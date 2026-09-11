@@ -16,7 +16,7 @@ Spec: `docs/superpowers/specs/2026-09-11-harness-structure-and-control-plane-des
 - Package scope `@harness/*`. Dependency rule: `contracts` không phụ thuộc package nào; `core` chỉ phụ thuộc `contracts`; `executors` phụ thuộc `contracts`, `core`; `adapter-fake` chỉ phụ thuộc `contracts`; `worker` phụ thuộc `contracts`, `core`, `executors`; `cli` phụ thuộc tất cả. `core` không bao giờ import `adapter-fake`.
 - ID = `<prefix>_<ULID>`. Prefix: `run_`, `stage_`, `attempt_`, `artifact_`, `op_`, `check_`, `evt_`, `src_`, `content_`, `variant_`, `pkg_`, `pub_`, `inc_`.
 - Checksum `sha256:<64 hex thường>`. Timestamp ISO 8601 UTC hậu tố `Z`. Revision số nguyên `>= 1`.
-- Mọi schema object dùng `.strict()`. Mọi entity/contract có `schema_version` dạng `harness.<tên>/v1`.
+- Mọi schema object dùng `.strict()`. Mọi entity miền và contract có `schema_version` dạng `harness.<tên>/v1`. Ngoại lệ: `Lease` là hàng nội bộ của state store (5 cột SQL), không có `schema_version` (quyết định 2026-09-11 khi review Task 2).
 - Profile đặt tên `cartoon`, `avatar`, `footage`. Không dùng `direction-a/b/c`.
 - Không module nào `UPDATE` cột `state` ngoài `transition()` và `claim()` trong `core/state`.
 - Secret chỉ ở dạng `secret://<scope>/<name>`; giá trị không được vào snapshot, event, log, manifest.
