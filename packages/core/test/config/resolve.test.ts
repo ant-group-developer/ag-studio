@@ -32,4 +32,8 @@ describe("resolveEffectiveConfig", () => {
     const { snapshot } = resolveEffectiveConfig({ harness, workflowDefaults: { tts_account: "secret://tts/main" }, profileOverrides: {}, channelOverrides: {}, runOverrides: {}, profileMaxCostUsd: 5, extraKnownKeys: ["tts_account"] });
     expect(snapshot.tts_account).toBe("secret://tts/main");
   });
+  it("rejects undefined values so snapshot and digest never diverge", () => {
+    try { resolveEffectiveConfig({ harness, workflowDefaults: { lease_seconds: undefined }, profileOverrides: {}, channelOverrides: {}, runOverrides: {}, profileMaxCostUsd: 5 }); throw new Error("no throw"); }
+    catch (e) { expect(isHarnessError(e, "CONFIG_INVALID")).toBe(true); expect((e as Error).message).toContain("lease_seconds"); }
+  });
 });

@@ -27,6 +27,7 @@ export function resolveEffectiveConfig(input: ResolveInput): { snapshot: Record<
   for (const [name, layer, restricted] of layers) {
     for (const [k, v] of Object.entries(layer)) {
       if (!known.has(k)) throw new HarnessError("UNKNOWN_CONFIG_KEY", `unknown config key "${k}" in ${name} layer`, { layer: name, key: k });
+      if (v === undefined) throw new HarnessError("CONFIG_INVALID", `key "${k}" in ${name} layer must not be undefined`, { layer: name, key: k });
       if (restricted && !overridable.has(k)) throw new HarnessError("CONFIG_INVALID", `key "${k}" may not be overridden in ${name} layer`, { layer: name, key: k });
       snapshot[k] = v; // lists and objects replace, never merge
     }

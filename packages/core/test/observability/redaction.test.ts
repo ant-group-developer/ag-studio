@@ -12,6 +12,11 @@ describe("Redactor", () => {
     const r = new Redactor(() => [""]);
     expect(r.redact("abc")).toBe("abc");
   });
+  it("redacts a longer secret fully even when a shorter secret is its prefix", () => {
+    const r = new Redactor(() => ["ab", "abcdef"]);
+    expect(r.redact("leaked: abcdef and ab")).toBe("leaked: [REDACTED] and [REDACTED]");
+    expect(r.redact("leaked: abcdef")).not.toContain("cdef");
+  });
 });
 
 describe("createLogger", () => {

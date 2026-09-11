@@ -1,7 +1,7 @@
 export class Redactor {
   constructor(private readonly secrets: () => string[]) {}
   redact<T>(value: T): T {
-    const secrets = this.secrets().filter((s) => s.length > 0);
+    const secrets = this.secrets().filter((s) => s.length > 0).sort((a, b) => b.length - a.length);
     if (secrets.length === 0) return value;
     return walk(value, secrets) as T;
   }
