@@ -2325,6 +2325,7 @@ export function resolveEffectiveConfig(input: ResolveInput): { snapshot: Record<
   for (const [name, layer, restricted] of layers) {
     for (const [k, v] of Object.entries(layer)) {
       if (!known.has(k)) throw new HarnessError("UNKNOWN_CONFIG_KEY", `unknown config key "${k}" in ${name} layer`, { layer: name, key: k });
+      if (v === undefined) throw new HarnessError("CONFIG_INVALID", `key "${k}" in ${name} layer must not be undefined`, { layer: name, key: k }); // snapshot and digest must agree (review Task 7)
       if (restricted && !overridable.has(k)) throw new HarnessError("CONFIG_INVALID", `key "${k}" may not be overridden in ${name} layer`, { layer: name, key: k });
       snapshot[k] = v; // lists and objects replace, never merge
     }
@@ -2371,7 +2372,8 @@ export class EnvSecretResolver implements SecretResolver {
 export class Redactor {
   constructor(private readonly secrets: () => string[]) {}
   redact<T>(value: T): T {
-    const secrets = this.secrets().filter((s) => s.length > 0);
+    // longest first: a secret that is a prefix of another must not break the longer match (review Task 7)
+    const secrets = this.secrets().filter((s) => s.length > 0).sort((a, b) => b.length - a.length);
     if (secrets.length === 0) return value;
     return walk(value, secrets) as T;
   }
