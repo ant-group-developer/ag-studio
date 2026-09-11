@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+*.db
+*.db-wal
+*.db-shm
+.claude/skills/
+.agents/skills/
