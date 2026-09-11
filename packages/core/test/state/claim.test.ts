@@ -76,6 +76,21 @@ describe("claim", () => {
     expect(store.getStageRun(r!.stage_run_id)?.state).toBe("FAILED");
   });
 
+  it("reports requeued=false and leaves the stage alone when it is not in an active state", () => {
+    const { store, clock } = openTempStore();
+    seedStage(store);
+    const c = claimWith(store, "w1")!;
+    const ev = { run_id: c.stageRun.run_id, stage_run_id: c.stageRun.stage_run_id, attempt_id: c.attempt.attempt_id, project_id: "project-main", portfolio_id: null, channel_id: null, content_id: null, variant_id: null, workflow_release: null, severity: "info" as const, event_type: "stage.test", payload: {} };
+    store.transition("stage_run", c.stageRun.stage_run_id, "CLAIMED", "RUNNING", ev);
+    store.transition("stage_run", c.stageRun.stage_run_id, "RUNNING", "WAITING_HUMAN", ev);
+    clock.advance(91);
+    const [r] = store.reapExpiredLeases(clock.now());
+    expect(r).toEqual({ stage_run_id: c.stageRun.stage_run_id, attempt_id: c.attempt.attempt_id, owner: "w1", requeued: false });
+    expect(store.getStageRun(c.stageRun.stage_run_id)?.state).toBe("WAITING_HUMAN");
+    expect(store.getAttempt(c.attempt.attempt_id)?.state).toBe("ABANDONED");
+    expect(store.getLease(c.stageRun.stage_run_id)).toBeUndefined();
+  });
+
   it("releaseLease removes the lease only for the matching token", () => {
     const { store } = openTempStore();
     seedStage(store);
