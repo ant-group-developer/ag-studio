@@ -1,2 +1,3 @@
 import { defineConfig } from "vitest/config";
-export default defineConfig({ test: { include: ["test/**/*.test.ts"] } });
+import { sharedConfig } from "../../vitest.shared.js";
+export default defineConfig(sharedConfig({ include: ["test/**/*.test.ts"] }));

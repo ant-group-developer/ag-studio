@@ -47,7 +47,14 @@ export class SqliteStateStore implements StateStore {
   }
 
   transaction<T>(fn: () => T): T {
-    if (this.depth > 0) { this.depth++; try { return fn(); } finally { this.depth--; } }
+    if (this.depth > 0) {
+      const sp = `sp_${this.depth}`;
+      this.db.exec(`SAVEPOINT ${sp}`);
+      this.depth++;
+      try { const out = fn(); this.db.exec(`RELEASE SAVEPOINT ${sp}`); return out; }
+      catch (e) { this.db.exec(`ROLLBACK TO SAVEPOINT ${sp}`); this.db.exec(`RELEASE SAVEPOINT ${sp}`); throw e; }
+      finally { this.depth--; }
+    }
     this.db.exec("BEGIN IMMEDIATE");
     this.depth = 1;
     try { const out = fn(); this.db.exec("COMMIT"); return out; }

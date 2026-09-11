@@ -68,4 +68,15 @@ describe("SqliteStateStore", () => {
     store.transaction(() => { store.insertRun(run); store.transaction(() => store.updateRun({ ...run, total_cost_usd: 2 })); });
     expect(store.getRun(run.run_id)?.total_cost_usd).toBe(2);
   });
+
+  it("rolls back only the inner unit when the outer catches the inner throw", () => {
+    const { store } = openTempStore();
+    const a = makeRun(); const b = makeRun();
+    store.transaction(() => {
+      store.insertRun(a);
+      try { store.transaction(() => { store.insertRun(b); throw new Error("inner"); }); } catch { /* swallowed on purpose */ }
+    });
+    expect(store.getRun(a.run_id)).toBeDefined();
+    expect(store.getRun(b.run_id)).toBeUndefined();
+  });
 });
