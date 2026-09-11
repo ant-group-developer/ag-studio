@@ -8,6 +8,7 @@ import {
   type ExternalOperation, type Lease, type ReapedLease, type Run, type StageRun, type StateStore, type TransitionKind,
 } from "@harness/contracts";
 import { SystemClock } from "./clock.js";
+import { assertTransition, STATE_FIELD_BY_KIND, TABLE_BY_KIND } from "./transitions.js";
 
 export const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "migrations");
 
@@ -174,7 +175,19 @@ export class SqliteStateStore implements StateStore {
   }
 
   // ---- implemented in Task 5 and 6 ----
-  transition(_kind: TransitionKind, _id: string, _from: string, _to: string, _event: EventInput): void { throw new Error("not implemented"); }
+  transition(kind: TransitionKind, id: string, expectedFrom: string, to: string, event: EventInput): void {
+    assertTransition(kind, expectedFrom, to);
+    this.transaction(() => {
+      const table = TABLE_BY_KIND[kind];
+      const field = STATE_FIELD_BY_KIND[kind];
+      const now = this.clock.now();
+      const res = this.db
+        .prepare(`UPDATE ${table} SET state = ?, data = json_set(data, '$.${field}', ?, '$.updated_at', ?), updated_at = ? WHERE id = ? AND state = ?`)
+        .run(to, to, now, now, id, expectedFrom);
+      if (res.changes === 0) throw new HarnessError("STALE_STATE", `${kind} ${id} not in state ${expectedFrom}`, { kind, id, expectedFrom, to });
+      this.appendEvent({ ...event, payload: { ...event.payload, from: expectedFrom, to } });
+    });
+  }
   claim(_params: ClaimParams): ClaimResult | undefined { throw new Error("not implemented"); }
   heartbeat(_attemptId: string, _token: number, _newExpiresAt: string): boolean { throw new Error("not implemented"); }
   getLease(_stageRunId: string): Lease | undefined { throw new Error("not implemented"); }
