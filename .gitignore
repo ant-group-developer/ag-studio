@@ -8,3 +8,5 @@ dist/
 *.db-shm
 .claude/skills/
 .agents/skills/
+.superpowers/
+fixtures/**/data/
