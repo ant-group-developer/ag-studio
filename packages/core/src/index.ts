@@ -6,3 +6,5 @@ export * from "./config/resolve.js";
 export * from "./config/secrets.js";
 export * from "./observability/redaction.js";
 export * from "./observability/logger.js";
+export * from "./environment/workspace.js";
+export * from "./artifacts/registry.js";
