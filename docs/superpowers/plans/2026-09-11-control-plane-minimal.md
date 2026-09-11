@@ -842,6 +842,18 @@ describe("config contracts", () => {
       stages: [{ key: "a", executor: { type: "script", script: "x" }, depends_on: ["nope"], required_capabilities: [], required_checks: [] }],
     }).success).toBe(false);
   });
+  it("rejects a dependency cycle longer than one stage", () => {
+    const r = WorkflowDefinitionSchema.safeParse({
+      schema_version: "harness.workflow/v1", id: "w", version: "1.0.0", defaults: {},
+      stages: [
+        { key: "a", executor: { type: "script", script: "x" }, depends_on: ["c"], required_capabilities: [], required_checks: [] },
+        { key: "b", executor: { type: "script", script: "x" }, depends_on: ["a"], required_capabilities: [], required_checks: [] },
+        { key: "c", executor: { type: "script", script: "x" }, depends_on: ["b"], required_capabilities: [], required_checks: [] },
+      ],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues.some((i) => i.message.startsWith("dependency cycle"))).toBe(true);
+  });
   it("applies harness defaults", () => {
     const cfg = HarnessConfigSchema.parse({ schema_version: "harness.config/v1" });
     expect(cfg.lease_seconds).toBe(90);
@@ -1001,6 +1013,17 @@ export const WorkflowDefinitionSchema = z.object({
     if (!keys.has(d)) ctx.addIssue({ code: "custom", message: `stage ${s.key} depends on unknown stage ${d}` });
     if (d === s.key) ctx.addIssue({ code: "custom", message: `stage ${s.key} depends on itself` });
   }
+  // cycle detection (added after Task 3 review): DFS with colouring over depends_on edges
+  const deps = new Map(wf.stages.map((s) => [s.key, s.depends_on]));
+  const colour = new Map<string, 1 | 2>();
+  const visit = (k: string, path: string[]): void => {
+    if (colour.get(k) === 2) return;
+    if (colour.get(k) === 1) { ctx.addIssue({ code: "custom", message: `dependency cycle: ${[...path, k].join(" -> ")}` }); return; }
+    colour.set(k, 1);
+    for (const d of deps.get(k) ?? []) if (keys.has(d)) visit(d, [...path, k]);
+    colour.set(k, 2);
+  };
+  for (const s of wf.stages) visit(s.key, []);
 });
 
 export const ProductionProfileSchema = z.object({
