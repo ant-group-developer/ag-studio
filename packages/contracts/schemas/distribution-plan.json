@@ -1,0 +1,62 @@
+{
+  "$ref": "#/definitions/distribution-plan",
+  "definitions": {
+    "distribution-plan": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.distribution-plan/v1"
+        },
+        "plan_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "variant_id": {
+                "type": "string",
+                "pattern": "^variant_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "channel_id": {
+                "type": "string"
+              },
+              "publish_slot": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "variant_id",
+              "channel_id",
+              "publish_slot"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "plan_id",
+        "revision",
+        "entries"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

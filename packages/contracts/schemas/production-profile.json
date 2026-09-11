@@ -1,0 +1,88 @@
+{
+  "$ref": "#/definitions/production-profile",
+  "definitions": {
+    "production-profile": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.production-profile/v1"
+        },
+        "profile_id": {
+          "type": "string",
+          "enum": [
+            "cartoon",
+            "avatar",
+            "footage"
+          ]
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "draft",
+            "retired"
+          ]
+        },
+        "workflow_release": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*@\\d+\\.\\d+\\.\\d+$"
+        },
+        "overrides": {
+          "type": "object",
+          "additionalProperties": {},
+          "default": {}
+        },
+        "verification": {
+          "type": "object",
+          "properties": {
+            "required_checks": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            }
+          },
+          "additionalProperties": false,
+          "default": {
+            "required_checks": []
+          }
+        },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "max_cost_usd_per_variant": {
+              "type": "number",
+              "minimum": 0,
+              "default": 5
+            },
+            "max_concurrency": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          "additionalProperties": false,
+          "default": {
+            "max_cost_usd_per_variant": 5,
+            "max_concurrency": 1
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "profile_id",
+        "revision",
+        "status",
+        "workflow_release"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

@@ -1,0 +1,70 @@
+{
+  "$ref": "#/definitions/check-result",
+  "definitions": {
+    "check-result": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.check-result/v1"
+        },
+        "check_result_id": {
+          "type": "string",
+          "pattern": "^check_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "check_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "checker_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attempt_id": {
+          "type": "string",
+          "pattern": "^attempt_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "artifact_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^artifact_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "skip"
+          ]
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": {}
+        },
+        "created_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+        }
+      },
+      "required": [
+        "schema_version",
+        "check_result_id",
+        "check_id",
+        "checker_version",
+        "attempt_id",
+        "artifact_id",
+        "verdict",
+        "evidence",
+        "created_at"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

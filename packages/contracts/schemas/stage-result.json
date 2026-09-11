@@ -1,0 +1,157 @@
+{
+  "$ref": "#/definitions/stage-result",
+  "definitions": {
+    "stage-result": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.stage-result/v1"
+        },
+        "attempt_id": {
+          "type": "string",
+          "pattern": "^attempt_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "succeeded",
+            "failed",
+            "deferred",
+            "unknown"
+          ]
+        },
+        "outputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "checksum": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "size_bytes": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "path",
+              "type",
+              "checksum",
+              "size_bytes"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "check_id": {
+                "type": "string"
+              },
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "pass",
+                  "fail",
+                  "skip"
+                ]
+              },
+              "evidence": {
+                "type": "object",
+                "additionalProperties": {},
+                "default": {}
+              }
+            },
+            "required": [
+              "check_id",
+              "verdict"
+            ],
+            "additionalProperties": false
+          },
+          "default": []
+        },
+        "usage": {
+          "type": "object",
+          "properties": {
+            "wall_seconds": {
+              "type": "number",
+              "minimum": 0
+            },
+            "cost_usd": {
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "wall_seconds",
+            "cost_usd"
+          ],
+          "additionalProperties": false,
+          "default": {
+            "wall_seconds": 0,
+            "cost_usd": 0
+          }
+        },
+        "external_operations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^op_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "default": []
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "transient",
+                  "result",
+                  "contract",
+                  "unknown"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "default": {}
+              }
+            },
+            "required": [
+              "kind",
+              "message"
+            ],
+            "additionalProperties": false
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "schema_version",
+        "attempt_id",
+        "outcome",
+        "outputs"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

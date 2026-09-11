@@ -1,0 +1,44 @@
+{
+  "$ref": "#/definitions/channel",
+  "definitions": {
+    "channel": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.channel/v1"
+        },
+        "channel_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "portfolio_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "account_ref": {
+          "type": "string",
+          "pattern": "^secret:\\/\\/[a-z0-9-]+\\/[a-z0-9-]+$"
+        },
+        "expected_channel_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "config_revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "schema_version",
+        "channel_id",
+        "portfolio_id",
+        "account_ref",
+        "expected_channel_id",
+        "config_revision"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

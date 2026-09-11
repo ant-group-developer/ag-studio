@@ -1,0 +1,104 @@
+{
+  "$ref": "#/definitions/external-operation",
+  "definitions": {
+    "external-operation": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.external-operation/v1"
+        },
+        "operation_id": {
+          "type": "string",
+          "pattern": "^op_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^run_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "stage_run_id": {
+          "type": "string",
+          "pattern": "^stage_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "attempt_id": {
+          "type": "string",
+          "pattern": "^attempt_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "idempotency_key": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "INTENT_RECORDED",
+            "DISPATCHED",
+            "NEEDS_RECONCILIATION",
+            "CONFIRMED",
+            "FAILED"
+          ]
+        },
+        "provider_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "receipt": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": {}
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cost_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "created_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+        },
+        "updated_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+        }
+      },
+      "required": [
+        "schema_version",
+        "operation_id",
+        "run_id",
+        "stage_run_id",
+        "attempt_id",
+        "provider",
+        "kind",
+        "target",
+        "idempotency_key",
+        "status",
+        "provider_ref",
+        "receipt",
+        "cost_usd",
+        "created_at",
+        "updated_at"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

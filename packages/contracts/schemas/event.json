@@ -1,0 +1,127 @@
+{
+  "$ref": "#/definitions/event",
+  "definitions": {
+    "event": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.event/v1"
+        },
+        "event_id": {
+          "type": "string",
+          "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "occurred_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^run_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stage_run_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^stage_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "attempt_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^attempt_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "project_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "portfolio_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "channel_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "content_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "variant_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workflow_release": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ]
+        },
+        "event_type": {
+          "type": "string",
+          "pattern": "^[a-z_]+\\.[a-z_]+$"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "schema_version",
+        "event_id",
+        "occurred_at",
+        "run_id",
+        "stage_run_id",
+        "attempt_id",
+        "project_id",
+        "portfolio_id",
+        "channel_id",
+        "content_id",
+        "variant_id",
+        "workflow_release",
+        "severity",
+        "event_type",
+        "payload"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

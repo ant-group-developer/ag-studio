@@ -1,0 +1,197 @@
+{
+  "$ref": "#/definitions/stage-run",
+  "definitions": {
+    "stage-run": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.stage-run/v1"
+        },
+        "stage_run_id": {
+          "type": "string",
+          "pattern": "^stage_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^run_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "stage_key": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "executor": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "script"
+                },
+                "script": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "type",
+                "script"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "agent"
+                },
+                "skill": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "brief": {
+                  "type": "string",
+                  "default": ""
+                }
+              },
+              "required": [
+                "type",
+                "skill"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "depends_on": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "required_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "required_checks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "retry": {
+          "type": "object",
+          "properties": {
+            "max_attempts": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "backoff_seconds": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "retry_on": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "transient",
+                  "result",
+                  "contract",
+                  "unknown",
+                  "abandoned"
+                ]
+              }
+            }
+          },
+          "required": [
+            "max_attempts",
+            "backoff_seconds",
+            "retry_on"
+          ],
+          "additionalProperties": false
+        },
+        "stage_config": {
+          "type": "object",
+          "additionalProperties": {}
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "PENDING",
+            "READY",
+            "CLAIMED",
+            "RUNNING",
+            "VERIFYING",
+            "WAITING_EXTERNAL",
+            "NEEDS_RECONCILIATION",
+            "WAITING_HUMAN",
+            "CANCEL_REQUESTED",
+            "CANCELLED",
+            "SUCCEEDED",
+            "FAILED"
+          ]
+        },
+        "attempt_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "result_failures": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ready_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+        },
+        "not_before": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+        },
+        "last_failure_kind": {
+          "type": "string",
+          "enum": [
+            "transient",
+            "result",
+            "contract",
+            "unknown",
+            "abandoned"
+          ]
+        },
+        "created_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+        },
+        "updated_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+        }
+      },
+      "required": [
+        "schema_version",
+        "stage_run_id",
+        "run_id",
+        "stage_key",
+        "executor",
+        "depends_on",
+        "required_capabilities",
+        "required_checks",
+        "retry",
+        "stage_config",
+        "state",
+        "attempt_count",
+        "result_failures",
+        "created_at",
+        "updated_at"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

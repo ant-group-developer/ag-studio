@@ -1,0 +1,170 @@
+{
+  "$ref": "#/definitions/stage-request",
+  "definitions": {
+    "stage-request": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.stage-request/v1"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^run_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "stage_run_id": {
+          "type": "string",
+          "pattern": "^stage_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "attempt_id": {
+          "type": "string",
+          "pattern": "^attempt_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "portfolio_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stage_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workflow": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string",
+              "pattern": "^\\d+\\.\\d+\\.\\d+$"
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "id",
+            "version",
+            "digest"
+          ],
+          "additionalProperties": false
+        },
+        "profile_snapshot": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "id",
+            "revision"
+          ],
+          "additionalProperties": false
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "artifact_id": {
+                "type": "string",
+                "pattern": "^artifact_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "checksum": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "type": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "artifact_id",
+              "checksum",
+              "path",
+              "type"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "workspace_uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stage_config": {
+          "type": "object",
+          "additionalProperties": {}
+        },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "deadline_at": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+            },
+            "max_cost_usd": {
+              "type": "number",
+              "minimum": 0
+            },
+            "max_attempts": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "deadline_at",
+            "max_cost_usd",
+            "max_attempts"
+          ],
+          "additionalProperties": false
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fencing_token": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "schema_version",
+        "run_id",
+        "stage_run_id",
+        "attempt_id",
+        "project_id",
+        "portfolio_id",
+        "stage_key",
+        "workflow",
+        "profile_snapshot",
+        "inputs",
+        "workspace_uri",
+        "stage_config",
+        "limits",
+        "capabilities",
+        "fencing_token"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

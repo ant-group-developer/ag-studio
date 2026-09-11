@@ -1,0 +1,100 @@
+{
+  "$ref": "#/definitions/channel-config",
+  "definitions": {
+    "channel-config": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.channel/v1"
+        },
+        "channel_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "config_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "portfolio_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "youtube": {
+          "type": "object",
+          "properties": {
+            "account_ref": {
+              "type": "string",
+              "pattern": "^secret:\\/\\/[a-z0-9-]+\\/[a-z0-9-]+$"
+            },
+            "expected_channel_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "account_ref",
+            "expected_channel_id"
+          ],
+          "additionalProperties": false
+        },
+        "publication": {
+          "type": "object",
+          "properties": {
+            "timezone": {
+              "type": "string"
+            },
+            "visibility": {
+              "type": "string",
+              "enum": [
+                "private",
+                "unlisted",
+                "public"
+              ]
+            },
+            "allowed_profiles": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "max_daily_uploads": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "require_human_approval_for_public": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "timezone",
+            "visibility",
+            "allowed_profiles",
+            "max_daily_uploads",
+            "require_human_approval_for_public"
+          ],
+          "additionalProperties": false
+        },
+        "overrides": {
+          "type": "object",
+          "additionalProperties": {},
+          "default": {}
+        }
+      },
+      "required": [
+        "schema_version",
+        "channel_id",
+        "config_revision",
+        "display_name",
+        "portfolio_id",
+        "youtube",
+        "publication"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

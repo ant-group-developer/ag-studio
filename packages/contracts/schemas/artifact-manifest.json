@@ -1,0 +1,160 @@
+{
+  "$ref": "#/definitions/artifact-manifest",
+  "definitions": {
+    "artifact-manifest": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.artifact/v1"
+        },
+        "artifact_id": {
+          "type": "string",
+          "pattern": "^artifact_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "provisional",
+            "accepted",
+            "rejected",
+            "stale",
+            "archived"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "checksum": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mime_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "created_by": {
+          "type": "object",
+          "properties": {
+            "run_id": {
+              "type": "string",
+              "pattern": "^run_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "stage_run_id": {
+              "type": "string",
+              "pattern": "^stage_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "attempt_id": {
+              "type": "string",
+              "pattern": "^attempt_[0-9A-HJKMNP-TV-Z]{26}$"
+            }
+          },
+          "required": [
+            "run_id",
+            "stage_run_id",
+            "attempt_id"
+          ],
+          "additionalProperties": false
+        },
+        "lineage": {
+          "type": "object",
+          "properties": {
+            "input_artifacts": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^artifact_[0-9A-HJKMNP-TV-Z]{26}$"
+              }
+            },
+            "source_items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "input_artifacts",
+            "source_items"
+          ],
+          "additionalProperties": false
+        },
+        "reproducibility": {
+          "type": "object",
+          "properties": {
+            "workflow_release": {
+              "type": "string"
+            },
+            "production_profile": {
+              "type": "string"
+            },
+            "channel_config_revision": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "executor_version": {
+              "type": "string"
+            },
+            "model_parameters_digest": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "workflow_release",
+            "production_profile",
+            "channel_config_revision",
+            "executor_version",
+            "model_parameters_digest"
+          ],
+          "additionalProperties": false
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^check_[0-9A-HJKMNP-TV-Z]{26}$"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "artifact_id",
+        "type",
+        "status",
+        "uri",
+        "checksum",
+        "size_bytes",
+        "mime_type",
+        "created_by",
+        "lineage",
+        "reproducibility",
+        "checks"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

@@ -1,0 +1,33 @@
+{
+  "$ref": "#/definitions/portfolio",
+  "definitions": {
+    "portfolio": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.portfolio/v1"
+        },
+        "portfolio_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "display_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "portfolio_id",
+        "project_id",
+        "display_name"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
