@@ -12,9 +12,9 @@ export const TRANSITIONS: Record<TransitionKind, Record<string, readonly string[
   stage_run: {
     PENDING: ["READY", "CANCEL_REQUESTED", "CANCELLED"],
     READY: ["CLAIMED", "CANCEL_REQUESTED", "CANCELLED"],
-    CLAIMED: ["RUNNING", "READY", "CANCEL_REQUESTED"],            // CLAIMED -> READY: lease abandoned
+    CLAIMED: ["RUNNING", "READY", "FAILED", "CANCEL_REQUESTED"],  // READY/FAILED: lease abandoned
     RUNNING: ["VERIFYING", "WAITING_EXTERNAL", "WAITING_HUMAN", "FAILED", "READY", "CANCEL_REQUESTED"], // RUNNING -> READY: lease abandoned
-    VERIFYING: ["SUCCEEDED", "FAILED", "WAITING_HUMAN"],          // WAITING_HUMAN: contract failure (spec B.9)
+    VERIFYING: ["SUCCEEDED", "FAILED", "WAITING_HUMAN", "READY"], // READY: lease abandoned during verify
     WAITING_EXTERNAL: ["RUNNING", "NEEDS_RECONCILIATION"],
     NEEDS_RECONCILIATION: ["RUNNING", "READY"],                   // READY: reconciled, retry with new attempt (spec addition v1)
     WAITING_HUMAN: ["READY", "CANCEL_REQUESTED"],

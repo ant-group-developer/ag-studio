@@ -50,6 +50,7 @@ export interface StateStore {
   getLease(stageRunId: string): Lease | undefined;
   releaseLease(stageRunId: string, fencingToken: number): void;
   reapExpiredLeases(now: string): ReapedLease[];
+  assertFencing(stageRunId: string, fencingToken: number): void;
 }
 
 export interface ExecutorContext {
