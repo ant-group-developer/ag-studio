@@ -2084,9 +2084,10 @@ Import thêm `LeaseSchema` từ `@harness/contracts` và `addSeconds` từ `./cl
         if (attempt.state === "CLAIMED" || attempt.state === "RUNNING") {
           this.transition("attempt", attempt.attempt_id, attempt.state, "ABANDONED", { ...this.eventBase(stage, attempt.attempt_id), severity: "warn", event_type: "attempt.abandoned", payload: { owner: lease.owner } });
         }
-        const canRetry = stage.retry.retry_on.includes("abandoned") && stage.attempt_count < stage.retry.max_attempts;
-        const next = canRetry ? "READY" : "FAILED";
-        if (["CLAIMED", "RUNNING", "VERIFYING"].includes(stage.state)) {
+        const active = ["CLAIMED", "RUNNING", "VERIFYING"].includes(stage.state);
+        const canRetry = active && stage.retry.retry_on.includes("abandoned") && stage.attempt_count < stage.retry.max_attempts;
+        if (active) {
+          const next = canRetry ? "READY" : "FAILED";
           this.transition("stage_run", stage.stage_run_id, stage.state, next, { ...this.eventBase(stage, attempt.attempt_id), severity: "warn", event_type: "stage.lease_expired", payload: { requeued: canRetry } });
           const fresh = this.getStageRun(stage.stage_run_id)!;
           this.updateStageRun({ ...fresh, last_failure_kind: "abandoned", ready_at: now, not_before: now });
