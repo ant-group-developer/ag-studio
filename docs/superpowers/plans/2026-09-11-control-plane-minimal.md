@@ -21,6 +21,7 @@ Spec: `docs/superpowers/specs/2026-09-11-harness-structure-and-control-plane-des
 - Không module nào `UPDATE` cột `state` ngoài `transition()` và `claim()` trong `core/state`.
 - Secret chỉ ở dạng `secret://<scope>/<name>`; giá trị không được vào snapshot, event, log, manifest.
 - Test xác định, không mạng, không LLM. SQLite test dùng file tạm trong `os.tmpdir()`.
+- Mọi `vitest.config.ts` của package dùng `sharedConfig()` từ `vitest.shared.ts` ở root (thêm sau review Task 4): nó cung cấp plugin `node:sqlite` cho vite-node và alias `@harness/*` → `packages/*/src/index.ts`, nên test không cần build `dist/`.
 - Lease mặc định 90 giây, heartbeat 30 giây, poll 2 giây; retry mặc định `max_attempts=3`, `backoff_seconds=[10,60,300]`, `retry_on=[transient, abandoned]`.
 - Commit message theo Conventional Commits, kết thúc bằng `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
 
@@ -1506,7 +1507,15 @@ export class SqliteStateStore implements StateStore {
   }
 
   transaction<T>(fn: () => T): T {
-    if (this.depth > 0) { this.depth++; try { return fn(); } finally { this.depth--; } }
+    if (this.depth > 0) {
+      // nested: SAVEPOINT so an inner throw caught by the outer still rolls back the inner writes (review Task 4)
+      const sp = `sp_${this.depth}`;
+      this.db.exec(`SAVEPOINT ${sp}`);
+      this.depth++;
+      try { const out = fn(); this.db.exec(`RELEASE SAVEPOINT ${sp}`); return out; }
+      catch (e) { this.db.exec(`ROLLBACK TO SAVEPOINT ${sp}`); this.db.exec(`RELEASE SAVEPOINT ${sp}`); throw e; }
+      finally { this.depth--; }
+    }
     this.db.exec("BEGIN IMMEDIATE");
     this.depth = 1;
     try { const out = fn(); this.db.exec("COMMIT"); return out; }
