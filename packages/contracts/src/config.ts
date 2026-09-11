@@ -28,6 +28,17 @@ export const WorkflowDefinitionSchema = z.object({
     if (!keys.has(d)) ctx.addIssue({ code: "custom", message: `stage ${s.key} depends on unknown stage ${d}` });
     if (d === s.key) ctx.addIssue({ code: "custom", message: `stage ${s.key} depends on itself` });
   }
+  // cycle detection: DFS with colouring over depends_on edges
+  const deps = new Map(wf.stages.map((s) => [s.key, s.depends_on]));
+  const colour = new Map<string, 1 | 2>();
+  const visit = (k: string, path: string[]): void => {
+    if (colour.get(k) === 2) return;
+    if (colour.get(k) === 1) { ctx.addIssue({ code: "custom", message: `dependency cycle: ${[...path, k].join(" -> ")}` }); return; }
+    colour.set(k, 1);
+    for (const d of deps.get(k) ?? []) if (keys.has(d)) visit(d, [...path, k]);
+    colour.set(k, 2);
+  };
+  for (const s of wf.stages) visit(s.key, []);
 });
 
 export const ProductionProfileSchema = z.object({

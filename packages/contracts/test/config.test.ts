@@ -21,6 +21,18 @@ describe("config contracts", () => {
       stages: [{ key: "a", executor: { type: "script", script: "x" }, depends_on: ["nope"], required_capabilities: [], required_checks: [] }],
     }).success).toBe(false);
   });
+  it("rejects a dependency cycle longer than one stage", () => {
+    const r = WorkflowDefinitionSchema.safeParse({
+      schema_version: "harness.workflow/v1", id: "w", version: "1.0.0", defaults: {},
+      stages: [
+        { key: "a", executor: { type: "script", script: "x" }, depends_on: ["c"], required_capabilities: [], required_checks: [] },
+        { key: "b", executor: { type: "script", script: "x" }, depends_on: ["a"], required_capabilities: [], required_checks: [] },
+        { key: "c", executor: { type: "script", script: "x" }, depends_on: ["b"], required_capabilities: [], required_checks: [] },
+      ],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues.some((i) => i.message.startsWith("dependency cycle"))).toBe(true);
+  });
   it("applies harness defaults", () => {
     const cfg = HarnessConfigSchema.parse({ schema_version: "harness.config/v1" });
     expect(cfg.lease_seconds).toBe(90);
