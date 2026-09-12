@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { StageResultSchema, type Checker } from "@harness/contracts";
 import { sha256File } from "../artifacts/checksum.js";
+import { directoryDigest, listDirectoryFiles } from "../artifacts/directory.js";
 
 export const schemaValidChecker: Checker = {
   id: "schema-valid", version: "1.0.0",
@@ -27,7 +28,16 @@ export const checksumMatchChecker: Checker = {
     for (const o of result.outputs) {
       const path = join(workspaceDir, o.path);
       if (!existsSync(path)) return { verdict: "fail", evidence: { path: o.path, reason: "missing" } };
-      const actual = await sha256File(path);
+      let actual: { checksum: string; size_bytes: number };
+      if (o.kind === "directory") {
+        try {
+          actual = directoryDigest(await listDirectoryFiles(path));
+        } catch {
+          return { verdict: "fail", evidence: { path: o.path, reason: "not a directory" } };
+        }
+      } else {
+        actual = await sha256File(path);
+      }
       if (actual.checksum !== o.checksum || actual.size_bytes !== o.size_bytes) {
         return { verdict: "fail", evidence: { path: o.path, declared: o.checksum, actual: actual.checksum, declared_size: o.size_bytes, actual_size: actual.size_bytes } };
       }

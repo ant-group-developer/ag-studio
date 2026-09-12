@@ -1,14 +1,15 @@
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { HarnessError, newId, type Artifact, type ArtifactManifest, type Attempt, type Run, type StageOutput, type StageRun, type StateStore } from "@harness/contracts";
 import { sha256File } from "./checksum.js";
+import { directoryDigest, listDirectoryFiles, type DirectoryEntry } from "./directory.js";
 
 export interface ArtifactContext {
   run: Run; stageRun: StageRun; attempt: Attempt;
   executorVersion: string; inputArtifactIds: string[]; checkResultIds: string[];
 }
-export interface StagedOutput { artifact: Artifact; manifestPath: string; manifest: ArtifactManifest }
+export interface StagedOutput { artifact: Artifact; manifestPath: string; manifest: ArtifactManifest; files?: DirectoryEntry[] }
 
 export function artifactDir(dataRoot: string, run: Run, artifactId: string): string {
   return join(dataRoot, "artifacts", run.content_id ?? run.run_id, run.variant_id ?? run.profile_snapshot.id, artifactId);
@@ -28,12 +29,13 @@ function buildArtifact(artifactId: string, output: StageOutput, uri: string, mim
   };
 }
 
-export function toManifest(a: Artifact): ArtifactManifest {
+export function toManifest(a: Artifact, files?: DirectoryEntry[]): ArtifactManifest {
   return {
     schema_version: "harness.artifact-manifest/v1", artifact_id: a.artifact_id, type: a.type, status: a.status.toLowerCase() as ArtifactManifest["status"],
     uri: a.uri, checksum: a.checksum, size_bytes: a.size_bytes, mime_type: a.mime_type,
     created_by: { run_id: a.run_id, stage_run_id: a.stage_run_id, attempt_id: a.attempt_id },
     lineage: a.lineage, reproducibility: a.reproducibility, checks: a.checks,
+    ...(files ? { files } : {}),
   };
 }
 
@@ -44,18 +46,25 @@ export class ArtifactRegistry {
   async stageOutputs(p: { workspaceDir: string; outputs: StageOutput[]; mimeTypes: Record<string, string>; ctx: ArtifactContext }): Promise<StagedOutput[]> {
     const now = new Date().toISOString();
     const root = resolve(p.workspaceDir) + sep;
-    const verified: { out: StageOutput; src: string }[] = [];
+    const verified: { out: StageOutput; src: string; files?: DirectoryEntry[] }[] = [];
     for (const out of p.outputs) {
       const src = resolve(p.workspaceDir, out.path);
       if (!src.startsWith(root)) throw new HarnessError("IO_ERROR", `output path escapes the workspace: ${out.path}`, { path: out.path });
-      const actual = await sha256File(src).catch(() => { throw new HarnessError("IO_ERROR", `output missing: ${out.path}`, { path: out.path }); });
+      let actual: { checksum: string; size_bytes: number }; let files: DirectoryEntry[] | undefined;
+      if (out.kind === "directory") {
+        if (!existsSync(src) || !statSync(src).isDirectory()) throw new HarnessError("IO_ERROR", `output directory missing: ${out.path}`, { path: out.path });
+        files = await listDirectoryFiles(src);
+        actual = directoryDigest(files);
+      } else {
+        actual = await sha256File(src).catch(() => { throw new HarnessError("IO_ERROR", `output missing: ${out.path}`, { path: out.path }); });
+      }
       if (actual.checksum !== out.checksum || actual.size_bytes !== out.size_bytes) {
         throw new HarnessError("CHECKSUM_MISMATCH", `checksum mismatch for ${out.path}`, { path: out.path, declared: out.checksum, actual: actual.checksum });
       }
-      verified.push({ out, src });
+      verified.push({ out, src, ...(files ? { files } : {}) });
     }
     const staged: StagedOutput[] = [];
-    for (const { out, src } of verified) {
+    for (const { out, src, files } of verified) {
       const id = newId("artifact");
       const dir = artifactDir(this.dataRoot, p.ctx.run, id);
       mkdirSync(dir, { recursive: true });
@@ -63,16 +72,16 @@ export class ArtifactRegistry {
       renameSync(src, dest);
       const artifact = buildArtifact(id, out, pathToFileURL(dest).href, p.mimeTypes[out.type] ?? "application/octet-stream", p.ctx, "PROVISIONAL", now);
       const manifestPath = join(dir, "manifest.json");
-      const manifest = toManifest(artifact);
+      const manifest = toManifest(artifact, files);
       writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
-      staged.push({ artifact, manifestPath, manifest });
+      staged.push({ artifact, manifestPath, manifest, ...(files ? { files } : {}) });
     }
     return staged;
   }
 
   /** Sync phase: must run inside store.transaction(). PROVISIONAL -> ACCEPTED with event. */
   commitAccepted(staged: StagedOutput[], ctx: ArtifactContext): Artifact[] {
-    return staged.map(({ artifact, manifestPath }) => {
+    return staged.map(({ artifact, manifestPath, files }) => {
       this.store.insertArtifact(artifact);
       this.store.transition("artifact", artifact.artifact_id, "PROVISIONAL", "ACCEPTED", {
         run_id: ctx.run.run_id, stage_run_id: ctx.stageRun.stage_run_id, attempt_id: ctx.attempt.attempt_id, project_id: ctx.run.project_id,
@@ -81,7 +90,7 @@ export class ArtifactRegistry {
         payload: { artifact_id: artifact.artifact_id, type: artifact.type, checksum: artifact.checksum },
       });
       const accepted = this.store.getArtifact(artifact.artifact_id)!;
-      writeFileSync(manifestPath, JSON.stringify(toManifest(accepted), null, 2) + "\n");
+      writeFileSync(manifestPath, JSON.stringify(toManifest(accepted, files), null, 2) + "\n");
       return accepted;
     });
   }

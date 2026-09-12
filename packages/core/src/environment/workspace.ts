@@ -1,7 +1,9 @@
+import { statSync } from "node:fs";
 import { copyFile, link, mkdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Artifact, StageInput } from "@harness/contracts";
+import { copyTree } from "../artifacts/directory.js";
 
 export function workspacePath(dataRoot: string, runId: string, stageKey: string, attemptId: string): string {
   return join(dataRoot, "workspaces", runId, stageKey, attemptId);
@@ -21,10 +23,11 @@ export async function materializeInputs(workspaceDir: string, artifacts: Artifac
   const inputs: StageInput[] = [];
   for (const a of artifacts) {
     const src = fileURLToPath(a.uri);
+    const isDir = statSync(src).isDirectory();
     const rel = join("input", a.artifact_id, basename(src)).split("\\").join("/");
     await mkdir(join(workspaceDir, "input", a.artifact_id), { recursive: true });
-    await linkOrCopy(src, join(workspaceDir, rel));
-    inputs.push({ artifact_id: a.artifact_id, checksum: a.checksum, path: rel, type: a.type, kind: "file" });
+    if (isDir) await copyTree(src, join(workspaceDir, rel)); else await linkOrCopy(src, join(workspaceDir, rel));
+    inputs.push({ artifact_id: a.artifact_id, checksum: a.checksum, path: rel, type: a.type, kind: isDir ? "directory" : "file" });
   }
   return inputs;
 }

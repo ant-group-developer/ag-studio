@@ -2,6 +2,7 @@ export * from "./state/clock.js";
 export * from "./state/sqlite-store.js";
 export * from "./state/transitions.js";
 export * from "./artifacts/checksum.js";
+export * from "./artifacts/directory.js";
 export * from "./config/resolve.js";
 export * from "./config/secrets.js";
 export * from "./observability/redaction.js";

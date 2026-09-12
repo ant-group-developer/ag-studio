@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ArtifactManifestSchema } from "@harness/contracts";
 import { acceptedInputsFor, ArtifactRegistry } from "../../src/artifacts/registry.js";
+import { directoryDigest, listDirectoryFiles } from "../../src/artifacts/directory.js";
 import { sha256String } from "../../src/artifacts/checksum.js";
 import { createWorkspace } from "../../src/environment/workspace.js";
 import { openTempStore, seedStage } from "../helpers.js";
@@ -80,5 +81,25 @@ describe("ArtifactRegistry", () => {
     expect(read().status).toBe("provisional");
     store.transaction(() => registry.commitAccepted(staged, ctx));
     expect(read().status).toBe("accepted");
+  });
+  it("stages a directory output as one artifact with a file listing in the manifest", async () => {
+    const { store, ws, registry, ctx, stage } = await setup();
+    mkdirSync(join(ws, "output", "cuts"), { recursive: true });
+    writeFileSync(join(ws, "output", "cuts", "001.mp4"), "aaa"); writeFileSync(join(ws, "output", "cuts", "002.mp4"), "bbbb");
+    const entries = await listDirectoryFiles(join(ws, "output", "cuts"));
+    const { checksum, size_bytes } = directoryDigest(entries);
+    const staged = await registry.stageOutputs({ workspaceDir: ws, outputs: [{ path: "output/cuts", type: "clip_set", checksum, size_bytes, kind: "directory" }], mimeTypes: { clip_set: "application/x-directory" }, ctx });
+    const [art] = store.transaction(() => registry.commitAccepted(staged, ctx));
+    expect(art!.size_bytes).toBe(7);
+    expect(existsSync(join(fileURLToPath(art!.uri), "002.mp4"))).toBe(true);
+    expect(existsSync(join(ws, "output", "cuts"))).toBe(false);
+    const manifest = JSON.parse(readFileSync(join(fileURLToPath(art!.uri), "..", "manifest.json"), "utf8"));
+    expect(manifest.files.map((f: { path: string }) => f.path)).toEqual(["001.mp4", "002.mp4"]);
+    expect(store.listArtifacts({ stage_run_id: stage.stage_run_id, status: "ACCEPTED" })).toHaveLength(1);
+  });
+  it("rejects a directory output whose digest does not match", async () => {
+    const { ws, registry, ctx } = await setup();
+    mkdirSync(join(ws, "output", "cuts"), { recursive: true }); writeFileSync(join(ws, "output", "cuts", "001.mp4"), "aaa");
+    await expect(registry.stageOutputs({ workspaceDir: ws, outputs: [{ path: "output/cuts", type: "clip_set", checksum: sha256String("nope"), size_bytes: 3, kind: "directory" }], mimeTypes: {}, ctx })).rejects.toMatchObject({ code: "CHECKSUM_MISMATCH" });
   });
 });

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { newId, type StageRequest, type StageResult } from "@harness/contracts";
 import { sha256String } from "../../src/artifacts/checksum.js";
+import { directoryDigest, listDirectoryFiles } from "../../src/artifacts/directory.js";
 import { BUILTIN_CHECKERS, Verifier } from "../../src/verification/verifier.js";
 
 const sha = "sha256:" + "a".repeat(64);
@@ -45,5 +46,17 @@ describe("Verifier", () => {
     const { ws, request, result } = fixture("hello", sha256String("hello"));
     const out = await new Verifier(BUILTIN_CHECKERS).verify({ request, result: { ...result, attempt_id: newId("attempt") }, workspaceDir: ws }, ["schema-valid"]);
     expect(out.results[0]).toMatchObject({ check_id: "schema-valid", verdict: "fail" });
+  });
+  it("output-exists and checksum-match handle directory outputs", async () => {
+    const { ws, request, result } = fixture("hello", sha256String("hello"));
+    mkdirSync(join(ws, "output", "set")); writeFileSync(join(ws, "output", "set", "a.txt"), "A");
+    const entries = await listDirectoryFiles(join(ws, "output", "set"));
+    const { checksum, size_bytes } = directoryDigest(entries);
+    const withDir = { ...result, outputs: [...result.outputs, { path: "output/set", type: "image_set", checksum, size_bytes, kind: "directory" as const }] };
+    const ok = await new Verifier(BUILTIN_CHECKERS).verify({ request, result: withDir, workspaceDir: ws }, ["output-exists", "checksum-match"]);
+    expect(ok.allRequiredPassed).toBe(true);
+    writeFileSync(join(ws, "output", "set", "a.txt"), "B");
+    const bad = await new Verifier(BUILTIN_CHECKERS).verify({ request, result: withDir, workspaceDir: ws }, ["checksum-match"]);
+    expect(bad.results[0]).toMatchObject({ verdict: "fail", evidence: { path: "output/set" } });
   });
 });

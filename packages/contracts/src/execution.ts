@@ -57,6 +57,12 @@ export const StageResultSchema = z.object({
   errors: z.array(stageErrorSchema).default([]),
 }).strict();
 
+export const directoryEntrySchema = z.object({
+  path: z.string().min(1),
+  checksum: checksumSchema,
+  size_bytes: z.number().int().min(0),
+}).strict();
+
 export const ArtifactManifestSchema = z.object({
   schema_version: schemaVersion("artifact-manifest"),
   artifact_id: idSchema("artifact"),
@@ -73,6 +79,7 @@ export const ArtifactManifestSchema = z.object({
     executor_version: z.string(), model_parameters_digest: checksumSchema.nullable(),
   }).strict(),
   checks: z.array(idSchema("check_result")),
+  files: z.array(directoryEntrySchema).optional(),
 }).strict();
 
 export type StageRequest = z.infer<typeof StageRequestSchema>;
@@ -80,3 +87,4 @@ export type StageResult = z.infer<typeof StageResultSchema>;
 export type StageOutput = z.infer<typeof stageOutputSchema>;
 export type StageInput = z.infer<typeof stageInputSchema>;
 export type ArtifactManifest = z.infer<typeof ArtifactManifestSchema>;
+export type DirectoryEntry = z.infer<typeof directoryEntrySchema>;
