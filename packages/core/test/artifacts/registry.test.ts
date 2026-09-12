@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ArtifactManifestSchema } from "@harness/contracts";
+import { ArtifactManifestSchema, isHarnessError, type HarnessError } from "@harness/contracts";
 import { acceptedInputsFor, ArtifactRegistry } from "../../src/artifacts/registry.js";
 import { directoryDigest, listDirectoryFiles } from "../../src/artifacts/directory.js";
 import { sha256String } from "../../src/artifacts/checksum.js";
@@ -57,6 +57,29 @@ describe("ArtifactRegistry", () => {
     const downstream = seedStage(store, { key: "verify", runId: ctx.run.run_id, depends_on: [stage.stage_key], state: "PENDING" });
     const inputs = acceptedInputsFor(store, downstream.stage);
     expect(inputs.map((a) => a.type)).toEqual(["script_text"]);
+  });
+  it("throws STALE_STATE when a reused upstream artifact is no longer ACCEPTED", async () => {
+    const { store, ws, registry, ctx } = await setup();
+    const staged = await registry.stageOutputs({ workspaceDir: ws, outputs: [{ path: "output/result.txt", type: "script_text", checksum: sha256String("hello"), size_bytes: 5 }], mimeTypes: {}, ctx });
+    const [art] = store.transaction(() => registry.commitAccepted(staged, ctx));
+    // a later run of the same variant reuses that artifact instead of producing its own...
+    const reusing = seedStage(store, { key: "produce", state: "SUCCEEDED" });
+    store.updateStageRun({ ...store.getStageRun(reusing.stage.stage_run_id)!, reused_artifact_ids: [art!.artifact_id] });
+    const downstream = seedStage(store, { key: "verify", runId: reusing.runId, depends_on: ["produce"], state: "READY" });
+    expect(acceptedInputsFor(store, downstream.stage).map((a) => a.artifact_id)).toEqual([art!.artifact_id]);
+    // ...and it goes STALE before the downstream stage runs
+    const ev = { run_id: ctx.run.run_id, stage_run_id: null, attempt_id: null, project_id: "project-main", portfolio_id: null, channel_id: null, content_id: null, variant_id: null, workflow_release: null, severity: "info" as const, event_type: "artifact.stale", payload: {} };
+    store.transaction(() => store.transition("artifact", art!.artifact_id, "ACCEPTED", "STALE", ev));
+    try { acceptedInputsFor(store, downstream.stage); throw new Error("no throw"); }
+    catch (e) { expect(isHarnessError(e, "STALE_STATE")).toBe(true); expect((e as HarnessError).details.artifact_id).toBe(art!.artifact_id); }
+  });
+  it("throws STALE_STATE when a reused upstream artifact row is gone", async () => {
+    const { store } = await setup();
+    const reusing = seedStage(store, { key: "produce", state: "SUCCEEDED" });
+    store.updateStageRun({ ...store.getStageRun(reusing.stage.stage_run_id)!, reused_artifact_ids: ["artifact_01J00000000000000000000000"] });
+    const downstream = seedStage(store, { key: "verify", runId: reusing.runId, depends_on: ["produce"], state: "READY" });
+    try { acceptedInputsFor(store, downstream.stage); throw new Error("no throw"); }
+    catch (e) { expect(isHarnessError(e, "STALE_STATE")).toBe(true); expect((e as HarnessError).details.status).toBe("missing"); }
   });
   it("rejects an output path that escapes the workspace before touching anything", async () => {
     const { ws, registry, ctx } = await setup();

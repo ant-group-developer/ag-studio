@@ -67,7 +67,9 @@ export class Worker {
       request = this.buildRequest(claim, run.effective_config_snapshot, inputs, workspaceDir);
     } catch (e) {
       log.error("stage setup failed", { error: e instanceof Error ? e.message : String(e) });
-      const failed: StageResult = { schema_version: "harness.stage-result/v1", attempt_id: claim.attempt.attempt_id, outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [{ kind: "transient", message: e instanceof Error ? e.message : String(e), details: { phase: "setup" } }] };
+      // a stale reused input or a corrupt artifact will not fix itself on retry: park the stage for a human
+      const setupKind = isHarnessError(e, "STALE_STATE") || isHarnessError(e, "CHECKSUM_MISMATCH") ? "contract" : "transient";
+      const failed: StageResult = { schema_version: "harness.stage-result/v1", attempt_id: claim.attempt.attempt_id, outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [{ kind: setupKind, message: e instanceof Error ? e.message : String(e), details: { phase: "setup", ...(isHarnessError(e) ? { code: e.code } : {}) } }] };
       await this.d.controller.commit({ stageRun: claim.stageRun, attempt: claim.attempt, fencingToken: claim.lease.fencing_token, result: failed, verify: { results: [], allRequiredPassed: false, missing: [] }, workspaceDir, executorVersion: "worker-setup", inputArtifactIds: [], mimeTypes: {}, stageDefinitionDigest: defDigest });
       return "done";
     }

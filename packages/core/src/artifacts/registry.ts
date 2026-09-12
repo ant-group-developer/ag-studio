@@ -111,11 +111,23 @@ export class ArtifactRegistry {
   }
 }
 
-/** Downstream stages only ever see ACCEPTED artifacts from the stages they depend on. */
+/**
+ * Downstream stages only ever see ACCEPTED artifacts from the stages they depend on.
+ * A reused artifact that stopped being ACCEPTED after plan time (another run superseded it) is fatal,
+ * not silently empty: the reusing run's graph is stale and must be re-planned.
+ */
 export function acceptedInputsFor(store: StateStore, stage: StageRun): Artifact[] {
   const wanted = new Set([...stage.depends_on, ...stage.depends_on_optional]);
   const upstream = store.listStageRuns(stage.run_id).filter((s) => wanted.has(s.stage_key));
-  return upstream.flatMap((s) => s.reused_artifact_ids
-    ? s.reused_artifact_ids.map((id) => store.getArtifact(id)).filter((a): a is Artifact => !!a && a.status === "ACCEPTED")
-    : store.listArtifacts({ stage_run_id: s.stage_run_id, status: "ACCEPTED" }));
+  return upstream.flatMap((s) => {
+    if (!s.reused_artifact_ids) return store.listArtifacts({ stage_run_id: s.stage_run_id, status: "ACCEPTED" });
+    return s.reused_artifact_ids.map((id) => {
+      const a = store.getArtifact(id);
+      if (!a || a.status !== "ACCEPTED") {
+        const status = a?.status ?? "missing";
+        throw new HarnessError("STALE_STATE", `reused artifact ${id} is ${status}; the run must be re-planned`, { artifact_id: id, status });
+      }
+      return a;
+    });
+  });
 }

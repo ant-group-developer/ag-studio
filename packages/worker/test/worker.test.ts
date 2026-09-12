@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { getEventListeners } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ProjectConfigSchema, type Executor, type StageRequest, type StageResult } from "@harness/contracts";
+import { ProjectConfigSchema, WorkflowDefinitionSchema, type Executor, type StageRequest, type StageResult } from "@harness/contracts";
 import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, FixedClock, HARNESS_ROOT, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, SourceCatalog, SqliteStateStore, Verifier, addSeconds, createLogger, loadHarnessConfig, loadProfile, loadWorkflow } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, fakeScriptCommands } from "@harness/adapter-fake";
@@ -37,6 +37,11 @@ function planAndEnqueue(w: ReturnType<typeof makeWorld>, stageOverrides: Record<
   w.planner.enqueue(run.run_id);
   return run;
 }
+/** `produce` is byte-identical in both workflows below, so its cache key (and therefore reuse) matches across them. */
+const PRODUCE = { key: "produce", executor: { type: "script", script: "fake-stage" }, required_capabilities: ["write_workspace"], required_checks: ["schema-valid", "output-exists", "checksum-match"], outputs: [{ type: "script_text", mime_type: "text/plain" }], config: { content: "draft script" } };
+const wfOne = { definition: WorkflowDefinitionSchema.parse({ schema_version: "harness.workflow/v1", id: "one-stage", version: "1.0.0", defaults: { lease_seconds: 90 }, stages: [PRODUCE] }), digest: "sha256:" + "a".repeat(64) };
+const wfTwo = { definition: WorkflowDefinitionSchema.parse({ schema_version: "harness.workflow/v1", id: "two-stage", version: "1.0.0", defaults: { lease_seconds: 90 }, stages: [PRODUCE, { key: "finalize", executor: { type: "script", script: "fake-stage" }, depends_on: ["produce"], required_capabilities: ["write_workspace"], required_checks: ["schema-valid", "output-exists", "checksum-match"], outputs: [{ type: "final_text", mime_type: "text/plain" }], config: { content: "final" } }] }), digest: "sha256:" + "b".repeat(64) };
+
 async function drain(w: ReturnType<typeof makeWorld>, max = 20) {
   for (let i = 0; i < max; i++) { if ((await w.worker.runOnce()) === "idle") return i; }
   throw new Error("did not drain");
@@ -216,5 +221,39 @@ describe("Worker", () => {
     expect(seen?.options).toEqual({});
     expect(seen?.source_items.map((s) => s.source_id)).toEqual([source.source_id]);
     expect(seen?.resources).toEqual(["cpu"]);
+  });
+  it("parks a stage WAITING_HUMAN when the artifact it reused went STALE before it ran", async () => {
+    const w = makeWorld();
+    const worker = new Worker({ ...w.deps, workflows: (ref) => (ref.startsWith("one-stage") ? wfOne : wfTwo) });
+    const profile = loadProfile(HARNESS_ROOT, "cartoon");
+    const content = w.catalog.createContent({ source_ids: [], title: "c" });
+    const { variant } = w.catalog.getOrCreateVariant({ content_id: content.content_id, profile, options: {} });
+    const version = w.executors.resolve({ type: "script", script: "fake-stage" }).version;
+    const plan = (workflow: typeof wfOne) => w.planner.plan({ workflow, profile, harness: loadHarnessConfig(HARNESS_ROOT), projectId: "project-main", portfolioId: "portfolio-main", content, variant, executorVersionFor: () => version });
+
+    const runA = plan(wfOne);
+    w.planner.enqueue(runA.run_id);
+    expect(await worker.runOnce()).toBe("done");
+    expect(w.store.getRun(runA.run_id)?.state).toBe("SUCCEEDED");
+    const produceA = w.store.listStageRuns(runA.run_id)[0]!;
+    const [artA] = w.store.listArtifacts({ stage_run_id: produceA.stage_run_id, status: "ACCEPTED" });
+
+    const runB = plan(wfTwo);
+    expect(w.store.listStageRuns(runB.run_id).map((s) => [s.stage_key, s.state])).toEqual([["produce", "SUCCEEDED"], ["finalize", "PENDING"]]);
+    expect(w.store.listStageRuns(runB.run_id)[0]?.reused_artifact_ids).toEqual([artA!.artifact_id]);
+    w.planner.enqueue(runB.run_id);
+    const finalizeId = w.store.listStageRuns(runB.run_id)[1]!.stage_run_id;
+    expect(w.store.getStageRun(finalizeId)?.state).toBe("READY");
+
+    // something else supersedes run A's artifact while run B still has finalize to run
+    const ev = { run_id: runA.run_id, stage_run_id: produceA.stage_run_id, attempt_id: null, project_id: "project-main", portfolio_id: null, channel_id: null, content_id: null, variant_id: null, workflow_release: null, severity: "warn" as const, event_type: "artifact.stale", payload: {} };
+    w.store.transaction(() => w.store.transition("artifact", artA!.artifact_id, "ACCEPTED", "STALE", ev));
+
+    expect(await worker.runOnce()).toBe("done");
+    expect(w.store.getStageRun(finalizeId)?.state).toBe("WAITING_HUMAN");
+    const attempt = w.store.listAttempts(finalizeId)[0]!;
+    expect([attempt.state, attempt.failure_kind]).toEqual(["FAILED", "contract"]);
+    expect(w.store.getRun(runB.run_id)?.state).toBe("WAITING");
+    expect(w.store.listArtifacts({ stage_run_id: finalizeId })).toHaveLength(0);
   });
 });
