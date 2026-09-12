@@ -8,6 +8,8 @@ import { directoryDigest, listDirectoryFiles, type DirectoryEntry } from "./dire
 export interface ArtifactContext {
   run: Run; stageRun: StageRun; attempt: Attempt;
   executorVersion: string; inputArtifactIds: string[]; checkResultIds: string[];
+  /** Every source the run derives from — all of the content item's sources, not just `run.source_id`. Resolved by `Controller.commit`. */
+  sourceItems: string[];
 }
 export interface StagedOutput { artifact: Artifact; manifestPath: string; manifest: ArtifactManifest; files?: DirectoryEntry[] }
 
@@ -19,7 +21,7 @@ function buildArtifact(artifactId: string, output: StageOutput, uri: string, mim
   return {
     schema_version: "harness.artifact/v1", artifact_id: artifactId, run_id: ctx.run.run_id, stage_run_id: ctx.stageRun.stage_run_id,
     attempt_id: ctx.attempt.attempt_id, type: output.type, status, uri, checksum: output.checksum, size_bytes: output.size_bytes, mime_type: mime,
-    lineage: { input_artifacts: ctx.inputArtifactIds, source_items: ctx.run.source_id ? [ctx.run.source_id] : [] },
+    lineage: { input_artifacts: ctx.inputArtifactIds, source_items: ctx.sourceItems },
     reproducibility: {
       workflow_release: `${ctx.run.workflow_release.id}@${ctx.run.workflow_release.version}`,
       production_profile: `${ctx.run.profile_snapshot.id}@${ctx.run.profile_snapshot.revision}`,

@@ -32,7 +32,7 @@ describe("sweepOrphanArtifacts", () => {
     const ws = await createWorkspace(dir, runId, stage.stage_key, attempt.attempt_id);
     writeFileSync(join(ws, "output", "result.txt"), "hello");
     const registry = new ArtifactRegistry(store, dir);
-    const ctx = { run: store.getRun(runId)!, stageRun: store.getStageRun(stage.stage_run_id)!, attempt, executorVersion: "x", inputArtifactIds: [], checkResultIds: [] };
+    const ctx = { run: store.getRun(runId)!, stageRun: store.getStageRun(stage.stage_run_id)!, attempt, executorVersion: "x", inputArtifactIds: [], checkResultIds: [], sourceItems: [] };
     const staged = await registry.stageOutputs({ workspaceDir: ws, outputs: [{ path: "output/result.txt", type: "t", checksum: sha256String("hello"), size_bytes: 5 }], mimeTypes: {}, ctx });
     const [accepted] = store.transaction(() => registry.commitAccepted(staged, ctx));
     const acceptedDir = join(staged[0]!.manifestPath, "..");

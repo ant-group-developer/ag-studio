@@ -31,7 +31,11 @@ export class Controller {
     const { store, registry, planner, clock } = this.deps;
     store.assertFencing(p.stageRun.stage_run_id, p.fencingToken);
     const run = store.getRun(p.stageRun.run_id)!;
-    const ctx: ArtifactContext = { run, stageRun: p.stageRun, attempt: p.attempt, executorVersion: p.executorVersion, inputArtifactIds: p.inputArtifactIds, checkResultIds: [] };
+    // a run planned from a content item derives from every one of its sources; a bare --source run from just that one
+    const sourceItems = run.content_id
+      ? store.getContentItem(run.content_id)?.source_ids ?? []
+      : run.source_id ? [run.source_id] : [];
+    const ctx: ArtifactContext = { run, stageRun: p.stageRun, attempt: p.attempt, executorVersion: p.executorVersion, inputArtifactIds: p.inputArtifactIds, checkResultIds: [], sourceItems };
     let kind = classifyFailure(p.result, p.verify);
 
     // A cancel that landed while the stage ran: nothing is staged, so no file leaves the workspace.

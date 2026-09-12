@@ -16,7 +16,7 @@ async function setup() {
   const ws = await createWorkspace(dir, runId, stage.stage_key, claim.attempt.attempt_id);
   writeFileSync(join(ws, "output", "result.txt"), "hello");
   const registry = new ArtifactRegistry(store, dir);
-  const ctx = { run: store.getRun(runId)!, stageRun: store.getStageRun(stage.stage_run_id)!, attempt: claim.attempt, executorVersion: "fake@0.1.0", inputArtifactIds: [], checkResultIds: [] };
+  const ctx = { run: store.getRun(runId)!, stageRun: store.getStageRun(stage.stage_run_id)!, attempt: claim.attempt, executorVersion: "fake@0.1.0", inputArtifactIds: [], checkResultIds: [], sourceItems: [] };
   return { store, dir, ws, registry, ctx, stage, claim };
 }
 

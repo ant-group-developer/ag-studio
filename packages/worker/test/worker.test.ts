@@ -222,6 +222,22 @@ describe("Worker", () => {
     expect(seen?.source_items.map((s) => s.source_id)).toEqual([source.source_id]);
     expect(seen?.resources).toEqual(["cpu"]);
   });
+  it("records every source of the content in artifact lineage, in order", async () => {
+    const w = makeWorld();
+    const a = join(w.dir, "a.txt"); writeFileSync(a, "aaa");
+    const b = join(w.dir, "b.txt"); writeFileSync(b, "bbb");
+    const s1 = (await w.catalog.ingest({ path: a })).source;
+    const s2 = (await w.catalog.ingest({ path: b })).source;
+    const profile = loadProfile(HARNESS_ROOT, "cartoon");
+    const content = w.catalog.createContent({ source_ids: [s1.source_id, s2.source_id], title: "c" });
+    const { variant } = w.catalog.getOrCreateVariant({ content_id: content.content_id, profile, options: {} });
+    const run = w.planner.plan({ workflow: loadWorkflow(HARNESS_ROOT, "sample-three-stage@1.0.0"), profile, harness: loadHarnessConfig(HARNESS_ROOT), projectId: "project-main", portfolioId: "portfolio-main", content, variant });
+    w.planner.enqueue(run.run_id);
+    expect(await w.worker.runOnce()).toBe("done");
+    const produce = w.store.listStageRuns(run.run_id).find((s) => s.stage_key === "produce")!;
+    const [art] = w.store.listArtifacts({ stage_run_id: produce.stage_run_id, status: "ACCEPTED" });
+    expect(art!.lineage.source_items).toEqual([s1.source_id, s2.source_id]); // used to record only run.source_id
+  });
   it("does no resource bookkeeping on an idle poll when no READY stage requires a resource", async () => {
     const w = makeWorld();
     planAndEnqueue(w); // the sample workflow declares no requires_resources
