@@ -648,7 +648,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 CREATE TABLE source_item (
   id TEXT PRIMARY KEY, checksum TEXT NOT NULL, collection TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL
 );
-CREATE INDEX source_item_checksum_idx ON source_item(checksum);
+CREATE UNIQUE INDEX source_item_checksum_idx ON source_item(checksum);  -- dedupe is enforced by the schema, not only by the lookup (review Task 5)
 
 CREATE TABLE content_item (
   id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -990,7 +990,15 @@ export class SourceCatalog {
       rights_status: p.rights_status ?? "unknown", language: p.language ?? null, duration_seconds: probed?.duration_seconds ?? null, ingested_at: this.d.clock.now(),
     };
     writeFileSync(join(dir, "source.json"), JSON.stringify(source, null, 2) + "\n");
-    this.d.store.insertSourceItem(source);
+    try { this.d.store.insertSourceItem(source); }
+    catch (e) {
+      const winner = this.d.store.findSourceItemByChecksum(checksum);
+      if (winner && /UNIQUE/.test(String((e as Error).message))) {
+        rmSync(dir, { recursive: true, force: true }); // a concurrent ingest won; drop our normalized copy (review Task 5)
+        return { source: winner, created: false };
+      }
+      throw e;
+    }
     return { source, created: true };
   }
 
