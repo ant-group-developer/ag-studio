@@ -5127,8 +5127,10 @@ describe("18.3 #1 three worker processes compete for one queue", () => {
   it("each stage is executed by exactly one attempt", async () => {
     const p = freshProject();
     const runId = planRun(p);
-    // Only `produce` is READY at first; three processes race for it, then the survivors drain the rest.
-    const results = await Promise.all(["w1", "w2", "w3"].map((o) => cliAsync(p, ["worker", "--once", "--owner", o, "--capabilities", "write_workspace,read_source"])));
+    // Only `produce` is READY at first; three processes race for it, then a drain worker finishes the rest.
+    // Racing workers get only write_workspace: `review` needs read_source and `finalize` depends on it,
+    // so exactly one `done` is possible regardless of process timing (review Task 16).
+    const results = await Promise.all(["w1", "w2", "w3"].map((o) => cliAsync(p, ["worker", "--once", "--owner", o, "--capabilities", "write_workspace"])));
     expect(results.every((r) => r.code === 0)).toBe(true);
     expect(results.filter((r) => r.out.includes("done"))).toHaveLength(1);
     expect(results.filter((r) => r.out.includes("idle"))).toHaveLength(2);
@@ -5233,7 +5235,7 @@ describe("18.3 #10 unknown config key fails validation before anything runs", ()
 });
 ```
 
-`tests/acceptance/11-secret-never-leaks.test.ts` (mục 11):
+`tests/acceptance/11-secret-never-leaks.test.ts` (mục 11). Giới hạn (quyết định khi review Task 16): sub-project 1 chưa có adapter nào resolve `secret://`, nên test này chỉ chứng minh không rò rỉ theo cấu trúc; chuỗi Redactor + logger được chứng minh ở unit test Task 7; sub-project 3 phải thêm test e2e khi executor thực sự dùng secret. Ghi chú này phải nằm trong comment đầu file test và bỏ dòng `expect(planRun).toBeDefined()`:
 
 ```ts
 import { describe, expect, it } from "vitest";

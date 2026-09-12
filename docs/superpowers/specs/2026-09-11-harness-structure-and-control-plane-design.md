@@ -105,7 +105,7 @@ Thư mục `skills/<skill-name>/SKILL.md` là nguồn. Lệnh `harness skills sy
 |---|---|---|---|
 | 1 | Control plane tối thiểu | Phần B của spec này | Hai worker cạnh tranh không trùng, resume sau crash, CLI end-to-end với adapter giả |
 | 2 | Source catalog + fan-out profile + bọc script cũ | source-catalog, production, profile cartoon/avatar/footage, adapter legacy-scripts, tts, remotion, image, pexels | Một source ra ba variant đã kiểm chứng, lineage độc lập |
-| 3 | Distribution và publishing | channels, distribution, channel package, adapter youtube, upload idempotent, reconcile | Publish đúng kênh, retry sau lỗi mạng không tạo video thứ hai |
+| 3 | Distribution và publishing | channels, distribution, channel package, adapter youtube, upload idempotent, reconcile; test e2e secret redaction khi executor thực sự dùng `secret://` (sub-project 1 chỉ chứng minh theo cấu trúc) | Publish đúng kênh, retry sau lỗi mạng không tạo video thứ hai |
 | 4 | Agent runtime và scheduled operations | agent-runtime claude/codex, skill sync, scheduled run, human gate, alert | Scheduled run mới chạy từ state, không cần lịch sử chat |
 | 5 | Release, template, governance | releases, project-template đầy đủ, canary, rollback, migration report | Nâng template cho canary rồi rollback không mất state |
 
