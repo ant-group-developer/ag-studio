@@ -4935,6 +4935,8 @@ export function registerRetry(program: Command): void {
     await withContext(cmd, {}, (ctx) => {
       const run = ctx.store.getRun(runId);
       if (!run) throw new HarnessError("NOT_FOUND", `run not found: ${runId}`, { runId });
+      // terminal runs are refused BEFORE any write; otherwise a later worker would claim the requeued stage (review Task 15)
+      if (run.state === "FAILED" || run.state === "CANCELLED") throw new HarnessError("INVALID_TRANSITION", `run is ${run.state} (terminal); plan a new run instead`, { runId, state: run.state });
       const moved: string[] = [];
       ctx.store.transaction(() => {
         for (const s of ctx.store.listStageRuns(runId)) {
@@ -4945,10 +4947,8 @@ export function registerRetry(program: Command): void {
           ctx.store.updateStageRun({ ...fresh, ready_at: ctx.clock.now(), not_before: ctx.clock.now() });
           moved.push(s.stage_key);
         }
-        if (run.state === "FAILED" || run.state === "WAITING") { /* run re-enters RUNNING via planner.advance when a worker claims */ }
-        if (run.state === "WAITING") ctx.planner.advance(runId);
+        if (moved.length && run.state === "WAITING") ctx.planner.advance(runId);
       });
-      if (run.state === "FAILED" && moved.length) throw new HarnessError("INVALID_TRANSITION", "run is FAILED (terminal); plan a new run instead", { runId });
       process.stdout.write(moved.length ? `READY: ${moved.join(", ")}\n` : "nothing to retry\n");
     });
   });
