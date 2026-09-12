@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
-import { isHarnessError, type ClaimResult, type Clock, type HarnessConfig, type ProjectConfig, type Run, type StageRequest, type StageResult, type StateStore } from "@harness/contracts";
-import { acceptedInputsFor, addSeconds, ArtifactRegistry, Controller, createWorkspace, eventFor, materializeInputs, Planner, Verifier, type HarnessLogger } from "@harness/core";
+import { isHarnessError, type Artifact, type ClaimResult, type Clock, type HarnessConfig, type ProjectConfig, type Run, type StageRequest, type StageResult, type StateStore } from "@harness/contracts";
+import { acceptedInputsFor, addSeconds, ArtifactRegistry, Controller, createWorkspace, eventFor, materializeInputs, Planner, Verifier, workspacePath, type HarnessLogger } from "@harness/core";
 import type { ExecutorRegistry } from "@harness/executors";
 import { startHeartbeat } from "./heartbeat.js";
 
@@ -9,13 +9,23 @@ export interface WorkerDeps {
   harness: HarnessConfig; project: ProjectConfig; dataRoot: string; owner: string; capabilities: string[]; logger: HarnessLogger; clock: Clock;
 }
 
+function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((res) => {
+    const onAbort = () => { clearTimeout(t); res(); };
+    const t = setTimeout(() => { signal.removeEventListener("abort", onAbort); res(); }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export class Worker {
   constructor(private readonly d: WorkerDeps) {}
 
   async runForever(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
-      const r = await this.runOnce(signal);
-      if (r === "idle") await new Promise((res) => { const t = setTimeout(res, this.d.harness.poll_seconds * 1000); signal.addEventListener("abort", () => { clearTimeout(t); res(undefined); }, { once: true }); });
+      let r: "idle" | "done" | "lost";
+      try { r = await this.runOnce(signal); }
+      catch (e) { this.d.logger.error("runOnce failed; worker keeps polling", { error: e instanceof Error ? e.message : String(e) }); r = "idle"; }
+      if (r === "idle" && !signal.aborted) await sleepUnlessAborted(this.d.harness.poll_seconds * 1000, signal);
     }
   }
 
@@ -35,11 +45,21 @@ export class Worker {
       store.transition("stage_run", claim.stageRun.stage_run_id, "CLAIMED", "RUNNING", ev("stage.started"));
     });
 
-    const workspaceDir = await createWorkspace(this.d.dataRoot, run.run_id, claim.stageRun.stage_key, claim.attempt.attempt_id);
-    store.updateAttempt({ ...store.getAttempt(claim.attempt.attempt_id)!, workspace_uri: pathToFileURL(workspaceDir).href });
-    const inputArtifacts = acceptedInputsFor(store, claim.stageRun);
-    const inputs = await materializeInputs(workspaceDir, inputArtifacts);
-    const request = this.buildRequest(claim, run.effective_config_snapshot, inputs, workspaceDir);
+    let workspaceDir = workspacePath(this.d.dataRoot, run.run_id, claim.stageRun.stage_key, claim.attempt.attempt_id);
+    let inputArtifacts: Artifact[] = [];
+    let request: StageRequest;
+    try {
+      workspaceDir = await createWorkspace(this.d.dataRoot, run.run_id, claim.stageRun.stage_key, claim.attempt.attempt_id);
+      store.updateAttempt({ ...store.getAttempt(claim.attempt.attempt_id)!, workspace_uri: pathToFileURL(workspaceDir).href });
+      inputArtifacts = acceptedInputsFor(store, claim.stageRun);
+      const inputs = await materializeInputs(workspaceDir, inputArtifacts);
+      request = this.buildRequest(claim, run.effective_config_snapshot, inputs, workspaceDir);
+    } catch (e) {
+      log.error("stage setup failed", { error: e instanceof Error ? e.message : String(e) });
+      const failed: StageResult = { schema_version: "harness.stage-result/v1", attempt_id: claim.attempt.attempt_id, outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [{ kind: "transient", message: e instanceof Error ? e.message : String(e), details: { phase: "setup" } }] };
+      await this.d.controller.commit({ stageRun: claim.stageRun, attempt: claim.attempt, fencingToken: claim.lease.fencing_token, request: this.buildRequest(claim, run.effective_config_snapshot, [], workspaceDir), result: failed, verify: { results: [], allRequiredPassed: false, missing: [] }, workspaceDir, executorVersion: "worker-setup", inputArtifactIds: [], mimeTypes: {} });
+      return "done";
+    }
 
     const abort = new AbortController();
     signal?.addEventListener("abort", () => abort.abort(), { once: true });
@@ -47,7 +67,7 @@ export class Worker {
     const executor = this.d.executors.resolve(claim.stageRun.executor);
     let result: StageResult;
     try {
-      result = await executor.execute(request, { workspaceDir, logger: log, signal: abort.signal });
+      result = await executor.execute(request, { workspaceDir, logger: log, clock, signal: abort.signal });
     } catch (e) {
       const kind = isHarnessError(e, "NOT_FOUND") || isHarnessError(e, "SCHEMA_INVALID") ? "contract" : "transient";
       result = { schema_version: "harness.stage-result/v1", attempt_id: claim.attempt.attempt_id, outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [{ kind, message: e instanceof Error ? e.message : String(e), details: isHarnessError(e) ? { code: e.code, ...e.details } : {} }] };

@@ -56,6 +56,7 @@ export interface StateStore {
 export interface ExecutorContext {
   workspaceDir: string;
   logger: { info(msg: string, data?: object): void; warn(msg: string, data?: object): void; error(msg: string, data?: object): void };
+  clock: Clock;
   signal?: AbortSignal;
 }
 export interface Executor { readonly version: string; execute(request: StageRequest, ctx: ExecutorContext): Promise<StageResult> }

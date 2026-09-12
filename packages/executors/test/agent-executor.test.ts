@@ -8,6 +8,7 @@ import { AgentExecutor } from "../src/agent-executor.js";
 import { ExecutorRegistry } from "../src/registry.js";
 
 const silent = { info() {}, warn() {}, error() {} };
+const wall = { now: () => new Date().toISOString() };
 function request(): StageRequest {
   const ws = mkdtempSync(join(tmpdir(), "ae-")); mkdirSync(join(ws, "output"));
   return {
@@ -21,7 +22,7 @@ describe("AgentExecutor + FakeAgentRuntime", () => {
   it("runs the skill brief through the runtime and writes an output", async () => {
     const ex = new AgentExecutor(new FakeAgentRuntime());
     const req = request();
-    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent });
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
     expect(res.outcome).toBe("succeeded");
     expect(readFileSync(join(req.workspace_uri, res.outputs[0]!.path), "utf8")).toContain("fake-review");
   });

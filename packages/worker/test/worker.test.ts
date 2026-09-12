@@ -1,16 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { getEventListeners } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProjectConfigSchema, type Executor, type StageResult } from "@harness/contracts";
 import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, FixedClock, HARNESS_ROOT, MIGRATIONS_DIR, Planner, Redactor, SqliteStateStore, Verifier, createLogger, loadHarnessConfig, loadProfile, loadWorkflow } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, fakeScriptCommands } from "@harness/adapter-fake";
-import { Worker } from "../src/worker.js";
+import { Worker, type WorkerDeps } from "../src/worker.js";
 
 function makeWorld(opts: { scriptExecutor?: Executor; owner?: string; clock?: FixedClock; dir?: string } = {}) {
   const dir = opts.dir ?? mkdtempSync(join(tmpdir(), "wk-"));
-  const clock = opts.clock ?? new FixedClock(new Date().toISOString());
+  const clock = opts.clock ?? new FixedClock("2026-09-11T00:00:00.000Z");
   const store = new SqliteStateStore(join(dir, "state.db"), clock);
   store.migrate(MIGRATIONS_DIR);
   const planner = new Planner(store);
@@ -22,8 +23,9 @@ function makeWorld(opts: { scriptExecutor?: Executor; owner?: string; clock?: Fi
   const harness = loadHarnessConfig(HARNESS_ROOT);
   const project = ProjectConfigSchema.parse({ schema_version: "harness.project/v1", project_id: "project-main", template_release: "0.1.0", runtime: "claude", data_root: dir, portfolios: [{ portfolio_id: "portfolio-main", display_name: "Main" }] });
   const logger = createLogger({ redactor: new Redactor(() => []), sink: () => {}, level: "error" });
-  const worker = new Worker({ store, planner, controller, registry, verifier: new Verifier(BUILTIN_CHECKERS), executors, harness, project, dataRoot: dir, owner: opts.owner ?? "w1", capabilities: ["write_workspace", "read_source"], logger, clock });
-  return { dir, clock, store, planner, worker };
+  const deps: WorkerDeps = { store, planner, controller, registry, verifier: new Verifier(BUILTIN_CHECKERS), executors, harness, project, dataRoot: dir, owner: opts.owner ?? "w1", capabilities: ["write_workspace", "read_source"], logger, clock };
+  const worker = new Worker(deps);
+  return { dir, clock, store, planner, worker, deps };
 }
 function planAndEnqueue(w: ReturnType<typeof makeWorld>, stageOverrides: Record<string, Record<string, unknown>> = {}) {
   const run = w.planner.plan({ workflow: loadWorkflow(HARNESS_ROOT, "sample-three-stage@1.0.0"), profile: loadProfile(HARNESS_ROOT, "cartoon"), harness: loadHarnessConfig(HARNESS_ROOT), projectId: "project-main", portfolioId: "portfolio-main" });
@@ -65,7 +67,7 @@ describe("Worker", () => {
     expect(attempts[0]!.workspace_uri).not.toBe(attempts[1]!.workspace_uri);
   });
   it("a worker that dies mid-stage loses its lease; a second worker finishes; the first cannot commit", async () => {
-    const clock = new FixedClock(new Date().toISOString());
+    const clock = new FixedClock("2026-09-11T00:00:00.000Z");
     let release!: () => void;
     const hanging: Executor = { version: "hang@1", execute: () => new Promise<StageResult>((resolve) => { release = () => resolve({ schema_version: "harness.stage-result/v1", attempt_id: "attempt_01J00000000000000000000000", outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [] }); }) };
     const dead = makeWorld({ scriptExecutor: hanging, owner: "dead", clock });
@@ -94,6 +96,27 @@ describe("Worker", () => {
     const produce = w.store.listStageRuns(run.run_id).find((s) => s.stage_key === "produce")!;
     expect(produce.state).toBe("READY");
     expect(w.store.listAttempts(produce.stage_run_id)[0]?.state).toBe("CANCELLED");
+    expect(w.store.getLease(produce.stage_run_id)).toBeUndefined();
+  });
+  it("does not accumulate abort listeners across idle polls", async () => {
+    const w = makeWorld();
+    const ac = new AbortController();
+    const p = w.worker.runForever(ac.signal);
+    await new Promise((r) => setTimeout(r, 2500)); // at least one full idle poll (poll_seconds = 2)
+    ac.abort();
+    await p;
+    expect(getEventListeners(ac.signal, "abort")).toHaveLength(0);
+  });
+  it("turns a workspace setup failure into a transient attempt failure and requeues the stage", async () => {
+    const w = makeWorld();
+    const run = planAndEnqueue(w);
+    writeFileSync(join(w.dir, "blocker"), "not a directory");
+    const broken = new Worker({ ...w.deps, dataRoot: join(w.dir, "blocker") });
+    expect(await broken.runOnce()).toBe("done");
+    const produce = w.store.listStageRuns(run.run_id).find((s) => s.stage_key === "produce")!;
+    expect(w.store.listAttempts(produce.stage_run_id)[0]?.state).toBe("FAILED");
+    expect(w.store.listAttempts(produce.stage_run_id)[0]?.failure_kind).toBe("transient");
+    expect(produce.state).toBe("READY");
     expect(w.store.getLease(produce.stage_run_id)).toBeUndefined();
   });
 });

@@ -12,7 +12,7 @@ export class ScriptExecutor implements Executor {
     const argv = this.commands[name];
     if (!argv || argv.length === 0) throw new HarnessError("NOT_FOUND", `no script registered for "${name}"`, { script: name });
     writeFileSync(join(ctx.workspaceDir, "stage-request.json"), JSON.stringify(request, null, 2));
-    const timeoutMs = Math.max(1, Date.parse(request.limits.deadline_at) - Date.now());
+    const timeoutMs = Math.max(1, Date.parse(request.limits.deadline_at) - Date.parse(ctx.clock.now()));
     const failed = (kind: "transient" | "result", message: string, details: Record<string, unknown>): StageResult => ({
       schema_version: "harness.stage-result/v1", attempt_id: request.attempt_id, outcome: "failed", outputs: [], checks: [],
       usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [{ kind, message, details }],
