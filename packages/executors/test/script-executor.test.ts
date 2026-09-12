@@ -1,22 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { getEventListeners } from "node:events";
 import { isHarnessError, newId, type StageRequest } from "@harness/contracts";
 import { fakeScriptCommands } from "@harness/adapter-fake";
 import { ScriptExecutor } from "../src/script-executor.js";
-
-// Windows: the OS temp dir usually lives on a different drive than the repo (e.g. C: vs E:), so the
-// fake script spawned with cwd = a mkdtemp'd workspace cannot walk up its own cwd to reach this repo's
-// hoisted node_modules and resolve "tsx". Redirect TEMP/TMP into the repo tree (under an existing
-// node_modules, already gitignored) so the workspace dirs created by tmpdir() below stay resolvable.
-if (process.platform === "win32") {
-  const localTmp = join(dirname(fileURLToPath(import.meta.url)), "..", "node_modules", ".vitest-tmp");
-  mkdirSync(localTmp, { recursive: true });
-  process.env.TEMP = localTmp;
-  process.env.TMP = localTmp;
-}
 
 const silent = { info() {}, warn() {}, error() {} };
 function request(stage_config: Record<string, unknown>, ws = mkdtempSync(join(tmpdir(), "se-"))): StageRequest {
@@ -54,5 +43,21 @@ describe("ScriptExecutor", () => {
     const ex = new ScriptExecutor({});
     const req = request({});
     await ex.execute({ ...req }, { workspaceDir: req.workspace_uri, logger: silent }).catch((e) => expect(isHarnessError(e, "NOT_FOUND")).toBe(true));
+  });
+  it("kills the script on abort and reports a transient failure", async () => {
+    const ex = new ScriptExecutor(fakeScriptCommands());
+    const req = request({ sleep_ms: 5000 });
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 200);
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, signal: ac.signal });
+    expect(res.outcome).toBe("failed");
+    expect(res.errors[0]?.kind).toBe("transient");
+  });
+  it("removes its abort listener after the script exits", async () => {
+    const ex = new ScriptExecutor(fakeScriptCommands());
+    const ac = new AbortController();
+    const req = request({ content: "x" });
+    await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, signal: ac.signal });
+    expect(getEventListeners(ac.signal, "abort")).toHaveLength(0);
   });
 });

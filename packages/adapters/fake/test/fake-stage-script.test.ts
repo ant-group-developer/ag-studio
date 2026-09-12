@@ -2,22 +2,9 @@ import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { newId, StageResultSchema, type StageRequest } from "@harness/contracts";
-import { FAKE_STAGE_SCRIPT_PATH } from "../src/index.js";
-
-// Windows: the OS temp dir usually lives on a different drive than the repo (e.g. C: vs E:), so a
-// child process spawned below with cwd = a mkdtemp'd workspace cannot walk up its own cwd to reach
-// this repo's hoisted node_modules and resolve "tsx". Redirect TEMP/TMP into the repo tree (under an
-// existing node_modules, already gitignored) so the workspace dirs created by tmpdir() below stay
-// resolvable, matching the intent that a project's hoisted devDependencies "just work" for scripts.
-if (process.platform === "win32") {
-  const localTmp = join(dirname(fileURLToPath(import.meta.url)), "..", "node_modules", ".vitest-tmp");
-  mkdirSync(localTmp, { recursive: true });
-  process.env.TEMP = localTmp;
-  process.env.TMP = localTmp;
-}
+import { fakeScriptCommands } from "../src/index.js";
 
 function run(stage_config: Record<string, unknown>, ws = mkdtempSync(join(tmpdir(), "fs-"))) {
   const attempt_id = newId("attempt");
@@ -28,7 +15,8 @@ function run(stage_config: Record<string, unknown>, ws = mkdtempSync(join(tmpdir
   };
   mkdirSync(join(ws, "output"), { recursive: true });
   writeFileSync(join(ws, "stage-request.json"), JSON.stringify(request));
-  const proc = spawnSync(process.execPath, ["--import", "tsx", FAKE_STAGE_SCRIPT_PATH], { cwd: ws, encoding: "utf8" });
+  const argv = fakeScriptCommands()["fake-stage"]!;
+  const proc = spawnSync(argv[0]!, argv.slice(1), { cwd: ws, encoding: "utf8" });
   return { ws, proc, attempt_id };
 }
 
@@ -56,5 +44,10 @@ describe("fake-stage-script", () => {
     expect(proc.status).toBe(0);
     const result = JSON.parse(readFileSync(join(ws, "stage-result.json"), "utf8"));
     expect(result.outputs[0].checksum).toBe("sha256:" + "0".repeat(64));
+  });
+  it("resolves tsx as an absolute file URL so the command works from any cwd", () => {
+    const argv = fakeScriptCommands()["fake-stage"]!;
+    expect(argv[1]).toBe("--import");
+    expect(argv[2]).toMatch(/^file:\/\/\/.*tsx.*\.mjs$/);
   });
 });

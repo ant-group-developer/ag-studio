@@ -23,9 +23,10 @@ export class ScriptExecutor implements Executor {
       let stderr = ""; let timedOut = false;
       child.stdout.on("data", (d) => ctx.logger.info(String(d).trimEnd(), { stream: "stdout" }));
       child.stderr.on("data", (d) => { stderr += String(d); ctx.logger.warn(String(d).trimEnd(), { stream: "stderr" }); });
+      const onAbort = () => child.kill();
       const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
-      ctx.signal?.addEventListener("abort", () => child.kill());
-      child.on("close", (code) => { clearTimeout(timer); resolve({ code, timedOut, stderr }); });
+      ctx.signal?.addEventListener("abort", onAbort, { once: true });
+      child.on("close", (code) => { clearTimeout(timer); ctx.signal?.removeEventListener("abort", onAbort); resolve({ code, timedOut, stderr }); });
     });
     mkdirSync(join(ctx.workspaceDir, "logs"), { recursive: true });
     writeFileSync(join(ctx.workspaceDir, "logs", "script-stderr.log"), stderr);
