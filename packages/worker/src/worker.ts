@@ -33,10 +33,14 @@ export class Worker {
     const { store, clock, logger } = this.d;
     const reaped = store.reapExpiredLeases(clock.now());
     for (const r of reaped) logger.warn("reaped expired lease", r);
-    const leaseSeconds = this.d.harness.lease_seconds;
-    const claim = store.claim({ owner: this.d.owner, capabilities: this.d.capabilities, now: clock.now(), leaseSeconds });
+    // the run is unknown until the claim lands, so claim on the harness default and widen afterwards
+    const defaultLeaseSeconds = this.d.harness.lease_seconds;
+    const claim = store.claim({ owner: this.d.owner, capabilities: this.d.capabilities, now: clock.now(), leaseSeconds: defaultLeaseSeconds });
     if (!claim) return "idle";
     const run = store.getRun(claim.stageRun.run_id)!;
+    const snapshotLease = Number(run.effective_config_snapshot.lease_seconds);
+    const leaseSeconds = Number.isFinite(snapshotLease) ? snapshotLease : defaultLeaseSeconds;
+    if (leaseSeconds !== defaultLeaseSeconds) store.heartbeat(claim.attempt.attempt_id, claim.lease.fencing_token, addSeconds(clock.now(), leaseSeconds));
     const log = logger.child({ run_id: run.run_id, stage_run_id: claim.stageRun.stage_run_id, attempt_id: claim.attempt.attempt_id, owner: this.d.owner });
     const ev = (type: string, severity: "info" | "warn" | "error" = "info", payload: Record<string, unknown> = {}) => eventFor(run, claim.stageRun, claim.attempt, type, severity, payload);
 

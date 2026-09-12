@@ -4,7 +4,7 @@ import { getEventListeners } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProjectConfigSchema, type Executor, type StageResult } from "@harness/contracts";
-import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, FixedClock, HARNESS_ROOT, MIGRATIONS_DIR, Planner, Redactor, SqliteStateStore, Verifier, createLogger, loadHarnessConfig, loadProfile, loadWorkflow } from "@harness/core";
+import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, FixedClock, HARNESS_ROOT, MIGRATIONS_DIR, Planner, Redactor, SqliteStateStore, Verifier, addSeconds, createLogger, loadHarnessConfig, loadProfile, loadWorkflow } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, fakeScriptCommands } from "@harness/adapter-fake";
 import { Worker, type WorkerDeps } from "../src/worker.js";
@@ -74,7 +74,7 @@ describe("Worker", () => {
     const run = planAndEnqueue(dead);
     const pending = dead.worker.runOnce();
     await new Promise((r) => setTimeout(r, 50));
-    clock.advance(91);
+    clock.advance(121); // past the run-scoped lease (cartoon snapshot: 120s)
     const alive = makeWorld({ owner: "alive", clock, dir: dead.dir });
     await drain(alive);
     release();
@@ -97,6 +97,20 @@ describe("Worker", () => {
     expect(produce.state).toBe("READY");
     expect(w.store.listAttempts(produce.stage_run_id)[0]?.state).toBe("CANCELLED");
     expect(w.store.getLease(produce.stage_run_id)).toBeUndefined();
+  });
+  it("honours the run-scoped lease_seconds from the effective config snapshot", async () => {
+    const clock = new FixedClock("2026-09-11T00:00:00.000Z");
+    let release!: () => void;
+    const hanging: Executor = { version: "hang@1", execute: () => new Promise<StageResult>((resolve) => { release = () => resolve({ schema_version: "harness.stage-result/v1", attempt_id: "attempt_01J00000000000000000000000", outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [] }); }) };
+    const w = makeWorld({ scriptExecutor: hanging, clock });
+    const run = planAndEnqueue(w);
+    expect(w.store.getRun(run.run_id)?.effective_config_snapshot.lease_seconds).toBe(120); // cartoon profile, harness default is 90
+    const pending = w.worker.runOnce();
+    await new Promise((r) => setTimeout(r, 50));
+    const produce = w.store.listStageRuns(run.run_id).find((s) => s.stage_key === "produce")!;
+    expect(w.store.getLease(produce.stage_run_id)?.expires_at).toBe(addSeconds(clock.now(), 120));
+    release();
+    await pending;
   });
   it("does not accumulate abort listeners across idle polls", async () => {
     const w = makeWorld();

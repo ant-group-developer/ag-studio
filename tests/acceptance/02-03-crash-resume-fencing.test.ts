@@ -30,7 +30,7 @@ describe("18.3 #2 and #3 worker dies mid-render; lease expires; old worker canno
     const late = dead.w.runOnce();
     await new Promise((r) => setTimeout(r, 50));
     expect(dead.store.getLease(dead.store.listStageRuns(run.run_id)[0]!.stage_run_id)?.owner).toBe("dead");
-    clock.advance(91);
+    clock.advance(121); // past the run-scoped lease (cartoon snapshot: 120s)
     const alive = worker(dir, clock, "alive");
     while ((await alive.w.runOnce()) !== "idle") { /* drain */ }
     finishLate();
