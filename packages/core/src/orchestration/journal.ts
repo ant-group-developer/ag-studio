@@ -20,6 +20,8 @@ export class ExternalOperationJournal {
     const key = this.keyFor(p);
     return this.store.transaction(() => {
       const existing = this.store.findExternalOperationByKey(key);
+      // A FAILED operation is superseded by a fresh row with the same idempotency key (the key must
+      // stay stable across retries so the provider lookup on reconciliation still finds it).
       if (existing && existing.status !== "FAILED") return existing;
       const now = this.clock.now();
       const op: ExternalOperation = {

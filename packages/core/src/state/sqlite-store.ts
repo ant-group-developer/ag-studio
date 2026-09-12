@@ -143,7 +143,9 @@ export class SqliteStateStore implements StateStore {
   }
   getExternalOperation(id: string): ExternalOperation | undefined { return this.getDoc("external_operation", id, (x) => ExternalOperationSchema.parse(x)); }
   findExternalOperationByKey(key: string): ExternalOperation | undefined {
-    const row = this.db.prepare("SELECT data FROM external_operation WHERE idempotency_key = ?").get(key) as Row | undefined;
+    // idempotency_key is not unique: a retry after a FAILED operation records a fresh row with the
+    // same key, so the most recently inserted row for a key is the current one.
+    const row = this.db.prepare("SELECT data FROM external_operation WHERE idempotency_key = ? ORDER BY rowid DESC LIMIT 1").get(key) as Row | undefined;
     return row ? ExternalOperationSchema.parse(JSON.parse(row.data)) : undefined;
   }
   updateExternalOperation(op: ExternalOperation): void {

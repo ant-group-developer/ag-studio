@@ -44,4 +44,15 @@ describe("ExternalOperationJournal", () => {
     expect(store.getExternalOperation(intent.operation_id)?.status).toBe("NEEDS_RECONCILIATION");
     expect(journal.findConfirmedByKey(intent.idempotency_key)).toBeUndefined();
   });
+  it("records a fresh intent with the same key after the previous operation FAILED", async () => {
+    const { journal, request, store } = world();
+    const first = journal.recordIntent({ request, provider: "p", kind: "upload", target: "c", payload: { v: 2 } });
+    store.transition("external_operation", first.operation_id, "INTENT_RECORDED", "FAILED", { run_id: request.run_id, stage_run_id: request.stage_run_id, attempt_id: request.attempt_id, project_id: null, portfolio_id: null, channel_id: null, content_id: null, variant_id: null, workflow_release: null, severity: "warn", event_type: "external_operation.failed", payload: {} });
+    const second = journal.recordIntent({ request, provider: "p", kind: "upload", target: "c", payload: { v: 2 } });
+    expect(second.operation_id).not.toBe(first.operation_id);
+    expect(second.idempotency_key).toBe(first.idempotency_key);
+    expect(second.status).toBe("INTENT_RECORDED");
+    expect(store.findExternalOperationByKey(first.idempotency_key)?.operation_id).toBe(second.operation_id);
+    expect(store.listExternalOperations({ stage_run_id: request.stage_run_id })).toHaveLength(2);
+  });
 });

@@ -23,9 +23,10 @@ CREATE INDEX artifact_stage_idx ON artifact(stage_run_id);
 CREATE INDEX artifact_run_idx ON artifact(run_id);
 
 CREATE TABLE external_operation (
-  id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE, state TEXT NOT NULL,
+  id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL, state TEXT NOT NULL,
   data TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+CREATE INDEX external_operation_key_idx ON external_operation(idempotency_key);
 
 CREATE TABLE check_result (
   id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL, data TEXT NOT NULL
