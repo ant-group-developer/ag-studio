@@ -14,7 +14,7 @@ function worker(dir: string, clock: FixedClock, owner: string, script?: Executor
   const executors = new ExecutorRegistry();
   executors.register("script", script ?? new ScriptExecutor(fakeScriptCommands())); executors.register("agent", new AgentExecutor(new FakeAgentRuntime()));
   const project = ProjectConfigSchema.parse({ schema_version: "harness.project-config/v1", project_id: "p", template_release: "0.1.0", runtime: "claude", data_root: dir, portfolios: [{ portfolio_id: "pf", display_name: "x" }] });
-  const w = new Worker({ store, planner, controller: new Controller({ store, registry, planner, clock }), registry, verifier: new Verifier(BUILTIN_CHECKERS), executors, harness: loadHarnessConfig(HARNESS_ROOT), project, dataRoot: dir, owner, capabilities: ["write_workspace", "read_source"], logger: createLogger({ redactor: new Redactor(() => []), sink: () => {}, level: "error" }), clock, workflows: (ref) => loadWorkflow(HARNESS_ROOT, ref) });
+  const w = new Worker({ store, planner, controller: new Controller({ store, registry, planner, clock }), registry, verifier: new Verifier(BUILTIN_CHECKERS), executors, harness: loadHarnessConfig(HARNESS_ROOT), project, dataRoot: dir, owner, capabilities: ["write_workspace", "read_source"], logger: createLogger({ redactor: new Redactor(() => []), sink: () => {}, level: "error" }), clock, workflows: (ref) => loadWorkflow(HARNESS_ROOT, ref), resourceCapacity: {} });
   return { store, planner, w };
 }
 

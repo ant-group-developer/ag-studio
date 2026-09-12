@@ -5,3 +5,5 @@ runtime: claude
 data_root: ./data
 portfolios:
   - { portfolio_id: portfolio-main, display_name: Minimal portfolio }
+resources: { cpu: 2, gpu: 1 }
+source: { materialize: link }

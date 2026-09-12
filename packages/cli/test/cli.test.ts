@@ -120,6 +120,26 @@ describe("harness CLI", () => {
     expect(r.code).toBe(1);
     expect(r.err).toContain("INVALID_TRANSITION");
   });
+  it("ingests a source, creates content, plans a variant and shows resources", () => {
+    const p = freshProject();
+    cli(p, "db", "migrate");
+    const raw = join(p, "raw.txt"); writeFileSync(raw, "raw source bytes");
+    const ing = JSON.parse(cli(p, "source", "ingest", raw, "--collection", "main", "--rights", "cleared", "--json").out);
+    expect(ing.source_id).toMatch(/^src_/); expect(ing.created).toBe(true);
+    expect(JSON.parse(cli(p, "source", "ingest", raw, "--json").out).created).toBe(false);
+    expect(JSON.parse(cli(p, "source", "list", "--json").out)).toHaveLength(1);
+    expect(cli(p, "source", "verify").code).toBe(0);
+    const content = JSON.parse(cli(p, "content", "create", "--source", ing.source_id, "--title", "Ep 1", "--json").out);
+    expect(content.content_id).toMatch(/^content_/);
+    const plan = JSON.parse(cli(p, "plan", "--workflow", "sample-three-stage@1.0.0", "--profile", "cartoon", "--content", content.content_id, "--json").out);
+    expect(plan.variant_id).toMatch(/^variant_/);
+    const status = JSON.parse(cli(p, "status", plan.run_id, "--json").out);
+    expect(status.run.content_id).toBe(content.content_id);
+    expect(status.run.source_id).toBe(ing.source_id);
+    const res = JSON.parse(cli(p, "resources", "status", "--json").out);
+    expect(res).toEqual(expect.arrayContaining([{ resource: "gpu", capacity: 1, held: 0, free: 1 }]));
+    expect(cli(p, "plan", "--workflow", "sample-three-stage@1.0.0", "--profile", "cartoon", "--content", content.content_id, "--option", "voice=tts").code).toBe(1); // cartoon declares no options
+  });
   it("artifacts sweep reports and removes orphan directories", () => {
     const p = freshProject();
     cli(p, "db", "migrate");

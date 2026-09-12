@@ -5,6 +5,8 @@ status: active
 workflow_release: sample-three-stage@1.0.0
 overrides:
   lease_seconds: 120
+options_schema: {}
+options_defaults: {}
 verification:
   required_checks: [schema-valid]
 limits:

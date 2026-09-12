@@ -1,5 +1,5 @@
 import { pathToFileURL } from "node:url";
-import { isHarnessError, type Artifact, type ClaimResult, type Clock, type HarnessConfig, type ProjectConfig, type Run, type StageRequest, type StageResult, type StateStore } from "@harness/contracts";
+import { isHarnessError, type Artifact, type ClaimResult, type Clock, type HarnessConfig, type ProjectConfig, type Run, type SourceItem, type StageRequest, type StageResult, type StateStore } from "@harness/contracts";
 import { acceptedInputsFor, addSeconds, ArtifactRegistry, canonicalDigest, Controller, createWorkspace, eventFor, type LoadedWorkflow, materializeInputs, Planner, stageDefinitionDigest, Verifier, workspacePath, type HarnessLogger } from "@harness/core";
 import type { ExecutorRegistry } from "@harness/executors";
 import { startHeartbeat } from "./heartbeat.js";
@@ -7,7 +7,7 @@ import { startHeartbeat } from "./heartbeat.js";
 export interface WorkerDeps {
   store: StateStore; planner: Planner; controller: Controller; registry: ArtifactRegistry; verifier: Verifier; executors: ExecutorRegistry;
   harness: HarnessConfig; project: ProjectConfig; dataRoot: string; owner: string; capabilities: string[]; logger: HarnessLogger; clock: Clock;
-  workflows: (ref: string) => LoadedWorkflow;
+  workflows: (ref: string) => LoadedWorkflow; resourceCapacity: Record<string, number>;
 }
 
 function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
@@ -40,8 +40,8 @@ export class Worker {
     }
     // the run is unknown until the claim lands, so claim on the harness default and widen afterwards
     const defaultLeaseSeconds = this.d.harness.lease_seconds;
-    const claim = store.claim({ owner: this.d.owner, capabilities: this.d.capabilities, now: clock.now(), leaseSeconds: defaultLeaseSeconds });
-    if (!claim) return "idle";
+    const claim = store.claim({ owner: this.d.owner, capabilities: this.d.capabilities, now: clock.now(), leaseSeconds: defaultLeaseSeconds, resourceCapacity: this.d.resourceCapacity });
+    if (!claim) { this.warnResourceStarvation(); return "idle"; }
     const run = store.getRun(claim.stageRun.run_id)!;
     const snapshotLease = Number(run.effective_config_snapshot.lease_seconds);
     const leaseSeconds = Number.isFinite(snapshotLease) ? snapshotLease : defaultLeaseSeconds;
@@ -105,13 +105,29 @@ export class Worker {
     const run = this.d.store.getRun(claim.stageRun.run_id)!;
     const exec = claim.stageRun.executor;
     const stage_config = { ...claim.stageRun.stage_config, ...(exec.type === "script" ? { __script: exec.script } : exec.type === "agent" ? { __skill: exec.skill, __brief: exec.brief } : { __brief: exec.brief }) };
+    const variant = run.variant_id ? this.d.store.getContentVariant(run.variant_id) : undefined;
+    const content = run.content_id ? this.d.store.getContentItem(run.content_id) : undefined;
+    const source_items = (content?.source_ids ?? []).map((id) => this.d.store.getSourceItem(id)).filter((s): s is SourceItem => !!s).map((s) => ({ source_id: s.source_id, uri: s.uri, checksum: s.checksum, mime_type: s.mime_type, duration_seconds: s.duration_seconds }));
     return {
       schema_version: "harness.stage-request/v1", run_id: run.run_id, stage_run_id: claim.stageRun.stage_run_id, attempt_id: claim.attempt.attempt_id,
       project_id: run.project_id, portfolio_id: run.portfolio_id, stage_key: claim.stageRun.stage_key, workflow: run.workflow_release, profile_snapshot: run.profile_snapshot,
-      inputs, workspace_uri: workspaceDir, stage_config, options: {}, source_items: [], resources: claim.stageRun.requires_resources,
+      inputs, workspace_uri: workspaceDir, stage_config, options: variant?.options ?? {}, source_items, resources: claim.lease.resources,
       limits: { deadline_at: addSeconds(this.d.clock.now(), Number(cfg.default_deadline_seconds ?? this.d.harness.default_deadline_seconds)), max_cost_usd: Number(cfg.default_max_cost_usd ?? this.d.harness.default_max_cost_usd), max_attempts: claim.stageRun.retry.max_attempts },
       capabilities: this.d.capabilities, fencing_token: claim.lease.fencing_token,
     };
+  }
+
+  private warnResourceStarvation(): void {
+    const { store, clock, harness } = this.d;
+    const held = store.countLeasedResources(); const now = clock.now();
+    for (const run of [...store.listRuns({ state: "RUNNING" }), ...store.listRuns({ state: "READY" })]) for (const s of store.listStageRuns(run.run_id)) {
+      if (s.state !== "READY" || !s.requires_resources.length || !s.ready_at) continue;
+      if (Date.parse(now) - Date.parse(s.ready_at) < harness.resource_wait_warn_seconds * 1000) continue;
+      const starved = s.requires_resources.filter((r) => (held[r] ?? 0) >= (this.d.resourceCapacity[r] ?? 0));
+      if (!starved.length) continue;
+      const recent = store.listEvents({ run_id: run.run_id, limit: 200, newest: true }).some((e) => e.event_type === "stage.waiting_resource" && e.stage_run_id === s.stage_run_id && Date.parse(now) - Date.parse(e.occurred_at) < harness.resource_wait_warn_seconds * 1000);
+      if (!recent) store.appendEvent(eventFor(run, s, null, "stage.waiting_resource", "warn", { resources: starved, waiting_since: s.ready_at }));
+    }
   }
 
   private mimeTypesFor(_claim: ClaimResult): Record<string, string> {

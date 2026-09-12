@@ -3,8 +3,8 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { getEventListeners } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ProjectConfigSchema, type Executor, type StageResult } from "@harness/contracts";
-import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, FixedClock, HARNESS_ROOT, MIGRATIONS_DIR, Planner, Redactor, SqliteStateStore, Verifier, addSeconds, createLogger, loadHarnessConfig, loadProfile, loadWorkflow } from "@harness/core";
+import { ProjectConfigSchema, type Executor, type StageRequest, type StageResult } from "@harness/contracts";
+import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, FixedClock, HARNESS_ROOT, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, SourceCatalog, SqliteStateStore, Verifier, addSeconds, createLogger, loadHarnessConfig, loadProfile, loadWorkflow } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, fakeScriptCommands } from "@harness/adapter-fake";
 import { Worker, type WorkerDeps } from "../src/worker.js";
@@ -23,9 +23,10 @@ function makeWorld(opts: { scriptExecutor?: Executor; owner?: string; clock?: Fi
   const harness = loadHarnessConfig(HARNESS_ROOT);
   const project = ProjectConfigSchema.parse({ schema_version: "harness.project-config/v1", project_id: "project-main", template_release: "0.1.0", runtime: "claude", data_root: dir, portfolios: [{ portfolio_id: "portfolio-main", display_name: "Main" }] });
   const logger = createLogger({ redactor: new Redactor(() => []), sink: () => {}, level: "error" });
-  const deps: WorkerDeps = { store, planner, controller, registry, verifier: new Verifier(BUILTIN_CHECKERS), executors, harness, project, dataRoot: dir, owner: opts.owner ?? "w1", capabilities: ["write_workspace", "read_source"], logger, clock, workflows: (ref) => loadWorkflow(HARNESS_ROOT, ref) };
+  const catalog = new SourceCatalog({ store, dataRoot: dir, prober: new NullMediaProber(), clock, materialize: "reference" });
+  const deps: WorkerDeps = { store, planner, controller, registry, verifier: new Verifier(BUILTIN_CHECKERS), executors, harness, project, dataRoot: dir, owner: opts.owner ?? "w1", capabilities: ["write_workspace", "read_source"], logger, clock, workflows: (ref) => loadWorkflow(HARNESS_ROOT, ref), resourceCapacity: { cpu: 2, gpu: 1 } };
   const worker = new Worker(deps);
-  return { dir, clock, store, planner, worker, deps };
+  return { dir, clock, store, planner, worker, deps, catalog, executors };
 }
 function planAndEnqueue(w: ReturnType<typeof makeWorld>, stageOverrides: Record<string, Record<string, unknown>> = {}) {
   const run = w.planner.plan({ workflow: loadWorkflow(HARNESS_ROOT, "sample-three-stage@1.0.0"), profile: loadProfile(HARNESS_ROOT, "cartoon"), harness: loadHarnessConfig(HARNESS_ROOT), projectId: "project-main", portfolioId: "portfolio-main" });
@@ -199,5 +200,21 @@ describe("Worker", () => {
     expect(w.store.listAttempts(produce.stage_run_id)[0]?.failure_kind).toBe("transient");
     expect(produce.state).toBe("READY");
     expect(w.store.getLease(produce.stage_run_id)).toBeUndefined();
+  });
+  it("passes options, source items and held resources to the executor request", async () => {
+    const w = makeWorld();
+    const raw = join(w.dir, "raw.txt"); writeFileSync(raw, "src");
+    const { source } = await w.catalog.ingest({ path: raw });
+    const content = w.catalog.createContent({ source_ids: [source.source_id], title: "c" });
+    const { variant } = w.catalog.getOrCreateVariant({ content_id: content.content_id, profile: loadProfile(HARNESS_ROOT, "cartoon"), options: {} });
+    const run = w.planner.plan({ workflow: loadWorkflow(HARNESS_ROOT, "sample-three-stage@1.0.0"), profile: loadProfile(HARNESS_ROOT, "cartoon"), harness: loadHarnessConfig(HARNESS_ROOT), projectId: "project-main", portfolioId: "portfolio-main", content, variant });
+    for (const s of w.store.listStageRuns(run.run_id)) w.store.updateStageRun({ ...s, requires_resources: s.stage_key === "produce" ? ["cpu"] : [] });
+    w.planner.enqueue(run.run_id);
+    let seen: StageRequest | undefined;
+    w.executors.register("script", { version: "spy", execute: async (req) => { seen = req; return { schema_version: "harness.stage-result/v1", attempt_id: req.attempt_id, outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [{ kind: "transient", message: "spy", details: {} }] }; } });
+    await w.worker.runOnce();
+    expect(seen?.options).toEqual({});
+    expect(seen?.source_items.map((s) => s.source_id)).toEqual([source.source_id]);
+    expect(seen?.resources).toEqual(["cpu"]);
   });
 });

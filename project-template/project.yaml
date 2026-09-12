@@ -6,3 +6,5 @@ runtime: claude            # claude | codex, chosen per machine/project
 data_root: ../youtube-operations-data
 portfolios:
   - { portfolio_id: portfolio-main, display_name: Main portfolio }
+resources: { cpu: 2, gpu: 1 }
+source: { materialize: link }
