@@ -16,3 +16,5 @@ export * from "./orchestration/journal.js";
 export * from "./orchestration/reconcile.js";
 export * from "./verification/verifier.js";
 export * from "./verification/checkers.js";
+export * from "./source-catalog/prober.js";
+export * from "./source-catalog/catalog.js";
