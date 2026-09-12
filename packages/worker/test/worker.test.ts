@@ -98,6 +98,42 @@ describe("Worker", () => {
     expect(w.store.listAttempts(produce.stage_run_id)[0]?.state).toBe("CANCELLED");
     expect(w.store.getLease(produce.stage_run_id)).toBeUndefined();
   });
+  it("marks the stage CANCELLED on abort when the run was cancelled while it ran", async () => {
+    const ac = new AbortController();
+    const hanging: Executor = { version: "hang@1", execute: (_r, ctx) => new Promise((_res, rej) => ctx.signal?.addEventListener("abort", () => rej(new Error("aborted")))) };
+    const w = makeWorld({ scriptExecutor: hanging });
+    const run = planAndEnqueue(w);
+    const pending = w.worker.runOnce(ac.signal);
+    await new Promise((r) => setTimeout(r, 50));
+    w.planner.cancel(run.run_id);
+    const produceId = w.store.listStageRuns(run.run_id).find((s) => s.stage_key === "produce")!.stage_run_id;
+    expect(w.store.getStageRun(produceId)?.state).toBe("CANCEL_REQUESTED");
+    ac.abort();
+    expect(await pending).toBe("done");
+    expect(w.store.getStageRun(produceId)?.state).toBe("CANCELLED");
+    expect(w.store.listAttempts(produceId)[0]?.state).toBe("CANCELLED");
+    expect(w.store.getLease(produceId)).toBeUndefined();
+    expect(w.store.getRun(run.run_id)?.state).toBe("CANCELLED");
+  });
+  it("does not requeue a stage it no longer owns when it is aborted", async () => {
+    const clock = new FixedClock("2026-09-11T00:00:00.000Z");
+    const ac = new AbortController();
+    const hanging: Executor = { version: "hang@1", execute: (_r, ctx) => new Promise((_res, rej) => ctx.signal?.addEventListener("abort", () => rej(new Error("aborted")))) };
+    const w = makeWorld({ scriptExecutor: hanging, clock, owner: "first" });
+    const run = planAndEnqueue(w);
+    const pending = w.worker.runOnce(ac.signal);
+    await new Promise((r) => setTimeout(r, 50));
+    const produceId = w.store.listStageRuns(run.run_id).find((s) => s.stage_key === "produce")!.stage_run_id;
+    clock.advance(121);
+    w.store.reapExpiredLeases(clock.now());
+    const second = w.store.claim({ owner: "second", capabilities: ["write_workspace", "read_source"], now: clock.now(), leaseSeconds: 90 })!;
+    expect(second.stageRun.stage_run_id).toBe(produceId);
+    ac.abort();
+    expect(await pending).toBe("lost");
+    expect(w.store.getStageRun(produceId)?.state).toBe("CLAIMED"); // still the second worker's, not requeued
+    expect(w.store.getLease(produceId)?.owner).toBe("second");
+    expect(w.store.listAttempts(produceId).map((a) => a.state)).toEqual(["ABANDONED", "CLAIMED"]);
+  });
   it("honours the run-scoped lease_seconds from the effective config snapshot", async () => {
     const clock = new FixedClock("2026-09-11T00:00:00.000Z");
     let release!: () => void;

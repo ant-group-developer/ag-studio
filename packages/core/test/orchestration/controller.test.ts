@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isHarnessError, type StageRequest, type StageResult } from "@harness/contracts";
 import { ArtifactRegistry, Controller, Planner, HARNESS_ROOT, loadHarnessConfig, loadProfile, loadWorkflow, sha256String, createWorkspace, Verifier, BUILTIN_CHECKERS } from "../../src/index.js";
@@ -29,7 +29,7 @@ async function setup(retry: { backoff_seconds?: number[]; max_attempts?: number 
   const verifier = new Verifier(BUILTIN_CHECKERS);
   const commit = async (result: StageResult, token = claim.lease.fencing_token) =>
     controller.commit({ stageRun: t.store.getStageRun(stageRun.stage_run_id)!, attempt, fencingToken: token, request, result, verify: await verifier.verify({ request, result, workspaceDir: ws }, stageRun.required_checks), workspaceDir: ws, executorVersion: "fake@0.1.0", inputArtifactIds: [], mimeTypes: { script_text: "text/plain" } });
-  return { ...t, run, stageRun, attempt, claim, ws, write, commit };
+  return { ...t, planner, run, stageRun, attempt, claim, ws, write, commit };
 }
 
 describe("Controller.commit", () => {
@@ -70,6 +70,22 @@ describe("Controller.commit", () => {
     const { attempt, commit } = await setup();
     const result: StageResult = { schema_version: "harness.stage-result/v1", attempt_id: attempt.attempt_id, outcome: "unknown", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [{ kind: "unknown", message: "lost", details: {} }] };
     expect(await commit(result)).toMatchObject({ failureKind: "unknown", stageState: "NEEDS_RECONCILIATION", runState: "WAITING", retryScheduled: false });
+  });
+  it("commits a cancel-requested stage as CANCELLED, keeps its outputs in the workspace and settles the run", async () => {
+    const { store, planner, run, stageRun, attempt, ws, write, commit } = await setup();
+    const result = write("hello");
+    planner.cancel(run.run_id);
+    expect(store.getStageRun(stageRun.stage_run_id)?.state).toBe("CANCEL_REQUESTED");
+    expect(store.getRun(run.run_id)?.state).toBe("CANCEL_REQUESTED");
+    const out = await commit(result);
+    expect(out).toMatchObject({ stageState: "CANCELLED", attemptState: "CANCELLED", runState: "CANCELLED", retryScheduled: false });
+    expect(out.failureKind).toBeUndefined();
+    expect(out.artifacts).toEqual([]);
+    expect(store.listArtifacts({ stage_run_id: stageRun.stage_run_id })).toHaveLength(0);
+    expect(existsSync(join(ws, "output", "result.txt"))).toBe(true); // nothing moved into the artifact store
+    expect(store.getRun(run.run_id)?.total_cost_usd).toBe(0);
+    expect(store.getLease(stageRun.stage_run_id)).toBeUndefined();
+    expect(store.listCheckResults(attempt.attempt_id).length).toBeGreaterThan(0);
   });
   it("deferred outcome parks the stage for a human without counting a result failure", async () => {
     const { store, stageRun, attempt, commit } = await setup();

@@ -31,9 +31,12 @@ export class Controller {
     const ctx: ArtifactContext = { run, stageRun: p.stageRun, attempt: p.attempt, executorVersion: p.executorVersion, inputArtifactIds: p.inputArtifactIds, checkResultIds: [] };
     let kind = classifyFailure(p.result, p.verify);
 
+    // A cancel that landed while the stage ran: nothing is staged, so no file leaves the workspace.
+    const cancelRequested = () => store.getStageRun(p.stageRun.stage_run_id)?.state === "CANCEL_REQUESTED";
+
     // Async phase (no DB writes): move verified outputs into the artifact store.
     let staged: Awaited<ReturnType<ArtifactRegistry["stageOutputs"]>> = [];
-    if (kind === null) {
+    if (kind === null && !cancelRequested()) {
       try { staged = await registry.stageOutputs({ workspaceDir: p.workspaceDir, outputs: p.result.outputs, mimeTypes: p.mimeTypes, ctx }); }
       catch (e) { if (isHarnessError(e, "CHECKSUM_MISMATCH") || isHarnessError(e, "IO_ERROR")) kind = "result"; else throw e; }
     }
@@ -51,6 +54,16 @@ export class Controller {
         store.insertCheckResult({ schema_version: "harness.check-result/v1", check_result_id: id, check_id: r.check_id, checker_version: r.checker_version, attempt_id: attempt.attempt_id, artifact_id: null, verdict: r.verdict, evidence: r.evidence, created_at: now });
         ctx.checkResultIds.push(id);
       }
+      if (stage.state === "CANCEL_REQUESTED") {
+        // the run was cancelled while this attempt ran: acknowledge it, bank no cost, keep no artifact
+        store.transition("attempt", attempt.attempt_id, "RUNNING", "CANCELLED", ev("attempt.cancelled", "warn"));
+        store.updateAttempt({ ...store.getAttempt(attempt.attempt_id)!, finished_at: now });
+        store.transition("stage_run", stage.stage_run_id, "CANCEL_REQUESTED", "CANCELLED", ev("stage.cancelled", "warn"));
+        store.releaseLease(stage.stage_run_id, p.fencingToken);
+        const { runState } = planner.advance(run.run_id);
+        return { stageState: "CANCELLED", attemptState: "CANCELLED", runState, artifacts: [], retryScheduled: false };
+      }
+
       const freshRun = store.getRun(run.run_id)!;
       store.updateRun({ ...freshRun, total_cost_usd: freshRun.total_cost_usd + p.result.usage.cost_usd }); // fresh read: cost captured before the await may be stale
 

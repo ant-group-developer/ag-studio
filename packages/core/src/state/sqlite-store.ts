@@ -264,6 +264,12 @@ export class SqliteStateStore implements StateStore {
         if (attempt.state === "CLAIMED" || attempt.state === "RUNNING") {
           this.transition("attempt", attempt.attempt_id, attempt.state, "ABANDONED", { ...this.eventBase(stage, attempt.attempt_id), severity: "warn", event_type: "attempt.abandoned", payload: { owner: lease.owner } });
         }
+        if (stage.state === "CANCEL_REQUESTED") {
+          // the worker that owed the acknowledgement is gone: the reaper completes the cancel, never requeues
+          this.transition("stage_run", stage.stage_run_id, "CANCEL_REQUESTED", "CANCELLED", { ...this.eventBase(stage, attempt.attempt_id), severity: "warn", event_type: "stage.cancelled", payload: { requeued: false, reason: "lease_expired" } });
+          out.push({ stage_run_id: stage.stage_run_id, attempt_id: attempt.attempt_id, owner: lease.owner, requeued: false });
+          continue;
+        }
         const active = ["CLAIMED", "RUNNING", "VERIFYING"].includes(stage.state);
         const canRetry = active && stage.retry.retry_on.includes("abandoned") && stage.attempt_count < stage.retry.max_attempts;
         if (active) {

@@ -14,10 +14,11 @@ export const TRANSITIONS: Record<TransitionKind, Record<string, readonly string[
     READY: ["CLAIMED", "CANCEL_REQUESTED", "CANCELLED"],
     CLAIMED: ["RUNNING", "READY", "FAILED", "CANCEL_REQUESTED"],  // READY/FAILED: lease abandoned
     RUNNING: ["VERIFYING", "WAITING_EXTERNAL", "WAITING_HUMAN", "FAILED", "READY", "CANCEL_REQUESTED"], // RUNNING -> READY: lease abandoned
-    VERIFYING: ["SUCCEEDED", "FAILED", "WAITING_HUMAN", "READY"], // READY: lease abandoned during verify
-    WAITING_EXTERNAL: ["RUNNING", "NEEDS_RECONCILIATION"],
-    NEEDS_RECONCILIATION: ["RUNNING", "READY"],                   // READY: reconciled, retry with new attempt (spec addition v1)
-    WAITING_HUMAN: ["READY", "CANCEL_REQUESTED"],
+    VERIFYING: ["SUCCEEDED", "FAILED", "WAITING_HUMAN", "READY", "CANCEL_REQUESTED"], // READY: lease abandoned during verify
+    // CANCELLED direct from the three parked states: no worker holds them, so nothing has to acknowledge the cancel
+    WAITING_EXTERNAL: ["RUNNING", "NEEDS_RECONCILIATION", "CANCEL_REQUESTED", "CANCELLED"],
+    NEEDS_RECONCILIATION: ["RUNNING", "READY", "CANCEL_REQUESTED", "CANCELLED"],       // READY: reconciled, retry with new attempt (spec addition v1)
+    WAITING_HUMAN: ["READY", "CANCEL_REQUESTED", "CANCELLED"],
     FAILED: ["READY"],                                            // retry policy
     CANCEL_REQUESTED: ["CANCELLED"],
     CANCELLED: [], SUCCEEDED: [],

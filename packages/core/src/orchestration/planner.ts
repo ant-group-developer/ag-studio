@@ -16,6 +16,11 @@ export function eventFor(run: Run, stage: StageRun | null, attempt: Attempt | nu
   };
 }
 
+/** No worker holds these, so cancel takes them straight to CANCELLED. */
+const CANCELLABLE_NOW = ["PENDING", "READY", "WAITING_HUMAN", "WAITING_EXTERNAL", "NEEDS_RECONCILIATION"];
+/** A worker holds the lease: it must acknowledge the cancel (or its lease must expire) before the stage is CANCELLED. */
+const HELD_BY_WORKER = ["CLAIMED", "RUNNING", "VERIFYING"];
+
 export class Planner {
   constructor(private readonly store: StateStore) {}
 
@@ -60,6 +65,7 @@ export class Planner {
   advance(runId: string): { released: string[]; runState: string } {
     return this.store.transaction(() => {
       const run = this.mustRun(runId);
+      if (run.state === "CANCEL_REQUESTED") return { released: [], runState: this.settleCancel(run) };
       const stages = this.store.listStageRuns(runId);
       const byKey = new Map(stages.map((s) => [s.stage_key, s]));
       const released: string[] = [];
@@ -85,16 +91,23 @@ export class Planner {
     this.store.transaction(() => {
       const run = this.mustRun(runId);
       for (const s of this.store.listStageRuns(runId)) {
-        if (s.state === "PENDING" || s.state === "READY") this.store.transition("stage_run", s.stage_run_id, s.state, "CANCELLED", eventFor(run, s, null, "stage.cancelled", "warn"));
-        else if (!isTerminal("stage_run", s.state) && s.state !== "CANCEL_REQUESTED") this.store.transition("stage_run", s.stage_run_id, s.state, "CANCEL_REQUESTED", eventFor(run, s, null, "stage.cancel_requested", "warn"));
+        if (CANCELLABLE_NOW.includes(s.state)) this.store.transition("stage_run", s.stage_run_id, s.state, "CANCELLED", eventFor(run, s, null, "stage.cancelled", "warn"));
+        else if (HELD_BY_WORKER.includes(s.state)) this.store.transition("stage_run", s.stage_run_id, s.state, "CANCEL_REQUESTED", eventFor(run, s, null, "stage.cancel_requested", "warn"));
+        // already CANCEL_REQUESTED or terminal: nothing to do
       }
-      const remaining = this.store.listStageRuns(runId).some((s) => s.state === "CANCEL_REQUESTED");
       if (run.state === "DRAFT") this.store.transition("run", runId, "DRAFT", "CANCELLED", eventFor(run, null, null, "run.cancelled", "warn"));
       else if (!isTerminal("run", run.state)) {
         if (run.state !== "CANCEL_REQUESTED") this.store.transition("run", runId, run.state, "CANCEL_REQUESTED", eventFor(run, null, null, "run.cancel_requested", "warn"));
-        if (!remaining) this.store.transition("run", runId, "CANCEL_REQUESTED", "CANCELLED", eventFor(run, null, null, "run.cancelled", "warn"));
+        this.settleCancel(run); // nothing left to acknowledge -> straight to CANCELLED
       }
     });
+  }
+
+  /** A CANCEL_REQUESTED run becomes CANCELLED as soon as no stage is still held or still owes an acknowledgement. */
+  private settleCancel(run: Run): string {
+    const pending = this.store.listStageRuns(run.run_id).some((s) => ["CANCEL_REQUESTED", ...HELD_BY_WORKER, "WAITING_EXTERNAL"].includes(s.state));
+    if (!pending) this.store.transition("run", run.run_id, "CANCEL_REQUESTED", "CANCELLED", eventFor(run, null, null, "run.cancelled", "warn"));
+    return this.mustRun(run.run_id).state;
   }
 
   private ready(run: Run, s: StageRun): void {

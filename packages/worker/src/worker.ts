@@ -78,7 +78,7 @@ export class Worker {
       result = { schema_version: "harness.stage-result/v1", attempt_id: claim.attempt.attempt_id, outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [{ kind, message: e instanceof Error ? e.message : String(e), details: isHarnessError(e) ? { code: e.code, ...e.details } : {} }] };
     } finally { hb.stop(); signal?.removeEventListener("abort", onParentAbort); }
 
-    if (signal?.aborted && !hb.lost) { this.cancelCurrent(claim, run); return "done"; }
+    if (signal?.aborted && !hb.lost) return this.cancelCurrent(claim, run, log);
     if (hb.lost || !store.getLease(claim.stageRun.stage_run_id) || store.getLease(claim.stageRun.stage_run_id)!.fencing_token !== claim.lease.fencing_token) {
       log.warn("lease lost during execution; result discarded");
       return "lost";
@@ -111,15 +111,28 @@ export class Worker {
     return { script_text: "text/plain", review_notes: "text/plain", final_text: "text/plain" };
   }
 
-  private cancelCurrent(claim: ClaimResult, run: Run): void {
+  private cancelCurrent(claim: ClaimResult, run: Run, log: HarnessLogger): "done" | "lost" {
     const { store } = this.d;
-    store.transaction(() => {
-      const ev = eventFor(run, claim.stageRun, claim.attempt, "attempt.cancelled", "warn", { owner: this.d.owner });
-      store.transition("attempt", claim.attempt.attempt_id, "RUNNING", "CANCELLED", ev);
-      store.transition("stage_run", claim.stageRun.stage_run_id, "RUNNING", "READY", { ...ev, event_type: "stage.requeued_after_cancel" });
-      const s = store.getStageRun(claim.stageRun.stage_run_id)!;
-      store.updateStageRun({ ...s, ready_at: this.d.clock.now(), not_before: this.d.clock.now() });
-      store.releaseLease(claim.stageRun.stage_run_id, claim.lease.fencing_token);
-    });
+    try {
+      store.transaction(() => {
+        store.assertFencing(claim.stageRun.stage_run_id, claim.lease.fencing_token); // another worker may own the stage by now
+        const ev = eventFor(run, claim.stageRun, claim.attempt, "attempt.cancelled", "warn", { owner: this.d.owner });
+        store.transition("attempt", claim.attempt.attempt_id, "RUNNING", "CANCELLED", ev);
+        if (store.getStageRun(claim.stageRun.stage_run_id)!.state === "CANCEL_REQUESTED") {
+          store.transition("stage_run", claim.stageRun.stage_run_id, "CANCEL_REQUESTED", "CANCELLED", { ...ev, event_type: "stage.cancelled" });
+          store.releaseLease(claim.stageRun.stage_run_id, claim.lease.fencing_token);
+          this.d.planner.advance(run.run_id);
+          return;
+        }
+        store.transition("stage_run", claim.stageRun.stage_run_id, "RUNNING", "READY", { ...ev, event_type: "stage.requeued_after_cancel" });
+        const s = store.getStageRun(claim.stageRun.stage_run_id)!;
+        store.updateStageRun({ ...s, ready_at: this.d.clock.now(), not_before: this.d.clock.now() });
+        store.releaseLease(claim.stageRun.stage_run_id, claim.lease.fencing_token);
+      });
+      return "done";
+    } catch (e) {
+      if (isHarnessError(e, "FENCING_REJECTED")) { log.warn("cancel rejected by fencing token; the stage belongs to another worker", e.details); return "lost"; }
+      throw e;
+    }
   }
 }

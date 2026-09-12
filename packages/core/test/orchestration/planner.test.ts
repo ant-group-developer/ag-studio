@@ -68,6 +68,35 @@ describe("Planner", () => {
     store.transition("stage_run", s.stage_run_id, "CLAIMED", "FAILED", ev);
     expect(planner.advance(run.run_id).runState).toBe("FAILED");
   });
+  it("cancel settles stages parked on a human or on reconciliation without throwing", () => {
+    const { store, planner, run, clock } = planSample();
+    planner.enqueue(run.run_id);
+    const c = store.claim({ owner: "w", capabilities: ["write_workspace", "read_source"], now: clock.now(), leaseSeconds: 90 })!;
+    const ev = (stageRunId: string) => ({ run_id: run.run_id, stage_run_id: stageRunId, attempt_id: null, project_id: "p", portfolio_id: null, channel_id: null, content_id: null, variant_id: null, workflow_release: null, severity: "info" as const, event_type: "stage.test", payload: {} });
+    const produce = c.stageRun.stage_run_id;
+    store.transition("stage_run", produce, "CLAIMED", "RUNNING", ev(produce));
+    store.transition("stage_run", produce, "RUNNING", "WAITING_EXTERNAL", ev(produce));
+    store.transition("stage_run", produce, "WAITING_EXTERNAL", "NEEDS_RECONCILIATION", ev(produce));
+    const review = store.listStageRuns(run.run_id).find((s) => s.stage_key === "review")!.stage_run_id;
+    for (const [from, to] of [["PENDING", "READY"], ["READY", "CLAIMED"], ["CLAIMED", "RUNNING"], ["RUNNING", "WAITING_HUMAN"]]) store.transition("stage_run", review, from!, to!, ev(review));
+    expect(() => planner.cancel(run.run_id)).not.toThrow();
+    expect(store.listStageRuns(run.run_id).map((s) => s.state)).toEqual(["CANCELLED", "CANCELLED", "CANCELLED"]);
+    expect(store.getRun(run.run_id)?.state).toBe("CANCELLED");
+  });
+  it("cancel parks a stage a worker still holds and advance settles the run once it lets go", () => {
+    const { store, planner, run, clock } = planSample();
+    planner.enqueue(run.run_id);
+    const c = store.claim({ owner: "w", capabilities: ["write_workspace", "read_source"], now: clock.now(), leaseSeconds: 90 })!;
+    const ev = { run_id: run.run_id, stage_run_id: c.stageRun.stage_run_id, attempt_id: null, project_id: "p", portfolio_id: null, channel_id: null, content_id: null, variant_id: null, workflow_release: null, severity: "info" as const, event_type: "stage.test", payload: {} };
+    store.transition("stage_run", c.stageRun.stage_run_id, "CLAIMED", "RUNNING", ev);
+    planner.cancel(run.run_id);
+    expect(store.getStageRun(c.stageRun.stage_run_id)?.state).toBe("CANCEL_REQUESTED");
+    expect(store.getRun(run.run_id)?.state).toBe("CANCEL_REQUESTED");
+    expect(planner.advance(run.run_id).runState).toBe("CANCEL_REQUESTED"); // the worker still holds it
+    store.transition("stage_run", c.stageRun.stage_run_id, "CANCEL_REQUESTED", "CANCELLED", ev);
+    expect(planner.advance(run.run_id).runState).toBe("CANCELLED");
+    expect(store.listEvents({ run_id: run.run_id }).some((e) => e.event_type === "run.cancelled")).toBe(true);
+  });
   it("cancel moves READY/PENDING stages to CANCELLED and the run to CANCELLED", () => {
     const { store, planner, run } = planSample();
     planner.enqueue(run.run_id);
