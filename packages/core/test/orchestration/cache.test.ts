@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { ProductionProfileSchema, WorkflowDefinitionSchema, type StageRequest, type StageResult } from "@harness/contracts";
 import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, HARNESS_ROOT, NullMediaProber, Planner, SourceCatalog, Verifier, computeCacheKey, createWorkspace, loadHarnessConfig, sha256String, stageDefinitionDigest } from "../../src/index.js";
 import { acceptedInputsFor } from "../../src/artifacts/registry.js";
+import { findReusableArtifacts } from "../../src/orchestration/cache.js";
 import { beginAttempt, openTempStore } from "../helpers.js";
 
 const wf = { definition: WorkflowDefinitionSchema.parse({ schema_version: "harness.workflow/v1", id: "two", version: "1.0.0", defaults: {}, stages: [
@@ -100,6 +101,30 @@ describe("cache", () => {
     // no executorVersionFor at all: reuse is skipped entirely
     const run6 = planner.plan({ workflow: wf, profile, harness, projectId: "p", portfolioId: "pf", content, variant });
     expect(t.store.listStageRuns(run6.run_id)[0]?.state).toBe("PENDING");
+  });
+
+  it("a chain of reusing runs keeps resolving to the artifacts of the run that produced them", async () => {
+    const w = world();
+    const plan = () => w.planner.plan({ workflow: wf, profile, harness: w.harness, projectId: "p", portfolioId: "pf", content: w.content, variant: w.variant, executorVersionFor });
+    const run1 = plan();
+    w.planner.enqueue(run1.run_id);
+    const produced = await driveOneStage(w, wf, "hello");
+    const finalized = await driveOneStage(w, wf, "final");
+    expect([produced.stageKey, finalized.stageKey]).toEqual(["produce", "finalize"]);
+    expect(w.store.getRun(run1.run_id)?.state).toBe("SUCCEEDED");
+    const ids1 = [produced.out.artifacts[0]!.artifact_id, finalized.out.artifacts[0]!.artifact_id];
+
+    const run2 = plan();
+    expect(w.store.listStageRuns(run2.run_id).map((s) => s.state)).toEqual(["SUCCEEDED", "SUCCEEDED"]);
+    expect(w.store.listStageRuns(run2.run_id).flatMap((s) => s.reused_artifact_ids ?? [])).toEqual(ids1);
+    w.planner.enqueue(run2.run_id);
+
+    // run3 reuses run2's stages, which are themselves pointers: it must land on run1's originals, not on nothing
+    const run3 = plan();
+    expect(w.store.listStageRuns(run3.run_id).map((s) => s.state)).toEqual(["SUCCEEDED", "SUCCEEDED"]);
+    expect(w.store.listStageRuns(run3.run_id).flatMap((s) => s.reused_artifact_ids ?? [])).toEqual(ids1);
+    const key = w.store.listStageRuns(run3.run_id)[1]!.cache_key!;
+    expect(findReusableArtifacts(w.store, { variantId: w.variant.variant_id, stageKey: "finalize", cacheKey: key, excludeRunId: run3.run_id }).map((a) => a.artifact_id)).toEqual([ids1[1]]);
   });
 
   it("a run whose every stage was reused settles SUCCEEDED at enqueue without dispatching anything", async () => {

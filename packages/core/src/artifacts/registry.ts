@@ -112,7 +112,8 @@ export class ArtifactRegistry {
       this.store.insertArtifact(a);
       this.store.transition("artifact", a.artifact_id, "PROVISIONAL", "REJECTED", {
         run_id: p.ctx.run.run_id, stage_run_id: p.ctx.stageRun.stage_run_id, attempt_id: p.ctx.attempt.attempt_id, project_id: p.ctx.run.project_id,
-        portfolio_id: p.ctx.run.portfolio_id, channel_id: null, content_id: null, variant_id: null, workflow_release: null,
+        portfolio_id: p.ctx.run.portfolio_id, channel_id: null, content_id: p.ctx.run.content_id ?? null, variant_id: p.ctx.run.variant_id ?? null,
+        workflow_release: `${p.ctx.run.workflow_release.id}@${p.ctx.run.workflow_release.version}`,
         severity: "warn", event_type: "artifact.rejected", payload: { artifact_id: a.artifact_id, reason: p.reason },
       });
       return this.store.getArtifact(a.artifact_id)!;

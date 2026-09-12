@@ -139,6 +139,16 @@ describe("harness CLI", () => {
     const res = JSON.parse(cli(p, "resources", "status", "--json").out);
     expect(res).toEqual(expect.arrayContaining([{ resource: "gpu", capacity: 1, held: 0, free: 1 }]));
     expect(cli(p, "plan", "--workflow", "sample-three-stage@1.0.0", "--profile", "cartoon", "--content", content.content_id, "--option", "voice=tts").code).toBe(1); // cartoon declares no options
+
+    // finish the run, then plan the same variant again: everything is reused, and --no-reuse opts out
+    expect(cli(p, "enqueue", plan.run_id).code).toBe(0);
+    for (let i = 0; i < 6; i++) if (cli(p, "worker", "--once", "--capabilities", "write_workspace,read_source", "--owner", `w${i}`).out.includes("idle")) break;
+    expect(JSON.parse(cli(p, "status", plan.run_id, "--json").out).run.state).toBe("SUCCEEDED");
+    const reused = JSON.parse(cli(p, "plan", "--workflow", "sample-three-stage@1.0.0", "--profile", "cartoon", "--content", content.content_id, "--json").out);
+    expect(JSON.parse(cli(p, "status", reused.run_id, "--json").out).stages.map((x: { state: string }) => x.state)).toEqual(["SUCCEEDED", "SUCCEEDED", "SUCCEEDED"]);
+    const noReuse = JSON.parse(cli(p, "plan", "--workflow", "sample-three-stage@1.0.0", "--profile", "cartoon", "--content", content.content_id, "--no-reuse", "--json").out);
+    expect(noReuse.skipped_stages).toEqual([]);
+    expect(JSON.parse(cli(p, "status", noReuse.run_id, "--json").out).stages.map((x: { state: string }) => x.state)).toEqual(["PENDING", "PENDING", "PENDING"]);
   });
   it("artifacts sweep reports and removes orphan directories", () => {
     const p = freshProject();

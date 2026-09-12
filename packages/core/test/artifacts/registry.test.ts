@@ -47,6 +47,10 @@ describe("ArtifactRegistry", () => {
     const [art] = store.transaction(() => registry.registerRejected({ workspaceDir: ws, outputs, ctx, reason: "checksum mismatch" }));
     expect(art!.status).toBe("REJECTED");
     expect(store.listArtifacts({ stage_run_id: stage.stage_run_id, status: "ACCEPTED" })).toHaveLength(0);
+    const ev = store.listEvents({ run_id: ctx.run.run_id }).find((e) => e.event_type === "artifact.rejected")!;
+    expect(ev.workflow_release).toBe("sample-three-stage@1.0.0"); // used to be null, unlike artifact.accepted
+    expect(ev.content_id).toBe(ctx.run.content_id ?? null);
+    expect(ev.variant_id).toBe(ctx.run.variant_id ?? null);
   });
   it("acceptedInputsFor only returns ACCEPTED artifacts of upstream stages", async () => {
     const { store, ws, registry, ctx, stage } = await setup();

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { isHarnessError, ProductionProfileSchema, WorkflowDefinitionSchema } from "@harness/contracts";
 import { HARNESS_ROOT, loadHarnessConfig, loadProfile, loadWorkflow } from "../../src/orchestration/registry.js";
 import { Planner } from "../../src/orchestration/planner.js";
-import { canonicalDigest } from "../../src/artifacts/checksum.js";
 import { NullMediaProber, SourceCatalog } from "../../src/index.js";
 import { openTempStore } from "../helpers.js";
 
