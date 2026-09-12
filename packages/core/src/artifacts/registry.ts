@@ -48,6 +48,13 @@ export class ArtifactRegistry {
   async stageOutputs(p: { workspaceDir: string; outputs: StageOutput[]; mimeTypes: Record<string, string>; ctx: ArtifactContext }): Promise<StagedOutput[]> {
     const now = new Date().toISOString();
     const root = resolve(p.workspaceDir) + sep;
+    // two outputs that nest (a directory and a file inside it) or repeat the same path would corrupt the
+    // workspace: the first rename moves the tree and the second fails with a raw ENOENT halfway through
+    const paths = p.outputs.map((o) => o.path.replace(/\\/g, "/").replace(/\/+$/, ""));
+    for (let i = 0; i < paths.length; i++) for (let j = i + 1; j < paths.length; j++) {
+      const a = paths[i]!; const b = paths[j]!;
+      if (a === b || b.startsWith(a + "/") || a.startsWith(b + "/")) throw new HarnessError("IO_ERROR", `overlapping outputs: ${a} and ${b}`, { a, b });
+    }
     const verified: { out: StageOutput; src: string; files?: DirectoryEntry[] }[] = [];
     for (const out of p.outputs) {
       const src = resolve(p.workspaceDir, out.path);

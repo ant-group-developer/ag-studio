@@ -120,6 +120,25 @@ describe("ArtifactRegistry", () => {
     expect(manifest.files.map((f: { path: string }) => f.path)).toEqual(["001.mp4", "002.mp4"]);
     expect(store.listArtifacts({ stage_run_id: stage.stage_run_id, status: "ACCEPTED" })).toHaveLength(1);
   });
+  it("rejects overlapping declared outputs before moving anything", async () => {
+    const { ws, registry, ctx } = await setup();
+    mkdirSync(join(ws, "output", "cuts"), { recursive: true });
+    writeFileSync(join(ws, "output", "cuts", "001.mp4"), "aaa");
+    const { checksum, size_bytes } = directoryDigest(await listDirectoryFiles(join(ws, "output", "cuts")));
+    const outputs = [
+      { path: "output/cuts/", type: "clip_set", checksum, size_bytes, kind: "directory" as const },
+      { path: "output\\cuts\\001.mp4", type: "clip", checksum: sha256String("aaa"), size_bytes: 3, kind: "file" as const },
+    ];
+    await expect(registry.stageOutputs({ workspaceDir: ws, outputs, mimeTypes: {}, ctx })).rejects.toMatchObject({ code: "IO_ERROR" });
+    expect(existsSync(join(ws, "output", "cuts", "001.mp4"))).toBe(true); // the second rename used to ENOENT after the first moved the tree
+    expect(existsSync(join(ws, "output", "result.txt"))).toBe(true);
+  });
+  it("rejects two outputs declaring the same path", async () => {
+    const { ws, registry, ctx } = await setup();
+    const one = { path: "output/result.txt", type: "script_text", checksum: sha256String("hello"), size_bytes: 5 };
+    await expect(registry.stageOutputs({ workspaceDir: ws, outputs: [one, { ...one, type: "other" }], mimeTypes: {}, ctx })).rejects.toMatchObject({ code: "IO_ERROR" });
+    expect(existsSync(join(ws, "output", "result.txt"))).toBe(true);
+  });
   it("rejects a directory output whose digest does not match", async () => {
     const { ws, registry, ctx } = await setup();
     mkdirSync(join(ws, "output", "cuts"), { recursive: true }); writeFileSync(join(ws, "output", "cuts", "001.mp4"), "aaa");
