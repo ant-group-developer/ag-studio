@@ -3619,13 +3619,28 @@ export function fakeScriptCommands(): Record<string, string[]> {
 Khi package được build ra `dist/`, `FAKE_STAGE_SCRIPT_PATH` trỏ tới `dist/fake-stage-script.ts` không tồn tại. Xử lý: trong `index.ts` kiểm tra `existsSync` của `.ts`; nếu không có thì dùng `.js` cùng thư mục và bỏ `--import tsx`:
 
 ```ts
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 const here = dirname(fileURLToPath(import.meta.url));
 export const FAKE_STAGE_SCRIPT_PATH = existsSync(join(here, "fake-stage-script.ts")) ? join(here, "fake-stage-script.ts") : join(here, "fake-stage-script.js");
+
+/** Absolute file:// URL of tsx's ESM loader, resolved from this package, so `--import` works from any cwd
+ *  (workspaces live outside the repo; a bare "tsx" specifier resolves against the child's cwd) — review Task 11. */
+export function tsxLoaderUrl(): string {
+  const pkgPath = createRequire(import.meta.url).resolve("tsx/package.json");
+  const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { exports?: Record<string, unknown> };
+  const dot = pkg.exports?.["."];
+  const entry = typeof dot === "string" ? dot : (dot as { import?: string | { default?: string } } | undefined)?.import;
+  const rel = typeof entry === "string" ? entry : entry?.default;
+  if (!rel) throw new Error("cannot locate tsx ESM loader entry in tsx/package.json exports");
+  return pathToFileURL(join(dirname(pkgPath), rel)).href;
+}
 export function fakeScriptCommands(): Record<string, string[]> {
-  return { "fake-stage": FAKE_STAGE_SCRIPT_PATH.endsWith(".ts") ? [process.execPath, "--import", "tsx", FAKE_STAGE_SCRIPT_PATH] : [process.execPath, FAKE_STAGE_SCRIPT_PATH] };
+  return { "fake-stage": FAKE_STAGE_SCRIPT_PATH.endsWith(".ts") ? [process.execPath, "--import", tsxLoaderUrl(), FAKE_STAGE_SCRIPT_PATH] : [process.execPath, FAKE_STAGE_SCRIPT_PATH] };
 }
 ```
+
+Test trong `fake-stage-script.test.ts` phải spawn bằng chính `fakeScriptCommands()["fake-stage"]` (không hard-code `--import tsx`) và workspace nằm ở `os.tmpdir()` ngoài repo, để chứng minh lệnh chạy được từ mọi cwd.
 
 - [ ] **Step 5: Viết executors**
 
@@ -3658,9 +3673,10 @@ export class ScriptExecutor implements Executor {
       let stderr = ""; let timedOut = false;
       child.stdout.on("data", (d) => ctx.logger.info(String(d).trimEnd(), { stream: "stdout" }));
       child.stderr.on("data", (d) => { stderr += String(d); ctx.logger.warn(String(d).trimEnd(), { stream: "stderr" }); });
+      const onAbort = () => child.kill();
       const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
-      ctx.signal?.addEventListener("abort", () => child.kill());
-      child.on("close", (code) => { clearTimeout(timer); resolve({ code, timedOut, stderr }); });
+      ctx.signal?.addEventListener("abort", onAbort, { once: true });
+      child.on("close", (code) => { clearTimeout(timer); ctx.signal?.removeEventListener("abort", onAbort); resolve({ code, timedOut, stderr }); }); // listener released (review Task 11)
     });
     writeFileSync(join(ctx.workspaceDir, "logs", "script-stderr.log"), stderr);
     if (timedOut) return failed("transient", "script exceeded deadline", { code: "EXECUTOR_TIMEOUT", timeout_ms: timeoutMs });
