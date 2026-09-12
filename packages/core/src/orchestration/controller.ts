@@ -2,6 +2,7 @@ import { isHarnessError, newId, type Artifact, type Attempt, type Clock, type Fa
 import { ArtifactRegistry, type ArtifactContext } from "../artifacts/registry.js";
 import { addSeconds } from "../state/clock.js";
 import type { VerifyOutcome } from "../verification/verifier.js";
+import { invalidateDownstream } from "./invalidation.js";
 import { eventFor, Planner } from "./planner.js";
 
 export interface CommitParams {
@@ -73,6 +74,8 @@ export class Controller {
       if (kind === null) {
         store.transition("stage_run", stage.stage_run_id, "RUNNING", "VERIFYING", ev("stage.verifying"));
         artifacts = registry.commitAccepted(staged.map((s) => ({ ...s, artifact: { ...s.artifact, checks: ctx.checkResultIds } })), ctx);
+        const { stale } = invalidateDownstream({ store, run, stageKey: stage.stage_key, now });
+        if (stale.length) store.appendEvent(ev("stage.invalidated_downstream", "info", { stale }));
         store.transition("attempt", attempt.attempt_id, "RUNNING", "SUCCEEDED", ev("attempt.succeeded", "info", { cost_usd: p.result.usage.cost_usd }));
         store.updateAttempt({ ...store.getAttempt(attempt.attempt_id)!, finished_at: now });
         store.transition("stage_run", stage.stage_run_id, "VERIFYING", "SUCCEEDED", ev("stage.succeeded", "info", { artifacts: artifacts.map((a) => a.artifact_id) }));
