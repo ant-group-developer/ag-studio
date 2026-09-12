@@ -3941,7 +3941,8 @@ export class Controller {
         store.insertCheckResult({ schema_version: "harness.check-result/v1", check_result_id: id, check_id: r.check_id, checker_version: r.checker_version, attempt_id: attempt.attempt_id, artifact_id: null, verdict: r.verdict, evidence: r.evidence, created_at: now });
         ctx.checkResultIds.push(id);
       }
-      store.updateRun({ ...store.getRun(run.run_id)!, total_cost_usd: run.total_cost_usd + p.result.usage.cost_usd });
+      const freshRun = store.getRun(run.run_id)!;
+      store.updateRun({ ...freshRun, total_cost_usd: freshRun.total_cost_usd + p.result.usage.cost_usd }); // fresh read: `run` captured before the await may be stale (review Task 12)
 
       let artifacts: Artifact[] = [];
       let retryScheduled = false;
