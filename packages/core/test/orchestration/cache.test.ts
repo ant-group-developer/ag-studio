@@ -11,8 +11,36 @@ const wf = { definition: WorkflowDefinitionSchema.parse({ schema_version: "harne
   { key: "finalize", executor: { type: "script", script: "fake-stage" }, depends_on: ["produce"], required_checks: ["schema-valid"] },
 ] }), digest: "sha256:" + "f".repeat(64) };
 const profile = ProductionProfileSchema.parse({ schema_version: "harness.production-profile/v1", profile_id: "footage", revision: 1, status: "active", workflow_release: "two@1.0.0", options_schema: { voice: ["none", "tts"] }, options_defaults: { voice: "none" } });
+const wf1 = { definition: WorkflowDefinitionSchema.parse({ schema_version: "harness.workflow/v1", id: "one", version: "1.0.0", defaults: {}, stages: [
+  { key: "produce", executor: { type: "script", script: "fake-stage" }, required_checks: ["schema-valid"], outputs: [{ type: "script_text", mime_type: "text/plain" }] },
+] }), digest: "sha256:" + "e".repeat(64) };
 const EXECUTOR_VERSION = "fake@0.1.0";
 const executorVersionFor = () => EXECUTOR_VERSION;
+
+function world() {
+  const t = openTempStore();
+  const catalog = new SourceCatalog({ store: t.store, dataRoot: t.dir, prober: new NullMediaProber(), clock: t.clock, materialize: "reference" });
+  const content = catalog.createContent({ source_ids: [], title: "c" });
+  const { variant } = catalog.getOrCreateVariant({ content_id: content.content_id, profile, options: {} });
+  const planner = new Planner(t.store);
+  const registry = new ArtifactRegistry(t.store, t.dir);
+  const controller = new Controller({ store: t.store, registry, planner, clock: t.clock });
+  return { ...t, catalog, content, variant, planner, controller, harness: loadHarnessConfig(HARNESS_ROOT) };
+}
+
+/** Claim whatever stage is READY, write one output file and commit it SUCCEEDED. */
+async function driveOneStage(w: ReturnType<typeof world>, workflow: typeof wf, body: string) {
+  const claim = w.store.claim({ owner: "w", capabilities: [], now: w.clock.now(), leaseSeconds: 90 })!;
+  const { stageRun, attempt } = beginAttempt(w.store, claim);
+  const ws = await createWorkspace(w.dir, stageRun.run_id, stageRun.stage_key, attempt.attempt_id);
+  writeFileSync(join(ws, "output", "result.txt"), body);
+  const result: StageResult = { schema_version: "harness.stage-result/v1", attempt_id: attempt.attempt_id, outcome: "succeeded", outputs: [{ path: "output/result.txt", type: "script_text", checksum: sha256String(body), size_bytes: Buffer.byteLength(body), kind: "file" }], checks: [], usage: { wall_seconds: 1, cost_usd: 0 }, external_operations: [], errors: [] };
+  const request = { attempt_id: attempt.attempt_id } as StageRequest;
+  const verify = await new Verifier(BUILTIN_CHECKERS).verify({ request, result, workspaceDir: ws }, ["schema-valid"]);
+  const def = workflow.definition.stages.find((s) => s.key === stageRun.stage_key)!;
+  const out = await w.controller.commit({ stageRun, attempt, fencingToken: claim.lease.fencing_token, result, verify, workspaceDir: ws, executorVersion: EXECUTOR_VERSION, inputArtifactIds: acceptedInputsFor(w.store, stageRun).map((a) => a.artifact_id), mimeTypes: { script_text: "text/plain" }, stageDefinitionDigest: stageDefinitionDigest(def) });
+  return { stageKey: stageRun.stage_key, out };
+}
 
 describe("cache", () => {
   it("cache key depends on definition, inputs, options, config and executor version", () => {
@@ -72,5 +100,27 @@ describe("cache", () => {
     // no executorVersionFor at all: reuse is skipped entirely
     const run6 = planner.plan({ workflow: wf, profile, harness, projectId: "p", portfolioId: "pf", content, variant });
     expect(t.store.listStageRuns(run6.run_id)[0]?.state).toBe("PENDING");
+  });
+
+  it("a run whose every stage was reused settles SUCCEEDED at enqueue without dispatching anything", async () => {
+    const w = world();
+    const plan = () => w.planner.plan({ workflow: wf1, profile, harness: w.harness, projectId: "p", portfolioId: "pf", content: w.content, variant: w.variant, executorVersionFor });
+    const run1 = plan();
+    w.planner.enqueue(run1.run_id);
+    await driveOneStage(w, wf1, "hello");
+    expect(w.store.getRun(run1.run_id)?.state).toBe("SUCCEEDED");
+
+    const run2 = plan();
+    expect(w.store.listStageRuns(run2.run_id).map((s) => s.state)).toEqual(["SUCCEEDED"]);
+    w.planner.enqueue(run2.run_id);
+    expect(w.store.getRun(run2.run_id)?.state).toBe("SUCCEEDED");
+    expect(w.planner.advance(run2.run_id).runState).toBe("SUCCEEDED");
+    const stage2 = w.store.listStageRuns(run2.run_id)[0]!;
+    expect(w.store.listAttempts(stage2.stage_run_id)).toEqual([]);
+    expect(w.store.getLease(stage2.stage_run_id)).toBeUndefined();
+    const events = w.store.listEvents({ run_id: run2.run_id }).map((e) => e.event_type);
+    expect(events).toContain("run.started");
+    expect(events).toContain("run.succeeded");
+    expect(w.store.claim({ owner: "w2", capabilities: [], now: w.clock.now(), leaseSeconds: 90 })).toBeUndefined();
   });
 });

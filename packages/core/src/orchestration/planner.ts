@@ -124,6 +124,11 @@ export class Planner {
         const deps = [...s.depends_on, ...s.depends_on_optional];
         if (deps.every((d) => byKey.get(d)?.state === "SUCCEEDED")) this.ready(run, s);
       }
+      // every stage came from the cache: no worker will ever claim anything here, so settle the run now
+      if (this.store.listStageRuns(runId).every((s) => s.state === "SUCCEEDED")) {
+        this.store.transition("run", runId, "READY", "RUNNING", eventFor(run, null, null, "run.started", "info", { reason: "all_stages_reused" }));
+        this.store.transition("run", runId, "RUNNING", "SUCCEEDED", eventFor(run, null, null, "run.succeeded"));
+      }
     });
   }
 
