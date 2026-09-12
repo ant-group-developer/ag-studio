@@ -10,5 +10,6 @@ export * from "./environment/workspace.js";
 export * from "./artifacts/registry.js";
 export * from "./orchestration/registry.js";
 export * from "./orchestration/planner.js";
+export * from "./orchestration/controller.js";
 export * from "./verification/verifier.js";
 export * from "./verification/checkers.js";
