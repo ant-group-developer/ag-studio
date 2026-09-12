@@ -21,7 +21,7 @@ function makeWorld(opts: { scriptExecutor?: Executor; owner?: string; clock?: Fi
   executors.register("script", opts.scriptExecutor ?? new ScriptExecutor(fakeScriptCommands()));
   executors.register("agent", new AgentExecutor(new FakeAgentRuntime()));
   const harness = loadHarnessConfig(HARNESS_ROOT);
-  const project = ProjectConfigSchema.parse({ schema_version: "harness.project/v1", project_id: "project-main", template_release: "0.1.0", runtime: "claude", data_root: dir, portfolios: [{ portfolio_id: "portfolio-main", display_name: "Main" }] });
+  const project = ProjectConfigSchema.parse({ schema_version: "harness.project-config/v1", project_id: "project-main", template_release: "0.1.0", runtime: "claude", data_root: dir, portfolios: [{ portfolio_id: "portfolio-main", display_name: "Main" }] });
   const logger = createLogger({ redactor: new Redactor(() => []), sink: () => {}, level: "error" });
   const deps: WorkerDeps = { store, planner, controller, registry, verifier: new Verifier(BUILTIN_CHECKERS), executors, harness, project, dataRoot: dir, owner: opts.owner ?? "w1", capabilities: ["write_workspace", "read_source"], logger, clock };
   const worker = new Worker(deps);

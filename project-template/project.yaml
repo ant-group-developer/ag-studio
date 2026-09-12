@@ -1,5 +1,5 @@
 # Copy this directory to create an operations project, then edit the values below.
-schema_version: harness.project/v1
+schema_version: harness.project-config/v1
 project_id: project-CHANGE-ME
 template_release: 0.1.0
 runtime: claude            # claude | codex, chosen per machine/project

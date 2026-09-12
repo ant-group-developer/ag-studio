@@ -53,7 +53,7 @@ export const StageResultSchema = z.object({
 }).strict();
 
 export const ArtifactManifestSchema = z.object({
-  schema_version: schemaVersion("artifact"),
+  schema_version: schemaVersion("artifact-manifest"),
   artifact_id: idSchema("artifact"),
   type: z.string().min(1),
   status: z.enum(["provisional", "accepted", "rejected", "stale", "archived"]),

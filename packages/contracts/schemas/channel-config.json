@@ -6,7 +6,7 @@
       "properties": {
         "schema_version": {
           "type": "string",
-          "const": "harness.channel/v1"
+          "const": "harness.channel-config/v1"
         },
         "channel_id": {
           "type": "string",

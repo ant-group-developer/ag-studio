@@ -53,7 +53,7 @@ export const ProductionProfileSchema = z.object({
 }).strict();
 
 export const ChannelConfigSchema = z.object({
-  schema_version: schemaVersion("channel"),
+  schema_version: schemaVersion("channel-config"),
   channel_id: z.string().min(1),
   config_revision: revisionSchema,
   display_name: z.string(),
@@ -67,7 +67,7 @@ export const ChannelConfigSchema = z.object({
 }).strict();
 
 export const ProjectConfigSchema = z.object({
-  schema_version: schemaVersion("project"),
+  schema_version: schemaVersion("project-config"),
   project_id: z.string().min(1),
   template_release: z.string().min(1),
   runtime: z.enum(["claude", "codex"]),

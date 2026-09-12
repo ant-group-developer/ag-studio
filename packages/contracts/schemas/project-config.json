@@ -6,7 +6,7 @@
       "properties": {
         "schema_version": {
           "type": "string",
-          "const": "harness.project/v1"
+          "const": "harness.project-config/v1"
         },
         "project_id": {
           "type": "string",

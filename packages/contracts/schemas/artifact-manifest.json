@@ -6,7 +6,7 @@
       "properties": {
         "schema_version": {
           "type": "string",
-          "const": "harness.artifact/v1"
+          "const": "harness.artifact-manifest/v1"
         },
         "artifact_id": {
           "type": "string",

@@ -30,7 +30,7 @@ function buildArtifact(output: StageOutput, uri: string, mime: string, ctx: Arti
 
 export function toManifest(a: Artifact): ArtifactManifest {
   return {
-    schema_version: "harness.artifact/v1", artifact_id: a.artifact_id, type: a.type, status: a.status.toLowerCase() as ArtifactManifest["status"],
+    schema_version: "harness.artifact-manifest/v1", artifact_id: a.artifact_id, type: a.type, status: a.status.toLowerCase() as ArtifactManifest["status"],
     uri: a.uri, checksum: a.checksum, size_bytes: a.size_bytes, mime_type: a.mime_type,
     created_by: { run_id: a.run_id, stage_run_id: a.stage_run_id, attempt_id: a.attempt_id },
     lineage: a.lineage, reproducibility: a.reproducibility, checks: a.checks,

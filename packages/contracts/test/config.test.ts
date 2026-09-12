@@ -42,7 +42,7 @@ describe("config contracts", () => {
   });
   it("parses project config with runtime", () => {
     expect(ProjectConfigSchema.parse({
-      schema_version: "harness.project/v1", project_id: "project-main", template_release: "0.1.0", runtime: "claude",
+      schema_version: "harness.project-config/v1", project_id: "project-main", template_release: "0.1.0", runtime: "claude",
       data_root: "E:/youtube-operations-data", portfolios: [{ portfolio_id: "portfolio-main", display_name: "Main" }],
     }).runtime).toBe("claude");
   });

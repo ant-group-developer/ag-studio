@@ -1,4 +1,4 @@
-schema_version: harness.project/v1
+schema_version: harness.project-config/v1
 project_id: project-minimal
 template_release: 0.1.0
 runtime: claude

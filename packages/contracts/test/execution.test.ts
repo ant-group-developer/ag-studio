@@ -37,7 +37,7 @@ describe("execution contracts", () => {
   });
   it("parses an ArtifactManifest", () => {
     expect(ArtifactManifestSchema.safeParse({
-      schema_version: "harness.artifact/v1", artifact_id: newId("artifact"), type: "final_video", status: "accepted",
+      schema_version: "harness.artifact-manifest/v1", artifact_id: newId("artifact"), type: "final_video", status: "accepted",
       uri: "file:///x", checksum: sha, size_bytes: 1, mime_type: "video/mp4",
       created_by: { run_id: newId("run"), stage_run_id: newId("stage_run"), attempt_id: newId("attempt") },
       lineage: { input_artifacts: [], source_items: [] },
