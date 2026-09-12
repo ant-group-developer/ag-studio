@@ -151,6 +151,12 @@ export class SqliteStateStore implements StateStore {
     const res = this.db.prepare("UPDATE external_operation SET data = ?, updated_at = ? WHERE id = ? AND state = ?").run(JSON.stringify(v), v.updated_at, v.operation_id, v.status);
     if (res.changes === 0) throw new HarnessError("STALE_STATE", `external_operation ${v.operation_id} not in status ${v.status}`);
   }
+  listExternalOperations(filter: { stage_run_id?: string; status?: string }): ExternalOperation[] {
+    const where: string[] = []; const params: string[] = [];
+    if (filter.stage_run_id) { where.push("json_extract(data, '$.stage_run_id') = ?"); params.push(filter.stage_run_id); }
+    if (filter.status) { where.push("state = ?"); params.push(filter.status); }
+    return this.listDocs(`SELECT data FROM external_operation${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY id`, params, (x) => ExternalOperationSchema.parse(x));
+  }
 
   // ---- check_result ----
   insertCheckResult(c: CheckResult): void {

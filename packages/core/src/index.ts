@@ -11,5 +11,7 @@ export * from "./artifacts/registry.js";
 export * from "./orchestration/registry.js";
 export * from "./orchestration/planner.js";
 export * from "./orchestration/controller.js";
+export * from "./orchestration/journal.js";
+export * from "./orchestration/reconcile.js";
 export * from "./verification/verifier.js";
 export * from "./verification/checkers.js";

@@ -37,6 +37,7 @@ export interface StateStore {
   getExternalOperation(id: string): ExternalOperation | undefined;
   findExternalOperationByKey(idempotencyKey: string): ExternalOperation | undefined;
   updateExternalOperation(op: ExternalOperation): void;
+  listExternalOperations(filter: { stage_run_id?: string; status?: string }): ExternalOperation[];
 
   insertCheckResult(c: CheckResult): void;
   listCheckResults(attemptId: string): CheckResult[];
