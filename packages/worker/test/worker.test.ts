@@ -102,9 +102,11 @@ describe("Worker", () => {
     const w = makeWorld();
     const ac = new AbortController();
     const p = w.worker.runForever(ac.signal);
-    await new Promise((r) => setTimeout(r, 2500)); // at least one full idle poll (poll_seconds = 2)
+    await new Promise((r) => setTimeout(r, 4500)); // poll_seconds = 2 → at least two idle sleeps completed, a third pending
+    const pending = getEventListeners(ac.signal, "abort").length;
     ac.abort();
     await p;
+    expect(pending).toBeLessThanOrEqual(1); // old code: one stale listener per completed sleep (>= 3 here)
     expect(getEventListeners(ac.signal, "abort")).toHaveLength(0);
   });
   it("turns a workspace setup failure into a transient attempt failure and requeues the stage", async () => {
