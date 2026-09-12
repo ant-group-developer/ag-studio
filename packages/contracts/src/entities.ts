@@ -9,7 +9,7 @@ export const ATTEMPT_STATES = ["CLAIMED", "RUNNING", "SUCCEEDED", "FAILED", "ABA
 export const ARTIFACT_STATUSES = ["PROVISIONAL", "ACCEPTED", "REJECTED", "STALE", "ARCHIVED"] as const;
 export const EXTERNAL_OPERATION_STATUSES = ["INTENT_RECORDED", "DISPATCHED", "NEEDS_RECONCILIATION", "CONFIRMED", "FAILED"] as const;
 export const PUBLICATION_STATES = ["DRAFT", "READY", "SCHEDULED", "UPLOADING", "PROCESSING", "PUBLISHED", "NEEDS_RECONCILIATION", "FAILED"] as const;
-export const FAILURE_KINDS = ["transient", "result", "contract", "unknown", "abandoned"] as const;
+export const FAILURE_KINDS = ["transient", "result", "contract", "unknown", "abandoned", "deferred"] as const;
 export const SEVERITIES = ["debug", "info", "warn", "error"] as const;
 
 export const workflowRefSchema = z.object({ id: z.string().min(1), version: semverSchema, digest: checksumSchema }).strict();

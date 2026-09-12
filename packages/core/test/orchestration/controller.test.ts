@@ -71,6 +71,17 @@ describe("Controller.commit", () => {
     const result: StageResult = { schema_version: "harness.stage-result/v1", attempt_id: attempt.attempt_id, outcome: "unknown", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [{ kind: "unknown", message: "lost", details: {} }] };
     expect(await commit(result)).toMatchObject({ failureKind: "unknown", stageState: "NEEDS_RECONCILIATION", runState: "WAITING", retryScheduled: false });
   });
+  it("deferred outcome parks the stage for a human without counting a result failure", async () => {
+    const { store, stageRun, attempt, commit } = await setup();
+    const result: StageResult = { schema_version: "harness.stage-result/v1", attempt_id: attempt.attempt_id, outcome: "deferred", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [] };
+    const out = await commit(result);
+    expect(out).toMatchObject({ failureKind: "deferred", stageState: "WAITING_HUMAN", runState: "WAITING", retryScheduled: false });
+    expect(out.artifacts).toEqual([]);
+    const s = store.getStageRun(stageRun.stage_run_id)!;
+    expect(s.result_failures).toBe(0);
+    expect(store.getAttempt(attempt.attempt_id)?.failure_kind).toBe("deferred");
+    expect(store.listEvents({ run_id: s.run_id }).some((e) => e.event_type === "stage.deferred")).toBe(true);
+  });
   it("rejects a stale fencing token and writes nothing", async () => {
     const { store, stageRun, clock, write, commit } = await setup();
     clock.advance(91);

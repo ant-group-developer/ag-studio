@@ -118,7 +118,8 @@
                         "result",
                         "contract",
                         "unknown",
-                        "abandoned"
+                        "abandoned",
+                        "deferred"
                       ]
                     }
                   }

@@ -15,6 +15,7 @@ export function classifyFailure(result: StageResult, verify: VerifyOutcome): Fai
   if (verify.missing.length > 0) return "contract";
   if (verify.results.some((r) => r.check_id === "schema-valid" && r.verdict === "fail")) return "contract";
   if (result.errors.some((e) => e.kind === "contract")) return "contract";
+  if (result.outcome === "deferred") return "deferred";
   if (result.outcome === "unknown") return "unknown";
   if (result.outcome === "failed" && result.errors[0]?.kind === "transient") return "transient";
   return "result";
@@ -66,6 +67,11 @@ export class Controller {
         this.failAttempt(attempt, kind, p.result, now);
         store.transition("stage_run", stage.stage_run_id, "RUNNING", "WAITING_EXTERNAL", ev("stage.waiting_external", "warn"));
         store.transition("stage_run", stage.stage_run_id, "WAITING_EXTERNAL", "NEEDS_RECONCILIATION", ev("stage.needs_reconciliation", "warn", { external_operations: p.result.external_operations }));
+      } else if (kind === "deferred") {
+        // the executor handed the decision to a human: park the stage, no result failure, no retry
+        this.failAttempt(attempt, kind, p.result, now);
+        store.transition("stage_run", stage.stage_run_id, "RUNNING", "VERIFYING", ev("stage.verifying"));
+        store.transition("stage_run", stage.stage_run_id, "VERIFYING", "WAITING_HUMAN", ev("stage.deferred", "info", { errors: p.result.errors }));
       } else if (kind === "contract") {
         this.failAttempt(attempt, kind, p.result, now);
         store.transition("stage_run", stage.stage_run_id, "RUNNING", "VERIFYING", ev("stage.verifying"));

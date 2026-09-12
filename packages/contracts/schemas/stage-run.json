@@ -105,7 +105,8 @@
                   "result",
                   "contract",
                   "unknown",
-                  "abandoned"
+                  "abandoned",
+                  "deferred"
                 ]
               }
             }
@@ -161,7 +162,8 @@
             "result",
             "contract",
             "unknown",
-            "abandoned"
+            "abandoned",
+            "deferred"
           ]
         },
         "created_at": {
