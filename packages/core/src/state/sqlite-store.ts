@@ -176,11 +176,13 @@ export class SqliteStateStore implements StateStore {
     this.db.prepare("INSERT INTO event (id, run_id, occurred_at, event_type, data) VALUES (?, ?, ?, ?, ?)").run(e.event_id, e.run_id, e.occurred_at, e.event_type, JSON.stringify(e));
     return e;
   }
-  listEvents(filter: { run_id?: string; limit?: number }): Event[] {
+  listEvents(filter: { run_id?: string; limit?: number; newest?: boolean }): Event[] {
     const limit = filter.limit ?? 1000;
-    return filter.run_id
-      ? this.listDocs("SELECT data FROM event WHERE run_id = ? ORDER BY occurred_at, id LIMIT ?", [filter.run_id, limit], (x) => EventSchema.parse(x))
-      : this.listDocs("SELECT data FROM event ORDER BY occurred_at, id LIMIT ?", [limit], (x) => EventSchema.parse(x));
+    const order = filter.newest ? "occurred_at DESC, id DESC" : "occurred_at, id";
+    const rows = filter.run_id
+      ? this.listDocs(`SELECT data FROM event WHERE run_id = ? ORDER BY ${order} LIMIT ?`, [filter.run_id, limit], (x) => EventSchema.parse(x))
+      : this.listDocs(`SELECT data FROM event ORDER BY ${order} LIMIT ?`, [limit], (x) => EventSchema.parse(x));
+    return filter.newest ? rows.reverse() : rows;
   }
 
   // ---- implemented in Task 5 and 6 ----

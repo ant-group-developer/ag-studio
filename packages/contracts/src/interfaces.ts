@@ -43,7 +43,7 @@ export interface StateStore {
   listCheckResults(attemptId: string): CheckResult[];
 
   appendEvent(e: EventInput): Event;
-  listEvents(filter: { run_id?: string; limit?: number }): Event[];
+  listEvents(filter: { run_id?: string; limit?: number; newest?: boolean }): Event[];
 
   transition(kind: TransitionKind, id: string, expectedFrom: string, to: string, event: EventInput): void;
   claim(params: ClaimParams): ClaimResult | undefined;

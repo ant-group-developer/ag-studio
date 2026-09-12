@@ -60,6 +60,16 @@ describe("SqliteStateStore", () => {
     expect(store.listEvents({ run_id: runId }).map((x) => x.event_type)).toEqual(["run.created", "run.enqueued"]);
   });
 
+  it("listEvents({ newest: true }) returns the newest rows in chronological order", () => {
+    const { store, clock } = openTempStore();
+    const runId = newId("run");
+    const base = { run_id: runId, stage_run_id: null, attempt_id: null, project_id: "p", portfolio_id: null, channel_id: null, content_id: null, variant_id: null, workflow_release: null, severity: "info" as const, payload: {} };
+    for (const t of ["one", "two", "three", "four", "five"]) { store.appendEvent({ ...base, event_type: `run.${t}` }); clock.advance(1); }
+    expect(store.listEvents({ run_id: runId, limit: 2, newest: true }).map((x) => x.event_type)).toEqual(["run.four", "run.five"]);
+    expect(store.listEvents({ limit: 2, newest: true }).map((x) => x.event_type)).toEqual(["run.four", "run.five"]);
+    expect(store.listEvents({ run_id: runId, limit: 2 }).map((x) => x.event_type)).toEqual(["run.one", "run.two"]);
+  });
+
   it("rolls back a transaction when the callback throws", () => {
     const { store } = openTempStore();
     const run = makeRun();
