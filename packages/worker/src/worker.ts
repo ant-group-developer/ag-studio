@@ -1,12 +1,13 @@
 import { pathToFileURL } from "node:url";
 import { isHarnessError, type Artifact, type ClaimResult, type Clock, type HarnessConfig, type ProjectConfig, type Run, type StageRequest, type StageResult, type StateStore } from "@harness/contracts";
-import { acceptedInputsFor, addSeconds, ArtifactRegistry, Controller, createWorkspace, eventFor, materializeInputs, Planner, Verifier, workspacePath, type HarnessLogger } from "@harness/core";
+import { acceptedInputsFor, addSeconds, ArtifactRegistry, canonicalDigest, Controller, createWorkspace, eventFor, type LoadedWorkflow, materializeInputs, Planner, stageDefinitionDigest, Verifier, workspacePath, type HarnessLogger } from "@harness/core";
 import type { ExecutorRegistry } from "@harness/executors";
 import { startHeartbeat } from "./heartbeat.js";
 
 export interface WorkerDeps {
   store: StateStore; planner: Planner; controller: Controller; registry: ArtifactRegistry; verifier: Verifier; executors: ExecutorRegistry;
   harness: HarnessConfig; project: ProjectConfig; dataRoot: string; owner: string; capabilities: string[]; logger: HarnessLogger; clock: Clock;
+  workflows: (ref: string) => LoadedWorkflow;
 }
 
 function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
@@ -47,6 +48,8 @@ export class Worker {
     if (leaseSeconds !== defaultLeaseSeconds) store.heartbeat(claim.attempt.attempt_id, claim.lease.fencing_token, addSeconds(clock.now(), leaseSeconds));
     const log = logger.child({ run_id: run.run_id, stage_run_id: claim.stageRun.stage_run_id, attempt_id: claim.attempt.attempt_id, owner: this.d.owner });
     const ev = (type: string, severity: "info" | "warn" | "error" = "info", payload: Record<string, unknown> = {}) => eventFor(run, claim.stageRun, claim.attempt, type, severity, payload);
+    const def = this.d.workflows(`${run.workflow_release.id}@${run.workflow_release.version}`).definition.stages.find((s) => s.key === claim.stageRun.stage_key);
+    const defDigest = def ? stageDefinitionDigest(def) : canonicalDigest({ key: claim.stageRun.stage_key });
 
     store.transaction(() => {
       store.transition("attempt", claim.attempt.attempt_id, "CLAIMED", "RUNNING", ev("attempt.started"));
@@ -65,7 +68,7 @@ export class Worker {
     } catch (e) {
       log.error("stage setup failed", { error: e instanceof Error ? e.message : String(e) });
       const failed: StageResult = { schema_version: "harness.stage-result/v1", attempt_id: claim.attempt.attempt_id, outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [{ kind: "transient", message: e instanceof Error ? e.message : String(e), details: { phase: "setup" } }] };
-      await this.d.controller.commit({ stageRun: claim.stageRun, attempt: claim.attempt, fencingToken: claim.lease.fencing_token, result: failed, verify: { results: [], allRequiredPassed: false, missing: [] }, workspaceDir, executorVersion: "worker-setup", inputArtifactIds: [], mimeTypes: {} });
+      await this.d.controller.commit({ stageRun: claim.stageRun, attempt: claim.attempt, fencingToken: claim.lease.fencing_token, result: failed, verify: { results: [], allRequiredPassed: false, missing: [] }, workspaceDir, executorVersion: "worker-setup", inputArtifactIds: [], mimeTypes: {}, stageDefinitionDigest: defDigest });
       return "done";
     }
 
@@ -89,7 +92,7 @@ export class Worker {
     }
     const verify = await this.d.verifier.verify({ request, result, workspaceDir }, claim.stageRun.required_checks);
     try {
-      const out = await this.d.controller.commit({ stageRun: claim.stageRun, attempt: claim.attempt, fencingToken: claim.lease.fencing_token, result, verify, workspaceDir, executorVersion: executor.version, inputArtifactIds: inputArtifacts.map((a) => a.artifact_id), mimeTypes: this.mimeTypesFor(claim) });
+      const out = await this.d.controller.commit({ stageRun: claim.stageRun, attempt: claim.attempt, fencingToken: claim.lease.fencing_token, result, verify, workspaceDir, executorVersion: executor.version, inputArtifactIds: inputArtifacts.map((a) => a.artifact_id), mimeTypes: this.mimeTypesFor(claim), stageDefinitionDigest: defDigest });
       log.info("stage committed", { stage: out.stageState, run: out.runState, failure: out.failureKind ?? null, retry: out.retryScheduled });
       return "done";
     } catch (e) {

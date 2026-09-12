@@ -1,13 +1,14 @@
-import { HarnessError, newId, type Attempt, type ContentItem, type ContentVariant, type EventInput, type HarnessConfig, type ProductionProfile, type Run, type StageDefinition, type StageRun, type StateStore } from "@harness/contracts";
+import { HarnessError, newId, type Artifact, type Attempt, type Checksum, type ContentItem, type ContentVariant, type EventInput, type HarnessConfig, type ProductionProfile, type Run, type StageDefinition, type StageRun, type StateStore } from "@harness/contracts";
 import { resolveEffectiveConfig } from "../config/resolve.js";
 import { isTerminal } from "../state/transitions.js";
 import { evaluateWhen, parseWhen } from "../source-catalog/when.js";
+import { computeCacheKey, findReusableArtifacts, stageDefinitionDigest } from "./cache.js";
 import type { LoadedWorkflow } from "./registry.js";
 
 export interface PlanInput {
   workflow: LoadedWorkflow; profile: ProductionProfile; harness: HarnessConfig;
   projectId: string; portfolioId: string; runOverrides?: Record<string, unknown>; channelOverrides?: Record<string, unknown>;
-  sourceId?: string; content?: ContentItem; variant?: ContentVariant;
+  sourceId?: string; content?: ContentItem; variant?: ContentVariant; reuse?: boolean;
 }
 
 export function eventFor(run: Run, stage: StageRun | null, attempt: Attempt | null, event_type: string, severity: EventInput["severity"] = "info", payload: Record<string, unknown> = {}): EventInput {
@@ -75,14 +76,29 @@ export class Planner {
         state: "DRAFT", effective_config_snapshot: snapshot, effective_config_digest: digest, total_cost_usd: 0, created_at: now, updated_at: now,
       };
       this.store.insertRun(run);
+      const reuse = input.reuse ?? input.profile.reuse === "allow";
+      const reusable = new Map<string, Artifact[]>();
+      let stageCacheKey: Checksum | undefined;
       for (const { def: s, depends_on, depends_on_optional } of graph.kept) {
+        let reused: Artifact[] | undefined;
+        if (reuse && input.variant && s.executor.type !== "gate") {
+          const deps = [...depends_on, ...depends_on_optional];
+          if (deps.every((d) => reusable.has(d))) {
+            const inputChecksums = deps.flatMap((d) => reusable.get(d)!.map((a) => a.checksum));
+            const cacheKey = computeCacheKey({ stageDefinitionDigest: stageDefinitionDigest(s), inputChecksums, optionsDigest: input.variant.options_digest, effectiveConfigDigest: digest });
+            const found = findReusableArtifacts(this.store, { variantId: input.variant.variant_id, stageKey: s.key, cacheKey, excludeRunId: run.run_id });
+            if (found.length) { reused = found; reusable.set(s.key, found); stageCacheKey = cacheKey; }
+          }
+        }
         const stage: StageRun = {
           schema_version: "harness.stage-run/v1", stage_run_id: newId("stage_run"), run_id: run.run_id, stage_key: s.key, executor: s.executor,
           depends_on, depends_on_optional, requires_resources: s.requires_resources, required_capabilities: s.required_capabilities,
           required_checks: [...new Set([...s.required_checks, ...input.profile.verification.required_checks, ...(input.profile.verification.required_checks_by_stage[s.key] ?? [])])],
-          retry: s.retry, stage_config: s.config, state: "PENDING", attempt_count: 0, result_failures: 0, created_at: now, updated_at: now,
+          retry: s.retry, stage_config: s.config, state: reused ? "SUCCEEDED" : "PENDING", attempt_count: 0, result_failures: 0, created_at: now, updated_at: now,
+          ...(reused ? { reused_artifact_ids: reused.map((a) => a.artifact_id), cache_key: stageCacheKey } : {}),
         };
         this.store.insertStageRun(stage);
+        if (reused) this.store.appendEvent(eventFor(run, stage, null, "stage.reused", "info", { artifacts: reused.map((a) => a.artifact_id), cache_key: stageCacheKey }));
       }
       this.store.appendEvent(eventFor(run, null, null, "run.created", "info", { stages: graph.kept.length, skipped_stages: graph.skipped, options }));
       return run;
@@ -93,7 +109,14 @@ export class Planner {
     this.store.transaction(() => {
       const run = this.mustRun(runId);
       this.store.transition("run", runId, "DRAFT", "READY", eventFor(run, null, null, "run.enqueued"));
-      for (const s of this.store.listStageRuns(runId)) if (s.depends_on.length === 0 && s.depends_on_optional.length === 0) this.ready(run, s);
+      const stages = this.store.listStageRuns(runId);
+      const byKey = new Map(stages.map((s) => [s.stage_key, s]));
+      // release root stages, and any stage whose dependencies were already satisfied by reuse at plan time
+      for (const s of stages) {
+        if (s.state !== "PENDING") continue;
+        const deps = [...s.depends_on, ...s.depends_on_optional];
+        if (deps.every((d) => byKey.get(d)?.state === "SUCCEEDED")) this.ready(run, s);
+      }
     });
   }
 

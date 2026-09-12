@@ -1,13 +1,15 @@
-import { isHarnessError, newId, type Artifact, type Attempt, type Clock, type FailureKind, type StageResult, type StageRun, type StateStore } from "@harness/contracts";
+import { isHarnessError, newId, type Artifact, type Attempt, type Checksum, type Clock, type FailureKind, type StageResult, type StageRun, type StateStore } from "@harness/contracts";
+import { canonicalDigest } from "../artifacts/checksum.js";
 import { ArtifactRegistry, type ArtifactContext } from "../artifacts/registry.js";
 import { addSeconds } from "../state/clock.js";
 import type { VerifyOutcome } from "../verification/verifier.js";
+import { computeCacheKey } from "./cache.js";
 import { invalidateDownstream } from "./invalidation.js";
 import { eventFor, Planner } from "./planner.js";
 
 export interface CommitParams {
   stageRun: StageRun; attempt: Attempt; fencingToken: number; result: StageResult; verify: VerifyOutcome;
-  workspaceDir: string; executorVersion: string; inputArtifactIds: string[]; mimeTypes: Record<string, string>;
+  workspaceDir: string; executorVersion: string; inputArtifactIds: string[]; mimeTypes: Record<string, string>; stageDefinitionDigest: Checksum;
 }
 export interface CommitOutcome { stageState: string; runState: string; attemptState: string; artifacts: Artifact[]; failureKind?: FailureKind; retryScheduled: boolean }
 
@@ -79,6 +81,10 @@ export class Controller {
         store.transition("attempt", attempt.attempt_id, "RUNNING", "SUCCEEDED", ev("attempt.succeeded", "info", { cost_usd: p.result.usage.cost_usd }));
         store.updateAttempt({ ...store.getAttempt(attempt.attempt_id)!, finished_at: now });
         store.transition("stage_run", stage.stage_run_id, "VERIFYING", "SUCCEEDED", ev("stage.succeeded", "info", { artifacts: artifacts.map((a) => a.artifact_id) }));
+        const inputChecksums = p.inputArtifactIds.map((id) => store.getArtifact(id)?.checksum).filter((c): c is string => !!c);
+        const variant = run.variant_id ? store.getContentVariant(run.variant_id) : undefined;
+        const cacheKey = computeCacheKey({ stageDefinitionDigest: p.stageDefinitionDigest, inputChecksums, optionsDigest: variant?.options_digest ?? canonicalDigest({}), effectiveConfigDigest: run.effective_config_digest });
+        store.updateStageRun({ ...store.getStageRun(stage.stage_run_id)!, cache_key: cacheKey });
       } else if (kind === "unknown") {
         this.failAttempt(attempt, kind, p.result, now);
         store.transition("stage_run", stage.stage_run_id, "RUNNING", "WAITING_EXTERNAL", ev("stage.waiting_external", "warn"));

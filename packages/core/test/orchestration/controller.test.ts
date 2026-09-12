@@ -28,7 +28,7 @@ async function setup(retry: { backoff_seconds?: number[]; max_attempts?: number 
   };
   const verifier = new Verifier(BUILTIN_CHECKERS);
   const commit = async (result: StageResult, token = claim.lease.fencing_token) =>
-    controller.commit({ stageRun: t.store.getStageRun(stageRun.stage_run_id)!, attempt, fencingToken: token, result, verify: await verifier.verify({ request, result, workspaceDir: ws }, stageRun.required_checks), workspaceDir: ws, executorVersion: "fake@0.1.0", inputArtifactIds: [], mimeTypes: { script_text: "text/plain" } });
+    controller.commit({ stageRun: t.store.getStageRun(stageRun.stage_run_id)!, attempt, fencingToken: token, result, verify: await verifier.verify({ request, result, workspaceDir: ws }, stageRun.required_checks), workspaceDir: ws, executorVersion: "fake@0.1.0", inputArtifactIds: [], mimeTypes: { script_text: "text/plain" }, stageDefinitionDigest: "sha256:" + "0".repeat(64) });
   return { ...t, planner, run, stageRun, attempt, claim, ws, write, commit };
 }
 
@@ -127,7 +127,7 @@ describe("Controller.commit cost accounting", () => {
       const run = store.getRun(a.runId)!;
       const request: StageRequest = { schema_version: "harness.stage-request/v1", run_id: a.runId, stage_run_id: stageRun.stage_run_id, attempt_id: attempt.attempt_id, project_id: "project-main", portfolio_id: "portfolio-main", stage_key: stageRun.stage_key, workflow: run.workflow_release, profile_snapshot: run.profile_snapshot, inputs: [], workspace_uri: ws, stage_config: {}, limits: { deadline_at: "2026-09-11T01:00:00.000Z", max_cost_usd: 5, max_attempts: 3 }, capabilities: [], fencing_token: claim.lease.fencing_token };
       const verify = await verifier.verify({ request, result, workspaceDir: ws }, stageRun.required_checks);
-      return () => controller.commit({ stageRun, attempt, fencingToken: claim.lease.fencing_token, result, verify, workspaceDir: ws, executorVersion: "fake@0.1.0", inputArtifactIds: [], mimeTypes: { script_text: "text/plain" } });
+      return () => controller.commit({ stageRun, attempt, fencingToken: claim.lease.fencing_token, result, verify, workspaceDir: ws, executorVersion: "fake@0.1.0", inputArtifactIds: [], mimeTypes: { script_text: "text/plain" }, stageDefinitionDigest: "sha256:" + "0".repeat(64) });
     };
     const [commitA, commitB] = [await prepare("a"), await prepare("b")];
     await Promise.all([commitA(), commitB()]);

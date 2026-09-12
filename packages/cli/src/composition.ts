@@ -2,14 +2,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
 import { HarnessError, ProjectConfigSchema, type ProjectConfig } from "@harness/contracts";
-import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, MIGRATIONS_DIR, Planner, Redactor, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, type HarnessLogger, type LogLevel } from "@harness/core";
+import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, loadWorkflow, MIGRATIONS_DIR, Planner, Redactor, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, type HarnessLogger, type LoadedWorkflow, type LogLevel } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, FakeProvider, fakeScriptCommands } from "@harness/adapter-fake";
 
 export interface AppContext {
   store: SqliteStateStore; planner: Planner; controller: Controller; registry: ArtifactRegistry; verifier: Verifier; executors: ExecutorRegistry;
   journal: ExternalOperationJournal; provider: FakeProvider; harness: ReturnType<typeof loadHarnessConfig>; project: ProjectConfig; projectDir: string;
-  dataRoot: string; logger: HarnessLogger; clock: SystemClock; secrets: EnvSecretResolver; migrationsDir: string; close(): void;
+  dataRoot: string; logger: HarnessLogger; clock: SystemClock; secrets: EnvSecretResolver; migrationsDir: string; workflows: (ref: string) => LoadedWorkflow; close(): void;
 }
 
 export function loadProject(projectDir: string): ProjectConfig {
@@ -37,5 +37,6 @@ export function buildContext(o: { projectDir: string; harnessRoot?: string; owne
   const executors = new ExecutorRegistry();
   executors.register("script", new ScriptExecutor(fakeScriptCommands()));
   executors.register("agent", new AgentExecutor(new FakeAgentRuntime({ journal })));
-  return { store, planner, controller, registry, verifier: new Verifier(BUILTIN_CHECKERS), executors, journal, provider, harness, project, projectDir, dataRoot, logger, clock, secrets, migrationsDir: MIGRATIONS_DIR, close: () => store.close() };
+  const workflows = (ref: string) => loadWorkflow(harnessRoot, ref);
+  return { store, planner, controller, registry, verifier: new Verifier(BUILTIN_CHECKERS), executors, journal, provider, harness, project, projectDir, dataRoot, logger, clock, secrets, migrationsDir: MIGRATIONS_DIR, workflows, close: () => store.close() };
 }
