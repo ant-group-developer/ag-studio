@@ -1,0 +1,9 @@
+schema_version: harness.config/v1
+lease_seconds: 90
+heartbeat_seconds: 30
+poll_seconds: 2
+default_deadline_seconds: 3600
+default_max_cost_usd: 5
+retention:
+  workspace_days: 7
+allowed_override_keys: [lease_seconds, default_deadline_seconds, default_max_cost_usd]

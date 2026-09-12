@@ -1,0 +1,12 @@
+schema_version: harness.production-profile/v1
+profile_id: cartoon
+revision: 1
+status: active
+workflow_release: sample-three-stage@1.0.0
+overrides:
+  lease_seconds: 120
+verification:
+  required_checks: [schema-valid]
+limits:
+  max_cost_usd_per_variant: 5
+  max_concurrency: 2

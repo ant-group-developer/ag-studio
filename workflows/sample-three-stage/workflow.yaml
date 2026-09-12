@@ -1,0 +1,30 @@
+schema_version: harness.workflow/v1
+id: sample-three-stage
+version: 1.0.0
+defaults:
+  lease_seconds: 90
+stages:
+  - key: produce
+    executor: { type: script, script: fake-stage }
+    required_capabilities: [write_workspace]
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: script_text, mime_type: text/plain }
+    config:
+      content: "draft script"
+  - key: review
+    executor: { type: agent, skill: fake-review, brief: "Review the draft script and produce notes." }
+    depends_on: [produce]
+    required_capabilities: [read_source]
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: review_notes, mime_type: text/plain }
+  - key: finalize
+    executor: { type: script, script: fake-stage }
+    depends_on: [produce, review]
+    required_capabilities: [write_workspace]
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: final_text, mime_type: text/plain }
+    config:
+      content: "final"
