@@ -13,6 +13,11 @@
     "harness": "tsx packages/cli/src/main.ts"
   },
   "devDependencies": {
+    "@harness/contracts": "workspace:*",
+    "@harness/core": "workspace:*",
+    "@harness/executors": "workspace:*",
+    "@harness/adapter-fake": "workspace:*",
+    "@harness/worker": "workspace:*",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",

@@ -109,6 +109,21 @@ importers:
 
   .:
     devDependencies:
+      '@harness/adapter-fake':
+        specifier: workspace:*
+        version: link:packages/adapters/fake
+      '@harness/contracts':
+        specifier: workspace:*
+        version: link:packages/contracts
+      '@harness/core':
+        specifier: workspace:*
+        version: link:packages/core
+      '@harness/executors':
+        specifier: workspace:*
+        version: link:packages/executors
+      '@harness/worker':
+        specifier: workspace:*
+        version: link:packages/worker
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.2
