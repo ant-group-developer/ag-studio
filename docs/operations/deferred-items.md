@@ -4,13 +4,13 @@ Danh sách rút từ các vòng review trong quá trình xây dựng (ledger SDD
 
 ## Phải làm ở sub-project tiếp theo
 
-- ★ **Lease ngắn hơn heartbeat.** Worker đặt lease theo `effective_config_snapshot.lease_seconds`; một override nhỏ hơn `heartbeat_seconds` (30s) sẽ tự làm hết lease giữa chừng. Thêm validation `lease_seconds > heartbeat_seconds` khi resolve config, hoặc `Math.max(default, snapshot)` trong worker. (`packages/worker/src/worker.ts`)
-- ★ **`harness retry` chưa từ chối run `CANCEL_REQUESTED`.** Stage đã FAILED trước khi cancel có thể bị đưa lại READY trong một run đang hủy. Thêm `CANCEL_REQUESTED` vào guard. (`packages/cli/src/commands/retry.ts`)
-- ★ **Run bị hủy do reaper hoàn tất vẫn ở `CANCEL_REQUESTED`** cho tới lần `harness cancel` kế tiếp (reaper ở tầng store không gọi planner). Cân nhắc cho worker gọi `planner.advance` sau khi reap. (`packages/core/src/state/sqlite-store.ts`, `packages/worker/src/worker.ts`)
-- ★ **Quét artifact mồ côi.** Crash hoặc cancel rơi vào giữa `stageOutputs` và commit để lại file trong `artifacts/` không có hàng DB (manifest ghi `provisional`). Cần lệnh `harness artifacts sweep`. (`packages/core/src/artifacts/registry.ts`)
-- ★ **Test e2e secret redaction.** Acceptance #11 hiện chỉ chứng minh không rò rỉ theo cấu trúc; khi adapter thực sự dùng `secret://` (sub-project 3) phải có test giá trị đi qua logger/event và bị che.
-- **Mime type cố định trong worker** (`mimeTypesFor`): chuyển sang đọc `outputs[].mime_type` từ stage definition khi StageRun mang thông tin đó.
-- **External operation chỉ đi qua agent executor.** Script executor chưa có cách ghi intent/dispatch; sub-project 3 cần giao thức file hoặc adapter trong tiến trình.
+- ✅ **Đã đóng ở 2A — Lease ngắn hơn heartbeat.** `resolveEffectiveConfig` ném `CONFIG_INVALID` nếu `lease_seconds <= heartbeat_seconds` (`packages/core/src/config/resolve.ts`).
+- ✅ **Đã đóng ở 2A — `harness retry` chưa từ chối run `CANCEL_REQUESTED`.** `retry` giờ từ chối cả FAILED, CANCELLED lẫn CANCEL_REQUESTED trước khi ghi gì (`packages/cli/src/commands/retry.ts`).
+- ✅ **Đã đóng ở 2A — Run bị hủy do reaper hoàn tất vẫn ở `CANCEL_REQUESTED`.** Worker gọi `planner.advance(runId)` cho từng run có lease vừa bị reap, để một cancel/requeue do reaper hoàn tất được settle ngay (`packages/worker/src/worker.ts`).
+- ✅ **Đã đóng ở 2A — Quét artifact mồ côi.** `harness artifacts sweep [--older-than-minutes] [--dry-run] [--json]` xoá thư mục `artifacts/<...>` không có hàng DB không-PROVISIONAL đứng sau (`packages/core/src/artifacts/sweep.ts`).
+- ★ **Test e2e secret redaction.** Vẫn mở — acceptance #11 hiện chỉ chứng minh không rò rỉ theo cấu trúc; khi adapter thực sự dùng `secret://` (sub-project 3) phải có test giá trị đi qua logger/event và bị che.
+- **Mime type cố định trong worker** (`mimeTypesFor`): vẫn mở — chưa chuyển sang đọc `outputs[].mime_type` từ stage definition dù StageRun đã mang thông tin đó từ 2A.
+- **External operation chỉ đi qua agent executor.** Vẫn mở — script executor chưa có cách ghi intent/dispatch; sub-project 2B/3 cần giao thức file hoặc adapter trong tiến trình.
 
 ## Hoãn, ít rủi ro
 
@@ -30,3 +30,16 @@ Danh sách rút từ các vòng review trong quá trình xây dựng (ledger SDD
 - Test listener của worker chờ 4.5s thời gian thật; cân nhắc fake timers.
 - `tests/integration/` trống; test tích hợp nằm trong `packages/core/test/**` (spec B.13 nêu bố cục khác).
 - Đặt tên schema con camelCase/PascalCase chưa thống nhất; brief nói "18 entity" nhưng có 20 schema.
+
+## Hoãn, ít rủi ro — thêm sau sub-project 2A (ledger 2026-09-12 → 2026-09-13)
+
+- `SourceItem` có các trường bắt buộc mới (`original_uri`, `mime_type`, `size_bytes`, `media`) không có default trong schema — chỉ `SourceCatalog.ingest()` biết điền đủ; dựng `SourceItem` tay ở nơi khác (test, migration script) dễ thiếu trường.
+- Regex tên tài nguyên (`^[a-z][a-z0-9-]*$`) chỉ ép ở stage definition và `project.yaml`, không ép lại trên `StageRun`, `Lease`, `StageRequest` — tên xấu lọt qua nếu không đi qua `plan()`.
+- `source ingest` không transactional giữa filesystem và DB: nếu `insertSourceItem` lỗi vì lý do khác UNIQUE (không phải race), thư mục `data/sources/normalized/<id>/` vừa tạo bị bỏ lại mồ côi (chỉ tốn dung lượng, không sai dữ liệu; id mới nên không đụng ingest khác).
+- `materialize: link` chia sẻ inode với file gốc — sửa file gốc sau ingest sẽ đổi luôn bản đã normalize (caveat có chủ đích, ghi trong ADR §18, không phải bug).
+- Output trùng lặp (một `kind: directory` và một file nằm bên trong thư mục đó cùng khai trong `outputs`) sẽ ENOENT ở lần rename thứ hai — chưa có validation chặn khai outputs chồng nhau ở stage definition.
+- `listDirectoryFiles` bỏ qua symlink một cách âm thầm (không lỗi, không liệt kê) khi liệt kê file trong thư mục output.
+- Thư mục output rỗng (`kind: directory` không có file con) vẫn được chấp nhận, tạo artifact với listing rỗng.
+- Loop reuse ở `plan()` giả định thứ tự stage trong workflow definition là topological (stage đứng trước dependency của nó thì bỏ lỡ cơ hội reuse, không bao giờ reuse sai) — chưa test chuỗi reuse nhiều tầng (multi-hop).
+- `source ingest <path>` resolve đường dẫn tương đối theo cwd của tiến trình CLI, không theo `--project`; chưa có test cho hành vi này.
+- `warnResourceStarvation` (cảnh báo `stage.waiting_resource`) truy vấn store ở mỗi vòng poll rảnh của worker, kể cả khi không có stage nào đang chờ tài nguyên.
