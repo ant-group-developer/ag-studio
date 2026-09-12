@@ -165,6 +165,22 @@ importers:
         specifier: workspace:*
         version: link:../adapters/fake
 
+  packages/worker:
+    dependencies:
+      '@harness/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@harness/core':
+        specifier: workspace:*
+        version: link:../core
+      '@harness/executors':
+        specifier: workspace:*
+        version: link:../executors
+    devDependencies:
+      '@harness/adapter-fake':
+        specifier: workspace:*
+        version: link:../adapters/fake
+
 packages:
 
   '@esbuild/aix-ppc64@0.21.5':
