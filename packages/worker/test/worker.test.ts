@@ -112,6 +112,19 @@ describe("Worker", () => {
     release();
     await pending;
   });
+  it("does not accumulate abort listeners across claimed stages", async () => {
+    const w = makeWorld();
+    const ac = new AbortController();
+    const run = planAndEnqueue(w);
+    const p = w.worker.runForever(ac.signal);
+    for (let i = 0; i < 200 && w.store.getRun(run.run_id)?.state !== "SUCCEEDED"; i++) await new Promise((r) => setTimeout(r, 25));
+    expect(w.store.getRun(run.run_id)?.state).toBe("SUCCEEDED");
+    const pending = getEventListeners(ac.signal, "abort").length; // old code: one stale listener per claimed stage (3 here)
+    ac.abort();
+    await p;
+    expect(pending).toBeLessThanOrEqual(1);
+    expect(getEventListeners(ac.signal, "abort")).toHaveLength(0);
+  });
   it("does not accumulate abort listeners across idle polls", async () => {
     const w = makeWorld();
     const ac = new AbortController();

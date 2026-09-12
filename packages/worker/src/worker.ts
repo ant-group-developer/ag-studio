@@ -66,7 +66,8 @@ export class Worker {
     }
 
     const abort = new AbortController();
-    signal?.addEventListener("abort", () => abort.abort(), { once: true });
+    const onParentAbort = () => abort.abort();
+    signal?.addEventListener("abort", onParentAbort, { once: true });
     const hb = startHeartbeat({ store, attemptId: claim.attempt.attempt_id, fencingToken: claim.lease.fencing_token, leaseSeconds, intervalMs: this.d.harness.heartbeat_seconds * 1000, clock, onLost: () => abort.abort() });
     const executor = this.d.executors.resolve(claim.stageRun.executor);
     let result: StageResult;
@@ -75,7 +76,7 @@ export class Worker {
     } catch (e) {
       const kind = isHarnessError(e, "NOT_FOUND") || isHarnessError(e, "SCHEMA_INVALID") ? "contract" : "transient";
       result = { schema_version: "harness.stage-result/v1", attempt_id: claim.attempt.attempt_id, outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [{ kind, message: e instanceof Error ? e.message : String(e), details: isHarnessError(e) ? { code: e.code, ...e.details } : {} }] };
-    } finally { hb.stop(); }
+    } finally { hb.stop(); signal?.removeEventListener("abort", onParentAbort); }
 
     if (signal?.aborted && !hb.lost) { this.cancelCurrent(claim, run); return "done"; }
     if (hb.lost || !store.getLease(claim.stageRun.stage_run_id) || store.getLease(claim.stageRun.stage_run_id)!.fencing_token !== claim.lease.fencing_token) {
