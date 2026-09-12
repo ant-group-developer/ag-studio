@@ -20,7 +20,7 @@ YouTube Operations Harness: control plane điều phối sản xuất và phân 
 - `harness source ingest <path> [--collection <name>] [--rights unknown|cleared|restricted] [--language <code>] [--json]`: đăng ký một file nguồn, dedupe theo sha256 (UNIQUE trên `checksum`, an toàn khi ingest đua nhau); vật liệu hoá theo `project.yaml.source.materialize` (`link` mặc định — hardlink dùng chung inode với file gốc, sửa file gốc sau đó sẽ đổi cả bản normalize; `copy`; `reference` — chỉ trỏ URI, không nhân bản).
 - `harness source list [--collection <name>] [--json]`, `harness source verify [--json]` (hash lại toàn bộ nguồn đã đăng ký; thoát mã 1 nếu có nguồn hỏng).
 - `harness content create --title <t> --source <src_id>... [--json]`.
-- `harness plan --workflow <id@version> --profile <id> --content <content_id> [--option k=v]... [--json]`: get-or-create variant khoá theo `content_id` + `profile_id` + `profile.revision` + digest của options (đã hợp nhất với `options_defaults` và kiểm theo `options_schema`); `--option` không có `--content` là lỗi `CONFIG_INVALID`.
+- `harness plan --workflow <id@version> --profile <id> --content <content_id> [--option k=v]... [--no-reuse] [--json]`: get-or-create variant khoá theo `content_id` + `profile_id` + `profile.revision` + digest của options (đã hợp nhất với `options_defaults` và kiểm theo `options_schema`); `--option` không có `--content` là lỗi `CONFIG_INVALID`.
 - `harness resources status [--json]`: capacity khai trong `project.yaml.resources` so với số lease đang giữ mỗi tài nguyên.
 - `harness artifacts sweep [--older-than-minutes 60] [--dry-run] [--json]`: xoá thư mục artifact cũ hơn ngưỡng không có hàng DB không-PROVISIONAL đứng sau (crash/cancel để lại rác giữa lúc ghi output và commit).
 
@@ -43,8 +43,8 @@ YouTube Operations Harness: control plane điều phối sản xuất và phân 
 - Stage READY chờ tài nguyên quá `resource_wait_warn_seconds` (mặc định 600s) sinh event `stage.waiting_resource`, không lặp lại nếu vẫn còn nằm trong cửa sổ đó.
 
 ## Quy tắc cache và invalidation
-- Controller ghi `cache_key` (digest của stage definition + checksum input đã sort + options digest + effective-config digest) vào StageRun khi commit SUCCEEDED.
-- Khi `plan` một run mới cho cùng variant (`profile.reuse: allow`, mặc định), stage nào có toàn bộ dependency đã reuse/SUCCEEDED sẽ được tái sử dụng artifact nếu tìm thấy stage SUCCEEDED cùng cache_key ở run trước của variant đó — không dispatch lại; event `stage.reused` ghi `reused_artifact_ids`. `profile.reuse: never` tắt hẳn; executor `gate` không bao giờ được reuse.
+- Controller ghi `cache_key` (digest của stage definition + checksum input đã sort + options digest + effective-config digest + `executor_version`) vào StageRun khi commit SUCCEEDED.
+- Khi `plan` một run mới cho cùng variant (`profile.reuse: allow`, mặc định), stage nào có toàn bộ dependency đã reuse/SUCCEEDED sẽ được tái sử dụng artifact nếu tìm thấy stage SUCCEEDED cùng cache_key ở run trước của variant đó — không dispatch lại; event `stage.reused` ghi `reused_artifact_ids`. `profile.reuse: never` tắt hẳn (`harness plan --no-reuse` tắt cho một run); executor `gate` không bao giờ được reuse. Nếu mọi stage đều reuse thì `enqueue` chốt run thành SUCCEEDED ngay, không dispatch gì.
 - Khi một stage commit artifact ACCEPTED mới, mọi artifact ACCEPTED của chính stage đó và các stage phụ thuộc (transitive, kể cả `depends_on_optional`) ở các run **trước đó** của cùng variant chuyển sang STALE (`artifact.stale`), kèm event `stage.invalidated_downstream` trên run vừa commit. Artifact STALE không còn được downstream đọc.
 
 ## Cách commit state
