@@ -1,11 +1,13 @@
-import { HarnessError, newId, type Attempt, type EventInput, type HarnessConfig, type ProductionProfile, type Run, type StageRun, type StateStore } from "@harness/contracts";
+import { HarnessError, newId, type Attempt, type ContentItem, type ContentVariant, type EventInput, type HarnessConfig, type ProductionProfile, type Run, type StageDefinition, type StageRun, type StateStore } from "@harness/contracts";
 import { resolveEffectiveConfig } from "../config/resolve.js";
 import { isTerminal } from "../state/transitions.js";
+import { evaluateWhen, parseWhen } from "../source-catalog/when.js";
 import type { LoadedWorkflow } from "./registry.js";
 
 export interface PlanInput {
   workflow: LoadedWorkflow; profile: ProductionProfile; harness: HarnessConfig;
-  projectId: string; portfolioId: string; runOverrides?: Record<string, unknown>; channelOverrides?: Record<string, unknown>; sourceId?: string;
+  projectId: string; portfolioId: string; runOverrides?: Record<string, unknown>; channelOverrides?: Record<string, unknown>;
+  sourceId?: string; content?: ContentItem; variant?: ContentVariant;
 }
 
 export function eventFor(run: Run, stage: StageRun | null, attempt: Attempt | null, event_type: string, severity: EventInput["severity"] = "info", payload: Record<string, unknown> = {}): EventInput {
@@ -21,34 +23,68 @@ const CANCELLABLE_NOW = ["PENDING", "READY", "WAITING_HUMAN", "WAITING_EXTERNAL"
 /** A worker holds the lease: it must acknowledge the cancel (or its lease must expire) before the stage is CANCELLED. */
 const HELD_BY_WORKER = ["CLAIMED", "RUNNING", "VERIFYING"];
 
+/** Stages whose `when` is false are dropped; dependants inherit the dropped stage's own dependencies (transitively). */
+export function resolveStageGraph(stages: StageDefinition[], options: Record<string, unknown>): { kept: { def: StageDefinition; depends_on: string[]; depends_on_optional: string[] }[]; skipped: string[] } {
+  const byKey = new Map(stages.map((s) => [s.key, s]));
+  const skipped = new Set(stages.filter((s) => s.when && !evaluateWhen(s.when, options)).map((s) => s.key));
+  const expand = (deps: string[], seen = new Set<string>()): string[] => {
+    const out: string[] = [];
+    for (const d of deps) {
+      if (!skipped.has(d)) { if (!out.includes(d)) out.push(d); continue; }
+      if (seen.has(d)) continue;
+      seen.add(d);
+      for (const x of expand(byKey.get(d)!.depends_on, seen)) if (!out.includes(x)) out.push(x);
+    }
+    return out;
+  };
+  const kept = stages.filter((s) => !skipped.has(s.key)).map((def) => ({
+    def,
+    depends_on: expand(def.depends_on),
+    depends_on_optional: def.depends_on_optional.filter((d) => !skipped.has(d)),
+  }));
+  // a required dependency must not also be listed as optional after rewiring
+  for (const k of kept) k.depends_on_optional = k.depends_on_optional.filter((d) => !k.depends_on.includes(d));
+  return { kept, skipped: [...skipped] };
+}
+
 export class Planner {
   constructor(private readonly store: StateStore) {}
 
   plan(input: PlanInput): Run {
+    const options = input.variant?.options ?? input.profile.options_defaults;
+    for (const s of input.workflow.definition.stages) {
+      if (!s.when) continue;
+      const { key } = parseWhen(s.when);
+      if (!(key in input.profile.options_schema)) throw new HarnessError("CONFIG_INVALID", `stage ${s.key}: when references option "${key}" not declared by profile ${input.profile.profile_id}`, { stage: s.key, key });
+    }
     const { snapshot, digest } = resolveEffectiveConfig({
       harness: input.harness, workflowDefaults: input.workflow.definition.defaults, profileOverrides: input.profile.overrides,
       channelOverrides: input.channelOverrides ?? {}, runOverrides: input.runOverrides ?? {}, profileMaxCostUsd: input.profile.limits.max_cost_usd_per_variant,
     });
+    const graph = resolveStageGraph(input.workflow.definition.stages, options);
     return this.store.transaction(() => {
       const now = (this.store as { clock?: { now(): string } }).clock?.now() ?? new Date().toISOString();
+      const sourceId = input.sourceId ?? input.content?.source_ids[0];
       const run: Run = {
         schema_version: "harness.run/v1", run_id: newId("run"), project_id: input.projectId, portfolio_id: input.portfolioId,
         workflow_release: { id: input.workflow.definition.id, version: input.workflow.definition.version, digest: input.workflow.digest },
         profile_snapshot: { id: input.profile.profile_id, revision: input.profile.revision },
-        ...(input.sourceId ? { source_id: input.sourceId } : {}),
+        ...(sourceId ? { source_id: sourceId } : {}),
+        ...(input.content ? { content_id: input.content.content_id } : {}),
+        ...(input.variant ? { variant_id: input.variant.variant_id } : {}),
         state: "DRAFT", effective_config_snapshot: snapshot, effective_config_digest: digest, total_cost_usd: 0, created_at: now, updated_at: now,
       };
       this.store.insertRun(run);
-      for (const s of input.workflow.definition.stages) {
+      for (const { def: s, depends_on, depends_on_optional } of graph.kept) {
         const stage: StageRun = {
           schema_version: "harness.stage-run/v1", stage_run_id: newId("stage_run"), run_id: run.run_id, stage_key: s.key, executor: s.executor,
-          depends_on: s.depends_on, depends_on_optional: s.depends_on_optional, requires_resources: s.requires_resources, required_capabilities: s.required_capabilities,
-          required_checks: [...new Set([...s.required_checks, ...input.profile.verification.required_checks])],
+          depends_on, depends_on_optional, requires_resources: s.requires_resources, required_capabilities: s.required_capabilities,
+          required_checks: [...new Set([...s.required_checks, ...input.profile.verification.required_checks, ...(input.profile.verification.required_checks_by_stage[s.key] ?? [])])],
           retry: s.retry, stage_config: s.config, state: "PENDING", attempt_count: 0, result_failures: 0, created_at: now, updated_at: now,
         };
         this.store.insertStageRun(stage);
       }
-      this.store.appendEvent(eventFor(run, null, null, "run.created", "info", { stages: input.workflow.definition.stages.length }));
+      this.store.appendEvent(eventFor(run, null, null, "run.created", "info", { stages: graph.kept.length, skipped_stages: graph.skipped, options }));
       return run;
     });
   }
@@ -57,7 +93,7 @@ export class Planner {
     this.store.transaction(() => {
       const run = this.mustRun(runId);
       this.store.transition("run", runId, "DRAFT", "READY", eventFor(run, null, null, "run.enqueued"));
-      for (const s of this.store.listStageRuns(runId)) if (s.depends_on.length === 0) this.ready(run, s);
+      for (const s of this.store.listStageRuns(runId)) if (s.depends_on.length === 0 && s.depends_on_optional.length === 0) this.ready(run, s);
     });
   }
 
@@ -71,7 +107,8 @@ export class Planner {
       const released: string[] = [];
       for (const s of stages) {
         if (s.state !== "PENDING") continue;
-        if (s.depends_on.every((d) => byKey.get(d)?.state === "SUCCEEDED")) { this.ready(run, s); released.push(s.stage_key); }
+        const deps = [...s.depends_on, ...s.depends_on_optional];
+        if (deps.every((d) => byKey.get(d)?.state === "SUCCEEDED")) { this.ready(run, s); released.push(s.stage_key); }
       }
       const fresh = this.store.listStageRuns(runId);
       const allDone = fresh.every((s) => s.state === "SUCCEEDED");

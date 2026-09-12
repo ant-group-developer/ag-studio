@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { isHarnessError } from "@harness/contracts";
+import { isHarnessError, ProductionProfileSchema, WorkflowDefinitionSchema } from "@harness/contracts";
 import { HARNESS_ROOT, loadHarnessConfig, loadProfile, loadWorkflow } from "../../src/orchestration/registry.js";
 import { Planner } from "../../src/orchestration/planner.js";
+import { canonicalDigest } from "../../src/artifacts/checksum.js";
+import { NullMediaProber, SourceCatalog } from "../../src/index.js";
 import { openTempStore } from "../helpers.js";
 
 function planSample(overrides: Record<string, unknown> = {}) {
@@ -103,5 +105,78 @@ describe("Planner", () => {
     planner.cancel(run.run_id);
     expect(store.getRun(run.run_id)?.state).toBe("CANCELLED");
     expect(new Set(store.listStageRuns(run.run_id).map((s) => s.state))).toEqual(new Set(["CANCELLED"]));
+  });
+});
+
+const optWorkflow = { definition: WorkflowDefinitionSchema.parse({
+  schema_version: "harness.workflow/v1", id: "opt", version: "1.0.0", defaults: {},
+  stages: [
+    { key: "script", executor: { type: "script", script: "fake-stage" } },
+    { key: "tts", executor: { type: "script", script: "fake-stage" }, depends_on: ["script"], when: 'options.voice == "tts"', requires_resources: ["gpu"] },
+    { key: "cut", executor: { type: "script", script: "fake-stage" }, depends_on: ["script"] },
+    { key: "assemble", executor: { type: "script", script: "fake-stage" }, depends_on: ["cut"], depends_on_optional: ["tts"] },
+    { key: "thumb", executor: { type: "script", script: "fake-stage" }, depends_on: ["tts"] },
+  ],
+}), digest: "sha256:" + "e".repeat(64) };
+const optProfile = ProductionProfileSchema.parse({
+  schema_version: "harness.production-profile/v1", profile_id: "footage", revision: 1, status: "active", workflow_release: "opt@1.0.0",
+  options_schema: { voice: ["none", "tts"] }, options_defaults: { voice: "none" }, verification: { required_checks_by_stage: { assemble: ["media-probe"] } },
+});
+
+describe("Planner with options", () => {
+  function setup(options: Record<string, unknown>) {
+    const t = openTempStore();
+    const catalog = new SourceCatalog({ store: t.store, dataRoot: t.dir, prober: new NullMediaProber(), clock: t.clock, materialize: "reference" });
+    const content = catalog.createContent({ source_ids: [], title: "c" });
+    const { variant } = catalog.getOrCreateVariant({ content_id: content.content_id, profile: optProfile, options });
+    const planner = new Planner(t.store);
+    const run = planner.plan({ workflow: optWorkflow, profile: optProfile, harness: loadHarnessConfig(HARNESS_ROOT), projectId: "p", portfolioId: "pf", content, variant });
+    return { ...t, planner, run, variant };
+  }
+  it("drops stages whose when is false and rewires dependants through them", () => {
+    const { store, run } = setup({ voice: "none" });
+    const stages = store.listStageRuns(run.run_id);
+    expect(stages.map((s) => s.stage_key)).toEqual(["script", "cut", "assemble", "thumb"]);
+    const byKey = Object.fromEntries(stages.map((s) => [s.stage_key, s]));
+    expect(byKey.assemble!.depends_on).toEqual(["cut"]);
+    expect(byKey.assemble!.depends_on_optional).toEqual([]);
+    expect(byKey.thumb!.depends_on).toEqual(["script"]); // tts skipped -> inherits tts's dependencies
+    expect(byKey.assemble!.required_checks).toContain("media-probe");
+    expect(store.listEvents({ run_id: run.run_id })[0]?.payload.skipped_stages).toEqual(["tts"]);
+  });
+  it("keeps optional dependencies when the stage exists and gates release on them", () => {
+    const { store, planner, run, clock, variant } = setup({ voice: "tts" });
+    expect(run.variant_id).toBe(variant.variant_id);
+    expect(run.content_id).toBe(variant.content_id);
+    const byKey = Object.fromEntries(store.listStageRuns(run.run_id).map((s) => [s.stage_key, s]));
+    expect(byKey.assemble!.depends_on_optional).toEqual(["tts"]);
+    expect(byKey.tts!.requires_resources).toEqual(["gpu"]);
+    planner.enqueue(run.run_id);
+    const finish = (key: string, caps: string[] = []) => {
+      const c = store.claim({ owner: "w", capabilities: caps, now: clock.now(), leaseSeconds: 90, resourceCapacity: { gpu: 1 } })!;
+      expect(c.stageRun.stage_key).toBe(key);
+      const ev = { run_id: run.run_id, stage_run_id: c.stageRun.stage_run_id, attempt_id: c.attempt.attempt_id, project_id: "p", portfolio_id: null, channel_id: null, content_id: null, variant_id: null, workflow_release: null, severity: "info" as const, event_type: "stage.test", payload: {} };
+      store.transition("stage_run", c.stageRun.stage_run_id, "CLAIMED", "RUNNING", ev);
+      store.transition("stage_run", c.stageRun.stage_run_id, "RUNNING", "VERIFYING", ev);
+      store.transition("stage_run", c.stageRun.stage_run_id, "VERIFYING", "SUCCEEDED", ev);
+      store.releaseLease(c.stageRun.stage_run_id, c.lease.fencing_token);
+      return planner.advance(run.run_id).released;
+    };
+    expect(finish("script").sort()).toEqual(["cut", "tts"]);
+    expect(finish("tts")).toEqual(["thumb"]);           // assemble still waits for cut
+    expect(finish("cut")).toEqual(["assemble"]);        // both cut and optional tts are done
+  });
+  it("rejects a when key that the profile does not declare", () => {
+    const t = openTempStore();
+    const badWf = { ...optWorkflow, definition: WorkflowDefinitionSchema.parse({ ...optWorkflow.definition, stages: [{ key: "a", executor: { type: "script", script: "x" }, when: 'options.colour == "red"' }] }) };
+    try { new Planner(t.store).plan({ workflow: badWf, profile: optProfile, harness: loadHarnessConfig(HARNESS_ROOT), projectId: "p", portfolioId: "pf" }); throw new Error("no throw"); }
+    catch (e) { expect(isHarnessError(e, "CONFIG_INVALID")).toBe(true); }
+    expect(t.store.listRuns()).toHaveLength(0);
+  });
+  it("still plans without content/variant (options default to the profile defaults)", () => {
+    const t = openTempStore();
+    const run = new Planner(t.store).plan({ workflow: optWorkflow, profile: optProfile, harness: loadHarnessConfig(HARNESS_ROOT), projectId: "p", portfolioId: "pf" });
+    expect(t.store.listStageRuns(run.run_id).map((s) => s.stage_key)).toEqual(["script", "cut", "assemble", "thumb"]);
+    expect(run.variant_id).toBeUndefined();
   });
 });

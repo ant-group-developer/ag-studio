@@ -104,6 +104,7 @@ export class ArtifactRegistry {
 
 /** Downstream stages only ever see ACCEPTED artifacts from the stages they depend on. */
 export function acceptedInputsFor(store: StateStore, stage: StageRun): Artifact[] {
-  const upstream = store.listStageRuns(stage.run_id).filter((s) => stage.depends_on.includes(s.stage_key));
+  const wanted = new Set([...stage.depends_on, ...stage.depends_on_optional]);
+  const upstream = store.listStageRuns(stage.run_id).filter((s) => wanted.has(s.stage_key));
   return upstream.flatMap((s) => store.listArtifacts({ stage_run_id: s.stage_run_id, status: "ACCEPTED" }));
 }
