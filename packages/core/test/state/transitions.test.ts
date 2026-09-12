@@ -58,6 +58,7 @@ describe("store.transition", () => {
     const r = run(); store.insertRun(r);
     expect(() => store.transition("run", r.run_id, "READY", "RUNNING", evt(r.run_id, "run.started"))).toThrow(/not in state READY/);
     expect(store.listEvents({ run_id: r.run_id })).toHaveLength(0);
+    expect(store.getRun(r.run_id)?.state).toBe("DRAFT");
   });
   it("throws INVALID_TRANSITION before touching the database", () => {
     const { store } = openTempStore();

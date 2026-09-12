@@ -14,9 +14,9 @@ export function artifactDir(dataRoot: string, run: Run, artifactId: string): str
   return join(dataRoot, "artifacts", run.content_id ?? run.run_id, run.variant_id ?? run.profile_snapshot.id, artifactId);
 }
 
-function buildArtifact(output: StageOutput, uri: string, mime: string, ctx: ArtifactContext, status: Artifact["status"], now: string): Artifact {
+function buildArtifact(artifactId: string, output: StageOutput, uri: string, mime: string, ctx: ArtifactContext, status: Artifact["status"], now: string): Artifact {
   return {
-    schema_version: "harness.artifact/v1", artifact_id: newId("artifact"), run_id: ctx.run.run_id, stage_run_id: ctx.stageRun.stage_run_id,
+    schema_version: "harness.artifact/v1", artifact_id: artifactId, run_id: ctx.run.run_id, stage_run_id: ctx.stageRun.stage_run_id,
     attempt_id: ctx.attempt.attempt_id, type: output.type, status, uri, checksum: output.checksum, size_bytes: output.size_bytes, mime_type: mime,
     lineage: { input_artifacts: ctx.inputArtifactIds, source_items: ctx.run.source_id ? [ctx.run.source_id] : [] },
     reproducibility: {
@@ -61,7 +61,7 @@ export class ArtifactRegistry {
       mkdirSync(dir, { recursive: true });
       const dest = join(dir, basename(src));
       renameSync(src, dest);
-      const artifact = { ...buildArtifact(out, pathToFileURL(dest).href, p.mimeTypes[out.type] ?? "application/octet-stream", p.ctx, "PROVISIONAL", now), artifact_id: id };
+      const artifact = buildArtifact(id, out, pathToFileURL(dest).href, p.mimeTypes[out.type] ?? "application/octet-stream", p.ctx, "PROVISIONAL", now);
       const manifestPath = join(dir, "manifest.json");
       const manifest = toManifest(artifact);
       writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
@@ -90,7 +90,7 @@ export class ArtifactRegistry {
   registerRejected(p: { workspaceDir: string; outputs: StageOutput[]; ctx: ArtifactContext; reason: string }): Artifact[] {
     const now = new Date().toISOString();
     return p.outputs.map((out) => {
-      const a = buildArtifact(out, pathToFileURL(join(p.workspaceDir, out.path)).href, "application/octet-stream", p.ctx, "PROVISIONAL", now);
+      const a = buildArtifact(newId("artifact"), out, pathToFileURL(join(p.workspaceDir, out.path)).href, "application/octet-stream", p.ctx, "PROVISIONAL", now);
       this.store.insertArtifact(a);
       this.store.transition("artifact", a.artifact_id, "PROVISIONAL", "REJECTED", {
         run_id: p.ctx.run.run_id, stage_run_id: p.ctx.stageRun.stage_run_id, attempt_id: p.ctx.attempt.attempt_id, project_id: p.ctx.run.project_id,

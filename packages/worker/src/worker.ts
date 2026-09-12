@@ -61,7 +61,7 @@ export class Worker {
     } catch (e) {
       log.error("stage setup failed", { error: e instanceof Error ? e.message : String(e) });
       const failed: StageResult = { schema_version: "harness.stage-result/v1", attempt_id: claim.attempt.attempt_id, outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [{ kind: "transient", message: e instanceof Error ? e.message : String(e), details: { phase: "setup" } }] };
-      await this.d.controller.commit({ stageRun: claim.stageRun, attempt: claim.attempt, fencingToken: claim.lease.fencing_token, request: this.buildRequest(claim, run.effective_config_snapshot, [], workspaceDir), result: failed, verify: { results: [], allRequiredPassed: false, missing: [] }, workspaceDir, executorVersion: "worker-setup", inputArtifactIds: [], mimeTypes: {} });
+      await this.d.controller.commit({ stageRun: claim.stageRun, attempt: claim.attempt, fencingToken: claim.lease.fencing_token, result: failed, verify: { results: [], allRequiredPassed: false, missing: [] }, workspaceDir, executorVersion: "worker-setup", inputArtifactIds: [], mimeTypes: {} });
       return "done";
     }
 
@@ -85,7 +85,7 @@ export class Worker {
     }
     const verify = await this.d.verifier.verify({ request, result, workspaceDir }, claim.stageRun.required_checks);
     try {
-      const out = await this.d.controller.commit({ stageRun: claim.stageRun, attempt: claim.attempt, fencingToken: claim.lease.fencing_token, request, result, verify, workspaceDir, executorVersion: executor.version, inputArtifactIds: inputArtifacts.map((a) => a.artifact_id), mimeTypes: this.mimeTypesFor(claim) });
+      const out = await this.d.controller.commit({ stageRun: claim.stageRun, attempt: claim.attempt, fencingToken: claim.lease.fencing_token, result, verify, workspaceDir, executorVersion: executor.version, inputArtifactIds: inputArtifacts.map((a) => a.artifact_id), mimeTypes: this.mimeTypesFor(claim) });
       log.info("stage committed", { stage: out.stageState, run: out.runState, failure: out.failureKind ?? null, retry: out.retryScheduled });
       return "done";
     } catch (e) {

@@ -61,7 +61,16 @@ describe("entities", () => {
     };
     expect(AttemptSchema.safeParse(attempt).success).toBe(true);
     expect(AttemptSchema.safeParse({ ...attempt, started_at: "2026-09-11T00:00:00+07:00" }).success).toBe(false);
-    expect(ArtifactSchema.safeParse({ checksum: "md5:abc" }).success).toBe(false);
+    const artifact = {
+      schema_version: "harness.artifact/v1", artifact_id: newId("artifact"), run_id: newId("run"), stage_run_id: newId("stage_run"),
+      attempt_id: newId("attempt"), type: "script_text", status: "ACCEPTED", uri: "file:///x/result.txt",
+      checksum: "sha256:" + "c".repeat(64), size_bytes: 5, mime_type: "text/plain",
+      lineage: { input_artifacts: [], source_items: [] },
+      reproducibility: { workflow_release: "w@1.0.0", production_profile: "cartoon@1", channel_config_revision: null, executor_version: "fake@0.1.0", model_parameters_digest: null },
+      checks: [], created_at: now, updated_at: now,
+    };
+    expect(ArtifactSchema.safeParse(artifact).success).toBe(true);
+    expect(ArtifactSchema.safeParse({ ...artifact, checksum: "md5:abc" }).success).toBe(false);
   });
 
   it("parses Event and Lease", () => {

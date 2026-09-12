@@ -34,7 +34,10 @@ export class ScriptExecutor implements Executor {
     if (code !== 0) return failed("transient", `script exited with code ${code}`, { code: "EXECUTOR_FAILED", exit_code: code });
     const resultPath = join(ctx.workspaceDir, "stage-result.json");
     if (!existsSync(resultPath)) return failed("result", "script exited 0 but wrote no stage-result.json", { code: "SCHEMA_INVALID" });
-    const parsed = StageResultSchema.safeParse(JSON.parse(readFileSync(resultPath, "utf8")));
+    let raw: unknown;
+    try { raw = JSON.parse(readFileSync(resultPath, "utf8")); }
+    catch (e) { return { ...failed("result", "stage-result.json is not valid JSON", { code: "SCHEMA_INVALID" }), errors: [{ kind: "contract", message: "stage-result.json is not valid JSON", details: { code: "SCHEMA_INVALID", reason: e instanceof Error ? e.message : String(e) } }] }; }
+    const parsed = StageResultSchema.safeParse(raw);
     if (!parsed.success) return { ...failed("result", "stage-result.json failed schema validation", { code: "SCHEMA_INVALID", issues: parsed.error.issues }), errors: [{ kind: "contract", message: "stage-result.json failed schema validation", details: { issues: parsed.error.issues } }] };
     return { ...parsed.data, usage: { ...parsed.data.usage, wall_seconds: parsed.data.usage.wall_seconds || (Date.now() - started) / 1000 } };
   }

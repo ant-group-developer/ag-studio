@@ -44,6 +44,13 @@ describe("ScriptExecutor", () => {
     expect(res.outcome).toBe("failed");
     expect(res.errors[0]).toMatchObject({ kind: "transient", details: { code: "EXECUTOR_TIMEOUT" } });
   });
+  it("reports malformed stage-result.json as a contract failure instead of throwing", async () => {
+    const ex = new ScriptExecutor({ "bad-json": [process.execPath, "-e", "require('fs').writeFileSync('stage-result.json','{not json')"] });
+    const req = request({ __script: "bad-json" });
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.outcome).toBe("failed");
+    expect(res.errors[0]).toMatchObject({ kind: "contract", message: "stage-result.json is not valid JSON", details: { code: "SCHEMA_INVALID" } });
+  });
   it("throws NOT_FOUND for an unregistered script", async () => {
     const ex = new ScriptExecutor({});
     const req = request({});

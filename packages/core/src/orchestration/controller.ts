@@ -1,11 +1,11 @@
-import { isHarnessError, newId, type Artifact, type Attempt, type Clock, type FailureKind, type StageRequest, type StageResult, type StageRun, type StateStore } from "@harness/contracts";
+import { isHarnessError, newId, type Artifact, type Attempt, type Clock, type FailureKind, type StageResult, type StageRun, type StateStore } from "@harness/contracts";
 import { ArtifactRegistry, type ArtifactContext } from "../artifacts/registry.js";
 import { addSeconds } from "../state/clock.js";
 import type { VerifyOutcome } from "../verification/verifier.js";
 import { eventFor, Planner } from "./planner.js";
 
 export interface CommitParams {
-  stageRun: StageRun; attempt: Attempt; fencingToken: number; request: StageRequest; result: StageResult; verify: VerifyOutcome;
+  stageRun: StageRun; attempt: Attempt; fencingToken: number; result: StageResult; verify: VerifyOutcome;
   workspaceDir: string; executorVersion: string; inputArtifactIds: string[]; mimeTypes: Record<string, string>;
 }
 export interface CommitOutcome { stageState: string; runState: string; attemptState: string; artifacts: Artifact[]; failureKind?: FailureKind; retryScheduled: boolean }
