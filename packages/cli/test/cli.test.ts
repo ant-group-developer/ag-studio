@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { cpSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HARNESS_ROOT } from "@harness/core";
+import { HARNESS_ROOT, SqliteStateStore } from "@harness/core";
 
 const MAIN = join(HARNESS_ROOT, "packages", "cli", "src", "main.ts");
 function cli(project: string, ...args: string[]) {
@@ -54,5 +54,29 @@ describe("harness CLI", () => {
     const { run_id } = JSON.parse(r.stdout.trim().split("\n").at(-1)!);
     const status = cli(p, "status", run_id, "--json");
     expect(status.out + status.err).not.toContain("super-secret-token");
+  });
+  it("retry refuses a terminal run and leaves its stages untouched", () => {
+    const p = freshProject();
+    cli(p, "db", "migrate");
+    const plan = cli(p, "plan", "--workflow", "sample-three-stage@1.0.0", "--profile", "cartoon", "--json");
+    const { run_id } = JSON.parse(plan.out);
+    cli(p, "enqueue", run_id);
+    // drive the run to a terminal FAILED state directly through the store
+    const store = new SqliteStateStore(join(p, "data", "state", "harness.db"));
+    const stage = store.listStageRuns(run_id).find((s) => s.stage_key === "produce")!;
+    const ev = { run_id, stage_run_id: stage.stage_run_id, attempt_id: null, project_id: "project-minimal", portfolio_id: null, channel_id: null, content_id: null, variant_id: null, workflow_release: null, severity: "error" as const, event_type: "stage.test", payload: {} };
+    store.transaction(() => {
+      store.transition("stage_run", stage.stage_run_id, "READY", "CLAIMED", ev);
+      store.transition("stage_run", stage.stage_run_id, "CLAIMED", "FAILED", ev);
+      store.transition("run", run_id, "READY", "RUNNING", ev);
+      store.transition("run", run_id, "RUNNING", "FAILED", ev);
+    });
+    store.close();
+    const r = cli(p, "retry", run_id);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("INVALID_TRANSITION");
+    const s = JSON.parse(cli(p, "status", run_id, "--json").out);
+    expect(s.run.state).toBe("FAILED");
+    expect(s.stages.find((x: { stage_key: string }) => x.stage_key === "produce").state).toBe("FAILED");
   });
 });
