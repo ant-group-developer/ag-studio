@@ -14,5 +14,8 @@ Không cần làm gì: lease hết sau `lease_seconds` (mặc định 90s), work
 ## Run FAILED
 Run FAILED là terminal. Tạo run mới bằng `harness plan`; lineage vẫn truy vết được qua state store.
 
+## Hủy run
+`harness cancel <run_id>`. Stage không do worker nào giữ bị `CANCELLED` ngay. Stage đang chạy (CLAIMED/RUNNING/VERIFYING) chuyển sang `CANCEL_REQUESTED`: worker đang giữ nó sẽ kết thúc attempt hiện tại rồi commit thành `CANCELLED` (kết quả bị bỏ, không có artifact, không cộng cost); nếu worker đã chết thì lease reaper hoàn tất việc hủy khi lease hết hạn. Run ở `CANCEL_REQUESTED` tự chuyển sang `CANCELLED` khi stage cuối cùng xác nhận xong — chạy lại `harness cancel` hoặc `harness status` (worker gọi `advance`) để thấy trạng thái cuối. Run đã `CANCELLED` là terminal: muốn chạy lại thì `harness plan` một run mới.
+
 ## Dọn workspace
-`harness workspaces prune [--days N]` xóa workspace attempt cũ hơn retention và không còn lease.
+`harness workspaces prune [--days N]` xóa workspace attempt cũ hơn retention mà stage của nó đã terminal (SUCCEEDED/FAILED/CANCELLED) và không còn lease; thư mục không khớp attempt nào bị bỏ qua và đếm vào `skipped`. Thêm `--force` nếu muốn xóa cả những thư mục không có attempt row.

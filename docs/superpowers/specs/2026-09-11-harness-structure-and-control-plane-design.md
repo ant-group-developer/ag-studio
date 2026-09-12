@@ -284,7 +284,7 @@ Output người đọc là bảng text; `--json` cho máy đọc. Exit code khá
 ### B.12 Observability tối thiểu
 
 - Bảng `event` append-only, mỗi hàng có đủ trường blueprint mục 15: `event_id, occurred_at, run_id, stage_run_id, attempt_id, project_id, portfolio_id, channel_id, content_id, variant_id, workflow_release, severity, event_type, payload`.
-- Log JSON ra stdout qua `pino`, đã qua redaction.
+- Log JSON một dòng ra **stderr** (stdout dành cho output máy đọc của CLI), đã qua redaction. Logger tự viết, không dùng `pino` (quyết định khi triển khai).
 - `usage` trong `StageResult` (wall_seconds, cost_usd) được cộng vào `run.total_cost_usd` khi commit.
 
 ### B.13 Kiểm thử
