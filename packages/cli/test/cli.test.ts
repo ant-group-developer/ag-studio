@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HARNESS_ROOT, SqliteStateStore } from "@harness/core";
@@ -37,6 +37,28 @@ describe("harness CLI", () => {
     expect(s.stages.map((x: { state: string }) => x.state)).toEqual(["SUCCEEDED", "SUCCEEDED", "SUCCEEDED"]);
     expect(s.artifacts.filter((a: { status: string }) => a.status === "ACCEPTED")).toHaveLength(3);
     expect(cli(p, "events", "tail", "--run", run_id).out).toContain("run.succeeded");
+  });
+  it("workspaces prune removes terminal-stage workspaces but never an unknown directory", () => {
+    const p = freshProject();
+    expect(cli(p, "db", "migrate").code).toBe(0);
+    const { run_id } = JSON.parse(cli(p, "plan", "--workflow", "sample-three-stage@1.0.0", "--profile", "cartoon", "--json").out);
+    expect(cli(p, "enqueue", run_id).code).toBe(0);
+    for (let i = 0; i < 6; i++) if (cli(p, "worker", "--once", "--capabilities", "write_workspace,read_source", "--owner", `w${i}`).out.includes("idle")) break;
+    const wsRoot = join(p, "data", "workspaces", run_id);
+    const stray = join(wsRoot, "produce", "bogus_attempt");
+    mkdirSync(stray, { recursive: true });
+    const real = readdirSync(join(wsRoot, "produce")).filter((d) => d !== "bogus_attempt");
+    expect(real.length).toBeGreaterThan(0);
+
+    const pruned = cli(p, "workspaces", "prune", "--days", "0");
+    expect(pruned.code, pruned.err).toBe(0);
+    expect(pruned.out).toMatch(/removed \d+, skipped [1-9]/);
+    expect(existsSync(stray)).toBe(true);
+    for (const d of real) expect(existsSync(join(wsRoot, "produce", d))).toBe(false);
+
+    const forced = cli(p, "workspaces", "prune", "--days", "0", "--force");
+    expect(forced.code, forced.err).toBe(0);
+    expect(existsSync(stray)).toBe(false);
   });
   it("fails fast on an unknown config override", () => {
     const p = freshProject();
