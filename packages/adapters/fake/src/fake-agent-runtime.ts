@@ -45,7 +45,7 @@ export class FakeAgentRuntime implements AgentRuntime {
     writeFileSync(join(task.workspaceDir, "output", "notes.txt"), content);
     return {
       schema_version: "harness.stage-result/v1", attempt_id: request.attempt_id, outcome: "succeeded",
-      outputs: [{ path: "output/notes.txt", type: "review_notes", checksum: `sha256:${createHash("sha256").update(content, "utf8").digest("hex")}`, size_bytes: Buffer.byteLength(content, "utf8") }],
+      outputs: [{ path: "output/notes.txt", type: "review_notes", checksum: `sha256:${createHash("sha256").update(content, "utf8").digest("hex")}`, size_bytes: Buffer.byteLength(content, "utf8"), kind: "file" }],
       checks: [], usage: { wall_seconds: 0.1, cost_usd: 0.02 }, external_operations: externalOps, errors: [],
     };
   }

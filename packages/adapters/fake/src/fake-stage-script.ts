@@ -29,7 +29,7 @@ const outputType = (request.stage_config.output_type as string | undefined) ?? (
 
 const result: StageResult = {
   schema_version: "harness.stage-result/v1", attempt_id: request.attempt_id, outcome: "succeeded",
-  outputs: [{ path: "output/result.txt", type: outputType, checksum, size_bytes: Buffer.byteLength(content, "utf8") }],
+  outputs: [{ path: "output/result.txt", type: outputType, checksum, size_bytes: Buffer.byteLength(content, "utf8"), kind: "file" }],
   checks: [], usage: { wall_seconds: (cfg.sleep_ms ?? 0) / 1000, cost_usd: 0.01 }, external_operations: [], errors: [],
 };
 writeFileSync(join(ws, "stage-result.json"), JSON.stringify(result, null, 2));

@@ -115,4 +115,27 @@ describe("claim", () => {
     store.releaseLease(c.stageRun.stage_run_id, 1);
     expect(store.getLease(c.stageRun.stage_run_id)).toBeUndefined();
   });
+
+  it("honours resource capacity and frees the slot when the lease is released or reaped", () => {
+    const { store, clock } = openTempStore();
+    seedStage(store, { key: "tts-a", requires_resources: ["gpu"] });
+    seedStage(store, { key: "tts-b", requires_resources: ["gpu"] });
+    seedStage(store, { key: "cpu-only", requires_resources: ["cpu"] });
+    const cap = { gpu: 1, cpu: 2 };
+    const first = store.claim({ owner: "w1", capabilities: [], now: clock.now(), leaseSeconds: 90, resourceCapacity: cap })!;
+    expect(first.stageRun.stage_key).toBe("tts-a");
+    expect(first.lease.resources).toEqual(["gpu"]);
+    expect(store.countLeasedResources()).toEqual({ gpu: 1 });
+    const second = store.claim({ owner: "w2", capabilities: [], now: clock.now(), leaseSeconds: 90, resourceCapacity: cap })!;
+    expect(second.stageRun.stage_key).toBe("cpu-only"); // gpu is full, the cpu stage is still claimable
+    expect(store.claim({ owner: "w3", capabilities: [], now: clock.now(), leaseSeconds: 90, resourceCapacity: cap })).toBeUndefined();
+    store.releaseLease(first.stageRun.stage_run_id, first.lease.fencing_token);
+    expect(store.claim({ owner: "w3", capabilities: [], now: clock.now(), leaseSeconds: 90, resourceCapacity: cap })?.stageRun.stage_key).toBe("tts-b");
+  });
+  it("treats an undeclared resource as capacity zero", () => {
+    const { store, clock } = openTempStore();
+    seedStage(store, { key: "needs-heygen", requires_resources: ["heygen"] });
+    expect(store.claim({ owner: "w", capabilities: [], now: clock.now(), leaseSeconds: 90, resourceCapacity: {} })).toBeUndefined();
+    expect(store.claim({ owner: "w", capabilities: [], now: clock.now(), leaseSeconds: 90 })).toBeUndefined();
+  });
 });

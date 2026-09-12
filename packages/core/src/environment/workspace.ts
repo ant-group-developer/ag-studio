@@ -24,7 +24,7 @@ export async function materializeInputs(workspaceDir: string, artifacts: Artifac
     const rel = join("input", a.artifact_id, basename(src)).split("\\").join("/");
     await mkdir(join(workspaceDir, "input", a.artifact_id), { recursive: true });
     await linkOrCopy(src, join(workspaceDir, rel));
-    inputs.push({ artifact_id: a.artifact_id, checksum: a.checksum, path: rel, type: a.type });
+    inputs.push({ artifact_id: a.artifact_id, checksum: a.checksum, path: rel, type: a.type, kind: "file" });
   }
   return inputs;
 }

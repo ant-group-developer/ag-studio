@@ -42,7 +42,7 @@ export class Planner {
       for (const s of input.workflow.definition.stages) {
         const stage: StageRun = {
           schema_version: "harness.stage-run/v1", stage_run_id: newId("stage_run"), run_id: run.run_id, stage_key: s.key, executor: s.executor,
-          depends_on: s.depends_on, required_capabilities: s.required_capabilities,
+          depends_on: s.depends_on, depends_on_optional: s.depends_on_optional, requires_resources: s.requires_resources, required_capabilities: s.required_capabilities,
           required_checks: [...new Set([...s.required_checks, ...input.profile.verification.required_checks])],
           retry: s.retry, stage_config: s.config, state: "PENDING", attempt_count: 0, result_failures: 0, created_at: now, updated_at: now,
         };

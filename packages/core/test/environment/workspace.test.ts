@@ -25,7 +25,7 @@ describe("workspace", () => {
     };
     const dir = await createWorkspace(root, "run_A", "verify", "attempt_C");
     const inputs = await materializeInputs(dir, [art]);
-    expect(inputs).toEqual([{ artifact_id: art.artifact_id, checksum: art.checksum, path: `input/${art.artifact_id}/script.txt`, type: "script_text" }]);
+    expect(inputs).toEqual([{ artifact_id: art.artifact_id, checksum: art.checksum, path: `input/${art.artifact_id}/script.txt`, type: "script_text", kind: "file" }]);
     expect(readFileSync(join(dir, inputs[0]!.path), "utf8")).toBe("abc");
   });
 });

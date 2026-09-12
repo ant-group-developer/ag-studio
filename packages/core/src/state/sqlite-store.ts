@@ -3,9 +3,11 @@ import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  ArtifactSchema, AttemptSchema, CheckResultSchema, EventSchema, ExternalOperationSchema, HarnessError, LeaseSchema, RunSchema, StageRunSchema,
-  newId, type Artifact, type Attempt, type CheckResult, type ClaimParams, type ClaimResult, type Clock, type Event, type EventInput,
-  type ExternalOperation, type Lease, type ReapedLease, type Run, type StageRun, type StateStore, type TransitionKind,
+  ArtifactSchema, AttemptSchema, CheckResultSchema, ContentItemSchema, ContentVariantSchema, EventSchema, ExternalOperationSchema, HarnessError,
+  LeaseSchema, RunSchema, SourceItemSchema, StageRunSchema,
+  newId, type Artifact, type Attempt, type CheckResult, type ClaimParams, type ClaimResult, type Clock, type ContentItem, type ContentVariant,
+  type Event, type EventInput, type ExternalOperation, type Lease, type ReapedLease, type Run, type SourceItem, type StageRun, type StateStore,
+  type TransitionKind,
 } from "@harness/contracts";
 import { addSeconds, SystemClock } from "./clock.js";
 import { assertTransition, STATE_FIELD_BY_KIND, TABLE_BY_KIND } from "./transitions.js";
@@ -86,10 +88,11 @@ export class SqliteStateStore implements StateStore {
     const res = this.db.prepare("UPDATE run SET data = ?, updated_at = ? WHERE id = ? AND state = ?").run(JSON.stringify(r), r.updated_at, r.run_id, r.state);
     if (res.changes === 0) throw new HarnessError("STALE_STATE", `run ${r.run_id} not in state ${r.state}`);
   }
-  listRuns(filter: { state?: string } = {}): Run[] {
-    return filter.state
-      ? this.listDocs("SELECT data FROM run WHERE state = ? ORDER BY id", [filter.state], (x) => RunSchema.parse(x))
-      : this.listDocs("SELECT data FROM run ORDER BY id", [], (x) => RunSchema.parse(x));
+  listRuns(filter: { state?: string; variant_id?: string } = {}): Run[] {
+    const where: string[] = []; const params: string[] = [];
+    if (filter.state) { where.push("state = ?"); params.push(filter.state); }
+    if (filter.variant_id) { where.push("json_extract(data, '$.variant_id') = ?"); params.push(filter.variant_id); }
+    return this.listDocs(`SELECT data FROM run${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY rowid`, params, (x) => RunSchema.parse(x));
   }
 
   // ---- stage_run ----
@@ -170,6 +173,57 @@ export class SqliteStateStore implements StateStore {
     return this.listDocs("SELECT data FROM check_result WHERE attempt_id = ? ORDER BY id", [attemptId], (x) => CheckResultSchema.parse(x));
   }
 
+  // ---- catalog ----
+  insertSourceItem(s: SourceItem): void {
+    const v = SourceItemSchema.parse(s);
+    this.db.prepare("INSERT INTO source_item (id, checksum, collection, data, updated_at) VALUES (?, ?, ?, ?, ?)").run(v.source_id, v.checksum, v.collection, JSON.stringify(v), v.ingested_at);
+  }
+  getSourceItem(id: string): SourceItem | undefined { return this.getDoc("source_item", id, (x) => SourceItemSchema.parse(x)); }
+  findSourceItemByChecksum(checksum: string): SourceItem | undefined {
+    const row = this.db.prepare("SELECT data FROM source_item WHERE checksum = ? ORDER BY rowid LIMIT 1").get(checksum) as Row | undefined;
+    return row ? SourceItemSchema.parse(JSON.parse(row.data)) : undefined;
+  }
+  listSourceItems(filter: { collection?: string } = {}): SourceItem[] {
+    return filter.collection
+      ? this.listDocs("SELECT data FROM source_item WHERE collection = ? ORDER BY rowid", [filter.collection], (x) => SourceItemSchema.parse(x))
+      : this.listDocs("SELECT data FROM source_item ORDER BY rowid", [], (x) => SourceItemSchema.parse(x));
+  }
+  insertContentItem(c: ContentItem): void {
+    const v = ContentItemSchema.parse(c);
+    this.db.prepare("INSERT INTO content_item (id, data, updated_at) VALUES (?, ?, ?)").run(v.content_id, JSON.stringify(v), v.created_at);
+  }
+  getContentItem(id: string): ContentItem | undefined { return this.getDoc("content_item", id, (x) => ContentItemSchema.parse(x)); }
+  updateContentItem(c: ContentItem): void {
+    const v = ContentItemSchema.parse(c);
+    const res = this.db.prepare("UPDATE content_item SET data = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(v), this.clock.now(), v.content_id);
+    if (res.changes === 0) throw new HarnessError("NOT_FOUND", `content_item ${v.content_id} not found`);
+  }
+  listContentItems(): ContentItem[] { return this.listDocs("SELECT data FROM content_item ORDER BY rowid", [], (x) => ContentItemSchema.parse(x)); }
+  private variantKey(k: { content_id: string; profile_id: string; profile_revision: number; options_digest: string }): string {
+    return `${k.content_id}|${k.profile_id}@${k.profile_revision}|${k.options_digest}`;
+  }
+  insertContentVariant(variant: ContentVariant): void {
+    const v = ContentVariantSchema.parse(variant);
+    this.db.prepare("INSERT INTO content_variant (id, content_id, profile_id, variant_key, data, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(v.variant_id, v.content_id, v.profile_id, this.variantKey(v), JSON.stringify(v), v.created_at);
+  }
+  getContentVariant(id: string): ContentVariant | undefined { return this.getDoc("content_variant", id, (x) => ContentVariantSchema.parse(x)); }
+  findContentVariant(key: { content_id: string; profile_id: string; profile_revision: number; options_digest: string }): ContentVariant | undefined {
+    const row = this.db.prepare("SELECT data FROM content_variant WHERE variant_key = ?").get(this.variantKey(key)) as Row | undefined;
+    return row ? ContentVariantSchema.parse(JSON.parse(row.data)) : undefined;
+  }
+  listContentVariants(contentId: string): ContentVariant[] {
+    return this.listDocs("SELECT data FROM content_variant WHERE content_id = ? ORDER BY rowid", [contentId], (x) => ContentVariantSchema.parse(x));
+  }
+
+  // ---- resources ----
+  countLeasedResources(): Record<string, number> {
+    const held: Record<string, number> = {};
+    for (const r of this.db.prepare("SELECT resources FROM lease").all() as { resources: string }[]) {
+      for (const name of JSON.parse(r.resources) as string[]) held[name] = (held[name] ?? 0) + 1;
+    }
+    return held;
+  }
+
   // ---- event ----
   appendEvent(input: EventInput): Event {
     const e = EventSchema.parse({ ...input, schema_version: "harness.event/v1", event_id: newId("event"), occurred_at: this.clock.now() });
@@ -205,11 +259,16 @@ export class SqliteStateStore implements StateStore {
 
   claim(params: ClaimParams): ClaimResult | undefined {
     return this.transaction(() => {
-      const rows = this.db.prepare("SELECT data FROM stage_run WHERE state = 'READY' ORDER BY json_extract(data, '$.ready_at'), id LIMIT 100").all() as Row[];
+      // rowid (insertion order), not id (a non-monotonic ULID), breaks ties: two stages can share a
+      // ready_at and be seeded within the same millisecond, so the id string order is not reliable.
+      const rows = this.db.prepare("SELECT data FROM stage_run WHERE state = 'READY' ORDER BY json_extract(data, '$.ready_at'), rowid LIMIT 100").all() as Row[];
+      const held = this.countLeasedResources();
+      const cap = params.resourceCapacity ?? {};
       for (const row of rows) {
         const stage = StageRunSchema.parse(JSON.parse(row.data));
         if (stage.not_before && stage.not_before > params.now) continue;
         if (!stage.required_capabilities.every((c) => params.capabilities.includes(c))) continue;
+        if (stage.requires_resources.some((r) => (held[r] ?? 0) >= (cap[r] ?? 0))) continue; // no free slot for a required resource
         const res = this.db.prepare("UPDATE stage_run SET state = 'CLAIMED' WHERE id = ? AND state = 'READY'").run(stage.stage_run_id);
         if (res.changes === 0) continue;
         const now = this.clock.now();
@@ -221,8 +280,8 @@ export class SqliteStateStore implements StateStore {
           lease_owner: params.owner, fencing_token: token, state: "CLAIMED", started_at: now, created_at: now, updated_at: now,
         };
         this.insertAttempt(attempt);
-        const lease: Lease = { stage_run_id: stage.stage_run_id, attempt_id: attempt.attempt_id, owner: params.owner, expires_at: addSeconds(now, params.leaseSeconds), fencing_token: token };
-        this.db.prepare("INSERT OR REPLACE INTO lease (stage_run_id, attempt_id, owner, expires_at, fencing_token) VALUES (?, ?, ?, ?, ?)").run(lease.stage_run_id, lease.attempt_id, lease.owner, lease.expires_at, lease.fencing_token);
+        const lease: Lease = { stage_run_id: stage.stage_run_id, attempt_id: attempt.attempt_id, owner: params.owner, expires_at: addSeconds(now, params.leaseSeconds), fencing_token: token, resources: stage.requires_resources };
+        this.db.prepare("INSERT OR REPLACE INTO lease (stage_run_id, attempt_id, owner, expires_at, fencing_token, resources) VALUES (?, ?, ?, ?, ?, ?)").run(lease.stage_run_id, lease.attempt_id, lease.owner, lease.expires_at, lease.fencing_token, JSON.stringify(lease.resources));
         const run = this.getRun(stage.run_id);
         if (run?.state === "READY") this.transition("run", run.run_id, "READY", "RUNNING", { ...this.eventBase(stage, null), stage_run_id: null, severity: "info", event_type: "run.started", payload: {} });
         this.appendEvent({ ...this.eventBase(stage, attempt.attempt_id), severity: "info", event_type: "attempt.claimed", payload: { owner: params.owner, fencing_token: token } });
@@ -237,8 +296,8 @@ export class SqliteStateStore implements StateStore {
   }
 
   getLease(stageRunId: string): Lease | undefined {
-    const row = this.db.prepare("SELECT stage_run_id, attempt_id, owner, expires_at, fencing_token FROM lease WHERE stage_run_id = ?").get(stageRunId);
-    return row ? LeaseSchema.parse(row) : undefined;
+    const row = this.db.prepare("SELECT stage_run_id, attempt_id, owner, expires_at, fencing_token, resources FROM lease WHERE stage_run_id = ?").get(stageRunId) as { resources: string } | undefined;
+    return row ? LeaseSchema.parse({ ...row, resources: JSON.parse(row.resources) }) : undefined;
   }
 
   releaseLease(stageRunId: string, fencingToken: number): void {
@@ -254,7 +313,7 @@ export class SqliteStateStore implements StateStore {
 
   reapExpiredLeases(now: string): ReapedLease[] {
     return this.transaction(() => {
-      const expired = (this.db.prepare("SELECT stage_run_id, attempt_id, owner, expires_at, fencing_token FROM lease WHERE expires_at < ?").all(now) as unknown[]).map((r) => LeaseSchema.parse(r));
+      const expired = (this.db.prepare("SELECT stage_run_id, attempt_id, owner, expires_at, fencing_token, resources FROM lease WHERE expires_at < ?").all(now) as { resources: string }[]).map((r) => LeaseSchema.parse({ ...r, resources: JSON.parse(r.resources) }));
       const out: ReapedLease[] = [];
       for (const lease of expired) {
         this.db.prepare("DELETE FROM lease WHERE stage_run_id = ? AND fencing_token = ?").run(lease.stage_run_id, lease.fencing_token);

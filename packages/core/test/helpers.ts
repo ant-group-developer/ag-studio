@@ -22,7 +22,7 @@ export function beginAttempt(store: SqliteStateStore, c: ClaimResult) {
 }
 
 const SHA = "sha256:" + "a".repeat(64);
-export function seedStage(store: SqliteStateStore, opts: { key?: string; caps?: string[]; retry?: Partial<RetryPolicy>; runId?: string; depends_on?: string[]; state?: StageRun["state"] } = {}) {
+export function seedStage(store: SqliteStateStore, opts: { key?: string; caps?: string[]; retry?: Partial<RetryPolicy>; runId?: string; depends_on?: string[]; state?: StageRun["state"]; requires_resources?: string[] } = {}) {
   const now = store.clock.now();
   const runId = opts.runId ?? newId("run");
   if (!opts.runId) {
@@ -35,7 +35,7 @@ export function seedStage(store: SqliteStateStore, opts: { key?: string; caps?: 
   }
   const stage: StageRun = {
     schema_version: "harness.stage-run/v1", stage_run_id: newId("stage_run"), run_id: runId, stage_key: opts.key ?? "produce",
-    executor: { type: "script", script: "fake-stage" }, depends_on: opts.depends_on ?? [], required_capabilities: opts.caps ?? [],
+    executor: { type: "script", script: "fake-stage" }, depends_on: opts.depends_on ?? [], depends_on_optional: [], requires_resources: opts.requires_resources ?? [], required_capabilities: opts.caps ?? [],
     required_checks: ["schema-valid"], retry: { max_attempts: 3, backoff_seconds: [0, 0, 0], retry_on: ["transient", "abandoned"], ...opts.retry },
     stage_config: {}, state: opts.state ?? "READY", attempt_count: 0, result_failures: 0, ready_at: now, created_at: now, updated_at: now,
   };
