@@ -57,7 +57,7 @@ export const ProductionProfileSchema = z.object({
   options_schema: z.record(z.string().regex(/^[a-z][a-z0-9_]*$/), z.array(z.string().min(1)).min(1)).default({}),
   options_defaults: jsonObjectSchema.default({}),
   reuse: z.enum(["allow", "never"]).default("allow"),
-  content: z.object({ target_duration_seconds: z.array(z.number().min(0)).length(2).optional() }).strict().default({}),
+  content: z.object({ target_duration_seconds: z.tuple([z.number().min(0), z.number().min(0)]).optional() }).strict().default({}),
   verification: z.object({ required_checks: z.array(z.string()).default([]), required_checks_by_stage: z.record(z.string(), z.array(z.string())).default({}) }).strict().default({ required_checks: [], required_checks_by_stage: {} }),
   limits: z.object({ max_cost_usd_per_variant: z.number().min(0).default(5), max_concurrency: z.number().int().min(1).default(1) }).strict().default({ max_cost_usd_per_variant: 5, max_concurrency: 1 }),
 }).strict();
