@@ -101,4 +101,23 @@ describe("harness CLI", () => {
     expect(s.run.state).toBe("FAILED");
     expect(s.stages.find((x: { stage_key: string }) => x.stage_key === "produce").state).toBe("FAILED");
   });
+  it("retry refuses a run whose cancel is still pending", () => {
+    const p = freshProject();
+    cli(p, "db", "migrate");
+    const plan = cli(p, "plan", "--workflow", "sample-three-stage@1.0.0", "--profile", "cartoon", "--json");
+    const { run_id } = JSON.parse(plan.out);
+    cli(p, "enqueue", run_id);
+    const store = new SqliteStateStore(join(p, "data", "state", "harness.db"));
+    const claim = store.claim({ owner: "w", capabilities: ["write_workspace"], now: new Date().toISOString(), leaseSeconds: 90 })!;
+    const ev = { run_id, stage_run_id: claim.stageRun.stage_run_id, attempt_id: claim.attempt.attempt_id, project_id: "project-minimal", portfolio_id: null, channel_id: null, content_id: null, variant_id: null, workflow_release: null, severity: "info" as const, event_type: "stage.test", payload: {} };
+    store.transaction(() => {
+      store.transition("attempt", claim.attempt.attempt_id, "CLAIMED", "RUNNING", ev);
+      store.transition("stage_run", claim.stageRun.stage_run_id, "CLAIMED", "RUNNING", ev);
+    });
+    store.close();
+    expect(cli(p, "cancel", run_id).out).toContain("CANCEL_REQUESTED");
+    const r = cli(p, "retry", run_id);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("INVALID_TRANSITION");
+  });
 });

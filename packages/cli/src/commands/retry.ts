@@ -7,7 +7,7 @@ export function registerRetry(program: Command): void {
     await withContext(cmd, {}, (ctx) => {
       const run = ctx.store.getRun(runId);
       if (!run) throw new HarnessError("NOT_FOUND", `run not found: ${runId}`, { runId });
-      if (run.state === "FAILED" || run.state === "CANCELLED") throw new HarnessError("INVALID_TRANSITION", `run is ${run.state} (terminal); plan a new run instead`, { runId, state: run.state });
+      if (run.state === "FAILED" || run.state === "CANCELLED" || run.state === "CANCEL_REQUESTED") throw new HarnessError("INVALID_TRANSITION", `run is ${run.state}; ${run.state === "CANCEL_REQUESTED" ? "finish the cancel first" : "plan a new run instead"}`, { runId, state: run.state });
       const moved: string[] = [];
       ctx.store.transaction(() => {
         for (const s of ctx.store.listStageRuns(runId)) {

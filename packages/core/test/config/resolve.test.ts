@@ -36,4 +36,9 @@ describe("resolveEffectiveConfig", () => {
     try { resolveEffectiveConfig({ harness, workflowDefaults: { lease_seconds: undefined }, profileOverrides: {}, channelOverrides: {}, runOverrides: {}, profileMaxCostUsd: 5 }); throw new Error("no throw"); }
     catch (e) { expect(isHarnessError(e, "CONFIG_INVALID")).toBe(true); expect((e as Error).message).toContain("lease_seconds"); }
   });
+  it("rejects a lease shorter than or equal to the heartbeat interval", () => {
+    try { resolveEffectiveConfig({ harness, workflowDefaults: {}, profileOverrides: { lease_seconds: 30 }, channelOverrides: {}, runOverrides: {}, profileMaxCostUsd: 5 }); throw new Error("no throw"); }
+    catch (e) { expect(isHarnessError(e, "CONFIG_INVALID")).toBe(true); expect((e as Error).message).toContain("heartbeat_seconds"); }
+    expect(resolveEffectiveConfig({ harness, workflowDefaults: {}, profileOverrides: { lease_seconds: 31 }, channelOverrides: {}, runOverrides: {}, profileMaxCostUsd: 5 }).snapshot.lease_seconds).toBe(31);
+  });
 });

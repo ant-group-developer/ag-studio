@@ -35,5 +35,10 @@ export function resolveEffectiveConfig(input: ResolveInput): { snapshot: Record<
   // policy constraints (mandatory, applied last)
   const cost = Number(snapshot.default_max_cost_usd);
   if (Number.isFinite(cost) && cost > input.profileMaxCostUsd) snapshot.default_max_cost_usd = input.profileMaxCostUsd;
+  // policy: a lease must outlive at least one heartbeat, or a worker reaps itself mid-stage
+  const lease = Number(snapshot.lease_seconds);
+  if (Number.isFinite(lease) && lease <= input.harness.heartbeat_seconds) {
+    throw new HarnessError("CONFIG_INVALID", `lease_seconds (${lease}) must be greater than heartbeat_seconds (${input.harness.heartbeat_seconds})`, { lease_seconds: lease, heartbeat_seconds: input.harness.heartbeat_seconds });
+  }
   return { snapshot, digest: canonicalDigest(snapshot) };
 }

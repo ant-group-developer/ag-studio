@@ -172,6 +172,22 @@ describe("Worker", () => {
     expect(pending).toBeLessThanOrEqual(1); // old code: one stale listener per completed sleep (>= 3 here)
     expect(getEventListeners(ac.signal, "abort")).toHaveLength(0);
   });
+  it("settles a cancelled run after reaping the lease of its last cancel-requested stage", async () => {
+    const w = makeWorld();
+    const run = planAndEnqueue(w);
+    const claim = w.store.claim({ owner: "dead", capabilities: ["write_workspace"], now: w.clock.now(), leaseSeconds: 90 })!;
+    const ev = { run_id: run.run_id, stage_run_id: claim.stageRun.stage_run_id, attempt_id: claim.attempt.attempt_id, project_id: "project-main", portfolio_id: null, channel_id: null, content_id: null, variant_id: null, workflow_release: null, severity: "info" as const, event_type: "stage.test", payload: {} };
+    w.store.transaction(() => {
+      w.store.transition("attempt", claim.attempt.attempt_id, "CLAIMED", "RUNNING", ev);
+      w.store.transition("stage_run", claim.stageRun.stage_run_id, "CLAIMED", "RUNNING", ev);
+    });
+    w.planner.cancel(run.run_id);
+    expect(w.store.getRun(run.run_id)?.state).toBe("CANCEL_REQUESTED");
+    w.clock.advance(121);
+    expect(await w.worker.runOnce()).toBe("idle");
+    expect(w.store.getStageRun(claim.stageRun.stage_run_id)?.state).toBe("CANCELLED");
+    expect(w.store.getRun(run.run_id)?.state).toBe("CANCELLED");
+  });
   it("turns a workspace setup failure into a transient attempt failure and requeues the stage", async () => {
     const w = makeWorld();
     const run = planAndEnqueue(w);

@@ -7,7 +7,7 @@ export type EventInput = Omit<Event, "schema_version" | "event_id" | "occurred_a
 
 export interface ClaimParams { owner: string; capabilities: string[]; now: string; leaseSeconds: number }
 export interface ClaimResult { stageRun: StageRun; attempt: Attempt; lease: Lease }
-export interface ReapedLease { stage_run_id: string; attempt_id: string; owner: string; requeued: boolean }
+export interface ReapedLease { stage_run_id: string; run_id: string; attempt_id: string; owner: string; requeued: boolean }
 
 export interface StateStore {
   migrate(migrationsDir: string): string[];

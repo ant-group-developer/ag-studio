@@ -33,6 +33,10 @@ export class Worker {
     const { store, clock, logger } = this.d;
     const reaped = store.reapExpiredLeases(clock.now());
     for (const r of reaped) logger.warn("reaped expired lease", r);
+    for (const runId of new Set(reaped.map((r) => r.run_id))) {
+      try { this.d.planner.advance(runId); } // a reaper-completed cancel or requeue may settle the run
+      catch (e) { logger.warn("advance after reap failed", { run_id: runId, error: e instanceof Error ? e.message : String(e) }); }
+    }
     // the run is unknown until the claim lands, so claim on the harness default and widen afterwards
     const defaultLeaseSeconds = this.d.harness.lease_seconds;
     const claim = store.claim({ owner: this.d.owner, capabilities: this.d.capabilities, now: clock.now(), leaseSeconds: defaultLeaseSeconds });

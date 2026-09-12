@@ -267,7 +267,7 @@ export class SqliteStateStore implements StateStore {
         if (stage.state === "CANCEL_REQUESTED") {
           // the worker that owed the acknowledgement is gone: the reaper completes the cancel, never requeues
           this.transition("stage_run", stage.stage_run_id, "CANCEL_REQUESTED", "CANCELLED", { ...this.eventBase(stage, attempt.attempt_id), severity: "warn", event_type: "stage.cancelled", payload: { requeued: false, reason: "lease_expired" } });
-          out.push({ stage_run_id: stage.stage_run_id, attempt_id: attempt.attempt_id, owner: lease.owner, requeued: false });
+          out.push({ stage_run_id: stage.stage_run_id, run_id: stage.run_id, attempt_id: attempt.attempt_id, owner: lease.owner, requeued: false });
           continue;
         }
         const active = ["CLAIMED", "RUNNING", "VERIFYING"].includes(stage.state);
@@ -278,7 +278,7 @@ export class SqliteStateStore implements StateStore {
           const fresh = this.getStageRun(stage.stage_run_id)!;
           this.updateStageRun({ ...fresh, last_failure_kind: "abandoned", ready_at: now, not_before: now });
         }
-        out.push({ stage_run_id: stage.stage_run_id, attempt_id: attempt.attempt_id, owner: lease.owner, requeued: canRetry });
+        out.push({ stage_run_id: stage.stage_run_id, run_id: stage.run_id, attempt_id: attempt.attempt_id, owner: lease.owner, requeued: canRetry });
       }
       return out;
     });

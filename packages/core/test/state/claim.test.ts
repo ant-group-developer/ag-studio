@@ -52,7 +52,7 @@ describe("claim", () => {
     const first = claimWith(store, "w1")!;
     clock.advance(91);
     const reaped = store.reapExpiredLeases(clock.now());
-    expect(reaped).toEqual([{ stage_run_id: first.stageRun.stage_run_id, attempt_id: first.attempt.attempt_id, owner: "w1", requeued: true }]);
+    expect(reaped).toEqual([{ stage_run_id: first.stageRun.stage_run_id, run_id: first.stageRun.run_id, attempt_id: first.attempt.attempt_id, owner: "w1", requeued: true }]);
     expect(store.getAttempt(first.attempt.attempt_id)?.state).toBe("ABANDONED");
     const stage = store.getStageRun(first.stageRun.stage_run_id)!;
     expect(stage.state).toBe("READY");
@@ -85,7 +85,7 @@ describe("claim", () => {
     store.transition("stage_run", c.stageRun.stage_run_id, "RUNNING", "WAITING_HUMAN", ev);
     clock.advance(91);
     const [r] = store.reapExpiredLeases(clock.now());
-    expect(r).toEqual({ stage_run_id: c.stageRun.stage_run_id, attempt_id: c.attempt.attempt_id, owner: "w1", requeued: false });
+    expect(r).toEqual({ stage_run_id: c.stageRun.stage_run_id, run_id: c.stageRun.run_id, attempt_id: c.attempt.attempt_id, owner: "w1", requeued: false });
     expect(store.getStageRun(c.stageRun.stage_run_id)?.state).toBe("WAITING_HUMAN");
     expect(store.getAttempt(c.attempt.attempt_id)?.state).toBe("ABANDONED");
     expect(store.getLease(c.stageRun.stage_run_id)).toBeUndefined();
@@ -100,7 +100,7 @@ describe("claim", () => {
     store.transition("stage_run", c.stageRun.stage_run_id, "RUNNING", "CANCEL_REQUESTED", ev);
     clock.advance(91);
     const [r] = store.reapExpiredLeases(clock.now());
-    expect(r).toEqual({ stage_run_id: c.stageRun.stage_run_id, attempt_id: c.attempt.attempt_id, owner: "w1", requeued: false });
+    expect(r).toEqual({ stage_run_id: c.stageRun.stage_run_id, run_id: c.stageRun.run_id, attempt_id: c.attempt.attempt_id, owner: "w1", requeued: false });
     expect(store.getStageRun(c.stageRun.stage_run_id)?.state).toBe("CANCELLED");
     expect(store.getAttempt(c.attempt.attempt_id)?.state).toBe("ABANDONED");
     expect(store.getLease(c.stageRun.stage_run_id)).toBeUndefined();
