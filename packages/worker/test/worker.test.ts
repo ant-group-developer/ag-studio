@@ -222,6 +222,37 @@ describe("Worker", () => {
     expect(seen?.source_items.map((s) => s.source_id)).toEqual([source.source_id]);
     expect(seen?.resources).toEqual(["cpu"]);
   });
+  it("does no resource bookkeeping on an idle poll when no READY stage requires a resource", async () => {
+    const w = makeWorld();
+    planAndEnqueue(w); // the sample workflow declares no requires_resources
+    let calls = 0;
+    const real = w.store.countLeasedResources.bind(w.store);
+    w.store.countLeasedResources = () => { calls++; return real(); };
+    const idle = new Worker({ ...w.deps, capabilities: [] }); // claims nothing: produce needs write_workspace
+    expect(await idle.runOnce()).toBe("idle");
+    expect(calls).toBe(1); // only claim()'s own count; the starvation check used to add a second one every poll
+  });
+  it("warns once per window while a READY stage is starved of a resource", async () => {
+    const w = makeWorld();
+    const run = planAndEnqueue(w);
+    for (const s of w.store.listStageRuns(run.run_id)) w.store.updateStageRun({ ...s, requires_resources: s.stage_key === "produce" ? ["gpu"] : [] });
+    const produceId = w.store.listStageRuns(run.run_id).find((s) => s.stage_key === "produce")!.stage_run_id;
+    const starved = new Worker({ ...w.deps, resourceCapacity: { gpu: 0 } });
+    const warns = () => w.store.listEvents({ run_id: run.run_id }).filter((e) => e.event_type === "stage.waiting_resource");
+
+    expect(await starved.runOnce()).toBe("idle");
+    expect(warns()).toHaveLength(0); // still inside resource_wait_warn_seconds (600)
+    w.clock.advance(601);
+    expect(await starved.runOnce()).toBe("idle");
+    expect(warns()).toHaveLength(1);
+    expect(warns()[0]!.stage_run_id).toBe(produceId);
+    expect(warns()[0]!.payload.resources).toEqual(["gpu"]);
+    expect(await starved.runOnce()).toBe("idle");
+    expect(warns()).toHaveLength(1); // deduped inside the same window
+    w.clock.advance(601);
+    expect(await starved.runOnce()).toBe("idle");
+    expect(warns()).toHaveLength(2);
+  });
   it("sends the resolved profile options to the executor even when the run has no variant", async () => {
     const w = makeWorld();
     const profile = ProductionProfileSchema.parse({ schema_version: "harness.production-profile/v1", profile_id: "footage", revision: 1, status: "active", workflow_release: "sample-three-stage@1.0.0", options_schema: { voice: ["none", "tts"] }, options_defaults: { voice: "none" } });

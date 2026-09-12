@@ -120,10 +120,13 @@ export class Worker {
 
   private warnResourceStarvation(): void {
     const { store, clock, harness } = this.d;
+    // most idle polls have nothing waiting on a resource: find the candidates once and skip the bookkeeping queries
+    const candidates = [...store.listRuns({ state: "RUNNING" }), ...store.listRuns({ state: "READY" })]
+      .flatMap((run) => store.listStageRuns(run.run_id).filter((s) => s.state === "READY" && s.requires_resources.length > 0 && s.ready_at).map((s) => ({ run, s })));
+    if (!candidates.length) return;
     const held = store.countLeasedResources(); const now = clock.now();
-    for (const run of [...store.listRuns({ state: "RUNNING" }), ...store.listRuns({ state: "READY" })]) for (const s of store.listStageRuns(run.run_id)) {
-      if (s.state !== "READY" || !s.requires_resources.length || !s.ready_at) continue;
-      if (Date.parse(now) - Date.parse(s.ready_at) < harness.resource_wait_warn_seconds * 1000) continue;
+    for (const { run, s } of candidates) {
+      if (Date.parse(now) - Date.parse(s.ready_at!) < harness.resource_wait_warn_seconds * 1000) continue;
       const starved = s.requires_resources.filter((r) => (held[r] ?? 0) >= (this.d.resourceCapacity[r] ?? 0));
       if (!starved.length) continue;
       const recent = store.listEvents({ run_id: run.run_id, limit: 200, newest: true }).some((e) => e.event_type === "stage.waiting_resource" && e.stage_run_id === s.stage_run_id && Date.parse(now) - Date.parse(e.occurred_at) < harness.resource_wait_warn_seconds * 1000);
