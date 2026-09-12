@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isHarnessError, type StageRequest, type StageResult } from "@harness/contracts";
 import { ArtifactRegistry, Controller, Planner, HARNESS_ROOT, loadHarnessConfig, loadProfile, loadWorkflow, sha256String, createWorkspace, Verifier, BUILTIN_CHECKERS } from "../../src/index.js";
-import { beginAttempt, openTempStore } from "../helpers.js";
+import { beginAttempt, openTempStore, seedStage } from "../helpers.js";
 
 async function setup(retry: { backoff_seconds?: number[]; max_attempts?: number } = {}) {
   const t = openTempStore();
@@ -78,5 +78,33 @@ describe("Controller.commit", () => {
     await commit(write("hello")).then(() => { throw new Error("no throw"); }, (e) => expect(isHarnessError(e, "FENCING_REJECTED")).toBe(true));
     expect(store.listArtifacts({ stage_run_id: stageRun.stage_run_id })).toHaveLength(0);
     expect(store.getStageRun(stageRun.stage_run_id)?.state).toBe("READY");
+  });
+});
+
+describe("Controller.commit cost accounting", () => {
+  it("accumulates cost from two overlapping commits on sibling stages", async () => {
+    const { store, dir, clock } = openTempStore();
+    const a = seedStage(store, { key: "a" });
+    const b = seedStage(store, { key: "b", runId: a.runId });
+    const planner = new Planner(store);
+    const registry = new ArtifactRegistry(store, dir);
+    const controller = new Controller({ store, registry, planner, clock });
+    const verifier = new Verifier(BUILTIN_CHECKERS);
+    const prepare = async (stageKey: string) => {
+      const claim = store.claim({ owner: `w-${stageKey}`, capabilities: [], now: clock.now(), leaseSeconds: 90 })!;
+      const { stageRun, attempt } = beginAttempt(store, claim);
+      const ws = await createWorkspace(dir, a.runId, stageRun.stage_key, attempt.attempt_id);
+      const content = `out-${stageKey}`;
+      writeFileSync(join(ws, "output", "result.txt"), content);
+      const result: StageResult = { schema_version: "harness.stage-result/v1", attempt_id: attempt.attempt_id, outcome: "succeeded", outputs: [{ path: "output/result.txt", type: "script_text", checksum: sha256String(content), size_bytes: content.length }], checks: [], usage: { wall_seconds: 1, cost_usd: 0.25 }, external_operations: [], errors: [] };
+      const run = store.getRun(a.runId)!;
+      const request: StageRequest = { schema_version: "harness.stage-request/v1", run_id: a.runId, stage_run_id: stageRun.stage_run_id, attempt_id: attempt.attempt_id, project_id: "project-main", portfolio_id: "portfolio-main", stage_key: stageRun.stage_key, workflow: run.workflow_release, profile_snapshot: run.profile_snapshot, inputs: [], workspace_uri: ws, stage_config: {}, limits: { deadline_at: "2026-09-11T01:00:00.000Z", max_cost_usd: 5, max_attempts: 3 }, capabilities: [], fencing_token: claim.lease.fencing_token };
+      const verify = await verifier.verify({ request, result, workspaceDir: ws }, stageRun.required_checks);
+      return () => controller.commit({ stageRun, attempt, fencingToken: claim.lease.fencing_token, request, result, verify, workspaceDir: ws, executorVersion: "fake@0.1.0", inputArtifactIds: [], mimeTypes: { script_text: "text/plain" } });
+    };
+    const [commitA, commitB] = [await prepare("a"), await prepare("b")];
+    await Promise.all([commitA(), commitB()]);
+    expect(store.getRun(a.runId)?.total_cost_usd).toBeCloseTo(0.5, 10);
+    expect(store.listStageRuns(a.runId).map((s) => s.state)).toEqual(["SUCCEEDED", "SUCCEEDED"]);
   });
 });
