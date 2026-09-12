@@ -57,4 +57,28 @@ describe("ArtifactRegistry", () => {
     const inputs = acceptedInputsFor(store, downstream.stage);
     expect(inputs.map((a) => a.type)).toEqual(["script_text"]);
   });
+  it("rejects an output path that escapes the workspace before touching anything", async () => {
+    const { ws, registry, ctx } = await setup();
+    const outputs = [{ path: "../escape.txt", type: "t", checksum: sha256String("x"), size_bytes: 1 }];
+    await expect(registry.stageOutputs({ workspaceDir: ws, outputs, mimeTypes: {}, ctx })).rejects.toMatchObject({ code: "IO_ERROR" });
+  });
+  it("moves nothing when a later output fails verification", async () => {
+    const { ws, registry, ctx } = await setup();
+    writeFileSync(join(ws, "output", "second.txt"), "second");
+    const outputs = [
+      { path: "output/result.txt", type: "script_text", checksum: sha256String("hello"), size_bytes: 5 },
+      { path: "output/second.txt", type: "script_text", checksum: sha256String("wrong"), size_bytes: 6 },
+    ];
+    await expect(registry.stageOutputs({ workspaceDir: ws, outputs, mimeTypes: {}, ctx })).rejects.toMatchObject({ code: "CHECKSUM_MISMATCH" });
+    expect(existsSync(join(ws, "output", "result.txt"))).toBe(true);
+    expect(existsSync(join(ws, "output", "second.txt"))).toBe(true);
+  });
+  it("writes a provisional manifest at staging and an accepted manifest only after commit", async () => {
+    const { store, ws, registry, ctx } = await setup();
+    const staged = await registry.stageOutputs({ workspaceDir: ws, outputs: [{ path: "output/result.txt", type: "script_text", checksum: sha256String("hello"), size_bytes: 5 }], mimeTypes: {}, ctx });
+    const read = () => JSON.parse(readFileSync(staged[0]!.manifestPath, "utf8")) as { status: string };
+    expect(read().status).toBe("provisional");
+    store.transaction(() => registry.commitAccepted(staged, ctx));
+    expect(read().status).toBe("accepted");
+  });
 });
