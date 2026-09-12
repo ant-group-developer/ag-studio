@@ -6,7 +6,8 @@ describe("18.3 #1 three worker processes compete for one queue", () => {
     const p = freshProject();
     const runId = planRun(p);
     // Only `produce` is READY at first; three processes race for it, then the survivors drain the rest.
-    const results = await Promise.all(["w1", "w2", "w3"].map((o) => cliAsync(p, ["worker", "--once", "--owner", o, "--capabilities", "write_workspace,read_source"])));
+    // racing workers can only claim `produce`: `review` needs read_source and `finalize` depends on it, so exactly one `done` is possible regardless of process timing
+    const results = await Promise.all(["w1", "w2", "w3"].map((o) => cliAsync(p, ["worker", "--once", "--owner", o, "--capabilities", "write_workspace"])));
     expect(results.every((r) => r.code === 0)).toBe(true);
     expect(results.filter((r) => r.out.includes("done"))).toHaveLength(1);
     expect(results.filter((r) => r.out.includes("idle"))).toHaveLength(2);
