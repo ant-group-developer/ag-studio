@@ -8,7 +8,7 @@ const sha = "sha256:" + "a".repeat(64);
 const run = (): Run => ({
   schema_version: "harness.run/v1", run_id: newId("run"), project_id: "p", portfolio_id: "pf",
   workflow_release: { id: "w", version: "1.0.0", digest: sha }, profile_snapshot: { id: "cartoon", revision: 1 },
-  state: "DRAFT", effective_config_snapshot: {}, effective_config_digest: sha, total_cost_usd: 0, created_at: now, updated_at: now,
+  options: {}, state: "DRAFT", effective_config_snapshot: {}, effective_config_digest: sha, total_cost_usd: 0, created_at: now, updated_at: now,
 });
 const evt = (run_id: string, event_type: string) => ({
   run_id, stage_run_id: null, attempt_id: null, project_id: "p", portfolio_id: null, channel_id: null, content_id: null,

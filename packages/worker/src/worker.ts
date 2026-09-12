@@ -107,13 +107,12 @@ export class Worker {
     const run = this.d.store.getRun(claim.stageRun.run_id)!;
     const exec = claim.stageRun.executor;
     const stage_config = { ...claim.stageRun.stage_config, ...(exec.type === "script" ? { __script: exec.script } : exec.type === "agent" ? { __skill: exec.skill, __brief: exec.brief } : { __brief: exec.brief }) };
-    const variant = run.variant_id ? this.d.store.getContentVariant(run.variant_id) : undefined;
     const content = run.content_id ? this.d.store.getContentItem(run.content_id) : undefined;
     const source_items = (content?.source_ids ?? []).map((id) => this.d.store.getSourceItem(id)).filter((s): s is SourceItem => !!s).map((s) => ({ source_id: s.source_id, uri: s.uri, checksum: s.checksum, mime_type: s.mime_type, duration_seconds: s.duration_seconds }));
     return {
       schema_version: "harness.stage-request/v1", run_id: run.run_id, stage_run_id: claim.stageRun.stage_run_id, attempt_id: claim.attempt.attempt_id,
       project_id: run.project_id, portfolio_id: run.portfolio_id, stage_key: claim.stageRun.stage_key, workflow: run.workflow_release, profile_snapshot: run.profile_snapshot,
-      inputs, workspace_uri: workspaceDir, stage_config, options: variant?.options ?? {}, source_items, resources: claim.lease.resources,
+      inputs, workspace_uri: workspaceDir, stage_config, options: run.options, source_items, resources: claim.lease.resources,
       limits: { deadline_at: addSeconds(this.d.clock.now(), Number(cfg.default_deadline_seconds ?? this.d.harness.default_deadline_seconds)), max_cost_usd: Number(cfg.default_max_cost_usd ?? this.d.harness.default_max_cost_usd), max_attempts: claim.stageRun.retry.max_attempts },
       capabilities: this.d.capabilities, fencing_token: claim.lease.fencing_token,
     };

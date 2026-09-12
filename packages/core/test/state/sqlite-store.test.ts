@@ -10,7 +10,7 @@ function makeRun(): Run {
   return {
     schema_version: "harness.run/v1", run_id: newId("run"), project_id: "p", portfolio_id: "pf",
     workflow_release: { id: "w", version: "1.0.0", digest: sha }, profile_snapshot: { id: "cartoon", revision: 1 },
-    state: "DRAFT", effective_config_snapshot: {}, effective_config_digest: sha, total_cost_usd: 0, created_at: now, updated_at: now,
+    options: {}, state: "DRAFT", effective_config_snapshot: {}, effective_config_digest: sha, total_cost_usd: 0, created_at: now, updated_at: now,
   };
 }
 

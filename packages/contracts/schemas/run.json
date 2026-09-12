@@ -73,6 +73,11 @@
           "type": "string",
           "pattern": "^variant_[0-9A-HJKMNP-TV-Z]{26}$"
         },
+        "options": {
+          "type": "object",
+          "additionalProperties": {},
+          "default": {}
+        },
         "state": {
           "type": "string",
           "enum": [

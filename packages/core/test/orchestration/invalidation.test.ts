@@ -23,7 +23,7 @@ describe("dependantsOf", () => {
 
 describe("invalidateDownstream", () => {
   function seedRun(store: ReturnType<typeof openTempStore>["store"], variantId: string, keys: string[]) {
-    const run: Run = { schema_version: "harness.run/v1", run_id: newId("run"), project_id: "p", portfolio_id: "pf", workflow_release: { id: "w", version: "1.0.0", digest: sha }, profile_snapshot: { id: "footage", revision: 1 }, variant_id: variantId, state: "SUCCEEDED", effective_config_snapshot: {}, effective_config_digest: sha, total_cost_usd: 0, created_at: now, updated_at: now };
+    const run: Run = { schema_version: "harness.run/v1", run_id: newId("run"), project_id: "p", portfolio_id: "pf", workflow_release: { id: "w", version: "1.0.0", digest: sha }, profile_snapshot: { id: "footage", revision: 1 }, variant_id: variantId, options: {}, state: "SUCCEEDED", effective_config_snapshot: {}, effective_config_digest: sha, total_cost_usd: 0, created_at: now, updated_at: now };
     store.insertRun(run);
     const arts: Record<string, Artifact> = {};
     for (const key of keys) {

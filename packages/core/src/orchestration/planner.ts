@@ -80,7 +80,7 @@ export class Planner {
         ...(sourceId ? { source_id: sourceId } : {}),
         ...(input.content ? { content_id: input.content.content_id } : {}),
         ...(input.variant ? { variant_id: input.variant.variant_id } : {}),
-        state: "DRAFT", effective_config_snapshot: snapshot, effective_config_digest: digest, total_cost_usd: 0, created_at: now, updated_at: now,
+        options, state: "DRAFT", effective_config_snapshot: snapshot, effective_config_digest: digest, total_cost_usd: 0, created_at: now, updated_at: now,
       };
       this.store.insertRun(run);
       const reuse = (input.reuse ?? input.profile.reuse === "allow") && !!input.executorVersionFor;

@@ -29,7 +29,7 @@ export function seedStage(store: SqliteStateStore, opts: { key?: string; caps?: 
     const run: Run = {
       schema_version: "harness.run/v1", run_id: runId, project_id: "project-main", portfolio_id: "portfolio-main",
       workflow_release: { id: "sample-three-stage", version: "1.0.0", digest: SHA }, profile_snapshot: { id: "cartoon", revision: 1 },
-      state: "READY", effective_config_snapshot: {}, effective_config_digest: SHA, total_cost_usd: 0, created_at: now, updated_at: now,
+      options: {}, state: "READY", effective_config_snapshot: {}, effective_config_digest: SHA, total_cost_usd: 0, created_at: now, updated_at: now,
     };
     store.insertRun(run);
   }

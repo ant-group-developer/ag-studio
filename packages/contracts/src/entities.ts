@@ -36,6 +36,8 @@ export const RunSchema = z.object({
   source_id: idSchema("source_item").optional(),
   content_id: idSchema("content_item").optional(),
   variant_id: idSchema("content_variant").optional(),
+  /** Options the planner resolved for this run: the variant's, or the profile's defaults when there is no variant. */
+  options: jsonObjectSchema.default({}),
   state: z.enum(RUN_STATES),
   effective_config_snapshot: jsonObjectSchema,
   effective_config_digest: checksumSchema,

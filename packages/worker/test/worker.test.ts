@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { getEventListeners } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ProjectConfigSchema, WorkflowDefinitionSchema, type Executor, type StageRequest, type StageResult } from "@harness/contracts";
+import { ProductionProfileSchema, ProjectConfigSchema, WorkflowDefinitionSchema, type Executor, type StageRequest, type StageResult } from "@harness/contracts";
 import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, FixedClock, HARNESS_ROOT, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, SourceCatalog, SqliteStateStore, Verifier, addSeconds, createLogger, loadHarnessConfig, loadProfile, loadWorkflow } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, fakeScriptCommands } from "@harness/adapter-fake";
@@ -221,6 +221,18 @@ describe("Worker", () => {
     expect(seen?.options).toEqual({});
     expect(seen?.source_items.map((s) => s.source_id)).toEqual([source.source_id]);
     expect(seen?.resources).toEqual(["cpu"]);
+  });
+  it("sends the resolved profile options to the executor even when the run has no variant", async () => {
+    const w = makeWorld();
+    const profile = ProductionProfileSchema.parse({ schema_version: "harness.production-profile/v1", profile_id: "footage", revision: 1, status: "active", workflow_release: "sample-three-stage@1.0.0", options_schema: { voice: ["none", "tts"] }, options_defaults: { voice: "none" } });
+    const run = w.planner.plan({ workflow: loadWorkflow(HARNESS_ROOT, "sample-three-stage@1.0.0"), profile, harness: loadHarnessConfig(HARNESS_ROOT), projectId: "project-main", portfolioId: "portfolio-main" });
+    expect(run.variant_id).toBeUndefined();
+    expect(w.store.getRun(run.run_id)?.options).toEqual({ voice: "none" });
+    w.planner.enqueue(run.run_id);
+    let seen: StageRequest | undefined;
+    w.executors.register("script", { version: "spy", execute: async (req) => { seen = req; return { schema_version: "harness.stage-result/v1", attempt_id: req.attempt_id, outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [{ kind: "transient", message: "spy", details: {} }] }; } });
+    await w.worker.runOnce();
+    expect(seen?.options).toEqual({ voice: "none" }); // used to be {} whenever there was no variant
   });
   it("parks a stage WAITING_HUMAN when the artifact it reused went STALE before it ran", async () => {
     const w = makeWorld();

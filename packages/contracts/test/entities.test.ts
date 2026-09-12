@@ -13,6 +13,7 @@ describe("entities", () => {
       portfolio_id: "portfolio-main",
       workflow_release: { id: "sample-three-stage", version: "1.0.0", digest: "sha256:" + "a".repeat(64) },
       profile_snapshot: { id: "cartoon", revision: 1 },
+      options: { voice: "none" },
       state: "DRAFT",
       effective_config_snapshot: { lease_seconds: 90 },
       effective_config_digest: "sha256:" + "b".repeat(64),
