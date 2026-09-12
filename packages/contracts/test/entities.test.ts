@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { newId } from "../src/ids.js";
-import { AttemptSchema, ArtifactSchema, RunSchema, StageRunSchema, EventSchema, LeaseSchema } from "../src/entities.js";
+import { AttemptSchema, ArtifactSchema, RunSchema, StageRunSchema, EventSchema, LeaseSchema, SourceItemSchema, ContentVariantSchema } from "../src/entities.js";
 
 const now = "2026-09-11T00:00:00.000Z";
 
@@ -83,5 +83,27 @@ describe("entities", () => {
     expect(LeaseSchema.safeParse({
       stage_run_id: newId("stage_run"), attempt_id: newId("attempt"), owner: "w", expires_at: now, fencing_token: 1,
     }).success).toBe(true);
+  });
+
+  it("parses the extended SourceItem, ContentVariant, StageRun and Lease", () => {
+    const src = SourceItemSchema.parse({
+      schema_version: "harness.source-item/v1", source_id: newId("source_item"), uri: "file:///d/normalized/a.mp4", original_uri: "file:///d/raw/a.mp4",
+      checksum: "sha256:" + "a".repeat(64), collection: "main", mime_type: "video/mp4", size_bytes: 10, media: { width: 1920, height: 1080, fps: 30, has_audio: true },
+      rights_status: "unknown", language: null, duration_seconds: 5, ingested_at: now,
+    });
+    expect(src.collection).toBe("main");
+    const variant = ContentVariantSchema.parse({
+      schema_version: "harness.content-variant/v1", variant_id: newId("content_variant"), content_id: newId("content_item"), profile_id: "footage", profile_revision: 1,
+      options: { voice: "tts" }, options_digest: "sha256:" + "b".repeat(64), created_at: now,
+    });
+    expect(variant.options).toEqual({ voice: "tts" });
+    const stage = StageRunSchema.parse({
+      schema_version: "harness.stage-run/v1", stage_run_id: newId("stage_run"), run_id: newId("run"), stage_key: "assemble",
+      executor: { type: "gate", brief: "decide" }, depends_on: ["cut"], depends_on_optional: ["tts"], requires_resources: ["cpu"],
+      required_capabilities: [], required_checks: [], retry: { max_attempts: 1, backoff_seconds: [0], retry_on: [] }, stage_config: {},
+      state: "PENDING", attempt_count: 0, result_failures: 0, cache_key: "sha256:" + "c".repeat(64), reused_artifact_ids: [newId("artifact")], created_at: now, updated_at: now,
+    });
+    expect(stage.depends_on_optional).toEqual(["tts"]);
+    expect(LeaseSchema.parse({ stage_run_id: newId("stage_run"), attempt_id: newId("attempt"), owner: "w", expires_at: now, fencing_token: 1 }).resources).toEqual([]);
   });
 });

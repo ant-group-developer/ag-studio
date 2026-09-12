@@ -71,6 +71,23 @@
                       "skill"
                     ],
                     "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "gate"
+                      },
+                      "brief": {
+                        "type": "string",
+                        "default": ""
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ],
+                    "additionalProperties": false
                   }
                 ]
               },
@@ -80,6 +97,29 @@
                   "type": "string"
                 },
                 "default": []
+              },
+              "depends_on_optional": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
+              },
+              "when": {
+                "type": "string",
+                "pattern": "^options\\.([a-z][a-z0-9_]*) (==|!=) \"([^\"]*)\"$"
+              },
+              "requires_resources": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]*$"
+                },
+                "default": []
+              },
+              "gate_deadline_seconds": {
+                "type": "integer",
+                "minimum": 1
               },
               "required_capabilities": {
                 "type": "array",
@@ -153,6 +193,18 @@
                       "minLength": 1
                     },
                     "mime_type": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "file",
+                        "directory"
+                      ],
+                      "default": "file"
+                    },
+                    "name": {
                       "type": "string",
                       "minLength": 1
                     }

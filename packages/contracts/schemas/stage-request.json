@@ -93,6 +93,14 @@
               "type": {
                 "type": "string",
                 "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "file",
+                  "directory"
+                ],
+                "default": "file"
               }
             },
             "required": [
@@ -111,6 +119,57 @@
         "stage_config": {
           "type": "object",
           "additionalProperties": {}
+        },
+        "options": {
+          "type": "object",
+          "additionalProperties": {},
+          "default": {}
+        },
+        "source_items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "source_id": {
+                "type": "string",
+                "pattern": "^src_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "uri": {
+                "type": "string",
+                "minLength": 1
+              },
+              "checksum": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "mime_type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "duration_seconds": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "source_id",
+              "uri",
+              "checksum",
+              "mime_type",
+              "duration_seconds"
+            ],
+            "additionalProperties": false
+          },
+          "default": []
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
         },
         "limits": {
           "type": "object",

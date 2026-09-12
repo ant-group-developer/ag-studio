@@ -47,6 +47,35 @@
             "additionalProperties": false
           },
           "minItems": 1
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9-]*$"
+          },
+          "default": {}
+        },
+        "source": {
+          "type": "object",
+          "properties": {
+            "materialize": {
+              "type": "string",
+              "enum": [
+                "link",
+                "copy",
+                "reference"
+              ],
+              "default": "link"
+            }
+          },
+          "additionalProperties": false,
+          "default": {
+            "materialize": "link"
+          }
         }
       },
       "required": [

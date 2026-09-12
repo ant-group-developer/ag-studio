@@ -4,14 +4,20 @@ import { executorRefSchema, retryPolicySchema } from "./entities.js";
 
 export const DEFAULT_RETRY = { max_attempts: 3, backoff_seconds: [10, 60, 300], retry_on: ["transient", "abandoned"] as const };
 
+export const WHEN_RE = /^options\.([a-z][a-z0-9_]*) (==|!=) "([^"]*)"$/;
+
 export const stageDefinitionSchema = z.object({
   key: z.string().regex(/^[a-z][a-z0-9-]*$/),
   executor: executorRefSchema,
   depends_on: z.array(z.string()).default([]),
+  depends_on_optional: z.array(z.string()).default([]),
+  when: z.string().regex(WHEN_RE, 'expected options.<key> == "<value>" or !=').optional(),
+  requires_resources: z.array(z.string().regex(/^[a-z][a-z0-9-]*$/)).default([]),
+  gate_deadline_seconds: z.number().int().min(1).optional(),
   required_capabilities: z.array(z.string()).default([]),
   required_checks: z.array(z.string()).default([]),
   retry: retryPolicySchema.default({ ...DEFAULT_RETRY, retry_on: [...DEFAULT_RETRY.retry_on] }),
-  outputs: z.array(z.object({ type: z.string().min(1), mime_type: z.string().min(1) }).strict()).default([]),
+  outputs: z.array(z.object({ type: z.string().min(1), mime_type: z.string().min(1), kind: z.enum(["file", "directory"]).default("file"), name: z.string().min(1).optional() }).strict()).default([]),
   config: jsonObjectSchema.default({}),
 }).strict();
 
@@ -24,12 +30,12 @@ export const WorkflowDefinitionSchema = z.object({
 }).strict().superRefine((wf, ctx) => {
   const keys = new Set(wf.stages.map((s) => s.key));
   if (keys.size !== wf.stages.length) ctx.addIssue({ code: "custom", message: "duplicate stage key" });
-  for (const s of wf.stages) for (const d of s.depends_on) {
+  for (const s of wf.stages) for (const d of [...s.depends_on, ...s.depends_on_optional]) {
     if (!keys.has(d)) ctx.addIssue({ code: "custom", message: `stage ${s.key} depends on unknown stage ${d}` });
     if (d === s.key) ctx.addIssue({ code: "custom", message: `stage ${s.key} depends on itself` });
   }
   // cycle detection: DFS with colouring over depends_on edges
-  const deps = new Map(wf.stages.map((s) => [s.key, s.depends_on]));
+  const deps = new Map(wf.stages.map((s) => [s.key, [...s.depends_on, ...s.depends_on_optional]]));
   const colour = new Map<string, 1 | 2>();
   const visit = (k: string, path: string[]): void => {
     if (colour.get(k) === 2) return;
@@ -48,7 +54,11 @@ export const ProductionProfileSchema = z.object({
   status: z.enum(["active", "draft", "retired"]),
   workflow_release: z.string().regex(/^[a-z][a-z0-9-]*@\d+\.\d+\.\d+$/),
   overrides: jsonObjectSchema.default({}),
-  verification: z.object({ required_checks: z.array(z.string()).default([]) }).strict().default({ required_checks: [] }),
+  options_schema: z.record(z.string().regex(/^[a-z][a-z0-9_]*$/), z.array(z.string().min(1)).min(1)).default({}),
+  options_defaults: jsonObjectSchema.default({}),
+  reuse: z.enum(["allow", "never"]).default("allow"),
+  content: z.object({ target_duration_seconds: z.array(z.number().min(0)).length(2).optional() }).strict().default({}),
+  verification: z.object({ required_checks: z.array(z.string()).default([]), required_checks_by_stage: z.record(z.string(), z.array(z.string())).default({}) }).strict().default({ required_checks: [], required_checks_by_stage: {} }),
   limits: z.object({ max_cost_usd_per_variant: z.number().min(0).default(5), max_concurrency: z.number().int().min(1).default(1) }).strict().default({ max_cost_usd_per_variant: 5, max_concurrency: 1 }),
 }).strict();
 
@@ -73,6 +83,8 @@ export const ProjectConfigSchema = z.object({
   runtime: z.enum(["claude", "codex"]),
   data_root: z.string().min(1),
   portfolios: z.array(z.object({ portfolio_id: z.string().min(1), display_name: z.string() }).strict()).min(1),
+  resources: z.record(z.string().regex(/^[a-z][a-z0-9-]*$/), z.number().int().min(0)).default({}),
+  source: z.object({ materialize: z.enum(["link", "copy", "reference"]).default("link") }).strict().default({ materialize: "link" }),
 }).strict();
 
 export const HarnessConfigSchema = z.object({
@@ -84,6 +96,7 @@ export const HarnessConfigSchema = z.object({
   default_max_cost_usd: z.number().min(0).default(5),
   retention: z.object({ workspace_days: z.number().int().min(0).default(7) }).strict().default({ workspace_days: 7 }),
   allowed_override_keys: z.array(z.string()).default(["lease_seconds", "default_deadline_seconds", "default_max_cost_usd"]),
+  resource_wait_warn_seconds: z.number().int().min(1).default(600),
 }).strict();
 
 export type WorkflowDefinition = z.infer<typeof WorkflowDefinitionSchema>;

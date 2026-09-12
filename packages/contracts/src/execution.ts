@@ -8,6 +8,7 @@ export const stageInputSchema = z.object({
   checksum: checksumSchema,
   path: z.string().min(1),
   type: z.string().min(1),
+  kind: z.enum(["file", "directory"]).default("file"),
 }).strict();
 
 export const StageRequestSchema = z.object({
@@ -23,6 +24,9 @@ export const StageRequestSchema = z.object({
   inputs: z.array(stageInputSchema),
   workspace_uri: z.string().min(1),
   stage_config: jsonObjectSchema,
+  options: jsonObjectSchema.default({}),
+  source_items: z.array(z.object({ source_id: idSchema("source_item"), uri: z.string().min(1), checksum: checksumSchema, mime_type: z.string().min(1), duration_seconds: z.number().nullable() }).strict()).default([]),
+  resources: z.array(z.string()).default([]),
   limits: z.object({ deadline_at: timestampSchema, max_cost_usd: z.number().min(0), max_attempts: z.number().int().min(1) }).strict(),
   capabilities: z.array(z.string()),
   fencing_token: z.number().int().min(1),
@@ -33,6 +37,7 @@ export const stageOutputSchema = z.object({
   type: z.string().min(1),
   checksum: checksumSchema,
   size_bytes: z.number().int().min(0),
+  kind: z.enum(["file", "directory"]).default("file"),
 }).strict();
 
 export const stageErrorSchema = z.object({

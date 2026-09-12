@@ -37,6 +37,50 @@
           "additionalProperties": {},
           "default": {}
         },
+        "options_schema": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "default": {}
+        },
+        "options_defaults": {
+          "type": "object",
+          "additionalProperties": {},
+          "default": {}
+        },
+        "reuse": {
+          "type": "string",
+          "enum": [
+            "allow",
+            "never"
+          ],
+          "default": "allow"
+        },
+        "content": {
+          "type": "object",
+          "properties": {
+            "target_duration_seconds": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": 0
+              },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "default": {}
+        },
         "verification": {
           "type": "object",
           "properties": {
@@ -46,11 +90,22 @@
                 "type": "string"
               },
               "default": []
+            },
+            "required_checks_by_stage": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "default": {}
             }
           },
           "additionalProperties": false,
           "default": {
-            "required_checks": []
+            "required_checks": [],
+            "required_checks_by_stage": {}
           }
         },
         "limits": {

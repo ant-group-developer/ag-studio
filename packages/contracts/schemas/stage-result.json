@@ -41,6 +41,14 @@
               "size_bytes": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "file",
+                  "directory"
+                ],
+                "default": "file"
               }
             },
             "required": [

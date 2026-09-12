@@ -16,9 +16,67 @@
           "type": "string",
           "minLength": 1
         },
+        "original_uri": {
+          "type": "string",
+          "minLength": 1
+        },
         "checksum": {
           "type": "string",
           "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "collection": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "default": "main"
+        },
+        "mime_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "media": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "width": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "height": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "fps": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "has_audio": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "width",
+                "height",
+                "fps",
+                "has_audio"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "rights_status": {
           "type": "string",
@@ -49,7 +107,11 @@
         "schema_version",
         "source_id",
         "uri",
+        "original_uri",
         "checksum",
+        "mime_type",
+        "size_bytes",
+        "media",
         "rights_status",
         "language",
         "duration_seconds",

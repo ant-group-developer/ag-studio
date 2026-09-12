@@ -1,13 +1,14 @@
-import type { Artifact, Attempt, CheckResult, Event, ExternalOperation, Lease, Run, StageRun } from "./entities.js";
+import type { Artifact, Attempt, CheckResult, ContentItem, ContentVariant, Event, ExternalOperation, Lease, MediaInfo, Run, SourceItem, StageRun } from "./entities.js";
 import type { StageRequest, StageResult } from "./execution.js";
 
 export type TransitionKind = "run" | "stage_run" | "attempt" | "artifact" | "external_operation";
 
 export type EventInput = Omit<Event, "schema_version" | "event_id" | "occurred_at">;
 
-export interface ClaimParams { owner: string; capabilities: string[]; now: string; leaseSeconds: number }
+export interface ClaimParams { owner: string; capabilities: string[]; now: string; leaseSeconds: number; resourceCapacity?: Record<string, number> }
 export interface ClaimResult { stageRun: StageRun; attempt: Attempt; lease: Lease }
 export interface ReapedLease { stage_run_id: string; run_id: string; attempt_id: string; owner: string; requeued: boolean }
+export interface MediaProber { probe(path: string): Promise<{ media: MediaInfo | null; duration_seconds: number | null; mime_type: string | null } | null> }
 
 export interface StateStore {
   migrate(migrationsDir: string): string[];
@@ -17,7 +18,7 @@ export interface StateStore {
   insertRun(run: Run): void;
   getRun(id: string): Run | undefined;
   updateRun(run: Run): void;
-  listRuns(filter?: { state?: string }): Run[];
+  listRuns(filter?: { state?: string; variant_id?: string }): Run[];
 
   insertStageRun(s: StageRun): void;
   getStageRun(id: string): StageRun | undefined;
@@ -41,6 +42,23 @@ export interface StateStore {
 
   insertCheckResult(c: CheckResult): void;
   listCheckResults(attemptId: string): CheckResult[];
+
+  insertSourceItem(s: SourceItem): void;
+  getSourceItem(id: string): SourceItem | undefined;
+  findSourceItemByChecksum(checksum: string): SourceItem | undefined;
+  listSourceItems(filter?: { collection?: string }): SourceItem[];
+
+  insertContentItem(c: ContentItem): void;
+  getContentItem(id: string): ContentItem | undefined;
+  updateContentItem(c: ContentItem): void;
+  listContentItems(): ContentItem[];
+
+  insertContentVariant(v: ContentVariant): void;
+  getContentVariant(id: string): ContentVariant | undefined;
+  findContentVariant(key: { content_id: string; profile_id: string; profile_revision: number; options_digest: string }): ContentVariant | undefined;
+  listContentVariants(contentId: string): ContentVariant[];
+
+  countLeasedResources(): Record<string, number>;
 
   appendEvent(e: EventInput): Event;
   listEvents(filter: { run_id?: string; limit?: number; newest?: boolean }): Event[];

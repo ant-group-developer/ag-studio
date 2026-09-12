@@ -23,6 +23,13 @@
         "fencing_token": {
           "type": "integer",
           "minimum": 1
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
         }
       },
       "required": [

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HarnessConfigSchema, ProjectConfigSchema, WorkflowDefinitionSchema } from "../src/config.js";
+import { HarnessConfigSchema, ProjectConfigSchema, WorkflowDefinitionSchema, ProductionProfileSchema } from "../src/config.js";
 
 describe("config contracts", () => {
   it("parses a workflow definition and rejects unknown keys", () => {
@@ -45,5 +45,42 @@ describe("config contracts", () => {
       schema_version: "harness.project-config/v1", project_id: "project-main", template_release: "0.1.0", runtime: "claude",
       data_root: "E:/youtube-operations-data", portfolios: [{ portfolio_id: "portfolio-main", display_name: "Main" }],
     }).runtime).toBe("claude");
+  });
+  it("parses when, optional dependencies, resources and directory outputs on stages", () => {
+    const wf = WorkflowDefinitionSchema.parse({
+      schema_version: "harness.workflow/v1", id: "w", version: "1.0.0", defaults: {},
+      stages: [
+        { key: "a", executor: { type: "script", script: "x" } },
+        { key: "tts", executor: { type: "script", script: "x" }, depends_on: ["a"], when: 'options.voice == "tts"', requires_resources: ["gpu"] },
+        { key: "b", executor: { type: "gate", brief: "go" }, depends_on: ["a"], depends_on_optional: ["tts"], gate_deadline_seconds: 3600, outputs: [{ type: "clip_set", mime_type: "application/x-directory", kind: "directory", name: "cuts" }] },
+      ],
+    });
+    expect(wf.stages[1]?.when).toBe('options.voice == "tts"');
+    expect(wf.stages[2]?.depends_on_optional).toEqual(["tts"]);
+    expect(wf.stages[2]?.outputs[0]?.kind).toBe("directory");
+    expect(wf.stages[0]?.outputs).toEqual([]);
+    expect(wf.stages[0]?.requires_resources).toEqual([]);
+  });
+  it("rejects malformed when expressions and unknown optional dependencies", () => {
+    const base = { schema_version: "harness.workflow/v1", id: "w", version: "1.0.0", defaults: {} };
+    expect(WorkflowDefinitionSchema.safeParse({ ...base, stages: [{ key: "a", executor: { type: "script", script: "x" }, when: "voice == tts" }] }).success).toBe(false);
+    expect(WorkflowDefinitionSchema.safeParse({ ...base, stages: [{ key: "a", executor: { type: "script", script: "x" }, depends_on_optional: ["nope"] }] }).success).toBe(false);
+  });
+  it("parses profile options schema, reuse policy and per-stage checks", () => {
+    const p = ProductionProfileSchema.parse({
+      schema_version: "harness.production-profile/v1", profile_id: "footage", revision: 1, status: "active", workflow_release: "footage-production@1.0.0",
+      options_schema: { voice: ["none", "tts", "original"], avatar: ["none", "heygen"] }, options_defaults: { voice: "none", avatar: "none" },
+      verification: { required_checks_by_stage: { assemble: ["media-probe"] } }, content: { target_duration_seconds: [480, 720] },
+    });
+    expect(p.reuse).toBe("allow");
+    expect(p.verification.required_checks).toEqual([]);
+    expect(p.verification.required_checks_by_stage.assemble).toEqual(["media-probe"]);
+  });
+  it("parses project resources and source materialize policy", () => {
+    const pc = ProjectConfigSchema.parse({ schema_version: "harness.project-config/v1", project_id: "p", template_release: "0.1.0", runtime: "claude", data_root: "./data", portfolios: [{ portfolio_id: "pf", display_name: "x" }], resources: { gpu: 1, "image-gen": 2 } });
+    expect(pc.resources).toEqual({ gpu: 1, "image-gen": 2 });
+    expect(pc.source.materialize).toBe("link");
+    expect(ProjectConfigSchema.safeParse({ ...pc, resources: { GPU: 1 } }).success).toBe(false);
+    expect(HarnessConfigSchema.parse({ schema_version: "harness.config/v1" }).resource_wait_warn_seconds).toBe(600);
   });
 });

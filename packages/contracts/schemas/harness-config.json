@@ -57,6 +57,11 @@
             "default_deadline_seconds",
             "default_max_cost_usd"
           ]
+        },
+        "resource_wait_warn_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 600
         }
       },
       "required": [

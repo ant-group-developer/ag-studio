@@ -61,6 +61,23 @@
                 "skill"
               ],
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "gate"
+                },
+                "brief": {
+                  "type": "string",
+                  "default": ""
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "additionalProperties": false
             }
           ]
         },
@@ -69,6 +86,20 @@
           "items": {
             "type": "string"
           }
+        },
+        "depends_on_optional": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "requires_resources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
         },
         "required_capabilities": {
           "type": "array",
@@ -165,6 +196,17 @@
             "abandoned",
             "deferred"
           ]
+        },
+        "cache_key": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "reused_artifact_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^artifact_[0-9A-HJKMNP-TV-Z]{26}$"
+          }
         },
         "created_at": {
           "type": "string",

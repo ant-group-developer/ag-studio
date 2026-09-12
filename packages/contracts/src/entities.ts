@@ -22,6 +22,7 @@ export const retryPolicySchema = z.object({
 export const executorRefSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("script"), script: z.string().min(1) }).strict(),
   z.object({ type: z.literal("agent"), skill: z.string().min(1), brief: z.string().default("") }).strict(),
+  z.object({ type: z.literal("gate"), brief: z.string().default("") }).strict(),
 ]);
 
 // ---- control plane entities ----
@@ -50,6 +51,8 @@ export const StageRunSchema = z.object({
   stage_key: z.string().regex(/^[a-z][a-z0-9-]*$/),
   executor: executorRefSchema,
   depends_on: z.array(z.string()),
+  depends_on_optional: z.array(z.string()).default([]),
+  requires_resources: z.array(z.string()).default([]),
   required_capabilities: z.array(z.string()),
   required_checks: z.array(z.string()),
   retry: retryPolicySchema,
@@ -60,6 +63,8 @@ export const StageRunSchema = z.object({
   ready_at: timestampSchema.optional(),
   not_before: timestampSchema.optional(),
   last_failure_kind: z.enum(FAILURE_KINDS).optional(),
+  cache_key: checksumSchema.optional(),
+  reused_artifact_ids: z.array(idSchema("artifact")).optional(),
   created_at: timestampSchema,
   updated_at: timestampSchema,
 }).strict();
@@ -160,6 +165,7 @@ export const LeaseSchema = z.object({
   owner: z.string().min(1),
   expires_at: timestampSchema,
   fencing_token: z.number().int().min(1),
+  resources: z.array(z.string()).default([]),
 }).strict();
 
 // ---- domain entities frozen now, tables added in later sub-projects ----
@@ -174,10 +180,14 @@ export const ChannelSchema = z.object({
   schema_version: schemaVersion("channel"), channel_id: z.string().min(1), portfolio_id: z.string().min(1),
   account_ref: secretRefSchema, expected_channel_id: z.string().min(1), config_revision: revisionSchema,
 }).strict();
+export const mediaInfoSchema = z.object({
+  width: z.number().int().min(1), height: z.number().int().min(1), fps: z.number().positive().nullable(), has_audio: z.boolean(),
+}).strict();
 export const SourceItemSchema = z.object({
-  schema_version: schemaVersion("source-item"), source_id: idSchema("source_item"), uri: z.string().min(1),
-  checksum: checksumSchema, rights_status: z.enum(["unknown", "cleared", "restricted"]), language: z.string().nullable(),
-  duration_seconds: z.number().nullable(), ingested_at: timestampSchema,
+  schema_version: schemaVersion("source-item"), source_id: idSchema("source_item"),
+  uri: z.string().min(1), original_uri: z.string().min(1), checksum: checksumSchema, collection: z.string().regex(/^[a-z][a-z0-9-]*$/).default("main"),
+  mime_type: z.string().min(1), size_bytes: z.number().int().min(0), media: mediaInfoSchema.nullable(),
+  rights_status: z.enum(["unknown", "cleared", "restricted"]), language: z.string().nullable(), duration_seconds: z.number().nullable(), ingested_at: timestampSchema,
 }).strict();
 export const ContentItemSchema = z.object({
   schema_version: schemaVersion("content-item"), content_id: idSchema("content_item"), source_ids: z.array(idSchema("source_item")),
@@ -188,7 +198,7 @@ export const ProductionProfileRefSchema = z.object({
 }).strict();
 export const ContentVariantSchema = z.object({
   schema_version: schemaVersion("content-variant"), variant_id: idSchema("content_variant"), content_id: idSchema("content_item"),
-  profile_id: z.string().min(1), profile_revision: revisionSchema, created_at: timestampSchema,
+  profile_id: z.string().min(1), profile_revision: revisionSchema, options: jsonObjectSchema.default({}), options_digest: checksumSchema, created_at: timestampSchema,
 }).strict();
 export const DistributionPlanSchema = z.object({
   schema_version: schemaVersion("distribution-plan"), plan_id: z.string().min(1), revision: revisionSchema,
@@ -228,3 +238,7 @@ export type StageRunState = (typeof STAGE_RUN_STATES)[number];
 export type AttemptState = (typeof ATTEMPT_STATES)[number];
 export type ArtifactStatus = (typeof ARTIFACT_STATUSES)[number];
 export type ExternalOperationStatus = (typeof EXTERNAL_OPERATION_STATUSES)[number];
+export type SourceItem = z.infer<typeof SourceItemSchema>;
+export type ContentItem = z.infer<typeof ContentItemSchema>;
+export type ContentVariant = z.infer<typeof ContentVariantSchema>;
+export type MediaInfo = z.infer<typeof mediaInfoSchema>;
