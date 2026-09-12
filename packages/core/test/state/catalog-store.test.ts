@@ -21,6 +21,11 @@ describe("catalog tables", () => {
     expect(store.listSourceItems({ collection: "main" })).toHaveLength(1);
     expect(store.listSourceItems()).toHaveLength(2);
   });
+  it("rejects a second source with the same checksum", () => {
+    const { store } = openTempStore();
+    store.insertSourceItem(src(sha("e")));
+    expect(() => store.insertSourceItem(src(sha("e")))).toThrow(/UNIQUE/);
+  });
   it("stores content and variants keyed by content/profile/revision/options", () => {
     const { store } = openTempStore();
     const content: ContentItem = { schema_version: "harness.content-item/v1", content_id: newId("content_item"), source_ids: [newId("source_item")], revision: 1, title: "t", created_at: now };

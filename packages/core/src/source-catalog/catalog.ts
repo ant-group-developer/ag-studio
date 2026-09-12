@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, linkSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, linkSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { HarnessError, newId, type Clock, type ContentItem, type ContentVariant, type MediaProber, type ProductionProfile, type SourceItem, type StateStore } from "@harness/contracts";
@@ -31,6 +31,7 @@ export class SourceCatalog {
     if (this.d.materialize !== "reference") {
       const dest = join(dir, basename(src));
       if (this.d.materialize === "copy") copyFileSync(src, dest);
+      // hardlink shares the inode: editing the original later changes the normalized bytes too (documented caveat of materialize: link)
       else { try { linkSync(src, dest); } catch { copyFileSync(src, dest); } }
       uri = pathToFileURL(dest).href;
     }
@@ -40,7 +41,15 @@ export class SourceCatalog {
       rights_status: p.rights_status ?? "unknown", language: p.language ?? null, duration_seconds: probed?.duration_seconds ?? null, ingested_at: this.d.clock.now(),
     };
     writeFileSync(join(dir, "source.json"), JSON.stringify(source, null, 2) + "\n");
-    this.d.store.insertSourceItem(source);
+    try { this.d.store.insertSourceItem(source); }
+    catch (e) {
+      const winner = this.d.store.findSourceItemByChecksum(checksum);
+      if (winner && /UNIQUE/.test(String((e as Error).message))) {
+        rmSync(dir, { recursive: true, force: true }); // a concurrent ingest won; drop our normalized copy
+        return { source: winner, created: false };
+      }
+      throw e;
+    }
     return { source, created: true };
   }
 

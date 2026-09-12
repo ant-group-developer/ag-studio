@@ -1,7 +1,7 @@
 CREATE TABLE source_item (
   id TEXT PRIMARY KEY, checksum TEXT NOT NULL, collection TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL
 );
-CREATE INDEX source_item_checksum_idx ON source_item(checksum);
+CREATE UNIQUE INDEX source_item_checksum_idx ON source_item(checksum);
 
 CREATE TABLE content_item (
   id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL

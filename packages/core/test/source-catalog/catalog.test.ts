@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isHarnessError, ProductionProfileSchema } from "@harness/contracts";
+import { isHarnessError, newId, ProductionProfileSchema } from "@harness/contracts";
 import { SourceCatalog, NullMediaProber, normalizedDir } from "../../src/index.js";
 import { sha256String } from "../../src/artifacts/checksum.js";
 import { openTempStore } from "../helpers.js";
@@ -70,5 +70,22 @@ describe("SourceCatalog", () => {
     catch (e) { expect(isHarnessError(e, "CONFIG_INVALID")).toBe(true); }
     try { catalog.createContent({ source_ids: ["src_01J00000000000000000000000"], title: "x" }); throw new Error("no throw"); }
     catch (e) { expect(isHarnessError(e, "NOT_FOUND")).toBe(true); }
+  });
+  it("returns the existing source when a concurrent ingest already registered the same checksum", async () => {
+    const { store, dir, file, catalog } = world();
+    // simulate a racing ingest that landed between our hash and our insert
+    const original = store.insertSourceItem.bind(store);
+    let racedId = "";
+    (store as { insertSourceItem: typeof store.insertSourceItem }).insertSourceItem = (s) => {
+      if (!racedId) { const rival = { ...s, source_id: newId("source_item"), uri: s.original_uri }; racedId = rival.source_id; original(rival); }
+      return original(s); // throws UNIQUE for the loser
+    };
+    const r = await catalog.ingest({ path: file });
+    expect(r.created).toBe(false);
+    expect(r.source.source_id).toBe(racedId);
+    expect(store.listSourceItems()).toHaveLength(1);
+    expect(existsSync(normalizedDir(dir, r.source.source_id))).toBe(false); // loser cleaned up its own normalized dir
+    const loserDirs = readdirSync(join(dir, "sources", "normalized"));
+    expect(loserDirs).toEqual([]);
   });
 });
