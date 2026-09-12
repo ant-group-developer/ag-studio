@@ -2611,7 +2611,7 @@ export async function materializeInputs(workspaceDir: string, artifacts: Artifac
 
 ```ts
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { HarnessError, newId, type Artifact, type ArtifactManifest, type Attempt, type Run, type StageOutput, type StageRun, type StateStore } from "@harness/contracts";
 import { sha256File } from "./checksum.js";
@@ -2652,16 +2652,22 @@ export function toManifest(a: Artifact): ArtifactManifest {
 export class ArtifactRegistry {
   constructor(private readonly store: StateStore, private readonly dataRoot: string) {}
 
-  /** Async phase: verify checksums, move files into the artifact store, write manifests. No DB writes. */
+  /** Async phase: verify every output first (no file moved on any failure), then move files and write PROVISIONAL manifests. No DB writes. (review Task 8) */
   async stageOutputs(p: { workspaceDir: string; outputs: StageOutput[]; mimeTypes: Record<string, string>; ctx: ArtifactContext }): Promise<StagedOutput[]> {
     const now = new Date().toISOString();
-    const staged: StagedOutput[] = [];
+    const root = resolve(p.workspaceDir) + sep;
+    const verified: { out: StageOutput; src: string }[] = [];
     for (const out of p.outputs) {
-      const src = join(p.workspaceDir, out.path);
+      const src = resolve(p.workspaceDir, out.path);
+      if (!src.startsWith(root)) throw new HarnessError("IO_ERROR", `output path escapes the workspace: ${out.path}`, { path: out.path });
       const actual = await sha256File(src).catch(() => { throw new HarnessError("IO_ERROR", `output missing: ${out.path}`, { path: out.path }); });
       if (actual.checksum !== out.checksum || actual.size_bytes !== out.size_bytes) {
         throw new HarnessError("CHECKSUM_MISMATCH", `checksum mismatch for ${out.path}`, { path: out.path, declared: out.checksum, actual: actual.checksum });
       }
+      verified.push({ out, src });
+    }
+    const staged: StagedOutput[] = [];
+    for (const { out, src } of verified) {
       const id = newId("artifact");
       const dir = artifactDir(this.dataRoot, p.ctx.run, id);
       mkdirSync(dir, { recursive: true });
@@ -2669,16 +2675,16 @@ export class ArtifactRegistry {
       renameSync(src, dest);
       const artifact = { ...buildArtifact(out, pathToFileURL(dest).href, p.mimeTypes[out.type] ?? "application/octet-stream", p.ctx, "PROVISIONAL", now), artifact_id: id };
       const manifestPath = join(dir, "manifest.json");
-      const manifest = toManifest({ ...artifact, status: "ACCEPTED" });
+      const manifest = toManifest(artifact);
       writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
       staged.push({ artifact, manifestPath, manifest });
     }
     return staged;
   }
 
-  /** Sync phase: must run inside store.transaction(). PROVISIONAL -> ACCEPTED with event. */
+  /** Sync phase: must run inside store.transaction(). PROVISIONAL -> ACCEPTED with event; manifest rewritten to "accepted" only after the DB row is ACCEPTED. */
   commitAccepted(staged: StagedOutput[], ctx: ArtifactContext): Artifact[] {
-    return staged.map(({ artifact }) => {
+    return staged.map(({ artifact, manifestPath }) => {
       this.store.insertArtifact(artifact);
       this.store.transition("artifact", artifact.artifact_id, "PROVISIONAL", "ACCEPTED", {
         run_id: ctx.run.run_id, stage_run_id: ctx.stageRun.stage_run_id, attempt_id: ctx.attempt.attempt_id, project_id: ctx.run.project_id,
@@ -2686,7 +2692,9 @@ export class ArtifactRegistry {
         workflow_release: `${ctx.run.workflow_release.id}@${ctx.run.workflow_release.version}`, severity: "info", event_type: "artifact.accepted",
         payload: { artifact_id: artifact.artifact_id, type: artifact.type, checksum: artifact.checksum },
       });
-      return this.store.getArtifact(artifact.artifact_id)!;
+      const accepted = this.store.getArtifact(artifact.artifact_id)!;
+      writeFileSync(manifestPath, JSON.stringify(toManifest(accepted), null, 2) + "\n");
+      return accepted;
     });
   }
 
