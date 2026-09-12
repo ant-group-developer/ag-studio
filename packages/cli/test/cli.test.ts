@@ -1,0 +1,58 @@
+import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+import { cpSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { HARNESS_ROOT } from "@harness/core";
+
+const MAIN = join(HARNESS_ROOT, "packages", "cli", "src", "main.ts");
+function cli(project: string, ...args: string[]) {
+  const r = spawnSync(process.execPath, ["--import", "tsx", MAIN, "--project", project, ...args], { encoding: "utf8", env: { ...process.env, HARNESS_LOG_LEVEL: "error" } });
+  return { code: r.status, out: r.stdout.trim(), err: r.stderr.trim() };
+}
+function freshProject() {
+  const dir = mkdtempSync(join(tmpdir(), "cli-"));
+  cpSync(join(HARNESS_ROOT, "fixtures", "ops-project-minimal"), dir, { recursive: true });
+  return dir;
+}
+
+describe("harness CLI", () => {
+  it("plans, enqueues, works and reports a SUCCEEDED run", () => {
+    const p = freshProject();
+    expect(cli(p, "db", "migrate").code).toBe(0);
+    const plan = cli(p, "plan", "--workflow", "sample-three-stage@1.0.0", "--profile", "cartoon", "--json");
+    expect(plan.code, plan.err).toBe(0);
+    const { run_id } = JSON.parse(plan.out);
+    expect(run_id).toMatch(/^run_/);
+    expect(cli(p, "enqueue", run_id).code).toBe(0);
+    for (let i = 0; i < 6; i++) {
+      const w = cli(p, "worker", "--once", "--capabilities", "write_workspace,read_source", "--owner", `w${i}`);
+      expect(w.code, w.err).toBe(0);
+      if (w.out.includes("idle")) break;
+    }
+    const status = cli(p, "status", run_id, "--json");
+    expect(status.code).toBe(0);
+    const s = JSON.parse(status.out);
+    expect(s.run.state).toBe("SUCCEEDED");
+    expect(s.stages.map((x: { state: string }) => x.state)).toEqual(["SUCCEEDED", "SUCCEEDED", "SUCCEEDED"]);
+    expect(s.artifacts.filter((a: { status: string }) => a.status === "ACCEPTED")).toHaveLength(3);
+    expect(cli(p, "events", "tail", "--run", run_id).out).toContain("run.succeeded");
+  });
+  it("fails fast on an unknown config override", () => {
+    const p = freshProject();
+    cli(p, "db", "migrate");
+    const r = cli(p, "plan", "--workflow", "sample-three-stage@1.0.0", "--profile", "cartoon", "--override", "leese_seconds=5");
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("UNKNOWN_CONFIG_KEY");
+  });
+  it("never leaks a resolved secret into snapshot, events or logs", () => {
+    const p = freshProject();
+    cli(p, "db", "migrate");
+    const r = spawnSync(process.execPath, ["--import", "tsx", MAIN, "--project", p, "plan", "--workflow", "sample-three-stage@1.0.0", "--profile", "cartoon", "--override", "default_max_cost_usd=1", "--json"], { encoding: "utf8", env: { ...process.env, HARNESS_SECRET_TTS_MAIN: "super-secret-token", HARNESS_LOG_LEVEL: "debug" } });
+    const all = r.stdout + r.stderr;
+    expect(all).not.toContain("super-secret-token");
+    const { run_id } = JSON.parse(r.stdout.trim().split("\n").at(-1)!);
+    const status = cli(p, "status", run_id, "--json");
+    expect(status.out + status.err).not.toContain("super-secret-token");
+  });
+});

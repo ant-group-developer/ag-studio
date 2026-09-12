@@ -1,0 +1,9 @@
+{
+  "name": "@harness/cli", "version": "0.1.0", "type": "module",
+  "bin": { "harness": "./dist/main.js" },
+  "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc -p tsconfig.json --noEmit", "dev": "tsx src/main.ts" },
+  "dependencies": {
+    "@harness/adapter-fake": "workspace:*", "@harness/contracts": "workspace:*", "@harness/core": "workspace:*",
+    "@harness/executors": "workspace:*", "@harness/worker": "workspace:*", "commander": "^12.1.0", "yaml": "^2.6.0"
+  }
+}
