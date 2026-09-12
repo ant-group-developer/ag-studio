@@ -11,13 +11,17 @@ const wf = { definition: WorkflowDefinitionSchema.parse({ schema_version: "harne
   { key: "finalize", executor: { type: "script", script: "fake-stage" }, depends_on: ["produce"], required_checks: ["schema-valid"] },
 ] }), digest: "sha256:" + "f".repeat(64) };
 const profile = ProductionProfileSchema.parse({ schema_version: "harness.production-profile/v1", profile_id: "footage", revision: 1, status: "active", workflow_release: "two@1.0.0", options_schema: { voice: ["none", "tts"] }, options_defaults: { voice: "none" } });
+const EXECUTOR_VERSION = "fake@0.1.0";
+const executorVersionFor = () => EXECUTOR_VERSION;
 
 describe("cache", () => {
-  it("cache key depends on definition, inputs, options and config", () => {
+  it("cache key depends on definition, inputs, options, config and executor version", () => {
     const d = stageDefinitionDigest(wf.definition.stages[0]!);
-    const k1 = computeCacheKey({ stageDefinitionDigest: d, inputChecksums: [], optionsDigest: "sha256:" + "1".repeat(64), effectiveConfigDigest: "sha256:" + "2".repeat(64) });
+    const base = { stageDefinitionDigest: d, inputChecksums: [] as string[], optionsDigest: "sha256:" + "1".repeat(64), effectiveConfigDigest: "sha256:" + "2".repeat(64), executorVersion: "fake@0.1.0" };
+    const k1 = computeCacheKey(base);
     expect(k1).toMatch(/^sha256:/);
-    expect(computeCacheKey({ stageDefinitionDigest: d, inputChecksums: ["sha256:" + "9".repeat(64)], optionsDigest: "sha256:" + "1".repeat(64), effectiveConfigDigest: "sha256:" + "2".repeat(64) })).not.toBe(k1);
+    expect(computeCacheKey({ ...base, inputChecksums: ["sha256:" + "9".repeat(64)] })).not.toBe(k1);
+    expect(computeCacheKey({ ...base, executorVersion: "fake@0.2.0" })).not.toBe(k1);
     expect(stageDefinitionDigest({ ...wf.definition.stages[0]!, config: { x: 1 } })).not.toBe(d);
   });
 
@@ -30,7 +34,7 @@ describe("cache", () => {
     const registry = new ArtifactRegistry(t.store, t.dir);
     const controller = new Controller({ store: t.store, registry, planner, clock: t.clock });
     const harness = loadHarnessConfig(HARNESS_ROOT);
-    const run1 = planner.plan({ workflow: wf, profile, harness, projectId: "p", portfolioId: "pf", content, variant });
+    const run1 = planner.plan({ workflow: wf, profile, harness, projectId: "p", portfolioId: "pf", content, variant, executorVersionFor });
     planner.enqueue(run1.run_id);
     // run produce for real
     const claim = t.store.claim({ owner: "w", capabilities: [], now: t.clock.now(), leaseSeconds: 90 })!;
@@ -45,7 +49,7 @@ describe("cache", () => {
     expect(t.store.getStageRun(stageRun.stage_run_id)?.cache_key).toMatch(/^sha256:/);
 
     // second run of the same variant: produce is reused, finalize is not (no accepted artifact for it yet)
-    const run2 = planner.plan({ workflow: wf, profile, harness, projectId: "p", portfolioId: "pf", content, variant });
+    const run2 = planner.plan({ workflow: wf, profile, harness, projectId: "p", portfolioId: "pf", content, variant, executorVersionFor });
     const stages2 = t.store.listStageRuns(run2.run_id);
     expect(stages2.map((s) => [s.stage_key, s.state])).toEqual([["produce", "SUCCEEDED"], ["finalize", "PENDING"]]);
     expect(stages2[0]?.reused_artifact_ids).toEqual(out.artifacts.map((a) => a.artifact_id));
@@ -57,10 +61,16 @@ describe("cache", () => {
 
     // a different options digest never reuses
     const { variant: other } = catalog.getOrCreateVariant({ content_id: content.content_id, profile, options: { voice: "tts" } });
-    const run3 = planner.plan({ workflow: wf, profile, harness, projectId: "p", portfolioId: "pf", content, variant: other });
+    const run3 = planner.plan({ workflow: wf, profile, harness, projectId: "p", portfolioId: "pf", content, variant: other, executorVersionFor });
     expect(t.store.listStageRuns(run3.run_id)[0]?.state).toBe("PENDING");
     // reuse: never
-    const run4 = planner.plan({ workflow: wf, profile: { ...profile, reuse: "never" }, harness, projectId: "p", portfolioId: "pf", content, variant });
+    const run4 = planner.plan({ workflow: wf, profile: { ...profile, reuse: "never" }, harness, projectId: "p", portfolioId: "pf", content, variant, executorVersionFor });
     expect(t.store.listStageRuns(run4.run_id)[0]?.state).toBe("PENDING");
+    // a new executor version breaks the cache key: no reuse
+    const run5 = planner.plan({ workflow: wf, profile, harness, projectId: "p", portfolioId: "pf", content, variant, executorVersionFor: () => "fake@0.2.0" });
+    expect(t.store.listStageRuns(run5.run_id)[0]?.state).toBe("PENDING");
+    // no executorVersionFor at all: reuse is skipped entirely
+    const run6 = planner.plan({ workflow: wf, profile, harness, projectId: "p", portfolioId: "pf", content, variant });
+    expect(t.store.listStageRuns(run6.run_id)[0]?.state).toBe("PENDING");
   });
 });

@@ -83,7 +83,7 @@ export class Controller {
         store.transition("stage_run", stage.stage_run_id, "VERIFYING", "SUCCEEDED", ev("stage.succeeded", "info", { artifacts: artifacts.map((a) => a.artifact_id) }));
         const inputChecksums = p.inputArtifactIds.map((id) => store.getArtifact(id)?.checksum).filter((c): c is string => !!c);
         const variant = run.variant_id ? store.getContentVariant(run.variant_id) : undefined;
-        const cacheKey = computeCacheKey({ stageDefinitionDigest: p.stageDefinitionDigest, inputChecksums, optionsDigest: variant?.options_digest ?? canonicalDigest({}), effectiveConfigDigest: run.effective_config_digest });
+        const cacheKey = computeCacheKey({ stageDefinitionDigest: p.stageDefinitionDigest, inputChecksums, optionsDigest: variant?.options_digest ?? canonicalDigest({}), effectiveConfigDigest: run.effective_config_digest, executorVersion: p.executorVersion });
         store.updateStageRun({ ...store.getStageRun(stage.stage_run_id)!, cache_key: cacheKey });
       } else if (kind === "unknown") {
         this.failAttempt(attempt, kind, p.result, now);

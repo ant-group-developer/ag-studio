@@ -28,7 +28,7 @@ export function registerPlan(program: Command): void {
           if (!content) throw new HarnessError("NOT_FOUND", `content not found: ${o.content}`, { content_id: o.content });
           variant = ctx.catalog.getOrCreateVariant({ content_id: content.content_id, profile, options: parseOverrides(o.option, { coerce: false }) }).variant;
         } else if (o.option.length) throw new HarnessError("CONFIG_INVALID", "--option requires --content", {});
-        const run = ctx.planner.plan({ workflow: ctx.workflows(o.workflow), profile, harness: ctx.harness, projectId: ctx.project.project_id, portfolioId: o.portfolio ?? ctx.project.portfolios[0]!.portfolio_id, runOverrides: parseOverrides(o.override), ...(o.source ? { sourceId: o.source } : {}), ...(content ? { content } : {}), ...(variant ? { variant } : {}) });
+        const run = ctx.planner.plan({ workflow: ctx.workflows(o.workflow), profile, harness: ctx.harness, projectId: ctx.project.project_id, portfolioId: o.portfolio ?? ctx.project.portfolios[0]!.portfolio_id, runOverrides: parseOverrides(o.override), executorVersionFor: ctx.executorVersionFor, ...(o.source ? { sourceId: o.source } : {}), ...(content ? { content } : {}), ...(variant ? { variant } : {}) });
         const created = ctx.store.listEvents({ run_id: run.run_id, limit: 1 })[0];
         print(o.json, { run_id: run.run_id, state: run.state, digest: run.effective_config_digest, variant_id: run.variant_id ?? null, skipped_stages: created?.payload.skipped_stages ?? [] }, () => `${run.run_id} (${run.state})${run.variant_id ? " variant " + run.variant_id : ""} config ${run.effective_config_digest.slice(0, 19)}`);
       });

@@ -1,4 +1,4 @@
-import { HarnessError, newId, type Artifact, type Attempt, type Checksum, type ContentItem, type ContentVariant, type EventInput, type HarnessConfig, type ProductionProfile, type Run, type StageDefinition, type StageRun, type StateStore } from "@harness/contracts";
+import { HarnessError, newId, type Artifact, type Attempt, type Checksum, type ContentItem, type ContentVariant, type EventInput, type ExecutorRef, type HarnessConfig, type ProductionProfile, type Run, type StageDefinition, type StageRun, type StateStore } from "@harness/contracts";
 import { resolveEffectiveConfig } from "../config/resolve.js";
 import { isTerminal } from "../state/transitions.js";
 import { evaluateWhen, parseWhen } from "../source-catalog/when.js";
@@ -9,6 +9,13 @@ export interface PlanInput {
   workflow: LoadedWorkflow; profile: ProductionProfile; harness: HarnessConfig;
   projectId: string; portfolioId: string; runOverrides?: Record<string, unknown>; channelOverrides?: Record<string, unknown>;
   sourceId?: string; content?: ContentItem; variant?: ContentVariant; reuse?: boolean;
+  /**
+   * Resolves the executor version a stage would run at, so `plan()` can compute the same cache key the
+   * controller will write at commit (spec §3.3 folds `executor_version` into the key). Without it the
+   * planner cannot know that version, so reuse is skipped entirely rather than computing a key that
+   * could never match — callers that want reuse must supply it.
+   */
+  executorVersionFor?: (ref: ExecutorRef) => string;
 }
 
 export function eventFor(run: Run, stage: StageRun | null, attempt: Attempt | null, event_type: string, severity: EventInput["severity"] = "info", payload: Record<string, unknown> = {}): EventInput {
@@ -76,16 +83,16 @@ export class Planner {
         state: "DRAFT", effective_config_snapshot: snapshot, effective_config_digest: digest, total_cost_usd: 0, created_at: now, updated_at: now,
       };
       this.store.insertRun(run);
-      const reuse = input.reuse ?? input.profile.reuse === "allow";
+      const reuse = (input.reuse ?? input.profile.reuse === "allow") && !!input.executorVersionFor;
       const reusable = new Map<string, Artifact[]>();
-      let stageCacheKey: Checksum | undefined;
       for (const { def: s, depends_on, depends_on_optional } of graph.kept) {
         let reused: Artifact[] | undefined;
+        let stageCacheKey: Checksum | undefined;
         if (reuse && input.variant && s.executor.type !== "gate") {
           const deps = [...depends_on, ...depends_on_optional];
           if (deps.every((d) => reusable.has(d))) {
             const inputChecksums = deps.flatMap((d) => reusable.get(d)!.map((a) => a.checksum));
-            const cacheKey = computeCacheKey({ stageDefinitionDigest: stageDefinitionDigest(s), inputChecksums, optionsDigest: input.variant.options_digest, effectiveConfigDigest: digest });
+            const cacheKey = computeCacheKey({ stageDefinitionDigest: stageDefinitionDigest(s), inputChecksums, optionsDigest: input.variant.options_digest, effectiveConfigDigest: digest, executorVersion: input.executorVersionFor!(s.executor) });
             const found = findReusableArtifacts(this.store, { variantId: input.variant.variant_id, stageKey: s.key, cacheKey, excludeRunId: run.run_id });
             if (found.length) { reused = found; reusable.set(s.key, found); stageCacheKey = cacheKey; }
           }

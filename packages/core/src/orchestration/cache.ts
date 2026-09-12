@@ -5,8 +5,9 @@ export function stageDefinitionDigest(def: StageDefinition): Checksum {
   return canonicalDigest({ key: def.key, executor: def.executor, required_checks: def.required_checks, outputs: def.outputs, config: def.config });
 }
 
-export function computeCacheKey(p: { stageDefinitionDigest: Checksum; inputChecksums: string[]; optionsDigest: Checksum; effectiveConfigDigest: Checksum }): Checksum {
-  return canonicalDigest({ d: p.stageDefinitionDigest, i: [...p.inputChecksums].sort(), o: p.optionsDigest, c: p.effectiveConfigDigest });
+/** Spec §3.3: definition + inputs + options + effective config + executor version. A new executor build must not hit the cache. */
+export function computeCacheKey(p: { stageDefinitionDigest: Checksum; inputChecksums: string[]; optionsDigest: Checksum; effectiveConfigDigest: Checksum; executorVersion: string }): Checksum {
+  return canonicalDigest({ d: p.stageDefinitionDigest, i: [...p.inputChecksums].sort(), o: p.optionsDigest, c: p.effectiveConfigDigest, x: p.executorVersion });
 }
 
 /** ACCEPTED artifacts of the newest earlier run of the same variant whose stage carries the same cache key. */
