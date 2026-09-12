@@ -1310,9 +1310,11 @@ CREATE INDEX artifact_stage_idx ON artifact(stage_run_id);
 CREATE INDEX artifact_run_idx ON artifact(run_id);
 
 CREATE TABLE external_operation (
-  id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE, state TEXT NOT NULL,
+  id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL, state TEXT NOT NULL,
   data TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+-- not UNIQUE: a retry after a FAILED operation reuses the same key; the current op is the newest row (review Task 14)
+CREATE INDEX external_operation_key_idx ON external_operation(idempotency_key);
 
 CREATE TABLE check_result (
   id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL, data TEXT NOT NULL
@@ -1605,7 +1607,8 @@ export class SqliteStateStore implements StateStore {
   }
   getExternalOperation(id: string): ExternalOperation | undefined { return this.getDoc("external_operation", id, (x) => ExternalOperationSchema.parse(x)); }
   findExternalOperationByKey(key: string): ExternalOperation | undefined {
-    const row = this.db.prepare("SELECT data FROM external_operation WHERE idempotency_key = ?").get(key) as Row | undefined;
+    // newest row wins: retries after a FAILED operation reuse the key (review Task 14)
+    const row = this.db.prepare("SELECT data FROM external_operation WHERE idempotency_key = ? ORDER BY rowid DESC LIMIT 1").get(key) as Row | undefined;
     return row ? ExternalOperationSchema.parse(JSON.parse(row.data)) : undefined;
   }
   updateExternalOperation(op: ExternalOperation): void {
