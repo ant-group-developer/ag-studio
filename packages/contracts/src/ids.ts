@@ -1,4 +1,4 @@
-import { monotonicFactory } from "ulid";
+import { ulid } from "ulid";
 import { z } from "zod";
 
 export const ID_PREFIXES = {
@@ -20,11 +20,6 @@ export const ID_PREFIXES = {
 export type IdKind = keyof typeof ID_PREFIXES;
 
 const ULID_RE = "[0-9A-HJKMNP-TV-Z]{26}";
-
-// Monotonic so ids generated in rapid succession (e.g. inserting several stage_runs for one
-// run within the same millisecond) stay strictly increasing; `listStageRuns` etc. rely on
-// `ORDER BY id` to reflect insertion order.
-const ulid = monotonicFactory();
 
 export function newId(kind: IdKind): string {
   return `${ID_PREFIXES[kind]}_${ulid()}`;

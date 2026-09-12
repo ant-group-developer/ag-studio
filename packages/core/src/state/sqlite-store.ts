@@ -103,7 +103,7 @@ export class SqliteStateStore implements StateStore {
     if (res.changes === 0) throw new HarnessError("STALE_STATE", `stage_run ${v.stage_run_id} not in state ${v.state}`);
   }
   listStageRuns(runId: string): StageRun[] {
-    return this.listDocs("SELECT data FROM stage_run WHERE run_id = ? ORDER BY id", [runId], (x) => StageRunSchema.parse(x));
+    return this.listDocs("SELECT data FROM stage_run WHERE run_id = ? ORDER BY rowid", [runId], (x) => StageRunSchema.parse(x));
   }
 
   // ---- attempt ----
