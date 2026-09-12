@@ -148,6 +148,12 @@ describe("harness CLI", () => {
     writeFileSync(join(dir, "manifest.json"), JSON.stringify({ artifact_id: "artifact_01J00000000000000000000000", status: "provisional" }));
     const old = new Date(Date.now() - 86_400_000);
     utimesSync(join(dir, "manifest.json"), old, old);
+    const bad = cli(p, "artifacts", "sweep", "--older-than-minutes", "abc");
+    expect(bad.code).toBe(1);
+    expect(bad.err).toContain("CONFIG_INVALID");
+    expect(existsSync(dir)).toBe(true); // a NaN threshold used to sweep everything
+    expect(cli(p, "artifacts", "sweep", "--older-than-minutes", "-1").code).toBe(1);
+    expect(existsSync(dir)).toBe(true);
     const dry = JSON.parse(cli(p, "artifacts", "sweep", "--dry-run", "--json").out);
     expect(dry.removed).toHaveLength(1);
     expect(existsSync(dir)).toBe(true);
