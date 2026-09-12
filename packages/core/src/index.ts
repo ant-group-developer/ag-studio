@@ -8,6 +8,7 @@ export * from "./observability/redaction.js";
 export * from "./observability/logger.js";
 export * from "./environment/workspace.js";
 export * from "./artifacts/registry.js";
+export * from "./artifacts/sweep.js";
 export * from "./orchestration/registry.js";
 export * from "./orchestration/planner.js";
 export * from "./orchestration/controller.js";

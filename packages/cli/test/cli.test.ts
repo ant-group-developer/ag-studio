@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HARNESS_ROOT, SqliteStateStore } from "@harness/core";
@@ -119,5 +119,20 @@ describe("harness CLI", () => {
     const r = cli(p, "retry", run_id);
     expect(r.code).toBe(1);
     expect(r.err).toContain("INVALID_TRANSITION");
+  });
+  it("artifacts sweep reports and removes orphan directories", () => {
+    const p = freshProject();
+    cli(p, "db", "migrate");
+    const dir = join(p, "data", "artifacts", "c", "v", "artifact_01J00000000000000000000000");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "manifest.json"), JSON.stringify({ artifact_id: "artifact_01J00000000000000000000000", status: "provisional" }));
+    const old = new Date(Date.now() - 86_400_000);
+    utimesSync(join(dir, "manifest.json"), old, old);
+    const dry = JSON.parse(cli(p, "artifacts", "sweep", "--dry-run", "--json").out);
+    expect(dry.removed).toHaveLength(1);
+    expect(existsSync(dir)).toBe(true);
+    const real = JSON.parse(cli(p, "artifacts", "sweep", "--json").out);
+    expect(real.removed).toHaveLength(1);
+    expect(existsSync(dir)).toBe(false);
   });
 });
