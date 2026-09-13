@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProductionProfileSchema, ProjectConfigSchema, WorkflowDefinitionSchema, type Executor, type StageRequest, type StageResult } from "@harness/contracts";
 import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, FixedClock, HARNESS_ROOT, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, SourceCatalog, SqliteStateStore, Verifier, addSeconds, createLogger, loadHarnessConfig, loadProfile, loadWorkflow } from "@harness/core";
-import { AgentExecutor, ExecutorRegistry, ScriptExecutor } from "@harness/executors";
+import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, fakeScriptCommands } from "@harness/adapter-fake";
 import { Worker, type WorkerDeps } from "../src/worker.js";
 
@@ -20,6 +20,7 @@ function makeWorld(opts: { scriptExecutor?: Executor; owner?: string; clock?: Fi
   const executors = new ExecutorRegistry();
   executors.register("script", opts.scriptExecutor ?? new ScriptExecutor(fakeScriptCommands()));
   executors.register("agent", new AgentExecutor(new FakeAgentRuntime()));
+  executors.register("gate", new GateExecutor());
   const harness = loadHarnessConfig(HARNESS_ROOT);
   const project = ProjectConfigSchema.parse({ schema_version: "harness.project-config/v1", project_id: "project-main", template_release: "0.1.0", runtime: "claude", data_root: dir, portfolios: [{ portfolio_id: "portfolio-main", display_name: "Main" }] });
   const logger = createLogger({ redactor: new Redactor(() => []), sink: () => {}, level: "error" });

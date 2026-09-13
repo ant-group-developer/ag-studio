@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { isHarnessError, type Artifact, type ClaimResult, type Clock, type HarnessConfig, type ProductionProfile, type ProjectConfig, type Run, type StageRequest, type StageResult, type StateStore } from "@harness/contracts";
-import { acceptedInputsFor, addSeconds, ArtifactRegistry, buildStageRequest, canonicalDigest, Controller, createWorkspace, eventFor, type LoadedWorkflow, materializeInputs, mimeTypesFor, Planner, stageDefinitionDigest, stageDefinitionFor, Verifier, workspacePath, type HarnessLogger } from "@harness/core";
+import { acceptedInputsFor, addSeconds, ArtifactRegistry, buildStageRequest, canonicalDigest, Controller, createWorkspace, eventFor, gateOverdue, type LoadedWorkflow, materializeInputs, mimeTypesFor, Planner, stageDefinitionDigest, stageDefinitionFor, Verifier, workspacePath, type HarnessLogger } from "@harness/core";
 import type { ExecutorRegistry } from "@harness/executors";
 import { startHeartbeat } from "./heartbeat.js";
 
@@ -41,7 +41,7 @@ export class Worker {
     // the run is unknown until the claim lands, so claim on the harness default and widen afterwards
     const defaultLeaseSeconds = this.d.harness.lease_seconds;
     const claim = store.claim({ owner: this.d.owner, capabilities: this.d.capabilities, now: clock.now(), leaseSeconds: defaultLeaseSeconds, resourceCapacity: this.d.resourceCapacity });
-    if (!claim) { this.warnResourceStarvation(); return "idle"; }
+    if (!claim) { this.warnResourceStarvation(); this.warnGateOverdue(); return "idle"; }
     const run = store.getRun(claim.stageRun.run_id)!;
     const snapshotLease = Number(run.effective_config_snapshot.lease_seconds);
     const leaseSeconds = Number.isFinite(snapshotLease) ? snapshotLease : defaultLeaseSeconds;
@@ -116,6 +116,13 @@ export class Worker {
       if (!starved.length) continue;
       const recent = store.listEvents({ run_id: run.run_id, limit: 200, newest: true }).some((e) => e.event_type === "stage.waiting_resource" && e.stage_run_id === s.stage_run_id && Date.parse(now) - Date.parse(e.occurred_at) < harness.resource_wait_warn_seconds * 1000);
       if (!recent) store.appendEvent(eventFor(run, s, null, "stage.waiting_resource", "warn", { resources: starved, waiting_since: s.ready_at }));
+    }
+  }
+
+  private warnGateOverdue(): void {
+    const { store, clock, harness, logger } = this.d;
+    for (const { run, stage, overdue_seconds } of gateOverdue(store, clock.now(), harness.resource_wait_warn_seconds)) {
+      logger.warn("gate overdue", { run_id: run.run_id, stage_run_id: stage.stage_run_id, overdue_seconds });
     }
   }
 

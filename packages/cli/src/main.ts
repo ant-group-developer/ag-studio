@@ -17,9 +17,10 @@ import { registerSource } from "./commands/source.js";
 import { registerContent } from "./commands/content.js";
 import { registerResources } from "./commands/resources.js";
 import { registerOp } from "./commands/op.js";
+import { registerStage } from "./commands/stage.js";
 
 const program = new Command("harness").description("YouTube Operations Harness control plane").option("--project <dir>", "operations project directory", process.env.HARNESS_PROJECT ?? process.cwd());
-for (const reg of [registerDb, registerPlan, registerEnqueue, registerWorker, registerStatus, registerRetry, registerCancel, registerReconcile, registerLeases, registerWorkspaces, registerEvents, registerArtifacts, registerSource, registerContent, registerResources, registerOp]) reg(program);
+for (const reg of [registerDb, registerPlan, registerEnqueue, registerWorker, registerStatus, registerRetry, registerCancel, registerReconcile, registerLeases, registerWorkspaces, registerEvents, registerArtifacts, registerSource, registerContent, registerResources, registerOp, registerStage]) reg(program);
 
 program.parseAsync(process.argv).catch((e: unknown) => {
   if (isHarnessError(e)) process.stderr.write(`${e.code}: ${e.message}\n`);

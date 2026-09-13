@@ -3,7 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
 import { HarnessError, ProjectConfigSchema, type ExecutorRef, type ProductionProfile, type ProjectConfig, type ScriptsRegistry } from "@harness/contracts";
 import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, loadProfile, loadScriptsRegistry, loadWorkflow, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, type HarnessLogger, type LoadedWorkflow, type LogLevel } from "@harness/core";
-import { AgentExecutor, ExecutorRegistry, ScriptExecutor } from "@harness/executors";
+import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, FakeProvider, fakeScriptCommands } from "@harness/adapter-fake";
 import { cliArgv } from "./self.js";
 
@@ -43,6 +43,7 @@ export function buildContext(o: { projectDir: string; harnessRoot?: string; owne
   const commands = { ...fakeScriptCommands(), ...(scripts ? scriptCommandsFrom(scripts, projectDir) : {}) };
   executors.register("script", new ScriptExecutor(commands, { projectDir, secrets, cliArgv: cliArgv() }));
   executors.register("agent", new AgentExecutor(new FakeAgentRuntime({ journal })));
+  executors.register("gate", new GateExecutor());
   const workflows = (ref: string) => loadWorkflow(harnessRoot, ref);
   const profiles = (id: string) => loadProfile(harnessRoot, id);
   const catalog = new SourceCatalog({ store, dataRoot, prober: new NullMediaProber(), clock, materialize: project.source.materialize });
