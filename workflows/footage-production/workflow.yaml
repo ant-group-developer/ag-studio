@@ -1,0 +1,79 @@
+schema_version: harness.workflow/v1
+id: footage-production
+version: 1.0.0
+defaults: {}
+stages:
+  - key: index-source
+    executor: { type: script, script: index-source }
+    requires_resources: [cpu]
+    required_checks: [schema-valid, output-exists, checksum-match, media-probe]
+    outputs:
+      - { type: shots, mime_type: application/json, name: shots.json }
+      - { type: proxy_video, mime_type: video/mp4, name: proxy.mp4 }
+  - key: select-topic
+    executor: { type: gate, brief: "Read shots.json and choose one topic for this episode. Write output/topic.md: title, angle, 3-5 key beats, which shots support each beat." }
+    depends_on: [index-source]
+    gate_deadline_seconds: 86400
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: topic, mime_type: text/markdown, name: topic.md }
+  - key: write-script
+    executor: { type: gate, brief: "From topic.md write the narration (output/narration.txt, plain text, one paragraph per beat) and the full script with on-screen notes (output/script.md)." }
+    depends_on: [select-topic]
+    gate_deadline_seconds: 86400
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: narration, mime_type: text/plain, name: narration.txt }
+      - { type: script, mime_type: text/markdown, name: script.md }
+  - key: edit-plan
+    executor: { type: gate, brief: "Produce output/edl.json (schema harness.edl/v1): ordered entries { source_id, in, out, order, overlay, note } covering the narration, using only sources listed in stage-request.json." }
+    depends_on: [write-script, index-source]
+    gate_deadline_seconds: 86400
+    required_checks: [schema-valid, output-exists, checksum-match, edl-valid]
+    outputs:
+      - { type: edl, mime_type: application/json, name: edl.json }
+  - key: tts
+    executor: { type: script, script: tts }
+    depends_on: [write-script]
+    when: options.voice == "tts"
+    requires_resources: [gpu]
+    required_checks: [schema-valid, output-exists, checksum-match, audio-integrity]
+    outputs:
+      - { type: voice_track, mime_type: audio/wav, name: narration.wav }
+      - { type: captions, mime_type: application/json, name: captions.json }
+  - key: avatar
+    executor: { type: script, script: avatar }
+    depends_on: [write-script, edit-plan]
+    when: options.avatar == "heygen"
+    requires_resources: [heygen]
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: avatar_clips, mime_type: application/x-directory, kind: directory, name: avatar-clips }
+  - key: cut
+    executor: { type: script, script: cut }
+    depends_on: [edit-plan]
+    requires_resources: [cpu]
+    required_checks: [schema-valid, output-exists, checksum-match, clip-set-complete]
+    outputs:
+      - { type: clip_set, mime_type: application/x-directory, kind: directory, name: cuts }
+  - key: assemble
+    executor: { type: script, script: assemble }
+    depends_on: [cut]
+    depends_on_optional: [tts, avatar]
+    requires_resources: [cpu]
+    required_checks: [schema-valid, output-exists, checksum-match, media-probe, duration-range, audio-integrity]
+    outputs:
+      - { type: episode_video, mime_type: video/mp4, name: full-episode.mp4 }
+  - key: thumbnail-render
+    executor: { type: script, script: thumbnail-render }
+    depends_on: [cut, write-script]
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: thumbnail, mime_type: image/png, name: thumbnail.png }
+  - key: thumbnail-qc
+    executor: { type: gate, brief: "Open thumbnail.png; write output/qc-checklist.json { readable: bool, on_brand: bool, notes: string }." }
+    depends_on: [thumbnail-render]
+    gate_deadline_seconds: 86400
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: qc_checklist, mime_type: application/json, name: qc-checklist.json }
