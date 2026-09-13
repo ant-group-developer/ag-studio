@@ -15,6 +15,11 @@ const profile = ProductionProfileSchema.parse({ schema_version: "harness.product
 const wf1 = { definition: WorkflowDefinitionSchema.parse({ schema_version: "harness.workflow/v1", id: "one", version: "1.0.0", defaults: {}, stages: [
   { key: "produce", executor: { type: "script", script: "fake-stage" }, required_checks: ["schema-valid"], outputs: [{ type: "script_text", mime_type: "text/plain" }] },
 ] }), digest: "sha256:" + "e".repeat(64) };
+/** A gate feeding a script stage: the gate can never be reused, so its dependant can only come from the cache at release. */
+const wfGate = { definition: WorkflowDefinitionSchema.parse({ schema_version: "harness.workflow/v1", id: "gated", version: "1.0.0", defaults: {}, stages: [
+  { key: "topic", executor: { type: "gate", brief: "write output/result.txt" }, gate_deadline_seconds: 3600, required_checks: ["schema-valid"], outputs: [{ type: "script_text", mime_type: "text/plain", name: "result.txt" }] },
+  { key: "cut", executor: { type: "script", script: "fake-stage" }, depends_on: ["topic"], required_checks: ["schema-valid"], outputs: [{ type: "script_text", mime_type: "text/plain", name: "result.txt" }] },
+] }), digest: "sha256:" + "d".repeat(64) };
 const EXECUTOR_VERSION = "fake@0.1.0";
 const executorVersionFor = () => EXECUTOR_VERSION;
 
@@ -125,6 +130,58 @@ describe("cache", () => {
     expect(w.store.listStageRuns(run3.run_id).flatMap((s) => s.reused_artifact_ids ?? [])).toEqual(ids1);
     const key = w.store.listStageRuns(run3.run_id)[1]!.cache_key!;
     expect(findReusableArtifacts(w.store, { variantId: w.variant.variant_id, stageKey: "finalize", cacheKey: key, excludeRunId: run3.run_id }).map((a) => a.artifact_id)).toEqual([ids1[1]]);
+  });
+
+  it("a stage whose gate re-committed identical content is reused at release, not re-run", async () => {
+    const w = world();
+    const plan = () => w.planner.plan({ workflow: wfGate, profile, harness: w.harness, projectId: "p", portfolioId: "pf", content: w.content, variant: w.variant, executorVersionFor });
+    const runA = plan();
+    w.planner.enqueue(runA.run_id);
+    const topicA = await driveOneStage(w, wfGate, "t1");
+    const cutA = await driveOneStage(w, wfGate, "cut bytes");
+    expect([topicA.stageKey, cutA.stageKey]).toEqual(["topic", "cut"]);
+    expect(w.store.getRun(runA.run_id)?.state).toBe("SUCCEEDED");
+    const cutIdsA = cutA.out.artifacts.map((a) => a.artifact_id);
+
+    // a gate is never reused at plan time, so its dependant cannot be either: both start PENDING
+    const runA2 = plan();
+    expect(w.store.listStageRuns(runA2.run_id).map((s) => [s.stage_key, s.state])).toEqual([["topic", "PENDING"], ["cut", "PENDING"]]);
+    const planned = w.store.listStageRuns(runA2.run_id)[1]!;
+    expect(planned.reuse_eligible).toBe(true);
+    expect(planned.stage_definition_digest).toBe(stageDefinitionDigest(wfGate.definition.stages[1]!));
+    expect(planned.expected_executor_version).toBe(EXECUTOR_VERSION);
+    w.planner.enqueue(runA2.run_id);
+
+    await driveOneStage(w, wfGate, "t1"); // the same gate bytes as run A
+    const cut2 = w.store.listStageRuns(runA2.run_id).find((s) => s.stage_key === "cut")!;
+    expect(cut2.state).toBe("SUCCEEDED");
+    expect(cut2.reused_artifact_ids).toEqual(cutIdsA);
+    expect(cut2.cache_key).toBe(w.store.listStageRuns(runA.run_id).find((s) => s.stage_key === "cut")!.cache_key);
+    expect(w.store.listAttempts(cut2.stage_run_id)).toEqual([]);
+    const reused = w.store.listEvents({ run_id: runA2.run_id }).find((e) => e.event_type === "stage.reused")!;
+    expect(reused.payload).toMatchObject({ at: "release", artifacts: cutIdsA, cache_key: cut2.cache_key });
+    expect(w.store.getRun(runA2.run_id)?.state).toBe("SUCCEEDED");
+    // identical bytes never invalidate: run A keeps every artifact
+    for (const a of [...topicA.out.artifacts, ...cutA.out.artifacts]) expect(w.store.getArtifact(a.artifact_id)?.status).toBe("ACCEPTED");
+    expect(w.store.claim({ owner: "w2", capabilities: [], now: w.clock.now(), leaseSeconds: 90 })).toBeUndefined();
+  });
+
+  it("a gate that commits different content leaves its dependant READY and stales the earlier run", async () => {
+    const w = world();
+    const plan = () => w.planner.plan({ workflow: wfGate, profile, harness: w.harness, projectId: "p", portfolioId: "pf", content: w.content, variant: w.variant, executorVersionFor });
+    const runA = plan();
+    w.planner.enqueue(runA.run_id);
+    const topicA = await driveOneStage(w, wfGate, "t1");
+    const cutA = await driveOneStage(w, wfGate, "cut bytes");
+
+    const runA2 = plan();
+    w.planner.enqueue(runA2.run_id);
+    await driveOneStage(w, wfGate, "t2"); // different gate bytes
+    const cut2 = w.store.listStageRuns(runA2.run_id).find((s) => s.stage_key === "cut")!;
+    expect(cut2.state).toBe("READY");
+    expect(cut2.reused_artifact_ids).toBeUndefined();
+    expect(w.store.getArtifact(topicA.out.artifacts[0]!.artifact_id)?.status).toBe("STALE");
+    expect(w.store.getArtifact(cutA.out.artifacts[0]!.artifact_id)?.status).toBe("STALE");
   });
 
   it("a run whose every stage was reused settles SUCCEEDED at enqueue without dispatching anything", async () => {

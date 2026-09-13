@@ -69,6 +69,11 @@ export const StageRunSchema = z.object({
   last_failure_kind: z.enum(FAILURE_KINDS).optional(),
   cache_key: checksumSchema.optional(),
   reused_artifact_ids: z.array(idSchema("artifact")).optional(),
+  // Recorded by the planner so a stage can still be looked up in the cache at release time, when the
+  // workflow definition and the executor registry are out of reach (core never loads either at that point).
+  stage_definition_digest: checksumSchema.optional(),
+  expected_executor_version: z.string().min(1).optional(),
+  reuse_eligible: z.boolean().optional(),
   created_at: timestampSchema,
   updated_at: timestampSchema,
 }).strict();

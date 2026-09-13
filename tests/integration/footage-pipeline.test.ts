@@ -2,23 +2,12 @@ import { describe, expect, it } from "vitest";
 import { hasFfmpeg } from "../media.js";
 import { SqliteStateStore } from "@harness/core";
 import { join } from "node:path";
-import { SAMPLE_EDL, cli, cliAsync, drain, freshFootageProject, planFootage, setGpuCapacity, stageId, status, submitGate } from "./footage-helpers.js";
+import { cli, cliAsync, drain, freshFootageProject, planFootage, runThroughEditPlan, setGpuCapacity, stageId, status, submitGate } from "./footage-helpers.js";
 
 function ingestAndCreateContent(dir: string, source: string): { source_id: string; content_id: string } {
   const ingest = JSON.parse(cli(dir, ["source", "ingest", source, "--rights", "cleared", "--json"]).out) as { source_id: string };
   const created = JSON.parse(cli(dir, ["content", "create", "--title", "Sample", "--source", ingest.source_id, "--json"]).out) as { content_id: string };
   return { source_id: ingest.source_id, content_id: created.content_id };
-}
-
-/** Advance a run through select-topic, write-script and edit-plan by writing the gate outputs the brief
- * would produce; leaves the run wherever the next drain takes it (tts/avatar/cut/assemble/thumbnail-render). */
-function runThroughEditPlan(dir: string, run: string, sourceId: string): void {
-  expect(status(dir, run).stages.find((s) => s.stage_key === "select-topic")?.state).toBe("WAITING_HUMAN");
-  submitGate(dir, run, "select-topic", { "topic.md": "# Sample topic\n" });
-  drain(dir);
-  submitGate(dir, run, "write-script", { "narration.txt": "Line one.\nLine two.\nLine three.\n", "script.md": "# Script\n" });
-  drain(dir);
-  submitGate(dir, run, "edit-plan", { "edl.json": SAMPLE_EDL(sourceId) });
 }
 
 describe.skipIf(!hasFfmpeg())("footage-production on the fixture ops project", () => {
@@ -61,10 +50,9 @@ describe.skipIf(!hasFfmpeg())("footage-production on the fixture ops project", (
     expect(cli(dir, ["events", "tail", "--run", runA2, "--json", "--limit", "200"]).out).toContain("stage.reused");
 
     // A2 re-run: submit every gate again with the same contents as A. A fresh gate submission mints a brand
-    // new artifact even for identical bytes, so cut/assemble/thumbnail-render/tts/avatar each get a new
-    // cache key and recompute for real; index-source's own cache key is unaffected by any of that and stays
-    // reused from A. This also invalidates A's downstream artifacts (same stage keys, same variant, a
-    // later run just committed new ones), while A's index-source artifact is untouched.
+    // new artifact row, but the bytes are identical — so nothing of A is invalidated (content-aware
+    // invalidation) and every script stage below the gates computes the very cache key it already carries on
+    // A and is settled from the cache at release instead of recomputed. Only the four gates actually run.
     runThroughEditPlan(dir, runA2, sourceId);
     drain(dir);
     expect(status(dir, runA2).stages.find((s) => s.stage_key === "assemble")?.state).toBe("SUCCEEDED");
@@ -73,20 +61,19 @@ describe.skipIf(!hasFfmpeg())("footage-production on the fixture ops project", (
 
     const a2Final = status(dir, runA2);
     expect(a2Final.run.state).toBe("SUCCEEDED");
-    const a2IndexSource = a2Final.stages.find((s) => s.stage_key === "index-source")!;
-    expect(a2IndexSource.attempts).toEqual([]);
-    expect(a2IndexSource.reused_artifact_ids?.length ?? 0).toBeGreaterThan(0);
-    for (const key of ["cut", "assemble", "thumbnail-render", "tts", "avatar"]) {
-      expect(a2Final.stages.find((s) => s.stage_key === key)?.attempts.filter((a) => a.state === "SUCCEEDED"), key).toHaveLength(1);
+    for (const key of ["index-source", "cut", "assemble", "thumbnail-render", "tts", "avatar"]) {
+      const st = a2Final.stages.find((s) => s.stage_key === key)!;
+      expect(st.attempts, key).toEqual([]);
+      expect(st.reused_artifact_ids?.length ?? 0, key).toBeGreaterThan(0);
     }
-    const a2Episode = a2Final.artifacts.find((a) => a.type === "episode_video" && a.status === "ACCEPTED")!;
-    expect(a2Episode.artifact_id).not.toBe(runAEpisode.artifact_id);
+    expect(a2Final.stages.filter((s) => s.attempts.length > 0).map((s) => s.stage_key).sort()).toEqual(["edit-plan", "select-topic", "thumbnail-qc", "write-script"]);
+    // A2's episode video is A's artifact, not a re-render of it
+    expect(a2Final.stages.find((s) => s.stage_key === "assemble")!.reused_artifact_ids).toEqual([runAEpisode.artifact_id]);
 
     const runAAfterA2 = status(dir, runA);
     const runAIndexSourceArtifacts = runAAfterA2.artifacts.filter((a) => a.stage_run_id === runAIndexSourceStageRunId);
     expect(runAIndexSourceArtifacts.length).toBeGreaterThan(0);
-    expect(runAIndexSourceArtifacts.every((a) => a.status === "ACCEPTED")).toBe(true);
-    expect(runAAfterA2.artifacts.some((a) => a.status === "STALE")).toBe(true);
+    expect(runAAfterA2.artifacts.every((a) => a.status === "ACCEPTED")).toBe(true); // identical bytes everywhere: nothing of A was superseded
   }, 300_000);
 
   it("gpu: 1 — two tts stages never overlap", async () => {

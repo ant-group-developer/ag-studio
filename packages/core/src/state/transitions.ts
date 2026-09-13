@@ -10,7 +10,7 @@ export const TRANSITIONS: Record<TransitionKind, Record<string, readonly string[
     CANCELLED: [], SUCCEEDED: [], FAILED: [],
   },
   stage_run: {
-    PENDING: ["READY", "CANCEL_REQUESTED", "CANCELLED"],
+    PENDING: ["READY", "SUCCEEDED", "CANCEL_REQUESTED", "CANCELLED"], // SUCCEEDED: reused from the cache at release, never dispatched
     READY: ["CLAIMED", "CANCEL_REQUESTED", "CANCELLED"],
     CLAIMED: ["RUNNING", "READY", "FAILED", "CANCEL_REQUESTED"],  // READY/FAILED: lease abandoned
     RUNNING: ["VERIFYING", "WAITING_EXTERNAL", "WAITING_HUMAN", "FAILED", "READY", "CANCEL_REQUESTED"], // RUNNING -> READY: lease abandoned

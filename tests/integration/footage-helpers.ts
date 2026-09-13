@@ -1,3 +1,4 @@
+import { expect } from "vitest";
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -169,3 +170,15 @@ export const SAMPLE_EDL = (sourceId: string): string =>
       { source_id: sourceId, in: 2, out: 4.5, order: 1, overlay: "avatar" },
     ],
   });
+
+/** Advance a run through select-topic, write-script and edit-plan by writing the gate outputs the brief
+ * would produce; leaves the run wherever the next drain takes it (tts/avatar/cut/assemble/thumbnail-render).
+ * The bytes are fixed, so calling it on two runs of the same variant submits byte-identical gate content. */
+export function runThroughEditPlan(dir: string, run: string, sourceId: string): void {
+  expect(status(dir, run).stages.find((s) => s.stage_key === "select-topic")?.state).toBe("WAITING_HUMAN");
+  submitGate(dir, run, "select-topic", { "topic.md": "# Sample topic\n" });
+  drain(dir);
+  submitGate(dir, run, "write-script", { "narration.txt": "Line one.\nLine two.\nLine three.\n", "script.md": "# Script\n" });
+  drain(dir);
+  submitGate(dir, run, "edit-plan", { "edl.json": SAMPLE_EDL(sourceId) });
+}

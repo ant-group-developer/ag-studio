@@ -54,9 +54,10 @@ describe.skipIf(!hasFfmpeg())("18.3 #6 changing an early gate stales exactly its
     expect([...(a2IndexSource.reused_artifact_ids ?? [])].sort()).toEqual(indexSourceArtifactIds.slice().sort());
     expect(a2AfterPlan.stages.find((s) => s.stage_key === "select-topic")?.state).toBe("WAITING_HUMAN");
 
-    // submit A2's select-topic with byte-identical content to A's: `stage submit` commits synchronously, so
-    // the invalidation this triggers is visible on A immediately, with no drain in between.
-    submitGate(dir, runA2, "select-topic", { "topic.md": "# Sample topic\n" });
+    // submit A2's select-topic with *different* content from A's — invalidation is content-aware, so
+    // re-submitting the same bytes would (correctly) invalidate nothing at all. `stage submit` commits
+    // synchronously, so the invalidation this triggers is visible on A immediately, with no drain in between.
+    submitGate(dir, runA2, "select-topic", { "topic.md": "# A different topic\n" });
 
     const runAAfterFirstSubmit = status(dir, runA);
     const staleNow = runAAfterFirstSubmit.artifacts.filter((a) => a.status === "STALE").map((a) => a.artifact_id).sort();

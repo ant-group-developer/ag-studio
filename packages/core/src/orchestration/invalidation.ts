@@ -17,15 +17,31 @@ export function dependantsOf(stages: GraphNode[], stageKey: string): string[] {
   return [...out];
 }
 
-/** A stage of `run` produced a new ACCEPTED artifact: earlier runs of the same variant lose that stage's and its dependants' artifacts. Must run inside a transaction. */
-export function invalidateDownstream(p: { store: StateStore; run: Run; stageKey: string; now: string }): { stale: string[] } {
+/**
+ * A stage of `run` produced a new ACCEPTED artifact: earlier runs of the same variant lose that stage's and
+ * its dependants' artifacts — unless the new artifacts are byte-identical to what that run already holds for
+ * the same stage. Spec §3.2 ("đổi script → … cut không nếu EDL không đổi"): invalidation stops at the first
+ * stage whose output did not actually change, so re-submitting a gate with the same bytes costs nothing.
+ * Must run inside a transaction.
+ */
+export function invalidateDownstream(p: { store: StateStore; run: Run; stageKey: string; now: string; newChecksums: string[] }): { stale: string[] } {
   if (!p.run.variant_id) return { stale: [] };
   const graph = p.store.listStageRuns(p.run.run_id);
   const affected = new Set([p.stageKey, ...dependantsOf(graph, p.stageKey)]);
+  const fresh = [...p.newChecksums].sort();
   const stale: string[] = [];
   for (const other of p.store.listRuns({ variant_id: p.run.variant_id })) {
     if (other.run_id === p.run.run_id) continue;
-    for (const s of p.store.listStageRuns(other.run_id)) {
+    const stages = p.store.listStageRuns(other.run_id);
+    // A stage that committed nothing has no content to compare, so it keeps invalidating by graph alone.
+    if (fresh.length) {
+      const held = stages
+        .filter((s) => s.stage_key === p.stageKey)
+        .flatMap((s) => p.store.listArtifacts({ stage_run_id: s.stage_run_id, status: "ACCEPTED" }).map((a) => a.checksum))
+        .sort();
+      if (held.length === fresh.length && held.every((c, i) => c === fresh[i])) continue;
+    }
+    for (const s of stages) {
       if (!affected.has(s.stage_key)) continue;
       for (const a of p.store.listArtifacts({ stage_run_id: s.stage_run_id, status: "ACCEPTED" })) {
         p.store.transition("artifact", a.artifact_id, "ACCEPTED", "STALE", eventFor(other, s, null, "artifact.stale", "info", { artifact_id: a.artifact_id, superseded_by_run: p.run.run_id, stage_key: p.stageKey }));

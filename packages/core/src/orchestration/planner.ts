@@ -3,7 +3,7 @@ import { resolveEffectiveConfig } from "../config/resolve.js";
 import { isTerminal } from "../state/transitions.js";
 import { evaluateWhen, parseWhen } from "../source-catalog/when.js";
 import { budgetBlocks } from "./budget.js";
-import { computeCacheKey, findReusableArtifacts, stageDefinitionDigest } from "./cache.js";
+import { computeCacheKey, findReusableArtifacts, stageDefinitionDigest, tryLateReuse } from "./cache.js";
 import type { LoadedWorkflow } from "./registry.js";
 
 export interface PlanInput {
@@ -92,11 +92,14 @@ export class Planner {
       for (const { def: s, depends_on, depends_on_optional } of graph.kept) {
         let reused: Artifact[] | undefined;
         let stageCacheKey: Checksum | undefined;
-        if (reuse && input.variant && s.executor.type !== "gate") {
+        const reuseEligible = reuse && !!input.variant && s.executor.type !== "gate";
+        const expectedExecutorVersion = input.executorVersionFor?.(s.executor);
+        const defDigest = stageDefinitionDigest(s);
+        if (reuseEligible && input.variant) {
           const deps = [...depends_on, ...depends_on_optional];
           if (deps.every((d) => reusable.has(d))) {
             const inputChecksums = deps.flatMap((d) => reusable.get(d)!.map((a) => a.checksum));
-            const cacheKey = computeCacheKey({ stageDefinitionDigest: stageDefinitionDigest(s), inputChecksums, optionsDigest: input.variant.options_digest, effectiveConfigDigest: digest, executorVersion: input.executorVersionFor!(s.executor) });
+            const cacheKey = computeCacheKey({ stageDefinitionDigest: defDigest, inputChecksums, optionsDigest: input.variant.options_digest, effectiveConfigDigest: digest, executorVersion: expectedExecutorVersion! });
             const found = findReusableArtifacts(this.store, { variantId: input.variant.variant_id, stageKey: s.key, cacheKey, excludeRunId: run.run_id });
             if (found.length) { reused = found; reusable.set(s.key, found); stageCacheKey = cacheKey; }
           }
@@ -107,6 +110,9 @@ export class Planner {
           required_checks: [...new Set([...s.required_checks, ...input.profile.verification.required_checks, ...(input.profile.verification.required_checks_by_stage[s.key] ?? [])])],
           retry: s.retry, stage_config: s.config, state: reused ? "SUCCEEDED" : "PENDING", attempt_count: 0, result_failures: 0, created_at: now, updated_at: now,
           ...(s.gate_deadline_seconds ? { gate_deadline_seconds: s.gate_deadline_seconds } : {}),
+          // what a later cache lookup at release needs, recorded now while the definition is in hand
+          stage_definition_digest: defDigest, reuse_eligible: reuseEligible,
+          ...(expectedExecutorVersion ? { expected_executor_version: expectedExecutorVersion } : {}),
           ...(reused ? { reused_artifact_ids: reused.map((a) => a.artifact_id), cache_key: stageCacheKey } : {}),
         };
         this.store.insertStageRun(stage);
@@ -122,14 +128,8 @@ export class Planner {
       const run = this.mustRun(runId);
       this.store.transition("run", runId, "DRAFT", "READY", eventFor(run, null, null, "run.enqueued"));
       const gate = budgetBlocks(this.store, run);
-      const stages = this.store.listStageRuns(runId);
-      const byKey = new Map(stages.map((s) => [s.stage_key, s]));
       // release root stages, and any stage whose dependencies were already satisfied by reuse at plan time
-      for (const s of stages) {
-        if (s.state !== "PENDING" || gate.blocked) continue;
-        const deps = [...s.depends_on, ...s.depends_on_optional];
-        if (deps.every((d) => byKey.get(d)?.state === "SUCCEEDED")) this.ready(run, s);
-      }
+      this.releaseReady(run, gate.blocked);
       const fresh = this.store.listStageRuns(runId);
       // every stage came from the cache: no worker will ever claim anything here, so settle the run now
       if (fresh.every((s) => s.state === "SUCCEEDED")) {
@@ -149,14 +149,7 @@ export class Planner {
       const run = this.mustRun(runId);
       if (run.state === "CANCEL_REQUESTED") return { released: [], runState: this.settleCancel(run) };
       const gate = budgetBlocks(this.store, run);
-      const stages = this.store.listStageRuns(runId);
-      const byKey = new Map(stages.map((s) => [s.stage_key, s]));
-      const released: string[] = [];
-      for (const s of stages) {
-        if (s.state !== "PENDING" || gate.blocked) continue;
-        const deps = [...s.depends_on, ...s.depends_on_optional];
-        if (deps.every((d) => byKey.get(d)?.state === "SUCCEEDED")) { this.ready(run, s); released.push(s.stage_key); }
-      }
+      const released = this.releaseReady(run, gate.blocked);
       const fresh = this.store.listStageRuns(runId);
       const allDone = fresh.every((s) => s.state === "SUCCEEDED");
       const anyFailed = fresh.some((s) => s.state === "FAILED" || s.state === "CANCELLED");
@@ -194,6 +187,35 @@ export class Planner {
     const pending = this.store.listStageRuns(run.run_id).some((s) => ["CANCEL_REQUESTED", ...HELD_BY_WORKER, "WAITING_EXTERNAL"].includes(s.state));
     if (!pending) this.store.transition("run", run.run_id, "CANCEL_REQUESTED", "CANCELLED", eventFor(run, null, null, "run.cancelled", "warn"));
     return this.mustRun(run.run_id).state;
+  }
+
+  /**
+   * Every PENDING stage whose dependencies all SUCCEEDED either comes from the cache (settled SUCCEEDED
+   * without ever being dispatched) or goes READY. Reusing a stage can satisfy its own dependants, so the
+   * sweep repeats until nothing changes — a whole tail of the graph can settle in one call.
+   * Returns the stage keys actually released to a worker.
+   */
+  private releaseReady(run: Run, budgetBlocked: boolean): string[] {
+    const released: string[] = [];
+    if (budgetBlocked) return released;
+    for (;;) {
+      const stages = this.store.listStageRuns(run.run_id);
+      const byKey = new Map(stages.map((s) => [s.stage_key, s]));
+      let reusedAny = false;
+      for (const s of stages) {
+        if (s.state !== "PENDING") continue;
+        const deps = [...s.depends_on, ...s.depends_on_optional];
+        if (!deps.every((d) => byKey.get(d)?.state === "SUCCEEDED")) continue;
+        const hit = tryLateReuse(this.store, run, s);
+        if (!hit) { this.ready(run, s); released.push(s.stage_key); continue; }
+        const ids = hit.artifacts.map((a) => a.artifact_id);
+        this.store.transition("stage_run", s.stage_run_id, "PENDING", "SUCCEEDED", eventFor(run, s, null, "stage.reused", "info", { artifacts: ids, cache_key: hit.cacheKey, at: "release" }));
+        const fresh = this.store.getStageRun(s.stage_run_id)!;
+        this.store.updateStageRun({ ...fresh, reused_artifact_ids: ids, cache_key: hit.cacheKey });
+        reusedAny = true;
+      }
+      if (!reusedAny) return released;
+    }
   }
 
   private ready(run: Run, s: StageRun): void {
