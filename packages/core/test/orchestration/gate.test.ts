@@ -100,6 +100,40 @@ describe("submitGate", () => {
     );
   });
 
+  it("commits a synthetic failure and releases the lease when the post-claim path throws (e.g. a swept input artifact)", async () => {
+    const { store, run, pick, ws, deps } = await setup();
+    writeFileSync(join(ws, "output", "topic.md"), "# Topic\n");
+
+    // Simulate an accepted input artifact going STALE between the pre-verify pass (rule 5) and the
+    // post-claim materialize (rule 6): point the upstream `draft` stage at a `reused_artifact_ids` entry
+    // for its own artifact, then make the *second* read of that artifact (the post-claim `acceptedInputsFor`
+    // call) report it STALE while the first (pre-verify) read still sees it ACCEPTED — exactly the race the
+    // review flagged, without needing real concurrency.
+    const draft = store.listStageRuns(run.run_id).find((s) => s.stage_key === "draft")!;
+    const [artDraft] = store.listArtifacts({ stage_run_id: draft.stage_run_id, status: "ACCEPTED" });
+    store.updateStageRun({ ...draft, reused_artifact_ids: [artDraft!.artifact_id] });
+    const realGetArtifact = store.getArtifact.bind(store);
+    let reads = 0;
+    store.getArtifact = (id: string) => {
+      if (id !== artDraft!.artifact_id) return realGetArtifact(id);
+      reads++;
+      const a = realGetArtifact(id);
+      return reads > 1 && a ? { ...a, status: "STALE" as const } : a;
+    };
+
+    const report = await submitGate(deps, { stageRunId: pick.stage_run_id });
+
+    expect(report.failed.length).toBeGreaterThan(0);
+    expect(report.missing).toEqual([]);
+    expect(report.artifacts).toEqual([]);
+    expect(store.getLease(pick.stage_run_id)).toBeUndefined();
+    const attempts = store.listAttempts(pick.stage_run_id);
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]).toMatchObject({ lease_owner: "cli-submit", state: "FAILED", failure_kind: "contract" });
+    expect(store.getStageRun(pick.stage_run_id)?.state).toBe("WAITING_HUMAN");
+    expect(report.stageState).toBe("WAITING_HUMAN");
+  });
+
   it("gateOverdue emits stage.gate_overdue once per window after gate_deadline_seconds", async () => {
     const { store, clock, run, pick } = await setup();
     expect(gateOverdue(store, clock.now(), 600)).toEqual([]);

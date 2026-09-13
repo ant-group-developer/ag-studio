@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { HarnessError, type Clock, type HarnessConfig, type Lease, type ProductionProfile, type Run, type StageResult, type StageRun, type StateStore } from "@harness/contracts";
+import { HarnessError, isHarnessError, type Clock, type HarnessConfig, type Lease, type ProductionProfile, type Run, type StageResult, type StageRun, type StateStore } from "@harness/contracts";
 import { canonicalDigest, sha256File } from "../artifacts/checksum.js";
 import { directoryDigest, listDirectoryFiles, copyTree } from "../artifacts/directory.js";
 import { acceptedInputsFor } from "../artifacts/registry.js";
@@ -63,10 +63,10 @@ export async function submitGate(d: GateDeps, p: { stageRunId: string; fromDir?:
   if (missing.length) return rejectedReport([]);
 
   const requestDeps = { store, clock, harness: d.harness, profiles: d.profiles, workflows: d.workflows };
-  const inputArtifacts = acceptedInputsFor(store, stageRun);
+  const preInputArtifacts = acceptedInputsFor(store, stageRun);
 
   // Rule 5: pre-verify against the gate attempt that is already parked, before touching any state.
-  const preInputs = await materializeInputs(ws, inputArtifacts);
+  const preInputs = await materializeInputs(ws, preInputArtifacts);
   const preLease: Lease = { stage_run_id: stageRun.stage_run_id, attempt_id: lastAttempt.attempt_id, owner: lastAttempt.lease_owner, expires_at: clock.now(), fencing_token: lastAttempt.fencing_token, resources: [] };
   const preRequest = buildStageRequest(requestDeps, { run, stageRun, attempt: lastAttempt, lease: preLease, inputs: preInputs, workspaceDir: ws, capabilities: stageRun.required_capabilities });
   const preResult: StageResult = { schema_version: "harness.stage-result/v1", attempt_id: lastAttempt.attempt_id, outcome: "succeeded", outputs, checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [] };
@@ -99,18 +99,35 @@ export async function submitGate(d: GateDeps, p: { stageRunId: string; fromDir?:
   });
   store.updateAttempt({ ...store.getAttempt(claim.attempt.attempt_id)!, workspace_uri: pathToFileURL(ws).href });
   const attempt = store.getAttempt(claim.attempt.attempt_id)!;
-
-  const inputs = await materializeInputs(ws, inputArtifacts);
-  const request = buildStageRequest(requestDeps, { run, stageRun: claim.stageRun, attempt, lease: claim.lease, inputs, workspaceDir: ws, capabilities: stageRun.required_capabilities });
-  const result: StageResult = { schema_version: "harness.stage-result/v1", attempt_id: attempt.attempt_id, outcome: "succeeded", outputs, checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [] };
-  const verify = await d.verifier.verify({ request, result, workspaceDir: ws }, claim.stageRun.required_checks);
   const defDigest = def ? stageDefinitionDigest(def) : canonicalDigest({ key: stageRun.stage_key });
 
-  const out = await d.controller.commit({
-    stageRun: claim.stageRun, attempt, fencingToken: claim.lease.fencing_token, result, verify, workspaceDir: ws,
-    executorVersion: "cli-submit@0.1.0", inputArtifactIds: inputArtifacts.map((a) => a.artifact_id), mimeTypes: mimeTypesFor(def), stageDefinitionDigest: defDigest,
-  });
-  return { stageRunId: p.stageRunId, stageState: out.stageState, runState: out.runState, missing: [], failed: [], artifacts: out.artifacts.map((a) => a.artifact_id) };
+  try {
+    const inputArtifacts = acceptedInputsFor(store, claim.stageRun);
+    const inputs = await materializeInputs(ws, inputArtifacts);
+    const request = buildStageRequest(requestDeps, { run, stageRun: claim.stageRun, attempt, lease: claim.lease, inputs, workspaceDir: ws, capabilities: stageRun.required_capabilities });
+    const result: StageResult = { schema_version: "harness.stage-result/v1", attempt_id: attempt.attempt_id, outcome: "succeeded", outputs, checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [] };
+    const verify = await d.verifier.verify({ request, result, workspaceDir: ws }, claim.stageRun.required_checks);
+    const out = await d.controller.commit({
+      stageRun: claim.stageRun, attempt, fencingToken: claim.lease.fencing_token, result, verify, workspaceDir: ws,
+      executorVersion: "cli-submit@0.1.0", inputArtifactIds: inputArtifacts.map((a) => a.artifact_id), mimeTypes: mimeTypesFor(def), stageDefinitionDigest: defDigest,
+    });
+    const failed = verify.results.filter((r) => r.verdict !== "pass").map((r) => ({ check_id: r.check_id, evidence: r.evidence }));
+    return { stageRunId: p.stageRunId, stageState: out.stageState, runState: out.runState, missing: verify.missing, failed, artifacts: out.artifacts.map((a) => a.artifact_id) };
+  } catch (e) {
+    // a stale reused input, a swept artifact, or any other post-claim failure must not strand the new
+    // attempt CLAIMED/RUNNING with a live lease until the reaper runs: commit a synthetic failure so the
+    // lease is released and the stage is parked the same way the worker parks an equivalent setup failure.
+    // FENCING_REJECTED means someone else already owns this attempt; let it propagate as it did before.
+    if (isHarnessError(e, "FENCING_REJECTED")) throw e;
+    const kind = isHarnessError(e, "STALE_STATE") || isHarnessError(e, "CHECKSUM_MISMATCH") ? "contract" : "transient";
+    const message = e instanceof Error ? e.message : String(e);
+    const failedResult: StageResult = { schema_version: "harness.stage-result/v1", attempt_id: attempt.attempt_id, outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [{ kind, message, details: { phase: "submit", ...(isHarnessError(e) ? { code: e.code } : {}) } }] };
+    const out = await d.controller.commit({
+      stageRun: claim.stageRun, attempt, fencingToken: claim.lease.fencing_token, result: failedResult, verify: { results: [], allRequiredPassed: false, missing: [] }, workspaceDir: ws,
+      executorVersion: "cli-submit@0.1.0", inputArtifactIds: [], mimeTypes: {}, stageDefinitionDigest: defDigest,
+    });
+    return { stageRunId: p.stageRunId, stageState: out.stageState, runState: out.runState, missing: [], failed: [{ check_id: "submit", evidence: { error: message } }], artifacts: [] };
+  }
 }
 
 /** Warn once per `windowSeconds` when a gate has sat `WAITING_HUMAN` past its `gate_deadline_seconds`. */
