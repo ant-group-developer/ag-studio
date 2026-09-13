@@ -46,6 +46,12 @@ export class SqliteStateStore implements StateStore {
     return applied;
   }
 
+  listAppliedMigrations(): string[] {
+    const table = this.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get();
+    if (!table) return [];
+    return (this.db.prepare("SELECT name FROM schema_migrations ORDER BY name").all() as { name: string }[]).map((r) => r.name);
+  }
+
   tableNames(): string[] {
     return this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().map((r) => (r as { name: string }).name);
   }

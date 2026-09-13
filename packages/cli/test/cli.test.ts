@@ -4,6 +4,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HARNESS_ROOT, SqliteStateStore } from "@harness/core";
+import { FfprobeMediaProber } from "@harness/adapter-ffprobe";
 
 const MAIN = join(HARNESS_ROOT, "packages", "cli", "src", "main.ts");
 function cli(project: string, ...args: string[]) {
@@ -170,5 +171,49 @@ describe("harness CLI", () => {
     const real = JSON.parse(cli(p, "artifacts", "sweep", "--json").out);
     expect(real.removed).toHaveLength(1);
     expect(existsSync(dir)).toBe(false);
+  });
+  it("doctor passes on ops-project-minimal (no scripts.yaml, no sources.yaml) when ffprobe is available", () => {
+    const p = freshProject();
+    expect(cli(p, "db", "migrate").code).toBe(0);
+    const d = cli(p, "doctor", "--json");
+    const rows = JSON.parse(d.out) as { check: string; ok: boolean; detail: string }[];
+    expect(rows.find((r) => r.check === "scripts")).toMatchObject({ ok: true });
+    expect(rows.find((r) => r.check === "sources")).toMatchObject({ ok: true });
+    expect(rows.find((r) => r.check === "migrations")).toMatchObject({ ok: true });
+    if (FfprobeMediaProber.isAvailable()) expect(d.code, d.out + d.err).toBe(0);
+  });
+  it("doctor exits 1 and never prints a resolved secret when a script env ref cannot be resolved", () => {
+    const p = freshProject();
+    mkdirSync(join(p, "executors"), { recursive: true });
+    writeFileSync(
+      join(p, "executors", "scripts.yaml"),
+      ["schema_version: harness.scripts/v1", "scripts:", '  avatar: { argv: [node], env_refs: { HEYGEN_API_KEY: "secret://heygen/main" } }', ""].join("\n"),
+    );
+    expect(cli(p, "db", "migrate").code).toBe(0);
+    const d = cli(p, "doctor", "--json");
+    expect(d.code).toBe(1);
+    const rows = JSON.parse(d.out) as { check: string; ok: boolean; detail: string }[];
+    const secretRow = rows.find((r) => r.check === "secret:avatar:HEYGEN_API_KEY");
+    expect(secretRow?.ok).toBe(false);
+    expect(d.out).not.toMatch(/HARNESS_SECRET_HEYGEN_MAIN=|heygen-secret/);
+  });
+  it("source sync ingests new files, flags missing files and lists unregistered DB rows", () => {
+    const p = freshProject();
+    cli(p, "db", "migrate");
+    mkdirSync(join(p, "raw"), { recursive: true });
+    writeFileSync(join(p, "raw", "present.mp4"), "present bytes");
+    mkdirSync(join(p, "source-catalog"), { recursive: true });
+    writeFileSync(
+      join(p, "source-catalog", "sources.yaml"),
+      ["schema_version: harness.sources/v1", "sources:", "  - { path: raw/present.mp4, collection: main, rights_status: cleared }", "  - { path: raw/missing.mp4 }", ""].join("\n"),
+    );
+    const r = cli(p, "source", "sync", "--json");
+    expect(r.code).toBe(1); // missing_files non-empty
+    const report = JSON.parse(r.out);
+    expect(report.added).toHaveLength(1);
+    expect(report.missing_files).toEqual(["raw/missing.mp4"]);
+    const again = JSON.parse(cli(p, "source", "sync", "--json").out);
+    expect(again.already).toHaveLength(1);
+    expect(again.missing_files).toEqual(["raw/missing.mp4"]);
   });
 });

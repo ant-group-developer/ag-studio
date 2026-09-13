@@ -22,6 +22,7 @@ export interface MediaProber {
 
 export interface StateStore {
   migrate(migrationsDir: string): string[];
+  listAppliedMigrations(): string[];
   transaction<T>(fn: () => T): T;
   close(): void;
 

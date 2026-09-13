@@ -24,6 +24,7 @@ function runThroughEditPlan(dir: string, run: string, sourceId: string): void {
 describe.skipIf(!hasFfmpeg())("footage-production on the fixture ops project", () => {
   it("runs two variants to an ACCEPTED full-episode.mp4, gates through stage submit, gpu:1 serialises tts", async () => {
     const { dir, source } = freshFootageProject();
+    expect(cli(dir, ["doctor"]).code).toBe(0);
     const { source_id: sourceId, content_id: contentId } = ingestAndCreateContent(dir, source);
 
     const runA = planFootage(dir, contentId, ["voice=tts", "avatar=heygen"]);

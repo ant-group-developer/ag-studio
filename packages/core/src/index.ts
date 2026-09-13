@@ -26,3 +26,5 @@ export * from "./verification/media-checkers.js";
 export * from "./source-catalog/prober.js";
 export * from "./source-catalog/catalog.js";
 export * from "./source-catalog/when.js";
+export * from "./source-catalog/sources-file.js";
+export * from "./doctor/doctor.js";
