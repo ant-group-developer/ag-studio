@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import type { ScriptCommand } from "@harness/contracts";
 export { FakeAgentRuntime, type JournalLike } from "./fake-agent-runtime.js";
 export { FakeProvider } from "./fake-provider.js";
 
@@ -20,7 +21,7 @@ export function tsxLoaderUrl(): string {
   return pathToFileURL(join(dirname(pkgPath), rel)).href;
 }
 
-/** Script registry entries for the composition root: name -> argv. Uses tsx on source, plain node on built output. */
-export function fakeScriptCommands(): Record<string, string[]> {
-  return { "fake-stage": FAKE_STAGE_SCRIPT_PATH.endsWith(".ts") ? [process.execPath, "--import", tsxLoaderUrl(), FAKE_STAGE_SCRIPT_PATH] : [process.execPath, FAKE_STAGE_SCRIPT_PATH] };
+/** Script registry entries for the composition root: name -> command. Uses tsx on source, plain node on built output. */
+export function fakeScriptCommands(): Record<string, ScriptCommand> {
+  return { "fake-stage": { argv: FAKE_STAGE_SCRIPT_PATH.endsWith(".ts") ? [process.execPath, "--import", tsxLoaderUrl(), FAKE_STAGE_SCRIPT_PATH] : [process.execPath, FAKE_STAGE_SCRIPT_PATH] } };
 }

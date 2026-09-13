@@ -112,6 +112,12 @@ describe("Planner", () => {
     expect(run.budget_usd).toBe(5);
     expect(store.listStageRuns(run.run_id)[0]?.gate_deadline_seconds).toBe(3600);
   });
+  it("requiresResourcesOverride replaces the workflow's requires_resources for a script stage", () => {
+    const { store, planner } = planSample();
+    const run = planner.plan({ workflow: loadWorkflow(HARNESS_ROOT, "sample-three-stage@1.0.0"), profile: loadProfile(HARNESS_ROOT, "cartoon"), harness: loadHarnessConfig(HARNESS_ROOT), projectId: "p", portfolioId: "pf", requiresResourcesOverride: (s) => (s.key === "produce" ? ["cpu"] : undefined) });
+    const byKey = Object.fromEntries(store.listStageRuns(run.run_id).map((s) => [s.stage_key, s.requires_resources]));
+    expect(byKey).toEqual({ produce: ["cpu"], review: [], finalize: [] });
+  });
 });
 
 const optWorkflow = { definition: WorkflowDefinitionSchema.parse({

@@ -9,6 +9,8 @@ export interface PlanInput {
   workflow: LoadedWorkflow; profile: ProductionProfile; harness: HarnessConfig;
   projectId: string; portfolioId: string; runOverrides?: Record<string, unknown>; channelOverrides?: Record<string, unknown>;
   sourceId?: string; content?: ContentItem; variant?: ContentVariant; reuse?: boolean;
+  /** Overrides a stage's `requires_resources` from the workflow definition; `undefined` keeps the workflow's own value. */
+  requiresResourcesOverride?: (stage: StageDefinition) => string[] | undefined;
   /**
    * Resolves the executor version a stage would run at, so `plan()` can compute the same cache key the
    * controller will write at commit (spec §3.3 folds `executor_version` into the key). Without it the
@@ -100,7 +102,7 @@ export class Planner {
         }
         const stage: StageRun = {
           schema_version: "harness.stage-run/v1", stage_run_id: newId("stage_run"), run_id: run.run_id, stage_key: s.key, executor: s.executor,
-          depends_on, depends_on_optional, requires_resources: s.requires_resources, required_capabilities: s.required_capabilities,
+          depends_on, depends_on_optional, requires_resources: input.requiresResourcesOverride?.(s) ?? s.requires_resources, required_capabilities: s.required_capabilities,
           required_checks: [...new Set([...s.required_checks, ...input.profile.verification.required_checks, ...(input.profile.verification.required_checks_by_stage[s.key] ?? [])])],
           retry: s.retry, stage_config: s.config, state: reused ? "SUCCEEDED" : "PENDING", attempt_count: 0, result_failures: 0, created_at: now, updated_at: now,
           ...(s.gate_deadline_seconds ? { gate_deadline_seconds: s.gate_deadline_seconds } : {}),

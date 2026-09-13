@@ -1,16 +1,18 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
-import { HarnessError, ProjectConfigSchema, type ExecutorRef, type ProductionProfile, type ProjectConfig } from "@harness/contracts";
-import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, loadProfile, loadWorkflow, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, type HarnessLogger, type LoadedWorkflow, type LogLevel } from "@harness/core";
+import { HarnessError, ProjectConfigSchema, type ExecutorRef, type ProductionProfile, type ProjectConfig, type ScriptsRegistry } from "@harness/contracts";
+import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, loadProfile, loadScriptsRegistry, loadWorkflow, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, type HarnessLogger, type LoadedWorkflow, type LogLevel } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, FakeProvider, fakeScriptCommands } from "@harness/adapter-fake";
+import { cliArgv } from "./self.js";
 
 export interface AppContext {
   store: SqliteStateStore; planner: Planner; controller: Controller; registry: ArtifactRegistry; verifier: Verifier; executors: ExecutorRegistry;
   journal: ExternalOperationJournal; provider: FakeProvider; harness: ReturnType<typeof loadHarnessConfig>; project: ProjectConfig; projectDir: string;
   dataRoot: string; logger: HarnessLogger; clock: SystemClock; secrets: EnvSecretResolver; migrationsDir: string; workflows: (ref: string) => LoadedWorkflow;
-  profiles: (id: string) => ProductionProfile; catalog: SourceCatalog; resourceCapacity: Record<string, number>; executorVersionFor: (ref: ExecutorRef) => string; close(): void;
+  profiles: (id: string) => ProductionProfile; catalog: SourceCatalog; resourceCapacity: Record<string, number>; executorVersionFor: (ref: ExecutorRef) => string;
+  scripts: ScriptsRegistry | undefined; close(): void;
 }
 
 export function loadProject(projectDir: string): ProjectConfig {
@@ -36,10 +38,13 @@ export function buildContext(o: { projectDir: string; harnessRoot?: string; owne
   const provider = new FakeProvider();
   const journal = new ExternalOperationJournal(store, provider, clock);
   const executors = new ExecutorRegistry();
-  executors.register("script", new ScriptExecutor(fakeScriptCommands()));
+  const scripts = loadScriptsRegistry(projectDir);
+  // an ops-project entry with the same name as a fake wins, so ops projects can override the built-in fakes
+  const commands = { ...fakeScriptCommands(), ...(scripts ? scriptCommandsFrom(scripts, projectDir) : {}) };
+  executors.register("script", new ScriptExecutor(commands, { projectDir, secrets, cliArgv: cliArgv() }));
   executors.register("agent", new AgentExecutor(new FakeAgentRuntime({ journal })));
   const workflows = (ref: string) => loadWorkflow(harnessRoot, ref);
   const profiles = (id: string) => loadProfile(harnessRoot, id);
   const catalog = new SourceCatalog({ store, dataRoot, prober: new NullMediaProber(), clock, materialize: project.source.materialize });
-  return { store, planner, controller, registry, verifier: new Verifier(BUILTIN_CHECKERS), executors, journal, provider, harness, project, projectDir, dataRoot, logger, clock, secrets, migrationsDir: MIGRATIONS_DIR, workflows, profiles, catalog, resourceCapacity: project.resources, executorVersionFor: (ref: ExecutorRef) => executors.resolve(ref).version, close: () => store.close() };
+  return { store, planner, controller, registry, verifier: new Verifier(BUILTIN_CHECKERS), executors, journal, provider, harness, project, projectDir, dataRoot, logger, clock, secrets, migrationsDir: MIGRATIONS_DIR, workflows, profiles, catalog, resourceCapacity: project.resources, executorVersionFor: (ref: ExecutorRef) => executors.resolve(ref).version, scripts, close: () => store.close() };
 }

@@ -97,6 +97,7 @@ export interface CheckerInput { request: StageRequest; result: StageResult; work
 export interface Checker { readonly id: string; readonly version: string; check(input: CheckerInput): Promise<{ verdict: "pass" | "fail" | "skip"; evidence: Record<string, unknown> }> }
 
 export interface SecretResolver { resolve(ref: string): string; resolvedValues(): string[] }
+export interface ScriptCommand { argv: string[]; cwd?: string; env_refs?: Record<string, string>; timeout_seconds?: number }
 export interface Clock { now(): string }
 
 export interface ExternalProvider {

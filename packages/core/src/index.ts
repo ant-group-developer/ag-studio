@@ -5,6 +5,7 @@ export * from "./artifacts/checksum.js";
 export * from "./artifacts/directory.js";
 export * from "./config/resolve.js";
 export * from "./config/secrets.js";
+export * from "./config/scripts.js";
 export * from "./observability/redaction.js";
 export * from "./observability/logger.js";
 export * from "./environment/workspace.js";

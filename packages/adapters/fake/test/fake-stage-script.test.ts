@@ -15,7 +15,7 @@ function run(stage_config: Record<string, unknown>, ws = mkdtempSync(join(tmpdir
   };
   mkdirSync(join(ws, "output"), { recursive: true });
   writeFileSync(join(ws, "stage-request.json"), JSON.stringify(request));
-  const argv = fakeScriptCommands()["fake-stage"]!;
+  const { argv } = fakeScriptCommands()["fake-stage"]!;
   const proc = spawnSync(argv[0]!, argv.slice(1), { cwd: ws, encoding: "utf8" });
   return { ws, proc, attempt_id };
 }
@@ -46,7 +46,7 @@ describe("fake-stage-script", () => {
     expect(result.outputs[0].checksum).toBe("sha256:" + "0".repeat(64));
   });
   it("resolves tsx as an absolute file URL so the command works from any cwd", () => {
-    const argv = fakeScriptCommands()["fake-stage"]!;
+    const { argv } = fakeScriptCommands()["fake-stage"]!;
     expect(argv[1]).toBe("--import");
     expect(argv[2]).toMatch(/^file:\/\/\/.*tsx.*\.mjs$/);
   });
