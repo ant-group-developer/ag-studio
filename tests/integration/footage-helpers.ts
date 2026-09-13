@@ -3,6 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse, stringify } from "yaml";
 import { HARNESS_ROOT } from "@harness/core";
 import { makeVideo } from "../media.js";
 
@@ -20,24 +21,18 @@ export interface StatusJson {
     reused_artifact_ids?: string[];
   }[];
   artifacts: { artifact_id: string; type: string; status: string; stage_run_id: string; lineage: { source_items: string[]; input_artifacts: string[] } }[];
+  /** stage_run ids `gateOverdue` flagged on this call (it appends the events as a side effect either way). */
+  overdue: string[];
 }
 
-/** Scripts registered by `fixtures/ops-project-footage/executors/scripts.yaml`, with `cwd` pinned to the
- * fixture directory so the wrapper `.mjs` files run in place and can resolve `@harness/script-sdk` through
- * that fixture's own `node_modules` (a temp project has none). Kept in sync with that file by hand. */
+/** The committed `fixtures/ops-project-footage/executors/scripts.yaml`, re-emitted with every script's `cwd`
+ * pinned to the fixture directory so the wrapper `.mjs` files run in place and can resolve
+ * `@harness/script-sdk` through that fixture's own `node_modules` (a temp project has none). Generated from
+ * the file rather than copied, so a change to the fixture reaches these tests automatically. */
 function scriptsYaml(): string {
-  const cwd = `"${FIXTURE_POSIX}"`;
-  return [
-    "schema_version: harness.scripts/v1",
-    "scripts:",
-    `  index-source:     { argv: [node, executors/wrappers/index-source.mjs], cwd: ${cwd}, requires_resources: [cpu], timeout_seconds: 600 }`,
-    `  tts:              { argv: [node, executors/wrappers/tts.mjs], cwd: ${cwd}, requires_resources: [gpu], timeout_seconds: 600 }`,
-    `  avatar:           { argv: [node, executors/wrappers/avatar.mjs], cwd: ${cwd}, env_refs: { HEYGEN_API_KEY: "secret://heygen/main" }, requires_resources: [heygen], timeout_seconds: 600 }`,
-    `  cut:              { argv: [node, executors/wrappers/cut.mjs], cwd: ${cwd}, requires_resources: [cpu], timeout_seconds: 600 }`,
-    `  assemble:         { argv: [node, executors/wrappers/assemble.mjs], cwd: ${cwd}, requires_resources: [cpu], timeout_seconds: 600 }`,
-    `  thumbnail-render: { argv: [node, executors/wrappers/thumbnail-render.mjs], cwd: ${cwd}, timeout_seconds: 600 }`,
-    "",
-  ].join("\n");
+  const doc = parse(readFileSync(join(FIXTURE, "executors", "scripts.yaml"), "utf8")) as { scripts: Record<string, { cwd?: string }> };
+  for (const script of Object.values(doc.scripts)) script.cwd = FIXTURE_POSIX;
+  return stringify(doc);
 }
 
 /** Temp ops project wired to run footage-production against the ops-project-footage fixture in place (the

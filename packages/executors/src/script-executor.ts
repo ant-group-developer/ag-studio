@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { HarnessError, StageResultSchema, type Executor, type ExecutorContext, type ScriptCommand, type SecretResolver, type StageRequest, type StageResult } from "@harness/contracts";
+import { Redactor } from "@harness/core";
 
 export interface ScriptExecutorOptions { projectDir?: string; secrets?: SecretResolver; cliArgv?: string[] }
 
@@ -29,7 +30,12 @@ function forwardStdout(logger: ExecutorContext["logger"]) {
 
 export class ScriptExecutor implements Executor {
   readonly version = "script-executor@0.2.0";
-  constructor(private readonly commands: Record<string, ScriptCommand>, private readonly opts: ScriptExecutorOptions = {}) {}
+  /** Every secret value resolved so far, masked out of anything this executor writes to disk itself
+   * (`logs/script-stderr.log`); the shared logger has its own Redactor for the log stream. */
+  private readonly redactor: Redactor;
+  constructor(private readonly commands: Record<string, ScriptCommand>, private readonly opts: ScriptExecutorOptions = {}) {
+    this.redactor = new Redactor(() => this.opts.secrets?.resolvedValues() ?? []);
+  }
 
   async execute(request: StageRequest, ctx: ExecutorContext): Promise<StageResult> {
     const name = String(request.stage_config.__script ?? "");
@@ -74,7 +80,8 @@ export class ScriptExecutor implements Executor {
       child.on("close", (code) => { onStdout("", true); clearTimeout(timer); ctx.signal?.removeEventListener("abort", onAbort); res({ code, timedOut, stderr }); });
     });
     mkdirSync(join(ctx.workspaceDir, "logs"), { recursive: true });
-    writeFileSync(join(ctx.workspaceDir, "logs", "script-stderr.log"), stderr);
+    // a script is free to print its own env (see fixtures/.../avatar.mjs): never persist a resolved secret
+    writeFileSync(join(ctx.workspaceDir, "logs", "script-stderr.log"), this.redactor.redact(stderr));
     if (timedOut) return failed("transient", "script exceeded deadline", { code: "EXECUTOR_TIMEOUT", timeout_ms: timeoutMs });
     if (code !== 0) return failed("transient", `script exited with code ${code}`, { code: "EXECUTOR_FAILED", exit_code: code });
     const resultPath = join(ctx.workspaceDir, "stage-result.json");

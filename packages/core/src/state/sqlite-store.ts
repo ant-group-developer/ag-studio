@@ -72,6 +72,11 @@ export class SqliteStateStore implements StateStore {
     finally { this.depth = 0; }
   }
 
+  /** True while a `transaction()` (or a nested savepoint) is open on this connection. Not part of the
+   * `StateStore` contract — it exists so callers/tests can assert that a multi-step sequence really is
+   * atomic (e.g. `submitGate`'s transition + targeted claim). */
+  inTransaction(): boolean { return this.depth > 0; }
+
   close(): void { this.db.close(); }
 
   // ---- generic helpers ----

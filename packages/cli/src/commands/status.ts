@@ -10,7 +10,9 @@ export function registerStatus(program: Command): void {
       const overdue = new Set(gateOverdue(ctx.store, ctx.clock.now(), ctx.harness.resource_wait_warn_seconds).map((o) => o.stage.stage_run_id));
       const stages = ctx.store.listStageRuns(runId).map((s) => ({ ...s, attempts: ctx.store.listAttempts(s.stage_run_id), lease: ctx.store.getLease(s.stage_run_id) ?? null }));
       const artifacts = ctx.store.listArtifacts({ run_id: runId });
-      print(o.json, { run, stages, artifacts }, () => [
+      // gateOverdue already appended the stage.gate_overdue events as a side effect; report what it flagged
+      // in the machine output too, instead of leaving it visible only as " OVERDUE" in the human lines.
+      print(o.json, { run, stages, artifacts, overdue: [...overdue] }, () => [
         `${run.run_id}  ${run.state}  cost=$${run.total_cost_usd.toFixed(2)}  workflow=${run.workflow_release.id}@${run.workflow_release.version}  profile=${run.profile_snapshot.id}@${run.profile_snapshot.revision}`,
         ...stages.map((s) => `  ${s.stage_key.padEnd(12)} ${s.state.padEnd(20)} attempts=${s.attempt_count} failures=${s.result_failures}${s.lease ? ` lease=${s.lease.owner}#${s.lease.fencing_token}` : ""}${s.last_failure_kind ? ` last=${s.last_failure_kind}` : ""}${overdue.has(s.stage_run_id) ? " OVERDUE" : ""}${s.reused_artifact_ids ? ` reused=${s.reused_artifact_ids.length}` : ""}`),
         ...artifacts.map((a) => `  artifact ${a.artifact_id} ${a.status.padEnd(11)} ${a.type} ${a.checksum.slice(0, 19)}`),

@@ -23,7 +23,9 @@ describe("dependantsOf", () => {
 });
 
 describe("invalidateDownstream", () => {
-  function seedRun(store: ReturnType<typeof openTempStore>["store"], variantId: string, keys: string[], checksums: Record<string, string> = {}) {
+  /** `reuse[key]` seeds that stage as a *pointer* run: `reused_artifact_ids` set, no artifact rows of its own —
+   * exactly what the planner writes for a reused stage. */
+  function seedRun(store: ReturnType<typeof openTempStore>["store"], variantId: string, keys: string[], checksums: Record<string, string> = {}, reuse: Record<string, string[]> = {}) {
     const run: Run = { schema_version: "harness.run/v1", run_id: newId("run"), project_id: "p", portfolio_id: "pf", workflow_release: { id: "w", version: "1.0.0", digest: sha }, profile_snapshot: { id: "footage", revision: 1 }, variant_id: variantId, options: {}, state: "SUCCEEDED", effective_config_snapshot: {}, effective_config_digest: sha, total_cost_usd: 0, created_at: now, updated_at: now };
     store.insertRun(run);
     const arts: Record<string, Artifact> = {};
@@ -31,6 +33,7 @@ describe("invalidateDownstream", () => {
       const g = graph.find((x) => x.stage_key === key)!;
       const s: StageRun = { schema_version: "harness.stage-run/v1", stage_run_id: newId("stage_run"), run_id: run.run_id, stage_key: key, executor: { type: "script", script: "x" }, depends_on: g.depends_on, depends_on_optional: g.depends_on_optional, requires_resources: [], required_capabilities: [], required_checks: [], retry: { max_attempts: 1, backoff_seconds: [0], retry_on: [] }, stage_config: {}, state: "SUCCEEDED", attempt_count: 1, result_failures: 0, created_at: now, updated_at: now };
       store.insertStageRun(s);
+      if (reuse[key]) { store.updateStageRun({ ...s, reused_artifact_ids: reuse[key] }); continue; }
       const a: Artifact = { schema_version: "harness.artifact/v1", artifact_id: newId("artifact"), run_id: run.run_id, stage_run_id: s.stage_run_id, attempt_id: newId("attempt"), type: key, status: "ACCEPTED", uri: "file:///x", checksum: checksums[key] ?? sha, size_bytes: 1, mime_type: "text/plain", lineage: { input_artifacts: [], source_items: [] }, reproducibility: { workflow_release: "w@1.0.0", production_profile: "footage@1", channel_config_revision: null, executor_version: "x", model_parameters_digest: null }, checks: [], created_at: now, updated_at: now };
       store.insertArtifact(a); arts[key] = a;
     }
@@ -73,6 +76,28 @@ describe("invalidateDownstream", () => {
     // different bytes for the same stage: the old behaviour, stage plus transitive dependants
     const { stale } = invalidateDownstream({ store, run: current.run, stageKey: "edit-plan", now, newChecksums: [c2] });
     expect(stale.sort()).toEqual([old.arts["edit-plan"]!.artifact_id, old.arts.cut!.artifact_id, old.arts.assemble!.artifact_id].sort());
+  });
+  // I5: a run whose stage was *reused* carries `reused_artifact_ids` and no artifact rows of its own, so
+  // `listArtifacts({ stage_run_id })` returned nothing, `held` was empty and the content compare could never
+  // match — the pointer run was invalidated even when the new bytes are the very ones it points at.
+  it("resolves an earlier run's reused_artifact_ids when comparing content", () => {
+    const { store } = openTempStore();
+    const variant = newId("content_variant");
+    const a1 = seedRun(store, variant, ["edit-plan", "cut"], { "edit-plan": c1 });
+    const a2 = seedRun(store, variant, ["edit-plan", "cut"], {}, { "edit-plan": [a1.arts["edit-plan"]!.artifact_id] });
+    const a3 = seedRun(store, variant, ["edit-plan", "cut"], { "edit-plan": c1 });
+
+    // a3 commits the very bytes a2 points at: neither earlier run loses anything
+    expect(invalidateDownstream({ store, run: a3.run, stageKey: "edit-plan", now, newChecksums: [c1] }).stale).toEqual([]);
+    expect(store.getArtifact(a2.arts.cut!.artifact_id)?.status).toBe("ACCEPTED"); // used to be STALE
+    expect(store.getArtifact(a1.arts.cut!.artifact_id)?.status).toBe("ACCEPTED");
+    expect(store.listEvents({ run_id: a2.run.run_id }).filter((e) => e.event_type === "artifact.stale")).toEqual([]);
+
+    // different bytes: the pointer run is invalidated like any other, its own downstream rows included
+    const { stale } = invalidateDownstream({ store, run: a3.run, stageKey: "edit-plan", now, newChecksums: [c2] });
+    expect(stale).toContain(a2.arts.cut!.artifact_id);
+    expect(stale).toContain(a1.arts.cut!.artifact_id);
+    expect(store.getArtifact(a2.arts.cut!.artifact_id)?.status).toBe("STALE");
   });
   it("compares the checksum set as a set, not in order, and only per stage", () => {
     const { store } = openTempStore();

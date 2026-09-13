@@ -80,18 +80,20 @@ export async function submitGate(d: GateDeps, p: { stageRunId: string; fromDir?:
   }
 
   // Rule 6: clean — move the stage back to READY, claim it like a worker would, and commit for real.
-  store.transaction(() => {
+  // The transition and the targeted claim commit together: in between the stage is plain READY, so a worker
+  // polling at that instant would claim it, re-run GateExecutor and orphan the operator's output.
+  const owner = d.owner ?? "cli-submit";
+  const claim = store.transaction(() => {
     store.transition("stage_run", stageRun.stage_run_id, "WAITING_HUMAN", "READY", eventFor(run, stageRun, null, "stage.submitted"));
     const fresh = store.getStageRun(stageRun.stage_run_id)!;
     store.updateStageRun({ ...fresh, ready_at: clock.now(), not_before: clock.now() });
     // the run parked in WAITING while the gate sat WAITING_HUMAN (no other active stage); a READY stage
     // is "active" for the planner, so nudge it back to RUNNING now, the way `harness retry` does.
     if (run.state === "WAITING") d.planner.advance(run.run_id);
+    const c = store.claim({ owner, capabilities: stageRun.required_capabilities, now: clock.now(), leaseSeconds: d.harness.lease_seconds, stageRunId: stageRun.stage_run_id });
+    if (!c) throw new HarnessError("STALE_STATE", `could not claim gate stage ${stageRun.stage_run_id} for submit`, { stageRunId: stageRun.stage_run_id });
+    return c;
   });
-
-  const owner = d.owner ?? "cli-submit";
-  const claim = store.claim({ owner, capabilities: stageRun.required_capabilities, now: clock.now(), leaseSeconds: d.harness.lease_seconds, stageRunId: stageRun.stage_run_id });
-  if (!claim) throw new HarnessError("STALE_STATE", `could not claim gate stage ${stageRun.stage_run_id} for submit`, { stageRunId: stageRun.stage_run_id });
 
   store.transaction(() => {
     store.transition("attempt", claim.attempt.attempt_id, "CLAIMED", "RUNNING", eventFor(run, claim.stageRun, claim.attempt, "attempt.started"));

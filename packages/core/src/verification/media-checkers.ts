@@ -8,8 +8,21 @@ function mimeOf(input: CheckerInput, o: StageOutput): string {
 const isAv = (m: string) => m.startsWith("video/") || m.startsWith("audio/");
 const skip = (reason: string) => ({ verdict: "skip" as const, evidence: { reason } });
 
-/** Media-aware checkers layered on top of BUILTIN_CHECKERS; `core` never imports adapters, so the prober comes in by argument (composition root wires an FfprobeMediaProber or NullMediaProber). */
-export function mediaCheckers(prober: MediaProber): Checker[] {
+/**
+ * Media-aware checkers layered on top of BUILTIN_CHECKERS; `core` never imports adapters, so the prober comes
+ * in by argument (composition root wires an FfprobeMediaProber or NullMediaProber).
+ *
+ * `opts.available === false` (no `ffprobe` on PATH — the composition root passes `FfprobeMediaProber.isAvailable()`)
+ * makes every checker in this set return `skip` with reason "no media prober available" before it looks at any
+ * output, instead of failing on a `NullMediaProber` that answers `null` for every file. The whole set is gated
+ * together — `edl-valid`, which needs no prober of its own, skips as well — so a machine without ffprobe reports
+ * one uniform cause rather than a mix of verdicts. A prober that *is* present and still returns `null` for a
+ * given file stays a `fail`: that is a broken output, not a missing tool.
+ */
+export function mediaCheckers(prober: MediaProber, opts: { available?: boolean } = {}): Checker[] {
+  const unavailable = opts.available === false;
+  const noProber = () => skip("no media prober available");
+
   const mediaProbe: Checker = {
     id: "media-probe",
     version: "1.0.0",
@@ -149,5 +162,6 @@ export function mediaCheckers(prober: MediaProber): Checker[] {
     },
   };
 
-  return [mediaProbe, durationRange, audioIntegrity, clipSetComplete, edlValid];
+  const checkers = [mediaProbe, durationRange, audioIntegrity, clipSetComplete, edlValid];
+  return unavailable ? checkers.map((c) => ({ ...c, check: async () => noProber() })) : checkers;
 }

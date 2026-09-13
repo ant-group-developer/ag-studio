@@ -74,6 +74,11 @@ describe.skipIf(!hasFfmpeg())("18.3 #16 secret e2e: the resolved HeyGen key neve
     const stageResult = readFileSync(join(ws, "stage-result.json"), "utf8");
     expect(stageRequest).not.toContain(SECRET);
     expect(stageResult).not.toContain(SECRET);
+    // avatar.mjs prints the key to stderr as well; ScriptExecutor persists that stream verbatim into the
+    // workspace, so it has to run it through its own Redactor before writing (the logger's one never sees it).
+    const stderrLog = readFileSync(join(ws, "logs", "script-stderr.log"), "utf8");
+    expect(stderrLog).toContain("avatar stderr key [REDACTED]");
+    expect(stderrLog).not.toContain(SECRET);
 
     const store = new SqliteStateStore(join(dir, "data", "state", "harness.db"));
     try {

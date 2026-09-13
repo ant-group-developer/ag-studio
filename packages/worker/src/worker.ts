@@ -79,28 +79,33 @@ export class Worker {
     signal?.addEventListener("abort", onParentAbort, { once: true });
     const hb = startHeartbeat({ store, attemptId: claim.attempt.attempt_id, fencingToken: claim.lease.fencing_token, leaseSeconds, intervalMs: this.d.harness.heartbeat_seconds * 1000, clock, onLost: () => abort.abort() });
     const executor = this.d.executors.resolve(claim.stageRun.executor);
-    let result: StageResult;
+    // The heartbeat has to outlive `execute`: verification is now ffprobe-backed (a blocking `spawnSync` with
+    // a 120s timeout per probe) and commit moves every output into the artifact store, so stopping it here
+    // would let a slow-but-healthy stage lose its lease to the reaper between execute and commit.
     try {
-      result = await executor.execute(request, { workspaceDir, logger: log, clock, signal: abort.signal });
-    } catch (e) {
-      const kind = isHarnessError(e, "NOT_FOUND") || isHarnessError(e, "SCHEMA_INVALID") || isHarnessError(e, "SECRET_UNRESOLVED") ? "contract" : "transient";
-      result = { schema_version: "harness.stage-result/v1", attempt_id: claim.attempt.attempt_id, outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [{ kind, message: e instanceof Error ? e.message : String(e), details: isHarnessError(e) ? { code: e.code, ...e.details } : {} }] };
-    } finally { hb.stop(); signal?.removeEventListener("abort", onParentAbort); }
+      let result: StageResult;
+      try {
+        result = await executor.execute(request, { workspaceDir, logger: log, clock, signal: abort.signal });
+      } catch (e) {
+        const kind = isHarnessError(e, "NOT_FOUND") || isHarnessError(e, "SCHEMA_INVALID") || isHarnessError(e, "SECRET_UNRESOLVED") ? "contract" : "transient";
+        result = { schema_version: "harness.stage-result/v1", attempt_id: claim.attempt.attempt_id, outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [{ kind, message: e instanceof Error ? e.message : String(e), details: isHarnessError(e) ? { code: e.code, ...e.details } : {} }] };
+      }
 
-    if (signal?.aborted && !hb.lost) return this.cancelCurrent(claim, run, log);
-    if (hb.lost || !store.getLease(claim.stageRun.stage_run_id) || store.getLease(claim.stageRun.stage_run_id)!.fencing_token !== claim.lease.fencing_token) {
-      log.warn("lease lost during execution; result discarded");
-      return "lost";
-    }
-    const verify = await this.d.verifier.verify({ request, result, workspaceDir }, claim.stageRun.required_checks);
-    try {
-      const out = await this.d.controller.commit({ stageRun: claim.stageRun, attempt: claim.attempt, fencingToken: claim.lease.fencing_token, result, verify, workspaceDir, executorVersion: executor.version, inputArtifactIds: inputArtifacts.map((a) => a.artifact_id), mimeTypes: mimeTypesFor(def), stageDefinitionDigest: defDigest });
-      log.info("stage committed", { stage: out.stageState, run: out.runState, failure: out.failureKind ?? null, retry: out.retryScheduled });
-      return "done";
-    } catch (e) {
-      if (isHarnessError(e, "FENCING_REJECTED")) { log.warn("commit rejected by fencing token", e.details); return "lost"; }
-      throw e;
-    }
+      if (signal?.aborted && !hb.lost) return this.cancelCurrent(claim, run, log);
+      if (hb.lost || !store.getLease(claim.stageRun.stage_run_id) || store.getLease(claim.stageRun.stage_run_id)!.fencing_token !== claim.lease.fencing_token) {
+        log.warn("lease lost during execution; result discarded");
+        return "lost";
+      }
+      const verify = await this.d.verifier.verify({ request, result, workspaceDir }, claim.stageRun.required_checks);
+      try {
+        const out = await this.d.controller.commit({ stageRun: claim.stageRun, attempt: claim.attempt, fencingToken: claim.lease.fencing_token, result, verify, workspaceDir, executorVersion: executor.version, inputArtifactIds: inputArtifacts.map((a) => a.artifact_id), mimeTypes: mimeTypesFor(def), stageDefinitionDigest: defDigest });
+        log.info("stage committed", { stage: out.stageState, run: out.runState, failure: out.failureKind ?? null, retry: out.retryScheduled });
+        return "done";
+      } catch (e) {
+        if (isHarnessError(e, "FENCING_REJECTED")) { log.warn("commit rejected by fencing token", e.details); return "lost"; }
+        throw e;
+      }
+    } finally { hb.stop(); signal?.removeEventListener("abort", onParentAbort); }
   }
 
   private warnResourceStarvation(): void {

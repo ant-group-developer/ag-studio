@@ -131,6 +131,23 @@ describe("runDoctor", () => {
     store.close();
   });
 
+  // the composition root swallows a CONFIG_INVALID from either registry loader so one malformed file does not
+  // abort every command; doctor is where the user finds out about it.
+  it("reports a swallowed registry parse error as a failing scripts/sources row", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "doctor-config-errors-"));
+    const rows = runDoctor({
+      ...baseInput(projectDir, {}),
+      scripts: undefined,
+      secrets: new StubSecrets(true),
+      workflows: [],
+      profiles: [],
+      configErrors: { scripts: "executors/scripts.yaml invalid: scripts: Required", sources: "source-catalog/sources.yaml invalid: sources.0.path: Required" },
+    });
+    const byCheck = new Map(rows.map((r) => [r.check, r]));
+    expect(byCheck.get("scripts")).toMatchObject({ ok: false, detail: "executors/scripts.yaml invalid: scripts: Required" });
+    expect(byCheck.get("sources")).toMatchObject({ ok: false, detail: "source-catalog/sources.yaml invalid: sources.0.path: Required" });
+  });
+
   it("treats a script missing from the registry but covered by a built-in command as ok, and as a failure without it", () => {
     const projectDir = mkdtempSync(join(tmpdir(), "doctor-builtin-"));
     const loaded = loadWorkflow(HARNESS_ROOT, "sample-three-stage@1.0.0");

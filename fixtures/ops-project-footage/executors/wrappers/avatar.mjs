@@ -6,6 +6,7 @@ import { ffmpeg } from "./_media.mjs";
 const ctx = await start();
 const key = process.env.HEYGEN_API_KEY ?? "";
 console.log(`avatar: using api key ${key}`); // deliberate: the secret e2e proves this line is redacted in the log
+console.error(`avatar stderr key ${key}`); // deliberate: proves logs/script-stderr.log on disk is redacted too
 ctx.log.info("calling heygen", { key }); // both a plain line and a JSON line
 
 // The payload must stay stable across a retry's fresh workspace (a new attempt gets a new absolute path for

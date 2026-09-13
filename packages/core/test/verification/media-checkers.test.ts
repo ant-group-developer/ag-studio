@@ -81,6 +81,46 @@ function tmpWorkspace(): string {
 }
 
 describe("mediaCheckers", () => {
+  // I2: ffprobe missing on this machine (composition passes `available: FfprobeMediaProber.isAvailable()`).
+  // Every checker in the set skips with one uniform reason instead of failing against a NullMediaProber that
+  // answers null for every file — `edl-valid` included, even though it needs no prober of its own.
+  describe("without a media prober (available: false)", () => {
+    it("skips every checker with reason \"no media prober available\", without touching the outputs", async () => {
+      const ws = tmpWorkspace(); // deliberately empty: a skipping checker must not read any file
+      const request = baseRequest({
+        expected_outputs: [{ type: "full_episode", mime_type: "video/mp4", kind: "file" }],
+        policy: { target_duration_seconds: [1, 10], max_silence_ratio: 0.5 },
+        inputs: [{ artifact_id: newId("artifact"), checksum: sha, path: "input/edl.json", type: "edl", kind: "file" }],
+      });
+      const result = baseResult([
+        { path: "output/full-episode.mp4", type: "full_episode", checksum: sha, size_bytes: 1, kind: "file" },
+        { path: "output/cuts", type: "clip_set", checksum: sha, size_bytes: 0, kind: "directory" },
+        { path: "output/edl.json", type: "edl", checksum: sha, size_bytes: 1, kind: "file" },
+      ]);
+      const checkers = mediaCheckers(new FakeMediaProber(new Map()), { available: false });
+      expect(checkers.map((c) => c.id)).toEqual(["media-probe", "duration-range", "audio-integrity", "clip-set-complete", "edl-valid"]);
+      for (const c of checkers) {
+        const outcome = await c.check({ request, result, workspaceDir: ws });
+        expect(outcome, c.id).toEqual({ verdict: "skip", evidence: { reason: "no media prober available" } });
+      }
+      rmSync(ws, { recursive: true, force: true });
+    });
+
+    it("still fails a present prober that cannot probe a file (a broken output, not a missing tool)", async () => {
+      const ws = tmpWorkspace();
+      mkdirSync(join(ws, "output"));
+      writeFileSync(join(ws, "output", "full-episode.mp4"), "x");
+      const request = baseRequest({ expected_outputs: [{ type: "full_episode", mime_type: "video/mp4", kind: "file" }] });
+      const result = baseResult([{ path: "output/full-episode.mp4", type: "full_episode", checksum: sha, size_bytes: 1, kind: "file" }]);
+      // available defaults to true, and an explicit `true` behaves the same way
+      for (const opts of [undefined, { available: true }]) {
+        const checker = checkerById(mediaCheckers(new FakeMediaProber(new Map()), opts), "media-probe");
+        expect((await checker.check({ request, result, workspaceDir: ws })).verdict).toBe("fail");
+      }
+      rmSync(ws, { recursive: true, force: true });
+    });
+  });
+
   describe("media-probe", () => {
     it("passes when the prober finds a stream, fails when it returns null", async () => {
       const ws = tmpWorkspace();

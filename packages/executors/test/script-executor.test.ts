@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getEventListeners } from "node:events";
@@ -92,6 +92,22 @@ describe("ScriptExecutor", () => {
     expect(warn.msg).toBe("key is s3cr3t"); // the executor forwards raw text; redaction is the logger's job (worker logger has the Redactor)
     expect((warn.data as { cwd: string }).cwd.toLowerCase()).toBe(project.toLowerCase());
     expect(lines.some((l) => l.msg === "plain line")).toBe(true);
+  });
+  it("redacts resolved secrets out of logs/script-stderr.log", async () => {
+    const project = mkdtempSync(join(tmpdir(), "proj-"));
+    writeFileSync(join(project, "leak.mjs"), `
+      import { writeFileSync } from "node:fs"; import { join } from "node:path";
+      console.error("leaking " + process.env.MY_KEY + " to stderr");
+      writeFileSync(join(process.env.HARNESS_WORKSPACE, "stage-result.json"), JSON.stringify({ schema_version: "harness.stage-result/v1", attempt_id: process.env.HARNESS_ATTEMPT_ID, outcome: "succeeded", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [] }));
+    `);
+    const secrets = { resolve: () => "s3cr3t-value", resolvedValues: () => ["s3cr3t-value"] };
+    const ex = new ScriptExecutor({ leak: { argv: [process.execPath, "leak.mjs"], cwd: ".", env_refs: { MY_KEY: "secret://heygen/main" } } }, { projectDir: project, secrets });
+    const req = request({ __script: "leak" });
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.outcome).toBe("succeeded");
+    const log = readFileSync(join(req.workspace_uri, "logs", "script-stderr.log"), "utf8");
+    expect(log).toContain("leaking [REDACTED] to stderr");
+    expect(log).not.toContain("s3cr3t-value");
   });
   it("caps the deadline by timeout_seconds", async () => {
     const ex = new ScriptExecutor({ ...fakeScriptCommands(), slow: { ...fakeScriptCommands()["fake-stage"]!, timeout_seconds: 1 } });

@@ -58,7 +58,7 @@ await ctx.done({ cost_usd: 0.01 });
 | `ctx.hasInput(type)` | Whether any input has the given `type`. |
 | `ctx.source(i)` | The source item at index `i`; throws if out of range. |
 | `ctx.hasResource(name)` | Whether `request.resources` includes `name`. |
-| `ctx.out.file(rel, { type, mime? })` | Declares a file under the workspace (usually `output/…`) as an output, checksumming it. |
+| `ctx.out.file(rel, { type, mime? })` | Declares a file under the workspace (usually `output/…`) as an output, checksumming it. `mime` is accepted for readability but **ignored**: the artifact's mime type comes from the workflow stage definition's `outputs[].mime_type` (`mimeTypesFor(def)` in `packages/core/src/orchestration/request.ts`), never from the script. |
 | `ctx.out.dir(rel, { type })` | Declares a directory as one output: the checksum is the canonical digest of its file listing, matching `@harness/core`'s `directoryDigest(listDirectoryFiles(dir))` byte-for-byte. |
 | `ctx.out.clear()` | Empties and recreates `output/` and forgets any declared outputs (used before retrying inside the same attempt). |
 | `ctx.heartbeat({ percent?, message? })` | Writes `progress.json` in the workspace. |
@@ -78,7 +78,7 @@ process) is what the executor treats as a transient failure of the attempt itsel
 
 ## `HARNESS_*` environment variables
 
-Set by the script executor (see Task 4) for each attempt:
+Set by the script executor (`packages/executors/src/script-executor.ts`) for each attempt:
 
 - `HARNESS_WORKSPACE` — absolute path to the stage's workspace directory, containing `stage-request.json` and
   the `input/`/`output/` trees.

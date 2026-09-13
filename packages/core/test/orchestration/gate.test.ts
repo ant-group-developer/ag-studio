@@ -134,6 +134,36 @@ describe("submitGate", () => {
     expect(report.stageState).toBe("WAITING_HUMAN");
   });
 
+  // I4: the WAITING_HUMAN -> READY transition and the targeted claim used to commit in two separate
+  // transactions, leaving the stage plain READY in between — long enough for a polling worker to claim it,
+  // re-run GateExecutor and orphan the operator's output.
+  it("claims the gate inside the same transaction as the WAITING_HUMAN -> READY transition", async () => {
+    const { store, pick, ws, deps } = await setup();
+    writeFileSync(join(ws, "output", "topic.md"), "# Topic\n");
+    const depths: boolean[] = [];
+    const realClaim = store.claim.bind(store);
+    store.claim = (params) => { depths.push(store.inTransaction()); return realClaim(params); };
+
+    const ok = await submitGate(deps, { stageRunId: pick.stage_run_id });
+    expect(ok).toMatchObject({ stageState: "SUCCEEDED", missing: [], failed: [] });
+    expect(depths).toEqual([true]); // old code: [false] — the claim ran after the transition committed
+    expect(store.listAttempts(pick.stage_run_id).at(-1)?.lease_owner).toBe("cli-submit");
+  });
+
+  it("rolls the gate back to WAITING_HUMAN when the targeted claim does not land", async () => {
+    const { store, pick, ws, deps } = await setup();
+    writeFileSync(join(ws, "output", "topic.md"), "# Topic\n");
+    store.claim = () => undefined; // someone else owns the stage by the time we get there
+
+    await submitGate(deps, { stageRunId: pick.stage_run_id }).then(
+      () => { throw new Error("expected submitGate to throw STALE_STATE"); },
+      (e) => expect(isHarnessError(e, "STALE_STATE")).toBe(true),
+    );
+    // old code: the transition had already committed, so the gate was left READY for any worker to pick up
+    expect(store.getStageRun(pick.stage_run_id)?.state).toBe("WAITING_HUMAN");
+    expect(store.listAttempts(pick.stage_run_id)).toHaveLength(1);
+  });
+
   it("gateOverdue emits stage.gate_overdue once per window after gate_deadline_seconds", async () => {
     const { store, clock, run, pick } = await setup();
     expect(gateOverdue(store, clock.now(), 600)).toEqual([]);

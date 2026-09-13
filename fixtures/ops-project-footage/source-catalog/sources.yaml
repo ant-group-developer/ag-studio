@@ -1,3 +1,6 @@
 schema_version: harness.sources/v1
-sources:
-  - { path: raw/sample-5s.mp4, collection: main, rights_status: cleared, language: vi }
+# Deliberately empty. The sample footage this fixture runs on is generated with ffmpeg at test time into a
+# temp project (see `freshFootageProject()` in tests/integration/footage-helpers.ts), which writes its own
+# `sources.yaml` pointing at it; `raw/` here is git-ignored, so an entry for it would make
+# `harness doctor --project fixtures/ops-project-footage` fail the `sources` row on a fresh clone.
+sources: []

@@ -18,6 +18,20 @@ export function dependantsOf(stages: GraphNode[], stageKey: string): string[] {
 }
 
 /**
+ * The ACCEPTED content a stage run currently stands behind: its own artifact rows, or — when the stage was
+ * reused — the checksums of the artifacts it points at. Same resolution as `acceptedInputsFor` and
+ * `findReusableArtifacts`, minus the throw: a pointer that is no longer ACCEPTED simply drops out, which
+ * makes the set differ from the new one and the run gets invalidated like any other.
+ */
+function heldChecksums(store: StateStore, stage: StageRun): string[] {
+  if (!stage.reused_artifact_ids) return store.listArtifacts({ stage_run_id: stage.stage_run_id, status: "ACCEPTED" }).map((a) => a.checksum);
+  return stage.reused_artifact_ids
+    .map((id) => store.getArtifact(id))
+    .filter((a) => !!a && a.status === "ACCEPTED")
+    .map((a) => a!.checksum);
+}
+
+/**
  * A stage of `run` produced a new ACCEPTED artifact: earlier runs of the same variant lose that stage's and
  * its dependants' artifacts — unless the new artifacts are byte-identical to what that run already holds for
  * the same stage. Spec §3.2 ("đổi script → … cut không nếu EDL không đổi"): invalidation stops at the first
@@ -37,7 +51,7 @@ export function invalidateDownstream(p: { store: StateStore; run: Run; stageKey:
     if (fresh.length) {
       const held = stages
         .filter((s) => s.stage_key === p.stageKey)
-        .flatMap((s) => p.store.listArtifacts({ stage_run_id: s.stage_run_id, status: "ACCEPTED" }).map((a) => a.checksum))
+        .flatMap((s) => heldChecksums(p.store, s))
         .sort();
       if (held.length === fresh.length && held.every((c, i) => c === fresh[i])) continue;
     }

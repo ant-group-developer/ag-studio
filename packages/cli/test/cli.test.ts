@@ -222,6 +222,37 @@ describe("harness CLI", () => {
     expect(secretRow?.ok).toBe(false);
     expect(d.out).not.toMatch(/HARNESS_SECRET_HEYGEN_MAIN=|heygen-secret/);
   });
+  // a malformed registry file used to throw out of buildContext, so *every* command (status, events, doctor
+  // itself) died with a raw CONFIG_INVALID and no way to see what was wrong.
+  it("keeps working with a malformed sources.yaml: doctor reports it, status still runs, source sync throws it", () => {
+    const p = freshProject();
+    expect(cli(p, "db", "migrate").code).toBe(0);
+    const { run_id } = JSON.parse(cli(p, "plan", "--workflow", "sample-three-stage@1.0.0", "--profile", "cartoon", "--json").out);
+    mkdirSync(join(p, "source-catalog"), { recursive: true });
+    writeFileSync(join(p, "source-catalog", "sources.yaml"), ["schema_version: harness.sources/v1", "sources:", "  - { collection: main }", ""].join("\n"));
+
+    const status = cli(p, "status", run_id, "--json");
+    expect(status.code, status.err).toBe(0);
+
+    const d = cli(p, "doctor", "--json");
+    expect(d.code).toBe(1);
+    const rows = JSON.parse(d.out) as { check: string; ok: boolean; detail: string }[];
+    const sources = rows.find((r) => r.check === "sources")!;
+    expect(sources.ok).toBe(false);
+    expect(sources.detail).toContain("sources.yaml invalid");
+    expect(rows.find((r) => r.check === "migrations")).toMatchObject({ ok: true }); // the rest of doctor still ran
+
+    const sync = cli(p, "source", "sync");
+    expect(sync.code).toBe(1);
+    expect(sync.err).toContain("CONFIG_INVALID");
+  });
+  it("status --json lists the stage runs gateOverdue flagged", () => {
+    const p = freshProject();
+    expect(cli(p, "db", "migrate").code).toBe(0);
+    const { run_id } = JSON.parse(cli(p, "plan", "--workflow", "sample-three-stage@1.0.0", "--profile", "cartoon", "--json").out);
+    const s = JSON.parse(cli(p, "status", run_id, "--json").out) as { overdue: string[] };
+    expect(s.overdue).toEqual([]); // no gate in this workflow; the field is always present
+  });
   it("source sync ingests new files, flags missing files and lists unregistered DB rows", () => {
     const p = freshProject();
     cli(p, "db", "migrate");

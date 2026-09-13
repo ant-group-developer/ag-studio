@@ -26,6 +26,9 @@ export function registerSource(program: Command): void {
   });
   source.command("sync").option("--json", "machine output", false).description("reconcile source-catalog/sources.yaml against the DB catalog").action(async (o, cmd) => {
     await withContext(cmd, {}, async (ctx) => {
+      // buildContext keeps a malformed registry from aborting every command; the command that actually needs
+      // it still fails loudly, with the parse error the loader produced.
+      if (ctx.configErrors.sources) throw new HarnessError("CONFIG_INVALID", ctx.configErrors.sources, { projectDir: ctx.projectDir });
       if (!ctx.sources) throw new HarnessError("NOT_FOUND", `source-catalog/sources.yaml not found in ${ctx.projectDir}`, { projectDir: ctx.projectDir });
       const report = await syncSources({ catalog: ctx.catalog, store: ctx.store, projectDir: ctx.projectDir, registry: ctx.sources });
       print(o.json, report, () =>

@@ -282,6 +282,36 @@ describe("Worker", () => {
     await w.worker.runOnce();
     expect(seen?.options).toEqual({ voice: "none" }); // used to be {} whenever there was no variant
   });
+  // I3: verification is ffprobe-backed (blocking spawnSync, up to 120s a probe) and commit copies every output
+  // into the artifact store; both used to run after `hb.stop()`, so a slow verify could outlive the lease.
+  it("keeps the heartbeat running through verification and commit, and stops it once commit returns", async () => {
+    const w = makeWorld();
+    const run = planAndEnqueue(w);
+    let releaseVerify!: () => void;
+    let verifyStarted!: () => void;
+    const gate = new Promise<void>((r) => (releaseVerify = r));
+    const started = new Promise<void>((r) => (verifyStarted = r));
+    class SlowVerifier extends Verifier {
+      async verify(...args: Parameters<Verifier["verify"]>) { verifyStarted(); await gate; return super.verify(...args); }
+    }
+    const beats: string[] = [];
+    const realHeartbeat = w.store.heartbeat.bind(w.store);
+    w.store.heartbeat = (attemptId, token, expiresAt) => { beats.push(expiresAt); return realHeartbeat(attemptId, token, expiresAt); };
+
+    const worker = new Worker({ ...w.deps, verifier: new SlowVerifier(BUILTIN_CHECKERS), harness: { ...w.deps.harness, heartbeat_seconds: 0.02 } });
+    const pending = worker.runOnce();
+    await started;
+    const duringVerify = beats.length;
+    await new Promise((r) => setTimeout(r, 200)); // ~10 heartbeat intervals while verify is parked
+    expect(beats.length).toBeGreaterThan(duringVerify); // old code: hb.stop() had already run, so 0 more beats
+
+    releaseVerify();
+    expect(await pending).toBe("done");
+    const afterCommit = beats.length;
+    await new Promise((r) => setTimeout(r, 200));
+    expect(beats.length).toBe(afterCommit); // the finally that wraps verify+commit stopped it
+    expect(w.store.listStageRuns(run.run_id).find((s) => s.stage_key === "produce")?.state).toBe("SUCCEEDED");
+  });
   it("parks a stage WAITING_HUMAN when the artifact it reused went STALE before it ran", async () => {
     const w = makeWorld();
     const worker = new Worker({ ...w.deps, workflows: (ref) => (ref.startsWith("one-stage") ? wfOne : wfTwo) });

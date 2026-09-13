@@ -22,6 +22,9 @@ export interface DoctorInput {
   proberAvailable: boolean;
   store: StateStore;
   migrationsDir: string;
+  /** Parse errors the composition root swallowed so one malformed config file does not abort every command
+   * (`packages/cli/src/composition.ts`): a message here turns the matching `scripts`/`sources` row FAIL. */
+  configErrors?: { scripts?: string; sources?: string };
 }
 
 const SCRIPT_FILE_RE = /\.(mjs|js|cjs|ts|py|sh)$/;
@@ -58,7 +61,9 @@ function checkResources(i: DoctorInput): DoctorRow {
 function checkWorkflows(i: DoctorInput): DoctorRow[] {
   const rows: DoctorRow[] = [];
   const seen = new Set<string>();
-  if (!i.scripts) {
+  if (i.configErrors?.scripts) {
+    rows.push({ check: "scripts", ok: false, detail: i.configErrors.scripts });
+  } else if (!i.scripts) {
     rows.push({ check: "scripts", ok: true, detail: "executors/scripts.yaml not found; only built-in fake scripts available" });
   }
   for (const { loaded } of i.workflows) {
@@ -156,6 +161,7 @@ function checkProfiles(i: DoctorInput): DoctorRow[] {
 }
 
 function checkSources(i: DoctorInput): DoctorRow {
+  if (i.configErrors?.sources) return { check: "sources", ok: false, detail: i.configErrors.sources };
   const file = resolve(i.projectDir, SOURCES_FILE);
   if (!existsSync(file)) return { check: "sources", ok: true, detail: "source-catalog/sources.yaml not found" };
   try {

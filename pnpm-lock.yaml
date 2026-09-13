@@ -139,6 +139,9 @@ importers:
       vitest:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.20.2)
+      yaml:
+        specifier: ^2.6.0
+        version: 2.9.0
 
   fixtures/ops-project-footage:
     dependencies:
