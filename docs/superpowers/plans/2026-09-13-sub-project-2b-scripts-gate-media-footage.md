@@ -1573,7 +1573,8 @@ export interface SyncReport { added: { source_id: string; path: string }[]; alre
 export async function syncSources(p: { catalog: SourceCatalog; store: StateStore; projectDir: string; registry: SourcesRegistry }): Promise<SyncReport>
 // doctor.ts
 export interface DoctorRow { check: string; ok: boolean; detail: string }
-export interface DoctorInput { projectDir: string; project: ProjectConfig; harness: HarnessConfig; scripts: ScriptsRegistry | undefined; workflows: { ref: string; loaded: LoadedWorkflow }[]; profiles: ProductionProfile[]; secrets: SecretResolver; proberAvailable: boolean; store: StateStore; migrationsDir: string }
+export interface DoctorInput { projectDir: string; project: ProjectConfig; harness: HarnessConfig; scripts: ScriptsRegistry | undefined; builtinScripts: string[]; workflows: { ref: string; loaded: LoadedWorkflow }[]; profiles: ProductionProfile[]; secrets: SecretResolver; proberAvailable: boolean; store: StateStore; migrationsDir: string }
+// `builtinScripts` = tên lệnh do composition root cung cấp sẵn (fakeScriptCommands) — script không có trong scripts.yaml nhưng có ở đây là hợp lệ (row ok, detail "provided by built-in commands"), không kiểm wrapper/secret.
 export function runDoctor(i: DoctorInput): DoctorRow[]
 ```
 Doctor kiểm (mỗi dòng một `check`):
