@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { hasFfmpeg } from "../media.js";
-import { SAMPLE_EDL, cli, cliAsync, drain, freshFootageProject, planFootage, setGpuCapacity, status, submitGate } from "./footage-helpers.js";
+import { SqliteStateStore } from "@harness/core";
+import { join } from "node:path";
+import { SAMPLE_EDL, cli, cliAsync, drain, freshFootageProject, planFootage, setGpuCapacity, stageId, status, submitGate } from "./footage-helpers.js";
 
 function ingestAndCreateContent(dir: string, source: string): { source_id: string; content_id: string } {
   const ingest = JSON.parse(cli(dir, ["source", "ingest", source, "--rights", "cleared", "--json"]).out) as { source_id: string };
@@ -46,6 +48,9 @@ describe.skipIf(!hasFfmpeg())("footage-production on the fixture ops project", (
     expect(status(dir, runA).stages.map((s) => s.stage_key)).toEqual(expect.arrayContaining(["tts", "avatar"]));
     expect(status(dir, runA).artifacts.some((a) => a.type === "avatar_clips" && a.status === "ACCEPTED")).toBe(true);
 
+    const runAIndexSourceStageRunId = stageId(dir, runA, "index-source");
+    const runAEpisode = status(dir, runA).artifacts.find((a) => a.type === "episode_video" && a.status === "ACCEPTED")!;
+
     // re-plan A: index-source comes from the cache, every gate runs again
     const runA2 = planFootage(dir, contentId, ["voice=tts", "avatar=heygen"]);
     drain(dir);
@@ -53,6 +58,34 @@ describe.skipIf(!hasFfmpeg())("footage-production on the fixture ops project", (
     expect(a2.stages.find((s) => s.stage_key === "index-source")).toMatchObject({ state: "SUCCEEDED", attempts: [] });
     expect(a2.stages.find((s) => s.stage_key === "select-topic")?.state).toBe("WAITING_HUMAN");
     expect(cli(dir, ["events", "tail", "--run", runA2, "--json", "--limit", "200"]).out).toContain("stage.reused");
+
+    // A2 re-run: submit every gate again with the same contents as A. A fresh gate submission mints a brand
+    // new artifact even for identical bytes, so cut/assemble/thumbnail-render/tts/avatar each get a new
+    // cache key and recompute for real; index-source's own cache key is unaffected by any of that and stays
+    // reused from A. This also invalidates A's downstream artifacts (same stage keys, same variant, a
+    // later run just committed new ones), while A's index-source artifact is untouched.
+    runThroughEditPlan(dir, runA2, sourceId);
+    drain(dir);
+    expect(status(dir, runA2).stages.find((s) => s.stage_key === "assemble")?.state).toBe("SUCCEEDED");
+    submitGate(dir, runA2, "thumbnail-qc", { "qc-checklist.json": JSON.stringify({ readable: true, on_brand: true, notes: "" }) });
+    drain(dir);
+
+    const a2Final = status(dir, runA2);
+    expect(a2Final.run.state).toBe("SUCCEEDED");
+    const a2IndexSource = a2Final.stages.find((s) => s.stage_key === "index-source")!;
+    expect(a2IndexSource.attempts).toEqual([]);
+    expect(a2IndexSource.reused_artifact_ids?.length ?? 0).toBeGreaterThan(0);
+    for (const key of ["cut", "assemble", "thumbnail-render", "tts", "avatar"]) {
+      expect(a2Final.stages.find((s) => s.stage_key === key)?.attempts.filter((a) => a.state === "SUCCEEDED"), key).toHaveLength(1);
+    }
+    const a2Episode = a2Final.artifacts.find((a) => a.type === "episode_video" && a.status === "ACCEPTED")!;
+    expect(a2Episode.artifact_id).not.toBe(runAEpisode.artifact_id);
+
+    const runAAfterA2 = status(dir, runA);
+    const runAIndexSourceArtifacts = runAAfterA2.artifacts.filter((a) => a.stage_run_id === runAIndexSourceStageRunId);
+    expect(runAIndexSourceArtifacts.length).toBeGreaterThan(0);
+    expect(runAIndexSourceArtifacts.every((a) => a.status === "ACCEPTED")).toBe(true);
+    expect(runAAfterA2.artifacts.some((a) => a.status === "STALE")).toBe(true);
   }, 300_000);
 
   it("gpu: 1 — two tts stages never overlap", async () => {
@@ -125,12 +158,27 @@ describe.skipIf(!hasFfmpeg())("footage-production on the fixture ops project", (
     // `reconcile` itself already released the stage back to READY once every NEEDS_RECONCILIATION op on it
     // resolved (found or not); `retry --stage avatar` is a no-op in that case ("nothing to retry") and is
     // exactly the escape hatch a human would reach for if it hadn't.
-    cli(dir, ["retry", run, "--stage", "avatar"]);
+    const retry = cli(dir, ["retry", run, "--stage", "avatar"]);
+    expect(retry.code, retry.err).toBe(0);
     expect(status(dir, run).stages.find((s) => s.stage_key === "avatar")?.state).toBe("READY");
 
     drain(dir); // a fresh attempt: same op idempotency key, new op row, CONFIRMED this time -> SUCCEEDED
     const after = status(dir, run);
     expect(after.stages.find((s) => s.stage_key === "avatar")?.state).toBe("SUCCEEDED");
     expect(after.artifacts.some((a) => a.type === "avatar_clips" && a.status === "ACCEPTED")).toBe(true);
+
+    const avatarStageRunId = stageId(dir, run, "avatar");
+    const store = new SqliteStateStore(join(dir, "data", "state", "harness.db"));
+    try {
+      const ops = store.listExternalOperations({ stage_run_id: avatarStageRunId });
+      const lostOp = ops.find((o) => o.status === "FAILED");
+      const confirmedOp = ops.find((o) => o.status === "CONFIRMED");
+      expect(lostOp, JSON.stringify(ops)).toBeDefined();
+      expect(confirmedOp, JSON.stringify(ops)).toBeDefined();
+      expect(confirmedOp!.operation_id).not.toBe(lostOp!.operation_id);
+      expect(confirmedOp!.idempotency_key).toBe(lostOp!.idempotency_key);
+    } finally {
+      store.close();
+    }
   }, 300_000);
 });

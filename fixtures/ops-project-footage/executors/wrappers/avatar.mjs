@@ -8,7 +8,13 @@ const key = process.env.HEYGEN_API_KEY ?? "";
 console.log(`avatar: using api key ${key}`); // deliberate: the secret e2e proves this line is redacted in the log
 ctx.log.info("calling heygen", { key }); // both a plain line and a JSON line
 
-const intent = await ctx.op.intent({ provider: "heygen", kind: "render", target: ctx.request.stage_run_id, payload: { script: ctx.input("script") } });
+// The payload must stay stable across a retry's fresh workspace (a new attempt gets a new absolute path for
+// the same input), so identify the script by its content checksum rather than by `ctx.input("script")`'s
+// path: that keeps `ctx.op.intent`'s idempotency key the same across attempts, so a retry after a lost
+// connection reuses the same key the first attempt recorded (found CONFIRMED via `findConfirmedByKey`, or
+// superseded in place if it was left FAILED) instead of minting an unrelated one.
+const scriptChecksum = ctx.request.inputs.find((i) => i.type === "script")?.checksum ?? null;
+const intent = await ctx.op.intent({ provider: "heygen", kind: "render", target: ctx.request.stage_run_id, payload: { script_checksum: scriptChecksum } });
 if (intent.status === "CONFIRMED") {
   ctx.log.info("reusing confirmed render", { operation_id: intent.operation_id });
 } else if (process.env.FAKE_HEYGEN_LOSE === "1") {
