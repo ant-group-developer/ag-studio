@@ -19,6 +19,8 @@ describe("execution contracts", () => {
       options: {},
       source_items: [],
       resources: [],
+      expected_outputs: [],
+      policy: {},
       limits: { deadline_at: now, max_cost_usd: 5, max_attempts: 3 },
       capabilities: ["write_workspace"],
       fencing_token: 1,

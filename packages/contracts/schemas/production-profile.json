@@ -82,6 +82,11 @@
                   "minimum": 0
                 }
               ]
+            },
+            "max_silence_ratio": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             }
           },
           "additionalProperties": false,

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { jsonObjectSchema, revisionSchema, schemaVersion, secretRefSchema, semverSchema } from "./common.js";
+import { expectedOutputSchema, jsonObjectSchema, revisionSchema, schemaVersion, secretRefSchema, semverSchema } from "./common.js";
 import { executorRefSchema, retryPolicySchema } from "./entities.js";
 
 export const DEFAULT_RETRY = { max_attempts: 3, backoff_seconds: [10, 60, 300], retry_on: ["transient", "abandoned"] as const };
@@ -17,7 +17,7 @@ export const stageDefinitionSchema = z.object({
   required_capabilities: z.array(z.string()).default([]),
   required_checks: z.array(z.string()).default([]),
   retry: retryPolicySchema.default({ ...DEFAULT_RETRY, retry_on: [...DEFAULT_RETRY.retry_on] }),
-  outputs: z.array(z.object({ type: z.string().min(1), mime_type: z.string().min(1), kind: z.enum(["file", "directory"]).default("file"), name: z.string().min(1).optional() }).strict()).default([]),
+  outputs: z.array(expectedOutputSchema).default([]),
   config: jsonObjectSchema.default({}),
 }).strict();
 
@@ -57,7 +57,7 @@ export const ProductionProfileSchema = z.object({
   options_schema: z.record(z.string().regex(/^[a-z][a-z0-9_]*$/), z.array(z.string().min(1)).min(1)).default({}),
   options_defaults: jsonObjectSchema.default({}),
   reuse: z.enum(["allow", "never"]).default("allow"),
-  content: z.object({ target_duration_seconds: z.tuple([z.number().min(0), z.number().min(0)]).optional() }).strict().default({}),
+  content: z.object({ target_duration_seconds: z.tuple([z.number().min(0), z.number().min(0)]).optional(), max_silence_ratio: z.number().min(0).max(1).optional() }).strict().default({}),
   verification: z.object({ required_checks: z.array(z.string()).default([]), required_checks_by_stage: z.record(z.string(), z.array(z.string())).default({}) }).strict().default({ required_checks: [], required_checks_by_stage: {} }),
   limits: z.object({ max_cost_usd_per_variant: z.number().min(0).default(5), max_concurrency: z.number().int().min(1).default(1) }).strict().default({ max_cost_usd_per_variant: 5, max_concurrency: 1 }),
 }).strict();
@@ -98,6 +98,29 @@ export const HarnessConfigSchema = z.object({
   allowed_override_keys: z.array(z.string()).default(["lease_seconds", "default_deadline_seconds", "default_max_cost_usd"]),
   resource_wait_warn_seconds: z.number().int().min(1).default(600),
 }).strict();
+
+export const scriptSpecSchema = z.object({
+  argv: z.array(z.string().min(1)).min(1),
+  cwd: z.string().min(1).default("."),
+  env_refs: z.record(z.string().regex(/^[A-Z][A-Z0-9_]*$/), secretRefSchema).default({}),
+  requires_resources: z.array(z.string().regex(/^[a-z][a-z0-9-]*$/)).optional(),
+  timeout_seconds: z.number().int().min(1).optional(),
+}).strict();
+/** `executors/scripts.yaml` of an operations project: script name (executor.script) -> command. */
+export const ScriptsRegistrySchema = z.object({ schema_version: schemaVersion("scripts"), scripts: z.record(z.string().regex(/^[a-z][a-z0-9-]*$/), scriptSpecSchema) }).strict();
+
+export const sourceEntrySchema = z.object({
+  path: z.string().min(1),
+  collection: z.string().regex(/^[a-z][a-z0-9-]*$/).default("main"),
+  rights_status: z.enum(["unknown", "cleared", "restricted"]).default("unknown"),
+  language: z.string().nullable().default(null),
+}).strict();
+/** `source-catalog/sources.yaml`: the reviewed register; the DB is the machine index. */
+export const SourcesRegistrySchema = z.object({ schema_version: schemaVersion("sources"), sources: z.array(sourceEntrySchema).default([]) }).strict();
+
+export type ScriptSpec = z.infer<typeof scriptSpecSchema>;
+export type ScriptsRegistry = z.infer<typeof ScriptsRegistrySchema>;
+export type SourcesRegistry = z.infer<typeof SourcesRegistrySchema>;
 
 export type WorkflowDefinition = z.infer<typeof WorkflowDefinitionSchema>;
 export type StageDefinition = z.infer<typeof stageDefinitionSchema>;

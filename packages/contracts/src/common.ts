@@ -14,5 +14,14 @@ export function schemaVersion<N extends string>(name: N) {
   return z.literal(`harness.${name}/v1` as const);
 }
 
+/** Declared shape of one stage output (spec §3); shared by workflow stage definitions and stage requests. */
+export const expectedOutputSchema = z.object({
+  type: z.string().min(1),
+  mime_type: z.string().min(1),
+  kind: z.enum(["file", "directory"]).default("file"),
+  name: z.string().min(1).optional(),
+}).strict();
+
 export type Checksum = z.infer<typeof checksumSchema>;
 export type Timestamp = z.infer<typeof timestampSchema>;
+export type ExpectedOutput = z.infer<typeof expectedOutputSchema>;

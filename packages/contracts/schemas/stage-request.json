@@ -171,6 +171,67 @@
           },
           "default": []
         },
+        "expected_outputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "mime_type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "file",
+                  "directory"
+                ],
+                "default": "file"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "type",
+              "mime_type"
+            ],
+            "additionalProperties": false
+          },
+          "default": []
+        },
+        "policy": {
+          "type": "object",
+          "properties": {
+            "target_duration_seconds": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "number",
+                  "minimum": 0
+                }
+              ]
+            },
+            "max_silence_ratio": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "additionalProperties": false,
+          "default": {}
+        },
         "limits": {
           "type": "object",
           "properties": {

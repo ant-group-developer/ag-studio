@@ -5,10 +5,20 @@ export type TransitionKind = "run" | "stage_run" | "attempt" | "artifact" | "ext
 
 export type EventInput = Omit<Event, "schema_version" | "event_id" | "occurred_at">;
 
-export interface ClaimParams { owner: string; capabilities: string[]; now: string; leaseSeconds: number; resourceCapacity?: Record<string, number> }
+export interface ClaimParams { owner: string; capabilities: string[]; now: string; leaseSeconds: number; resourceCapacity?: Record<string, number>; stageRunId?: string }
 export interface ClaimResult { stageRun: StageRun; attempt: Attempt; lease: Lease }
 export interface ReapedLease { stage_run_id: string; run_id: string; attempt_id: string; owner: string; requeued: boolean }
-export interface MediaProber { probe(path: string): Promise<{ media: MediaInfo | null; duration_seconds: number | null; mime_type: string | null } | null> }
+export interface MediaProbe {
+  media: MediaInfo | null; duration_seconds: number | null; mime_type: string | null;
+  container: string | null;
+  video: { codec: string; width: number; height: number; fps: number | null } | null;
+  audio: { codec: string; channels: number; sample_rate: number } | null;
+}
+export interface MediaProber {
+  probe(path: string): Promise<MediaProbe | null>;
+  /** 0..1 share of the timeline ffmpeg's silencedetect reports as silent; undefined when the prober cannot measure it. */
+  silenceRatio?(path: string): Promise<number | null>;
+}
 
 export interface StateStore {
   migrate(migrationsDir: string): string[];

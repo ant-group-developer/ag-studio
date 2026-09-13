@@ -101,6 +101,10 @@
           },
           "default": []
         },
+        "gate_deadline_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
         "required_capabilities": {
           "type": "array",
           "items": {

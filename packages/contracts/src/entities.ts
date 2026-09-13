@@ -42,6 +42,7 @@ export const RunSchema = z.object({
   effective_config_snapshot: jsonObjectSchema,
   effective_config_digest: checksumSchema,
   total_cost_usd: z.number().min(0),
+  budget_usd: z.number().min(0).optional(),
   created_at: timestampSchema,
   updated_at: timestampSchema,
 }).strict();
@@ -55,6 +56,7 @@ export const StageRunSchema = z.object({
   depends_on: z.array(z.string()),
   depends_on_optional: z.array(z.string()).default([]),
   requires_resources: z.array(z.string()).default([]),
+  gate_deadline_seconds: z.number().int().min(1).optional(),
   required_capabilities: z.array(z.string()),
   required_checks: z.array(z.string()),
   retry: retryPolicySchema,

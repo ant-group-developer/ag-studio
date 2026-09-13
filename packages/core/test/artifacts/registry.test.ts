@@ -9,6 +9,8 @@ import { sha256String } from "../../src/artifacts/checksum.js";
 import { createWorkspace } from "../../src/environment/workspace.js";
 import { openTempStore, seedStage } from "../helpers.js";
 
+const SHA = "sha256:" + "a".repeat(64);
+
 async function setup() {
   const { store, dir, clock } = openTempStore();
   const { runId, stage } = seedStage(store);
@@ -142,6 +144,13 @@ describe("ArtifactRegistry", () => {
     const one = { path: "output/result.txt", type: "script_text", checksum: sha256String("hello"), size_bytes: 5 };
     await expect(registry.stageOutputs({ workspaceDir: ws, outputs: [one, { ...one, type: "other" }], mimeTypes: {}, ctx })).rejects.toMatchObject({ code: "IO_ERROR" });
     expect(existsSync(join(ws, "output", "result.txt"))).toBe(true);
+  });
+  it("rejects overlapping outputs even when one path is written with ./ or ..", async () => {
+    const { ws, registry, ctx } = await setup();
+    await expect(registry.stageOutputs({ workspaceDir: ws, outputs: [
+      { path: "output/./cuts", type: "clip_set", checksum: SHA, size_bytes: 0, kind: "directory" },
+      { path: "output/cuts/../cuts/001.mp4", type: "clip", checksum: SHA, size_bytes: 0, kind: "file" },
+    ], mimeTypes: {}, ctx })).rejects.toMatchObject({ code: "IO_ERROR" });
   });
   it("rejects a directory output whose digest does not match", async () => {
     const { ws, registry, ctx } = await setup();

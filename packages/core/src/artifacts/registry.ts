@@ -50,10 +50,10 @@ export class ArtifactRegistry {
     const root = resolve(p.workspaceDir) + sep;
     // two outputs that nest (a directory and a file inside it) or repeat the same path would corrupt the
     // workspace: the first rename moves the tree and the second fails with a raw ENOENT halfway through
-    const paths = p.outputs.map((o) => o.path.replace(/\\/g, "/").replace(/\/+$/, ""));
+    const paths = p.outputs.map((o) => resolve(p.workspaceDir, o.path).replace(/[\\/]+$/, ""));
     for (let i = 0; i < paths.length; i++) for (let j = i + 1; j < paths.length; j++) {
       const a = paths[i]!; const b = paths[j]!;
-      if (a === b || b.startsWith(a + "/") || a.startsWith(b + "/")) throw new HarnessError("IO_ERROR", `overlapping outputs: ${a} and ${b}`, { a, b });
+      if (a === b || b.startsWith(a + sep) || a.startsWith(b + sep)) throw new HarnessError("IO_ERROR", `overlapping outputs: ${p.outputs[i]!.path} and ${p.outputs[j]!.path}`, { a: p.outputs[i]!.path, b: p.outputs[j]!.path });
     }
     const verified: { out: StageOutput; src: string; files?: DirectoryEntry[] }[] = [];
     for (const out of p.outputs) {

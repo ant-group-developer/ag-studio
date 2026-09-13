@@ -1,0 +1,70 @@
+{
+  "$ref": "#/definitions/scripts",
+  "definitions": {
+    "scripts": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.scripts/v1"
+        },
+        "scripts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "argv": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1
+              },
+              "cwd": {
+                "type": "string",
+                "minLength": 1,
+                "default": "."
+              },
+              "env_refs": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string",
+                  "pattern": "^secret:\\/\\/[a-z0-9-]+\\/[a-z0-9-]+$"
+                },
+                "propertyNames": {
+                  "pattern": "^[A-Z][A-Z0-9_]*$"
+                },
+                "default": {}
+              },
+              "requires_resources": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]*$"
+                }
+              },
+              "timeout_seconds": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "argv"
+            ],
+            "additionalProperties": false
+          },
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9-]*$"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "scripts"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

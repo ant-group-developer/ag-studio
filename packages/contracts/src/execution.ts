@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { idSchema } from "./ids.js";
-import { checksumSchema, jsonObjectSchema, schemaVersion, timestampSchema } from "./common.js";
+import { checksumSchema, expectedOutputSchema, jsonObjectSchema, schemaVersion, timestampSchema } from "./common.js";
 import { profileRefSchema, workflowRefSchema } from "./entities.js";
 
 export const stageInputSchema = z.object({
@@ -9,6 +9,11 @@ export const stageInputSchema = z.object({
   path: z.string().min(1),
   type: z.string().min(1),
   kind: z.enum(["file", "directory"]).default("file"),
+}).strict();
+
+export const verificationPolicySchema = z.object({
+  target_duration_seconds: z.tuple([z.number().min(0), z.number().min(0)]).optional(),
+  max_silence_ratio: z.number().min(0).max(1).optional(),
 }).strict();
 
 export const StageRequestSchema = z.object({
@@ -27,6 +32,8 @@ export const StageRequestSchema = z.object({
   options: jsonObjectSchema.default({}),
   source_items: z.array(z.object({ source_id: idSchema("source_item"), uri: z.string().min(1), checksum: checksumSchema, mime_type: z.string().min(1), duration_seconds: z.number().nullable() }).strict()).default([]),
   resources: z.array(z.string()).default([]),
+  expected_outputs: z.array(expectedOutputSchema).default([]),
+  policy: verificationPolicySchema.default({}),
   limits: z.object({ deadline_at: timestampSchema, max_cost_usd: z.number().min(0), max_attempts: z.number().int().min(1) }).strict(),
   capabilities: z.array(z.string()),
   fencing_token: z.number().int().min(1),
@@ -83,6 +90,7 @@ export const ArtifactManifestSchema = z.object({
 }).strict();
 
 export type StageRequest = z.infer<typeof StageRequestSchema>;
+export type VerificationPolicy = z.infer<typeof verificationPolicySchema>;
 export type StageResult = z.infer<typeof StageResultSchema>;
 export type StageOutput = z.infer<typeof stageOutputSchema>;
 export type StageInput = z.infer<typeof stageInputSchema>;

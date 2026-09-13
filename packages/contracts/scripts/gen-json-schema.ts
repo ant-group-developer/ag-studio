@@ -6,6 +6,7 @@ import type { ZodTypeAny } from "zod";
 import * as E from "../src/entities.js";
 import * as X from "../src/execution.js";
 import * as C from "../src/config.js";
+import { EdlSchema } from "../src/edl.js";
 
 export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
   run: E.RunSchema, "stage-run": E.StageRunSchema, attempt: E.AttemptSchema, artifact: E.ArtifactSchema,
@@ -17,6 +18,7 @@ export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
   "stage-request": X.StageRequestSchema, "stage-result": X.StageResultSchema, "artifact-manifest": X.ArtifactManifestSchema,
   workflow: C.WorkflowDefinitionSchema, "production-profile": C.ProductionProfileSchema, "channel-config": C.ChannelConfigSchema,
   "project-config": C.ProjectConfigSchema, "harness-config": C.HarnessConfigSchema,
+  edl: EdlSchema, scripts: C.ScriptsRegistrySchema, sources: C.SourcesRegistrySchema,
 };
 
 export function toJsonSchema(name: string, schema: ZodTypeAny) {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HarnessConfigSchema, ProjectConfigSchema, WorkflowDefinitionSchema, ProductionProfileSchema } from "../src/config.js";
+import { ScriptsRegistrySchema, SourcesRegistrySchema, StageRequestSchema } from "../src/index.js";
 
 describe("config contracts", () => {
   it("parses a workflow definition and rejects unknown keys", () => {
@@ -82,5 +83,23 @@ describe("config contracts", () => {
     expect(pc.source.materialize).toBe("link");
     expect(ProjectConfigSchema.safeParse({ ...pc, resources: { GPU: 1 } }).success).toBe(false);
     expect(HarnessConfigSchema.parse({ schema_version: "harness.config/v1" }).resource_wait_warn_seconds).toBe(600);
+  });
+});
+
+describe("2B contracts", () => {
+  it("scripts registry defaults cwd, env_refs and resources; rejects a non-secret env ref", () => {
+    const r = ScriptsRegistrySchema.parse({ schema_version: "harness.scripts/v1", scripts: { tts: { argv: ["node", "executors/wrappers/tts.mjs"], requires_resources: ["gpu"], timeout_seconds: 60 } } });
+    expect(r.scripts.tts).toMatchObject({ cwd: ".", env_refs: {}, requires_resources: ["gpu"], timeout_seconds: 60 });
+    expect(ScriptsRegistrySchema.safeParse({ schema_version: "harness.scripts/v1", scripts: { avatar: { argv: ["node", "x.mjs"], env_refs: { HEYGEN_API_KEY: "plain-value" } } } }).success).toBe(false);
+    expect(ScriptsRegistrySchema.safeParse({ schema_version: "harness.scripts/v1", scripts: { bad: { argv: [] } } }).success).toBe(false);
+  });
+  it("sources registry entries default collection and rights", () => {
+    const s = SourcesRegistrySchema.parse({ schema_version: "harness.sources/v1", sources: [{ path: "raw/clip.mp4" }] });
+    expect(s.sources[0]).toMatchObject({ collection: "main", rights_status: "unknown", language: null });
+  });
+  it("stage request defaults expected_outputs and policy", () => {
+    const req = StageRequestSchema.parse({ schema_version: "harness.stage-request/v1", run_id: "run_01J00000000000000000000000", stage_run_id: "stage_01J00000000000000000000000", attempt_id: "attempt_01J00000000000000000000000", project_id: "p", portfolio_id: "pf", stage_key: "k", workflow: { id: "w", version: "1.0.0", digest: "sha256:" + "a".repeat(64) }, profile_snapshot: { id: "footage", revision: 1 }, inputs: [], workspace_uri: "/ws", stage_config: {}, limits: { deadline_at: "2026-09-13T00:00:00.000Z", max_cost_usd: 1, max_attempts: 1 }, capabilities: [], fencing_token: 1 });
+    expect(req.expected_outputs).toEqual([]);
+    expect(req.policy).toEqual({});
   });
 });
