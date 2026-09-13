@@ -1,4 +1,4 @@
-import type { Attempt, Clock, HarnessConfig, Lease, ProductionProfile, Run, SourceItem, StageDefinition, StageInput, StageRequest, StageRun, StateStore, VerificationPolicy } from "@harness/contracts";
+import { isHarnessError, type Attempt, type Clock, type HarnessConfig, type Lease, type ProductionProfile, type Run, type SourceItem, type StageDefinition, type StageInput, type StageRequest, type StageRun, type StateStore, type VerificationPolicy } from "@harness/contracts";
 import { addSeconds } from "../state/clock.js";
 import type { LoadedWorkflow } from "./registry.js";
 
@@ -24,7 +24,7 @@ export function buildStageRequest(d: RequestDeps, p: { run: Run; stageRun: Stage
     .map((s) => ({ source_id: s.source_id, uri: s.uri, checksum: s.checksum, mime_type: s.mime_type, duration_seconds: s.duration_seconds }));
   const def = stageDefinitionFor(d.workflows, run, stageRun.stage_key);
   let policy: VerificationPolicy = {};
-  try { policy = policyFor(d.profiles(run.profile_snapshot.id)); } catch { /* profile file gone: verify without thresholds */ }
+  try { policy = policyFor(d.profiles(run.profile_snapshot.id)); } catch (e) { if (!isHarnessError(e, "NOT_FOUND")) throw e; /* profile file gone: verify without thresholds */ }
   return {
     schema_version: "harness.stage-request/v1", run_id: run.run_id, stage_run_id: stageRun.stage_run_id, attempt_id: p.attempt.attempt_id,
     project_id: run.project_id, portfolio_id: run.portfolio_id, stage_key: stageRun.stage_key, workflow: run.workflow_release, profile_snapshot: run.profile_snapshot,
