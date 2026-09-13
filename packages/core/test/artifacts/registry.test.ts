@@ -9,8 +9,6 @@ import { sha256String } from "../../src/artifacts/checksum.js";
 import { createWorkspace } from "../../src/environment/workspace.js";
 import { openTempStore, seedStage } from "../helpers.js";
 
-const SHA = "sha256:" + "a".repeat(64);
-
 async function setup() {
   const { store, dir, clock } = openTempStore();
   const { runId, stage } = seedStage(store);
@@ -147,10 +145,17 @@ describe("ArtifactRegistry", () => {
   });
   it("rejects overlapping outputs even when one path is written with ./ or ..", async () => {
     const { ws, registry, ctx } = await setup();
+    // real files so the old string-only normalisation (which does not see these two paths as
+    // overlapping) would have gone on to move both outputs successfully instead of throwing;
+    // only the resolve()-based check catches the overlap before anything is touched.
+    mkdirSync(join(ws, "output", "cuts"), { recursive: true });
+    writeFileSync(join(ws, "output", "cuts", "001.mp4"), "aaa");
+    const { checksum: dirChecksum, size_bytes: dirSize } = directoryDigest(await listDirectoryFiles(join(ws, "output", "cuts")));
     await expect(registry.stageOutputs({ workspaceDir: ws, outputs: [
-      { path: "output/./cuts", type: "clip_set", checksum: SHA, size_bytes: 0, kind: "directory" },
-      { path: "output/cuts/../cuts/001.mp4", type: "clip", checksum: SHA, size_bytes: 0, kind: "file" },
-    ], mimeTypes: {}, ctx })).rejects.toMatchObject({ code: "IO_ERROR" });
+      { path: "output/./cuts", type: "clip_set", checksum: dirChecksum, size_bytes: dirSize, kind: "directory" },
+      { path: "output/cuts/../cuts/001.mp4", type: "clip", checksum: sha256String("aaa"), size_bytes: 3, kind: "file" },
+    ], mimeTypes: {}, ctx })).rejects.toMatchObject({ code: "IO_ERROR", message: expect.stringContaining("overlapping outputs") });
+    expect(existsSync(join(ws, "output", "cuts", "001.mp4"))).toBe(true);
   });
   it("rejects a directory output whose digest does not match", async () => {
     const { ws, registry, ctx } = await setup();
