@@ -51,7 +51,7 @@ await ctx.done({ cost_usd: 0.01 });
 | `ctx.workspace` | Absolute path to the stage workspace directory. |
 | `ctx.options` | `request.options`. |
 | `ctx.sources` | `request.source_items`. |
-| `ctx.input(typeOrPath)` | Absolute path to the first input matching `type` exactly, else matching `path` exactly or by basename; throws if none matches. |
+| `ctx.input(typeOrPath)` | Absolute path to the first input matching `type` exactly, else matching `path` exactly or as a path suffix after `/`; throws if none matches. |
 | `ctx.inputs(type)` | Absolute paths of every input with the given `type`. |
 | `ctx.hasInput(type)` | Whether any input has the given `type`. |
 | `ctx.source(i)` | The source item at index `i`; throws if out of range. |

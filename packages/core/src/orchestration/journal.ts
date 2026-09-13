@@ -56,6 +56,37 @@ export class ExternalOperationJournal {
     }
   }
 
+  confirmExternal(operationId: string, r: { provider_ref: string; receipt: Record<string, unknown>; cost_usd?: number }): ExternalOperation {
+    return this.store.transaction(() => {
+      const op = this.must(operationId);
+      if (op.status === "CONFIRMED") return op;
+      if (op.status === "INTENT_RECORDED") this.store.transition("external_operation", op.operation_id, "INTENT_RECORDED", "DISPATCHED", this.ev(op, "external_operation.dispatched"));
+      const cur = this.store.getExternalOperation(op.operation_id)!;
+      if (cur.status !== "DISPATCHED") throw new HarnessError("INVALID_TRANSITION", `operation ${operationId} is ${cur.status}; cannot confirm`, { status: cur.status });
+      this.store.updateExternalOperation({ ...cur, provider_ref: r.provider_ref, receipt: r.receipt, cost_usd: r.cost_usd ?? cur.cost_usd });
+      this.store.transition("external_operation", op.operation_id, "DISPATCHED", "CONFIRMED", this.ev(op, "external_operation.confirmed", { provider_ref: r.provider_ref }));
+      return this.store.getExternalOperation(op.operation_id)!;
+    });
+  }
+
+  markLost(operationId: string, reason: string): ExternalOperation {
+    return this.store.transaction(() => {
+      const op = this.must(operationId);
+      if (op.status === "INTENT_RECORDED") this.store.transition("external_operation", op.operation_id, "INTENT_RECORDED", "DISPATCHED", this.ev(op, "external_operation.dispatched"));
+      const cur = this.store.getExternalOperation(op.operation_id)!;
+      if (cur.status === "NEEDS_RECONCILIATION") return cur;
+      if (cur.status !== "DISPATCHED") throw new HarnessError("INVALID_TRANSITION", `operation ${operationId} is ${cur.status}; cannot mark lost`, { status: cur.status });
+      this.store.transition("external_operation", op.operation_id, "DISPATCHED", "NEEDS_RECONCILIATION", this.ev(op, "external_operation.needs_reconciliation", { reason }));
+      return this.store.getExternalOperation(op.operation_id)!;
+    });
+  }
+
+  private must(id: string): ExternalOperation {
+    const op = this.store.getExternalOperation(id);
+    if (!op) throw new HarnessError("NOT_FOUND", `external operation not found: ${id}`, { id });
+    return op;
+  }
+
   private ev(op: ExternalOperation, type: string, payload: Record<string, unknown> = {}) {
     const run = this.store.getRun(op.run_id)!;
     const stage = this.store.getStageRun(op.stage_run_id)!;

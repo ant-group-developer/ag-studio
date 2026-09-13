@@ -52,14 +52,21 @@ export async function start(opts = {}) {
   const relPosix = (rel) => rel.split("\\").join("/").replace(/\/+$/, "");
   /** @returns {string[]} */
   const cliArgv = () => { const raw = env.HARNESS_CLI_ARGV; if (!raw) throw new Error("HARNESS_CLI_ARGV is not set: ctx.op.* needs the harness CLI"); return JSON.parse(raw); };
+  /** @returns {string} */
+  const attemptId = () => { const v = env.HARNESS_ATTEMPT_ID; if (!v) throw new Error("HARNESS_ATTEMPT_ID is not set: ctx.op.* needs the attempt id"); return v; };
+  /** @returns {string} */
+  const fencingToken = () => { const v = env.HARNESS_FENCING_TOKEN; if (!v) throw new Error("HARNESS_FENCING_TOKEN is not set: ctx.op.* needs the fencing token"); return v; };
   /** @param {string[]} args @returns {OperationRecord} */
   const cli = (args) => {
     const argv = cliArgv();
     const cmd = /** @type {string} */ (argv[0]);
     const rest = argv.slice(1);
     const r = spawnSync(cmd, [...rest, "--project", env.HARNESS_PROJECT ?? process.cwd(), ...args, "--json"], { encoding: "utf8", env: { ...process.env, HARNESS_LOG_LEVEL: "error" } });
-    if (r.status !== 0) throw new Error(`harness ${args.join(" ")} failed: ${r.stderr.trim()}`);
-    return JSON.parse(/** @type {string} */ (r.stdout.trim().split("\n").at(-1)));
+    if (r.error) throw new Error(`harness ${args.join(" ")} could not start: ${r.error.message}`);
+    if (r.status !== 0) throw new Error(`harness ${args.join(" ")} failed: ${(r.stderr ?? "").trim()}`);
+    const lastLine = (r.stdout ?? "").trim().split("\n").at(-1) ?? "";
+    try { return JSON.parse(lastLine); }
+    catch { throw new Error(`harness ${args.join(" ")} returned no JSON: ${JSON.stringify((r.stdout ?? "").trim())}`); }
   };
   /** @param {Record<string, any>} partial @returns {any} */
   const writeResult = (partial) => {
@@ -92,9 +99,9 @@ export async function start(opts = {}) {
     async fail(kind, message, details = {}) { return writeResult({ outcome: "failed", outputs: [], errors: [{ kind, message, details }] }); },
     async unknown(message, external_operations = []) { return writeResult({ outcome: "unknown", outputs: [], external_operations, errors: [{ kind: "unknown", message, details: {} }] }); },
     op: {
-      async intent(p) { return cli(["op", "intent", "--attempt", /** @type {string} */ (env.HARNESS_ATTEMPT_ID), "--fencing-token", /** @type {string} */ (env.HARNESS_FENCING_TOKEN), "--provider", p.provider, "--kind", p.kind, "--target", p.target, "--payload", JSON.stringify(p.payload ?? {})]); },
-      async confirm(operationId, r) { return cli(["op", "confirm", operationId, "--fencing-token", /** @type {string} */ (env.HARNESS_FENCING_TOKEN), "--provider-ref", r.provider_ref, "--receipt", JSON.stringify(r.receipt ?? {}), ...(r.cost_usd !== undefined ? ["--cost-usd", String(r.cost_usd)] : [])]); },
-      async lost(operationId, reason) { return cli(["op", "lost", operationId, "--fencing-token", /** @type {string} */ (env.HARNESS_FENCING_TOKEN), "--reason", reason]); },
+      async intent(p) { return cli(["op", "intent", "--attempt", attemptId(), "--fencing-token", fencingToken(), "--provider", p.provider, "--kind", p.kind, "--target", p.target, "--payload", JSON.stringify(p.payload ?? {})]); },
+      async confirm(operationId, r) { return cli(["op", "confirm", operationId, "--fencing-token", fencingToken(), "--provider-ref", r.provider_ref, "--receipt", JSON.stringify(r.receipt ?? {}), ...(r.cost_usd !== undefined ? ["--cost-usd", String(r.cost_usd)] : [])]); },
+      async lost(operationId, reason) { return cli(["op", "lost", operationId, "--fencing-token", fencingToken(), "--reason", reason]); },
     },
   };
 }

@@ -55,4 +55,14 @@ describe("ExternalOperationJournal", () => {
     expect(store.findExternalOperationByKey(first.idempotency_key)?.operation_id).toBe(second.operation_id);
     expect(store.listExternalOperations({ stage_run_id: request.stage_run_id })).toHaveLength(2);
   });
+  it("confirmExternal and markLost drive an intent recorded by a wrapper", () => {
+    const { journal, request, store } = world();
+    const op = journal.recordIntent({ request, provider: "heygen", kind: "render", target: "stage-x", payload: { a: 1 } });
+    const confirmed = journal.confirmExternal(op.operation_id, { provider_ref: "hg-1", receipt: { ok: true }, cost_usd: 0.4 });
+    expect(confirmed).toMatchObject({ status: "CONFIRMED", provider_ref: "hg-1", cost_usd: 0.4 });
+    expect(journal.confirmExternal(op.operation_id, { provider_ref: "hg-1", receipt: {} }).status).toBe("CONFIRMED"); // idempotent
+    const op2 = journal.recordIntent({ request, provider: "heygen", kind: "render", target: "stage-y", payload: {} });
+    expect(journal.markLost(op2.operation_id, "socket closed").status).toBe("NEEDS_RECONCILIATION");
+    expect(store.listEvents({ run_id: request.run_id, limit: 50 }).map((e) => e.event_type)).toEqual(expect.arrayContaining(["external_operation.confirmed", "external_operation.needs_reconciliation"]));
+  });
 });

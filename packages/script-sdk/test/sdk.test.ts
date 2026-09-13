@@ -64,4 +64,35 @@ describe("script-sdk", () => {
     await ctx.unknown("lost after dispatch", ["op_1"]);
     expect(JSON.parse(readFileSync(join(ws, "stage-result.json"), "utf8"))).toMatchObject({ outcome: "unknown", external_operations: ["op_1"] });
   });
+  describe("ctx.op.*", () => {
+    const okCliArgv = JSON.stringify([process.execPath, "-e", "console.log('not the json you are looking for')", "--"]);
+    it("throws a clear error when HARNESS_ATTEMPT_ID is unset", async () => {
+      const ws = workspace();
+      const ctx = await start({ env: { HARNESS_WORKSPACE: ws, HARNESS_CLI_ARGV: okCliArgv, HARNESS_FENCING_TOKEN: "1" }, io });
+      await expect(ctx.op.intent({ provider: "heygen", kind: "render", target: "t" })).rejects.toThrow(/HARNESS_ATTEMPT_ID is not set/);
+    });
+    it("throws a clear error when HARNESS_FENCING_TOKEN is unset", async () => {
+      const ws = workspace();
+      const ctx = await start({ env: { HARNESS_WORKSPACE: ws, HARNESS_CLI_ARGV: okCliArgv, HARNESS_ATTEMPT_ID: "attempt_1" }, io });
+      await expect(ctx.op.intent({ provider: "heygen", kind: "render", target: "t" })).rejects.toThrow(/HARNESS_FENCING_TOKEN is not set/);
+      await expect(ctx.op.lost("op_1", "timeout")).rejects.toThrow(/HARNESS_FENCING_TOKEN is not set/);
+    });
+    it("reports a spawn failure as 'could not start' instead of throwing an unrelated node error", async () => {
+      const ws = workspace();
+      const cliArgv = JSON.stringify(["/no/such/harness-binary-xyz"]);
+      const ctx = await start({ env: { HARNESS_WORKSPACE: ws, HARNESS_CLI_ARGV: cliArgv, HARNESS_ATTEMPT_ID: "attempt_1", HARNESS_FENCING_TOKEN: "1" }, io });
+      await expect(ctx.op.lost("op_1", "timeout")).rejects.toThrow(/could not start/);
+    });
+    it("surfaces stderr when the CLI exits non-zero", async () => {
+      const ws = workspace();
+      const cliArgv = JSON.stringify([process.execPath, "-e", "process.stderr.write('CONFIG_INVALID: boom'); process.exit(1)", "--"]);
+      const ctx = await start({ env: { HARNESS_WORKSPACE: ws, HARNESS_CLI_ARGV: cliArgv, HARNESS_ATTEMPT_ID: "attempt_1", HARNESS_FENCING_TOKEN: "1" }, io });
+      await expect(ctx.op.lost("op_1", "timeout")).rejects.toThrow(/CONFIG_INVALID: boom/);
+    });
+    it("throws a clear error when stdout has no parsable JSON line", async () => {
+      const ws = workspace();
+      const ctx = await start({ env: { HARNESS_WORKSPACE: ws, HARNESS_CLI_ARGV: okCliArgv, HARNESS_ATTEMPT_ID: "attempt_1", HARNESS_FENCING_TOKEN: "1" }, io });
+      await expect(ctx.op.lost("op_1", "timeout")).rejects.toThrow(/returned no JSON/);
+    });
+  });
 });
