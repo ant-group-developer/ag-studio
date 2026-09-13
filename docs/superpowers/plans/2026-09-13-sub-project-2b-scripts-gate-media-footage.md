@@ -1017,7 +1017,7 @@ Quy tắc `submitGate`:
 4. Outputs mong đợi = `stageDefinitionFor(...).outputs`; mỗi output của gate **phải có `name`** (`CONFIG_INVALID` nếu thiếu). Đường dẫn `output/<name>`; file → `sha256File`, directory → `directoryDigest(listDirectoryFiles)`. Thiếu → `missing`.
 5. Pre-verify với request/result dựng trên attempt gate cũ (`buildStageRequest` với lease giả `{ resources: [], fencing_token: attempt.fencing_token }`): `verifier.verify(..., stageRun.required_checks)`; có `fail`/`missing` checker → trả về `failed`, ghi event `stage.submit_rejected` (payload `missing`, `failed`), **không** đổi state.
 6. Khi sạch: `store.transaction`: `transition(WAITING_HUMAN → READY, "stage.submitted")`, `updateStageRun({ ready_at: now, not_before: now })`; sau transaction `claim({ owner: d.owner ?? "cli-submit", capabilities: stageRun.required_capabilities, now, leaseSeconds: harness.lease_seconds, stageRunId })` (undefined → `STALE_STATE`); transition attempt/stage `CLAIMED → RUNNING`; `updateAttempt({ workspace_uri })` (cùng workspace gate); dựng lại request+result với attempt mới; `verify` lại; `controller.commit({ ..., executorVersion: "cli-submit@0.1.0", inputArtifactIds: acceptedInputsFor(store, stageRun).map(id), mimeTypes: mimeTypesFor(def), stageDefinitionDigest })`.
-7. `SubmitReport.artifacts` = id artifact ACCEPTED.
+7. `SubmitReport.artifacts` = id artifact ACCEPTED; `missing`/`failed` phản ánh lần verify sau claim. Sau khi `WAITING_HUMAN → READY`, nếu run đang `WAITING` thì gọi `planner.advance(run_id)` (như `retry.ts`) để run về RUNNING trước khi commit settle. Mọi lỗi ném ra sau khi claim (materialize, build request, verify) được commit như một `StageResult` failed (phase `submit`) để lease được trả, giống nhánh setup-failure của worker.
 
 - [ ] **Step 1: Test thất bại**
 
@@ -1054,7 +1054,7 @@ describe("GateExecutor", () => {
     expect(rejected.missing).toEqual(["output/topic.md"]);
     expect(store.getStageRun(pick.stage_run_id)?.state).toBe("WAITING_HUMAN");
     expect(store.listAttempts(pick.stage_run_id)).toHaveLength(1);
-    expect(store.listEvents({ run_id: run.run_id, limit: 5, newest: true })[0]?.event_type).toBe("stage.submit_rejected");
+    expect(store.listEvents({ run_id: run.run_id, limit: 5, newest: true }).at(-1)?.event_type).toBe("stage.submit_rejected"); // newest:true returns chronological order, newest last
     writeFileSync(join(ws, "output", "topic.md"), "# Topic\n");
     const ok = await submitGate(deps, { stageRunId: pick.stage_run_id });
     expect(ok).toMatchObject({ stageState: "SUCCEEDED", runState: "SUCCEEDED", missing: [], failed: [] });
