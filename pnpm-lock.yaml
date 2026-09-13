@@ -121,6 +121,9 @@ importers:
       '@harness/executors':
         specifier: workspace:*
         version: link:packages/executors
+      '@harness/script-sdk':
+        specifier: workspace:*
+        version: link:packages/script-sdk
       '@harness/worker':
         specifier: workspace:*
         version: link:packages/worker
@@ -203,6 +206,11 @@ importers:
       '@harness/adapter-fake':
         specifier: workspace:*
         version: link:../adapters/fake
+      '@harness/script-sdk':
+        specifier: workspace:*
+        version: link:../script-sdk
+
+  packages/script-sdk: {}
 
   packages/worker:
     dependencies:

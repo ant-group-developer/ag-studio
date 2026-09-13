@@ -23,6 +23,7 @@ export const workspaceAliases: Record<string, string> = {
   "@harness/executors": `${ROOT}packages/executors/src/index.ts`,
   "@harness/adapter-fake": `${ROOT}packages/adapters/fake/src/index.ts`,
   "@harness/worker": `${ROOT}packages/worker/src/index.ts`,
+  "@harness/script-sdk": `${ROOT}packages/script-sdk/src/index.js`,
 };
 
 export function sharedConfig(test: { include: string[]; testTimeout?: number; hookTimeout?: number }): UserConfig {

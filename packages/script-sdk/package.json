@@ -1,0 +1,9 @@
+{
+  "name": "@harness/script-sdk", "version": "0.1.0", "type": "module", "license": "MIT",
+  "description": "Helpers for wrapper scripts driven by the YouTube Operations Harness (stage-request/stage-result file protocol).",
+  "main": "./src/index.js", "types": "./src/index.d.ts",
+  "exports": { ".": { "types": "./src/index.d.ts", "default": "./src/index.js" } },
+  "files": ["src", "README.md"],
+  "scripts": { "build": "node -e \"process.exit(0)\"", "typecheck": "tsc -p tsconfig.json" },
+  "engines": { "node": ">=20" }
+}

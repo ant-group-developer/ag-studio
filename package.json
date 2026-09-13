@@ -18,6 +18,7 @@
     "@harness/executors": "workspace:*",
     "@harness/adapter-fake": "workspace:*",
     "@harness/worker": "workspace:*",
+    "@harness/script-sdk": "workspace:*",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
