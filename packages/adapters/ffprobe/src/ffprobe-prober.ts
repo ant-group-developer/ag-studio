@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import type { MediaProbe, MediaProber } from "@harness/contracts";
 
 interface FfprobeStream {
@@ -13,6 +13,20 @@ interface FfprobeStream {
 interface FfprobeOutput {
   format?: { format_name?: string; duration?: string };
   streams?: FfprobeStream[];
+}
+
+const DEFAULT_TIMEOUT_MS = 120_000;
+const AVAILABILITY_TIMEOUT_MS = 10_000;
+const MAX_BUFFER_BYTES = 16 * 1024 * 1024;
+
+/**
+ * spawnSync wrapper with a hard wall-clock timeout so a hung/slow decode can never block the process
+ * indefinitely (unlike ScriptExecutor's deadline handling, plain spawnSync has no timeout by default).
+ * Exported (not re-exported from index.ts) so tests can exercise the timeout/kill behavior directly
+ * without needing real ffmpeg/ffprobe binaries.
+ */
+export function run(bin: string, args: string[], timeoutMs: number): SpawnSyncReturns<string> {
+  return spawnSync(bin, args, { encoding: "utf8", timeout: timeoutMs, killSignal: "SIGKILL", maxBuffer: MAX_BUFFER_BYTES });
 }
 
 /** ffprobe reports format_name as a comma-joined alias list (e.g. "mov,mp4,m4a,3gp,3g2,mj2"); only the first token is meaningful for mime mapping. */
@@ -47,24 +61,31 @@ function parseDuration(duration: string | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** A killed-by-timeout or otherwise-unspawnable child; both cases should be treated as a probe/measure failure, same as any other. */
+function timedOutOrFailed(r: SpawnSyncReturns<string>): boolean {
+  return Boolean(r.error) || r.signal !== null;
+}
+
 export class FfprobeMediaProber implements MediaProber {
   private readonly ffprobeBin: string;
   private readonly ffmpegBin: string;
+  private readonly timeoutMs: number;
 
-  constructor(opts?: { ffprobe?: string; ffmpeg?: string }) {
+  constructor(opts?: { ffprobe?: string; ffmpeg?: string; timeoutMs?: number }) {
     this.ffprobeBin = opts?.ffprobe ?? process.env.FFPROBE_PATH ?? "ffprobe";
     this.ffmpegBin = opts?.ffmpeg ?? process.env.FFMPEG_PATH ?? "ffmpeg";
+    this.timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   static isAvailable(opts?: { ffprobe?: string }): boolean {
     const ffprobe = opts?.ffprobe ?? process.env.FFPROBE_PATH ?? "ffprobe";
-    const r = spawnSync(ffprobe, ["-version"]);
-    return r.status === 0;
+    const r = run(ffprobe, ["-version"], AVAILABILITY_TIMEOUT_MS);
+    return !timedOutOrFailed(r) && r.status === 0;
   }
 
   async probe(path: string): Promise<MediaProbe | null> {
-    const r = spawnSync(this.ffprobeBin, ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", path], { encoding: "utf8" });
-    if (r.error || r.status !== 0) return null;
+    const r = run(this.ffprobeBin, ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", path], this.timeoutMs);
+    if (timedOutOrFailed(r) || r.status !== 0) return null;
     let parsed: FfprobeOutput;
     try {
       parsed = JSON.parse(r.stdout) as FfprobeOutput;
@@ -90,7 +111,8 @@ export class FfprobeMediaProber implements MediaProber {
   async silenceRatio(path: string): Promise<number | null> {
     const probed = await this.probe(path);
     if (!probed || !probed.audio || !probed.duration_seconds) return null;
-    const r = spawnSync(this.ffmpegBin, ["-nostats", "-hide_banner", "-i", path, "-af", "silencedetect=noise=-50dB:d=0.3", "-f", "null", "-"], { encoding: "utf8" });
+    const r = run(this.ffmpegBin, ["-nostats", "-hide_banner", "-i", path, "-af", "silencedetect=noise=-50dB:d=0.3", "-f", "null", "-"], this.timeoutMs);
+    if (timedOutOrFailed(r)) return null;
     const stderr = r.stderr ?? "";
     let total = 0;
     for (const m of stderr.matchAll(/silence_duration:\s*([\d.]+)/g)) {

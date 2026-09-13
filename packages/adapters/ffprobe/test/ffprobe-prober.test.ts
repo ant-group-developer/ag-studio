@@ -3,7 +3,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { hasFfmpeg, makeVideo, makeWav } from "../../../../tests/media.js";
-import { FfprobeMediaProber } from "../src/ffprobe-prober.js";
+import { FfprobeMediaProber, run } from "../src/ffprobe-prober.js";
+
+// Does not need ffmpeg/ffprobe: exercises the spawnSync timeout wrapper directly with a hung node process,
+// standing in for a stalled ffmpeg/ffprobe decode.
+describe("run() timeout", () => {
+  it("kills a hung child within its timeout instead of blocking indefinitely", () => {
+    const start = Date.now();
+    const r = run(process.execPath, ["-e", "setTimeout(() => {}, 5000)"], 200);
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(2000);
+    expect(r.signal).not.toBeNull();
+  });
+});
 
 describe.skipIf(!hasFfmpeg())("FfprobeMediaProber (needs ffmpeg/ffprobe on PATH)", () => {
   let clip: string;

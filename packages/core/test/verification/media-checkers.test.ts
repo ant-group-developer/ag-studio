@@ -122,10 +122,30 @@ describe("mediaCheckers", () => {
       const result = baseResult([{ path: "output/full-episode.mp4", type: "full_episode", checksum: sha, size_bytes: 1, kind: "file" }]);
       const prober = new FakeMediaProber(new Map([[path, videoProbe(20)]]));
       const checker = checkerById(mediaCheckers(prober), "duration-range");
-      expect((await checker.check({ request, result, workspaceDir: ws })).verdict).toBe("fail");
+      const outOfRange = await checker.check({ request, result, workspaceDir: ws });
+      expect(outOfRange.verdict).toBe("fail");
+      expect(outOfRange.evidence.reason).toBe("duration out of range");
 
       const noPolicyRequest = baseRequest({ expected_outputs: request.expected_outputs });
       expect((await checker.check({ request: noPolicyRequest, result, workspaceDir: ws })).verdict).toBe("skip");
+      rmSync(ws, { recursive: true, force: true });
+    });
+
+    it("fails with a distinct reason when the probed duration is unknown", async () => {
+      const ws = tmpWorkspace();
+      mkdirSync(join(ws, "output"));
+      writeFileSync(join(ws, "output", "full-episode.mp4"), "x");
+      const path = join(ws, "output", "full-episode.mp4");
+      const request = baseRequest({
+        expected_outputs: [{ type: "full_episode", mime_type: "video/mp4", kind: "file" }],
+        policy: { target_duration_seconds: [1, 10] },
+      });
+      const result = baseResult([{ path: "output/full-episode.mp4", type: "full_episode", checksum: sha, size_bytes: 1, kind: "file" }]);
+      const unknownDurationProbe: MediaProbe = { ...videoProbe(0), duration_seconds: null };
+      const checker = checkerById(mediaCheckers(new FakeMediaProber(new Map([[path, unknownDurationProbe]]))), "duration-range");
+      const outcome = await checker.check({ request, result, workspaceDir: ws });
+      expect(outcome.verdict).toBe("fail");
+      expect(outcome.evidence.reason).toBe("duration unknown");
       rmSync(ws, { recursive: true, force: true });
     });
   });
@@ -201,6 +221,22 @@ describe("mediaCheckers", () => {
       const missing = await missingChecker.check({ request, result, workspaceDir: ws });
       expect(missing.verdict).toBe("fail");
       expect(missing.evidence.reason).toBe("missing");
+      rmSync(ws, { recursive: true, force: true });
+    });
+
+    it("fails with a distinct reason when a clip's probed duration is unknown", async () => {
+      const ws = tmpWorkspace();
+      const { request, result } = edlFixture(ws);
+      const p000 = join(ws, "output", "cuts", "000.mp4");
+      const p001 = join(ws, "output", "cuts", "001.mp4");
+      writeFileSync(p000, "x");
+      writeFileSync(p001, "x");
+      const unknownDurationProbe: MediaProbe = { ...videoProbe(0), duration_seconds: null };
+      const prober = new FakeMediaProber(new Map([[p000, unknownDurationProbe], [p001, videoProbe(3.4)]]));
+      const checker = checkerById(mediaCheckers(prober), "clip-set-complete");
+      const outcome = await checker.check({ request, result, workspaceDir: ws });
+      expect(outcome.verdict).toBe("fail");
+      expect(outcome.evidence.reason).toBe("duration unknown");
       rmSync(ws, { recursive: true, force: true });
     });
   });

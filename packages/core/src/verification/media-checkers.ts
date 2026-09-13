@@ -41,7 +41,10 @@ export function mediaCheckers(prober: MediaProber): Checker[] {
       for (const o of outputs) {
         const probed = await prober.probe(join(input.workspaceDir, o.path));
         const duration = probed?.duration_seconds ?? null;
-        if (duration === null || duration < min || duration > max) {
+        if (duration === null) {
+          return { verdict: "fail", evidence: { path: o.path, reason: "duration unknown" } };
+        }
+        if (duration < min || duration > max) {
           return { verdict: "fail", evidence: { path: o.path, reason: "duration out of range", duration, min, max } };
         }
         checked.push(o.path);
@@ -102,7 +105,10 @@ export function mediaCheckers(prober: MediaProber): Checker[] {
           const probed = await prober.probe(filePath);
           const expected = entry.out - entry.in;
           const duration = probed?.duration_seconds ?? null;
-          if (duration === null || Math.abs(duration - expected) > 0.5) {
+          if (duration === null) {
+            return { verdict: "fail", evidence: { path: filePath, reason: "duration unknown" } };
+          }
+          if (Math.abs(duration - expected) > 0.5) {
             return { verdict: "fail", evidence: { path: filePath, reason: "duration mismatch", expected, actual: duration } };
           }
           checked.push(filePath);
