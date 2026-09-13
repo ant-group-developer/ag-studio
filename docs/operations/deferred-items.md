@@ -107,3 +107,9 @@ Những gì còn lại, đã xem xét và cố ý hoãn:
   định nhanh lại, chạy đầy đủ trong CI.
 - (Đã sửa trực tiếp, không hoãn: README của `@harness/script-sdk` không còn nhắc "Task 4" và đã ghi rõ
   `ctx.out.file`'s `mime` bị bỏ qua — mime thật lấy từ `outputs[].mime_type` của stage definition.)
+
+## Hoãn, ít rủi ro — sau re-review đợt sửa cuối 2B (2026-09-13)
+
+- `harness plan` với `executors/scripts.yaml` sai schema: `buildContext` nay nuốt `CONFIG_INVALID` vào `configErrors`, nên `plan` chạy tiếp với `requires_resources` của workflow thay vì bản ghi đè của registry (trước đó lệnh dừng ngay). `doctor` vẫn báo lỗi; worker vẫn thất bại rõ (`NOT_FOUND`). Sửa: `plan` ném `configErrors.scripts` như `source sync` (`packages/cli/src/commands/plan.ts`).
+- Lỗi cú pháp YAML (không phải sai schema) trong `scripts.yaml`/`sources.yaml` vẫn ném `YAMLParseError` từ `parse()` trước khi tới Zod, nên vẫn làm mọi lệnh (kể cả `doctor`) dừng; `guard()` trong composition chỉ bắt `CONFIG_INVALID`. Sửa: bọc `parse()` trong `loadScriptsRegistry`/`loadSourcesRegistry` thành `CONFIG_INVALID`.
+- `heldChecksums` (invalidation) coi `reused_artifact_ids: []` là stage con trỏ rỗng; planner hiện không bao giờ ghi mảng rỗng nên chỉ tiềm ẩn.
