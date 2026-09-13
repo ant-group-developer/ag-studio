@@ -10,3 +10,4 @@ dist/
 .agents/skills/
 .superpowers/
 fixtures/**/data/
+fixtures/ops-project-footage/raw/

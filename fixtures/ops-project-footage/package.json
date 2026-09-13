@@ -1,0 +1,9 @@
+{
+  "name": "ops-project-footage-fixture",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "dependencies": {
+    "@harness/script-sdk": "workspace:*"
+  }
+}

@@ -2,5 +2,6 @@ packages:
   - "packages/*"
   - "packages/adapters/*"
   - "packages/agent-runtime/*"
+  - "fixtures/*"
 allowBuilds:
   esbuild: true

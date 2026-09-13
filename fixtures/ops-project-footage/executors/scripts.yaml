@@ -1,0 +1,8 @@
+schema_version: harness.scripts/v1
+scripts:
+  index-source:     { argv: [node, executors/wrappers/index-source.mjs], requires_resources: [cpu], timeout_seconds: 600 }
+  tts:              { argv: [node, executors/wrappers/tts.mjs], requires_resources: [gpu], timeout_seconds: 600 }
+  avatar:           { argv: [node, executors/wrappers/avatar.mjs], env_refs: { HEYGEN_API_KEY: "secret://heygen/main" }, requires_resources: [heygen], timeout_seconds: 600 }
+  cut:              { argv: [node, executors/wrappers/cut.mjs], requires_resources: [cpu], timeout_seconds: 600 }
+  assemble:         { argv: [node, executors/wrappers/assemble.mjs], requires_resources: [cpu], timeout_seconds: 600 }
+  thumbnail-render: { argv: [node, executors/wrappers/thumbnail-render.mjs], timeout_seconds: 600 }

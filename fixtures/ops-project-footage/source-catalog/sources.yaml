@@ -1,0 +1,3 @@
+schema_version: harness.sources/v1
+sources:
+  - { path: raw/sample-5s.mp4, collection: main, rights_status: cleared, language: vi }

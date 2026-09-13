@@ -1,0 +1,9 @@
+schema_version: harness.project-config/v1
+project_id: project-footage
+template_release: 0.1.0
+runtime: claude
+data_root: ./data
+portfolios:
+  - { portfolio_id: portfolio-main, display_name: Footage portfolio }
+resources: { cpu: 2, gpu: 1, heygen: 1 }
+source: { materialize: link }
