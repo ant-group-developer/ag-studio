@@ -13,7 +13,9 @@ export interface AppContext {
   journal: ExternalOperationJournal; provider: FakeProvider; harness: ReturnType<typeof loadHarnessConfig>; project: ProjectConfig; projectDir: string;
   dataRoot: string; logger: HarnessLogger; clock: SystemClock; secrets: EnvSecretResolver; migrationsDir: string; workflows: (ref: string) => LoadedWorkflow;
   profiles: (id: string) => ProductionProfile; catalog: SourceCatalog; resourceCapacity: Record<string, number>; executorVersionFor: (ref: ExecutorRef) => string;
-  scripts: ScriptsRegistry | undefined; sources: SourcesRegistry | undefined; proberAvailable: boolean; harnessRoot: string; close(): void;
+  scripts: ScriptsRegistry | undefined; sources: SourcesRegistry | undefined; proberAvailable: boolean; harnessRoot: string;
+  /** Names the "script" executor resolves right now: built-in fakes plus any project scripts.yaml override. */
+  scriptCommandNames: string[]; close(): void;
 }
 
 export function loadProject(projectDir: string): ProjectConfig {
@@ -51,5 +53,5 @@ export function buildContext(o: { projectDir: string; harnessRoot?: string; owne
   const proberAvailable = FfprobeMediaProber.isAvailable();
   const prober = proberAvailable ? new FfprobeMediaProber() : new NullMediaProber();
   const catalog = new SourceCatalog({ store, dataRoot, prober, clock, materialize: project.source.materialize });
-  return { store, planner, controller, registry, verifier: new Verifier([...BUILTIN_CHECKERS, ...mediaCheckers(prober)]), executors, journal, provider, harness, project, projectDir, dataRoot, logger, clock, secrets, migrationsDir: MIGRATIONS_DIR, workflows, profiles, catalog, resourceCapacity: project.resources, executorVersionFor: (ref: ExecutorRef) => executors.resolve(ref).version, scripts, sources, proberAvailable, harnessRoot, close: () => store.close() };
+  return { store, planner, controller, registry, verifier: new Verifier([...BUILTIN_CHECKERS, ...mediaCheckers(prober)]), executors, journal, provider, harness, project, projectDir, dataRoot, logger, clock, secrets, migrationsDir: MIGRATIONS_DIR, workflows, profiles, catalog, resourceCapacity: project.resources, executorVersionFor: (ref: ExecutorRef) => executors.resolve(ref).version, scripts, sources, proberAvailable, harnessRoot, scriptCommandNames: Object.keys(commands), close: () => store.close() };
 }

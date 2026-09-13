@@ -35,9 +35,6 @@ function scriptsYaml(): string {
     `  cut:              { argv: [node, executors/wrappers/cut.mjs], cwd: ${cwd}, requires_resources: [cpu], timeout_seconds: 600 }`,
     `  assemble:         { argv: [node, executors/wrappers/assemble.mjs], cwd: ${cwd}, requires_resources: [cpu], timeout_seconds: 600 }`,
     `  thumbnail-render: { argv: [node, executors/wrappers/thumbnail-render.mjs], cwd: ${cwd}, timeout_seconds: 600 }`,
-    // not used by footage-production; registered only so `harness doctor` (which checks every workflow in the
-    // harness install, including sample-three-stage) finds every script it references.
-    `  fake-stage:       { argv: [node], cwd: ${cwd} }`,
     "",
   ].join("\n");
 }

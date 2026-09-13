@@ -13,6 +13,9 @@ export interface DoctorInput {
   project: ProjectConfig;
   harness: HarnessConfig;
   scripts: ScriptsRegistry | undefined;
+  /** Names the runtime resolves even without a `scripts.yaml` entry (built-in fakes merged in by the CLI's
+   * composition, e.g. "fake-stage") -- a script not found in `scripts` but listed here is not a real gap. */
+  builtinScripts: string[];
   workflows: { ref: string; loaded: LoadedWorkflow }[];
   profiles: ProductionProfile[];
   secrets: SecretResolver;
@@ -74,8 +77,13 @@ function checkScriptStage(i: DoctorInput, scripts: ScriptsRegistry, wfId: string
   const rows: DoctorRow[] = [];
   const scriptName = (stage.executor as { script: string }).script;
   const spec = scripts.scripts[scriptName];
+  const builtin = !spec && i.builtinScripts.includes(scriptName);
 
-  rows.push({ check: `script:${wfId}/${stage.key}`, ok: !!spec, detail: spec ? `scripts.${scriptName} registered` : `scripts.${scriptName} not found in executors/scripts.yaml` });
+  rows.push({
+    check: `script:${wfId}/${stage.key}`,
+    ok: !!spec || builtin,
+    detail: spec ? `scripts.${scriptName} registered` : builtin ? `scripts.${scriptName} provided by built-in commands` : `scripts.${scriptName} not found in executors/scripts.yaml`,
+  });
 
   if (spec) {
     const wrapperId = `wrapper:${scriptName}`;

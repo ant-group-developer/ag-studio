@@ -43,7 +43,7 @@ export function registerDoctor(program: Command): void {
         const rows = [
           ...extraRows,
           ...runDoctor({
-            projectDir: ctx.projectDir, project: ctx.project, harness: ctx.harness, scripts: ctx.scripts, workflows, profiles,
+            projectDir: ctx.projectDir, project: ctx.project, harness: ctx.harness, scripts: ctx.scripts, builtinScripts: ctx.scriptCommandNames, workflows, profiles,
             secrets: ctx.secrets, proberAvailable: ctx.proberAvailable, store: ctx.store, migrationsDir: ctx.migrationsDir,
           }),
         ];

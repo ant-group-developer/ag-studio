@@ -39,9 +39,9 @@ function withoutFirstOutputName(loaded: LoadedWorkflow, stageKey: string): Loade
   return { definition, digest: loaded.digest };
 }
 
-function baseInput(projectDir: string, resources: Record<string, number>): Pick<DoctorInput, "projectDir" | "project" | "harness" | "proberAvailable" | "store" | "migrationsDir"> {
+function baseInput(projectDir: string, resources: Record<string, number>): Pick<DoctorInput, "projectDir" | "project" | "harness" | "proberAvailable" | "store" | "migrationsDir" | "builtinScripts"> {
   const { store } = openTempStore();
-  return { projectDir, project: makeProject(resources), harness: HARNESS_CONFIG, proberAvailable: true, store, migrationsDir: MIGRATIONS_DIR };
+  return { projectDir, project: makeProject(resources), harness: HARNESS_CONFIG, proberAvailable: true, store, migrationsDir: MIGRATIONS_DIR, builtinScripts: [] };
 }
 
 describe("runDoctor", () => {
@@ -121,7 +121,7 @@ describe("runDoctor", () => {
     const store = new SqliteStateStore(join(dbDir, "unmigrated.db"));
     const input: DoctorInput = {
       projectDir, project: makeProject({}), harness: HARNESS_CONFIG, proberAvailable: false, store, migrationsDir: MIGRATIONS_DIR,
-      scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+      scripts: undefined, builtinScripts: [], secrets: new StubSecrets(true), workflows: [], profiles: [],
     };
     const rows = runDoctor(input);
     const byCheck = new Map(rows.map((r) => [r.check, r]));
@@ -129,5 +129,41 @@ describe("runDoctor", () => {
     expect(byCheck.get("ffprobe")).toMatchObject({ ok: false });
     expect(byCheck.get("scripts")).toMatchObject({ ok: true });
     store.close();
+  });
+
+  it("treats a script missing from the registry but covered by a built-in command as ok, and as a failure without it", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "doctor-builtin-"));
+    const loaded = loadWorkflow(HARNESS_ROOT, "sample-three-stage@1.0.0");
+    // "fake-stage" (used by "produce" and "finalize") is deliberately absent from the registry -- this is
+    // the real-world shape of a project scripts.yaml that only covers the workflows it actually runs, while
+    // `harness doctor` still checks every workflow installed in the harness (see composition.ts, which always
+    // merges `fakeScriptCommands()` into the effective "script" executor regardless of scripts.yaml).
+    const scripts: ScriptsRegistry = { schema_version: "harness.scripts/v1", scripts: {} };
+
+    const withBuiltin = runDoctor({
+      ...baseInput(projectDir, {}),
+      scripts,
+      builtinScripts: ["fake-stage"],
+      secrets: new StubSecrets(true),
+      workflows: [{ ref: "sample-three-stage@1.0.0", loaded }],
+      profiles: [],
+    });
+    const byCheckWithBuiltin = new Map(withBuiltin.map((r) => [r.check, r]));
+    expect(byCheckWithBuiltin.get("script:sample-three-stage/produce")).toMatchObject({ ok: true });
+    expect(byCheckWithBuiltin.get("script:sample-three-stage/finalize")).toMatchObject({ ok: true });
+    // a builtin has no argv/env_refs to check, so no wrapper/secret rows are generated for it
+    expect(byCheckWithBuiltin.has("wrapper:fake-stage")).toBe(false);
+
+    const withoutBuiltin = runDoctor({
+      ...baseInput(projectDir, {}),
+      scripts,
+      builtinScripts: [],
+      secrets: new StubSecrets(true),
+      workflows: [{ ref: "sample-three-stage@1.0.0", loaded }],
+      profiles: [],
+    });
+    const byCheckWithoutBuiltin = new Map(withoutBuiltin.map((r) => [r.check, r]));
+    expect(byCheckWithoutBuiltin.get("script:sample-three-stage/produce")).toMatchObject({ ok: false });
+    expect(byCheckWithoutBuiltin.get("script:sample-three-stage/finalize")).toMatchObject({ ok: false });
   });
 });
