@@ -1693,6 +1693,38 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
+### Task 12b: Invalidation theo nội dung và tái sử dụng lúc release (mở khoá acceptance #7)
+
+**Bối cảnh (phát hiện khi làm Task 12):** acceptance #7 "thay thumbnail không render lại video" không thể pass với code hiện tại: (a) `retry --stage` không nhận stage SUCCEEDED (terminal, không có cạnh ra) nên không "mở lại" gate trong cùng run; (b) plan A2 cùng variant thì mọi gate chạy lại (gate không bao giờ reuse) → `cut`/`assemble`/`thumbnail-render` phụ thuộc gate nên không reuse được **lúc plan**; (c) kể cả có reuse muộn, invalidation theo graph đánh STALE artifact của A ngay khi gate của A2 commit, dù nội dung y hệt. Spec §3.2 nói rõ "đổi script → … cut **không** nếu EDL không đổi", tức invalidation phải dừng ở stage có artifact mới **trùng nội dung**; spec §3.3 chỉ mô tả reuse lúc plan nhưng không cấm reuse lúc release. Quyết định: (1) invalidation theo nội dung; (2) reuse lúc release (`advance()`), dùng cùng `cache_key`.
+
+**Files:**
+- Modify: `packages/contracts/src/entities.ts` (`StageRun.stage_definition_digest?: checksum`, `StageRun.expected_executor_version?: string`, `StageRun.reuse_eligible?: boolean`), `packages/core/src/state/transitions.ts` (`stage_run.PENDING` thêm `"SUCCEEDED"`), `packages/core/src/orchestration/invalidation.ts`, `packages/core/src/orchestration/controller.ts`, `packages/core/src/orchestration/planner.ts`, `packages/core/src/orchestration/cache.ts`, `docs` (ADR mục mới ở Task 13)
+- Test: `packages/core/test/orchestration/invalidation.test.ts`, `packages/core/test/orchestration/cache.test.ts` hoặc `planner.test.ts`, `tests/acceptance/07-thumbnail-does-not-rerender.test.ts`
+
+**Interfaces:**
+- `invalidateDownstream(p: { store; run; stageKey; now; newChecksums: string[] })`: với mỗi run khác của cùng variant, nếu tập checksum của artifact ACCEPTED ở **chính stage đó** của run cũ bằng tập `newChecksums` (so sánh sort) thì **bỏ qua run đó** (không STALE gì, kể cả dependants); ngược lại giữ hành vi cũ. Controller truyền `newChecksums = artifacts.map(a => a.checksum)`.
+- Planner `plan()`: ghi lên mỗi StageRun `stage_definition_digest: stageDefinitionDigest(s)`, `expected_executor_version: input.executorVersionFor?.(s.executor)` (khi có), `reuse_eligible: reuse && !!input.variant && s.executor.type !== "gate"`.
+- `tryLateReuse(store, run, stage): Artifact[] | undefined` trong `cache.ts`: nếu `stage.reuse_eligible && run.variant_id && stage.stage_definition_digest && stage.expected_executor_version` thì `inputChecksums = acceptedInputsFor(store, stage).map(a => a.checksum)`, `cacheKey = computeCacheKey({ stageDefinitionDigest, inputChecksums, optionsDigest: variant.options_digest, effectiveConfigDigest: run.effective_config_digest, executorVersion })`, `findReusableArtifacts(store, { variantId, stageKey, cacheKey, excludeRunId: run.run_id })` → trả artifact hoặc undefined.
+- Planner `advance()` (và `enqueue()` khi release root): trước `ready(run, s)`, nếu `tryLateReuse` trả artifact → `transition("stage_run", id, "PENDING", "SUCCEEDED", eventFor(..., "stage.reused", "info", { artifacts, cache_key, at: "release" }))`, `updateStageRun({ reused_artifact_ids, cache_key })`, và **không** release; vòng lặp tiếp tục để dependants của nó có thể được xét trong cùng lần `advance` (lặp cho tới khi không đổi).
+
+- [ ] **Step 1: Test thất bại**
+  - `invalidation.test.ts`: run cũ có artifact stage X checksum `c1` và dependant Y; run mới commit X với `newChecksums: [c1]` → không artifact nào STALE, không event; với `[c2]` → X và Y của run cũ STALE (hành vi cũ).
+  - `planner.test.ts`: workflow `gate → script(cut)`; variant; run A: gate submit (giả lập bằng commit artifact `topic` checksum `t1`), cut chạy (commit) với cache_key; run A2 cùng variant: gate commit `t1` lần nữa → `advance` đưa `cut` thẳng `SUCCEEDED` với `reused_artifact_ids` = artifact cut của A, event `stage.reused` payload `at: "release"`; biến thể: gate commit `t2` → `cut` READY.
+  - `tests/acceptance/07-thumbnail-does-not-rerender.test.ts` (`describe.skipIf(!hasFfmpeg())`): run A `voice=original` tới SUCCEEDED; plan A2 cùng variant; submit `select-topic`, `write-script`, `edit-plan` **y hệt** A; drain; submit `thumbnail-qc` **khác**; drain. Assert trên A2: `index-source`, `cut`, `assemble`, `thumbnail-render` đều `attempts: []` với `reused_artifact_ids`; chỉ 4 gate có attempt; artifact `episode_video` của A vẫn ACCEPTED và là artifact được A2 reuse; `status(A)` không có artifact STALE ngoài `thumbnail-qc`.
+- [ ] **Step 2: Chạy, xác nhận fail.**
+- [ ] **Step 3: Triển khai** theo Interfaces; `pnpm gen:schemas`.
+- [ ] **Step 4:** `pnpm build && pnpm typecheck && pnpm test` xanh (test tích hợp footage: đoạn A2 trong `footage-pipeline.test.ts` hiện assert `cut/assemble/thumbnail-render` chạy lại — với nội dung gate y hệt nay chúng được reuse; cập nhật assertion đó cho đúng hành vi mới và giữ phần chứng minh `index-source` reuse).
+- [ ] **Step 5: Commit**
+
+```bash
+git add packages tests
+git commit -m "feat(core): content-aware invalidation and late reuse at release; acceptance #7
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+---
+
 ### Task 13: Tài liệu, project-template và báo cáo 2B
 
 **Files:**
