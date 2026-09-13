@@ -105,6 +105,13 @@ describe("Planner", () => {
     expect(store.getRun(run.run_id)?.state).toBe("CANCELLED");
     expect(new Set(store.listStageRuns(run.run_id).map((s) => s.state))).toEqual(new Set(["CANCELLED"]));
   });
+  it("copies gate_deadline_seconds and budget_usd onto the run and stage", () => {
+    const { store, planner } = planSample();
+    const wf = { definition: WorkflowDefinitionSchema.parse({ schema_version: "harness.workflow/v1", id: "g", version: "1.0.0", stages: [{ key: "pick", executor: { type: "gate", brief: "pick a topic" }, gate_deadline_seconds: 3600, outputs: [{ type: "topic", mime_type: "text/markdown", name: "topic.md" }] }] }), digest: "sha256:" + "c".repeat(64) };
+    const run = planner.plan({ workflow: wf, profile: loadProfile(HARNESS_ROOT, "cartoon"), harness: loadHarnessConfig(HARNESS_ROOT), projectId: "p", portfolioId: "pf" });
+    expect(run.budget_usd).toBe(5);
+    expect(store.listStageRuns(run.run_id)[0]?.gate_deadline_seconds).toBe(3600);
+  });
 });
 
 const optWorkflow = { definition: WorkflowDefinitionSchema.parse({

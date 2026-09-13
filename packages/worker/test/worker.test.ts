@@ -24,7 +24,7 @@ function makeWorld(opts: { scriptExecutor?: Executor; owner?: string; clock?: Fi
   const project = ProjectConfigSchema.parse({ schema_version: "harness.project-config/v1", project_id: "project-main", template_release: "0.1.0", runtime: "claude", data_root: dir, portfolios: [{ portfolio_id: "portfolio-main", display_name: "Main" }] });
   const logger = createLogger({ redactor: new Redactor(() => []), sink: () => {}, level: "error" });
   const catalog = new SourceCatalog({ store, dataRoot: dir, prober: new NullMediaProber(), clock, materialize: "reference" });
-  const deps: WorkerDeps = { store, planner, controller, registry, verifier: new Verifier(BUILTIN_CHECKERS), executors, harness, project, dataRoot: dir, owner: opts.owner ?? "w1", capabilities: ["write_workspace", "read_source"], logger, clock, workflows: (ref) => loadWorkflow(HARNESS_ROOT, ref), resourceCapacity: { cpu: 2, gpu: 1 } };
+  const deps: WorkerDeps = { store, planner, controller, registry, verifier: new Verifier(BUILTIN_CHECKERS), executors, harness, project, dataRoot: dir, owner: opts.owner ?? "w1", capabilities: ["write_workspace", "read_source"], logger, clock, workflows: (ref) => loadWorkflow(HARNESS_ROOT, ref), profiles: (id) => loadProfile(HARNESS_ROOT, id), resourceCapacity: { cpu: 2, gpu: 1 } };
   const worker = new Worker(deps);
   return { dir, clock, store, planner, worker, deps, catalog, executors };
 }

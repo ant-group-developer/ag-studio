@@ -138,4 +138,14 @@ describe("claim", () => {
     expect(store.claim({ owner: "w", capabilities: [], now: clock.now(), leaseSeconds: 90, resourceCapacity: {} })).toBeUndefined();
     expect(store.claim({ owner: "w", capabilities: [], now: clock.now(), leaseSeconds: 90 })).toBeUndefined();
   });
+
+  it("claim with stageRunId takes only that stage, or nothing", () => {
+    const { store, clock } = openTempStore();
+    const a = seedStage(store, { key: "a" });
+    const b = seedStage(store, { key: "b" });
+    const c = store.claim({ owner: "w", capabilities: [], now: clock.now(), leaseSeconds: 90, stageRunId: b.stage.stage_run_id })!;
+    expect(c.stageRun.stage_run_id).toBe(b.stage.stage_run_id);
+    expect(store.getStageRun(a.stage.stage_run_id)?.state).toBe("READY");
+    expect(store.claim({ owner: "w", capabilities: [], now: clock.now(), leaseSeconds: 90, stageRunId: b.stage.stage_run_id })).toBeUndefined();
+  });
 });

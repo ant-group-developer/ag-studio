@@ -261,7 +261,9 @@ export class SqliteStateStore implements StateStore {
     return this.transaction(() => {
       // rowid (insertion order), not id (a non-monotonic ULID), breaks ties: two stages can share a
       // ready_at and be seeded within the same millisecond, so the id string order is not reliable.
-      const rows = this.db.prepare("SELECT data FROM stage_run WHERE state = 'READY' ORDER BY json_extract(data, '$.ready_at'), rowid LIMIT 100").all() as Row[];
+      const rows = params.stageRunId
+        ? (this.db.prepare("SELECT data FROM stage_run WHERE state = 'READY' AND id = ?").all(params.stageRunId) as Row[])
+        : (this.db.prepare("SELECT data FROM stage_run WHERE state = 'READY' ORDER BY json_extract(data, '$.ready_at'), rowid LIMIT 100").all() as Row[]);
       const held = this.countLeasedResources();
       const cap = params.resourceCapacity ?? {};
       for (const row of rows) {

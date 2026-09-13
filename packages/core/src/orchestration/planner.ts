@@ -80,7 +80,8 @@ export class Planner {
         ...(sourceId ? { source_id: sourceId } : {}),
         ...(input.content ? { content_id: input.content.content_id } : {}),
         ...(input.variant ? { variant_id: input.variant.variant_id } : {}),
-        options, state: "DRAFT", effective_config_snapshot: snapshot, effective_config_digest: digest, total_cost_usd: 0, created_at: now, updated_at: now,
+        options, state: "DRAFT", effective_config_snapshot: snapshot, effective_config_digest: digest, total_cost_usd: 0,
+        budget_usd: input.profile.limits.max_cost_usd_per_variant, created_at: now, updated_at: now,
       };
       this.store.insertRun(run);
       const reuse = (input.reuse ?? input.profile.reuse === "allow") && !!input.executorVersionFor;
@@ -102,6 +103,7 @@ export class Planner {
           depends_on, depends_on_optional, requires_resources: s.requires_resources, required_capabilities: s.required_capabilities,
           required_checks: [...new Set([...s.required_checks, ...input.profile.verification.required_checks, ...(input.profile.verification.required_checks_by_stage[s.key] ?? [])])],
           retry: s.retry, stage_config: s.config, state: reused ? "SUCCEEDED" : "PENDING", attempt_count: 0, result_failures: 0, created_at: now, updated_at: now,
+          ...(s.gate_deadline_seconds ? { gate_deadline_seconds: s.gate_deadline_seconds } : {}),
           ...(reused ? { reused_artifact_ids: reused.map((a) => a.artifact_id), cache_key: stageCacheKey } : {}),
         };
         this.store.insertStageRun(stage);

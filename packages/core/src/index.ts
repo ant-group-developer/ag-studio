@@ -11,6 +11,7 @@ export * from "./environment/workspace.js";
 export * from "./artifacts/registry.js";
 export * from "./artifacts/sweep.js";
 export * from "./orchestration/registry.js";
+export * from "./orchestration/request.js";
 export * from "./orchestration/invalidation.js";
 export * from "./orchestration/planner.js";
 export * from "./orchestration/controller.js";
