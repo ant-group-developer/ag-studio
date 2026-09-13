@@ -6,8 +6,9 @@ import { cli, freshProject } from "./helpers.js";
 // SCOPE NOTE (sub-project 1): no adapter in this control plane resolves a secret:// reference yet, so this
 // test proves that the resolved value cannot leak through plan/enqueue/worker/status/events by construction.
 // The Redactor + logger chain is covered by packages/core/test/observability/redaction.test.ts.
-// Sub-project 3 (YouTube/TTS adapters) must add an end-to-end case where a resolved secret is actually used
-// by an executor and shown to be redacted in logs and events.
+// The end-to-end case — a resolved secret actually used by an executor (the HeyGen avatar script) and shown
+// to be redacted in worker logs, status, events, workspace files and the artifact manifest — is
+// tests/acceptance/16-secret-e2e.test.ts (sub-project 2B, footage fixture).
 describe("18.3 #11 secrets never appear in snapshot, events or logs", () => {
   it("resolved secret value is absent from every persisted and printed surface", () => {
     const p = freshProject();
