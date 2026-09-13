@@ -146,11 +146,20 @@ importers:
         specifier: workspace:*
         version: link:../../contracts
 
+  packages/adapters/ffprobe:
+    dependencies:
+      '@harness/contracts':
+        specifier: workspace:*
+        version: link:../../contracts
+
   packages/cli:
     dependencies:
       '@harness/adapter-fake':
         specifier: workspace:*
         version: link:../adapters/fake
+      '@harness/adapter-ffprobe':
+        specifier: workspace:*
+        version: link:../adapters/ffprobe
       '@harness/contracts':
         specifier: workspace:*
         version: link:../contracts

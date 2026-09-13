@@ -2,9 +2,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
 import { HarnessError, ProjectConfigSchema, type ExecutorRef, type ProductionProfile, type ProjectConfig, type ScriptsRegistry } from "@harness/contracts";
-import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, loadProfile, loadScriptsRegistry, loadWorkflow, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, type HarnessLogger, type LoadedWorkflow, type LogLevel } from "@harness/core";
+import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, loadProfile, loadScriptsRegistry, loadWorkflow, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, type HarnessLogger, type LoadedWorkflow, type LogLevel } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, FakeProvider, fakeScriptCommands } from "@harness/adapter-fake";
+import { FfprobeMediaProber } from "@harness/adapter-ffprobe";
 import { cliArgv } from "./self.js";
 
 export interface AppContext {
@@ -12,7 +13,7 @@ export interface AppContext {
   journal: ExternalOperationJournal; provider: FakeProvider; harness: ReturnType<typeof loadHarnessConfig>; project: ProjectConfig; projectDir: string;
   dataRoot: string; logger: HarnessLogger; clock: SystemClock; secrets: EnvSecretResolver; migrationsDir: string; workflows: (ref: string) => LoadedWorkflow;
   profiles: (id: string) => ProductionProfile; catalog: SourceCatalog; resourceCapacity: Record<string, number>; executorVersionFor: (ref: ExecutorRef) => string;
-  scripts: ScriptsRegistry | undefined; close(): void;
+  scripts: ScriptsRegistry | undefined; proberAvailable: boolean; close(): void;
 }
 
 export function loadProject(projectDir: string): ProjectConfig {
@@ -46,6 +47,8 @@ export function buildContext(o: { projectDir: string; harnessRoot?: string; owne
   executors.register("gate", new GateExecutor());
   const workflows = (ref: string) => loadWorkflow(harnessRoot, ref);
   const profiles = (id: string) => loadProfile(harnessRoot, id);
-  const catalog = new SourceCatalog({ store, dataRoot, prober: new NullMediaProber(), clock, materialize: project.source.materialize });
-  return { store, planner, controller, registry, verifier: new Verifier(BUILTIN_CHECKERS), executors, journal, provider, harness, project, projectDir, dataRoot, logger, clock, secrets, migrationsDir: MIGRATIONS_DIR, workflows, profiles, catalog, resourceCapacity: project.resources, executorVersionFor: (ref: ExecutorRef) => executors.resolve(ref).version, scripts, close: () => store.close() };
+  const proberAvailable = FfprobeMediaProber.isAvailable();
+  const prober = proberAvailable ? new FfprobeMediaProber() : new NullMediaProber();
+  const catalog = new SourceCatalog({ store, dataRoot, prober, clock, materialize: project.source.materialize });
+  return { store, planner, controller, registry, verifier: new Verifier([...BUILTIN_CHECKERS, ...mediaCheckers(prober)]), executors, journal, provider, harness, project, projectDir, dataRoot, logger, clock, secrets, migrationsDir: MIGRATIONS_DIR, workflows, profiles, catalog, resourceCapacity: project.resources, executorVersionFor: (ref: ExecutorRef) => executors.resolve(ref).version, scripts, proberAvailable, close: () => store.close() };
 }
