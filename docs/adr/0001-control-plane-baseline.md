@@ -138,17 +138,20 @@ vi, không chép từ plan.
     10s cho `isAvailable()`) và `maxBuffer` 16MB, khác biệt với `ScriptExecutor` (dùng `child.kill()` qua
     `setTimeout`) vì đây là lời gọi đồng bộ. Thiếu `ffprobe` rơi về `NullMediaProber`, và composition root
     truyền luôn `mediaCheckers(prober, { available: FfprobeMediaProber.isAvailable() })`: với
-    `available: false` **mọi checker trong bộ media** trả thẳng
-    `{ verdict: "skip", evidence: { reason: "no media prober available" } }` trước khi nhìn tới output nào —
-    kể cả `edl-valid` (vốn không cần prober), để cả bộ báo đúng một nguyên nhân thay vì trộn verdict. Một
-    prober **có mặt** mà trả `null` cho một file vẫn là `fail`: đó là output hỏng, không phải thiếu công cụ.
+    `available: false`, **bốn checker dựa trên prober** (`media-probe`, `duration-range`, `audio-integrity`,
+    `clip-set-complete`) trả thẳng `{ verdict: "skip", evidence: { reason: "no media prober available" } }`
+    trước khi nhìn tới output nào. `edl-valid` **được miễn**: nó chỉ parse JSON theo `EdlSchema` và đối chiếu
+    `request.source_items`, không cần prober, nên vẫn cho verdict pass/fail thật trên máy không có ffprobe.
+    Một prober **có mặt** mà trả `null` cho một file vẫn là `fail`: đó là output hỏng, không phải thiếu công cụ.
     Cần nói rõ hệ quả state: `Verifier.verify` chỉ tính `allRequiredPassed` khi **mọi** kết quả là `pass`,
     nên một `skip` trên một check bắt buộc làm `allRequiredPassed = false`; `classifyFailure` khi đó trả
     `"result"` (không phải `"contract"` — `verify.missing` rỗng, không có lỗi `contract` nào trong result),
     nên stage đi `RUNNING → VERIFYING → FAILED`, output được `registerRejected`, và vì `retry_on` mặc định là
     `["transient", "abandoned"]` thì **không có retry** — run chốt `FAILED`. Nói cách khác: thiếu `ffprobe`
-    **không** làm đường ống footage chạy hết; nó dừng ở stage media đầu tiên với một `check_result` `skip`
-    ghi rõ lý do (trước đây là `fail` "no probeable media stream", cùng hệ quả state nhưng khó đọc hơn).
+    **không** làm đường ống footage chạy hết; nó dừng ở stage media đầu tiên (`index-source`, `required_checks`
+    có `media-probe`) với một `check_result` `skip` ghi rõ lý do (trước đây là `fail` "no probeable media
+    stream", cùng hệ quả state nhưng khó đọc hơn). Vì `edl-valid` được miễn, gate `edit-plan` vẫn được kiểm
+    đúng như bình thường kể cả khi không có ffprobe.
     `harness doctor` báo dòng `ffprobe` FAIL chính là cảnh báo trước cho tình huống này.
 41. `harness doctor` liệt kê các `check` id: `migrations`, `ffprobe`, `resources`,
     `script:<workflow_id>/<stage_key>` (một dòng cho mỗi stage script của mỗi workflow), `wrapper:<tên>` và

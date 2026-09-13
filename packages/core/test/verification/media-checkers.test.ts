@@ -82,10 +82,11 @@ function tmpWorkspace(): string {
 
 describe("mediaCheckers", () => {
   // I2: ffprobe missing on this machine (composition passes `available: FfprobeMediaProber.isAvailable()`).
-  // Every checker in the set skips with one uniform reason instead of failing against a NullMediaProber that
-  // answers null for every file — `edl-valid` included, even though it needs no prober of its own.
+  // The four prober-backed checkers skip with one uniform reason instead of failing against a NullMediaProber
+  // that answers null for every file. `edl-valid` is exempt — it only parses JSON and cross-checks
+  // request.source_items, so it must keep giving a real verdict.
   describe("without a media prober (available: false)", () => {
-    it("skips every checker with reason \"no media prober available\", without touching the outputs", async () => {
+    it("skips the four prober-backed checkers with reason \"no media prober available\", without touching the outputs", async () => {
       const ws = tmpWorkspace(); // deliberately empty: a skipping checker must not read any file
       const request = baseRequest({
         expected_outputs: [{ type: "full_episode", mime_type: "video/mp4", kind: "file" }],
@@ -95,14 +96,33 @@ describe("mediaCheckers", () => {
       const result = baseResult([
         { path: "output/full-episode.mp4", type: "full_episode", checksum: sha, size_bytes: 1, kind: "file" },
         { path: "output/cuts", type: "clip_set", checksum: sha, size_bytes: 0, kind: "directory" },
-        { path: "output/edl.json", type: "edl", checksum: sha, size_bytes: 1, kind: "file" },
       ]);
       const checkers = mediaCheckers(new FakeMediaProber(new Map()), { available: false });
       expect(checkers.map((c) => c.id)).toEqual(["media-probe", "duration-range", "audio-integrity", "clip-set-complete", "edl-valid"]);
-      for (const c of checkers) {
+      for (const c of checkers.filter((c) => c.id !== "edl-valid")) {
         const outcome = await c.check({ request, result, workspaceDir: ws });
         expect(outcome, c.id).toEqual({ verdict: "skip", evidence: { reason: "no media prober available" } });
       }
+      rmSync(ws, { recursive: true, force: true });
+    });
+
+    it("leaves edl-valid working: it needs no prober, so it still passes and fails on its own merits", async () => {
+      const ws = tmpWorkspace();
+      mkdirSync(join(ws, "output"), { recursive: true });
+      const sourceId = newId("source_item");
+      const request = baseRequest({
+        source_items: [{ source_id: sourceId, uri: "file:///a.mp4", checksum: sha, mime_type: "video/mp4", duration_seconds: 10 }],
+      });
+      const result = baseResult([{ path: "output/edl.json", type: "edl", checksum: sha, size_bytes: 1, kind: "file" }]);
+      const checker = checkerById(mediaCheckers(new FakeMediaProber(new Map()), { available: false }), "edl-valid");
+
+      writeFileSync(join(ws, "output", "edl.json"), JSON.stringify({ schema_version: "harness.edl/v1", entries: [{ source_id: sourceId, in: 0, out: 2, order: 0, overlay: null, note: "" }] }));
+      expect((await checker.check({ request, result, workspaceDir: ws })).verdict).toBe("pass");
+
+      writeFileSync(join(ws, "output", "edl.json"), JSON.stringify({ schema_version: "harness.edl/v1", entries: [{ source_id: newId("source_item"), in: 0, out: 2, order: 0, overlay: null, note: "" }] }));
+      const unknown = await checker.check({ request, result, workspaceDir: ws });
+      expect(unknown.verdict).toBe("fail");
+      expect(unknown.evidence.reason).toBe("unknown source_id");
       rmSync(ws, { recursive: true, force: true });
     });
 

@@ -13,11 +13,12 @@ const skip = (reason: string) => ({ verdict: "skip" as const, evidence: { reason
  * in by argument (composition root wires an FfprobeMediaProber or NullMediaProber).
  *
  * `opts.available === false` (no `ffprobe` on PATH — the composition root passes `FfprobeMediaProber.isAvailable()`)
- * makes every checker in this set return `skip` with reason "no media prober available" before it looks at any
- * output, instead of failing on a `NullMediaProber` that answers `null` for every file. The whole set is gated
- * together — `edl-valid`, which needs no prober of its own, skips as well — so a machine without ffprobe reports
- * one uniform cause rather than a mix of verdicts. A prober that *is* present and still returns `null` for a
- * given file stays a `fail`: that is a broken output, not a missing tool.
+ * makes the four **prober-backed** checkers (`media-probe`, `duration-range`, `audio-integrity`,
+ * `clip-set-complete`) return `skip` with reason "no media prober available" before they look at any output,
+ * instead of failing on a `NullMediaProber` that answers `null` for every file. `edl-valid` is exempt: it only
+ * parses JSON against `EdlSchema` and cross-checks `request.source_items`, so it keeps giving a real pass/fail
+ * verdict on a machine without ffprobe. A prober that *is* present and still returns `null` for a given file
+ * stays a `fail`: that is a broken output, not a missing tool.
  */
 export function mediaCheckers(prober: MediaProber, opts: { available?: boolean } = {}): Checker[] {
   const unavailable = opts.available === false;
@@ -162,6 +163,7 @@ export function mediaCheckers(prober: MediaProber, opts: { available?: boolean }
     },
   };
 
-  const checkers = [mediaProbe, durationRange, audioIntegrity, clipSetComplete, edlValid];
-  return unavailable ? checkers.map((c) => ({ ...c, check: async () => noProber() })) : checkers;
+  const proberBacked = [mediaProbe, durationRange, audioIntegrity, clipSetComplete];
+  // edlValid needs no prober, so it is never gated on one
+  return [...(unavailable ? proberBacked.map((c) => ({ ...c, check: async () => noProber() })) : proberBacked), edlValid];
 }
