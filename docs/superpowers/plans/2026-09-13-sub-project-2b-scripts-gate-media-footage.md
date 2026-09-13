@@ -725,7 +725,7 @@ Thêm vào `packages/executors/test/script-executor.test.ts` (giữ các test c�
     const lines: { level: string; msg: string; data?: object }[] = [];
     const logger = { info: (msg: string, data?: object) => lines.push({ level: "info", msg, data }), warn: (msg: string, data?: object) => lines.push({ level: "warn", msg, data }), error: (msg: string, data?: object) => lines.push({ level: "error", msg, data }) };
     const secrets = { resolve: (ref: string) => (ref === "secret://heygen/main" ? "s3cr3t" : (() => { throw new Error("nope"); })()), resolvedValues: () => ["s3cr3t"] };
-    const ex = new ScriptExecutor({ echo: { argv: [process.execPath, "echo.mjs"], env_refs: { MY_KEY: "secret://heygen/main" } } }, { projectDir: project, secrets, cliArgv: ["node", "cli.js"] });
+    const ex = new ScriptExecutor({ echo: { argv: [process.execPath, "echo.mjs"], cwd: ".", env_refs: { MY_KEY: "secret://heygen/main" } } }, { projectDir: project, secrets, cliArgv: ["node", "cli.js"] });
     const req = request({ __script: "echo" });
     const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger, clock: wall });
     expect(res.outcome).toBe("succeeded");
