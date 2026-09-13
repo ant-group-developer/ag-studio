@@ -15,6 +15,7 @@ export * from "./orchestration/registry.js";
 export * from "./orchestration/request.js";
 export * from "./orchestration/invalidation.js";
 export * from "./orchestration/planner.js";
+export * from "./orchestration/budget.js";
 export * from "./orchestration/controller.js";
 export * from "./orchestration/cache.js";
 export * from "./orchestration/gate.js";

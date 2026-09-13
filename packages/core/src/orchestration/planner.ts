@@ -2,6 +2,7 @@ import { HarnessError, newId, type Artifact, type Attempt, type Checksum, type C
 import { resolveEffectiveConfig } from "../config/resolve.js";
 import { isTerminal } from "../state/transitions.js";
 import { evaluateWhen, parseWhen } from "../source-catalog/when.js";
+import { budgetBlocks } from "./budget.js";
 import { computeCacheKey, findReusableArtifacts, stageDefinitionDigest } from "./cache.js";
 import type { LoadedWorkflow } from "./registry.js";
 
@@ -120,18 +121,24 @@ export class Planner {
     this.store.transaction(() => {
       const run = this.mustRun(runId);
       this.store.transition("run", runId, "DRAFT", "READY", eventFor(run, null, null, "run.enqueued"));
+      const gate = budgetBlocks(this.store, run);
       const stages = this.store.listStageRuns(runId);
       const byKey = new Map(stages.map((s) => [s.stage_key, s]));
       // release root stages, and any stage whose dependencies were already satisfied by reuse at plan time
       for (const s of stages) {
-        if (s.state !== "PENDING") continue;
+        if (s.state !== "PENDING" || gate.blocked) continue;
         const deps = [...s.depends_on, ...s.depends_on_optional];
         if (deps.every((d) => byKey.get(d)?.state === "SUCCEEDED")) this.ready(run, s);
       }
+      const fresh = this.store.listStageRuns(runId);
       // every stage came from the cache: no worker will ever claim anything here, so settle the run now
-      if (this.store.listStageRuns(runId).every((s) => s.state === "SUCCEEDED")) {
+      if (fresh.every((s) => s.state === "SUCCEEDED")) {
         this.store.transition("run", runId, "READY", "RUNNING", eventFor(run, null, null, "run.started", "info", { reason: "all_stages_reused" }));
         this.store.transition("run", runId, "RUNNING", "SUCCEEDED", eventFor(run, null, null, "run.succeeded"));
+      } else if (gate.blocked && fresh.some((s) => s.state === "PENDING") && !fresh.some((s) => s.state === "READY")) {
+        // the variant already spent its whole budget before this run existed: skip straight to WAITING
+        this.store.transition("run", runId, "READY", "RUNNING", eventFor(run, null, null, "run.started", "info", { reason: "budget_check" }));
+        this.store.transition("run", runId, "RUNNING", "WAITING", eventFor(run, null, null, "run.budget_exceeded", "warn", { spent: gate.spent, budget: gate.budget }));
       }
     });
   }
@@ -141,11 +148,12 @@ export class Planner {
     return this.store.transaction(() => {
       const run = this.mustRun(runId);
       if (run.state === "CANCEL_REQUESTED") return { released: [], runState: this.settleCancel(run) };
+      const gate = budgetBlocks(this.store, run);
       const stages = this.store.listStageRuns(runId);
       const byKey = new Map(stages.map((s) => [s.stage_key, s]));
       const released: string[] = [];
       for (const s of stages) {
-        if (s.state !== "PENDING") continue;
+        if (s.state !== "PENDING" || gate.blocked) continue;
         const deps = [...s.depends_on, ...s.depends_on_optional];
         if (deps.every((d) => byKey.get(d)?.state === "SUCCEEDED")) { this.ready(run, s); released.push(s.stage_key); }
       }
@@ -154,8 +162,10 @@ export class Planner {
       const anyFailed = fresh.some((s) => s.state === "FAILED" || s.state === "CANCELLED");
       const anyWaiting = fresh.some((s) => s.state === "WAITING_HUMAN" || s.state === "NEEDS_RECONCILIATION");
       const anyActive = fresh.some((s) => ["READY", "CLAIMED", "RUNNING", "VERIFYING", "WAITING_EXTERNAL"].includes(s.state));
+      const anyPending = fresh.some((s) => s.state === "PENDING");
       const current = this.mustRun(runId);
-      if (current.state === "RUNNING" && allDone) this.store.transition("run", runId, "RUNNING", "SUCCEEDED", eventFor(run, null, null, "run.succeeded"));
+      if (gate.blocked && current.state === "RUNNING" && !anyActive && anyPending) this.store.transition("run", runId, "RUNNING", "WAITING", eventFor(run, null, null, "run.budget_exceeded", "warn", { spent: gate.spent, budget: gate.budget }));
+      else if (current.state === "RUNNING" && allDone) this.store.transition("run", runId, "RUNNING", "SUCCEEDED", eventFor(run, null, null, "run.succeeded"));
       else if (current.state === "RUNNING" && anyFailed && !anyActive) this.store.transition("run", runId, "RUNNING", "FAILED", eventFor(run, null, null, "run.failed", "error"));
       else if (current.state === "RUNNING" && anyWaiting && !anyActive) this.store.transition("run", runId, "RUNNING", "WAITING", eventFor(run, null, null, "run.waiting", "warn"));
       else if (current.state === "WAITING" && anyActive) this.store.transition("run", runId, "WAITING", "RUNNING", eventFor(run, null, null, "run.resumed"));

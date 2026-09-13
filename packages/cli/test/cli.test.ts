@@ -121,6 +121,31 @@ describe("harness CLI", () => {
     expect(r.code).toBe(1);
     expect(r.err).toContain("INVALID_TRANSITION");
   });
+  it("retry --raise-budget reopens a run parked WAITING by the variant budget gate", () => {
+    const p = freshProject();
+    cli(p, "db", "migrate");
+    const plan = cli(p, "plan", "--workflow", "sample-three-stage@1.0.0", "--profile", "cartoon", "--json");
+    const { run_id } = JSON.parse(plan.out);
+    cli(p, "enqueue", run_id);
+    const store = new SqliteStateStore(join(p, "data", "state", "harness.db"));
+    const run = store.getRun(run_id)!;
+    store.updateRun({ ...run, budget_usd: 0.005 }); // below the fake-stage's fixed $0.01 cost, so "produce" alone trips the gate
+    store.close();
+    const w = cli(p, "worker", "--once", "--capabilities", "write_workspace,read_source", "--owner", "w1");
+    expect(w.code, w.err).toBe(0);
+    const beforeRaise = JSON.parse(cli(p, "status", run_id, "--json").out);
+    expect(beforeRaise.run.state).toBe("WAITING");
+    expect(beforeRaise.stages.find((x: { stage_key: string }) => x.stage_key === "review").state).toBe("PENDING");
+
+    const r = cli(p, "retry", run_id, "--raise-budget", "10");
+    expect(r.code, r.err).toBe(0);
+    expect(r.out).toContain("budget");
+    expect(r.out).toContain("0.005");
+    const after = JSON.parse(cli(p, "status", run_id, "--json").out);
+    expect(after.run.state).toBe("RUNNING");
+    expect(after.run.budget_usd).toBe(10);
+    expect(after.stages.find((x: { stage_key: string }) => x.stage_key === "review").state).toBe("READY");
+  });
   it("ingests a source, creates content, plans a variant and shows resources", () => {
     const p = freshProject();
     cli(p, "db", "migrate");
