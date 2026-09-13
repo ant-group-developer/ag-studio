@@ -104,14 +104,20 @@ vi, không chép từ plan.
     không quét toàn bộ READY) với `owner` mặc định `"cli-submit"`, rồi `Controller.commit` y hệt worker. Một
     lỗi *sau* claim (input ACCEPTED bị stale, artifact bị sweep, …) không strand lease: `submitGate` bắt lỗi
     đó và tự commit một `StageResult` "failed" tổng hợp (trừ `FENCING_REJECTED`, vẫn propagate) để lease được
-    giải phóng và stage đỗ đúng chỗ như một setup failure của worker.
+    giải phóng và stage đỗ đúng chỗ như một setup failure của worker. Transition `WAITING_HUMAN → READY` và
+    `claim({ stageRunId })` nằm **trong cùng một `store.transaction`** (claim lồng qua savepoint): nếu tách
+    hai transaction thì giữa chúng stage là READY thuần, đủ để một worker đang poll claim mất gate, chạy lại
+    `GateExecutor` và bỏ rơi output người duyệt vừa nộp. Hệ quả: claim không thành (`STALE_STATE`) thì
+    transition cũng rollback — gate ở nguyên `WAITING_HUMAN`, không bị bỏ lại READY.
 37. `stage.gate_overdue` chỉ ghi **một lần mỗi cửa sổ** `resource_wait_warn_seconds` cho cùng một stage:
     `gateOverdue(store, now, windowSeconds)` quét mọi run `WAITING`/`RUNNING`, mọi stage gate `WAITING_HUMAN`
     quá `gate_deadline_seconds`, và bỏ qua nếu event `stage.gate_overdue` gần nhất của đúng stage đó còn nằm
     trong cửa sổ. Hàm này **không thuần đọc** — nó tự ghi event khi phát hiện quá hạn — nhưng được gọi từ hai
     nơi độc lập: worker (`runOnce`, mỗi vòng poll rảnh) và `harness status <run_id>` (mỗi lần gọi, để đánh
     dấu `OVERDUE` trên dòng stage) — cả hai dùng chung logic dedupe nên `status` một mình (không cần worker
-    đang chạy) cũng sinh và thấy được cảnh báo.
+    đang chạy) cũng sinh và thấy được cảnh báo. Vì tác dụng phụ đó xảy ra dù sao, `harness status --json`
+    trả thêm `overdue: string[]` (danh sách `stage_run_id` vừa bị đánh dấu ở chính lần gọi này), không chỉ
+    hiện " OVERDUE" ở output người đọc.
 38. `EdlSchema` (`schema_version: "harness.edl/v1"`, `entries: EdlEntry[]`, tối thiểu 1 entry, `order` không
     trùng nhau) là hợp đồng giữa gate `edit-plan` và script `cut`/`assemble`: mỗi entry
     `{ source_id, in, out, order, overlay?, note? }` (`in < out`, `overlay` chỉ nhận `"avatar"` hoặc null).
@@ -130,9 +136,20 @@ vi, không chép từ plan.
     `FFPROBE_PATH`/`FFMPEG_PATH`), không phải gói npm — `core` không bao giờ import nó trực tiếp (composition
     root quyết định). Mọi lời gọi `spawnSync` đều có timeout cứng (`DEFAULT_TIMEOUT_MS` 120s cho probe,
     10s cho `isAvailable()`) và `maxBuffer` 16MB, khác biệt với `ScriptExecutor` (dùng `child.kill()` qua
-    `setTimeout`) vì đây là lời gọi đồng bộ. Thiếu `ffprobe` (hoặc timeout) rơi về `NullMediaProber`:
-    `harness doctor` báo dòng `ffprobe` FAIL nhưng không chặn gì khác — mọi checker media trả `skip` thay vì
-    fail, đường ống footage vẫn chạy hết (không có xác nhận chất lượng media).
+    `setTimeout`) vì đây là lời gọi đồng bộ. Thiếu `ffprobe` rơi về `NullMediaProber`, và composition root
+    truyền luôn `mediaCheckers(prober, { available: FfprobeMediaProber.isAvailable() })`: với
+    `available: false` **mọi checker trong bộ media** trả thẳng
+    `{ verdict: "skip", evidence: { reason: "no media prober available" } }` trước khi nhìn tới output nào —
+    kể cả `edl-valid` (vốn không cần prober), để cả bộ báo đúng một nguyên nhân thay vì trộn verdict. Một
+    prober **có mặt** mà trả `null` cho một file vẫn là `fail`: đó là output hỏng, không phải thiếu công cụ.
+    Cần nói rõ hệ quả state: `Verifier.verify` chỉ tính `allRequiredPassed` khi **mọi** kết quả là `pass`,
+    nên một `skip` trên một check bắt buộc làm `allRequiredPassed = false`; `classifyFailure` khi đó trả
+    `"result"` (không phải `"contract"` — `verify.missing` rỗng, không có lỗi `contract` nào trong result),
+    nên stage đi `RUNNING → VERIFYING → FAILED`, output được `registerRejected`, và vì `retry_on` mặc định là
+    `["transient", "abandoned"]` thì **không có retry** — run chốt `FAILED`. Nói cách khác: thiếu `ffprobe`
+    **không** làm đường ống footage chạy hết; nó dừng ở stage media đầu tiên với một `check_result` `skip`
+    ghi rõ lý do (trước đây là `fail` "no probeable media stream", cùng hệ quả state nhưng khó đọc hơn).
+    `harness doctor` báo dòng `ffprobe` FAIL chính là cảnh báo trước cho tình huống này.
 41. `harness doctor` liệt kê các `check` id: `migrations`, `ffprobe`, `resources`,
     `script:<workflow_id>/<stage_key>` (một dòng cho mỗi stage script của mỗi workflow), `wrapper:<tên>` và
     `secret:<tên>:<env>` (một dòng cho mỗi wrapper file / mỗi biến `env_refs`, dedupe theo tên script — không
@@ -143,7 +160,13 @@ vi, không chép từ plan.
     — doctor gộp thành đúng **một** dòng `ok` (`check: "scripts"`, "chỉ built-in fake script khả dụng") và bỏ
     qua toàn bộ check theo-từng-script (không có registry thì không có gì để kiểm ở mức đó); một tên script
     không có trong `scripts.yaml` nhưng nằm trong `builtinScripts` (danh sách fake do composition root gộp
-    vào, ví dụ `fake-stage` dùng trong test) vẫn `ok`, ghi rõ "provided by built-in commands".
+    vào, ví dụ `fake-stage` dùng trong test) vẫn `ok`, ghi rõ "provided by built-in commands". Một
+    `executors/scripts.yaml` / `source-catalog/sources.yaml` **sai schema** không còn làm `buildContext` ném
+    `CONFIG_INVALID` cho *mọi* lệnh: composition root bắt đúng lỗi đó, để registry `undefined` và ghi thông
+    điệp vào `AppContext.configErrors.{scripts,sources}`; `doctor` nhận qua `DoctorInput.configErrors` và in
+    dòng `scripts`/`sources` FAIL với chính thông điệp đó (các dòng khác vẫn chạy). Lệnh thật sự cần registry
+    vẫn fail to: `harness source sync` ném lại `CONFIG_INVALID` đã lưu, còn script executor báo `NOT_FOUND`
+    cho tên script không nạp được.
 42. `harness source sync` đối chiếu `source-catalog/sources.yaml` với DB, trả `SyncReport { added,
     already, missing_files, unregistered }`: `added`/`already` là `{source_id, path}` theo entry vừa
     ingest/đã có; `missing_files` là `path` của entry mà file trên đĩa không còn tồn tại (không tự xoá gì
@@ -166,7 +189,10 @@ vi, không chép từ plan.
     vừa commit (`newChecksums`, đã sort) với tập checksum ACCEPTED hiện có của **chính stage đó** ở mỗi run
     khác của cùng variant; khớp y hệt (cùng độ dài, cùng thứ tự sau sort) thì bỏ qua run đó hoàn toàn — không
     đánh STALE gì, kể cả các stage phụ thuộc xuôi dòng. Nhờ vậy submit lại một gate với đúng nội dung cũ
-    (byte giống hệt) không phá cache của run trước. **Ngoại lệ**: nếu `newChecksums` rỗng (stage vừa commit
+    (byte giống hệt) không phá cache của run trước. Tập checksum "đang giữ" của run cũ được resolve **giống
+    `acceptedInputsFor`/`findReusableArtifacts`**: stage nào có `reused_artifact_ids` (stage được reuse — một
+    run "con trỏ", không có hàng artifact của riêng nó) thì lấy checksum của các artifact nó trỏ tới và còn
+    ACCEPTED, thay vì `listArtifacts({ stage_run_id })` (luôn rỗng, khiến run con trỏ bị invalidate oan). **Ngoại lệ**: nếu `newChecksums` rỗng (stage vừa commit
     không tạo output nào), so sánh nội dung bị bỏ qua — `invalidateDownstream` quay về hành vi thuần theo
     graph (invalidate mọi ACCEPTED artifact của chính stage đó và xuôi dòng ở run khác), vì không có gì để
     so nội dung.
@@ -191,3 +217,9 @@ vi, không chép từ plan.
     ngay operation đã `CONFIRMED` (không gọi provider lại); với `FAILED`, idempotency key giữ nguyên nhưng
     `recordIntent` ghi một **dòng mới** (một operation `FAILED` không được coi là hiện hành — mục 13), nên
     lần attempt kế tiếp gọi provider lại từ đầu.
+48. Heartbeat của worker sống qua **cả** `verifier.verify` và `controller.commit`, không dừng ngay sau
+    `executor.execute`: verify giờ có checker media gọi `ffprobe` qua `spawnSync` (chặn, tối đa 120s mỗi
+    probe) và commit còn chuyển từng output vào artifact store, nên nếu dừng nhịp tim sớm thì một stage chạy
+    chậm-nhưng-khoẻ có thể mất lease vào tay reaper đúng giữa execute và commit. `hb.stop()` nằm trong một
+    `finally` bọc quanh execute + verify + commit; các kiểm tra `hb.lost`/fencing trước commit và đường cancel
+    (`cancelCurrent`) giữ nguyên vị trí cũ.

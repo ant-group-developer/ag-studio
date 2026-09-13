@@ -71,9 +71,39 @@ Danh sách rút từ các vòng review trong quá trình xây dựng (ledger SDD
 - `FfprobeMediaProber` hardcode `maxBuffer` 16MB cho `spawnSync`, không cho override qua constructor — đủ cho fixture, có thể cần chỉnh khi probe file rất lớn ngoài đời thật.
 - Wrapper giả `cut.mjs`/`thumbnail-render.mjs` (fixture footage) throw `Error` thô thay vì `ctx.fail(...)` khi input thiếu — `ScriptExecutor` vẫn bắt được (process thoát khác 0 mà không có `stage-result.json` → "transient"), nhưng `errors[].kind`/`message` thiếu ngữ cảnh cụ thể của lỗi.
 - `tests/integration/footage-helpers.ts`'s `cli()` và `cliAsync()` là hai hàm spawn gần giống nhau (đồng bộ/bất đồng bộ), chưa hợp nhất.
-- `executors/scripts.yaml` thật của `fixtures/ops-project-footage` bị chép tay thành một template string thứ hai trong `footage-helpers.ts`'s `scriptsYaml()` (để pin `cwd` cho project tạm) — hai nơi phải sửa cùng lúc nếu đổi fixture, ghi chú "kept in sync by hand" ngay trong code nhưng không có test canh giữ.
+- ✅ **Đã đóng ở review cuối 2B — scripts.yaml của fixture không còn bị chép tay.** `footage-helpers.ts`'s `scriptsYaml()` đọc chính `fixtures/ops-project-footage/executors/scripts.yaml`, parse bằng `yaml`, set `cwd` tuyệt đối cho từng script rồi `stringify` lại (`yaml` đã thêm vào devDependencies gốc). Fixture `source-catalog/sources.yaml` cũng đổi thành `sources: []` (file mẫu nằm trong `raw/` bị git-ignore) để `harness doctor` trên bản vừa clone không FAIL dòng `sources`.
 - Hàm `workspacePathFromUri` (chuyển `file://` URI của workspace thành đường dẫn hệ điều hành, xử lý riêng ổ đĩa Windows `/E:/...`) bị chép lại y hệt ở `tests/acceptance/16-secret-e2e.test.ts` thay vì import từ `footage-helpers.ts` (nơi định nghĩa gốc, không export).
 - World của `tests/acceptance/12-old-run-explainable.test.ts` không đóng `SqliteStateStore` sau khi chạy — rò file handle trong bộ test, không ảnh hưởng sản phẩm.
-- `invalidateDownstream` so checksum của run cũ với checksum vừa commit mà không loại trừ trường hợp run cũ đó đang **reuse** (giữ `reused_artifact_ids` trỏ sang artifact của một run khác nữa, không phải artifact của chính nó) — một run thuần "con trỏ" như vậy có thể bị đánh STALE dù chưa từng tự tạo artifact nào của riêng nó; sửa một dòng (so trực tiếp `held` qua `reused_artifact_ids` khi có) nhưng chưa làm ở 2B.
+- ✅ **Đã đóng ở review cuối 2B — invalidation bỏ qua run con trỏ.** `invalidateDownstream` resolve tập checksum "đang giữ" của run cũ qua `reused_artifact_ids` khi stage đó được reuse (helper `heldChecksums`, cùng cách `acceptedInputsFor`/`findReusableArtifacts` resolve), nên một run thuần con trỏ không còn bị đánh STALE khi nội dung mới trùng đúng byte nó đang trỏ tới (`packages/core/src/orchestration/invalidation.ts`).
 - Đường "reuse lúc release" (`tryLateReuse` trong `releaseReady`) hiếm khi có dịp chạy thật trong bộ test hiện tại: phần lớn kịch bản reuse đã khớp ngay lúc `plan()` trước khi tới `releaseReady`; test acceptance #7 phủ đường release qua gate, nhưng chưa có test cho stage không dưới gate nào vẫn phải chờ tới `releaseReady` mới reuse được.
 - Chưa có test nào re-run thật một stage dùng ffmpeg ở lần chạy thứ hai của cùng variant (nội dung input đổi thật sự, không phải reuse) — các test hiện tại thiên về xác nhận đường "reuse" hơn đường "phải chạy lại vì cache key đổi" cho riêng các stage ffmpeg.
+
+## Hoãn, ít rủi ro — thêm sau review toàn nhánh 2B (ledger 2026-09-13)
+
+Các mục C1/I2/I3/I4/I5/I6 của vòng review này đã sửa trong cùng một đợt (xem ADR mục 36, 37, 40, 41, 44, 48).
+Những gì còn lại, đã xem xét và cố ý hoãn:
+
+- `harness status <run_id>` gọi `gateOverdue` quét **mọi** run `WAITING`/`RUNNING` của project và ghi event
+  `stage.gate_overdue` cho tất cả, không chỉ cho run được hỏi — tác dụng phụ toàn cục của một lệnh đọc.
+  `--json` giờ trả `overdue: string[]` nên ít nhất nhìn thấy được, nhưng phạm vi quét thì chưa thu hẹp.
+- Dedupe của `gateOverdue` (và của `warnResourceStarvation`) dựa trên `listEvents({ limit: 200, newest: true })`:
+  một run sinh hơn 200 event trong cùng cửa sổ sẽ đẩy event `stage.gate_overdue` cũ ra khỏi tầm nhìn và cảnh
+  báo lặp lại sớm hơn cửa sổ.
+- `Redactor` của tiến trình CLI con (`harness op ...` do wrapper gọi) không biết secret nào — nó chỉ che giá
+  trị `EnvSecretResolver` đã resolve **trong tiến trình đó**, mà tiến trình đó không resolve secret nào; thêm
+  vào đó `--payload` đi qua argv nên nằm trong bảng tiến trình của máy. Không rò secret hiện tại (payload của
+  wrapper là checksum), nhưng là một kênh cần chú ý nếu sau này payload chứa dữ liệu nhạy cảm.
+- `ScriptExecutor` kill script con bằng `child.kill()` (SIGTERM) khi hết deadline/abort, không leo thang
+  SIGKILL sau một khoảng chờ: một script bắt SIGTERM mà không thoát sẽ treo tới khi worker chết.
+- Buffer stdout/stderr của script con không có trần: một wrapper in ra hàng trăm MB sẽ tích luỹ trong bộ nhớ
+  worker (stderr) và trong buffer dòng của `forwardStdout` (stdout).
+- Checker `audio-integrity` gọi `prober.probe(path)` rồi `prober.silenceRatio(path)` — hai lần `spawnSync`
+  trên cùng một file; `silenceRatio` có thể lấy luôn từ lần probe đầu nếu adapter cache lại.
+- Ngưỡng media của profile `footage` (`target_duration_seconds`, `max_silence_ratio`) rộng gần như vô nghĩa
+  với fixture 5s hiện tại — checker chạy thật nhưng gần như không thể fail; cần ngưỡng sát hơn khi có nội
+  dung thật để các test media thực sự có sức phân biệt.
+- Bộ test footage (`tests/integration`, `tests/acceptance/16-*`) chạy ffmpeg thật, tốn vài phút thời gian
+  thực trong `pnpm test` chung; nên tách thành một vitest project riêng (hoặc gắn tag) để `pnpm test` mặc
+  định nhanh lại, chạy đầy đủ trong CI.
+- (Đã sửa trực tiếp, không hoãn: README của `@harness/script-sdk` không còn nhắc "Task 4" và đã ghi rõ
+  `ctx.out.file`'s `mime` bị bỏ qua — mime thật lấy từ `outputs[].mime_type` của stage definition.)
