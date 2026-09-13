@@ -1,0 +1,6 @@
+# Optional: declarative source list synced by `harness source sync`. Each entry is one raw file this
+# project owns; `sync` ingests any entry not yet in the catalog (dedup by sha256, same as `source ingest`)
+# and reports files that disappeared or DB rows no entry here covers. Leave `sources: []` and use
+# `harness source ingest <path>` directly if you would rather register sources one at a time.
+schema_version: harness.sources/v1
+sources: []

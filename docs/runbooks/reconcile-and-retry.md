@@ -1,9 +1,79 @@
 # Runbook: reconcile, retry, lease
 
-## Stage ở NEEDS_RECONCILIATION
-1. `harness status <run_id>` để xem stage và external operation.
-2. `harness reconcile <run_id>`: hỏi provider theo idempotency key. CONFIRMED → stage về READY, worker sẽ tái sử dụng operation đã confirm, không dispatch lại. FAILED → stage vẫn cần người xem xét; sau đó `harness retry <run_id> --stage <key>`.
-3. Không bao giờ `retry` trước khi `reconcile`.
+## Op từ wrapper (NEEDS_RECONCILIATION)
+Nguyên nhân: wrapper gọi `ctx.op.lost(...)` (mất kết nối tới provider giữa chừng, không biết cuộc gọi đã
+thành công hay chưa) rồi kết thúc bằng `ctx.unknown(...)`; controller đưa external operation về
+`NEEDS_RECONCILIATION` và stage đi cùng nó.
+
+1. `harness status <run_id>` để xem stage và external operation đang treo.
+2. `harness reconcile <run_id>` (hoặc `harness reconcile <operation_id>` cho một operation cụ thể): hỏi
+   provider theo `idempotency_key`. Provider tìm thấy → operation `CONFIRMED` (ghi lại `provider_ref`/
+   `receipt`). Không tìm thấy → operation `FAILED`.
+3. **Cả hai kết quả đều tự đưa stage từ `NEEDS_RECONCILIATION` về `READY`** ngay khi không còn operation nào
+   khác của stage đó còn `NEEDS_RECONCILIATION` — `reconcile` tự gọi `planner.advance()`, không cần
+   `harness retry` để "mở khoá" stage. Khác biệt duy nhất giữa hai kết quả nằm ở lần attempt kế tiếp:
+   - **CONFIRMED**: wrapper gọi lại `ctx.op.intent(...)` với cùng payload (cùng idempotency key) sẽ nhận lại
+     chính operation đã `CONFIRMED` đó (`findConfirmedByKey`) — không gọi lại provider, không tốn tiền lần
+     hai.
+   - **FAILED**: idempotency key giữ nguyên, nhưng lần `ctx.op.intent(...)` kế tiếp ghi một dòng **mới**
+     (một operation FAILED không được coi là "hiện hành" — dòng mới nhất mới là hiện hành), nên attempt kế
+     tiếp gọi lại provider từ đầu.
+4. Vẫn nên xem `harness events tail --run <run_id>` (`external_operation.reconciled`, `found: false`) trước
+   khi để worker tự chạy tiếp một `FAILED` — đây là lúc hợp lý để phát hiện provider/script cũ có vấn đề
+   thật sự, dù code không bắt buộc dừng lại chờ người.
+5. Không bao giờ `harness retry` một stage đang `NEEDS_RECONCILIATION` trước khi `reconcile` nó — `retry`
+   chỉ nhận stage `FAILED`/`WAITING_HUMAN`.
+
+## Gate quá hạn
+Nguyên nhân: một stage gate (`executor.type: "gate"`) đỗ ở `WAITING_HUMAN` quá `gate_deadline_seconds` khai
+trên stage definition (workflow `footage-production` đặt 86400s = 24h cho mọi gate của nó) mà chưa ai
+`stage submit`.
+
+1. Event `stage.gate_overdue` (payload `overdue_seconds`, `deadline_seconds`) được ghi tối đa một lần mỗi
+   `resource_wait_warn_seconds` (mặc định 600s) cho cùng một stage — do worker tự kiểm tra ở mỗi vòng poll
+   rảnh, và cũng do `harness status <run_id>` tính lại mỗi lần gọi (đánh dấu `OVERDUE` cạnh stage đó trong
+   output dạng text lẫn JSON) — không cần worker đang chạy để thấy dấu quá hạn.
+2. Quá hạn không tự làm gì khác — stage vẫn `WAITING_HUMAN`, không tự fail, không tự hủy. Xử lý: đọc
+   `brief.md` trong workspace của attempt gate đó (đường dẫn từ `harness status <run_id> --json` →
+   `stages[].attempts[-1].workspace_uri`), viết output theo yêu cầu, rồi `harness stage submit
+   <stage_run_id>`.
+3. Nếu deadline quá hạn vì gate không còn cần thiết (đổi hướng sản xuất): `harness cancel <run_id>` thay vì
+   cố submit cho xong.
+
+## Submit bị từ chối
+`harness stage submit <stage_run_id>` verify `output/` trước khi đổi bất kỳ trạng thái nào — bị từ chối thì
+stage vẫn nguyên `WAITING_HUMAN`, không mất gì để thử lại.
+
+1. Output có `missing` (thiếu file) hoặc `failed` (check không đạt) trong response — cả CLI text lẫn `--json`
+   đều in đủ hai danh sách này; exit code 1 khi có ít nhất một trong hai.
+2. `missing`: thiếu file `output/<name>` mà stage definition khai trong `outputs[].name` — ghi/copy file còn
+   thiếu vào `output/` rồi submit lại.
+3. `failed`: một required check (`schema-valid`, `checksum-match`, `edl-valid`, …) không đạt — evidence đi
+   kèm nói rõ lý do (ví dụ `edl-valid` báo `source_id` không có trong `stage-request.json`, hay
+   `clip-set-complete` báo thiếu một file `NNN.mp4`). Sửa nội dung `output/` theo evidence rồi submit lại;
+   `--from <dir>` copy đè một thư mục khác vào `output/` trước khi verify nếu tiện hơn sửa tay.
+4. Submit rejected ghi event `stage.submit_rejected` (payload `missing`, `failed`) — xem lại bằng
+   `harness events tail --run <run_id>` nếu không còn ở terminal đã chạy submit.
+
+## Vượt ngân sách
+Nguyên nhân: `run.budget_usd` (đặt lúc `plan` hoặc tính từ `limits.max_cost_usd_per_variant` của profile) đã
+bị tổng chi phí của **variant** đó (cộng dồn `total_cost_usd` mọi run của variant, không chỉ run hiện tại)
+chạm hoặc vượt qua, trước khi một stage kịp dispatch.
+
+1. Run đỗ `WAITING`, stage kế tiếp `PENDING` (chưa từng `READY`) — event `run.budget_exceeded` (payload
+   `spent`, `budget`) ghi trên run ngay khi `advance()`/`enqueue()` phát hiện. `harness status <run_id>` chỉ
+   thấy run `WAITING` và stage `PENDING`, không có gì nói rõ lý do là ngân sách — phải đọc `events tail`.
+2. Không có "waive" từng phần — chỉ có nâng trần: `harness retry <run_id> --raise-budget <usd>` (usd phải
+   lớn hơn số đã chi của variant, không thì lệnh từ chối) ghi `run.budget_raised` rồi tự gọi lại
+   `planner.advance()`, không cần thêm lệnh nào khác để giải phóng stage đang chờ.
+3. Ngân sách chặn ở **hai** chỗ khác nhau, không đối xứng: reuse **lúc `plan`** (planner chọn sẵn artifact
+   cũ khi tạo `StageRun`, trước khi `enqueue`) hoàn toàn không nhìn tới ngân sách — một run mới của cùng
+   variant vẫn tái sử dụng toàn bộ stage đã tốn tiền ở run trước dù ngân sách hiện đã hết, vì reuse không
+   phát sinh chi phí mới. Nhưng reuse **lúc release** (`tryLateReuse` — một stage `PENDING` dưới một gate,
+   dependency vừa `SUCCEEDED`, tính lại cache key từ input ACCEPTED thật) nằm trong cùng vòng lặp với dispatch
+   thường (`releaseReady`) và **bị chặn giống hệt dispatch**: khi `budgetBlocks` báo `blocked: true`, vòng
+   lặp đó return ngay, kể cả một stage lẽ ra tái sử dụng được (miễn phí) cũng phải chờ `--raise-budget` mới
+   được xét lại — dù bản thân việc tái sử dụng nó không tốn thêm tiền.
 
 ## Stage ở WAITING_HUMAN
 Nguyên nhân: kết quả sai schema, checker thiếu, hoặc fencing bị từ chối. Xem `harness events tail --run <run_id>`, sửa nguyên nhân (workflow, checker, script), rồi `harness retry <run_id> --stage <key>`.

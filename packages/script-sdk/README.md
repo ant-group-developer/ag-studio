@@ -13,11 +13,13 @@ beyond Node builtins and no build step, so a fixture can `import` it straight fr
 
 ## Install
 
-```sh
-npm i @harness/script-sdk
-```
-
-Inside this monorepo, add `"@harness/script-sdk": "workspace:*"` to the consuming package's dependencies instead.
+This package is not published to a public registry. Inside this monorepo, add `"@harness/script-sdk":
+"workspace:*"` to the consuming package's dependencies (see `fixtures/ops-project-footage/package.json`).
+An ops project copied out of `project-template/` (see `docs/runbooks/wrap-a-channel.md`) is not part of the
+monorepo workspace, so its `package.json` instead points a `link:` dependency at wherever that machine
+checked out this repo, e.g. `"@harness/script-sdk": "link:../YOUTUBE_OPERATIONS_HARNESS/packages/script-sdk"`
+— `pnpm install` then symlinks the package in without copying it (there is no build step, so edits to
+`src/index.js` take effect immediately).
 
 ## Example wrapper
 

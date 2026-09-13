@@ -1,0 +1,9 @@
+{
+  "name": "ops-project-CHANGE-ME",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "dependencies": {
+    "@harness/script-sdk": "link:../YOUTUBE_OPERATIONS_HARNESS/packages/script-sdk"
+  }
+}

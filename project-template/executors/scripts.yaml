@@ -1,0 +1,29 @@
+# executors/scripts.yaml — one entry per script-backed stage of the workflow(s) this project plans.
+# `executor.script` in a workflow.yaml must name a key here (or a built-in fake used only by the harness's
+# own tests). `harness doctor` checks that every argv[1] wrapper file exists, every env_refs secret
+# resolves, and every requires_resources name has capacity > 0 in project.yaml.
+#
+# Fields per script:
+#   argv                — command + args; argv[0] is usually "node", argv[1] the wrapper .mjs below.
+#   cwd                 — resolved against this project directory; defaults to "." when omitted.
+#   env_refs            — NAME: "secret://scope/name" pairs resolved into the child process's env only
+#                         (never written to a file, event or log); set the matching
+#                         HARNESS_SECRET_<SCOPE>_<NAME> env var in the shell that runs `harness worker`
+#                         (or in a machine-local .env loaded by that shell) — do not commit the value.
+#   requires_resources  — shared resource name(s) this script needs a slot of; when set here it overrides
+#                         the workflow stage's own requires_resources for this project.
+#   timeout_seconds     — caps the attempt's deadline for this script; a run that exceeds it fails
+#                         "transient" and retries like any other transient failure.
+#
+# None of the six wrapper files referenced below exist yet in this template. Copy
+# executors/wrappers/example.mjs to each name, point it at the matching legacy script per
+# docs/runbooks/wrap-a-channel.md, then delete the entries (and matching workflow stages) you don't need —
+# this list mirrors fixtures/ops-project-footage/executors/scripts.yaml only as a starting shape.
+schema_version: harness.scripts/v1
+scripts:
+  index-source:     { argv: [node, executors/wrappers/index-source.mjs], requires_resources: [cpu], timeout_seconds: 600 }
+  tts:              { argv: [node, executors/wrappers/tts.mjs], requires_resources: [gpu], timeout_seconds: 600 }
+  avatar:           { argv: [node, executors/wrappers/avatar.mjs], env_refs: { HEYGEN_API_KEY: "secret://heygen/main" }, requires_resources: [heygen], timeout_seconds: 600 }
+  cut:              { argv: [node, executors/wrappers/cut.mjs], requires_resources: [cpu], timeout_seconds: 600 }
+  assemble:         { argv: [node, executors/wrappers/assemble.mjs], requires_resources: [cpu], timeout_seconds: 600 }
+  thumbnail-render: { argv: [node, executors/wrappers/thumbnail-render.mjs], timeout_seconds: 600 }
