@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { Command } from "commander";
 import { parse } from "yaml";
 import type { ProductionProfile } from "@harness/contracts";
+import { CliAgentRuntime, RUNTIME_COMMANDS } from "@harness/adapter-agent-cli";
 import { resolveWorkflowScope, runDoctor, type DoctorRow, type LoadedWorkflow } from "@harness/core";
 import { print, withContext } from "./shared.js";
 
@@ -60,6 +61,15 @@ export function registerDoctor(program: Command): void {
             projectDir: ctx.projectDir, project: ctx.project, harness: ctx.harness, scripts: ctx.scripts, builtinScripts: ctx.scriptCommandNames, workflows, profiles,
             secrets: ctx.secrets, proberAvailable: ctx.proberAvailable, store: ctx.store, migrationsDir: ctx.migrationsDir, configErrors: ctx.configErrors,
             ...(ctx.library ? { library: { fs: ctx.library.fs, role: ctx.library.role } } : {}),
+            channels: { loaded: ctx.channels.list(), errors: ctx.channelErrors, secrets: ctx.secrets },
+            agent: ctx.project.adapters.agent === "cli"
+              ? {
+                  kind: "cli", runtime: ctx.project.runtime,
+                  argv0: ctx.project.adapters.agent_argv?.[0] ?? RUNTIME_COMMANDS[ctx.project.runtime].argv[0]!,
+                  isAvailable: (argv0: string) => CliAgentRuntime.isAvailable(ctx.project.runtime, argv0),
+                }
+              : { kind: "fake", runtime: ctx.project.runtime, argv0: ctx.project.runtime, isAvailable: () => true },
+            publisher: { name: ctx.publisher.name },
           }),
         ];
 

@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
-import { isHarnessError, type Artifact, type ClaimResult, type Clock, type HarnessConfig, type ProductionProfile, type ProjectConfig, type Run, type StageRequest, type StageResult, type StateStore } from "@harness/contracts";
-import { acceptedInputsFor, addSeconds, ArtifactRegistry, buildStageRequest, canonicalDigest, Controller, createWorkspace, eventFor, gateOverdue, type LibraryFs, type LibraryRole, type LoadedWorkflow, materializeInputs, mimeTypesFor, Planner, stageDefinitionDigest, stageDefinitionFor, syncLibrary, Verifier, workspacePath, type HarnessLogger } from "@harness/core";
+import { isHarnessError, type Artifact, type ClaimResult, type Clock, type HarnessConfig, type ProductionProfile, type ProjectConfig, type Publisher, type Run, type StageRequest, type StageResult, type StateStore } from "@harness/contracts";
+import { acceptedInputsFor, addSeconds, ArtifactRegistry, buildStageRequest, canonicalDigest, type ChannelRegistry, Controller, createWorkspace, eventFor, gateOverdue, type LibraryFs, type LibraryRole, type LoadedWorkflow, materializeInputs, mimeTypesFor, Planner, stageDefinitionDigest, stageDefinitionFor, syncLibrary, Verifier, verifyScheduled, workspacePath, type HarnessLogger } from "@harness/core";
 import type { ExecutorRegistry } from "@harness/executors";
 import { startHeartbeat } from "./heartbeat.js";
 
@@ -11,6 +11,13 @@ export interface WorkerDeps {
   /** Only present when `project.yaml` declares `library`; an idle poll syncs the kho at most once every
    * `syncSeconds` so a channel's new request or a studio's fresh style/item reaches this project's DB. */
   library?: { fs: LibraryFs; role: LibraryRole; syncSeconds: number };
+  /** Only present when the ops project has at least one loaded channel; an idle poll sweeps overdue SCHEDULED
+   * publication jobs at most once every `verifySeconds` (spec §4.1's verify sweep). */
+  publication?: { publisher: Publisher; channels: ChannelRegistry; verifySeconds: number; graceHours: number };
+  /** Only present once the composition root wires a dashboard writer (Task 10); an idle poll calls `write()`
+   * at most once every `refreshSeconds`. The worker only calls it on a cadence -- what it writes is the
+   * composition root's concern, not this package's. */
+  dashboard?: { refreshSeconds: number; write: () => Promise<void> };
 }
 
 function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
@@ -24,6 +31,10 @@ function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
 export class Worker {
   /** ms timestamp of the last library sync; `undefined` means "never yet", so the first idle poll always syncs. */
   private lastLibrarySyncAt: number | undefined;
+  /** ms timestamp of the last publication verify sweep; same "never yet" convention as `lastLibrarySyncAt`. */
+  private lastPublicationVerifyAt: number | undefined;
+  /** ms timestamp of the last dashboard refresh; same "never yet" convention as `lastLibrarySyncAt`. */
+  private lastDashboardRefreshAt: number | undefined;
 
   constructor(private readonly d: WorkerDeps) {}
 
@@ -47,7 +58,7 @@ export class Worker {
     // the run is unknown until the claim lands, so claim on the harness default and widen afterwards
     const defaultLeaseSeconds = this.d.harness.lease_seconds;
     const claim = store.claim({ owner: this.d.owner, capabilities: this.d.capabilities, now: clock.now(), leaseSeconds: defaultLeaseSeconds, resourceCapacity: this.d.resourceCapacity });
-    if (!claim) { this.warnResourceStarvation(); this.warnGateOverdue(); await this.maybeSyncLibrary(); return "idle"; }
+    if (!claim) { this.warnResourceStarvation(); this.warnGateOverdue(); await this.maybeSyncLibrary(); await this.maybeVerifyPublications(); await this.maybeRefreshDashboard(); return "idle"; }
     const run = store.getRun(claim.stageRun.run_id)!;
     const snapshotLease = Number(run.effective_config_snapshot.lease_seconds);
     const leaseSeconds = Number.isFinite(snapshotLease) ? snapshotLease : defaultLeaseSeconds;
@@ -157,6 +168,42 @@ export class Worker {
       for (const m of report.missing) this.d.logger.warn("library sync: missing from kho", m);
     } catch (e) {
       this.d.logger.error("library sync failed", { error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  /** At most once every `publication.verifySeconds`, on an otherwise-idle poll: sweeps overdue SCHEDULED
+   * publication jobs through `verifyScheduled` (spec §4.1) so a video the legacy scheduler actually published
+   * settles PUBLISHED, and one that did not park NEEDS_RECONCILIATION for a human, without a person running
+   * `harness publish verify` by hand. Same stamp-before-attempt, log-and-swallow shape as `maybeSyncLibrary`:
+   * an unreachable provider must not stop the worker loop or retry on every single poll. */
+  private async maybeVerifyPublications(): Promise<void> {
+    const publication = this.d.publication;
+    if (!publication) return;
+    const now = Date.parse(this.d.clock.now());
+    if (this.lastPublicationVerifyAt !== undefined && now - this.lastPublicationVerifyAt < publication.verifySeconds * 1000) return;
+    this.lastPublicationVerifyAt = now;
+    try {
+      const report = await verifyScheduled({ store: this.d.store, publisher: publication.publisher, channels: publication.channels, clock: this.d.clock, graceHours: publication.graceHours });
+      for (const w of report.warnings) this.d.logger.warn("publication verify: warning", w);
+      for (const e of report.errors) this.d.logger.warn("publication verify: lookup failed", e);
+    } catch (e) {
+      this.d.logger.error("publication verify failed", { error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  /** At most once every `dashboard.refreshSeconds`, on an otherwise-idle poll: calls the composition-provided
+   * `write()` (Task 10 wires an actual snapshot writer; this package only ever calls it on a cadence). Same
+   * stamp-before-attempt, log-and-swallow shape as `maybeSyncLibrary`/`maybeVerifyPublications`. */
+  private async maybeRefreshDashboard(): Promise<void> {
+    const dashboard = this.d.dashboard;
+    if (!dashboard) return;
+    const now = Date.parse(this.d.clock.now());
+    if (this.lastDashboardRefreshAt !== undefined && now - this.lastDashboardRefreshAt < dashboard.refreshSeconds * 1000) return;
+    this.lastDashboardRefreshAt = now;
+    try {
+      await dashboard.write();
+    } catch (e) {
+      this.d.logger.error("dashboard refresh failed", { error: e instanceof Error ? e.message : String(e) });
     }
   }
 

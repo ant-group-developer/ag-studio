@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { HarnessConfig, ProjectConfig, ScriptsRegistry, SecretResolver } from "@harness/contracts";
-import { HARNESS_ROOT, LibraryFs, loadProfile, loadWorkflow, MIGRATIONS_DIR, resolveWorkflowScope, runDoctor, SqliteStateStore, type DoctorInput, type LoadedWorkflow } from "../../src/index.js";
+import { ChannelConfigSchema, type HarnessConfig, type ProjectConfig, type ScriptsRegistry, type SecretResolver } from "@harness/contracts";
+import { HARNESS_ROOT, LibraryFs, loadProfile, loadWorkflow, MIGRATIONS_DIR, resolveWorkflowScope, runDoctor, SqliteStateStore, type DoctorInput, type LoadedChannel, type LoadedWorkflow } from "../../src/index.js";
 import { openTempStore } from "../helpers.js";
 
 const HARNESS_CONFIG: HarnessConfig = {
@@ -26,6 +26,39 @@ class StubSecrets implements SecretResolver {
     return "resolved-value";
   }
   resolvedValues(): string[] { return []; }
+}
+
+/** Resolves any ref to the fixed value the `legacy-channel-repo` fixture's `channel.config.json` carries, so
+ * `channel:<id>:identity`'s email comparison passes without wiring a real secret store. */
+class FixedSecrets implements SecretResolver {
+  constructor(private readonly value: string) {}
+  resolve(): string { return this.value; }
+  resolvedValues(): string[] { return []; }
+}
+
+const LEGACY_REPO_FIXTURE = join(HARNESS_ROOT, "fixtures", "legacy-channel-repo");
+
+/** Fresh temp copy of `fixtures/legacy-channel-repo` (channel.config.json: channelId `UCfake000000000000000001`,
+ * accountEmail `owner@example.com`, projectId `project-01`; `.upload-profile/Default/.keep` present) so a test
+ * can delete `.upload-profile/Default` without mutating the committed fixture. */
+function setupChannelRepo(): string {
+  const dir = mkdtempSync(join(tmpdir(), "doctor-channel-repo-"));
+  cpSync(LEGACY_REPO_FIXTURE, dir, { recursive: true });
+  return dir;
+}
+
+function makeLoadedChannel(repoDir: string): LoadedChannel {
+  const config = ChannelConfigSchema.parse({
+    schema_version: "harness.channel-config/v1",
+    channel_id: "c1",
+    display_name: "Channel One",
+    portfolio_id: "portfolio-main",
+    repo_dir: repoDir.split("\\").join("/"),
+    legacy_project_id: "project-01",
+    youtube: { expected_channel_id: "UCfake000000000000000001", account_email_ref: "secret://youtube-c1/email" },
+    publication: { timezone: "Asia/Ho_Chi_Minh", publish_times: ["09:00"], max_daily_uploads: 1, min_gap_hours: 1 },
+  });
+  return { config, dir: join(repoDir, "channels", "c1"), config_revision: "sha256:" + "0".repeat(64) };
 }
 
 /** Clone `loaded` and drop the `name` of the first output on `stageKey` (exactOptionalPropertyTypes forbids
@@ -255,6 +288,93 @@ describe("runDoctor", () => {
     expect(rows.some((r) => r.check.startsWith("script:library-production/"))).toBe(false);
     expect(rows.some((r) => r.check.startsWith("script:style-study/"))).toBe(false);
     for (const row of rows) expect(row, `${row.check}: ${row.detail}`).toMatchObject({ ok: true });
+  });
+
+  describe("channels / agent / publisher rows (sub-project 3, Task 9)", () => {
+    it("passes all 5 per-channel checks when the repo, scripts, profile, identity and secret all line up", () => {
+      const repoDir = setupChannelRepo();
+      const channel = makeLoadedChannel(repoDir);
+      const projectDir = mkdtempSync(join(tmpdir(), "doctor-channels-ok-"));
+
+      const rows = runDoctor({
+        ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+        channels: { loaded: [channel], errors: [], secrets: new FixedSecrets("owner@example.com") },
+      });
+      const byCheck = new Map(rows.map((r) => [r.check, r]));
+
+      expect(byCheck.get("channels:config")).toMatchObject({ ok: true, detail: "1 channels" });
+      for (const suffix of ["repo", "scripts", "profile", "identity", "secrets"]) {
+        expect(byCheck.get(`channel:c1:${suffix}`), JSON.stringify(byCheck.get(`channel:c1:${suffix}`))).toMatchObject({ ok: true });
+      }
+    });
+
+    it("fails channel:<id>:profile (and only that row) once .upload-profile/Default is removed", () => {
+      const repoDir = setupChannelRepo();
+      rmSync(join(repoDir, ".upload-profile", "Default"), { recursive: true, force: true });
+      const channel = makeLoadedChannel(repoDir);
+      const projectDir = mkdtempSync(join(tmpdir(), "doctor-channels-noprofile-"));
+
+      const rows = runDoctor({
+        ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+        channels: { loaded: [channel], errors: [], secrets: new FixedSecrets("owner@example.com") },
+      });
+      const byCheck = new Map(rows.map((r) => [r.check, r]));
+
+      expect(byCheck.get("channel:c1:profile")).toMatchObject({ ok: false });
+      expect(byCheck.get("channel:c1:profile")?.detail).toContain("harness channel login c1");
+      for (const suffix of ["repo", "scripts", "identity", "secrets"]) {
+        expect(byCheck.get(`channel:c1:${suffix}`), JSON.stringify(byCheck.get(`channel:c1:${suffix}`))).toMatchObject({ ok: true });
+      }
+    });
+
+    it("channels:config fails on a swallowed loadChannels error, with no per-channel rows and no channels", () => {
+      const projectDir = mkdtempSync(join(tmpdir(), "doctor-channels-broken-"));
+      const rows = runDoctor({
+        ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+        channels: { loaded: [], errors: ["channels/bad/channel.yaml invalid: channel_id: Required"], secrets: new StubSecrets(true) },
+      });
+      expect(new Map(rows.map((r) => [r.check, r])).get("channels:config")).toMatchObject({ ok: false, detail: "channels/bad/channel.yaml invalid: channel_id: Required" });
+      expect(rows.some((r) => r.check.startsWith("channel:"))).toBe(false);
+    });
+
+    it("adds no channels:config row (and no per-channel rows) when no channels are declared", () => {
+      const projectDir = mkdtempSync(join(tmpdir(), "doctor-channels-none-"));
+      const rows = runDoctor({
+        ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+        channels: { loaded: [], errors: [], secrets: new StubSecrets(true) },
+      });
+      expect(rows.some((r) => r.check.startsWith("channel"))).toBe(false);
+    });
+
+    it("adds no channels rows at all when DoctorInput.channels is not passed", () => {
+      const projectDir = mkdtempSync(join(tmpdir(), "doctor-channels-absent-"));
+      const rows = runDoctor({ ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [] });
+      expect(rows.some((r) => r.check.startsWith("channel"))).toBe(false);
+    });
+
+    it("agent:runtime: fake is always ok regardless of isAvailable; cli asks the injected isAvailable with argv0", () => {
+      const projectDir = mkdtempSync(join(tmpdir(), "doctor-agent-"));
+      const base = { ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [] } as const;
+
+      const fake = runDoctor({ ...base, agent: { kind: "fake", runtime: "claude", argv0: "claude", isAvailable: () => false } });
+      expect(new Map(fake.map((r) => [r.check, r])).get("agent:runtime")).toMatchObject({ ok: true, detail: "fake" });
+
+      let askedArgv0: string | undefined;
+      const cliMissing = runDoctor({ ...base, agent: { kind: "cli", runtime: "claude", argv0: "missing-bin", isAvailable: (argv0) => { askedArgv0 = argv0; return false; } } });
+      const missingRow = new Map(cliMissing.map((r) => [r.check, r])).get("agent:runtime");
+      expect(missingRow).toMatchObject({ ok: false });
+      expect(missingRow?.detail).toContain("missing-bin");
+      expect(askedArgv0).toBe("missing-bin"); // doctor never invokes the model, only --version through isAvailable
+
+      const cliOk = runDoctor({ ...base, agent: { kind: "cli", runtime: "claude", argv0: "claude", isAvailable: () => true } });
+      expect(new Map(cliOk.map((r) => [r.check, r])).get("agent:runtime")).toMatchObject({ ok: true });
+    });
+
+    it("publisher: a single informational row naming the adapter", () => {
+      const projectDir = mkdtempSync(join(tmpdir(), "doctor-publisher-"));
+      const rows = runDoctor({ ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [], publisher: { name: "playwright" } });
+      expect(new Map(rows.map((r) => [r.check, r])).get("publisher")).toMatchObject({ ok: true, detail: "playwright" });
+    });
   });
 });
 

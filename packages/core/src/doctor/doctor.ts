@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { HarnessConfig, ProductionProfile, ProjectConfig, ScriptsRegistry, SecretResolver, StageDefinition, StateStore } from "@harness/contracts";
 import { EnvSecretResolver } from "../config/secrets.js";
+import type { LoadedChannel } from "../distribution/channels.js";
 import type { LibraryFs, LibraryRole } from "../library/files.js";
 import type { LoadedWorkflow } from "../orchestration/registry.js";
 import { loadSourcesRegistry, SOURCES_FILE } from "../source-catalog/sources-file.js";
@@ -29,6 +30,16 @@ export interface DoctorInput {
   configErrors?: { scripts?: string; sources?: string };
   /** Only present when `project.yaml` declares `library`; adds the three `library:*` rows below. */
   library?: { fs: LibraryFs; role: LibraryRole };
+  /** Only present when the composition root always has channel data available; a per-channel row set is added
+   * for every loaded channel (repo dir, upload scripts, upload profile, identity, secret), plus one summary
+   * `channels:config` row. `errors` mirrors `configErrors.scripts`/`.sources`: a broken `channels/` directory
+   * fails that one row instead of aborting doctor, and no channel is loaded so no per-channel rows follow. */
+  channels?: { loaded: LoadedChannel[]; errors: string[]; secrets: SecretResolver };
+  /** Only present when the composition root has picked an agent runtime; checks `--version` only (never the
+   * model) through the injected `isAvailable`, so doctor never has to import an adapter. */
+  agent?: { kind: "cli" | "fake"; runtime: "claude" | "codex"; argv0: string; isAvailable: (argv0: string) => boolean };
+  /** Only present when the composition root has picked a publisher adapter; a single informational row. */
+  publisher?: { name: string };
 }
 
 const SCRIPT_FILE_RE = /\.(mjs|js|cjs|ts|py|sh)$/;
@@ -63,6 +74,9 @@ export function runDoctor(i: DoctorInput): DoctorRow[] {
     ...checkProfiles(i),
     checkSources(i),
     ...(i.library ? [checkLibraryRoot(i.library), checkLibraryWrite(i.library), checkLibraryIndex(i.library)] : []),
+    ...checkChannels(i),
+    ...(i.agent ? [checkAgentRuntime(i.agent)] : []),
+    ...(i.publisher ? [checkPublisher(i.publisher)] : []),
   ];
 }
 
@@ -232,6 +246,85 @@ function checkLibraryIndex(library: { fs: LibraryFs; role: LibraryRole }): Docto
   } catch (e) {
     return { check: "library:index", ok: false, detail: e instanceof Error ? e.message : String(e) };
   }
+}
+
+const CHANNEL_UPLOAD_SCRIPTS = ["upload-youtube-playwright.mjs", "publish-video-playwright.mjs"];
+
+/** `channels:config` plus, only when `errors` is empty, five rows per loaded channel. A broken `channels/`
+ * directory (the composition root swallows the parse error the same way it does for `configErrors.scripts`/
+ * `.sources`) fails just the one summary row -- there is nothing loaded to check per-channel. No channels
+ * declared at all (the common case for a footage/avatar-only project) adds no row, same as `library:*`. */
+function checkChannels(i: DoctorInput): DoctorRow[] {
+  if (!i.channels) return [];
+  if (i.channels.errors.length > 0) return [{ check: "channels:config", ok: false, detail: i.channels.errors.join("; ") }];
+  if (i.channels.loaded.length === 0) return [];
+  const rows: DoctorRow[] = [{ check: "channels:config", ok: true, detail: `${i.channels.loaded.length} channels` }];
+  for (const channel of i.channels.loaded) rows.push(...checkOneChannel(channel, i.channels.secrets));
+  return rows;
+}
+
+function checkOneChannel(channel: LoadedChannel, secrets: SecretResolver): DoctorRow[] {
+  const id = channel.config.channel_id;
+  const repoDir = resolve(channel.config.repo_dir);
+
+  const repoOk = existsSync(repoDir) && statSync(repoDir).isDirectory();
+  const repoRow: DoctorRow = { check: `channel:${id}:repo`, ok: repoOk, detail: repoOk ? `${repoDir} exists` : `${repoDir} not found or not a directory` };
+
+  const missingScripts = CHANNEL_UPLOAD_SCRIPTS.filter((f) => !existsSync(join(repoDir, "scripts", f)));
+  const scriptsRow: DoctorRow = { check: `channel:${id}:scripts`, ok: missingScripts.length === 0, detail: missingScripts.length === 0 ? `${CHANNEL_UPLOAD_SCRIPTS.join(" + ")} present` : `missing: ${missingScripts.join(", ")}` };
+
+  const profilePath = join(repoDir, ".upload-profile", "Default");
+  const profileOk = existsSync(profilePath);
+  const profileRow: DoctorRow = { check: `channel:${id}:profile`, ok: profileOk, detail: profileOk ? `${profilePath} exists` : `chưa đăng nhập: harness channel login ${id}` };
+
+  const identityRow = checkChannelIdentity(channel, repoDir, secrets);
+
+  let secretsOk = true;
+  let secretsDetail = `${channel.config.youtube.account_email_ref} resolves`;
+  try { secrets.resolve(channel.config.youtube.account_email_ref); }
+  catch (e) { secretsOk = false; secretsDetail = e instanceof Error ? e.message : String(e); }
+  const secretsRow: DoctorRow = { check: `channel:${id}:secrets`, ok: secretsOk, detail: secretsDetail };
+
+  return [repoRow, scriptsRow, profileRow, identityRow, secretsRow];
+}
+
+/** Compares the legacy repo's `channel.config.json` against `channel.yaml`: `youtube.channelId` must match
+ * `youtube.expected_channel_id`, `projectId` must match `legacy_project_id`, `youtube.accountEmail` must match
+ * the secret `account_email_ref` resolves to. The email comparison is skipped (not failed) when the secret
+ * itself does not resolve -- `channel:<id>:secrets` already reports that root cause on its own row. */
+function checkChannelIdentity(channel: LoadedChannel, repoDir: string, secrets: SecretResolver): DoctorRow {
+  const id = channel.config.channel_id;
+  const check = `channel:${id}:identity`;
+  const path = join(repoDir, "channel.config.json");
+  if (!existsSync(path)) return { check, ok: false, detail: `${path} not found` };
+
+  let raw: { projectId?: string; youtube?: { channelId?: string; accountEmail?: string } };
+  try { raw = JSON.parse(readFileSync(path, "utf8")); }
+  catch (e) { return { check, ok: false, detail: e instanceof Error ? e.message : String(e) }; }
+
+  const problems: string[] = [];
+  if (raw.youtube?.channelId !== channel.config.youtube.expected_channel_id) {
+    problems.push(`youtube.channelId "${raw.youtube?.channelId ?? ""}" != expected_channel_id "${channel.config.youtube.expected_channel_id}"`);
+  }
+  if (raw.projectId !== channel.config.legacy_project_id) {
+    problems.push(`projectId "${raw.projectId ?? ""}" != legacy_project_id "${channel.config.legacy_project_id}"`);
+  }
+  try {
+    const expectedEmail = secrets.resolve(channel.config.youtube.account_email_ref);
+    if (raw.youtube?.accountEmail !== expectedEmail) problems.push(`youtube.accountEmail "${raw.youtube?.accountEmail ?? ""}" != resolved ${channel.config.youtube.account_email_ref}`);
+  } catch { /* unresolved secret is channel:<id>:secrets's failure to report, not this row's */ }
+  return { check, ok: problems.length === 0, detail: problems.length === 0 ? `${path} matches channel.yaml` : problems.join("; ") };
+}
+
+/** `--version` only, through the injected `isAvailable` -- doctor never invokes the model itself. */
+function checkAgentRuntime(agent: NonNullable<DoctorInput["agent"]>): DoctorRow {
+  if (agent.kind === "fake") return { check: "agent:runtime", ok: true, detail: "fake" };
+  const ok = agent.isAvailable(agent.argv0);
+  return { check: "agent:runtime", ok, detail: ok ? `${agent.argv0} available` : `${agent.argv0} not on PATH` };
+}
+
+function checkPublisher(publisher: NonNullable<DoctorInput["publisher"]>): DoctorRow {
+  return { check: "publisher", ok: true, detail: publisher.name };
 }
 
 function checkSources(i: DoctorInput): DoctorRow {

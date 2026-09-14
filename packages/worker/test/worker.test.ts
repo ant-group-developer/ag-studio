@@ -3,10 +3,10 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { getEventListeners } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { newId, ProductionProfileSchema, ProjectConfigSchema, WorkflowDefinitionSchema, type Executor, type StageRequest, type StageResult } from "@harness/contracts";
-import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, FixedClock, HARNESS_ROOT, LibraryFs, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, SourceCatalog, SqliteStateStore, Verifier, addSeconds, createLogger, loadHarnessConfig, loadProfile, loadWorkflow } from "@harness/core";
+import { ChannelConfigSchema, newId, ProductionProfileSchema, ProjectConfigSchema, WorkflowDefinitionSchema, type ChannelPackage, type Executor, type Hypothesis, type PublicationJob, type StageRequest, type StageResult } from "@harness/contracts";
+import { ArtifactRegistry, BUILTIN_CHECKERS, ChannelRegistry, Controller, FixedClock, HARNESS_ROOT, LibraryFs, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, SourceCatalog, SqliteStateStore, Verifier, addSeconds, createLogger, loadHarnessConfig, loadProfile, loadWorkflow } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
-import { FakeAgentRuntime, fakeScriptCommands } from "@harness/adapter-fake";
+import { FakeAgentRuntime, FakePublisher, fakeScriptCommands } from "@harness/adapter-fake";
 import { Worker, type WorkerDeps } from "../src/worker.js";
 
 function makeWorld(opts: { scriptExecutor?: Executor; owner?: string; clock?: FixedClock; dir?: string } = {}) {
@@ -407,6 +407,96 @@ describe("Worker", () => {
       await expect(worker.runOnce()).resolves.toBe("idle"); // same instant, still under syncSeconds -> no retry yet
       expect(listStyleIds).toHaveBeenCalledTimes(1);
       expect(errors).toHaveLength(1);
+    });
+  });
+
+  describe("publication verify sweep (sub-project 3, Task 9)", () => {
+    const PLACEHOLDER = "sha256:" + "0".repeat(64);
+
+    function makeChannelRegistry(): ChannelRegistry {
+      const config = ChannelConfigSchema.parse({
+        schema_version: "harness.channel-config/v1", channel_id: "channel-main", display_name: "Main Channel", portfolio_id: "portfolio-main",
+        repo_dir: "repo-does-not-need-to-exist", legacy_project_id: "project-01",
+        youtube: { expected_channel_id: "UCfakemain00000000000001", account_email_ref: "secret://youtube-channel-main/email" },
+        publication: { timezone: "Asia/Ho_Chi_Minh", publish_times: ["09:00"], max_daily_uploads: 1, min_gap_hours: 1 },
+      });
+      return new ChannelRegistry([{ config, dir: "channels/channel-main", config_revision: PLACEHOLDER }]);
+    }
+
+    function sampleHypothesis(): Hypothesis {
+      return {
+        schema_version: "harness.hypothesis/v1", hypothesis_id: newId("hypothesis"),
+        basis: [{ kind: "manual", note: "seed" }],
+        chosen: { title: "Ep 1", thumbnail_candidate: "thumb.png", overlay_text: [], angle: "" },
+        rejected: [{ title: "Other angle", angle: "", why: "weaker" }],
+        expected: { metric: "ctr", target: 0.1, horizon_hours: 48 },
+        status: "open", created_at: "2026-09-10T00:00:00.000Z",
+      };
+    }
+
+    /** Hand-writes a committed `ChannelPackage` and a `SCHEDULED` `PublicationJob` straight into the store
+     * (mirroring the CLI's own channel-publish-commands test), scheduled well before the `FixedClock`'s
+     * "now" -- overdue with `graceHours: 0`. */
+    function seedOverdueScheduledJob(w: ReturnType<typeof makeWorld>, videoId: string): PublicationJob {
+      const now = w.clock.now();
+      const pkg: ChannelPackage = {
+        schema_version: "harness.channel-package/v1", package_id: newId("channel_package"), channel_id: "channel-main",
+        variant_id: newId("content_variant"), content_id: newId("content_item"), library_item_id: newId("library_item"), run_id: newId("run"),
+        episode_no: 1, episode_dir: "episode-01", manifest_digest: PLACEHOLDER, video_artifact_id: newId("artifact"), thumbnail_artifact_id: newId("artifact"),
+        video_checksum: PLACEHOLDER, thumbnail_checksum: PLACEHOLDER,
+        metadata: { title: "Ep 1", description: "", tags: [], playlists: [], hashtags: [], pinned_comment: "", language: "en" },
+        hypothesis: sampleHypothesis(), metadata_revision: 1, channel_config_revision: PLACEHOLDER, status: "committed", created_at: now, updated_at: now,
+      };
+      w.store.insertChannelPackage(pkg);
+      const job: PublicationJob = {
+        schema_version: "harness.publication-job/v1", publication_job_id: newId("publication_job"), package_id: pkg.package_id,
+        channel_id: "channel-main", library_item_id: pkg.library_item_id, run_id: pkg.run_id, idempotency_key: PLACEHOLDER,
+        state: "SCHEDULED", youtube_video_id: videoId, operation_id: null, scheduled_at: "2026-09-10T00:00:00.000Z",
+        published_at: null, last_verified_at: null, note: null, receipt: null, created_at: now, updated_at: now,
+      };
+      w.store.insertPublicationJob(job);
+      return job;
+    }
+
+    it("sweeps an overdue SCHEDULED job to PUBLISHED, at most once every verifySeconds", async () => {
+      const w = makeWorld();
+      const job = seedOverdueScheduledJob(w, "vidX");
+      const publisher = new FakePublisher({ lookup: { found: true, video_id: "vidX", visibility: "public" } });
+      const worker = new Worker({ ...w.deps, publication: { publisher, channels: makeChannelRegistry(), verifySeconds: 10, graceHours: 0 } });
+
+      expect(await worker.runOnce()).toBe("idle"); // nothing enqueued -> claim() is null -> idle branch sweeps
+      expect(w.store.getPublicationJob(job.publication_job_id)?.state).toBe("PUBLISHED");
+      expect(publisher.lookups).toBe(1);
+
+      expect(await worker.runOnce()).toBe("idle"); // same FixedClock instant, well under verifySeconds=10
+      expect(publisher.lookups).toBe(1); // no second sweep
+    });
+  });
+
+  describe("dashboard refresh (sub-project 3, Task 9)", () => {
+    it("calls dashboard.write once per refreshSeconds", async () => {
+      const w = makeWorld();
+      const write = vi.fn(async () => {});
+      const worker = new Worker({ ...w.deps, dashboard: { refreshSeconds: 10, write } });
+
+      expect(await worker.runOnce()).toBe("idle");
+      expect(write).toHaveBeenCalledTimes(1);
+
+      expect(await worker.runOnce()).toBe("idle"); // same FixedClock instant, well under refreshSeconds=10
+      expect(write).toHaveBeenCalledTimes(1);
+    });
+
+    it("logs and swallows a dashboard write failure instead of crashing the poll", async () => {
+      const w = makeWorld();
+      const errors: unknown[] = [];
+      const logger = { ...w.deps.logger, error: (msg: string, data?: object) => { errors.push({ msg, data }); } };
+      const write = vi.fn(async () => { throw new Error("disk full"); });
+      const worker = new Worker({ ...w.deps, logger, dashboard: { refreshSeconds: 10, write } });
+
+      await expect(worker.runOnce()).resolves.toBe("idle");
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatchObject({ msg: "dashboard refresh failed" });
     });
   });
 });
