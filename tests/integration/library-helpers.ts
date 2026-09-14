@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { parse, stringify } from "yaml";
 import { newId, type LibraryItem } from "@harness/contracts";
 import { HARNESS_ROOT } from "@harness/core";
-import { makeVideo } from "../media.js";
+import { hasFfmpeg, makeVideo } from "../media.js";
 import { cli } from "./footage-helpers.js";
 
 export { cli, cliAsync, drain, stageId, status, submitGate, SAMPLE_EDL } from "./footage-helpers.js";
@@ -147,7 +147,14 @@ export function setResourceCapacity(project: string, resource: string, capacity:
  * Writes an `items/<id>/` the way `library-export` would have: one data file plus a manifest whose
  * `files` entry carries that file's real checksum and size. `corrupt` bends exactly one of the two so the
  * item is what `syncLibrary` reports as corrupt: `"manifest"` leaves unparseable JSON in manifest.json,
- * `"checksum"` rewrites the data file after the manifest was computed.
+ * `"checksum"` rewrites the data file after the manifest was computed. `extraFiles` writes additional
+ * `items/<id>/<path>` entries into the manifest's `files` array alongside `episode.mp4` (e.g. thumbnail
+ * candidates a channel-publish run needs) -- a compatible addition, so every existing caller is unaffected.
+ *
+ * `episode.mp4` itself is a real (tiny) video via `makeVideo` when ffmpeg is on PATH, so a `media-probe`
+ * check downstream (the channel-publish `fetch-library-item` stage requires it) gets a decodable file
+ * instead of failing on plain text; when ffmpeg is unavailable this falls back to the original fake-bytes
+ * body (unchanged from before), which is fine because `media-probe` itself skips without a prober.
  */
 export function writeLibraryItem(lib: string, o: {
   itemId: string;
@@ -156,15 +163,31 @@ export function writeLibraryItem(lib: string, o: {
   titleHint?: string;
   requestId?: string;
   corrupt?: "manifest" | "checksum";
+  extraFiles?: { path: string; body: string; mime_type: string }[];
 }): void {
   const dir = join(lib, "items", o.itemId);
   mkdirSync(dir, { recursive: true });
-  const body = `fake episode bytes for ${o.itemId}\n`;
-  writeFileSync(join(dir, "episode.mp4"), body);
+  const videoPath = join(dir, "episode.mp4");
+  let body: Buffer | string;
+  if (hasFfmpeg()) {
+    makeVideo(videoPath, { seconds: 2, audio: true });
+    body = readFileSync(videoPath);
+  } else {
+    body = `fake episode bytes for ${o.itemId}\n`;
+    writeFileSync(videoPath, body);
+  }
 
   if (o.corrupt === "manifest") {
     writeFileSync(join(dir, "manifest.json"), "{ this is not valid JSON");
     return;
+  }
+
+  const files: LibraryItem["files"] = [
+    { path: "episode.mp4", checksum: "sha256:" + createHash("sha256").update(body).digest("hex"), size_bytes: Buffer.byteLength(body), mime_type: "video/mp4" },
+  ];
+  for (const f of o.extraFiles ?? []) {
+    writeFileSync(join(dir, f.path), f.body);
+    files.push({ path: f.path, checksum: "sha256:" + createHash("sha256").update(f.body).digest("hex"), size_bytes: Buffer.byteLength(f.body), mime_type: f.mime_type });
   }
 
   const item: LibraryItem = {
@@ -177,7 +200,7 @@ export function writeLibraryItem(lib: string, o: {
     ...(o.requestId ? { request_id: o.requestId } : {}),
     duration_seconds: 5,
     media: null,
-    files: [{ path: "episode.mp4", checksum: "sha256:" + createHash("sha256").update(body).digest("hex"), size_bytes: Buffer.byteLength(body), mime_type: "video/mp4" }],
+    files,
     lineage: { project_id: "project-studio", run_id: newId("run"), content_id: newId("content_item"), source_ids: [] },
     review: { note: "" },
     created_at: "2026-09-14T00:00:00.000Z",
@@ -186,7 +209,9 @@ export function writeLibraryItem(lib: string, o: {
   writeFileSync(join(dir, "manifest.json"), JSON.stringify(item, null, 2) + "\n");
 
   // after the manifest was written, so its checksum no longer describes what is on disk
-  if (o.corrupt === "checksum") writeFileSync(join(dir, "episode.mp4"), `${body}tampered\n`);
+  if (o.corrupt === "checksum") {
+    writeFileSync(videoPath, typeof body === "string" ? `${body}tampered\n` : Buffer.concat([body, Buffer.from("tampered")]));
+  }
 }
 
 /** `harness library sync --json` on a project, asserting it found nothing corrupt. */

@@ -1,0 +1,32 @@
+schema_version: harness.channel-config/v1
+channel_id: channel-two
+display_name: Channel Two
+portfolio_id: portfolio-channel
+# Overwritten with an absolute path to its own temp copy of fixtures/legacy-channel-repo by
+# tests/integration/publish-helpers.ts's freshPublishWorld -- see channel-one/channel.yaml for why the
+# relative value below already resolves correctly from this fixture directory.
+repo_dir: ../legacy-channel-repo
+legacy_project_id: project-01
+youtube:
+  expected_channel_id: UCfake000000000000000001
+  account_email_ref: secret://youtube-channel-two/email
+publication:
+  timezone: Asia/Bangkok
+  publish_times: ["19:00"]
+  max_daily_uploads: 3
+  min_gap_hours: 1
+seo:
+  niche: du lịch miền Tây
+  audience: người Việt 25-45 tuổi thích khám phá
+  angle: ẩm thực đường phố
+  language: vi
+  market: VN
+  keywords: ["ẩm thực", "miền Tây", "đường phố"]
+  title_rules: "tối đa 100 ký tự, có số liệu cụ thể"
+  description_template: "Tập {{episode_no}}: {{title}}\n\n#mienTay #amThuc"
+episode:
+  start: 3
+  dir_pattern: episode-{nn}
+overlay:
+  enabled: true
+  side: right

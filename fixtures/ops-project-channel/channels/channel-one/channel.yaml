@@ -1,0 +1,32 @@
+schema_version: harness.channel-config/v1
+channel_id: channel-one
+display_name: Channel One
+portfolio_id: portfolio-channel
+# Overwritten with an absolute path to a temp copy of fixtures/legacy-channel-repo by
+# tests/integration/publish-helpers.ts's freshPublishWorld -- relative to this fixture directory, this is
+# the real legacy-channel-repo fixture, exactly like fixtures/ops-project-footage's scripts.yaml cwd trick.
+repo_dir: ../legacy-channel-repo
+legacy_project_id: project-01
+youtube:
+  expected_channel_id: UCfake000000000000000001
+  account_email_ref: secret://youtube-channel-one/email
+publication:
+  timezone: Asia/Bangkok
+  publish_times: ["20:00"]
+  max_daily_uploads: 3
+  min_gap_hours: 1
+seo:
+  niche: du lịch miền Tây
+  audience: người Việt 25-45 tuổi thích khám phá
+  angle: chợ nổi và đời sống sông nước
+  language: vi
+  market: VN
+  keywords: ["chợ nổi", "miền Tây", "du lịch sông nước"]
+  title_rules: "tối đa 100 ký tự, có số liệu cụ thể"
+  description_template: "Tập {{episode_no}}: {{title}}\n\n#mienTay #choNoi"
+episode:
+  start: 15
+  dir_pattern: episode-{nn}
+overlay:
+  enabled: true
+  side: right

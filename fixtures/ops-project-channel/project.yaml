@@ -9,7 +9,17 @@ source: { materialize: link }
 # Same kho as the studio fixture, mounted read-mostly: a channel only ever writes `requests/<id>.json`
 # and `items/<id>/claims/<channel_id>.json` (enforced by LibraryFs.assertWritable).
 library: { root: ./library, role: channel }
-# The channel role runs no workflow of its own yet -- it creates requests, syncs and picks. An empty list
-# scopes `harness doctor` to no workflow at all, so it never asks for wrappers this project has no
-# `executors/` for.
-workflows: []
+# The channel role also runs channel-publish (Task 11): fetch/build-package/upload/schedule are the built-in
+# publish-* commands (no executors/ wrapper needed, same as library-*), so scoping doctor to just this release
+# never asks for a scripts.yaml this project doesn't have.
+workflows: [channel-publish@1.0.0]
+# upload/schedule both requires_resources: [browser] (workflow.yaml); one slot is enough since production
+# profile channel's limits.max_concurrency is 1.
+resources: { browser: 1 }
+adapters:
+  publisher: playwright
+  agent: cli
+  # "node" / "../fake-agent-cli.mjs" only resolve correctly from *this* fixture directory (mirroring
+  # channels/*/channel.yaml's repo_dir); tests/integration/publish-helpers.ts's freshPublishWorld rewrites
+  # both to absolute paths (argv[0] -> process.execPath) before writing project.yaml into a temp project.
+  agent_argv: [node, ../fake-agent-cli.mjs, "{prompt}"]
