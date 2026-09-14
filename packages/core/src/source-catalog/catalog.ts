@@ -7,10 +7,14 @@ import { canonicalDigest, sha256File } from "../artifacts/checksum.js";
 export interface IngestInput { path: string; collection?: string; rights_status?: "unknown" | "cleared" | "restricted"; language?: string | null }
 export interface VerifyRow { source_id: string; ok: boolean; reason: string | null }
 
-const MIME_BY_EXT: Record<string, string> = {
+export const MIME_BY_EXT: Record<string, string> = {
   ".mp4": "video/mp4", ".mov": "video/quicktime", ".mkv": "video/x-matroska", ".wav": "audio/wav", ".mp3": "audio/mpeg",
   ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".txt": "text/plain", ".md": "text/markdown", ".json": "application/json", ".srt": "text/plain",
 };
+
+export function mimeTypeForPath(path: string): string {
+  return MIME_BY_EXT[extname(path).toLowerCase()] ?? "application/octet-stream";
+}
 
 export function normalizedDir(dataRoot: string, sourceId: string): string { return join(dataRoot, "sources", "normalized", sourceId); }
 
@@ -37,7 +41,7 @@ export class SourceCatalog {
     }
     const source: SourceItem = {
       schema_version: "harness.source-item/v1", source_id: id, uri, original_uri: pathToFileURL(src).href, checksum, collection: p.collection ?? "main",
-      mime_type: probed?.mime_type ?? MIME_BY_EXT[extname(src).toLowerCase()] ?? "application/octet-stream", size_bytes, media: probed?.media ?? null,
+      mime_type: probed?.mime_type ?? mimeTypeForPath(src), size_bytes, media: probed?.media ?? null,
       rights_status: p.rights_status ?? "unknown", language: p.language ?? null, duration_seconds: probed?.duration_seconds ?? null, ingested_at: this.d.clock.now(),
     };
     writeFileSync(join(dir, "source.json"), JSON.stringify(source, null, 2) + "\n");
