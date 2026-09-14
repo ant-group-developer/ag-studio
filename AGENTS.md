@@ -53,14 +53,32 @@ YouTube Operations Harness: control plane điều phối sản xuất và phân 
 - `harness library styles show <style_id> [--json]`: in một edit style đã sync.
 - `harness library stage <intake|style-export|export|apply-review>`: nội bộ, do executor `script` tự gọi lại CLI này khi chạy bốn stage kho built-in trong `library-production`/`style-study` — không gọi tay; xem `docs/runbooks/content-library.md`.
 
+## Lệnh 3 (phát hành kênh, dashboard)
+- `harness channel list [--json]` · `show <id> [--json]` (config + `config_revision` + đếm `PublicationJob` theo `state`) · `hypotheses <id> [--json]` (từ `channel_package.hypothesis` của các gói `committed`) · `login <id>`: spawn `scripts/open-channel-chrome.mjs` của repo kênh nếu có, ngược lại in dòng lệnh mở Chrome tay với `--user-data-dir=.upload-profile` — không có đường nào khác đưa một profile Chrome vào trạng thái đã đăng nhập; Chrome ≥127 App-Bound Encryption khoá cookie theo máy nên **không copy `.upload-profile` giữa các máy**.
+- `harness publish list [--channel <id>] [--state <s>] [--json]` · `show <job> [--json]` (kèm title/episode_no từ package + event của job) · `slots <channel> [--days 7] [--json]` (xem trước, không đặt lịch) · `verify [--json]` (chạy `verifyScheduled` một lần, không đợi chu kỳ worker) · `reconcile <job> [--json]` (hỏi `Publisher.lookup` rồi tự sửa job) · `cancel <job> --note <text> [--json]` (`READY|PROCESSING|SCHEDULED → FAILED`, không đụng YouTube). `harness reconcile --publication <job>` tương đương `publish reconcile <job>` (không được truyền cùng lúc với `<id>` thường — `CONFIG_INVALID`).
+- `harness publish stage fetch|build-package|upload|schedule`: nội bộ, bốn stage built-in của workflow `channel-publish` (`publish-fetch|publish-build-package|publish-upload|publish-schedule` trong composition) — do executor `script` tự gọi lại CLI này, không gọi tay; xem `docs/runbooks/channel-publish.md`.
+- `harness skills sync [--json]`: copy `<harnessRoot>/skills/*` (hiện chỉ có `channel-package`) vào `.claude/skills/` **và** `.agents/skills/` của ops project — cả hai đích luôn được ghi, không phân biệt `project.yaml.runtime`; chạy lại xoá sạch rồi copy lại (không merge tăng dần).
+- `harness dashboard snapshot [--json]` (ghi `dashboard/snapshot.json` nguyên tử, in đường dẫn hoặc nội dung) · `serve [--port]` (ghi một snapshot rồi phục vụ `/hub` tới khi Ctrl+C; cổng theo thứ tự `--port` > `HARNESS_DASHBOARD_PORT` > `project.yaml.dashboard.port`, mặc định 5200; bind `127.0.0.1`).
+- Doctor thêm cho vai `channel`: `channels:config` (một dòng cho cả khối `channels/`; lỗi parse/`channel_id` khác tên thư mục/`portfolio_id` lạ làm dòng này FAIL và **không** có năm dòng theo kênh nào cả), rồi năm dòng mỗi kênh nạp được — `channel:<id>:repo` (`repo_dir` tồn tại), `:scripts` (hai script Playwright cũ có mặt), `:profile` (`.upload-profile/Default/` tồn tại — không kiểm đăng nhập thật), `:identity` (`channel.config.json.youtube.channelId`/`projectId`/`accountEmail` khớp `channel.yaml`), `:secrets` (`account_email_ref` resolve được). Cộng `agent:runtime` (CLI của `runtime` có trên PATH, `--version` chạy được — không gọi model) và `publisher` (tên adapter đang chọn, luôn `ok`). Không có `channels/` → không dòng nào trong nhóm này (giống `library:*` khi không khai `library`).
+
+### Ranh giới ghi repo kênh cũ, secret của agent
+- Harness chỉ được **ghi** vào repo kênh cũ (`channel.yaml.repo_dir`) dưới ba đường: `outputs/<legacy_project_id>/episodes/episode-NN/{full-episode/,thumbnails/,publish/}` (do `build-package` tạo), và để chính script cũ tự ghi `outputs/<legacy_project_id>/publish-queue.json`, `publish/upload-debug/`, `work/research/upload-blocked.json`. **Không bao giờ** sửa `scripts/`, `channel.config.json`, `.upload-profile/` — những thứ đó là của người vận hành kênh, đọc-only từ phía harness.
+- `youtube.account_email_ref` chỉ dùng để **đối chiếu** (`channel-identity` checker, doctor `channel:<id>:identity`/`:secrets`) — script cũ tự đọc `youtube.accountEmail` từ `channel.config.json` của chính nó để làm cổng chặn nhầm tài khoản; harness không bao giờ truyền giá trị email cho script qua argv/env.
+- Bốn stage built-in của `channel-publish` chạy trong **tiến trình CLI con riêng** (`harness publish stage <tên>`, giống khuôn 2C) — Redactor của một tiến trình chỉ che giá trị secret **chính tiến trình đó** đã `resolve()`. `channel-identity` (chạy ở `build-package`) resolve `account_email_ref` không giúp gì hai stage `upload`/`schedule` chạy sau, trong hai tiến trình khác — hai stage đó phải tự `app.secrets.resolve(...)` (bọc try/catch, không fail stage vì unresolved) ngay trước khi gọi `Publisher`, chỉ để đăng ký giá trị với Redactor của chính tiến trình mình (ADR-0001 mục 80).
+- Agent runtime (`@harness/adapter-agent-cli`) **không bao giờ** nhận `HARNESS_SECRET_*` trong env con, dù có lỡ liệt kê trong `env_passthrough` của runtime — lọc theo tiền tố tên biến, không theo danh sách trắng. Prompt đưa vào agent qua file (`agent-prompt.md` trong workspace), không qua argv/stdin.
+
 ## Giới hạn quyền
 - Không sửa cột `state` ngoài `transition()` và `claim()` trong `packages/core/src/state/` — **trừ** ba bảng
-  mirror của kho (`edit_style`, `content_request`, `library_item`): `state` ở đó chỉ là bản sao nội dung đọc
-  từ file trong kho, `syncLibrary`/`upsert*` ghi thẳng (xem "Quy tắc kho nội dung" và ADR-0001 mục 51).
+  mirror của kho (`edit_style`, `content_request`, `library_item`) và bảng `channel_package`: `state`/`status`
+  ở đó chỉ là bản sao nội dung (từ file trong kho, hoặc từ `ChannelPackage.status`), `syncLibrary`/`upsert*`/
+  `commitPackage` ghi thẳng (xem "Quy tắc kho nội dung" và ADR-0001 mục 51, 70). `publication_job.state`
+  **không** nằm trong ngoại lệ này — luôn qua `transitionPublication()`.
 - Không import `adapters/*` hay `agent-runtime/*` từ `packages/core`.
 - Không ghi giá trị secret vào file, event, log, manifest; chỉ dùng `secret://scope/name`.
 - Không gọi mạng hay LLM trong test.
-- Không upload/publish thật khi chưa có adapter YouTube ở sub-project 3; mọi thứ hiện là adapter giả.
+- Đường upload/schedule thật (`playwright` adapter, sub-project 3) bọc lại script Playwright cũ của kênh,
+  luôn đăng nhập bằng tay trước (`harness channel login`) — harness không bao giờ gõ mật khẩu/2FA. Adapter
+  YouTube Data API thật vẫn chưa tồn tại (không cần, thiết kế cố ý dùng script cũ thay vì gọi API).
 
 ## Quy tắc artifact
 - Worker ghi vào `workspaces/<run>/<stage>/<attempt>/output/`. Controller mới chuyển vào `artifacts/` và đánh dấu ACCEPTED.

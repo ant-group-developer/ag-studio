@@ -343,3 +343,87 @@ thư mục chia sẻ ("kho"); máy channel xin nội dung, đồng bộ, rồi n
 69. `exportItem` ghi `manifest.json` **trước** rồi mới `pruneStaleFiles`: giữa hai bước, một máy khác đang
     `library sync` chỉ thấy manifest liệt kê đúng những file còn trên đĩa. Thứ tự ngược lại tạo một khe trong
     đó manifest cũ bảo chứng cho file vừa bị xoá — đúng định nghĩa `corrupt` của sync.
+
+## Sub-project 3 (2026-09-14/15)
+
+Phát hành kênh: máy `channel` lấy một `LibraryItem` đã `approved` (qua `library pick` có sẵn của 2C), đóng
+gói theo hướng SEO của kênh (agent, skill `channel-package`), rồi đưa lên YouTube bằng cách bọc lại script
+Playwright cũ của kênh (`upload-youtube-playwright.mjs`, `publish-video-playwright.mjs`) — không dùng YouTube
+Data API. Cộng một dashboard chỉ đọc, dựng từ file `snapshot.json`. Đọc code (`packages/core/src/
+distribution/`, `packages/adapters/{youtube-playwright,agent-cli}/`, `packages/cli/src/commands/{channel,
+publish,publish-stage,dashboard}.ts`, `migrations/0004_distribution.sql`) để xác nhận hành vi, không chép từ
+plan/spec.
+
+70. `publication_job` là **`TransitionKind` thứ sáu** (`run | stage_run | attempt | artifact |
+    external_operation | publication_job`, `packages/contracts/src/interfaces.ts`) — cột `state` của nó chỉ
+    đổi qua `transitionPublication()` (bọc `store.transition("publication_job", ...)`), giống mọi bảng
+    transition khác, **khác** ba bảng mirror của kho (mục 51). Ngược lại, `channel_package.status` (`draft |
+    committed`) **là mirror-style**: `commitPackage` ghi thẳng qua `store.updateChannelPackage`, không qua
+    `transition()` — gói không có máy trạng thái riêng, chỉ có hai giá trị tuần tự không thể lùi.
+71. `ChannelPackage.channel_config_revision` là **sha256 canonical của `channel.yaml`** (`checksumSchema`),
+    không phải số nguyên tăng dần như bản nháp đầu của schema — khác trường cùng tên trên
+    `Artifact.reproducibility.channel_config_revision` (`z.number().int().nullable()`, không liên quan, giữ
+    nguyên từ trước). Đổi từ int sang checksum ngay ở Task 3 vì spec §2.3 nói rõ "sha256 canonical".
+72. Bốn stage built-in của `channel-publish` (`fetch-library-item`, `build-package`, `upload`, `schedule`)
+    chạy qua CLI con giống khuôn 2C (mục 52): mỗi script `publish-<tên>` trong composition chỉ là
+    `harness --project <dir> publish stage <tên>` (`builtinPublishCommands`,
+    `packages/cli/src/composition.ts`), đăng ký vào cùng `ScriptExecutor` với các script kho — một ops
+    project vai `channel` không cần `executors/scripts.yaml` cho bốn stage này. Stage `package` (thứ hai) là
+    executor `agent`, không đi qua CLI con.
+73. Cổng `Publisher` (`packages/contracts`) có hai implementation: `PlaywrightPublisher`
+    (`@harness/adapter-youtube-playwright`) bọc hai script Playwright cũ bằng `spawn`, đọc kết quả qua exit
+    code + `publish-queue.json`; `FakePublisher` (`@harness/adapter-fake`) cho test. **Exit-code-primary**:
+    kết quả `uploaded` chỉ được trả khi script thoát **0 và** `publish-queue.json` có dòng khớp — thoát khác 0
+    luôn là `unknown` **kể cả khi** dòng queue đã có mặt (kịch bản script chết sau khi tạo video nhưng trước
+    khi thoát sạch) — một điểm dừng để người kiểm tra qua `publish reconcile` thay vì tự tin nhận video đó
+    (ledger Task 5, giải quyết một mâu thuẫn trong brief giữa "có dòng queue là uploaded bất kể exit code" và
+    test "lost mode" đòi `unknown`).
+74. `idempotency_key = sha256(channel_id + ":" + video_checksum + ":" + manifest_digest)`
+    (`idempotencyKeyFor`, `packages/core/src/distribution/publication.ts`) — khác kênh hoặc khác nội dung
+    (checksum/manifest đổi) luôn ra khoá khác, nên hai kênh cùng phát một mục kho không bao giờ đụng khoá
+    của nhau (mục "Lineage" spec §2.7).
+75. Stage `upload` ghi `ExternalOperation` **`DISPATCHED` trước khi gọi `Publisher.upload()`** (có thể mất
+    tới 45 phút), không phải sau: một crash giữa chừng luôn để lại op ở `DISPATCHED` (không bao giờ kẹt
+    `INTENT_RECORDED`), để nhánh phục hồi `UPLOADING` của attempt kế tiếp (`recoverUploading`,
+    `packages/cli/src/commands/publish-stage.ts`) phân biệt được ba tình huống theo **trạng thái thật của
+    op**: `CONFIRMED` (video đã tạo, chỉ ghi lại output, không upload lại) → job `PROCESSING`; `FAILED`
+    (chưa hề upload) → job về `READY`, attempt này upload lại ngay, không chờ retry mới; còn lại
+    (`INTENT_RECORDED`/`DISPATCHED`/đã `NEEDS_RECONCILIATION`/hàng op mất) → coi như `unknown` sống,
+    `markLost` rồi job/op `NEEDS_RECONCILIATION`. (ledger Task 8, sửa ở fix round 1-2: bản đầu chỉ biết
+    "job đang UPLOADING" mà không phân theo trạng thái op, có thể kẹt hoặc upload đúp.)
+76. `harness publish reconcile <job>` (và `harness reconcile --publication <job>`, hai đường gọi cùng
+    `reconcilePublication`) luôn **hỏi provider trước** (`Publisher.lookup`) rồi mới cho phép một lần upload
+    lại — tìm thấy video → job/op xác nhận theo §2.6 (không có video thứ hai, acceptance 21); không tìm
+    thấy → op `FAILED`, job `READY`, và **đây là lần duy nhất** attempt `upload` kế tiếp được phép gọi lại
+    `Publisher.upload()` cho cùng job (acceptance 26) — không có đường nào khác trong toàn bộ pipeline cho
+    upload lặp lại một khi op đã `CONFIRMED`.
+77. `@harness/adapter-agent-cli`'s `CliAgentRuntime`: prompt được ghi ra **file** (`agent-prompt.md` trong
+    workspace, không qua argv/stdin) rồi child CLI (`claude -p …` hay `codex exec …`, bảng lệnh
+    `RUNTIME_COMMANDS`) được trỏ đọc file đó qua `PROMPT_POINTER`; env con chỉ có `env_passthrough` của
+    runtime (`ANTHROPIC_API_KEY`/`CLAUDE_CONFIG_DIR` hay `OPENAI_API_KEY`/`CODEX_HOME`, cộng
+    `FAKE_AGENT_MODE` — **chỉ để test**, không dùng ở production) cộng vài biến `HARNESS_*` cố định
+    (`HARNESS_WORKSPACE`, …); **không bao giờ** `HARNESS_SECRET_*`, kể cả khi vô tình có mặt trong
+    `env_passthrough` — lọc theo tiền tố, không theo danh sách trắng (acceptance 25).
+78. Dashboard (`packages/dashboard`) **chỉ đọc**: `src/server.ts` dùng mỗi `node:http`/`node:fs`/`node:path`
+    (không dependency ngoài), phục vụ `GET /hub` (và `/`), `GET /api/snapshot` (nội dung
+    `<data_root>/dashboard/snapshot.json`, `Cache-Control: no-store`, 404 `{ error: "no snapshot" }` nếu
+    chưa có), `GET /thumbnails/<file>`; **mọi method khác 405**, mọi route khác 404. Không `POST`, không ghi
+    gì cả — snapshot là ảnh chụp do `harness dashboard snapshot`/worker sinh, không phải state hai chiều như
+    tài liệu bàn giao hệ thống cũ. `buildSnapshot` cô lập theo kênh: một kênh cấu hình sai không kéo sập
+    snapshot của kênh khác (fix round 1 Task 10).
+79. `ChannelConfigSchema` cũ (nếu từng tồn tại trước sub-project 3) bị thay hẳn bằng bản mới ở spec §1.3 —
+    chưa ai dùng bản cũ (không ops project thật nào phát hành trước SP3), nên đây là thay thế, không phải
+    migration dữ liệu. Secret ref của kênh dùng đúng khuôn hai đoạn của `secretRefSchema` hiện có
+    (`^secret://[a-z0-9-]+/[a-z0-9-]+$`, `packages/contracts/src/common.ts`): `secret://youtube-<channel_id>/
+    email`, không phải ví dụ ba đoạn `secret://youtube/<channel>/email` từng xuất hiện trong bản nháp đầu
+    của spec §1.3 — env tương ứng là `HARNESS_SECRET_YOUTUBE_<CHANNEL_ID upper, "-"→"_">_EMAIL`
+    (`EnvSecretResolver.envName`, ledger Task 11).
+80. Redactor của tiến trình `harness publish stage upload|schedule` chỉ che giá trị secret **chính tiến
+    trình đó** đã resolve (`EnvSecretResolver.resolvedValues()`) — `channel-identity` (chạy trong tiến trình
+    `build-package`) resolve `account_email_ref` không giúp gì cho hai stage sau, chạy trong hai tiến trình
+    CLI con khác. Hai stage `uploadStage`/`scheduleStage` (`packages/cli/src/commands/publish-stage.ts`) vì
+    vậy tự gọi `app.secrets.resolve(channel.config.youtube.account_email_ref)` ngay trước khi gọi
+    `Publisher`, bọc try/catch (secret không resolve được không được làm fail stage này — `channel-identity`
+    đã báo lỗi đó ở `build-package`) — chỉ để đăng ký giá trị với Redactor, không log/lưu giá trị. Không có
+    lời gọi này, dòng cổng tài khoản mà script cũ tự in (`[upload] account <email>`) sẽ lọt nguyên văn vào
+    `log_tail`/receipt của `PublicationJob`/`ExternalOperation` (Task 12, phát hiện ở review cuối Task 11).

@@ -1,0 +1,102 @@
+# Copy this directory to `channels/<channel_id>/channel.yaml` (the directory name must equal channel_id
+# below) to declare one channel this "channel" role ops project publishes to. See docs/runbooks/
+# channel-publish.md and docs/superpowers/specs/2026-09-14-sub-project-3-channel-publish-design.md §1.3.
+schema_version: harness.channel-config/v1
+
+# ^[a-z0-9][a-z0-9-]*$, must equal the name of the directory this file lives in (channels/<channel_id>/).
+channel_id: example
+
+display_name: Example Channel
+
+# Must already exist in this project's project.yaml.portfolios[].portfolio_id.
+portfolio_id: portfolio-main
+
+# #RRGGBB, used only by the dashboard (card's top border). Default #5b8cff if omitted.
+color: "#5f4838"
+
+# Path to the legacy channel repo (the pre-harness `D:\<channel>\scripts\...` project) this channel wraps.
+# Use an **absolute** path with forward slashes -- a relative path here resolves against the *process's*
+# current working directory when `harness` runs (plain Node `path.resolve()`, not relative to --project or
+# to this file), which is almost never what you want outside of a test fixture. See
+# fixtures/ops-project-channel/channels/*/channel.yaml for the one place a relative path is used on purpose
+# (rewritten to an absolute temp path by the integration tests before every run).
+repo_dir: D:/example-channel
+
+# Selects outputs/<legacy_project_id>/episodes/... in repo_dir above -- must match the legacy repo's own
+# channel.config.json.projectId (checked by the channel-identity checker and `harness doctor`'s
+# channel:<id>:identity row). Default "project-01" if omitted.
+legacy_project_id: project-01
+
+youtube:
+  # The real YouTube channel id (starts "UC..."), checked against the legacy repo's own
+  # channel.config.json.youtube.channelId by the channel-identity checker (build-package stage) and
+  # `harness doctor`'s channel:<id>:identity row -- a mismatch blocks build-package before any upload.
+  expected_channel_id: UCXXXXXXXXXXXXXXXXXXXXXXXX
+
+  # secret:// ref, NOT the email itself -- exactly two segments, ^secret://[a-z0-9-]+/[a-z0-9-]+$. Resolved
+  # from the environment variable HARNESS_SECRET_<SCOPE upper, "-"->"_">_<NAME upper, "-"->"_">, e.g. the ref
+  # below resolves from HARNESS_SECRET_YOUTUBE_EXAMPLE_EMAIL (see EnvSecretResolver.envName in
+  # packages/core/src/config/secrets.ts). Set that variable in the shell/.env of the machine running
+  # `harness worker`/`doctor` -- never commit the value. The harness never passes this value to the legacy
+  # upload/schedule scripts (they read their own account email straight out of channel.config.json); it is
+  # used only to cross-check that file against this one (channel-identity checker, doctor
+  # channel:<id>:identity/:secrets) and is stripped from every log by the Redactor.
+  account_email_ref: secret://youtube-example/email
+
+publication:
+  # IANA timezone name -- publish_times below and "today" (dashboard, max_daily_uploads) are both evaluated
+  # in this timezone, not the machine's local time.
+  timezone: America/New_York
+
+  # HH:mm (24h) slots in the timezone above, at least one. `nextSlot()` books the next of these times that
+  # still has room (see max_daily_uploads/min_gap_hours below), never more than 60 days out.
+  publish_times: ["13:00"]
+
+  # Max jobs counted SCHEDULED|PUBLISHED for this channel on the same calendar day (in the timezone above)
+  # before nextSlot() pushes to the next day. Default 1 if omitted.
+  max_daily_uploads: 1
+
+  # Minimum hours between this channel's scheduled slots, even across different publish_times/days. Default
+  # 20 if omitted.
+  min_gap_hours: 20
+
+  # Always "private" -- the legacy upload script always uploads PRIVATE first; going public on schedule is
+  # YouTube's own native scheduling (publish-video-playwright.mjs --schedule), never a harness-side toggle.
+  visibility_default: private
+
+# All of seo.* is free text handed to the `channel-package` agent skill as-is (packaged into the brief for
+# stage 2 "package") -- it is the main steering input for that skill's title/description/thumbnail choices.
+# Every field defaults to "" (or [] for keywords) if omitted, but an empty channel here means a nearly
+# content-free brief for the agent.
+seo:
+  niche: "..."
+  audience: "..."
+  angle: "..."
+  language: en
+  market: US
+  keywords: ["...", "..."]
+  title_rules: "max 100 characters, lead with a concrete number"
+  # Free text with {chapters}/{playlist_url}/{channel_name} placeholders; the skill fills these in when it
+  # writes output/package.json's metadata.description.
+  description_template: |
+    {chapters}
+
+    {playlist_url}
+    Subscribe to {channel_name} for more.
+
+episode:
+  # First episode number this harness will ever allocate for this channel (channel_sequence starts here).
+  # Only matters once, before the first package is ever committed for this channel_id -- raising it later
+  # has no effect on episode numbers already allocated. Default 1 if omitted.
+  start: 1
+  # Must contain the literal "{nn}" token (replaced with the episode number, zero-padded to at least 2
+  # digits). Default "episode-{nn}" if omitted.
+  dir_pattern: "episode-{nn}"
+
+overlay:
+  # Whether build-package calls the legacy repo's scripts/gen-thumb-overlay.mjs (if present) to burn the
+  # agent's chosen overlay_text onto the chosen thumbnail candidate; false (or the script missing, or the
+  # `package` stage's overlay_text being empty) just copies the candidate thumbnail as-is. Default true.
+  enabled: true
+  # left | right -- passed to gen-thumb-overlay.mjs as --side. Default right.
+  side: right

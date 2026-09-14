@@ -155,16 +155,61 @@ rm -rf fixtures/ops-project-studio/data fixtures/ops-project-channel/data fixtur
 git checkout -- fixtures/ops-project-studio/project.yaml fixtures/ops-project-channel/project.yaml
 ```
 
+## Quick-start: phát hành kênh trên fixture (studio → channel → YouTube)
+
+`fixtures/ops-project-channel` (vai `channel`, workflow `channel-publish`, hai kênh `channel-one`/
+`channel-two`) và `fixtures/legacy-channel-repo` (repo kênh cũ giả — script Playwright giả, không đụng
+Chrome thật) minh hoạ sub-project 3: lấy một mục kho đã duyệt, đóng gói theo kênh, "đưa lên YouTube" (script
+giả ghi `publish-queue.json`), đặt lịch, rồi xem qua `harness publish`/`harness dashboard`. Cần `ffmpeg`/
+`ffprobe` trên PATH cho `fetch-library-item` (media-probe); `claude`/`codex` **không** cần cho quick-start
+này — `project.yaml.adapters.agent_argv` của fixture đã trỏ tới một agent giả (`fake-agent-cli.mjs`), không
+phải skill `channel-package` thật (xem `docs/runbooks/channel-publish.md` mục "DoD #6" cho cách chạy skill
+thật).
+
+`channels/*/channel.yaml` của fixture khai `repo_dir: ../legacy-channel-repo` — một đường dẫn **tương đối
+theo thư mục làm việc thật của tiến trình `harness` lúc chạy** (Node `path.resolve()`, không theo
+`--project`), đúng khi `harness` chạy với cwd = chính `fixtures/ops-project-channel/` (cách bộ test tích hợp
+tự viết đường dẫn tuyệt đối, xem comment trong file); chạy từ gốc repo như mọi quick-start khác ở trên thì
+`repo_dir` phải sửa thành đường tuyệt đối trước (cách một kênh thật khai, xem `project-template/channels/
+example/channel.yaml`) — không có `sed -i` portable nên dùng Node:
+
+```bash
+pnpm build
+pnpm harness --project fixtures/ops-project-channel db migrate
+
+node -e "const fs=require('fs'),path=require('path');const abs=path.resolve('fixtures/legacy-channel-repo').split(path.sep).join('/');for(const p of ['fixtures/ops-project-channel/channels/channel-one/channel.yaml','fixtures/ops-project-channel/channels/channel-two/channel.yaml'])fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('repo_dir: ../legacy-channel-repo','repo_dir: '+abs))"
+mkdir -p fixtures/ops-project-channel/library/styles fixtures/ops-project-channel/library/requests fixtures/ops-project-channel/library/items
+
+# doctor: hai dòng channel:*:secrets FAIL cho tới khi set biến secret theo channel_id
+#   (secret://youtube-channel-one/email -> HARNESS_SECRET_YOUTUBE_CHANNEL_ONE_EMAIL, khớp
+#   channel.config.json.youtube.accountEmail = owner@example.com của repo giả). Mọi dòng khác phải ok.
+HARNESS_SECRET_YOUTUBE_CHANNEL_ONE_EMAIL=owner@example.com \
+HARNESS_SECRET_YOUTUBE_CHANNEL_TWO_EMAIL=owner@example.com \
+pnpm harness --project fixtures/ops-project-channel doctor
+
+pnpm harness --project fixtures/ops-project-channel channel list
+```
+
+Chu trình đầy đủ (kho → `pick` → `plan --workflow channel-publish@1.0.0 --profile channel` → `enqueue` →
+worker → `publish list/show/slots` → `NEEDS_RECONCILIATION`/`reconcile` → `dashboard serve`), checklist
+nghiệm thu dashboard, và cách chạy skill `channel-package` thật với `claude`/`codex` ở
+`docs/runbooks/channel-publish.md`. Dọn sau khi thử:
+
+```bash
+rm -rf fixtures/ops-project-channel/data fixtures/ops-project-channel/library
+git checkout -- fixtures/ops-project-channel/channels/channel-one/channel.yaml fixtures/ops-project-channel/channels/channel-two/channel.yaml
+```
+
 ## Tài liệu
 - Blueprint: `docs/architecture/YOUTUBE_OPERATIONS_HARNESS_BLUEPRINT_v1.0.md`
-- Spec: `docs/superpowers/specs/2026-09-11-harness-structure-and-control-plane-design.md`, `docs/superpowers/specs/2026-09-12-sub-project-2-footage-production-design.md`, `docs/superpowers/specs/2026-09-14-sub-project-2c-content-library-design.md`
+- Spec: `docs/superpowers/specs/2026-09-11-harness-structure-and-control-plane-design.md`, `docs/superpowers/specs/2026-09-12-sub-project-2-footage-production-design.md`, `docs/superpowers/specs/2026-09-14-sub-project-2c-content-library-design.md`, `docs/superpowers/specs/2026-09-14-sub-project-3-channel-publish-design.md`
 - Plan sub-project 1: `docs/superpowers/plans/2026-09-11-control-plane-minimal.md`
 - Plan sub-project 2A: `docs/superpowers/plans/2026-09-12-sub-project-2a-catalog-planner-resources.md`
 - Plan sub-project 2B: `docs/superpowers/plans/2026-09-13-sub-project-2b-scripts-gate-media-footage.md`
 - Plan sub-project 2C: `docs/superpowers/plans/2026-09-14-sub-project-2c-content-library.md`
 - ADR: `docs/adr/`
-- Runbook: `docs/runbooks/` (`reconcile-and-retry.md`, `wrap-a-channel.md`, `content-library.md`)
-- Project mới: copy `project-template/` (xem `docs/runbooks/wrap-a-channel.md` bước 1)
+- Runbook: `docs/runbooks/` (`reconcile-and-retry.md`, `wrap-a-channel.md`, `content-library.md`, `channel-publish.md`)
+- Project mới: copy `project-template/` (xem `docs/runbooks/wrap-a-channel.md` bước 1; mẫu kênh ở `project-template/channels/example/channel.yaml`)
 
 ## Trạng thái
 Sub-project 1 (control plane) + 2A (source catalog, content/variant, plan theo option, tài nguyên chia sẻ
@@ -173,9 +218,16 @@ người duyệt + `stage submit`, checker media qua ffprobe, ngân sách theo v
 sync`, workflow + profile + fixture `footage`, `project-template/`) + 2C (kho nội dung chia sẻ giữa máy
 studio và máy channel: `harness library sync|list|request|accept|review|pick|styles`, bốn stage kho built-in
 (`intake`, `style-export`, `export`, `apply-review`), workflow `style-study` + `library-production`, profile
-`studio`, worker tự đồng bộ kho khi rảnh) — adapter thật vẫn giả (HeyGen/TTS/YouTube), phát hành nội dung đã
-`pick` (channel publish) để lại cho sub-project 3. Còn lại cho sub-project 3: adapter thật (HeyGen, TTS,
-YouTube), reconcile với provider thật, workflow phát hành đọc `library_item_id` từ một `ContentItem` đã pick.
-Sub-project 4: agent runtime thay executor `gate` (agent tự làm việc trong workspace thay vì người `stage
-submit`) — kho có 5 gate cần người hôm nay (`analyze-style`, `style-review`, `survey-source`, `plan-edit`,
-`library-review`).
+`studio`, worker tự đồng bộ kho khi rảnh) + 3 (phát hành kênh: bảng `channel_package`/`publication_job` +
+máy trạng thái riêng, workflow `channel-publish` (`fetch-library-item` → agent `package` → `build-package` →
+`upload` → `schedule`, bốn stage built-in qua CLI con), cổng `Publisher` bọc script Playwright cũ của kênh
+(`playwright` thật + `fake` cho test) thay vì gọi YouTube Data API, `@harness/adapter-agent-cli` chạy `claude
+-p`/`codex exec` headless cho skill `channel-package`, `harness channel *`/`publish *`/`skills sync`/
+`dashboard snapshot|serve`, sweep `verify` + `reconcile` theo trạng thái `PublicationJob`, dashboard chỉ đọc
+từ `snapshot.json`) — adapter TTS/avatar (HeyGen) của sub-project 2 vẫn giả; upload/schedule YouTube giờ có
+đường thật (bọc script cũ) nhưng cần đăng nhập Chrome tay và `claude`/`codex` thật trên máy (chưa kiểm được
+trong môi trường build agent này, xem `docs/runbooks/channel-publish.md` mục "DoD #6"). Còn lại cho
+sub-project 3B: thu số liệu sau khi lên (`collect-metrics-playwright`), đánh giá `Hypothesis` (`open` →
+`supported`/`refuted`), tự sinh `ContentRequest` từ lịch/số liệu, YouTube Test & Compare. Sub-project 4: agent
+runtime thay executor `gate` (agent tự làm việc trong workspace thay vì người `stage submit`) — kho vẫn có 5
+gate cần người hôm nay (`analyze-style`, `style-review`, `survey-source`, `plan-edit`, `library-review`).

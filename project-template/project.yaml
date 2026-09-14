@@ -16,3 +16,32 @@ source: { materialize: link }
 #   # requests/<id>.json and items/<id>/claims/<channel_id>.json (asks for and picks up content). Both
 #   # machines must point root at the same mounted share. sync_seconds (min 10, default 300) caps how
 #   # often `harness worker` syncs the kho on its own when idle. See docs/runbooks/content-library.md.
+
+# channel-publish only (sub-project 3): a "channel" role machine that picks approved kho items, packages them
+# per channel.yaml, and uploads/schedules them via the legacy Playwright scripts. See channels/example/
+# channel.yaml and docs/runbooks/channel-publish.md. Uncomment and add `workflows: [channel-publish@1.0.0]`
+# above (and a `channels/<id>/channel.yaml` per channel, see channels/example/) to run it.
+# adapters:
+#   publisher: fake        # playwright | fake. playwright spawns the legacy scripts in each channel's
+#                           # repo_dir for real; fake never touches a browser or the network -- use it until
+#                           # every channel:<id>:* doctor row is green and you have logged in once with
+#                           # `harness channel login <id>`.
+#   agent: fake             # cli | fake. cli spawns `claude -p`/`codex exec` (picked by the `runtime` field
+#                           # above) headless in the workspace for the `package` stage's `channel-package`
+#                           # skill; fake writes a placeholder package.json, useful before a real agent CLI is
+#                           # set up on this machine (`harness doctor`'s `agent:runtime` row checks for it).
+#   # agent_argv: [claude, -p, "{prompt}", --output-format, json]   # override the default argv for `runtime`
+#                           # (RUNTIME_COMMANDS in @harness/adapter-agent-cli); "{prompt}" is replaced with a
+#                           # one-line pointer to agent-prompt.md. Only needed for a non-default CLI flag set,
+#                           # or (in tests) to point at a fake CLI.
+# publication:
+#   verify_seconds: 900     # how often (>=60s) the worker's idle sweep asks the publisher whether an overdue
+#                           # SCHEDULED job actually went public (settles PUBLISHED or parks
+#                           # NEEDS_RECONCILIATION). `harness publish verify` runs the same sweep once by hand.
+#   verify_grace_hours: 2   # a SCHEDULED job whose scheduled_at is this many hours in the past without
+#                           # settling to PUBLISHED is treated as overdue by the sweep above.
+# dashboard:
+#   port: 5200              # `harness dashboard serve` binds 127.0.0.1:<port> (HARNESS_DASHBOARD_PORT env,
+#                           # then --port on the CLI, override this in that order).
+#   refresh_seconds: 60     # how often (>=10s) the worker's idle sweep rewrites dashboard/snapshot.json on
+#                           # its own; `harness dashboard snapshot` writes one immediately by hand.

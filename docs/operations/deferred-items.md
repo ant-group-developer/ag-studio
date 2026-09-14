@@ -196,3 +196,130 @@ Những gì còn lại, đã xem xét và cố ý hoãn:
 - `applyReview` replay khi request đã được run mới re-claim trả về im lặng (không ghi gì, không báo); bản `--json` có `request_status` để nhận ra. Cân nhắc in cảnh báo ở bản text.
 - `ContentItem` tạo trước khi có `library_channel_id` sẽ bị `pick` lại tạo thêm bản mới (không ảnh hưởng vì 2C chưa từng phát hành).
 - Test tích hợp `library-pipeline`: scenario 2 phụ thuộc scenario 1 (dùng chung world + style thật); chạy lẻ `-t` sẽ fail có thông báo rõ.
+
+## Sau sub-project 3 (ledger 2026-09-14/15)
+
+Rút từ ledger SDD (`docs/superpowers/sdd/2026-09-14-sub-project-3-channel-publish/progress.md`) và spec §11
+(`docs/superpowers/specs/2026-09-14-sub-project-3-channel-publish-design.md`). Đọc code trước khi tin lệch
+(`packages/core/src/distribution/`, `packages/adapters/{youtube-playwright,agent-cli}/`,
+`packages/cli/src/commands/{channel,publish,publish-stage,dashboard,doctor}.ts`).
+
+- ✅ **Đã đóng ở Task 12 — `Redactor` không biết secret email khi upload/schedule chạy trong tiến trình CLI
+  con.** `uploadStage`/`scheduleStage` (`packages/cli/src/commands/publish-stage.ts`) giờ tự
+  `app.secrets.resolve(channel.config.youtube.account_email_ref)` ngay trước khi gọi `Publisher` (bọc
+  try/catch, không fail stage vì secret unresolved), chỉ để đăng ký giá trị với Redactor của chính tiến
+  trình mình (ADR-0001 mục 80; gap ghi nhận cuối Task 11, có test ở `packages/cli/test/publish-stage.test.ts`).
+
+### Rủi ro vận hành (spec §11, chưa có gì để sửa trong code)
+
+- **DOM YouTube Studio đổi** làm hai script Playwright cũ hỏng âm thầm: harness chỉ thấy `transient`/
+  `unknown` từ `PlaywrightPublisher`, `harness doctor` không phát hiện được (không kiểm nội dung DOM, chỉ
+  kiểm file/profile tồn tại) — người vận hành nhận biết qua log `upload-debug/` của repo kênh (ghi trong
+  runbook `channel-publish.md`).
+- **Lịch đặt tay ngoài harness** (ai đó tự đặt lịch trên Studio) không được `nextSlot()` biết tới — nó chỉ
+  tính theo `PublicationJob` đã có trong state store, nên có thể trùng khung với một lịch đặt tay; sweep
+  `verify` phát hiện lệch sau đó (SP3B, khi verify/reconcile đọc trực tiếp Studio nhiều hơn).
+- **Chrome ≥127 App-Bound Encryption**: `.upload-profile/` không copy được giữa máy — mỗi máy phải tự
+  `harness channel login <id>` một lần; đăng nhập không đồng bộ qua git/rsync được.
+- **Phiên đăng nhập hết hạn âm thầm**: không có cách chủ động phát hiện ngoài một lần `upload`/`schedule`
+  refused (script cũ tự thoát exit 3) — dashboard không có cờ "đã login thật", chỉ có `profile_dir_exists`
+  (thư mục có mặt, không phải phiên còn hiệu lực).
+- **Script cũ khác nhau giữa các repo kênh thật**: `Publisher` chỉ hứa giao diện argv/exit-code/
+  `publish-queue.json`; một kênh có script lệch khuôn phải tự chuẩn hoá tay trước khi nối vào harness (không
+  có adapter tự sửa).
+
+### `packages/core/src/distribution/` — core
+
+- `createDraftPackage`'s guard cho `library_item_id` thiếu chưa có test riêng (Task 3).
+- `zonedToUtc` (dùng bởi `nextSlot`) không xử lý riêng giờ DST bị nhảy/lặp (spring-forward gap, fall-back
+  ambiguous hour) — dùng `Intl.DateTimeFormat` thô, hành vi ở đúng giờ chuyển DST chưa được assert (Task 3).
+- Nhánh mức độ `info` (không phải `warn`/`error`) của `transitionPublication` khi ghi `Event` chưa có test
+  khẳng định riêng (Task 3).
+- `channel-identity` (checker, `checkers.ts`) gọi `channels.get()` không bọc guard tồn tại — một `channel_id`
+  không nạp được sẽ ném thay vì trả `fail` có ngữ cảnh (Task 4).
+- Năm checker của `distributionCheckers` lặp lại gần như y hệt khối đọc + parse output — chưa rút thành một
+  helper chung (Task 4).
+- Nhánh `reconcilePublication` khi op đã `CONFIRMED` (không phải `NEEDS_RECONCILIATION`) chưa có test riêng
+  (Task 4).
+- `FakePublisher` (`adapter-fake`) nuốt lỗi parse `publish-queue.json` thay vì báo rõ (Task 4).
+- `resolveManifestPath` (checker `package-integrity`) dùng `isAbsolute` của platform hiện tại — một manifest
+  ghi đường tuyệt đối kiểu khác hệ điều hành (ví dụ POSIX trên máy Windows) có thể bị hiểu sai (Task 4).
+- `nextSlot`/`buildUploadManifest`: `upload-manifest.template.json` (template cũ của repo kênh) mang giá trị
+  placeholder — chấp nhận nguyên trạng vì bản thân template của hệ thống cũ vốn chỉ là placeholder, không
+  phải nội dung thật cần harness kiểm (ruling Task 5, không phải bug).
+
+### `packages/adapters/youtube-playwright/` — Publisher thật
+
+- `runScript` (spawn script cũ) dùng chung một buffer dòng cho cả stdout lẫn stderr — dòng từ hai luồng có
+  thể xen kẽ sai thứ tự thật trong `log_tail` (Task 5).
+- Chế độ "im lặng" của script cũ (exit 0, không có dòng `publish-queue.json` khớp) chưa có test riêng cho
+  nhánh `unknown` tương ứng (Task 5).
+- `episode_no` dạng số (thay vì đã pad `NN`) truyền vào lệnh script cũ chưa có test (Task 5).
+- `lookup.mjs` (script adapter, chạy Playwright thật để đọc Studio) không được chạy trong bộ test tự động
+  (cần Chrome thật) — chỉ `queue.ts`/exit-code mapping có test; `lookup.mjs` cũng chưa capture `publish_at`
+  cho một video đang ở trạng thái Scheduled (Task 5, Task 8 §8 của spec).
+
+### `packages/adapters/agent-cli/` — AgentRuntime thật
+
+- `combinedLog` (log gộp stdout+stderr của CLI agent) bị redact hai lần (vô hại, chỉ dư việc) (Task 6).
+- `sha256File` được cài lặp lại ở ba nơi quanh package boundary — chưa gộp thành một helper dùng chung
+  (Task 6).
+- `child.kill()` khi hết timeout không giết được tiến trình cháu của CLI thật (`claude`/`codex` có thể tự
+  spawn tiến trình con) — treo tài nguyên nếu agent thật bị timeout giữa chừng (Task 6).
+
+### `packages/cli/src/commands/publish-stage.ts` — bốn stage built-in
+
+- Log stderr của `gen-thumb-overlay.mjs` bị discard bởi catch-all của `runStage` trước khi redact — mất ngữ
+  cảnh lỗi thật khi overlay script fail (Task 8).
+- `listChannelPackages({run_id})[0]` (tìm gói draft của run hiện tại, dùng khi attempt `build-package` chạy
+  lại) không sắp thứ tự tường minh — dựa vào thứ tự trả về ngầm định của store (Task 8).
+- Receipt idempotent của `upload` (khi job đã `PROCESSING`/`SCHEDULED`/`PUBLISHED`) dùng chuỗi rỗng làm sentinel
+  cho `video_id`/`operation_id` thay vì `null`/thiếu trường (Task 8).
+- Ba hàm `parseDraft`/`parsePackageReceipt`/`parseUploadReceipt` gần như giống hệt nhau — chưa rút thành một
+  helper generic (Task 8).
+- `fetchStage` luôn đăng ký output `episode_video` dù file `episode.mp4` không tồn tại trong `manifest.files`
+  — lỗi lộ ra muộn, ở bước `writeJsonOutput`/`sdk.out.file`, dưới dạng `transient` mơ hồ thay vì `contract` rõ
+  ràng (Task 8).
+- `publish-stage.ts` dài (~400 dòng sau Task 12): nửa `build-package` ghi trực tiếp vào repo kênh có thể tách
+  xuống `packages/core` để dễ test đơn vị hơn (Task 8).
+- `updatePublicationJob` không tự bump `updated_at` ở một số điểm gọi — không sai dữ liệu nghiệp vụ nhưng
+  không nhất quán với các hàm ghi khác (Task 8).
+- Nhánh op `NEEDS_RECONCILIATION` trong khi job vẫn `UPLOADING` (một tổ hợp hiếm, không phải nhánh chính của
+  `recoverUploading`) chưa có test riêng (Task 8).
+
+### `harness channel`/`publish`/`dashboard` — CLI người dùng
+
+- `harness channel login` (spawn `open-channel-chrome.mjs` hoặc in dòng lệnh Chrome tay) chưa có test tự
+  động — fixture Chrome giả chưa được viết (Task 9).
+- Ba chỗ trong CLI publish tự gộp `listPublicationJobs` theo tay (đếm theo state, lọc theo channel) thay vì
+  dùng chung một helper (Task 9).
+- `packages/cli/test/dashboard.test.ts` chỉ kiểm một project không có kênh nào (phần snapshot có kênh đã
+  được `packages/core/test/dashboard/snapshot.test.ts` phủ, nhưng chưa có test CLI end-to-end cho
+  `dashboard snapshot`/`serve` trên một project có kênh thật) (Task 10).
+- `DoctorRow` chỉ có `ok: boolean`, không có mức độ nghiêm trọng (`warn` vs `fail`) — mọi dòng doctor hiện
+  nhị phân, dù một số (như `channel:<id>:profile` chưa đăng nhập) về bản chất "chưa cần" hơn là "hỏng"
+  (Task 10).
+- Một kênh cấu hình sai (nằm trong `channelErrors`) không xuất hiện trong `snapshot.episodes[]` — dashboard
+  không có cách hiển thị "kênh này đang lỗi cấu hình", chỉ có dòng doctor tương ứng (Task 10).
+- `fallbackChannel` (dùng khi build snapshot cho project không có kênh nào) lặp lại logic lọc doctor-row đã
+  có ở nơi khác — chưa gộp (Task 10).
+
+### Vệ sinh test (Task 11)
+
+- Helper `copyRepo` (chép `fixtures/legacy-channel-repo` vào temp dir cho mỗi test) được cài lặp lại lần thứ
+  ba — ở `tests/integration/publish-helpers.ts` và (theo cùng khuôn) trong test CLI riêng — chưa gộp về một
+  chỗ dùng chung.
+- `PublishWorld` (kiểu world dùng bởi test tích hợp publish) cần một ép kiểu (`as`) ở một chỗ do interface
+  chưa khớp hoàn toàn hình dạng thật.
+- Vòng lặp `drain` trong test tích hợp publish chờ tối đa 30 lượt worker — dư khá nhiều so với số lượt thật
+  sự cần cho một chu trình 5-stage; chưa thu hẹp.
+
+### Việc vặt khác, không phải bug (Task 1, Task 7)
+
+- `packageMetadataSchema`'s tên field/type chữ thường theo đúng yêu cầu brief (không phải sai sót cần sửa,
+  ghi lại vì khác quy ước PascalCase/camelCase thường thấy ở các schema khác — xem ghi nhận cuối 2A về cùng
+  chủ đề).
+- `pnpm gen:schemas` ở Task 1 sinh lệch dòng cuối (CRLF) trên bốn file JSON Schema không liên quan tới
+  sub-project 3 — bản lệch bị bỏ (discard), chỉ khác xuống dòng, không khác nội dung.
+- Số dòng báo cáo ở report của Task 7 không khớp số dòng thật (lỗi đếm khi viết báo cáo, không phải lỗi
+  code) — không cần sửa gì trong repo.
