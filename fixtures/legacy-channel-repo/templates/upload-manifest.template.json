@@ -1,0 +1,11 @@
+{
+  "videoPath": "outputs/<project>/episodes/episode-NN/final/episode-NN.mp4",
+  "thumbnailPath": "outputs/<project>/episodes/episode-NN/thumbnail/episode-NN-thumb.png",
+  "visibility": "private",
+  "title": "<title placeholder>",
+  "description": "<description placeholder>",
+  "playlists": [],
+  "tags": [],
+  "pinnedComment": "",
+  "hashtags": []
+}

@@ -12,3 +12,5 @@ dist/
 fixtures/**/data/
 fixtures/**/library/
 fixtures/ops-project-footage/raw/
+fixtures/legacy-channel-repo/outputs/
+fixtures/legacy-channel-repo/work/

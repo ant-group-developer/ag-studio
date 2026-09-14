@@ -167,6 +167,12 @@ importers:
         specifier: workspace:*
         version: link:../../contracts
 
+  packages/adapters/youtube-playwright:
+    dependencies:
+      '@harness/contracts':
+        specifier: workspace:*
+        version: link:../../contracts
+
   packages/cli:
     dependencies:
       '@harness/adapter-fake':
