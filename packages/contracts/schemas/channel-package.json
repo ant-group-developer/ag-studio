@@ -37,8 +37,8 @@
           "minimum": 1
         },
         "channel_config_revision": {
-          "type": "integer",
-          "minimum": 1
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
         },
         "created_at": {
           "type": "string",

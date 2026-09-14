@@ -117,7 +117,7 @@ describe("ChannelPackageSchema and PublicationJobSchema", () => {
       metadata: { title: "Episode 1" },
       hypothesis: SAMPLE_HYPOTHESIS,
       metadata_revision: 1,
-      channel_config_revision: 1,
+      channel_config_revision: "sha256:" + "d".repeat(64),
       status: "draft",
       created_at: "2026-09-14T00:00:00.000Z",
       updated_at: "2026-09-14T00:00:00.000Z",

@@ -35,7 +35,7 @@ function channelPackage(overrides: Record<string, unknown> = {}): ChannelPackage
     metadata: { title: "Episode 1" },
     hypothesis: SAMPLE_HYPOTHESIS,
     metadata_revision: 1,
-    channel_config_revision: 1,
+    channel_config_revision: sha("9"),
     status: "draft",
     created_at: now,
     updated_at: now,

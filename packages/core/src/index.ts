@@ -35,3 +35,6 @@ export * from "./library/sync.js";
 export * from "./library/requests.js";
 export * from "./library/review.js";
 export * from "./library/export.js";
+export * from "./distribution/channels.js";
+export * from "./distribution/packages.js";
+export * from "./distribution/publication.js";

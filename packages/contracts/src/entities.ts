@@ -222,7 +222,7 @@ export const DistributionPlanSchema = z.object({
 export const ChannelPackageSchema = z.object({
   schema_version: schemaVersion("channel-package"), package_id: idSchema("channel_package"), channel_id: z.string().min(1),
   variant_id: idSchema("content_variant"), manifest_digest: checksumSchema, video_artifact_id: idSchema("artifact"),
-  thumbnail_artifact_id: idSchema("artifact"), metadata_revision: revisionSchema, channel_config_revision: revisionSchema, created_at: timestampSchema,
+  thumbnail_artifact_id: idSchema("artifact"), metadata_revision: revisionSchema, channel_config_revision: checksumSchema, created_at: timestampSchema,
   content_id: idSchema("content_item"), library_item_id: idSchema("library_item"), run_id: idSchema("run"),
   episode_no: z.number().int().min(1), episode_dir: z.string().min(1), metadata: packageMetadataSchema, hypothesis: HypothesisSchema,
   video_checksum: checksumSchema, thumbnail_checksum: checksumSchema, status: z.enum(["draft", "committed"]), updated_at: timestampSchema,
