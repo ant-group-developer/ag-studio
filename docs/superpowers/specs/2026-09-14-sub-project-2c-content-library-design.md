@@ -255,3 +255,20 @@ Hành vi thật sự đã triển khai: `library-apply-review` gọi `reopenRequ
 duyệt; người vận hành `harness library accept --request <cùng id>` lại (build một `library_brief`/
 `ContentItem` mới) rồi `harness plan` một **run mới** cho request đó — không phải retry run cũ. Xem
 `docs/runbooks/content-library.md` mục 3b và ADR-0001 mục 60.
+
+### `count` của một content request ghim ở 1
+
+Spec để `count` mở ("bao nhiêu tập cho một yêu cầu"). Bản triển khai ghim `ContentRequestSchema.count =
+z.literal(1)`: `intake` là nơi duy nhất chuyển `open → claimed` và không có đường nào cho một run thứ hai
+claim lại một request đang `claimed`, nên `count > 1` sẽ để request kẹt `claimed` vĩnh viễn sau tập đầu
+tiên (`fulfillRequest` chỉ đóng request khi `item_ids.length >= count`, còn `reopenRequest` thì mất luôn
+tập đã duyệt khỏi vòng). Cần nhiều tập cho cùng một chủ đề thì tạo nhiều request. Mở lại giới hạn này cần
+một cơ chế re-claim (request `claimed` cho phép một run mới nhận phần còn thiếu) — chưa làm ở 2C.
+
+### Chi phí của `library sync`
+
+`syncLibrary` chỉ hash lại file dữ liệu của item **mới hoặc đã đổi** (so manifest đọc từ kho với hàng mirror
+trước khi verify), vì worker tự sync mỗi `sync_seconds` và bản đầu tiên đọc lại toàn bộ byte của kho qua
+mount ở mỗi lần rảnh việc. Hệ quả có chủ ý: một file dữ liệu bị sửa **sau** khi item đã import không lộ ra ở
+sync thường — `harness library sync --verify` (`syncLibrary(d, { verify: true })`) là đường audit đọc lại tất
+cả. Ghi trong runbook `content-library.md` mục 7.

@@ -143,12 +143,14 @@ Những gì còn lại, đã xem xét và cố ý hoãn:
   biệt "request tôi vừa tạo" khỏi request do channel khác tạo, chỉ có thể lọc theo trường `requested_by` sau
   khi đọc nội dung; đây là thiết kế cố ý (role chỉ gate quyền ghi, không gate danh tính), không phải thiếu sót
   cần sửa.
-- `readRequest`/`readItem` map **mọi** `IO_ERROR` (kể cả lỗi quyền/mount rớt giữa chừng, không chỉ "file
-  không tồn tại") thành `NOT_FOUND` — một mount tạm thời mất kết nối trong lúc đọc trông giống hệt một
-  request/item chưa từng tồn tại.
-- `applyReview` ghi hai file (`manifest.json` của item, rồi `requests/<id>.json` nếu có `request_id`) qua hai
-  lệnh `writeJsonAtomic` riêng, không phải một transaction — một crash giữa hai lệnh để lại item đã duyệt
-  nhưng request chưa cập nhật (mirror DB sẽ lệch tới khi `sync` đọc lại cả hai từ kho lần sau).
+- ~~`readRequest`/`readItem` map **mọi** `IO_ERROR` … thành `NOT_FOUND`~~ — **đã đóng** ở vòng review cuối
+  2C: chỉ file không tồn tại (`existsSync`) mới là `NOT_FOUND`; file tồn tại mà hỏng giữ `IO_ERROR`/
+  `CONFIG_INVALID` (ADR-0001 mục 62).
+- ~~`applyReview` ghi hai file … không phải một transaction~~ — **đã giảm nhẹ** ở vòng review cuối 2C: kiểm
+  transition của request trước khi ghi item, ghi item rồi mới ghi request, lỗi ở bước sau mang
+  `item_written: true`, và chạy lại cùng quyết định là idempotent (áp nốt nửa request còn thiếu) — ADR-0001
+  mục 64. Vẫn **không** phải transaction thật: một crash đúng giữa hai lần ghi vẫn cần người chạy lại
+  `harness library review` (runbook `content-library.md` mục 8).
 - `claimItem` có khe TOCTOU giữa `existsSync(claimPath)` và `writeJsonAtomic(claimPath, claim)`: hai tiến
   trình `pick` cùng item/channel gần như đồng thời trên cùng máy có thể cùng thấy claim chưa tồn tại và cùng
   tạo `ContentItem` riêng trước khi tiến trình thua ghi đè file claim của tiến trình thắng.
@@ -171,3 +173,22 @@ Những gì còn lại, đã xem xét và cố ý hoãn:
 - `fixtures/ops-project-studio/library` và `fixtures/ops-project-channel/library` không tồn tại trên một bản
   clone repo mới (`library.root: ./library` bị git-ignore) — thử tay cần tự tạo `styles/`/`requests/`/`items/`
   hoặc trỏ sang một kho tạm, như `freshLibraryWorld()` của bộ test làm (xem README quick-start).
+
+## Hoãn — ghi nhận ở vòng review cuối 2C (2026-09-14)
+
+- `library-export-valid` (`packages/core/src/verification/library-checkers.ts`) trộn hai loại đường dẫn trong
+  `evidence.path`: một số nhánh fail trả đường **tương đối theo workspace** (`o.path`, nhánh "unreadable"),
+  số khác trả đường **tuyệt đối** (`receiptPath`, `filePath` — đường trong kho). Người đọc evidence phải tự
+  đoán gốc. Thống nhất (luôn tuyệt đối, hoặc luôn kèm cả hai trường) khi có dịp — ghi nhận từ Task 5.
+- Cả `style-export` (style-study) và `library-export` (library-production) khai output `type:
+  export_receipt`, nhưng **hai hình dạng khác nhau**: style-export ghi `{ style_id, revision, dir }`,
+  library-export ghi `ExportReceipt` (`{ item_id, item_dir, files[], manifest_checksum }`). `library-export-
+  valid` chỉ hiểu hình dạng thứ hai — hôm nay vô hại vì `style-export.required_checks` không có nó, nhưng
+  thêm `library-export-valid` vào `style-export` (hay bất kỳ stage nào khác xuất `export_receipt`) sẽ fail
+  ngay với `invalid receipt`. Tách thành hai `type` riêng (`style_export_receipt` / `item_export_receipt`)
+  là cách sửa gốc.
+- `rejectRequest` (`packages/core/src/library/requests.ts`, `claimed → rejected`) vẫn **không có đường gọi**:
+  không CLI, không stage nào dùng — `library-apply-review` từ chối item bằng `reopenRequest` (request về
+  `open`) chứ không bao giờ `rejected`. Trạng thái `rejected` của một `content_request` do đó chỉ đến được
+  bằng cách sửa tay file trong kho. Giữ lại vì `reopenRequest` nhận cả `rejected` làm đầu vào (đường phục hồi
+  cho một request bị sửa tay); nối vào CLI (`library request reject`) khi thật sự cần.

@@ -43,17 +43,20 @@ YouTube Operations Harness: control plane điều phối sản xuất và phân 
 - `harness artifacts sweep [--older-than-minutes 60] [--dry-run] [--json]`: xoá thư mục artifact cũ hơn ngưỡng không có hàng DB không-PROVISIONAL đứng sau (crash/cancel để lại rác giữa lúc ghi output và commit).
 
 ## Lệnh 2C (kho nội dung)
-- `harness library sync [--json]`: kéo `styles/`, `requests/`, `items/` từ kho vào mirror DB (`edit_style`, `content_request`, `library_item`); báo `imported`/`updated`/`corrupt`/`missing`, thoát mã 1 nếu có `corrupt`. Chạy trước mọi lệnh `library list`/`accept` khác — chúng đọc mirror, không đọc kho trực tiếp.
+- `harness library sync [--verify] [--json]`: kéo `styles/`, `requests/`, `items/` từ kho vào mirror DB (`edit_style`, `content_request`, `library_item`); báo `imported`/`updated`/`corrupt`/`missing`, thoát mã 1 nếu có `corrupt`. Chạy trước mọi lệnh `library list`/`accept` khác — chúng đọc mirror, không đọc kho trực tiếp. Mặc định chỉ hash lại file dữ liệu của item **mới/đã đổi**; `--verify` ép kiểm toàn bộ (audit, chậm) — đó là cách duy nhất phát hiện file dữ liệu bị sửa sau khi item đã import. Kho chưa mount (root không tồn tại) ném `IO_ERROR` (exit 1), **không** báo mọi thứ `missing`.
 - `harness library list <items|requests|styles> [--status <s>] [--json]`: liệt kê từ mirror DB.
-- `harness library request create --portfolio <id> [--channel <id>] --topic <topic> [--style <style_id>] [--duration <min,max>] [--voice none|tts|original] [--language <code>] [--count <n>] [--due <date>] [--json]` (vai `channel`): tạo một `content_request` `open` trong kho.
+- `harness library request create --portfolio <id> [--channel <id>] --topic <topic> [--style <style_id>] [--duration <min,max>] [--voice none|tts|original] [--language <code>] [--count 1] [--due <date>] [--json]` (vai `channel`): tạo một `content_request` `open` trong kho. `count` ghim ở 1 (`ContentRequestSchema`); `--count` khác 1 là `CONFIG_INVALID`.
 - `harness library accept (--request <id> | --topic <t> --style <style_id>) --source <src_id>... [--title <t>] [--json]` (vai `studio`): build `library_brief` + `ContentItem` cho `plan` tiếp theo — **không** claim request, **không** tiền-kiểm `status` của nó (accept một request không còn `open` vẫn thành công, lỗi lộ ra sau ở `intake` của run vừa plan).
-- `harness library review <item_id> (--approve|--reject) [--note <n>] [--json]` (vai `studio`, không qua gate): ghi kết quả duyệt thẳng vào kho — cùng một hàm `applyReview` mà stage built-in `library-apply-review` gọi sau gate `library-review`.
-- `harness library pick <item_id> --channel <channel_id> [--portfolio <id>] [--json]` (vai `channel`): claim một item `approved` thành `ContentItem` cục bộ (`library_item_id` trỏ về kho), in `content_id` cho `plan` của workflow phát hành. Idempotent theo channel: `pick` lại cùng item/channel trả lại đúng claim cũ, không đòi `approved` lần hai.
+- `harness library review <item_id> (--approve|--reject) [--note <n>] [--json]` (vai `studio`, không qua gate): ghi kết quả duyệt thẳng vào kho — cùng một hàm `applyReview` mà stage built-in `library-apply-review` gọi sau gate `library-review`. Idempotent: chạy lại cùng một quyết định không lỗi, và áp nốt nửa request nếu lần trước chỉ kịp ghi item (lỗi mang `item_written: true`).
+- `harness library withdraw <item_id> [--note <n>] [--json]` (vai `studio`): `approved|rejected → withdrawn` — cách kho biểu diễn "coi như đã xoá", **không có đường quay lại**. Claim đã tồn tại vẫn được tôn trọng sau đó (mục dưới).
+- `harness library pick <item_id> --channel <channel_id> [--portfolio <id>] [--json]` (vai `channel`): claim một item `approved` thành `ContentItem` cục bộ (`library_item_id` + `library_channel_id` trỏ về kho và về kênh), in `content_id` cho `plan` của workflow phát hành. Idempotent theo channel: `pick` lại cùng item/channel trả lại đúng claim cũ, không đòi `approved` lần hai; hai channel cùng `pick` một item là **hai** `ContentItem` riêng.
 - `harness library styles show <style_id> [--json]`: in một edit style đã sync.
 - `harness library stage <intake|style-export|export|apply-review>`: nội bộ, do executor `script` tự gọi lại CLI này khi chạy bốn stage kho built-in trong `library-production`/`style-study` — không gọi tay; xem `docs/runbooks/content-library.md`.
 
 ## Giới hạn quyền
-- Không sửa cột `state` ngoài `transition()` và `claim()` trong `packages/core/src/state/`.
+- Không sửa cột `state` ngoài `transition()` và `claim()` trong `packages/core/src/state/` — **trừ** ba bảng
+  mirror của kho (`edit_style`, `content_request`, `library_item`): `state` ở đó chỉ là bản sao nội dung đọc
+  từ file trong kho, `syncLibrary`/`upsert*` ghi thẳng (xem "Quy tắc kho nội dung" và ADR-0001 mục 51).
 - Không import `adapters/*` hay `agent-runtime/*` từ `packages/core`.
 - Không ghi giá trị secret vào file, event, log, manifest; chỉ dùng `secret://scope/name`.
 - Không gọi mạng hay LLM trong test.
@@ -83,9 +86,10 @@ YouTube Operations Harness: control plane điều phối sản xuất và phân 
 - `intake` là nơi duy nhất một request chuyển `open → claimed`; `library-apply-review` (built-in stage) và `harness library review` (CLI) là hai đường duy nhất ghi kết quả duyệt vào kho, cả hai gọi chung `applyReview`.
 - Một run mà `library-apply-review` ghi `rejected` kết thúc **SUCCEEDED** với mọi stage `SUCCEEDED` — không có gì để `retry --stage <key>` (retry chỉ đưa `FAILED`/`WAITING_HUMAN` về `READY`). Làm lại: request đã về `open`, `library accept --request <cùng id>` rồi `plan` một run mới, không `retry` run cũ.
 - `claimItem` (`library pick`) idempotent theo channel, không theo run: một claim đã tồn tại được tôn trọng bất kể trạng thái hiện tại của item (kể cả sau khi item đó chuyển `withdrawn`/`rejected`); chỉ một claim **mới** mới đòi item đang `approved`.
-- `exportItem` (`library-export`) là chỗ duy nhất kho xoá file: re-export cùng `item_id` ghi đè `items/<id>/` rồi xoá file lẻ không còn trong bộ output mới (không đệ quy — `claims/` không bao giờ bị đụng).
+- `exportItem` (`library-export`) là chỗ duy nhất kho xoá file: re-export cùng `item_id` ghi đè `items/<id>/`, ghi `manifest.json` **trước** rồi mới xoá file lẻ không còn trong bộ output mới (không đệ quy — `claims/` không bao giờ bị đụng), để máy khác đang sync không thấy manifest bảo chứng cho file vừa xoá.
 - `harness worker` tự `syncLibrary` mỗi khi rảnh việc, tối đa một lần mỗi `library.sync_seconds` (mặc định 300, tối thiểu 10); lỗi sync chỉ log, không dừng worker, và worker không bao giờ tự `plan` một run từ request mới thấy.
-- `harness doctor` không bao giờ tự tạo thư mục kho còn thiếu; `library:root`/`library:write`/`library:index` chỉ kiểm tra, không mutate ngoài một file thử viết-rồi-xoá.
+- Mọi ghi vào kho kiểm `library.root` còn mount không trước khi chạm đĩa — thiếu root là `IO_ERROR`, không bao giờ `mkdir -p` một kho giả cục bộ. `readRequest`/`readItem` chỉ trả `NOT_FOUND` khi file **không tồn tại**; file tồn tại mà hỏng giữ `IO_ERROR`/`CONFIG_INVALID`.
+- `harness doctor` không bao giờ tự tạo thư mục kho còn thiếu; `library:root`/`library:write`/`library:index` chỉ kiểm tra, không mutate ngoài một file thử viết-rồi-xoá tên `.doctor-<role>-<uuid>.tmp` (dot-name; mọi `list*Ids` của `LibraryFs` bỏ qua tên bắt đầu bằng `.`).
 
 ## Cách commit state
 - Mọi kết quả stage đi qua `Controller.commit()` với fencing token của attempt hiện tại.

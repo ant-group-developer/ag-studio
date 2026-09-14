@@ -87,11 +87,16 @@ hai `project.yaml` vào đó (đây là con đường `library.root` tạm, gi�
 library-helpers.ts`'s `freshLibraryWorld()` làm — không phải mount SMB/NAS thật, xem
 `docs/runbooks/content-library.md` mục 1 cho việc đó). Cần `ffmpeg`/`ffprobe` trên PATH.
 
+Tạo thư mục kho tạm rồi **sửa tay** dòng `library:` trong `project.yaml` của cả hai fixture cho `root` trỏ
+vào đó (`sed -i` không portable: khác nhau giữa GNU/BSD và không có trên PowerShell). Cách không cần editor,
+chạy được mọi nơi có Node:
+
 ```bash
 pnpm build
-lib=$(mktemp -d); mkdir -p "$lib/styles" "$lib/requests" "$lib/items"
-sed -i "s#library: { root: ./library#library: { root: $lib#" \
-  fixtures/ops-project-studio/project.yaml fixtures/ops-project-channel/project.yaml
+lib=$(node -e "const{mkdtempSync,mkdirSync}=require('fs'),{join}=require('path');const d=mkdtempSync(join(require('os').tmpdir(),'kho-'));for(const s of ['styles','requests','items'])mkdirSync(join(d,s));console.log(d)")
+
+# trỏ library.root của cả hai fixture vào kho tạm vừa tạo
+node -e "const fs=require('fs');for(const p of ['fixtures/ops-project-studio/project.yaml','fixtures/ops-project-channel/project.yaml'])fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('root: ./library','root: '+JSON.stringify(process.argv[1]).slice(1,-1)))" "$lib"
 
 pnpm harness --project fixtures/ops-project-studio db migrate
 pnpm harness --project fixtures/ops-project-channel db migrate

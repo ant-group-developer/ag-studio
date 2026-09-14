@@ -42,7 +42,8 @@ library: { root: ./library, role: channel }                    # máy channel (s
 - `root`: đường dẫn tới kho đã mount (tương đối so với thư mục project, hoặc tuyệt đối).
 - `role`: `studio` hoặc `channel` — quyết định `LibraryFs` cho phép ghi gì (mục 4).
 - `sync_seconds`: chu kỳ tối thiểu (giây, ≥ 10, mặc định 300) giữa hai lần `worker` tự đồng bộ kho khi rảnh
-  việc (mục 5). Không bắt buộc — thiếu `library` trong `project.yaml` thì toàn bộ lệnh `library *` báo
+  việc (mục 7). `sync_seconds: 10` trong `fixtures/ops-project-studio` là **giá trị cho bộ test** (để test
+  không phải chờ 5 phút) — máy thật cứ để mặc định 300. Không bắt buộc — thiếu `library` trong `project.yaml` thì toàn bộ lệnh `library *` báo
   `CONFIG_INVALID: project.yaml ... has no library configured`, và `doctor`/`worker` bỏ qua phần kho.
 
 `workflows:` cũng nên khai kèm để `harness doctor` chỉ kiểm những workflow máy này thật sự chạy — xem mục 6.
@@ -109,8 +110,11 @@ built-in) → gate `library-review` → `library-apply-review` (script, built-in
 - Gate `library-review` cần `review.json { decision: "approved"|"rejected", note }`. Có thể duyệt qua gate
   (`stage submit`) hoặc trực tiếp không qua gate: `harness library review <item_id> --approve|--reject
   [--note "..."]` — cả hai đường đều gọi đúng một hàm (`applyReview`) là nơi duy nhất ghi kết quả duyệt vào
-  kho. `approved` gọi `fulfillRequest` (đẩy `item_id` vào request, `fulfilled` khi đủ `count`); `rejected`
-  gọi `reopenRequest` (request về `open`, ghi chú được nối vào `notes`, `claimed_by_run` bị xoá).
+  kho. `approved` gọi `fulfillRequest` (đẩy `item_id` vào request; vì `count` ghim ở 1, item đầu tiên làm
+  request `fulfilled`); `rejected` gọi `reopenRequest` (request về `open`, ghi chú được nối vào `notes`,
+  `claimed_by_run` bị xoá). Trạng thái của request được **kiểm trước khi ghi item**, nên một request không
+  nhận được transition (chưa ai claim, hay đã `fulfilled`) làm lệnh dừng lại với item còn nguyên
+  `pending_review` — không có nửa vời. Chạy lại cùng một quyết định là idempotent (xem mục 8).
 - **Run bị `rejected` vẫn kết thúc `SUCCEEDED`** — từ chối là một kết quả bình thường của workflow, không
   phải lỗi. Mọi stage của run đó đã `SUCCEEDED`, nên `harness retry <run_id> --stage plan-edit` không có gì
   để retry (`retry` chỉ đưa stage `FAILED`/`WAITING_HUMAN` về `READY`) — in `nothing to retry`. Cách làm lại:
@@ -139,8 +143,14 @@ này trước đó) luôn được tôn trọng và trả lại đúng `ContentI
 `library_item_id` trỏ về kho, `source_ids: []` (nội dung không đi qua source catalog của channel) — dùng
 `content_id` in ra cho `harness plan` của workflow phát hành (sub-project 3, chưa có ở nhánh này).
 
-`--count` của request quyết định cần bao nhiêu item mới `fulfilled`; request vẫn `claimed` (chờ thêm item)
-cho tới khi `item_ids.length >= count`.
+Một request đổi lấy đúng **một** item: `count` ghim ở 1 trong `ContentRequestSchema`, `--count` khác 1 bị từ
+chối `CONFIG_INVALID`. Item đầu tiên được duyệt `approved` đóng request thành `fulfilled`. Cần thêm tập nữa
+thì tạo request mới — chưa có cơ chế cho một run claim lại một request đã `claimed` (xem ghi chú cuối spec 2C).
+
+Item đã `approved` mà kênh không dùng nữa: `harness --project <studio-dir> library withdraw <item_id> --note
+"..."` (vai `studio`) đưa nó về `withdrawn` — cách kho biểu diễn "coi như đã xoá", **không có đường quay
+lại**. Claim đã tồn tại vẫn được tôn trọng (channel đã `pick` trước đó giữ nguyên `ContentItem` của nó); chỉ
+`pick` **mới** mới bị từ chối.
 
 ## 5. Ai được ghi gì (`LibraryFs.assertWritable`)
 
@@ -178,6 +188,10 @@ vì làm chết lệnh `doctor`.
   dung y hệt thì không ghi lại dù `updated_at` khác, tránh nhiễu do đồng hồ hai máy lệch nhau).
 - `corrupt`: file không đọc được (JSON hỏng, thiếu trường) hoặc một file dữ liệu của item không khớp checksum
   trong manifest — **cô lập vào đúng item đó**, các style/request/item khác vẫn đồng bộ bình thường.
+  Lưu ý chi phí: file dữ liệu chỉ được hash lại cho item **mới hoặc đã đổi** (so manifest với mirror). Một
+  file bị sửa **sau** khi item đã import không bị phát hiện ở lần sync thường — chạy `harness library sync
+  --verify` (audit, đọc lại toàn bộ kho, chậm) khi cần chắc chắn, ví dụ trước một đợt phát hành lớn hay sau
+  một sự cố mount.
 - `missing`: có trong DB mirror nhưng không còn thấy trên kho (đã bị xoá thủ công/mount rớt) — chỉ báo, không
   tự xoá khỏi mirror.
 
@@ -197,6 +211,8 @@ plan run** từ một request mới thấy — đó vẫn là việc của ngư�
 | Request kẹt `claimed` không ai `fulfilled`/`rejected` | Xem `claimed_by_run` trong `requests/<id>.json` (hoặc `library list requests --json`) — run nào đang giữ; `harness status <run_id>` của máy studio đó xem stage nào chưa xong. Nếu run đó đã chết (crash, hủy): `harness cancel <run_id>` rồi `harness library review <item_id> --reject --note "run huỷ, làm lại"` nếu đã có item, hoặc trực tiếp sửa `requests/<id>.json` (ít khuyến khích, chỉ khi không còn run nào giữ) về `open`. |
 | `intake` của một run mới `WAITING_HUMAN`, lỗi `INVALID_TRANSITION ... already claimed` | Một run khác đã `claimRequest` request này trước (accept-hai-lần trên cùng request đang `open`, hoặc accept một request không còn `open`). Đây là kết quả đúng, không phải lỗi hệ thống — `cancel` run thua cuộc (xem acceptance test #19); request vẫn `claimed` đúng bởi run thắng. |
 | `library pick <item_id>` báo `INVALID_TRANSITION ... withdrawn`/`rejected`/`pending_review` | Item chưa (hoặc không còn) ở trạng thái `approved`. `withdrawn` là cách kho biểu diễn "coi như đã xoá" (kho không bao giờ xoá thật) — không có đường đưa một item `withdrawn` trở lại `approved`; cần một item mới (dựng lại từ request đã mở lại, hoặc studio `library review` một item khác). |
+| `library sync` (hay một stage kho) ném `IO_ERROR: library root not available: ...` | Kho chưa mount (hoặc mount vừa rớt). Đây là lỗi cố ý: không lệnh nào tự tạo thư mục kho, và không có gì được ghi vào đĩa cục bộ đóng vai kho. Mount lại rồi chạy lại; với một run đang chạy, `IO_ERROR` là `transient` nên stage sẽ tự retry trong hạn attempt. |
+| `harness library review` ném lỗi có `item_written: true` (item đã ghi, request chưa) | Manifest item đã sang `approved`/`rejected` nhưng file request chưa kịp cập nhật (mount rớt giữa hai lần ghi). Chạy **lại đúng lệnh cũ** — `harness library review <item_id> --approve\|--reject [--note ...]` là idempotent: item đã mang quyết định đó thì không ghi lại, và nửa request còn thiếu được áp nốt. Nếu run cũ đã bị `cancel` và request đã được run khác claim thì lệnh chạy lại chỉ trả về nguyên trạng, không đụng vào claim mới. |
 | `doctor` báo `library:root` FAIL | `library.root` (đã resolve từ `project.yaml`) không tồn tại hoặc không phải thư mục — mount kho trước. |
 | `doctor` báo `library:write` FAIL, `directory missing: .../styles` (hay `.../requests`) | Thư mục con vai này cần ghi chưa có trên kho — `doctor` cố ý không tự tạo; tạo `styles/`, `requests/`, `items/` một lần khi thiết lập kho (xem README quick-start) hoặc kiểm tra mount. |
 | `doctor` báo `library:index` FAIL | `index.json` tồn tại nhưng hỏng — chạy lại `library sync` ở máy `studio` để ghi lại. |

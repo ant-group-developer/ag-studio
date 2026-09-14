@@ -301,3 +301,42 @@ thư mục chia sẻ ("kho"); máy channel xin nội dung, đồng bộ, rồi n
     <cùng id>` lần nữa rồi `plan` một **run mới** (không phải `retry` run cũ). Spec §3.2/§6 nhắc `retry
     --stage plan-edit` như một lựa chọn khả dĩ sau khi bị từ chối — ghi chú sửa lại ở cuối tài liệu spec 2C
     (`docs/superpowers/specs/2026-09-14-sub-project-2c-content-library-design.md`).
+61. Kho là một **mount**, không phải thư mục do process này sở hữu: mọi ghi qua `LibraryFs`
+    (`writeJsonAtomic`, `copyFileWithChecksum`) kiểm `exists()` của `library.root` trước, và `syncLibrary`
+    cũng vậy — root không có mặt ném `IO_ERROR` (`transient` với `library-stage`, exit 1 với CLI) thay vì để
+    `mkdirSync(..., { recursive: true })` dựng một cây thư mục cục bộ đóng vai kho rồi báo "thành công".
+    Không có check này, một máy chưa mount kho vẫn chạy `library-export` "xong" vào đĩa cục bộ, và
+    `library sync` báo mọi thứ `missing` như thể ai đó vừa xoá sạch kho.
+62. `readRequest`/`readItem` chỉ map **file không tồn tại** (`existsSync` trả `false`) thành `NOT_FOUND`; lỗi
+    đọc/parse của một file **có tồn tại** giữ nguyên mã của `readJson` (`IO_ERROR`, hoặc `CONFIG_INVALID` khi
+    sai schema). Trước đó mọi `IO_ERROR` bị đổi thành `NOT_FOUND`, nên một mount rớt giữa chừng trông hệt như
+    "request chưa từng tồn tại" và `library-stage` biến nó thành contract failure vĩnh viễn thay vì retry.
+63. `ContentRequestSchema.count` ghim `z.literal(1)`: `intake` claim một request đúng một lần và item đầu tiên
+    `fulfillRequest` đóng nó, nên một request `count > 1` sẽ kẹt `claimed` vĩnh viễn (không có cơ chế
+    re-claim). CLI `library request create --count` chỉ nhận `1` (khác đi là `CONFIG_INVALID`). Phép so
+    `item_ids.length >= count` vẫn giữ trong `fulfillRequest` cho ngày mở lại giới hạn này.
+64. `applyReview` ghi hai file (manifest item, rồi request) mà kho không có transaction, nên: (a) transition
+    của request được **kiểm trước** khi ghi item (request phải `claimed` để `fulfill`, `claimed`/`rejected` để
+    `reopen`) — request không nhận được thì item vẫn `pending_review`, không có nửa vời; (b) ghi item trước,
+    request sau, và nếu bước request ném lỗi thì lỗi mang `details.item_written: true` cùng cả hai id; (c)
+    chạy lại cùng một quyết định là **idempotent**: item đã mang đúng `status` thì trả về nguyên trạng, và nếu
+    nửa request chưa kịp áp (vẫn `claimed` bởi đúng `lineage.run_id` của item) thì áp nốt lúc đó — tức
+    `harness library review <item_id> --approve|--reject` là cách hồi phục một lần ghi dở.
+65. `ContentItem.library_channel_id` (mới): `claimItem` ghi cùng `library_item_id` và tra cứu claim cũ theo
+    **cả hai**. Hai channel cùng `pick` một item của kho là hai `ContentItem` riêng; trước đó nhánh idempotent
+    tra theo `library_item_id` một mình nên channel thứ hai có thể nhận lại `ContentItem` của channel thứ
+    nhất (và `plan` một run phát hành trên content của kênh khác).
+66. `syncLibrary` chỉ hash lại file dữ liệu của item **mới hoặc đã đổi** (`classify` chạy trước `verifyFile`);
+    `syncLibrary(d, { verify: true })` / `harness library sync --verify` ép kiểm toàn bộ. Worker (sync định kỳ
+    mỗi `sync_seconds`) dùng đường rẻ — nếu không, mỗi lần rảnh việc là một lần đọc lại toàn bộ kho qua
+    mount. Đổi lại: một file dữ liệu bị sửa **sau** khi item đã import chỉ lộ ra ở lần `--verify`.
+67. `harness library withdraw <item_id> [--note]` (vai `studio`) nối CLI vào `withdrawItem` —
+    `approved|rejected → withdrawn`, trạng thái kho dùng thay cho xoá. Trước đó `withdrawn` chỉ đến được bằng
+    cách sửa tay `manifest.json`, dù `claimItem` và `library pick` đều kiểm nó.
+68. `doctor` ghi file thử tên `.doctor-<role>-<uuid>.tmp` (dot-name, không bao giờ `.json`) và
+    `listRequestIds`/`listStyleIds`/`listItemIds` bỏ qua mọi tên bắt đầu bằng `.`: một file thử sót lại
+    (doctor chết giữa chừng) trước đây là `requests/.doctor-channel-<uuid>.json` và bị `listRequestIds` đọc
+    như một request thật rồi báo `corrupt`.
+69. `exportItem` ghi `manifest.json` **trước** rồi mới `pruneStaleFiles`: giữa hai bước, một máy khác đang
+    `library sync` chỉ thấy manifest liệt kê đúng những file còn trên đĩa. Thứ tự ngược lại tạo một khe trong
+    đó manifest cũ bảo chứng cho file vừa bị xoá — đúng định nghĩa `corrupt` của sync.
