@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -255,6 +255,44 @@ describe("exportItem", () => {
     expect(second.item.files.map((f) => f.path)).toEqual(["episode.mp4", "thumbnail-01.png", "thumbnail-02.webp", "edit-plan.json"]);
     expect(store.getLibraryItem(second.item.item_id)).toEqual(second.item);
     expect(fs.listItemIds()).toEqual([first.item.item_id]);
+  });
+
+  it("writes the new manifest before pruning, so a concurrent reader never sees a manifest listing deleted files", async () => {
+    const { d, fs } = world();
+    const run = makeRun();
+    const content = makeContent();
+    const brief = makeBrief();
+
+    const src = tempSrcDir();
+    const episodePath = join(src, "full-episode.mp4");
+    writeFileSync(episodePath, "episode-bytes");
+    const editPlanPath = join(src, "plan.json");
+    writeFileSync(editPlanPath, JSON.stringify({ style_id: "x" }));
+    const thumb1 = join(src, "t1.png");
+    writeFileSync(thumb1, "thumb-1");
+    const thumb2 = join(src, "t2.png");
+    writeFileSync(thumb2, "thumb-2");
+
+    const first = await exportItem(d, { run, content, brief, episodePath, editPlanPath, thumbnailPaths: [thumb1, thumb2] });
+    const dir = first.receipt.item_dir;
+    const stale = join(dir, "thumbnail-02.png");
+    expect(existsSync(stale)).toBe(true);
+
+    // record the state of the soon-to-be-pruned file at the instant the manifest is written
+    let staleExistedAtManifestWrite: boolean | undefined;
+    const realWrite = fs.writeJsonAtomic.bind(fs);
+    const spy = vi.spyOn(fs, "writeJsonAtomic").mockImplementation((path: string, value: unknown) => {
+      if (path === fs.paths.manifest(first.item.item_id)) staleExistedAtManifestWrite = existsSync(stale);
+      realWrite(path, value);
+    });
+
+    const second = await exportItem(d, { run, content, brief, episodePath, editPlanPath, thumbnailPaths: [thumb1], existingItemId: first.item.item_id });
+    spy.mockRestore();
+
+    expect(second.item.files.map((f) => f.path)).toEqual(["episode.mp4", "thumbnail-01.png", "edit-plan.json"]);
+    // the manifest that stops listing thumbnail-02.png is on disk *before* the file goes away
+    expect(staleExistedAtManifestWrite).toBe(true);
+    expect(existsSync(stale)).toBe(false);
   });
 
   it("treats an existingItemId with no manifest on disk yet the same as a fresh export (created_at = now)", async () => {

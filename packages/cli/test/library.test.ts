@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse, stringify } from "yaml";
@@ -71,6 +72,25 @@ function writeItemManifest(root: string, itemId: string, styleId: string, runId:
     review: { note: "" }, created_at: "2026-09-14T00:00:00.000Z", updated_at: "2026-09-14T00:00:00.000Z",
   };
   writeFileSync(join(dir, "manifest.json"), JSON.stringify(item, null, 2) + "\n");
+}
+
+/** Like `writeItemManifest`, but the data file really exists and the manifest carries its real checksum --
+ * what `library sync` needs to have something to verify. Returns the data file's path. */
+function writeRealItem(root: string, itemId: string, styleId: string): string {
+  const dir = join(root, "items", itemId);
+  mkdirSync(dir, { recursive: true });
+  const body = `episode bytes for ${itemId}\n`;
+  const dataPath = join(dir, "episode.mp4");
+  writeFileSync(dataPath, body);
+  const item = {
+    schema_version: "harness.library-item/v1", item_id: itemId, status: "approved", title_hint: "Real item", summary: "",
+    style: { style_id: styleId, revision: 1 }, duration_seconds: 42, media: null,
+    files: [{ path: "episode.mp4", checksum: "sha256:" + createHash("sha256").update(body).digest("hex"), size_bytes: Buffer.byteLength(body), mime_type: "video/mp4" }],
+    lineage: { project_id: "project-studio", run_id: newId("run"), content_id: newId("content_item"), source_ids: [] },
+    review: { note: "" }, created_at: "2026-09-14T00:00:00.000Z", updated_at: "2026-09-14T00:00:00.000Z",
+  };
+  writeFileSync(join(dir, "manifest.json"), JSON.stringify(item, null, 2) + "\n");
+  return dataPath;
 }
 
 describe("harness library CLI", () => {
@@ -167,6 +187,86 @@ describe("harness library CLI", () => {
     const report = JSON.parse(sync.out);
     expect(report.corrupt).toHaveLength(1);
     expect(report.corrupt[0].path).toBe(corruptPath);
+  });
+
+  it("`library request create --count` accepts only 1", () => {
+    const root = mkdtempSync(join(tmpdir(), "kho-count-"));
+    const channelDir = libraryProject(root, "channel", "count");
+    expect(cli(channelDir, "db", "migrate").code).toBe(0);
+    const styleId = newId("edit_style");
+    writeStyleFile(root, styleId);
+
+    const many = cli(channelDir, "library", "request", "create", "--portfolio", "portfolio-main", "--topic", "t", "--style", styleId, "--count", "3", "--json");
+    expect(many.code).toBe(1);
+    expect(many.err).toContain("CONFIG_INVALID");
+    expect(many.err).toContain("--count");
+
+    const one = cli(channelDir, "library", "request", "create", "--portfolio", "portfolio-main", "--topic", "t", "--style", styleId, "--count", "1", "--json");
+    expect(one.code, one.err).toBe(0);
+    expect(JSON.parse(one.out).count).toBe(1);
+  });
+
+  it("`library withdraw` moves an approved item to withdrawn in the kho", () => {
+    const root = mkdtempSync(join(tmpdir(), "kho-withdraw-"));
+    const studioDir = libraryProject(root, "studio", "withdraw");
+    expect(cli(studioDir, "db", "migrate").code).toBe(0);
+    const styleId = newId("edit_style");
+    writeStyleFile(root, styleId);
+
+    const itemId = newId("library_item");
+    writeItemManifest(root, itemId, styleId, newId("run"), newId("content_item"));
+    expect(cli(studioDir, "library", "review", itemId, "--approve", "--json").code).toBe(0);
+
+    const withdrawn = cli(studioDir, "library", "withdraw", itemId, "--note", "kênh không dùng nữa", "--json");
+    expect(withdrawn.code, withdrawn.err).toBe(0);
+    expect(JSON.parse(withdrawn.out).status).toBe("withdrawn");
+    const onDisk = JSON.parse(readFileSync(join(root, "items", itemId, "manifest.json"), "utf8"));
+    expect(onDisk.status).toBe("withdrawn");
+    expect(onDisk.review.note).toContain("kênh không dùng nữa");
+
+    // a pending_review item is not withdrawable
+    const otherId = newId("library_item");
+    writeItemManifest(root, otherId, styleId, newId("run"), newId("content_item"));
+    const refused = cli(studioDir, "library", "withdraw", otherId);
+    expect(refused.code).toBe(1);
+    expect(refused.err).toContain("INVALID_TRANSITION");
+  });
+
+  it("`library sync --verify` re-hashes data files of unchanged items; the cheap sync does not", () => {
+    const root = mkdtempSync(join(tmpdir(), "kho-verify-"));
+    const studioDir = libraryProject(root, "studio", "verify");
+    expect(cli(studioDir, "db", "migrate").code).toBe(0);
+    const styleId = newId("edit_style");
+    writeStyleFile(root, styleId);
+
+    const itemId = newId("library_item");
+    const dataPath = writeRealItem(root, itemId, styleId);
+    expect(cli(studioDir, "library", "sync", "--json").code).toBe(0);
+
+    writeFileSync(dataPath, "tampered bytes");
+
+    const cheap = cli(studioDir, "library", "sync", "--json");
+    expect(cheap.code).toBe(0);
+    expect(JSON.parse(cheap.out).corrupt).toHaveLength(0);
+
+    const audit = cli(studioDir, "library", "sync", "--verify", "--json");
+    expect(audit.code).toBe(1);
+    const report = JSON.parse(audit.out);
+    expect(report.corrupt).toHaveLength(1);
+    expect(report.corrupt[0].path).toBe(dataPath);
+  });
+
+  it("`library sync` fails with IO_ERROR when the kho root is not mounted", () => {
+    const root = mkdtempSync(join(tmpdir(), "kho-unmounted-"));
+    const studioDir = libraryProject(root, "studio", "unmounted");
+    expect(cli(studioDir, "db", "migrate").code).toBe(0);
+    rmSync(root, { recursive: true, force: true });
+
+    const sync = cli(studioDir, "library", "sync", "--json");
+    expect(sync.code).toBe(1);
+    expect(sync.err).toContain("IO_ERROR");
+    expect(sync.err).toContain(root);
+    expect(existsSync(root)).toBe(false); // nothing scaffolded a local kho behind our back
   });
 
   it("doctor reports the three library:* rows for a project with a library root", () => {

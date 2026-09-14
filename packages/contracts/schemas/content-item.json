@@ -89,6 +89,10 @@
         "library_item_id": {
           "type": "string",
           "pattern": "^item_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "library_channel_id": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [

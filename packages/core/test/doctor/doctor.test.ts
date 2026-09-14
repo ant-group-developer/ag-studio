@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HarnessConfig, ProjectConfig, ScriptsRegistry, SecretResolver } from "@harness/contracts";
@@ -225,6 +225,14 @@ describe("runDoctor", () => {
     expect(byCheckPresent.get("library:root")).toMatchObject({ ok: true });
     expect(byCheckPresent.get("library:write")).toMatchObject({ ok: true });
     expect(byCheckPresent.get("library:index")).toMatchObject({ ok: true });
+
+    // the channel probe must not look like a request to `listRequestIds`: a dot-name, and never `.json`
+    const writeDetail = byCheckPresent.get("library:write")!.detail;
+    expect(writeDetail).toMatch(/[\\/]\.doctor-channel-[0-9a-f-]+\.tmp\b/);
+    expect(writeDetail).not.toMatch(/\.json\b/);
+    // and it really is gone, so no listing sees it either way
+    expect(new LibraryFs({ root: existingRoot, role: "channel" }).listRequestIds()).toEqual([]);
+    expect(readdirSync(join(existingRoot, "requests"))).toEqual([]);
   });
 
   // project.yaml.workflows scopes doctor to the workflow releases a machine actually runs: a footage-only

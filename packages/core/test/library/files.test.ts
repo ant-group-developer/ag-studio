@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -58,6 +58,46 @@ describe("LibraryFs.writeJsonAtomic", () => {
     }
     expect(isHarnessError(caught, "IO_ERROR")).toBe(true);
     expect(readdirSync(join(root, "styles")).filter((n) => n.includes(".tmp-"))).toEqual([]);
+  });
+});
+
+describe("LibraryFs writes against an unmounted kho", () => {
+  it("writeJsonAtomic throws IO_ERROR and scaffolds nothing when the root is gone", () => {
+    const root = tempRoot();
+    const fs = new LibraryFs({ root, role: "studio" });
+    rmSync(root, { recursive: true, force: true });
+
+    let caught: unknown;
+    try {
+      fs.writeJsonAtomic(fs.paths.styleFile("style_a"), { ok: true });
+    } catch (e) {
+      caught = e;
+    }
+    expect(isHarnessError(caught, "IO_ERROR")).toBe(true);
+    expect((caught as { details: { root: string } }).details.root).toBe(fs.paths.root);
+    // the whole point: no local directory tree standing in for a share that is not mounted
+    expect(existsSync(root)).toBe(false);
+    expect(existsSync(fs.paths.styles)).toBe(false);
+  });
+
+  it("copyFileWithChecksum throws IO_ERROR and scaffolds nothing when the root is gone", async () => {
+    const raw = tempRoot();
+    const src = join(raw, "episode.mp4");
+    writeFileSync(src, "fake episode bytes");
+
+    const root = tempRoot();
+    const fs = new LibraryFs({ root, role: "studio" });
+    rmSync(root, { recursive: true, force: true });
+
+    let caught: unknown;
+    try {
+      await fs.copyFileWithChecksum(src, join(fs.paths.itemDir("item_a"), "episode.mp4"));
+    } catch (e) {
+      caught = e;
+    }
+    expect(isHarnessError(caught, "IO_ERROR")).toBe(true);
+    expect(existsSync(root)).toBe(false);
+    expect(existsSync(fs.paths.items)).toBe(false);
   });
 });
 
@@ -244,6 +284,28 @@ describe("LibraryFs listings", () => {
 
     expect(studio.listStyleIds()).toEqual(["style_a"]);
     expect(studio.listRequestIds()).toEqual(["req_a"]);
+  });
+
+  it("skips every dot-name, so doctor's probe file is never mistaken for a request/style/item", () => {
+    const root = tempRoot();
+    const studio = new LibraryFs({ root, role: "studio" });
+    const channel = new LibraryFs({ root, role: "channel" });
+    studio.writeJsonAtomic(studio.paths.styleFile("style_a"), { ok: true });
+    studio.writeJsonAtomic(studio.paths.manifest("item_a"), { ok: true });
+    channel.writeJsonAtomic(channel.paths.requestFile("req_a"), { ok: true });
+
+    // exactly what `doctor`'s library:write probe leaves behind if it ever fails to remove itself
+    writeFileSync(join(channel.paths.requests, ".doctor-channel-6f9b.tmp"), "{}");
+    writeFileSync(join(studio.paths.styles, ".doctor-studio-6f9b.tmp"), "{}");
+    // and a dot-directory that happens to carry a manifest/style file
+    mkdirSync(join(studio.paths.items, ".hidden-item"), { recursive: true });
+    writeFileSync(join(studio.paths.items, ".hidden-item", "manifest.json"), "{}");
+    mkdirSync(join(studio.paths.styles, ".hidden-style"), { recursive: true });
+    writeFileSync(join(studio.paths.styles, ".hidden-style", "style.json"), "{}");
+
+    expect(studio.listRequestIds()).toEqual(["req_a"]);
+    expect(studio.listStyleIds()).toEqual(["style_a"]);
+    expect(studio.listItemIds()).toEqual(["item_a"]);
   });
 
   it("returns empty arrays when the respective directories don't exist yet", () => {

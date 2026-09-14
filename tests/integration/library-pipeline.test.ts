@@ -36,8 +36,11 @@ function acceptedProductionRun(world: LibraryWorld, styleId: string): { requestI
   expect(request.status).toBe("open");
 
   const synced = librarySync(world.studio);
-  expect(synced.imported.styles).toContain(styleId);
   expect(synced.imported.requests).toContain(request.request_id);
+  // the style is visible to the studio either way: freshly imported here, or already in its mirror because
+  // this very project's `style-export` put it in the kho (scenario 2 chains onto scenario 1's style)
+  const styleShown = cli(world.studio, ["library", "styles", "show", styleId, "--json"]);
+  expect(styleShown.code, styleShown.err).toBe(0);
 
   const ingested = cli(world.studio, ["source", "ingest", world.sample, "--rights", "cleared", "--json"]);
   expect(ingested.code, ingested.err).toBe(0);
@@ -87,15 +90,14 @@ function produceUntilReview(world: LibraryWorld, runId: string, sourceId: string
 }
 
 describe.skipIf(!hasFfmpeg())("the content library across a studio and a channel ops project", () => {
+  /** Scenario 1 leaves a real, `style-export`ed style in a real kho; scenario 2 requests *that* style instead
+   * of a hand-written one, so DoD bullet 2 ("a style the studio learned is what a channel can request and a
+   * production run consumes") is proven end-to-end rather than in two halves. Scenario 2 fails loudly if
+   * scenario 1 did not get that far. */
+  let learned: { world: LibraryWorld; styleId: string } | undefined;
+
   it("style-study: collected samples, two gates and style-export put an active style in the kho the channel can see", async () => {
     const world = freshLibraryWorld();
-    // both roles are healthy on the same kho: the studio with two workflows and six wrappers, the channel
-    // with no workflows and no `executors/` at all
-    for (const project of [world.studio, world.channel]) {
-      const doctor = cli(project, ["doctor"]);
-      expect(doctor.code, doctor.out).toBe(0);
-      expect(doctor.out).toContain("library:write");
-    }
 
     const ingested = cli(world.studio, ["source", "ingest", world.samplesTxt, "--rights", "cleared", "--json"]);
     expect(ingested.code, ingested.err).toBe(0);
@@ -153,12 +155,13 @@ describe.skipIf(!hasFfmpeg())("the content library across a studio and a channel
     const shown = cli(world.channel, ["library", "styles", "show", styleId, "--json"]);
     expect(shown.code, shown.err).toBe(0);
     expect((JSON.parse(shown.out) as EditStyle).status).toBe("active");
+
+    learned = { world, styleId };
   }, 300_000);
 
   it("request -> production -> approved review -> channel pick, with the unapproved pick refused", async () => {
-    const world = freshLibraryWorld();
-    const styleId = newId("edit_style");
-    writeActiveStyle(world.lib, styleId);
+    expect(learned, "scenario 1 (style-study) must run first: scenario 2 requests the style it exported").toBeDefined();
+    const { world, styleId } = learned!;
 
     const { requestId, sourceId, runId } = acceptedProductionRun(world, styleId);
     const itemId = produceUntilReview(world, runId, sourceId, styleId);

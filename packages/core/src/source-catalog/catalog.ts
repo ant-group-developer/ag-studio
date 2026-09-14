@@ -68,11 +68,12 @@ export class SourceCatalog {
     return rows;
   }
 
-  createContent(p: { source_ids: string[]; title: string; library_item_id?: string; library_brief?: LibraryBrief }): ContentItem {
+  createContent(p: { source_ids: string[]; title: string; library_item_id?: string; library_channel_id?: string; library_brief?: LibraryBrief }): ContentItem {
     for (const id of p.source_ids) if (!this.d.store.getSourceItem(id)) throw new HarnessError("NOT_FOUND", `source not found: ${id}`, { source_id: id });
     const content: ContentItem = {
       schema_version: "harness.content-item/v1", content_id: newId("content_item"), source_ids: p.source_ids, revision: 1, title: p.title, created_at: this.d.clock.now(),
       ...(p.library_item_id !== undefined ? { library_item_id: p.library_item_id } : {}),
+      ...(p.library_channel_id !== undefined ? { library_channel_id: p.library_channel_id } : {}),
       ...(p.library_brief !== undefined ? { library_brief: p.library_brief } : {}),
     };
     this.d.store.insertContentItem(content);

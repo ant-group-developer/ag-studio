@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Clock, ContentRequest, EditStyle, LibraryItem, StateStore } from "@harness/contracts";
-import { ContentRequestSchema, EditStyleSchema, LibraryItemSchema } from "@harness/contracts";
+import { ContentRequestSchema, EditStyleSchema, HarnessError, LibraryItemSchema } from "@harness/contracts";
 import { canonicalDigest } from "../artifacts/checksum.js";
 import type { LibraryFs, LibraryRole } from "./files.js";
 
@@ -32,7 +32,26 @@ function reasonFor(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export async function syncLibrary(d: { store: StateStore; fs: LibraryFs; role: LibraryRole; clock: Clock }): Promise<SyncReport> {
+export interface SyncOptions {
+  /**
+   * Re-hash every data file of every item, not just the ones whose manifest changed since the last sync.
+   * Off by default: a periodic sync would otherwise read every byte in the kho every time, and an item whose
+   * manifest is unchanged has already been verified once. Turn it on for an audit (`library sync --verify`)
+   * -- that is the only way a data file tampered with *after* its item was imported is ever noticed.
+   */
+  verify?: boolean;
+}
+
+/**
+ * An unmounted kho is an error, not an empty kho: without this check every style/request/item in the mirror
+ * would be reported `missing` (listings of a non-existent directory are empty), which reads exactly like
+ * "someone deleted the whole library" and tells an operator the wrong thing to fix.
+ */
+export async function syncLibrary(d: { store: StateStore; fs: LibraryFs; role: LibraryRole; clock: Clock }, o: SyncOptions = {}): Promise<SyncReport> {
+  if (!d.fs.exists()) {
+    throw new HarnessError("IO_ERROR", `library root not available: ${d.fs.paths.root}`, { root: d.fs.paths.root });
+  }
+  const verifyAll = o.verify ?? false;
   const report = emptyReport();
 
   const styleIds = d.fs.listStyleIds();
@@ -75,6 +94,11 @@ export async function syncLibrary(d: { store: StateStore; fs: LibraryFs; role: L
     // just mismatching — deleted mid-sync, a permission error, a flaky mount) must not abort the loop.
     try {
       const item = d.fs.readJson<LibraryItem>(path, LibraryItemSchema);
+      const outcome = classify(item, d.store.getLibraryItem(item.item_id));
+      // An item whose manifest has not moved was already verified when it was imported; re-hashing its data
+      // files on every poll is the single most expensive thing a sync can do (see SyncOptions.verify).
+      if (outcome === "unchanged" && !verifyAll) continue;
+
       const itemDir = d.fs.paths.itemDir(id);
       let bad: { path: string; reason: string } | undefined;
       for (const f of item.files) {
@@ -99,8 +123,7 @@ export async function syncLibrary(d: { store: StateStore; fs: LibraryFs; role: L
         report.corrupt.push(bad);
         continue;
       }
-      const outcome = classify(item, d.store.getLibraryItem(item.item_id));
-      if (outcome === "unchanged") continue;
+      if (outcome === "unchanged") continue; // verify-only pass: nothing to mirror, nothing to report
       d.store.upsertLibraryItem(item);
       report[outcome].items.push(item.item_id);
     } catch (e) {

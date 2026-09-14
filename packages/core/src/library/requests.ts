@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { ContentRequestSchema, HarnessError, newId, type Clock, type ContentRequest, type StateStore } from "@harness/contracts";
 import type { LibraryFs } from "./files.js";
 
@@ -13,17 +14,18 @@ function appendNote(notes: string, note: string): string {
   return notes ? `${notes}\n${note}` : note;
 }
 
-/** Reads a request straight from the kho (not the DB mirror); a missing file is NOT_FOUND. */
+/**
+ * Reads a request straight from the kho (not the DB mirror). Only an *absent* file is NOT_FOUND: a file that
+ * exists but cannot be read or parsed keeps `readJson`'s own code (`IO_ERROR`, or `CONFIG_INVALID` for a
+ * schema mismatch), because a dropped mount or a half-written file is a retryable problem with the kho, not
+ * "this request never existed" -- which `library-stage` would turn into a permanent contract failure.
+ */
 export function readRequest(d: LibraryDeps, requestId: string): ContentRequest {
   const path = d.fs.paths.requestFile(requestId);
-  try {
-    return d.fs.readJson(path, ContentRequestSchema);
-  } catch (e) {
-    if (e instanceof HarnessError && e.code === "IO_ERROR") {
-      throw new HarnessError("NOT_FOUND", `content request not found: ${requestId}`, { request_id: requestId });
-    }
-    throw e;
+  if (!existsSync(path)) {
+    throw new HarnessError("NOT_FOUND", `content request not found: ${requestId}`, { request_id: requestId });
   }
+  return d.fs.readJson(path, ContentRequestSchema);
 }
 
 function saveRequest(d: LibraryDeps, request: ContentRequest): ContentRequest {
@@ -40,7 +42,6 @@ export function createRequest(d: LibraryDeps, p: {
   target_duration_seconds?: [number, number];
   voice?: "none" | "tts" | "original";
   language?: string;
-  count?: number;
   due_at?: string;
   notes?: string;
 }): ContentRequest {
@@ -52,7 +53,7 @@ export function createRequest(d: LibraryDeps, p: {
     topic: p.topic,
     voice: p.voice ?? "none",
     language: p.language ?? "vi",
-    count: p.count ?? 1,
+    count: 1, // fixed by contract: one request buys one item (ContentRequestSchema.count)
     status: "open",
     item_ids: [],
     notes: p.notes ?? "",

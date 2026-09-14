@@ -82,8 +82,6 @@ export async function exportItem(
   }
   files.push(await d.fs.copyFileWithChecksum(p.editPlanPath, join(dir, "edit-plan.json")));
 
-  pruneStaleFiles(dir, files.map((f) => f.path));
-
   const probed = await d.prober.probe(p.episodePath);
   const now = d.clock.now();
 
@@ -109,7 +107,11 @@ export async function exportItem(
     updated_at: now,
   };
 
+  // Manifest first, prune second: between the two, a concurrent reader (another machine's `library sync`)
+  // sees a manifest that lists only files still on disk. The other order would publish a window where the
+  // manifest vouches for a file that has already been deleted, which reads as a corrupt item.
   d.fs.writeJsonAtomic(manifestPath, item);
+  pruneStaleFiles(dir, files.map((f) => f.path));
   d.store.upsertLibraryItem(item);
 
   const receipt: ExportReceipt = {

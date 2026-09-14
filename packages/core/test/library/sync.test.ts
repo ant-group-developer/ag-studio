@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { newId } from "@harness/contracts";
+import { isHarnessError, newId } from "@harness/contracts";
 import type { ContentRequest, EditStyle, LibraryItem } from "@harness/contracts";
 import { LibraryFs, sha256File, syncLibrary, writeIndex } from "../../src/index.js";
 import { openTempStore } from "../helpers.js";
@@ -241,6 +241,80 @@ describe("syncLibrary", () => {
     const report = await syncLibrary({ store, fs: studio, role: "studio", clock });
     expect(report.missing).toEqual([{ kind: "style", id: styleId }]);
     expect(store.getEditStyle(styleId)).toBeDefined();
+  });
+
+  it("throws IO_ERROR instead of reporting everything missing when the kho root is not mounted", async () => {
+    const root = tempRoot();
+    const studio = new LibraryFs({ root, role: "studio" });
+    const { store, clock } = openTempStore();
+
+    const styleId = newId("edit_style");
+    studio.writeJsonAtomic(studio.paths.styleFile(styleId), makeStyle(styleId));
+    await syncLibrary({ store, fs: studio, role: "studio", clock });
+
+    rmSync(root, { recursive: true, force: true });
+
+    let caught: unknown;
+    try {
+      await syncLibrary({ store, fs: studio, role: "studio", clock });
+    } catch (e) {
+      caught = e;
+    }
+    expect(isHarnessError(caught, "IO_ERROR")).toBe(true);
+    expect((caught as { message: string }).message).toContain(root);
+    // the mirror is untouched: an unmounted kho says nothing about what the kho holds
+    expect(store.getEditStyle(styleId)).toBeDefined();
+  });
+
+  it("verifies data files only for new or changed items, unless verify: true", async () => {
+    const root = tempRoot();
+    const studio = new LibraryFs({ root, role: "studio" });
+    const { store, clock } = openTempStore();
+
+    const styleId = newId("edit_style");
+    const itemId = newId("library_item");
+    await writeItem(studio, itemId, styleId, "episode one bytes");
+
+    const spy = vi.spyOn(studio, "verifyFile");
+    const first = await syncLibrary({ store, fs: studio, role: "studio", clock });
+    expect(first.imported.items).toEqual([itemId]);
+    expect(spy).toHaveBeenCalledTimes(1); // a new item is always verified
+
+    // unchanged on a second sync: the expensive re-hash is skipped entirely
+    spy.mockClear();
+    const second = await syncLibrary({ store, fs: studio, role: "studio", clock });
+    expect(second.updated.items).toEqual([]);
+    expect(spy).not.toHaveBeenCalled();
+
+    // ... unless the caller asks for a full audit
+    spy.mockClear();
+    const audited = await syncLibrary({ store, fs: studio, role: "studio", clock }, { verify: true });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(audited.corrupt).toEqual([]);
+    spy.mockRestore();
+  });
+
+  it("reports a tampered data file of an otherwise-unchanged item only under verify: true", async () => {
+    const root = tempRoot();
+    const studio = new LibraryFs({ root, role: "studio" });
+    const { store, clock } = openTempStore();
+
+    const styleId = newId("edit_style");
+    const itemId = newId("library_item");
+    await writeItem(studio, itemId, styleId, "episode one bytes");
+    expect((await syncLibrary({ store, fs: studio, role: "studio", clock })).imported.items).toEqual([itemId]);
+
+    // the manifest is untouched, so the item classifies as unchanged; only its bytes moved
+    const dataPath = join(studio.paths.itemDir(itemId), "episode.mp4");
+    writeFileSync(dataPath, "tampered bytes");
+
+    const cheap = await syncLibrary({ store, fs: studio, role: "studio", clock });
+    expect(cheap.corrupt).toEqual([]);
+
+    const audit = await syncLibrary({ store, fs: studio, role: "studio", clock }, { verify: true });
+    expect(audit.corrupt).toHaveLength(1);
+    expect(audit.corrupt[0].path).toBe(dataPath);
+    expect(audit.corrupt[0].reason).toMatch(/^checksum mismatch:/);
   });
 
   it("only writes index.json for the studio role; the channel role never writes it", async () => {

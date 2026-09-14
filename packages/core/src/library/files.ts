@@ -44,6 +44,15 @@ export function libraryPaths(root: string): LibraryPaths {
   };
 }
 
+/**
+ * A kho entry is never a dot-name: the only dot-names that turn up are scratch (an interrupted write's
+ * leftovers, `doctor`'s `.doctor-<role>-<uuid>.tmp` probe, or an OS artefact like `.DS_Store`). Listing one
+ * as a style/request/item id would hand `syncLibrary` a "corrupt" entry for a file the kho does not own.
+ */
+function isHiddenName(name: string): boolean {
+  return name.startsWith(".");
+}
+
 function removeTmpQuietly(tmp: string): void {
   try {
     if (existsSync(tmp)) rmSync(tmp, { force: true });
@@ -92,8 +101,21 @@ export class LibraryFs {
     return result.data;
   }
 
+  /**
+   * The kho is a mount, not a directory this process owns: when the root is not there, `mkdirSync(…, {
+   * recursive: true })` would happily build a local tree standing in for the share and every write would
+   * "succeed" into it. Every write checks the root first so an unmounted kho is a plain `IO_ERROR`
+   * (`transient` to `library-stage`, exit 1 to the CLI) instead of a silently-scaffolded fake library.
+   */
+  private assertRootMounted(): void {
+    if (!this.exists()) {
+      throw new HarnessError("IO_ERROR", `library root not available: ${this.paths.root}`, { root: this.paths.root });
+    }
+  }
+
   writeJsonAtomic(path: string, value: unknown): void {
     this.assertWritable(path);
+    this.assertRootMounted();
     const tmp = `${path}.tmp-${randomUUID()}`;
     try {
       mkdirSync(dirname(path), { recursive: true });
@@ -108,6 +130,7 @@ export class LibraryFs {
 
   async copyFileWithChecksum(src: string, dest: string): Promise<LibraryFile> {
     this.assertWritable(dest);
+    this.assertRootMounted();
     const tmp = `${dest}.tmp-${randomUUID()}`;
     try {
       mkdirSync(dirname(dest), { recursive: true });
@@ -132,7 +155,7 @@ export class LibraryFs {
   listStyleIds(): string[] {
     if (!existsSync(this.paths.styles)) return [];
     return readdirSync(this.paths.styles, { withFileTypes: true })
-      .filter((e) => e.isDirectory() && !e.name.startsWith(".tmp-") && existsSync(join(this.paths.styles, e.name, "style.json")))
+      .filter((e) => e.isDirectory() && !isHiddenName(e.name) && existsSync(join(this.paths.styles, e.name, "style.json")))
       .map((e) => e.name)
       .sort();
   }
@@ -140,7 +163,7 @@ export class LibraryFs {
   listRequestIds(): string[] {
     if (!existsSync(this.paths.requests)) return [];
     return readdirSync(this.paths.requests, { withFileTypes: true })
-      .filter((e) => e.isFile() && e.name.endsWith(".json"))
+      .filter((e) => e.isFile() && !isHiddenName(e.name) && e.name.endsWith(".json"))
       .map((e) => e.name.slice(0, -".json".length))
       .sort();
   }
@@ -148,7 +171,7 @@ export class LibraryFs {
   listItemIds(): string[] {
     if (!existsSync(this.paths.items)) return [];
     return readdirSync(this.paths.items, { withFileTypes: true })
-      .filter((e) => e.isDirectory() && !e.name.startsWith(".tmp-") && existsSync(join(this.paths.items, e.name, "manifest.json")))
+      .filter((e) => e.isDirectory() && !isHiddenName(e.name) && existsSync(join(this.paths.items, e.name, "manifest.json")))
       .map((e) => e.name)
       .sort();
   }

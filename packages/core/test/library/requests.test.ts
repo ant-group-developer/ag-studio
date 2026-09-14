@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isHarnessError, newId } from "@harness/contracts";
-import { claimRequest, createRequest, fulfillRequest, LibraryFs, rejectRequest, reopenRequest } from "../../src/index.js";
+import { claimRequest, createRequest, fulfillRequest, LibraryFs, readRequest, rejectRequest, reopenRequest } from "../../src/index.js";
 import { openTempStore } from "../helpers.js";
 
 function tempRoot(): string {
@@ -20,7 +20,7 @@ function world() {
 describe("createRequest", () => {
   it("writes an open request file and mirrors it into the store", () => {
     const { d, fs } = world();
-    const request = createRequest(d, { requested_by: { portfolio_id: "portfolio-a", channel_id: "chan-a" }, topic: "5 ancient ruins", count: 2 });
+    const request = createRequest(d, { requested_by: { portfolio_id: "portfolio-a", channel_id: "chan-a" }, topic: "5 ancient ruins" });
 
     expect(request.status).toBe("open");
     expect(request.item_ids).toEqual([]);
@@ -41,6 +41,58 @@ describe("createRequest", () => {
     expect(request.count).toBe(1);
     expect(request.voice).toBe("none");
     expect(request.language).toBe("vi");
+  });
+
+  it("is fixed at count 1: a hand-written request asking for more is CONFIG_INVALID on read", () => {
+    const { d, fs } = world();
+    const request = createRequest(d, { requested_by: { portfolio_id: "portfolio-a" }, topic: "topic" });
+    fs.writeJsonAtomic(fs.paths.requestFile(request.request_id), { ...request, count: 2 });
+
+    let caught: unknown;
+    try {
+      readRequest(d, request.request_id);
+    } catch (e) {
+      caught = e;
+    }
+    expect(isHarnessError(caught, "CONFIG_INVALID")).toBe(true);
+  });
+});
+
+describe("readRequest", () => {
+  it("is NOT_FOUND only when the file is absent; an unreadable/invalid file keeps its own error code", () => {
+    const { d, fs } = world();
+
+    let caught: unknown;
+    try {
+      readRequest(d, newId("content_request"));
+    } catch (e) {
+      caught = e;
+    }
+    expect(isHarnessError(caught, "NOT_FOUND")).toBe(true);
+
+    // the file exists but holds garbage: that is an IO_ERROR (the kho is reachable, the content is not
+    // usable), never NOT_FOUND -- `library-stage` retries IO_ERROR and fails the run on NOT_FOUND.
+    const brokenId = newId("content_request");
+    mkdirSync(fs.paths.requests, { recursive: true });
+    writeFileSync(fs.paths.requestFile(brokenId), "{ not json");
+    caught = undefined;
+    try {
+      readRequest(d, brokenId);
+    } catch (e) {
+      caught = e;
+    }
+    expect(isHarnessError(caught, "IO_ERROR")).toBe(true);
+
+    // a directory where the request file should be: readFileSync throws EISDIR, still IO_ERROR
+    const dirId = newId("content_request");
+    mkdirSync(fs.paths.requestFile(dirId), { recursive: true });
+    caught = undefined;
+    try {
+      readRequest(d, dirId);
+    } catch (e) {
+      caught = e;
+    }
+    expect(isHarnessError(caught, "IO_ERROR")).toBe(true);
   });
 });
 
@@ -103,21 +155,27 @@ describe("claimRequest", () => {
 });
 
 describe("fulfillRequest", () => {
-  it("stays claimed until item_ids reaches count, then becomes fulfilled", () => {
+  it("is fulfilled by the first item, since count is pinned at 1", () => {
     const { d } = world();
-    const request = createRequest(d, { requested_by: { portfolio_id: "portfolio-a" }, topic: "topic", count: 2 });
+    const request = createRequest(d, { requested_by: { portfolio_id: "portfolio-a" }, topic: "topic" });
+    expect(request.count).toBe(1);
     const run = { project_id: "project-studio", run_id: newId("run") };
     claimRequest(d, { request_id: request.request_id, run });
 
     const item1 = newId("library_item");
-    const afterFirst = fulfillRequest(d, { request_id: request.request_id, item_id: item1 });
-    expect(afterFirst.status).toBe("claimed");
-    expect(afterFirst.item_ids).toEqual([item1]);
+    const fulfilled = fulfillRequest(d, { request_id: request.request_id, item_id: item1 });
+    expect(fulfilled.status).toBe("fulfilled");
+    expect(fulfilled.item_ids).toEqual([item1]);
 
-    const item2 = newId("library_item");
-    const afterSecond = fulfillRequest(d, { request_id: request.request_id, item_id: item2 });
-    expect(afterSecond.status).toBe("fulfilled");
-    expect(afterSecond.item_ids).toEqual([item1, item2]);
+    // and a second call is refused: a fulfilled request is no longer claimed (the `>= count` comparison
+    // stays in fulfillRequest for the day count can exceed 1 again, but nothing can reach it today)
+    let caught: unknown;
+    try {
+      fulfillRequest(d, { request_id: request.request_id, item_id: newId("library_item") });
+    } catch (e) {
+      caught = e;
+    }
+    expect(isHarnessError(caught, "INVALID_TRANSITION")).toBe(true);
   });
 
   it("only transitions from claimed", () => {

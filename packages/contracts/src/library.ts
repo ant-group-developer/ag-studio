@@ -47,7 +47,10 @@ export const ContentRequestSchema = z.object({
   target_duration_seconds: durationTuple.optional(),
   voice: z.enum(["none", "tts", "original"]).default("none"),
   language: z.string().min(1).default("vi"),
-  count: z.number().int().min(1).default(1),
+  // Pinned to 1: `intake` claims a request once and `fulfillRequest` closes it on the first item, so a
+  // request asking for more than one item would wedge at `claimed` forever (no re-claim mechanism yet).
+  // Kept as a field (rather than dropped) so the contract still says what one request buys.
+  count: z.literal(1).default(1),
   due_at: timestampSchema.optional(),
   status: z.enum(["open", "claimed", "fulfilled", "rejected"]),
   claimed_by_run: z.object({ project_id: z.string().min(1), run_id: idSchema("run") }).strict().optional(),

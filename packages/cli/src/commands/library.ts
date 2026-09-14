@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import { HarnessError, type LibraryBrief } from "@harness/contracts";
-import { applyReview, claimItem, createRequest, syncLibrary } from "@harness/core";
+import { applyReview, claimItem, createRequest, syncLibrary, withdrawItem } from "@harness/core";
 import { registerLibraryStage, requireLibrary } from "./library-stage.js";
 import { print, withContext } from "./shared.js";
 
@@ -15,12 +15,14 @@ export function registerLibrary(program: Command): void {
   const library = program.command("library").description("kho nội dung: sync, requests, styles, items (spec §4.2)");
   registerLibraryStage(library);
 
-  library.command("sync").option("--json", "machine output", false)
+  library.command("sync")
+    .option("--verify", "re-hash the data files of every item, not just new/changed ones (audit; slow)", false)
+    .option("--json", "machine output", false)
     .description("pull styles/requests/items from the kho filesystem into the local DB mirror")
     .action(async (o, cmd) => {
       await withContext(cmd, {}, async (ctx) => {
         const lib = requireLibrary(ctx);
-        const report = await syncLibrary({ store: ctx.store, fs: lib.fs, role: lib.role, clock: ctx.clock });
+        const report = await syncLibrary({ store: ctx.store, fs: lib.fs, role: lib.role, clock: ctx.clock }, { verify: Boolean(o.verify) });
         print(o.json, report, () =>
           [
             `imported: styles=${report.imported.styles.length} requests=${report.imported.requests.length} items=${report.imported.items.length}`,
@@ -48,12 +50,18 @@ export function registerLibrary(program: Command): void {
   const request = library.command("request").description("content requests (channel role)");
   request.command("create")
     .requiredOption("--portfolio <id>").option("--channel <id>").requiredOption("--topic <topic>").option("--style <style_id>")
-    .option("--duration <min,max>").option("--voice <voice>", "none|tts|original").option("--language <code>").option("--count <n>").option("--due <date>")
+    .option("--duration <min,max>").option("--voice <voice>", "none|tts|original").option("--language <code>")
+    .option("--count <n>", "must be 1 (one request buys one item until a re-claim mechanism exists)").option("--due <date>")
     .option("--json", "machine output", false)
     .description("create an open content request in the kho")
     .action(async (o, cmd) => {
       await withContext(cmd, {}, (ctx) => {
         const lib = requireLibrary(ctx);
+        // `count` is pinned to 1 by ContentRequestSchema: `intake` claims a request once and the first item
+        // fulfills it, so anything larger would leave the request stuck at `claimed`.
+        if (o.count !== undefined && Number(o.count) !== 1) {
+          throw new HarnessError("CONFIG_INVALID", "--count must be 1: one content request buys one item (no re-claim mechanism yet)", { count: o.count });
+        }
         const target_duration_seconds = parseDuration(o.duration);
         const r = createRequest({ store: ctx.store, fs: lib.fs, clock: ctx.clock }, {
           requested_by: { portfolio_id: o.portfolio, ...(o.channel ? { channel_id: o.channel } : {}) },
@@ -62,7 +70,6 @@ export function registerLibrary(program: Command): void {
           ...(target_duration_seconds ? { target_duration_seconds } : {}),
           ...(o.voice ? { voice: o.voice } : {}),
           ...(o.language ? { language: o.language } : {}),
-          ...(o.count ? { count: Number(o.count) } : {}),
           ...(o.due ? { due_at: o.due } : {}),
         });
         print(o.json, r, () => `${r.request_id} ${r.status}`);
@@ -115,6 +122,17 @@ export function registerLibrary(program: Command): void {
         const { item, request } = applyReview({ store: ctx.store, fs: lib.fs, clock: ctx.clock }, { item_id: itemId, decision, by: "cli", ...(o.note ? { note: o.note } : {}) });
         print(o.json, { item_id: item.item_id, status: item.status, request_id: request?.request_id, request_status: request?.status },
           () => `${item.item_id} ${item.status}`);
+      });
+    });
+
+  library.command("withdraw <item_id>")
+    .option("--note <note>", "why it is being withdrawn (appended to the review note)").option("--json", "machine output", false)
+    .description("retire an approved|rejected item (studio role); `withdrawn` is the kho's stand-in for deletion, and is not reversible")
+    .action(async (itemId: string, o, cmd) => {
+      await withContext(cmd, {}, (ctx) => {
+        const lib = requireLibrary(ctx);
+        const item = withdrawItem({ store: ctx.store, fs: lib.fs, clock: ctx.clock }, { item_id: itemId, ...(o.note ? { note: o.note } : {}) });
+        print(o.json, { item_id: item.item_id, status: item.status }, () => `${item.item_id} ${item.status}`);
       });
     });
 

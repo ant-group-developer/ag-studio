@@ -71,8 +71,8 @@
           "default": "vi"
         },
         "count": {
-          "type": "integer",
-          "minimum": 1,
+          "type": "number",
+          "const": 1,
           "default": 1
         },
         "due_at": {

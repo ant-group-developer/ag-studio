@@ -202,8 +202,10 @@ function checkLibraryWrite(library: { fs: LibraryFs; role: LibraryRole }): Docto
   if (!existsSync(targetDir)) {
     return { check: "library:write", ok: false, detail: `directory missing: ${targetDir} (mount the library first)` };
   }
-  const name = `.doctor-${library.role}-${randomUUID()}`;
-  const path = library.role === "studio" ? resolve(targetDir, name) : resolve(targetDir, `${name}.json`);
+  // A dot-name ending in `.tmp`, never `.json`: `LibraryFs.listRequestIds` would otherwise pick a
+  // `requests/<something>.json` probe up as a real request id (and `syncLibrary` report it corrupt) if this
+  // probe ever outlived the `rmSync` below. Both roles use the same shape.
+  const path = resolve(targetDir, `.doctor-${library.role}-${randomUUID()}.tmp`);
   let wrote = false;
   let removeError: unknown;
   try {

@@ -203,6 +203,9 @@ export const ContentItemSchema = z.object({
   revision: revisionSchema, title: z.string(), created_at: timestampSchema,
   library_brief: libraryBriefSchema.optional(),
   library_item_id: idSchema("library_item").optional(),
+  // Which channel's `library pick` minted this content: two channels may claim the same kho item, and each
+  // gets its own ContentItem. Set together with `library_item_id`; absent for content created any other way.
+  library_channel_id: z.string().min(1).optional(),
 }).strict();
 export const ProductionProfileRefSchema = z.object({
   schema_version: schemaVersion("production-profile-ref"), profile_id: z.enum(["cartoon", "avatar", "footage", "studio"]), profile_revision: revisionSchema,

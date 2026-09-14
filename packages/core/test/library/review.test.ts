@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isHarnessError, newId, type LibraryItem } from "@harness/contracts";
@@ -87,11 +87,89 @@ describe("applyReview", () => {
     expect(result.request?.notes).toContain("off brief");
   });
 
-  it("only transitions from pending_review", () => {
+  it("only transitions from pending_review (re-running the same decision is the one exception)", () => {
     const { studio, store, clock } = world();
     const d = { store, fs: studio, clock };
     const itemId = newId("library_item");
     studio.writeJsonAtomic(studio.paths.manifest(itemId), makeItem(itemId, { status: "approved" }));
+
+    // reversing an already-applied decision is not a review, it is a second opinion: refused
+    let caught: unknown;
+    try {
+      applyReview(d, { item_id: itemId, decision: "rejected" });
+    } catch (e) {
+      caught = e;
+    }
+    expect(isHarnessError(caught, "INVALID_TRANSITION")).toBe(true);
+
+    // a withdrawn item cannot be reviewed at all
+    const withdrawnId = newId("library_item");
+    studio.writeJsonAtomic(studio.paths.manifest(withdrawnId), makeItem(withdrawnId, { status: "withdrawn" }));
+    caught = undefined;
+    try {
+      applyReview(d, { item_id: withdrawnId, decision: "approved" });
+    } catch (e) {
+      caught = e;
+    }
+    expect(isHarnessError(caught, "INVALID_TRANSITION")).toBe(true);
+  });
+
+  it("is a no-op re-run when the item already carries the decision and the request already reflects it", () => {
+    const { studio, channel, store, clock } = world();
+    const d = { store, fs: studio, clock };
+    const dChannel = { store, fs: channel, clock };
+
+    const request = createRequest(dChannel, { requested_by: { portfolio_id: "portfolio-a" }, topic: "topic" });
+    const run = { project_id: "project-studio", run_id: newId("run") };
+    claimRequest(d, { request_id: request.request_id, run });
+
+    const itemId = newId("library_item");
+    studio.writeJsonAtomic(studio.paths.manifest(itemId), makeItem(itemId, { request_id: request.request_id, lineage: { project_id: run.project_id, run_id: run.run_id, content_id: newId("content_item"), source_ids: [] } }));
+
+    const first = applyReview(d, { item_id: itemId, decision: "approved", note: "ok" });
+    expect(first.request?.status).toBe("fulfilled");
+
+    // re-running the same review (gate replayed, or `harness library review` run twice) is not an error
+    const again = applyReview(d, { item_id: itemId, decision: "approved", note: "ok" });
+    expect(again.item.status).toBe("approved");
+    expect(again.item.updated_at).toBe(first.item.updated_at); // nothing rewritten
+    expect(again.request?.status).toBe("fulfilled");
+    expect(again.request?.item_ids).toEqual([itemId]);
+  });
+
+  it("finishes the request half when a previous run wrote the item but not the request", () => {
+    const { studio, channel, store, clock } = world();
+    const d = { store, fs: studio, clock };
+    const dChannel = { store, fs: channel, clock };
+
+    const request = createRequest(dChannel, { requested_by: { portfolio_id: "portfolio-a" }, topic: "topic" });
+    const run = { project_id: "project-studio", run_id: newId("run") };
+    claimRequest(d, { request_id: request.request_id, run });
+
+    // exactly the crash state: manifest already `approved`, request still `claimed` by this item's run
+    const itemId = newId("library_item");
+    studio.writeJsonAtomic(studio.paths.manifest(itemId), makeItem(itemId, {
+      status: "approved",
+      request_id: request.request_id,
+      lineage: { project_id: run.project_id, run_id: run.run_id, content_id: newId("content_item"), source_ids: [] },
+    }));
+
+    const result = applyReview(d, { item_id: itemId, decision: "approved", note: "ok" });
+    expect(result.item.status).toBe("approved");
+    expect(result.request?.status).toBe("fulfilled");
+    expect(result.request?.item_ids).toEqual([itemId]);
+  });
+
+  it("checks the request transition before writing the item, so a bad request leaves nothing half-written", () => {
+    const { studio, channel, store, clock } = world();
+    const d = { store, fs: studio, clock };
+    const dChannel = { store, fs: channel, clock };
+
+    // a request nobody ever claimed: `fulfillRequest` would refuse it
+    const request = createRequest(dChannel, { requested_by: { portfolio_id: "portfolio-a" }, topic: "topic" });
+
+    const itemId = newId("library_item");
+    studio.writeJsonAtomic(studio.paths.manifest(itemId), makeItem(itemId, { request_id: request.request_id }));
 
     let caught: unknown;
     try {
@@ -100,6 +178,34 @@ describe("applyReview", () => {
       caught = e;
     }
     expect(isHarnessError(caught, "INVALID_TRANSITION")).toBe(true);
+    // the item was never written: no `approved` manifest pointing at an `open` request
+    expect(JSON.parse(readFileSync(studio.paths.manifest(itemId), "utf8")).status).toBe("pending_review");
+    expect(store.getContentRequest(request.request_id)?.status).toBe("open");
+  });
+
+  it("keeps IO_ERROR as IO_ERROR when the manifest exists but cannot be read", () => {
+    const { studio, store, clock } = world();
+    const d = { store, fs: studio, clock };
+
+    const missingId = newId("library_item");
+    let caught: unknown;
+    try {
+      applyReview(d, { item_id: missingId, decision: "approved" });
+    } catch (e) {
+      caught = e;
+    }
+    expect(isHarnessError(caught, "NOT_FOUND")).toBe(true);
+
+    const brokenId = newId("library_item");
+    mkdirSync(studio.paths.itemDir(brokenId), { recursive: true });
+    writeFileSync(studio.paths.manifest(brokenId), "{ not json");
+    caught = undefined;
+    try {
+      applyReview(d, { item_id: brokenId, decision: "approved" });
+    } catch (e) {
+      caught = e;
+    }
+    expect(isHarnessError(caught, "IO_ERROR")).toBe(true);
   });
 
   it("does not touch a request when the item has none", () => {
@@ -185,6 +291,29 @@ describe("claimItem", () => {
     expect(second.claim).toEqual(first.claim);
     expect(second.content.content_id).toBe(first.content.content_id);
     expect(store.listContentItems().filter((c) => c.library_item_id === itemId)).toHaveLength(1);
+  });
+
+  it("gives each channel its own ContentItem for the same item, and hands back the right one on a re-pick", () => {
+    const { studio, channel, store, clock, catalog } = world();
+    const itemId = newId("library_item");
+    studio.writeJsonAtomic(studio.paths.manifest(itemId), makeItem(itemId, { status: "approved" }));
+    const d = { store, fs: channel, clock, catalog };
+
+    const one = claimItem(d, { item_id: itemId, channel_id: "chan-one", portfolio_id: "portfolio-a" });
+    const two = claimItem(d, { item_id: itemId, channel_id: "chan-two", portfolio_id: "portfolio-b" });
+
+    // two channels picking the same kho item are two separate local ContentItems, each tagged with its channel
+    expect(two.content.content_id).not.toBe(one.content.content_id);
+    expect(one.content.library_channel_id).toBe("chan-one");
+    expect(two.content.library_channel_id).toBe("chan-two");
+    expect(store.listContentItems().filter((c) => c.library_item_id === itemId)).toHaveLength(2);
+
+    // the idempotent branch must not hand channel one the *other* channel's content
+    const oneAgain = claimItem(d, { item_id: itemId, channel_id: "chan-one", portfolio_id: "portfolio-a" });
+    expect(oneAgain.content.content_id).toBe(one.content.content_id);
+    const twoAgain = claimItem(d, { item_id: itemId, channel_id: "chan-two", portfolio_id: "portfolio-b" });
+    expect(twoAgain.content.content_id).toBe(two.content.content_id);
+    expect(store.listContentItems().filter((c) => c.library_item_id === itemId)).toHaveLength(2);
   });
 
   it("keeps honoring an existing claim after the item later becomes withdrawn", () => {
