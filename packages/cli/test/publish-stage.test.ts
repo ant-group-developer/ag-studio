@@ -367,6 +367,37 @@ describe("harness publish stage", () => {
       expect(receipt2.episode_no).toBe(receipt1.episode_no);
     });
 
+    it("rerunning with a changed draft keeps the package but refreshes its stored metadata (no stale title)", async () => {
+      const { runId, fetchWorkspace, packageWorkspace } = await toBuildPackageReady(world.channel, world.lib, sampleDraft());
+      const inputs = buildPackageInputs(fetchWorkspace, packageWorkspace);
+      const first = await invokeStage(world.channel, runId, "build-package", "build-package", inputs);
+      expect(first.result.outcome, JSON.stringify(first.result)).toBe("succeeded");
+      const receipt1 = JSON.parse(readFileSync(join(first.workspaceDir, "output", "package-receipt.json"), "utf8")) as PackageReceipt;
+
+      // the `package` agent stage reran and produced a better title; `build-package` reuses the same
+      // ChannelPackage row (same episode number) but must not keep describing the *old* draft.
+      const newDraft = sampleDraft() as { metadata: { title: string }; hypothesis: { chosen: { title: string } } };
+      newDraft.metadata.title = "A Much Better Episode Title";
+      newDraft.hypothesis.chosen.title = "A Much Better Episode Title";
+      writeFileSync(join(packageWorkspace, "output", "package.json"), JSON.stringify(newDraft, null, 2));
+
+      const second = await invokeStage(world.channel, runId, "build-package", "build-package", inputs, {}, first.claim);
+      expect(second.result.outcome, JSON.stringify(second.result)).toBe("succeeded");
+      const receipt2 = JSON.parse(readFileSync(join(second.workspaceDir, "output", "package-receipt.json"), "utf8")) as PackageReceipt;
+      expect(receipt2.package_id).toBe(receipt1.package_id);
+      expect(receipt2.episode_no).toBe(receipt1.episode_no);
+
+      const manifest = JSON.parse(readFileSync(join(receipt2.episode_dir, receipt2.manifest_path), "utf8")) as { title: string };
+      expect(manifest.title).toBe("A Much Better Episode Title");
+
+      const ctx = buildContext({ projectDir: world.channel });
+      try {
+        const pkg = ctx.store.getChannelPackage(receipt2.package_id)!;
+        expect(pkg.metadata.title).toBe("A Much Better Episode Title");
+        expect(pkg.hypothesis.chosen.title).toBe("A Much Better Episode Title");
+      } finally { ctx.close(); }
+    });
+
     it("fails contract when the episode directory exists but was not created by this package", async () => {
       const { runId, fetchWorkspace, packageWorkspace } = await toBuildPackageReady(world.channel, world.lib, sampleDraft());
       const inputs = buildPackageInputs(fetchWorkspace, packageWorkspace);

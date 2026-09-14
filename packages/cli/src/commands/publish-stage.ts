@@ -203,7 +203,12 @@ async function buildPackageStage(app: AppContext, sdk: ScriptContext): Promise<v
   const videoChecksum = (await sha256File(videoDest)).checksum;
   const thumbnailChecksum = (await sha256File(thumbDest)).checksum;
   const digest = manifestDigest(manifest);
-  const committed = commitPackage({ store: app.store, clock: app.clock }, { package_id: pkg.package_id, video_checksum: videoChecksum, thumbnail_checksum: thumbnailChecksum, manifest_digest: digest });
+  // `draft.metadata`/`draft.hypothesis` go in too, not just the checksums: on a rerun `pkg` is the row an
+  // earlier attempt inserted, whose metadata may predate the draft this manifest was just built from.
+  const committed = commitPackage({ store: app.store, clock: app.clock }, {
+    package_id: pkg.package_id, video_checksum: videoChecksum, thumbnail_checksum: thumbnailChecksum, manifest_digest: digest,
+    metadata: draft.metadata, hypothesis: draft.hypothesis,
+  });
 
   const job = app.store.listPublicationJobs({ run_id: run.run_id })[0] ?? createJob({ store: app.store, clock: app.clock }, { pkg: committed });
 

@@ -150,8 +150,10 @@ describe("createDraftPackage / findDraftForRun / commitPackage", () => {
     expect(findDraftForRun(store, run1.run_id)?.package_id).toBe(pkg1.package_id);
     expect(findDraftForRun(store, newId("run"))).toBeUndefined();
 
+    const draft1 = sampleDraft();
     const committed = commitPackage({ store, clock }, {
       package_id: pkg1.package_id, video_checksum: sha("1"), thumbnail_checksum: sha("2"), manifest_digest: sha("3"),
+      metadata: draft1.metadata, hypothesis: draft1.hypothesis,
     });
     expect(committed.status).toBe("committed");
     expect(committed.video_checksum).toBe(sha("1"));
@@ -159,5 +161,50 @@ describe("createDraftPackage / findDraftForRun / commitPackage", () => {
     expect(committed.manifest_digest).toBe(sha("3"));
     expect(findDraftForRun(store, run1.run_id)).toBeUndefined();
     expect(store.getChannelPackage(pkg1.package_id)?.status).toBe("committed");
+  });
+
+  it("writes the metadata and hypothesis it is handed onto the row, so a rerun from a newer draft does not leave stale metadata behind", () => {
+    const { store, clock } = openTempStore();
+    const run = sampleRun();
+    const pkg = createDraftPackage({ store, clock }, {
+      channel: loadedChannel(), run, content: sampleContent({ content_id: run.content_id }), draft: sampleDraft(),
+      variant_id: run.variant_id!, video_artifact_id: newId("artifact"), thumbnail_artifact_id: newId("artifact"),
+      repoEpisodesDir: "D:/legacy-channel-a/outputs/project-01/episodes",
+    });
+    expect(pkg.metadata.title).toBe("Episode 15");
+
+    const newer = sampleDraft();
+    newer.metadata = { ...newer.metadata, title: "A Much Better Title", tags: ["x"] };
+    newer.hypothesis = { ...SAMPLE_HYPOTHESIS, chosen: { ...SAMPLE_HYPOTHESIS.chosen, title: "A Much Better Title", angle: "curiosity" } };
+
+    const committed = commitPackage({ store, clock }, {
+      package_id: pkg.package_id, video_checksum: sha("1"), thumbnail_checksum: sha("2"), manifest_digest: sha("3"),
+      metadata: newer.metadata, hypothesis: newer.hypothesis,
+    });
+    expect(committed.metadata.title).toBe("A Much Better Title");
+    expect(committed.metadata.tags).toEqual(["x"]);
+    expect(committed.hypothesis.chosen.angle).toBe("curiosity");
+    expect(committed.metadata_revision).toBe(2); // changed metadata bumps the revision
+    expect(committed.updated_at).toBe(clock.now());
+
+    const stored = store.getChannelPackage(pkg.package_id)!;
+    expect(stored.metadata.title).toBe("A Much Better Title");
+    expect(stored.hypothesis.chosen.angle).toBe("curiosity");
+  });
+
+  it("leaves metadata_revision alone when the metadata is unchanged", () => {
+    const { store, clock } = openTempStore();
+    const run = sampleRun();
+    const draft = sampleDraft();
+    const pkg = createDraftPackage({ store, clock }, {
+      channel: loadedChannel(), run, content: sampleContent({ content_id: run.content_id }), draft,
+      variant_id: run.variant_id!, video_artifact_id: newId("artifact"), thumbnail_artifact_id: newId("artifact"),
+      repoEpisodesDir: "D:/legacy-channel-a/outputs/project-01/episodes",
+    });
+    const committed = commitPackage({ store, clock }, {
+      package_id: pkg.package_id, video_checksum: sha("1"), thumbnail_checksum: sha("2"), manifest_digest: sha("3"),
+      metadata: draft.metadata, hypothesis: draft.hypothesis,
+    });
+    expect(committed.metadata_revision).toBe(1);
   });
 });

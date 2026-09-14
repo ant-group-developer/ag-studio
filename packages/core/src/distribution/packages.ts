@@ -2,7 +2,7 @@ import { join } from "node:path";
 import {
   HarnessError, newId,
   type Checksum, type ChannelPackage, type ChannelPackageDraft, type Clock, type ContentItem,
-  type PackageMetadata, type Run, type StateStore,
+  type Hypothesis, type PackageMetadata, type Run, type StateStore,
 } from "@harness/contracts";
 import { canonicalDigest } from "../artifacts/checksum.js";
 import { posixPath, type LoadedChannel } from "./channels.js";
@@ -109,13 +109,28 @@ export function findDraftForRun(store: StateStore, runId: string): ChannelPackag
   return store.listChannelPackages({ run_id: runId, status: "draft" })[0];
 }
 
-/** `draft` → `committed`, with the real checksums computed once the video/thumbnail/manifest exist on disk. */
-export function commitPackage(d: PackageDeps, p: { package_id: string; video_checksum: Checksum; thumbnail_checksum: Checksum; manifest_digest: Checksum }): ChannelPackage {
+/**
+ * `draft` → `committed`, with the real checksums computed once the video/thumbnail/manifest exist on disk.
+ *
+ * `metadata`/`hypothesis` come from the draft the caller actually built this manifest from, not from the row:
+ * a `build-package` rerun reuses the existing `ChannelPackage` of the run (same `package_id`, same episode
+ * number) but may be working from a *newer* `channel_package_draft` — writing only the checksums would leave
+ * the row (and therefore `publish show`, `channel hypotheses`, the dashboard) describing the previous draft
+ * while the manifest on disk and the upload itself carry the new one.
+ */
+export function commitPackage(d: PackageDeps, p: {
+  package_id: string; video_checksum: Checksum; thumbnail_checksum: Checksum; manifest_digest: Checksum;
+  metadata: PackageMetadata; hypothesis: Hypothesis;
+}): ChannelPackage {
   return d.store.transaction(() => {
     const existing = d.store.getChannelPackage(p.package_id);
     if (!existing) throw new HarnessError("NOT_FOUND", `channel package not found: ${p.package_id}`, { package_id: p.package_id });
+    const metadataChanged = canonicalDigest(p.metadata) !== canonicalDigest(existing.metadata);
     const updated: ChannelPackage = {
       ...existing,
+      metadata: p.metadata,
+      hypothesis: p.hypothesis,
+      metadata_revision: metadataChanged ? existing.metadata_revision + 1 : existing.metadata_revision,
       video_checksum: p.video_checksum,
       thumbnail_checksum: p.thumbnail_checksum,
       manifest_digest: p.manifest_digest,
