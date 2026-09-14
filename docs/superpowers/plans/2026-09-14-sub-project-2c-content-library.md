@@ -333,6 +333,8 @@ stages:
 
 **`production-profiles/studio/profile.yaml`:** `profile_id: studio` — `ProductionProfileSchema.profile_id` hiện là enum `cartoon|avatar|footage`; **mở rộng enum** thêm `studio` (và `ProductionProfileRefSchema`), `pnpm gen:schemas`. `workflow_release: library-production@1.0.0`, `options_schema: { voice: [none, tts, original], subtitles: ["true","false"] }`, defaults `voice: none, subtitles: "false"`, `content: { target_duration_seconds: [1, 1800], max_silence_ratio: 0.9 }`, `limits: { max_cost_usd_per_variant: 5, max_concurrency: 2 }`. `style-study` cũng chạy với profile `studio` (workflow ref truyền qua `plan --workflow`; profile chỉ cần options hợp lệ — `style-study` không có `when`).
 
+- [ ] **Step 0 (bổ sung khi thực thi): phạm vi doctor.** Doctor quét mọi workflow trong harness nên thêm workflow mới làm fixture footage đỏ. Quy tắc mới: `project.yaml.workflows?: string[]` (ref `id@version`) — khi có, doctor chỉ kiểm các workflow đó (và profile có `workflow_release` thuộc danh sách), ref không tồn tại → row `workflow:<ref>` fail; thêm row `workflows` nêu phạm vi; không có → kiểm tất cả như cũ. Fixture footage/minimal và `project-template` khai `workflows`.
+
 - [ ] **Step 1: Test thất bại** — `library-workflows.test.ts`: cả hai workflow load được; `library-production` có 11 stage đúng thứ tự và loại; mọi gate output có `name`; `resolveStageGraph` với `voice=none` bỏ `tts` và `library-export`/`assemble` không còn cạnh optional tới `tts`; profile `studio` parse được; `loadProfile(HARNESS_ROOT, "studio").workflow_release === "library-production@1.0.0"`.
 - [ ] **Step 2–4:** viết YAML, mở rộng enum, `pnpm gen:schemas`, test xanh, `pnpm test`.
 - [ ] **Step 5: Commit** — `feat: style-study and library-production workflows; studio profile`.
