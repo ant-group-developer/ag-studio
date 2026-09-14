@@ -4,7 +4,7 @@
   "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc -p tsconfig.json --noEmit", "dev": "tsx src/main.ts" },
   "dependencies": {
     "@harness/adapter-agent-cli": "workspace:*", "@harness/adapter-fake": "workspace:*", "@harness/adapter-ffprobe": "workspace:*", "@harness/adapter-youtube-playwright": "workspace:*",
-    "@harness/contracts": "workspace:*", "@harness/core": "workspace:*", "@harness/executors": "workspace:*", "@harness/script-sdk": "workspace:*", "@harness/worker": "workspace:*",
+    "@harness/contracts": "workspace:*", "@harness/core": "workspace:*", "@harness/dashboard": "workspace:*", "@harness/executors": "workspace:*", "@harness/script-sdk": "workspace:*", "@harness/worker": "workspace:*",
     "commander": "^12.1.0", "yaml": "^2.6.0"
   }
 }

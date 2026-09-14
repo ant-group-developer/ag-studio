@@ -26,6 +26,7 @@ export const workspaceAliases: Record<string, string> = {
   "@harness/adapter-agent-cli": `${ROOT}packages/adapters/agent-cli/src/index.ts`,
   "@harness/adapter-youtube-playwright": `${ROOT}packages/adapters/youtube-playwright/src/index.ts`,
   "@harness/worker": `${ROOT}packages/worker/src/index.ts`,
+  "@harness/dashboard": `${ROOT}packages/dashboard/src/index.ts`,
   "@harness/script-sdk": `${ROOT}packages/script-sdk/src/index.js`,
 };
 

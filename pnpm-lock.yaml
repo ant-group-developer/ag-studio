@@ -202,6 +202,9 @@ importers:
       '@harness/core':
         specifier: workspace:*
         version: link:../core
+      '@harness/dashboard':
+        specifier: workspace:*
+        version: link:../dashboard
       '@harness/executors':
         specifier: workspace:*
         version: link:../executors
@@ -241,6 +244,8 @@ importers:
       zod:
         specifier: ^3.23.0
         version: 3.25.76
+
+  packages/dashboard: {}
 
   packages/executors:
     dependencies:

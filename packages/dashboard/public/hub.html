@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<title>Harness Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #0f1420; --panel: #171e2e; --panel2: #1e2740; --line: rgba(255, 255, 255, .08);
+    --text: #e8ecf5; --text2: #93a0bd; --accent: #5b8cff; --ok: #2ecc8f; --warn: #f0a83c; --radius: 14px;
+    --bad: #e6584f;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; }
+  a { color: var(--accent); }
+  header { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line); padding: 14px 20px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 700; }
+  header .gen { color: var(--text2); font-size: 12px; }
+  header button { margin-left: auto; }
+  button { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .6; cursor: default; }
+  main { max-width: 1200px; margin: 0 auto; padding: 20px; }
+  .chips { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+  .chip { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 8px 16px; font-size: 13px; }
+  .chip b { color: var(--accent); font-size: 15px; margin-right: 6px; }
+  .kho-bar { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 20px; display: flex; gap: 20px; flex-wrap: wrap; font-size: 13px; color: var(--text2); }
+  .kho-bar b { color: var(--text); }
+  .kho-bar .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .dot.on { background: var(--ok); } .dot.off { background: var(--bad); }
+  .section-title { font-size: 13px; letter-spacing: .08em; color: var(--text2); margin: 24px 0 12px; text-transform: uppercase; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(285px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-top: 4px solid var(--c, var(--accent)); border-radius: var(--radius); padding: 14px; cursor: pointer; }
+  .card:hover { border-color: var(--accent); }
+  .card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .card-head .name { font-weight: 700; }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; }
+  .badge { font-size: 11px; padding: 2px 7px; border-radius: 999px; background: var(--panel2); border: 1px solid var(--line); color: var(--text2); }
+  .badge.on { color: var(--ok); border-color: var(--ok); }
+  .badge.off { color: var(--text2); }
+  .badge.warn { color: var(--warn); border-color: var(--warn); }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .stat { background: var(--panel2); border-radius: 10px; padding: 8px; text-align: center; }
+  .stat .n { font-size: 16px; font-weight: 700; display: block; }
+  .stat .l { font-size: 11px; color: var(--text2); }
+  .alerts { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 0; }
+  .alerts .row { padding: 10px 16px; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: baseline; font-size: 13px; }
+  .alerts .row:last-child { border-bottom: none; }
+  .alerts .icon { flex-shrink: 0; }
+  .alerts .msg { flex: 1; }
+  .alerts .since { color: var(--text2); font-size: 12px; }
+  .empty { color: var(--text2); padding: 16px; text-align: center; }
+  .overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); display: flex; align-items: flex-start; justify-content: center; padding: 40px 16px; overflow-y: auto; z-index: 10; }
+  .overlay[hidden] { display: none; }
+  .modal { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); max-width: 760px; width: 100%; padding: 20px; }
+  .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .modal-head h2 { margin: 0; font-size: 18px; }
+  .modal-close { font-size: 18px; line-height: 1; padding: 4px 10px; }
+  .settings { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; background: var(--panel2); border-radius: 10px; padding: 12px; margin: 14px 0; font-size: 13px; }
+  .settings .k { color: var(--text2); }
+  .account { background: var(--panel2); border-radius: 10px; padding: 12px; margin: 14px 0; font-size: 13px; }
+  .account code { display: block; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-top: 8px; word-break: break-all; }
+  .episode { background: var(--panel2); border-radius: 10px; padding: 12px; margin-top: 12px; display: flex; gap: 12px; }
+  .episode img { width: 168px; height: 94px; object-fit: cover; border-radius: 8px; background: #000; flex-shrink: 0; }
+  .episode .body { flex: 1; min-width: 0; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+  .row:last-child { border-bottom: none; }
+  .row-label { color: var(--text2); width: 78px; flex-shrink: 0; }
+  .row-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .charcount { color: var(--text2); font-size: 11px; }
+  .charcount.over { color: var(--bad); font-weight: 700; }
+  .btn-copy { padding: 2px 9px; font-size: 11px; flex-shrink: 0; }
+  @media (max-width: 720px) {
+    .grid { grid-template-columns: 1fr; }
+    .stats { grid-template-columns: repeat(3, 1fr); }
+    .settings { grid-template-columns: 1fr; }
+    .episode { flex-direction: column; }
+    .episode img { width: 100%; height: auto; max-height: 180px; }
+    header button { margin-left: 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="projectTitle">Harness Dashboard</h1>
+  <span class="gen" id="genAt"></span>
+  <button id="refreshBtn" type="button">Làm mới</button>
+</header>
+
+<main>
+  <div id="loadState" class="empty" hidden>Đang tải...</div>
+  <div id="content" hidden>
+    <div class="chips" id="chips"></div>
+    <div class="kho-bar" id="khoBar"></div>
+    <div class="section-title" id="channelsTitle">KÊNH</div>
+    <div class="grid" id="channelGrid"></div>
+    <div class="section-title">CẢNH BÁO</div>
+    <div class="alerts" id="alertsPanel"></div>
+  </div>
+</main>
+
+<div class="overlay" id="overlay" hidden>
+  <div class="modal" id="modal"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var STATE_LABEL = {
+    DRAFT: "Nháp", READY: "Sẵn sàng", SCHEDULED: "Đã lên lịch", UPLOADING: "Đang tải lên",
+    PROCESSING: "Đang xử lý", PUBLISHED: "Đã đăng", NEEDS_RECONCILIATION: "Cần đối soát", FAILED: "Thất bại",
+    committed: "Đã chốt", draft: "Nháp",
+  };
+  var STAGE_LABEL = {
+    "fetch-library-item": "Lấy tập từ kho", "package": "Đóng gói (AI)", "build-package": "Build gói",
+    "upload": "Tải lên YouTube", "schedule": "Lên lịch đăng",
+  };
+  var ALERT_ICON = { reconcile: "⚠", run_failed: "✗", gate_overdue: "⏳", doctor: "🩺", library_unmounted: "📁", missing_today: "📅" };
+  var HASHTAG_RE = /#[\p{L}\d_]+/gu;
+  var POLL_MS = 30000;
+
+  var state = null;
+  var pollTimer = null;
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function stateLabel(s) { return STATE_LABEL[s] || s; }
+  function stageLabel(s) { return s ? (STAGE_LABEL[s] || s) : "—"; }
+
+  function fmtDate(iso) {
+    if (!iso) return "—";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return "—";
+    return d.toLocaleString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+
+  function fallbackCopy(text, done) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try { document.execCommand("copy"); } catch (e) { /* best effort */ }
+    document.body.removeChild(ta);
+    done();
+  }
+
+  function copyText(text, btn) {
+    var old = btn.textContent;
+    function done() {
+      btn.textContent = "✓ Đã chép";
+      btn.disabled = true;
+      setTimeout(function () { btn.textContent = old; btn.disabled = false; }, 1500);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text, done); });
+    } else {
+      fallbackCopy(text, done);
+    }
+  }
+
+  function copyRow(label, value, opts) {
+    opts = opts || {};
+    var extra = opts.charcount ? '<span class="charcount' + (value.length > 100 ? " over" : "") + '">' + value.length + "/100</span>" : "";
+    return (
+      '<div class="row"><div class="row-label">' + esc(label) + '</div>' +
+      '<div class="row-value" title="' + esc(value) + '">' + esc(value || "—") + "</div>" +
+      extra +
+      '<button type="button" class="btn-copy" data-copy="' + esc(value) + '">Chép</button></div>'
+    );
+  }
+
+  function hashtagsOf(pkg) {
+    var joined = (pkg.hashtags || []).join(" ");
+    var matches = joined.match(HASHTAG_RE);
+    return matches ? matches.join(" ") : "";
+  }
+
+  // ---- top-level render ----
+
+  function renderChips(snap) {
+    var approved = snap.library ? snap.library.items.approved : 0;
+    var open = snap.library ? snap.library.requests_open : 0;
+    var chips = [
+      ["Kênh", snap.channels.length],
+      ["Tập", snap.episodes.length],
+      ["Mục kho đã duyệt", approved],
+      ["Request mở", open],
+    ];
+    document.getElementById("chips").innerHTML = chips.map(function (c) {
+      return '<div class="chip"><b>' + esc(c[1]) + "</b>" + esc(c[0]) + "</div>";
+    }).join("");
+  }
+
+  function renderKhoBar(snap) {
+    var el = document.getElementById("khoBar");
+    if (!snap.library) { el.innerHTML = '<span class="empty">Không cấu hình kho nội dung.</span>'; return; }
+    var lib = snap.library;
+    el.innerHTML =
+      '<span><span class="dot ' + (lib.mounted ? "on" : "off") + '"></span><b>' + esc(lib.root) + "</b> " + (lib.mounted ? "đã mount" : "CHƯA mount") + "</span>" +
+      '<span>Style hoạt động: <b>' + esc(lib.styles_active) + "</b></span>" +
+      '<span>Request mở: <b>' + esc(lib.requests_open) + "</b></span>" +
+      '<span>Chờ duyệt: <b>' + esc(lib.items.pending_review) + '</b> · Đã duyệt: <b>' + esc(lib.items.approved) +
+      '</b> · Từ chối: <b>' + esc(lib.items.rejected) + '</b> · Rút: <b>' + esc(lib.items.withdrawn) + "</b></span>";
+  }
+
+  function channelBadges(snap, ch) {
+    var badges = ['<span class="badge on">AUTO</span>'];
+    var hasReconcile = snap.alerts.some(function (a) { return a.kind === "reconcile" && a.channel_id === ch.channel_id; });
+    if (hasReconcile) badges.push('<span class="badge warn">⚠ reconcile</span>');
+    var isRunning = snap.runs_active.some(function (r) { return r.channel_id === ch.channel_id; });
+    if (isRunning) badges.push('<span class="badge on">⏳ đang chạy</span>');
+    badges.push(ch.login.profile_dir_exists ? '<span class="badge on">🔑 có profile</span>' : '<span class="badge off">🔑 chưa profile</span>');
+    return badges.join("");
+  }
+
+  function renderChannelCard(snap, ch) {
+    var latestLabel = ch.latest ? (STAGE_LABEL[ch.latest.stage_key] || stateLabel(ch.latest.state)) : "—";
+    var latestSub = ch.latest ? "#" + ch.latest.episode_no : "chưa có tập";
+    return (
+      '<div class="card" style="--c:' + esc(ch.color) + '" data-channel="' + esc(ch.channel_id) + '">' +
+      '<div class="card-head"><span class="name">' + esc(ch.display_name) + '</span><div class="badges">' + channelBadges(snap, ch) + "</div></div>" +
+      '<div class="stats">' +
+      '<div class="stat"><span class="n">' + esc(ch.today.published) + "/" + esc(ch.today.target) + '</span><span class="l">đăng hôm nay</span></div>' +
+      '<div class="stat"><span class="n">' + esc(ch.episodes_count) + '</span><span class="l">tập</span></div>' +
+      '<div class="stat"><span class="n">' + esc(latestSub) + '</span><span class="l">' + esc(latestLabel) + "</span></div>" +
+      "</div></div>"
+    );
+  }
+
+  function renderChannels(snap) {
+    document.getElementById("channelsTitle").textContent = "KÊNH (" + snap.channels.length + ")";
+    var grid = document.getElementById("channelGrid");
+    if (!snap.channels.length) { grid.innerHTML = '<div class="empty">Chưa có kênh nào.</div>'; return; }
+    grid.innerHTML = snap.channels.map(function (ch) { return renderChannelCard(snap, ch); }).join("");
+  }
+
+  function renderAlerts(snap) {
+    var el = document.getElementById("alertsPanel");
+    if (!snap.alerts.length) { el.innerHTML = '<div class="empty">Không có cảnh báo nào.</div>'; return; }
+    el.innerHTML = snap.alerts.map(function (a) {
+      return (
+        '<div class="row"><span class="icon">' + (ALERT_ICON[a.kind] || "•") + "</span>" +
+        '<span class="msg">' + esc(a.message) + "</span>" +
+        '<span class="since">' + esc(fmtDate(a.since)) + "</span></div>"
+      );
+    }).join("");
+  }
+
+  function render(snap) {
+    document.getElementById("projectTitle").textContent = snap.project_id || "Harness Dashboard";
+    document.getElementById("genAt").textContent = "cập nhật " + fmtDate(snap.generated_at);
+    renderChips(snap);
+    renderKhoBar(snap);
+    renderChannels(snap);
+    renderAlerts(snap);
+    document.getElementById("loadState").hidden = true;
+    document.getElementById("content").hidden = false;
+  }
+
+  // ---- channel modal ----
+
+  function episodeCard(snap, ep) {
+    var pkg = ep.package;
+    var thumb = pkg.thumbnail ? "/" + pkg.thumbnail + "?v=" + encodeURIComponent(snap.generated_at) : "";
+    return (
+      '<div class="episode"><img src="' + esc(thumb) + '" alt="" loading="lazy" onerror="this.style.visibility=\'hidden\'" />' +
+      '<div class="body">' +
+      '<div class="row"><div class="row-label">Tập #' + esc(ep.episode_no) + "</div>" +
+      '<div class="row-value">' + esc(stateLabel(ep.state)) + (ep.current_stage ? " · " + esc(stageLabel(ep.current_stage)) : "") + "</div></div>" +
+      copyRow("Tiêu đề", pkg.title, { charcount: true }) +
+      copyRow("Mô tả", pkg.description) +
+      copyRow("Tags", (pkg.tags || []).join(", ")) +
+      copyRow("Hashtag", hashtagsOf(pkg)) +
+      copyRow("Playlist", (pkg.playlists || []).join(", ")) +
+      copyRow("Lịch", fmtDate(ep.scheduled_at || ep.published_at)) +
+      "</div></div>"
+    );
+  }
+
+  function openModal(snap, channelId) {
+    var ch = snap.channels.find(function (c) { return c.channel_id === channelId; });
+    if (!ch) return;
+    var episodes = snap.episodes.filter(function (e) { return e.channel_id === channelId; }).sort(function (a, b) { return b.episode_no - a.episode_no; });
+    var loginCmd = "harness channel login " + ch.channel_id;
+
+    var html =
+      '<div class="modal-head"><h2>' + esc(ch.display_name) + '</h2><button type="button" class="modal-close">✕</button></div>' +
+      '<div class="stats">' +
+      '<div class="stat"><span class="n">' + esc(ch.today.published) + "/" + esc(ch.today.target) + '</span><span class="l">đăng hôm nay</span></div>' +
+      '<div class="stat"><span class="n">' + esc(ch.episodes_count) + '</span><span class="l">tổng tập</span></div>' +
+      '<div class="stat"><span class="n">' + (ch.latest ? "#" + esc(ch.latest.episode_no) : "—") + '</span><span class="l">tập mới nhất</span></div>' +
+      '<div class="stat"><span class="n">' + esc(ch.latest ? stateLabel(ch.latest.state) : "—") + '</span><span class="l">trạng thái</span></div>' +
+      "</div>" +
+      '<div class="settings">' +
+      "<span class=\"k\">SEO language</span><span>" + esc(ch.language) + "</span>" +
+      "<span class=\"k\">Giờ đăng</span><span>" + esc((ch.publish_times || []).join(", ")) + "</span>" +
+      "<span class=\"k\">Mục tiêu/ngày</span><span>" + esc(ch.today.target) + "</span>" +
+      "<span class=\"k\">Timezone</span><span>" + esc(ch.timezone) + "</span>" +
+      "</div>" +
+      '<div class="account">' +
+      "<div>Profile: " + (ch.login.profile_dir_exists ? '<span class="badge on">có</span>' : '<span class="badge off">chưa có</span>') + "</div>" +
+      "<div>Lần upload ok gần nhất: " + esc(fmtDate(ch.login.last_upload_ok_at)) + "</div>" +
+      '<code>' + esc(loginCmd) + '</code>' +
+      '<button type="button" class="btn-copy" data-copy="' + esc(loginCmd) + '" style="margin-top:8px">Chép lệnh</button>' +
+      "</div>" +
+      '<div class="section-title" style="margin-top:18px">GÓI ĐĂNG TẢI</div>' +
+      (episodes.length ? episodes.map(function (e) { return episodeCard(snap, e); }).join("") : '<div class="empty">Chưa có tập nào.</div>');
+
+    document.getElementById("modal").innerHTML = html;
+    document.getElementById("overlay").hidden = false;
+  }
+
+  function closeModal() {
+    document.getElementById("overlay").hidden = true;
+    document.getElementById("modal").innerHTML = "";
+  }
+
+  // ---- polling ----
+
+  function shouldPoll(snap) {
+    if (snap.runs_active && snap.runs_active.length) return true;
+    return (snap.episodes || []).some(function (e) { return e.state === "UPLOADING"; });
+  }
+
+  function schedulePoll() {
+    if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+    if (state && shouldPoll(state)) pollTimer = setTimeout(load, POLL_MS);
+  }
+
+  function load() {
+    fetch("/api/snapshot", { cache: "no-store" }).then(function (r) {
+      if (r.status === 404) {
+        document.getElementById("loadState").hidden = false;
+        document.getElementById("loadState").textContent = "Chưa có snapshot dashboard.";
+        document.getElementById("content").hidden = true;
+        return null;
+      }
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }).then(function (snap) {
+      if (!snap) { schedulePoll(); return; }
+      state = snap;
+      render(snap);
+      schedulePoll();
+    }).catch(function (e) {
+      document.getElementById("loadState").hidden = false;
+      document.getElementById("loadState").textContent = "Lỗi tải dashboard: " + e.message;
+      schedulePoll();
+    });
+  }
+
+  document.addEventListener("click", function (e) {
+    var copyBtn = e.target.closest(".btn-copy");
+    if (copyBtn) { copyText(copyBtn.getAttribute("data-copy") || "", copyBtn); return; }
+
+    var card = e.target.closest(".card[data-channel]");
+    if (card && state) { openModal(state, card.getAttribute("data-channel")); return; }
+
+    if (e.target.closest(".modal-close") || e.target.id === "overlay") { closeModal(); return; }
+
+    if (e.target.id === "refreshBtn") { load(); return; }
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") closeModal();
+  });
+
+  document.getElementById("loadState").hidden = false;
+  document.getElementById("loadState").textContent = "Đang tải...";
+  load();
+})();
+</script>
+</body>
+</html>

@@ -1,12 +1,12 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
 import { HarnessError, isHarnessError, ProjectConfigSchema, type AgentRuntime, type ExecutorRef, type MediaProber, type ProductionProfile, type ProjectConfig, type Publisher, type ScriptCommand, type ScriptsRegistry, type SourcesRegistry } from "@harness/contracts";
-import { ArtifactRegistry, BUILTIN_CHECKERS, ChannelRegistry, Controller, distributionCheckers, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, LibraryFs, libraryCheckers, loadChannels, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, type HarnessLogger, type LibraryRole, type LoadedWorkflow, type LogLevel } from "@harness/core";
+import { ArtifactRegistry, BUILTIN_CHECKERS, buildSnapshot, ChannelRegistry, Controller, distributionCheckers, type DoctorRow, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, LibraryFs, libraryCheckers, loadChannels, type LoadedWorkflow, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, resolveWorkflowScope, runDoctor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, writeSnapshotFile, type HarnessLogger, type LibraryRole, type LogLevel } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, FakeProvider, FakePublisher, fakeScriptCommands } from "@harness/adapter-fake";
 import { FfprobeMediaProber } from "@harness/adapter-ffprobe";
-import { CliAgentRuntime } from "@harness/adapter-agent-cli";
+import { CliAgentRuntime, RUNTIME_COMMANDS } from "@harness/adapter-agent-cli";
 import { PlaywrightPublisher } from "@harness/adapter-youtube-playwright";
 import { cliArgv } from "./self.js";
 
@@ -133,4 +133,80 @@ export function buildContext(o: { projectDir: string; harnessRoot?: string; owne
     dashboard: { port: project.dashboard.port, refreshSeconds: project.dashboard.refresh_seconds },
     close: () => store.close(),
   };
+}
+
+function subdirsWith(root: string, filename: string): string[] {
+  if (!existsSync(root)) return [];
+  return readdirSync(root, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && existsSync(join(root, d.name, filename)))
+    .map((d) => d.name)
+    .sort();
+}
+
+/**
+ * The full `DoctorRow[]` `harness doctor` reports: workflow-scope resolution (`project.yaml.workflows`, or a
+ * scan of every `workflow.yaml` under the harness install's `workflows/` dir when unset) and profile loading,
+ * followed by `runDoctor`'s own checks. Shared between `commands/doctor.ts` (prints these rows) and
+ * `writeDashboardSnapshot` below (turns the failing ones into `alerts[].kind === "doctor"`, design §6.1) so
+ * the ~20-line input assembly is not duplicated between the two call sites.
+ */
+export function computeDoctorRows(ctx: AppContext): DoctorRow[] {
+  const extraRows: DoctorRow[] = [];
+  const scope = ctx.project.workflows;
+  let workflows: { ref: string; loaded: LoadedWorkflow }[];
+  if (scope) {
+    const scoped = resolveWorkflowScope(scope, ctx.workflows);
+    workflows = scoped.workflows;
+    extraRows.push(...scoped.rows);
+  } else {
+    workflows = [];
+    for (const dir of subdirsWith(join(ctx.harnessRoot, "workflows"), "workflow.yaml")) {
+      try {
+        const raw = parse(readFileSync(join(ctx.harnessRoot, "workflows", dir, "workflow.yaml"), "utf8")) as { id?: string; version?: string };
+        const ref = `${raw.id ?? dir}@${raw.version ?? "0.0.0"}`;
+        workflows.push({ ref, loaded: ctx.workflows(ref) });
+      } catch (e) {
+        extraRows.push({ check: `workflow:${dir}`, ok: false, detail: e instanceof Error ? e.message : String(e) });
+      }
+    }
+  }
+  extraRows.push({ check: "workflows", ok: true, detail: scope ? `scoped to project.yaml workflows: ${scope.join(", ")}` : "all workflows in harness" });
+
+  const allProfiles: ProductionProfile[] = [];
+  for (const dir of subdirsWith(join(ctx.harnessRoot, "production-profiles"), "profile.yaml")) {
+    try { allProfiles.push(ctx.profiles(dir)); }
+    catch (e) { extraRows.push({ check: `profile:${dir}:load`, ok: false, detail: e instanceof Error ? e.message : String(e) }); }
+  }
+  const profiles = scope ? allProfiles.filter((p) => scope.includes(p.workflow_release)) : allProfiles;
+
+  return [
+    ...extraRows,
+    ...runDoctor({
+      projectDir: ctx.projectDir, project: ctx.project, harness: ctx.harness, scripts: ctx.scripts, builtinScripts: ctx.scriptCommandNames, workflows, profiles,
+      secrets: ctx.secrets, proberAvailable: ctx.proberAvailable, store: ctx.store, migrationsDir: ctx.migrationsDir, configErrors: ctx.configErrors,
+      ...(ctx.library ? { library: { fs: ctx.library.fs, role: ctx.library.role } } : {}),
+      channels: { loaded: ctx.channels.list(), errors: ctx.channelErrors, secrets: ctx.secrets },
+      agent: ctx.project.adapters.agent === "cli"
+        ? {
+            kind: "cli", runtime: ctx.project.runtime,
+            argv0: ctx.project.adapters.agent_argv?.[0] ?? RUNTIME_COMMANDS[ctx.project.runtime].argv[0]!,
+            isAvailable: (argv0: string) => CliAgentRuntime.isAvailable(ctx.project.runtime, argv0),
+          }
+        : { kind: "fake", runtime: ctx.project.runtime, argv0: ctx.project.runtime, isAvailable: () => true },
+      publisher: { name: ctx.publisher.name },
+    }),
+  ];
+}
+
+/** `runDoctor` (via `computeDoctorRows`) + `buildSnapshot` + `writeSnapshotFile`: the one place a dashboard
+ * snapshot gets written, called by both `harness dashboard snapshot|serve` and the worker's periodic refresh
+ * (Task 9's `WorkerDeps.dashboard.write`). */
+export async function writeDashboardSnapshot(ctx: AppContext): Promise<string> {
+  const doctorRows = computeDoctorRows(ctx);
+  const snapshot = buildSnapshot({
+    store: ctx.store, channels: ctx.channels.list(), doctorRows, clock: ctx.clock,
+    gateWindowSeconds: ctx.harness.resource_wait_warn_seconds, project_id: ctx.project.project_id,
+    ...(ctx.library ? { library: { fs: ctx.library.fs } } : {}),
+  });
+  return writeSnapshotFile(ctx.dataRoot, snapshot);
 }

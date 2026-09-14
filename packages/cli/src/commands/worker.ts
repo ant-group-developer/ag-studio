@@ -1,6 +1,7 @@
 import { hostname } from "node:os";
 import type { Command } from "commander";
 import { Worker } from "@harness/worker";
+import { writeDashboardSnapshot } from "../composition.js";
 import { withContext } from "./shared.js";
 export function registerWorker(program: Command): void {
   program.command("worker").description("claim and execute stages")
@@ -9,13 +10,12 @@ export function registerWorker(program: Command): void {
       await withContext(cmd, {}, async (ctx) => {
         // `ctx.publication`/`ctx.dashboard` (AppContext's own config shapes) are not WorkerDeps.publication/
         // .dashboard (a Publisher+ChannelRegistry bundle; a refresh callback) -- excluded from the base spread
-        // below so the conditional `publication` re-added afterwards is the only source of that key.
+        // below so the `publication`/`dashboard` keys re-added afterwards are the only source of those keys.
         const { publication: _appPublicationConfig, dashboard: _appDashboardConfig, ...workerBase } = ctx;
         const worker = new Worker({
           ...workerBase, harness: ctx.harness, project: ctx.project, dataRoot: ctx.dataRoot, owner: o.owner, capabilities: String(o.capabilities).split(",").map((s: string) => s.trim()).filter(Boolean),
           logger: ctx.logger, clock: ctx.clock, profiles: ctx.profiles, resourceCapacity: ctx.resourceCapacity, ...(ctx.library ? { library: ctx.library } : {}),
-          // A dashboard writer lands in Task 10's composition; the worker already knows how to call one on a
-          // cadence (WorkerDeps.dashboard) but nothing here provides it yet.
+          dashboard: { refreshSeconds: ctx.dashboard.refreshSeconds, write: async () => { await writeDashboardSnapshot(ctx); } },
           ...(ctx.channels.list().length > 0 ? { publication: { publisher: ctx.publisher, channels: ctx.channels, verifySeconds: ctx.publication.verifySeconds, graceHours: ctx.publication.graceHours } } : {}),
         });
         if (o.once) { process.stdout.write(`${await worker.runOnce()}\n`); return; }
