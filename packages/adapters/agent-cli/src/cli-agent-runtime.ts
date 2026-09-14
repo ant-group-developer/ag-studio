@@ -39,10 +39,15 @@ const BASE_ENV_ALLOWLIST = ["PATH", "PATHEXT", "SystemRoot", "ComSpec", "TEMP", 
  * the workspace root even though `cwd` already points there.
  */
 export function agentChildEnv(base: Record<string, string | undefined>, passthrough: string[], workspace: string): Record<string, string> {
+  // Windows env var names vary in case (Path/PATH, Temp/TEMP, ...); compare upper-cased so the lookup
+  // finds them regardless of how the host process happens to have cased them, but always emit the
+  // canonical name from the allow-list so the child sees a predictable key.
+  const upper = new Map<string, string | undefined>();
+  for (const [k, v] of Object.entries(base)) upper.set(k.toUpperCase(), v);
   const env: Record<string, string> = {};
   for (const key of [...BASE_ENV_ALLOWLIST, ...passthrough]) {
     if (key.startsWith("HARNESS_SECRET_")) continue;
-    const v = base[key];
+    const v = upper.get(key.toUpperCase());
     if (v !== undefined) env[key] = v;
   }
   env.HARNESS_WORKSPACE = workspace;
@@ -101,24 +106,33 @@ export class CliAgentRuntime implements AgentRuntime {
       }
     };
 
-    const { code, timedOut } = await new Promise<{ code: number | null; timedOut: boolean }>((resolve) => {
+    type SpawnResult = { code: number | null; timedOut: boolean; spawnError: Error | null };
+    const { code, timedOut, spawnError } = await new Promise<SpawnResult>((resolve) => {
       const child = spawn(cmd, cmdArgs, { cwd: task.workspaceDir, env, stdio: ["ignore", "pipe", "pipe"] });
       let timedOut = false;
-      child.stdout.on("data", (d) => { const s = String(d); stdoutBuf += s; forward("info", s); });
-      child.stderr.on("data", (d) => forward("warn", String(d)));
+      let settled = false;
       const onAbort = () => child.kill();
       const timer = setTimeout(() => { timedOut = true; child.kill(); }, deadlineMs);
       ctx.signal?.addEventListener("abort", onAbort, { once: true });
-      child.on("close", (code) => {
+      const settle = (result: SpawnResult) => {
+        if (settled) return; // "error" and "close" can both fire (or neither cleanly); resolve once
+        settled = true;
         clearTimeout(timer);
         ctx.signal?.removeEventListener("abort", onAbort);
-        resolve({ code, timedOut });
-      });
+        resolve(result);
+      };
+      child.stdout.on("data", (d) => { const s = String(d); stdoutBuf += s; forward("info", s); });
+      child.stderr.on("data", (d) => forward("warn", String(d)));
+      // Without this handler, a missing binary (ENOENT) or similar spawn failure throws an unhandled
+      // "error" event and crashes the whole process instead of resolving the promise.
+      child.on("error", (e) => settle({ code: null, timedOut, spawnError: e }));
+      child.on("close", (code) => settle({ code, timedOut, spawnError: null }));
     });
 
     mkdirSync(join(task.workspaceDir, "logs"), { recursive: true });
     writeFileSync(join(task.workspaceDir, "logs", "agent-stdout.log"), redact(combinedLog));
 
+    if (spawnError) return failed("transient", `agent CLI failed to start: ${spawnError.message}`, { code: "EXECUTOR_FAILED", reason: spawnError.message });
     if (timedOut) return failed("transient", "agent CLI exceeded deadline", { code: "EXECUTOR_TIMEOUT", timeout_ms: deadlineMs });
     if (code !== 0) return failed("transient", `agent CLI exited with code ${code}`, { code: "EXECUTOR_FAILED", exit_code: code });
 

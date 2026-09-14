@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ChannelPackageDraftSchema, newId, type ExecutorContext, type StageRequest } from "@harness/contracts";
-import { CliAgentRuntime } from "../src/cli-agent-runtime.js";
+import { agentChildEnv, CliAgentRuntime } from "../src/cli-agent-runtime.js";
 
 const skillsDir = fileURLToPath(new URL("../../../../skills", import.meta.url));
 const fixture = fileURLToPath(new URL("../../../../fixtures/fake-agent-cli.mjs", import.meta.url));
@@ -114,6 +114,37 @@ describe("CliAgentRuntime", () => {
   it("isAvailable: true for a real binary answering --version, false for a missing one", () => {
     expect(CliAgentRuntime.isAvailable("claude", process.execPath)).toBe(true);
     expect(CliAgentRuntime.isAvailable("claude", "definitely-missing-bin")).toBe(false);
+  });
+
+  it("missing binary: spawn ENOENT fails transiently instead of crashing the process", async () => {
+    const { ws, req } = makeWorkspace();
+    const runtime = new CliAgentRuntime({ runtime: "claude", skillsDir, argv: ["definitely-missing-binary-xyz", "{prompt}"] });
+    const res = await runtime.runTask({ skill: "channel-package", brief: "b", request: req, workspaceDir: ws }, { ...ctx, workspaceDir: ws });
+    expect(res.outcome).toBe("failed");
+    expect(res.errors[0]!.kind).toBe("transient");
+  });
+});
+
+describe("agentChildEnv", () => {
+  it("keeps only the allow-listed keys and always drops HARNESS_SECRET_*, even when explicitly passed through", () => {
+    const env = agentChildEnv(
+      { HARNESS_SECRET_X_Y: "s3cret", FAKE_AGENT_MODE: "ok", PATH: "/bin", SOME_OTHER: "nope" },
+      ["HARNESS_SECRET_X_Y", "FAKE_AGENT_MODE"],
+      "/workspace",
+    );
+    expect(env.PATH).toBe("/bin");
+    expect(env.FAKE_AGENT_MODE).toBe("ok");
+    expect(env.HARNESS_WORKSPACE).toBe("/workspace");
+    expect(env).not.toHaveProperty("HARNESS_SECRET_X_Y");
+    expect(env).not.toHaveProperty("SOME_OTHER");
+  });
+
+  it("matches allow-listed base-env keys case-insensitively but emits the canonical name", () => {
+    const env = agentChildEnv({ Path: "C:\\Windows", Temp: "C:\\Temp" }, [], "/workspace");
+    expect(env.PATH).toBe("C:\\Windows");
+    expect(env.TEMP).toBe("C:\\Temp");
+    expect(env).not.toHaveProperty("Path");
+    expect(env).not.toHaveProperty("Temp");
   });
 });
 
