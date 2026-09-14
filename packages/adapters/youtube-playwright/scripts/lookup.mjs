@@ -13,9 +13,42 @@ function arg(flag) {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
+/** The lookup itself could not be performed (bad argv, no playwright, Studio unreachable/changed). Exit 2 so
+ * the adapter reports `error: true` — "could not ask", never "not on YouTube". */
 function fail(reason) {
-  console.log(JSON.stringify({ found: false, reason }));
+  console.log(JSON.stringify({ found: false, error: true, reason }));
   process.exit(2);
+}
+
+/** The Studio upload list was read and the video is definitively not in it. Exit 0: a real answer. */
+function notFound(reason) {
+  console.log(JSON.stringify({ found: false, reason }));
+  process.exit(0);
+}
+
+/**
+ * Best-effort `publish_at` for a row Studio classifies as Scheduled: the row text carries the scheduled date
+ * (and sometimes a time) in the viewer's locale. Only the shapes we can read unambiguously are parsed —
+ * anything else yields `undefined`, which the caller treats as "scheduled, date unknown" rather than guessing.
+ */
+function parseScheduledAt(text) {
+  const iso = /\b(\d{4}-\d{2}-\d{2})(?:[ T](\d{1,2}):(\d{2}))?\b/.exec(text);
+  if (iso) {
+    const [, date, hh, mm] = iso;
+    const d = new Date(`${date}T${(hh ?? "00").padStart(2, "0")}:${mm ?? "00"}:00`);
+    return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+  }
+  // "Sep 20, 2026, 1:00 PM" / "Sep 20, 2026" (en-US Studio, the only non-ISO shape worth guessing at)
+  const us = /\b([A-Z][a-z]{2})\s+(\d{1,2}),\s*(\d{4})(?:,?\s*(\d{1,2}):(\d{2})\s*(AM|PM)?)?/i.exec(text);
+  if (us) {
+    const [, mon, day, year, hh, mm, ampm] = us;
+    let hour = hh ? Number(hh) : 0;
+    if (ampm && /pm/i.test(ampm) && hour < 12) hour += 12;
+    if (ampm && /am/i.test(ampm) && hour === 12) hour = 0;
+    const d = new Date(`${mon} ${day}, ${year} ${String(hour).padStart(2, "0")}:${mm ?? "00"}:00`);
+    return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+  }
+  return undefined;
 }
 
 async function main() {
@@ -58,12 +91,17 @@ async function main() {
       }
       return false;
     });
-    if (!match) return fail("no matching video row in Studio's upload list");
+    // The list was read successfully and the video is not in it: a definitive answer, not a failure.
+    if (!match) return notFound("no matching video row in Studio's upload list");
 
     const visMatch = /Public|Private|Unlisted|Scheduled/i.exec(match.text);
     const visibility = (visMatch?.[0] ?? "private").toLowerCase();
     const idMatch = /[?&]v=([\w-]{6,})/.exec(match.href);
-    console.log(JSON.stringify({ found: true, video_id: idMatch?.[1] ?? video ?? "", visibility, title: match.text }));
+    const publishAt = visibility === "scheduled" ? parseScheduledAt(match.text) : undefined;
+    console.log(JSON.stringify({
+      found: true, video_id: idMatch?.[1] ?? video ?? "", visibility, title: match.text,
+      ...(publishAt ? { publish_at: publishAt } : {}),
+    }));
     process.exit(0);
   } catch (e) {
     return fail(e instanceof Error ? e.message : String(e));

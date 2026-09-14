@@ -210,8 +210,9 @@ export class PlaywrightPublisher implements Publisher {
     let data: Record<string, LookupOutcome>;
     try {
       data = JSON.parse(readFileSync(path, "utf8")) as Record<string, LookupOutcome>;
-    } catch {
-      return { found: false };
+    } catch (e) {
+      // An unreadable/corrupt lookup file is "could not ask", not "not on YouTube".
+      return { found: false, error: true, reason: `lookup file unreadable: ${e instanceof Error ? e.message : String(e)}` };
     }
     if (video_id) {
       const byId = data[video_id];
@@ -234,15 +235,23 @@ export class PlaywrightPublisher implements Publisher {
         return { found: true, video_id, visibility: "public", ...(body.title !== undefined ? { title: body.title } : {}) };
       }
       if (res.status === 401 || res.status === 403 || res.status === 404) return this.lookupViaScript(p);
-      return { found: false, reason: `oembed returned ${res.status}` };
+      // Any other status (429, 5xx, a captive portal, ...) says nothing about the video: it is a failed
+      // lookup, not a "not there".
+      return { found: false, error: true, reason: `oembed returned ${res.status}` };
     } catch (e) {
       return this.lookupViaScript(p, e instanceof Error ? e.message : String(e));
     }
   }
 
+  /**
+   * Studio fallback. Every way this can go wrong — no script on disk, no playwright in the channel repo, a
+   * timeout, a non-zero exit, unparsable stdout — is `error: true`: the question was never answered. Only a
+   * script that actually ran and read the upload list may report a definitive `found: false` (it exits 0 with
+   * that JSON; see `scripts/lookup.mjs`).
+   */
   private lookupViaScript(p: { channel: PublisherChannel; video_id?: string; title?: string; since?: string }, oembedError?: string): LookupOutcome {
     if (!existsSync(this.lookupScript)) {
-      return { found: false, reason: oembedError ? `oembed failed (${oembedError}) and lookup script not found: ${this.lookupScript}` : `lookup script not found: ${this.lookupScript}` };
+      return { found: false, error: true, reason: oembedError ? `oembed failed (${oembedError}) and lookup script not found: ${this.lookupScript}` : `lookup script not found: ${this.lookupScript}` };
     }
     const args = ["--profile", join(p.channel.repo_dir, ".upload-profile"), "--channel", p.channel.expected_channel_id];
     if (p.video_id) args.push("--video", p.video_id);
@@ -252,17 +261,19 @@ export class PlaywrightPublisher implements Publisher {
     const result = spawnSync(this.node, [this.lookupScript, ...args], { encoding: "utf8", timeout: this.lookupTimeoutMs, killSignal: "SIGKILL", env: publisherChildEnv(process.env) });
     const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code;
     if (errorCode === "ETIMEDOUT" || result.signal) {
-      return { found: false, reason: "lookup script timed out" };
+      return { found: false, error: true, reason: "lookup script timed out" };
     }
     if (result.error || result.status !== 0) {
       const reason = result.error ? result.error.message : (result.stdout || result.stderr || `lookup script exited with code ${result.status}`).trim();
-      return { found: false, reason };
+      return { found: false, error: true, reason };
     }
+    let parsed: LookupOutcome;
     try {
       const line = result.stdout.trim().split(/\r?\n/).pop() ?? "";
-      return JSON.parse(line) as LookupOutcome;
+      parsed = JSON.parse(line) as LookupOutcome;
     } catch {
-      return { found: false, reason: "lookup script produced invalid JSON" };
+      return { found: false, error: true, reason: "lookup script produced invalid JSON" };
     }
+    return parsed;
   }
 }

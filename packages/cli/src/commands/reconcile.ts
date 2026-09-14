@@ -15,7 +15,7 @@ export function registerReconcile(program: Command): void {
         }
         if (o.publication) {
           const report = await reconcilePublication({ store: ctx.store, publisher: ctx.publisher, channels: ctx.channels, journal: ctx.journal, planner: ctx.planner, clock: ctx.clock }, o.publication);
-          print(o.json, report, () => `${report.job_id} ${report.from} -> ${report.to} video=${report.video_id ?? "-"}`);
+          print(o.json, report, () => `${report.job_id} ${report.from} -> ${report.to} video=${report.video_id ?? "-"}${report.note ? `\nnote: ${report.note}` : ""}`);
           return;
         }
         if (!id) throw new HarnessError("CONFIG_INVALID", "reconcile requires <id> (a run_id or op_id) or --publication <job>", {});

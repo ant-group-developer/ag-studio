@@ -261,12 +261,55 @@ describe("PlaywrightPublisher.lookup", () => {
     expect(outcome).toEqual({ found: true, video_id: "yt-1", visibility: "public", title: "A Title" });
   });
 
-  it("fetchImpl returns 404 and lookupScript isn't available -> found:false", async () => {
+  it("lookupFile entry {found:false} is a definitive not-found, not an error", async () => {
+    const repoDir = prepFixture();
+    const lookupFile = join(mkdtempSync(join(tmpdir(), "lookup-")), "lookup.json");
+    writeFileSync(lookupFile, JSON.stringify({ "yt-1": { found: false, reason: "no matching video row in Studio's upload list" } }));
+    const publisher = new PlaywrightPublisher({ lookupFile });
+    const outcome = await publisher.lookup({ channel: channel(repoDir), video_id: "yt-1" });
+    expect(outcome).toEqual({ found: false, reason: "no matching video row in Studio's upload list" });
+    expect((outcome as { error?: boolean }).error).toBeUndefined();
+  });
+
+  it("fetchImpl returns 404 and lookupScript isn't available -> error:true (could not ask), not a not-found", async () => {
     const repoDir = prepFixture();
     const fetchImpl = (async () => ({ status: 404, json: async () => ({}) })) as unknown as typeof fetch;
     const publisher = new PlaywrightPublisher({ fetchImpl, lookupScript: join(repoDir, "missing.mjs") });
     const outcome = await publisher.lookup({ channel: channel(repoDir), video_id: "yt-1" });
-    expect(outcome.found).toBe(false);
+    expect(outcome).toEqual({ found: false, error: true, reason: expect.stringContaining("lookup script not found") });
+  });
+
+  it("fetchImpl throws (no network) and the Studio fallback cannot run -> error:true", async () => {
+    const repoDir = prepFixture();
+    const fetchImpl = (async () => { throw new Error("getaddrinfo ENOTFOUND www.youtube.com"); }) as unknown as typeof fetch;
+    const publisher = new PlaywrightPublisher({ fetchImpl, lookupScript: join(repoDir, "missing.mjs") });
+    const outcome = await publisher.lookup({ channel: channel(repoDir), video_id: "yt-1" });
+    expect(outcome).toMatchObject({ found: false, error: true });
+    expect((outcome as { reason: string }).reason).toContain("ENOTFOUND");
+  });
+
+  it("fetchImpl returns a non-200 that is not 401/403/404 -> error:true, without touching the Studio script", async () => {
+    const repoDir = prepFixture();
+    const fetchImpl = (async () => ({ status: 503, json: async () => ({}) })) as unknown as typeof fetch;
+    const publisher = new PlaywrightPublisher({ fetchImpl, lookupScript: join(repoDir, "missing.mjs") });
+    const outcome = await publisher.lookup({ channel: channel(repoDir), video_id: "yt-1" });
+    expect(outcome).toEqual({ found: false, error: true, reason: "oembed returned 503" });
+  });
+
+  it("a lookupScript that exits 0 with {found:false} is a definitive not-found; one that exits non-zero is an error", async () => {
+    const repoDir = prepFixture();
+    const scriptDir = mkdtempSync(join(tmpdir(), "lookup-script-"));
+    const okScript = join(scriptDir, "definitive.mjs");
+    writeFileSync(okScript, 'console.log(JSON.stringify({ found: false, reason: "not in the upload list" }));\n');
+    const badScript = join(scriptDir, "broken.mjs");
+    writeFileSync(badScript, 'console.log(JSON.stringify({ found: false, error: true, reason: "playwright not installed" }));\nprocess.exit(2);\n');
+    const fetchImpl = (async () => ({ status: 404, json: async () => ({}) })) as unknown as typeof fetch;
+
+    const definitive = await new PlaywrightPublisher({ fetchImpl, lookupScript: okScript }).lookup({ channel: channel(repoDir), video_id: "yt-1" });
+    expect(definitive).toEqual({ found: false, reason: "not in the upload list" });
+
+    const errored = await new PlaywrightPublisher({ fetchImpl, lookupScript: badScript }).lookup({ channel: channel(repoDir), video_id: "yt-1" });
+    expect(errored).toMatchObject({ found: false, error: true });
   });
 
   it("a hanging lookupScript is killed at lookupTimeoutMs -> found:false with a timeout reason, well before the script's own 5s sleep", async () => {
@@ -279,7 +322,7 @@ describe("PlaywrightPublisher.lookup", () => {
     const startedAt = Date.now();
     const outcome = await publisher.lookup({ channel: channel(repoDir), video_id: "yt-1" });
     const elapsedMs = Date.now() - startedAt;
-    expect(outcome).toEqual({ found: false, reason: expect.stringContaining("timed out") });
+    expect(outcome).toEqual({ found: false, error: true, reason: expect.stringContaining("timed out") });
     expect(elapsedMs).toBeLessThan(4000);
   });
 });

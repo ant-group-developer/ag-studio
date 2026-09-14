@@ -137,9 +137,17 @@ export type UploadOutcome =
   | { kind: "refused"; reason: string }
   | { kind: "busy"; reason: string };
 export type ScheduleOutcome = { kind: "scheduled" } | { kind: "refused"; reason: string } | { kind: "busy"; reason: string };
+/**
+ * Three outcomes, not two. `found: false` alone is the provider *answering* "that video is not there" — a
+ * definitive answer a caller may act on (reconcile re-uploads on it). `found: false, error: true` is "I could
+ * not ask": the network failed, Studio's DOM moved, the profile is logged out, the lookup script crashed. The
+ * two must never be conflated — treating a failed lookup as "not on YouTube" is what produces a second upload
+ * of a video that already exists.
+ */
 export type LookupOutcome =
   | { found: true; video_id: string; visibility: "public" | "private" | "unlisted" | "scheduled"; publish_at?: string; title?: string }
-  | { found: false; reason?: string };
+  | { found: false; error?: false; reason?: string }
+  | { found: false; error: true; reason: string };
 export interface Publisher {
   readonly name: string;
   upload(p: { channel: PublisherChannel; episode_no: number; episode_dir: string; intent_at: string; timeout_seconds: number; log?: (line: string) => void }): Promise<UploadOutcome>;

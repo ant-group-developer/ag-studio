@@ -113,6 +113,36 @@ describe("verifyScheduled", () => {
     expect(publisher.calls).toBe(2);
   });
 
+  it("treats an error:true lookup like a thrown one: reported first, NEEDS_RECONCILIATION only on the second", async () => {
+    const { store, clock } = openTempStore("2026-09-14T00:00:00.000Z");
+    const job = sampleJob(store);
+    const publisher = new TestPublisher({ found: false, error: true, reason: "studio profile is logged out" });
+    const deps = { store, publisher, channels: makeChannels(), clock, graceHours: 0 };
+
+    const first = await verifyScheduled(deps);
+    expect(first.errors).toEqual([{ job_id: job.publication_job_id, message: "studio profile is logged out" }]);
+    expect(first.reconcile).toEqual([]);
+    expect(store.getPublicationJob(job.publication_job_id)!.state).toBe("SCHEDULED");
+    expect(store.getPublicationJob(job.publication_job_id)!.receipt).toMatchObject({ verify_failures: 1 });
+
+    const second = await verifyScheduled(deps);
+    expect(second.reconcile).toEqual([job.publication_job_id]);
+    expect(store.getPublicationJob(job.publication_job_id)!.state).toBe("NEEDS_RECONCILIATION");
+    expect(store.getPublicationJob(job.publication_job_id)!.note).toBe("lookup failed twice in a row");
+  });
+
+  it("moves a job to NEEDS_RECONCILIATION on the first *definitive* not-found, without waiting for a second pass", async () => {
+    const { store, clock } = openTempStore("2026-09-14T00:00:00.000Z");
+    const job = sampleJob(store);
+    const publisher = new TestPublisher({ found: false, reason: "no matching video row in Studio's upload list" });
+    const report = await verifyScheduled({ store, publisher, channels: makeChannels(), clock, graceHours: 0 });
+    expect(report.reconcile).toEqual([job.publication_job_id]);
+    expect(report.errors).toEqual([]);
+    const updated = store.getPublicationJob(job.publication_job_id)!;
+    expect(updated.state).toBe("NEEDS_RECONCILIATION");
+    expect(updated.note).toBe("no matching video row in Studio's upload list");
+  });
+
   it("resets the verify_failures counter in the receipt after a successful lookup", async () => {
     const { store, clock } = openTempStore("2026-09-14T00:00:00.000Z");
     const job = sampleJob(store, { receipt: { verify_failures: 1 } });

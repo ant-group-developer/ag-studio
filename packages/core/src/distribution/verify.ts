@@ -29,10 +29,10 @@ export async function verifyScheduled(d: VerifyDeps): Promise<VerifyReport> {
     const channel = d.channels.toPublisherChannel(job.channel_id);
     const receipt = { ...(job.receipt ?? {}) } as Record<string, unknown>;
 
-    let lookup: LookupOutcome;
-    try {
-      lookup = await d.publisher.lookup({ channel, ...(job.youtube_video_id ? { video_id: job.youtube_video_id } : {}) });
-    } catch (e) {
+    /** Two strikes for a lookup that could not be performed at all (a thrown error, or an `error: true`
+     * outcome): the first is only reported, the second parks the job for a human. A failed lookup never means
+     * "not on YouTube", so it must not take the NEEDS_RECONCILIATION-on-first-sight path below. */
+    const countLookupFailure = (message: string): void => {
       report.checked.push(job.publication_job_id);
       const failures = (typeof receipt.verify_failures === "number" ? receipt.verify_failures : 0) + 1;
       receipt.verify_failures = failures;
@@ -42,8 +42,20 @@ export async function verifyScheduled(d: VerifyDeps): Promise<VerifyReport> {
         report.reconcile.push(job.publication_job_id);
       } else {
         d.store.updatePublicationJob({ ...job, receipt, last_verified_at: now });
-        report.errors.push({ job_id: job.publication_job_id, message: e instanceof Error ? e.message : String(e) });
+        report.errors.push({ job_id: job.publication_job_id, message });
       }
+    };
+
+    let lookup: LookupOutcome;
+    try {
+      lookup = await d.publisher.lookup({ channel, ...(job.youtube_video_id ? { video_id: job.youtube_video_id } : {}) });
+    } catch (e) {
+      countLookupFailure(e instanceof Error ? e.message : String(e));
+      continue;
+    }
+
+    if (!lookup.found && lookup.error) {
+      countLookupFailure(lookup.reason);
       continue;
     }
 

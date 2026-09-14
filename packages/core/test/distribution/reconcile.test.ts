@@ -106,6 +106,69 @@ describe("reconcilePublication", () => {
     expect(store.getStageRun(stage.stage_run_id)!.state).toBe("READY");
   });
 
+  it("throws on an error:true lookup and leaves the job and operation exactly as they were -- a failed lookup must never trigger a re-upload", async () => {
+    const { store, clock } = openTempStore();
+    const { stage, op, job } = world(store, clock);
+    const journal = new ExternalOperationJournal(store, { name: "unused", dispatch: async () => { throw new Error("unused"); }, lookup: async () => ({ found: false }) }, clock);
+    const planner = new Planner(store);
+    const publisher = new TestPublisher({ found: false, error: true, reason: "studio DOM changed" });
+
+    await reconcilePublication({ store, publisher, channels: makeChannels(), journal, planner, clock }, job.publication_job_id)
+      .then(() => { throw new Error("expected reconcilePublication to throw"); }, (e) => {
+        expect(isHarnessError(e, "CONNECTION_LOST")).toBe(true);
+        expect((e as Error).message).toContain("studio DOM changed");
+      });
+
+    const unchanged = store.getPublicationJob(job.publication_job_id)!;
+    expect(unchanged.state).toBe("NEEDS_RECONCILIATION");
+    expect(unchanged.youtube_video_id).toBeNull();
+    expect(store.getExternalOperation(op.operation_id)!.status).toBe("NEEDS_RECONCILIATION");
+    expect(store.getStageRun(stage.stage_run_id)!.state).toBe("NEEDS_RECONCILIATION");
+  });
+
+  it("clears youtube_video_id when a job with one is definitively not found and goes back to READY", async () => {
+    const { store, clock } = openTempStore();
+    const { job } = world(store, clock);
+    store.updatePublicationJob({ ...job, youtube_video_id: "yt-gone" });
+    const journal = new ExternalOperationJournal(store, { name: "unused", dispatch: async () => { throw new Error("unused"); }, lookup: async () => ({ found: false }) }, clock);
+    const planner = new Planner(store);
+    const publisher = new TestPublisher({ found: false, reason: "no matching video" });
+
+    const report = await reconcilePublication({ store, publisher, channels: makeChannels(), journal, planner, clock }, job.publication_job_id);
+    expect(report.to).toBe("READY");
+    expect(report.video_id).toBeNull();
+    expect(store.getPublicationJob(job.publication_job_id)!.youtube_video_id).toBeNull();
+  });
+
+  it("notes that nothing will book the slot when a PROCESSING job's run has no live upload/schedule stage", async () => {
+    const { store, clock } = openTempStore();
+    const { job } = world(store, clock);
+    // A job whose run has no upload/schedule stage row left to move it along (the run is long gone, or the
+    // video was put up by hand): PROCESSING would otherwise look healthy while nothing ever schedules it.
+    const orphan: PublicationJob = { ...job, publication_job_id: newId("publication_job"), run_id: newId("run"), operation_id: null };
+    store.insertPublicationJob(orphan);
+    const journal = new ExternalOperationJournal(store, { name: "unused", dispatch: async () => { throw new Error("unused"); }, lookup: async () => ({ found: false }) }, clock);
+    const planner = new Planner(store);
+    const publisher = new TestPublisher({ found: true, video_id: "yt-99", visibility: "private" });
+
+    const report = await reconcilePublication({ store, publisher, channels: makeChannels(), journal, planner, clock }, orphan.publication_job_id);
+    expect(report.to).toBe("PROCESSING");
+    expect(report.note).toContain("run has no live stage");
+    expect(store.getPublicationJob(orphan.publication_job_id)!.note).toBe(report.note);
+  });
+
+  it("adds no note when the run still has a live stage to carry the job on", async () => {
+    const { store, clock } = openTempStore();
+    const { job } = world(store, clock);
+    const journal = new ExternalOperationJournal(store, { name: "unused", dispatch: async () => { throw new Error("unused"); }, lookup: async () => ({ found: false }) }, clock);
+    const planner = new Planner(store);
+    const publisher = new TestPublisher({ found: true, video_id: "yt-99", visibility: "private" });
+
+    const report = await reconcilePublication({ store, publisher, channels: makeChannels(), journal, planner, clock }, job.publication_job_id);
+    expect(report.to).toBe("PROCESSING");
+    expect(report.note).toBeUndefined();
+  });
+
   it("throws INVALID_TRANSITION when the job is not NEEDS_RECONCILIATION", async () => {
     const { store, clock } = openTempStore();
     const { job } = world(store, clock);

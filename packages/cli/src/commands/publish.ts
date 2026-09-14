@@ -79,7 +79,7 @@ export function registerPublish(program: Command): void {
     .action(async (jobId: string, o, cmd) => {
       await withContext(cmd, {}, async (ctx) => {
         const report = await reconcilePublication({ store: ctx.store, publisher: ctx.publisher, channels: ctx.channels, journal: ctx.journal, planner: ctx.planner, clock: ctx.clock }, jobId);
-        print(o.json, report, () => `${report.job_id} ${report.from} -> ${report.to} video=${report.video_id ?? "-"}`);
+        print(o.json, report, () => `${report.job_id} ${report.from} -> ${report.to} video=${report.video_id ?? "-"}${report.note ? `\nnote: ${report.note}` : ""}`);
       });
     });
 
