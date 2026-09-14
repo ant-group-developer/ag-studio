@@ -1,0 +1,5 @@
+schema_version: harness.sources/v1
+# Deliberately empty, like the footage fixture: the sample footage and the `samples.txt` sample list this
+# fixture studies are generated with ffmpeg at test time into a temp project (see `freshLibraryWorld()` in
+# tests/integration/library-helpers.ts), which writes its own `sources.yaml` pointing at them.
+sources: []

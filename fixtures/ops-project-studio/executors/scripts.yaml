@@ -1,0 +1,11 @@
+schema_version: harness.scripts/v1
+# `library-intake`, `library-style-export`, `library-export` and `library-apply-review` are built into the
+# CLI composition (`builtinLibraryCommands()`), so a studio ops project declares only the media wrappers.
+# The four footage wrappers are reused in place through `cwd`, so this fixture owns no copy of them.
+scripts:
+  collect-samples:      { argv: [node, executors/wrappers/collect-samples.mjs], requires_resources: [cpu], timeout_seconds: 600 }
+  thumbnail-candidates: { argv: [node, executors/wrappers/thumbnail-candidates.mjs], timeout_seconds: 600 }
+  index-source:         { argv: [node, executors/wrappers/index-source.mjs], cwd: ../ops-project-footage, requires_resources: [cpu], timeout_seconds: 600 }
+  tts:                  { argv: [node, executors/wrappers/tts.mjs], cwd: ../ops-project-footage, requires_resources: [gpu], timeout_seconds: 600 }
+  cut:                  { argv: [node, executors/wrappers/cut.mjs], cwd: ../ops-project-footage, requires_resources: [cpu], timeout_seconds: 600 }
+  assemble:             { argv: [node, executors/wrappers/assemble.mjs], cwd: ../ops-project-footage, requires_resources: [cpu], timeout_seconds: 600 }

@@ -1,0 +1,4 @@
+schema_version: harness.sources/v1
+# A channel project ingests nothing of its own: every content item it works on arrives through
+# `harness library pick`, which mints a ContentItem with no source_ids.
+sources: []

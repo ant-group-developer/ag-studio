@@ -10,4 +10,5 @@ dist/
 .agents/skills/
 .superpowers/
 fixtures/**/data/
+fixtures/**/library/
 fixtures/ops-project-footage/raw/

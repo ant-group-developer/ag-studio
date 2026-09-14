@@ -2,7 +2,7 @@ import { expect } from "vitest";
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { HARNESS_ROOT } from "@harness/core";
 import { makeVideo } from "../media.js";
@@ -17,7 +17,7 @@ export interface StatusJson {
     stage_key: string;
     stage_run_id: string;
     state: string;
-    attempts: { attempt_id: string; state: string; workspace_uri?: string }[];
+    attempts: { attempt_id: string; state: string; workspace_uri?: string; failure_kind?: string; error_summary?: string }[];
     reused_artifact_ids?: string[];
   }[];
   artifacts: { artifact_id: string; type: string; status: string; stage_run_id: string; lineage: { source_items: string[]; input_artifacts: string[] } }[];
@@ -128,7 +128,9 @@ function workspacePathFromUri(uri: string): string {
   return p;
 }
 
-/** Write `files` into the last attempt's workspace `output/`, then `harness stage submit`; asserts exit 0. */
+/** Write `files` into the last attempt's workspace `output/`, then `harness stage submit`; asserts exit 0.
+ * A key may name a path inside `output/` (`"evidence/note.md"`), which is how a gate declaring a directory
+ * output is satisfied -- the intermediate directories are created. */
 export function submitGate(project: string, runId: string, key: string, files: Record<string, string>): void {
   const st = status(project, runId).stages.find((s) => s.stage_key === key);
   if (!st) throw new Error(`stage ${key} not found on run ${runId}`);
@@ -136,7 +138,11 @@ export function submitGate(project: string, runId: string, key: string, files: R
   if (!lastAttempt?.workspace_uri) throw new Error(`stage ${key} has no attempt workspace on run ${runId}`);
   const outputDir = join(workspacePathFromUri(lastAttempt.workspace_uri), "output");
   mkdirSync(outputDir, { recursive: true });
-  for (const [name, content] of Object.entries(files)) writeFileSync(join(outputDir, name), content);
+  for (const [name, content] of Object.entries(files)) {
+    const path = join(outputDir, name);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, content);
+  }
   const r = cli(project, ["stage", "submit", st.stage_run_id]);
   if (r.code !== 0) throw new Error(`stage submit ${key} (${st.stage_run_id}) failed: ${r.err}\n${r.out}`);
 }

@@ -149,6 +149,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/script-sdk
 
+  fixtures/ops-project-studio:
+    dependencies:
+      '@harness/script-sdk':
+        specifier: workspace:*
+        version: link:../../packages/script-sdk
+
   packages/adapters/fake:
     dependencies:
       '@harness/contracts':

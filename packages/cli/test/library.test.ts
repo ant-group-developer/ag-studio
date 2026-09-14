@@ -36,12 +36,10 @@ function libraryProject(root: string, role: "studio" | "channel", idSuffix: stri
   return freshProject((cfg) => { cfg.project_id = `${cfg.project_id}-${idSuffix}`; cfg.library = { root, role }; });
 }
 
-/** Writes a schema-valid, `active` EditStyle straight into the kho, as `style-export` would have. */
-function writeStyleFile(root: string, styleId: string): void {
-  const dir = join(root, "styles", styleId);
-  mkdirSync(dir, { recursive: true });
+/** A schema-valid EditStyle document, at whatever point of the draft -> active lifecycle the caller needs. */
+function styleJson(styleId: string, status: "draft" | "active" | "retired" = "active"): string {
   const style = {
-    schema_version: "harness.edit-style/v1", style_id: styleId, revision: 1, name: "Test style", status: "active",
+    schema_version: "harness.edit-style/v1", style_id: styleId, revision: 1, name: "Test style", status,
     learned_from: [],
     params: {
       cut_rhythm: "medium", shot_seconds: [2, 5], transitions: [], text_overlay: { style: "bold", density: "low" },
@@ -49,7 +47,14 @@ function writeStyleFile(root: string, styleId: string): void {
     },
     evidence: [], created_at: "2026-09-14T00:00:00.000Z", updated_at: "2026-09-14T00:00:00.000Z",
   };
-  writeFileSync(join(dir, "style.json"), JSON.stringify(style, null, 2) + "\n");
+  return JSON.stringify(style, null, 2) + "\n";
+}
+
+/** Writes a schema-valid, `active` EditStyle straight into the kho, as `style-export` would have. */
+function writeStyleFile(root: string, styleId: string): void {
+  const dir = join(root, "styles", styleId);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "style.json"), styleJson(styleId, "active"));
 }
 
 /** Writes a schema-valid `pending_review` LibraryItem manifest straight into the kho, as `library-export`
@@ -256,6 +261,65 @@ describe("harness library CLI", () => {
       expect(result.outcome).toBe("failed");
       expect(result.errors[0].kind).toBe("contract");
       expect(existsSync(join(workspaceDir, "output", "brief.json"))).toBe(false);
+    });
+  });
+
+  // `style-export` depends on style-review *and* analyze-style, and both stages emit a `style` artifact, so
+  // the real workspace always carries two style inputs -- in stage order, draft first.
+  describe("built-in `library stage style-export` with both style inputs present", () => {
+    function workspaceWithStyles(styles: { name: string; content: string }[]): string {
+      const dir = mkdtempSync(join(tmpdir(), "lib-style-export-ws-"));
+      mkdirSync(join(dir, "output"), { recursive: true });
+      const inputs = styles.map(({ name, content }) => {
+        const rel = `input/${name}/style.json`;
+        mkdirSync(join(dir, "input", name), { recursive: true });
+        writeFileSync(join(dir, rel), content);
+        return { artifact_id: newId("artifact"), checksum: SHA, path: rel, type: "style", kind: "file" };
+      });
+      const stageRequest = {
+        schema_version: "harness.stage-request/v1", run_id: newId("run"), stage_run_id: newId("stage_run"), attempt_id: newId("attempt"),
+        project_id: "project-studio", portfolio_id: "portfolio-main", stage_key: "style-export",
+        workflow: { id: "style-study", version: "1.0.0", digest: SHA }, profile_snapshot: { id: "studio", revision: 1 },
+        inputs, workspace_uri: "file://" + dir, stage_config: {}, options: {}, source_items: [], resources: [], expected_outputs: [],
+        policy: {}, limits: { deadline_at: new Date(Date.now() + 3_600_000).toISOString(), max_cost_usd: 5, max_attempts: 3 },
+        capabilities: [], fencing_token: 1,
+      };
+      writeFileSync(join(dir, "stage-request.json"), JSON.stringify(stageRequest, null, 2));
+      return dir;
+    }
+
+    it("exports the reviewed active style, not the draft the analyze-style gate produced first", () => {
+      const root = mkdtempSync(join(tmpdir(), "kho-style-export-"));
+      const studioDir = libraryProject(root, "studio", "style-export");
+      expect(cli(studioDir, "db", "migrate").code).toBe(0);
+      const styleId = newId("edit_style");
+
+      const workspaceDir = workspaceWithStyles([
+        { name: "analyze", content: styleJson(styleId, "draft") },
+        { name: "review", content: styleJson(styleId, "active") },
+      ]);
+      const r = cliEnv(studioDir, { HARNESS_WORKSPACE: workspaceDir }, "library", "stage", "style-export");
+      expect(r.code, r.err).toBe(0);
+
+      const result = JSON.parse(readFileSync(join(workspaceDir, "stage-result.json"), "utf8"));
+      expect(result.outcome, JSON.stringify(result.errors)).toBe("succeeded");
+      expect(JSON.parse(readFileSync(join(root, "styles", styleId, "style.json"), "utf8")).status).toBe("active");
+    });
+
+    it("fails with kind contract when no style input has been reviewed to active", () => {
+      const root = mkdtempSync(join(tmpdir(), "kho-style-export-draft-"));
+      const studioDir = libraryProject(root, "studio", "style-export-draft");
+      expect(cli(studioDir, "db", "migrate").code).toBe(0);
+      const styleId = newId("edit_style");
+
+      const workspaceDir = workspaceWithStyles([{ name: "analyze", content: styleJson(styleId, "draft") }]);
+      const r = cliEnv(studioDir, { HARNESS_WORKSPACE: workspaceDir }, "library", "stage", "style-export");
+      expect(r.code, r.err).toBe(0);
+
+      const result = JSON.parse(readFileSync(join(workspaceDir, "stage-result.json"), "utf8"));
+      expect(result.outcome).toBe("failed");
+      expect(result.errors[0].kind).toBe("contract");
+      expect(existsSync(join(root, "styles", styleId, "style.json"))).toBe(false);
     });
   });
 });

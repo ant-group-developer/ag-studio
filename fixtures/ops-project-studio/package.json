@@ -1,0 +1,9 @@
+{
+  "name": "ops-project-studio-fixture",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "dependencies": {
+    "@harness/script-sdk": "workspace:*"
+  }
+}

@@ -2,7 +2,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Command } from "commander";
 import { start, type ScriptContext } from "@harness/script-sdk";
-import { EditStyleSchema, HarnessError, isHarnessError, libraryBriefSchema, type LibraryBrief } from "@harness/contracts";
+import { EditStyleSchema, HarnessError, isHarnessError, libraryBriefSchema, type EditStyle, type LibraryBrief } from "@harness/contracts";
 import { applyReview, claimRequest, exportItem, exportStyle } from "@harness/core";
 import type { AppContext } from "../composition.js";
 import { withContext } from "./shared.js";
@@ -72,15 +72,37 @@ async function intake(app: AppContext, sdk: ScriptContext): Promise<void> {
   await sdk.done();
 }
 
+/**
+ * `style-export` depends on both `style-review` and `analyze-style`, and *both* stages output a `style`
+ * artifact, so the workspace carries two `style` inputs -- in stage order, which means `sdk.input("style")`
+ * hands back `analyze-style`'s **draft**. Read every one of them and take the reviewed (`active`) style
+ * instead; approving the style is the whole point of the `style-review` gate. The last active one wins, so
+ * a workflow that ever chains more than one reviewing gate exports the final word.
+ */
+function reviewedStyle(sdk: ScriptContext): EditStyle {
+  const paths = sdk.inputs("style");
+  if (paths.length === 0) throw new HarnessError("CONFIG_INVALID", "style-export has no style input", {});
+  const styles: EditStyle[] = [];
+  for (const path of paths) {
+    const parsed = EditStyleSchema.safeParse(readJsonFile(path));
+    if (!parsed.success) throw new HarnessError("CONFIG_INVALID", `style.json failed schema validation: ${path}`, { path, issues: parsed.error.issues });
+    styles.push(parsed.data);
+  }
+  const active = styles.filter((s) => s.status === "active").at(-1);
+  if (!active) {
+    const statuses = styles.map((s) => `${s.style_id}=${s.status}`);
+    throw new HarnessError("CONFIG_INVALID", `no style input is active (${statuses.join(", ")}); submit style-review with status: active`, { statuses });
+  }
+  return active;
+}
+
 /** stage 4 of `style-study`: publishes an approved style (plus optional evidence) into the kho (spec §3.1). */
 async function styleExport(app: AppContext, sdk: ScriptContext): Promise<void> {
   const library = requireLibrary(app);
-  const parsedStyle = EditStyleSchema.safeParse(readJsonFile(sdk.input("style")));
-  if (!parsedStyle.success) throw new HarnessError("CONFIG_INVALID", "style.json failed schema validation", { issues: parsedStyle.error.issues });
-  if (parsedStyle.data.status !== "active") throw new HarnessError("CONFIG_INVALID", `style ${parsedStyle.data.style_id} is ${parsedStyle.data.status}, not active`, { style_id: parsedStyle.data.style_id, status: parsedStyle.data.status });
+  const style_ = reviewedStyle(sdk);
   const evidenceDir = sdk.hasInput("style_evidence") ? sdk.input("style_evidence") : undefined;
 
-  const { style, dir } = await exportStyle({ store: app.store, fs: library.fs, clock: app.clock }, { style: parsedStyle.data, ...(evidenceDir !== undefined ? { evidenceDir } : {}) });
+  const { style, dir } = await exportStyle({ store: app.store, fs: library.fs, clock: app.clock }, { style: style_, ...(evidenceDir !== undefined ? { evidenceDir } : {}) });
 
   await writeOutput(sdk, "output/export-receipt.json", { style_id: style.style_id, revision: style.revision, dir }, "export_receipt");
   await sdk.done();

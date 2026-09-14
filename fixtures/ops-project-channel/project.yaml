@@ -1,0 +1,15 @@
+schema_version: harness.project-config/v1
+project_id: project-channel
+template_release: 0.1.0
+runtime: claude
+data_root: ./data
+portfolios:
+  - { portfolio_id: portfolio-channel, display_name: Channel }
+source: { materialize: link }
+# Same kho as the studio fixture, mounted read-mostly: a channel only ever writes `requests/<id>.json`
+# and `items/<id>/claims/<channel_id>.json` (enforced by LibraryFs.assertWritable).
+library: { root: ./library, role: channel }
+# The channel role runs no workflow of its own yet -- it creates requests, syncs and picks. An empty list
+# scopes `harness doctor` to no workflow at all, so it never asks for wrappers this project has no
+# `executors/` for.
+workflows: []
