@@ -91,8 +91,10 @@ export function buildSnapshot(d: SnapshotDeps): DashboardSnapshot {
   const now = d.clock.now();
   const doctorRows = d.doctorRows ?? [];
 
-  const channels = d.channels.map((c) => buildChannel(d.store, c, now, doctorRows));
-  const episodes = buildEpisodes(d.store, d.channels);
+  const results = d.channels.map((c) => buildChannelSafe(d.store, c, now, doctorRows));
+  const channels = results.map((r) => r.channel);
+  const episodes = results.flatMap((r) => r.episodes);
+  const channelBuildErrors = results.flatMap((r) => (r.error ? [{ channel_id: r.channel.channel_id, message: r.error }] : []));
 
   return {
     schema_version: "harness.dashboard-snapshot/v1",
@@ -102,7 +104,7 @@ export function buildSnapshot(d: SnapshotDeps): DashboardSnapshot {
     channels,
     episodes,
     runs_active: buildRunsActive(d.store),
-    alerts: buildAlerts(d, now, doctorRows, channels),
+    alerts: buildAlerts(d, now, doctorRows, channels, channelBuildErrors),
     market: {},
   };
 }
@@ -128,6 +130,43 @@ function buildLibrary(d: SnapshotDeps): DashboardLibrary | null {
 function currentStage(store: StateStore, runId: string): string | null {
   const stage = store.listStageRuns(runId).find((s) => s.state !== "SUCCEEDED");
   return stage ? stage.stage_key : null;
+}
+
+interface ChannelBuild { channel: DashboardChannel; episodes: DashboardEpisode[]; error?: string }
+
+/** One misconfigured channel (most likely `publication.timezone` -- `ChannelConfigSchema` only requires
+ * `z.string().min(1)`, never validated against the IANA timezone database, so a typo throws a `RangeError`
+ * out of `Intl.DateTimeFormat` deep inside `localDate`/`zonedToUtc`) must not abort the whole snapshot: every
+ * other channel still has to render. Falls back to a safe-default row plus the failure message rather than
+ * propagating, so the caller can still surface it as a `doctor` alert (`buildAlerts` below). */
+function buildChannelSafe(store: StateStore, channel: LoadedChannel, now: string, doctorRows: DoctorRow[]): ChannelBuild {
+  try {
+    return { channel: buildChannel(store, channel, now, doctorRows), episodes: buildChannelEpisodes(store, channel) };
+  } catch (e) {
+    return { channel: fallbackChannel(channel, doctorRows), episodes: [], error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Safe-default row for a channel whose `buildChannel` threw: zeroed counters, no `latest`/episodes, but the
+ * real `doctor` rows (pure string filtering, cannot itself throw) and a best-effort `profile_dir_exists` --
+ * `existsSync`/`resolve` do not throw for an ordinary bad path, but this stays defensive since the whole
+ * point of this fallback is "never let one channel's bad config take the rest of the snapshot down with it". */
+function fallbackChannel(channel: LoadedChannel, doctorRows: DoctorRow[]): DashboardChannel {
+  const cfg = channel.config;
+  let profileDirExists = false;
+  try { profileDirExists = existsSync(join(resolve(cfg.repo_dir), ".upload-profile", "Default")); } catch { /* keep false */ }
+  const doctor: DashboardChannelDoctorRow[] = doctorRows
+    .filter((r) => r.check.startsWith(`channel:${cfg.channel_id}:`))
+    .map((r) => ({ row: r.check, status: r.ok ? "ok" : "fail", message: r.detail }));
+  return {
+    channel_id: cfg.channel_id, display_name: cfg.display_name, color: cfg.color,
+    publish_times: cfg.publication.publish_times, timezone: cfg.publication.timezone, language: cfg.seo.language,
+    today: { published: 0, target: cfg.publication.max_daily_uploads },
+    login: { profile_dir_exists: profileDirExists, last_upload_ok_at: null },
+    latest: null,
+    episodes_count: 0,
+    doctor,
+  };
 }
 
 function buildChannel(store: StateStore, channel: LoadedChannel, now: string, doctorRows: DoctorRow[]): DashboardChannel {
@@ -176,24 +215,26 @@ function buildChannel(store: StateStore, channel: LoadedChannel, now: string, do
   };
 }
 
-function buildEpisodes(store: StateStore, channels: LoadedChannel[]): DashboardEpisode[] {
+/** Episodes for one channel -- called from `buildChannelSafe` so a channel whose `buildChannel` threw simply
+ * contributes no episodes (already reflected by `episodes_count: 0` on its fallback row) instead of a second,
+ * redundant failure path. Does not read `channel.config.publication`, so nothing here can throw the way a bad
+ * `timezone` throws out of `buildChannel`. */
+function buildChannelEpisodes(store: StateStore, channel: LoadedChannel): DashboardEpisode[] {
   const episodes: DashboardEpisode[] = [];
-  for (const channel of channels) {
-    for (const job of store.listPublicationJobs({ channel_id: channel.config.channel_id })) {
-      const pkg = store.getChannelPackage(job.package_id);
-      if (!pkg) continue; // a job with no package left is a data problem for `doctor`, not the dashboard
-      episodes.push({
-        job_id: job.publication_job_id, channel_id: job.channel_id, episode_no: pkg.episode_no, state: job.state,
-        scheduled_at: job.scheduled_at, published_at: job.published_at, video_id: job.youtube_video_id, run_id: job.run_id,
-        current_stage: currentStage(store, job.run_id),
-        package: {
-          title: pkg.metadata.title, description: pkg.metadata.description, tags: pkg.metadata.tags,
-          hashtags: pkg.metadata.hashtags, playlists: pkg.metadata.playlists, pinned_comment: pkg.metadata.pinned_comment,
-          thumbnail: `thumbnails/${pkg.package_id}.png`,
-        },
-        hypothesis: { angle: pkg.hypothesis.chosen.angle, metric: pkg.hypothesis.expected.metric, target: pkg.hypothesis.expected.target },
-      });
-    }
+  for (const job of store.listPublicationJobs({ channel_id: channel.config.channel_id })) {
+    const pkg = store.getChannelPackage(job.package_id);
+    if (!pkg) continue; // a job with no package left is a data problem for `doctor`, not the dashboard
+    episodes.push({
+      job_id: job.publication_job_id, channel_id: job.channel_id, episode_no: pkg.episode_no, state: job.state,
+      scheduled_at: job.scheduled_at, published_at: job.published_at, video_id: job.youtube_video_id, run_id: job.run_id,
+      current_stage: currentStage(store, job.run_id),
+      package: {
+        title: pkg.metadata.title, description: pkg.metadata.description, tags: pkg.metadata.tags,
+        hashtags: pkg.metadata.hashtags, playlists: pkg.metadata.playlists, pinned_comment: pkg.metadata.pinned_comment,
+        thumbnail: `thumbnails/${pkg.package_id}.png`,
+      },
+      hypothesis: { angle: pkg.hypothesis.chosen.angle, metric: pkg.hypothesis.expected.metric, target: pkg.hypothesis.expected.target },
+    });
   }
   return episodes;
 }
@@ -220,9 +261,14 @@ function isPastLastSlot(publishTimes: string[], timezone: string, now: string): 
   return Date.parse(now) >= zonedToUtc({ y, m, d: dd, hh, mm }, timezone).getTime();
 }
 
-function buildAlerts(d: SnapshotDeps, now: string, doctorRows: DoctorRow[], channels: DashboardChannel[]): DashboardAlert[] {
+function buildAlerts(d: SnapshotDeps, now: string, doctorRows: DoctorRow[], channels: DashboardChannel[], channelBuildErrors: { channel_id: string; message: string }[]): DashboardAlert[] {
   const { store } = d;
   const alerts: DashboardAlert[] = [];
+
+  for (const err of channelBuildErrors) {
+    alerts.push({ kind: "doctor", channel_id: err.channel_id, ref: `channel:${err.channel_id}:snapshot`, message: err.message, since: now });
+  }
+  const brokenChannelIds = new Set(channelBuildErrors.map((e) => e.channel_id));
 
   for (const job of store.listPublicationJobs({ state: "NEEDS_RECONCILIATION" }) as PublicationJob[]) {
     alerts.push({ kind: "reconcile", channel_id: job.channel_id, ref: job.publication_job_id, message: `publication job ${job.publication_job_id} stuck at NEEDS_RECONCILIATION`, since: job.updated_at });
@@ -250,6 +296,9 @@ function buildAlerts(d: SnapshotDeps, now: string, doctorRows: DoctorRow[], chan
   }
 
   for (const channel of channels) {
+    // a broken channel's fallback row still carries its (bad) timezone -- `isPastLastSlot` would throw again;
+    // its `channel:<id>:snapshot` doctor alert above already covers it, so skip rather than re-fail here.
+    if (brokenChannelIds.has(channel.channel_id)) continue;
     if (channel.today.published >= channel.today.target) continue;
     if (!isPastLastSlot(channel.publish_times, channel.timezone, now)) continue;
     alerts.push({

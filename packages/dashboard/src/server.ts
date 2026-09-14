@@ -41,6 +41,12 @@ function sendJsonError(res: ServerResponse, status: number, error: string): void
   send(res, status, JSON.stringify({ error }), { "Content-Type": "application/json; charset=utf-8" });
 }
 
+/** This server never accepts writes (design §6.2: no `POST`) -- anything but `GET`/`HEAD` is `405` with an
+ * `Allow: GET` header, before any route matching happens. */
+function methodNotAllowed(res: ServerResponse): void {
+  send(res, 405, JSON.stringify({ error: "method not allowed" }), { "Content-Type": "application/json; charset=utf-8", Allow: "GET" });
+}
+
 function serveHub(res: ServerResponse, hubHtml: string): void {
   if (!existsSync(hubHtml)) { sendJsonError(res, 404, "hub.html not found"); return; }
   send(res, 200, readFileSync(hubHtml), { "Content-Type": "text/html; charset=utf-8" });
@@ -63,6 +69,9 @@ function serveThumbnail(res: ServerResponse, dataRoot: string, name: string): vo
 }
 
 function handleRequest(req: IncomingMessage, res: ServerResponse, o: DashboardServerOptions, hubHtml: string): void {
+  const method = req.method ?? "GET";
+  if (method !== "GET" && method !== "HEAD") { methodNotAllowed(res); return; }
+
   const path = new URL(req.url ?? "/", "http://localhost").pathname;
 
   if (path === "/" || path === "/hub") { serveHub(res, hubHtml); return; }

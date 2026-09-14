@@ -77,6 +77,13 @@ describe("startDashboard", () => {
     expect(r.status).toBe(404);
   });
 
+  it("a write method is rejected -- POST /api/snapshot is 405 with Allow: GET", async () => {
+    handle = await startDashboard({ dataRoot, port: 0 });
+    const r = await fetch(`${handle.url}/api/snapshot`, { method: "POST" });
+    expect(r.status).toBe(405);
+    expect(r.headers.get("allow")).toBe("GET");
+  });
+
   it("close() stops the server", async () => {
     handle = await startDashboard({ dataRoot, port: 0 });
     const url = handle.url;

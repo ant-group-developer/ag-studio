@@ -19,7 +19,7 @@ function setupChannelRepo(withProfile: boolean): string {
   return dir;
 }
 
-function makeChannel(id: string, repoDir: string, o: { maxDaily?: number } = {}): LoadedChannel {
+function makeChannel(id: string, repoDir: string, o: { maxDaily?: number; timezone?: string } = {}): LoadedChannel {
   const config = ChannelConfigSchema.parse({
     schema_version: "harness.channel-config/v1",
     channel_id: id,
@@ -28,7 +28,7 @@ function makeChannel(id: string, repoDir: string, o: { maxDaily?: number } = {})
     repo_dir: repoDir.split("\\").join("/"),
     legacy_project_id: "project-01",
     youtube: { expected_channel_id: `UC${id}`, account_email_ref: `secret://youtube-${id}/email` },
-    publication: { timezone: "Asia/Ho_Chi_Minh", publish_times: ["09:00", "18:00"], max_daily_uploads: o.maxDaily ?? 1, min_gap_hours: 1 },
+    publication: { timezone: o.timezone ?? "Asia/Ho_Chi_Minh", publish_times: ["09:00", "18:00"], max_daily_uploads: o.maxDaily ?? 1, min_gap_hours: 1 },
   });
   return { config, dir: repoDir, config_revision: canonicalDigest(config) };
 }
@@ -119,6 +119,50 @@ describe("buildSnapshot", () => {
 
     const doctorAlert = snapshot.alerts.find((a) => a.kind === "doctor");
     expect(doctorAlert?.ref).toBe("ffprobe");
+  });
+
+  it("isolates a channel with an invalid timezone: the good channel is unaffected and the bad one gets a doctor alert instead of aborting the snapshot", () => {
+    const { store } = openTempStore();
+    const clock = new FixedClock(NOW);
+
+    const goodRepo = setupChannelRepo(true);
+    const badRepo = setupChannelRepo(true);
+    const good = makeChannel("good", goodRepo);
+    // `ChannelConfigSchema.publication.timezone` is only `z.string().min(1)` -- never validated against the
+    // IANA timezone database -- so this is a legal config that still crashes `Intl.DateTimeFormat` deep
+    // inside `localDate`/`zonedToUtc` with a `RangeError` the moment `buildChannel` touches it.
+    const bad = makeChannel("bad", badRepo, { timezone: "Not/AZone" });
+
+    const pkgGood = makePackage({ channelId: "good", episodeNo: 1, title: "Good Episode", configRevision: good.config_revision });
+    const jobGood = makeJob(pkgGood, { state: "SCHEDULED", scheduledAt: "2026-09-15T02:00:00.000Z" }); // 09:00 local, today
+    store.insertChannelPackage(pkgGood);
+    store.insertPublicationJob(jobGood);
+
+    const pkgBad = makePackage({ channelId: "bad", episodeNo: 1, title: "Bad Episode", configRevision: bad.config_revision });
+    store.insertChannelPackage(pkgBad);
+    store.insertPublicationJob(makeJob(pkgBad, { state: "SCHEDULED", scheduledAt: "2026-09-15T02:00:00.000Z" }));
+
+    const snapshot = buildSnapshot({ store, channels: [good, bad], clock, gateWindowSeconds: 600, project_id: "project-snap" });
+
+    // the whole snapshot still builds
+    expect(snapshot.channels).toHaveLength(2);
+
+    const goodChannel = snapshot.channels.find((c) => c.channel_id === "good");
+    expect(goodChannel?.today.published).toBe(1);
+
+    const badChannel = snapshot.channels.find((c) => c.channel_id === "bad");
+    expect(badChannel).toEqual({
+      channel_id: "bad", display_name: "Channel bad", color: "#5b8cff", publish_times: ["09:00", "18:00"],
+      timezone: "Not/AZone", language: "en", today: { published: 0, target: 1 },
+      login: { profile_dir_exists: true, last_upload_ok_at: null }, latest: null, episodes_count: 0, doctor: [],
+    });
+
+    const doctorAlert = snapshot.alerts.find((a) => a.kind === "doctor" && a.channel_id === "bad");
+    expect(doctorAlert?.ref).toBe("channel:bad:snapshot");
+    expect(doctorAlert?.message).toBeTruthy();
+
+    // the bad channel must not also blow up the missing_today check downstream
+    expect(snapshot.alerts.some((a) => a.kind === "missing_today" && a.channel_id === "bad")).toBe(false);
   });
 
   it("reports library counts and mounted state from the DB mirror + LibraryFs.exists()", () => {
