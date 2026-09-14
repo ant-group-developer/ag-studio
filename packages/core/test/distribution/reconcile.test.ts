@@ -145,7 +145,7 @@ describe("reconcilePublication", () => {
     const { job } = world(store, clock);
     // A job whose run has no upload/schedule stage row left to move it along (the run is long gone, or the
     // video was put up by hand): PROCESSING would otherwise look healthy while nothing ever schedules it.
-    const orphan: PublicationJob = { ...job, publication_job_id: newId("publication_job"), run_id: newId("run"), operation_id: null };
+    const orphan: PublicationJob = { ...job, publication_job_id: newId("publication_job"), run_id: newId("run"), operation_id: null, idempotency_key: "sha256:" + "b".repeat(64) };
     store.insertPublicationJob(orphan);
     const journal = new ExternalOperationJournal(store, { name: "unused", dispatch: async () => { throw new Error("unused"); }, lookup: async () => ({ found: false }) }, clock);
     const planner = new Planner(store);
@@ -174,7 +174,8 @@ describe("reconcilePublication", () => {
     const { job } = world(store, clock);
     // reconcilePublication only accepts a NEEDS_RECONCILIATION job; insert a second job that starts life
     // already PROCESSING to exercise the guard without an invalid state transition.
-    const processingJob: PublicationJob = { ...job, publication_job_id: newId("publication_job"), state: "PROCESSING" };
+    // (a distinct idempotency_key: only one live job per key, enforced by a partial unique index)
+    const processingJob: PublicationJob = { ...job, publication_job_id: newId("publication_job"), state: "PROCESSING", idempotency_key: "sha256:" + "c".repeat(64) };
     store.insertPublicationJob(processingJob);
     const journal = new ExternalOperationJournal(store, { name: "unused", dispatch: async () => { throw new Error("unused"); }, lookup: async () => ({ found: false }) }, clock);
     const planner = new Planner(store);

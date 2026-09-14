@@ -54,11 +54,15 @@ function makePackage(o: { channelId: string; episodeNo: number; title: string; c
   });
 }
 
+let jobKeySeq = 0;
+const nextIdempotencyKey = (): string => "sha256:" + (++jobKeySeq).toString(16).padStart(64, "0");
+
 function makeJob(pkg: ChannelPackage, o: { state: PublicationJob["state"]; scheduledAt?: string | null; publishedAt?: string | null; videoId?: string | null }): PublicationJob {
   return PublicationJobSchema.parse({
     schema_version: "harness.publication-job/v1", publication_job_id: newId("publication_job"), package_id: pkg.package_id,
     channel_id: pkg.channel_id, library_item_id: pkg.library_item_id, run_id: pkg.run_id,
-    idempotency_key: "sha256:" + "b".repeat(64), state: o.state,
+    // unique per job: `publication_job.idempotency_key` is uniquely indexed for every non-FAILED row.
+    idempotency_key: nextIdempotencyKey(), state: o.state,
     youtube_video_id: o.videoId ?? null, operation_id: null, scheduled_at: o.scheduledAt ?? null, published_at: o.publishedAt ?? null,
     last_verified_at: null, note: null, receipt: null, created_at: "2026-09-14T00:00:00.000Z", updated_at: "2026-09-14T00:00:00.000Z",
   });

@@ -169,6 +169,23 @@ describe("updatePublicationJob", () => {
   });
 });
 
+describe("publication_job.idempotency_key uniqueness", () => {
+  it("refuses a second live job with the same key, and allows one once the first is FAILED (spec §2.5)", () => {
+    const { store } = openTempStore();
+    const key = sha("7");
+    const first = publicationJob({ idempotency_key: key, state: "READY" });
+    store.insertPublicationJob(first);
+
+    const second = publicationJob({ idempotency_key: key, state: "READY" });
+    expect(() => store.insertPublicationJob(second)).toThrow();
+
+    // `publish cancel` (READY -> FAILED) frees the key: the partial index only covers live rows.
+    store.transition("publication_job", first.publication_job_id, "READY", "FAILED", publicationEvent(first.run_id, "publication.cancelled"));
+    expect(() => store.insertPublicationJob(second)).not.toThrow();
+    expect(store.listPublicationJobs({ idempotency_key: key }).map((j) => j.state).sort()).toEqual(["FAILED", "READY"]);
+  });
+});
+
 describe("listPublicationJobs", () => {
   it("filters by idempotency_key", () => {
     const { store } = openTempStore();
