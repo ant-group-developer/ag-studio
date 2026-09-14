@@ -202,7 +202,7 @@ describe("harness channel / publish / skills commands", () => {
       for (const m of ms) expect(m).toBeGreaterThan(Date.now());
     });
 
-    it("publish cancel moves a READY job to FAILED with the note; refuses a terminal PUBLISHED job", () => {
+    it("publish cancel moves a READY job to FAILED with the note", () => {
       const jobReady = withCtx(world.project, (ctx) => {
         const pkg = seedPackage(ctx, { channelId: "c1", episodeNo: 199, title: "Cancel Me" });
         return seedJob(ctx, pkg, { state: "READY" });
@@ -213,14 +213,25 @@ describe("harness channel / publish / skills commands", () => {
       const updated = JSON.parse(ok.out) as PublicationJob;
       expect(updated.state).toBe("FAILED");
       expect(updated.note).toBe("no longer wanted");
+    });
+
+    // Regression for the note-before-transition race: `publish cancel` used to write `note` and then
+    // transition as two separate top-level store calls. If the transition failed (e.g. a concurrent
+    // writer like the worker's verify sweep had already moved the job past the state `cancel` read), the
+    // note was already committed -- leaving a job that says "cancelled" but never actually transitioned.
+    // `cancel` on a terminal PUBLISHED job is the simplest reproducible case of "the transition cannot
+    // possibly succeed": it must fail atomically with no partial write, not just a wrong final state.
+    it("publish cancel on a terminal PUBLISHED job fails atomically: exit 1, state and note both untouched", () => {
+      const before = withCtx(world.project, (ctx) => ctx.store.getPublicationJob(jobPublished.publication_job_id));
+      expect(before?.note).toBeNull(); // sanity: nothing wrote a note on this job before this test
 
       const refused = cli(world.project, ["publish", "cancel", jobPublished.publication_job_id, "--note", "too late"]);
       expect(refused.code).toBe(1);
       expect(refused.err).toMatch(/^INVALID_TRANSITION:/);
-      // never touched: still PUBLISHED, note untouched
-      const stillPublished = withCtx(world.project, (ctx) => ctx.store.getPublicationJob(jobPublished.publication_job_id));
-      expect(stillPublished?.state).toBe("PUBLISHED");
-      expect(stillPublished?.note).toBeNull();
+
+      const after = withCtx(world.project, (ctx) => ctx.store.getPublicationJob(jobPublished.publication_job_id));
+      expect(after?.state).toBe("PUBLISHED"); // never touched
+      expect(after?.note).toBeNull(); // no partial write: the note must not land without the transition
     });
 
     it("publish verify settles the overdue SCHEDULED job to PUBLISHED via HARNESS_PUBLISHER_LOOKUP_FILE", () => {
@@ -256,6 +267,15 @@ describe("harness channel / publish / skills commands", () => {
       expect(report).toMatchObject({ job_id: job.publication_job_id, from: "NEEDS_RECONCILIATION", to: "PUBLISHED" });
       const after = withCtx(world.project, (ctx) => ctx.store.getPublicationJob(job.publication_job_id));
       expect(after?.state).toBe("PUBLISHED");
+    });
+
+    it("reconcile <id> --publication <job> together is CONFIG_INVALID (ambiguous which one to reconcile)", () => {
+      // the guard fires before either code path touches the store, so which state `jobNeedsReconciliation`
+      // happens to be in by this point in the suite is irrelevant to this test.
+      const r = cli(world.project, ["reconcile", jobNeedsReconciliation.publication_job_id, "--publication", jobNeedsReconciliation.publication_job_id]);
+      expect(r.code).toBe(1);
+      expect(r.err).toMatch(/^CONFIG_INVALID:/);
+      expect(r.err).toContain("not both");
     });
 
     it("channel hypotheses c1 --json lists hypotheses from c1's committed packages only", () => {

@@ -94,8 +94,18 @@ export function registerPublish(program: Command): void {
         if (!CANCELLABLE_STATES.has(job.state)) {
           throw new HarnessError("INVALID_TRANSITION", `publication job ${jobId} is ${job.state}; cancel needs one of ${[...CANCELLABLE_STATES].join("/")}`, { publication_job_id: jobId, state: job.state });
         }
-        ctx.store.updatePublicationJob({ ...job, note: o.note });
-        const updated = transitionPublication(ctx.store, jobId, job.state, "FAILED", { reason: o.note });
+        // Transition first, note second, both inside one transaction (mirrors verify.ts's own
+        // transition-then-annotate order at packages/core/src/distribution/verify.ts:40-58): if a
+        // concurrent writer (e.g. the worker's verify sweep) has already moved the job past `job.state`,
+        // `transitionPublication`'s own store.transition throws STALE_STATE and nothing commits -- the
+        // note is never written. The previous note-first order (two separate top-level store calls) could
+        // leave a "cancelled" note on a job whose state had actually moved on in that same race window.
+        const updated = ctx.store.transaction(() => {
+          const afterTransition = transitionPublication(ctx.store, jobId, job.state, "FAILED", { reason: o.note });
+          const fresh = ctx.store.getPublicationJob(jobId) ?? afterTransition;
+          ctx.store.updatePublicationJob({ ...fresh, note: o.note });
+          return ctx.store.getPublicationJob(jobId)!;
+        });
         print(o.json, updated, () => `${updated.publication_job_id} ${updated.state}`);
       });
     });

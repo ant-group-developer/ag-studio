@@ -10,6 +10,9 @@ export function registerReconcile(program: Command): void {
     .description("reconcile NEEDS_RECONCILIATION operations for a run_id or a single op_id, or (--publication) a stuck publication job")
     .action(async (id: string | undefined, o, cmd) => {
       await withContext(cmd, {}, async (ctx) => {
+        if (id && o.publication) {
+          throw new HarnessError("CONFIG_INVALID", "pass either an id or --publication, not both", { id, publication: o.publication });
+        }
         if (o.publication) {
           const report = await reconcilePublication({ store: ctx.store, publisher: ctx.publisher, channels: ctx.channels, journal: ctx.journal, planner: ctx.planner, clock: ctx.clock }, o.publication);
           print(o.json, report, () => `${report.job_id} ${report.from} -> ${report.to} video=${report.video_id ?? "-"}`);
