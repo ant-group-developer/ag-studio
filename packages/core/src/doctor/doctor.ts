@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { HarnessConfig, ProductionProfile, ProjectConfig, ScriptsRegistry, SecretResolver, StageDefinition, StateStore } from "@harness/contracts";
 import { EnvSecretResolver } from "../config/secrets.js";
 import type { LibraryFs, LibraryRole } from "../library/files.js";
@@ -174,18 +174,31 @@ function checkLibraryRoot(library: { fs: LibraryFs; role: LibraryRole }): Doctor
 
 /** Writes then removes a throwaway file in the one directory this role is allowed to write (studio: `styles/`,
  * channel: `requests/`), via plain `node:fs` rather than `LibraryFs.writeJsonAtomic` -- doctor's probe file is
- * not a real style/request and should not have to satisfy `EditStyleSchema`/`ContentRequestSchema`. */
+ * not a real style/request and should not have to satisfy `EditStyleSchema`/`ContentRequestSchema`.
+ *
+ * Doctor must never scaffold kho structure: an unmounted or missing target directory is a plain FAIL, with no
+ * `mkdirSync` fallback (that would silently create local directories standing in for a share that isn't there). */
 function checkLibraryWrite(library: { fs: LibraryFs; role: LibraryRole }): DoctorRow {
+  const targetDir = library.role === "studio" ? library.fs.paths.styles : library.fs.paths.requests;
+  if (!existsSync(targetDir)) {
+    return { check: "library:write", ok: false, detail: `directory missing: ${targetDir} (mount the library first)` };
+  }
   const name = `.doctor-${library.role}-${randomUUID()}`;
-  const path = library.role === "studio" ? resolve(library.fs.paths.styles, name) : resolve(library.fs.paths.requests, `${name}.json`);
+  const path = library.role === "studio" ? resolve(targetDir, name) : resolve(targetDir, `${name}.json`);
+  let wrote = false;
+  let removeError: unknown;
   try {
-    mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, "{}");
-    rmSync(path);
-    return { check: "library:write", ok: true, detail: `wrote and removed ${path}` };
+    wrote = true;
   } catch (e) {
     return { check: "library:write", ok: false, detail: e instanceof Error ? e.message : String(e) };
+  } finally {
+    if (wrote) { try { rmSync(path); } catch (e) { removeError = e; } }
   }
+  if (removeError !== undefined) {
+    return { check: "library:write", ok: false, detail: `wrote ${path} but could not remove it: ${removeError instanceof Error ? removeError.message : String(removeError)}` };
+  }
+  return { check: "library:write", ok: true, detail: `wrote and removed ${path}` };
 }
 
 /** `index.json` is studio-only and only written after a sync; its absence is not a failure. */

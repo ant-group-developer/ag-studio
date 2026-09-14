@@ -149,6 +149,21 @@ describe("harness library CLI", () => {
     expect(r.err).toContain("CONFIG_INVALID");
   });
 
+  it("`library sync` exits 1 when the kho holds a corrupt request file", () => {
+    const root = mkdtempSync(join(tmpdir(), "kho-corrupt-"));
+    const studioDir = libraryProject(root, "studio", "corrupt");
+    expect(cli(studioDir, "db", "migrate").code).toBe(0);
+    mkdirSync(join(root, "requests"), { recursive: true });
+    const corruptPath = join(root, "requests", "broken.json");
+    writeFileSync(corruptPath, "{ not valid json");
+
+    const sync = cli(studioDir, "library", "sync", "--json");
+    expect(sync.code).toBe(1);
+    const report = JSON.parse(sync.out);
+    expect(report.corrupt).toHaveLength(1);
+    expect(report.corrupt[0].path).toBe(corruptPath);
+  });
+
   it("doctor reports the three library:* rows for a project with a library root", () => {
     const root = mkdtempSync(join(tmpdir(), "kho-doctor-"));
     mkdirSync(join(root, "styles"), { recursive: true });

@@ -139,16 +139,25 @@ export class Worker {
 
   /** At most once every `library.syncSeconds`, on an otherwise-idle poll: pulls the kho's requests/styles/items
    * into the local DB mirror so a channel's new request (or a studio's fresh style/item) surfaces without a
-   * person running `harness library sync` by hand. Never plans a run on its own (spec §4.2). */
+   * person running `harness library sync` by hand. Never plans a run on its own (spec §4.2).
+   *
+   * The stamp is set *before* the sync attempt, and a thrown error here is logged and swallowed rather than
+   * propagated: an unreachable or broken kho must not stop the worker loop (or make `worker --once` exit
+   * non-zero), and must not be retried on every single poll while it stays broken -- it gets one attempt per
+   * `syncSeconds`, same as a healthy kho. */
   private async maybeSyncLibrary(): Promise<void> {
     const library = this.d.library;
     if (!library) return;
     const now = Date.parse(this.d.clock.now());
     if (this.lastLibrarySyncAt !== undefined && now - this.lastLibrarySyncAt < library.syncSeconds * 1000) return;
     this.lastLibrarySyncAt = now;
-    const report = await syncLibrary({ store: this.d.store, fs: library.fs, role: library.role, clock: this.d.clock });
-    for (const c of report.corrupt) this.d.logger.warn("library sync: corrupt entry", c);
-    for (const m of report.missing) this.d.logger.warn("library sync: missing from kho", m);
+    try {
+      const report = await syncLibrary({ store: this.d.store, fs: library.fs, role: library.role, clock: this.d.clock });
+      for (const c of report.corrupt) this.d.logger.warn("library sync: corrupt entry", c);
+      for (const m of report.missing) this.d.logger.warn("library sync: missing from kho", m);
+    } catch (e) {
+      this.d.logger.error("library sync failed", { error: e instanceof Error ? e.message : String(e) });
+    }
   }
 
   private cancelCurrent(claim: ClaimResult, run: Run, log: HarnessLogger): "done" | "lost" {

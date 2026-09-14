@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HarnessConfig, ProjectConfig, ScriptsRegistry, SecretResolver } from "@harness/contracts";
@@ -197,11 +197,26 @@ describe("runDoctor", () => {
     });
     const byCheckMissing = new Map(missing.map((r) => [r.check, r]));
     expect(byCheckMissing.get("library:root")).toMatchObject({ ok: false });
-    // library:write creates its parent directory on demand -- a missing kho root does not block the probe write
-    expect(byCheckMissing.get("library:write")).toMatchObject({ ok: true });
+    // doctor must never scaffold kho structure: a missing/unmounted root fails library:write too, and no
+    // directory is created on the way to that verdict.
+    expect(byCheckMissing.get("library:write")).toMatchObject({ ok: false });
+    expect(byCheckMissing.get("library:write")?.detail).toContain("directory missing");
+    expect(existsSync(missingRoot)).toBe(false);
     expect(byCheckMissing.get("library:index")).toMatchObject({ ok: true });
 
+    // root exists but this role's subdirectory does not -- still a FAIL, and still no scaffolding
+    const rootWithoutSubdir = mkdtempSync(join(tmpdir(), "doctor-library-nosubdir-"));
+    const missingSubdir = runDoctor({
+      ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+      library: { fs: new LibraryFs({ root: rootWithoutSubdir, role: "channel" }), role: "channel" },
+    });
+    const byCheckMissingSubdir = new Map(missingSubdir.map((r) => [r.check, r]));
+    expect(byCheckMissingSubdir.get("library:root")).toMatchObject({ ok: true }); // the root itself exists
+    expect(byCheckMissingSubdir.get("library:write")).toMatchObject({ ok: false });
+    expect(existsSync(join(rootWithoutSubdir, "requests"))).toBe(false);
+
     const existingRoot = mkdtempSync(join(tmpdir(), "doctor-library-root-"));
+    mkdirSync(join(existingRoot, "requests"), { recursive: true }); // channel's one writable subdirectory
     const present = runDoctor({
       ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
       library: { fs: new LibraryFs({ root: existingRoot, role: "channel" }), role: "channel" },

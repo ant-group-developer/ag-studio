@@ -390,5 +390,23 @@ describe("Worker", () => {
       expect(await worker.runOnce()).toBe("idle");
       expect(listRequestIds).toHaveBeenCalledTimes(2);
     });
+
+    it("logs and swallows a sync failure instead of crashing the poll, and still waits out syncSeconds before retrying", async () => {
+      const w = makeWorld();
+      const fs = new LibraryFs({ root: mkdtempSync(join(tmpdir(), "wk-lib-")), role: "channel" });
+      const errors: unknown[] = [];
+      const logger = { ...w.deps.logger, error: (msg: string, data?: object) => { errors.push({ msg, data }); } };
+      const worker = new Worker({ ...w.deps, logger, library: { fs, role: "channel", syncSeconds: 300 } });
+
+      const listStyleIds = vi.spyOn(fs, "listStyleIds").mockImplementation(() => { throw new Error("kho unreachable"); });
+      await expect(worker.runOnce()).resolves.toBe("idle"); // the broken kho must not crash the poll
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatchObject({ msg: "library sync failed" });
+      expect(listStyleIds).toHaveBeenCalledTimes(1);
+
+      await expect(worker.runOnce()).resolves.toBe("idle"); // same instant, still under syncSeconds -> no retry yet
+      expect(listStyleIds).toHaveBeenCalledTimes(1);
+      expect(errors).toHaveLength(1);
+    });
   });
 });

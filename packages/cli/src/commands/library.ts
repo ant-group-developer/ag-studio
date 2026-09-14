@@ -119,12 +119,13 @@ export function registerLibrary(program: Command): void {
     });
 
   library.command("pick <item_id>")
-    .requiredOption("--channel <channel_id>").option("--json", "machine output", false)
+    .requiredOption("--channel <channel_id>").option("--portfolio <id>", "portfolio to attribute the picked content to (defaults to project.yaml's first portfolio)").option("--json", "machine output", false)
     .description("claim an approved item into a local ContentItem (channel role); prints content_id for `plan --content`")
     .action(async (itemId: string, o, cmd) => {
       await withContext(cmd, {}, (ctx) => {
         const lib = requireLibrary(ctx);
-        const portfolio_id = ctx.project.portfolios[0]!.portfolio_id;
+        const portfolio_id = o.portfolio ?? ctx.project.portfolios[0]?.portfolio_id;
+        if (!portfolio_id) throw new HarnessError("CONFIG_INVALID", "no --portfolio given and project.yaml declares no portfolios", { projectDir: ctx.projectDir });
         const { content } = claimItem({ store: ctx.store, fs: lib.fs, clock: ctx.clock, catalog: ctx.catalog }, { item_id: itemId, channel_id: o.channel, portfolio_id });
         print(o.json, { content_id: content.content_id }, () => content.content_id);
       });
