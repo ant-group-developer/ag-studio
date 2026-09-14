@@ -329,3 +329,28 @@ Rút từ ledger SDD (`.superpowers/sdd/2026-09-14-sub-project-3-channel-publish
   sub-project 3 — bản lệch bị bỏ (discard), chỉ khác xuống dòng, không khác nội dung.
 - Số dòng báo cáo ở report của Task 7 không khớp số dòng thật (lỗi đếm khi viết báo cáo, không phải lỗi
   code) — không cần sửa gì trong repo.
+
+## Hoãn — ghi nhận ở re-review đợt sửa cuối sub-project 3 (2026-09-15)
+
+Bảy quan sát ngoài phạm vi của re-review cuối; không mục nào chặn merge. Ruling của người điều phối ghi cạnh từng mục.
+
+- `alreadyScheduledAt` (`packages/cli/src/commands/publish-stage.ts`) coi lookup `error: true` như "chưa có
+  lịch" rồi đặt lịch lại trên **cùng** video id (không tạo video thứ hai, chỉ có thể dời giờ phát). Ruling: hoãn —
+  lần sửa sau cho retry fail `transient` khi không hỏi được YouTube, thay vì đặt lịch.
+- `lookupViaScript` (`packages/adapters/youtube-playwright/src/playwright-publisher.ts`) không validate JSON do
+  `lookup.mjs` in ra bằng schema; script exit 0 in `{}` sẽ thành "không tìm thấy" dứt khoát. Ruling: hoãn — thêm
+  zod parse cho `LookupOutcome` khi chạm file này lần tới; `lookup.mjs` thật luôn đặt `found`.
+- `migrations/0004_distribution.sql` được sửa tại chỗ trong nhánh (index unique một phần) và runner chỉ theo dõi
+  tên file: máy nào đã chạy bản cũ của nhánh (chỉ máy dev/temp trong phiên này) giữ index cũ. Ruling: chấp nhận —
+  migration chưa từng có trên `main`; máy kênh thật chưa có DB nào áp 0004 bản cũ.
+- Hai job "sống" trùng `idempotency_key` giờ ném lỗi SQLite thô trong `build-package` → `transient` (retry) thay
+  vì thông điệp của checker `duplicate-upload`. Chỉ xảy ra khi hai run cùng kênh có cùng `video_checksum` **và**
+  `manifest_digest` (số tập khác nhau nên gần như không thể). Ruling: hoãn — bắt `SQLITE_CONSTRAINT` trong
+  `createJob` và ném `HarnessError("INVALID_TRANSITION")` khi có dịp.
+- `harness publish slots --days abc` (alias ẩn) báo lỗi nêu tên `--count`. Ruling: chấp nhận (alias ẩn, thông
+  điệp vẫn đúng ý).
+- `parseScheduledAt` trong `lookup.mjs` lấy ngày đầu tiên trong text của hàng Studio; hàng hiển thị ngày upload
+  trước ngày hẹn có thể cho `publish_at` sai. Chỉ dùng khi `visibility === "scheduled"`; sweep `verify` sẽ bắt
+  lệch sau. Ruling: hoãn tới khi có mẫu DOM thật để chỉnh selector.
+- `cli-agent-runtime.ts` map **mọi** lỗi spawn (ENOENT, EACCES, EPERM…) thành `contract`; spec §4.3 chỉ nói tới
+  "không có trên PATH". Ruling: chấp nhận — các lỗi đó đều cần người can thiệp, retry tự động không giúp gì.
