@@ -667,6 +667,44 @@ describe("harness publish stage", () => {
       expect(onDisk.at).toBe(scheduleReceipt.scheduled_at);
     });
 
+    it("a retry after a crashed schedule attempt looks up first and records YouTube's existing slot instead of booking a second one", async () => {
+      const { runId, uploadWorkspace } = await toScheduleReady();
+      const uploadReceipt = JSON.parse(readFileSync(join(uploadWorkspace, "output", "upload-receipt.json"), "utf8")) as UploadReceipt;
+      const existingSlot = new Date(Date.now() + 48 * 3600_000).toISOString();
+
+      // Durable state a crash *after* the legacy script booked the slot but before the stage could record it
+      // leaves behind: job still PROCESSING, `schedule_attempted_at` on the receipt.
+      {
+        const ctx = buildContext({ projectDir: world.channel });
+        try {
+          const job = ctx.store.getPublicationJob(uploadReceipt.publication_job_id)!;
+          expect(job.state).toBe("PROCESSING");
+          ctx.store.updatePublicationJob({ ...job, receipt: { ...(job.receipt ?? {}), schedule_attempted_at: "2026-09-15T00:00:00.000Z" } });
+        } finally { ctx.close(); }
+      }
+
+      const lookupFile = join(mkdtempSync(join(tmpdir(), "lookup-")), "lookup.json");
+      writeFileSync(lookupFile, JSON.stringify({ [uploadReceipt.video_id]: { found: true, video_id: uploadReceipt.video_id, visibility: "scheduled", publish_at: existingSlot } }));
+
+      // FAKE_SCHEDULE_MODE=refused is the canary: if the stage called the publisher at all, the outcome below
+      // would be a "contract" failure rather than a success.
+      const sc = await invokeStage(world.channel, runId, "schedule", "schedule", [
+        { type: "upload_receipt", relPath: "input/upload-receipt/upload-receipt.json", src: join(uploadWorkspace, "output", "upload-receipt.json") },
+      ], { FAKE_SCHEDULE_MODE: "refused", HARNESS_PUBLISHER_LOOKUP_FILE: lookupFile });
+      expect(sc.result.outcome, JSON.stringify(sc.result)).toBe("succeeded");
+
+      const receipt = JSON.parse(readFileSync(join(sc.workspaceDir, "output", "schedule-receipt.json"), "utf8")) as { scheduled_at: string; video_id: string };
+      expect(receipt.scheduled_at).toBe(existingSlot);
+      expect(receipt.video_id).toBe(uploadReceipt.video_id);
+
+      const ctx = buildContext({ projectDir: world.channel });
+      try {
+        const job = ctx.store.getPublicationJob(uploadReceipt.publication_job_id)!;
+        expect(job.state).toBe("SCHEDULED");
+        expect(job.scheduled_at).toBe(existingSlot);
+      } finally { ctx.close(); }
+    });
+
     it("idempotent rerun after SCHEDULED returns the same slot without calling the publisher again", async () => {
       const { runId, uploadWorkspace } = await toScheduleReady();
       const inputs = [

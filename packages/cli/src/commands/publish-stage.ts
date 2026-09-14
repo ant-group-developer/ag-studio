@@ -345,6 +345,28 @@ async function uploadStage(app: AppContext, sdk: ScriptContext): Promise<void> {
   await sdk.fail("transient", outcome.reason);
 }
 
+/**
+ * Asks the publisher whether `videoId` is *already* scheduled for a future time, returning that time. A lookup
+ * that fails (no network, logged-out Studio profile, `error: true`) or that reports anything else returns
+ * `undefined`: the caller then books a slot as usual, exactly as it did before this check existed.
+ */
+async function alreadyScheduledAt(app: AppContext, channelId: string, videoId: string, sdk: ScriptContext): Promise<string | undefined> {
+  let outcome;
+  try {
+    outcome = await app.publisher.lookup({ channel: app.channels.toPublisherChannel(channelId), video_id: videoId });
+  } catch (e) {
+    sdk.log.warn(`schedule pre-check lookup failed: ${e instanceof Error ? e.message : String(e)}`);
+    return undefined;
+  }
+  if (!outcome.found) {
+    if (outcome.error) sdk.log.warn(`schedule pre-check lookup failed: ${outcome.reason}`);
+    return undefined;
+  }
+  if (outcome.visibility !== "scheduled" || !outcome.publish_at) return undefined;
+  if (Date.parse(outcome.publish_at) <= Date.parse(app.clock.now())) return undefined;
+  return outcome.publish_at;
+}
+
 /** stage 5 of `channel-publish`: books the next free publish slot and drives the publisher's schedule call
  * (spec §3). No external-operation journal here -- `Publisher.schedule` is itself idempotent per video id, and
  * the workflow's own retry policy covers a transient failure. */
@@ -367,16 +389,38 @@ async function scheduleStage(app: AppContext, sdk: ScriptContext): Promise<void>
   const channel = requireChannel(app, job.channel_id);
   registerAccountEmailForRedaction(app, channel);
 
+  // Spec §3 stage 5: a retry must ask YouTube before booking anything. `schedule_attempted_at` is written
+  // onto the job receipt immediately before every `Publisher.schedule` call, so its presence means an earlier
+  // attempt already drove the legacy script -- possibly far enough to book the slot before dying. Booking a
+  // second slot for the same video is a real, visible mistake (the channel's schedule fills up with ghosts),
+  // so when the lookup says the video is already scheduled for a future time, that time is simply recorded.
+  const priorReceipt = { ...(job.receipt ?? {}) } as Record<string, unknown>;
+  if (typeof priorReceipt.schedule_attempted_at === "string") {
+    const already = await alreadyScheduledAt(app, job.channel_id, videoId, sdk);
+    if (already) {
+      app.store.updatePublicationJob({ ...job, scheduled_at: already });
+      transitionPublication(app.store, job.publication_job_id, "PROCESSING", "SCHEDULED");
+      const recovered: ScheduleReceipt = { schema_version: "harness.schedule-receipt/v1", publication_job_id: job.publication_job_id, video_id: videoId, scheduled_at: already };
+      await writeJsonOutput(sdk, "output/schedule-receipt.json", recovered, "publication_receipt");
+      await sdk.done();
+      return;
+    }
+  }
+
   const taken = app.store.listPublicationJobs({ channel_id: job.channel_id })
     .filter((j) => j.state === "SCHEDULED" || j.state === "PUBLISHED")
     .map((j) => j.scheduled_at)
     .filter((at): at is string => at !== null);
   const at = nextSlot(channel.config.publication, taken, app.clock.now());
 
+  // Durable *before* the call, so the next attempt knows a booking may already have happened (above).
+  app.store.updatePublicationJob({ ...job, receipt: { ...priorReceipt, schedule_attempted_at: app.clock.now() } });
+
   const outcome = await app.publisher.schedule({ channel: app.channels.toPublisherChannel(job.channel_id), video_id: videoId, at, timeout_seconds: 900, log: (l) => sdk.log.info(l) });
 
   if (outcome.kind === "scheduled") {
-    app.store.updatePublicationJob({ ...job, scheduled_at: at });
+    const current = app.store.getPublicationJob(job.publication_job_id)!;
+    app.store.updatePublicationJob({ ...current, scheduled_at: at });
     transitionPublication(app.store, job.publication_job_id, "PROCESSING", "SCHEDULED");
     const scheduled: ScheduleReceipt = { schema_version: "harness.schedule-receipt/v1", publication_job_id: job.publication_job_id, video_id: videoId, scheduled_at: at };
     await writeJsonOutput(sdk, "output/schedule-receipt.json", scheduled, "publication_receipt");
