@@ -52,11 +52,20 @@ describe.skipIf(!hasFfmpeg())("acceptance 25: no secret value or HARNESS_SECRET_
 
     const files = leakCandidates(world.channel);
     expect(files.length).toBeGreaterThan(0); // the assertion below would be vacuous over an empty list
+    let sawUploadEnvProbe = false;
     for (const f of files) {
       const content = readFileSync(f, "utf8");
       expect(content, `${f} contains the secret value`).not.toContain(SECRET_VALUE);
       for (const name of SECRET_NAMES) expect(content, `${f} contains ${name}`).not.toContain(name);
+      // The fixture upload script prints the *names* of every HARNESS_SECRET_* var its own process can see
+      // (`[upload] env=<names>`); `PlaywrightPublisher` strips them from the child env, so the list is empty.
+      // (the char class stops at the closing quote/escape of the JSON log line the sdk emits around it)
+      for (const m of content.matchAll(/\[upload\] env=([^"\\\r\n]*)/g)) {
+        sawUploadEnvProbe = true;
+        expect(m[1]!.trim(), `${f}: the upload child saw HARNESS_SECRET_* vars`).toBe("");
+      }
     }
+    expect(sawUploadEnvProbe, "the upload script's env probe never reached any log").toBe(true);
 
     const events = cli(world.channel, ["events", "tail", "--run", runId, "--limit", "1000", "--json"], world.secretsEnv);
     expect(events.code, events.err).toBe(0);

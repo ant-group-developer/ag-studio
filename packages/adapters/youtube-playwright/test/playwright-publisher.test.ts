@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import type { PublisherChannel } from "@harness/contracts";
-import { PlaywrightPublisher } from "../src/index.js";
+import { PlaywrightPublisher, publisherChildEnv } from "../src/index.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_DIR = join(HERE, "..", "..", "..", "..", "fixtures", "legacy-channel-repo");
@@ -50,6 +50,23 @@ async function withEnv(vars: Record<string, string>, fn: () => Promise<void>): P
     }
   }
 }
+
+describe("publisherChildEnv", () => {
+  it("drops every HARNESS_SECRET_* key (any casing) and keeps everything else", () => {
+    const env = publisherChildEnv({
+      PATH: "/bin", USERPROFILE: "C:/Users/x", FAKE_UPLOAD_MODE: "ok",
+      HARNESS_SECRET_YOUTUBE_C1_EMAIL: "owner@example.com", harness_secret_lower_case: "also-secret",
+      HARNESS_WORKSPACE: "/ws", HARNESS_CLI_ARGV: "[]",
+    });
+    expect(env.PATH).toBe("/bin");
+    expect(env.USERPROFILE).toBe("C:/Users/x");
+    expect(env.FAKE_UPLOAD_MODE).toBe("ok");
+    expect(env.HARNESS_WORKSPACE).toBe("/ws"); // not an allow-list: only secrets are stripped
+    expect(env.HARNESS_CLI_ARGV).toBe("[]");
+    expect(env).not.toHaveProperty("HARNESS_SECRET_YOUTUBE_C1_EMAIL");
+    expect(env).not.toHaveProperty("harness_secret_lower_case");
+  });
+});
 
 describe("PlaywrightPublisher.upload", () => {
   it("ok -> uploaded, with a video_id matching the queue line", async () => {
@@ -129,6 +146,29 @@ describe("PlaywrightPublisher.upload", () => {
     });
   });
 
+  it("never passes HARNESS_SECRET_* to the legacy script, but keeps the rest of the environment", async () => {
+    const repoDir = prepFixture();
+    withManifest(repoDir);
+    const seen: string[] = [];
+    const publisher = new PlaywrightPublisher();
+    await withEnv({ FAKE_UPLOAD_MODE: "ok", HARNESS_SECRET_YOUTUBE_C1_EMAIL: "owner@example.com" }, async () => {
+      const outcome = await publisher.upload({
+        channel: channel(repoDir), episode_no: 15, episode_dir: episodeDir(repoDir), intent_at: shortlyBefore(), timeout_seconds: 30,
+        log: (line) => seen.push(line),
+      });
+      expect(outcome.kind, seen.join("\n")).toBe("uploaded"); // FAKE_UPLOAD_MODE (a non-secret var) still reached the child
+      const envLine = seen.find((l) => l.includes("[upload] env="));
+      expect(envLine, seen.join("\n")).toBe("[upload] env=");
+    });
+  });
+
+  it("a repo_dir that does not exist (spawn ENOENT) -> busy, without crashing the process", async () => {
+    const publisher = new PlaywrightPublisher();
+    const missingRepo = join(mkdtempSync(join(tmpdir(), "gone-repo-")), "not-mounted");
+    const outcome = await publisher.upload({ channel: channel(missingRepo), episode_no: 15, episode_dir: episodeDir(missingRepo), intent_at: shortlyBefore(), timeout_seconds: 30 });
+    expect(outcome).toEqual({ kind: "busy", reason: expect.stringContaining("spawn failed") });
+  });
+
   it("missing upload manifest -> refused (exit 3), same as an explicit refusal", async () => {
     const repoDir = prepFixture(); // no withManifest(): the manifest file is absent
     const publisher = new PlaywrightPublisher();
@@ -163,6 +203,13 @@ describe("PlaywrightPublisher.schedule", () => {
       const outcome = await publisher.schedule({ channel: channel(repoDir), video_id: "yt-1", at: "2026-09-20T13:00:00.000Z", timeout_seconds: 30 });
       expect(outcome).toEqual({ kind: "busy", reason: expect.any(String) });
     });
+  });
+
+  it("a repo_dir that does not exist (spawn ENOENT) -> busy, not a throw", async () => {
+    const publisher = new PlaywrightPublisher();
+    const missingRepo = join(mkdtempSync(join(tmpdir(), "gone-repo-")), "not-mounted");
+    const outcome = await publisher.schedule({ channel: channel(missingRepo), video_id: "yt-1", at: "2026-09-20T13:00:00.000Z", timeout_seconds: 30 });
+    expect(outcome).toEqual({ kind: "busy", reason: expect.stringContaining("spawn failed") });
   });
 
   it("crash -> throws a transient EXECUTOR_FAILED HarnessError", async () => {

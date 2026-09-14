@@ -33,6 +33,11 @@ if (!existsSync(manifestPath)) {
 
 console.log(`[upload] account ${cfg.youtube.accountEmail}`);
 
+// Probe (fixture-only, the real script has no such line): the *names* of every HARNESS_SECRET_* variable this
+// child can see. `PlaywrightPublisher` strips them from the child env, so this must always print an empty
+// list -- adapter test "never passes HARNESS_SECRET_* ..." and acceptance 25 both assert on it.
+console.log(`[upload] env=${Object.keys(process.env).filter((k) => k.toUpperCase().startsWith("HARNESS_SECRET_")).join(",")}`);
+
 if (mode === "hang") {
   setTimeout(() => process.exit(0), 5000);
 } else if (mode === "refused") {

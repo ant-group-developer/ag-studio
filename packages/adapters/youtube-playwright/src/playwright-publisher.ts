@@ -30,6 +30,8 @@ export interface PlaywrightPublisherOptions {
 interface RunResult {
   code: number | null;
   timedOut: boolean;
+  /** Set when the child never started at all (ENOENT on a missing/unmounted `repo_dir`, EACCES, ...). */
+  spawnError: Error | null;
   /** Redacted stdout+stderr, last 40 lines. */
   tail: string[];
 }
@@ -38,11 +40,29 @@ function identity(s: string): string {
   return s;
 }
 
+/**
+ * Env for every legacy script this adapter spawns: `base` minus every `HARNESS_SECRET_*` variable, and nothing
+ * else removed. Unlike `agentChildEnv` (`@harness/adapter-agent-cli`) this is deliberately **not** an
+ * allow-list — the real scripts drive Playwright/Chrome against a persistent profile and need a normal user
+ * environment (PATH, HOME/USERPROFILE, APPDATA, DISPLAY, proxy vars, the channel repo's own knobs...). Only
+ * resolved harness secrets are stripped: a legacy script has no business reading them, and the account email
+ * it does need it reads from its own `channel.config.json` (AGENTS.md, "Ranh giới ghi repo kênh cũ").
+ * Matching is case-insensitive on the variable name, since Windows env keys vary in case.
+ */
+export function publisherChildEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(base)) {
+    if (k.toUpperCase().startsWith("HARNESS_SECRET_")) continue;
+    env[k] = v;
+  }
+  return env;
+}
+
 function lastLine(lines: string[]): string | undefined {
   return lines.length > 0 ? lines[lines.length - 1] : undefined;
 }
 
-/** spawn()s `node script args...`, forwarding each redacted stdout/stderr line to `log` and keeping the last 40 as a tail; kills the child once `timeoutMs` elapses. Mirrors `ScriptExecutor`'s spawn/timeout/line-buffering pattern. */
+/** spawn()s `node script args...`, forwarding each redacted stdout/stderr line to `log` and keeping the last 40 as a tail; kills the child once `timeoutMs` elapses. Mirrors `ScriptExecutor`'s spawn/timeout/line-buffering pattern, including its settled-guard so a child that emits both "error" and "close" settles the promise exactly once. */
 function runScript(
   node: string,
   args: string[],
@@ -57,6 +77,7 @@ function runScript(
     const tail: string[] = [];
     let buf = "";
     let timedOut = false;
+    let settled = false;
 
     const emit = (line: string) => {
       if (!line) return;
@@ -79,10 +100,19 @@ function runScript(
       child.kill();
     }, timeoutMs);
 
+    const settle = (result: RunResult) => {
+      if (settled) return; // "error" and "close" can both fire; settle once
+      settled = true;
+      clearTimeout(timer);
+      resolvePromise(result);
+    };
+
+    // Without this handler a spawn failure (ENOENT on a missing/unmounted `repo_dir`, EACCES, ...) raises an
+    // unhandled "error" event and takes the whole stage process down instead of settling the promise.
+    child.on("error", (e) => settle({ code: null, timedOut, spawnError: e, tail }));
     child.on("close", (code) => {
       emit(buf);
-      clearTimeout(timer);
-      resolvePromise({ code, timedOut, tail });
+      settle({ code, timedOut, spawnError: null, tail });
     });
   });
 }
@@ -107,15 +137,19 @@ export class PlaywrightPublisher implements Publisher {
 
   async upload(p: { channel: PublisherChannel; episode_no: number; episode_dir: string; intent_at: string; timeout_seconds: number; log?: (line: string) => void }): Promise<UploadOutcome> {
     const nn = String(p.episode_no).padStart(2, "0");
-    const { code, timedOut, tail } = await runScript(
+    const { code, timedOut, spawnError, tail } = await runScript(
       this.node,
       ["scripts/upload-youtube-playwright.mjs", `episode-${nn}`],
       p.channel.repo_dir,
-      process.env,
+      publisherChildEnv(process.env),
       p.timeout_seconds * 1000,
       this.redact,
       p.log,
     );
+
+    // The child never started, so nothing was ever sent to YouTube: `busy` (the stage fails `transient` and
+    // retries) rather than `unknown` (which would park the job in NEEDS_RECONCILIATION for no reason).
+    if (spawnError) return { kind: "busy", reason: `spawn failed: ${spawnError.message}` };
 
     if (code === EXIT_REFUSED) return { kind: "refused", reason: lastLine(tail) ?? `upload refused (exit ${code})` };
     if (code === EXIT_BUSY) return { kind: "busy", reason: lastLine(tail) ?? `upload busy (exit ${code})` };
@@ -140,15 +174,18 @@ export class PlaywrightPublisher implements Publisher {
   }
 
   async schedule(p: { channel: PublisherChannel; video_id: string; at: string; timeout_seconds: number; log?: (line: string) => void }): Promise<ScheduleOutcome> {
-    const { code, timedOut, tail } = await runScript(
+    const { code, timedOut, spawnError, tail } = await runScript(
       this.node,
       ["scripts/publish-video-playwright.mjs", p.video_id, "--schedule", p.at],
       p.channel.repo_dir,
-      process.env,
+      publisherChildEnv(process.env),
       p.timeout_seconds * 1000,
       this.redact,
       p.log,
     );
+
+    // Same reasoning as `upload`: a child that never started booked nothing, so this is a retryable `busy`.
+    if (spawnError) return { kind: "busy", reason: `spawn failed: ${spawnError.message}` };
 
     if (code === 0) return { kind: "scheduled" };
     if (code === EXIT_REFUSED) return { kind: "refused", reason: lastLine(tail) ?? `schedule refused (exit ${code})` };
@@ -212,7 +249,7 @@ export class PlaywrightPublisher implements Publisher {
     if (p.title) args.push("--title", p.title);
     if (p.since) args.push("--since", p.since);
 
-    const result = spawnSync(this.node, [this.lookupScript, ...args], { encoding: "utf8", timeout: this.lookupTimeoutMs, killSignal: "SIGKILL" });
+    const result = spawnSync(this.node, [this.lookupScript, ...args], { encoding: "utf8", timeout: this.lookupTimeoutMs, killSignal: "SIGKILL", env: publisherChildEnv(process.env) });
     const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code;
     if (errorCode === "ETIMEDOUT" || result.signal) {
       return { found: false, reason: "lookup script timed out" };
