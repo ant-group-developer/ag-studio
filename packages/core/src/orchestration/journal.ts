@@ -62,9 +62,22 @@ export class ExternalOperationJournal {
       if (op.status === "CONFIRMED") return op;
       if (op.status === "INTENT_RECORDED") this.store.transition("external_operation", op.operation_id, "INTENT_RECORDED", "DISPATCHED", this.ev(op, "external_operation.dispatched"));
       const cur = this.store.getExternalOperation(op.operation_id)!;
-      if (cur.status !== "DISPATCHED") throw new HarnessError("INVALID_TRANSITION", `operation ${operationId} is ${cur.status}; cannot confirm`, { status: cur.status });
+      // DISPATCHED is the common case (dispatch() confirms it); NEEDS_RECONCILIATION -> CONFIRMED is also a
+      // valid direct transition (see TRANSITIONS.external_operation) for a reconcile that finds the operation
+      // on the provider after a connection was lost.
+      if (cur.status !== "DISPATCHED" && cur.status !== "NEEDS_RECONCILIATION") throw new HarnessError("INVALID_TRANSITION", `operation ${operationId} is ${cur.status}; cannot confirm`, { status: cur.status });
       this.store.updateExternalOperation({ ...cur, provider_ref: r.provider_ref, receipt: r.receipt, cost_usd: r.cost_usd ?? cur.cost_usd });
-      this.store.transition("external_operation", op.operation_id, "DISPATCHED", "CONFIRMED", this.ev(op, "external_operation.confirmed", { provider_ref: r.provider_ref }));
+      this.store.transition("external_operation", op.operation_id, cur.status, "CONFIRMED", this.ev(op, "external_operation.confirmed", { provider_ref: r.provider_ref }));
+      return this.store.getExternalOperation(op.operation_id)!;
+    });
+  }
+
+  /** INTENT_RECORDED|DISPATCHED|NEEDS_RECONCILIATION → FAILED; FAILED is returned as-is; CONFIRMED → INVALID_TRANSITION. */
+  markFailed(operationId: string, reason: string): ExternalOperation {
+    return this.store.transaction(() => {
+      const op = this.must(operationId);
+      if (op.status === "FAILED") return op;
+      this.store.transition("external_operation", op.operation_id, op.status, "FAILED", this.ev(op, "external_operation.failed", { reason }));
       return this.store.getExternalOperation(op.operation_id)!;
     });
   }

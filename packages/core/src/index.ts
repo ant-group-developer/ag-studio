@@ -38,3 +38,6 @@ export * from "./library/export.js";
 export * from "./distribution/channels.js";
 export * from "./distribution/packages.js";
 export * from "./distribution/publication.js";
+export * from "./distribution/checkers.js";
+export * from "./distribution/verify.js";
+export * from "./distribution/reconcile.js";
