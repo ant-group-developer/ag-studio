@@ -449,6 +449,84 @@ describe("harness publish stage", () => {
       } finally { ctx.close(); }
     });
 
+    it("recovers a job a crashed attempt left UPLOADING after the operation was already CONFIRMED: succeeds, job PROCESSING with that video id", async () => {
+      const { runId, receipt, buildPackageWorkspace } = await toReadyJob(world.channel, world.lib, sampleDraft());
+
+      // Simulate a process dying *after* the publisher confirmed the upload but before it could write
+      // `job.youtube_video_id`/transition the job to PROCESSING: the operation is already CONFIRMED, the job
+      // is still UPLOADING. `confirmExternal` promotes INTENT_RECORDED -> DISPATCHED itself, so no separate
+      // dispatch step is needed here.
+      {
+        const ctx = buildContext({ projectDir: world.channel });
+        try {
+          const job = ctx.store.getPublicationJob(receipt.publication_job_id)!;
+          const intent = ctx.journal.recordIntent({
+            request: { run_id: runId, stage_run_id: newId("stage_run"), attempt_id: newId("attempt") },
+            provider: ctx.publisher.name, kind: "youtube-upload", target: job.channel_id, payload: { idempotency_key: job.idempotency_key },
+          });
+          ctx.journal.confirmExternal(intent.operation_id, { provider_ref: "vidX", receipt: { url: "https://example.com/watch?v=vidX" } });
+          ctx.store.updatePublicationJob({ ...job, operation_id: intent.operation_id });
+          transitionPublication(ctx.store, job.publication_job_id, "READY", "UPLOADING");
+        } finally { ctx.close(); }
+      }
+
+      // FAKE_UPLOAD_MODE=refused as a canary: recovering a CONFIRMED operation must never call the publisher.
+      const up = await invokeStage(world.channel, runId, "upload", "upload", [
+        { type: "channel_package", relPath: "input/package-receipt/package-receipt.json", src: join(buildPackageWorkspace, "output", "package-receipt.json") },
+      ], { FAKE_UPLOAD_MODE: "refused" });
+      expect(up.result.outcome, JSON.stringify(up.result)).toBe("succeeded");
+      const uploadReceipt = JSON.parse(readFileSync(join(up.workspaceDir, "output", "upload-receipt.json"), "utf8")) as UploadReceipt;
+      expect(uploadReceipt.video_id).toBe("vidX");
+      expect(uploadReceipt.state).toBe("PROCESSING");
+
+      const ctx = buildContext({ projectDir: world.channel });
+      try {
+        const job = ctx.store.getPublicationJob(receipt.publication_job_id)!;
+        expect(job.state).toBe("PROCESSING");
+        expect(job.youtube_video_id).toBe("vidX");
+      } finally { ctx.close(); }
+    });
+
+    it("recovers a job a crashed attempt left UPLOADING after the operation had already FAILED: retries within the same attempt with a fresh operation", async () => {
+      const { runId, receipt, buildPackageWorkspace } = await toReadyJob(world.channel, world.lib, sampleDraft());
+      let seededOperationId = "";
+
+      // Simulate a process dying *after* the publisher refused/was busy and `markFailed` already ran, but
+      // before the job could be transitioned back to READY: the operation is FAILED, the job is still
+      // UPLOADING. The upload never happened, so recovery must retry it within this same attempt rather than
+      // parking NEEDS_RECONCILIATION for nothing.
+      {
+        const ctx = buildContext({ projectDir: world.channel });
+        try {
+          const job = ctx.store.getPublicationJob(receipt.publication_job_id)!;
+          const intent = ctx.journal.recordIntent({
+            request: { run_id: runId, stage_run_id: newId("stage_run"), attempt_id: newId("attempt") },
+            provider: ctx.publisher.name, kind: "youtube-upload", target: job.channel_id, payload: { idempotency_key: job.idempotency_key },
+          });
+          ctx.journal.markFailed(intent.operation_id, "refused (seeded crash scenario)");
+          seededOperationId = intent.operation_id;
+          ctx.store.updatePublicationJob({ ...job, operation_id: intent.operation_id });
+          transitionPublication(ctx.store, job.publication_job_id, "READY", "UPLOADING");
+        } finally { ctx.close(); }
+      }
+
+      const up = await invokeStage(world.channel, runId, "upload", "upload", [
+        { type: "channel_package", relPath: "input/package-receipt/package-receipt.json", src: join(buildPackageWorkspace, "output", "package-receipt.json") },
+      ], { FAKE_UPLOAD_MODE: "ok" });
+      expect(up.result.outcome, JSON.stringify(up.result)).toBe("succeeded");
+
+      const ctx = buildContext({ projectDir: world.channel });
+      try {
+        const job = ctx.store.getPublicationJob(receipt.publication_job_id)!;
+        expect(job.state).toBe("PROCESSING");
+        expect(job.operation_id).not.toBe(seededOperationId); // a FAILED op is superseded, not reused
+        const op = ctx.store.getExternalOperation(job.operation_id!)!;
+        expect(op.status).toBe("CONFIRMED");
+        const seeded = ctx.store.getExternalOperation(seededOperationId)!;
+        expect(seeded.status).toBe("FAILED"); // the old row is left exactly as it was, not resurrected
+      } finally { ctx.close(); }
+    });
+
     it("lost: unknown outcome, job NEEDS_RECONCILIATION, operation NEEDS_RECONCILIATION", async () => {
       const { runId, receipt, buildPackageWorkspace } = await toReadyJob(world.channel, world.lib, sampleDraft());
       const up = await invokeStage(world.channel, runId, "upload", "upload", [

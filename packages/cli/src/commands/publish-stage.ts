@@ -5,7 +5,7 @@ import type { Command } from "commander";
 import { start, type ScriptContext } from "@harness/script-sdk";
 import {
   ChannelPackageDraftSchema, HarnessError, isHarnessError, LibraryItemSchema, PackageReceiptSchema, ScheduleReceiptSchema, UploadReceiptSchema,
-  type ChannelPackageDraft, type PackageReceipt, type ScheduleReceipt, type UploadReceipt,
+  type ChannelPackageDraft, type PackageReceipt, type PublicationJob, type ScheduleReceipt, type UploadReceipt,
 } from "@harness/contracts";
 import { buildUploadManifest, commitPackage, createDraftPackage, createJob, eventFor, manifestDigest, nextSlot, sha256File, transitionPublication, type LoadedChannel } from "@harness/core";
 import type { AppContext } from "../composition.js";
@@ -207,11 +207,46 @@ async function buildPackageStage(app: AppContext, sdk: ScriptContext): Promise<v
   await sdk.done();
 }
 
+/**
+ * A previous attempt died somewhere mid-upload, leaving the job `UPLOADING`. What happens next depends on
+ * exactly where its operation got to before the crash -- the upload may already have completed (`CONFIRMED`),
+ * definitely didn't (`FAILED`), or is still genuinely unresolved (`INTENT_RECORDED`/`DISPATCHED`/already
+ * `NEEDS_RECONCILIATION`, or the operation row itself is gone). Returns `undefined` once it has written this
+ * attempt's `stage-result.json` itself (nothing left for `uploadStage` to do); returns the job's fresh state
+ * when the caller should fall through into the normal `READY` upload path in this same attempt (the `FAILED`
+ * case -- the upload never happened, so there's no reason to make the run wait for another retry).
+ */
+async function recoverUploading(app: AppContext, sdk: ScriptContext, job: PublicationJob): Promise<PublicationJob | undefined> {
+  const reason = "a previous attempt died during upload; outcome unknown";
+  const op = job.operation_id ? app.store.getExternalOperation(job.operation_id) : undefined;
+
+  if (op?.status === "CONFIRMED") {
+    if (!op.provider_ref) throw new HarnessError("CONFIG_INVALID", `operation ${op.operation_id} is CONFIRMED with no provider_ref`, { operation_id: op.operation_id });
+    app.store.updatePublicationJob({ ...job, youtube_video_id: op.provider_ref, receipt: op.receipt });
+    transitionPublication(app.store, job.publication_job_id, "UPLOADING", "PROCESSING");
+    const uploaded: UploadReceipt = { schema_version: "harness.upload-receipt/v1", publication_job_id: job.publication_job_id, video_id: op.provider_ref, operation_id: op.operation_id, state: "PROCESSING" };
+    await writeJsonOutput(sdk, "output/upload-receipt.json", uploaded, "upload_receipt");
+    await sdk.done({ external_operations: [op.operation_id] });
+    return undefined;
+  }
+  if (op?.status === "FAILED") {
+    transitionPublication(app.store, job.publication_job_id, "UPLOADING", "READY");
+    return app.store.getPublicationJob(job.publication_job_id)!;
+  }
+  // INTENT_RECORDED, DISPATCHED, already NEEDS_RECONCILIATION, or the operation row itself is missing: all
+  // mean "we do not know whether the upload happened", exactly like a live `unknown` outcome from the
+  // publisher. `markLost` only applies to an op that hasn't already been journaled lost.
+  if (op && (op.status === "INTENT_RECORDED" || op.status === "DISPATCHED")) app.journal.markLost(op.operation_id, reason);
+  transitionPublication(app.store, job.publication_job_id, "UPLOADING", "NEEDS_RECONCILIATION", { reason });
+  await sdk.unknown(reason, op ? [op.operation_id] : []);
+  return undefined;
+}
+
 /** stage 4 of `channel-publish`: records intent, drives the publisher's upload, and settles the publication
  * job + external-operation journal on whichever outcome the publisher reports (spec §3, §4.1). */
 async function uploadStage(app: AppContext, sdk: ScriptContext): Promise<void> {
   const receipt = parsePackageReceipt(readJsonFile(sdk.input("channel_package")));
-  const job = app.store.getPublicationJob(receipt.publication_job_id);
+  let job = app.store.getPublicationJob(receipt.publication_job_id);
   if (!job) throw new HarnessError("NOT_FOUND", `publication job not found: ${receipt.publication_job_id}`, { publication_job_id: receipt.publication_job_id });
 
   if (job.state === "PROCESSING" || job.state === "SCHEDULED" || job.state === "PUBLISHED") {
@@ -221,19 +256,12 @@ async function uploadStage(app: AppContext, sdk: ScriptContext): Promise<void> {
     return;
   }
 
-  // A previous attempt died somewhere between recording the intent and confirming/failing it -- the durable
-  // state is job=UPLOADING with an operation that is at least DISPATCHED (see below), and we genuinely don't
-  // know whether the upload happened. This is not a contract problem for *this* attempt to fail on: park it
-  // NEEDS_RECONCILIATION exactly like a live "unknown" outcome would, so `harness publish reconcile` (and the
-  // workflow's own retry, once reconciled) can pick it back up instead of the stage wedging in WAITING_HUMAN
-  // forever with no operation any reconciler will touch.
+  // Not a contract problem for *this* attempt to fail on: recoverUploading either finishes the stage-result
+  // itself, or hands back the job now back at READY so this attempt can just retry the upload below.
   if (job.state === "UPLOADING") {
-    const reason = "a previous attempt died during upload; outcome unknown";
-    if (!job.operation_id) throw new HarnessError("CONFIG_INVALID", `publication job ${job.publication_job_id} is UPLOADING with no operation_id to reconcile`, { publication_job_id: job.publication_job_id });
-    app.journal.markLost(job.operation_id, reason);
-    transitionPublication(app.store, job.publication_job_id, "UPLOADING", "NEEDS_RECONCILIATION", { reason });
-    await sdk.unknown(reason, [job.operation_id]);
-    return;
+    const retried = await recoverUploading(app, sdk, job);
+    if (!retried) return;
+    job = retried;
   }
   if (job.state !== "READY") {
     throw new HarnessError("INVALID_TRANSITION", `publication job ${job.publication_job_id} is ${job.state}; upload needs READY`, { publication_job_id: job.publication_job_id, state: job.state });
