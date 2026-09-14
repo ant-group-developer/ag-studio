@@ -59,11 +59,15 @@ for (const eo of request.expected_outputs ?? []) {
   if (eo.type === "channel_package_draft") {
     const title = mode === "long-title" ? "A".repeat(150) : titleHint();
     const thumbInput = (request.inputs ?? []).find((i) => i.type === "thumbnail_set");
-    let thumbnailCandidate = "output/thumbnail.png";
+    // Bare filename, not a path: both `hypothesis-complete` (readdirSync(thumbDir).includes(candidate)) and
+    // `build-package` (join(sdk.input("thumbnail_set"), candidate)) resolve it relative to the thumbnail_set
+    // directory root, not to the workspace root -- prefixing thumbInput.path here doubled that join and made
+    // every real (non-fabricated) run of this fixture fail hypothesis-complete / ENOENT in build-package.
+    let thumbnailCandidate = "thumbnail.png";
     if (thumbInput) {
       try {
         const files = readdirSync(join(cwd, thumbInput.path)).sort();
-        if (files[0]) thumbnailCandidate = `${thumbInput.path}/${files[0]}`;
+        if (files[0]) thumbnailCandidate = files[0];
       } catch { /* directory missing: keep the placeholder */ }
     }
     content = JSON.stringify({
