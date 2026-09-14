@@ -1,11 +1,21 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { ChannelPackageDraftSchema, PackageReceiptSchema, type Checker, type SecretResolver, type StateStore } from "@harness/contracts";
 import { sha256File } from "../artifacts/checksum.js";
 import type { ChannelRegistry } from "./channels.js";
 import { manifestDigest, youtubeLimitProblems } from "./packages.js";
 
 const skip = (reason: string) => ({ verdict: "skip" as const, evidence: { reason } });
+
+/**
+ * `upload-manifest.json`'s `videoPath`/`thumbnailPath` are absolute, forward-slash paths per the design spec
+ * (§3: "videoPath, thumbnailPath tuyệt đối gạch xuôi") — the legacy Playwright uploader reads them as-is. Only
+ * fall back to resolving relative to `episode_dir` for a path that genuinely isn't absolute (e.g. a fixture);
+ * `path.join(episode_dir, absolutePath)` would otherwise concatenate the two into a broken doubled path.
+ */
+function resolveManifestPath(episodeDir: string, p: string): string {
+  return isAbsolute(p) ? p : join(episodeDir, p);
+}
 
 function readJson(path: string): { ok: true; value: unknown } | { ok: false; reason: string } {
   try {
@@ -109,13 +119,13 @@ export function distributionCheckers(d: DistributionCheckerDeps): Checker[] {
         if (typeof manifest.videoPath !== "string" || typeof manifest.thumbnailPath !== "string") {
           return { verdict: "fail", evidence: { path: manifestPath, reason: "manifest missing videoPath/thumbnailPath" } };
         }
-        const videoPath = join(receipt.episode_dir, manifest.videoPath);
+        const videoPath = resolveManifestPath(receipt.episode_dir, manifest.videoPath);
         if (!existsSync(videoPath)) return { verdict: "fail", evidence: { path: videoPath, reason: "missing video" } };
         const actualVideo = await sha256File(videoPath);
         if (actualVideo.checksum !== receipt.video_checksum) {
           return { verdict: "fail", evidence: { path: videoPath, reason: "video checksum mismatch", declared: receipt.video_checksum, actual: actualVideo.checksum } };
         }
-        const thumbnailPath = join(receipt.episode_dir, manifest.thumbnailPath);
+        const thumbnailPath = resolveManifestPath(receipt.episode_dir, manifest.thumbnailPath);
         if (!existsSync(thumbnailPath)) return { verdict: "fail", evidence: { path: thumbnailPath, reason: "missing thumbnail" } };
         const actualThumbnail = await sha256File(thumbnailPath);
         if (actualThumbnail.checksum !== receipt.thumbnail_checksum) {

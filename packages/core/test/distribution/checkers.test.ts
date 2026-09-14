@@ -6,7 +6,7 @@ import {
   ChannelConfigSchema, newId, type Checker, type CheckerInput, type ChannelPackageDraft,
   type PackageReceipt, type PublicationJob, type SecretResolver, type StageRequest, type StageResult,
 } from "@harness/contracts";
-import { ChannelRegistry, distributionCheckers, EnvSecretResolver, manifestDigest, sha256File, type LoadedChannel } from "../../src/index.js";
+import { ChannelRegistry, distributionCheckers, EnvSecretResolver, manifestDigest, posixPath, sha256File, type LoadedChannel } from "../../src/index.js";
 import { openTempStore } from "../helpers.js";
 
 const sha = "sha256:" + "a".repeat(64);
@@ -162,6 +162,36 @@ describe("distributionCheckers", () => {
 
     it("passes when the video and thumbnail on disk match the receipt's checksums", async () => {
       const { episodeDir, ws, request, result } = await fixture();
+      const checker = checkerById(distributionCheckers({ store: openTempStore().store, channels: noopChannels(), secrets: new StubSecretResolver({}) }), "package-integrity");
+      expect(await checker.check({ request, result, workspaceDir: ws })).toEqual({ verdict: "pass", evidence: {} });
+      rmSync(episodeDir, { recursive: true, force: true });
+      rmSync(ws, { recursive: true, force: true });
+    });
+
+    it("passes when the manifest's videoPath/thumbnailPath are absolute forward-slash paths (the real legacy format)", async () => {
+      // Design spec §3: upload-manifest.json's videoPath/thumbnailPath are written as absolute,
+      // forward-slash paths (the legacy Playwright uploader reads them as-is) — not relative to episode_dir.
+      const episodeDir = mkdtempSync(join(tmpdir(), "distribution-checkers-episode-"));
+      writeFileSync(join(episodeDir, "video.mp4"), "video-bytes");
+      writeFileSync(join(episodeDir, "thumb.png"), "thumb-bytes");
+      const videoChecksum = (await sha256File(join(episodeDir, "video.mp4"))).checksum;
+      const thumbnailChecksum = (await sha256File(join(episodeDir, "thumb.png"))).checksum;
+      const manifest = {
+        videoPath: posixPath(join(episodeDir, "video.mp4")),
+        thumbnailPath: posixPath(join(episodeDir, "thumb.png")),
+        visibility: "private", title: "T",
+      };
+      writeFileSync(join(episodeDir, "upload-manifest.json"), JSON.stringify(manifest));
+      const receipt: PackageReceipt = {
+        schema_version: "harness.package-receipt/v1", package_id: newId("channel_package"), publication_job_id: newId("publication_job"),
+        channel_id: "channel-a", episode_no: 1, episode_dir: episodeDir, manifest_path: "upload-manifest.json",
+        video_checksum: videoChecksum, thumbnail_checksum: thumbnailChecksum, manifest_digest: manifestDigest(manifest),
+      };
+      const ws = tmpWorkspace();
+      mkdirSync(join(ws, "output"), { recursive: true });
+      writeFileSync(join(ws, "output", "receipt.json"), JSON.stringify(receipt));
+      const request = baseRequest();
+      const result = baseResult([{ path: "output/receipt.json", type: "channel_package", checksum: sha, size_bytes: 1, kind: "file" }]);
       const checker = checkerById(distributionCheckers({ store: openTempStore().store, channels: noopChannels(), secrets: new StubSecretResolver({}) }), "package-integrity");
       expect(await checker.check({ request, result, workspaceDir: ws })).toEqual({ verdict: "pass", evidence: {} });
       rmSync(episodeDir, { recursive: true, force: true });
