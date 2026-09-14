@@ -1,11 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
-import { HarnessError, isHarnessError, ProjectConfigSchema, type ExecutorRef, type MediaProber, type ProductionProfile, type ProjectConfig, type ScriptCommand, type ScriptsRegistry, type SourcesRegistry } from "@harness/contracts";
-import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, LibraryFs, libraryCheckers, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, type HarnessLogger, type LibraryRole, type LoadedWorkflow, type LogLevel } from "@harness/core";
+import { HarnessError, isHarnessError, ProjectConfigSchema, type AgentRuntime, type ExecutorRef, type MediaProber, type ProductionProfile, type ProjectConfig, type Publisher, type ScriptCommand, type ScriptsRegistry, type SourcesRegistry } from "@harness/contracts";
+import { ArtifactRegistry, BUILTIN_CHECKERS, ChannelRegistry, Controller, distributionCheckers, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, LibraryFs, libraryCheckers, loadChannels, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, type HarnessLogger, type LibraryRole, type LoadedWorkflow, type LogLevel } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
-import { FakeAgentRuntime, FakeProvider, fakeScriptCommands } from "@harness/adapter-fake";
+import { FakeAgentRuntime, FakeProvider, FakePublisher, fakeScriptCommands } from "@harness/adapter-fake";
 import { FfprobeMediaProber } from "@harness/adapter-ffprobe";
+import { CliAgentRuntime } from "@harness/adapter-agent-cli";
+import { PlaywrightPublisher } from "@harness/adapter-youtube-playwright";
 import { cliArgv } from "./self.js";
 
 export interface AppContext {
@@ -23,6 +25,17 @@ export interface AppContext {
   /** Only present when `project.yaml` declares `library`; the filesystem handle and role/sync interval the
    * kho commands, doctor's library rows, and the worker's periodic sync all share. */
   library?: { fs: LibraryFs; role: LibraryRole; syncSeconds: number };
+  /** Always present (empty when the project declares no `channels/`), same pattern as `scripts`/`sources`
+   * above -- a malformed `channel.yaml` must not stop every other command from running. */
+  channels: ChannelRegistry;
+  /** `loadChannels` errors swallowed the same way as `configErrors.scripts`/`.sources`: `doctor` reports them,
+   * and a publish command that actually needs a channel re-throws via `requireChannel`. */
+  channelErrors: string[];
+  /** Chosen by `project.yaml`'s `adapters.publisher`/`adapters.agent`; the only place either adapter is picked. */
+  publisher: Publisher;
+  agentRuntime: AgentRuntime;
+  publication: { verifySeconds: number; graceHours: number };
+  dashboard: { port: number; refreshSeconds: number };
   close(): void;
 }
 
@@ -36,6 +49,18 @@ export function builtinLibraryCommands(argv: string[], projectDir: string): Reco
   const names = ["intake", "style-export", "export", "apply-review"] as const;
   const commands: Record<string, ScriptCommand> = {};
   for (const name of names) commands[`library-${name}`] = { argv: [...argv, "--project", projectDir, "library", "stage", name], cwd: "." };
+  return commands;
+}
+
+/**
+ * The four `channel-publish` script stages (fetch, build-package, upload, schedule; spec §3) are built in the
+ * same way as the library ones above: each re-invokes this CLI as `harness --project <projectDir> publish
+ * stage <name>`, reading `stage-request.json` from the `ScriptExecutor`-provided workspace.
+ */
+export function builtinPublishCommands(argv: string[], projectDir: string): Record<string, ScriptCommand> {
+  const names = ["fetch", "build-package", "upload", "schedule"] as const;
+  const commands: Record<string, ScriptCommand> = {};
+  for (const name of names) commands[`publish-${name}`] = { argv: [...argv, "--project", projectDir, "publish", "stage", name], cwd: "." };
   return commands;
 }
 
@@ -73,11 +98,22 @@ export function buildContext(o: { projectDir: string; harnessRoot?: string; owne
   };
   const scripts = guard("scripts", () => loadScriptsRegistry(projectDir));
   const sources = guard("sources", () => loadSourcesRegistry(projectDir));
+  const channelErrors: string[] = [];
+  let loadedChannels: ReturnType<typeof loadChannels> = [];
+  try { loadedChannels = loadChannels(projectDir, project); }
+  catch (e) { if (!isHarnessError(e, "CONFIG_INVALID")) throw e; channelErrors.push(e.message); }
+  const channels = new ChannelRegistry(loadedChannels);
+  const publisher: Publisher = project.adapters.publisher === "playwright"
+    ? new PlaywrightPublisher({ redact: (s) => redactor.redact(s), ...(process.env.HARNESS_PUBLISHER_LOOKUP_FILE ? { lookupFile: process.env.HARNESS_PUBLISHER_LOOKUP_FILE } : {}) })
+    : new FakePublisher();
+  const agentRuntime: AgentRuntime = project.adapters.agent === "cli"
+    ? new CliAgentRuntime({ runtime: project.runtime, skillsDir: join(harnessRoot, "skills"), redact: (s) => redactor.redact(s), ...(project.adapters.agent_argv ? { argv: project.adapters.agent_argv } : {}) })
+    : new FakeAgentRuntime({ journal });
   const argv = cliArgv();
-  // an ops-project entry with the same name as a built-in (fake or library) wins, so ops projects can override them
-  const commands = { ...fakeScriptCommands(), ...builtinLibraryCommands(argv, projectDir), ...(scripts ? scriptCommandsFrom(scripts, projectDir) : {}) };
+  // an ops-project entry with the same name as a built-in (fake or library/publish) wins, so ops projects can override them
+  const commands = { ...fakeScriptCommands(), ...builtinLibraryCommands(argv, projectDir), ...builtinPublishCommands(argv, projectDir), ...(scripts ? scriptCommandsFrom(scripts, projectDir) : {}) };
   executors.register("script", new ScriptExecutor(commands, { projectDir, secrets, cliArgv: argv }));
-  executors.register("agent", new AgentExecutor(new FakeAgentRuntime({ journal })));
+  executors.register("agent", new AgentExecutor(agentRuntime));
   executors.register("gate", new GateExecutor());
   const workflows = (ref: string) => loadWorkflow(harnessRoot, ref);
   const profiles = (id: string) => loadProfile(harnessRoot, id);
@@ -87,5 +123,14 @@ export function buildContext(o: { projectDir: string; harnessRoot?: string; owne
   const library = project.library
     ? { fs: new LibraryFs({ root: resolve(projectDir, project.library.root), role: project.library.role }), role: project.library.role, syncSeconds: project.library.sync_seconds }
     : undefined;
-  return { store, planner, controller, registry, verifier: new Verifier([...BUILTIN_CHECKERS, ...mediaCheckers(prober, { available: proberAvailable }), ...libraryCheckers(prober, { available: proberAvailable })]), executors, journal, provider, harness, project, projectDir, dataRoot, logger, clock, secrets, migrationsDir: MIGRATIONS_DIR, workflows, profiles, catalog, resourceCapacity: project.resources, executorVersionFor: (ref: ExecutorRef) => executors.resolve(ref).version, scripts, sources, configErrors, proberAvailable, harnessRoot, prober, scriptCommandNames: Object.keys(commands), ...(library ? { library } : {}), close: () => store.close() };
+  return {
+    store, planner, controller, registry,
+    verifier: new Verifier([...BUILTIN_CHECKERS, ...mediaCheckers(prober, { available: proberAvailable }), ...libraryCheckers(prober, { available: proberAvailable }), ...distributionCheckers({ store, channels, secrets })]),
+    executors, journal, provider, harness, project, projectDir, dataRoot, logger, clock, secrets, migrationsDir: MIGRATIONS_DIR, workflows, profiles, catalog,
+    resourceCapacity: project.resources, executorVersionFor: (ref: ExecutorRef) => executors.resolve(ref).version, scripts, sources, configErrors, proberAvailable, harnessRoot, prober,
+    scriptCommandNames: Object.keys(commands), ...(library ? { library } : {}), channels, channelErrors, publisher, agentRuntime,
+    publication: { verifySeconds: project.publication.verify_seconds, graceHours: project.publication.verify_grace_hours },
+    dashboard: { port: project.dashboard.port, refreshSeconds: project.dashboard.refresh_seconds },
+    close: () => store.close(),
+  };
 }

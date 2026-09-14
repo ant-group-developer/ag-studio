@@ -184,12 +184,18 @@ importers:
 
   packages/cli:
     dependencies:
+      '@harness/adapter-agent-cli':
+        specifier: workspace:*
+        version: link:../adapters/agent-cli
       '@harness/adapter-fake':
         specifier: workspace:*
         version: link:../adapters/fake
       '@harness/adapter-ffprobe':
         specifier: workspace:*
         version: link:../adapters/ffprobe
+      '@harness/adapter-youtube-playwright':
+        specifier: workspace:*
+        version: link:../adapters/youtube-playwright
       '@harness/contracts':
         specifier: workspace:*
         version: link:../contracts
