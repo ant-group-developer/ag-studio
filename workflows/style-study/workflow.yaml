@@ -1,0 +1,32 @@
+schema_version: harness.workflow/v1
+id: style-study
+version: 1.0.0
+defaults: {}
+stages:
+  - key: collect-samples
+    executor: { type: script, script: collect-samples }
+    requires_resources: [cpu]
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: sample_set, mime_type: application/x-directory, kind: directory, name: samples }
+  - key: analyze-style
+    executor: { type: gate, brief: "Xem samples/ (khung hình theo mốc, transcript). Viết output/style.json theo schema harness.edit-style/v1 (status: draft) và output/evidence/ (ảnh + ghi chú vì sao)." }
+    depends_on: [collect-samples]
+    gate_deadline_seconds: 86400
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: style, mime_type: application/json, name: style.json }
+      - { type: style_evidence, mime_type: application/x-directory, kind: directory, name: evidence }
+  - key: style-review
+    executor: { type: gate, brief: "Sửa style.json nếu cần và đặt status: active. Chỉ nộp khi đồng ý dùng style này cho sản xuất." }
+    depends_on: [analyze-style]
+    gate_deadline_seconds: 86400
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: style, mime_type: application/json, name: style.json }
+  - key: style-export
+    executor: { type: script, script: library-style-export }
+    depends_on: [style-review, analyze-style]
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: export_receipt, mime_type: application/json, name: export-receipt.json }

@@ -1,0 +1,20 @@
+schema_version: harness.production-profile/v1
+profile_id: studio
+revision: 1
+status: active
+workflow_release: library-production@1.0.0
+overrides: {}
+options_schema:
+  voice: [none, tts, original]
+  subtitles: ["true", "false"]
+options_defaults: { voice: none, subtitles: "false" }
+reuse: allow
+content:
+  target_duration_seconds: [1, 1800]
+  max_silence_ratio: 0.9
+verification:
+  required_checks: []
+  required_checks_by_stage: {}
+limits:
+  max_cost_usd_per_variant: 5
+  max_concurrency: 2

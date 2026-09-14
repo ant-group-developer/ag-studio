@@ -113,3 +113,18 @@ Những gì còn lại, đã xem xét và cố ý hoãn:
 - `harness plan` với `executors/scripts.yaml` sai schema: `buildContext` nay nuốt `CONFIG_INVALID` vào `configErrors`, nên `plan` chạy tiếp với `requires_resources` của workflow thay vì bản ghi đè của registry (trước đó lệnh dừng ngay). `doctor` vẫn báo lỗi; worker vẫn thất bại rõ (`NOT_FOUND`). Sửa: `plan` ném `configErrors.scripts` như `source sync` (`packages/cli/src/commands/plan.ts`).
 - Lỗi cú pháp YAML (không phải sai schema) trong `scripts.yaml`/`sources.yaml` vẫn ném `YAMLParseError` từ `parse()` trước khi tới Zod, nên vẫn làm mọi lệnh (kể cả `doctor`) dừng; `guard()` trong composition chỉ bắt `CONFIG_INVALID`. Sửa: bọc `parse()` trong `loadScriptsRegistry`/`loadSourcesRegistry` thành `CONFIG_INVALID`.
 - `heldChecksums` (invalidation) coi `reused_artifact_ids: []` là stage con trỏ rỗng; planner hiện không bao giờ ghi mảng rỗng nên chỉ tiềm ẩn.
+
+## Ghi nhận trong Task 7 sub-project 2C (2026-09-14)
+
+- `harness doctor` quét **mọi** `workflow.yaml`/`profile.yaml` dưới `workflows/`/`production-profiles/` của
+  harness cho **mọi** ops project, bất kể project đó có định chạy workflow ấy hay không
+  (`packages/cli/src/commands/doctor.ts` `subdirsWith` + `runDoctor`/`checkScriptStage`). Thêm `style-study`
+  và `library-production` (dùng `collect-samples`, `thumbnail-candidates` — chưa có wrapper nào tới Task 8)
+  làm `fixtures/ops-project-footage` (chỉ chạy `footage-production`) lộ hai hàng FAIL
+  (`script:library-production/thumbnail-candidates`, `script:style-study/collect-samples`) dù project đó
+  không hề dùng hai workflow này. Đã sửa `tests/integration/footage-pipeline.test.ts` để chỉ assert không có
+  hàng FAIL *liên quan tới footage-production*/generic thay vì `doctor` toàn xanh, thay vì làm giả
+  `scripts.yaml` hay bớt phạm vi quét của `doctor`. Vấn đề gốc (doctor không biết project nào "quan tâm" tới
+  workflow nào) còn nguyên — sẽ tái diễn với mọi workflow mới thêm vào harness; project-scoping thật (ví dụ
+  project.yaml khai `profiles: [...]` project mình dùng) là một thay đổi thiết kế ngoài phạm vi Task 7, chưa
+  làm ở đây.

@@ -1,0 +1,83 @@
+schema_version: harness.workflow/v1
+id: library-production
+version: 1.0.0
+defaults: {}
+stages:
+  - key: intake
+    executor: { type: script, script: library-intake }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: brief, mime_type: application/json, name: brief.json }
+  - key: index-source
+    executor: { type: script, script: index-source }
+    requires_resources: [cpu]
+    required_checks: [schema-valid, output-exists, checksum-match, media-probe]
+    outputs:
+      - { type: shots, mime_type: application/json, name: shots.json }
+      - { type: proxy_video, mime_type: video/mp4, name: proxy.mp4 }
+  - key: survey-source
+    executor: { type: gate, brief: "Xem shots.json và proxy.mp4, đối chiếu với brief.json (yêu cầu, style đã snapshot). Viết output/survey.md chấm điểm/ghi chú từng shot phù hợp với yêu cầu tới đâu." }
+    depends_on: [index-source, intake]
+    gate_deadline_seconds: 86400
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: survey, mime_type: text/markdown, name: survey.md }
+  - key: plan-edit
+    executor: { type: gate, brief: "Xem survey.md và style trong brief.json. Viết output/edl.json (schema harness.edl/v1) dùng nguồn trong shots.json, output/edit-plan.json (chữ, nhạc, mở bài theo style), output/narration.txt (lời bình theo kịch bản; nếu không lồng tiếng vẫn tạo file, có thể để trống hoặc ghi chú không cần)." }
+    depends_on: [survey-source, intake]
+    gate_deadline_seconds: 86400
+    required_checks: [schema-valid, output-exists, checksum-match, edl-valid]
+    outputs:
+      - { type: edl, mime_type: application/json, name: edl.json }
+      - { type: edit_plan, mime_type: application/json, name: edit-plan.json }
+      - { type: narration, mime_type: text/plain, name: narration.txt }
+  - key: tts
+    executor: { type: script, script: tts }
+    depends_on: [plan-edit]
+    when: options.voice == "tts"
+    requires_resources: [gpu]
+    required_checks: [schema-valid, output-exists, checksum-match, audio-integrity]
+    outputs:
+      - { type: voice_track, mime_type: audio/wav, name: narration.wav }
+      - { type: captions, mime_type: application/json, name: captions.json }
+  - key: cut
+    executor: { type: script, script: cut }
+    depends_on: [plan-edit]
+    requires_resources: [cpu]
+    required_checks: [schema-valid, output-exists, checksum-match, clip-set-complete]
+    outputs:
+      - { type: clip_set, mime_type: application/x-directory, kind: directory, name: cuts }
+  - key: assemble
+    executor: { type: script, script: assemble }
+    depends_on: [cut, intake]
+    depends_on_optional: [tts]
+    requires_resources: [cpu]
+    required_checks: [schema-valid, output-exists, checksum-match, media-probe, duration-range, audio-integrity, brief-duration]
+    outputs:
+      - { type: episode_video, mime_type: video/mp4, name: full-episode.mp4 }
+  - key: thumbnail-candidates
+    executor: { type: script, script: thumbnail-candidates }
+    depends_on: [cut]
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: thumbnail_set, mime_type: application/x-directory, kind: directory, name: thumbnails }
+  - key: library-export
+    executor: { type: script, script: library-export }
+    depends_on: [assemble, thumbnail-candidates, plan-edit, intake]
+    depends_on_optional: [tts]
+    required_checks: [schema-valid, output-exists, checksum-match, library-export-valid]
+    outputs:
+      - { type: export_receipt, mime_type: application/json, name: export-receipt.json }
+  - key: library-review
+    executor: { type: gate, brief: "Xem bản dựng trong kho (episode, thumbnail, edit-plan). Ghi output/review.json { decision: approved|rejected, note }." }
+    depends_on: [library-export]
+    gate_deadline_seconds: 86400
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: review, mime_type: application/json, name: review.json }
+  - key: library-apply-review
+    executor: { type: script, script: library-apply-review }
+    depends_on: [library-review, library-export]
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: apply_receipt, mime_type: application/json, name: apply-receipt.json }

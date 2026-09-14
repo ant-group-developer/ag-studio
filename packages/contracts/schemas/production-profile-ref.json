@@ -13,7 +13,8 @@
           "enum": [
             "cartoon",
             "avatar",
-            "footage"
+            "footage",
+            "studio"
           ]
         },
         "profile_revision": {

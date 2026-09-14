@@ -205,7 +205,7 @@ export const ContentItemSchema = z.object({
   library_item_id: idSchema("library_item").optional(),
 }).strict();
 export const ProductionProfileRefSchema = z.object({
-  schema_version: schemaVersion("production-profile-ref"), profile_id: z.enum(["cartoon", "avatar", "footage"]), profile_revision: revisionSchema,
+  schema_version: schemaVersion("production-profile-ref"), profile_id: z.enum(["cartoon", "avatar", "footage", "studio"]), profile_revision: revisionSchema,
 }).strict();
 export const ContentVariantSchema = z.object({
   schema_version: schemaVersion("content-variant"), variant_id: idSchema("content_variant"), content_id: idSchema("content_item"),
