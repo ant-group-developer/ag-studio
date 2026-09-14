@@ -155,6 +155,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/script-sdk
 
+  packages/adapters/agent-cli:
+    dependencies:
+      '@harness/contracts':
+        specifier: workspace:*
+        version: link:../../contracts
+      '@harness/script-sdk':
+        specifier: workspace:*
+        version: link:../../script-sdk
+
   packages/adapters/fake:
     dependencies:
       '@harness/contracts':
