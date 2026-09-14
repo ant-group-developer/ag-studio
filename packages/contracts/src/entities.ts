@@ -262,3 +262,6 @@ export type SourceItem = z.infer<typeof SourceItemSchema>;
 export type ContentItem = z.infer<typeof ContentItemSchema>;
 export type ContentVariant = z.infer<typeof ContentVariantSchema>;
 export type MediaInfo = z.infer<typeof mediaInfoSchema>;
+export type ChannelPackage = z.infer<typeof ChannelPackageSchema>;
+export type PublicationJob = z.infer<typeof PublicationJobSchema>;
+export type PublicationState = (typeof PUBLICATION_STATES)[number];

@@ -1,4 +1,4 @@
-import type { Artifact, Attempt, CheckResult, ContentItem, ContentVariant, Event, ExternalOperation, Lease, MediaInfo, Run, SourceItem, StageRun } from "./entities.js";
+import type { Artifact, Attempt, ChannelPackage, CheckResult, ContentItem, ContentVariant, Event, ExternalOperation, Lease, MediaInfo, PublicationJob, Run, SourceItem, StageRun } from "./entities.js";
 import type { StageRequest, StageResult } from "./execution.js";
 import type { ContentRequest, EditStyle, LibraryItem } from "./library.js";
 
@@ -84,6 +84,21 @@ export interface StateStore {
   upsertLibraryItem(i: LibraryItem): void;
   getLibraryItem(id: string): LibraryItem | undefined;
   listLibraryItems(filter?: { status?: string }): LibraryItem[];
+
+  // ---- distribution (sub-project 3) ----
+  insertChannelPackage(p: ChannelPackage): void;
+  getChannelPackage(id: string): ChannelPackage | undefined;
+  updateChannelPackage(p: ChannelPackage): void;
+  listChannelPackages(filter?: { channel_id?: string; run_id?: string; status?: string }): ChannelPackage[];
+
+  insertPublicationJob(j: PublicationJob): void;
+  getPublicationJob(id: string): PublicationJob | undefined;
+  /** Never changes `state`: throws HarnessError("STALE_STATE", …) if `j.state` differs from the stored column. */
+  updatePublicationJob(j: PublicationJob): void;
+  listPublicationJobs(filter?: { channel_id?: string; state?: string; library_item_id?: string; idempotency_key?: string; run_id?: string }): PublicationJob[];
+
+  /** Allocates the next episode number for a channel inside a transaction: no row yet → creates one at `start`, returns `start`; a row exists → returns the current value, then increments. */
+  allocateEpisodeNo(channelId: string, start: number): number;
 
   appendEvent(e: EventInput): Event;
   listEvents(filter: { run_id?: string; limit?: number; newest?: boolean }): Event[];

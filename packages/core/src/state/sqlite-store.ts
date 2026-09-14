@@ -3,10 +3,10 @@ import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  ArtifactSchema, AttemptSchema, CheckResultSchema, ContentItemSchema, ContentRequestSchema, ContentVariantSchema, EditStyleSchema, EventSchema, ExternalOperationSchema, HarnessError,
-  LeaseSchema, LibraryItemSchema, RunSchema, SourceItemSchema, StageRunSchema,
-  newId, type Artifact, type Attempt, type CheckResult, type ClaimParams, type ClaimResult, type Clock, type ContentItem, type ContentRequest, type ContentVariant,
-  type EditStyle, type Event, type EventInput, type ExternalOperation, type Lease, type LibraryItem, type ReapedLease, type Run, type SourceItem, type StageRun, type StateStore,
+  ArtifactSchema, AttemptSchema, ChannelPackageSchema, CheckResultSchema, ContentItemSchema, ContentRequestSchema, ContentVariantSchema, EditStyleSchema, EventSchema, ExternalOperationSchema, HarnessError,
+  LeaseSchema, LibraryItemSchema, PublicationJobSchema, RunSchema, SourceItemSchema, StageRunSchema,
+  newId, type Artifact, type Attempt, type ChannelPackage, type CheckResult, type ClaimParams, type ClaimResult, type Clock, type ContentItem, type ContentRequest, type ContentVariant,
+  type EditStyle, type Event, type EventInput, type ExternalOperation, type Lease, type LibraryItem, type PublicationJob, type ReapedLease, type Run, type SourceItem, type StageRun, type StateStore,
   type TransitionKind,
 } from "@harness/contracts";
 import { addSeconds, SystemClock } from "./clock.js";
@@ -278,6 +278,72 @@ export class SqliteStateStore implements StateStore {
       for (const name of JSON.parse(r.resources) as string[]) held[name] = (held[name] ?? 0) + 1;
     }
     return held;
+  }
+
+  // ---- distribution (sub-project 3) ----
+  insertChannelPackage(p: ChannelPackage): void {
+    const v = ChannelPackageSchema.parse(p);
+    this.db.prepare(
+      "INSERT INTO channel_package (id, state, channel_id, run_id, library_item_id, episode_no, data, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(v.package_id, v.status, v.channel_id, v.run_id, v.library_item_id, v.episode_no, JSON.stringify(v), v.updated_at);
+  }
+  getChannelPackage(id: string): ChannelPackage | undefined { return this.getDoc("channel_package", id, (x) => ChannelPackageSchema.parse(x)); }
+  updateChannelPackage(p: ChannelPackage): void {
+    // channel_package.state mirrors ChannelPackage.status; it is written directly here, never via transition() — see migrations/0004_distribution.sql.
+    const v = ChannelPackageSchema.parse(p);
+    const res = this.db.prepare(
+      "UPDATE channel_package SET state = ?, channel_id = ?, run_id = ?, library_item_id = ?, episode_no = ?, data = ?, updated_at = ? WHERE id = ?",
+    ).run(v.status, v.channel_id, v.run_id, v.library_item_id, v.episode_no, JSON.stringify(v), v.updated_at, v.package_id);
+    if (res.changes === 0) throw new HarnessError("NOT_FOUND", `channel_package ${v.package_id} not found`);
+  }
+  listChannelPackages(filter: { channel_id?: string; run_id?: string; status?: string } = {}): ChannelPackage[] {
+    const where: string[] = []; const params: string[] = [];
+    if (filter.channel_id) { where.push("channel_id = ?"); params.push(filter.channel_id); }
+    if (filter.run_id) { where.push("run_id = ?"); params.push(filter.run_id); }
+    if (filter.status) { where.push("state = ?"); params.push(filter.status); }
+    return this.listDocs(`SELECT data FROM channel_package${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY rowid`, params, (x) => ChannelPackageSchema.parse(x));
+  }
+
+  insertPublicationJob(j: PublicationJob): void {
+    const v = PublicationJobSchema.parse(j);
+    this.db.prepare(
+      "INSERT INTO publication_job (id, state, channel_id, library_item_id, idempotency_key, scheduled_at, data, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(v.publication_job_id, v.state, v.channel_id, v.library_item_id, v.idempotency_key, v.scheduled_at, JSON.stringify(v), v.updated_at);
+  }
+  getPublicationJob(id: string): PublicationJob | undefined { return this.getDoc("publication_job", id, (x) => PublicationJobSchema.parse(x)); }
+  updatePublicationJob(j: PublicationJob): void {
+    // publication_job.state is control-plane state: only transition() may change it. A caller passing a
+    // `state` that no longer matches the stored column (e.g. it moved under them) is refused outright.
+    const v = PublicationJobSchema.parse(j);
+    const current = this.db.prepare("SELECT state FROM publication_job WHERE id = ?").get(v.publication_job_id) as { state: string } | undefined;
+    if (!current) throw new HarnessError("NOT_FOUND", `publication_job ${v.publication_job_id} not found`);
+    if (current.state !== v.state) {
+      throw new HarnessError("STALE_STATE", `publication_job ${v.publication_job_id} is ${current.state}, refusing to overwrite with state ${v.state}`, { id: v.publication_job_id, current: current.state, attempted: v.state });
+    }
+    this.db.prepare(
+      "UPDATE publication_job SET channel_id = ?, library_item_id = ?, idempotency_key = ?, scheduled_at = ?, data = ?, updated_at = ? WHERE id = ?",
+    ).run(v.channel_id, v.library_item_id, v.idempotency_key, v.scheduled_at, JSON.stringify(v), v.updated_at, v.publication_job_id);
+  }
+  listPublicationJobs(filter: { channel_id?: string; state?: string; library_item_id?: string; idempotency_key?: string; run_id?: string } = {}): PublicationJob[] {
+    const where: string[] = []; const params: string[] = [];
+    if (filter.channel_id) { where.push("channel_id = ?"); params.push(filter.channel_id); }
+    if (filter.state) { where.push("state = ?"); params.push(filter.state); }
+    if (filter.library_item_id) { where.push("library_item_id = ?"); params.push(filter.library_item_id); }
+    if (filter.idempotency_key) { where.push("idempotency_key = ?"); params.push(filter.idempotency_key); }
+    if (filter.run_id) { where.push("json_extract(data, '$.run_id') = ?"); params.push(filter.run_id); }
+    return this.listDocs(`SELECT data FROM publication_job${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY rowid`, params, (x) => PublicationJobSchema.parse(x));
+  }
+
+  allocateEpisodeNo(channelId: string, start: number): number {
+    return this.transaction(() => {
+      const row = this.db.prepare("SELECT next_episode_no FROM channel_sequence WHERE channel_id = ?").get(channelId) as { next_episode_no: number } | undefined;
+      if (!row) {
+        this.db.prepare("INSERT INTO channel_sequence (channel_id, next_episode_no) VALUES (?, ?)").run(channelId, start + 1);
+        return start;
+      }
+      this.db.prepare("UPDATE channel_sequence SET next_episode_no = ? WHERE channel_id = ?").run(row.next_episode_no + 1, channelId);
+      return row.next_episode_no;
+    });
   }
 
   // ---- event ----

@@ -40,8 +40,15 @@ export const TRANSITIONS: Record<TransitionKind, Record<string, readonly string[
     NEEDS_RECONCILIATION: ["CONFIRMED", "FAILED", "DISPATCHED"],
     CONFIRMED: [], FAILED: [],
   },
-  // Task 2 fills this table; Task 1 only needs contracts to typecheck.
-  publication_job: {},
+  publication_job: {
+    DRAFT: ["READY"],
+    READY: ["UPLOADING", "FAILED"],
+    UPLOADING: ["PROCESSING", "NEEDS_RECONCILIATION", "READY"],   // READY: refused/busy — the upload never happened
+    PROCESSING: ["SCHEDULED", "NEEDS_RECONCILIATION", "FAILED"],
+    SCHEDULED: ["PUBLISHED", "NEEDS_RECONCILIATION", "FAILED"],
+    NEEDS_RECONCILIATION: ["PROCESSING", "SCHEDULED", "PUBLISHED", "READY", "FAILED"],
+    PUBLISHED: [], FAILED: [],
+  },
 };
 
 export function assertTransition(kind: TransitionKind, from: string, to: string): void {
