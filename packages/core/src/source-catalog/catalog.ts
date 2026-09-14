@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, linkSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { HarnessError, newId, type Clock, type ContentItem, type ContentVariant, type MediaProber, type ProductionProfile, type SourceItem, type StateStore } from "@harness/contracts";
+import { HarnessError, newId, type Clock, type ContentItem, type ContentVariant, type LibraryBrief, type MediaProber, type ProductionProfile, type SourceItem, type StateStore } from "@harness/contracts";
 import { canonicalDigest, sha256File } from "../artifacts/checksum.js";
 
 export interface IngestInput { path: string; collection?: string; rights_status?: "unknown" | "cleared" | "restricted"; language?: string | null }
@@ -68,9 +68,13 @@ export class SourceCatalog {
     return rows;
   }
 
-  createContent(p: { source_ids: string[]; title: string }): ContentItem {
+  createContent(p: { source_ids: string[]; title: string; library_item_id?: string; library_brief?: LibraryBrief }): ContentItem {
     for (const id of p.source_ids) if (!this.d.store.getSourceItem(id)) throw new HarnessError("NOT_FOUND", `source not found: ${id}`, { source_id: id });
-    const content: ContentItem = { schema_version: "harness.content-item/v1", content_id: newId("content_item"), source_ids: p.source_ids, revision: 1, title: p.title, created_at: this.d.clock.now() };
+    const content: ContentItem = {
+      schema_version: "harness.content-item/v1", content_id: newId("content_item"), source_ids: p.source_ids, revision: 1, title: p.title, created_at: this.d.clock.now(),
+      ...(p.library_item_id !== undefined ? { library_item_id: p.library_item_id } : {}),
+      ...(p.library_brief !== undefined ? { library_brief: p.library_brief } : {}),
+    };
     this.d.store.insertContentItem(content);
     return content;
   }
