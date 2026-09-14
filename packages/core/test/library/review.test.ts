@@ -187,6 +187,23 @@ describe("claimItem", () => {
     expect(store.listContentItems().filter((c) => c.library_item_id === itemId)).toHaveLength(1);
   });
 
+  it("keeps honoring an existing claim after the item later becomes withdrawn", () => {
+    const { studio, channel, store, clock, catalog } = world();
+    const itemId = newId("library_item");
+    const approved = makeItem(itemId, { status: "approved" });
+    studio.writeJsonAtomic(studio.paths.manifest(itemId), approved);
+
+    const first = claimItem({ store, fs: channel, clock, catalog }, { item_id: itemId, channel_id: "chan-a", portfolio_id: "portfolio-a" });
+
+    studio.writeJsonAtomic(studio.paths.manifest(itemId), { ...approved, status: "withdrawn", updated_at: clock.now() });
+
+    const second = claimItem({ store, fs: channel, clock, catalog }, { item_id: itemId, channel_id: "chan-a", portfolio_id: "portfolio-a" });
+
+    expect(second.claim).toEqual(first.claim);
+    expect(second.content.content_id).toBe(first.content.content_id);
+    expect(store.listContentItems().filter((c) => c.library_item_id === itemId)).toHaveLength(1);
+  });
+
   it("rejects the studio role writing a claim file with CONFIG_INVALID", () => {
     const { studio, store, clock, catalog } = world();
     const itemId = newId("library_item");

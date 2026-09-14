@@ -67,25 +67,30 @@ export function withdrawItem(d: LibraryDeps, p: { item_id: string; note?: string
   return saveItem(d, updated);
 }
 
-/** Channel role: item must be approved (checked against the kho file, not the DB mirror). Claiming
- * is per-channel and idempotent — a second claimItem for the same item+channel returns the existing
- * claim and content instead of writing again or re-checking approval. */
+/** Channel role: a *new* claim requires the item to be approved (checked against the kho file, not
+ * the DB mirror) — else INVALID_TRANSITION. Claiming is per-channel and idempotent: once a claim
+ * file exists for this item+channel, it (and its ContentItem) is returned regardless of the item's
+ * later status, without writing again or re-checking approval. */
 export function claimItem(
   d: LibraryDeps & { catalog: SourceCatalog },
   p: { item_id: string; channel_id: string; portfolio_id: string; note?: string },
 ): { claim: LibraryClaim; content: ContentItem } {
   const item = readItem(d, p.item_id);
-  if (item.status !== "approved") {
-    throw new HarnessError("INVALID_TRANSITION", `library item ${p.item_id} is ${item.status}, not approved`, { item_id: p.item_id, status: item.status });
-  }
-
   const claimPath = d.fs.paths.claimFile(p.item_id, p.channel_id);
   const title = item.title_hint || item.item_id;
+
+  // An existing claim is honored regardless of the item's current status (mirrors claimRequest's
+  // same-run idempotency): a channel that already picked the item keeps its claim and ContentItem
+  // even if the item was later withdrawn or rejected — approval is only gatekept for a *new* claim.
   if (existsSync(claimPath)) {
     const claim = d.fs.readJson(claimPath, LibraryClaimSchema);
     const content = d.store.listContentItems().find((c) => c.library_item_id === p.item_id)
       ?? d.catalog.createContent({ source_ids: [], title, library_item_id: p.item_id });
     return { claim, content };
+  }
+
+  if (item.status !== "approved") {
+    throw new HarnessError("INVALID_TRANSITION", `library item ${p.item_id} is ${item.status}, not approved`, { item_id: p.item_id, status: item.status });
   }
 
   const claim: LibraryClaim = {
