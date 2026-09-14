@@ -221,4 +221,18 @@ describe("PlaywrightPublisher.lookup", () => {
     const outcome = await publisher.lookup({ channel: channel(repoDir), video_id: "yt-1" });
     expect(outcome.found).toBe(false);
   });
+
+  it("a hanging lookupScript is killed at lookupTimeoutMs -> found:false with a timeout reason, well before the script's own 5s sleep", async () => {
+    const repoDir = prepFixture();
+    const scriptDir = mkdtempSync(join(tmpdir(), "hang-lookup-"));
+    const hangScript = join(scriptDir, "hang-lookup.mjs");
+    writeFileSync(hangScript, "setTimeout(() => process.exit(0), 5000);\n");
+    const fetchImpl = (async () => ({ status: 404, json: async () => ({}) })) as unknown as typeof fetch;
+    const publisher = new PlaywrightPublisher({ fetchImpl, lookupScript: hangScript, lookupTimeoutMs: 500 });
+    const startedAt = Date.now();
+    const outcome = await publisher.lookup({ channel: channel(repoDir), video_id: "yt-1" });
+    const elapsedMs = Date.now() - startedAt;
+    expect(outcome).toEqual({ found: false, reason: expect.stringContaining("timed out") });
+    expect(elapsedMs).toBeLessThan(4000);
+  });
 });

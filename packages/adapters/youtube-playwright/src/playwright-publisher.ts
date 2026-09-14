@@ -23,6 +23,8 @@ export interface PlaywrightPublisherOptions {
   lookupFile?: string;
   /** Default: `<package>/scripts/lookup.mjs`. */
   lookupScript?: string;
+  /** Wall-clock timeout for the `lookupScript` spawnSync (a hung Playwright page/selector must not freeze the caller). Default: 120000ms. */
+  lookupTimeoutMs?: number;
 }
 
 interface RunResult {
@@ -92,6 +94,7 @@ export class PlaywrightPublisher implements Publisher {
   private readonly fetchImpl: typeof fetch;
   private readonly lookupFile: string | undefined;
   private readonly lookupScript: string;
+  private readonly lookupTimeoutMs: number;
 
   constructor(opts: PlaywrightPublisherOptions = {}) {
     this.node = opts.node ?? process.execPath;
@@ -99,6 +102,7 @@ export class PlaywrightPublisher implements Publisher {
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.lookupFile = opts.lookupFile ?? process.env.HARNESS_PUBLISHER_LOOKUP_FILE;
     this.lookupScript = opts.lookupScript ?? DEFAULT_LOOKUP_SCRIPT;
+    this.lookupTimeoutMs = opts.lookupTimeoutMs ?? 120_000;
   }
 
   async upload(p: { channel: PublisherChannel; episode_no: number; episode_dir: string; intent_at: string; timeout_seconds: number; log?: (line: string) => void }): Promise<UploadOutcome> {
@@ -208,7 +212,11 @@ export class PlaywrightPublisher implements Publisher {
     if (p.title) args.push("--title", p.title);
     if (p.since) args.push("--since", p.since);
 
-    const result = spawnSync(this.node, [this.lookupScript, ...args], { encoding: "utf8" });
+    const result = spawnSync(this.node, [this.lookupScript, ...args], { encoding: "utf8", timeout: this.lookupTimeoutMs, killSignal: "SIGKILL" });
+    const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code;
+    if (errorCode === "ETIMEDOUT" || result.signal) {
+      return { found: false, reason: "lookup script timed out" };
+    }
     if (result.error || result.status !== 0) {
       const reason = result.error ? result.error.message : (result.stdout || result.stderr || `lookup script exited with code ${result.status}`).trim();
       return { found: false, reason };
