@@ -145,6 +145,61 @@ describe("syncLibrary", () => {
     expect(index.items).toEqual([{ id: item1Id, status: "pending_review", title_hint: "Ancient ruins ep. 1", duration_seconds: 120, style: { style_id: styleId, revision: 1 } }]);
   });
 
+  it("treats a data file deleted after the manifest was written as 'missing file', not 'checksum mismatch', and imports the other items", async () => {
+    const root = tempRoot();
+    const studio = new LibraryFs({ root, role: "studio" });
+    const { store, clock } = openTempStore();
+
+    const styleId = newId("edit_style");
+    const item1Id = newId("library_item");
+    const item2Id = newId("library_item");
+    await writeItem(studio, item1Id, styleId, "episode one bytes");
+    await writeItem(studio, item2Id, styleId, "episode two bytes");
+    const missingPath = join(studio.paths.itemDir(item2Id), "episode.mp4");
+    rmSync(missingPath);
+
+    const report = await syncLibrary({ store, fs: studio, role: "studio", clock });
+
+    expect(report.imported.items).toEqual([item1Id]);
+    expect(report.corrupt).toEqual([{ path: missingPath, reason: `missing file: ${missingPath}` }]);
+    expect(store.getLibraryItem(item1Id)).toBeDefined();
+    expect(store.getLibraryItem(item2Id)).toBeUndefined();
+  });
+
+  it("catches a read error during data-file verification (a files[] path that names a directory) without aborting the rest of sync", async () => {
+    const root = tempRoot();
+    const studio = new LibraryFs({ root, role: "studio" });
+    const { store, clock } = openTempStore();
+
+    const styleId = newId("edit_style");
+    const item1Id = newId("library_item");
+    await writeItem(studio, item1Id, styleId, "episode one bytes");
+
+    // item2's manifest claims a data file whose path on disk is actually a directory: sha256File's
+    // createReadStream rejects with EISDIR instead of the file simply not matching a checksum.
+    const item2Id = newId("library_item");
+    const badPath = join(studio.paths.itemDir(item2Id), "episode.mp4");
+    mkdirSync(badPath, { recursive: true });
+    const item2 = makeItem(item2Id, styleId, {
+      files: [{ path: "episode.mp4", checksum: `sha256:${"0".repeat(64)}`, size_bytes: 0, mime_type: "video/mp4" }],
+    });
+    studio.writeJsonAtomic(studio.paths.manifest(item2Id), item2);
+
+    const report = await syncLibrary({ store, fs: studio, role: "studio", clock });
+
+    expect(report.imported.items).toEqual([item1Id]);
+    expect(report.corrupt).toHaveLength(1);
+    expect(report.corrupt[0].path).toBe(badPath);
+    expect(report.corrupt[0].reason.length).toBeGreaterThan(0);
+    expect(report.corrupt[0].reason).not.toMatch(/^missing file:/);
+    expect(report.corrupt[0].reason).not.toMatch(/^checksum mismatch:/);
+    expect(store.getLibraryItem(item2Id)).toBeUndefined();
+
+    // The rest of sync still ran to completion: missing-bookkeeping and index.json both happened.
+    expect(report.missing).toEqual([]);
+    expect(existsSync(studio.paths.index)).toBe(true);
+  });
+
   it("classifies a re-synced entity as updated when updated_at moves forward or content changes, and unchanged otherwise", async () => {
     const root = tempRoot();
     const studio = new LibraryFs({ root, role: "studio" });

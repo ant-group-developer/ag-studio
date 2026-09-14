@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Clock, ContentRequest, EditStyle, LibraryItem, StateStore } from "@harness/contracts";
 import { ContentRequestSchema, EditStyleSchema, LibraryItemSchema } from "@harness/contracts";
@@ -69,30 +70,42 @@ export async function syncLibrary(d: { store: StateStore; fs: LibraryFs; role: L
   const itemIds = d.fs.listItemIds();
   for (const id of itemIds) {
     const path = d.fs.paths.manifest(id);
-    let item: LibraryItem;
+    // The whole per-item pass (manifest read *and* every data-file check) is one bad file at most:
+    // any thrown error here (missing manifest, corrupt JSON, a data-file read that errors instead of
+    // just mismatching — deleted mid-sync, a permission error, a flaky mount) must not abort the loop.
     try {
-      item = d.fs.readJson(path, LibraryItemSchema);
+      const item = d.fs.readJson<LibraryItem>(path, LibraryItemSchema);
+      const itemDir = d.fs.paths.itemDir(id);
+      let bad: { path: string; reason: string } | undefined;
+      for (const f of item.files) {
+        const filePath = join(itemDir, f.path);
+        if (!existsSync(filePath)) {
+          bad = { path: filePath, reason: `missing file: ${filePath}` };
+          break;
+        }
+        let ok: boolean;
+        try {
+          ok = await d.fs.verifyFile(itemDir, f);
+        } catch (e) {
+          bad = { path: filePath, reason: reasonFor(e) };
+          break;
+        }
+        if (!ok) {
+          bad = { path: filePath, reason: `checksum mismatch: ${filePath}` };
+          break;
+        }
+      }
+      if (bad) {
+        report.corrupt.push(bad);
+        continue;
+      }
+      const outcome = classify(item, d.store.getLibraryItem(item.item_id));
+      if (outcome === "unchanged") continue;
+      d.store.upsertLibraryItem(item);
+      report[outcome].items.push(item.item_id);
     } catch (e) {
       report.corrupt.push({ path, reason: reasonFor(e) });
-      continue;
     }
-    const itemDir = d.fs.paths.itemDir(id);
-    let badFile: string | undefined;
-    for (const f of item.files) {
-      const ok = await d.fs.verifyFile(itemDir, f);
-      if (!ok) {
-        badFile = join(itemDir, f.path);
-        break;
-      }
-    }
-    if (badFile) {
-      report.corrupt.push({ path: badFile, reason: `checksum mismatch: ${badFile}` });
-      continue;
-    }
-    const outcome = classify(item, d.store.getLibraryItem(item.item_id));
-    if (outcome === "unchanged") continue;
-    d.store.upsertLibraryItem(item);
-    report[outcome].items.push(item.item_id);
   }
 
   const fsStyleIds = new Set(styleIds);
