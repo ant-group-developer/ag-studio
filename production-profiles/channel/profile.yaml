@@ -1,0 +1,13 @@
+schema_version: harness.production-profile/v1
+profile_id: channel
+revision: 1
+status: active
+workflow_release: channel-publish@1.0.0
+overrides: {}
+options_schema:
+  overlay: [auto, none]
+options_defaults: { overlay: auto }
+reuse: never
+content: {}
+verification: { required_checks: [], required_checks_by_stage: {} }
+limits: { max_cost_usd_per_variant: 3, max_concurrency: 1 }
