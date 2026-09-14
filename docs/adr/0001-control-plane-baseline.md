@@ -311,6 +311,9 @@ thư mục chia sẻ ("kho"); máy channel xin nội dung, đồng bộ, rồi n
     đọc/parse của một file **có tồn tại** giữ nguyên mã của `readJson` (`IO_ERROR`, hoặc `CONFIG_INVALID` khi
     sai schema). Trước đó mọi `IO_ERROR` bị đổi thành `NOT_FOUND`, nên một mount rớt giữa chừng trông hệt như
     "request chưa từng tồn tại" và `library-stage` biến nó thành contract failure vĩnh viễn thay vì retry.
+    Giới hạn còn lại: **đường đọc chưa kiểm root còn mount** (chỉ đường ghi có `assertRootMounted`), nên root
+    rớt hẳn vẫn làm `existsSync` trả `false` → `NOT_FOUND` → contract failure; việc thêm kiểm root cho
+    `readRequest`/`readItem`/`readStyle` ghi ở `docs/operations/deferred-items.md`.
 63. `ContentRequestSchema.count` ghim `z.literal(1)`: `intake` claim một request đúng một lần và item đầu tiên
     `fulfillRequest` đóng nó, nên một request `count > 1` sẽ kẹt `claimed` vĩnh viễn (không có cơ chế
     re-claim). CLI `library request create --count` chỉ nhận `1` (khác đi là `CONFIG_INVALID`). Phép so

@@ -192,3 +192,7 @@ Những gì còn lại, đã xem xét và cố ý hoãn:
   `open`) chứ không bao giờ `rejected`. Trạng thái `rejected` của một `content_request` do đó chỉ đến được
   bằng cách sửa tay file trong kho. Giữ lại vì `reopenRequest` nhận cả `rejected` làm đầu vào (đường phục hồi
   cho một request bị sửa tay); nối vào CLI (`library request reject`) khi thật sự cần.
+- Đường đọc kho (`readRequest`/`readItem`/`readStyle`) chưa gọi `assertRootMounted`: root rớt hẳn → `existsSync` false → `NOT_FOUND` → `library-stage` map thành contract failure (chờ người) thay vì `transient`. Sửa: kiểm `fs.exists()` trước `existsSync(path)` trong ba hàm đọc, thêm test; sau đó sửa lại câu ở ADR §62 và AGENTS. (Re-review đợt fix cuối 2C.)
+- `applyReview` replay khi request đã được run mới re-claim trả về im lặng (không ghi gì, không báo); bản `--json` có `request_status` để nhận ra. Cân nhắc in cảnh báo ở bản text.
+- `ContentItem` tạo trước khi có `library_channel_id` sẽ bị `pick` lại tạo thêm bản mới (không ảnh hưởng vì 2C chưa từng phát hành).
+- Test tích hợp `library-pipeline`: scenario 2 phụ thuộc scenario 1 (dùng chung world + style thật); chạy lẻ `-t` sẽ fail có thông báo rõ.
