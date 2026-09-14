@@ -120,3 +120,54 @@ Những gì còn lại, đã xem xét và cố ý hoãn:
   `project.yaml.workflows` liệt kê (khi trường này có mặt) thay vì mọi workflow/profile cài trong harness;
   không khai `workflows` giữ hành vi cũ (quét hết). Xem `packages/cli/src/commands/doctor.ts` và
   `ProjectConfigSchema.workflows` (`packages/contracts/src/config.ts`).
+
+## Hoãn, ít rủi ro — thêm sau sub-project 2C (ledger 2026-09-14)
+
+- `LibraryFs.assertWritable`: nhánh `channel` cho phép `requests/<id>.json` chỉ khớp độ dài đường dẫn
+  (`segs[0] === "requests" && segs.length === 2`), không kiểm đuôi `.json` — một ghi `requests/<id>.txt` vẫn
+  qua được kiểm tra quyền dù `readRequest`/`listRequestIds` sau đó không bao giờ đọc lại nó.
+- `copyFileWithChecksum` đọc lại file vừa copy để hash (`sha256File`) **ngoài** khối `try/catch` bao quanh
+  chính việc copy — một lỗi đọc ở bước hash (file bị xoá/khoá ngay sau rename) thoát ra như lỗi chưa được bọc
+  `HarnessError`, khác các nhánh lỗi khác của cùng hàm.
+- `listStyleIds`/`listItemIds` lọc `!e.name.startsWith(".tmp-")` để loại thư mục tạm còn sót — nhưng file tạm
+  thật (`writeJsonAtomic`/`copyFileWithChecksum`) đặt tên `<file>.tmp-<uuid>` (hậu tố trên **file**, không
+  phải thư mục), nên điều kiện lọc này không bao giờ khớp bất cứ gì trong thực tế.
+- `readdirSync(..., { withFileTypes: true })` cộng `e.isDirectory()`/`e.isFile()` bỏ qua symlink một cách âm
+  thầm (giống caveat đã ghi cho `listDirectoryFiles` ở 2A/2B) — một style/item/claim được mount vào kho qua
+  symlink sẽ không bao giờ được liệt kê.
+- So khớp tiền tố `library.root` trong `assertWritable` phân biệt hoa/thường ngay cả trên Windows (không dùng
+  so sánh case-insensitive theo hệ điều hành) — `library.root` lệch case giữa hai máy có thể khiến một ghi
+  hợp lệ bị từ chối `CONFIG_INVALID` dù cùng trỏ một mount thật (ghi trong runbook `content-library.md` mục 1
+  như một điều cần tránh, chưa sửa trong code).
+- `LibraryFs` không biết `channel_id` của chính nó — một channel không có cách nào (ở tầng `LibraryFs`) phân
+  biệt "request tôi vừa tạo" khỏi request do channel khác tạo, chỉ có thể lọc theo trường `requested_by` sau
+  khi đọc nội dung; đây là thiết kế cố ý (role chỉ gate quyền ghi, không gate danh tính), không phải thiếu sót
+  cần sửa.
+- `readRequest`/`readItem` map **mọi** `IO_ERROR` (kể cả lỗi quyền/mount rớt giữa chừng, không chỉ "file
+  không tồn tại") thành `NOT_FOUND` — một mount tạm thời mất kết nối trong lúc đọc trông giống hệt một
+  request/item chưa từng tồn tại.
+- `applyReview` ghi hai file (`manifest.json` của item, rồi `requests/<id>.json` nếu có `request_id`) qua hai
+  lệnh `writeJsonAtomic` riêng, không phải một transaction — một crash giữa hai lệnh để lại item đã duyệt
+  nhưng request chưa cập nhật (mirror DB sẽ lệch tới khi `sync` đọc lại cả hai từ kho lần sau).
+- `claimItem` có khe TOCTOU giữa `existsSync(claimPath)` và `writeJsonAtomic(claimPath, claim)`: hai tiến
+  trình `pick` cùng item/channel gần như đồng thời trên cùng máy có thể cùng thấy claim chưa tồn tại và cùng
+  tạo `ContentItem` riêng trước khi tiến trình thua ghi đè file claim của tiến trình thắng.
+- Nhánh idempotent của `claimRequest` (cùng run gọi lại `intake`) trả về request hiện có mà không gọi
+  `store.upsertContentRequest` lại — vô hại (nội dung không đổi) nhưng khác các nhánh ghi khác của
+  `requests.ts`/`review.ts`, vốn luôn upsert sau khi ghi file.
+- `requests.ts` (`claimRequest`/`fulfillRequest`/`rejectRequest`/`reopenRequest`) lặp lại cùng khuôn
+  đọc-kiểm-status-rồi-ghi ở bốn hàm; `review.ts` cũng vậy — chưa rút thành một helper transition chung.
+- `withdrawItem` nối ghi chú mới vào `review.note` cũ bằng `\n` giống `rejectRequest` nối vào `notes` — cách
+  nối ghi chú này chưa có test cho trường hợp gọi `withdraw` nhiều lần với nhiều ghi chú khác nhau.
+- `harness library accept --request <id>` không tiền-kiểm `status` của request — accept một request không
+  còn `open` (đã `claimed`/`fulfilled`/`rejected`) vẫn build xong `library_brief`/`ContentItem`; lỗi chỉ lộ ra
+  sau, ở `intake` của run vừa `plan` (`INVALID_TRANSITION`, xem ADR mục 53 và runbook `content-library.md`
+  mục 3b).
+- `stage_run.last_failure_kind` chỉ được ghi khi một retry thật sự **được lên lịch** (`scheduleRetry`); một
+  contract failure (như `intake` gặp request đã bị claim) không bao giờ retry nên `last_failure_kind` giữ
+  nguyên giá trị cũ (hoặc rỗng) — lý do thật của lần fail gần nhất luôn nằm ở `failure_kind` của **attempt**
+  cuối, không phải ở `stage_run.last_failure_kind` (hành vi có từ trước 2C, không riêng cho kho, nhưng lần
+  đầu gây nhầm lẫn khi đọc log của acceptance test #19).
+- `fixtures/ops-project-studio/library` và `fixtures/ops-project-channel/library` không tồn tại trên một bản
+  clone repo mới (`library.root: ./library` bị git-ignore) — thử tay cần tự tạo `styles/`/`requests/`/`items/`
+  hoặc trỏ sang một kho tạm, như `freshLibraryWorld()` của bộ test làm (xem README quick-start).

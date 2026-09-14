@@ -240,3 +240,18 @@ Worker: khi `project.yaml.library` có, mỗi lượt `runOnce` rảnh gọi `sy
 - **`updated_at` phụ thuộc đồng hồ hai máy**: chỉ dùng để nhận bản mới hơn của cùng một file do cùng một chủ ghi, nên lệch đồng hồ không gây mất dữ liệu, chỉ có thể trì hoãn nhận bản mới; `sync` so thêm checksum nội dung.
 - **Kho lớn**: `sync` đọc mọi manifest mỗi lần; đủ cho vài nghìn mục; `index.json` giúp `list` nhanh; cursor/phân trang để sau.
 - **Gate nhiều**: phần 1 hôm nay có 5 gate cần người; đây là chi phí tạm tới sub-project 4.
+
+## Ghi chú sau khi triển khai
+
+§3.2 và §6 nhắc `retry --stage plan-edit` như một cách làm lại sau khi `library-review` từ chối. Đường đó
+không tồn tại: `harness retry --stage <key>` chỉ đưa một stage đang `FAILED`/`WAITING_HUMAN` về `READY`
+(`packages/cli/src/commands/retry.ts`), còn một run bị `rejected` kết thúc **SUCCEEDED** với **mọi** stage
+`SUCCEEDED` — từ chối là một kết quả bình thường của workflow (`library-apply-review` vẫn `SUCCEEDED`), không
+phải lỗi khiến stage nào đó rớt trạng thái. `retry --stage plan-edit` trên một run như vậy không tìm thấy
+stage nào để chuyển và in `nothing to retry`, không chạy lại gì cả (xác nhận bằng test tích hợp
+`tests/integration/library-pipeline.test.ts`, kịch bản "a rejected review reopens the request").
+
+Hành vi thật sự đã triển khai: `library-apply-review` gọi `reopenRequest` đưa request về `open` kèm ghi chú
+duyệt; người vận hành `harness library accept --request <cùng id>` lại (build một `library_brief`/
+`ContentItem` mới) rồi `harness plan` một **run mới** cho request đó — không phải retry run cũ. Xem
+`docs/runbooks/content-library.md` mục 3b và ADR-0001 mục 60.

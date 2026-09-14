@@ -42,6 +42,16 @@ YouTube Operations Harness: control plane điều phối sản xuất và phân 
 - `harness resources status [--json]`: capacity khai trong `project.yaml.resources` so với số lease đang giữ mỗi tài nguyên.
 - `harness artifacts sweep [--older-than-minutes 60] [--dry-run] [--json]`: xoá thư mục artifact cũ hơn ngưỡng không có hàng DB không-PROVISIONAL đứng sau (crash/cancel để lại rác giữa lúc ghi output và commit).
 
+## Lệnh 2C (kho nội dung)
+- `harness library sync [--json]`: kéo `styles/`, `requests/`, `items/` từ kho vào mirror DB (`edit_style`, `content_request`, `library_item`); báo `imported`/`updated`/`corrupt`/`missing`, thoát mã 1 nếu có `corrupt`. Chạy trước mọi lệnh `library list`/`accept` khác — chúng đọc mirror, không đọc kho trực tiếp.
+- `harness library list <items|requests|styles> [--status <s>] [--json]`: liệt kê từ mirror DB.
+- `harness library request create --portfolio <id> [--channel <id>] --topic <topic> [--style <style_id>] [--duration <min,max>] [--voice none|tts|original] [--language <code>] [--count <n>] [--due <date>] [--json]` (vai `channel`): tạo một `content_request` `open` trong kho.
+- `harness library accept (--request <id> | --topic <t> --style <style_id>) --source <src_id>... [--title <t>] [--json]` (vai `studio`): build `library_brief` + `ContentItem` cho `plan` tiếp theo — **không** claim request, **không** tiền-kiểm `status` của nó (accept một request không còn `open` vẫn thành công, lỗi lộ ra sau ở `intake` của run vừa plan).
+- `harness library review <item_id> (--approve|--reject) [--note <n>] [--json]` (vai `studio`, không qua gate): ghi kết quả duyệt thẳng vào kho — cùng một hàm `applyReview` mà stage built-in `library-apply-review` gọi sau gate `library-review`.
+- `harness library pick <item_id> --channel <channel_id> [--portfolio <id>] [--json]` (vai `channel`): claim một item `approved` thành `ContentItem` cục bộ (`library_item_id` trỏ về kho), in `content_id` cho `plan` của workflow phát hành. Idempotent theo channel: `pick` lại cùng item/channel trả lại đúng claim cũ, không đòi `approved` lần hai.
+- `harness library styles show <style_id> [--json]`: in một edit style đã sync.
+- `harness library stage <intake|style-export|export|apply-review>`: nội bộ, do executor `script` tự gọi lại CLI này khi chạy bốn stage kho built-in trong `library-production`/`style-study` — không gọi tay; xem `docs/runbooks/content-library.md`.
+
 ## Giới hạn quyền
 - Không sửa cột `state` ngoài `transition()` và `claim()` trong `packages/core/src/state/`.
 - Không import `adapters/*` hay `agent-runtime/*` từ `packages/core`.
@@ -66,6 +76,16 @@ YouTube Operations Harness: control plane điều phối sản xuất và phân 
 - Khi một stage commit artifact ACCEPTED mới, mọi artifact ACCEPTED của chính stage đó và các stage phụ thuộc (transitive, kể cả `depends_on_optional`) ở các run **trước đó** của cùng variant chuyển sang STALE (`artifact.stale`), kèm event `stage.invalidated_downstream` trên run vừa commit. Artifact STALE không còn được downstream đọc.
 - Invalidation theo **nội dung**, không chỉ theo graph (spec §3.2): run cũ nào đang giữ đúng tập checksum vừa commit ở chính stage đó thì được bỏ qua nguyên vẹn — submit lại một gate với nội dung y hệt không làm hỏng gì của run trước. **Ngoại lệ:** một stage commit **không output nào** (tập checksum rỗng) không có gì để so nội dung, nên vẫn invalidate thuần theo graph như trước — không có "byte giống hệt" để so sánh thì không thể bỏ qua.
 - Reuse còn xảy ra **lúc release**: một stage PENDING có đủ dependency SUCCEEDED sẽ tính lại cache_key từ input ACCEPTED thật (`stage_definition_digest`, `expected_executor_version`, `reuse_eligible` planner ghi sẵn lên StageRun) và nếu trúng thì đi thẳng `PENDING → SUCCEEDED` với event `stage.reused` (`at: "release"`), không dispatch. Nhờ đó stage nằm dưới một gate — thứ không bao giờ reuse lúc plan — vẫn tái sử dụng được khi gate cho ra đúng nội dung cũ. Ngân sách (variant) chặn nhánh reuse-lúc-release này y hệt dispatch thường (nằm trong cùng vòng lặp `releaseReady`) dù bản thân nó miễn phí; reuse lúc `plan()` thì không bao giờ bị ngân sách chặn.
+
+## Quy tắc kho nội dung
+- Kho là filesystem chia sẻ, không phải service; mỗi file có đúng một chủ ghi theo vai (`LibraryFs.assertWritable`): `studio` ghi `styles/**`, `items/**` (trừ mọi đường có đoạn `claims`), `index.json`, và chỉ overwrite `requests/<id>.json` đã tồn tại; `channel` tạo/ghi đè `requests/<id>.json` và `items/<id>/claims/<channel_id>.json`. Ghi ngoài các đường này ném `CONFIG_INVALID` trước khi chạm đĩa; mọi ghi đi qua file tạm `<file>.tmp-<uuid>` cùng thư mục rồi `renameSync`.
+- Ba bảng mirror `edit_style`/`content_request`/`library_item` (migration `0003_library.sql`) không đi qua `transition()` — `state` chỉ phản ánh nội dung đọc được từ kho, `syncLibrary`/`upsert*` ghi trực tiếp.
+- `intake` là nơi duy nhất một request chuyển `open → claimed`; `library-apply-review` (built-in stage) và `harness library review` (CLI) là hai đường duy nhất ghi kết quả duyệt vào kho, cả hai gọi chung `applyReview`.
+- Một run mà `library-apply-review` ghi `rejected` kết thúc **SUCCEEDED** với mọi stage `SUCCEEDED` — không có gì để `retry --stage <key>` (retry chỉ đưa `FAILED`/`WAITING_HUMAN` về `READY`). Làm lại: request đã về `open`, `library accept --request <cùng id>` rồi `plan` một run mới, không `retry` run cũ.
+- `claimItem` (`library pick`) idempotent theo channel, không theo run: một claim đã tồn tại được tôn trọng bất kể trạng thái hiện tại của item (kể cả sau khi item đó chuyển `withdrawn`/`rejected`); chỉ một claim **mới** mới đòi item đang `approved`.
+- `exportItem` (`library-export`) là chỗ duy nhất kho xoá file: re-export cùng `item_id` ghi đè `items/<id>/` rồi xoá file lẻ không còn trong bộ output mới (không đệ quy — `claims/` không bao giờ bị đụng).
+- `harness worker` tự `syncLibrary` mỗi khi rảnh việc, tối đa một lần mỗi `library.sync_seconds` (mặc định 300, tối thiểu 10); lỗi sync chỉ log, không dừng worker, và worker không bao giờ tự `plan` một run từ request mới thấy.
+- `harness doctor` không bao giờ tự tạo thư mục kho còn thiếu; `library:root`/`library:write`/`library:index` chỉ kiểm tra, không mutate ngoài một file thử viết-rồi-xoá.
 
 ## Cách commit state
 - Mọi kết quả stage đi qua `Controller.commit()` với fencing token của attempt hiện tại.

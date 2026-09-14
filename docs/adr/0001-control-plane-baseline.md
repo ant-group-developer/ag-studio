@@ -234,3 +234,70 @@ vi, không chép từ plan.
     của plan thì sửa ngay". Đổi tên bản 2B (ít rủi ro hơn: không nơi nào trong `packages/cli` import kiểu này
     theo tên, chỉ suy ra qua `Awaited<ReturnType<...>>`) thay vì đổi `SyncReport` mới của kho — giữ đúng tên mà
     brief Task 6/9 đã viết sẵn cho `library sync`.
+
+## Sub-project 2C (2026-09-14)
+
+Kho nội dung (content library): máy studio dựng episode từ nguồn theo một edit style đã học rồi xuất vào một
+thư mục chia sẻ ("kho"); máy channel xin nội dung, đồng bộ, rồi nhận một item đã duyệt. Đọc code
+(`packages/contracts/src/library.ts`, `migrations/0003_library.sql`, `packages/core/src/library/
+{files,sync,requests,review,export}.ts`, `packages/core/src/verification/library-checkers.ts`,
+`packages/cli/src/commands/{library,library-stage,doctor}.ts`, `packages/cli/src/composition.ts`,
+`packages/worker/src/worker.ts`) để xác nhận hành vi, không chép từ plan/spec.
+
+50. Kho là filesystem chia sẻ (mount SMB/NAS/Drive), không phải service: mỗi file có đúng một "chủ ghi" theo
+    vai (`LibraryFs.assertWritable`) — `studio` ghi `styles/**`, `items/**` trừ mọi đường có đoạn `claims`,
+    `index.json`, và chỉ **overwrite** `requests/<id>.json` đã tồn tại (không bao giờ tạo mới); `channel` tạo
+    hoặc ghi đè `requests/<id>.json` và `items/<id>/claims/<channel_id>.json`. Ghi ngoài root hay ngoài các
+    đường trên ném `CONFIG_INVALID` trước khi chạm đĩa. Mọi ghi đi qua `writeJsonAtomic`/
+    `copyFileWithChecksum`: file tạm `<file>.tmp-<uuid>` cùng thư mục đích rồi `renameSync` đè lên.
+51. Ba bảng mirror `edit_style`/`content_request`/`library_item` (migration `0003_library.sql`) **không** đi
+    qua `transition()` — cột `state` chỉ được `syncLibrary`/`upsert*` ghi trực tiếp từ nội dung đọc được trên
+    kho, phản ánh trạng thái của file chứ không phải một state machine control-plane; không có bảng transition
+    nào ràng buộc chuyển đổi của chúng.
+52. Bốn stage kho (`intake`, `style-export` script `library-style-export`, `export` script `library-export`,
+    `apply-review` script `library-apply-review`) là built-in trong CLI composition
+    (`builtinLibraryCommands`, `packages/cli/src/composition.ts`) thay vì wrapper ops project phải cung cấp:
+    mỗi lệnh chỉ tự gọi lại chính CLI này (`harness --project <dir> library stage <name>`) qua executor
+    `script` bình thường (`ScriptExecutor` không phân biệt), nhưng cần `StateStore`/`LibraryFs` trực tiếp
+    (`claimRequest`, `applyReview`, `exportItem`, `exportStyle`) — việc một wrapper `.mjs` độc lập không làm
+    được. Một ops project studio thật vì thế chỉ cần khai `scripts.yaml` cho các wrapper media của mình (xem
+    `fixtures/ops-project-studio/executors/scripts.yaml`), không cần bốn entry kho.
+53. `intake` là nơi duy nhất một `content_request` chuyển `open → claimed` (`claimRequest`): cùng run gọi lại
+    là idempotent (trả lại request không ghi lại); request đang `claimed` bởi run khác, hay không còn `open`,
+    ném `INVALID_TRANSITION` → stage `WAITING_HUMAN` (contract failure, không retry). `harness library
+    accept` (CLI) chỉ build `library_brief`/`ContentItem` cục bộ, **không** tiền-kiểm `status` của request —
+    accept một request không còn `open` vẫn thành công, lỗi chỉ lộ ra sau, ở `intake` của run vừa `plan`
+    (deferred, ledger Task 8).
+54. `library-apply-review` (built-in stage, sau gate `library-review`) và `harness library review` (CLI,
+    không qua gate) đều gọi thẳng `applyReview` (`packages/core/src/library/review.ts`) — hàm duy nhất ghi
+    kết quả duyệt vào kho: `approved` gọi `fulfillRequest` (đẩy `item_id`, `fulfilled` khi `item_ids.length >=
+    count`); `rejected` gọi `reopenRequest` (`open`, nối ghi chú vào `notes`, xoá `claimed_by_run`).
+55. `syncLibrary` phân loại `imported`/`updated`/`unchanged` bằng `updated_at` (file mới hơn mirror) rồi
+    `canonicalDigest` (nội dung khác mirror) — nội dung giống hệt không ghi lại dù `updated_at` khác, để đồng
+    hồ lệch giữa hai máy không tạo vòng lặp ghi vô ích qua mount chậm.
+56. `ProductionProfileSchema.profile_id` thêm `"studio"` vào enum (`cartoon | avatar | footage | studio`),
+    kéo theo `ProductionProfileRefSchema` và JSON Schema sinh lại bằng `pnpm gen:schemas`.
+57. `project.yaml.workflows` (đã có từ trước, optional) giờ còn scope `harness doctor`
+    (`packages/cli/src/commands/doctor.ts`): không khai = quét mọi `workflow.yaml`/`profile.yaml` cài trong
+    harness (hành vi cũ); khai `[]` = không quét workflow/profile nào (đúng cho một project channel không có
+    `executors/`); khai danh sách = chỉ quét đúng các release đó (và profile có `workflow_release` nằm trong
+    danh sách) — một ref không nạp được thành dòng `workflow:<ref>` FAIL riêng thay vì làm chết lệnh `doctor`
+    (ledger Task 7, sửa ngay trong vòng review đầu vì spec không tính tới project chỉ chạy một phần workflow
+    của harness).
+58. `claimItem` (channel `library pick`): một claim đã tồn tại
+    (`items/<id>/claims/<channel_id>.json`) được tôn trọng **bất kể trạng thái hiện tại của item** — trả lại
+    đúng claim và `ContentItem` cũ, không ghi lại, không kiểm `approved` lại. Chỉ một claim **mới** mới đòi
+    item đang `approved` (nếu không thì `INVALID_TRANSITION`). Cố ý khác `claimRequest` (mục 53, chỉ
+    idempotent trong cùng run): ở đây idempotent theo channel, vĩnh viễn — một channel đã `pick` một item giữ
+    nguyên `ContentItem` của nó kể cả khi item đó sau này chuyển `withdrawn`/`rejected`.
+59. `exportItem` (`library-export`) là chỗ duy nhất kho xoá file: idempotent trên `existingItemId` (chạy lại
+    cùng `item_id` ghi đè cùng thư mục `items/<id>/`, giữ `created_at` cũ), rồi `pruneStaleFiles` xoá mọi file
+    thường nằm trực tiếp trong thư mục item không còn nằm trong `files[]` của lần xuất mới (ví dụ ít thumbnail
+    hơn lần trước) — không đệ quy, nên `claims/` (do channel ghi) không bao giờ bị đụng tới.
+60. `harness retry --stage <key>` chỉ đưa stage `FAILED`/`WAITING_HUMAN` về `READY`. Một run mà
+    `library-apply-review` ghi `rejected` kết thúc với **mọi** stage `SUCCEEDED` — từ chối là một kết quả
+    bình thường của workflow, không phải lỗi — nên không có gì để `retry`; `retry --stage plan-edit` in
+    `nothing to retry`. Đường làm lại thật sự: request đã `reopenRequest` về `open`, `library accept --request
+    <cùng id>` lần nữa rồi `plan` một **run mới** (không phải `retry` run cũ). Spec §3.2/§6 nhắc `retry
+    --stage plan-edit` như một lựa chọn khả dĩ sau khi bị từ chối — ghi chú sửa lại ở cuối tài liệu spec 2C
+    (`docs/superpowers/specs/2026-09-14-sub-project-2c-content-library-design.md`).
