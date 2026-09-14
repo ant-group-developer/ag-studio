@@ -6,6 +6,7 @@ import type { ZodTypeAny } from "zod";
 import * as E from "../src/entities.js";
 import * as X from "../src/execution.js";
 import * as C from "../src/config.js";
+import * as L from "../src/library.js";
 import { EdlSchema } from "../src/edl.js";
 
 export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
@@ -19,6 +20,8 @@ export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
   workflow: C.WorkflowDefinitionSchema, "production-profile": C.ProductionProfileSchema, "channel-config": C.ChannelConfigSchema,
   "project-config": C.ProjectConfigSchema, "harness-config": C.HarnessConfigSchema,
   edl: EdlSchema, scripts: C.ScriptsRegistrySchema, sources: C.SourcesRegistrySchema,
+  "edit-style": L.EditStyleSchema, "content-request": L.ContentRequestSchema,
+  "library-item": L.LibraryItemSchema, "library-claim": L.LibraryClaimSchema,
 };
 
 export function toJsonSchema(name: string, schema: ZodTypeAny) {

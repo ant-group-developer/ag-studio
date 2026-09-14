@@ -85,6 +85,11 @@ export const ProjectConfigSchema = z.object({
   portfolios: z.array(z.object({ portfolio_id: z.string().min(1), display_name: z.string() }).strict()).min(1),
   resources: z.record(z.string().regex(/^[a-z][a-z0-9-]*$/), z.number().int().min(0)).default({}),
   source: z.object({ materialize: z.enum(["link", "copy", "reference"]).default("link") }).strict().default({ materialize: "link" }),
+  library: z.object({
+    root: z.string().min(1),
+    role: z.enum(["studio", "channel"]),
+    sync_seconds: z.number().int().min(10).default(300),
+  }).strict().optional(),
 }).strict();
 
 export const HarnessConfigSchema = z.object({

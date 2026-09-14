@@ -1,0 +1,43 @@
+{
+  "$ref": "#/definitions/library-claim",
+  "definitions": {
+    "library-claim": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.library-claim/v1"
+        },
+        "item_id": {
+          "type": "string",
+          "pattern": "^item_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "channel_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "portfolio_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "claimed_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+        },
+        "note": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "required": [
+        "schema_version",
+        "item_id",
+        "channel_id",
+        "portfolio_id",
+        "claimed_at"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { idSchema } from "./ids.js";
-import { checksumSchema, jsonObjectSchema, revisionSchema, schemaVersion, secretRefSchema, semverSchema, timestampSchema } from "./common.js";
+import { checksumSchema, jsonObjectSchema, mediaInfoSchema, revisionSchema, schemaVersion, secretRefSchema, semverSchema, timestampSchema } from "./common.js";
+import { libraryBriefSchema } from "./library.js";
+
+export { mediaInfoSchema } from "./common.js";
 
 // ---- state enums (blueprint §9 + spec B.5) ----
 export const RUN_STATES = ["DRAFT", "READY", "RUNNING", "WAITING", "CANCEL_REQUESTED", "CANCELLED", "SUCCEEDED", "FAILED"] as const;
@@ -189,9 +192,6 @@ export const ChannelSchema = z.object({
   schema_version: schemaVersion("channel"), channel_id: z.string().min(1), portfolio_id: z.string().min(1),
   account_ref: secretRefSchema, expected_channel_id: z.string().min(1), config_revision: revisionSchema,
 }).strict();
-export const mediaInfoSchema = z.object({
-  width: z.number().int().min(1), height: z.number().int().min(1), fps: z.number().positive().nullable(), has_audio: z.boolean(),
-}).strict();
 export const SourceItemSchema = z.object({
   schema_version: schemaVersion("source-item"), source_id: idSchema("source_item"),
   uri: z.string().min(1), original_uri: z.string().min(1), checksum: checksumSchema, collection: z.string().regex(/^[a-z][a-z0-9-]*$/).default("main"),
@@ -201,6 +201,8 @@ export const SourceItemSchema = z.object({
 export const ContentItemSchema = z.object({
   schema_version: schemaVersion("content-item"), content_id: idSchema("content_item"), source_ids: z.array(idSchema("source_item")),
   revision: revisionSchema, title: z.string(), created_at: timestampSchema,
+  library_brief: libraryBriefSchema.optional(),
+  library_item_id: idSchema("library_item").optional(),
 }).strict();
 export const ProductionProfileRefSchema = z.object({
   schema_version: schemaVersion("production-profile-ref"), profile_id: z.enum(["cartoon", "avatar", "footage"]), profile_revision: revisionSchema,

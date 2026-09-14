@@ -3,10 +3,10 @@ import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  ArtifactSchema, AttemptSchema, CheckResultSchema, ContentItemSchema, ContentVariantSchema, EventSchema, ExternalOperationSchema, HarnessError,
-  LeaseSchema, RunSchema, SourceItemSchema, StageRunSchema,
-  newId, type Artifact, type Attempt, type CheckResult, type ClaimParams, type ClaimResult, type Clock, type ContentItem, type ContentVariant,
-  type Event, type EventInput, type ExternalOperation, type Lease, type ReapedLease, type Run, type SourceItem, type StageRun, type StateStore,
+  ArtifactSchema, AttemptSchema, CheckResultSchema, ContentItemSchema, ContentRequestSchema, ContentVariantSchema, EditStyleSchema, EventSchema, ExternalOperationSchema, HarnessError,
+  LeaseSchema, LibraryItemSchema, RunSchema, SourceItemSchema, StageRunSchema,
+  newId, type Artifact, type Attempt, type CheckResult, type ClaimParams, type ClaimResult, type Clock, type ContentItem, type ContentRequest, type ContentVariant,
+  type EditStyle, type Event, type EventInput, type ExternalOperation, type Lease, type LibraryItem, type ReapedLease, type Run, type SourceItem, type StageRun, type StateStore,
   type TransitionKind,
 } from "@harness/contracts";
 import { addSeconds, SystemClock } from "./clock.js";
@@ -224,6 +224,51 @@ export class SqliteStateStore implements StateStore {
   }
   listContentVariants(contentId: string): ContentVariant[] {
     return this.listDocs("SELECT data FROM content_variant WHERE content_id = ? ORDER BY rowid", [contentId], (x) => ContentVariantSchema.parse(x));
+  }
+
+  // ---- library mirrors ----
+  // edit_style, content_request and library_item mirror the shared library (kho); they are written
+  // here by syncLibrary's upsert* calls and never go through transition() — see ADR 0001.
+  upsertEditStyle(s: EditStyle): void {
+    const v = EditStyleSchema.parse(s);
+    this.db.prepare(
+      "INSERT INTO edit_style (id, state, data, updated_at) VALUES (?, ?, ?, ?) " +
+      "ON CONFLICT(id) DO UPDATE SET state = excluded.state, data = excluded.data, updated_at = excluded.updated_at",
+    ).run(v.style_id, v.status, JSON.stringify(v), v.updated_at);
+  }
+  getEditStyle(id: string): EditStyle | undefined { return this.getDoc("edit_style", id, (x) => EditStyleSchema.parse(x)); }
+  listEditStyles(filter: { status?: string } = {}): EditStyle[] {
+    return filter.status
+      ? this.listDocs("SELECT data FROM edit_style WHERE state = ? ORDER BY rowid", [filter.status], (x) => EditStyleSchema.parse(x))
+      : this.listDocs("SELECT data FROM edit_style ORDER BY rowid", [], (x) => EditStyleSchema.parse(x));
+  }
+
+  upsertContentRequest(r: ContentRequest): void {
+    const v = ContentRequestSchema.parse(r);
+    this.db.prepare(
+      "INSERT INTO content_request (id, state, data, updated_at) VALUES (?, ?, ?, ?) " +
+      "ON CONFLICT(id) DO UPDATE SET state = excluded.state, data = excluded.data, updated_at = excluded.updated_at",
+    ).run(v.request_id, v.status, JSON.stringify(v), v.updated_at);
+  }
+  getContentRequest(id: string): ContentRequest | undefined { return this.getDoc("content_request", id, (x) => ContentRequestSchema.parse(x)); }
+  listContentRequests(filter: { status?: string } = {}): ContentRequest[] {
+    return filter.status
+      ? this.listDocs("SELECT data FROM content_request WHERE state = ? ORDER BY rowid", [filter.status], (x) => ContentRequestSchema.parse(x))
+      : this.listDocs("SELECT data FROM content_request ORDER BY rowid", [], (x) => ContentRequestSchema.parse(x));
+  }
+
+  upsertLibraryItem(i: LibraryItem): void {
+    const v = LibraryItemSchema.parse(i);
+    this.db.prepare(
+      "INSERT INTO library_item (id, state, data, updated_at) VALUES (?, ?, ?, ?) " +
+      "ON CONFLICT(id) DO UPDATE SET state = excluded.state, data = excluded.data, updated_at = excluded.updated_at",
+    ).run(v.item_id, v.status, JSON.stringify(v), v.updated_at);
+  }
+  getLibraryItem(id: string): LibraryItem | undefined { return this.getDoc("library_item", id, (x) => LibraryItemSchema.parse(x)); }
+  listLibraryItems(filter: { status?: string } = {}): LibraryItem[] {
+    return filter.status
+      ? this.listDocs("SELECT data FROM library_item WHERE state = ? ORDER BY rowid", [filter.status], (x) => LibraryItemSchema.parse(x))
+      : this.listDocs("SELECT data FROM library_item ORDER BY rowid", [], (x) => LibraryItemSchema.parse(x));
   }
 
   // ---- resources ----

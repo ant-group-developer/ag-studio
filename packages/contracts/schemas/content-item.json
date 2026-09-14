@@ -29,6 +29,66 @@
         "created_at": {
           "type": "string",
           "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+        },
+        "library_brief": {
+          "type": "object",
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "pattern": "^req_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "topic": {
+              "type": "string",
+              "minLength": 1
+            },
+            "style_id": {
+              "type": "string",
+              "pattern": "^style_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "style_revision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "target_duration_seconds": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "number",
+                  "minimum": 0
+                }
+              ]
+            },
+            "voice": {
+              "type": "string",
+              "enum": [
+                "none",
+                "tts",
+                "original"
+              ],
+              "default": "none"
+            },
+            "language": {
+              "type": "string",
+              "minLength": 1,
+              "default": "vi"
+            }
+          },
+          "required": [
+            "topic",
+            "style_id",
+            "style_revision"
+          ],
+          "additionalProperties": false
+        },
+        "library_item_id": {
+          "type": "string",
+          "pattern": "^item_[0-9A-HJKMNP-TV-Z]{26}$"
         }
       },
       "required": [

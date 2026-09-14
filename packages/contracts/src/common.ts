@@ -9,6 +9,9 @@ export const revisionSchema = z.number().int().min(1);
 export const semverSchema = z.string().regex(/^\d+\.\d+\.\d+$/);
 export const secretRefSchema = z.string().regex(/^secret:\/\/[a-z0-9-]+\/[a-z0-9-]+$/);
 export const jsonObjectSchema = z.record(z.string(), z.unknown());
+export const mediaInfoSchema = z.object({
+  width: z.number().int().min(1), height: z.number().int().min(1), fps: z.number().positive().nullable(), has_audio: z.boolean(),
+}).strict();
 
 export function schemaVersion<N extends string>(name: N) {
   return z.literal(`harness.${name}/v1` as const);

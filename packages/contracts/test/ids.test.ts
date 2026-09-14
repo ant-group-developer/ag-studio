@@ -18,6 +18,7 @@ describe("ids", () => {
       external_operation: "op", check_result: "check", event: "evt", source_item: "src",
       content_item: "content", content_variant: "variant", channel_package: "pkg",
       publication_job: "pub", incident: "inc",
+      edit_style: "style", content_request: "req", library_item: "item",
     });
   });
 });

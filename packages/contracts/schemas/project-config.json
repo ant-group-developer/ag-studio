@@ -76,6 +76,32 @@
           "default": {
             "materialize": "link"
           }
+        },
+        "library": {
+          "type": "object",
+          "properties": {
+            "root": {
+              "type": "string",
+              "minLength": 1
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "studio",
+                "channel"
+              ]
+            },
+            "sync_seconds": {
+              "type": "integer",
+              "minimum": 10,
+              "default": 300
+            }
+          },
+          "required": [
+            "root",
+            "role"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

@@ -15,6 +15,9 @@ export const ID_PREFIXES = {
   channel_package: "pkg",
   publication_job: "pub",
   incident: "inc",
+  edit_style: "style",
+  content_request: "req",
+  library_item: "item",
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

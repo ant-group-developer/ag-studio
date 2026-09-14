@@ -15,9 +15,9 @@ function makeRun(): Run {
 }
 
 describe("SqliteStateStore", () => {
-  it("migrates once and creates 11 tables", () => {
+  it("migrates once and creates 14 tables", () => {
     const { store, dir } = openTempStore();
-    expect(store.tableNames().sort()).toEqual(["artifact", "attempt", "check_result", "content_item", "content_variant", "event", "external_operation", "lease", "run", "schema_migrations", "source_item", "stage_run"]);
+    expect(store.tableNames().sort()).toEqual(["artifact", "attempt", "check_result", "content_item", "content_request", "content_variant", "edit_style", "event", "external_operation", "lease", "library_item", "run", "schema_migrations", "source_item", "stage_run"]);
     expect(store.migrate(MIGRATIONS_DIR)).toEqual([]);
     const again = new SqliteStateStore(join(dir, "state.db"));
     expect(again.migrate(MIGRATIONS_DIR)).toEqual([]);

@@ -1,5 +1,6 @@
 import type { Artifact, Attempt, CheckResult, ContentItem, ContentVariant, Event, ExternalOperation, Lease, MediaInfo, Run, SourceItem, StageRun } from "./entities.js";
 import type { StageRequest, StageResult } from "./execution.js";
+import type { ContentRequest, EditStyle, LibraryItem } from "./library.js";
 
 export type TransitionKind = "run" | "stage_run" | "attempt" | "artifact" | "external_operation";
 
@@ -70,6 +71,19 @@ export interface StateStore {
   listContentVariants(contentId: string): ContentVariant[];
 
   countLeasedResources(): Record<string, number>;
+
+  // ---- library mirrors (written by syncLibrary, not transition(); see ADR 0001) ----
+  upsertEditStyle(s: EditStyle): void;
+  getEditStyle(id: string): EditStyle | undefined;
+  listEditStyles(filter?: { status?: string }): EditStyle[];
+
+  upsertContentRequest(r: ContentRequest): void;
+  getContentRequest(id: string): ContentRequest | undefined;
+  listContentRequests(filter?: { status?: string }): ContentRequest[];
+
+  upsertLibraryItem(i: LibraryItem): void;
+  getLibraryItem(id: string): LibraryItem | undefined;
+  listLibraryItems(filter?: { status?: string }): LibraryItem[];
 
   appendEvent(e: EventInput): Event;
   listEvents(filter: { run_id?: string; limit?: number; newest?: boolean }): Event[];
