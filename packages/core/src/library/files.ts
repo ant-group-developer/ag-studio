@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import type { ZodType } from "zod";
+import type { ZodTypeDef, ZodType } from "zod";
 import { HarnessError, LibraryClaimSchema, type LibraryClaim, type LibraryFile } from "@harness/contracts";
 import { sha256File } from "../artifacts/checksum.js";
 import { mimeTypeForPath } from "../source-catalog/catalog.js";
@@ -69,7 +69,10 @@ export class LibraryFs {
     }
   }
 
-  readJson<T>(path: string, schema: ZodType<T>): T {
+  // `ZodType<T>` defaults its Input param to T too, which rejects any schema with `.default()` fields
+  // (their parse *input* is narrower than their parse *output* T) — pin Input to `any` so callers can pass
+  // schemas like EditStyleSchema/ContentRequestSchema/LibraryItemSchema that lean on `.default()`.
+  readJson<T>(path: string, schema: ZodType<T, ZodTypeDef, any>): T {
     let raw: string;
     try {
       raw = readFileSync(path, "utf8");

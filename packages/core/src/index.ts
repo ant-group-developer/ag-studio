@@ -30,3 +30,4 @@ export * from "./source-catalog/when.js";
 export * from "./source-catalog/sources-file.js";
 export * from "./doctor/doctor.js";
 export * from "./library/files.js";
+export * from "./library/sync.js";

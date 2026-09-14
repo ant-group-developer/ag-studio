@@ -170,7 +170,7 @@ vi, không chép từ plan.
     dòng `scripts`/`sources` FAIL với chính thông điệp đó (các dòng khác vẫn chạy). Lệnh thật sự cần registry
     vẫn fail to: `harness source sync` ném lại `CONFIG_INVALID` đã lưu, còn script executor báo `NOT_FOUND`
     cho tên script không nạp được.
-42. `harness source sync` đối chiếu `source-catalog/sources.yaml` với DB, trả `SyncReport { added,
+42. `harness source sync` đối chiếu `source-catalog/sources.yaml` với DB, trả `SourceSyncReport { added,
     already, missing_files, unregistered }`: `added`/`already` là `{source_id, path}` theo entry vừa
     ingest/đã có; `missing_files` là `path` của entry mà file trên đĩa không còn tồn tại (không tự xoá gì
     khỏi DB); `unregistered` là `{source_id, uri}` của source **đã có trong DB** nhưng checksum không khớp
@@ -226,3 +226,11 @@ vi, không chép từ plan.
     chậm-nhưng-khoẻ có thể mất lease vào tay reaper đúng giữa execute và commit. `hb.stop()` nằm trong một
     `finally` bọc quanh execute + verify + commit; các kiểm tra `hb.lost`/fencing trước commit và đường cancel
     (`cancelCurrent`) giữ nguyên vị trí cũ.
+49. Sub-project 2C (Task 3) đổi tên `SyncReport` (kiểu trả về của `syncSources`, `source-catalog/sources-file.ts`,
+    2B) thành `SourceSyncReport`: brief của Task 3/9 đặt tên `SyncReport` cho kiểu trả về mới của `syncLibrary`
+    (`packages/core/src/library/sync.ts`), và `export *` của hai module trong `packages/core/src/index.ts` không
+    thể mang hai kiểu trùng tên (`tsc` báo lỗi ambiguity ở barrel) — đây là chỗ đụng tên không được thấy trước
+    khi viết brief 2B lẫn 2C, không phải đánh đổi thiết kế, nên sửa thẳng theo quy tắc "lỗi rõ ràng trong code
+    của plan thì sửa ngay". Đổi tên bản 2B (ít rủi ro hơn: không nơi nào trong `packages/cli` import kiểu này
+    theo tên, chỉ suy ra qua `Awaited<ReturnType<...>>`) thay vì đổi `SyncReport` mới của kho — giữ đúng tên mà
+    brief Task 6/9 đã viết sẵn cho `library sync`.

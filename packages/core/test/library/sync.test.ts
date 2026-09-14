@@ -1,0 +1,225 @@
+import { describe, expect, it } from "vitest";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { newId } from "@harness/contracts";
+import type { ContentRequest, EditStyle, LibraryItem } from "@harness/contracts";
+import { LibraryFs, sha256File, syncLibrary, writeIndex } from "../../src/index.js";
+import { openTempStore } from "../helpers.js";
+
+function tempRoot(): string {
+  return mkdtempSync(join(tmpdir(), "library-sync-"));
+}
+
+function makeStyle(id: string, overrides: Partial<EditStyle> = {}): EditStyle {
+  return {
+    schema_version: "harness.edit-style/v1",
+    style_id: id,
+    revision: 1,
+    name: "Fast cuts",
+    status: "active",
+    learned_from: [],
+    params: {
+      cut_rhythm: "fast",
+      shot_seconds: [1, 3],
+      transitions: [],
+      text_overlay: { style: "bold", density: "medium" },
+      subtitles: "burn-in",
+      music: { mood: "upbeat", ducking: true },
+      opening: { seconds: 3, structure: "hook" },
+      aspect_ratio: "16:9",
+      pace_notes: "",
+    },
+    evidence: [],
+    created_at: "2026-09-14T00:00:00.000Z",
+    updated_at: "2026-09-14T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function makeRequest(id: string, overrides: Partial<ContentRequest> = {}): ContentRequest {
+  return {
+    schema_version: "harness.content-request/v1",
+    request_id: id,
+    requested_by: { portfolio_id: "portfolio-main" },
+    topic: "5 ancient ruins",
+    voice: "none",
+    language: "vi",
+    count: 1,
+    status: "open",
+    item_ids: [],
+    notes: "",
+    created_at: "2026-09-14T00:00:00.000Z",
+    updated_at: "2026-09-14T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function makeItem(id: string, styleId: string, overrides: Partial<LibraryItem> = {}): LibraryItem {
+  return {
+    schema_version: "harness.library-item/v1",
+    item_id: id,
+    status: "pending_review",
+    title_hint: "Ancient ruins ep. 1",
+    summary: "",
+    style: { style_id: styleId, revision: 1 },
+    duration_seconds: 120,
+    media: null,
+    files: [],
+    lineage: { project_id: "project-studio", run_id: newId("run"), content_id: newId("content_item"), source_ids: [] },
+    review: { note: "" },
+    created_at: "2026-09-14T00:00:00.000Z",
+    updated_at: "2026-09-14T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+async function writeItem(fs: LibraryFs, id: string, styleId: string, dataBytes: string): Promise<LibraryItem> {
+  const dataPath = join(fs.paths.itemDir(id), "episode.mp4");
+  mkdirSync(fs.paths.itemDir(id), { recursive: true });
+  writeFileSync(dataPath, dataBytes);
+  const { checksum, size_bytes } = await sha256File(dataPath);
+  const item = makeItem(id, styleId, { files: [{ path: "episode.mp4", checksum, size_bytes, mime_type: "video/mp4" }] });
+  fs.writeJsonAtomic(fs.paths.manifest(id), item);
+  return item;
+}
+
+describe("syncLibrary", () => {
+  it("imports valid entities, flags corrupt ones without importing them, and skips .tmp- files", async () => {
+    const root = tempRoot();
+    const studio = new LibraryFs({ root, role: "studio" });
+    const channel = new LibraryFs({ root, role: "channel" });
+    const { store, clock } = openTempStore();
+
+    const styleId = newId("edit_style");
+    studio.writeJsonAtomic(studio.paths.styleFile(styleId), makeStyle(styleId));
+
+    // Requests are the channel's to create; studio may only overwrite one that already exists.
+    const req1Id = newId("content_request");
+    const req2Id = newId("content_request");
+    channel.writeJsonAtomic(channel.paths.requestFile(req1Id), makeRequest(req1Id));
+    mkdirSync(channel.paths.requests, { recursive: true });
+    writeFileSync(channel.paths.requestFile(req2Id), "{not valid json");
+
+    const item1Id = newId("library_item");
+    const item2Id = newId("library_item");
+    await writeItem(studio, item1Id, styleId, "episode one bytes");
+    await writeItem(studio, item2Id, styleId, "episode two bytes");
+    // Tamper with item 2's data file after the manifest (and its checksum) were written.
+    writeFileSync(join(studio.paths.itemDir(item2Id), "episode.mp4"), "tampered bytes");
+
+    // A stray .tmp- artifact left by an interrupted write; sync must ignore it entirely.
+    mkdirSync(join(studio.paths.items, ".tmp-abandoned"), { recursive: true });
+    writeFileSync(join(studio.paths.items, ".tmp-abandoned", "manifest.json"), "{not json either");
+
+    const report = await syncLibrary({ store, fs: studio, role: "studio", clock });
+
+    expect(report.imported.styles).toEqual([styleId]);
+    expect(report.imported.requests).toEqual([req1Id]);
+    expect(report.imported.items).toEqual([item1Id]);
+    expect(report.updated).toEqual({ styles: [], requests: [], items: [] });
+    expect(report.missing).toEqual([]);
+
+    expect(report.corrupt).toHaveLength(2);
+    const corruptPaths = report.corrupt.map((c) => c.path);
+    expect(corruptPaths).toContain(studio.paths.requestFile(req2Id));
+    expect(corruptPaths).toContain(join(studio.paths.itemDir(item2Id), "episode.mp4"));
+    for (const c of report.corrupt) expect(c.reason.length).toBeGreaterThan(0);
+
+    expect(store.getEditStyle(styleId)).toBeDefined();
+    expect(store.getContentRequest(req1Id)).toBeDefined();
+    expect(store.getContentRequest(req2Id)).toBeUndefined();
+    expect(store.getLibraryItem(item1Id)).toBeDefined();
+    expect(store.getLibraryItem(item2Id)).toBeUndefined();
+
+    // studio's role writes index.json; channel's role never does.
+    expect(existsSync(studio.paths.index)).toBe(true);
+    const index = JSON.parse(readFileSync(studio.paths.index, "utf8")) as {
+      generated_at: string;
+      styles: { id: string; revision: number; status: string; name: string }[];
+      requests: { id: string; status: string; topic: string }[];
+      items: { id: string; status: string; title_hint: string; duration_seconds: number; style: { style_id: string; revision: number } }[];
+    };
+    expect(index.styles).toEqual([{ id: styleId, revision: 1, status: "active", name: "Fast cuts" }]);
+    expect(index.requests).toEqual([{ id: req1Id, status: "open", topic: "5 ancient ruins" }]);
+    expect(index.items).toEqual([{ id: item1Id, status: "pending_review", title_hint: "Ancient ruins ep. 1", duration_seconds: 120, style: { style_id: styleId, revision: 1 } }]);
+  });
+
+  it("classifies a re-synced entity as updated when updated_at moves forward or content changes, and unchanged otherwise", async () => {
+    const root = tempRoot();
+    const studio = new LibraryFs({ root, role: "studio" });
+    const channel = new LibraryFs({ root, role: "channel" });
+    const { store, clock } = openTempStore();
+
+    const req1Id = newId("content_request");
+    channel.writeJsonAtomic(channel.paths.requestFile(req1Id), makeRequest(req1Id));
+    const first = await syncLibrary({ store, fs: studio, role: "studio", clock });
+    expect(first.imported.requests).toEqual([req1Id]);
+
+    // Re-sync with no file changes at all: nothing imported or updated.
+    const unchanged = await syncLibrary({ store, fs: studio, role: "studio", clock });
+    expect(unchanged.imported.requests).toEqual([]);
+    expect(unchanged.updated.requests).toEqual([]);
+
+    // Rewrite the same request with a newer updated_at (content otherwise identical); the request
+    // already exists on disk, so studio is allowed to overwrite it (e.g. after claiming it).
+    clock.advance(60);
+    studio.writeJsonAtomic(studio.paths.requestFile(req1Id), makeRequest(req1Id, { updated_at: clock.now(), notes: "still the same topic" }));
+    const updatedReport = await syncLibrary({ store, fs: studio, role: "studio", clock });
+    expect(updatedReport.updated.requests).toEqual([req1Id]);
+    expect(store.getContentRequest(req1Id)?.notes).toBe("still the same topic");
+  });
+
+  it("reports a DB row whose file has disappeared from the library as missing, without deleting it from the store", async () => {
+    const root = tempRoot();
+    const studio = new LibraryFs({ root, role: "studio" });
+    const { store, clock } = openTempStore();
+
+    const styleId = newId("edit_style");
+    studio.writeJsonAtomic(studio.paths.styleFile(styleId), makeStyle(styleId));
+    await syncLibrary({ store, fs: studio, role: "studio", clock });
+    expect(store.getEditStyle(styleId)).toBeDefined();
+
+    // The style directory disappears from the shared library (e.g. a stale mount).
+    rmSync(studio.paths.styleDir(styleId), { recursive: true, force: true });
+
+    const report = await syncLibrary({ store, fs: studio, role: "studio", clock });
+    expect(report.missing).toEqual([{ kind: "style", id: styleId }]);
+    expect(store.getEditStyle(styleId)).toBeDefined();
+  });
+
+  it("only writes index.json for the studio role; the channel role never writes it", async () => {
+    const root = tempRoot();
+    const { store, clock } = openTempStore();
+
+    const styleId = newId("edit_style");
+    const studioFs = new LibraryFs({ root, role: "studio" });
+    studioFs.writeJsonAtomic(studioFs.paths.styleFile(styleId), makeStyle(styleId));
+
+    const channelFs = new LibraryFs({ root, role: "channel" });
+    await syncLibrary({ store, fs: channelFs, role: "channel", clock });
+    expect(existsSync(join(root, "index.json"))).toBe(false);
+
+    await syncLibrary({ store, fs: studioFs, role: "studio", clock });
+    expect(existsSync(join(root, "index.json"))).toBe(true);
+  });
+});
+
+describe("writeIndex", () => {
+  it("writes generated_at plus the current DB mirrors, independent of syncLibrary", () => {
+    const root = tempRoot();
+    const fs = new LibraryFs({ root, role: "studio" });
+    const { store, clock } = openTempStore();
+
+    const styleId = newId("edit_style");
+    store.upsertEditStyle(makeStyle(styleId));
+
+    writeIndex({ fs, store, clock });
+
+    const raw = JSON.parse(readFileSync(fs.paths.index, "utf8"));
+    expect(raw.generated_at).toBe(clock.now());
+    expect(raw.styles).toEqual([{ id: styleId, revision: 1, status: "active", name: "Fast cuts" }]);
+    expect(raw.requests).toEqual([]);
+    expect(raw.items).toEqual([]);
+  });
+});

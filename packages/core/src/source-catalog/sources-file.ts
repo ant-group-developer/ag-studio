@@ -16,7 +16,7 @@ export function loadSourcesRegistry(projectDir: string): SourcesRegistry | undef
   return parsed.data;
 }
 
-export interface SyncReport {
+export interface SourceSyncReport {
   added: { source_id: string; path: string }[];
   already: { source_id: string; path: string }[];
   missing_files: string[];
@@ -26,9 +26,9 @@ export interface SyncReport {
 /** Reconcile `source-catalog/sources.yaml` against the DB catalog: ingest entries not yet in the DB (via
  * `catalog.ingest`, so materialisation and probing behave exactly like `source ingest`), report entries whose
  * file is gone, and flag DB rows whose checksum is not covered by any entry currently on disk. */
-export async function syncSources(p: { catalog: SourceCatalog; store: StateStore; projectDir: string; registry: SourcesRegistry }): Promise<SyncReport> {
-  const added: SyncReport["added"] = [];
-  const already: SyncReport["already"] = [];
+export async function syncSources(p: { catalog: SourceCatalog; store: StateStore; projectDir: string; registry: SourcesRegistry }): Promise<SourceSyncReport> {
+  const added: SourceSyncReport["added"] = [];
+  const already: SourceSyncReport["already"] = [];
   const missing_files: string[] = [];
   const yamlChecksums = new Set<string>();
 
