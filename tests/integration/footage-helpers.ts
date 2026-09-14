@@ -54,6 +54,7 @@ export function freshFootageProject(): { dir: string; source: string } {
       "  - { portfolio_id: portfolio-main, display_name: Footage portfolio }",
       "resources: { cpu: 2, gpu: 1, heygen: 1 }",
       "source: { materialize: link }",
+      "workflows: [footage-production@1.0.0]",
       "",
     ].join("\n"),
   );

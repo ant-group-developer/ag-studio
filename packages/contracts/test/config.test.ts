@@ -77,6 +77,14 @@ describe("config contracts", () => {
     expect(p.verification.required_checks).toEqual([]);
     expect(p.verification.required_checks_by_stage.assemble).toEqual(["media-probe"]);
   });
+  it("parses project.workflows as a list of workflow releases and rejects a bad ref format", () => {
+    const base = { schema_version: "harness.project-config/v1", project_id: "p", template_release: "0.1.0", runtime: "claude", data_root: "./data", portfolios: [{ portfolio_id: "pf", display_name: "x" }] };
+    expect(ProjectConfigSchema.parse({ ...base, workflows: ["footage-production@1.0.0", "library-production@1.0.0"] }).workflows).toEqual(["footage-production@1.0.0", "library-production@1.0.0"]);
+    expect(ProjectConfigSchema.parse(base).workflows).toBeUndefined();
+    for (const bad of ["footage-production", "footage-production@1.0", "Footage-Production@1.0.0", "footage-production@1.0.0-beta"]) {
+      expect(ProjectConfigSchema.safeParse({ ...base, workflows: [bad] }).success, bad).toBe(false);
+    }
+  });
   it("parses project resources and source materialize policy", () => {
     const pc = ProjectConfigSchema.parse({ schema_version: "harness.project-config/v1", project_id: "p", template_release: "0.1.0", runtime: "claude", data_root: "./data", portfolios: [{ portfolio_id: "pf", display_name: "x" }], resources: { gpu: 1, "image-gen": 2 } });
     expect(pc.resources).toEqual({ gpu: 1, "image-gen": 2 });

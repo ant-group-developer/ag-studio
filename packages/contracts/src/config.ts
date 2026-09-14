@@ -85,6 +85,10 @@ export const ProjectConfigSchema = z.object({
   portfolios: z.array(z.object({ portfolio_id: z.string().min(1), display_name: z.string() }).strict()).min(1),
   resources: z.record(z.string().regex(/^[a-z][a-z0-9-]*$/), z.number().int().min(0)).default({}),
   source: z.object({ materialize: z.enum(["link", "copy", "reference"]).default("link") }).strict().default({ materialize: "link" }),
+  /** Workflow releases (`id@version`) this ops project actually runs. When set, `harness doctor` checks only
+   * these (and the profiles whose `workflow_release` is among them) instead of every workflow/profile
+   * installed in the harness. */
+  workflows: z.array(z.string().regex(/^[a-z][a-z0-9-]*@\d+\.\d+\.\d+$/)).optional(),
   library: z.object({
     root: z.string().min(1),
     role: z.enum(["studio", "channel"]),

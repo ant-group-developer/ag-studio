@@ -7,3 +7,4 @@ portfolios:
   - { portfolio_id: portfolio-main, display_name: Minimal portfolio }
 resources: { cpu: 2, gpu: 1 }
 source: { materialize: link }
+workflows: [sample-three-stage@1.0.0]

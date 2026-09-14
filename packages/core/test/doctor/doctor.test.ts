@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HarnessConfig, ProjectConfig, ScriptsRegistry, SecretResolver } from "@harness/contracts";
-import { HARNESS_ROOT, LibraryFs, loadProfile, loadWorkflow, MIGRATIONS_DIR, runDoctor, SqliteStateStore, type DoctorInput, type LoadedWorkflow } from "../../src/index.js";
+import { HARNESS_ROOT, LibraryFs, loadProfile, loadWorkflow, MIGRATIONS_DIR, resolveWorkflowScope, runDoctor, SqliteStateStore, type DoctorInput, type LoadedWorkflow } from "../../src/index.js";
 import { openTempStore } from "../helpers.js";
 
 const HARNESS_CONFIG: HarnessConfig = {
@@ -225,5 +225,52 @@ describe("runDoctor", () => {
     expect(byCheckPresent.get("library:root")).toMatchObject({ ok: true });
     expect(byCheckPresent.get("library:write")).toMatchObject({ ok: true });
     expect(byCheckPresent.get("library:index")).toMatchObject({ ok: true });
+  });
+
+  // project.yaml.workflows scopes doctor to the workflow releases a machine actually runs: a footage-only
+  // (or here, sample-three-stage-only) project's scripts.yaml has no reason to register library-production's
+  // or style-study's scripts, and doctor must not manufacture script:library-production/* / script:style-study/*
+  // rows for workflows that were never passed in.
+  it("scoped to one workflow release, never reports rows for a workflow it was not given", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "doctor-scope-"));
+    const loaded = loadWorkflow(HARNESS_ROOT, "sample-three-stage@1.0.0");
+    const scripts: ScriptsRegistry = { schema_version: "harness.scripts/v1", scripts: {} }; // no library-* entries at all
+
+    const rows = runDoctor({
+      ...baseInput(projectDir, {}),
+      scripts,
+      builtinScripts: ["fake-stage"],
+      secrets: new StubSecrets(true),
+      workflows: [{ ref: "sample-three-stage@1.0.0", loaded }],
+      profiles: [],
+    });
+    expect(rows.some((r) => r.check.startsWith("script:library-production/"))).toBe(false);
+    expect(rows.some((r) => r.check.startsWith("script:style-study/"))).toBe(false);
+    for (const row of rows) expect(row, `${row.check}: ${row.detail}`).toMatchObject({ ok: true });
+  });
+});
+
+describe("resolveWorkflowScope", () => {
+  it("loads every ref in scope and reports which loaded", () => {
+    const loaded = loadWorkflow(HARNESS_ROOT, "sample-three-stage@1.0.0");
+    const result = resolveWorkflowScope(["sample-three-stage@1.0.0"], (ref) => {
+      expect(ref).toBe("sample-three-stage@1.0.0");
+      return loaded;
+    });
+    expect(result.workflows).toEqual([{ ref: "sample-three-stage@1.0.0", loaded }]);
+    expect(result.rows).toEqual([]);
+  });
+
+  it("turns a ref that fails to load into a failing workflow:<ref> row instead of throwing", () => {
+    const loaded = loadWorkflow(HARNESS_ROOT, "sample-three-stage@1.0.0");
+    const result = resolveWorkflowScope(
+      ["sample-three-stage@1.0.0", "does-not-exist@9.9.9"],
+      (ref) => {
+        if (ref === "sample-three-stage@1.0.0") return loaded;
+        throw new Error(`file not found: workflows/${ref.split("@")[0]}/workflow.yaml`);
+      },
+    );
+    expect(result.workflows).toEqual([{ ref: "sample-three-stage@1.0.0", loaded }]);
+    expect(result.rows).toEqual([{ check: "workflow:does-not-exist@9.9.9", ok: false, detail: expect.stringContaining("does-not-exist") }]);
   });
 });

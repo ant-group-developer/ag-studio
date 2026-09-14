@@ -8,3 +8,6 @@ portfolios:
   - { portfolio_id: portfolio-main, display_name: Main portfolio }
 resources: { cpu: 2, gpu: 1 }
 source: { materialize: link }
+# workflows: [footage-production@1.0.0]  # workflow releases this machine runs; `doctor` checks only these
+                                          # (and their profiles) instead of every workflow in the harness.
+                                          # Leave unset to check everything installed.

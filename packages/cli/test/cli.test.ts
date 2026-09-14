@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync, utimesSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HARNESS_ROOT, SqliteStateStore } from "@harness/core";
@@ -205,20 +205,41 @@ describe("harness CLI", () => {
     expect(rows.find((r) => r.check === "scripts")).toMatchObject({ ok: true });
     expect(rows.find((r) => r.check === "sources")).toMatchObject({ ok: true });
     expect(rows.find((r) => r.check === "migrations")).toMatchObject({ ok: true });
+    // fixtures/ops-project-minimal declares `workflows: [sample-three-stage@1.0.0]`, so doctor is scoped to
+    // that one release instead of scanning every workflow installed in the harness.
+    expect(rows.find((r) => r.check === "workflows")).toMatchObject({ ok: true, detail: "scoped to project.yaml workflows: sample-three-stage@1.0.0" });
+    expect(rows.some((r) => r.check.startsWith("script:footage-production/") || r.check.startsWith("script:library-production/") || r.check.startsWith("script:style-study/"))).toBe(false);
     if (FfprobeMediaProber.isAvailable()) expect(d.code, d.out + d.err).toBe(0);
+  });
+  it("doctor with an unlisted project.yaml.workflows ref fails with a workflow:<ref> row instead of every workflow in the harness", () => {
+    const p = freshProject();
+    const projectYaml = readFileSync(join(p, "project.yaml"), "utf8").replace(/^workflows:.*$/m, "workflows: [does-not-exist@9.9.9]");
+    writeFileSync(join(p, "project.yaml"), projectYaml);
+    expect(cli(p, "db", "migrate").code).toBe(0);
+    const d = cli(p, "doctor", "--json");
+    expect(d.code).toBe(1);
+    const rows = JSON.parse(d.out) as { check: string; ok: boolean; detail: string }[];
+    const row = rows.find((r) => r.check === "workflow:does-not-exist@9.9.9");
+    expect(row).toMatchObject({ ok: false });
+    expect(row?.detail).toContain("does-not-exist");
+    // the scope is exactly what was listed -- no fallback to scanning the harness for other workflows
+    expect(rows.some((r) => r.check.startsWith("script:footage-production/"))).toBe(false);
   });
   it("doctor exits 1 and never prints a resolved secret when a script env ref cannot be resolved", () => {
     const p = freshProject();
     mkdirSync(join(p, "executors"), { recursive: true });
+    // "fake-stage" is the script sample-three-stage's "produce"/"finalize" stages actually use -- ops-project-minimal
+    // scopes doctor to `workflows: [sample-three-stage@1.0.0]`, so an env ref on an out-of-scope script (e.g. "avatar",
+    // which no stage of sample-three-stage runs) would never surface a row at all.
     writeFileSync(
       join(p, "executors", "scripts.yaml"),
-      ["schema_version: harness.scripts/v1", "scripts:", '  avatar: { argv: [node], env_refs: { HEYGEN_API_KEY: "secret://heygen/main" } }', ""].join("\n"),
+      ["schema_version: harness.scripts/v1", "scripts:", '  fake-stage: { argv: [node], env_refs: { HEYGEN_API_KEY: "secret://heygen/main" } }', ""].join("\n"),
     );
     expect(cli(p, "db", "migrate").code).toBe(0);
     const d = cli(p, "doctor", "--json");
     expect(d.code).toBe(1);
     const rows = JSON.parse(d.out) as { check: string; ok: boolean; detail: string }[];
-    const secretRow = rows.find((r) => r.check === "secret:avatar:HEYGEN_API_KEY");
+    const secretRow = rows.find((r) => r.check === "secret:fake-stage:HEYGEN_API_KEY");
     expect(secretRow?.ok).toBe(false);
     expect(d.out).not.toMatch(/HARNESS_SECRET_HEYGEN_MAIN=|heygen-secret/);
   });

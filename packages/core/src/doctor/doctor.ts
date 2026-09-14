@@ -33,6 +33,25 @@ export interface DoctorInput {
 
 const SCRIPT_FILE_RE = /\.(mjs|js|cjs|ts|py|sh)$/;
 
+export interface WorkflowScopeResult { workflows: { ref: string; loaded: LoadedWorkflow }[]; rows: DoctorRow[] }
+
+/** Resolves `project.yaml`'s `workflows` scope (the workflow releases this ops project actually runs) against
+ * a loader, turning any ref that fails to load into a failing `workflow:<ref>` row instead of throwing --
+ * `harness doctor` uses this when the scope is set so it checks only those releases (see `checkWorkflows`/
+ * `checkProfiles` below, which only ever look at what's in `DoctorInput.workflows`/`.profiles`) instead of
+ * every workflow installed in the harness. An unset scope means "check everything" and is resolved by the
+ * caller via a directory scan instead (`packages/cli/src/commands/doctor.ts`), since that needs the harness
+ * root's filesystem layout rather than a single ref lookup. */
+export function resolveWorkflowScope(scope: readonly string[], loadWorkflow: (ref: string) => LoadedWorkflow): WorkflowScopeResult {
+  const workflows: { ref: string; loaded: LoadedWorkflow }[] = [];
+  const rows: DoctorRow[] = [];
+  for (const ref of scope) {
+    try { workflows.push({ ref, loaded: loadWorkflow(ref) }); }
+    catch (e) { rows.push({ check: `workflow:${ref}`, ok: false, detail: e instanceof Error ? e.message : String(e) }); }
+  }
+  return { workflows, rows };
+}
+
 /** Checks a project + harness install for consistency without touching the network or mutating anything;
  * every fallible step (filesystem reads, secret resolution) is wrapped so one bad row never aborts the rest. */
 export function runDoctor(i: DoctorInput): DoctorRow[] {
