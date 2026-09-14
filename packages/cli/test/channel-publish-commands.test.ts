@@ -191,8 +191,8 @@ describe("harness channel / publish / skills commands", () => {
       expect(out.episode_no).toBe(202);
     });
 
-    it("publish slots c1 --days 3 --json returns 3 increasing, distinct, future slots", () => {
-      const r = cli(world.project, ["publish", "slots", "c1", "--days", "3", "--json"]);
+    it("publish slots c1 --count 3 --json returns 3 increasing, distinct, future slots", () => {
+      const r = cli(world.project, ["publish", "slots", "c1", "--count", "3", "--json"]);
       expect(r.code, r.err).toBe(0);
       const slots = JSON.parse(r.out) as string[];
       expect(slots).toHaveLength(3);
@@ -200,6 +200,12 @@ describe("harness channel / publish / skills commands", () => {
       expect(new Set(ms).size).toBe(3);
       expect(ms).toEqual([...ms].sort((a, b) => a - b));
       for (const m of ms) expect(m).toBeGreaterThan(Date.now());
+    });
+
+    it("publish slots still accepts the old --days spelling as a hidden alias", () => {
+      const r = cli(world.project, ["publish", "slots", "c1", "--days", "3", "--json"]);
+      expect(r.code, r.err).toBe(0);
+      expect(JSON.parse(r.out) as string[]).toHaveLength(3);
     });
 
     it("publish cancel moves a READY job to FAILED with the note", () => {

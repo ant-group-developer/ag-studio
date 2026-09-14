@@ -116,12 +116,12 @@ describe("CliAgentRuntime", () => {
     expect(CliAgentRuntime.isAvailable("claude", "definitely-missing-bin")).toBe(false);
   });
 
-  it("missing binary: spawn ENOENT fails transiently instead of crashing the process", async () => {
+  it("missing binary: spawn ENOENT fails contract (spec 4.3: the CLI is not installed) instead of crashing the process", async () => {
     const { ws, req } = makeWorkspace();
     const runtime = new CliAgentRuntime({ runtime: "claude", skillsDir, argv: ["definitely-missing-binary-xyz", "{prompt}"] });
     const res = await runtime.runTask({ skill: "channel-package", brief: "b", request: req, workspaceDir: ws }, { ...ctx, workspaceDir: ws });
     expect(res.outcome).toBe("failed");
-    expect(res.errors[0]!.kind).toBe("transient");
+    expect(res.errors[0]!.kind).toBe("contract");
   });
 });
 

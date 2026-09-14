@@ -1,4 +1,4 @@
-import type { Command } from "commander";
+import { Option, type Command } from "commander";
 import { HarnessError } from "@harness/contracts";
 import { nextSlot, reconcilePublication, transitionPublication, verifyScheduled } from "@harness/core";
 import { print, requireChannelsLoaded, withContext } from "./shared.js";
@@ -41,14 +41,19 @@ export function registerPublish(program: Command): void {
     });
 
   publish.command("slots <channel>")
-    .option("--days <n>", "how many upcoming slots to compute", "7").option("--json", "machine output", false)
+    // `--days` was a misnomer: the number is how many *slots* to compute, and a channel with two publish
+    // times a day covers `n/2` days. Kept as a hidden alias so existing scripts keep working.
+    .option("--count <n>", "how many upcoming slots to compute", "7")
+    .addOption(new Option("--days <n>", "deprecated alias for --count").hideHelp())
+    .option("--json", "machine output", false)
     .description("preview the channel's next free publish slots (does not book anything)")
     .action(async (channelId: string, o, cmd) => {
       await withContext(cmd, {}, (ctx) => {
         requireChannelsLoaded(ctx);
         const channel = ctx.channels.get(channelId);
-        const n = Number(o.days);
-        if (!Number.isInteger(n) || n < 1) throw new HarnessError("CONFIG_INVALID", `--days must be a positive integer, got "${o.days}"`, { days: o.days });
+        const raw = (o.days ?? o.count) as string; // an explicit --days wins over --count's default
+        const n = Number(raw);
+        if (!Number.isInteger(n) || n < 1) throw new HarnessError("CONFIG_INVALID", `--count must be a positive integer, got "${raw}"`, { count: raw });
         const taken = ctx.store.listPublicationJobs({ channel_id: channelId })
           .filter((j) => j.state === "SCHEDULED" || j.state === "PUBLISHED")
           .map((j) => j.scheduled_at).filter((at): at is string => at !== null);

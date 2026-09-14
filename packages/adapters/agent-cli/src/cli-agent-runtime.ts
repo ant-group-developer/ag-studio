@@ -137,7 +137,9 @@ export class CliAgentRuntime implements AgentRuntime {
     mkdirSync(join(task.workspaceDir, "logs"), { recursive: true });
     writeFileSync(join(task.workspaceDir, "logs", "agent-stdout.log"), redact(combinedLog));
 
-    if (spawnError) return failed("transient", `agent CLI failed to start: ${spawnError.message}`, { code: "EXECUTOR_FAILED", reason: spawnError.message });
+    // Spec §4.3: "CLI không có trên PATH → failed contract" -- a missing agent CLI is a machine that was never
+    // set up (doctor's `agent:runtime` row says so up front), not a blip worth retrying the stage over.
+    if (spawnError) return failed("contract", `agent CLI failed to start: ${spawnError.message}`, { code: "EXECUTOR_FAILED", reason: spawnError.message });
     if (timedOut) return failed("transient", "agent CLI exceeded deadline", { code: "EXECUTOR_TIMEOUT", timeout_ms: deadlineMs });
     if (code !== 0) return failed("transient", `agent CLI exited with code ${code}`, { code: "EXECUTOR_FAILED", exit_code: code });
 
