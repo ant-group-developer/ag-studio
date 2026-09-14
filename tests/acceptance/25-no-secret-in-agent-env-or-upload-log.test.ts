@@ -52,20 +52,21 @@ describe.skipIf(!hasFfmpeg())("acceptance 25: no secret value or HARNESS_SECRET_
 
     const files = leakCandidates(world.channel);
     expect(files.length).toBeGreaterThan(0); // the assertion below would be vacuous over an empty list
-    let sawUploadEnvProbe = false;
     for (const f of files) {
       const content = readFileSync(f, "utf8");
       expect(content, `${f} contains the secret value`).not.toContain(SECRET_VALUE);
       for (const name of SECRET_NAMES) expect(content, `${f} contains ${name}`).not.toContain(name);
-      // The fixture upload script prints the *names* of every HARNESS_SECRET_* var its own process can see
-      // (`[upload] env=<names>`); `PlaywrightPublisher` strips them from the child env, so the list is empty.
-      // (the char class stops at the closing quote/escape of the JSON log line the sdk emits around it)
-      for (const m of content.matchAll(/\[upload\] env=([^"\\\r\n]*)/g)) {
-        sawUploadEnvProbe = true;
-        expect(m[1]!.trim(), `${f}: the upload child saw HARNESS_SECRET_* vars`).toBe("");
-      }
     }
-    expect(sawUploadEnvProbe, "the upload script's env probe never reached any log").toBe(true);
+
+    // The upload child's own view of the environment, straight from the horse's mouth: the fixture upload
+    // script prints the *names* of every HARNESS_SECRET_* var it can see (`[upload] env=<names>`), and that
+    // line lands verbatim in the job receipt's `log_tail`. `PlaywrightPublisher.publisherChildEnv` strips
+    // them all, so the list must be empty -- a non-empty one means a resolved secret reached a legacy script.
+    const uploadJob = jobs(world, "channel-one")[0]!;
+    const logTail = ((uploadJob.receipt as { log_tail?: unknown[] } | null)?.log_tail ?? []).filter((l): l is string => typeof l === "string");
+    const envLines = logTail.filter((l) => l.includes("[upload] env="));
+    expect(envLines, `no "[upload] env=" line in the job receipt log_tail: ${JSON.stringify(logTail)}`).toHaveLength(1);
+    expect(envLines[0]!.trim()).toBe("[upload] env=");
 
     const events = cli(world.channel, ["events", "tail", "--run", runId, "--limit", "1000", "--json"], world.secretsEnv);
     expect(events.code, events.err).toBe(0);
