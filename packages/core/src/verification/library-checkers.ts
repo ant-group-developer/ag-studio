@@ -1,14 +1,24 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { libraryBriefSchema, LibraryItemSchema, type Checker, type MediaProber } from "@harness/contracts";
+import { z } from "zod";
+import { checksumSchema, libraryBriefSchema, libraryFileSchema, LibraryItemSchema, type Checker, type MediaProber } from "@harness/contracts";
 import { canonicalDigest, sha256File } from "../artifacts/checksum.js";
-import type { ExportReceipt } from "../library/export.js";
 
 const skip = (reason: string) => ({ verdict: "skip" as const, evidence: { reason } });
 
 // `brief.json` may carry a `style_snapshot` alongside the LibraryBrief fields (intake writes both);
 // this checker only reads `target_duration_seconds`, so extra fields are allowed rather than rejected.
 const briefWithExtrasSchema = libraryBriefSchema.passthrough();
+
+// Shape of `export-receipt.json` (exportItem's ExportReceipt), validated defensively: the receipt comes
+// from a stage output on disk, not a typed in-process value, so a malformed or hand-edited file must fail
+// this checker cleanly instead of throwing when its fields are read.
+const exportReceiptSchema = z.object({
+  item_id: z.string().min(1),
+  item_dir: z.string().min(1),
+  files: z.array(libraryFileSchema),
+  manifest_checksum: checksumSchema,
+});
 
 /**
  * Kho-aware checkers layered on top of BUILTIN_CHECKERS and mediaCheckers (spec §3.2, §4.1):
@@ -41,11 +51,11 @@ export function libraryCheckers(prober: MediaProber, opts: { available?: boolean
       try {
         parsedJson = JSON.parse(readFileSync(briefPath, "utf8"));
       } catch (e) {
-        return { verdict: "fail", evidence: { path: briefInput.path, reason: "invalid brief.json", error: e instanceof Error ? e.message : String(e) } };
+        return { verdict: "fail", evidence: { path: briefInput.path, reason: "invalid JSON in brief.json", error: e instanceof Error ? e.message : String(e) } };
       }
       const parsed = briefWithExtrasSchema.safeParse(parsedJson);
       if (!parsed.success) {
-        return { verdict: "fail", evidence: { path: briefInput.path, reason: "invalid brief.json", issues: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) } };
+        return { verdict: "fail", evidence: { path: briefInput.path, reason: "brief.json failed schema validation", issues: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) } };
       }
       const range = parsed.data.target_duration_seconds;
       if (!range) return skip("no target_duration_seconds");
@@ -79,12 +89,18 @@ export function libraryCheckers(prober: MediaProber, opts: { available?: boolean
       const checked: string[] = [];
       for (const o of outputs) {
         const receiptPath = join(input.workspaceDir, o.path);
-        let receipt: ExportReceipt;
+        let receiptJson: unknown;
         try {
-          receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+          receiptJson = JSON.parse(readFileSync(receiptPath, "utf8"));
         } catch (e) {
           return { verdict: "fail", evidence: { path: o.path, reason: "unreadable", error: e instanceof Error ? e.message : String(e) } };
         }
+        const parsedReceipt = exportReceiptSchema.safeParse(receiptJson);
+        if (!parsedReceipt.success) {
+          const reason = `invalid receipt: ${parsedReceipt.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`;
+          return { verdict: "fail", evidence: { path: receiptPath, reason } };
+        }
+        const receipt = parsedReceipt.data;
 
         for (const f of receipt.files) {
           const filePath = join(receipt.item_dir, f.path);

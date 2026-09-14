@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { extname, join } from "node:path";
 import {
   LibraryItemSchema,
@@ -28,6 +28,23 @@ export interface ExportReceipt {
 function existingCreatedAt(d: LibraryDeps, manifestPath: string): string | undefined {
   if (!existsSync(manifestPath)) return undefined;
   return d.fs.readJson(manifestPath, LibraryItemSchema).created_at;
+}
+
+/**
+ * The one place the kho removes files: after a re-export overwrites `items/<id>/` with a new file set
+ * (e.g. fewer thumbnails, or the same slot with a different source extension), any regular file directly
+ * in the item dir that is neither `manifest.json` nor one of the freshly-copied `files[].path` is stale
+ * data from the previous export of this *same, still-unreviewed* item — not a reviewed artifact and not
+ * anything a channel wrote — so it is deleted. Never recurses, so `claims/` (channel-owned) is untouched.
+ */
+function pruneStaleFiles(dir: string, keep: readonly string[]): void {
+  if (!existsSync(dir)) return;
+  const keepNames = new Set(keep);
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isFile()) continue; // skips claims/ (a directory) and anything else that isn't a plain file
+    if (entry.name === "manifest.json" || keepNames.has(entry.name)) continue;
+    rmSync(join(dir, entry.name));
+  }
 }
 
 /**
@@ -64,6 +81,8 @@ export async function exportItem(
     files.push(await d.fs.copyFileWithChecksum(p.captionsPath, join(dir, "captions.json")));
   }
   files.push(await d.fs.copyFileWithChecksum(p.editPlanPath, join(dir, "edit-plan.json")));
+
+  pruneStaleFiles(dir, files.map((f) => f.path));
 
   const probed = await d.prober.probe(p.episodePath);
   const now = d.clock.now();

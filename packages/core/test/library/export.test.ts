@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -200,6 +200,61 @@ describe("exportItem", () => {
     // only one item directory/manifest exists, no second item minted
     expect(fs.listItemIds()).toEqual([first.item.item_id]);
     expect(store.listLibraryItems()).toHaveLength(1);
+  });
+
+  it("prunes stale files on re-export with a smaller/different file set, preserving manifest.json and claims/", async () => {
+    const { d, fs, store } = world();
+    const run = makeRun();
+    const content = makeContent();
+    const brief = makeBrief();
+
+    const src = tempSrcDir();
+    const episodePath = join(src, "full-episode.mp4");
+    writeFileSync(episodePath, "episode-bytes");
+    const editPlanPath = join(src, "plan.json");
+    writeFileSync(editPlanPath, JSON.stringify({ style_id: "x" }));
+
+    const firstThumb1 = join(src, "first-1.png");
+    writeFileSync(firstThumb1, "first-thumb-1");
+    const firstThumb2 = join(src, "first-2.jpg");
+    writeFileSync(firstThumb2, "first-thumb-2");
+    const firstThumb3 = join(src, "first-3.png");
+    writeFileSync(firstThumb3, "first-thumb-3");
+
+    const first = await exportItem(d, {
+      run, content, brief, episodePath, editPlanPath,
+      thumbnailPaths: [firstThumb1, firstThumb2, firstThumb3],
+    });
+    const dir = first.receipt.item_dir;
+
+    // A claim file, as a channel would write it — must never be touched by a studio re-export.
+    mkdirSync(join(dir, "claims"), { recursive: true });
+    writeFileSync(join(dir, "claims", "c1.json"), JSON.stringify({ item_id: first.item.item_id }));
+
+    const secondThumb1 = join(src, "second-1.png");
+    writeFileSync(secondThumb1, "second-thumb-1");
+    const secondThumb2 = join(src, "second-2.webp"); // same slot as firstThumb2, different extension
+    writeFileSync(secondThumb2, "second-thumb-2");
+
+    const second = await exportItem(d, {
+      run, content, brief, episodePath, editPlanPath,
+      thumbnailPaths: [secondThumb1, secondThumb2],
+      existingItemId: first.item.item_id,
+    });
+
+    expect(second.item.item_id).toBe(first.item.item_id);
+    expect(second.item.created_at).toBe(first.item.created_at);
+
+    const topLevelFiles = readdirSync(dir, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name).sort();
+    expect(topLevelFiles).toEqual(["edit-plan.json", "episode.mp4", "manifest.json", "thumbnail-01.png", "thumbnail-02.webp"].sort());
+    expect(existsSync(join(dir, "thumbnail-02.jpg"))).toBe(false); // stale: superseded extension
+    expect(existsSync(join(dir, "thumbnail-03.png"))).toBe(false); // stale: no third thumbnail this time
+
+    expect(existsSync(join(dir, "claims", "c1.json"))).toBe(true);
+
+    expect(second.item.files.map((f) => f.path)).toEqual(["episode.mp4", "thumbnail-01.png", "thumbnail-02.webp", "edit-plan.json"]);
+    expect(store.getLibraryItem(second.item.item_id)).toEqual(second.item);
+    expect(fs.listItemIds()).toEqual([first.item.item_id]);
   });
 
   it("treats an existingItemId with no manifest on disk yet the same as a fresh export (created_at = now)", async () => {

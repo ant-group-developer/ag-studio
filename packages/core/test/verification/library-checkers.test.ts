@@ -138,6 +138,43 @@ describe("libraryCheckers", () => {
       rmSync(ws, { recursive: true, force: true });
     });
 
+    it("fails with a JSON reason when brief.json is not valid JSON", async () => {
+      const ws = tmpWorkspace();
+      const { request, result } = fixture(ws, { topic: "t", style_id: newId("edit_style"), style_revision: 1, target_duration_seconds: [5, 20] });
+      writeFileSync(join(ws, "input", "brief.json"), "{ not valid json");
+      const checker = checkerById(libraryCheckers(new FakeMediaProber(new Map())), "brief-duration");
+      const outcome = await checker.check({ request, result, workspaceDir: ws });
+      expect(outcome.verdict).toBe("fail");
+      expect(outcome.evidence.reason).toContain("JSON");
+      rmSync(ws, { recursive: true, force: true });
+    });
+
+    it("fails with a schema reason when brief.json does not match the brief schema", async () => {
+      const ws = tmpWorkspace();
+      const { request, result } = fixture(ws, { topic: "t", style_id: newId("edit_style"), style_revision: 1, target_duration_seconds: [5, 20] });
+      // style_id must match the edit_style id pattern; this one does not, so schema validation fails
+      writeFileSync(join(ws, "input", "brief.json"), JSON.stringify({ topic: "t", style_id: "not-a-valid-style-id", style_revision: 1, target_duration_seconds: [5, 20] }));
+      const checker = checkerById(libraryCheckers(new FakeMediaProber(new Map())), "brief-duration");
+      const outcome = await checker.check({ request, result, workspaceDir: ws });
+      expect(outcome.verdict).toBe("fail");
+      expect(outcome.evidence.reason).toContain("schema");
+      rmSync(ws, { recursive: true, force: true });
+    });
+
+    it("tolerates an extra style_snapshot field on brief.json (passthrough) and still passes", async () => {
+      const ws = tmpWorkspace();
+      const { request, result, episodePath } = fixture(ws, { topic: "t", style_id: newId("edit_style"), style_revision: 1, target_duration_seconds: [5, 20] });
+      const briefWithSnapshot = {
+        topic: "t", style_id: newId("edit_style"), style_revision: 1, target_duration_seconds: [5, 20],
+        style_snapshot: { name: "fast-cut", params: { cut_rhythm: "fast" } },
+      };
+      writeFileSync(join(ws, "input", "brief.json"), JSON.stringify(briefWithSnapshot));
+      const checker = checkerById(libraryCheckers(new FakeMediaProber(new Map([[episodePath, videoProbe(12)]]))), "brief-duration");
+      const outcome = await checker.check({ request, result, workspaceDir: ws });
+      expect(outcome.verdict).toBe("pass");
+      rmSync(ws, { recursive: true, force: true });
+    });
+
     it("skips when there is no episode_video output", async () => {
       const ws = tmpWorkspace();
       const request = baseRequest();
@@ -278,6 +315,21 @@ describe("libraryCheckers", () => {
       const result = baseResult([{ path: "output/thumb.png", type: "thumbnail", checksum: sha, size_bytes: 1, kind: "file" }]);
       const checker = checkerById(libraryCheckers(new FakeMediaProber(new Map())), "library-export-valid");
       expect(await checker.check({ request, result, workspaceDir: ws })).toEqual({ verdict: "skip", evidence: { reason: "no matching output" } });
+      rmSync(ws, { recursive: true, force: true });
+    });
+
+    it("fails with a structured 'invalid receipt' reason instead of throwing when the receipt JSON is malformed", async () => {
+      const ws = tmpWorkspace();
+      mkdirSync(join(ws, "output"), { recursive: true });
+      const receiptPath = join(ws, "output", "export-receipt.json");
+      writeFileSync(receiptPath, JSON.stringify({}));
+      const request = baseRequest();
+      const result = baseResult([{ path: "output/export-receipt.json", type: "export_receipt", checksum: sha, size_bytes: 1, kind: "file" }]);
+      const checker = checkerById(libraryCheckers(new FakeMediaProber(new Map())), "library-export-valid");
+      const outcome = await checker.check({ request, result, workspaceDir: ws });
+      expect(outcome.verdict).toBe("fail");
+      expect(outcome.evidence.path).toBe(receiptPath);
+      expect(outcome.evidence.reason).toMatch(/^invalid receipt: /);
       rmSync(ws, { recursive: true, force: true });
     });
   });
