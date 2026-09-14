@@ -21,6 +21,22 @@ function requireChannel(app: AppContext, id: string): LoadedChannel {
   return app.channels.get(id);
 }
 
+/** The `upload`/`schedule` stages run in their own `harness publish stage …` CLI child process, spawned fresh
+ * by the `ScriptExecutor` -- its `Redactor` only masks secret values *this* process has resolved
+ * (`EnvSecretResolver.resolvedValues()`). The channel's `youtube.account_email_ref` is normally only resolved
+ * by the `channel-identity` checker back in the `build-package` process, so without this call a legacy script
+ * that echoes the account email (the real `upload-youtube-playwright.mjs` logs it as an account gate) would land
+ * unredacted in this process's attempt log and `log_tail`. Resolving here purely registers the value with the
+ * Redactor; an unresolved secret must not fail the stage -- `channel-identity` already reports that separately
+ * -- so failures are swallowed, and the resolved value is never logged or stored. */
+function registerAccountEmailForRedaction(app: AppContext, channel: LoadedChannel): void {
+  try {
+    app.secrets.resolve(channel.config.youtube.account_email_ref);
+  } catch {
+    // unresolved: channel-identity (build-package) already fails the run for this
+  }
+}
+
 function readJsonFile(path: string): unknown {
   let raw: string;
   try {
@@ -269,7 +285,8 @@ async function uploadStage(app: AppContext, sdk: ScriptContext): Promise<void> {
 
   const pkg = app.store.getChannelPackage(receipt.package_id);
   if (!pkg) throw new HarnessError("NOT_FOUND", `channel package not found: ${receipt.package_id}`, { package_id: receipt.package_id });
-  requireChannel(app, job.channel_id);
+  const channel = requireChannel(app, job.channel_id);
+  registerAccountEmailForRedaction(app, channel);
 
   const intent = app.journal.recordIntent({
     request: { run_id: sdk.request.run_id, stage_run_id: sdk.request.stage_run_id, attempt_id: sdk.request.attempt_id },
@@ -343,6 +360,7 @@ async function scheduleStage(app: AppContext, sdk: ScriptContext): Promise<void>
   const videoId = job.youtube_video_id;
   if (!videoId) throw new HarnessError("CONFIG_INVALID", `publication job ${job.publication_job_id} has no youtube_video_id`, { publication_job_id: job.publication_job_id });
   const channel = requireChannel(app, job.channel_id);
+  registerAccountEmailForRedaction(app, channel);
 
   const taken = app.store.listPublicationJobs({ channel_id: job.channel_id })
     .filter((j) => j.state === "SCHEDULED" || j.state === "PUBLISHED")

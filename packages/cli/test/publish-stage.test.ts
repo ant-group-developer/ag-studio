@@ -151,7 +151,7 @@ interface InputSpec { type: string; relPath: string; kind?: "file" | "directory"
  * state themselves, only `run_id`/inputs, so replaying a stage against the same claim is a legitimate way to
  * test its own idempotency without fighting the terminal `SUCCEEDED` state), hand-builds a `stage-request.json`
  * with `inputSpecs` materialized as fake inputs, and spawns `harness publish stage <cliName>`. */
-async function invokeStage(project: string, runId: string, stageKey: string, cliName: string, inputSpecs: InputSpec[], envExtra: Record<string, string> = {}, claimOverride?: ClaimResult): Promise<{ result: StageResult; workspaceDir: string; claim: ClaimResult }> {
+async function invokeStage(project: string, runId: string, stageKey: string, cliName: string, inputSpecs: InputSpec[], envExtra: Record<string, string> = {}, claimOverride?: ClaimResult): Promise<{ result: StageResult; workspaceDir: string; claim: ClaimResult; stdout: string; stderr: string }> {
   let claim: ClaimResult;
   {
     const ctx = buildContext({ projectDir: project });
@@ -184,7 +184,7 @@ async function invokeStage(project: string, runId: string, stageKey: string, cli
   const resultPath = join(workspaceDir, "stage-result.json");
   if (!existsSync(resultPath)) throw new Error(`publish stage ${cliName} wrote no stage-result.json (exit ${r.code}): ${r.err}\n${r.out}`);
   const result = JSON.parse(readFileSync(resultPath, "utf8")) as StageResult;
-  return { result, workspaceDir, claim };
+  return { result, workspaceDir, claim, stdout: r.out, stderr: r.err };
 }
 
 /** Progresses the workflow DAG (so the next stage's `claim()` can find a READY row) by committing a stage's
@@ -409,6 +409,37 @@ describe("harness publish stage", () => {
         const confirmedIdx = events.findIndex((e) => e.event_type === "external_operation.confirmed");
         expect(dispatchedIdx, JSON.stringify(events.map((e) => e.event_type))).toBeGreaterThanOrEqual(0);
         expect(confirmedIdx).toBeGreaterThan(dispatchedIdx);
+      } finally { ctx.close(); }
+    });
+
+    it("redacts the channel's account email from stdout, the stage result, and the stored receipt -- the upload stage runs in its own CLI child process, where the Redactor only masks secrets *that process* resolved, so without registering account_email_ref up front the legacy script's account-gate line (`[upload] account <email>`, printed by the fixture upload script) would leak unmasked", async () => {
+      const { runId, receipt, buildPackageWorkspace } = await toReadyJob(world.channel, world.lib, sampleDraft());
+      const up = await invokeStage(world.channel, runId, "upload", "upload", [
+        { type: "channel_package", relPath: "input/package-receipt/package-receipt.json", src: join(buildPackageWorkspace, "output", "package-receipt.json") },
+      ], { FAKE_UPLOAD_MODE: "ok" });
+      expect(up.result.outcome, JSON.stringify(up.result)).toBe("succeeded");
+
+      // the account-gate line only ever reaches this process's own stdout (as a `sdk.log.info` JSON line) and
+      // the stored receipt's `log_tail` -- never the upload-receipt.json output or stage-result.json themselves.
+      expect(up.stdout).not.toContain("owner@example.com");
+      expect(up.stdout).toContain("[REDACTED]");
+      expect(JSON.stringify(up.result)).not.toContain("owner@example.com");
+
+      const uploadReceiptRaw = readFileSync(join(up.workspaceDir, "output", "upload-receipt.json"), "utf8");
+      expect(uploadReceiptRaw).not.toContain("owner@example.com");
+
+      const ctx = buildContext({ projectDir: world.channel });
+      try {
+        const job = ctx.store.getPublicationJob(receipt.publication_job_id)!;
+        const receiptJson = JSON.stringify(job.receipt);
+        expect(receiptJson).not.toContain("owner@example.com");
+        expect(receiptJson).toContain("[REDACTED]");
+        const logTail = (job.receipt as { log_tail?: unknown[] } | null)?.log_tail ?? [];
+        expect(logTail.length).toBeGreaterThan(0);
+        expect(logTail.some((l) => typeof l === "string" && l.includes("[REDACTED]"))).toBe(true);
+
+        const op = ctx.store.getExternalOperation(job.operation_id!)!;
+        expect(JSON.stringify(op.receipt)).not.toContain("owner@example.com");
       } finally { ctx.close(); }
     });
 
