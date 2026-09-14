@@ -230,6 +230,11 @@ Rút từ ledger SDD (`docs/superpowers/sdd/2026-09-14-sub-project-3-channel-pub
 
 ### `packages/core/src/distribution/` — core
 
+- `PublicationState` (`export type PublicationState = (typeof PUBLICATION_STATES)[number]`,
+  `packages/contracts/src/entities.ts:267`) không có nơi nào import — thừa từ Task 2, không dùng để gõ kiểu
+  `PublicationJob.state` ở bất kỳ chữ ký hàm nào trong `packages/core`/`packages/cli` hiện có (chúng dùng
+  `string`/suy luận từ `PublicationJob`). Ruling: giữ nguyên (không phải bug, không tốn gì) — xoá hoặc bắt đầu
+  dùng nó lần tới có ai sửa `packages/contracts/src/entities.ts` cho khu vực này (Task 2).
 - `createDraftPackage`'s guard cho `library_item_id` thiếu chưa có test riêng (Task 3).
 - `zonedToUtc` (dùng bởi `nextSlot`) không xử lý riêng giờ DST bị nhảy/lặp (spring-forward gap, fall-back
   ambiguous hour) — dùng `Intl.DateTimeFormat` thô, hành vi ở đúng giờ chuyển DST chưa được assert (Task 3).

@@ -427,3 +427,6 @@ plan/spec.
     đã báo lỗi đó ở `build-package`) — chỉ để đăng ký giá trị với Redactor, không log/lưu giá trị. Không có
     lời gọi này, dòng cổng tài khoản mà script cũ tự in (`[upload] account <email>`) sẽ lọt nguyên văn vào
     `log_tail`/receipt của `PublicationJob`/`ExternalOperation` (Task 12, phát hiện ở review cuối Task 11).
+    Test: `packages/cli/test/publish-stage.test.ts` ("redacts the channel's account email from stdout, the
+    stage result, and the stored receipt", `describe("upload", ...)`) — xác nhận fail (email lộ nguyên văn)
+    khi bỏ lời gọi này, pass khi có.
