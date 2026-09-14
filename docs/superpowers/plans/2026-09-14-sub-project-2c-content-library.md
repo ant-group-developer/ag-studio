@@ -222,7 +222,7 @@ export function reopenRequest(d, p: { request_id; note }): ContentRequest       
 // review.ts
 export function applyReview(d, p: { item_id; decision: "approved"|"rejected"; note?; by? }): { item: LibraryItem; request?: ContentRequest }   // studio; pending_review → approved|rejected; nếu item.request_id: approved → fulfillRequest, rejected → reopenRequest
 export function withdrawItem(d, p: { item_id; note? }): LibraryItem                 // studio; approved|rejected → withdrawn
-export function claimItem(d: { store; fs; clock; catalog: SourceCatalog }, p: { item_id; channel_id; portfolio_id; note? }): { claim: LibraryClaim; content: ContentItem }   // channel; item phải approved (đọc file kho, không tin DB); ghi claims/<channel>.json (idempotent: đã có → trả lại); tạo ContentItem { source_ids: [], title: item.title_hint, library_item_id }
+export function claimItem(d: { store; fs; clock; catalog: SourceCatalog }, p: { item_id; channel_id; portfolio_id; note? }): { claim: LibraryClaim; content: ContentItem }   // channel; đọc manifest từ kho (không tin DB); NẾU claims/<channel>.json đã có → trả claim đó + ContentItem có library_item_id (tạo nếu chưa có) bất kể status hiện tại (idempotent, như claimRequest); ngược lại item phải approved (INVALID_TRANSITION nếu không), ghi claim, tạo ContentItem { source_ids: [], title: item.title_hint, library_item_id }
 ```
 `d` chung: `{ store: StateStore; fs: LibraryFs; clock: Clock }`. `SourceCatalog.createContent` hiện yêu cầu `source_ids`; thêm tham số tuỳ chọn `library_item_id`/`library_brief` cho `createContent` (mở rộng chữ ký, không đổi hành vi cũ).
 
