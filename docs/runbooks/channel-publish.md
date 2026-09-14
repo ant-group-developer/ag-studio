@@ -15,6 +15,12 @@ verify,reconcile,checkers}.ts`, `packages/adapters/{youtube-playwright,agent-cli
 
 ## 1. Khai một kênh (`channels/<channel_id>/channel.yaml`)
 
+> **Điều kiện tiên quyết của máy kênh: phải có `ffprobe`/`ffmpeg` trên PATH.** Stage đầu tiên
+> (`fetch-library-item`) khai checker bắt buộc `media-probe`; không có prober thì checker đó trả `skip`, mà
+> `skip` **không** phải `pass` — stage `FAILED` (output `REJECTED`), `retry_on` mặc định không retry lỗi
+> `result`, nên **run chốt `FAILED` ngay ở stage 1** và không có gói nào được tạo. Cài ffmpeg (kèm ffprobe)
+> trước khi chạy kênh đầu tiên; `harness doctor` có một hàng `ffprobe` báo trước đúng việc này (mục 3).
+
 Copy `project-template/channels/example/channel.yaml` thành `channels/<channel_id>/channel.yaml` (**tên thư
 mục phải khớp `channel_id`** — lệch tên là `CONFIG_INVALID`, chặn cả `channels:config` của mọi kênh khác
 trong cùng project, không chỉ kênh sai). Các trường bắt buộc phải điền đúng máy đang chạy:
@@ -68,6 +74,7 @@ Ngoài các hàng chung (migration, ffprobe, resources, ...), một project có 
 
 | Hàng | Kiểm gì |
 | --- | --- |
+| `ffprobe` | `ffprobe` có trên PATH (hàng chung, nhưng trên máy kênh là **bắt buộc**: FAIL ở đây nghĩa là mọi run `channel-publish` sẽ chết ở stage `fetch-library-item` vì checker `media-probe` bị skip — xem mục 1). |
 | `channels:config` | Cả khối `channels/` nạp được (một kênh lỗi parse/`channel_id` sai tên thư mục/`portfolio_id` lạ làm dòng này FAIL và **không có** năm dòng theo kênh nào cả — sửa kênh đó trước). |
 | `channel:<id>:repo` | `repo_dir` tồn tại và là thư mục. |
 | `channel:<id>:scripts` | `upload-youtube-playwright.mjs` + `publish-video-playwright.mjs` có mặt trong `scripts/` của repo. |
@@ -115,13 +122,14 @@ log, không dừng worker.
 ```sh
 harness --project <channel-dir> publish list [--channel <id>] [--state <STATE>] [--json]
 harness --project <channel-dir> publish show <job_id> [--json]      # kèm title/episode_no từ package + event
-harness --project <channel-dir> publish slots <channel_id> [--days 7] [--json]   # xem trước, không đặt lịch
+harness --project <channel-dir> publish slots <channel_id> [--count 7] [--json]  # xem trước, không đặt lịch
 ```
 
 `state` là một trong máy trạng thái `PublicationJob`: `DRAFT → READY → UPLOADING → PROCESSING → SCHEDULED →
 PUBLISHED`, với hai nhánh sự cố `NEEDS_RECONCILIATION` (từ `UPLOADING` hoặc `SCHEDULED`) và `FAILED` (chỉ từ
-`publish cancel`, không bao giờ tự động). `publish slots` tính trước các khung giờ `nextSlot()` sẽ cấp tiếp
-theo cấu hình `publication.*` hiện tại của kênh — không ghi gì, dùng để trả lời "kênh này còn chỗ tuần này
+`publish cancel`, không bao giờ tự động). `publish slots` tính trước **`--count` khung giờ** (mặc định 7 — số *khung*, không phải số
+ngày: kênh có hai giờ đăng mỗi ngày thì 7 khung là ~3,5 ngày; `--days` vẫn nhận được, là bí danh cũ) mà
+`nextSlot()` sẽ cấp tiếp theo cấu hình `publication.*` hiện tại của kênh — không ghi gì, dùng để trả lời "kênh này còn chỗ tuần này
 không" trước khi lên kế hoạch thêm tập.
 
 ## 6. `NEEDS_RECONCILIATION`: khi nào tự `reconcile`, khi nào vào Studio tay
@@ -143,16 +151,28 @@ không bấm gì. Ba kết quả:
   rồi run tự đi tiếp `schedule`, đã public → `PUBLISHED`) — **không có video thứ hai**.
 - **Không tìm thấy** → op `FAILED`, job về `READY` — **đây là lần duy nhất** attempt `upload` kế tiếp được
   phép gọi lại `Publisher.upload()` cho job này (sau khi đã hỏi provider một lần).
-- **Reconcile chính nó lỗi** (không đăng nhập, DOM Studio đổi, mất mạng) → in lỗi rõ, job giữ nguyên
-  `NEEDS_RECONCILIATION`, thử lại sau.
+- **Reconcile chính nó lỗi** (không đăng nhập, DOM Studio đổi, mất mạng, oEmbed trả 5xx, `lookup.mjs` in
+  JSON hỏng) → `lookup` trả `error: true`, `reconcile` ném `CONNECTION_LOST` (exit 1), job/op/stage **giữ
+  nguyên** `NEEDS_RECONCILIATION`, thử lại sau. "Không hỏi được" không bao giờ bị coi là "không tìm thấy" —
+  đó chính là thứ chặn một lần upload lại oan.
 
-**Khi nào tự tay vào YouTube Studio trước khi chạy `reconcile`:** nếu bạn nghi script cũ đã hỏng thật sự (DOM
-Studio đổi — không có cảnh báo tự động nào cho việc này, `doctor` không phát hiện được vì nó không kiểm nội
-dung DOM) và có thể `reconcile` sẽ báo "không tìm thấy" sai (video thật ra đã có), **hãy tự kiểm trên Studio
-trước**: `reconcile` "không tìm thấy" luôn dẫn tới **upload lại** ở attempt kế tiếp — nếu video thật ra đã
-tồn tại mà `reconcile` không thấy được (ví dụ do `lookup.mjs` cũng hỏng theo cùng lý do), kết quả là **hai
-video trên YouTube** cho cùng một tập. Xem log `upload-debug/` trong repo kênh (script cũ tự ghi) để nhận
-biết DOM đã đổi.
+**Khi nào tự tay vào YouTube Studio trước khi chạy `reconcile`:** `lookup.mjs` hỏng/không đăng nhập giờ cho
+`error: true` (nhánh thứ ba ở trên) nên không còn biến thành "không tìm thấy" nữa. Rủi ro còn lại hẹp hơn
+nhưng vẫn có: script **chạy trót lọt** mà **không thấy dòng của video** (DOM Studio đổi kiểu vẫn parse được,
+lọc theo tiêu đề/ngày trượt) — `doctor` không phát hiện được vì nó không kiểm nội dung DOM. Khi nghi ngờ điều
+đó, **hãy tự kiểm trên Studio trước**: `reconcile` "không tìm thấy" luôn dẫn tới **upload lại** ở attempt kế
+tiếp, và nếu video thật ra đã tồn tại thì kết quả là **hai video trên YouTube** cho cùng một tập. Xem log
+`upload-debug/` trong repo kênh (script cũ tự ghi) để nhận biết DOM đã đổi.
+
+Một trường hợp nữa `reconcile` tự nói ra: job về `PROCESSING` nhưng **run không còn stage nào sống**
+(`upload`/`schedule` đều không ở `READY`/`NEEDS_RECONCILIATION`/`WAITING_HUMAN`) — báo cáo và `note` của job
+ghi `run has no live stage: schedule by hand in Studio then publish reconcile again, or publish cancel`.
+Không có gì tự đặt lịch cho job đó nữa; tự đặt lịch trên Studio rồi `publish reconcile` lại (lần này lookup
+thấy lịch → `SCHEDULED`), hoặc `publish cancel`.
+
+Stage `schedule` tự phòng chuyện đặt lịch hai lần: nó ghi `receipt.schedule_attempted_at` ngay trước mỗi lần
+gọi script cũ, nên attempt kế tiếp thấy dấu đó sẽ `lookup` trước — video đã có lịch tương lai thì chỉ ghi
+nhận đúng giờ đó, không đặt thêm khung nào.
 
 `harness publish cancel <job_id> --note "..."` (chỉ `READY|PROCESSING|SCHEDULED → FAILED`) dùng khi bạn quyết
 định **không** phát hành job này nữa — không bao giờ đụng tới video đã có trên YouTube (nếu video đã tồn

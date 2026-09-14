@@ -199,7 +199,8 @@ Những gì còn lại, đã xem xét và cố ý hoãn:
 
 ## Sau sub-project 3 (ledger 2026-09-14/15)
 
-Rút từ ledger SDD (`docs/superpowers/sdd/2026-09-14-sub-project-3-channel-publish/progress.md`) và spec §11
+Rút từ ledger SDD (`.superpowers/sdd/2026-09-14-sub-project-3-channel-publish/progress.md` — thư mục
+`.superpowers/` nằm trong `.gitignore`, **không commit**, nên ledger chỉ có trên máy đã chạy vòng SDD đó) và spec §11
 (`docs/superpowers/specs/2026-09-14-sub-project-3-channel-publish-design.md`). Đọc code trước khi tin lệch
 (`packages/core/src/distribution/`, `packages/adapters/{youtube-playwright,agent-cli}/`,
 `packages/cli/src/commands/{channel,publish,publish-stage,dashboard,doctor}.ts`).
