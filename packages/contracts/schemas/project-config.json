@@ -109,6 +109,80 @@
             "role"
           ],
           "additionalProperties": false
+        },
+        "adapters": {
+          "type": "object",
+          "properties": {
+            "publisher": {
+              "type": "string",
+              "enum": [
+                "playwright",
+                "fake"
+              ],
+              "default": "fake"
+            },
+            "agent": {
+              "type": "string",
+              "enum": [
+                "cli",
+                "fake"
+              ],
+              "default": "fake"
+            },
+            "agent_argv": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "additionalProperties": false,
+          "default": {
+            "publisher": "fake",
+            "agent": "fake"
+          }
+        },
+        "publication": {
+          "type": "object",
+          "properties": {
+            "verify_seconds": {
+              "type": "integer",
+              "minimum": 60,
+              "default": 900
+            },
+            "verify_grace_hours": {
+              "type": "number",
+              "minimum": 0,
+              "default": 2
+            }
+          },
+          "additionalProperties": false,
+          "default": {
+            "verify_seconds": 900,
+            "verify_grace_hours": 2
+          }
+        },
+        "dashboard": {
+          "type": "object",
+          "properties": {
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 5200
+            },
+            "refresh_seconds": {
+              "type": "integer",
+              "minimum": 10,
+              "default": 60
+            }
+          },
+          "additionalProperties": false,
+          "default": {
+            "port": 5200,
+            "refresh_seconds": 60
+          }
         }
       },
       "required": [

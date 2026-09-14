@@ -1,0 +1,155 @@
+{
+  "$ref": "#/definitions/hypothesis",
+  "definitions": {
+    "hypothesis": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.hypothesis/v1"
+        },
+        "hypothesis_id": {
+          "type": "string",
+          "pattern": "^hyp_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "basis": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "market",
+                  "channel",
+                  "manual"
+                ]
+              },
+              "note": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidence_ref": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "note"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "chosen": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string",
+              "minLength": 1
+            },
+            "thumbnail_candidate": {
+              "type": "string",
+              "minLength": 1
+            },
+            "overlay_text": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 3,
+              "default": []
+            },
+            "angle": {
+              "type": "string",
+              "default": ""
+            }
+          },
+          "required": [
+            "title",
+            "thumbnail_candidate"
+          ],
+          "additionalProperties": false
+        },
+        "rejected": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "angle": {
+                "type": "string",
+                "default": ""
+              },
+              "why": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "title",
+              "why"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "expected": {
+          "type": "object",
+          "properties": {
+            "metric": {
+              "type": "string",
+              "enum": [
+                "ctr",
+                "views_72h",
+                "avg_view_pct"
+              ]
+            },
+            "target": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "horizon_hours": {
+              "type": "integer",
+              "minimum": 24
+            }
+          },
+          "required": [
+            "metric",
+            "target",
+            "horizon_hours"
+          ],
+          "additionalProperties": false
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "supported",
+            "refuted",
+            "void"
+          ],
+          "default": "open"
+        },
+        "created_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+        }
+      },
+      "required": [
+        "schema_version",
+        "hypothesis_id",
+        "basis",
+        "chosen",
+        "rejected",
+        "expected",
+        "created_at"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

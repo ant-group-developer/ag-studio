@@ -2,7 +2,7 @@ import type { Artifact, Attempt, CheckResult, ContentItem, ContentVariant, Event
 import type { StageRequest, StageResult } from "./execution.js";
 import type { ContentRequest, EditStyle, LibraryItem } from "./library.js";
 
-export type TransitionKind = "run" | "stage_run" | "attempt" | "artifact" | "external_operation";
+export type TransitionKind = "run" | "stage_run" | "attempt" | "artifact" | "external_operation" | "publication_job";
 
 export type EventInput = Omit<Event, "schema_version" | "event_id" | "occurred_at">;
 
@@ -114,6 +114,23 @@ export interface Checker { readonly id: string; readonly version: string; check(
 export interface SecretResolver { resolve(ref: string): string; resolvedValues(): string[] }
 export interface ScriptCommand { argv: string[]; cwd?: string; env_refs?: Record<string, string>; timeout_seconds?: number }
 export interface Clock { now(): string }
+
+export interface PublisherChannel { channel_id: string; repo_dir: string; legacy_project_id: string; expected_channel_id: string }
+export type UploadOutcome =
+  | { kind: "uploaded"; video_id: string; receipt: Record<string, unknown> }
+  | { kind: "unknown"; reason: string }
+  | { kind: "refused"; reason: string }
+  | { kind: "busy"; reason: string };
+export type ScheduleOutcome = { kind: "scheduled" } | { kind: "refused"; reason: string } | { kind: "busy"; reason: string };
+export type LookupOutcome =
+  | { found: true; video_id: string; visibility: "public" | "private" | "unlisted" | "scheduled"; publish_at?: string; title?: string }
+  | { found: false; reason?: string };
+export interface Publisher {
+  readonly name: string;
+  upload(p: { channel: PublisherChannel; episode_no: number; episode_dir: string; intent_at: string; timeout_seconds: number; log?: (line: string) => void }): Promise<UploadOutcome>;
+  schedule(p: { channel: PublisherChannel; video_id: string; at: string; timeout_seconds: number; log?: (line: string) => void }): Promise<ScheduleOutcome>;
+  lookup(p: { channel: PublisherChannel; video_id?: string; title?: string; since?: string }): Promise<LookupOutcome>;
+}
 
 export interface ExternalProvider {
   readonly name: string;

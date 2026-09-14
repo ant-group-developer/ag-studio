@@ -40,6 +40,8 @@ export const TRANSITIONS: Record<TransitionKind, Record<string, readonly string[
     NEEDS_RECONCILIATION: ["CONFIRMED", "FAILED", "DISPATCHED"],
     CONFIRMED: [], FAILED: [],
   },
+  // Task 2 fills this table; Task 1 only needs contracts to typecheck.
+  publication_job: {},
 };
 
 export function assertTransition(kind: TransitionKind, from: string, to: string): void {
@@ -55,7 +57,9 @@ export function isTerminal(kind: TransitionKind, state: string): boolean {
 
 export const TABLE_BY_KIND: Record<TransitionKind, string> = {
   run: "run", stage_run: "stage_run", attempt: "attempt", artifact: "artifact", external_operation: "external_operation",
+  publication_job: "publication_job",
 };
 export const STATE_FIELD_BY_KIND: Record<TransitionKind, "state" | "status"> = {
   run: "state", stage_run: "state", attempt: "state", artifact: "status", external_operation: "status",
+  publication_job: "state",
 };

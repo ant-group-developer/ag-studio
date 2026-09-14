@@ -49,7 +49,7 @@ export const WorkflowDefinitionSchema = z.object({
 
 export const ProductionProfileSchema = z.object({
   schema_version: schemaVersion("production-profile"),
-  profile_id: z.enum(["cartoon", "avatar", "footage", "studio"]),
+  profile_id: z.enum(["cartoon", "avatar", "footage", "studio", "channel"]),
   revision: revisionSchema,
   status: z.enum(["active", "draft", "retired"]),
   workflow_release: z.string().regex(/^[a-z][a-z0-9-]*@\d+\.\d+\.\d+$/),
@@ -64,16 +64,27 @@ export const ProductionProfileSchema = z.object({
 
 export const ChannelConfigSchema = z.object({
   schema_version: schemaVersion("channel-config"),
-  channel_id: z.string().min(1),
-  config_revision: revisionSchema,
-  display_name: z.string(),
+  channel_id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
+  display_name: z.string().min(1),
   portfolio_id: z.string().min(1),
-  youtube: z.object({ account_ref: secretRefSchema, expected_channel_id: z.string().min(1) }).strict(),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#5b8cff"),
+  repo_dir: z.string().min(1),
+  legacy_project_id: z.string().min(1).default("project-01"),
+  youtube: z.object({ expected_channel_id: z.string().min(1), account_email_ref: secretRefSchema }).strict(),
   publication: z.object({
-    timezone: z.string(), visibility: z.enum(["private", "unlisted", "public"]), allowed_profiles: z.array(z.string()),
-    max_daily_uploads: z.number().int().min(0), require_human_approval_for_public: z.boolean(),
+    timezone: z.string().min(1),
+    publish_times: z.array(z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/)).min(1),
+    max_daily_uploads: z.number().int().min(1).default(1),
+    min_gap_hours: z.number().min(0).default(20),
+    visibility_default: z.literal("private").default("private"),
   }).strict(),
-  overrides: jsonObjectSchema.default({}),
+  seo: z.object({
+    niche: z.string().default(""), audience: z.string().default(""), angle: z.string().default(""),
+    language: z.string().min(1).default("en"), market: z.string().default(""), keywords: z.array(z.string()).default([]),
+    title_rules: z.string().default(""), description_template: z.string().default(""),
+  }).strict().default({}),
+  episode: z.object({ start: z.number().int().min(1).default(1), dir_pattern: z.string().regex(/\{nn\}/).default("episode-{nn}") }).strict().default({}),
+  overlay: z.object({ enabled: z.boolean().default(true), side: z.enum(["left", "right"]).default("right") }).strict().default({}),
 }).strict();
 
 export const ProjectConfigSchema = z.object({
@@ -94,6 +105,14 @@ export const ProjectConfigSchema = z.object({
     role: z.enum(["studio", "channel"]),
     sync_seconds: z.number().int().min(10).default(300),
   }).strict().optional(),
+  adapters: z.object({
+    publisher: z.enum(["playwright", "fake"]).default("fake"),
+    agent: z.enum(["cli", "fake"]).default("fake"),
+    /** Ghi đè argv của runtime agent (test dùng runtime giả). `{prompt}` được thay bằng câu chỉ tới agent-prompt.md. */
+    agent_argv: z.array(z.string().min(1)).optional(),
+  }).strict().default({ publisher: "fake", agent: "fake" }),
+  publication: z.object({ verify_seconds: z.number().int().min(60).default(900), verify_grace_hours: z.number().min(0).default(2) }).strict().default({ verify_seconds: 900, verify_grace_hours: 2 }),
+  dashboard: z.object({ port: z.number().int().min(1).max(65535).default(5200), refresh_seconds: z.number().int().min(10).default(60) }).strict().default({ port: 5200, refresh_seconds: 60 }),
 }).strict();
 
 export const HarnessConfigSchema = z.object({

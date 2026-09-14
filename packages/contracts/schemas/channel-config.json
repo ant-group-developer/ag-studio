@@ -10,34 +10,45 @@
         },
         "channel_id": {
           "type": "string",
-          "minLength": 1
-        },
-        "config_revision": {
-          "type": "integer",
-          "minimum": 1
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
         },
         "display_name": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "portfolio_id": {
           "type": "string",
           "minLength": 1
         },
+        "color": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "default": "#5b8cff"
+        },
+        "repo_dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "legacy_project_id": {
+          "type": "string",
+          "minLength": 1,
+          "default": "project-01"
+        },
         "youtube": {
           "type": "object",
           "properties": {
-            "account_ref": {
-              "type": "string",
-              "pattern": "^secret:\\/\\/[a-z0-9-]+\\/[a-z0-9-]+$"
-            },
             "expected_channel_id": {
               "type": "string",
               "minLength": 1
+            },
+            "account_email_ref": {
+              "type": "string",
+              "pattern": "^secret:\\/\\/[a-z0-9-]+\\/[a-z0-9-]+$"
             }
           },
           "required": [
-            "account_ref",
-            "expected_channel_id"
+            "expected_channel_id",
+            "account_email_ref"
           ],
           "additionalProperties": false
         },
@@ -45,51 +56,125 @@
           "type": "object",
           "properties": {
             "timezone": {
-              "type": "string"
-            },
-            "visibility": {
               "type": "string",
-              "enum": [
-                "private",
-                "unlisted",
-                "public"
-              ]
+              "minLength": 1
             },
-            "allowed_profiles": {
+            "publish_times": {
               "type": "array",
               "items": {
-                "type": "string"
-              }
+                "type": "string",
+                "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+              },
+              "minItems": 1
             },
             "max_daily_uploads": {
               "type": "integer",
-              "minimum": 0
+              "minimum": 1,
+              "default": 1
             },
-            "require_human_approval_for_public": {
-              "type": "boolean"
+            "min_gap_hours": {
+              "type": "number",
+              "minimum": 0,
+              "default": 20
+            },
+            "visibility_default": {
+              "type": "string",
+              "const": "private",
+              "default": "private"
             }
           },
           "required": [
             "timezone",
-            "visibility",
-            "allowed_profiles",
-            "max_daily_uploads",
-            "require_human_approval_for_public"
+            "publish_times"
           ],
           "additionalProperties": false
         },
-        "overrides": {
+        "seo": {
           "type": "object",
-          "additionalProperties": {},
+          "properties": {
+            "niche": {
+              "type": "string",
+              "default": ""
+            },
+            "audience": {
+              "type": "string",
+              "default": ""
+            },
+            "angle": {
+              "type": "string",
+              "default": ""
+            },
+            "language": {
+              "type": "string",
+              "minLength": 1,
+              "default": "en"
+            },
+            "market": {
+              "type": "string",
+              "default": ""
+            },
+            "keywords": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "title_rules": {
+              "type": "string",
+              "default": ""
+            },
+            "description_template": {
+              "type": "string",
+              "default": ""
+            }
+          },
+          "additionalProperties": false,
+          "default": {}
+        },
+        "episode": {
+          "type": "object",
+          "properties": {
+            "start": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "dir_pattern": {
+              "type": "string",
+              "pattern": "\\{nn\\}",
+              "default": "episode-{nn}"
+            }
+          },
+          "additionalProperties": false,
+          "default": {}
+        },
+        "overlay": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "side": {
+              "type": "string",
+              "enum": [
+                "left",
+                "right"
+              ],
+              "default": "right"
+            }
+          },
+          "additionalProperties": false,
           "default": {}
         }
       },
       "required": [
         "schema_version",
         "channel_id",
-        "config_revision",
         "display_name",
         "portfolio_id",
+        "repo_dir",
         "youtube",
         "publication"
       ],

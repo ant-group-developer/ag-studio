@@ -7,6 +7,7 @@ import * as E from "../src/entities.js";
 import * as X from "../src/execution.js";
 import * as C from "../src/config.js";
 import * as L from "../src/library.js";
+import * as D from "../src/distribution.js";
 import { EdlSchema } from "../src/edl.js";
 
 export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
@@ -22,6 +23,8 @@ export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
   edl: EdlSchema, scripts: C.ScriptsRegistrySchema, sources: C.SourcesRegistrySchema,
   "edit-style": L.EditStyleSchema, "content-request": L.ContentRequestSchema,
   "library-item": L.LibraryItemSchema, "library-claim": L.LibraryClaimSchema,
+  hypothesis: D.HypothesisSchema, "channel-package-draft": D.ChannelPackageDraftSchema,
+  "package-receipt": D.PackageReceiptSchema, "upload-receipt": D.UploadReceiptSchema, "schedule-receipt": D.ScheduleReceiptSchema,
 };
 
 export function toJsonSchema(name: string, schema: ZodTypeAny) {

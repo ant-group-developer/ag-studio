@@ -1,0 +1,64 @@
+{
+  "$ref": "#/definitions/package-receipt",
+  "definitions": {
+    "package-receipt": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.package-receipt/v1"
+        },
+        "package_id": {
+          "type": "string",
+          "pattern": "^pkg_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "publication_job_id": {
+          "type": "string",
+          "pattern": "^pub_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "channel_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_no": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "episode_dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "manifest_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "video_checksum": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "thumbnail_checksum": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "manifest_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "schema_version",
+        "package_id",
+        "publication_job_id",
+        "channel_id",
+        "episode_no",
+        "episode_dir",
+        "manifest_path",
+        "video_checksum",
+        "thumbnail_checksum",
+        "manifest_digest"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

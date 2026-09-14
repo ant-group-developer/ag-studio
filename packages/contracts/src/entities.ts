@@ -2,6 +2,7 @@ import { z } from "zod";
 import { idSchema } from "./ids.js";
 import { checksumSchema, jsonObjectSchema, mediaInfoSchema, revisionSchema, schemaVersion, secretRefSchema, semverSchema, timestampSchema } from "./common.js";
 import { libraryBriefSchema } from "./library.js";
+import { HypothesisSchema, packageMetadataSchema } from "./distribution.js";
 
 export { mediaInfoSchema } from "./common.js";
 
@@ -208,7 +209,7 @@ export const ContentItemSchema = z.object({
   library_channel_id: z.string().min(1).optional(),
 }).strict();
 export const ProductionProfileRefSchema = z.object({
-  schema_version: schemaVersion("production-profile-ref"), profile_id: z.enum(["cartoon", "avatar", "footage", "studio"]), profile_revision: revisionSchema,
+  schema_version: schemaVersion("production-profile-ref"), profile_id: z.enum(["cartoon", "avatar", "footage", "studio", "channel"]), profile_revision: revisionSchema,
 }).strict();
 export const ContentVariantSchema = z.object({
   schema_version: schemaVersion("content-variant"), variant_id: idSchema("content_variant"), content_id: idSchema("content_item"),
@@ -222,11 +223,16 @@ export const ChannelPackageSchema = z.object({
   schema_version: schemaVersion("channel-package"), package_id: idSchema("channel_package"), channel_id: z.string().min(1),
   variant_id: idSchema("content_variant"), manifest_digest: checksumSchema, video_artifact_id: idSchema("artifact"),
   thumbnail_artifact_id: idSchema("artifact"), metadata_revision: revisionSchema, channel_config_revision: revisionSchema, created_at: timestampSchema,
+  content_id: idSchema("content_item"), library_item_id: idSchema("library_item"), run_id: idSchema("run"),
+  episode_no: z.number().int().min(1), episode_dir: z.string().min(1), metadata: packageMetadataSchema, hypothesis: HypothesisSchema,
+  video_checksum: checksumSchema, thumbnail_checksum: checksumSchema, status: z.enum(["draft", "committed"]), updated_at: timestampSchema,
 }).strict();
 export const PublicationJobSchema = z.object({
   schema_version: schemaVersion("publication-job"), publication_job_id: idSchema("publication_job"), package_id: idSchema("channel_package"),
   idempotency_key: checksumSchema, state: z.enum(PUBLICATION_STATES), youtube_video_id: z.string().nullable(), receipt: jsonObjectSchema.nullable(),
   created_at: timestampSchema, updated_at: timestampSchema,
+  channel_id: z.string().min(1), library_item_id: idSchema("library_item"), run_id: idSchema("run"), operation_id: idSchema("external_operation").nullable(),
+  scheduled_at: timestampSchema.nullable(), published_at: timestampSchema.nullable(), last_verified_at: timestampSchema.nullable(), note: z.string().nullable(),
 }).strict();
 export const WorkflowReleaseSchema = z.object({
   schema_version: schemaVersion("workflow-release"), workflow_id: z.string().min(1), version: semverSchema, digest: checksumSchema, released_at: timestampSchema,
