@@ -1,10 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { getEventListeners } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ProductionProfileSchema, ProjectConfigSchema, WorkflowDefinitionSchema, type Executor, type StageRequest, type StageResult } from "@harness/contracts";
-import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, FixedClock, HARNESS_ROOT, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, SourceCatalog, SqliteStateStore, Verifier, addSeconds, createLogger, loadHarnessConfig, loadProfile, loadWorkflow } from "@harness/core";
+import { newId, ProductionProfileSchema, ProjectConfigSchema, WorkflowDefinitionSchema, type Executor, type StageRequest, type StageResult } from "@harness/contracts";
+import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, FixedClock, HARNESS_ROOT, LibraryFs, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, SourceCatalog, SqliteStateStore, Verifier, addSeconds, createLogger, loadHarnessConfig, loadProfile, loadWorkflow } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, fakeScriptCommands } from "@harness/adapter-fake";
 import { Worker, type WorkerDeps } from "../src/worker.js";
@@ -345,5 +345,50 @@ describe("Worker", () => {
     expect([attempt.state, attempt.failure_kind]).toEqual(["FAILED", "contract"]);
     expect(w.store.getRun(runB.run_id)?.state).toBe("WAITING");
     expect(w.store.listArtifacts({ stage_run_id: finalizeId })).toHaveLength(0);
+  });
+
+  describe("library sync", () => {
+    function handWrittenRequest(clock: FixedClock) {
+      return {
+        schema_version: "harness.content-request/v1",
+        request_id: newId("content_request"),
+        requested_by: { portfolio_id: "portfolio-main", channel_id: "channel-main" },
+        topic: "hand-written request",
+        status: "open",
+        created_at: clock.now(),
+        updated_at: clock.now(),
+      };
+    }
+
+    it("picks up a request hand-written into the kho on an idle poll, and does not re-sync before syncSeconds elapses", async () => {
+      const w = makeWorld();
+      const fs = new LibraryFs({ root: mkdtempSync(join(tmpdir(), "wk-lib-")), role: "channel" });
+      const request = handWrittenRequest(w.clock);
+      fs.writeJsonAtomic(fs.paths.requestFile(request.request_id), request);
+      const worker = new Worker({ ...w.deps, library: { fs, role: "channel", syncSeconds: 300 } });
+
+      const listRequestIds = vi.spyOn(fs, "listRequestIds");
+      expect(await worker.runOnce()).toBe("idle"); // nothing enqueued -> claim() is null -> idle branch syncs the kho
+      expect(w.store.listContentRequests().map((r) => r.request_id)).toContain(request.request_id);
+      expect(listRequestIds).toHaveBeenCalledTimes(1);
+
+      expect(await worker.runOnce()).toBe("idle"); // same FixedClock instant, well under syncSeconds=300
+      expect(listRequestIds).toHaveBeenCalledTimes(1); // no second sync
+    });
+
+    it("syncs again once syncSeconds has elapsed", async () => {
+      const w = makeWorld();
+      const fs = new LibraryFs({ root: mkdtempSync(join(tmpdir(), "wk-lib-")), role: "channel" });
+      const request = handWrittenRequest(w.clock);
+      fs.writeJsonAtomic(fs.paths.requestFile(request.request_id), request);
+      const worker = new Worker({ ...w.deps, library: { fs, role: "channel", syncSeconds: 300 } });
+
+      const listRequestIds = vi.spyOn(fs, "listRequestIds");
+      expect(await worker.runOnce()).toBe("idle");
+      expect(listRequestIds).toHaveBeenCalledTimes(1);
+      w.clock.advance(301);
+      expect(await worker.runOnce()).toBe("idle");
+      expect(listRequestIds).toHaveBeenCalledTimes(2);
+    });
   });
 });

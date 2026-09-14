@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HarnessConfig, ProjectConfig, ScriptsRegistry, SecretResolver } from "@harness/contracts";
-import { HARNESS_ROOT, loadProfile, loadWorkflow, MIGRATIONS_DIR, runDoctor, SqliteStateStore, type DoctorInput, type LoadedWorkflow } from "../../src/index.js";
+import { HARNESS_ROOT, LibraryFs, loadProfile, loadWorkflow, MIGRATIONS_DIR, runDoctor, SqliteStateStore, type DoctorInput, type LoadedWorkflow } from "../../src/index.js";
 import { openTempStore } from "../helpers.js";
 
 const HARNESS_CONFIG: HarnessConfig = {
@@ -182,5 +182,33 @@ describe("runDoctor", () => {
     const byCheckWithoutBuiltin = new Map(withoutBuiltin.map((r) => [r.check, r]));
     expect(byCheckWithoutBuiltin.get("script:sample-three-stage/produce")).toMatchObject({ ok: false });
     expect(byCheckWithoutBuiltin.get("script:sample-three-stage/finalize")).toMatchObject({ ok: false });
+  });
+
+  it("adds the three library:* rows only when project.library is configured, failing library:root on a missing kho", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "doctor-library-"));
+
+    const withoutLibrary = runDoctor({ ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [] });
+    expect(withoutLibrary.some((r) => r.check.startsWith("library:"))).toBe(false);
+
+    const missingRoot = join(projectDir, "kho-does-not-exist");
+    const missing = runDoctor({
+      ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+      library: { fs: new LibraryFs({ root: missingRoot, role: "studio" }), role: "studio" },
+    });
+    const byCheckMissing = new Map(missing.map((r) => [r.check, r]));
+    expect(byCheckMissing.get("library:root")).toMatchObject({ ok: false });
+    // library:write creates its parent directory on demand -- a missing kho root does not block the probe write
+    expect(byCheckMissing.get("library:write")).toMatchObject({ ok: true });
+    expect(byCheckMissing.get("library:index")).toMatchObject({ ok: true });
+
+    const existingRoot = mkdtempSync(join(tmpdir(), "doctor-library-root-"));
+    const present = runDoctor({
+      ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+      library: { fs: new LibraryFs({ root: existingRoot, role: "channel" }), role: "channel" },
+    });
+    const byCheckPresent = new Map(present.map((r) => [r.check, r]));
+    expect(byCheckPresent.get("library:root")).toMatchObject({ ok: true });
+    expect(byCheckPresent.get("library:write")).toMatchObject({ ok: true });
+    expect(byCheckPresent.get("library:index")).toMatchObject({ ok: true });
   });
 });

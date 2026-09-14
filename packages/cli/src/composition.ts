@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
-import { HarnessError, isHarnessError, ProjectConfigSchema, type ExecutorRef, type ProductionProfile, type ProjectConfig, type ScriptsRegistry, type SourcesRegistry } from "@harness/contracts";
-import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, type HarnessLogger, type LoadedWorkflow, type LogLevel } from "@harness/core";
+import { HarnessError, isHarnessError, ProjectConfigSchema, type ExecutorRef, type MediaProber, type ProductionProfile, type ProjectConfig, type ScriptCommand, type ScriptsRegistry, type SourcesRegistry } from "@harness/contracts";
+import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, LibraryFs, libraryCheckers, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, type HarnessLogger, type LibraryRole, type LoadedWorkflow, type LogLevel } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, FakeProvider, fakeScriptCommands } from "@harness/adapter-fake";
 import { FfprobeMediaProber } from "@harness/adapter-ffprobe";
@@ -13,13 +13,30 @@ export interface AppContext {
   journal: ExternalOperationJournal; provider: FakeProvider; harness: ReturnType<typeof loadHarnessConfig>; project: ProjectConfig; projectDir: string;
   dataRoot: string; logger: HarnessLogger; clock: SystemClock; secrets: EnvSecretResolver; migrationsDir: string; workflows: (ref: string) => LoadedWorkflow;
   profiles: (id: string) => ProductionProfile; catalog: SourceCatalog; resourceCapacity: Record<string, number>; executorVersionFor: (ref: ExecutorRef) => string;
-  scripts: ScriptsRegistry | undefined; sources: SourcesRegistry | undefined; proberAvailable: boolean; harnessRoot: string;
+  scripts: ScriptsRegistry | undefined; sources: SourcesRegistry | undefined; proberAvailable: boolean; harnessRoot: string; prober: MediaProber;
   /** A malformed `executors/scripts.yaml` / `source-catalog/sources.yaml` must not stop `doctor` (or any other
    * command) from running: the registry stays `undefined` and the loader's message lands here, so `doctor` can
    * report it as a failing row and the commands that really need the registry can throw it themselves. */
   configErrors: { scripts?: string; sources?: string };
   /** Names the "script" executor resolves right now: built-in fakes plus any project scripts.yaml override. */
-  scriptCommandNames: string[]; close(): void;
+  scriptCommandNames: string[];
+  /** Only present when `project.yaml` declares `library`; the filesystem handle and role/sync interval the
+   * kho commands, doctor's library rows, and the worker's periodic sync all share. */
+  library?: { fs: LibraryFs; role: LibraryRole; syncSeconds: number };
+  close(): void;
+}
+
+/**
+ * The four `library-production`/`style-study` script stages that touch the kho (spec §3.2 stages 1, 4, 9, 11)
+ * are built in rather than wrapper scripts an ops project must supply: each just re-invokes this very CLI as
+ * `harness --project <projectDir> library stage <name>`, which reads `stage-request.json` from the workspace
+ * `ScriptExecutor` already set up (`HARNESS_WORKSPACE`) via `@harness/script-sdk`'s `start()`.
+ */
+export function builtinLibraryCommands(argv: string[], projectDir: string): Record<string, ScriptCommand> {
+  const names = ["intake", "style-export", "export", "apply-review"] as const;
+  const commands: Record<string, ScriptCommand> = {};
+  for (const name of names) commands[`library-${name}`] = { argv: [...argv, "--project", projectDir, "library", "stage", name], cwd: "." };
+  return commands;
 }
 
 export function loadProject(projectDir: string): ProjectConfig {
@@ -56,9 +73,10 @@ export function buildContext(o: { projectDir: string; harnessRoot?: string; owne
   };
   const scripts = guard("scripts", () => loadScriptsRegistry(projectDir));
   const sources = guard("sources", () => loadSourcesRegistry(projectDir));
-  // an ops-project entry with the same name as a fake wins, so ops projects can override the built-in fakes
-  const commands = { ...fakeScriptCommands(), ...(scripts ? scriptCommandsFrom(scripts, projectDir) : {}) };
-  executors.register("script", new ScriptExecutor(commands, { projectDir, secrets, cliArgv: cliArgv() }));
+  const argv = cliArgv();
+  // an ops-project entry with the same name as a built-in (fake or library) wins, so ops projects can override them
+  const commands = { ...fakeScriptCommands(), ...builtinLibraryCommands(argv, projectDir), ...(scripts ? scriptCommandsFrom(scripts, projectDir) : {}) };
+  executors.register("script", new ScriptExecutor(commands, { projectDir, secrets, cliArgv: argv }));
   executors.register("agent", new AgentExecutor(new FakeAgentRuntime({ journal })));
   executors.register("gate", new GateExecutor());
   const workflows = (ref: string) => loadWorkflow(harnessRoot, ref);
@@ -66,5 +84,8 @@ export function buildContext(o: { projectDir: string; harnessRoot?: string; owne
   const proberAvailable = FfprobeMediaProber.isAvailable();
   const prober = proberAvailable ? new FfprobeMediaProber() : new NullMediaProber();
   const catalog = new SourceCatalog({ store, dataRoot, prober, clock, materialize: project.source.materialize });
-  return { store, planner, controller, registry, verifier: new Verifier([...BUILTIN_CHECKERS, ...mediaCheckers(prober, { available: proberAvailable })]), executors, journal, provider, harness, project, projectDir, dataRoot, logger, clock, secrets, migrationsDir: MIGRATIONS_DIR, workflows, profiles, catalog, resourceCapacity: project.resources, executorVersionFor: (ref: ExecutorRef) => executors.resolve(ref).version, scripts, sources, configErrors, proberAvailable, harnessRoot, scriptCommandNames: Object.keys(commands), close: () => store.close() };
+  const library = project.library
+    ? { fs: new LibraryFs({ root: resolve(projectDir, project.library.root), role: project.library.role }), role: project.library.role, syncSeconds: project.library.sync_seconds }
+    : undefined;
+  return { store, planner, controller, registry, verifier: new Verifier([...BUILTIN_CHECKERS, ...mediaCheckers(prober, { available: proberAvailable }), ...libraryCheckers(prober, { available: proberAvailable })]), executors, journal, provider, harness, project, projectDir, dataRoot, logger, clock, secrets, migrationsDir: MIGRATIONS_DIR, workflows, profiles, catalog, resourceCapacity: project.resources, executorVersionFor: (ref: ExecutorRef) => executors.resolve(ref).version, scripts, sources, configErrors, proberAvailable, harnessRoot, prober, scriptCommandNames: Object.keys(commands), ...(library ? { library } : {}), close: () => store.close() };
 }

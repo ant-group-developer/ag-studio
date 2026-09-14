@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { isHarnessError, type Artifact, type ClaimResult, type Clock, type HarnessConfig, type ProductionProfile, type ProjectConfig, type Run, type StageRequest, type StageResult, type StateStore } from "@harness/contracts";
-import { acceptedInputsFor, addSeconds, ArtifactRegistry, buildStageRequest, canonicalDigest, Controller, createWorkspace, eventFor, gateOverdue, type LoadedWorkflow, materializeInputs, mimeTypesFor, Planner, stageDefinitionDigest, stageDefinitionFor, Verifier, workspacePath, type HarnessLogger } from "@harness/core";
+import { acceptedInputsFor, addSeconds, ArtifactRegistry, buildStageRequest, canonicalDigest, Controller, createWorkspace, eventFor, gateOverdue, type LibraryFs, type LibraryRole, type LoadedWorkflow, materializeInputs, mimeTypesFor, Planner, stageDefinitionDigest, stageDefinitionFor, syncLibrary, Verifier, workspacePath, type HarnessLogger } from "@harness/core";
 import type { ExecutorRegistry } from "@harness/executors";
 import { startHeartbeat } from "./heartbeat.js";
 
@@ -8,6 +8,9 @@ export interface WorkerDeps {
   store: StateStore; planner: Planner; controller: Controller; registry: ArtifactRegistry; verifier: Verifier; executors: ExecutorRegistry;
   harness: HarnessConfig; project: ProjectConfig; dataRoot: string; owner: string; capabilities: string[]; logger: HarnessLogger; clock: Clock;
   workflows: (ref: string) => LoadedWorkflow; profiles: (id: string) => ProductionProfile; resourceCapacity: Record<string, number>;
+  /** Only present when `project.yaml` declares `library`; an idle poll syncs the kho at most once every
+   * `syncSeconds` so a channel's new request or a studio's fresh style/item reaches this project's DB. */
+  library?: { fs: LibraryFs; role: LibraryRole; syncSeconds: number };
 }
 
 function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
@@ -19,6 +22,9 @@ function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 export class Worker {
+  /** ms timestamp of the last library sync; `undefined` means "never yet", so the first idle poll always syncs. */
+  private lastLibrarySyncAt: number | undefined;
+
   constructor(private readonly d: WorkerDeps) {}
 
   async runForever(signal: AbortSignal): Promise<void> {
@@ -41,7 +47,7 @@ export class Worker {
     // the run is unknown until the claim lands, so claim on the harness default and widen afterwards
     const defaultLeaseSeconds = this.d.harness.lease_seconds;
     const claim = store.claim({ owner: this.d.owner, capabilities: this.d.capabilities, now: clock.now(), leaseSeconds: defaultLeaseSeconds, resourceCapacity: this.d.resourceCapacity });
-    if (!claim) { this.warnResourceStarvation(); this.warnGateOverdue(); return "idle"; }
+    if (!claim) { this.warnResourceStarvation(); this.warnGateOverdue(); await this.maybeSyncLibrary(); return "idle"; }
     const run = store.getRun(claim.stageRun.run_id)!;
     const snapshotLease = Number(run.effective_config_snapshot.lease_seconds);
     const leaseSeconds = Number.isFinite(snapshotLease) ? snapshotLease : defaultLeaseSeconds;
@@ -129,6 +135,20 @@ export class Worker {
     for (const { run, stage, overdue_seconds } of gateOverdue(store, clock.now(), harness.resource_wait_warn_seconds)) {
       logger.warn("gate overdue", { run_id: run.run_id, stage_run_id: stage.stage_run_id, overdue_seconds });
     }
+  }
+
+  /** At most once every `library.syncSeconds`, on an otherwise-idle poll: pulls the kho's requests/styles/items
+   * into the local DB mirror so a channel's new request (or a studio's fresh style/item) surfaces without a
+   * person running `harness library sync` by hand. Never plans a run on its own (spec §4.2). */
+  private async maybeSyncLibrary(): Promise<void> {
+    const library = this.d.library;
+    if (!library) return;
+    const now = Date.parse(this.d.clock.now());
+    if (this.lastLibrarySyncAt !== undefined && now - this.lastLibrarySyncAt < library.syncSeconds * 1000) return;
+    this.lastLibrarySyncAt = now;
+    const report = await syncLibrary({ store: this.d.store, fs: library.fs, role: library.role, clock: this.d.clock });
+    for (const c of report.corrupt) this.d.logger.warn("library sync: corrupt entry", c);
+    for (const m of report.missing) this.d.logger.warn("library sync: missing from kho", m);
   }
 
   private cancelCurrent(claim: ClaimResult, run: Run, log: HarnessLogger): "done" | "lost" {

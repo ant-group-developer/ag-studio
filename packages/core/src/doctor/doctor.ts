@@ -1,7 +1,9 @@
-import { existsSync, readdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import type { HarnessConfig, ProductionProfile, ProjectConfig, ScriptsRegistry, SecretResolver, StageDefinition, StateStore } from "@harness/contracts";
 import { EnvSecretResolver } from "../config/secrets.js";
+import type { LibraryFs, LibraryRole } from "../library/files.js";
 import type { LoadedWorkflow } from "../orchestration/registry.js";
 import { loadSourcesRegistry, SOURCES_FILE } from "../source-catalog/sources-file.js";
 import { parseWhen } from "../source-catalog/when.js";
@@ -25,6 +27,8 @@ export interface DoctorInput {
   /** Parse errors the composition root swallowed so one malformed config file does not abort every command
    * (`packages/cli/src/composition.ts`): a message here turns the matching `scripts`/`sources` row FAIL. */
   configErrors?: { scripts?: string; sources?: string };
+  /** Only present when `project.yaml` declares `library`; adds the three `library:*` rows below. */
+  library?: { fs: LibraryFs; role: LibraryRole };
 }
 
 const SCRIPT_FILE_RE = /\.(mjs|js|cjs|ts|py|sh)$/;
@@ -39,6 +43,7 @@ export function runDoctor(i: DoctorInput): DoctorRow[] {
     ...checkWorkflows(i),
     ...checkProfiles(i),
     checkSources(i),
+    ...(i.library ? [checkLibraryRoot(i.library), checkLibraryWrite(i.library), checkLibraryIndex(i.library)] : []),
   ];
 }
 
@@ -158,6 +163,41 @@ function checkProfiles(i: DoctorInput): DoctorRow[] {
     rows.push({ check: `profile:${profile.profile_id}:options_defaults`, ok: bad.length === 0, detail: bad.length === 0 ? "options_defaults valid for options_schema" : `invalid: ${bad.join(", ")}` });
   }
   return rows;
+}
+
+/** `fs.exists()` only -- a missing root is a plain FAIL, no attempt to create it (doctor never mutates
+ * anything the kho doesn't already have except the throwaway probe file `checkLibraryWrite` writes and removes). */
+function checkLibraryRoot(library: { fs: LibraryFs; role: LibraryRole }): DoctorRow {
+  const ok = library.fs.exists();
+  return { check: "library:root", ok, detail: ok ? `${library.fs.paths.root} exists` : `${library.fs.paths.root} not found` };
+}
+
+/** Writes then removes a throwaway file in the one directory this role is allowed to write (studio: `styles/`,
+ * channel: `requests/`), via plain `node:fs` rather than `LibraryFs.writeJsonAtomic` -- doctor's probe file is
+ * not a real style/request and should not have to satisfy `EditStyleSchema`/`ContentRequestSchema`. */
+function checkLibraryWrite(library: { fs: LibraryFs; role: LibraryRole }): DoctorRow {
+  const name = `.doctor-${library.role}-${randomUUID()}`;
+  const path = library.role === "studio" ? resolve(library.fs.paths.styles, name) : resolve(library.fs.paths.requests, `${name}.json`);
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, "{}");
+    rmSync(path);
+    return { check: "library:write", ok: true, detail: `wrote and removed ${path}` };
+  } catch (e) {
+    return { check: "library:write", ok: false, detail: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** `index.json` is studio-only and only written after a sync; its absence is not a failure. */
+function checkLibraryIndex(library: { fs: LibraryFs; role: LibraryRole }): DoctorRow {
+  const path = library.fs.paths.index;
+  if (!existsSync(path)) return { check: "library:index", ok: true, detail: `${path} not found` };
+  try {
+    JSON.parse(readFileSync(path, "utf8"));
+    return { check: "library:index", ok: true, detail: `${path} parses` };
+  } catch (e) {
+    return { check: "library:index", ok: false, detail: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 function checkSources(i: DoctorInput): DoctorRow {

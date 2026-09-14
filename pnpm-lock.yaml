@@ -178,6 +178,9 @@ importers:
       '@harness/executors':
         specifier: workspace:*
         version: link:../executors
+      '@harness/script-sdk':
+        specifier: workspace:*
+        version: link:../script-sdk
       '@harness/worker':
         specifier: workspace:*
         version: link:../worker
