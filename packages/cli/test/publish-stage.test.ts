@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { beforeAll, describe, expect, it } from "vitest";
 import { newId, type ClaimResult, type PackageReceipt, type StageInput, type StageResult, type UploadReceipt } from "@harness/contracts";
-import { HARNESS_ROOT, buildStageRequest, canonicalDigest, eventFor, mimeTypesFor, sha256File, stageDefinitionDigest, stageDefinitionFor } from "@harness/core";
+import { HARNESS_ROOT, buildStageRequest, canonicalDigest, eventFor, mimeTypesFor, sha256File, stageDefinitionDigest, stageDefinitionFor, transitionPublication } from "@harness/core";
 import { buildContext, type AppContext } from "../src/composition.js";
 import { cli, freshLibraryWorld, librarySync, type LibraryWorld } from "../../../tests/integration/library-helpers.js";
 
@@ -401,6 +401,51 @@ describe("harness publish stage", () => {
         const op = ctx.store.getExternalOperation(job.operation_id!)!;
         expect(op.status).toBe("CONFIRMED");
         expect(op.provider_ref).toBe(uploadReceipt.video_id);
+
+        // the operation must pass through DISPATCHED *before* the (up to 45-minute) publisher call returns,
+        // so a crash mid-upload leaves something a reconciler can act on rather than a stuck INTENT_RECORDED.
+        const events = ctx.store.listEvents({ run_id: runId, limit: 500 }).filter((e) => e.payload.operation_id === job.operation_id);
+        const dispatchedIdx = events.findIndex((e) => e.event_type === "external_operation.dispatched");
+        const confirmedIdx = events.findIndex((e) => e.event_type === "external_operation.confirmed");
+        expect(dispatchedIdx, JSON.stringify(events.map((e) => e.event_type))).toBeGreaterThanOrEqual(0);
+        expect(confirmedIdx).toBeGreaterThan(dispatchedIdx);
+      } finally { ctx.close(); }
+    });
+
+    it("recovers a job a crashed attempt left UPLOADING: unknown outcome, job and operation NEEDS_RECONCILIATION", async () => {
+      const { runId, receipt, buildPackageWorkspace } = await toReadyJob(world.channel, world.lib, sampleDraft());
+
+      // Simulate a process dying between "recordIntent" and the publisher call returning: the durable state
+      // the real upload stage leaves at that point is job=UPLOADING with its operation already DISPATCHED
+      // (never INTENT_RECORDED alone, precisely because the stage dispatches before calling the publisher).
+      {
+        const ctx = buildContext({ projectDir: world.channel });
+        try {
+          const job = ctx.store.getPublicationJob(receipt.publication_job_id)!;
+          const run = ctx.store.getRun(runId)!;
+          const intent = ctx.journal.recordIntent({
+            request: { run_id: runId, stage_run_id: newId("stage_run"), attempt_id: newId("attempt") },
+            provider: ctx.publisher.name, kind: "youtube-upload", target: job.channel_id, payload: { idempotency_key: job.idempotency_key },
+          });
+          ctx.store.transition("external_operation", intent.operation_id, "INTENT_RECORDED", "DISPATCHED", eventFor(run, null, null, "external_operation.dispatched", "info", { operation_id: intent.operation_id }));
+          ctx.store.updatePublicationJob({ ...job, operation_id: intent.operation_id });
+          transitionPublication(ctx.store, job.publication_job_id, "READY", "UPLOADING");
+        } finally { ctx.close(); }
+      }
+
+      // FAKE_UPLOAD_MODE=refused as a canary: if the recovery branch failed to short-circuit and fell through
+      // to a real publisher call, the outcome below would be a "contract" failure instead of "unknown".
+      const up = await invokeStage(world.channel, runId, "upload", "upload", [
+        { type: "channel_package", relPath: "input/package-receipt/package-receipt.json", src: join(buildPackageWorkspace, "output", "package-receipt.json") },
+      ], { FAKE_UPLOAD_MODE: "refused" });
+      expect(up.result.outcome, JSON.stringify(up.result)).toBe("unknown");
+
+      const ctx = buildContext({ projectDir: world.channel });
+      try {
+        const job = ctx.store.getPublicationJob(receipt.publication_job_id)!;
+        expect(job.state).toBe("NEEDS_RECONCILIATION");
+        const op = ctx.store.getExternalOperation(job.operation_id!)!;
+        expect(op.status).toBe("NEEDS_RECONCILIATION");
       } finally { ctx.close(); }
     });
 

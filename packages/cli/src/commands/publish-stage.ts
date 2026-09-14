@@ -7,7 +7,7 @@ import {
   ChannelPackageDraftSchema, HarnessError, isHarnessError, LibraryItemSchema, PackageReceiptSchema, ScheduleReceiptSchema, UploadReceiptSchema,
   type ChannelPackageDraft, type PackageReceipt, type ScheduleReceipt, type UploadReceipt,
 } from "@harness/contracts";
-import { buildUploadManifest, commitPackage, createDraftPackage, createJob, manifestDigest, nextSlot, sha256File, transitionPublication, type LoadedChannel } from "@harness/core";
+import { buildUploadManifest, commitPackage, createDraftPackage, createJob, eventFor, manifestDigest, nextSlot, sha256File, transitionPublication, type LoadedChannel } from "@harness/core";
 import type { AppContext } from "../composition.js";
 import { requireLibrary } from "./library-stage.js";
 import { withContext } from "./shared.js";
@@ -152,8 +152,11 @@ async function buildPackageStage(app: AppContext, sdk: ScriptContext): Promise<v
       throw new HarnessError("CONFIG_INVALID", `episode directory ${episodeDir} already exists and was not created by package ${pkg.package_id}`, { episode_dir: episodeDir, package_id: pkg.package_id });
     }
   }
-  for (const sub of ["full-episode", "thumbnails", "publish"]) mkdirSync(join(episodeDir, sub), { recursive: true });
+  // marker written first: a crash between here and the subdirectories existing must not leave an unmarked
+  // directory the guard above would reject forever on the next attempt.
+  mkdirSync(episodeDir, { recursive: true });
   writeFileSync(markerFile, pkg.package_id);
+  for (const sub of ["full-episode", "thumbnails", "publish"]) mkdirSync(join(episodeDir, sub), { recursive: true });
 
   const videoDest = join(episodeDir, "full-episode", `episode-${nn}-full-episode.mp4`);
   copyFileSync(sdk.input("episode_video"), videoDest);
@@ -217,6 +220,21 @@ async function uploadStage(app: AppContext, sdk: ScriptContext): Promise<void> {
     await sdk.done({ external_operations: job.operation_id ? [job.operation_id] : [] });
     return;
   }
+
+  // A previous attempt died somewhere between recording the intent and confirming/failing it -- the durable
+  // state is job=UPLOADING with an operation that is at least DISPATCHED (see below), and we genuinely don't
+  // know whether the upload happened. This is not a contract problem for *this* attempt to fail on: park it
+  // NEEDS_RECONCILIATION exactly like a live "unknown" outcome would, so `harness publish reconcile` (and the
+  // workflow's own retry, once reconciled) can pick it back up instead of the stage wedging in WAITING_HUMAN
+  // forever with no operation any reconciler will touch.
+  if (job.state === "UPLOADING") {
+    const reason = "a previous attempt died during upload; outcome unknown";
+    if (!job.operation_id) throw new HarnessError("CONFIG_INVALID", `publication job ${job.publication_job_id} is UPLOADING with no operation_id to reconcile`, { publication_job_id: job.publication_job_id });
+    app.journal.markLost(job.operation_id, reason);
+    transitionPublication(app.store, job.publication_job_id, "UPLOADING", "NEEDS_RECONCILIATION", { reason });
+    await sdk.unknown(reason, [job.operation_id]);
+    return;
+  }
   if (job.state !== "READY") {
     throw new HarnessError("INVALID_TRANSITION", `publication job ${job.publication_job_id} is ${job.state}; upload needs READY`, { publication_job_id: job.publication_job_id, state: job.state });
   }
@@ -231,6 +249,18 @@ async function uploadStage(app: AppContext, sdk: ScriptContext): Promise<void> {
   });
   app.store.updatePublicationJob({ ...job, operation_id: intent.operation_id });
   transitionPublication(app.store, job.publication_job_id, "READY", "UPLOADING");
+
+  // Marked DISPATCHED *before* the (up to 45-minute) upload call, not after: if this process dies mid-upload,
+  // the op must already be past INTENT_RECORDED so `journal.markLost`/`markFailed` (called by the next
+  // attempt's UPLOADING-recovery branch above, or by `harness publish reconcile`) can act on it. `recordIntent`
+  // returns an *existing* op verbatim when one is already current for this idempotency key, so this is a no-op
+  // on a retry that already got past this point.
+  if (intent.status === "INTENT_RECORDED") {
+    const run = app.store.getRun(sdk.request.run_id)!;
+    const stageRun = app.store.getStageRun(sdk.request.stage_run_id) ?? null;
+    const attempt = app.store.getAttempt(sdk.request.attempt_id) ?? null;
+    app.store.transition("external_operation", intent.operation_id, "INTENT_RECORDED", "DISPATCHED", eventFor(run, stageRun, attempt, "external_operation.dispatched", "info", { operation_id: intent.operation_id }));
+  }
 
   const outcome = await app.publisher.upload({
     channel: app.channels.toPublisherChannel(job.channel_id), episode_no: pkg.episode_no, episode_dir: pkg.episode_dir,
