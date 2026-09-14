@@ -46,8 +46,13 @@ export function agentChildEnv(base: Record<string, string | undefined>, passthro
   for (const [k, v] of Object.entries(base)) upper.set(k.toUpperCase(), v);
   const env: Record<string, string> = {};
   for (const key of [...BASE_ENV_ALLOWLIST, ...passthrough]) {
-    if (key.startsWith("HARNESS_SECRET_")) continue;
-    const v = upper.get(key.toUpperCase());
+    const canonical = key.toUpperCase();
+    // Case-insensitive on both sides: a passthrough entry spelled "harness_secret_x_y" must be
+    // stripped exactly like "HARNESS_SECRET_X_Y" — the lookup below is already case-insensitive
+    // (matches base env keys via `canonical`), so the secret guard must be too, or a
+    // differently-cased passthrough entry would sail through and leak the resolved value.
+    if (canonical.startsWith("HARNESS_SECRET_")) continue;
+    const v = upper.get(canonical);
     if (v !== undefined) env[key] = v;
   }
   env.HARNESS_WORKSPACE = workspace;

@@ -146,6 +146,19 @@ describe("agentChildEnv", () => {
     expect(env).not.toHaveProperty("Path");
     expect(env).not.toHaveProperty("Temp");
   });
+
+  it("regression: a differently-cased HARNESS_SECRET_* passthrough entry is still stripped, not leaked under a lowercase key", () => {
+    const env = agentChildEnv(
+      { HARNESS_SECRET_X_Y: "s3cret", FAKE_AGENT_MODE: "ok" },
+      ["harness_secret_x_y", "Fake_Agent_Mode"],
+      "/workspace",
+    );
+    // the mode value passes through fine (not a secret) — only its exact key casing depends on the
+    // passthrough entry's own spelling, which is not what this regression is about
+    expect(Object.values(env)).toContain("ok");
+    expect(Object.keys(env).some((k) => k.toUpperCase().startsWith("HARNESS_SECRET_"))).toBe(false);
+    expect(Object.values(env)).not.toContain("s3cret");
+  });
 });
 
 // Exercises the real `claude` CLI end to end: skipped wherever the binary is not on PATH (most dev/CI
