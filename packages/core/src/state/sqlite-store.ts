@@ -352,12 +352,14 @@ export class SqliteStateStore implements StateStore {
     this.db.prepare("INSERT INTO event (id, run_id, occurred_at, event_type, data) VALUES (?, ?, ?, ?, ?)").run(e.event_id, e.run_id, e.occurred_at, e.event_type, JSON.stringify(e));
     return e;
   }
-  listEvents(filter: { run_id?: string; limit?: number; newest?: boolean }): Event[] {
+  listEvents(filter: { run_id?: string; event_type?: string; limit?: number; newest?: boolean }): Event[] {
     const limit = filter.limit ?? 1000;
     const order = filter.newest ? "occurred_at DESC, id DESC" : "occurred_at, id";
-    const rows = filter.run_id
-      ? this.listDocs(`SELECT data FROM event WHERE run_id = ? ORDER BY ${order} LIMIT ?`, [filter.run_id, limit], (x) => EventSchema.parse(x))
-      : this.listDocs(`SELECT data FROM event ORDER BY ${order} LIMIT ?`, [limit], (x) => EventSchema.parse(x));
+    const where: string[] = []; const params: (string | number)[] = [];
+    if (filter.run_id) { where.push("run_id = ?"); params.push(filter.run_id); }
+    if (filter.event_type) { where.push("event_type = ?"); params.push(filter.event_type); } // real column, not json_extract -- see migration 0001
+    params.push(limit);
+    const rows = this.listDocs(`SELECT data FROM event${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY ${order} LIMIT ?`, params, (x) => EventSchema.parse(x));
     return filter.newest ? rows.reverse() : rows;
   }
 

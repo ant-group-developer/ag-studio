@@ -70,6 +70,27 @@ describe("SqliteStateStore", () => {
     expect(store.listEvents({ run_id: runId, limit: 2 }).map((x) => x.event_type)).toEqual(["run.one", "run.two"]);
   });
 
+  it("listEvents({ event_type }) filters by the dedicated column, combinable with run_id and newest", () => {
+    const { store } = openTempStore();
+    const runA = newId("run");
+    const runB = newId("run");
+    const base = { stage_run_id: null, attempt_id: null, project_id: "p", portfolio_id: null, channel_id: null, content_id: null, variant_id: null, workflow_release: null, severity: "info" as const, payload: {} };
+    store.appendEvent({ ...base, run_id: runA, event_type: "run.started" });
+    store.appendEvent({ ...base, run_id: runA, event_type: "request.auto_accepted" });
+    store.appendEvent({ ...base, run_id: runB, event_type: "request.auto_accepted" });
+    store.appendEvent({ ...base, run_id: runB, event_type: "run.started" });
+
+    expect(store.listEvents({ event_type: "request.auto_accepted" }).map((x) => x.run_id).sort()).toEqual([runA, runB].sort());
+    expect(store.listEvents({ event_type: "request.auto_accepted", run_id: runA })).toHaveLength(1);
+    expect(store.listEvents({ event_type: "run.missing" })).toEqual([]);
+
+    // the filter must still work once the matching event_type is far outnumbered by unrelated events --
+    // this is what makes the auto-accept skip-dedup check (packages/core/src/library/auto-accept.ts) cheap
+    // and correct regardless of how many other events a project has accumulated.
+    for (let i = 0; i < 1200; i++) store.appendEvent({ ...base, run_id: runA, event_type: "noise.event" });
+    expect(store.listEvents({ event_type: "request.auto_accepted", newest: true }).map((x) => x.run_id).sort()).toEqual([runA, runB].sort());
+  });
+
   it("rolls back a transaction when the callback throws", () => {
     const { store } = openTempStore();
     const run = makeRun();
