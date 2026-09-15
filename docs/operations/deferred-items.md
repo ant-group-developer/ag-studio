@@ -509,3 +509,26 @@ tin lệch (`packages/core/src/media/watch.ts`, `packages/core/src/library/auto-
   chọn ở lần đầu — nếu bản thân source là nguyên nhân bị từ chối, phải tới khi chạm `max_replans` mới có
   người biết để đổi source. Chấp nhận có chủ đích (spec), giữ `max_replans` nhỏ (mặc định 2) để giới hạn số
   lần thử vô ích.
+
+## Hoãn — ghi nhận ở re-review đợt sửa cuối sub-project 4 (2026-09-15)
+
+Sáu quan sát ngoài phạm vi của re-review cuối; không mục nào chặn merge. Ruling của người điều phối ghi cạnh từng mục.
+
+- `assertFfmpegSpawned` (`packages/core/src/media/watch.ts`) coi mọi lỗi spawn không kèm signal là `CONFIG_INVALID` →
+  `contract` (không retry), kể cả `EAGAIN`/`EMFILE` khi máy cạn fd/process — vốn là lỗi tạm. Ruling: hoãn — lần
+  sửa sau chỉ ném `CONFIG_INVALID` cho `ENOENT`/`EACCES`, còn lại ném `IO_ERROR` (→ `transient`).
+- Alert `stage_waiting_human` bắn cho cả gate người của workflow 1.0.0 đang chờ bình thường, và khi quá hạn có thêm
+  `gate_overdue` cùng `stage_run_id`. Ruling: chấp nhận — dashboard là mặt đồng hồ, gate đang chờ người đúng là
+  việc cần thấy; nếu ồn thì lọc ở `hub.html` theo `executor.type`.
+- `waitingHumanAlerts` quét toàn bộ run + stage + attempt mỗi lần ghi snapshot. Ruling: hoãn (quy mô hiện tại
+  nhỏ); thêm chỉ mục/lọc theo state khi số run vượt vài nghìn.
+- Đường mẫu hỗn hợp (một phần tải được, một phần chỉ có ảnh sẵn): `frames` của phần chỉ-ảnh trỏ ra ngoài artifact
+  `output/watch` (`../../input/samples/…`) nên sau khi workspace đổi tên vào `artifacts/` có thể treo. Ruling:
+  hoãn — chỉ xảy ra với wrapper không để lại video (fixture 2C); wrapper studio luôn để lại video.
+- Guard "ContentItem chưa có run" của auto-accept chỉ áp dụng ở `replan_no === 0`; `library accept` tay lần hai sau
+  một lần từ chối vẫn có cửa sổ plan đôi; request có ContentItem tay chưa plan bị bỏ qua `run-active` mãi mà không
+  có event/alert. Ruling: hoãn — vận hành tự động không dùng `library accept` tay; ghi vào runbook §6 là "không
+  trộn accept tay với autopilot trên cùng request".
+- Test chặn câu "harness điền hộ" trong SKILL.md chỉ khớp hai cách viết tiếng Việt cố định; `skills/style-review`
+  vẫn nói "không có quyền WebSearch/WebFetch" trong khi `allowedTools` là toàn cục (chỉ là quy ước prompt).
+  Ruling: hoãn — ghi ADR 91 đã có; sửa chữ khi chạm skill lần tới.
