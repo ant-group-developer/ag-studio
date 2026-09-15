@@ -1,9 +1,15 @@
 #!/usr/bin/env node
-// THU SỐ LIỆU STUDIO — READ-ONLY. Script này KHÔNG BAO GIỜ bấm hay gõ bất cứ gì trên trang: nó chỉ
-// `goto` ba URL Analytics của một video (Overview / Reach / Engagement) theo id, đọc text hiển thị,
-// và không tương tác gì khác. Nếu trang đòi đăng nhập lại (chuyển hướng về accounts.google.com, hoặc
-// còn "Verify it's you") thì báo `blocked` và dừng ngay — đăng nhập lại là việc của CHỦ KÊNH, agent
-// không bao giờ được gõ mật khẩu hay mã 2FA (xem `scripts/lookup.mjs`, cùng nguyên tắc).
+// THU SỐ LIỆU STUDIO — READ-ONLY. Script này KHÔNG BAO GIỜ gõ hay nộp bất cứ gì (không có ô nhập nào
+// được gõ, không có form nào được submit, không có mật khẩu/2FA nào được gõ). Nó chỉ điều hướng trong
+// Analytics của một video theo hai cách, cả hai đều read-only:
+//   - `goto` thẳng URL cho tab Overview và tab Engagement.
+//   - BẤM vào tab "Reach"/"Phạm vi tiếp cận" trên thanh tab Analytics (chỉ đổi tab đang xem, không đổi
+//     trạng thái gì trên YouTube) — `goto` thẳng URL của tab này render TRANG TRẮNG ngay cả sau 60s,
+//     xem `D:\<kênh>\scripts\collect-metrics-playwright.mjs:169-171` (kho kênh cũ, chỉ đọc). Đây là cú
+//     bấm DUY NHẤT trong toàn bộ script, và nó không bấm nút nào khác ngoài tab đó.
+// Nếu trang đòi đăng nhập lại (chuyển hướng về accounts.google.com, hoặc còn "Verify it's you") thì báo
+// `blocked` và dừng ngay — đăng nhập lại là việc của CHỦ KÊNH, agent không bao giờ được gõ mật khẩu hay
+// mã 2FA (xem `scripts/lookup.mjs`, cùng nguyên tắc).
 //
 // `playwright` không phải dependency của package adapter này; kênh (thư mục cha của --profile) đã cài
 // sẵn, nên được resolve từ đó qua createRequire — giống hệt `scripts/lookup.mjs`.
@@ -13,7 +19,8 @@
 //   { kind: "ok", views, impressions?, ctr_pct?, avg_view_sec? }   exit 0
 //   { kind: "no-views" }                                          exit 0 (Studio tự khai chưa có lượt xem)
 //   { kind: "blocked", reason }                                   exit 2 (tường đăng nhập lại)
-//   { kind: "error", reason }                                     exit 3 (bất cứ lỗi nào khác)
+//   { kind: "error", reason }                                     exit 3 (bất cứ lỗi nào khác, kể cả
+//                                                                  widget không vẽ xong trong 60s)
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
@@ -28,7 +35,7 @@ function arg(flag) {
 const COUNT_MULTIPLIER = { k: 1e3, m: 1e6, b: 1e9, n: 1e3, tr: 1e6, "tỷ": 1e9 };
 
 function parseCount(s) {
-  const t = String(s ?? "").replace(/[   ]/g, " ").trim();
+  const t = String(s ?? "").replace(/[\u00A0\u202F\u2009]/g, " ").trim();
   if (!t) return null;
   const m = /^([\d.,]+)\s*(K|M|B|N|Tr|Tỷ)?$/i.exec(t);
   if (!m) return null;
@@ -40,7 +47,7 @@ function parseCount(s) {
 }
 
 function parsePercent(s) {
-  const t = String(s ?? "").replace(/[   ]/g, " ").trim();
+  const t = String(s ?? "").replace(/[\u00A0\u202F\u2009]/g, " ").trim();
   const m = /^([\d.,]+)\s*%$/.exec(t);
   if (!m) return null;
   const n = Number(m[1].replace(",", "."));
@@ -124,11 +131,32 @@ function fail(reason) {
   process.exit(3);
 }
 
-async function readTab(page, url) {
-  await page.goto(url, { waitUntil: "domcontentloaded" });
-  const text = await page.evaluate(() => document.body.innerText);
-  if (isLoginWall(page.url(), text)) return { text: null, loginWall: true };
-  return { text: sliceBeforeRealtime(text), loginWall: false };
+/**
+ * Polls `document.body.innerText` every 1s, up to `timeoutMs` (default 60s), until at least one of
+ * `labels` appears as its own line. Ported from the legacy `collect-metrics-playwright.mjs`'s
+ * `textWhenLabelsAppear` (lines 122-136): Studio's analytics widgets render client-side well after
+ * `domcontentloaded`/a tab click resolves, so a single read right after navigating is a race that
+ * silently reads an empty/partial page. Returns `{ text, ok }` — `ok: false` on timeout, with `text`
+ * holding whatever was last read (used by the caller only to check for a login wall before giving up).
+ */
+async function waitForLabels(page, labels, timeoutMs = 60000) {
+  const deadline = Date.now() + timeoutMs;
+  const wanted = labels.map((l) => l.toLowerCase());
+  let text = "";
+  for (;;) {
+    text = await page.evaluate(() => document.body.innerText);
+    const lines = text.split(/\r?\n/).map((s) => s.trim().toLowerCase());
+    if (wanted.some((l) => lines.includes(l))) return { text, ok: true };
+    if (Date.now() >= deadline) return { text, ok: false };
+    await page.waitForTimeout(1000);
+  }
+}
+
+/** The one click this script ever makes: switches the Analytics tab strip to Reach/"Phạm vi tiếp cận".
+ * Read-only (a client-side tab switch, not an edit/upload/publish action) — see the file header. */
+async function clickReachTab(page) {
+  const tab = page.getByRole("tab", { name: /^(reach|phạm vi tiếp cận)$/i }).first();
+  await tab.click({ timeout: 20000 });
 }
 
 async function main() {
@@ -152,22 +180,39 @@ async function main() {
     page.setDefaultTimeout(60000);
 
     // ---- tab-overview: Views, and the definitive "no views yet" sentence ----
-    const overview = await readTab(page, `https://studio.youtube.com/video/${video}/analytics/tab-overview/period-since_publish`);
-    if (overview.loginWall) return blocked("Studio yêu cầu đăng nhập lại (Verify it's you)");
-    if (saysNoViews(overview.text)) return noViews();
-    const views = parseCount(pickMetric(overview.text, VIEWS_LABELS, RE_COUNT));
+    await page.goto(`https://studio.youtube.com/video/${video}/analytics/tab-overview/period-since_publish`, { waitUntil: "domcontentloaded" });
+    let res = await waitForLabels(page, VIEWS_LABELS, 60000);
+    if (isLoginWall(page.url(), res.text)) return blocked("Studio yêu cầu đăng nhập lại (Verify it's you)");
+    if (!res.ok) return fail("labels not rendered: overview");
+    const overviewText = sliceBeforeRealtime(res.text);
+    if (saysNoViews(overviewText)) return noViews();
+    const views = parseCount(pickMetric(overviewText, VIEWS_LABELS, RE_COUNT));
     if (views === null) return fail("không đọc được Views trên tab overview");
 
-    // ---- tab-reach: impressions + CTR (không có ở tab overview) ----
-    const reach = await readTab(page, `https://studio.youtube.com/video/${video}/analytics/tab-reach/period-since_publish`);
-    if (reach.loginWall) return blocked("Studio yêu cầu đăng nhập lại (Verify it's you)");
-    const impressions = parseCount(pickMetric(reach.text, REACH_IMPRESSIONS_LABELS, RE_COUNT));
-    const ctr_pct = parsePercent(pickMetric(reach.text, REACH_CTR_LABELS, RE_PCT));
+    // ---- tab-reach: impressions + CTR (không có ở tab overview). BẤM tab từ Overview, không `goto`
+    // thẳng URL — xem lý do ở đầu file. Widget Reach hoạ hoằn vẫn không vẽ xong sau cú bấm đầu; reload
+    // rồi bấm lại một lần nữa trước khi báo lỗi (vẫn read-only: reload không đổi trạng thái gì). ----
+    await clickReachTab(page).catch(() => {}); // nuốt lỗi bấm: waitForLabels dưới đây sẽ time out và được xử lý như nhau
+    res = await waitForLabels(page, REACH_IMPRESSIONS_LABELS, 60000);
+    if (isLoginWall(page.url(), res.text)) return blocked("Studio yêu cầu đăng nhập lại (Verify it's you)");
+    if (!res.ok) {
+      await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+      await clickReachTab(page).catch(() => {});
+      res = await waitForLabels(page, REACH_IMPRESSIONS_LABELS, 60000);
+      if (isLoginWall(page.url(), res.text)) return blocked("Studio yêu cầu đăng nhập lại (Verify it's you)");
+    }
+    if (!res.ok) return fail("labels not rendered: reach");
+    const reachText = sliceBeforeRealtime(res.text);
+    const impressions = parseCount(pickMetric(reachText, REACH_IMPRESSIONS_LABELS, RE_COUNT));
+    const ctr_pct = parsePercent(pickMetric(reachText, REACH_CTR_LABELS, RE_PCT));
 
     // ---- tab-engagement: thời lượng xem trung bình (không có ở tab overview) ----
-    const engagement = await readTab(page, `https://studio.youtube.com/video/${video}/analytics/tab-engagement/period-since_publish`);
-    if (engagement.loginWall) return blocked("Studio yêu cầu đăng nhập lại (Verify it's you)");
-    const avg_view_sec = parseDuration(pickMetric(engagement.text, AVG_VIEW_LABELS, RE_DUR));
+    await page.goto(`https://studio.youtube.com/video/${video}/analytics/tab-engagement/period-since_publish`, { waitUntil: "domcontentloaded" });
+    res = await waitForLabels(page, AVG_VIEW_LABELS, 60000);
+    if (isLoginWall(page.url(), res.text)) return blocked("Studio yêu cầu đăng nhập lại (Verify it's you)");
+    if (!res.ok) return fail("labels not rendered: engagement");
+    const engagementText = sliceBeforeRealtime(res.text);
+    const avg_view_sec = parseDuration(pickMetric(engagementText, AVG_VIEW_LABELS, RE_DUR));
 
     return ok({
       views,
