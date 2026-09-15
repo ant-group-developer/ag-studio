@@ -132,6 +132,10 @@ export const DemandSchema = z.object({
   }).strict(),
   open_requests: z.number().int().min(0),
   max_open_requests: z.number().int().min(0),
+  /** Echoes `channel.config.planning.topics_per_run` -- the per-run cap `create-requests` applies alongside
+   * `needed`/`max_open_requests` headroom, and the same value `channel-plan`/the fake agent read to cap how
+   * many topics they propose in the first place (spec §4.2). */
+  topics_per_run: z.number().int().min(1),
 }).strict();
 
 /** `output/requests-receipt.json` written by the built-in `create-requests` stage (spec §4.2): every content

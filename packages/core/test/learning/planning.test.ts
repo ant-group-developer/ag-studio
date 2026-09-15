@@ -63,6 +63,13 @@ describe("channelDemand", () => {
     expect(demand.needed).toBe(3);
   });
 
+  it("echoes channel.config.planning.topics_per_run", () => {
+    const { store, clock } = openTempStore(T0);
+    const channel = makeChannel({ planning: { lookahead_slots: 3, topics_per_run: 7 } });
+    const demand = channelDemand({ store, clock, channel, libraryItems: [], libraryClaimsOf: () => [] });
+    expect(demand.topics_per_run).toBe(7);
+  });
+
   it("one SCHEDULED job + one shared approved item + one open request cover all 3 slots", () => {
     const { store, clock } = openTempStore(T0);
     const channel = makeChannel({ planning: { lookahead_slots: 3 } });
@@ -131,7 +138,7 @@ describe("channelDemand", () => {
 describe("planningNeeded", () => {
   const base: Demand = {
     schema_version: "harness.demand/v1", channel_id: "channel-a", needed: 0, slots: [],
-    covered: { jobs: 0, runs: 0, items: 0, requests: 0 }, open_requests: 0, max_open_requests: 3,
+    covered: { jobs: 0, runs: 0, items: 0, requests: 0 }, open_requests: 0, max_open_requests: 3, topics_per_run: 3,
   };
   it("true only when needed>0 and open_requests<max_open_requests", () => {
     expect(planningNeeded({ ...base, needed: 1 })).toBe(true);

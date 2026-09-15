@@ -85,9 +85,9 @@ function tmpWorkspace(): string {
   return mkdtempSync(join(tmpdir(), "fake-agent-"));
 }
 
-const DEMAND_JSON = (needed: number) => JSON.stringify({
+const DEMAND_JSON = (needed: number, topicsPerRun = 3) => JSON.stringify({
   schema_version: "harness.demand/v1", channel_id: "c1", needed, slots: [],
-  covered: { jobs: 0, runs: 0, items: 0, requests: 0 }, open_requests: 0, max_open_requests: 3,
+  covered: { jobs: 0, runs: 0, items: 0, requests: 0 }, open_requests: 0, max_open_requests: 3, topics_per_run: topicsPerRun,
 });
 
 /** A schema-valid `harness.channel-brief/v1` document, shaped just enough to exercise the fake agent's
@@ -405,6 +405,21 @@ describe("fake-agent-cli.mjs: sub-project 3B channel-planning/channel-package ou
     const proposal = JSON.parse(readFileSync(join(ws, "output", "topics.json"), "utf8"));
     expect(TopicProposalSchema.safeParse(proposal).success).toBe(true);
     expect(proposal.topics).toHaveLength(1);
+  });
+
+  it("channel-plan: caps the proposal count at demand.topics_per_run, not just needed", () => {
+    const ws = tmpWorkspace();
+    const demandInput = fileInput(ws, "inputs/demand.json", DEMAND_JSON(5, 2), "demand"); // needed=5, topics_per_run=2
+    const req = makeRequest(ws, {
+      stage_key: "propose-topics",
+      inputs: [demandInput],
+      expected_outputs: [{ type: "topic_proposal", mime_type: "application/json", kind: "file", name: "topics.json" }],
+    });
+    const r = run(ws, req);
+    expect(r.status, `stderr: ${r.err}`).toBe(0);
+    const proposal = JSON.parse(readFileSync(join(ws, "output", "topics.json"), "utf8"));
+    expect(TopicProposalSchema.safeParse(proposal).success).toBe(true);
+    expect(proposal.topics).toHaveLength(2); // min(needed=5, topics_per_run=2, 3)
   });
 
   it("channel-plan: FAKE_ANGLE overrides the proposed topics' angle", () => {

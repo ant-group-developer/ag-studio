@@ -100,6 +100,7 @@ export function channelDemand(d: {
     covered: { jobs: jobsCovered, runs: runsCovered, items: itemsCovered, requests: requestsCovered },
     open_requests,
     max_open_requests: d.channel.config.planning.max_open_requests,
+    topics_per_run: d.channel.config.planning.topics_per_run,
   };
   return DemandSchema.parse(demand);
 }

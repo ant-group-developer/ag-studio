@@ -225,6 +225,19 @@ const SAMPLE_PROPOSAL = (): TopicProposal => ({
   ],
 });
 
+/** 5 distinct topics -- for the `room`/`topics_per_run` capping tests, which need more candidates than
+ * `SAMPLE_PROPOSAL()`'s 3. */
+const SAMPLE_PROPOSAL_5 = (): TopicProposal => ({
+  schema_version: "harness.topic-proposal/v1",
+  topics: [
+    { topic: "Khám phá chợ nổi Cái Răng lúc bình minh", angle: "góc quay flycam", why: "recent_metrics tập gần nhất đạt views cao với mở đầu flycam" },
+    { topic: "Ẩm thực đường phố miền Tây mùa nước nổi", angle: "trải nghiệm ăn uống", why: "giả thuyết hyp cũ supported hướng ẩm thực" },
+    { topic: "Một ngày làm thương lái trên sông Hậu", angle: "theo chân nhân vật", why: "video cùng ngách tìm được trên web đang lên xu hướng" },
+    { topic: "Nghề đóng ghe truyền thống ở Cần Thơ", angle: "làng nghề", why: "chưa có tập nào khai thác nghề thủ công" },
+    { topic: "Trẻ em miền Tây đi học bằng xuồng mỗi ngày", angle: "góc nhìn đời thường", why: "video cùng ngách tìm được trên web đang lên xu hướng" },
+  ],
+});
+
 describe("harness publish stage: channel-brief / demand / create-requests", () => {
   let world: LibraryWorld;
   let repoDir: string;
@@ -288,13 +301,28 @@ describe("harness publish stage: channel-brief / demand / create-requests", () =
   });
 
   describe("create-requests", () => {
-    async function toCreateRequestsReady(title: string): Promise<{ runId: string; briefSnap: string; demandSnap: string; topicsSnap: string }> {
+    async function toCreateRequestsReady(title: string, proposal: TopicProposal = SAMPLE_PROPOSAL()): Promise<{ runId: string; briefSnap: string; demandSnap: string; topicsSnap: string }> {
       const contentId = createPlanningContent(world.channel, title);
       const runId = planRun(world.channel, "channel-planning@1.0.0", "channel-planning", contentId);
       const brief = await runAndCommit(world.channel, runId, "channel-brief", "channel-brief");
       const demand = await runAndCommit(world.channel, runId, "demand", "demand");
-      const propose = await fabricateProposeTopics(world.channel, runId, SAMPLE_PROPOSAL());
+      const propose = await fabricateProposeTopics(world.channel, runId, proposal);
       return { runId, briefSnap: brief.workspaceSnapshot, demandSnap: demand.workspaceSnapshot, topicsSnap: propose.workspaceSnapshot };
+    }
+
+    /** Writes a hand-built `demand.json` (the stage only reads the `demand` input file, so this is a
+     * deterministic way to exercise a specific `needed`/`max_open_requests`/`open_requests`/`topics_per_run`
+     * combination without reconstructing that exact channel state for real). */
+    function writeDemandFixture(d: Partial<Demand>): string {
+      const dir = mkdtempSync(join(tmpdir(), "demand-fixture-"));
+      const demand: Demand = {
+        schema_version: "harness.demand/v1", channel_id: CHANNEL_ID, needed: 0, slots: [],
+        covered: { jobs: 0, runs: 0, items: 0, requests: 0 }, open_requests: 0, max_open_requests: 3, topics_per_run: 3,
+        ...d,
+      };
+      mkdirSync(join(dir, "output"), { recursive: true });
+      writeFileSync(join(dir, "output", "demand.json"), JSON.stringify(demand, null, 2));
+      return dir;
     }
 
     function createRequestsInputs(briefSnap: string, demandSnap: string, topicsSnap: string): InputSpec[] {
@@ -337,16 +365,37 @@ describe("harness publish stage: channel-brief / demand / create-requests", () =
       // lookahead is already covered by requests created in the previous test -- simplest deterministic way is
       // to hand-write a demand.json with needed: 0 directly (this stage only reads the `demand` input file).
       const { runId, briefSnap, topicsSnap } = await toCreateRequestsReady("planning c1 zero-needed");
-      const zeroDemandDir = mkdtempSync(join(tmpdir(), "zero-demand-"));
-      const zeroDemand: Demand = { schema_version: "harness.demand/v1", channel_id: CHANNEL_ID, needed: 0, slots: [], covered: { jobs: 0, runs: 0, items: 0, requests: 0 }, open_requests: 0, max_open_requests: 3 };
-      mkdirSync(join(zeroDemandDir, "output"), { recursive: true });
-      writeFileSync(join(zeroDemandDir, "output", "demand.json"), JSON.stringify(zeroDemand, null, 2));
+      const zeroDemandDir = writeDemandFixture({ needed: 0 });
 
       const inputs = createRequestsInputs(briefSnap, zeroDemandDir, topicsSnap);
       const { result, workspaceDir } = await invokeStage(world.channel, runId, "create-requests", "create-requests", inputs);
       expect(result.outcome, JSON.stringify(result)).toBe("succeeded");
       const receipt = JSON.parse(readFileSync(join(workspaceDir, "output", "requests-receipt.json"), "utf8")) as RequestsReceipt;
       expect(receipt.request_ids).toEqual([]);
+    });
+
+    it("demand.needed 5, max_open_requests 3, open_requests 2, 5 proposed topics -> exactly 1 request created (room, not needed, is the binding limit)", async () => {
+      const { runId, briefSnap, topicsSnap } = await toCreateRequestsReady("planning c1 room-capped", SAMPLE_PROPOSAL_5());
+      // room = max_open_requests(3) - open_requests(2) = 1; cap = min(needed=5, room=1, topics_per_run=3) = 1
+      const demandDir = writeDemandFixture({ needed: 5, max_open_requests: 3, open_requests: 2, topics_per_run: 3 });
+
+      const inputs = createRequestsInputs(briefSnap, demandDir, topicsSnap);
+      const { result, workspaceDir } = await invokeStage(world.channel, runId, "create-requests", "create-requests", inputs);
+      expect(result.outcome, JSON.stringify(result)).toBe("succeeded");
+      const receipt = JSON.parse(readFileSync(join(workspaceDir, "output", "requests-receipt.json"), "utf8")) as RequestsReceipt;
+      expect(receipt.request_ids).toHaveLength(1);
+    });
+
+    it("demand.needed 5, room plenty, topics_per_run 2, 5 proposed topics -> exactly 2 requests created (topics_per_run is the binding limit)", async () => {
+      const { runId, briefSnap, topicsSnap } = await toCreateRequestsReady("planning c1 topics-per-run-capped", SAMPLE_PROPOSAL_5());
+      // room = max_open_requests(10) - open_requests(0) = 10; cap = min(needed=5, room=10, topics_per_run=2) = 2
+      const demandDir = writeDemandFixture({ needed: 5, max_open_requests: 10, open_requests: 0, topics_per_run: 2 });
+
+      const inputs = createRequestsInputs(briefSnap, demandDir, topicsSnap);
+      const { result, workspaceDir } = await invokeStage(world.channel, runId, "create-requests", "create-requests", inputs);
+      expect(result.outcome, JSON.stringify(result)).toBe("succeeded");
+      const receipt = JSON.parse(readFileSync(join(workspaceDir, "output", "requests-receipt.json"), "utf8")) as RequestsReceipt;
+      expect(receipt.request_ids).toHaveLength(2);
     });
   });
 

@@ -507,7 +507,13 @@ function resolveStyleFor(app: AppContext, topicStyleId: string | undefined): { s
   return { style_id: active.style_id, style_revision: active.revision };
 }
 
-/** `create-requests` stage (spec §4.2): turns up to `demand.needed` proposed topics into kho content requests.
+/** `create-requests` stage (spec §4.2): turns proposed topics into kho content requests, capped by three
+ * independent limits at once -- `demand.needed` (the publish schedule doesn't need more), `room` (the
+ * channel's `max_open_requests` headroom: `max_open_requests - open_requests`, so the studio is never handed
+ * more open work than the channel is allowed to have queued), and `demand.topics_per_run` (the channel's own
+ * per-run cap). Without `room` in the mix, a channel with a generous `lookahead_slots` but a tight
+ * `max_open_requests` could have every one of `demand.needed`'s slots turned into an open request in a single
+ * run, blowing straight through the open-request cap `planningNeeded` is supposed to enforce.
  * Idempotent per run -- a topic whose normalized text matches an existing request already carrying this
  * run's id in its `notes` is left alone (its id is still reported in the receipt), so a retried attempt never
  * double-books the same topic. */
@@ -519,7 +525,9 @@ async function createRequestsStage(app: AppContext, sdk: ScriptContext): Promise
   const demand = parseDemand(readJsonFile(sdk.input("demand")));
   const brief = parseChannelBrief(readJsonFile(sdk.input("channel_brief")));
 
-  const candidates = proposal.topics.slice(0, demand.needed);
+  const room = Math.max(0, demand.max_open_requests - demand.open_requests);
+  const cap = Math.min(demand.needed, room, demand.topics_per_run);
+  const candidates = proposal.topics.slice(0, cap);
   const existingForRun = app.store.listContentRequests({}).filter((r) => r.requested_by.channel_id === channelId && r.notes.includes(run.run_id));
   const byTopic = new Map(existingForRun.map((r) => [normalizeTopic(r.topic), r.request_id]));
 

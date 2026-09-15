@@ -149,7 +149,7 @@ describe("DemandSchema", () => {
     const parsed = DemandSchema.parse({
       schema_version: "harness.demand/v1", channel_id: "channel-a", needed: 2,
       slots: [now], covered: { jobs: 1, runs: 1, items: 1, requests: 0 },
-      open_requests: 0, max_open_requests: 3,
+      open_requests: 0, max_open_requests: 3, topics_per_run: 3,
     });
     expect(parsed.needed).toBe(2);
   });

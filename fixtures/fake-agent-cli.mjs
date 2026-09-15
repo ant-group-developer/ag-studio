@@ -279,9 +279,9 @@ function buildChannelPackageDraft() {
 }
 
 /** `harness.topic-proposal/v1` for the `propose-topics` stage of `channel-planning` (sub-project 3B): reads
- * `needed` from the `demand` input and the channel's niche/learned angle plus everything already spoken for
- * (open requests, recent hypothesis titles) from the `channel_brief` input, then invents up to
- * `max(1, min(needed, 3))` new, non-duplicate topics. */
+ * `needed` (and the per-run cap `topics_per_run`) from the `demand` input and the channel's niche/learned
+ * angle plus everything already spoken for (open requests, recent hypothesis titles) from the `channel_brief`
+ * input, then invents up to `max(1, min(needed, topics_per_run ?? 3, 3))` new, non-duplicate topics. */
 function buildTopicProposal() {
   const demandInput = findInput("demand");
   const demand = demandInput ? tryReadJsonAt(demandInput.path) : null;
@@ -289,6 +289,7 @@ function buildTopicProposal() {
   const brief = briefInput ? tryReadJsonAt(briefInput.path) : null;
 
   const needed = typeof demand?.needed === "number" ? demand.needed : 1;
+  const topicsPerRun = typeof demand?.topics_per_run === "number" ? demand.topics_per_run : 3;
   const niche = brief?.channel?.seo?.niche || "kênh";
   let angle = brief?.learned?.standard?.angle ?? "";
   if (process.env.FAKE_ANGLE !== undefined) angle = process.env.FAKE_ANGLE;
@@ -297,7 +298,7 @@ function buildTopicProposal() {
   for (const r of brief?.open_requests ?? []) seen.add(normalizeTopic(r.topic));
   for (const h of brief?.hypotheses ?? []) seen.add(normalizeTopic(h.chosen?.title));
 
-  const count = Math.max(1, Math.min(needed, 3));
+  const count = Math.max(1, Math.min(needed, topicsPerRun, 3));
   const topics = [];
   for (let n = 1; topics.length < count && n <= count + seen.size + 10; n++) {
     const candidate = `Chủ đề tự động ${n} về ${niche}`;

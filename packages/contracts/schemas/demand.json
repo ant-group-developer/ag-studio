@@ -58,6 +58,10 @@
         "max_open_requests": {
           "type": "integer",
           "minimum": 0
+        },
+        "topics_per_run": {
+          "type": "integer",
+          "minimum": 1
         }
       },
       "required": [
@@ -67,7 +71,8 @@
         "slots",
         "covered",
         "open_requests",
-        "max_open_requests"
+        "max_open_requests",
+        "topics_per_run"
       ],
       "additionalProperties": false
     }
