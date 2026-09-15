@@ -30,3 +30,11 @@ episode:
 overlay:
   enabled: true
   side: right
+# Sub-project 3B: the *quiet* channel of the pair -- it still collects stats and learns from what it publishes,
+# but never plans topics or auto-picks kho items on its own. A learning-world test therefore gets exactly one
+# channel driving the planning/auto-pick sweeps, and every "item picked"/"request created" assertion is
+# unambiguous about which channel did it.
+planning:
+  enabled: false
+auto_pick:
+  enabled: false

@@ -30,3 +30,21 @@ episode:
 overlay:
   enabled: true
   side: right
+# Sub-project 3B: this is the channel that *learns*. `freshPublishWorld` (tests/integration/publish-helpers.ts)
+# strips these three blocks again unless a test asks for `{ learning: true }`, so every sub-project 3 test
+# keeps the pre-3B channel (planning/auto_pick default to `enabled: false` anyway; `learning` only ever does
+# anything once a job is PUBLISHED and past its horizon).
+learning:
+  horizon_hours: 72
+  recollect_hours: [168, 720]
+  min_impressions: 50
+  min_samples: 2
+planning:
+  enabled: true
+  lookahead_slots: 3
+  topics_per_run: 3
+  max_open_requests: 3
+  check_seconds: 60
+auto_pick:
+  enabled: true
+  max_concurrent_runs: 1

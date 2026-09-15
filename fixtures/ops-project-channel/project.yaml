@@ -10,15 +10,25 @@ source: { materialize: link }
 # and `items/<id>/claims/<channel_id>.json` (enforced by LibraryFs.assertWritable).
 library: { root: ./library, role: channel }
 # The channel role also runs channel-publish (Task 11): fetch/build-package/upload/schedule are the built-in
-# publish-* commands (no executors/ wrapper needed, same as library-*), so scoping doctor to just this release
-# never asks for a scripts.yaml this project doesn't have.
-workflows: [channel-publish@1.0.0]
+# publish-* commands (no executors/ wrapper needed, same as library-*), so scoping doctor to just these releases
+# never asks for a scripts.yaml this project doesn't have. Sub-project 3B adds channel-publish@1.1.0 (what
+# production profile `channel` revision 2 points at) and channel-planning@1.0.0 (profile `channel-planning`);
+# 1.0.0 stays in scope so `doctor` keeps checking the release tests/integration/publish-pipeline.test.ts and
+# acceptance 21-26/40 still drive explicitly with `--workflow channel-publish@1.0.0`.
+workflows: [channel-publish@1.0.0, channel-publish@1.1.0, channel-planning@1.0.0]
 # upload/schedule both requires_resources: [browser] (workflow.yaml); one slot is enough since production
 # profile channel's limits.max_concurrency is 1.
 resources: { browser: 1 }
+# Sub-project 3B: how often the channel worker sweeps for video metrics to collect. 60s is the schema minimum
+# -- every sweep stamp lives on the Worker instance, and a test drives the worker as one-shot `worker --once`
+# processes, so the cadence only ever matters to a long-lived `harness worker`.
+learning: { collect_seconds: 60, collect_batch: 5 }
 adapters:
   publisher: playwright
   agent: cli
+  # Sub-project 3B: no browser, no Studio -- FakeStatsCollector reads HARNESS_FAKE_STATS_FILE (a JSON
+  # `{ [video_id]: StatsOutcome }` map, re-read on every collect) so a test can script per-video outcomes.
+  stats: fake
   # "node" / "../fake-agent-cli.mjs" only resolve correctly from *this* fixture directory (mirroring
   # channels/*/channel.yaml's repo_dir); tests/integration/publish-helpers.ts's freshPublishWorld rewrites
   # both to absolute paths (argv[0] -> process.execPath) before writing project.yaml into a temp project.
