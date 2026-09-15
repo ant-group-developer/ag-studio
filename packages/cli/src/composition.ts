@@ -8,6 +8,7 @@ import { FakeAgentRuntime, FakeProvider, FakePublisher, fakeScriptCommands } fro
 import { FfprobeMediaProber } from "@harness/adapter-ffprobe";
 import { CliAgentRuntime, RUNTIME_COMMANDS } from "@harness/adapter-agent-cli";
 import { PlaywrightPublisher } from "@harness/adapter-youtube-playwright";
+import { builtinMediaCommands } from "./commands/media.js";
 import { cliArgv } from "./self.js";
 
 export interface AppContext {
@@ -110,8 +111,8 @@ export function buildContext(o: { projectDir: string; harnessRoot?: string; owne
     ? new CliAgentRuntime({ runtime: project.runtime, skillsDir: join(harnessRoot, "skills"), redact: (s) => redactor.redact(s), ...(project.adapters.agent_argv ? { argv: project.adapters.agent_argv } : {}) })
     : new FakeAgentRuntime({ journal });
   const argv = cliArgv();
-  // an ops-project entry with the same name as a built-in (fake or library/publish) wins, so ops projects can override them
-  const commands = { ...fakeScriptCommands(), ...builtinLibraryCommands(argv, projectDir), ...builtinPublishCommands(argv, projectDir), ...(scripts ? scriptCommandsFrom(scripts, projectDir) : {}) };
+  // an ops-project entry with the same name as a built-in (fake or library/publish/media) wins, so ops projects can override them
+  const commands = { ...fakeScriptCommands(), ...builtinLibraryCommands(argv, projectDir), ...builtinPublishCommands(argv, projectDir), ...builtinMediaCommands(argv, projectDir), ...(scripts ? scriptCommandsFrom(scripts, projectDir) : {}) };
   executors.register("script", new ScriptExecutor(commands, { projectDir, secrets, cliArgv: argv }));
   executors.register("agent", new AgentExecutor(agentRuntime));
   executors.register("gate", new GateExecutor());
