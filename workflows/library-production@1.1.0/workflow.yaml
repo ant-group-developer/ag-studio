@@ -32,7 +32,7 @@ stages:
       - { type: survey_index, mime_type: application/json, name: survey.json }
   - key: plan-edit
     executor: { type: agent, skill: edit-plan, brief: "Từ survey.json/survey.md, brief.json (style, thời lượng đích, request_notes) và shots.json, viết output/edl.json (harness.edl/v1), output/edit-plan.json, output/narration.txt." }
-    depends_on: [survey-source, watch-source, intake]
+    depends_on: [survey-source, watch-source, intake, index-source]
     retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
     required_checks: [schema-valid, output-exists, checksum-match, edl-valid]
     outputs:

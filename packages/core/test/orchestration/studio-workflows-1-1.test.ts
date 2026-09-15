@@ -62,7 +62,7 @@ describe("library-production@1.1.0", () => {
   it("plan-edit is an agent stage using edit-plan and keeps edl-valid in required_checks", () => {
     const s = wf.definition.stages.find((st) => st.key === "plan-edit")!;
     expect(s.executor).toMatchObject({ type: "agent", skill: "edit-plan" });
-    expect(s.depends_on.sort()).toEqual(["intake", "survey-source", "watch-source"]);
+    expect(s.depends_on.sort()).toEqual(["index-source", "intake", "survey-source", "watch-source"]);
     expect(s.required_checks).toContain("edl-valid");
     expect(s.retry).toEqual({ max_attempts: 2, backoff_seconds: [60], retry_on: ["transient", "abandoned"] });
   });
