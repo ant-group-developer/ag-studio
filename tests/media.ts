@@ -23,9 +23,29 @@ function run(bin: string, args: string[]): void {
   }
 }
 
-/** ffmpeg -y -f lavfi -i testsrc=... [-f lavfi -i sine=...] -c:v libx264 -preset ultrafast -pix_fmt yuv420p [-c:a aac -shortest] <path> */
-export function makeVideo(path: string, o: { seconds: number; audio?: boolean; size?: string }): void {
-  const { seconds, audio = true, size = "320x180" } = o;
+/**
+ * ffmpeg -y -f lavfi -i testsrc=... [-f lavfi -i sine=...] -c:v libx264 -preset ultrafast -pix_fmt yuv420p [-c:a aac -shortest] <path>
+ * With `scene_cut_at` set, produces two solid-color segments (red then blue) concatenated at that second
+ * instead of the usual testsrc pattern, so a scene-change detector has an unambiguous cut to find.
+ */
+export function makeVideo(path: string, o: { seconds: number; audio?: boolean; size?: string; scene_cut_at?: number }): void {
+  const { seconds, audio = true, size = "320x180", scene_cut_at } = o;
+  if (scene_cut_at !== undefined && scene_cut_at > 0 && scene_cut_at < seconds) {
+    const rest = seconds - scene_cut_at;
+    const args = [
+      "-y",
+      "-f", "lavfi", "-i", `color=c=red:s=${size}:d=${scene_cut_at}:r=25`,
+      "-f", "lavfi", "-i", `color=c=blue:s=${size}:d=${rest}:r=25`,
+    ];
+    if (audio) args.push("-f", "lavfi", "-i", `sine=frequency=440:duration=${seconds}`);
+    args.push("-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]", "-map", "[v]");
+    if (audio) args.push("-map", "2:a");
+    args.push("-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p");
+    if (audio) args.push("-c:a", "aac", "-shortest");
+    args.push(path);
+    run(ffmpegPath(), args);
+    return;
+  }
   const args = ["-y", "-f", "lavfi", "-i", `testsrc=duration=${seconds}:size=${size}:rate=25`];
   if (audio) args.push("-f", "lavfi", "-i", `sine=frequency=440:duration=${seconds}`);
   args.push("-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p");

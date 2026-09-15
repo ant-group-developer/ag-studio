@@ -42,3 +42,4 @@ export * from "./distribution/checkers.js";
 export * from "./distribution/verify.js";
 export * from "./distribution/reconcile.js";
 export * from "./dashboard/snapshot.js";
+export * from "./media/watch.js";
