@@ -147,8 +147,10 @@ hai cho cùng request khi run đầu còn sống, kể cả khi đang `WAITING_H
 ## 6. Alert `request_stuck`
 
 Khi `library-apply-review` từ chối liên tiếp và số run **đã kết thúc** của một request vượt `max_replans`
-(tức đã thử `max_replans + 1` lần), `autoAccept` bỏ cuộc — event `request.auto_accept_exhausted`, request ở
-lại `open`, dashboard snapshot thêm alert:
+(tức đã thử `max_replans + 1` lần), `autoAccept` bỏ cuộc — event `request.auto_accept_exhausted
+{ request_id, finished_runs, max_replans }` ghi **đúng một lần** cho mỗi request (kèm một
+`request.auto_accept_skipped { reason: "exhausted" }` cùng khuôn dedupe, thứ báo cáo mỗi vòng poll đọc),
+request ở lại `open`, dashboard snapshot thêm alert:
 
 ```sh
 harness --project <studio-dir> dashboard snapshot --json

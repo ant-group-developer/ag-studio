@@ -133,6 +133,20 @@ function skipOnce(d: AutoAcceptDeps, requestId: string, reason: AutoAcceptSkipRe
   });
 }
 
+/** The distinct event spec §5.4 names for "this request burned through its replan budget" -- the condition
+ * the dashboard's `request_stuck` alert renders, and what an operator greps the event log for. Deduped per
+ * request the same way `skipOnce` is (the skip event stays too: it is what the poll-level report keys off),
+ * so a request that stays open forever produces exactly one of each. */
+function exhaustedOnce(d: AutoAcceptDeps, requestId: string, finishedRuns: number): void {
+  const already = d.store.listEvents({ event_type: "request.auto_accept_exhausted", newest: true }).some((e) => e.payload.request_id === requestId);
+  if (already) return;
+  d.store.appendEvent({
+    run_id: null, stage_run_id: null, attempt_id: null, project_id: d.projectId, portfolio_id: d.portfolioId, channel_id: null,
+    content_id: null, variant_id: null, workflow_release: null, severity: "warn", event_type: "request.auto_accept_exhausted",
+    payload: { request_id: requestId, finished_runs: finishedRuns, max_replans: d.config.max_replans },
+  });
+}
+
 /**
  * Studio autopilot loop (spec §5): claims no request itself (`intake` still does that later in the plan)
  * -- it only ever writes through `catalog.createContent`, `catalog.getOrCreateVariant`, `planner.plan`,
@@ -161,6 +175,7 @@ export async function autoAccept(d: AutoAcceptDeps): Promise<AutoAcceptReport> {
     if (replanNo > d.config.max_replans) {
       report.skipped.push({ request_id: request.request_id, reason: "exhausted" });
       skipOnce(d, request.request_id, "exhausted");
+      exhaustedOnce(d, request.request_id, replanNo);
       continue;
     }
     if (activeCount >= d.config.max_concurrent_runs) {

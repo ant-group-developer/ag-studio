@@ -496,7 +496,8 @@ library-production}@1.1.0/`, `skills/{style-analyze,style-review,source-survey,e
     `isTerminal` cập nhật theo (mục 91 dưới ghi caveat của hàm này); (b) sự kiện `request.auto_accept_skipped
     { reason: "no source" }` dedupe bằng `listEvents({ event_type: "request.auto_accept_skipped", newest: true
     })` lọc theo `request_id`+`reason` trước khi ghi thêm — request không có source hợp lệ chỉ sinh một sự
-    kiện mỗi lý do, không log mỗi vòng poll.
+    kiện mỗi lý do, không log mỗi vòng poll. Sự kiện riêng `request.auto_accept_exhausted { request_id,
+    finished_runs, max_replans }` (spec §5.4, mục 87) đi cùng khuôn dedupe đó trên `event_type` của chính nó.
 87. `max_replans` (`library.auto_accept.max_replans`, mặc định 2) đếm theo **số run đã kết thúc** của một
     request (`finishedRunCounts`, mục 86), không phải số lần "từ chối": vòng đầu chấp nhận request là
     `replan_no: 0`; mỗi lần `library-apply-review` mở lại request (`rejected → open`) và `autoAccept` thấy lại

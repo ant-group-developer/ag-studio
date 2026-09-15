@@ -80,5 +80,16 @@ describe.skipIf(!hasFfmpeg())("acceptance 28: a request that keeps failing revie
     studioWorkerUntil(world, () => false, 5, env);
     expect(acceptedEventsFor(world.studio, requestId)).toHaveLength(2);
     expect(requestStatus(world, requestId).status).toBe("open");
+
+    // `request.auto_accept_exhausted` (spec §5.4) fired exactly once for this request, however many idle
+    // polls have seen it since -- final-review finding I-4, which added the event the docs already named.
+    const after = new SqliteStateStore(join(world.studio, "data", "state", "harness.db"));
+    try {
+      const exhausted = after.listEvents({ event_type: "request.auto_accept_exhausted" }).filter((e) => e.payload.request_id === requestId);
+      expect(exhausted, JSON.stringify(exhausted)).toHaveLength(1);
+      expect(exhausted[0]!.payload).toMatchObject({ request_id: requestId, finished_runs: 2, max_replans: 1 });
+    } finally {
+      after.close();
+    }
   }, 600_000);
 });

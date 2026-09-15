@@ -185,10 +185,16 @@ describe("autoAccept", () => {
     expect(report.accepted).toEqual([]);
     expect(report.skipped).toEqual([{ request_id: request.request_id, reason: "exhausted" }]);
 
-    // dedup: a second poll must not append a second `request.auto_accept_skipped` event
+    // the distinct event spec §5.4 names, once, alongside the skip event (final-review finding I-4)
+    const exhausted = w.store.listEvents({ event_type: "request.auto_accept_exhausted" }).filter((e) => e.payload.request_id === request.request_id);
+    expect(exhausted).toHaveLength(1);
+    expect(exhausted[0]!.payload).toMatchObject({ request_id: request.request_id, finished_runs: 3, max_replans: 2 });
+
+    // dedup: a second poll must not append a second `request.auto_accept_skipped`/`_exhausted` event
     await autoAccept(depsFor(w, baseConfig({ max_replans: 2 })));
     const skipEvents = w.store.listEvents({ event_type: "request.auto_accept_skipped" }).filter((e) => e.payload.request_id === request.request_id);
     expect(skipEvents).toHaveLength(1);
+    expect(w.store.listEvents({ event_type: "request.auto_accept_exhausted" }).filter((e) => e.payload.request_id === request.request_id)).toHaveLength(1);
   });
 
   // fix-round-1 finding #1: DRAFT (planned by hand, never enqueued) and CANCEL_REQUESTED were in neither of
