@@ -1,11 +1,11 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
-import { HarnessError, isHarnessError, ProjectConfigSchema, type AgentRuntime, type ExecutorRef, type MediaProber, type ProductionProfile, type ProjectConfig, type Publisher, type ScriptCommand, type ScriptsRegistry, type SourcesRegistry, type StatsCollector } from "@harness/contracts";
+import { HarnessError, isHarnessError, ProjectConfigSchema, type AgentRuntime, type ChannelPackage, type ExecutorRef, type MediaProber, type ProductionProfile, type ProjectConfig, type Publisher, type ScriptCommand, type ScriptsRegistry, type SourcesRegistry, type StatsCollector } from "@harness/contracts";
 import { ArtifactRegistry, type AutoAcceptConfig, BUILTIN_CHECKERS, buildSnapshot, ChannelRegistry, Controller, distributionCheckers, type DoctorRow, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, learningCheckers, LibraryFs, libraryCheckers, listWorkflowRefs, loadChannels, type LoadedWorkflow, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, resolveWorkflowScope, runDoctor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, writeSnapshotFile, type HarnessLogger, type LibraryRole, type LogLevel } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, FakeProvider, FakePublisher, FakeStatsCollector, fakeScriptCommands } from "@harness/adapter-fake";
-import { FfprobeMediaProber } from "@harness/adapter-ffprobe";
+import { FfprobeMediaProber, probeDurationSync } from "@harness/adapter-ffprobe";
 import { CliAgentRuntime, RUNTIME_COMMANDS } from "@harness/adapter-agent-cli";
 import { PlaywrightPublisher, PlaywrightStatsCollector } from "@harness/adapter-youtube-playwright";
 import { builtinMediaCommands } from "./commands/media.js";
@@ -74,6 +74,23 @@ export function builtinPublishCommands(argv: string[], projectDir: string): Reco
   const commands: Record<string, ScriptCommand> = {};
   for (const name of names) commands[`publish-${name}`] = { argv: [...argv, "--project", projectDir, "publish", "stage", name], cwd: "." };
   return commands;
+}
+
+/**
+ * Sub-project 3B Task 6: `CollectDeps.durationOf` -- the video duration (seconds) `evaluateHypotheses`/
+ * `learnChannelStandard` need for `avg_view_pct`. Nothing in the control plane stores a committed package's
+ * duration (`buildUploadManifest`, `packages/core/src/distribution/packages.ts`, never records one), but
+ * `build-package`'s own naming convention (`packages/cli/src/commands/publish-stage.ts` `buildPackageStage`)
+ * is fully derivable from the package row alone: the committed video always lands at
+ * `<pkg.episode_dir>/full-episode/episode-<NN>-full-episode.mp4`. Probed with `probeDurationSync` (a
+ * synchronous ffprobe call -- `durationOf` has no `await` point available to it); a missing file, a missing
+ * ffprobe binary, or a probe failure all return `null` ("unknown"), never throw.
+ */
+export function durationOfPackage(pkg: ChannelPackage): number | null {
+  const nn = String(pkg.episode_no).padStart(2, "0");
+  const videoPath = join(pkg.episode_dir, "full-episode", `episode-${nn}-full-episode.mp4`);
+  if (!existsSync(videoPath)) return null;
+  return probeDurationSync(videoPath);
 }
 
 export function loadProject(projectDir: string): ProjectConfig {
@@ -218,6 +235,9 @@ export function computeDoctorRows(ctx: AppContext): DoctorRow[] {
           }
         : {}),
       channels: { loaded: ctx.channels.list(), errors: ctx.channelErrors, secrets: ctx.secrets },
+      ...(ctx.channels.list().length > 0
+        ? { learning: { harnessRoot: ctx.harnessRoot, statsAdapter: ctx.project.adapters.stats, agentIsFake: ctx.project.adapters.agent === "fake", loadProfile: ctx.profiles, loadWorkflow: ctx.workflows } }
+        : {}),
       agent: ctx.project.adapters.agent === "cli"
         ? {
             kind: "cli", runtime: ctx.project.runtime,
@@ -239,6 +259,7 @@ export async function writeDashboardSnapshot(ctx: AppContext): Promise<string> {
     store: ctx.store, channels: ctx.channels.list(), doctorRows, clock: ctx.clock,
     gateWindowSeconds: ctx.harness.resource_wait_warn_seconds, project_id: ctx.project.project_id,
     ...(ctx.library ? { library: { fs: ctx.library.fs, role: ctx.library.role, ...(ctx.library.autoAccept ? { autoAccept: ctx.library.autoAccept } : {}) } } : {}),
+    ...(ctx.library ? { learning: { libraryItems: ctx.store.listLibraryItems({ status: "approved" }), libraryClaimsOf: (itemId: string) => ctx.library!.fs.listClaims(itemId) } } : {}),
   });
   return writeSnapshotFile(ctx.dataRoot, snapshot);
 }

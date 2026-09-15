@@ -1,11 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Command } from "commander";
-import { HarnessError } from "@harness/contracts";
-import type { LoadedChannel } from "@harness/core";
+import { HarnessError, type ChannelLearned, type VideoMetrics } from "@harness/contracts";
+import { autoPick, channelDemand, collectStats, importMetrics, planRequestsRun, type LoadedChannel } from "@harness/core";
 import type { AppContext } from "../composition.js";
+import { durationOfPackage } from "../composition.js";
+import { requireLibrary } from "./library-stage.js";
 import { print, requireChannelsLoaded, withContext } from "./shared.js";
+import { autoPickDepsFor, planRequestsDepsFor } from "./worker.js";
 
 /** "episode next" for `channel list`: the channel's own `channel_sequence` counter is only readable by
  * mutating it (`store.allocateEpisodeNo`), which a plain `list` must never do -- so this reads it the way
@@ -64,11 +67,130 @@ export function registerChannel(program: Command): void {
       await withContext(cmd, {}, (ctx) => {
         requireChannelsLoaded(ctx);
         ctx.channels.get(id); // NOT_FOUND if the channel itself does not exist
+        // spec §3.3: `metric_value` was always meant to ride along once `evaluateHypotheses` (Task 3) started
+        // writing it -- an oversight left over from before that task landed, fixed here rather than flagged.
         const rows = ctx.store.listChannelPackages({ channel_id: id, status: "committed" }).map((p) => ({
           hypothesis_id: p.hypothesis.hypothesis_id, episode_no: p.episode_no, title: p.hypothesis.chosen.title,
-          expected: p.hypothesis.expected, status: p.hypothesis.status,
+          expected: p.hypothesis.expected, status: p.hypothesis.status, metric_value: p.hypothesis.evaluated?.metric_value ?? null,
         }));
-        print(o.json, rows, () => rows.map((r) => `${r.hypothesis_id} ep${r.episode_no} "${r.title}" ${r.status} expect ${r.expected.metric}>=${r.expected.target}@${r.expected.horizon_hours}h`).join("\n") || "no hypotheses");
+        print(o.json, rows, () => rows.map((r) => `${r.hypothesis_id} ep${r.episode_no} "${r.title}" ${r.status} expect ${r.expected.metric}>=${r.expected.target}@${r.expected.horizon_hours}h metric_value=${r.metric_value ?? "-"}`).join("\n") || "no hypotheses");
+      });
+    });
+
+  channel.command("stats <id>")
+    .option("--json", "machine output", false)
+    .description("latest video-metrics snapshot per PUBLISHED job (spec §2.5)")
+    .action(async (id: string, o, cmd) => {
+      await withContext(cmd, {}, (ctx) => {
+        requireChannelsLoaded(ctx);
+        ctx.channels.get(id); // NOT_FOUND if the channel itself does not exist
+        const jobs = ctx.store.listPublicationJobs({ channel_id: id, state: "PUBLISHED" });
+        const rows = jobs.map((job) => {
+          const pkg = ctx.store.getChannelPackage(job.package_id);
+          const metrics = ctx.store.listVideoMetrics({ publication_job_id: job.publication_job_id });
+          const latest: VideoMetrics | undefined = metrics.length > 0 ? metrics.reduce((a, b) => (b.age_hours > a.age_hours ? b : a)) : undefined;
+          return {
+            episode_no: pkg?.episode_no ?? 0, title: pkg?.metadata.title ?? "", publication_job_id: job.publication_job_id,
+            age_hours: latest?.age_hours ?? null, views: latest?.views ?? null, impressions: latest?.impressions ?? null,
+            ctr_pct: latest?.ctr_pct ?? null, avg_view_sec: latest?.avg_view_sec ?? null, snapshots: metrics.length,
+          };
+        }).sort((a, b) => b.episode_no - a.episode_no);
+        print(o.json, rows, () => rows.map((r) => `ep${r.episode_no} "${r.title}" snapshots=${r.snapshots} age_hours=${r.age_hours ?? "-"} views=${r.views ?? "-"} impressions=${r.impressions ?? "-"} ctr_pct=${r.ctr_pct ?? "-"} avg_view_sec=${r.avg_view_sec ?? "-"}`).join("\n") || "no published jobs");
+      });
+    });
+
+  channel.command("collect")
+    .option("--channel <id>", "restrict to one channel")
+    .option("--job <id>", "restrict to one publication job")
+    .option("--force", "ignore due-time gating; collect every PUBLISHED job (or --job) regardless of horizon", false)
+    .option("--json", "machine output", false)
+    .description("run one collectStats sweep (spec §2.4)")
+    .action(async (o, cmd) => {
+      await withContext(cmd, {}, async (ctx) => {
+        requireChannelsLoaded(ctx);
+        const report = await collectStats(
+          { store: ctx.store, collector: ctx.stats, channels: ctx.channels, clock: ctx.clock, batch: ctx.learning.collectBatch, durationOf: durationOfPackage, logger: ctx.logger },
+          { ...(o.channel ? { channelId: o.channel } : {}), ...(o.job ? { jobId: o.job } : {}), ...(o.force ? { force: true } : {}) },
+        );
+        print(o.json, report, () => `collected=${report.collected.length} blocked=${report.blocked.length} failed=${report.failed.length} evaluated=${report.evaluated.length} learned=${report.learned.length}`);
+        if (report.failed.length > 0) process.exitCode = 1;
+      });
+    });
+
+  channel.command("learned <id>")
+    .option("--json", "machine output", false)
+    .description("show the channel's learned standard (spec §3.2)")
+    .action(async (id: string, o, cmd) => {
+      await withContext(cmd, {}, (ctx) => {
+        requireChannelsLoaded(ctx);
+        const c = ctx.channels.get(id);
+        const learned: ChannelLearned = ctx.store.getChannelLearned(id) ?? {
+          schema_version: "harness.channel-learned/v1", channel_id: id, updated_at: ctx.clock.now(), sample_size: 0,
+          metric: null, medians: { views_72h: null, ctr_pct: null, avg_view_pct: null },
+          winners: { angles: [], title_patterns: [], overlay: [] },
+          standard: { note: `cần ≥${c.config.learning.min_samples} giả thuyết supported cùng nhóm; hiện có 0 đã đánh giá` },
+          history: [],
+        };
+        print(o.json, learned, () => [
+          `metric=${learned.metric ?? "-"} sample_size=${learned.sample_size}`,
+          `medians: views_72h=${learned.medians.views_72h ?? "-"} ctr_pct=${learned.medians.ctr_pct ?? "-"} avg_view_pct=${learned.medians.avg_view_pct ?? "-"}`,
+          `standard: angle=${learned.standard.angle ?? "-"} title_pattern=${learned.standard.title_pattern ?? "-"} overlay_lines=${learned.standard.overlay_lines ?? "-"}${learned.standard.note ? ` note="${learned.standard.note}"` : ""}`,
+          `top angles: ${learned.winners.angles.slice(0, 3).map((g) => `${g.value}(lift=${g.lift.toFixed(2)})`).join(", ") || "-"}`,
+          `top title_patterns: ${learned.winners.title_patterns.slice(0, 3).map((g) => `${g.value}(lift=${g.lift.toFixed(2)})`).join(", ") || "-"}`,
+          `top overlay: ${learned.winners.overlay.slice(0, 3).map((g) => `${g.value}(lift=${g.lift.toFixed(2)})`).join(", ") || "-"}`,
+        ].join("\n"));
+      });
+    });
+
+  channel.command("demand <id>")
+    .option("--json", "machine output", false)
+    .description("this channel's publish-schedule demand (spec §4.1)")
+    .action(async (id: string, o, cmd) => {
+      await withContext(cmd, {}, (ctx) => {
+        requireChannelsLoaded(ctx);
+        const c = ctx.channels.get(id);
+        const library = requireLibrary(ctx);
+        const libraryItems = ctx.store.listLibraryItems({ status: "approved" });
+        const demand = channelDemand({ store: ctx.store, clock: ctx.clock, channel: c, libraryItems, libraryClaimsOf: (itemId: string) => library.fs.listClaims(itemId) });
+        print(o.json, demand, () => `needed=${demand.needed} slots=${demand.slots.length} open_requests=${demand.open_requests}/${demand.max_open_requests}`);
+      });
+    });
+
+  channel.command("plan-requests <id>")
+    .option("--json", "machine output", false)
+    .description("run planRequestsRun once for this channel, bypassing its own cadence (spec §4.3)")
+    .action(async (id: string, o, cmd) => {
+      await withContext(cmd, {}, async (ctx) => {
+        requireChannelsLoaded(ctx);
+        const c = ctx.channels.get(id);
+        const result = await planRequestsRun(planRequestsDepsFor(ctx, c));
+        print(o.json, result, () => (result.started ? `started run=${result.started.run_id} needed=${result.started.needed}` : `skipped: ${result.skipped}`));
+      });
+    });
+
+  channel.command("pick-next <id>")
+    .option("--json", "machine output", false)
+    .description("run autoPick once for this channel (spec §4.4)")
+    .action(async (id: string, o, cmd) => {
+      await withContext(cmd, {}, async (ctx) => {
+        requireChannelsLoaded(ctx);
+        const c = ctx.channels.get(id);
+        const result = await autoPick(autoPickDepsFor(ctx, c));
+        print(o.json, result, () => (result.picked ? `picked item=${result.picked.item_id} run=${result.picked.run_id}` : `skipped: ${result.skipped}`));
+      });
+    });
+
+  const metrics = channel.command("metrics").description("video-metrics maintenance commands");
+  metrics.command("import <id> <jsonl>")
+    .option("--json", "machine output", false)
+    .description("import a legacy channel-metrics.jsonl register as manual snapshots (spec §2.5)")
+    .action(async (id: string, jsonlPath: string, o, cmd) => {
+      await withContext(cmd, {}, (ctx) => {
+        requireChannelsLoaded(ctx);
+        ctx.channels.get(id); // NOT_FOUND if the channel itself does not exist
+        const jsonl = readFileSync(resolve(jsonlPath), "utf8");
+        const result = importMetrics(ctx.store, { channel_id: id, jsonl, clock: ctx.clock });
+        print(o.json, result, () => `imported=${result.imported} skipped=${result.skipped.length}${result.skipped.length ? `\n${result.skipped.map((s) => `  ${s.videoId || "(no videoId)"}: ${s.why}`).join("\n")}` : ""}`);
       });
     });
 

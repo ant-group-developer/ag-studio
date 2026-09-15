@@ -159,6 +159,7 @@ describe("buildSnapshot", () => {
       channel_id: "bad", display_name: "Channel bad", color: "#5b8cff", publish_times: ["09:00", "18:00"],
       timezone: "Not/AZone", language: "en", today: { published: 0, target: 1 },
       login: { profile_dir_exists: true, last_upload_ok_at: null }, latest: null, episodes_count: 0, doctor: [],
+      learning: { hypotheses: { open: 0, supported: 0, refuted: 0, void: 0 }, last_collect_at: null, standard: null, metric: null, demand: null },
     });
 
     const doctorAlert = snapshot.alerts.find((a) => a.kind === "doctor" && a.channel_id === "bad");
@@ -289,6 +290,120 @@ describe("buildSnapshot", () => {
     expect(parked[0]!.message).toContain("survey-source");
     expect(parked[0]!.message).toContain(runId);
     expect(parked[0]!.message).toContain("agent wrote no output/survey.md");
+  });
+
+  describe("learning block and alerts (sub-project 3B, Task 6)", () => {
+    it("counts hypothesis statuses, reports the newest stats.collected timestamp and the learned standard/metric, and leaves demand null when planning is disabled", () => {
+      const { store } = openTempStore();
+      const clock = new FixedClock(NOW);
+      const repo = setupChannelRepo(true);
+      const c1 = makeChannel("c1", repo);
+
+      const pkgOpen = makePackage({ channelId: "c1", episodeNo: 1, title: "Open", configRevision: c1.config_revision });
+      const pkgSupported = { ...makePackage({ channelId: "c1", episodeNo: 2, title: "Supported", configRevision: c1.config_revision }), hypothesis: { ...SAMPLE_HYPOTHESIS, status: "supported" as const } };
+      const pkgRefuted = { ...makePackage({ channelId: "c1", episodeNo: 3, title: "Refuted", configRevision: c1.config_revision }), hypothesis: { ...SAMPLE_HYPOTHESIS, status: "refuted" as const } };
+      for (const pkg of [pkgOpen, pkgSupported, pkgRefuted]) store.insertChannelPackage(pkg);
+      const job = makeJob(pkgSupported, { state: "PUBLISHED", publishedAt: "2026-09-10T00:00:00.000Z", videoId: "vid1" });
+      store.insertPublicationJob(job);
+
+      store.appendEvent({
+        run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null, channel_id: "c1",
+        content_id: null, variant_id: null, workflow_release: null, severity: "info", event_type: "stats.collected",
+        payload: { job_id: job.publication_job_id, metric_id: "metric_1" },
+      });
+
+      store.upsertChannelLearned({
+        schema_version: "harness.channel-learned/v1", channel_id: "c1", updated_at: NOW, sample_size: 2, metric: "ctr",
+        medians: { views_72h: 100, ctr_pct: 5, avg_view_pct: null },
+        winners: { angles: [], title_patterns: [], overlay: [] },
+        standard: { angle: "flycam", note: "" }, history: [],
+      });
+
+      const snapshot = buildSnapshot({ store, channels: [c1], clock, gateWindowSeconds: 600, project_id: "project-snap" });
+      const learning = snapshot.channels[0]!.learning;
+      expect(learning.hypotheses).toEqual({ open: 1, supported: 1, refuted: 1, void: 0 });
+      expect(learning.last_collect_at).not.toBeNull();
+      expect(learning.standard).toEqual({ angle: "flycam", note: "" });
+      expect(learning.metric).toBe("ctr");
+      expect(learning.demand).toBeNull(); // planning.enabled defaults to false
+    });
+
+    it("computes demand only when planning.enabled and SnapshotDeps.learning (library access) are both present", () => {
+      const { store } = openTempStore();
+      const clock = new FixedClock(NOW);
+      const repo = setupChannelRepo(true);
+      const c1 = makeChannel("c1", repo);
+      (c1.config.planning as { enabled: boolean }).enabled = true;
+
+      const noLibrary = buildSnapshot({ store, channels: [c1], clock, gateWindowSeconds: 600, project_id: "project-snap" });
+      expect(noLibrary.channels[0]!.learning.demand).toBeNull();
+
+      const withLibrary = buildSnapshot({
+        store, channels: [c1], clock, gateWindowSeconds: 600, project_id: "project-snap",
+        learning: { libraryItems: [], libraryClaimsOf: () => [] },
+      });
+      expect(withLibrary.channels[0]!.learning.demand).toEqual({ needed: c1.config.planning.lookahead_slots, open_requests: 0 });
+    });
+
+    it("alerts stats_blocked for a channel with a stats.blocked event in the last 24h and no later stats.collected, and clears once a fresh collect succeeds", () => {
+      const { store, clock } = openTempStore();
+      const repo = setupChannelRepo(true);
+      const c1 = makeChannel("c1", repo);
+
+      store.appendEvent({
+        run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null, channel_id: "c1",
+        content_id: null, variant_id: null, workflow_release: null, severity: "warn", event_type: "stats.blocked",
+        payload: { channel_id: "c1", reason: "verify-it's-you" },
+      });
+
+      const blocked = buildSnapshot({ store, channels: [c1], clock, gateWindowSeconds: 600, project_id: "project-snap" });
+      const alert = blocked.alerts.find((a) => a.kind === "stats_blocked" && a.channel_id === "c1");
+      expect(alert).toBeDefined();
+      expect(alert?.message).toContain("verify-it's-you");
+
+      clock.advance(10);
+      store.appendEvent({
+        run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null, channel_id: "c1",
+        content_id: null, variant_id: null, workflow_release: null, severity: "info", event_type: "stats.collected",
+        payload: { job_id: "publication_job_x", metric_id: "metric_x" },
+      });
+      const cleared = buildSnapshot({ store, channels: [c1], clock, gateWindowSeconds: 600, project_id: "project-snap" });
+      expect(cleared.alerts.some((a) => a.kind === "stats_blocked" && a.channel_id === "c1")).toBe(false);
+    });
+
+    it("alerts stats_failing for any PUBLISHED job whose receipt.collect_failures has reached 3", () => {
+      const { store, clock } = openTempStore();
+      const repo = setupChannelRepo(true);
+      const c1 = makeChannel("c1", repo);
+      const pkg = makePackage({ channelId: "c1", episodeNo: 1, title: "Ep 1", configRevision: c1.config_revision });
+      store.insertChannelPackage(pkg);
+      const job = makeJob(pkg, { state: "PUBLISHED", publishedAt: "2026-09-10T00:00:00.000Z", videoId: "vid1" });
+      store.insertPublicationJob(job);
+      store.updatePublicationJob({ ...job, receipt: { collect_failures: 3 } });
+
+      const snapshot = buildSnapshot({ store, channels: [c1], clock, gateWindowSeconds: 600, project_id: "project-snap" });
+      const alert = snapshot.alerts.find((a) => a.kind === "stats_failing");
+      expect(alert).toMatchObject({ kind: "stats_failing", channel_id: "c1", ref: job.publication_job_id });
+
+      store.updatePublicationJob({ ...job, receipt: { collect_failures: 2 } });
+      const belowThreshold = buildSnapshot({ store, channels: [c1], clock, gateWindowSeconds: 600, project_id: "project-snap" });
+      expect(belowThreshold.alerts.some((a) => a.kind === "stats_failing")).toBe(false);
+    });
+
+    it("alerts planning_failed for a channel.planning_failed event within the last 24h", () => {
+      const { store, clock } = openTempStore();
+      const repo = setupChannelRepo(true);
+      const c1 = makeChannel("c1", repo);
+      store.appendEvent({
+        run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null, channel_id: "c1",
+        content_id: null, variant_id: null, workflow_release: null, severity: "error", event_type: "channel.planning_failed",
+        payload: { channel_id: "c1", reason: "no active edit style available" },
+      });
+
+      const snapshot = buildSnapshot({ store, channels: [c1], clock, gateWindowSeconds: 600, project_id: "project-snap" });
+      const alert = snapshot.alerts.find((a) => a.kind === "planning_failed" && a.channel_id === "c1");
+      expect(alert?.message).toContain("no active edit style available");
+    });
   });
 });
 

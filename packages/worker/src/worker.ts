@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
-import { isHarnessError, type Artifact, type ClaimResult, type Clock, type HarnessConfig, type ProductionProfile, type ProjectConfig, type Publisher, type Run, type StageRequest, type StageResult, type StateStore } from "@harness/contracts";
-import { acceptedInputsFor, addSeconds, ArtifactRegistry, autoAccept, type AutoAcceptDeps, buildStageRequest, canonicalDigest, type ChannelRegistry, Controller, createWorkspace, eventFor, gateOverdue, type LibraryFs, type LibraryRole, type LoadedWorkflow, materializeInputs, mimeTypesFor, Planner, stageDefinitionDigest, stageDefinitionFor, syncLibrary, Verifier, verifyScheduled, workspacePath, type HarnessLogger } from "@harness/core";
+import { isHarnessError, type Artifact, type ChannelPackage, type ClaimResult, type Clock, type HarnessConfig, type ProductionProfile, type ProjectConfig, type Publisher, type Run, type StageRequest, type StageResult, type StateStore, type StatsCollector } from "@harness/contracts";
+import { acceptedInputsFor, addSeconds, ArtifactRegistry, autoAccept, type AutoAcceptDeps, buildStageRequest, canonicalDigest, type ChannelRegistry, collectStats, Controller, createWorkspace, eventFor, gateOverdue, type LibraryFs, type LibraryRole, type LoadedChannel, type LoadedWorkflow, materializeInputs, mimeTypesFor, Planner, stageDefinitionDigest, stageDefinitionFor, syncLibrary, Verifier, verifyScheduled, workspacePath, type HarnessLogger } from "@harness/core";
 import type { ExecutorRegistry } from "@harness/executors";
 import { startHeartbeat } from "./heartbeat.js";
 
@@ -22,6 +22,21 @@ export interface WorkerDeps {
    * at most once every `refreshSeconds`. The worker only calls it on a cadence -- what it writes is the
    * composition root's concern, not this package's. */
   dashboard?: { refreshSeconds: number; write: () => Promise<void> };
+  /** Only present when the ops project has at least one loaded channel (sub-project 3B Task 6, spec §2.4/§4.3/
+   * §4.4): drives three idle-poll sweeps -- collect due video stats, plan requests for channels that need more
+   * episodes queued, and auto-pick the next library item for channels that opted in. `planning.run`/
+   * `autoPick.run` are pre-bound to each channel's full deps by the composition root (`planRequestsRun`/
+   * `autoPick` themselves need catalog/planner/profile/etc. this package has no business assembling); the
+   * worker only ever calls them with a `LoadedChannel` from `channels.list()`.
+   * `durationOf` is not part of the brief's own `WorkerDeps.learning` shape -- an obvious omission (mirrors
+   * `CollectDeps.durationOf`'s own documented fix in packages/core/src/learning/metrics.ts): `collectStats`
+   * needs it to compute `avg_view_pct`, and nothing else on `WorkerDeps` can supply it, so it is added here too. */
+  learning?: {
+    channels: ChannelRegistry; collector: StatsCollector; collectSeconds: number; collectBatch: number;
+    durationOf: (pkg: ChannelPackage) => number | null;
+    planning: { checkSeconds: number; run: (channel: LoadedChannel) => Promise<unknown> };
+    autoPick: { run: (channel: LoadedChannel) => Promise<unknown> };
+  };
 }
 
 function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
@@ -39,6 +54,10 @@ export class Worker {
   private lastPublicationVerifyAt: number | undefined;
   /** ms timestamp of the last dashboard refresh; same "never yet" convention as `lastLibrarySyncAt`. */
   private lastDashboardRefreshAt: number | undefined;
+  /** ms timestamp of the last collect-stats sweep; same "never yet" convention as `lastLibrarySyncAt`. */
+  private lastCollectAt: number | undefined;
+  /** ms timestamp of the last plan-requests sweep; same "never yet" convention as `lastLibrarySyncAt`. */
+  private lastPlanAt: number | undefined;
 
   constructor(private readonly d: WorkerDeps) {}
 
@@ -64,8 +83,11 @@ export class Worker {
     const claim = store.claim({ owner: this.d.owner, capabilities: this.d.capabilities, now: clock.now(), leaseSeconds: defaultLeaseSeconds, resourceCapacity: this.d.resourceCapacity });
     if (!claim) {
       this.warnResourceStarvation(); this.warnGateOverdue();
-      if (await this.maybeSyncLibrary()) await this.maybeAutoAccept();
-      await this.maybeVerifyPublications(); await this.maybeRefreshDashboard();
+      if (await this.maybeSyncLibrary()) { await this.maybeAutoAccept(); await this.maybeAutoPick(); }
+      await this.maybeVerifyPublications();
+      await this.maybeCollectStats();
+      await this.maybePlanRequests();
+      await this.maybeRefreshDashboard();
       return "idle";
     }
     const run = store.getRun(claim.stageRun.run_id)!;
@@ -217,6 +239,71 @@ export class Worker {
       for (const e of report.errors) this.d.logger.warn("publication verify: lookup failed", e);
     } catch (e) {
       this.d.logger.error("publication verify failed", { error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  /** At most once every `learning.collectSeconds`, on an otherwise-idle poll, after the publication verify
+   * sweep (spec §2.4): runs one `collectStats` pass across every loaded channel. `collectStats` itself never
+   * throws (a blocked channel, a per-video error, or a failed evaluate/learn pass are all caught and reported
+   * inside its own `CollectReport`), but this still wraps the call the same log-and-swallow way as
+   * `maybeSyncLibrary`/`maybeVerifyPublications`, since a bug here must not be allowed to stop the worker loop
+   * either. */
+  private async maybeCollectStats(): Promise<void> {
+    const learning = this.d.learning;
+    if (!learning) return;
+    const now = Date.parse(this.d.clock.now());
+    if (this.lastCollectAt !== undefined && now - this.lastCollectAt < learning.collectSeconds * 1000) return;
+    this.lastCollectAt = now;
+    try {
+      const report = await collectStats({
+        store: this.d.store, collector: learning.collector, channels: learning.channels, clock: this.d.clock,
+        batch: learning.collectBatch, durationOf: learning.durationOf, logger: this.d.logger,
+      });
+      this.d.logger.info("collect stats", {
+        collected: report.collected.length, blocked: report.blocked.length, failed: report.failed.length, learned: report.learned.length,
+      });
+    } catch (e) {
+      this.d.logger.error("collect stats failed", { error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  /** At most once every `learning.planning.checkSeconds`, on an otherwise-idle poll, after the collect-stats
+   * sweep (spec §4.3): for every loaded channel with `planning.enabled`, calls the composition-supplied
+   * `learning.planning.run(channel)`. `planRequestsRun` itself never throws (spec: any failure -- inside or
+   * outside its own transaction -- is caught, logged, and recorded as `channel.planning_failed`), but each
+   * channel still gets its own `try`/`catch` here: one channel's `run` throwing (a bug, not the documented
+   * failure path) must not stop the sweep from reaching the next channel. */
+  private async maybePlanRequests(): Promise<void> {
+    const learning = this.d.learning;
+    if (!learning) return;
+    const now = Date.parse(this.d.clock.now());
+    if (this.lastPlanAt !== undefined && now - this.lastPlanAt < learning.planning.checkSeconds * 1000) return;
+    this.lastPlanAt = now;
+    for (const channel of learning.channels.list()) {
+      if (!channel.config.planning.enabled) continue;
+      try {
+        await learning.planning.run(channel);
+      } catch (e) {
+        this.d.logger.error("plan requests failed", { channel_id: channel.config.channel_id, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+  }
+
+  /** Only ever called once a library sync just succeeded (see `runOnce`), same trigger as `maybeAutoAccept`
+   * (spec §4.4): for every loaded channel with `auto_pick.enabled`, calls the composition-supplied
+   * `learning.autoPick.run(channel)`. Same per-channel `try`/`catch` reasoning as `maybePlanRequests` above --
+   * `autoPick` itself already reports its documented failure path as `channel.auto_pick_failed` without
+   * throwing. */
+  private async maybeAutoPick(): Promise<void> {
+    const learning = this.d.learning;
+    if (!learning) return;
+    for (const channel of learning.channels.list()) {
+      if (!channel.config.auto_pick.enabled) continue;
+      try {
+        await learning.autoPick.run(channel);
+      } catch (e) {
+        this.d.logger.error("auto-pick failed", { channel_id: channel.config.channel_id, error: e instanceof Error ? e.message : String(e) });
+      }
     }
   }
 

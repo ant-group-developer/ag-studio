@@ -39,6 +39,13 @@ export interface DoctorInput {
    * `channels:config` row. `errors` mirrors `configErrors.scripts`/`.sources`: a broken `channels/` directory
    * fails that one row instead of aborting doctor, and no channel is loaded so no per-channel rows follow. */
   channels?: { loaded: LoadedChannel[]; errors: string[]; secrets: SecretResolver };
+  /** Only present when the composition root has channels loaded; adds two rows per channel (sub-project 3B
+   * Task 6, spec §2.5/§5): `channel:<id>:stats` and, only when that channel's own `planning.enabled` is true,
+   * `channel:<id>:planning`. Kept separate from the (possibly `project.yaml`-scoped) `workflows`/`profiles`
+   * arrays above -- `loadProfile`/`loadWorkflow` here always resolve against the full harness install,
+   * regardless of any `project.yaml` workflows scope, since these two rows must check `channel-planning`/the
+   * stats adapter's own readiness independent of that scope. */
+  learning?: { harnessRoot: string; statsAdapter: "playwright" | "fake"; agentIsFake: boolean; loadProfile: (id: string) => ProductionProfile; loadWorkflow: (ref: string) => LoadedWorkflow };
   /** Only present when the composition root has picked an agent runtime; checks `--version` only (never the
    * model) through the injected `isAvailable`, so doctor never has to import an adapter. */
   agent?: { kind: "cli" | "fake"; runtime: "claude" | "codex"; argv0: string; isAvailable: (argv0: string) => boolean };
@@ -276,8 +283,54 @@ function checkChannels(i: DoctorInput): DoctorRow[] {
   if (i.channels.errors.length > 0) return [{ check: "channels:config", ok: false, detail: i.channels.errors.join("; ") }];
   if (i.channels.loaded.length === 0) return [];
   const rows: DoctorRow[] = [{ check: "channels:config", ok: true, detail: `${i.channels.loaded.length} channels` }];
-  for (const channel of i.channels.loaded) rows.push(...checkOneChannel(channel, i.channels.secrets));
+  for (const channel of i.channels.loaded) {
+    rows.push(...checkOneChannel(channel, i.channels.secrets));
+    if (i.learning) {
+      rows.push(checkChannelStats(i.learning, channel));
+      if (channel.config.planning.enabled) rows.push(checkChannelPlanning(i.learning, channel));
+    }
+  }
   return rows;
+}
+
+/** `channel:<id>:stats` (sub-project 3B, spec §2.5): with `adapters.stats: fake` there is nothing real to
+ * check, so it is always `ok`; with `playwright` it needs both the harness-owned collector script (not
+ * per-channel -- one script serves every channel) and this channel's own logged-in Chrome profile, the same
+ * `.upload-profile/Default` path `channel:<id>:profile` already checks (the two rows answer different
+ * questions -- "did you ever log in" vs "is stats collection actually ready" -- so the overlap is intentional,
+ * not redundant). */
+function checkChannelStats(learning: NonNullable<DoctorInput["learning"]>, channel: LoadedChannel): DoctorRow {
+  const id = channel.config.channel_id;
+  const check = `channel:${id}:stats`;
+  if (learning.statsAdapter === "fake") return { check, ok: true, detail: "fake" };
+  const script = join(learning.harnessRoot, "packages", "adapters", "youtube-playwright", "scripts", "collect-stats.mjs");
+  const scriptOk = existsSync(script);
+  const profilePath = join(resolve(channel.config.repo_dir), ".upload-profile", "Default");
+  const profileOk = existsSync(profilePath);
+  if (scriptOk && profileOk) return { check, ok: true, detail: `${script} + ${profilePath} present` };
+  const missing = [...(scriptOk ? [] : [script]), ...(profileOk ? [] : [profilePath])];
+  return { check, ok: false, detail: `missing: ${missing.join(", ")}` };
+}
+
+/** `channel:<id>:planning`, only added for a channel whose own `planning.enabled` is true (spec §2.5/§5):
+ * the `channel-planning` profile and its workflow release must both load, and the agent runtime must not be
+ * `fake` (a fake agent would enqueue `channel-planning` runs that can never actually propose a real topic). */
+function checkChannelPlanning(learning: NonNullable<DoctorInput["learning"]>, channel: LoadedChannel): DoctorRow {
+  const id = channel.config.channel_id;
+  const check = `channel:${id}:planning`;
+  let profile: ProductionProfile;
+  try {
+    profile = learning.loadProfile("channel-planning");
+  } catch (e) {
+    return { check, ok: false, detail: e instanceof Error ? e.message : String(e) };
+  }
+  try {
+    learning.loadWorkflow(profile.workflow_release);
+  } catch (e) {
+    return { check, ok: false, detail: e instanceof Error ? e.message : String(e) };
+  }
+  if (learning.agentIsFake) return { check, ok: false, detail: "adapters.agent is fake" };
+  return { check, ok: true, detail: `${profile.workflow_release} ready` };
 }
 
 function checkOneChannel(channel: LoadedChannel, secrets: SecretResolver): DoctorRow[] {

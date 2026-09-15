@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { ChannelPackage, Clock, PublicationJob, StateStore } from "@harness/contracts";
+import type { ChannelLearned, ChannelPackage, Clock, LibraryClaim, LibraryItem, PublicationJob, StateStore } from "@harness/contracts";
 import { posixPath, type LoadedChannel } from "../distribution/channels.js";
 import { localDate, zonedToUtc } from "../distribution/publication.js";
 import type { DoctorRow } from "../doctor/doctor.js";
 import type { AutoAcceptConfig } from "../library/auto-accept.js";
 import { finishedRunCounts } from "../library/auto-accept.js";
 import type { LibraryFs, LibraryRole } from "../library/files.js";
+import { channelDemand } from "../learning/planning.js";
 import { gateOverdue } from "../orchestration/gate.js";
 import { isTerminal } from "../state/transitions.js";
 
@@ -50,6 +51,18 @@ export interface DashboardChannel {
   latest: { episode_no: number; state: string; stage_key: string | null; run_id: string } | null;
   episodes_count: number;
   doctor: DashboardChannelDoctorRow[];
+  learning: DashboardChannelLearning;
+}
+
+/** Sub-project 3B Task 6 (spec §5): the channel-learning-loop read model for one channel. `demand` is `null`
+ * unless this channel has `planning.enabled` *and* the snapshot was built with library access
+ * (`SnapshotDeps.learning`) -- `channelDemand` needs both to mean anything. */
+export interface DashboardChannelLearning {
+  hypotheses: { open: number; supported: number; refuted: number; void: number };
+  last_collect_at: string | null;
+  standard: ChannelLearned["standard"] | null;
+  metric: ChannelLearned["metric"] | null;
+  demand: { needed: number; open_requests: number } | null;
 }
 
 export interface DashboardEpisode {
@@ -68,7 +81,7 @@ export interface DashboardEpisode {
 
 export interface DashboardActiveRun { run_id: string; channel_id: string; stage_key: string; state: string; since: string }
 
-export type DashboardAlertKind = "reconcile" | "run_failed" | "gate_overdue" | "doctor" | "library_unmounted" | "missing_today" | "request_stuck" | "stage_waiting_human";
+export type DashboardAlertKind = "reconcile" | "run_failed" | "gate_overdue" | "doctor" | "library_unmounted" | "missing_today" | "request_stuck" | "stage_waiting_human" | "stats_blocked" | "stats_failing" | "planning_failed";
 export interface DashboardAlert { kind: DashboardAlertKind; channel_id?: string; ref: string; message: string; since: string }
 
 export interface SnapshotDeps {
@@ -81,6 +94,14 @@ export interface SnapshotDeps {
    * like the worker's own `autoAcceptDepsFor`: a channel project, or a studio with the loop switched off,
    * has nobody to act on "auto-accept gave up" and must not be told it did. */
   library?: { fs: LibraryFs; role: LibraryRole; autoAccept?: AutoAcceptConfig };
+  /**
+   * Sub-project 3B Task 6: library data for each channel's `learning.demand` block (`channelDemand` needs
+   * `libraryItems`/`libraryClaimsOf`, exactly the shape `publish-stage.ts`'s own `demand` stage already reads
+   * from `app.store.listLibraryItems`/`library.fs.listClaims`). Optional and separate from `library` above --
+   * a snapshot with no library access at all (or a channel whose `planning` is disabled) simply reports
+   * `demand: null` rather than needing this.
+   */
+  learning?: { libraryItems: LibraryItem[]; libraryClaimsOf: (itemId: string) => LibraryClaim[] };
   doctorRows?: DoctorRow[];
   clock: Clock;
   gateWindowSeconds: number;
@@ -100,7 +121,7 @@ export function buildSnapshot(d: SnapshotDeps): DashboardSnapshot {
   const now = d.clock.now();
   const doctorRows = d.doctorRows ?? [];
 
-  const results = d.channels.map((c) => buildChannelSafe(d.store, c, now, doctorRows));
+  const results = d.channels.map((c) => buildChannelSafe(d, c, now, doctorRows));
   const channels = results.map((r) => r.channel);
   const episodes = results.flatMap((r) => r.episodes);
   const channelBuildErrors = results.flatMap((r) => (r.error ? [{ channel_id: r.channel.channel_id, message: r.error }] : []));
@@ -148,9 +169,9 @@ interface ChannelBuild { channel: DashboardChannel; episodes: DashboardEpisode[]
  * out of `Intl.DateTimeFormat` deep inside `localDate`/`zonedToUtc`) must not abort the whole snapshot: every
  * other channel still has to render. Falls back to a safe-default row plus the failure message rather than
  * propagating, so the caller can still surface it as a `doctor` alert (`buildAlerts` below). */
-function buildChannelSafe(store: StateStore, channel: LoadedChannel, now: string, doctorRows: DoctorRow[]): ChannelBuild {
+function buildChannelSafe(d: SnapshotDeps, channel: LoadedChannel, now: string, doctorRows: DoctorRow[]): ChannelBuild {
   try {
-    return { channel: buildChannel(store, channel, now, doctorRows), episodes: buildChannelEpisodes(store, channel) };
+    return { channel: buildChannel(d, channel, now, doctorRows), episodes: buildChannelEpisodes(d.store, channel) };
   } catch (e) {
     return { channel: fallbackChannel(channel, doctorRows), episodes: [], error: e instanceof Error ? e.message : String(e) };
   }
@@ -175,10 +196,37 @@ function fallbackChannel(channel: LoadedChannel, doctorRows: DoctorRow[]): Dashb
     latest: null,
     episodes_count: 0,
     doctor,
+    learning: { hypotheses: { open: 0, supported: 0, refuted: 0, void: 0 }, last_collect_at: null, standard: null, metric: null, demand: null },
   };
 }
 
-function buildChannel(store: StateStore, channel: LoadedChannel, now: string, doctorRows: DoctorRow[]): DashboardChannel {
+/** Newest `event_type` event for this channel, or `undefined` when none exists -- `listEvents({ newest: true })`
+ * (per its own documented ordering, see `packages/core/src/learning/metrics.ts`'s `recentlyEmitted`) returns
+ * the newest-1000 window OLDEST-first, so the *last* matching element is the actually-newest one. */
+function newestChannelEvent(store: StateStore, eventType: string, channelId: string) {
+  return store.listEvents({ event_type: eventType, newest: true }).filter((e) => e.channel_id === channelId).at(-1);
+}
+
+/** Sub-project 3B Task 6 (spec §5): `DashboardChannel.learning` for one channel -- hypothesis-status counts
+ * across its committed packages, the newest `stats.collected` event's timestamp, the channel's learned
+ * standard/metric (`null` until `learnChannelStandard` has ever run for it), and `demand` computed via
+ * `channelDemand` only when this channel's `planning.enabled` *and* the snapshot has library access. */
+function buildChannelLearning(d: SnapshotDeps, channel: LoadedChannel): DashboardChannelLearning {
+  const channelId = channel.config.channel_id;
+  const hypotheses = { open: 0, supported: 0, refuted: 0, void: 0 };
+  for (const pkg of d.store.listChannelPackages({ channel_id: channelId, status: "committed" })) hypotheses[pkg.hypothesis.status]++;
+  const learned = d.store.getChannelLearned(channelId);
+  const lastCollect = newestChannelEvent(d.store, "stats.collected", channelId);
+  let demand: DashboardChannelLearning["demand"] = null;
+  if (d.learning && channel.config.planning.enabled) {
+    const computed = channelDemand({ store: d.store, clock: d.clock, channel, libraryItems: d.learning.libraryItems, libraryClaimsOf: d.learning.libraryClaimsOf });
+    demand = { needed: computed.needed, open_requests: computed.open_requests };
+  }
+  return { hypotheses, last_collect_at: lastCollect?.occurred_at ?? null, standard: learned?.standard ?? null, metric: learned?.metric ?? null, demand };
+}
+
+function buildChannel(d: SnapshotDeps, channel: LoadedChannel, now: string, doctorRows: DoctorRow[]): DashboardChannel {
+  const store = d.store;
   const cfg = channel.config;
   const jobs = store.listPublicationJobs({ channel_id: cfg.channel_id });
   const today = localDate(now, cfg.publication.timezone);
@@ -221,6 +269,7 @@ function buildChannel(store: StateStore, channel: LoadedChannel, now: string, do
     latest,
     episodes_count: jobs.length,
     doctor,
+    learning: buildChannelLearning(d, channel),
   };
 }
 
@@ -290,6 +339,63 @@ function waitingHumanAlerts(store: StateStore): DashboardAlert[] {
   return alerts;
 }
 
+const ALERT_WINDOW_MS = 24 * 3_600_000;
+const STATS_FAILING_THRESHOLD = 3;
+
+/** `stats_blocked` (spec §5/§6): a `stats.blocked` event for the channel within the last 24h with no later
+ * `stats.collected` for that same channel -- once a fresh collect succeeds the channel is no longer
+ * considered blocked, even before another `stats.blocked` would naturally age out of the window. */
+function statsBlockedAlerts(store: StateStore, now: string, channels: LoadedChannel[]): DashboardAlert[] {
+  const alerts: DashboardAlert[] = [];
+  for (const channel of channels) {
+    const channelId = channel.config.channel_id;
+    const blocked = newestChannelEvent(store, "stats.blocked", channelId);
+    if (!blocked) continue;
+    if (Date.parse(now) - Date.parse(blocked.occurred_at) >= ALERT_WINDOW_MS) continue;
+    const collected = newestChannelEvent(store, "stats.collected", channelId);
+    if (collected && Date.parse(collected.occurred_at) > Date.parse(blocked.occurred_at)) continue;
+    alerts.push({
+      kind: "stats_blocked", channel_id: channelId, ref: blocked.event_id,
+      message: `channel ${channelId} stats collection blocked: ${String(blocked.payload.reason ?? "unknown reason")}`,
+      since: blocked.occurred_at,
+    });
+  }
+  return alerts;
+}
+
+/** `stats_failing` (spec §5/§6): any `PUBLISHED` job whose `receipt.collect_failures` has reached the
+ * `stats.failing` threshold `collectStats` itself uses (packages/core/src/learning/metrics.ts). */
+function statsFailingAlerts(store: StateStore): DashboardAlert[] {
+  const alerts: DashboardAlert[] = [];
+  for (const job of store.listPublicationJobs({ state: "PUBLISHED" }) as PublicationJob[]) {
+    const failures = job.receipt && typeof job.receipt.collect_failures === "number" ? job.receipt.collect_failures : 0;
+    if (failures < STATS_FAILING_THRESHOLD) continue;
+    alerts.push({
+      kind: "stats_failing", channel_id: job.channel_id, ref: job.publication_job_id,
+      message: `publication job ${job.publication_job_id} has ${failures} consecutive stats-collect failures`,
+      since: job.updated_at,
+    });
+  }
+  return alerts;
+}
+
+/** `planning_failed` (spec §5/§6): a `channel.planning_failed` event for the channel within the last 24h. */
+function planningFailedAlerts(store: StateStore, now: string, channels: LoadedChannel[]): DashboardAlert[] {
+  const alerts: DashboardAlert[] = [];
+  for (const channel of channels) {
+    const channelId = channel.config.channel_id;
+    const failed = newestChannelEvent(store, "channel.planning_failed", channelId);
+    if (!failed) continue;
+    if (Date.parse(now) - Date.parse(failed.occurred_at) >= ALERT_WINDOW_MS) continue;
+    alerts.push({
+      kind: "planning_failed", channel_id: channelId, ref: failed.event_id,
+      message: `channel ${channelId} planning failed: ${String(failed.payload.reason ?? "unknown reason")}`,
+      since: failed.occurred_at,
+    });
+  }
+  return alerts;
+}
+
 /** Local wall-clock time in `timezone` is past the latest `publishTimes` entry for `now`'s local day. */
 function isPastLastSlot(publishTimes: string[], timezone: string, now: string): boolean {
   const last = [...publishTimes].sort().at(-1);
@@ -319,6 +425,9 @@ function buildAlerts(d: SnapshotDeps, now: string, doctorRows: DoctorRow[], chan
   }
 
   alerts.push(...waitingHumanAlerts(store));
+  alerts.push(...statsBlockedAlerts(store, now, d.channels));
+  alerts.push(...statsFailingAlerts(store));
+  alerts.push(...planningFailedAlerts(store, now, d.channels));
 
   for (const { run, stage, overdue_seconds } of gateOverdue(store, now, d.gateWindowSeconds)) {
     alerts.push({ kind: "gate_overdue", ref: stage.stage_run_id, message: `gate ${stage.stage_key} of run ${run.run_id} overdue by ${overdue_seconds}s`, since: stage.updated_at });

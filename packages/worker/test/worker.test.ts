@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { getEventListeners } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ChannelConfigSchema, newId, ProductionProfileSchema, ProjectConfigSchema, WorkflowDefinitionSchema, type ChannelPackage, type ContentRequest, type Executor, type Hypothesis, type PublicationJob, type StageRequest, type StageResult } from "@harness/contracts";
-import { ArtifactRegistry, BUILTIN_CHECKERS, ChannelRegistry, Controller, FixedClock, HARNESS_ROOT, LibraryFs, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, SourceCatalog, SqliteStateStore, Verifier, addSeconds, createLogger, loadHarnessConfig, loadProfile, loadWorkflow } from "@harness/core";
+import { ArtifactRegistry, BUILTIN_CHECKERS, ChannelRegistry, Controller, FixedClock, HARNESS_ROOT, LibraryFs, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, SourceCatalog, SqliteStateStore, Verifier, addSeconds, createLogger, loadHarnessConfig, loadProfile, loadWorkflow, type LoadedChannel } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, FakePublisher, fakeScriptCommands } from "@harness/adapter-fake";
 import { Worker, type WorkerDeps } from "../src/worker.js";
@@ -561,6 +561,143 @@ describe("Worker", () => {
       const planSpy = vi.spyOn(w.planner, "plan");
       expect(await w.worker.runOnce()).toBe("idle");
       expect(planSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("learning sweeps: collect / plan-requests / auto-pick (sub-project 3B, Task 6)", () => {
+    const PLACEHOLDER = "sha256:" + "0".repeat(64);
+
+    function makeLearningChannel(id: string, o: { planningEnabled: boolean; autoPickEnabled: boolean }) {
+      const config = ChannelConfigSchema.parse({
+        schema_version: "harness.channel-config/v1", channel_id: id, display_name: `Channel ${id}`, portfolio_id: "portfolio-main",
+        repo_dir: "repo-does-not-need-to-exist", legacy_project_id: "project-01",
+        youtube: { expected_channel_id: `UCfake${id}00000000000001`, account_email_ref: `secret://youtube-${id}/email` },
+        publication: { timezone: "Asia/Ho_Chi_Minh", publish_times: ["09:00"], max_daily_uploads: 1, min_gap_hours: 1 },
+        // `recollect_hours: []` keeps `collectDue` to exactly one due target (horizon_hours) per job -- with
+        // the default [168, 720] a video this old (seedDueJob's published_at is ~240h before the FixedClock's
+        // "now") is simultaneously due for all three targets, and this test is about the worker's own cadence
+        // gate, not `collectDue`'s multi-target behavior (covered by its own unit tests).
+        learning: { recollect_hours: [] },
+        planning: { enabled: o.planningEnabled }, auto_pick: { enabled: o.autoPickEnabled },
+      });
+      return { config, dir: `channels/${id}`, config_revision: PLACEHOLDER };
+    }
+
+    /** A committed package + a `PUBLISHED` job already past `learning.horizon_hours` (default 72h), so
+     * `collectDue` reports it immediately -- lets a test observe `collectStats` actually calling the
+     * collector instead of just trusting the cadence gate alone. */
+    function seedDueJob(w: ReturnType<typeof makeWorld>, channelId: string): void {
+      const now = w.clock.now();
+      const hyp: Hypothesis = {
+        schema_version: "harness.hypothesis/v1", hypothesis_id: newId("hypothesis"),
+        basis: [{ kind: "manual", note: "seed" }],
+        chosen: { title: "Ep 1", thumbnail_candidate: "thumb.png", overlay_text: [], angle: "" },
+        rejected: [{ title: "Other angle", angle: "", why: "weaker" }],
+        expected: { metric: "ctr", target: 0.1, horizon_hours: 48 },
+        status: "open", created_at: now,
+      };
+      const pkg: ChannelPackage = {
+        schema_version: "harness.channel-package/v1", package_id: newId("channel_package"), channel_id: channelId,
+        variant_id: newId("content_variant"), content_id: newId("content_item"), library_item_id: newId("library_item"), run_id: newId("run"),
+        episode_no: 1, episode_dir: "episode-01", manifest_digest: PLACEHOLDER, video_artifact_id: newId("artifact"), thumbnail_artifact_id: newId("artifact"),
+        video_checksum: PLACEHOLDER, thumbnail_checksum: PLACEHOLDER,
+        metadata: { title: "Ep 1", description: "", tags: [], playlists: [], hashtags: [], pinned_comment: "", language: "en" },
+        hypothesis: hyp, metadata_revision: 1, channel_config_revision: PLACEHOLDER, status: "committed", created_at: now, updated_at: now,
+      };
+      w.store.insertChannelPackage(pkg);
+      const publishedAt = "2026-09-01T00:00:00.000Z"; // well over 72h before the FixedClock's "now" (2026-09-11)
+      const job: PublicationJob = {
+        schema_version: "harness.publication-job/v1", publication_job_id: newId("publication_job"), package_id: pkg.package_id,
+        channel_id: channelId, library_item_id: pkg.library_item_id, run_id: pkg.run_id, idempotency_key: PLACEHOLDER,
+        state: "PUBLISHED", youtube_video_id: "vid1", operation_id: null, scheduled_at: null,
+        published_at: publishedAt, last_verified_at: null, note: null, receipt: null, created_at: now, updated_at: now,
+      };
+      w.store.insertPublicationJob(job);
+    }
+
+    function fakeCollector() {
+      let calls = 0;
+      return { name: "fake-stats", collect: async () => { calls++; return { kind: "ok" as const, views: 10 }; }, get calls() { return calls; } };
+    }
+
+    function libraryFor(w: ReturnType<typeof makeWorld>, syncSeconds = 300) {
+      const libRoot = mkdtempSync(join(tmpdir(), "wk-learning-lib-"));
+      for (const sub of ["styles", "requests", "items"]) mkdirSync(join(libRoot, sub), { recursive: true });
+      return { fs: new LibraryFs({ root: libRoot, role: "channel" as const }), role: "channel" as const, syncSeconds };
+    }
+
+    it("runs collectStats and plan-requests.run for planning-enabled channels once per their own cadence, and never for a planning-disabled channel", async () => {
+      const w = makeWorld();
+      const enabled = makeLearningChannel("c1", { planningEnabled: true, autoPickEnabled: false });
+      const disabled = makeLearningChannel("c2", { planningEnabled: false, autoPickEnabled: false });
+      seedDueJob(w, "c1");
+      const collector = fakeCollector();
+      const planningRun = vi.fn(async () => ({}));
+      const worker = new Worker({
+        ...w.deps,
+        learning: {
+          channels: new ChannelRegistry([enabled, disabled]), collector, collectSeconds: 10, collectBatch: 5, durationOf: () => null,
+          planning: { checkSeconds: 10, run: planningRun }, autoPick: { run: vi.fn(async () => ({})) },
+        },
+      });
+
+      expect(await worker.runOnce()).toBe("idle");
+      expect(collector.calls).toBe(1);
+      expect(planningRun).toHaveBeenCalledTimes(1);
+      expect(planningRun).toHaveBeenCalledWith(expect.objectContaining({ config: expect.objectContaining({ channel_id: "c1" }) }));
+
+      expect(await worker.runOnce()).toBe("idle"); // same FixedClock instant, well under collectSeconds/checkSeconds=10
+      expect(collector.calls).toBe(1);
+      expect(planningRun).toHaveBeenCalledTimes(1);
+    });
+
+    it("runs auto-pick.run only right after a successful library sync, for auto_pick-enabled channels only", async () => {
+      const w = makeWorld();
+      const enabled = makeLearningChannel("c1", { planningEnabled: false, autoPickEnabled: true });
+      const disabled = makeLearningChannel("c2", { planningEnabled: false, autoPickEnabled: false });
+      const autoPickRun = vi.fn(async () => ({}));
+      const worker = new Worker({
+        ...w.deps, library: libraryFor(w),
+        learning: {
+          channels: new ChannelRegistry([enabled, disabled]), collector: fakeCollector(), collectSeconds: 10_000, collectBatch: 5, durationOf: () => null,
+          planning: { checkSeconds: 10_000, run: vi.fn(async () => ({})) }, autoPick: { run: autoPickRun },
+        },
+      });
+
+      expect(await worker.runOnce()).toBe("idle");
+      expect(autoPickRun).toHaveBeenCalledTimes(1);
+      expect(autoPickRun).toHaveBeenCalledWith(expect.objectContaining({ config: expect.objectContaining({ channel_id: "c1" }) }));
+
+      expect(await worker.runOnce()).toBe("idle"); // same FixedClock instant, well under library.syncSeconds=300
+      expect(autoPickRun).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not run learning sweeps when the project declares no channels", async () => {
+      const w = makeWorld();
+      expect(await w.worker.runOnce()).toBe("idle"); // w.deps has no `learning` at all
+    });
+
+    it("logs and swallows a throwing planning.run/autoPick.run for one channel without stopping the sweep or the poll", async () => {
+      const w = makeWorld();
+      const bad = makeLearningChannel("c1", { planningEnabled: true, autoPickEnabled: true });
+      const good = makeLearningChannel("c2", { planningEnabled: true, autoPickEnabled: true });
+      const errors: unknown[] = [];
+      const logger = { ...w.deps.logger, error: (msg: string, data?: object) => { errors.push({ msg, data }); } };
+      const planningRun = vi.fn(async (channel: LoadedChannel) => { if (channel.config.channel_id === "c1") throw new Error("plan boom"); return {}; });
+      const autoPickRun = vi.fn(async (channel: LoadedChannel) => { if (channel.config.channel_id === "c1") throw new Error("pick boom"); return {}; });
+      const worker = new Worker({
+        ...w.deps, logger, library: libraryFor(w),
+        learning: {
+          channels: new ChannelRegistry([bad, good]), collector: fakeCollector(), collectSeconds: 10, collectBatch: 5, durationOf: () => null,
+          planning: { checkSeconds: 10, run: planningRun }, autoPick: { run: autoPickRun },
+        },
+      });
+
+      await expect(worker.runOnce()).resolves.toBe("idle");
+      expect(planningRun).toHaveBeenCalledTimes(2); // c2 still got its turn after c1 threw
+      expect(autoPickRun).toHaveBeenCalledTimes(2);
+      expect(errors.some((e) => (e as { msg: string }).msg === "plan requests failed")).toBe(true);
+      expect(errors.some((e) => (e as { msg: string }).msg === "auto-pick failed")).toBe(true);
     });
   });
 });

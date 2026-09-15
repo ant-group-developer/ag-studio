@@ -47,7 +47,7 @@ function setupChannelRepo(): string {
   return dir;
 }
 
-function makeLoadedChannel(repoDir: string): LoadedChannel {
+function makeLoadedChannel(repoDir: string, overrides: Record<string, unknown> = {}): LoadedChannel {
   const config = ChannelConfigSchema.parse({
     schema_version: "harness.channel-config/v1",
     channel_id: "c1",
@@ -57,6 +57,7 @@ function makeLoadedChannel(repoDir: string): LoadedChannel {
     legacy_project_id: "project-01",
     youtube: { expected_channel_id: "UCfake000000000000000001", account_email_ref: "secret://youtube-c1/email" },
     publication: { timezone: "Asia/Ho_Chi_Minh", publish_times: ["09:00"], max_daily_uploads: 1, min_gap_hours: 1 },
+    ...overrides,
   });
   return { config, dir: join(repoDir, "channels", "c1"), config_revision: "sha256:" + "0".repeat(64) };
 }
@@ -417,6 +418,88 @@ describe("runDoctor", () => {
       const projectDir = mkdtempSync(join(tmpdir(), "doctor-publisher-"));
       const rows = runDoctor({ ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [], publisher: { name: "playwright" } });
       expect(new Map(rows.map((r) => [r.check, r])).get("publisher")).toMatchObject({ ok: true, detail: "playwright" });
+    });
+  });
+
+  describe("channel:<id>:stats / channel:<id>:planning rows (sub-project 3B, Task 6)", () => {
+    it("channel:<id>:stats is ok \"fake\" with adapters.stats fake, regardless of the repo's own state", () => {
+      const repoDir = setupChannelRepo();
+      rmSync(join(repoDir, ".upload-profile", "Default"), { recursive: true, force: true }); // would fail a playwright check
+      const channel = makeLoadedChannel(repoDir);
+      const projectDir = mkdtempSync(join(tmpdir(), "doctor-stats-fake-"));
+
+      const rows = runDoctor({
+        ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+        channels: { loaded: [channel], errors: [], secrets: new FixedSecrets("owner@example.com") },
+        learning: { harnessRoot: HARNESS_ROOT, statsAdapter: "fake", agentIsFake: true, loadProfile: (id) => loadProfile(HARNESS_ROOT, id), loadWorkflow: (ref) => loadWorkflow(HARNESS_ROOT, ref) },
+      });
+      expect(new Map(rows.map((r) => [r.check, r])).get("channel:c1:stats")).toMatchObject({ ok: true, detail: "fake" });
+    });
+
+    it("channel:<id>:stats with adapters.stats playwright: ok when the adapter script and .upload-profile/Default both exist, fails naming what is missing otherwise", () => {
+      const repoDir = setupChannelRepo();
+      const channel = makeLoadedChannel(repoDir);
+      const projectDir = mkdtempSync(join(tmpdir(), "doctor-stats-playwright-ok-"));
+      const learning = { harnessRoot: HARNESS_ROOT, statsAdapter: "playwright" as const, agentIsFake: true, loadProfile: (id: string) => loadProfile(HARNESS_ROOT, id), loadWorkflow: (ref: string) => loadWorkflow(HARNESS_ROOT, ref) };
+
+      const okRows = runDoctor({
+        ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+        channels: { loaded: [channel], errors: [], secrets: new FixedSecrets("owner@example.com") }, learning,
+      });
+      expect(new Map(okRows.map((r) => [r.check, r])).get("channel:c1:stats")).toMatchObject({ ok: true });
+
+      rmSync(join(repoDir, ".upload-profile", "Default"), { recursive: true, force: true });
+      const missingRows = runDoctor({
+        ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+        channels: { loaded: [channel], errors: [], secrets: new FixedSecrets("owner@example.com") }, learning,
+      });
+      const missingRow = new Map(missingRows.map((r) => [r.check, r])).get("channel:c1:stats");
+      expect(missingRow).toMatchObject({ ok: false });
+      expect(missingRow?.detail).toContain(join(".upload-profile", "Default"));
+    });
+
+    it("channel:<id>:planning is added only for a channel with planning.enabled, ok when the profile+workflow load and the agent is not fake", () => {
+      const repoDir = setupChannelRepo();
+      const disabled = makeLoadedChannel(repoDir);
+      const enabled = makeLoadedChannel(repoDir, { planning: { enabled: true } });
+      const projectDir = mkdtempSync(join(tmpdir(), "doctor-planning-ok-"));
+      const learning = { harnessRoot: HARNESS_ROOT, statsAdapter: "fake" as const, agentIsFake: false, loadProfile: (id: string) => loadProfile(HARNESS_ROOT, id), loadWorkflow: (ref: string) => loadWorkflow(HARNESS_ROOT, ref) };
+
+      const disabledRows = runDoctor({
+        ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+        channels: { loaded: [disabled], errors: [], secrets: new FixedSecrets("owner@example.com") }, learning,
+      });
+      expect(disabledRows.some((r) => r.check === "channel:c1:planning")).toBe(false);
+
+      const enabledRows = runDoctor({
+        ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+        channels: { loaded: [enabled], errors: [], secrets: new FixedSecrets("owner@example.com") }, learning,
+      });
+      expect(new Map(enabledRows.map((r) => [r.check, r])).get("channel:c1:planning")).toMatchObject({ ok: true });
+    });
+
+    it("channel:<id>:planning warns \"fake agent\" when the profile+workflow load but adapters.agent is fake, and fails when the profile itself cannot load", () => {
+      const repoDir = setupChannelRepo();
+      const enabled = makeLoadedChannel(repoDir, { planning: { enabled: true } });
+      const projectDir = mkdtempSync(join(tmpdir(), "doctor-planning-fake-agent-"));
+
+      const fakeAgentRows = runDoctor({
+        ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+        channels: { loaded: [enabled], errors: [], secrets: new FixedSecrets("owner@example.com") },
+        learning: { harnessRoot: HARNESS_ROOT, statsAdapter: "fake", agentIsFake: true, loadProfile: (id) => loadProfile(HARNESS_ROOT, id), loadWorkflow: (ref) => loadWorkflow(HARNESS_ROOT, ref) },
+      });
+      const fakeAgentRow = new Map(fakeAgentRows.map((r) => [r.check, r])).get("channel:c1:planning");
+      expect(fakeAgentRow).toMatchObject({ ok: false });
+      expect(fakeAgentRow?.detail).toContain("fake");
+
+      const brokenProfileRows = runDoctor({
+        ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+        channels: { loaded: [enabled], errors: [], secrets: new FixedSecrets("owner@example.com") },
+        learning: { harnessRoot: HARNESS_ROOT, statsAdapter: "fake", agentIsFake: false, loadProfile: () => { throw new Error("profile.yaml not found"); }, loadWorkflow: (ref) => loadWorkflow(HARNESS_ROOT, ref) },
+      });
+      const brokenProfileRow = new Map(brokenProfileRows.map((r) => [r.check, r])).get("channel:c1:planning");
+      expect(brokenProfileRow).toMatchObject({ ok: false });
+      expect(brokenProfileRow?.detail).toContain("profile.yaml not found");
     });
   });
 });
