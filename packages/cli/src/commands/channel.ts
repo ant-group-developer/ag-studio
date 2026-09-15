@@ -93,9 +93,13 @@ export function registerChannel(program: Command): void {
             episode_no: pkg?.episode_no ?? 0, title: pkg?.metadata.title ?? "", publication_job_id: job.publication_job_id,
             age_hours: latest?.age_hours ?? null, views: latest?.views ?? null, impressions: latest?.impressions ?? null,
             ctr_pct: latest?.ctr_pct ?? null, avg_view_sec: latest?.avg_view_sec ?? null, snapshots: metrics.length,
+            // where the newest snapshot came from -- `studio` (a real collect sweep) or `manual` (a
+            // `channel metrics import` of the legacy register). Without it nothing an operator can run says
+            // whether a row is a number the collector actually read or one imported from the old ledger.
+            source: latest?.source ?? null,
           };
         }).sort((a, b) => b.episode_no - a.episode_no);
-        print(o.json, rows, () => rows.map((r) => `ep${r.episode_no} "${r.title}" snapshots=${r.snapshots} age_hours=${r.age_hours ?? "-"} views=${r.views ?? "-"} impressions=${r.impressions ?? "-"} ctr_pct=${r.ctr_pct ?? "-"} avg_view_sec=${r.avg_view_sec ?? "-"}`).join("\n") || "no published jobs");
+        print(o.json, rows, () => rows.map((r) => `ep${r.episode_no} "${r.title}" snapshots=${r.snapshots} source=${r.source ?? "-"} age_hours=${r.age_hours ?? "-"} views=${r.views ?? "-"} impressions=${r.impressions ?? "-"} ctr_pct=${r.ctr_pct ?? "-"} avg_view_sec=${r.avg_view_sec ?? "-"}`).join("\n") || "no published jobs");
       });
     });
 
