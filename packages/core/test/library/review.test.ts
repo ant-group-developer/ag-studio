@@ -2,14 +2,32 @@ import { describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isHarnessError, newId, type LibraryItem } from "@harness/contracts";
-import { applyReview, claimItem, claimRequest, createRequest, LibraryFs, NullMediaProber, SourceCatalog, withdrawItem } from "../../src/index.js";
+import { isHarnessError, newId, type EditStyle, type LibraryItem } from "@harness/contracts";
+import { activateStyle, applyReview, claimItem, claimRequest, createRequest, LibraryFs, NullMediaProber, SourceCatalog, withdrawItem } from "../../src/index.js";
 import { openTempStore } from "../helpers.js";
 
 const SHA = "sha256:" + "a".repeat(64);
 
 function tempRoot(): string {
   return mkdtempSync(join(tmpdir(), "library-review-"));
+}
+
+function makeStyle(id: string, status: EditStyle["status"] = "draft"): EditStyle {
+  return {
+    schema_version: "harness.edit-style/v1",
+    style_id: id,
+    revision: 1,
+    name: "Test style",
+    status,
+    learned_from: [],
+    params: {
+      cut_rhythm: "medium", shot_seconds: [2, 5], transitions: [], text_overlay: { style: "bold", density: "low" },
+      subtitles: "burn-in", music: { mood: "upbeat", ducking: true }, opening: { seconds: 3, structure: "hook" }, aspect_ratio: "16:9", pace_notes: "",
+    },
+    evidence: [],
+    created_at: "2026-09-14T00:00:00.000Z",
+    updated_at: "2026-09-14T00:00:00.000Z",
+  };
 }
 
 function makeItem(id: string, overrides: Partial<LibraryItem> = {}): LibraryItem {
@@ -341,6 +359,80 @@ describe("claimItem", () => {
     let caught: unknown;
     try {
       claimItem({ store, fs: studio, clock, catalog }, { item_id: itemId, channel_id: "chan-a", portfolio_id: "portfolio-a" });
+    } catch (e) {
+      caught = e;
+    }
+    expect(isHarnessError(caught, "CONFIG_INVALID")).toBe(true);
+  });
+});
+
+describe("activateStyle", () => {
+  it("moves a draft style to active, bumping revision and rewriting the kho file", () => {
+    const { studio, store, clock } = world();
+    const d = { store, fs: studio, clock };
+    const styleId = newId("edit_style");
+    studio.writeJsonAtomic(studio.paths.styleFile(styleId), makeStyle(styleId, "draft"));
+
+    const activated = activateStyle(d, { style_id: styleId });
+
+    expect(activated.status).toBe("active");
+    expect(activated.revision).toBe(2);
+    expect(activated.updated_at).toBe(clock.now());
+    const onDisk = JSON.parse(readFileSync(studio.paths.styleFile(styleId), "utf8"));
+    expect(onDisk.status).toBe("active");
+    expect(onDisk.revision).toBe(2);
+    expect(store.getEditStyle(styleId)?.status).toBe("active");
+  });
+
+  it("moves a retired style back to active", () => {
+    const { studio, store, clock } = world();
+    const d = { store, fs: studio, clock };
+    const styleId = newId("edit_style");
+    studio.writeJsonAtomic(studio.paths.styleFile(styleId), { ...makeStyle(styleId, "retired"), revision: 3 });
+
+    const activated = activateStyle(d, { style_id: styleId });
+    expect(activated.status).toBe("active");
+    expect(activated.revision).toBe(4);
+  });
+
+  it("is idempotent on an already-active style: returned unchanged, no revision bump, no write", () => {
+    const { studio, store, clock } = world();
+    const d = { store, fs: studio, clock };
+    const styleId = newId("edit_style");
+    const active = { ...makeStyle(styleId, "active"), revision: 5 };
+    studio.writeJsonAtomic(studio.paths.styleFile(styleId), active);
+    const before = readFileSync(studio.paths.styleFile(styleId), "utf8");
+
+    const result = activateStyle(d, { style_id: styleId });
+
+    expect(result.status).toBe("active");
+    expect(result.revision).toBe(5);
+    expect(readFileSync(studio.paths.styleFile(styleId), "utf8")).toBe(before);
+  });
+
+  it("throws NOT_FOUND for a style that does not exist in the kho", () => {
+    const { studio, store, clock } = world();
+    const d = { store, fs: studio, clock };
+    let caught: unknown;
+    try {
+      activateStyle(d, { style_id: newId("edit_style") });
+    } catch (e) {
+      caught = e;
+    }
+    expect(isHarnessError(caught, "NOT_FOUND")).toBe(true);
+  });
+
+  it("rejects a channel role's activation write with CONFIG_INVALID", () => {
+    const { channel, store, clock } = world();
+    const styleId = newId("edit_style");
+    // hand-written straight to disk (assertWritable only governs the *channel* LibraryFs's own writes)
+    const d = { store, fs: channel, clock };
+    mkdirSync(join(channel.paths.styleDir(styleId)), { recursive: true });
+    writeFileSync(channel.paths.styleFile(styleId), JSON.stringify(makeStyle(styleId, "draft")));
+
+    let caught: unknown;
+    try {
+      activateStyle(d, { style_id: styleId });
     } catch (e) {
       caught = e;
     }

@@ -269,6 +269,58 @@ describe("harness library CLI", () => {
     expect(existsSync(root)).toBe(false); // nothing scaffolded a local kho behind our back
   });
 
+  it("`library styles activate` moves a draft style to active on studio and is refused on channel", () => {
+    const root = mkdtempSync(join(tmpdir(), "kho-activate-"));
+    const studioDir = libraryProject(root, "studio", "activate");
+    const channelDir = libraryProject(root, "channel", "activate-channel");
+    expect(cli(studioDir, "db", "migrate").code).toBe(0);
+    expect(cli(channelDir, "db", "migrate").code).toBe(0);
+    const styleId = newId("edit_style");
+    const dir = join(root, "styles", styleId);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "style.json"), styleJson(styleId, "draft"));
+
+    const refused = cli(channelDir, "library", "styles", "activate", styleId, "--json");
+    expect(refused.code).toBe(1);
+    expect(refused.err).toContain("CONFIG_INVALID");
+    expect(JSON.parse(readFileSync(join(dir, "style.json"), "utf8")).status).toBe("draft");
+
+    const activated = cli(studioDir, "library", "styles", "activate", styleId, "--json");
+    expect(activated.code, activated.err).toBe(0);
+    const out = JSON.parse(activated.out);
+    expect(out.status).toBe("active");
+    expect(out.revision).toBe(2);
+    expect(JSON.parse(readFileSync(join(dir, "style.json"), "utf8")).status).toBe("active");
+
+    // idempotent: activating an already-active style again does not bump revision
+    const again = cli(studioDir, "library", "styles", "activate", styleId, "--json");
+    expect(again.code, again.err).toBe(0);
+    expect(JSON.parse(again.out).revision).toBe(2);
+  });
+
+  it("`library request create --source-hint/--source-id` writes source_hint into the kho file", () => {
+    const root = mkdtempSync(join(tmpdir(), "kho-source-hint-"));
+    const channelDir = libraryProject(root, "channel", "source-hint");
+    expect(cli(channelDir, "db", "migrate").code).toBe(0);
+    const styleId = newId("edit_style");
+    writeStyleFile(root, styleId);
+
+    const collectionOnly = cli(channelDir, "library", "request", "create", "--portfolio", "portfolio-main", "--topic", "t", "--style", styleId, "--source-hint", "main", "--json");
+    expect(collectionOnly.code, collectionOnly.err).toBe(0);
+    const r1 = JSON.parse(collectionOnly.out);
+    expect(r1.source_hint).toEqual({ collection: "main" });
+    const onDisk1 = JSON.parse(readFileSync(join(root, "requests", `${r1.request_id}.json`), "utf8"));
+    expect(onDisk1.source_hint).toEqual({ collection: "main" });
+
+    const srcA = newId("source_item");
+    const srcB = newId("source_item");
+    const withIds = cli(channelDir, "library", "request", "create", "--portfolio", "portfolio-main", "--topic", "t2", "--style", styleId, "--source-id", srcA, "--source-id", srcB, "--json");
+    expect(withIds.code, withIds.err).toBe(0);
+    const r2 = JSON.parse(withIds.out);
+    expect(r2.source_hint.source_ids).toEqual([srcA, srcB]);
+    expect(r2.source_hint.collection).toBeUndefined();
+  });
+
   it("doctor reports the three library:* rows for a project with a library root", () => {
     const root = mkdtempSync(join(tmpdir(), "kho-doctor-"));
     mkdirSync(join(root, "styles"), { recursive: true });
@@ -361,6 +413,161 @@ describe("harness library CLI", () => {
       expect(result.outcome).toBe("failed");
       expect(result.errors[0].kind).toBe("contract");
       expect(existsSync(join(workspaceDir, "output", "brief.json"))).toBe(false);
+    });
+
+    function writeRequestFile(root: string, requestId: string, styleId: string, notes: string): void {
+      mkdirSync(join(root, "requests"), { recursive: true });
+      const request = {
+        schema_version: "harness.content-request/v1", request_id: requestId,
+        requested_by: { portfolio_id: "portfolio-main" }, topic: "Intake topic", style_id: styleId, style_revision: 1,
+        voice: "none", language: "vi", count: 1, status: "open", item_ids: [], notes,
+        created_at: "2026-09-14T00:00:00.000Z", updated_at: "2026-09-14T00:00:00.000Z",
+      };
+      writeFileSync(join(root, "requests", `${requestId}.json`), JSON.stringify(request, null, 2) + "\n");
+    }
+
+    it("copies request.notes into brief.json.request_notes when the brief carries a request_id", () => {
+      const root = mkdtempSync(join(tmpdir(), "kho-intake-notes-"));
+      const studioDir = libraryProject(root, "studio", "intake-notes");
+      expect(cli(studioDir, "db", "migrate").code).toBe(0);
+      const styleId = newId("edit_style");
+      writeStyleFile(root, styleId);
+      const requestId = newId("content_request");
+      writeRequestFile(root, requestId, styleId, "lý do cũ");
+
+      const content: ContentItem = {
+        schema_version: "harness.content-item/v1", content_id: newId("content_item"), source_ids: [], revision: 1, title: "Intake content", created_at: new Date().toISOString(),
+        library_brief: { request_id: requestId, topic: "Intake topic", style_id: styleId, style_revision: 1, voice: "none", language: "vi" },
+      };
+      const run = insertRun(studioDir, content);
+
+      const workspaceDir = stageWorkspace();
+      writeStageRequest(workspaceDir, run);
+      const r = cliEnv(studioDir, { HARNESS_WORKSPACE: workspaceDir }, "library", "stage", "intake");
+      expect(r.code, r.err).toBe(0);
+
+      const result = JSON.parse(readFileSync(join(workspaceDir, "stage-result.json"), "utf8"));
+      expect(result.outcome, JSON.stringify(result.errors)).toBe("succeeded");
+      const brief = JSON.parse(readFileSync(join(workspaceDir, "output", "brief.json"), "utf8"));
+      expect(brief.request_notes).toBe("lý do cũ");
+
+      // intake is still the one place a request moves open -> claimed
+      const onDisk = JSON.parse(readFileSync(join(root, "requests", `${requestId}.json`), "utf8"));
+      expect(onDisk.status).toBe("claimed");
+    });
+
+    it("leaves brief.json.request_notes empty when the brief has no request_id", () => {
+      const root = mkdtempSync(join(tmpdir(), "kho-intake-norequest-"));
+      const studioDir = libraryProject(root, "studio", "intake-norequest");
+      expect(cli(studioDir, "db", "migrate").code).toBe(0);
+      const styleId = newId("edit_style");
+      writeStyleFile(root, styleId);
+
+      const content: ContentItem = {
+        schema_version: "harness.content-item/v1", content_id: newId("content_item"), source_ids: [], revision: 1, title: "Intake content", created_at: new Date().toISOString(),
+        library_brief: { topic: "Intake topic", style_id: styleId, style_revision: 1, voice: "none", language: "vi" },
+      };
+      const run = insertRun(studioDir, content);
+
+      const workspaceDir = stageWorkspace();
+      writeStageRequest(workspaceDir, run);
+      const r = cliEnv(studioDir, { HARNESS_WORKSPACE: workspaceDir }, "library", "stage", "intake");
+      expect(r.code, r.err).toBe(0);
+
+      const brief = JSON.parse(readFileSync(join(workspaceDir, "output", "brief.json"), "utf8"));
+      expect(brief.request_notes).toBe("");
+    });
+
+    it("fails with kind contract when brief.request_id points at a request the kho does not have", () => {
+      const root = mkdtempSync(join(tmpdir(), "kho-intake-missing-request-"));
+      const studioDir = libraryProject(root, "studio", "intake-missing-request");
+      expect(cli(studioDir, "db", "migrate").code).toBe(0);
+      const styleId = newId("edit_style");
+      writeStyleFile(root, styleId);
+
+      const content: ContentItem = {
+        schema_version: "harness.content-item/v1", content_id: newId("content_item"), source_ids: [], revision: 1, title: "Intake content", created_at: new Date().toISOString(),
+        library_brief: { request_id: newId("content_request"), topic: "Intake topic", style_id: styleId, style_revision: 1, voice: "none", language: "vi" },
+      };
+      const run = insertRun(studioDir, content);
+
+      const workspaceDir = stageWorkspace();
+      writeStageRequest(workspaceDir, run);
+      const r = cliEnv(studioDir, { HARNESS_WORKSPACE: workspaceDir }, "library", "stage", "intake");
+      expect(r.code, r.err).toBe(0);
+
+      const result = JSON.parse(readFileSync(join(workspaceDir, "stage-result.json"), "utf8"));
+      expect(result.outcome).toBe("failed");
+      expect(result.errors[0].kind).toBe("contract");
+    });
+  });
+
+  describe("built-in `library stage apply-review`", () => {
+    function workspaceWithReview(reviewContent: string, exportReceiptContent: string): string {
+      const dir = mkdtempSync(join(tmpdir(), "lib-apply-review-ws-"));
+      mkdirSync(join(dir, "output"), { recursive: true });
+      mkdirSync(join(dir, "input"), { recursive: true });
+      writeFileSync(join(dir, "input", "review.json"), reviewContent);
+      writeFileSync(join(dir, "input", "export-receipt.json"), exportReceiptContent);
+      const inputs = [
+        { artifact_id: newId("artifact"), checksum: SHA, path: "input/review.json", type: "review", kind: "file" },
+        { artifact_id: newId("artifact"), checksum: SHA, path: "input/export-receipt.json", type: "export_receipt", kind: "file" },
+      ];
+      const stageRequest = {
+        schema_version: "harness.stage-request/v1", run_id: newId("run"), stage_run_id: newId("stage_run"), attempt_id: newId("attempt"),
+        project_id: "project-studio", portfolio_id: "portfolio-main", stage_key: "apply-review",
+        workflow: { id: "library-production", version: "1.0.0", digest: SHA }, profile_snapshot: { id: "studio", revision: 1 },
+        inputs, workspace_uri: "file://" + dir, stage_config: {}, options: {}, source_items: [], resources: [], expected_outputs: [],
+        policy: {}, limits: { deadline_at: new Date(Date.now() + 3_600_000).toISOString(), max_cost_usd: 5, max_attempts: 3 },
+        capabilities: [], fencing_token: 1,
+      };
+      writeFileSync(join(dir, "stage-request.json"), JSON.stringify(stageRequest, null, 2));
+      return dir;
+    }
+
+    it("records checks_failed and rejects the item when a check fails", () => {
+      const root = mkdtempSync(join(tmpdir(), "kho-apply-review-"));
+      const studioDir = libraryProject(root, "studio", "apply-review");
+      expect(cli(studioDir, "db", "migrate").code).toBe(0);
+      const styleId = newId("edit_style");
+      writeStyleFile(root, styleId);
+      const itemId = newId("library_item");
+      writeItemManifest(root, itemId, styleId, newId("run"), newId("content_item"));
+
+      const review = { decision: "rejected", note: "audio missing", checks: [{ id: "audio_present", pass: false }] };
+      const receipt = { item_id: itemId };
+      const workspaceDir = workspaceWithReview(JSON.stringify(review), JSON.stringify(receipt));
+      const r = cliEnv(studioDir, { HARNESS_WORKSPACE: workspaceDir }, "library", "stage", "apply-review");
+      expect(r.code, r.err).toBe(0);
+
+      const result = JSON.parse(readFileSync(join(workspaceDir, "stage-result.json"), "utf8"));
+      expect(result.outcome, JSON.stringify(result.errors)).toBe("succeeded");
+      const applyReceipt = JSON.parse(readFileSync(join(workspaceDir, "output", "apply-receipt.json"), "utf8"));
+      expect(applyReceipt.status).toBe("rejected");
+      expect(applyReceipt.checks_failed).toBe(1);
+      expect(JSON.parse(readFileSync(join(root, "items", itemId, "manifest.json"), "utf8")).status).toBe("rejected");
+    });
+
+    it("still accepts an old review.json with no schema_version, note, or checks", () => {
+      const root = mkdtempSync(join(tmpdir(), "kho-apply-review-legacy-"));
+      const studioDir = libraryProject(root, "studio", "apply-review-legacy");
+      expect(cli(studioDir, "db", "migrate").code).toBe(0);
+      const styleId = newId("edit_style");
+      writeStyleFile(root, styleId);
+      const itemId = newId("library_item");
+      writeItemManifest(root, itemId, styleId, newId("run"), newId("content_item"));
+
+      const review = { decision: "approved" };
+      const receipt = { item_id: itemId };
+      const workspaceDir = workspaceWithReview(JSON.stringify(review), JSON.stringify(receipt));
+      const r = cliEnv(studioDir, { HARNESS_WORKSPACE: workspaceDir }, "library", "stage", "apply-review");
+      expect(r.code, r.err).toBe(0);
+
+      const result = JSON.parse(readFileSync(join(workspaceDir, "stage-result.json"), "utf8"));
+      expect(result.outcome, JSON.stringify(result.errors)).toBe("succeeded");
+      const applyReceipt = JSON.parse(readFileSync(join(workspaceDir, "output", "apply-receipt.json"), "utf8"));
+      expect(applyReceipt.status).toBe("approved");
+      expect(applyReceipt.checks_failed).toBe(0);
     });
   });
 

@@ -1,10 +1,12 @@
 import { existsSync } from "node:fs";
 import {
+  EditStyleSchema,
   HarnessError,
   LibraryClaimSchema,
   LibraryItemSchema,
   type ContentItem,
   type ContentRequest,
+  type EditStyle,
   type LibraryClaim,
   type LibraryItem,
 } from "@harness/contracts";
@@ -127,6 +129,41 @@ export function withdrawItem(d: LibraryDeps, p: { item_id: string; note?: string
   const note = p.note ? (item.review.note ? `${item.review.note}\n${p.note}` : p.note) : item.review.note;
   const updated: LibraryItem = { ...item, status: "withdrawn", review: { ...item.review, note }, updated_at: now };
   return saveItem(d, updated);
+}
+
+/** Reads a style straight from the kho (not the DB mirror), mirroring `readItem`/`readRequest`: only an
+ * *absent* file is NOT_FOUND. */
+function readStyle(d: LibraryDeps, styleId: string): EditStyle {
+  const path = d.fs.paths.styleFile(styleId);
+  if (!existsSync(path)) {
+    throw new HarnessError("NOT_FOUND", `edit style not found: ${styleId}`, { style_id: styleId });
+  }
+  return d.fs.readJson(path, EditStyleSchema);
+}
+
+function saveStyle(d: LibraryDeps, style: EditStyle): EditStyle {
+  d.fs.writeJsonAtomic(d.fs.paths.styleFile(style.style_id), style);
+  d.store.upsertEditStyle(style);
+  return style;
+}
+
+/**
+ * draft|retired -> active, bumping `revision` and `updated_at` and mirroring the result into the store.
+ * Studio-only: `LibraryFs.assertWritable` refuses a channel role's write with CONFIG_INVALID before
+ * anything touches disk (styles/** is a studio-owned path), so no separate role check is needed here.
+ *
+ * Idempotent on an already-active style: returned unchanged, no revision bump and no write -- re-running
+ * `harness library styles activate` after a real activation is a no-op instead of an unbounded revision
+ * climb. `p.note` has no field to land in on `EditStyleSchema` today (unlike `LibraryItem.review` or
+ * `LibraryClaim.note`, a style carries no per-transition note) -- accepted for CLI symmetry with
+ * `review`/`withdraw --note` but currently unused; wiring it in would mean growing the schema, out of
+ * scope here.
+ */
+export function activateStyle(d: LibraryDeps, p: { style_id: string; note?: string }): EditStyle {
+  const style = readStyle(d, p.style_id);
+  if (style.status === "active") return style;
+  const updated: EditStyle = { ...style, status: "active", revision: style.revision + 1, updated_at: d.clock.now() };
+  return saveStyle(d, updated);
 }
 
 /** Channel role: a *new* claim requires the item to be approved (checked against the kho file, not

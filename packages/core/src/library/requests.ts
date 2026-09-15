@@ -44,6 +44,7 @@ export function createRequest(d: LibraryDeps, p: {
   language?: string;
   due_at?: string;
   notes?: string;
+  source_hint?: ContentRequest["source_hint"];
 }): ContentRequest {
   const now = d.clock.now();
   const request: ContentRequest = {
@@ -63,6 +64,7 @@ export function createRequest(d: LibraryDeps, p: {
     ...(p.style_revision !== undefined ? { style_revision: p.style_revision } : {}),
     ...(p.target_duration_seconds !== undefined ? { target_duration_seconds: p.target_duration_seconds } : {}),
     ...(p.due_at !== undefined ? { due_at: p.due_at } : {}),
+    ...(p.source_hint !== undefined ? { source_hint: p.source_hint } : {}),
   };
   return saveRequest(d, request);
 }

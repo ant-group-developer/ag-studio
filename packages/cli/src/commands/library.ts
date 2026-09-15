@@ -1,6 +1,6 @@
 import type { Command } from "commander";
-import { HarnessError, type LibraryBrief } from "@harness/contracts";
-import { applyReview, claimItem, createRequest, syncLibrary, withdrawItem } from "@harness/core";
+import { HarnessError, type ContentRequest, type LibraryBrief } from "@harness/contracts";
+import { activateStyle, applyReview, claimItem, createRequest, syncLibrary, withdrawItem } from "@harness/core";
 import { registerLibraryStage, requireLibrary } from "./library-stage.js";
 import { print, withContext } from "./shared.js";
 
@@ -52,6 +52,8 @@ export function registerLibrary(program: Command): void {
     .requiredOption("--portfolio <id>").option("--channel <id>").requiredOption("--topic <topic>").option("--style <style_id>")
     .option("--duration <min,max>").option("--voice <voice>", "none|tts|original").option("--language <code>")
     .option("--count <n>", "must be 1 (one request buys one item until a re-claim mechanism exists)").option("--due <date>")
+    .option("--source-hint <collection>", "named source collection an auto-accept run may pull from")
+    .option("--source-id <src_id>", "source item id to narrow auto-accept to (repeatable)", (v: string, acc: string[]) => [...acc, v], [] as string[])
     .option("--json", "machine output", false)
     .description("create an open content request in the kho")
     .action(async (o, cmd) => {
@@ -63,6 +65,10 @@ export function registerLibrary(program: Command): void {
           throw new HarnessError("CONFIG_INVALID", "--count must be 1: one content request buys one item (no re-claim mechanism yet)", { count: o.count });
         }
         const target_duration_seconds = parseDuration(o.duration);
+        const sourceIds: string[] = o.sourceId;
+        const source_hint: ContentRequest["source_hint"] | undefined = (o.sourceHint || sourceIds.length > 0)
+          ? { ...(sourceIds.length > 0 ? { source_ids: sourceIds } : {}), ...(o.sourceHint ? { collection: o.sourceHint } : {}) }
+          : undefined;
         const r = createRequest({ store: ctx.store, fs: lib.fs, clock: ctx.clock }, {
           requested_by: { portfolio_id: o.portfolio, ...(o.channel ? { channel_id: o.channel } : {}) },
           topic: o.topic,
@@ -71,6 +77,7 @@ export function registerLibrary(program: Command): void {
           ...(o.voice ? { voice: o.voice } : {}),
           ...(o.language ? { language: o.language } : {}),
           ...(o.due ? { due_at: o.due } : {}),
+          ...(source_hint ? { source_hint } : {}),
         });
         print(o.json, r, () => `${r.request_id} ${r.status}`);
       });
@@ -158,6 +165,17 @@ export function registerLibrary(program: Command): void {
         const style = ctx.store.getEditStyle(styleId);
         if (!style) throw new HarnessError("NOT_FOUND", `edit style not found: ${styleId}; run library sync first`, { style_id: styleId });
         print(o.json, style, () => `${style.style_id} rev${style.revision} ${style.status} "${style.name}"`);
+      });
+    });
+
+  styles.command("activate <style_id>")
+    .option("--note <note>", "optional note").option("--json", "machine output", false)
+    .description("draft|retired -> active in the kho (studio role); idempotent on an already-active style")
+    .action(async (styleId: string, o, cmd) => {
+      await withContext(cmd, {}, (ctx) => {
+        const lib = requireLibrary(ctx);
+        const style = activateStyle({ store: ctx.store, fs: lib.fs, clock: ctx.clock }, { style_id: styleId, ...(o.note ? { note: o.note } : {}) });
+        print(o.json, style, () => `${style.style_id} rev${style.revision} ${style.status}`);
       });
     });
 }

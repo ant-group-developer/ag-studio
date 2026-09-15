@@ -12,6 +12,10 @@ export const libraryBriefSchema = z.object({
   target_duration_seconds: durationTuple.optional(),
   voice: z.enum(["none", "tts", "original"]).default("none"),
   language: z.string().min(1).default("vi"),
+  /** The originating request's free-text `notes`, copied in by `intake` when the brief carries a
+   * `request_id` (empty when it does not, or the request has none of its own). Lets downstream skills
+   * (e.g. `style-analyze`, `library-review`) see why the channel asked for this without re-reading the kho. */
+  request_notes: z.string().optional(),
 }).strict();
 
 export const EditStyleSchema = z.object({

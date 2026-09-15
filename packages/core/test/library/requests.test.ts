@@ -43,6 +43,25 @@ describe("createRequest", () => {
     expect(request.language).toBe("vi");
   });
 
+  it("writes source_hint into the request file when given", () => {
+    const { d, fs } = world();
+    const srcA = newId("source_item");
+    const srcB = newId("source_item");
+    const request = createRequest(d, {
+      requested_by: { portfolio_id: "portfolio-a" }, topic: "topic",
+      source_hint: { source_ids: [srcA, srcB], collection: "main" },
+    });
+    expect(request.source_hint).toEqual({ source_ids: [srcA, srcB], collection: "main" });
+    const onDisk = JSON.parse(readFileSync(fs.paths.requestFile(request.request_id), "utf8"));
+    expect(onDisk.source_hint).toEqual({ source_ids: [srcA, srcB], collection: "main" });
+  });
+
+  it("omits source_hint entirely when not given", () => {
+    const { d } = world();
+    const request = createRequest(d, { requested_by: { portfolio_id: "portfolio-a" }, topic: "topic" });
+    expect(request.source_hint).toBeUndefined();
+  });
+
   it("is fixed at count 1: a hand-written request asking for more is CONFIG_INVALID on read", () => {
     const { d, fs } = world();
     const request = createRequest(d, { requested_by: { portfolio_id: "portfolio-a" }, topic: "topic" });

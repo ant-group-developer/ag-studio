@@ -2,8 +2,8 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Command } from "commander";
 import { start, type ScriptContext } from "@harness/script-sdk";
-import { EditStyleSchema, HarnessError, isHarnessError, libraryBriefSchema, type EditStyle, type LibraryBrief } from "@harness/contracts";
-import { applyReview, claimRequest, exportItem, exportStyle } from "@harness/core";
+import { EditStyleSchema, HarnessError, isHarnessError, libraryBriefSchema, reviewSchema, type EditStyle, type LibraryBrief } from "@harness/contracts";
+import { applyReview, claimRequest, exportItem, exportStyle, readRequest } from "@harness/core";
 import type { AppContext } from "../composition.js";
 import { withContext } from "./shared.js";
 
@@ -37,12 +37,12 @@ async function writeOutput(sdk: ScriptContext, relPath: string, value: unknown, 
   await sdk.out.file(relPath, { type });
 }
 
-function parseReview(raw: unknown): { decision: "approved" | "rejected"; note?: string } {
-  if (!raw || typeof raw !== "object") throw new HarnessError("CONFIG_INVALID", "review.json must be a JSON object", { raw });
-  const r = raw as Record<string, unknown>;
-  if (r.decision !== "approved" && r.decision !== "rejected") throw new HarnessError("CONFIG_INVALID", 'review.json "decision" must be "approved" or "rejected"', { decision: r.decision });
-  if (r.note !== undefined && typeof r.note !== "string") throw new HarnessError("CONFIG_INVALID", 'review.json "note" must be a string', { note: r.note });
-  return { decision: r.decision, ...(typeof r.note === "string" ? { note: r.note } : {}) };
+/** `review.json` is validated against `reviewSchema`, which keeps parsing the pre-Task-4 shape (just
+ * `{ decision, note }`, no `schema_version`/`checks`) unchanged since both are optional/defaulted there. */
+function parseReview(raw: unknown) {
+  const parsed = reviewSchema.safeParse(raw);
+  if (!parsed.success) throw new HarnessError("CONFIG_INVALID", "review.json failed schema validation", { issues: parsed.error.issues });
+  return parsed.data;
 }
 
 function parseExportReceiptItemId(raw: unknown): string {
@@ -66,9 +66,16 @@ async function intake(app: AppContext, sdk: ScriptContext): Promise<void> {
   if (style.status !== "active") throw new HarnessError("CONFIG_INVALID", `edit style ${brief.style_id} is ${style.status}, not active`, { style_id: brief.style_id, status: style.status });
   if (style.revision !== brief.style_revision) throw new HarnessError("CONFIG_INVALID", `edit style ${brief.style_id} is at revision ${style.revision}, brief expects ${brief.style_revision}`, { style_id: brief.style_id, revision: style.revision, expected_revision: brief.style_revision });
 
-  if (brief.request_id) claimRequest({ store: app.store, fs: library.fs, clock: app.clock }, { request_id: brief.request_id, run: { project_id: run.project_id, run_id: run.run_id } });
+  let request_notes = "";
+  if (brief.request_id) {
+    claimRequest({ store: app.store, fs: library.fs, clock: app.clock }, { request_id: brief.request_id, run: { project_id: run.project_id, run_id: run.run_id } });
+    // NOT_FOUND here (a brief pointing at a request the kho no longer has) is a contract problem with this
+    // run, not something to retry -- `runStage` maps it to kind "contract" the same as any other NOT_FOUND.
+    const request = readRequest({ store: app.store, fs: library.fs, clock: app.clock }, brief.request_id);
+    request_notes = request.notes;
+  }
 
-  await writeOutput(sdk, "output/brief.json", { ...brief, style_snapshot: style }, "brief");
+  await writeOutput(sdk, "output/brief.json", { ...brief, request_notes, style_snapshot: style }, "brief");
   await sdk.done();
 }
 
@@ -149,12 +156,12 @@ async function applyReviewStage(app: AppContext, sdk: ScriptContext): Promise<vo
   const item_id = parseExportReceiptItemId(readJsonFile(sdk.input("export_receipt")));
 
   const { item, request } = applyReview({ store: app.store, fs: library.fs, clock: app.clock }, {
-    item_id, decision: review.decision, by: "gate:library-review",
-    ...(review.note !== undefined ? { note: review.note } : {}),
+    item_id, decision: review.decision, by: "gate:library-review", note: review.note,
   });
+  const checks_failed = review.checks.filter((c) => !c.pass).length;
 
   await writeOutput(sdk, "output/apply-receipt.json", {
-    item_id: item.item_id, status: item.status,
+    item_id: item.item_id, status: item.status, checks_failed,
     ...(request ? { request_id: request.request_id, request_status: request.status } : {}),
   }, "apply_receipt");
   await sdk.done();
