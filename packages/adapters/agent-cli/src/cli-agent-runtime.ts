@@ -8,14 +8,21 @@ import type { AgentRuntime, AgentTask, ExecutorContext, StageOutput, StageResult
 export type AgentCliRuntimeKind = "claude" | "codex";
 
 /** Argv and the env vars each headless CLI is allowed to see, keyed by runtime kind. One place to tune flags. */
+// Sub-project 4's five studio skills (style-analyze, style-review, source-survey, edit-plan, library-review)
+// drive the fake agent CLI through a few extra test-only knobs beyond FAKE_AGENT_MODE (see
+// fixtures/fake-agent-cli.mjs's own header comment) -- harmless in production (the real `claude`/`codex`
+// binaries simply never read them), but they must be in this allow-list or `agentChildEnv` strips them
+// before the fake CLI ever sees them.
+const FAKE_AGENT_TEST_ENV = ["FAKE_AGENT_MODE", "FAKE_REVIEW_MODE", "FAKE_AGENT_FAIL_STAGE", "FAKE_STYLE_STATUS", "FAKE_STYLE_REVIEW"];
+
 export const RUNTIME_COMMANDS: Record<AgentCliRuntimeKind, { argv: string[]; env_passthrough: string[] }> = {
   claude: {
     argv: ["claude", "-p", "{prompt}", "--output-format", "json", "--permission-mode", "acceptEdits", "--allowedTools", "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(ffprobe:*)"],
-    env_passthrough: ["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR", "FAKE_AGENT_MODE"],
+    env_passthrough: ["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR", ...FAKE_AGENT_TEST_ENV],
   },
   codex: {
     argv: ["codex", "exec", "--full-auto", "--json", "{prompt}"],
-    env_passthrough: ["OPENAI_API_KEY", "CODEX_HOME", "FAKE_AGENT_MODE"],
+    env_passthrough: ["OPENAI_API_KEY", "CODEX_HOME", ...FAKE_AGENT_TEST_ENV],
   },
 };
 
