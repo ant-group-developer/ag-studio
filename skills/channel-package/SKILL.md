@@ -55,8 +55,10 @@ chứng về vì sao gói này sẽ hoạt động, để đối chiếu lại s
 }
 ```
 
-`hypothesis_id` không tự đặt — để trống `hyp_` + 26 ký tự ULID bất kỳ nếu môi trường không có
-generator; `created_at` do harness điền nếu thiếu.
+`hypothesis_id` và `created_at` bạn **tự sinh, không được để trống** — harness không điền hộ, thiếu hoặc
+sai định dạng là fail checker `schema-valid` ngay: `hypothesis_id` = `hyp_` + 26 ký tự Crockford base32
+(`0-9A-HJKMNP-TV-Z`, ví dụ `hyp_01JBQ7YF3K8ZC4M6N9PRTVWXYZ`); `created_at` = thời điểm ghi file, ISO 8601
+UTC có hậu tố `Z` (ví dụ `2026-09-15T08:30:00.000Z`).
 
 ## Giới hạn YouTube (tự áp trước khi ghi file)
 

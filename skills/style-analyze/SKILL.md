@@ -71,8 +71,10 @@ thành một bản nháp `style.json` (`status: draft`) kèm bằng chứng cho 
 
 `params` phải đủ 9 trường trên, đúng kiểu (`cut_rhythm` một trong `fast|medium|slow`; `shot_seconds`
 là khoảng `[min, max]` giây quan sát được; `subtitles` một trong `burn-in|karaoke|none`; `aspect_ratio`
-dạng `"W:H"`). `style_id`/`created_at`/`updated_at` để trống hợp lý nếu môi trường không có generator —
-harness sẽ điền lại nếu thiếu.
+dạng `"W:H"`). Ba trường định danh bạn **tự sinh, không được để trống** — harness không điền hộ, thiếu
+hoặc sai định dạng là fail checker `schema-valid` ngay: `style_id` = `style_` + 26 ký tự Crockford
+base32 (`0-9A-HJKMNP-TV-Z`, ví dụ `style_01JBQ7YF3K8ZC4M6N9PRTVWXYZ`); `created_at`/`updated_at` =
+thời điểm ghi file, ISO 8601 UTC có hậu tố `Z` (ví dụ `2026-09-15T08:30:00.000Z`).
 
 ## `output/evidence/notes.md` — mẫu
 

@@ -12,7 +12,7 @@
 // `edl`/`edit_plan`/`narration`/`review` branches, every content assertion below failed (the fixture only
 // knew `channel_package_draft`; everything else fell through to `{ fake: true }`, which fails every schema).
 import { dirname, join } from "node:path";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -335,4 +335,22 @@ describe("studio skill docs (skills/<name>/SKILL.md)", () => {
       expect(lineCount).toBeLessThanOrEqual(120);
     });
   }
+
+  // Final-review finding I-1: `style-analyze` (and `channel-package` before it) told the agent it could leave
+  // `style_id`/`hypothesis_id`/`created_at`/`updated_at` blank because "harness sẽ điền lại nếu thiếu".
+  // Nothing backfills them -- `EditStyleSchema`/`HypothesisSchema` require a well-formed id and an ISO-8601
+  // UTC timestamp on the way in -- so an agent that follows that sentence fails `schema-valid` on its first
+  // real run. Guard every skill doc (not just the five studio ones) against the claim coming back.
+  const BACKFILL_CLAIMS = ["điền lại nếu thiếu", "harness điền nếu thiếu"];
+  it("no skills/*/SKILL.md claims the harness backfills a missing field", () => {
+    const docs = readdirSync(skillsDir)
+      .map((name) => join(skillsDir, name, "SKILL.md"))
+      .filter((path) => existsSync(path));
+    expect(docs.length).toBeGreaterThan(0);
+    const offenders = docs.filter((path) => {
+      const content = readFileSync(path, "utf8");
+      return BACKFILL_CLAIMS.some((claim) => content.includes(claim));
+    });
+    expect(offenders).toEqual([]);
+  });
 });
