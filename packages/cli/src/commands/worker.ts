@@ -1,5 +1,6 @@
 import { hostname } from "node:os";
 import type { Command } from "commander";
+import type { ContentRequest, ProjectConfig } from "@harness/contracts";
 import type { AutoAcceptDeps } from "@harness/core";
 import { Worker } from "@harness/worker";
 import type { AppContext } from "../composition.js";
@@ -10,12 +11,26 @@ import { withContext } from "./shared.js";
  * needs beyond `store`/`fs`/`clock`/`logger` (the `Worker` supplies those itself, see `WorkerDeps.library`).
  * Profile is fixed at "studio" (spec's own note allows an optional `auto_accept.profile_id`, but the studio
  * profile is the only one `library-production@1.0.0` ships with, so a config knob for it would be unused). */
+/**
+ * The portfolio an auto-accepted run belongs to: the requesting portfolio (`requested_by.portfolio_id`) when
+ * this project actually declares it, else the project's first portfolio. Auto-accepted runs used to be
+ * stamped with the first portfolio unconditionally, which silently mis-attributed every run on a studio that
+ * serves more than one portfolio; a request naming a portfolio this project does not know (the kho is shared
+ * across machines, so that is a normal thing to see) still has to land somewhere, hence the fallback.
+ */
+export function portfolioForRequest(project: Pick<ProjectConfig, "portfolios">, request: ContentRequest): string {
+  const requested = request.requested_by.portfolio_id;
+  return project.portfolios.some((p) => p.portfolio_id === requested) ? requested : project.portfolios[0]!.portfolio_id;
+}
+
 function autoAcceptDepsFor(ctx: AppContext): Omit<AutoAcceptDeps, "store" | "fs" | "clock" | "logger"> | undefined {
   const config = ctx.library?.role === "studio" ? ctx.library.autoAccept : undefined;
   if (!config?.enabled) return undefined;
   return {
     catalog: ctx.catalog, planner: ctx.planner, harness: ctx.harness, projectId: ctx.project.project_id,
-    portfolioId: ctx.project.portfolios[0]!.portfolio_id, profile: ctx.profiles("studio"), workflows: ctx.workflows,
+    portfolioId: ctx.project.portfolios[0]!.portfolio_id,
+    portfolioFor: (request) => portfolioForRequest(ctx.project, request),
+    profile: ctx.profiles("studio"), workflows: ctx.workflows,
     executorVersionFor: ctx.executorVersionFor,
     requiresResourcesOverride: (s) => (s.executor.type === "script" ? ctx.scripts?.scripts[s.executor.script]?.requires_resources : undefined),
     config,

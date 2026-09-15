@@ -47,10 +47,12 @@ library:
 adapters: { agent: cli }      # bắt buộc CLI thật (không phải fake) để doctor library:auto_accept xanh
 ```
 
-Kiểm bằng `harness doctor`: dòng `library:auto_accept` — `enabled: false` luôn `ok` (không có gì để kiểm);
-`enabled: true` FAIL nếu `source_collection` không có source nào trong catalog, hoặc `adapters.agent` là
-`fake` (autopilot cần agent thật để chạy được các stage agent, không chỉ để lên kế hoạch). Không sửa gì cả —
-chạy lại bao nhiêu lần cũng an toàn.
+Kiểm bằng `harness doctor`: dòng `library:auto_accept` chỉ xuất hiện khi `library.role: studio` **và**
+`auto_accept.enabled: true` — đúng điều kiện worker mới dựng vòng autopilot; vai `channel` hoặc
+`enabled: false` thì **không có dòng nào** (không có gì đang chạy để mà kiểm). Khi có, dòng này FAIL nếu
+`source_collection` không có source nào trong catalog, hoặc `adapters.agent` là `fake` (autopilot cần agent
+thật để chạy được các stage agent, không chỉ để lên kế hoạch). Không sửa gì cả — chạy lại bao nhiêu lần cũng
+an toàn. Alert `request_stuck` của dashboard (mục 6) cũng theo đúng cặp điều kiện đó.
 
 ## 3. Chu trình: request → studio tự chạy → item `approved` → channel `pick`
 

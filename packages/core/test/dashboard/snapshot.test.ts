@@ -196,14 +196,14 @@ describe("buildSnapshot", () => {
       created_at: NOW, updated_at: NOW,
     }));
 
-    const snapshot = buildSnapshot({ store, channels: [], library: { fs }, clock, gateWindowSeconds: 600, project_id: "project-snap" });
+    const snapshot = buildSnapshot({ store, channels: [], library: { fs, role: "channel" }, clock, gateWindowSeconds: 600, project_id: "project-snap" });
     expect(snapshot.library).toEqual({
       root: libRoot.split("\\").join("/"), mounted: true, styles_active: 1, requests_open: 1,
       items: { pending_review: 0, approved: 1, rejected: 0, withdrawn: 0 },
     });
 
     rmSync(libRoot, { recursive: true, force: true });
-    const unmounted = buildSnapshot({ store, channels: [], library: { fs }, clock, gateWindowSeconds: 600, project_id: "project-snap" });
+    const unmounted = buildSnapshot({ store, channels: [], library: { fs, role: "channel" }, clock, gateWindowSeconds: 600, project_id: "project-snap" });
     expect(unmounted.library?.mounted).toBe(false);
     expect(unmounted.alerts.some((a) => a.kind === "library_unmounted")).toBe(true);
   });
@@ -232,12 +232,28 @@ describe("buildSnapshot", () => {
       });
     }
 
-    const withoutAutoAccept = buildSnapshot({ store, channels: [], library: { fs }, clock, gateWindowSeconds: 600, project_id: "project-snap" });
+    const autoAccept = { enabled: true, source_collection: "main", max_replans: 2, max_concurrent_runs: 1 };
+
+    const withoutAutoAccept = buildSnapshot({ store, channels: [], library: { fs, role: "studio" }, clock, gateWindowSeconds: 600, project_id: "project-snap" });
     expect(withoutAutoAccept.alerts.some((a) => a.kind === "request_stuck")).toBe(false);
+
+    // final-review bundled minor (h): the alert only means something where the loop actually runs -- the same
+    // `role === "studio" && enabled` condition the worker builds `AutoAcceptDeps` on
+    const disabled = buildSnapshot({
+      store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap",
+      library: { fs, role: "studio", autoAccept: { ...autoAccept, enabled: false } },
+    });
+    expect(disabled.alerts.some((a) => a.kind === "request_stuck")).toBe(false);
+
+    const channelRole = buildSnapshot({
+      store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap",
+      library: { fs, role: "channel", autoAccept },
+    });
+    expect(channelRole.alerts.some((a) => a.kind === "request_stuck")).toBe(false);
 
     const snapshot = buildSnapshot({
       store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap",
-      library: { fs, autoAccept: { enabled: true, source_collection: "main", max_replans: 2, max_concurrent_runs: 1 } },
+      library: { fs, role: "studio", autoAccept },
     });
     const alert = snapshot.alerts.find((a) => a.kind === "request_stuck");
     expect(alert).toMatchObject({ kind: "request_stuck", ref: requestId });

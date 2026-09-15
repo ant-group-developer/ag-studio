@@ -23,7 +23,12 @@ export interface AutoAcceptDeps {
   clock: Clock;
   harness: HarnessConfig;
   projectId: string;
+  /** Fallback portfolio for anything not tied to one request (and for `portfolioFor` to fall back on). */
   portfolioId: string;
+  /** Portfolio a given request's run and events belong to. Without it every auto-accepted run was stamped
+   * with the project's first portfolio, losing the requesting portfolio on multi-portfolio studios; the CLI
+   * passes the request's own `requested_by.portfolio_id` when the project declares it. */
+  portfolioFor?: (request: ContentRequest) => string;
   profile: ProductionProfile;
   workflows: (ref: string) => LoadedWorkflow;
   executorVersionFor: (ref: ExecutorRef) => string;
@@ -122,12 +127,12 @@ export function pickSource(store: StateStore, p: { request: ContentRequest; defa
  * first, so this dedup check stays cheap and correct regardless of how many *other* events the project has
  * accumulated -- unlike an unfiltered `listEvents({})`, which silently stops seeing old rows past its
  * `limit` once a project passes that many total events. */
-function skipOnce(d: AutoAcceptDeps, requestId: string, reason: AutoAcceptSkipReason): void {
+function skipOnce(d: AutoAcceptDeps, portfolioId: string, requestId: string, reason: AutoAcceptSkipReason): void {
   if (!DEDUPED_SKIP_REASONS.has(reason)) return;
   const already = d.store.listEvents({ event_type: "request.auto_accept_skipped", newest: true }).some((e) => e.payload.request_id === requestId && e.payload.reason === reason);
   if (already) return;
   d.store.appendEvent({
-    run_id: null, stage_run_id: null, attempt_id: null, project_id: d.projectId, portfolio_id: d.portfolioId, channel_id: null,
+    run_id: null, stage_run_id: null, attempt_id: null, project_id: d.projectId, portfolio_id: portfolioId, channel_id: null,
     content_id: null, variant_id: null, workflow_release: null, severity: "warn", event_type: "request.auto_accept_skipped",
     payload: { request_id: requestId, reason },
   });
@@ -137,11 +142,11 @@ function skipOnce(d: AutoAcceptDeps, requestId: string, reason: AutoAcceptSkipRe
  * the dashboard's `request_stuck` alert renders, and what an operator greps the event log for. Deduped per
  * request the same way `skipOnce` is (the skip event stays too: it is what the poll-level report keys off),
  * so a request that stays open forever produces exactly one of each. */
-function exhaustedOnce(d: AutoAcceptDeps, requestId: string, finishedRuns: number): void {
+function exhaustedOnce(d: AutoAcceptDeps, portfolioId: string, requestId: string, finishedRuns: number): void {
   const already = d.store.listEvents({ event_type: "request.auto_accept_exhausted", newest: true }).some((e) => e.payload.request_id === requestId);
   if (already) return;
   d.store.appendEvent({
-    run_id: null, stage_run_id: null, attempt_id: null, project_id: d.projectId, portfolio_id: d.portfolioId, channel_id: null,
+    run_id: null, stage_run_id: null, attempt_id: null, project_id: d.projectId, portfolio_id: portfolioId, channel_id: null,
     content_id: null, variant_id: null, workflow_release: null, severity: "warn", event_type: "request.auto_accept_exhausted",
     payload: { request_id: requestId, finished_runs: finishedRuns, max_replans: d.config.max_replans },
   });
@@ -166,16 +171,24 @@ export async function autoAccept(d: AutoAcceptDeps): Promise<AutoAcceptReport> {
   const openRequests = [...store.listContentRequests({ status: "open" })].sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0));
 
   for (const request of openRequests) {
+    const portfolioId = d.portfolioFor?.(request) ?? d.portfolioId;
     if (!request.style_id) { report.skipped.push({ request_id: request.request_id, reason: "no-style" }); continue; }
     const style = store.getEditStyle(request.style_id);
     if (style?.status !== "active") { report.skipped.push({ request_id: request.request_id, reason: "style-inactive" }); continue; }
-    if (activeRequestIds.has(request.request_id)) { report.skipped.push({ request_id: request.request_id, reason: "run-active" }); continue; }
 
     const replanNo = finished.get(request.request_id) ?? 0;
+    // `ownSources.has(...)` with no finished run yet: a ContentItem already carries this request but no run
+    // exists for it -- the window between `harness library accept` and the operator's `harness plan`. Planning
+    // a second run here would duplicate the work the human is about to enqueue, so treat it as run-active.
+    if (activeRequestIds.has(request.request_id) || (replanNo === 0 && ownSources.has(request.request_id))) {
+      report.skipped.push({ request_id: request.request_id, reason: "run-active" });
+      continue;
+    }
+
     if (replanNo > d.config.max_replans) {
       report.skipped.push({ request_id: request.request_id, reason: "exhausted" });
-      skipOnce(d, request.request_id, "exhausted");
-      exhaustedOnce(d, request.request_id, replanNo);
+      skipOnce(d, portfolioId, request.request_id, "exhausted");
+      exhaustedOnce(d, portfolioId, request.request_id, replanNo);
       continue;
     }
     if (activeCount >= d.config.max_concurrent_runs) {
@@ -189,7 +202,7 @@ export async function autoAccept(d: AutoAcceptDeps): Promise<AutoAcceptReport> {
     const source = pickSource(store, { request, defaultCollection: d.config.source_collection, busySourceIds: busyForThisRequest });
     if (!source) {
       report.skipped.push({ request_id: request.request_id, reason: "no-source" });
-      skipOnce(d, request.request_id, "no-source");
+      skipOnce(d, portfolioId, request.request_id, "no-source");
       continue;
     }
 
@@ -206,13 +219,13 @@ export async function autoAccept(d: AutoAcceptDeps): Promise<AutoAcceptReport> {
         const content = d.catalog.createContent({ source_ids: [source.source_id], title: request.topic, library_brief: libraryBrief });
         const { variant } = d.catalog.getOrCreateVariant({ content_id: content.content_id, profile: d.profile, options: { voice: request.voice } });
         const run = d.planner.plan({
-          workflow: d.workflows(d.profile.workflow_release), profile: d.profile, harness: d.harness, projectId: d.projectId, portfolioId: d.portfolioId,
+          workflow: d.workflows(d.profile.workflow_release), profile: d.profile, harness: d.harness, projectId: d.projectId, portfolioId,
           runOverrides: {}, executorVersionFor: d.executorVersionFor, content, variant,
           ...(d.requiresResourcesOverride ? { requiresResourcesOverride: d.requiresResourcesOverride } : {}),
         });
         d.planner.enqueue(run.run_id);
         store.appendEvent({
-          run_id: run.run_id, stage_run_id: null, attempt_id: null, project_id: d.projectId, portfolio_id: d.portfolioId, channel_id: null,
+          run_id: run.run_id, stage_run_id: null, attempt_id: null, project_id: d.projectId, portfolio_id: portfolioId, channel_id: null,
           content_id: content.content_id, variant_id: variant.variant_id, workflow_release: d.profile.workflow_release,
           severity: "info", event_type: "request.auto_accepted",
           payload: { request_id: request.request_id, run_id: run.run_id, replan_no: replanNo, source_id: source.source_id },
@@ -228,7 +241,7 @@ export async function autoAccept(d: AutoAcceptDeps): Promise<AutoAcceptReport> {
       // Appended *outside* the rolled-back transaction above: the failure record must survive even though
       // everything else that attempt did was undone.
       store.appendEvent({
-        run_id: null, stage_run_id: null, attempt_id: null, project_id: d.projectId, portfolio_id: d.portfolioId, channel_id: null,
+        run_id: null, stage_run_id: null, attempt_id: null, project_id: d.projectId, portfolio_id: portfolioId, channel_id: null,
         content_id: null, variant_id: null, workflow_release: null, severity: "error", event_type: "request.auto_accept_failed",
         payload: { request_id: request.request_id, reason: message },
       });

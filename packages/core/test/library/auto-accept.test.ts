@@ -115,6 +115,39 @@ describe("autoAccept", () => {
     expect(second.skipped).toEqual([{ request_id: request.request_id, reason: "run-active" }]);
   });
 
+  // Final-review bundled minor (f): the run and its events belong to the portfolio that asked, not to
+  // whatever portfolio the CLI happened to list first.
+  it("stamps the run and the accepted event with portfolioFor(request) when given one", async () => {
+    const w = world();
+    const styleId = newId("edit_style");
+    w.store.upsertEditStyle(makeStyle(styleId));
+    await ingest(w, "clip one");
+    const request = createOpenRequest(w, { style_id: styleId });
+
+    const report = await autoAccept({ ...depsFor(w, baseConfig()), portfolioFor: () => "portfolio-requesting" });
+
+    expect(report.accepted).toHaveLength(1);
+    expect(w.store.getRun(report.accepted[0]!.run_id)?.portfolio_id).toBe("portfolio-requesting");
+    const event = w.store.listEvents({ event_type: "request.auto_accepted" }).find((e) => e.payload.request_id === request.request_id);
+    expect(event?.portfolio_id).toBe("portfolio-requesting");
+  });
+
+  // Final-review bundled minor (g): between `harness library accept` and the operator's `harness plan` there
+  // is a ContentItem carrying the request and no run at all -- auto-accept used to plan a second run into
+  // that window.
+  it("skips run-active for a request that already has a ContentItem but no run yet", async () => {
+    const w = world();
+    const styleId = newId("edit_style");
+    w.store.upsertEditStyle(makeStyle(styleId));
+    const source = await ingest(w, "clip one");
+    const request = createOpenRequest(w, { style_id: styleId });
+    seedContent(w, { requestId: request.request_id, styleId, sourceId: source.source_id });
+
+    const report = await autoAccept(depsFor(w, baseConfig()));
+    expect(report.accepted).toEqual([]);
+    expect(report.skipped).toEqual([{ request_id: request.request_id, reason: "run-active" }]);
+  });
+
   it("skips a request with no style_id as no-style", async () => {
     const w = world();
     const request = createOpenRequest(w);

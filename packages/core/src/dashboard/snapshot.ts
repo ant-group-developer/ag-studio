@@ -7,7 +7,7 @@ import { localDate, zonedToUtc } from "../distribution/publication.js";
 import type { DoctorRow } from "../doctor/doctor.js";
 import type { AutoAcceptConfig } from "../library/auto-accept.js";
 import { finishedRunCounts } from "../library/auto-accept.js";
-import type { LibraryFs } from "../library/files.js";
+import type { LibraryFs, LibraryRole } from "../library/files.js";
 import { gateOverdue } from "../orchestration/gate.js";
 import { isTerminal } from "../state/transitions.js";
 
@@ -74,10 +74,13 @@ export interface DashboardAlert { kind: DashboardAlertKind; channel_id?: string;
 export interface SnapshotDeps {
   store: StateStore;
   channels: LoadedChannel[];
-  /** `autoAccept`, when present, drives the `request_stuck` alert below (an open request whose finished-run
-   * count already exceeds `max_replans` -- the same "exhausted" condition `autoAccept` itself skips on, spec
-   * §5) without this snapshot needing to know anything else about the studio autopilot loop. */
-  library?: { fs: LibraryFs; autoAccept?: AutoAcceptConfig };
+  /** `autoAccept` drives the `request_stuck` alert below (an open request whose finished-run count already
+   * exceeds `max_replans` -- the same "exhausted" condition `autoAccept` itself skips on, spec §5) without
+   * this snapshot needing to know anything else about the studio autopilot loop. It only means anything
+   * where the loop actually runs, so the alert is gated on `role === "studio"` **and** `enabled`, exactly
+   * like the worker's own `autoAcceptDepsFor`: a channel project, or a studio with the loop switched off,
+   * has nobody to act on "auto-accept gave up" and must not be told it did. */
+  library?: { fs: LibraryFs; role: LibraryRole; autoAccept?: AutoAcceptConfig };
   doctorRows?: DoctorRow[];
   clock: Clock;
   gateWindowSeconds: number;
@@ -332,7 +335,7 @@ function buildAlerts(d: SnapshotDeps, now: string, doctorRows: DoctorRow[], chan
     alerts.push({ kind: "library_unmounted", ref: root, message: `library root not mounted: ${root}`, since: now });
   }
 
-  if (d.library?.autoAccept) {
+  if (d.library?.autoAccept?.enabled && d.library.role === "studio") {
     const maxReplans = d.library.autoAccept.max_replans;
     const finished = finishedRunCounts(store);
     for (const request of store.listContentRequests({ status: "open" })) {

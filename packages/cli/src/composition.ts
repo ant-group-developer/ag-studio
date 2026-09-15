@@ -226,7 +226,7 @@ export async function writeDashboardSnapshot(ctx: AppContext): Promise<string> {
   const snapshot = buildSnapshot({
     store: ctx.store, channels: ctx.channels.list(), doctorRows, clock: ctx.clock,
     gateWindowSeconds: ctx.harness.resource_wait_warn_seconds, project_id: ctx.project.project_id,
-    ...(ctx.library ? { library: { fs: ctx.library.fs, ...(ctx.library.autoAccept ? { autoAccept: ctx.library.autoAccept } : {}) } } : {}),
+    ...(ctx.library ? { library: { fs: ctx.library.fs, role: ctx.library.role, ...(ctx.library.autoAccept ? { autoAccept: ctx.library.autoAccept } : {}) } } : {}),
   });
   return writeSnapshotFile(ctx.dataRoot, snapshot);
 }

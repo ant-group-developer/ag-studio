@@ -217,7 +217,7 @@ describe("runDoctor", () => {
     expect(byCheckWithoutBuiltin.get("script:sample-three-stage/finalize")).toMatchObject({ ok: false });
   });
 
-  it("adds library:auto_accept only when library.autoAccept is present, and only in its enabled shape checks sources/agent", () => {
+  it("adds library:auto_accept only for a studio project with the loop enabled, then checks sources/agent", () => {
     const projectDir = mkdtempSync(join(tmpdir(), "doctor-auto-accept-"));
     const libRoot = mkdtempSync(join(tmpdir(), "doctor-auto-accept-kho-"));
     mkdirSync(join(libRoot, "styles"), { recursive: true });
@@ -227,11 +227,19 @@ describe("runDoctor", () => {
     const withoutAutoAccept = runDoctor({ ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [], library: { fs, role: "studio" } });
     expect(withoutAutoAccept.some((r) => r.check === "library:auto_accept")).toBe(false);
 
+    // final-review bundled minor (h): a loop that never runs here gets no row at all -- neither when it is
+    // switched off, nor on a channel project (where `autoAcceptDepsFor` never builds the loop either)
     const disabled = runDoctor({
       ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
       library: { fs, role: "studio", autoAccept: { config: { ...config, enabled: false }, sourceCount: 0, agentIsFake: true } },
     });
-    expect(disabled.find((r) => r.check === "library:auto_accept")).toMatchObject({ ok: true, detail: "disabled" });
+    expect(disabled.some((r) => r.check === "library:auto_accept")).toBe(false);
+
+    const channelRole = runDoctor({
+      ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+      library: { fs, role: "channel", autoAccept: { config, sourceCount: 0, agentIsFake: true } },
+    });
+    expect(channelRole.some((r) => r.check === "library:auto_accept")).toBe(false);
 
     const noSources = runDoctor({
       ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
