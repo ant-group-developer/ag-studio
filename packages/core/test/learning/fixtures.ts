@@ -34,7 +34,7 @@ export function makeRegistry(channels: LoadedChannel[]): ChannelRegistry {
 }
 
 export function insertPublishedJob(store: SqliteStateStore, o: {
-  channel_id?: string; published_at: string; youtube_video_id?: string; package_id?: string; run_id?: string; receipt?: Record<string, unknown> | null;
+  channel_id?: string; published_at: string; youtube_video_id?: string | null; package_id?: string; run_id?: string; receipt?: Record<string, unknown> | null;
 }): PublicationJob {
   const job: PublicationJob = {
     schema_version: "harness.publication-job/v1",
@@ -42,7 +42,7 @@ export function insertPublishedJob(store: SqliteStateStore, o: {
     package_id: o.package_id ?? newId("channel_package"),
     idempotency_key: uniqueChecksum(),
     state: "PUBLISHED",
-    youtube_video_id: o.youtube_video_id ?? "yt-1",
+    youtube_video_id: o.youtube_video_id === undefined ? "yt-1" : o.youtube_video_id,
     receipt: o.receipt ?? null,
     created_at: T0, updated_at: T0,
     channel_id: o.channel_id ?? "channel-a",

@@ -71,7 +71,10 @@ function pickCandidate(groups: GroupStat[], minSamples: number): GroupStat | und
 function decideDimension(p: { candidate: GroupStat | undefined; oldValue: string | undefined; oldGroups: GroupStat[] | undefined; newGroups: GroupStat[] }): string | undefined {
   if (p.oldValue === undefined) return p.candidate?.value;
   const oldLift = p.oldGroups?.find((w) => w.value === p.oldValue)?.lift ?? p.newGroups.find((w) => w.value === p.oldValue)?.lift;
-  if (oldLift === undefined) return p.candidate?.value;
+  // No old lift to compare against: fall back to this round's candidate, but never *drop* a standing value
+  // just because nothing qualified this round -- that would silently erase a value the channel already
+  // earned (changed=true, a spurious history entry, a spurious channel.learned_updated event) for no reason.
+  if (oldLift === undefined) return p.candidate?.value ?? p.oldValue;
   if (p.candidate && p.candidate.lift >= oldLift * 1.10) return p.candidate.value;
   return p.oldValue;
 }

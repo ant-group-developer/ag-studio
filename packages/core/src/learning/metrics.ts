@@ -63,19 +63,27 @@ export interface CollectReport {
 
 /** Newest event of `eventType` whose payload satisfies `matches`, deduped to a 24h window against `now` --
  * mirrors `auto-accept.ts`'s `listEvents({ event_type, newest: true })` pattern but adds the time check the
- * brief's dedup rule calls for (an old blocked/failing event must eventually be re-raised). */
+ * brief's dedup rule calls for (an old blocked/failing event must eventually be re-raised). `listEvents({
+ * newest: true })` orders `occurred_at DESC` and then reverses the page before returning it, so the array
+ * comes back OLDEST-first within the newest-1000 window -- `.find` would grab the earliest match and dedupe
+ * forever after the first 24h; the last matching element is the actually-newest one. */
 function recentlyEmitted(store: StateStore, eventType: string, now: string, matches: (payload: Record<string, unknown>) => boolean): boolean {
-  const newest = store.listEvents({ event_type: eventType, newest: true }).find((e) => matches(e.payload));
-  if (!newest) return false;
-  return Date.parse(now) - Date.parse(newest.occurred_at) < 24 * 3_600_000;
+  const latest = store.listEvents({ event_type: eventType, newest: true }).filter((e) => matches(e.payload)).at(-1);
+  if (!latest) return false;
+  return Date.parse(now) - Date.parse(latest.occurred_at) < 24 * 3_600_000;
 }
 
 /**
  * One sweep across every channel (or just `o.channelId`): collects due videos' stats via `d.collector`,
  * records them append-only in `video_metrics`, and folds any channel it actually collected something for
- * through `evaluateHypotheses` + `learnChannelStandard`. Never throws -- a `blocked` channel is skipped for
- * the rest of this sweep (its videos stay due for next time) and a per-video `error` only counts against that
- * job's own `receipt.collect_failures`, never stopping the sweep for other videos or other channels.
+ * through `evaluateHypotheses` + `learnChannelStandard`. Never throws: a `blocked` channel is skipped for
+ * the rest of this sweep (its videos stay due for next time); a per-video `error` only counts against that
+ * job's own `receipt.collect_failures`; a job with no `youtube_video_id` or a negative computed age is
+ * skipped and reported in `failed` without ever calling the collector; any other unexpected failure while
+ * processing one due item (a store write throwing, a schema-invalid outcome, etc.) is caught, logged and
+ * reported in `failed` too; and a failure in the per-channel `evaluateHypotheses`/`learnChannelStandard`
+ * pass is caught and logged rather than aborting the rest of the sweep. Nothing here ever stops another
+ * video, another channel, or the sweep as a whole.
  */
 export async function collectStats(d: CollectDeps, o?: { channelId?: string; jobId?: string; force?: boolean }): Promise<CollectReport> {
   const report: CollectReport = { collected: [], blocked: [], failed: [], evaluated: [], learned: [] };
@@ -96,84 +104,104 @@ export async function collectStats(d: CollectDeps, o?: { channelId?: string; job
 
     let collectedCount = 0;
     for (const { job } of due) {
-      const publisherChannel = d.channels.toPublisherChannel(channelId);
-      let outcome: StatsOutcome;
       try {
-        outcome = await d.collector.collect({ channel: publisherChannel, video_id: job.youtube_video_id ?? "", timeout_seconds: 120 });
-      } catch (e) {
-        outcome = { kind: "error", reason: e instanceof Error ? e.message : String(e) };
-      }
-
-      if (outcome.kind === "blocked") {
-        const alreadyBlocked = recentlyEmitted(d.store, "stats.blocked", now, (payload) => payload.channel_id === channelId);
-        if (!alreadyBlocked) {
-          d.store.appendEvent({
-            run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null,
-            channel_id: channelId, content_id: null, variant_id: null, workflow_release: null,
-            severity: "warn", event_type: "stats.blocked", payload: { channel_id: channelId, reason: outcome.reason },
-          });
+        if (!job.youtube_video_id) {
+          report.failed.push({ job_id: job.publication_job_id, reason: "no video id" });
+          continue;
         }
-        d.logger.warn("collectStats: channel blocked", { channel_id: channelId, reason: outcome.reason });
-        report.blocked.push(channelId);
-        break; // stop this channel; other channels still get their turn
-      }
+        const ageH = ageHours(job.published_at!, now);
+        if (ageH < 0) {
+          report.failed.push({ job_id: job.publication_job_id, reason: "negative age_hours" });
+          continue;
+        }
 
-      if (outcome.kind === "error") {
-        const current = d.store.getPublicationJob(job.publication_job_id)!;
-        const receipt: Record<string, unknown> = { ...(current.receipt ?? {}) };
-        const failures = (typeof receipt.collect_failures === "number" ? receipt.collect_failures : 0) + 1;
-        receipt.collect_failures = failures;
-        d.store.updatePublicationJob({ ...current, receipt });
-        d.logger.warn("collectStats: collect failed", { job_id: job.publication_job_id, reason: outcome.reason });
-        report.failed.push({ job_id: job.publication_job_id, reason: outcome.reason });
-        if (failures >= 3) {
-          const alreadyFailing = recentlyEmitted(d.store, "stats.failing", now, (payload) => payload.job_id === job.publication_job_id);
-          if (!alreadyFailing) {
+        const publisherChannel = d.channels.toPublisherChannel(channelId);
+        let outcome: StatsOutcome;
+        try {
+          outcome = await d.collector.collect({ channel: publisherChannel, video_id: job.youtube_video_id, timeout_seconds: 120 });
+        } catch (e) {
+          outcome = { kind: "error", reason: e instanceof Error ? e.message : String(e) };
+        }
+
+        if (outcome.kind === "blocked") {
+          const alreadyBlocked = recentlyEmitted(d.store, "stats.blocked", now, (payload) => payload.channel_id === channelId);
+          if (!alreadyBlocked) {
             d.store.appendEvent({
-              run_id: job.run_id, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null,
+              run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null,
               channel_id: channelId, content_id: null, variant_id: null, workflow_release: null,
-              severity: "error", event_type: "stats.failing", payload: { job_id: job.publication_job_id },
+              severity: "warn", event_type: "stats.blocked", payload: { channel_id: channelId, reason: outcome.reason },
             });
           }
+          d.logger.warn("collectStats: channel blocked", { channel_id: channelId, reason: outcome.reason });
+          report.blocked.push(channelId);
+          break; // stop this channel; other channels still get their turn
         }
-        continue;
+
+        if (outcome.kind === "error") {
+          const current = d.store.getPublicationJob(job.publication_job_id)!;
+          const receipt: Record<string, unknown> = { ...(current.receipt ?? {}) };
+          const failures = (typeof receipt.collect_failures === "number" ? receipt.collect_failures : 0) + 1;
+          receipt.collect_failures = failures;
+          d.store.updatePublicationJob({ ...current, receipt });
+          d.logger.warn("collectStats: collect failed", { job_id: job.publication_job_id, reason: outcome.reason });
+          report.failed.push({ job_id: job.publication_job_id, reason: outcome.reason });
+          if (failures >= 3) {
+            const alreadyFailing = recentlyEmitted(d.store, "stats.failing", now, (payload) => payload.job_id === job.publication_job_id);
+            if (!alreadyFailing) {
+              d.store.appendEvent({
+                run_id: job.run_id, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null,
+                channel_id: channelId, content_id: null, variant_id: null, workflow_release: null,
+                severity: "error", event_type: "stats.failing", payload: { job_id: job.publication_job_id },
+              });
+            }
+          }
+          continue;
+        }
+
+        // ok | no-views
+        const metric: VideoMetrics = {
+          schema_version: "harness.video-metrics/v1",
+          metric_id: newId("video_metrics"),
+          publication_job_id: job.publication_job_id,
+          channel_id: channelId,
+          video_id: job.youtube_video_id,
+          collected_at: now,
+          age_hours: ageH,
+          source: "studio",
+          views: outcome.kind === "ok" ? outcome.views : 0,
+          impressions: outcome.kind === "ok" ? outcome.impressions ?? null : null,
+          ctr_pct: outcome.kind === "ok" ? outcome.ctr_pct ?? null : null,
+          avg_view_sec: outcome.kind === "ok" ? outcome.avg_view_sec ?? null : null,
+          retention30_pct: outcome.kind === "ok" ? outcome.retention30_pct ?? null : null,
+        };
+        d.store.insertVideoMetrics(metric);
+        d.store.appendEvent({
+          run_id: job.run_id, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null,
+          channel_id: channelId, content_id: null, variant_id: null, workflow_release: null,
+          severity: "info", event_type: "stats.collected", payload: { job_id: job.publication_job_id, metric_id: metric.metric_id },
+        });
+
+        const current = d.store.getPublicationJob(job.publication_job_id)!;
+        d.store.updatePublicationJob({ ...current, receipt: { ...(current.receipt ?? {}), collect_failures: 0 } });
+
+        report.collected.push({ job_id: job.publication_job_id, metric_id: metric.metric_id, age_hours: ageH });
+        collectedCount++;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        d.logger.error("collectStats: unexpected error processing job", { job_id: job.publication_job_id, error: message });
+        report.failed.push({ job_id: job.publication_job_id, reason: message });
       }
-
-      // ok | no-views
-      const ageH = ageHours(job.published_at!, now);
-      const metric: VideoMetrics = {
-        schema_version: "harness.video-metrics/v1",
-        metric_id: newId("video_metrics"),
-        publication_job_id: job.publication_job_id,
-        channel_id: channelId,
-        video_id: job.youtube_video_id ?? "",
-        collected_at: now,
-        age_hours: ageH,
-        source: "studio",
-        views: outcome.kind === "ok" ? outcome.views : 0,
-        impressions: outcome.kind === "ok" ? outcome.impressions ?? null : null,
-        ctr_pct: outcome.kind === "ok" ? outcome.ctr_pct ?? null : null,
-        avg_view_sec: outcome.kind === "ok" ? outcome.avg_view_sec ?? null : null,
-        retention30_pct: outcome.kind === "ok" ? outcome.retention30_pct ?? null : null,
-      };
-      d.store.insertVideoMetrics(metric);
-      d.store.appendEvent({
-        run_id: job.run_id, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null,
-        channel_id: channelId, content_id: null, variant_id: null, workflow_release: null,
-        severity: "info", event_type: "stats.collected", payload: { job_id: job.publication_job_id, metric_id: metric.metric_id },
-      });
-
-      const current = d.store.getPublicationJob(job.publication_job_id)!;
-      d.store.updatePublicationJob({ ...current, receipt: { ...(current.receipt ?? {}), collect_failures: 0 } });
-
-      report.collected.push({ job_id: job.publication_job_id, metric_id: metric.metric_id, age_hours: ageH });
-      collectedCount++;
     }
 
     if (collectedCount > 0) {
-      report.evaluated.push(evaluateHypotheses({ store: d.store, clock: d.clock, channel, durationOf: d.durationOf }));
-      const { changed } = learnChannelStandard({ store: d.store, clock: d.clock, channel, durationOf: d.durationOf });
-      if (changed) report.learned.push(channelId);
+      try {
+        report.evaluated.push(evaluateHypotheses({ store: d.store, clock: d.clock, channel, durationOf: d.durationOf }));
+        const { changed } = learnChannelStandard({ store: d.store, clock: d.clock, channel, durationOf: d.durationOf });
+        if (changed) report.learned.push(channelId);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        d.logger.error("collectStats: evaluate/learn failed", { channel_id: channelId, error: message });
+      }
     }
   }
 
@@ -207,12 +235,21 @@ export function importMetrics(store: StateStore, p: { channel_id: string; jsonl:
       skipped.push({ videoId, why: "no matching publication job" });
       continue;
     }
+    if (typeof row.views !== "number") {
+      skipped.push({ videoId, why: "no views" });
+      continue;
+    }
     const publishedAt = job.published_at ?? (typeof row.publishedAt === "string" ? row.publishedAt : undefined);
     if (!publishedAt) {
       skipped.push({ videoId, why: "no published_at" });
       continue;
     }
     const collectedAt = typeof row.collectedAt === "string" ? row.collectedAt : p.clock.now();
+    const age = ageHours(publishedAt, collectedAt);
+    if (age < 0) {
+      skipped.push({ videoId, why: "negative age" });
+      continue;
+    }
     const metric: VideoMetrics = {
       schema_version: "harness.video-metrics/v1",
       metric_id: newId("video_metrics"),
@@ -220,9 +257,9 @@ export function importMetrics(store: StateStore, p: { channel_id: string; jsonl:
       channel_id: p.channel_id,
       video_id: videoId,
       collected_at: collectedAt,
-      age_hours: ageHours(publishedAt, collectedAt),
+      age_hours: age,
       source: "manual",
-      views: typeof row.views === "number" ? row.views : 0,
+      views: row.views,
       impressions: typeof row.impressions === "number" ? row.impressions : null,
       ctr_pct: typeof row.ctr_pct === "number" ? row.ctr_pct : null,
       avg_view_sec: typeof row.avg_view_sec === "number" ? row.avg_view_sec : null,

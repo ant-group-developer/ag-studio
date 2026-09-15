@@ -121,6 +121,51 @@ describe("collectStats", () => {
     expect(store.listEvents({ event_type: "stats.blocked" })).toHaveLength(1);
   });
 
+  it("re-raises a deduped stats.blocked event once 24h have passed since the newest one, then dedupes again against that newer one", async () => {
+    const { store, clock } = openTempStore(T0);
+    const channel = makeChannel();
+    const channels = makeRegistry([channel]);
+    insertPublishedJob(store, { published_at: T0, youtube_video_id: "v1" });
+    clock.set(addSeconds(T0, 72 * 3600));
+    const collector = new FakeStatsCollector({ outcomes: { v1: { kind: "blocked", reason: "login wall" } } });
+
+    await collectStats({ store, collector, channels, clock, batch: 5, durationOf, logger: noopLogger });
+    expect(store.listEvents({ event_type: "stats.blocked" })).toHaveLength(1);
+
+    // still inside the 24h window of the first event: deduped
+    clock.advance(23 * 3600);
+    await collectStats({ store, collector, channels, clock, batch: 5, durationOf, logger: noopLogger });
+    expect(store.listEvents({ event_type: "stats.blocked" })).toHaveLength(1);
+
+    // now 25h past the first (and only) event: re-raised
+    clock.advance(2 * 3600);
+    await collectStats({ store, collector, channels, clock, batch: 5, durationOf, logger: noopLogger });
+    expect(store.listEvents({ event_type: "stats.blocked" })).toHaveLength(2);
+
+    // one more hour: inside the 24h window of the *second* (newer) event, not the (now 26h-old) first one --
+    // a dedup check that reads the oldest match instead of the newest would incorrectly re-raise here.
+    clock.advance(1 * 3600);
+    await collectStats({ store, collector, channels, clock, batch: 5, durationOf, logger: noopLogger });
+    expect(store.listEvents({ event_type: "stats.blocked" })).toHaveLength(2);
+  });
+
+  it("skips a job with no youtube_video_id (reported in failed) without aborting the rest of the sweep", async () => {
+    const { store, clock } = openTempStore(T0);
+    const channel = makeChannel();
+    const channels = makeRegistry([channel]);
+    const noVideoJob = insertPublishedJob(store, { published_at: T0, youtube_video_id: null });
+    const validJob = insertPublishedJob(store, { published_at: T0, youtube_video_id: "v1" });
+    clock.set(addSeconds(T0, 72 * 3600));
+    const collector = new FakeStatsCollector({ outcomes: { v1: { kind: "ok", views: 42 } } });
+
+    const report = await collectStats({ store, collector, channels, clock, batch: 5, durationOf, logger: noopLogger });
+
+    expect(report.failed).toContainEqual({ job_id: noVideoJob.publication_job_id, reason: "no video id" });
+    expect(report.collected).toEqual([{ job_id: validJob.publication_job_id, metric_id: expect.any(String), age_hours: 72 }]);
+    expect(store.listVideoMetrics({ publication_job_id: validJob.publication_job_id })).toHaveLength(1);
+    expect(store.listVideoMetrics({ publication_job_id: noVideoJob.publication_job_id })).toEqual([]);
+  });
+
   it("error: increments receipt.collect_failures and fires a deduped stats.failing after 3 in a row; a later ok resets it", async () => {
     const { store, clock } = openTempStore(T0);
     const channel = makeChannel();
@@ -183,5 +228,18 @@ describe("importMetrics", () => {
     expect(v1.views).toBe(1000);
     expect(v1.impressions).toBe(5000);
     expect(v1.source).toBe("manual");
+  });
+
+  it("skips a line with no numeric views instead of fabricating a 0-view snapshot", () => {
+    const { store, clock } = openTempStore(T0);
+    insertPublishedJob(store, { published_at: T0, youtube_video_id: "v1" });
+    clock.set(addSeconds(T0, 100 * 3600));
+
+    const jsonl = JSON.stringify({ videoId: "v1" });
+    const result = importMetrics(store, { channel_id: "channel-a", jsonl, clock });
+
+    expect(result.imported).toBe(0);
+    expect(result.skipped).toEqual([{ videoId: "v1", why: "no views" }]);
+    expect(store.listVideoMetrics({ channel_id: "channel-a" })).toEqual([]);
   });
 });

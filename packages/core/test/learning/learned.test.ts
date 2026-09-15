@@ -105,6 +105,26 @@ describe("learnChannelStandard", () => {
     expect(changed).toBe(false);
   });
 
+  it("keeps the old standard value (does not drop it) when its lift is unknown and there is no new candidate", () => {
+    const { store, clock } = openTempStore(T0);
+    const channel = makeChannel();
+    // the old standard's value is absent from its own previous winners (e.g. a manually-set standard, or
+    // one carried over from an even earlier round whose winners were pruned) -- no old lift to compare.
+    store.upsertChannelLearned({
+      schema_version: "harness.channel-learned/v1", channel_id: "channel-a", updated_at: T0, sample_size: 0, metric: null,
+      medians: { views_72h: null, ctr_pct: null, avg_view_pct: null },
+      winners: { angles: [], title_patterns: [], overlay: [] },
+      standard: { angle: "curiosity", note: "" },
+      history: [],
+    });
+
+    // no evaluated hypotheses this round at all -> no candidate anywhere either.
+    const { learned, changed } = learnChannelStandard({ store, clock, channel, durationOf });
+    expect(learned.standard.angle).toBe("curiosity");
+    expect(changed).toBe(false);
+    expect(store.listEvents({ event_type: "channel.learned_updated" })).toEqual([]);
+  });
+
   it("replaces the old standard value once the new candidate's lift clears the 10% bar", () => {
     const { store, clock } = openTempStore(T0);
     const channel = makeChannel();
