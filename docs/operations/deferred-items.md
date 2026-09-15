@@ -354,3 +354,148 @@ Bảy quan sát ngoài phạm vi của re-review cuối; không mục nào chặ
   lệch sau. Ruling: hoãn tới khi có mẫu DOM thật để chỉnh selector.
 - `cli-agent-runtime.ts` map **mọi** lỗi spawn (ENOENT, EACCES, EPERM…) thành `contract`; spec §4.3 chỉ nói tới
   "không có trên PATH". Ruling: chấp nhận — các lỗi đó đều cần người can thiệp, retry tự động không giúp gì.
+
+## Sau sub-project 4 (ledger 2026-09-15)
+
+Rút từ ledger SDD (`.superpowers/sdd/2026-09-15-sub-project-4-studio-autopilot/progress.md` — thư mục
+`.superpowers/` nằm trong `.gitignore`, **không commit**, nên ledger chỉ có trên máy đã chạy vòng SDD đó) và
+spec §10 (`docs/superpowers/specs/2026-09-15-sub-project-4-studio-autopilot-design.md`). Đọc code trước khi
+tin lệch (`packages/core/src/media/watch.ts`, `packages/core/src/library/auto-accept.ts`,
+`packages/cli/src/commands/media.ts`, `fixtures/fake-agent-cli.mjs`, `skills/`).
+
+### Lỗi tài liệu đã biết, chưa sửa lúc Task 9 commit
+
+- **`skills/style-analyze/SKILL.md` và `skills/channel-package/SKILL.md` claim sai**: cả hai nói
+  `style_id`/`created_at`/`updated_at` (và `hypothesis_id`/`created_at` ở `channel-package`) "để trống hợp lý
+  nếu môi trường không có generator — harness sẽ điền lại nếu thiếu". Sai: schema Zod tương ứng
+  (`editStyleSchema`, `packageMetadataSchema` hay tương đương) đòi các trường này là chuỗi khớp định dạng
+  ngay, không có cơ chế điền lại nào ở harness — một agent thật để trống các trường đó sẽ fail checker
+  `schema-valid` ngay lập tức. `channel-package` claim này đã có từ sub-project 3 (ghi nhận ở ledger Task 6
+  sub-project 4 là "same false claim pre-exists"), `style-analyze` là bản sao lỗi tương tự viết mới ở Task 6
+  sub-project 4. **Rủi ro chạy thật**: đây là claim nằm ngay trong SKILL.md mà một agent `claude`/`codex`
+  thật sẽ đọc và làm theo — nếu để trống các trường bắt buộc, lần chạy thật đầu tiên (DoD #3,
+  `docs/runbooks/studio-autopilot.md` mục 9) sẽ fail ngay ở checker, không phải một vấn đề chỉ lộ ra khi có
+  người đọc tài liệu. Sửa: xoá câu "harness sẽ điền lại nếu thiếu" ở cả hai file, thay bằng hướng dẫn agent
+  tự sinh `style_id`/`hypothesis_id` (ULID) và `created_at`/`updated_at` (ISO 8601 tại thời điểm ghi) — để ở
+  đợt sửa cuối cùng của sub-project 4/rà soát skill chung, không chặn merge nhánh này.
+- **`skills/style-review/SKILL.md` overclaim quyền công cụ**: dòng "skill này không có quyền
+  `WebSearch`/`WebFetch`" không đúng — `allowedTools` (`RUNTIME_COMMANDS.claude.argv` trong
+  `packages/adapters/agent-cli/src/cli-agent-runtime.ts`) là một chuỗi cố định cho **toàn bộ phiên CLI**,
+  không phân biệt theo từng skill/stage; `style-analyze` được liệt trong cùng danh sách
+  `WebSearch,WebFetch` mà `style-review` dùng chung runtime. Nội dung SKILL.md không tự chặn được việc agent
+  gọi các tool đó, chỉ là hướng dẫn hành vi (không nên dùng), không phải một ràng buộc kỹ thuật. Ghi lại đúng
+  câu ("theo hướng dẫn, không dùng WebSearch/WebFetch cho stage này — quyền thật vẫn có") khi sửa cùng đợt
+  với hai mục trên.
+
+### `packages/core/src/media/watch.ts` — stage `watch`
+
+- `pickFrameTimes` không tự khử trùng khoảng mốc đều dưới 1 giây trong chính nó (chỉ khử trùng khi hợp với
+  scene-change) — `interval_seconds` cấu hình nhỏ hơn 1 có thể sinh mốc trùng gần nhau.
+- Contact sheet dừng giữa vòng vẽ (`drawtext` lỗi ở một sheet) để lại sheet nhãn thiếu một phần thay vì bỏ
+  hẳn sheet đó hoặc thử lại toàn bộ không nhãn.
+- `detectSceneChanges` nuốt lỗi ffmpeg thành mảng rỗng (chữ ký hàm được `plan` giả định luôn trả mảng,
+  không có đường báo lỗi riêng) — một lỗi thật (file hỏng, codec lạ) trông giống "không có scene nào".
+- Khối ghi `watch.json` bị lặp lại ở hai nhánh thay vì rút thành một hàm dùng chung.
+- `label` (tên thư mục con `output/watch/<label>/`) không được làm sạch trước khi join đường dẫn — một
+  `samples.json` với `label` chứa `/`/`..` có thể ghi ra ngoài thư mục dự kiến (input `samples.json` do
+  wrapper `collect-samples` của chính ops project ghi, không phải dữ liệu ngoài, nên rủi ro thấp trong thực
+  tế hôm nay).
+
+### `packages/cli/src/commands/media.ts` / stage script
+
+- `readJsonFile` map JSON hỏng thành `CONFIG_INVALID`; các hàm đọc JSON tương tự ở nơi khác trong repo dùng
+  `IO_ERROR` cho lỗi đọc file — không nhất quán mã lỗi giữa các stage (không sai hành vi, chỉ khác phân loại
+  khi người đọc log tra cứu theo mã).
+- `runStage`/`readJsonFile` bị chép lặp lại ở nhiều file stage (`watch`, và các stage built-in khác) thay vì
+  gộp vào `packages/cli/src/commands/shared.ts`.
+- `--mode samples` xử lý tất cả-hoặc-không-gì khi rơi về `watchFromExistingFrames` (một mục trong
+  `samples.json` thiếu ảnh sẵn làm hỏng cả batch thay vì chỉ mục đó) — theo đúng brief (task 3), không phải
+  hồi quy.
+
+### `packages/core/src/library/auto-accept.ts` / CLI `library styles activate`, `request create`
+
+- Doctor `library:auto_accept` và dashboard alert `request_stuck` không nhìn `library.role` (chỉ vai
+  `studio` mới có ý nghĩa chạy autopilot) lẫn `auto_accept.enabled: false` khi tính `request_stuck` — một
+  project vai `channel` lỡ khai `library.auto_accept` (không đúng vai) hay một project tắt `enabled` vẫn có
+  thể sinh alert `request_stuck` nếu ai đó gọi `buildSnapshot` với state cũ còn request kẹt từ lúc còn bật.
+- Nhánh nuốt lỗi (`try/catch` quanh `maybeAutoAccept` trong worker) chưa có test riêng cho trường hợp
+  `autoAccept` tự ném lỗi bất ngờ (khác `request.auto_accept_failed` đã xử lý có chủ đích cho lỗi
+  planner/workflow).
+- Biên `finished === max_replans` (đúng lần thử cuối cùng còn được phép) chưa có test riêng — test hiện có
+  phủ `< max_replans` (còn thử) và `> max_replans` (đã kẹt), không phủ đúng ranh giới bằng.
+- `AutoAcceptDeps.fs` được khai trong interface nhưng không hàm nào trong `auto-accept.ts` thật sự dùng nó.
+- `autoAccept` chỉ được gọi ở nhánh **idle** của worker (không còn việc gì khác để dispatch) — `library.
+  auto_accept.max_concurrent_runs > 1` vì vậy không bao giờ được "châm" thêm run trong khi worker đang bận
+  dispatch việc khác, dù còn dưới hạn mức; đây là hành vi kế thừa từ cách `maybeSyncLibrary` (2C) cũng chỉ
+  chạy ở nhánh idle, không phải lỗi riêng của sub-project 4.
+- `finishedRunCounts` quét lại toàn bộ run mỗi lần `autoAccept`/dashboard `buildSnapshot` gọi (không cache
+  giữa các lần gọi liền nhau) — chấp nhận được ở quy mô hiện tại, cùng dạng đánh đổi với `gateOverdue`/
+  `warnResourceStarvation` đã ghi nhận ở các sub-project trước.
+- `isTerminal("run", state)` coi **mọi trạng thái run không nhận ra** là terminal (mặc định an toàn hiện
+  tại, vì mọi trạng thái run có thật hôm nay đều đã liệt kê) — một trạng thái run mới thêm sau này mà quên
+  cập nhật `isTerminal` sẽ bị đếm nhầm là "đã kết thúc" trong `finishedRunCounts`, ảnh hưởng trực tiếp
+  `max_replans`. Tiềm ẩn, chưa xảy ra.
+- `intake` (built-in stage) đọc lại request từ kho **sau khi** `claimRequest` đã ghi — thừa một lần đọc so
+  với việc dùng thẳng giá trị `claimRequest` vừa trả về.
+- `--source-id` của `library request create` không được CLI tiền-kiểm là một source thật đã ingest (giống
+  tiền lệ `--style`/`--source` ở các lệnh `library`/`content` khác trong repo, không riêng gì sub-project
+  4) — id sai chỉ lộ ra khi `autoAccept` thử chọn nguồn và không thấy gì khớp.
+- `library styles activate --note <n>` nhận tham số nhưng **không lưu** vào đâu cả — `EditStyle` schema
+  không có trường `note`/`activation_note`; cờ này hiện chỉ có tác dụng tài liệu hoá trong lệnh gọi, không
+  đọc lại được sau đó.
+- Tăng `revision` khi `retired → active` (nhánh `activateStyle` có viết code cho trường hợp này) không có
+  đường nào gọi tới được hôm nay — chưa có lệnh CLI nào đưa một style sang `retired` (giống `rejectRequest`
+  không đường gọi ở 2C, ADR mục tương ứng).
+
+### Ngũ skill (`skills/{style-analyze,style-review,source-survey,edit-plan,library-review}/`)
+
+- `fitShotsToRange` (dùng trong ràng buộc thời lượng của `edit-plan`) trả `[]` khi tham số `max` là
+  `<= 0` thay vì báo lỗi cấu hình rõ ràng.
+- `buildStyle` (helper của `fake-agent-cli.mjs`, đứng thay agent thật khi test) bị gọi lặp lại một lần mỗi
+  output thay vì tính một lần rồi dùng chung — chỉ ảnh hưởng tốc độ test, không phải sản phẩm.
+- Đường `collect-samples` tải URL thật qua `yt-dlp` (không phải `FAKE_YTDLP=1`) chưa có test nào chạy qua —
+  bộ test hiện tại luôn giả lập, đúng theo brief ("harness lõi không gọi yt-dlp trực tiếp") nhưng nghĩa là
+  hành vi thật của wrapper trên một máy có `yt-dlp` cài sẵn chưa được xác nhận tự động.
+
+### Workflow `@1.1.0`
+
+- Test cho nhánh `voice: "none"` của `library-production@1.1.0` chưa assert riêng việc `depends_on_optional`
+  (stage `tts`) được rewire đúng khi `when` loại nó khỏi graph — hành vi rewire tự nó có test chung từ 2A,
+  chỉ riêng workflow 1.1.0 chưa có assertion trực tiếp cho trường hợp cụ thể này.
+- `watch-episode` không khai `requires_resources` trong khi `watch-samples`/`watch-source` đều khai `[cpu]`
+  — bất đối xứng có trong chính brief (task 7), chưa rõ có chủ đích hay chỉ là sót.
+
+### Test tích hợp/acceptance (Task 8)
+
+- Acceptance 29 chứng minh "không có `ContentItem`/run thứ hai" bằng cách đếm sự kiện
+  `request.auto_accepted`, không phải đếm trực tiếp số `ContentItem` trong DB — gián tiếp nhưng đủ, vì mọi
+  `ContentItem` do autopilot tạo đều đi kèm đúng một sự kiện đó.
+- `acceptedEventsFor` (đọc sự kiện `request.auto_accepted` từ state store) được chép lặp lại ở acceptance
+  27/28/29 thay vì gộp vào `tests/integration/library-helpers.ts`.
+- `bothRunsTerminal` (dùng trong test chờ acceptance 27/28) mở lại `SqliteStateStore` mỗi lần gọi trong vòng
+  lặp poll thay vì giữ một kết nối — chỉ ảnh hưởng tốc độ test.
+- Một comment inline giải thích cơ chế retry ở test acceptance viết chưa chính xác hoàn toàn (nội dung mã
+  đúng, chỉ chú thích cần rõ hơn) — không ảnh hưởng kết quả test.
+- Acceptance 28 (`reject-always`, `max_replans: 1`, khẳng định đúng hai run rồi dừng) có ngân sách 400 vòng
+  lặp poll — nhạy với tải máy chạy CI/máy chậm, giống caveat "load-sensitivity" đã ghi ở acceptance khác của
+  các sub-project trước (không sửa riêng, ghi nhận theo cùng khuôn).
+
+### Rủi ro vận hành (spec §10, chưa có gì để sửa trong code)
+
+- **Chất lượng agent không kiểm chứng được bằng test tự động**: mọi test/fixture đều dùng
+  `fake-agent-cli.mjs`, luôn ghi output "hợp lệ" theo schema bất kể nội dung có đúng hay không — DoD #3
+  (`docs/runbooks/studio-autopilot.md` mục 9) là kiểm tay duy nhất; checker + bảng kiểm sáu mục của
+  `library-review` là lưới an toàn cuối cùng trước khi một mục vào kho `approved`.
+- **Chi phí agent**: bốn stage agent mỗi lần đều đọc ảnh (contact sheet trước, tối đa 20 khung đơn); contact
+  sheet giảm số lần gọi model khoảng 10× so với gửi từng khung rời. `max_cost_usd_per_variant: 8` (profile
+  `studio`) chặn ở mức **run**, chưa có trần chi phí theo ngày/portfolio.
+- **Ngưỡng scene-change 0.3`** phù hợp footage cắt cảnh rõ; video chuyển cảnh mềm (dissolve, fade dài) có thể
+  cho ít scene frame hơn — mốc đều (`interval_seconds`) bù lại, không phải một cơ chế thích ứng theo nội
+  dung.
+- **Hai stage cùng output type `watch`** (`watch-source`/`watch-episode` trong `library-production@1.1.0`)
+  dựa vào `depends_on` để một stage phía sau biết input `watch` nào là của mình — nếu sau này có một stage
+  phụ thuộc cả hai, cần đặt tên `type` khác nhau cho từng nguồn thay vì dùng chung `watch`.
+- **Review từ chối liên tiếp cùng một source**: plan lại (`autoAccept` mục 4 spec §5) giữ nguyên source đã
+  chọn ở lần đầu — nếu bản thân source là nguyên nhân bị từ chối, phải tới khi chạm `max_replans` mới có
+  người biết để đổi source. Chấp nhận có chủ đích (spec), giữ `max_replans` nhỏ (mặc định 2) để giới hạn số
+  lần thử vô ích.

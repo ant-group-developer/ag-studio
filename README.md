@@ -155,6 +155,69 @@ rm -rf fixtures/ops-project-studio/data fixtures/ops-project-channel/data fixtur
 git checkout -- fixtures/ops-project-studio/project.yaml fixtures/ops-project-channel/project.yaml
 ```
 
+## Quick-start: studio tự vận hành (sub-project 4, agent giả)
+
+`fixtures/ops-project-studio/project.yaml` đã bật sẵn `library.auto_accept` và trỏ `adapters.agent_argv` vào
+`fixtures/fake-agent-cli.mjs` (đứng thay `claude -p`/`codex exec` — cần `claude`/`codex` thật trên PATH để
+chạy skill thật, xem `docs/runbooks/studio-autopilot.md` mục "DoD #3"), nên chu trình dưới đây không cần đổi
+gì trong workflow/profile — chỉ cần trỏ cả hai fixture vào cùng một kho tạm **và** đổi hai đường dẫn tương
+đối trong `project.yaml`/`samples.txt` thành tuyệt đối, vì chúng được một tiến trình con resolve theo
+workspace của chính stage đó (`ScriptExecutor`/`CliAgentRuntime` đều spawn với `cwd` là workspace, không phải
+thư mục project hay thư mục bạn gõ lệnh) — `../fake-agent-cli.mjs` và một dòng tương đối trong `samples.txt`
+đều sai theo cùng lý do đó. Cần `ffmpeg`/`ffprobe` trên PATH (stage `watch`).
+
+```bash
+pnpm build
+lib=$(node -e "const{mkdtempSync,mkdirSync}=require('fs'),{join}=require('path');const d=mkdtempSync(join(require('os').tmpdir(),'kho-'));for(const s of ['styles','requests','items'])mkdirSync(join(d,s));console.log(d)")
+node -e "const fs=require('fs');for(const p of ['fixtures/ops-project-studio/project.yaml','fixtures/ops-project-channel/project.yaml'])fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('root: ./library','root: '+JSON.stringify(process.argv[1]).slice(1,-1)))" "$lib"
+node -e "const fs=require('fs'),path=require('path');const abs=path.resolve('fixtures/fake-agent-cli.mjs').split(path.sep).join('/');const p='fixtures/ops-project-studio/project.yaml';fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('../fake-agent-cli.mjs',abs))"
+
+pnpm harness --project fixtures/ops-project-studio db migrate
+pnpm harness --project fixtures/ops-project-channel db migrate
+pnpm harness --project fixtures/ops-project-studio doctor   # library:auto_accept FAIL là bình thường:
+                                                              # chưa có source nào trong collection "main"
+                                                              # (dòng đó xanh sau bước 1 dưới)
+
+# 1. style-study@1.1.0: một mẫu cục bộ, không cần người duyệt (analyze-style/style-review là agent, không
+#    phải gate) -- agent giả mặc định ghi style "active" khi qua đủ checker
+mkdir -p fixtures/ops-project-studio/raw
+ffmpeg -y -f lavfi -i testsrc=duration=5:size=320x180:rate=25 -f lavfi -i sine=frequency=440:duration=5 \
+  -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest \
+  fixtures/ops-project-studio/raw/sample-5s.mp4
+node -e "console.log(require('path').resolve('fixtures/ops-project-studio/raw/sample-5s.mp4').split(require('path').sep).join('/'))" > fixtures/ops-project-studio/raw/samples.txt
+pnpm harness --project fixtures/ops-project-studio source ingest fixtures/ops-project-studio/raw/samples.txt --rights cleared --json
+pnpm harness --project fixtures/ops-project-studio content create --title "Học style demo (autopilot)" --source <source_id> --json
+pnpm harness --project fixtures/ops-project-studio plan --workflow style-study@1.1.0 --profile studio --content <content_id> --json
+pnpm harness --project fixtures/ops-project-studio enqueue <run_id>
+pnpm harness --project fixtures/ops-project-studio worker --once   # lặp lại tới khi status <run_id> báo SUCCEEDED
+
+# 2. một nguồn dựng cho auto-accept chọn (đường tuyệt đối, cùng lý do như samples.txt ở trên), rồi channel
+#    tạo request với --source-hint
+pnpm harness --project fixtures/ops-project-studio source ingest fixtures/ops-project-studio/raw/sample-5s.mp4 --rights cleared --json
+pnpm harness --project fixtures/ops-project-channel library sync --json
+pnpm harness --project fixtures/ops-project-channel library request create \
+  --portfolio portfolio-channel --channel channel-one --topic "chợ nổi Cái Răng" \
+  --style <style_id> --voice none --duration 1,60 --source-hint main --json
+
+# 3. studio: chỉ `worker`, không lệnh người nào khác -- auto-accept tự đồng bộ, tự nhận request, tự plan,
+#    tự chạy hết library-production@1.1.0 (13 stage, không gate nào)
+pnpm harness --project fixtures/ops-project-studio worker --once   # lặp lại nhiều lần tới khi
+pnpm harness --project fixtures/ops-project-studio library list requests --json   # thấy request "fulfilled"
+
+# 4. channel: đồng bộ rồi nhận item vừa duyệt (bước duy nhất vẫn tay ở phía kênh)
+pnpm harness --project fixtures/ops-project-channel library sync --json
+pnpm harness --project fixtures/ops-project-channel library pick <item_id> --channel channel-one --json
+```
+
+Chi tiết đầy đủ (bật `auto_accept` trên một project thật, xử lý `WAITING_HUMAN` của stage agent,
+`request_stuck`, `style-review` giữ draft, quay lại workflow `1.0.0` gate người, DoD #3) ở
+`docs/runbooks/studio-autopilot.md`. Dọn sau khi thử:
+
+```bash
+rm -rf fixtures/ops-project-studio/data fixtures/ops-project-channel/data fixtures/ops-project-studio/raw
+git checkout -- fixtures/ops-project-studio/project.yaml fixtures/ops-project-channel/project.yaml
+```
+
 ## Quick-start: phát hành kênh trên fixture (studio → channel → YouTube)
 
 `fixtures/ops-project-channel` (vai `channel`, workflow `channel-publish`, hai kênh `channel-one`/
@@ -202,14 +265,16 @@ git checkout -- fixtures/ops-project-channel/channels/channel-one/channel.yaml f
 
 ## Tài liệu
 - Blueprint: `docs/architecture/YOUTUBE_OPERATIONS_HARNESS_BLUEPRINT_v1.0.md`
-- Spec: `docs/superpowers/specs/2026-09-11-harness-structure-and-control-plane-design.md`, `docs/superpowers/specs/2026-09-12-sub-project-2-footage-production-design.md`, `docs/superpowers/specs/2026-09-14-sub-project-2c-content-library-design.md`, `docs/superpowers/specs/2026-09-14-sub-project-3-channel-publish-design.md`
+- Spec: `docs/superpowers/specs/2026-09-11-harness-structure-and-control-plane-design.md`, `docs/superpowers/specs/2026-09-12-sub-project-2-footage-production-design.md`, `docs/superpowers/specs/2026-09-14-sub-project-2c-content-library-design.md`, `docs/superpowers/specs/2026-09-14-sub-project-3-channel-publish-design.md`, `docs/superpowers/specs/2026-09-15-sub-project-4-studio-autopilot-design.md`
 - Plan sub-project 1: `docs/superpowers/plans/2026-09-11-control-plane-minimal.md`
 - Plan sub-project 2A: `docs/superpowers/plans/2026-09-12-sub-project-2a-catalog-planner-resources.md`
 - Plan sub-project 2B: `docs/superpowers/plans/2026-09-13-sub-project-2b-scripts-gate-media-footage.md`
 - Plan sub-project 2C: `docs/superpowers/plans/2026-09-14-sub-project-2c-content-library.md`
+- Plan sub-project 4: `docs/superpowers/plans/2026-09-15-sub-project-4-studio-autopilot.md`
 - ADR: `docs/adr/`
-- Runbook: `docs/runbooks/` (`reconcile-and-retry.md`, `wrap-a-channel.md`, `content-library.md`, `channel-publish.md`)
-- Project mới: copy `project-template/` (xem `docs/runbooks/wrap-a-channel.md` bước 1; mẫu kênh ở `project-template/channels/example/channel.yaml`)
+- Runbook: `docs/runbooks/` (`reconcile-and-retry.md`, `wrap-a-channel.md`, `content-library.md`, `channel-publish.md`, `studio-autopilot.md`)
+- Việc để lại: `docs/operations/deferred-items.md`
+- Project mới: copy `project-template/` (xem `docs/runbooks/wrap-a-channel.md` bước 1; mẫu kênh ở `project-template/channels/example/channel.yaml`; khối `library.auto_accept` mẫu trong `project-template/project.yaml`)
 
 ## Trạng thái
 Sub-project 1 (control plane) + 2A (source catalog, content/variant, plan theo option, tài nguyên chia sẻ
@@ -226,8 +291,16 @@ máy trạng thái riêng, workflow `channel-publish` (`fetch-library-item` → 
 `dashboard snapshot|serve`, sweep `verify` + `reconcile` theo trạng thái `PublicationJob`, dashboard chỉ đọc
 từ `snapshot.json`) — adapter TTS/avatar (HeyGen) của sub-project 2 vẫn giả; upload/schedule YouTube giờ có
 đường thật (bọc script cũ) nhưng cần đăng nhập Chrome tay và `claude`/`codex` thật trên máy (chưa kiểm được
-trong môi trường build agent này, xem `docs/runbooks/channel-publish.md` mục "DoD #6"). Còn lại cho
+trong môi trường build agent này, xem `docs/runbooks/channel-publish.md` mục "DoD #6") + 4 (studio tự vận
+hành: năm gate người của kho (`analyze-style`, `style-review`, `survey-source`, `plan-edit`,
+`library-review`) thành năm stage `agent` chạy skill (`skills/{style-analyze,style-review,source-survey,
+edit-plan,library-review}/SKILL.md`), stage built-in `watch` (ffmpeg trích khung + contact sheet + hook
+transcript tuỳ chọn) thay việc người tự xem video, worker studio tự nhận request kho qua `library.
+auto_accept` (`harness library styles activate`, `library request create --source-hint`, doctor
+`library:auto_accept`, dashboard alert `request_stuck`), workflow `style-study@1.1.0` +
+`library-production@1.1.0` chạy song song với bản `1.0.0` gate-người cũ (`loadWorkflow`/`listWorkflowRefs`
+hỗ trợ nhiều version cùng thư mục `workflows/`) — bốn stage agent chưa được kiểm bằng `claude`/`codex` thật
+trong môi trường build agent này, xem `docs/runbooks/studio-autopilot.md` mục "DoD #3"). Còn lại cho
 sub-project 3B: thu số liệu sau khi lên (`collect-metrics-playwright`), đánh giá `Hypothesis` (`open` →
-`supported`/`refuted`), tự sinh `ContentRequest` từ lịch/số liệu, YouTube Test & Compare. Sub-project 4: agent
-runtime thay executor `gate` (agent tự làm việc trong workspace thay vì người `stage submit`) — kho vẫn có 5
-gate cần người hôm nay (`analyze-style`, `style-review`, `survey-source`, `plan-edit`, `library-review`).
+`supported`/`refuted`), tự sinh `ContentRequest` từ lịch/số liệu, YouTube Test & Compare, và agent tự chọn
+nguồn (sub-project 4 chỉ chọn theo quy tắc cố định, xem `docs/operations/deferred-items.md`).

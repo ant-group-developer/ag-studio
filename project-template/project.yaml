@@ -16,6 +16,22 @@ source: { materialize: link }
 #   # requests/<id>.json and items/<id>/claims/<channel_id>.json (asks for and picks up content). Both
 #   # machines must point root at the same mounted share. sync_seconds (min 10, default 300) caps how
 #   # often `harness worker` syncs the kho on its own when idle. See docs/runbooks/content-library.md.
+#   auto_accept:            # sub-project 4, studio role only: turns on the autopilot loop -- a fulfilled
+#                            # channel request is claimed, planned and run with no human command beyond
+#                            # `harness worker`. Absent (or the whole `library:` block absent) = off, same
+#                            # as today's fully-manual 2C flow. See docs/runbooks/studio-autopilot.md.
+#     enabled: true
+#     source_collection: main   # named source collection auto-accept pulls from when a request has no
+#                                # --source-hint of its own; must have at least one ingested source or
+#                                # `harness doctor`'s `library:auto_accept` row fails.
+#     max_replans: 2            # how many more runs a request gets after a `library-review` rejection
+#                                # before the dashboard raises a `request_stuck` alert and auto-accept gives
+#                                # up on it (max_replans + 1 runs total per request).
+#     max_concurrent_runs: 1    # runs auto-accept itself may have RUNNING/READY/WAITING at once; does not
+#                                # cap runs planned by hand (`harness library accept` + `plan`).
+#   # `adapters: { agent: cli }` (below) must be set -- not `fake` -- for auto_accept to actually dispatch
+#   # the five agent stages (style-analyze, style-review, source-survey, edit-plan, library-review); `harness
+#   # doctor` flags `adapters.agent: fake` with `enabled: true` here as a FAIL.
 
 # channel-publish only (sub-project 3): a "channel" role machine that picks approved kho items, packages them
 # per channel.yaml, and uploads/schedules them via the legacy Playwright scripts. See channels/example/

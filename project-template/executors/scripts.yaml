@@ -27,3 +27,17 @@ scripts:
   cut:              { argv: [node, executors/wrappers/cut.mjs], requires_resources: [cpu], timeout_seconds: 600 }
   assemble:         { argv: [node, executors/wrappers/assemble.mjs], requires_resources: [cpu], timeout_seconds: 600 }
   thumbnail-render: { argv: [node, executors/wrappers/thumbnail-render.mjs], timeout_seconds: 600 }
+  # transcribe: { argv: [node, executors/wrappers/transcribe.mjs], timeout_seconds: 900 }
+  #   # sub-project 4, optional: the built-in `harness media watch` stage (style-study@1.1.0,
+  #   # library-production@1.1.0) shells this out for every video it watches, when this entry is present at
+  #   # all -- not declaring it is a valid choice, and `watch.json` then writes `transcript: null` for every
+  #   # video, no error. This project's core does not know what transcription tool is behind the wrapper
+  #   # (whisper, a paid API, ...); it only knows the contract below. `env_refs` is deliberately never
+  #   # resolved for this entry even if you add one -- a transcription CLI has no legitimate reason to see a
+  #   # secret, so `watch` never passes any.
+  #   # Contract: `node executors/wrappers/transcribe.mjs --in <path to the media file> --out <path to write
+  #   # JSON to>` (both absolute paths, chosen by `watch`, not by you). The wrapper must write
+  #   # `{ segments: [{ start: <seconds>, end: <seconds>, text: <string> }] }` to `--out` and exit 0. A
+  #   # nonzero exit, a timeout (`timeout_seconds` above), or JSON that fails to parse/match that shape is not
+  #   # a stage failure -- `watch` logs a warning, writes `transcript: null` plus a `transcript_error` string
+  #   # for that video, and the `watch` stage still `succeeded`. See docs/runbooks/studio-autopilot.md §1.

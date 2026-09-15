@@ -430,3 +430,117 @@ plan/spec.
     Test: `packages/cli/test/publish-stage.test.ts` ("redacts the channel's account email from stdout, the
     stage result, and the stored receipt", `describe("upload", ...)`) — xác nhận fail (email lộ nguyên văn)
     khi bỏ lời gọi này, pass khi có.
+
+## Sub-project 4 (2026-09-15)
+
+Studio tự vận hành: năm gate của kho (`analyze-style`, `style-review`, `survey-source`, `plan-edit`,
+`library-review`) thành stage `agent` với năm skill mới; harness tự "xem" video cho agent bằng stage built-in
+`watch`; worker studio tự nhận request kho, tự `plan`, tự plan lại khi review từ chối. Đọc code
+(`packages/core/src/{media/watch,library/auto-accept,orchestration/registry}.ts`,
+`packages/cli/src/commands/media.ts`, `packages/contracts/src/{library,media}.ts`, `workflows/{style-study,
+library-production}@1.1.0/`, `skills/{style-analyze,style-review,source-survey,edit-plan,library-review}/`)
+để xác nhận hành vi, không chép từ plan/spec.
+
+81. Workflow nhiều version cùng thư mục `workflows/`: `workflowDir(harnessRoot, id, version)` dùng
+    `workflows/<id>@<version>/workflow.yaml` nếu thư mục đó tồn tại, ngược lại rơi về `workflows/<id>/`
+    (dạng cũ, không version trong tên thư mục) — `loadWorkflow` vẫn kiểm `parsed.data.version === version`
+    sau khi đọc dù đi đường nào. `listWorkflowRefs` (`packages/core/src/orchestration/registry.ts`) quét cả
+    hai dạng thư mục để liệt kê ref cho `harness doctor`: một thư mục không có `workflow.yaml` bị bỏ qua hẳn;
+    một `workflow.yaml` sinh `id`/`version` được (kể cả khi tên thư mục không có `@`) luôn được ghi theo
+    đúng `id@version` đọc từ file; một `workflow.yaml` hỏng cú pháp/thiếu trường chỉ còn được liệt kê nếu
+    tên thư mục *đã* theo khuôn `<id>@<version>` (nguồn ref đáng tin duy nhất còn lại) — thư mục cũ dạng
+    `<id>/` không version trong tên mà file hỏng thì bị bỏ qua hoàn toàn khỏi danh sách quét, không ném lỗi.
+    `harness doctor` (`computeDoctorRows`, `packages/cli/src/composition.ts`) ghi một dòng
+    `workflow:<ref>` FAIL riêng cho ref nào `loadWorkflow` không nạp được, không làm chết lệnh `doctor`.
+82. Stage `watch` là **built-in trong CLI**, không phải wrapper ops project phải cung cấp, vì lý do khác với
+    bốn stage kho built-in của 2C (ADR mục 52): (a) cần `ffmpeg`/`ffprobe` — một phụ thuộc hệ thống harness
+    đã biết cách phát hiện qua `@harness/adapter-ffprobe`, một wrapper riêng sẽ phải tự dò lại; (b) hợp đồng
+    ảnh đưa cho agent (contact sheet 4×4 + khung đơn 640px, nhãn thời gian) phải cố định giữa ba mode
+    (`samples`/`source`/`episode`) để năm skill đọc được theo cùng một khuôn — để một wrapper ops project tự
+    triển khai sẽ phá tính nhất quán đó. `harness media watch --mode <m>` (`packages/cli/src/commands/
+    media.ts`) đăng ký ba lệnh script built-in `watch-samples`/`watch-source`/`watch-episode`
+    (`builtinMediaCommands`, cùng khuôn `builtinLibraryCommands`) mà `executor: { type: script, script:
+    "watch-<mode>" }` của hai workflow 1.1.0 gọi — không cần entry nào trong `executors/scripts.yaml` của ops
+    project cho ba stage này. Hook `transcribe` (tuỳ chọn, `scripts.yaml.transcribe`) là con đường **duy nhất**
+    lấy transcript: không khai → `watch.json` ghi `transcript: null` cho mọi video, không lỗi.
+83. Năm gate người của kho (2C) trở thành năm stage `executor: { type: agent, skill: <tên> }` trong hai
+    workflow `@1.1.0`, thay cho `executor: { type: gate }` của `@1.0.0` (bản 1.0.0 giữ nguyên, hai bản chạy
+    song song — mục 84 dưới). Hợp đồng chung cho cả năm agent (spec §2.3): chỉ đọc `brief.md`,
+    `stage-request.json`, input theo `inputs[].path`; ghi `output/<name>` đúng `expected_outputs`; đọc ảnh
+    bằng công cụ `Read` của agent, không phải một API riêng của harness; `retry: { max_attempts: 2,
+    backoff_seconds: [60], retry_on: [transient, abandoned] }` trên cả năm stage — **không có `contract`**
+    trong `retry_on`, nên một agent không ghi output/JSON sai schema (lỗi `contract`, xem mục 88) đỗ thẳng
+    `WAITING_HUMAN` sau đúng **một** attempt, không phải hai. Runtime vẫn `@harness/adapter-agent-cli` y hệt
+    sub-project 3 (`claude -p`/`codex exec` headless, prompt qua file `agent-prompt.md`).
+84. `reviewSchema` (`packages/contracts/src/library.ts`, `harness.review/v1`): `{ decision, note, checks:
+    ReviewCheck[] }` với `checks` mặc định `[]` khi vắng mặt — một `review.json` cũ từ trước sub-project 4
+    (chỉ có `decision`/`note`, không có `checks`) vẫn parse được nguyên vẹn qua schema mới; `library-
+    apply-review` (built-in stage) và `harness library review` (CLI) đều đi qua schema này nên tương thích cả
+    hai đường ghi kết quả duyệt. Stage agent `library-review` ghi `checks[]` theo bảng kiểm cố định sáu mục
+    (spec §4) — checker không đọc nội dung `checks[]`, chỉ `schema-valid`; ý nghĩa "đạt hay không" vẫn nằm ở
+    `decision`.
+85. `libraryBriefSchema` thêm trường tuỳ chọn `request_notes: string | null` — stage `intake` (built-in, đã
+    có từ 2C) giờ chép thêm `request.notes` (kho) vào `brief.json.request_notes` mỗi lần chạy, để stage agent
+    `plan-edit` đọc được lý do từ chối của lần review trước (nếu request đã bị `library-apply-review` mở lại
+    qua `reopenRequest`, ghi nối `notes`) và sửa theo trong `edit-plan.json.notes` — đường phản hồi giữa vòng
+    review-từ-chối và lần plan lại, không cần người chuyển tay.
+86. `autoAccept(d)` (`packages/core/src/library/auto-accept.ts`), gọi từ worker studio ở nhánh idle sau
+    `maybeSyncLibrary` khi `library.auto_accept.enabled`: một request được nhận và tạo run trong **một
+    `store.transaction`** (`createContent` + `plan` + `enqueue`, sự kiện `request.auto_accepted`) — không có
+    khe nào giữa "đã tạo `ContentItem`" và "đã enqueue run" mà một auto-accept khác cùng lúc có thể đọc thấy
+    và nhận trùng request. `intake` (không phải `autoAccept`) vẫn là nơi duy nhất request chuyển `open →
+    claimed` (giữ nguyên từ 2C, mục 53) — `autoAccept` chỉ tạo run rồi để `intake` của chính run đó claim khi
+    worker dispatch tới. Hai cơ chế chống trùng: (a) `isTerminal("run", state)` (`packages/core/src/state/
+    transitions.ts`) đếm số run đã **kết thúc** của một request (`finishedRunCounts`) thay vì so sánh hai bảng
+    danh sách trạng thái riêng — một trạng thái run mới thêm sau này tự động được phân loại đúng miễn
+    `isTerminal` cập nhật theo (mục 91 dưới ghi caveat của hàm này); (b) sự kiện `request.auto_accept_skipped
+    { reason: "no source" }` dedupe bằng `listEvents({ event_type: "request.auto_accept_skipped", newest: true
+    })` lọc theo `request_id`+`reason` trước khi ghi thêm — request không có source hợp lệ chỉ sinh một sự
+    kiện mỗi lý do, không log mỗi vòng poll.
+87. `max_replans` (`library.auto_accept.max_replans`, mặc định 2) đếm theo **số run đã kết thúc** của một
+    request (`finishedRunCounts`, mục 86), không phải số lần "từ chối": vòng đầu chấp nhận request là
+    `replan_no: 0`; mỗi lần `library-apply-review` mở lại request (`rejected → open`) và `autoAccept` thấy lại
+    `open`, nó tạo run mới với `replan_no` = số run kết thúc hiện tại, cho tới khi số đó vượt `max_replans` —
+    tức tối đa `max_replans + 1` run cho một request trước khi event `request.auto_accept_exhausted` và
+    dashboard alert `request_stuck` (mục 90). `profile` dùng để `plan()` trong `autoAccept` là hardcode
+    `"studio"` ở lớp nối dây CLI (`packages/cli/src/commands/worker.ts`) — brief cho phép hardcode này; một
+    project studio khác tên profile phải đổi trực tiếp trong code, chưa có trường cấu hình
+    (`library.auto_accept.profile_id`) cho việc đó.
+88. Một agent-stage thất bại **không được retry**: cả năm skill khai `retry_on: [transient, abandoned]` (mục
+    83) — lỗi "agent không ghi `output/<name>`" hay "JSON sai schema" là `kind: "contract"`
+    (`CliAgentRuntime.runTask`), và `controller.ts`'s `classifyFailure`/`scheduleRetry` không bao giờ retry một
+    `contract` failure bất kể `max_attempts` khai bao nhiêu. Stage đỗ `WAITING_HUMAN` sau **đúng một
+    attempt**. Đây là điểm tài liệu spec §7 (`docs/superpowers/specs/2026-09-15-sub-project-4-studio-
+    autopilot-design.md`, mô tả acceptance 29 là "FAILED sau 2 attempt") viết sai so với hành vi thật của
+    code — runbook (`docs/runbooks/studio-autopilot.md` mục 5) và AGENTS.md ghi đúng "một attempt", không sửa
+    lại spec. Trong lúc stage đỗ, request giữ nguyên `claimed` (run chưa kết thúc) nên `autoAccept` không tạo
+    run thứ hai cho cùng request — acceptance 29 xác nhận.
+89. `RUNTIME_COMMANDS[runtime].env_passthrough` (`@harness/adapter-agent-cli`,
+    `packages/adapters/agent-cli/src/cli-agent-runtime.ts`) giờ gồm cả các biến `FAKE_AGENT_MODE`,
+    `FAKE_REVIEW_MODE`, `FAKE_AGENT_FAIL_STAGE`, `FAKE_STYLE_STATUS`, `FAKE_STYLE_REVIEW` (`FAKE_AGENT_TEST_ENV`)
+    bên cạnh `ANTHROPIC_API_KEY`/`CLAUDE_CONFIG_DIR` (`claude`) hay `OPENAI_API_KEY`/`CODEX_HOME` (`codex`) —
+    cần thiết để test tích hợp chạy `fake-agent-cli.mjs` **qua đúng đường runtime thật**
+    (`CliAgentRuntime.runTask` spawn CLI theo `RUNTIME_COMMANDS`) thay vì gọi thẳng fixture, nhưng nghĩa là
+    năm biến này lọt vào env con của **cả `claude`/`codex` thật** nếu chúng vô tình được set trong shell chạy
+    `harness worker` trên máy studio thật — vô hại trong production (bản thân `claude`/`codex` không đọc các
+    biến đó), khác `HARNESS_SECRET_*` (luôn bị lọc theo tiền tố tên biến bất kể có trong `env_passthrough`
+    hay không, ADR mục 77) nên đây là hai lớp lọc khác nhau cho hai mục đích khác nhau. Đây là biến **chỉ
+    dùng cho test**, không có tác dụng gì với CLI agent thật; AGENTS.md ghi rõ quy tắc "không dựa vào các
+    biến `FAKE_*` khi vận hành production".
+90. `library-production@1.1.0`'s stage `plan-edit` thêm `index-source` vào `depends_on` (bên cạnh
+    `survey-source`, `watch-source`, `intake` mà spec §3.2 liệt kê ban đầu) —
+    `workflows/library-production@1.1.0/workflow.yaml` — vì skill `edit-plan` cần đọc trực tiếp `shots.json`
+    (output của `index-source`), không chỉ `survey.json`/`survey.md` phái sinh từ nó; thiếu dependency đó thì
+    input `shots` không được vật liệu hoá vào workspace của `plan-edit`. Sửa ngay trong review (ledger Task 8,
+    commit `854057a`) theo quy tắc "lỗi rõ ràng trong code của plan thì sửa ngay", không phải đánh đổi thiết
+    kế cần hỏi.
+91. Hai điểm sai trong nội dung skill, ghi nhận là lỗi tài liệu đã biết (chưa sửa tại thời điểm Task 9 commit
+    — xem `docs/operations/deferred-items.md` mục "Sau sub-project 4"): `skills/style-analyze/SKILL.md` (dòng
+    "`style_id`/`created_at`/`updated_at` để trống hợp lý nếu môi trường không có generator — harness sẽ điền
+    lại nếu thiếu") và `skills/channel-package/SKILL.md` (dòng tương tự cho `hypothesis_id`/`created_at`) đều
+    **sai** — `editStyleSchema`/`packageMetadataSchema` (hay tương đương) đòi các trường này là chuỗi khớp
+    định dạng, không có giá trị mặc định nào được harness điền lại; một agent thật để trống các trường đó sẽ
+    fail checker `schema-valid` ngay. `skills/style-review/SKILL.md` claim "skill này không có quyền
+    `WebSearch`/`WebFetch`" cũng sai — `allowedTools` của runtime agent (spec §2.3: `style-analyze` được thêm
+    `WebSearch`/`WebFetch` để xác nhận kênh mẫu) là cấu hình **toàn cục** của agent-cli cho cả phiên, không
+    theo từng skill; `style-review` không tự chặn được các tool đó bằng nội dung SKILL.md của chính nó.
