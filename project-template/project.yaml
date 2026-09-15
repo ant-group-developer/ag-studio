@@ -44,12 +44,22 @@ source: { materialize: link }
 #                           # `harness channel login <id>`.
 #   agent: fake             # cli | fake. cli spawns `claude -p`/`codex exec` (picked by the `runtime` field
 #                           # above) headless in the workspace for the `package` stage's `channel-package`
-#                           # skill; fake writes a placeholder package.json, useful before a real agent CLI is
-#                           # set up on this machine (`harness doctor`'s `agent:runtime` row checks for it).
+#                           # skill (and, sub-project 3B, the `channel-planning` workflow's `propose-topics`
+#                           # stage, skill `channel-plan`); fake writes a placeholder output, useful before a
+#                           # real agent CLI is set up on this machine (`harness doctor`'s `agent:runtime` row
+#                           # checks for it; `channel:<id>:planning` also FAILs on `fake` when that channel's
+#                           # own `planning.enabled: true`, see channels/example/channel.yaml).
 #   # agent_argv: [claude, -p, "{prompt}", --output-format, json]   # override the default argv for `runtime`
 #                           # (RUNTIME_COMMANDS in @harness/adapter-agent-cli); "{prompt}" is replaced with a
 #                           # one-line pointer to agent-prompt.md. Only needed for a non-default CLI flag set,
 #                           # or (in tests) to point at a fake CLI.
+#   stats: fake              # playwright | fake, sub-project 3B: which StatsCollector reads a published
+#                           # video's YouTube Studio Analytics for the channel learning loop. playwright spawns
+#                           # a harness-owned, read-only Playwright script (packages/adapters/youtube-
+#                           # playwright/scripts/collect-stats.mjs) against the *same* logged-in
+#                           # `.upload-profile` as upload/schedule above -- no separate login step. fake never
+#                           # touches a browser; use it until `channel:<id>:stats` is green and you have run
+#                           # DoD #4 (docs/runbooks/channel-learning.md mục 9) at least once on this machine.
 # publication:
 #   verify_seconds: 900     # how often (>=60s) the worker's idle sweep asks the publisher whether an overdue
 #                           # SCHEDULED job actually went public (settles PUBLISHED or parks
@@ -61,3 +71,9 @@ source: { materialize: link }
 #                           # then --port on the CLI, override this in that order).
 #   refresh_seconds: 60     # how often (>=10s) the worker's idle sweep rewrites dashboard/snapshot.json on
 #                           # its own; `harness dashboard snapshot` writes one immediately by hand.
+# learning:                 # sub-project 3B: cadence for the worker's own video-metrics collect sweep
+#                           # (maybeCollectStats), independent of any per-channel learning/planning/auto_pick
+#                           # block below in channels/<id>/channel.yaml. Present only if you want channels to
+#                           # collect stats at all -- absent keeps the schema default (same numbers as below).
+#   collect_seconds: 1800   # how often (>=60s) the worker sweeps for due video_metrics snapshots.
+#   collect_batch: 5        # max (job, target_age_hours) pairs collected per sweep, across all channels.

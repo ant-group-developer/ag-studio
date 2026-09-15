@@ -532,3 +532,142 @@ Sáu quan sát ngoài phạm vi của re-review cuối; không mục nào chặn
 - Test chặn câu "harness điền hộ" trong SKILL.md chỉ khớp hai cách viết tiếng Việt cố định; `skills/style-review`
   vẫn nói "không có quyền WebSearch/WebFetch" trong khi `allowedTools` là toàn cục (chỉ là quy ước prompt).
   Ruling: hoãn — ghi ADR 91 đã có; sửa chữ khi chạm skill lần tới.
+
+## Sau sub-project 3B (ledger 2026-09-15/16)
+
+Rút từ ledger SDD (`.superpowers/sdd/2026-09-15-sub-project-3b-channel-learning/progress.md` — thư mục
+`.superpowers/` nằm trong `.gitignore`, **không commit**, nên ledger chỉ có trên máy đã chạy vòng SDD đó) và
+spec §10 (`docs/superpowers/specs/2026-09-15-sub-project-3b-channel-learning-design.md`). Đọc code trước khi
+tin lệch (`packages/core/src/learning/`, `packages/adapters/youtube-playwright/`, `packages/cli/src/commands/
+{channel,publish-stage,worker,doctor}.ts`).
+
+### Hổng vận hành còn thật (không chỉ ghi nhận, có tác động)
+
+- **Request tạo tay không `--duration` vẫn dead-end ở studio** (SP4 gap, phát hiện lại ở Task 7 khi sửa lỗi
+  tương tự cho request tự sinh): `harness library request create` không kèm `--duration` để
+  `target_duration_seconds` trống; `library-production@1.1.0`'s `assemble` liệt `brief-duration` vào
+  `required_checks`, checker đó `skip` khi brief không có target duration, và `skip` không phải `pass` — stage
+  fail, request bị replan tới `max_replans` rồi kẹt `request_stuck` vĩnh viễn. 3B tự sửa cho **request nó tự
+  sinh** (`create-requests` luôn gán `target_duration_seconds`, xem ADR mục 97 lân cận) nhưng đường người tạo
+  tay vẫn hở — sửa ở `createRequest` (mặc định một khoảng rộng) hoặc bỏ `brief-duration` khỏi
+  `required_checks` của `assemble`, chuyển xuống `duration-range` cấp profile.
+
+### `packages/core/src/learning/metrics.ts` — thu số, `collectStats`, `importMetrics`
+
+- `jobId` filter (CLI `--job`) áp dụng **sau** khi đã cắt `batch` — một job cụ thể có thể bị batch slice loại
+  trước khi filter kịp thấy nó.
+- Một job đến hạn ở hai mốc `recollect_hours` cùng lúc bị thu **hai lần** trong một sweep (hình dạng
+  "per-target" do brief quy định) — không sai dữ liệu (mỗi lần vẫn một `metric_id` riêng, append-only) nhưng
+  tốn một lượt gọi `StatsCollector` thừa.
+- Kiểm `void` (giả thuyết dưới sàn) nên coi `duration <= 0` giống `null` (hiện chỉ `null` mới kích hoạt);
+  `ctr_pct: null` với `impressions` đủ sàn hiện thành `refuted` với giá trị 0 thay vì `void`.
+- `toPublisherChannel` tính lại cho từng job thay vì một lần mỗi kênh; các hàm cập nhật receipt không luôn bump
+  `updated_at`; `importMetrics` gặp tuổi âm (`age < 0`) ném lỗi giữa chừng một lượt nhập (dòng trước đã nhập
+  vẫn giữ, nhưng lượt nhập dừng ở đó thay vì bỏ qua dòng và tiếp tục); `importMetrics` chấp nhận `views: NaN`
+  (không kiểm `Number.isFinite`).
+- Nhánh `blocked` của `collectStats` đặt `break` (dừng hẳn kênh đó cho lượt sweep này) **bên trong** khối
+  `try`/`catch` bọc quanh `appendEvent` — nếu chính `appendEvent` ném lỗi (ví dụ store lỗi tạm thời), `break`
+  không chạy tới và kênh đó bị coi như còn tiếp tục thu bình thường thay vì dừng đúng ý; chưa có test riêng
+  cho tổ hợp hiếm này.
+- `harness channel collect --channel <id không tồn tại>` là no-op im lặng, thoát mã 0 — không báo lỗi rõ
+  "kênh không có trong `channels/`".
+- `statsFailingAlerts` (dashboard) quét job **toàn project**, không lọc theo `d.channels` đang nạp được — một
+  kênh lỗi cấu hình (không load được) vẫn có thể góp alert `stats_failing` vào snapshot.
+- Không có chỉ mục cho `json_extract(..., '$.channel_id')` (video_metrics/channel_learned) — quét tuyến tính
+  khi số hàng lớn.
+
+### `packages/core/src/learning/learned.ts`/`hypotheses.ts` — chuẩn kênh, giả thuyết
+
+- `ChannelLearnedSchema.history` (`.max(20)`) chưa có test riêng cho việc từ chối một mảng vượt 20 phần tử;
+  vài trường hợp biên của `Demand` (0 slot, `needed` âm giả định) cũng chưa có test riêng.
+- Vài nhánh của `CollectReport` (`report.evaluated`/`report.learned` khi rỗng), việc thu hẹp kiểu
+  `channelId`/`jobId` trong `collectStats`, và nhánh fallback tuổi (`age`) khi `importMetrics` thiếu
+  `collectedAt` chưa có test riêng — hành vi đúng, chỉ thiếu assertion trực tiếp.
+
+### `packages/adapters/youtube-playwright/` — thu số thật
+
+- Test giả lập lỗi ENOENT override cả script lẫn `node` thay vì chỉ chương trình con, nên nhánh
+  `result.error` thật của `spawnSync` (binary có mặt nhưng gọi lỗi) chưa được phủ riêng.
+- `HARNESS_FAKE_STATS_FILE`/`FakeStatsCollector`'s file hook ép JSON đọc được về kiểu `StatsOutcome` bằng cast
+  (`as`), không validate hình dạng — một file test viết sai field vẫn "chạy được" tới khi giá trị sai lộ ra ở
+  chỗ khác.
+- Lý do (`reason`) của `blocked`/`error` (exit 2/3) là **đuôi thô của stdout**, không phải một trường JSON đã
+  parse riêng — giống hệt cách `Publisher.lookup`'s `error: true` báo lý do (tiền lệ đã chấp nhận ở SP3, xem
+  "Sau sub-project 3").
+- Tab Engagement (`avg_view_sec`) vẫn `goto` thẳng URL thay vì bấm từ tab hiện tại (khác tab Reach — bấm, xem
+  comment đầu `collect-stats.mjs`); cơ chế reload-rồi-bấm-lại của tab Reach có thể là no-op nếu cú bấm đầu đã
+  `pushState` sang đúng tab đó trước khi timeout — cần một lượt smoke-test tay trên Studio thật (DoD #4,
+  `docs/runbooks/channel-learning.md` mục 9) để xác nhận, chưa kiểm được trong môi trường build agent.
+
+### `packages/core/src/learning/planning.ts`/`auto-pick.ts` — kế hoạch, tự pick
+
+- `channelDemand` gọi `listRuns`/`listContentItems` bên trong vòng lặp lọc theo từng item thay vì tính một lần
+  ngoài vòng lặp; `autoPick` tính `demand` (gọi `channelDemand`) ngay cả khi không có ứng viên nào cần tới nó;
+  kiểm "item có run `FAILED`/`WAITING_HUMAN`" chỉ nhìn **run mới nhất**, không toàn bộ lịch sử run của cặp
+  item+kênh.
+- `channel-brief` (stage built-in) gọi `listVideoMetrics` hai lần cho cùng một job; một chỗ ép kiểu `status`
+  không qua kiểm tra hình dạng; checker `topics-valid` đọc lại `channel-brief.json` riêng cho mỗi output thay
+  vì một lần.
+- `TopicProposal` không tự kiểm trùng **trong chính nó** (hai chủ đề agent đề xuất cùng lượt giống nhau) —
+  chỉ kiểm trùng với `open_requests`/20 gói gần nhất; thứ tự ưu tiên bỏ qua ứng viên (`skip` vì trùng/thiếu
+  style) và cách phá ngang điểm hoà (`sort` khi lift bằng nhau) chưa test riêng từng trường hợp biên.
+- `requests-receipt.json` chỉ liệt request của **lượt gọi hiện tại**, không phải toàn bộ request từng tạo bởi
+  run (idempotent rerun vẫn đúng, chỉ receipt không phải nhật ký đầy đủ); `run_id` xuất hiện dư thừa trong
+  payload một event (chấp nhận, không sai).
+- Ba hàm `parseTopicProposal`/`parseDemand`/`parseChannelBrief` gần giống hệt nhau — chưa rút thành helper
+  chung; `normalizeTopic` được cài lặp lại ba nơi.
+- `publish-stage.ts` giờ còn ôm cả các stage planning (`channel-brief`, `demand`, `create-requests`) bên cạnh
+  bốn stage publish gốc — file dài hơn, mô tả lệnh CLI nội bộ cũ chưa cập nhật theo.
+- `sdk.input(...)` thiếu file input báo `transient` thay vì `contract` rõ ràng hơn (hành vi có từ trước 3B,
+  không phải hồi quy mới, ghi nhận lại vì planning stage mới lộ ra đường này nhiều hơn).
+- CLI `channel learned` lặp lại câu "chưa đủ mẫu" ở hai nhánh code (có ảnh và không có `channel_learned` nào)
+  thay vì dùng chung một hằng chuỗi.
+- Nhánh sweep ném lỗi bất ngờ (khác `channel.planning_failed`/`channel.auto_pick_failed` đã xử lý có chủ đích)
+  chỉ log, không có event riêng để dashboard/alert nhìn thấy.
+- `fallbackChannel`/`newestChannelEvent` (dashboard) trả `last_collect_at: null` khi chính `buildChannel` của
+  kênh đó ném lỗi (kênh lỗi cấu hình) — có thể giữ alert `stats_blocked` treo trên một kênh không thực sự
+  đang bị chặn thu, chỉ đang lỗi nạp cấu hình.
+- `skippedAlreadyEmittedToday` (`planning.ts`) dùng chung cửa sổ 1000-event mới nhất **toàn project** để dedupe
+  (giống caveat `newestChannelEvent` đã ghi ở "Sau sub-project 4") — một project nhiều kênh/sự kiện dày có thể
+  làm event `channel.planning_skipped` của một kênh bị "trôi" khỏi cửa sổ trước khi kịp dedupe đúng ngày.
+
+### Vệ sinh test
+
+- `tests/cli` cho lệnh `channel learned`/`demand`/... phụ thuộc thứ tự chạy trong cùng file (không cô lập
+  hoàn toàn); hai assertion còn yếu — test worker "không kênh nào" và test `plan-requests` chỉ kiểm
+  `started`/`open-cap` mà chưa phân biệt rạch ròi từng nhánh `skipped`.
+- Acceptance 33 (`stats_blocked` không chặn phát) chạy nhánh publish trên `channel-publish@1.0.0`, không phải
+  `@1.1.0` — không sai (mục đích của test không phải kiểm `channel-brief`), chỉ ghi nhận để người đọc test
+  không hiểu nhầm cả hai workflow đều được acceptance này phủ.
+- Tiêu đề mô tả trong `tests/integration/channel-learning.test.ts` nói "không lệnh người nào" hơi phóng đại:
+  `library sync` (poll) và một item thứ tư viết tay (`writeLibraryItem`, không qua planning thật vì planning
+  giới hạn một run/ngày) vẫn là can thiệp trực tiếp vào state, dù không phải lệnh CLI theo nghĩa "người vận
+  hành gõ tay".
+- `pickAndPlan` (helper test) nhận `itemId` rỗng ở một nhánh mà không có guard rõ ràng.
+- Khối `learning` mức project (`project.yaml`) trong fixture `ops-project-channel` **không** bị
+  `freshPublishWorld` tước bỏ cho các thế giới không yêu cầu `learning: true` (chỉ ba khối mức kênh
+  `learning`/`planning`/`auto_pick` trong `channel.yaml` mới bị tước) — mọi test dựng trên fixture này thừa
+  hưởng sweep thu số khi rảnh (vô hại vì `adapters.stats: fake` và không có job `PUBLISHED` nào để thu, nhưng
+  không đối xứng với cách tước ở cấp kênh).
+- Hai file YAML workflow mới (`channel-planning@1.0.0`, và bản sửa của `channel-publish@1.1.0`) dùng line
+  ending LF trong khi các file `workflow.yaml` khác của repo là CRLF — chỉ gây nhiễu diff, không phải lỗi nội
+  dung.
+
+### Rủi ro vận hành (spec §10, chưa có gì để sửa trong code)
+
+- **Chuẩn kênh học từ mẫu nhỏ** (`min_samples` mặc định 2): dễ nhiễu ở kênh mới; ngưỡng đổi 10% và `history`
+  (tối đa 20 dòng) để người soi lại quyết định nào đã đổi chuẩn và vì sao (ADR mục 96) — sub-project sau có
+  thể nâng ngưỡng theo số tập đã publish.
+- **Studio Analytics đổi DOM** làm thu số dừng âm thầm: alert `stats_failing` sau 3 lỗi liên tiếp một video;
+  runbook (`docs/runbooks/channel-learning.md` mục 6) chỉ đúng ba khối cần sửa trong `collect-stats.mjs`
+  (nhãn Views/Overview, Thumbnail impressions+CTR/Reach, Average view duration/Engagement) — không có cách
+  phát hiện chủ động ngoài đếm lỗi liên tiếp.
+- **Agent đề xuất chủ đề trùng lặp theo thời gian**, ngoài phạm vi kiểm trùng hiện tại (`open_requests` +
+  20 gói gần nhất của kênh): chấp nhận có chủ đích (spec) — một sub-project sau có thể thêm bộ nhớ chủ đề dài
+  hạn hơn.
+- **`channelDemand` tính theo item `approved` chưa claim** có thể trùng với một kênh khác cũng đang định pick
+  cùng item chung (item không `request_id`): chấp nhận có chủ đích — hai kênh cùng pick một item chung là hợp
+  lệ theo thiết kế kho (SP2C/SP3), `needed` chỉ là ước lượng nhu cầu, không phải khoá giữ chỗ.
+- **`hypothesis.evaluated` ghi vào `channel_package`** làm một gói "committed" thay đổi nội dung sau khi đã
+  publish: chỉ đúng trường `hypothesis` (ADR mục 94) thay đổi, `manifest`/checksum của gói không đụng tới —
+  chấp nhận có chủ đích, đây chính là cơ chế duy nhất giả thuyết được đánh giá.

@@ -553,3 +553,66 @@ library-production}@1.1.0/`, `skills/{style-analyze,style-review,source-survey,e
     trên hai workflow, không phải bốn trên một. Cùng lớp lỗi tài liệu với mục 88 (spec viết "2 attempt" cho
     một lỗi `contract` không bao giờ retry); runbook (`docs/runbooks/studio-autopilot.md` mục 9) và README
     ghi đúng số, không sửa lại câu chữ của spec.
+
+## Sub-project 3B (2026-09-16)
+
+93. `video_metrics` (migration `0005_learning.sql`) là bảng **append-only**: mỗi lần `collectStats`/`channel
+    metrics import` ghi thêm một hàng mới (`metric_id` riêng), không bao giờ `UPDATE` một ảnh chụp cũ, kể cả
+    khi cùng một `publication_job_id` được thu lại nhiều lần theo `learning.recollect_hours`. `collectDue`
+    (`packages/core/src/learning/metrics.ts`) tự loại các mốc đã có ảnh chụp `source: "studio"` với
+    `age_hours ≥ mốc − 6` thay vì dựa vào bất kỳ cờ "đã thu" nào trên chính hàng đó — lịch sử đầy đủ của một
+    video luôn nằm nguyên trong bảng, không phần nào bị ghi đè, kể cả khi `channel metrics import` thêm một
+    hàng `source: "manual"` xen giữa các ảnh chụp `studio` thật.
+94. `hypothesis.status`/`hypothesis.evaluated` (trường mới optional trong `HypothesisSchema`, spec §3.1) cập
+    nhật **tại chỗ** trong `channel_package.data` (cột JSON) qua `updateChannelPackage`, không qua
+    `transition()` — cùng khuôn "mirror-kiểu" với ba bảng mirror của kho (`edit_style`/`content_request`/
+    `library_item`, AGENTS.md mục "Giới hạn quyền") và với `ChannelPackage.status` (ADR mục 70): trường thay
+    đổi phản ánh một kết quả tính toán ngoài băng (`evaluateHypotheses` đọc `video_metrics`), không phải một
+    bước trong máy trạng thái stage/run/attempt của chính gói đó. Một gói `committed` "thay đổi sau khi
+    publish" chỉ ở đúng trường `hypothesis` — `manifest`/checksum của gói không bị đụng (spec §10 rủi ro).
+95. `learnChannelStandard` (`packages/core/src/learning/learned.ts`) là **hàm thuần, test được**, không phải
+    agent quyết định (phương án A đã chọn, spec §0, loại phương án B "một agent quyết định tất cả"): nhóm
+    tiêu đề dùng đúng ba nhãn nhị phân cố định kết hợp bằng `+` — `titlePattern()` trả
+    `${number|plain}+${question|statement}+${long|short}` (có chữ số hay không; kết thúc `?` hay không; dài
+    hơn 60 ký tự hay không, ví dụ `number+question+short`) — và `overlayGroup()` trả số dòng chữ đè
+    (`"0"`/`"1-2"`/`"3"`). Một nhóm thành `standard` khi `supported ≥ min_samples`, `lift > 1` (trung bình
+    `metric_value` chia trung vị kênh của cùng metric) và `supported > refuted`; không nhóm nào đạt →
+    `standard.note` ghi rõ số mẫu còn thiếu thay vì để trống im lặng.
+96. **Ngưỡng đổi chuẩn 10%**: `decideDimension` (`packages/core/src/learning/learned.ts`) chỉ thay một giá
+    trị `standard` đang đứng khi nhóm mới có `lift ≥ lift cũ × 1.10` — một nhóm nhỉnh hơn chút không đủ lật
+    chuẩn (chống nhiễu mẫu nhỏ, spec §10 "chuẩn kênh học từ mẫu nhỏ"). Hệ quả trực tiếp: **một chuẩn không
+    bao giờ hình thành chỉ từ hai tập** dù cả hai `supported` cùng nhóm — trung vị của đúng hai mẫu là trung
+    bình của chính chúng nên `lift` của nhóm đó luôn đúng bằng 1.0, không bao giờ `> 1`; cần ít nhất một mẫu
+    khác (kể cả `refuted`, nhóm khác) để kéo trung vị kênh lệch đi. Đây không phải lỗi thiết kế — brief Task 7
+    ban đầu mô tả một chuẩn hình thành sau hai tập là **sai** so với luật đã spec (số học ở trên), sửa lại ở
+    test tích hợp (`tests/integration/channel-learning.test.ts`) bằng một tập thứ ba, góc khác và yếu hơn,
+    thay vì sửa luật để khớp brief.
+97. Stage built-in `channel-brief` (`packages/cli/src/commands/publish-stage.ts`, chạy trong cả
+    `channel-publish@1.1.0` trước `package` lẫn `channel-planning@1.0.0`) vá đúng lỗ hổng spec 3 để lại (spec
+    3 §10, spec 3B §0 "kiến trúc"): stage `package` của `channel-publish@1.0.0` chưa từng nhận `seo` của kênh
+    hay bất kỳ số liệu/chuẩn/giả thuyết đã đánh giá nào làm input có cấu trúc — skill `channel-package` chỉ
+    đọc thẳng `channel.yaml`/`stage-request.json`. `channel-brief.json` (`harness.channel-brief/v1`) gộp cả
+    bốn nguồn đó (`channel.seo`, `learned: ChannelLearned | null`, tối đa 10 giả thuyết đã đánh giá gần nhất,
+    tối đa 10 ảnh chụp số liệu gần nhất, request đang mở của kênh) thành một input duy nhất, có schema, cho cả
+    hai workflow — `channel-publish@1.0.0` giữ nguyên không có stage này (chạy song song, acceptance 40).
+98. `maybePlanRequests`/`planRequestsRun` (`packages/core/src/learning/planning.ts`) đối xử **planning như
+    một run bình thường**, đúng nguyên tắc "mọi việc agent làm đều là run" (spec §0): không có nhánh tắt nào
+    gọi thẳng agent ngoài vòng workflow/checker/artifact như ba sweep kia. Planning bị giới hạn **tối đa một
+    run mỗi kênh mỗi ngày UTC**: `content.title` của run mang tiền tố `"planning <channel_id> "` cộng ngày
+    UTC hiện tại, và `run-active` chặn bất kỳ run `channel-planning` nào cùng tiền tố còn sống, hoặc đã kết
+    thúc **trong đúng ngày hôm nay** — một run FAILED thì vào cooldown 24h riêng qua event
+    `channel.planning_failed` (`recentlyEmitted`, không tính theo ranh giới ngày UTC, khác cơ chế trên).
+99. `autoPick` (`packages/core/src/learning/auto-pick.ts`, spec §4.4) ưu tiên rõ ràng: (a) item `approved`
+    gắn `request_id` của một request do **chính kênh này** tạo (sắp theo `created_at` request, cũ trước) —
+    trước khi cân nhắc (b) item chung không có `request_id`, và (b) chỉ được xét khi `channelDemand.needed >
+    0` (không giành item chung khi kênh không cần thêm gì). Item đã có run `channel-publish` `FAILED`/
+    `WAITING_HUMAN` của chính kênh này bị loại khỏi ứng viên — tránh auto-pick lặp lại một item vừa thất bại
+    vô hạn lần; một claim rollback (transaction pick+plan+enqueue thất bại) xoá luôn file claim vừa ghi, không
+    để lại claim mồ côi (sửa ở review Task 4, xem ledger).
+100. **Cổng học không chặn** (spec §0 "cổng học: không chặn, chỉ ưu tiên", đối lập tường minh với
+    `lib/learning-gate.mjs` của hệ cũ — bị loại hẳn, không mang sang): thu số bị Studio chặn (`stats_blocked`)
+    hay lỗi liên tiếp (`stats_failing`) không bao giờ dừng `channel-publish`/`channel-planning`; một kênh chưa
+    học được gì (`ChannelLearned.standard` rỗng, `channel-brief.json.learned: null`) vẫn phát đều theo
+    `channel.yaml.seo` y hệt trước sub-project 3B. `learned.standard` chỉ **ưu tiên** đề xuất kế tiếp (agent
+    `channel-plan` đọc `learned.standard.angle`; skill `channel-package` dẫn chứng `basis` kind `"channel"`
+    khi có) — không trường nào trong toàn bộ đường ống 3B coi việc chưa học xong là điều kiện chặn dispatch.

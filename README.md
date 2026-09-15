@@ -263,16 +263,90 @@ rm -rf fixtures/ops-project-channel/data fixtures/ops-project-channel/library
 git checkout -- fixtures/ops-project-channel/channels/channel-one/channel.yaml fixtures/ops-project-channel/channels/channel-two/channel.yaml
 ```
 
+## Quick-start: vòng học kênh (sub-project 3B, agent + số liệu giả)
+
+Tiếp trên hai fixture của mục "studio tự vận hành" ở trên (`ops-project-studio` + `ops-project-channel`, cùng
+kho tạm) — `channels/channel-one/channel.yaml` của fixture đã bật sẵn `learning`/`planning`/`auto_pick`
+(`channels/channel-two` cố tình tắt cả hai, xem comment trong file), và `project.yaml` của cả hai máy đã có
+`adapters.stats: fake`/`learning: { collect_seconds: 60, collect_batch: 5 }` — không cần sửa gì thêm ngoài
+đường dẫn tuyệt đối cho kho tạm + `fake-agent-cli.mjs` (giống mục "studio tự vận hành"). Cần `ffmpeg`/
+`ffprobe` trên PATH (stage `watch` của studio).
+
+```bash
+pnpm build
+lib=$(node -e "const{mkdtempSync,mkdirSync}=require('fs'),{join}=require('path');const d=mkdtempSync(join(require('os').tmpdir(),'kho-'));for(const s of ['styles','requests','items'])mkdirSync(join(d,s));console.log(d)")
+node -e "const fs=require('fs');for(const p of ['fixtures/ops-project-studio/project.yaml','fixtures/ops-project-channel/project.yaml'])fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('root: ./library','root: '+JSON.stringify(process.argv[1]).slice(1,-1)))" "$lib"
+node -e "const fs=require('fs'),path=require('path');const abs=path.resolve('fixtures/fake-agent-cli.mjs').split(path.sep).join('/');for(const p of ['fixtures/ops-project-studio/project.yaml','fixtures/ops-project-channel/project.yaml'])fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('../fake-agent-cli.mjs',abs))"
+node -e "const fs=require('fs'),path=require('path');const abs=path.resolve('fixtures/legacy-channel-repo').split(path.sep).join('/');for(const p of ['fixtures/ops-project-channel/channels/channel-one/channel.yaml','fixtures/ops-project-channel/channels/channel-two/channel.yaml'])fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('repo_dir: ../legacy-channel-repo','repo_dir: '+abs))"
+
+# channel-identity (checker của build-package) đòi cả hai secret suốt phiên -- export một lần, không chỉ cho
+# doctor: publish-build-package/upload/schedule chạy trong tiến trình CLI con riêng (AGENTS.md "Lệnh 3"), mỗi
+# tiến trình tự resolve lại.
+export HARNESS_SECRET_YOUTUBE_CHANNEL_ONE_EMAIL=owner@example.com HARNESS_SECRET_YOUTUBE_CHANNEL_TWO_EMAIL=owner@example.com
+
+pnpm harness --project fixtures/ops-project-studio db migrate
+pnpm harness --project fixtures/ops-project-channel db migrate
+pnpm harness --project fixtures/ops-project-channel doctor   # channel-one:stats/planning phải ok (adapters.stats: fake)
+
+# 0. studio: học một style trước, y hệt mục "studio tự vận hành" -- create-requests (bước 2) cần một style
+#    active để gán cho các request tự sinh
+mkdir -p fixtures/ops-project-studio/raw
+ffmpeg -y -f lavfi -i testsrc=duration=5:size=320x180:rate=25 -f lavfi -i sine=frequency=440:duration=5 \
+  -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest fixtures/ops-project-studio/raw/sample-5s.mp4
+node -e "console.log(require('path').resolve('fixtures/ops-project-studio/raw/sample-5s.mp4').split(require('path').sep).join('/'))" > fixtures/ops-project-studio/raw/samples.txt
+pnpm harness --project fixtures/ops-project-studio source ingest fixtures/ops-project-studio/raw/samples.txt --rights cleared --json
+pnpm harness --project fixtures/ops-project-studio content create --title "Học style (3B)" --source <source_id> --json
+pnpm harness --project fixtures/ops-project-studio plan --workflow style-study@1.1.0 --profile studio --content <content_id> --json
+pnpm harness --project fixtures/ops-project-studio enqueue <run_id>
+pnpm harness --project fixtures/ops-project-studio worker --once   # lặp lại tới khi status <run_id> báo SUCCEEDED
+pnpm harness --project fixtures/ops-project-studio source ingest fixtures/ops-project-studio/raw/sample-5s.mp4 --rights cleared --json
+pnpm harness --project fixtures/ops-project-channel library sync --json
+
+# 1. kênh rỗng tự sinh request: channel-planning@1.0.0 (channel-brief -> demand -> propose-topics agent giả
+#    -> create-requests), chạy tay bỏ qua cadence (planning.check_seconds)
+pnpm harness --project fixtures/ops-project-channel channel demand channel-one --json   # needed=3 (chưa job/request nào)
+pnpm harness --project fixtures/ops-project-channel channel plan-requests channel-one --json   # in ra run_id
+pnpm harness --project fixtures/ops-project-channel worker --once   # lặp lại tới khi status <run_id> báo SUCCEEDED
+pnpm harness --project fixtures/ops-project-channel library list requests --json   # 3 request "open", topic "auto-plan <run_id>: ..."
+
+# 2. studio: worker tự nhận một request (auto_accept, y hệt mục "studio tự vận hành") -> item "approved"
+pnpm harness --project fixtures/ops-project-studio worker --once   # lặp lại tới khi library list requests thấy 1 "fulfilled"
+pnpm harness --project fixtures/ops-project-studio library list requests --json
+
+# 3. kênh: tự pick (bỏ qua cadence auto_pick), phát tới SCHEDULED
+pnpm harness --project fixtures/ops-project-channel library sync --json
+pnpm harness --project fixtures/ops-project-channel channel pick-next channel-one --json   # in ra item_id + run_id
+pnpm harness --project fixtures/ops-project-channel worker --once   # lặp lại tới khi status <run_id> báo SUCCEEDED
+pnpm harness --project fixtures/ops-project-channel publish list --channel channel-one --json   # 1 job SCHEDULED
+
+# 4. thu số (fake) + nhập sổ cũ -- job chưa PUBLISHED thật (không đợi được trong quick-start), nên minh hoạ
+#    `metrics import` bằng chính youtube_video_id vừa upload (lấy id thật ở output publish list phía trên)
+echo '{"videoId":"<youtube_video_id>","views":1234,"publishedAt":"2026-09-01T00:00:00.000Z"}' > /tmp/legacy-metrics.jsonl
+pnpm harness --project fixtures/ops-project-channel channel metrics import channel-one /tmp/legacy-metrics.jsonl --json   # imported=1
+pnpm harness --project fixtures/ops-project-channel channel collect --channel channel-one --json   # collected=0 (job chưa PUBLISHED)
+pnpm harness --project fixtures/ops-project-channel channel learned channel-one --json   # standard rỗng, note "cần >=2 mẫu"
+pnpm harness --project fixtures/ops-project-channel dashboard snapshot --json   # channels[].learning
+```
+
+Chu trình đầy đủ (đọc `channel learned`/`channel demand`, cách chuẩn kênh đổi, ba alert mới, sự cố
+`stats_blocked`/`stats_failing`/`planning_failed`, nhập sổ cũ, quay về thủ công, DoD #4) ở
+`docs/runbooks/channel-learning.md`. Dọn sau khi thử:
+
+```bash
+rm -rf fixtures/ops-project-studio/data fixtures/ops-project-channel/data fixtures/ops-project-studio/raw fixtures/ops-project-studio/library fixtures/ops-project-channel/library /tmp/legacy-metrics.jsonl
+git checkout -- fixtures/ops-project-studio/project.yaml fixtures/ops-project-channel/project.yaml fixtures/ops-project-channel/channels/channel-one/channel.yaml fixtures/ops-project-channel/channels/channel-two/channel.yaml
+```
+
 ## Tài liệu
 - Blueprint: `docs/architecture/YOUTUBE_OPERATIONS_HARNESS_BLUEPRINT_v1.0.md`
-- Spec: `docs/superpowers/specs/2026-09-11-harness-structure-and-control-plane-design.md`, `docs/superpowers/specs/2026-09-12-sub-project-2-footage-production-design.md`, `docs/superpowers/specs/2026-09-14-sub-project-2c-content-library-design.md`, `docs/superpowers/specs/2026-09-14-sub-project-3-channel-publish-design.md`, `docs/superpowers/specs/2026-09-15-sub-project-4-studio-autopilot-design.md`
+- Spec: `docs/superpowers/specs/2026-09-11-harness-structure-and-control-plane-design.md`, `docs/superpowers/specs/2026-09-12-sub-project-2-footage-production-design.md`, `docs/superpowers/specs/2026-09-14-sub-project-2c-content-library-design.md`, `docs/superpowers/specs/2026-09-14-sub-project-3-channel-publish-design.md`, `docs/superpowers/specs/2026-09-15-sub-project-4-studio-autopilot-design.md`, `docs/superpowers/specs/2026-09-15-sub-project-3b-channel-learning-design.md`
 - Plan sub-project 1: `docs/superpowers/plans/2026-09-11-control-plane-minimal.md`
 - Plan sub-project 2A: `docs/superpowers/plans/2026-09-12-sub-project-2a-catalog-planner-resources.md`
 - Plan sub-project 2B: `docs/superpowers/plans/2026-09-13-sub-project-2b-scripts-gate-media-footage.md`
 - Plan sub-project 2C: `docs/superpowers/plans/2026-09-14-sub-project-2c-content-library.md`
 - Plan sub-project 4: `docs/superpowers/plans/2026-09-15-sub-project-4-studio-autopilot.md`
 - ADR: `docs/adr/`
-- Runbook: `docs/runbooks/` (`reconcile-and-retry.md`, `wrap-a-channel.md`, `content-library.md`, `channel-publish.md`, `studio-autopilot.md`)
+- Runbook: `docs/runbooks/` (`reconcile-and-retry.md`, `wrap-a-channel.md`, `content-library.md`, `channel-publish.md`, `studio-autopilot.md`, `channel-learning.md`)
 - Việc để lại: `docs/operations/deferred-items.md`
 - Project mới: copy `project-template/` (xem `docs/runbooks/wrap-a-channel.md` bước 1; mẫu kênh ở `project-template/channels/example/channel.yaml`; khối `library.auto_accept` mẫu trong `project-template/project.yaml`)
 
@@ -301,7 +375,19 @@ auto_accept` (`harness library styles activate`, `library request create --sourc
 `library-production@1.1.0` chạy song song với bản `1.0.0` gate-người cũ (`loadWorkflow`/`listWorkflowRefs`
 hỗ trợ nhiều version cùng thư mục `workflows/`) — năm stage agent (ba của `library-production@1.1.0`, hai
 của `style-study@1.1.0`) chưa được kiểm bằng `claude`/`codex` thật trong môi trường build agent này, xem
-`docs/runbooks/studio-autopilot.md` mục "DoD #3"). Còn lại cho
-sub-project 3B: thu số liệu sau khi lên (`collect-metrics-playwright`), đánh giá `Hypothesis` (`open` →
-`supported`/`refuted`), tự sinh `ContentRequest` từ lịch/số liệu, YouTube Test & Compare, và agent tự chọn
-nguồn (sub-project 4 chỉ chọn theo quy tắc cố định, xem `docs/operations/deferred-items.md`).
+`docs/runbooks/studio-autopilot.md` mục "DoD #3") + 3B (vòng học kênh: cổng `StatsCollector` (`playwright`
+đọc read-only ba tab Studio Analytics qua `collect-stats.mjs` + `fake`) và bảng `video_metrics` append-only,
+`evaluateHypotheses` (`open → supported/refuted/void`) + `learnChannelStandard` (quy tắc thuần, nhóm theo
+angle/mẫu tiêu đề/overlay, ngưỡng đổi chuẩn 10%, `channel_learned` + `history`), stage built-in `channel-brief`
+vá lỗ hổng SP3 (gói giờ nhận `seo` + chuẩn kênh + giả thuyết đã đánh giá), workflow `channel-planning@1.0.0`
+(agent `channel-plan` đề xuất chủ đề từ `channel-brief`/`demand`, được web) tự sinh `ContentRequest` tối đa
+một run mỗi kênh mỗi ngày, `channel-publish@1.1.0` (profile `channel` revision 2) thêm stage `channel-brief`
+trước `package`, ba sweep worker kênh mới (`maybeCollectStats`, `maybePlanRequests`, `maybeAutoPick` ưu tiên
+request của chính kênh), `harness channel stats|learned|demand|collect|plan-requests|pick-next|metrics
+import`, doctor `channel:<id>:stats|planning`, dashboard khối `learning` + alert
+`stats_blocked|stats_failing|planning_failed` — cổng học không chặn phát hành, chỉ ưu tiên đề xuất kế tiếp;
+thu số thật (`adapters.stats: playwright`) và agent `channel-plan`/`channel-package` thật chưa kiểm được
+trong môi trường build agent này, xem `docs/runbooks/channel-learning.md` mục "DoD #4"). Còn lại: sửa
+metadata video đã lên theo kết quả, YouTube Test & Compare, học chéo kênh (`fleetLessons`), mục tiêu doanh
+thu/đăng ký, agent tự chọn nguồn phía studio, tự động hoá đăng nhập Studio (xem
+`docs/operations/deferred-items.md`).

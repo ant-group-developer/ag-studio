@@ -100,3 +100,49 @@ overlay:
   enabled: true
   # left | right -- passed to gen-thumb-overlay.mjs as --side. Default right.
   side: right
+
+# Sub-project 3B (channel learning loop): all three blocks below are optional, every field defaults as shown --
+# an absent block is the same as writing it with every field at its default (learning always runs; planning/
+# auto_pick default OFF). See docs/runbooks/channel-learning.md for the full loop (empty channel -> request ->
+# studio builds it -> this channel picks/publishes -> stats -> learned standard -> next request).
+learning:
+  # First stats snapshot this many hours after a job's published_at (YouTube Studio needs real traffic to
+  # report anything meaningful before then -- the legacy repo waited the same 72h).
+  horizon_hours: 72
+  # Extra snapshots at these ages (hours) after publish, to see how a video's numbers settle over time; []
+  # turns off every snapshot beyond the first (horizon_hours above still fires).
+  recollect_hours: [168, 720]
+  # A CTR hypothesis with fewer impressions than this floor is judged "void" (inconclusive), not
+  # supported/refuted -- too little traffic to trust the number either way.
+  min_impressions: 50
+  # Minimum supported hypotheses in one group (same angle / title pattern / overlay-line count) before that
+  # group can become the channel's learned standard for a dimension. Two alone is never enough on its own --
+  # the group's lift is measured against the channel median, and the median of exactly two samples is their
+  # own mean, so a two-sample group's lift is always exactly 1.0. See docs/runbooks/channel-learning.md mục 5.
+  min_samples: 2
+# Whether this channel proposes and files its own ContentRequest topics when its publish schedule needs more
+# episodes than the kho currently has approved/claimed/in flight for it (channelDemand). Off by default --
+# turning it on needs `adapters.agent: cli` project-wide (not `fake`; `harness doctor`'s `channel:<id>:planning`
+# row FAILs otherwise) so the `channel-plan` skill can actually propose something real.
+planning:
+  enabled: false
+  # How many of this channel's next publish-schedule slots (nextSlot(), same policy as publication.* above)
+  # must have an item ready before planning stops proposing more.
+  lookahead_slots: 3
+  # Max new topics one channel-planning run's agent may propose (and create-requests may turn into requests).
+  topics_per_run: 3
+  # Hard cap on this channel's own open ContentRequest count in the kho at once -- planning stops (event
+  # channel.planning_skipped { reason: "open-cap" }) once it is reached, even if lookahead_slots still wants
+  # more, so the studio is never handed more open work than this.
+  max_open_requests: 3
+  # How often (>=60s) the worker's idle sweep runs planning for this channel (`harness channel plan-requests
+  # <id>` runs it once by hand, bypassing this cadence). At most one channel-planning run per channel per UTC
+  # calendar day regardless of how low this is set.
+  check_seconds: 3600
+# Whether this channel automatically claims an approved kho item (preferring one that answers its own open
+# requests) and runs channel-publish on it, with no human `library pick` in between. Off by default.
+auto_pick:
+  enabled: false
+  # Max channel-publish runs this channel's own auto-pick sweep may have in flight at once; does not cap runs
+  # started by a human `library pick` + `plan` + `enqueue`.
+  max_concurrent_runs: 1
