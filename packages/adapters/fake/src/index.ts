@@ -6,6 +6,7 @@ import type { ScriptCommand } from "@harness/contracts";
 export { FakeAgentRuntime, type JournalLike } from "./fake-agent-runtime.js";
 export { FakeProvider } from "./fake-provider.js";
 export { FakePublisher, type FakePublisherOptions } from "./fake-publisher.js";
+export { FakeStatsCollector, type FakeStatsCollectorOptions } from "./fake-stats-collector.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 /** Points at the .ts source (run via tsx) when the package is used from source, or the built .js when run from dist/. */

@@ -2,3 +2,6 @@ export { PlaywrightPublisher, publisherChildEnv } from "./playwright-publisher.j
 export type { PlaywrightPublisherOptions } from "./playwright-publisher.js";
 export { EXIT_BUSY, EXIT_REFUSED, newestUploadFor, readQueue } from "./queue.js";
 export type { QueueLine } from "./queue.js";
+export { PlaywrightStatsCollector } from "./playwright-stats-collector.js";
+export type { PlaywrightStatsCollectorOptions } from "./playwright-stats-collector.js";
+export { parseCount, parseDuration, parsePercent, parseStatsJson } from "./metrics-parse.js";

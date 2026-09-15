@@ -1,13 +1,13 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
-import { HarnessError, isHarnessError, ProjectConfigSchema, type AgentRuntime, type ExecutorRef, type MediaProber, type ProductionProfile, type ProjectConfig, type Publisher, type ScriptCommand, type ScriptsRegistry, type SourcesRegistry } from "@harness/contracts";
+import { HarnessError, isHarnessError, ProjectConfigSchema, type AgentRuntime, type ExecutorRef, type MediaProber, type ProductionProfile, type ProjectConfig, type Publisher, type ScriptCommand, type ScriptsRegistry, type SourcesRegistry, type StatsCollector } from "@harness/contracts";
 import { ArtifactRegistry, type AutoAcceptConfig, BUILTIN_CHECKERS, buildSnapshot, ChannelRegistry, Controller, distributionCheckers, type DoctorRow, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, LibraryFs, libraryCheckers, listWorkflowRefs, loadChannels, type LoadedWorkflow, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, resolveWorkflowScope, runDoctor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, writeSnapshotFile, type HarnessLogger, type LibraryRole, type LogLevel } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
-import { FakeAgentRuntime, FakeProvider, FakePublisher, fakeScriptCommands } from "@harness/adapter-fake";
+import { FakeAgentRuntime, FakeProvider, FakePublisher, FakeStatsCollector, fakeScriptCommands } from "@harness/adapter-fake";
 import { FfprobeMediaProber } from "@harness/adapter-ffprobe";
 import { CliAgentRuntime, RUNTIME_COMMANDS } from "@harness/adapter-agent-cli";
-import { PlaywrightPublisher } from "@harness/adapter-youtube-playwright";
+import { PlaywrightPublisher, PlaywrightStatsCollector } from "@harness/adapter-youtube-playwright";
 import { builtinMediaCommands } from "./commands/media.js";
 import { cliArgv } from "./self.js";
 
@@ -35,11 +35,17 @@ export interface AppContext {
   /** `loadChannels` errors swallowed the same way as `configErrors.scripts`/`.sources`: `doctor` reports them,
    * and a publish command that actually needs a channel re-throws via `requireChannel`. */
   channelErrors: string[];
-  /** Chosen by `project.yaml`'s `adapters.publisher`/`adapters.agent`; the only place either adapter is picked. */
+  /** Chosen by `project.yaml`'s `adapters.publisher`/`adapters.agent`/`adapters.stats`; the only place any
+   * of the three adapters is picked. */
   publisher: Publisher;
   agentRuntime: AgentRuntime;
+  /** Sub-project 3B: `StatsCollector` chosen by `project.yaml`'s `adapters.stats`. */
+  stats: StatsCollector;
   publication: { verifySeconds: number; graceHours: number };
   dashboard: { port: number; refreshSeconds: number };
+  /** Sub-project 3B: `project.yaml`'s `learning.collect_seconds`/`collect_batch` -- how often and how many
+   * jobs per sweep the worker's `collectStats` (Task 3) considers. */
+  learning: { collectSeconds: number; collectBatch: number };
   close(): void;
 }
 
@@ -113,6 +119,9 @@ export function buildContext(o: { projectDir: string; harnessRoot?: string; owne
   const agentRuntime: AgentRuntime = project.adapters.agent === "cli"
     ? new CliAgentRuntime({ runtime: project.runtime, skillsDir: join(harnessRoot, "skills"), redact: (s) => redactor.redact(s), ...(project.adapters.agent_argv ? { argv: project.adapters.agent_argv } : {}) })
     : new FakeAgentRuntime({ journal });
+  const stats: StatsCollector = project.adapters.stats === "playwright"
+    ? new PlaywrightStatsCollector({ redact: (s) => redactor.redact(s), ...(process.env.HARNESS_FAKE_STATS_FILE ? { statsFile: process.env.HARNESS_FAKE_STATS_FILE } : {}) })
+    : new FakeStatsCollector({ ...(process.env.HARNESS_FAKE_STATS_FILE ? { file: process.env.HARNESS_FAKE_STATS_FILE } : {}) });
   const argv = cliArgv();
   // an ops-project entry with the same name as a built-in (fake or library/publish/media) wins, so ops projects can override them
   const commands = { ...fakeScriptCommands(), ...builtinLibraryCommands(argv, projectDir), ...builtinPublishCommands(argv, projectDir), ...builtinMediaCommands(argv, projectDir), ...(scripts ? scriptCommandsFrom(scripts, projectDir) : {}) };
@@ -135,9 +144,10 @@ export function buildContext(o: { projectDir: string; harnessRoot?: string; owne
     verifier: new Verifier([...BUILTIN_CHECKERS, ...mediaCheckers(prober, { available: proberAvailable }), ...libraryCheckers(prober, { available: proberAvailable }), ...distributionCheckers({ store, channels, secrets })]),
     executors, journal, provider, harness, project, projectDir, dataRoot, logger, clock, secrets, migrationsDir: MIGRATIONS_DIR, workflows, profiles, catalog,
     resourceCapacity: project.resources, executorVersionFor: (ref: ExecutorRef) => executors.resolve(ref).version, scripts, sources, configErrors, proberAvailable, harnessRoot, prober,
-    scriptCommandNames: Object.keys(commands), ...(library ? { library } : {}), channels, channelErrors, publisher, agentRuntime,
+    scriptCommandNames: Object.keys(commands), ...(library ? { library } : {}), channels, channelErrors, publisher, agentRuntime, stats,
     publication: { verifySeconds: project.publication.verify_seconds, graceHours: project.publication.verify_grace_hours },
     dashboard: { port: project.dashboard.port, refreshSeconds: project.dashboard.refresh_seconds },
+    learning: { collectSeconds: project.learning.collect_seconds, collectBatch: project.learning.collect_batch },
     close: () => store.close(),
   };
 }
