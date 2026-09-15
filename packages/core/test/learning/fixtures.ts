@@ -1,5 +1,8 @@
-import { newId, ChannelConfigSchema, type ChannelPackage, type Hypothesis, type PublicationJob, type VideoMetrics } from "@harness/contracts";
-import { ChannelRegistry, type LoadedChannel, type SqliteStateStore } from "../../src/index.js";
+import {
+  newId, ChannelConfigSchema, ProductionProfileSchema, WorkflowDefinitionSchema,
+  type ChannelPackage, type Hypothesis, type LibraryItem, type ProductionProfile, type PublicationJob, type VideoMetrics,
+} from "@harness/contracts";
+import { canonicalDigest, ChannelRegistry, type LoadedChannel, type LoadedWorkflow, type SqliteStateStore } from "../../src/index.js";
 
 export const sha = (c: string) => "sha256:" + c.repeat(64);
 export const T0 = "2026-09-11T00:00:00.000Z";
@@ -15,6 +18,9 @@ function uniqueChecksum(): string {
 export function makeChannel(o: {
   channel_id?: string;
   learning?: Partial<{ horizon_hours: number; recollect_hours: number[]; min_impressions: number; min_samples: number }>;
+  planning?: Partial<{ enabled: boolean; lookahead_slots: number; topics_per_run: number; max_open_requests: number; check_seconds: number }>;
+  auto_pick?: Partial<{ enabled: boolean; max_concurrent_runs: number }>;
+  publication?: Partial<{ timezone: string; publish_times: string[]; max_daily_uploads: number; min_gap_hours: number }>;
 } = {}): LoadedChannel {
   const config = ChannelConfigSchema.parse({
     schema_version: "harness.channel-config/v1",
@@ -23,8 +29,11 @@ export function makeChannel(o: {
     portfolio_id: "portfolio-main",
     repo_dir: "D:/legacy-channel-a",
     youtube: { expected_channel_id: "UCxxxxxxxxxxxxxxxxxxxxxx", account_email_ref: "secret://youtube/channel-a-email" },
-    publication: { timezone: "America/New_York", publish_times: ["13:00"] },
+    publication: { timezone: "America/New_York", publish_times: ["13:00"], ...o.publication },
+    seo: { niche: "history", audience: "curious learners", angle: "surprising facts", language: "en", market: "US", keywords: ["history", "facts"] },
     learning: o.learning,
+    planning: o.planning,
+    auto_pick: o.auto_pick,
   });
   return { config, dir: "D:/legacy-channel-a", config_revision: sha("e") };
 }
@@ -124,3 +133,48 @@ export function makeMetric(o: {
 
 export const noopLogger = { info: () => {}, warn: () => {}, error: () => {} };
 export const durationOf = (): number => 600;
+
+export function makeLibraryItem(o: {
+  item_id?: string; status?: LibraryItem["status"]; request_id?: string; title_hint?: string;
+  duration_seconds?: number; updated_at?: string; style_id?: string;
+} = {}): LibraryItem {
+  return {
+    schema_version: "harness.library-item/v1",
+    item_id: o.item_id ?? newId("library_item"),
+    status: o.status ?? "approved",
+    title_hint: o.title_hint ?? "A great episode",
+    summary: "summary",
+    style: { style_id: o.style_id ?? newId("edit_style"), revision: 1 },
+    ...(o.request_id !== undefined ? { request_id: o.request_id } : {}),
+    duration_seconds: o.duration_seconds ?? 600,
+    media: null,
+    files: [{ path: "episode.mp4", checksum: sha("f"), size_bytes: 100, mime_type: "video/mp4" }],
+    lineage: { project_id: "project-studio", run_id: newId("run"), content_id: newId("content_item"), source_ids: [] },
+    review: { note: "" },
+    created_at: T0,
+    updated_at: o.updated_at ?? T0,
+  };
+}
+
+/** Synthetic `channel-planning@1.0.0` workflow/profile: Task 5 wires the real ones (built-in stages the
+ * agent skill needs); Task 4's core functions only need something `Planner.plan` can resolve a stage graph
+ * against. */
+export function makeChannelPlanningWorkflow(): LoadedWorkflow {
+  const definition = WorkflowDefinitionSchema.parse({
+    schema_version: "harness.workflow/v1",
+    id: "channel-planning",
+    version: "1.0.0",
+    stages: [{ key: "channel-brief", executor: { type: "script", script: "publish-channel-brief" } }],
+  });
+  return { definition, digest: canonicalDigest(definition) };
+}
+
+export function makeChannelPlanningProfile(): ProductionProfile {
+  return ProductionProfileSchema.parse({
+    schema_version: "harness.production-profile/v1",
+    profile_id: "channel-planning",
+    revision: 1,
+    status: "active",
+    workflow_release: "channel-planning@1.0.0",
+  });
+}
