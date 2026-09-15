@@ -604,9 +604,12 @@ library-production}@1.1.0/`, `skills/{style-analyze,style-review,source-survey,e
     `channel.planning_failed` (`recentlyEmitted`, không tính theo ranh giới ngày UTC, khác cơ chế trên).
 99. `autoPick` (`packages/core/src/learning/auto-pick.ts`, spec §4.4) ưu tiên rõ ràng: (a) item `approved`
     gắn `request_id` của một request do **chính kênh này** tạo (sắp theo `created_at` request, cũ trước) —
-    trước khi cân nhắc (b) item chung không có `request_id`, và (b) chỉ được xét khi `channelDemand.needed >
-    0` (không giành item chung khi kênh không cần thêm gì). Item đã có run `channel-publish` `FAILED`/
-    `WAITING_HUMAN` của chính kênh này bị loại khỏi ứng viên — tránh auto-pick lặp lại một item vừa thất bại
+    trước khi cân nhắc (b) item chung không có `request_id`, và (b) chỉ được xét khi `demand.needed +
+    demand.covered.items > 0`, tức còn ít nhất một khung phát chưa được job/run/request che phủ — cố ý
+    **không** tính chính các item chung vào phần "đã che phủ" ở phép so này, vì `channelDemand` vẫn gộp
+    chúng vào `covered.items` như đã che phủ trên giấy; nếu gate chỉ so `needed > 0` một item chung tồn tại
+    sẵn sẽ tự kéo `needed` về 0 rồi vĩnh viễn tự chặn chính nó khỏi được pick. Item đã có run `channel-publish`
+    `FAILED`/`WAITING_HUMAN` của chính kênh này bị loại khỏi ứng viên — tránh auto-pick lặp lại một item vừa thất bại
     vô hạn lần; một claim rollback (transaction pick+plan+enqueue thất bại) xoá luôn file claim vừa ghi, không
     để lại claim mồ côi (sửa ở review Task 4, xem ledger).
 100. **Cổng học không chặn** (spec §0 "cổng học: không chặn, chỉ ưu tiên", đối lập tường minh với

@@ -126,11 +126,13 @@ nhất FAILED trong 24h qua) — cả ba cạnh `reconcile`/`run_failed`/`gate_o
 
 **`maybeAutoPick` chọn item theo thứ tự** (spec §4.4, `packages/core/src/learning/auto-pick.ts`): (a) item
 `approved` gắn `request_id` của một request do **chính kênh này** tạo, sắp theo `created_at` của request (cũ
-trước); rồi mới tới (b) item chung không có `request_id`, và chỉ khi `channelDemand.needed > 0` (không giành
-item chung khi kênh không cần thêm gì) — bỏ qua item đã có run `channel-publish` `FAILED`/`WAITING_HUMAN` của
-chính kênh này (tránh lặp lại thất bại vô hạn). Hai kênh cùng pick một item chung là hợp lệ (mỗi kênh một
-claim riêng, xem `docs/runbooks/content-library.md`); item có `request_id` của kênh khác thì kênh này không
-bao giờ pick.
+trước); rồi mới tới (b) item chung không có `request_id`, và chỉ khi `demand.needed + demand.covered.items >
+0`, tức còn khung phát chưa được job/run/request che phủ — cố ý không tính chính các item chung vào phần "đã
+che phủ" ở phép so này (chúng vẫn được `channelDemand` gộp vào `covered.items` như đã che phủ trên giấy, nên
+nếu gate chỉ so `needed > 0`, một item chung đang tồn tại sẽ tự kéo `needed` về 0 và vĩnh viễn tự chặn chính
+nó khỏi được pick) — bỏ qua item đã có run `channel-publish` `FAILED`/`WAITING_HUMAN` của chính kênh này
+(tránh lặp lại thất bại vô hạn). Hai kênh cùng pick một item chung là hợp lệ (mỗi kênh một claim riêng, xem
+`docs/runbooks/content-library.md`); item có `request_id` của kênh khác thì kênh này không bao giờ pick.
 
 ## 4. Nhập sổ cũ (`metrics import`)
 
