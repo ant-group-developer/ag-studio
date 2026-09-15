@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parse, stringify } from "yaml";
-import { newId, type LibraryItem } from "@harness/contracts";
+import { newId, type ContentRequest, type LibraryItem } from "@harness/contracts";
 import { HARNESS_ROOT } from "@harness/core";
 import { hasFfmpeg, makeVideo } from "../media.js";
 import { cli } from "./footage-helpers.js";
@@ -14,6 +14,7 @@ export { cli, cliAsync, drain, stageId, status, submitGate, SAMPLE_EDL } from ".
 export const STUDIO_FIXTURE = join(HARNESS_ROOT, "fixtures", "ops-project-studio");
 export const CHANNEL_FIXTURE = join(HARNESS_ROOT, "fixtures", "ops-project-channel");
 const MAIN = join(HARNESS_ROOT, "packages", "cli", "src", "main.ts");
+const FAKE_AGENT_CLI = join(HARNESS_ROOT, "fixtures", "fake-agent-cli.mjs");
 
 const posix = (p: string): string => p.split("\\").join("/");
 
@@ -30,11 +31,30 @@ function studioScriptsYaml(): string {
 
 /** Copies a committed fixture `project.yaml`, repointing `data_root` at the temp project and `library.root`
  * at the shared temp kho, and writes it into `dir`. Everything else (role, portfolios, workflow scope,
- * resources) stays exactly as the fixture declares it. */
-function writeProjectYaml(fixtureDir: string, dir: string, lib: string): void {
-  const cfg = parse(readFileSync(join(fixtureDir, "project.yaml"), "utf8")) as { data_root: string; library: { root: string } };
+ * resources) stays exactly as the fixture declares it -- except, for the studio fixture only, `adapters`
+ * and `library.auto_accept`, which this function always overwrites outright (never merges) based on
+ * `autopilot`: true rewrites `adapters.agent_argv` to absolute paths (`node`/`../fake-agent-cli.mjs` only
+ * resolve from the fixture directory itself, see that file's committed adapters comment) so the studio
+ * autopilot loop can actually spawn the fake agent from a temp project; false/omitted strips `adapters` and
+ * `library.auto_accept` entirely, reproducing the pre-task-8 fixture shape (`agent: fake`, no auto-accept)
+ * so every existing 2C test (library-pipeline, studio-wrappers) is unaffected by the fixture now shipping
+ * autopilot enabled by default for real (non-test) use. */
+function writeProjectYaml(fixtureDir: string, dir: string, lib: string, o: { autopilot?: boolean } = {}): void {
+  const cfg = parse(readFileSync(join(fixtureDir, "project.yaml"), "utf8")) as {
+    data_root: string;
+    library: { root: string; auto_accept?: unknown };
+    adapters?: { agent?: string; agent_argv?: string[] };
+  };
   cfg.data_root = posix(join(dir, "data"));
   cfg.library.root = posix(lib);
+  if (fixtureDir === STUDIO_FIXTURE) {
+    if (o.autopilot) {
+      cfg.adapters = { agent: "cli", agent_argv: [process.execPath, posix(FAKE_AGENT_CLI), "{prompt}"] };
+    } else {
+      delete cfg.adapters;
+      delete cfg.library.auto_accept;
+    }
+  }
   writeFileSync(join(dir, "project.yaml"), stringify(cfg));
 }
 
@@ -59,17 +79,22 @@ export interface LibraryWorld {
 /**
  * A studio project and a channel project on one shared kho, both migrated, plus the media the style-study
  * and library-production workflows run on. `sample`/`samplesTxt` are only written when `media` is true
- * (they need ffmpeg); the acceptance tests that hand-write kho files take `media: false`.
+ * (they need ffmpeg); the acceptance tests that hand-write kho files take `media: false`. `autopilot: true`
+ * (task 8) rewrites the studio project's `adapters`/`library.auto_accept` so `worker --once` alone can drive
+ * a channel request all the way to an approved item through the fake agent CLI -- see `writeProjectYaml`'s
+ * own comment for exactly what that overwrites. Defaults to `false`, reproducing the pre-task-8 studio
+ * project (`agent: fake`, no auto-accept) so every existing 2C test is unaffected.
  */
-export function freshLibraryWorld(o: { media?: boolean } = {}): LibraryWorld {
+export function freshLibraryWorld(o: { media?: boolean; autopilot?: boolean } = {}): LibraryWorld {
   const media = o.media ?? true;
+  const autopilot = o.autopilot ?? false;
   const lib = mkdtempSync(join(tmpdir(), "kho-"));
   // the three top-level kho directories a mounted share would already have; `doctor`'s `library:write` row
   // probes `styles/` (studio) and `requests/` (channel) and fails when they are missing.
   for (const sub of ["styles", "requests", "items"]) mkdirSync(join(lib, sub), { recursive: true });
 
   const studio = mkdtempSync(join(tmpdir(), "studio-"));
-  writeProjectYaml(STUDIO_FIXTURE, studio, lib);
+  writeProjectYaml(STUDIO_FIXTURE, studio, lib, { autopilot });
   mkdirSync(join(studio, "executors"), { recursive: true });
   writeFileSync(join(studio, "executors", "scripts.yaml"), studioScriptsYaml());
   mkdirSync(join(studio, "source-catalog"), { recursive: true });
@@ -219,4 +244,60 @@ export function librarySync(project: string): { imported: { styles: string[]; re
   const r = cli(project, ["library", "sync", "--json"]);
   if (r.code !== 0) throw new Error(`library sync failed in ${project}: ${r.err}\n${r.out}`);
   return JSON.parse(r.out);
+}
+
+/** Env every `cli()`/`drain()` call against an autopilot studio project should carry: `FAKE_YTDLP=1` so
+ * `collect-samples.mjs` fakes downloading any `https://` line in `samples.txt` instead of shelling a real
+ * yt-dlp (spec/task-6), plus whatever the caller layers on top (`FAKE_REVIEW_MODE`, `FAKE_AGENT_FAIL_STAGE`,
+ * ...). `world` is unused today but kept in the signature -- every other studio-world helper here takes it
+ * first, and a future per-world default (e.g. a distinct fake yt-dlp fixture) would slot in without
+ * breaking callers. */
+export function studioEnv(world: LibraryWorld, extra: Record<string, string> = {}): Record<string, string> {
+  void world;
+  return { FAKE_YTDLP: "1", ...extra };
+}
+
+/** Channel `library request create --json`, returning the new request's id. Mirrors the CLI's own option
+ * names (`--source-hint`, `--voice`, `--duration`) one-to-one so a caller reads like the command it drives.
+ * `duration` defaults to `[1, 60]` (comfortably wide for the few-second samples these worlds cut from) --
+ * the `assemble` stage's `brief-duration` required check (workflows/library-production@{1.0.0,1.1.0}) skips
+ * without a `target_duration_seconds` on the request, and a skipped *required* check fails the stage just
+ * like an outright `fail` would (AGENTS.md: "skip không phải là pass"), so every request an autopilot test
+ * expects to reach `assemble` needs one. */
+export function requestCreate(world: LibraryWorld, o: { topic: string; style: string; sourceHint?: string; voice?: string; duration?: [number, number] }): string {
+  const [min, max] = o.duration ?? [1, 60];
+  const args = ["library", "request", "create", "--portfolio", "portfolio-channel", "--channel", "channel-one", "--topic", o.topic, "--style", o.style, "--duration", `${min},${max}`, "--json"];
+  if (o.sourceHint) args.push("--source-hint", o.sourceHint);
+  if (o.voice) args.push("--voice", o.voice);
+  const r = cli(world.channel, args);
+  if (r.code !== 0) throw new Error(`library request create failed: ${r.err}\n${r.out}`);
+  return (JSON.parse(r.out) as ContentRequest).request_id;
+}
+
+/** The request exactly as the kho file has it (not the studio's DB mirror, which only reflects the last
+ * `library sync`/auto-sync poll) -- `reopenRequest`/`fulfillRequest`/`claimRequest` all write straight
+ * through to this file, so reading it is always current regardless of sync cadence. */
+export function requestStatus(world: LibraryWorld, requestId: string): ContentRequest {
+  return JSON.parse(readFileSync(join(world.lib, "requests", `${requestId}.json`), "utf8")) as ContentRequest;
+}
+
+/** Drives the studio autopilot loop: `worker --once` (env defaulting through `studioEnv`) up to `max` times,
+ * stopping as soon as `pred()` is true. Unlike `drain()` (which stops at the first "idle" result), a single
+ * "idle" poll here may have just silently planned a *new* run via auto-accept -- its first stage only gets
+ * claimed on the *next* call -- so this keeps polling on a domain predicate instead of the worker's own
+ * idle/busy signal. Does not throw when `max` is exhausted without `pred()` going true: the caller's own
+ * `expect` on whatever `pred` was checking gives a far more useful failure than a generic timeout would. */
+export function studioWorkerUntil(world: LibraryWorld, pred: () => boolean, max = 60, env: Record<string, string> = {}): void {
+  for (let i = 0; i < max && !pred(); i++) cli(world.studio, ["worker", "--once"], studioEnv(world, env));
+}
+
+/** Rewrites the studio project's `library.auto_accept.max_replans` in place (acceptance 28: forcing the
+ * replan budget down to exercise the "exhausted" skip reason / `request_stuck` dashboard alert without
+ * waiting for the default of 2). */
+export function setMaxReplans(project: string, maxReplans: number): void {
+  const path = join(project, "project.yaml");
+  const cfg = parse(readFileSync(path, "utf8")) as { library: { auto_accept?: { max_replans: number } } };
+  if (!cfg.library.auto_accept) throw new Error(`${path}: library.auto_accept is not set (need freshLibraryWorld({ autopilot: true }))`);
+  cfg.library.auto_accept.max_replans = maxReplans;
+  writeFileSync(path, stringify(cfg));
 }

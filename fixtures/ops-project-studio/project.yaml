@@ -9,5 +9,22 @@ resources: { cpu: 2, gpu: 1 }
 source: { materialize: link }
 # `root` is the shared kho folder this machine has mounted; tests override it with a temp directory
 # (see `freshLibraryWorld()` in tests/integration/library-helpers.ts) and `./library` is git-ignored.
-library: { root: ./library, role: studio, sync_seconds: 10 }
-workflows: [style-study@1.0.0, library-production@1.0.0]
+# `auto_accept` turns on the studio autopilot loop (sub-project 4 spec §5): a fulfilled channel request is
+# claimed and run without a human triggering it, as long as the worker keeps polling (`worker --once`).
+library:
+  root: ./library
+  role: studio
+  sync_seconds: 10
+  auto_accept: { enabled: true, source_collection: main, max_replans: 2, max_concurrent_runs: 1 }
+# "node" / "../fake-agent-cli.mjs" only resolve correctly from *this* fixture directory; tests rewrite both
+# to absolute paths (argv[0] -> process.execPath) before writing project.yaml into a temp project -- see
+# `freshLibraryWorld({ autopilot: true })` in tests/integration/library-helpers.ts (mirrors
+# ops-project-channel/project.yaml's own adapters.agent_argv comment).
+adapters:
+  agent: cli
+  agent_argv: [node, ../fake-agent-cli.mjs, "{prompt}"]
+# Both the 1.0.0 (gate-based, sub-project 2C) and 1.1.0 (agent-based, sub-project 4) releases stay listed so
+# `doctor` scopes both -- tests/integration/library-pipeline.test.ts still runs library-production@1.0.0
+# against this same fixture (profile studio revision 2's workflow_release is 1.1.0, but --workflow can
+# always name an older release explicitly; see acceptance 32).
+workflows: [style-study@1.0.0, style-study@1.1.0, library-production@1.0.0, library-production@1.1.0]
