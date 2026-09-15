@@ -4,6 +4,7 @@ import type { LoadedWorkflow } from "../orchestration/registry.js";
 import type { SourceCatalog } from "../source-catalog/catalog.js";
 import { isTerminal } from "../state/transitions.js";
 import type { LibraryFs } from "./files.js";
+import { startPlannedRun } from "./start-run.js";
 
 /** `project.yaml`'s `library.auto_accept` (spec: sub-project 4). */
 export interface AutoAcceptConfig { enabled: boolean; source_collection: string; max_replans: number; max_concurrent_runs: number }
@@ -217,19 +218,19 @@ export async function autoAccept(d: AutoAcceptDeps): Promise<AutoAcceptReport> {
       // polls, and this same request would be retried (and fail) every poll from then on (fix-round-1 #3).
       store.transaction(() => {
         const content = d.catalog.createContent({ source_ids: [source.source_id], title: request.topic, library_brief: libraryBrief });
-        const { variant } = d.catalog.getOrCreateVariant({ content_id: content.content_id, profile: d.profile, options: { voice: request.voice } });
-        const run = d.planner.plan({
-          workflow: d.workflows(d.profile.workflow_release), profile: d.profile, harness: d.harness, projectId: d.projectId, portfolioId,
-          runOverrides: {}, executorVersionFor: d.executorVersionFor, content, variant,
-          ...(d.requiresResourcesOverride ? { requiresResourcesOverride: d.requiresResourcesOverride } : {}),
-        });
-        d.planner.enqueue(run.run_id);
-        store.appendEvent({
-          run_id: run.run_id, stage_run_id: null, attempt_id: null, project_id: d.projectId, portfolio_id: portfolioId, channel_id: null,
-          content_id: content.content_id, variant_id: variant.variant_id, workflow_release: d.profile.workflow_release,
-          severity: "info", event_type: "request.auto_accepted",
-          payload: { request_id: request.request_id, run_id: run.run_id, replan_no: replanNo, source_id: source.source_id },
-        });
+        const run = startPlannedRun(
+          {
+            store, catalog: d.catalog, planner: d.planner, harness: d.harness, projectId: d.projectId, portfolioId, profile: d.profile,
+            workflows: d.workflows, executorVersionFor: d.executorVersionFor,
+            ...(d.requiresResourcesOverride ? { requiresResourcesOverride: d.requiresResourcesOverride } : {}),
+          },
+          content,
+          {
+            event_type: "request.auto_accepted", channel_id: null,
+            payload: (runId) => ({ request_id: request.request_id, run_id: runId, replan_no: replanNo, source_id: source.source_id }),
+          },
+          { voice: request.voice },
+        );
         report.accepted.push({ request_id: request.request_id, run_id: run.run_id, replan_no: replanNo, source_id: source.source_id });
         activeRequestIds.add(request.request_id);
         activeCount++;

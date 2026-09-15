@@ -66,8 +66,9 @@ export interface CollectReport {
  * brief's dedup rule calls for (an old blocked/failing event must eventually be re-raised). `listEvents({
  * newest: true })` orders `occurred_at DESC` and then reverses the page before returning it, so the array
  * comes back OLDEST-first within the newest-1000 window -- `.find` would grab the earliest match and dedupe
- * forever after the first 24h; the last matching element is the actually-newest one. */
-function recentlyEmitted(store: StateStore, eventType: string, now: string, matches: (payload: Record<string, unknown>) => boolean): boolean {
+ * forever after the first 24h; the last matching element is the actually-newest one. Exported: `planning.ts`'s
+ * `channel.planning_failed` cooldown check reuses this exact logic rather than duplicating it. */
+export function recentlyEmitted(store: StateStore, eventType: string, now: string, matches: (payload: Record<string, unknown>) => boolean): boolean {
   const latest = store.listEvents({ event_type: eventType, newest: true }).filter((e) => matches(e.payload)).at(-1);
   if (!latest) return false;
   return Date.parse(now) - Date.parse(latest.occurred_at) < 24 * 3_600_000;

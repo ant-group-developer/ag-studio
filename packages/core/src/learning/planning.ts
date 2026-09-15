@@ -4,12 +4,14 @@ import {
   type ProductionProfile, type Run, type StateStore,
 } from "@harness/contracts";
 import type { AutoAcceptLogger } from "../library/auto-accept.js";
+import { startPlannedRun } from "../library/start-run.js";
 import type { Planner } from "../orchestration/planner.js";
 import type { LoadedWorkflow } from "../orchestration/registry.js";
 import type { SourceCatalog } from "../source-catalog/catalog.js";
 import { nextSlot, type SlotPolicy } from "../distribution/publication.js";
 import type { LoadedChannel } from "../distribution/channels.js";
 import { isTerminal } from "../state/transitions.js";
+import { recentlyEmitted } from "./metrics.js";
 
 function slotPolicyOf(channel: LoadedChannel): SlotPolicy {
   const p = channel.config.publication;
@@ -48,10 +50,18 @@ export function channelDemand(d: {
     .map((j) => j.scheduled_at ?? j.published_at)
     .filter((t): t is string => t != null);
 
+  // `nextSlot` throws CONFIG_INVALID when no free slot exists within its own 60-day search window (an
+  // exceptionally packed publish policy) -- channelDemand must never throw for that, so a channel simply gets
+  // fewer slots (and therefore less computed demand) instead of blowing up the caller.
   const slots: string[] = [];
   const takenForSlots = [...taken];
   for (let i = 0; i < d.channel.config.planning.lookahead_slots; i++) {
-    const slot = nextSlot(policy, takenForSlots, now);
+    let slot: string;
+    try {
+      slot = nextSlot(policy, takenForSlots, now);
+    } catch {
+      break;
+    }
     slots.push(slot);
     takenForSlots.push(slot);
   }
@@ -61,12 +71,18 @@ export function channelDemand(d: {
 
   const requestsOfChannel = [...d.store.listContentRequests({ status: "open" }), ...d.store.listContentRequests({ status: "claimed" })]
     .filter((r) => r.requested_by.channel_id === channelId);
-  const requestIdsOfChannel = new Set(requestsOfChannel.map((r) => r.request_id));
 
+  // An approved item carrying a request_id counts as covered by matching that request's *owning channel*, not
+  // by the request's current status: `applyReview` moves a request to `fulfilled` the moment its item is
+  // approved (`fulfillRequest`), so by the time an item can even be `approved` its own originating request has
+  // almost always already left open|claimed -- restricting to open|claimed here would miss nearly every
+  // request-targeted approved item and inflate `needed`. `requestsCovered`/`open_requests` below stay scoped
+  // to open|claimed on purpose: those count requests the studio is still actively working, not items already
+  // sitting in the kho.
   const itemsCovered = d.libraryItems.filter((item) => {
     if (item.status !== "approved") return false;
     if (d.libraryClaimsOf(item.item_id).some((c) => c.channel_id === channelId)) return false;
-    if (item.request_id) return requestIdsOfChannel.has(item.request_id);
+    if (item.request_id) return d.store.getContentRequest(item.request_id)?.requested_by.channel_id === channelId;
     return true;
   }).length;
 
@@ -107,15 +123,6 @@ function utcDate(iso: string): string {
   return iso.slice(0, 10);
 }
 
-/** Newest event of `eventType` matching `matches`, true when it landed within 24h of `now`. Mirrors
- * `collectStats`'s `recentlyEmitted` (learning/metrics.ts): `listEvents({ event_type, newest: true })` comes
- * back oldest-first within its newest-1000 window, so the actually-newest match is the array's last element. */
-function recentlyEmitted(store: StateStore, eventType: string, now: string, matches: (payload: Record<string, unknown>) => boolean): boolean {
-  const latest = store.listEvents({ event_type: eventType, newest: true }).filter((e) => matches(e.payload)).at(-1);
-  if (!latest) return false;
-  return Date.parse(now) - Date.parse(latest.occurred_at) < 24 * 3_600_000;
-}
-
 /** Same-day (UTC) dedup for `channel.planning_skipped`: a reason already emitted for this channel today is
  * not re-emitted every poll. */
 function skippedAlreadyEmittedToday(store: StateStore, channelId: string, reason: string, now: string): boolean {
@@ -125,57 +132,67 @@ function skippedAlreadyEmittedToday(store: StateStore, channelId: string, reason
 }
 
 /**
- * Starts a `channel-planning` run when the channel needs more episodes queued (spec §4.3). Never throws: a
- * `planner.plan`/`enqueue` failure inside the transaction is caught, the transaction rolled back, and a
- * `channel.planning_failed` event recorded outside it -- the failure itself puts the channel into a 24h
- * cooldown via `recentlyEmitted` on the next call.
+ * Starts a `channel-planning` run when the channel needs more episodes queued (spec §4.3). Never throws: every
+ * read (including `channelDemand` itself) and the whole plan/enqueue transaction are covered by one `try`, so
+ * any failure -- inside or outside the transaction -- is caught, logged, and recorded as `channel.planning_failed`
+ * outside the (possibly rolled-back) transaction; the failure itself puts the channel into a 24h cooldown via
+ * `recentlyEmitted` on the next call.
  */
 export async function planRequestsRun(d: PlanRequestsDeps): Promise<{ started?: { run_id: string; needed: number }; skipped?: PlanRequestsSkipReason }> {
   const { store } = d;
   const channelId = d.channel.config.channel_id;
   const now = d.clock.now();
 
-  const demand = channelDemand({ store, clock: d.clock, channel: d.channel, libraryItems: d.libraryItems, libraryClaimsOf: d.libraryClaimsOf });
-
-  if (!planningNeeded(demand)) {
-    const reason: PlanRequestsSkipReason = demand.needed <= 0 ? "covered" : "open-cap";
-    if (!skippedAlreadyEmittedToday(store, channelId, reason, now)) {
-      store.appendEvent({
-        run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null, channel_id: channelId,
-        content_id: null, variant_id: null, workflow_release: null, severity: "info", event_type: "channel.planning_skipped",
-        payload: { channel_id: channelId, reason },
-      });
-    }
-    return { skipped: reason };
-  }
-
-  const titlePrefix = `planning ${channelId}`;
-  const runActive = store.listRuns({}).some((run) => {
-    if (isTerminal("run", run.state)) return false;
-    if (!run.content_id) return false;
-    const content = store.getContentItem(run.content_id);
-    return content?.title.startsWith(titlePrefix) ?? false;
-  });
-  if (runActive) return { skipped: "run-active" };
-
-  if (recentlyEmitted(store, "channel.planning_failed", now, (payload) => payload.channel_id === channelId)) {
-    return { skipped: "cooldown" };
-  }
-
   try {
+    const demand = channelDemand({ store, clock: d.clock, channel: d.channel, libraryItems: d.libraryItems, libraryClaimsOf: d.libraryClaimsOf });
+
+    if (!planningNeeded(demand)) {
+      const reason: PlanRequestsSkipReason = demand.needed <= 0 ? "covered" : "open-cap";
+      if (!skippedAlreadyEmittedToday(store, channelId, reason, now)) {
+        store.appendEvent({
+          run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null, channel_id: channelId,
+          content_id: null, variant_id: null, workflow_release: null, severity: "info", event_type: "channel.planning_skipped",
+          payload: { channel_id: channelId, reason },
+        });
+      }
+      return { skipped: reason };
+    }
+
+    // Anchored with a trailing space so a sibling channel id that is a string-prefix of this one (e.g.
+    // "channel-a" vs "channel-a-shorts") can never match; also requires the run to actually be the
+    // `channel-planning` workflow, not merely a run whose content happens to share the title convention.
+    // Any *non-terminal* such run blocks a new one outright (still working); a *terminal* one blocks only for
+    // the rest of today (`content.title` embeds `utcDate(now)`) -- a planning run that finished (successfully
+    // or not) without covering demand must not be retried every poll for the rest of the day.
+    const titlePrefix = `planning ${channelId} `;
+    const todayTitle = `${titlePrefix}${utcDate(now)}`;
+    const runActive = store.listRuns({}).some((run) => {
+      if (run.workflow_release.id !== "channel-planning") return false;
+      if (!run.content_id) return false;
+      const content = store.getContentItem(run.content_id);
+      if (!content?.title.startsWith(titlePrefix)) return false;
+      if (!isTerminal("run", run.state)) return true;
+      return content.title === todayTitle;
+    });
+    if (runActive) return { skipped: "run-active" };
+
+    if (recentlyEmitted(store, "channel.planning_failed", now, (payload) => payload.channel_id === channelId)) {
+      return { skipped: "cooldown" };
+    }
+
     const runId = store.transaction(() => {
-      const content = d.catalog.createContent({ source_ids: [], title: `${titlePrefix} ${utcDate(now)}`, library_channel_id: channelId });
-      const { variant } = d.catalog.getOrCreateVariant({ content_id: content.content_id, profile: d.profile, options: {} });
-      const run = d.planner.plan({
-        workflow: d.workflows(d.profile.workflow_release), profile: d.profile, harness: d.harness, projectId: d.projectId,
-        portfolioId: d.portfolioId, runOverrides: {}, executorVersionFor: d.executorVersionFor, content, variant,
-      });
-      d.planner.enqueue(run.run_id);
-      store.appendEvent({
-        run_id: run.run_id, stage_run_id: null, attempt_id: null, project_id: d.projectId, portfolio_id: d.portfolioId,
-        channel_id: channelId, content_id: content.content_id, variant_id: variant.variant_id, workflow_release: d.profile.workflow_release,
-        severity: "info", event_type: "channel.planning_started", payload: { channel_id: channelId, needed: demand.needed, run_id: run.run_id },
-      });
+      const content = d.catalog.createContent({ source_ids: [], title: todayTitle, library_channel_id: channelId });
+      const run = startPlannedRun(
+        {
+          store, catalog: d.catalog, planner: d.planner, harness: d.harness, projectId: d.projectId, portfolioId: d.portfolioId,
+          profile: d.profile, workflows: d.workflows, executorVersionFor: d.executorVersionFor,
+        },
+        content,
+        {
+          event_type: "channel.planning_started", channel_id: channelId,
+          payload: (runId) => ({ channel_id: channelId, needed: demand.needed, run_id: runId }),
+        },
+      );
       return run.run_id;
     });
     return { started: { run_id: runId, needed: demand.needed } };

@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { newId, type ContentRequest, type Demand, type PublicationJob } from "@harness/contracts";
+import { newId, type ContentRequest, type Demand, type PublicationJob, type Run } from "@harness/contracts";
 import {
   channelDemand, HARNESS_ROOT, LibraryFs, loadHarnessConfig, loadWorkflow, NullMediaProber, planningNeeded, planRequestsRun,
   Planner, SourceCatalog, type PlanRequestsDeps,
@@ -76,15 +76,42 @@ describe("channelDemand", () => {
     expect(demand.open_requests).toBe(1);
   });
 
+  it("an approved item carrying this channel's own request_id counts as covered even after the request is fulfilled", () => {
+    const { store, clock } = openTempStore(T0);
+    const channel = makeChannel({ planning: { lookahead_slots: 3 } });
+    // realistic case: by the time an item is `approved`, its originating request has almost always already
+    // moved to `fulfilled` (applyReview -> fulfillRequest) -- coverage must key off the owning channel, not
+    // the request's current status.
+    const ownRequest = makeOpenRequest(store, { status: "fulfilled" });
+    const item = makeLibraryItem({ status: "approved", request_id: ownRequest.request_id });
+
+    const demand = channelDemand({ store, clock, channel, libraryItems: [item], libraryClaimsOf: () => [] });
+    expect(demand.covered.items).toBe(1);
+    expect(demand.needed).toBe(2);
+  });
+
   it("an approved item carrying another channel's request_id does not count as covered", () => {
     const { store, clock } = openTempStore(T0);
     const channel = makeChannel({ planning: { lookahead_slots: 3 } });
-    const otherChannelRequest = makeOpenRequest(store, { channel_id: "channel-b" });
+    const otherChannelRequest = makeOpenRequest(store, { channel_id: "channel-b", status: "fulfilled" });
     const item = makeLibraryItem({ status: "approved", request_id: otherChannelRequest.request_id });
 
     const demand = channelDemand({ store, clock, channel, libraryItems: [item], libraryClaimsOf: () => [] });
     expect(demand.covered.items).toBe(0);
     expect(demand.needed).toBe(3);
+  });
+
+  it("channelDemand returns fewer slots instead of throwing when nextSlot cannot find one within its own search window", () => {
+    const { store, clock } = openTempStore(T0);
+    const channel = makeChannel({
+      planning: { lookahead_slots: 5 },
+      publication: { max_daily_uploads: 1, min_gap_hours: 100_000 }, // no second slot exists within 60 days
+    });
+
+    let demand: Demand | undefined;
+    expect(() => { demand = channelDemand({ store, clock, channel, libraryItems: [], libraryClaimsOf: () => [] }); }).not.toThrow();
+    expect(demand!.slots.length).toBeGreaterThan(0);
+    expect(demand!.slots.length).toBeLessThan(5);
   });
 
   it("an approved item already claimed by this channel does not count as covered", () => {
@@ -141,6 +168,43 @@ describe("planRequestsRun", () => {
 
     const second = await planRequestsRun(depsFor(w, channel));
     expect(second.skipped).toBe("run-active");
+  });
+
+  it("does not treat a sibling channel whose id is a string-prefix of this one's as having an active run", async () => {
+    const w = world();
+    const channel = makeChannel({ planning: { lookahead_slots: 1 } });
+    const siblingId = "channel-a-shorts"; // "channel-a" is a string-prefix of this
+    const content = w.catalog.createContent({ source_ids: [], title: `planning ${siblingId} 2026-09-11`, library_channel_id: siblingId });
+    const siblingRun: Run = {
+      schema_version: "harness.run/v1", run_id: newId("run"), project_id: "project-a", portfolio_id: "portfolio-main",
+      workflow_release: { id: "channel-planning", version: "1.0.0", digest: "sha256:" + "b".repeat(64) }, profile_snapshot: { id: "channel-planning", revision: 1 },
+      content_id: content.content_id, options: {}, state: "READY", effective_config_snapshot: {}, effective_config_digest: "sha256:" + "b".repeat(64),
+      total_cost_usd: 0, created_at: T0, updated_at: T0,
+    };
+    w.store.insertRun(siblingRun);
+
+    const result = await planRequestsRun(depsFor(w, channel));
+    expect(result.started).toBeDefined();
+  });
+
+  it("skips run-active for the rest of the day after a channel-planning run for this channel finished, then starts the next day", async () => {
+    const w = world();
+    const channel = makeChannel({ planning: { lookahead_slots: 1 } });
+    const content = w.catalog.createContent({ source_ids: [], title: `planning channel-a ${T0.slice(0, 10)}`, library_channel_id: "channel-a" });
+    const finishedRun: Run = {
+      schema_version: "harness.run/v1", run_id: newId("run"), project_id: "project-a", portfolio_id: "portfolio-main",
+      workflow_release: { id: "channel-planning", version: "1.0.0", digest: "sha256:" + "c".repeat(64) }, profile_snapshot: { id: "channel-planning", revision: 1 },
+      content_id: content.content_id, options: {}, state: "SUCCEEDED", effective_config_snapshot: {}, effective_config_digest: "sha256:" + "c".repeat(64),
+      total_cost_usd: 0, created_at: T0, updated_at: T0,
+    };
+    w.store.insertRun(finishedRun);
+
+    const sameDay = await planRequestsRun(depsFor(w, channel));
+    expect(sameDay.skipped).toBe("run-active");
+
+    w.clock.advance(24 * 3600);
+    const nextDay = await planRequestsRun(depsFor(w, channel));
+    expect(nextDay.started).toBeDefined();
   });
 
   it("skips open-cap and dedups the channel.planning_skipped event within the same UTC day", async () => {

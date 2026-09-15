@@ -65,10 +65,22 @@ describe("autoPick", () => {
     expect(result.picked!.item_id).toBe(targeted.item_id);
   });
 
-  it("only considers an untargeted item when the channel still has open demand", async () => {
+  it("picks an untargeted item when there is an unfilled slot not covered by jobs/runs/requests", async () => {
     const w = world();
     const channel = makeChannel({ planning: { lookahead_slots: 1 } });
-    // fully covered: a SCHEDULED job takes the one lookahead slot
+    // nothing at all covers the one lookahead slot except the untargeted item itself -- picking it is exactly
+    // what should turn that "covered on paper" (demand.covered.items) into a real claim, not block it.
+    const untargeted = seedItem(w);
+
+    const result = await autoPick(depsFor(w, channel, [untargeted]));
+    expect(result.picked).toBeDefined();
+    expect(result.picked!.item_id).toBe(untargeted.item_id);
+  });
+
+  it("does not pick when there is no untargeted item to offer and jobs/runs/requests already cover all slots", async () => {
+    const w = world();
+    const channel = makeChannel({ planning: { lookahead_slots: 1 } });
+    // fully covered: a SCHEDULED job takes the one lookahead slot, and there is no untargeted item at all
     const job = {
       schema_version: "harness.publication-job/v1" as const, publication_job_id: newId("publication_job"), package_id: newId("channel_package"),
       idempotency_key: "sha256:" + "7".repeat(64), state: "SCHEDULED" as const, youtube_video_id: null, receipt: null,
@@ -76,9 +88,8 @@ describe("autoPick", () => {
       operation_id: null, scheduled_at: "2026-09-12T13:00:00.000Z", published_at: null, last_verified_at: null, note: null,
     };
     w.store.insertPublicationJob(job);
-    const untargeted = seedItem(w);
 
-    const result = await autoPick(depsFor(w, channel, [untargeted]));
+    const result = await autoPick(depsFor(w, channel, []));
     expect(result.skipped).toBe("no-candidate");
   });
 
@@ -132,5 +143,26 @@ describe("autoPick", () => {
     const events = w.store.listEvents({ event_type: "channel.auto_picked" });
     expect(events).toHaveLength(1);
     expect(events[0]!.payload).toMatchObject({ channel_id: "channel-a", item_id: item.item_id, run_id: result.picked!.run_id });
+  });
+
+  it("removes the claim file it wrote when planning fails after claimItem already committed it, so the item can be picked again", async () => {
+    const w = world();
+    const channel = makeChannel({ planning: { lookahead_slots: 3 } });
+    const item = seedItem(w);
+    const failingDeps = { ...depsFor(w, channel, [item]), workflows: () => { throw new Error("no such workflow"); } };
+
+    const first = await autoPick(failingDeps);
+    expect(first.skipped).toBe("pick-failed");
+    expect(w.channelFs.listClaims(item.item_id)).toEqual([]);
+    expect(w.store.listContentItems()).toEqual([]);
+    const failedEvents = w.store.listEvents({ event_type: "channel.auto_pick_failed" });
+    expect(failedEvents).toHaveLength(1);
+    expect(failedEvents[0]!.payload).toMatchObject({ channel_id: "channel-a", item_id: item.item_id });
+
+    // the item is not permanently hidden behind an orphaned claim file: a later call with working deps picks it
+    const second = await autoPick(depsFor(w, channel, [item]));
+    expect(second.picked).toBeDefined();
+    expect(second.picked!.item_id).toBe(item.item_id);
+    expect(w.channelFs.listClaims(item.item_id).map((c) => c.channel_id)).toEqual(["channel-a"]);
   });
 });
