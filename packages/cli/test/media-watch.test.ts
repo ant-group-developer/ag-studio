@@ -205,6 +205,39 @@ describe.skipIf(!hasFfmpeg())("harness media watch", () => {
     for (const f of watchIndex.videos[0]!.frames) expect(existsSync(join(workspaceDir, "output", "watch", f.file))).toBe(true);
   });
 
+  // Final-review finding I-3: one entry whose recorded path no longer resolves here used to drag every other
+  // sample down to the frames-only fallback (no fresh frames, no contact sheets for any of them).
+  it("mode samples: mixes per entry -- a resolvable clip is re-watched while an unresolvable one keeps its old frames", async () => {
+    const project = freshProject();
+    const runId = planRun(project);
+    const samplesDir = mkdtempSync(join(tmpdir(), "samples-mixed-"));
+    makeVideo(join(samplesDir, "dl-0.mp4"), { seconds: 4 });
+    for (const name of ["1-start.png", "1-mid.png", "1-end.png"]) writeFileSync(join(samplesDir, name), `fake png ${name}`);
+    writeFileSync(join(samplesDir, "samples.json"), JSON.stringify([
+      { index: 0, label: "s0", path: "dl-0.mp4" },
+      { index: 1, label: "s1", path: "/no/such/local/video.mp4", frames: ["1-start.png", "1-mid.png", "1-end.png"] },
+    ], null, 2));
+
+    const { result, workspaceDir } = await invokeWatch(project, runId, "samples", [
+      { type: "sample_set", relPath: "input/samples", kind: "directory", src: samplesDir },
+    ]);
+    expect(result.outcome, JSON.stringify(result)).toBe("succeeded");
+
+    const watchIndex = JSON.parse(readFileSync(join(workspaceDir, "output", "watch", "watch.json"), "utf8")) as
+      { videos: { label: string; duration_seconds: number; frames: { file: string }[]; sheets: string[] }[] };
+    expect(watchIndex.videos.map((v) => v.label).sort()).toEqual(["s0", "s1"]);
+
+    const watched = watchIndex.videos.find((v) => v.label === "s0")!;
+    expect(watched.duration_seconds).toBeGreaterThan(0);
+    expect(watched.frames.length).toBeGreaterThan(0);
+    expect(watched.sheets.length).toBeGreaterThan(0);
+    for (const f of watched.frames) expect(existsSync(join(workspaceDir, "output", "watch", f.file))).toBe(true);
+
+    const fallback = watchIndex.videos.find((v) => v.label === "s1")!;
+    expect(fallback.frames).toHaveLength(3);
+    expect(fallback.sheets).toEqual([]);
+  });
+
   it("transcribe hook: scripts.yaml declares a transcribe script, and the transcript comes back with segments", async () => {
     const project = freshProject();
     declareTranscribeScript(project);

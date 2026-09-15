@@ -72,9 +72,13 @@ describe.skipIf(!hasFfmpeg())("collect-samples wrapper", () => {
 
     expect(samples[0]!.label).toBe("s0");
     expect(samples[0]!.url).toBe("https://example.com/video1");
-    expect(existsSync(samples[0]!.path)).toBe(true);
+    // a downloaded clip is recorded relative to the samples dir: the workspace path it has right now is gone
+    // once the harness renames `output/samples` into `artifacts/` (final-review finding I-3)
+    expect(samples[0]!.path).toBe("dl-0.mp4");
+    expect(existsSync(join(ws, "output", "samples", samples[0]!.path))).toBe(true);
     expect(samples[0]!.frames).toHaveLength(3);
 
+    // a local file the wrapper never copied stays absolute -- it lives outside the workspace and stays valid
     expect(samples[1]!.label).toBe("s1");
     expect(samples[1]!.url).toBeUndefined();
     expect(samples[1]!.path).toBe(localVideo);

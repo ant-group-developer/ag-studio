@@ -30,6 +30,14 @@ export interface WatchVideoInput {
 
 export type WatchLogFn = (level: "info" | "warn", msg: string, data?: Record<string, unknown>) => void;
 
+/** A video whose frames are already on disk (the `collect-samples` shape: one still per mark, no ffmpeg). */
+export interface PreExtractedVideo {
+  label: string;
+  source_path: string;
+  /** Absolute paths of the already-extracted frames, in time order. */
+  frames: string[];
+}
+
 export interface WatchDeps {
   prober: MediaProber;
   /** ffmpeg binary name/path; defaults to "ffmpeg" on PATH. */
@@ -250,13 +258,41 @@ function runTranscribe(
   }
 }
 
+/** One frame per second (t = index), kind "interval", no contact sheets, no transcript -- the shape a
+ * caller can build without ffmpeg from frames some earlier stage already extracted. */
+function preExtractedVideos(outDir: string, groups: PreExtractedVideo[]): WatchVideo[] {
+  return groups.map((g) => ({
+    label: g.label,
+    source_path: g.source_path,
+    duration_seconds: g.frames.length,
+    media: null,
+    frames: g.frames.map((f, i) => ({ t: i, file: relOut(outDir, f), kind: "interval" as const })),
+    sheets: [],
+    transcript: null,
+  }));
+}
+
+/** Validate + write `<outDir>/watch.json`; the single place both entry points below produce the file. */
+function writeWatchIndex(outDir: string, mode: WatchMode, videos: WatchVideo[]): WatchIndex {
+  const index = WatchIndexSchema.parse({ schema_version: "harness.watch/v1", mode, videos });
+  mkdirSync(outDir, { recursive: true });
+  writeFileSync(join(outDir, "watch.json"), JSON.stringify(index, null, 2));
+  return index;
+}
+
 /**
  * For each video: probe (media, duration) -> pick frame times (scene + interval) -> extract frames with
  * ffmpeg -> group into contact sheets -> optionally run the transcribe hook -> validate and write
  * `<outDir>/watch.json`. Never throws out of the transcribe step; a failed/timed-out/malformed transcript
  * always degrades to `transcript: null` + `transcript_error`.
+ *
+ * `preExtracted` (optional) are videos this machine cannot re-watch -- a sample whose recorded path no longer
+ * exists here -- carried into the same index from frames an earlier stage already wrote, so one unresolvable
+ * entry no longer forces the whole set down to the frames-only path (final-review finding I-3). They are
+ * appended after the freshly watched videos, so `videos[]` order follows the argument order of each group,
+ * not the caller's original interleaving.
  */
-export async function watchVideos(d: WatchDeps, o: WatchOptions, videos: WatchVideoInput[]): Promise<WatchIndex> {
+export async function watchVideos(d: WatchDeps, o: WatchOptions, videos: WatchVideoInput[], preExtracted: PreExtractedVideo[] = []): Promise<WatchIndex> {
   const ffmpeg = d.ffmpeg ?? "ffmpeg";
   const log = d.log ?? noopLog;
   const defaults = WATCH_DEFAULTS[o.mode];
@@ -318,10 +354,7 @@ export async function watchVideos(d: WatchDeps, o: WatchOptions, videos: WatchVi
     });
   }
 
-  const index = WatchIndexSchema.parse({ schema_version: "harness.watch/v1", mode: o.mode, videos: outVideos });
-  mkdirSync(o.outDir, { recursive: true });
-  writeFileSync(join(o.outDir, "watch.json"), JSON.stringify(index, null, 2));
-  return index;
+  return writeWatchIndex(o.outDir, o.mode, [...outVideos, ...preExtractedVideos(o.outDir, preExtracted)]);
 }
 
 /**
@@ -329,21 +362,6 @@ export async function watchVideos(d: WatchDeps, o: WatchOptions, videos: WatchVi
  * one frame per second (t = index), kind "interval", no contact sheets, no transcript. Writes
  * `<outDir>/watch.json` the same way `watchVideos` does, for a consistent downstream contract.
  */
-export function watchFromExistingFrames(
-  o: { mode: "samples"; outDir: string },
-  groups: { label: string; source_path: string; frames: string[] }[],
-): WatchIndex {
-  const videos: WatchVideo[] = groups.map((g) => ({
-    label: g.label,
-    source_path: g.source_path,
-    duration_seconds: g.frames.length,
-    media: null,
-    frames: g.frames.map((f, i) => ({ t: i, file: relOut(o.outDir, f), kind: "interval" as const })),
-    sheets: [],
-    transcript: null,
-  }));
-  const index = WatchIndexSchema.parse({ schema_version: "harness.watch/v1", mode: o.mode, videos });
-  mkdirSync(o.outDir, { recursive: true });
-  writeFileSync(join(o.outDir, "watch.json"), JSON.stringify(index, null, 2));
-  return index;
+export function watchFromExistingFrames(o: { mode: "samples"; outDir: string }, groups: PreExtractedVideo[]): WatchIndex {
+  return writeWatchIndex(o.outDir, o.mode, preExtractedVideos(o.outDir, groups));
 }

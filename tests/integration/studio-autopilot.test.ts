@@ -29,7 +29,7 @@ function artifactFor(project: string, runId: string, stageKey: string, type: str
   return found!;
 }
 
-interface WatchIndexLike { videos: { label: string; frames: { t: number; kind: string }[] }[] }
+interface WatchIndexLike { videos: { label: string; frames: { t: number; kind: string }[]; sheets: string[] }[] }
 
 describe.skipIf(!hasFfmpeg())("studio autopilot: style-study@1.1.0 and library-production@1.1.0 with no human at the studio", () => {
   it("collects+learns a style end to end, then fulfills a channel request into an approved item using only worker --once at the studio", async () => {
@@ -66,11 +66,17 @@ describe.skipIf(!hasFfmpeg())("studio autopilot: style-study@1.1.0 and library-p
     expect(style.status).toBe("active");
     expect(style.style_id).toBe(styleId);
 
-    // watch-samples watched both videos (the local file and the faked download), each with real frames
+    // watch-samples watched both videos (the local file and the faked download) for real: fresh frames AND a
+    // contact sheet each. The downloaded clip used to be recorded with an absolute workspace path that no
+    // longer existed once the output dir was renamed into `artifacts/`, which dropped the whole set to the
+    // frames-only fallback -- no sheets at all for either sample (final-review finding I-3).
     const watchSamplesArtifact = artifactFor(world.studio, styleRunId, "watch-samples", "watch");
     const watchSamplesIndex = readJson<WatchIndexLike>(join(fileURLToPath(watchSamplesArtifact.uri), "watch.json"));
     expect(watchSamplesIndex.videos).toHaveLength(2);
-    for (const v of watchSamplesIndex.videos) expect(v.frames.length, v.label).toBeGreaterThan(0);
+    for (const v of watchSamplesIndex.videos) {
+      expect(v.frames.length, v.label).toBeGreaterThan(0);
+      expect(v.sheets.length, v.label).toBeGreaterThan(0);
+    }
 
     // ---- (2) a channel request, fulfilled with no studio command beyond worker --once from here on ----
     expect(librarySync(world.channel).imported.styles).toContain(styleId);

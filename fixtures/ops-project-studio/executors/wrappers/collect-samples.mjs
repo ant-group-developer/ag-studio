@@ -4,10 +4,17 @@
 // never need real network access or a real yt-dlp binary). Fake in the same sense as the footage wrappers
 // otherwise -- real frames, no analysis. The `_media.mjs` helpers are shared with the footage fixture
 // next door rather than duplicated.
+//
+// `samples.json.path` convention (read back by `harness media watch --mode samples`): a clip this wrapper
+// downloaded into `output/samples/` is recorded RELATIVE to that directory, because the harness renames the
+// output directory into `artifacts/` on commit -- an absolute workspace path would be dangling by the time
+// the watch stage reads it, and every URL sample would silently degrade to the frames-only fallback
+// (final-review finding I-3). A local file listed by path is left ABSOLUTE and is not copied: it lives
+// outside the workspace on the studio machine and stays valid there.
 import { start } from "@harness/script-sdk";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { ffmpeg, fileUrlToPath, probeDuration } from "../../../ops-project-footage/executors/wrappers/_media.mjs";
 
 const ctx = await start();
@@ -90,7 +97,9 @@ for (const [index, line] of lines.entries()) {
     ffmpeg(["-y", "-ss", String(at), "-i", path, "-frames:v", "1", join(samplesDir, name)]);
     frames.push(name);
   }
-  samples.push({ index, label, path, ...(isUrl ? { url: line } : {}), frames });
+  // downloaded clips live in `samplesDir` itself, so their basename is exactly the relative path the watch
+  // stage resolves against the materialized sample_set directory (see the header comment)
+  samples.push({ index, label, path: isUrl ? basename(path) : path, ...(isUrl ? { url: line } : {}), frames });
 }
 
 writeFileSync(join(samplesDir, "samples.json"), JSON.stringify(samples, null, 2) + "\n");

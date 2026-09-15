@@ -3,7 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import type { Command } from "commander";
 import { start, type ScriptContext } from "@harness/script-sdk";
 import { HarnessError, isHarnessError, type ScriptCommand, type WatchIndex } from "@harness/contracts";
-import { watchFromExistingFrames, watchVideos, type WatchDeps, type WatchVideoInput } from "@harness/core";
+import { watchFromExistingFrames, watchVideos, type PreExtractedVideo, type WatchDeps, type WatchVideoInput } from "@harness/core";
 import type { AppContext } from "../composition.js";
 import { withContext } from "./shared.js";
 
@@ -85,11 +85,13 @@ function parseSampleEntries(raw: unknown, samplesJsonPath: string): SampleEntry[
 }
 
 /**
- * `--mode samples`: reads `sample_set/samples.json`. When every listed `path` still resolves to a file on
- * this machine, re-extracts frames from the real videos via `watchVideos` (ffmpeg); otherwise (the studio
- * fixture's shape today -- `path` was only ever meaningful on the machine `collect-samples` ran on) falls
- * back to the frames `collect-samples` already extracted, via `watchFromExistingFrames`. `path`/`frames`
- * entries may be relative to the `sample_set` directory or absolute (task-3 brief).
+ * `--mode samples`: reads `sample_set/samples.json` and decides **per entry** (final-review finding I-3 --
+ * it used to be all-or-nothing, so one clip whose path no longer resolved dropped every other sample to the
+ * frames-only path, contact sheets and all). A `path` that still resolves to a file here is re-watched with
+ * ffmpeg via `watchVideos`; one that does not (a local reference recorded on another machine) falls back to
+ * the frames `collect-samples` already extracted. `path`/`frames` may be relative to the `sample_set`
+ * directory -- which is how a downloaded clip survives the workspace being renamed into `artifacts/` -- or
+ * absolute, for a local file the wrapper only referenced and never copied.
  */
 async function handleSamples(app: AppContext, sdk: ScriptContext, outDir: string): Promise<WatchIndex> {
   if (!sdk.hasInput("sample_set")) throw new HarnessError("CONFIG_INVALID", 'media watch --mode samples needs a "sample_set" input', {});
@@ -98,19 +100,18 @@ async function handleSamples(app: AppContext, sdk: ScriptContext, outDir: string
   if (!existsSync(samplesJsonPath)) throw new HarnessError("CONFIG_INVALID", `sample_set ${sampleSetDir} has no samples.json`, { dir: sampleSetDir });
   const entries = parseSampleEntries(readJsonFile(samplesJsonPath), samplesJsonPath);
 
-  const resolvedPaths = entries.map((e) => (isAbsolute(e.path) ? e.path : join(sampleSetDir, e.path)));
-  const allPathsExist = resolvedPaths.length > 0 && resolvedPaths.every((p) => existsSync(p));
+  const resolve1 = (p: string): string => (isAbsolute(p) ? p : join(sampleSetDir, p));
 
-  if (allPathsExist) {
-    const videos: WatchVideoInput[] = entries.map((e, i) => ({ label: e.label, path: resolvedPaths[i]! }));
-    return watchVideos(watchDepsFor(app, sdk), { mode: "samples", outDir }, videos);
+  const videos: WatchVideoInput[] = [];
+  const preExtracted: PreExtractedVideo[] = [];
+  for (const e of entries) {
+    const path = resolve1(e.path);
+    if (existsSync(path)) videos.push({ label: e.label, path });
+    else preExtracted.push({ label: e.label, source_path: e.path, frames: (e.frames ?? []).map(resolve1) });
   }
-  const groups = entries.map((e) => ({
-    label: e.label,
-    source_path: e.path,
-    frames: (e.frames ?? []).map((f) => (isAbsolute(f) ? f : join(sampleSetDir, f))),
-  }));
-  return watchFromExistingFrames({ mode: "samples", outDir }, groups);
+
+  if (videos.length === 0) return watchFromExistingFrames({ mode: "samples", outDir }, preExtracted);
+  return watchVideos(watchDepsFor(app, sdk), { mode: "samples", outDir }, videos, preExtracted);
 }
 
 interface ShotsFile { shots: unknown }
