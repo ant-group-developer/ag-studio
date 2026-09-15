@@ -479,7 +479,8 @@ library-production}@1.1.0/`, `skills/{style-analyze,style-review,source-survey,e
     hai đường ghi kết quả duyệt. Stage agent `library-review` ghi `checks[]` theo bảng kiểm cố định sáu mục
     (spec §4) — checker không đọc nội dung `checks[]`, chỉ `schema-valid`; ý nghĩa "đạt hay không" vẫn nằm ở
     `decision`.
-85. `libraryBriefSchema` thêm trường tuỳ chọn `request_notes: string | null` — stage `intake` (built-in, đã
+85. `libraryBriefSchema` thêm trường tuỳ chọn `request_notes?: string` (`z.string().optional()` — vắng mặt,
+    không phải `null`) — stage `intake` (built-in, đã
     có từ 2C) giờ chép thêm `request.notes` (kho) vào `brief.json.request_notes` mỗi lần chạy, để stage agent
     `plan-edit` đọc được lý do từ chối của lần review trước (nếu request đã bị `library-apply-review` mở lại
     qua `reopenRequest`, ghi nối `notes`) và sửa theo trong `edit-plan.json.notes` — đường phản hồi giữa vòng

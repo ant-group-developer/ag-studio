@@ -104,8 +104,10 @@ export const ProjectConfigSchema = z.object({
     root: z.string().min(1),
     role: z.enum(["studio", "channel"]),
     sync_seconds: z.number().int().min(10).default(300),
-    /** Studio autopilot: when set, a fulfilled `content-request` this project's library owns may be claimed
-     * and run automatically instead of waiting for a human to trigger it (spec: sub-project 4). */
+    /** Studio autopilot: when enabled on a `studio` project, an **open** `content_request` in the kho is
+     * planned into a run automatically instead of waiting for a human `library accept` + `plan` (spec:
+     * sub-project 4). `autoAccept` itself never claims the request -- the run's own `intake` stage is still
+     * the only thing that moves it `open -> claimed`. */
     auto_accept: z.object({
       enabled: z.boolean().default(true),
       source_collection: z.string().regex(/^[a-z][a-z0-9-]*$/).default("main"),

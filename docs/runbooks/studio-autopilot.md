@@ -121,8 +121,8 @@ vào kho).
 
 ## 5. Khi một stage agent đỗ `WAITING_HUMAN`
 
-Bốn stage agent của `library-production@1.1.0` (`survey-source`, `plan-edit`, `library-review`) cộng hai
-stage của `style-study@1.1.0` (`analyze-style`, `style-review`) đều khai `retry: { max_attempts: 2,
+Ba stage agent của `library-production@1.1.0` (`survey-source`, `plan-edit`, `library-review`) cộng hai
+stage của `style-study@1.1.0` (`analyze-style`, `style-review`) — **năm** trên hai workflow — đều khai `retry: { max_attempts: 2,
 backoff_seconds: [60], retry_on: [transient, abandoned] }` — **`contract` không nằm trong `retry_on`**. Một
 agent không ghi đúng `output/<name>` theo `expected_outputs`, hoặc ghi JSON sai schema, là lỗi `contract` và
 **không bao giờ được retry** dù `max_attempts` khai là 2 — stage đỗ `WAITING_HUMAN` sau **đúng một attempt**.
@@ -188,7 +188,8 @@ Xử lý (request vẫn `open`, không tự động thử lại tới khi bạn 
 
 `production-profiles/studio/profile.yaml` (revision 2) đặt `limits.max_cost_usd_per_variant: 8` — chặn
 dispatch mới khi tổng chi phí của variant (mọi run cùng content+profile+options) chạm mức đó; `harness retry
---raise-budget <usd>` nâng lên khi cần (như mọi profile khác, không riêng sub-project 4). Bốn stage agent là
+--raise-budget <usd>` nâng lên khi cần (như mọi profile khác, không riêng sub-project 4). Năm stage agent (ba
+chạy mỗi tập trong `library-production@1.1.0`, hai chạy mỗi lần học style trong `style-study@1.1.0`) là
 phần tốn nhất: mỗi stage đọc ảnh (contact sheet trước, tối đa 20 khung đơn — ngân sách khung của spec §2.3),
 contact sheet giảm số lần gọi model khoảng 10× so với gửi từng khung rời. Chưa có trần chi phí theo
 ngày/portfolio (ngoài phạm vi, xem `docs/operations/deferred-items.md`) — theo dõi qua `harness status

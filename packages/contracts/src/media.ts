@@ -22,7 +22,7 @@ export const watchVideoSchema = z.object({
   transcript_error: z.string().optional(),
 }).strict();
 
-/** `watch/index.json` a "watch" stage produces: per-video frame/sheet/transcript summary for an agent to review. */
+/** `watch/watch.json` a "watch" stage produces: per-video frame/sheet/transcript summary for an agent to review. */
 export const WatchIndexSchema = z.object({
   schema_version: schemaVersion("watch"),
   mode: z.enum(["samples", "source", "episode"]),

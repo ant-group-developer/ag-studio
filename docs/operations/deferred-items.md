@@ -365,7 +365,13 @@ tin lệch (`packages/core/src/media/watch.ts`, `packages/core/src/library/auto-
 
 ### Lỗi tài liệu đã biết, chưa sửa lúc Task 9 commit
 
-- **`skills/style-analyze/SKILL.md` và `skills/channel-package/SKILL.md` claim sai**: cả hai nói
+> Cập nhật (đợt rà soát cuối sub-project 4): mục đầu tiên dưới đây **đã sửa** — hai SKILL.md giờ bảo agent tự
+> sinh `style_id`/`hypothesis_id` (Crockford base32) và `created_at`/`updated_at` (ISO 8601 UTC), và
+> `packages/adapters/agent-cli/test/fake-agent-outputs.test.ts` grep mọi `skills/*/SKILL.md` để claim này
+> không quay lại. Mục `style-review` overclaim quyền công cụ thì **chưa** sửa.
+
+- **`skills/style-analyze/SKILL.md` và `skills/channel-package/SKILL.md` claim sai** (đã sửa, xem ghi chú
+  trên): cả hai nói
   `style_id`/`created_at`/`updated_at` (và `hypothesis_id`/`created_at` ở `channel-package`) "để trống hợp lý
   nếu môi trường không có generator — harness sẽ điền lại nếu thiếu". Sai: schema Zod tương ứng
   (`editStyleSchema`, `packageMetadataSchema` hay tương đương) đòi các trường này là chuỗi khớp định dạng
@@ -393,9 +399,10 @@ tin lệch (`packages/core/src/media/watch.ts`, `packages/core/src/library/auto-
   scene-change) — `interval_seconds` cấu hình nhỏ hơn 1 có thể sinh mốc trùng gần nhau.
 - Contact sheet dừng giữa vòng vẽ (`drawtext` lỗi ở một sheet) để lại sheet nhãn thiếu một phần thay vì bỏ
   hẳn sheet đó hoặc thử lại toàn bộ không nhãn.
-- `detectSceneChanges` nuốt lỗi ffmpeg thành mảng rỗng (chữ ký hàm được `plan` giả định luôn trả mảng,
-  không có đường báo lỗi riêng) — một lỗi thật (file hỏng, codec lạ) trông giống "không có scene nào".
-- Khối ghi `watch.json` bị lặp lại ở hai nhánh thay vì rút thành một hàm dùng chung.
+- `detectSceneChanges` nuốt lỗi ffmpeg thành mảng rỗng — **đã sửa một nửa** ở đợt rà soát cuối sub-project 4:
+  ffmpeg không spawn được (ENOENT/EACCES) giờ ném `CONFIG_INVALID`, nhưng một lần chạy thật trả mã khác 0
+  (file hỏng, codec lạ) vẫn trông giống "không có scene nào".
+- ~~Khối ghi `watch.json` bị lặp lại ở hai nhánh~~ — đã rút thành `writeWatchIndex` (đợt rà soát cuối).
 - `label` (tên thư mục con `output/watch/<label>/`) không được làm sạch trước khi join đường dẫn — một
   `samples.json` với `label` chứa `/`/`..` có thể ghi ra ngoài thư mục dự kiến (input `samples.json` do
   wrapper `collect-samples` của chính ops project ghi, không phải dữ liệu ngoài, nên rủi ro thấp trong thực
@@ -408,16 +415,16 @@ tin lệch (`packages/core/src/media/watch.ts`, `packages/core/src/library/auto-
   khi người đọc log tra cứu theo mã).
 - `runStage`/`readJsonFile` bị chép lặp lại ở nhiều file stage (`watch`, và các stage built-in khác) thay vì
   gộp vào `packages/cli/src/commands/shared.ts`.
-- `--mode samples` xử lý tất cả-hoặc-không-gì khi rơi về `watchFromExistingFrames` (một mục trong
-  `samples.json` thiếu ảnh sẵn làm hỏng cả batch thay vì chỉ mục đó) — theo đúng brief (task 3), không phải
-  hồi quy.
+- ~~`--mode samples` xử lý tất cả-hoặc-không-gì khi rơi về `watchFromExistingFrames`~~ — **đã sửa** ở đợt rà
+  soát cuối sub-project 4: `handleSamples` phân giải từng mục một, chỉ mục nào mất file mới rơi về khung có
+  sẵn (và `collect-samples.mjs` ghi `path` tương đối cho clip tải về nên chúng không còn mất đường dẫn sau
+  khi workspace đổi tên thành `artifacts/`).
 
 ### `packages/core/src/library/auto-accept.ts` / CLI `library styles activate`, `request create`
 
-- Doctor `library:auto_accept` và dashboard alert `request_stuck` không nhìn `library.role` (chỉ vai
-  `studio` mới có ý nghĩa chạy autopilot) lẫn `auto_accept.enabled: false` khi tính `request_stuck` — một
-  project vai `channel` lỡ khai `library.auto_accept` (không đúng vai) hay một project tắt `enabled` vẫn có
-  thể sinh alert `request_stuck` nếu ai đó gọi `buildSnapshot` với state cũ còn request kẹt từ lúc còn bật.
+- ~~Doctor `library:auto_accept` và dashboard alert `request_stuck` không nhìn `library.role` lẫn
+  `auto_accept.enabled: false`~~ — **đã sửa** ở đợt rà soát cuối sub-project 4: cả hàng doctor lẫn alert giờ
+  đòi `role === "studio"` **và** `enabled`, đúng điều kiện `autoAcceptDepsFor` của worker dựng vòng lặp.
 - Nhánh nuốt lỗi (`try/catch` quanh `maybeAutoAccept` trong worker) chưa có test riêng cho trường hợp
   `autoAccept` tự ném lỗi bất ngờ (khác `request.auto_accept_failed` đã xử lý có chủ đích cho lỗi
   planner/workflow).
