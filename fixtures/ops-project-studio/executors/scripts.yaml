@@ -4,6 +4,7 @@ schema_version: harness.scripts/v1
 # The four footage wrappers are reused in place through `cwd`, so this fixture owns no copy of them.
 scripts:
   collect-samples:      { argv: [node, executors/wrappers/collect-samples.mjs], requires_resources: [cpu], timeout_seconds: 600 }
+  transcribe:           { argv: [node, executors/wrappers/transcribe.mjs], timeout_seconds: 300 }
   thumbnail-candidates: { argv: [node, executors/wrappers/thumbnail-candidates.mjs], timeout_seconds: 600 }
   index-source:         { argv: [node, executors/wrappers/index-source.mjs], cwd: ../ops-project-footage, requires_resources: [cpu], timeout_seconds: 600 }
   tts:                  { argv: [node, executors/wrappers/tts.mjs], cwd: ../ops-project-footage, requires_resources: [gpu], timeout_seconds: 600 }
