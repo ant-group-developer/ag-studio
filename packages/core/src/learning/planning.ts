@@ -125,10 +125,15 @@ function utcDate(iso: string): string {
 }
 
 /** Same-day (UTC) dedup for `channel.planning_skipped`: a reason already emitted for this channel today is
- * not re-emitted every poll. */
+ * not re-emitted every poll. The `channel_id` goes to `listEvents`'s own filter, not just to the predicate
+ * below (final-review finding, sub-project 3B; same fix as `recentlyEmitted`'s in `metrics.ts`): `newest:
+ * true` is a newest-1000 window shared by every channel, so a busy sibling channel could evict this channel's
+ * own marker from the window and un-dedup it -- one `channel.planning_skipped` per poll for the rest of the
+ * day. The JS `payload.channel_id` check is kept as a redundant belt-and-braces; `reason`/`occurred_at`
+ * narrow further than the store filter can. */
 function skippedAlreadyEmittedToday(store: StateStore, channelId: string, reason: string, now: string): boolean {
   const today = utcDate(now);
-  return store.listEvents({ event_type: "channel.planning_skipped", newest: true })
+  return store.listEvents({ event_type: "channel.planning_skipped", channel_id: channelId, newest: true })
     .some((e) => e.payload.channel_id === channelId && e.payload.reason === reason && utcDate(e.occurred_at) === today);
 }
 

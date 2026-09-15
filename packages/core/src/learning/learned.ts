@@ -100,12 +100,19 @@ export function learnChannelStandard(d: { store: StateStore; clock: Clock; chann
 
   const metric = modeMetric(evaluated.map((p) => p.hypothesis.expected.metric));
 
-  // medians: snapshotAtHorizon(72) of every PUBLISHED job of the channel.
+  // medians: the horizon snapshot (`snapshotAtHorizon`, nearest within its window) of every PUBLISHED job of
+  // the channel. The horizon is the CHANNEL's own `learning.horizon_hours`, not a hardcoded 72 (final-review
+  // finding, sub-project 3B): a channel configured with e.g. `horizon_hours: 48` collects at ~48 h, so a
+  // fixed 72 found no snapshot at all -> every median null -> every `lift` 0 -> the channel could never learn
+  // anything, forever and silently. The `medians.views_72h` field name is kept (it is in the persisted
+  // `harness.channel-learned/v1` shape) and means "views at the channel horizon"; likewise `ctr_pct` and
+  // `avg_view_pct` are read off that same horizon snapshot.
+  const horizonHours = d.channel.config.learning.horizon_hours;
   const views: number[] = [];
   const ctrs: number[] = [];
   const avgViewPcts: number[] = [];
   for (const job of d.store.listPublicationJobs({ channel_id: channelId, state: "PUBLISHED" })) {
-    const snap = snapshotAtHorizon(d.store.listVideoMetrics({ publication_job_id: job.publication_job_id }), 72);
+    const snap = snapshotAtHorizon(d.store.listVideoMetrics({ publication_job_id: job.publication_job_id }), horizonHours);
     if (!snap) continue;
     views.push(snap.views);
     if (snap.ctr_pct != null) ctrs.push(snap.ctr_pct);

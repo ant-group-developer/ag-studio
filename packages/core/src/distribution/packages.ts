@@ -56,6 +56,17 @@ export function episodeDirName(pattern: string, episodeNo: number): string {
   return pattern.replace("{nn}", String(episodeNo).padStart(2, "0"));
 }
 
+/**
+ * The one place the committed full-episode video's path convention lives:
+ * `<episode_dir>/full-episode/episode-<NN>-full-episode.mp4`. `buildPackageStage`
+ * (`packages/cli/src/commands/publish-stage.ts`) writes the file there and `durationOfPackage`
+ * (`packages/cli/src/composition.ts`) probes it for `avg_view_pct`; both must agree, so neither spells the
+ * convention out on its own (final-review finding, sub-project 3B) -- a rename here moves both at once.
+ */
+export function fullEpisodePath(pkg: { episode_dir: string; episode_no: number }): string {
+  return join(pkg.episode_dir, "full-episode", `episode-${String(pkg.episode_no).padStart(2, "0")}-full-episode.mp4`);
+}
+
 export interface PackageDeps { store: StateStore; clock: Clock }
 
 const PLACEHOLDER_CHECKSUM: Checksum = "sha256:" + "0".repeat(64);

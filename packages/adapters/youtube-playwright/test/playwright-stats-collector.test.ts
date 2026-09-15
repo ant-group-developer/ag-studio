@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PublisherChannel } from "@harness/contracts";
-import { PlaywrightStatsCollector } from "../src/index.js";
+import { COLLECT_STATS_TIMEOUT_SECONDS, PlaywrightStatsCollector } from "../src/index.js";
 
 function channel(repoDir = "D:/legacy-channel-a"): PublisherChannel {
   return { channel_id: "channel-a", repo_dir: repoDir, legacy_project_id: "project-01", expected_channel_id: "UCfake000000000000000001" };
@@ -186,13 +186,23 @@ describe("PlaywrightStatsCollector.collect (statsFile test hook)", () => {
     expect(second).toEqual({ kind: "no-views" });
   });
 
-  it("HARNESS_FAKE_STATS_FILE env var sets statsFile the same way the constructor option does", async () => {
+  // The production collector must never be steerable by a stray env var in an operator's shell: a real
+  // collection that silently answers from a JSON file would be recorded as a genuine `source: "studio"`
+  // snapshot. `HARNESS_FAKE_STATS_FILE` belongs to `FakeStatsCollector` (`adapters.stats: fake`) alone.
+  it("ignores HARNESS_FAKE_STATS_FILE: only the explicit statsFile option short-circuits the spawn", async () => {
     const filePath = join(mkdtempSync(join(tmpdir(), "stats-file-")), "stats.json");
     writeFileSync(filePath, JSON.stringify({ "vid-1": { kind: "ok", views: 3 } }));
-    await withEnv({ HARNESS_FAKE_STATS_FILE: filePath }, async () => {
-      const collector = new PlaywrightStatsCollector({});
+    await withEnv({ HARNESS_FAKE_STATS_FILE: filePath, FAKE_STATS_EXIT: "0" }, async () => {
+      const collector = new PlaywrightStatsCollector({ script: fakeScript() });
       const outcome = await collector.collect({ channel: channel(), video_id: "vid-1", timeout_seconds: 10 });
-      expect(outcome).toEqual({ kind: "ok", views: 3 });
+      // the spawned script's answer, not the env file's `views: 3`
+      expect(outcome).toEqual({ kind: "ok", views: 42, impressions: 100, ctr_pct: 5.5, avg_view_sec: 61 });
     });
+  });
+
+  it("declares COLLECT_STATS_TIMEOUT_SECONDS as its own timeout_seconds so the sweep does not cut the script off", () => {
+    expect(new PlaywrightStatsCollector({}).timeout_seconds).toBe(COLLECT_STATS_TIMEOUT_SECONDS);
+    // must stay above the script's own worst case (see the arithmetic in scripts/collect-stats.mjs' header)
+    expect(COLLECT_STATS_TIMEOUT_SECONDS).toBeGreaterThan(275);
   });
 });

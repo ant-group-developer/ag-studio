@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
 import { HarnessError, isHarnessError, ProjectConfigSchema, type AgentRuntime, type ChannelPackage, type ExecutorRef, type MediaProber, type ProductionProfile, type ProjectConfig, type Publisher, type ScriptCommand, type ScriptsRegistry, type SourcesRegistry, type StatsCollector } from "@harness/contracts";
-import { ArtifactRegistry, type AutoAcceptConfig, BUILTIN_CHECKERS, buildSnapshot, ChannelRegistry, Controller, distributionCheckers, type DoctorRow, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, learningCheckers, LibraryFs, libraryCheckers, listWorkflowRefs, loadChannels, type LoadedWorkflow, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, resolveWorkflowScope, runDoctor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, writeSnapshotFile, type HarnessLogger, type LibraryRole, type LogLevel } from "@harness/core";
+import { ArtifactRegistry, type AutoAcceptConfig, BUILTIN_CHECKERS, buildSnapshot, ChannelRegistry, Controller, distributionCheckers, type DoctorRow, EnvSecretResolver, ExternalOperationJournal, fullEpisodePath, HARNESS_ROOT, learningCheckers, LibraryFs, libraryCheckers, listWorkflowRefs, loadChannels, type LoadedWorkflow, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, resolveWorkflowScope, runDoctor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, writeSnapshotFile, type HarnessLogger, type LibraryRole, type LogLevel } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, FakeProvider, FakePublisher, FakeStatsCollector, fakeScriptCommands } from "@harness/adapter-fake";
 import { FfprobeMediaProber, probeDurationSync } from "@harness/adapter-ffprobe";
@@ -82,13 +82,13 @@ export function builtinPublishCommands(argv: string[], projectDir: string): Reco
  * duration (`buildUploadManifest`, `packages/core/src/distribution/packages.ts`, never records one), but
  * `build-package`'s own naming convention (`packages/cli/src/commands/publish-stage.ts` `buildPackageStage`)
  * is fully derivable from the package row alone: the committed video always lands at
- * `<pkg.episode_dir>/full-episode/episode-<NN>-full-episode.mp4`. Probed with `probeDurationSync` (a
- * synchronous ffprobe call -- `durationOf` has no `await` point available to it); a missing file, a missing
- * ffprobe binary, or a probe failure all return `null` ("unknown"), never throw.
+ * `fullEpisodePath(pkg)`, the single shared constant `buildPackageStage` writes to and this probes -- a
+ * rename in one can no longer silently break the other. Probed with `probeDurationSync` (a synchronous
+ * ffprobe call -- `durationOf` has no `await` point available to it); a missing file, a missing ffprobe
+ * binary, or a probe failure all return `null` ("unknown"), never throw.
  */
 export function durationOfPackage(pkg: ChannelPackage): number | null {
-  const nn = String(pkg.episode_no).padStart(2, "0");
-  const videoPath = join(pkg.episode_dir, "full-episode", `episode-${nn}-full-episode.mp4`);
+  const videoPath = fullEpisodePath(pkg);
   if (!existsSync(videoPath)) return null;
   return probeDurationSync(videoPath);
 }
@@ -138,8 +138,12 @@ export function buildContext(o: { projectDir: string; harnessRoot?: string; owne
   const agentRuntime: AgentRuntime = project.adapters.agent === "cli"
     ? new CliAgentRuntime({ runtime: project.runtime, skillsDir: join(harnessRoot, "skills"), redact: (s) => redactor.redact(s), ...(project.adapters.agent_argv ? { argv: project.adapters.agent_argv } : {}) })
     : new FakeAgentRuntime({ journal });
+  // `HARNESS_FAKE_STATS_FILE` reaches `FakeStatsCollector` ONLY: a test env var must never be able to make
+  // the real collector answer a real channel's stats from a JSON file (recorded as a genuine
+  // `source: "studio"` snapshot) just because it was left set in an operator's shell -- final-review finding,
+  // sub-project 3B. Reading from a file is what `adapters.stats: fake` is for.
   const stats: StatsCollector = project.adapters.stats === "playwright"
-    ? new PlaywrightStatsCollector({ redact: (s) => redactor.redact(s), ...(process.env.HARNESS_FAKE_STATS_FILE ? { statsFile: process.env.HARNESS_FAKE_STATS_FILE } : {}) })
+    ? new PlaywrightStatsCollector({ redact: (s) => redactor.redact(s) })
     : new FakeStatsCollector({ ...(process.env.HARNESS_FAKE_STATS_FILE ? { file: process.env.HARNESS_FAKE_STATS_FILE } : {}) });
   const argv = cliArgv();
   // an ops-project entry with the same name as a built-in (fake or library/publish/media) wins, so ops projects can override them

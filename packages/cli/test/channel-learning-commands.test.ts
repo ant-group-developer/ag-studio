@@ -59,7 +59,11 @@ function sampleHypothesis(title: string): Hypothesis {
     basis: [{ kind: "manual", note: "seed" }],
     chosen: { title, thumbnail_candidate: "thumb.png", overlay_text: [], angle: "flycam" },
     rejected: [{ title: "Other angle", angle: "", why: "weaker" }],
-    expected: { metric: "ctr", target: 0.1, horizon_hours: 48 },
+    // 72h, matching the channel's own default `learning.horizon_hours` (this channel.yaml declares no
+    // `learning` block): the seeded snapshot lands at ~80h, inside `snapshotAtHorizon`'s [60, 96] window.
+    // A 48h horizon here would put that snapshot outside its [36, 72] window -- correctly leaving the
+    // hypothesis `open`, but not what these tests are about.
+    expected: { metric: "ctr", target: 0.1, horizon_hours: 72 },
     status: "open", created_at: "2026-09-01T00:00:00.000Z",
   };
 }

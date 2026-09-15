@@ -22,9 +22,19 @@ Tiền đề: đã đọc `docs/runbooks/channel-publish.md` (sub-project 3: kê
   cùng `.upload-profile/<repo_dir>` mà `channel login <id>` (SP3) đã đăng nhập cho upload/schedule — thu số
   dùng lại đúng profile đó, chỉ đọc (`scripts/collect-stats.mjs`, mục 6). Không đăng nhập lại riêng cho thu
   số; nếu upload/schedule đã chạy được trên máy đó thì thu số cũng sẵn sàng về mặt đăng nhập.
+- **Ngân sách thời gian một lượt thu số thật**: `PlaywrightStatsCollector` cắt `collect-stats.mjs` ở
+  `COLLECT_STATS_TIMEOUT_SECONDS` = **300 s**, và tự khai chính số đó cho sweep (`StatsCollector.timeout_seconds`)
+  nên sweep không bao giờ cắt ngắn hơn. Bản thân script chặn worst case của nó dưới mức đó: `LABEL_WAIT_MS`
+  45 s × 4 lần chờ widget (overview, reach, reach retry, engagement) + `NAV_TIMEOUT_MS` 15 s × 5 lần
+  `goto`/`reload`/bấm tab + launch 20 s = **275 s**. Sửa một trong các hằng số ấy thì tính lại tổng và đối chiếu
+  300 s — phép tính đặt ngay đầu `packages/adapters/youtube-playwright/scripts/collect-stats.mjs`. Một kênh
+  mà Studio thường xuyên vẽ chậm hơn thế thì nâng cả hai, đừng nâng mỗi một bên.
 - **`adapters.stats: fake`** (mặc định) dùng `FakeStatsCollector` — không cần Chrome, không đụng mạng; đủ để
   tập luyện toàn bộ vòng lặp và chạy test/CI. Đổi sang `playwright` chỉ khi đã kiểm `channel:<id>:stats` xanh
   ở `harness doctor` (mục 3 dưới) **và** đã có DoD #4 (mục 9) chạy được ít nhất một lần trên máy đó.
+  Biến môi trường `HARNESS_FAKE_STATS_FILE` (file JSON `{ "<video_id>": StatsOutcome }`) **chỉ** có tác dụng
+  với `adapters.stats: fake`; collector thật không đọc biến nào cả, nên một biến còn sót trong shell không
+  thể làm một lượt thu số thật lặng lẽ trả lời từ file rồi ghi lại như ảnh chụp `source: "studio"`.
 - `planning.enabled: true` cần agent thật (`adapters.agent: cli`, `claude`/`codex` trên PATH) để
   `propose-topics` sinh chủ đề có ý nghĩa — `harness doctor`'s `channel:<id>:planning` FAIL nếu
   `adapters.agent` là `fake` trong khi `planning.enabled: true` (mục 3).
@@ -39,9 +49,13 @@ Ba khối mới trong `channels/<channel_id>/channel.yaml` (mọi trường opti
 
 ```yaml
 learning:
-  horizon_hours: 72            # thu số lần đầu sau mốc này kể từ published_at
+  horizon_hours: 72            # thu số lần đầu sau mốc này kể từ published_at; cũng là mốc chấm giả thuyết
+                               # và mốc tính medians — ảnh chụp được chọn là cái gần mốc nhất trong
+                               # [mốc − 12, mốc + 24] giờ (72 → [60, 96])
   recollect_hours: [168, 720]  # ảnh chụp thêm (7 ngày, 30 ngày); [] để tắt tái thu
   min_impressions: 50          # dưới sàn -> giả thuyết ctr thành "void" thay vì supported/refuted
+                               # (chỉ số đọc không ra — ctr_pct null, avg_view_sec null, thời lượng
+                               #  null hoặc ≤ 0 — cũng thành "void", không bao giờ refuted với 0)
   min_samples: 2               # số giả thuyết supported tối thiểu cùng nhóm để thành chuẩn kênh
 planning:
   enabled: true                # bật sweep maybePlanRequests + workflow channel-planning@1.0.0
@@ -164,6 +178,13 @@ của nhóm chia cho `medians[metric]` của kênh), và `supported > refuted`. 
 hợp bằng `+` (`titlePattern`, `packages/core/src/learning/learned.ts`): `number|plain` (có chữ số hay
 không) `+` `question|statement` (kết thúc `?` hay không) `+` `long|short` (>60 ký tự hay không) — ví dụ
 `number+question+short`. Nhóm overlay dùng số dòng chữ đè: `"0"`, `"1-2"`, `"3"`.
+
+`medians` lấy tại `learning.horizon_hours` **của chính kênh** (tên trường `medians.views_72h` giữ nguyên vì
+nằm trong shape đã lưu, nay đọc là "views tại mốc của kênh"), và chỉ tính ảnh chụp nằm trong cửa sổ
+`[mốc − 12, mốc + 24]` giờ. Một video bị chặn thu đúng ở mốc (chỉ còn ảnh chụp 168 h chẳng hạn) **không**
+được mượn con số muộn hơn đó: giả thuyết của nó ở nguyên `open` và job đó không góp vào trung vị — sai
+số của một tuần đọ với mục tiêu 72 h còn tệ hơn là thiếu một mẫu. Muốn có số cho video đó thì thu bù
+sớm (`channel collect --job <id> --force`) trước khi ra khỏi cửa sổ, hoặc nhập tay qua `metrics import`.
 
 **Một chuẩn không bao giờ hình thành chỉ từ hai tập, kể cả khi cả hai `supported` cùng nhóm.** `lift` so với
 **trung vị của kênh** (`medians[metric]`), và trung vị của đúng hai mẫu chính là trung bình cộng của chúng —

@@ -20,7 +20,16 @@
 //   { kind: "no-views" }                                          exit 0 (Studio tự khai chưa có lượt xem)
 //   { kind: "blocked", reason }                                   exit 2 (tường đăng nhập lại)
 //   { kind: "error", reason }                                     exit 3 (bất cứ lỗi nào khác, kể cả
-//                                                                  widget không vẽ xong trong 60s)
+//                                                                  widget không vẽ xong trong LABEL_WAIT_MS)
+//
+// NGÂN SÁCH THỜI GIAN — phải luôn nhỏ hơn `COLLECT_STATS_TIMEOUT_SECONDS` (300 s) mà
+// `PlaywrightStatsCollector` áp lên `spawnSync`; vượt mức đó thì script bị giết giữa chừng và báo
+// "collect script timed out" thay vì một lý do thật. Trường hợp xấu nhất (mọi mốc đều chạm trần):
+//   launch 20 s + 4 lần chờ nhãn × 45 s (overview, reach, reach retry, engagement) = 180 s
+//   + 5 lần điều hướng/bấm × 15 s (goto overview, click reach, reload, click reach lần 2,
+//     goto engagement) = 75 s  →  tổng 275 s < 300 s (dư 25 s).
+// Sửa một trong ba hằng số LABEL_WAIT_MS/NAV_TIMEOUT_MS/LAUNCH_TIMEOUT_MS thì tính lại tổng này và
+// đối chiếu `COLLECT_STATS_TIMEOUT_SECONDS` trong `src/playwright-stats-collector.ts`.
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
@@ -105,6 +114,12 @@ function isLoginWall(url, text) {
   return /accounts\.google\.com|Verify it.s you|sign in again|Xác minh danh tính|Đăng nhập lại/i.test(hay);
 }
 
+/** Ngân sách một lần chờ widget Studio vẽ xong (4 lần trong một lần chạy) — xem phép tính ở đầu file. */
+const LABEL_WAIT_MS = 45_000;
+/** Ngân sách mỗi lần `goto`/`reload`/bấm tab, và launch trình duyệt — xem phép tính ở đầu file. */
+const NAV_TIMEOUT_MS = 15_000;
+const LAUNCH_TIMEOUT_MS = 20_000;
+
 const RE_COUNT = /[\d][\d.,]*\s*(?:K|M|B|N|Tr|Tỷ)?/;
 const RE_PCT = /[\d][\d.,]*\s*%/;
 const RE_DUR = /\d+:\d{2}(?::\d{2})?/;
@@ -132,14 +147,14 @@ function fail(reason) {
 }
 
 /**
- * Polls `document.body.innerText` every 1s, up to `timeoutMs` (default 60s), until at least one of
+ * Polls `document.body.innerText` every 1s, up to `timeoutMs` (default `LABEL_WAIT_MS`), until at least one of
  * `labels` appears as its own line. Ported from the legacy `collect-metrics-playwright.mjs`'s
  * `textWhenLabelsAppear` (lines 122-136): Studio's analytics widgets render client-side well after
  * `domcontentloaded`/a tab click resolves, so a single read right after navigating is a race that
  * silently reads an empty/partial page. Returns `{ text, ok }` — `ok: false` on timeout, with `text`
  * holding whatever was last read (used by the caller only to check for a login wall before giving up).
  */
-async function waitForLabels(page, labels, timeoutMs = 60000) {
+async function waitForLabels(page, labels, timeoutMs = LABEL_WAIT_MS) {
   const deadline = Date.now() + timeoutMs;
   const wanted = labels.map((l) => l.toLowerCase());
   let text = "";
@@ -156,7 +171,7 @@ async function waitForLabels(page, labels, timeoutMs = 60000) {
  * Read-only (a client-side tab switch, not an edit/upload/publish action) — see the file header. */
 async function clickReachTab(page) {
   const tab = page.getByRole("tab", { name: /^(reach|phạm vi tiếp cận)$/i }).first();
-  await tab.click({ timeout: 20000 });
+  await tab.click({ timeout: NAV_TIMEOUT_MS });
 }
 
 async function main() {
@@ -175,13 +190,13 @@ async function main() {
 
   let context;
   try {
-    context = await chromium.launchPersistentContext(profile, { headless: true });
+    context = await chromium.launchPersistentContext(profile, { headless: true, timeout: LAUNCH_TIMEOUT_MS });
     const page = context.pages()[0] ?? (await context.newPage());
-    page.setDefaultTimeout(60000);
+    page.setDefaultTimeout(NAV_TIMEOUT_MS);
 
     // ---- tab-overview: Views, and the definitive "no views yet" sentence ----
-    await page.goto(`https://studio.youtube.com/video/${video}/analytics/tab-overview/period-since_publish`, { waitUntil: "domcontentloaded" });
-    let res = await waitForLabels(page, VIEWS_LABELS, 60000);
+    await page.goto(`https://studio.youtube.com/video/${video}/analytics/tab-overview/period-since_publish`, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+    let res = await waitForLabels(page, VIEWS_LABELS, LABEL_WAIT_MS);
     if (isLoginWall(page.url(), res.text)) return blocked("Studio yêu cầu đăng nhập lại (Verify it's you)");
     if (!res.ok) return fail("labels not rendered: overview");
     const overviewText = sliceBeforeRealtime(res.text);
@@ -193,12 +208,12 @@ async function main() {
     // thẳng URL — xem lý do ở đầu file. Widget Reach hoạ hoằn vẫn không vẽ xong sau cú bấm đầu; reload
     // rồi bấm lại một lần nữa trước khi báo lỗi (vẫn read-only: reload không đổi trạng thái gì). ----
     await clickReachTab(page).catch(() => {}); // nuốt lỗi bấm: waitForLabels dưới đây sẽ time out và được xử lý như nhau
-    res = await waitForLabels(page, REACH_IMPRESSIONS_LABELS, 60000);
+    res = await waitForLabels(page, REACH_IMPRESSIONS_LABELS, LABEL_WAIT_MS);
     if (isLoginWall(page.url(), res.text)) return blocked("Studio yêu cầu đăng nhập lại (Verify it's you)");
     if (!res.ok) {
-      await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+      await page.reload({ waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS }).catch(() => {});
       await clickReachTab(page).catch(() => {});
-      res = await waitForLabels(page, REACH_IMPRESSIONS_LABELS, 60000);
+      res = await waitForLabels(page, REACH_IMPRESSIONS_LABELS, LABEL_WAIT_MS);
       if (isLoginWall(page.url(), res.text)) return blocked("Studio yêu cầu đăng nhập lại (Verify it's you)");
     }
     if (!res.ok) return fail("labels not rendered: reach");
@@ -207,8 +222,8 @@ async function main() {
     const ctr_pct = parsePercent(pickMetric(reachText, REACH_CTR_LABELS, RE_PCT));
 
     // ---- tab-engagement: thời lượng xem trung bình (không có ở tab overview) ----
-    await page.goto(`https://studio.youtube.com/video/${video}/analytics/tab-engagement/period-since_publish`, { waitUntil: "domcontentloaded" });
-    res = await waitForLabels(page, AVG_VIEW_LABELS, 60000);
+    await page.goto(`https://studio.youtube.com/video/${video}/analytics/tab-engagement/period-since_publish`, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+    res = await waitForLabels(page, AVG_VIEW_LABELS, LABEL_WAIT_MS);
     if (isLoginWall(page.url(), res.text)) return blocked("Studio yêu cầu đăng nhập lại (Verify it's you)");
     if (!res.ok) return fail("labels not rendered: engagement");
     const engagementText = sliceBeforeRealtime(res.text);

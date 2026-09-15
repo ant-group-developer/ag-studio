@@ -9,6 +9,17 @@ import { parseStatsJson } from "./metrics-parse.js";
 /** `<package root>/scripts/collect-stats.mjs`; same relative depth from `src/` (dev) and `dist/` (built). */
 const DEFAULT_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "collect-stats.mjs");
 
+/**
+ * The outer `spawnSync` budget for one `collect-stats.mjs` run, and the ONE place the number lives: exposed
+ * as this collector's `timeout_seconds`, which `collectStats` (`packages/core/src/learning/metrics.ts`)
+ * passes straight back into `collect()` in place of its own 120 s default. It must stay above the script's
+ * own worst-case wall clock, which `scripts/collect-stats.mjs` bounds explicitly (`LABEL_WAIT_MS` x4 +
+ * `NAV_TIMEOUT_MS` x5 + browser launch = 275 s; see the arithmetic in that file's header) -- the old 120 s
+ * cut the script off mid-run and reported "collect script timed out" for what was really just a slow Studio
+ * widget (final-review finding, sub-project 3B). Changing either number means re-checking the other.
+ */
+export const COLLECT_STATS_TIMEOUT_SECONDS = 300;
+
 export interface PlaywrightStatsCollectorOptions {
   /** Node executable used to spawn the legacy script. Default: `process.execPath`. */
   node?: string;
@@ -18,9 +29,13 @@ export interface PlaywrightStatsCollectorOptions {
   /** Default: `<package>/scripts/collect-stats.mjs`. */
   script?: string;
   /**
-   * Test-only: path to a JSON file `{ [video_id]: StatsOutcome }`. When set (directly or via
-   * `HARNESS_FAKE_STATS_FILE`), `collect()` never spawns anything and answers from the file instead,
-   * re-read on every call so a test can change the scenario mid-run.
+   * Test-only: path to a JSON file `{ [video_id]: StatsOutcome }`. When set, `collect()` never spawns
+   * anything and answers from the file instead, re-read on every call so a test can change the scenario
+   * mid-run. Deliberately an explicit option only: this collector never reads `HARNESS_FAKE_STATS_FILE`
+   * (or any other env var) itself, so a stray variable in an operator's shell can never turn a real
+   * collection into a file read recorded as a genuine `source: "studio"` snapshot (final-review finding,
+   * sub-project 3B). The env var belongs to `FakeStatsCollector` alone -- pick it with
+   * `project.yaml`'s `adapters.stats: fake`.
    */
   statsFile?: string;
 }
@@ -40,6 +55,9 @@ function lastNonEmptyLine(text: string | null | undefined): string | undefined {
 
 export class PlaywrightStatsCollector implements StatsCollector {
   readonly name = "youtube-playwright-stats";
+  /** See `COLLECT_STATS_TIMEOUT_SECONDS`: the sweep asks the collector how long its own script may take
+   * instead of guessing. */
+  readonly timeout_seconds = COLLECT_STATS_TIMEOUT_SECONDS;
   private readonly node: string;
   private readonly redact: (s: string) => string;
   private readonly script: string;
@@ -49,7 +67,7 @@ export class PlaywrightStatsCollector implements StatsCollector {
     this.node = opts.node ?? process.execPath;
     this.redact = opts.redact ?? identity;
     this.script = opts.script ?? DEFAULT_SCRIPT;
-    this.statsFile = opts.statsFile ?? process.env.HARNESS_FAKE_STATS_FILE;
+    this.statsFile = opts.statsFile;
   }
 
   async collect(p: { channel: PublisherChannel; video_id: string; timeout_seconds: number; log?: (line: string) => void }): Promise<StatsOutcome> {

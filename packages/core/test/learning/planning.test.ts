@@ -229,6 +229,35 @@ describe("planRequestsRun", () => {
     expect(events[0]!.payload).toMatchObject({ channel_id: "channel-a", reason: "open-cap" });
   });
 
+  // Regression: the dedup used to read the newest-1000 `channel.planning_skipped` events across EVERY
+  // channel and filter in JS, so a busy sibling channel could push this channel's own marker out of the
+  // window -- re-emitting one `channel.planning_skipped` per poll for the rest of the day.
+  it("still dedups when a busy sibling channel floods the shared newest-events window", async () => {
+    const w = world();
+    const channel = makeChannel({ planning: { lookahead_slots: 2, max_open_requests: 1 } });
+    makeOpenRequest(w.store);
+
+    const first = await planRequestsRun(depsFor(w, channel));
+    expect(first.skipped).toBe("open-cap");
+
+    // 1000 strictly newer sibling-channel events of the same type: exactly fills `listEvents({ newest:
+    // true })`'s window, pushing this channel's own marker out of it (same UTC day throughout)
+    w.clock.advance(60);
+    for (let i = 0; i < 1000; i++) {
+      w.store.appendEvent({
+        run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null, channel_id: "channel-busy",
+        content_id: null, variant_id: null, workflow_release: null, severity: "info", event_type: "channel.planning_skipped",
+        payload: { channel_id: "channel-busy", reason: "open-cap" },
+      });
+    }
+    expect(w.store.listEvents({ event_type: "channel.planning_skipped", newest: true }).every((e) => e.payload.channel_id === "channel-busy")).toBe(true);
+
+    const second = await planRequestsRun(depsFor(w, channel));
+    expect(second.skipped).toBe("open-cap");
+    const mine = w.store.listEvents({ event_type: "channel.planning_skipped", channel_id: "channel-a" });
+    expect(mine).toHaveLength(1);
+  });
+
   it("skips covered without any run/event when demand is already met", async () => {
     const w = world();
     const channel = makeChannel({ planning: { lookahead_slots: 1 } });

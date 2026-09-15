@@ -16,10 +16,39 @@ export function metricValue(metric: HypothesisMetric, m: VideoMetrics, durationS
   return (m.avg_view_sec / durationSeconds) * 100;
 }
 
-/** The first snapshot (studio or manual, in the list's own order -- callers pass `listVideoMetrics`'s
- * `collected_at`-ordered result) whose `age_hours` has reached `horizonHours`. */
+/** How far either side of the horizon a snapshot may sit and still count as "the horizon snapshot"
+ * (spec §2.2: "`views_72h` = `views` của ảnh chụp có `age_hours` gần 72 nhất trong [60, 96]", generalised
+ * from 72 to any `horizon_hours`). */
+export const HORIZON_WINDOW_BEFORE_HOURS = 12;
+export const HORIZON_WINDOW_AFTER_HOURS = 24;
+
+/**
+ * The snapshot (studio or manual) whose `age_hours` is CLOSEST to `horizonHours` within the window
+ * `[horizon - 12, horizon + 24]` -- for the default 72 h horizon, exactly spec §2.2's "nearest within
+ * [60, 96]". `undefined` when no snapshot falls in the window: the horizon has genuinely not been measured,
+ * so `evaluateHypotheses` leaves the hypothesis `open` and `learnChannelStandard` leaves that job out of the
+ * channel medians. The upper bound is the point of the window (final-review finding, sub-project 3B): with
+ * only "first snapshot at or past the horizon", a job whose 72 h collect was blocked had its 168 h (or 720 h)
+ * snapshot judged as if it were the 72 h number -- a week's worth of extra views scored against a 72 h target,
+ * both in the verdict and in the medians every other job's `lift` is measured against.
+ *
+ * Ties (two snapshots equidistant from the horizon) go to the earlier element; callers pass
+ * `listVideoMetrics`'s `collected_at`-ordered result, so that is the earlier collection.
+ */
 export function snapshotAtHorizon(list: VideoMetrics[], horizonHours: number): VideoMetrics | undefined {
-  return list.find((m) => m.age_hours >= horizonHours);
+  const low = horizonHours - HORIZON_WINDOW_BEFORE_HOURS;
+  const high = horizonHours + HORIZON_WINDOW_AFTER_HOURS;
+  let best: VideoMetrics | undefined;
+  let bestDistance = Infinity;
+  for (const m of list) {
+    if (m.age_hours < low || m.age_hours > high) continue;
+    const distance = Math.abs(m.age_hours - horizonHours);
+    if (distance < bestDistance) {
+      best = m;
+      bestDistance = distance;
+    }
+  }
+  return best;
 }
 
 export interface EvaluationReport {
@@ -28,11 +57,13 @@ export interface EvaluationReport {
 }
 
 /**
- * Judges every `committed` package's still-`open` hypothesis against the first video-metrics snapshot that
- * reached its `expected.horizon_hours`, writing the verdict back onto `channel_package.hypothesis` (mirror
- * update via `updateChannelPackage`, not `transition()` -- see ADR 0001) and firing `hypothesis.evaluated`.
- * A hypothesis with no snapshot yet stays `open` and is skipped; anything already `supported|refuted|void`
- * is skipped too, making this idempotent to call on every `collectStats` sweep.
+ * Judges every `committed` package's still-`open` hypothesis against the video-metrics snapshot nearest its
+ * `expected.horizon_hours` within `snapshotAtHorizon`'s window, writing the verdict back onto
+ * `channel_package.hypothesis` (mirror update via `updateChannelPackage`, not `transition()` -- see ADR 0001)
+ * and firing `hypothesis.evaluated`. A hypothesis with no snapshot in that window stays `open` and is skipped
+ * (including the case where the horizon collect was missed entirely and only a much later snapshot exists);
+ * anything already `supported|refuted|void` is skipped too, making this idempotent to call on every
+ * `collectStats` sweep.
  */
 export function evaluateHypotheses(d: { store: StateStore; clock: Clock; channel: LoadedChannel; durationOf: (pkg: ChannelPackage) => number | null }): EvaluationReport {
   const channelId = d.channel.config.channel_id;
@@ -55,13 +86,19 @@ export function evaluateHypotheses(d: { store: StateStore; clock: Clock; channel
     const duration = d.durationOf(pkg);
     const value = metricValue(h.expected.metric, snapshot, duration);
 
+    // An unreadable metric is `void`, never a verdict. The null check covers every metric at once
+    // (final-review finding, sub-project 3B): a `ctr` snapshot whose impressions cleared the floor but whose
+    // `ctr_pct` Studio never rendered used to fall through to `(null ?? 0) >= target` -> `refuted` with
+    // `metric_value: 0`, which then dragged that group's mean -- and the channel standard -- down with a
+    // number nobody ever measured. `avg_view_pct` is null when `avg_view_sec` is missing or the duration is
+    // missing/not positive (`metricValue`); `views_72h` is never null, so it is unaffected.
     let status: "supported" | "refuted" | "void";
-    if (h.expected.metric === "ctr" && (snapshot.impressions == null || snapshot.impressions < minImpressions)) {
+    if (value == null) {
       status = "void";
-    } else if (h.expected.metric === "avg_view_pct" && (snapshot.avg_view_sec == null || duration == null)) {
+    } else if (h.expected.metric === "ctr" && (snapshot.impressions == null || snapshot.impressions < minImpressions)) {
       status = "void";
     } else {
-      status = (value ?? 0) >= h.expected.target ? "supported" : "refuted";
+      status = value >= h.expected.target ? "supported" : "refuted";
     }
 
     const updated: ChannelPackage = {

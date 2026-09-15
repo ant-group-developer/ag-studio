@@ -8,7 +8,7 @@ import {
   RequestsReceiptSchema, ScheduleReceiptSchema, TopicProposalSchema, UploadReceiptSchema,
   type ChannelPackageDraft, type LibraryItem, type PackageReceipt, type PublicationJob, type ScheduleReceipt, type UploadReceipt,
 } from "@harness/contracts";
-import { buildChannelBrief, buildUploadManifest, channelDemand, commitPackage, createDraftPackage, createJob, createRequest, eventFor, manifestDigest, nextSlot, sha256File, transitionPublication, type LoadedChannel } from "@harness/core";
+import { buildChannelBrief, buildUploadManifest, channelDemand, commitPackage, createDraftPackage, createJob, createRequest, eventFor, fullEpisodePath, manifestDigest, nextSlot, sha256File, transitionPublication, type LoadedChannel } from "@harness/core";
 import type { AppContext } from "../composition.js";
 import { requireLibrary } from "./library-stage.js";
 import { withContext } from "./shared.js";
@@ -199,7 +199,8 @@ async function buildPackageStage(app: AppContext, sdk: ScriptContext): Promise<v
   writeFileSync(markerFile, pkg.package_id);
   for (const sub of ["full-episode", "thumbnails", "publish"]) mkdirSync(join(episodeDir, sub), { recursive: true });
 
-  const videoDest = join(episodeDir, "full-episode", `episode-${nn}-full-episode.mp4`);
+  // shared with `durationOfPackage` (composition.ts) -- see `fullEpisodePath`'s docstring
+  const videoDest = fullEpisodePath(pkg);
   copyFileSync(sdk.input("episode_video"), videoDest);
 
   const thumbDest = join(episodeDir, "thumbnails", "opt1.png");

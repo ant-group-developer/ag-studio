@@ -8,6 +8,14 @@ import { learnChannelStandard } from "./learned.js";
 
 export interface DueCollection { job: PublicationJob; target_age_hours: number }
 
+/** Only used for a `StatsCollector` that does not declare a `timeout_seconds` of its own (the fake one, or
+ * any in-process collector that cannot take long). A collector that spawns something knows its own worst
+ * case and says so -- `PlaywrightStatsCollector.timeout_seconds` is `COLLECT_STATS_TIMEOUT_SECONDS`, and the
+ * sweep must not cut it off below that (final-review finding, sub-project 3B: a fixed 120 s here was shorter
+ * than `collect-stats.mjs`'s own worst-case budget, turning a slow Studio widget into "collect script timed
+ * out" and, after three of them, a spurious `stats.failing` alert). */
+export const DEFAULT_COLLECT_TIMEOUT_SECONDS = 120;
+
 export function ageHours(publishedAt: string, now: string): number {
   return (Date.parse(now) - Date.parse(publishedAt)) / 3_600_000;
 }
@@ -129,7 +137,8 @@ export async function collectStats(d: CollectDeps, o?: { channelId?: string; job
         const publisherChannel = d.channels.toPublisherChannel(channelId);
         let outcome: StatsOutcome;
         try {
-          outcome = await d.collector.collect({ channel: publisherChannel, video_id: job.youtube_video_id, timeout_seconds: 120 });
+          const timeoutSeconds = d.collector.timeout_seconds ?? DEFAULT_COLLECT_TIMEOUT_SECONDS;
+          outcome = await d.collector.collect({ channel: publisherChannel, video_id: job.youtube_video_id, timeout_seconds: timeoutSeconds });
         } catch (e) {
           outcome = { kind: "error", reason: e instanceof Error ? e.message : String(e) };
         }

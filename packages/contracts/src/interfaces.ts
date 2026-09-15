@@ -174,6 +174,11 @@ export type StatsOutcome =
   | { kind: "error"; reason: string };
 export interface StatsCollector {
   readonly name: string;
+  /** The collector's own outer budget, in seconds, when it knows one (a collector that spawns a script knows
+   * how long that script may legitimately take). `collectStats` passes it back in as `collect`'s
+   * `timeout_seconds` instead of its own default, so the caller can never cut a collector off below its own
+   * worst case -- see `COLLECT_STATS_TIMEOUT_SECONDS` in the `youtube-playwright` adapter. */
+  readonly timeout_seconds?: number;
   collect(p: { channel: PublisherChannel; video_id: string; timeout_seconds: number; log?: (line: string) => void }): Promise<StatsOutcome>;
 }
 

@@ -562,7 +562,14 @@ library-production}@1.1.0/`, `skills/{style-analyze,style-review,source-survey,e
     (`packages/core/src/learning/metrics.ts`) tự loại các mốc đã có ảnh chụp `source: "studio"` với
     `age_hours ≥ mốc − 6` thay vì dựa vào bất kỳ cờ "đã thu" nào trên chính hàng đó — lịch sử đầy đủ của một
     video luôn nằm nguyên trong bảng, không phần nào bị ghi đè, kể cả khi `channel metrics import` thêm một
-    hàng `source: "manual"` xen giữa các ảnh chụp `studio` thật.
+    hàng `source: "manual"` xen giữa các ảnh chụp `studio` thật. Đọc ngược lại lịch sử đó, `snapshotAtHorizon`
+    (`packages/core/src/learning/hypotheses.ts`) chọn ảnh chụp có `age_hours` **gần mốc nhất trong cửa sổ
+    `[mốc − 12, mốc + 24]`** — với mốc mặc định 72 h đúng bằng "gần 72 nhất trong `[60, 96]`" của spec §2.2.
+    Cửa sổ có **cận trên** là điểm mấu chốt (sửa ở review cuối 3B): quy tắc cũ "ảnh chụp đầu tiên đạt mốc"
+    khiến một video bị chặn thu ở 72 h bị chấm bằng chính ảnh chụp 168 h của nó — lượt xem cả tuần đọ với
+    mục tiêu 72 h, sai cả ở phán quyết lẫn ở `medians` mà mọi `lift` khác đem ra so. Không có ảnh chụp nào
+    trong cửa sổ = mốc đó **chưa từng được đo**: `evaluateHypotheses` để giả thuyết nguyên `open`, và
+    `learnChannelStandard` loại job đó khỏi `medians` (thay vì mượn tạm một con số khác).
 94. `hypothesis.status`/`hypothesis.evaluated` (trường mới optional trong `HypothesisSchema`, spec §3.1) cập
     nhật **tại chỗ** trong `channel_package.data` (cột JSON) qua `updateChannelPackage`, không qua
     `transition()` — cùng khuôn "mirror-kiểu" với ba bảng mirror của kho (`edit_style`/`content_request`/
@@ -577,7 +584,17 @@ library-production}@1.1.0/`, `skills/{style-analyze,style-review,source-survey,e
     hơn 60 ký tự hay không, ví dụ `number+question+short`) — và `overlayGroup()` trả số dòng chữ đè
     (`"0"`/`"1-2"`/`"3"`). Một nhóm thành `standard` khi `supported ≥ min_samples`, `lift > 1` (trung bình
     `metric_value` chia trung vị kênh của cùng metric) và `supported > refuted`; không nhóm nào đạt →
-    `standard.note` ghi rõ số mẫu còn thiếu thay vì để trống im lặng.
+    `standard.note` ghi rõ số mẫu còn thiếu thay vì để trống im lặng. Trung vị lấy tại `horizon_hours` **của
+    chính kênh** (không phải 72 h cố định — sửa ở review cuối 3B: một kênh đặt `horizon_hours: 48` thu số ở
+    ~48 h nên với mốc cứng 72 h không ảnh chụp nào lọt, mọi trung vị `null`, mọi `lift` bằng 0, kênh đó không
+    bao giờ học được gì mà cũng không báo lỗi); tên trường `medians.views_72h` giữ nguyên vì nằm trong shape
+    đã lưu `harness.channel-learned/v1` và nay đọc là "views tại mốc của kênh".
+    **Chỉ số đọc không ra là `void`, không phải `refuted` 0** (sửa ở review cuối 3B): `evaluateHypotheses`
+    trả `void` bất cứ khi nào `metricValue` cho `null` — `ctr` mà `ctr_pct` null dù `impressions` đã vượt
+    `min_impressions`, `avg_view_pct` mà `avg_view_sec` null hoặc thời lượng null/≤ 0 — bên cạnh điều kiện
+    `void` sẵn có cho `ctr` dưới sàn `min_impressions`. Trước đó `(null ?? 0) >= target` biến một ô Studio
+    không vẽ ra thành một phán quyết `refuted` với `metric_value: 0`, kéo trung bình nhóm (và qua đó cả chuẩn
+    kênh) xuống bằng một con số chưa ai từng đo. `views_72h` không bao giờ `null` nên không đổi gì.
 96. **Ngưỡng đổi chuẩn 10%**: `decideDimension` (`packages/core/src/learning/learned.ts`) chỉ thay một giá
     trị `standard` đang đứng khi nhóm mới có `lift ≥ lift cũ × 1.10` — một nhóm nhỉnh hơn chút không đủ lật
     chuẩn (chống nhiễu mẫu nhỏ, spec §10 "chuẩn kênh học từ mẫu nhỏ"). Hệ quả trực tiếp: **một chuẩn không
@@ -619,3 +636,19 @@ library-production}@1.1.0/`, `skills/{style-analyze,style-review,source-survey,e
     `channel.yaml.seo` y hệt trước sub-project 3B. `learned.standard` chỉ **ưu tiên** đề xuất kế tiếp (agent
     `channel-plan` đọc `learned.standard.angle`; skill `channel-package` dẫn chứng `basis` kind `"channel"`
     khi có) — không trường nào trong toàn bộ đường ống 3B coi việc chưa học xong là điều kiện chặn dispatch.
+101. **Adapter thật không nghe biến môi trường test, và tự khai ngân sách thời gian của mình** (cả hai sửa ở
+    review cuối 3B). (a) `HARNESS_FAKE_STATS_FILE` chỉ đi tới `FakeStatsCollector`: composition root
+    (`packages/cli/src/composition.ts`) truyền nó cho nhánh `adapters.stats: fake` và **không** truyền gì cho
+    `PlaywrightStatsCollector`, còn chính collector đó không đọc `process.env` nữa (chỉ nhận `statsFile`
+    truyền tay trong test). Một biến còn sót trong shell của người vận hành từng đủ để biến một lượt thu số
+    thật thành đọc file JSON, rồi ghi lại như ảnh chụp `source: "studio"` — số bịa lẫn vào chính bảng
+    append-only mà mục 93 nói là lịch sử đầy đủ của kênh. Quy tắc chung: chọn adapter là việc của
+    `project.yaml.adapters.*`, không bao giờ của một biến môi trường. (b) Ngân sách thời gian thu số khai đúng
+    **một** chỗ: `COLLECT_STATS_TIMEOUT_SECONDS = 300` trong `packages/adapters/youtube-playwright/src/
+    playwright-stats-collector.ts` vừa là timeout `spawnSync`, vừa là `StatsCollector.timeout_seconds` mà
+    `collectStats` truyền ngược lại vào `collect()` (collector nào không khai thì sweep dùng
+    `DEFAULT_COLLECT_TIMEOUT_SECONDS = 120`). `scripts/collect-stats.mjs` tự chặn worst case của nó dưới mức
+    đó bằng ba hằng số có phép tính ghi ở đầu file (`LABEL_WAIT_MS` 45 s × 4 + `NAV_TIMEOUT_MS` 15 s × 5 +
+    launch 20 s = 275 s < 300 s). Trước đó sweep cắt ở 120 s trong khi script có thể chạy tới ~240 s, nên một
+    widget Studio chậm bị báo là "collect script timed out" và ba lần như thế dựng một alert `stats_failing`
+    hoàn toàn giả.

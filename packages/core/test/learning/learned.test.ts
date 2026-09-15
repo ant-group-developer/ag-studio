@@ -34,22 +34,45 @@ describe("median", () => {
  * medians contribution -- everything `learnChannelStandard` reads. */
 function seedEvaluated(store: StateStore, o: {
   channel_id?: string; status: "supported" | "refuted"; metric: HypothesisMetric; metric_value: number;
-  angle?: string; title?: string; overlay?: string[]; snapshotViews?: number;
+  angle?: string; title?: string; overlay?: string[]; snapshotViews?: number; horizon_hours?: number; snapshotAgeHours?: number;
 }): ChannelPackage {
   const h = makeHypothesis({
     status: o.status,
-    expected: { metric: o.metric, target: 1, horizon_hours: 72 },
+    expected: { metric: o.metric, target: 1, horizon_hours: o.horizon_hours ?? 72 },
     chosen: { title: o.title ?? "Why This Works", angle: o.angle ?? "", overlay_text: o.overlay ?? [], thumbnail_candidate: "c.png" },
     evaluated: { at: T0, metric_value: o.metric_value, metric_id: newId("video_metrics") },
   });
   const pkg = makeCommittedPackage({ channel_id: o.channel_id, hypothesis: h });
   store.insertChannelPackage(pkg);
   const job = insertPublishedJob(store, { channel_id: o.channel_id, published_at: T0, package_id: pkg.package_id });
-  store.insertVideoMetrics(makeMetric({ publication_job_id: job.publication_job_id, age_hours: 72, views: o.snapshotViews ?? 100 }));
+  store.insertVideoMetrics(makeMetric({ publication_job_id: job.publication_job_id, age_hours: o.snapshotAgeHours ?? 72, views: o.snapshotViews ?? 100 }));
   return pkg;
 }
 
 describe("learnChannelStandard", () => {
+  // Regression: the medians used to be taken at a hardcoded 72h, so a channel that collects at 48h had no
+  // snapshot at all in range -> every median null -> every lift 0 -> nothing could ever become a standard.
+  it("takes the medians at the channel's own learning.horizon_hours, not a hardcoded 72", () => {
+    const { store, clock } = openTempStore(T0);
+    const channel = makeChannel({ learning: { horizon_hours: 48 } });
+    seedEvaluated(store, { status: "supported", metric: "views_72h", metric_value: 150, angle: "curiosity", horizon_hours: 48, snapshotAgeHours: 50, snapshotViews: 100 });
+    seedEvaluated(store, { status: "supported", metric: "views_72h", metric_value: 150, angle: "curiosity", title: "10 Secrets?", overlay: ["a"], horizon_hours: 48, snapshotAgeHours: 50, snapshotViews: 100 });
+
+    const { learned } = learnChannelStandard({ store, clock, channel, durationOf });
+    expect(learned.medians.views_72h).toBe(100); // "views at the channel horizon", here 48h
+    expect(learned.standard.angle).toBe("curiosity");
+  });
+
+  it("ignores a snapshot far past the channel horizon when computing the medians", () => {
+    const { store, clock } = openTempStore(T0);
+    const channel = makeChannel({ learning: { horizon_hours: 48 } });
+    // only a 168h snapshot exists: the 48h collect never ran, so this job contributes no median at all
+    seedEvaluated(store, { status: "supported", metric: "views_72h", metric_value: 150, angle: "curiosity", horizon_hours: 48, snapshotAgeHours: 168, snapshotViews: 9999 });
+
+    const { learned } = learnChannelStandard({ store, clock, channel, durationOf });
+    expect(learned.medians.views_72h).toBeNull();
+  });
+
   it("promotes an angle to the standard when two supported hypotheses share it with lift > 1", () => {
     const { store, clock } = openTempStore(T0);
     const channel = makeChannel();
