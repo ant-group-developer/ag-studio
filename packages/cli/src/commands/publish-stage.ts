@@ -507,6 +507,24 @@ function resolveStyleFor(app: AppContext, topicStyleId: string | undefined): { s
   return { style_id: active.style_id, style_revision: active.revision };
 }
 
+/**
+ * Last-resort `target_duration_seconds` for an auto-planned request (see `createRequestsStage`). Deliberately
+ * as wide as the studio profile's own `content.target_duration_seconds` ([1, 1800]): it exists to make the
+ * request *buildable*, not to constrain it -- the narrowing is the proposing agent's job (`topics.json`) or
+ * the operator's (`production-profiles/channel-planning/profile.yaml`'s `content`).
+ */
+const DEFAULT_TARGET_DURATION_SECONDS: [number, number] = [1, 1800];
+
+/** `stage-request.json`'s `policy.target_duration_seconds`, if this run's profile declares one. The script
+ * SDK types `policy` as a bare `Record<string, unknown>` (it is a plain JSON document to a wrapper script),
+ * so the tuple has to be narrowed by hand rather than parsed as `VerificationPolicy`. */
+function policyTargetDuration(policy: Record<string, unknown>): [number, number] | undefined {
+  const value = policy.target_duration_seconds;
+  if (!Array.isArray(value) || value.length !== 2) return undefined;
+  const [min, max] = value;
+  return typeof min === "number" && typeof max === "number" ? [min, max] : undefined;
+}
+
 /** `create-requests` stage (spec §4.2): turns proposed topics into kho content requests, capped by three
  * independent limits at once -- `demand.needed` (the publish schedule doesn't need more), `room` (the
  * channel's `max_open_requests` headroom: `max_open_requests - open_requests`, so the studio is never handed
@@ -516,7 +534,14 @@ function resolveStyleFor(app: AppContext, topicStyleId: string | undefined): { s
  * run, blowing straight through the open-request cap `planningNeeded` is supposed to enforce.
  * Idempotent per run -- a topic whose normalized text matches an existing request already carrying this
  * run's id in its `notes` is left alone (its id is still reported in the receipt), so a retried attempt never
- * double-books the same topic. */
+ * double-books the same topic.
+ *
+ * Every created request always carries a `target_duration_seconds`, even when the proposal left that optional
+ * field out (`topic.target_duration_seconds` -> this run's profile policy -> `DEFAULT_TARGET_DURATION_SECONDS`).
+ * Without it the loop dead-ends at the studio: `library-production@1.1.0`'s `assemble` stage lists
+ * `brief-duration` in `required_checks`, that checker *skips* when the brief declares no target duration, and
+ * a skipped required check fails the stage exactly like an outright `fail` -- so an auto-planned request with
+ * no duration is replanned until `max_replans` and then parked as `request_stuck`, forever. */
 async function createRequestsStage(app: AppContext, sdk: ScriptContext): Promise<void> {
   const { run, channelId } = requireRunChannel(app, sdk);
   const library = requireLibrary(app);
@@ -542,7 +567,7 @@ async function createRequestsStage(app: AppContext, sdk: ScriptContext): Promise
     const created = createRequest({ store: app.store, fs: library.fs, clock: app.clock }, {
       requested_by: { portfolio_id: run.portfolio_id, channel_id: channelId },
       topic: topic.topic, style_id, style_revision, voice: topic.voice ?? "none", language: brief.channel.seo.language,
-      ...(topic.target_duration_seconds !== undefined ? { target_duration_seconds: topic.target_duration_seconds } : {}),
+      target_duration_seconds: topic.target_duration_seconds ?? policyTargetDuration(sdk.request.policy) ?? DEFAULT_TARGET_DURATION_SECONDS,
       ...(topic.source_hint !== undefined ? { source_hint: topic.source_hint } : {}),
       notes: `auto-plan ${run.run_id}: ${topic.why}`,
     });

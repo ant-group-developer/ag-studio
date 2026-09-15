@@ -61,7 +61,10 @@ stage `create-requests` (script, không phải agent) biến thành content requ
 
 `style_id`/`voice`/`target_duration_seconds`/`source_hint` đều tùy chọn — chỉ ghi khi có căn cứ rõ
 ràng từ `channel-brief.json` hay yêu cầu đặc biệt; bỏ trống thì `create-requests` tự điền mặc định
-(`style_id` = style active mới nhất, `voice` = `"none"`).
+(`style_id` = style active mới nhất, `voice` = `"none"`, `target_duration_seconds` = `content.target_duration_seconds`
+của profile `channel-planning` nếu có, không thì `[1, 1800]` — request **luôn** có khoảng thời lượng, vì
+stage `assemble` của studio bắt buộc check `brief-duration` và một request không có khoảng đích thì không
+bao giờ dựng xong được).
 
 ## Quy tắc
 
