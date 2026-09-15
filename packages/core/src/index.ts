@@ -42,5 +42,8 @@ export * from "./distribution/publication.js";
 export * from "./distribution/checkers.js";
 export * from "./distribution/verify.js";
 export * from "./distribution/reconcile.js";
+export * from "./learning/metrics.js";
+export * from "./learning/hypotheses.js";
+export * from "./learning/learned.js";
 export * from "./dashboard/snapshot.js";
 export * from "./media/watch.js";
