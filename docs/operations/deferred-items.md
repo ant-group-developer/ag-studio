@@ -671,3 +671,25 @@ tin lệch (`packages/core/src/learning/`, `packages/adapters/youtube-playwright
 - **`hypothesis.evaluated` ghi vào `channel_package`** làm một gói "committed" thay đổi nội dung sau khi đã
   publish: chỉ đúng trường `hypothesis` (ADR mục 94) thay đổi, `manifest`/checksum của gói không đụng tới —
   chấp nhận có chủ đích, đây chính là cơ chế duy nhất giả thuyết được đánh giá.
+
+## Hoãn — ghi nhận ở re-review đợt sửa cuối sub-project 3B (2026-09-16)
+
+Ba quan sát mức thấp còn lại sau đợt sửa `b13029e` (cửa sổ horizon, trung vị theo horizon kênh, `void` khi
+metric null, ranh giới adapter). Không cái nào chặn merge; ghi để sub-project sau cân nhắc.
+
+- **Giả thuyết có `expected.horizon_hours` khác `learning.horizon_hours` của kênh sẽ `open` mãi, không báo**
+  (`packages/core/src/learning/hypotheses.ts`, `collectDue` chỉ thu tại mốc của kênh nên không bao giờ có ảnh
+  chụp lọt cửa sổ `[h−12, h+24]` của giả thuyết). Không có gì kiểm hai số này khớp nhau — skill
+  `channel-package` chỉ nói "72 trừ khi brief nói khác". Việc sau: doctor/checker `package-valid` cảnh báo khi
+  hai số lệch, hoặc kẹp `expected.horizon_hours` về horizon kênh lúc commit gói.
+- **Ngân sách thu số 300 s/video × `collect_batch` 5 (spawnSync tuần tự) → worker kênh có thể đứng ~25 phút**
+  trong tình huống xấu nhất, vượt `collect_seconds` mặc định 1800 s (`packages/core/src/learning/metrics.ts`).
+  Đổi đúng hướng (timeout thật thay vì `stats_failing` giả) nhưng runbook nên có một dòng về cadence; việc sau:
+  thu số bất đồng bộ hoặc giảm `collect_batch` mặc định.
+- **`void` vẫn lưu `metric_value: 0` vào `channel_package.hypothesis.evaluated` và event `hypothesis.evaluated`**
+  vì `HypothesisSchema.evaluated.metric_value` là `z.number()` bắt buộc; `channel hypotheses` và
+  `channel-brief.json` in `metric_value: 0` cạnh `status: "void"`. Phép học không bị ảnh hưởng
+  (`learnChannelStandard` chỉ đọc supported|refuted). Việc sau: nới schema thành `nullable()` + `gen:schemas`.
+- Ngoài phạm vi: `waitForLabels` trong `collect-stats.mjs` kiểm deadline trước `waitForTimeout(1000)` và
+  `page.evaluate` không chịu `setDefaultTimeout`, nên mỗi lần chờ có thể quá `LABEL_WAIT_MS` ~1 s; 275 s trong
+  header là sàn, không phải trần cứng (còn 25 s dư so với 300 s).
