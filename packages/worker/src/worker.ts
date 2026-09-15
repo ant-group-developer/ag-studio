@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { isHarnessError, type Artifact, type ClaimResult, type Clock, type HarnessConfig, type ProductionProfile, type ProjectConfig, type Publisher, type Run, type StageRequest, type StageResult, type StateStore } from "@harness/contracts";
-import { acceptedInputsFor, addSeconds, ArtifactRegistry, buildStageRequest, canonicalDigest, type ChannelRegistry, Controller, createWorkspace, eventFor, gateOverdue, type LibraryFs, type LibraryRole, type LoadedWorkflow, materializeInputs, mimeTypesFor, Planner, stageDefinitionDigest, stageDefinitionFor, syncLibrary, Verifier, verifyScheduled, workspacePath, type HarnessLogger } from "@harness/core";
+import { acceptedInputsFor, addSeconds, ArtifactRegistry, autoAccept, type AutoAcceptDeps, buildStageRequest, canonicalDigest, type ChannelRegistry, Controller, createWorkspace, eventFor, gateOverdue, type LibraryFs, type LibraryRole, type LoadedWorkflow, materializeInputs, mimeTypesFor, Planner, stageDefinitionDigest, stageDefinitionFor, syncLibrary, Verifier, verifyScheduled, workspacePath, type HarnessLogger } from "@harness/core";
 import type { ExecutorRegistry } from "@harness/executors";
 import { startHeartbeat } from "./heartbeat.js";
 
@@ -9,8 +9,12 @@ export interface WorkerDeps {
   harness: HarnessConfig; project: ProjectConfig; dataRoot: string; owner: string; capabilities: string[]; logger: HarnessLogger; clock: Clock;
   workflows: (ref: string) => LoadedWorkflow; profiles: (id: string) => ProductionProfile; resourceCapacity: Record<string, number>;
   /** Only present when `project.yaml` declares `library`; an idle poll syncs the kho at most once every
-   * `syncSeconds` so a channel's new request or a studio's fresh style/item reaches this project's DB. */
-  library?: { fs: LibraryFs; role: LibraryRole; syncSeconds: number };
+   * `syncSeconds` so a channel's new request or a studio's fresh style/item reaches this project's DB.
+   * `autoAccept`, only ever present for a studio-role project with `library.auto_accept.enabled`, runs
+   * right after a *successful* sync on that same cadence (see `maybeAutoAccept` below) -- the composition
+   * root supplies everything `autoAccept` needs except `store`/`fs`/`clock`/`logger`, which this worker
+   * already has. */
+  library?: { fs: LibraryFs; role: LibraryRole; syncSeconds: number; autoAccept?: Omit<AutoAcceptDeps, "store" | "fs" | "clock" | "logger"> };
   /** Only present when the ops project has at least one loaded channel; an idle poll sweeps overdue SCHEDULED
    * publication jobs at most once every `verifySeconds` (spec §4.1's verify sweep). */
   publication?: { publisher: Publisher; channels: ChannelRegistry; verifySeconds: number; graceHours: number };
@@ -58,7 +62,12 @@ export class Worker {
     // the run is unknown until the claim lands, so claim on the harness default and widen afterwards
     const defaultLeaseSeconds = this.d.harness.lease_seconds;
     const claim = store.claim({ owner: this.d.owner, capabilities: this.d.capabilities, now: clock.now(), leaseSeconds: defaultLeaseSeconds, resourceCapacity: this.d.resourceCapacity });
-    if (!claim) { this.warnResourceStarvation(); this.warnGateOverdue(); await this.maybeSyncLibrary(); await this.maybeVerifyPublications(); await this.maybeRefreshDashboard(); return "idle"; }
+    if (!claim) {
+      this.warnResourceStarvation(); this.warnGateOverdue();
+      if (await this.maybeSyncLibrary()) await this.maybeAutoAccept();
+      await this.maybeVerifyPublications(); await this.maybeRefreshDashboard();
+      return "idle";
+    }
     const run = store.getRun(claim.stageRun.run_id)!;
     const snapshotLease = Number(run.effective_config_snapshot.lease_seconds);
     const leaseSeconds = Number.isFinite(snapshotLease) ? snapshotLease : defaultLeaseSeconds;
@@ -156,18 +165,38 @@ export class Worker {
    * propagated: an unreachable or broken kho must not stop the worker loop (or make `worker --once` exit
    * non-zero), and must not be retried on every single poll while it stays broken -- it gets one attempt per
    * `syncSeconds`, same as a healthy kho. */
-  private async maybeSyncLibrary(): Promise<void> {
+  /** Returns `true` only when a sync was actually attempted *and* succeeded this call -- `maybeAutoAccept`
+   * uses that (not its own cadence stamp) to run "right after a successful sync", per `runOnce` above. */
+  private async maybeSyncLibrary(): Promise<boolean> {
     const library = this.d.library;
-    if (!library) return;
+    if (!library) return false;
     const now = Date.parse(this.d.clock.now());
-    if (this.lastLibrarySyncAt !== undefined && now - this.lastLibrarySyncAt < library.syncSeconds * 1000) return;
+    if (this.lastLibrarySyncAt !== undefined && now - this.lastLibrarySyncAt < library.syncSeconds * 1000) return false;
     this.lastLibrarySyncAt = now;
     try {
       const report = await syncLibrary({ store: this.d.store, fs: library.fs, role: library.role, clock: this.d.clock });
       for (const c of report.corrupt) this.d.logger.warn("library sync: corrupt entry", c);
       for (const m of report.missing) this.d.logger.warn("library sync: missing from kho", m);
+      return true;
     } catch (e) {
       this.d.logger.error("library sync failed", { error: e instanceof Error ? e.message : String(e) });
+      return false;
+    }
+  }
+
+  /** Studio autopilot (spec §5): only ever called once a sync just succeeded (see `runOnce`), and only when
+   * this project actually declares `library.autoAccept` (composition root wiring gates that on studio role +
+   * `auto_accept.enabled`). Same log-and-swallow shape as `maybeSyncLibrary`/`maybeVerifyPublications`: a
+   * request the loop cannot plan must not stop the worker, and is already reported inside `report.skipped`. */
+  private async maybeAutoAccept(): Promise<void> {
+    const library = this.d.library;
+    if (!library?.autoAccept) return;
+    try {
+      const report = await autoAccept({ store: this.d.store, fs: library.fs, clock: this.d.clock, logger: this.d.logger, ...library.autoAccept });
+      this.d.logger.info("auto-accept", { accepted: report.accepted.length, skipped: report.skipped.length });
+      for (const s of report.skipped) this.d.logger.warn("auto-accept: skipped", s);
+    } catch (e) {
+      this.d.logger.error("auto-accept failed", { error: e instanceof Error ? e.message : String(e) });
     }
   }
 

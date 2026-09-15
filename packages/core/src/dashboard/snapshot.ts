@@ -5,6 +5,8 @@ import type { ChannelPackage, Clock, PublicationJob, StateStore } from "@harness
 import { posixPath, type LoadedChannel } from "../distribution/channels.js";
 import { localDate, zonedToUtc } from "../distribution/publication.js";
 import type { DoctorRow } from "../doctor/doctor.js";
+import type { AutoAcceptConfig } from "../library/auto-accept.js";
+import { finishedRunCounts } from "../library/auto-accept.js";
 import type { LibraryFs } from "../library/files.js";
 import { gateOverdue } from "../orchestration/gate.js";
 
@@ -65,13 +67,16 @@ export interface DashboardEpisode {
 
 export interface DashboardActiveRun { run_id: string; channel_id: string; stage_key: string; state: string; since: string }
 
-export type DashboardAlertKind = "reconcile" | "run_failed" | "gate_overdue" | "doctor" | "library_unmounted" | "missing_today";
+export type DashboardAlertKind = "reconcile" | "run_failed" | "gate_overdue" | "doctor" | "library_unmounted" | "missing_today" | "request_stuck";
 export interface DashboardAlert { kind: DashboardAlertKind; channel_id?: string; ref: string; message: string; since: string }
 
 export interface SnapshotDeps {
   store: StateStore;
   channels: LoadedChannel[];
-  library?: { fs: LibraryFs };
+  /** `autoAccept`, when present, drives the `request_stuck` alert below (an open request whose finished-run
+   * count already exceeds `max_replans` -- the same "exhausted" condition `autoAccept` itself skips on, spec
+   * §5) without this snapshot needing to know anything else about the studio autopilot loop. */
+  library?: { fs: LibraryFs; autoAccept?: AutoAcceptConfig };
   doctorRows?: DoctorRow[];
   clock: Clock;
   gateWindowSeconds: number;
@@ -293,6 +298,20 @@ function buildAlerts(d: SnapshotDeps, now: string, doctorRows: DoctorRow[], chan
   if (d.library && !d.library.fs.exists()) {
     const root = posixPath(d.library.fs.paths.root);
     alerts.push({ kind: "library_unmounted", ref: root, message: `library root not mounted: ${root}`, since: now });
+  }
+
+  if (d.library?.autoAccept) {
+    const maxReplans = d.library.autoAccept.max_replans;
+    const finished = finishedRunCounts(store);
+    for (const request of store.listContentRequests({ status: "open" })) {
+      const count = finished.get(request.request_id) ?? 0;
+      if (count <= maxReplans) continue;
+      alerts.push({
+        kind: "request_stuck", ref: request.request_id,
+        message: `content request ${request.request_id} exhausted its replan budget (${count} finished runs > max_replans ${maxReplans})`,
+        since: request.updated_at,
+      });
+    }
   }
 
   for (const channel of channels) {

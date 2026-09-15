@@ -217,6 +217,41 @@ describe("runDoctor", () => {
     expect(byCheckWithoutBuiltin.get("script:sample-three-stage/finalize")).toMatchObject({ ok: false });
   });
 
+  it("adds library:auto_accept only when library.autoAccept is present, and only in its enabled shape checks sources/agent", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "doctor-auto-accept-"));
+    const libRoot = mkdtempSync(join(tmpdir(), "doctor-auto-accept-kho-"));
+    mkdirSync(join(libRoot, "styles"), { recursive: true });
+    const fs = new LibraryFs({ root: libRoot, role: "studio" });
+    const config = { enabled: true, source_collection: "main", max_replans: 2, max_concurrent_runs: 1 };
+
+    const withoutAutoAccept = runDoctor({ ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [], library: { fs, role: "studio" } });
+    expect(withoutAutoAccept.some((r) => r.check === "library:auto_accept")).toBe(false);
+
+    const disabled = runDoctor({
+      ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+      library: { fs, role: "studio", autoAccept: { config: { ...config, enabled: false }, sourceCount: 0, agentIsFake: true } },
+    });
+    expect(disabled.find((r) => r.check === "library:auto_accept")).toMatchObject({ ok: true, detail: "disabled" });
+
+    const noSources = runDoctor({
+      ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+      library: { fs, role: "studio", autoAccept: { config, sourceCount: 0, agentIsFake: false } },
+    });
+    expect(noSources.find((r) => r.check === "library:auto_accept")).toMatchObject({ ok: false, detail: "collection main has no sources" });
+
+    const fakeAgent = runDoctor({
+      ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+      library: { fs, role: "studio", autoAccept: { config, sourceCount: 3, agentIsFake: true } },
+    });
+    expect(fakeAgent.find((r) => r.check === "library:auto_accept")).toMatchObject({ ok: false, detail: "adapters.agent is fake" });
+
+    const ok = runDoctor({
+      ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+      library: { fs, role: "studio", autoAccept: { config, sourceCount: 3, agentIsFake: false } },
+    });
+    expect(ok.find((r) => r.check === "library:auto_accept")).toMatchObject({ ok: true, detail: "enabled, collection main (3 sources)" });
+  });
+
   it("adds the three library:* rows only when project.library is configured, failing library:root on a missing kho", () => {
     const projectDir = mkdtempSync(join(tmpdir(), "doctor-library-"));
 

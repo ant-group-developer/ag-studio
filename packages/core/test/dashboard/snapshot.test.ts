@@ -207,6 +207,41 @@ describe("buildSnapshot", () => {
     expect(unmounted.library?.mounted).toBe(false);
     expect(unmounted.alerts.some((a) => a.kind === "library_unmounted")).toBe(true);
   });
+
+  it("alerts request_stuck for an open request whose finished runs exceed autoAccept.max_replans", () => {
+    const { store, clock } = openTempStore();
+    const libRoot = mkdtempSync(join(tmpdir(), "snapshot-lib-stuck-"));
+    const fs = new LibraryFs({ root: libRoot, role: "studio" });
+    const requestId = newId("content_request");
+    const contentId = newId("content_item");
+
+    store.upsertContentRequest(ContentRequestSchema.parse({
+      schema_version: "harness.content-request/v1", request_id: requestId, requested_by: { portfolio_id: "portfolio-main" },
+      topic: "topic", status: "open", created_at: clock.now(), updated_at: clock.now(),
+    }));
+    store.insertContentItem({
+      schema_version: "harness.content-item/v1", content_id: contentId, source_ids: [], revision: 1, title: "topic", created_at: clock.now(),
+      library_brief: { topic: "topic", style_id: newId("edit_style"), style_revision: 1, voice: "none", language: "vi", request_id: requestId },
+    });
+    for (const state of ["SUCCEEDED", "FAILED", "CANCELLED"] as const) {
+      store.insertRun({
+        schema_version: "harness.run/v1", run_id: newId("run"), project_id: "project-snap", portfolio_id: "portfolio-main",
+        workflow_release: { id: "library-production", version: "1.0.0", digest: SHA }, profile_snapshot: { id: "studio", revision: 1 },
+        content_id: contentId, options: {}, state, effective_config_snapshot: {}, effective_config_digest: SHA, total_cost_usd: 0,
+        created_at: clock.now(), updated_at: clock.now(),
+      });
+    }
+
+    const withoutAutoAccept = buildSnapshot({ store, channels: [], library: { fs }, clock, gateWindowSeconds: 600, project_id: "project-snap" });
+    expect(withoutAutoAccept.alerts.some((a) => a.kind === "request_stuck")).toBe(false);
+
+    const snapshot = buildSnapshot({
+      store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap",
+      library: { fs, autoAccept: { enabled: true, source_collection: "main", max_replans: 2, max_concurrent_runs: 1 } },
+    });
+    const alert = snapshot.alerts.find((a) => a.kind === "request_stuck");
+    expect(alert).toMatchObject({ kind: "request_stuck", ref: requestId });
+  });
 });
 
 describe("writeSnapshotFile", () => {

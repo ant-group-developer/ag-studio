@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { getEventListeners } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ChannelConfigSchema, newId, ProductionProfileSchema, ProjectConfigSchema, WorkflowDefinitionSchema, type ChannelPackage, type Executor, type Hypothesis, type PublicationJob, type StageRequest, type StageResult } from "@harness/contracts";
+import { ChannelConfigSchema, newId, ProductionProfileSchema, ProjectConfigSchema, WorkflowDefinitionSchema, type ChannelPackage, type ContentRequest, type Executor, type Hypothesis, type PublicationJob, type StageRequest, type StageResult } from "@harness/contracts";
 import { ArtifactRegistry, BUILTIN_CHECKERS, ChannelRegistry, Controller, FixedClock, HARNESS_ROOT, LibraryFs, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, SourceCatalog, SqliteStateStore, Verifier, addSeconds, createLogger, loadHarnessConfig, loadProfile, loadWorkflow } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, FakePublisher, fakeScriptCommands } from "@harness/adapter-fake";
@@ -497,6 +497,70 @@ describe("Worker", () => {
       expect(write).toHaveBeenCalledTimes(1);
       expect(errors).toHaveLength(1);
       expect(errors[0]).toMatchObject({ msg: "dashboard refresh failed" });
+    });
+  });
+
+  describe("auto-accept (sub-project 4, Task 5)", () => {
+    function libraryWithAutoAccept(w: ReturnType<typeof makeWorld>, syncSeconds = 300) {
+      const libRoot = mkdtempSync(join(tmpdir(), "wk-lib-"));
+      return {
+        fs: new LibraryFs({ root: libRoot, role: "studio" as const }), role: "studio" as const, syncSeconds,
+        autoAccept: {
+          catalog: w.catalog, planner: w.planner, harness: loadHarnessConfig(HARNESS_ROOT), projectId: "project-main", portfolioId: "portfolio-main",
+          profile: loadProfile(HARNESS_ROOT, "studio"), workflows: (ref: string) => loadWorkflow(HARNESS_ROOT, ref), executorVersionFor: () => "v1",
+          config: { enabled: true, source_collection: "main", max_replans: 2, max_concurrent_runs: 5 },
+        },
+      };
+    }
+
+    function seedAcceptableRequest(w: ReturnType<typeof makeWorld>): void {
+      const styleId = newId("edit_style");
+      w.store.upsertEditStyle({
+        schema_version: "harness.edit-style/v1", style_id: styleId, revision: 1, name: "Test style", status: "active",
+        learned_from: [],
+        params: {
+          cut_rhythm: "medium", shot_seconds: [2, 5], transitions: [], text_overlay: { style: "bold", density: "low" },
+          subtitles: "burn-in", music: { mood: "upbeat", ducking: true }, opening: { seconds: 3, structure: "hook" }, aspect_ratio: "16:9", pace_notes: "",
+        },
+        evidence: [], created_at: w.clock.now(), updated_at: w.clock.now(),
+      });
+      w.store.insertSourceItem({
+        schema_version: "harness.source-item/v1", source_id: newId("source_item"), uri: "file:///clip.mp4", original_uri: "file:///clip.mp4",
+        checksum: "sha256:" + "a".repeat(64), collection: "main", mime_type: "video/mp4", size_bytes: 10, media: null,
+        rights_status: "cleared", language: null, duration_seconds: null, ingested_at: w.clock.now(),
+      });
+      const request: ContentRequest = {
+        schema_version: "harness.content-request/v1", request_id: newId("content_request"), requested_by: { portfolio_id: "portfolio-main" },
+        topic: "Ancient ruins", style_id: styleId, style_revision: 1, voice: "none", language: "vi", count: 1,
+        status: "open", item_ids: [], notes: "", created_at: w.clock.now(), updated_at: w.clock.now(),
+      };
+      w.store.upsertContentRequest(request);
+    }
+
+    it("runs auto-accept once right after a successful library sync, and not again before syncSeconds", async () => {
+      const w = makeWorld();
+      seedAcceptableRequest(w);
+      const planSpy = vi.spyOn(w.planner, "plan");
+      // force every poll down the idle branch: the run auto-accept enqueues has a claimable first stage
+      // (library-production's "intake" declares no required_capabilities), which would otherwise turn the
+      // second `runOnce()` into "done" and make this test about claim scheduling instead of the sync/
+      // auto-accept cadence it is meant to check.
+      vi.spyOn(w.store, "claim").mockReturnValue(undefined);
+      const worker = new Worker({ ...w.deps, library: libraryWithAutoAccept(w) });
+
+      expect(await worker.runOnce()).toBe("idle");
+      expect(planSpy).toHaveBeenCalledTimes(1);
+
+      expect(await worker.runOnce()).toBe("idle"); // same FixedClock instant, well under syncSeconds=300
+      expect(planSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not run auto-accept when the project declares no library", async () => {
+      const w = makeWorld();
+      seedAcceptableRequest(w);
+      const planSpy = vi.spyOn(w.planner, "plan");
+      expect(await w.worker.runOnce()).toBe("idle");
+      expect(planSpy).not.toHaveBeenCalled();
     });
   });
 });

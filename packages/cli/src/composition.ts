@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
 import { HarnessError, isHarnessError, ProjectConfigSchema, type AgentRuntime, type ExecutorRef, type MediaProber, type ProductionProfile, type ProjectConfig, type Publisher, type ScriptCommand, type ScriptsRegistry, type SourcesRegistry } from "@harness/contracts";
-import { ArtifactRegistry, BUILTIN_CHECKERS, buildSnapshot, ChannelRegistry, Controller, distributionCheckers, type DoctorRow, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, LibraryFs, libraryCheckers, listWorkflowRefs, loadChannels, type LoadedWorkflow, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, resolveWorkflowScope, runDoctor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, writeSnapshotFile, type HarnessLogger, type LibraryRole, type LogLevel } from "@harness/core";
+import { ArtifactRegistry, type AutoAcceptConfig, BUILTIN_CHECKERS, buildSnapshot, ChannelRegistry, Controller, distributionCheckers, type DoctorRow, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, LibraryFs, libraryCheckers, listWorkflowRefs, loadChannels, type LoadedWorkflow, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, resolveWorkflowScope, runDoctor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, writeSnapshotFile, type HarnessLogger, type LibraryRole, type LogLevel } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, FakeProvider, FakePublisher, fakeScriptCommands } from "@harness/adapter-fake";
 import { FfprobeMediaProber } from "@harness/adapter-ffprobe";
@@ -24,8 +24,11 @@ export interface AppContext {
   /** Names the "script" executor resolves right now: built-in fakes plus any project scripts.yaml override. */
   scriptCommandNames: string[];
   /** Only present when `project.yaml` declares `library`; the filesystem handle and role/sync interval the
-   * kho commands, doctor's library rows, and the worker's periodic sync all share. */
-  library?: { fs: LibraryFs; role: LibraryRole; syncSeconds: number };
+   * kho commands, doctor's library rows, and the worker's periodic sync all share. `autoAccept` is the raw
+   * `project.yaml` config (present whenever `library.auto_accept` is set, even when `enabled: false`) --
+   * `computeDoctorRows`/`writeDashboardSnapshot` below read it directly; `commands/worker.ts` turns it into
+   * the full `AutoAcceptDeps` the `Worker` needs, gated on `library.role === "studio" && ...enabled`. */
+  library?: { fs: LibraryFs; role: LibraryRole; syncSeconds: number; autoAccept?: AutoAcceptConfig };
   /** Always present (empty when the project declares no `channels/`), same pattern as `scripts`/`sources`
    * above -- a malformed `channel.yaml` must not stop every other command from running. */
   channels: ChannelRegistry;
@@ -122,7 +125,10 @@ export function buildContext(o: { projectDir: string; harnessRoot?: string; owne
   const prober = proberAvailable ? new FfprobeMediaProber() : new NullMediaProber();
   const catalog = new SourceCatalog({ store, dataRoot, prober, clock, materialize: project.source.materialize });
   const library = project.library
-    ? { fs: new LibraryFs({ root: resolve(projectDir, project.library.root), role: project.library.role }), role: project.library.role, syncSeconds: project.library.sync_seconds }
+    ? {
+        fs: new LibraryFs({ root: resolve(projectDir, project.library.root), role: project.library.role }), role: project.library.role, syncSeconds: project.library.sync_seconds,
+        ...(project.library.auto_accept ? { autoAccept: project.library.auto_accept } : {}),
+      }
     : undefined;
   return {
     store, planner, controller, registry,
@@ -183,7 +189,22 @@ export function computeDoctorRows(ctx: AppContext): DoctorRow[] {
     ...runDoctor({
       projectDir: ctx.projectDir, project: ctx.project, harness: ctx.harness, scripts: ctx.scripts, builtinScripts: ctx.scriptCommandNames, workflows, profiles,
       secrets: ctx.secrets, proberAvailable: ctx.proberAvailable, store: ctx.store, migrationsDir: ctx.migrationsDir, configErrors: ctx.configErrors,
-      ...(ctx.library ? { library: { fs: ctx.library.fs, role: ctx.library.role } } : {}),
+      ...(ctx.library
+        ? {
+            library: {
+              fs: ctx.library.fs, role: ctx.library.role,
+              ...(ctx.library.autoAccept
+                ? {
+                    autoAccept: {
+                      config: ctx.library.autoAccept,
+                      sourceCount: ctx.store.listSourceItems({ collection: ctx.library.autoAccept.source_collection }).length,
+                      agentIsFake: ctx.project.adapters.agent === "fake",
+                    },
+                  }
+                : {}),
+            },
+          }
+        : {}),
       channels: { loaded: ctx.channels.list(), errors: ctx.channelErrors, secrets: ctx.secrets },
       agent: ctx.project.adapters.agent === "cli"
         ? {
@@ -205,7 +226,7 @@ export async function writeDashboardSnapshot(ctx: AppContext): Promise<string> {
   const snapshot = buildSnapshot({
     store: ctx.store, channels: ctx.channels.list(), doctorRows, clock: ctx.clock,
     gateWindowSeconds: ctx.harness.resource_wait_warn_seconds, project_id: ctx.project.project_id,
-    ...(ctx.library ? { library: { fs: ctx.library.fs } } : {}),
+    ...(ctx.library ? { library: { fs: ctx.library.fs, ...(ctx.library.autoAccept ? { autoAccept: ctx.library.autoAccept } : {}) } } : {}),
   });
   return writeSnapshotFile(ctx.dataRoot, snapshot);
 }

@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import type { HarnessConfig, ProductionProfile, ProjectConfig, ScriptsRegistry, SecretResolver, StageDefinition, StateStore } from "@harness/contracts";
 import { EnvSecretResolver } from "../config/secrets.js";
 import type { LoadedChannel } from "../distribution/channels.js";
+import type { AutoAcceptConfig } from "../library/auto-accept.js";
 import type { LibraryFs, LibraryRole } from "../library/files.js";
 import type { LoadedWorkflow } from "../orchestration/registry.js";
 import { loadSourcesRegistry, SOURCES_FILE } from "../source-catalog/sources-file.js";
@@ -28,8 +29,10 @@ export interface DoctorInput {
   /** Parse errors the composition root swallowed so one malformed config file does not abort every command
    * (`packages/cli/src/composition.ts`): a message here turns the matching `scripts`/`sources` row FAIL. */
   configErrors?: { scripts?: string; sources?: string };
-  /** Only present when `project.yaml` declares `library`; adds the three `library:*` rows below. */
-  library?: { fs: LibraryFs; role: LibraryRole };
+  /** Only present when `project.yaml` declares `library`; adds the three `library:*` rows below.
+   * `autoAccept`, when present, adds `library:auto_accept` too -- pre-computed by the composition root
+   * (`sourceCount`/`agentIsFake`) rather than derived here, same as `proberAvailable`/`configErrors` above. */
+  library?: { fs: LibraryFs; role: LibraryRole; autoAccept?: { config: AutoAcceptConfig; sourceCount: number; agentIsFake: boolean } };
   /** Only present when the composition root always has channel data available; a per-channel row set is added
    * for every loaded channel (repo dir, upload scripts, upload profile, identity, secret), plus one summary
    * `channels:config` row. `errors` mirrors `configErrors.scripts`/`.sources`: a broken `channels/` directory
@@ -74,6 +77,7 @@ export function runDoctor(i: DoctorInput): DoctorRow[] {
     ...checkProfiles(i),
     checkSources(i),
     ...(i.library ? [checkLibraryRoot(i.library), checkLibraryWrite(i.library), checkLibraryIndex(i.library)] : []),
+    ...(i.library?.autoAccept ? [checkLibraryAutoAccept(i.library.autoAccept)] : []),
     ...checkChannels(i),
     ...(i.agent ? [checkAgentRuntime(i.agent)] : []),
     ...(i.publisher ? [checkPublisher(i.publisher)] : []),
@@ -246,6 +250,17 @@ function checkLibraryIndex(library: { fs: LibraryFs; role: LibraryRole }): Docto
   } catch (e) {
     return { check: "library:index", ok: false, detail: e instanceof Error ? e.message : String(e) };
   }
+}
+
+/** `library:auto_accept`: disabled is a plain informational OK (nothing to run); enabled checks the two
+ * things that would make the loop silently do nothing forever -- an empty source collection, or an agent
+ * runtime that cannot actually execute the plans it enqueues. */
+function checkLibraryAutoAccept(a: { config: AutoAcceptConfig; sourceCount: number; agentIsFake: boolean }): DoctorRow {
+  const check = "library:auto_accept";
+  if (!a.config.enabled) return { check, ok: true, detail: "disabled" };
+  if (a.sourceCount === 0) return { check, ok: false, detail: `collection ${a.config.source_collection} has no sources` };
+  if (a.agentIsFake) return { check, ok: false, detail: "adapters.agent is fake" };
+  return { check, ok: true, detail: `enabled, collection ${a.config.source_collection} (${a.sourceCount} sources)` };
 }
 
 const CHANNEL_UPLOAD_SCRIPTS = ["upload-youtube-playwright.mjs", "publish-video-playwright.mjs"];
