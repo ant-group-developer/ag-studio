@@ -134,8 +134,17 @@ export const DemandSchema = z.object({
   max_open_requests: z.number().int().min(0),
 }).strict();
 
+/** `output/requests-receipt.json` written by the built-in `create-requests` stage (spec §4.2): every content
+ * request id the `channel-planning` run's topics resolved to, whether newly created this attempt or already
+ * existing from an earlier attempt of the same run (idempotent rerun). */
+export const RequestsReceiptSchema = z.object({
+  schema_version: schemaVersion("requests-receipt"),
+  request_ids: z.array(idSchema("content_request")),
+}).strict();
+
 export type VideoMetrics = z.infer<typeof VideoMetricsSchema>;
 export type ChannelLearned = z.infer<typeof ChannelLearnedSchema>;
 export type ChannelBrief = z.infer<typeof ChannelBriefSchema>;
 export type TopicProposal = z.infer<typeof TopicProposalSchema>;
 export type Demand = z.infer<typeof DemandSchema>;
+export type RequestsReceipt = z.infer<typeof RequestsReceiptSchema>;

@@ -1,0 +1,46 @@
+schema_version: harness.workflow/v1
+id: channel-publish
+version: 1.1.0
+defaults: {}
+stages:
+  - key: fetch-library-item
+    executor: { type: script, script: publish-fetch }
+    required_checks: [schema-valid, output-exists, checksum-match, media-probe]
+    outputs:
+      - { type: episode_video, mime_type: video/mp4, name: episode.mp4 }
+      - { type: thumbnail_set, mime_type: application/x-directory, kind: directory, name: thumbnails }
+      - { type: library_brief, mime_type: application/json, name: brief.json }
+  - key: channel-brief
+    executor: { type: script, script: publish-channel-brief }
+    depends_on: [fetch-library-item]
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: channel_brief, mime_type: application/json, name: channel-brief.json }
+  - key: package
+    executor: { type: agent, skill: channel-package, brief: "Đóng gói tập này cho kênh: đọc channel-brief.json trước (chuẩn kênh đã học, giả thuyết gần đây, số liệu, request đang mở), rồi brief.md (hướng SEO của kênh, gợi ý tiêu đề, ứng viên thumbnail), tìm mẫu tiêu đề cùng ngách trên web, viết output/package.json gồm metadata và hypothesis theo schema harness.channel-package-draft/v1." }
+    depends_on: [fetch-library-item, channel-brief]
+    retry: { max_attempts: 2, backoff_seconds: [30], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, youtube-limits, hypothesis-complete]
+    outputs:
+      - { type: channel_package_draft, mime_type: application/json, name: package.json }
+  - key: build-package
+    executor: { type: script, script: publish-build-package }
+    depends_on: [package, fetch-library-item]
+    required_checks: [schema-valid, output-exists, checksum-match, package-integrity, channel-identity, duplicate-upload]
+    outputs:
+      - { type: channel_package, mime_type: application/json, name: package-receipt.json }
+  - key: upload
+    executor: { type: script, script: publish-upload }
+    depends_on: [build-package]
+    requires_resources: [browser]
+    retry: { max_attempts: 3, backoff_seconds: [60, 600], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: upload_receipt, mime_type: application/json, name: upload-receipt.json }
+  - key: schedule
+    executor: { type: script, script: publish-schedule }
+    depends_on: [upload]
+    requires_resources: [browser]
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: publication_receipt, mime_type: application/json, name: schedule-receipt.json }

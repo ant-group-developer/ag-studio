@@ -1,0 +1,28 @@
+schema_version: harness.workflow/v1
+id: channel-planning
+version: 1.0.0
+defaults: {}
+stages:
+  - key: channel-brief
+    executor: { type: script, script: publish-channel-brief }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: channel_brief, mime_type: application/json, name: channel-brief.json }
+  - key: demand
+    executor: { type: script, script: publish-demand }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: demand, mime_type: application/json, name: demand.json }
+  - key: propose-topics
+    executor: { type: agent, skill: channel-plan, brief: "Đọc channel-brief.json (hướng SEO, chuẩn kênh, giả thuyết đã đánh giá, số liệu gần đây, request đang mở) và demand.json (needed). Tìm 3–5 video cùng ngách gần đây trên web. Viết output/topics.json (harness.topic-proposal/v1) với tối đa needed chủ đề mới, mỗi chủ đề có why dựa trên số liệu/giả thuyết/thị trường, không trùng request đang mở hay tập gần đây." }
+    depends_on: [channel-brief, demand]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, topics-valid]
+    outputs:
+      - { type: topic_proposal, mime_type: application/json, name: topics.json }
+  - key: create-requests
+    executor: { type: script, script: publish-create-requests }
+    depends_on: [propose-topics, demand, channel-brief]
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: requests_receipt, mime_type: application/json, name: requests-receipt.json }

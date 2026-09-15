@@ -4,10 +4,11 @@ import { dirname, join, resolve } from "node:path";
 import type { Command } from "commander";
 import { start, type ScriptContext } from "@harness/script-sdk";
 import {
-  ChannelPackageDraftSchema, HarnessError, isHarnessError, LibraryItemSchema, PackageReceiptSchema, ScheduleReceiptSchema, UploadReceiptSchema,
-  type ChannelPackageDraft, type PackageReceipt, type PublicationJob, type ScheduleReceipt, type UploadReceipt,
+  ChannelBriefSchema, ChannelPackageDraftSchema, DemandSchema, HarnessError, isHarnessError, LibraryItemSchema, PackageReceiptSchema,
+  RequestsReceiptSchema, ScheduleReceiptSchema, TopicProposalSchema, UploadReceiptSchema,
+  type ChannelPackageDraft, type LibraryItem, type PackageReceipt, type PublicationJob, type ScheduleReceipt, type UploadReceipt,
 } from "@harness/contracts";
-import { buildUploadManifest, commitPackage, createDraftPackage, createJob, eventFor, manifestDigest, nextSlot, sha256File, transitionPublication, type LoadedChannel } from "@harness/core";
+import { buildChannelBrief, buildUploadManifest, channelDemand, commitPackage, createDraftPackage, createJob, createRequest, eventFor, manifestDigest, nextSlot, sha256File, transitionPublication, type LoadedChannel } from "@harness/core";
 import type { AppContext } from "../composition.js";
 import { requireLibrary } from "./library-stage.js";
 import { withContext } from "./shared.js";
@@ -67,6 +68,30 @@ function parseUploadReceipt(raw: unknown): UploadReceipt {
   const parsed = UploadReceiptSchema.safeParse(raw);
   if (!parsed.success) throw new HarnessError("CONFIG_INVALID", "upload_receipt output failed schema validation", { issues: parsed.error.issues });
   return parsed.data;
+}
+
+function parseDemand(raw: unknown) {
+  const parsed = DemandSchema.safeParse(raw);
+  if (!parsed.success) throw new HarnessError("CONFIG_INVALID", "demand input failed schema validation", { issues: parsed.error.issues });
+  return parsed.data;
+}
+
+function parseChannelBrief(raw: unknown) {
+  const parsed = ChannelBriefSchema.safeParse(raw);
+  if (!parsed.success) throw new HarnessError("CONFIG_INVALID", "channel_brief input failed schema validation", { issues: parsed.error.issues });
+  return parsed.data;
+}
+
+function parseTopicProposal(raw: unknown) {
+  const parsed = TopicProposalSchema.safeParse(raw);
+  if (!parsed.success) throw new HarnessError("CONFIG_INVALID", "topic_proposal input failed schema validation", { issues: parsed.error.issues });
+  return parsed.data;
+}
+
+/** lowercase, trim, collapse internal whitespace -- same normalization `learningCheckers`'s `topics-valid`
+ * uses (packages/core/src/learning/checkers.ts) for duplicate-topic detection. */
+function normalizeTopic(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 /** Writes `value` as the named JSON output under the workspace and registers it with the sdk, mirroring
@@ -431,8 +456,107 @@ async function scheduleStage(app: AppContext, sdk: ScriptContext): Promise<void>
   await sdk.fail("transient", outcome.reason); // busy
 }
 
+/** shared by `channel-brief`/`demand`/`create-requests`: every one of them needs this run's channel, resolved
+ * from `content.library_channel_id` -- missing it is a contract problem with this run, not something to retry. */
+function requireRunChannel(app: AppContext, sdk: ScriptContext): { channel: LoadedChannel; channelId: string; content: ReturnType<typeof runOf>["content"]; run: ReturnType<typeof runOf>["run"] } {
+  const { run, content } = runOf(app, sdk);
+  if (!content.library_channel_id) throw new HarnessError("CONFIG_INVALID", `content ${content.content_id} has no library_channel_id`, { content_id: content.content_id });
+  return { channel: requireChannel(app, content.library_channel_id), channelId: content.library_channel_id, content, run };
+}
+
+/** `channel-brief` stage (spec §3.3, §4.2): assembles `output/channel-brief.json` for both `channel-publish`
+ * (after `fetch-library-item`, where `content.library_item_id` is always set -- the item is read from the kho)
+ * and `channel-planning` (planning content carries no `library_item_id` yet -- `item` is simply `null`, the
+ * normal case for a planning run, not an error). */
+async function channelBriefStage(app: AppContext, sdk: ScriptContext): Promise<void> {
+  const { channel, content } = requireRunChannel(app, sdk);
+  let item: LibraryItem | null = null;
+  if (content.library_item_id) {
+    const library = requireLibrary(app);
+    item = library.fs.readJson(library.fs.paths.manifest(content.library_item_id), LibraryItemSchema);
+  }
+  const brief = buildChannelBrief({ store: app.store, clock: app.clock, channel, item });
+  await writeJsonOutput(sdk, "output/channel-brief.json", brief, "channel_brief");
+  await sdk.done();
+}
+
+/** `demand` stage (spec §4.2): assembles `output/demand.json` -- how many more episodes this channel's
+ * publish schedule needs, and how much of that is already covered. */
+async function demandStage(app: AppContext, sdk: ScriptContext): Promise<void> {
+  const { channel } = requireRunChannel(app, sdk);
+  const library = requireLibrary(app);
+  const libraryItems = app.store.listLibraryItems({ status: "approved" });
+  const demand = channelDemand({ store: app.store, clock: app.clock, channel, libraryItems, libraryClaimsOf: (itemId) => library.fs.listClaims(itemId) });
+  await writeJsonOutput(sdk, "output/demand.json", demand, "demand");
+  await sdk.done();
+}
+
+/** Resolves the edit style a planned topic buys: the topic's own `style_id` when it named one, else the
+ * channel's most recently created active style (`listEditStyles` is insertion-ordered, so the last entry is
+ * the newest). Either way the style's *current* `revision` is read back from the store -- a `TopicProposal`
+ * never carries a revision of its own. No active style anywhere is a contract problem: `create-requests` has
+ * nothing to assign the planned topic to. */
+function resolveStyleFor(app: AppContext, topicStyleId: string | undefined): { style_id: string; style_revision: number } {
+  if (topicStyleId) {
+    const style = app.store.getEditStyle(topicStyleId);
+    if (!style) throw new HarnessError("NOT_FOUND", `edit style not found: ${topicStyleId}`, { style_id: topicStyleId });
+    return { style_id: style.style_id, style_revision: style.revision };
+  }
+  const active = app.store.listEditStyles({ status: "active" }).at(-1);
+  if (!active) throw new HarnessError("CONFIG_INVALID", "no active edit style available to assign to a planned topic", {});
+  return { style_id: active.style_id, style_revision: active.revision };
+}
+
+/** `create-requests` stage (spec §4.2): turns up to `demand.needed` proposed topics into kho content requests.
+ * Idempotent per run -- a topic whose normalized text matches an existing request already carrying this
+ * run's id in its `notes` is left alone (its id is still reported in the receipt), so a retried attempt never
+ * double-books the same topic. */
+async function createRequestsStage(app: AppContext, sdk: ScriptContext): Promise<void> {
+  const { run, channelId } = requireRunChannel(app, sdk);
+  const library = requireLibrary(app);
+
+  const proposal = parseTopicProposal(readJsonFile(sdk.input("topic_proposal")));
+  const demand = parseDemand(readJsonFile(sdk.input("demand")));
+  const brief = parseChannelBrief(readJsonFile(sdk.input("channel_brief")));
+
+  const candidates = proposal.topics.slice(0, demand.needed);
+  const existingForRun = app.store.listContentRequests({}).filter((r) => r.requested_by.channel_id === channelId && r.notes.includes(run.run_id));
+  const byTopic = new Map(existingForRun.map((r) => [normalizeTopic(r.topic), r.request_id]));
+
+  const requestIds: string[] = [];
+  const createdIds: string[] = [];
+  for (const topic of candidates) {
+    const key = normalizeTopic(topic.topic);
+    const existingId = byTopic.get(key);
+    if (existingId) { requestIds.push(existingId); continue; }
+
+    const { style_id, style_revision } = resolveStyleFor(app, topic.style_id);
+    const created = createRequest({ store: app.store, fs: library.fs, clock: app.clock }, {
+      requested_by: { portfolio_id: run.portfolio_id, channel_id: channelId },
+      topic: topic.topic, style_id, style_revision, voice: topic.voice ?? "none", language: brief.channel.seo.language,
+      ...(topic.target_duration_seconds !== undefined ? { target_duration_seconds: topic.target_duration_seconds } : {}),
+      ...(topic.source_hint !== undefined ? { source_hint: topic.source_hint } : {}),
+      notes: `auto-plan ${run.run_id}: ${topic.why}`,
+    });
+    requestIds.push(created.request_id);
+    createdIds.push(created.request_id);
+    byTopic.set(key, created.request_id); // guards against duplicate topics inside the same proposal
+  }
+
+  if (createdIds.length > 0) {
+    const stageRun = app.store.getStageRun(sdk.request.stage_run_id) ?? null;
+    const attempt = app.store.getAttempt(sdk.request.attempt_id) ?? null;
+    app.store.appendEvent(eventFor(run, stageRun, attempt, "channel.requests_created", "info", { channel_id: channelId, run_id: run.run_id, request_ids: createdIds }));
+  }
+
+  const receipt = RequestsReceiptSchema.parse({ schema_version: "harness.requests-receipt/v1", request_ids: requestIds });
+  await writeJsonOutput(sdk, "output/requests-receipt.json", receipt, "requests_receipt");
+  await sdk.done();
+}
+
 const STAGES: Record<string, (app: AppContext, sdk: ScriptContext) => Promise<void>> = {
   fetch: fetchStage, "build-package": buildPackageStage, upload: uploadStage, schedule: scheduleStage,
+  "channel-brief": channelBriefStage, demand: demandStage, "create-requests": createRequestsStage,
 };
 
 /** Maps a thrown `HarnessError` (or anything else) to the sdk's `ctx.fail(kind, …)`, identical to

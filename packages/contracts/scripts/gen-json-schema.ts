@@ -31,6 +31,7 @@ export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
   "package-receipt": D.PackageReceiptSchema, "upload-receipt": D.UploadReceiptSchema, "schedule-receipt": D.ScheduleReceiptSchema,
   "video-metrics": G.VideoMetricsSchema, "channel-learned": G.ChannelLearnedSchema,
   "channel-brief": G.ChannelBriefSchema, "topic-proposal": G.TopicProposalSchema,
+  demand: G.DemandSchema, "requests-receipt": G.RequestsReceiptSchema,
 };
 
 export function toJsonSchema(name: string, schema: ZodTypeAny) {

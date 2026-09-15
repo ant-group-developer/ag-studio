@@ -1,12 +1,11 @@
 schema_version: harness.production-profile/v1
-profile_id: channel
-revision: 2
+profile_id: channel-planning
+revision: 1
 status: active
-workflow_release: channel-publish@1.1.0
+workflow_release: channel-planning@1.0.0
 overrides: {}
-options_schema:
-  overlay: [auto, none]
-options_defaults: { overlay: auto }
+options_schema: {}
+options_defaults: {}
 reuse: never
 content: {}
 verification: { required_checks: [], required_checks_by_stage: {} }

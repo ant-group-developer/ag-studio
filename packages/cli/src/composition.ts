@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
 import { HarnessError, isHarnessError, ProjectConfigSchema, type AgentRuntime, type ExecutorRef, type MediaProber, type ProductionProfile, type ProjectConfig, type Publisher, type ScriptCommand, type ScriptsRegistry, type SourcesRegistry, type StatsCollector } from "@harness/contracts";
-import { ArtifactRegistry, type AutoAcceptConfig, BUILTIN_CHECKERS, buildSnapshot, ChannelRegistry, Controller, distributionCheckers, type DoctorRow, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, LibraryFs, libraryCheckers, listWorkflowRefs, loadChannels, type LoadedWorkflow, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, resolveWorkflowScope, runDoctor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, writeSnapshotFile, type HarnessLogger, type LibraryRole, type LogLevel } from "@harness/core";
+import { ArtifactRegistry, type AutoAcceptConfig, BUILTIN_CHECKERS, buildSnapshot, ChannelRegistry, Controller, distributionCheckers, type DoctorRow, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, learningCheckers, LibraryFs, libraryCheckers, listWorkflowRefs, loadChannels, type LoadedWorkflow, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, resolveWorkflowScope, runDoctor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, writeSnapshotFile, type HarnessLogger, type LibraryRole, type LogLevel } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, FakeProvider, FakePublisher, FakeStatsCollector, fakeScriptCommands } from "@harness/adapter-fake";
 import { FfprobeMediaProber } from "@harness/adapter-ffprobe";
@@ -63,12 +63,14 @@ export function builtinLibraryCommands(argv: string[], projectDir: string): Reco
 }
 
 /**
- * The four `channel-publish` script stages (fetch, build-package, upload, schedule; spec §3) are built in the
- * same way as the library ones above: each re-invokes this CLI as `harness --project <projectDir> publish
- * stage <name>`, reading `stage-request.json` from the `ScriptExecutor`-provided workspace.
+ * The `channel-publish` script stages (fetch, build-package, upload, schedule; spec §3) plus the sub-project
+ * 3B `channel-brief`/`demand`/`create-requests` stages shared by `channel-publish@1.1.0` and
+ * `channel-planning@1.0.0` (spec §4.2) are built in the same way as the library ones above: each re-invokes
+ * this CLI as `harness --project <projectDir> publish stage <name>`, reading `stage-request.json` from the
+ * `ScriptExecutor`-provided workspace.
  */
 export function builtinPublishCommands(argv: string[], projectDir: string): Record<string, ScriptCommand> {
-  const names = ["fetch", "build-package", "upload", "schedule"] as const;
+  const names = ["fetch", "build-package", "upload", "schedule", "channel-brief", "demand", "create-requests"] as const;
   const commands: Record<string, ScriptCommand> = {};
   for (const name of names) commands[`publish-${name}`] = { argv: [...argv, "--project", projectDir, "publish", "stage", name], cwd: "." };
   return commands;
@@ -141,7 +143,7 @@ export function buildContext(o: { projectDir: string; harnessRoot?: string; owne
     : undefined;
   return {
     store, planner, controller, registry,
-    verifier: new Verifier([...BUILTIN_CHECKERS, ...mediaCheckers(prober, { available: proberAvailable }), ...libraryCheckers(prober, { available: proberAvailable }), ...distributionCheckers({ store, channels, secrets })]),
+    verifier: new Verifier([...BUILTIN_CHECKERS, ...mediaCheckers(prober, { available: proberAvailable }), ...libraryCheckers(prober, { available: proberAvailable }), ...distributionCheckers({ store, channels, secrets }), ...learningCheckers({ store })]),
     executors, journal, provider, harness, project, projectDir, dataRoot, logger, clock, secrets, migrationsDir: MIGRATIONS_DIR, workflows, profiles, catalog,
     resourceCapacity: project.resources, executorVersionFor: (ref: ExecutorRef) => executors.resolve(ref).version, scripts, sources, configErrors, proberAvailable, harnessRoot, prober,
     scriptCommandNames: Object.keys(commands), ...(library ? { library } : {}), channels, channelErrors, publisher, agentRuntime, stats,

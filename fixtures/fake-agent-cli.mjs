@@ -20,6 +20,12 @@
 //   FAKE_REVIEW_MODE     approve (default) | reject-once | reject-always -- see buildReview below
 //   FAKE_AGENT_FAIL_STAGE=<stage_key>   behave like "no-output" only when stage-request.json.stage_key
 //                                       matches, regardless of FAKE_AGENT_MODE (task 8: targeted failure)
+//
+// Extra env vars for sub-project 3B's channel-planning/channel-package skills, consulted only when an
+// `expected_outputs[].type` needs them:
+//   FAKE_ANGLE    overrides the `angle` written into a `topic_proposal`'s topics / a `channel_package_draft`'s
+//                 `hypothesis.chosen.angle` (a test learning a channel standard needs two packages sharing one angle)
+//   FAKE_METRIC   overrides a `channel_package_draft`'s `hypothesis.expected.metric`
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -213,6 +219,16 @@ function buildReview() {
   };
 }
 
+/** medians.* key for a `ChannelLearned.metric` value -- `ctr` targets `medians.ctr_pct`, the other two share
+ * their own name (see `ChannelLearnedSchema` in packages/contracts/src/learning.ts). */
+const MEDIAN_KEY_FOR_METRIC = { ctr: "ctr_pct", views_72h: "views_72h", avg_view_pct: "avg_view_pct" };
+
+/** lowercase, trim, collapse internal whitespace -- same normalization `learningCheckers`'s `topics-valid`
+ * uses for duplicate detection (packages/core/src/learning/checkers.ts). */
+function normalizeTopic(s) {
+  return String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 function buildChannelPackageDraft() {
   const title = mode === "long-title" ? "A".repeat(150) : titleHint();
   const thumbInput = findInput("thumbnail_set");
@@ -227,20 +243,71 @@ function buildChannelPackageDraft() {
       if (files[0]) thumbnailCandidate = files[0];
     } catch { /* directory missing: keep the placeholder */ }
   }
+
+  // Channel-aware (sub-project 3B, channel-publish@1.1.0's `package` stage): when a `channel_brief` input is
+  // present, follow the channel's learned standard the same way the real `channel-package` skill does.
+  const briefInput = findInput("channel_brief");
+  const brief = briefInput ? tryReadJsonAt(briefInput.path) : null;
+  const learned = brief?.learned ?? null;
+  const standard = learned?.standard;
+  const hasStandard = Boolean(standard && (standard.angle || standard.title_pattern || standard.overlay_lines));
+
+  let angle = learned?.standard?.angle ?? "";
+  if (process.env.FAKE_ANGLE !== undefined) angle = process.env.FAKE_ANGLE;
+
+  const basis = [{ kind: "manual", note: "fake agent: no live research performed" }];
+  if (hasStandard) basis.push({ kind: "channel", note: "theo chuẩn kênh (fake)" });
+
+  const metric = process.env.FAKE_METRIC ?? learned?.metric ?? "views_72h";
+  const medianValue = learned?.medians?.[MEDIAN_KEY_FOR_METRIC[metric]];
+  const target = medianValue * 1.1 || 1000;
+
   return {
     schema_version: "harness.channel-package-draft/v1",
     metadata: { title, description: "", tags: [], playlists: [], hashtags: [], pinned_comment: "", language: "vi" },
     hypothesis: {
       schema_version: "harness.hypothesis/v1",
       hypothesis_id: `hyp_${fakeUlid()}`,
-      basis: [{ kind: "manual", note: "fake agent: no live research performed" }],
-      chosen: { title, thumbnail_candidate: thumbnailCandidate, overlay_text: [], angle: "" },
+      basis,
+      chosen: { title, thumbnail_candidate: thumbnailCandidate, overlay_text: [], angle },
       rejected: [{ title: "alternate title", angle: "", why: "fake agent placeholder rejection" }],
-      expected: { metric: "views_72h", target: 1000, horizon_hours: 72 },
+      expected: { metric, target, horizon_hours: 72 },
       status: "open",
       created_at: new Date().toISOString(),
     },
   };
+}
+
+/** `harness.topic-proposal/v1` for the `propose-topics` stage of `channel-planning` (sub-project 3B): reads
+ * `needed` from the `demand` input and the channel's niche/learned angle plus everything already spoken for
+ * (open requests, recent hypothesis titles) from the `channel_brief` input, then invents up to
+ * `max(1, min(needed, 3))` new, non-duplicate topics. */
+function buildTopicProposal() {
+  const demandInput = findInput("demand");
+  const demand = demandInput ? tryReadJsonAt(demandInput.path) : null;
+  const briefInput = findInput("channel_brief");
+  const brief = briefInput ? tryReadJsonAt(briefInput.path) : null;
+
+  const needed = typeof demand?.needed === "number" ? demand.needed : 1;
+  const niche = brief?.channel?.seo?.niche || "kênh";
+  let angle = brief?.learned?.standard?.angle ?? "";
+  if (process.env.FAKE_ANGLE !== undefined) angle = process.env.FAKE_ANGLE;
+
+  const seen = new Set();
+  for (const r of brief?.open_requests ?? []) seen.add(normalizeTopic(r.topic));
+  for (const h of brief?.hypotheses ?? []) seen.add(normalizeTopic(h.chosen?.title));
+
+  const count = Math.max(1, Math.min(needed, 3));
+  const topics = [];
+  for (let n = 1; topics.length < count && n <= count + seen.size + 10; n++) {
+    const candidate = `Chủ đề tự động ${n} về ${niche}`;
+    const key = normalizeTopic(candidate);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    topics.push({ topic: candidate, angle, why: "fake: theo demand" });
+  }
+
+  return { schema_version: "harness.topic-proposal/v1", topics };
 }
 
 mkdirSync(join(cwd, "output"), { recursive: true });
@@ -256,6 +323,7 @@ for (const eo of request.expected_outputs ?? []) {
   let content;
   switch (eo.type) {
     case "channel_package_draft": content = JSON.stringify(buildChannelPackageDraft(), null, 2); break;
+    case "topic_proposal": content = JSON.stringify(buildTopicProposal(), null, 2); break;
     case "style": content = JSON.stringify(buildStyle(), null, 2); break;
     case "review_notes": content = buildReviewNotesMd(); break;
     case "survey": content = buildSurveyMd(); break;

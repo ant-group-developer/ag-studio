@@ -13,7 +13,10 @@ export type AgentCliRuntimeKind = "claude" | "codex";
 // fixtures/fake-agent-cli.mjs's own header comment) -- harmless in production (the real `claude`/`codex`
 // binaries simply never read them), but they must be in this allow-list or `agentChildEnv` strips them
 // before the fake CLI ever sees them.
-const FAKE_AGENT_TEST_ENV = ["FAKE_AGENT_MODE", "FAKE_REVIEW_MODE", "FAKE_AGENT_FAIL_STAGE", "FAKE_STYLE_STATUS", "FAKE_STYLE_REVIEW"];
+// Sub-project 3B's channel-planning/channel-package skills add two more (FAKE_ANGLE overrides the fake
+// draft's/proposal's angle, FAKE_METRIC overrides the fake draft's expected.metric) -- same rationale as the
+// rest of this list: harmless for the real `claude`/`codex` binaries, needed by the fake CLI in tests.
+const FAKE_AGENT_TEST_ENV = ["FAKE_AGENT_MODE", "FAKE_REVIEW_MODE", "FAKE_AGENT_FAIL_STAGE", "FAKE_STYLE_STATUS", "FAKE_STYLE_REVIEW", "FAKE_ANGLE", "FAKE_METRIC"];
 
 export const RUNTIME_COMMANDS: Record<AgentCliRuntimeKind, { argv: string[]; env_passthrough: string[] }> = {
   claude: {

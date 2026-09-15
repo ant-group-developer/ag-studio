@@ -17,7 +17,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { EdlSchema, EditStyleSchema, newId, reviewSchema, surveyIndexSchema, type StageRequest } from "@harness/contracts";
+import { ChannelPackageDraftSchema, EdlSchema, EditStyleSchema, newId, reviewSchema, surveyIndexSchema, TopicProposalSchema, type StageRequest } from "@harness/contracts";
 
 const skillsDir = fileURLToPath(new URL("../../../../skills", import.meta.url));
 const fixture = fileURLToPath(new URL("../../../../fixtures/fake-agent-cli.mjs", import.meta.url));
@@ -84,6 +84,48 @@ const STYLE_DRAFT_JSON = (styleId: string) => JSON.stringify({
 function tmpWorkspace(): string {
   return mkdtempSync(join(tmpdir(), "fake-agent-"));
 }
+
+const DEMAND_JSON = (needed: number) => JSON.stringify({
+  schema_version: "harness.demand/v1", channel_id: "c1", needed, slots: [],
+  covered: { jobs: 0, runs: 0, items: 0, requests: 0 }, open_requests: 0, max_open_requests: 3,
+});
+
+/** A schema-valid `harness.channel-brief/v1` document, shaped just enough to exercise the fake agent's
+ * channel-aware branches (sub-project 3B, task 5): `learned.standard`/`metric`/`medians` when given, plus
+ * `open_requests`/`hypotheses` titles a `topic_proposal` must not duplicate. */
+const CHANNEL_BRIEF_JSON = (o: {
+  standard?: { angle?: string; title_pattern?: string; overlay_lines?: "0" | "1-2" | "3" };
+  metric?: "ctr" | "views_72h" | "avg_view_pct";
+  medians?: Partial<{ views_72h: number; ctr_pct: number; avg_view_pct: number }>;
+  openTopics?: string[];
+  hypothesisTitles?: string[];
+  niche?: string;
+} = {}) => JSON.stringify({
+  schema_version: "harness.channel-brief/v1",
+  generated_at: "2026-09-16T00:00:00.000Z",
+  channel: {
+    channel_id: "c1", display_name: "Channel One",
+    seo: { niche: o.niche ?? "chợ nổi miền Tây", audience: "", angle: "", language: "vi", market: "", keywords: [], title_rules: "", description_template: "" },
+    publication: { timezone: "Asia/Ho_Chi_Minh", publish_times: ["09:00"] },
+  },
+  learned: (o.standard || o.metric || o.medians) ? {
+    schema_version: "harness.channel-learned/v1", channel_id: "c1", updated_at: "2026-09-16T00:00:00.000Z", sample_size: 10,
+    metric: o.metric ?? "views_72h",
+    medians: { views_72h: o.medians?.views_72h ?? null, ctr_pct: o.medians?.ctr_pct ?? null, avg_view_pct: o.medians?.avg_view_pct ?? null },
+    winners: { angles: [], title_patterns: [], overlay: [] },
+    standard: { ...(o.standard ?? {}), note: "" },
+    history: [],
+  } : null,
+  hypotheses: (o.hypothesisTitles ?? []).map((title, i) => ({
+    hypothesis_id: newId("hypothesis"), episode_no: i + 1,
+    chosen: { title, angle: "", overlay_text: [] },
+    expected: { metric: "views_72h", target: 1000, horizon_hours: 72 },
+    status: "open",
+  })),
+  recent_metrics: [],
+  open_requests: (o.openTopics ?? []).map((topic) => ({ request_id: newId("content_request"), topic, status: "open" })),
+  item: null,
+});
 
 /** Writes `agent-prompt.md` (required to exist, unused by these output branches) + `stage-request.json`,
  * then spawns the fixture with `cwd = ws`, exactly like the harness core's `CliAgentRuntime` does. */
@@ -319,6 +361,130 @@ describe("fake-agent-cli.mjs: studio skill outputs", () => {
     const r2 = run(ws2, req2, { FAKE_AGENT_FAIL_STAGE: "survey-source" });
     expect(r2.status, `stderr: ${r2.err}`).toBe(0);
     expect(existsSync(join(ws2, "output", "review.json"))).toBe(true);
+  });
+});
+
+describe("fake-agent-cli.mjs: sub-project 3B channel-planning/channel-package outputs", () => {
+  it("channel-plan (type 'topic_proposal'): reads demand.needed and channel_brief, avoids duplicating open_requests[].topic and hypotheses[].chosen.title", () => {
+    const ws = tmpWorkspace();
+    const demandInput = fileInput(ws, "inputs/demand.json", DEMAND_JSON(2), "demand");
+    const briefInput = fileInput(ws, "inputs/channel-brief.json", CHANNEL_BRIEF_JSON({
+      standard: { angle: "flycam" },
+      openTopics: ["Chủ đề tự động 1 về chợ nổi miền Tây"],
+      hypothesisTitles: ["Chủ đề tự động 2 về chợ nổi miền Tây"],
+    }), "channel_brief");
+    const req = makeRequest(ws, {
+      stage_key: "propose-topics",
+      inputs: [demandInput, briefInput],
+      expected_outputs: [{ type: "topic_proposal", mime_type: "application/json", kind: "file", name: "topics.json" }],
+    });
+    const r = run(ws, req);
+    expect(r.status, `stderr: ${r.err}`).toBe(0);
+
+    const proposal = JSON.parse(readFileSync(join(ws, "output", "topics.json"), "utf8"));
+    const parsed = TopicProposalSchema.safeParse(proposal);
+    expect(parsed.success, JSON.stringify(parsed.success ? undefined : parsed.error.issues)).toBe(true);
+    expect(proposal.topics).toHaveLength(2); // min(needed=2, 3)
+    const topics = proposal.topics.map((t: { topic: string }) => t.topic.toLowerCase());
+    expect(topics).not.toContain("chủ đề tự động 1 về chợ nổi miền tây"); // duplicates open_requests[].topic
+    expect(topics).not.toContain("chủ đề tự động 2 về chợ nổi miền tây"); // duplicates hypotheses[].chosen.title
+    for (const t of proposal.topics as { angle: string; why: string }[]) {
+      expect(t.angle).toBe("flycam"); // follows learned.standard.angle
+      expect(t.why.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("channel-plan: without demand/channel_brief inputs, still writes a schema-valid single-topic proposal", () => {
+    const ws = tmpWorkspace();
+    const req = makeRequest(ws, {
+      stage_key: "propose-topics",
+      expected_outputs: [{ type: "topic_proposal", mime_type: "application/json", kind: "file", name: "topics.json" }],
+    });
+    const r = run(ws, req);
+    expect(r.status, `stderr: ${r.err}`).toBe(0);
+    const proposal = JSON.parse(readFileSync(join(ws, "output", "topics.json"), "utf8"));
+    expect(TopicProposalSchema.safeParse(proposal).success).toBe(true);
+    expect(proposal.topics).toHaveLength(1);
+  });
+
+  it("channel-plan: FAKE_ANGLE overrides the proposed topics' angle", () => {
+    const ws = tmpWorkspace();
+    const demandInput = fileInput(ws, "inputs/demand.json", DEMAND_JSON(1), "demand");
+    const briefInput = fileInput(ws, "inputs/channel-brief.json", CHANNEL_BRIEF_JSON({ standard: { angle: "flycam" } }), "channel_brief");
+    const req = makeRequest(ws, {
+      stage_key: "propose-topics",
+      inputs: [demandInput, briefInput],
+      expected_outputs: [{ type: "topic_proposal", mime_type: "application/json", kind: "file", name: "topics.json" }],
+    });
+    const r = run(ws, req, { FAKE_ANGLE: "override-angle" });
+    expect(r.status, `stderr: ${r.err}`).toBe(0);
+    const proposal = JSON.parse(readFileSync(join(ws, "output", "topics.json"), "utf8"));
+    expect(proposal.topics[0].angle).toBe("override-angle");
+  });
+
+  it("channel-package_draft (channel-aware): a channel_brief with a learned standard adds a 'channel' basis entry, follows the standard's angle, and prices expected off the matching median", () => {
+    const ws = tmpWorkspace();
+    const thumbSet = dirInput(ws, "inputs/thumbnails", { "thumb-01.png": "x" }, "thumbnail_set");
+    const briefInput = fileInput(ws, "inputs/channel-brief.json", CHANNEL_BRIEF_JSON({
+      standard: { angle: "flycam", title_pattern: "question" }, metric: "ctr", medians: { ctr_pct: 5 },
+    }), "channel_brief");
+    const req = makeRequest(ws, {
+      stage_key: "package",
+      inputs: [thumbSet, briefInput],
+      expected_outputs: [{ type: "channel_package_draft", mime_type: "application/json", kind: "file", name: "package.json" }],
+    });
+    const r = run(ws, req);
+    expect(r.status, `stderr: ${r.err}`).toBe(0);
+
+    const draft = JSON.parse(readFileSync(join(ws, "output", "package.json"), "utf8"));
+    expect(ChannelPackageDraftSchema.safeParse(draft).success).toBe(true);
+    expect(draft.hypothesis.chosen.angle).toBe("flycam");
+    expect(draft.hypothesis.basis).toEqual(expect.arrayContaining([{ kind: "channel", note: "theo chuẩn kênh (fake)" }]));
+    expect(draft.hypothesis.expected.metric).toBe("ctr");
+    expect(draft.hypothesis.expected.target).toBeCloseTo(5.5); // medians.ctr_pct (5) * 1.1
+  });
+
+  it("channel_package_draft: no channel_brief input keeps the pre-3B behavior (manual basis only, empty angle, views_72h/1000 default)", () => {
+    const ws = tmpWorkspace();
+    const thumbSet = dirInput(ws, "inputs/thumbnails", { "thumb-01.png": "x" }, "thumbnail_set");
+    const req = makeRequest(ws, {
+      stage_key: "package",
+      inputs: [thumbSet],
+      expected_outputs: [{ type: "channel_package_draft", mime_type: "application/json", kind: "file", name: "package.json" }],
+    });
+    const r = run(ws, req);
+    expect(r.status, `stderr: ${r.err}`).toBe(0);
+    const draft = JSON.parse(readFileSync(join(ws, "output", "package.json"), "utf8"));
+    expect(draft.hypothesis.basis).toEqual([{ kind: "manual", note: "fake agent: no live research performed" }]);
+    expect(draft.hypothesis.chosen.angle).toBe("");
+    expect(draft.hypothesis.expected).toEqual({ metric: "views_72h", target: 1000, horizon_hours: 72 });
+  });
+
+  it("channel_package_draft: FAKE_ANGLE and FAKE_METRIC override the draft even without a channel_brief input", () => {
+    const ws = tmpWorkspace();
+    const thumbSet = dirInput(ws, "inputs/thumbnails", { "thumb-01.png": "x" }, "thumbnail_set");
+    const req = makeRequest(ws, {
+      stage_key: "package",
+      inputs: [thumbSet],
+      expected_outputs: [{ type: "channel_package_draft", mime_type: "application/json", kind: "file", name: "package.json" }],
+    });
+    const r = run(ws, req, { FAKE_ANGLE: "custom-angle", FAKE_METRIC: "avg_view_pct" });
+    expect(r.status, `stderr: ${r.err}`).toBe(0);
+    const draft = JSON.parse(readFileSync(join(ws, "output", "package.json"), "utf8"));
+    expect(draft.hypothesis.chosen.angle).toBe("custom-angle");
+    expect(draft.hypothesis.expected.metric).toBe("avg_view_pct");
+  });
+});
+
+describe("channel-plan/SKILL.md (sub-project 3B, task 5)", () => {
+  it("exists, mirrors channel-package's section outline, and is 80-110 lines", () => {
+    const content = readFileSync(join(skillsDir, "channel-plan", "SKILL.md"), "utf8");
+    for (const heading of ["## Mục tiêu", "## Input", "## Quy trình", "## Cấu trúc", "## Quy tắc", "## Điều cấm", "## Tự kiểm"]) {
+      expect(content).toContain(heading);
+    }
+    const lineCount = content.split("\n").length;
+    expect(lineCount).toBeGreaterThanOrEqual(80);
+    expect(lineCount).toBeLessThanOrEqual(110);
   });
 });
 

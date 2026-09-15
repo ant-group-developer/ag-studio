@@ -36,8 +36,8 @@ describe("channel-publish@1.0.0", () => {
     }
   });
 
-  it("profile channel has correct workflow_release and reuse", () => {
-    expect(profile.workflow_release).toBe("channel-publish@1.0.0");
+  it("profile channel parses (its workflow_release now tracks channel-publish@1.1.0, see channel-workflows-1-1.test.ts)", () => {
+    expect(profile.workflow_release).toBe("channel-publish@1.1.0");
     expect(profile.reuse).toBe("never");
   });
 });

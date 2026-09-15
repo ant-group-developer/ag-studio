@@ -8,25 +8,33 @@ chứng về vì sao gói này sẽ hoạt động, để đối chiếu lại s
 
 ## Input (đọc trong workspace, không sửa)
 
+- `channel-brief.json` — bối cảnh kênh: SEO (`channel.seo`: ngách, đối tượng, từ khóa), chuẩn đã
+  học (`learned.standard`: angle/title_pattern/overlay_lines, `learned.medians`: trung vị số liệu),
+  giả thuyết gần đây kèm kết quả (`hypotheses[]`), số liệu gần đây (`recent_metrics[]`), request
+  đang mở (`open_requests[]`) — đọc trước khi mở `brief.md`, đây là nguồn chuẩn của kênh.
 - `brief.md` — brief tập bằng văn xuôi (bối cảnh, góc nhìn, yêu cầu đặc biệt nếu có).
-- `brief.json` — cùng nội dung ở dạng có cấu trúc (channel, ngách, kênh đối thủ nếu có).
 - `edit-plan.json` — timeline dựng: các đoạn, mốc giây, mô tả từng đoạn (dùng để suy ra chapters).
 - Thư mục ứng viên thumbnail (`inputs[].type === "thumbnail_set"`) — vài ảnh PNG/JPG đã render sẵn.
 - `stage-request.json` — nguồn sự thật cho `expected_outputs`, `inputs`, `options`, `policy`.
 
 ## Quy trình 7 bước
 
-1. Đọc hết `brief.md`, `brief.json`, `edit-plan.json`, và liệt kê các ứng viên thumbnail.
+1. Đọc hết `channel-brief.json`, `brief.md`, `edit-plan.json`, và liệt kê các ứng viên thumbnail.
 2. Tìm web 3–5 video cùng ngách đăng gần đây (qua `WebSearch`/`WebFetch`) để lấy mẫu tiêu đề và
    từ khóa đang hoạt động; mỗi phát hiện đáng kể ghi một mục `basis` kind `market` kèm `evidence_ref`
-   (URL). Không tìm được web thì bỏ qua bước này — không bịa nguồn.
+   (URL). Bổ sung: đối chiếu với `hypotheses[].chosen.title` trong `channel-brief.json` để không lặp
+   tiêu đề kênh đã dùng. Không tìm được web thì bỏ qua bước tìm web — không bịa nguồn.
 3. Đề xuất ≥3 tiêu đề ứng viên, chọn 1 làm `chosen.title`; phần còn lại ghi vào `rejected` kèm `why`
-   (vì sao không chọn — yếu hơn, trùng kênh khác, sai kỳ vọng nội dung, …).
+   (vì sao không chọn — yếu hơn, trùng kênh khác, sai kỳ vọng nội dung, …). Nếu `learned.standard`
+   có `angle`/`title_pattern`/`overlay_lines`, ưu tiên theo chuẩn đó khi chọn và ghi thêm một mục
+   `basis` kind `channel` với `note` dạng "theo chuẩn kênh: …" (nêu rõ chuẩn nào đã áp dụng).
 4. Viết mô tả theo mẫu: hook 1–2 dòng, chapters suy từ `edit-plan.json` (mốc giây → `m:ss`), rồi CTA.
    3 hashtag đứng đầu mô tả (`hashtags` cũng liệt kê lại). Tối đa 14 tags, tổng ký tự tags trong giới hạn.
 5. Chọn 1 ứng viên thumbnail hợp với `chosen.title`; viết `overlay_text` ≤3 dòng, mỗi dòng ≤4 từ.
-6. Đặt `expected`: `metric` mặc định `views_72h`; `target` lấy trung vị 72h của kênh nếu brief có số
-   liệu, không thì suy từ đối thủ tìm được ở bước 2; `horizon_hours` là 72 trừ khi brief yêu cầu khác.
+6. Đặt `expected`: `metric` = `learned.metric` nếu `channel-brief.json` có (không thì `views_72h`);
+   `target` = trung vị tương ứng trong `learned.medians` (`ctr` → `medians.ctr_pct`, `views_72h` →
+   `medians.views_72h`, `avg_view_pct` → `medians.avg_view_pct`) nhân 1.1 khi kênh đã có trung vị đó,
+   không thì suy từ đối thủ tìm được ở bước 2; `horizon_hours` là 72 trừ khi brief yêu cầu khác.
 7. Ghi `output/package.json` đúng schema bên dưới, rồi tự kiểm (mục "Tự kiểm") trước khi kết thúc.
 
 ## Cấu trúc `output/package.json`

@@ -1,0 +1,76 @@
+{
+  "$ref": "#/definitions/demand",
+  "definitions": {
+    "demand": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.demand/v1"
+        },
+        "channel_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "needed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "slots": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+          }
+        },
+        "covered": {
+          "type": "object",
+          "properties": {
+            "jobs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "runs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "requests": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "jobs",
+            "runs",
+            "items",
+            "requests"
+          ],
+          "additionalProperties": false
+        },
+        "open_requests": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_open_requests": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "schema_version",
+        "channel_id",
+        "needed",
+        "slots",
+        "covered",
+        "open_requests",
+        "max_open_requests"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
