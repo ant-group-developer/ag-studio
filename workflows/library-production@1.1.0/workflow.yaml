@@ -66,6 +66,7 @@ stages:
   - key: watch-episode
     executor: { type: script, script: watch-episode }
     depends_on: [assemble]
+    requires_resources: [cpu]
     required_checks: [schema-valid, output-exists, checksum-match]
     outputs:
       - { type: watch, mime_type: application/x-directory, kind: directory, name: watch }

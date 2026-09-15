@@ -72,6 +72,9 @@ describe("library-production@1.1.0", () => {
     expect(watchEpisode.executor).toEqual({ type: "script", script: "watch-episode" });
     expect(watchEpisode.depends_on).toEqual(["assemble"]);
     expect(watchEpisode.outputs.some((o) => o.type === "watch")).toBe(true);
+    // ffmpeg-bound like every other watch stage (`watch-source` here, `watch-samples` in style-study@1.1.0):
+    // it must contend for `cpu` too, or it is the one stage that can pile on top of a saturated machine.
+    expect(watchEpisode.requires_resources).toEqual(["cpu"]);
 
     const review = wf.definition.stages.find((st) => st.key === "library-review")!;
     expect(review.executor).toMatchObject({ type: "agent", skill: "library-review" });
