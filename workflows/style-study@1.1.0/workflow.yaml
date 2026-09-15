@@ -1,0 +1,40 @@
+schema_version: harness.workflow/v1
+id: style-study
+version: 1.1.0
+defaults: {}
+stages:
+  - key: collect-samples
+    executor: { type: script, script: collect-samples }
+    requires_resources: [cpu]
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: sample_set, mime_type: application/x-directory, kind: directory, name: samples }
+  - key: watch-samples
+    executor: { type: script, script: watch-samples }
+    depends_on: [collect-samples]
+    requires_resources: [cpu]
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: watch, mime_type: application/x-directory, kind: directory, name: watch }
+  - key: analyze-style
+    executor: { type: agent, skill: style-analyze, brief: "Xem watch/ (contact sheet + khung đơn + transcript nếu có) của các video mẫu, viết output/style.json (harness.edit-style/v1, status draft) và output/evidence/ (khung tiêu biểu + notes.md dẫn chứng từng tham số)." }
+    depends_on: [watch-samples, collect-samples]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: style, mime_type: application/json, name: style.json }
+      - { type: style_evidence, mime_type: application/x-directory, kind: directory, name: evidence }
+  - key: style-review
+    executor: { type: agent, skill: style-review, brief: "Đối chiếu style.json với ≥5 khung trong watch/. Đạt → ghi output/style.json với status active; lệch ≥2 tham số → giữ draft. Luôn ghi output/review-notes.md." }
+    depends_on: [analyze-style, watch-samples]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: style, mime_type: application/json, name: style.json }
+      - { type: review_notes, mime_type: text/markdown, name: review-notes.md }
+  - key: style-export
+    executor: { type: script, script: library-style-export }
+    depends_on: [style-review, analyze-style]
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: export_receipt, mime_type: application/json, name: export-receipt.json }

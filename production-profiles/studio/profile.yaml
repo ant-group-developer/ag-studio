@@ -1,8 +1,8 @@
 schema_version: harness.production-profile/v1
 profile_id: studio
-revision: 1
+revision: 2
 status: active
-workflow_release: library-production@1.0.0
+workflow_release: library-production@1.1.0
 overrides: {}
 options_schema:
   voice: [none, tts, original]
@@ -16,5 +16,5 @@ verification:
   required_checks: []
   required_checks_by_stage: {}
 limits:
-  max_cost_usd_per_variant: 5
+  max_cost_usd_per_variant: 8
   max_concurrency: 2
