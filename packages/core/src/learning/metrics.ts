@@ -67,9 +67,19 @@ export interface CollectReport {
  * newest: true })` orders `occurred_at DESC` and then reverses the page before returning it, so the array
  * comes back OLDEST-first within the newest-1000 window -- `.find` would grab the earliest match and dedupe
  * forever after the first 24h; the last matching element is the actually-newest one. Exported: `planning.ts`'s
- * `channel.planning_failed` cooldown check reuses this exact logic rather than duplicating it. */
-export function recentlyEmitted(store: StateStore, eventType: string, now: string, matches: (payload: Record<string, unknown>) => boolean): boolean {
-  const latest = store.listEvents({ event_type: eventType, newest: true }).filter((e) => matches(e.payload)).at(-1);
+ * `channel.planning_failed` cooldown check reuses this exact logic rather than duplicating it.
+ *
+ * `channelId`, when the caller has one, is passed straight through to `store.listEvents`'s own `channel_id`
+ * filter (final-review finding, sub-project 3B Task 6): without it, the newest-1000 window is shared across
+ * *every* channel, so a quiet channel's own matching event can be pushed out of the window by a busier
+ * sibling channel -- silently un-deduping (a stale `stats.blocked`/`channel.planning_failed` would be
+ * re-raised, or a fresh one missed) on any project with more than a handful of channels. `matches` still runs
+ * afterwards: for a channel-scoped event type this is redundant (harmless) with the store-level filter, and
+ * for a caller matching on something narrower within the channel (e.g. `stats.failing`'s `job_id`) it is
+ * still the only thing narrowing that far. */
+export function recentlyEmitted(store: StateStore, eventType: string, now: string, matches: (payload: Record<string, unknown>) => boolean, channelId?: string): boolean {
+  const latest = store.listEvents({ event_type: eventType, newest: true, ...(channelId !== undefined ? { channel_id: channelId } : {}) })
+    .filter((e) => matches(e.payload)).at(-1);
   if (!latest) return false;
   return Date.parse(now) - Date.parse(latest.occurred_at) < 24 * 3_600_000;
 }
@@ -125,7 +135,7 @@ export async function collectStats(d: CollectDeps, o?: { channelId?: string; job
         }
 
         if (outcome.kind === "blocked") {
-          const alreadyBlocked = recentlyEmitted(d.store, "stats.blocked", now, (payload) => payload.channel_id === channelId);
+          const alreadyBlocked = recentlyEmitted(d.store, "stats.blocked", now, (payload) => payload.channel_id === channelId, channelId);
           if (!alreadyBlocked) {
             d.store.appendEvent({
               run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null,
@@ -147,7 +157,7 @@ export async function collectStats(d: CollectDeps, o?: { channelId?: string; job
           d.logger.warn("collectStats: collect failed", { job_id: job.publication_job_id, reason: outcome.reason });
           report.failed.push({ job_id: job.publication_job_id, reason: outcome.reason });
           if (failures >= 3) {
-            const alreadyFailing = recentlyEmitted(d.store, "stats.failing", now, (payload) => payload.job_id === job.publication_job_id);
+            const alreadyFailing = recentlyEmitted(d.store, "stats.failing", now, (payload) => payload.job_id === job.publication_job_id, channelId);
             if (!alreadyFailing) {
               d.store.appendEvent({
                 run_id: job.run_id, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null,

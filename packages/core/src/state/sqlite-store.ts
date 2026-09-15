@@ -378,12 +378,18 @@ export class SqliteStateStore implements StateStore {
     this.db.prepare("INSERT INTO event (id, run_id, occurred_at, event_type, data) VALUES (?, ?, ?, ?, ?)").run(e.event_id, e.run_id, e.occurred_at, e.event_type, JSON.stringify(e));
     return e;
   }
-  listEvents(filter: { run_id?: string; event_type?: string; limit?: number; newest?: boolean }): Event[] {
+  listEvents(filter: { run_id?: string; event_type?: string; channel_id?: string; limit?: number; newest?: boolean }): Event[] {
     const limit = filter.limit ?? 1000;
     const order = filter.newest ? "occurred_at DESC, id DESC" : "occurred_at, id";
     const where: string[] = []; const params: (string | number)[] = [];
     if (filter.run_id) { where.push("run_id = ?"); params.push(filter.run_id); }
     if (filter.event_type) { where.push("event_type = ?"); params.push(filter.event_type); } // real column, not json_extract -- see migration 0001
+    // `channel_id` is not its own column (unlike `run_id`/`event_type`) -- it only ever lived inside the
+    // serialized `data` JSON, same as every other Event field except those two. Narrowing by it here (rather
+    // than fetching the newest `limit` rows of `event_type` across *every* channel and filtering in JS) is
+    // what lets a quiet channel's own newest event survive a busy sibling channel's churn within the same
+    // `newest: true` window -- see `packages/core/src/dashboard/snapshot.ts`'s `newestChannelEvent`.
+    if (filter.channel_id) { where.push("json_extract(data, '$.channel_id') = ?"); params.push(filter.channel_id); }
     params.push(limit);
     const rows = this.listDocs(`SELECT data FROM event${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY ${order} LIMIT ?`, params, (x) => EventSchema.parse(x));
     return filter.newest ? rows.reverse() : rows;

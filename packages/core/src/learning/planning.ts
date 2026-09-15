@@ -177,7 +177,7 @@ export async function planRequestsRun(d: PlanRequestsDeps): Promise<{ started?: 
     });
     if (runActive) return { skipped: "run-active" };
 
-    if (recentlyEmitted(store, "channel.planning_failed", now, (payload) => payload.channel_id === channelId)) {
+    if (recentlyEmitted(store, "channel.planning_failed", now, (payload) => payload.channel_id === channelId, channelId)) {
       return { skipped: "cooldown" };
     }
 

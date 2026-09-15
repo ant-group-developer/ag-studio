@@ -200,11 +200,14 @@ function fallbackChannel(channel: LoadedChannel, doctorRows: DoctorRow[]): Dashb
   };
 }
 
-/** Newest `event_type` event for this channel, or `undefined` when none exists -- `listEvents({ newest: true })`
- * (per its own documented ordering, see `packages/core/src/learning/metrics.ts`'s `recentlyEmitted`) returns
- * the newest-1000 window OLDEST-first, so the *last* matching element is the actually-newest one. */
+/** Newest `event_type` event for this channel, or `undefined` when none exists. Filters by `channel_id` at
+ * the store level (not by fetching the newest-of-all-channels window and filtering in JS): on a multi-channel
+ * project, a quiet channel's own newest event of this type could otherwise be pushed out of a shared
+ * newest-1000-across-every-channel window by a busier sibling channel, silently reporting `undefined` even
+ * though a matching event exists (final-review finding, sub-project 3B Task 6). `limit: 1` is enough once the
+ * query is already narrowed to exactly this channel + event type. */
 function newestChannelEvent(store: StateStore, eventType: string, channelId: string) {
-  return store.listEvents({ event_type: eventType, newest: true }).filter((e) => e.channel_id === channelId).at(-1);
+  return store.listEvents({ event_type: eventType, channel_id: channelId, newest: true, limit: 1 }).at(-1);
 }
 
 /** Sub-project 3B Task 6 (spec §5): `DashboardChannel.learning` for one channel -- hypothesis-status counts
@@ -344,16 +347,19 @@ const STATS_FAILING_THRESHOLD = 3;
 
 /** `stats_blocked` (spec §5/§6): a `stats.blocked` event for the channel within the last 24h with no later
  * `stats.collected` for that same channel -- once a fresh collect succeeds the channel is no longer
- * considered blocked, even before another `stats.blocked` would naturally age out of the window. */
-function statsBlockedAlerts(store: StateStore, now: string, channels: LoadedChannel[]): DashboardAlert[] {
+ * considered blocked, even before another `stats.blocked` would naturally age out of the window. Takes the
+ * already-built `DashboardChannel[]` (not a fresh `LoadedChannel[]`/store lookup) so the "newest
+ * `stats.collected`" half of the check reuses `buildChannelLearning`'s own `last_collect_at` -- computed once
+ * per channel per snapshot already, not fetched a second time here. */
+function statsBlockedAlerts(store: StateStore, now: string, channels: DashboardChannel[]): DashboardAlert[] {
   const alerts: DashboardAlert[] = [];
   for (const channel of channels) {
-    const channelId = channel.config.channel_id;
+    const channelId = channel.channel_id;
     const blocked = newestChannelEvent(store, "stats.blocked", channelId);
     if (!blocked) continue;
     if (Date.parse(now) - Date.parse(blocked.occurred_at) >= ALERT_WINDOW_MS) continue;
-    const collected = newestChannelEvent(store, "stats.collected", channelId);
-    if (collected && Date.parse(collected.occurred_at) > Date.parse(blocked.occurred_at)) continue;
+    const lastCollectAt = channel.learning.last_collect_at;
+    if (lastCollectAt && Date.parse(lastCollectAt) > Date.parse(blocked.occurred_at)) continue;
     alerts.push({
       kind: "stats_blocked", channel_id: channelId, ref: blocked.event_id,
       message: `channel ${channelId} stats collection blocked: ${String(blocked.payload.reason ?? "unknown reason")}`,
@@ -380,10 +386,10 @@ function statsFailingAlerts(store: StateStore): DashboardAlert[] {
 }
 
 /** `planning_failed` (spec §5/§6): a `channel.planning_failed` event for the channel within the last 24h. */
-function planningFailedAlerts(store: StateStore, now: string, channels: LoadedChannel[]): DashboardAlert[] {
+function planningFailedAlerts(store: StateStore, now: string, channels: DashboardChannel[]): DashboardAlert[] {
   const alerts: DashboardAlert[] = [];
   for (const channel of channels) {
-    const channelId = channel.config.channel_id;
+    const channelId = channel.channel_id;
     const failed = newestChannelEvent(store, "channel.planning_failed", channelId);
     if (!failed) continue;
     if (Date.parse(now) - Date.parse(failed.occurred_at) >= ALERT_WINDOW_MS) continue;
@@ -425,9 +431,9 @@ function buildAlerts(d: SnapshotDeps, now: string, doctorRows: DoctorRow[], chan
   }
 
   alerts.push(...waitingHumanAlerts(store));
-  alerts.push(...statsBlockedAlerts(store, now, d.channels));
+  alerts.push(...statsBlockedAlerts(store, now, channels));
   alerts.push(...statsFailingAlerts(store));
-  alerts.push(...planningFailedAlerts(store, now, d.channels));
+  alerts.push(...planningFailedAlerts(store, now, channels));
 
   for (const { run, stage, overdue_seconds } of gateOverdue(store, now, d.gateWindowSeconds)) {
     alerts.push({ kind: "gate_overdue", ref: stage.stage_run_id, message: `gate ${stage.stage_key} of run ${run.run_id} overdue by ${overdue_seconds}s`, since: stage.updated_at });

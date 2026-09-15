@@ -328,6 +328,74 @@ describe("buildSnapshot", () => {
       expect(learning.demand).toBeNull(); // planning.enabled defaults to false
     });
 
+    // Final-review finding (sub-project 3B Task 6): `newestChannelEvent` used to fetch the newest `event_type`
+    // rows across *every* channel (`listEvents({ event_type, newest: true })`, default `limit: 1000`) and
+    // filter by `channel_id` in JS -- so a quiet channel's own newest event of that type could be pushed out
+    // of that shared window by a busier sibling channel, well before the quiet channel itself accumulated
+    // anywhere near 1000 events. Fixed by a store-level `channel_id` filter (`listEvents({ channel_id })`,
+    // `packages/core/src/state/sqlite-store.ts`) that `newestChannelEvent` now uses with `limit: 1`.
+    it("last_collect_at survives a busier sibling channel emitting more stats.collected events than the store's default newest-window limit", () => {
+      const { store, clock } = openTempStore();
+      const repo = setupChannelRepo(true);
+      const quiet = makeChannel("quiet", repo);
+      const busy = makeChannel("busy", repo);
+
+      store.appendEvent({
+        run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null, channel_id: "quiet",
+        content_id: null, variant_id: null, workflow_release: null, severity: "info", event_type: "stats.collected",
+        payload: { job_id: "quiet-job", metric_id: "metric_quiet" },
+      });
+      clock.advance(1);
+
+      // more than `listEvents`'s default limit (1000) of matching-type events, all on the sibling channel.
+      for (let i = 0; i < 1005; i++) {
+        store.appendEvent({
+          run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null, channel_id: "busy",
+          content_id: null, variant_id: null, workflow_release: null, severity: "info", event_type: "stats.collected",
+          payload: { job_id: `busy-job-${i}`, metric_id: `metric_busy_${i}` },
+        });
+        clock.advance(1);
+      }
+
+      const snapshot = buildSnapshot({ store, channels: [quiet, busy], clock, gateWindowSeconds: 600, project_id: "project-snap" });
+      const quietChannel = snapshot.channels.find((c) => c.channel_id === "quiet")!;
+      expect(quietChannel.learning.last_collect_at).not.toBeNull(); // used to be null: pushed out by "busy"'s 1005 events
+    });
+
+    it("stats_blocked clears once a channel's own later stats.collected exists, even when a busier sibling channel's events would otherwise push it out of a shared window", () => {
+      const { store, clock } = openTempStore();
+      const repo = setupChannelRepo(true);
+      const quiet = makeChannel("quiet", repo);
+      const busy = makeChannel("busy", repo);
+
+      store.appendEvent({
+        run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null, channel_id: "quiet",
+        content_id: null, variant_id: null, workflow_release: null, severity: "warn", event_type: "stats.blocked",
+        payload: { channel_id: "quiet", reason: "verify-it's-you" },
+      });
+      clock.advance(1);
+      store.appendEvent({
+        run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null, channel_id: "quiet",
+        content_id: null, variant_id: null, workflow_release: null, severity: "info", event_type: "stats.collected",
+        payload: { job_id: "quiet-job", metric_id: "metric_quiet" },
+      });
+      clock.advance(1);
+
+      for (let i = 0; i < 1005; i++) {
+        store.appendEvent({
+          run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null, channel_id: "busy",
+          content_id: null, variant_id: null, workflow_release: null, severity: "info", event_type: "stats.collected",
+          payload: { job_id: `busy-job-${i}`, metric_id: `metric_busy_${i}` },
+        });
+        clock.advance(1);
+      }
+
+      const snapshot = buildSnapshot({ store, channels: [quiet, busy], clock, gateWindowSeconds: 600, project_id: "project-snap" });
+      // used to stay up forever on a busy multi-channel project: the "quiet" channel's own later stats.collected
+      // was pushed out of the shared newest-1000 window by "busy"'s 1005 events.
+      expect(snapshot.alerts.some((a) => a.kind === "stats_blocked" && a.channel_id === "quiet")).toBe(false);
+    });
+
     it("computes demand only when planning.enabled and SnapshotDeps.learning (library access) are both present", () => {
       const { store } = openTempStore();
       const clock = new FixedClock(NOW);

@@ -91,6 +91,39 @@ describe("SqliteStateStore", () => {
     expect(store.listEvents({ event_type: "request.auto_accepted", newest: true }).map((x) => x.run_id).sort()).toEqual([runA, runB].sort());
   });
 
+  // Sub-project 3B Task 6 final-review finding: `channel_id` is not its own column (unlike `event_type`) --
+  // it only ever lived inside the serialized `data` JSON. Without a store-level filter for it, a quiet
+  // channel's own newest event of a given type can be pushed out of a `newest: true` window by a busier
+  // sibling channel sharing that same event_type, well before that quiet channel accumulates anywhere near
+  // `limit` events of its own -- exactly the bug this filter fixes for `packages/core/src/dashboard/snapshot.ts`'s
+  // `newestChannelEvent` and `packages/core/src/learning/metrics.ts`'s `recentlyEmitted`.
+  it("listEvents({ channel_id }) filters by the JSON-embedded channel_id, and survives a busier sibling channel filling the newest window", () => {
+    const { store, clock } = openTempStore();
+    const base = { run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null, content_id: null, variant_id: null, workflow_release: null, severity: "info" as const, payload: {} };
+
+    store.appendEvent({ ...base, channel_id: "quiet", event_type: "stats.collected", payload: { job_id: "quiet-job" } });
+    const quietEvent = store.listEvents({ event_type: "stats.collected", channel_id: "quiet" })[0]!;
+    clock.advance(1);
+
+    // a busy sibling channel now emits far more matching-type events than any reasonable default `limit` --
+    // the quiet channel's own event above must still be found once filtered by channel_id.
+    for (let i = 0; i < 5; i++) {
+      store.appendEvent({ ...base, channel_id: "busy", event_type: "stats.collected", payload: { job_id: `busy-job-${i}` } });
+      clock.advance(1);
+    }
+
+    const quietFiltered = store.listEvents({ event_type: "stats.collected", channel_id: "quiet", newest: true, limit: 1 });
+    expect(quietFiltered).toEqual([quietEvent]);
+
+    const busyFiltered = store.listEvents({ event_type: "stats.collected", channel_id: "busy" });
+    expect(busyFiltered).toHaveLength(5);
+    expect(busyFiltered.every((e) => e.channel_id === "busy")).toBe(true);
+
+    // combinable with event_type (already covered above) and with no channel_id at all still returns everything
+    expect(store.listEvents({ event_type: "stats.collected" })).toHaveLength(6);
+    expect(store.listEvents({ event_type: "stats.collected", channel_id: "nobody" })).toEqual([]);
+  });
+
   it("rolls back a transaction when the callback throws", () => {
     const { store } = openTempStore();
     const run = makeRun();
