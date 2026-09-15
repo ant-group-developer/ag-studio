@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import type { Command } from "commander";
 import { start, type ScriptContext } from "@harness/script-sdk";
-import { HarnessError, isHarnessError, type ScriptCommand } from "@harness/contracts";
+import { HarnessError, isHarnessError, type ScriptCommand, type WatchIndex } from "@harness/contracts";
 import { watchFromExistingFrames, watchVideos, type WatchDeps, type WatchVideoInput } from "@harness/core";
 import type { AppContext } from "../composition.js";
 import { withContext } from "./shared.js";
@@ -91,7 +91,7 @@ function parseSampleEntries(raw: unknown, samplesJsonPath: string): SampleEntry[
  * back to the frames `collect-samples` already extracted, via `watchFromExistingFrames`. `path`/`frames`
  * entries may be relative to the `sample_set` directory or absolute (task-3 brief).
  */
-async function handleSamples(app: AppContext, sdk: ScriptContext, outDir: string): Promise<void> {
+async function handleSamples(app: AppContext, sdk: ScriptContext, outDir: string): Promise<WatchIndex> {
   if (!sdk.hasInput("sample_set")) throw new HarnessError("CONFIG_INVALID", 'media watch --mode samples needs a "sample_set" input', {});
   const sampleSetDir = sdk.input("sample_set");
   const samplesJsonPath = join(sampleSetDir, "samples.json");
@@ -103,15 +103,14 @@ async function handleSamples(app: AppContext, sdk: ScriptContext, outDir: string
 
   if (allPathsExist) {
     const videos: WatchVideoInput[] = entries.map((e, i) => ({ label: e.label, path: resolvedPaths[i]! }));
-    await watchVideos(watchDepsFor(app, sdk), { mode: "samples", outDir }, videos);
-    return;
+    return watchVideos(watchDepsFor(app, sdk), { mode: "samples", outDir }, videos);
   }
   const groups = entries.map((e) => ({
     label: e.label,
     source_path: e.path,
     frames: (e.frames ?? []).map((f) => (isAbsolute(f) ? f : join(sampleSetDir, f))),
   }));
-  watchFromExistingFrames({ mode: "samples", outDir }, groups);
+  return watchFromExistingFrames({ mode: "samples", outDir }, groups);
 }
 
 interface ShotsFile { shots: unknown }
@@ -133,49 +132,66 @@ function parseShotMarks(raw: unknown, shotsPath: string): number[] {
 /** `--mode source`: the proxy video index-source produced, watched at scene+interval marks plus every shot
  * boundary from `shots.json` (task-3 brief: `watchVideos([{ label: "source", path: proxy, shot_marks:
  * shots[].in }])`). */
-async function handleSource(app: AppContext, sdk: ScriptContext, outDir: string): Promise<void> {
+async function handleSource(app: AppContext, sdk: ScriptContext, outDir: string): Promise<WatchIndex> {
   if (!sdk.hasInput("proxy_video")) throw new HarnessError("CONFIG_INVALID", 'media watch --mode source needs a "proxy_video" input', {});
   if (!sdk.hasInput("shots")) throw new HarnessError("CONFIG_INVALID", 'media watch --mode source needs a "shots" input', {});
   const proxyPath = sdk.input("proxy_video");
   const shotsPath = sdk.input("shots");
   const shot_marks = parseShotMarks(readJsonFile(shotsPath), shotsPath);
-  await watchVideos(watchDepsFor(app, sdk), { mode: "source", outDir }, [{ label: "source", path: proxyPath, shot_marks }]);
+  return watchVideos(watchDepsFor(app, sdk), { mode: "source", outDir }, [{ label: "source", path: proxyPath, shot_marks }]);
 }
 
 /** `--mode episode`: the assembled episode video, watched at scene+interval marks only (no shot list). */
-async function handleEpisode(app: AppContext, sdk: ScriptContext, outDir: string): Promise<void> {
+async function handleEpisode(app: AppContext, sdk: ScriptContext, outDir: string): Promise<WatchIndex> {
   if (!sdk.hasInput("episode_video")) throw new HarnessError("CONFIG_INVALID", 'media watch --mode episode needs an "episode_video" input', {});
   const episodePath = sdk.input("episode_video");
-  await watchVideos(watchDepsFor(app, sdk), { mode: "episode", outDir }, [{ label: "episode", path: episodePath }]);
+  return watchVideos(watchDepsFor(app, sdk), { mode: "episode", outDir }, [{ label: "episode", path: episodePath }]);
 }
 
-const HANDLERS: Record<WatchMode, (app: AppContext, sdk: ScriptContext, outDir: string) => Promise<void>> = {
+const HANDLERS: Record<WatchMode, (app: AppContext, sdk: ScriptContext, outDir: string) => Promise<WatchIndex>> = {
   samples: handleSamples, source: handleSource, episode: handleEpisode,
 };
+
+/**
+ * A video the prober gave a real duration for but that produced no frame at all means the frame extraction
+ * never worked (ffmpeg missing or refusing this file), and shipping that as a SUCCEEDED but empty `watch/`
+ * hands the agent stages downstream nothing to look at while everything reports green (final-review finding
+ * I-2). `duration_seconds === 0` is left alone on purpose: that is the `watchFromExistingFrames` fallback
+ * shape and an unprobeable input, neither of which this check can say anything useful about.
+ */
+export function emptyWatchLabels(index: WatchIndex): string[] {
+  return index.videos.filter((v) => v.duration_seconds > 0 && v.frames.length === 0).map((v) => v.label);
+}
 
 /**
  * `harness media watch --mode <samples|source|episode>`: extracts frames (scene changes + interval, plus
  * shot marks for `source`) and contact sheets via ffmpeg, optionally runs the `transcribe` hook, and writes
  * `output/watch/watch.json` (task 2's `watchVideos`/`watchFromExistingFrames`). Every mode needs ffmpeg on
  * PATH; `app.proberAvailable` (ffprobe -- installed alongside ffmpeg in every supported setup, and already
- * the signal `harness doctor` reports) stands in for that check so a missing toolchain fails the same way
- * `doctor` already flags it, without this stage separately shelling `ffmpeg -version`.
+ * the signal `harness doctor` reports) is the cheap pre-check, but it is ffprobe, not ffmpeg: a machine with
+ * only one of the two is caught by `watch.ts`'s own spawn check and, as a last net, by the zero-frame check
+ * below (`emptyWatchLabels`) -- both `contract`, never a green empty `watch/` (final-review finding I-2).
  */
 async function watchStage(app: AppContext, sdk: ScriptContext, mode: string): Promise<void> {
   if (!MODES.includes(mode as WatchMode)) throw new HarnessError("CONFIG_INVALID", `unknown --mode "${mode}"; expected one of ${MODES.join("|")}`, { mode });
   if (!app.proberAvailable) throw new HarnessError("CONFIG_INVALID", "ffmpeg/ffprobe not found on PATH; media watch needs them (see `harness doctor`)", { mode });
 
   const outDir = join(sdk.workspace, "output", "watch");
+  let index: WatchIndex;
   try {
-    await HANDLERS[mode as WatchMode](app, sdk, outDir);
+    index = await HANDLERS[mode as WatchMode](app, sdk, outDir);
   } catch (e) {
-    // Every ffmpeg spawn inside watch.ts reports a missing binary through spawnSync's returned `error`
-    // (logged as a warn, frames just come up empty) rather than a thrown exception, so this branch is a
-    // defensive backstop for the task-3 brief's "spawn ENOENT -> contract" case, not the primary path.
-    if (e instanceof Error && e.message.includes("ENOENT")) {
+    // `watch.ts` raises a missing/unstartable ffmpeg as `CONFIG_INVALID` itself (`assertFfmpegSpawned`), which
+    // falls through untouched; this branch stays as a backstop for any other ENOENT that escapes a handler.
+    if (e instanceof Error && !isHarnessError(e) && e.message.includes("ENOENT")) {
       throw new HarnessError("CONFIG_INVALID", `ffmpeg not available: ${e.message}`, { mode });
     }
     throw e;
+  }
+
+  const empty = emptyWatchLabels(index);
+  if (empty.length > 0) {
+    throw new HarnessError("CONFIG_INVALID", `media watch --mode ${mode}: no frames extracted for ${empty.join(", ")} (is ffmpeg on PATH?)`, { mode, labels: empty });
   }
 
   await sdk.out.dir("output/watch", { type: "watch" });

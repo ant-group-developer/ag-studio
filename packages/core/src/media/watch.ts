@@ -1,8 +1,9 @@
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import {
+  HarnessError,
   WatchIndexSchema,
   watchTranscriptSchema,
   type MediaProber,
@@ -55,11 +56,27 @@ const FFMPEG_TIMEOUT_MS = 300_000;
 
 const noopLog: WatchLogFn = () => {};
 
+/**
+ * A binary that could not be started at all shows up on `spawnSync`'s return as `error` (ENOENT when ffmpeg
+ * is not on PATH, EACCES when it is there but not executable) with no `signal`; a run that started and was
+ * killed by the `timeout` option sets `signal` instead. The first case is a machine/config problem for the
+ * whole stage -- degrading it into "this frame just didn't come out" is what let a studio with ffprobe but no
+ * ffmpeg produce a SUCCEEDED, completely empty `watch/` (final-review finding I-2) -- so it throws, while a
+ * per-frame non-zero exit or timeout stays a warning the caller handles.
+ */
+function assertFfmpegSpawned(ffmpeg: string, r: SpawnSyncReturns<string>): void {
+  if (!r.error || r.signal) return;
+  throw new HarnessError("CONFIG_INVALID", `ffmpeg not available: cannot run "${ffmpeg}": ${r.error.message}`, { ffmpeg });
+}
+
 /** ffmpeg select=gt(scene,thr),showinfo -> pts_time[] (seconds, ascending). Frames below `threshold` scene-change
- * score never appear in showinfo output, so every parsed pts_time is a detected cut. */
+ * score never appear in showinfo output, so every parsed pts_time is a detected cut. Throws `CONFIG_INVALID`
+ * when ffmpeg itself cannot be spawned (see `assertFfmpegSpawned`); an ffmpeg that ran and found nothing
+ * still returns an empty array. */
 export function detectSceneChanges(ffmpeg: string, path: string, threshold: number): number[] {
   const vf = `select='gt(scene\\,${threshold})',showinfo`;
   const r = spawnSync(ffmpeg, ["-i", path, "-vf", vf, "-f", "null", "-"], { timeout: FFMPEG_TIMEOUT_MS, encoding: "utf8" });
+  assertFfmpegSpawned(ffmpeg, r);
   const stderr = r.stderr ?? "";
   const times = new Set<number>();
   for (const m of stderr.matchAll(/pts_time:([0-9.]+)/g)) {
@@ -139,12 +156,15 @@ function relOut(outDir: string, p: string): string {
   return relative(outDir, p).split("\\").join("/");
 }
 
+/** `false` when this one frame did not come out (bad seek, corrupt region, timeout); throws `CONFIG_INVALID`
+ * when ffmpeg could not be spawned at all, since every other frame would fail the same way. */
 function extractFrame(ffmpeg: string, sourcePath: string, t: number, frameWidth: number, outPath: string): boolean {
   const r = spawnSync(
     ffmpeg,
     ["-y", "-ss", String(t), "-i", sourcePath, "-frames:v", "1", "-vf", `scale=${frameWidth}:-2`, outPath],
     { timeout: FFMPEG_TIMEOUT_MS, encoding: "utf8" },
   );
+  assertFfmpegSpawned(ffmpeg, r);
   return r.status === 0 && existsSync(outPath);
 }
 

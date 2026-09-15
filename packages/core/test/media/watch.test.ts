@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import type { MediaProbe, MediaProber } from "@harness/contracts";
+import { isHarnessError, type MediaProbe, type MediaProber } from "@harness/contracts";
 import { hasFfmpeg, makeVideo } from "../../../../tests/media.js";
 import {
   WATCH_DEFAULTS,
@@ -117,6 +117,38 @@ describe("watchFromExistingFrames", () => {
     expect(idx.videos[0].transcript_error).toBeUndefined();
 
     expect(idx.videos[1].frames).toEqual([{ t: 0, file: "b/f-1.png", kind: "interval" }]);
+  });
+});
+
+/** Reports a fixed duration for any path, so the ffmpeg-missing tests below never need ffprobe or a real
+ * file -- the point is what `watchVideos` does once it believes there is something to extract frames from. */
+class FixedDurationProber implements MediaProber {
+  constructor(private readonly seconds: number) {}
+  async probe(): Promise<MediaProbe> {
+    return { media: null, duration_seconds: this.seconds, mime_type: null, container: null, video: null, audio: null };
+  }
+}
+
+// Final-review finding I-2: a studio with ffprobe but no ffmpeg used to get a SUCCEEDED, completely empty
+// `watch/` -- every ffmpeg spawn failed with ENOENT, which only ever became a warning.
+describe("missing ffmpeg binary", () => {
+  it("detectSceneChanges throws CONFIG_INVALID instead of reporting 'no scene changes'", () => {
+    expect(() => detectSceneChanges("definitely-missing-ffmpeg", "clip.mp4", 0.3)).toThrowError(/ffmpeg not available/);
+    try {
+      detectSceneChanges("definitely-missing-ffmpeg", "clip.mp4", 0.3);
+    } catch (e) {
+      expect(isHarnessError(e, "CONFIG_INVALID")).toBe(true);
+    }
+  });
+
+  it("watchVideos rejects with CONFIG_INVALID rather than writing a frameless watch.json", async () => {
+    const outDir = mkdtempSync(join(tmpdir(), "watch-no-ffmpeg-"));
+    await expect(
+      watchVideos({ prober: new FixedDurationProber(10), ffmpeg: "definitely-missing-ffmpeg" }, { mode: "source", outDir }, [
+        { label: "clip", path: join(outDir, "clip.mp4") },
+      ]),
+    ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
+    expect(existsSync(join(outDir, "watch.json"))).toBe(false);
   });
 });
 

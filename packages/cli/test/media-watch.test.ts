@@ -4,9 +4,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { stringify } from "yaml";
 import { describe, expect, it } from "vitest";
-import { newId, type ClaimResult, type StageInput, type StageResult } from "@harness/contracts";
+import { newId, type ClaimResult, type StageInput, type StageResult, type WatchIndex, type WatchVideo } from "@harness/contracts";
 import { HARNESS_ROOT, buildStageRequest, eventFor } from "@harness/core";
 import { buildContext, type AppContext } from "../src/composition.js";
+import { emptyWatchLabels } from "../src/commands/media.js";
 import { hasFfmpeg, makeVideo } from "../../../tests/media.js";
 
 // Task 3: `harness media watch --mode samples|source|episode` (a built-in stage script, same shape as
@@ -114,6 +115,29 @@ async function invokeWatch(project: string, runId: string, mode: string, inputSp
   const result = JSON.parse(readFileSync(resultPath, "utf8")) as StageResult;
   return { result, workspaceDir };
 }
+
+// Final-review finding I-2: `watchStage` turns a non-empty `emptyWatchLabels` into a `contract` failure, so a
+// machine with ffprobe but no working ffmpeg can never commit a SUCCEEDED, frameless `watch/` artifact.
+describe("emptyWatchLabels", () => {
+  const video = (label: string, duration_seconds: number, frameCount: number): WatchVideo => ({
+    label, source_path: `/src/${label}.mp4`, duration_seconds, media: null,
+    frames: Array.from({ length: frameCount }, (_, i) => ({ t: i, file: `${label}/f-${i}.png`, kind: "interval" as const })),
+    sheets: [], transcript: null,
+  });
+
+  it("flags a probed video that extracted nothing, and ignores both a healthy one and a zero-duration fallback entry", () => {
+    const index: WatchIndex = {
+      schema_version: "harness.watch/v1", mode: "samples",
+      videos: [video("broken", 12, 0), video("ok", 8, 4), video("fallback", 0, 0)],
+    };
+    expect(emptyWatchLabels(index)).toEqual(["broken"]);
+  });
+
+  it("is empty for an index where every probed video produced frames", () => {
+    const index: WatchIndex = { schema_version: "harness.watch/v1", mode: "episode", videos: [video("episode", 30, 8)] };
+    expect(emptyWatchLabels(index)).toEqual([]);
+  });
+});
 
 describe.skipIf(!hasFfmpeg())("harness media watch", () => {
   it("mode source: extracts frames guided by shots.json, writes a valid watch.json", async () => {
