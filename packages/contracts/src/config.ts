@@ -49,7 +49,7 @@ export const WorkflowDefinitionSchema = z.object({
 
 export const ProductionProfileSchema = z.object({
   schema_version: schemaVersion("production-profile"),
-  profile_id: z.enum(["cartoon", "avatar", "footage", "studio", "channel"]),
+  profile_id: z.enum(["cartoon", "avatar", "footage", "studio", "channel", "channel-planning"]),
   revision: revisionSchema,
   status: z.enum(["active", "draft", "retired"]),
   workflow_release: z.string().regex(/^[a-z][a-z0-9-]*@\d+\.\d+\.\d+$/),
@@ -60,6 +60,12 @@ export const ProductionProfileSchema = z.object({
   content: z.object({ target_duration_seconds: z.tuple([z.number().min(0), z.number().min(0)]).optional(), max_silence_ratio: z.number().min(0).max(1).optional() }).strict().default({}),
   verification: z.object({ required_checks: z.array(z.string()).default([]), required_checks_by_stage: z.record(z.string(), z.array(z.string())).default({}) }).strict().default({ required_checks: [], required_checks_by_stage: {} }),
   limits: z.object({ max_cost_usd_per_variant: z.number().min(0).default(5), max_concurrency: z.number().int().min(1).default(1) }).strict().default({ max_cost_usd_per_variant: 5, max_concurrency: 1 }),
+}).strict();
+
+export const channelSeoSchema = z.object({
+  niche: z.string().default(""), audience: z.string().default(""), angle: z.string().default(""),
+  language: z.string().min(1).default("en"), market: z.string().default(""), keywords: z.array(z.string()).default([]),
+  title_rules: z.string().default(""), description_template: z.string().default(""),
 }).strict();
 
 export const ChannelConfigSchema = z.object({
@@ -78,13 +84,29 @@ export const ChannelConfigSchema = z.object({
     min_gap_hours: z.number().min(0).default(20),
     visibility_default: z.literal("private").default("private"),
   }).strict(),
-  seo: z.object({
-    niche: z.string().default(""), audience: z.string().default(""), angle: z.string().default(""),
-    language: z.string().min(1).default("en"), market: z.string().default(""), keywords: z.array(z.string()).default([]),
-    title_rules: z.string().default(""), description_template: z.string().default(""),
-  }).strict().default({}),
+  seo: channelSeoSchema.default({}),
   episode: z.object({ start: z.number().int().min(1).default(1), dir_pattern: z.string().regex(/\{nn\}/).default("episode-{nn}") }).strict().default({}),
   overlay: z.object({ enabled: z.boolean().default(true), side: z.enum(["left", "right"]).default("right") }).strict().default({}),
+  /** Sub-project 3B: how a channel's video-metrics history is collected and turned into a learned standard. */
+  learning: z.object({
+    horizon_hours: z.number().int().min(1).default(72),
+    recollect_hours: z.array(z.number().int().min(1)).default([168, 720]),
+    min_impressions: z.number().int().min(0).default(50),
+    min_samples: z.number().int().min(1).default(2),
+  }).strict().default({}),
+  /** Sub-project 3B: whether topic planning runs automatically for this channel. */
+  planning: z.object({
+    enabled: z.boolean().default(false),
+    lookahead_slots: z.number().int().min(1).default(3),
+    topics_per_run: z.number().int().min(1).default(3),
+    max_open_requests: z.number().int().min(1).default(3),
+    check_seconds: z.number().int().min(60).default(3600),
+  }).strict().default({}),
+  /** Sub-project 3B: whether an auto-picked hypothesis may kick off a run without a human choosing it. */
+  auto_pick: z.object({
+    enabled: z.boolean().default(false),
+    max_concurrent_runs: z.number().int().min(1).default(1),
+  }).strict().default({}),
 }).strict();
 
 export const ProjectConfigSchema = z.object({
@@ -120,9 +142,16 @@ export const ProjectConfigSchema = z.object({
     agent: z.enum(["cli", "fake"]).default("fake"),
     /** Ghi đè argv của runtime agent (test dùng runtime giả). `{prompt}` được thay bằng câu chỉ tới agent-prompt.md. */
     agent_argv: z.array(z.string().min(1)).optional(),
-  }).strict().default({ publisher: "fake", agent: "fake" }),
+    /** Sub-project 3B: which StatsCollector implementation collects video metrics from YouTube Studio. */
+    stats: z.enum(["playwright", "fake"]).default("fake"),
+  }).strict().default({ publisher: "fake", agent: "fake", stats: "fake" }),
   publication: z.object({ verify_seconds: z.number().int().min(60).default(900), verify_grace_hours: z.number().min(0).default(2) }).strict().default({ verify_seconds: 900, verify_grace_hours: 2 }),
   dashboard: z.object({ port: z.number().int().min(1).max(65535).default(5200), refresh_seconds: z.number().int().min(10).default(60) }).strict().default({ port: 5200, refresh_seconds: 60 }),
+  /** Sub-project 3B: how often the worker sweeps for video metrics to collect, and how many jobs per sweep. */
+  learning: z.object({
+    collect_seconds: z.number().int().min(60).default(1800),
+    collect_batch: z.number().int().min(1).default(5),
+  }).strict().default({}),
 }).strict();
 
 export const HarnessConfigSchema = z.object({

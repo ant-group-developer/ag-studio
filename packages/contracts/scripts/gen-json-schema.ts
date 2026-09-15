@@ -9,6 +9,7 @@ import * as C from "../src/config.js";
 import * as L from "../src/library.js";
 import * as M from "../src/media.js";
 import * as D from "../src/distribution.js";
+import * as G from "../src/learning.js";
 import { EdlSchema } from "../src/edl.js";
 
 export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
@@ -28,6 +29,8 @@ export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
   watch: M.WatchIndexSchema,
   hypothesis: D.HypothesisSchema, "channel-package-draft": D.ChannelPackageDraftSchema,
   "package-receipt": D.PackageReceiptSchema, "upload-receipt": D.UploadReceiptSchema, "schedule-receipt": D.ScheduleReceiptSchema,
+  "video-metrics": G.VideoMetricsSchema, "channel-learned": G.ChannelLearnedSchema,
+  "channel-brief": G.ChannelBriefSchema, "topic-proposal": G.TopicProposalSchema,
 };
 
 export function toJsonSchema(name: string, schema: ZodTypeAny) {

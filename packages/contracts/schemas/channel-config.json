@@ -167,6 +167,86 @@
           },
           "additionalProperties": false,
           "default": {}
+        },
+        "learning": {
+          "type": "object",
+          "properties": {
+            "horizon_hours": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 72
+            },
+            "recollect_hours": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "default": [
+                168,
+                720
+              ]
+            },
+            "min_impressions": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 50
+            },
+            "min_samples": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 2
+            }
+          },
+          "additionalProperties": false,
+          "default": {}
+        },
+        "planning": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "lookahead_slots": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 3
+            },
+            "topics_per_run": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 3
+            },
+            "max_open_requests": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 3
+            },
+            "check_seconds": {
+              "type": "integer",
+              "minimum": 60,
+              "default": 3600
+            }
+          },
+          "additionalProperties": false,
+          "default": {}
+        },
+        "auto_pick": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "max_concurrent_runs": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          "additionalProperties": false,
+          "default": {}
         }
       },
       "required": [

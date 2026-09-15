@@ -3,11 +3,11 @@ import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  ArtifactSchema, AttemptSchema, ChannelPackageSchema, CheckResultSchema, ContentItemSchema, ContentRequestSchema, ContentVariantSchema, EditStyleSchema, EventSchema, ExternalOperationSchema, HarnessError,
-  LeaseSchema, LibraryItemSchema, PublicationJobSchema, RunSchema, SourceItemSchema, StageRunSchema,
-  newId, type Artifact, type Attempt, type ChannelPackage, type CheckResult, type ClaimParams, type ClaimResult, type Clock, type ContentItem, type ContentRequest, type ContentVariant,
+  ArtifactSchema, AttemptSchema, ChannelLearnedSchema, ChannelPackageSchema, CheckResultSchema, ContentItemSchema, ContentRequestSchema, ContentVariantSchema, EditStyleSchema, EventSchema, ExternalOperationSchema, HarnessError,
+  LeaseSchema, LibraryItemSchema, PublicationJobSchema, RunSchema, SourceItemSchema, StageRunSchema, VideoMetricsSchema,
+  newId, type Artifact, type Attempt, type ChannelLearned, type ChannelPackage, type CheckResult, type ClaimParams, type ClaimResult, type Clock, type ContentItem, type ContentRequest, type ContentVariant,
   type EditStyle, type Event, type EventInput, type ExternalOperation, type Lease, type LibraryItem, type PublicationJob, type ReapedLease, type Run, type SourceItem, type StageRun, type StateStore,
-  type TransitionKind,
+  type TransitionKind, type VideoMetrics,
 } from "@harness/contracts";
 import { addSeconds, SystemClock } from "./clock.js";
 import { assertTransition, STATE_FIELD_BY_KIND, TABLE_BY_KIND } from "./transitions.js";
@@ -344,6 +344,32 @@ export class SqliteStateStore implements StateStore {
       this.db.prepare("UPDATE channel_sequence SET next_episode_no = ? WHERE channel_id = ?").run(row.next_episode_no + 1, channelId);
       return row.next_episode_no;
     });
+  }
+
+  // ---- channel learning (sub-project 3B) ----
+  insertVideoMetrics(m: VideoMetrics): void {
+    const v = VideoMetricsSchema.parse(m);
+    this.db.prepare(
+      "INSERT INTO video_metrics (id, publication_job_id, channel_id, collected_at, age_hours, data) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run(v.metric_id, v.publication_job_id, v.channel_id, v.collected_at, v.age_hours, JSON.stringify(v));
+  }
+  listVideoMetrics(filter: { publication_job_id?: string; channel_id?: string } = {}): VideoMetrics[] {
+    const where: string[] = []; const params: string[] = [];
+    if (filter.publication_job_id) { where.push("publication_job_id = ?"); params.push(filter.publication_job_id); }
+    if (filter.channel_id) { where.push("channel_id = ?"); params.push(filter.channel_id); }
+    return this.listDocs(`SELECT data FROM video_metrics${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY collected_at`, params, (x) => VideoMetricsSchema.parse(x));
+  }
+
+  upsertChannelLearned(l: ChannelLearned): void {
+    const v = ChannelLearnedSchema.parse(l);
+    this.db.prepare(
+      "INSERT INTO channel_learned (channel_id, data, updated_at) VALUES (?, ?, ?) " +
+      "ON CONFLICT(channel_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
+    ).run(v.channel_id, JSON.stringify(v), v.updated_at);
+  }
+  getChannelLearned(channelId: string): ChannelLearned | undefined {
+    const row = this.db.prepare("SELECT data FROM channel_learned WHERE channel_id = ?").get(channelId) as Row | undefined;
+    return row ? ChannelLearnedSchema.parse(JSON.parse(row.data)) : undefined;
   }
 
   // ---- event ----

@@ -15,7 +15,8 @@
             "avatar",
             "footage",
             "studio",
-            "channel"
+            "channel",
+            "channel-planning"
           ]
         },
         "revision": {

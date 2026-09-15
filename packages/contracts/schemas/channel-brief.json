@@ -1,0 +1,583 @@
+{
+  "$ref": "#/definitions/channel-brief",
+  "definitions": {
+    "channel-brief": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.channel-brief/v1"
+        },
+        "generated_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+        },
+        "channel": {
+          "type": "object",
+          "properties": {
+            "channel_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "display_name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "seo": {
+              "type": "object",
+              "properties": {
+                "niche": {
+                  "type": "string",
+                  "default": ""
+                },
+                "audience": {
+                  "type": "string",
+                  "default": ""
+                },
+                "angle": {
+                  "type": "string",
+                  "default": ""
+                },
+                "language": {
+                  "type": "string",
+                  "minLength": 1,
+                  "default": "en"
+                },
+                "market": {
+                  "type": "string",
+                  "default": ""
+                },
+                "keywords": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "default": []
+                },
+                "title_rules": {
+                  "type": "string",
+                  "default": ""
+                },
+                "description_template": {
+                  "type": "string",
+                  "default": ""
+                }
+              },
+              "additionalProperties": false
+            },
+            "publication": {
+              "type": "object",
+              "properties": {
+                "timezone": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "publish_times": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "timezone",
+                "publish_times"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "channel_id",
+            "display_name",
+            "seo",
+            "publication"
+          ],
+          "additionalProperties": false
+        },
+        "learned": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "schema_version": {
+                  "type": "string",
+                  "const": "harness.channel-learned/v1"
+                },
+                "channel_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "updated_at": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+                },
+                "sample_size": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "metric": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "ctr",
+                        "views_72h",
+                        "avg_view_pct"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "medians": {
+                  "type": "object",
+                  "properties": {
+                    "views_72h": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "ctr_pct": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "avg_view_pct": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "views_72h",
+                    "ctr_pct",
+                    "avg_view_pct"
+                  ],
+                  "additionalProperties": false
+                },
+                "winners": {
+                  "type": "object",
+                  "properties": {
+                    "angles": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "value": {
+                            "type": "string"
+                          },
+                          "supported": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "refuted": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "lift": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "value",
+                          "supported",
+                          "refuted",
+                          "lift"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "title_patterns": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "value": {
+                            "type": "string"
+                          },
+                          "supported": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "refuted": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "lift": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "value",
+                          "supported",
+                          "refuted",
+                          "lift"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "overlay": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "value": {
+                            "type": "string"
+                          },
+                          "supported": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "refuted": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "lift": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "value",
+                          "supported",
+                          "refuted",
+                          "lift"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "angles",
+                    "title_patterns",
+                    "overlay"
+                  ],
+                  "additionalProperties": false
+                },
+                "standard": {
+                  "type": "object",
+                  "properties": {
+                    "angle": {
+                      "type": "string"
+                    },
+                    "title_pattern": {
+                      "type": "string"
+                    },
+                    "overlay_lines": {
+                      "type": "string",
+                      "enum": [
+                        "0",
+                        "1-2",
+                        "3"
+                      ]
+                    },
+                    "note": {
+                      "type": "string",
+                      "default": ""
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "history": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "at": {
+                        "type": "string",
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+                      },
+                      "standard": {
+                        "type": "object",
+                        "properties": {
+                          "angle": {
+                            "type": "string"
+                          },
+                          "title_pattern": {
+                            "type": "string"
+                          },
+                          "overlay_lines": {
+                            "type": "string",
+                            "enum": [
+                              "0",
+                              "1-2",
+                              "3"
+                            ]
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "at",
+                      "standard"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "maxItems": 20,
+                  "default": []
+                }
+              },
+              "required": [
+                "schema_version",
+                "channel_id",
+                "updated_at",
+                "sample_size",
+                "metric",
+                "medians",
+                "winners",
+                "standard"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hypotheses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "hypothesis_id": {
+                "type": "string",
+                "pattern": "^hyp_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "episode_no": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "chosen": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "angle": {
+                    "type": "string",
+                    "default": ""
+                  },
+                  "overlay_text": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 3,
+                    "default": []
+                  }
+                },
+                "required": [
+                  "title"
+                ],
+                "additionalProperties": false
+              },
+              "expected": {
+                "type": "object",
+                "properties": {
+                  "metric": {
+                    "type": "string",
+                    "enum": [
+                      "ctr",
+                      "views_72h",
+                      "avg_view_pct"
+                    ]
+                  },
+                  "target": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "horizon_hours": {
+                    "type": "integer",
+                    "minimum": 24
+                  }
+                },
+                "required": [
+                  "metric",
+                  "target",
+                  "horizon_hours"
+                ],
+                "additionalProperties": false
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "open",
+                  "supported",
+                  "refuted",
+                  "void"
+                ]
+              },
+              "metric_value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "hypothesis_id",
+              "episode_no",
+              "chosen",
+              "expected",
+              "status"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 10
+        },
+        "recent_metrics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "episode_no": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "views": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "impressions": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "ctr_pct": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "avg_view_sec": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "age_hours": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "episode_no",
+              "title",
+              "views",
+              "impressions",
+              "ctr_pct",
+              "avg_view_sec",
+              "age_hours"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 10
+        },
+        "open_requests": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "request_id": {
+                "type": "string",
+                "pattern": "^req_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "topic": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "open",
+                  "claimed"
+                ]
+              }
+            },
+            "required": [
+              "request_id",
+              "topic",
+              "status"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "item": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "item_id": {
+                  "type": "string",
+                  "pattern": "^item_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "title_hint": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "duration_seconds": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "item_id",
+                "title_hint",
+                "summary",
+                "duration_seconds"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "generated_at",
+        "channel",
+        "learned",
+        "hypotheses",
+        "recent_metrics",
+        "open_requests",
+        "item"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

@@ -252,6 +252,28 @@
             "created_at": {
               "type": "string",
               "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+            },
+            "evaluated": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+                },
+                "metric_value": {
+                  "type": "number"
+                },
+                "metric_id": {
+                  "type": "string",
+                  "pattern": "^metric_[0-9A-HJKMNP-TV-Z]{26}$"
+                }
+              },
+              "required": [
+                "at",
+                "metric_value",
+                "metric_id"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [

@@ -28,6 +28,12 @@ export const HypothesisSchema = z.object({
   }).strict(),
   status: z.enum(["open", "supported", "refuted", "void"]).default("open"),
   created_at: timestampSchema,
+  /** Set once a StatsCollector snapshot is judged against `expected` (sub-project 3B); absent while `status` is still `open`. */
+  evaluated: z.object({
+    at: timestampSchema,
+    metric_value: z.number(),
+    metric_id: idSchema("video_metrics"),
+  }).strict().optional(),
 }).strict();
 
 export const packageMetadataSchema = z.object({

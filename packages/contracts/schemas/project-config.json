@@ -160,12 +160,21 @@
                 "type": "string",
                 "minLength": 1
               }
+            },
+            "stats": {
+              "type": "string",
+              "enum": [
+                "playwright",
+                "fake"
+              ],
+              "default": "fake"
             }
           },
           "additionalProperties": false,
           "default": {
             "publisher": "fake",
-            "agent": "fake"
+            "agent": "fake",
+            "stats": "fake"
           }
         },
         "publication": {
@@ -208,6 +217,23 @@
             "port": 5200,
             "refresh_seconds": 60
           }
+        },
+        "learning": {
+          "type": "object",
+          "properties": {
+            "collect_seconds": {
+              "type": "integer",
+              "minimum": 60,
+              "default": 1800
+            },
+            "collect_batch": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 5
+            }
+          },
+          "additionalProperties": false,
+          "default": {}
         }
       },
       "required": [

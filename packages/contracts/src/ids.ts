@@ -19,6 +19,7 @@ export const ID_PREFIXES = {
   content_request: "req",
   library_item: "item",
   hypothesis: "hyp",
+  video_metrics: "metric",
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

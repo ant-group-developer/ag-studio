@@ -1,6 +1,7 @@
 import type { Artifact, Attempt, ChannelPackage, CheckResult, ContentItem, ContentVariant, Event, ExternalOperation, Lease, MediaInfo, PublicationJob, Run, SourceItem, StageRun } from "./entities.js";
 import type { StageRequest, StageResult } from "./execution.js";
 import type { ContentRequest, EditStyle, LibraryItem } from "./library.js";
+import type { ChannelLearned, VideoMetrics } from "./learning.js";
 
 export type TransitionKind = "run" | "stage_run" | "attempt" | "artifact" | "external_operation" | "publication_job";
 
@@ -100,6 +101,14 @@ export interface StateStore {
   /** Allocates the next episode number for a channel inside a transaction: no row yet → creates one at `start`, returns `start`; a row exists → returns the current value, then increments. */
   allocateEpisodeNo(channelId: string, start: number): number;
 
+  // ---- channel learning (sub-project 3B) ----
+  /** Append-only: never updated. */
+  insertVideoMetrics(m: VideoMetrics): void;
+  /** ORDER BY collected_at. */
+  listVideoMetrics(filter: { publication_job_id?: string; channel_id?: string }): VideoMetrics[];
+  upsertChannelLearned(l: ChannelLearned): void;
+  getChannelLearned(channelId: string): ChannelLearned | undefined;
+
   appendEvent(e: EventInput): Event;
   listEvents(filter: { run_id?: string; event_type?: string; limit?: number; newest?: boolean }): Event[];
 
@@ -153,6 +162,19 @@ export interface Publisher {
   upload(p: { channel: PublisherChannel; episode_no: number; episode_dir: string; intent_at: string; timeout_seconds: number; log?: (line: string) => void }): Promise<UploadOutcome>;
   schedule(p: { channel: PublisherChannel; video_id: string; at: string; timeout_seconds: number; log?: (line: string) => void }): Promise<ScheduleOutcome>;
   lookup(p: { channel: PublisherChannel; video_id?: string; title?: string; since?: string }): Promise<LookupOutcome>;
+}
+
+/** Outcome of one video's video-metrics collection attempt (sub-project 3B). `no-views` is a definitive answer
+ * ("the video has no stats yet", e.g. still processing) distinct from `blocked`/`error`, which mean the
+ * collector could not tell -- mirrors the `found`/`error` split on `LookupOutcome` above. */
+export type StatsOutcome =
+  | { kind: "ok"; views: number; impressions?: number; ctr_pct?: number; avg_view_sec?: number; retention30_pct?: number; note?: string }
+  | { kind: "no-views" }
+  | { kind: "blocked"; reason: string }
+  | { kind: "error"; reason: string };
+export interface StatsCollector {
+  readonly name: string;
+  collect(p: { channel: PublisherChannel; video_id: string; timeout_seconds: number; log?: (line: string) => void }): Promise<StatsOutcome>;
 }
 
 export interface ExternalProvider {
