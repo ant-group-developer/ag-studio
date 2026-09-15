@@ -7,7 +7,7 @@ import {
   newId, type ChannelPackage, type PublicationJob,
 } from "@harness/contracts";
 import { buildSnapshot, canonicalDigest, FixedClock, HARNESS_ROOT, LibraryFs, writeSnapshotFile, type LoadedChannel } from "../../src/index.js";
-import { openTempStore } from "../helpers.js";
+import { openTempStore, seedStage } from "../helpers.js";
 
 const LEGACY_REPO_FIXTURE = join(HARNESS_ROOT, "fixtures", "legacy-channel-repo");
 const SHA = "sha256:" + "a".repeat(64);
@@ -241,6 +241,38 @@ describe("buildSnapshot", () => {
     });
     const alert = snapshot.alerts.find((a) => a.kind === "request_stuck");
     expect(alert).toMatchObject({ kind: "request_stuck", ref: requestId });
+  });
+
+  // Final-review finding I-5: an agent stage that fails `contract` is never retried and parks at
+  // WAITING_HUMAN forever. `gateOverdue` only ever looked at `gate` executors with a deadline, and
+  // `request_stuck` only at open requests, so nothing on the dashboard said anything about it.
+  it("alerts stage_waiting_human for any parked stage on a live run, with the last attempt's failure, and not for a terminal run", () => {
+    const { store, clock } = openTempStore();
+
+    const { runId, stage } = seedStage(store, { key: "survey-source", state: "WAITING_HUMAN" });
+    store.insertAttempt({
+      schema_version: "harness.attempt/v1", attempt_id: newId("attempt"), stage_run_id: stage.stage_run_id, run_id: runId,
+      lease_owner: "worker-1", fencing_token: 1, state: "FAILED", started_at: clock.now(), finished_at: clock.now(),
+      failure_kind: "contract", error_summary: "agent wrote no output/survey.md", created_at: clock.now(), updated_at: clock.now(),
+    });
+
+    // a second run that already finished: its parked stage must not raise anything
+    const doneRunId = newId("run");
+    store.insertRun({
+      schema_version: "harness.run/v1", run_id: doneRunId, project_id: "project-snap", portfolio_id: "portfolio-main",
+      workflow_release: { id: "library-production", version: "1.1.0", digest: SHA }, profile_snapshot: { id: "studio", revision: 1 },
+      options: {}, state: "CANCELLED", effective_config_snapshot: {}, effective_config_digest: SHA, total_cost_usd: 0,
+      created_at: clock.now(), updated_at: clock.now(),
+    });
+    seedStage(store, { key: "plan-edit", state: "WAITING_HUMAN", runId: doneRunId });
+
+    const snapshot = buildSnapshot({ store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap" });
+    const parked = snapshot.alerts.filter((a) => a.kind === "stage_waiting_human");
+    expect(parked).toHaveLength(1);
+    expect(parked[0]!.ref).toBe(stage.stage_run_id);
+    expect(parked[0]!.message).toContain("survey-source");
+    expect(parked[0]!.message).toContain(runId);
+    expect(parked[0]!.message).toContain("agent wrote no output/survey.md");
   });
 });
 

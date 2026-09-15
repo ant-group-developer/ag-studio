@@ -9,6 +9,7 @@ import type { AutoAcceptConfig } from "../library/auto-accept.js";
 import { finishedRunCounts } from "../library/auto-accept.js";
 import type { LibraryFs } from "../library/files.js";
 import { gateOverdue } from "../orchestration/gate.js";
+import { isTerminal } from "../state/transitions.js";
 
 /**
  * Read model for the file-based dashboard (design §6.1). Deliberately a plain TS interface, not a Zod schema:
@@ -67,7 +68,7 @@ export interface DashboardEpisode {
 
 export interface DashboardActiveRun { run_id: string; channel_id: string; stage_key: string; state: string; since: string }
 
-export type DashboardAlertKind = "reconcile" | "run_failed" | "gate_overdue" | "doctor" | "library_unmounted" | "missing_today" | "request_stuck";
+export type DashboardAlertKind = "reconcile" | "run_failed" | "gate_overdue" | "doctor" | "library_unmounted" | "missing_today" | "request_stuck" | "stage_waiting_human";
 export interface DashboardAlert { kind: DashboardAlertKind; channel_id?: string; ref: string; message: string; since: string }
 
 export interface SnapshotDeps {
@@ -257,6 +258,35 @@ function buildRunsActive(store: StateStore): DashboardActiveRun[] {
   return out;
 }
 
+/**
+ * Every stage parked at `WAITING_HUMAN` on a run that is still alive, whatever its executor type. `gate`
+ * stages were already covered -- but only by `gateOverdue`, and only once a `gate_deadline_seconds` they may
+ * not even declare has elapsed; an `agent` stage that failed `contract` (never retried, spec §7) parks
+ * forever with nothing on the dashboard at all, and `request_stuck` does not see it either because the kho
+ * request stays `claimed` while the run lives (final-review finding I-5). Carries the last attempt's failure
+ * so the operator knows whether to fix an input, the skill, or just resubmit.
+ */
+function waitingHumanAlerts(store: StateStore): DashboardAlert[] {
+  const alerts: DashboardAlert[] = [];
+  for (const run of store.listRuns({})) {
+    if (isTerminal("run", run.state)) continue;
+    for (const stage of store.listStageRuns(run.run_id)) {
+      if (stage.state !== "WAITING_HUMAN") continue;
+      const attempts = store.listAttempts(stage.stage_run_id);
+      const last = attempts[attempts.length - 1];
+      const why = last
+        ? `last attempt ${last.failure_kind ?? last.state.toLowerCase()}${last.error_summary ? `: ${last.error_summary}` : ""}`
+        : "no attempt recorded";
+      alerts.push({
+        kind: "stage_waiting_human", ref: stage.stage_run_id,
+        message: `stage ${stage.stage_key} of run ${run.run_id} is waiting for a human (${why})`,
+        since: stage.updated_at,
+      });
+    }
+  }
+  return alerts;
+}
+
 /** Local wall-clock time in `timezone` is past the latest `publishTimes` entry for `now`'s local day. */
 function isPastLastSlot(publishTimes: string[], timezone: string, now: string): boolean {
   const last = [...publishTimes].sort().at(-1);
@@ -284,6 +314,8 @@ function buildAlerts(d: SnapshotDeps, now: string, doctorRows: DoctorRow[], chan
     if (Date.parse(run.updated_at) < failedSinceMs) continue;
     alerts.push({ kind: "run_failed", ref: run.run_id, message: `run ${run.run_id} failed`, since: run.updated_at });
   }
+
+  alerts.push(...waitingHumanAlerts(store));
 
   for (const { run, stage, overdue_seconds } of gateOverdue(store, now, d.gateWindowSeconds)) {
     alerts.push({ kind: "gate_overdue", ref: stage.stage_run_id, message: `gate ${stage.stage_key} of run ${run.run_id} overdue by ${overdue_seconds}s`, since: stage.updated_at });

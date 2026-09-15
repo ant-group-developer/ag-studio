@@ -144,6 +144,18 @@ harness --project <studio-dir> status <run_id> --json   # tìm stage_run_id đan
 Trong lúc stage đỗ, request kho vẫn `claimed` (run chưa kết thúc) — `autoAccept` không bao giờ tạo run thứ
 hai cho cùng request khi run đầu còn sống, kể cả khi đang `WAITING_HUMAN`.
 
+Không phải chờ tình cờ phát hiện: mọi stage `WAITING_HUMAN` của một run **chưa kết thúc** sinh alert
+`stage_waiting_human { ref: <stage_run_id> }` trong dashboard snapshot, bất kể executor là `agent`, `gate`
+hay `script`, kèm `stage_key`, `run_id` và tóm tắt lỗi của attempt cuối (`failure_kind` + `error_summary`).
+Khác `gate_overdue` (chỉ gate có khai `gate_deadline_seconds`, và chỉ khi đã quá hạn) và khác `request_stuck`
+(chỉ request `open`, trong khi request của run đang đỗ vẫn `claimed`) — đây là đường duy nhất một stage agent
+đỗ vì lỗi `contract` xuất hiện trên dashboard:
+
+```sh
+harness --project <studio-dir> dashboard snapshot --json
+# alerts: [{ kind: "stage_waiting_human", ref: "<stage_run_id>", message: "stage survey-source of run ... (last attempt contract: ...)" }]
+```
+
 ## 6. Alert `request_stuck`
 
 Khi `library-apply-review` từ chối liên tiếp và số run **đã kết thúc** của một request vượt `max_replans`
