@@ -299,8 +299,9 @@ transcript tuỳ chọn) thay việc người tự xem video, worker studio tự
 auto_accept` (`harness library styles activate`, `library request create --source-hint`, doctor
 `library:auto_accept`, dashboard alert `request_stuck`), workflow `style-study@1.1.0` +
 `library-production@1.1.0` chạy song song với bản `1.0.0` gate-người cũ (`loadWorkflow`/`listWorkflowRefs`
-hỗ trợ nhiều version cùng thư mục `workflows/`) — bốn stage agent chưa được kiểm bằng `claude`/`codex` thật
-trong môi trường build agent này, xem `docs/runbooks/studio-autopilot.md` mục "DoD #3"). Còn lại cho
+hỗ trợ nhiều version cùng thư mục `workflows/`) — năm stage agent (ba của `library-production@1.1.0`, hai
+của `style-study@1.1.0`) chưa được kiểm bằng `claude`/`codex` thật trong môi trường build agent này, xem
+`docs/runbooks/studio-autopilot.md` mục "DoD #3"). Còn lại cho
 sub-project 3B: thu số liệu sau khi lên (`collect-metrics-playwright`), đánh giá `Hypothesis` (`open` →
 `supported`/`refuted`), tự sinh `ContentRequest` từ lịch/số liệu, YouTube Test & Compare, và agent tự chọn
 nguồn (sub-project 4 chỉ chọn theo quy tắc cố định, xem `docs/operations/deferred-items.md`).

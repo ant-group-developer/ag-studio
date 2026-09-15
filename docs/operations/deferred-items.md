@@ -486,9 +486,12 @@ tin lệch (`packages/core/src/media/watch.ts`, `packages/core/src/library/auto-
   `fake-agent-cli.mjs`, luôn ghi output "hợp lệ" theo schema bất kể nội dung có đúng hay không — DoD #3
   (`docs/runbooks/studio-autopilot.md` mục 9) là kiểm tay duy nhất; checker + bảng kiểm sáu mục của
   `library-review` là lưới an toàn cuối cùng trước khi một mục vào kho `approved`.
-- **Chi phí agent**: bốn stage agent mỗi lần đều đọc ảnh (contact sheet trước, tối đa 20 khung đơn); contact
-  sheet giảm số lần gọi model khoảng 10× so với gửi từng khung rời. `max_cost_usd_per_variant: 8` (profile
-  `studio`) chặn ở mức **run**, chưa có trần chi phí theo ngày/portfolio.
+- **Chi phí agent**: năm stage agent (ba của `library-production@1.1.0` mỗi lần dựng một tập — `survey-
+  source`, `plan-edit`, `library-review` — cộng hai của `style-study@1.1.0` chạy một lần mỗi khi học style
+  mới — `analyze-style`, `style-review`; spec §10 viết "4 stage agent" gộp lẫn hai workflow, sửa lại ở đây
+  cùng lý do với ADR-0001 mục 92) đều đọc ảnh (contact sheet trước, tối đa 20 khung đơn); contact sheet giảm
+  số lần gọi model khoảng 10× so với gửi từng khung rời. `max_cost_usd_per_variant: 8` (profile `studio`)
+  chặn ở mức **run**, chưa có trần chi phí theo ngày/portfolio.
 - **Ngưỡng scene-change 0.3`** phù hợp footage cắt cảnh rõ; video chuyển cảnh mềm (dissolve, fade dài) có thể
   cho ít scene frame hơn — mốc đều (`interval_seconds`) bù lại, không phải một cơ chế thích ứng theo nội
   dung.

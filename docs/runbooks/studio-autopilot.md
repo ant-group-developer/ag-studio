@@ -195,12 +195,14 @@ autopilot cho một project mà vẫn giữ workflow 1.1.0 cài sẵn: `library.
 hẳn khối `auto_accept`) trong `project.yaml` — quay lại quy trình 2C hoàn toàn tay (`library accept` → `plan`
 → gate `stage submit`).
 
-## 9. DoD #3 — chạy bốn stage agent thật ít nhất một tập
+## 9. DoD #3 — chạy năm stage agent thật ít nhất một tập
 
-Spec yêu cầu (§8 mục 3) xác nhận bốn stage agent của `library-production@1.1.0` (`survey-source`,
-`plan-edit`, `library-review`, cộng hai của `style-study@1.1.0` mà DoD gộp chung "stage agent") chạy được
-với `claude`/`codex` **thật** trên máy có CLI, ít nhất một tập — kiểm tay, không có cách chứng minh qua test
-tự động (bản thân việc gọi model là external effect có chi phí, giống DoD #6 của sub-project 3).
+Spec yêu cầu (§8 mục 3) xác nhận các stage agent chạy được với `claude`/`codex` **thật** trên máy có CLI, ít
+nhất một tập — kiểm tay, không có cách chứng minh qua test tự động (bản thân việc gọi model là external
+effect có chi phí, giống DoD #6 của sub-project 3). Đúng ra là **năm** stage agent trên **hai** workflow, không
+phải bốn trên một: ba của `library-production@1.1.0` (`survey-source`, `plan-edit`, `library-review`) cộng
+hai của `style-study@1.1.0` (`analyze-style`, `style-review`) — spec §8 mục 3 viết "bốn" là đếm sai, tương tự
+lỗi "2 attempt" đã sửa ở mục 5; xem ADR-0001 mục 92.
 
 **Cách chạy** (tương tự runbook `channel-publish.md` mục 10, đổi sang workflow kho):
 

@@ -544,3 +544,10 @@ library-production}@1.1.0/`, `skills/{style-analyze,style-review,source-survey,e
     `WebSearch`/`WebFetch`" cũng sai — `allowedTools` của runtime agent (spec §2.3: `style-analyze` được thêm
     `WebSearch`/`WebFetch` để xác nhận kênh mẫu) là cấu hình **toàn cục** của agent-cli cho cả phiên, không
     theo từng skill; `style-review` không tự chặn được các tool đó bằng nội dung SKILL.md của chính nó.
+92. Spec §8 DoD #3 (`docs/superpowers/specs/2026-09-15-sub-project-4-studio-autopilot-design.md`) đếm sai số
+    stage agent: câu "Bốn stage agent của `library-production@1.1.0` chạy với agent-cli thật ít nhất một
+    tập" gộp lẫn hai workflow. `library-production@1.1.0` có **ba** stage agent (`survey-source`, `plan-edit`,
+    `library-review`); `style-study@1.1.0` có thêm **hai** (`analyze-style`, `style-review`) — tổng **năm**
+    trên hai workflow, không phải bốn trên một. Cùng lớp lỗi tài liệu với mục 88 (spec viết "2 attempt" cho
+    một lỗi `contract` không bao giờ retry); runbook (`docs/runbooks/studio-autopilot.md` mục 9) và README
+    ghi đúng số, không sửa lại câu chữ của spec.
