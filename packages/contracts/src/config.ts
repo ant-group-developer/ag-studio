@@ -104,6 +104,14 @@ export const ProjectConfigSchema = z.object({
     root: z.string().min(1),
     role: z.enum(["studio", "channel"]),
     sync_seconds: z.number().int().min(10).default(300),
+    /** Studio autopilot: when set, a fulfilled `content-request` this project's library owns may be claimed
+     * and run automatically instead of waiting for a human to trigger it (spec: sub-project 4). */
+    auto_accept: z.object({
+      enabled: z.boolean().default(true),
+      source_collection: z.string().regex(/^[a-z][a-z0-9-]*$/).default("main"),
+      max_replans: z.number().int().min(0).default(2),
+      max_concurrent_runs: z.number().int().min(1).default(1),
+    }).strict().optional(),
   }).strict().optional(),
   adapters: z.object({
     publisher: z.enum(["playwright", "fake"]).default("fake"),

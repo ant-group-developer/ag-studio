@@ -114,6 +114,23 @@
           },
           "default": []
         },
+        "source_hint": {
+          "type": "object",
+          "properties": {
+            "source_ids": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^src_[0-9A-HJKMNP-TV-Z]{26}$"
+              }
+            },
+            "collection": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*$"
+            }
+          },
+          "additionalProperties": false
+        },
         "notes": {
           "type": "string",
           "default": ""

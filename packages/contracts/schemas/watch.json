@@ -1,0 +1,179 @@
+{
+  "$ref": "#/definitions/watch",
+  "definitions": {
+    "watch": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.watch/v1"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "samples",
+            "source",
+            "episode"
+          ]
+        },
+        "videos": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "duration_seconds": {
+                "type": "number",
+                "minimum": 0
+              },
+              "media": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "width": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "height": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "fps": {
+                        "anyOf": [
+                          {
+                            "type": "number",
+                            "exclusiveMinimum": 0
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "has_audio": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "width",
+                      "height",
+                      "fps",
+                      "has_audio"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "frames": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "t": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "file": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "scene",
+                        "interval"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "t",
+                    "file",
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "sheets": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "transcript": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "segments": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "start": {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            "end": {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            "text": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "start",
+                            "end",
+                            "text"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "segments"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "transcript_error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "label",
+              "source_path",
+              "duration_seconds",
+              "media",
+              "frames",
+              "sheets",
+              "transcript"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "mode",
+        "videos"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

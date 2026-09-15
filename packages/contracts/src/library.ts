@@ -55,6 +55,13 @@ export const ContentRequestSchema = z.object({
   status: z.enum(["open", "claimed", "fulfilled", "rejected"]),
   claimed_by_run: z.object({ project_id: z.string().min(1), run_id: idSchema("run") }).strict().optional(),
   item_ids: z.array(idSchema("library_item")).default([]),
+  /** Narrows which kho source items an auto-accept run may pull from: an explicit set of source items, or a
+   * named collection (see `sourceEntrySchema.collection` in config.ts). Optional -- most requests still leave
+   * sourcing entirely to the fulfilling run. */
+  source_hint: z.object({
+    source_ids: z.array(idSchema("source_item")).optional(),
+    collection: z.string().regex(/^[a-z][a-z0-9-]*$/).optional(),
+  }).strict().optional(),
   notes: z.string().default(""),
   created_at: timestampSchema,
   updated_at: timestampSchema,
@@ -98,9 +105,33 @@ export const LibraryClaimSchema = z.object({
   note: z.string().default(""),
 }).strict();
 
+/** `review.json` a review stage (gate or agent) writes; `schema_version` is optional because the pre-existing
+ * gate-produced `review.json` (sub-projects 1-3) never carried one and must keep parsing unchanged. */
+export const reviewSchema = z.object({
+  schema_version: schemaVersion("review").optional(),
+  decision: z.enum(["approved", "rejected"]),
+  note: z.string().default(""),
+  checks: z.array(z.object({ id: z.string().min(1), pass: z.boolean(), note: z.string().default("") }).strict()).default([]),
+}).strict();
+
+/** `survey.json` a footage-survey stage produces: per-shot usability scoring for downstream selection. */
+export const surveyIndexSchema = z.object({
+  schema_version: schemaVersion("survey-index"),
+  shots: z.array(z.object({
+    in: z.number().min(0),
+    out: z.number().positive(),
+    score: z.number().int().min(0).max(5),
+    tags: z.array(z.string()).default([]),
+    usable: z.boolean(),
+    note: z.string().default(""),
+  }).strict()).min(1),
+}).strict();
+
 export type LibraryBrief = z.infer<typeof libraryBriefSchema>;
 export type EditStyle = z.infer<typeof EditStyleSchema>;
 export type ContentRequest = z.infer<typeof ContentRequestSchema>;
 export type LibraryFile = z.infer<typeof libraryFileSchema>;
 export type LibraryItem = z.infer<typeof LibraryItemSchema>;
 export type LibraryClaim = z.infer<typeof LibraryClaimSchema>;
+export type Review = z.infer<typeof reviewSchema>;
+export type SurveyIndex = z.infer<typeof surveyIndexSchema>;

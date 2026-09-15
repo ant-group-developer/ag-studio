@@ -7,6 +7,7 @@ import * as E from "../src/entities.js";
 import * as X from "../src/execution.js";
 import * as C from "../src/config.js";
 import * as L from "../src/library.js";
+import * as M from "../src/media.js";
 import * as D from "../src/distribution.js";
 import { EdlSchema } from "../src/edl.js";
 
@@ -23,6 +24,8 @@ export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
   edl: EdlSchema, scripts: C.ScriptsRegistrySchema, sources: C.SourcesRegistrySchema,
   "edit-style": L.EditStyleSchema, "content-request": L.ContentRequestSchema,
   "library-item": L.LibraryItemSchema, "library-claim": L.LibraryClaimSchema,
+  review: L.reviewSchema, "survey-index": L.surveyIndexSchema,
+  watch: M.WatchIndexSchema,
   hypothesis: D.HypothesisSchema, "channel-package-draft": D.ChannelPackageDraftSchema,
   "package-receipt": D.PackageReceiptSchema, "upload-receipt": D.UploadReceiptSchema, "schedule-receipt": D.ScheduleReceiptSchema,
 };

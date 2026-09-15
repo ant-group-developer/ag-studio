@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
 import { HarnessError, isHarnessError, ProjectConfigSchema, type AgentRuntime, type ExecutorRef, type MediaProber, type ProductionProfile, type ProjectConfig, type Publisher, type ScriptCommand, type ScriptsRegistry, type SourcesRegistry } from "@harness/contracts";
-import { ArtifactRegistry, BUILTIN_CHECKERS, buildSnapshot, ChannelRegistry, Controller, distributionCheckers, type DoctorRow, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, LibraryFs, libraryCheckers, loadChannels, type LoadedWorkflow, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, resolveWorkflowScope, runDoctor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, writeSnapshotFile, type HarnessLogger, type LibraryRole, type LogLevel } from "@harness/core";
+import { ArtifactRegistry, BUILTIN_CHECKERS, buildSnapshot, ChannelRegistry, Controller, distributionCheckers, type DoctorRow, EnvSecretResolver, ExternalOperationJournal, HARNESS_ROOT, LibraryFs, libraryCheckers, listWorkflowRefs, loadChannels, type LoadedWorkflow, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, resolveWorkflowScope, runDoctor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, writeSnapshotFile, type HarnessLogger, type LibraryRole, type LogLevel } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, FakeProvider, FakePublisher, fakeScriptCommands } from "@harness/adapter-fake";
 import { FfprobeMediaProber } from "@harness/adapter-ffprobe";
@@ -159,15 +159,13 @@ export function computeDoctorRows(ctx: AppContext): DoctorRow[] {
     workflows = scoped.workflows;
     extraRows.push(...scoped.rows);
   } else {
+    // listWorkflowRefs (core/orchestration/registry.ts) finds both `workflows/<id>/` (legacy, unversioned) and
+    // `workflows/<id>@<version>/` directories; a ref it could not resolve a usable id/version for at all is
+    // already dropped there, so any throw here is a genuine WORKFLOW_INVALID from actually loading the ref.
     workflows = [];
-    for (const dir of subdirsWith(join(ctx.harnessRoot, "workflows"), "workflow.yaml")) {
-      try {
-        const raw = parse(readFileSync(join(ctx.harnessRoot, "workflows", dir, "workflow.yaml"), "utf8")) as { id?: string; version?: string };
-        const ref = `${raw.id ?? dir}@${raw.version ?? "0.0.0"}`;
-        workflows.push({ ref, loaded: ctx.workflows(ref) });
-      } catch (e) {
-        extraRows.push({ check: `workflow:${dir}`, ok: false, detail: e instanceof Error ? e.message : String(e) });
-      }
+    for (const ref of listWorkflowRefs(ctx.harnessRoot)) {
+      try { workflows.push({ ref, loaded: ctx.workflows(ref) }); }
+      catch (e) { extraRows.push({ check: `workflow:${ref}`, ok: false, detail: e instanceof Error ? e.message : String(e) }); }
     }
   }
   extraRows.push({ check: "workflows", ok: true, detail: scope ? `scoped to project.yaml workflows: ${scope.join(", ")}` : "all workflows in harness" });

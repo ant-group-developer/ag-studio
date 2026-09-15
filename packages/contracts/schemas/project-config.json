@@ -102,6 +102,31 @@
               "type": "integer",
               "minimum": 10,
               "default": 300
+            },
+            "auto_accept": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": true
+                },
+                "source_collection": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]*$",
+                  "default": "main"
+                },
+                "max_replans": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "default": 2
+                },
+                "max_concurrent_runs": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "default": 1
+                }
+              },
+              "additionalProperties": false
             }
           },
           "required": [

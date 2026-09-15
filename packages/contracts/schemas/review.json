@@ -1,0 +1,55 @@
+{
+  "$ref": "#/definitions/review",
+  "definitions": {
+    "review": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.review/v1"
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "approved",
+            "rejected"
+          ]
+        },
+        "note": {
+          "type": "string",
+          "default": ""
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "pass": {
+                "type": "boolean"
+              },
+              "note": {
+                "type": "string",
+                "default": ""
+              }
+            },
+            "required": [
+              "id",
+              "pass"
+            ],
+            "additionalProperties": false
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "decision"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
