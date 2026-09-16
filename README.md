@@ -346,7 +346,7 @@ git checkout -- fixtures/ops-project-studio/project.yaml fixtures/ops-project-ch
 - Plan sub-project 2C: `docs/superpowers/plans/2026-09-14-sub-project-2c-content-library.md`
 - Plan sub-project 4: `docs/superpowers/plans/2026-09-15-sub-project-4-studio-autopilot.md`
 - ADR: `docs/adr/`
-- Runbook: `docs/runbooks/` (`reconcile-and-retry.md`, `wrap-a-channel.md`, `content-library.md`, `channel-publish.md`, `studio-autopilot.md`, `channel-learning.md`)
+- Runbook: `docs/runbooks/` (`go-live.md` — đưa lên máy thật, một máy hai vai; `reconcile-and-retry.md`, `wrap-a-channel.md`, `content-library.md`, `channel-publish.md`, `studio-autopilot.md`, `channel-learning.md`)
 - Việc để lại: `docs/operations/deferred-items.md`
 - Project mới: copy `project-template/` (xem `docs/runbooks/wrap-a-channel.md` bước 1; mẫu kênh ở `project-template/channels/example/channel.yaml`; khối `library.auto_accept` mẫu trong `project-template/project.yaml`)
 
