@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { newId, type FitReport, type LibraryItem, type Narration, type NarrationTiming, type Review } from "@harness/contracts";
+import { newId, type FitReport, type LibraryItem, type Narration, type NarrationTiming, type Review, type ShotsIndex } from "@harness/contracts";
 import { SqliteStateStore } from "@harness/core";
 import { hasFfmpeg } from "../media.js";
 import { addVoice, artifactPathFor, autoAcceptedRuns, freshLibraryWorld, ingestShoot, requestCreate, requestStatus, status, studioWorkerUntil, writeActiveStyle } from "../integration/library-helpers.js";
@@ -68,7 +68,13 @@ describe.skipIf(!hasFfmpeg())("acceptance 42: a script longer than the footage i
       firstItem.close();
     }
 
-    // ---- run 2: the same request on the same shoot, shorter lines, approved ----
+    // ---- run 2: the same request on the SAME shoot, shorter lines, approved ----
+    // The collection-mode own-request exemption is the point here: `shoot-a` is `used` by run 1 (SUCCEEDED),
+    // which would lock any OTHER request out of it -- the replan must still get exactly those sources back.
+    const sourcesOf = (runId: string): string[] =>
+      readJson<ShotsIndex>(artifactPathFor(world.studio, runId, "media-index", "shots")!).sources.map((s) => s.source_id).sort();
+    expect(sourcesOf(second.run_id), "the replan ran on a different shoot").toEqual(sourcesOf(first.run_id));
+
     const secondNarration = readJson<Narration>(artifactPathFor(world.studio, second.run_id, "plan-edit", "narration")!);
     expect(secondNarration.lines.length).toBeGreaterThan(0);
     for (const l of secondNarration.lines) expect(l.text).toHaveLength(20);

@@ -119,4 +119,50 @@ describe.skipIf(!hasFfmpeg())("studio media: library-production@1.2.0 end to end
     const picked = cli(world.channel, ["library", "sync", "--json"]);
     expect(picked.code, picked.err).toBe(0);
   }, 600_000);
+
+  // Task-10 fix round: `voice: none` over drone/b-roll clips with NO audio track is the third voice mode and
+  // the one 1.2.0 could not finish. `assemble` always mixes an `anullsrc` pad now, so the episode comes out
+  // ~99.7% silent and `audio-integrity` used to fail it against the studio profile's `max_silence_ratio: 0.9`
+  // -- a FAILED run, not a rejected review, so the SP4 replan loop never saw it and the request sat at
+  // `claimed` waiting for a human. `audio-integrity` now passes that one case with evidence
+  // `{ reason: "silent by brief" }`, proven from the brief (`voice: none`) and `shots.json` (no source has
+  // audio); everything else about the checker is unchanged.
+  it("finishes a voice: none episode cut from footage that has no audio track at all", () => {
+    const world = freshLibraryWorld({ media: false, media1_2: true });
+    const env = { FAKE_REVIEW_MODE: "approve" };
+
+    const styleId = newId("edit_style");
+    writeActiveStyle(world.lib, styleId);
+    const sourceIds = ingestShoot(world, "shoot-a", 2, { withAudio: false });
+
+    const requestId = requestCreate(world, {
+      topic: "Chỉ có hình, không có tiếng", style: styleId, sourceHint: "shoot-a",
+      voice: "none", duration: [1, 120], language: "en",
+    });
+
+    studioWorkerUntil(world, () => requestStatus(world, requestId).status === "fulfilled", 300, env);
+    const fulfilled = requestStatus(world, requestId);
+    expect(fulfilled.status, JSON.stringify(fulfilled)).toBe("fulfilled");
+
+    const manifest = readJson<LibraryItem>(join(world.lib, "items", fulfilled.item_ids[0]!, "manifest.json"));
+    expect(manifest.status).toBe("approved");
+    const runId = manifest.lineage.run_id;
+
+    const final = status(world.studio, runId);
+    expect(final.run.state).toBe("SUCCEEDED");
+    expect(final.stages.map((s) => s.stage_key).sort()).toEqual([...STAGE_KEYS].sort());
+    for (const s of final.stages) expect(s.state, s.stage_key).toBe("SUCCEEDED");
+
+    // the scenario really was audio-free end to end, so the pass above came from the new allowance and not
+    // from footage that quietly had sound after all
+    const shots = readJson<ShotsIndex>(artifactPath(world.studio, runId, "media-index", "shots"));
+    expect(shots.sources.map((s) => s.source_id).sort()).toEqual([...sourceIds].sort());
+    expect(shots.sources.every((s) => !s.has_audio), JSON.stringify(shots.sources.map((s) => s.has_audio))).toBe(true);
+    const transcript = readJson<Transcript>(artifactPath(world.studio, runId, "media-transcribe", "transcript"));
+    expect(transcript.sources.every((s) => s.segments.length === 0)).toBe(true);
+    // `voice: none` writes no narration at all, and media-tts never touches the engine
+    const timing = readJson<NarrationTiming>(artifactPath(world.studio, runId, "media-tts", "narration_timing"));
+    expect(timing.lines).toEqual([]);
+    expect(ffprobeHasAudio(artifactPath(world.studio, runId, "assemble", "episode_video"))).toBe(true);
+  }, 300_000);
 });

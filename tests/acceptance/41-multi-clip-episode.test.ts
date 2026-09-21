@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { newId, type Edl, type FitReport, type LibraryItem } from "@harness/contracts";
+import { newId, type Edl, type FitReport, type LibraryItem, type ShotsIndex } from "@harness/contracts";
 import { hasFfmpeg } from "../media.js";
 import { addVoice, artifactPathFor, freshLibraryWorld, ingestShoot, requestCreate, requestStatus, studioWorkerUntil, writeActiveStyle } from "../integration/library-helpers.js";
 
@@ -12,18 +12,24 @@ const readJson = <T>(path: string): T => JSON.parse(readFileSync(path, "utf8")) 
 // what this pins is that the FITTED edl.json -- the one `cut` actually renders, since `cut` depends only on
 // `media-fit-edl` in 1.2.0 -- still spans the shoot after fitting, and that fitting really happened (at least
 // one entry trimmed/extended/appended rather than every entry passed through as `kept`).
+//
+// The request carries NO `--source-hint` on purpose: that drives the production default end to end through
+// the real CLI wiring -- `library.auto_accept.source_collections: ["shoot-*"]` -> `pickSources` case 3, "the
+// newest collection matching the patterns that is neither busy nor already used". Two shoots exist so the
+// choice is real, and `shoot-b` is ingested second, which makes it unambiguously the newest.
 describe.skipIf(!hasFfmpeg())("acceptance 41: a multi-clip shoot becomes one episode", () => {
-  it("the fitted EDL spans at least two sources and the fit report shows real reshaping", () => {
+  it("picks the newest shoot-* collection with no hint, and its fitted EDL spans at least two of its sources", () => {
     const world = freshLibraryWorld({ media: false, media1_2: true });
     const env = { FAKE_REVIEW_MODE: "approve" };
 
     const styleId = newId("edit_style");
     writeActiveStyle(world.lib, styleId);
     const voiceId = addVoice(world);
-    ingestShoot(world, "shoot-a", 3, { withAudio: true });
+    ingestShoot(world, "shoot-a", 2, { withAudio: true });
+    const newest = ingestShoot(world, "shoot-b", 3, { withAudio: true }); // ingested last => newest
 
     const requestId = requestCreate(world, {
-      topic: "Một buổi quay, một tập", style: styleId, sourceHint: "shoot-a",
+      topic: "Một buổi quay, một tập", style: styleId,
       voice: "tts", voiceId, duration: [5, 120], language: "en",
     });
 
@@ -34,6 +40,10 @@ describe.skipIf(!hasFfmpeg())("acceptance 41: a multi-clip shoot becomes one epi
     const manifest = readJson<LibraryItem>(join(world.lib, "items", fulfilled.item_ids[0]!, "manifest.json"));
     expect(manifest.status).toBe("approved");
     const runId = manifest.lineage.run_id;
+
+    // the autopilot chose the newest shoot with no hint, and took the WHOLE shoot, not one clip of it
+    const shots = readJson<ShotsIndex>(artifactPathFor(world.studio, runId, "media-index", "shots")!);
+    expect(shots.sources.map((s) => s.source_id).sort()).toEqual([...newest].sort());
 
     const edl = readJson<Edl>(artifactPathFor(world.studio, runId, "media-fit-edl", "edl")!);
     const sourceIds = new Set(edl.entries.map((e) => e.source_id));

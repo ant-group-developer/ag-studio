@@ -64,14 +64,17 @@ describe.skipIf(!hasFfmpeg())("acceptance 43: voice original never cuts mid-word
     for (const entry of edl.entries) {
       if (exempt.has(entry.order)) continue;
       const words = wordsBySource.get(entry.source_id) ?? [];
+      // An entry whose source produced no words at all is compared against nothing, so it must NOT count
+      // towards the non-vacuity guard below -- it would make an empty transcript look like a clean pass.
+      if (words.length === 0) continue;
       for (const point of [entry.in, entry.out]) {
         const inside = words.find((w) => w.start < point && point < w.end);
         expect(inside, `entry ${entry.order} (${entry.source_id}) cuts at ${point}s, inside "${inside?.word}" [${inside?.start}, ${inside?.end}]`).toBeUndefined();
         checked++;
       }
     }
-    // non-vacuity: the loop above must have had something to check
-    expect(checked, `every entry was exempted by a warning: ${JSON.stringify(report.warnings)}`).toBeGreaterThan(0);
+    // non-vacuity: the loop above must have compared real cut points against a real word list
+    expect(checked, `nothing was compared against words: warnings ${JSON.stringify(report.warnings)}`).toBeGreaterThan(0);
     // ...and at least one cut really moved, which is the behaviour being accepted, not just "nothing broke"
     expect(report.entries.some((e) => e.action === "snapped"), `no entry was snapped: ${JSON.stringify(report.entries)}`).toBe(true);
   }, 300_000);

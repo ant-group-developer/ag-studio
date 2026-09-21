@@ -71,9 +71,16 @@ describe("acceptance 45: no secret reaches the media engine or anything it write
       ...textFiles(world.lib),
     ];
     expect(files.length, "nothing to scan -- the loop below would be vacuous").toBeGreaterThan(0);
-    // the media stages really did write into that set
-    expect(files.some((f) => f.endsWith("narration-timing.json")), "no narration-timing.json among the scanned files").toBe(true);
-    expect(files.some((f) => f.endsWith("transcript.json")), "no transcript.json among the scanned files").toBe(true);
+
+    // Non-vacuity, four ways: the scan must actually cover the media stages' ARTIFACTS, their per-attempt
+    // WORKSPACES (workspaces/<run>/<stage_key>/<attempt>/...), and at least one stage LOG -- the log is where
+    // a leak would surface, since that is the only media output that passes through the Redactor at all.
+    const slashed = files.map((f) => f.split("\\").join("/"));
+    expect(slashed.some((f) => f.endsWith("narration-timing.json")), "no narration-timing.json among the scanned files").toBe(true);
+    expect(slashed.some((f) => f.endsWith("transcript.json")), "no transcript.json among the scanned files").toBe(true);
+    expect(slashed.some((f) => f.includes("/media-tts/")), "no file from a media-tts attempt workspace").toBe(true);
+    expect(slashed.some((f) => f.includes("/media-transcribe/")), "no file from a media-transcribe attempt workspace").toBe(true);
+    expect(slashed.filter((f) => f.endsWith(".log")).length, "no stage log among the scanned files").toBeGreaterThan(0);
 
     for (const f of files) {
       const content = readFileSync(f, "utf8");
@@ -83,6 +90,12 @@ describe("acceptance 45: no secret reaches the media engine or anything it write
 
     const events = cli(world.studio, ["events", "tail", "--limit", "2000", "--json"], env);
     expect(events.code, events.err).toBe(0);
+    // ...and the event half is not passing on an empty tail: the media stages' own events must be in it
+    const rows = JSON.parse(events.out) as { event_type: string }[];
+    expect(rows.length, "events tail returned nothing to scan").toBeGreaterThan(0);
+    expect(rows.map((r) => r.event_type)).toContain("media.tts_done");
+    expect(rows.map((r) => r.event_type)).toContain("media.transcribed");
+    expect(events.out).toContain("media.tts_done");
     expect(events.out).not.toContain(SECRET_VALUE);
     expect(events.out).not.toContain(SECRET_NAME);
   }, 300_000);
