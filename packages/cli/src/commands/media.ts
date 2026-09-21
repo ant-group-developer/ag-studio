@@ -153,11 +153,18 @@ function parseShotMarks(raw: unknown, shotsPath: string): number[] {
  * present, every source's transcript is handed to `watchVideos` as `transcriptBySource` (keyed by
  * `source_id`) instead of letting it invoke the `scripts.yaml` `transcribe` hook per video -- spec: "không
  * gọi hook transcribe của scripts.yaml" when a real transcript already exists.
+ *
+ * Final-review Important 3: a source whose proxy was never encoded (`shots.json` records why, in
+ * `proxy_error`) is watched at its ORIGINAL file instead, with a warning. Pointing ffmpeg at a proxy that is
+ * not there extracted no frames at all for that source, so the survey agent scored footage nobody ever
+ * looked at -- and `emptyWatchLabels` could not catch it, because an input ffprobe cannot read reports
+ * `duration_seconds: 0`, which that check deliberately ignores.
  */
 async function handleSourceMulti(app: AppContext, sdk: ScriptContext, outDir: string): Promise<WatchIndex> {
   if (!sdk.hasInput("shots")) throw new HarnessError("CONFIG_INVALID", 'media watch --mode source needs a "shots" input', {});
   const shots = parseShotsDoc(readJsonFile(sdk.input("shots")));
   const proxySetDir = sdk.input("proxy_set");
+  const originalPathOf = new Map(sdk.sources.map((s) => [s.source_id, sourcePathAndName(app, s).path]));
 
   let transcriptBySource: Record<string, { segments: { start: number; end: number; text: string }[] }> | undefined;
   if (sdk.hasInput("transcript")) {
@@ -168,12 +175,20 @@ async function handleSourceMulti(app: AppContext, sdk: ScriptContext, outDir: st
     }
   }
 
-  const videos: WatchVideoInput[] = shots.sources.map((s) => ({
-    label: String(s.index).padStart(3, "0"),
-    path: join(proxySetDir, `${s.source_id}.mp4`),
-    shot_marks: s.shots.map((sh) => sh.in),
-    source_id: s.source_id,
-  }));
+  const videos: WatchVideoInput[] = shots.sources.map((s) => {
+    const proxyPath = join(proxySetDir, `${s.source_id}.mp4`);
+    let path = proxyPath;
+    if (!existsSync(proxyPath)) {
+      const original = originalPathOf.get(s.source_id);
+      if (original && existsSync(original)) {
+        sdk.log.warn("media watch --mode source: proxy missing, watching the original source file instead", { source_id: s.source_id, proxy: proxyPath, original, proxy_error: s.proxy_error ?? null });
+        path = original;
+      } else {
+        sdk.log.warn("media watch --mode source: proxy missing and no original file to fall back on", { source_id: s.source_id, proxy: proxyPath, proxy_error: s.proxy_error ?? null });
+      }
+    }
+    return { label: String(s.index).padStart(3, "0"), path, shot_marks: s.shots.map((sh) => sh.in), source_id: s.source_id };
+  });
 
   return watchVideos(
     watchDepsFor(app, sdk),

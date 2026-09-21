@@ -17,9 +17,14 @@ export interface IndexDeps {
 
 const noopLog: WatchLogFn = () => {};
 
+/** How many trailing characters of ffmpeg's stderr end up in a source's `proxy_error`: enough to name the
+ * real cause (a missing encoder, an unreadable file) without putting a whole ffmpeg log in `shots.json`. */
+const PROXY_ERROR_CHARS = 300;
+
 /** `-vf scale=-2:<proxy_height> -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac`, with
- * `-map 0:v:0 -map 0:a:0?` so a source with no audio stream still encodes instead of failing. */
-function encodeProxy(ffmpeg: string, sourcePath: string, outPath: string, proxyHeight: number): boolean {
+ * `-map 0:v:0 -map 0:a:0?` so a source with no audio stream still encodes instead of failing. Returns `null`
+ * on success, or a short reason on failure (the caller records it as the source's `proxy_error`). */
+function encodeProxy(ffmpeg: string, sourcePath: string, outPath: string, proxyHeight: number): string | null {
   mkdirSync(dirname(outPath), { recursive: true });
   const r = spawnSync(
     ffmpeg,
@@ -37,7 +42,10 @@ function encodeProxy(ffmpeg: string, sourcePath: string, outPath: string, proxyH
     ],
     { encoding: "utf8" },
   );
-  return r.status === 0 && existsSync(outPath);
+  if (r.status === 0 && existsSync(outPath)) return null;
+  const stderr = (r.stderr ?? "").toString().trim();
+  const reason = r.error?.message ?? (stderr ? stderr.slice(-PROXY_ERROR_CHARS) : `ffmpeg exited ${String(r.status)} without writing the proxy`);
+  return reason;
 }
 
 type ShotsSource = ShotsIndex["sources"][number];
@@ -86,15 +94,29 @@ export function indexSources(
     );
 
     const proxyPath = join(p.proxyDir, `${source.source_id}.mp4`);
-    if (!encodeProxy(d.ffmpeg, source.path, proxyPath, p.scene.proxy_height)) {
-      log("warn", "indexSources: proxy encode failed", { source_id: source.source_id, path: proxyPath });
+    const proxyError = encodeProxy(d.ffmpeg, source.path, proxyPath, p.scene.proxy_height);
+    if (proxyError !== null) {
+      log("warn", "indexSources: proxy encode failed", { source_id: source.source_id, path: proxyPath, error: proxyError });
     }
 
-    return { source_id: source.source_id, index, file_name: source.file_name, duration_seconds: duration, has_audio: probed.has_audio, shots };
+    return {
+      source_id: source.source_id, index, file_name: source.file_name, duration_seconds: duration,
+      has_audio: probed.has_audio, shots, ...(proxyError !== null ? { proxy_error: proxyError } : {}),
+    };
   });
 
   if (sources.every((s) => s.shots.length === 0)) {
     throw new HarnessError("CONFIG_INVALID", "no usable source", { sources: sources.map((s) => s.source_id) });
+  }
+
+  // Final-review Important 3: a single failed proxy is survivable (`media watch` falls back to the original
+  // file for that one source), but ZERO proxies means the encoder itself is broken on this box -- an ffmpeg
+  // without libx264 fails every one of them. Letting that through produced a run planned from nothing, with
+  // every stage green. `CONFIG_INVALID` -> `contract`, which is the right kind: no retry will fix it.
+  const withProxy = sources.filter((s) => s.shots.length > 0 && s.proxy_error === undefined);
+  if (withProxy.length === 0) {
+    const errors = sources.filter((s) => s.proxy_error !== undefined).map((s) => `${s.source_id}: ${s.proxy_error}`);
+    throw new HarnessError("CONFIG_INVALID", `no proxy could be encoded for any source (is ffmpeg's libx264 encoder available?): ${errors.join("; ")}`, { sources: errors });
   }
 
   return ShotsIndexSchema.parse({ schema_version: "harness.shots/v2", sources });

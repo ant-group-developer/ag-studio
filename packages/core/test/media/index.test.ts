@@ -130,3 +130,53 @@ describe.skipIf(!hasFfmpeg())("indexSources (needs ffmpeg)", () => {
     }
   });
 });
+
+// Final-review Important 3. These need no real ffmpeg: `detect` is injected and the proxy encode is forced to
+// fail by pointing `ffmpeg` at a binary that does not exist, which is also exactly what a box whose ffmpeg
+// lacks libx264 looks like from here.
+describe("indexSources proxy failures (no ffmpeg needed)", () => {
+  const MISSING_FFMPEG = join(tmpdir(), "definitely-not-ffmpeg-harness-test");
+  const stubProbe = () => ({ duration_seconds: 30, has_audio: true });
+  const stubDetect = () => [10, 20];
+
+  function run(sourceCount: number, ffmpeg: string) {
+    const dir = mkdtempSync(join(tmpdir(), "index-sources-proxy-"));
+    const sources = Array.from({ length: sourceCount }, (_, i) => ({ source_id: newId("source_item"), path: join(dir, `clip-${i}.mp4`), file_name: `clip-${i}.mp4` }));
+    for (const s of sources) writeFileSync(s.path, "x");
+    return indexSources({ ffmpeg, probe: stubProbe, detect: stubDetect }, { sources, scene: SCENE, proxyDir: join(dir, "proxy") });
+  }
+
+  it("throws CONFIG_INVALID when not a single proxy was produced", () => {
+    expect(() => run(2, MISSING_FFMPEG)).toThrowError(/no proxy/);
+    try {
+      run(2, MISSING_FFMPEG);
+    } catch (e) {
+      expect(isHarnessError(e, "CONFIG_INVALID")).toBe(true);
+    }
+  });
+
+  it.skipIf(!hasFfmpeg())("records proxy_error on the source that failed and leaves the one that worked clean", () => {
+    const dir = mkdtempSync(join(tmpdir(), "index-sources-proxy-mixed-"));
+    const good = join(dir, "good.mp4");
+    makeThreeSceneVideo(good);
+    const bad = join(dir, "bad.mp4");
+    writeFileSync(bad, "not a video, so the proxy encode fails while the stub probe/detect still report shots");
+
+    const idx = indexSources(
+      { ffmpeg: ffmpegBin(), probe: stubProbe, detect: stubDetect },
+      {
+        sources: [
+          { source_id: newId("source_item"), path: good, file_name: "good.mp4" },
+          { source_id: newId("source_item"), path: bad, file_name: "bad.mp4" },
+        ],
+        scene: SCENE,
+        proxyDir: join(dir, "proxy"),
+      },
+    );
+
+    expect(idx.sources[0]!.proxy_error).toBeUndefined();
+    expect(idx.sources[1]!.proxy_error, "a failed proxy encode left no trace in shots.json").toBeTruthy();
+    // the source is still indexed -- a missing proxy is a degraded source, not an unusable one
+    expect(idx.sources[1]!.shots.length).toBeGreaterThan(0);
+  });
+});

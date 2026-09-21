@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -12,7 +12,7 @@ import {
   mimeTypesFor, sha256File, stageDefinitionDigest, stageDefinitionFor, Verifier, type VerifyOutcome,
 } from "@harness/core";
 import { buildContext, type AppContext } from "../src/composition.js";
-import { cli, freshLibraryWorld, librarySync, writeActiveStyle, type LibraryWorld } from "../../../tests/integration/library-helpers.js";
+import { cli, freshLibraryWorld, librarySync, setResourceCapacity, writeActiveStyle, type LibraryWorld } from "../../../tests/integration/library-helpers.js";
 import { hasFfmpeg, makeVideo } from "../../../tests/media.js";
 
 // Sub-project 5A Task 8: the four built-in `media index|transcribe|tts|fit-edl` stages, driven the same way
@@ -182,8 +182,8 @@ async function fabricateAndCommit(project: string, runId: string, stageKey: stri
   await commitResult(project, runId, claim, workspaceDir, result);
 }
 
-function planRun(project: string, workflow: string, profile: string, contentId: string): string {
-  const p = cli(project, ["plan", "--workflow", workflow, "--profile", profile, "--content", contentId, "--json"]);
+function planRun(project: string, workflow: string, profile: string, contentId: string, noReuse = false): string {
+  const p = cli(project, ["plan", "--workflow", workflow, "--profile", profile, "--content", contentId, "--json", ...(noReuse ? ["--no-reuse"] : [])]);
   if (p.code !== 0) throw new Error(`plan failed: ${p.err}\n${p.out}`);
   const runId = (JSON.parse(p.out) as { run_id: string }).run_id;
   const e = cli(project, ["enqueue", runId]);
@@ -226,6 +226,7 @@ describe.skipIf(!hasFfmpeg())("harness media index|transcribe|tts|fit-edl (sub-p
   let sourceIds: string[];
   let voiceId: string;
 
+  let contentId: string;
   let indexSnap: string;
   let transcribeSnap: string;
   let watchSourceSnap: string;
@@ -249,7 +250,6 @@ describe.skipIf(!hasFfmpeg())("harness media index|transcribe|tts|fit-edl (sub-p
     const ing2 = JSON.parse(cli(world.studio, ["source", "ingest", clip2, "--collection", "main", "--rights", "cleared", "--language", "vi", "--json"]).out) as { source_id: string };
     sourceIds = [ing1.source_id, ing2.source_id];
 
-    let contentId: string;
     {
       const ctx = buildContext({ projectDir: world.studio });
       try {
@@ -334,6 +334,47 @@ describe.skipIf(!hasFfmpeg())("harness media index|transcribe|tts|fit-edl (sub-p
     const watchJson = JSON.parse(readFileSync(join(watchSourceSnap, "output", "watch", "watch.json"), "utf8"));
     expect(watchJson.videos).toHaveLength(2);
     expect(watchJson.videos.map((v: { label: string }) => v.label).sort()).toEqual(["000", "001"]);
+  });
+
+  // Final-review Important 3: a source whose proxy never got encoded used to be handed to ffmpeg as a path
+  // that does not exist -- zero frames for that source, `emptyWatchLabels` blind to it (`duration_seconds: 0`
+  // is ignored there), and the survey agent scoring footage nobody ever looked at, with every stage green.
+  it("media watch --mode source: a missing proxy falls back to the original source file, with frames and a warning", async () => {
+    // A second run of the same content, so this scenario owns its own `proxy_set` without disturbing the
+    // snapshots every other test here reads. `media-transcribe` needs a gpu slot and the first run's
+    // `media-tts` claim is still holding the only one, so widen the capacity for the duration.
+    setResourceCapacity(world.studio, "gpu", 2);
+    let index: { workspaceSnapshot: string };
+    let otherRun: string;
+    try {
+      otherRun = planRun(world.studio, "library-production@1.2.0", "studio", contentId, true);
+      await runAndCommit(world.studio, otherRun, "intake", ["library", "stage", "intake"]);
+      index = await runAndCommit(world.studio, otherRun, "media-index", ["media", "index"]);
+      // `watch-source` depends on `media-transcribe` too, so it has to run before the stage is claimable
+      await runAndCommit(world.studio, otherRun, "media-transcribe", ["media", "transcribe"], [
+        { type: "shots", relPath: "input/shots/shots.json", src: join(index.workspaceSnapshot, "output", "shots.json") },
+      ]);
+    } finally {
+      setResourceCapacity(world.studio, "gpu", 1);
+    }
+
+    // delete exactly one proxy, as a failed encode would have left things
+    const proxyDir = mkdtempSync(join(tmpdir(), "proxy-missing-"));
+    cpSync(join(index.workspaceSnapshot, "output", "proxy"), proxyDir, { recursive: true });
+    const dropped = readdirSync(proxyDir).sort()[0]!;
+    rmSync(join(proxyDir, dropped));
+    expect(readdirSync(proxyDir)).toHaveLength(1);
+
+    const r = await invokeStage(world.studio, otherRun, "watch-source", ["media", "watch", "--mode", "source"], [
+      { type: "shots", relPath: "input/shots/shots.json", src: join(index.workspaceSnapshot, "output", "shots.json") },
+      { type: "proxy_set", relPath: "input/proxy/proxy", kind: "directory", src: proxyDir },
+    ]);
+    expect(r.result.outcome, JSON.stringify(r.result)).toBe("succeeded");
+    expect(r.stdout).toContain("watching the original source file instead");
+
+    const watchJson = JSON.parse(readFileSync(join(r.workspaceDir, "output", "watch", "watch.json"), "utf8")) as { videos: { label: string; frames: string[] }[] };
+    expect(watchJson.videos).toHaveLength(2);
+    for (const v of watchJson.videos) expect(v.frames.length, `no frames for ${v.label}`).toBeGreaterThan(0);
   });
 
   describe("media tts", () => {

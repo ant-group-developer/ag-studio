@@ -34,6 +34,9 @@
               "error": {
                 "type": "string"
               },
+              "proxy_error": {
+                "type": "string"
+              },
               "shots": {
                 "type": "array",
                 "items": {

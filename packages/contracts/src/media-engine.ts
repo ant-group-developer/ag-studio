@@ -21,6 +21,10 @@ export const ShotsIndexSchema = z.object({
     duration_seconds: z.number().min(0),
     has_audio: z.boolean(),
     error: z.string().optional(),
+    /** Why this source has no `<proxy_dir>/<source_id>.mp4` (sub-project 5A final review, Important 3). A
+     * failed proxy encode used to be logged and swallowed, so `media watch --mode source` silently extracted
+     * no frames for it and the survey agent scored footage it had never seen, with every stage green. */
+    proxy_error: z.string().optional(),
     shots: z.array(z.object({
       shot_id: z.string().regex(/^s\d{3}-\d{3}$/),
       in: z.number().min(0),
