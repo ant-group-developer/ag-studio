@@ -23,28 +23,19 @@ import sys
 import wave
 from typing import Any
 
-SAMPLE_RATE = 24000
-DRY_RUN_SECONDS = 0.1
-MAX_CHUNK_ATTEMPTS = 3  # first try + "đọc lại tối đa 2 lần" (retry at most twice)
+import engine_io as _io
 
-
-def _load_io_module():
-    """See `transcribe.py`'s copy of this function: `import _io` would silently resolve to CPython's own
-    built-in `_io` module instead of this script's sibling file, so it is loaded explicitly instead."""
-    import importlib.util
-
-    here = os.path.dirname(os.path.abspath(__file__))
-    spec = importlib.util.spec_from_file_location("harness_media_engine_io", os.path.join(here, "_io.py"))
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-_io = _load_io_module()
 read_job = _io.read_job
 write_result = _io.write_result
 log = _io.log
+
+SAMPLE_RATE = 24000
+DRY_RUN_SECONDS = 0.1
+MAX_CHUNK_ATTEMPTS = 3  # first try + "đọc lại tối đa 2 lần" (retry at most twice)
+# `torch.<dtype>` must resolve to a real dtype attribute; an unsupported value is a config mistake the
+# operator made (typo'd dtype in project.yaml), not something a retry could ever fix -- checked in
+# validate_job() so it fails `contract`, not a retried `transient` from a bare AttributeError.
+SUPPORTED_DTYPES = {"float16", "bfloat16", "float32"}
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -59,6 +50,8 @@ def validate_job(job: dict[str, Any]) -> str | None:
     for key in ("device", "model", "dtype", "num_step", "speed", "language", "ref_audio", "ref_text", "align", "lines"):
         if key not in job:
             return f"job missing required field: {key}"
+    if job["dtype"] not in SUPPORTED_DTYPES:
+        return f"job.dtype must be one of {sorted(SUPPORTED_DTYPES)}, got: {job['dtype']!r}"
     if not isinstance(job["lines"], list):
         return "job.lines must be a list"
     for i, line in enumerate(job["lines"]):

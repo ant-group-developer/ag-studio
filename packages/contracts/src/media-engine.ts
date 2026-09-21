@@ -168,7 +168,10 @@ export interface TranscribeJob {
 }
 
 export interface TtsJob {
-  lines: { line_id: string; text: string; out_path: string }[];
+  /** One entry per narration line (`line_id` unique, `chunks` non-empty) -- `chunks` is the already
+   * sentence-split text for that line (spec: core's `splitSentences`, sub-project 5A Task 5); `pause_seconds`
+   * overrides the engine's configured `tts.pause_seconds` for this line only when set. */
+  lines: { line_id: string; chunks: string[]; out_path: string; pause_seconds?: number }[];
   language: string;
   voice: { ref_audio: string; ref_text: string; params: VoiceParams };
   align: boolean;

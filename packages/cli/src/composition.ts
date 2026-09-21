@@ -7,7 +7,7 @@ import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@
 import { FakeAgentRuntime, FakeMediaEngine, FakeProvider, FakePublisher, FakeStatsCollector, fakeScriptCommands } from "@harness/adapter-fake";
 import { FfprobeMediaProber, probeDurationSync } from "@harness/adapter-ffprobe";
 import { CliAgentRuntime, RUNTIME_COMMANDS } from "@harness/adapter-agent-cli";
-import { PythonMediaEngine } from "@harness/adapter-media-python";
+import { PythonMediaEngine, type PythonMediaEngineOptions } from "@harness/adapter-media-python";
 import { PlaywrightPublisher, PlaywrightStatsCollector } from "@harness/adapter-youtube-playwright";
 import { builtinMediaCommands } from "./commands/media.js";
 import { cliArgv } from "./self.js";
@@ -106,13 +106,36 @@ export function loadProject(projectDir: string): ProjectConfig {
   return ProjectConfigSchema.parse(parse(readFileSync(file, "utf8")));
 }
 
-/** `media.python` is optional in `mediaConfigSchema` (an old/CI project.yaml must still parse without it),
- * but `adapters.media: python` cannot run without it -- caught here, once, as the composition root builds
- * `PythonMediaEngine`, rather than as a null-pointer somewhere inside the adapter. */
-export function requireMediaPython(project: ProjectConfig): string {
-  const python = project.media.python;
-  if (!python) throw new HarnessError("CONFIG_INVALID", 'project.yaml media.python is required when adapters.media is "python"', { field: "media.python" });
-  return python;
+/**
+ * Resolves the `python`/`transcribePython`/`ttsPython` fields `PythonMediaEngine` needs from `project.yaml`'s
+ * `media` block: `media.python` is the shared default, `media.transcribe.python`/`media.tts.python` override
+ * it per stage. `media.python` alone is enough to run either stage (the required top-level `python` field can
+ * come from it directly); with no top-level default, BOTH per-engine overrides must be set instead -- one of
+ * them is used as the required `python` field (either is fine, since `transcribe()`/`synthesize()` each still
+ * resolve their own override first), but whichever stage is left with neither a top-level default nor its own
+ * override throws `CONFIG_INVALID` naming exactly that missing key, caught here once instead of failing deep
+ * inside the first `transcribe`/`synthesize` call (or worse, spawning `undefined` as a command).
+ */
+export function mediaEngineOptions(project: ProjectConfig, harnessRoot: string, redact: (s: string) => string): PythonMediaEngineOptions {
+  const top = project.media.python;
+  const transcribePython = project.media.transcribe.python;
+  const ttsPython = project.media.tts.python;
+
+  const python = top ?? transcribePython ?? ttsPython;
+  if (!python) throw new HarnessError("CONFIG_INVALID", 'project.yaml media.python is required when adapters.media is "python" (or set both media.transcribe.python and media.tts.python)', { field: "media.python" });
+  if (!top && !transcribePython) throw new HarnessError("CONFIG_INVALID", 'project.yaml media.transcribe.python is required when adapters.media is "python" and media.python is not set', { field: "media.transcribe.python" });
+  if (!top && !ttsPython) throw new HarnessError("CONFIG_INVALID", 'project.yaml media.tts.python is required when adapters.media is "python" and media.python is not set', { field: "media.tts.python" });
+
+  return {
+    python,
+    enginesDir: join(harnessRoot, "engines", "python"),
+    device: project.media.device,
+    transcribe: project.media.transcribe,
+    tts: project.media.tts,
+    redact,
+    ...(transcribePython ? { transcribePython } : {}),
+    ...(ttsPython ? { ttsPython } : {}),
+  };
 }
 
 export function buildContext(o: { projectDir: string; harnessRoot?: string; owner?: string; capabilities?: string[]; logLevel?: LogLevel }): AppContext {
@@ -161,14 +184,10 @@ export function buildContext(o: { projectDir: string; harnessRoot?: string; owne
   const stats: StatsCollector = project.adapters.stats === "playwright"
     ? new PlaywrightStatsCollector({ redact: (s) => redactor.redact(s) })
     : new FakeStatsCollector({ ...(process.env.HARNESS_FAKE_STATS_FILE ? { file: process.env.HARNESS_FAKE_STATS_FILE } : {}) });
-  // Sub-project 5A: the only place a MediaEngine is chosen (spec: Global constraints). `PythonMediaEngine`
-  // needs `media.python`; `requireMediaPython` throws CONFIG_INVALID up front when the project asked for it
-  // but never configured it, instead of failing deep inside the first transcribe/synthesize call.
+  // Sub-project 5A: the only place a MediaEngine is chosen (spec: Global constraints). See
+  // `mediaEngineOptions` for how `media.python`/`media.transcribe.python`/`media.tts.python` resolve.
   const media: MediaEngine = project.adapters.media === "python"
-    ? new PythonMediaEngine({
-        python: requireMediaPython(project), enginesDir: join(harnessRoot, "engines", "python"), device: project.media.device,
-        transcribe: project.media.transcribe, tts: project.media.tts, redact: (s) => redactor.redact(s),
-      })
+    ? new PythonMediaEngine(mediaEngineOptions(project, harnessRoot, (s) => redactor.redact(s)))
     : new FakeMediaEngine();
   const argv = cliArgv();
   // an ops-project entry with the same name as a built-in (fake or library/publish/media) wins, so ops projects can override them

@@ -63,10 +63,7 @@ describe.skipIf(!hasFfmpeg())("FakeMediaEngine (needs ffmpeg/ffprobe on PATH)", 
     const text2 = "This is a much longer second chunk of narration text";
     const outPath = join(dir, "L001.wav");
     const job: TtsJob = {
-      lines: [
-        { line_id: "L001", text: text1, out_path: outPath },
-        { line_id: "L001", text: text2, out_path: outPath },
-      ],
+      lines: [{ line_id: "L001", chunks: [text1, text2], out_path: outPath }],
       language: "en",
       voice: { ref_audio: join(dir, "ref.wav"), ref_text: "hi", params: { speed: 1, num_step: 32 } },
       align: false,
@@ -102,7 +99,7 @@ describe.skipIf(!hasFfmpeg())("FakeMediaEngine (needs ffmpeg/ffprobe on PATH)", 
     const engine = new FakeMediaEngine();
     const outPath = join(dir, "L002.wav");
     const job: TtsJob = {
-      lines: [{ line_id: "L002", text: "Hi.", out_path: outPath }],
+      lines: [{ line_id: "L002", chunks: ["Hi."], out_path: outPath }],
       language: "en",
       voice: { ref_audio: join(dir, "ref.wav"), ref_text: "hi", params: { speed: 1, num_step: 32 } },
       align: false,
@@ -110,6 +107,39 @@ describe.skipIf(!hasFfmpeg())("FakeMediaEngine (needs ffmpeg/ffprobe on PATH)", 
     const res = await engine.synthesize(job, { timeout_seconds: 10 });
     expect(res.kind).toBe("ok");
     if (res.kind === "ok") expect(res.result.lines[0]!.duration_seconds).toBe(0.4);
+  });
+
+  it("synthesize: a duplicate line_id fails contract, no wav is written", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fake-media-"));
+    const engine = new FakeMediaEngine();
+    const outPath = join(dir, "L003.wav");
+    const job: TtsJob = {
+      lines: [
+        { line_id: "L003", chunks: ["Hello."], out_path: outPath },
+        { line_id: "L003", chunks: ["Again."], out_path: outPath },
+      ],
+      language: "en",
+      voice: { ref_audio: join(dir, "ref.wav"), ref_text: "hi", params: { speed: 1, num_step: 32 } },
+      align: false,
+    };
+    const res = await engine.synthesize(job, { timeout_seconds: 10 });
+    expect(res.kind).toBe("contract");
+    if (res.kind !== "ok") expect(res.reason).toContain("duplicate line_id");
+    expect(engine.calls).toEqual([]);
+  });
+
+  it("synthesize: empty chunks fails contract", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fake-media-"));
+    const engine = new FakeMediaEngine();
+    const job: TtsJob = {
+      lines: [{ line_id: "L004", chunks: [], out_path: join(dir, "L004.wav") }],
+      language: "en",
+      voice: { ref_audio: join(dir, "ref.wav"), ref_text: "hi", params: { speed: 1, num_step: 32 } },
+      align: false,
+    };
+    const res = await engine.synthesize(job, { timeout_seconds: 10 });
+    expect(res.kind).toBe("contract");
+    if (res.kind !== "ok") expect(res.reason).toContain("no chunks");
   });
 
   it("probe(): reports no python/GPU available without throwing", async () => {

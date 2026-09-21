@@ -115,10 +115,7 @@ function makeTranscribeJob(outDir: string): TranscribeJob {
 function makeTtsJob(outDir: string): TtsJob {
   const outPath = join(outDir, "L001.wav");
   return {
-    lines: [
-      { line_id: "L001", text: "Hello there.", out_path: outPath },
-      { line_id: "L001", text: "This is a test.", out_path: outPath },
-    ],
+    lines: [{ line_id: "L001", chunks: ["Hello there.", "This is a test."], out_path: outPath }],
     language: "en",
     voice: { ref_audio: join(outDir, "ref.wav"), ref_text: "hi", params: { speed: 1, num_step: 32 } },
     align: false,
@@ -147,7 +144,7 @@ describe("PythonMediaEngine", () => {
     }
   });
 
-  it("ok: synthesize result parses as valid TtsRaw, kind ok, groups chunks sharing a line_id", async () => {
+  it("ok: synthesize result parses as valid TtsRaw, kind ok, one line with its chunks", async () => {
     const enginesDir = makeFakeEnginesDir();
     const outDir = mkdtempSync(join(tmpdir(), "media-job-"));
     const engine = makeEngine(enginesDir);
@@ -157,6 +154,40 @@ describe("PythonMediaEngine", () => {
       expect(res.result.lines).toHaveLength(1);
       expect(res.result.lines[0]!.chunks).toHaveLength(2);
     }
+  });
+
+  it("synthesize: a duplicate line_id fails contract before spawning anything", async () => {
+    const enginesDir = makeFakeEnginesDir();
+    const outDir = mkdtempSync(join(tmpdir(), "media-job-"));
+    const engine = makeEngine(enginesDir);
+    const outPath = join(outDir, "L001.wav");
+    const job: TtsJob = {
+      lines: [
+        { line_id: "L001", chunks: ["Hello there."], out_path: outPath },
+        { line_id: "L001", chunks: ["This is a test."], out_path: outPath },
+      ],
+      language: "en",
+      voice: { ref_audio: join(outDir, "ref.wav"), ref_text: "hi", params: { speed: 1, num_step: 32 } },
+      align: false,
+    };
+    const res = await engine.synthesize(job, { timeout_seconds: 10 });
+    expect(res.kind).toBe("contract");
+    if (res.kind !== "ok") expect(res.reason).toContain("duplicate line_id");
+  });
+
+  it("synthesize: empty chunks fails contract before spawning anything", async () => {
+    const enginesDir = makeFakeEnginesDir();
+    const outDir = mkdtempSync(join(tmpdir(), "media-job-"));
+    const engine = makeEngine(enginesDir);
+    const job: TtsJob = {
+      lines: [{ line_id: "L001", chunks: [], out_path: join(outDir, "L001.wav") }],
+      language: "en",
+      voice: { ref_audio: join(outDir, "ref.wav"), ref_text: "hi", params: { speed: 1, num_step: 32 } },
+      align: false,
+    };
+    const res = await engine.synthesize(job, { timeout_seconds: 10 });
+    expect(res.kind).toBe("contract");
+    if (res.kind !== "ok") expect(res.reason).toContain("no chunks");
   });
 
   it("contract: { ok:false, kind:'contract' } passes through verbatim", async () => {

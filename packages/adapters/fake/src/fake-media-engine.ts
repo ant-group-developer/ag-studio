@@ -48,30 +48,17 @@ function synthWav(ffmpeg: string, outPath: string, seconds: number): void {
   run(ffmpeg, ["-y", "-f", "lavfi", "-i", `sine=frequency=440:sample_rate=${SAMPLE_RATE}`, "-t", seconds.toFixed(3), "-c:a", "pcm_s16le", outPath]);
 }
 
-interface LineGroup {
-  line_id: string;
-  texts: string[];
-  out_path: string;
-}
-
-/**
- * `TtsJob.lines` may contain several entries sharing one `line_id` -- one per sentence/chunk `splitSentences`
- * produced upstream (spec: `packages/core`'s `synthesizeNarration`, sub-project 5A Task 5, "vào job với
- * chunks = splitSentences(...)"). This groups them back into one wav per `line_id`, in first-seen order.
- */
-function groupLines(lines: TtsJob["lines"]): LineGroup[] {
-  const groups: LineGroup[] = [];
-  const byId = new Map<string, LineGroup>();
-  for (const l of lines) {
-    let g = byId.get(l.line_id);
-    if (!g) {
-      g = { line_id: l.line_id, texts: [], out_path: l.out_path };
-      byId.set(l.line_id, g);
-      groups.push(g);
-    }
-    g.texts.push(l.text);
+/** Every `line_id` unique, every `chunks` non-empty -- same check `PythonMediaEngine.synthesize` makes before
+ * spawning anything, kept here too so a test (or a caller) sees identical `contract` behavior regardless of
+ * which `MediaEngine` implementation is wired up. */
+function validateTtsJob(lines: TtsJob["lines"]): string | null {
+  const seen = new Set<string>();
+  for (const line of lines) {
+    if (line.chunks.length === 0) return `tts job line ${line.line_id} has no chunks`;
+    if (seen.has(line.line_id)) return `tts job has a duplicate line_id: ${line.line_id}`;
+    seen.add(line.line_id);
   }
-  return groups;
+  return null;
 }
 
 /**
@@ -82,9 +69,11 @@ function groupLines(lines: TtsJob["lines"]): LineGroup[] {
  * see `probeDurationSeconds`), fixed text `"w1 w2 w3"`, words divided evenly, `alignment: "word"`,
  * `language: item.language ?? "en"`.
  *
- * `synthesize`: per line (grouped chunks), a sine-wave wav at 24 kHz lasting
- * `max(0.4, totalChars / charsPerSecond)` seconds; each chunk gets a time span proportional to its share of
- * the line's total characters, its words divided evenly by whitespace within that span, `alignment: "word"`.
+ * `synthesize`: per line, a sine-wave wav at 24 kHz lasting `max(0.4, totalChars / charsPerSecond)` seconds
+ * (`totalChars` = sum of every chunk's character count); each chunk gets a time span proportional to its
+ * share of the line's total characters, its words divided evenly by whitespace within that span,
+ * `alignment: "word"`. A line with a duplicate `line_id` or empty `chunks` fails `contract` before any wav
+ * is written.
  */
 export class FakeMediaEngine implements MediaEngine {
   readonly name = "fake";
@@ -112,28 +101,30 @@ export class FakeMediaEngine implements MediaEngine {
   }
 
   async synthesize(job: TtsJob): Promise<EngineOutcome<TtsRaw>> {
-    const groups = groupLines(job.lines);
-    this.calls.push({ kind: "synthesize", n: groups.length });
-    const lines = groups.map((g) => {
-      const charCounts = g.texts.map((t) => t.length);
+    const invalid = validateTtsJob(job.lines);
+    if (invalid) return { kind: "contract", reason: invalid };
+
+    this.calls.push({ kind: "synthesize", n: job.lines.length });
+    const lines = job.lines.map((line) => {
+      const charCounts = line.chunks.map((t) => t.length);
       const totalChars = charCounts.reduce((a, b) => a + b, 0);
       const duration = Math.max(MIN_LINE_SECONDS, totalChars / this.charsPerSecond);
-      synthWav(this.ffmpeg, g.out_path, duration);
+      synthWav(this.ffmpeg, line.out_path, duration);
 
       const chunks: TtsRaw["lines"][number]["chunks"] = [];
       const words: Word[] = [];
       let cursor = 0;
-      for (let i = 0; i < g.texts.length; i++) {
-        const text = g.texts[i]!;
-        const frac = totalChars > 0 ? charCounts[i]! / totalChars : 1 / g.texts.length;
-        const isLast = i === g.texts.length - 1;
+      for (let i = 0; i < line.chunks.length; i++) {
+        const text = line.chunks[i]!;
+        const frac = totalChars > 0 ? charCounts[i]! / totalChars : 1 / line.chunks.length;
+        const isLast = i === line.chunks.length - 1;
         const start = cursor;
         const end = isLast ? duration : cursor + duration * frac;
         chunks.push({ text, start, end });
         words.push(...evenWords(text, start, end));
         cursor = end;
       }
-      return { line_id: g.line_id, wav_path: g.out_path, duration_seconds: duration, chunks, words, alignment: "word" as const };
+      return { line_id: line.line_id, wav_path: line.out_path, duration_seconds: duration, chunks, words, alignment: "word" as const };
     });
     return { kind: "ok", result: { lines } };
   }

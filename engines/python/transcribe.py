@@ -11,32 +11,22 @@ the TS side can tell "this input is unfixable" (`contract`) from "try again" (`t
 "the process died".
 
 `--dry-run` never imports torch/whisperx/omnivoice: it validates the job and writes an empty-segment result
-per item, so CI (no GPU, no model weights on this machine) can still exercise the process/JSON contract.
+per item, so CI (no GPU, no model weights on this machine) can still exercise the process/JSON contract. Its
+result also echoes the split device (see `split_device` below) into the `engine` string, so
+`packages/adapters/media-python/test/python-scripts.test.ts` can assert the split happened correctly without
+needing a real GPU.
 """
 
 from __future__ import annotations
 
 import argparse
+import gc
 import os
 import sys
 from typing import Any
 
+import engine_io as _io
 
-def _load_io_module():
-    """Loads `_io.py` (this script's sibling) under an explicit module name. A plain `import _io` would
-    silently resolve to CPython's own built-in `_io` module (already cached in `sys.modules` before this
-    script even starts) instead of our file -- see `_io.py`'s module docstring."""
-    import importlib.util
-
-    here = os.path.dirname(os.path.abspath(__file__))
-    spec = importlib.util.spec_from_file_location("harness_media_engine_io", os.path.join(here, "_io.py"))
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-_io = _load_io_module()
 read_job = _io.read_job
 write_result = _io.write_result
 log = _io.log
@@ -48,6 +38,21 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--result", required=True)
     p.add_argument("--dry-run", action="store_true")
     return p.parse_args(argv)
+
+
+def split_device(device: str) -> tuple[str, int]:
+    """`whisperx.load_model` forwards `device` straight into faster-whisper/ctranslate2, which accepts only
+    the bare strings `"cpu"`/`"cuda"` plus a separate `device_index` -- passing it the harness's own
+    `"cuda:0"`-style device string raises `ValueError: unsupported device cuda:0`. This is the one place that
+    string is split; `whisperx.load_align_model`/`whisperx.align` keep taking the *original* full device
+    string unchanged (torch itself accepts `"cuda:0"` fine).
+
+    `"cuda:0"` -> `("cuda", 0)`, `"cuda:1"` -> `("cuda", 1)`, `"cpu"` -> `("cpu", 0)`.
+    """
+    dev, _sep, idx = str(device).partition(":")
+    dev = dev or "cpu"
+    index = int(idx) if idx else 0
+    return dev, index
 
 
 def validate_job(job: dict[str, Any]) -> str | None:
@@ -64,11 +69,16 @@ def validate_job(job: dict[str, Any]) -> str | None:
 
 
 def dry_run(job: dict[str, Any], result_path: str) -> None:
+    dev, index = split_device(job["device"])
     sources = [
         {"source_id": item["source_id"], "language": item.get("language"), "alignment": "word", "segments": []}
         for item in job["items"]
     ]
-    write_result(result_path, {"ok": True, "engine": f"whisperx:{job['model']}(dry-run)", "sources": sources})
+    write_result(result_path, {"ok": True, "engine": f"whisperx:{job['model']}(dry-run,device={dev},device_index={index})", "sources": sources})
+
+
+def _fallback_segments(segments_in: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{"start": s.get("start", 0.0), "end": s.get("end", 0.0), "text": s.get("text", ""), "words": []} for s in segments_in]
 
 
 def run(job: dict[str, Any], result_path: str) -> None:
@@ -85,16 +95,16 @@ def run(job: dict[str, Any], result_path: str) -> None:
         write_result(result_path, {"ok": False, "kind": "contract", "reason": f"device {device!r} requested but CUDA is not available"})
         return
 
+    dev, device_index = split_device(device)
     try:
-        model = whisperx.load_model(job["model"], device, compute_type=job["compute_type"])
+        model = whisperx.load_model(job["model"], dev, device_index=device_index, compute_type=job["compute_type"])
     except Exception as e:  # model load / download / OOM
         write_result(result_path, {"ok": False, "kind": "transient", "reason": f"failed to load whisperx model: {e}"})
         return
 
-    # Cache the alignment model per language for the lifetime of this process -- items commonly share a
-    # language, and reloading it per item would be needless GPU churn.
-    align_cache: dict[str, tuple[Any, Any] | None] = {}
-    sources: list[dict[str, Any]] = []
+    # Phase 1: transcribe every item with the whisper model, keeping each item's language/segments/audio for
+    # the alignment pass below.
+    transcribed: list[dict[str, Any]] = []
     try:
         for item in job["items"]:
             audio_path = item["audio_path"]
@@ -103,9 +113,38 @@ def run(job: dict[str, Any], result_path: str) -> None:
                 return
 
             audio = whisperx.load_audio(audio_path)
-            transcribed = model.transcribe(audio, batch_size=job["batch_size"], language=item.get("language"))
-            language = transcribed.get("language") or item.get("language") or "en"
+            out = model.transcribe(audio, batch_size=job["batch_size"], language=item.get("language"))
+            language = out.get("language") or item.get("language") or "en"
+            transcribed.append({"source_id": item["source_id"], "language": language, "segments_in": out.get("segments", []), "audio": audio})
+    except MemoryError as e:
+        write_result(result_path, {"ok": False, "kind": "transient", "reason": f"out of memory: {e}"})
+        return
+    except RuntimeError as e:
+        kind_reason = f"out of memory: {e}" if "out of memory" in str(e).lower() else f"transcribe failed: {e}"
+        write_result(result_path, {"ok": False, "kind": "transient", "reason": kind_reason})
+        return
+    except Exception as e:
+        write_result(result_path, {"ok": False, "kind": "transient", "reason": f"transcribe failed: {e}"})
+        return
 
+    # Free the whisper model before loading any alignment model (same rationale as tts.py freeing the TTS
+    # model before its alignment pass): the two rarely fit in VRAM together on a single consumer GPU.
+    del model
+    gc.collect()
+    try:
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+    # Phase 2: align, one alignment model per language, cached for the life of this process -- items commonly
+    # share a language, and reloading it per item would be needless GPU churn. Uses the *original* full
+    # `device` string (e.g. "cuda:0"), not the split (dev, device_index) pair above -- torch/whisperx accept
+    # that form directly.
+    align_cache: dict[str, tuple[Any, Any] | None] = {}
+    sources: list[dict[str, Any]] = []
+    try:
+        for entry in transcribed:
+            language = entry["language"]
             if language not in align_cache:
                 try:
                     align_model, metadata = whisperx.load_align_model(language_code=language, device=device)
@@ -115,10 +154,10 @@ def run(job: dict[str, Any], result_path: str) -> None:
                     log("warn", "no alignment model for language, falling back to segment-level timing", language=language, reason=str(e))
 
             cached = align_cache[language]
-            segments_in = transcribed.get("segments", [])
+            segments_in = entry["segments_in"]
             if cached is not None:
                 align_model, metadata = cached
-                aligned = whisperx.align(segments_in, align_model, metadata, audio, device, return_char_alignments=False)
+                aligned = whisperx.align(segments_in, align_model, metadata, entry["audio"], device, return_char_alignments=False)
                 segments = [
                     {
                         "start": s.get("start", 0.0),
@@ -134,22 +173,19 @@ def run(job: dict[str, Any], result_path: str) -> None:
                 ]
                 alignment = "word"
             else:
-                segments = [
-                    {"start": s.get("start", 0.0), "end": s.get("end", 0.0), "text": s.get("text", ""), "words": []}
-                    for s in segments_in
-                ]
+                segments = _fallback_segments(segments_in)
                 alignment = "segment"
 
-            sources.append({"source_id": item["source_id"], "language": language, "alignment": alignment, "segments": segments})
+            sources.append({"source_id": entry["source_id"], "language": language, "alignment": alignment, "segments": segments})
     except MemoryError as e:
         write_result(result_path, {"ok": False, "kind": "transient", "reason": f"out of memory: {e}"})
         return
     except RuntimeError as e:
-        kind_reason = f"out of memory: {e}" if "out of memory" in str(e).lower() else f"transcribe failed: {e}"
+        kind_reason = f"out of memory: {e}" if "out of memory" in str(e).lower() else f"alignment failed: {e}"
         write_result(result_path, {"ok": False, "kind": "transient", "reason": kind_reason})
         return
     except Exception as e:
-        write_result(result_path, {"ok": False, "kind": "transient", "reason": f"transcribe failed: {e}"})
+        write_result(result_path, {"ok": False, "kind": "transient", "reason": f"alignment failed: {e}"})
         return
 
     write_result(result_path, {"ok": True, "engine": f"whisperx:{job['model']}", "sources": sources})

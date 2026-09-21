@@ -122,32 +122,16 @@ const PROBE_SCRIPT = [
   "print(json.dumps(info))",
 ].join("\n");
 
-interface PythonTtsLine {
-  line_id: string;
-  chunks: string[];
-  out_path: string;
-  pause_seconds: number;
-}
-
-/**
- * Groups `TtsJob.lines` by `line_id`: core (sub-project 5A Task 5's `synthesizeNarration`) sends one entry
- * per sentence/chunk `splitSentences` produced, all sharing the same `line_id` and `out_path` -- this
- * reassembles them into one python-job "line" per `line_id`, chunk texts in first-seen order. Same rationale
- * and grouping as `FakeMediaEngine`'s `groupLines`.
- */
-function groupTtsLines(lines: TtsJob["lines"], pause_seconds: number): PythonTtsLine[] {
-  const groups: PythonTtsLine[] = [];
-  const byId = new Map<string, PythonTtsLine>();
-  for (const l of lines) {
-    let g = byId.get(l.line_id);
-    if (!g) {
-      g = { line_id: l.line_id, chunks: [], out_path: l.out_path, pause_seconds };
-      byId.set(l.line_id, g);
-      groups.push(g);
-    }
-    g.chunks.push(l.text);
+/** Every `line_id` unique, every `chunks` non-empty -- checked before spawning anything, since a job shaped
+ * wrong is never going to become right by retrying it against the python process. */
+function validateTtsJob(lines: TtsJob["lines"]): string | null {
+  const seen = new Set<string>();
+  for (const line of lines) {
+    if (line.chunks.length === 0) return `tts job line ${line.line_id} has no chunks`;
+    if (seen.has(line.line_id)) return `tts job has a duplicate line_id: ${line.line_id}`;
+    seen.add(line.line_id);
   }
-  return groups;
+  return null;
 }
 
 /**
@@ -196,10 +180,15 @@ export class PythonMediaEngine implements MediaEngine {
   }
 
   async synthesize(job: TtsJob, o: { timeout_seconds: number; log?: (l: string) => void }): Promise<EngineOutcome<TtsRaw>> {
+    const invalid = validateTtsJob(job.lines);
+    if (invalid) return { kind: "contract", reason: invalid };
+
     const python = this.opts.ttsPython ?? this.opts.python;
     const script = join(this.opts.enginesDir, "tts.py");
-    const groups = groupTtsLines(job.lines, this.opts.tts.pause_seconds);
-    const outDir = groups.length > 0 ? dirname(groups[0]!.out_path) : process.cwd();
+    const pythonLines = job.lines.map((l) => ({
+      line_id: l.line_id, chunks: l.chunks, out_path: l.out_path, pause_seconds: l.pause_seconds ?? this.opts.tts.pause_seconds,
+    }));
+    const outDir = job.lines.length > 0 ? dirname(job.lines[0]!.out_path) : process.cwd();
     const payload = {
       device: this.opts.device,
       model: this.opts.tts.model,
@@ -210,7 +199,7 @@ export class PythonMediaEngine implements MediaEngine {
       ref_audio: job.voice.ref_audio,
       ref_text: job.voice.ref_text,
       align: job.align,
-      lines: groups,
+      lines: pythonLines,
     };
     mkdirSync(outDir, { recursive: true });
     const raw = await this.run(python, script, payload, outDir, o);

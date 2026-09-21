@@ -25,7 +25,10 @@ Model weights are large; fetch them once, ahead of any real run, so the first `t
 in production is not also the first (and slowest, most failure-prone) download:
 
 ```sh
-python -c "import whisperx; whisperx.load_model('large-v3', 'cuda:0', compute_type='float16')"
+# whisperx.load_model wants the bare "cuda"/"cpu" plus a separate device_index -- NOT "cuda:0" (that raises
+# ValueError: unsupported device cuda:0). See transcribe.py's split_device().
+python -c "import whisperx; whisperx.load_model('large-v3', 'cuda', device_index=0, compute_type='float16')"
+# load_align_model/OmniVoice.from_pretrained take the full "cuda:0"-style string fine.
 python -c "import whisperx; whisperx.load_align_model(language_code='en', device='cuda:0')"
 python -c "import torch; from omnivoice import OmniVoice; OmniVoice.from_pretrained('k2-fsa/OmniVoice', device_map='cuda:0', dtype=torch.float16)"
 ```
@@ -61,5 +64,8 @@ retry can never fix (missing `ref_audio`, an unimportable package, `cuda:*` requ
 missing/corrupt result file are all treated by the TypeScript side as `transient` too, since the process
 itself misbehaved rather than reporting a clean failure.
 
-`_io.py` (shared by both scripts) is loaded via `importlib`, never `import _io` -- CPython already has a
-built-in module named `_io` and a plain import would silently bind that instead of this file.
+`engine_io.py` (shared by both scripts, `import engine_io`) is deliberately not named `_io.py` -- CPython
+already has a built-in module named `_io` and a plain `import _io` would silently bind that instead of this
+file. Its `write_result` also refuses to write a NaN/Infinity into the result JSON (invalid JSON, and a known
+WhisperX alignment failure mode): that case falls back to a clean `{ ok: false, kind: "transient", ... }`
+instead of a broken/partial result file.

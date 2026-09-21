@@ -24,8 +24,8 @@ const ttsCfg = { engine: "omnivoice" as const, model: "k2-fsa/OmniVoice", dtype:
  * `PythonMediaEngine`. On a machine with no python at all, `describe.skipIf` drops the whole suite.
  */
 describe.skipIf(!hasPython())("python engine scripts (engines/python)", () => {
-  it("py_compile: _io.py, transcribe.py, tts.py all compile", () => {
-    for (const file of ["_io.py", "transcribe.py", "tts.py"]) {
+  it("py_compile: engine_io.py, transcribe.py, tts.py all compile", () => {
+    for (const file of ["engine_io.py", "transcribe.py", "tts.py"]) {
       const r = spawnSync(PYTHON, ["-m", "py_compile", join(ENGINES_DIR, file)], { encoding: "utf8" });
       expect(r.status, r.stderr).toBe(0);
     }
@@ -50,16 +50,26 @@ describe.skipIf(!hasPython())("python engine scripts (engines/python)", () => {
     }
   });
 
+  it.each([
+    ["cuda:0", "cuda", 0],
+    ["cuda:1", "cuda", 1],
+    ["cpu", "cpu", 0],
+  ])("transcribe.py --dry-run splits device %s into (%s, device_index=%i) for whisperx.load_model", async (device, dev, index) => {
+    const outDir = mkdtempSync(join(tmpdir(), "engine-dryrun-"));
+    const engine = new PythonMediaEngine({ python: PYTHON, enginesDir: ENGINES_DIR, device, transcribe: transcribeCfg, tts: ttsCfg, dryRun: true });
+    const job: TranscribeJob = { items: [{ source_id: newId("source_item"), audio_path: join(outDir, "a.wav"), language: "en" }], out_dir: outDir };
+    const res = await engine.transcribe(job, { timeout_seconds: 30 });
+    expect(res.kind, res.kind !== "ok" ? res.reason : "").toBe("ok");
+    if (res.kind === "ok") expect(res.result.engine).toContain(`device=${dev},device_index=${index}`);
+  });
+
   it("tts.py --dry-run writes a result that parses as a valid TtsRaw shape (via PythonMediaEngine)", async () => {
     const outDir = mkdtempSync(join(tmpdir(), "engine-dryrun-"));
     writeFileSync(join(outDir, "ref.wav"), Buffer.alloc(0));
     const engine = new PythonMediaEngine({ python: PYTHON, enginesDir: ENGINES_DIR, device: "cpu", transcribe: transcribeCfg, tts: ttsCfg, dryRun: true });
     const outPath = join(outDir, "L001.wav");
     const job: TtsJob = {
-      lines: [
-        { line_id: "L001", text: "Hello there.", out_path: outPath },
-        { line_id: "L001", text: "This is a longer second chunk.", out_path: outPath },
-      ],
+      lines: [{ line_id: "L001", chunks: ["Hello there.", "This is a longer second chunk."], out_path: outPath }],
       language: "en",
       voice: { ref_audio: join(outDir, "ref.wav"), ref_text: "hi", params: { speed: 1, num_step: 32 } },
       align: false,
@@ -82,6 +92,23 @@ describe.skipIf(!hasPython())("python engine scripts (engines/python)", () => {
     writeFileSync(jobPath, JSON.stringify({ device: "cpu" })); // missing model/compute_type/batch_size/items
     const resultPath = join(outDir, "result.json");
     const r = spawnSync(PYTHON, [join(ENGINES_DIR, "transcribe.py"), "--job", jobPath, "--result", resultPath, "--dry-run"], { encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    const result = JSON.parse(readFileSync(resultPath, "utf8"));
+    expect(result.ok).toBe(false);
+    expect(result.kind).toBe("contract");
+  });
+
+  it("tts.py --dry-run: an unsupported dtype fails contract, not a crash", async () => {
+    const outDir = mkdtempSync(join(tmpdir(), "engine-dryrun-"));
+    writeFileSync(join(outDir, "ref.wav"), Buffer.alloc(0));
+    const jobPath = join(outDir, "bad-dtype-job.json");
+    writeFileSync(jobPath, JSON.stringify({
+      device: "cpu", model: "k2-fsa/OmniVoice", dtype: "float8", num_step: 32, speed: 1, language: "en",
+      ref_audio: join(outDir, "ref.wav"), ref_text: "hi", align: false,
+      lines: [{ line_id: "L001", chunks: ["hi"], out_path: join(outDir, "L001.wav") }],
+    }));
+    const resultPath = join(outDir, "result.json");
+    const r = spawnSync(PYTHON, [join(ENGINES_DIR, "tts.py"), "--job", jobPath, "--result", resultPath, "--dry-run"], { encoding: "utf8" });
     expect(r.status, r.stderr).toBe(0);
     const result = JSON.parse(readFileSync(resultPath, "utf8"));
     expect(result.ok).toBe(false);
