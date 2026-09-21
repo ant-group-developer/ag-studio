@@ -287,13 +287,23 @@ function buildReview() {
   const footageRejected = Boolean(fitReport && (shortfalls.length > 0 || (fitReport.reused_seconds ?? 0) > 5 || fitReport.within_target === false));
 
   const rejected = footageRejected || (mode_ === "reject-always" ? true : mode_ === "reject-once" ? !hasNotes : false);
+  // A `within_target: false` rejection with NO shortfall is a different fault from "the lines have no
+  // picture": the picture covers the script fine, the programme is simply the wrong length. Saying "thiếu
+  // 0.0 s ở " there (what this used to write) tells a replanned `edit-plan` nothing at all, so name the
+  // measured duration and the target instead -- the real `library-review` skill's step 0 does the same.
+  const overshot = Boolean(fitReport && shortfalls.length === 0 && fitReport.within_target === false);
   const checks = REVIEW_CHECK_IDS.map((id) => ({ id, pass: true, note: "" }));
   if (rejected) {
-    checks[0] = { id: REVIEW_CHECK_IDS[0], pass: false, note: footageRejected ? "fake agent: thiếu hình cho lời (media-fit-edl)" : "fake agent: thời lượng vượt khoảng đích tại t=95.0s" };
+    const footageNote = overshot
+      ? `fake agent: ${Number(fitReport.total_seconds ?? 0).toFixed(1)} s ngoài khoảng đích ${JSON.stringify(fitReport.target_duration_seconds ?? [])}`
+      : "fake agent: thiếu hình cho lời (media-fit-edl)";
+    checks[0] = { id: REVIEW_CHECK_IDS[0], pass: false, note: footageRejected ? footageNote : "fake agent: thời lượng vượt khoảng đích tại t=95.0s" };
   }
 
   let note;
-  if (footageRejected) {
+  if (overshot) {
+    note = `fake agent: tổng ${Number(fitReport.total_seconds ?? 0).toFixed(1)} s nằm ngoài khoảng đích ${JSON.stringify(fitReport.target_duration_seconds ?? [])}`;
+  } else if (footageRejected) {
     const missingSeconds = shortfalls.reduce((a, s) => a + (s.missing_seconds ?? 0), 0);
     const lineIds = shortfalls.flatMap((s) => s.line_ids ?? []);
     note = `fake agent: thiếu ${missingSeconds.toFixed(1)} s ở ${lineIds.join(", ")}`;

@@ -8,10 +8,10 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { newId, type LibraryItem, type Narration, type NarrationTiming, type ShotsIndex, type Timeline, type Transcript } from "@harness/contracts";
+import { newId, type FitReport, type LibraryItem, type Narration, type NarrationTiming, type Review, type ShotsIndex, type Timeline, type Transcript } from "@harness/contracts";
 import { SqliteStateStore } from "@harness/core";
 import { hasFfmpeg } from "../media.js";
-import { addVoice, cli, freshLibraryWorld, ingestShoot, requestCreate, requestStatus, stageId, status, studioWorkerUntil, writeActiveStyle } from "./library-helpers.js";
+import { addVoice, cli, freshLibraryWorld, ingestShoot, requestCreate, requestStatus, setMaxReplans, stageId, status, studioWorkerUntil, writeActiveStyle } from "./library-helpers.js";
 
 const readJson = <T>(path: string): T => JSON.parse(readFileSync(path, "utf8")) as T;
 
@@ -35,6 +35,24 @@ function ffprobeHasAudio(path: string): boolean {
   const bin = process.env.FFPROBE_PATH ?? "ffprobe";
   const r = spawnSync(bin, ["-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "default=nw=1:nk=1", path], { encoding: "utf8" });
   return r.status === 0 && r.stdout.trim().length > 0;
+}
+
+/** Every stage's state plus, for the stages that did not succeed, the check verdicts of their last attempt --
+ * an assertion message that says WHY a run stopped instead of just which state it ended in. */
+function why(project: string, runId: string): string {
+  const store = new SqliteStateStore(join(project, "data", "state", "harness.db"));
+  try {
+    return JSON.stringify(
+      store.listStageRuns(runId).map((s) => {
+        if (s.state === "SUCCEEDED" || s.state === "PENDING") return [s.stage_key, s.state];
+        const attempt = store.listAttempts(s.stage_run_id).at(-1);
+        const checks = attempt ? store.listCheckResults(attempt.attempt_id).filter((c) => c.verdict !== "pass").map((c) => [c.check_id, c.verdict, c.evidence]) : [];
+        return [s.stage_key, s.state, attempt?.error_summary ?? null, checks];
+      }),
+    );
+  } finally {
+    store.close();
+  }
 }
 
 const STAGE_KEYS = [
@@ -164,5 +182,98 @@ describe.skipIf(!hasFfmpeg())("studio media: library-production@1.2.0 end to end
     const timing = readJson<NarrationTiming>(artifactPath(world.studio, runId, "media-tts", "narration_timing"));
     expect(timing.lines).toEqual([]);
     expect(ffprobeHasAudio(artifactPath(world.studio, runId, "assemble", "episode_video"))).toBe(true);
+  }, 300_000);
+
+  // Final-review Critical 1, the same shape as the `voice: none` case above: an episode whose fitted duration
+  // lands outside the request's `target_duration_seconds` used to FAIL `brief-duration` on `assemble` -- a
+  // FAILED run, so `library-apply-review` never ran, the request stayed `claimed` and the SP4 replan loop
+  // never saw it. In 1.2.0 that is reachable with nothing broken (`fitEdl` appends/reuses footage on its own,
+  // and the fake `edit-plan` does not fit a multi-source EDL to any target), so the verdict belongs to
+  // `library-review` -- which rejects on `within_target === false` and reopens the request.
+  //
+  // The fake agent cannot converge here (its 1.2.0 EDL ignores the target entirely), so the assertion is the
+  // designed terminal state: `max_replans: 0` means exactly one run, then `request.auto_accept_exhausted` and
+  // a request left `open` for a human -- never `claimed`, and no FAILED run anywhere in the project.
+  it("rejects an episode that overshoots the brief's target instead of failing the run", () => {
+    const world = freshLibraryWorld({ media: false, media1_2: true });
+    setMaxReplans(world.studio, 0);
+    const env = { FAKE_REVIEW_MODE: "approve" };
+
+    const styleId = newId("edit_style");
+    writeActiveStyle(world.lib, styleId);
+    ingestShoot(world, "shoot-a", 2, { withAudio: true });
+
+    // Two clips' worth of picture (~4 s) against a 1-2 s target: out of range, and well inside the studio
+    // profile's own `duration-range` policy of [1, 1800], so this really is the brief's check talking.
+    const requestId = requestCreate(world, {
+      topic: "Dài hơn khoảng đích", style: styleId, sourceHint: "shoot-a",
+      voice: "none", duration: [1, 2], language: "en",
+    });
+
+    const runOf = (): string | undefined => {
+      const store = new SqliteStateStore(join(world.studio, "data", "state", "harness.db"));
+      try {
+        return store.listEvents({ event_type: "request.auto_accepted" }).find((e) => e.payload.request_id === requestId)?.payload.run_id as string | undefined;
+      } finally {
+        store.close();
+      }
+    };
+    studioWorkerUntil(world, () => {
+      const runId = runOf();
+      return runId !== undefined && ["SUCCEEDED", "FAILED", "CANCELLED"].includes(status(world.studio, runId).run.state);
+    }, 120, env);
+
+    const runId = runOf();
+    expect(runId, "the autopilot never planned a run for the request").toBeDefined();
+    const final = status(world.studio, runId!);
+    expect(final.run.state, why(world.studio, runId!)).toBe("SUCCEEDED");
+    for (const s of final.stages) expect(s.state, s.stage_key).toBe("SUCCEEDED");
+
+    // the episode really did overshoot, and `media-fit-edl` said so
+    const report = readJson<FitReport>(artifactPath(world.studio, runId!, "media-fit-edl", "fit_report"));
+    expect(report.within_target).toBe(false);
+    expect(report.target_duration_seconds).toEqual([1, 2]);
+    expect(ffprobeDuration(artifactPath(world.studio, runId!, "assemble", "episode_video"))).toBeGreaterThan(2);
+
+    const review = readJson<Review>(artifactPath(world.studio, runId!, "library-review", "review"));
+    expect(review.decision).toBe("rejected");
+    expect(review.note, review.note).toContain("khoảng đích");
+
+    const store = new SqliteStateStore(join(world.studio, "data", "state", "harness.db"));
+    try {
+      // `brief-duration` passed rather than failing, and said why -- this is the fix, not a side effect of
+      // the episode happening to land in range.
+      const assembleStage = store.listStageRuns(runId!).find((s) => s.stage_key === "assemble")!;
+      const attempt = store.listAttempts(assembleStage.stage_run_id).at(-1)!;
+      const briefDuration = store.listCheckResults(attempt.attempt_id).find((c) => c.check_id === "brief-duration")!;
+      expect(briefDuration.verdict).toBe("pass");
+      expect(briefDuration.evidence.reason).toBe("deferred to library-review");
+      expect(briefDuration.evidence.within_target).toBe(false);
+      // the exported item was rejected in the kho, which is what reopened the request
+      expect(store.listLibraryItems({}).find((i) => i.lineage.run_id === runId)?.status).toBe("rejected");
+    } finally {
+      store.close();
+    }
+
+    // reopened for the replan loop, never parked at `claimed` behind a failure
+    expect(requestStatus(world, requestId).status).toBe("open");
+
+    // the designed terminal state: budget spent, request still `open`, and not one FAILED run
+    studioWorkerUntil(world, () => {
+      const s = new SqliteStateStore(join(world.studio, "data", "state", "harness.db"));
+      try {
+        return s.listEvents({ event_type: "request.auto_accept_exhausted" }).some((e) => e.payload.request_id === requestId);
+      } finally {
+        s.close();
+      }
+    }, 10, env);
+    const after = new SqliteStateStore(join(world.studio, "data", "state", "harness.db"));
+    try {
+      expect(after.listEvents({ event_type: "request.auto_accept_exhausted" }).some((e) => e.payload.request_id === requestId)).toBe(true);
+      expect(after.listRuns({}).filter((r) => r.state === "FAILED").map((r) => r.run_id)).toEqual([]);
+    } finally {
+      after.close();
+    }
+    expect(requestStatus(world, requestId).status).toBe("open");
   }, 300_000);
 });

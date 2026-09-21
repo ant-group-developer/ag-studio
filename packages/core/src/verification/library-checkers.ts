@@ -4,11 +4,13 @@ import { z } from "zod";
 import {
   AnySurveyIndexSchema,
   checksumSchema,
+  FitReportSchema,
   libraryBriefSchema,
   libraryFileSchema,
   LibraryItemSchema,
   ShotsIndexSchema,
   type Checker,
+  type FitReport,
   type MediaProber,
   type ShotsIndex,
 } from "@harness/contracts";
@@ -42,6 +44,23 @@ function shotIndexByShotId(shots: ShotsIndex): Map<string, { source_id: string; 
 
 /** Max allowed drift (seconds) between a v2 survey shot's `in`/`out` and its `shots.json` shot's `in`/`out`. */
 const SURVEY_SHOT_TOLERANCE_SECONDS = 0.05;
+
+/**
+ * This stage's `fit_report` input (`media-fit-edl`'s `fit-report.json`), parsed -- `null` when the stage has
+ * no such input at all (workflows 1.0.0/1.1.0, footage-production) or when the file is missing, unreadable,
+ * not JSON, or does not satisfy `FitReportSchema`. `brief-duration` treats all four the same way: without a
+ * trustworthy fit report it has nothing to defer to, so it keeps its pre-5A verdict.
+ */
+function readFitReport(input: { request: { inputs: { type: string; path: string }[] }; workspaceDir: string }): FitReport | null {
+  const fitInput = input.request.inputs.find((i) => i.type === "fit_report");
+  if (!fitInput) return null;
+  try {
+    const parsed = FitReportSchema.safeParse(JSON.parse(readFileSync(join(input.workspaceDir, fitInput.path), "utf8")));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Kho-aware checkers layered on top of BUILTIN_CHECKERS and mediaCheckers (spec §3.2, §4.1):
@@ -94,6 +113,18 @@ export function libraryCheckers(prober: MediaProber, opts: { available?: boolean
           return { verdict: "fail", evidence: { path: o.path, reason: "duration unknown" } };
         }
         if (duration < min || duration > max) {
+          // Controller ruling (sub-project 5A final review, Critical 1), the same precedent `audio-integrity`
+          // set with "silent by brief": a run that cannot produce a good episode must end as a REJECTED
+          // REVIEW, never as a FAILED run that strands its request at `claimed`. In 1.2.0 an out-of-range
+          // duration is genuinely reachable without anything being broken -- `fitEdl` appends/reuses footage
+          // on its own and `edit-plan` exempts `voice: original` from the target range -- and `library-review`
+          // already rejects on `within_target === false`, which reopens the request for the SP4 replan loop.
+          // So: with a parseable `fit_report` input this passes and hands the editorial call over. With no
+          // such input (1.0.0/1.1.0, footage-production) or an unparsable one, behaviour is exactly as before.
+          const fit = readFitReport(input);
+          if (fit) {
+            return { verdict: "pass", evidence: { reason: "deferred to library-review", within_target: fit.within_target, duration_seconds: duration, target: range } };
+          }
           return { verdict: "fail", evidence: { path: o.path, reason: "duration out of range", duration, range } };
         }
         checked.push(o.path);

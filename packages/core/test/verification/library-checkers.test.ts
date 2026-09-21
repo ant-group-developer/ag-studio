@@ -210,6 +210,82 @@ describe("libraryCheckers", () => {
       expect(await checker.check({ request, result, workspaceDir: ws })).toEqual({ verdict: "skip", evidence: { reason: "no media prober available" } });
       rmSync(ws, { recursive: true, force: true });
     });
+
+    // Final-review Critical 1: with a `fit_report` input (library-production@1.2.0 only), an out-of-range
+    // duration is an EDITORIAL verdict, not a machine fault -- `library-review` already rejects on
+    // `within_target === false`, which reopens the request and lets the SP4 replan loop run. Failing the
+    // stage here instead would fail the whole run and strand the request at `claimed`.
+    describe("with a fit_report input (workflow 1.2.0)", () => {
+      /** `fixture` plus a `fit_report` input whose body is `fitReport` (already stringified by the caller). */
+      function withFitReport(ws: string, body: string) {
+        const f = fixture(ws, { topic: "t", style_id: newId("edit_style"), style_revision: 1, target_duration_seconds: [5, 20] });
+        writeFileSync(join(ws, "input", "fit-report.json"), body);
+        const request = baseRequest({
+          expected_outputs: f.request.expected_outputs,
+          inputs: [
+            ...f.request.inputs,
+            { artifact_id: newId("artifact"), checksum: sha, path: "input/fit-report.json", type: "fit_report", kind: "file" },
+          ],
+        });
+        return { ...f, request };
+      }
+
+      const fitReportBody = (within_target: boolean): string =>
+        JSON.stringify({
+          schema_version: "harness.fit-report/v1", voice: "tts", entries: [], shortfalls: [], reused_seconds: 0,
+          warnings: [], total_seconds: 30, target_duration_seconds: [5, 20], within_target,
+        });
+
+      it("still passes as before when the probed duration is within the brief's range", async () => {
+        const ws = tmpWorkspace();
+        const { request, result, episodePath } = withFitReport(ws, fitReportBody(true));
+        const checker = checkerById(libraryCheckers(new FakeMediaProber(new Map([[episodePath, videoProbe(12)]]))), "brief-duration");
+        expect(await checker.check({ request, result, workspaceDir: ws })).toEqual({ verdict: "pass", evidence: { checked: ["output/full-episode.mp4"] } });
+        rmSync(ws, { recursive: true, force: true });
+      });
+
+      it("passes an out-of-range duration and defers the verdict to library-review", async () => {
+        const ws = tmpWorkspace();
+        const { request, result, episodePath } = withFitReport(ws, fitReportBody(false));
+        const checker = checkerById(libraryCheckers(new FakeMediaProber(new Map([[episodePath, videoProbe(30)]]))), "brief-duration");
+        const outcome = await checker.check({ request, result, workspaceDir: ws });
+        expect(outcome).toEqual({
+          verdict: "pass",
+          evidence: { reason: "deferred to library-review", within_target: false, duration_seconds: 30, target: [5, 20] },
+        });
+        rmSync(ws, { recursive: true, force: true });
+      });
+
+      it("still fails an out-of-range duration when the fit report does not parse", async () => {
+        const ws = tmpWorkspace();
+        const { request, result, episodePath } = withFitReport(ws, "{ not a fit report");
+        const checker = checkerById(libraryCheckers(new FakeMediaProber(new Map([[episodePath, videoProbe(30)]]))), "brief-duration");
+        const outcome = await checker.check({ request, result, workspaceDir: ws });
+        expect(outcome.verdict).toBe("fail");
+        expect(outcome.evidence.reason).toBe("duration out of range");
+        rmSync(ws, { recursive: true, force: true });
+      });
+
+      it("still fails an out-of-range duration when the fit report is valid JSON of the wrong shape", async () => {
+        const ws = tmpWorkspace();
+        const { request, result, episodePath } = withFitReport(ws, JSON.stringify({ schema_version: "harness.fit-report/v1" }));
+        const checker = checkerById(libraryCheckers(new FakeMediaProber(new Map([[episodePath, videoProbe(30)]]))), "brief-duration");
+        const outcome = await checker.check({ request, result, workspaceDir: ws });
+        expect(outcome.verdict).toBe("fail");
+        expect(outcome.evidence.reason).toBe("duration out of range");
+        rmSync(ws, { recursive: true, force: true });
+      });
+
+      it("still fails duration unknown with a fit report present", async () => {
+        const ws = tmpWorkspace();
+        const { request, result, episodePath } = withFitReport(ws, fitReportBody(false));
+        const checker = checkerById(libraryCheckers(new FakeMediaProber(new Map([[episodePath, videoProbe(null)]]))), "brief-duration");
+        const outcome = await checker.check({ request, result, workspaceDir: ws });
+        expect(outcome.verdict).toBe("fail");
+        expect(outcome.evidence.reason).toBe("duration unknown");
+        rmSync(ws, { recursive: true, force: true });
+      });
+    });
   });
 
   describe("library-export-valid", () => {
