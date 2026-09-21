@@ -98,7 +98,7 @@ describe("mediaCheckers", () => {
         { path: "output/cuts", type: "clip_set", checksum: sha, size_bytes: 0, kind: "directory" },
       ]);
       const checkers = mediaCheckers(new FakeMediaProber(new Map()), { available: false });
-      expect(checkers.map((c) => c.id)).toEqual(["media-probe", "duration-range", "audio-integrity", "clip-set-complete", "edl-valid"]);
+      expect(checkers.map((c) => c.id)).toEqual(["media-probe", "duration-range", "audio-integrity", "clip-set-complete", "tts-valid", "edl-valid"]);
       for (const c of checkers.filter((c) => c.id !== "edl-valid")) {
         const outcome = await c.check({ request, result, workspaceDir: ws });
         expect(outcome, c.id).toEqual({ verdict: "skip", evidence: { reason: "no media prober available" } });

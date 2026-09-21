@@ -56,3 +56,5 @@ export * from "./media/watch.js";
 export * from "./media/scene.js";
 export * from "./media/index.js";
 export * from "./media/transcribe.js";
+export * from "./media/sentences.js";
+export * from "./media/tts.js";
