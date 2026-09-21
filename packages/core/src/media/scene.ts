@@ -1,5 +1,8 @@
 /** Pure shot-building from raw scene-cut times (spec sub-project 5A §1.2). No ffmpeg, no I/O: `index.ts`
  * feeds it `detectSceneChanges` output, but any caller can hand it a plain `number[]` of cut times. */
+import { HarnessError } from "@harness/contracts";
+
+const MAX_SHOT_ID_INDEX = 999;
 
 function round3(n: number): number {
   return Math.round(n * 1000) / 1000;
@@ -76,8 +79,13 @@ export function buildShots(
 }
 
 /** `shot_id` for a source's Nth shot: `s<sourceIndex:3>-<shotIndex:3>`, matching `ShotsIndexSchema`'s
- * `/^s\d{3}-\d{3}$/`. */
+ * `/^s\d{3}-\d{3}$/`. That regex only ever allows 3 digits per half, so an index above 999 (a source-item
+ * count or a shot-per-source count nobody expects to hit in practice) would silently produce an id the
+ * schema then rejects far from here -- caught immediately instead, with a clear reason. */
 export function shotId(sourceIndex: number, shotIndex: number): string {
+  if (sourceIndex > MAX_SHOT_ID_INDEX || shotIndex > MAX_SHOT_ID_INDEX) {
+    throw new HarnessError("CONFIG_INVALID", `shotId: index exceeds ${MAX_SHOT_ID_INDEX} (sourceIndex=${sourceIndex}, shotIndex=${shotIndex})`, { sourceIndex, shotIndex });
+  }
   const pad = (n: number) => String(n).padStart(3, "0");
   return `s${pad(sourceIndex)}-${pad(shotIndex)}`;
 }

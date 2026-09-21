@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isHarnessError } from "@harness/contracts";
 import { buildShots, shotId } from "../../src/media/scene.js";
 
 describe("buildShots", () => {
@@ -64,5 +65,16 @@ describe("shotId", () => {
     expect(shotId(0, 0)).toBe("s000-000");
     expect(shotId(2, 15)).toBe("s002-015");
     expect(shotId(12, 345)).toBe("s012-345");
+  });
+
+  it("throws CONFIG_INVALID when either index exceeds 999 (would overflow the 3-digit shot_id regex)", () => {
+    expect(shotId(999, 999)).toBe("s999-999");
+    expect(() => shotId(1000, 0)).toThrowError(/exceeds 999/);
+    expect(() => shotId(0, 1000)).toThrowError(/exceeds 999/);
+    try {
+      shotId(1000, 0);
+    } catch (e) {
+      expect(isHarnessError(e, "CONFIG_INVALID")).toBe(true);
+    }
   });
 });
