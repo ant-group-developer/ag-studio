@@ -61,6 +61,16 @@ function makeClipSet(ws: string): Input {
   return { artifact_id: "a_clips", checksum: "sha256:" + "0".repeat(64), path: "input/clips", type: "clip_set", kind: "directory" };
 }
 
+/** A shoot that mixes sound and silence: `000.mp4` has an audio track, `001.mp4` has none -- the headline 5A
+ * scenario, and the one a single `hasAudioStream(clips[0])` decision used to get wrong for half the clips. */
+function makeMixedClipSet(ws: string, o: { firstHasAudio: boolean }): Input {
+  const dir = join(ws, "input", "clips");
+  mkdirSync(dir, { recursive: true });
+  makeVideo(join(dir, "000.mp4"), { seconds: 2, audio: o.firstHasAudio });
+  makeVideo(join(dir, "001.mp4"), { seconds: 2, audio: !o.firstHasAudio });
+  return { artifact_id: "a_clips", checksum: "sha256:" + "0".repeat(64), path: "input/clips", type: "clip_set", kind: "directory" };
+}
+
 function writeJsonFile(ws: string, relPath: string, value: unknown): Input {
   const abs = join(ws, relPath);
   mkdirSync(join(abs, ".."), { recursive: true });
@@ -146,4 +156,24 @@ describe.skipIf(!hasFfmpeg())("assemble.mjs (sub-project 5A task 8: timeline-awa
     // quieter than "original", though not necessarily exactly -12dB once amix/apad are in the mix.
     expect(peakNone!).toBeLessThan(peakOriginal! - 3);
   });
+
+  // Final-review Important 7: `hasAudioStream(clips[0])` decided for the whole shoot. With the first clip
+  // silent, `voice: original` fell through to the silent-track-only branch and threw away the audio of every
+  // other clip; with it not silent, `[0:a]` referred to a concat stream only some inputs contribute to. Both
+  // orders now work, because each clip gets its own audio stream before concatenation.
+  for (const firstHasAudio of [true, false]) {
+    it(`timeline.voice original on a shoot mixing clips with and without audio (first clip ${firstHasAudio ? "has" : "has no"} audio)`, () => {
+      const ws = tmpWorkspace();
+      const clipSet = makeMixedClipSet(ws, { firstHasAudio });
+      const timeline = writeJsonFile(ws, "input/timeline/timeline.json", { schema_version: "harness.timeline/v1", voice: "original", language: "vi", total_seconds: 4, video: [], narration: [], speech: [] });
+      const r = run(ws, [clipSet, timeline]);
+      expect(r.status, `stderr: ${r.err}`).toBe(0);
+      const outPath = join(ws, "output", "full-episode.mp4");
+      expect(hasAudioStream(outPath)).toBe(true);
+      // both clips are in the picture: a dropped clip would halve this
+      expect(probeDuration(outPath)).toBeGreaterThan(3.5);
+      // the clip that DOES carry sound is audible in the mix, not silenced by its silent neighbour
+      expect(peakVolumeDb(outPath)).toBeGreaterThan(-60);
+    });
+  }
 });

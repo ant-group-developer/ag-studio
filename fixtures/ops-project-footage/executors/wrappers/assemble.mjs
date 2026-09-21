@@ -1,6 +1,6 @@
 import { start } from "@harness/script-sdk";
 import { dirname, join } from "node:path";
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { ffmpeg, hasAudioStream } from "./_media.mjs";
 
 const ctx = await start();
@@ -25,10 +25,33 @@ const outPath = join(ctx.workspace, "output", "full-episode.mp4");
 // original code path -- see the `else` branch.
 if (ctx.hasInput("timeline")) {
   const timeline = JSON.parse(readFileSync(ctx.input("timeline"), "utf8"));
-  const clipHasAudio = clips.length > 0 && hasAudioStream(clips[0]);
+
+  // Sub-project 5A final review (Important 7): a shoot that MIXES clips with and without sound is the
+  // headline 5A scenario, and `hasAudioStream(clips[0])` decided for the whole programme -- with the first
+  // clip silent, every later clip's audio was dropped; with it not silent, `[0:a]` referred to a concat
+  // stream that only some inputs contribute to. Give every clip its own audio stream BEFORE concatenation
+  // (a silent `anullsrc` track for the ones that have none), so `[0:a]` is well defined for all of them.
+  const preparedDir = join(ctx.workspace, "concat-audio");
+  mkdirSync(preparedDir, { recursive: true });
+  const prepared = clips.map((clip, i) => {
+    if (hasAudioStream(clip)) return clip;
+    const padded = join(preparedDir, `${String(i).padStart(3, "0")}.mp4`);
+    ffmpeg([
+      "-y", "-i", clip,
+      "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+      "-map", "0:v:0", "-map", "1:a:0", "-shortest",
+      "-c:v", "copy", "-c:a", "aac", padded,
+    ]);
+    ctx.log.info("assemble: clip had no audio stream; padded it with silence before concatenation", { clip });
+    return padded;
+  });
+  const preparedConcatPath = join(ctx.workspace, "concat-prepared.txt");
+  writeFileSync(preparedConcatPath, prepared.map((p) => `file '${p.split("\\").join("/")}'`).join("\n") + "\n");
+
+  const clipHasAudio = prepared.length > 0;
   const totalSeconds = Math.max(0.1, Number(timeline.total_seconds) || 0.1);
 
-  const args = ["-y", "-f", "concat", "-safe", "0", "-i", concatPath]; // input 0: concatenated clip video(+audio)
+  const args = ["-y", "-f", "concat", "-safe", "0", "-i", preparedConcatPath]; // input 0: concatenated clip video+audio
   // A guaranteed-silent track the length of the whole programme: mixed into every branch below so the
   // output always has an audio stream, even when the source clips have none or `voice: tts` has no lines.
   args.push("-f", "lavfi", "-i", `anullsrc=r=44100:cl=stereo:d=${totalSeconds.toFixed(3)}`);

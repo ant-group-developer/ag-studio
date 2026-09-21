@@ -31,6 +31,15 @@ function ffprobeDuration(path: string): number {
   return Number(r.stdout.trim());
 }
 
+/** `ffmpeg -i <path> -af volumedetect -f null -`, parsing `max_volume: <n> dB` -- the same technique
+ * `media-checkers.ts`'s `peakVolumeDb` and `assemble-wrapper.test.ts` use. A file with an audio stream that
+ * is silent end to end reports about -91 dB. */
+function peakVolumeDb(path: string): number | null {
+  const r = spawnSync(process.env.FFMPEG_PATH ?? "ffmpeg", ["-i", path, "-af", "volumedetect", "-f", "null", "-"], { encoding: "utf8" });
+  const m = (r.stderr ?? "").match(/max_volume:\s*(-?\d+(?:\.\d+)?)\s*dB/);
+  return m ? Number(m[1]) : null;
+}
+
 function ffprobeHasAudio(path: string): boolean {
   const bin = process.env.FFPROBE_PATH ?? "ffprobe";
   const r = spawnSync(bin, ["-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "default=nw=1:nk=1", path], { encoding: "utf8" });
@@ -182,6 +191,43 @@ describe.skipIf(!hasFfmpeg())("studio media: library-production@1.2.0 end to end
     const timing = readJson<NarrationTiming>(artifactPath(world.studio, runId, "media-tts", "narration_timing"));
     expect(timing.lines).toEqual([]);
     expect(ffprobeHasAudio(artifactPath(world.studio, runId, "assemble", "episode_video"))).toBe(true);
+  }, 300_000);
+
+  // Final-review Important 7: a shoot that MIXES clips with sound and clips without is the headline 5A
+  // scenario, and `assemble.mjs` -- the wrapper the go-live runbook tells operators to copy -- decided for
+  // the whole programme from `hasAudioStream(clips[0])`. With the first clip silent, `voice: original` fell
+  // through to the silent-track-only branch and threw away every other clip's audio.
+  it("finishes a voice: original episode from a shoot that mixes clips with and without audio", () => {
+    const world = freshLibraryWorld({ media: false, media1_2: true });
+    const env = { FAKE_REVIEW_MODE: "approve" };
+
+    const styleId = newId("edit_style");
+    writeActiveStyle(world.lib, styleId);
+    // clip 0 silent, clip 1 with sound: the order that used to silence the whole episode
+    const sourceIds = ingestShoot(world, "shoot-a", 2, { withAudio: true, silentClips: [0] });
+
+    const requestId = requestCreate(world, {
+      topic: "Nửa có tiếng, nửa không", style: styleId, sourceHint: "shoot-a",
+      voice: "original", duration: [1, 120], language: "en",
+    });
+
+    studioWorkerUntil(world, () => requestStatus(world, requestId).status === "fulfilled", 300, env);
+    const fulfilled = requestStatus(world, requestId);
+    expect(fulfilled.status, JSON.stringify(fulfilled)).toBe("fulfilled");
+
+    const manifest = readJson<LibraryItem>(join(world.lib, "items", fulfilled.item_ids[0]!, "manifest.json"));
+    expect(manifest.status).toBe("approved");
+    const runId = manifest.lineage.run_id;
+    const final = status(world.studio, runId);
+    expect(final.run.state, why(world.studio, runId)).toBe("SUCCEEDED");
+
+    // the shoot really was mixed, and the finished episode really does carry sound
+    const shots = readJson<ShotsIndex>(artifactPath(world.studio, runId, "media-index", "shots"));
+    expect(shots.sources.map((s) => s.source_id).sort()).toEqual([...sourceIds].sort());
+    expect(shots.sources.map((s) => s.has_audio).sort()).toEqual([false, true]);
+    const episode = artifactPath(world.studio, runId, "assemble", "episode_video");
+    expect(ffprobeHasAudio(episode)).toBe(true);
+    expect(peakVolumeDb(episode), "the episode is entirely silent: the clip that had sound was dropped").toBeGreaterThan(-60);
   }, 300_000);
 
   // Final-review Critical 1, the same shape as the `voice: none` case above: an episode whose fitted duration

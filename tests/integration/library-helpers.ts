@@ -338,10 +338,13 @@ function collectionSeed(collection: string): number {
  * Every clip differs in duration, colours and audio tone, so none of them dedupe against another by checksum.
  * `withAudio: false` produces video-only clips (`has_audio: false`, which `media-transcribe` skips);
  * `audioSeconds` shortens the tone so the clip ends in real silence -- the tail `voice: original` cut
- * snapping needs something to snap to (see `makeSceneClip`).
+ * snapping needs something to snap to (see `makeSceneClip`). `silentClips` names the clip indexes that get
+ * NO audio track while the rest do: a shoot that mixes sound and silence, which is the headline 5A scenario
+ * and the one `assemble.mjs` used to decide for the whole shoot from its first clip alone.
  */
-export function ingestShoot(world: LibraryWorld, collection: string, n: number, o: { withAudio?: boolean; audioSeconds?: number; language?: string } = {}): string[] {
+export function ingestShoot(world: LibraryWorld, collection: string, n: number, o: { withAudio?: boolean; audioSeconds?: number; language?: string; silentClips?: number[] } = {}): string[] {
   const withAudio = o.withAudio ?? true;
+  const silent = new Set(o.silentClips ?? []);
   const seed = collectionSeed(collection);
   const dir = mkdtempSync(join(tmpdir(), `${collection}-`));
   for (let i = 0; i < n; i++) {
@@ -350,7 +353,7 @@ export function ingestShoot(world: LibraryWorld, collection: string, n: number, 
       seconds,
       colors: SHOOT_COLORS[(seed + i) % SHOOT_COLORS.length]!,
       size: `${320 + 2 * (seed % 8)}x180`,
-      audio: withAudio ? { frequency: 300 + ((seed + i * 7) % 23) * 37, ...(o.audioSeconds !== undefined ? { seconds: Math.min(o.audioSeconds, seconds) } : {}) } : null,
+      audio: withAudio && !silent.has(i) ? { frequency: 300 + ((seed + i * 7) % 23) * 37, ...(o.audioSeconds !== undefined ? { seconds: Math.min(o.audioSeconds, seconds) } : {}) } : null,
     });
   }
   const r = cli(world.studio, ["source", "ingest", dir, "--collection", collection, "--rights", "cleared", "--language", o.language ?? "en", "--json"]);
