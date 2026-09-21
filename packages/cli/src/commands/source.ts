@@ -1,12 +1,25 @@
+import { existsSync, statSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
 import { HarnessError } from "@harness/contracts";
 import { syncSources } from "@harness/core";
 import { print, withContext } from "./shared.js";
 export function registerSource(program: Command): void {
   const source = program.command("source").description("source catalog");
-  source.command("ingest <path>").option("--collection <name>", "collection", "main").option("--rights <status>", "unknown|cleared|restricted", "unknown").option("--language <code>").option("--json", "machine output", false)
-    .description("register a raw source file (deduplicated by checksum)").action(async (path: string, o, cmd) => {
+  source.command("ingest <path>").option("--collection <name>", "collection", "main").option("--rights <status>", "unknown|cleared|restricted", "unknown").option("--language <code>").option("--recursive", "descend into subdirectories (directory <path> only)", false).option("--json", "machine output", false)
+    .description("register a raw source file, or every video file under a directory (deduplicated by checksum)").action(async (path: string, o, cmd) => {
       await withContext(cmd, {}, async (ctx) => {
+        if (existsSync(path) && statSync(path).isDirectory()) {
+          const r = await ctx.catalog.ingestDirectory({ dir: path, recursive: Boolean(o.recursive), collection: o.collection, rights_status: o.rights, language: o.language ?? null });
+          const ingested = r.ingested.map((i) => ({ source_id: i.source.source_id, path: fileURLToPath(i.source.original_uri), created: i.created }));
+          print(o.json, { ingested, skipped: r.skipped }, () =>
+            [
+              ...ingested.map((i) => `${i.source_id} ${i.created ? "created" : "already registered"} ${i.path}`),
+              ...r.skipped.map((s) => `SKIPPED ${s.path}: ${s.why}`),
+            ].join("\n") || "no video files found",
+          );
+          return;
+        }
         const r = await ctx.catalog.ingest({ path, collection: o.collection, rights_status: o.rights, language: o.language ?? null });
         print(o.json, { source_id: r.source.source_id, created: r.created, checksum: r.source.checksum, uri: r.source.uri }, () => `${r.source.source_id} ${r.created ? "created" : "already registered"} ${r.source.checksum.slice(0, 19)}`);
       });

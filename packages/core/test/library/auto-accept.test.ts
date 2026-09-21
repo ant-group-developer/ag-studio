@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { newId, type EditStyle, type Run } from "@harness/contracts";
-import { autoAccept, createRequest, HARNESS_ROOT, LibraryFs, loadHarnessConfig, loadProfile, loadWorkflow, NullMediaProber, pickSource, Planner, SourceCatalog, type AutoAcceptConfig, type AutoAcceptDeps, type AutoAcceptLogger } from "../../src/index.js";
+import { autoAcceptPatterns, newId, type EditStyle, type Run } from "@harness/contracts";
+import { autoAccept, createRequest, HARNESS_ROOT, LibraryFs, loadHarnessConfig, loadProfile, loadWorkflow, NullMediaProber, Planner, SourceCatalog, type AutoAcceptConfig, type AutoAcceptDeps, type AutoAcceptLogger } from "../../src/index.js";
 import { openTempStore } from "../helpers.js";
 
 const SHA = "sha256:" + "a".repeat(64);
@@ -35,7 +35,7 @@ function world() {
 }
 
 function baseConfig(overrides: Partial<AutoAcceptConfig> = {}): AutoAcceptConfig {
-  return { enabled: true, source_collection: "main", max_replans: 2, max_concurrent_runs: 5, ...overrides };
+  return { enabled: true, source_collection: "main", max_replans: 2, max_concurrent_runs: 5, max_sources: 40, ...overrides };
 }
 
 function depsFor(w: ReturnType<typeof world>, config: AutoAcceptConfig): AutoAcceptDeps {
@@ -43,7 +43,7 @@ function depsFor(w: ReturnType<typeof world>, config: AutoAcceptConfig): AutoAcc
     store: w.store, fs: w.studio, catalog: w.catalog, planner: w.planner, clock: w.clock, harness: w.harness,
     projectId: "project-studio", portfolioId: "portfolio-studio", profile: w.profile,
     workflows: (ref: string) => loadWorkflow(HARNESS_ROOT, ref), executorVersionFor: () => "v1",
-    config, logger: silentLogger,
+    config, patterns: autoAcceptPatterns(config), maxSources: config.max_sources, logger: silentLogger,
   };
 }
 
@@ -103,7 +103,11 @@ describe("autoAccept", () => {
     expect(run?.state).toBe("READY");
     const content = w.store.getContentItem(run!.content_id!);
     expect(content?.library_brief?.request_id).toBe(request.request_id);
-    expect(content?.source_ids).toEqual([accepted.source_id]);
+    // sub-project 5A: a request with no hint picks the *whole* matching collection, not one clip -- this
+    // fixture ingests two sources into "main", so both end up on the content; `accepted.source_id` is just
+    // the first of them (picked[0], report-level convenience field for events/logging).
+    expect(content?.source_ids).toHaveLength(2);
+    expect(content?.source_ids).toContain(accepted.source_id);
 
     const events = w.store.listEvents({ run_id: accepted.run_id });
     const accepted_event = events.find((e) => e.event_type === "request.auto_accepted");
@@ -329,28 +333,5 @@ describe("autoAccept", () => {
     const contentItems = w.store.listContentItems();
     expect(contentItems.filter((c) => c.library_brief?.request_id === first.request_id)).toEqual([]);
     expect(contentItems.filter((c) => c.library_brief?.request_id === second.request_id)).toHaveLength(1);
-  });
-});
-
-describe("pickSource", () => {
-  it("skips a source already busy with another open request", async () => {
-    const w = world();
-    const a = await ingest(w, "clip one");
-    w.clock.advance(1);
-    const b = await ingest(w, "clip two");
-    const request = createOpenRequest(w, { style_id: newId("edit_style") });
-    const picked = pickSource(w.store, { request, defaultCollection: "main", busySourceIds: new Set([b.source_id]) });
-    // newest first: "clip two" (b) was ingested after "clip one" (a), so without the busy set it would win
-    expect(picked?.source_id).toBe(a.source_id);
-  });
-
-  // fix-round-1 (cheap fold-in): an explicit source_hint.source_ids must not hand back a rights-restricted
-  // source just because it was named directly.
-  it("excludes a rights-restricted source even when named explicitly via source_hint.source_ids", async () => {
-    const w = world();
-    const restricted = await ingest(w, "clip restricted", "main", "restricted");
-    const request = createOpenRequest(w, { style_id: newId("edit_style"), source_hint: { source_ids: [restricted.source_id] } });
-    const picked = pickSource(w.store, { request, defaultCollection: "main", busySourceIds: new Set() });
-    expect(picked).toBeUndefined();
   });
 });

@@ -1,16 +1,41 @@
-import { copyFileSync, existsSync, linkSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, linkSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { HarnessError, newId, type Clock, type ContentItem, type ContentVariant, type LibraryBrief, type MediaProber, type ProductionProfile, type SourceItem, type StateStore } from "@harness/contracts";
 import { canonicalDigest, sha256File } from "../artifacts/checksum.js";
 
 export interface IngestInput { path: string; collection?: string; rights_status?: "unknown" | "cleared" | "restricted"; language?: string | null }
+export interface IngestDirectoryInput { dir: string; recursive: boolean; collection?: string; rights_status?: "unknown" | "cleared" | "restricted"; language?: string | null }
+export interface IngestDirectoryReport {
+  ingested: { source: SourceItem; created: boolean }[];
+  skipped: { path: string; why: string }[];
+}
 export interface VerifyRow { source_id: string; ok: boolean; reason: string | null }
 
 export const MIME_BY_EXT: Record<string, string> = {
-  ".mp4": "video/mp4", ".mov": "video/quicktime", ".mkv": "video/x-matroska", ".wav": "audio/wav", ".mp3": "audio/mpeg",
+  ".mp4": "video/mp4", ".mov": "video/quicktime", ".mkv": "video/x-matroska", ".m4v": "video/x-m4v", ".avi": "video/x-msvideo", ".webm": "video/webm",
+  ".wav": "audio/wav", ".mp3": "audio/mpeg",
   ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".txt": "text/plain", ".md": "text/markdown", ".json": "application/json", ".srt": "text/plain",
 };
+
+/** Video extensions `ingestDirectory` picks up (task-7 brief, sub-project 5A): case-insensitive. */
+const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".mkv", ".m4v", ".avi", ".webm"]);
+
+/** Depth-first listing of every video file under `dir`: hidden entries (name starts with `.`) and symlinks
+ * (files or directories -- "not followed", task-7 brief) are skipped entirely; a non-video file is ignored
+ * silently; a subdirectory is only descended into when `recursive`. Sorted by `basename` for a deterministic
+ * ingest order. */
+function listVideoFiles(dir: string, recursive: boolean): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name.startsWith(".")) continue;
+    if (entry.isSymbolicLink()) continue;
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) { if (recursive) out.push(...listVideoFiles(full, recursive)); continue; }
+    if (entry.isFile() && VIDEO_EXTENSIONS.has(extname(entry.name).toLowerCase())) out.push(full);
+  }
+  return out.sort((a, b) => (basename(a) < basename(b) ? -1 : basename(a) > basename(b) ? 1 : 0));
+}
 
 export function mimeTypeForPath(path: string): string {
   return MIME_BY_EXT[extname(path).toLowerCase()] ?? "application/octet-stream";
@@ -55,6 +80,31 @@ export class SourceCatalog {
       throw e;
     }
     return { source, created: true };
+  }
+
+  /** Ingests every video file under a directory (task-7 brief, sub-project 5A: a shoot is a directory of many
+   * clips, registered together into one kho `collection`). A file that fails to ingest (unreadable, vanished
+   * between listing and hashing, …) is recorded in `skipped` with its error message and does not stop the
+   * rest of the walk; an empty directory is not an error. */
+  async ingestDirectory(p: IngestDirectoryInput): Promise<IngestDirectoryReport> {
+    const dir = resolve(p.dir);
+    if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new HarnessError("NOT_FOUND", `directory not found: ${dir}`, { path: dir });
+    const ingested: { source: SourceItem; created: boolean }[] = [];
+    const skipped: { path: string; why: string }[] = [];
+    for (const file of listVideoFiles(dir, p.recursive)) {
+      try {
+        const r = await this.ingest({
+          path: file,
+          ...(p.collection !== undefined ? { collection: p.collection } : {}),
+          ...(p.rights_status !== undefined ? { rights_status: p.rights_status } : {}),
+          ...(p.language !== undefined ? { language: p.language } : {}),
+        });
+        ingested.push(r);
+      } catch (e) {
+        skipped.push({ path: file, why: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    return { ingested, skipped };
   }
 
   async verify(): Promise<VerifyRow[]> {

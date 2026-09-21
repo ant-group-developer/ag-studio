@@ -1,0 +1,234 @@
+import { describe, expect, it } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
+import { autoAcceptPatterns, newId, type EditStyle } from "@harness/contracts";
+import { autoAccept, createRequest, HARNESS_ROOT, LibraryFs, loadHarnessConfig, loadProfile, loadWorkflow, matchCollection, NullMediaProber, pickSources, Planner, SourceCatalog, type AutoAcceptConfig, type AutoAcceptDeps, type AutoAcceptLogger } from "../../src/index.js";
+import { openTempStore } from "../helpers.js";
+
+function makeStyle(id: string, status: EditStyle["status"] = "active"): EditStyle {
+  return {
+    schema_version: "harness.edit-style/v1", style_id: id, revision: 1, name: "Test style", status,
+    learned_from: [],
+    params: {
+      cut_rhythm: "medium", shot_seconds: [2, 5], transitions: [], text_overlay: { style: "bold", density: "low" },
+      subtitles: "burn-in", music: { mood: "upbeat", ducking: true }, opening: { seconds: 3, structure: "hook" }, aspect_ratio: "16:9", pace_notes: "",
+    },
+    evidence: [], created_at: "2026-09-14T00:00:00.000Z", updated_at: "2026-09-14T00:00:00.000Z",
+  };
+}
+
+const silentLogger: AutoAcceptLogger = { info: () => {}, warn: () => {}, error: () => {} };
+
+function world() {
+  const root = mkdtempSync(join(tmpdir(), "library-auto-accept-collections-"));
+  const studio = new LibraryFs({ root, role: "studio" });
+  const channel = new LibraryFs({ root, role: "channel" });
+  const { store, dir, clock } = openTempStore();
+  const catalog = new SourceCatalog({ store, dataRoot: dir, prober: new NullMediaProber(), clock, materialize: "copy" });
+  const planner = new Planner(store);
+  const profile = loadProfile(HARNESS_ROOT, "studio");
+  const harness = loadHarnessConfig(HARNESS_ROOT);
+  return { root, studio, channel, store, dir, clock, catalog, planner, profile, harness };
+}
+
+function baseConfig(overrides: Partial<AutoAcceptConfig> = {}): AutoAcceptConfig {
+  return { enabled: true, source_collection: "main", max_replans: 2, max_concurrent_runs: 5, max_sources: 40, ...overrides };
+}
+
+function depsFor(w: ReturnType<typeof world>, config: AutoAcceptConfig): AutoAcceptDeps {
+  return {
+    store: w.store, fs: w.studio, catalog: w.catalog, planner: w.planner, clock: w.clock, harness: w.harness,
+    projectId: "project-studio", portfolioId: "portfolio-studio", profile: w.profile,
+    workflows: (ref: string) => loadWorkflow(HARNESS_ROOT, ref), executorVersionFor: () => "v1",
+    config, patterns: autoAcceptPatterns(config), maxSources: config.max_sources, logger: silentLogger,
+  };
+}
+
+/** Ingests a file under a controlled basename (unlike the random-ULID names used elsewhere) so filename-order
+ * assertions are deterministic. Callers within one test must pass distinct `filename`s -- `w.dir` is a fresh
+ * temp directory per `world()`, so there is no cross-test collision risk. */
+async function ingestNamed(
+  w: ReturnType<typeof world>, filename: string, content: string, collection = "main",
+  rights_status: "unknown" | "cleared" | "restricted" = "cleared",
+) {
+  const path = join(w.dir, filename);
+  writeFileSync(path, content);
+  const { source } = await w.catalog.ingest({ path, collection, rights_status });
+  return source;
+}
+
+function createOpenRequest(w: ReturnType<typeof world>, p: { style_id?: string; source_hint?: { source_ids?: string[]; collection?: string } } = {}) {
+  return createRequest({ store: w.store, fs: w.channel, clock: w.clock }, {
+    requested_by: { portfolio_id: "portfolio-channel" }, topic: "A whole shoot",
+    ...(p.style_id ? { style_id: p.style_id } : {}),
+    ...(p.source_hint ? { source_hint: p.source_hint } : {}),
+  });
+}
+
+describe("matchCollection", () => {
+  it("shoot-* matches shoot-2026-09-21 but not main", () => {
+    expect(matchCollection("shoot-2026-09-21", "shoot-*")).toBe(true);
+    expect(matchCollection("main", "shoot-*")).toBe(false);
+  });
+
+  it("a plain pattern with no * matches only the exact name", () => {
+    expect(matchCollection("main", "main")).toBe(true);
+    expect(matchCollection("mainx", "main")).toBe(false);
+    expect(matchCollection("xmain", "main")).toBe(false);
+  });
+});
+
+describe("pickSources", () => {
+  it("hint.source_ids: drops restricted sources and keeps hint order (not filename/ingestion order)", async () => {
+    const w = world();
+    const a = await ingestNamed(w, "b-clip.mp4", "content a");
+    const restricted = await ingestNamed(w, "a-clip.mp4", "content restricted", "main", "restricted");
+    const b = await ingestNamed(w, "c-clip.mp4", "content b");
+    const request = createOpenRequest(w, { source_hint: { source_ids: [b.source_id, restricted.source_id, a.source_id] } });
+    const picked = pickSources(w.store, { request, patterns: ["main"], maxSources: 40, busyCollections: new Set(), usedCollections: new Set() });
+    expect(picked.map((s) => s.source_id)).toEqual([b.source_id, a.source_id]);
+  });
+
+  it("hint.collection: returns every non-restricted source of that collection, sorted by filename, ignoring busy/used/patterns", async () => {
+    const w = world();
+    await ingestNamed(w, "z.mp4", "c1", "shoot-a");
+    await ingestNamed(w, "a.mp4", "c2", "shoot-a");
+    await ingestNamed(w, "m.mp4", "c3", "shoot-a", "restricted");
+    await ingestNamed(w, "b.mp4", "c4", "other-collection");
+    const request = createOpenRequest(w, { source_hint: { collection: "shoot-a" } });
+    const picked = pickSources(w.store, { request, patterns: ["nope-*"], maxSources: 40, busyCollections: new Set(["shoot-a"]), usedCollections: new Set() });
+    expect(picked.map((s) => basename(s.original_uri))).toEqual(["a.mp4", "z.mp4"]);
+  });
+
+  it("no hint: picks the pattern-matching collection with the newest ingested_at, sorted by filename", async () => {
+    const w = world();
+    await ingestNamed(w, "old1.mp4", "c1", "shoot-old");
+    w.clock.advance(10);
+    await ingestNamed(w, "b.mp4", "c2", "shoot-new");
+    await ingestNamed(w, "a.mp4", "c3", "shoot-new");
+    const request = createOpenRequest(w);
+    const picked = pickSources(w.store, { request, patterns: ["shoot-*"], maxSources: 40, busyCollections: new Set(), usedCollections: new Set() });
+    expect(picked.map((s) => s.collection)).toEqual(["shoot-new", "shoot-new"]);
+    expect(picked.map((s) => basename(s.original_uri))).toEqual(["a.mp4", "b.mp4"]);
+  });
+
+  it("no hint: skips a busy collection even though it is the newest", async () => {
+    const w = world();
+    const old = await ingestNamed(w, "old.mp4", "old content", "shoot-a");
+    w.clock.advance(10);
+    await ingestNamed(w, "new.mp4", "new content", "shoot-b");
+    const request = createOpenRequest(w);
+    const picked = pickSources(w.store, { request, patterns: ["shoot-*"], maxSources: 40, busyCollections: new Set(["shoot-b"]), usedCollections: new Set() });
+    expect(picked.map((s) => s.source_id)).toEqual([old.source_id]);
+  });
+
+  it("no hint: skips a collection that already has a SUCCEEDED run", async () => {
+    const w = world();
+    const old = await ingestNamed(w, "old.mp4", "old content", "shoot-a");
+    w.clock.advance(10);
+    await ingestNamed(w, "new.mp4", "new content", "shoot-b");
+    const request = createOpenRequest(w);
+    const picked = pickSources(w.store, { request, patterns: ["shoot-*"], maxSources: 40, busyCollections: new Set(), usedCollections: new Set(["shoot-b"]) });
+    expect(picked.map((s) => s.source_id)).toEqual([old.source_id]);
+  });
+
+  it("caps the picked sources at maxSources", async () => {
+    const w = world();
+    await ingestNamed(w, "a.mp4", "1", "shoot-a");
+    await ingestNamed(w, "b.mp4", "2", "shoot-a");
+    await ingestNamed(w, "c.mp4", "3", "shoot-a");
+    const request = createOpenRequest(w);
+    const picked = pickSources(w.store, { request, patterns: ["shoot-*"], maxSources: 2, busyCollections: new Set(), usedCollections: new Set() });
+    expect(picked).toHaveLength(2);
+  });
+
+  it("breaks a tie in newest ingested_at by collection name ascending", async () => {
+    const w = world();
+    await ingestNamed(w, "b.mp4", "1", "shoot-b");
+    await ingestNamed(w, "a.mp4", "2", "shoot-a"); // same clock tick: no advance() between the two ingests
+    const request = createOpenRequest(w);
+    const picked = pickSources(w.store, { request, patterns: ["shoot-*"], maxSources: 40, busyCollections: new Set(), usedCollections: new Set() });
+    expect(picked[0]!.collection).toBe("shoot-a");
+  });
+
+  it("returns [] when nothing matches the patterns", async () => {
+    const w = world();
+    await ingestNamed(w, "a.mp4", "1", "main");
+    const request = createOpenRequest(w);
+    const picked = pickSources(w.store, { request, patterns: ["shoot-*"], maxSources: 40, busyCollections: new Set(), usedCollections: new Set() });
+    expect(picked).toEqual([]);
+  });
+});
+
+describe("autoAccept (collections, sub-project 5A)", () => {
+  it("creates a content item carrying every usable source of the auto-picked shoot collection", async () => {
+    const w = world();
+    const styleId = newId("edit_style");
+    w.store.upsertEditStyle(makeStyle(styleId));
+    await ingestNamed(w, "a.mp4", "1", "shoot-2026-09-21");
+    await ingestNamed(w, "b.mp4", "2", "shoot-2026-09-21");
+    await ingestNamed(w, "c.mp4", "3", "shoot-2026-09-21", "restricted"); // excluded: rights-restricted
+    const request = createOpenRequest(w, { style_id: styleId });
+
+    const report = await autoAccept(depsFor(w, baseConfig({ source_collections: ["shoot-*"] })));
+
+    expect(report.accepted).toHaveLength(1);
+    const run = w.store.getRun(report.accepted[0]!.run_id)!;
+    const content = w.store.getContentItem(run.content_id!)!;
+    expect(content.source_ids).toHaveLength(2);
+    expect(content.library_brief?.request_id).toBe(request.request_id);
+  });
+
+  it("a legacy config with only source_collection: main still auto-accepts a single-source request the same as before", async () => {
+    const w = world();
+    const styleId = newId("edit_style");
+    w.store.upsertEditStyle(makeStyle(styleId));
+    await ingestNamed(w, "only.mp4", "1", "main");
+    const request = createOpenRequest(w, { style_id: styleId });
+
+    const report = await autoAccept(depsFor(w, baseConfig()));
+
+    expect(report.accepted).toHaveLength(1);
+    const run = w.store.getRun(report.accepted[0]!.run_id)!;
+    const content = w.store.getContentItem(run.content_id!)!;
+    expect(content.source_ids).toHaveLength(1);
+  });
+
+  it("within one sweep, a second request does not repick the collection just accepted for the first", async () => {
+    const w = world();
+    const styleId = newId("edit_style");
+    w.store.upsertEditStyle(makeStyle(styleId));
+    await ingestNamed(w, "a.mp4", "1", "shoot-2026-09-21");
+    const first = createOpenRequest(w, { style_id: styleId });
+    w.clock.advance(1);
+    const second = createOpenRequest(w, { style_id: styleId });
+
+    const report = await autoAccept(depsFor(w, baseConfig({ source_collections: ["shoot-*"], max_concurrent_runs: 5 })));
+
+    expect(report.accepted).toHaveLength(1);
+    expect(report.accepted[0]!.request_id).toBe(first.request_id);
+    expect(report.skipped).toEqual([{ request_id: second.request_id, reason: "no-source" }]);
+  });
+
+  it("across polls, a second request does not pick a collection while the first run on it is still active", async () => {
+    const w = world();
+    const styleId = newId("edit_style");
+    w.store.upsertEditStyle(makeStyle(styleId));
+    await ingestNamed(w, "a.mp4", "1", "shoot-2026-09-21");
+    const first = createOpenRequest(w, { style_id: styleId });
+    const cfg = baseConfig({ source_collections: ["shoot-*"], max_concurrent_runs: 5 });
+
+    const firstReport = await autoAccept(depsFor(w, cfg));
+    expect(firstReport.accepted).toHaveLength(1);
+    expect(w.store.getRun(firstReport.accepted[0]!.run_id)?.state).toBe("READY"); // non-terminal: still busy
+
+    w.clock.advance(1);
+    const second = createOpenRequest(w, { style_id: styleId }); // the only matching collection is now busy
+    const secondReport = await autoAccept(depsFor(w, cfg));
+    expect(secondReport.accepted).toEqual([]);
+    // `first` is also re-evaluated on this second poll (autoAccept never claims a request) and skips as
+    // "run-active" again -- irrelevant noise for this test, which only cares about `second`.
+    expect(secondReport.skipped).toContainEqual({ request_id: second.request_id, reason: "no-source" });
+  });
+});

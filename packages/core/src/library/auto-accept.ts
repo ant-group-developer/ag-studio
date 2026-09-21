@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import type { Clock, ContentRequest, ExecutorRef, HarnessConfig, LibraryBrief, ProductionProfile, SourceItem, StageDefinition, StateStore } from "@harness/contracts";
 import type { Planner } from "../orchestration/planner.js";
 import type { LoadedWorkflow } from "../orchestration/registry.js";
@@ -6,8 +7,18 @@ import { isTerminal } from "../state/transitions.js";
 import type { LibraryFs } from "./files.js";
 import { startPlannedRun } from "./start-run.js";
 
-/** `project.yaml`'s `library.auto_accept` (spec: sub-project 4). */
-export interface AutoAcceptConfig { enabled: boolean; source_collection: string; max_replans: number; max_concurrent_runs: number }
+/** `project.yaml`'s `library.auto_accept` (spec: sub-project 4, extended sub-project 5A with `source_collections`
+ * and `max_sources` -- see `autoAcceptSchema`/`autoAcceptPatterns` in `@harness/contracts`). */
+export interface AutoAcceptConfig {
+  enabled: boolean;
+  source_collection: string;
+  // `| undefined` alongside the `?` matches zod's own `.optional()` output type (exactOptionalPropertyTypes):
+  // `project.library.auto_accept` (the actual runtime value this field is filled from) is typed that way.
+  source_collections?: string[] | undefined;
+  max_replans: number;
+  max_concurrent_runs: number;
+  max_sources: number;
+}
 
 /** Minimal logger shape `autoAccept` needs -- `HarnessLogger` satisfies it structurally. */
 export interface AutoAcceptLogger {
@@ -35,6 +46,11 @@ export interface AutoAcceptDeps {
   executorVersionFor: (ref: ExecutorRef) => string;
   requiresResourcesOverride?: (s: StageDefinition) => string[] | undefined;
   config: AutoAcceptConfig;
+  /** Collection-name glob patterns this sweep may draw sources from -- `autoAcceptPatterns(config)`
+   * (`@harness/contracts`), resolved once by the caller (composition root) rather than re-derived per pick. */
+  patterns: string[];
+  /** Cap on sources picked per accepted request -- `config.max_sources`. */
+  maxSources: number;
   logger: AutoAcceptLogger;
 }
 
@@ -84,43 +100,112 @@ export function finishedRunCounts(store: StateStore): Map<string, number> {
   return partitionRunsByRequest(store).finished;
 }
 
-/** Source ids already earmarked (via a `ContentItem.library_brief.request_id`) by an open or claimed
- * request, grouped by owning request so a caller can subtract "my own sources don't count as busy against
- * myself" per request without re-scanning `listContentItems()` for every request in the loop. */
-function busySourceIdsByRequest(store: StateStore): { global: Set<string>; own: Map<string, Set<string>> } {
-  const openOrClaimed = new Set(
-    [...store.listContentRequests({ status: "open" }), ...store.listContentRequests({ status: "claimed" })].map((r) => r.request_id),
-  );
-  const global = new Set<string>();
-  const own = new Map<string, Set<string>>();
+/** request_ids that already have at least one ContentItem carrying their `library_brief.request_id` -- the
+ * window between a ContentItem being created (by `harness library accept` or a prior `autoAccept` pass) and a
+ * run actually being enqueued for it. Only membership is needed (not which sources), unlike the old
+ * per-request busy-source bookkeeping this replaces (sub-project 5A moved busy/used tracking to the
+ * collection level -- see `busyAndUsedCollections` below). */
+function requestsWithContent(store: StateStore): Set<string> {
+  const s = new Set<string>();
   for (const item of store.listContentItems()) {
     const requestId = item.library_brief?.request_id;
-    if (!requestId) continue;
-    let mine = own.get(requestId);
-    if (!mine) { mine = new Set(); own.set(requestId, mine); }
-    for (const id of item.source_ids) mine.add(id);
-    if (openOrClaimed.has(requestId)) for (const id of item.source_ids) global.add(id);
+    if (requestId) s.add(requestId);
   }
-  return { global, own };
+  return s;
 }
 
-/** Picks the source an auto-accepted request should run against (spec §5). An explicit `source_hint.source_ids`
- * wins outright -- the first one that still exists and is not rights-restricted, `busySourceIds` does not apply
- * because the request named it directly. Otherwise the request's `source_hint.collection` (or
- * `defaultCollection`) is searched for the most recently ingested item that is not rights-restricted and not
- * already busy. */
-export function pickSource(store: StateStore, p: { request: ContentRequest; defaultCollection: string; busySourceIds: Set<string> }): SourceItem | undefined {
+/** Glob match for a kho collection name against one of `library.auto_accept.source_collections` (spec: sub-project
+ * 5A, `*` is the only wildcard). Every other regex metacharacter in `pattern` is escaped; `name` and `pattern`
+ * are compared as whole strings (anchored both ends). */
+export function matchCollection(name: string, pattern: string): boolean {
+  const body = pattern.split("*").map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[a-z0-9-]*");
+  return new RegExp(`^${body}$`).test(name);
+}
+
+function collectionsOfContent(store: StateStore, contentId: string | undefined): string[] {
+  if (!contentId) return [];
+  const content = store.getContentItem(contentId);
+  if (!content) return [];
+  const collections: string[] = [];
+  for (const id of content.source_ids) {
+    const source = store.getSourceItem(id);
+    if (source) collections.push(source.collection);
+  }
+  return collections;
+}
+
+/** Collections of every source referenced by a ContentItem with a run of a `library-production` workflow (any
+ * version): `busyCollections` for a still-non-terminal run, `usedCollections` for a `SUCCEEDED` one (spec:
+ * sub-project 5A §5). Computed once per `autoAccept` sweep, not re-scanned per request -- see the call site. */
+function busyAndUsedCollections(store: StateStore): { busyCollections: Set<string>; usedCollections: Set<string> } {
+  const busyCollections = new Set<string>();
+  const usedCollections = new Set<string>();
+  for (const run of store.listRuns({})) {
+    if (run.workflow_release.id !== "library-production") continue;
+    if (run.state === "SUCCEEDED") { for (const c of collectionsOfContent(store, run.content_id)) usedCollections.add(c); continue; }
+    if (!isTerminal("run", run.state)) { for (const c of collectionsOfContent(store, run.content_id)) busyCollections.add(c); }
+  }
+  return { busyCollections, usedCollections };
+}
+
+function sortByFilenameThenIngested(items: SourceItem[]): SourceItem[] {
+  return items.slice().sort((a, b) => {
+    const an = basename(a.original_uri);
+    const bn = basename(b.original_uri);
+    if (an !== bn) return an < bn ? -1 : 1;
+    return a.ingested_at < b.ingested_at ? -1 : a.ingested_at > b.ingested_at ? 1 : 0;
+  });
+}
+
+/**
+ * Picks the sources an auto-accepted request should run against (spec §5, extended sub-project 5A to pick a
+ * whole shoot collection instead of one clip):
+ *  1. `source_hint.source_ids` -- every one that still exists and is not rights-restricted, in hint order;
+ *     busy/used never applies (the request named these directly).
+ *  2. else `source_hint.collection` -- every non-restricted source of that collection, regardless of busy/used.
+ *  3. else the collections matching `patterns` that are not in `busyCollections`/`usedCollections` and have at
+ *     least one non-restricted source; the one with the greatest max(ingested_at) wins (ties broken by
+ *     collection name ascending).
+ * Cases 2/3 are sorted by `basename(original_uri)` then `ingested_at` and capped at `maxSources`; an empty
+ * result means the caller should skip the request as `"no-source"`.
+ */
+export function pickSources(store: StateStore, p: { request: ContentRequest; patterns: string[]; maxSources: number; busyCollections: Set<string>; usedCollections: Set<string> }): SourceItem[] {
   const hint = p.request.source_hint;
+
   if (hint?.source_ids?.length) {
+    const picked: SourceItem[] = [];
     for (const id of hint.source_ids) {
       const source = store.getSourceItem(id);
-      if (source && source.rights_status !== "restricted") return source;
+      if (source && source.rights_status !== "restricted") picked.push(source);
     }
-    return undefined;
+    return picked.slice(0, p.maxSources);
   }
-  const collection = hint?.collection ?? p.defaultCollection;
-  const candidates = store.listSourceItems({ collection }).filter((s) => s.rights_status !== "restricted" && !p.busySourceIds.has(s.source_id));
-  return candidates.sort((a, b) => (a.ingested_at < b.ingested_at ? 1 : a.ingested_at > b.ingested_at ? -1 : 0))[0];
+
+  if (hint?.collection) {
+    const candidates = store.listSourceItems({ collection: hint.collection }).filter((s) => s.rights_status !== "restricted");
+    return sortByFilenameThenIngested(candidates).slice(0, p.maxSources);
+  }
+
+  const byCollection = new Map<string, SourceItem[]>();
+  for (const source of store.listSourceItems()) {
+    if (source.rights_status === "restricted") continue;
+    if (p.busyCollections.has(source.collection) || p.usedCollections.has(source.collection)) continue;
+    if (!p.patterns.some((pattern) => matchCollection(source.collection, pattern))) continue;
+    let list = byCollection.get(source.collection);
+    if (!list) { list = []; byCollection.set(source.collection, list); }
+    list.push(source);
+  }
+  let chosen: string | undefined;
+  let chosenNewest = "";
+  for (const [collection, items] of byCollection) {
+    const newest = items.reduce((max, s) => (s.ingested_at > max ? s.ingested_at : max), "");
+    if (chosen === undefined || newest > chosenNewest || (newest === chosenNewest && collection < chosen)) {
+      chosen = collection;
+      chosenNewest = newest;
+    }
+  }
+  if (chosen === undefined) return [];
+  return sortByFilenameThenIngested(byCollection.get(chosen)!).slice(0, p.maxSources);
 }
 
 /** `listEvents({ event_type, newest: true })` scans only rows matching that column (a real indexed-free but
@@ -165,9 +250,11 @@ export async function autoAccept(d: AutoAcceptDeps): Promise<AutoAcceptReport> {
 
   const { active: activeRequestIds, finished, activeCount: initialActiveCount } = partitionRunsByRequest(store);
   let activeCount = initialActiveCount;
-  // Hoisted once (not re-scanned per request, per fix-round-1 finding #4): `global` is mutated in place as
-  // requests are accepted below, so a source picked for one request is immediately busy for the next.
-  const { global: busy, own: ownSources } = busySourceIdsByRequest(store);
+  const requestsWithOwnContent = requestsWithContent(store);
+  // Hoisted once (not re-scanned per request, per fix-round-1 finding #4, and per spec: sub-project 5A §5):
+  // both sets are mutated in place as requests are accepted below, so a collection picked for one request is
+  // immediately busy for the next in the same sweep.
+  const { busyCollections, usedCollections } = busyAndUsedCollections(store);
 
   const openRequests = [...store.listContentRequests({ status: "open" })].sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0));
 
@@ -178,10 +265,11 @@ export async function autoAccept(d: AutoAcceptDeps): Promise<AutoAcceptReport> {
     if (style?.status !== "active") { report.skipped.push({ request_id: request.request_id, reason: "style-inactive" }); continue; }
 
     const replanNo = finished.get(request.request_id) ?? 0;
-    // `ownSources.has(...)` with no finished run yet: a ContentItem already carries this request but no run
-    // exists for it -- the window between `harness library accept` and the operator's `harness plan`. Planning
-    // a second run here would duplicate the work the human is about to enqueue, so treat it as run-active.
-    if (activeRequestIds.has(request.request_id) || (replanNo === 0 && ownSources.has(request.request_id))) {
+    // `requestsWithOwnContent.has(...)` with no finished run yet: a ContentItem already carries this request
+    // but no run exists for it -- the window between `harness library accept` and the operator's `harness
+    // plan`. Planning a second run here would duplicate the work the human is about to enqueue, so treat it as
+    // run-active.
+    if (activeRequestIds.has(request.request_id) || (replanNo === 0 && requestsWithOwnContent.has(request.request_id))) {
       report.skipped.push({ request_id: request.request_id, reason: "run-active" });
       continue;
     }
@@ -197,11 +285,20 @@ export async function autoAccept(d: AutoAcceptDeps): Promise<AutoAcceptReport> {
       break; // no point checking the rest of the queue against a gate that will not move this poll
     }
 
-    // this request's own sources (if any, e.g. from a prior reopen) never count as busy against itself
-    const busyForThisRequest = new Set(busy);
-    for (const id of ownSources.get(request.request_id) ?? []) busyForThisRequest.delete(id);
-    const source = pickSource(store, { request, defaultCollection: d.config.source_collection, busySourceIds: busyForThisRequest });
-    if (!source) {
+    // `usedCollections` (a collection with a SUCCEEDED run is retired forever) only applies once a project has
+    // actually opted into the sub-project 5A shoot-collection flow (`source_collections` set): every SP1-3B
+    // project still runs on the single legacy `source_collection` (typically "main") as an unlimited, reusable
+    // stock pool that many separate content items draw from over the project's lifetime (see e.g. the
+    // channel-planning -> studio -> auto-pick loop in tests/integration/channel-learning.test.ts, which builds
+    // three separate episodes off one never-changing "main" collection with no explicit source_hint) -- a hard
+    // exclusion the moment the first episode SUCCEEDED would permanently starve every request after it, which
+    // the "every SP1-3B test stays green" constraint (common-implementer.md) rules out. `busyCollections`
+    // (still-active run) is never gated this way: a legacy project's episodes run to completion one at a time
+    // in practice, so it never collides with this exception, and the brief's own cross-poll "do not repick a
+    // busy collection" requirement holds unconditionally.
+    const usedGate = d.config.source_collections !== undefined ? usedCollections : new Set<string>();
+    const picked = pickSources(store, { request, patterns: d.patterns, maxSources: d.maxSources, busyCollections, usedCollections: usedGate });
+    if (picked.length === 0) {
       report.skipped.push({ request_id: request.request_id, reason: "no-source" });
       skipOnce(d, portfolioId, request.request_id, "no-source");
       continue;
@@ -214,10 +311,10 @@ export async function autoAccept(d: AutoAcceptDeps): Promise<AutoAcceptReport> {
         request_id: request.request_id,
       };
       // Atomic: a `planner.plan` throw (e.g. a bad `workflows(ref)` lookup) must leave no trace -- an orphan
-      // ContentItem/ContentVariant would otherwise poison `busy` for every other request in this and later
-      // polls, and this same request would be retried (and fail) every poll from then on (fix-round-1 #3).
+      // ContentItem/ContentVariant would otherwise poison `busyCollections` for every other request in this and
+      // later polls, and this same request would be retried (and fail) every poll from then on (fix-round-1 #3).
       store.transaction(() => {
-        const content = d.catalog.createContent({ source_ids: [source.source_id], title: request.topic, library_brief: libraryBrief });
+        const content = d.catalog.createContent({ source_ids: picked.map((s) => s.source_id), title: request.topic, library_brief: libraryBrief });
         const run = startPlannedRun(
           {
             store, catalog: d.catalog, planner: d.planner, harness: d.harness, projectId: d.projectId, portfolioId, profile: d.profile,
@@ -227,14 +324,14 @@ export async function autoAccept(d: AutoAcceptDeps): Promise<AutoAcceptReport> {
           content,
           {
             event_type: "request.auto_accepted", channel_id: null,
-            payload: (runId) => ({ request_id: request.request_id, run_id: runId, replan_no: replanNo, source_id: source.source_id }),
+            payload: (runId) => ({ request_id: request.request_id, run_id: runId, replan_no: replanNo, source_id: picked[0]!.source_id }),
           },
           { voice: request.voice },
         );
-        report.accepted.push({ request_id: request.request_id, run_id: run.run_id, replan_no: replanNo, source_id: source.source_id });
+        report.accepted.push({ request_id: request.request_id, run_id: run.run_id, replan_no: replanNo, source_id: picked[0]!.source_id });
         activeRequestIds.add(request.request_id);
         activeCount++;
-        busy.add(source.source_id);
+        for (const s of picked) busyCollections.add(s.collection);
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);

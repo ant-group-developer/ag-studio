@@ -508,7 +508,8 @@ describe("Worker", () => {
         autoAccept: {
           catalog: w.catalog, planner: w.planner, harness: loadHarnessConfig(HARNESS_ROOT), projectId: "project-main", portfolioId: "portfolio-main",
           profile: loadProfile(HARNESS_ROOT, "studio"), workflows: (ref: string) => loadWorkflow(HARNESS_ROOT, ref), executorVersionFor: () => "v1",
-          config: { enabled: true, source_collection: "main", max_replans: 2, max_concurrent_runs: 5 },
+          config: { enabled: true, source_collection: "main", max_replans: 2, max_concurrent_runs: 5, max_sources: 40 },
+          patterns: ["main"], maxSources: 40,
         },
       };
     }

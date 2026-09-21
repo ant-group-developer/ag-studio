@@ -1,6 +1,6 @@
 import { hostname } from "node:os";
 import type { Command } from "commander";
-import type { ContentRequest, ProjectConfig } from "@harness/contracts";
+import { autoAcceptPatterns, type ContentRequest, type ProjectConfig } from "@harness/contracts";
 import { autoPick, type AutoAcceptDeps, type AutoPickDeps, type LoadedChannel, planRequestsRun, type PlanRequestsDeps } from "@harness/core";
 import { Worker, type WorkerDeps } from "@harness/worker";
 import type { AppContext } from "../composition.js";
@@ -34,7 +34,7 @@ function autoAcceptDepsFor(ctx: AppContext): Omit<AutoAcceptDeps, "store" | "fs"
     profile: ctx.profiles("studio"), workflows: ctx.workflows,
     executorVersionFor: ctx.executorVersionFor,
     requiresResourcesOverride: (s) => (s.executor.type === "script" ? ctx.scripts?.scripts[s.executor.script]?.requires_resources : undefined),
-    config,
+    config, patterns: autoAcceptPatterns(config), maxSources: config.max_sources,
   };
 }
 
