@@ -69,7 +69,6 @@ async function intake(app: AppContext, sdk: ScriptContext): Promise<void> {
   let request_notes = "";
   let requestVoiceId: string | undefined;
   if (brief.request_id) {
-    claimRequest({ store: app.store, fs: library.fs, clock: app.clock }, { request_id: brief.request_id, run: { project_id: run.project_id, run_id: run.run_id } });
     // NOT_FOUND here (a brief pointing at a request the kho no longer has) is a contract problem with this
     // run, not something to retry -- `runStage` maps it to kind "contract" the same as any other NOT_FOUND.
     const request = readRequest({ store: app.store, fs: library.fs, clock: app.clock }, brief.request_id);
@@ -83,6 +82,10 @@ async function intake(app: AppContext, sdk: ScriptContext): Promise<void> {
   // (kept current by `syncLibrary`, since a channel process is the only one ever allowed to write voices/**);
   // the checksum re-check below then catches the one thing the mirror alone cannot: the kho's `ref.wav` bytes
   // having drifted from what `voice.json` claims (a bad sync, a half-written file, tampering).
+  //
+  // Final-review Critical 2: this whole block runs BEFORE `claimRequest` below, like every other validation
+  // in this stage. Claiming first and validating after turned a bad voice into a FAILED run whose request was
+  // already `claimed` -- nothing reopens it, so the SP4 replan loop never sees it and it waits for a human.
   let voiceFields: { voice_id: string; voice_revision: number; voice_checksum: string } | undefined;
   if (brief.voice === "tts") {
     const profile = requireActiveVoice(app.store, requestVoiceId);
@@ -95,6 +98,12 @@ async function intake(app: AppContext, sdk: ScriptContext): Promise<void> {
       throw new HarnessError("CONFIG_INVALID", `voice profile ${profile.voice_id}'s ref.wav checksum does not match voice.json (kho drift or tampering)`, { voice_id: profile.voice_id, path: refPath, expected: profile.ref_audio.checksum, actual: checksum });
     }
     voiceFields = { voice_id: profile.voice_id, voice_revision: profile.revision, voice_checksum: profile.ref_audio.checksum };
+  }
+
+  // Last, once nothing above can still refuse this run: `intake` is the ONE place a request moves
+  // `open -> claimed` (AGENTS.md, "Quy tắc kho nội dung").
+  if (brief.request_id) {
+    claimRequest({ store: app.store, fs: library.fs, clock: app.clock }, { request_id: brief.request_id, run: { project_id: run.project_id, run_id: run.run_id } });
   }
 
   await writeOutput(sdk, "output/brief.json", { ...brief, request_notes, style_snapshot: style, ...(voiceFields ?? {}) }, "brief");

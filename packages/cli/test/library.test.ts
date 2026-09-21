@@ -417,13 +417,14 @@ describe("harness library CLI", () => {
       expect(existsSync(join(workspaceDir, "output", "brief.json"))).toBe(false);
     });
 
-    function writeRequestFile(root: string, requestId: string, styleId: string, notes: string): void {
+    function writeRequestFile(root: string, requestId: string, styleId: string, notes: string, extra: Record<string, unknown> = {}): void {
       mkdirSync(join(root, "requests"), { recursive: true });
       const request = {
         schema_version: "harness.content-request/v1", request_id: requestId,
         requested_by: { portfolio_id: "portfolio-main" }, topic: "Intake topic", style_id: styleId, style_revision: 1,
         voice: "none", language: "vi", count: 1, status: "open", item_ids: [], notes,
         created_at: "2026-09-14T00:00:00.000Z", updated_at: "2026-09-14T00:00:00.000Z",
+        ...extra,
       };
       writeFileSync(join(root, "requests", `${requestId}.json`), JSON.stringify(request, null, 2) + "\n");
     }
@@ -478,6 +479,51 @@ describe("harness library CLI", () => {
 
       const brief = JSON.parse(readFileSync(join(workspaceDir, "output", "brief.json"), "utf8"));
       expect(brief.request_notes).toBe("");
+    });
+
+    // Final-review Critical 2: every other `intake` validation sits ABOVE the `claimRequest` call, so a bad
+    // run leaves the request `open` for the next sweep. The `voice: "tts"` checks (added in 5A) sat BELOW it,
+    // so a retired/unmirrored voice or a drifted `ref.wav` failed the stage `contract` AFTER the request had
+    // already moved `open -> claimed` -- a FAILED run with its request parked behind it, waiting for a human.
+    it("fails with kind contract on a retired voice and leaves the kho request open, not claimed", () => {
+      const root = mkdtempSync(join(tmpdir(), "kho-intake-retired-voice-"));
+      const studioDir = libraryProject(root, "studio", "intake-retired-voice");
+      expect(cli(studioDir, "db", "migrate").code).toBe(0);
+      const styleId = newId("edit_style");
+      writeStyleFile(root, styleId);
+      const requestId = newId("content_request");
+      const voiceId = newId("voice_profile");
+      writeRequestFile(root, requestId, styleId, "", { voice: "tts", voice_id: voiceId });
+
+      // the studio's own mirror (what `requireActiveVoice` reads) has the profile, but retired
+      const store = new SqliteStateStore(join(studioDir, "data", "state", "harness.db"));
+      store.upsertVoiceProfile({
+        schema_version: "harness.voice/v1", voice_id: voiceId, display_name: "Giọng đã nghỉ", language: "vi",
+        origin: "synthetic", origin_note: "", ref_audio: { path: "ref.wav", checksum: SHA, duration_seconds: 6 },
+        ref_text: "một hai ba", params: { speed: 1, num_step: 16 }, revision: 1, status: "retired",
+        created_at: "2026-09-14T00:00:00.000Z", updated_at: "2026-09-14T00:00:00.000Z",
+      });
+      store.close();
+
+      const content: ContentItem = {
+        schema_version: "harness.content-item/v1", content_id: newId("content_item"), source_ids: [], revision: 1, title: "Intake content", created_at: new Date().toISOString(),
+        library_brief: { request_id: requestId, topic: "Intake topic", style_id: styleId, style_revision: 1, voice: "tts", language: "vi" },
+      };
+      const run = insertRun(studioDir, content);
+
+      const workspaceDir = stageWorkspace();
+      writeStageRequest(workspaceDir, run);
+      const r = cliEnv(studioDir, { HARNESS_WORKSPACE: workspaceDir }, "library", "stage", "intake");
+      expect(r.code, r.err).toBe(0);
+
+      const result = JSON.parse(readFileSync(join(workspaceDir, "stage-result.json"), "utf8"));
+      expect(result.outcome).toBe("failed");
+      expect(result.errors[0].kind).toBe("contract");
+      expect(result.errors[0].message).toContain("retired");
+
+      const onDisk = JSON.parse(readFileSync(join(root, "requests", `${requestId}.json`), "utf8"));
+      expect(onDisk.status, "the request was claimed before the voice was validated").toBe("open");
+      expect(onDisk.claimed_by_run).toBeUndefined();
     });
 
     it("fails with kind contract when brief.request_id points at a request the kho does not have", () => {
