@@ -332,6 +332,30 @@ describe("autoAccept", () => {
     expect(skipEvents).toHaveLength(1);
   });
 
+  // Fix round (task 8 review, Important 4): `config.workflow_release` (the studio autopilot's rollback
+  // knob, packages/core/src/library/auto-accept.ts) must plan that release instead of the profile's own,
+  // AND the run-started event must record the SAME release -- it used to keep recording
+  // `d.profile.workflow_release` regardless, so the run row and its own start event would disagree about
+  // which release the run was actually planned against whenever the override was set.
+  it("workflow_release override: plans that release, and the run row + its start event both reflect it, not the profile's own release", async () => {
+    const w = world();
+    const styleId = newId("edit_style");
+    w.store.upsertEditStyle(makeStyle(styleId));
+    await ingest(w, "clip one");
+    const request = createOpenRequest(w, { style_id: styleId });
+
+    const override = "library-production@1.1.0";
+    expect(w.profile.workflow_release).not.toBe(override); // the studio profile itself is on a newer release
+    const report = await autoAccept(depsFor(w, baseConfig({ workflow_release: override })));
+
+    expect(report.accepted).toHaveLength(1);
+    const run = w.store.getRun(report.accepted[0]!.run_id)!;
+    expect(`${run.workflow_release.id}@${run.workflow_release.version}`).toBe(override);
+
+    const event = w.store.listEvents({ event_type: "request.auto_accepted" }).find((e) => e.payload.request_id === request.request_id);
+    expect(event?.workflow_release).toBe(override);
+  });
+
   // fix-round-1 finding #3: a plan() throw must roll back everything the failing attempt did (no orphan
   // ContentItem/ContentVariant) and must not stop the loop from accepting the next request.
   it("rolls back the whole accept when plan() throws, and still accepts the next request in the same call", async () => {

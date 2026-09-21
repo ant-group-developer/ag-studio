@@ -84,12 +84,18 @@ function surveyV1Json() {
   };
 }
 
-/** Writes `output/survey.json` (always) and, when `shots` is given, `input/shots.json` plus a matching
- * `type: "shots"` request input -- the two workspace files `survey-valid` reads. */
+/** Writes `output/survey.json` (type `survey_index`, always) alongside a sibling `output/survey.md` (type
+ * `survey`, plain markdown -- the REAL pair `survey-source` declares: `{ type: survey, survey.md }` +
+ * `{ type: survey_index, survey.json }`, matching `library-production@1.2.0`'s workflow.yaml). The markdown
+ * output must never be read as JSON by the checker -- task 8 review, Critical 2: it used to filter on
+ * `type === "survey"` (the markdown one) and crash on real runs. When `shots` is given, also writes
+ * `input/shots.json` plus a matching `type: "shots"` request input -- the two workspace files
+ * `survey-valid` reads. */
 function fixture(ws: string, o: { survey: unknown; shots?: unknown }): { request: StageRequest; result: StageResult } {
   mkdirSync(join(ws, "input"), { recursive: true });
   mkdirSync(join(ws, "output"), { recursive: true });
   writeFileSync(join(ws, "output", "survey.json"), JSON.stringify(o.survey));
+  writeFileSync(join(ws, "output", "survey.md"), "# Khảo sát nguồn\n\nnot JSON at all -- must never be parsed by survey-valid\n");
 
   const inputs: StageRequest["inputs"] = [];
   if (o.shots !== undefined) {
@@ -98,7 +104,10 @@ function fixture(ws: string, o: { survey: unknown; shots?: unknown }): { request
   }
 
   const request = baseRequest({ inputs });
-  const result = baseResult([{ path: "output/survey.json", type: "survey", checksum: sha, size_bytes: 1, kind: "file" }]);
+  const result = baseResult([
+    { path: "output/survey.json", type: "survey_index", checksum: sha, size_bytes: 1, kind: "file" },
+    { path: "output/survey.md", type: "survey", checksum: sha, size_bytes: 1, kind: "file" },
+  ]);
   return { request, result };
 }
 
@@ -113,6 +122,15 @@ describe("survey-valid", () => {
     const result = baseResult([{ path: "output/thumb.png", type: "thumbnail", checksum: sha, size_bytes: 1, kind: "file" }]);
     const outcome = await checker().check({ request, result, workspaceDir: ws });
     expect(outcome).toEqual({ verdict: "skip", evidence: { reason: "no matching output" } });
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("ignores the sibling survey.md (type 'survey') output entirely -- only survey_index is read as JSON", async () => {
+    const ws = tmpWorkspace();
+    const { request, result } = fixture(ws, { survey: surveyV1Json() });
+    expect(result.outputs.some((o) => o.type === "survey")).toBe(true); // the markdown output is present
+    const outcome = await checker().check({ request, result, workspaceDir: ws });
+    expect(outcome).toEqual({ verdict: "pass", evidence: { checked: ["output/survey.json"] } });
     rmSync(ws, { recursive: true, force: true });
   });
 

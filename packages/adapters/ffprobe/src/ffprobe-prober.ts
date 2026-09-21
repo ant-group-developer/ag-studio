@@ -67,32 +67,12 @@ function timedOutOrFailed(r: SpawnSyncReturns<string>): boolean {
 }
 
 /**
- * Synchronous duration-only probe (spec 3B Task 6): `collectStats`'s `durationOf(pkg)` needs a video's
- * duration to compute `avg_view_pct`, but `CollectDeps.durationOf` is a plain synchronous function -- there is
- * no `await` point between `collectStats` and the channel-package row it is given. `FfprobeMediaProber.probe`
- * is `async` only for interface compliance; the ffprobe call itself already runs through `spawnSync` (see
- * `run` above), so this reuses that same call directly instead of wrapping it in a promise no caller here can
- * await. A missing file, missing ffprobe binary, non-zero exit, timeout, or unparsable JSON all return `null`
- * rather than throwing -- exactly `MediaProber.probe`'s own "unknown" outcome, just duration-only and sync. */
-export function probeDurationSync(path: string, opts?: { ffprobe?: string; timeoutMs?: number }): number | null {
-  const ffprobe = opts?.ffprobe ?? process.env.FFPROBE_PATH ?? "ffprobe";
-  const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const r = run(ffprobe, ["-v", "error", "-print_format", "json", "-show_format", path], timeoutMs);
-  if (timedOutOrFailed(r) || r.status !== 0) return null;
-  try {
-    const parsed = JSON.parse(r.stdout) as FfprobeOutput;
-    return parseDuration(parsed.format?.duration);
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Synchronous duration + has_audio probe (sub-project 5A task 8): `IndexDeps.probe`
  * (packages/core/src/media/index.ts) is a plain synchronous function -- `indexSources` has no `await` point
- * for it -- so this is the adapter-layer counterpart to `probeDurationSync` above, extended with the one
- * extra field `media-index` needs. Same failure shape: a missing file, missing ffprobe binary, non-zero exit,
- * timeout, or unparsable JSON all return `null` rather than throwing.
+ * for it -- so this is the adapter-layer counterpart `media index` needs, and `probeDurationSync` below is
+ * now expressed through it rather than duplicating the same ffprobe call/parse body. Same failure shape: a
+ * missing file, missing ffprobe binary, non-zero exit, timeout, or unparsable JSON all return `null` rather
+ * than throwing.
  */
 export function probeSync(path: string, opts?: { ffprobe?: string; timeoutMs?: number }): { duration_seconds: number | null; has_audio: boolean } | null {
   const ffprobe = opts?.ffprobe ?? process.env.FFPROBE_PATH ?? "ffprobe";
@@ -107,6 +87,17 @@ export function probeSync(path: string, opts?: { ffprobe?: string; timeoutMs?: n
   } catch {
     return null;
   }
+}
+
+/**
+ * Synchronous duration-only probe (spec 3B Task 6): `collectStats`'s `durationOf(pkg)` needs a video's
+ * duration to compute `avg_view_pct`, but `CollectDeps.durationOf` is a plain synchronous function -- there is
+ * no `await` point between `collectStats` and the channel-package row it is given. Expressed through
+ * `probeSync` above (fix round, task 8 review, adjacent item) rather than a second copy of the same
+ * ffprobe call/parse body -- the extra `-show_streams` cost is negligible and every failure mode
+ * (`null`) is unchanged. */
+export function probeDurationSync(path: string, opts?: { ffprobe?: string; timeoutMs?: number }): number | null {
+  return probeSync(path, opts)?.duration_seconds ?? null;
 }
 
 export class FfprobeMediaProber implements MediaProber {

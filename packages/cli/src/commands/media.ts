@@ -346,9 +346,14 @@ function sourcePathAndName(app: AppContext, s: { source_id: string; uri: string 
 
 /** `deadlineSeconds` every media engine call (`transcribe`/`tts`) is given: seconds remaining until
  * `request.limits.deadline_at`, minus a 30s margin so core's own timeout math never rounds up past the
- * stage's real deadline (task-8 brief §D). */
+ * stage's real deadline (task-8 brief §D). `transcribeSources`/`synthesizeNarration` already refuse a
+ * non-positive deadline themselves, but only after doing real work first (extracting audio, reading the tts
+ * cache); called at the top of each stage function, before any of that, so a stage with no time left fails
+ * fast instead of doing wasted I/O first (fix round, task 8 review, adjacent item). */
 function deadlineSecondsFor(sdk: ScriptContext): number {
-  return Math.floor((Date.parse(sdk.request.limits.deadline_at) - Date.now()) / 1000) - 30;
+  const seconds = Math.floor((Date.parse(sdk.request.limits.deadline_at) - Date.now()) / 1000) - 30;
+  if (seconds <= 0) throw new HarnessError("IO_ERROR", "no time left before the stage deadline", { deadline_at: sdk.request.limits.deadline_at });
+  return seconds;
 }
 
 /** Appends a `media.*` event through the same `store.appendEvent(eventFor(...))` shape every other built-in
@@ -393,6 +398,7 @@ async function mediaIndexStage(app: AppContext, sdk: ScriptContext): Promise<voi
  * `media.transcribed`.
  */
 async function mediaTranscribeStage(app: AppContext, sdk: ScriptContext): Promise<void> {
+  const deadlineSeconds = deadlineSecondsFor(sdk); // checked first: no time left must not spend I/O first
   const shots = parseShotsDoc(readJsonFile(sdk.input("shots")));
   const sources = sdk.sources.map((s) => {
     const { path } = sourcePathAndName(app, s);
@@ -401,7 +407,7 @@ async function mediaTranscribeStage(app: AppContext, sdk: ScriptContext): Promis
   });
   const transcript = await transcribeSources(
     { engine: app.media, ffmpeg: ffmpegBin(), log: (level, msg, data) => sdk.log[level](msg, data) },
-    { shots, sources, workDir: join(sdk.workspace, "work"), deadlineSeconds: deadlineSecondsFor(sdk) },
+    { shots, sources, workDir: join(sdk.workspace, "work"), deadlineSeconds },
   );
   writeJsonOutputFile(join(sdk.workspace, "output", "transcript.json"), transcript);
   await sdk.out.file("output/transcript.json", { type: "transcript" });
@@ -417,6 +423,7 @@ async function mediaTranscribeStage(app: AppContext, sdk: ScriptContext): Promis
  * `synthesizeNarration` itself writes the empty timing and creates `output/voice/` (possibly empty).
  */
 async function mediaTtsStage(app: AppContext, sdk: ScriptContext): Promise<void> {
+  const deadlineSeconds = deadlineSecondsFor(sdk); // checked first: no time left must not spend I/O first
   const library = requireLibrary(app);
   const brief = parseBriefDoc(readJsonFile(sdk.input("brief")));
   const narration = parseNarrationDoc(readJsonFile(sdk.input("narration")));
@@ -436,7 +443,7 @@ async function mediaTtsStage(app: AppContext, sdk: ScriptContext): Promise<void>
 
   const timing = await synthesizeNarration(
     { engine: app.media, ffmpeg: ffmpegBin(), probeDuration: (p) => probeDurationSync(p), cacheDir: join(app.dataRoot, "cache", "tts"), log: (level, msg, data) => sdk.log[level](msg, data) },
-    { narration, voiceMode: brief.voice, ...(voice ? { voice } : {}), cfg: app.mediaConfig.tts, outDir: join(sdk.workspace, "output", "voice"), deadlineSeconds: deadlineSecondsFor(sdk) },
+    { narration, voiceMode: brief.voice, ...(voice ? { voice } : {}), cfg: app.mediaConfig.tts, outDir: join(sdk.workspace, "output", "voice"), deadlineSeconds },
   );
   writeJsonOutputFile(join(sdk.workspace, "output", "narration-timing.json"), timing);
   await sdk.out.file("output/narration-timing.json", { type: "narration_timing" });
@@ -459,9 +466,13 @@ async function mediaFitEdlStage(app: AppContext, sdk: ScriptContext): Promise<vo
   const timing = parseNarrationTimingDoc(readJsonFile(sdk.input("narration_timing")));
   const shots = parseShotsDoc(readJsonFile(sdk.input("shots")));
 
+  // Fix round (task 8 review, Critical 1): `survey-source` declares TWO outputs -- `{ type: survey,
+  // survey.md }` (markdown) and `{ type: survey_index, survey.json }` (the JSON this stage needs). Reading
+  // by type "survey" resolved to the markdown file and `readJsonFile`/`parseSurveyDoc` threw `CONFIG_INVALID`
+  // on every real run.
   let survey: SurveyIndexV2 | null = null;
-  if (sdk.hasInput("survey")) {
-    const parsed = parseSurveyDoc(readJsonFile(sdk.input("survey")));
+  if (sdk.hasInput("survey_index")) {
+    const parsed = parseSurveyDoc(readJsonFile(sdk.input("survey_index")));
     if (parsed.schema_version === "harness.survey-index/v2") survey = parsed;
   }
   let transcript: Transcript | null = null;

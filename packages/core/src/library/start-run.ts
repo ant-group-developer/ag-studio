@@ -37,8 +37,11 @@ export function startPlannedRun(d: StartRunDeps, content: ContentItem, event: St
   });
   d.planner.enqueue(run.run_id);
   d.store.appendEvent({
+    // Fix round (task 8 review, Important 4): must mirror what was actually planned (`workflow` above), not
+    // always the profile's own release -- a `workflowRelease` override would otherwise leave the run row and
+    // its own start event disagreeing about which release this run is on.
     run_id: run.run_id, stage_run_id: null, attempt_id: null, project_id: d.projectId, portfolio_id: d.portfolioId,
-    channel_id: event.channel_id, content_id: content.content_id, variant_id: variant.variant_id, workflow_release: d.profile.workflow_release,
+    channel_id: event.channel_id, content_id: content.content_id, variant_id: variant.variant_id, workflow_release: d.workflowRelease ?? d.profile.workflow_release,
     severity: "info", event_type: event.event_type, payload: event.payload(run.run_id),
   });
   return run;

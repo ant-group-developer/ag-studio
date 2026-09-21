@@ -161,19 +161,27 @@ export function libraryCheckers(prober: MediaProber, opts: { available?: boolean
   };
 
   /**
-   * `survey-valid` (sub-project 5A): validates a `survey.json` output against `AnySurveyIndexSchema`. The
-   * v1 (single-source) shape just needs to parse -- same as it did before this checker existed (1.1.0
-   * behavior). The v2 (multi-source) shape additionally cross-checks every shot against the run's `shots`
-   * input (`ShotsIndexSchema`): the `shot_id` must exist there, its `source_id` must match the shot's owner,
-   * and `in`/`out` must be within `SURVEY_SHOT_TOLERANCE_SECONDS` of the indexed shot's -- a survey drifting
-   * from the index it was scored against is not trustworthy input to selection. No prober needed (like
-   * `library-export-valid`), so `opts.available` never gates it.
+   * `survey-valid` (sub-project 5A): validates a `survey.json` output (artifact type `survey_index` -- the
+   * agent stage's OTHER declared output, type `survey`, is `survey.md`, plain markdown, and is never the
+   * one this checker reads) against `AnySurveyIndexSchema`. The v1 (single-source) shape just needs to
+   * parse -- same as it did before this checker existed (1.1.0 behavior, though 1.1.0 never lists
+   * `survey-valid` in `required_checks`, so this never actually ran against it). The v2 (multi-source) shape
+   * additionally cross-checks every shot against the run's `shots` input (`ShotsIndexSchema`): the
+   * `shot_id` must exist there, its `source_id` must match the shot's owner, and `in`/`out` must be within
+   * `SURVEY_SHOT_TOLERANCE_SECONDS` of the indexed shot's -- a survey drifting from the index it was scored
+   * against is not trustworthy input to selection. No prober needed (like `library-export-valid`), so
+   * `opts.available` never gates it.
+   *
+   * Fix round (task 8 review, Critical 2): this used to filter on `o.type === "survey"`, which is the
+   * markdown output's type, not the JSON one -- in a real `library-production@1.2.0` run this always failed
+   * with "invalid survey" (`JSON.parse` of a markdown file), since `survey-source`'s two declared outputs
+   * are `{ type: survey, survey.md }` and `{ type: survey_index, survey.json }`.
    */
   const surveyValid: Checker = {
     id: "survey-valid",
     version: "1.0.0",
     async check(input) {
-      const outputs = input.result.outputs.filter((o) => o.type === "survey");
+      const outputs = input.result.outputs.filter((o) => o.type === "survey_index");
       if (outputs.length === 0) return skip("no matching output");
 
       const checked: string[] = [];
