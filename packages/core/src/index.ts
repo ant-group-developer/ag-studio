@@ -58,3 +58,6 @@ export * from "./media/index.js";
 export * from "./media/transcribe.js";
 export * from "./media/sentences.js";
 export * from "./media/tts.js";
+export * from "./media/snap.js";
+export * from "./media/fit-edl.js";
+export * from "./media/timeline.js";
