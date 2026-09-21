@@ -652,3 +652,112 @@ library-production}@1.1.0/`, `skills/{style-analyze,style-review,source-survey,e
     launch 20 s = 275 s < 300 s). Trước đó sweep cắt ở 120 s trong khi script có thể chạy tới ~240 s, nên một
     widget Studio chậm bị báo là "collect script timed out" và ba lần như thế dựng một alert `stats_failing`
     hoàn toàn giả.
+102. **Engine media là tiến trình con trao đổi file JSON, không phải thư viện và không phải service**
+    (sub-project 5A §1.2). `packages/core` không bao giờ `import` torch/whisperx/omnivoice — nó chỉ thấy
+    interface `MediaEngine`; `PythonMediaEngine` (`packages/adapters/media-python`) ghi
+    `engine-job-<uuid>.json` vào workspace, `spawn` (bất đồng bộ, **không** `spawnSync`: một stage GPU chạy
+    nhiều phút sẽ chặn cả event loop lẫn heartbeat của worker) `python transcribe.py|tts.py --job … --result …`,
+    rồi đọc `engine-result-<uuid>.json` và xoá cả hai. **Exit code luôn 0**: mọi thất bại đi qua file result
+    dưới dạng `{ ok: false, kind: "contract" | "transient", reason }` — `contract` cho lỗi đầu vào mà retry
+    không bao giờ cứu được (thiếu `ref_audio`, gói không import được, `cuda:*` trên máy không có CUDA),
+    `transient` cho phần còn lại. Exit code khác 0, timeout, hay file result thiếu/hỏng đều bị phía TypeScript
+    quy về `transient` — tiến trình tự nó hỏng chứ không báo cáo được một thất bại sạch. Không có dịch vụ
+    Python thường trú (spec §9) nên mỗi stage trả giá một lần nạp mô hình; đo thật trên RTX 3060 là ~12 s cho
+    OmniVoice và ~4 s cho whisper large-v3 + VAD, tức với buổi quay ngắn thì **nạp mô hình chi phối tổng thời
+    gian, không phải tính toán** (`docs/runbooks/studio-media.md` mục 7).
+103. **`adapters.media: python | fake` là khoá duy nhất chọn engine**, đọc **chỉ** ở composition root
+    (`packages/cli/src/composition.ts`, `mediaEngineOptions()`) — đúng quy tắc mục 101(a) đã đặt cho
+    `adapters.stats`: chọn adapter là việc của `project.yaml`, không bao giờ của một biến môi trường. Mặc định
+    `fake` để mọi test SP1–4 và CI không GPU chạy nguyên trạng. Env của tiến trình Python con là một **danh
+    sách trắng** (`PATH`, `SystemRoot`, `TEMP`, `TMP`, `CUDA_*`, `HF_HOME`, `HF_HUB_OFFLINE`, `PYTHONUTF8=1`),
+    không phải bộ lọc theo tiền tố như `publisherChildEnv` — một script tính toán thuần không cần môi trường
+    người dùng đầy đủ, nên chặn mặc định rẻ hơn lọc mặc định; `HARNESS_SECRET_*` không bao giờ lọt qua và
+    stderr đi qua `Redactor` (giữ 2000 ký tự cuối).
+104. **Buổi quay = một collection, và có đúng HAI chế độ chọn nguồn, phân biệt tường minh bằng
+    `library.auto_accept.source_collections`.** Không khai khoá đó → chế độ cũ của sub-project 4 nguyên vẹn
+    (một request một source, bận theo từng source). Khai rồi → chế độ collection: một request lấy cả
+    collection khớp glob, giới hạn bởi `max_sources` (mặc định 40), và một collection đã được một run thành
+    công dùng thì đánh dấu **đã dùng** nên request khác không lấy lại — có miễn trừ cho chính request đó khi
+    replan, nếu không thì vòng loại→replan của SP4 chết ngay trong chế độ 5A (run bị `library-review` loại vẫn
+    kết thúc SUCCEEDED, nên collection của nó thành "đã dùng" và request mở lại không bao giờ chọn được nó
+    nữa). `AutoAcceptDeps.sources` là union phân biệt `{ mode: "legacy" | "collections" }` chứ không phải một
+    nhánh `if` rải rác, và nhánh legacy đã được kiểm là byte-equivalent với bản trước 5A.
+105. **Giọng đọc thuộc kênh, `origin` là bắt buộc, và harness không xác minh được nó.** Hồ sơ giọng
+    (`VoiceProfile`) sống trong `voices/` của kho; vai `channel` ghi, vai `studio` chỉ đọc — cùng ranh giới
+    quyền ghi mà `LibraryFs.assertWritable` đã áp cho `styles/`, `items/`, `requests/`. `library voices add`
+    kiểm clip mẫu (3–30 s) và chuyển sang PCM mono 24 kHz trước khi chạm kho; `origin: synthetic | own |
+    licensed` bắt buộc. Harness **chỉ ghi lại lời khai** — không có cách nào kiểm chứng một clip có phải giọng
+    người thật hay không (spec §10), nên trách nhiệm thuộc người tạo hồ sơ và runbook nói thẳng điều đó.
+    `--voice tts` thiếu `--voice-id` (hay trỏ hồ sơ `retired`) bị từ chối **lúc tạo request**, nhưng khi chính
+    kênh tự sinh request thì `create-requests` **hạ xuống `voice: none` kèm ghi chú** thay vì làm hỏng stage —
+    một kênh chưa có giọng vẫn phải sản xuất được.
+106. **`media-fit-edl` không bao giờ fail vì thiếu hình.** Nó ghi `fit-report.json` (mỗi dòng một `action`
+    `kept|trimmed|expanded|appended|dropped`, cộng `shortfalls[]`) rồi để agent `library-review` quyết định
+    loại hay không, và vòng replan của SP4 xử lý phần còn lại. Đây là hệ quả trực tiếp của nguyên tắc "không
+    cổng người" (spec §0): một stage fail vì dữ liệu không vừa ý sẽ dựng đúng cái cổng người mà sub-project 4
+    vừa gỡ bỏ. Hằng số khớp hình cố định trong mã (vào trước 0.3 s, ra sau 0.4 s, hít cắt ±0.4 s, khe tối
+    thiểu 0.15 s, tay cầm 0.08 s, bỏ đoạn < 0.2 s, dự phòng 0.5 s) chứ không cấu hình được — chúng là quy ước
+    dựng phim, không phải tham số vận hành.
+107. **`timeline.json` là hợp đồng cho sub-project 5B**, không phải một file gỡ lỗi: `video[]` (thứ tự,
+    source, in/out, start/end trên trục thời gian), `narration[]` (dòng lời, wav, vị trí, `words[]`),
+    `speech[]` (câu gốc giữ lại khi `voice: original`), `total_seconds`. Chữ trên hình, phụ đề, nhạc + ducking
+    và chuyển cảnh của 5B đều cần **mốc từ** trên một trục thời gian đã chốt; sinh lại chúng từ `edl.json` +
+    `narration-timing.json` ở 5B sẽ là tính lại đúng phép tính mà `fitEdl` vừa làm, với rủi ro lệch.
+108. **Cache TTS băm theo nội dung, không theo run.** `ttsCacheKey` gộp chữ của dòng, giọng (`voice_id` +
+    revision + checksum clip mẫu + `ref_text`), `speed`/`num_step`, **và** `dtype`/`max_chars`/`pause_seconds`/
+    `loudness_lufs` — bốn khoá sau là sửa ở review Task 5: thiếu chúng, đổi `dtype` hay `loudness_lufs` trong
+    `project.yaml` sẽ lặng lẽ tái dùng wav cũ đọc bằng cấu hình cũ. Nhờ đó vòng replan chỉ đọc lại **dòng đã
+    sửa** (`narration-timing.json` ghi `cached: true` cho phần còn lại; đo thật: `media-tts` 33.4 s → 0.4 s).
+    `harness artifacts sweep` **chưa** biết tới `<data_root>/cache/tts` — ghi ở deferred, không sửa trong 5A.
+109. **Hai loại artifact khảo sát, và `survey_index` mới là file JSON.** Stage `survey-source` ghi cả
+    `survey.md` (type `survey`, cho người đọc) lẫn `survey.json` (type `survey_index`, `harness.survey-index/v2`,
+    cho `media-fit-edl` và checker `survey-valid` đọc). Nhầm hai type này là lỗi Critical của Task 8: cả
+    `media-fit-edl` lẫn checker đều đi đọc `survey.md` và mọi run 1.2.0 thật sẽ fail.
+110. **`audio-integrity` miễn trừ đúng một trường hợp: "silent by brief".** Khi `brief.voice` là `none` **và**
+    không nguồn nào trong `shots.json` có luồng audio, tập dựng ra là một đoạn `anullsrc` gần như im lặng hoàn
+    toàn (tỉ lệ lặng ~0.997) và checker `max_silence_ratio: 0.9` của profile studio làm run **FAILED** — không
+    phải một bản duyệt bị loại, nên vòng replan của SP4 không bao giờ thấy nó và request kẹt ở `claimed` chờ
+    người, đúng cái cổng người bị cấm. Sửa ở **checker**, ghi `evidence: { reason: "silent by brief" }`, chứ
+    tuyệt đối không nới `max_silence_ratio` — nới ngưỡng sẽ làm mù cả những tập đáng lẽ phải bị bắt.
+111. **`library.auto_accept.workflow_release` là nút lùi có tài liệu, và là cách test giữ nguyên release của
+    mình.** Nó ghim vòng autopilot vào một release cụ thể thay vì đi theo `workflow_release` của profile
+    studio; không khai = đi theo profile. Nhờ đó (a) người vận hành lùi về `library-production@1.1.0` mà không
+    phải sửa profile, và (b) mọi test autopilot của sub-project 4 vẫn chạy trên 1.1.0 trong khi profile đã
+    tiến lên 1.2.0. Đi kèm là dòng doctor `media:engine`, chỉ xuất hiện khi release **hiệu lực** của autopilot
+    từ `library-production@1.2.0` trở lên mà `adapters.media` vẫn `fake`: chạy được, nhưng sinh ra transcript
+    và giọng giữ chỗ — đúng cái bẫy mà dòng đó tồn tại để bắt **trước** một run nhiều giờ.
+112. **Phép dò engine media không được nằm trên đường nóng của dashboard.** `MediaEngine.probe()` spawn một
+    tiến trình Python; `buildSnapshot` chạy mỗi ~60 s từ worker, nên bản dò được memo hoá (TTL 900 s,
+    `packages/cli/src/media-probe-cache.ts`) cho đường snapshot, còn `harness doctor` gõ tay thì luôn dò mới.
+    Phép dò cũng **bỏ qua khi đang có lease GPU** — dò lúc đó sẽ xếp hàng sau một stage dài nhiều phút. Đổi
+    lại: một engine hỏng có thể không bị phát hiện chừng nào GPU còn bận liên tục (ghi ở deferred). Bốn dòng
+    `media:python|packages|device|engine` dựng **duy nhất** alert `media_engine_unavailable`, không dựng thêm
+    alert doctor chung — một sự cố một alert; `media:models` cố ý đứng ngoài nhóm đó vì "chưa tải mô hình" là
+    cảnh báo, không phải hỏng.
+113. **Lần chạy thật đầu tiên (task 11, RTX 3060 12 GB) chốt ba điều spec §10 để ngỏ.** (a) **Một venv là đủ**:
+    torch 2.8.0+cu126 cài trước, rồi `requirements.txt` không hề đụng tới torch, và `import whisperx` lẫn
+    `import omnivoice` cùng sống trong `E:\harness-venv` — phương án hai venv (`media.transcribe.python` /
+    `media.tts.python`) vẫn còn nguyên trong schema như đường lùi, chưa cần dùng. (b) **Tiếng Việt của
+    OmniVoice dùng được**: nghe ngược bằng WhisperX cho WER 3.1 % / CER 0.9 % (từ sai duy nhất là một cặp
+    đồng âm), tốc độ đọc 16.95 ký tự/giây ngang với 16.26 của tiếng Anh, và mô hình căn chỉnh tiếng Việt khớp
+    được **từng từ** vào audio sinh ra — `en` và `vi` đều là ngôn ngữ được hỗ trợ, không có gì phải đẩy sang
+    deferred. (c) **VRAM đỉnh ~4.1 GB**, thấp hơn nhiều so với 12 GB của card, vì `transcribe.py`/`tts.py` đều
+    giải phóng mô hình chính (`del` + `torch.cuda.empty_cache()`) trước khi nạp mô hình căn chỉnh.
+114. **torch ≥ 2.6 và checkpoint VAD của WhisperX: allow-list, không phải `weights_only=False`.** Defect duy
+    nhất mà lần chạy thật lộ ra: `whisperx.load_model` (mặc định `vad_method="pyannote"`) unpickle
+    `whisperx/assets/pytorch_model.bin` qua `torch.load`, mà torch 2.6 đã đổi mặc định `weights_only` thành
+    `True` — mọi lần transcribe chết với `UnpicklingError: Weights only load failed ... Unsupported global`,
+    báo về harness là `transient` nên bị retry vô ích. `transcribe.py::allow_vad_checkpoint_globals()`
+    allow-list đúng những lớp checkpoint đó gọi tên (node cấu hình omegaconf, `TorchVersion`,
+    `Introspection`/`Specifications` của pyannote, `typing.Any` và vài builtin) thay vì tắt `weights_only`:
+    phần còn lại của file vẫn không được phép unpickle mã tuỳ ý. Hàm là best-effort (phiên bản whisperx/
+    pyannote khác chỉ góp ít mục hơn, máy không có torch trả về danh sách rỗng thay vì ném) — nhờ đó test hồi
+    quy chạy được **không cần GPU và không cần trọng số**.
+115. **Ngôn ngữ của job phải tới được cả hai mô hình.** `tts.py` mang `job.language` tới
+    `whisperx.load_align_model` nhưng **không** tới `OmniVoice.generate` — mà hàm đó nhận `language` và tài
+    liệu của chính nó nói đọc tốt hơn khi được cho biết ngôn ngữ. Phát hiện lúc dựng bằng chứng DoD #3 ở
+    task 11: mẫu tiếng Việt đang được đo bằng một đường gọi **khác** đường harness thật chạy, nên con số đo
+    được không nói về mã đã ship. Truyền thẳng giá trị của job xuống là đủ và không tạo chế độ lỗi mới:
+    `_resolve_language` của OmniVoice cảnh báo rồi lùi về chế độ không phụ thuộc ngôn ngữ với giá trị lạ —
+    đúng hành vi cũ — và `en`/`vi` đều là mã hợp lệ. Nguyên tắc rút ra: bằng chứng cho một DoD phải đi qua
+    đúng mã sẽ được ship, không phải một lời gọi thư viện viết riêng cho phép đo.

@@ -146,3 +146,12 @@ auto_pick:
   # Max channel-publish runs this channel's own auto-pick sweep may have in flight at once; does not cap runs
   # started by a human `library pick` + `plan` + `enqueue`.
   max_concurrent_runs: 1
+# Sub-project 5A: this channel's default TTS voice. Optional -- a channel that only asks for `voice: none` or
+# `voice: original` needs no voice at all. The profile itself lives in the KHO (`voices/<voice_id>/`) and is
+# written by this same `channel` role with `harness library voices add`; the studio only ever reads it.
+# `harness library request create --voice tts` still needs its own `--voice-id` (required, checked at create
+# time against an ACTIVE profile) -- this field is the channel's default, not a substitute for that flag.
+# NEVER clone a real person's voice without the rights to do so: `--origin synthetic|own|licensed` is
+# mandatory and the harness cannot verify it, it only records what you declared. See
+# docs/runbooks/studio-media.md mục 4 for the voice-design route that keeps `synthetic` literally true.
+# voice: { voice_id: voice_01ARZ3NDEKTSV4RRFFQ69G5FAV }

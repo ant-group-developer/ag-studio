@@ -29,6 +29,19 @@ source: { materialize: link }
 #                                # up on it (max_replans + 1 runs total per request).
 #     max_concurrent_runs: 1    # runs auto-accept itself may have RUNNING/READY/WAITING at once; does not
 #                                # cap runs planned by hand (`harness library accept` + `plan`).
+#     # --- sub-project 5A: a shooting session is a COLLECTION, not a single clip ---------------------------
+#     source_collections: ["shoot-*"]   # glob patterns. SETTING THIS SWITCHES MODES: a request now takes a
+#                                # WHOLE matching collection (`harness source ingest <dir> --collection
+#                                # shoot-2026-09-21`), and a collection a successful run already used is
+#                                # marked used so no other request picks it again (the request's own replan
+#                                # is exempt). LEAVING IT UNSET keeps sub-project 4's behaviour exactly:
+#                                # one source per request, busy tracked per source. Must have >= 1 pattern.
+#     max_sources: 40           # cap on how many clips of a collection one request may draw.
+#     workflow_release: library-production@1.1.0   # pins the autopilot to ONE release instead of following
+#                                # the studio profile's own workflow_release. This is the documented rollback
+#                                # out of library-production@1.2.0 (the media release) -- unset means "plan
+#                                # whatever the profile currently points at". `harness plan --workflow
+#                                # <id>@<ver>` by hand always overrides both.
 #   # `adapters: { agent: cli }` (below) must be set -- not `fake` -- for auto_accept to actually dispatch
 #   # the five agent stages (style-analyze, style-review, source-survey, edit-plan, library-review); `harness
 #   # doctor` flags `adapters.agent: fake` with `enabled: true` here as a FAIL.
@@ -60,6 +73,45 @@ source: { materialize: link }
 #                           # `.upload-profile` as upload/schedule above -- no separate login step. fake never
 #                           # touches a browser; use it until `channel:<id>:stats` is green and you have run
 #                           # DoD #4 (docs/runbooks/channel-learning.md mục 9) at least once on this machine.
+#   media: fake              # python | fake, sub-project 5A: which MediaEngine runs the four built-in media
+#                           # stages of library-production@1.2.0 (media-index/transcribe/tts/fit-edl). python
+#                           # spawns engines/python/{transcribe,tts}.py in the venv named under `media:` below
+#                           # (WhisperX + OmniVoice on a real GPU); fake writes placeholder transcripts and
+#                           # silent voice wavs -- fine for CI, useless for production, and `harness doctor`
+#                           # raises a `media:engine` FAIL when a studio autopilot on >= 1.2.0 is still on it.
+
+# Sub-project 5A: settings for the local Python media engine. Every key is optional with a default, so an
+# older project.yaml parses unchanged; only `python` is REQUIRED once `adapters.media: python`. Build the
+# venv OUTSIDE this project (nothing here is committed) -- docs/runbooks/studio-media.md mục 1 has the exact
+# install commands, the pre-download step and the measured timings/VRAM on an RTX 3060.
+# media:
+#   python: E:/harness-venv/Scripts/python.exe   # absolute path to the venv interpreter. REQUIRED for python.
+#   device: cuda:0          # cuda:<n> | cpu. cpu works but is far too slow for production.
+#   transcribe:
+#     engine: whisperx
+#     model: large-v3       # faster-whisper model name
+#     compute_type: float16 # float16 | int8_float16 | int8 -- step down if the GPU runs out of memory
+#     batch_size: 8
+#     # python: …           # overrides `media.python` for transcribe ONLY (two-venv fallback, see below)
+#   tts:
+#     engine: omnivoice
+#     model: k2-fsa/OmniVoice
+#     dtype: float16        # float16 | bfloat16 | float32
+#     num_step: 32          # diffusion steps, 4-128. Higher is slower and not automatically better.
+#     max_chars: 280        # 80-600: a narration line longer than this is split into chunks
+#     pause_seconds: 0.25   # silence inserted between two chunks of the same line
+#     loudness_lufs: -16    # per-line loudness normalisation target
+#     # python: …           # overrides `media.python` for tts ONLY
+#   scene:
+#     threshold: 0.30       # ffmpeg scene-change threshold; lower it for handheld or changing-light footage
+#     min_shot_seconds: 1.0
+#     max_shot_seconds: 20  # caps a shot when no scene change is detected at all
+#     proxy_height: 540     # height of the proxy media-index encodes for the survey agent to look at
+#   watch:
+#     max_sheets: 24
+#   # Two venvs (`media.transcribe.python` + `media.tts.python`) are the documented fallback for a version
+#   # conflict between OmniVoice's torch and WhisperX's dependencies. On the build machine there was NO
+#   # conflict -- one venv held both -- so use the single `media.python` above unless pip actually fights you.
 # publication:
 #   verify_seconds: 900     # how often (>=60s) the worker's idle sweep asks the publisher whether an overdue
 #                           # SCHEDULED job actually went public (settles PUBLISHED or parks

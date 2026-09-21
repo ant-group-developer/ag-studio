@@ -693,3 +693,145 @@ metric null, ranh giới adapter). Không cái nào chặn merge; ghi để sub-
 - Ngoài phạm vi: `waitForLabels` trong `collect-stats.mjs` kiểm deadline trước `waitForTimeout(1000)` và
   `page.evaluate` không chịu `setDefaultTimeout`, nên mỗi lần chờ có thể quá `LABEL_WAIT_MS` ~1 s; 275 s trong
   header là sàn, không phải trần cứng (còn 25 s dư so với 300 s).
+
+## Sau sub-project 5A (xưởng dựng có engine media thật, 2026-09-21)
+
+Gom từ sổ SDD của kế hoạch 5A (mọi dòng `minor (deferred)` và `NOTE` của Task 1–11) cộng phần rủi ro còn lại
+của spec §10. Không dòng nào chặn merge; `library-production@1.2.0` đã chạy thật đủ 15 stage, ba chế độ
+giọng, trên GPU của máy build (`docs/runbooks/studio-media.md` mục 7 và 9).
+
+### `engines/python/` — hai script engine
+
+- `transcribe.py` giữ **toàn bộ mảng audio của mọi clip trong bộ nhớ** xuyên suốt cả hai pha (nghe rồi căn
+  chỉnh) để pha 2 không phải đọc lại file — khoảng 1–2 GB RAM cho 40 clip. Việc sau: đọc lại từ đĩa ở pha 2,
+  hoặc xử lý theo lô.
+- `PythonMediaEngine.probe()` **không rút cạn stderr** của tiến trình con; một bản Python in nhiều cảnh báo
+  ra stderr trong lúc probe có thể làm đầy pipe.
+- `spawn()` trong `run()` **không bọc try**: nếu chính lời gọi ném (khác với sự kiện `error`), file job vừa
+  ghi bị bỏ lại trong workspace.
+- Ghi nguyên tử của Python (`write_result`) để lại file `.tmp` nếu tiến trình bị SIGKILL (timeout) đúng giữa
+  chừng; không test nào kiểm file job/result tạm đã được xoá.
+- Comment mô tả env của tiến trình con bỏ sót `PATHEXT` (Windows cần nó để phân giải một lệnh không có đuôi).
+- `FakeMediaEngine` gặp file audio không đọc được thì trả **0 segment một cách im lặng**, không phân biệt với
+  "clip này thật sự không có tiếng".
+- Danh sách allow-list trong `allow_vad_checkpoint_globals()` (sửa ở Task 11) **gắn với phiên bản**: nâng
+  whisperx/pyannote lên bản đổi tên hay dời các lớp đó thì hàm lặng lẽ góp ít mục hơn và `load_model` fail
+  lại với đúng thông điệp cũ. Không có test nào bắt được điều đó mà không cần GPU + trọng số thật; dấu hiệu
+  là dòng log `allow-listed VAD checkpoint globals for torch.load` ngắn đi.
+
+### `packages/core/src/media/` — bóc cảnh, nghe nguồn, đọc lời, khớp hình
+
+- `shotId` > 999 phá regex `shot_id` (đã thêm guard, nhưng trần vẫn là 999 shot mỗi source).
+- Lỗi encode bản proxy bị **log rồi nuốt**, không để lại dấu nào trong `shots.json` — downstream không phân
+  biệt được "không có proxy" với "proxy hỏng".
+- Không có test cho nhánh ffmpeg trích audio thất bại trong `transcribeSources`.
+- Timeout của transcribe chỉ cộng thời lượng của những clip **có audio**, nên một buổi quay lẫn nhiều clip
+  câm được cấp deadline ngắn hơn tổng thời lượng thật.
+- `edl-valid` **bỏ qua** phần narration khi stage không có output `edl`.
+- File `.tmp-*` mồ côi trong `cache/tts` không bao giờ được quét dọn, và lỗi ghi cache là `Error` trần.
+- Tách câu: vẫn **thiếu tách** sau một dấu ngoặc kép đóng.
+- `tts-valid` spawn **một ffmpeg cho mỗi dòng** lời.
+- ffmpeg **có mặt nhưng hỏng** làm `tts-valid` báo đỉnh âm lượng là `unknown` một cách im lặng (quyết định có
+  chủ đích: không fail vì thiếu công cụ).
+- Nhánh kẹp `loudnorm` bị trôi và nhánh cache JSON hỏng chưa có test.
+- `fitEdl`: cặp `expandOnly` có thể để điểm thua nằm **giữa một từ** mà không cảnh báo; nhánh hồi sinh không
+  kẹp vẫn có thể fail `EdlSchema` khi `in`/`out` làm tròn bằng nhau trên source không rõ thời lượng; `refine`
+  không ép bất biến `missing = reused + uncovered`; entry không nằm trong shot nào bị dán nhãn `kept` dù đã
+  phải nối thêm hình, và phần đuôi rảnh của shot chứa điểm giữa nó thì không dùng tới; một shot bị đánh dấu
+  "đã dùng" theo khoảng **gốc chưa cắt**, nên phần đuôi đã cắt bỏ không tái sử dụng được; `report.entries[]`
+  lặp `order` cho các dòng bị loại; `markUsed` đánh dấu cả shot chứa điểm giữa dù chỉ chồng ≤ 0.2 s; pha quét
+  narration mồ côi bị cổng theo `voice: tts` (thừa); tên test `fit-edl.test.ts:524` gây hiểu nhầm; còn thiếu
+  test cho rule 4 nhiều lựa chọn, entry trải hai shot, và câu nói không có dòng transcript tương ứng.
+
+### `packages/core/src/library/` — giọng đọc, tự nhận request
+
+- `library sync --verify` **không** băm lại `ref.wav` của hồ sơ giọng (chỉ item mới băm lại).
+- Không test nào kiểm việc lan truyền trạng thái `retired` sang studio khi sync, cũng không kiểm `--ref-text`
+  đọc từ file.
+- `sha256FileSync` trả `size_bytes` mà không ai dùng.
+- Chạy lại `create-requests` **không** tính lại trạng thái hạ giọng (`downgraded_voice`) cho một request đã
+  tồn tại — kênh vừa thêm giọng vẫn thấy request cũ ở `voice: none`.
+- **Chế độ collection: replan không ưu tiên collection cũ của chính request đó khi đã có collection mới chưa
+  dùng.** Hệ quả: một buổi quay có thể bị bỏ lửng, và kết cục phụ thuộc thứ tự `created_at` của các request.
+  Đây là khoảng trống trong phán quyết của Task 7, cố ý để lại cho sub-project sau chứ không phải bỏ sót.
+- `d.config.source_collections` là mã chết bên trong `core` (chế độ đã được quyết ở `AutoAcceptDeps.sources`).
+- Mỗi lượt quét auto-accept vẫn duyệt `listRuns` lần thứ hai và hỏi từng source một.
+- Tên collection **không được kiểm ở CLI** — regex của schema bắt nó muộn, sau khi đã ingest.
+- Worker nuốt im lặng một `TypeError` từ auto-accept (có từ trước 5A).
+
+### `packages/cli/` — stage, doctor, dashboard
+
+- `default_deadline_seconds: 14400` của profile `studio` revision 3 áp cho **mọi** stage, kể cả stage agent —
+  một agent treo giờ mất 4 tiếng mới chạm deadline thay vì 1 tiếng như trước.
+- `ArtifactRegistry.stageOutputs` dùng `renameSync`, dễ gặp `EPERM` chập chờn trên Windows; 1.2.0 thêm hai
+  artifact thư mục nữa nên xác suất tăng. Việc sau: thử lại có giới hạn.
+- `library-review` nhận **hai** input `edl`: bản trước khi khớp (`plan-edit`) và bản đã khớp
+  (`media-fit-edl`). Đúng ý đồ, nhưng skill phải tự biết đọc bản nào.
+- `assemble.mjs` quyết định cho **cả bộ clip** dựa trên `hasAudioStream(clips[0])`.
+- Brief inline của `survey-source`/`plan-edit` bị **viết đè** thay vì nối thêm khi profile ghi đè.
+- `media.ts` dài 519 dòng; `publish-stage.ts` đã có cảnh báo tương tự từ 3B.
+- Test verifier độc lập của `survey-source` **hard-code** `required_checks` thay vì đọc từ workflow.
+- `pinnedWorkflowLoadable` lặp lại non-null assertion; `mediaEngineOptions()` bị tính lại trong
+  `computeDoctorRows`.
+- **Phép dò engine media bị bỏ qua khi đang giữ lease GPU có thể che một engine hỏng vô thời hạn** trên một
+  GPU bận liên tục — không có chỉ báo "đã bỏ qua lần dò" nào cho người vận hành thấy.
+- Không có khử trùng lặp cho các lần dò song song đang bay; `_resetMediaProbeCacheForTests` chưa nằm trong
+  setup test toàn cục; tỉ lệ `cache_hit_ratio` của dashboard đọc trần 200 event.
+- `library-export` trong 1.2.0 **không còn** artifact `captions` nào để xuất (`hasInput("captions")` luôn
+  false), nên mọi item 1.2.0 ra kho **không có phụ đề** cho tới sub-project 5B.
+- Workspace của `assemble` giờ vật liệu hoá cả `proxy_set` (hardlink, rơi về copy) — một syscall mỗi file,
+  đáng lưu ý với buổi quay lớn.
+
+### Vệ sinh test
+
+- Phần lớn test hợp đồng mới của Task 1 **không được quan sát fail trước** (test và cài đặt viết cùng một
+  lượt).
+- Test cache TTS chứng minh "được tất cả hoặc không được gì", **không** chứng minh tái dùng **từng dòng** khi
+  chỉ một dòng đổi — đúng cái mà vòng replan cần nhất. (Lần chạy thật ở Task 11 cũng chỉ chứng minh mức tất
+  cả: hai dòng đều `cached: true`.)
+- `within_target: false` chưa bao giờ được chạy end-to-end.
+- Chỉ có **một** ngôn ngữ nguồn trong bộ test tự động; đường `vi` chỉ được kiểm bằng tay ở Task 11.
+- `studio-media` "channel can pick" chỉ kiểm exit code.
+- `artifactPathFor` trả `undefined` rồi bị non-null assertion ở chỗ gọi.
+- `ffprobeHasAudio` gộp "probe lỗi" với "không có audio".
+- `writeProjectYaml` đặt `adapters.media: fake` cho cả thế giới ghim 1.1.0 (vô hại, không đối xứng).
+- Tham số `language` của `ingestShoot` không dùng tới.
+- Acceptance 43 ("ít nhất một điểm cắt được hít") phụ thuộc con số 2.51 s do ffmpeg sinh ra.
+- Hai khối `describe` của 1.0.0/1.1.0 giờ khẳng định các sự kiện của profile revision 3.
+
+### Rủi ro vận hành còn lại (spec §10)
+
+- **Cache TTS lớn dần.** `harness artifacts sweep` **chưa** biết tới `<data_root>/cache/tts`; không có dọn
+  theo tuổi. Với giọng và lời ổn định thì thư mục này chỉ có lớn lên. Việc sau: đưa nó vào `artifacts sweep`
+  với ngưỡng tuổi riêng.
+- **Dò cảnh bằng ngưỡng cố định** (`media.scene.threshold`, mặc định 0.30) dễ sai với cảnh quay tay rung hay
+  ánh sáng đổi; `max_shot_seconds` chỉ chặn hậu quả. Dò cảnh tốt hơn là việc sau.
+- **Nhân giọng: harness không xác minh được `origin`.** Trường này chỉ ghi lại lời khai; trách nhiệm hoàn
+  toàn thuộc người tạo hồ sơ (ADR mục 105). Không có việc kỹ thuật nào để làm ở đây, chỉ có quy tắc.
+- **`reused`/`shortfalls` lặp vô hạn** đã bị `max_replans` của SP4 chặn; hết lượt thì `request_stuck` như cũ.
+- **Thời gian chạy trên buổi quay lớn chưa đo.** Số đo của Task 11 lấy từ ba clip mỗi buổi; với 40 clip,
+  phần nạp mô hình (~12 s OmniVoice, ~4 s whisper) không tăng nhưng phần nghe thì có, và `lease_seconds` của
+  profile phải ≥ timeout của stage dài nhất.
+- **Engine media chưa chạy trên máy studio thật.** Task 11 chạy trên máy build; venv, mô hình và driver CUDA
+  của máy đích là việc của `docs/runbooks/go-live.md` bước 3b.
+
+### Ngoài phạm vi 5A, ghi lại để khỏi quên (spec §9)
+
+- **Phụ đề**: 1.2.0 không sinh artifact `captions` nào, nên item ra kho không có phụ đề — sub-project 5B.
+  Cùng đó: chữ trên hình, nhạc + ducking, chuyển cảnh, tỉ lệ khung. `timeline.json` đã là hợp đồng sẵn cho
+  chúng (ADR mục 107).
+- **Lệnh sinh clip mẫu bằng voice design** chưa được bọc vào CLI — hiện phải gọi `OmniVoice.generate(...,
+  instruct=...)` bằng tay theo `studio-media.md` mục 4, dù đó chính là cách duy nhất để `origin: synthetic`
+  đúng sự thật mà không cần giọng người nào.
+- **Dịch transcript giữa hai ngôn ngữ** (nguồn nói tiếng này, kênh phát tiếng kia): chưa có.
+- **`style-study` vẫn dùng hook `transcribe` của `executors/scripts.yaml`**, không dùng engine transcribe
+  thật — hai đường nghe khác nhau trong cùng một repo.
+- **Tách người nói (diarization)** và **engine đám mây**: chưa có, không định có sớm.
+
+### Tên profile `cartoon`/`avatar` còn sót
+
+`profile_id` vẫn là enum có `cartoon` và `avatar`, và `production-profiles/cartoon` vẫn là profile mẫu mà
+`README.md` quick-start đầu tiên dùng (`plan --profile cartoon`) — di sản của ADR mục 7, đặt tên profile theo
+phong cách sản xuất. **Harness này không dành cho nội dung hoạt hình** (spec 5A §0), nên hai tên đó giờ chỉ
+gây hiểu nhầm cho người đọc mới. Đổi tên là một refactor cơ học (enum + thư mục profile + fixture + vài test
+đếm) chứ không phải đổi hành vi, và **chưa được yêu cầu** — để lại nguyên trạng cho tới khi chủ máy muốn.

@@ -93,10 +93,10 @@ chạy được mọi nơi có Node:
 
 ```bash
 pnpm build
-lib=$(node -e "const{mkdtempSync,mkdirSync}=require('fs'),{join}=require('path');const d=mkdtempSync(join(require('os').tmpdir(),'kho-'));for(const s of ['styles','requests','items'])mkdirSync(join(d,s));console.log(d)")
+lib=$(node -e "const{mkdtempSync,mkdirSync}=require('fs'),{join}=require('path');const d=mkdtempSync(join(require('os').tmpdir(),'kho-'));for(const s of ['styles','requests','items'])mkdirSync(join(d,s));console.log(d.split(require('path').sep).join('/'))")
 
 # trỏ library.root của cả hai fixture vào kho tạm vừa tạo
-node -e "const fs=require('fs');for(const p of ['fixtures/ops-project-studio/project.yaml','fixtures/ops-project-channel/project.yaml'])fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('root: ./library','root: '+JSON.stringify(process.argv[1]).slice(1,-1)))" "$lib"
+node -e "const fs=require('fs');for(const p of ['fixtures/ops-project-studio/project.yaml','fixtures/ops-project-channel/project.yaml'])fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('root: ./library','root: '+process.argv[1]))" "$lib"
 
 pnpm harness --project fixtures/ops-project-studio db migrate
 pnpm harness --project fixtures/ops-project-channel db migrate
@@ -168,9 +168,9 @@ thư mục project hay thư mục bạn gõ lệnh) — `../fake-agent-cli.mjs` 
 
 ```bash
 pnpm build
-lib=$(node -e "const{mkdtempSync,mkdirSync}=require('fs'),{join}=require('path');const d=mkdtempSync(join(require('os').tmpdir(),'kho-'));for(const s of ['styles','requests','items'])mkdirSync(join(d,s));console.log(d)")
-node -e "const fs=require('fs');for(const p of ['fixtures/ops-project-studio/project.yaml','fixtures/ops-project-channel/project.yaml'])fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('root: ./library','root: '+JSON.stringify(process.argv[1]).slice(1,-1)))" "$lib"
-node -e "const fs=require('fs'),path=require('path');const abs=path.resolve('fixtures/fake-agent-cli.mjs').split(path.sep).join('/');const p='fixtures/ops-project-studio/project.yaml';fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('../fake-agent-cli.mjs',abs))"
+lib=$(node -e "const{mkdtempSync,mkdirSync}=require('fs'),{join}=require('path');const d=mkdtempSync(join(require('os').tmpdir(),'kho-'));for(const s of ['styles','requests','items'])mkdirSync(join(d,s));console.log(d.split(require('path').sep).join('/'))")
+node -e "const fs=require('fs');for(const p of ['fixtures/ops-project-studio/project.yaml','fixtures/ops-project-channel/project.yaml'])fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('root: ./library','root: '+process.argv[1]))" "$lib"
+node -e "const fs=require('fs'),path=require('path');const abs=path.resolve('fixtures/fake-agent-cli.mjs').split(path.sep).join('/');const p='fixtures/ops-project-studio/project.yaml';fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('[node, ../fake-agent-cli.mjs,','[node, '+abs+','))"
 
 pnpm harness --project fixtures/ops-project-studio db migrate
 pnpm harness --project fixtures/ops-project-channel db migrate
@@ -212,6 +212,86 @@ pnpm harness --project fixtures/ops-project-channel library pick <item_id> --cha
 Chi tiết đầy đủ (bật `auto_accept` trên một project thật, xử lý `WAITING_HUMAN` của stage agent,
 `request_stuck`, `style-review` giữ draft, quay lại workflow `1.0.0` gate người, DoD #3) ở
 `docs/runbooks/studio-autopilot.md`. Dọn sau khi thử:
+
+```bash
+rm -rf fixtures/ops-project-studio/data fixtures/ops-project-channel/data fixtures/ops-project-studio/raw
+git checkout -- fixtures/ops-project-studio/project.yaml fixtures/ops-project-channel/project.yaml
+```
+
+## Quick-start: xưởng dựng theo buổi quay (sub-project 5A, engine media giả)
+
+`library-production@1.2.0` thay ba wrapper `index-source`/`transcribe`/`tts` bằng bốn stage media built-in
+(`media-index`, `media-transcribe`, `media-tts`, `media-fit-edl`), đổi đơn vị nguồn từ **một clip** sang
+**một buổi quay** (`source ingest <thư mục> --collection shoot-…`), và thêm hồ sơ giọng đọc thuộc kênh.
+Quick-start này chạy tất cả với `adapters.media: fake` — **không cần GPU, không cần Python**. Bản thật
+(WhisperX + OmniVoice) ở `docs/runbooks/studio-media.md`.
+
+Cần `ffmpeg`/`ffprobe` trên PATH. Dựng trên đúng hai fixture của mục "studio tự vận hành" ở trên, thêm hai
+việc: kho tạm phải có **bốn** thư mục con (`voices/` là mới của 5A) và studio phải bật **chế độ collection**
+bằng `library.auto_accept.source_collections`.
+
+```bash
+pnpm build
+lib=$(node -e "const{mkdtempSync,mkdirSync}=require('fs'),{join}=require('path');const d=mkdtempSync(join(require('os').tmpdir(),'kho-'));for(const s of ['styles','requests','items','voices'])mkdirSync(join(d,s));console.log(d.split(require('path').sep).join('/'))")
+node -e "const fs=require('fs');for(const p of ['fixtures/ops-project-studio/project.yaml','fixtures/ops-project-channel/project.yaml'])fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('root: ./library','root: '+process.argv[1]))" "$lib"
+node -e "const fs=require('fs'),path=require('path');const abs=path.resolve('fixtures/fake-agent-cli.mjs').split(path.sep).join('/');const p='fixtures/ops-project-studio/project.yaml';fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('[node, ../fake-agent-cli.mjs,','[node, '+abs+','))"
+# chế độ collection: một request lấy CẢ buổi quay (bỏ dòng này = chế độ một-source của sub-project 4)
+node -e "const fs=require('fs');const p='fixtures/ops-project-studio/project.yaml';fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('auto_accept: { enabled: true, source_collection: main,','auto_accept: { enabled: true, source_collections: [shoot-*],'))"
+
+pnpm harness --project fixtures/ops-project-studio db migrate
+pnpm harness --project fixtures/ops-project-channel db migrate
+
+# 1. một style active (y hệt mục "studio tự vận hành": style-study@1.1.0 với agent giả)
+mkdir -p fixtures/ops-project-studio/raw
+ffmpeg -y -f lavfi -i testsrc=duration=5:size=320x180:rate=25 -f lavfi -i sine=frequency=440:duration=5 \
+  -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest fixtures/ops-project-studio/raw/sample-5s.mp4
+node -e "console.log(require('path').resolve('fixtures/ops-project-studio/raw/sample-5s.mp4').split(require('path').sep).join('/'))" > fixtures/ops-project-studio/raw/samples.txt
+pnpm harness --project fixtures/ops-project-studio source ingest fixtures/ops-project-studio/raw/samples.txt --rights cleared --json
+pnpm harness --project fixtures/ops-project-studio content create --title "Học style (5A)" --source <source_id> --json
+pnpm harness --project fixtures/ops-project-studio plan --workflow style-study@1.1.0 --profile studio --content <content_id> --json
+pnpm harness --project fixtures/ops-project-studio enqueue <run_id>
+pnpm harness --project fixtures/ops-project-studio worker --once   # lặp tới khi status <run_id> SUCCEEDED
+pnpm harness --project fixtures/ops-project-studio library list styles --json   # lấy <style_id> "active"
+
+# 2. MỘT BUỔI QUAY = một thư mục = một collection. Ba clip, mỗi clip hai cảnh màu để media-index dò ra cắt.
+mkdir -p fixtures/ops-project-studio/raw/shoot-demo
+for i in 0 1 2; do
+  ffmpeg -y -f lavfi -i "color=c=red:s=$((320+i*2))x180:d=3:r=25" -f lavfi -i "color=c=blue:s=$((320+i*2))x180:d=3:r=25" \
+    -f lavfi -i "sine=frequency=$((300+i*40)):duration=6" -filter_complex "[0:v][1:v]concat=n=2:v=1:a=0[v]" \
+    -map "[v]" -map 2:a -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac \
+    fixtures/ops-project-studio/raw/shoot-demo/clip-0$i.mp4
+done
+pnpm harness --project fixtures/ops-project-studio source ingest fixtures/ops-project-studio/raw/shoot-demo \
+  --collection shoot-demo --rights cleared --language vi --json     # "ingested": ba source trong một lệnh
+
+# 3. kênh đăng ký một hồ sơ giọng rồi xin một tập `voice: tts` từ đúng buổi quay đó.
+#    Clip mẫu ở đây là một tiếng sine của ffmpeg — chỉ để thử đường đi; giọng thật thì xem
+#    docs/runbooks/studio-media.md mục 4, và KHÔNG BAO GIỜ nhân giọng người thật khi chưa có quyền.
+ffmpeg -y -f lavfi -i sine=frequency=330:sample_rate=44100 -t 6 -c:a pcm_s16le fixtures/ops-project-studio/raw/ref.wav
+pnpm harness --project fixtures/ops-project-channel library voices add --display-name "Giọng demo" \
+  --ref fixtures/ops-project-studio/raw/ref.wav --ref-text "đây là đoạn ghi âm mẫu, đọc đúng từng chữ." \
+  --language vi --origin synthetic --origin-note "ffmpeg sine, chỉ để thử" --json
+pnpm harness --project fixtures/ops-project-studio library sync --json
+pnpm harness --project fixtures/ops-project-channel library request create \
+  --portfolio portfolio-channel --channel channel-one --topic "Buổi quay chợ nổi" --style <style_id> \
+  --duration 1,120 --voice tts --voice-id <voice_id> --language vi --source-hint shoot-demo --json
+
+pnpm harness --project fixtures/ops-project-studio doctor    # library:voices ok, library:auto_accept ok,
+                                                              # media:engine FAIL "fake media engine" là ĐÚNG:
+                                                              # 1.2.0 muốn engine thật, quick-start này cố ý giả
+
+# 4. studio: chỉ `worker`, 15 stage, không gate nào
+FAKE_REVIEW_MODE=approve pnpm harness --project fixtures/ops-project-studio worker --once   # lặp tới khi
+pnpm harness --project fixtures/ops-project-studio library list requests --json             # thấy "fulfilled"
+
+# 5. kênh nhận item
+pnpm harness --project fixtures/ops-project-channel library sync --json
+pnpm harness --project fixtures/ops-project-channel library pick <item_id> --channel channel-one --json
+```
+
+Chu trình đầy đủ với engine thật (dựng venv, tải trước mô hình, khối `media:`, đọc `fit-report.json`/
+`timeline.json`, cache TTS, sự cố, thời gian chạy + VRAM đo thật, kết luận DoD #2/#3) ở
+`docs/runbooks/studio-media.md`. Dọn sau khi thử:
 
 ```bash
 rm -rf fixtures/ops-project-studio/data fixtures/ops-project-channel/data fixtures/ops-project-studio/raw
@@ -274,9 +354,9 @@ kho tạm) — `channels/channel-one/channel.yaml` của fixture đã bật sẵ
 
 ```bash
 pnpm build
-lib=$(node -e "const{mkdtempSync,mkdirSync}=require('fs'),{join}=require('path');const d=mkdtempSync(join(require('os').tmpdir(),'kho-'));for(const s of ['styles','requests','items'])mkdirSync(join(d,s));console.log(d)")
-node -e "const fs=require('fs');for(const p of ['fixtures/ops-project-studio/project.yaml','fixtures/ops-project-channel/project.yaml'])fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('root: ./library','root: '+JSON.stringify(process.argv[1]).slice(1,-1)))" "$lib"
-node -e "const fs=require('fs'),path=require('path');const abs=path.resolve('fixtures/fake-agent-cli.mjs').split(path.sep).join('/');for(const p of ['fixtures/ops-project-studio/project.yaml','fixtures/ops-project-channel/project.yaml'])fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('../fake-agent-cli.mjs',abs))"
+lib=$(node -e "const{mkdtempSync,mkdirSync}=require('fs'),{join}=require('path');const d=mkdtempSync(join(require('os').tmpdir(),'kho-'));for(const s of ['styles','requests','items'])mkdirSync(join(d,s));console.log(d.split(require('path').sep).join('/'))")
+node -e "const fs=require('fs');for(const p of ['fixtures/ops-project-studio/project.yaml','fixtures/ops-project-channel/project.yaml'])fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('root: ./library','root: '+process.argv[1]))" "$lib"
+node -e "const fs=require('fs'),path=require('path');const abs=path.resolve('fixtures/fake-agent-cli.mjs').split(path.sep).join('/');for(const p of ['fixtures/ops-project-studio/project.yaml','fixtures/ops-project-channel/project.yaml'])fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('[node, ../fake-agent-cli.mjs,','[node, '+abs+','))"
 node -e "const fs=require('fs'),path=require('path');const abs=path.resolve('fixtures/legacy-channel-repo').split(path.sep).join('/');for(const p of ['fixtures/ops-project-channel/channels/channel-one/channel.yaml','fixtures/ops-project-channel/channels/channel-two/channel.yaml'])fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('repo_dir: ../legacy-channel-repo','repo_dir: '+abs))"
 
 # channel-identity (checker của build-package) đòi cả hai secret suốt phiên -- export một lần, không chỉ cho
@@ -339,14 +419,16 @@ git checkout -- fixtures/ops-project-studio/project.yaml fixtures/ops-project-ch
 
 ## Tài liệu
 - Blueprint: `docs/architecture/YOUTUBE_OPERATIONS_HARNESS_BLUEPRINT_v1.0.md`
-- Spec: `docs/superpowers/specs/2026-09-11-harness-structure-and-control-plane-design.md`, `docs/superpowers/specs/2026-09-12-sub-project-2-footage-production-design.md`, `docs/superpowers/specs/2026-09-14-sub-project-2c-content-library-design.md`, `docs/superpowers/specs/2026-09-14-sub-project-3-channel-publish-design.md`, `docs/superpowers/specs/2026-09-15-sub-project-4-studio-autopilot-design.md`, `docs/superpowers/specs/2026-09-15-sub-project-3b-channel-learning-design.md`
+- Spec: `docs/superpowers/specs/2026-09-11-harness-structure-and-control-plane-design.md`, `docs/superpowers/specs/2026-09-12-sub-project-2-footage-production-design.md`, `docs/superpowers/specs/2026-09-14-sub-project-2c-content-library-design.md`, `docs/superpowers/specs/2026-09-14-sub-project-3-channel-publish-design.md`, `docs/superpowers/specs/2026-09-15-sub-project-4-studio-autopilot-design.md`, `docs/superpowers/specs/2026-09-15-sub-project-3b-channel-learning-design.md`, `docs/superpowers/specs/2026-09-21-sub-project-5a-studio-media-design.md`
 - Plan sub-project 1: `docs/superpowers/plans/2026-09-11-control-plane-minimal.md`
 - Plan sub-project 2A: `docs/superpowers/plans/2026-09-12-sub-project-2a-catalog-planner-resources.md`
 - Plan sub-project 2B: `docs/superpowers/plans/2026-09-13-sub-project-2b-scripts-gate-media-footage.md`
 - Plan sub-project 2C: `docs/superpowers/plans/2026-09-14-sub-project-2c-content-library.md`
 - Plan sub-project 4: `docs/superpowers/plans/2026-09-15-sub-project-4-studio-autopilot.md`
+- Plan sub-project 5A: `docs/superpowers/plans/2026-09-21-sub-project-5a-studio-media.md`
 - ADR: `docs/adr/`
-- Runbook: `docs/runbooks/` (`go-live.md` — đưa lên máy thật, một máy hai vai; `reconcile-and-retry.md`, `wrap-a-channel.md`, `content-library.md`, `channel-publish.md`, `studio-autopilot.md`, `channel-learning.md`)
+- Runbook: `docs/runbooks/` (`go-live.md` — đưa lên máy thật, một máy hai vai; `reconcile-and-retry.md`, `wrap-a-channel.md`, `content-library.md`, `channel-publish.md`, `studio-autopilot.md`, `channel-learning.md`, `studio-media.md` — venv + GPU cho `library-production@1.2.0`)
+- Engine media Python (giao thức job/result, cài đặt, tải trước mô hình): `engines/python/README.md`
 - Việc để lại: `docs/operations/deferred-items.md`
 - Project mới: copy `project-template/` (xem `docs/runbooks/wrap-a-channel.md` bước 1; mẫu kênh ở `project-template/channels/example/channel.yaml`; khối `library.auto_accept` mẫu trong `project-template/project.yaml`)
 
@@ -387,7 +469,19 @@ request của chính kênh), `harness channel stats|learned|demand|collect|plan-
 import`, doctor `channel:<id>:stats|planning`, dashboard khối `learning` + alert
 `stats_blocked|stats_failing|planning_failed` — cổng học không chặn phát hành, chỉ ưu tiên đề xuất kế tiếp;
 thu số thật (`adapters.stats: playwright`) và agent `channel-plan`/`channel-package` thật chưa kiểm được
-trong môi trường build agent này, xem `docs/runbooks/channel-learning.md` mục "DoD #4"). Còn lại: sửa
+trong môi trường build agent này, xem `docs/runbooks/channel-learning.md` mục "DoD #4") + 5A (xưởng dựng có engine media thật: cổng `MediaEngine`
+với hai bản cài (`python` gọi `engines/python/{transcribe,tts}.py` là tiến trình con trao đổi file JSON —
+WhisperX nghe nguồn, OmniVoice đọc lời — và `fake` cho CI), bốn stage built-in `media-index|transcribe|tts|
+fit-edl` thay ba wrapper `index-source`/`transcribe`/`tts`, buổi quay = collection
+(`source ingest <thư mục>`, `library.auto_accept.source_collections`), hồ sơ giọng thuộc kênh trong
+`voices/` của kho (`library voices add|list|retire`, `origin` bắt buộc, `channel.yaml.voice`), khớp hình
+theo lời (`fit-edl` cắt/kéo EDL, **không bao giờ fail vì thiếu hình** — ghi `fit-report.json` rồi để
+`library-review` loại và vòng replan SP4 chạy tiếp), `timeline.json` làm hợp đồng cho 5B, cache TTS theo nội
+dung, `library-production@1.2.0` + profile `studio` revision 3, doctor `media:python|packages|device|models|
+engine` + `library:voices`, alert `media_engine_unavailable` — **đã chạy thật trên GPU của máy build**: bốn
+tập đủ 15 stage với ba chế độ giọng (`en`+`tts`, `vi`+`tts`, `original`), `alignment: "word"` kể cả tiếng
+Việt, đỉnh VRAM ~4.1 GB, một venv đủ cho cả hai stack; xem `docs/runbooks/studio-media.md` mục 7 và 9). Còn
+lại: chữ trên hình + phụ đề + nhạc/chuyển cảnh (5B — item 1.2.0 hiện ra kho **không có phụ đề**), sửa
 metadata video đã lên theo kết quả, YouTube Test & Compare, học chéo kênh (`fleetLessons`), mục tiêu doanh
 thu/đăng ký, agent tự chọn nguồn phía studio, tự động hoá đăng nhập Studio (xem
 `docs/operations/deferred-items.md`).

@@ -98,6 +98,51 @@ YouTube Operations Harness: control plane điều phối sản xuất và phân 
 - `HARNESS_FAKE_STATS_FILE` **chỉ** tới `FakeStatsCollector` (`adapters.stats: fake`): `PlaywrightStatsCollector` không đọc biến môi trường nào, chỉ nhận `statsFile` truyền tay trong test — một biến còn sót trong shell của người vận hành không bao giờ được phép biến một lượt thu số thật thành đọc file JSON rồi ghi lại như ảnh chụp `source: "studio"`.
 - `maybeAutoPick` ưu tiên item `approved` gắn `request_id` của request do chính kênh tạo (theo `created_at` request, cũ trước) trước khi cân nhắc item chung không `request_id` — item chung chỉ được cân nhắc khi `demand.needed + demand.covered.items > 0`, tức còn khung phát chưa được job/run/request che phủ (không tính chính các item chung vào phần "đã che phủ" ở phép so này, vì tính vào sẽ tự chặn — item chung đang tồn tại luôn kéo `covered.items` lên, khiến `needed` một mình về 0 và item đó vĩnh viễn không bao giờ được pick).
 
+## Lệnh 5A (media studio)
+- `harness source ingest <path> [--collection <name>] [--recursive] [--rights …] [--language <code>]`: từ 5A
+  `<path>` nhận cả **một thư mục** — mọi file video trong đó được đăng ký thành một buổi quay (`--recursive`
+  để xuống thư mục con). Dedupe theo sha256 vẫn như cũ và **giữ collection cũ** của file trùng byte, nên
+  ingest lại cùng thư mục dưới tên collection khác sẽ không đổi được gì.
+- `harness library voices add|list|retire` (vai `channel`; `studio` chỉ đọc qua `library sync`):
+  `add --display-name <n> --ref <wav> --ref-text <text_or_path> --language <code> --origin synthetic|own|licensed
+  [--origin-note <n>] [--speed <n>] [--num-step <n>] [--voice-id <id>]` — `--ref` phải dài 3–30 s và được
+  chuyển thành PCM mono 24 kHz `ref.wav` trong kho trước khi ghi; `--ref-text` là lời đọc đúng từng chữ của
+  clip mẫu (hoặc đường dẫn file chứa nó); `--voice-id` **nâng revision** của hồ sơ đã có thay vì tạo mới.
+  `list [--status active|retired]` đọc mirror DB (chạy `library sync` trước); `retire <voice_id>` là
+  `active → retired`, idempotent.
+- **Không bao giờ nhân giọng một người thật khi chưa có quyền.** `origin` là trường bắt buộc và harness
+  **không xác minh được** nó — nó chỉ ghi lại lời khai của người tạo hồ sơ (spec §10, ADR mục 105). Cách an
+  toàn: sinh clip mẫu bằng voice design của OmniVoice (chỉ từ mô tả chữ, không có audio tham chiếu) rồi khai
+  `--origin synthetic`; xem `docs/runbooks/studio-media.md` mục 4.
+- `harness library request create … --voice tts --voice-id <id>`: `--voice tts` **bắt buộc** có `--voice-id`
+  trỏ một hồ sơ `active`, kiểm ngay lúc tạo (`requireActiveVoice`). Request do chính kênh tự sinh
+  (`channel-planning`) thì thiếu giọng dùng được sẽ **hạ xuống `voice: none` kèm ghi chú**
+  (`receipt.downgraded_voice`), không làm hỏng stage.
+- `harness media index|transcribe|tts|fit-edl`: **stage built-in** của `library-production@1.2.0` (đọc
+  `stage-request.json` trong `$HARNESS_WORKSPACE`), do composition root tự đăng ký — **không** cần entry
+  trong `executors/scripts.yaml`, **không** gọi tay, giống `media watch` và bốn lệnh `library stage`.
+- `project.yaml`: `adapters.media: python | fake` (mặc định `fake`; đây là chỗ **duy nhất** chọn engine, đọc
+  chỉ ở `packages/cli/src/composition.ts`) và khối `media:` — `python` (bắt buộc khi `python`), `device`
+  (`cuda:<n>|cpu`), `transcribe.{engine,model,compute_type,batch_size,python}`,
+  `tts.{engine,model,dtype,num_step,max_chars,pause_seconds,loudness_lufs,python}`,
+  `scene.{threshold,min_shot_seconds,max_shot_seconds,proxy_height}`, `watch.max_sheets`. Hai khoá
+  `transcribe.python`/`tts.python` ghi đè `media.python` theo từng engine (phương án hai venv khi torch của
+  OmniVoice xung đột với WhisperX — trên máy build **không** xung đột, một venv là đủ).
+- `library.auto_accept.source_collections` (danh sách glob, `.min(1)`) bật **chế độ collection**: một request
+  lấy cả buổi quay khớp glob, trần `max_sources` (mặc định 40), và collection đã được một run thành công dùng
+  thì không request nào khác lấy lại (miễn trừ cho chính request đó khi replan). **Không khai** khoá này =
+  chế độ cũ của sub-project 4 nguyên vẹn (một source một request). `library.auto_accept.workflow_release`
+  (`<id>@<x.y.z>`) ghim vòng autopilot vào một release thay vì đi theo profile — nút lùi về
+  `library-production@1.1.0`, và là cách test SP4 ở lại 1.1.0 khi profile đã sang 1.2.0.
+- `channels/<id>/channel.yaml` thêm `voice: { voice_id: <voice_profile_id> }` — giọng mặc định của kênh.
+- Doctor thêm `library:voices` (thư mục `voices/` của kho tồn tại, cả hai vai) và — chỉ khi
+  `adapters.media: python` — `media:python|packages|device|models`; `media:models` FAIL là **cảnh báo** "sẽ
+  tải lúc chạy đầu", không dựng alert. Khi `adapters.media: fake` mà release hiệu lực của autopilot ≥
+  `library-production@1.2.0` thì có thêm dòng `media:engine` FAIL. Phép dò bị **bỏ qua khi đang giữ lease
+  GPU** và được cache 900 s trên đường dashboard; `harness doctor` gõ tay luôn dò mới.
+- Xem `docs/runbooks/studio-media.md` (dựng venv, tải trước mô hình, đọc `fit-report.json`/`timeline.json`,
+  cache TTS, sự cố, số đo thật, kết luận DoD #2/#3) và `engines/python/README.md` (giao thức job/result).
+
 ## Giới hạn quyền
 - Không sửa cột `state` ngoài `transition()` và `claim()` trong `packages/core/src/state/` — **trừ** ba bảng
   mirror của kho (`edit_style`, `content_request`, `library_item`) và bảng `channel_package`: `state`/`status`

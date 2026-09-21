@@ -10,7 +10,7 @@ trỏ `library.root` vào một thư mục kho cục bộ. Không có server, kh
 trong `D:\`.
 
 Đọc kèm: `wrap-a-channel.md` (wrapper + secret), `content-library.md` (kho), `studio-autopilot.md`,
-`channel-publish.md`, `channel-learning.md`.
+`channel-publish.md`, `channel-learning.md`, `studio-media.md` (venv + GPU cho `library-production@1.2.0`).
 
 ---
 
@@ -54,11 +54,12 @@ Mọi lệnh `harness` dưới đây chạy từ thư mục repo: `pnpm harness 
 ## 3. Tạo kho cục bộ
 
 ```bash
-mkdir -p E:/kho/styles E:/kho/requests E:/kho/items
+mkdir -p E:/kho/styles E:/kho/requests E:/kho/items E:/kho/voices
 ```
 
-Doctor **không** tự tạo ba thư mục này (`content-library.md` §6). Muốn dùng lại kho cũ thì trỏ vào đó,
-nhưng kho phải có đúng ba thư mục con.
+Doctor **không** tự tạo bốn thư mục này (`content-library.md` §6). Muốn dùng lại kho cũ thì trỏ vào đó,
+nhưng kho phải có đủ bốn thư mục con — `voices/` là của sub-project 5A (hồ sơ giọng đọc, dòng doctor
+`library:voices`) và một kho dựng trước 5A sẽ thiếu nó.
 
 ## 4. Ops project vai studio (`E:\ops-studio`)
 
@@ -89,18 +90,50 @@ library:
   auto_accept: { enabled: true, source_collection: main, max_replans: 2, max_concurrent_runs: 1 }
 adapters:
   agent: cli                        # KHÔNG dùng fake ở go-live; doctor sẽ FAIL nếu auto_accept bật + agent fake
-workflows: [style-study@1.1.0, library-production@1.1.0]
+workflows: [style-study@1.1.0, library-production@1.2.0]   # 1.2.0 = bản có engine media (bước 3b).
+                                                           # Chưa dựng được venv/GPU thì để 1.1.0 và thêm
+                                                           # ba wrapper index-source/transcribe/tts.
 ```
 
-3. `executors/scripts.yaml` + `executors/wrappers/*.mjs`: `library-production@1.1.0` gọi bảy script
-   `collect-samples`, `transcribe`, `thumbnail-candidates`, `index-source`, `tts`, `cut`, `assemble`
-   (bốn lệnh `library-*` và `watch-*` là built-in, không cần wrapper). Mỗi tên một dòng trong
-   `scripts.yaml` và một wrapper gọi script cũ ở `D:\<kênh>\scripts\` theo khuôn `wrap-a-channel.md` §4
-   (đường dẫn script cũ đặt qua env hoặc `cwd`, không hard-code trong wrapper để commit được). Mẫu chạy
-   được: `fixtures/ops-project-studio/executors/` và `fixtures/ops-project-footage/executors/wrappers/`.
+3. `executors/scripts.yaml` + `executors/wrappers/*.mjs`: `library-production@1.2.0` gọi **bốn** script
+   `collect-samples`, `thumbnail-candidates`, `cut`, `assemble`. Ba script của 1.1.0 — `index-source`,
+   `transcribe`, `tts` — **không còn phải viết**: từ 1.2.0 chúng là stage media built-in
+   (`media-index`, `media-transcribe`, `media-tts`, cộng `media-fit-edl`) chạy bằng engine Python cục bộ,
+   giống bốn lệnh `library-*` và `watch-*`. Mỗi tên còn lại một dòng trong `scripts.yaml` và một wrapper gọi
+   script cũ ở `D:\<kênh>\scripts\` theo khuôn `wrap-a-channel.md` §4 (đường dẫn script cũ đặt qua env hoặc
+   `cwd`, không hard-code trong wrapper để commit được). Mẫu chạy được:
+   `fixtures/ops-project-studio/executors/` và `fixtures/ops-project-footage/executors/wrappers/`.
    **Đây là phần việc thật lớn nhất của go-live và chưa có wrapper nào cho script cũ ở `D:\`** — làm
    từng cái, thử bằng một run tay (`content create` → `plan` → `enqueue` → `worker --once`, xem
    `wrap-a-channel.md` §8) trước khi giao cho worker chạy nền.
+3b. **Engine media (sub-project 5A)** — cần trước khi chạy `library-production@1.2.0`:
+   - Dựng venv ngoài repo và tải trước mô hình theo `docs/runbooks/studio-media.md` mục 1 (~20 GB đĩa, GPU
+     NVIDIA; đỉnh VRAM đo thật ~4.1 GB nên card 8 GB đủ). Đặt `HF_HOME` **trong shell chạy worker**, không
+     chỉ lúc tải — nó nằm trong danh sách trắng env truyền xuống tiến trình Python con.
+   - Thêm vào `project.yaml` của studio:
+
+     ```yaml
+     adapters:
+       agent: cli
+       media: python
+     media:
+       python: E:/harness-venv/Scripts/python.exe
+       device: cuda:0
+     library:
+       auto_accept:
+         enabled: true
+         source_collections: ["shoot-*"]   # buổi quay = collection; bỏ khoá này = chế độ một-source cũ
+         max_sources: 40
+     workflows: [style-study@1.1.0, library-production@1.2.0]
+     ```
+   - Kho cần thêm thư mục `voices/` (`mkdir -p E:/kho/voices`) — doctor không tự tạo, dòng `library:voices`
+     FAIL nếu thiếu, giống `styles/`/`requests/`/`items/` ở bước 3.
+   - Vai kênh tạo ít nhất một hồ sơ giọng nếu định xin `voice: tts`:
+     `harness library voices add --display-name … --ref <wav 3-30s> --ref-text <lời đọc> --language vi
+     --origin synthetic|own|licensed`. **Không bao giờ nhân giọng người thật khi chưa có quyền** —
+     `studio-media.md` mục 4 có cách sinh clip mẫu bằng voice design để `synthetic` là đúng sự thật.
+   - `harness doctor` phải ok: `media:python`, `media:packages`, `media:device`, `media:models`,
+     `library:voices`.
 4. `source-catalog/sources.yaml`: khai collection `main` trỏ vào corpus nguồn (ví dụ `D:\hub-tai-chinh-us`),
    rồi `harness source ingest …` để `library:auto_accept` có ít nhất một source.
 5. Skill cho agent: `pnpm harness --project E:/ops-studio skills sync` (chép `skills/*` vào
@@ -179,7 +212,7 @@ thứ thật. Mỗi bước dừng lại đọc `status <run_id>` / log trước
    `library request create --portfolio portfolio-channel --channel <channel_id> --topic "…" --style <style_id>
    --duration 600,900` (`--duration` là `min,max` giây và **bắt buộc**: thiếu thì studio kẹt ở stage
    `assemble` — xem deferred-items "Sau sub-project 3B").
-3. **Studio worker** nhận request (`worker --once` lặp) → `library-production@1.1.0` chạy đủ 13 stage → item
+3. **Studio worker** nhận request (`worker --once` lặp) → `library-production@1.2.0` chạy đủ 15 stage → item
    `approved` trong kho. Đây là lúc wrapper script cũ lộ lỗi; sửa wrapper, không sửa script cũ.
 4. **Kênh pick và phát**: `library sync`, `channel pick-next <id>`, `worker --once` lặp → `publish list`
    thấy job SCHEDULED. Stage `package` là lần chạy agent thật cho skill `channel-package`: điền
@@ -210,7 +243,11 @@ riêng của máy.
 
 ## 8. Điều chưa từng chạy thật (kiểm đầu tiên khi gãy)
 
-- Bảy wrapper cho script cũ ở `D:\` — chưa viết.
+- **Bốn** wrapper cho script cũ ở `D:\` (`collect-samples`, `thumbnail-candidates`, `cut`, `assemble`) —
+  chưa viết. Ba cái còn lại của 1.1.0 (`index-source`, `transcribe`, `tts`) đã thành stage media built-in ở
+  `library-production@1.2.0`, không phải viết nữa.
+- Engine media Python trên **máy studio này**: venv, mô hình, driver CUDA của chính nó chưa từng kiểm. Bản
+  thân engine đã chạy thật (bốn tập, ba chế độ giọng) trên máy build — `studio-media.md` mục 7 và 9.
 - `claude -p` / `codex exec` với skill thật, `--allowedTools` cố định trong `RUNTIME_COMMANDS`
   (`packages/adapters/agent-cli/src/cli-agent-runtime.ts`).
 - `upload-youtube-playwright.mjs` / `publish-video-playwright.mjs` được gọi từ harness thay vì từ phiên
