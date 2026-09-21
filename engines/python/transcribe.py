@@ -112,8 +112,7 @@ def allow_vad_checkpoint_globals() -> list[str]:
             if obj is not None:
                 allowed.append(obj)
 
-    if not allowed:
-        return []
+    # No `if not allowed` guard: `allowed` is seeded with eight builtins above, so it is never empty.
     try:
         add(allowed)
     except Exception:

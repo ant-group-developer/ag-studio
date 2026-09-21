@@ -669,7 +669,8 @@ library-production}@1.1.0/`, `skills/{style-analyze,style-review,source-survey,e
     (`packages/cli/src/composition.ts`, `mediaEngineOptions()`) — đúng quy tắc mục 101(a) đã đặt cho
     `adapters.stats`: chọn adapter là việc của `project.yaml`, không bao giờ của một biến môi trường. Mặc định
     `fake` để mọi test SP1–4 và CI không GPU chạy nguyên trạng. Env của tiến trình Python con là một **danh
-    sách trắng** (`PATH`, `SystemRoot`, `TEMP`, `TMP`, `CUDA_*`, `HF_HOME`, `HF_HUB_OFFLINE`, `PYTHONUTF8=1`),
+    sách trắng** đúng tám mục (`PATH`, `PATHEXT`, `SystemRoot`, `TEMP`, `TMP`, `HF_HOME`, `HF_HUB_OFFLINE`,
+    `PYTHONUTF8=1`) cộng mọi biến tiền tố `CUDA_*`,
     không phải bộ lọc theo tiền tố như `publisherChildEnv` — một script tính toán thuần không cần môi trường
     người dùng đầy đủ, nên chặn mặc định rẻ hơn lọc mặc định; `HARNESS_SECRET_*` không bao giờ lọt qua và
     stderr đi qua `Redactor` (giữ 2000 ký tự cuối).

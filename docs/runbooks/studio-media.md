@@ -83,8 +83,10 @@ Dung lượng đo được sau một lần chạy thật:
 là mô hình Hugging Face nên có theo `HF_HOME`. Nếu ổ C chật, đặt thêm `TORCH_HOME` cạnh `HF_HOME`.
 
 `HF_HOME` phải được đặt **trong môi trường chạy worker**, không chỉ lúc tải: nó nằm trong danh sách trắng env
-mà `mediaChildEnv()` truyền xuống tiến trình Python con (cùng `PATH`, `SystemRoot`, `TEMP`, `TMP`, `CUDA_*`,
-`HF_HUB_OFFLINE`, `PYTHONUTF8`). Thiếu nó thì engine đi tìm mô hình ở `~/.cache/huggingface` và tải lại từ đầu.
+mà `mediaChildEnv()` truyền xuống tiến trình Python con — đúng **tám** mục: `PATH`, `PATHEXT` (Windows cần
+nó để phân giải một lệnh không có đuôi), `SystemRoot`, `TEMP`, `TMP`, `HF_HOME`, `HF_HUB_OFFLINE`,
+`PYTHONUTF8=1`, cộng mọi biến tiền tố `CUDA_*`. Thiếu `HF_HOME` thì engine đi tìm mô hình ở
+`~/.cache/huggingface` và tải lại từ đầu.
 
 ## 2. Khối `media:` trong `project.yaml`
 

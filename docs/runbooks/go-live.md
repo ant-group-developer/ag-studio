@@ -90,10 +90,28 @@ library:
   auto_accept: { enabled: true, source_collection: main, max_replans: 2, max_concurrent_runs: 1 }
 adapters:
   agent: cli                        # KHÔNG dùng fake ở go-live; doctor sẽ FAIL nếu auto_accept bật + agent fake
-workflows: [style-study@1.1.0, library-production@1.2.0]   # 1.2.0 = bản có engine media (bước 3b).
-                                                           # Chưa dựng được venv/GPU thì để 1.1.0 và viết
-                                                           # thêm hai wrapper index-source + tts (bước 3).
+workflows: [style-study@1.1.0, library-production@1.2.0]   # CHỈ giới hạn phạm vi doctor kiểm (xem dưới).
 ```
+
+**`workflows:` không chọn release cho autopilot.** Khoá này chỉ nói `harness doctor` phải nạp và kiểm những
+release nào (mỗi stage script có entry trong `scripts.yaml`, wrapper tồn tại, secret resolve được, …). Vòng
+tự nhận việc của studio plan theo `library.auto_accept.workflow_release` nếu có, **ngược lại** theo
+`workflow_release` của production profile đang dùng — profile `studio` revision 3 là
+`library-production@1.2.0`. Bỏ 1.2.0 khỏi `workflows:` chỉ làm doctor ngừng kiểm nó, autopilot vẫn plan 1.2.0
+và sẽ gãy ở stage đầu tiên thiếu wrapper.
+
+Chưa dựng được venv/GPU (bước 3b) thì **ghim** autopilot lại bằng chính khoá đó:
+
+```yaml
+library:
+  auto_accept:
+    enabled: true
+    workflow_release: library-production@1.1.0   # nút lùi: autopilot ở lại 1.1.0 dù profile đã sang 1.2.0
+workflows: [style-study@1.1.0, library-production@1.1.0]   # cho doctor kiểm đúng bản đang chạy
+```
+
+Ở 1.1.0 thì viết thêm hai wrapper `index-source` + `tts` (bước 3). Gỡ ghim (xoá `workflow_release`) khi
+`media:python|packages|device` của doctor đã ok.
 
 3. `executors/scripts.yaml` + `executors/wrappers/*.mjs` — đúng những script mỗi workflow cần:
    - **`library-production@1.2.0`: ba script** — `thumbnail-candidates`, `cut`, `assemble`. Mọi stage còn
@@ -196,7 +214,12 @@ adapters:
 learning: { horizon_hours: 72, recollect_hours: [168, 720], min_impressions: 50, min_samples: 2 }
 planning: { enabled: false }       # bật sau khi tập đầu tiên đi hết vòng
 auto_pick: { enabled: true, max_concurrent_runs: 1 }
+voice: { voice_id: voice_… }       # 5A: giọng mặc định của kênh (id từ `library voices add` ở bước 3b)
 ```
+
+   `voice:` là giọng kênh dùng khi `channel-planning` tự sinh request `voice: tts`; thiếu nó (hoặc trỏ một
+   hồ sơ đã `retired`) thì request tự sinh **hạ xuống `voice: none`** kèm `receipt.downgraded_voice` — không
+   gãy, nhưng tập ra không có lời bình. Kênh chưa cần TTS thì bỏ hẳn khoá này.
 
 4. Secret: `youtube.account_email_ref: secret://youtube-<kênh>/email` → set env
    `HARNESS_SECRET_YOUTUBE_<KÊNH>_EMAIL=<email đăng nhập Studio>` trong shell chạy worker (đặt trong
@@ -209,7 +232,10 @@ pnpm harness --project E:/ops-channel doctor
 ```
 
    Phải ok: `channels:config`, `channel:<id>:repo|scripts|profile|identity|secrets|stats`, `agent:runtime`,
-   `library:root|write`. Hàng `channel:<id>:planning` chỉ xuất hiện khi `planning.enabled`.
+   `library:root|write|voices`. Hàng `channel:<id>:voice` chỉ xuất hiện khi `channel.yaml` khai `voice:` —
+   khi có thì nó cũng phải ok (hồ sơ giọng tồn tại trong mirror và còn `active`); FAIL ở đây nghĩa là mọi
+   request tự sinh của kênh sẽ bị hạ xuống `voice: none`. Hàng `channel:<id>:planning` chỉ xuất hiện khi
+   `planning.enabled`.
 
 ## 6. Chạy thử tay, từng bước, trước khi để worker chạy nền
 

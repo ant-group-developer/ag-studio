@@ -18,6 +18,14 @@ khi tập vào kho — checker cứng đã chặn lỗi kỹ thuật; skill này
   hình cho vừa lời: `entries[]`, `shortfalls[] { line_ids, missing_seconds, reused_seconds,
   uncovered_seconds }`, `reused_seconds`, `within_target`. Đây là mục kiểm thứ 7, riêng của sub-project
   5A — không có trong `library-production@1.1.0` (thiếu input này thì bỏ qua bước 7, giữ 6 mục cũ).
+- **`timeline.json` và `edl.json` NẰM CÙNG THƯ MỤC với `fit-report.json`** (`media-fit-edl`) — đây là bản
+  dựng thật: `timeline.json` (`harness.timeline/v1`: `video[]`, `narration[]`, `speech[]`,
+  `total_seconds`) và `edl.json` **đã khớp hình theo lời**. Mọi phép đối chiếu với tập đã dựng dùng ba file
+  này.
+- `edl.json` **nằm cạnh `edit-plan.json`** (`plan-edit`) là bản **trước khi khớp** — dự định của agent
+  dựng, chỉ để tham khảo. `library-production@1.2.0` đưa **hai** input `edl` vào stage này; không bao giờ
+  chấm bản dựng theo bản pre-fit đó. Cách phân biệt chắc chắn: bản nào cùng thư mục với `fit-report.json`
+  thì là bản đã khớp.
 - `stage-request.json` — nguồn sự thật cho `expected_outputs`, `inputs`, `options`, `policy`.
 
 ## Ngân sách khung
@@ -84,6 +92,8 @@ nhất quán với `checks` (≥1 `pass: false` ⇒ `"rejected"`).
 - [ ] Đã xem `thumbnail_set` và khung mở đầu thật, không suy đoán từ `edit-plan.json` một mình.
 - [ ] Có input `fit_report`: đã đọc và, nếu bước 0 buộc `"rejected"`, `note` nêu đủ `line_id` +
       số giây thiếu của từng dòng trong `shortfalls`, không chỉ nói chung chung "thiếu hình".
+- [ ] Có hai input `edl`: đã đọc bản **cùng thư mục với `fit-report.json`** (bản đã khớp), không phải bản
+      cạnh `edit-plan.json` (bản pre-fit).
 
 ## Điều cấm
 

@@ -705,8 +705,6 @@ giọng, trên GPU của máy build (`docs/runbooks/studio-media.md` mục 7 và
 - `transcribe.py` giữ **toàn bộ mảng audio của mọi clip trong bộ nhớ** xuyên suốt cả hai pha (nghe rồi căn
   chỉnh) để pha 2 không phải đọc lại file — khoảng 1–2 GB RAM cho 40 clip. Việc sau: đọc lại từ đĩa ở pha 2,
   hoặc xử lý theo lô.
-- `PythonMediaEngine.probe()` **không rút cạn stderr** của tiến trình con; một bản Python in nhiều cảnh báo
-  ra stderr trong lúc probe có thể làm đầy pipe.
 - `spawn()` trong `run()` **không bọc try**: nếu chính lời gọi ném (khác với sự kiện `error`), file job vừa
   ghi bị bỏ lại trong workspace.
 - Ghi nguyên tử của Python (`write_result`) để lại file `.tmp` nếu tiến trình bị SIGKILL (timeout) đúng giữa
@@ -718,6 +716,14 @@ giọng, trên GPU của máy build (`docs/runbooks/studio-media.md` mục 7 và
   whisperx/pyannote lên bản đổi tên hay dời các lớp đó thì hàm lặng lẽ góp ít mục hơn và `load_model` fail
   lại với đúng thông điệp cũ. Không có test nào bắt được điều đó mà không cần GPU + trọng số thật; dấu hiệu
   là dòng log `allow-listed VAD checkpoint globals for torch.load` ngắn đi.
+- **Lỗi unpickle VAD bị xếp `transient`, đáng lẽ là `contract`** (Task 11): `whisperx.load_model` hỏng vì
+  `UnpicklingError` được `transcribe.py` báo về là `failed to load whisperx model: …` kind `transient`, nên
+  stage retry đủ số lần rồi mới bỏ cuộc — trong khi đây là lỗi cài đặt, retry không bao giờ cứu được. Việc
+  sau: nhận diện `UnpicklingError`/`Unsupported global` và trả `contract`.
+- **`requirements.txt` không ghim `pyannote.audio`/`transformers`** (Task 11): hai gói này vào venv gián tiếp
+  qua `whisperx`, và chính chúng quyết định danh sách allow-list ở trên có còn đúng tên lớp hay không. Một
+  `pip install -U` vô tình có thể làm gãy `load_model` mà `requirements.txt` không nói gì. Việc sau: ghim
+  cận trên cho cả hai.
 
 ### `packages/core/src/media/` — bóc cảnh, nghe nguồn, đọc lời, khớp hình
 
@@ -771,6 +777,26 @@ giọng, trên GPU của máy build (`docs/runbooks/studio-media.md` mục 7 và
   false), nên mọi item 1.2.0 ra kho **không có phụ đề** cho tới sub-project 5B.
 - Workspace của `assemble` giờ vật liệu hoá cả `proxy_set` (hardlink, rơi về copy) — một syscall mỗi file,
   đáng lưu ý với buổi quay lớn.
+- **Một run `library-production` FAILED bỏ request của nó ở `claimed`** — có hệ thống, không chỉ riêng hai
+  Critical đã sửa ở review cuối 5A (`brief-duration`, `intake` claim trước khi kiểm giọng). Hôm nay chỉ có
+  alert `run_failed` của dashboard; không có đường nào tự mở lại request, nên mọi lỗi máy ở giữa ống dẫn đều
+  cần người vào gỡ. **Quy tắc ứng viên cho một sub-project sau:** quyết định cho **từng checker** điều kiện
+  nào là *máy hỏng* (fail stage) và điều kiện nào là *dựng không đạt* (reject + replan), rồi đặt một lưới an
+  toàn chung — ví dụ `library-apply-review` hoặc một stage dọn dẹp luôn chạy khi run kết thúc FAILED, ghi
+  `rejected` và mở lại request.
+- `media.ts` dài hơn 550 dòng và trộn `media watch` với bốn stage `media index|transcribe|tts|fit-edl`; nên
+  tách phần stage ra `media-stages.ts`. `publish-stage.ts` đã có cảnh báo tương tự từ 3B.
+- `tts-valid` **hard-fail** `media-tts` trên một máy không có `ffprobe`, khác với bốn checker media dựa trên
+  prober (chúng `skip` với `reason: "no media prober available"`). Không sai về mặt vận hành (thiếu ffprobe
+  vốn đã chặn ống dẫn) nhưng lệch quy ước.
+- Profile `studio` còn quảng cáo tuỳ chọn `subtitles` trong `options_schema` mà **không stage nào đọc** —
+  1.2.0 không sinh `captions` (xem dòng trên). Bỏ đi hoặc nối vào 5B.
+- Skill `library-review` nhắc `thumbnail_set` nhưng stage `library-review` **không** `depends_on`
+  `thumbnail-candidates`, nên input đó không bao giờ có mặt và mục kiểm `thumbnails_textless` chấm mò. Có
+  sẵn từ 1.1.0, không phải hồi quy của 5A.
+- `library-review` nhận **hai** input `edl` (pre-fit từ `plan-edit`, đã khớp từ `media-fit-edl`). Đúng ý đồ,
+  và skill + brief của workflow nay đã nói rõ đọc bản nào; nhưng hợp đồng vẫn dựa vào chữ nghĩa chứ không
+  phải vào kiểu artifact. Việc sau: đặt một type riêng cho bản đã khớp (ví dụ `fitted_edl`).
 
 ### Vệ sinh test
 
@@ -779,7 +805,6 @@ giọng, trên GPU của máy build (`docs/runbooks/studio-media.md` mục 7 và
 - Test cache TTS chứng minh "được tất cả hoặc không được gì", **không** chứng minh tái dùng **từng dòng** khi
   chỉ một dòng đổi — đúng cái mà vòng replan cần nhất. (Lần chạy thật ở Task 11 cũng chỉ chứng minh mức tất
   cả: hai dòng đều `cached: true`.)
-- `within_target: false` chưa bao giờ được chạy end-to-end.
 - Chỉ có **một** ngôn ngữ nguồn trong bộ test tự động; đường `vi` chỉ được kiểm bằng tay ở Task 11.
 - `studio-media` "channel can pick" chỉ kiểm exit code.
 - `artifactPathFor` trả `undefined` rồi bị non-null assertion ở chỗ gọi.

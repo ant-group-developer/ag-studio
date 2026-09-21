@@ -239,6 +239,10 @@ export class PythonMediaEngine implements MediaEngine {
       child.stdout?.on("data", (d) => {
         stdout += String(d);
       });
+      // Drain stderr and throw it away: nothing here reads it, and an unread pipe fills up. A torch build
+      // that prints a page of deprecation warnings during `import` would then block on its own write until
+      // the 30s kill, turning a healthy interpreter into a doctor row that says "no python".
+      child.stderr?.resume();
       child.on("error", () => settle(false));
       child.on("close", (code) => settle(code === 0));
     });

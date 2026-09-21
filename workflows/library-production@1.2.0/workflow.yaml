@@ -103,7 +103,7 @@ stages:
     outputs:
       - { type: export_receipt, mime_type: application/json, name: export-receipt.json }
   - key: library-review
-    executor: { type: agent, skill: library-review, brief: "Soi bản dựng qua watch/ (episode), đối chiếu edit-plan.json và brief.json; đọc fit-report.json; ghi output/review.json (harness.review/v1) với 6 checks cố định; ≥1 fail → rejected." }
+    executor: { type: agent, skill: library-review, brief: "Soi bản dựng qua watch/ (episode), đối chiếu edit-plan.json và brief.json; đọc fit-report.json, timeline.json và edl.json NẰM CÙNG THƯ MỤC với fit-report.json (bản đã khớp hình theo lời) — edl.json cạnh edit-plan.json là bản pre-fit, chỉ để tham khảo; ghi output/review.json (harness.review/v1) với 6 checks cố định; ≥1 fail → rejected." }
     depends_on: [watch-episode, library-export, plan-edit, intake, media-fit-edl]
     retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
     required_checks: [schema-valid, output-exists, checksum-match]
