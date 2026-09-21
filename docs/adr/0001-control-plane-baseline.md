@@ -692,7 +692,8 @@ library-production}@1.1.0/`, `skills/{style-analyze,style-review,source-survey,e
     kênh tự sinh request thì `create-requests` **hạ xuống `voice: none` kèm ghi chú** thay vì làm hỏng stage —
     một kênh chưa có giọng vẫn phải sản xuất được.
 106. **`media-fit-edl` không bao giờ fail vì thiếu hình.** Nó ghi `fit-report.json` (mỗi dòng một `action`
-    `kept|trimmed|expanded|appended|dropped`, cộng `shortfalls[]`) rồi để agent `library-review` quyết định
+    thuộc `FIT_ACTIONS` — `kept|trimmed|extended|appended|reused|snapped|dropped`,
+    `packages/contracts/src/media-engine.ts` — cộng `shortfalls[]`) rồi để agent `library-review` quyết định
     loại hay không, và vòng replan của SP4 xử lý phần còn lại. Đây là hệ quả trực tiếp của nguyên tắc "không
     cổng người" (spec §0): một stage fail vì dữ liệu không vừa ý sẽ dựng đúng cái cổng người mà sub-project 4
     vừa gỡ bỏ. Hằng số khớp hình cố định trong mã (vào trước 0.3 s, ra sau 0.4 s, hít cắt ±0.4 s, khe tối
@@ -703,10 +704,14 @@ library-production}@1.1.0/`, `skills/{style-analyze,style-review,source-survey,e
     `speech[]` (câu gốc giữ lại khi `voice: original`), `total_seconds`. Chữ trên hình, phụ đề, nhạc + ducking
     và chuyển cảnh của 5B đều cần **mốc từ** trên một trục thời gian đã chốt; sinh lại chúng từ `edl.json` +
     `narration-timing.json` ở 5B sẽ là tính lại đúng phép tính mà `fitEdl` vừa làm, với rủi ro lệch.
-108. **Cache TTS băm theo nội dung, không theo run.** `ttsCacheKey` gộp chữ của dòng, giọng (`voice_id` +
-    revision + checksum clip mẫu + `ref_text`), `speed`/`num_step`, **và** `dtype`/`max_chars`/`pause_seconds`/
-    `loudness_lufs` — bốn khoá sau là sửa ở review Task 5: thiếu chúng, đổi `dtype` hay `loudness_lufs` trong
-    `project.yaml` sẽ lặng lẽ tái dùng wav cũ đọc bằng cấu hình cũ. Nhờ đó vòng replan chỉ đọc lại **dòng đã
+108. **Cache TTS băm theo nội dung, không theo run.** `ttsCacheKey` (`packages/core/src/media/tts.ts`) băm
+    sha256 của đúng chín trường: `text`, `voice_checksum`, `params` (tức `speed` + `num_step` của hồ sơ
+    giọng), `model`, `language`, `dtype`, `max_chars`, `pause_seconds`, `loudness_lufs`. Bốn trường cuối là
+    sửa ở review Task 5: thiếu chúng, đổi `dtype` hay `loudness_lufs` trong `project.yaml` sẽ lặng lẽ tái
+    dùng wav cũ đọc bằng cấu hình cũ. `voice_checksum` là checksum của chính `ref.wav`
+    (`profile.ref_audio.checksum`), nên bump hồ sơ giọng bằng một clip mẫu khác tự làm mất hiệu lực cache của
+    giọng đó; bump mà **chỉ** sửa `ref_text` trên đúng clip cũ thì không — ghi ở deferred. Nhờ đó vòng replan
+    chỉ đọc lại **dòng đã
     sửa** (`narration-timing.json` ghi `cached: true` cho phần còn lại; đo thật: `media-tts` 33.4 s → 0.4 s).
     `harness artifacts sweep` **chưa** biết tới `<data_root>/cache/tts` — ghi ở deferred, không sửa trong 5A.
 109. **Hai loại artifact khảo sát, và `survey_index` mới là file JSON.** Stage `survey-source` ghi cả
@@ -738,10 +743,14 @@ library-production}@1.1.0/`, `skills/{style-analyze,style-review,source-survey,e
     torch 2.8.0+cu126 cài trước, rồi `requirements.txt` không hề đụng tới torch, và `import whisperx` lẫn
     `import omnivoice` cùng sống trong `E:\harness-venv` — phương án hai venv (`media.transcribe.python` /
     `media.tts.python`) vẫn còn nguyên trong schema như đường lùi, chưa cần dùng. (b) **Tiếng Việt của
-    OmniVoice dùng được**: nghe ngược bằng WhisperX cho WER 3.1 % / CER 0.9 % (từ sai duy nhất là một cặp
-    đồng âm), tốc độ đọc 16.95 ký tự/giây ngang với 16.26 của tiếng Anh, và mô hình căn chỉnh tiếng Việt khớp
-    được **từng từ** vào audio sinh ra — `en` và `vi` đều là ngôn ngữ được hỗ trợ, không có gì phải đẩy sang
-    deferred. (c) **VRAM đỉnh ~4.1 GB**, thấp hơn nhiều so với 12 GB của card, vì `transcribe.py`/`tts.py` đều
+    OmniVoice dùng được**: mẫu sinh bằng **chính `engines/python/tts.py`** (đúng payload job mà
+    `PythonMediaEngine.synthesize()` ghi ra — xem mục 115 về vì sao phải là đường đó), nghe ngược bằng
+    WhisperX cho **WER 3.1 % / CER 1.9 %** (từ sai duy nhất là `sào`→`xảo`, một cặp `s`/`x` giọng Nam không
+    phân biệt), tốc độ đọc **16.47 ký tự/giây** ngang với **15.52** của tiếng Anh (tiếng Anh: WER 0 % /
+    CER 0 %), và mô hình căn chỉnh tiếng Việt khớp được **từng từ** (32/32) vào audio sinh ra — `en` và `vi`
+    đều là ngôn ngữ được hỗ trợ, không có gì phải đẩy sang deferred. Số đo đầy đủ ở
+    `docs/runbooks/studio-media.md` mục 9. (c) **VRAM đỉnh 4047–4083 MiB (~4.1 GB)** trên cả bốn run, thấp
+    hơn nhiều so với 12 GB của card, vì `transcribe.py`/`tts.py` đều
     giải phóng mô hình chính (`del` + `torch.cuda.empty_cache()`) trước khi nạp mô hình căn chỉnh.
 114. **torch ≥ 2.6 và checkpoint VAD của WhisperX: allow-list, không phải `weights_only=False`.** Defect duy
     nhất mà lần chạy thật lộ ra: `whisperx.load_model` (mặc định `vad_method="pyannote"`) unpickle
@@ -761,3 +770,14 @@ library-production}@1.1.0/`, `skills/{style-analyze,style-review,source-survey,e
     `_resolve_language` của OmniVoice cảnh báo rồi lùi về chế độ không phụ thuộc ngôn ngữ với giá trị lạ —
     đúng hành vi cũ — và `en`/`vi` đều là mã hợp lệ. Nguyên tắc rút ra: bằng chứng cho một DoD phải đi qua
     đúng mã sẽ được ship, không phải một lời gọi thư viện viết riêng cho phép đo.
+116. **Harness này không dành cho nội dung hoạt hình.** Phạm vi của nó là sản xuất từ **footage nguồn có
+    thật**: đăng ký nguồn, bóc cảnh, nghe nguồn, dựng theo EDL, khớp hình theo lời, xuất kho, phát hành.
+    Không có stage nào sinh hình vẽ, không có adapter nào gọi dịch vụ dựng hoạt hình hay avatar, và
+    sub-project 5A không thêm gì theo hướng đó (spec 5A §0). Hai cái tên còn sót lại **không** phải bằng
+    chứng ngược lại: `profile_id` vẫn là enum có `cartoon` và `avatar`
+    (`packages/contracts/src/config.ts`, `entities.ts`) từ mục 7 — đặt tên profile theo phong cách sản xuất
+    — và `production-profiles/cartoon` vẫn tồn tại, nhưng nó ghim
+    `workflow_release: sample-three-stage@1.0.0`, tức **workflow demo của sub-project 1**, không phải một
+    đường ống hoạt hình; `avatar` thì chỉ có trong enum, không có thư mục profile nào cả. Đổi tên hai id đó
+    là refactor cơ học (enum + thư mục profile + fixture + vài test đếm), không đổi hành vi, và **chưa được
+    yêu cầu** — để lại nguyên trạng, ghi ở `docs/operations/deferred-items.md` mục "Sau sub-project 5A".

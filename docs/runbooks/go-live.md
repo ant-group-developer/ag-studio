@@ -91,18 +91,29 @@ library:
 adapters:
   agent: cli                        # KHÔNG dùng fake ở go-live; doctor sẽ FAIL nếu auto_accept bật + agent fake
 workflows: [style-study@1.1.0, library-production@1.2.0]   # 1.2.0 = bản có engine media (bước 3b).
-                                                           # Chưa dựng được venv/GPU thì để 1.1.0 và thêm
-                                                           # ba wrapper index-source/transcribe/tts.
+                                                           # Chưa dựng được venv/GPU thì để 1.1.0 và viết
+                                                           # thêm hai wrapper index-source + tts (bước 3).
 ```
 
-3. `executors/scripts.yaml` + `executors/wrappers/*.mjs`: `library-production@1.2.0` gọi **bốn** script
-   `collect-samples`, `thumbnail-candidates`, `cut`, `assemble`. Ba script của 1.1.0 — `index-source`,
-   `transcribe`, `tts` — **không còn phải viết**: từ 1.2.0 chúng là stage media built-in
-   (`media-index`, `media-transcribe`, `media-tts`, cộng `media-fit-edl`) chạy bằng engine Python cục bộ,
-   giống bốn lệnh `library-*` và `watch-*`. Mỗi tên còn lại một dòng trong `scripts.yaml` và một wrapper gọi
-   script cũ ở `D:\<kênh>\scripts\` theo khuôn `wrap-a-channel.md` §4 (đường dẫn script cũ đặt qua env hoặc
-   `cwd`, không hard-code trong wrapper để commit được). Mẫu chạy được:
-   `fixtures/ops-project-studio/executors/` và `fixtures/ops-project-footage/executors/wrappers/`.
+3. `executors/scripts.yaml` + `executors/wrappers/*.mjs` — đúng những script mỗi workflow cần:
+   - **`library-production@1.2.0`: ba script** — `thumbnail-candidates`, `cut`, `assemble`. Mọi stage còn
+     lại là built-in (`library-intake`/`library-export`/`library-apply-review`, `watch-source`/
+     `watch-episode`, và bốn stage media `media-index`/`media-transcribe`/`media-tts`/`media-fit-edl`).
+     Hai script của 1.1.0 — `index-source` và `tts` — **không còn phải viết**: từ 1.2.0 chúng là stage media
+     built-in chạy bằng engine Python cục bộ (bước 3b).
+   - **`style-study@1.1.0`: thêm `collect-samples`** (stage `watch-samples` là built-in). `collect-samples`
+     thuộc workflow này, **không** thuộc `library-production`.
+   - **`transcribe` chưa biến mất — nó là một hook tuỳ chọn, không phải stage.** `harness media watch` đọc
+     entry `transcribe` của `executors/scripts.yaml` nếu có (`transcribeHookFor`,
+     `packages/cli/src/commands/media.ts`) để kèm transcript vào `watch.json`. Trong 1.2.0 `watch-source`
+     **không cần** nó (transcript thật đến từ stage `media-transcribe`), nhưng `watch-samples` của
+     `style-study@1.1.0` thì vẫn dùng: không khai entry `transcribe` thì stage vẫn `succeeded`, chỉ là
+     `watch.json` mang `transcript: null` và phần phân tích style mất một nguồn thông tin — **suy giảm, không
+     fail**. Hook lỗi/timeout/JSON sai cũng chỉ cảnh báo (`transcript_error`).
+   Mỗi tên một dòng trong `scripts.yaml` và một wrapper gọi script cũ ở `D:\<kênh>\scripts\` theo khuôn
+   `wrap-a-channel.md` §4 (đường dẫn script cũ đặt qua env hoặc `cwd`, không hard-code trong wrapper để
+   commit được). Mẫu chạy được: `fixtures/ops-project-studio/executors/` và
+   `fixtures/ops-project-footage/executors/wrappers/`.
    **Đây là phần việc thật lớn nhất của go-live và chưa có wrapper nào cho script cũ ở `D:\`** — làm
    từng cái, thử bằng một run tay (`content create` → `plan` → `enqueue` → `worker --once`, xem
    `wrap-a-channel.md` §8) trước khi giao cho worker chạy nền.
@@ -207,7 +218,9 @@ thứ thật. Mỗi bước dừng lại đọc `status <run_id>` / log trước
 
 1. **Studio học style** từ 2–3 video mẫu thật của kênh (`source ingest` file mẫu, `content create`,
    `plan --workflow style-study@1.1.0 --profile studio`, `enqueue`, `worker --once` tới SUCCEEDED). Đây là lần
-   chạy agent thật đầu tiên: điền bảng `studio-autopilot.md` §9.
+   chạy agent thật đầu tiên: điền bảng `studio-autopilot.md` §9. Workflow này cần wrapper `collect-samples`
+   (bước 3); chưa khai hook `transcribe` thì `watch-samples` vẫn chạy, chỉ là không có transcript cho
+   `analyze-style` đọc.
 2. **Kênh tạo một request tay** (chưa bật planning):
    `library request create --portfolio portfolio-channel --channel <channel_id> --topic "…" --style <style_id>
    --duration 600,900` (`--duration` là `min,max` giây và **bắt buộc**: thiếu thì studio kẹt ở stage
@@ -243,9 +256,10 @@ riêng của máy.
 
 ## 8. Điều chưa từng chạy thật (kiểm đầu tiên khi gãy)
 
-- **Bốn** wrapper cho script cũ ở `D:\` (`collect-samples`, `thumbnail-candidates`, `cut`, `assemble`) —
-  chưa viết. Ba cái còn lại của 1.1.0 (`index-source`, `transcribe`, `tts`) đã thành stage media built-in ở
-  `library-production@1.2.0`, không phải viết nữa.
+- Wrapper cho script cũ ở `D:\` — chưa viết cái nào: ba cho `library-production@1.2.0`
+  (`thumbnail-candidates`, `cut`, `assemble`), một cho `style-study@1.1.0` (`collect-samples`), cộng hook
+  `transcribe` tuỳ chọn mà `watch-samples` dùng. Hai script của 1.1.0 (`index-source`, `tts`) đã thành stage
+  media built-in ở 1.2.0, không phải viết nữa (bước 3).
 - Engine media Python trên **máy studio này**: venv, mô hình, driver CUDA của chính nó chưa từng kiểm. Bản
   thân engine đã chạy thật (bốn tập, ba chế độ giọng) trên máy build — `studio-media.md` mục 7 và 9.
 - `claude -p` / `codex exec` với skill thật, `--allowedTools` cố định trong `RUNTIME_COMMANDS`

@@ -220,7 +220,7 @@ git checkout -- fixtures/ops-project-studio/project.yaml fixtures/ops-project-ch
 
 ## Quick-start: xưởng dựng theo buổi quay (sub-project 5A, engine media giả)
 
-`library-production@1.2.0` thay ba wrapper `index-source`/`transcribe`/`tts` bằng bốn stage media built-in
+`library-production@1.2.0` thay hai wrapper `index-source`/`tts` bằng bốn stage media built-in
 (`media-index`, `media-transcribe`, `media-tts`, `media-fit-edl`), đổi đơn vị nguồn từ **một clip** sang
 **một buổi quay** (`source ingest <thư mục> --collection shoot-…`), và thêm hồ sơ giọng đọc thuộc kênh.
 Quick-start này chạy tất cả với `adapters.media: fake` — **không cần GPU, không cần Python**. Bản thật
@@ -472,7 +472,7 @@ thu số thật (`adapters.stats: playwright`) và agent `channel-plan`/`channel
 trong môi trường build agent này, xem `docs/runbooks/channel-learning.md` mục "DoD #4") + 5A (xưởng dựng có engine media thật: cổng `MediaEngine`
 với hai bản cài (`python` gọi `engines/python/{transcribe,tts}.py` là tiến trình con trao đổi file JSON —
 WhisperX nghe nguồn, OmniVoice đọc lời — và `fake` cho CI), bốn stage built-in `media-index|transcribe|tts|
-fit-edl` thay ba wrapper `index-source`/`transcribe`/`tts`, buổi quay = collection
+fit-edl` thay hai wrapper `index-source`/`tts`, buổi quay = collection
 (`source ingest <thư mục>`, `library.auto_accept.source_collections`), hồ sơ giọng thuộc kênh trong
 `voices/` của kho (`library voices add|list|retire`, `origin` bắt buộc, `channel.yaml.voice`), khớp hình
 theo lời (`fit-edl` cắt/kéo EDL, **không bao giờ fail vì thiếu hình** — ghi `fit-report.json` rồi để

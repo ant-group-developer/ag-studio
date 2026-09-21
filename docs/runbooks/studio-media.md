@@ -199,9 +199,11 @@ harness library voices retire <voice_id>
 > chỉ từ một câu mô tả, không có audio tham chiếu nào:
 >
 > ```python
+> import soundfile as sf, torch
 > from omnivoice import OmniVoice
 > m = OmniVoice.from_pretrained("k2-fsa/OmniVoice", device_map="cuda:0", dtype=torch.float16)
 > audio = m.generate(text="<8-12 giây lời đọc>", language="Vietnamese", instruct="female, low pitch")[0]
+> sf.write("ref.wav", audio, m.sampling_rate)   # 24000 Hz
 > ```
 >
 > `instruct` chỉ nhận một tập mục cố định (giới tính, tuổi, cao độ, `whisper`, giọng vùng tiếng Anh; tiếng
@@ -233,10 +235,22 @@ harness library request create --portfolio portfolio-channel --channel channel-o
 
 - `edl.json` — bản EDL đã khớp (stage `cut` dùng bản này; `library-review` nhận **cả hai** — bản trước khi
   khớp do `plan-edit` ghi, và bản đã khớp này).
-- `fit-report.json` — `within_target`, và mỗi dòng một `action`: `kept` | `trimmed` | `expanded` | `appended`
-  | `dropped`, cộng `shortfalls[]` (`line_ids`, `missing_seconds`, `reused_seconds`, `uncovered_seconds`).
-  `shortfalls` không rỗng nghĩa là lời dài hơn hình còn lại — đây là tín hiệu để agent `library-review` loại
-  bản dựng.
+- `fit-report.json` — `within_target`, `reused_seconds`, `shortfalls[]` (`line_ids`, `missing_seconds`,
+  `reused_seconds`, `uncovered_seconds`), và mỗi dòng một `action`. Enum đầy đủ là `FIT_ACTIONS`
+  (`packages/contracts/src/media-engine.ts`), **bảy** giá trị:
+
+  | `action` | Nghĩa với người vận hành |
+  | --- | --- |
+  | `kept` | Đoạn hình giữ nguyên in/out mà `plan-edit` đã viết. Không có gì phải xem. |
+  | `trimmed` | Hình **dài hơn** lời nên bị cắt ngắn lại cho vừa (chỉ cắt khi phần thừa ≥ 0.5 s dự phòng). Bình thường. |
+  | `extended` | Hình **ngắn hơn** lời, được kéo dài ra trong phạm vi chính cái shot nó nằm. Bình thường. |
+  | `snapped` | Điểm cắt được hít về ranh giới câu/từ gần nhất (±0.4 s) để không cắt giữa chữ. Chỉ xuất hiện với `voice: original`. Bình thường, thậm chí là thứ ta muốn thấy. |
+  | `appended` | Kéo dài trong shot vẫn chưa đủ nên **một đoạn hình khác, chưa dùng** được nối thêm vào. Chấp nhận được, nhưng nhiều dòng `appended` nghĩa là EDL của agent thiếu hình so với lời. |
+  | `reused` | **Phương án cuối**: một đoạn hình **đã dùng rồi** được đưa lên màn hình lần thứ hai. Người xem sẽ thấy lặp. Tổng số giây kiểu này nằm ở `reused_seconds` và là một trong ba điều kiện loại tự động ở dưới. |
+  | `dropped` | Đoạn ngắn quá (< 0.2 s sau khi khớp) nên bị bỏ hẳn khỏi bản dựng. |
+
+  `shortfalls` không rỗng nghĩa là lời **vẫn** dài hơn toàn bộ hình còn lại, kể cả sau khi đã `reused` —
+  tức đoạn đó sẽ có lời mà không có hình che.
 - `timeline.json` — hợp đồng cho sub-project 5B: `video[]` (thứ tự, source, in/out, start/end),
   `narration[]` (dòng lời, wav, vị trí trên trục thời gian, `words[]`), `speech[]` (câu gốc giữ lại khi
   `voice: original`), `total_seconds`.
@@ -244,12 +258,35 @@ harness library request create --portfolio portfolio-channel --channel channel-o
 Hằng số khớp hình cố định trong mã: vào trước 0.3 s, ra sau 0.4 s, cửa sổ hít cắt ±0.4 s, khe tối thiểu
 0.15 s, tay cầm 0.08 s, bỏ đoạn < 0.2 s, dự phòng 0.5 s.
 
-Vòng loại → replan là vòng của sub-project 4, không đổi: `library-review` ghi `rejected` → request về `open`
-→ auto-accept plan một run mới (tối đa `max_replans` lần) → hết lượt thì dashboard dựng alert `request_stuck`.
+**Ba điều kiện loại tự động.** Khi stage `library-review` có input `fit_report`, agent quyết định thẳng
+`"rejected"` — bỏ qua bước tính `decision` từ sáu mục kiểm hình ảnh — nếu **bất kỳ** điều nào sau đây đúng
+(`skills/library-review/SKILL.md` bước 0, `fixtures/fake-agent-cli.mjs` cài đúng ba điều kiện này để test
+chạy được cùng luật):
 
-**Cache TTS** nằm ở `<data_root>/cache/tts/<key>.wav|.json`. Khoá băm theo *nội dung*: chữ của dòng, giọng
-(`voice_id` + revision + checksum clip mẫu + `ref_text`), `speed`/`num_step`, và `dtype`/`max_chars`/
-`pause_seconds`/`loudness_lufs`. Một dòng không đổi ở lần replan sau **không đọc lại** — `narration-timing.json`
+1. `shortfalls` **không rỗng** — có lời không đủ hình che.
+2. `reused_seconds > 5` — quá 5 giây hình bị dùng lại để lấp chỗ trống.
+3. `within_target === false` — tổng thời lượng sau khi khớp hình lệch khỏi khoảng đích của request.
+
+Agent vẫn phải chấm đủ sáu mục để `note` đầy đủ thông tin, và `note` **bắt buộc** nêu từng `line_id` trong
+`shortfalls[].line_ids` cùng số giây thiếu (`shortfalls[].missing_seconds`) — đó là thứ duy nhất lượt dựng
+lại có để biết **đúng dòng lời nào** cần viết lại hoặc rút ngắn. Một `note` chỉ nói "thiếu hình" làm vòng
+replan chạy mù.
+
+Vòng loại → replan là vòng của sub-project 4, không đổi: `library-review` ghi `rejected` → `library-apply-review`
+ghi kết quả vào kho và đưa request về `open` → auto-accept plan một run mới, lần này `plan-edit` đọc `note`
+ở `request_notes` của brief → chỉ những dòng bị nêu tên mới đổi, nên `media-tts` chỉ đọc lại đúng chúng
+(phần còn lại `cached: true`). Trần là `library.auto_accept.max_replans` (mặc định 2, đếm theo **số run đã
+kết thúc**, tối đa `max_replans + 1` run mỗi request); hết lượt thì auto-accept bỏ cuộc, sinh event
+`request.auto_accept_exhausted` và dashboard dựng alert `request_stuck` — lúc đó mới cần người sửa request
+hoặc bổ sung nguồn.
+
+**Cache TTS** nằm ở `<data_root>/cache/tts/<key>.wav|.json`. Khoá là sha256 của đúng chín trường
+(`ttsCacheKey`, `packages/core/src/media/tts.ts`): `text` (chữ của dòng), `voice_checksum` (checksum của
+`ref.wav` trong hồ sơ giọng), `params` (`speed` + `num_step` của hồ sơ), `model`, `language`, `dtype`,
+`max_chars`, `pause_seconds`, `loudness_lufs`. Hệ quả thực tế: đổi bất kỳ khoá `media.tts.*` nào trong
+`project.yaml` là **cache cũ hết hiệu lực** (cố ý — nếu không thì một wav đọc bằng cấu hình cũ sẽ lặng lẽ
+được dùng lại); bump hồ sơ giọng bằng một clip mẫu khác cũng vậy, nhưng bump mà **chỉ** sửa `ref_text` trên
+đúng clip cũ thì không (ghi ở deferred). Một dòng không đổi ở lần replan sau **không đọc lại** — `narration-timing.json`
 ghi `cached: true` cho dòng đó. Đo thật: tập thứ hai với đúng phần lời của tập thứ nhất làm `media-tts` rơi từ
 **33.4 s xuống 0.4 s**. Thư mục cache lớn dần và `harness artifacts sweep` **chưa** biết tới nó (xem
 `docs/operations/deferred-items.md`).

@@ -104,8 +104,10 @@ YouTube Operations Harness: control plane điều phối sản xuất và phân 
   để xuống thư mục con). Dedupe theo sha256 vẫn như cũ và **giữ collection cũ** của file trùng byte, nên
   ingest lại cùng thư mục dưới tên collection khác sẽ không đổi được gì.
 - `harness library voices add|list|retire` (vai `channel`; `studio` chỉ đọc qua `library sync`):
-  `add --display-name <n> --ref <wav> --ref-text <text_or_path> --language <code> --origin synthetic|own|licensed
-  [--origin-note <n>] [--speed <n>] [--num-step <n>] [--voice-id <id>]` — `--ref` phải dài 3–30 s và được
+  `add --display-name <n> --ref <wav> --ref-text <text_or_path> --origin synthetic|own|licensed
+  [--language <code>] [--origin-note <n>] [--speed <n>] [--num-step <n>] [--voice-id <id>]` — bốn tuỳ chọn
+  đầu là `requiredOption`, `--language` **không bắt buộc** (mặc định `vi`,
+  `packages/cli/src/commands/library.ts`). `--ref` phải dài 3–30 s và được
   chuyển thành PCM mono 24 kHz `ref.wav` trong kho trước khi ghi; `--ref-text` là lời đọc đúng từng chữ của
   clip mẫu (hoặc đường dẫn file chứa nó); `--voice-id` **nâng revision** của hồ sơ đã có thay vì tạo mới.
   `list [--status active|retired]` đọc mirror DB (chạy `library sync` trước); `retire <voice_id>` là

@@ -830,8 +830,12 @@ giọng, trên GPU của máy build (`docs/runbooks/studio-media.md` mục 7 và
 
 ### Tên profile `cartoon`/`avatar` còn sót
 
-`profile_id` vẫn là enum có `cartoon` và `avatar`, và `production-profiles/cartoon` vẫn là profile mẫu mà
-`README.md` quick-start đầu tiên dùng (`plan --profile cartoon`) — di sản của ADR mục 7, đặt tên profile theo
-phong cách sản xuất. **Harness này không dành cho nội dung hoạt hình** (spec 5A §0), nên hai tên đó giờ chỉ
-gây hiểu nhầm cho người đọc mới. Đổi tên là một refactor cơ học (enum + thư mục profile + fixture + vài test
-đếm) chứ không phải đổi hành vi, và **chưa được yêu cầu** — để lại nguyên trạng cho tới khi chủ máy muốn.
+`profile_id` vẫn là enum có `cartoon` và `avatar` (`packages/contracts/src/config.ts`, `entities.ts`), và
+`production-profiles/cartoon` vẫn là profile mẫu mà `README.md` quick-start đầu tiên dùng
+(`plan --profile cartoon`) — di sản của ADR mục 7, đặt tên profile theo phong cách sản xuất. Profile đó ghim
+`workflow_release: sample-three-stage@1.0.0`, tức workflow **demo** của sub-project 1, không phải một đường
+ống hoạt hình; `avatar` chỉ có trong enum, không có thư mục profile nào. **Harness này không dành cho nội
+dung hoạt hình** — phạm vi là sản xuất từ footage nguồn có thật (spec 5A §0, **ADR-0001 mục 116**) — nên hai
+tên đó giờ chỉ gây hiểu nhầm cho người đọc mới. Đổi tên là một refactor cơ học (enum + thư mục profile +
+fixture + vài test đếm) chứ không phải đổi hành vi, và **chưa được yêu cầu** — để lại nguyên trạng cho tới
+khi chủ máy muốn.

@@ -10,22 +10,29 @@ these scripts do, and only on the machine that actually has a GPU set up.
 The venv belongs OUTSIDE the repo (nothing here is committed). What actually ran on the build machine
 (Windows 11, RTX 3060 12 GB, driver 581.29, Python 3.11.15) is:
 
+Every block below runs **from the repo root** and names the venv interpreter explicitly through `$P` --
+there is no `activate` step and no `cd`, because an activated shell is exactly how the wrong `python` ends
+up running these.
+
 ```sh
 # 1. keep the ~20 GB of wheels, models and pip cache off the system drive
 export PIP_CACHE_DIR=E:/pip-cache HF_HOME=E:/hf-cache
 
-python -m venv E:/harness-venv
-E:/harness-venv/Scripts/python -m pip install --upgrade pip
+# the system python 3.11 that CREATES the venv -- not used for anything after this line
+D:/tools/python311/python.exe -m venv E:/harness-venv
+
+# every later command goes through $P: the venv's own interpreter
+P=E:/harness-venv/Scripts/python
+$P -m pip install --upgrade pip
 
 # 2. torch FIRST, from the PyTorch CUDA index -- otherwise the requirements resolver picks the CPU wheel.
 #    cu126 works against a CUDA 12.x/13-capable driver; use cu128 if no cu126 wheel exists for your Python.
-E:/harness-venv/Scripts/python -m pip install torch==2.8.0 torchaudio==2.8.0 \
-  --index-url https://download.pytorch.org/whl/cu126
+$P -m pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu126
 
 # 3. the engines. ONE venv is enough: the resolver leaves torch alone (verified, task 11).
-E:/harness-venv/Scripts/python -m pip install -r requirements.txt
+$P -m pip install -r engines/python/requirements.txt
 
-E:/harness-venv/Scripts/python -c "import torch, whisperx, omnivoice; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+$P -c "import torch, whisperx, omnivoice; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 # -> 2.8.0+cu126 True NVIDIA GeForce RTX 3060
 ```
 
@@ -37,16 +44,20 @@ Model weights are large; fetch them once, ahead of any real run, so the first `t
 in production is not also the first (and slowest, most failure-prone) download:
 
 ```sh
+export HF_HOME=E:/hf-cache
+P=E:/harness-venv/Scripts/python
+
 # whisperx.load_model wants the bare "cuda"/"cpu" plus a separate device_index -- NOT "cuda:0" (that raises
 # ValueError: unsupported device cuda:0). See transcribe.py's split_device(). The allow_vad_checkpoint_globals()
 # call is what `transcribe.py` itself does before load_model on torch >= 2.6; without it this line dies with
-# `UnpicklingError: Weights only load failed`.
-python -c "import sys; sys.path.insert(0, '.'); import transcribe; transcribe.allow_vad_checkpoint_globals(); import whisperx; whisperx.load_model('large-v3', 'cuda', device_index=0, compute_type='float16')"
+# `UnpicklingError: Weights only load failed`. `sys.path` gets engines/python so `import transcribe` resolves
+# from the repo root.
+$P -c "import sys; sys.path.insert(0, 'engines/python'); import transcribe; transcribe.allow_vad_checkpoint_globals(); import whisperx; whisperx.load_model('large-v3', 'cuda', device_index=0, compute_type='float16')"
 # load_align_model/OmniVoice.from_pretrained take the full "cuda:0"-style string fine. One per language you
 # transcribe or narrate in -- `en` is a torchaudio bundle, every other language is a Hugging Face wav2vec2.
-python -c "import whisperx; whisperx.load_align_model(language_code='en', device='cuda:0')"
-python -c "import whisperx; whisperx.load_align_model(language_code='vi', device='cuda:0')"
-python -c "import torch; from omnivoice import OmniVoice; OmniVoice.from_pretrained('k2-fsa/OmniVoice', device_map='cuda:0', dtype=torch.float16)"
+$P -c "import whisperx; whisperx.load_align_model(language_code='en', device='cuda:0')"
+$P -c "import whisperx; whisperx.load_align_model(language_code='vi', device='cuda:0')"
+$P -c "import torch; from omnivoice import OmniVoice; OmniVoice.from_pretrained('k2-fsa/OmniVoice', device_map='cuda:0', dtype=torch.float16)"
 ```
 
 Set `HF_HOME` first if the Hugging Face cache should live somewhere other than the default
@@ -59,16 +70,37 @@ run: venv 7.4 GB, `HF_HOME` 8.9 GB (OmniVoice 3.1, faster-whisper large-v3 2.9, 
 
 ## Verify
 
-1. Dry run first -- no GPU, no model weights, just the process/JSON contract:
+1. Dry run first -- no GPU, no model weights, not even torch: this only exercises the process/JSON contract,
+   so ANY python 3.11 works here. From the repo root:
+
+   Python writes the job files itself, so every path inside them is spelled the way the interpreter will
+   read it. (Do not hand-write `/tmp/...` into the JSON on Windows: a shell like Git Bash rewrites
+   command-line arguments but not file *contents*, so `out_path` would land on a different drive than the
+   `--result` next to it. Only the values inside the JSON are affected -- the engine itself is fine.)
 
    ```sh
-   python transcribe.py --job <a job.json> --result /tmp/result.json --dry-run
-   python tts.py --job <a job.json> --result /tmp/result.json --dry-run
+   D=$(python -c "import json,os,tempfile;d=tempfile.mkdtemp(prefix='engine-check-');p=lambda n:os.path.join(d,n);open(p('ref.wav'),'wb').close();json.dump({'device':'cuda:0','model':'large-v3','compute_type':'float16','batch_size':8,'items':[{'source_id':'src_01ARZ3NDEKTSV4RRFFQ69G5FAV','audio_path':p('a.wav'),'language':'en'}]},open(p('tr-job.json'),'w'));json.dump({'device':'cuda:0','model':'k2-fsa/OmniVoice','dtype':'float16','num_step':32,'speed':1,'language':'en','ref_audio':p('ref.wav'),'ref_text':'hi','align':False,'lines':[{'line_id':'L001','chunks':['Hello there.'],'out_path':p('L001.wav'),'pause_seconds':0.25}]},open(p('tts-job.json'),'w'));print(d)")
+
+   python engines/python/transcribe.py --job "$D/tr-job.json"  --result "$D/tr.json"  --dry-run
+   python engines/python/tts.py        --job "$D/tts-job.json" --result "$D/tts.json" --dry-run
+   python -c "import json,os,sys;d=sys.argv[1];[print(json.load(open(os.path.join(d,f)))) for f in ('tr.json','tts.json')];print('L001.wav bytes:', os.path.getsize(os.path.join(d,'L001.wav')))" "$D"
    ```
 
-2. Then run one real sentence through each script (small `items`/`lines`, real `audio_path`/`ref_audio`) with
-   `--dry-run` dropped, and confirm `result.json` has `ok: true` and a real `.wav`/segments before pointing a
-   whole project at `adapters.media: python`.
+   Both results must be `{'ok': True, ...}` -- `transcribe` echoes the split device
+   (`whisperx:large-v3(dry-run,device=cuda,device_index=0)`, see `split_device()`), `tts` reports one line of
+   `duration_seconds: 0.1` with `alignment: 'chunk'` and leaves a ~4.8 kB silent `L001.wav` behind.
+
+   The same two dry runs are what `packages/adapters/media-python/test/python-scripts.test.ts` drives through
+   the real `PythonMediaEngine`, so a green `pnpm vitest run packages/adapters/media-python` covers this too.
+
+2. Then run one real sentence through each script **with the venv interpreter** (small `items`/`lines`, real
+   `audio_path`/`ref_audio`) and `--dry-run` dropped, and confirm `result.json` has `ok: true` and a real
+   `.wav`/segments before pointing a whole project at `adapters.media: python`:
+
+   ```sh
+   HF_HOME=E:/hf-cache E:/harness-venv/Scripts/python engines/python/tts.py \
+     --job <a real job.json> --result /tmp/engine-check/tts-real.json
+   ```
 
 ## Protocol (kept in sync with `packages/adapters/media-python/src/python-media-engine.ts`)
 
