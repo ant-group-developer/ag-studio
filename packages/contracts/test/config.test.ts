@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HarnessConfigSchema, ProjectConfigSchema, WorkflowDefinitionSchema, ProductionProfileSchema } from "../src/config.js";
+import { autoAcceptSchema, HarnessConfigSchema, ProjectConfigSchema, WorkflowDefinitionSchema, ProductionProfileSchema } from "../src/config.js";
 import { ScriptsRegistrySchema, SourcesRegistrySchema, StageRequestSchema } from "../src/index.js";
 
 describe("config contracts", () => {
@@ -84,6 +84,15 @@ describe("config contracts", () => {
     for (const bad of ["footage-production", "footage-production@1.0", "Footage-Production@1.0.0", "footage-production@1.0.0-beta"]) {
       expect(ProjectConfigSchema.safeParse({ ...base, workflows: [bad] }).success, bad).toBe(false);
     }
+  });
+  // Sub-project 5A Task 9 fix round: an empty `source_collections` is a project.yaml that declares collection
+  // mode but names no collection at all -- `pickSources`/`matchCollection` would just always come up empty,
+  // so this is rejected at parse time rather than silently behaving like "no sources ever match".
+  it("rejects an empty auto_accept.source_collections but accepts one pattern", () => {
+    const base = { enabled: true, source_collection: "main", max_replans: 2, max_concurrent_runs: 1 };
+    expect(autoAcceptSchema.safeParse({ ...base, source_collections: [] }).success).toBe(false);
+    const parsed = autoAcceptSchema.parse({ ...base, source_collections: ["shoot-*"] });
+    expect(parsed.source_collections).toEqual(["shoot-*"]);
   });
   it("parses project resources and source materialize policy", () => {
     const pc = ProjectConfigSchema.parse({ schema_version: "harness.project-config/v1", project_id: "p", template_release: "0.1.0", runtime: "claude", data_root: "./data", portfolios: [{ portfolio_id: "pf", display_name: "x" }], resources: { gpu: 1, "image-gen": 2 } });

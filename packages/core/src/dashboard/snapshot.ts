@@ -27,7 +27,16 @@ export interface DashboardSnapshot {
   runs_active: DashboardActiveRun[];
   alerts: DashboardAlert[];
   market: Record<string, never>;
+  media: DashboardMedia | null;
 }
+
+/** Sub-project 5A Task 9 (spec §6.1): project-level (not per-channel) media-engine health for the studio
+ * dashboard -- `engine` is whichever `MediaEngine` `project.yaml`'s `adapters.media` picked, `last_tts_at` is
+ * the newest `media.tts_done` event's timestamp, `cache_hit_ratio` is Σcached / Σlines across the newest 20
+ * `media.tts_done` events (`null` when none exist or their lines summed to zero). Present only when the
+ * project declares `library` with `role: "studio"` -- a channel project or one with no library at all has
+ * nothing running the media pipeline for this block to describe. */
+export interface DashboardMedia { engine: "python" | "fake"; last_tts_at: string | null; cache_hit_ratio: number | null }
 
 export interface DashboardLibrary {
   root: string;
@@ -81,7 +90,7 @@ export interface DashboardEpisode {
 
 export interface DashboardActiveRun { run_id: string; channel_id: string; stage_key: string; state: string; since: string }
 
-export type DashboardAlertKind = "reconcile" | "run_failed" | "gate_overdue" | "doctor" | "library_unmounted" | "missing_today" | "request_stuck" | "stage_waiting_human" | "stats_blocked" | "stats_failing" | "planning_failed";
+export type DashboardAlertKind = "reconcile" | "run_failed" | "gate_overdue" | "doctor" | "library_unmounted" | "missing_today" | "request_stuck" | "stage_waiting_human" | "stats_blocked" | "stats_failing" | "planning_failed" | "media_engine_unavailable";
 export interface DashboardAlert { kind: DashboardAlertKind; channel_id?: string; ref: string; message: string; since: string }
 
 export interface SnapshotDeps {
@@ -102,6 +111,13 @@ export interface SnapshotDeps {
    * `demand: null` rather than needing this.
    */
   learning?: { libraryItems: LibraryItem[]; libraryClaimsOf: (itemId: string) => LibraryClaim[] };
+  /**
+   * Sub-project 5A Task 9: which `MediaEngine` this project runs (`ctx.media.name` -- the composition root's
+   * own adapter instance, never re-derived or re-imported here since `core` must not depend on `adapters/*`).
+   * Combined with `store`'s `media.tts_done` events into `DashboardSnapshot.media`, which is `null` unless
+   * `library.role === "studio"` regardless of whether this is set.
+   */
+  media?: { engine: "python" | "fake" };
   doctorRows?: DoctorRow[];
   clock: Clock;
   gateWindowSeconds: number;
@@ -136,7 +152,29 @@ export function buildSnapshot(d: SnapshotDeps): DashboardSnapshot {
     runs_active: buildRunsActive(d.store),
     alerts: buildAlerts(d, now, doctorRows, channels, channelBuildErrors),
     market: {},
+    media: buildMedia(d),
   };
+}
+
+const TTS_DONE_WINDOW = 20;
+
+/** `DashboardSnapshot.media` (spec §6.1, sub-project 5A Task 9): `null` unless the project declares `library`
+ * with `role: "studio"`. `engine` defaults to `"fake"` when the caller did not pass `SnapshotDeps.media` --
+ * every real call site (the composition root) always does, this is just what a `library`-only test fixture
+ * that predates this task falls back to. `media.tts_done` events carry no `channel_id` (the media pipeline is
+ * project-level, not per-channel), so this reads the newest 20 project-wide rather than going through
+ * `newestChannelEvent`. */
+function buildMedia(d: SnapshotDeps): DashboardMedia | null {
+  if (d.library?.role !== "studio") return null;
+  const events = d.store.listEvents({ event_type: "media.tts_done", newest: true, limit: TTS_DONE_WINDOW });
+  const last_tts_at = events.at(-1)?.occurred_at ?? null;
+  let cachedSum = 0;
+  let linesSum = 0;
+  for (const e of events) {
+    cachedSum += typeof e.payload.cached === "number" ? e.payload.cached : 0;
+    linesSum += typeof e.payload.lines === "number" ? e.payload.lines : 0;
+  }
+  return { engine: d.media?.engine ?? "fake", last_tts_at, cache_hit_ratio: linesSum > 0 ? cachedSum / linesSum : null };
 }
 
 function buildLibrary(d: SnapshotDeps): DashboardLibrary | null {
@@ -443,6 +481,17 @@ function buildAlerts(d: SnapshotDeps, now: string, doctorRows: DoctorRow[], chan
     if (row.ok) continue;
     const channelMatch = /^channel:([^:]+):/.exec(row.check);
     alerts.push({ kind: "doctor", ...(channelMatch ? { channel_id: channelMatch[1] } : {}), ref: row.check, message: row.detail, since: now });
+  }
+
+  // `media_engine_unavailable` (spec §6.1, sub-project 5A Task 9): a failing `media:python`/`media:packages`/
+  // `media:device`/`media:engine` row means the python engine cannot actually do the transcribe/tts work a
+  // multi-hour GPU stage is about to attempt. `media:models` is deliberately excluded -- an uncached model
+  // just means the first real run downloads it, not that the engine is unusable (same `ok: false`-as-warning
+  // treatment `channel:<id>:planning`'s fake-agent row gets, no new severity concept).
+  for (const row of doctorRows) {
+    if (row.ok) continue;
+    if (row.check !== "media:python" && row.check !== "media:packages" && row.check !== "media:device" && row.check !== "media:engine") continue;
+    alerts.push({ kind: "media_engine_unavailable", ref: row.check, message: row.detail, since: now });
   }
 
   if (d.library && !d.library.fs.exists()) {

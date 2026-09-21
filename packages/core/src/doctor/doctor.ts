@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { HarnessConfig, ProductionProfile, ProjectConfig, ScriptsRegistry, SecretResolver, StageDefinition, StateStore } from "@harness/contracts";
+import type { HarnessConfig, MediaEngineProbe, ProductionProfile, ProjectConfig, ScriptsRegistry, SecretResolver, StageDefinition, StateStore } from "@harness/contracts";
 import { sha256FileSync } from "../artifacts/checksum.js";
 import { EnvSecretResolver } from "../config/secrets.js";
 import type { LoadedChannel } from "../distribution/channels.js";
@@ -33,8 +33,23 @@ export interface DoctorInput {
   /** Only present when `project.yaml` declares `library`; adds the three `library:*` rows below.
    * `autoAccept` adds `library:auto_accept` too, but only on a `studio` project whose loop is `enabled`
    * -- pre-computed by the composition root (`sourceCount`/`agentIsFake`) rather than derived here, same as
-   * `proberAvailable`/`configErrors` above. */
-  library?: { fs: LibraryFs; role: LibraryRole; autoAccept?: { config: AutoAcceptConfig; sourceCount: number; agentIsFake: boolean } };
+   * `proberAvailable`/`configErrors` above. `matchingCollections`/`pinnedWorkflowLoadable` (sub-project 5A
+   * Task 9 fix round) are collection-mode-only inputs, present when `config.source_collections` is set /
+   * `config.workflow_release` is set respectively -- legacy mode (`source_collections` unset) never reads
+   * either and is byte-identical to before. */
+  library?: {
+    fs: LibraryFs; role: LibraryRole;
+    autoAccept?: {
+      config: AutoAcceptConfig; sourceCount: number; agentIsFake: boolean;
+      /** Collection mode only: every kho collection matching at least one of `config.source_collections`'
+       * patterns that has at least one non-restricted source, with that source count -- computed by the
+       * composition root (`matchCollection`) so `doctor.ts` stays pure. */
+      matchingCollections?: { name: string; count: number }[];
+      /** Only present when `config.workflow_release` is set: whether the composition root could load that
+       * pinned workflow release. */
+      pinnedWorkflowLoadable?: boolean;
+    };
+  };
   /** Only present when the composition root always has channel data available; a per-channel row set is added
    * for every loaded channel (repo dir, upload scripts, upload profile, identity, secret), plus one summary
    * `channels:config` row. `errors` mirrors `configErrors.scripts`/`.sources`: a broken `channels/` directory
@@ -52,6 +67,19 @@ export interface DoctorInput {
   agent?: { kind: "cli" | "fake"; runtime: "claude" | "codex"; argv0: string; isAvailable: (argv0: string) => boolean };
   /** Only present when the composition root has picked a publisher adapter; a single informational row. */
   publisher?: { name: string };
+  /** Sub-project 5A Task 9 (`media:python|packages|device|models`): only present when `adapters.media ===
+   * "python"`. `MediaEngine.probe()` is async and spawns a python child process, so the composition root
+   * awaits it once (`computeDoctorRows`) and hands the plain result here -- `doctor.ts` stays pure/sync and
+   * never calls `probe()` itself. `pythonPath` is the configured `media.python` (or the transcribe/tts
+   * override) doctor names when the probe could not even start the interpreter (`probe.python === null`). */
+  media?: { pythonPath: string; device: string; probe: MediaEngineProbe };
+  /** Sub-project 5A Task 9 (`media:engine`): only present when `adapters.media === "fake"` on a studio
+   * project whose `library.auto_accept.enabled` is true -- the composition root resolves the effective
+   * autopilot release (`auto_accept.workflow_release ?? the "studio" profile's own workflow_release`) since
+   * doctor itself never loads a production profile. A release of `library-production@1.2.0` or later needs
+   * the real Python engine to do anything useful; an older pinned release (e.g. a rollback to 1.1.0) still
+   * runs fine on the fake engine, so `checkMediaEngineOnFake` below adds no row at all then. */
+  mediaEngineOnFake?: { effectiveRelease: string };
 }
 
 const SCRIPT_FILE_RE = /\.(mjs|js|cjs|ts|py|sh)$/;
@@ -90,6 +118,8 @@ export function runDoctor(i: DoctorInput): DoctorRow[] {
     ...checkChannels(i),
     ...(i.agent ? [checkAgentRuntime(i.agent)] : []),
     ...(i.publisher ? [checkPublisher(i.publisher)] : []),
+    ...(i.media ? [checkMediaPython(i.media), checkMediaPackages(i.media), checkMediaDevice(i.media), checkMediaModels(i.media)] : []),
+    ...(i.mediaEngineOnFake ? checkMediaEngineOnFake(i.mediaEngineOnFake) : []),
   ];
 }
 
@@ -295,14 +325,44 @@ function checkLibraryVoices(library: { fs: LibraryFs; role: LibraryRole }): Doct
 
 /** `library:auto_accept`, added only for a studio project with the loop actually enabled (the exact
  * condition the worker's `autoAcceptDepsFor` builds the loop on): checks the two things that would make it
- * silently do nothing forever -- an empty source collection, or an agent runtime that cannot execute the
- * plans it enqueues. A channel project, or a studio with `enabled: false`, gets no row at all rather than a
- * row about a loop that never runs there. */
-function checkLibraryAutoAccept(a: { config: AutoAcceptConfig; sourceCount: number; agentIsFake: boolean }): DoctorRow {
+ * silently do nothing forever -- no usable source, or an agent runtime that cannot execute the plans it
+ * enqueues. A channel project, or a studio with `enabled: false`, gets no row at all rather than a row about
+ * a loop that never runs there.
+ *
+ * Two modes (sub-project 5A Task 9 fix round -- Task 7 shipped `source_collections` but left this row
+ * checking only the legacy `source_collection`, so a correctly configured collection-mode project with an
+ * empty `main` FAILed doctor for no reason):
+ *  - legacy (`config.source_collections` unset): byte-identical to before -- `sourceCount` (one named
+ *    collection) is the whole story.
+ *  - collections (`config.source_collections` set): ok when `matchingCollections` (every collection matching
+ *    at least one pattern with at least one non-restricted source, computed by the composition root via
+ *    `matchCollection`) is non-empty; detail lists up to 5 matching collection names + counts. Fail detail
+ *    names the patterns that matched nothing.
+ * `config.workflow_release`, when set, is named in every non-"unloadable" detail; an unloadable pinned
+ * release fails the row outright, before either mode's own source check.
+ */
+function checkLibraryAutoAccept(a: NonNullable<NonNullable<DoctorInput["library"]>["autoAccept"]>): DoctorRow {
   const check = "library:auto_accept";
+  const pinnedSuffix = a.config.workflow_release ? `, pinned to ${a.config.workflow_release}` : "";
+
+  if (a.config.workflow_release && a.pinnedWorkflowLoadable === false) {
+    return { check, ok: false, detail: `workflow release ${a.config.workflow_release} not loadable` };
+  }
+
+  if (a.config.source_collections && a.config.source_collections.length > 0) {
+    const matches = a.matchingCollections ?? [];
+    if (matches.length === 0) {
+      return { check, ok: false, detail: `no collection matches patterns: ${a.config.source_collections.join(", ")}${pinnedSuffix}` };
+    }
+    if (a.agentIsFake) return { check, ok: false, detail: "adapters.agent is fake" };
+    const shown = matches.slice(0, 5).map((m) => `${m.name} (${m.count})`).join(", ");
+    const more = matches.length > 5 ? `, +${matches.length - 5} more` : "";
+    return { check, ok: true, detail: `enabled, collections ${shown}${more}${pinnedSuffix}` };
+  }
+
   if (a.sourceCount === 0) return { check, ok: false, detail: `collection ${a.config.source_collection} has no sources` };
   if (a.agentIsFake) return { check, ok: false, detail: "adapters.agent is fake" };
-  return { check, ok: true, detail: `enabled, collection ${a.config.source_collection} (${a.sourceCount} sources)` };
+  return { check, ok: true, detail: `enabled, collection ${a.config.source_collection} (${a.sourceCount} sources)${pinnedSuffix}` };
 }
 
 const CHANNEL_UPLOAD_SCRIPTS = ["upload-youtube-playwright.mjs", "publish-video-playwright.mjs"];
@@ -456,6 +516,73 @@ function checkAgentRuntime(agent: NonNullable<DoctorInput["agent"]>): DoctorRow 
 
 function checkPublisher(publisher: NonNullable<DoctorInput["publisher"]>): DoctorRow {
   return { check: "publisher", ok: true, detail: publisher.name };
+}
+
+/** `media:python`: `probe.python` is the configured python executable once the probe subprocess actually ran
+ * (`PythonMediaEngine.probe()`), `null` when it could not even be spawned/parsed -- `pythonPath` is what
+ * doctor names in that failure case, since a `null` probe carries no path of its own to report. */
+function checkMediaPython(m: { pythonPath: string; probe: MediaEngineProbe }): DoctorRow {
+  const check = "media:python";
+  if (m.probe.python === null) return { check, ok: false, detail: `python not runnable: ${m.pythonPath}` };
+  return { check, ok: true, detail: `python ${m.probe.python}` };
+}
+
+/** `media:packages`: `torch`/`omnivoice`/`whisperx` must all have a resolved version string. */
+function checkMediaPackages(m: { probe: MediaEngineProbe }): DoctorRow {
+  const check = "media:packages";
+  const entries = Object.entries(m.probe.packages);
+  const missing = entries.filter(([, v]) => v === null).map(([k]) => k);
+  if (missing.length > 0) return { check, ok: false, detail: `missing: ${missing.join(", ")}` };
+  return { check, ok: true, detail: entries.map(([k, v]) => `${k} ${v}`).join(", ") };
+}
+
+/** `media:device`: `device: "cpu"` needs nothing from the probe at all; `device: "cuda:*"` needs
+ * `probe.cuda === true`, and the detail names the GPU + free VRAM the probe found. */
+function checkMediaDevice(m: { device: string; probe: MediaEngineProbe }): DoctorRow {
+  const check = "media:device";
+  if (m.device === "cpu") return { check, ok: true, detail: "cpu" };
+  if (!m.probe.cuda) return { check, ok: false, detail: "CUDA not available" };
+  const gpu = m.probe.gpu ?? "unknown gpu";
+  const vram = m.probe.vram_free_mb !== undefined ? `${m.probe.vram_free_mb} MB free` : "vram unknown";
+  return { check, ok: true, detail: `${m.device}: ${gpu}, ${vram}` };
+}
+
+/** `media:models`: an uncached model is a warning, not a hard failure -- exactly the same `ok: false` shape
+ * `channel:<id>:planning`'s fake-agent row uses, no new severity concept. It never raises the
+ * `media_engine_unavailable` dashboard alert (`buildAlerts` excludes this one check by name) and doctor's
+ * exit code treats it like every other `ok: false` row, same as today. */
+function checkMediaModels(m: { probe: MediaEngineProbe }): DoctorRow {
+  const check = "media:models";
+  const missing = Object.entries(m.probe.models_cached).filter(([, cached]) => !cached).map(([name]) => name);
+  if (missing.length > 0) return { check, ok: false, detail: `will download on first run: ${missing.join(", ")}` };
+  return { check, ok: true, detail: "all models cached" };
+}
+
+/** Compares two `major.minor.patch` version strings (the shape every `workflow_release`/profile release is
+ * already regex-constrained to, e.g. `stageDefinitionSchema`'s siblings) -- `a >= b`. */
+function versionGte(a: string, b: string): boolean {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const x = pa[i] ?? 0;
+    const y = pb[i] ?? 0;
+    if (x !== y) return x > y;
+  }
+  return true;
+}
+
+/** `media:engine`: a studio project's effective autopilot release (composition root, `mediaEngineOnFake`)
+ * needs the real Python media engine from `library-production@1.2.0` onward -- running it on the fake engine
+ * still "works" (spec: fake stands in for CI) but silently produces placeholder transcripts/voice, which is
+ * exactly the trap this row exists to catch before a multi-hour GPU-shaped run does that for real. Any other
+ * workflow id, or a release older than 1.2.0 (e.g. a deliberate rollback), adds no row at all. */
+function checkMediaEngineOnFake(m: { effectiveRelease: string }): DoctorRow[] {
+  const at = m.effectiveRelease.lastIndexOf("@");
+  if (at < 0) return [];
+  const id = m.effectiveRelease.slice(0, at);
+  const version = m.effectiveRelease.slice(at + 1);
+  if (id !== "library-production" || !versionGte(version, "1.2.0")) return [];
+  return [{ check: "media:engine", ok: false, detail: "fake media engine" }];
 }
 
 function checkSources(i: DoctorInput): DoctorRow {

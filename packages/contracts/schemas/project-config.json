@@ -120,7 +120,8 @@
                   "items": {
                     "type": "string",
                     "pattern": "^[a-z][a-z0-9*-]*$"
-                  }
+                  },
+                  "minItems": 1
                 },
                 "max_replans": {
                   "type": "integer",

@@ -475,6 +475,100 @@ describe("buildSnapshot", () => {
   });
 });
 
+describe("media block and media_engine_unavailable alert (sub-project 5A, Task 9)", () => {
+  it("media is null unless the project declares library with role \"studio\"", () => {
+    const { store, clock } = openTempStore();
+    const noLibrary = buildSnapshot({ store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap" });
+    expect(noLibrary.media).toBeNull();
+
+    const libRoot = mkdtempSync(join(tmpdir(), "snapshot-media-channel-"));
+    const channelRole = buildSnapshot({
+      store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap", media: { engine: "python" },
+      library: { fs: new LibraryFs({ root: libRoot, role: "channel" }), role: "channel" },
+    });
+    expect(channelRole.media).toBeNull();
+  });
+
+  it("reports the configured engine, the newest media.tts_done timestamp, and Σcached/Σlines", () => {
+    const { store, clock } = openTempStore();
+    const libRoot = mkdtempSync(join(tmpdir(), "snapshot-media-studio-"));
+    const library = { fs: new LibraryFs({ root: libRoot, role: "studio" as const }), role: "studio" as const };
+
+    const noEvents = buildSnapshot({ store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap", library, media: { engine: "python" } });
+    expect(noEvents.media).toEqual({ engine: "python", last_tts_at: null, cache_hit_ratio: null });
+
+    const appendTts = (lines: number, cached: number): void => {
+      store.appendEvent({
+        run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null, channel_id: null,
+        content_id: null, variant_id: null, workflow_release: null, severity: "info", event_type: "media.tts_done",
+        payload: { run_id: "run_1", lines, cached, seconds: 10 },
+      });
+      clock.advance(1);
+    };
+    appendTts(10, 4);
+    appendTts(10, 8); // newest -- last_tts_at should reflect this one
+
+    const snapshot = buildSnapshot({ store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap", library, media: { engine: "python" } });
+    expect(snapshot.media?.engine).toBe("python");
+    expect(snapshot.media?.last_tts_at).not.toBeNull();
+    expect(snapshot.media?.cache_hit_ratio).toBeCloseTo((4 + 8) / (10 + 10));
+  });
+
+  it("caps the ratio window at the newest 20 media.tts_done events, ignoring older ones", () => {
+    const { store, clock } = openTempStore();
+    const libRoot = mkdtempSync(join(tmpdir(), "snapshot-media-window-"));
+    const library = { fs: new LibraryFs({ root: libRoot, role: "studio" as const }), role: "studio" as const };
+
+    const appendTts = (lines: number, cached: number): void => {
+      store.appendEvent({
+        run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null, channel_id: null,
+        content_id: null, variant_id: null, workflow_release: null, severity: "info", event_type: "media.tts_done",
+        payload: { run_id: "run_old", lines, cached, seconds: 1 },
+      });
+      clock.advance(1);
+    };
+    // 5 old events with a 0/10 ratio, then 20 newer events with a perfect 10/10 ratio -- only the newest 20
+    // may count, or the ratio would be pulled down by the old ones.
+    for (let i = 0; i < 5; i++) appendTts(10, 0);
+    for (let i = 0; i < 20; i++) appendTts(10, 10);
+
+    const snapshot = buildSnapshot({ store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap", library, media: { engine: "python" } });
+    expect(snapshot.media?.cache_hit_ratio).toBe(1);
+  });
+
+  it("cache_hit_ratio is null when the newest events summed to zero lines", () => {
+    const { store, clock } = openTempStore();
+    const libRoot = mkdtempSync(join(tmpdir(), "snapshot-media-zero-"));
+    const library = { fs: new LibraryFs({ root: libRoot, role: "studio" as const }), role: "studio" as const };
+    store.appendEvent({
+      run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null, channel_id: null,
+      content_id: null, variant_id: null, workflow_release: null, severity: "info", event_type: "media.tts_done",
+      payload: { run_id: "run_1", lines: 0, cached: 0, seconds: 0 },
+    });
+    const snapshot = buildSnapshot({ store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap", library, media: { engine: "fake" } });
+    expect(snapshot.media?.cache_hit_ratio).toBeNull();
+  });
+
+  it("alerts media_engine_unavailable for a failing media:python/packages/device/engine doctor row, but never for media:models", () => {
+    const { store, clock } = openTempStore();
+    const pythonFail = buildSnapshot({
+      store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap",
+      doctorRows: [{ check: "media:python", ok: false, detail: "python not runnable: /bad/python" }],
+    });
+    const alert = pythonFail.alerts.find((a) => a.kind === "media_engine_unavailable");
+    expect(alert).toMatchObject({ ref: "media:python", message: "python not runnable: /bad/python" });
+
+    const modelsWarn = buildSnapshot({
+      store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap",
+      doctorRows: [{ check: "media:models", ok: false, detail: "will download on first run: whisperx" }],
+    });
+    expect(modelsWarn.alerts.some((a) => a.kind === "media_engine_unavailable")).toBe(false);
+    // still surfaces as a plain "doctor" alert, exactly like any other ok:false row (e.g.
+    // channel:<id>:planning's fake-agent warning) -- no new severity concept, just no *specific* alert kind.
+    expect(modelsWarn.alerts.some((a) => a.kind === "doctor" && a.ref === "media:models")).toBe(true);
+  });
+});
+
 describe("writeSnapshotFile", () => {
   it("writes <dataRoot>/dashboard/snapshot.json atomically, leaving no .tmp files behind", () => {
     const dataRoot = mkdtempSync(join(tmpdir(), "snapshot-out-"));

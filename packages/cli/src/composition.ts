@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
 import { HarnessError, isHarnessError, ProjectConfigSchema, type AgentRuntime, type ChannelPackage, type ExecutorRef, type MediaConfig, type MediaEngine, type MediaProber, type ProductionProfile, type ProjectConfig, type Publisher, type ScriptCommand, type ScriptsRegistry, type SourcesRegistry, type StatsCollector } from "@harness/contracts";
-import { ArtifactRegistry, type AutoAcceptConfig, BUILTIN_CHECKERS, buildSnapshot, ChannelRegistry, Controller, distributionCheckers, type DoctorRow, EnvSecretResolver, ExternalOperationJournal, fullEpisodePath, HARNESS_ROOT, learningCheckers, LibraryFs, libraryCheckers, listWorkflowRefs, loadChannels, type LoadedWorkflow, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, resolveWorkflowScope, runDoctor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, writeSnapshotFile, type HarnessLogger, type LibraryRole, type LogLevel } from "@harness/core";
+import { ArtifactRegistry, type AutoAcceptConfig, BUILTIN_CHECKERS, buildSnapshot, ChannelRegistry, Controller, distributionCheckers, type DoctorRow, EnvSecretResolver, ExternalOperationJournal, fullEpisodePath, HARNESS_ROOT, learningCheckers, LibraryFs, libraryCheckers, listWorkflowRefs, loadChannels, type LoadedWorkflow, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, matchCollection, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, resolveWorkflowScope, runDoctor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, writeSnapshotFile, type HarnessLogger, type LibraryRole, type LogLevel } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, FakeMediaEngine, FakeProvider, FakePublisher, FakeStatsCollector, fakeScriptCommands } from "@harness/adapter-fake";
 import { FfprobeMediaProber, probeDurationSync } from "@harness/adapter-ffprobe";
@@ -227,14 +227,54 @@ function subdirsWith(root: string, filename: string): string[] {
     .sort();
 }
 
+/** Collection-mode `library:auto_accept` doctor input (sub-project 5A Task 9 fix round): every kho collection
+ * matching at least one of `patterns` that has at least one non-restricted source, with that source count --
+ * `doctor.ts`'s `checkLibraryAutoAccept` stays pure, so this scan lives here instead. */
+function autoAcceptMatchingCollections(store: AppContext["store"], patterns: string[]): { name: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const s of store.listSourceItems()) {
+    if (s.rights_status === "restricted") continue;
+    if (!patterns.some((p) => matchCollection(s.collection, p))) continue;
+    counts.set(s.collection, (counts.get(s.collection) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([name, count]) => ({ name, count }));
+}
+
+/** `library.auto_accept.workflow_release ?? the "studio" profile's own workflow_release` -- the release the
+ * autopilot loop actually plans against right now (sub-project 5A Task 8's rollback knob, task 9's `media:engine`
+ * row). `undefined` when there is no auto_accept config at all, or (defensively) when the "studio" profile
+ * itself fails to load -- `checkProfiles`/`profile:studio:workflow` already reports that failure on its own row. */
+function effectiveAutopilotRelease(ctx: AppContext): string | undefined {
+  const autoAccept = ctx.library?.autoAccept;
+  if (!autoAccept) return undefined;
+  if (autoAccept.workflow_release) return autoAccept.workflow_release;
+  try { return ctx.profiles("studio").workflow_release; }
+  catch { return undefined; }
+}
+
+/** `DoctorInput.mediaEngineOnFake` (sub-project 5A Task 9): only when this project actually runs the studio
+ * autopilot loop on the fake engine -- `adapters.media: "fake"` on a studio project with `auto_accept.enabled`.
+ * `doctor.ts`'s `checkMediaEngineOnFake` decides from the release string alone whether that is actually a
+ * problem (library-production@1.2.0+ needs the real engine; older releases don't). */
+function mediaEngineOnFakeInput(ctx: AppContext): { effectiveRelease: string } | undefined {
+  if (ctx.project.adapters.media !== "fake") return undefined;
+  if (ctx.library?.role !== "studio" || !ctx.library.autoAccept?.enabled) return undefined;
+  const effectiveRelease = effectiveAutopilotRelease(ctx);
+  return effectiveRelease ? { effectiveRelease } : undefined;
+}
+
 /**
  * The full `DoctorRow[]` `harness doctor` reports: workflow-scope resolution (`project.yaml.workflows`, or a
  * scan of every `workflow.yaml` under the harness install's `workflows/` dir when unset) and profile loading,
  * followed by `runDoctor`'s own checks. Shared between `commands/doctor.ts` (prints these rows) and
  * `writeDashboardSnapshot` below (turns the failing ones into `alerts[].kind === "doctor"`, design §6.1) so
  * the ~20-line input assembly is not duplicated between the two call sites.
+ *
+ * Async (sub-project 5A Task 9): `media:python|packages|device|models` need `MediaEngine.probe()`, which spawns
+ * a python child process -- awaited here, once, only when `adapters.media === "python"`, so `doctor.ts` itself
+ * stays a pure/sync row builder over a plain `MediaEngineProbe` literal.
  */
-export function computeDoctorRows(ctx: AppContext): DoctorRow[] {
+export async function computeDoctorRows(ctx: AppContext): Promise<DoctorRow[]> {
   const extraRows: DoctorRow[] = [];
   const scope = ctx.project.workflows;
   let workflows: { ref: string; loaded: LoadedWorkflow }[];
@@ -261,6 +301,11 @@ export function computeDoctorRows(ctx: AppContext): DoctorRow[] {
   }
   const profiles = scope ? allProfiles.filter((p) => scope.includes(p.workflow_release)) : allProfiles;
 
+  const media = ctx.project.adapters.media === "python"
+    ? { pythonPath: mediaEngineOptions(ctx.project, ctx.harnessRoot, (s) => s).python, device: ctx.mediaConfig.device, probe: await ctx.media.probe() }
+    : undefined;
+  const mediaEngineOnFake = mediaEngineOnFakeInput(ctx);
+
   return [
     ...extraRows,
     ...runDoctor({
@@ -276,6 +321,12 @@ export function computeDoctorRows(ctx: AppContext): DoctorRow[] {
                       config: ctx.library.autoAccept,
                       sourceCount: ctx.store.listSourceItems({ collection: ctx.library.autoAccept.source_collection }).length,
                       agentIsFake: ctx.project.adapters.agent === "fake",
+                      ...(ctx.library.autoAccept.source_collections
+                        ? { matchingCollections: autoAcceptMatchingCollections(ctx.store, ctx.library.autoAccept.source_collections) }
+                        : {}),
+                      ...(ctx.library.autoAccept.workflow_release
+                        ? { pinnedWorkflowLoadable: (() => { try { ctx.workflows(ctx.library!.autoAccept!.workflow_release!); return true; } catch { return false; } })() }
+                        : {}),
                     },
                   }
                 : {}),
@@ -294,6 +345,8 @@ export function computeDoctorRows(ctx: AppContext): DoctorRow[] {
           }
         : { kind: "fake", runtime: ctx.project.runtime, argv0: ctx.project.runtime, isAvailable: () => true },
       publisher: { name: ctx.publisher.name },
+      ...(media ? { media } : {}),
+      ...(mediaEngineOnFake ? { mediaEngineOnFake } : {}),
     }),
   ];
 }
@@ -302,10 +355,11 @@ export function computeDoctorRows(ctx: AppContext): DoctorRow[] {
  * snapshot gets written, called by both `harness dashboard snapshot|serve` and the worker's periodic refresh
  * (Task 9's `WorkerDeps.dashboard.write`). */
 export async function writeDashboardSnapshot(ctx: AppContext): Promise<string> {
-  const doctorRows = computeDoctorRows(ctx);
+  const doctorRows = await computeDoctorRows(ctx);
   const snapshot = buildSnapshot({
     store: ctx.store, channels: ctx.channels.list(), doctorRows, clock: ctx.clock,
     gateWindowSeconds: ctx.harness.resource_wait_warn_seconds, project_id: ctx.project.project_id,
+    media: { engine: ctx.project.adapters.media },
     ...(ctx.library ? { library: { fs: ctx.library.fs, role: ctx.library.role, ...(ctx.library.autoAccept ? { autoAccept: ctx.library.autoAccept } : {}) } } : {}),
     ...(ctx.library ? { learning: { libraryItems: ctx.store.listLibraryItems({ status: "approved" }), libraryClaimsOf: (itemId: string) => ctx.library!.fs.listClaims(itemId) } } : {}),
   });

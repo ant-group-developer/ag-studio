@@ -119,7 +119,7 @@ export const ChannelConfigSchema = z.object({
 export const autoAcceptSchema = z.object({
   enabled: z.boolean().default(true),
   source_collection: z.string().regex(/^[a-z][a-z0-9-]*$/).default("main"),
-  source_collections: z.array(z.string().regex(/^[a-z][a-z0-9*-]*$/)).optional(),
+  source_collections: z.array(z.string().regex(/^[a-z][a-z0-9*-]*$/)).min(1).optional(),
   max_replans: z.number().int().min(0).default(2),
   max_concurrent_runs: z.number().int().min(1).default(1),
   max_sources: z.number().int().min(1).default(40),

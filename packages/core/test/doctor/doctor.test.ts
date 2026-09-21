@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ChannelConfigSchema, newId, type HarnessConfig, type ProjectConfig, type ScriptsRegistry, type SecretResolver, type VoiceProfile } from "@harness/contracts";
+import { ChannelConfigSchema, newId, type HarnessConfig, type MediaEngineProbe, type ProjectConfig, type ScriptsRegistry, type SecretResolver, type VoiceProfile } from "@harness/contracts";
 import { HARNESS_ROOT, LibraryFs, loadProfile, loadWorkflow, MIGRATIONS_DIR, resolveWorkflowScope, runDoctor, sha256FileSync, SqliteStateStore, type DoctorInput, type LoadedChannel, type LoadedWorkflow } from "../../src/index.js";
 import { openTempStore } from "../helpers.js";
 
@@ -590,6 +590,144 @@ describe("runDoctor", () => {
       expect(brokenProfileRow).toMatchObject({ ok: false });
       expect(brokenProfileRow?.detail).toContain("profile.yaml not found");
     });
+  });
+});
+
+describe("media:* rows (sub-project 5A, Task 9)", () => {
+  function makeProbe(overrides: Partial<MediaEngineProbe> = {}): MediaEngineProbe {
+    return {
+      python: "/usr/bin/python3.11",
+      packages: { torch: "2.3.0", omnivoice: "0.1.0", whisperx: "3.1.1" },
+      cuda: true,
+      gpu: "NVIDIA RTX 4090",
+      vram_free_mb: 20000,
+      models_cached: { omnivoice: true, whisperx: true },
+      ...overrides,
+    };
+  }
+
+  function runWith(input: Partial<DoctorInput>) {
+    const projectDir = mkdtempSync(join(tmpdir(), "doctor-media-"));
+    return runDoctor({ ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [], ...input });
+  }
+
+  it("adds no media:* rows at all when adapters.media is fake and there is no studio-autopilot-on-1.2.0 case", () => {
+    const rows = runWith({});
+    expect(rows.some((r) => r.check.startsWith("media:"))).toBe(false);
+  });
+
+  it("python engine with everything present: four ok rows", () => {
+    const rows = runWith({ media: { pythonPath: "/usr/bin/python3.11", device: "cuda:0", probe: makeProbe() } });
+    const byCheck = new Map(rows.map((r) => [r.check, r]));
+    expect(byCheck.get("media:python")).toMatchObject({ ok: true });
+    expect(byCheck.get("media:packages")).toMatchObject({ ok: true });
+    expect(byCheck.get("media:device")).toMatchObject({ ok: true });
+    expect(byCheck.get("media:models")).toMatchObject({ ok: true });
+  });
+
+  it("media:python fails naming the configured path when the probe could not run python at all", () => {
+    const rows = runWith({
+      media: { pythonPath: "/opt/bad-python", device: "cpu", probe: makeProbe({ python: null, packages: { torch: null, omnivoice: null, whisperx: null }, cuda: false, models_cached: { omnivoice: false, whisperx: false } }) },
+    });
+    const row = new Map(rows.map((r) => [r.check, r])).get("media:python");
+    expect(row).toMatchObject({ ok: false });
+    expect(row?.detail).toContain("/opt/bad-python");
+  });
+
+  it("media:packages fails and names a missing package", () => {
+    const rows = runWith({ media: { pythonPath: "/usr/bin/python3.11", device: "cuda:0", probe: makeProbe({ packages: { torch: "2.3.0", omnivoice: "0.1.0", whisperx: null } }) } });
+    const row = new Map(rows.map((r) => [r.check, r])).get("media:packages");
+    expect(row).toMatchObject({ ok: false });
+    expect(row?.detail).toContain("whisperx");
+    expect(row?.detail).not.toContain("torch");
+  });
+
+  it("media:device fails when device is cuda:0 but the probe found no CUDA", () => {
+    const rows = runWith({ media: { pythonPath: "/usr/bin/python3.11", device: "cuda:0", probe: makeProbe({ cuda: false }) } });
+    expect(new Map(rows.map((r) => [r.check, r])).get("media:device")).toMatchObject({ ok: false, detail: "CUDA not available" });
+  });
+
+  it("media:device is ok \"cpu\" regardless of the probe's cuda flag when device is cpu", () => {
+    const rows = runWith({ media: { pythonPath: "/usr/bin/python3.11", device: "cpu", probe: makeProbe({ cuda: false }) } });
+    expect(new Map(rows.map((r) => [r.check, r])).get("media:device")).toMatchObject({ ok: true, detail: "cpu" });
+  });
+
+  it("media:models is ok:false (a warning, not a hard failure) naming the uncached model", () => {
+    const rows = runWith({ media: { pythonPath: "/usr/bin/python3.11", device: "cuda:0", probe: makeProbe({ models_cached: { omnivoice: true, whisperx: false } }) } });
+    const row = new Map(rows.map((r) => [r.check, r])).get("media:models");
+    expect(row).toMatchObject({ ok: false });
+    expect(row?.detail).toContain("will download on first run");
+    expect(row?.detail).toContain("whisperx");
+  });
+
+  it("media:engine fails \"fake media engine\" on a studio autopilot project whose effective release is library-production@1.2.0", () => {
+    const rows = runWith({ mediaEngineOnFake: { effectiveRelease: "library-production@1.2.0" } });
+    expect(new Map(rows.map((r) => [r.check, r])).get("media:engine")).toMatchObject({ ok: false, detail: "fake media engine" });
+  });
+
+  it("media:engine also fires for a release newer than 1.2.0, but adds no row for a 1.1.0 rollback or an unrelated workflow", () => {
+    const newer = runWith({ mediaEngineOnFake: { effectiveRelease: "library-production@1.3.0" } });
+    expect(newer.some((r) => r.check === "media:engine")).toBe(true);
+
+    const rolledBack = runWith({ mediaEngineOnFake: { effectiveRelease: "library-production@1.1.0" } });
+    expect(rolledBack.some((r) => r.check === "media:engine")).toBe(false);
+
+    const otherWorkflow = runWith({ mediaEngineOnFake: { effectiveRelease: "footage-production@1.2.0" } });
+    expect(otherWorkflow.some((r) => r.check === "media:engine")).toBe(false);
+  });
+});
+
+describe("library:auto_accept collection mode (sub-project 5A Task 9 fix round)", () => {
+  const config = { enabled: true, source_collection: "main", source_collections: ["shoot-*"], max_replans: 2, max_concurrent_runs: 1 };
+
+  function runWith(autoAccept: NonNullable<NonNullable<DoctorInput["library"]>["autoAccept"]>) {
+    const projectDir = mkdtempSync(join(tmpdir(), "doctor-media-autoaccept-"));
+    const libRoot = mkdtempSync(join(tmpdir(), "doctor-media-autoaccept-kho-"));
+    mkdirSync(join(libRoot, "styles"), { recursive: true });
+    const fs = new LibraryFs({ root: libRoot, role: "studio" });
+    return runDoctor({
+      ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+      library: { fs, role: "studio", autoAccept },
+    });
+  }
+
+  it("ok, listing matching collections and counts, when at least one collection matches a pattern", () => {
+    const rows = runWith({ config, sourceCount: 0, agentIsFake: false, matchingCollections: [{ name: "shoot-01", count: 3 }, { name: "shoot-02", count: 1 }] });
+    const row = new Map(rows.map((r) => [r.check, r])).get("library:auto_accept");
+    expect(row).toMatchObject({ ok: true });
+    expect(row?.detail).toContain("shoot-01 (3)");
+    expect(row?.detail).toContain("shoot-02 (1)");
+  });
+
+  it("fails naming the patterns when no empty-\"main\" collection-mode project has any matching collection (Task 7's bug: a project with an empty legacy main must not FAIL here)", () => {
+    const rows = runWith({ config, sourceCount: 0, agentIsFake: false, matchingCollections: [] });
+    const row = new Map(rows.map((r) => [r.check, r])).get("library:auto_accept");
+    expect(row).toMatchObject({ ok: false });
+    expect(row?.detail).toContain("shoot-*");
+  });
+
+  it("still fails on adapters.agent fake in collection mode", () => {
+    const rows = runWith({ config, sourceCount: 0, agentIsFake: true, matchingCollections: [{ name: "shoot-01", count: 1 }] });
+    expect(new Map(rows.map((r) => [r.check, r])).get("library:auto_accept")).toMatchObject({ ok: false, detail: "adapters.agent is fake" });
+  });
+
+  it("names the pinned workflow_release in the ok detail, and fails outright when it is not loadable", () => {
+    const pinned = { ...config, workflow_release: "library-production@1.1.0" };
+    const ok = runWith({ config: pinned, sourceCount: 0, agentIsFake: false, matchingCollections: [{ name: "shoot-01", count: 1 }], pinnedWorkflowLoadable: true });
+    const okRow = new Map(ok.map((r) => [r.check, r])).get("library:auto_accept");
+    expect(okRow).toMatchObject({ ok: true });
+    expect(okRow?.detail).toContain("library-production@1.1.0");
+
+    const unloadable = runWith({ config: pinned, sourceCount: 0, agentIsFake: false, matchingCollections: [{ name: "shoot-01", count: 1 }], pinnedWorkflowLoadable: false });
+    const badRow = new Map(unloadable.map((r) => [r.check, r])).get("library:auto_accept");
+    expect(badRow).toMatchObject({ ok: false });
+    expect(badRow?.detail).toContain("library-production@1.1.0");
+  });
+
+  it("legacy mode (no source_collections) is unaffected: still keys off sourceCount alone", () => {
+    const legacyConfig = { enabled: true, source_collection: "main", max_replans: 2, max_concurrent_runs: 1 };
+    const rows = runWith({ config: legacyConfig, sourceCount: 0, agentIsFake: false });
+    expect(new Map(rows.map((r) => [r.check, r])).get("library:auto_accept")).toMatchObject({ ok: false, detail: "collection main has no sources" });
   });
 });
 
