@@ -4,10 +4,11 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parse, stringify } from "yaml";
-import { newId, type ContentRequest, type LibraryItem } from "@harness/contracts";
-import { HARNESS_ROOT } from "@harness/core";
-import { hasFfmpeg, makeVideo } from "../media.js";
-import { cli } from "./footage-helpers.js";
+import { fileURLToPath } from "node:url";
+import { newId, type ContentRequest, type LibraryItem, type VoiceProfile } from "@harness/contracts";
+import { HARNESS_ROOT, SqliteStateStore } from "@harness/core";
+import { hasFfmpeg, makeSceneClip, makeVideo, makeWav } from "../media.js";
+import { cli, status } from "./footage-helpers.js";
 
 export { cli, cliAsync, drain, stageId, status, submitGate, SAMPLE_EDL } from "./footage-helpers.js";
 
@@ -39,23 +40,31 @@ function studioScriptsYaml(): string {
  * `library.auto_accept` entirely, reproducing the pre-task-8 fixture shape (`agent: fake`, no auto-accept)
  * so every existing 2C test (library-pipeline, studio-wrappers) is unaffected by the fixture now shipping
  * autopilot enabled by default for real (non-test) use. */
-function writeProjectYaml(fixtureDir: string, dir: string, lib: string, o: { autopilot?: boolean } = {}): void {
+function writeProjectYaml(fixtureDir: string, dir: string, lib: string, o: { autopilot?: boolean; media1_2?: boolean } = {}): void {
   const cfg = parse(readFileSync(join(fixtureDir, "project.yaml"), "utf8")) as {
     data_root: string;
     library: { root: string; auto_accept?: unknown };
-    adapters?: { agent?: string; agent_argv?: string[] };
+    adapters?: { agent?: string; agent_argv?: string[]; media?: string };
   };
   cfg.data_root = posix(join(dir, "data"));
   cfg.library.root = posix(lib);
   if (fixtureDir === STUDIO_FIXTURE) {
     if (o.autopilot) {
-      cfg.adapters = { agent: "cli", agent_argv: [process.execPath, posix(FAKE_AGENT_CLI), "{prompt}"] };
-      // Task 8: the studio profile moved to library-production@1.2.0, but every sub-project 4 autopilot test
-      // was written against 1.1.0's stage keys/counts -- pin the autopilot to the release it was written for
-      // via `library.auto_accept.workflow_release` (the operator's own documented rollback knob) rather than
-      // letting it silently follow the profile forward. Task 10 adds an opt-in for 1.2.0.
+      cfg.adapters = { agent: "cli", agent_argv: [process.execPath, posix(FAKE_AGENT_CLI), "{prompt}"], media: "fake" };
       const auto = (cfg.library.auto_accept ?? {}) as Record<string, unknown>;
-      cfg.library.auto_accept = { ...auto, workflow_release: "library-production@1.1.0" };
+      if (o.media1_2) {
+        // Task 10: the sub-project 5A world -- NO `workflow_release` pin, so the autopilot follows the studio
+        // profile (revision 3 -> library-production@1.2.0), and COLLECTION source picking (the studio
+        // autopilot's second explicit mode since task 7: a whole shoot per request instead of one clip). The
+        // committed fixture deliberately stays in legacy mode, so this is set only on the temp copy.
+        cfg.library.auto_accept = { ...auto, source_collections: ["shoot-*"] };
+      } else {
+        // Task 8: the studio profile moved to library-production@1.2.0, but every sub-project 4 autopilot test
+        // was written against 1.1.0's stage keys/counts -- pin the autopilot to the release it was written for
+        // via `library.auto_accept.workflow_release` (the operator's own documented rollback knob) rather than
+        // letting it silently follow the profile forward.
+        cfg.library.auto_accept = { ...auto, workflow_release: "library-production@1.1.0" };
+      }
     } else {
       delete cfg.adapters;
       delete cfg.library.auto_accept;
@@ -90,10 +99,16 @@ export interface LibraryWorld {
  * a channel request all the way to an approved item through the fake agent CLI -- see `writeProjectYaml`'s
  * own comment for exactly what that overwrites. Defaults to `false`, reproducing the pre-task-8 studio
  * project (`agent: fake`, no auto-accept) so every existing 2C test is unaffected.
+ *
+ * `media1_2: true` (task 10, sub-project 5A) implies `autopilot` and swaps that pin for the 5A world: the
+ * autopilot follows the studio profile forward to `library-production@1.2.0`, runs on `adapters.media: fake`
+ * (`FakeMediaEngine`, no Python/GPU), and picks sources in COLLECTION mode over `shoot-*` -- pair it with
+ * `ingestShoot(world, "shoot-a", n)`.
  */
-export function freshLibraryWorld(o: { media?: boolean; autopilot?: boolean } = {}): LibraryWorld {
+export function freshLibraryWorld(o: { media?: boolean; autopilot?: boolean; media1_2?: boolean } = {}): LibraryWorld {
   const media = o.media ?? true;
-  const autopilot = o.autopilot ?? false;
+  const media1_2 = o.media1_2 ?? false;
+  const autopilot = (o.autopilot ?? false) || media1_2;
   const lib = mkdtempSync(join(tmpdir(), "kho-"));
   // the top-level kho directories a mounted share would already have; `doctor`'s `library:write` row probes
   // `styles/` (studio) and `requests/` (channel) and fails when they are missing, and (sub-project 5A)
@@ -101,7 +116,7 @@ export function freshLibraryWorld(o: { media?: boolean; autopilot?: boolean } = 
   for (const sub of ["styles", "requests", "items", "voices"]) mkdirSync(join(lib, sub), { recursive: true });
 
   const studio = mkdtempSync(join(tmpdir(), "studio-"));
-  writeProjectYaml(STUDIO_FIXTURE, studio, lib, { autopilot });
+  writeProjectYaml(STUDIO_FIXTURE, studio, lib, { autopilot, media1_2 });
   mkdirSync(join(studio, "executors"), { recursive: true });
   writeFileSync(join(studio, "executors", "scripts.yaml"), studioScriptsYaml());
   mkdirSync(join(studio, "source-catalog"), { recursive: true });
@@ -271,11 +286,15 @@ export function studioEnv(world: LibraryWorld, extra: Record<string, string> = {
  * without a `target_duration_seconds` on the request, and a skipped *required* check fails the stage just
  * like an outright `fail` would (AGENTS.md: "skip không phải là pass"), so every request an autopilot test
  * expects to reach `assemble` needs one. */
-export function requestCreate(world: LibraryWorld, o: { topic: string; style: string; sourceHint?: string; voice?: string; duration?: [number, number] }): string {
+export function requestCreate(world: LibraryWorld, o: { topic: string; style: string; sourceHint?: string; voice?: string; voiceId?: string; duration?: [number, number]; language?: string }): string {
   const [min, max] = o.duration ?? [1, 60];
   const args = ["library", "request", "create", "--portfolio", "portfolio-channel", "--channel", "channel-one", "--topic", o.topic, "--style", o.style, "--duration", `${min},${max}`, "--json"];
   if (o.sourceHint) args.push("--source-hint", o.sourceHint);
   if (o.voice) args.push("--voice", o.voice);
+  // `--voice tts` is rejected at creation time without an ACTIVE voice profile (`createRequest` ->
+  // `requireActiveVoice`), so every tts request in these tests carries an `addVoice()` id.
+  if (o.voiceId) args.push("--voice-id", o.voiceId);
+  if (o.language) args.push("--language", o.language);
   const r = cli(world.channel, args);
   if (r.code !== 0) throw new Error(`library request create failed: ${r.err}\n${r.out}`);
   return (JSON.parse(r.out) as ContentRequest).request_id;
@@ -296,6 +315,106 @@ export function requestStatus(world: LibraryWorld, requestId: string): ContentRe
  * `expect` on whatever `pred` was checking gives a far more useful failure than a generic timeout would. */
 export function studioWorkerUntil(world: LibraryWorld, pred: () => boolean, max = 60, env: Record<string, string> = {}): void {
   for (let i = 0; i < max && !pred(); i++) cli(world.studio, ["worker", "--once"], studioEnv(world, env));
+}
+
+/** Four distinct colour triples, cycled over a shoot's clips: two clips must never be byte-identical or
+ * `source ingest` deduplicates them by checksum into a single source item -- and that applies ACROSS shoots
+ * too, which is why the cycle starts at a per-collection offset (`collectionSeed`) rather than at 0. */
+const SHOOT_COLORS = [["red", "blue", "green"], ["blue", "green", "yellow"], ["green", "yellow", "red"], ["yellow", "red", "blue"]];
+
+/** A small stable number per collection name, used to give each shoot its own colours, frame size and tone
+ * so no two shoots can generate the same bytes for the same clip index. */
+function collectionSeed(collection: string): number {
+  let h = 0;
+  for (const ch of collection) h = (h * 31 + ch.charCodeAt(0)) % 997;
+  return h;
+}
+
+/**
+ * A whole shoot (sub-project 5A: a collection is one shooting session): `n` distinct ffmpeg clips of 6-10 s,
+ * each three solid-colour scenes so `media-index` finds two scene cuts in it, ingested in one
+ * `harness source ingest <dir> --collection <collection>`. Returns the new `source_id`s in ingest order.
+ *
+ * Every clip differs in duration, colours and audio tone, so none of them dedupe against another by checksum.
+ * `withAudio: false` produces video-only clips (`has_audio: false`, which `media-transcribe` skips);
+ * `audioSeconds` shortens the tone so the clip ends in real silence -- the tail `voice: original` cut
+ * snapping needs something to snap to (see `makeSceneClip`).
+ */
+export function ingestShoot(world: LibraryWorld, collection: string, n: number, o: { withAudio?: boolean; audioSeconds?: number; language?: string } = {}): string[] {
+  const withAudio = o.withAudio ?? true;
+  const seed = collectionSeed(collection);
+  const dir = mkdtempSync(join(tmpdir(), `${collection}-`));
+  for (let i = 0; i < n; i++) {
+    const seconds = 6 + (i % 5); // 6..10 s
+    makeSceneClip(join(dir, `clip-${String(i).padStart(2, "0")}.mp4`), {
+      seconds,
+      colors: SHOOT_COLORS[(seed + i) % SHOOT_COLORS.length]!,
+      size: `${320 + 2 * (seed % 8)}x180`,
+      audio: withAudio ? { frequency: 300 + ((seed + i * 7) % 23) * 37, ...(o.audioSeconds !== undefined ? { seconds: Math.min(o.audioSeconds, seconds) } : {}) } : null,
+    });
+  }
+  const r = cli(world.studio, ["source", "ingest", dir, "--collection", collection, "--rights", "cleared", "--language", o.language ?? "en", "--json"]);
+  if (r.code !== 0) throw new Error(`source ingest ${dir} failed: ${r.err}\n${r.out}`);
+  const ingested = (JSON.parse(r.out) as { ingested: { source_id: string; created: boolean }[] }).ingested;
+  // A clip whose bytes an earlier shoot already registered comes back `created: false` and KEEPS that earlier
+  // collection, so `--source-hint <collection>` would silently find nothing later -- fail here instead.
+  const reused = ingested.filter((i) => !i.created);
+  if (ingested.length !== n || reused.length > 0) {
+    throw new Error(`source ingest ${dir} registered ${ingested.length} sources (${reused.length} deduplicated against an earlier shoot), expected ${n} new ones`);
+  }
+  return ingested.map((i) => i.source_id);
+}
+
+/**
+ * A channel-owned TTS voice profile, written by the CHANNEL role exactly as an operator would
+ * (`harness library voices add`, which validates the reference clip and converts it to 24 kHz mono), then
+ * mirrored into the studio's DB with one `library sync` so `intake`/`media-tts` can resolve it right away
+ * instead of waiting for the worker's own `sync_seconds` poll. `voiceId` bumps an existing profile
+ * (revision + 1) instead of minting a new one.
+ */
+export function addVoice(world: LibraryWorld, voiceId?: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "voiceref-"));
+  const ref = join(dir, "ref.wav");
+  makeWav(ref, 6);
+  const args = [
+    "library", "voices", "add", "--display-name", "Kênh một — giọng thử",
+    "--ref", ref, "--ref-text", "This is the reference clip, word for word.",
+    "--language", "en", "--origin", "synthetic", "--origin-note", "sinh bằng ffmpeg cho test",
+    "--json",
+  ];
+  if (voiceId) args.push("--voice-id", voiceId);
+  const r = cli(world.channel, args);
+  if (r.code !== 0) throw new Error(`library voices add failed: ${r.err}\n${r.out}`);
+  const profile = JSON.parse(r.out) as VoiceProfile;
+  librarySync(world.studio);
+  return profile.voice_id;
+}
+
+/**
+ * Every run the studio autopilot planned for `requestId`, oldest first, read from the `request.auto_accepted`
+ * events rather than from the run table -- the event carries `replan_no`, which is what separates a first
+ * attempt from the replan the SP4 reject loop produced, and needs no join through ContentItem.
+ */
+export function autoAcceptedRuns(world: LibraryWorld, requestId: string): { run_id: string; replan_no: number }[] {
+  const store = new SqliteStateStore(join(world.studio, "data", "state", "harness.db"));
+  try {
+    return store.listEvents({ event_type: "request.auto_accepted" })
+      .filter((e) => e.payload.request_id === requestId)
+      .map((e) => ({ run_id: String(e.payload.run_id), replan_no: Number(e.payload.replan_no) }))
+      .sort((a, b) => a.replan_no - b.replan_no);
+  } finally {
+    store.close();
+  }
+}
+
+/** An artifact's on-disk path for one stage of one run (`status --json`'s artifacts carry a `uri` even though
+ * `StatusJson` does not declare the field); undefined when that stage has not produced it (yet). */
+export function artifactPathFor(project: string, runId: string, stageKey: string, type: string): string | undefined {
+  const st = status(project, runId);
+  const sid = st.stages.find((s) => s.stage_key === stageKey)?.stage_run_id;
+  if (!sid) return undefined;
+  const found = st.artifacts.find((a) => a.stage_run_id === sid && a.type === type) as unknown as { uri: string } | undefined;
+  return found ? fileURLToPath(found.uri) : undefined;
 }
 
 /** Rewrites the studio project's `library.auto_accept.max_replans` in place (acceptance 28: forcing the

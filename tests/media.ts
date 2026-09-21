@@ -54,6 +54,49 @@ export function makeVideo(path: string, o: { seconds: number; audio?: boolean; s
   run(ffmpegPath(), args);
 }
 
+/**
+ * A multi-scene clip: `colors.length` solid-colour segments concatenated into one `seconds`-long video, so a
+ * scene-change detector (`media-index`, sub-project 5A) finds a cut at every boundary. `cuts` places those
+ * boundaries explicitly (seconds from the start, ascending, inside `(0, seconds)`); omitted, the colours
+ * split the clip evenly.
+ *
+ * `audio` is a sine tone, `null` for a video-only clip. Its `seconds` may be SHORTER than the video (there is
+ * deliberately no `-shortest` here): the tail then carries no audio at all, which is what gives
+ * `FakeMediaEngine`'s transcript a real silence for `voice: original` cut-snapping to aim at. It must never
+ * be longer, or the muxed file outlasts the picture.
+ */
+export function makeSceneClip(path: string, o: {
+  seconds: number;
+  colors: string[];
+  cuts?: number[];
+  audio?: { seconds?: number; frequency?: number } | null;
+  size?: string;
+}): void {
+  const size = o.size ?? "320x180";
+  if (o.colors.length === 0) throw new Error("makeSceneClip: colors must not be empty");
+  const cuts = o.cuts ?? o.colors.slice(1).map((_, i) => ((i + 1) * o.seconds) / o.colors.length);
+  if (cuts.length !== o.colors.length - 1) throw new Error(`makeSceneClip: ${o.colors.length} colors need ${o.colors.length - 1} cuts, got ${cuts.length}`);
+  const bounds = [0, ...cuts, o.seconds];
+
+  const args = ["-y"];
+  for (const [i, color] of o.colors.entries()) {
+    const d = bounds[i + 1]! - bounds[i]!;
+    if (d <= 0) throw new Error(`makeSceneClip: segment ${i} of ${path} has non-positive length ${d}`);
+    args.push("-f", "lavfi", "-i", `color=c=${color}:s=${size}:d=${d.toFixed(3)}:r=25`);
+  }
+  const audio = o.audio === null ? null : { seconds: o.audio?.seconds ?? o.seconds, frequency: o.audio?.frequency ?? 440 };
+  if (audio) {
+    if (audio.seconds > o.seconds) throw new Error(`makeSceneClip: audio (${audio.seconds}s) outlasts the video (${o.seconds}s)`);
+    args.push("-f", "lavfi", "-i", `sine=frequency=${audio.frequency}:duration=${audio.seconds}`);
+  }
+  args.push("-filter_complex", `${o.colors.map((_, i) => `[${i}:v]`).join("")}concat=n=${o.colors.length}:v=1:a=0[v]`, "-map", "[v]");
+  if (audio) args.push("-map", `${o.colors.length}:a`);
+  args.push("-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p");
+  if (audio) args.push("-c:a", "aac");
+  args.push(path);
+  run(ffmpegPath(), args);
+}
+
 /** ffmpeg -y -f lavfi -i anullsrc=... | sine=... -t <seconds> -c:a pcm_s16le <path> */
 export function makeWav(path: string, seconds: number, o?: { silent?: boolean }): void {
   const silent = o?.silent ?? false;
