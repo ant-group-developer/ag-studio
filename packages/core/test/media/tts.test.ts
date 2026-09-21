@@ -60,7 +60,7 @@ function narrationFixture(lines: { line_id: string; edl_order: number; text: str
 // Review finding (Task 5 fix round 1, Important #1): the cache stores the POST-loudnorm/post-chunking
 // result, so the key must include everything that shapes that output, not just voice/text identity.
 function keyBase() {
-  return { text: "hello", voice_checksum: sha, params: { speed: 1, num_step: 32 }, model: "m1", language: "en", dtype: "float16", max_chars: 280, pause_seconds: 0.25, loudness_lufs: -16 };
+  return { text: "hello", voice_checksum: sha, voice_revision: 1, params: { speed: 1, num_step: 32 }, model: "m1", language: "en", dtype: "float16", max_chars: 280, pause_seconds: 0.25, loudness_lufs: -16 };
 }
 
 describe("ttsCacheKey", () => {
@@ -91,6 +91,15 @@ describe("ttsCacheKey", () => {
     expect(ttsCacheKey(base)).not.toBe(ttsCacheKey({ ...base, loudness_lufs: -20 }));
   });
 
+  // Final-review Important 1: `voice_checksum` alone cannot see a `--ref-text`-only re-add -- `harness library
+  // voices add --voice-id <id>` with the SAME wav and a corrected transcript bumps `revision` and nothing
+  // else, so every previously synthesized line would keep being served from cache and one episode could mix
+  // audio read with the old transcript and the new.
+  it("changes when voice_revision changes, with the same ref.wav checksum", () => {
+    const base = keyBase();
+    expect(ttsCacheKey(base)).not.toBe(ttsCacheKey({ ...base, voice_revision: 2 }));
+  });
+
   it("is a 64-char hex digest, stable for identical input", () => {
     const p = keyBase();
     const k1 = ttsCacheKey(p);
@@ -102,7 +111,7 @@ describe("ttsCacheKey", () => {
   it("is unaffected by JSON key order", () => {
     const k1 = ttsCacheKey(keyBase());
     const k2 = ttsCacheKey({
-      loudness_lufs: -16, language: "en", model: "m1", params: { num_step: 32, speed: 1 }, voice_checksum: sha, text: "hello", pause_seconds: 0.25, dtype: "float16", max_chars: 280,
+      loudness_lufs: -16, language: "en", model: "m1", params: { num_step: 32, speed: 1 }, voice_checksum: sha, voice_revision: 1, text: "hello", pause_seconds: 0.25, dtype: "float16", max_chars: 280,
     });
     expect(k1).toBe(k2);
   });

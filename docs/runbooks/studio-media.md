@@ -280,13 +280,15 @@ kết thúc**, tối đa `max_replans + 1` run mỗi request); hết lượt th�
 `request.auto_accept_exhausted` và dashboard dựng alert `request_stuck` — lúc đó mới cần người sửa request
 hoặc bổ sung nguồn.
 
-**Cache TTS** nằm ở `<data_root>/cache/tts/<key>.wav|.json`. Khoá là sha256 của đúng chín trường
+**Cache TTS** nằm ở `<data_root>/cache/tts/<key>.wav|.json`. Khoá là sha256 của đúng mười trường
 (`ttsCacheKey`, `packages/core/src/media/tts.ts`): `text` (chữ của dòng), `voice_checksum` (checksum của
-`ref.wav` trong hồ sơ giọng), `params` (`speed` + `num_step` của hồ sơ), `model`, `language`, `dtype`,
-`max_chars`, `pause_seconds`, `loudness_lufs`. Hệ quả thực tế: đổi bất kỳ khoá `media.tts.*` nào trong
-`project.yaml` là **cache cũ hết hiệu lực** (cố ý — nếu không thì một wav đọc bằng cấu hình cũ sẽ lặng lẽ
-được dùng lại); bump hồ sơ giọng bằng một clip mẫu khác cũng vậy, nhưng bump mà **chỉ** sửa `ref_text` trên
-đúng clip cũ thì không (ghi ở deferred). Một dòng không đổi ở lần replan sau **không đọc lại** — `narration-timing.json`
+`ref.wav` trong hồ sơ giọng), `voice_revision` (revision của hồ sơ giọng), `params` (`speed` + `num_step`
+của hồ sơ), `model`, `language`, `dtype`, `max_chars`, `pause_seconds`, `loudness_lufs`. Hệ quả thực tế: đổi
+bất kỳ khoá `media.tts.*` nào trong `project.yaml` là **cache cũ hết hiệu lực** (cố ý — nếu không thì một wav
+đọc bằng cấu hình cũ sẽ lặng lẽ được dùng lại); bump hồ sơ giọng bằng một clip mẫu khác cũng vậy, và bump mà
+**chỉ** sửa `ref_text` trên đúng clip cũ cũng vậy nốt — `voice_revision` nằm trong khoá. `media-tts` còn đối
+chiếu `brief.voice_revision` (do `intake` chụp lại) với revision hiện tại trong kho: lệch nhau là
+`CONFIG_INVALID` (`contract`), vì giọng đã đổi sau khi run này chốt brief. Một dòng không đổi ở lần replan sau **không đọc lại** — `narration-timing.json`
 ghi `cached: true` cho dòng đó. Đo thật: tập thứ hai với đúng phần lời của tập thứ nhất làm `media-tts` rơi từ
 **33.4 s xuống 0.4 s**. Thư mục cache lớn dần và `harness artifacts sweep` **chưa** biết tới nó (xem
 `docs/operations/deferred-items.md`).

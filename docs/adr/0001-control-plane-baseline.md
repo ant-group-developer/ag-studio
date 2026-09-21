@@ -705,13 +705,16 @@ library-production}@1.1.0/`, `skills/{style-analyze,style-review,source-survey,e
     và chuyển cảnh của 5B đều cần **mốc từ** trên một trục thời gian đã chốt; sinh lại chúng từ `edl.json` +
     `narration-timing.json` ở 5B sẽ là tính lại đúng phép tính mà `fitEdl` vừa làm, với rủi ro lệch.
 108. **Cache TTS băm theo nội dung, không theo run.** `ttsCacheKey` (`packages/core/src/media/tts.ts`) băm
-    sha256 của đúng chín trường: `text`, `voice_checksum`, `params` (tức `speed` + `num_step` của hồ sơ
-    giọng), `model`, `language`, `dtype`, `max_chars`, `pause_seconds`, `loudness_lufs`. Bốn trường cuối là
-    sửa ở review Task 5: thiếu chúng, đổi `dtype` hay `loudness_lufs` trong `project.yaml` sẽ lặng lẽ tái
-    dùng wav cũ đọc bằng cấu hình cũ. `voice_checksum` là checksum của chính `ref.wav`
+    sha256 của đúng mười trường: `text`, `voice_checksum`, `voice_revision`, `params` (tức `speed` +
+    `num_step` của hồ sơ giọng), `model`, `language`, `dtype`, `max_chars`, `pause_seconds`, `loudness_lufs`.
+    Bốn trường cuối là sửa ở review Task 5: thiếu chúng, đổi `dtype` hay `loudness_lufs` trong `project.yaml`
+    sẽ lặng lẽ tái dùng wav cũ đọc bằng cấu hình cũ. `voice_checksum` là checksum của chính `ref.wav`
     (`profile.ref_audio.checksum`), nên bump hồ sơ giọng bằng một clip mẫu khác tự làm mất hiệu lực cache của
-    giọng đó; bump mà **chỉ** sửa `ref_text` trên đúng clip cũ thì không — ghi ở deferred. Nhờ đó vòng replan
-    chỉ đọc lại **dòng đã
+    giọng đó; `voice_revision` (thêm ở review cuối 5A) bắt nốt trường hợp checksum **không** đổi — thêm lại
+    giọng chỉ để sửa `ref_text` trên đúng clip cũ — vốn sẽ phục vụ audio cũ vĩnh viễn và làm một tập lẫn hai
+    cách đọc. Cùng lúc đó `media-tts` đối chiếu `brief.voice_revision` (do `intake` chụp) với revision hiện
+    tại trong kho và từ chối run (`CONFIG_INVALID`, `contract`) khi lệch: trường `intake` ghi ra cuối cùng
+    cũng có người đọc. Nhờ đó vòng replan chỉ đọc lại **dòng đã
     sửa** (`narration-timing.json` ghi `cached: true` cho phần còn lại; đo thật: `media-tts` 33.4 s → 0.4 s).
     `harness artifacts sweep` **chưa** biết tới `<data_root>/cache/tts` — ghi ở deferred, không sửa trong 5A.
 109. **Hai loại artifact khảo sát, và `survey_index` mới là file JSON.** Stage `survey-source` ghi cả

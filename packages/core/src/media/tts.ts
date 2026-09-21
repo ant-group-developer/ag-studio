@@ -45,6 +45,11 @@ type CacheEntry = z.infer<typeof cacheEntrySchema>;
  * `dtype`/`max_chars`/`pause_seconds`/`loudness_lufs` all shape that output (chunk boundaries, inter-chunk
  * pause, final loudness), so a project.yaml edit to any of them must change the key too, or a stale cache
  * entry would keep being served as a hit forever.
+ *
+ * Final-review finding (Important 1): `voice_revision` is in the key alongside `voice_checksum` because a
+ * `--ref-text`-only re-add (`harness library voices add --voice-id <id>` with the SAME wav and a corrected
+ * transcript) bumps `revision` and leaves `ref_audio.checksum` untouched -- on checksum alone every line
+ * synthesized before the correction stays a cache hit, and one episode can mix old and new readings.
  */
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
@@ -59,6 +64,7 @@ function stableStringify(value: unknown): string {
 export function ttsCacheKey(p: {
   text: string;
   voice_checksum: string;
+  voice_revision: number;
   params: VoiceParams;
   model: string;
   language: string;
@@ -68,7 +74,7 @@ export function ttsCacheKey(p: {
   loudness_lufs: number;
 }): string {
   const payload = {
-    text: p.text, voice_checksum: p.voice_checksum, params: p.params, model: p.model, language: p.language,
+    text: p.text, voice_checksum: p.voice_checksum, voice_revision: p.voice_revision, params: p.params, model: p.model, language: p.language,
     dtype: p.dtype, max_chars: p.max_chars, pause_seconds: p.pause_seconds, loudness_lufs: p.loudness_lufs,
   };
   return createHash("sha256").update(stableStringify(payload)).digest("hex");
@@ -166,7 +172,7 @@ export async function synthesizeNarration(
 
   for (const line of p.narration.lines) {
     const key = ttsCacheKey({
-      text: line.text, voice_checksum: profile.ref_audio.checksum, params: profile.params, model: p.cfg.model, language: p.narration.language,
+      text: line.text, voice_checksum: profile.ref_audio.checksum, voice_revision: profile.revision, params: profile.params, model: p.cfg.model, language: p.narration.language,
       dtype: p.cfg.dtype, max_chars: p.cfg.max_chars, pause_seconds: p.cfg.pause_seconds, loudness_lufs: p.cfg.loudness_lufs,
     });
     keyByLineId.set(line.line_id, key);

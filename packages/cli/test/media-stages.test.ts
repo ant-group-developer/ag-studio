@@ -205,10 +205,11 @@ function seedVoiceProfile(project: string, checksum = VOICE_CHECKSUM): string {
   return voiceId;
 }
 
-function briefJson(o: Partial<{ voice: "none" | "tts" | "original"; voice_id: string; voice_checksum: string; target_duration_seconds: [number, number] }> = {}): Record<string, unknown> {
+function briefJson(o: Partial<{ voice: "none" | "tts" | "original"; voice_id: string; voice_checksum: string; voice_revision: number; target_duration_seconds: [number, number] }> = {}): Record<string, unknown> {
   return {
     topic: "test topic", style_id: STYLE_ID, style_revision: 1, language: "vi",
     voice: o.voice ?? "tts", ...(o.voice_id ? { voice_id: o.voice_id } : {}), ...(o.voice_checksum ? { voice_checksum: o.voice_checksum } : {}),
+    ...(o.voice_revision !== undefined ? { voice_revision: o.voice_revision } : {}),
     ...(o.target_duration_seconds ? { target_duration_seconds: o.target_duration_seconds } : {}),
   };
 }
@@ -392,6 +393,23 @@ describe.skipIf(!hasFfmpeg())("harness media index|transcribe|tts|fit-edl (sub-p
       expect(r.result.outcome, JSON.stringify(r.result)).toBe("failed");
       expect(r.result.errors[0]?.kind).toBe("contract");
       expect(r.result.errors[0]?.message).toContain("checksum");
+    });
+
+    // Final-review Important 1: a `--ref-text`-only re-add bumps `revision` and leaves `ref.wav` (and so
+    // `voice_checksum`) byte-identical, so the checksum guard above cannot see it. `intake` already writes
+    // `voice_revision` onto the brief; until now nothing read it back.
+    it("voice revision mismatch (voice re-added since intake) -> contract failure", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "tts-brief-revision-"));
+      const briefPath = writeTempJson(dir, "brief.json", briefJson({ voice: "tts", voice_id: voiceId, voice_checksum: VOICE_CHECKSUM, voice_revision: 7 }));
+      const narrationPath = writeTempJson(dir, "narration.json", { schema_version: "harness.narration/v1", language: "vi", lines: [{ line_id: "L001", edl_order: 0, text: "revision check line" }] });
+      const inputs: InputSpec[] = [
+        { type: "brief", relPath: "input/brief/brief.json", src: briefPath },
+        { type: "narration", relPath: "input/narration/narration.json", src: narrationPath },
+      ];
+      const r = await invokeStage(world.studio, runId, "media-tts", ["media", "tts"], inputs, {}, mediaTtsClaim.claim);
+      expect(r.result.outcome, JSON.stringify(r.result)).toBe("failed");
+      expect(r.result.errors[0]?.kind).toBe("contract");
+      expect(r.result.errors[0]?.message).toContain("revision");
     });
   });
 

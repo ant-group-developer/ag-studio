@@ -438,6 +438,18 @@ async function mediaTtsStage(app: AppContext, sdk: ScriptContext): Promise<void>
         { voice_id: profile.voice_id, expected: brief.voice_checksum, actual: profile.ref_audio.checksum },
       );
     }
+    // Final-review Important 1: `intake` snapshots `voice_revision` onto the brief precisely so this run is
+    // pinned to one reading of the voice; a `--ref-text`-only re-add bumps the revision while leaving
+    // `ref.wav` byte-identical, which the checksum guard above cannot see. `ttsCacheKey` now includes the
+    // revision, so the cache is right either way -- this refuses the run instead of quietly reading the
+    // script with a voice profile the editor never approved.
+    if (brief.voice_revision !== undefined && profile.revision !== brief.voice_revision) {
+      throw new HarnessError(
+        "CONFIG_INVALID",
+        `voice ${profile.voice_id} has changed since intake: brief pins revision ${brief.voice_revision}, the kho is at ${profile.revision}`,
+        { voice_id: profile.voice_id, expected: brief.voice_revision, actual: profile.revision },
+      );
+    }
     voice = { profile, ref_audio_path: library.fs.paths.voiceRef(profile.voice_id) };
   }
 
