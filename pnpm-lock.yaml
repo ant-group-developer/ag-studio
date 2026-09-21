@@ -176,6 +176,15 @@ importers:
         specifier: workspace:*
         version: link:../../contracts
 
+  packages/adapters/media-python:
+    dependencies:
+      '@harness/contracts':
+        specifier: workspace:*
+        version: link:../../contracts
+      zod:
+        specifier: ^3.23.0
+        version: 3.25.76
+
   packages/adapters/youtube-playwright:
     dependencies:
       '@harness/contracts':
@@ -193,6 +202,9 @@ importers:
       '@harness/adapter-ffprobe':
         specifier: workspace:*
         version: link:../adapters/ffprobe
+      '@harness/adapter-media-python':
+        specifier: workspace:*
+        version: link:../adapters/media-python
       '@harness/adapter-youtube-playwright':
         specifier: workspace:*
         version: link:../adapters/youtube-playwright

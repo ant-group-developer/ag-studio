@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { ScriptCommand } from "@harness/contracts";
 export { FakeAgentRuntime, type JournalLike } from "./fake-agent-runtime.js";
+export { FakeMediaEngine, type FakeMediaEngineOptions } from "./fake-media-engine.js";
 export { FakeProvider } from "./fake-provider.js";
 export { FakePublisher, type FakePublisherOptions } from "./fake-publisher.js";
 export { FakeStatsCollector, type FakeStatsCollectorOptions } from "./fake-stats-collector.js";

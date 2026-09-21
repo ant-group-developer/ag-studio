@@ -24,6 +24,7 @@ export const workspaceAliases: Record<string, string> = {
   "@harness/adapter-fake": `${ROOT}packages/adapters/fake/src/index.ts`,
   "@harness/adapter-ffprobe": `${ROOT}packages/adapters/ffprobe/src/index.ts`,
   "@harness/adapter-agent-cli": `${ROOT}packages/adapters/agent-cli/src/index.ts`,
+  "@harness/adapter-media-python": `${ROOT}packages/adapters/media-python/src/index.ts`,
   "@harness/adapter-youtube-playwright": `${ROOT}packages/adapters/youtube-playwright/src/index.ts`,
   "@harness/worker": `${ROOT}packages/worker/src/index.ts`,
   "@harness/dashboard": `${ROOT}packages/dashboard/src/index.ts`,

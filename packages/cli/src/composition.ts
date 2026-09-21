@@ -1,12 +1,13 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
-import { HarnessError, isHarnessError, ProjectConfigSchema, type AgentRuntime, type ChannelPackage, type ExecutorRef, type MediaProber, type ProductionProfile, type ProjectConfig, type Publisher, type ScriptCommand, type ScriptsRegistry, type SourcesRegistry, type StatsCollector } from "@harness/contracts";
+import { HarnessError, isHarnessError, ProjectConfigSchema, type AgentRuntime, type ChannelPackage, type ExecutorRef, type MediaConfig, type MediaEngine, type MediaProber, type ProductionProfile, type ProjectConfig, type Publisher, type ScriptCommand, type ScriptsRegistry, type SourcesRegistry, type StatsCollector } from "@harness/contracts";
 import { ArtifactRegistry, type AutoAcceptConfig, BUILTIN_CHECKERS, buildSnapshot, ChannelRegistry, Controller, distributionCheckers, type DoctorRow, EnvSecretResolver, ExternalOperationJournal, fullEpisodePath, HARNESS_ROOT, learningCheckers, LibraryFs, libraryCheckers, listWorkflowRefs, loadChannels, type LoadedWorkflow, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, resolveWorkflowScope, runDoctor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, writeSnapshotFile, type HarnessLogger, type LibraryRole, type LogLevel } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
-import { FakeAgentRuntime, FakeProvider, FakePublisher, FakeStatsCollector, fakeScriptCommands } from "@harness/adapter-fake";
+import { FakeAgentRuntime, FakeMediaEngine, FakeProvider, FakePublisher, FakeStatsCollector, fakeScriptCommands } from "@harness/adapter-fake";
 import { FfprobeMediaProber, probeDurationSync } from "@harness/adapter-ffprobe";
 import { CliAgentRuntime, RUNTIME_COMMANDS } from "@harness/adapter-agent-cli";
+import { PythonMediaEngine } from "@harness/adapter-media-python";
 import { PlaywrightPublisher, PlaywrightStatsCollector } from "@harness/adapter-youtube-playwright";
 import { builtinMediaCommands } from "./commands/media.js";
 import { cliArgv } from "./self.js";
@@ -41,6 +42,12 @@ export interface AppContext {
   agentRuntime: AgentRuntime;
   /** Sub-project 3B: `StatsCollector` chosen by `project.yaml`'s `adapters.stats`. */
   stats: StatsCollector;
+  /** Sub-project 5A: `MediaEngine` chosen by `project.yaml`'s `adapters.media` -- `PythonMediaEngine` (real
+   * WhisperX transcribe / OmniVoice tts, requires `media.python`) or `FakeMediaEngine` (default, CI). */
+  media: MediaEngine;
+  /** `project.yaml`'s `media` block verbatim (device, transcribe/tts/scene/watch settings) -- stages that
+   * need the raw config (not just the engine) read it from here. */
+  mediaConfig: MediaConfig;
   publication: { verifySeconds: number; graceHours: number };
   dashboard: { port: number; refreshSeconds: number };
   /** Sub-project 3B: `project.yaml`'s `learning.collect_seconds`/`collect_batch` -- how often and how many
@@ -99,6 +106,15 @@ export function loadProject(projectDir: string): ProjectConfig {
   return ProjectConfigSchema.parse(parse(readFileSync(file, "utf8")));
 }
 
+/** `media.python` is optional in `mediaConfigSchema` (an old/CI project.yaml must still parse without it),
+ * but `adapters.media: python` cannot run without it -- caught here, once, as the composition root builds
+ * `PythonMediaEngine`, rather than as a null-pointer somewhere inside the adapter. */
+export function requireMediaPython(project: ProjectConfig): string {
+  const python = project.media.python;
+  if (!python) throw new HarnessError("CONFIG_INVALID", 'project.yaml media.python is required when adapters.media is "python"', { field: "media.python" });
+  return python;
+}
+
 export function buildContext(o: { projectDir: string; harnessRoot?: string; owner?: string; capabilities?: string[]; logLevel?: LogLevel }): AppContext {
   const harnessRoot = o.harnessRoot ?? HARNESS_ROOT;
   const projectDir = resolve(o.projectDir);
@@ -145,6 +161,15 @@ export function buildContext(o: { projectDir: string; harnessRoot?: string; owne
   const stats: StatsCollector = project.adapters.stats === "playwright"
     ? new PlaywrightStatsCollector({ redact: (s) => redactor.redact(s) })
     : new FakeStatsCollector({ ...(process.env.HARNESS_FAKE_STATS_FILE ? { file: process.env.HARNESS_FAKE_STATS_FILE } : {}) });
+  // Sub-project 5A: the only place a MediaEngine is chosen (spec: Global constraints). `PythonMediaEngine`
+  // needs `media.python`; `requireMediaPython` throws CONFIG_INVALID up front when the project asked for it
+  // but never configured it, instead of failing deep inside the first transcribe/synthesize call.
+  const media: MediaEngine = project.adapters.media === "python"
+    ? new PythonMediaEngine({
+        python: requireMediaPython(project), enginesDir: join(harnessRoot, "engines", "python"), device: project.media.device,
+        transcribe: project.media.transcribe, tts: project.media.tts, redact: (s) => redactor.redact(s),
+      })
+    : new FakeMediaEngine();
   const argv = cliArgv();
   // an ops-project entry with the same name as a built-in (fake or library/publish/media) wins, so ops projects can override them
   const commands = { ...fakeScriptCommands(), ...builtinLibraryCommands(argv, projectDir), ...builtinPublishCommands(argv, projectDir), ...builtinMediaCommands(argv, projectDir), ...(scripts ? scriptCommandsFrom(scripts, projectDir) : {}) };
@@ -167,7 +192,7 @@ export function buildContext(o: { projectDir: string; harnessRoot?: string; owne
     verifier: new Verifier([...BUILTIN_CHECKERS, ...mediaCheckers(prober, { available: proberAvailable }), ...libraryCheckers(prober, { available: proberAvailable }), ...distributionCheckers({ store, channels, secrets }), ...learningCheckers({ store })]),
     executors, journal, provider, harness, project, projectDir, dataRoot, logger, clock, secrets, migrationsDir: MIGRATIONS_DIR, workflows, profiles, catalog,
     resourceCapacity: project.resources, executorVersionFor: (ref: ExecutorRef) => executors.resolve(ref).version, scripts, sources, configErrors, proberAvailable, harnessRoot, prober,
-    scriptCommandNames: Object.keys(commands), ...(library ? { library } : {}), channels, channelErrors, publisher, agentRuntime, stats,
+    scriptCommandNames: Object.keys(commands), ...(library ? { library } : {}), channels, channelErrors, publisher, agentRuntime, stats, media, mediaConfig: project.media,
     publication: { verifySeconds: project.publication.verify_seconds, graceHours: project.publication.verify_grace_hours },
     dashboard: { port: project.dashboard.port, refreshSeconds: project.dashboard.refresh_seconds },
     learning: { collectSeconds: project.learning.collect_seconds, collectBatch: project.learning.collect_batch },

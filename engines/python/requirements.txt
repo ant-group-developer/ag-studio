@@ -1,0 +1,4 @@
+omnivoice
+whisperx
+soundfile
+numpy
