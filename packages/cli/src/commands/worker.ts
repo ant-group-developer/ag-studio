@@ -1,7 +1,7 @@
 import { hostname } from "node:os";
 import type { Command } from "commander";
 import { autoAcceptPatterns, type ContentRequest, type ProjectConfig } from "@harness/contracts";
-import { autoPick, type AutoAcceptDeps, type AutoPickDeps, type LoadedChannel, planRequestsRun, type PlanRequestsDeps } from "@harness/core";
+import { autoPick, type AutoAcceptConfig, type AutoAcceptDeps, type AutoAcceptSources, type AutoPickDeps, type LoadedChannel, planRequestsRun, type PlanRequestsDeps } from "@harness/core";
 import { Worker, type WorkerDeps } from "@harness/worker";
 import type { AppContext } from "../composition.js";
 import { durationOfPackage, writeDashboardSnapshot } from "../composition.js";
@@ -24,6 +24,17 @@ export function portfolioForRequest(project: Pick<ProjectConfig, "portfolios">, 
   return project.portfolios.some((p) => p.portfolio_id === requested) ? requested : project.portfolios[0]!.portfolio_id;
 }
 
+/** Legacy mode (byte-identical to sub-project 4) unless the project has actually opted into sub-project 5A's
+ * shoot-collection flow by setting `source_collections` -- see `AutoAcceptSources` in `@harness/core` and the
+ * task-7 fix-round controller ruling: a project that only ever set the single `source_collection` field must
+ * keep drawing one source per request from an unlimited, reusable pool, not a whole-collection/used-forever
+ * model that would permanently starve it after the first successful episode. */
+function autoAcceptSourcesFor(config: AutoAcceptConfig): AutoAcceptSources {
+  return config.source_collections !== undefined
+    ? { mode: "collections", patterns: autoAcceptPatterns(config), maxSources: config.max_sources }
+    : { mode: "legacy", collection: config.source_collection };
+}
+
 function autoAcceptDepsFor(ctx: AppContext): Omit<AutoAcceptDeps, "store" | "fs" | "clock" | "logger"> | undefined {
   const config = ctx.library?.role === "studio" ? ctx.library.autoAccept : undefined;
   if (!config?.enabled) return undefined;
@@ -34,7 +45,7 @@ function autoAcceptDepsFor(ctx: AppContext): Omit<AutoAcceptDeps, "store" | "fs"
     profile: ctx.profiles("studio"), workflows: ctx.workflows,
     executorVersionFor: ctx.executorVersionFor,
     requiresResourcesOverride: (s) => (s.executor.type === "script" ? ctx.scripts?.scripts[s.executor.script]?.requires_resources : undefined),
-    config, patterns: autoAcceptPatterns(config), maxSources: config.max_sources,
+    config, sources: autoAcceptSourcesFor(config),
   };
 }
 

@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { autoAcceptPatterns, newId, type EditStyle, type Run } from "@harness/contracts";
-import { autoAccept, createRequest, HARNESS_ROOT, LibraryFs, loadHarnessConfig, loadProfile, loadWorkflow, NullMediaProber, Planner, SourceCatalog, type AutoAcceptConfig, type AutoAcceptDeps, type AutoAcceptLogger } from "../../src/index.js";
+import { newId, type EditStyle, type Run } from "@harness/contracts";
+import { autoAccept, createRequest, HARNESS_ROOT, LibraryFs, loadHarnessConfig, loadProfile, loadWorkflow, NullMediaProber, pickSource, Planner, SourceCatalog, type AutoAcceptConfig, type AutoAcceptDeps, type AutoAcceptLogger } from "../../src/index.js";
 import { openTempStore } from "../helpers.js";
 
 const SHA = "sha256:" + "a".repeat(64);
@@ -43,7 +43,7 @@ function depsFor(w: ReturnType<typeof world>, config: AutoAcceptConfig): AutoAcc
     store: w.store, fs: w.studio, catalog: w.catalog, planner: w.planner, clock: w.clock, harness: w.harness,
     projectId: "project-studio", portfolioId: "portfolio-studio", profile: w.profile,
     workflows: (ref: string) => loadWorkflow(HARNESS_ROOT, ref), executorVersionFor: () => "v1",
-    config, patterns: autoAcceptPatterns(config), maxSources: config.max_sources, logger: silentLogger,
+    config, sources: { mode: "legacy", collection: config.source_collection }, logger: silentLogger,
   };
 }
 
@@ -103,11 +103,7 @@ describe("autoAccept", () => {
     expect(run?.state).toBe("READY");
     const content = w.store.getContentItem(run!.content_id!);
     expect(content?.library_brief?.request_id).toBe(request.request_id);
-    // sub-project 5A: a request with no hint picks the *whole* matching collection, not one clip -- this
-    // fixture ingests two sources into "main", so both end up on the content; `accepted.source_id` is just
-    // the first of them (picked[0], report-level convenience field for events/logging).
-    expect(content?.source_ids).toHaveLength(2);
-    expect(content?.source_ids).toContain(accepted.source_id);
+    expect(content?.source_ids).toEqual([accepted.source_id]);
 
     const events = w.store.listEvents({ run_id: accepted.run_id });
     const accepted_event = events.find((e) => e.event_type === "request.auto_accepted");
@@ -117,6 +113,36 @@ describe("autoAccept", () => {
     const second = await autoAccept(depsFor(w, baseConfig()));
     expect(second.accepted).toEqual([]);
     expect(second.skipped).toEqual([{ request_id: request.request_id, reason: "run-active" }]);
+  });
+
+  // Controller ruling, task-7 fix round: legacy mode (no `source_collections`) must behave exactly as
+  // sub-project 4 did -- one source per request, busy tracked per source, so two concurrently open requests
+  // over the same collection get two *different* sources instead of one request claiming the whole pool.
+  it("legacy mode: two open requests over the same collection each get exactly one source, the first getting the newest", async () => {
+    const w = world();
+    const styleId = newId("edit_style");
+    w.store.upsertEditStyle(makeStyle(styleId));
+    const older = await ingest(w, "clip one");
+    w.clock.advance(1);
+    const newer = await ingest(w, "clip two");
+    const first = createOpenRequest(w, { style_id: styleId });
+    w.clock.advance(1);
+    const second = createOpenRequest(w, { style_id: styleId });
+
+    const report = await autoAccept(depsFor(w, baseConfig({ max_concurrent_runs: 2 })));
+
+    expect(report.accepted).toHaveLength(2);
+    expect(report.skipped).toEqual([]);
+    const firstAccept = report.accepted.find((a) => a.request_id === first.request_id)!;
+    const secondAccept = report.accepted.find((a) => a.request_id === second.request_id)!;
+    expect(firstAccept.source_id).toBe(newer.source_id); // first request in queue order gets the newest source
+    expect(secondAccept.source_id).toBe(older.source_id);
+    expect(firstAccept.source_id).not.toBe(secondAccept.source_id);
+
+    const firstContent = w.store.getContentItem(w.store.getRun(firstAccept.run_id)!.content_id!);
+    const secondContent = w.store.getContentItem(w.store.getRun(secondAccept.run_id)!.content_id!);
+    expect(firstContent?.source_ids).toEqual([newer.source_id]);
+    expect(secondContent?.source_ids).toEqual([older.source_id]);
   });
 
   // Final-review bundled minor (f): the run and its events belong to the portfolio that asked, not to
@@ -333,5 +359,28 @@ describe("autoAccept", () => {
     const contentItems = w.store.listContentItems();
     expect(contentItems.filter((c) => c.library_brief?.request_id === first.request_id)).toEqual([]);
     expect(contentItems.filter((c) => c.library_brief?.request_id === second.request_id)).toHaveLength(1);
+  });
+});
+
+describe("pickSource", () => {
+  it("skips a source already busy with another open request", async () => {
+    const w = world();
+    const a = await ingest(w, "clip one");
+    w.clock.advance(1);
+    const b = await ingest(w, "clip two");
+    const request = createOpenRequest(w, { style_id: newId("edit_style") });
+    const picked = pickSource(w.store, { request, defaultCollection: "main", busySourceIds: new Set([b.source_id]) });
+    // newest first: "clip two" (b) was ingested after "clip one" (a), so without the busy set it would win
+    expect(picked?.source_id).toBe(a.source_id);
+  });
+
+  // fix-round-1 (cheap fold-in): an explicit source_hint.source_ids must not hand back a rights-restricted
+  // source just because it was named explicitly via source_hint.source_ids.
+  it("excludes a rights-restricted source even when named explicitly via source_hint.source_ids", async () => {
+    const w = world();
+    const restricted = await ingest(w, "clip restricted", "main", "restricted");
+    const request = createOpenRequest(w, { style_id: newId("edit_style"), source_hint: { source_ids: [restricted.source_id] } });
+    const picked = pickSource(w.store, { request, defaultCollection: "main", busySourceIds: new Set() });
+    expect(picked).toBeUndefined();
   });
 });

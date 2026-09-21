@@ -3,7 +3,10 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { autoAcceptPatterns, newId, type EditStyle } from "@harness/contracts";
-import { autoAccept, createRequest, HARNESS_ROOT, LibraryFs, loadHarnessConfig, loadProfile, loadWorkflow, matchCollection, NullMediaProber, pickSources, Planner, SourceCatalog, type AutoAcceptConfig, type AutoAcceptDeps, type AutoAcceptLogger } from "../../src/index.js";
+import {
+  autoAccept, claimRequest, createRequest, fulfillRequest, HARNESS_ROOT, LibraryFs, loadHarnessConfig, loadProfile, loadWorkflow, matchCollection,
+  NullMediaProber, pickSources, Planner, reopenRequest, SourceCatalog, type AutoAcceptConfig, type AutoAcceptDeps, type AutoAcceptLogger,
+} from "../../src/index.js";
 import { openTempStore } from "../helpers.js";
 
 function makeStyle(id: string, status: EditStyle["status"] = "active"): EditStyle {
@@ -36,12 +39,15 @@ function baseConfig(overrides: Partial<AutoAcceptConfig> = {}): AutoAcceptConfig
   return { enabled: true, source_collection: "main", max_replans: 2, max_concurrent_runs: 5, max_sources: 40, ...overrides };
 }
 
+/** Every test in this file exercises collection mode explicitly (the mode a project opts into by setting
+ * `source_collections` -- see `commands/worker.ts`'s `autoAcceptSourcesFor`); legacy mode's own byte-identical
+ * behaviour is covered by `auto-accept.test.ts`. */
 function depsFor(w: ReturnType<typeof world>, config: AutoAcceptConfig): AutoAcceptDeps {
   return {
     store: w.store, fs: w.studio, catalog: w.catalog, planner: w.planner, clock: w.clock, harness: w.harness,
     projectId: "project-studio", portfolioId: "portfolio-studio", profile: w.profile,
     workflows: (ref: string) => loadWorkflow(HARNESS_ROOT, ref), executorVersionFor: () => "v1",
-    config, patterns: autoAcceptPatterns(config), maxSources: config.max_sources, logger: silentLogger,
+    config, sources: { mode: "collections", patterns: autoAcceptPatterns(config), maxSources: config.max_sources }, logger: silentLogger,
   };
 }
 
@@ -64,6 +70,26 @@ function createOpenRequest(w: ReturnType<typeof world>, p: { style_id?: string; 
     ...(p.style_id ? { style_id: p.style_id } : {}),
     ...(p.source_hint ? { source_hint: p.source_hint } : {}),
   });
+}
+
+/** Walks a freshly-planned run (READY, as `autoAccept` leaves it) to SUCCEEDED through the real `transition()`
+ * state machine (READY -> RUNNING -> SUCCEEDED) -- test-only shortcut for "the studio's pipeline finished
+ * every stage", standing in for what a real worker sweep would do. */
+function settleRun(w: ReturnType<typeof world>, runId: string): void {
+  const ev = {
+    run_id: runId, stage_run_id: null, attempt_id: null, project_id: "project-studio", portfolio_id: "portfolio-studio",
+    channel_id: null, content_id: null, variant_id: null, workflow_release: null, severity: "info" as const, event_type: "run.test_settled", payload: {},
+  };
+  w.store.transition("run", runId, "READY", "RUNNING", ev);
+  w.store.transition("run", runId, "RUNNING", "SUCCEEDED", ev);
+}
+
+/** Claims `request` the way `intake` would once its run starts, using the studio's own fs handle -- studio may
+ * overwrite an *existing* `requests/<id>.json` (`LibraryFs.assertWritable`), which is what `claimRequest`/
+ * `reopenRequest`/`fulfillRequest` all do here, mirroring how `library-apply-review`'s stage (itself running as
+ * part of the studio's pipeline) reaches these same functions in production. */
+function claim(w: ReturnType<typeof world>, requestId: string, runId: string) {
+  return claimRequest({ store: w.store, fs: w.studio, clock: w.clock }, { request_id: requestId, run: { project_id: "project-studio", run_id: runId } });
 }
 
 describe("matchCollection", () => {
@@ -159,15 +185,29 @@ describe("pickSources", () => {
     const picked = pickSources(w.store, { request, patterns: ["shoot-*"], maxSources: 40, busyCollections: new Set(), usedCollections: new Set() });
     expect(picked).toEqual([]);
   });
+
+  // Controller ruling, task-7 fix round (adjacent finding): sort by the DECODED file name, not the raw
+  // percent-escaped `original_uri` string -- a `file:` URL escapes non-ASCII bytes, which can reorder names
+  // relative to how they actually read (and relative to how `SourceCatalog.ingestDirectory`'s `listVideoFiles`
+  // itself ordered them on disk).
+  it("sorts by the decoded basename of a file: URL, not its percent-escaped form", async () => {
+    const w = world();
+    const cafe = await ingestNamed(w, "café.mp4", "1", "shoot-a"); // é = U+00E9 (233): decoded, sorts AFTER 'z'
+    const cafz = await ingestNamed(w, "cafz.mp4", "2", "shoot-a"); // 'z' = U+007A (122)
+    const request = createOpenRequest(w);
+    const picked = pickSources(w.store, { request, patterns: ["shoot-*"], maxSources: 40, busyCollections: new Set(), usedCollections: new Set() });
+    // percent-encoded ("caf%C3%A9.mp4" vs "cafz.mp4") would sort café FIRST ('%' < 'z') -- the wrong order.
+    expect(picked.map((s) => s.source_id)).toEqual([cafz.source_id, cafe.source_id]);
+  });
 });
 
 describe("autoAccept (collections, sub-project 5A)", () => {
-  it("creates a content item carrying every usable source of the auto-picked shoot collection", async () => {
+  it("creates a content item carrying every usable source of the auto-picked shoot collection, in filename order", async () => {
     const w = world();
     const styleId = newId("edit_style");
     w.store.upsertEditStyle(makeStyle(styleId));
-    await ingestNamed(w, "a.mp4", "1", "shoot-2026-09-21");
-    await ingestNamed(w, "b.mp4", "2", "shoot-2026-09-21");
+    const a = await ingestNamed(w, "a.mp4", "1", "shoot-2026-09-21");
+    const b = await ingestNamed(w, "b.mp4", "2", "shoot-2026-09-21");
     await ingestNamed(w, "c.mp4", "3", "shoot-2026-09-21", "restricted"); // excluded: rights-restricted
     const request = createOpenRequest(w, { style_id: styleId });
 
@@ -176,23 +216,8 @@ describe("autoAccept (collections, sub-project 5A)", () => {
     expect(report.accepted).toHaveLength(1);
     const run = w.store.getRun(report.accepted[0]!.run_id)!;
     const content = w.store.getContentItem(run.content_id!)!;
-    expect(content.source_ids).toHaveLength(2);
+    expect(content.source_ids).toEqual([a.source_id, b.source_id]);
     expect(content.library_brief?.request_id).toBe(request.request_id);
-  });
-
-  it("a legacy config with only source_collection: main still auto-accepts a single-source request the same as before", async () => {
-    const w = world();
-    const styleId = newId("edit_style");
-    w.store.upsertEditStyle(makeStyle(styleId));
-    await ingestNamed(w, "only.mp4", "1", "main");
-    const request = createOpenRequest(w, { style_id: styleId });
-
-    const report = await autoAccept(depsFor(w, baseConfig()));
-
-    expect(report.accepted).toHaveLength(1);
-    const run = w.store.getRun(report.accepted[0]!.run_id)!;
-    const content = w.store.getContentItem(run.content_id!)!;
-    expect(content.source_ids).toHaveLength(1);
   });
 
   it("within one sweep, a second request does not repick the collection just accepted for the first", async () => {
@@ -230,5 +255,101 @@ describe("autoAccept (collections, sub-project 5A)", () => {
     // `first` is also re-evaluated on this second poll (autoAccept never claims a request) and skips as
     // "run-active" again -- irrelevant noise for this test, which only cares about `second`.
     expect(secondReport.skipped).toContainEqual({ request_id: second.request_id, reason: "no-source" });
+  });
+
+  // Controller ruling, task-7 fix round, CRITICAL 1: a rejected review still ends the run SUCCEEDED and
+  // reopens the request (acceptance 27) -- without the own-request exemption, the reopened request's own
+  // collection would land in `usedCollections` and it could never replan.
+  it("a rejected review's reopened request re-picks its own shoot on the next sweep (replan_no 1); a different request does not get it", async () => {
+    const w = world();
+    const styleId = newId("edit_style");
+    w.store.upsertEditStyle(makeStyle(styleId));
+    const a = await ingestNamed(w, "a.mp4", "1", "shoot-a");
+    const b = await ingestNamed(w, "b.mp4", "2", "shoot-a");
+    const cfg = baseConfig({ source_collections: ["shoot-*"], max_concurrent_runs: 5 });
+
+    const request = createOpenRequest(w, { style_id: styleId });
+    const firstReport = await autoAccept(depsFor(w, cfg));
+    expect(firstReport.accepted).toHaveLength(1);
+    const run1Id = firstReport.accepted[0]!.run_id;
+
+    // library-apply-review, rejected path: the run ends SUCCEEDED, the request goes back to open (AGENTS.md:
+    // "một run mà library-apply-review ghi rejected kết thúc SUCCEEDED"; acceptance 27 models the same thing).
+    settleRun(w, run1Id);
+    claim(w, request.request_id, run1Id);
+    const reopened = reopenRequest({ store: w.store, fs: w.studio, clock: w.clock }, { request_id: request.request_id, note: "off brief" });
+    expect(reopened.status).toBe("open");
+
+    // a different open request also wants a shoot -- "shoot-a" is the only one that exists
+    w.clock.advance(1);
+    const other = createOpenRequest(w, { style_id: styleId });
+
+    const secondReport = await autoAccept(depsFor(w, cfg));
+
+    const ownAccept = secondReport.accepted.find((x) => x.request_id === request.request_id);
+    expect(ownAccept, JSON.stringify(secondReport)).toBeDefined();
+    expect(ownAccept!.replan_no).toBe(1);
+    const content2 = w.store.getContentItem(w.store.getRun(ownAccept!.run_id)!.content_id!)!;
+    expect(content2.source_ids).toEqual([a.source_id, b.source_id]);
+
+    expect(secondReport.skipped).toContainEqual({ request_id: other.request_id, reason: "no-source" });
+  });
+
+  // Controller ruling, task-7 fix round, IMPORTANT 3: a ContentItem from `harness library accept` (or a prior
+  // sweep) with no run yet must still reserve its collection, or a second request can grab the same shoot out
+  // from under the human/pending plan.
+  it("a ContentItem with no run yet reserves its collection for another open request too", async () => {
+    const w = world();
+    const styleId = newId("edit_style");
+    w.store.upsertEditStyle(makeStyle(styleId));
+    await ingestNamed(w, "a.mp4", "1", "shoot-a");
+    const cfg = baseConfig({ source_collections: ["shoot-*"] });
+
+    const requestA = createOpenRequest(w, { style_id: styleId });
+    const sourceA = w.store.listSourceItems({ collection: "shoot-a" })[0]!;
+    w.catalog.createContent({
+      source_ids: [sourceA.source_id], title: "x",
+      library_brief: { topic: "x", style_id: styleId, style_revision: 1, voice: "none", language: "vi", request_id: requestA.request_id },
+    });
+
+    w.clock.advance(1);
+    const requestB = createOpenRequest(w, { style_id: styleId });
+
+    const report = await autoAccept(depsFor(w, cfg));
+    expect(report.accepted).toEqual([]);
+    expect(report.skipped).toContainEqual({ request_id: requestA.request_id, reason: "run-active" });
+    expect(report.skipped).toContainEqual({ request_id: requestB.request_id, reason: "no-source" });
+  });
+
+  // Controller ruling, task-7 fix round: `usedCollections` applies unconditionally in collection mode -- a
+  // collection whose run SUCCEEDED for a different, already-settled (fulfilled, not reopened) request stays
+  // excluded from a brand-new no-hint request, but an explicit `source_hint.collection` still gets it (case 2
+  // ignores busy/used entirely).
+  it("a used collection from a fulfilled request is excluded for a new no-hint request, but honoured via source_hint.collection", async () => {
+    const w = world();
+    const styleId = newId("edit_style");
+    w.store.upsertEditStyle(makeStyle(styleId));
+    const a = await ingestNamed(w, "a.mp4", "1", "shoot-a");
+    const cfg = baseConfig({ source_collections: ["shoot-*"] });
+
+    const settled = createOpenRequest(w, { style_id: styleId });
+    const firstReport = await autoAccept(depsFor(w, cfg));
+    expect(firstReport.accepted).toHaveLength(1);
+    const runId = firstReport.accepted[0]!.run_id;
+    settleRun(w, runId);
+    claim(w, settled.request_id, runId);
+    const fulfilled = fulfillRequest({ store: w.store, fs: w.studio, clock: w.clock }, { request_id: settled.request_id, item_id: newId("library_item") });
+    expect(fulfilled.status).toBe("fulfilled"); // settled for good -- never reopened, never re-evaluated
+
+    w.clock.advance(1);
+    const noHint = createOpenRequest(w, { style_id: styleId });
+    const secondReport = await autoAccept(depsFor(w, cfg));
+    expect(secondReport.skipped).toContainEqual({ request_id: noHint.request_id, reason: "no-source" });
+
+    const hinted = createOpenRequest(w, { style_id: styleId, source_hint: { collection: "shoot-a" } });
+    const thirdReport = await autoAccept(depsFor(w, cfg));
+    const hintedAccept = thirdReport.accepted.find((x) => x.request_id === hinted.request_id);
+    expect(hintedAccept, JSON.stringify(thirdReport)).toBeDefined();
+    expect(w.store.getContentItem(w.store.getRun(hintedAccept!.run_id)!.content_id!)?.source_ids).toEqual([a.source_id]);
   });
 });

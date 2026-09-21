@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Clock, ContentRequest, ExecutorRef, HarnessConfig, LibraryBrief, ProductionProfile, SourceItem, StageDefinition, StateStore } from "@harness/contracts";
 import type { Planner } from "../orchestration/planner.js";
 import type { LoadedWorkflow } from "../orchestration/registry.js";
@@ -27,6 +28,20 @@ export interface AutoAcceptLogger {
   error(msg: string, data?: Record<string, unknown>): void;
 }
 
+/**
+ * Which sources an accepted request may draw from, and how busy/used tracking works: two distinct modes, not
+ * one unified algorithm (controller ruling, task-7 fix round).
+ *  - `"legacy"`: byte-identical to sub-project 4 -- one source per request (`pickSource` below), busy tracked
+ *    per source (`busySourceIdsByRequest`). Every project that has not set `source_collections` runs this way,
+ *    including every SP1-3B fixture/test, which must see no behavioural difference at all.
+ *  - `"collections"`: sub-project 5A's whole-shoot-collection flow -- every usable source of a matched
+ *    collection (`pickSources` below), busy/used tracked per collection with an own-request exemption so a
+ *    replan re-picks the same shoot instead of being permanently locked out of it.
+ * Resolved once by the caller (composition root / `commands/worker.ts`) from `config`, not re-derived inside
+ * `autoAccept()`.
+ */
+export type AutoAcceptSources = { mode: "legacy"; collection: string } | { mode: "collections"; patterns: string[]; maxSources: number };
+
 export interface AutoAcceptDeps {
   store: StateStore;
   fs: LibraryFs;
@@ -46,11 +61,7 @@ export interface AutoAcceptDeps {
   executorVersionFor: (ref: ExecutorRef) => string;
   requiresResourcesOverride?: (s: StageDefinition) => string[] | undefined;
   config: AutoAcceptConfig;
-  /** Collection-name glob patterns this sweep may draw sources from -- `autoAcceptPatterns(config)`
-   * (`@harness/contracts`), resolved once by the caller (composition root) rather than re-derived per pick. */
-  patterns: string[];
-  /** Cap on sources picked per accepted request -- `config.max_sources`. */
-  maxSources: number;
+  sources: AutoAcceptSources;
   logger: AutoAcceptLogger;
 }
 
@@ -100,11 +111,52 @@ export function finishedRunCounts(store: StateStore): Map<string, number> {
   return partitionRunsByRequest(store).finished;
 }
 
+/** Source ids already earmarked (via a `ContentItem.library_brief.request_id`) by an open or claimed
+ * request, grouped by owning request so a caller can subtract "my own sources don't count as busy against
+ * myself" per request without re-scanning `listContentItems()` for every request in the loop. Legacy mode
+ * only (restored verbatim from before sub-project 5A, see the controller ruling in the task-7 fix round: a
+ * legacy project must see no behavioural difference at all). */
+function busySourceIdsByRequest(store: StateStore): { global: Set<string>; own: Map<string, Set<string>> } {
+  const openOrClaimed = new Set(
+    [...store.listContentRequests({ status: "open" }), ...store.listContentRequests({ status: "claimed" })].map((r) => r.request_id),
+  );
+  const global = new Set<string>();
+  const own = new Map<string, Set<string>>();
+  for (const item of store.listContentItems()) {
+    const requestId = item.library_brief?.request_id;
+    if (!requestId) continue;
+    let mine = own.get(requestId);
+    if (!mine) { mine = new Set(); own.set(requestId, mine); }
+    for (const id of item.source_ids) mine.add(id);
+    if (openOrClaimed.has(requestId)) for (const id of item.source_ids) global.add(id);
+  }
+  return { global, own };
+}
+
+/** Picks the ONE source a legacy-mode auto-accepted request should run against (spec §5, sub-project 4,
+ * restored verbatim -- sub-project 5A's whole-collection picking is `pickSources` below, a different mode
+ * entirely). An explicit `source_hint.source_ids` wins outright -- the first one that still exists and is not
+ * rights-restricted, `busySourceIds` does not apply because the request named it directly. Otherwise the
+ * request's `source_hint.collection` (or `defaultCollection`) is searched for the most recently ingested item
+ * that is not rights-restricted and not already busy. */
+export function pickSource(store: StateStore, p: { request: ContentRequest; defaultCollection: string; busySourceIds: Set<string> }): SourceItem | undefined {
+  const hint = p.request.source_hint;
+  if (hint?.source_ids?.length) {
+    for (const id of hint.source_ids) {
+      const source = store.getSourceItem(id);
+      if (source && source.rights_status !== "restricted") return source;
+    }
+    return undefined;
+  }
+  const collection = hint?.collection ?? p.defaultCollection;
+  const candidates = store.listSourceItems({ collection }).filter((s) => s.rights_status !== "restricted" && !p.busySourceIds.has(s.source_id));
+  return candidates.sort((a, b) => (a.ingested_at < b.ingested_at ? 1 : a.ingested_at > b.ingested_at ? -1 : 0))[0];
+}
+
 /** request_ids that already have at least one ContentItem carrying their `library_brief.request_id` -- the
  * window between a ContentItem being created (by `harness library accept` or a prior `autoAccept` pass) and a
- * run actually being enqueued for it. Only membership is needed (not which sources), unlike the old
- * per-request busy-source bookkeeping this replaces (sub-project 5A moved busy/used tracking to the
- * collection level -- see `busyAndUsedCollections` below). */
+ * run actually being enqueued for it. Shared by both modes for the "run-active" check below (only membership
+ * is needed there, not which sources/collections). */
 function requestsWithContent(store: StateStore): Set<string> {
   const s = new Set<string>();
   for (const item of store.listContentItems()) {
@@ -134,40 +186,99 @@ function collectionsOfContent(store: StateStore, contentId: string | undefined):
   return collections;
 }
 
-/** Collections of every source referenced by a ContentItem with a run of a `library-production` workflow (any
- * version): `busyCollections` for a still-non-terminal run, `usedCollections` for a `SUCCEEDED` one (spec:
- * sub-project 5A §5). Computed once per `autoAccept` sweep, not re-scanned per request -- see the call site. */
-function busyAndUsedCollections(store: StateStore): { busyCollections: Set<string>; usedCollections: Set<string> } {
-  const busyCollections = new Set<string>();
-  const usedCollections = new Set<string>();
+/**
+ * Collection-mode busy/used tracking (spec: sub-project 5A §5, corrected by the controller ruling in the
+ * task-7 fix round): for every kho collection, which request_ids are "responsible" for it being busy or used,
+ * so a request re-picking a collection it is itself already responsible for (a replan) can be told apart from
+ * one genuinely claimed by someone else --
+ *  - `busy`: a collection referenced by a ContentItem with a still-non-terminal `library-production` run
+ *    (any version), attributed to that run's request; OR (CRITICAL/IMPORTANT-3 fix) a ContentItem of an
+ *    open/claimed request that has NO run at all yet -- the manual-accept window between `harness library
+ *    accept`/a prior sweep's create and an actual `plan`, which otherwise reserves nothing and lets a second
+ *    request grab the same shoot out from under it.
+ *  - `used`: a collection referenced by a ContentItem with a `SUCCEEDED` `library-production` run, attributed
+ *    to that run's request.
+ * Computed once per `autoAccept` sweep; `collectionsExcluding` below narrows it per request without
+ * re-scanning the store.
+ */
+function computeCollectionAttribution(store: StateStore): { busy: Map<string, Set<string>>; used: Map<string, Set<string>> } {
+  const busy = new Map<string, Set<string>>();
+  const used = new Map<string, Set<string>>();
+  const attribute = (map: Map<string, Set<string>>, collection: string, requestId: string): void => {
+    let ids = map.get(collection);
+    if (!ids) { ids = new Set(); map.set(collection, ids); }
+    ids.add(requestId);
+  };
+
+  const contentIdsWithRun = new Set<string>();
   for (const run of store.listRuns({})) {
+    if (run.content_id) contentIdsWithRun.add(run.content_id);
     if (run.workflow_release.id !== "library-production") continue;
-    if (run.state === "SUCCEEDED") { for (const c of collectionsOfContent(store, run.content_id)) usedCollections.add(c); continue; }
-    if (!isTerminal("run", run.state)) { for (const c of collectionsOfContent(store, run.content_id)) busyCollections.add(c); }
+    const requestId = requestIdForRun(store, run);
+    if (!requestId) continue;
+    if (run.state === "SUCCEEDED") { for (const c of collectionsOfContent(store, run.content_id)) attribute(used, c, requestId); }
+    else if (!isTerminal("run", run.state)) { for (const c of collectionsOfContent(store, run.content_id)) attribute(busy, c, requestId); }
   }
-  return { busyCollections, usedCollections };
+
+  const openOrClaimed = new Set(
+    [...store.listContentRequests({ status: "open" }), ...store.listContentRequests({ status: "claimed" })].map((r) => r.request_id),
+  );
+  for (const item of store.listContentItems()) {
+    if (contentIdsWithRun.has(item.content_id)) continue; // already attributed above via its own run
+    const requestId = item.library_brief?.request_id;
+    if (!requestId || !openOrClaimed.has(requestId)) continue;
+    for (const id of item.source_ids) {
+      const source = store.getSourceItem(id);
+      if (source) attribute(busy, source.collection, requestId);
+    }
+  }
+
+  return { busy, used };
+}
+
+/** Collections `map` marks busy/used *for someone other than* `requestId` -- the own-request exemption: a
+ * collection attributed only to `requestId` itself (a replan re-picking its own prior shoot) is not excluded. */
+function collectionsExcluding(map: Map<string, Set<string>>, requestId: string): Set<string> {
+  const result = new Set<string>();
+  for (const [collection, requestIds] of map) {
+    for (const id of requestIds) {
+      if (id !== requestId) { result.add(collection); break; }
+    }
+  }
+  return result;
+}
+
+/** `basename`, decoded first when `uri` is a `file:` URL (so `%20`/percent-escaped Unicode in the URL does not
+ * sort differently from how `SourceCatalog.ingestDirectory`'s `listVideoFiles` itself ordered the same file on
+ * disk); falls back to a plain `basename` of the raw string for anything else (a `reference`-mode URI need not
+ * be a `file:` URL at all). */
+function decodedBasename(uri: string): string {
+  if (uri.startsWith("file:")) {
+    try { return basename(fileURLToPath(uri)); } catch { /* fall through to the raw string below */ }
+  }
+  return basename(uri);
 }
 
 function sortByFilenameThenIngested(items: SourceItem[]): SourceItem[] {
   return items.slice().sort((a, b) => {
-    const an = basename(a.original_uri);
-    const bn = basename(b.original_uri);
+    const an = decodedBasename(a.original_uri);
+    const bn = decodedBasename(b.original_uri);
     if (an !== bn) return an < bn ? -1 : 1;
     return a.ingested_at < b.ingested_at ? -1 : a.ingested_at > b.ingested_at ? 1 : 0;
   });
 }
 
 /**
- * Picks the sources an auto-accepted request should run against (spec §5, extended sub-project 5A to pick a
- * whole shoot collection instead of one clip):
+ * Picks the sources a collection-mode auto-accepted request should run against (spec §5, sub-project 5A: pick
+ * a whole shoot collection instead of one clip):
  *  1. `source_hint.source_ids` -- every one that still exists and is not rights-restricted, in hint order;
  *     busy/used never applies (the request named these directly).
  *  2. else `source_hint.collection` -- every non-restricted source of that collection, regardless of busy/used.
  *  3. else the collections matching `patterns` that are not in `busyCollections`/`usedCollections` and have at
  *     least one non-restricted source; the one with the greatest max(ingested_at) wins (ties broken by
  *     collection name ascending).
- * Cases 2/3 are sorted by `basename(original_uri)` then `ingested_at` and capped at `maxSources`; an empty
- * result means the caller should skip the request as `"no-source"`.
+ * Cases 2/3 are sorted by the decoded `basename(original_uri)` then `ingested_at` and capped at `maxSources`;
+ * an empty result means the caller should skip the request as `"no-source"`.
  */
 export function pickSources(store: StateStore, p: { request: ContentRequest; patterns: string[]; maxSources: number; busyCollections: Set<string>; usedCollections: Set<string> }): SourceItem[] {
   const hint = p.request.source_hint;
@@ -243,6 +354,10 @@ function exhaustedOnce(d: AutoAcceptDeps, portfolioId: string, requestId: string
  * -- it only ever writes through `catalog.createContent`, `catalog.getOrCreateVariant`, `planner.plan`,
  * `planner.enqueue` and `store.appendEvent`. A single request's plan failure is caught, logged and reported
  * as `plan-failed`; it never aborts the rest of the loop.
+ *
+ * Two source-picking modes (`d.sources.mode`, see `AutoAcceptSources`) share every other step of the loop
+ * (style checks, run-active, exhausted, concurrency, the accept transaction) -- only "which sources does this
+ * request get" and "what do I mark busy once accepted" differ.
  */
 export async function autoAccept(d: AutoAcceptDeps): Promise<AutoAcceptReport> {
   const { store } = d;
@@ -251,10 +366,12 @@ export async function autoAccept(d: AutoAcceptDeps): Promise<AutoAcceptReport> {
   const { active: activeRequestIds, finished, activeCount: initialActiveCount } = partitionRunsByRequest(store);
   let activeCount = initialActiveCount;
   const requestsWithOwnContent = requestsWithContent(store);
-  // Hoisted once (not re-scanned per request, per fix-round-1 finding #4, and per spec: sub-project 5A §5):
-  // both sets are mutated in place as requests are accepted below, so a collection picked for one request is
-  // immediately busy for the next in the same sweep.
-  const { busyCollections, usedCollections } = busyAndUsedCollections(store);
+
+  // Mode-specific bookkeeping, hoisted once (not re-scanned per request): mutated in place as requests are
+  // accepted below, so a source/collection picked for one request is immediately busy for the next in the
+  // same sweep.
+  const legacy = d.sources.mode === "legacy" ? busySourceIdsByRequest(store) : undefined;
+  const collections = d.sources.mode === "collections" ? computeCollectionAttribution(store) : undefined;
 
   const openRequests = [...store.listContentRequests({ status: "open" })].sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0));
 
@@ -285,19 +402,18 @@ export async function autoAccept(d: AutoAcceptDeps): Promise<AutoAcceptReport> {
       break; // no point checking the rest of the queue against a gate that will not move this poll
     }
 
-    // `usedCollections` (a collection with a SUCCEEDED run is retired forever) only applies once a project has
-    // actually opted into the sub-project 5A shoot-collection flow (`source_collections` set): every SP1-3B
-    // project still runs on the single legacy `source_collection` (typically "main") as an unlimited, reusable
-    // stock pool that many separate content items draw from over the project's lifetime (see e.g. the
-    // channel-planning -> studio -> auto-pick loop in tests/integration/channel-learning.test.ts, which builds
-    // three separate episodes off one never-changing "main" collection with no explicit source_hint) -- a hard
-    // exclusion the moment the first episode SUCCEEDED would permanently starve every request after it, which
-    // the "every SP1-3B test stays green" constraint (common-implementer.md) rules out. `busyCollections`
-    // (still-active run) is never gated this way: a legacy project's episodes run to completion one at a time
-    // in practice, so it never collides with this exception, and the brief's own cross-poll "do not repick a
-    // busy collection" requirement holds unconditionally.
-    const usedGate = d.config.source_collections !== undefined ? usedCollections : new Set<string>();
-    const picked = pickSources(store, { request, patterns: d.patterns, maxSources: d.maxSources, busyCollections, usedCollections: usedGate });
+    let picked: SourceItem[];
+    if (d.sources.mode === "legacy") {
+      // this request's own sources (if any, e.g. from a prior reopen) never count as busy against itself
+      const busyForThisRequest = new Set(legacy!.global);
+      for (const id of legacy!.own.get(request.request_id) ?? []) busyForThisRequest.delete(id);
+      const source = pickSource(store, { request, defaultCollection: d.sources.collection, busySourceIds: busyForThisRequest });
+      picked = source ? [source] : [];
+    } else {
+      const busyCollections = collectionsExcluding(collections!.busy, request.request_id);
+      const usedCollections = collectionsExcluding(collections!.used, request.request_id);
+      picked = pickSources(store, { request, patterns: d.sources.patterns, maxSources: d.sources.maxSources, busyCollections, usedCollections });
+    }
     if (picked.length === 0) {
       report.skipped.push({ request_id: request.request_id, reason: "no-source" });
       skipOnce(d, portfolioId, request.request_id, "no-source");
@@ -311,8 +427,9 @@ export async function autoAccept(d: AutoAcceptDeps): Promise<AutoAcceptReport> {
         request_id: request.request_id,
       };
       // Atomic: a `planner.plan` throw (e.g. a bad `workflows(ref)` lookup) must leave no trace -- an orphan
-      // ContentItem/ContentVariant would otherwise poison `busyCollections` for every other request in this and
-      // later polls, and this same request would be retried (and fail) every poll from then on (fix-round-1 #3).
+      // ContentItem/ContentVariant would otherwise poison the busy bookkeeping for every other request in this
+      // and later polls, and this same request would be retried (and fail) every poll from then on
+      // (fix-round-1 #3).
       store.transaction(() => {
         const content = d.catalog.createContent({ source_ids: picked.map((s) => s.source_id), title: request.topic, library_brief: libraryBrief });
         const run = startPlannedRun(
@@ -331,7 +448,15 @@ export async function autoAccept(d: AutoAcceptDeps): Promise<AutoAcceptReport> {
         report.accepted.push({ request_id: request.request_id, run_id: run.run_id, replan_no: replanNo, source_id: picked[0]!.source_id });
         activeRequestIds.add(request.request_id);
         activeCount++;
-        for (const s of picked) busyCollections.add(s.collection);
+        if (d.sources.mode === "legacy") {
+          legacy!.global.add(picked[0]!.source_id);
+        } else {
+          for (const s of picked) {
+            let ids = collections!.busy.get(s.collection);
+            if (!ids) { ids = new Set(); collections!.busy.set(s.collection, ids); }
+            ids.add(request.request_id);
+          }
+        }
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
