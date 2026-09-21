@@ -99,13 +99,19 @@ def dry_run(job: dict[str, Any], result_path: str) -> None:
     write_result(result_path, {"ok": True, "lines": lines_out})
 
 
-def _generate_chunk(model: Any, np_mod: Any, text: str, ref_audio: str, ref_text: str, num_step: int, speed: float) -> Any:
+def _generate_chunk(model: Any, np_mod: Any, text: str, ref_audio: str, ref_text: str, num_step: int, speed: float, language: str | None) -> Any:
     """Reads one chunk, retrying up to `MAX_CHUNK_ATTEMPTS - 1` more times when OmniVoice produced empty or
-    NaN-containing audio (spec: "chunk có độ dài 0 hoặc nan → đọc lại tối đa 2 lần")."""
+    NaN-containing audio (spec: "chunk có độ dài 0 hoặc nan → đọc lại tối đa 2 lần").
+
+    `language` is the job's language code, forwarded to `OmniVoice.generate` because the model reads better
+    when it is told which language the text is in. An unrecognised value is not a failure: OmniVoice's
+    `_resolve_language` logs a warning and falls back to language-agnostic mode, which is exactly what this
+    did for every call before task 11.
+    """
     last_error: Exception | None = None
     for _attempt in range(MAX_CHUNK_ATTEMPTS):
         try:
-            raw = model.generate(text=text, ref_audio=ref_audio, ref_text=ref_text, num_step=num_step, speed=speed)[0]
+            raw = model.generate(text=text, language=language, ref_audio=ref_audio, ref_text=ref_text, num_step=num_step, speed=speed)[0]
         except Exception as e:
             last_error = e
             continue
@@ -116,7 +122,7 @@ def _generate_chunk(model: Any, np_mod: Any, text: str, ref_audio: str, ref_text
     raise last_error if last_error is not None else RuntimeError("chunk generation failed")
 
 
-def _synth_line(model: Any, np_mod: Any, line: dict[str, Any], ref_audio: str, ref_text: str, num_step: int, speed: float) -> tuple[Any, list[dict[str, Any]]]:
+def _synth_line(model: Any, np_mod: Any, line: dict[str, Any], ref_audio: str, ref_text: str, num_step: int, speed: float, language: str | None) -> tuple[Any, list[dict[str, Any]]]:
     pause_seconds = float(line.get("pause_seconds") or 0.0)
     pause_samples = np_mod.zeros(int(round(pause_seconds * SAMPLE_RATE)), dtype=np_mod.float32)
     parts: list[Any] = []
@@ -124,7 +130,7 @@ def _synth_line(model: Any, np_mod: Any, line: dict[str, Any], ref_audio: str, r
     cursor = 0.0
     texts: list[str] = line["chunks"]
     for i, text in enumerate(texts):
-        arr = _generate_chunk(model, np_mod, text, ref_audio, ref_text, num_step, speed)
+        arr = _generate_chunk(model, np_mod, text, ref_audio, ref_text, num_step, speed, language)
         duration = len(arr) / SAMPLE_RATE
         start = cursor
         end = cursor + duration
@@ -167,7 +173,7 @@ def run(job: dict[str, Any], result_path: str) -> None:
     lines_out: list[dict[str, Any]] = []
     try:
         for line in job["lines"]:
-            audio, chunks_out = _synth_line(model, np, line, ref_audio, job["ref_text"], job["num_step"], job["speed"])
+            audio, chunks_out = _synth_line(model, np, line, ref_audio, job["ref_text"], job["num_step"], job["speed"], job["language"])
             out_path = line["out_path"]
             os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
             sf.write(out_path, audio, SAMPLE_RATE)

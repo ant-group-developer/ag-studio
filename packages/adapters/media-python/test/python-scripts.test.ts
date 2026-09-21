@@ -154,4 +154,63 @@ describe.skipIf(!hasPython())("python engine scripts (engines/python)", () => {
       expect(out.names).toEqual([]);
     }
   });
+
+  /**
+   * Task 11: `tts.py` used to drop the job's `language` on the floor -- it reached `whisperx.load_align_model`
+   * but never `OmniVoice.generate`, whose own docs say reading is better when the language is given, and
+   * whose `_resolve_language` degrades an unrecognised value to language-agnostic mode rather than raising.
+   * The DoD #3 Vietnamese samples were measured WITH the language passed, so the shipped path had to match
+   * what was measured.
+   *
+   * Runs with no GPU, no omnivoice and no numpy: it drives `tts._synth_line` directly with a recording stub
+   * model and a hand-rolled array module implementing only the five operations that function uses.
+   */
+  it("tts.py forwards the job's language into OmniVoice.generate for every chunk", () => {
+    const probe = [
+      "import json, sys",
+      `sys.path.insert(0, ${JSON.stringify(ENGINES_DIR)})`,
+      "import tts",
+      "",
+      "class Arr(list):",
+      "    @property",
+      "    def size(self): return len(self)",
+      "class Flags(list):",
+      "    def any(self): return any(self)",
+      "class FakeNp:",
+      "    float32 = 'f32'",
+      "    @staticmethod",
+      "    def zeros(n, dtype=None): return Arr([0.0] * n)",
+      "    @staticmethod",
+      "    def asarray(x, dtype=None): return Arr(list(x))",
+      "    @staticmethod",
+      "    def concatenate(parts):",
+      "        out = Arr()",
+      "        for p in parts: out.extend(p)",
+      "        return out",
+      "    @staticmethod",
+      "    def isnan(a): return Flags([False] * len(a))",
+      "",
+      "class FakeModel:",
+      "    def __init__(self): self.calls = []",
+      "    def generate(self, **kw):",
+      "        self.calls.append(kw)",
+      "        return [[0.0] * 2400]",
+      "",
+      "m = FakeModel()",
+      "line = {'line_id': 'L001', 'chunks': ['xin chao.', 'cau thu hai.'], 'out_path': 'x.wav', 'pause_seconds': 0.25}",
+      "audio, chunks = tts._synth_line(m, FakeNp, line, 'ref.wav', 'loi mau', 32, 1.0, 'vi')",
+      "print(json.dumps({'languages': [c.get('language', '<MISSING>') for c in m.calls],",
+      "                  'calls': len(m.calls), 'chunks': len(chunks), 'samples': len(audio)}))",
+    ].join("\n");
+    const r = spawnSync(PYTHON, ["-c", probe], { encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    const out = JSON.parse(r.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1)!) as {
+      languages: string[]; calls: number; chunks: number; samples: number;
+    };
+    expect(out.calls).toBe(2);
+    expect(out.languages).toEqual(["vi", "vi"]);
+    // non-vacuity: the stub really did produce the two chunks plus the 0.25 s pause between them
+    expect(out.chunks).toBe(2);
+    expect(out.samples).toBe(2 * 2400 + Math.round(0.25 * 24000));
+  });
 });
