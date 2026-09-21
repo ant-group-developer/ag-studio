@@ -1,7 +1,17 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { checksumSchema, libraryBriefSchema, libraryFileSchema, LibraryItemSchema, type Checker, type MediaProber } from "@harness/contracts";
+import {
+  AnySurveyIndexSchema,
+  checksumSchema,
+  libraryBriefSchema,
+  libraryFileSchema,
+  LibraryItemSchema,
+  ShotsIndexSchema,
+  type Checker,
+  type MediaProber,
+  type ShotsIndex,
+} from "@harness/contracts";
 import { canonicalDigest, sha256File } from "../artifacts/checksum.js";
 
 const skip = (reason: string) => ({ verdict: "skip" as const, evidence: { reason } });
@@ -19,6 +29,19 @@ const exportReceiptSchema = z.object({
   files: z.array(libraryFileSchema),
   manifest_checksum: checksumSchema,
 });
+
+/** shot_id -> its owning source_id and canonical in/out, from a `ShotsIndex` -- what `survey-valid` cross-checks
+ * a v2 `survey.json`'s entries against. */
+function shotIndexByShotId(shots: ShotsIndex): Map<string, { source_id: string; in: number; out: number }> {
+  const map = new Map<string, { source_id: string; in: number; out: number }>();
+  for (const source of shots.sources) {
+    for (const shot of source.shots) map.set(shot.shot_id, { source_id: source.source_id, in: shot.in, out: shot.out });
+  }
+  return map;
+}
+
+/** Max allowed drift (seconds) between a v2 survey shot's `in`/`out` and its `shots.json` shot's `in`/`out`. */
+const SURVEY_SHOT_TOLERANCE_SECONDS = 0.05;
 
 /**
  * Kho-aware checkers layered on top of BUILTIN_CHECKERS and mediaCheckers (spec §3.2, §4.1):
@@ -137,5 +160,73 @@ export function libraryCheckers(prober: MediaProber, opts: { available?: boolean
     },
   };
 
-  return [briefDuration, libraryExportValid];
+  /**
+   * `survey-valid` (sub-project 5A): validates a `survey.json` output against `AnySurveyIndexSchema`. The
+   * v1 (single-source) shape just needs to parse -- same as it did before this checker existed (1.1.0
+   * behavior). The v2 (multi-source) shape additionally cross-checks every shot against the run's `shots`
+   * input (`ShotsIndexSchema`): the `shot_id` must exist there, its `source_id` must match the shot's owner,
+   * and `in`/`out` must be within `SURVEY_SHOT_TOLERANCE_SECONDS` of the indexed shot's -- a survey drifting
+   * from the index it was scored against is not trustworthy input to selection. No prober needed (like
+   * `library-export-valid`), so `opts.available` never gates it.
+   */
+  const surveyValid: Checker = {
+    id: "survey-valid",
+    version: "1.0.0",
+    async check(input) {
+      const outputs = input.result.outputs.filter((o) => o.type === "survey");
+      if (outputs.length === 0) return skip("no matching output");
+
+      const checked: string[] = [];
+      for (const o of outputs) {
+        const surveyPath = join(input.workspaceDir, o.path);
+        let surveyJson: unknown;
+        try {
+          surveyJson = JSON.parse(readFileSync(surveyPath, "utf8"));
+        } catch (e) {
+          return { verdict: "fail", evidence: { path: o.path, reason: "unreadable", error: e instanceof Error ? e.message : String(e) } };
+        }
+        const parsedSurvey = AnySurveyIndexSchema.safeParse(surveyJson);
+        if (!parsedSurvey.success) {
+          return { verdict: "fail", evidence: { path: o.path, reason: "invalid survey", issues: parsedSurvey.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) } };
+        }
+        const survey = parsedSurvey.data;
+        if (survey.schema_version !== "harness.survey-index/v2") {
+          checked.push(o.path);
+          continue;
+        }
+
+        const shotsInput = input.request.inputs.find((i) => i.type === "shots");
+        if (!shotsInput) return { verdict: "fail", evidence: { reason: "no shots input" } };
+
+        const shotsPath = join(input.workspaceDir, shotsInput.path);
+        let shotsJson: unknown;
+        try {
+          shotsJson = JSON.parse(readFileSync(shotsPath, "utf8"));
+        } catch (e) {
+          return { verdict: "fail", evidence: { path: shotsInput.path, reason: "unreadable shots input", error: e instanceof Error ? e.message : String(e) } };
+        }
+        const parsedShots = ShotsIndexSchema.safeParse(shotsJson);
+        if (!parsedShots.success) {
+          return { verdict: "fail", evidence: { path: shotsInput.path, reason: "invalid shots input", issues: parsedShots.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) } };
+        }
+        const shotById = shotIndexByShotId(parsedShots.data);
+
+        for (const shot of survey.shots) {
+          const found = shotById.get(shot.shot_id);
+          if (!found) return { verdict: "fail", evidence: { path: o.path, reason: "unknown shot_id", shot_id: shot.shot_id } };
+          if (found.source_id !== shot.source_id) {
+            return { verdict: "fail", evidence: { path: o.path, reason: "source_id mismatch", shot_id: shot.shot_id, expected: found.source_id, actual: shot.source_id } };
+          }
+          if (Math.abs(found.in - shot.in) > SURVEY_SHOT_TOLERANCE_SECONDS || Math.abs(found.out - shot.out) > SURVEY_SHOT_TOLERANCE_SECONDS) {
+            return { verdict: "fail", evidence: { path: o.path, reason: "in/out mismatch", shot_id: shot.shot_id } };
+          }
+        }
+        checked.push(o.path);
+      }
+
+      return { verdict: "pass", evidence: { checked } };
+    },
+  };
+
+  return [briefDuration, libraryExportValid, surveyValid];
 }

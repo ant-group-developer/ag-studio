@@ -87,9 +87,11 @@ function tmpWorkspace(): string {
 }
 
 describe("libraryCheckers", () => {
-  it("returns brief-duration and library-export-valid, in that order", () => {
+  // sub-project 5A task 3: survey-valid registers inside this same factory, so the exact-count assertion
+  // below grew a third id (was ["brief-duration", "library-export-valid"] before this task).
+  it("returns brief-duration, library-export-valid, and survey-valid, in that order", () => {
     const checkers = libraryCheckers(new FakeMediaProber(new Map()));
-    expect(checkers.map((c) => c.id)).toEqual(["brief-duration", "library-export-valid"]);
+    expect(checkers.map((c) => c.id)).toEqual(["brief-duration", "library-export-valid", "survey-valid"]);
     expect(checkers.every((c) => c.version === "1.0.0")).toBe(true);
   });
 

@@ -6,6 +6,7 @@ import {
   HarnessError,
   WatchIndexSchema,
   watchTranscriptSchema,
+  type MediaProbe,
   type MediaProber,
   type WatchFrame,
   type WatchIndex,
@@ -26,6 +27,10 @@ export interface WatchVideoInput {
   label: string;
   path: string;
   shot_marks?: number[];
+  /** sub-project 5A: this video's kho source id, when it has one -- the key `transcriptBySource` is looked
+   * up by (falling back to `label` when unset), since a multi-source `watch` keys transcripts by source_id,
+   * not by the display label. */
+  source_id?: string;
 }
 
 export type WatchLogFn = (level: "info" | "warn", msg: string, data?: Record<string, unknown>) => void;
@@ -55,6 +60,14 @@ export interface WatchOptions {
   scene_threshold?: number;
   /** frame width in pixels, scaled with -2 for height (even, aspect-preserving); defaults to 640. */
   frame_width?: number;
+  /** sub-project 5A: total contact sheets to spend across every video in this call, allocated proportionally
+   * to duration (see `distributeSheetBudget`). Unset keeps the SP4 behavior: each video gets as many sheets
+   * as its frame count needs (grouped `CONTACT_SHEET_GROUP_SIZE` at a time), with no cross-video budget. */
+  max_sheets?: number;
+  /** sub-project 5A: transcripts already produced by the `transcribe` stage, keyed by `WatchVideoInput.source_id`
+   * (or `label` when a video has no `source_id`). When a video's key is present here, that transcript is used
+   * as-is and `WatchDeps.transcribe` is never invoked for it. */
+  transcriptBySource?: Record<string, WatchTranscript>;
 }
 
 const DEDUPE_WINDOW_SECONDS = 1;
@@ -229,6 +242,55 @@ function buildContactSheet(ffmpeg: string, group: { t: number; absPath: string }
   }
 }
 
+/** Splits `arr` into exactly `min(groups, arr.length)` chunks, as evenly sized as possible (earlier chunks
+ * absorbing the remainder when `arr.length` doesn't divide evenly) -- used to build exactly a video's sheet
+ * budget from `distributeSheetBudget`, in place of the fixed `CONTACT_SHEET_GROUP_SIZE`-per-sheet grouping
+ * used when `max_sheets` is not set. */
+function chunkIntoGroups<T>(arr: T[], groups: number): T[][] {
+  if (arr.length === 0 || groups <= 0) return [];
+  const g = Math.min(groups, arr.length);
+  const base = Math.floor(arr.length / g);
+  let extra = arr.length % g;
+  const result: T[][] = [];
+  let idx = 0;
+  for (let i = 0; i < g; i++) {
+    const size = base + (extra > 0 ? 1 : 0);
+    if (extra > 0) extra--;
+    result.push(arr.slice(idx, idx + size));
+    idx += size;
+  }
+  return result;
+}
+
+/**
+ * Allocates `maxSheets` contact sheets across `durations.length` videos, proportional to each video's
+ * duration, with a floor of 1 sheet per video (sub-project 5A task-3 resolution). Uses the largest-remainder
+ * method (every video starts at 1, the remaining `maxSheets - n` sheets are handed out by each video's
+ * fractional share, largest fraction first) so the total is exactly `maxSheets` whenever there are enough
+ * sheets to go around.
+ *
+ * When there are at least as many videos as `maxSheets`, the 1-per-video floor alone already meets or
+ * exceeds the target, so every video gets exactly 1 and the total can exceed `maxSheets` in that degenerate
+ * case -- the budget is a target, not a hard cap, and giving any video 0 sheets would be worse.
+ */
+function distributeSheetBudget(durations: number[], maxSheets: number): number[] {
+  const n = durations.length;
+  if (n === 0) return [];
+  if (n >= maxSheets) return durations.map(() => 1);
+
+  const totalDuration = durations.reduce((a, b) => a + b, 0);
+  const shares = totalDuration > 0 ? durations.map((d) => d / totalDuration) : durations.map(() => 1 / n);
+  const remaining = maxSheets - n;
+  const extraRaw = shares.map((s) => s * remaining);
+  const extra = extraRaw.map((x) => Math.floor(x));
+  const allocated = extra.reduce((a, b) => a + b, 0);
+  const leftover = remaining - allocated;
+  const order = extraRaw.map((x, i) => ({ i, frac: x - Math.floor(x) })).sort((a, b) => b.frac - a.frac);
+  for (let k = 0; k < leftover; k++) extra[order[k]!.i]! += 1;
+
+  return durations.map((_, i) => 1 + extra[i]!);
+}
+
 function runTranscribe(
   t: NonNullable<WatchDeps["transcribe"]>,
   sourcePath: string,
@@ -301,10 +363,20 @@ export async function watchVideos(d: WatchDeps, o: WatchOptions, videos: WatchVi
   const scene_threshold = o.scene_threshold ?? 0.3;
   const frame_width = o.frame_width ?? 640;
 
+  // Probe every video up front: the sheet budget below depends on every video's duration, not just the one
+  // currently being processed, so all probing happens before any frame is extracted. This changes only the
+  // order probes happen in (all-at-once instead of interleaved with extraction), not how many times each
+  // video is probed, so it does not change behavior when `max_sheets` is unset.
+  const probes: (MediaProbe | null)[] = [];
+  for (const video of videos) probes.push(await d.prober.probe(video.path));
+  const durations = probes.map((probe) => probe?.duration_seconds ?? 0);
+  const sheetBudgets: (number | undefined)[] = o.max_sheets !== undefined ? distributeSheetBudget(durations, o.max_sheets) : videos.map(() => undefined);
+
   const outVideos: WatchVideo[] = [];
-  for (const video of videos) {
-    const probe = await d.prober.probe(video.path);
-    const duration_seconds = probe?.duration_seconds ?? 0;
+  for (let vi = 0; vi < videos.length; vi++) {
+    const video = videos[vi]!;
+    const probe = probes[vi]!;
+    const duration_seconds = durations[vi]!;
     const scene = duration_seconds > 0 ? detectSceneChanges(ffmpeg, video.path, scene_threshold) : [];
     const marks = video.shot_marks ?? [];
     const times = pickFrameTimes({ duration: duration_seconds, scene, marks, interval_seconds, max_frames });
@@ -326,17 +398,27 @@ export async function watchVideos(d: WatchDeps, o: WatchOptions, videos: WatchVi
       extracted.push({ t, absPath: framePath });
     }
 
+    const sheetBudget = sheetBudgets[vi];
+    const sheetGroups: { t: number; absPath: string }[][] =
+      sheetBudget !== undefined
+        ? chunkIntoGroups(extracted, sheetBudget)
+        : Array.from({ length: Math.ceil(extracted.length / CONTACT_SHEET_GROUP_SIZE) }, (_, i) =>
+            extracted.slice(i * CONTACT_SHEET_GROUP_SIZE, (i + 1) * CONTACT_SHEET_GROUP_SIZE),
+          );
     const sheets: string[] = [];
-    for (let i = 0; i < extracted.length; i += CONTACT_SHEET_GROUP_SIZE) {
-      const group = extracted.slice(i, i + CONTACT_SHEET_GROUP_SIZE);
-      const sheetIndex = Math.floor(i / CONTACT_SHEET_GROUP_SIZE) + 1;
-      const sheetPath = join(labelDir, `sheet-${String(sheetIndex).padStart(2, "0")}.png`);
+    for (let gi = 0; gi < sheetGroups.length; gi++) {
+      const group = sheetGroups[gi]!;
+      const sheetPath = join(labelDir, `sheet-${String(gi + 1).padStart(2, "0")}.png`);
       if (buildContactSheet(ffmpeg, group, sheetPath, log)) sheets.push(relOut(o.outDir, sheetPath));
     }
 
     let transcript: WatchTranscript | null = null;
     let transcript_error: string | undefined;
-    if (d.transcribe) {
+    const transcriptKey = video.source_id ?? video.label;
+    const fromInput = o.transcriptBySource?.[transcriptKey];
+    if (fromInput !== undefined) {
+      transcript = fromInput;
+    } else if (d.transcribe) {
       const result = runTranscribe(d.transcribe, video.path, labelDir);
       transcript = result.transcript;
       transcript_error = result.transcript_error;
