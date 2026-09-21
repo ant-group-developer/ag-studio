@@ -854,3 +854,31 @@ dung hoạt hình** — phạm vi là sản xuất từ footage nguồn có th�
 tên đó giờ chỉ gây hiểu nhầm cho người đọc mới. Đổi tên là một refactor cơ học (enum + thư mục profile +
 fixture + vài test đếm) chứ không phải đổi hành vi, và **chưa được yêu cầu** — để lại nguyên trạng cho tới
 khi chủ máy muốn.
+
+## Hoãn — ghi nhận ở re-review đợt sửa cuối sub-project 5A (2026-09-22)
+
+Các quan sát mức thấp còn lại sau đợt sửa `cdd7ddd..d13bb98` (brief-duration nhường cho library-review, intake
+kiểm giọng trước khi claim, khoá cache TTS theo revision giọng, replan quay lại buổi quay của chính nó, lỗi
+proxy được ghi nhận, retry rename, assemble đệm audio từng clip). Không cái nào chặn merge.
+
+- **`assemble.mjs` đệm im lặng cố định `anullsrc=r=44100:cl=stereo`** trong khi clip có tiếng được giữ nguyên:
+  buổi quay 48 kHz hoặc mono sẽ cho concat demuxer các đoạn khác tham số audio (lấy theo đoạn đầu). Fixture
+  test đều 44,1 kHz nên suite không thấy. Việc sau: dò clip có tiếng đầu tiên rồi khớp rate/layout.
+- **Cùng file: `-shortest` với `anullsrc` vô hạn + `-c:v copy`** được ffmpeg ghi nhận là không ổn định trên một
+  số bản build; nếu không cắt được thì tiến trình không dừng và stage đốt hết `default_deadline_seconds: 14400`.
+  Việc sau: thêm `-t <thời lượng clip>`. Clip có codec hình không `-c:v copy` được vào mp4 cũng làm `assemble`
+  ném lỗi mới.
+- **Guard "không proxy nào dựng được" của `media index`** (`packages/core/src/media/index.ts`) là một đường
+  `CONFIG_INVALID` → `contract` → run FAILED → request kẹt `claimed` mới, cùng lớp với C1/C2. Chấp nhận có chủ
+  đích (máy không có libx264 là hỏng máy thật), tính vào mục hệ thống "run FAILED để request ở `claimed`" ở trên.
+- **`ArtifactRegistry.stageOutputs` dừng giữa chừng khi khoá file kéo dài**: một số output đã được chuyển khỏi
+  workspace, để lại thư mục artifact PROVISIONAL không bao giờ commit và workspace thiếu file trước khi
+  `harness retry` chạy lại. Hành vi có sẵn của nhánh `CHECKSUM_MISMATCH`; đợt sửa chỉ làm đường này dễ tới hơn.
+- **`brief-duration` tin vào sự có mặt của fit report, không đối chiếu với file đã probe.** Skill
+  `library-review` thật tự tính lại `duration_in_range` từ `watch.json` nên vẫn bắt được; agent giả thì không
+  (chỉ đọc fit report). Cần nhớ khi mở rộng agent giả.
+- **Vòng replan theo thời lượng chưa có bằng chứng hội tụ end-to-end**: `plan-edit` giả bỏ qua
+  `target_duration_seconds` ở 1.2.0, nên test chỉ khẳng định trạng thái cuối đã thiết kế (`request_stuck`,
+  request `open`, không run FAILED). Vòng replan theo thiếu hình thì đã có (acceptance 42).
+- JSDoc đầu file `packages/adapters/media-python/src/child-env.ts` vẫn thiếu `PATHEXT` trong phần mô tả, dù
+  `FIXED_ALLOWLIST` có.
