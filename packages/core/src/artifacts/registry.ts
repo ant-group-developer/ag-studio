@@ -17,6 +17,59 @@ export function artifactDir(dataRoot: string, run: Run, artifactId: string): str
   return join(dataRoot, "artifacts", run.content_id ?? run.run_id, run.variant_id ?? run.profile_snapshot.id, artifactId);
 }
 
+/** Errno codes a rename is worth retrying for. On Windows a file another process still has open -- a
+ * lingering ffmpeg child, an antivirus scanner that opened the freshly written output, Explorer previewing a
+ * directory -- makes `rename` fail with one of these for a few dozen milliseconds and then succeed. */
+const RENAME_RETRY_CODES = new Set(["EPERM", "EBUSY", "EACCES"]);
+const RENAME_ATTEMPTS = 5;
+const RENAME_FIRST_BACKOFF_MS = 60;
+
+/** Blocks this thread for `ms` without a promise: `stageOutputs` is `async`, but the rename sits in the
+ * middle of a synchronous loop and an `await` here would let another turn observe a half-moved output set. */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * `renameSync` with a bounded retry (5 attempts, 60ms doubling) for the three transient Windows codes, and
+ * every failure -- retryable or not -- surfaced as `HarnessError("IO_ERROR", …)` naming both paths.
+ *
+ * Final-review Important 4: a raw `EPERM` here is not a `HarnessError`, so it went straight through
+ * `Controller.commit` (which only converts `CHECKSUM_MISMATCH`/`IO_ERROR`) and `Worker.runOnce`, killing the
+ * long-running worker process over a transient file lock. As an `IO_ERROR` the commit path classifies it
+ * `result`: the stage FAILS and can be retried with `harness retry <run> --stage <key>`, which is what a
+ * half-moved output set deserves. `library-production@1.2.0` adds two more directory artifacts, so the
+ * exposure went up, not down.
+ *
+ * `rename`/`sleep` are injectable for tests only; production always uses `renameSync`/`sleepSync`.
+ */
+export function renameWithRetry(
+  src: string,
+  dest: string,
+  o: { rename?: (from: string, to: string) => void; sleep?: (ms: number) => void; attempts?: number } = {},
+): void {
+  const rename = o.rename ?? renameSync;
+  const sleep = o.sleep ?? sleepSync;
+  const attempts = o.attempts ?? RENAME_ATTEMPTS;
+  let backoff = RENAME_FIRST_BACKOFF_MS;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      rename(src, dest);
+      return;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException | undefined)?.code;
+      const retryable = code !== undefined && RENAME_RETRY_CODES.has(code);
+      if (!retryable || attempt >= attempts) {
+        throw new HarnessError("IO_ERROR", `could not move output into the artifact store after ${attempt} attempt(s): ${src} -> ${dest} (${code ?? (e as Error).message})`, {
+          src, dest, ...(code !== undefined ? { code } : {}), attempts: attempt,
+        });
+      }
+      sleep(backoff);
+      backoff *= 2;
+    }
+  }
+}
+
 function buildArtifact(artifactId: string, output: StageOutput, uri: string, mime: string, ctx: ArtifactContext, status: Artifact["status"], now: string): Artifact {
   return {
     schema_version: "harness.artifact/v1", artifact_id: artifactId, run_id: ctx.run.run_id, stage_run_id: ctx.stageRun.stage_run_id,
@@ -78,7 +131,7 @@ export class ArtifactRegistry {
       const dir = artifactDir(this.dataRoot, p.ctx.run, id);
       mkdirSync(dir, { recursive: true });
       const dest = join(dir, basename(src));
-      renameSync(src, dest);
+      renameWithRetry(src, dest);
       const artifact = buildArtifact(id, out, pathToFileURL(dest).href, p.mimeTypes[out.type] ?? "application/octet-stream", p.ctx, "PROVISIONAL", now);
       const manifestPath = join(dir, "manifest.json");
       const manifest = toManifest(artifact, files);

@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ArtifactManifestSchema, isHarnessError, type HarnessError } from "@harness/contracts";
-import { acceptedInputsFor, ArtifactRegistry } from "../../src/artifacts/registry.js";
+import { acceptedInputsFor, ArtifactRegistry, renameWithRetry } from "../../src/artifacts/registry.js";
 import { directoryDigest, listDirectoryFiles } from "../../src/artifacts/directory.js";
 import { sha256String } from "../../src/artifacts/checksum.js";
 import { createWorkspace } from "../../src/environment/workspace.js";
@@ -19,6 +19,68 @@ async function setup() {
   const ctx = { run: store.getRun(runId)!, stageRun: store.getStageRun(stage.stage_run_id)!, attempt: claim.attempt, executorVersion: "fake@0.1.0", inputArtifactIds: [], checkResultIds: [], sourceItems: [] };
   return { store, dir, ws, registry, ctx, stage, claim };
 }
+
+// Final-review Important 4: a transient Windows `EPERM`/`EBUSY`/`EACCES` from `renameSync` was not a
+// `HarnessError`, so it travelled through `Controller.commit` (which only converts CHECKSUM_MISMATCH/
+// IO_ERROR) and `Worker.runOnce` and took the worker process down over a file lock that clears in
+// milliseconds. `library-production@1.2.0` adds two more directory artifacts, so it happens more, not less.
+describe("renameWithRetry", () => {
+  function failingRename(failures: number, code: string) {
+    const calls: [string, string][] = [];
+    let left = failures;
+    return {
+      calls,
+      rename(from: string, to: string): void {
+        calls.push([from, to]);
+        if (left-- > 0) {
+          const e = new Error(`fake ${code}`) as NodeJS.ErrnoException;
+          e.code = code;
+          throw e;
+        }
+      },
+    };
+  }
+
+  for (const code of ["EPERM", "EBUSY", "EACCES"]) {
+    it(`retries a transient ${code} and succeeds once the lock clears`, () => {
+      const slept: number[] = [];
+      const f = failingRename(3, code);
+      renameWithRetry("a", "b", { rename: f.rename, sleep: (ms) => slept.push(ms) });
+      expect(f.calls).toHaveLength(4);
+      expect(slept).toEqual([60, 120, 240]);
+    });
+  }
+
+  it("gives up after the attempt budget with IO_ERROR naming both paths", () => {
+    const f = failingRename(99, "EBUSY");
+    let thrown: unknown;
+    try {
+      renameWithRetry("from.mp4", "to.mp4", { rename: f.rename, sleep: () => {} });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(isHarnessError(thrown, "IO_ERROR"), String(thrown)).toBe(true);
+    const err = thrown as HarnessError;
+    expect(err.details).toMatchObject({ src: "from.mp4", dest: "to.mp4", code: "EBUSY", attempts: 5 });
+    expect(f.calls).toHaveLength(5);
+  });
+
+  it("does not retry a non-transient code, but still reports it as IO_ERROR", () => {
+    const f = failingRename(99, "ENOENT");
+    const slept: number[] = [];
+    expect(() => renameWithRetry("from", "to", { rename: f.rename, sleep: (ms) => slept.push(ms) })).toThrowError(/ENOENT/);
+    expect(f.calls).toHaveLength(1);
+    expect(slept).toEqual([]);
+  });
+
+  it("does not sleep at all when the first rename works", () => {
+    const f = failingRename(0, "EPERM");
+    const slept: number[] = [];
+    renameWithRetry("a", "b", { rename: f.rename, sleep: (ms) => slept.push(ms) });
+    expect(f.calls).toHaveLength(1);
+    expect(slept).toEqual([]);
+  });
+});
 
 describe("ArtifactRegistry", () => {
   it("stages outputs, verifies checksums, moves files and commits ACCEPTED with a manifest", async () => {

@@ -539,7 +539,30 @@ describe("fitEdl - all modes", () => {
       transcript: null,
       voice: "none",
     });
-    expect(edl.entries[0]).toMatchObject({ in: 4, out: 4.1 });
+    // Final-review Important 5 widened this from the raw `[4, 4.1]` to a full `minEntry`: an entry the
+    // clamp cannot touch is now always at least 0.2s long, so rounding can never collapse it to `in === out`
+    // and make `EdlSchema` throw.
+    expect(edl.entries[0]).toMatchObject({ in: 4, out: 4.2 });
+    expect(report.warnings.some((w) => w.includes("could not be clamped"))).toBe(true);
+    expect(() => EdlSchema.parse(edl)).not.toThrow();
+  });
+
+  // Final-review Important 5: the unclamped revival branch kept the entry's raw `in`/`out`, and `round3`
+  // can collapse a sub-millisecond entry to `in === out`. `EdlSchema` demands `in < out`, so `fitEdl` THREW
+  // -- breaking the one promise this function has ("never fails for lack of footage"), turning a shortfall
+  // that `library-review` should have rejected into a FAILED run with its request stuck at `claimed`.
+  it("widens the revived entry to minEntry when rounding would collapse it on a source of unknown duration", () => {
+    const unknownSource = shotsFixture([{ source_id: SRC_B, index: 0, duration: 30, shots: [] }]);
+    const { edl, report } = fitEdl({
+      edl: edlFixture([{ source_id: SRC_A, in: 1.0001, out: 1.0004, order: 0 }]),
+      timing: timingFixture([]),
+      shots: unknownSource, // SRC_A is not in `shots` at all, so `durationOf` has nothing to clamp against
+      survey: null,
+      transcript: null,
+      voice: "none",
+    });
+    expect(edl.entries).toEqual([{ source_id: SRC_A, in: 1, out: 1.2, order: 0, overlay: null, note: "" }]);
+    expect(report.entries[0]).toMatchObject({ after: { in: 1, out: 1.2 }, action: "kept" });
     expect(report.warnings.some((w) => w.includes("could not be clamped"))).toBe(true);
     expect(() => EdlSchema.parse(edl)).not.toThrow();
   });

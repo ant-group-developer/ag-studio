@@ -734,8 +734,7 @@ giọng, trên GPU của máy build (`docs/runbooks/studio-media.md` mục 7 và
 - ffmpeg **có mặt nhưng hỏng** làm `tts-valid` báo đỉnh âm lượng là `unknown` một cách im lặng (quyết định có
   chủ đích: không fail vì thiếu công cụ).
 - Nhánh kẹp `loudnorm` bị trôi và nhánh cache JSON hỏng chưa có test.
-- `fitEdl`: cặp `expandOnly` có thể để điểm thua nằm **giữa một từ** mà không cảnh báo; nhánh hồi sinh không
-  kẹp vẫn có thể fail `EdlSchema` khi `in`/`out` làm tròn bằng nhau trên source không rõ thời lượng; `refine`
+- `fitEdl`: cặp `expandOnly` có thể để điểm thua nằm **giữa một từ** mà không cảnh báo; `refine`
   không ép bất biến `missing = reused + uncovered`; entry không nằm trong shot nào bị dán nhãn `kept` dù đã
   phải nối thêm hình, và phần đuôi rảnh của shot chứa điểm giữa nó thì không dùng tới; một shot bị đánh dấu
   "đã dùng" theo khoảng **gốc chưa cắt**, nên phần đuôi đã cắt bỏ không tái sử dụng được; `report.entries[]`
@@ -760,13 +759,7 @@ giọng, trên GPU của máy build (`docs/runbooks/studio-media.md` mục 7 và
 
 - `default_deadline_seconds: 14400` của profile `studio` revision 3 áp cho **mọi** stage, kể cả stage agent —
   một agent treo giờ mất 4 tiếng mới chạm deadline thay vì 1 tiếng như trước.
-- `ArtifactRegistry.stageOutputs` dùng `renameSync`, dễ gặp `EPERM` chập chờn trên Windows; 1.2.0 thêm hai
-  artifact thư mục nữa nên xác suất tăng. Việc sau: thử lại có giới hạn.
-- `library-review` nhận **hai** input `edl`: bản trước khi khớp (`plan-edit`) và bản đã khớp
-  (`media-fit-edl`). Đúng ý đồ, nhưng skill phải tự biết đọc bản nào.
-- `assemble.mjs` quyết định cho **cả bộ clip** dựa trên `hasAudioStream(clips[0])`.
 - Brief inline của `survey-source`/`plan-edit` bị **viết đè** thay vì nối thêm khi profile ghi đè.
-- `media.ts` dài 519 dòng; `publish-stage.ts` đã có cảnh báo tương tự từ 3B.
 - Test verifier độc lập của `survey-source` **hard-code** `required_checks` thay vì đọc từ workflow.
 - `pinnedWorkflowLoadable` lặp lại non-null assertion; `mediaEngineOptions()` bị tính lại trong
   `computeDoctorRows`.

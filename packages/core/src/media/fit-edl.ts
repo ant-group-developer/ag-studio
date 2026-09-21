@@ -216,6 +216,11 @@ export function fitEdl(p: {
       if (after.out - after.in < FIT.minEntry) after = { in: round3(duration - FIT.minEntry), out: round3(duration) };
     } else {
       after = { in: round3(first.in), out: round3(first.out) };
+      // Final-review Important 5: with nothing to clamp against, `round3` can collapse a sub-millisecond
+      // entry (`[1.0001, 1.0004]` -> `[1, 1]`) and `EdlSchema`'s `in < out` would make `fitEdl` THROW --
+      // which is the one thing this function must never do for lack of footage. Widen instead; the shortage
+      // is already in the report for `library-review` to reject on.
+      if (after.out - after.in < FIT.minEntry) after = { in: after.in, out: round3(after.in + FIT.minEntry) };
       warnings.push(
         `fit: source ${first.source_id} has no usable duration, so the revived first entry could not be clamped`,
       );
