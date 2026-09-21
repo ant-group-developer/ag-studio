@@ -8,6 +8,7 @@ import * as X from "../src/execution.js";
 import * as C from "../src/config.js";
 import * as L from "../src/library.js";
 import * as M from "../src/media.js";
+import * as ME from "../src/media-engine.js";
 import * as D from "../src/distribution.js";
 import * as G from "../src/learning.js";
 import { EdlSchema } from "../src/edl.js";
@@ -25,13 +26,16 @@ export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
   edl: EdlSchema, scripts: C.ScriptsRegistrySchema, sources: C.SourcesRegistrySchema,
   "edit-style": L.EditStyleSchema, "content-request": L.ContentRequestSchema,
   "library-item": L.LibraryItemSchema, "library-claim": L.LibraryClaimSchema,
-  review: L.reviewSchema, "survey-index": L.surveyIndexSchema,
+  review: L.reviewSchema, "survey-index": L.surveyIndexSchema, "survey-index-v2": L.surveyIndexSchemaV2,
   watch: M.WatchIndexSchema,
   hypothesis: D.HypothesisSchema, "channel-package-draft": D.ChannelPackageDraftSchema,
   "package-receipt": D.PackageReceiptSchema, "upload-receipt": D.UploadReceiptSchema, "schedule-receipt": D.ScheduleReceiptSchema,
   "video-metrics": G.VideoMetricsSchema, "channel-learned": G.ChannelLearnedSchema,
   "channel-brief": G.ChannelBriefSchema, "topic-proposal": G.TopicProposalSchema,
   demand: G.DemandSchema, "requests-receipt": G.RequestsReceiptSchema,
+  shots: ME.ShotsIndexSchema, transcript: ME.TranscriptSchema, narration: ME.NarrationSchema,
+  "narration-timing": ME.NarrationTimingSchema, "fit-report": ME.FitReportSchema, timeline: ME.TimelineSchema,
+  voice: ME.VoiceProfileSchema,
 };
 
 export function toJsonSchema(name: string, schema: ZodTypeAny) {

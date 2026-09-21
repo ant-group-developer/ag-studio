@@ -115,6 +115,13 @@
                   "pattern": "^[a-z][a-z0-9-]*$",
                   "default": "main"
                 },
+                "source_collections": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9*-]*$"
+                  }
+                },
                 "max_replans": {
                   "type": "integer",
                   "minimum": 0,
@@ -124,6 +131,11 @@
                   "type": "integer",
                   "minimum": 1,
                   "default": 1
+                },
+                "max_sources": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "default": 40
                 }
               },
               "additionalProperties": false
@@ -168,13 +180,22 @@
                 "fake"
               ],
               "default": "fake"
+            },
+            "media": {
+              "type": "string",
+              "enum": [
+                "python",
+                "fake"
+              ],
+              "default": "fake"
             }
           },
           "additionalProperties": false,
           "default": {
             "publisher": "fake",
             "agent": "fake",
-            "stats": "fake"
+            "stats": "fake",
+            "media": "fake"
           }
         },
         "publication": {
@@ -230,6 +251,140 @@
               "type": "integer",
               "minimum": 1,
               "default": 5
+            }
+          },
+          "additionalProperties": false,
+          "default": {}
+        },
+        "media": {
+          "type": "object",
+          "properties": {
+            "python": {
+              "type": "string",
+              "minLength": 1
+            },
+            "device": {
+              "type": "string",
+              "pattern": "^(cuda:\\d+|cpu)$",
+              "default": "cuda:0"
+            },
+            "transcribe": {
+              "type": "object",
+              "properties": {
+                "engine": {
+                  "type": "string",
+                  "const": "whisperx",
+                  "default": "whisperx"
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1,
+                  "default": "large-v3"
+                },
+                "compute_type": {
+                  "type": "string",
+                  "minLength": 1,
+                  "default": "float16"
+                },
+                "batch_size": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "default": 8
+                },
+                "python": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false,
+              "default": {}
+            },
+            "tts": {
+              "type": "object",
+              "properties": {
+                "engine": {
+                  "type": "string",
+                  "const": "omnivoice",
+                  "default": "omnivoice"
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1,
+                  "default": "k2-fsa/OmniVoice"
+                },
+                "dtype": {
+                  "type": "string",
+                  "minLength": 1,
+                  "default": "float16"
+                },
+                "num_step": {
+                  "type": "integer",
+                  "minimum": 4,
+                  "maximum": 128,
+                  "default": 32
+                },
+                "max_chars": {
+                  "type": "integer",
+                  "minimum": 80,
+                  "maximum": 600,
+                  "default": 280
+                },
+                "pause_seconds": {
+                  "type": "number",
+                  "minimum": 0,
+                  "default": 0.25
+                },
+                "loudness_lufs": {
+                  "type": "number",
+                  "default": -16
+                },
+                "python": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false,
+              "default": {}
+            },
+            "scene": {
+              "type": "object",
+              "properties": {
+                "threshold": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1,
+                  "default": 0.3
+                },
+                "min_shot_seconds": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "default": 1
+                },
+                "max_shot_seconds": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "default": 20
+                },
+                "proxy_height": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "default": 540
+                }
+              },
+              "additionalProperties": false,
+              "default": {}
+            },
+            "watch": {
+              "type": "object",
+              "properties": {
+                "max_sheets": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "default": 24
+                }
+              },
+              "additionalProperties": false,
+              "default": {}
             }
           },
           "additionalProperties": false,

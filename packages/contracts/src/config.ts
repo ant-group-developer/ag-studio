@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { expectedOutputSchema, jsonObjectSchema, revisionSchema, schemaVersion, secretRefSchema, semverSchema } from "./common.js";
 import { executorRefSchema, retryPolicySchema } from "./entities.js";
+import { idSchema } from "./ids.js";
 
 export const DEFAULT_RETRY = { max_attempts: 3, backoff_seconds: [10, 60, 300], retry_on: ["transient", "abandoned"] as const };
 
@@ -107,7 +108,63 @@ export const ChannelConfigSchema = z.object({
     enabled: z.boolean().default(false),
     max_concurrent_runs: z.number().int().min(1).default(1),
   }).strict().default({}),
+  /** Sub-project 5A: the channel's own TTS voice, required when the channel wants to request `voice: tts`. */
+  voice: z.object({ voice_id: idSchema("voice_profile") }).strict().optional(),
 }).strict();
+
+/** `library.auto_accept` (sub-project 4, extended in 5A): which kho collections an auto-accept run may draw
+ * sources from, and the caps on that autopilot loop. `source_collection` is the original single-name field
+ * (kept so an old project.yaml still parses); `source_collections` (5A) is a list of glob patterns that
+ * supersedes it when present -- see `autoAcceptPatterns` below. */
+export const autoAcceptSchema = z.object({
+  enabled: z.boolean().default(true),
+  source_collection: z.string().regex(/^[a-z][a-z0-9-]*$/).default("main"),
+  source_collections: z.array(z.string().regex(/^[a-z][a-z0-9*-]*$/)).optional(),
+  max_replans: z.number().int().min(0).default(2),
+  max_concurrent_runs: z.number().int().min(1).default(1),
+  max_sources: z.number().int().min(1).default(40),
+}).strict();
+
+/** The effective set of collection-name patterns an auto-accept run may draw sources from: `source_collections`
+ * when the project set it, otherwise the single legacy `source_collection` as a one-element list. */
+export function autoAcceptPatterns(cfg: z.infer<typeof autoAcceptSchema>): string[] {
+  return cfg.source_collections ?? [cfg.source_collection];
+}
+
+/** `media` block (sub-project 5A): local Python engine settings for transcribe (WhisperX) and TTS
+ * (OmniVoice); every field optional/defaulted so an old project.yaml still parses. */
+export const mediaConfigSchema = z.object({
+  /** Required when `adapters.media: python`; per-engine `transcribe.python`/`tts.python` override it. */
+  python: z.string().min(1).optional(),
+  device: z.string().regex(/^(cuda:\d+|cpu)$/).default("cuda:0"),
+  transcribe: z.object({
+    engine: z.literal("whisperx").default("whisperx"),
+    model: z.string().min(1).default("large-v3"),
+    compute_type: z.string().min(1).default("float16"),
+    batch_size: z.number().int().min(1).default(8),
+    python: z.string().min(1).optional(),
+  }).strict().default({}),
+  tts: z.object({
+    engine: z.literal("omnivoice").default("omnivoice"),
+    model: z.string().min(1).default("k2-fsa/OmniVoice"),
+    dtype: z.string().min(1).default("float16"),
+    num_step: z.number().int().min(4).max(128).default(32),
+    max_chars: z.number().int().min(80).max(600).default(280),
+    pause_seconds: z.number().min(0).default(0.25),
+    loudness_lufs: z.number().default(-16),
+    python: z.string().min(1).optional(),
+  }).strict().default({}),
+  scene: z.object({
+    threshold: z.number().min(0).max(1).default(0.30),
+    min_shot_seconds: z.number().positive().default(1.0),
+    max_shot_seconds: z.number().positive().default(20),
+    proxy_height: z.number().int().min(1).default(540),
+  }).strict().default({}),
+  watch: z.object({
+    max_sheets: z.number().int().min(1).default(24),
+  }).strict().default({}),
+}).strict();
+export type MediaConfig = z.infer<typeof mediaConfigSchema>;
 
 export const ProjectConfigSchema = z.object({
   schema_version: schemaVersion("project-config"),
@@ -130,12 +187,7 @@ export const ProjectConfigSchema = z.object({
      * planned into a run automatically instead of waiting for a human `library accept` + `plan` (spec:
      * sub-project 4). `autoAccept` itself never claims the request -- the run's own `intake` stage is still
      * the only thing that moves it `open -> claimed`. */
-    auto_accept: z.object({
-      enabled: z.boolean().default(true),
-      source_collection: z.string().regex(/^[a-z][a-z0-9-]*$/).default("main"),
-      max_replans: z.number().int().min(0).default(2),
-      max_concurrent_runs: z.number().int().min(1).default(1),
-    }).strict().optional(),
+    auto_accept: autoAcceptSchema.optional(),
   }).strict().optional(),
   adapters: z.object({
     publisher: z.enum(["playwright", "fake"]).default("fake"),
@@ -144,7 +196,10 @@ export const ProjectConfigSchema = z.object({
     agent_argv: z.array(z.string().min(1)).optional(),
     /** Sub-project 3B: which StatsCollector implementation collects video metrics from YouTube Studio. */
     stats: z.enum(["playwright", "fake"]).default("fake"),
-  }).strict().default({ publisher: "fake", agent: "fake", stats: "fake" }),
+    /** Sub-project 5A: which MediaEngine implementation runs transcribe/tts -- `core` never chooses, only
+     * the composition root reads this. */
+    media: z.enum(["python", "fake"]).default("fake"),
+  }).strict().default({ publisher: "fake", agent: "fake", stats: "fake", media: "fake" }),
   publication: z.object({ verify_seconds: z.number().int().min(60).default(900), verify_grace_hours: z.number().min(0).default(2) }).strict().default({ verify_seconds: 900, verify_grace_hours: 2 }),
   dashboard: z.object({ port: z.number().int().min(1).max(65535).default(5200), refresh_seconds: z.number().int().min(10).default(60) }).strict().default({ port: 5200, refresh_seconds: 60 }),
   /** Sub-project 3B: how often the worker sweeps for video metrics to collect, and how many jobs per sweep. */
@@ -152,6 +207,8 @@ export const ProjectConfigSchema = z.object({
     collect_seconds: z.number().int().min(60).default(1800),
     collect_batch: z.number().int().min(1).default(5),
   }).strict().default({}),
+  /** Sub-project 5A: local Python media engine settings (transcribe/TTS); required only when `adapters.media: python`. */
+  media: mediaConfigSchema.default({}),
 }).strict();
 
 export const HarnessConfigSchema = z.object({

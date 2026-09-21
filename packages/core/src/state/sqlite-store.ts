@@ -4,10 +4,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ArtifactSchema, AttemptSchema, ChannelLearnedSchema, ChannelPackageSchema, CheckResultSchema, ContentItemSchema, ContentRequestSchema, ContentVariantSchema, EditStyleSchema, EventSchema, ExternalOperationSchema, HarnessError,
-  LeaseSchema, LibraryItemSchema, PublicationJobSchema, RunSchema, SourceItemSchema, StageRunSchema, VideoMetricsSchema,
+  LeaseSchema, LibraryItemSchema, PublicationJobSchema, RunSchema, SourceItemSchema, StageRunSchema, VideoMetricsSchema, VoiceProfileSchema,
   newId, type Artifact, type Attempt, type ChannelLearned, type ChannelPackage, type CheckResult, type ClaimParams, type ClaimResult, type Clock, type ContentItem, type ContentRequest, type ContentVariant,
   type EditStyle, type Event, type EventInput, type ExternalOperation, type Lease, type LibraryItem, type PublicationJob, type ReapedLease, type Run, type SourceItem, type StageRun, type StateStore,
-  type TransitionKind, type VideoMetrics,
+  type TransitionKind, type VideoMetrics, type VoiceProfile,
 } from "@harness/contracts";
 import { addSeconds, SystemClock } from "./clock.js";
 import { assertTransition, STATE_FIELD_BY_KIND, TABLE_BY_KIND } from "./transitions.js";
@@ -370,6 +370,23 @@ export class SqliteStateStore implements StateStore {
   getChannelLearned(channelId: string): ChannelLearned | undefined {
     const row = this.db.prepare("SELECT data FROM channel_learned WHERE channel_id = ?").get(channelId) as Row | undefined;
     return row ? ChannelLearnedSchema.parse(JSON.parse(row.data)) : undefined;
+  }
+
+  // ---- voice profiles (sub-project 5A) ----
+  // Mirror of <kho>/voices/<id>/voice.json, written by syncLibrary via upsertVoiceProfile -- same pattern
+  // as edit_style/content_request/library_item: `status` is never touched by transition().
+  upsertVoiceProfile(v: VoiceProfile): void {
+    const p = VoiceProfileSchema.parse(v);
+    this.db.prepare(
+      "INSERT INTO voice_profile (id, data, status, updated_at) VALUES (?, ?, ?, ?) " +
+      "ON CONFLICT(id) DO UPDATE SET data = excluded.data, status = excluded.status, updated_at = excluded.updated_at",
+    ).run(p.voice_id, JSON.stringify(p), p.status, p.updated_at);
+  }
+  getVoiceProfile(id: string): VoiceProfile | undefined { return this.getDoc("voice_profile", id, (x) => VoiceProfileSchema.parse(x)); }
+  listVoiceProfiles(filter: { status?: "active" | "retired" } = {}): VoiceProfile[] {
+    return filter.status
+      ? this.listDocs("SELECT data FROM voice_profile WHERE status = ? ORDER BY rowid", [filter.status], (x) => VoiceProfileSchema.parse(x))
+      : this.listDocs("SELECT data FROM voice_profile ORDER BY rowid", [], (x) => VoiceProfileSchema.parse(x));
   }
 
   // ---- event ----

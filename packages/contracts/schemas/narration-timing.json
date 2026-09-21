@@ -1,0 +1,152 @@
+{
+  "$ref": "#/definitions/narration-timing",
+  "definitions": {
+    "narration-timing": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.narration-timing/v1"
+        },
+        "voice_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^voice_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voice_revision": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "total_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "line_id": {
+                "type": "string"
+              },
+              "edl_order": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "text": {
+                "type": "string"
+              },
+              "wav": {
+                "type": "string"
+              },
+              "duration_seconds": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "chunks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    },
+                    "start": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "end": {
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "text",
+                    "start",
+                    "end"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "words": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "word": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "start": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "end": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "score": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  },
+                  "required": [
+                    "word",
+                    "start",
+                    "end"
+                  ],
+                  "additionalProperties": false
+                },
+                "default": []
+              },
+              "alignment": {
+                "type": "string",
+                "enum": [
+                  "word",
+                  "chunk"
+                ]
+              },
+              "cached": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "line_id",
+              "edl_order",
+              "text",
+              "wav",
+              "duration_seconds",
+              "chunks",
+              "alignment",
+              "cached"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "voice_id",
+        "voice_revision",
+        "total_seconds",
+        "lines"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

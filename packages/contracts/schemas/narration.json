@@ -1,0 +1,52 @@
+{
+  "$ref": "#/definitions/narration",
+  "definitions": {
+    "narration": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.narration/v1"
+        },
+        "language": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "line_id": {
+                "type": "string",
+                "pattern": "^L\\d{3}$"
+              },
+              "edl_order": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1200
+              }
+            },
+            "required": [
+              "line_id",
+              "edl_order",
+              "text"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "language",
+        "lines"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

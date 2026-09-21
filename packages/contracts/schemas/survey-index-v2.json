@@ -1,0 +1,82 @@
+{
+  "$ref": "#/definitions/survey-index-v2",
+  "definitions": {
+    "survey-index-v2": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.survey-index/v2"
+        },
+        "shots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "source_id": {
+                "type": "string",
+                "pattern": "^src_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "shot_id": {
+                "type": "string",
+                "pattern": "^s\\d{3}-\\d{3}$"
+              },
+              "in": {
+                "type": "number",
+                "minimum": 0
+              },
+              "out": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "score": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 5
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
+              },
+              "usable": {
+                "type": "boolean"
+              },
+              "note": {
+                "type": "string",
+                "default": ""
+              },
+              "speech": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "talking",
+                  "ambient"
+                ]
+              }
+            },
+            "required": [
+              "source_id",
+              "shot_id",
+              "in",
+              "out",
+              "score",
+              "usable",
+              "speech"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "schema_version",
+        "shots"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

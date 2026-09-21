@@ -16,6 +16,9 @@ export const libraryBriefSchema = z.object({
    * `request_id` (empty when it does not, or the request has none of its own). Lets downstream skills
    * (e.g. `style-analyze`, `library-review`) see why the channel asked for this without re-reading the kho. */
   request_notes: z.string().optional(),
+  voice_id: idSchema("voice_profile").optional(),
+  voice_revision: revisionSchema.optional(),
+  voice_checksum: checksumSchema.optional(),
 }).strict();
 
 export const EditStyleSchema = z.object({
@@ -50,6 +53,7 @@ export const ContentRequestSchema = z.object({
   style_revision: revisionSchema.optional(),
   target_duration_seconds: durationTuple.optional(),
   voice: z.enum(["none", "tts", "original"]).default("none"),
+  voice_id: idSchema("voice_profile").optional(),
   language: z.string().min(1).default("vi"),
   // Pinned to 1: `intake` claims a request once and `fulfillRequest` closes it on the first item, so a
   // request asking for more than one item would wedge at `claimed` forever (no re-claim mechanism yet).
@@ -131,6 +135,28 @@ export const surveyIndexSchema = z.object({
   }).strict()).min(1),
 }).strict();
 
+/** `survey.json` v2 (sub-project 5A): per-shot usability scoring across multiple sources, keyed by
+ * `shot_id` against a `shots.json` (`ShotsIndexSchema`) instead of the single-source `in`/`out` list of v1. */
+export const surveyIndexSchemaV2 = z.object({
+  schema_version: schemaVersion("survey-index", 2),
+  shots: z.array(z.object({
+    source_id: idSchema("source_item"),
+    shot_id: z.string().regex(/^s\d{3}-\d{3}$/),
+    in: z.number().min(0),
+    out: z.number().positive(),
+    score: z.number().int().min(0).max(5),
+    tags: z.array(z.string()).default([]),
+    usable: z.boolean(),
+    note: z.string().default(""),
+    speech: z.enum(["none", "talking", "ambient"]),
+  }).strict()).min(1),
+}).strict();
+
+/** A footage survey is either the single-source v1 shape or the multi-source v2 shape; a plain (not
+ * discriminated) union because the two are told apart by `schema_version`'s literal value, which zod
+ * already tries in order. */
+export const AnySurveyIndexSchema = z.union([surveyIndexSchema, surveyIndexSchemaV2]);
+
 export type LibraryBrief = z.infer<typeof libraryBriefSchema>;
 export type EditStyle = z.infer<typeof EditStyleSchema>;
 export type ContentRequest = z.infer<typeof ContentRequestSchema>;
@@ -139,3 +165,5 @@ export type LibraryItem = z.infer<typeof LibraryItemSchema>;
 export type LibraryClaim = z.infer<typeof LibraryClaimSchema>;
 export type Review = z.infer<typeof reviewSchema>;
 export type SurveyIndex = z.infer<typeof surveyIndexSchema>;
+export type SurveyIndexV2 = z.infer<typeof surveyIndexSchemaV2>;
+export type AnySurveyIndex = z.infer<typeof AnySurveyIndexSchema>;

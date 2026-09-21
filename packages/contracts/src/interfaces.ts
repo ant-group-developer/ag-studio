@@ -2,6 +2,7 @@ import type { Artifact, Attempt, ChannelPackage, CheckResult, ContentItem, Conte
 import type { StageRequest, StageResult } from "./execution.js";
 import type { ContentRequest, EditStyle, LibraryItem } from "./library.js";
 import type { ChannelLearned, VideoMetrics } from "./learning.js";
+import type { VoiceProfile } from "./media-engine.js";
 
 export type TransitionKind = "run" | "stage_run" | "attempt" | "artifact" | "external_operation" | "publication_job";
 
@@ -108,6 +109,11 @@ export interface StateStore {
   listVideoMetrics(filter: { publication_job_id?: string; channel_id?: string }): VideoMetrics[];
   upsertChannelLearned(l: ChannelLearned): void;
   getChannelLearned(channelId: string): ChannelLearned | undefined;
+
+  // ---- voice profiles (sub-project 5A): mirror of <kho>/voices/<id>/voice.json, written by syncLibrary ----
+  upsertVoiceProfile(v: VoiceProfile): void;
+  getVoiceProfile(id: string): VoiceProfile | undefined;
+  listVoiceProfiles(filter?: { status?: "active" | "retired" }): VoiceProfile[];
 
   appendEvent(e: EventInput): Event;
   listEvents(filter: { run_id?: string; event_type?: string; channel_id?: string; limit?: number; newest?: boolean }): Event[];

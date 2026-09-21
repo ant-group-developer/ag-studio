@@ -96,7 +96,7 @@ describe("ProjectConfigSchema.library.auto_accept", () => {
     portfolios: [{ portfolio_id: "portfolio-main", display_name: "Main" }],
   } as const;
 
-  it("defaults enabled true, source_collection main, max_replans 2, max_concurrent_runs 1 when auto_accept is {}", () => {
+  it("defaults enabled true, source_collection main, max_replans 2, max_concurrent_runs 1, max_sources 40 when auto_accept is {}", () => {
     const parsed = ProjectConfigSchema.parse({
       ...PROJECT_BASE,
       library: { root: "./kho", role: "studio", auto_accept: {} },
@@ -106,6 +106,7 @@ describe("ProjectConfigSchema.library.auto_accept", () => {
       source_collection: "main",
       max_replans: 2,
       max_concurrent_runs: 1,
+      max_sources: 40,
     });
   });
 

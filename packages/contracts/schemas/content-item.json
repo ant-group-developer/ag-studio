@@ -80,6 +80,18 @@
             },
             "request_notes": {
               "type": "string"
+            },
+            "voice_id": {
+              "type": "string",
+              "pattern": "^voice_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "voice_revision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "voice_checksum": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
             }
           },
           "required": [

@@ -19,7 +19,7 @@ describe("ids", () => {
       content_item: "content", content_variant: "variant", channel_package: "pkg",
       publication_job: "pub", incident: "inc",
       edit_style: "style", content_request: "req", library_item: "item",
-      hypothesis: "hyp", video_metrics: "metric",
+      hypothesis: "hyp", video_metrics: "metric", voice_profile: "voice",
     });
   });
 });

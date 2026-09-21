@@ -3,6 +3,7 @@ export * from "./common.js";
 export * from "./errors.js";
 export * from "./library.js";
 export * from "./media.js";
+export * from "./media-engine.js";
 export * from "./distribution.js";
 export * from "./learning.js";
 export * from "./entities.js";

@@ -1,0 +1,164 @@
+{
+  "$ref": "#/definitions/fit-report",
+  "definitions": {
+    "fit-report": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.fit-report/v1"
+        },
+        "voice": {
+          "type": "string",
+          "enum": [
+            "none",
+            "tts",
+            "original"
+          ]
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "order": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "source_id": {
+                "type": "string",
+                "pattern": "^src_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "before": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "in": {
+                        "type": "number"
+                      },
+                      "out": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "in",
+                      "out"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "after": {
+                "type": "object",
+                "properties": {
+                  "in": {
+                    "type": "number"
+                  },
+                  "out": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "in",
+                  "out"
+                ],
+                "additionalProperties": false
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "kept",
+                  "trimmed",
+                  "extended",
+                  "appended",
+                  "reused",
+                  "snapped",
+                  "dropped"
+                ]
+              }
+            },
+            "required": [
+              "order",
+              "source_id",
+              "before",
+              "after",
+              "action"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "shortfalls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "line_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "missing_seconds": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "line_ids",
+              "missing_seconds"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "reused_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "total_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "target_duration_seconds": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "number",
+              "minimum": 0
+            }
+          ]
+        },
+        "within_target": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema_version",
+        "voice",
+        "entries",
+        "shortfalls",
+        "reused_seconds",
+        "warnings",
+        "total_seconds",
+        "within_target"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

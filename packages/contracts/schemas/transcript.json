@@ -1,0 +1,114 @@
+{
+  "$ref": "#/definitions/transcript",
+  "definitions": {
+    "transcript": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.transcript/v1"
+        },
+        "engine": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "source_id": {
+                "type": "string",
+                "pattern": "^src_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "language": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "alignment": {
+                "type": "string",
+                "enum": [
+                  "word",
+                  "segment"
+                ]
+              },
+              "segments": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "start": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "end": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "words": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "word": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "start": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "end": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "score": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
+                          }
+                        },
+                        "required": [
+                          "word",
+                          "start",
+                          "end"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "default": []
+                    }
+                  },
+                  "required": [
+                    "start",
+                    "end",
+                    "text"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "source_id",
+              "language",
+              "alignment",
+              "segments"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "engine",
+        "sources"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
