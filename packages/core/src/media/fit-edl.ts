@@ -14,12 +14,10 @@ import {
   type Transcript,
 } from "@harness/contracts";
 import { snapEntry } from "./snap.js";
+import { EPS, round3 } from "./time.js";
 
 export const FIT = { lead: 0.3, tail: 0.4, keepSlack: 0.5, snapWindow: 0.4, minGap: 0.15, handle: 0.08, minEntry: 0.2 } as const;
 
-/** Seconds below which two durations count as equal -- three orders of magnitude finer than the 3-decimal
- * output grid, so it only ever absorbs floating-point dust. */
-const EPS = 1e-6;
 /** An interval marks a shot as "used" when it covers the shot's midpoint or overlaps it by more than this. */
 const USED_OVERLAP = 0.2;
 
@@ -46,10 +44,6 @@ interface Work {
   note: string;
   before: { in: number; out: number } | null;
   action: FitAction;
-}
-
-function round3(n: number): number {
-  return Math.round(n * 1000) / 1000;
 }
 
 function shotKey(s: { source_id: string; shot_id: string }): string {
@@ -126,7 +120,9 @@ export function fitEdl(p: {
 
   const warnings: string[] = [];
   const shortfalls: FitReport["shortfalls"] = [];
-  let reusedSeconds = 0;
+  /** Original order -> the index of its single shortfall row, so the orphan pass below can replace that row
+   * instead of adding a second one for the same line group. */
+  const shortfallRow = new Map<number, number>();
   const groups = new Map<number, Work[]>();
 
   for (const entry of ordered) {
@@ -145,8 +141,10 @@ export function fitEdl(p: {
     if (p.voice === "tts" && lines.length > 0) {
       const fitted = fitOne(base, lines, { shotsBySource, allShots, used, markUsed });
       work = fitted.work;
-      reusedSeconds += fitted.reused;
-      shortfalls.push(...fitted.shortfalls);
+      if (fitted.shortfall) {
+        shortfallRow.set(entry.order, shortfalls.length);
+        shortfalls.push(fitted.shortfall);
+      }
     } else {
       work = [base];
     }
@@ -159,7 +157,7 @@ export function fitEdl(p: {
           out: w.out,
           source: p.transcript?.sources.find((s) => s.source_id === w.source_id),
           sourceDuration: durationOf.get(w.source_id) ?? w.out,
-          o: { window: FIT.snapWindow, minGap: FIT.minGap, handle: FIT.handle },
+          o: { window: FIT.snapWindow, minGap: FIT.minGap, handle: FIT.handle, minEntry: FIT.minEntry },
         });
         w.in = snapped.in;
         w.out = snapped.out;
@@ -175,6 +173,7 @@ export function fitEdl(p: {
   const reportEntries: FitReport["entries"] = [];
   const finalEntries: EdlEntry[] = [];
   const orderMap = new Map<number, number[]>(ordered.map((e) => [e.order, []]));
+  let firstOriginal: { row: number; warning: number } | null = null;
 
   for (const entry of ordered) {
     for (const w of groups.get(entry.order) ?? []) {
@@ -182,7 +181,13 @@ export function fitEdl(p: {
       const clamp = (v: number): number => round3(duration === undefined ? Math.max(0, v) : Math.min(Math.max(0, v), duration));
       const after = { in: clamp(w.in), out: clamp(w.out) };
 
+      // The row and warning for the FIRST original entry are remembered, because the all-dropped fallback
+      // below revives exactly that entry and must then replace its own "dropped" row rather than contradict
+      // it with a second row for the same order.
+      const isFirstOriginal = entry.order === ordered[0]?.order && w.before !== null;
+
       if (after.out - after.in < FIT.minEntry) {
+        if (isFirstOriginal) firstOriginal = { row: reportEntries.length, warning: warnings.length };
         reportEntries.push({ order: entry.order, source_id: w.source_id, before: w.before, after, action: "dropped" });
         warnings.push(
           `fit: entry for order ${entry.order} on ${w.source_id} dropped: ${round3(after.out - after.in)}s is shorter than ${FIT.minEntry}s`,
@@ -197,15 +202,57 @@ export function fitEdl(p: {
     }
   }
 
-  // `EdlSchema` needs at least one entry, so a plan where everything was dropped falls back to the agent's
-  // first entry untouched -- `library-review` rejects it and the SP4 replan loop takes it from there.
+  // `EdlSchema` needs at least one entry, so a plan where everything was dropped revives the agent's first
+  // entry -- clamped into its source like every other emitted entry, and widened to the last `minEntry`
+  // seconds of the source when the clamp left nothing. `library-review` rejects the result and the SP4
+  // replan loop takes it from there; this must never throw for lack of footage.
   if (finalEntries.length === 0) {
     const first = ordered[0]!;
-    const after = { in: round3(first.in), out: round3(first.out) };
+    const duration = durationOf.get(first.source_id);
+    let after: { in: number; out: number };
+    if (duration !== undefined && duration > FIT.minEntry) {
+      const fit = (v: number): number => round3(Math.min(Math.max(0, v), duration));
+      after = { in: fit(first.in), out: fit(first.out) };
+      if (after.out - after.in < FIT.minEntry) after = { in: round3(duration - FIT.minEntry), out: round3(duration) };
+    } else {
+      after = { in: round3(first.in), out: round3(first.out) };
+      warnings.push(
+        `fit: source ${first.source_id} has no usable duration, so the revived first entry could not be clamped`,
+      );
+    }
     finalEntries.push({ source_id: first.source_id, ...after, order: 0, overlay: first.overlay, note: first.note });
     orderMap.get(first.order)?.push(0);
-    reportEntries.push({ order: 0, source_id: first.source_id, before: { in: first.in, out: first.out }, after, action: "kept" });
+    const revived = { order: 0, source_id: first.source_id, before: { in: first.in, out: first.out }, after, action: "kept" as const };
+    if (firstOriginal) {
+      reportEntries[firstOriginal.row] = revived;
+      warnings.splice(firstOriginal.warning, 1);
+    } else {
+      reportEntries.push(revived);
+    }
     warnings.push(`fit: every entry was dropped; kept the first original entry (order ${first.order}) so the EDL stays valid`);
+  }
+
+  // A narration line with no picture would otherwise vanish without a trace: synthesized audio nobody ever
+  // hears and nothing for `library-review` to reject on. One shortfall row per orphaned group.
+  if (p.voice === "tts") {
+    const orphaned = new Map<number, NarrationTiming["lines"]>();
+    for (const line of p.timing.lines) {
+      if ((orderMap.get(line.edl_order)?.length ?? 0) > 0) continue;
+      const group = orphaned.get(line.edl_order);
+      if (group) group.push(line);
+      else orphaned.set(line.edl_order, [line]);
+    }
+    for (const order of [...orphaned.keys()].sort((a, b) => a - b)) {
+      const lines = orphaned.get(order) ?? [];
+      const seconds = round3(lines.reduce((a, l) => a + l.duration_seconds, 0) + FIT.lead + FIT.tail);
+      // Nothing of this group survived, so the whole need is uncovered -- that supersedes any partial row
+      // the fit rules left behind, keeping it at one row per line group.
+      const row = { line_ids: lines.map((l) => l.line_id), missing_seconds: seconds, reused_seconds: 0, uncovered_seconds: seconds };
+      const existing = shortfallRow.get(order);
+      if (existing === undefined) shortfalls.push(row);
+      else shortfalls[existing] = row;
+      warnings.push(`fit: narration for edl_order ${order} has no picture: ${lines.map((l) => l.line_id).join(", ")}`);
+    }
   }
 
   const total = round3(finalEntries.reduce((a, e) => a + (e.out - e.in), 0));
@@ -214,7 +261,8 @@ export function fitEdl(p: {
     voice: p.voice,
     entries: reportEntries,
     shortfalls,
-    reused_seconds: round3(reusedSeconds),
+    // By definition the sum of the rows, so replacing a row can never leave the total contradicting them.
+    reused_seconds: round3(shortfalls.reduce((a, s) => a + s.reused_seconds, 0)),
     warnings,
     total_seconds: total,
     ...(target ? { target_duration_seconds: target } : {}),
@@ -246,18 +294,23 @@ function appendedWork(group: ShotRef, take: number, lineIds: string[], action: "
 /**
  * The five `voice: tts` rules for one narrated entry (spec §4.1): trim, extend inside the entry's own shot,
  * append the adjacent shots of the same source, append the best unused shots anywhere, and finally reuse
- * footage already on screen -- recording a shortfall for whatever reuse had to cover, and for whatever even
- * reuse could not. Reuse makes at most one pass over its candidates, so it always terminates.
+ * footage already on screen. Reuse makes at most one pass over its candidates, so it always terminates.
+ *
+ * A deficit below `minEntry` is treated as covered and stops the search: a cut that short is not worth a
+ * shot of its own (it would be dropped again downstream) and the 0.4s tail pad absorbs it, so it is not a
+ * shortfall either. That is also why no appended or reused entry is ever shorter than `minEntry`.
+ *
+ * At most ONE shortfall row is produced, for the whole line group: `missing_seconds` is everything fresh
+ * footage could not cover, split into the part reuse papered over and the part nothing covers at all.
  */
 function fitOne(
   base: Work,
   lines: NarrationTiming["lines"],
   ctx: FitContext,
-): { work: Work[]; reused: number; shortfalls: FitReport["shortfalls"] } {
+): { work: Work[]; shortfall: FitReport["shortfalls"][number] | null } {
   const lineIds = lines.map((l) => l.line_id);
   const need = lines.reduce((a, l) => a + l.duration_seconds, 0) + FIT.lead + FIT.tail;
   const work: Work[] = [base];
-  const shortfalls: FitReport["shortfalls"] = [];
   const original = { in: base.in, out: base.out };
 
   // Rule 1 -- long enough already.
@@ -266,7 +319,7 @@ function fitOne(
       base.out = base.in + need;
       base.action = "trimmed";
     }
-    return { work, reused: 0, shortfalls };
+    return { work, shortfall: null };
   }
 
   // Rule 2 -- grow inside the shot the entry sits in; with no such shot the entry is its own bound and
@@ -282,11 +335,16 @@ function fitOne(
   ctx.markUsed(base.source_id, base.in, base.out);
   let remaining = need - (base.out - base.in);
 
+  /** True while the deficit is still big enough to be worth a cut of its own. */
+  const worthFilling = (): boolean => remaining >= FIT.minEntry - EPS;
+  /** A shot that could not fill even a minimum-length entry is no use to any of the append rules. */
+  const longEnough = (s: ShotRef): boolean => s.out - s.in >= FIT.minEntry - EPS;
+
   // Rule 3 -- the shots right after it in the same source, while they are free and usable.
   if (anchor) {
-    for (let i = list.indexOf(anchor) + 1; remaining > EPS && i < list.length; i++) {
+    for (let i = list.indexOf(anchor) + 1; worthFilling() && i < list.length; i++) {
       const sh = list[i]!;
-      if (!sh.usable || ctx.used.has(shotKey(sh))) break;
+      if (!sh.usable || ctx.used.has(shotKey(sh)) || !longEnough(sh)) break;
       const take = Math.min(sh.out - sh.in, remaining);
       work.push(appendedWork(sh, take, lineIds, "appended"));
       ctx.used.add(shotKey(sh));
@@ -295,8 +353,8 @@ function fitOne(
   }
 
   // Rule 4 -- the best unused shot anywhere, repeatedly.
-  while (remaining > EPS) {
-    const next = ctx.allShots.filter((s) => s.usable && !ctx.used.has(shotKey(s))).sort(byQuality)[0];
+  while (worthFilling()) {
+    const next = ctx.allShots.filter((s) => s.usable && longEnough(s) && !ctx.used.has(shotKey(s))).sort(byQuality)[0];
     if (!next) break;
     const take = Math.min(next.out - next.in, remaining);
     work.push(appendedWork(next, take, lineIds, "appended"));
@@ -306,17 +364,24 @@ function fitOne(
 
   // Rule 5 -- last resort: put the best footage on screen a second time and own up to it.
   let reused = 0;
-  if (remaining > EPS) {
-    for (const sh of ctx.allShots.filter((s) => s.usable && ctx.used.has(shotKey(s))).sort(byQuality)) {
-      if (remaining <= EPS) break;
+  if (worthFilling()) {
+    for (const sh of ctx.allShots.filter((s) => s.usable && longEnough(s) && ctx.used.has(shotKey(s))).sort(byQuality)) {
+      if (!worthFilling()) break;
       const take = Math.min(sh.out - sh.in, remaining);
       work.push(appendedWork(sh, take, lineIds, "reused"));
       remaining -= take;
       reused += take;
     }
-    if (round3(reused) > 0) shortfalls.push({ line_ids: lineIds, missing_seconds: round3(reused) });
-    if (round3(remaining) > 0) shortfalls.push({ line_ids: lineIds, missing_seconds: round3(remaining) });
+    const reusedSeconds = round3(reused);
+    const uncoveredSeconds = worthFilling() ? round3(remaining) : 0;
+    const missing = round3(reusedSeconds + uncoveredSeconds);
+    if (missing > 0) {
+      return {
+        work,
+        shortfall: { line_ids: lineIds, missing_seconds: missing, reused_seconds: reusedSeconds, uncovered_seconds: uncoveredSeconds },
+      };
+    }
   }
 
-  return { work, reused, shortfalls };
+  return { work, shortfall: null };
 }

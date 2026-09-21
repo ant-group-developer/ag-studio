@@ -105,6 +105,16 @@
               "missing_seconds": {
                 "type": "number",
                 "exclusiveMinimum": 0
+              },
+              "reused_seconds": {
+                "type": "number",
+                "minimum": 0,
+                "default": 0
+              },
+              "uncovered_seconds": {
+                "type": "number",
+                "minimum": 0,
+                "default": 0
               }
             },
             "required": [

@@ -144,7 +144,9 @@ describe("fitEdl - voice tts", () => {
       overlay: null,
       note: "fit: reused for L001",
     });
-    expect(report.shortfalls).toEqual([{ line_ids: ["L001"], missing_seconds: 1.7 }]);
+    expect(report.shortfalls).toEqual([
+      { line_ids: ["L001"], missing_seconds: 1.7, reused_seconds: 1.7, uncovered_seconds: 0 },
+    ]);
     expect(report.reused_seconds).toBe(1.7);
     expect(orderMap.get(0)).toEqual([0, 1]);
     expect(orderMap.get(1)).toEqual([2]);
@@ -162,8 +164,83 @@ describe("fitEdl - voice tts", () => {
     });
     expect(edl.entries).toHaveLength(1);
     expect(edl.entries[0]).toMatchObject({ in: 0, out: 3 });
-    expect(report.shortfalls).toEqual([{ line_ids: ["L001"], missing_seconds: 3.7 }]);
+    expect(report.shortfalls).toEqual([
+      { line_ids: ["L001"], missing_seconds: 3.7, reused_seconds: 0, uncovered_seconds: 3.7 },
+    ]);
     expect(report.reused_seconds).toBe(0);
+  });
+
+  it("records one shortfall row per line group, split into reused and uncovered seconds", () => {
+    // 20s of footage against a 300s line: 20s is shown twice over, 260.7s is not covered at all.
+    const shots = shotsFixture([{ source_id: SRC_A, index: 0, duration: 20, shots: [[0, 5], [5, 10], [10, 15], [15, 20]] }]);
+    const { report } = fitEdl({
+      edl: edlFixture([{ source_id: SRC_A, in: 0, out: 3, order: 0 }]),
+      timing: timingFixture([{ line_id: "L001", edl_order: 0, duration_seconds: 300 }]),
+      shots,
+      survey: surveyFor(shots),
+      transcript: null,
+      voice: "tts",
+    });
+    expect(report.shortfalls).toEqual([
+      { line_ids: ["L001"], missing_seconds: 280.7, reused_seconds: 20, uncovered_seconds: 260.7 },
+    ]);
+    expect(report.reused_seconds).toBe(20);
+  });
+
+  it("absorbs a leftover need below minEntry instead of appending a shot that would be dropped", () => {
+    // need = 4.35 + 0.7 = 5.05 against a 5s shot: the 0.05s leftover is soaked up by the tail pad.
+    const { edl, report } = fitEdl({
+      edl: edlFixture([{ source_id: SRC_A, in: 10, out: 13, order: 0 }]),
+      timing: timingFixture([{ line_id: "L001", edl_order: 0, duration_seconds: 4.35 }]),
+      shots: TWO_SOURCES,
+      survey: surveyFor(TWO_SOURCES),
+      transcript: null,
+      voice: "tts",
+    });
+    expect(edl.entries).toEqual([{ source_id: SRC_A, in: 10, out: 15, order: 0, overlay: null, note: "" }]);
+    expect(report.entries.map((e) => e.action)).toEqual(["extended"]);
+    expect(report.shortfalls).toEqual([]);
+    expect(report.warnings).toEqual([]);
+  });
+
+  it("reports narration whose edl_order matches no entry", () => {
+    const { report } = fitEdl({
+      edl: edlFixture([{ source_id: SRC_A, in: 0, out: 4, order: 0 }]),
+      timing: timingFixture([
+        { line_id: "L003", edl_order: 42, duration_seconds: 2 },
+        { line_id: "L004", edl_order: 42, duration_seconds: 1 },
+      ]),
+      shots: TWO_SOURCES,
+      survey: surveyFor(TWO_SOURCES),
+      transcript: null,
+      voice: "tts",
+    });
+    expect(report.shortfalls).toEqual([
+      { line_ids: ["L003", "L004"], missing_seconds: 3.7, reused_seconds: 0, uncovered_seconds: 3.7 },
+    ]);
+    expect(report.warnings).toContain("fit: narration for edl_order 42 has no picture: L003, L004");
+  });
+
+  it("reports narration whose entry was dropped, as one row for the whole need", () => {
+    // No shots at all, so nothing can be appended and the clamped 0.05s entry is dropped outright. The
+    // partial row the fit rules produced is superseded by the full-need orphan row -- never two rows.
+    const shots = shotsFixture([{ source_id: SRC_A, index: 0, duration: 30, shots: [] }]);
+    const { report, orderMap } = fitEdl({
+      edl: edlFixture([
+        { source_id: SRC_A, in: 0, out: 4, order: 0 },
+        { source_id: SRC_A, in: 29.95, out: 30.5, order: 1 },
+      ]),
+      timing: timingFixture([{ line_id: "L002", edl_order: 1, duration_seconds: 2 }]),
+      shots,
+      survey: null,
+      transcript: null,
+      voice: "tts",
+    });
+    expect(orderMap.get(1)).toEqual([]);
+    expect(report.shortfalls).toEqual([
+      { line_ids: ["L002"], missing_seconds: 2.7, reused_seconds: 0, uncovered_seconds: 2.7 },
+    ]);
+    expect(report.warnings).toContain("fit: narration for edl_order 1 has no picture: L002");
   });
 
   it("leaves an entry with no narration line alone and renumbers order contiguously", () => {
@@ -321,6 +398,28 @@ describe("fitEdl - voice original", () => {
     expect(report.entries[0]!.action).toBe("snapped");
   });
 
+  it("never inverts an entry when both points fall back onto the silence between them", () => {
+    const transcript = transcriptFixture([
+      {
+        source_id: SRC_A,
+        alignment: "word",
+        segments: [{ start: 9, end: 11.3, text: "a b", words: words([["a", 9.0, 10.0], ["b", 10.3, 11.3]]) }],
+      },
+    ]);
+    const { edl, report } = fitEdl({
+      edl: edlFixture([{ source_id: SRC_A, in: 9.95, out: 10.35, order: 0 }]),
+      timing: timingFixture([]),
+      shots: SHOTS,
+      survey: null,
+      transcript,
+      voice: "original",
+    });
+    expect(edl.entries[0]).toMatchObject({ in: 9.95, out: 10.35 });
+    expect(report.entries[0]!.action).toBe("kept");
+    expect(report.warnings).toHaveLength(1);
+    expect(report.warnings[0]).toContain("order 0");
+  });
+
   it("leaves a cut point that is not inside a word alone", () => {
     const transcript = transcriptFixture([
       {
@@ -395,7 +494,7 @@ describe("fitEdl - all modes", () => {
     expect(orderMap.get(1)).toEqual([]);
   });
 
-  it("keeps the first original entry when every entry would be dropped", () => {
+  it("revives the first entry CLAMPED when every entry would be dropped, with one report row for it", () => {
     const { edl, report } = fitEdl({
       edl: edlFixture([{ source_id: SRC_A, in: 29.95, out: 30.5, order: 3 }]),
       timing: timingFixture([]),
@@ -404,8 +503,44 @@ describe("fitEdl - all modes", () => {
       transcript: null,
       voice: "none",
     });
-    expect(edl.entries).toEqual([{ source_id: SRC_A, in: 29.95, out: 30.5, order: 0, overlay: null, note: "" }]);
-    expect(report.warnings.some((w) => w.includes("every entry"))).toBe(true);
+    // clamped to [29.95, 30] is only 0.05s, so the revived entry takes the last minEntry of the source
+    expect(edl.entries).toEqual([{ source_id: SRC_A, in: 29.8, out: 30, order: 0, overlay: null, note: "" }]);
+    expect(report.entries).toEqual([
+      { order: 0, source_id: SRC_A, before: { in: 29.95, out: 30.5 }, after: { in: 29.8, out: 30 }, action: "kept" },
+    ]);
+    expect(report.warnings).toEqual([
+      "fit: every entry was dropped; kept the first original entry (order 3) so the EDL stays valid",
+    ]);
+    expect(report.total_seconds).toBe(0.2);
+    expect(() => EdlSchema.parse(edl)).not.toThrow();
+  });
+
+  it("revives an entry whose clamp still leaves enough picture at the clamped values", () => {
+    const { edl, report } = fitEdl({
+      edl: edlFixture([{ source_id: SRC_A, in: 29.5, out: 29.6, order: 0 }]),
+      timing: timingFixture([]),
+      shots: SHOTS,
+      survey: null,
+      transcript: null,
+      voice: "none",
+    });
+    // the entry is simply too short (0.1s) rather than out of range, so the source's last 0.2s is used
+    expect(edl.entries[0]).toMatchObject({ in: 29.8, out: 30 });
+    expect(report.entries).toHaveLength(1);
+  });
+
+  it("revives an entry unclamped, with a warning, when the source duration is unusable", () => {
+    const noDuration = shotsFixture([{ source_id: SRC_A, index: 0, duration: 0, shots: [] }]);
+    const { edl, report } = fitEdl({
+      edl: edlFixture([{ source_id: SRC_A, in: 4, out: 4.1, order: 0 }]),
+      timing: timingFixture([]),
+      shots: noDuration,
+      survey: null,
+      transcript: null,
+      voice: "none",
+    });
+    expect(edl.entries[0]).toMatchObject({ in: 4, out: 4.1 });
+    expect(report.warnings.some((w) => w.includes("could not be clamped"))).toBe(true);
     expect(() => EdlSchema.parse(edl)).not.toThrow();
   });
 

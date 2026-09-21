@@ -89,7 +89,16 @@ export const FitReportSchema = z.object({
     after: z.object({ in: z.number(), out: z.number() }).strict(),
     action: z.enum(FIT_ACTIONS),
   }).strict()),
-  shortfalls: z.array(z.object({ line_ids: z.array(z.string()), missing_seconds: z.number().positive() }).strict()),
+  /** One row per narration line group that fresh footage could not cover. `missing_seconds` is the whole
+   * uncovered need (`reused_seconds + uncovered_seconds`), split into the part that was papered over by
+   * showing footage a second time and the part that nothing covers at all -- so a consumer summing
+   * `missing_seconds` across rows never double-counts a group. */
+  shortfalls: z.array(z.object({
+    line_ids: z.array(z.string()),
+    missing_seconds: z.number().positive(),
+    reused_seconds: z.number().min(0).default(0),
+    uncovered_seconds: z.number().min(0).default(0),
+  }).strict()),
   reused_seconds: z.number().min(0),
   warnings: z.array(z.string()),
   total_seconds: z.number().min(0),

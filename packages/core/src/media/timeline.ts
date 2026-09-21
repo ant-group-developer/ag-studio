@@ -4,10 +4,7 @@
  * randomness. */
 import { TimelineSchema, type Edl, type NarrationTiming, type Timeline, type Transcript, type Word } from "@harness/contracts";
 import { FIT } from "./fit-edl.js";
-
-function round3(n: number): number {
-  return Math.round(n * 1000) / 1000;
-}
+import { round3 } from "./time.js";
 
 /** Copies a word onto the programme clock. `score` is spread conditionally: the schema has it optional and
  * the repo compiles with `exactOptionalPropertyTypes`, so an explicit `undefined` would not type-check. */
@@ -58,6 +55,9 @@ export function buildTimeline(p: {
 
   const narration: Timeline["narration"] = [];
   for (const order of [...groups.keys()].sort((a, b) => a - b)) {
+    // No picture for this line group: skip it silently. A timeline has no report to record the loss in --
+    // `fitEdl` has already pushed a shortfall row and a warning for exactly these groups (see the
+    // "narration ... has no picture" block there), which is what `library-review` rejects on.
     const anchor = byOrder.get(p.orderMap.get(order)?.[0] ?? -1);
     if (!anchor) continue;
     let at = anchor.start + FIT.lead;

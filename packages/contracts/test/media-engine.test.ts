@@ -87,6 +87,19 @@ describe("media-engine schemas", () => {
     }).shots).toHaveLength(1);
   });
 
+  it("splits a fit-report shortfall into reused and uncovered seconds, defaulting both to 0", () => {
+    const withRow = (row: Record<string, unknown>) => ({ ...fitReportSample(), shortfalls: [row] });
+    expect(FitReportSchema.parse(withRow({ line_ids: ["L001"], missing_seconds: 2 })).shortfalls[0]).toEqual({
+      line_ids: ["L001"], missing_seconds: 2, reused_seconds: 0, uncovered_seconds: 0,
+    });
+    expect(FitReportSchema.parse(withRow({
+      line_ids: ["L001", "L002"], missing_seconds: 280.7, reused_seconds: 20, uncovered_seconds: 260.7,
+    })).shortfalls[0]?.uncovered_seconds).toBe(260.7);
+    // missing_seconds stays strictly positive, and neither split may be negative
+    expect(FitReportSchema.safeParse(withRow({ line_ids: [], missing_seconds: 0 })).success).toBe(false);
+    expect(FitReportSchema.safeParse(withRow({ line_ids: [], missing_seconds: 2, reused_seconds: -1 })).success).toBe(false);
+  });
+
   it("rejects a shot_id that does not match s###-### ", () => {
     const bad = shotsIndexSample();
     bad.sources[0]!.shots[0]!.shot_id = "s1-2";
