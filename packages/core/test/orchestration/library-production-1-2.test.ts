@@ -111,9 +111,11 @@ describe("library-production@1.2.0", () => {
     expect(s.depends_on).toEqual(["media-fit-edl"]);
   });
 
-  it("assemble depends on cut/intake/media-tts/media-fit-edl, no depends_on_optional", () => {
+  // `media-index` joined this set in the task-10 fix round: `audio-integrity` needs its `shots` output
+  // (`has_audio` per source) to tell a deliberately silent `voice: none` episode from one that lost its audio.
+  it("assemble depends on cut/intake/media-tts/media-fit-edl/media-index, no depends_on_optional", () => {
     const s = wf.definition.stages.find((st) => st.key === "assemble")!;
-    expect(s.depends_on.sort()).toEqual(["cut", "intake", "media-fit-edl", "media-tts"]);
+    expect(s.depends_on.sort()).toEqual(["cut", "intake", "media-fit-edl", "media-index", "media-tts"]);
     expect(s.depends_on_optional).toEqual([]);
     expect(s.required_checks).toContain("brief-duration");
   });

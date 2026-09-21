@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { EdlSchema, NarrationSchema, NarrationTimingSchema, type Checker, type CheckerInput, type MediaProber, type StageOutput } from "@harness/contracts";
+import { EdlSchema, NarrationSchema, NarrationTimingSchema, ShotsIndexSchema, type Checker, type CheckerInput, type MediaProber, type StageOutput } from "@harness/contracts";
 
 function mimeOf(input: CheckerInput, o: StageOutput): string {
   return input.request.expected_outputs.find((e) => e.type === o.type)?.mime_type ?? "";
@@ -17,6 +17,44 @@ function peakVolumeDb(ffmpeg: string, path: string): number | null {
   if (!m) return null;
   const n = Number(m[1]);
   return Number.isFinite(n) ? n : null;
+}
+
+/** `<workspaceDir>/<input of this type>.path`, JSON-parsed; `undefined` when the stage has no such input or
+ * the file cannot be read/parsed. Never throws: it only ever decides whether an EXTRA allowance applies, so
+ * anything unreadable must fall back to the stricter path, not blow the checker up. */
+function readInputJson(input: CheckerInput, type: string): unknown | undefined {
+  const found = input.request.inputs.find((i) => i.type === type);
+  if (!found) return undefined;
+  try {
+    return JSON.parse(readFileSync(join(input.workspaceDir, found.path), "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Sub-project 5A: is this episode supposed to be silent?
+ *
+ * An episode assembled from drone/b-roll clips that carry no audio track at all, for a request that asked for
+ * `voice: "none"`, is silent BY DESIGN -- `assemble` mixes only its `anullsrc` pad, so the silence ratio comes
+ * out at ~1.0 and `max_silence_ratio` (0.9 on the studio profile) fails a stage nothing can ever fix: the run
+ * goes FAILED rather than producing a rejected review, so the SP4 replan loop never sees it and the request
+ * sits at `claimed` waiting for a human -- the one thing this project does not allow.
+ *
+ * Both conditions must hold, and both must be positively evidenced by an input this stage actually has:
+ *   1. a `brief` input declaring `voice: "none"`;
+ *   2. a `shots` input (`harness.shots/v2`, `media-index`) whose sources ALL report `has_audio: false`.
+ * Without either input -- 1.0.0/1.1.0, the footage pipeline, any hand-built stage -- this is `false` and
+ * `audio-integrity` behaves exactly as it did before. A `voice: "none"` episode over sources that DO have
+ * audio stays held to the policy: that silence would be a genuinely lost audio track.
+ */
+function silentByBrief(input: CheckerInput): boolean {
+  const brief = readInputJson(input, "brief") as { voice?: unknown } | undefined;
+  if (!brief || typeof brief !== "object" || brief.voice !== "none") return false;
+
+  const parsed = ShotsIndexSchema.safeParse(readInputJson(input, "shots"));
+  if (!parsed.success) return false;
+  return parsed.data.sources.length > 0 && parsed.data.sources.every((s) => !s.has_audio);
 }
 
 /**
@@ -89,6 +127,10 @@ export function mediaCheckers(prober: MediaProber, opts: { available?: boolean; 
       if (outputs.length === 0) return skip("no matching output");
       const threshold = input.request.policy.max_silence_ratio;
       const checked: string[] = [];
+      // Resolved at most once, and only if some output actually exceeds the threshold (it reads two input
+      // files off disk, which a passing episode should never pay for).
+      let silent: boolean | undefined;
+      let exempt: { path: string; reason: string; silence_ratio: number } | undefined;
       for (const o of outputs) {
         const path = join(input.workspaceDir, o.path);
         const probed = await prober.probe(path);
@@ -98,12 +140,18 @@ export function mediaCheckers(prober: MediaProber, opts: { available?: boolean; 
         if (threshold !== undefined && prober.silenceRatio) {
           const ratio = await prober.silenceRatio(path);
           if (ratio !== null && ratio > threshold) {
-            return { verdict: "fail", evidence: { path: o.path, reason: "silence ratio exceeds policy", ratio, threshold } };
+            silent ??= silentByBrief(input);
+            // `pass`, never `skip`: this is a REQUIRED check on `assemble`, and a skipped required check
+            // fails the stage just as an outright fail would (AGENTS.md: "skip không phải là pass").
+            if (!silent) {
+              return { verdict: "fail", evidence: { path: o.path, reason: "silence ratio exceeds policy", ratio, threshold } };
+            }
+            exempt = { path: o.path, reason: "silent by brief", silence_ratio: ratio };
           }
         }
         checked.push(o.path);
       }
-      return { verdict: "pass", evidence: { checked } };
+      return { verdict: "pass", evidence: exempt ? { checked, ...exempt } : { checked } };
     },
   };
 

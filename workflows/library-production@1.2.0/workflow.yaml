@@ -75,7 +75,10 @@ stages:
       - { type: clip_set, mime_type: application/x-directory, kind: directory, name: cuts }
   - key: assemble
     executor: { type: script, script: assemble }
-    depends_on: [cut, intake, media-tts, media-fit-edl]
+    # `media-index` is here for its `shots` output, not for the picture: `audio-integrity` needs it to tell a
+    # deliberately silent episode (`voice: none` over sources that carry no audio track at all) from an
+    # episode that lost its audio, and it is the only stage carrying `has_audio` per source.
+    depends_on: [cut, intake, media-tts, media-fit-edl, media-index]
     requires_resources: [cpu]
     required_checks: [schema-valid, output-exists, checksum-match, media-probe, duration-range, audio-integrity, brief-duration]
     outputs:

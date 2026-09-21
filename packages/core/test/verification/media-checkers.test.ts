@@ -238,6 +238,113 @@ describe("mediaCheckers", () => {
       expect((await fine.check({ request, result, workspaceDir: ws })).verdict).toBe("pass");
       rmSync(ws, { recursive: true, force: true });
     });
+
+    // Sub-project 5A task 10 fix round: an episode cut from footage with no audio track at all, for a request
+    // that asked for `voice: "none"`, is silent BY DESIGN -- `assemble` mixes only its `anullsrc` pad. Failing
+    // it on `max_silence_ratio` parks the run FAILED (not a rejected review), so the SP4 replan loop never
+    // sees it and the request sits at `claimed` waiting for a human. The allowance is narrow and must be
+    // positively evidenced by BOTH the `brief` and the `shots` input.
+    describe("silent by brief (voice: none over footage with no audio)", () => {
+      const EPISODE = { path: "output/full-episode.mp4", type: "full_episode", checksum: sha, size_bytes: 1, kind: "file" as const };
+
+      /** A workspace with the episode output plus, optionally, `brief.json` and `shots.json` inputs -- and the
+       * `StageRequest.inputs` entries that point at them. */
+      function silentWorkspace(o: { voice?: string; shotsHaveAudio?: boolean[] }): { ws: string; request: StageRequest; path: string } {
+        const ws = tmpWorkspace();
+        mkdirSync(join(ws, "output"), { recursive: true });
+        mkdirSync(join(ws, "input"), { recursive: true });
+        writeFileSync(join(ws, "output", "full-episode.mp4"), "x");
+
+        const inputs: StageRequest["inputs"] = [];
+        if (o.voice !== undefined) {
+          writeFileSync(join(ws, "input", "brief.json"), JSON.stringify({ topic: "t", style_id: newId("edit_style"), style_revision: 1, voice: o.voice, language: "en" }));
+          inputs.push({ artifact_id: newId("artifact"), checksum: sha, path: "input/brief.json", type: "brief", kind: "file" });
+        }
+        if (o.shotsHaveAudio !== undefined) {
+          writeFileSync(join(ws, "input", "shots.json"), JSON.stringify({
+            schema_version: "harness.shots/v2",
+            sources: o.shotsHaveAudio.map((has_audio, index) => ({
+              source_id: newId("source_item"), index, file_name: `clip-${index}.mp4`, duration_seconds: 6, has_audio,
+              shots: [{ shot_id: `s${String(index).padStart(3, "0")}-000`, in: 0, out: 6 }],
+            })),
+          }));
+          inputs.push({ artifact_id: newId("artifact"), checksum: sha, path: "input/shots.json", type: "shots", kind: "file" });
+        }
+
+        const request = baseRequest({
+          expected_outputs: [{ type: "full_episode", mime_type: "video/mp4", kind: "file" }],
+          policy: { max_silence_ratio: 0.9 },
+          inputs,
+        });
+        return { ws, request, path: join(ws, "output", "full-episode.mp4") };
+      }
+
+      /** The checker with a prober reporting an audio stream and a near-total silence ratio (0.997 is what a
+       * real `anullsrc`-only episode measured in the task-10 end-to-end probe). */
+      function run(o: { voice?: string; shotsHaveAudio?: boolean[] }): Promise<{ verdict: string; evidence: Record<string, unknown>; ws: string }> {
+        const { ws, request, path } = silentWorkspace(o);
+        const result = baseResult([EPISODE]);
+        const checker = checkerById(
+          mediaCheckers(new FakeMediaProber(new Map([[path, videoProbe(10)]]), new Map([[path, 0.997]]))),
+          "audio-integrity",
+        );
+        return checker.check({ request, result, workspaceDir: ws }).then((o2) => ({ verdict: o2.verdict, evidence: o2.evidence, ws }));
+      }
+
+      it("passes (never skips) when the brief says voice: none and no source has audio", async () => {
+        const { verdict, evidence, ws } = await run({ voice: "none", shotsHaveAudio: [false, false] });
+        // `pass`, not `skip`: `audio-integrity` is a REQUIRED check on `assemble`, and a skipped required
+        // check fails the stage exactly like a failing one.
+        expect(verdict).toBe("pass");
+        expect(evidence.reason).toBe("silent by brief");
+        expect(evidence.silence_ratio).toBe(0.997);
+        rmSync(ws, { recursive: true, force: true });
+      });
+
+      it("still fails when ONE source does have an audio track (that silence is a lost audio track)", async () => {
+        const { verdict, evidence, ws } = await run({ voice: "none", shotsHaveAudio: [false, true] });
+        expect(verdict).toBe("fail");
+        expect(evidence.reason).toBe("silence ratio exceeds policy");
+        rmSync(ws, { recursive: true, force: true });
+      });
+
+      it("still fails for voice: tts and voice: original, whatever the footage has", async () => {
+        for (const voice of ["tts", "original"]) {
+          const { verdict, evidence, ws } = await run({ voice, shotsHaveAudio: [false, false] });
+          expect(verdict, voice).toBe("fail");
+          expect(evidence.reason, voice).toBe("silence ratio exceeds policy");
+          rmSync(ws, { recursive: true, force: true });
+        }
+      });
+
+      it("is unchanged without a brief input, without a shots input, or with neither (1.0.0/1.1.0, footage)", async () => {
+        for (const o of [{ shotsHaveAudio: [false] }, { voice: "none" }, {}]) {
+          const { verdict, evidence, ws } = await run(o);
+          expect(verdict, JSON.stringify(o)).toBe("fail");
+          expect(evidence.reason, JSON.stringify(o)).toBe("silence ratio exceeds policy");
+          rmSync(ws, { recursive: true, force: true });
+        }
+      });
+
+      it("does not let the allowance rescue a missing audio stream, and leaves a quiet episode passing plainly", async () => {
+        const { ws, request, path } = silentWorkspace({ voice: "none", shotsHaveAudio: [false] });
+        const result = baseResult([EPISODE]);
+
+        const noStream = checkerById(mediaCheckers(new FakeMediaProber(new Map([[path, videoProbe(10, false)]]))), "audio-integrity");
+        const noStreamOutcome = await noStream.check({ request, result, workspaceDir: ws });
+        expect(noStreamOutcome.verdict).toBe("fail");
+        expect(noStreamOutcome.evidence.reason).toBe("no audio stream");
+
+        const under = checkerById(
+          mediaCheckers(new FakeMediaProber(new Map([[path, videoProbe(10)]]), new Map([[path, 0.2]]))),
+          "audio-integrity",
+        );
+        const underOutcome = await under.check({ request, result, workspaceDir: ws });
+        expect(underOutcome.verdict).toBe("pass");
+        expect(underOutcome.evidence.reason).toBeUndefined(); // no allowance was needed, so none is claimed
+        rmSync(ws, { recursive: true, force: true });
+      });
+    });
   });
 
   describe("clip-set-complete", () => {
