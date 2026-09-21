@@ -352,4 +352,83 @@ describe("autoAccept (collections, sub-project 5A)", () => {
     expect(hintedAccept, JSON.stringify(thirdReport)).toBeDefined();
     expect(w.store.getContentItem(w.store.getRun(hintedAccept!.run_id)!.content_id!)?.source_ids).toEqual([a.source_id]);
   });
+
+  // Final-review Important 2: the own-request exemption made the OLD shoot *available* to a replan but the
+  // newest-first rule still won, so a replan with a newer unused shoot around jumped ship -- and the shoot it
+  // abandoned stayed `used` by a request that had moved on, locking every other request out of it forever.
+  // Which request got which shoot then came down to `created_at` order, which is not a decision anyone made.
+  describe("a replan prefers the shoot it already worked on (Important 2)", () => {
+    async function reopenedWorld(order: "replan-first" | "newcomer-first") {
+      const w = world();
+      const styleId = newId("edit_style");
+      w.store.upsertEditStyle(makeStyle(styleId));
+      // The newcomer is held out of the FIRST sweep by a draft style ("style-inactive"), so `order` controls
+      // only its `created_at` relative to R's -- which is exactly what used to decide who got which shoot.
+      const laterStyleId = newId("edit_style");
+      w.store.upsertEditStyle(makeStyle(laterStyleId, "draft"));
+      const a = await ingestNamed(w, "a.mp4", "1", "shoot-a");
+      const cfg = baseConfig({ source_collections: ["shoot-*"], max_concurrent_runs: 5 });
+
+      const mkReplanned = () => createOpenRequest(w, { style_id: styleId });
+      const mkNewcomer = () => createOpenRequest(w, { style_id: laterStyleId });
+      const [replanned, newcomer] = order === "newcomer-first"
+        ? ((n) => { w.clock.advance(1); return [mkReplanned(), n] as const; })(mkNewcomer())
+        : ((r) => { w.clock.advance(1); return [r, mkNewcomer()] as const; })(mkReplanned());
+
+      // run 1 for R on shoot-a, rejected review -> run SUCCEEDED, request reopened
+      const firstReport = await autoAccept(depsFor(w, cfg));
+      const firstAccept = firstReport.accepted.find((x) => x.request_id === replanned.request_id);
+      expect(firstAccept, JSON.stringify(firstReport)).toBeDefined();
+      expect(w.store.getContentItem(w.store.getRun(firstAccept!.run_id)!.content_id!)?.source_ids).toEqual([a.source_id]);
+      settleRun(w, firstAccept!.run_id);
+      claim(w, replanned.request_id, firstAccept!.run_id);
+      reopenRequest({ store: w.store, fs: w.studio, clock: w.clock }, { request_id: replanned.request_id, note: "off brief" });
+
+      // a NEWER shoot arrives, unused by anyone, and the newcomer's style goes active
+      w.clock.advance(10);
+      const b = await ingestNamed(w, "b.mp4", "2", "shoot-b");
+      w.store.upsertEditStyle(makeStyle(laterStyleId));
+      return { w, cfg, replanned, newcomer, a, b, styleId };
+    }
+
+    for (const order of ["replan-first", "newcomer-first"] as const) {
+      it(`gives the replan its own shoot-a and the other request shoot-b (${order})`, async () => {
+        const { w, cfg, replanned, newcomer, a, b } = await reopenedWorld(order);
+
+        const report = await autoAccept(depsFor(w, cfg));
+        const sourcesOf = (requestId: string): string[] => {
+          const accept = report.accepted.find((x) => x.request_id === requestId);
+          expect(accept, `${requestId} was not accepted: ${JSON.stringify(report)}`).toBeDefined();
+          return w.store.getContentItem(w.store.getRun(accept!.run_id)!.content_id!)!.source_ids;
+        };
+        expect(sourcesOf(replanned.request_id), "the replan abandoned its own shoot").toEqual([a.source_id]);
+        expect(sourcesOf(newcomer.request_id)).toEqual([b.source_id]);
+
+        // the report/event now say which collection and every source, not just `picked[0]`
+        const replanAccept = report.accepted.find((x) => x.request_id === replanned.request_id)!;
+        expect(replanAccept.collection).toBe("shoot-a");
+        expect(replanAccept.source_ids).toEqual([a.source_id]);
+        const event = w.store.listEvents({ event_type: "request.auto_accepted" }).find((e) => e.payload.run_id === replanAccept.run_id);
+        expect(event?.payload).toMatchObject({ collection: "shoot-a", source_ids: [a.source_id], source_id: a.source_id });
+      });
+    }
+
+    // The preference is a preference, not a lock: a shoot another request is actually working on stays off
+    // limits, and the replan falls back to the ordinary newest-first rule.
+    it("falls through to the newest-first rule when the replan's own shoot is busy for someone else", async () => {
+      const { w, cfg, replanned, styleId, a, b } = await reopenedWorld("replan-first");
+      // a third request is already holding shoot-a (a ContentItem with no run yet -- the `harness library
+      // accept` window), which makes it busy for everyone else
+      const hogger = createOpenRequest(w, { style_id: styleId, source_hint: { collection: "shoot-a" } });
+      w.catalog.createContent({
+        source_ids: [a.source_id], title: "held",
+        library_brief: { topic: "held", style_id: styleId, style_revision: 1, voice: "none", language: "vi", request_id: hogger.request_id },
+      });
+
+      const report = await autoAccept(depsFor(w, cfg));
+      const replanAccept = report.accepted.find((x) => x.request_id === replanned.request_id);
+      expect(replanAccept, JSON.stringify(report)).toBeDefined();
+      expect(w.store.getContentItem(w.store.getRun(replanAccept!.run_id)!.content_id!)?.source_ids).toEqual([b.source_id]);
+    });
+  });
 });

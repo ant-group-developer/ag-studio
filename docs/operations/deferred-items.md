@@ -751,9 +751,6 @@ giọng, trên GPU của máy build (`docs/runbooks/studio-media.md` mục 7 và
 - `sha256FileSync` trả `size_bytes` mà không ai dùng.
 - Chạy lại `create-requests` **không** tính lại trạng thái hạ giọng (`downgraded_voice`) cho một request đã
   tồn tại — kênh vừa thêm giọng vẫn thấy request cũ ở `voice: none`.
-- **Chế độ collection: replan không ưu tiên collection cũ của chính request đó khi đã có collection mới chưa
-  dùng.** Hệ quả: một buổi quay có thể bị bỏ lửng, và kết cục phụ thuộc thứ tự `created_at` của các request.
-  Đây là khoảng trống trong phán quyết của Task 7, cố ý để lại cho sub-project sau chứ không phải bỏ sót.
 - `d.config.source_collections` là mã chết bên trong `core` (chế độ đã được quyết ở `AutoAcceptDeps.sources`).
 - Mỗi lượt quét auto-accept vẫn duyệt `listRuns` lần thứ hai và hỏi từng source một.
 - Tên collection **không được kiểm ở CLI** — regex của schema bắt nó muộn, sau khi đã ingest.

@@ -72,7 +72,9 @@ export interface AutoAcceptDeps {
 export type AutoAcceptSkipReason = "no-style" | "style-inactive" | "run-active" | "exhausted" | "no-source" | "concurrency" | "plan-failed";
 
 export interface AutoAcceptReport {
-  accepted: { request_id: string; run_id: string; replan_no: number; source_id: string }[];
+  /** `source_id` is `source_ids[0]`, kept because every sub-project 4 reader already keys off it; in
+   * collection mode a request takes a whole shoot, so `source_ids`/`collection` are the real answer. */
+  accepted: { request_id: string; run_id: string; replan_no: number; source_id: string; source_ids: string[]; collection: string }[];
   skipped: { request_id: string; reason: AutoAcceptSkipReason }[];
 }
 
@@ -205,7 +207,7 @@ function collectionsOfContent(store: StateStore, contentId: string | undefined):
  * Computed once per `autoAccept` sweep; `collectionsExcluding` below narrows it per request without
  * re-scanning the store.
  */
-function computeCollectionAttribution(store: StateStore): { busy: Map<string, Set<string>>; used: Map<string, Set<string>> } {
+function computeCollectionAttribution(store: StateStore): { busy: Map<string, Set<string>>; used: Map<string, Set<string>>; own: Map<string, string[]> } {
   const busy = new Map<string, Set<string>>();
   const used = new Map<string, Set<string>>();
   const attribute = (map: Map<string, Set<string>>, collection: string, requestId: string): void => {
@@ -213,6 +215,9 @@ function computeCollectionAttribution(store: StateStore): { busy: Map<string, Se
     if (!ids) { ids = new Set(); map.set(collection, ids); }
     ids.add(requestId);
   };
+  /** Every (request, collection) pair with the timestamp of the work that tied them together -- collapsed
+   * into `own` (most recent first, deduped) at the end. See `pickSources`'s rule 3a. */
+  const worked: { requestId: string; collection: string; at: string }[] = [];
 
   const contentIdsWithRun = new Set<string>();
   for (const run of store.listRuns({})) {
@@ -220,8 +225,12 @@ function computeCollectionAttribution(store: StateStore): { busy: Map<string, Se
     if (run.workflow_release.id !== "library-production") continue;
     const requestId = requestIdForRun(store, run);
     if (!requestId) continue;
-    if (run.state === "SUCCEEDED") { for (const c of collectionsOfContent(store, run.content_id)) attribute(used, c, requestId); }
-    else if (!isTerminal("run", run.state)) { for (const c of collectionsOfContent(store, run.content_id)) attribute(busy, c, requestId); }
+    const collections = collectionsOfContent(store, run.content_id);
+    // A run in ANY state counts as "this request has worked on that shoot" -- including a FAILED or
+    // CANCELLED one, which is neither busy nor used but is still the shoot the request was pointed at.
+    for (const c of collections) worked.push({ requestId, collection: c, at: run.created_at });
+    if (run.state === "SUCCEEDED") { for (const c of collections) attribute(used, c, requestId); }
+    else if (!isTerminal("run", run.state)) { for (const c of collections) attribute(busy, c, requestId); }
   }
 
   const openOrClaimed = new Set(
@@ -233,11 +242,20 @@ function computeCollectionAttribution(store: StateStore): { busy: Map<string, Se
     if (!requestId || !openOrClaimed.has(requestId)) continue;
     for (const id of item.source_ids) {
       const source = store.getSourceItem(id);
-      if (source) attribute(busy, source.collection, requestId);
+      if (!source) continue;
+      attribute(busy, source.collection, requestId);
+      worked.push({ requestId, collection: source.collection, at: item.created_at });
     }
   }
 
-  return { busy, used };
+  const own = new Map<string, string[]>();
+  for (const w of worked.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))) {
+    let list = own.get(w.requestId);
+    if (!list) { list = []; own.set(w.requestId, list); }
+    if (!list.includes(w.collection)) list.push(w.collection);
+  }
+
+  return { busy, used, own };
 }
 
 /** Collections `map` marks busy/used *for someone other than* `requestId` -- the own-request exemption: a
@@ -278,13 +296,21 @@ function sortByFilenameThenIngested(items: SourceItem[]): SourceItem[] {
  *  1. `source_hint.source_ids` -- every one that still exists and is not rights-restricted, in hint order;
  *     busy/used never applies (the request named these directly).
  *  2. else `source_hint.collection` -- every non-restricted source of that collection, regardless of busy/used.
- *  3. else the collections matching `patterns` that are not in `busyCollections`/`usedCollections` and have at
- *     least one non-restricted source; the one with the greatest max(ingested_at) wins (ties broken by
- *     collection name ascending).
+ *  3. else, among the collections matching `patterns` that are not in `busyCollections`/`usedCollections` and
+ *     have at least one non-restricted source:
+ *     a. a collection THIS request has already worked on (`ownCollections`, most recently worked first) wins
+ *        outright -- a replan must go back to its own shoot;
+ *     b. otherwise the one with the greatest max(ingested_at) (ties broken by collection name ascending).
  * Cases 2/3 are sorted by the decoded `basename(original_uri)` then `ingested_at` and capped at `maxSources`;
  * an empty result means the caller should skip the request as `"no-source"`.
+ *
+ * Rule 3a is the final-review Important 2 fix. Without it a reopened request with a newer unused shoot around
+ * jumped to that shoot, and the shoot it abandoned stayed `used` by a request that had moved on -- excluded
+ * from every other request forever. Which request ended up on which shoot then depended on nothing but the
+ * `created_at` order of the open requests. `busyCollections`/`usedCollections` already carry the own-request
+ * exemption, so a shoot another request is really working on is not in `byCollection` and 3a cannot take it.
  */
-export function pickSources(store: StateStore, p: { request: ContentRequest; patterns: string[]; maxSources: number; busyCollections: Set<string>; usedCollections: Set<string> }): SourceItem[] {
+export function pickSources(store: StateStore, p: { request: ContentRequest; patterns: string[]; maxSources: number; busyCollections: Set<string>; usedCollections: Set<string>; ownCollections?: string[] }): SourceItem[] {
   const hint = p.request.source_hint;
 
   if (hint?.source_ids?.length) {
@@ -310,6 +336,11 @@ export function pickSources(store: StateStore, p: { request: ContentRequest; pat
     if (!list) { list = []; byCollection.set(source.collection, list); }
     list.push(source);
   }
+  for (const collection of p.ownCollections ?? []) {
+    const items = byCollection.get(collection);
+    if (items?.length) return sortByFilenameThenIngested(items).slice(0, p.maxSources);
+  }
+
   let chosen: string | undefined;
   let chosenNewest = "";
   for (const [collection, items] of byCollection) {
@@ -416,7 +447,8 @@ export async function autoAccept(d: AutoAcceptDeps): Promise<AutoAcceptReport> {
     } else {
       const busyCollections = collectionsExcluding(collections!.busy, request.request_id);
       const usedCollections = collectionsExcluding(collections!.used, request.request_id);
-      picked = pickSources(store, { request, patterns: d.sources.patterns, maxSources: d.sources.maxSources, busyCollections, usedCollections });
+      const ownCollections = collections!.own.get(request.request_id) ?? [];
+      picked = pickSources(store, { request, patterns: d.sources.patterns, maxSources: d.sources.maxSources, busyCollections, usedCollections, ownCollections });
     }
     if (picked.length === 0) {
       report.skipped.push({ request_id: request.request_id, reason: "no-source" });
@@ -446,11 +478,14 @@ export async function autoAccept(d: AutoAcceptDeps): Promise<AutoAcceptReport> {
           content,
           {
             event_type: "request.auto_accepted", channel_id: null,
-            payload: (runId) => ({ request_id: request.request_id, run_id: runId, replan_no: replanNo, source_id: picked[0]!.source_id }),
+            // `source_id` is kept for backward compatibility (every SP4 reader keys off it); `source_ids` and
+            // `collection` are the whole truth in collection mode, where one request takes a whole shoot and
+            // `picked[0]` alone said nothing about the other 39 clips (final-review bundled minor).
+            payload: (runId) => ({ request_id: request.request_id, run_id: runId, replan_no: replanNo, source_id: picked[0]!.source_id, source_ids: picked.map((s) => s.source_id), collection: picked[0]!.collection }),
           },
           { voice: request.voice },
         );
-        report.accepted.push({ request_id: request.request_id, run_id: run.run_id, replan_no: replanNo, source_id: picked[0]!.source_id });
+        report.accepted.push({ request_id: request.request_id, run_id: run.run_id, replan_no: replanNo, source_id: picked[0]!.source_id, source_ids: picked.map((s) => s.source_id), collection: picked[0]!.collection });
         activeRequestIds.add(request.request_id);
         activeCount++;
         if (d.sources.mode === "legacy") {
