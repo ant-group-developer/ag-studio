@@ -1,9 +1,9 @@
 schema_version: harness.production-profile/v1
 profile_id: studio
-revision: 2
+revision: 3
 status: active
-workflow_release: library-production@1.1.0
-overrides: {}
+workflow_release: library-production@1.2.0
+overrides: { default_deadline_seconds: 14400 }
 options_schema:
   voice: [none, tts, original]
   subtitles: ["true", "false"]

@@ -87,6 +87,28 @@ export function probeDurationSync(path: string, opts?: { ffprobe?: string; timeo
   }
 }
 
+/**
+ * Synchronous duration + has_audio probe (sub-project 5A task 8): `IndexDeps.probe`
+ * (packages/core/src/media/index.ts) is a plain synchronous function -- `indexSources` has no `await` point
+ * for it -- so this is the adapter-layer counterpart to `probeDurationSync` above, extended with the one
+ * extra field `media-index` needs. Same failure shape: a missing file, missing ffprobe binary, non-zero exit,
+ * timeout, or unparsable JSON all return `null` rather than throwing.
+ */
+export function probeSync(path: string, opts?: { ffprobe?: string; timeoutMs?: number }): { duration_seconds: number | null; has_audio: boolean } | null {
+  const ffprobe = opts?.ffprobe ?? process.env.FFPROBE_PATH ?? "ffprobe";
+  const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const r = run(ffprobe, ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", path], timeoutMs);
+  if (timedOutOrFailed(r) || r.status !== 0) return null;
+  try {
+    const parsed = JSON.parse(r.stdout) as FfprobeOutput;
+    const duration_seconds = parseDuration(parsed.format?.duration);
+    const has_audio = (parsed.streams ?? []).some((s) => s.codec_type === "audio");
+    return { duration_seconds, has_audio };
+  } catch {
+    return null;
+  }
+}
+
 export class FfprobeMediaProber implements MediaProber {
   private readonly ffprobeBin: string;
   private readonly ffmpegBin: string;

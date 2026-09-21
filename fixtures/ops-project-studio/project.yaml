@@ -23,8 +23,15 @@ library:
 adapters:
   agent: cli
   agent_argv: [node, ../fake-agent-cli.mjs, "{prompt}"]
+  # Sub-project 5A: no Python engine in tests -- FakeMediaEngine stands in for WhisperX/OmniVoice everywhere
+  # this fixture is used (default is already "fake"; spelled out here per the task-8 plan).
+  media: fake
 # Both the 1.0.0 (gate-based, sub-project 2C) and 1.1.0 (agent-based, sub-project 4) releases stay listed so
 # `doctor` scopes both -- tests/integration/library-pipeline.test.ts still runs library-production@1.0.0
 # against this same fixture (profile studio revision 2's workflow_release is 1.1.0, but --workflow can
-# always name an older release explicitly; see acceptance 32).
-workflows: [style-study@1.0.0, style-study@1.1.0, library-production@1.0.0, library-production@1.1.0]
+# always name an older release explicitly; see acceptance 32). library-production@1.2.0 (task 8, profile
+# studio revision 3's default) joins the list the same way; the studio autopilot itself stays pinned to
+# 1.1.0 in tests via freshLibraryWorld's own `library.auto_accept.workflow_release` (task 8 binding
+# decision B) -- this fixture does NOT set `library.auto_accept.source_collections` (LEGACY auto-accept
+# mode stays exactly sub-project 4's, one source per request).
+workflows: [style-study@1.0.0, style-study@1.1.0, library-production@1.0.0, library-production@1.1.0, library-production@1.2.0]

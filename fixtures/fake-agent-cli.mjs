@@ -26,6 +26,12 @@
 //   FAKE_ANGLE    overrides the `angle` written into a `topic_proposal`'s topics / a `channel_package_draft`'s
 //                 `hypothesis.chosen.angle` (a test learning a channel standard needs two packages sharing one angle)
 //   FAKE_METRIC   overrides a `channel_package_draft`'s `hypothesis.expected.metric`
+//
+// Extra env var for sub-project 5A task 8's `narration.json` (edit-plan skill, library-production@1.2.0):
+//   FAKE_NARRATION_CHARS   length in characters of each narration line's placeholder text when
+//                          `brief.json.voice === "tts"` (default 40; a `media-fit-edl` test wanting a line
+//                          longer than the footage available raises this). Ignored (fixed at 20) once
+//                          `brief.json.request_notes` contains "thiếu" -- simulating a replanned, shorter line.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -145,10 +151,38 @@ function buildSurveyMd() {
   return "# Khảo sát nguồn (fake agent)\n\nKhông có phân tích thật -- dữ liệu giả cho test.\n";
 }
 
-/** `harness.survey-index/v1` from `shots.json` (input type "shots"): every shot gets score 4, usable true. */
+/** `harness.survey-index/v2` (sub-project 5A task 8) from a multi-source `shots.json` (`sources: [...]`):
+ * every shot gets `usable: true`, `score: 3`, and `speech` set to `"talking"` when `transcript.json` (input
+ * type "transcript") has a segment overlapping the shot's `[in, out)` on the same `source_id`, else
+ * `"none"`. */
+function buildSurveyIndexV2(shotsDoc) {
+  const transcriptInput = findInput("transcript");
+  const transcriptDoc = transcriptInput ? tryReadJsonAt(transcriptInput.path) : null;
+  const segmentsBySource = new Map();
+  for (const s of transcriptDoc?.sources ?? []) segmentsBySource.set(s.source_id, s.segments ?? []);
+
+  const shots = [];
+  for (const src of shotsDoc.sources ?? []) {
+    const segments = segmentsBySource.get(src.source_id) ?? [];
+    for (const sh of src.shots ?? []) {
+      const talking = segments.some((seg) => seg.start < sh.out && seg.end > sh.in);
+      shots.push({
+        source_id: src.source_id, shot_id: sh.shot_id, in: sh.in, out: sh.out, score: 3, tags: [],
+        usable: true, note: "fake agent: no real survey", speech: talking ? "talking" : "none",
+      });
+    }
+  }
+  return { schema_version: "harness.survey-index/v2", shots: shots.length ? shots : [{ source_id: `src_${fakeUlid()}`, shot_id: "s000-000", in: 0, out: 1, score: 3, tags: [], usable: true, note: "fake agent: no real survey", speech: "none" }] };
+}
+
+/** `harness.survey-index/v1` from `shots.json` (input type "shots"): every shot gets score 4, usable true.
+ * A multi-source `shots.json` (`{ sources: [...] }`, `library-production@1.2.0`) dispatches to
+ * `buildSurveyIndexV2` instead; the single-source v1 shape (`{ source_id, shots: [...] }`, 1.1.0) below is
+ * unchanged. */
 function buildSurveyIndex() {
   const shotsInput = findInput("shots");
   const shotsDoc = shotsInput ? tryReadJsonAt(shotsInput.path) : null;
+  if (shotsDoc && Array.isArray(shotsDoc.sources)) return buildSurveyIndexV2(shotsDoc);
   const shots = shotsDoc?.shots?.length ? shotsDoc.shots : [{ in: 0, out: 1 }];
   return {
     schema_version: "harness.survey-index/v1",
@@ -178,11 +212,28 @@ function fitShotsToRange(shots, range) {
   return out.map((s, i) => ({ ...s, order: i }));
 }
 
+/** `harness.edl/v1` from a multi-source `shots.json` (task 8): the first shot of up to 3 sources, one EDL
+ * entry per source (`order` 0..n-1) -- `media-fit-edl` (run downstream) reshapes this to fit the narration,
+ * so this fake agent does not need to fit any duration itself. */
+function buildEdlMulti(shotsDoc) {
+  const sources = (shotsDoc.sources ?? []).slice(0, 3);
+  const entries = sources.map((src, i) => {
+    const first = (src.shots ?? [])[0] ?? { in: 0, out: 1 };
+    return { source_id: src.source_id, in: first.in, out: first.out, order: i, overlay: null, note: "" };
+  });
+  if (entries.length === 0) entries.push({ source_id: `src_${fakeUlid()}`, in: 0, out: 1, order: 0, overlay: null, note: "" });
+  return { schema_version: "harness.edl/v1", entries };
+}
+
 /** `harness.edl/v1` from `shots.json`: one entry per shot, trimmed to `brief.json.target_duration_seconds`
- * (input type "brief") when present. */
+ * (input type "brief") when present. A multi-source `shots.json` (`{ sources: [...] }`,
+ * `library-production@1.2.0`) dispatches to `buildEdlMulti`; the single-source v1 shape (1.1.0) below is
+ * unchanged. */
 function buildEdl() {
   const shotsInput = findInput("shots");
   const shotsDoc = shotsInput ? tryReadJsonAt(shotsInput.path) : null;
+  if (shotsDoc && Array.isArray(shotsDoc.sources)) return buildEdlMulti(shotsDoc);
+
   const sourceId = shotsDoc?.source_id ?? `src_${fakeUlid()}`;
   const rawShots = shotsDoc?.shots?.length ? shotsDoc.shots : [{ in: 0, out: 5 }];
 
@@ -196,27 +247,61 @@ function buildEdl() {
   };
 }
 
+/** `harness.narration/v1` (task 8): `lines: []` unless `brief.json.voice === "tts"`. One line per EDL entry
+ * (`buildEdl()`, so `edl_order` always exists), each a fixed-length placeholder string: `FAKE_NARRATION_CHARS`
+ * chars (default 40), or 20 when `brief.json.request_notes` contains "thiếu" -- simulating the agent writing
+ * a shorter line after a `media-fit-edl` shortfall rejection carried that word into the replanned brief. */
+function buildNarration() {
+  const briefInput = findInput("brief");
+  const brief = briefInput ? tryReadJsonAt(briefInput.path) : null;
+  const language = brief?.language ?? "vi";
+  if (!brief || brief.voice !== "tts") return { schema_version: "harness.narration/v1", language, lines: [] };
+
+  const edl = buildEdl();
+  const hadShortfallNote = typeof brief.request_notes === "string" && brief.request_notes.includes("thiếu");
+  const perLineChars = hadShortfallNote ? 20 : Number(process.env.FAKE_NARRATION_CHARS ?? 40);
+  const lines = edl.entries.map((e, i) => ({ line_id: `L${String(i + 1).padStart(3, "0")}`, edl_order: e.order, text: "x".repeat(Math.max(1, perLineChars)) }));
+  return { schema_version: "harness.narration/v1", language, lines };
+}
+
 const REVIEW_CHECK_IDS = ["duration_in_range", "no_black_or_frozen_over_2s", "opening_matches_style", "text_not_clipped", "audio_present", "thumbnails_textless"];
 
 /** `harness.review/v1` per FAKE_REVIEW_MODE: "approve" (default) always approves; "reject-always" always
  * rejects; "reject-once" rejects only on the first pass (brief.json.request_notes empty -- no prior
- * rejection recorded yet) and approves once a replan has carried request_notes forward. */
+ * rejection recorded yet) and approves once a replan has carried request_notes forward.
+ *
+ * Task 8: when a `fit_report` input (`harness.fit-report/v1`, `media-fit-edl`'s output) is present and
+ * `shortfalls.length > 0 || reused_seconds > 5 || within_target === false`, this rejects unconditionally --
+ * `FAKE_REVIEW_MODE` is not consulted at all, mirroring the `library-review` skill's own step 0 (a footage
+ * shortfall is always a hard reject, decided before the 6 fixed checks). `note` names every `line_id` and the
+ * total `missing_seconds` so a replanned `edit-plan` fixes the right lines. */
 function buildReview() {
   const mode_ = process.env.FAKE_REVIEW_MODE ?? "approve";
   const briefInput = findInput("brief");
   const brief = briefInput ? tryReadJsonAt(briefInput.path) : null;
   const hasNotes = Boolean(brief?.request_notes && brief.request_notes.trim().length > 0);
 
-  const rejected = mode_ === "reject-always" ? true : mode_ === "reject-once" ? !hasNotes : false;
-  const checks = REVIEW_CHECK_IDS.map((id) => ({ id, pass: true, note: "" }));
-  if (rejected) checks[0] = { id: REVIEW_CHECK_IDS[0], pass: false, note: "fake agent: thời lượng vượt khoảng đích tại t=95.0s" };
+  const fitReportInput = findInput("fit_report");
+  const fitReport = fitReportInput ? tryReadJsonAt(fitReportInput.path) : null;
+  const shortfalls = fitReport?.shortfalls ?? [];
+  const footageRejected = Boolean(fitReport && (shortfalls.length > 0 || (fitReport.reused_seconds ?? 0) > 5 || fitReport.within_target === false));
 
-  return {
-    schema_version: "harness.review/v1",
-    decision: rejected ? "rejected" : "approved",
-    note: rejected ? "fake agent: review tự động phát hiện lỗi" : "fake agent: review tự động, đạt",
-    checks,
-  };
+  const rejected = footageRejected || (mode_ === "reject-always" ? true : mode_ === "reject-once" ? !hasNotes : false);
+  const checks = REVIEW_CHECK_IDS.map((id) => ({ id, pass: true, note: "" }));
+  if (rejected) {
+    checks[0] = { id: REVIEW_CHECK_IDS[0], pass: false, note: footageRejected ? "fake agent: thiếu hình cho lời (media-fit-edl)" : "fake agent: thời lượng vượt khoảng đích tại t=95.0s" };
+  }
+
+  let note;
+  if (footageRejected) {
+    const missingSeconds = shortfalls.reduce((a, s) => a + (s.missing_seconds ?? 0), 0);
+    const lineIds = shortfalls.flatMap((s) => s.line_ids ?? []);
+    note = `fake agent: thiếu ${missingSeconds.toFixed(1)} s ở ${lineIds.join(", ")}`;
+  } else {
+    note = rejected ? "fake agent: review tự động phát hiện lỗi" : "fake agent: review tự động, đạt";
+  }
+
+  return { schema_version: "harness.review/v1", decision: rejected ? "rejected" : "approved", note, checks };
 }
 
 /** medians.* key for a `ChannelLearned.metric` value -- `ctr` targets `medians.ctr_pct`, the other two share
@@ -331,7 +416,9 @@ for (const eo of request.expected_outputs ?? []) {
     case "survey_index": content = JSON.stringify(buildSurveyIndex(), null, 2); break;
     case "edl": content = JSON.stringify(buildEdl(), null, 2); break;
     case "edit_plan": content = JSON.stringify({ schema_version: "harness.edit-plan/v1", notes: "" }, null, 2); break;
-    case "narration": content = ""; break;
+    // 1.1.0's narration output is text/plain narration.txt (always empty, unchanged); 1.2.0's is
+    // application/json narration.json (harness.narration/v1, task 8).
+    case "narration": content = eo.mime_type === "application/json" ? JSON.stringify(buildNarration(), null, 2) : ""; break;
     case "review": content = JSON.stringify(buildReview(), null, 2); break;
     default: content = JSON.stringify({ fake: true });
   }

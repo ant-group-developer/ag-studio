@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { hasFfmpeg, makeVideo, makeWav } from "../../../../tests/media.js";
-import { FfprobeMediaProber, run } from "../src/ffprobe-prober.js";
+import { FfprobeMediaProber, probeSync, run } from "../src/ffprobe-prober.js";
 
 // Does not need ffmpeg/ffprobe: exercises the spawnSync timeout wrapper directly with a hung node process,
 // standing in for a stalled ffmpeg/ffprobe decode.
@@ -63,5 +63,26 @@ describe.skipIf(!hasFfmpeg())("FfprobeMediaProber (needs ffmpeg/ffprobe on PATH)
 
   it("isAvailable is false for a bad binary", () => {
     expect(FfprobeMediaProber.isAvailable({ ffprobe: "no-such-binary" })).toBe(false);
+  });
+
+  // Sub-project 5A Task 8: `media index`'s `IndexDeps.probe` is synchronous (packages/core/src/media/index.ts),
+  // unlike `MediaProber.probe` -- `probeSync` is the adapter-layer function the CLI composition injects for it.
+  it("probeSync reports duration and has_audio synchronously for a video with audio", () => {
+    const probed = probeSync(clip);
+    expect(probed).not.toBeNull();
+    expect(probed!.duration_seconds).toBeGreaterThan(1.8);
+    expect(probed!.has_audio).toBe(true);
+  });
+
+  it("probeSync reports has_audio: false for a video with no audio stream", () => {
+    const noAudio = join(mkdtempSync(join(tmpdir(), "ffprobe-adapter-noaudio-")), "silent.mp4");
+    makeVideo(noAudio, { seconds: 1, audio: false });
+    const probed = probeSync(noAudio);
+    expect(probed).not.toBeNull();
+    expect(probed!.has_audio).toBe(false);
+  });
+
+  it("probeSync returns null for a missing file", () => {
+    expect(probeSync("/no/such/file.mp4")).toBeNull();
   });
 });

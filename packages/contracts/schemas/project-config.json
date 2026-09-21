@@ -136,6 +136,10 @@
                   "type": "integer",
                   "minimum": 1,
                   "default": 40
+                },
+                "workflow_release": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]*@\\d+\\.\\d+\\.\\d+$"
                 }
               },
               "additionalProperties": false

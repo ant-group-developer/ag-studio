@@ -1,24 +1,40 @@
-import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
 import { start, type ScriptContext } from "@harness/script-sdk";
-import { HarnessError, isHarnessError, type ScriptCommand, type WatchIndex } from "@harness/contracts";
-import { watchFromExistingFrames, watchVideos, type PreExtractedVideo, type WatchDeps, type WatchVideoInput } from "@harness/core";
+import {
+  AnySurveyIndexSchema, EdlSchema, HarnessError, isHarnessError, libraryBriefSchema, NarrationSchema, NarrationTimingSchema, ShotsIndexSchema, TranscriptSchema,
+  type AnySurveyIndex, type Edl, type LibraryBrief, type Narration, type NarrationTiming, type ScriptCommand, type ShotsIndex, type SurveyIndexV2, type Transcript,
+  type VoiceProfile, type WatchIndex,
+} from "@harness/contracts";
+import {
+  buildTimeline, eventFor, fitEdl, indexSources, requireActiveVoice, synthesizeNarration, transcribeSources,
+  watchFromExistingFrames, watchVideos, type PreExtractedVideo, type WatchDeps, type WatchVideoInput,
+} from "@harness/core";
+import { probeDurationSync, probeSync } from "@harness/adapter-ffprobe";
 import type { AppContext } from "../composition.js";
+import { requireLibrary } from "./library-stage.js";
 import { withContext } from "./shared.js";
 
 const MODES = ["samples", "source", "episode"] as const;
 type WatchMode = (typeof MODES)[number];
 
+/** The four `media index|transcribe|tts|fit-edl` built-in commands, task 8's counterpart to `MODES` above. */
+const MEDIA_STAGE_NAMES = ["index", "transcribe", "tts", "fit-edl"] as const;
+
 /**
  * The three `harness media watch --mode <m>` re-invocations (task 2's spec §7 workflows wire `watch-samples`,
- * `watch-source`, `watch-episode` as `executor: { type: script, script: "watch-<mode>" }`), built in the same
- * shape as `builtinLibraryCommands`/`builtinPublishCommands` in `composition.ts`: each re-invokes this CLI
- * against the ops project, reading `stage-request.json` from the `ScriptExecutor`-provided workspace.
+ * `watch-source`, `watch-episode` as `executor: { type: script, script: "watch-<mode>" }`), plus (task 8) the
+ * four `media-index|media-transcribe|media-tts|media-fit-edl` re-invocations `library-production@1.2.0` wires
+ * the same way -- built in the same shape as `builtinLibraryCommands`/`builtinPublishCommands` in
+ * `composition.ts`: each re-invokes this CLI against the ops project, reading `stage-request.json` from the
+ * `ScriptExecutor`-provided workspace.
  */
 export function builtinMediaCommands(argv: string[], projectDir: string): Record<string, ScriptCommand> {
   const commands: Record<string, ScriptCommand> = {};
   for (const mode of MODES) commands[`watch-${mode}`] = { argv: [...argv, "--project", projectDir, "media", "watch", "--mode", mode], cwd: "." };
+  for (const name of MEDIA_STAGE_NAMES) commands[`media-${name}`] = { argv: [...argv, "--project", projectDir, "media", name], cwd: "." };
   return commands;
 }
 
@@ -130,10 +146,49 @@ function parseShotMarks(raw: unknown, shotsPath: string): number[] {
   });
 }
 
+/**
+ * `--mode source` (multi-source, `library-production@1.2.0`, task 8): every source of this run, labeled by
+ * its `shots.json` `index` (3 digits, spec §2.4), watched at its own proxy from the `proxy_set` directory
+ * `media-index` produced, at scene+interval marks plus its own shot boundaries. When a `transcript` input is
+ * present, every source's transcript is handed to `watchVideos` as `transcriptBySource` (keyed by
+ * `source_id`) instead of letting it invoke the `scripts.yaml` `transcribe` hook per video -- spec: "không
+ * gọi hook transcribe của scripts.yaml" when a real transcript already exists.
+ */
+async function handleSourceMulti(app: AppContext, sdk: ScriptContext, outDir: string): Promise<WatchIndex> {
+  if (!sdk.hasInput("shots")) throw new HarnessError("CONFIG_INVALID", 'media watch --mode source needs a "shots" input', {});
+  const shots = parseShotsDoc(readJsonFile(sdk.input("shots")));
+  const proxySetDir = sdk.input("proxy_set");
+
+  let transcriptBySource: Record<string, { segments: { start: number; end: number; text: string }[] }> | undefined;
+  if (sdk.hasInput("transcript")) {
+    const transcript = parseTranscriptDoc(readJsonFile(sdk.input("transcript")));
+    transcriptBySource = {};
+    for (const src of transcript.sources) {
+      transcriptBySource[src.source_id] = { segments: src.segments.map((s) => ({ start: s.start, end: s.end, text: s.text })) };
+    }
+  }
+
+  const videos: WatchVideoInput[] = shots.sources.map((s) => ({
+    label: String(s.index).padStart(3, "0"),
+    path: join(proxySetDir, `${s.source_id}.mp4`),
+    shot_marks: s.shots.map((sh) => sh.in),
+    source_id: s.source_id,
+  }));
+
+  return watchVideos(
+    watchDepsFor(app, sdk),
+    { mode: "source", outDir, max_sheets: app.mediaConfig.watch.max_sheets, ...(transcriptBySource ? { transcriptBySource } : {}) },
+    videos,
+  );
+}
+
 /** `--mode source`: the proxy video index-source produced, watched at scene+interval marks plus every shot
  * boundary from `shots.json` (task-3 brief: `watchVideos([{ label: "source", path: proxy, shot_marks:
- * shots[].in }])`). */
+ * shots[].in }])`). `library-production@1.2.0`'s `media-index` output (`proxy_set`, a directory) is a
+ * different input type entirely from 1.1.0's single-file `proxy_video`, so its presence alone tells the two
+ * pipelines apart -- 1.1.0 (and every SP1-4 test) is untouched below the `if`, byte-for-byte. */
 async function handleSource(app: AppContext, sdk: ScriptContext, outDir: string): Promise<WatchIndex> {
+  if (sdk.hasInput("proxy_set")) return handleSourceMulti(app, sdk, outDir);
   if (!sdk.hasInput("proxy_video")) throw new HarnessError("CONFIG_INVALID", 'media watch --mode source needs a "proxy_video" input', {});
   if (!sdk.hasInput("shots")) throw new HarnessError("CONFIG_INVALID", 'media watch --mode source needs a "shots" input', {});
   const proxyPath = sdk.input("proxy_video");
@@ -200,20 +255,247 @@ async function watchStage(app: AppContext, sdk: ScriptContext, mode: string): Pr
 }
 
 /** Maps a thrown `HarnessError` (or anything else) to the sdk's `ctx.fail(kind, …)`, identical to
- * `library-stage.ts`/`publish-stage.ts`'s own `runStage`. */
+ * `library-stage.ts`/`publish-stage.ts`'s own `runStage`; shared by `runStage` (watch) and `runMediaStage`
+ * (task 8's index/transcribe/tts/fit-edl) below so the mapping lives in exactly one place. */
+async function reportFailure(sdk: ScriptContext, e: unknown): Promise<void> {
+  if (isHarnessError(e, "CONFIG_INVALID") || isHarnessError(e, "INVALID_TRANSITION") || isHarnessError(e, "NOT_FOUND")) {
+    await sdk.fail("contract", e.message, { code: e.code, ...e.details });
+    return;
+  }
+  if (isHarnessError(e, "IO_ERROR")) {
+    await sdk.fail("transient", e.message, { code: e.code, ...e.details });
+    return;
+  }
+  await sdk.fail("transient", e instanceof Error ? e.message : String(e), {});
+}
+
 async function runStage(sdk: ScriptContext, app: AppContext, mode: string): Promise<void> {
   try {
     await watchStage(app, sdk, mode);
   } catch (e) {
-    if (isHarnessError(e, "CONFIG_INVALID") || isHarnessError(e, "INVALID_TRANSITION") || isHarnessError(e, "NOT_FOUND")) {
-      await sdk.fail("contract", e.message, { code: e.code, ...e.details });
-      return;
+    await reportFailure(sdk, e);
+  }
+}
+
+// ---- Task 8: media index|transcribe|tts|fit-edl (spec §2.2-§2.3, §3.4, §4.1) ----
+
+function parseShotsDoc(raw: unknown): ShotsIndex {
+  const parsed = ShotsIndexSchema.safeParse(raw);
+  if (!parsed.success) throw new HarnessError("CONFIG_INVALID", "shots.json failed schema validation", { issues: parsed.error.issues });
+  return parsed.data;
+}
+function parseTranscriptDoc(raw: unknown): Transcript {
+  const parsed = TranscriptSchema.safeParse(raw);
+  if (!parsed.success) throw new HarnessError("CONFIG_INVALID", "transcript.json failed schema validation", { issues: parsed.error.issues });
+  return parsed.data;
+}
+function parseEdlDoc(raw: unknown): Edl {
+  const parsed = EdlSchema.safeParse(raw);
+  if (!parsed.success) throw new HarnessError("CONFIG_INVALID", "edl.json failed schema validation", { issues: parsed.error.issues });
+  return parsed.data;
+}
+function parseNarrationDoc(raw: unknown): Narration {
+  const parsed = NarrationSchema.safeParse(raw);
+  if (!parsed.success) throw new HarnessError("CONFIG_INVALID", "narration.json failed schema validation", { issues: parsed.error.issues });
+  return parsed.data;
+}
+function parseNarrationTimingDoc(raw: unknown): NarrationTiming {
+  const parsed = NarrationTimingSchema.safeParse(raw);
+  if (!parsed.success) throw new HarnessError("CONFIG_INVALID", "narration-timing.json failed schema validation", { issues: parsed.error.issues });
+  return parsed.data;
+}
+function parseSurveyDoc(raw: unknown): AnySurveyIndex {
+  const parsed = AnySurveyIndexSchema.safeParse(raw);
+  if (!parsed.success) throw new HarnessError("CONFIG_INVALID", "survey.json failed schema validation", { issues: parsed.error.issues });
+  return parsed.data;
+}
+// `brief.json` may carry extra fields (`intake` also writes `style_snapshot`, `request_notes`); passthrough
+// mirrors `library-checkers.ts`'s own `briefWithExtrasSchema`.
+const briefWithExtrasSchema = libraryBriefSchema.passthrough();
+function parseBriefDoc(raw: unknown): LibraryBrief {
+  const parsed = briefWithExtrasSchema.safeParse(raw);
+  if (!parsed.success) throw new HarnessError("CONFIG_INVALID", "brief.json failed schema validation", { issues: parsed.error.issues });
+  return parsed.data;
+}
+
+function writeJsonOutputFile(path: string, value: unknown): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(value, null, 2) + "\n");
+}
+
+/** `basename(original_uri)`, decoded first when it is a `file:` URL -- same normalization
+ * `auto-accept.ts`'s `decodedBasename` uses, kept local here since that one is not exported. */
+function decodedBasename(uri: string): string {
+  if (uri.startsWith("file:")) {
+    try { return basename(fileURLToPath(uri)); } catch { /* fall through to the raw string below */ }
+  }
+  return basename(uri);
+}
+
+/** A `media-index`/`media-transcribe` source's filesystem path (from `sdk.sources[].uri`, a `file:` URL) and
+ * display `file_name` (`basename` of the kho's own `original_uri`, read through `app.store.getSourceItem` --
+ * task-8 brief: "file_name = basename của original_uri lấy qua app.store.getSourceItem"). A source id the
+ * store mirror has never seen (should not happen in practice) falls back to the workspace-local uri's own
+ * basename rather than throwing -- indexing is still possible from the materialized file alone. */
+function sourcePathAndName(app: AppContext, s: { source_id: string; uri: string }): { path: string; file_name: string } {
+  const path = s.uri.startsWith("file:") ? fileURLToPath(s.uri) : s.uri;
+  const item = app.store.getSourceItem(s.source_id);
+  const file_name = item ? decodedBasename(item.original_uri) : decodedBasename(s.uri);
+  return { path, file_name };
+}
+
+/** `deadlineSeconds` every media engine call (`transcribe`/`tts`) is given: seconds remaining until
+ * `request.limits.deadline_at`, minus a 30s margin so core's own timeout math never rounds up past the
+ * stage's real deadline (task-8 brief §D). */
+function deadlineSecondsFor(sdk: ScriptContext): number {
+  return Math.floor((Date.parse(sdk.request.limits.deadline_at) - Date.now()) / 1000) - 30;
+}
+
+/** Appends a `media.*` event through the same `store.appendEvent(eventFor(...))` shape every other built-in
+ * stage uses (e.g. `publish-stage.ts`'s `channel.requests_created`); a no-op when the run row cannot be found
+ * (should not happen for a real claimed stage, but this must never be the reason a stage fails). */
+function appendMediaEvent(app: AppContext, sdk: ScriptContext, event_type: string, payload: Record<string, unknown>): void {
+  const run = app.store.getRun(sdk.request.run_id);
+  if (!run) return;
+  const stageRun = app.store.getStageRun(sdk.request.stage_run_id) ?? null;
+  const attempt = app.store.getAttempt(sdk.request.attempt_id) ?? null;
+  app.store.appendEvent(eventFor(run, stageRun, attempt, event_type, "info", payload));
+}
+
+const ffmpegBin = (): string => process.env.FFMPEG_PATH ?? "ffmpeg";
+
+/**
+ * `media index` (spec §2.2): probes + scene-detects + proxies every one of this run's sources (`sdk.sources`),
+ * writing `output/shots.json` (type `shots`, `harness.shots/v2`) and `output/proxy/` (type `proxy_set`). ffmpeg
+ * missing is `contract`, exactly like `media watch`.
+ */
+async function mediaIndexStage(app: AppContext, sdk: ScriptContext): Promise<void> {
+  if (!app.proberAvailable) {
+    throw new HarnessError("CONFIG_INVALID", "ffmpeg/ffprobe not found on PATH; media index needs them (see `harness doctor`)", {});
+  }
+  const sources = sdk.sources.map((s) => {
+    const { path, file_name } = sourcePathAndName(app, s);
+    return { source_id: s.source_id, path, file_name };
+  });
+  const shots = indexSources(
+    { ffmpeg: ffmpegBin(), probe: (p) => probeSync(p), log: (level, msg, data) => sdk.log[level](msg, data) },
+    { sources, scene: app.mediaConfig.scene, proxyDir: join(sdk.workspace, "output", "proxy") },
+  );
+  writeJsonOutputFile(join(sdk.workspace, "output", "shots.json"), shots);
+  await sdk.out.file("output/shots.json", { type: "shots" });
+  await sdk.out.dir("output/proxy", { type: "proxy_set" });
+  await sdk.done();
+}
+
+/**
+ * `media transcribe` (spec §2.3): transcribes every source's audio via `app.media` (the composition root's
+ * `PythonMediaEngine`/`FakeMediaEngine`), writing `output/transcript.json` (type `transcript`) and an event
+ * `media.transcribed`.
+ */
+async function mediaTranscribeStage(app: AppContext, sdk: ScriptContext): Promise<void> {
+  const shots = parseShotsDoc(readJsonFile(sdk.input("shots")));
+  const sources = sdk.sources.map((s) => {
+    const { path } = sourcePathAndName(app, s);
+    const item = app.store.getSourceItem(s.source_id);
+    return { source_id: s.source_id, path, language: item?.language ?? null };
+  });
+  const transcript = await transcribeSources(
+    { engine: app.media, ffmpeg: ffmpegBin(), log: (level, msg, data) => sdk.log[level](msg, data) },
+    { shots, sources, workDir: join(sdk.workspace, "work"), deadlineSeconds: deadlineSecondsFor(sdk) },
+  );
+  writeJsonOutputFile(join(sdk.workspace, "output", "transcript.json"), transcript);
+  await sdk.out.file("output/transcript.json", { type: "transcript" });
+  const seconds = shots.sources.reduce((a, s) => a + (s.has_audio && s.error === undefined ? s.duration_seconds : 0), 0);
+  appendMediaEvent(app, sdk, "media.transcribed", { run_id: sdk.request.run_id, sources: transcript.sources.length, seconds });
+  await sdk.done();
+}
+
+/**
+ * `media tts` (spec §3.4): synthesizes every `narration.json` line via `app.media`, writing `output/voice/`
+ * (type `voice_set`) and `output/narration-timing.json` (type `narration_timing`) plus a `media.tts_done`
+ * event. `voice` other than `tts` (or an empty script) never touches the engine or the voice kho --
+ * `synthesizeNarration` itself writes the empty timing and creates `output/voice/` (possibly empty).
+ */
+async function mediaTtsStage(app: AppContext, sdk: ScriptContext): Promise<void> {
+  const library = requireLibrary(app);
+  const brief = parseBriefDoc(readJsonFile(sdk.input("brief")));
+  const narration = parseNarrationDoc(readJsonFile(sdk.input("narration")));
+
+  let voice: { profile: VoiceProfile; ref_audio_path: string } | undefined;
+  if (brief.voice === "tts" && narration.lines.length > 0) {
+    const profile = requireActiveVoice(app.store, brief.voice_id);
+    if (brief.voice_checksum && profile.ref_audio.checksum !== brief.voice_checksum) {
+      throw new HarnessError(
+        "CONFIG_INVALID",
+        `voice ${profile.voice_id}'s ref.wav checksum has changed since intake (brief: ${brief.voice_checksum}, current: ${profile.ref_audio.checksum})`,
+        { voice_id: profile.voice_id, expected: brief.voice_checksum, actual: profile.ref_audio.checksum },
+      );
     }
-    if (isHarnessError(e, "IO_ERROR")) {
-      await sdk.fail("transient", e.message, { code: e.code, ...e.details });
-      return;
-    }
-    await sdk.fail("transient", e instanceof Error ? e.message : String(e), {});
+    voice = { profile, ref_audio_path: library.fs.paths.voiceRef(profile.voice_id) };
+  }
+
+  const timing = await synthesizeNarration(
+    { engine: app.media, ffmpeg: ffmpegBin(), probeDuration: (p) => probeDurationSync(p), cacheDir: join(app.dataRoot, "cache", "tts"), log: (level, msg, data) => sdk.log[level](msg, data) },
+    { narration, voiceMode: brief.voice, ...(voice ? { voice } : {}), cfg: app.mediaConfig.tts, outDir: join(sdk.workspace, "output", "voice"), deadlineSeconds: deadlineSecondsFor(sdk) },
+  );
+  writeJsonOutputFile(join(sdk.workspace, "output", "narration-timing.json"), timing);
+  await sdk.out.file("output/narration-timing.json", { type: "narration_timing" });
+  await sdk.out.dir("output/voice", { type: "voice_set" });
+  const cached = timing.lines.filter((l) => l.cached).length;
+  appendMediaEvent(app, sdk, "media.tts_done", { run_id: sdk.request.run_id, lines: timing.lines.length, cached, seconds: timing.total_seconds });
+  await sdk.done();
+}
+
+/**
+ * `media fit-edl` (spec §4.1): reshapes the agent's EDL to match the narration timing (or, for `voice:
+ * original`, snaps cuts to word boundaries), writing `output/edl.json`, `output/fit-report.json` and
+ * `output/timeline.json`. Every input is schema-validated up front (a parse failure is `contract`); the stage
+ * itself never fails for a footage shortfall -- `fitEdl` is pure and always returns a result, and a non-empty
+ * `report.shortfalls` only ever produces the `media.fit_shortfall` event, for `library-review` to act on.
+ */
+async function mediaFitEdlStage(app: AppContext, sdk: ScriptContext): Promise<void> {
+  const brief = parseBriefDoc(readJsonFile(sdk.input("brief")));
+  const edl = parseEdlDoc(readJsonFile(sdk.input("edl")));
+  const timing = parseNarrationTimingDoc(readJsonFile(sdk.input("narration_timing")));
+  const shots = parseShotsDoc(readJsonFile(sdk.input("shots")));
+
+  let survey: SurveyIndexV2 | null = null;
+  if (sdk.hasInput("survey")) {
+    const parsed = parseSurveyDoc(readJsonFile(sdk.input("survey")));
+    if (parsed.schema_version === "harness.survey-index/v2") survey = parsed;
+  }
+  let transcript: Transcript | null = null;
+  if (sdk.hasInput("transcript")) transcript = parseTranscriptDoc(readJsonFile(sdk.input("transcript")));
+
+  const fitted = fitEdl({
+    edl, timing, shots, survey, transcript, voice: brief.voice,
+    ...(brief.target_duration_seconds ? { target_duration_seconds: brief.target_duration_seconds } : {}),
+  });
+  const timeline = buildTimeline({ edl: fitted.edl, timing, transcript, voice: brief.voice, language: brief.language, orderMap: fitted.orderMap });
+
+  writeJsonOutputFile(join(sdk.workspace, "output", "edl.json"), fitted.edl);
+  await sdk.out.file("output/edl.json", { type: "edl" });
+  writeJsonOutputFile(join(sdk.workspace, "output", "fit-report.json"), fitted.report);
+  await sdk.out.file("output/fit-report.json", { type: "fit_report" });
+  writeJsonOutputFile(join(sdk.workspace, "output", "timeline.json"), timeline);
+  await sdk.out.file("output/timeline.json", { type: "timeline" });
+
+  if (fitted.report.shortfalls.length > 0) {
+    const missing_seconds = Math.round(fitted.report.shortfalls.reduce((a, s) => a + s.missing_seconds, 0) * 1000) / 1000;
+    appendMediaEvent(app, sdk, "media.fit_shortfall", { run_id: sdk.request.run_id, missing_seconds });
+  }
+  await sdk.done();
+}
+
+const MEDIA_STAGES: Record<(typeof MEDIA_STAGE_NAMES)[number], (app: AppContext, sdk: ScriptContext) => Promise<void>> = {
+  index: mediaIndexStage, transcribe: mediaTranscribeStage, tts: mediaTtsStage, "fit-edl": mediaFitEdlStage,
+};
+
+async function runMediaStage(sdk: ScriptContext, app: AppContext, name: (typeof MEDIA_STAGE_NAMES)[number]): Promise<void> {
+  try {
+    await MEDIA_STAGES[name](app, sdk);
+  } catch (e) {
+    await reportFailure(sdk, e);
   }
 }
 
@@ -226,4 +508,12 @@ export function registerMedia(program: Command): void {
       const sdk = await start({ env: process.env });
       await withContext(cmd, {}, async (app) => runStage(sdk, app, o.mode));
     });
+  for (const name of MEDIA_STAGE_NAMES) {
+    media.command(name)
+      .description(`built-in "media ${name}" stage (sub-project 5A): reads stage-request.json from $HARNESS_WORKSPACE, writes stage-result.json`)
+      .action(async (_o: unknown, cmd: Command) => {
+        const sdk = await start({ env: process.env });
+        await withContext(cmd, {}, async (app) => runMediaStage(sdk, app, name));
+      });
+  }
 }

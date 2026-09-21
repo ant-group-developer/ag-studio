@@ -13,6 +13,11 @@ export interface StartRunDeps {
   store: StateStore; catalog: SourceCatalog; planner: Planner; harness: HarnessConfig; projectId: string; portfolioId: string;
   profile: ProductionProfile; workflows: (ref: string) => LoadedWorkflow; executorVersionFor: (ref: ExecutorRef) => string;
   requiresResourcesOverride?: (s: StageDefinition) => string[] | undefined;
+  /** Sub-project 5A Task 8: plans this workflow release instead of `profile.workflow_release` -- the studio
+   * autopilot's `library.auto_accept.workflow_release` rollback knob threads through here. An unknown release
+   * throws from `workflows(ref)` exactly like a bad `profile.workflow_release` always has, which `autoAccept`'s
+   * own try/catch already turns into a `plan-failed` skip. */
+  workflowRelease?: string;
 }
 
 export interface StartRunEvent {
@@ -26,7 +31,7 @@ export interface StartRunEvent {
 export function startPlannedRun(d: StartRunDeps, content: ContentItem, event: StartRunEvent, options: Record<string, unknown> = {}): Run {
   const { variant } = d.catalog.getOrCreateVariant({ content_id: content.content_id, profile: d.profile, options });
   const run = d.planner.plan({
-    workflow: d.workflows(d.profile.workflow_release), profile: d.profile, harness: d.harness, projectId: d.projectId,
+    workflow: d.workflows(d.workflowRelease ?? d.profile.workflow_release), profile: d.profile, harness: d.harness, projectId: d.projectId,
     portfolioId: d.portfolioId, runOverrides: {}, executorVersionFor: d.executorVersionFor, content, variant,
     ...(d.requiresResourcesOverride ? { requiresResourcesOverride: d.requiresResourcesOverride } : {}),
   });

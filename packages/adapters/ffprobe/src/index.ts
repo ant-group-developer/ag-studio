@@ -1,1 +1,1 @@
-export { FfprobeMediaProber, probeDurationSync } from "./ffprobe-prober.js";
+export { FfprobeMediaProber, probeDurationSync, probeSync } from "./ffprobe-prober.js";

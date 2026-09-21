@@ -50,6 +50,12 @@ function writeProjectYaml(fixtureDir: string, dir: string, lib: string, o: { aut
   if (fixtureDir === STUDIO_FIXTURE) {
     if (o.autopilot) {
       cfg.adapters = { agent: "cli", agent_argv: [process.execPath, posix(FAKE_AGENT_CLI), "{prompt}"] };
+      // Task 8: the studio profile moved to library-production@1.2.0, but every sub-project 4 autopilot test
+      // was written against 1.1.0's stage keys/counts -- pin the autopilot to the release it was written for
+      // via `library.auto_accept.workflow_release` (the operator's own documented rollback knob) rather than
+      // letting it silently follow the profile forward. Task 10 adds an opt-in for 1.2.0.
+      const auto = (cfg.library.auto_accept ?? {}) as Record<string, unknown>;
+      cfg.library.auto_accept = { ...auto, workflow_release: "library-production@1.1.0" };
     } else {
       delete cfg.adapters;
       delete cfg.library.auto_accept;

@@ -94,9 +94,9 @@ describe("library-production@1.1.0", () => {
     expect(g.skipped).toEqual(["tts"]);
   });
 
-  it("profile studio points at library-production@1.1.0, revision 2", () => {
-    expect(profile.workflow_release).toBe("library-production@1.1.0");
-    expect(profile.revision).toBe(2);
+  it("profile studio itself has since moved to library-production@1.2.0, revision 3 (sub-project 5A task 8); --workflow still resolves this 1.1.0 release directly, see library-production-1-2.test.ts for the current profile pointer", () => {
+    expect(profile.workflow_release).toBe("library-production@1.2.0");
+    expect(profile.revision).toBe(3);
     expect(profile.limits.max_cost_usd_per_variant).toBe(8);
   });
 });

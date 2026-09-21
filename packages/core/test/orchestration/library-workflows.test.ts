@@ -35,8 +35,8 @@ describe("library-production@1.0.0", () => {
     for (const s of wf.definition.stages) if (s.executor.type === "gate") for (const o of s.outputs) expect(o.name, `${s.key} output ${o.type}`).toBeTruthy();
   });
 
-  it("profile studio parses (its workflow_release now tracks library-production@1.1.0, see studio-workflows-1-1.test.ts)", () => {
-    expect(profile.workflow_release).toBe("library-production@1.1.0");
+  it("profile studio parses (its workflow_release now tracks library-production@1.2.0, see library-production-1-2.test.ts -- sub-project 5A task 8 moved it from 1.1.0)", () => {
+    expect(profile.workflow_release).toBe("library-production@1.2.0");
   });
 
   it("voice=none drops tts and rewires assemble/library-export to skip the optional tts edge", () => {

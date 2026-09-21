@@ -14,6 +14,10 @@ khi tập vào kho — checker cứng đã chặn lỗi kỹ thuật; skill này
 - `brief.json` (trong input `brief`) — `topic`, `style_snapshot`, `target_duration_seconds?`.
 - `export-receipt.json` (trong input `export_receipt`) — `{ item_id, item_dir, files, manifest_checksum }`.
 - `thumbnail_set` (thư mục) — các ảnh thumbnail ứng viên đã render.
+- `fit-report.json` (trong input `fit_report`, `harness.fit-report/v1`) — cách `media-fit-edl` đã chỉnh
+  hình cho vừa lời: `entries[]`, `shortfalls[] { line_ids, missing_seconds, reused_seconds,
+  uncovered_seconds }`, `reused_seconds`, `within_target`. Đây là mục kiểm thứ 7, riêng của sub-project
+  5A — không có trong `library-production@1.1.0` (thiếu input này thì bỏ qua bước 7, giữ 6 mục cũ).
 - `stage-request.json` — nguồn sự thật cho `expected_outputs`, `inputs`, `options`, `policy`.
 
 ## Ngân sách khung
@@ -22,8 +26,17 @@ khi tập vào kho — checker cứng đã chặn lỗi kỹ thuật; skill này
 - Mở khung đơn tại các mốc nghi vấn (mở đầu, các mốc có `text_overlays`, gần cuối video) khi sheet
   không đủ rõ. Tổng khung đơn mở ≤20.
 
-## Quy trình 8 bước
+## Quy trình 8 bước (thêm bước 0 khi có `fit-report.json`)
 
+0. Nếu có input `fit_report`: đọc `fit-report.json`. Có input này và bất kỳ điều nào sau đây đúng thì
+   quyết định thẳng `"rejected"` (bỏ qua bước 8 tính `decision` từ `checks`, nhưng vẫn chấm đủ 6 mục ở
+   dưới để `note` đầy đủ thông tin):
+   - `shortfalls` không rỗng (lời không đủ hình che phủ);
+   - `reused_seconds > 5` (dùng lại cùng một đoạn hình quá 5 giây để lấp chỗ trống);
+   - `within_target === false` (tổng thời lượng sau khi khớp hình lệch khỏi khoảng đích).
+   `note` phải nêu rõ từng `line_id` trong `shortfalls[].line_ids` và số giây thiếu
+   (`shortfalls[].missing_seconds`), để lượt dựng lại (`edit-plan`) biết đúng dòng lời cần viết lại
+   hoặc rút ngắn.
 1. Đọc `brief.json` để biết `target_duration_seconds` (khoảng đích) và `style_snapshot`.
 2. Đọc `watch.json`, lấy `duration_seconds` của tập — so với khoảng đích ⇒ `duration_in_range`.
 3. Lướt toàn bộ `sheet-*.png` tìm khung đen liên tục hoặc khung đứng hình (hai khung liền kề giống
@@ -69,6 +82,8 @@ nhất quán với `checks` (≥1 `pass: false` ⇒ `"rejected"`).
 - [ ] Mọi `note` của mục `pass: false` nêu rõ mốc giây (hoặc khoảng giây) cụ thể của lỗi, không chỉ
       nói chung chung.
 - [ ] Đã xem `thumbnail_set` và khung mở đầu thật, không suy đoán từ `edit-plan.json` một mình.
+- [ ] Có input `fit_report`: đã đọc và, nếu bước 0 buộc `"rejected"`, `note` nêu đủ `line_id` +
+      số giây thiếu của từng dòng trong `shortfalls`, không chỉ nói chung chung "thiếu hình".
 
 ## Điều cấm
 
@@ -76,5 +91,5 @@ nhất quán với `checks` (≥1 `pass: false` ⇒ `"rejected"`).
 - Không gọi mạng — skill này chỉ dùng dữ liệu đã có trong workspace.
 - Không đọc hay ghi bất kỳ giá trị `secret://` hay biến `HARNESS_SECRET_*` nào.
 - Không ghi file ngoài `output/`; không sửa `edit-plan.json`, `brief.json`, `watch/`,
-  `export-receipt.json`, hay `thumbnail_set`.
+  `export-receipt.json`, `fit-report.json`, hay `thumbnail_set`.
 - Không rời khỏi thư mục workspace hiện tại (không `cd`, không đọc đường dẫn tuyệt đối khác).

@@ -16,7 +16,10 @@ export type AgentCliRuntimeKind = "claude" | "codex";
 // Sub-project 3B's channel-planning/channel-package skills add two more (FAKE_ANGLE overrides the fake
 // draft's/proposal's angle, FAKE_METRIC overrides the fake draft's expected.metric) -- same rationale as the
 // rest of this list: harmless for the real `claude`/`codex` binaries, needed by the fake CLI in tests.
-const FAKE_AGENT_TEST_ENV = ["FAKE_AGENT_MODE", "FAKE_REVIEW_MODE", "FAKE_AGENT_FAIL_STAGE", "FAKE_STYLE_STATUS", "FAKE_STYLE_REVIEW", "FAKE_ANGLE", "FAKE_METRIC"];
+// Sub-project 5A task 8 adds FAKE_NARRATION_CHARS: the length of each fake `narration.json` line's
+// placeholder text (edit-plan skill, library-production@1.2.0), used by media-fit-edl tests that need a
+// narration line longer than the footage a fake shoot provides.
+const FAKE_AGENT_TEST_ENV = ["FAKE_AGENT_MODE", "FAKE_REVIEW_MODE", "FAKE_AGENT_FAIL_STAGE", "FAKE_STYLE_STATUS", "FAKE_STYLE_REVIEW", "FAKE_ANGLE", "FAKE_METRIC", "FAKE_NARRATION_CHARS"];
 
 export const RUNTIME_COMMANDS: Record<AgentCliRuntimeKind, { argv: string[]; env_passthrough: string[] }> = {
   claude: {

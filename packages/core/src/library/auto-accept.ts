@@ -19,6 +19,10 @@ export interface AutoAcceptConfig {
   max_replans: number;
   max_concurrent_runs: number;
   max_sources: number;
+  /** Pins the autopilot to a specific workflow release instead of `profile.workflow_release` (spec: task 8
+   * rollback knob). `| undefined` alongside the `?` matches zod's own `.optional()` output type
+   * (exactOptionalPropertyTypes), same as `source_collections` above. */
+  workflow_release?: string | undefined;
 }
 
 /** Minimal logger shape `autoAccept` needs -- `HarnessLogger` satisfies it structurally. */
@@ -437,6 +441,7 @@ export async function autoAccept(d: AutoAcceptDeps): Promise<AutoAcceptReport> {
             store, catalog: d.catalog, planner: d.planner, harness: d.harness, projectId: d.projectId, portfolioId, profile: d.profile,
             workflows: d.workflows, executorVersionFor: d.executorVersionFor,
             ...(d.requiresResourcesOverride ? { requiresResourcesOverride: d.requiresResourcesOverride } : {}),
+            ...(d.config.workflow_release ? { workflowRelease: d.config.workflow_release } : {}),
           },
           content,
           {

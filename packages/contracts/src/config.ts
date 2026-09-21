@@ -123,6 +123,12 @@ export const autoAcceptSchema = z.object({
   max_replans: z.number().int().min(0).default(2),
   max_concurrent_runs: z.number().int().min(1).default(1),
   max_sources: z.number().int().min(1).default(40),
+  /** Sub-project 5A Task 8: pins the autopilot to a specific workflow release instead of the studio profile's
+   * own `workflow_release` -- the operator's documented rollback (e.g. back to `library-production@1.1.0` if
+   * `@1.2.0` needs to be rolled back) and how `freshLibraryWorld({ autopilot: true })` keeps every sub-project
+   * 4 autopilot test on the release it was written for while the profile itself moves forward. Unset means
+   * "plan whatever the profile currently points at" (unchanged behavior). */
+  workflow_release: z.string().regex(/^[a-z][a-z0-9-]*@\d+\.\d+\.\d+$/).optional(),
 }).strict();
 
 /** The effective set of collection-name patterns an auto-accept run may draw sources from: `source_collections`

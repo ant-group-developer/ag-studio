@@ -17,7 +17,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { ChannelPackageDraftSchema, EdlSchema, EditStyleSchema, newId, reviewSchema, surveyIndexSchema, TopicProposalSchema, type StageRequest } from "@harness/contracts";
+import { ChannelPackageDraftSchema, EdlSchema, EditStyleSchema, NarrationSchema, newId, reviewSchema, surveyIndexSchema, TopicProposalSchema, type StageRequest } from "@harness/contracts";
 
 const skillsDir = fileURLToPath(new URL("../../../../skills", import.meta.url));
 const fixture = fileURLToPath(new URL("../../../../fixtures/fake-agent-cli.mjs", import.meta.url));
@@ -361,6 +361,195 @@ describe("fake-agent-cli.mjs: studio skill outputs", () => {
     const r2 = run(ws2, req2, { FAKE_AGENT_FAIL_STAGE: "survey-source" });
     expect(r2.status, `stderr: ${r2.err}`).toBe(0);
     expect(existsSync(join(ws2, "output", "review.json"))).toBe(true);
+  });
+});
+
+const SHOTS_JSON_V2 = (sourceIds: string[]) => JSON.stringify({
+  schema_version: "harness.shots/v2",
+  sources: sourceIds.map((id, i) => ({
+    source_id: id, index: i, file_name: `clip${i}.mp4`, duration_seconds: 20, has_audio: true,
+    shots: [
+      { shot_id: `s${String(i).padStart(3, "0")}-000`, in: 0, out: 10 },
+      { shot_id: `s${String(i).padStart(3, "0")}-001`, in: 10, out: 20 },
+    ],
+  })),
+});
+
+const TRANSCRIPT_JSON = (sourceIds: string[], talkingSourceId: string) => JSON.stringify({
+  schema_version: "harness.transcript/v1", engine: "fake",
+  sources: sourceIds.map((id) => ({
+    source_id: id, language: "vi", alignment: "word",
+    segments: id === talkingSourceId ? [{ start: 1, end: 3, text: "xin chào", words: [] }] : [],
+  })),
+});
+
+const FIT_REPORT_JSON = (o: { shortfalls?: { line_ids: string[]; missing_seconds: number; reused_seconds?: number; uncovered_seconds?: number }[]; reused_seconds?: number; within_target?: boolean } = {}) => JSON.stringify({
+  schema_version: "harness.fit-report/v1", voice: "tts", entries: [],
+  shortfalls: o.shortfalls ?? [], reused_seconds: o.reused_seconds ?? 0, warnings: [], total_seconds: 12,
+  within_target: o.within_target ?? true,
+});
+
+// Sub-project 5A task 8: the multi-source survey/edl/narration shapes and the fit_report-aware review, kept
+// separate from the sub-project 4 studio block above (which exercises the unchanged single-source v1 shapes).
+describe("fake-agent-cli.mjs: sub-project 5A task 8 (multi-source survey/edl/narration, fit_report review)", () => {
+  it("source-survey with a v2 shots.json (multi-source) writes a v2 survey.json: every shot usable, score 3, speech from transcript overlap", () => {
+    const ws = tmpWorkspace();
+    const sourceIds = [newId("source_item"), newId("source_item")];
+    const shotsInput = fileInput(ws, "inputs/shots.json", SHOTS_JSON_V2(sourceIds), "shots");
+    const transcriptInput = fileInput(ws, "inputs/transcript.json", TRANSCRIPT_JSON(sourceIds, sourceIds[0]!), "transcript");
+    const briefInput = fileInput(ws, "inputs/brief.json", BRIEF_JSON(), "brief");
+    const req = makeRequest(ws, {
+      stage_key: "survey-source",
+      inputs: [shotsInput, transcriptInput, briefInput],
+      expected_outputs: [
+        { type: "survey", mime_type: "text/markdown", kind: "file", name: "survey.md" },
+        { type: "survey_index", mime_type: "application/json", kind: "file", name: "survey.json" },
+      ],
+    });
+    const r = run(ws, req);
+    expect(r.status, `stderr: ${r.err}`).toBe(0);
+
+    const survey = JSON.parse(readFileSync(join(ws, "output", "survey.json"), "utf8"));
+    expect(survey.schema_version).toBe("harness.survey-index/v2");
+    expect(survey.shots).toHaveLength(4); // 2 sources x 2 shots
+    for (const shot of survey.shots) { expect(shot.usable).toBe(true); expect(shot.score).toBe(3); }
+    // sourceIds[0]'s shots overlap the transcript segment [1,3); sourceIds[1] has no segments at all.
+    const talking = survey.shots.filter((s: { source_id: string; speech: string }) => s.source_id === sourceIds[0] && s.speech === "talking");
+    expect(talking.length).toBeGreaterThan(0);
+    for (const shot of survey.shots.filter((s: { source_id: string }) => s.source_id === sourceIds[1])) {
+      expect(shot.speech).toBe("none");
+    }
+  });
+
+  it("edit-plan with a v2 shots.json + brief.voice tts: writes narration.json (harness.narration/v1) with lines keyed to real edl_order values", () => {
+    const ws = tmpWorkspace();
+    const sourceIds = [newId("source_item"), newId("source_item")];
+    const shotsInput = fileInput(ws, "inputs/shots.json", SHOTS_JSON_V2(sourceIds), "shots");
+    const briefJson = JSON.stringify({ topic: "test", style_id: newId("edit_style"), style_revision: 1, voice: "tts", language: "vi", request_notes: "" });
+    const briefInput = fileInput(ws, "inputs/brief.json", briefJson, "brief");
+    const req = makeRequest(ws, {
+      stage_key: "plan-edit",
+      inputs: [shotsInput, briefInput],
+      expected_outputs: [
+        { type: "edl", mime_type: "application/json", kind: "file", name: "edl.json" },
+        { type: "edit_plan", mime_type: "application/json", kind: "file", name: "edit-plan.json" },
+        { type: "narration", mime_type: "application/json", kind: "file", name: "narration.json" },
+      ],
+    });
+    const r = run(ws, req);
+    expect(r.status, `stderr: ${r.err}`).toBe(0);
+
+    const edl = JSON.parse(readFileSync(join(ws, "output", "edl.json"), "utf8"));
+    expect(EdlSchema.safeParse(edl).success).toBe(true);
+    expect(edl.entries.map((e: { source_id: string }) => e.source_id).sort()).toEqual([...sourceIds].sort());
+
+    const narration = JSON.parse(readFileSync(join(ws, "output", "narration.json"), "utf8"));
+    const parsed = NarrationSchema.safeParse(narration);
+    expect(parsed.success, JSON.stringify(parsed.success ? undefined : parsed.error.issues)).toBe(true);
+    expect(narration.lines.length).toBe(edl.entries.length);
+    const knownOrders = new Set(edl.entries.map((e: { order: number }) => e.order));
+    for (const line of narration.lines) expect(knownOrders.has(line.edl_order)).toBe(true);
+    // FAKE_NARRATION_CHARS default 40
+    for (const line of narration.lines) expect(line.text.length).toBe(40);
+  });
+
+  it("edit-plan: FAKE_NARRATION_CHARS overrides the placeholder line length", () => {
+    const ws = tmpWorkspace();
+    const sourceIds = [newId("source_item")];
+    const shotsInput = fileInput(ws, "inputs/shots.json", SHOTS_JSON_V2(sourceIds), "shots");
+    const briefJson = JSON.stringify({ topic: "test", style_id: newId("edit_style"), style_revision: 1, voice: "tts", language: "vi", request_notes: "" });
+    const briefInput = fileInput(ws, "inputs/brief.json", briefJson, "brief");
+    const req = makeRequest(ws, {
+      stage_key: "plan-edit",
+      inputs: [shotsInput, briefInput],
+      expected_outputs: [{ type: "narration", mime_type: "application/json", kind: "file", name: "narration.json" }],
+    });
+    const r = run(ws, req, { FAKE_NARRATION_CHARS: "90" });
+    expect(r.status, `stderr: ${r.err}`).toBe(0);
+    const narration = JSON.parse(readFileSync(join(ws, "output", "narration.json"), "utf8"));
+    expect(narration.lines[0].text.length).toBe(90);
+  });
+
+  it("edit-plan: brief.request_notes containing \"thiếu\" (a prior shortfall rejection) shortens the line to 20 chars regardless of FAKE_NARRATION_CHARS", () => {
+    const ws = tmpWorkspace();
+    const sourceIds = [newId("source_item")];
+    const shotsInput = fileInput(ws, "inputs/shots.json", SHOTS_JSON_V2(sourceIds), "shots");
+    const briefJson = JSON.stringify({ topic: "test", style_id: newId("edit_style"), style_revision: 1, voice: "tts", language: "vi", request_notes: "fake agent: thiếu 4.2 s ở L001" });
+    const briefInput = fileInput(ws, "inputs/brief.json", briefJson, "brief");
+    const req = makeRequest(ws, {
+      stage_key: "plan-edit",
+      inputs: [shotsInput, briefInput],
+      expected_outputs: [{ type: "narration", mime_type: "application/json", kind: "file", name: "narration.json" }],
+    });
+    const r = run(ws, req, { FAKE_NARRATION_CHARS: "90" });
+    expect(r.status, `stderr: ${r.err}`).toBe(0);
+    const narration = JSON.parse(readFileSync(join(ws, "output", "narration.json"), "utf8"));
+    expect(narration.lines[0].text.length).toBe(20);
+  });
+
+  it("library-review: a fit_report with shortfalls rejects unconditionally (FAKE_REVIEW_MODE=approve is overridden), note names the line_ids and missing seconds", () => {
+    const ws = tmpWorkspace();
+    const briefInput = fileInput(ws, "inputs/brief.json", BRIEF_JSON(), "brief");
+    const fitReportInput = fileInput(ws, "inputs/fit-report.json", FIT_REPORT_JSON({ shortfalls: [{ line_ids: ["L001", "L002"], missing_seconds: 4.2, reused_seconds: 0, uncovered_seconds: 4.2 }] }), "fit_report");
+    const req = makeRequest(ws, {
+      stage_key: "library-review",
+      inputs: [briefInput, fitReportInput],
+      expected_outputs: [{ type: "review", mime_type: "application/json", kind: "file", name: "review.json" }],
+    });
+    const r = run(ws, req, { FAKE_REVIEW_MODE: "approve" });
+    expect(r.status, `stderr: ${r.err}`).toBe(0);
+    const review = JSON.parse(readFileSync(join(ws, "output", "review.json"), "utf8"));
+    expect(reviewSchema.safeParse(review).success).toBe(true);
+    expect(review.decision).toBe("rejected");
+    expect(review.note).toContain("thiếu");
+    expect(review.note).toContain("L001");
+    expect(review.note).toContain("L002");
+    expect(review.note).toContain("4.2");
+  });
+
+  it("library-review: a fit_report with reused_seconds > 5 rejects even with no shortfalls rows", () => {
+    const ws = tmpWorkspace();
+    const briefInput = fileInput(ws, "inputs/brief.json", BRIEF_JSON(), "brief");
+    const fitReportInput = fileInput(ws, "inputs/fit-report.json", FIT_REPORT_JSON({ shortfalls: [{ line_ids: ["L001"], missing_seconds: 6, reused_seconds: 6, uncovered_seconds: 0 }], reused_seconds: 6 }), "fit_report");
+    const req = makeRequest(ws, {
+      stage_key: "library-review",
+      inputs: [briefInput, fitReportInput],
+      expected_outputs: [{ type: "review", mime_type: "application/json", kind: "file", name: "review.json" }],
+    });
+    const r = run(ws, req, { FAKE_REVIEW_MODE: "approve" });
+    expect(r.status, `stderr: ${r.err}`).toBe(0);
+    const review = JSON.parse(readFileSync(join(ws, "output", "review.json"), "utf8"));
+    expect(review.decision).toBe("rejected");
+  });
+
+  it("library-review: a fit_report with within_target: false rejects even with no shortfalls", () => {
+    const ws = tmpWorkspace();
+    const briefInput = fileInput(ws, "inputs/brief.json", BRIEF_JSON(), "brief");
+    const fitReportInput = fileInput(ws, "inputs/fit-report.json", FIT_REPORT_JSON({ within_target: false }), "fit_report");
+    const req = makeRequest(ws, {
+      stage_key: "library-review",
+      inputs: [briefInput, fitReportInput],
+      expected_outputs: [{ type: "review", mime_type: "application/json", kind: "file", name: "review.json" }],
+    });
+    const r = run(ws, req, { FAKE_REVIEW_MODE: "approve" });
+    expect(r.status, `stderr: ${r.err}`).toBe(0);
+    const review = JSON.parse(readFileSync(join(ws, "output", "review.json"), "utf8"));
+    expect(review.decision).toBe("rejected");
+  });
+
+  it("library-review: a fit_report with no shortfalls, reused_seconds <= 5, within_target true does not force rejection", () => {
+    const ws = tmpWorkspace();
+    const briefInput = fileInput(ws, "inputs/brief.json", BRIEF_JSON(), "brief");
+    const fitReportInput = fileInput(ws, "inputs/fit-report.json", FIT_REPORT_JSON({}), "fit_report");
+    const req = makeRequest(ws, {
+      stage_key: "library-review",
+      inputs: [briefInput, fitReportInput],
+      expected_outputs: [{ type: "review", mime_type: "application/json", kind: "file", name: "review.json" }],
+    });
+    const r = run(ws, req);
+    expect(r.status, `stderr: ${r.err}`).toBe(0);
+    const review = JSON.parse(readFileSync(join(ws, "output", "review.json"), "utf8"));
+    expect(review.decision).toBe("approved");
   });
 });
 
