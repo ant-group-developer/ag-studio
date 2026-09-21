@@ -212,7 +212,7 @@ describe("harness channel stats/collect/learned/demand/plan-requests/pick-next/m
   it("channel metrics import c1 <jsonl> --json imports matching rows and reports the rest skipped", () => {
     const jsonlPath = join(mkdtempSync(join(tmpdir(), "metrics-import-")), "channel-metrics.jsonl");
     const lines = [
-      JSON.stringify({ videoId: "vidABC", views: 200, impressions: 900, ctr_pct: 6, avg_view_sec: 70, collectedAt: "2026-09-13T00:00:00.000Z" }),
+      JSON.stringify({ videoId: "vidABC", views: 200, impressions: 900, ctr_pct: 6, avg_view_sec: 70, collectedAt: new Date(Date.now() - 2 * 3_600_000).toISOString() }),
       JSON.stringify({ videoId: "vid-does-not-exist", views: 10 }),
     ];
     writeFileSync(jsonlPath, lines.join("\n") + "\n");
