@@ -136,12 +136,17 @@ export async function syncLibrary(d: { store: StateStore; fs: LibraryFs; role: L
   // its own after `voices add`, or another portfolio's) need this in their own mirror.
   const voiceIds = d.fs.listVoiceIds();
   for (const id of voiceIds) {
-    const path = d.fs.paths.voiceFile(id);
+    // `listVoiceIds` only checks for a `voice.json` inside the directory, not that the directory *name* is a
+    // valid voice_id -- an operator-created or otherwise malformed entry must isolate to one `corrupt` row
+    // like every other bad file here, not throw `paths.voiceFile`'s own CONFIG_INVALID uncaught and abort the
+    // rest of sync (fix round 1: `rawPath` is computed unvalidated, purely for the corrupt report, so the
+    // validating call is the only thing inside the try).
+    const rawPath = join(d.fs.paths.voicesDir, id, "voice.json");
     let voice: VoiceProfile;
     try {
-      voice = d.fs.readJson(path, VoiceProfileSchema);
+      voice = d.fs.readJson(d.fs.paths.voiceFile(id), VoiceProfileSchema);
     } catch (e) {
-      report.corrupt.push({ path, reason: reasonFor(e) });
+      report.corrupt.push({ path: rawPath, reason: reasonFor(e) });
       continue;
     }
     const outcome = classify(voice, d.store.getVoiceProfile(voice.voice_id));

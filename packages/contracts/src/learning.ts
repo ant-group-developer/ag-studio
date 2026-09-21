@@ -140,10 +140,16 @@ export const DemandSchema = z.object({
 
 /** `output/requests-receipt.json` written by the built-in `create-requests` stage (spec §4.2): every content
  * request id the `channel-planning` run's topics resolved to, whether newly created this attempt or already
- * existing from an earlier attempt of the same run (idempotent rerun). */
+ * existing from an earlier attempt of the same run (idempotent rerun).
+ *
+ * `downgraded_voice` (sub-project 5A, optional): the ids of requests this attempt created for a proposed
+ * `voice: "tts"` topic that had no active channel voice to resolve against -- `create-requests` never fails
+ * the stage for this (a planning loop must never dead-end on a missing voice profile); it silently downgrades
+ * the request to `voice: "none"` instead and lists it here so an operator can see it happened. */
 export const RequestsReceiptSchema = z.object({
   schema_version: schemaVersion("requests-receipt"),
   request_ids: z.array(idSchema("content_request")),
+  downgraded_voice: z.array(idSchema("content_request")).optional(),
 }).strict();
 
 export type VideoMetrics = z.infer<typeof VideoMetricsSchema>;

@@ -32,8 +32,9 @@ function setupChannelRepo(): string {
 
 /** Adds `channels/c1/channel.yaml` with `planning.lookahead_slots: 2` -- with nothing else covering the
  * channel's publish slots, `channelDemand` computes `needed: 2` deterministically, matching the brief's own
- * worked example ("demand.needed 2"). */
-function addChannel(project: string, repoDir: string): void {
+ * worked example ("demand.needed 2"). `voiceId`, when given, sets `voice: { voice_id }` (sub-project 5A Task
+ * 4 fix round 1: the channel's own configured TTS voice `create-requests` resolves a "tts" topic against). */
+function addChannel(project: string, repoDir: string, voiceId?: string): void {
   const cfgPath = join(project, "project.yaml");
   const cfg = parse(readFileSync(cfgPath, "utf8")) as Record<string, unknown>;
   cfg.adapters = { publisher: "playwright", agent: "fake" };
@@ -55,8 +56,28 @@ function addChannel(project: string, repoDir: string): void {
     overlay: { enabled: true, side: "right" },
     seo: { niche: "chợ nổi miền Tây", audience: "khán giả trẻ thích du lịch", language: "vi" },
     planning: { enabled: true, lookahead_slots: 2, topics_per_run: 3, max_open_requests: 3, check_seconds: 3600 },
+    ...(voiceId ? { voice: { voice_id: voiceId } } : {}),
   };
   writeFileSync(join(channelDir, "channel.yaml"), stringify(channelYaml));
+}
+
+/** Seeds a schema-valid `VoiceProfile` straight into a project's own local store mirror -- standing in for a
+ * real `library voices add` (which needs ffmpeg) the same way this file fakes `propose-topics` instead of
+ * running a real agent. `status` lets a test exercise the "configured but retired" case. */
+function seedVoiceProfile(project: string, status: "active" | "retired" = "active"): string {
+  const voiceId = newId("voice_profile");
+  const ctx = buildContext({ projectDir: project });
+  try {
+    ctx.store.upsertVoiceProfile({
+      schema_version: "harness.voice/v1", voice_id: voiceId, display_name: "Narrator", language: "vi",
+      origin: "own", origin_note: "", ref_audio: { path: "ref.wav", checksum: "sha256:" + "a".repeat(64), duration_seconds: 5 },
+      ref_text: "hi", params: { speed: 1, num_step: 32 }, revision: 1, status,
+      created_at: "2026-09-14T00:00:00.000Z", updated_at: "2026-09-14T00:00:00.000Z",
+    });
+  } finally {
+    ctx.close();
+  }
+  return voiceId;
 }
 
 function writeApprovedItem(lib: string, itemId: string): void {
@@ -238,6 +259,32 @@ const SAMPLE_PROPOSAL_5 = (): TopicProposal => ({
   ],
 });
 
+/** One "tts" topic and one "none" topic -- for the voice-downgrade tests (sub-project 5A Task 4 fix round 1,
+ * Important #2): `create-requests` must never fail the stage for a proposed "tts" topic when the channel has
+ * no active voice to resolve it against, and must leave a topic that never asked for "tts" untouched. */
+const TTS_MIX_PROPOSAL = (): TopicProposal => ({
+  schema_version: "harness.topic-proposal/v1",
+  topics: [
+    { topic: "Giọng đọc tự động cho tập chợ nổi buổi sáng", angle: "tường thuật", why: "kênh muốn thử giọng đọc tự động mới", voice: "tts" },
+    { topic: "Một ngày quan sát không cần tường thuật gì cả", angle: "quan sát", why: "tập này không cần giọng đọc nào hết", voice: "none" },
+  ],
+});
+
+/** Standalone (not scoped to any one `world`) equivalent of the `create-requests` describe block's own
+ * `writeDemandFixture`, for the voice-downgrade tests below, which each need their own isolated channel
+ * project. */
+function writeDemandJson(d: Partial<Demand>): string {
+  const dir = mkdtempSync(join(tmpdir(), "demand-fixture-"));
+  const demand: Demand = {
+    schema_version: "harness.demand/v1", channel_id: CHANNEL_ID, needed: 0, slots: [],
+    covered: { jobs: 0, runs: 0, items: 0, requests: 0 }, open_requests: 0, max_open_requests: 3, topics_per_run: 3,
+    ...d,
+  };
+  mkdirSync(join(dir, "output"), { recursive: true });
+  writeFileSync(join(dir, "output", "demand.json"), JSON.stringify(demand, null, 2));
+  return dir;
+}
+
 describe("harness publish stage: channel-brief / demand / create-requests", () => {
   let world: LibraryWorld;
   let repoDir: string;
@@ -396,6 +443,111 @@ describe("harness publish stage: channel-brief / demand / create-requests", () =
       expect(result.outcome, JSON.stringify(result)).toBe("succeeded");
       const receipt = JSON.parse(readFileSync(join(workspaceDir, "output", "requests-receipt.json"), "utf8")) as RequestsReceipt;
       expect(receipt.request_ids).toHaveLength(2);
+    });
+
+    // Sub-project 5A Task 4 fix round 1, Important #2: `world.channel` has no `voice:` block (the default --
+    // see `beforeAll` above), so a proposed "tts" topic must downgrade instead of failing the whole stage.
+    it("a \"tts\" topic on a channel with no configured voice downgrades to \"none\" instead of failing the stage", async () => {
+      const { runId, briefSnap, topicsSnap } = await toCreateRequestsReady("planning c1 voice-no-channel-voice", TTS_MIX_PROPOSAL());
+      const demandDir = writeDemandFixture({ needed: 2, max_open_requests: 10, open_requests: 0, topics_per_run: 5 });
+
+      const inputs = createRequestsInputs(briefSnap, demandDir, topicsSnap);
+      const { result, workspaceDir } = await invokeStage(world.channel, runId, "create-requests", "create-requests", inputs);
+      expect(result.outcome, JSON.stringify(result)).toBe("succeeded");
+      const receipt = JSON.parse(readFileSync(join(workspaceDir, "output", "requests-receipt.json"), "utf8")) as RequestsReceipt;
+      expect(receipt.request_ids).toHaveLength(2);
+      expect(receipt.downgraded_voice).toHaveLength(1);
+
+      const ctx = buildContext({ projectDir: world.channel });
+      try {
+        const downgradedId = receipt.downgraded_voice![0]!;
+        const downgraded = ctx.store.getContentRequest(downgradedId)!;
+        expect(downgraded.voice).toBe("none");
+        expect(downgraded.voice_id).toBeUndefined();
+        expect(downgraded.notes).toContain("voice: tts→none");
+        expect(downgraded.topic).toContain("Giọng đọc tự động");
+
+        const untouchedId = receipt.request_ids.find((id) => id !== downgradedId)!;
+        const untouched = ctx.store.getContentRequest(untouchedId)!;
+        expect(untouched.voice).toBe("none");
+        expect(untouched.notes).not.toContain("voice: tts→none");
+      } finally { ctx.close(); }
+    });
+  });
+
+  describe("create-requests: voice downgrade with a configured channel voice (sub-project 5A Task 4 fix round 1)", () => {
+    it("an active channel voice: the \"tts\" topic's request carries voice: tts and the channel's voice_id, no downgrade", async () => {
+      const voiceWorld = freshLibraryWorld({ media: false });
+      const voiceRepoDir = setupChannelRepo();
+      const voiceId = seedVoiceProfile(voiceWorld.channel, "active");
+      addChannel(voiceWorld.channel, voiceRepoDir, voiceId);
+      const voiceStyleId = newId("edit_style");
+      writeActiveStyle(voiceWorld.lib, voiceStyleId);
+      librarySync(voiceWorld.channel);
+
+      const contentId = createPlanningContent(voiceWorld.channel, "planning c1 voice-active");
+      const runId = planRun(voiceWorld.channel, "channel-planning@1.0.0", "channel-planning", contentId);
+      const brief = await runAndCommit(voiceWorld.channel, runId, "channel-brief", "channel-brief");
+      // The real `demand` stage still has to run and commit (it's a `depends_on` of create-requests, and this
+      // harness has no planner/worker loop driving stages to READY on its own) -- only the *content* fed to
+      // create-requests as its `demand` input is swapped for a deterministic fixture, same trick the
+      // "demand.needed 0"/"room-capped"/"topics-per-run-capped" tests above use via `writeDemandFixture`.
+      await runAndCommit(voiceWorld.channel, runId, "demand", "demand");
+      const demandDir = writeDemandJson({ needed: 2, max_open_requests: 10, open_requests: 0, topics_per_run: 5 });
+      const propose = await fabricateProposeTopics(voiceWorld.channel, runId, TTS_MIX_PROPOSAL());
+
+      const inputs = [
+        { type: "topic_proposal", relPath: "input/topics/topics.json", src: join(propose.workspaceSnapshot, "output", "topics.json") },
+        { type: "demand", relPath: "input/demand/demand.json", src: join(demandDir, "output", "demand.json") },
+        { type: "channel_brief", relPath: "input/channel-brief/channel-brief.json", src: join(brief.workspaceSnapshot, "output", "channel-brief.json") },
+      ];
+      const { result, workspaceDir } = await invokeStage(voiceWorld.channel, runId, "create-requests", "create-requests", inputs);
+      expect(result.outcome, JSON.stringify(result)).toBe("succeeded");
+      const receipt = JSON.parse(readFileSync(join(workspaceDir, "output", "requests-receipt.json"), "utf8")) as RequestsReceipt;
+      expect(receipt.request_ids).toHaveLength(2);
+      expect(receipt.downgraded_voice ?? []).toEqual([]);
+
+      const ctx = buildContext({ projectDir: voiceWorld.channel });
+      try {
+        const ttsRequest = ctx.store.listContentRequests({}).find((r) => r.topic.includes("Giọng đọc tự động"))!;
+        expect(ttsRequest.voice).toBe("tts");
+        expect(ttsRequest.voice_id).toBe(voiceId);
+        expect(ttsRequest.notes).not.toContain("voice: tts→none");
+      } finally { ctx.close(); }
+    });
+
+    it("a retired channel voice: the \"tts\" topic still downgrades to \"none\" (retired is not active)", async () => {
+      const retiredWorld = freshLibraryWorld({ media: false });
+      const retiredRepoDir = setupChannelRepo();
+      const voiceId = seedVoiceProfile(retiredWorld.channel, "retired");
+      addChannel(retiredWorld.channel, retiredRepoDir, voiceId);
+      const retiredStyleId = newId("edit_style");
+      writeActiveStyle(retiredWorld.lib, retiredStyleId);
+      librarySync(retiredWorld.channel);
+
+      const contentId = createPlanningContent(retiredWorld.channel, "planning c1 voice-retired");
+      const runId = planRun(retiredWorld.channel, "channel-planning@1.0.0", "channel-planning", contentId);
+      const brief = await runAndCommit(retiredWorld.channel, runId, "channel-brief", "channel-brief");
+      await runAndCommit(retiredWorld.channel, runId, "demand", "demand");
+      const demandDir = writeDemandJson({ needed: 2, max_open_requests: 10, open_requests: 0, topics_per_run: 5 });
+      const propose = await fabricateProposeTopics(retiredWorld.channel, runId, TTS_MIX_PROPOSAL());
+
+      const inputs = [
+        { type: "topic_proposal", relPath: "input/topics/topics.json", src: join(propose.workspaceSnapshot, "output", "topics.json") },
+        { type: "demand", relPath: "input/demand/demand.json", src: join(demandDir, "output", "demand.json") },
+        { type: "channel_brief", relPath: "input/channel-brief/channel-brief.json", src: join(brief.workspaceSnapshot, "output", "channel-brief.json") },
+      ];
+      const { result, workspaceDir } = await invokeStage(retiredWorld.channel, runId, "create-requests", "create-requests", inputs);
+      expect(result.outcome, JSON.stringify(result)).toBe("succeeded");
+      const receipt = JSON.parse(readFileSync(join(workspaceDir, "output", "requests-receipt.json"), "utf8")) as RequestsReceipt;
+      expect(receipt.downgraded_voice).toHaveLength(1);
+
+      const ctx = buildContext({ projectDir: retiredWorld.channel });
+      try {
+        const downgraded = ctx.store.getContentRequest(receipt.downgraded_voice![0]!)!;
+        expect(downgraded.voice).toBe("none");
+        expect(downgraded.notes).toContain("voice: tts→none");
+      } finally { ctx.close(); }
     });
   });
 

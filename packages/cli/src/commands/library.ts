@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import type { Command } from "commander";
-import { HarnessError, type ContentRequest, type LibraryBrief, type VoiceParams } from "@harness/contracts";
+import { HarnessError, idSchema, type ContentRequest, type LibraryBrief, type VoiceParams } from "@harness/contracts";
 import { activateStyle, addVoice, applyReview, claimItem, createRequest, retireVoice, syncLibrary, withdrawItem } from "@harness/core";
 import { probeDurationSync } from "@harness/adapter-ffprobe";
 import { registerLibraryStage, requireLibrary } from "./library-stage.js";
@@ -13,15 +13,19 @@ function parseDuration(raw: string | undefined): [number, number] | undefined {
   return [parts[0]!, parts[1]!];
 }
 
-/** `--ref-text` (voices add): an existing file's UTF-8 content (trimmed), or the raw string as-is. Either way,
- * empty is CONFIG_INVALID -- a blank transcript would silently produce an unusable voice profile. */
+/** `--ref-text` (voices add): an existing *file*'s UTF-8 content (trimmed), or the raw string as-is. Either
+ * way, empty is CONFIG_INVALID -- a blank transcript would silently produce an unusable voice profile.
+ * `existsSync(raw)` alone is also true for a directory, which `readFileSync` would then reject with a raw
+ * `EISDIR` instead of this function's own clear error -- `statSync(raw).isFile()` guards that (fix round 1). */
 function resolveRefText(raw: string): string {
-  const text = existsSync(raw) ? readFileSync(raw, "utf8").trim() : raw;
+  const isFile = existsSync(raw) && statSync(raw).isFile();
+  const text = isFile ? readFileSync(raw, "utf8").trim() : raw;
   if (!text) throw new HarnessError("CONFIG_INVALID", "--ref-text must not be empty", { value: raw });
   return text;
 }
 
 const VOICE_ORIGINS = ["synthetic", "own", "licensed"] as const;
+const VOICE_ID_SCHEMA = idSchema("voice_profile");
 
 export function registerLibrary(program: Command): void {
   const library = program.command("library").description("kho nội dung: sync, requests, styles, items (spec §4.2)");
@@ -211,6 +215,11 @@ export function registerLibrary(program: Command): void {
         const lib = requireLibrary(ctx);
         if (!VOICE_ORIGINS.includes(o.origin)) {
           throw new HarnessError("CONFIG_INVALID", `--origin must be one of ${VOICE_ORIGINS.join("|")}`, { origin: o.origin });
+        }
+        // Fail fast on a malformed/path-traversal-shaped --voice-id before resolving --ref-text or spending
+        // any ffmpeg work -- addVoice validates this too, but this gives an immediate, CLI-specific error.
+        if (o.voiceId !== undefined && !VOICE_ID_SCHEMA.safeParse(o.voiceId).success) {
+          throw new HarnessError("CONFIG_INVALID", `--voice-id is not a valid voice_id: ${o.voiceId}`, { voice_id: o.voiceId });
         }
         const ref_text = resolveRefText(o.refText);
         const params: Partial<VoiceParams> = {};

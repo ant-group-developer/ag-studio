@@ -337,10 +337,13 @@ function checkChannelVoice(store: StateStore, library: DoctorInput["library"], c
   const check = `channel:${id}:voice`;
   const voiceId = channel.config.voice!.voice_id;
 
+  // Checked first (fix round 1): a channels-only project with no `library` block at all should say so
+  // plainly, not report "run library sync" for a library it has no way to sync in the first place.
+  if (!library) return { check, ok: false, detail: "project.yaml has no library configured; cannot verify ref.wav" };
+
   const profile = store.getVoiceProfile(voiceId);
   if (!profile) return { check, ok: false, detail: `voice profile not mirrored: ${voiceId}; run library sync` };
   if (profile.status !== "active") return { check, ok: false, detail: `voice profile ${voiceId} is ${profile.status}, not active` };
-  if (!library) return { check, ok: false, detail: "project.yaml has no library configured; cannot verify ref.wav" };
 
   const refPath = library.fs.paths.voiceRef(voiceId);
   if (!existsSync(refPath)) return { check, ok: false, detail: `ref.wav missing: ${refPath}` };

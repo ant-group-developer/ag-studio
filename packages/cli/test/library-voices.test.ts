@@ -1,11 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { parse, stringify } from "yaml";
 import { HARNESS_ROOT } from "@harness/core";
 import { hasFfmpeg, makeWav } from "../../../tests/media.js";
+
+/** Every regular file under `root`, relative and sorted -- proves a refused `voices add` left the kho
+ * unchanged, not just "no new voice profile" (a file written outside `voices/` via a path-traversal id would
+ * otherwise go unnoticed). */
+function walkFiles(root: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) return;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else out.push(relative(root, full).split("\\").join("/"));
+    }
+  };
+  walk(root);
+  return out.sort();
+}
 
 const MAIN = join(HARNESS_ROOT, "packages", "cli", "src", "main.ts");
 
@@ -93,6 +110,18 @@ describe.skipIf(!hasFfmpeg())("harness library voices CLI", () => {
     const listed = cli(channelDir, "library", "voices", "list", "--json");
     expect(listed.code, listed.err).toBe(0);
     expect(JSON.parse(listed.out)).toEqual([]);
+  });
+
+  it("`--voice-id ../requests` (path traversal) exits non-zero and leaves the kho unchanged", () => {
+    const root = mkdtempSync(join(tmpdir(), "kho-voices-traversal-"));
+    const channelDir = libraryProject(root, "channel", "voices-traversal");
+    expect(cli(channelDir, "db", "migrate").code).toBe(0);
+    const before = walkFiles(root);
+
+    const refused = cli(channelDir, "library", "voices", "add", "--voice-id", "../requests", "--display-name", "Nope", "--ref", makeClip(5), "--ref-text", "hi", "--origin", "own", "--json");
+    expect(refused.code).toBe(1);
+    expect(refused.err).toContain("CONFIG_INVALID");
+    expect(walkFiles(root)).toEqual(before);
   });
 
   it("retires a voice on the channel role and refuses on the studio role", () => {

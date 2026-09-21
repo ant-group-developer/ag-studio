@@ -366,14 +366,41 @@ describe("syncLibrary voices", () => {
   it("flags a corrupt voice.json without importing it", async () => {
     const root = tempRoot();
     const channel = new LibraryFs({ root, role: "channel" });
-    mkdirSync(channel.paths.voiceDir("voice-broken"), { recursive: true });
-    writeFileSync(join(channel.paths.voiceDir("voice-broken"), "voice.json"), "{not valid json");
+    const voiceId = newId("voice_profile");
+    mkdirSync(channel.paths.voiceDir(voiceId), { recursive: true });
+    writeFileSync(join(channel.paths.voiceDir(voiceId), "voice.json"), "{not valid json");
     const { store, clock } = openTempStore();
 
     const report = await syncLibrary({ store, fs: channel, role: "channel", clock });
     expect(report.imported.voices).toEqual([]);
     expect(report.corrupt).toHaveLength(1);
-    expect(report.corrupt[0].path).toBe(join(channel.paths.voiceDir("voice-broken"), "voice.json"));
+    expect(report.corrupt[0].path).toBe(join(channel.paths.voiceDir(voiceId), "voice.json"));
+  });
+
+  // Review finding (Task 4 fix round 1, Important #1): `voiceDir`/`voiceFile` now throw CONFIG_INVALID for an
+  // id that isn't a valid `voice_<ULID>` -- `listVoiceIds` itself does not check that (only that a `voice.json`
+  // sits inside the directory), so a malformed directory name must isolate to one `corrupt` entry the same as
+  // any other bad file, not crash the whole sync. Written with plain node:fs (not `channel.paths.voiceDir`,
+  // which would itself now refuse the bad name) to stand in for a directory an operator created by hand.
+  it("isolates a voices/ directory whose name is not a valid voice_id to one corrupt entry, without aborting the rest of sync", async () => {
+    const root = tempRoot();
+    const channel = new LibraryFs({ root, role: "channel" });
+    const badDir = join(channel.paths.voicesDir, "voice-broken");
+    mkdirSync(badDir, { recursive: true });
+    writeFileSync(join(badDir, "voice.json"), JSON.stringify({ hello: "not a real voice profile" }));
+
+    const styleId = newId("edit_style");
+    const studio = new LibraryFs({ root, role: "studio" });
+    studio.writeJsonAtomic(studio.paths.styleFile(styleId), makeStyle(styleId));
+
+    const { store, clock } = openTempStore();
+    const report = await syncLibrary({ store, fs: channel, role: "channel", clock });
+
+    expect(report.imported.voices).toEqual([]);
+    expect(report.corrupt).toHaveLength(1);
+    expect(report.corrupt[0].path).toBe(join(badDir, "voice.json"));
+    // and the rest of sync still ran to completion (a style import, unrelated to voices, still happened)
+    expect(report.imported.styles).toEqual([styleId]);
   });
 
   it("reports a mirrored voice whose kho entry disappeared as missing, without dropping it from the store", async () => {

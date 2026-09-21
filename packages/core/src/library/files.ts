@@ -2,11 +2,25 @@ import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { ZodTypeDef, ZodType } from "zod";
-import { HarnessError, LibraryClaimSchema, type LibraryClaim, type LibraryFile } from "@harness/contracts";
+import { HarnessError, idSchema, LibraryClaimSchema, type LibraryClaim, type LibraryFile } from "@harness/contracts";
 import { sha256File } from "../artifacts/checksum.js";
 import { mimeTypeForPath } from "../source-catalog/catalog.js";
 
 export type LibraryRole = "studio" | "channel";
+
+const VOICE_ID_SCHEMA = idSchema("voice_profile");
+
+/** Defence in depth for every caller of `voiceDir`/`voiceFile`/`voiceRef`, present or future: an id that
+ * does not match the `voice_<ULID>` shape must never reach a `join()` that builds a kho path -- a string like
+ * `"../requests"` would otherwise resolve outside `voices/` entirely (onto a path a *different* rule of
+ * `assertWritable` happens to allow), and a syntactically-odd-but-still-under-`voices/` id would leave an
+ * orphan directory neither `listVoiceIds` nor `syncLibrary` ever look at. Review finding (Task 4 fix round 1).
+ */
+function assertValidVoiceId(voiceId: string): void {
+  if (!VOICE_ID_SCHEMA.safeParse(voiceId).success) {
+    throw new HarnessError("CONFIG_INVALID", `invalid voice_id: ${voiceId}`, { voice_id: voiceId });
+  }
+}
 
 export interface LibraryPaths {
   root: string;
@@ -47,9 +61,9 @@ export function libraryPaths(root: string): LibraryPaths {
     manifest: (id) => join(items, id, "manifest.json"),
     claimsDir: (id) => join(items, id, "claims"),
     claimFile: (id, channelId) => join(items, id, "claims", `${channelId}.json`),
-    voiceDir: (id) => join(voicesDir, id),
-    voiceFile: (id) => join(voicesDir, id, "voice.json"),
-    voiceRef: (id) => join(voicesDir, id, "ref.wav"),
+    voiceDir: (id) => { assertValidVoiceId(id); return join(voicesDir, id); },
+    voiceFile: (id) => { assertValidVoiceId(id); return join(voicesDir, id, "voice.json"); },
+    voiceRef: (id) => { assertValidVoiceId(id); return join(voicesDir, id, "ref.wav"); },
   };
 }
 

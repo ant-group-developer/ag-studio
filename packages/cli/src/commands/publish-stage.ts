@@ -526,6 +526,21 @@ function policyTargetDuration(policy: Record<string, unknown>): [number, number]
   return typeof min === "number" && typeof max === "number" ? [min, max] : undefined;
 }
 
+/** The channel's own configured TTS voice (`channel.yaml` `voice.voice_id`), resolved once against *this*
+ * project's store mirror and only if it is still `active` -- `undefined` for a channel with no `voice` block
+ * at all, one whose `voice_id` the mirror has never seen, or one that is `retired`. Deliberately silent (no
+ * throw): `resolveStyleFor`/`requireActiveVoice` throwing is right for a single hand-run `library request
+ * create`, but `create-requests` drives the fully-automatic planning loop (spec §4.2) -- a channel with no
+ * active voice yet must never turn a proposed "tts" topic into a stage failure (fix round 1, Important #2). */
+function resolveActiveChannelVoice(app: AppContext, channel: LoadedChannel): string | undefined {
+  const voiceId = channel.config.voice?.voice_id;
+  if (!voiceId) return undefined;
+  const profile = app.store.getVoiceProfile(voiceId);
+  return profile?.status === "active" ? profile.voice_id : undefined;
+}
+
+const VOICE_DOWNGRADE_NOTE = " [voice: tts→none, kênh chưa có giọng active]";
+
 /** `create-requests` stage (spec §4.2): turns proposed topics into kho content requests, capped by three
  * independent limits at once -- `demand.needed` (the publish schedule doesn't need more), `room` (the
  * channel's `max_open_requests` headroom: `max_open_requests - open_requests`, so the studio is never handed
@@ -542,7 +557,13 @@ function policyTargetDuration(policy: Record<string, unknown>): [number, number]
  * Without it the loop dead-ends at the studio: `library-production@1.1.0`'s `assemble` stage lists
  * `brief-duration` in `required_checks`, that checker *skips* when the brief declares no target duration, and
  * a skipped required check fails the stage exactly like an outright `fail` -- so an auto-planned request with
- * no duration is replanned until `max_replans` and then parked as `request_stuck`, forever. */
+ * no duration is replanned until `max_replans` and then parked as `request_stuck`, forever.
+ *
+ * A proposed `voice: "tts"` topic with no active channel voice to resolve is never a stage failure either
+ * (`resolveActiveChannelVoice` above, fix round 1): it is silently created as `voice: "none"` instead, with
+ * `VOICE_DOWNGRADE_NOTE` appended to its `notes` and its id listed in the receipt's `downgraded_voice` -- an
+ * agent-proposed `tts` topic must never be able to wedge the fully-automatic planning loop on a channel that
+ * simply hasn't recorded a voice yet. */
 async function createRequestsStage(app: AppContext, sdk: ScriptContext): Promise<void> {
   const { run, channelId, channel } = requireRunChannel(app, sdk);
   const library = requireLibrary(app);
@@ -556,37 +577,50 @@ async function createRequestsStage(app: AppContext, sdk: ScriptContext): Promise
   const candidates = proposal.topics.slice(0, cap);
   const existingForRun = app.store.listContentRequests({}).filter((r) => r.requested_by.channel_id === channelId && r.notes.includes(run.run_id));
   const byTopic = new Map(existingForRun.map((r) => [normalizeTopic(r.topic), r.request_id]));
+  const channelVoiceId = resolveActiveChannelVoice(app, channel);
 
   const requestIds: string[] = [];
   const createdIds: string[] = [];
+  const downgradedVoiceIds: string[] = [];
   for (const topic of candidates) {
     const key = normalizeTopic(topic.topic);
     const existingId = byTopic.get(key);
     if (existingId) { requestIds.push(existingId); continue; }
 
     const { style_id, style_revision } = resolveStyleFor(app, topic.style_id);
+    const wantsTts = (topic.voice ?? "none") === "tts";
+    const downgrade = wantsTts && channelVoiceId === undefined;
+    const voice = downgrade ? "none" : (topic.voice ?? "none");
+    const notes = `auto-plan ${run.run_id}: ${topic.why}${downgrade ? VOICE_DOWNGRADE_NOTE : ""}`;
+
     const created = createRequest({ store: app.store, fs: library.fs, clock: app.clock }, {
       requested_by: { portfolio_id: run.portfolio_id, channel_id: channelId },
-      topic: topic.topic, style_id, style_revision, voice: topic.voice ?? "none", language: brief.channel.seo.language,
+      topic: topic.topic, style_id, style_revision, voice, language: brief.channel.seo.language,
       target_duration_seconds: topic.target_duration_seconds ?? policyTargetDuration(sdk.request.policy) ?? DEFAULT_TARGET_DURATION_SECONDS,
       ...(topic.source_hint !== undefined ? { source_hint: topic.source_hint } : {}),
-      // The channel's own configured voice (channel.yaml `voice.voice_id`), used only when the proposed
-      // topic itself asks for "tts" and names no per-topic override -- see `createRequest`'s voice_id rule.
-      ...(channel.config.voice?.voice_id !== undefined ? { channelVoiceId: channel.config.voice.voice_id } : {}),
-      notes: `auto-plan ${run.run_id}: ${topic.why}`,
+      // Used only when voice ends up "tts" (createRequest ignores it otherwise) -- the channel's own active
+      // voice, already resolved once above instead of per-topic.
+      ...(channelVoiceId !== undefined ? { channelVoiceId } : {}),
+      notes,
     });
     requestIds.push(created.request_id);
     createdIds.push(created.request_id);
+    if (downgrade) downgradedVoiceIds.push(created.request_id);
     byTopic.set(key, created.request_id); // guards against duplicate topics inside the same proposal
   }
 
   if (createdIds.length > 0) {
     const stageRun = app.store.getStageRun(sdk.request.stage_run_id) ?? null;
     const attempt = app.store.getAttempt(sdk.request.attempt_id) ?? null;
-    app.store.appendEvent(eventFor(run, stageRun, attempt, "channel.requests_created", "info", { channel_id: channelId, run_id: run.run_id, request_ids: createdIds }));
+    app.store.appendEvent(eventFor(run, stageRun, attempt, "channel.requests_created", "info", {
+      channel_id: channelId, run_id: run.run_id, request_ids: createdIds, downgraded_voice_count: downgradedVoiceIds.length,
+    }));
   }
 
-  const receipt = RequestsReceiptSchema.parse({ schema_version: "harness.requests-receipt/v1", request_ids: requestIds });
+  const receipt = RequestsReceiptSchema.parse({
+    schema_version: "harness.requests-receipt/v1", request_ids: requestIds,
+    ...(downgradedVoiceIds.length > 0 ? { downgraded_voice: downgradedVoiceIds } : {}),
+  });
   await writeJsonOutput(sdk, "output/requests-receipt.json", receipt, "requests_receipt");
   await sdk.done();
 }

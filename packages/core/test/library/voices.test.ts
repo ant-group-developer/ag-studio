@@ -1,12 +1,30 @@
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { isHarnessError, newId } from "@harness/contracts";
 import { addVoice, LibraryFs, requireActiveVoice, retireVoice, sha256File } from "../../src/index.js";
 import { openTempStore } from "../helpers.js";
 import { hasFfmpeg, makeWav } from "../../../../tests/media.js";
+
+/** Every regular file under `root`, as paths relative to `root` (sorted) -- used to prove a rejected
+ * `addVoice`/`retireVoice` call left the kho byte-for-byte as it found it, not just "no voice.json for this
+ * id" (an orphan directory under a *different* name, or a file written outside `voices/` entirely via path
+ * traversal, would otherwise go unnoticed). */
+function walkFiles(root: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) return;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else out.push(relative(root, full).split("\\").join("/"));
+    }
+  };
+  walk(root);
+  return out.sort();
+}
 
 function ffmpegPath(): string {
   return process.env.FFMPEG_PATH ?? "ffmpeg";
@@ -46,6 +64,79 @@ function makeClip(seconds: number): string {
   makeWav(path, seconds);
   return path;
 }
+
+// Review finding (Task 4 fix round 1, Important #1): a caller-supplied voice_id must be rejected before it
+// ever reaches a kho path -- not gated on ffmpeg, since these must fail before ffmpeg is even considered
+// (asserted below by walking the kho and finding it byte-for-byte unchanged).
+describe("addVoice / retireVoice reject an invalid voice_id before touching the kho", () => {
+  it("addVoice with a malformed voice_id (not a ULID) throws CONFIG_INVALID and writes nothing anywhere in the kho", async () => {
+    const { d, root } = world();
+    const before = walkFiles(root);
+
+    let caught: unknown;
+    try {
+      await addVoice(d, { voice_id: "foo", display_name: "Narrator", ref_path: makeClip(5), ref_text: "hi", language: "vi", origin: "own" });
+    } catch (e) {
+      caught = e;
+    }
+    expect(isHarnessError(caught, "CONFIG_INVALID")).toBe(true);
+    expect(walkFiles(root)).toEqual(before);
+  });
+
+  it("addVoice with a path-traversal-shaped voice_id (\"../requests\") throws CONFIG_INVALID and writes nothing anywhere in the kho", async () => {
+    const { d, root } = world();
+    const before = walkFiles(root);
+
+    let caught: unknown;
+    try {
+      await addVoice(d, { voice_id: "../requests", display_name: "Narrator", ref_path: makeClip(5), ref_text: "hi", language: "vi", origin: "own" });
+    } catch (e) {
+      caught = e;
+    }
+    expect(isHarnessError(caught, "CONFIG_INVALID")).toBe(true);
+    // in particular: no file landed under requests/ (the channel role's other writable directory)
+    expect(walkFiles(root)).toEqual(before);
+  });
+
+  it("retireVoice with an invalid voice_id throws CONFIG_INVALID without touching the kho", () => {
+    const { d, root } = world();
+    const before = walkFiles(root);
+
+    let caught: unknown;
+    try {
+      retireVoice(d, "../requests");
+    } catch (e) {
+      caught = e;
+    }
+    expect(isHarnessError(caught, "CONFIG_INVALID")).toBe(true);
+    expect(walkFiles(root)).toEqual(before);
+  });
+});
+
+describe("LibraryFs.paths voice id hardening (defence in depth)", () => {
+  it("voiceDir/voiceFile/voiceRef throw CONFIG_INVALID for a non-ULID or path-traversal id", () => {
+    const root = tempRoot("library-voices-paths-");
+    const fs = new LibraryFs({ root, role: "channel" });
+    for (const bad of ["foo", "../requests", "voice_short", ""]) {
+      for (const fn of [() => fs.paths.voiceDir(bad), () => fs.paths.voiceFile(bad), () => fs.paths.voiceRef(bad)]) {
+        let caught: unknown;
+        try {
+          fn();
+        } catch (e) {
+          caught = e;
+        }
+        expect(isHarnessError(caught, "CONFIG_INVALID"), `expected CONFIG_INVALID for id ${JSON.stringify(bad)}`).toBe(true);
+      }
+    }
+  });
+
+  it("accepts a real voice_id", () => {
+    const root = tempRoot("library-voices-paths-ok-");
+    const fs = new LibraryFs({ root, role: "channel" });
+    const id = newId("voice_profile");
+    expect(fs.paths.voiceRef(id)).toBe(join(root, "voices", id, "ref.wav"));
+  });
+});
 
 describe.skipIf(!hasFfmpeg())("addVoice", () => {
   it("converts a valid clip into a mono 24kHz ref.wav, revision 1, checksum matching the file on disk", async () => {
