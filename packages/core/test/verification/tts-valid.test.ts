@@ -149,6 +149,64 @@ describe.skipIf(!hasFfmpeg())("tts-valid (needs ffmpeg)", () => {
     rmSync(ws, { recursive: true, force: true });
   });
 
+  // Review finding (Task 5 fix round 1, Important #2): the 5 cps floor previously hard-failed every short
+  // line -- a 1-char line against a 0.4s-minimum wav is 2.5 cps, a 2-char line sits exactly on the boundary
+  // and flips on any drift, and a real short interjection ("Ừ.") is well under 5 cps too. The floor now only
+  // applies to lines with text.length >= 10; the 30 cps ceiling still applies to every line regardless.
+  it("a 1-char line (2.5 cps) and a 2-char line (exactly 5.0 cps) both pass: the 5 cps floor is exempt below 10 chars", async () => {
+    const ws = tmpWorkspace();
+    mkdirSync(join(ws, "output", "voice"), { recursive: true });
+    makeSineWav(join(ws, "output", "voice", "L001.wav"), 0.4);
+    makeSineWav(join(ws, "output", "voice", "L002.wav"), 0.4);
+    const timing = timingFixture([
+      { line_id: "L001", text: "x", duration_seconds: 0.4, wav: "voice/L001.wav" },
+      { line_id: "L002", text: "xy", duration_seconds: 0.4, wav: "voice/L002.wav" },
+    ]);
+    writeFileSync(join(ws, "output", "narration-timing.json"), JSON.stringify(timing));
+
+    const request = baseRequest();
+    const result = baseResult(outputsFor());
+    const checker = checkerById(mediaCheckers(new NullMediaProber(), { available: true, ffmpeg: ffmpegPath() }), "tts-valid");
+    const outcome = await checker.check({ request, result, workspaceDir: ws });
+    expect(outcome.verdict).toBe("pass");
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("a 40-char line at 2 chars/second still fails: the 5 cps floor applies once text.length >= 10", async () => {
+    const ws = tmpWorkspace();
+    mkdirSync(join(ws, "output", "voice"), { recursive: true });
+    makeSineWav(join(ws, "output", "voice", "L001.wav"), 20);
+    const text = "x".repeat(40); // 40 chars / 20s = 2 chars/second, under the 5 floor
+    const timing = timingFixture([{ line_id: "L001", text, duration_seconds: 20, wav: "voice/L001.wav" }]);
+    writeFileSync(join(ws, "output", "narration-timing.json"), JSON.stringify(timing));
+
+    const request = baseRequest();
+    const result = baseResult(outputsFor());
+    const checker = checkerById(mediaCheckers(new NullMediaProber(), { available: true, ffmpeg: ffmpegPath() }), "tts-valid");
+    const outcome = await checker.check({ request, result, workspaceDir: ws });
+    expect(outcome.verdict).toBe("fail");
+    expect(outcome.evidence.reason).toBe("reading rate out of range");
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("an unmeasurable peak (ffmpeg not runnable) does not fail the line: recorded as unknown in the evidence, other checks still run", async () => {
+    const ws = tmpWorkspace();
+    mkdirSync(join(ws, "output", "voice"), { recursive: true });
+    makeSineWav(join(ws, "output", "voice", "L001.wav"), 2); // built with the real ffmpeg
+    const timing = timingFixture([{ line_id: "L001", text: "This line reads at a normal pace today.", duration_seconds: 2, wav: "voice/L001.wav" }]);
+    writeFileSync(join(ws, "output", "narration-timing.json"), JSON.stringify(timing));
+
+    const request = baseRequest();
+    const result = baseResult(outputsFor());
+    // point the checker itself at a binary that cannot run, so its own peak measurement fails
+    const checker = checkerById(mediaCheckers(new NullMediaProber(), { available: true, ffmpeg: "definitely-not-a-real-ffmpeg-binary-xyz" }), "tts-valid");
+    const outcome = await checker.check({ request, result, workspaceDir: ws });
+    expect(outcome.verdict).toBe("pass");
+    expect(outcome.evidence.peak).toBe("unknown");
+    expect(outcome.evidence.unknown_peaks).toEqual(["voice/L001.wav"]);
+    rmSync(ws, { recursive: true, force: true });
+  });
+
   it("fails when the wav's peak is at/above 0 dBFS", async () => {
     const ws = tmpWorkspace();
     mkdirSync(join(ws, "output", "voice"), { recursive: true });

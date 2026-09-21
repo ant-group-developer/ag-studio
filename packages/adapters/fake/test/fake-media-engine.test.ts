@@ -128,6 +128,20 @@ describe.skipIf(!hasFfmpeg())("FakeMediaEngine (needs ffmpeg/ffprobe on PATH)", 
     expect(engine.calls).toEqual([]);
   });
 
+  it("synthesize: records the job as lastTtsJob, unchanged, alongside calls", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fake-media-"));
+    const engine = new FakeMediaEngine();
+    expect(engine.lastTtsJob).toBeUndefined();
+    const job: TtsJob = {
+      lines: [{ line_id: "L005", chunks: ["Hello there."], out_path: join(dir, "L005.wav"), pause_seconds: 0.3 }],
+      language: "en",
+      voice: { ref_audio: join(dir, "ref.wav"), ref_text: "hi", params: { speed: 1, num_step: 32 } },
+      align: true,
+    };
+    await engine.synthesize(job, { timeout_seconds: 10 });
+    expect(engine.lastTtsJob).toEqual(job);
+  });
+
   it("synthesize: empty chunks fails contract", async () => {
     const dir = mkdtempSync(join(tmpdir(), "fake-media-"));
     const engine = new FakeMediaEngine();

@@ -149,8 +149,13 @@ export function mediaCheckers(prober: MediaProber, opts: { available?: boolean; 
   /**
    * `narration_timing` output (task 5): every line's wav exists under the `voice_set` directory output,
    * `duration_seconds > 0` (already guaranteed by `NarrationTimingSchema` -- a schema failure surfaces as
-   * "schema invalid" instead), a reading rate of 5-30 chars/second, and a peak below 0 dBFS. An empty
-   * `lines: []` passes trivially (`voice: none|original`, or `voice: tts` with an empty script). `lines[].wav`
+   * "schema invalid" instead), a reading rate below 30 chars/second (every line) and above 5 chars/second
+   * (lines with `text.length >= 10` only -- review finding, Task 5 fix round 1, Important #2: the 5 cps floor
+   * against a short line's minimum-duration wav, or a short real interjection like "Ừ.", produces false
+   * failures that have nothing to do with a broken synthesis), and a peak below 0 dBFS *when it can be
+   * measured* -- an unmeasurable peak (ffmpeg not runnable) is recorded as `"unknown"` in the evidence and
+   * does not fail the line, only a peak actually measured at/above 0 dBFS does. An empty `lines: []` passes
+   * trivially (`voice: none|original`, or `voice: tts` with an empty script). `lines[].wav`
    * ("voice/<line_id>.wav") is resolved against the directory *containing* the `voice_set` output -- that
    * directory is `output/`, and `wav` is already relative to it (spec: sub-project 5A task 5 resolution).
    */
@@ -179,25 +184,26 @@ export function mediaCheckers(prober: MediaProber, opts: { available?: boolean; 
       const voiceParentDir = dirname(voiceSetOutput.path);
 
       const checked: string[] = [];
+      const unknownPeaks: string[] = [];
       for (const line of timing.lines) {
         const wavPath = join(input.workspaceDir, voiceParentDir, line.wav);
         if (!existsSync(wavPath)) {
           return { verdict: "fail", evidence: { path: line.wav, reason: "missing wav", line_id: line.line_id } };
         }
         const rate = line.text.length / line.duration_seconds;
-        if (rate < 5 || rate > 30) {
+        const belowFloor = line.text.length >= 10 && rate < 5;
+        if (belowFloor || rate > 30) {
           return { verdict: "fail", evidence: { path: line.wav, reason: "reading rate out of range", line_id: line.line_id, chars_per_second: rate } };
         }
         const peak = peakVolumeDb(ffmpeg, wavPath);
         if (peak === null) {
-          return { verdict: "fail", evidence: { path: line.wav, reason: "peak unknown", line_id: line.line_id } };
-        }
-        if (peak >= 0) {
+          unknownPeaks.push(line.wav);
+        } else if (peak >= 0) {
           return { verdict: "fail", evidence: { path: line.wav, reason: "peak at or above 0 dBFS", line_id: line.line_id, peak_db: peak } };
         }
         checked.push(line.wav);
       }
-      return { verdict: "pass", evidence: { checked } };
+      return { verdict: "pass", evidence: { checked, ...(unknownPeaks.length > 0 ? { peak: "unknown", unknown_peaks: unknownPeaks } : {}) } };
     },
   };
 

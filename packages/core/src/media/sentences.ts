@@ -1,7 +1,10 @@
+import { HarnessError } from "@harness/contracts";
+
 /**
  * Pure sentence splitting for TTS chunking (sub-project 5A Task 5, spec §3.4): normalize whitespace, split on
  * sentence-ending punctuation (skipping decimals and known abbreviations), pack adjacent sentences up to
- * `maxChars`, and hard-split anything still too long. No I/O, no engine, no config beyond the three arguments.
+ * `maxChars`, and hard-split anything still too long. The only non-pure-computation dependency is
+ * `HarnessError`, thrown for an invalid `maxChars`.
  */
 
 const BOUNDARY_CHARS = new Set([".", "!", "?", "…", ";", ":"]);
@@ -49,13 +52,15 @@ function splitIntoSentences(normalized: string, language: string): string[] {
   return sentences;
 }
 
-/** Index of the `,` in `s` closest to its midpoint, or -1 when there is none. */
+/** Index of the `,` in `s` closest to its midpoint, or -1 when there is none. Only a comma immediately
+ * followed by a space counts -- a thousands separator (`1,200`) is never followed by one, so this alone
+ * keeps it from ever being cut (review finding, Task 5 fix round 1, adjacent item). */
 function commaNearMiddle(s: string): number {
   const mid = s.length / 2;
   let best = -1;
   let bestDist = Infinity;
   for (let i = 0; i < s.length; i++) {
-    if (s[i] !== ",") continue;
+    if (s[i] !== "," || s[i + 1] !== " ") continue;
     const d = Math.abs(i - mid);
     if (d < bestDist) {
       bestDist = d;
@@ -121,8 +126,14 @@ function chunkLong(s: string, maxChars: number): string[] {
  * Never returns an empty string in the result. `chunks.join(" ")` reproduces the whitespace-normalized input
  * exactly, except across a hard character cut, where `chunks.join(" ").replace(/ /g, "")` still equals
  * `normalized.replace(/ /g, "")` (the join adds a space the source never had at that one position).
+ *
+ * Throws `CONFIG_INVALID` for `maxChars < 1` -- `chunkLong`'s hard-cut fallback (`s.slice(0, maxChars)`)
+ * would otherwise never shrink `s` and recurse forever.
  */
 export function splitSentences(text: string, language: string, maxChars: number): string[] {
+  if (maxChars < 1) {
+    throw new HarnessError("CONFIG_INVALID", `splitSentences: maxChars must be >= 1, got ${maxChars}`, { maxChars });
+  }
   const normalized = text.trim().replace(/\s+/g, " ");
   if (normalized === "") return [];
 

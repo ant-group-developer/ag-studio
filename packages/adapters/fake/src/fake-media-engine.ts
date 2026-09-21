@@ -78,6 +78,9 @@ function validateTtsJob(lines: TtsJob["lines"]): string | null {
 export class FakeMediaEngine implements MediaEngine {
   readonly name = "fake";
   calls: { kind: "transcribe" | "synthesize"; n: number }[] = [];
+  /** The most recent `synthesize` job as received, kept next to `calls` so a test can assert exactly what
+   * core sent (chunks, pause_seconds, align) without re-deriving it (review finding, Task 5 fix round 1). */
+  lastTtsJob?: TtsJob;
   private readonly ffmpeg: string;
   private readonly charsPerSecond: number;
 
@@ -105,6 +108,7 @@ export class FakeMediaEngine implements MediaEngine {
     if (invalid) return { kind: "contract", reason: invalid };
 
     this.calls.push({ kind: "synthesize", n: job.lines.length });
+    this.lastTtsJob = job;
     const lines = job.lines.map((line) => {
       const charCounts = line.chunks.map((t) => t.length);
       const totalChars = charCounts.reduce((a, b) => a + b, 0);

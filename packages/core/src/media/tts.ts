@@ -38,8 +38,13 @@ type CacheEntry = z.infer<typeof cacheEntrySchema>;
 /**
  * `sha256(JSON with keys sorted at every level)` of the cache-relevant fields -- deliberately excludes
  * anything that does not change the audio (line_id, edl_order): the same text read by the same voice under
- * the same params/model/language always resolves to the same cache entry, whichever narration line it is
- * currently attached to.
+ * the same params/model/language/engine-config always resolves to the same cache entry, whichever narration
+ * line it is currently attached to.
+ *
+ * Review finding (Task 5 fix round 1, Important #1): the cached wav/json are the *post-processing* result --
+ * `dtype`/`max_chars`/`pause_seconds`/`loudness_lufs` all shape that output (chunk boundaries, inter-chunk
+ * pause, final loudness), so a project.yaml edit to any of them must change the key too, or a stale cache
+ * entry would keep being served as a hit forever.
  */
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
@@ -51,8 +56,21 @@ function stableStringify(value: unknown): string {
   return JSON.stringify(value);
 }
 
-export function ttsCacheKey(p: { text: string; voice_checksum: string; params: VoiceParams; model: string; language: string }): string {
-  const payload = { text: p.text, voice_checksum: p.voice_checksum, params: p.params, model: p.model, language: p.language };
+export function ttsCacheKey(p: {
+  text: string;
+  voice_checksum: string;
+  params: VoiceParams;
+  model: string;
+  language: string;
+  dtype: string;
+  max_chars: number;
+  pause_seconds: number;
+  loudness_lufs: number;
+}): string {
+  const payload = {
+    text: p.text, voice_checksum: p.voice_checksum, params: p.params, model: p.model, language: p.language,
+    dtype: p.dtype, max_chars: p.max_chars, pause_seconds: p.pause_seconds, loudness_lufs: p.loudness_lufs,
+  };
   return createHash("sha256").update(stableStringify(payload)).digest("hex");
 }
 
@@ -147,7 +165,10 @@ export async function synthesizeNarration(
   const missLines: Narration["lines"] = [];
 
   for (const line of p.narration.lines) {
-    const key = ttsCacheKey({ text: line.text, voice_checksum: profile.ref_audio.checksum, params: profile.params, model: p.cfg.model, language: p.narration.language });
+    const key = ttsCacheKey({
+      text: line.text, voice_checksum: profile.ref_audio.checksum, params: profile.params, model: p.cfg.model, language: p.narration.language,
+      dtype: p.cfg.dtype, max_chars: p.cfg.max_chars, pause_seconds: p.cfg.pause_seconds, loudness_lufs: p.cfg.loudness_lufs,
+    });
     keyByLineId.set(line.line_id, key);
     const cached = readCacheEntry(join(d.cacheDir, `${key}.wav`), join(d.cacheDir, `${key}.json`));
     if (!cached) {
@@ -172,12 +193,13 @@ export async function synthesizeNarration(
     const rawDir = join(p.outDir, ".raw");
     try {
       mkdirSync(rawDir, { recursive: true });
-      const jobLines = missLines.map((l) => ({
-        line_id: l.line_id,
-        chunks: splitSentences(l.text, p.narration.language, p.cfg.max_chars),
-        out_path: join(rawDir, `${l.line_id}.wav`),
-        pause_seconds: p.cfg.pause_seconds,
-      }));
+      const jobLines = missLines.map((l) => {
+        const chunks = splitSentences(l.text, p.narration.language, p.cfg.max_chars);
+        if (chunks.length === 0) {
+          throw new HarnessError("CONFIG_INVALID", `narration line ${l.line_id} has no speakable text after normalization`, { line_id: l.line_id });
+        }
+        return { line_id: l.line_id, chunks, out_path: join(rawDir, `${l.line_id}.wav`), pause_seconds: p.cfg.pause_seconds };
+      });
 
       const outcome = await d.engine.synthesize(
         { lines: jobLines, language: p.narration.language, voice: { ref_audio: ref_audio_path, ref_text: profile.ref_text, params: profile.params }, align: true },

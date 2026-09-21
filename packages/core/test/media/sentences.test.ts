@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isHarnessError } from "@harness/contracts";
 import { splitSentences } from "../../src/media/sentences.js";
 
 // A small maxChars isolates sentence-boundary detection from the maxChars packing step (step 3 merges
@@ -72,5 +73,32 @@ describe("splitSentences", () => {
   it("normalizes internal whitespace runs (including newlines) to a single space before splitting", () => {
     const out = splitSentences("Line one.\n\nLine   two.", "en", 280);
     expect(out).toEqual(["Line one. Line two."]);
+  });
+
+  // Review finding (Task 5 fix round 1, adjacent item): a comma is only a valid cut point when it is
+  // immediately followed by a space -- a thousands separator like "1,200" never is, so it must never be the
+  // comma chunkLong picks. If it were, rejoining with " " would turn "1,200" into "1, 200", which would not
+  // equal the original sentence; that is exactly what this test's join(" ") === sentence assertion catches.
+  it("a long sentence containing a thousands-separated number (1,200), with no other comma, never splits the number", () => {
+    const maxChars = 40;
+    const before = Array.from({ length: 10 }, (_, i) => `word${i}`).join(" ");
+    const after = Array.from({ length: 10 }, (_, i) => `term${i}`).join(" ");
+    const sentence = `${before} 1,200 ${after}.`;
+    expect(sentence.length).toBeGreaterThan(maxChars);
+
+    const out = splitSentences(sentence, "en", maxChars);
+    for (const chunk of out) expect(chunk.length).toBeLessThanOrEqual(maxChars);
+    expect(out.join(" ")).toBe(sentence);
+    expect(out.some((c) => c.includes("1,200"))).toBe(true);
+  });
+
+  it("throws CONFIG_INVALID for maxChars < 1", () => {
+    let caught: unknown;
+    try {
+      splitSentences("Hello there.", "en", 0);
+    } catch (e) {
+      caught = e;
+    }
+    expect(isHarnessError(caught, "CONFIG_INVALID")).toBe(true);
   });
 });
