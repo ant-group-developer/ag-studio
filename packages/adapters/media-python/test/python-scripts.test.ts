@@ -114,4 +114,44 @@ describe.skipIf(!hasPython())("python engine scripts (engines/python)", () => {
     expect(result.ok).toBe(false);
     expect(result.kind).toBe("contract");
   });
+
+  /**
+   * Task 11 (first real GPU run), regression for the defect that killed EVERY real transcribe:
+   * `whisperx.load_model(..., vad_method="pyannote")` unpickles `whisperx/assets/pytorch_model.bin` through
+   * `torch.load`, whose `weights_only` default flipped to `True` in torch 2.6 -- so the load died with
+   * `UnpicklingError: ... Unsupported global` and the harness saw an infinitely-retried `transient`.
+   * `allow_vad_checkpoint_globals()` allow-lists exactly the classes that checkpoint names.
+   *
+   * Runs with no GPU and no model weights: importing `transcribe` never imports torch (the import lives
+   * inside `run()`), and the helper itself returns `[]` rather than raising when torch is absent -- so this
+   * asserts the contract that matters on every machine (importable, callable, returns a list of names, never
+   * throws), and additionally asserts the omegaconf/pyannote entries are present when those packages ARE
+   * installed, which is the case that actually fixes the bug.
+   */
+  it("transcribe.allow_vad_checkpoint_globals() is callable without torch and allow-lists the VAD checkpoint classes when it is installed", () => {
+    const probe = [
+      "import json, sys",
+      `sys.path.insert(0, ${JSON.stringify(ENGINES_DIR)})`,
+      "import transcribe",
+      "names = transcribe.allow_vad_checkpoint_globals()",
+      "assert isinstance(names, list), names",
+      "try:",
+      "    import torch, omegaconf, pyannote.audio",
+      "    have = True",
+      "except Exception:",
+      "    have = False",
+      "print(json.dumps({'have': have, 'names': names}))",
+    ].join("\n");
+    const r = spawnSync(PYTHON, ["-c", probe], { encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    const out = JSON.parse(r.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1)!) as { have: boolean; names: string[] };
+    if (out.have) {
+      expect(out.names).toContain("omegaconf.listconfig.ListConfig");
+      expect(out.names).toContain("torch.torch_version.TorchVersion");
+      expect(out.names).toContain("pyannote.audio.core.model.Introspection");
+      expect(out.names).toContain("typing.Any");
+    } else {
+      expect(out.names).toEqual([]);
+    }
+  });
 });

@@ -23,6 +23,7 @@ import argparse
 import gc
 import os
 import sys
+from collections import defaultdict
 from typing import Any
 
 import engine_io as _io
@@ -53,6 +54,71 @@ def split_device(device: str) -> tuple[str, int]:
     dev = dev or "cpu"
     index = int(idx) if idx else 0
     return dev, index
+
+
+def _global_name(obj: Any) -> str:
+    """`typing.Any` is a plain object rather than a class on some Python versions, so it carries `_name`
+    instead of `__qualname__`; everything else in the allow-list below is a class."""
+    return str(getattr(obj, "__qualname__", None) or getattr(obj, "_name", None) or repr(obj))
+
+
+def allow_vad_checkpoint_globals() -> list[str]:
+    """Allow-lists the handful of classes WhisperX's bundled VAD checkpoint pickles, so `load_model` works on
+    torch >= 2.6.
+
+    `whisperx.load_model(..., vad_method="pyannote")` (the default) loads `whisperx/assets/pytorch_model.bin`
+    -- a file that ships INSIDE the installed whisperx wheel, not something downloaded per run -- through
+    `pyannote.audio`'s `Model.from_pretrained` -> lightning `pl_load` -> `torch.load`. PyTorch 2.6 flipped
+    `torch.load`'s `weights_only` default to `True`, and that checkpoint pickles six non-tensor objects
+    (`omegaconf` config nodes, `TorchVersion`, pyannote's own `Introspection`/`Specifications` and their
+    enums), so every real transcribe run died at model load with
+    `UnpicklingError: Weights only load failed ... Unsupported global` -- reported to the harness as a
+    `transient` failure and retried forever. (Task 11, first real GPU run.)
+
+    Deliberately an allow-list of those exact classes rather than forcing `weights_only=False` back on:
+    nothing else in the checkpoint gets to unpickle arbitrary code. Entirely best effort -- a whisperx or
+    pyannote version that moved/renamed any of these simply contributes fewer entries (and, if the checkpoint
+    still needs them, fails at `load_model` with the same clear message as before), and a torch too old to
+    have `add_safe_globals` at all is a no-op. Returns the names actually allow-listed, for the log line and
+    for a test to assert against without a GPU.
+    """
+    try:
+        import torch  # noqa: PLC0415  -- deliberately local: this module must import with no torch installed
+    except Exception:
+        return []
+
+    add = getattr(torch.serialization, "add_safe_globals", None)
+    if add is None:
+        return []
+
+    # `typing.Any` and `collections.defaultdict` appear as the *type arguments* omegaconf stores alongside its
+    # config nodes; builtins are not allow-listed by default either once a pickle names them explicitly.
+    allowed: list[Any] = [Any, defaultdict, dict, list, int, float, str, bool]
+    for module_name, attrs in (
+        ("omegaconf.listconfig", ("ListConfig",)),
+        ("omegaconf.dictconfig", ("DictConfig",)),
+        ("omegaconf.base", ("ContainerMetadata", "Metadata")),
+        ("omegaconf.nodes", ("AnyNode",)),
+        ("torch.torch_version", ("TorchVersion",)),
+        ("pyannote.audio.core.model", ("Introspection",)),
+        ("pyannote.audio.core.task", ("Specifications", "Problem", "Resolution")),
+    ):
+        try:
+            module = __import__(module_name, fromlist=list(attrs))
+        except Exception:
+            continue
+        for attr in attrs:
+            obj = getattr(module, attr, None)
+            if obj is not None:
+                allowed.append(obj)
+
+    if not allowed:
+        return []
+    try:
+        add(allowed)
+    except Exception:
+        return []
+    return [f"{getattr(o, '__module__', '?')}.{_global_name(o)}" for o in allowed]
 
 
 def validate_job(job: dict[str, Any]) -> str | None:
@@ -96,6 +162,7 @@ def run(job: dict[str, Any], result_path: str) -> None:
         return
 
     dev, device_index = split_device(device)
+    log("info", "allow-listed VAD checkpoint globals for torch.load", classes=allow_vad_checkpoint_globals())
     try:
         model = whisperx.load_model(job["model"], dev, device_index=device_index, compute_type=job["compute_type"])
     except Exception as e:  # model load / download / OOM
