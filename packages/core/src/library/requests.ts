@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { ContentRequestSchema, HarnessError, newId, type Clock, type ContentRequest, type StateStore } from "@harness/contracts";
 import type { LibraryFs } from "./files.js";
+import { requireActiveVoice } from "./voices.js";
 
 /** Common dependencies for every library lifecycle function in requests.ts and review.ts. */
 export interface LibraryDeps {
@@ -41,18 +42,28 @@ export function createRequest(d: LibraryDeps, p: {
   style_revision?: number;
   target_duration_seconds?: [number, number];
   voice?: "none" | "tts" | "original";
+  /** An explicit voice profile for this request, only meaningful when `voice: "tts"`. */
+  voice_id?: string;
+  /** Fallback voice profile when the caller (e.g. `create-requests`, spec §4.2) has the requesting channel's
+   * own configured voice but no per-request override; ignored if `voice_id` is also given. */
+  channelVoiceId?: string;
   language?: string;
   due_at?: string;
   notes?: string;
   source_hint?: ContentRequest["source_hint"];
 }): ContentRequest {
   const now = d.clock.now();
+  const voice = p.voice ?? "none";
+  // voice_id is only ever persisted for "tts": requireActiveVoice both validates and resolves it (undefined
+  // input included, so "tts" with neither voice_id nor channelVoiceId fails clearly here rather than at
+  // `intake` time), and any voice_id passed alongside "none"/"original" is silently dropped.
+  const voice_id = voice === "tts" ? requireActiveVoice(d.store, p.voice_id ?? p.channelVoiceId).voice_id : undefined;
   const request: ContentRequest = {
     schema_version: "harness.content-request/v1",
     request_id: newId("content_request"),
     requested_by: p.requested_by,
     topic: p.topic,
-    voice: p.voice ?? "none",
+    voice,
     language: p.language ?? "vi",
     count: 1, // fixed by contract: one request buys one item (ContentRequestSchema.count)
     status: "open",
@@ -63,6 +74,7 @@ export function createRequest(d: LibraryDeps, p: {
     ...(p.style_id !== undefined ? { style_id: p.style_id } : {}),
     ...(p.style_revision !== undefined ? { style_revision: p.style_revision } : {}),
     ...(p.target_duration_seconds !== undefined ? { target_duration_seconds: p.target_duration_seconds } : {}),
+    ...(voice_id !== undefined ? { voice_id } : {}),
     ...(p.due_at !== undefined ? { due_at: p.due_at } : {}),
     ...(p.source_hint !== undefined ? { source_hint: p.source_hint } : {}),
   };

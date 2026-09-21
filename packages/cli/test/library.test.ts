@@ -321,9 +321,10 @@ describe("harness library CLI", () => {
     expect(r2.source_hint.collection).toBeUndefined();
   });
 
-  it("doctor reports the three library:* rows for a project with a library root", () => {
+  it("doctor reports the library:* rows for a project with a library root", () => {
     const root = mkdtempSync(join(tmpdir(), "kho-doctor-"));
     mkdirSync(join(root, "styles"), { recursive: true });
+    mkdirSync(join(root, "voices"), { recursive: true }); // sub-project 5A: library:voices also needs its directory
     const p = libraryProject(root, "studio", "doctor");
     expect(cli(p, "db", "migrate").code).toBe(0);
     const d = cli(p, "doctor", "--json");
@@ -333,6 +334,7 @@ describe("harness library CLI", () => {
     expect(byCheck.get("library:root")).toMatchObject({ ok: true });
     expect(byCheck.get("library:write")).toMatchObject({ ok: true });
     expect(byCheck.get("library:index")).toMatchObject({ ok: true });
+    expect(byCheck.get("library:voices")).toMatchObject({ ok: true });
   });
 
   describe("built-in `library stage intake` (run by hand, outside any real workflow)", () => {

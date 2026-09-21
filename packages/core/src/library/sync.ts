@@ -1,19 +1,19 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { Clock, ContentRequest, EditStyle, LibraryItem, StateStore } from "@harness/contracts";
-import { ContentRequestSchema, EditStyleSchema, HarnessError, LibraryItemSchema } from "@harness/contracts";
+import type { Clock, ContentRequest, EditStyle, LibraryItem, StateStore, VoiceProfile } from "@harness/contracts";
+import { ContentRequestSchema, EditStyleSchema, HarnessError, LibraryItemSchema, VoiceProfileSchema } from "@harness/contracts";
 import { canonicalDigest } from "../artifacts/checksum.js";
 import type { LibraryFs, LibraryRole } from "./files.js";
 
 export interface SyncReport {
-  imported: { styles: string[]; requests: string[]; items: string[] };
-  updated: { styles: string[]; requests: string[]; items: string[] };
+  imported: { styles: string[]; requests: string[]; items: string[]; voices: string[] };
+  updated: { styles: string[]; requests: string[]; items: string[]; voices: string[] };
   corrupt: { path: string; reason: string }[];
-  missing: { kind: "style" | "request" | "item"; id: string }[];
+  missing: { kind: "style" | "request" | "item" | "voice"; id: string }[];
 }
 
 function emptyReport(): SyncReport {
-  return { imported: { styles: [], requests: [], items: [] }, updated: { styles: [], requests: [], items: [] }, corrupt: [], missing: [] };
+  return { imported: { styles: [], requests: [], items: [], voices: [] }, updated: { styles: [], requests: [], items: [], voices: [] }, corrupt: [], missing: [] };
 }
 
 /**
@@ -131,6 +131,25 @@ export async function syncLibrary(d: { store: StateStore; fs: LibraryFs; role: L
     }
   }
 
+  // voices/ is channel-owned content mirrored the same way for both roles -- unlike index.json below, which
+  // only the studio role writes, both a studio (learning what channels' voices exist) and a channel (seeing
+  // its own after `voices add`, or another portfolio's) need this in their own mirror.
+  const voiceIds = d.fs.listVoiceIds();
+  for (const id of voiceIds) {
+    const path = d.fs.paths.voiceFile(id);
+    let voice: VoiceProfile;
+    try {
+      voice = d.fs.readJson(path, VoiceProfileSchema);
+    } catch (e) {
+      report.corrupt.push({ path, reason: reasonFor(e) });
+      continue;
+    }
+    const outcome = classify(voice, d.store.getVoiceProfile(voice.voice_id));
+    if (outcome === "unchanged") continue;
+    d.store.upsertVoiceProfile(voice);
+    report[outcome].voices.push(voice.voice_id);
+  }
+
   const fsStyleIds = new Set(styleIds);
   for (const s of d.store.listEditStyles()) {
     if (!fsStyleIds.has(s.style_id)) report.missing.push({ kind: "style", id: s.style_id });
@@ -142,6 +161,10 @@ export async function syncLibrary(d: { store: StateStore; fs: LibraryFs; role: L
   const fsItemIds = new Set(itemIds);
   for (const i of d.store.listLibraryItems()) {
     if (!fsItemIds.has(i.item_id)) report.missing.push({ kind: "item", id: i.item_id });
+  }
+  const fsVoiceIds = new Set(voiceIds);
+  for (const v of d.store.listVoiceProfiles()) {
+    if (!fsVoiceIds.has(v.voice_id)) report.missing.push({ kind: "voice", id: v.voice_id });
   }
 
   if (d.role === "studio") writeIndex({ fs: d.fs, store: d.store, clock: d.clock });

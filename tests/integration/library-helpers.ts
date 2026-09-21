@@ -89,9 +89,10 @@ export function freshLibraryWorld(o: { media?: boolean; autopilot?: boolean } = 
   const media = o.media ?? true;
   const autopilot = o.autopilot ?? false;
   const lib = mkdtempSync(join(tmpdir(), "kho-"));
-  // the three top-level kho directories a mounted share would already have; `doctor`'s `library:write` row
-  // probes `styles/` (studio) and `requests/` (channel) and fails when they are missing.
-  for (const sub of ["styles", "requests", "items"]) mkdirSync(join(lib, sub), { recursive: true });
+  // the top-level kho directories a mounted share would already have; `doctor`'s `library:write` row probes
+  // `styles/` (studio) and `requests/` (channel) and fails when they are missing, and (sub-project 5A)
+  // `library:voices` fails the same way for either role when `voices/` itself is absent.
+  for (const sub of ["styles", "requests", "items", "voices"]) mkdirSync(join(lib, sub), { recursive: true });
 
   const studio = mkdtempSync(join(tmpdir(), "studio-"));
   writeProjectYaml(STUDIO_FIXTURE, studio, lib, { autopilot });

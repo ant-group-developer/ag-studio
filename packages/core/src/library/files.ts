@@ -14,6 +14,7 @@ export interface LibraryPaths {
   requests: string;
   items: string;
   index: string;
+  voicesDir: string;
   styleDir(id: string): string;
   styleFile(id: string): string;
   requestFile(id: string): string;
@@ -21,6 +22,9 @@ export interface LibraryPaths {
   manifest(id: string): string;
   claimsDir(id: string): string;
   claimFile(id: string, channelId: string): string;
+  voiceDir(id: string): string;
+  voiceFile(id: string): string;
+  voiceRef(id: string): string;
 }
 
 export function libraryPaths(root: string): LibraryPaths {
@@ -28,12 +32,14 @@ export function libraryPaths(root: string): LibraryPaths {
   const styles = join(r, "styles");
   const requests = join(r, "requests");
   const items = join(r, "items");
+  const voicesDir = join(r, "voices");
   return {
     root: r,
     styles,
     requests,
     items,
     index: join(r, "index.json"),
+    voicesDir,
     styleDir: (id) => join(styles, id),
     styleFile: (id) => join(styles, id, "style.json"),
     requestFile: (id) => join(requests, `${id}.json`),
@@ -41,6 +47,9 @@ export function libraryPaths(root: string): LibraryPaths {
     manifest: (id) => join(items, id, "manifest.json"),
     claimsDir: (id) => join(items, id, "claims"),
     claimFile: (id, channelId) => join(items, id, "claims", `${channelId}.json`),
+    voiceDir: (id) => join(voicesDir, id),
+    voiceFile: (id) => join(voicesDir, id, "voice.json"),
+    voiceRef: (id) => join(voicesDir, id, "ref.wav"),
   };
 }
 
@@ -176,6 +185,14 @@ export class LibraryFs {
       .sort();
   }
 
+  listVoiceIds(): string[] {
+    if (!existsSync(this.paths.voicesDir)) return [];
+    return readdirSync(this.paths.voicesDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !isHiddenName(e.name) && existsSync(join(this.paths.voicesDir, e.name, "voice.json")))
+      .map((e) => e.name)
+      .sort();
+  }
+
   listClaims(itemId: string): LibraryClaim[] {
     const dir = this.paths.claimsDir(itemId);
     if (!existsSync(dir)) return [];
@@ -195,7 +212,10 @@ export class LibraryFs {
   /**
    * studio may write under styles/, under items/ except any `claims` segment, index.json,
    * and requests/<id>.json only when the file already exists (studio never creates a request).
-   * channel may create or overwrite requests/<id>.json and items/<id>/claims/<channel_id>.json.
+   * channel may create or overwrite requests/<id>.json, items/<id>/claims/<channel_id>.json, and
+   * voices/<id>/<file> (exactly two path segments below voices/ -- a voice's own voice.json/ref.wav,
+   * never a nested path). studio may never write under voices/ at all -- a voice profile is channel-owned,
+   * the one library entity where the write ownership is reversed from styles/.
    * Anything else, or any path outside the library root, is CONFIG_INVALID.
    */
   assertWritable(path: string): void {
@@ -225,6 +245,7 @@ export class LibraryFs {
     // channel
     if (segs[0] === "requests" && segs.length === 2) return;
     if (segs[0] === "items" && segs.includes("claims")) return;
+    if (segs[0] === "voices" && segs.length === 3) return;
     return deny();
   }
 }

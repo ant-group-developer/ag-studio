@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ChannelConfigSchema, type HarnessConfig, type ProjectConfig, type ScriptsRegistry, type SecretResolver } from "@harness/contracts";
-import { HARNESS_ROOT, LibraryFs, loadProfile, loadWorkflow, MIGRATIONS_DIR, resolveWorkflowScope, runDoctor, SqliteStateStore, type DoctorInput, type LoadedChannel, type LoadedWorkflow } from "../../src/index.js";
+import { ChannelConfigSchema, newId, type HarnessConfig, type ProjectConfig, type ScriptsRegistry, type SecretResolver, type VoiceProfile } from "@harness/contracts";
+import { HARNESS_ROOT, LibraryFs, loadProfile, loadWorkflow, MIGRATIONS_DIR, resolveWorkflowScope, runDoctor, sha256FileSync, SqliteStateStore, type DoctorInput, type LoadedChannel, type LoadedWorkflow } from "../../src/index.js";
 import { openTempStore } from "../helpers.js";
 
 const HARNESS_CONFIG: HarnessConfig = {
@@ -312,6 +312,34 @@ describe("runDoctor", () => {
     expect(readdirSync(join(existingRoot, "requests"))).toEqual([]);
   });
 
+  it("library:voices: FAIL when voices/ is missing; OK on directory presence alone for studio; OK+write-probe for channel", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "doctor-library-voices-"));
+    const root = mkdtempSync(join(tmpdir(), "doctor-library-voices-root-"));
+
+    const missing = runDoctor({
+      ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+      library: { fs: new LibraryFs({ root, role: "studio" }), role: "studio" },
+    });
+    expect(new Map(missing.map((r) => [r.check, r])).get("library:voices")).toMatchObject({ ok: false });
+    expect(existsSync(join(root, "voices"))).toBe(false); // doctor never scaffolds it
+
+    mkdirSync(join(root, "voices"), { recursive: true });
+    const studioOk = runDoctor({
+      ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+      library: { fs: new LibraryFs({ root, role: "studio" }), role: "studio" },
+    });
+    expect(new Map(studioOk.map((r) => [r.check, r])).get("library:voices")).toMatchObject({ ok: true });
+
+    const channelOk = runDoctor({
+      ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+      library: { fs: new LibraryFs({ root, role: "channel" }), role: "channel" },
+    });
+    const channelRow = new Map(channelOk.map((r) => [r.check, r])).get("library:voices");
+    expect(channelRow).toMatchObject({ ok: true });
+    expect(channelRow?.detail).toMatch(/[\\/]\.doctor-channel-[0-9a-f-]+\.tmp\b/);
+    expect(readdirSync(join(root, "voices"))).toEqual([]); // probe file removed itself
+  });
+
   // project.yaml.workflows scopes doctor to the workflow releases a machine actually runs: a footage-only
   // (or here, sample-three-stage-only) project's scripts.yaml has no reason to register library-production's
   // or style-study's scripts, and doctor must not manufacture script:library-production/* / script:style-study/*
@@ -418,6 +446,67 @@ describe("runDoctor", () => {
       const projectDir = mkdtempSync(join(tmpdir(), "doctor-publisher-"));
       const rows = runDoctor({ ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [], publisher: { name: "playwright" } });
       expect(new Map(rows.map((r) => [r.check, r])).get("publisher")).toMatchObject({ ok: true, detail: "playwright" });
+    });
+
+    describe("channel:<id>:voice row (sub-project 5A)", () => {
+      function makeVoiceProfile(id: string, overrides: Partial<VoiceProfile> = {}): VoiceProfile {
+        return {
+          schema_version: "harness.voice/v1", voice_id: id, display_name: "Narrator", language: "vi",
+          origin: "own", origin_note: "", ref_audio: { path: "ref.wav", checksum: `sha256:${"a".repeat(64)}`, duration_seconds: 5 },
+          ref_text: "hi", params: { speed: 1, num_step: 32 }, revision: 1, status: "active",
+          created_at: "2026-09-14T00:00:00.000Z", updated_at: "2026-09-14T00:00:00.000Z",
+          ...overrides,
+        };
+      }
+
+      it("adds no row for a channel with no voice configured", () => {
+        const repoDir = setupChannelRepo();
+        const channel = makeLoadedChannel(repoDir);
+        const projectDir = mkdtempSync(join(tmpdir(), "doctor-channel-voice-none-"));
+        const rows = runDoctor({
+          ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+          channels: { loaded: [channel], errors: [], secrets: new FixedSecrets("owner@example.com") },
+        });
+        expect(rows.some((r) => r.check === "channel:c1:voice")).toBe(false);
+      });
+
+      it("ok when the voice profile is mirrored active and ref.wav's checksum matches; fails when not mirrored, retired, ref.wav missing, or checksum mismatched", () => {
+        const repoDir = setupChannelRepo();
+        const projectDir = mkdtempSync(join(tmpdir(), "doctor-channel-voice-"));
+        const root = mkdtempSync(join(tmpdir(), "doctor-channel-voice-kho-"));
+        const fs = new LibraryFs({ root, role: "channel" });
+        const voiceId = newId("voice_profile");
+        const channel = makeLoadedChannel(repoDir, { voice: { voice_id: voiceId } });
+
+        const base = baseInput(projectDir, {});
+        const runFor = (library: DoctorInput["library"]) => runDoctor({
+          ...base, scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+          channels: { loaded: [channel], errors: [], secrets: new FixedSecrets("owner@example.com") },
+          ...(library ? { library } : {}),
+        });
+        const rowOf = (rows: ReturnType<typeof runDoctor>) => new Map(rows.map((r) => [r.check, r])).get("channel:c1:voice");
+
+        // not mirrored at all yet
+        expect(rowOf(runFor({ fs, role: "channel" }))).toMatchObject({ ok: false });
+
+        // mirrored but retired
+        base.store.upsertVoiceProfile(makeVoiceProfile(voiceId, { status: "retired" }));
+        expect(rowOf(runFor({ fs, role: "channel" }))).toMatchObject({ ok: false });
+
+        // mirrored and active, but ref.wav is not in the kho
+        mkdirSync(fs.paths.voiceDir(voiceId), { recursive: true });
+        base.store.upsertVoiceProfile(makeVoiceProfile(voiceId, { status: "active" }));
+        expect(rowOf(runFor({ fs, role: "channel" }))).toMatchObject({ ok: false });
+
+        // ref.wav present but its checksum does not match voice.json's recorded one
+        writeFileSync(fs.paths.voiceRef(voiceId), "some bytes");
+        expect(rowOf(runFor({ fs, role: "channel" }))).toMatchObject({ ok: false });
+
+        // ref.wav present and checksum matches: ok
+        const { checksum } = sha256FileSync(fs.paths.voiceRef(voiceId));
+        base.store.upsertVoiceProfile(makeVoiceProfile(voiceId, { status: "active", ref_audio: { path: "ref.wav", checksum, duration_seconds: 5 } }));
+        expect(rowOf(runFor({ fs, role: "channel" }))).toMatchObject({ ok: true });
+      });
     });
   });
 

@@ -1,9 +1,9 @@
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Command } from "commander";
 import { start, type ScriptContext } from "@harness/script-sdk";
 import { EditStyleSchema, HarnessError, isHarnessError, libraryBriefSchema, reviewSchema, type EditStyle, type LibraryBrief } from "@harness/contracts";
-import { applyReview, claimRequest, exportItem, exportStyle, readRequest } from "@harness/core";
+import { applyReview, claimRequest, exportItem, exportStyle, readRequest, requireActiveVoice, sha256File } from "@harness/core";
 import type { AppContext } from "../composition.js";
 import { withContext } from "./shared.js";
 
@@ -67,15 +67,37 @@ async function intake(app: AppContext, sdk: ScriptContext): Promise<void> {
   if (style.revision !== brief.style_revision) throw new HarnessError("CONFIG_INVALID", `edit style ${brief.style_id} is at revision ${style.revision}, brief expects ${brief.style_revision}`, { style_id: brief.style_id, revision: style.revision, expected_revision: brief.style_revision });
 
   let request_notes = "";
+  let requestVoiceId: string | undefined;
   if (brief.request_id) {
     claimRequest({ store: app.store, fs: library.fs, clock: app.clock }, { request_id: brief.request_id, run: { project_id: run.project_id, run_id: run.run_id } });
     // NOT_FOUND here (a brief pointing at a request the kho no longer has) is a contract problem with this
     // run, not something to retry -- `runStage` maps it to kind "contract" the same as any other NOT_FOUND.
     const request = readRequest({ store: app.store, fs: library.fs, clock: app.clock }, brief.request_id);
     request_notes = request.notes;
+    requestVoiceId = request.voice_id;
   }
 
-  await writeOutput(sdk, "output/brief.json", { ...brief, request_notes, style_snapshot: style }, "brief");
+  // Sub-project 5A: a "tts" brief must snapshot the exact voice revision this run commits to at intake time --
+  // downstream stages (Task 8's media-tts) read voice_id/voice_revision/voice_checksum off the brief, never
+  // back off the (possibly-changed-since) request. `requireActiveVoice` reads the studio's own store mirror
+  // (kept current by `syncLibrary`, since a channel process is the only one ever allowed to write voices/**);
+  // the checksum re-check below then catches the one thing the mirror alone cannot: the kho's `ref.wav` bytes
+  // having drifted from what `voice.json` claims (a bad sync, a half-written file, tampering).
+  let voiceFields: { voice_id: string; voice_revision: number; voice_checksum: string } | undefined;
+  if (brief.voice === "tts") {
+    const profile = requireActiveVoice(app.store, requestVoiceId);
+    const refPath = library.fs.paths.voiceRef(profile.voice_id);
+    if (!existsSync(refPath)) {
+      throw new HarnessError("CONFIG_INVALID", `voice profile ${profile.voice_id} has no ref.wav in the kho: ${refPath}`, { voice_id: profile.voice_id, path: refPath });
+    }
+    const { checksum } = await sha256File(refPath);
+    if (checksum !== profile.ref_audio.checksum) {
+      throw new HarnessError("CONFIG_INVALID", `voice profile ${profile.voice_id}'s ref.wav checksum does not match voice.json (kho drift or tampering)`, { voice_id: profile.voice_id, path: refPath, expected: profile.ref_audio.checksum, actual: checksum });
+    }
+    voiceFields = { voice_id: profile.voice_id, voice_revision: profile.revision, voice_checksum: profile.ref_audio.checksum };
+  }
+
+  await writeOutput(sdk, "output/brief.json", { ...brief, request_notes, style_snapshot: style, ...(voiceFields ?? {}) }, "brief");
   await sdk.done();
 }
 

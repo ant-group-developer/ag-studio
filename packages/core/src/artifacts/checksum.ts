@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, readFileSync, statSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import type { Checksum } from "@harness/contracts";
 
@@ -25,5 +25,15 @@ export async function sha256File(path: string): Promise<{ checksum: Checksum; si
   await new Promise<void>((resolve, reject) => {
     createReadStream(path).on("data", (c) => hash.update(c)).on("end", resolve).on("error", reject);
   });
+  return { checksum: `sha256:${hash.digest("hex")}`, size_bytes: size };
+}
+
+/** Synchronous sibling of `sha256File`, for the one caller with no `await` point available to it: `doctor`'s
+ * `channel:<id>:voice` row (`runDoctor` is a plain synchronous function, like every other doctor check).
+ * Reads the whole file into memory rather than streaming -- fine for a voice profile's `ref.wav`, which is
+ * capped at 30s of mono 24kHz PCM (well under a couple MB), never a multi-minute episode file. */
+export function sha256FileSync(path: string): { checksum: Checksum; size_bytes: number } {
+  const size = statSync(path).size;
+  const hash = createHash("sha256").update(readFileSync(path));
   return { checksum: `sha256:${hash.digest("hex")}`, size_bytes: size };
 }

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isHarnessError, newId } from "@harness/contracts";
-import type { ContentRequest, EditStyle, LibraryItem } from "@harness/contracts";
+import type { ContentRequest, EditStyle, LibraryItem, VoiceProfile } from "@harness/contracts";
 import { LibraryFs, sha256File, syncLibrary, writeIndex } from "../../src/index.js";
 import { openTempStore } from "../helpers.js";
 
@@ -74,6 +74,16 @@ function makeItem(id: string, styleId: string, overrides: Partial<LibraryItem> =
   };
 }
 
+function makeVoice(id: string, overrides: Partial<VoiceProfile> = {}): VoiceProfile {
+  return {
+    schema_version: "harness.voice/v1", voice_id: id, display_name: "Narrator", language: "vi",
+    origin: "own", origin_note: "", ref_audio: { path: "ref.wav", checksum: `sha256:${"a".repeat(64)}`, duration_seconds: 5 },
+    ref_text: "hi", params: { speed: 1, num_step: 32 }, revision: 1, status: "active",
+    created_at: "2026-09-14T00:00:00.000Z", updated_at: "2026-09-14T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 async function writeItem(fs: LibraryFs, id: string, styleId: string, dataBytes: string): Promise<LibraryItem> {
   const dataPath = join(fs.paths.itemDir(id), "episode.mp4");
   mkdirSync(fs.paths.itemDir(id), { recursive: true });
@@ -117,7 +127,7 @@ describe("syncLibrary", () => {
     expect(report.imported.styles).toEqual([styleId]);
     expect(report.imported.requests).toEqual([req1Id]);
     expect(report.imported.items).toEqual([item1Id]);
-    expect(report.updated).toEqual({ styles: [], requests: [], items: [] });
+    expect(report.updated).toEqual({ styles: [], requests: [], items: [], voices: [] });
     expect(report.missing).toEqual([]);
 
     expect(report.corrupt).toHaveLength(2);
@@ -331,6 +341,54 @@ describe("syncLibrary", () => {
 
     await syncLibrary({ store, fs: studioFs, role: "studio", clock });
     expect(existsSync(join(root, "index.json"))).toBe(true);
+  });
+});
+
+describe("syncLibrary voices", () => {
+  it("mirrors a hand-written voice.json for both the studio and channel role", async () => {
+    const root = tempRoot();
+    const channel = new LibraryFs({ root, role: "channel" });
+    const voiceId = newId("voice_profile");
+    channel.writeJsonAtomic(channel.paths.voiceFile(voiceId), makeVoice(voiceId));
+
+    const studio = new LibraryFs({ root, role: "studio" });
+    const { store: studioStore, clock: studioClock } = openTempStore();
+    const studioReport = await syncLibrary({ store: studioStore, fs: studio, role: "studio", clock: studioClock });
+    expect(studioReport.imported.voices).toEqual([voiceId]);
+    expect(studioStore.getVoiceProfile(voiceId)?.voice_id).toBe(voiceId);
+
+    const { store: channelStore, clock: channelClock } = openTempStore();
+    const channelReport = await syncLibrary({ store: channelStore, fs: channel, role: "channel", clock: channelClock });
+    expect(channelReport.imported.voices).toEqual([voiceId]);
+    expect(channelStore.getVoiceProfile(voiceId)?.voice_id).toBe(voiceId);
+  });
+
+  it("flags a corrupt voice.json without importing it", async () => {
+    const root = tempRoot();
+    const channel = new LibraryFs({ root, role: "channel" });
+    mkdirSync(channel.paths.voiceDir("voice-broken"), { recursive: true });
+    writeFileSync(join(channel.paths.voiceDir("voice-broken"), "voice.json"), "{not valid json");
+    const { store, clock } = openTempStore();
+
+    const report = await syncLibrary({ store, fs: channel, role: "channel", clock });
+    expect(report.imported.voices).toEqual([]);
+    expect(report.corrupt).toHaveLength(1);
+    expect(report.corrupt[0].path).toBe(join(channel.paths.voiceDir("voice-broken"), "voice.json"));
+  });
+
+  it("reports a mirrored voice whose kho entry disappeared as missing, without dropping it from the store", async () => {
+    const root = tempRoot();
+    const channel = new LibraryFs({ root, role: "channel" });
+    const voiceId = newId("voice_profile");
+    channel.writeJsonAtomic(channel.paths.voiceFile(voiceId), makeVoice(voiceId));
+    const { store, clock } = openTempStore();
+    await syncLibrary({ store, fs: channel, role: "channel", clock });
+    expect(store.getVoiceProfile(voiceId)).toBeDefined();
+
+    rmSync(channel.paths.voiceDir(voiceId), { recursive: true, force: true });
+    const report = await syncLibrary({ store, fs: channel, role: "channel", clock });
+    expect(report.missing).toEqual([{ kind: "voice", id: voiceId }]);
+    expect(store.getVoiceProfile(voiceId)).toBeDefined();
   });
 });
 

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { HarnessConfig, ProductionProfile, ProjectConfig, ScriptsRegistry, SecretResolver, StageDefinition, StateStore } from "@harness/contracts";
+import { sha256FileSync } from "../artifacts/checksum.js";
 import { EnvSecretResolver } from "../config/secrets.js";
 import type { LoadedChannel } from "../distribution/channels.js";
 import type { AutoAcceptConfig } from "../library/auto-accept.js";
@@ -84,7 +85,7 @@ export function runDoctor(i: DoctorInput): DoctorRow[] {
     ...checkWorkflows(i),
     ...checkProfiles(i),
     checkSources(i),
-    ...(i.library ? [checkLibraryRoot(i.library), checkLibraryWrite(i.library), checkLibraryIndex(i.library)] : []),
+    ...(i.library ? [checkLibraryRoot(i.library), checkLibraryWrite(i.library), checkLibraryIndex(i.library), checkLibraryVoices(i.library)] : []),
     ...(i.library?.autoAccept?.config.enabled && i.library.role === "studio" ? [checkLibraryAutoAccept(i.library.autoAccept)] : []),
     ...checkChannels(i),
     ...(i.agent ? [checkAgentRuntime(i.agent)] : []),
@@ -260,6 +261,38 @@ function checkLibraryIndex(library: { fs: LibraryFs; role: LibraryRole }): Docto
   }
 }
 
+/** `library:voices` (sub-project 5A): `<root>/voices` must exist and be a directory -- doctor never creates it,
+ * same as `library:write`. For the studio role that is the whole check (studio never writes under `voices/**`,
+ * so there is nothing to probe-write). For the channel role, also writes-then-removes a throwaway probe file
+ * there, the same approach `checkLibraryWrite` uses for `requests/` -- a channel with no actual write access to
+ * its own `voices/` directory (permissions, a read-only mount) would otherwise pass this row and then fail
+ * confusingly at `library voices add` time. */
+function checkLibraryVoices(library: { fs: LibraryFs; role: LibraryRole }): DoctorRow {
+  const check = "library:voices";
+  const dir = library.fs.paths.voicesDir;
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+    return { check, ok: false, detail: `directory missing: ${dir} (mount the library first)` };
+  }
+  if (library.role !== "channel") {
+    return { check, ok: true, detail: `${dir} exists` };
+  }
+  const path = resolve(dir, `.doctor-${library.role}-${randomUUID()}.tmp`);
+  let wrote = false;
+  let removeError: unknown;
+  try {
+    writeFileSync(path, "{}");
+    wrote = true;
+  } catch (e) {
+    return { check, ok: false, detail: e instanceof Error ? e.message : String(e) };
+  } finally {
+    if (wrote) { try { rmSync(path); } catch (e) { removeError = e; } }
+  }
+  if (removeError !== undefined) {
+    return { check, ok: false, detail: `wrote ${path} but could not remove it: ${removeError instanceof Error ? removeError.message : String(removeError)}` };
+  }
+  return { check, ok: true, detail: `wrote and removed ${path}` };
+}
+
 /** `library:auto_accept`, added only for a studio project with the loop actually enabled (the exact
  * condition the worker's `autoAcceptDepsFor` builds the loop on): checks the two things that would make it
  * silently do nothing forever -- an empty source collection, or an agent runtime that cannot execute the
@@ -285,12 +318,37 @@ function checkChannels(i: DoctorInput): DoctorRow[] {
   const rows: DoctorRow[] = [{ check: "channels:config", ok: true, detail: `${i.channels.loaded.length} channels` }];
   for (const channel of i.channels.loaded) {
     rows.push(...checkOneChannel(channel, i.channels.secrets));
+    if (channel.config.voice) rows.push(checkChannelVoice(i.store, i.library, channel));
     if (i.learning) {
       rows.push(checkChannelStats(i.learning, channel));
       if (channel.config.planning.enabled) rows.push(checkChannelPlanning(i.learning, channel));
     }
   }
   return rows;
+}
+
+/** `channel:<id>:voice` (sub-project 5A), added only when this channel's `channel.yaml` declares `voice`
+ * (a `voice_id` it wants every `voice: tts` request of its own to use, spec §1.5). Checks the same store
+ * mirror `requireActiveVoice` reads at request/intake time -- so this row fails exactly when `library request
+ * create --voice tts` or the channel-planning auto-loop would fail too, ahead of time -- plus one thing the
+ * mirror alone cannot see: whether the kho's `ref.wav` bytes still match `voice.json`'s recorded checksum. */
+function checkChannelVoice(store: StateStore, library: DoctorInput["library"], channel: LoadedChannel): DoctorRow {
+  const id = channel.config.channel_id;
+  const check = `channel:${id}:voice`;
+  const voiceId = channel.config.voice!.voice_id;
+
+  const profile = store.getVoiceProfile(voiceId);
+  if (!profile) return { check, ok: false, detail: `voice profile not mirrored: ${voiceId}; run library sync` };
+  if (profile.status !== "active") return { check, ok: false, detail: `voice profile ${voiceId} is ${profile.status}, not active` };
+  if (!library) return { check, ok: false, detail: "project.yaml has no library configured; cannot verify ref.wav" };
+
+  const refPath = library.fs.paths.voiceRef(voiceId);
+  if (!existsSync(refPath)) return { check, ok: false, detail: `ref.wav missing: ${refPath}` };
+  const { checksum } = sha256FileSync(refPath);
+  if (checksum !== profile.ref_audio.checksum) {
+    return { check, ok: false, detail: `ref.wav checksum mismatch: ${refPath} (voice.json expects ${profile.ref_audio.checksum})` };
+  }
+  return { check, ok: true, detail: `${voiceId} rev${profile.revision} active, ref.wav checksum matches` };
 }
 
 /** `channel:<id>:stats` (sub-project 3B, spec §2.5): with `adapters.stats: fake` there is nothing real to

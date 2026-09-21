@@ -544,7 +544,7 @@ function policyTargetDuration(policy: Record<string, unknown>): [number, number]
  * a skipped required check fails the stage exactly like an outright `fail` -- so an auto-planned request with
  * no duration is replanned until `max_replans` and then parked as `request_stuck`, forever. */
 async function createRequestsStage(app: AppContext, sdk: ScriptContext): Promise<void> {
-  const { run, channelId } = requireRunChannel(app, sdk);
+  const { run, channelId, channel } = requireRunChannel(app, sdk);
   const library = requireLibrary(app);
 
   const proposal = parseTopicProposal(readJsonFile(sdk.input("topic_proposal")));
@@ -570,6 +570,9 @@ async function createRequestsStage(app: AppContext, sdk: ScriptContext): Promise
       topic: topic.topic, style_id, style_revision, voice: topic.voice ?? "none", language: brief.channel.seo.language,
       target_duration_seconds: topic.target_duration_seconds ?? policyTargetDuration(sdk.request.policy) ?? DEFAULT_TARGET_DURATION_SECONDS,
       ...(topic.source_hint !== undefined ? { source_hint: topic.source_hint } : {}),
+      // The channel's own configured voice (channel.yaml `voice.voice_id`), used only when the proposed
+      // topic itself asks for "tts" and names no per-topic override -- see `createRequest`'s voice_id rule.
+      ...(channel.config.voice?.voice_id !== undefined ? { channelVoiceId: channel.config.voice.voice_id } : {}),
       notes: `auto-plan ${run.run_id}: ${topic.why}`,
     });
     requestIds.push(created.request_id);
