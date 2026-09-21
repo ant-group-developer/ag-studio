@@ -157,22 +157,29 @@ export function buildSnapshot(d: SnapshotDeps): DashboardSnapshot {
 }
 
 const TTS_DONE_WINDOW = 20;
+// `media.tts_done` fires for every run including `voice: none`/`voice: original` ones, which carry `lines: 0`
+// -- a project that mixes those with `voice: tts` episodes can have the newest 20 *events* all be zero-line
+// ones, pushing every real tts line out of the window entirely. Fetched wider and filtered below (review
+// finding, Task 9 fix round) so the ratio/timestamp reflect the newest 20 events that actually did tts work.
+const TTS_DONE_FETCH_LIMIT = 200;
 
 /** `DashboardSnapshot.media` (spec §6.1, sub-project 5A Task 9): `null` unless the project declares `library`
  * with `role: "studio"`. `engine` defaults to `"fake"` when the caller did not pass `SnapshotDeps.media` --
  * every real call site (the composition root) always does, this is just what a `library`-only test fixture
  * that predates this task falls back to. `media.tts_done` events carry no `channel_id` (the media pipeline is
- * project-level, not per-channel), so this reads the newest 20 project-wide rather than going through
- * `newestChannelEvent`. */
+ * project-level, not per-channel), so this reads project-wide rather than going through `newestChannelEvent`.
+ * `last_tts_at`/`cache_hit_ratio` both only ever look at events with `lines > 0` (a `voice: none`/`original`
+ * run's zero-line event says nothing about tts cache health and must not crowd out or null it). */
 function buildMedia(d: SnapshotDeps): DashboardMedia | null {
   if (d.library?.role !== "studio") return null;
-  const events = d.store.listEvents({ event_type: "media.tts_done", newest: true, limit: TTS_DONE_WINDOW });
-  const last_tts_at = events.at(-1)?.occurred_at ?? null;
+  const fetched = d.store.listEvents({ event_type: "media.tts_done", newest: true, limit: TTS_DONE_FETCH_LIMIT });
+  const withLines = fetched.filter((e) => typeof e.payload.lines === "number" && e.payload.lines > 0).slice(-TTS_DONE_WINDOW);
+  const last_tts_at = withLines.at(-1)?.occurred_at ?? null;
   let cachedSum = 0;
   let linesSum = 0;
-  for (const e of events) {
+  for (const e of withLines) {
     cachedSum += typeof e.payload.cached === "number" ? e.payload.cached : 0;
-    linesSum += typeof e.payload.lines === "number" ? e.payload.lines : 0;
+    linesSum += e.payload.lines as number;
   }
   return { engine: d.media?.engine ?? "fake", last_tts_at, cache_hit_ratio: linesSum > 0 ? cachedSum / linesSum : null };
 }
@@ -382,6 +389,9 @@ function waitingHumanAlerts(store: StateStore): DashboardAlert[] {
 
 const ALERT_WINDOW_MS = 24 * 3_600_000;
 const STATS_FAILING_THRESHOLD = 3;
+/** The doctor `check` names that raise `media_engine_unavailable` instead of the generic `doctor` alert
+ * (`media:models` is deliberately excluded -- see `buildAlerts` below). */
+const MEDIA_ENGINE_CHECKS = new Set(["media:python", "media:packages", "media:device", "media:engine"]);
 
 /** `stats_blocked` (spec §5/§6): a `stats.blocked` event for the channel within the last 24h with no later
  * `stats.collected` for that same channel -- once a fresh collect succeeds the channel is no longer
@@ -479,18 +489,23 @@ function buildAlerts(d: SnapshotDeps, now: string, doctorRows: DoctorRow[], chan
 
   for (const row of doctorRows) {
     if (row.ok) continue;
+    // `media_engine_unavailable` below already covers these four -- a failing `media:python`/`media:packages`/
+    // `media:device`/`media:engine` row must raise exactly one alert, not this generic one *and* the specific
+    // one (review finding, Task 9 fix round). `media:models` is deliberately NOT in `MEDIA_ENGINE_CHECKS`, so
+    // it still falls through to this generic loop -- same `ok: false`-as-warning treatment
+    // `channel:<id>:planning`'s fake-agent row gets, no new severity concept, no *specific* alert kind.
+    if (MEDIA_ENGINE_CHECKS.has(row.check)) continue;
     const channelMatch = /^channel:([^:]+):/.exec(row.check);
     alerts.push({ kind: "doctor", ...(channelMatch ? { channel_id: channelMatch[1] } : {}), ref: row.check, message: row.detail, since: now });
   }
 
   // `media_engine_unavailable` (spec §6.1, sub-project 5A Task 9): a failing `media:python`/`media:packages`/
   // `media:device`/`media:engine` row means the python engine cannot actually do the transcribe/tts work a
-  // multi-hour GPU stage is about to attempt. `media:models` is deliberately excluded -- an uncached model
-  // just means the first real run downloads it, not that the engine is unusable (same `ok: false`-as-warning
-  // treatment `channel:<id>:planning`'s fake-agent row gets, no new severity concept).
+  // multi-hour GPU stage is about to attempt -- raised INSTEAD OF the generic `doctor` alert for these four
+  // checks (see the exclusion above), one `media_engine_unavailable` alert per failing row.
   for (const row of doctorRows) {
     if (row.ok) continue;
-    if (row.check !== "media:python" && row.check !== "media:packages" && row.check !== "media:device" && row.check !== "media:engine") continue;
+    if (!MEDIA_ENGINE_CHECKS.has(row.check)) continue;
     alerts.push({ kind: "media_engine_unavailable", ref: row.check, message: row.detail, since: now });
   }
 

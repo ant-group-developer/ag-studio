@@ -536,6 +536,39 @@ describe("media block and media_engine_unavailable alert (sub-project 5A, Task 9
     expect(snapshot.media?.cache_hit_ratio).toBe(1);
   });
 
+  // Fix round (coordinator review, adjacent finding): media.tts_done fires for every run, including
+  // voice:none/voice:original ones with lines: 0. A naive "newest 20 events" window can be entirely zero-line
+  // ones on a project that mixes tts and non-tts episodes, nulling the ratio and last_tts_at even though real
+  // tts work happened not long before.
+  it("ignores interleaved zero-line media.tts_done events for both cache_hit_ratio and last_tts_at", () => {
+    const { store, clock } = openTempStore();
+    const libRoot = mkdtempSync(join(tmpdir(), "snapshot-media-interleaved-"));
+    const library = { fs: new LibraryFs({ root: libRoot, role: "studio" as const }), role: "studio" as const };
+
+    const appendTts = (lines: number, cached: number): void => {
+      store.appendEvent({
+        run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null, channel_id: null,
+        content_id: null, variant_id: null, workflow_release: null, severity: "info", event_type: "media.tts_done",
+        payload: { run_id: "run_x", lines, cached, seconds: 1 },
+      });
+      clock.advance(1);
+    };
+
+    appendTts(10, 5); // real tts, oldest
+    appendTts(0, 0); // voice: none/original in between
+    let lastRealAt: string | undefined;
+    appendTts(10, 10); // real tts, newest
+    lastRealAt = store.listEvents({ event_type: "media.tts_done", newest: true, limit: 1 })[0]!.occurred_at;
+    // 25 more voice:none/original runs after the last real tts -- more than the naive 20-event window, so a
+    // window keyed on raw event recency (not filtered by lines > 0 first) would see only these and conclude
+    // "no tts ever happened".
+    for (let i = 0; i < 25; i++) appendTts(0, 0);
+
+    const snapshot = buildSnapshot({ store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap", library, media: { engine: "python" } });
+    expect(snapshot.media?.cache_hit_ratio).toBeCloseTo((5 + 10) / (10 + 10));
+    expect(snapshot.media?.last_tts_at).toBe(lastRealAt);
+  });
+
   it("cache_hit_ratio is null when the newest events summed to zero lines", () => {
     const { store, clock } = openTempStore();
     const libRoot = mkdtempSync(join(tmpdir(), "snapshot-media-zero-"));
@@ -549,23 +582,32 @@ describe("media block and media_engine_unavailable alert (sub-project 5A, Task 9
     expect(snapshot.media?.cache_hit_ratio).toBeNull();
   });
 
-  it("alerts media_engine_unavailable for a failing media:python/packages/device/engine doctor row, but never for media:models", () => {
+  // Fix round (coordinator review, Important 1): a failing media:python/packages/device/engine row used to
+  // raise BOTH the generic "doctor" alert (the loop over every !row.ok row) AND the specific
+  // "media_engine_unavailable" one -- double alerting nothing else in this file does (channel:<id>:planning's
+  // fake-agent row, for comparison, only ever gets the one generic alert). Each of these four checks now
+  // raises media_engine_unavailable ONLY; media:models keeps the single generic "doctor" alert and never gets
+  // media_engine_unavailable, exactly like the fake-agent warning row.
+  it("a failing media:python/packages/device/engine row raises exactly one alert (media_engine_unavailable, not also doctor)", () => {
     const { store, clock } = openTempStore();
-    const pythonFail = buildSnapshot({
-      store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap",
-      doctorRows: [{ check: "media:python", ok: false, detail: "python not runnable: /bad/python" }],
-    });
-    const alert = pythonFail.alerts.find((a) => a.kind === "media_engine_unavailable");
-    expect(alert).toMatchObject({ ref: "media:python", message: "python not runnable: /bad/python" });
+    for (const check of ["media:python", "media:packages", "media:device", "media:engine"]) {
+      const snapshot = buildSnapshot({
+        store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap",
+        doctorRows: [{ check, ok: false, detail: `${check} detail` }],
+      });
+      expect(snapshot.alerts, check).toHaveLength(1);
+      expect(snapshot.alerts[0], check).toMatchObject({ kind: "media_engine_unavailable", ref: check, message: `${check} detail` });
+    }
+  });
 
-    const modelsWarn = buildSnapshot({
+  it("a failing media:models row raises exactly one alert (the generic doctor one, never media_engine_unavailable)", () => {
+    const { store, clock } = openTempStore();
+    const snapshot = buildSnapshot({
       store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap",
       doctorRows: [{ check: "media:models", ok: false, detail: "will download on first run: whisperx" }],
     });
-    expect(modelsWarn.alerts.some((a) => a.kind === "media_engine_unavailable")).toBe(false);
-    // still surfaces as a plain "doctor" alert, exactly like any other ok:false row (e.g.
-    // channel:<id>:planning's fake-agent warning) -- no new severity concept, just no *specific* alert kind.
-    expect(modelsWarn.alerts.some((a) => a.kind === "doctor" && a.ref === "media:models")).toBe(true);
+    expect(snapshot.alerts).toHaveLength(1);
+    expect(snapshot.alerts[0]).toMatchObject({ kind: "doctor", ref: "media:models", message: "will download on first run: whisperx" });
   });
 });
 

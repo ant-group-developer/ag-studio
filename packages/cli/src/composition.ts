@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
-import { HarnessError, isHarnessError, ProjectConfigSchema, type AgentRuntime, type ChannelPackage, type ExecutorRef, type MediaConfig, type MediaEngine, type MediaProber, type ProductionProfile, type ProjectConfig, type Publisher, type ScriptCommand, type ScriptsRegistry, type SourcesRegistry, type StatsCollector } from "@harness/contracts";
+import { HarnessError, isHarnessError, ProjectConfigSchema, type AgentRuntime, type ChannelPackage, type ExecutorRef, type MediaConfig, type MediaEngine, type MediaEngineProbe, type MediaProber, type ProductionProfile, type ProjectConfig, type Publisher, type ScriptCommand, type ScriptsRegistry, type SourcesRegistry, type StatsCollector } from "@harness/contracts";
 import { ArtifactRegistry, type AutoAcceptConfig, BUILTIN_CHECKERS, buildSnapshot, ChannelRegistry, Controller, distributionCheckers, type DoctorRow, EnvSecretResolver, ExternalOperationJournal, fullEpisodePath, HARNESS_ROOT, learningCheckers, LibraryFs, libraryCheckers, listWorkflowRefs, loadChannels, type LoadedWorkflow, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, matchCollection, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, resolveWorkflowScope, runDoctor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, writeSnapshotFile, type HarnessLogger, type LibraryRole, type LogLevel } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, FakeMediaEngine, FakeProvider, FakePublisher, FakeStatsCollector, fakeScriptCommands } from "@harness/adapter-fake";
@@ -10,6 +10,7 @@ import { CliAgentRuntime, RUNTIME_COMMANDS } from "@harness/adapter-agent-cli";
 import { PythonMediaEngine, type PythonMediaEngineOptions } from "@harness/adapter-media-python";
 import { PlaywrightPublisher, PlaywrightStatsCollector } from "@harness/adapter-youtube-playwright";
 import { builtinMediaCommands } from "./commands/media.js";
+import { gpuCurrentlyLeased, mediaProbeCacheKey, resolveMediaProbe } from "./media-probe-cache.js";
 import { cliArgv } from "./self.js";
 
 export interface AppContext {
@@ -273,8 +274,16 @@ function mediaEngineOnFakeInput(ctx: AppContext): { effectiveRelease: string } |
  * Async (sub-project 5A Task 9): `media:python|packages|device|models` need `MediaEngine.probe()`, which spawns
  * a python child process -- awaited here, once, only when `adapters.media === "python"`, so `doctor.ts` itself
  * stays a pure/sync row builder over a plain `MediaEngineProbe` literal.
+ *
+ * `opts.mediaProbe` (coordinator review, Task 9 fix round): `"fresh"` (the default -- `harness doctor` run by
+ * hand) always spawns a probe. `"cached"` (`writeDashboardSnapshot` below, called on every worker idle poll)
+ * reuses a still-fresh result from the module-level cache in `media-probe-cache.ts` instead of spawning a
+ * torch-importing subprocess roughly once a minute forever; `opts.nowMs` is injectable so tests never need
+ * real timers.
  */
-export async function computeDoctorRows(ctx: AppContext): Promise<DoctorRow[]> {
+export async function computeDoctorRows(ctx: AppContext, opts: { mediaProbe?: "fresh" | "cached"; nowMs?: () => number } = {}): Promise<DoctorRow[]> {
+  const mediaProbeMode = opts.mediaProbe ?? "fresh";
+  const nowMs = opts.nowMs ?? Date.now;
   const extraRows: DoctorRow[] = [];
   const scope = ctx.project.workflows;
   let workflows: { ref: string; loaded: LoadedWorkflow }[];
@@ -301,9 +310,14 @@ export async function computeDoctorRows(ctx: AppContext): Promise<DoctorRow[]> {
   }
   const profiles = scope ? allProfiles.filter((p) => scope.includes(p.workflow_release)) : allProfiles;
 
-  const media = ctx.project.adapters.media === "python"
-    ? { pythonPath: mediaEngineOptions(ctx.project, ctx.harnessRoot, (s) => s).python, device: ctx.mediaConfig.device, probe: await ctx.media.probe() }
-    : undefined;
+  let media: { pythonPath: string; device: string; probe: MediaEngineProbe } | undefined;
+  if (ctx.project.adapters.media === "python") {
+    const options = mediaEngineOptions(ctx.project, ctx.harnessRoot, (s) => s);
+    const cacheKey = mediaProbeCacheKey(options);
+    const gpuLeased = mediaProbeMode === "cached" && gpuCurrentlyLeased(ctx.store);
+    const probe = await resolveMediaProbe({ engine: ctx.media, cacheKey, mode: mediaProbeMode, nowMs, gpuLeased });
+    if (probe) media = { pythonPath: options.python, device: ctx.mediaConfig.device, probe };
+  }
   const mediaEngineOnFake = mediaEngineOnFakeInput(ctx);
 
   return [
@@ -355,7 +369,10 @@ export async function computeDoctorRows(ctx: AppContext): Promise<DoctorRow[]> {
  * snapshot gets written, called by both `harness dashboard snapshot|serve` and the worker's periodic refresh
  * (Task 9's `WorkerDeps.dashboard.write`). */
 export async function writeDashboardSnapshot(ctx: AppContext): Promise<string> {
-  const doctorRows = await computeDoctorRows(ctx);
+  // "cached": this runs on every worker idle poll (roughly every `dashboard.refreshSeconds`, forever) --
+  // `harness doctor` itself (an operator asking on purpose) still always probes fresh (composition.ts's
+  // `computeDoctorRows` default).
+  const doctorRows = await computeDoctorRows(ctx, { mediaProbe: "cached" });
   const snapshot = buildSnapshot({
     store: ctx.store, channels: ctx.channels.list(), doctorRows, clock: ctx.clock,
     gateWindowSeconds: ctx.harness.resource_wait_warn_seconds, project_id: ctx.project.project_id,
