@@ -128,16 +128,13 @@ bỏ hẳn file, stage vẫn đạt.
     `voice === "tts"`); `word_index` tuỳ chọn, trỏ vào từ thứ mấy của dòng đó.
   - `{ "edl_order": 3 }` — neo vào một `order` có thật trong `edl.json.entries`; dùng khi `voice` là
     `none`/`original`, hoặc khi chữ gắn với hình chứ không với lời.
-  - `{ "speech_index": 1 }` — neo vào đoạn lời thứ mấy trong **`timeline.speech[]` đã fit** (chỉ khi
+  - `{ "speech_index": 1 }` — chỉ số đoạn lời trong **`timeline.speech[]` đã fit** (chỉ khi
     `voice === "original"`).
-  Neo `line_id` hoặc `edl_order` không tồn tại ⇒ `overlays-valid` fail ngay ở `plan-edit`.
-  > **`speech_index` KHÔNG được checker kiểm ở bước này** — `timeline.json` chưa tồn tại lúc `plan-edit`
-  > chạy, nên không có gì để giải neo ra. Một `speech_index` sai vẫn qua `overlays-valid`, rồi bị **bỏ âm
-  > thầm** ở `media-compose` (`composition.json.text_dropped` = `{ id, reason: "anchor_missing" }`), và chỉ
-  > lộ ra khi `library-review` **từ chối** tập vì `render-report.text_events.dropped` không rỗng — tức là
-  > phải dựng lại **cả tập** (replan). Nên chỉ dùng `speech_index` khi đã thật sự đếm đoạn lời trong
-  > `transcript.json` của đúng các source mà EDL giữ lại, theo đúng thứ tự EDL; không chắc thì dùng
-  > `edl_order`, luôn kiểm được.
+  Neo `line_id`/`edl_order` không tồn tại ⇒ `overlays-valid` fail ngay ở `plan-edit`.
+  > **`speech_index` thì checker KHÔNG kiểm được** (`timeline.json` chưa tồn tại ở bước này): sai vẫn qua
+  > `overlays-valid`, bị bỏ âm thầm ở `media-compose` (`text_dropped: anchor_missing`), rồi `library-review`
+  > **từ chối** cả tập ⇒ dựng lại từ đầu. Chỉ dùng khi đã tự đếm đoạn lời trong `transcript.json` của đúng
+  > các source EDL giữ lại, theo thứ tự EDL; không chắc thì dùng `edl_order`, luôn kiểm được.
 - `seconds` (tuỳ chọn) trong khoảng `[1, 10]`; thiếu thì lấy mặc định của brand theo `kind`.
 - **≤ 1 `title` cho mỗi đoạn** (mỗi `edl_order` sau khi giải neo) — hai title chồng nhau là lỗi.
 - **Không lặp lại nguyên câu lời đọc**: chữ trên hình là rút gọn/nhấn mạnh, không phải phụ đề (phụ đề đã
@@ -152,11 +149,10 @@ bỏ hẳn file, stage vẫn đạt.
 - `transitions[]` **chỉ dùng ở chỗ đổi chủ đề** (ghi đè `brand.transition` cho đúng một mối nối):
   `before_order` là `order` của đoạn ĐỨNG SAU mối nối (≥ 1, có thật trong `edl.json`), `kind` là `cut` |
   `dissolve` | `dip_black`. Không liệt kê mọi mối nối — mặc định của brand đã đủ.
-- `music.mood`: một từ khoá tâm trạng lấy từ brief (`style_snapshot.music.mood`) hoặc từ nội dung tập;
-  `media-compose` dùng nó để chọn nhạc nền trong kho. **Không có track nào khớp mood thì tập vẫn có nhạc**:
-  toàn bộ ứng viên `active` của brand được giữ lại và một bài được chọn như thường, kèm cảnh báo
-  `music_mood_unmatched` trong `composition.json.warnings`. Tập chỉ không có nhạc khi brand không khai track
-  nào (hoặc không có brand) — `music: null` kèm `music_reason`.
+- `music.mood`: một từ khoá tâm trạng lấy từ brief (`style_snapshot.music.mood`) hoặc từ nội dung tập.
+  **Không track nào khớp mood thì tập VẪN có nhạc**: giữ nguyên toàn bộ ứng viên `active` của brand, chọn
+  một bài như thường, kèm cảnh báo `music_mood_unmatched`. Chỉ khi brand không khai track nào (hoặc không có
+  brand) mới `music: null`.
 
 ## Tiêu chí tự kiểm trước khi kết thúc
 
@@ -167,8 +163,8 @@ bỏ hẳn file, stage vẫn đạt.
 - [ ] `request_notes` có nội dung → `edit-plan.json.notes` nêu cách khắc phục (kèm `line_id`/`edl_order` nếu nói về lời thiếu hình).
 - [ ] `output/narration.json` đúng `harness.narration/v1`; `lines: []` khi `voice` là `"none"`/`"original"`; mọi `edl_order` tồn tại trong `edl.json`.
 - [ ] Có `expected_outputs.overlays` → `output/overlays.json` đúng `harness.overlays/v1`: mọi `anchor` trỏ
-      vào `line_id`/`edl_order`/`speech_index` có thật (**`speech_index` phải tự đếm — checker không kiểm
-      được, sai là mất cả tập**), ≤ 1 `title` mỗi đoạn, độ dài chữ trong giới hạn
+      vào `line_id`/`edl_order`/`speech_index` có thật (**`speech_index` phải tự đếm**), ≤ 1 `title` mỗi
+      đoạn, độ dài chữ trong giới hạn
       48/24/64, **số** overlay không vượt ngân sách mật độ ở trên, `transitions[].before_order` có thật. Không cần chữ thì
       bỏ hẳn file (output không bắt buộc), đừng ghi file rỗng.
 

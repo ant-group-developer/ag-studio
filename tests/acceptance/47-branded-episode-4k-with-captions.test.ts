@@ -11,8 +11,8 @@ import {
 const readJson = <T>(path: string): T => JSON.parse(readFileSync(path, "utf8")) as T;
 
 const CHANNEL_ID = "channel-one";
-/** The square `render-valid` itself samples at the logo corner (`LOGO_PROBE_PX`, spec §6.2). */
-const LOGO_PROBE_PX = 260;
+/** Default brand `safe_margin_px`; `final-graph.ts` overlays the logo at half of it from both edges. */
+const SAFE_MARGIN_PX = 120;
 
 // Acceptance 47 (sub-project 5B §8): the headline promise of 5B -- one branded 4K episode with burned-in
 // karaoke subtitles, a title on screen, a logo in the corner and ducked music, produced end to end by the
@@ -64,9 +64,13 @@ describe.skipIf(!hasFfmpeg() || !systemFontPath())("acceptance 47: a branded 4K 
 
     // ---- the logo corner of a mid-episode frame is painted, measured on the pixels ----
     const episode = artifactPathFor(world.studio, runId, "media-render", "episode_video")!;
+    // The window is derived the way `render-valid`'s own `logoCrop()` derives it (fix wave, I1) rather than
+    // copied from a constant: a `2 x height_px` square anchored at `safe_margin_px / 2` from the corner.
     const corner = composition.logo!.corner;
+    const probe = composition.logo!.height_px * 2;
+    const m = SAFE_MARGIN_PX / 2;
     const stddev = frameStdDev(episode, composition.total_seconds / 2, {
-      w: LOGO_PROBE_PX, h: LOGO_PROBE_PX, x: corner === "left" ? 0 : 3840 - LOGO_PROBE_PX, y: 0,
+      w: probe, h: probe, x: corner === "left" ? m : 3840 - m - probe, y: m,
     });
     expect(stddev, "ffmpeg could not extract the mid-episode frame").not.toBeNull();
     expect(stddev!, `the ${corner} logo corner is a flat fill: nothing was drawn there`).toBeGreaterThan(4);
