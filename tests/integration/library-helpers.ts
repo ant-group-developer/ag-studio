@@ -111,9 +111,12 @@ export function freshLibraryWorld(o: { media?: boolean; autopilot?: boolean; med
   const autopilot = (o.autopilot ?? false) || media1_2;
   const lib = mkdtempSync(join(tmpdir(), "kho-"));
   // the top-level kho directories a mounted share would already have; `doctor`'s `library:write` row probes
-  // `styles/` (studio) and `requests/` (channel) and fails when they are missing, and (sub-project 5A)
-  // `library:voices` fails the same way for either role when `voices/` itself is absent.
-  for (const sub of ["styles", "requests", "items", "voices"]) mkdirSync(join(lib, sub), { recursive: true });
+  // `styles/` (studio) and `requests/` (channel) and fails when they are missing, (sub-project 5A)
+  // `library:voices` fails the same way for either role when `voices/` itself is absent, and (sub-project 5B)
+  // `library:music` fails the same way for either role when `music/` is absent (`library:brands`, studio-only,
+  // does not need its directory to exist at all -- an empty/missing `brands/` is just "no channel has a brand
+  // yet", not a failure, so it is deliberately left uncreated here).
+  for (const sub of ["styles", "requests", "items", "voices", "music"]) mkdirSync(join(lib, sub), { recursive: true });
 
   const studio = mkdtempSync(join(tmpdir(), "studio-"));
   writeProjectYaml(STUDIO_FIXTURE, studio, lib, { autopilot, media1_2 });

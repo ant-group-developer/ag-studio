@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ChannelConfigSchema, newId, type HarnessConfig, type MediaEngineProbe, type ProjectConfig, type ScriptsRegistry, type SecretResolver, type VoiceProfile } from "@harness/contracts";
+import { ChannelConfigSchema, newId, type BrandProfile, type HarnessConfig, type MediaEngineProbe, type MusicTrack, type ProjectConfig, type ScriptsRegistry, type SecretResolver, type VoiceProfile } from "@harness/contracts";
 import { HARNESS_ROOT, LibraryFs, loadProfile, loadWorkflow, MIGRATIONS_DIR, resolveWorkflowScope, runDoctor, sha256FileSync, SqliteStateStore, type DoctorInput, type LoadedChannel, type LoadedWorkflow } from "../../src/index.js";
 import { openTempStore } from "../helpers.js";
 
@@ -340,6 +340,129 @@ describe("runDoctor", () => {
     expect(readdirSync(join(root, "voices"))).toEqual([]); // probe file removed itself
   });
 
+  describe("library:music row (sub-project 5B)", () => {
+    function makeTrack(id: string, overrides: Partial<MusicTrack> = {}): MusicTrack {
+      return {
+        schema_version: "harness.music-track/v1", track_id: id, display_name: "Calm piano 01", file: "track.wav",
+        mood: ["calm"], duration_seconds: 184.2, loop_ok: true, origin: "royalty_free", origin_note: "n/a",
+        checksum: `sha256:${"a".repeat(64)}`, active: true, created_at: "2026-09-22T00:00:00.000Z", updated_at: "2026-09-22T00:00:00.000Z",
+        ...overrides,
+      };
+    }
+
+    it("FAIL when music/ is missing", () => {
+      const projectDir = mkdtempSync(join(tmpdir(), "doctor-library-music-"));
+      const root = mkdtempSync(join(tmpdir(), "doctor-library-music-root-"));
+      const rows = runDoctor({
+        ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+        library: { fs: new LibraryFs({ root, role: "channel" }), role: "channel" },
+      });
+      expect(new Map(rows.map((r) => [r.check, r])).get("library:music")).toMatchObject({ ok: false });
+      expect(existsSync(join(root, "music"))).toBe(false); // doctor never scaffolds it
+    });
+
+    it("ok when music/ exists with no active tracks; fails naming a track whose file is missing or whose checksum does not match", () => {
+      const projectDir = mkdtempSync(join(tmpdir(), "doctor-library-music-checks-"));
+      const root = mkdtempSync(join(tmpdir(), "doctor-library-music-checks-root-"));
+      const fs = new LibraryFs({ root, role: "channel" });
+      mkdirSync(fs.paths.musicDir, { recursive: true });
+      const base = baseInput(projectDir, {});
+      const runFor = () => runDoctor({
+        ...base, scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+        library: { fs, role: "channel" },
+      });
+      const rowOf = (rows: ReturnType<typeof runDoctor>) => new Map(rows.map((r) => [r.check, r])).get("library:music");
+
+      expect(rowOf(runFor())).toMatchObject({ ok: true });
+
+      // active track mirrored, but its file is not in the kho
+      base.store.upsertMusicTrack(makeTrack("calm-01"));
+      expect(rowOf(runFor())).toMatchObject({ ok: false });
+
+      // file present but checksum does not match track.json's recorded one
+      mkdirSync(fs.paths.trackDir("calm-01"), { recursive: true });
+      writeFileSync(join(fs.paths.trackDir("calm-01"), "track.wav"), "some bytes");
+      expect(rowOf(runFor())).toMatchObject({ ok: false });
+
+      // checksum matches: ok
+      const { checksum } = sha256FileSync(join(fs.paths.trackDir("calm-01"), "track.wav"));
+      base.store.upsertMusicTrack(makeTrack("calm-01", { checksum }));
+      expect(rowOf(runFor())).toMatchObject({ ok: true });
+
+      // a retired track's file is never checked
+      base.store.upsertMusicTrack(makeTrack("retired-01", { active: false, checksum: `sha256:${"f".repeat(64)}` }));
+      expect(rowOf(runFor())).toMatchObject({ ok: true });
+    });
+  });
+
+  describe("library:brands row (sub-project 5B, studio role only)", () => {
+    function makeBrand(channelId: string, overrides: Partial<BrandProfile> = {}): BrandProfile {
+      return {
+        schema_version: "harness.brand/v1", channel_id: channelId, revision: 1,
+        fonts: { regular: "fonts/Regular.ttf", bold: "fonts/Bold.ttf", origin: "royalty_free", origin_note: "n/a" },
+        colors: { primary: "#F2C94C", text: "#FFFFFF", text_outline: "#000000", box: "#000000B3" },
+        safe_margin_px: 120,
+        text: {
+          title: { size_px: 120, position: "top_left", box: true, animation: "slide_up", seconds: 4 },
+          callout: { size_px: 160, position: "center", box: false, animation: "pop", seconds: 3 },
+          lower_third: { size_px: 72, position: "bottom_left", box: true, animation: "fade", seconds: 5 },
+        },
+        subtitles: { mode: "burn-in", size_px: 88, position: "bottom_center", max_chars_per_line: 42, max_lines: 2, highlight_color: "#F2C94C" },
+        transition: { kind: "cut", seconds: 0.4 },
+        source_fit: "scale_pad",
+        music: { tracks: [], gain_db: -18, duck_db: -12, duck_attack_ms: 150, duck_release_ms: 600 },
+        checksums: {},
+        created_at: "2026-09-22T00:00:00.000Z", updated_at: "2026-09-22T00:00:00.000Z",
+        ...overrides,
+      };
+    }
+
+    // Writes with plain node:fs (not `fs.writeJsonAtomic`), since the fixture must land in the kho regardless
+    // of the studio-role `fs` under test here -- a real brand would have been written by the channel role's
+    // own `setBrand`, which studio doctor then only ever reads.
+    function writeBrandWithFonts(fs: LibraryFs, channelId: string): BrandProfile {
+      mkdirSync(fs.paths.brandFontsDir(channelId), { recursive: true });
+      writeFileSync(join(fs.paths.brandFontsDir(channelId), "Regular.ttf"), "regular bytes");
+      writeFileSync(join(fs.paths.brandFontsDir(channelId), "Bold.ttf"), "bold bytes");
+      const { checksum: regular } = sha256FileSync(join(fs.paths.brandFontsDir(channelId), "Regular.ttf"));
+      const { checksum: bold } = sha256FileSync(join(fs.paths.brandFontsDir(channelId), "Bold.ttf"));
+      const brand = makeBrand(channelId, { checksums: { "fonts.regular": regular, "fonts.bold": bold } });
+      writeFileSync(fs.paths.brandFile(channelId), JSON.stringify(brand, null, 2));
+      return brand;
+    }
+
+    it("ok with no channels in brands/; fails naming a channel whose font checksum does not match", () => {
+      const projectDir = mkdtempSync(join(tmpdir(), "doctor-library-brands-"));
+      const root = mkdtempSync(join(tmpdir(), "doctor-library-brands-root-"));
+      const fs = new LibraryFs({ root, role: "studio" });
+      const runFor = () => runDoctor({
+        ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+        library: { fs, role: "studio" },
+      });
+      const rowOf = (rows: ReturnType<typeof runDoctor>) => new Map(rows.map((r) => [r.check, r])).get("library:brands");
+
+      expect(rowOf(runFor())).toMatchObject({ ok: true });
+
+      writeBrandWithFonts(fs, "ch1");
+      expect(rowOf(runFor())).toMatchObject({ ok: true });
+
+      writeFileSync(join(fs.paths.brandFontsDir("ch1"), "Regular.ttf"), "tampered bytes");
+      const row = rowOf(runFor());
+      expect(row).toMatchObject({ ok: false });
+      expect(row?.detail).toContain("ch1");
+    });
+
+    it("adds no library:brands row for the channel role", () => {
+      const projectDir = mkdtempSync(join(tmpdir(), "doctor-library-brands-channel-role-"));
+      const root = mkdtempSync(join(tmpdir(), "doctor-library-brands-channel-role-root-"));
+      const rows = runDoctor({
+        ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+        library: { fs: new LibraryFs({ root, role: "channel" }), role: "channel" },
+      });
+      expect(rows.some((r) => r.check === "library:brands")).toBe(false);
+    });
+  });
+
   // project.yaml.workflows scopes doctor to the workflow releases a machine actually runs: a footage-only
   // (or here, sample-three-stage-only) project's scripts.yaml has no reason to register library-production's
   // or style-study's scripts, and doctor must not manufacture script:library-production/* / script:style-study/*
@@ -506,6 +629,73 @@ describe("runDoctor", () => {
         const { checksum } = sha256FileSync(fs.paths.voiceRef(voiceId));
         base.store.upsertVoiceProfile(makeVoiceProfile(voiceId, { status: "active", ref_audio: { path: "ref.wav", checksum, duration_seconds: 5 } }));
         expect(rowOf(runFor({ fs, role: "channel" }))).toMatchObject({ ok: true });
+      });
+    });
+
+    describe("channel:<id>:brand row (sub-project 5B)", () => {
+      function makeBrand(channelId: string, overrides: Partial<BrandProfile> = {}): BrandProfile {
+        return {
+          schema_version: "harness.brand/v1", channel_id: channelId, revision: 1,
+          fonts: { regular: "fonts/Regular.ttf", bold: "fonts/Bold.ttf", origin: "royalty_free", origin_note: "n/a" },
+          colors: { primary: "#F2C94C", text: "#FFFFFF", text_outline: "#000000", box: "#000000B3" },
+          safe_margin_px: 120,
+          text: {
+            title: { size_px: 120, position: "top_left", box: true, animation: "slide_up", seconds: 4 },
+            callout: { size_px: 160, position: "center", box: false, animation: "pop", seconds: 3 },
+            lower_third: { size_px: 72, position: "bottom_left", box: true, animation: "fade", seconds: 5 },
+          },
+          subtitles: { mode: "burn-in", size_px: 88, position: "bottom_center", max_chars_per_line: 42, max_lines: 2, highlight_color: "#F2C94C" },
+          transition: { kind: "cut", seconds: 0.4 },
+          source_fit: "scale_pad",
+          music: { tracks: [], gain_db: -18, duck_db: -12, duck_attack_ms: 150, duck_release_ms: 600 },
+          checksums: {},
+          created_at: "2026-09-22T00:00:00.000Z", updated_at: "2026-09-22T00:00:00.000Z",
+          ...overrides,
+        };
+      }
+
+      it("adds no row for a channel with no brands/<id>/ directory in the kho", () => {
+        const repoDir = setupChannelRepo();
+        const channel = makeLoadedChannel(repoDir);
+        const projectDir = mkdtempSync(join(tmpdir(), "doctor-channel-brand-none-"));
+        const root = mkdtempSync(join(tmpdir(), "doctor-channel-brand-none-kho-"));
+        const rows = runDoctor({
+          ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+          channels: { loaded: [channel], errors: [], secrets: new FixedSecrets("owner@example.com") },
+          library: { fs: new LibraryFs({ root, role: "channel" }), role: "channel" },
+        });
+        expect(rows.some((r) => r.check === "channel:c1:brand")).toBe(false);
+      });
+
+      it("ok when the brand parses and every font checksum matches; fails naming the missing/mismatched file otherwise", () => {
+        const repoDir = setupChannelRepo();
+        const channel = makeLoadedChannel(repoDir);
+        const projectDir = mkdtempSync(join(tmpdir(), "doctor-channel-brand-"));
+        const root = mkdtempSync(join(tmpdir(), "doctor-channel-brand-kho-"));
+        const fs = new LibraryFs({ root, role: "channel" });
+        const rowOf = (rows: ReturnType<typeof runDoctor>) => new Map(rows.map((r) => [r.check, r])).get("channel:c1:brand");
+        const runFor = () => runDoctor({
+          ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [],
+          channels: { loaded: [channel], errors: [], secrets: new FixedSecrets("owner@example.com") },
+          library: { fs, role: "channel" },
+        });
+
+        // brand.json present but fonts missing entirely
+        fs.writeJsonAtomic(fs.paths.brandFile("c1"), makeBrand("c1"));
+        expect(rowOf(runFor())).toMatchObject({ ok: false });
+
+        // fonts present, checksums recorded correctly
+        mkdirSync(fs.paths.brandFontsDir("c1"), { recursive: true });
+        writeFileSync(join(fs.paths.brandFontsDir("c1"), "Regular.ttf"), "regular bytes");
+        writeFileSync(join(fs.paths.brandFontsDir("c1"), "Bold.ttf"), "bold bytes");
+        const { checksum: regular } = sha256FileSync(join(fs.paths.brandFontsDir("c1"), "Regular.ttf"));
+        const { checksum: bold } = sha256FileSync(join(fs.paths.brandFontsDir("c1"), "Bold.ttf"));
+        fs.writeJsonAtomic(fs.paths.brandFile("c1"), makeBrand("c1", { checksums: { "fonts.regular": regular, "fonts.bold": bold } }));
+        expect(rowOf(runFor())).toMatchObject({ ok: true });
+
+        // tamper with a font after the fact
+        writeFileSync(join(fs.paths.brandFontsDir("c1"), "Regular.ttf"), "tampered bytes");
+        expect(rowOf(runFor())).toMatchObject({ ok: false });
       });
     });
   });

@@ -127,7 +127,7 @@ describe("syncLibrary", () => {
     expect(report.imported.styles).toEqual([styleId]);
     expect(report.imported.requests).toEqual([req1Id]);
     expect(report.imported.items).toEqual([item1Id]);
-    expect(report.updated).toEqual({ styles: [], requests: [], items: [], voices: [] });
+    expect(report.updated).toEqual({ styles: [], requests: [], items: [], voices: [], brands: [], tracks: [] });
     expect(report.missing).toEqual([]);
 
     expect(report.corrupt).toHaveLength(2);

@@ -9,6 +9,14 @@ import { mimeTypeForPath } from "../source-catalog/catalog.js";
 export type LibraryRole = "studio" | "channel";
 
 const VOICE_ID_SCHEMA = idSchema("voice_profile");
+// `channel_id` (kho `brands/<channel_id>/`) has no ULID prefix -- it is the same free-form id
+// `ChannelConfigSchema.channel_id` uses (`packages/contracts/src/config.ts`), so the shape check here mirrors
+// that regex rather than `idSchema`. `track_id` (kho `music/<track_id>/`) mirrors `MusicTrackSchema.track_id`.
+// Same rationale as `assertValidVoiceId` below: a channel_id/track_id built from CLI input must never reach a
+// `join()` that builds a kho path unchecked -- a value like `"../music"` would otherwise resolve outside
+// `brands/`/`music/` entirely, onto a path a *different* rule of `assertWritable` happens to allow.
+const CHANNEL_ID_SCHEMA = /^[a-z0-9][a-z0-9-]*$/;
+const TRACK_ID_SCHEMA = /^[a-z0-9][a-z0-9-]{1,39}$/;
 
 /** Defence in depth for every caller of `voiceDir`/`voiceFile`/`voiceRef`, present or future: an id that
  * does not match the `voice_<ULID>` shape must never reach a `join()` that builds a kho path -- a string like
@@ -19,6 +27,20 @@ const VOICE_ID_SCHEMA = idSchema("voice_profile");
 function assertValidVoiceId(voiceId: string): void {
   if (!VOICE_ID_SCHEMA.safeParse(voiceId).success) {
     throw new HarnessError("CONFIG_INVALID", `invalid voice_id: ${voiceId}`, { voice_id: voiceId });
+  }
+}
+
+/** Sub-project 5B, same defence-in-depth rationale as `assertValidVoiceId`. */
+function assertValidChannelId(channelId: string): void {
+  if (!CHANNEL_ID_SCHEMA.test(channelId)) {
+    throw new HarnessError("CONFIG_INVALID", `invalid channel_id: ${channelId}`, { channel_id: channelId });
+  }
+}
+
+/** Sub-project 5B, same defence-in-depth rationale as `assertValidVoiceId`. */
+function assertValidTrackId(trackId: string): void {
+  if (!TRACK_ID_SCHEMA.test(trackId)) {
+    throw new HarnessError("CONFIG_INVALID", `invalid track_id: ${trackId}`, { track_id: trackId });
   }
 }
 
@@ -39,6 +61,13 @@ export interface LibraryPaths {
   voiceDir(id: string): string;
   voiceFile(id: string): string;
   voiceRef(id: string): string;
+  brandsDir: string;
+  brandDir(channelId: string): string;
+  brandFile(channelId: string): string;
+  brandFontsDir(channelId: string): string;
+  musicDir: string;
+  trackDir(id: string): string;
+  trackFile(id: string): string;
 }
 
 export function libraryPaths(root: string): LibraryPaths {
@@ -47,6 +76,8 @@ export function libraryPaths(root: string): LibraryPaths {
   const requests = join(r, "requests");
   const items = join(r, "items");
   const voicesDir = join(r, "voices");
+  const brandsDir = join(r, "brands");
+  const musicDir = join(r, "music");
   return {
     root: r,
     styles,
@@ -64,6 +95,13 @@ export function libraryPaths(root: string): LibraryPaths {
     voiceDir: (id) => { assertValidVoiceId(id); return join(voicesDir, id); },
     voiceFile: (id) => { assertValidVoiceId(id); return join(voicesDir, id, "voice.json"); },
     voiceRef: (id) => { assertValidVoiceId(id); return join(voicesDir, id, "ref.wav"); },
+    brandsDir,
+    brandDir: (channelId) => { assertValidChannelId(channelId); return join(brandsDir, channelId); },
+    brandFile: (channelId) => { assertValidChannelId(channelId); return join(brandsDir, channelId, "brand.json"); },
+    brandFontsDir: (channelId) => { assertValidChannelId(channelId); return join(brandsDir, channelId, "fonts"); },
+    musicDir,
+    trackDir: (id) => { assertValidTrackId(id); return join(musicDir, id); },
+    trackFile: (id) => { assertValidTrackId(id); return join(musicDir, id, "track.json"); },
   };
 }
 
@@ -207,6 +245,22 @@ export class LibraryFs {
       .sort();
   }
 
+  listBrandChannelIds(): string[] {
+    if (!existsSync(this.paths.brandsDir)) return [];
+    return readdirSync(this.paths.brandsDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !isHiddenName(e.name) && existsSync(join(this.paths.brandsDir, e.name, "brand.json")))
+      .map((e) => e.name)
+      .sort();
+  }
+
+  listTrackIds(): string[] {
+    if (!existsSync(this.paths.musicDir)) return [];
+    return readdirSync(this.paths.musicDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !isHiddenName(e.name) && existsSync(join(this.paths.musicDir, e.name, "track.json")))
+      .map((e) => e.name)
+      .sort();
+  }
+
   listClaims(itemId: string): LibraryClaim[] {
     const dir = this.paths.claimsDir(itemId);
     if (!existsSync(dir)) return [];
@@ -226,10 +280,14 @@ export class LibraryFs {
   /**
    * studio may write under styles/, under items/ except any `claims` segment, index.json,
    * and requests/<id>.json only when the file already exists (studio never creates a request).
-   * channel may create or overwrite requests/<id>.json, items/<id>/claims/<channel_id>.json, and
+   * channel may create or overwrite requests/<id>.json, items/<id>/claims/<channel_id>.json,
    * voices/<id>/<file> (exactly two path segments below voices/ -- a voice's own voice.json/ref.wav,
-   * never a nested path). studio may never write under voices/ at all -- a voice profile is channel-owned,
-   * the one library entity where the write ownership is reversed from styles/.
+   * never a nested path), brands/<channel_id>/** (at least two path segments below brands/ -- brand.json and
+   * the logo sit directly under the channel_id, fonts/<basename> one level deeper, sub-project 5B), and
+   * music/<track_id>/<file> (exactly two path segments below music/ -- a track's own track.json/track.<ext>,
+   * never a nested path).
+   * studio may never write under voices/, brands/, or music/ at all -- all three are channel-owned, the kho
+   * entities where write ownership is reversed from styles/.
    * Anything else, or any path outside the library root, is CONFIG_INVALID.
    */
   assertWritable(path: string): void {
@@ -260,6 +318,8 @@ export class LibraryFs {
     if (segs[0] === "requests" && segs.length === 2) return;
     if (segs[0] === "items" && segs.includes("claims")) return;
     if (segs[0] === "voices" && segs.length === 3) return;
+    if (segs[0] === "brands" && segs.length >= 3) return;
+    if (segs[0] === "music" && segs.length === 3) return;
     return deny();
   }
 }

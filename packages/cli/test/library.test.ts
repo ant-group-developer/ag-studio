@@ -325,6 +325,7 @@ describe("harness library CLI", () => {
     const root = mkdtempSync(join(tmpdir(), "kho-doctor-"));
     mkdirSync(join(root, "styles"), { recursive: true });
     mkdirSync(join(root, "voices"), { recursive: true }); // sub-project 5A: library:voices also needs its directory
+    mkdirSync(join(root, "music"), { recursive: true }); // sub-project 5B: library:music also needs its directory
     const p = libraryProject(root, "studio", "doctor");
     expect(cli(p, "db", "migrate").code).toBe(0);
     const d = cli(p, "doctor", "--json");
@@ -335,6 +336,10 @@ describe("harness library CLI", () => {
     expect(byCheck.get("library:write")).toMatchObject({ ok: true });
     expect(byCheck.get("library:index")).toMatchObject({ ok: true });
     expect(byCheck.get("library:voices")).toMatchObject({ ok: true });
+    expect(byCheck.get("library:music")).toMatchObject({ ok: true });
+    // library:brands (studio role only): no channel has a brand yet, but that is not a failure -- unlike
+    // library:music, its directory does not even need to exist.
+    expect(byCheck.get("library:brands")).toMatchObject({ ok: true });
   });
 
   describe("built-in `library stage intake` (run by hand, outside any real workflow)", () => {

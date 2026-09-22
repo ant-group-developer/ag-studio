@@ -6,6 +6,7 @@ import { sha256FileSync } from "../artifacts/checksum.js";
 import { EnvSecretResolver } from "../config/secrets.js";
 import type { LoadedChannel } from "../distribution/channels.js";
 import type { AutoAcceptConfig } from "../library/auto-accept.js";
+import { loadBrand, type LoadedBrand } from "../library/brands.js";
 import type { LibraryFs, LibraryRole } from "../library/files.js";
 import type { LoadedWorkflow } from "../orchestration/registry.js";
 import { loadSourcesRegistry, SOURCES_FILE } from "../source-catalog/sources-file.js";
@@ -113,7 +114,13 @@ export function runDoctor(i: DoctorInput): DoctorRow[] {
     ...checkWorkflows(i),
     ...checkProfiles(i),
     checkSources(i),
-    ...(i.library ? [checkLibraryRoot(i.library), checkLibraryWrite(i.library), checkLibraryIndex(i.library), checkLibraryVoices(i.library)] : []),
+    ...(i.library
+      ? [
+          checkLibraryRoot(i.library), checkLibraryWrite(i.library), checkLibraryIndex(i.library), checkLibraryVoices(i.library),
+          checkLibraryMusic(i.library, i.store),
+          ...(i.library.role === "studio" ? [checkLibraryBrands(i.library)] : []),
+        ]
+      : []),
     ...(i.library?.autoAccept?.config.enabled && i.library.role === "studio" ? [checkLibraryAutoAccept(i.library.autoAccept)] : []),
     ...checkChannels(i),
     ...(i.agent ? [checkAgentRuntime(i.agent)] : []),
@@ -323,6 +330,84 @@ function checkLibraryVoices(library: { fs: LibraryFs; role: LibraryRole }): Doct
   return { check, ok: true, detail: `wrote and removed ${path}` };
 }
 
+/** Compares a `LoadedBrand`'s fonts (and logo, when present) against the sha256 checksums recorded in its own
+ * `brand.json`, synchronously (`sha256FileSync`) since every doctor check is a plain sync function -- the
+ * async sibling `verifyBrandFiles` (`library/brands.ts`) is for callers with an await point (`intake`,
+ * `media-compose`). Returns a one-line failure reason, or `undefined` when everything matches. */
+function verifyBrandChecksumsSync(loaded: LoadedBrand): string | undefined {
+  const files: [string, string][] = [["fonts.regular", loaded.font_regular_path], ["fonts.bold", loaded.font_bold_path]];
+  if (loaded.logo_path) files.push(["logo", loaded.logo_path]);
+  for (const [key, path] of files) {
+    const expected = loaded.brand.checksums[key];
+    if (!expected) return `missing checksum for ${key}`;
+    if (!existsSync(path)) return `file missing: ${path}`;
+    const { checksum } = sha256FileSync(path);
+    if (checksum !== expected) return `checksum mismatch: ${path}`;
+  }
+  return undefined;
+}
+
+/** `library:music` (sub-project 5B, both roles): `<root>/music` must exist (doctor never creates it, same as
+ * `library:voices`), and every `active` track mirrored in the store must have its file present in the kho with
+ * a matching checksum -- a retired track's file is never checked (spec: retiring never touches the file, so a
+ * stale/missing one there is not a live problem). */
+function checkLibraryMusic(library: { fs: LibraryFs; role: LibraryRole }, store: StateStore): DoctorRow {
+  const check = "library:music";
+  const dir = library.fs.paths.musicDir;
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+    return { check, ok: false, detail: `directory missing: ${dir} (mount the library first)` };
+  }
+  const bad: string[] = [];
+  for (const track of store.listMusicTracks({ active: true })) {
+    const path = join(library.fs.paths.trackDir(track.track_id), track.file);
+    if (!existsSync(path)) { bad.push(`${track.track_id}: file missing: ${path}`); continue; }
+    const { checksum } = sha256FileSync(path);
+    if (checksum !== track.checksum) bad.push(`${track.track_id}: checksum mismatch: ${path}`);
+  }
+  return { check, ok: bad.length === 0, detail: bad.length === 0 ? `${dir} ok` : bad.join("; ") };
+}
+
+/** `library:brands` (sub-project 5B, studio role only): every channel's brand in the kho must parse and have
+ * every font/logo it references present with a matching checksum -- a broken brand of one channel fails this
+ * row (naming that channel) so it is caught before that channel's tapes hit `media-compose`, same rationale
+ * `checkLibraryVoices`/`checkChannelVoice` document for voices. The channel role gets no row here at all: it
+ * only ever has (and only ever needs to check) its own brand, which is `channel:<id>:brand` below. */
+function checkLibraryBrands(library: { fs: LibraryFs; role: LibraryRole }): DoctorRow {
+  const check = "library:brands";
+  const ids = library.fs.listBrandChannelIds();
+  const bad: string[] = [];
+  for (const id of ids) {
+    try {
+      const loaded = loadBrand(library.fs, id);
+      if (!loaded) { bad.push(`${id}: brand.json missing`); continue; }
+      const reason = verifyBrandChecksumsSync(loaded);
+      if (reason) bad.push(`${id}: ${reason}`);
+    } catch (e) {
+      bad.push(`${id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { check, ok: bad.length === 0, detail: bad.length === 0 ? `${ids.length} brand(s) ok` : bad.join("; ") };
+}
+
+/** `channel:<id>:brand` (sub-project 5B), added only when this channel already has a `brands/<id>/` directory
+ * in the kho (a channel with no brand yet is not a failure -- spec §2.1: a brandless channel still renders,
+ * just without text/logo/music). Mirrors `checkChannelVoice`'s shape: `loadBrand` + the same checksum
+ * verification `checkLibraryBrands` uses, naming the offending file on failure. */
+function checkChannelBrand(library: { fs: LibraryFs; role: LibraryRole }, channel: LoadedChannel): DoctorRow | undefined {
+  const id = channel.config.channel_id;
+  const check = `channel:${id}:brand`;
+  if (!existsSync(library.fs.paths.brandDir(id))) return undefined;
+  try {
+    const loaded = loadBrand(library.fs, id);
+    if (!loaded) return { check, ok: false, detail: `brands/${id}/ exists but brand.json is missing` };
+    const reason = verifyBrandChecksumsSync(loaded);
+    if (reason) return { check, ok: false, detail: reason };
+    return { check, ok: true, detail: `${id} rev${loaded.brand.revision} brand ok` };
+  } catch (e) {
+    return { check, ok: false, detail: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /** `library:auto_accept`, added only for a studio project with the loop actually enabled (the exact
  * condition the worker's `autoAcceptDepsFor` builds the loop on): checks the two things that would make it
  * silently do nothing forever -- no usable source, or an agent runtime that cannot execute the plans it
@@ -379,6 +464,10 @@ function checkChannels(i: DoctorInput): DoctorRow[] {
   for (const channel of i.channels.loaded) {
     rows.push(...checkOneChannel(channel, i.channels.secrets));
     if (channel.config.voice) rows.push(checkChannelVoice(i.store, i.library, channel));
+    if (i.library) {
+      const brandRow = checkChannelBrand(i.library, channel);
+      if (brandRow) rows.push(brandRow);
+    }
     if (i.learning) {
       rows.push(checkChannelStats(i.learning, channel));
       if (channel.config.planning.enabled) rows.push(checkChannelPlanning(i.learning, channel));

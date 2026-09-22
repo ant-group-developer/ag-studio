@@ -1,19 +1,24 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { Clock, ContentRequest, EditStyle, LibraryItem, StateStore, VoiceProfile } from "@harness/contracts";
-import { ContentRequestSchema, EditStyleSchema, HarnessError, LibraryItemSchema, VoiceProfileSchema } from "@harness/contracts";
+import type { BrandProfile, Clock, ContentRequest, EditStyle, LibraryItem, MusicTrack, StateStore, VoiceProfile } from "@harness/contracts";
+import { BrandProfileSchema, ContentRequestSchema, EditStyleSchema, HarnessError, LibraryItemSchema, MusicTrackSchema, VoiceProfileSchema } from "@harness/contracts";
 import { canonicalDigest } from "../artifacts/checksum.js";
 import type { LibraryFs, LibraryRole } from "./files.js";
 
 export interface SyncReport {
-  imported: { styles: string[]; requests: string[]; items: string[]; voices: string[] };
-  updated: { styles: string[]; requests: string[]; items: string[]; voices: string[] };
+  imported: { styles: string[]; requests: string[]; items: string[]; voices: string[]; brands: string[]; tracks: string[] };
+  updated: { styles: string[]; requests: string[]; items: string[]; voices: string[]; brands: string[]; tracks: string[] };
   corrupt: { path: string; reason: string }[];
-  missing: { kind: "style" | "request" | "item" | "voice"; id: string }[];
+  missing: { kind: "style" | "request" | "item" | "voice" | "brand" | "track"; id: string }[];
 }
 
 function emptyReport(): SyncReport {
-  return { imported: { styles: [], requests: [], items: [], voices: [] }, updated: { styles: [], requests: [], items: [], voices: [] }, corrupt: [], missing: [] };
+  return {
+    imported: { styles: [], requests: [], items: [], voices: [], brands: [], tracks: [] },
+    updated: { styles: [], requests: [], items: [], voices: [], brands: [], tracks: [] },
+    corrupt: [],
+    missing: [],
+  };
 }
 
 /**
@@ -24,6 +29,21 @@ function emptyReport(): SyncReport {
 function classify<T extends { updated_at: string }>(fromFile: T, fromDb: T | undefined): "imported" | "updated" | "unchanged" {
   if (!fromDb) return "imported";
   if (fromFile.updated_at > fromDb.updated_at) return "updated";
+  if (canonicalDigest(fromFile) !== canonicalDigest(fromDb)) return "updated";
+  return "unchanged";
+}
+
+/**
+ * Same idea as `classify`, for `BrandProfile` specifically: `created_at`/`updated_at` are `.optional()` on
+ * `BrandProfileSchema` (a hand-authored template `brand.json` an operator has not run through `setBrand` yet
+ * may have neither), so the timestamp shortcut only applies when both sides actually have one -- otherwise
+ * this falls straight through to the same `canonicalDigest` comparison `classify` uses as its own fallback.
+ * Every `brand.json` `setBrand` ever writes into the kho always has both timestamps set, so in practice this
+ * behaves identically to `classify` for anything that went through the one real write path.
+ */
+function classifyBrand(fromFile: BrandProfile, fromDb: BrandProfile | undefined): "imported" | "updated" | "unchanged" {
+  if (!fromDb) return "imported";
+  if (fromFile.updated_at && fromDb.updated_at && fromFile.updated_at > fromDb.updated_at) return "updated";
   if (canonicalDigest(fromFile) !== canonicalDigest(fromDb)) return "updated";
   return "unchanged";
 }
@@ -155,6 +175,45 @@ export async function syncLibrary(d: { store: StateStore; fs: LibraryFs; role: L
     report[outcome].voices.push(voice.voice_id);
   }
 
+  // brands/ and music/ are channel-owned content mirrored the same way as voices/ (sub-project 5B): both
+  // roles keep their own mirror current, studio to read another channel's brand at media-compose time,
+  // channel to see its own after `library brands set`/`library music add`.
+  const brandChannelIds = d.fs.listBrandChannelIds();
+  for (const id of brandChannelIds) {
+    // `listBrandChannelIds` only checks for a `brand.json` inside the directory, not that the directory
+    // *name* is a valid channel_id -- an operator-created or otherwise malformed entry must isolate to one
+    // `corrupt` row like every other bad file here, not throw `paths.brandFile`'s own CONFIG_INVALID
+    // uncaught and abort the rest of sync (same fix as `voices/` above).
+    const rawPath = join(d.fs.paths.brandsDir, id, "brand.json");
+    let brand: BrandProfile;
+    try {
+      brand = d.fs.readJson(d.fs.paths.brandFile(id), BrandProfileSchema);
+    } catch (e) {
+      report.corrupt.push({ path: rawPath, reason: reasonFor(e) });
+      continue;
+    }
+    const outcome = classifyBrand(brand, d.store.getBrandProfile(brand.channel_id));
+    if (outcome === "unchanged") continue;
+    d.store.upsertBrandProfile(brand);
+    report[outcome].brands.push(brand.channel_id);
+  }
+
+  const trackIds = d.fs.listTrackIds();
+  for (const id of trackIds) {
+    const rawPath = join(d.fs.paths.musicDir, id, "track.json");
+    let track: MusicTrack;
+    try {
+      track = d.fs.readJson(d.fs.paths.trackFile(id), MusicTrackSchema);
+    } catch (e) {
+      report.corrupt.push({ path: rawPath, reason: reasonFor(e) });
+      continue;
+    }
+    const outcome = classify(track, d.store.getMusicTrack(track.track_id));
+    if (outcome === "unchanged") continue;
+    d.store.upsertMusicTrack(track);
+    report[outcome].tracks.push(track.track_id);
+  }
+
   const fsStyleIds = new Set(styleIds);
   for (const s of d.store.listEditStyles()) {
     if (!fsStyleIds.has(s.style_id)) report.missing.push({ kind: "style", id: s.style_id });
@@ -170,6 +229,14 @@ export async function syncLibrary(d: { store: StateStore; fs: LibraryFs; role: L
   const fsVoiceIds = new Set(voiceIds);
   for (const v of d.store.listVoiceProfiles()) {
     if (!fsVoiceIds.has(v.voice_id)) report.missing.push({ kind: "voice", id: v.voice_id });
+  }
+  const fsBrandIds = new Set(brandChannelIds);
+  for (const b of d.store.listBrandProfiles()) {
+    if (!fsBrandIds.has(b.channel_id)) report.missing.push({ kind: "brand", id: b.channel_id });
+  }
+  const fsTrackIds = new Set(trackIds);
+  for (const t of d.store.listMusicTracks()) {
+    if (!fsTrackIds.has(t.track_id)) report.missing.push({ kind: "track", id: t.track_id });
   }
 
   if (d.role === "studio") writeIndex({ fs: d.fs, store: d.store, clock: d.clock });
