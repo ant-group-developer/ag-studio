@@ -245,8 +245,17 @@ cho lỗi chữ là đường duyệt: một bản overlays qua được checker
   > attack/release lấy từ brand). Hai trường đó chỉ để người và agent đọc, và để checker đối chiếu. Sửa
   > `windows` trong file không đổi được một mẫu âm thanh nào.
 - **`transitions`** — `{ requested, applied, downgraded[] }`. Bất biến: `applied + downgraded.length = requested`.
+- **`narration[].wav`** — đường dẫn tuyệt đối, **do `media-compose` ghi theo workspace attempt của chính nó**.
+  Đừng tin chúng khi đọc file nguội: `media-render` **ghi đè lại** (`rebaseNarrationWavs`) thành
+  `<voice_set của attempt render>/<tên file>` ngay trước khi dựng, nên một workspace compose đã bị dọn
+  (`harness artifacts sweep`) hay một máy khác vẫn dựng lại được. Thiếu file trong `voice_set` là
+  `CONFIG_INVALID` (`contract`, không retry) có nêu tên file.
 - **`warnings[]`** — `word_interpolated:<line_id>:<i>` (từ thiếu mốc, phải nội suy), `music_mood_unmatched`,
   `music_ends_early`, `overlay_dropped:<id>`, `overlays_ignored_no_brand`.
+  > `music_ends_early` nghĩa là track ngắn hơn tập và **không** khai `--loop-ok`: nhạc dừng ở
+  > `music.cues[0].end`, không phải ở cuối tập. Fade-out 3 s được neo vào **chỗ nhạc hết**
+  > (`min(total_seconds, cues[0].end) − fade_out`), nên nhạc tắt dần đúng lúc chứ không cụt ngang; phần tập
+  > còn lại chỉ có tiếng lời. Muốn nhạc phủ hết tập thì đổi track dài hơn, hoặc `library music add … --loop-ok`.
 
 ### `render-report.json` — bản dựng đã render thật
 
@@ -311,18 +320,25 @@ nguyên trạng) — đó cũng là lý do `media-render` khai input `edl` bên 
 ### Cache mezzanine: sidecar, LRU, dọn tay
 
 ```
-<data_root>/cache/mezz/<key>.mp4        thân đoạn
-<data_root>/cache/mezz/<key>-tail.mp4   đuôi cho dissolve (khoá riêng, có thêm tail_seconds)
+<data_root>/cache/mezz/<key>.mp4        thân đoạn — và cả đuôi dissolve
 <data_root>/cache/mezz/<key>.json       sidecar: { key, seconds, bytes, created_at, last_used_at }
 ```
 
-`key = sha256({ source_checksum, in, out, fit, w, h, fps, has_audio, encoder_id, mezz_version })` — **theo
-nội dung**, không theo run. Đổi chữ, đổi nhạc, đổi kiểu chuyển cảnh mà không đụng tới điểm cắt thì **không
-encode lại một khung hình nào**.
+`key = sha256({ source_checksum, in, out, fit, w, h, fps, has_audio, encoder, codec, mezz_version })` —
+**theo nội dung**, không theo run. Đổi chữ, đổi nhạc, đổi kiểu chuyển cảnh mà không đụng tới điểm cắt thì
+**không encode lại một khung hình nào**.
+
+> **Đuôi dissolve nằm dưới khoá của CHÍNH NÓ, file `<khoá đuôi>.mp4`** — không có hậu tố `-tail` trên đĩa.
+> Đuôi là một lượt gọi riêng với `in = out`, `out = out + tail_seconds` cộng thêm `tail_seconds` vào khoá,
+> nên nó băm ra một khoá hoàn toàn khác và nằm phẳng cạnh thân trong cùng thư mục. Chuỗi `-tail` chỉ xuất
+> hiện trong **log** (`mezzanine <order>-tail`), không bao giờ trong tên file.
 
 - **Sidecar là nguồn sự thật duy nhất cho LRU**: `atime` trên Windows không tin được, nên `last_used_at` được
   ghi lại mỗi lần cache hit. File media **không có sidecar đọc được** bị coi là miss và **bị xoá cả hai**.
-- Sau **mỗi** lần dựng, cache bị quét LRU về dưới `media.render.cache_max_gb` (mặc định 60 GB).
+- Sau **mỗi** lần dựng, cache bị quét LRU về dưới `media.render.cache_max_gb` (mặc định 60 GB). Quét ngay
+  cuối lượt dựng an toàn **vì `media-render` giữ lease `gpu` duy nhất** (`resources.gpu: 1`), nên không có
+  lượt dựng nào khác đang giữ mezzanine nóng. Khai `resources.gpu ≥ 2` thì hai lượt dựng song song có thể
+  quét mất mezzanine vừa ghi của nhau (dựng lại được, chỉ tốn thời gian — ghi ở `deferred-items.md`).
 - Không có bảng SQLite nào cho cache, và `harness artifacts sweep` **không** biết tới thư mục này. Muốn dọn
   tay thì xoá cả thư mục — lần dựng sau chỉ chậm hơn, không hỏng gì.
 - Dashboard cho `mezz_cache.hit_ratio` (Σcached / Σtotal trên 20 lần render gần nhất). **Không có `bytes`** —

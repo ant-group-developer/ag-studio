@@ -60,7 +60,9 @@ khi tập vào kho — checker cứng đã chặn lỗi kỹ thuật; skill này
      `brand_no_tracks`;
    - `composition.json.warnings` có `word_interpolated` cho hơn 10 % số từ (phụ đề phải nội suy mốc thời
      gian vì thiếu word timing);
-   - `render-report.json.loudness.integrated_lufs` nằm ngoài `[−16, −12]`.
+   - `render-report.json.loudness.integrated_lufs` nằm ngoài `[−16, −12]` (checker `render-valid` ở
+     `media-render` đã chặn đúng khoảng này rồi, nên một tập tới được đây thì gần như chắc chắn đạt; giữ lại
+     ở đây là **phòng thủ nhiều lớp**, cho những bản dựng chạy tay hay bản render cũ không đi qua checker).
    `note` phải nêu rõ `id` của từng overlay bị bỏ và `before_order` của từng mối nối bị hạ cấp, để lượt
    dựng lại (`edit-plan`) sửa đúng chỗ — không nói chung chung "chữ bị lỗi".
    **Không** từ chối vì những cảnh báo chỉ mang tính thông tin trong `render-report.json.warnings`:

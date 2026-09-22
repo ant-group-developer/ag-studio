@@ -990,6 +990,12 @@ bốn tập đủ 15 stage trên máy build.
   `sidechaincompress` quyết theo **tín hiệu lời**, không đọc hai trường đó. Đã ghi ở runbook mục 5; giữ lại
   ở đây vì đó là một cái bẫy khi đọc file.
 - **`prober` hỏng và cache mezzanine hỏng không phân biệt được**: cả hai đều đi đường "xoá entry rồi fail".
+- **`cacheEvict` quét LRU ngay cuối mỗi lượt dựng** — an toàn **chỉ vì** `media-render` giữ lease `gpu` duy
+  nhất (`resources.gpu: 1` trong `project.yaml` mẫu), nên không thể có hai lượt dựng chạy cùng lúc. Một
+  project khai `resources.gpu ≥ 2` thì hai lượt dựng song song có thể quét mất mezzanine **vừa ghi** của
+  nhau (cache theo nội dung, không có khoá/refcount nào giữ file đang dùng): không sai kết quả — lượt kia
+  encode lại — nhưng mất đúng cái cache sinh ra để tiết kiệm. Việc sau: hoặc refcount file đang được một
+  render tham chiếu, hoặc chỉ quét khi không có lease `gpu` nào khác đang giữ.
 - **`report.warnings` không gộp `composition.warnings`** — người/agent đọc phải mở cả hai file (skill
   `library-review` đã nói đúng điều đó ở bước 0b).
 - **`timeout_seconds` của `media-render` là ngân sách cho cả lượt dựng**, không phải cho từng lệnh ffmpeg.
@@ -1004,7 +1010,9 @@ bốn tập đủ 15 stage trên máy build.
   `Style:`/`Dialogue:`; nhánh nội suy mốc `null`/`undefined` chưa được phủ.
 - Không có test `placeOverlays` cho neo `line_id` dưới `voice: original`; biên 0.5 s của `duckWindows` (gộp
   đúng tại 0.5 s nhờ EPS) chưa được phủ.
-- `render-valid.test.ts` để lại ~10 workspace 4K trong thư mục temp của hệ điều hành, không dọn.
+- ~~`render-valid.test.ts` để lại ~10 workspace 4K trong thư mục temp của hệ điều hành, không dọn.~~
+  **Đã xong** (đợt sửa sau review cuối, m8): `render-valid.test.ts` và `run.test.ts` gom mọi thư mục
+  `mkdtemp` của chúng và xoá trong `afterAll` (`rmSync(..., { recursive: true, force: true })`, nuốt lỗi).
 - `frameStdDev` bị chép lại trong `tests/media.ts` (bản trong checker là private).
 - Acceptance 49(b) (`no_tail`) phụ thuộc vào việc dò cảnh trên clip phẳng ra đúng một shot — canh chừng flake.
 - `sqlite-store.ts`: nhánh `brand_profile.updated_at ?? clock.now()` chưa có test.
@@ -1024,6 +1032,7 @@ lại làm đường lùi:
   luôn cắt theo `total_seconds`), nên hai mục này chỉ còn áp cho ops project nào vẫn chạy 1.1.0/1.2.0. Bản
   mẫu `fixtures/ops-project-footage/executors/wrappers/assemble.mjs` giữ nguyên, không sửa.
 
-Một mục 5A khác được lần chạy thật này **xác nhận là không còn nghi vấn**: giả định `fontFamily() = tên file
-không đuôi` (sổ Task 3) đúng trên thực tế — `fonts/arial.ttf` → `Fontname: arial` trong ASS, và libass chỉ
-nhìn `fontsdir` của brand đã vẽ đúng chữ có dấu tiếng Việt ở cả năm khung trích ra cho chủ máy xem.
+Một mục 5A khác **đóng lại hẳn, không còn là nghi vấn**: giả định `fontFamily() = tên file không đuôi` (sổ
+Task 3, để ngỏ tới lúc có bản render thật với `fontsdir`) đúng trên thực tế — `fonts/arial.ttf` →
+`Fontname: arial` trong ASS, và libass chỉ nhìn `fontsdir` của brand đã vẽ đúng chữ có dấu tiếng Việt ở cả
+năm khung trích ra cho chủ máy xem. Lần chạy 4K thật của Task 11 là bằng chứng; **không cần theo dõi tiếp**.
