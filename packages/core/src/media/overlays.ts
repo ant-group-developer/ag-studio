@@ -151,14 +151,23 @@ function charsPerSecond(language: string): number {
   return 15;
 }
 
-/** Maximum overlay count for a given density: `floor(seconds / spacing)`, where `seconds` is the estimated
- * spoken length (narration character count / cps, for `tts`) or the total EDL screen time (`Σ out - in`,
- * otherwise) -- spec §4.2 / §3 (checker `overlays-valid` density rule). */
+/**
+ * Maximum overlay count for a given density: `max(1, floor(seconds / spacing))`, where `seconds` is
+ * `max(estimated spoken length, total EDL screen time)` -- spec §3's density rule.
+ *
+ * Both terms, not one or the other (controller ruling, task-8 fix round 1). Taking the narration estimate
+ * *instead of* the EDL length made every `voice: none`/`original` plan-edit carry a `narration.json` with
+ * `lines: []`, which scored 0 seconds and so a limit of 0 -- every overlay plan for a silent or
+ * original-audio episode was rejected outright. Taking the maximum also matches how the two actually
+ * relate: the picture is at least as long as the script it covers, and a script running longer than the
+ * footage is exactly the shortfall `media-fit-edl` fixes by appending more picture.
+ *
+ * The floor of 1 is spec §3's "luôn cho phép ít nhất một sự kiện": an opening title is always allowed,
+ * however short the episode.
+ */
 export function overlayDensityLimit(p: { narration: Narration | null; edl: Edl; language: string; density: "low" | "medium" | "high" }): number {
   const spacing = DENSITY_SPACING[p.density];
-  const seconds =
-    p.narration !== null
-      ? p.narration.lines.reduce((sum, line) => sum + line.text.length, 0) / charsPerSecond(p.language)
-      : p.edl.entries.reduce((sum, e) => sum + (e.out - e.in), 0);
-  return Math.floor(seconds / spacing);
+  const narrationSeconds = (p.narration?.lines ?? []).reduce((sum, line) => sum + line.text.length, 0) / charsPerSecond(p.language);
+  const edlSeconds = p.edl.entries.reduce((sum, e) => sum + (e.out - e.in), 0);
+  return Math.max(1, Math.floor(Math.max(narrationSeconds, edlSeconds) / spacing));
 }

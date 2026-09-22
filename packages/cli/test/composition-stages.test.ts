@@ -287,6 +287,7 @@ describe.skipIf(!hasFfmpeg() || !hasFont)("harness media compose|render (sub-pro
   let fitEdlSnap: string;
   let composeSnap: string;
   let composeOutcome: VerifyOutcome;
+  let planEditVerify: VerifyOutcome;
   let briefPath: string;
 
   beforeAll(async () => {
@@ -337,7 +338,13 @@ describe.skipIf(!hasFfmpeg() || !hasFont)("harness media compose|render (sub-pro
         { source_id: a.source_id, in: 2, out: 4, order: 2, overlay: null, note: "" },
       ],
     };
-    planEditSnap = await fabricateAndCommit(world.studio, runId, "plan-edit", [
+    briefPath = writeTempJson(mkdtempSync(join(tmpdir(), "brief-")), "brief.json", briefJson(requestId));
+
+    // Exactly ONE overlay item on purpose: `voice: none` means an empty `narration.json`, so the
+    // `overlays-valid` density budget is scored on the 6 s of picture alone -- `max(1, floor(6 / 8))` = 1
+    // (spec §3). A second item here would be a plan the checker is right to reject, and this stage is
+    // committed through the REAL Verifier below.
+    const planEditOutputs = [
       { relPath: "edl.json", type: "edl", value: planEdl },
       { relPath: "edit-plan.json", type: "edit_plan", value: { schema_version: "harness.edit-plan/v1", notes: "" } },
       { relPath: "narration.json", type: "narration", value: { schema_version: "harness.narration/v1", language: "vi", lines: [] } },
@@ -345,17 +352,24 @@ describe.skipIf(!hasFfmpeg() || !hasFont)("harness media compose|render (sub-pro
         relPath: "overlays.json", type: "overlays",
         value: {
           schema_version: "harness.overlays/v1",
-          items: [
-            { id: "OV01", kind: "title", text: "Chợ nổi 5 giờ sáng", anchor: { edl_order: 0 }, seconds: 2 },
-            { id: "OV02", kind: "callout", text: "30 nghìn/kg", anchor: { edl_order: 2 }, seconds: 2 },
-          ],
+          items: [{ id: "OV01", kind: "title", text: "Chợ nổi 5 giờ sáng", anchor: { edl_order: 0 }, seconds: 2 }],
           transitions: [],
           music: { mood: "calm" },
         },
       },
+    ];
+    // Fix round 1, item 3: `plan-edit` goes through the REAL Verifier (schema-valid, output-exists,
+    // checksum-match, edl-valid AND overlays-valid) instead of `commitResult`'s canned passing outcome, so
+    // the overlays plan the rest of this flow composes from is one the workflow would actually have
+    // accepted.
+    const planEdit = await fabricateStage(world.studio, runId, "plan-edit", planEditOutputs, [
+      { type: "brief", relPath: "input/brief/brief.json", src: briefPath },
+      { type: "shots", relPath: "input/shots/shots.json", src: join(indexSnap, "output", "shots.json") },
     ]);
-
-    briefPath = writeTempJson(mkdtempSync(join(tmpdir(), "brief-")), "brief.json", briefJson(requestId));
+    planEditVerify = await verifyStage(world.studio, runId, "plan-edit", planEdit.workspaceDir, planEdit.result);
+    planEditSnap = snapshotOutputs(planEdit.workspaceDir);
+    await commitWithVerify(world.studio, runId, planEdit.claim, planEdit.workspaceDir, planEdit.result, planEditVerify);
+    if (!planEditVerify.allRequiredPassed) throw new Error(`plan-edit did not verify: ${JSON.stringify(planEditVerify.results, null, 2)}`);
     ttsSnap = (await runAndCommit(world.studio, runId, "media-tts", ["media", "tts"], [
       { type: "brief", relPath: "input/brief/brief.json", src: briefPath },
       { type: "narration", relPath: "input/narration/narration.json", src: join(planEditSnap, "output", "narration.json") },
@@ -407,8 +421,13 @@ describe.skipIf(!hasFfmpeg() || !hasFont)("harness media compose|render (sub-pro
     expect(composition.captions.mode).toBe("burn-in");
     expect(composition.logo).not.toBeNull();
     expect(composition.music?.track_id).toBe("calm-01");
-    expect(composition.text_events.map((e) => e.id).sort()).toEqual(["OV01", "OV02"]);
+    expect(composition.text_events.map((e) => e.id)).toEqual(["OV01"]);
     expect(composition.text_dropped).toEqual([]);
+  });
+
+  it("plan-edit: every required check passes through the real Verifier, overlays-valid included", () => {
+    expectAllRequiredPassed(planEditVerify);
+    expect(planEditVerify.results.map((r) => r.check_id)).toContain("overlays-valid");
   });
 
   it("media compose: writes captions/ (srt + vtt) and overlay.ass at 4K", () => {
@@ -639,9 +658,10 @@ describe.skipIf(!hasFfmpeg())("plan-edit: overlays-valid fails the run exactly l
       edl: { schema_version: "harness.edl/v1", entries: [{ source_id: newId("source_item"), in: 0, out: 2, order: 0, overlay: null, note: "" }] },
       overlays: goodOverlays,
     });
-    // `overlays-valid` reads the stage's own `edl` output too, so a broken EDL trips it as well -- the
-    // point here is only that `edl-valid` is among the failures.
-    expect(badEdl.failed).toContain("edl-valid");
+    // Exactly one failure: a one-item plan anchored at a real `edl_order` still satisfies `overlays-valid`
+    // (including its density budget, which floors at 1 since the fix round), so the two checkers really do
+    // fail independently of each other.
+    expect(badEdl.failed).toEqual(["edl-valid"]);
 
     // The point of the comparison: the two land the run in exactly the same place, so the SP4 replan loop
     // treats a bad overlay plan the same way it already treats a bad EDL.

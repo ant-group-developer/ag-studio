@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import type { Command } from "commander";
 import { start, type ScriptContext } from "@harness/script-sdk";
 import { EditStyleSchema, HarnessError, isHarnessError, libraryBriefSchema, reviewSchema, type EditStyle, type LibraryBrief } from "@harness/contracts";
-import { applyReview, claimRequest, exportItem, exportStyle, loadBrand, readRequest, requireActiveVoice, sha256File, verifyBrandFiles } from "@harness/core";
+import { applyReview, claimRequest, exportItem, exportStyle, readRequest, requireActiveVoice, requireValidBrand, sha256File } from "@harness/core";
 import type { AppContext } from "../composition.js";
 import { withContext } from "./shared.js";
 
@@ -106,16 +106,7 @@ async function intake(app: AppContext, sdk: ScriptContext): Promise<void> {
   // request stuck at `claimed` that nothing reopens. No brand at all is not a problem (the episode is built
   // plain, spec §2.1); a brand directory that IS there but broken is. Nothing is added to the brief: the
   // composition stage resolves the channel the same way, from the request.
-  const brandChannelId = brief.request_id ? app.store.getContentRequest(brief.request_id)?.requested_by.channel_id : undefined;
-  if (brandChannelId) {
-    const brand = loadBrand(library.fs, brandChannelId);
-    if (brand) {
-      const verified = await verifyBrandFiles(library.fs, brand);
-      if (!verified.ok) {
-        throw new HarnessError("CONFIG_INVALID", `brand for channel ${brandChannelId} is broken: ${verified.reason}`, { channel_id: brandChannelId, reason: verified.reason });
-      }
-    }
-  }
+  await requireValidBrand(library.fs, brief.request_id ? app.store.getContentRequest(brief.request_id)?.requested_by.channel_id : undefined);
 
   // Last, once nothing above can still refuse this run: `intake` is the ONE place a request moves
   // `open -> claimed` (AGENTS.md, "Quy tắc kho nội dung").

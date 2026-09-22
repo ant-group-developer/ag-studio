@@ -425,9 +425,9 @@ export function setBrand(world: LibraryWorld, channelId: string, o: { withLogo?:
   const dir = mkdtempSync(join(tmpdir(), "brandsrc-"));
   const fontsDir = join(dir, "fonts");
   mkdirSync(fontsDir, { recursive: true });
-  // Two DISTINCT files (regular vs bold): `library brands set` copies both by basename, so one source file
-  // under two names is fine, but the bytes must land at two paths for `verifyBrandFiles` to check two
-  // checksums. A trailing-byte difference keeps them distinct without needing a second real font.
+  // Two files, same bytes: `library brands set` copies each by basename and records a checksum per path, so
+  // `verifyBrandFiles` still has two independent files to check. One real font stands in for both weights --
+  // nothing in the harness reads the font's own weight metadata, only libass does, at render time.
   const regular = join(fontsDir, "Regular.ttf");
   const bold = join(fontsDir, "Bold.ttf");
   copyFileSync(font, regular);

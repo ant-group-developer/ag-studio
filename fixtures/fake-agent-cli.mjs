@@ -280,12 +280,29 @@ function overlaysMode() {
   return process.env.FAKE_OVERLAYS ?? "medium";
 }
 
+/** The `overlays-valid` density budget for this stage, mirroring `overlayDensityLimit` in
+ * packages/core/src/media/overlays.ts: `seconds = max(narration chars / cps, EDL screen time)`,
+ * `limit = max(1, floor(seconds / 8))`. `plan-edit` has no `edit_style` input in
+ * `library-production@1.3.0`, so the checker's density is always its "medium" default (spacing 8 s). */
+function overlayBudget(edl, narration, language) {
+  const cps = String(language ?? "vi").startsWith("vi") ? 14 : 15;
+  const narrationSeconds = (narration.lines ?? []).reduce((sum, l) => sum + l.text.length, 0) / cps;
+  const edlSeconds = edl.entries.reduce((sum, e) => sum + (e.out - e.in), 0);
+  return Math.max(1, Math.floor(Math.max(narrationSeconds, edlSeconds) / 8));
+}
+
 /**
  * `harness.overlays/v1` (sub-project 5B §3). `medium` (the default) is a plan `overlays-valid` accepts: one
  * `title` anchored at the first narration line (`L001`) -- or at `edl_order 0` when there is no narration to
  * anchor to -- plus one `callout` at the middle EDL entry, and `music.mood: "calm"`. `dense` writes 30
  * callouts on one `edl_order` so the density/spacing rule fails; `invalid` anchors at a `line_id` no
  * narration has.
+ *
+ * Fix round 1: `medium` drops the callout when the density budget is only 1. The integration fixtures cut
+ * ~2-3 s from each of three clips, which is 7-10 s of picture and so a limit of exactly 1 -- a fixed
+ * two-item plan would have failed `overlays-valid` on the very happy path it exists to exercise. "As many
+ * of the two as the budget allows" is what a real `edit-plan` agent does anyway, and every unit fixture
+ * here (20 s of EDL) still gets both.
  */
 function buildOverlays() {
   const mode_ = overlaysMode();
@@ -314,16 +331,14 @@ function buildOverlays() {
     };
   }
 
+  const briefInput = findInput("brief");
+  const brief = briefInput ? tryReadJsonAt(briefInput.path) : null;
   const titleAnchor = narration.lines.length > 0 ? { line_id: narration.lines[0].line_id } : { edl_order: firstOrder };
-  return {
-    schema_version: "harness.overlays/v1",
-    items: [
-      { id: "OV01", kind: "title", text: "Tiêu đề mở đầu", anchor: titleAnchor, seconds: 4 },
-      { id: "OV02", kind: "callout", text: "Điểm nhấn", anchor: { edl_order: midOrder }, seconds: 3 },
-    ],
-    transitions: [],
-    music: { mood: "calm" },
-  };
+  const items = [{ id: "OV01", kind: "title", text: "Tiêu đề mở đầu", anchor: titleAnchor, seconds: 4 }];
+  if (overlayBudget(edl, narration, brief?.language) >= 2) {
+    items.push({ id: "OV02", kind: "callout", text: "Điểm nhấn", anchor: { edl_order: midOrder }, seconds: 3 });
+  }
+  return { schema_version: "harness.overlays/v1", items, transitions: [], music: { mood: "calm" } };
 }
 
 const REVIEW_CHECK_IDS = ["duration_in_range", "no_black_or_frozen_over_2s", "opening_matches_style", "text_not_clipped", "audio_present", "thumbnails_textless"];
@@ -389,18 +404,24 @@ function buildReview() {
       : "fake agent: thiếu hình cho lời (media-fit-edl)";
     checks[0] = { id: REVIEW_CHECK_IDS[0], pass: false, note: footageRejected ? footageNote : "fake agent: thời lượng vượt khoảng đích tại t=95.0s" };
   }
-  if (renderRejected) return { schema_version: "harness.review/v1", decision: "rejected", note: renderNote, checks };
 
-  let note;
+  /** The footage/mode half of the note, empty when nothing on that side rejected. */
+  let otherNote = "";
   if (overshot) {
-    note = `fake agent: tổng ${Number(fitReport.total_seconds ?? 0).toFixed(1)} s nằm ngoài khoảng đích ${JSON.stringify(fitReport.target_duration_seconds ?? [])}`;
+    otherNote = `fake agent: tổng ${Number(fitReport.total_seconds ?? 0).toFixed(1)} s nằm ngoài khoảng đích ${JSON.stringify(fitReport.target_duration_seconds ?? [])}`;
   } else if (footageRejected) {
     const missingSeconds = shortfalls.reduce((a, s) => a + (s.missing_seconds ?? 0), 0);
     const lineIds = shortfalls.flatMap((s) => s.line_ids ?? []);
-    note = `fake agent: thiếu ${missingSeconds.toFixed(1)} s ở ${lineIds.join(", ")}`;
-  } else {
-    note = rejected ? "fake agent: review tự động phát hiện lỗi" : "fake agent: review tự động, đạt";
+    otherNote = `fake agent: thiếu ${missingSeconds.toFixed(1)} s ở ${lineIds.join(", ")}`;
+  } else if (otherRejected) {
+    otherNote = "fake agent: review tự động phát hiện lỗi";
   }
+
+  // Fix round 1 (m6): when BOTH halves reject, the note carries both. Returning the render note alone hid
+  // the shortfall's `line_id`s from the replanned `edit-plan`, which then fixed the overlays and left the
+  // lines with no picture -- a guaranteed second rejection.
+  const noteParts = [otherNote, renderNote].filter(Boolean);
+  const note = noteParts.length > 0 ? noteParts.join(" | ") : "fake agent: review tự động, đạt";
 
   return { schema_version: "harness.review/v1", decision: rejected ? "rejected" : "approved", note, checks };
 }

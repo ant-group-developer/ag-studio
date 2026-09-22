@@ -229,30 +229,50 @@ describe("raiseCaptions", () => {
   });
 });
 
+// Spec §3 (updated in the task-8 fix round): `seconds = max(narration chars / cps, Σ EDL (out - in))`,
+// `limit = max(1, floor(seconds / spacing))`. The narration term alone used to win whenever a
+// `narration.json` was present at all, which scored 0 seconds -- and so a limit of 0 -- for every
+// `voice: none`/`original` plan (their `lines` array is empty by contract), rejecting every overlay plan.
 describe("overlayDensityLimit", () => {
-  it("uses narration character count / cps for tts, floor(seconds / spacing)", () => {
-    const narration: Narration = {
-      schema_version: "harness.narration/v1",
-      language: "en",
-      lines: [
-        { line_id: "L001", edl_order: 0, text: "a".repeat(600) },
-        { line_id: "L002", edl_order: 1, text: "b".repeat(600) },
-      ],
-    };
-    const edl: Edl = { schema_version: "harness.edl/v1", entries: [{ source_id: SRC_A, in: 0, out: 1, order: 0, overlay: null, note: "" }] };
-    // 1200 chars / 15 cps (en) = 80s; medium spacing 8 -> floor(80/8) = 10
-    expect(overlayDensityLimit({ narration, edl, language: "en", density: "medium" })).toBe(10);
+  const edlOf = (...lengths: number[]): Edl => ({
+    schema_version: "harness.edl/v1",
+    entries: lengths.map((len, order) => ({ source_id: SRC_A, in: 0, out: len, order, overlay: null, note: "" })),
+  });
+  const narrationOf = (...texts: string[]): Narration => ({
+    schema_version: "harness.narration/v1",
+    language: "en",
+    lines: texts.map((text, i) => ({ line_id: `L${String(i + 1).padStart(3, "0")}`, edl_order: i, text })),
   });
 
-  it("uses total EDL screen time when there is no narration", () => {
-    const edl: Edl = {
-      schema_version: "harness.edl/v1",
-      entries: [
-        { source_id: SRC_A, in: 0, out: 40, order: 0, overlay: null, note: "" },
-        { source_id: SRC_A, in: 0, out: 40, order: 1, overlay: null, note: "" },
-      ],
-    };
+  it("the spoken estimate wins when the script is longer than the EDL", () => {
+    // 1200 chars / 15 cps (en) = 80s, EDL only 1s; medium spacing 8 -> floor(80/8) = 10
+    expect(overlayDensityLimit({ narration: narrationOf("a".repeat(600), "b".repeat(600)), edl: edlOf(1), language: "en", density: "medium" })).toBe(10);
+  });
+
+  it("the EDL screen time wins when there is no narration at all", () => {
     // 80s total, high spacing 5 -> floor(80/5) = 16
-    expect(overlayDensityLimit({ narration: null, edl, language: "en", density: "high" })).toBe(16);
+    expect(overlayDensityLimit({ narration: null, edl: edlOf(40, 40), language: "en", density: "high" })).toBe(16);
+  });
+
+  it("an empty narration.json (voice: none/original) still scores the EDL, not zero", () => {
+    // 40s of picture, medium spacing 8 -> 5. Before the fix this was floor(0/8) = 0.
+    expect(overlayDensityLimit({ narration: narrationOf(), edl: edlOf(40), language: "en", density: "medium" })).toBe(5);
+  });
+
+  it("the EDL wins over a shorter script too", () => {
+    // 2 lines x 40 chars = 80 chars / 15 cps = 5.33s; EDL 40s -> floor(40/8) = 5
+    expect(overlayDensityLimit({ narration: narrationOf("a".repeat(40), "b".repeat(40)), edl: edlOf(40), language: "en", density: "medium" })).toBe(5);
+  });
+
+  it("never returns 0: one opening title is always allowed however short the episode", () => {
+    // 2 lines x 40 chars = 5.33s spoken, 4s of picture, medium spacing 8 -> floor(5.33/8) = 0 -> clamped to 1
+    expect(overlayDensityLimit({ narration: narrationOf("a".repeat(40), "b".repeat(40)), edl: edlOf(4), language: "en", density: "medium" })).toBe(1);
+    expect(overlayDensityLimit({ narration: null, edl: edlOf(1), language: "vi", density: "low" })).toBe(1);
+  });
+
+  it("vietnamese reads at 14 cps, not 15", () => {
+    // 1120 chars / 14 = 80s -> floor(80/8) = 10 for vi; the same text at 15 cps would be 9
+    expect(overlayDensityLimit({ narration: narrationOf("x".repeat(1120)), edl: edlOf(1), language: "vi", density: "medium" })).toBe(10);
+    expect(overlayDensityLimit({ narration: narrationOf("x".repeat(1120)), edl: edlOf(1), language: "en", density: "medium" })).toBe(9);
   });
 });

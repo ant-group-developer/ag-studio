@@ -11,8 +11,8 @@ import {
 } from "@harness/contracts";
 import {
   activeTracks, buildComposition, buildTimeline, eventFor, fitEdl, indexSources, loadBrand, probeNvenc, renderComposition, requireActiveVoice,
-  synthesizeNarration, transcribeSources, verifyBrandFiles, watchFromExistingFrames, watchVideos,
-  type LoadedBrand, type PreExtractedVideo, type WatchDeps, type WatchVideoInput,
+  requireValidBrand, synthesizeNarration, transcribeSources, watchFromExistingFrames, watchVideos,
+  type PreExtractedVideo, type WatchDeps, type WatchVideoInput,
 } from "@harness/core";
 import { probeDurationSync, probeSync } from "@harness/adapter-ffprobe";
 import type { AppContext } from "../composition.js";
@@ -585,28 +585,14 @@ function brandChannelIdFor(app: AppContext, brief: LibraryBrief): string | null 
  */
 function subtitlesOverrideFor(sdk: ScriptContext): SubtitleMode | undefined {
   const raw = sdk.options.subtitles;
-  if (raw === undefined || raw === null || raw === "true") return undefined;
+  if (raw === undefined || raw === null) return undefined;
   const value = String(raw);
+  // Normalized through `String()` first (fix round 1, m3): YAML/JSON options can arrive as a real boolean
+  // `true`/`false`, not only as the quoted strings `options_schema` lists.
+  if (value === "true") return undefined;
   if (value === "false") return "none";
   if ((SUBTITLE_MODES as readonly string[]).includes(value)) return value as SubtitleMode;
   throw new HarnessError("CONFIG_INVALID", `option "subtitles" must be one of ${SUBTITLE_MODES.join("|")}|true|false, got "${value}"`, { subtitles: value });
-}
-
-/**
- * The loaded brand for this run, with every file it references re-verified against `brand.json`'s checksums.
- * `intake` already did exactly this before claiming the request (spec §7), so a failure here means the kho
- * drifted mid-run -- cheap to re-check, and far better caught before a two-hour render than after it.
- */
-async function loadVerifiedBrand(app: AppContext, lib: NonNullable<AppContext["library"]>, brief: LibraryBrief): Promise<LoadedBrand | null> {
-  const channelId = brandChannelIdFor(app, brief);
-  if (channelId === null) return null;
-  const brand = loadBrand(lib.fs, channelId);
-  if (brand === null) return null;
-  const verified = await verifyBrandFiles(lib.fs, brand);
-  if (!verified.ok) {
-    throw new HarnessError("CONFIG_INVALID", `brand for channel ${channelId} is broken: ${verified.reason}`, { channel_id: channelId, reason: verified.reason });
-  }
-  return brand;
 }
 
 /**
@@ -639,15 +625,24 @@ async function mediaComposeStage(app: AppContext, sdk: ScriptContext): Promise<v
   const narration = sdk.hasInput("narration") ? parseNarrationDoc(readJsonFile(sdk.input("narration"))) : null;
   const voiceSetDir = sdk.hasInput("voice_set") ? sdk.input("voice_set") : null;
 
-  const brand = await loadVerifiedBrand(app, library, brief);
+  // `intake` already verified this brand before claiming the request (spec §7); re-checked here because it
+  // is cheap and the kho can drift mid-run -- far better caught before a two-hour render than after it.
+  const brand = await requireValidBrand(library.fs, brandChannelIdFor(app, brief));
   const tracks = brand ? activeTracks(app.store, brand.brand.music.tracks) : [];
 
   // `duration_seconds`/`has_audio` come from `shots.json` (the one stage that already probed every source);
   // `fps` needs its own probe, since `shots.json` does not record it. A source ffprobe cannot read at all
   // contributes `fps: null`, which simply never votes in `buildComposition`'s fps election.
+  //
+  // Only the sources the TIMELINE actually uses are probed (fix round 1, m5): a run whose content carries a
+  // whole shoot but whose edit kept three clips would otherwise pay an ffprobe per unused clip, and those
+  // probes cannot change the result -- `buildComposition` looks up `sources` by `timeline.video[].source_id`
+  // and an absent entry never votes on fps either.
+  const usedSourceIds = new Set(timeline.video.map((v) => v.source_id));
   const shotsBySource = new Map(shots.sources.map((s) => [s.source_id, s]));
   const sources = new Map<string, { path: string; duration_seconds: number; has_audio: boolean; fps: number | null }>();
   for (const s of sdk.sources) {
+    if (!usedSourceIds.has(s.source_id)) continue;
     const { path } = sourcePathAndName(app, s);
     const indexed = shotsBySource.get(s.source_id);
     const probed = await app.prober.probe(path);

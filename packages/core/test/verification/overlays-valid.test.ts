@@ -203,7 +203,9 @@ describe("overlays-valid", () => {
 
   it("fails with the limit when the item count exceeds the density limit for medium (default)", async () => {
     const ws = tmpWorkspace();
-    // narration totals 300 chars (150 + 150); en cps 15 -> 20s spoken; medium spacing 8 -> floor(20/8) = 2.
+    // Spec §3 (task-8 fix round): seconds = max(narration chars / cps, EDL screen time). Narration is
+    // 300 chars (150 + 150) / 15 cps (en) = 20s; the EDL is 20 x 5s = 100s and wins; medium spacing 8 ->
+    // floor(100/8) = 12. Twenty items are still well past that.
     const narration: Narration = {
       schema_version: "harness.narration/v1",
       language: "en",
@@ -219,7 +221,24 @@ describe("overlays-valid", () => {
     const outcome = await checker().check({ request, result, workspaceDir: ws });
     expect(outcome.verdict).toBe("fail");
     expect(outcome.evidence.reason).toBe("overlay density exceeds limit");
-    expect(outcome.evidence.limit).toBe(2);
+    expect(outcome.evidence.limit).toBe(12);
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  // The bug the fix round's density ruling closes: `plan-edit` on a `voice: none`/`original` run always
+  // writes `narration.json` with `lines: []` (contract), which used to score 0 seconds and so a limit of 0 --
+  // every overlay plan for a silent or original-audio episode was rejected, and no replan could ever fix it.
+  it("a voice: none plan (empty narration.json) is scored on the EDL, so a sane plan passes", async () => {
+    const ws = tmpWorkspace();
+    const narration: Narration = { schema_version: "harness.narration/v1", language: "en", lines: [] };
+    const edl = edlJson([0, 1, 2, 3]); // 4 x 5s = 20s -> medium spacing 8 -> limit 2
+    const overlays = overlaysJson([
+      { id: "OV01", kind: "title", text: "Mở đầu", anchor: { edl_order: 0 } },
+      { id: "OV02", kind: "callout", text: "27,5 %", anchor: { edl_order: 2 } },
+    ]);
+    const { request, result } = fixture(ws, { overlays, narration, edl, language: "en" });
+    const outcome = await checker().check({ request, result, workspaceDir: ws });
+    expect(outcome.verdict, JSON.stringify(outcome.evidence)).toBe("pass");
     rmSync(ws, { recursive: true, force: true });
   });
 });

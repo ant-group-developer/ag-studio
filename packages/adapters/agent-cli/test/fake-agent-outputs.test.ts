@@ -667,9 +667,10 @@ describe("fake-agent-cli.mjs: sub-project 5B task 8 (overlays.json, composition-
     expect(overlays.items).toHaveLength(2);
   });
 
-  function reviewWorkspace(inputs: { renderReport?: string; composition?: string }): { ws: string; req: StageRequest } {
+  function reviewWorkspace(inputs: { renderReport?: string; composition?: string; fitReport?: string }): { ws: string; req: StageRequest } {
     const ws = tmpWorkspace();
     const list = [fileInput(ws, "inputs/brief.json", BRIEF_JSON(), "brief")];
+    if (inputs.fitReport) list.push(fileInput(ws, "inputs/fit-report.json", inputs.fitReport, "fit_report"));
     if (inputs.composition) list.push(fileInput(ws, "inputs/composition.json", inputs.composition, "composition"));
     if (inputs.renderReport) list.push(fileInput(ws, "inputs/render-report.json", inputs.renderReport, "render_report"));
     return { ws, req: makeRequest(ws, { stage_key: "library-review", inputs: list, expected_outputs: [{ type: "review", mime_type: "application/json", kind: "file", name: "review.json" }] }) };
@@ -716,6 +717,31 @@ describe("fake-agent-cli.mjs: sub-project 5B task 8 (overlays.json, composition-
 
   // 1 downgrade out of 5 requested is 20 %, under the 30 % bar -- a render that lost one dissolve is not
   // worth a replan.
+  // Fix round 1 (m6): a replanned `edit-plan` that is told only about the dropped overlay fixes the text
+  // and leaves the lines without picture -- a guaranteed second rejection. Both halves of the note travel.
+  it("library-review: when BOTH the footage and the composition reject, the note carries both details", () => {
+    const dropped = [{ id: "OV02", reason: "collision_unresolved" }];
+    const { ws, req } = reviewWorkspace({
+      fitReport: FIT_REPORT_JSON({ shortfalls: [{ line_ids: ["L001", "L003"], missing_seconds: 4.2, reused_seconds: 0, uncovered_seconds: 4.2 }] }),
+      renderReport: RENDER_REPORT_JSON({ dropped }),
+      composition: COMPOSITION_JSON({ dropped }),
+    });
+    const r = run(ws, req, { FAKE_REVIEW_MODE: "approve" });
+    expect(r.status, `stderr: ${r.err}`).toBe(0);
+    const review = JSON.parse(readFileSync(join(ws, "output", "review.json"), "utf8"));
+    expect(reviewSchema.safeParse(review).success).toBe(true);
+    expect(review.decision).toBe("rejected");
+    // footage half
+    expect(review.note).toContain("L001");
+    expect(review.note).toContain("L003");
+    expect(review.note).toContain("4.2");
+    // composition half
+    expect(review.note).toContain("OV02");
+    // and the two failures land on their own checks
+    expect(review.checks.find((c: { id: string }) => c.id === "duration_in_range").pass).toBe(false);
+    expect(review.checks.find((c: { id: string }) => c.id === "text_not_clipped").pass).toBe(false);
+  });
+
   it("library-review: a render report under the 30 % downgrade bar approves and leaves all six checks passing", () => {
     const { ws, req } = reviewWorkspace({ renderReport: RENDER_REPORT_JSON({ requested: 5, downgraded: [{ before_order: 2, reason: "no_tail" }] }), composition: COMPOSITION_JSON() });
     expect(run(ws, req).status).toBe(0);

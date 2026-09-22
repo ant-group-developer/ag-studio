@@ -155,6 +155,26 @@ export function loadBrand(fs: LibraryFs, channelId: string): LoadedBrand | null 
   return { brand, dir, fonts_dir, font_regular_path, font_bold_path, logo_path };
 }
 
+/**
+ * `loadBrand` + `verifyBrandFiles` in one call, raising a mismatch as the `CONFIG_INVALID` both callers
+ * want -- `intake` (before `claimRequest`, so a broken brand leaves the request `open`) and `media-compose`
+ * (a cheap re-check before a two-hour render). `null` means "this channel has no brand", which is not an
+ * error anywhere: the episode is simply built plain (spec §2.1).
+ *
+ * `channelId` may be `null`/`undefined` for a run with no originating request (or a request created without
+ * a channel); that answers `null` too, for the same reason.
+ */
+export async function requireValidBrand(fs: LibraryFs, channelId: string | null | undefined): Promise<LoadedBrand | null> {
+  if (!channelId) return null;
+  const brand = loadBrand(fs, channelId);
+  if (brand === null) return null;
+  const verified = await verifyBrandFiles(fs, brand);
+  if (!verified.ok) {
+    throw new HarnessError("CONFIG_INVALID", `brand for channel ${channelId} is broken: ${verified.reason}`, { channel_id: channelId, reason: verified.reason });
+  }
+  return brand;
+}
+
 /** Verifies every file a loaded brand references (fonts, logo) still matches the sha256 checksum recorded in
  * `brand.json` -- used at `intake` (spec §7: checked before `claimRequest`, alongside the voice check) and
  * re-checked cheaply at `media-compose`. Never throws for a mismatch/missing file; that is an ordinary
