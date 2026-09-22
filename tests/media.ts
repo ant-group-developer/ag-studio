@@ -110,9 +110,41 @@ export function makeSceneClip(path: string, o: {
   run(ffmpegPath(), args);
 }
 
-/** ffmpeg -y -f lavfi -i anullsrc=... | sine=... -t <seconds> -c:a pcm_s16le <path> */
-export function makeWav(path: string, seconds: number, o?: { silent?: boolean }): void {
+/** ffmpeg -y -f lavfi -i anullsrc=... | sine=... -t <seconds> -c:a pcm_s16le <path>. `frequency` (default
+ * 440 Hz, so every existing caller is unchanged) picks the tone -- a music track and a voice reference clip
+ * generated for the same test should not be the same sine wave. */
+export function makeWav(path: string, seconds: number, o?: { silent?: boolean; frequency?: number }): void {
   const silent = o?.silent ?? false;
-  const source = silent ? "anullsrc=r=44100:cl=mono" : "sine=frequency=440:sample_rate=44100";
+  const source = silent ? "anullsrc=r=44100:cl=mono" : `sine=frequency=${o?.frequency ?? 440}:sample_rate=44100`;
   run(ffmpegPath(), ["-y", "-f", "lavfi", "-i", source, "-t", String(seconds), "-c:a", "pcm_s16le", path]);
+}
+
+/** `format=duration` in seconds, or `null` when ffprobe cannot read the file. */
+export function ffprobeDuration(path: string): number | null {
+  const r = spawnSync(ffprobePath(), ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", path], { encoding: "utf8" });
+  if (r.status !== 0) return null;
+  const n = Number(r.stdout.trim());
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Standard deviation of one gray frame's luma, sampled at `t` seconds inside `crop` -- the same measurement
+ * `render-valid` makes (`packages/core/src/verification/composition-checkers.ts`), reimplemented here (five
+ * lines of arithmetic over one raw frame) so an acceptance test can assert on the pixels itself rather than
+ * on the checker's verdict about them. `null` when ffmpeg produced no frame at all.
+ */
+export function frameStdDev(file: string, t: number, crop: { w: number; h: number; x: number; y: number }): number | null {
+  const r = spawnSync(
+    ffmpegPath(),
+    ["-hide_banner", "-ss", String(t), "-i", file, "-frames:v", "1", "-vf", `crop=${crop.w}:${crop.h}:${crop.x}:${crop.y},format=gray`, "-f", "rawvideo", "-"],
+    { maxBuffer: 64 * 1024 * 1024, timeout: 300_000 },
+  );
+  if (r.status !== 0 || !r.stdout || r.stdout.length === 0) return null;
+  const buf = r.stdout;
+  let sum = 0;
+  for (const byte of buf) sum += byte;
+  const mean = sum / buf.length;
+  let variance = 0;
+  for (const byte of buf) variance += (byte - mean) ** 2;
+  return Math.sqrt(variance / buf.length);
 }

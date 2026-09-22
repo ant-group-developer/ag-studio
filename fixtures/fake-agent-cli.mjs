@@ -34,9 +34,10 @@
 //                          `brief.json.request_notes` contains "thiếu" -- simulating a replanned, shorter line.
 //
 // Extra env var for sub-project 5B task 8's `overlays.json` (edit-plan skill, library-production@1.3.0):
-//   FAKE_OVERLAYS   none | medium (default) | dense | invalid -- see buildOverlays below. `none` writes NO
-//                   overlays.json at all (the output is `optional: true`, so the runtime must accept that);
-//                   `dense` and `invalid` exist to make `overlays-valid` fail on purpose. A
+//   FAKE_OVERLAYS   none | medium (default) | dense | invalid | unresolvable -- see buildOverlays below.
+//                   `none` writes NO overlays.json at all (the output is `optional: true`, so the runtime
+//                   must accept that); `dense` and `invalid` exist to make `overlays-valid` fail on purpose;
+//                   `unresolvable` PASSES `overlays-valid` and only falls apart at `media-compose`. A
 //                   `brief.json.request_notes` containing "chữ" forces `medium`, simulating a replan after a
 //                   text-related rejection.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -326,6 +327,19 @@ function buildOverlays() {
     return {
       schema_version: "harness.overlays/v1",
       items: [{ id: "OV01", kind: "title", text: "Tiêu đề sai neo", anchor: { line_id: "L999" }, seconds: 4 }],
+      transitions: [],
+      music: { mood: "calm" },
+    };
+  }
+  // Task 10 (acceptance 48): the one overlay fault that survives `plan-edit`. A `speech_index` anchor is
+  // deliberately NOT validated by `overlays-valid` (spec §3: there is no `timeline.json` to resolve it
+  // against before `media-fit-edl` has run), so this plan is accepted at `plan-edit`, then resolves to
+  // nothing at `media-compose` and lands in `composition.text_dropped` / `render-report.text_events.dropped`
+  // -- which is what `library-review` rejects on, carrying "chữ" into the replanned brief.
+  if (mode_ === "unresolvable") {
+    return {
+      schema_version: "harness.overlays/v1",
+      items: [{ id: "OV01", kind: "title", text: "Neo vào câu không có", anchor: { speech_index: 999 }, seconds: 4 }],
       transitions: [],
       music: { mood: "calm" },
     };

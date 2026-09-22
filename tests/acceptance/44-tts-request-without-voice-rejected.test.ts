@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { parse, stringify } from "yaml";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import type { VoiceProfile } from "@harness/contracts";
-import { HARNESS_ROOT } from "@harness/core";
 import { hasFfmpeg } from "../media.js";
-import { addVoice, CHANNEL_FIXTURE, cli, freshLibraryWorld } from "../integration/library-helpers.js";
+import { addVoice, cli, declareChannel, freshLibraryWorld } from "../integration/library-helpers.js";
 
 /** Request ids currently in the kho -- the only place `createRequest` writes (file + DB mirror in one call),
  * so an unchanged listing proves a rejected `request create` left nothing behind. */
@@ -19,15 +17,11 @@ function createTtsRequest(channel: string, extra: string[]): { code: number | nu
 
 /** Copies the committed `channel-one` config into the temp channel project (which `freshLibraryWorld` leaves
  * without a `channels/` directory), with `repo_dir` repointed at the real fixture so the rest of the config
- * still loads, and `voice.voice_id` set to `voiceId`. */
+ * still loads, and `voice.voice_id` set to `voiceId`. Task 10 (5B) moved the body into `declareChannel`,
+ * which acceptance 51 needs for the `channel:<id>:brand` doctor row; this wrapper keeps the name that reads
+ * right here. */
 function declareChannelVoice(channelProject: string, voiceId: string): void {
-  const src = join(CHANNEL_FIXTURE, "channels", "channel-one", "channel.yaml");
-  const cfg = parse(readFileSync(src, "utf8")) as Record<string, unknown>;
-  cfg.repo_dir = resolve(HARNESS_ROOT, "fixtures", "legacy-channel-repo").split("\\").join("/");
-  cfg.voice = { voice_id: voiceId };
-  const dir = join(channelProject, "channels", "channel-one");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "channel.yaml"), stringify(cfg));
+  declareChannel(channelProject, { voiceId });
 }
 
 // Acceptance 44 (sub-project 5A §7, spec §3.2): a `voice: tts` request is refused the moment it is created if

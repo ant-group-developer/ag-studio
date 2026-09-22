@@ -194,6 +194,25 @@ export function writeActiveStyle(lib: string, styleId: string): void {
   writeFileSync(join(dir, "style.json"), SAMPLE_STYLE(styleId, "active") + "\n");
 }
 
+/**
+ * Copies the committed `channel-one` config into a temp channel project (`freshLibraryWorld` deliberately
+ * leaves it without a `channels/` directory, which is all most tests need), repointing `repo_dir` at the real
+ * legacy-repo fixture so the rest of the config still loads. `voiceId` additionally sets `voice.voice_id`.
+ *
+ * Declaring the channel is what makes `harness doctor` emit its per-channel rows at all (`checkChannels`
+ * returns nothing when no channel is loaded) -- `channel:<id>:voice` (sub-project 5A) and
+ * `channel:<id>:brand` (5B) both hang off it.
+ */
+export function declareChannel(channelProject: string, o: { voiceId?: string } = {}): void {
+  const src = join(CHANNEL_FIXTURE, "channels", "channel-one", "channel.yaml");
+  const cfg = parse(readFileSync(src, "utf8")) as Record<string, unknown>;
+  cfg.repo_dir = posix(resolve(HARNESS_ROOT, "fixtures", "legacy-channel-repo"));
+  if (o.voiceId) cfg.voice = { voice_id: o.voiceId };
+  const dir = join(channelProject, "channels", "channel-one");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "channel.yaml"), stringify(cfg));
+}
+
 /** Rewrites one resource capacity in a temp project's `project.yaml`. Setting a capacity to 0 starves every
  * stage that requires it, so `claim()` skips those candidates and falls through to the next ready stage --
  * the same trick `setGpuCapacity` plays for the footage fixture. */
@@ -355,17 +374,24 @@ function collectionSeed(collection: string): number {
  * snapping needs something to snap to (see `makeSceneClip`). `silentClips` names the clip indexes that get
  * NO audio track while the rest do: a shoot that mixes sound and silence, which is the headline 5A scenario
  * and the one `assemble.mjs` used to decide for the whole shoot from its first clip alone.
+ *
+ * `scenes` (sub-project 5B task 10) is how many solid-colour scenes each clip is cut from, default 3.
+ * `scenes: 1` makes every clip ONE flat colour, so `media-index` finds no scene change in it and the whole
+ * clip comes back as a single shot -- which makes the fake agent's "first shot of each source" EDL run to
+ * the very last frame of its source (`out == duration`), the one condition under which a `dissolve` has no
+ * tail left to fade into (acceptance 49).
  */
-export function ingestShoot(world: LibraryWorld, collection: string, n: number, o: { withAudio?: boolean; audioSeconds?: number; language?: string; silentClips?: number[] } = {}): string[] {
+export function ingestShoot(world: LibraryWorld, collection: string, n: number, o: { withAudio?: boolean; audioSeconds?: number; language?: string; silentClips?: number[]; scenes?: number } = {}): string[] {
   const withAudio = o.withAudio ?? true;
   const silent = new Set(o.silentClips ?? []);
+  const scenes = Math.max(1, o.scenes ?? 3);
   const seed = collectionSeed(collection);
   const dir = mkdtempSync(join(tmpdir(), `${collection}-`));
   for (let i = 0; i < n; i++) {
     const seconds = 6 + (i % 5); // 6..10 s
     makeSceneClip(join(dir, `clip-${String(i).padStart(2, "0")}.mp4`), {
       seconds,
-      colors: SHOOT_COLORS[(seed + i) % SHOOT_COLORS.length]!,
+      colors: SHOOT_COLORS[(seed + i) % SHOOT_COLORS.length]!.slice(0, scenes),
       size: `${320 + 2 * (seed % 8)}x180`,
       audio: withAudio && !silent.has(i) ? { frequency: 300 + ((seed + i * 7) % 23) * 37, ...(o.audioSeconds !== undefined ? { seconds: Math.min(o.audioSeconds, seconds) } : {}) } : null,
     });
@@ -418,7 +444,14 @@ export function addVoice(world: LibraryWorld, voiceId?: string): string {
  * ffmpeg is not on PATH). `music` is left empty here on purpose: `addTrack` fills it, so a test that wants a
  * brand without music simply never calls it.
  */
-export function setBrand(world: LibraryWorld, channelId: string, o: { withLogo?: boolean; tracks?: string[]; subtitles?: "burn-in" | "karaoke" | "none" } = {}): boolean {
+export function setBrand(world: LibraryWorld, channelId: string, o: {
+  withLogo?: boolean;
+  tracks?: string[];
+  subtitles?: "burn-in" | "karaoke" | "none";
+  /** `brand.transition` (spec §2.1): the default across every cut of this channel's episodes. Left off, the
+   * schema default `{ kind: "cut", seconds: 0.4 }` applies and no segment ever gets a tail rendered. */
+  transition?: { kind: "cut" | "dissolve" | "dip_black"; seconds?: number };
+} = {}): boolean {
   const font = systemFontPath();
   if (!font) return false;
 
@@ -448,6 +481,7 @@ export function setBrand(world: LibraryWorld, channelId: string, o: { withLogo?:
     colors: { primary: "#F2C94C" },
     ...(logo ? { logo } : {}),
     ...(o.subtitles ? { subtitles: { mode: o.subtitles } } : {}),
+    ...(o.transition ? { transition: { kind: o.transition.kind, ...(o.transition.seconds !== undefined ? { seconds: o.transition.seconds } : {}) } } : {}),
     ...(o.tracks ? { music: { tracks: o.tracks } } : {}),
   };
   const path = join(dir, "brand.json");
@@ -471,10 +505,12 @@ function makeLogoPng(path: string): void {
 
 /** A kho-wide background music track (sub-project 5B), added by the CHANNEL role the way an operator would
  * (`harness library music add`) from an 8 s sine wav, then mirrored into the studio DB. Returns `trackId`. */
-export function addTrack(world: LibraryWorld, trackId: string, o: { mood?: string[]; seconds?: number; loopOk?: boolean } = {}): string {
+export function addTrack(world: LibraryWorld, trackId: string, o: { mood?: string[]; seconds?: number; loopOk?: boolean; frequency?: number } = {}): string {
   const dir = mkdtempSync(join(tmpdir(), "track-"));
   const src = join(dir, `${trackId}.wav`);
-  makeWav(src, o.seconds ?? 8);
+  // 220 Hz by default, an octave below `addVoice`'s 440 Hz reference clip, so a mixed episode's music and
+  // voice are distinguishable in a spectrum when someone listens to a test render.
+  makeWav(src, o.seconds ?? 8, { frequency: o.frequency ?? 220 });
   // `--origin` accepts own|licensed|royalty_free (MUSIC_ORIGINS); "own" is the honest one for a file this
   // test generated itself.
   const args = [
