@@ -19,7 +19,7 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { copyFileSync, existsSync, linkSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { HarnessError, RenderReportSchema, type Clock, type Composition, type MediaProber, type RenderReport } from "@harness/contracts";
+import { HarnessError, isHarnessError, RenderReportSchema, type Clock, type Composition, type MediaProber, type RenderReport } from "@harness/contracts";
 import { round3 } from "../time.js";
 import { cacheCommit, cacheEvict, cacheLookup, type MezzCache } from "./cache.js";
 import { NVENC_PROBE_ARGS, resolveEncoder, type EncoderChoice } from "./encoder.js";
@@ -77,6 +77,12 @@ interface ProcResult {
  * purpose: `spawnSync` would block the event loop for the whole encode and stop the worker's lease heartbeat
  * from ticking. Only the last `STDERR_TAIL` characters of stderr are kept, so a chatty ffmpeg cannot grow
  * unbounded in memory over a long render.
+ *
+ * Two different error codes, on purpose (review round 1, Important 1). A spawn `error` event means the
+ * BINARY could not be run at all (`ENOENT`, `EACCES`) -- that is a broken machine/config, not a flaky
+ * encode, so it is `CONFIG_INVALID` with the same wording `watch.ts`'s `assertFfmpegSpawned` uses and the
+ * stage layer maps it to a `contract` failure that does not retry. An ffmpeg that DID run and then failed
+ * (non-zero exit, `null` exit after a kill, our own timeout) stays `IO_ERROR` -> `transient`.
  */
 function runProcess(spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, label: string, captureStdout: boolean): Promise<ProcResult> {
   const [bin, ...args] = argv;
@@ -94,35 +100,37 @@ function runProcess(spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, la
       child.kill();
     }, Math.max(1, timeoutSeconds) * 1000);
 
-    child.stderr?.on("data", (chunk: Buffer | string) => {
-      stderr = (stderr + String(chunk)).slice(-STDERR_TAIL);
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => {
+      stderr = (stderr + chunk).slice(-STDERR_TAIL);
     });
-    child.stdout?.on("data", (chunk: Buffer | string) => {
-      if (captureStdout) stdout = (stdout + String(chunk)).slice(-STDERR_TAIL);
+    child.stdout?.on("data", (chunk: string) => {
+      if (captureStdout) stdout = (stdout + chunk).slice(-STDERR_TAIL);
     });
 
-    const fail = (message: string, details: Record<string, unknown>): void => {
+    const settle = (e: HarnessError): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      reject(new HarnessError("IO_ERROR", message, { label, stderr_tail: stderr, ...details }));
+      reject(e);
     };
 
-    child.on("error", (e) => fail(`${label}: ffmpeg could not start (${e.message})`, { bin }));
+    child.on("error", (e) => settle(new HarnessError("CONFIG_INVALID", `ffmpeg not available: cannot run "${bin}": ${e.message}`, { label, ffmpeg: bin })));
     child.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
       // `timedOut` first: a killed process also reports a non-zero/null exit, and "timed out" is the useful
       // message of the two.
       if (timedOut) {
-        reject(new HarnessError("IO_ERROR", `${label}: ffmpeg timed out after ${timeoutSeconds}s and was killed`, { label, timeout_seconds: timeoutSeconds, stderr_tail: stderr }));
+        settle(new HarnessError("IO_ERROR", `${label}: ffmpeg timed out after ${timeoutSeconds}s and was killed`, { label, timeout_seconds: timeoutSeconds, stderr_tail: stderr }));
         return;
       }
       if (code !== 0) {
-        reject(new HarnessError("IO_ERROR", `${label}: ffmpeg exited ${String(code)}`, { label, exit_code: code, stderr_tail: stderr }));
+        settle(new HarnessError("IO_ERROR", `${label}: ffmpeg exited ${String(code)}`, { label, exit_code: code, stderr_tail: stderr }));
         return;
       }
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       resolve({ stdout, stderr });
     });
   });
@@ -190,7 +198,11 @@ export async function renderComposition(d: RenderDeps, p: RenderInput): Promise<
 
   const warnings: string[] = [];
   const nvenc = await d.nvencAvailable();
-  const runEncoder = resolveEncoder(p.encoderCfg, nvenc);
+  /** The encoder this run has settled on. It starts at whatever `resolveEncoder` picked and can only ever
+   * step DOWN to `cpu`, the first time NVENC actually fails on a segment (review round 1, Important 4): a
+   * driver that just died will fail on every remaining segment too, so re-trying it N times would cost N
+   * wasted encodes and emit N identical warnings. */
+  let encoder = resolveEncoder(p.encoderCfg, nvenc);
   if (p.encoderCfg === "nvenc" && !nvenc) warnings.push("nvenc_unavailable_cpu_fallback");
 
   const segs = [...composition.segments].sort((a, b) => a.order - b.order);
@@ -199,12 +211,17 @@ export async function renderComposition(d: RenderDeps, p: RenderInput): Promise<
   const { width, height, fps, codec } = composition.output;
 
   // ---- 2) mezzanine per segment body (+ tail per dissolve) ----
-  /** One mezzanine file: rendered if it had to be encoded, cached if the key hit and the file still probed
-   * to the right length. */
-  const renderMezz = async (o: { key: string; source: string; in: number; out: number; fit: "scale_pad" | "scale_crop"; has_audio: boolean; label: string }): Promise<{ path: string; seconds: number; cached: boolean }> => {
+  /**
+   * One mezzanine file: `cached` when the key hit and the file still probed to the right length, otherwise
+   * encoded here. `keyFor` rather than a fixed key because the encoder is part of the cache key: an NVENC
+   * segment that falls back to CPU must be looked up, written and committed under the CPU key, or the cache
+   * would hold a CPU-encoded file under a name that promises NVENC.
+   */
+  const renderMezz = async (o: { keyFor: (e: EncoderChoice) => string; source: string; in: number; out: number; fit: "scale_pad" | "scale_crop"; has_audio: boolean; label: string }): Promise<{ path: string; seconds: number; cached: boolean }> => {
     const expected = o.out - o.in;
+    let key = o.keyFor(encoder);
 
-    const hit = cacheLookup(d.cache, o.key, "mp4", d.clock.now());
+    const hit = cacheLookup(d.cache, key, "mp4", d.clock.now());
     if (hit !== null) {
       const probed = await d.prober.probe(hit);
       const duration = probed?.duration_seconds ?? null;
@@ -212,26 +229,34 @@ export async function renderComposition(d: RenderDeps, p: RenderInput): Promise<
         return { path: hit, seconds: expected, cached: true };
       }
       // Spec §7: a truncated cache entry is deleted and re-rendered rather than handed to the final graph.
-      log(`mezz cache entry ${o.key} is corrupt (duration ${String(duration)} vs ${expected}); re-rendering`);
+      log(`mezz cache entry ${key} is corrupt (duration ${String(duration)} vs ${expected}); re-rendering`);
       rmSync(hit, { force: true });
-      rmSync(join(d.cache.dir, `${o.key}.json`), { force: true });
+      rmSync(join(d.cache.dir, `${key}.json`), { force: true });
     }
 
-    const tmpPath = join(tmpDir, `${o.key}.mp4`);
-    const argsFor = (encoder: EncoderChoice): string[] => mezzArgs({
-      ffmpeg: d.ffmpeg, source: o.source, in: o.in, out: o.out, fit: o.fit, w: width, h: height, fps,
-      has_audio: o.has_audio, encoder, codec, out_path: tmpPath,
-    });
+    const encodeTo = async (choice: EncoderChoice, k: string, label: string): Promise<string> => {
+      const tmpPath = join(tmpDir, `${k}.mp4`);
+      const args = mezzArgs({
+        ffmpeg: d.ffmpeg, source: o.source, in: o.in, out: o.out, fit: o.fit, w: width, h: height, fps,
+        has_audio: o.has_audio, encoder: choice, codec, out_path: tmpPath,
+      });
+      await runProcess(spawnFn, args, remaining(), label, false);
+      return tmpPath;
+    };
 
+    let tmpPath: string;
     try {
-      await runProcess(spawnFn, argsFor(runEncoder), remaining(), `mezzanine ${o.label}`, false);
+      tmpPath = await encodeTo(encoder, key, `mezzanine ${o.label}`);
     } catch (e) {
       // Spec §7: an NVENC failure on one segment gets exactly one CPU retry; a CPU failure is the stage's.
-      if (runEncoder !== "nvenc") throw e;
+      // `CONFIG_INVALID` (the ffmpeg binary itself cannot be run) is never worth retrying on either encoder.
+      if (encoder !== "nvenc" || !isHarnessError(e, "IO_ERROR")) throw e;
       warnings.push(`nvenc_segment_fallback:${o.label}`);
-      log(`nvenc failed for mezzanine ${o.label}; retrying once on cpu`);
-      rmSync(tmpPath, { force: true });
-      await runProcess(spawnFn, argsFor("cpu"), remaining(), `mezzanine ${o.label} (cpu retry)`, false);
+      log(`nvenc failed for mezzanine ${o.label}; this run falls back to cpu`);
+      rmSync(join(tmpDir, `${key}.mp4`), { force: true });
+      encoder = "cpu";
+      key = o.keyFor("cpu");
+      tmpPath = await encodeTo("cpu", key, `mezzanine ${o.label} (cpu retry)`);
     }
 
     const probed = await d.prober.probe(tmpPath);
@@ -241,13 +266,16 @@ export async function renderComposition(d: RenderDeps, p: RenderInput): Promise<
     }
 
     const bytes = statSync(tmpPath).size;
-    const path = cacheCommit(d.cache, o.key, tmpPath, { seconds: expected, bytes, now: d.clock.now() });
+    const path = cacheCommit(d.cache, key, tmpPath, { seconds: expected, bytes, now: d.clock.now() });
     return { path, seconds: expected, cached: false };
   };
 
   const mezz: MezzRef[] = [];
   let rendered = 0;
   let cached = 0;
+  /** Total mezzanine footage this episode is built from -- every body plus every dissolve tail, whether it
+   * was encoded now or served from the cache. It describes the render PLAN's size, not the work done this
+   * run; `rendered`/`cached` next to it are what say how much of it had to be encoded (review round 1, m6). */
   let mezzSeconds = 0;
 
   for (const seg of segs) {
@@ -255,10 +283,12 @@ export async function renderComposition(d: RenderDeps, p: RenderInput): Promise<
     if (checksum === undefined) {
       throw new HarnessError("CONFIG_INVALID", `no source checksum for segment ${seg.order} (source ${seg.source_id})`, { order: seg.order, source_id: seg.source_id });
     }
-    const common = { source_checksum: checksum, fit: seg.fit, w: width, h: height, fps, has_audio: seg.has_audio, encoder: runEncoder, codec };
+    const common = { source_checksum: checksum, fit: seg.fit, w: width, h: height, fps, has_audio: seg.has_audio, codec };
 
-    const bodyKey = mezzCacheKey({ ...common, in: seg.in, out: seg.out });
-    const body = await renderMezz({ key: bodyKey, source: seg.source_path, in: seg.in, out: seg.out, fit: seg.fit, has_audio: seg.has_audio, label: String(seg.order) });
+    const body = await renderMezz({
+      keyFor: (e) => mezzCacheKey({ ...common, encoder: e, in: seg.in, out: seg.out }),
+      source: seg.source_path, in: seg.in, out: seg.out, fit: seg.fit, has_audio: seg.has_audio, label: String(seg.order),
+    });
     mezzSeconds += body.seconds;
 
     let tail: { path: string; seconds: number; cached: boolean } | null = null;
@@ -266,8 +296,10 @@ export async function renderComposition(d: RenderDeps, p: RenderInput): Promise<
       const tailSeconds = seg.transition_out.seconds;
       // The tail carries `tail_seconds` in its own key, so changing the transition length (or the transition
       // kind) never invalidates the body it belongs to.
-      const tailKey = mezzCacheKey({ ...common, in: seg.out, out: seg.out + tailSeconds, tail_seconds: tailSeconds });
-      tail = await renderMezz({ key: tailKey, source: seg.source_path, in: seg.out, out: seg.out + tailSeconds, fit: seg.fit, has_audio: seg.has_audio, label: `${seg.order}-tail` });
+      tail = await renderMezz({
+        keyFor: (e) => mezzCacheKey({ ...common, encoder: e, in: seg.out, out: seg.out + tailSeconds, tail_seconds: tailSeconds }),
+        source: seg.source_path, in: seg.out, out: seg.out + tailSeconds, fit: seg.fit, has_audio: seg.has_audio, label: `${seg.order}-tail`,
+      });
       mezzSeconds += tail.seconds;
     }
 
@@ -309,19 +341,23 @@ export async function renderComposition(d: RenderDeps, p: RenderInput): Promise<
     ...(p.safe_margin_px !== undefined ? { safe_margin_px: p.safe_margin_px } : {}),
   };
 
-  const measure = await runProcess(spawnFn, finalArgs({ ...finalInput, encoder: runEncoder, loudnorm: null, measureOnly: true }).argv, remaining(), "loudnorm measure", false);
+  // The measurement pass is audio-only (`-vn -f null -`), so `encoder` never reaches its argv; it is passed
+  // for the shape of `FinalGraphInput` alone.
+  const measure = await runProcess(spawnFn, finalArgs({ ...finalInput, encoder, loudnorm: null, measureOnly: true }).argv, remaining(), "loudnorm measure", false);
   const measured = parseLoudnorm(measure.stderr);
   if (measured === null) {
     throw new HarnessError("IO_ERROR", "loudnorm measure failed: ffmpeg printed no parsable loudnorm json", { stderr_tail: measure.stderr });
   }
 
   // ---- 5) the real encode ----
-  let finalEncoder = runEncoder;
+  // Starts from whatever the mezzanine tier settled on: if NVENC already died on a segment, there is no
+  // point asking it for a 4K final encode first.
+  let finalEncoder = encoder;
   let render: ProcResult;
   try {
     render = await runProcess(spawnFn, finalArgs({ ...finalInput, encoder: finalEncoder, loudnorm: measured.measured, measureOnly: false }).argv, remaining(), "final encode", false);
   } catch (e) {
-    if (finalEncoder !== "nvenc") throw e;
+    if (finalEncoder !== "nvenc" || !isHarnessError(e, "IO_ERROR")) throw e;
     warnings.push("nvenc_final_fallback");
     log("nvenc failed on the final encode; retrying once on cpu");
     rmSync(episodePath, { force: true });

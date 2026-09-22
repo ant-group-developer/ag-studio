@@ -209,7 +209,7 @@ export function buildContext(o: { projectDir: string; harnessRoot?: string; owne
     : undefined;
   return {
     store, planner, controller, registry,
-    verifier: new Verifier([...BUILTIN_CHECKERS, ...mediaCheckers(prober, { available: proberAvailable }), ...libraryCheckers(prober, { available: proberAvailable }), ...compositionCheckers({ prober, available: proberAvailable, ffmpeg: process.env.FFMPEG_PATH ?? "ffmpeg" }), ...distributionCheckers({ store, channels, secrets }), ...learningCheckers({ store })]),
+    verifier: new Verifier([...BUILTIN_CHECKERS, ...mediaCheckers(prober, { available: proberAvailable, ffmpeg: process.env.FFMPEG_PATH ?? "ffmpeg" }), ...libraryCheckers(prober, { available: proberAvailable }), ...compositionCheckers({ prober, available: proberAvailable, ffmpeg: process.env.FFMPEG_PATH ?? "ffmpeg" }), ...distributionCheckers({ store, channels, secrets }), ...learningCheckers({ store })]),
     executors, journal, provider, harness, project, projectDir, dataRoot, logger, clock, secrets, migrationsDir: MIGRATIONS_DIR, workflows, profiles, catalog,
     resourceCapacity: project.resources, executorVersionFor: (ref: ExecutorRef) => executors.resolve(ref).version, scripts, sources, configErrors, proberAvailable, harnessRoot, prober,
     scriptCommandNames: Object.keys(commands), ...(library ? { library } : {}), channels, channelErrors, publisher, agentRuntime, stats, media, mediaConfig: project.media,

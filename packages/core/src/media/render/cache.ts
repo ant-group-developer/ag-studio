@@ -98,19 +98,29 @@ export function cacheCommit(c: MezzCache, key: string, tmpPath: string, meta: { 
 /**
  * Sweeps the cache down to `maxBytes` by deleting whole entries (media + sidecar), oldest `last_used_at`
  * first. Media files with no readable sidecar are treated as infinitely old, so an orphan left behind by an
- * interrupted commit is the first thing to go. Returns how many entries were removed and how many bytes that
- * freed. A cache directory that does not exist yet is a no-op, not an error.
+ * interrupted commit is the first thing to go. Sidecars whose media file is gone (the other half of the same
+ * accident, and the shape `cacheLookup` leaves behind when it deletes a corrupt entry's media without being
+ * asked for that key again) are deleted unconditionally, before the size check: they are tiny, so they never
+ * push the cache over its limit and would otherwise accumulate forever. Returns how many entries were
+ * removed and how many bytes that freed; the sidecar-only orphans are counted in neither, since removing
+ * them is housekeeping rather than eviction. A cache directory that does not exist yet is a no-op, not an
+ * error.
  */
 export function cacheEvict(c: MezzCache): { removed: number; bytes: number } {
   if (!existsSync(c.dir)) return { removed: 0, bytes: 0 };
 
   let entries: { key: string; media: string; bytes: number; lastUsed: number }[];
   try {
-    entries = readdirSync(c.dir)
-      .filter((name) => extname(name) === ".mp4")
-      .map((name) => {
-        const key = basename(name, ".mp4");
-        const media = join(c.dir, name);
+    const names = readdirSync(c.dir);
+    const mediaKeys = new Set(names.filter((n) => extname(n) === ".mp4").map((n) => basename(n, ".mp4")));
+    for (const name of names) {
+      if (extname(name) !== ".json") continue;
+      if (!mediaKeys.has(basename(name, ".json"))) removeQuietly(join(c.dir, name));
+    }
+
+    entries = [...mediaKeys]
+      .map((key) => {
+        const media = mediaPath(c, key, "mp4");
         let bytes = 0;
         try {
           bytes = statSync(media).size;

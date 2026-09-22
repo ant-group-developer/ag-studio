@@ -40,14 +40,20 @@ const LOGO_PROBE_PX = 260;
 const DEFAULT_SAFE_MARGIN_PX = 120;
 const DEFAULT_SUBTITLE_SIZE_PX = 88;
 
+/** Same ceiling `media/watch.ts` puts on its own synchronous ffmpeg calls: a frame extract that has not
+ * finished in five minutes is wedged, and a checker must not hang the verifier waiting for it. */
+const FFMPEG_TIMEOUT_MS = 300_000;
+
 /** Standard deviation of one gray frame's luma, sampled at `t` seconds inside `crop`; `null` when ffmpeg
- * could not produce the frame at all. Synchronous on purpose: checkers already shell out this way
+ * could not produce the frame at all -- including when it was killed on `FFMPEG_TIMEOUT_MS`, which
+ * `spawnSync` reports as a non-zero/null status, so the caller reads it as "frame extract failed" like any
+ * other extraction failure. Synchronous on purpose: checkers already shell out this way
  * (`media-checkers.ts`'s `volumedetect`), and one frame of a 260x260 crop is a few milliseconds. */
 function frameStdDev(ffmpeg: string, file: string, t: number, crop: { w: number; h: number; x: number; y: number }): number | null {
   const r = spawnSync(
     ffmpeg,
     ["-hide_banner", "-ss", String(t), "-i", file, "-frames:v", "1", "-vf", `crop=${crop.w}:${crop.h}:${crop.x}:${crop.y},format=gray`, "-f", "rawvideo", "-"],
-    { maxBuffer: 64 * 1024 * 1024 },
+    { maxBuffer: 64 * 1024 * 1024, timeout: FFMPEG_TIMEOUT_MS },
   );
   if (r.status !== 0) return null;
   const buf = r.stdout;
@@ -75,13 +81,35 @@ function brandLayout(composition: Composition): { safe: number; subtitleSize: nu
   return { safe: DEFAULT_SAFE_MARGIN_PX, subtitleSize: DEFAULT_SUBTITLE_SIZE_PX };
 }
 
-/** The `captions` directory of this stage, whether it was produced here (`media-compose` run standalone) or
- * consumed as an input (`media-render`, where `captions` comes from the previous stage). */
+/** The `captions` directory of this stage, whether it was produced here (`media-compose`) or consumed as an
+ * input (`media-render`, where `captions` comes from the previous stage). */
 function captionsDir(input: CheckerInput): string | null {
   const out = input.result.outputs.find((o) => o.kind === "directory" && o.type === "captions");
   if (out) return join(input.workspaceDir, out.path);
   const asInput = input.request.inputs.find((i) => i.type === "captions");
   return asInput ? join(input.workspaceDir, asInput.path) : null;
+}
+
+/**
+ * `<dir>/captions.srt` must exist, be readable, and hold exactly `expectedCues` blocks -- the one place that
+ * rule is written down, shared by `composition-valid` (where the SRT is being produced) and `render-valid`
+ * (where it is being shipped). Returns a `fail` verdict to hand straight back, or `null` when the count is
+ * right.
+ */
+function srtBlockCheck(dir: string, expectedCues: number): { verdict: "fail"; evidence: Record<string, unknown> } | null {
+  const srtPath = join(dir, "captions.srt");
+  if (!existsSync(srtPath)) return { verdict: "fail", evidence: { path: srtPath, reason: "missing captions.srt" } };
+  let srtText: string;
+  try {
+    srtText = readFileSync(srtPath, "utf8");
+  } catch (e) {
+    return { verdict: "fail", evidence: { path: srtPath, reason: "unreadable captions.srt", error: e instanceof Error ? e.message : String(e) } };
+  }
+  const blocks = srtText.trim().length === 0 ? 0 : srtText.split(/\r?\n\r?\n/).map((b) => b.trim()).filter((b) => b.length > 0).length;
+  if (blocks !== expectedCues) {
+    return { verdict: "fail", evidence: { reason: "captions.srt block count mismatch", expected: expectedCues, actual: blocks } };
+  }
+  return null;
 }
 
 /** `<workspaceDir>/<request input of this type>.path`, JSON-parsed and schema-validated; `undefined` when
@@ -316,18 +344,8 @@ export function compositionCheckers(opts: { prober: MediaProber; available?: boo
 
       const captionsOut = input.result.outputs.find((o) => o.kind === "directory" && o.type === "captions");
       if (!captionsOut) return { verdict: "fail", evidence: { reason: "no captions output" } };
-      const srtPath = join(input.workspaceDir, captionsOut.path, "captions.srt");
-      if (!existsSync(srtPath)) return { verdict: "fail", evidence: { path: srtPath, reason: "missing captions.srt" } };
-      let srtText: string;
-      try {
-        srtText = readFileSync(srtPath, "utf8");
-      } catch (e) {
-        return { verdict: "fail", evidence: { path: srtPath, reason: "unreadable captions.srt", error: e instanceof Error ? e.message : String(e) } };
-      }
-      const srtBlockCount = srtText.trim().length === 0 ? 0 : srtText.split(/\r?\n\r?\n/).map((b) => b.trim()).filter((b) => b.length > 0).length;
-      if (srtBlockCount !== composition.captions.cues.length) {
-        return { verdict: "fail", evidence: { reason: "captions.srt block count mismatch", expected: composition.captions.cues.length, actual: srtBlockCount } };
-      }
+      const srtFailure = srtBlockCheck(join(input.workspaceDir, captionsOut.path), composition.captions.cues.length);
+      if (srtFailure) return srtFailure;
 
       if (composition.transitions.applied + composition.transitions.downgraded.length !== composition.transitions.requested) {
         return { verdict: "fail", evidence: { reason: "transitions applied+downgraded != requested", ...composition.transitions } };
@@ -419,18 +437,8 @@ export function compositionCheckers(opts: { prober: MediaProber; available?: boo
 
       const capDir = captionsDir(input);
       if (capDir !== null) {
-        const srtPath = join(capDir, "captions.srt");
-        if (!existsSync(srtPath)) return { verdict: "fail", evidence: { path: srtPath, reason: "missing captions.srt" } };
-        let srtText: string;
-        try {
-          srtText = readFileSync(srtPath, "utf8");
-        } catch (e) {
-          return { verdict: "fail", evidence: { path: srtPath, reason: "unreadable captions.srt", error: e instanceof Error ? e.message : String(e) } };
-        }
-        const blocks = srtText.trim().length === 0 ? 0 : srtText.split(/\r?\n\r?\n/).map((b) => b.trim()).filter((b) => b.length > 0).length;
-        if (blocks !== composition.captions.cues.length) {
-          return { verdict: "fail", evidence: { reason: "captions.srt block count mismatch", expected: composition.captions.cues.length, actual: blocks } };
-        }
+        const srtFailure = srtBlockCheck(capDir, composition.captions.cues.length);
+        if (srtFailure) return srtFailure;
       }
 
       const { safe, subtitleSize } = brandLayout(composition);

@@ -103,6 +103,18 @@ describe("cacheEvict", () => {
     expect(existsSync(join(c.dir, "k.mp4"))).toBe(true);
   });
 
+  it("sweeps sidecars whose media file is gone, even when the cache is under the limit", () => {
+    const c = cache(10_000);
+    cacheCommit(c, "keep", tmpFile(100), { seconds: 1, bytes: 100, now: "2026-09-22T10:00:00.000Z" });
+    writeFileSync(join(c.dir, "ghost.json"), JSON.stringify({ key: "ghost", seconds: 1, bytes: 1, created_at: "2026-09-22T08:00:00.000Z", last_used_at: "2026-09-22T08:00:00.000Z" }));
+
+    // Housekeeping, not eviction: the counters stay at zero because nothing that took up space was removed.
+    expect(cacheEvict(c)).toEqual({ removed: 0, bytes: 0 });
+    expect(existsSync(join(c.dir, "ghost.json"))).toBe(false);
+    expect(existsSync(join(c.dir, "keep.mp4"))).toBe(true);
+    expect(existsSync(join(c.dir, "keep.json"))).toBe(true);
+  });
+
   it("evicts orphan media files (no sidecar) first, whatever their mtime", () => {
     const c = cache(1500);
     cacheCommit(c, "keep", tmpFile(1000, "a.mp4"), { seconds: 1, bytes: 1000, now: "2026-09-22T08:00:00.000Z" });

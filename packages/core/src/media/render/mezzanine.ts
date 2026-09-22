@@ -11,8 +11,12 @@ export const MEZZ_VERSION = 1;
 
 /**
  * `sha256` hex of the canonicalized (key-sorted) render parameters plus `MEZZ_VERSION` -- stable across
- * property insertion order, changes whenever any parameter (including the version) changes. Callers append
- * `-tail` to this key for the dissolve-tail cache entry, keyed by its own `tail_seconds`.
+ * property insertion order, changes whenever any parameter (including the version) changes.
+ *
+ * A dissolve tail is NOT a suffix of its body's key: it is a separate call with its own `in`/`out` (the
+ * `out .. out + tail_seconds` slice) plus `tail_seconds`, which hashes to an entirely different key. That is
+ * what lets the two live side by side in one flat cache directory as `<key>.mp4`, and what lets a change of
+ * transition length (or kind) invalidate only the tail while the body it belongs to stays a hit.
  */
 export function mezzCacheKey(p: {
   source_checksum: string;

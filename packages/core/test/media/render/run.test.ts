@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { CompositionSchema, newId, type Composition, type MediaProbe, type MediaProber } from "@harness/contracts";
-import { probeNvenc, renderComposition, type RenderDeps, type RenderInput } from "../../../src/media/render/run.js";
+import { probeNvenc, renderComposition, type RenderDeps, type RenderInput, type SpawnFn } from "../../../src/media/render/run.js";
 import { hasFfmpeg } from "../../../../../tests/media.js";
 
 const SRC_A = "src_01JAAAAAAAAAAAAAAAAAAAAAAA";
@@ -141,10 +143,198 @@ function input(o: Partial<RenderInput> & { composition: Composition; outDir: str
   return { assPath: null, encoderCfg: "cpu", timeoutSeconds: 600, ...o };
 }
 
+// ---- fake ffmpeg, for the encoder-fallback and process-failure paths (no GPU, no ffmpeg needed) ----
+
+/** One real `loudnorm` json block, so the measurement and render passes both parse. */
+const LOUDNORM_STDERR = [
+  "[Parsed_loudnorm_5 @ 0x1]",
+  "{",
+  '\t"input_i" : "-23.47",',
+  '\t"input_tp" : "-4.61",',
+  '\t"input_lra" : "6.70",',
+  '\t"input_thresh" : "-33.86",',
+  '\t"output_i" : "-14.03",',
+  '\t"output_tp" : "-1.49",',
+  '\t"output_lra" : "6.60",',
+  '\t"output_thresh" : "-24.40",',
+  '\t"normalization_type" : "linear",',
+  '\t"target_offset" : "0.03"',
+  "}",
+].join("\n");
+
+interface FakePlan {
+  /** Exit code the child reports; `null` stands for "killed by a signal". Defaults to 0. */
+  exit?: number | null;
+  /** Never exit and never emit anything, so `runProcess`'s own timer has to kill it. */
+  hang?: boolean;
+}
+
+/**
+ * A `SpawnFn` that behaves enough like ffmpeg for `renderComposition`: it streams a canned loudnorm block on
+ * stderr and, for any successful encode (an argv carrying `-y` and a real output path), writes a few bytes
+ * to that path so the runner's `statSync`/link/commit steps have a file to work with. `plan` decides per
+ * call what happens, by argv and by call index.
+ */
+function fakeSpawn(plan: (argv: string[], index: number) => FakePlan = () => ({})): { spawn: SpawnFn; calls: string[][]; kills: () => number } {
+  const calls: string[][] = [];
+  let kills = 0;
+
+  const spawn = ((bin: string, args: readonly string[]) => {
+    const argv = [bin, ...args];
+    const index = calls.length;
+    calls.push(argv);
+    const p = plan(argv, index);
+    const exit = p.exit === undefined ? 0 : p.exit;
+
+    const child = new EventEmitter() as EventEmitter & { stderr: Readable; stdout: Readable | null; kill: () => boolean };
+    const err = new Readable({ read() {} });
+    child.stderr = err;
+    child.stdout = null;
+    child.kill = () => {
+      kills++;
+      child.emit("close", null);
+      return true;
+    };
+
+    if (!p.hang) {
+      // `close` only after stderr has fully drained, so the runner has really seen the loudnorm block by the
+      // time it inspects it (a bare setTimeout races the stream).
+      err.on("end", () => {
+        const out = argv[argv.length - 1]!;
+        if (exit === 0 && argv.includes("-y") && out !== "-") writeFileSync(out, Buffer.alloc(4096, 1));
+        child.emit("close", exit);
+      });
+      setTimeout(() => {
+        err.push(LOUDNORM_STDERR);
+        err.push(null);
+      }, 0);
+    }
+    return child as unknown as ReturnType<SpawnFn>;
+  }) as unknown as SpawnFn;
+
+  return { spawn, calls, kills: () => kills };
+}
+
+/** Answers every probe with the same 2-second 4K/48 kHz stereo shape the fake compositions below expect. */
+function fakeProber(): MediaProber {
+  return {
+    async probe(): Promise<MediaProbe | null> {
+      return {
+        media: null, duration_seconds: 2, mime_type: null, container: "mp4",
+        video: { codec: "h264", width: 3840, height: 2160, fps: 25 },
+        audio: { codec: "aac", channels: 2, sample_rate: 48000 },
+      };
+    },
+  };
+}
+
+/** Two 2-second segments off one (never-read) source path. */
+function fakeComposition(): Composition {
+  return composition({
+    total_seconds: 4,
+    segments: [
+      segment({ order: 0, source_id: SRC_A, source_path: "/abs/a.mp4", in: 0, out: 2, start: 0, end: 2, has_audio: true }),
+      segment({ order: 1, source_id: SRC_A, source_path: "/abs/a.mp4", in: 2, out: 4, start: 2, end: 4, has_audio: true }),
+    ],
+  });
+}
+
+function fakeWorld(o: { spawn: SpawnFn; nvenc: boolean }): { d: RenderDeps; outDir: string } {
+  return {
+    d: {
+      ffmpeg: "ffmpeg",
+      prober: fakeProber(),
+      cache: { dir: join(tempDir("fake-cache-"), "mezz"), maxBytes: 1024 * 1024 * 1024 },
+      nvencAvailable: async () => o.nvenc,
+      clock: { now: () => new Date().toISOString() },
+      spawn: o.spawn,
+    },
+    outDir: join(tempDir("fake-out-"), "out"),
+  };
+}
+
+const CHECKSUMS = new Map([[SRC_A, "sha256:" + "f".repeat(64)]]);
+
 describe("probeNvenc", () => {
   it("answers false (never throws) for a binary that cannot run at all", async () => {
     await expect(probeNvenc(join(tempDir("no-ffmpeg-"), "definitely-not-ffmpeg"))).resolves.toBe(false);
   });
+});
+
+describe("renderComposition (fake ffmpeg)", () => {
+  it("an ffmpeg binary that cannot be spawned at all is CONFIG_INVALID, not a transient IO_ERROR", async () => {
+    const outDir = join(tempDir("missing-ffmpeg-out-"), "out");
+    const d: RenderDeps = {
+      ffmpeg: join(tempDir("missing-ffmpeg-"), "definitely-not-ffmpeg"),
+      prober: fakeProber(),
+      cache: { dir: join(tempDir("missing-ffmpeg-cache-"), "mezz"), maxBytes: 1024 * 1024 },
+      nvencAvailable: async () => false,
+      clock: { now: () => new Date().toISOString() },
+    };
+    await expect(renderComposition(d, input({ composition: fakeComposition(), outDir, sourceChecksums: CHECKSUMS })))
+      .rejects.toMatchObject({ code: "CONFIG_INVALID", message: expect.stringContaining("ffmpeg not available") });
+  });
+
+  it("nvenc failing on one segment falls the WHOLE run back to cpu, with a single warning", async () => {
+    // Call 0 is the first mezzanine, on nvenc; everything after it succeeds.
+    const { spawn, calls } = fakeSpawn((_argv, i) => (i === 0 ? { exit: 1 } : {}));
+    const { d, outDir } = fakeWorld({ spawn, nvenc: true });
+
+    const { report } = await renderComposition(d, input({ composition: fakeComposition(), outDir, encoderCfg: "auto", sourceChecksums: CHECKSUMS }));
+
+    expect(report.warnings.filter((w) => w.startsWith("nvenc_segment_fallback"))).toEqual(["nvenc_segment_fallback:0"]);
+    expect(report.encoder).toBe("cpu");
+    expect(report.segments).toMatchObject({ total: 2, rendered: 2, cached: 0 });
+    // Only the one attempt ever asked for NVENC: segment 1 and the final encode went straight to cpu.
+    expect(calls.filter((c) => c.includes("h264_nvenc"))).toHaveLength(1);
+  });
+
+  it("nvenc failing on the final encode retries once on cpu, leaving the mezzanines alone", async () => {
+    let finalAttempts = 0;
+    const { spawn, calls } = fakeSpawn((argv) => {
+      if (!argv.includes("[vout]")) return {};
+      finalAttempts++;
+      return finalAttempts === 1 ? { exit: 1 } : {};
+    });
+    const { d, outDir } = fakeWorld({ spawn, nvenc: true });
+
+    const { report } = await renderComposition(d, input({ composition: fakeComposition(), outDir, encoderCfg: "auto", sourceChecksums: CHECKSUMS }));
+
+    expect(report.warnings).toContain("nvenc_final_fallback");
+    expect(report.warnings.some((w) => w.startsWith("nvenc_segment_fallback"))).toBe(false);
+    expect(report.encoder).toBe("cpu");
+    // Both mezzanines plus the failed final attempt used NVENC; the retry did not.
+    expect(calls.filter((c) => c.includes("h264_nvenc"))).toHaveLength(3);
+    expect(finalAttempts).toBe(2);
+  });
+
+  it('encoderCfg "nvenc" on a machine without NVENC warns and never emits an nvenc argv', async () => {
+    const { spawn, calls } = fakeSpawn();
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+
+    const { report } = await renderComposition(d, input({ composition: fakeComposition(), outDir, encoderCfg: "nvenc", sourceChecksums: CHECKSUMS }));
+
+    expect(report.warnings).toContain("nvenc_unavailable_cpu_fallback");
+    expect(report.encoder).toBe("cpu");
+    expect(calls.some((c) => c.some((a) => a.includes("nvenc")))).toBe(false);
+  });
+
+  it("an ffmpeg killed by a signal (exit code null) is an IO_ERROR", async () => {
+    const { spawn } = fakeSpawn((_argv, i) => (i === 0 ? { exit: null } : {}));
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+
+    await expect(renderComposition(d, input({ composition: fakeComposition(), outDir, encoderCfg: "cpu", sourceChecksums: CHECKSUMS })))
+      .rejects.toMatchObject({ code: "IO_ERROR", message: expect.stringContaining("exited null") });
+  });
+
+  it("an ffmpeg that never exits is killed on the timeout and reported as an IO_ERROR", async () => {
+    const { spawn, kills } = fakeSpawn((_argv, i) => (i === 0 ? { hang: true } : {}));
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+
+    await expect(renderComposition(d, input({ composition: fakeComposition(), outDir, encoderCfg: "cpu", timeoutSeconds: 1, sourceChecksums: CHECKSUMS })))
+      .rejects.toMatchObject({ code: "IO_ERROR", message: expect.stringContaining("timed out") });
+    expect(kills()).toBe(1);
+  }, 20_000);
 });
 
 describe.skipIf(!hasFfmpeg())("renderComposition (needs ffmpeg)", () => {
@@ -205,7 +395,17 @@ describe.skipIf(!hasFfmpeg())("renderComposition (needs ffmpeg)", () => {
     // `render-report.json` lands next to the episode so the stage can declare it as an output verbatim.
     expect(existsSync(join(outDir, "render-report.json"))).toBe(true);
 
-    // Second run, same cache, fresh output dir: no mezzanine is re-encoded.
+    // Truncate one of the two cached mezzanines, leaving its sidecar intact: the key still hits, but the
+    // file no longer probes to the right length, so spec §7 says delete it and render that segment again.
+    const cachedFiles = readdirSync(cacheDir).filter((n) => n.endsWith(".mp4")).sort();
+    expect(cachedFiles).toHaveLength(2);
+    writeFileSync(join(cacheDir, cachedFiles[0]!), Buffer.alloc(1024, 0));
+
+    const outDirCorrupt = join(tempDir("render-out-c-"), "out");
+    const afterCorrupt = await renderComposition(d, input({ composition: comp, outDir: outDirCorrupt, sourceChecksums: checksums }));
+    expect(afterCorrupt.report.segments).toMatchObject({ total: 2, rendered: 1, cached: 1 });
+
+    // Third run, same (now healthy) cache, fresh output dir: no mezzanine is re-encoded.
     const outDir2 = join(tempDir("render-out2-"), "out");
     const second = await renderComposition(d, input({ composition: comp, outDir: outDir2, sourceChecksums: checksums }));
     expect(second.report.segments).toMatchObject({ total: 2, rendered: 0, cached: 2 });
