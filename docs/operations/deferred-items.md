@@ -1036,3 +1036,25 @@ Một mục 5A khác **đóng lại hẳn, không còn là nghi vấn**: giả �
 Task 3, để ngỏ tới lúc có bản render thật với `fontsdir`) đúng trên thực tế — `fonts/arial.ttf` →
 `Fontname: arial` trong ASS, và libass chỉ nhìn `fontsdir` của brand đã vẽ đúng chữ có dấu tiếng Việt ở cả
 năm khung trích ra cho chủ máy xem. Lần chạy 4K thật của Task 11 là bằng chứng; **không cần theo dõi tiếp**.
+
+## Hoãn — ghi nhận ở re-review đợt sửa cuối sub-project 5B (2026-09-23)
+
+Ba điểm nhỏ do chính đợt sửa cuối (`2e791bb`..`5ff1fce`) đưa vào; không mở đợt sửa thứ hai, ghi lại để sub-project
+sau xử lý:
+
+- **Chú thích nói quá ở `packages/core/src/media/child-env.ts:2-3`** và tiêu đề commit `2e791bb` ("no ffmpeg
+  child sees a secret"): `childEnvWithoutSecrets()` mới chỉ áp cho ba chỗ 5B thêm (`render/run.ts`,
+  `composition-checkers.ts frameStdDev`, `media-probe-cache.ts`). Các spawn ffmpeg/ffprobe có từ trước
+  (`media-checkers.ts volumedetect`, `media/watch.ts`, `media/transcribe.ts`, `media/tts.ts`, `library/voices.ts`,
+  `media/index.ts`, `adapters/ffprobe`) vẫn thừa hưởng nguyên `process.env` của worker. Việc cần làm: áp cùng
+  helper cho toàn bộ, rồi sửa chú thích cho đúng.
+- **`rmSync(tmp, { recursive, force })` trong `finally` của `renderComposition`** (`render/run.ts` ~196): `force` chỉ
+  nuốt `ENOENT`; trên Windows một file `tmp/*.mp4` còn bị ffmpeg vừa bị kill giữ tay cầm sẽ ném `EBUSY`/`EPERM`
+  từ `finally` và **thay thế** `IO_ERROR` thật (timeout / exit ≠ 0) bằng lỗi fs không phân loại → tầng stage
+  phân loại sai. Sửa: bọc `try { } catch { }` quanh dọn dẹp hoặc dùng `maxRetries`/`retryDelay`.
+- **Chú thích cũ "one frame of a 260x260 crop"** ở `composition-checkers.ts frameStdDev` (~51-54): kích thước này
+  không còn tồn tại sau khi cửa sổ dò được suy từ brand (`logoCrop`/`captionCrop`).
+
+Hai dung sai đã biết của cửa sổ dò mới (không phải lỗi, chỉ để người sửa sau khỏi ngạc nhiên): `captionCrop()`
+không tính `cue.raise_px` (cue bị nâng vì `lower_third` vẫn giao đủ với dải dò); `logoCrop()` lấy hình vuông
+`2 × height_px` nên logo rộng hơn 2:1 chỉ được dò nửa gần góc.
