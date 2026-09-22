@@ -3,7 +3,7 @@
  * or `timeline.speech[].words` (`voice: original`, one "line" per source segment); `voice: none` yields no
  * cues. Words never merge across a line/segment boundary. */
 import type { CaptionCue, Timeline, Word } from "@harness/contracts";
-import { round3 } from "./time.js";
+import { EPS, round3 } from "./time.js";
 
 export const CAPTION = {
   max_cue_seconds: 6,
@@ -61,9 +61,15 @@ function interpolateLineWords(words: Word[], lineStart: number, lineEnd: number,
 /**
  * Groups one line's (already-timed) words into cue-sized runs, per spec §4.1 point 1: a cue closes right
  * after the word just added when adding the next word would push the joined text over
- * `max_chars_per_line * max_lines` characters, the cue is already longer than `CAPTION.max_cue_seconds`, the
- * word ends a sentence and the cue is already `>= CAPTION.punct_break_min_seconds`, the gap to the next word
- * is `>= CAPTION.silence_break_seconds`, or the line has run out of words.
+ * `max_chars_per_line * max_lines` characters OR push the cue's duration past `CAPTION.max_cue_seconds`
+ * (both are lookaheads at the *next* word, so a cue never overshoots the cap -- a single word longer than
+ * `max_cue_seconds` on its own is still allowed as its own one-word cue, since there is no earlier point to
+ * cut it), the word just added ends a sentence and the cue is already `>= CAPTION.punct_break_min_seconds`,
+ * the gap to the next word is `>= CAPTION.silence_break_seconds`, or the line has run out of words.
+ *
+ * Every threshold comparison here is against a value computed from subtracted floating-point seconds (e.g.
+ * `0.7 - 0.2 === 0.49999999999999994`), so each is padded by `EPS` (see `time.ts`) rather than compared
+ * exactly -- a gap or duration that is the threshold, modulo float dust, must still count as reaching it.
  */
 function groupCueWords(words: Word[], maxCharsPerLine: number, maxLines: number): Word[][] {
   const capacity = maxCharsPerLine * maxLines;
@@ -76,13 +82,14 @@ function groupCueWords(words: Word[], maxCharsPerLine: number, maxLines: number)
     current.push(w);
     text = text.length === 0 ? w.word : `${text} ${w.word}`;
     const next = words[i + 1];
-    const duration = w.end - current[0]!.start;
+    const cueStart = current[0]!.start;
+    const duration = w.end - cueStart;
 
     let close = next === undefined;
     if (!close && next && `${text} ${next.word}`.length > capacity) close = true;
-    if (!close && duration > CAPTION.max_cue_seconds) close = true;
-    if (!close && SENTENCE_END.test(w.word) && duration >= CAPTION.punct_break_min_seconds) close = true;
-    if (!close && next && next.start - w.end >= CAPTION.silence_break_seconds) close = true;
+    if (!close && next && next.end - cueStart > CAPTION.max_cue_seconds + EPS) close = true;
+    if (!close && SENTENCE_END.test(w.word) && duration >= CAPTION.punct_break_min_seconds - EPS) close = true;
+    if (!close && next && next.start - w.end >= CAPTION.silence_break_seconds - EPS) close = true;
 
     if (close) {
       groups.push(current);
@@ -115,7 +122,7 @@ export function buildCaptionCues(p: { timeline: Timeline; max_chars_per_line: nu
     const words = groups[i]!;
     const start = round3(words[0]!.start);
     let end = round3(words[words.length - 1]!.end);
-    if (end - start < CAPTION.min_cue_seconds) {
+    if (end - start < CAPTION.min_cue_seconds - EPS) {
       const next = groups[i + 1];
       const cap = next ? next[0]!.start - CAPTION.cue_gap_seconds : Infinity;
       end = round3(Math.max(start, Math.min(start + CAPTION.min_cue_seconds, cap)));
@@ -170,6 +177,7 @@ function avoidNumberUnitSplit(s: string, cut: number): number {
  * is a safety net, not the normal path: whatever is left becomes the last line, even if it overflows.
  */
 export function wrapLines(text: string, maxChars: number, maxLines: number): string[] {
+  if (text.length === 0) return [];
   if (maxLines <= 1 || text.length <= maxChars) return [text];
 
   const lines: string[] = [];

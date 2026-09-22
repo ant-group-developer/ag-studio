@@ -99,6 +99,47 @@ describe("buildCaptionCues", () => {
     expect(cues[1]!.words.map((word) => word.word)).toEqual(["Gamma", "Delta"]);
   });
 
+  it("splits on a silence gap that floating-point subtraction rounds just under the threshold", () => {
+    const words = [w("Alpha", 0, 0.2), w("Beta", 0.7, 1.0)];
+    // 0.7 - 0.2 === 0.49999999999999994 in IEEE754 -- just under CAPTION.silence_break_seconds (0.5)
+    // without an epsilon, so this gap must still count as a silence break.
+    expect(0.7 - 0.2).toBeLessThan(CAPTION.silence_break_seconds);
+    const timeline = ttsTimeline([{ line_id: "L001", wav: "L001.wav", start: 0, end: 1.0, words }]);
+
+    const { cues } = buildCaptionCues({ timeline, max_chars_per_line: 42, max_lines: 2 });
+
+    expect(cues).toHaveLength(2);
+    expect(cues[0]!.words.map((word) => word.word)).toEqual(["Alpha"]);
+    expect(cues[1]!.words.map((word) => word.word)).toEqual(["Beta"]);
+  });
+
+  it("never lets a cue overshoot max_cue_seconds, closing before the word that would push it past 6s", () => {
+    const words = [w("one", 0, 5.9), w("two", 5.95, 7.5)];
+    const timeline = ttsTimeline([{ line_id: "L001", wav: "L001.wav", start: 0, end: 7.5, words }]);
+
+    const { cues } = buildCaptionCues({ timeline, max_chars_per_line: 42, max_lines: 2 });
+
+    for (const cue of cues) expect(cue.end - cue.start).toBeLessThanOrEqual(CAPTION.max_cue_seconds + 1e-9);
+    expect(cues).toHaveLength(2);
+    expect(cues[0]!.words.map((word) => word.word)).toEqual(["one"]);
+    expect(cues[1]!.words.map((word) => word.word)).toEqual(["two"]);
+  });
+
+  it("caps a short cue's extended end at next.start - cue_gap_seconds, never overlapping the next cue", () => {
+    const timeline = ttsTimeline([
+      { line_id: "L001", wav: "L001.wav", start: 0, end: 0.3, words: [w("Hi", 0, 0.3)] },
+      { line_id: "L002", wav: "L002.wav", start: 0.5, end: 0.9, words: [w("There", 0.5, 0.9)] },
+    ]);
+
+    const { cues } = buildCaptionCues({ timeline, max_chars_per_line: 42, max_lines: 2 });
+
+    expect(cues).toHaveLength(2);
+    // cue0 is under min_cue_seconds (0.3s); start+0.8=0.8 would overlap cue1 (starts 0.5), so the cap binds
+    // at next.start - cue_gap_seconds = 0.5 - 0.05 = 0.45.
+    expect(cues[0]!.end).toBeCloseTo(0.45, 6);
+    expect(cues[0]!.end).toBeLessThanOrEqual(cues[1]!.start);
+  });
+
   it("returns no cues when voice is none", () => {
     const timeline: Timeline = {
       schema_version: "harness.timeline/v1",
@@ -128,6 +169,10 @@ describe("wrapLines", () => {
   it("caps at maxLines, with the last line taking the remainder", () => {
     const lines = wrapLines("one two three four five six seven eight nine ten", 10, 2);
     expect(lines).toHaveLength(2);
+  });
+
+  it("returns no lines for empty text", () => {
+    expect(wrapLines("", 20, 2)).toEqual([]);
   });
 });
 
