@@ -109,7 +109,7 @@ function trackFixture(overrides: Partial<MusicTrack> = {}): MusicTrack {
 /** Builds a real composition (via `buildComposition`) over a workspace where every path it references
  * (`source_path`, narration wav, music path, logo path, brand fonts_dir) exists on disk -- `composition-valid`
  * checks those paths as literally stored, so the fixture has to be a real temp tree, not just JSON. */
-function realComposition(tmp: string) {
+function realComposition(tmp: string, opts: { outOfOrderVideo?: boolean } = {}) {
   const fontsDir = join(tmp, "fonts");
   mkdirSync(fontsDir, { recursive: true });
   const logoPath = join(tmp, "logo.png");
@@ -133,15 +133,19 @@ function realComposition(tmp: string) {
     logo_path: logoPath,
   };
 
+  const video: Timeline["video"] = [
+    { order: 0, source_id: SRC_A, in: 0, out: 5, start: 0, end: 5 },
+    { order: 1, source_id: SRC_A, in: 5, out: 10, start: 5, end: 10 },
+  ];
   const timeline: Timeline = {
     schema_version: "harness.timeline/v1",
     voice: "tts",
     language: "en",
     total_seconds: 10,
-    video: [
-      { order: 0, source_id: SRC_A, in: 0, out: 5, start: 0, end: 5 },
-      { order: 1, source_id: SRC_A, in: 5, out: 10, start: 5, end: 10 },
-    ],
+    // `timeline.json` on disk is written exactly as `buildComposition` received it (fix round 1, Important 2
+    // regression test): out of order here must still let composition-valid match segments to it by `order`,
+    // not by array index.
+    video: opts.outOfOrderVideo ? [video[1]!, video[0]!] : video,
     narration: [
       {
         line_id: "L001",
@@ -220,6 +224,17 @@ describe("composition-valid", () => {
   it("passes a composition built end-to-end from a real timeline/brand/music fixture", async () => {
     const ws = tmpWorkspace("composition-valid-ws-");
     const built = realComposition(ws);
+    const { request, result } = writeWorkspace(ws, built);
+    const outcome = await checker().check({ request, result, workspaceDir: ws });
+    expect(outcome.verdict).toBe("pass");
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("still passes when timeline.json's video[] is not order-ascending -- segments are matched to it by order, not array index", async () => {
+    const ws = tmpWorkspace("composition-valid-ws-");
+    const built = realComposition(ws, { outOfOrderVideo: true });
+    expect(built.timeline.video.map((v) => v.order)).toEqual([1, 0]); // the input really is out of order
+    expect(built.composition.segments.map((s) => s.order)).toEqual([0, 1]); // buildComposition still sorts its output
     const { request, result } = writeWorkspace(ws, built);
     const outcome = await checker().check({ request, result, workspaceDir: ws });
     expect(outcome.verdict).toBe("pass");

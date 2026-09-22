@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { CompositionSchema, isHarnessError, newId, type BrandProfile, type MediaConfig, type MusicTrack, type Overlays, type Timeline } from "@harness/contracts";
 import { buildComposition, type ComposeInput } from "../../src/media/compose.js";
 import { countDialogues } from "../../src/media/ass.js";
+import { assignTransitions } from "../../src/media/transitions.js";
 import type { LoadedBrand } from "../../src/library/brands.js";
 
 const SRC_A = "src_01JAAAAAAAAAAAAAAAAAAAAAAA";
@@ -210,6 +211,52 @@ describe("buildComposition", () => {
       expect.fail("expected buildComposition to throw");
     } catch (e) {
       expect(isHarnessError(e, "CONFIG_INVALID")).toBe(true);
+    }
+  });
+
+  it("forces captions.mode to 'none' with no brand even when subtitlesOverride asks for karaoke -- there is no font/style to burn it with, and buildAss always emits zero Dialogue lines with no brand", () => {
+    const input = baseInput({ brand: null, subtitlesOverride: "karaoke" });
+    const { composition, ass } = buildComposition(input);
+
+    expect(composition.captions.mode).toBe("none");
+    // cues are still computed for SRT/VTT even though there is no brand to burn them in with.
+    expect(composition.captions.cues.length).toBeGreaterThan(0);
+    expect(composition.text_events).toEqual([]);
+    expect(countDialogues(ass)).toBe(0);
+    // The exact equation composition-valid's dialogue-count check enforces: with mode "none" the cue count
+    // does not enter it at all, so a non-empty cues[] can never desync it from the (empty) ASS.
+    const expectedDialogues = (composition.captions.mode === "none" ? 0 : composition.captions.cues.length) + composition.text_events.length;
+    expect(countDialogues(ass)).toBe(expectedDialogues);
+  });
+
+  it("builds segments and their transition_out from an order-sorted copy of timeline.video, so an out-of-order input still lines each transition up with its own segment", () => {
+    const timeline: Timeline = {
+      schema_version: "harness.timeline/v1",
+      voice: "none",
+      language: "en",
+      total_seconds: 15,
+      video: [
+        { order: 1, source_id: SRC_A, in: 5, out: 10, start: 5, end: 10 },
+        { order: 0, source_id: SRC_A, in: 0, out: 5, start: 0, end: 5 },
+        { order: 2, source_id: SRC_A, in: 10, out: 15, start: 10, end: 15 },
+      ],
+      narration: [],
+      speech: [],
+    };
+    const sourceDurations = new Map([[SRC_A, 20]]);
+    const brand = brandProfileFixture({ transition: { kind: "dissolve", seconds: 0.4 } });
+    const input = baseInput({ timeline, overlays: null, brand: loadedBrandFixture({ transition: { kind: "dissolve", seconds: 0.4 } }) });
+    const { composition } = buildComposition(input);
+
+    // Segments come out order-ascending regardless of the input's own order.
+    expect(composition.segments.map((s) => s.order)).toEqual([0, 1, 2]);
+
+    // Independently-computed expectation: assignTransitions sorts its own copy internally, so it produces
+    // the same transition_out per `order` no matter what order `timeline.video` is handed in.
+    const expected = assignTransitions({ timeline, overlays: null, brand, sourceDurations });
+    for (const seg of composition.segments) {
+      const expectedIndex = [0, 1, 2].indexOf(seg.order);
+      expect(seg.transition_out).toEqual(expected.transition_out[expectedIndex]);
     }
   });
 });

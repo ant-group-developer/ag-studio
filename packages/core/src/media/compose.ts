@@ -101,7 +101,12 @@ export function buildComposition(p: ComposeInput): { composition: Composition; s
   const { transition_out, summary: transitionsSummary } = assignTransitions({ timeline, overlays: p.overlays, brand: brandProfile, sourceDurations });
 
   const fit = brandProfile?.source_fit ?? "scale_pad";
-  const segments: CompositionSegment[] = timeline.video.map((seg, k) => {
+  // `assignTransitions` sorts its own copy of `timeline.video` by `order` before building `transition_out`
+  // (fix round 1, Important 2), so `segments` has to walk the SAME order-sorted sequence -- otherwise
+  // `transition_out[k]` (indexed into the sorted array) would zip onto the wrong segment whenever the caller
+  // hands in a `timeline.video` that is not already order-ascending.
+  const sortedVideo = [...timeline.video].sort((a, b) => a.order - b.order);
+  const segments: CompositionSegment[] = sortedVideo.map((seg, k) => {
     const source = requireSource(p.sources, seg.source_id);
     return {
       order: seg.order,
@@ -133,7 +138,12 @@ export function buildComposition(p: ComposeInput): { composition: Composition; s
     overlayWarnings = ["overlays_ignored_no_brand"];
   }
 
-  const mode: SubtitleMode = p.subtitlesOverride ?? (brandProfile !== null ? brandProfile.subtitles.mode : "none");
+  // `subtitlesOverride` only ever picks a mode BETWEEN what a brand offers -- with no brand there is no font,
+  // no highlight color, no `buildAss` styling at all, so `buildAss` always emits zero Dialogue lines
+  // regardless of `mode` (fix round 1, Important 1). Letting an override force "karaoke"/"burn-in" here would
+  // produce a `captions.mode` that promises burned-in text the ASS can never deliver, and would fail
+  // `composition-valid`'s own dialogue-count check the moment cues are non-empty.
+  const mode: SubtitleMode = brandProfile !== null ? (p.subtitlesOverride ?? brandProfile.subtitles.mode) : "none";
   const maxCharsPerLine = brandProfile?.subtitles.max_chars_per_line ?? DEFAULT_MAX_CHARS_PER_LINE;
   const maxLines = brandProfile?.subtitles.max_lines ?? DEFAULT_MAX_LINES;
   const { cues: rawCues, warnings: captionWarnings } = buildCaptionCues({ timeline, max_chars_per_line: maxCharsPerLine, max_lines: maxLines });

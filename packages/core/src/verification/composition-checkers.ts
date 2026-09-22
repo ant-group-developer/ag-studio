@@ -194,10 +194,14 @@ export function compositionCheckers(opts: { prober: MediaProber; available?: boo
       if (composition.segments.length !== timeline.video.length) {
         return { verdict: "fail", evidence: { reason: "segment count mismatch", expected: timeline.video.length, actual: composition.segments.length } };
       }
-      for (let i = 0; i < timeline.video.length; i++) {
-        const seg = composition.segments[i]!;
-        const t = timeline.video[i]!;
-        if (seg.order !== t.order) return { verdict: "fail", evidence: { reason: "segment field mismatch", index: i, field: "order", expected: t.order, actual: seg.order } };
+      // Matched by `order`, not array index (fix round 1, Important 2): `buildComposition` builds `segments`
+      // from an order-sorted copy of `timeline.video`, so a `timeline.json` whose own `video[]` is not
+      // order-ascending would otherwise compare the wrong pair of entries here even though the composition
+      // itself is correct.
+      const timelineByOrder = new Map(timeline.video.map((t) => [t.order, t]));
+      for (const seg of composition.segments) {
+        const t = timelineByOrder.get(seg.order);
+        if (!t) return { verdict: "fail", evidence: { reason: "segment order not found in timeline", order: seg.order } };
         if (seg.source_id !== t.source_id) return { verdict: "fail", evidence: { reason: "segment field mismatch", order: t.order, field: "source_id", expected: t.source_id, actual: seg.source_id } };
         for (const field of ["in", "out", "start", "end"] as const) {
           if (Math.abs(seg[field] - t[field]) > 0.001) {
