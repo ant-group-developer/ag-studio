@@ -1,6 +1,6 @@
 export interface StageInputLike { artifact_id: string; checksum: string; path: string; type: string; kind: "file" | "directory" }
 export interface SourceItemLike { source_id: string; uri: string; checksum: string; mime_type: string; duration_seconds: number | null }
-export interface ExpectedOutputLike { type: string; mime_type: string; kind: "file" | "directory"; name?: string }
+export interface ExpectedOutputLike { type: string; mime_type: string; kind: "file" | "directory"; name?: string; optional?: boolean }
 export interface StageRequestLike {
   schema_version: string; run_id: string; stage_run_id: string; attempt_id: string; project_id: string; portfolio_id: string; stage_key: string;
   workflow: { id: string; version: string; digest: string }; profile_snapshot: { id: string; revision: number };

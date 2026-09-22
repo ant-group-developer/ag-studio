@@ -1,13 +1,21 @@
 schema_version: harness.production-profile/v1
 profile_id: studio
-revision: 3
+revision: 4
 status: active
-workflow_release: library-production@1.2.0
+workflow_release: library-production@1.3.0
 overrides: { default_deadline_seconds: 14400 }
 options_schema:
   voice: [none, tts, original]
-  subtitles: ["true", "false"]
-options_defaults: { voice: none, subtitles: "false" }
+  # Sub-project 5B: `subtitles` finally means something -- it overrides `brand.subtitles.mode` for this one
+  # episode. `"true"`/absent means "the brand decides"; `"false"` (the historical default, which used to mean
+  # nothing at all) maps to `none`, so an existing request keeps behaving exactly as it did.
+  subtitles: ["burn-in", "karaoke", "none", "true", "false"]
+# `subtitles` defaults to "true" from revision 4 on, i.e. "the brand decides" (`brand.subtitles.mode`,
+# itself defaulting to burn-in). It was "false" while the option meant nothing at all; leaving it there
+# would have silently forced EVERY episode to render without subtitles the moment the option started being
+# read, which is the opposite of what a channel setting `brand.subtitles.mode` asks for. An episode that
+# really wants no subtitles still says so explicitly with `--option subtitles=none` (or "false").
+options_defaults: { voice: none, subtitles: "true" }
 reuse: allow
 content:
   target_duration_seconds: [1, 1800]

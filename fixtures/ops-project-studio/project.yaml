@@ -34,4 +34,4 @@ adapters:
 # 1.1.0 in tests via freshLibraryWorld's own `library.auto_accept.workflow_release` (task 8 binding
 # decision B) -- this fixture does NOT set `library.auto_accept.source_collections` (LEGACY auto-accept
 # mode stays exactly sub-project 4's, one source per request).
-workflows: [style-study@1.0.0, style-study@1.1.0, library-production@1.0.0, library-production@1.1.0, library-production@1.2.0]
+workflows: [style-study@1.0.0, style-study@1.1.0, library-production@1.0.0, library-production@1.1.0, library-production@1.2.0, library-production@1.3.0]

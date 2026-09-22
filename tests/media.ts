@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 
 /** Shared by the ffprobe adapter test and any future media-adapter test: generate small real media files with ffmpeg. */
 
@@ -13,6 +14,18 @@ export function hasFfmpeg(): boolean {
   const ffmpeg = spawnSync(ffmpegPath(), ["-version"]);
   const ffprobe = spawnSync(ffprobePath(), ["-version"]);
   return ffmpeg.status === 0 && ffprobe.status === 0;
+}
+
+/** The harness ships no font (sub-project 5B, binding constraint), so any test that needs a real `.ttf` --
+ * a brand profile, burned-in text -- borrows one from the operating system and SKIPS when there is none.
+ * `undefined` is the signal to skip, never a reason to fail. */
+export function systemFontPath(): string | undefined {
+  const candidates = [
+    "C:\\Windows\\Fonts\\arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+  ];
+  return candidates.find((p) => existsSync(p));
 }
 
 function run(bin: string, args: string[]): void {

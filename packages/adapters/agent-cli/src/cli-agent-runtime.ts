@@ -19,7 +19,7 @@ export type AgentCliRuntimeKind = "claude" | "codex";
 // Sub-project 5A task 8 adds FAKE_NARRATION_CHARS: the length of each fake `narration.json` line's
 // placeholder text (edit-plan skill, library-production@1.2.0), used by media-fit-edl tests that need a
 // narration line longer than the footage a fake shoot provides.
-const FAKE_AGENT_TEST_ENV = ["FAKE_AGENT_MODE", "FAKE_REVIEW_MODE", "FAKE_AGENT_FAIL_STAGE", "FAKE_STYLE_STATUS", "FAKE_STYLE_REVIEW", "FAKE_ANGLE", "FAKE_METRIC", "FAKE_NARRATION_CHARS"];
+const FAKE_AGENT_TEST_ENV = ["FAKE_AGENT_MODE", "FAKE_REVIEW_MODE", "FAKE_AGENT_FAIL_STAGE", "FAKE_STYLE_STATUS", "FAKE_STYLE_REVIEW", "FAKE_ANGLE", "FAKE_METRIC", "FAKE_NARRATION_CHARS", "FAKE_OVERLAYS"];
 
 export const RUNTIME_COMMANDS: Record<AgentCliRuntimeKind, { argv: string[]; env_passthrough: string[] }> = {
   claude: {
@@ -161,7 +161,13 @@ export class CliAgentRuntime implements AgentRuntime {
       if (!eo.name) return failed("contract", "expected_outputs entry has no name", { type: eo.type });
       const rel = `output/${eo.name}`;
       const abs = join(task.workspaceDir, rel);
-      if (!existsSync(abs)) return failed("contract", `agent wrote no output/${eo.name}`, { name: eo.name });
+      // Sub-project 5B: an `optional: true` output the agent chose not to write is simply absent from
+      // `outputs` -- no artifact, no contract failure. Every downstream consumer already treats a missing
+      // input of that type as "there is none" (`media-compose` composes without overlays).
+      if (!existsSync(abs)) {
+        if (eo.optional) continue;
+        return failed("contract", `agent wrote no output/${eo.name}`, { name: eo.name });
+      }
       if (eo.kind === "directory") {
         const { checksum, size_bytes } = directoryListing(abs);
         outputs.push({ path: rel, type: eo.type, checksum, size_bytes, kind: "directory" });

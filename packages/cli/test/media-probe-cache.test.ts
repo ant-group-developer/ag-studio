@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { MediaEngine, MediaEngineProbe } from "@harness/contracts";
-import { _resetMediaProbeCacheForTests, gpuCurrentlyLeased, MEDIA_PROBE_TTL_SECONDS, mediaProbeCacheKey, resolveMediaProbe } from "../src/media-probe-cache.js";
+import { _resetMediaProbeCacheForTests, _resetNvencProbeCacheForTests, gpuCurrentlyLeased, MEDIA_PROBE_TTL_SECONDS, mediaProbeCacheKey, NVENC_PROBE_TTL_SECONDS, resolveMediaProbe, resolveNvencProbe } from "../src/media-probe-cache.js";
 
 const HEALTHY_PROBE: MediaEngineProbe = {
   python: "/usr/bin/python3.11", packages: { torch: "2.3.0", omnivoice: "0.1.0", whisperx: "3.1.1" }, cuda: true,
@@ -130,5 +130,51 @@ describe("gpuCurrentlyLeased", () => {
     expect(gpuCurrentlyLeased({ countLeasedResources: () => ({ gpu: 0 }) })).toBe(false);
     expect(gpuCurrentlyLeased({ countLeasedResources: () => ({}) })).toBe(false);
     expect(gpuCurrentlyLeased({ countLeasedResources: () => ({ cpu: 3 }) })).toBe(false);
+  });
+});
+
+// Sub-project 5B Task 8: the NVENC probe behind the same kind of TTL cache. `media-render` would otherwise
+// spawn a throwaway ffmpeg encode before every single episode.
+describe("resolveNvencProbe", () => {
+  beforeEach(() => {
+    _resetNvencProbeCacheForTests();
+  });
+
+  it("probes once, then serves the cached answer until the TTL expires", async () => {
+    const clock = clockAt(1_000_000);
+    let calls = 0;
+    const probe = async (): Promise<boolean> => { calls++; return true; };
+
+    expect(await resolveNvencProbe({ ffmpeg: "ffmpeg", probe, nowMs: clock.nowMs })).toBe(true);
+    expect(await resolveNvencProbe({ ffmpeg: "ffmpeg", probe, nowMs: clock.nowMs })).toBe(true);
+    expect(calls).toBe(1);
+
+    clock.advance((NVENC_PROBE_TTL_SECONDS - 1) * 1000);
+    expect(await resolveNvencProbe({ ffmpeg: "ffmpeg", probe, nowMs: clock.nowMs })).toBe(true);
+    expect(calls).toBe(1);
+
+    clock.advance(2000);
+    expect(await resolveNvencProbe({ ffmpeg: "ffmpeg", probe, nowMs: clock.nowMs })).toBe(true);
+    expect(calls).toBe(2);
+  });
+
+  it("caches a negative answer just as long: a machine with no NVENC must not re-probe every render", async () => {
+    const clock = clockAt(0);
+    let calls = 0;
+    const probe = async (): Promise<boolean> => { calls++; return false; };
+
+    expect(await resolveNvencProbe({ ffmpeg: "ffmpeg", probe, nowMs: clock.nowMs })).toBe(false);
+    expect(await resolveNvencProbe({ ffmpeg: "ffmpeg", probe, nowMs: clock.nowMs })).toBe(false);
+    expect(calls).toBe(1);
+  });
+
+  it("keys on the ffmpeg binary, so two builds never share an answer", async () => {
+    const clock = clockAt(0);
+    const seen: string[] = [];
+    const probe = async (bin: string): Promise<boolean> => { seen.push(bin); return bin === "ffmpeg-nvenc"; };
+
+    expect(await resolveNvencProbe({ ffmpeg: "ffmpeg", probe, nowMs: clock.nowMs })).toBe(false);
+    expect(await resolveNvencProbe({ ffmpeg: "ffmpeg-nvenc", probe, nowMs: clock.nowMs })).toBe(true);
+    expect(seen).toEqual(["ffmpeg", "ffmpeg-nvenc"]);
   });
 });

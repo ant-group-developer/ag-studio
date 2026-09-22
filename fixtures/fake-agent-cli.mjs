@@ -32,6 +32,13 @@
 //                          `brief.json.voice === "tts"` (default 40; a `media-fit-edl` test wanting a line
 //                          longer than the footage available raises this). Ignored (fixed at 20) once
 //                          `brief.json.request_notes` contains "thiếu" -- simulating a replanned, shorter line.
+//
+// Extra env var for sub-project 5B task 8's `overlays.json` (edit-plan skill, library-production@1.3.0):
+//   FAKE_OVERLAYS   none | medium (default) | dense | invalid -- see buildOverlays below. `none` writes NO
+//                   overlays.json at all (the output is `optional: true`, so the runtime must accept that);
+//                   `dense` and `invalid` exist to make `overlays-valid` fail on purpose. A
+//                   `brief.json.request_notes` containing "chữ" forces `medium`, simulating a replan after a
+//                   text-related rejection.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -264,6 +271,61 @@ function buildNarration() {
   return { schema_version: "harness.narration/v1", language, lines };
 }
 
+/** `FAKE_OVERLAYS` for this run: the env var, except that a brief whose `request_notes` mention "chữ" (a
+ * text-related rejection carried into the replan) always goes back to the safe `medium` plan. */
+function overlaysMode() {
+  const briefInput = findInput("brief");
+  const brief = briefInput ? tryReadJsonAt(briefInput.path) : null;
+  if (typeof brief?.request_notes === "string" && brief.request_notes.includes("chữ")) return "medium";
+  return process.env.FAKE_OVERLAYS ?? "medium";
+}
+
+/**
+ * `harness.overlays/v1` (sub-project 5B §3). `medium` (the default) is a plan `overlays-valid` accepts: one
+ * `title` anchored at the first narration line (`L001`) -- or at `edl_order 0` when there is no narration to
+ * anchor to -- plus one `callout` at the middle EDL entry, and `music.mood: "calm"`. `dense` writes 30
+ * callouts on one `edl_order` so the density/spacing rule fails; `invalid` anchors at a `line_id` no
+ * narration has.
+ */
+function buildOverlays() {
+  const mode_ = overlaysMode();
+  const edl = buildEdl();
+  const narration = buildNarration();
+  const orders = edl.entries.map((e) => e.order);
+  const firstOrder = orders[0] ?? 0;
+  const midOrder = orders[Math.floor(orders.length / 2)] ?? firstOrder;
+
+  if (mode_ === "dense") {
+    return {
+      schema_version: "harness.overlays/v1",
+      items: Array.from({ length: 30 }, (_, i) => ({
+        id: `OV${String(i + 1).padStart(3, "0")}`, kind: "callout", text: `chữ ${i + 1}`, anchor: { edl_order: firstOrder }, seconds: 3,
+      })),
+      transitions: [],
+      music: { mood: "calm" },
+    };
+  }
+  if (mode_ === "invalid") {
+    return {
+      schema_version: "harness.overlays/v1",
+      items: [{ id: "OV01", kind: "title", text: "Tiêu đề sai neo", anchor: { line_id: "L999" }, seconds: 4 }],
+      transitions: [],
+      music: { mood: "calm" },
+    };
+  }
+
+  const titleAnchor = narration.lines.length > 0 ? { line_id: narration.lines[0].line_id } : { edl_order: firstOrder };
+  return {
+    schema_version: "harness.overlays/v1",
+    items: [
+      { id: "OV01", kind: "title", text: "Tiêu đề mở đầu", anchor: titleAnchor, seconds: 4 },
+      { id: "OV02", kind: "callout", text: "Điểm nhấn", anchor: { edl_order: midOrder }, seconds: 3 },
+    ],
+    transitions: [],
+    music: { mood: "calm" },
+  };
+}
+
 const REVIEW_CHECK_IDS = ["duration_in_range", "no_black_or_frozen_over_2s", "opening_matches_style", "text_not_clipped", "audio_present", "thumbnails_textless"];
 
 /** `harness.review/v1` per FAKE_REVIEW_MODE: "approve" (default) always approves; "reject-always" always
@@ -286,19 +348,48 @@ function buildReview() {
   const shortfalls = fitReport?.shortfalls ?? [];
   const footageRejected = Boolean(fitReport && (shortfalls.length > 0 || (fitReport.reused_seconds ?? 0) > 5 || fitReport.within_target === false));
 
-  const rejected = footageRejected || (mode_ === "reject-always" ? true : mode_ === "reject-once" ? !hasNotes : false);
+  // Sub-project 5B (library-production@1.3.0): the composition side of the review. `render-report.json`
+  // (`render_report` input) is the authority on what was actually rendered; `composition.json` carries the
+  // same `warnings`/`text_dropped` and is read alongside it, exactly as the skill tells a real reviewer to.
+  const renderReport = findInput("render_report") ? tryReadJsonAt(findInput("render_report").path) : null;
+  const composition = findInput("composition") ? tryReadJsonAt(findInput("composition").path) : null;
+  const downgraded = renderReport?.transitions?.downgraded ?? [];
+  const requestedTransitions = renderReport?.transitions?.requested ?? 0;
+  const droppedText = renderReport?.text_events?.dropped ?? composition?.text_dropped ?? [];
+  const musicTrackId = renderReport ? (renderReport.music?.track_id ?? null) : undefined;
+  const musicReason = renderReport?.music?.reason ?? composition?.music_reason;
+  const musicMissing = Boolean(renderReport && musicTrackId === null && !["no_brand", "brand_no_tracks"].includes(String(musicReason)));
+  const transitionsBroken = requestedTransitions > 0 && downgraded.length > 0.3 * requestedTransitions;
+  const renderRejected = Boolean(renderReport) && (transitionsBroken || droppedText.length > 0 || musicMissing);
+
+  /** Every rejection reason EXCEPT the composition-side one -- the two write different `checks` entries. */
+  const otherRejected = footageRejected || (mode_ === "reject-always" ? true : mode_ === "reject-once" ? !hasNotes : false);
+  const rejected = otherRejected || renderRejected;
   // A `within_target: false` rejection with NO shortfall is a different fault from "the lines have no
   // picture": the picture covers the script fine, the programme is simply the wrong length. Saying "thiếu
   // 0.0 s ở " there (what this used to write) tells a replanned `edit-plan` nothing at all, so name the
   // measured duration and the target instead -- the real `library-review` skill's step 0 does the same.
   const overshot = Boolean(fitReport && shortfalls.length === 0 && fitReport.within_target === false);
   const checks = REVIEW_CHECK_IDS.map((id) => ({ id, pass: true, note: "" }));
-  if (rejected) {
+  // A composition-side rejection (5B) names the overlay ids / `before_order`s that need replanning, so a
+  // replanned `edit-plan` fixes the right items (spec §6.3). It fails `text_not_clipped`, not the duration
+  // check the footage path uses, and it is decided BEFORE the footage/`FAKE_REVIEW_MODE` notes below so a
+  // rejection reason is never attributed to the wrong check.
+  const renderNote = renderRejected
+    ? "fake agent: " + [
+      droppedText.length > 0 ? `chữ bị bỏ: ${droppedText.map((d) => `${d.id} (${d.reason})`).join(", ")}` : "",
+      transitionsBroken ? `chuyển cảnh hạ cấp: ${downgraded.map((d) => `before_order ${d.before_order} (${d.reason})`).join(", ")}` : "",
+      musicMissing ? `nhạc không chọn được: ${String(musicReason ?? "unknown")}` : "",
+    ].filter(Boolean).join("; ")
+    : "";
+  if (renderRejected) checks[3] = { id: REVIEW_CHECK_IDS[3], pass: false, note: renderNote };
+  if (otherRejected) {
     const footageNote = overshot
       ? `fake agent: ${Number(fitReport.total_seconds ?? 0).toFixed(1)} s ngoài khoảng đích ${JSON.stringify(fitReport.target_duration_seconds ?? [])}`
       : "fake agent: thiếu hình cho lời (media-fit-edl)";
     checks[0] = { id: REVIEW_CHECK_IDS[0], pass: false, note: footageRejected ? footageNote : "fake agent: thời lượng vượt khoảng đích tại t=95.0s" };
   }
+  if (renderRejected) return { schema_version: "harness.review/v1", decision: "rejected", note: renderNote, checks };
 
   let note;
   if (overshot) {
@@ -409,6 +500,10 @@ function buildTopicProposal() {
 mkdirSync(join(cwd, "output"), { recursive: true });
 for (const eo of request.expected_outputs ?? []) {
   if (!eo.name) continue;
+  // `FAKE_OVERLAYS=none`: write no overlays.json at all. The output is declared `optional: true` in
+  // `library-production@1.3.0`, so the runtime must accept the stage without it -- an edit plan with no text
+  // on screen is a legitimate plan.
+  if (eo.type === "overlays" && overlaysMode() === "none") continue;
   const outPath = join(cwd, "output", eo.name);
   if (eo.kind === "directory") {
     mkdirSync(outPath, { recursive: true });
@@ -429,6 +524,7 @@ for (const eo of request.expected_outputs ?? []) {
     // 1.1.0's narration output is text/plain narration.txt (always empty, unchanged); 1.2.0's is
     // application/json narration.json (harness.narration/v1, task 8).
     case "narration": content = eo.mime_type === "application/json" ? JSON.stringify(buildNarration(), null, 2) : ""; break;
+    case "overlays": content = JSON.stringify(buildOverlays(), null, 2); break;
     case "review": content = JSON.stringify(buildReview(), null, 2); break;
     default: content = JSON.stringify({ fake: true });
   }

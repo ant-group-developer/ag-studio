@@ -17,7 +17,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { ChannelPackageDraftSchema, EdlSchema, EditStyleSchema, NarrationSchema, newId, reviewSchema, surveyIndexSchema, TopicProposalSchema, type StageRequest } from "@harness/contracts";
+import { ChannelPackageDraftSchema, EdlSchema, EditStyleSchema, NarrationSchema, newId, OverlaysSchema, reviewSchema, surveyIndexSchema, TopicProposalSchema, type StageRequest } from "@harness/contracts";
 
 const skillsDir = fileURLToPath(new URL("../../../../skills", import.meta.url));
 const fixture = fileURLToPath(new URL("../../../../fixtures/fake-agent-cli.mjs", import.meta.url));
@@ -553,6 +553,178 @@ describe("fake-agent-cli.mjs: sub-project 5A task 8 (multi-source survey/edl/nar
   });
 });
 
+const RENDER_REPORT_JSON = (o: {
+  downgraded?: { before_order: number; reason: "no_tail" | "next_too_short" | "too_short" }[];
+  requested?: number;
+  dropped?: { id: string; reason: string }[];
+  trackId?: string | null;
+  musicReason?: string;
+} = {}) => JSON.stringify({
+  schema_version: "harness.render-report/v1", encoder: "cpu", codec: "h264",
+  output: { width: 3840, height: 2160, fps: 30, seconds: 12, bytes: 1234 },
+  segments: { total: 2, rendered: 2, cached: 0, mezz_seconds: 12 },
+  transitions: { requested: o.requested ?? 0, applied: 0, downgraded: o.downgraded ?? [] },
+  captions: { mode: "burn-in", cues: 3 },
+  text_events: { total: 2, dropped: o.dropped ?? [] },
+  music: { track_id: o.trackId === undefined ? "calm-01" : o.trackId, loop: false, ...(o.musicReason ? { reason: o.musicReason } : {}) },
+  loudness: { integrated_lufs: -14, true_peak_dbtp: -1.2, lra: 7 },
+  brand: "present", warnings: [], render_seconds: 30, ffmpeg_version: "8.1",
+});
+
+const COMPOSITION_JSON = (o: { dropped?: { id: string; reason: string }[]; warnings?: string[] } = {}) => JSON.stringify({
+  schema_version: "harness.composition/v1",
+  output: { width: 3840, height: 2160, fps: 30, codec: "h264" },
+  voice: "none", language: "vi", total_seconds: 12, request_id: newId("content_request"),
+  brand: null, segments: [], text_events: [], captions: { mode: "none", cues: [] }, music: null,
+  logo: null, narration: [], transitions: { requested: 0, applied: 0, downgraded: [] },
+  text_dropped: o.dropped ?? [], warnings: o.warnings ?? [],
+});
+
+// Sub-project 5B task 8: the `overlays.json` branch of `edit-plan` (FAKE_OVERLAYS) and the
+// composition-aware `library-review` (render_report + composition inputs).
+describe("fake-agent-cli.mjs: sub-project 5B task 8 (overlays.json, composition-aware review)", () => {
+  const PLAN_EDIT_OUTPUTS = (o: { optionalOverlays?: boolean } = {}) => [
+    { type: "edl", mime_type: "application/json", kind: "file" as const, name: "edl.json" },
+    { type: "edit_plan", mime_type: "application/json", kind: "file" as const, name: "edit-plan.json" },
+    { type: "narration", mime_type: "application/json", kind: "file" as const, name: "narration.json" },
+    { type: "overlays", mime_type: "application/json", kind: "file" as const, name: "overlays.json", ...(o.optionalOverlays === false ? {} : { optional: true }) },
+  ];
+
+  function planEditWorkspace(o: { voice?: "none" | "tts"; requestNotes?: string } = {}): { ws: string; req: StageRequest } {
+    const ws = tmpWorkspace();
+    const sourceIds = [newId("source_item"), newId("source_item")];
+    const shotsInput = fileInput(ws, "inputs/shots.json", SHOTS_JSON_V2(sourceIds), "shots");
+    const briefJson = JSON.stringify({
+      topic: "test", style_id: newId("edit_style"), style_revision: 1,
+      voice: o.voice ?? "tts", language: "vi", request_notes: o.requestNotes ?? "",
+    });
+    const briefInput = fileInput(ws, "inputs/brief.json", briefJson, "brief");
+    return { ws, req: makeRequest(ws, { stage_key: "plan-edit", inputs: [shotsInput, briefInput], expected_outputs: PLAN_EDIT_OUTPUTS() }) };
+  }
+
+  it("edit-plan default (medium): a schema-valid overlays.json with one title anchored at L001 and one callout on a real edl_order", () => {
+    const { ws, req } = planEditWorkspace({ voice: "tts" });
+    const r = run(ws, req);
+    expect(r.status, `stderr: ${r.err}`).toBe(0);
+
+    const overlays = JSON.parse(readFileSync(join(ws, "output", "overlays.json"), "utf8"));
+    const parsed = OverlaysSchema.safeParse(overlays);
+    expect(parsed.success, JSON.stringify(parsed.success ? undefined : parsed.error.issues)).toBe(true);
+
+    const edl = JSON.parse(readFileSync(join(ws, "output", "edl.json"), "utf8")) as { entries: { order: number }[] };
+    const narration = JSON.parse(readFileSync(join(ws, "output", "narration.json"), "utf8")) as { lines: { line_id: string }[] };
+    const orders = new Set(edl.entries.map((e) => e.order));
+
+    expect(overlays.items.filter((i: { kind: string }) => i.kind === "title")).toHaveLength(1);
+    expect(overlays.items[0].anchor).toEqual({ line_id: narration.lines[0]!.line_id });
+    expect(orders.has(overlays.items[1].anchor.edl_order)).toBe(true);
+    expect(overlays.music).toEqual({ mood: "calm" });
+  });
+
+  it("edit-plan with voice: none (no narration lines) anchors the title at a real edl_order instead", () => {
+    const { ws, req } = planEditWorkspace({ voice: "none" });
+    expect(run(ws, req).status).toBe(0);
+    const overlays = JSON.parse(readFileSync(join(ws, "output", "overlays.json"), "utf8"));
+    expect(OverlaysSchema.safeParse(overlays).success).toBe(true);
+    const edl = JSON.parse(readFileSync(join(ws, "output", "edl.json"), "utf8")) as { entries: { order: number }[] };
+    const orders = new Set(edl.entries.map((e) => e.order));
+    expect(orders.has(overlays.items[0].anchor.edl_order)).toBe(true);
+  });
+
+  it("FAKE_OVERLAYS=none writes NO overlays.json (the output is optional) while every other output is still written", () => {
+    const { ws, req } = planEditWorkspace();
+    const r = run(ws, req, { FAKE_OVERLAYS: "none" });
+    expect(r.status, `stderr: ${r.err}`).toBe(0);
+    expect(existsSync(join(ws, "output", "overlays.json"))).toBe(false);
+    expect(existsSync(join(ws, "output", "edl.json"))).toBe(true);
+    expect(existsSync(join(ws, "output", "narration.json"))).toBe(true);
+  });
+
+  it("FAKE_OVERLAYS=dense writes 30 callouts on one edl_order (schema-valid, but far past any density limit)", () => {
+    const { ws, req } = planEditWorkspace();
+    expect(run(ws, req, { FAKE_OVERLAYS: "dense" }).status).toBe(0);
+    const overlays = JSON.parse(readFileSync(join(ws, "output", "overlays.json"), "utf8"));
+    expect(OverlaysSchema.safeParse(overlays).success).toBe(true);
+    expect(overlays.items).toHaveLength(30);
+    const anchors = new Set(overlays.items.map((i: { anchor: { edl_order: number } }) => i.anchor.edl_order));
+    expect(anchors.size).toBe(1);
+  });
+
+  it("FAKE_OVERLAYS=invalid anchors at a line_id no narration has", () => {
+    const { ws, req } = planEditWorkspace();
+    expect(run(ws, req, { FAKE_OVERLAYS: "invalid" }).status).toBe(0);
+    const overlays = JSON.parse(readFileSync(join(ws, "output", "overlays.json"), "utf8"));
+    expect(OverlaysSchema.safeParse(overlays).success).toBe(true);
+    expect(overlays.items[0].anchor).toEqual({ line_id: "L999" });
+    const narration = JSON.parse(readFileSync(join(ws, "output", "narration.json"), "utf8")) as { lines: { line_id: string }[] };
+    expect(narration.lines.map((l) => l.line_id)).not.toContain("L999");
+  });
+
+  it("a brief whose request_notes mention \"chữ\" forces the medium plan back even under FAKE_OVERLAYS=dense", () => {
+    const { ws, req } = planEditWorkspace({ requestNotes: "fake agent: chữ bị bỏ: OV02 (collision)" });
+    expect(run(ws, req, { FAKE_OVERLAYS: "dense" }).status).toBe(0);
+    const overlays = JSON.parse(readFileSync(join(ws, "output", "overlays.json"), "utf8"));
+    expect(overlays.items).toHaveLength(2);
+  });
+
+  function reviewWorkspace(inputs: { renderReport?: string; composition?: string }): { ws: string; req: StageRequest } {
+    const ws = tmpWorkspace();
+    const list = [fileInput(ws, "inputs/brief.json", BRIEF_JSON(), "brief")];
+    if (inputs.composition) list.push(fileInput(ws, "inputs/composition.json", inputs.composition, "composition"));
+    if (inputs.renderReport) list.push(fileInput(ws, "inputs/render-report.json", inputs.renderReport, "render_report"));
+    return { ws, req: makeRequest(ws, { stage_key: "library-review", inputs: list, expected_outputs: [{ type: "review", mime_type: "application/json", kind: "file", name: "review.json" }] }) };
+  }
+
+  it("library-review: a non-empty text_events.dropped rejects unconditionally, naming the overlay ids", () => {
+    const dropped = [{ id: "OV02", reason: "collision_unresolved" }];
+    const { ws, req } = reviewWorkspace({ renderReport: RENDER_REPORT_JSON({ dropped }), composition: COMPOSITION_JSON({ dropped }) });
+    const r = run(ws, req, { FAKE_REVIEW_MODE: "approve" });
+    expect(r.status, `stderr: ${r.err}`).toBe(0);
+    const review = JSON.parse(readFileSync(join(ws, "output", "review.json"), "utf8"));
+    expect(reviewSchema.safeParse(review).success).toBe(true);
+    expect(review.decision).toBe("rejected");
+    expect(review.note).toContain("OV02");
+    expect(review.checks.find((c: { id: string }) => c.id === "text_not_clipped").pass).toBe(false);
+  });
+
+  it("library-review: more than 30 % of requested transitions downgraded rejects, naming before_order", () => {
+    const { ws, req } = reviewWorkspace({
+      renderReport: RENDER_REPORT_JSON({ requested: 3, downgraded: [{ before_order: 2, reason: "no_tail" }, { before_order: 5, reason: "too_short" }] }),
+      composition: COMPOSITION_JSON(),
+    });
+    expect(run(ws, req, { FAKE_REVIEW_MODE: "approve" }).status).toBe(0);
+    const review = JSON.parse(readFileSync(join(ws, "output", "review.json"), "utf8"));
+    expect(review.decision).toBe("rejected");
+    expect(review.note).toContain("before_order 2");
+    expect(review.note).toContain("before_order 5");
+  });
+
+  it("library-review: music null with a reason other than no_brand/brand_no_tracks rejects", () => {
+    const { ws, req } = reviewWorkspace({ renderReport: RENDER_REPORT_JSON({ trackId: null, musicReason: "no_candidates" }), composition: COMPOSITION_JSON() });
+    expect(run(ws, req, { FAKE_REVIEW_MODE: "approve" }).status).toBe(0);
+    const review = JSON.parse(readFileSync(join(ws, "output", "review.json"), "utf8"));
+    expect(review.decision).toBe("rejected");
+    expect(review.note).toContain("no_candidates");
+  });
+
+  it("library-review: music null because the channel has no brand is NOT a rejection", () => {
+    const { ws, req } = reviewWorkspace({ renderReport: RENDER_REPORT_JSON({ trackId: null, musicReason: "no_brand" }), composition: COMPOSITION_JSON() });
+    expect(run(ws, req).status).toBe(0);
+    const review = JSON.parse(readFileSync(join(ws, "output", "review.json"), "utf8"));
+    expect(review.decision).toBe("approved");
+  });
+
+  // 1 downgrade out of 5 requested is 20 %, under the 30 % bar -- a render that lost one dissolve is not
+  // worth a replan.
+  it("library-review: a render report under the 30 % downgrade bar approves and leaves all six checks passing", () => {
+    const { ws, req } = reviewWorkspace({ renderReport: RENDER_REPORT_JSON({ requested: 5, downgraded: [{ before_order: 2, reason: "no_tail" }] }), composition: COMPOSITION_JSON() });
+    expect(run(ws, req).status).toBe(0);
+    const review = JSON.parse(readFileSync(join(ws, "output", "review.json"), "utf8"));
+    expect(review.decision).toBe("approved");
+    expect(review.checks.every((c: { pass: boolean }) => c.pass)).toBe(true);
+  });
+});
+
 describe("fake-agent-cli.mjs: sub-project 3B channel-planning/channel-package outputs", () => {
   it("channel-plan (type 'topic_proposal'): reads demand.needed and channel_brief, avoids duplicating open_requests[].topic and hypotheses[].chosen.title", () => {
     const ws = tmpWorkspace();
@@ -696,13 +868,18 @@ describe("studio skill docs (skills/<name>/SKILL.md)", () => {
   const REQUIRED_HEADINGS = ["## Mục tiêu", "## Input", "## Ngân sách khung", "## Quy trình", "## Cấu trúc", "## Tiêu chí tự kiểm", "## Điều cấm"];
   const skills = ["style-analyze", "style-review", "source-survey", "edit-plan", "library-review"];
 
+  // Upper bound amended by sub-project 5B task 8 (was 120): `edit-plan` gained the whole `overlays.json`
+  // contract (anchor forms, per-kind character limits, density spacing, transition rules) and
+  // `library-review` gained step 0b over `render-report.json`/`composition.json`. Both are content the
+  // workflow's required checkers enforce, so the doc has to state them; the bound is a "do not ramble"
+  // guard, not a budget these two can be trimmed back into.
   for (const skill of skills) {
-    it(`${skill}/SKILL.md exists, has every required section, and is 80-120 lines`, () => {
+    it(`${skill}/SKILL.md exists, has every required section, and is 80-180 lines`, () => {
       const content = readFileSync(join(skillsDir, skill, "SKILL.md"), "utf8");
       for (const heading of REQUIRED_HEADINGS) expect(content).toContain(heading);
       const lineCount = content.split("\n").length;
       expect(lineCount).toBeGreaterThanOrEqual(80);
-      expect(lineCount).toBeLessThanOrEqual(120);
+      expect(lineCount).toBeLessThanOrEqual(180);
     });
   }
 

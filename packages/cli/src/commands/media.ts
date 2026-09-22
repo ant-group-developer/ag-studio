@@ -4,24 +4,28 @@ import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
 import { start, type ScriptContext } from "@harness/script-sdk";
 import {
-  AnySurveyIndexSchema, EdlSchema, HarnessError, isHarnessError, libraryBriefSchema, NarrationSchema, NarrationTimingSchema, ShotsIndexSchema, TranscriptSchema,
-  type AnySurveyIndex, type Edl, type LibraryBrief, type Narration, type NarrationTiming, type ScriptCommand, type ShotsIndex, type SurveyIndexV2, type Transcript,
-  type VoiceProfile, type WatchIndex,
+  AnySurveyIndexSchema, CompositionSchema, EdlSchema, HarnessError, isHarnessError, libraryBriefSchema, NarrationSchema, NarrationTimingSchema, OverlaysSchema,
+  ShotsIndexSchema, SUBTITLE_MODES, TimelineSchema, TranscriptSchema,
+  type AnySurveyIndex, type Composition, type Edl, type LibraryBrief, type Narration, type NarrationTiming, type Overlays, type ScriptCommand, type ShotsIndex,
+  type SubtitleMode, type SurveyIndexV2, type Timeline, type Transcript, type VoiceProfile, type WatchIndex,
 } from "@harness/contracts";
 import {
-  buildTimeline, eventFor, fitEdl, indexSources, requireActiveVoice, synthesizeNarration, transcribeSources,
-  watchFromExistingFrames, watchVideos, type PreExtractedVideo, type WatchDeps, type WatchVideoInput,
+  activeTracks, buildComposition, buildTimeline, eventFor, fitEdl, indexSources, loadBrand, probeNvenc, renderComposition, requireActiveVoice,
+  synthesizeNarration, transcribeSources, verifyBrandFiles, watchFromExistingFrames, watchVideos,
+  type LoadedBrand, type PreExtractedVideo, type WatchDeps, type WatchVideoInput,
 } from "@harness/core";
 import { probeDurationSync, probeSync } from "@harness/adapter-ffprobe";
 import type { AppContext } from "../composition.js";
+import { resolveNvencProbe } from "../media-probe-cache.js";
 import { requireLibrary } from "./library-stage.js";
 import { withContext } from "./shared.js";
 
 const MODES = ["samples", "source", "episode"] as const;
 type WatchMode = (typeof MODES)[number];
 
-/** The four `media index|transcribe|tts|fit-edl` built-in commands, task 8's counterpart to `MODES` above. */
-const MEDIA_STAGE_NAMES = ["index", "transcribe", "tts", "fit-edl"] as const;
+/** The six `media index|transcribe|tts|fit-edl|compose|render` built-in commands, task 8's counterpart to
+ * `MODES` above (`compose`/`render` joined in sub-project 5B Task 8). */
+const MEDIA_STAGE_NAMES = ["index", "transcribe", "tts", "fit-edl", "compose", "render"] as const;
 
 /**
  * The three `harness media watch --mode <m>` re-invocations (task 2's spec §7 workflows wire `watch-samples`,
@@ -34,9 +38,21 @@ const MEDIA_STAGE_NAMES = ["index", "transcribe", "tts", "fit-edl"] as const;
 export function builtinMediaCommands(argv: string[], projectDir: string): Record<string, ScriptCommand> {
   const commands: Record<string, ScriptCommand> = {};
   for (const mode of MODES) commands[`watch-${mode}`] = { argv: [...argv, "--project", projectDir, "media", "watch", "--mode", mode], cwd: "." };
-  for (const name of MEDIA_STAGE_NAMES) commands[`media-${name}`] = { argv: [...argv, "--project", projectDir, "media", name], cwd: "." };
+  for (const name of MEDIA_STAGE_NAMES) {
+    commands[`media-${name}`] = {
+      argv: [...argv, "--project", projectDir, "media", name], cwd: ".",
+      ...(name === "render" ? { timeout_seconds: MEDIA_RENDER_TIMEOUT_SECONDS } : {}),
+    };
+  }
   return commands;
 }
+
+/** Outer wall-clock cap on one `media-render` stage (sub-project 5B Task 8, spec §6.1's `timeout_seconds:
+ * 7200`). `stageDefinitionSchema` has no timeout key, so this lives on the ScriptCommand, which is what
+ * `ScriptExecutor` actually reads (it takes `min(stage deadline, command timeout)`). The render itself
+ * budgets a tighter window of its own (`renderTimeoutSeconds`); this is only the net that catches an ffmpeg
+ * that hung past every inner timeout. */
+export const MEDIA_RENDER_TIMEOUT_SECONDS = 7200;
 
 /** Env for the transcribe hook's child process: everything the harness process itself has, minus every
  * `HARNESS_SECRET_*` var -- transcription needs no secrets, and this is the only allowlist/denylist this
@@ -525,8 +541,244 @@ async function mediaFitEdlStage(app: AppContext, sdk: ScriptContext): Promise<vo
   await sdk.done();
 }
 
+// ---- Sub-project 5B Task 8: media compose|render (spec §4, §5, §6.1) ----
+
+function parseTimelineDoc(raw: unknown): Timeline {
+  const parsed = TimelineSchema.safeParse(raw);
+  if (!parsed.success) throw new HarnessError("CONFIG_INVALID", "timeline.json failed schema validation", { issues: parsed.error.issues });
+  return parsed.data;
+}
+function parseOverlaysDoc(raw: unknown): Overlays {
+  const parsed = OverlaysSchema.safeParse(raw);
+  if (!parsed.success) throw new HarnessError("CONFIG_INVALID", "overlays.json failed schema validation", { issues: parsed.error.issues });
+  return parsed.data;
+}
+function parseCompositionDoc(raw: unknown): Composition {
+  const parsed = CompositionSchema.safeParse(raw);
+  if (!parsed.success) throw new HarnessError("CONFIG_INVALID", "composition.json failed schema validation", { issues: parsed.error.issues });
+  return parsed.data;
+}
+
+/**
+ * The channel whose brand this episode is rendered with. `libraryBriefSchema` carries no `channel_id` of its
+ * own (checked -- it has `request_id`, `style_id`, `voice*` and nothing about the requester), so it is read
+ * off the originating request's `requested_by.channel_id` through the studio's own DB mirror. `null` means
+ * "no channel to look a brand up for" (a hand-planned run with no request, or a request created without a
+ * channel), which is the same outcome as "this channel has no brand yet": build the episode plain (spec
+ * §2.1, "Không có brand -> tập vẫn dựng").
+ */
+function brandChannelIdFor(app: AppContext, brief: LibraryBrief): string | null {
+  if (!brief.request_id) return null;
+  return app.store.getContentRequest(brief.request_id)?.requested_by.channel_id ?? null;
+}
+
+/**
+ * `subtitlesOverride` for this run, from the `subtitles` run option the `studio` profile's `options_schema`
+ * declares (`burn-in | karaoke | none | true | false`, revision 4). `"false"` -- the historical value, which
+ * meant nothing at all before 5B -- maps to `"none"`; `"true"` and an absent option map to `undefined`, i.e.
+ * "the brand decides" (`brand.subtitles.mode`). Anything else is one of the three real modes.
+ *
+ * Deviation from the task brief, recorded in the task-8 report: the brief says `brief.options.subtitles`, but
+ * a `library_brief` has no `options` field anywhere in `libraryBriefSchema` (nor does `ContentRequest`) --
+ * per-run options live on `run.options`, which the stage request hands over as `sdk.options`, and that is the
+ * value the profile's `options_schema` actually validates.
+ */
+function subtitlesOverrideFor(sdk: ScriptContext): SubtitleMode | undefined {
+  const raw = sdk.options.subtitles;
+  if (raw === undefined || raw === null || raw === "true") return undefined;
+  const value = String(raw);
+  if (value === "false") return "none";
+  if ((SUBTITLE_MODES as readonly string[]).includes(value)) return value as SubtitleMode;
+  throw new HarnessError("CONFIG_INVALID", `option "subtitles" must be one of ${SUBTITLE_MODES.join("|")}|true|false, got "${value}"`, { subtitles: value });
+}
+
+/**
+ * The loaded brand for this run, with every file it references re-verified against `brand.json`'s checksums.
+ * `intake` already did exactly this before claiming the request (spec §7), so a failure here means the kho
+ * drifted mid-run -- cheap to re-check, and far better caught before a two-hour render than after it.
+ */
+async function loadVerifiedBrand(app: AppContext, lib: NonNullable<AppContext["library"]>, brief: LibraryBrief): Promise<LoadedBrand | null> {
+  const channelId = brandChannelIdFor(app, brief);
+  if (channelId === null) return null;
+  const brand = loadBrand(lib.fs, channelId);
+  if (brand === null) return null;
+  const verified = await verifyBrandFiles(lib.fs, brand);
+  if (!verified.ok) {
+    throw new HarnessError("CONFIG_INVALID", `brand for channel ${channelId} is broken: ${verified.reason}`, { channel_id: channelId, reason: verified.reason });
+  }
+  return brand;
+}
+
+/**
+ * `media compose` (spec §4): turns `timeline.json` + the agent's `overlays.json` + the channel's brand and
+ * music into one `composition.json` plus the `captions/` and `overlay.ass` text it implies. Pure below this
+ * function -- `buildComposition` never touches the filesystem, so everything it needs (source paths,
+ * durations, fps, the brand directory, track paths) is resolved here and handed in.
+ *
+ * Fails only for machine reasons: a broken brand, a missing source, a `voice: tts` run with no `voice_set`.
+ * Editorial problems (overlays too dense, an anchor that does not exist) already failed at `plan-edit`'s
+ * `overlays-valid` and went round the SP4 replan loop -- they never reach this stage.
+ */
+async function mediaComposeStage(app: AppContext, sdk: ScriptContext): Promise<void> {
+  const library = requireLibrary(app);
+  const brief = parseBriefDoc(readJsonFile(sdk.input("brief")));
+  if (!brief.request_id) {
+    throw new HarnessError("CONFIG_INVALID", "media compose needs a brief with a request_id (composition.json is keyed by it)", {});
+  }
+  const timeline = parseTimelineDoc(readJsonFile(sdk.input("timeline")));
+  // `media-compose` depends on BOTH `plan-edit` (for `overlays`/`narration`) and `media-fit-edl`, and both
+  // emit an `edl` artifact -- `sdk.input("edl")` would hand back `plan-edit`'s PRE-FIT plan. Inputs arrive
+  // in upstream-stage order, so the last `edl` is `media-fit-edl`'s fitted one, the only one that matches
+  // `timeline.json`. (Same two-edl situation the `library-review` skill documents for its own stage.)
+  const edlPaths = sdk.inputs("edl");
+  const fittedEdlPath = edlPaths.at(-1);
+  if (fittedEdlPath === undefined) throw new HarnessError("CONFIG_INVALID", "media compose needs an \"edl\" input", {});
+  const edl = parseEdlDoc(readJsonFile(fittedEdlPath));
+  const shots = parseShotsDoc(readJsonFile(sdk.input("shots")));
+  const overlays = sdk.hasInput("overlays") ? parseOverlaysDoc(readJsonFile(sdk.input("overlays"))) : null;
+  const narration = sdk.hasInput("narration") ? parseNarrationDoc(readJsonFile(sdk.input("narration"))) : null;
+  const voiceSetDir = sdk.hasInput("voice_set") ? sdk.input("voice_set") : null;
+
+  const brand = await loadVerifiedBrand(app, library, brief);
+  const tracks = brand ? activeTracks(app.store, brand.brand.music.tracks) : [];
+
+  // `duration_seconds`/`has_audio` come from `shots.json` (the one stage that already probed every source);
+  // `fps` needs its own probe, since `shots.json` does not record it. A source ffprobe cannot read at all
+  // contributes `fps: null`, which simply never votes in `buildComposition`'s fps election.
+  const shotsBySource = new Map(shots.sources.map((s) => [s.source_id, s]));
+  const sources = new Map<string, { path: string; duration_seconds: number; has_audio: boolean; fps: number | null }>();
+  for (const s of sdk.sources) {
+    const { path } = sourcePathAndName(app, s);
+    const indexed = shotsBySource.get(s.source_id);
+    const probed = await app.prober.probe(path);
+    sources.set(s.source_id, {
+      path,
+      duration_seconds: indexed?.duration_seconds ?? probed?.duration_seconds ?? 0,
+      has_audio: indexed?.has_audio ?? (probed?.audio != null),
+      fps: probed?.video?.fps ?? null,
+    });
+  }
+
+  const subtitlesOverride = subtitlesOverrideFor(sdk);
+  const { composition, srt, vtt, ass } = buildComposition({
+    timeline, overlays, narration, edl, brand, tracks,
+    trackPath: (t) => join(library.fs.paths.trackDir(t.track_id), t.file),
+    sources, voiceSetDir, request_id: brief.request_id,
+    ...(subtitlesOverride !== undefined ? { subtitlesOverride } : {}),
+    render: app.mediaConfig.render,
+  });
+
+  writeJsonOutputFile(join(sdk.workspace, "output", "composition.json"), composition);
+  const captionsDir = join(sdk.workspace, "output", "captions");
+  mkdirSync(captionsDir, { recursive: true });
+  writeFileSync(join(captionsDir, "captions.srt"), srt);
+  writeFileSync(join(captionsDir, "captions.vtt"), vtt);
+  writeFileSync(join(sdk.workspace, "output", "overlay.ass"), ass);
+
+  await sdk.out.file("output/composition.json", { type: "composition" });
+  await sdk.out.dir("output/captions", { type: "captions" });
+  await sdk.out.file("output/overlay.ass", { type: "overlay_ass" });
+
+  for (const warning of composition.warnings) sdk.log.warn(`media compose: ${warning}`, { run_id: sdk.request.run_id });
+  appendMediaEvent(app, sdk, "media.composed", {
+    run_id: sdk.request.run_id,
+    cues: composition.captions.cues.length,
+    text_events: composition.text_events.length,
+    music_track: composition.music?.track_id ?? null,
+  });
+  await sdk.done();
+}
+
+/** Whole-render wall-clock budget (task-8 brief): at least 20 minutes, otherwise 3x the programme length
+ * plus 5 minutes of fixed overhead (probes, loudnorm pass, cache sweep) -- then clamped to whatever is left
+ * before the stage's own deadline, minus a 30 s margin so ffmpeg is killed by us with a readable error
+ * rather than by the lease expiring underneath it. */
+export function renderTimeoutSeconds(totalSeconds: number, deadlineAt: string, nowMs: number): number {
+  const budget = Math.max(1200, totalSeconds * 3 + 300);
+  const untilDeadline = Math.floor((Date.parse(deadlineAt) - nowMs) / 1000) - 30;
+  if (untilDeadline <= 0) throw new HarnessError("IO_ERROR", "no time left before the stage deadline", { deadline_at: deadlineAt });
+  return Math.min(budget, untilDeadline);
+}
+
+/**
+ * `media render` (spec §5): the two-tier ffmpeg render of one `composition.json` -- a cached mezzanine per
+ * segment, then one 4K final encode with the ASS overlay burned in and music ducked under the voice. Writes
+ * `full-episode.mp4`, `cuts/` (the `clip_set` `thumbnail-candidates` still consumes) and
+ * `render-report.json`, all three straight into `output/` where `renderComposition` puts them.
+ */
+async function mediaRenderStage(app: AppContext, sdk: ScriptContext): Promise<void> {
+  const library = requireLibrary(app);
+  const composition = parseCompositionDoc(readJsonFile(sdk.input("composition")));
+  const assPath = sdk.hasInput("overlay_ass") ? sdk.input("overlay_ass") : null;
+
+  // Every segment's source checksum, folded into that segment's mezzanine cache key: re-ingesting a source
+  // under the same id with different bytes must not serve the previous bytes' mezzanine (spec §5.1).
+  const sourceChecksums = new Map<string, string>();
+  for (const seg of composition.segments) {
+    if (sourceChecksums.has(seg.source_id)) continue;
+    const item = app.store.getSourceItem(seg.source_id);
+    if (!item) throw new HarnessError("CONFIG_INVALID", `source item not found in the catalog: ${seg.source_id}`, { source_id: seg.source_id });
+    sourceChecksums.set(seg.source_id, item.checksum);
+  }
+
+  // `safe_margin_px` places the logo overlay and is NOT carried in `composition.json` (only `brand.dir` is),
+  // so the brand is re-loaded here by the channel the composition names.
+  let safeMarginPx: number | undefined;
+  if (composition.brand !== null) {
+    const loaded = loadBrand(library.fs, composition.brand.channel_id);
+    if (loaded) safeMarginPx = loaded.brand.safe_margin_px;
+  }
+
+  const cfg = app.mediaConfig.render;
+  const ffmpeg = ffmpegBin();
+  const outDir = join(sdk.workspace, "output");
+  mkdirSync(outDir, { recursive: true });
+
+  const { report } = await renderComposition(
+    {
+      ffmpeg,
+      prober: app.prober,
+      cache: { dir: join(app.dataRoot, "cache", "mezz"), maxBytes: cfg.cache_max_gb * 1024 ** 3 },
+      nvencAvailable: () => resolveNvencProbe({ ffmpeg, probe: probeNvenc, nowMs: () => Date.now() }),
+      clock: app.clock,
+      log: (line) => sdk.log.info(line, { run_id: sdk.request.run_id }),
+    },
+    {
+      composition, assPath, outDir,
+      encoderCfg: cfg.encoder,
+      timeoutSeconds: renderTimeoutSeconds(composition.total_seconds, sdk.request.limits.deadline_at, Date.now()),
+      sourceChecksums,
+      ...(safeMarginPx !== undefined ? { safe_margin_px: safeMarginPx } : {}),
+    },
+  );
+
+  // `encoder: auto` that resolved to `cpu` is not an error, but it is the thing an operator wants to see on
+  // the dashboard (spec §6.4's `render_cpu_fallback` alert reads this warning) -- appended after the fact,
+  // since `renderComposition` knows nothing about the configured preference. Rewritten BEFORE `out.file`
+  // hashes it.
+  if (cfg.encoder === "auto" && report.encoder === "cpu" && !report.warnings.includes("encoder_cpu")) {
+    report.warnings.push("encoder_cpu");
+    writeJsonOutputFile(join(outDir, "render-report.json"), report);
+  }
+
+  await sdk.out.file("output/full-episode.mp4", { type: "episode_video" });
+  await sdk.out.dir("output/cuts", { type: "clip_set" });
+  await sdk.out.file("output/render-report.json", { type: "render_report" });
+
+  appendMediaEvent(app, sdk, "media.rendered", {
+    run_id: sdk.request.run_id,
+    seconds: report.output.seconds,
+    encoder: report.encoder,
+    cached_segments: report.segments.cached,
+    rendered_segments: report.segments.rendered,
+    render_seconds: report.render_seconds,
+  });
+  await sdk.done();
+}
+
 const MEDIA_STAGES: Record<(typeof MEDIA_STAGE_NAMES)[number], (app: AppContext, sdk: ScriptContext) => Promise<void>> = {
   index: mediaIndexStage, transcribe: mediaTranscribeStage, tts: mediaTtsStage, "fit-edl": mediaFitEdlStage,
+  compose: mediaComposeStage, render: mediaRenderStage,
 };
 
 async function runMediaStage(sdk: ScriptContext, app: AppContext, name: (typeof MEDIA_STAGE_NAMES)[number]): Promise<void> {
@@ -548,7 +800,7 @@ export function registerMedia(program: Command): void {
     });
   for (const name of MEDIA_STAGE_NAMES) {
     media.command(name)
-      .description(`built-in "media ${name}" stage (sub-project 5A): reads stage-request.json from $HARNESS_WORKSPACE, writes stage-result.json`)
+      .description(`built-in "media ${name}" stage (sub-projects 5A/5B): reads stage-request.json from $HARNESS_WORKSPACE, writes stage-result.json`)
       .action(async (_o: unknown, cmd: Command) => {
         const sdk = await start({ env: process.env });
         await withContext(cmd, {}, async (app) => runMediaStage(sdk, app, name));

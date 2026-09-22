@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { extname, join } from "node:path";
 import {
+  HarnessError,
   LibraryItemSchema,
   newId,
   type Checksum,
@@ -62,6 +63,14 @@ export async function exportItem(
     episodePath: string;
     thumbnailPaths: string[];
     captionsPath?: string;
+    /**
+     * Sub-project 5B: `media-compose`'s `captions` output is a DIRECTORY holding `captions.srt` and
+     * `captions.vtt`, not the single `captions.json` file `library-production@1.1.0`/`@1.2.0` passed as
+     * `captionsPath`. Both are copied into the item (as `captions.srt`/`captions.vtt`) and both land in
+     * `files`, so a channel picking the item up gets subtitles in the two formats YouTube accepts.
+     * `captionsPath` stays exactly as it was for the older releases.
+     */
+    captionsDir?: string;
     editPlanPath: string;
     existingItemId?: string;
   },
@@ -79,6 +88,13 @@ export async function exportItem(
   }
   if (p.captionsPath !== undefined) {
     files.push(await d.fs.copyFileWithChecksum(p.captionsPath, join(dir, "captions.json")));
+  }
+  if (p.captionsDir !== undefined) {
+    for (const name of ["captions.srt", "captions.vtt"]) {
+      const src = join(p.captionsDir, name);
+      if (!existsSync(src)) throw new HarnessError("CONFIG_INVALID", `captions directory has no ${name}: ${src}`, { path: src });
+      files.push(await d.fs.copyFileWithChecksum(src, join(dir, name)));
+    }
   }
   files.push(await d.fs.copyFileWithChecksum(p.editPlanPath, join(dir, "edit-plan.json")));
 

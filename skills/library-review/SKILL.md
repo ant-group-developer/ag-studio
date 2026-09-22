@@ -26,6 +26,11 @@ khi tập vào kho — checker cứng đã chặn lỗi kỹ thuật; skill này
   dựng, chỉ để tham khảo. `library-production@1.2.0` đưa **hai** input `edl` vào stage này; không bao giờ
   chấm bản dựng theo bản pre-fit đó. Cách phân biệt chắc chắn: bản nào cùng thư mục với `fit-report.json`
   thì là bản đã khớp.
+- `composition.json` (trong input `composition`, `harness.composition/v1`) và `render-report.json` (trong
+  input `render_report`, `harness.render-report/v1`) — bản dựng đã lên lịch và bản dựng đã render thật.
+  Đây là mục kiểm thứ 9, riêng của sub-project 5B (`library-production@1.3.0`); thiếu hai input này thì bỏ
+  qua bước 0b. **Phải đọc CẢ HAI**: `render-report.json` không gộp `composition.json.warnings`, và
+  `text_dropped` chỉ đầy đủ ở `composition.json`.
 - `stage-request.json` — nguồn sự thật cho `expected_outputs`, `inputs`, `options`, `policy`.
 
 ## Ngân sách khung
@@ -34,7 +39,7 @@ khi tập vào kho — checker cứng đã chặn lỗi kỹ thuật; skill này
 - Mở khung đơn tại các mốc nghi vấn (mở đầu, các mốc có `text_overlays`, gần cuối video) khi sheet
   không đủ rõ. Tổng khung đơn mở ≤20.
 
-## Quy trình 8 bước (thêm bước 0 khi có `fit-report.json`)
+## Quy trình 8 bước (thêm bước 0 khi có `fit-report.json`, bước 0b khi có `render-report.json`)
 
 0. Nếu có input `fit_report`: đọc `fit-report.json`. Có input này và bất kỳ điều nào sau đây đúng thì
    quyết định thẳng `"rejected"` (bỏ qua bước 8 tính `decision` từ `checks`, nhưng vẫn chấm đủ 6 mục ở
@@ -45,6 +50,19 @@ khi tập vào kho — checker cứng đã chặn lỗi kỹ thuật; skill này
    `note` phải nêu rõ từng `line_id` trong `shortfalls[].line_ids` và số giây thiếu
    (`shortfalls[].missing_seconds`), để lượt dựng lại (`edit-plan`) biết đúng dòng lời cần viết lại
    hoặc rút ngắn.
+0b. Nếu có input `render_report`: đọc **cả** `render-report.json` **và** `composition.json`. Bất kỳ điều
+   nào sau đây đúng thì quyết định thẳng `"rejected"` (vẫn chấm đủ 6 mục để `note` đầy đủ):
+   - `render-report.json.transitions.downgraded.length > 0.3 × transitions.requested` — chuyển cảnh gãy
+     nhiều, thường do EDL cắt sát mép source;
+   - `text_events.dropped` không rỗng (đối chiếu `composition.json.text_dropped` để có đủ `id` + `reason`)
+     — chữ đã bị bỏ vì va chạm không giải được;
+   - `music.track_id === null` mà brand có nhạc, tức `music.reason` KHÔNG phải `no_brand` hay
+     `brand_no_tracks`;
+   - `composition.json.warnings` có `word_interpolated` cho hơn 10 % số từ (phụ đề phải nội suy mốc thời
+     gian vì thiếu word timing);
+   - `render-report.json.loudness.integrated_lufs` nằm ngoài `[−16, −12]`.
+   `note` phải nêu rõ `id` của từng overlay bị bỏ và `before_order` của từng mối nối bị hạ cấp, để lượt
+   dựng lại (`edit-plan`) sửa đúng chỗ — không nói chung chung "chữ bị lỗi".
 1. Đọc `brief.json` để biết `target_duration_seconds` (khoảng đích) và `style_snapshot`.
 2. Đọc `watch.json`, lấy `duration_seconds` của tập — so với khoảng đích ⇒ `duration_in_range`.
 3. Lướt toàn bộ `sheet-*.png` tìm khung đen liên tục hoặc khung đứng hình (hai khung liền kề giống
@@ -94,6 +112,9 @@ nhất quán với `checks` (≥1 `pass: false` ⇒ `"rejected"`).
       số giây thiếu của từng dòng trong `shortfalls`, không chỉ nói chung chung "thiếu hình".
 - [ ] Có hai input `edl`: đã đọc bản **cùng thư mục với `fit-report.json`** (bản đã khớp), không phải bản
       cạnh `edit-plan.json` (bản pre-fit).
+- [ ] Có input `render_report`: đã đọc **cả hai** `render-report.json` và `composition.json` (không suy ra
+      `text_dropped`/`warnings` từ một file), và nếu bước 0b buộc `"rejected"`, `note` nêu đủ `id` của
+      overlay bị bỏ và `before_order` của mối nối bị hạ cấp.
 
 ## Điều cấm
 
@@ -101,5 +122,5 @@ nhất quán với `checks` (≥1 `pass: false` ⇒ `"rejected"`).
 - Không gọi mạng — skill này chỉ dùng dữ liệu đã có trong workspace.
 - Không đọc hay ghi bất kỳ giá trị `secret://` hay biến `HARNESS_SECRET_*` nào.
 - Không ghi file ngoài `output/`; không sửa `edit-plan.json`, `brief.json`, `watch/`,
-  `export-receipt.json`, `fit-report.json`, hay `thumbnail_set`.
+  `export-receipt.json`, `fit-report.json`, `composition.json`, `render-report.json`, hay `thumbnail_set`.
 - Không rời khỏi thư mục workspace hiện tại (không `cd`, không đọc đường dẫn tuyệt đối khác).

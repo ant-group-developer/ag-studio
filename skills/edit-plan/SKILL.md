@@ -43,7 +43,9 @@ sẽ chỉnh hình cho vừa thời lượng lời đọc thật; edit-plan ch�
    lời — ví dụ `L003` thiếu 4.2s thì viết lại dài hơn hoặc thêm shot quanh `edl_order` của nó; ghi cách
    khắc phục vào `edit-plan.json.notes`.
 6. Soạn `opening` (theo `style_snapshot.opening`), `text_overlays` (nếu overlay mật độ > `none`) và
-   `music` (mood/ducking theo `style_snapshot.music`).
+   `music` (mood/ducking theo `style_snapshot.music`). Nếu `expected_outputs` có `overlays` thì viết
+   `output/overlays.json` theo mục "Cấu trúc `output/overlays.json`" bên dưới — đây là bản chữ trên hình
+   thật sự được dựng, `edit-plan.json.text_overlays` chỉ là ghi chú kế hoạch.
 7. Ghi `output/edl.json`, `output/edit-plan.json`, `output/narration.json` rồi tự kiểm.
    `voice === "none"` hoặc `"original"` → `narration.json.lines: []` (bản `original` không viết lời
    mới, EDL đã cắt theo câu trọn ở bước 4). `voice === "tts"` → một dòng mỗi ý cần đọc, gắn đúng
@@ -99,6 +101,49 @@ hiện; `edl_order` trỏ tới một `order` có thật trong `edl.json.entries
 `edl_order` không tồn tại và `line_id` trùng); `text` không rỗng, ≤1200 ký tự, không cắt giữa câu.
 Nhiều dòng có thể cùng `edl_order` (đọc nối tiếp trên cùng một đoạn hình).
 
+## Cấu trúc `output/overlays.json`
+
+Chỉ viết khi `stage-request.json.expected_outputs` có mục `type: "overlays"` (workflow
+`library-production@1.3.0` trở lên). Đây là output **không bắt buộc**: một tập không cần chữ trên hình thì
+bỏ hẳn file, stage vẫn đạt.
+
+```json
+{
+  "schema_version": "harness.overlays/v1",
+  "items": [
+    { "id": "OV01", "kind": "title", "text": "Chợ nổi 5 giờ sáng", "anchor": { "line_id": "L001" }, "seconds": 4 },
+    { "id": "OV02", "kind": "callout", "text": "30 nghìn/kg", "anchor": { "edl_order": 3 }, "seconds": 3 },
+    { "id": "OV03", "kind": "lower_third", "text": "Cô Bảy — 20 năm bán trái cây", "anchor": { "line_id": "L004", "word_index": 2 } }
+  ],
+  "transitions": [{ "before_order": 5, "kind": "dissolve" }],
+  "music": { "mood": "calm" }
+}
+```
+
+- `id`: `OV01`…`OV999`, duy nhất. `kind`: `title` | `callout` | `lower_third`.
+- **Giới hạn ký tự** (checker `overlays-valid` chặn cứng): `title` ≤ 48, `callout` ≤ 24,
+  `lower_third` ≤ 64. Chữ dài hơn thì rút gọn, đừng cắt cụt giữa từ.
+- **Quy tắc neo** (`anchor`, chọn đúng một trong ba dạng):
+  - `{ "line_id": "L003", "word_index": 2 }` — neo vào một dòng trong `narration.json` (chỉ khi
+    `voice === "tts"`); `word_index` tuỳ chọn, trỏ vào từ thứ mấy của dòng đó.
+  - `{ "edl_order": 3 }` — neo vào một `order` có thật trong `edl.json.entries`; dùng khi `voice` là
+    `none`/`original`, hoặc khi chữ gắn với hình chứ không với lời.
+  - `{ "speech_index": 1 }` — neo vào đoạn lời thứ mấy trong `transcript.json` (chỉ khi
+    `voice === "original"`).
+  Neo trỏ vào `line_id`/`edl_order`/`speech_index` không tồn tại ⇒ `overlays-valid` fail ⇒ dựng lại.
+- `seconds` (tuỳ chọn) trong khoảng `[1, 10]`; thiếu thì lấy mặc định của brand theo `kind`.
+- **≤ 1 `title` cho mỗi đoạn** (mỗi `edl_order` sau khi giải neo) — hai title chồng nhau là lỗi.
+- **Không lặp lại nguyên câu lời đọc**: chữ trên hình là rút gọn/nhấn mạnh, không phải phụ đề (phụ đề đã
+  do `media-compose` sinh riêng từ `timeline.json`).
+- **Mật độ**: khoảng cách tối thiểu giữa hai overlay là 5 s (`density: high`), 8 s (`medium`), 15 s
+  (`low`) theo `style_snapshot.text_overlay.density`; `none` ⇒ `items: []`. Quá dày ⇒ `overlays-valid`
+  fail.
+- `transitions[]` **chỉ dùng ở chỗ đổi chủ đề** (ghi đè `brand.transition` cho đúng một mối nối):
+  `before_order` là `order` của đoạn ĐỨNG SAU mối nối (≥ 1, có thật trong `edl.json`), `kind` là `cut` |
+  `dissolve` | `dip_black`. Không liệt kê mọi mối nối — mặc định của brand đã đủ.
+- `music.mood`: một từ khoá tâm trạng lấy từ brief (`style_snapshot.music.mood`) hoặc từ nội dung tập;
+  `media-compose` dùng nó để chọn nhạc nền trong kho. Không có ứng viên khớp thì tập vẫn dựng, không nhạc.
+
 ## Tiêu chí tự kiểm trước khi kết thúc
 
 - [ ] `output/edl.json` là JSON hợp lệ đúng `harness.edl/v1`; mọi `source_id` khớp một nguồn trong `shots.json`.
@@ -107,6 +152,10 @@ Nhiều dòng có thể cùng `edl_order` (đọc nối tiếp trên cùng một
 - [ ] Độ dài từng đoạn tham chiếu `style_snapshot.shot_seconds`/`cut_rhythm` khi có thể chọn được.
 - [ ] `request_notes` có nội dung → `edit-plan.json.notes` nêu cách khắc phục (kèm `line_id`/`edl_order` nếu nói về lời thiếu hình).
 - [ ] `output/narration.json` đúng `harness.narration/v1`; `lines: []` khi `voice` là `"none"`/`"original"`; mọi `edl_order` tồn tại trong `edl.json`.
+- [ ] Có `expected_outputs.overlays` → `output/overlays.json` đúng `harness.overlays/v1`: mọi `anchor` trỏ
+      vào `line_id`/`edl_order`/`speech_index` có thật, ≤ 1 `title` mỗi đoạn, độ dài chữ trong giới hạn
+      48/24/64, khoảng cách theo mật độ của style, `transitions[].before_order` có thật. Không cần chữ thì
+      bỏ hẳn file (output không bắt buộc), đừng ghi file rỗng.
 
 ## Điều cấm
 

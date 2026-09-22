@@ -66,6 +66,42 @@ export async function resolveMediaProbe(o: ResolveMediaProbeOptions): Promise<Me
   return probe;
 }
 
+/** How long a `probeNvenc()` answer is trusted (sub-project 5B Task 8). Same 900 s budget as
+ * `MEDIA_PROBE_TTL_SECONDS`, and for the same reason: `media-render` spawns one throwaway ffmpeg encode to
+ * find out whether NVENC works, and a studio running episodes back to back would otherwise pay for that
+ * probe on every single render. A driver that dies mid-run is still handled inside `renderComposition`
+ * itself (it steps the whole run down to `cpu` on the first NVENC failure), so a stale `true` here costs at
+ * most one failed segment encode, never a wrong result. */
+export const NVENC_PROBE_TTL_SECONDS = 900;
+
+interface NvencCacheEntry { available: boolean; atMs: number }
+const nvencCache = new Map<string, NvencCacheEntry>();
+
+/** Test-only: clears the module-level NVENC cache between tests. Never called from production code. */
+export function _resetNvencProbeCacheForTests(): void {
+  nvencCache.clear();
+}
+
+export interface ResolveNvencProbeOptions {
+  /** The ffmpeg binary the render will actually use -- also the cache key, so `FFMPEG_PATH` changing
+   * mid-process (a test, an operator switching builds) never reuses the other binary's answer. */
+  ffmpeg: string;
+  probe: (ffmpeg: string) => Promise<boolean>;
+  /** Injectable clock (milliseconds since epoch) so tests never need real timers. */
+  nowMs: () => number;
+}
+
+/** `probeNvenc(ffmpeg)` behind a `NVENC_PROBE_TTL_SECONDS` cache, shaped like `resolveMediaProbe` above.
+ * A cached `false` is kept just as long as a cached `true`: a machine with no NVENC must not re-spawn the
+ * probe encode for every render either. */
+export async function resolveNvencProbe(o: ResolveNvencProbeOptions): Promise<boolean> {
+  const cached = nvencCache.get(o.ffmpeg);
+  if (cached && o.nowMs() - cached.atMs < NVENC_PROBE_TTL_SECONDS * 1000) return cached.available;
+  const available = await o.probe(o.ffmpeg);
+  nvencCache.set(o.ffmpeg, { available, atMs: o.nowMs() });
+  return available;
+}
+
 /** Whether a `gpu` resource lease is currently held (any stage, any run) -- the cheap, already-indexed
  * `countLeasedResources()` query `resources status`/the worker's own claim loop already use, not a new scan.
  * `library-production@1.2.0`'s `media-transcribe`/`media-tts` stages declare `requires_resources: [gpu]`

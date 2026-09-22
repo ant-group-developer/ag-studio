@@ -1,13 +1,13 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parse, stringify } from "yaml";
 import { fileURLToPath } from "node:url";
 import { newId, type ContentRequest, type LibraryItem, type VoiceProfile } from "@harness/contracts";
 import { HARNESS_ROOT, SqliteStateStore } from "@harness/core";
-import { hasFfmpeg, makeSceneClip, makeVideo, makeWav } from "../media.js";
+import { hasFfmpeg, makeSceneClip, makeVideo, makeWav, systemFontPath } from "../media.js";
 import { cli, status } from "./footage-helpers.js";
 
 export { cli, cliAsync, drain, stageId, status, submitGate, SAMPLE_EDL } from "./footage-helpers.js";
@@ -40,7 +40,7 @@ function studioScriptsYaml(): string {
  * `library.auto_accept` entirely, reproducing the pre-task-8 fixture shape (`agent: fake`, no auto-accept)
  * so every existing 2C test (library-pipeline, studio-wrappers) is unaffected by the fixture now shipping
  * autopilot enabled by default for real (non-test) use. */
-function writeProjectYaml(fixtureDir: string, dir: string, lib: string, o: { autopilot?: boolean; media1_2?: boolean } = {}): void {
+function writeProjectYaml(fixtureDir: string, dir: string, lib: string, o: { autopilot?: boolean; media1_2?: boolean; media1_3?: boolean } = {}): void {
   const cfg = parse(readFileSync(join(fixtureDir, "project.yaml"), "utf8")) as {
     data_root: string;
     library: { root: string; auto_accept?: unknown };
@@ -52,12 +52,18 @@ function writeProjectYaml(fixtureDir: string, dir: string, lib: string, o: { aut
     if (o.autopilot) {
       cfg.adapters = { agent: "cli", agent_argv: [process.execPath, posix(FAKE_AGENT_CLI), "{prompt}"], media: "fake" };
       const auto = (cfg.library.auto_accept ?? {}) as Record<string, unknown>;
-      if (o.media1_2) {
-        // Task 10: the sub-project 5A world -- NO `workflow_release` pin, so the autopilot follows the studio
-        // profile (revision 3 -> library-production@1.2.0), and COLLECTION source picking (the studio
-        // autopilot's second explicit mode since task 7: a whole shoot per request instead of one clip). The
-        // committed fixture deliberately stays in legacy mode, so this is set only on the temp copy.
+      if (o.media1_3) {
+        // Sub-project 5B Task 8: the 5B world -- NO `workflow_release` pin, so the autopilot follows the
+        // studio profile forward (revision 4 -> library-production@1.3.0), plus the same COLLECTION source
+        // picking `media1_2` uses.
         cfg.library.auto_accept = { ...auto, source_collections: ["shoot-*"] };
+      } else if (o.media1_2) {
+        // Task 10 (5A): the sub-project 5A world -- COLLECTION source picking (the studio autopilot's second
+        // explicit mode since task 7: a whole shoot per request instead of one clip), pinned to 1.2.0.
+        // Sub-project 5B moved the studio profile to library-production@1.3.0, so what used to be "follow the
+        // profile" is now an explicit pin via `library.auto_accept.workflow_release` (ADR 111's documented
+        // rollback knob) -- exactly the way the 1.1.0 branch below has always worked.
+        cfg.library.auto_accept = { ...auto, source_collections: ["shoot-*"], workflow_release: "library-production@1.2.0" };
       } else {
         // Task 8: the studio profile moved to library-production@1.2.0, but every sub-project 4 autopilot test
         // was written against 1.1.0's stage keys/counts -- pin the autopilot to the release it was written for
@@ -100,15 +106,20 @@ export interface LibraryWorld {
  * own comment for exactly what that overwrites. Defaults to `false`, reproducing the pre-task-8 studio
  * project (`agent: fake`, no auto-accept) so every existing 2C test is unaffected.
  *
- * `media1_2: true` (task 10, sub-project 5A) implies `autopilot` and swaps that pin for the 5A world: the
- * autopilot follows the studio profile forward to `library-production@1.2.0`, runs on `adapters.media: fake`
- * (`FakeMediaEngine`, no Python/GPU), and picks sources in COLLECTION mode over `shoot-*` -- pair it with
+ * `media1_2: true` (task 10, sub-project 5A) implies `autopilot` and swaps that pin for the 5A world:
+ * `library-production@1.2.0` (an explicit pin since 5B moved the profile on), `adapters.media: fake`
+ * (`FakeMediaEngine`, no Python/GPU), and COLLECTION source picking over `shoot-*` -- pair it with
  * `ingestShoot(world, "shoot-a", n)`.
+ *
+ * `media1_3: true` (sub-project 5B task 8) is the same world one release forward: NO pin at all, so the
+ * autopilot follows the studio profile to `library-production@1.3.0` (`media-compose`/`media-render`).
+ * Pair it with `setBrand`/`addTrack` when the episode should carry text, subtitles and music.
  */
-export function freshLibraryWorld(o: { media?: boolean; autopilot?: boolean; media1_2?: boolean } = {}): LibraryWorld {
+export function freshLibraryWorld(o: { media?: boolean; autopilot?: boolean; media1_2?: boolean; media1_3?: boolean } = {}): LibraryWorld {
   const media = o.media ?? true;
   const media1_2 = o.media1_2 ?? false;
-  const autopilot = (o.autopilot ?? false) || media1_2;
+  const media1_3 = o.media1_3 ?? false;
+  const autopilot = (o.autopilot ?? false) || media1_2 || media1_3;
   const lib = mkdtempSync(join(tmpdir(), "kho-"));
   // the top-level kho directories a mounted share would already have; `doctor`'s `library:write` row probes
   // `styles/` (studio) and `requests/` (channel) and fails when they are missing, (sub-project 5A)
@@ -119,7 +130,7 @@ export function freshLibraryWorld(o: { media?: boolean; autopilot?: boolean; med
   for (const sub of ["styles", "requests", "items", "voices", "music"]) mkdirSync(join(lib, sub), { recursive: true });
 
   const studio = mkdtempSync(join(tmpdir(), "studio-"));
-  writeProjectYaml(STUDIO_FIXTURE, studio, lib, { autopilot, media1_2 });
+  writeProjectYaml(STUDIO_FIXTURE, studio, lib, { autopilot, media1_2, media1_3 });
   mkdirSync(join(studio, "executors"), { recursive: true });
   writeFileSync(join(studio, "executors", "scripts.yaml"), studioScriptsYaml());
   mkdirSync(join(studio, "source-catalog"), { recursive: true });
@@ -394,6 +405,88 @@ export function addVoice(world: LibraryWorld, voiceId?: string): string {
   const profile = JSON.parse(r.out) as VoiceProfile;
   librarySync(world.studio);
   return profile.voice_id;
+}
+
+/**
+ * A channel-owned brand profile in the kho (sub-project 5B), written by the CHANNEL role exactly as an
+ * operator would (`harness library brands set --from <brand.json>`), then mirrored into the studio's DB with
+ * one `library sync` so `intake`/`media-compose` resolve it right away.
+ *
+ * The harness ships no font, so the two font files are copies of whatever `systemFontPath()` finds; with no
+ * system font this returns `false` and writes nothing -- the caller SKIPS that scenario instead of failing.
+ * `withLogo` additionally generates a 64x64 PNG with ffmpeg (skipped, with `logo` left off the profile, when
+ * ffmpeg is not on PATH). `music` is left empty here on purpose: `addTrack` fills it, so a test that wants a
+ * brand without music simply never calls it.
+ */
+export function setBrand(world: LibraryWorld, channelId: string, o: { withLogo?: boolean; tracks?: string[]; subtitles?: "burn-in" | "karaoke" | "none" } = {}): boolean {
+  const font = systemFontPath();
+  if (!font) return false;
+
+  const dir = mkdtempSync(join(tmpdir(), "brandsrc-"));
+  const fontsDir = join(dir, "fonts");
+  mkdirSync(fontsDir, { recursive: true });
+  // Two DISTINCT files (regular vs bold): `library brands set` copies both by basename, so one source file
+  // under two names is fine, but the bytes must land at two paths for `verifyBrandFiles` to check two
+  // checksums. A trailing-byte difference keeps them distinct without needing a second real font.
+  const regular = join(fontsDir, "Regular.ttf");
+  const bold = join(fontsDir, "Bold.ttf");
+  copyFileSync(font, regular);
+  copyFileSync(font, bold);
+
+  let logo: { path: string } | undefined;
+  if (o.withLogo && hasFfmpeg()) {
+    const logoPath = join(dir, "logo.png");
+    makeLogoPng(logoPath);
+    logo = { path: "logo.png" };
+  }
+
+  const brand = {
+    schema_version: "harness.brand/v1",
+    channel_id: channelId,
+    revision: 1,
+    fonts: { regular: "fonts/Regular.ttf", bold: "fonts/Bold.ttf", origin: "royalty_free", origin_note: "system font, copied for tests" },
+    colors: { primary: "#F2C94C" },
+    ...(logo ? { logo } : {}),
+    ...(o.subtitles ? { subtitles: { mode: o.subtitles } } : {}),
+    ...(o.tracks ? { music: { tracks: o.tracks } } : {}),
+  };
+  const path = join(dir, "brand.json");
+  writeFileSync(path, JSON.stringify(brand, null, 2));
+
+  const r = cli(world.channel, ["library", "brands", "set", channelId, "--from", path, "--json"]);
+  if (r.code !== 0) throw new Error(`library brands set ${channelId} failed: ${r.err}\n${r.out}`);
+  librarySync(world.studio);
+  return true;
+}
+
+/** A 64x64 solid-colour PNG with a contrasting square in it, so `render-valid`'s "the logo corner is not a
+ * flat colour" probe has something to see. */
+function makeLogoPng(path: string): void {
+  const r = spawnSync(process.env.FFMPEG_PATH ?? "ffmpeg", [
+    "-y", "-f", "lavfi", "-i", "color=c=white:s=64x64:d=1",
+    "-vf", "drawbox=x=8:y=8:w=48:h=48:color=red@1:t=fill", "-frames:v", "1", path,
+  ], { encoding: "utf8" });
+  if (r.status !== 0) throw new Error(`ffmpeg logo generation failed: ${r.stderr}`);
+}
+
+/** A kho-wide background music track (sub-project 5B), added by the CHANNEL role the way an operator would
+ * (`harness library music add`) from an 8 s sine wav, then mirrored into the studio DB. Returns `trackId`. */
+export function addTrack(world: LibraryWorld, trackId: string, o: { mood?: string[]; seconds?: number; loopOk?: boolean } = {}): string {
+  const dir = mkdtempSync(join(tmpdir(), "track-"));
+  const src = join(dir, `${trackId}.wav`);
+  makeWav(src, o.seconds ?? 8);
+  // `--origin` accepts own|licensed|royalty_free (MUSIC_ORIGINS); "own" is the honest one for a file this
+  // test generated itself.
+  const args = [
+    "library", "music", "add", "--track-id", trackId, "--file", src,
+    "--display-name", `Track ${trackId}`, "--mood", (o.mood ?? ["calm"]).join(","),
+    "--origin", "own", "--origin-note", "sinh bằng ffmpeg cho test", "--json",
+  ];
+  if (o.loopOk ?? true) args.push("--loop-ok");
+  const r = cli(world.channel, args);
+  if (r.code !== 0) throw new Error(`library music add ${trackId} failed: ${r.err}\n${r.out}`);
+  librarySync(world.studio);
+  return trackId;
 }
 
 /**

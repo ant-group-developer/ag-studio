@@ -131,9 +131,13 @@ describe("library-production@1.2.0", () => {
     expect(s.depends_on_optional).toEqual([]);
   });
 
-  it("profile studio points at library-production@1.2.0, revision 3, with the deadline override", () => {
-    expect(profile.workflow_release).toBe("library-production@1.2.0");
-    expect(profile.revision).toBe(3);
+  // Amended by sub-project 5B task 8: the profile pointer moved on to library-production@1.3.0 (revision 4,
+  // asserted in library-production-1-3.test.ts). 1.2.0 remains loadable by an explicit `--workflow` and via
+  // the `library.auto_accept.workflow_release` rollback knob (ADR 111), which is what the rest of this file
+  // still pins down; only the two "which release is the profile default" lines changed here.
+  it("profile studio has moved on to library-production@1.3.0, revision 4, keeping the deadline override", () => {
+    expect(profile.workflow_release).toBe("library-production@1.3.0");
+    expect(profile.revision).toBe(4);
     expect(profile.overrides).toEqual({ default_deadline_seconds: 14400 });
     expect(profile.limits.max_cost_usd_per_variant).toBe(8);
   });

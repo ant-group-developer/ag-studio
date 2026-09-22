@@ -23,6 +23,16 @@ export const expectedOutputSchema = z.object({
   mime_type: z.string().min(1),
   kind: z.enum(["file", "directory"]).default("file"),
   name: z.string().min(1).optional(),
+  /**
+   * Sub-project 5B: an output the stage MAY write but does not have to (`plan-edit`'s `overlays.json` --
+   * an edit plan with no text at all is a legitimate plan). Absent/false means the usual "this stage must
+   * produce it". Deliberately `.optional()` rather than `.default(false)`: `loadWorkflow` digests the
+   * PARSED definition (`canonicalDigest(parsed.data)`), so a default would silently change the digest of
+   * every already-released workflow (1.0.0/1.1.0/1.2.0, style-study, channel-*) and add `optional: false`
+   * to every `expected_outputs` entry in every `stage-request.json` ever written. An absent key changes
+   * nothing anywhere except the one output that opts in.
+   */
+  optional: z.boolean().optional(),
 }).strict();
 
 export type Checksum = z.infer<typeof checksumSchema>;

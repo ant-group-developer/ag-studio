@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Command } from "commander";
 import { start, type ScriptContext } from "@harness/script-sdk";
 import { EditStyleSchema, HarnessError, isHarnessError, libraryBriefSchema, reviewSchema, type EditStyle, type LibraryBrief } from "@harness/contracts";
-import { applyReview, claimRequest, exportItem, exportStyle, readRequest, requireActiveVoice, sha256File } from "@harness/core";
+import { applyReview, claimRequest, exportItem, exportStyle, loadBrand, readRequest, requireActiveVoice, sha256File, verifyBrandFiles } from "@harness/core";
 import type { AppContext } from "../composition.js";
 import { withContext } from "./shared.js";
 
@@ -100,6 +100,23 @@ async function intake(app: AppContext, sdk: ScriptContext): Promise<void> {
     voiceFields = { voice_id: profile.voice_id, voice_revision: profile.revision, voice_checksum: profile.ref_audio.checksum };
   }
 
+  // Sub-project 5B (spec §7): the requesting channel's brand, checked HERE for the same reason the voice
+  // check above lives here -- a brand whose font/logo drifted from the checksums in `brand.json` makes
+  // `media-compose` impossible, and finding that out after `claimRequest` leaves a FAILED run behind a
+  // request stuck at `claimed` that nothing reopens. No brand at all is not a problem (the episode is built
+  // plain, spec §2.1); a brand directory that IS there but broken is. Nothing is added to the brief: the
+  // composition stage resolves the channel the same way, from the request.
+  const brandChannelId = brief.request_id ? app.store.getContentRequest(brief.request_id)?.requested_by.channel_id : undefined;
+  if (brandChannelId) {
+    const brand = loadBrand(library.fs, brandChannelId);
+    if (brand) {
+      const verified = await verifyBrandFiles(library.fs, brand);
+      if (!verified.ok) {
+        throw new HarnessError("CONFIG_INVALID", `brand for channel ${brandChannelId} is broken: ${verified.reason}`, { channel_id: brandChannelId, reason: verified.reason });
+      }
+    }
+  }
+
   // Last, once nothing above can still refuse this run: `intake` is the ONE place a request moves
   // `open -> claimed` (AGENTS.md, "Quy tắc kho nội dung").
   if (brief.request_id) {
@@ -167,12 +184,17 @@ async function exportStage(app: AppContext, sdk: ScriptContext): Promise<void> {
     .sort()
     .map((name) => join(thumbnailSetDir, name));
   const editPlanPath = sdk.input("edit_plan");
-  const captionsPath = sdk.hasInput("captions") ? sdk.input("captions") : undefined;
+  // `library-production@1.3.0`'s `captions` input is the DIRECTORY `media-compose` wrote
+  // (`captions.srt` + `captions.vtt`); 1.1.0/1.2.0's was a single `captions.json` file that no stage ever
+  // actually produced. One `statSync` tells the two apart, so both releases keep working from one branch.
+  const captionsInput = sdk.hasInput("captions") ? sdk.input("captions") : undefined;
+  const captionsIsDir = captionsInput !== undefined && statSync(captionsInput).isDirectory();
   const existingItemId = app.store.listLibraryItems().find((i) => i.lineage.run_id === run.run_id)?.item_id;
 
   const { receipt } = await exportItem({ store: app.store, fs: library.fs, clock: app.clock, prober: app.prober }, {
     run, content, brief, episodePath, thumbnailPaths, editPlanPath,
-    ...(captionsPath !== undefined ? { captionsPath } : {}),
+    ...(captionsInput !== undefined && !captionsIsDir ? { captionsPath: captionsInput } : {}),
+    ...(captionsInput !== undefined && captionsIsDir ? { captionsDir: captionsInput } : {}),
     ...(existingItemId !== undefined ? { existingItemId } : {}),
   });
 

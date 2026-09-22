@@ -29,7 +29,9 @@ export function buildStageRequest(d: RequestDeps, p: { run: Run; stageRun: Stage
     schema_version: "harness.stage-request/v1", run_id: run.run_id, stage_run_id: stageRun.stage_run_id, attempt_id: p.attempt.attempt_id,
     project_id: run.project_id, portfolio_id: run.portfolio_id, stage_key: stageRun.stage_key, workflow: run.workflow_release, profile_snapshot: run.profile_snapshot,
     inputs: p.inputs, workspace_uri: p.workspaceDir, stage_config, options: run.options, source_items, resources: p.lease.resources,
-    expected_outputs: (def?.outputs ?? []).map((o) => ({ type: o.type, mime_type: o.mime_type, kind: o.kind, ...(o.name ? { name: o.name } : {}) })),
+    // `optional` is carried through only when the workflow actually set it (sub-project 5B): every other
+    // stage request keeps exactly the shape it had before, byte for byte.
+    expected_outputs: (def?.outputs ?? []).map((o) => ({ type: o.type, mime_type: o.mime_type, kind: o.kind, ...(o.name ? { name: o.name } : {}), ...(o.optional ? { optional: true } : {}) })),
     policy,
     limits: { deadline_at: addSeconds(d.clock.now(), Number(cfg.default_deadline_seconds ?? d.harness.default_deadline_seconds)), max_cost_usd: Number(cfg.default_max_cost_usd ?? d.harness.default_max_cost_usd), max_attempts: stageRun.retry.max_attempts },
     capabilities: p.capabilities, fencing_token: p.lease.fencing_token,
