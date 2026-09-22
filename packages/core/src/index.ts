@@ -63,3 +63,5 @@ export * from "./media/tts.js";
 export * from "./media/snap.js";
 export * from "./media/fit-edl.js";
 export * from "./media/timeline.js";
+export * from "./media/captions.js";
+export * from "./media/ass.js";
