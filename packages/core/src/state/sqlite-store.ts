@@ -3,10 +3,10 @@ import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  ArtifactSchema, AttemptSchema, ChannelLearnedSchema, ChannelPackageSchema, CheckResultSchema, ContentItemSchema, ContentRequestSchema, ContentVariantSchema, EditStyleSchema, EventSchema, ExternalOperationSchema, HarnessError,
-  LeaseSchema, LibraryItemSchema, PublicationJobSchema, RunSchema, SourceItemSchema, StageRunSchema, VideoMetricsSchema, VoiceProfileSchema,
-  newId, type Artifact, type Attempt, type ChannelLearned, type ChannelPackage, type CheckResult, type ClaimParams, type ClaimResult, type Clock, type ContentItem, type ContentRequest, type ContentVariant,
-  type EditStyle, type Event, type EventInput, type ExternalOperation, type Lease, type LibraryItem, type PublicationJob, type ReapedLease, type Run, type SourceItem, type StageRun, type StateStore,
+  ArtifactSchema, AttemptSchema, BrandProfileSchema, ChannelLearnedSchema, ChannelPackageSchema, CheckResultSchema, ContentItemSchema, ContentRequestSchema, ContentVariantSchema, EditStyleSchema, EventSchema, ExternalOperationSchema, HarnessError,
+  LeaseSchema, LibraryItemSchema, MusicTrackSchema, PublicationJobSchema, RunSchema, SourceItemSchema, StageRunSchema, VideoMetricsSchema, VoiceProfileSchema,
+  newId, type Artifact, type Attempt, type BrandProfile, type ChannelLearned, type ChannelPackage, type CheckResult, type ClaimParams, type ClaimResult, type Clock, type ContentItem, type ContentRequest, type ContentVariant,
+  type EditStyle, type Event, type EventInput, type ExternalOperation, type Lease, type LibraryItem, type MusicTrack, type PublicationJob, type ReapedLease, type Run, type SourceItem, type StageRun, type StateStore,
   type TransitionKind, type VideoMetrics, type VoiceProfile,
 } from "@harness/contracts";
 import { addSeconds, SystemClock } from "./clock.js";
@@ -387,6 +387,38 @@ export class SqliteStateStore implements StateStore {
     return filter.status
       ? this.listDocs("SELECT data FROM voice_profile WHERE status = ? ORDER BY rowid", [filter.status], (x) => VoiceProfileSchema.parse(x))
       : this.listDocs("SELECT data FROM voice_profile ORDER BY rowid", [], (x) => VoiceProfileSchema.parse(x));
+  }
+
+  // ---- brand profiles / music tracks (sub-project 5B) ----
+  // Mirrors of <kho>/brands/<channel_id>/brand.json and <kho>/music/<track_id>/track.json, written by
+  // syncLibrary -- same pattern as voice_profile: neither is touched by transition().
+  upsertBrandProfile(b: BrandProfile): void {
+    const v = BrandProfileSchema.parse(b);
+    this.db.prepare(
+      "INSERT INTO brand_profile (channel_id, data, revision, updated_at) VALUES (?, ?, ?, ?) " +
+      "ON CONFLICT(channel_id) DO UPDATE SET data = excluded.data, revision = excluded.revision, updated_at = excluded.updated_at",
+    ).run(v.channel_id, JSON.stringify(v), v.revision, v.updated_at ?? this.clock.now());
+  }
+  getBrandProfile(channelId: string): BrandProfile | undefined {
+    const row = this.db.prepare("SELECT data FROM brand_profile WHERE channel_id = ?").get(channelId) as Row | undefined;
+    return row ? BrandProfileSchema.parse(JSON.parse(row.data)) : undefined;
+  }
+  listBrandProfiles(): BrandProfile[] {
+    return this.listDocs("SELECT data FROM brand_profile ORDER BY rowid", [], (x) => BrandProfileSchema.parse(x));
+  }
+
+  upsertMusicTrack(t: MusicTrack): void {
+    const v = MusicTrackSchema.parse(t);
+    this.db.prepare(
+      "INSERT INTO music_track (id, data, active, updated_at) VALUES (?, ?, ?, ?) " +
+      "ON CONFLICT(id) DO UPDATE SET data = excluded.data, active = excluded.active, updated_at = excluded.updated_at",
+    ).run(v.track_id, JSON.stringify(v), v.active ? 1 : 0, v.updated_at);
+  }
+  getMusicTrack(id: string): MusicTrack | undefined { return this.getDoc("music_track", id, (x) => MusicTrackSchema.parse(x)); }
+  listMusicTracks(filter: { active?: boolean } = {}): MusicTrack[] {
+    return filter.active !== undefined
+      ? this.listDocs("SELECT data FROM music_track WHERE active = ? ORDER BY rowid", [filter.active ? 1 : 0], (x) => MusicTrackSchema.parse(x))
+      : this.listDocs("SELECT data FROM music_track ORDER BY rowid", [], (x) => MusicTrackSchema.parse(x));
   }
 
   // ---- event ----

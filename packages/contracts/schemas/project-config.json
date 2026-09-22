@@ -390,6 +390,54 @@
               },
               "additionalProperties": false,
               "default": {}
+            },
+            "render": {
+              "type": "object",
+              "properties": {
+                "codec": {
+                  "type": "string",
+                  "enum": [
+                    "h264",
+                    "hevc"
+                  ],
+                  "default": "h264"
+                },
+                "encoder": {
+                  "type": "string",
+                  "enum": [
+                    "auto",
+                    "nvenc",
+                    "cpu"
+                  ],
+                  "default": "auto"
+                },
+                "fps": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "const": "auto"
+                    },
+                    {
+                      "type": "number",
+                      "enum": [
+                        24,
+                        25,
+                        30,
+                        50,
+                        60
+                      ]
+                    }
+                  ],
+                  "default": "auto"
+                },
+                "cache_max_gb": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "default": 60
+                }
+              },
+              "additionalProperties": false,
+              "default": {}
             }
           },
           "additionalProperties": false,

@@ -1,0 +1,263 @@
+{
+  "$ref": "#/definitions/render-report",
+  "definitions": {
+    "render-report": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.render-report/v1"
+        },
+        "encoder": {
+          "type": "string",
+          "enum": [
+            "nvenc",
+            "cpu"
+          ]
+        },
+        "codec": {
+          "type": "string",
+          "enum": [
+            "h264",
+            "hevc"
+          ]
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "width": {
+              "type": "integer"
+            },
+            "height": {
+              "type": "integer"
+            },
+            "fps": {
+              "type": "number"
+            },
+            "seconds": {
+              "type": "number"
+            },
+            "bytes": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "width",
+            "height",
+            "fps",
+            "seconds",
+            "bytes"
+          ],
+          "additionalProperties": false
+        },
+        "segments": {
+          "type": "object",
+          "properties": {
+            "total": {
+              "type": "integer"
+            },
+            "rendered": {
+              "type": "integer"
+            },
+            "cached": {
+              "type": "integer"
+            },
+            "mezz_seconds": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "total",
+            "rendered",
+            "cached",
+            "mezz_seconds"
+          ],
+          "additionalProperties": false
+        },
+        "transitions": {
+          "type": "object",
+          "properties": {
+            "requested": {
+              "type": "integer"
+            },
+            "applied": {
+              "type": "integer"
+            },
+            "downgraded": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "before_order": {
+                    "type": "integer"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "no_tail",
+                      "next_too_short",
+                      "too_short"
+                    ]
+                  }
+                },
+                "required": [
+                  "before_order",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "requested",
+            "applied",
+            "downgraded"
+          ],
+          "additionalProperties": false
+        },
+        "captions": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "burn-in",
+                "karaoke",
+                "none"
+              ]
+            },
+            "cues": {
+              "type": "integer"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode",
+            "cues"
+          ],
+          "additionalProperties": false
+        },
+        "text_events": {
+          "type": "object",
+          "properties": {
+            "total": {
+              "type": "integer"
+            },
+            "dropped": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "total",
+            "dropped"
+          ],
+          "additionalProperties": false
+        },
+        "music": {
+          "type": "object",
+          "properties": {
+            "track_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "loop": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "track_id",
+            "loop"
+          ],
+          "additionalProperties": false
+        },
+        "loudness": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "integrated_lufs": {
+                  "type": "number"
+                },
+                "true_peak_dbtp": {
+                  "type": "number"
+                },
+                "lra": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "integrated_lufs",
+                "true_peak_dbtp",
+                "lra"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "brand": {
+          "type": "string",
+          "enum": [
+            "present",
+            "absent"
+          ]
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "render_seconds": {
+          "type": "number"
+        },
+        "ffmpeg_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "encoder",
+        "codec",
+        "output",
+        "segments",
+        "transitions",
+        "captions",
+        "text_events",
+        "music",
+        "loudness",
+        "brand",
+        "warnings",
+        "render_seconds",
+        "ffmpeg_version"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

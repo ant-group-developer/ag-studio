@@ -1,0 +1,64 @@
+{
+  "$ref": "#/definitions/text-event",
+  "definitions": {
+    "text-event": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "title",
+            "callout",
+            "lower_third"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "start": {
+          "type": "number",
+          "minimum": 0
+        },
+        "end": {
+          "type": "number",
+          "minimum": 0
+        },
+        "position": {
+          "type": "string",
+          "enum": [
+            "top_left",
+            "top_center",
+            "top_right",
+            "center",
+            "bottom_left",
+            "bottom_center",
+            "bottom_right"
+          ]
+        },
+        "animation": {
+          "type": "string",
+          "enum": [
+            "none",
+            "fade",
+            "slide_up",
+            "pop"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "text",
+        "start",
+        "end",
+        "position",
+        "animation"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

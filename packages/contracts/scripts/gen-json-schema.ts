@@ -9,6 +9,7 @@ import * as C from "../src/config.js";
 import * as L from "../src/library.js";
 import * as M from "../src/media.js";
 import * as ME from "../src/media-engine.js";
+import * as CM from "../src/composition.js";
 import * as D from "../src/distribution.js";
 import * as G from "../src/learning.js";
 import { EdlSchema } from "../src/edl.js";
@@ -36,6 +37,9 @@ export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
   shots: ME.ShotsIndexSchema, transcript: ME.TranscriptSchema, narration: ME.NarrationSchema,
   "narration-timing": ME.NarrationTimingSchema, "fit-report": ME.FitReportSchema, timeline: ME.TimelineSchema,
   voice: ME.VoiceProfileSchema,
+  overlays: CM.OverlaysSchema, brand: CM.BrandProfileSchema, "music-track": CM.MusicTrackSchema,
+  "caption-cue": CM.CaptionCueSchema, "text-event": CM.TextEventSchema, composition: CM.CompositionSchema,
+  "render-report": CM.RenderReportSchema,
 };
 
 export function toJsonSchema(name: string, schema: ZodTypeAny) {

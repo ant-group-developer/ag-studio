@@ -1,0 +1,587 @@
+{
+  "$ref": "#/definitions/composition",
+  "definitions": {
+    "composition": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.composition/v1"
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "width": {
+              "type": "number",
+              "const": 3840
+            },
+            "height": {
+              "type": "number",
+              "const": 2160
+            },
+            "fps": {
+              "type": "integer"
+            },
+            "codec": {
+              "type": "string",
+              "enum": [
+                "h264",
+                "hevc"
+              ]
+            }
+          },
+          "required": [
+            "width",
+            "height",
+            "fps",
+            "codec"
+          ],
+          "additionalProperties": false
+        },
+        "voice": {
+          "type": "string",
+          "enum": [
+            "none",
+            "tts",
+            "original"
+          ]
+        },
+        "language": {
+          "type": "string"
+        },
+        "total_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^req_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "brand": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "channel_id": {
+                  "type": "string"
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "dir": {
+                  "type": "string"
+                },
+                "fonts_dir": {
+                  "type": "string"
+                },
+                "checksums": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  }
+                }
+              },
+              "required": [
+                "channel_id",
+                "revision",
+                "dir",
+                "fonts_dir",
+                "checksums"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "order": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "source_id": {
+                "type": "string",
+                "pattern": "^src_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "source_path": {
+                "type": "string"
+              },
+              "in": {
+                "type": "number"
+              },
+              "out": {
+                "type": "number"
+              },
+              "start": {
+                "type": "number"
+              },
+              "end": {
+                "type": "number"
+              },
+              "fit": {
+                "type": "string",
+                "enum": [
+                  "scale_pad",
+                  "scale_crop"
+                ]
+              },
+              "has_audio": {
+                "type": "boolean"
+              },
+              "transition_out": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "cut",
+                      "dissolve",
+                      "dip_black"
+                    ]
+                  },
+                  "seconds": {
+                    "type": "number"
+                  },
+                  "tail_available": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "seconds",
+                  "tail_available"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "order",
+              "source_id",
+              "source_path",
+              "in",
+              "out",
+              "start",
+              "end",
+              "fit",
+              "has_audio",
+              "transition_out"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "text_events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "title",
+                  "callout",
+                  "lower_third"
+                ]
+              },
+              "text": {
+                "type": "string"
+              },
+              "start": {
+                "type": "number",
+                "minimum": 0
+              },
+              "end": {
+                "type": "number",
+                "minimum": 0
+              },
+              "position": {
+                "type": "string",
+                "enum": [
+                  "top_left",
+                  "top_center",
+                  "top_right",
+                  "center",
+                  "bottom_left",
+                  "bottom_center",
+                  "bottom_right"
+                ]
+              },
+              "animation": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "fade",
+                  "slide_up",
+                  "pop"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "text",
+              "start",
+              "end",
+              "position",
+              "animation"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "captions": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "burn-in",
+                "karaoke",
+                "none"
+              ]
+            },
+            "cues": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "index": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "start": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "end": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "lines": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "maxItems": 3
+                  },
+                  "raise_px": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 0
+                  },
+                  "words": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "word": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "start": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "end": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "score": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 1
+                        }
+                      },
+                      "required": [
+                        "word",
+                        "start",
+                        "end"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "default": []
+                  }
+                },
+                "required": [
+                  "index",
+                  "start",
+                  "end",
+                  "lines"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode",
+            "cues"
+          ],
+          "additionalProperties": false
+        },
+        "music": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "track_id": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "loop": {
+                  "type": "boolean"
+                },
+                "fade_in": {
+                  "type": "number"
+                },
+                "fade_out": {
+                  "type": "number"
+                },
+                "cues": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "start": {
+                        "type": "number"
+                      },
+                      "end": {
+                        "type": "number"
+                      },
+                      "gain_db": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "start",
+                      "end",
+                      "gain_db"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "duck": {
+                  "type": "object",
+                  "properties": {
+                    "windows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "start": {
+                            "type": "number"
+                          },
+                          "end": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "start",
+                          "end"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "gain_db": {
+                      "type": "number"
+                    },
+                    "attack_ms": {
+                      "type": "number"
+                    },
+                    "release_ms": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "windows",
+                    "gain_db",
+                    "attack_ms",
+                    "release_ms"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "track_id",
+                "path",
+                "loop",
+                "fade_in",
+                "fade_out",
+                "cues",
+                "duck"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "music_reason": {
+          "type": "string"
+        },
+        "logo": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "corner": {
+                  "type": "string",
+                  "enum": [
+                    "left",
+                    "right"
+                  ]
+                },
+                "opacity": {
+                  "type": "number"
+                },
+                "height_px": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "path",
+                "corner",
+                "opacity",
+                "height_px"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "narration": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "line_id": {
+                "type": "string"
+              },
+              "wav": {
+                "type": "string"
+              },
+              "start": {
+                "type": "number"
+              },
+              "end": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "line_id",
+              "wav",
+              "start",
+              "end"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "transitions": {
+          "type": "object",
+          "properties": {
+            "requested": {
+              "type": "integer"
+            },
+            "applied": {
+              "type": "integer"
+            },
+            "downgraded": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "before_order": {
+                    "type": "integer"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "no_tail",
+                      "next_too_short",
+                      "too_short"
+                    ]
+                  }
+                },
+                "required": [
+                  "before_order",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "requested",
+            "applied",
+            "downgraded"
+          ],
+          "additionalProperties": false
+        },
+        "text_dropped": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "reason"
+            ],
+            "additionalProperties": false
+          },
+          "default": []
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "output",
+        "voice",
+        "language",
+        "total_seconds",
+        "request_id",
+        "brand",
+        "segments",
+        "text_events",
+        "captions",
+        "music",
+        "logo",
+        "narration",
+        "transitions",
+        "warnings"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

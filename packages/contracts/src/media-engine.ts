@@ -10,6 +10,10 @@ export const wordSchema = z.object({
   end: z.number().min(0),
   score: z.number().min(0).max(1).optional(),
 }).strict();
+/** Sub-project 5B: same schema as `wordSchema`, exported under the PascalCase name `composition.ts` (and
+ * other 5B modules) import. Both names stay live -- `wordSchema` is still used by `packages/core/src/media/tts.ts`
+ * and `packages/adapters/media-python/src/python-media-engine.ts`. */
+export const WordSchema = wordSchema;
 
 /** `shots.json` a multi-source index stage produces: per-source shot boundaries (spec §1.2). */
 export const ShotsIndexSchema = z.object({

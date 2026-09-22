@@ -169,6 +169,13 @@ export const mediaConfigSchema = z.object({
   watch: z.object({
     max_sheets: z.number().int().min(1).default(24),
   }).strict().default({}),
+  /** Sub-project 5B: `media.render` (ffmpeg compose/render) settings. */
+  render: z.object({
+    codec: z.enum(["h264", "hevc"]).default("h264"),
+    encoder: z.enum(["auto", "nvenc", "cpu"]).default("auto"),
+    fps: z.union([z.literal("auto"), z.union([z.literal(24), z.literal(25), z.literal(30), z.literal(50), z.literal(60)])]).default("auto"),
+    cache_max_gb: z.number().positive().default(60),
+  }).strict().default({}),
 }).strict();
 export type MediaConfig = z.infer<typeof mediaConfigSchema>;
 

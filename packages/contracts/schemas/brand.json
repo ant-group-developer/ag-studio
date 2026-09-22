@@ -1,0 +1,406 @@
+{
+  "$ref": "#/definitions/brand",
+  "definitions": {
+    "brand": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.brand/v1"
+        },
+        "channel_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "fonts": {
+          "type": "object",
+          "properties": {
+            "regular": {
+              "type": "string",
+              "minLength": 1
+            },
+            "bold": {
+              "type": "string",
+              "minLength": 1
+            },
+            "origin": {
+              "type": "string",
+              "enum": [
+                "own",
+                "licensed",
+                "royalty_free"
+              ]
+            },
+            "origin_note": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "regular",
+            "bold",
+            "origin",
+            "origin_note"
+          ],
+          "additionalProperties": false
+        },
+        "colors": {
+          "type": "object",
+          "properties": {
+            "primary": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$"
+            },
+            "text": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$",
+              "default": "#FFFFFF"
+            },
+            "text_outline": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$",
+              "default": "#000000"
+            },
+            "box": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$",
+              "default": "#000000B3"
+            }
+          },
+          "required": [
+            "primary"
+          ],
+          "additionalProperties": false
+        },
+        "safe_margin_px": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 600,
+          "default": 120
+        },
+        "text": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "object",
+              "properties": {
+                "size_px": {
+                  "type": "integer",
+                  "minimum": 24,
+                  "maximum": 400,
+                  "default": 120
+                },
+                "position": {
+                  "type": "string",
+                  "enum": [
+                    "top_left",
+                    "top_center",
+                    "top_right",
+                    "center",
+                    "bottom_left",
+                    "bottom_center",
+                    "bottom_right"
+                  ],
+                  "default": "top_left"
+                },
+                "box": {
+                  "type": "boolean",
+                  "default": true
+                },
+                "animation": {
+                  "type": "string",
+                  "enum": [
+                    "none",
+                    "fade",
+                    "slide_up",
+                    "pop"
+                  ],
+                  "default": "slide_up"
+                },
+                "seconds": {
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 10,
+                  "default": 4
+                }
+              },
+              "additionalProperties": false,
+              "default": {}
+            },
+            "callout": {
+              "type": "object",
+              "properties": {
+                "size_px": {
+                  "type": "integer",
+                  "minimum": 24,
+                  "maximum": 400,
+                  "default": 160
+                },
+                "position": {
+                  "type": "string",
+                  "enum": [
+                    "top_left",
+                    "top_center",
+                    "top_right",
+                    "center",
+                    "bottom_left",
+                    "bottom_center",
+                    "bottom_right"
+                  ],
+                  "default": "center"
+                },
+                "box": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "animation": {
+                  "type": "string",
+                  "enum": [
+                    "none",
+                    "fade",
+                    "slide_up",
+                    "pop"
+                  ],
+                  "default": "pop"
+                },
+                "seconds": {
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 10,
+                  "default": 3
+                }
+              },
+              "additionalProperties": false,
+              "default": {}
+            },
+            "lower_third": {
+              "type": "object",
+              "properties": {
+                "size_px": {
+                  "type": "integer",
+                  "minimum": 24,
+                  "maximum": 400,
+                  "default": 72
+                },
+                "position": {
+                  "type": "string",
+                  "enum": [
+                    "top_left",
+                    "top_center",
+                    "top_right",
+                    "center",
+                    "bottom_left",
+                    "bottom_center",
+                    "bottom_right"
+                  ],
+                  "default": "bottom_left"
+                },
+                "box": {
+                  "type": "boolean",
+                  "default": true
+                },
+                "animation": {
+                  "type": "string",
+                  "enum": [
+                    "none",
+                    "fade",
+                    "slide_up",
+                    "pop"
+                  ],
+                  "default": "fade"
+                },
+                "seconds": {
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 10,
+                  "default": 5
+                }
+              },
+              "additionalProperties": false,
+              "default": {}
+            }
+          },
+          "additionalProperties": false,
+          "default": {}
+        },
+        "subtitles": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "burn-in",
+                "karaoke",
+                "none"
+              ],
+              "default": "burn-in"
+            },
+            "size_px": {
+              "type": "integer",
+              "minimum": 24,
+              "maximum": 300,
+              "default": 88
+            },
+            "position": {
+              "type": "string",
+              "enum": [
+                "bottom_center",
+                "top_center"
+              ],
+              "default": "bottom_center"
+            },
+            "max_chars_per_line": {
+              "type": "integer",
+              "minimum": 16,
+              "maximum": 80,
+              "default": 42
+            },
+            "max_lines": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3,
+              "default": 2
+            },
+            "highlight_color": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$",
+              "default": "#F2C94C"
+            }
+          },
+          "additionalProperties": false,
+          "default": {}
+        },
+        "logo": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "corner": {
+              "type": "string",
+              "enum": [
+                "left",
+                "right"
+              ],
+              "default": "right"
+            },
+            "opacity": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0.8
+            },
+            "height_px": {
+              "type": "integer",
+              "minimum": 24,
+              "maximum": 600,
+              "default": 140
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        },
+        "transition": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "cut",
+                "dissolve",
+                "dip_black"
+              ],
+              "default": "cut"
+            },
+            "seconds": {
+              "type": "number",
+              "minimum": 0.2,
+              "maximum": 1,
+              "default": 0.4
+            }
+          },
+          "additionalProperties": false,
+          "default": {}
+        },
+        "source_fit": {
+          "type": "string",
+          "enum": [
+            "scale_pad",
+            "scale_crop"
+          ],
+          "default": "scale_pad"
+        },
+        "music": {
+          "type": "object",
+          "properties": {
+            "tracks": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "gain_db": {
+              "type": "number",
+              "minimum": -40,
+              "maximum": 0,
+              "default": -18
+            },
+            "duck_db": {
+              "type": "number",
+              "minimum": -40,
+              "maximum": 0,
+              "default": -12
+            },
+            "duck_attack_ms": {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 2000,
+              "default": 150
+            },
+            "duck_release_ms": {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 5000,
+              "default": 600
+            }
+          },
+          "additionalProperties": false,
+          "default": {}
+        },
+        "checksums": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "default": {}
+        },
+        "created_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+        },
+        "updated_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+        }
+      },
+      "required": [
+        "schema_version",
+        "channel_id",
+        "revision",
+        "fonts",
+        "colors"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

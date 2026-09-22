@@ -3,6 +3,7 @@ import type { StageRequest, StageResult } from "./execution.js";
 import type { ContentRequest, EditStyle, LibraryItem } from "./library.js";
 import type { ChannelLearned, VideoMetrics } from "./learning.js";
 import type { VoiceProfile } from "./media-engine.js";
+import type { BrandProfile, MusicTrack } from "./composition.js";
 
 export type TransitionKind = "run" | "stage_run" | "attempt" | "artifact" | "external_operation" | "publication_job";
 
@@ -114,6 +115,16 @@ export interface StateStore {
   upsertVoiceProfile(v: VoiceProfile): void;
   getVoiceProfile(id: string): VoiceProfile | undefined;
   listVoiceProfiles(filter?: { status?: "active" | "retired" }): VoiceProfile[];
+
+  // ---- brand profiles / music tracks (sub-project 5B): mirrors of <kho>/brands/<channel_id>/brand.json and
+  // <kho>/music/<track_id>/track.json, written by syncLibrary ----
+  upsertBrandProfile(b: BrandProfile): void;
+  getBrandProfile(channelId: string): BrandProfile | undefined;
+  listBrandProfiles(): BrandProfile[];
+
+  upsertMusicTrack(t: MusicTrack): void;
+  getMusicTrack(id: string): MusicTrack | undefined;
+  listMusicTracks(filter?: { active?: boolean }): MusicTrack[];
 
   appendEvent(e: EventInput): Event;
   listEvents(filter: { run_id?: string; event_type?: string; channel_id?: string; limit?: number; newest?: boolean }): Event[];

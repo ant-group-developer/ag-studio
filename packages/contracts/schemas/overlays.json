@@ -1,0 +1,144 @@
+{
+  "$ref": "#/definitions/overlays",
+  "definitions": {
+    "overlays": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.overlays/v1"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^OV\\d{2,3}$"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "title",
+                  "callout",
+                  "lower_third"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "anchor": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "line_id": {
+                        "type": "string",
+                        "pattern": "^L\\d{3}$"
+                      },
+                      "word_index": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "line_id"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "edl_order": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "edl_order"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "speech_index": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "speech_index"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "seconds": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 10
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "text",
+              "anchor"
+            ],
+            "additionalProperties": false
+          },
+          "default": []
+        },
+        "transitions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "before_order": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "cut",
+                  "dissolve",
+                  "dip_black"
+                ]
+              }
+            },
+            "required": [
+              "before_order",
+              "kind"
+            ],
+            "additionalProperties": false
+          },
+          "default": []
+        },
+        "music": {
+          "type": "object",
+          "properties": {
+            "mood": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40
+            }
+          },
+          "required": [
+            "mood"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema_version"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
