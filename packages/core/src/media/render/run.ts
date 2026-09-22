@@ -20,6 +20,7 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { copyFileSync, existsSync, linkSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { HarnessError, isHarnessError, RenderReportSchema, type Clock, type Composition, type MediaProber, type RenderReport } from "@harness/contracts";
+import { childEnvWithoutSecrets } from "../child-env.js";
 import { round3 } from "../time.js";
 import { cacheCommit, cacheEvict, cacheLookup, type MezzCache } from "./cache.js";
 import { NVENC_PROBE_ARGS, resolveEncoder, type EncoderChoice } from "./encoder.js";
@@ -89,7 +90,8 @@ function runProcess(spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, la
   if (bin === undefined) throw new HarnessError("CONFIG_INVALID", `${label}: empty ffmpeg argv`, { label });
 
   return new Promise<ProcResult>((resolve, reject) => {
-    const child = spawnFn(bin, args, { windowsHide: true, stdio: ["ignore", captureStdout ? "pipe" : "ignore", "pipe"] });
+    // `env`: ffmpeg never needs a secret, and the repo rule is absolute -- see `childEnvWithoutSecrets`.
+    const child = spawnFn(bin, args, { windowsHide: true, env: childEnvWithoutSecrets(), stdio: ["ignore", captureStdout ? "pipe" : "ignore", "pipe"] });
     let stderr = "";
     let stdout = "";
     let timedOut = false;
@@ -182,6 +184,19 @@ interface MezzRef {
  * `clip-set-complete` checker still depend on.
  */
 export async function renderComposition(d: RenderDeps, p: RenderInput): Promise<{ report: RenderReport; episodePath: string; clipSetDir: string }> {
+  try {
+    return await renderCompositionInner(d, p);
+  } finally {
+    // `tmp/` holds the mezzanine each ffmpeg call writes BEFORE it is probed and committed to the cache --
+    // at 4K those are the largest files this stage ever makes. On the happy path the last committed one is
+    // all that is left; on a failure (a dead NVENC, a timeout, a mezzanine that came out the wrong length)
+    // the partial file would otherwise sit in the attempt workspace until the whole workspace is swept, and
+    // a retry would write its own alongside it. Cleaning up here covers both (review fix wave, m7).
+    rmSync(join(p.outDir, "tmp"), { recursive: true, force: true });
+  }
+}
+
+async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ report: RenderReport; episodePath: string; clipSetDir: string }> {
   const { composition } = p;
   const spawnFn = d.spawn ?? nodeSpawn;
   const log = d.log ?? (() => {});
@@ -430,7 +445,6 @@ export async function renderComposition(d: RenderDeps, p: RenderInput): Promise<
   });
 
   writeFileSync(join(outDir, "render-report.json"), JSON.stringify(report, null, 2));
-  rmSync(tmpDir, { recursive: true, force: true });
   const evicted = cacheEvict(d.cache);
   if (evicted.removed > 0) log(`mezz cache swept: ${evicted.removed} entries, ${evicted.bytes} bytes`);
 

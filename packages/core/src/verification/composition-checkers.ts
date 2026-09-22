@@ -22,6 +22,7 @@ import {
   type Narration,
 } from "@harness/contracts";
 import { countDialogues } from "../media/ass.js";
+import { childEnvWithoutSecrets } from "../media/child-env.js";
 import { overlayDensityLimit } from "../media/overlays.js";
 
 const skip = (reason: string) => ({ verdict: "skip" as const, evidence: { reason } });
@@ -33,12 +34,13 @@ const TRUE_PEAK_MAX_DBTP = -0.5;
 /** Luma standard deviation below which a sampled region counts as "nothing was drawn here" -- a flat fill
  * (letterbox black, a solid backdrop) measures ~0, any real logo or subtitle edge measures far above 4. */
 const PAINTED_STDDEV_MIN = 4;
-/** Square sampled at the logo corner; comfortably covers the default 140 px logo at a 120 px safe margin. */
-const LOGO_PROBE_PX = 260;
 /** Fallbacks for a composition whose brand directory is unreadable -- the same defaults `BrandProfileSchema`
- * itself applies to `safe_margin_px` / `subtitles.size_px`. */
+ * itself applies to `safe_margin_px` / `subtitles.size_px` / `subtitles.position`. */
 const DEFAULT_SAFE_MARGIN_PX = 120;
 const DEFAULT_SUBTITLE_SIZE_PX = 88;
+const DEFAULT_SUBTITLE_POSITION = "bottom_center" as const;
+const FRAME_W = 3840;
+const FRAME_H = 2160;
 
 /** Same ceiling `media/watch.ts` puts on its own synchronous ffmpeg calls: a frame extract that has not
  * finished in five minutes is wedged, and a checker must not hang the verifier waiting for it. */
@@ -53,7 +55,8 @@ function frameStdDev(ffmpeg: string, file: string, t: number, crop: { w: number;
   const r = spawnSync(
     ffmpeg,
     ["-hide_banner", "-ss", String(t), "-i", file, "-frames:v", "1", "-vf", `crop=${crop.w}:${crop.h}:${crop.x}:${crop.y},format=gray`, "-f", "rawvideo", "-"],
-    { maxBuffer: 64 * 1024 * 1024, timeout: FFMPEG_TIMEOUT_MS },
+    // `env`: a checker's ffmpeg never needs a secret either (`childEnvWithoutSecrets`).
+    { maxBuffer: 64 * 1024 * 1024, timeout: FFMPEG_TIMEOUT_MS, env: childEnvWithoutSecrets() },
   );
   if (r.status !== 0) return null;
   const buf = r.stdout;
@@ -66,19 +69,60 @@ function frameStdDev(ffmpeg: string, file: string, t: number, crop: { w: number;
   return Math.sqrt(variance / buf.length);
 }
 
-/** `safe_margin_px` / `subtitles.size_px` from the composition's own brand directory, so the sampled caption
- * band matches where `overlay.ass` actually drew; schema defaults when there is no readable brand. */
-function brandLayout(composition: Composition): { safe: number; subtitleSize: number } {
+/** `safe_margin_px` / `subtitles.size_px` / `subtitles.position` from the composition's own brand directory,
+ * so the sampled regions match where `ass.ts`/`final-graph.ts` actually drew; schema defaults when there is
+ * no readable brand. */
+function brandLayout(composition: Composition): { safe: number; subtitleSize: number; subtitlePosition: "bottom_center" | "top_center" } {
   const dir = composition.brand?.dir;
   if (dir !== undefined) {
     try {
       const parsed = BrandProfileSchema.safeParse(JSON.parse(readFileSync(join(dir, "brand.json"), "utf8")));
-      if (parsed.success) return { safe: parsed.data.safe_margin_px, subtitleSize: parsed.data.subtitles.size_px };
+      if (parsed.success) {
+        return { safe: parsed.data.safe_margin_px, subtitleSize: parsed.data.subtitles.size_px, subtitlePosition: parsed.data.subtitles.position };
+      }
     } catch {
       // No brand on disk (a hand-run render, or a kho that moved): fall through to the defaults.
     }
   }
-  return { safe: DEFAULT_SAFE_MARGIN_PX, subtitleSize: DEFAULT_SUBTITLE_SIZE_PX };
+  return { safe: DEFAULT_SAFE_MARGIN_PX, subtitleSize: DEFAULT_SUBTITLE_SIZE_PX, subtitlePosition: DEFAULT_SUBTITLE_POSITION };
+}
+
+/** A crop rectangle clamped inside the 3840x2160 frame -- a large `safe_margin_px` (up to 600) or a tall
+ * logo can otherwise push a computed window past an edge, where ffmpeg's `crop` refuses to run and every
+ * sample comes back `null` ("frame extract failed") on an episode that is in fact perfectly painted. */
+function clampCrop(c: { w: number; h: number; x: number; y: number }): { w: number; h: number; x: number; y: number } {
+  const w = Math.max(1, Math.min(Math.round(c.w), FRAME_W));
+  const h = Math.max(1, Math.min(Math.round(c.h), FRAME_H));
+  return { w, h, x: Math.max(0, Math.min(Math.round(c.x), FRAME_W - w)), y: Math.max(0, Math.min(Math.round(c.y), FRAME_H - h)) };
+}
+
+/**
+ * Where `final-graph.ts` really puts the logo: `overlay=<m/2>:<m/2>` from the chosen corner, a picture
+ * `composition.logo.height_px` tall (`scale=-1:height_px`, so its width is whatever the source aspect gives).
+ * The probe window is a `2 x height_px` square anchored at that corner -- wide enough to cover any logo up to
+ * 2:1, small enough that a flat frame around a drawn logo still fails. Before the fix wave this was a fixed
+ * 260 px square at `y = 0`, which sampled pure background for any brand whose `safe_margin_px` was large
+ * (up to 600 -> the logo starts at y = 300) or whose logo was taller than 260 px.
+ */
+function logoCrop(logo: NonNullable<Composition["logo"]>, safe: number): { w: number; h: number; x: number; y: number } {
+  const size = Math.min(Math.max(1, Math.round(logo.height_px * 2)), FRAME_W, FRAME_H);
+  const m = Math.round(safe / 2);
+  const x = logo.corner === "left" ? m : FRAME_W - m - size;
+  return clampCrop({ w: size, h: size, x, y: m });
+}
+
+/**
+ * Where `ass.ts` really puts the subtitles: Alignment 2 with `MarginV = safe_margin_px` (text sits ABOVE the
+ * bottom margin) for `bottom_center`, Alignment 8 with the same margin (text hangs BELOW the top margin) for
+ * `top_center`. Three subtitle lines is the ceiling (`subtitles.max_lines` is capped at 3), so the band is
+ * `3 x size_px` tall: it starts AT the top margin going down for `top_center`, and reaches UP from the bottom
+ * edge (margin included) for `bottom_center`. Before the fix wave the bottom band was the only one sampled,
+ * so a `top_center` brand had its captions checked against a strip of background.
+ */
+function captionCrop(safe: number, subtitleSize: number, position: "bottom_center" | "top_center"): { w: number; h: number; x: number; y: number } {
+  if (position === "top_center") return clampCrop({ w: 1000, h: subtitleSize * 3, x: 1420, y: safe });
+  const bandHeight = safe + subtitleSize * 3;
+  return clampCrop({ w: 1000, h: bandHeight, x: 1420, y: FRAME_H - bandHeight });
 }
 
 /** The `captions` directory of this stage, whether it was produced here (`media-compose`) or consumed as an
@@ -354,8 +398,14 @@ export function compositionCheckers(opts: { prober: MediaProber; available?: boo
       for (const seg of composition.segments) {
         if (!existsSync(seg.source_path)) return { verdict: "fail", evidence: { reason: "source_path missing", order: seg.order, path: seg.source_path } };
       }
-      for (const n of composition.narration) {
-        if (!existsSync(n.wav)) return { verdict: "fail", evidence: { reason: "narration wav missing", line_id: n.line_id, path: n.wav } };
+      // Only `voice: "tts"` actually reads these wavs: `final-graph.ts` adds a `-i` per narration line for
+      // `tts` alone, and `voice: "original"`/`"none"` take their audio from the mezzanines. An `original`
+      // composition can still carry `narration[]` (the lines the agent wrote, for anchoring and for review),
+      // and those have no synthesized wav on disk to point at (review fix wave, m4).
+      if (composition.voice === "tts") {
+        for (const n of composition.narration) {
+          if (!existsSync(n.wav)) return { verdict: "fail", evidence: { reason: "narration wav missing", line_id: n.line_id, path: n.wav } };
+        }
       }
       if (composition.music !== null && !existsSync(composition.music.path)) {
         return { verdict: "fail", evidence: { reason: "music path missing", path: composition.music.path } };
@@ -441,33 +491,31 @@ export function compositionCheckers(opts: { prober: MediaProber; available?: boo
         if (srtFailure) return srtFailure;
       }
 
-      const { safe, subtitleSize } = brandLayout(composition);
+      const { safe, subtitleSize, subtitlePosition } = brandLayout(composition);
       /** Times are clamped into the episode: a very short episode would otherwise be sampled at t < 0. */
       const at = (t: number): number => Math.min(Math.max(t, 0), Math.max(0, total - 0.1));
 
       if (composition.logo !== null) {
-        const x = composition.logo.corner === "left" ? 0 : 3840 - LOGO_PROBE_PX;
-        const crop = { w: LOGO_PROBE_PX, h: LOGO_PROBE_PX, x, y: 0 };
+        const crop = logoCrop(composition.logo, safe);
         const samples = [at(1), at(total / 2), at(total - 1)].map((t) => ({ t, stddev: frameStdDev(ffmpeg, videoPath, t, crop) }));
         if (samples.some((s) => s.stddev === null)) {
-          return { verdict: "fail", evidence: { reason: "frame extract failed", region: "logo", samples: samples.map((s) => s.t) } };
+          return { verdict: "fail", evidence: { reason: "frame extract failed", region: "logo", crop, samples: samples.map((s) => s.t) } };
         }
         // 2 of 3: one sampled frame can legitimately land on a dip_black fade, where the whole frame is flat.
         const painted = samples.filter((s) => (s.stddev ?? 0) > PAINTED_STDDEV_MIN).length;
         if (painted < 2) {
-          return { verdict: "fail", evidence: { reason: "logo region looks unpainted", min_stddev: PAINTED_STDDEV_MIN, samples: samples.map((s) => ({ t: s.t, stddev: s.stddev })) } };
+          return { verdict: "fail", evidence: { reason: "logo region looks unpainted", min_stddev: PAINTED_STDDEV_MIN, crop, samples: samples.map((s) => ({ t: s.t, stddev: s.stddev })) } };
         }
       }
 
       const firstCue = composition.captions.cues[0];
       if (composition.captions.mode !== "none" && firstCue !== undefined) {
         const t = at((firstCue.start + firstCue.end) / 2);
-        const bandHeight = safe + subtitleSize * 3;
-        const crop = { w: 1000, h: bandHeight, x: 1420, y: Math.max(0, 2160 - bandHeight) };
+        const crop = captionCrop(safe, subtitleSize, subtitlePosition);
         const stddev = frameStdDev(ffmpeg, videoPath, t, crop);
-        if (stddev === null) return { verdict: "fail", evidence: { reason: "frame extract failed", region: "captions", t } };
+        if (stddev === null) return { verdict: "fail", evidence: { reason: "frame extract failed", region: "captions", crop, t } };
         if (stddev <= PAINTED_STDDEV_MIN) {
-          return { verdict: "fail", evidence: { reason: "caption region looks unpainted", min_stddev: PAINTED_STDDEV_MIN, stddev, t } };
+          return { verdict: "fail", evidence: { reason: "caption region looks unpainted", min_stddev: PAINTED_STDDEV_MIN, crop, stddev, t } };
         }
       }
 

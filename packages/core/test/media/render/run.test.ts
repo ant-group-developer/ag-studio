@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -19,9 +19,25 @@ function ffprobePath(): string {
   return process.env.FFPROBE_PATH ?? "ffprobe";
 }
 
+/** Every `mkdtemp` directory this file made (sources, mezzanine caches, output dirs -- 4K episodes among
+ * them), deleted once the file is done instead of being left in the OS temp directory. */
+const tempDirs: string[] = [];
+
 function tempDir(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
 }
+
+afterAll(() => {
+  for (const dir of tempDirs) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Best effort: a file still held open must not fail the suite.
+    }
+  }
+});
 
 /** Minimal local `MediaProber` -- `@harness/core` never imports `@harness/adapter-ffprobe`, so the test
  * supplies its own (same approach as `packages/core/test/library/voices.test.ts`). */
@@ -182,14 +198,16 @@ interface FakePlan {
  * to that path so the runner's `statSync`/link/commit steps have a file to work with. `plan` decides per
  * call what happens, by argv and by call index.
  */
-function fakeSpawn(plan: (argv: string[], index: number) => FakePlan = () => ({})): { spawn: SpawnFn; calls: string[][]; kills: () => number } {
+function fakeSpawn(plan: (argv: string[], index: number) => FakePlan = () => ({})): { spawn: SpawnFn; calls: string[][]; options: Record<string, unknown>[]; kills: () => number } {
   const calls: string[][] = [];
+  const options: Record<string, unknown>[] = [];
   let kills = 0;
 
-  const spawn = ((bin: string, args: readonly string[]) => {
+  const spawn = ((bin: string, args: readonly string[], opts: Record<string, unknown>) => {
     const argv = [bin, ...args];
     const index = calls.length;
     calls.push(argv);
+    options.push(opts);
     const p = plan(argv, index);
     const exit = p.exit === undefined ? 0 : p.exit;
 
@@ -219,7 +237,7 @@ function fakeSpawn(plan: (argv: string[], index: number) => FakePlan = () => ({}
     return child as unknown as ReturnType<SpawnFn>;
   }) as unknown as SpawnFn;
 
-  return { spawn, calls, kills: () => kills };
+  return { spawn, calls, options, kills: () => kills };
 }
 
 /** Answers every probe with the same 2-second 4K/48 kHz stereo shape the fake compositions below expect. */
@@ -350,6 +368,36 @@ describe("renderComposition (fake ffmpeg)", () => {
     expect(report.warnings).toContain("nvenc_unavailable_cpu_fallback");
     expect(report.encoder).toBe("cpu");
     expect(calls.some((c) => c.some((a) => a.includes("nvenc")))).toBe(false);
+  });
+
+  // Review fix wave, I3: "child processes never receive HARNESS_SECRET_*" (AGENTS.md) had been enforced for
+  // the media engine and the Playwright/agent children, but every ffmpeg this renderer spawned inherited the
+  // worker's whole environment, secrets included.
+  it("no ffmpeg child gets a HARNESS_SECRET_* variable, while an ordinary env still comes through", async () => {
+    const previous = { upper: process.env.HARNESS_SECRET_X_Y, lower: process.env.harness_secret_a_b };
+    process.env.HARNESS_SECRET_X_Y = "s3cret";
+    process.env.harness_secret_a_b = "s3cret";
+    try {
+      const { spawn, options } = fakeSpawn();
+      const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+
+      await renderComposition(d, input({ composition: fakeComposition(), outDir, encoderCfg: "cpu", sourceChecksums: CHECKSUMS }));
+
+      expect(options.length, "no ffmpeg was spawned at all -- the assertions below would be vacuous").toBeGreaterThan(0);
+      for (const opts of options) {
+        const env = opts.env as Record<string, string> | undefined;
+        expect(env, "spawn was called without an explicit env").toBeDefined();
+        expect(Object.keys(env!).filter((k) => k.toLowerCase().startsWith("harness_secret_")), JSON.stringify(Object.keys(env!))).toEqual([]);
+        expect(Object.values(env!)).not.toContain("s3cret");
+        // ...and it is not passing on an empty env: ffmpeg still needs a normal user environment.
+        expect(env!.PATH ?? env!.Path).toBe(process.env.PATH ?? process.env.Path);
+      }
+    } finally {
+      if (previous.upper === undefined) delete process.env.HARNESS_SECRET_X_Y;
+      else process.env.HARNESS_SECRET_X_Y = previous.upper;
+      if (previous.lower === undefined) delete process.env.harness_secret_a_b;
+      else process.env.harness_secret_a_b = previous.lower;
+    }
   });
 
   it("an ffmpeg killed by a signal (exit code null) is an IO_ERROR", async () => {

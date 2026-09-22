@@ -55,6 +55,7 @@ export * from "./learning/planning.js";
 export * from "./learning/auto-pick.js";
 export * from "./learning/checkers.js";
 export * from "./dashboard/snapshot.js";
+export * from "./media/child-env.js";
 export * from "./media/watch.js";
 export * from "./media/scene.js";
 export * from "./media/index.js";

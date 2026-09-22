@@ -104,7 +104,14 @@ export function audioGraph(p: AudioGraphInput): { filter: string; out: string } 
   if (music !== null && musicIndex !== null) {
     const loopPrefix = music.loop ? "aloop=loop=-1:size=2e9," : "";
     const gainDb = music.cues[0]?.gain_db ?? -18;
-    const fadeOutStart = fmt(composition.total_seconds - music.fade_out);
+    // The fade-out is anchored at the end of the music, not at the end of the EPISODE. For a looping track
+    // (or one at least as long as the episode) `cues[0].end` IS `total_seconds` and this is the old
+    // behaviour. For a short track with `loop_ok: false` -- `buildMusicPlan`'s `music_ends_early` case --
+    // `cues[0].end` is where the track runs out, and anchoring at `total_seconds` would put the whole fade
+    // after the audio had already stopped: the music would cut off hard mid-bar and the fade would play over
+    // silence (review fix wave, m2).
+    const musicEnd = Math.min(composition.total_seconds, music.cues[0]?.end ?? composition.total_seconds);
+    const fadeOutStart = fmt(Math.max(0, musicEnd - music.fade_out));
     parts.push(
       `[${musicIndex}:a]${loopPrefix}atrim=0:${fmt(composition.total_seconds)},afade=t=in:d=${fmt(music.fade_in)},afade=t=out:st=${fadeOutStart}:d=${fmt(music.fade_out)},volume=${fmt(gainDb)}dB[music]`,
     );

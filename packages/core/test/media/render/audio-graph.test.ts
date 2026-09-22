@@ -73,7 +73,10 @@ describe("audioGraph", () => {
         { line_id: "L001", wav: "/abs/voice/L001.wav", start: 0.3, end: 2 },
         { line_id: "L002", wav: "/abs/voice/L002.wav", start: 6, end: 9 },
       ],
-      music: musicFixture(),
+      // A track that covers the whole 15 s episode, which is what `buildMusicPlan` writes whenever the track
+      // is long enough or loops (`cues[0].end === total_seconds`). The fixture's default 10 s cue would now
+      // be the `music_ends_early` case and would fade at 7 s, not 12 -- covered by its own test below.
+      music: musicFixture({ cues: [{ start: 0, end: 15, gain_db: -18 }] }),
     });
     const narrationIdx = new Map([["L001", 3], ["L002", 4]]);
     const { filter, out } = run({
@@ -128,6 +131,27 @@ describe("audioGraph", () => {
     const composition = baseComposition({ voice: "tts", narration: [] });
     const { filter } = run({ composition });
     expect(filter).toContain("anullsrc=r=48000:cl=stereo");
+  });
+
+  // Review fix wave, m2: a short non-looping track (`buildMusicPlan`'s `music_ends_early` case) must fade at
+  // its OWN end, not at the episode's -- anchoring at `total_seconds - fade_out` would leave the track
+  // cutting off hard at 6 s and the fade playing over silence from 7 s to 10 s.
+  it("a short non-looping track fades out at cues[0].end, not at total_seconds", () => {
+    const composition = baseComposition({
+      voice: "none",
+      music: musicFixture({ loop: false, cues: [{ start: 0, end: 6, gain_db: -18 }] }),
+    });
+    const mezzIdx = new Map([[0, 0], [1, 1]]);
+    const { filter } = run({ composition, mezzIndex: (order) => mezzIdx.get(order)!, musicIndex: 5 });
+    expect(filter).toContain("afade=t=out:st=3:d=3");
+    expect(filter).not.toContain("afade=t=out:st=7:d=3");
+  });
+
+  it("a track that covers the whole episode still fades out at total_seconds - fade_out", () => {
+    const composition = baseComposition({ voice: "none", music: musicFixture() });
+    const mezzIdx = new Map([[0, 0], [1, 1]]);
+    const { filter } = run({ composition, mezzIndex: (order) => mezzIdx.get(order)!, musicIndex: 5 });
+    expect(filter).toContain("afade=t=out:st=7:d=3");
   });
 
   it("music.loop: true -> aloop=loop=-1:size=2e9", () => {

@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import type { MediaEngine, MediaEngineProbe, StateStore } from "@harness/contracts";
+import { childEnvWithoutSecrets } from "@harness/core";
 
 /**
  * How long a cached `MediaEngine.probe()` result is trusted before `computeDoctorRows`'s `"cached"` mode
@@ -148,9 +149,11 @@ function parseCapabilityNames(stdout: string): string[] {
  * injectable `spawnFn` purely for tests; production code only ever calls this through
  * `resolveFfmpegCapabilities`'s TTL cache below. */
 export function probeFfmpegCapabilities(ffmpeg: string, spawnFn: typeof spawnSync = spawnSync): FfmpegCapabilities | null {
-  const filters = spawnFn(ffmpeg, ["-hide_banner", "-filters"], { encoding: "utf8", timeout: FFMPEG_CAPS_PROBE_TIMEOUT_MS });
+  // `env`: these two ffmpeg children never need a secret either (`childEnvWithoutSecrets`, @harness/core).
+  const opts = { encoding: "utf8" as const, timeout: FFMPEG_CAPS_PROBE_TIMEOUT_MS, env: childEnvWithoutSecrets() };
+  const filters = spawnFn(ffmpeg, ["-hide_banner", "-filters"], opts);
   if (filters.error) return null;
-  const encoders = spawnFn(ffmpeg, ["-hide_banner", "-encoders"], { encoding: "utf8", timeout: FFMPEG_CAPS_PROBE_TIMEOUT_MS });
+  const encoders = spawnFn(ffmpeg, ["-hide_banner", "-encoders"], opts);
   if (encoders.error) return null;
   return { filters: parseCapabilityNames(filters.stdout ?? ""), encoders: parseCapabilityNames(encoders.stdout ?? "") };
 }

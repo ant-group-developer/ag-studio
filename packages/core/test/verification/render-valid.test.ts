@@ -1,6 +1,6 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CompositionSchema, newId, RenderReportSchema, type Checker, type Composition, type MediaProbe, type MediaProber, type RenderReport, type StageRequest, type StageResult } from "@harness/contracts";
@@ -76,9 +76,67 @@ function makeEpisode(path: string, pattern: "flat" | "noise", seconds = 4): void
   ]);
 }
 
-function tempDir(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+/** Every `mkdtemp` directory this file made, so `afterAll` can delete them: each `world()` holds a full 4K
+ * episode, and a whole run of this file used to leave ~10 of them behind in the OS temp directory
+ * (deferred-items, "Vệ sinh test"). */
+const tempDirs: string[] = [];
+
+/**
+ * A 3840x2160 / 25 fps / 4s episode that is flat everywhere EXCEPT one rectangle, which carries real
+ * structure. That is how the probe windows are tested without guessing crop argv: paint only where the brand
+ * layout says the logo/captions land, and only the checker that looks there can pass.
+ */
+function makeRegionEpisode(path: string, region: { x: number; y: number; w: number; h: number }, seconds = 4): void {
+  run(ffmpegPath(), [
+    "-hide_banner", "-y",
+    "-f", "lavfi", "-i", "color=c=0x303030:size=3840x2160:rate=25",
+    "-f", "lavfi", "-i", `testsrc2=size=${region.w}x${region.h}:rate=25,drawgrid=w=32:h=32:t=4:color=white`,
+    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+    "-filter_complex", `[0:v][1:v]overlay=${region.x}:${region.y}[v]`,
+    "-map", "[v]", "-map", "2:a",
+    "-t", String(seconds), "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-r", "25",
+    "-c:a", "aac", "-b:a", "256k", "-ar", "48000", "-ac", "2", "-shortest", path,
+  ]);
 }
+
+/** A brand directory holding just the `brand.json` `brandLayout()` reads (no fonts, no logo file: nothing in
+ * `render-valid` opens either). */
+function brandDir(o: { safe_margin_px?: number; subtitlePosition?: "bottom_center" | "top_center"; subtitleSize?: number }): string {
+  const dir = tempDir("rv-brand-");
+  writeFileSync(join(dir, "brand.json"), JSON.stringify({
+    schema_version: "harness.brand/v1",
+    channel_id: "channel-one",
+    revision: 1,
+    fonts: { regular: "fonts/regular.ttf", bold: "fonts/bold.ttf", origin: "own", origin_note: "test" },
+    colors: { primary: "#112233" },
+    ...(o.safe_margin_px !== undefined ? { safe_margin_px: o.safe_margin_px } : {}),
+    subtitles: {
+      ...(o.subtitlePosition !== undefined ? { position: o.subtitlePosition } : {}),
+      ...(o.subtitleSize !== undefined ? { size_px: o.subtitleSize } : {}),
+    },
+  }));
+  return dir;
+}
+
+function brandRef(dir: string): NonNullable<Composition["brand"]> {
+  return { channel_id: "channel-one", revision: 1, dir, fonts_dir: join(dir, "fonts"), checksums: {} };
+}
+
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+afterAll(() => {
+  for (const dir of tempDirs) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Best effort: a file still held open by a just-killed ffmpeg must not fail the suite.
+    }
+  }
+});
 
 function baseRequest(overrides: Partial<StageRequest> = {}): StageRequest {
   return {
@@ -272,6 +330,61 @@ describe.skipIf(!hasFfmpeg())("render-valid (needs ffmpeg)", () => {
     expect(bad.verdict).toBe("fail");
     expect(bad.evidence.reason).toBe("logo region looks unpainted");
   }, 120_000);
+
+  /**
+   * Review fix wave, I1. The caption band used to be sampled at the BOTTOM of the frame unconditionally,
+   * even though `ass.ts` switches to Alignment 8 (top) for `subtitles.position: "top_center"`. With a 120 px
+   * safe margin and 88 px subtitles the real top band is rows 120..384, so an episode painted exactly there
+   * has to pass -- and one painted in the old bottom window (rows 1776..2160) has to fail, or the probe is
+   * still looking at the wrong half of the picture.
+   */
+  it("samples the TOP caption band for a brand whose subtitles.position is top_center", async () => {
+    const dir = brandDir({ subtitlePosition: "top_center" });
+    const comp = composition({
+      brand: brandRef(dir),
+      captions: { mode: "burn-in", cues: [{ index: 1, start: 1, end: 3, lines: ["hello"], raise_px: 0, words: [] }] },
+    });
+
+    const episodeDir = tempDir("rv-top-");
+    const topPainted = join(episodeDir, "top.mp4");
+    const bottomPainted = join(episodeDir, "bottom.mp4");
+    makeRegionEpisode(topPainted, { x: 1420, y: 120, w: 1000, h: 264 });
+    makeRegionEpisode(bottomPainted, { x: 1420, y: 2160 - 384, w: 1000, h: 384 });
+
+    expect((await checker().check(world({ episode: topPainted, composition: comp, report: report() }))).verdict).toBe("pass");
+
+    const bad = await checker().check(world({ episode: bottomPainted, composition: comp, report: report() }));
+    expect(bad.verdict).toBe("fail");
+    expect(bad.evidence.reason).toBe("caption region looks unpainted");
+  }, 240_000);
+
+  /**
+   * Review fix wave, I1. The logo window used to be a fixed 260x260 square at `y = 0`, but `final-graph.ts`
+   * overlays the logo at `safe_margin_px / 2` from BOTH edges. At the schema's maximum margin (600) the logo
+   * starts at 300,300 -- nowhere near the old window. The new window is `2 x height_px` anchored at the real
+   * corner position, so an episode painted only at the OLD spot must now fail.
+   */
+  it("derives the logo window from safe_margin_px/2 and logo.height_px", async () => {
+    const dir = brandDir({ safe_margin_px: 560 });
+    const comp = composition({
+      brand: brandRef(dir),
+      logo: { path: "/abs/logo.png", corner: "left", opacity: 0.8, height_px: 140 },
+    });
+
+    const episodeDir = tempDir("rv-logo-");
+    const atLogo = join(episodeDir, "at-logo.mp4");
+    const atOldWindow = join(episodeDir, "at-old-window.mp4");
+    // safe_margin_px 560 -> the logo sits at (280, 280); the probe square is 2 x 140 = 280 px.
+    makeRegionEpisode(atLogo, { x: 280, y: 280, w: 280, h: 280 });
+    // Where the old fixed window looked: the very corner of the frame.
+    makeRegionEpisode(atOldWindow, { x: 0, y: 0, w: 260, h: 260 });
+
+    expect((await checker().check(world({ episode: atLogo, composition: comp, report: report() }))).verdict).toBe("pass");
+
+    const bad = await checker().check(world({ episode: atOldWindow, composition: comp, report: report() }));
+    expect(bad.verdict).toBe("fail");
+    expect(bad.evidence.reason).toBe("logo region looks unpainted");
+  }, 240_000);
 
   it("checks the caption band when captions.mode is not none", async () => {
     const comp = composition({
