@@ -785,3 +785,81 @@ library-production}@1.1.0/`, `skills/{style-analyze,style-review,source-survey,e
     đường ống hoạt hình; `avatar` thì chỉ có trong enum, không có thư mục profile nào cả. Đổi tên hai id đó
     là refactor cơ học (enum + thư mục profile + fixture + vài test đếm), không đổi hành vi, và **chưa được
     yêu cầu** — để lại nguyên trạng, ghi ở `docs/operations/deferred-items.md` mục "Sau sub-project 5A".
+117. **Dựng hình là hai tầng, không phải một `filter_complex`.** Mỗi đoạn của `timeline.video[]` được encode
+    riêng thành một **mezzanine 4K** (`<data_root>/cache/mezz/<key>.mp4`, khoá băm theo nội dung: checksum
+    nguồn + `in`/`out` + `fit` + khung hình + fps + `has_audio` + encoder + `mezz_version`), rồi **một** lệnh
+    ffmpeg cuối nối chúng lại, đốt ASS, phủ logo, trộn tiếng và encode. Hai phương án bị loại tường minh:
+    một `filter_complex` duy nhất cho cả tập (graph hàng nghìn node, không debug được, không resume được sau
+    khi chết giữa chừng) và một frame server PyAV/Remotion (thêm hẳn một runtime, 4K chậm, đi ngược ADR mục
+    116). Cái giá phải trả là đĩa: mezzanine 4K tốn cỡ 0.5–1 GB mỗi phút footage, nên `media.render
+    .cache_max_gb` quét LRU sau **mỗi** lần dựng. Cái được là cache **theo nội dung**: dựng lại một tập chỉ
+    đổi chữ/nhạc/chuyển cảnh không encode lại một khung hình nào (đo thật: 3/3 đoạn cache hit, lượt dựng
+    12.1 s → 7.5 s).
+118. **Bất biến mốc thời gian: `composition.segments[]` bằng đúng `timeline.video[]`.** `start/end/in/out/
+    order/source_id` phải khớp tới từng mili giây (checker `composition-valid` fail nếu lệch > 1 ms) —
+    chữ, phụ đề, nhạc và chuyển cảnh chỉ **phủ lên** trục thời gian, không bao giờ dời nó. Hệ quả cho
+    `dissolve`: nó **không** được ăn vào đoạn kế tiếp; thay vào đó `media-render` dựng thêm một mezzanine
+    **đuôi** riêng (`<key>-tail.mp4`, `-ss out -to out+seconds` của **chính source đó**) và `xfade` với
+    `offset` = độ dài đoạn **không kể đuôi**, nên đoạn sau vẫn bắt đầu đúng tại `start_{k+1}` và tổng thời
+    lượng vẫn là Σ(end − start). Source hết hình để lấy đuôi, hoặc đoạn kế tiếp ngắn hơn `2 × seconds`, thì
+    chuyển cảnh **hạ cấp về `cut`** kèm `downgraded[] { before_order, reason }` — không bao giờ fail, không
+    bao giờ dời mốc. Thân và đuôi là **hai file**, để `clip_set` giữ đúng `out − in` và để đổi kiểu chuyển
+    cảnh không làm mất cache của thân.
+119. **ASS là kênh vẽ duy nhất; `drawtext` không được dùng.** Mọi thứ vẽ lên hình trừ logo — phụ đề
+    (`burn-in` và `karaoke`), `title`, `callout`, `lower_third`, mọi hiệu ứng vào/ra — là sự kiện trong
+    **một** file `overlay.ass` do `media-compose` sinh, và `media-render` đốt bằng đúng một filter
+    `ass=overlay.ass:fontsdir=<brands/<id>/fonts>`. Lý do: một kênh vẽ thì số `Dialogue:` đếm được và đối
+    chiếu được với `composition.json` (checker `composition-valid` làm đúng thế), bố cục/ngắt dòng/đè nhau
+    do libass lo thay vì do ta tự tính `drawtext`, và `fontsdir` + fontconfig tắt bảo đảm libass **chỉ** thấy
+    font của brand, nên kết quả giống nhau trên mọi máy. Bẫy đã trả giá ở lần dựng thật đầu tiên: libass vẽ
+    **đúng những ký tự nằm trong** các đoạn `{\kf}`, nên phần lặng giữa hai từ karaoke phải mang theo **dấu
+    cách thật** — một `{\kf4}` rỗng làm cả dòng dính liền ("Chợbênsôngmởtừlúc").
+120. **Thương hiệu thuộc kênh, nằm trong kho, và harness không ship font nào.** `brands/<channel_id>/` trong
+    kho chung (`brand.json` + `fonts/*` + `logo.png`, checksum ghi trong file) là nơi duy nhất khai font,
+    màu, vị trí chữ/phụ đề, góc logo, chuyển cảnh mặc định và danh sách nhạc. Vai `channel` ghi, vai `studio`
+    chỉ đọc — cùng luật với hồ sơ giọng của 5A. `channel.yaml` **không** có khoá brand nào, và `overlay.side`
+    (đường thumbnail của hệ cũ) cố ý **không** liên kết với `brand.logo.corner`. Repo không chứa một file
+    font nào: font là tài sản có giấy phép, `fonts.origin` (+ `origin_note`) là **lời khai** của người tạo
+    hồ sơ và harness không xác minh được nó, y như `voice.origin` (ADR mục 105). Test nào cần đốt chữ thì đi
+    tìm font hệ thống và **skip** khi không có.
+121. **Nhạc nằm trong kho, có `origin`, và harness chọn bài — agent chỉ chọn tâm trạng.** `music/<track_id>/`
+    (`track.json` + file gốc) là kho dùng chung; brand khai kênh này được dùng những track nào; agent
+    `plan-edit` chỉ viết `overlays.music.mood`. `media-compose` lọc ứng viên theo mood rồi lấy phần tử thứ
+    `sha256(request_id) mod n` — **tái lập được** (cùng request luôn ra cùng bài, kể cả khi replan) nhưng
+    hai tập khác nhau không bị cùng một bài. Không có ứng viên thì `music: null` + `reason`, tập vẫn dựng.
+    `retire` một track chỉ đặt `active: false` và **giữ nguyên file**, để tập cũ trong kho không gãy.
+122. **Brand được kiểm ở `intake`, trước `claimRequest`.** `loadBrand` + `verifyBrandFiles` chạy cùng chỗ và
+    cùng cách với phép kiểm giọng của 5A: font/logo thiếu hay checksum lệch là `CONFIG_INVALID` (`contract`),
+    `intake` đỗ **`WAITING_HUMAN`** sau đúng một attempt, và vì fail xảy ra **trước** khi claim nên request
+    vẫn `open` — sửa kho rồi `harness retry <run_id> --stage intake` là chạy tiếp. Lý do đặt ở đây: hỏng
+    brand là hỏng **cấu hình của kênh**, phát hiện càng sớm càng rẻ, và một run mới bò được tới
+    `media-compose` (sau transcribe + tts, hàng chục giây GPU) rồi mới chết là lãng phí. `media-compose` vẫn
+    kiểm lại lần nữa vì phép kiểm rẻ.
+123. **`encoder: auto` → NVENC nếu dò được, CPU nếu không; và "không có NVENC" là cảnh báo, không phải
+    hỏng.** Phép dò chạy **một lần mỗi run** (`ffmpeg -f lavfi -i nullsrc … -c:v h264_nvenc -f null -`, cache
+    15 phút như media probe của 5A); hỏng giữa chừng thì cả run chuyển sang CPU kèm `nvenc_final_fallback`/
+    `nvenc_segment_fallback`. `harness doctor` in `media:render FAIL "no NVENC, renders on CPU"` theo đúng
+    khuôn `ok: false`-là-cảnh-báo mà `media:models` đã dùng (không dựng alert doctor); dashboard dựng alert
+    riêng `render_cpu_fallback` khi máy có khai `gpu`. **Điều kiện phần cứng, ghi ra vì đã mất thời gian vì
+    nó:** `h264_nvenc` của ffmpeg 8.1.2 đòi nvenc API 13.1, tức **driver NVIDIA ≥ 610.00**. Máy build ở
+    581.29 nên cả sub-project 5B chưa từng chạy NVENC một lần nào — mọi số đo trong
+    `docs/runbooks/studio-composition.md` là CPU, và đường NVENC chỉ được phủ bằng test fake-spawn.
+124. **Phụ đề luôn là file rời, ngay cả khi đã đốt vào hình.** `media-compose` luôn sinh artifact `captions`
+    (`captions.srt` + `captions.vtt`) từ cùng **một** bộ cue mà ASS dùng, và `library-export` đưa cả hai vào
+    item kho. `brand.subtitles.mode` (`burn-in | karaoke | none`, ghi đè được cho từng tập bằng
+    `--option subtitles=…`) chỉ quyết định có **đốt** hay không. Lý do: YouTube nhận file phụ đề rời và làm
+    được nhiều thứ với nó (dịch, tìm kiếm, tắt/bật), còn chữ đã đốt thì vĩnh viễn; và một tập `voice: none`
+    vẫn cần một `captions.srt` rỗng hợp lệ để hợp đồng của `library-export` không có hai nhánh.
+125. **Mật độ chữ là một NGÂN SÁCH ĐẾM, không phải một khoảng cách.** `overlays-valid` tính
+    `seconds = max(tổng ký tự lời / cps, Σ(out − in) của EDL)` rồi cho phép `limit = max(1, floor(seconds /
+    spacing))` sự kiện, `spacing` = 5/8/15 s theo `high`/`medium`/`low`. Hai nửa của `max()` đều cần: chấm
+    theo lời thôi thì một tập `voice: none|original` có ngân sách 0, chấm theo EDL thôi thì một tập lời dày
+    trên ít hình lại được phép nhồi chữ. Sàn `max(1, …)` bảo đảm tập ngắn nhất vẫn được một `title` mở đầu.
+    Đếm thay vì đo khoảng cách vì checker chạy ở `plan-edit`, nơi **chưa có `timeline.json`** nên chưa giải
+    được neo ra mốc thời gian thật — đếm là phép kiểm chặt nhất mà dữ liệu ở bước đó cho phép.
+126. **Output `optional` của stage được biểu diễn bằng KHOÁ VẮNG MẶT, không phải `optional: false`.**
+    `overlays.json` là output thứ tư, tuỳ chọn, của `plan-edit`. Thêm `optional` vào schema output của
+    workflow là `z.boolean().optional()`: một workflow cũ không khai gì thì digest của định nghĩa stage
+    **không đổi một byte**, nên `library-production@1.0.0`/`1.1.0`/`1.2.0` vẫn byte-identical và cache_key
+    của mọi run cũ vẫn trúng. Một `optional: false` mặc định sẽ xuất hiện trong digest và làm mất cache của
+    toàn bộ lịch sử — đây là cách chung để thêm bất kỳ khoá nào vào một schema đã được băm.

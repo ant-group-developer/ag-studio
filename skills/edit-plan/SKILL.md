@@ -135,9 +135,13 @@ bỏ hẳn file, stage vẫn đạt.
 - **≤ 1 `title` cho mỗi đoạn** (mỗi `edl_order` sau khi giải neo) — hai title chồng nhau là lỗi.
 - **Không lặp lại nguyên câu lời đọc**: chữ trên hình là rút gọn/nhấn mạnh, không phải phụ đề (phụ đề đã
   do `media-compose` sinh riêng từ `timeline.json`).
-- **Mật độ**: khoảng cách tối thiểu giữa hai overlay là 5 s (`density: high`), 8 s (`medium`), 15 s
-  (`low`) theo `style_snapshot.text_overlay.density`; `none` ⇒ `items: []`. Quá dày ⇒ `overlays-valid`
-  fail.
+- **Mật độ** — `overlays-valid` đếm **tổng số `items`**, không đo khoảng cách giữa chúng. Ngân sách là
+  `max(1, floor(seconds / spacing))`, trong đó `spacing` = 5 s (`density: high`), 8 s (`medium`, mặc định),
+  15 s (`low`) theo `style_snapshot.text_overlay.density`, còn `seconds` là **cái lớn hơn** của (a) tổng ký
+  tự lời bình chia cho 15 (`en`) hoặc 14 (`vi`) và (b) tổng `out - in` của `edl.json`. `none` ⇒ `items: []`.
+  Nhiều hơn ngân sách ⇒ `overlays-valid` fail. Ngân sách **luôn ≥ 1**, nên một tập ngắn vẫn được phép có
+  đúng một `title` mở đầu — nhưng cũng **chỉ** một: một tập 10 giây ở mật độ `medium` có ngân sách 1, dù hai
+  overlay cách nhau 8 giây vẫn là quá dày.
 - `transitions[]` **chỉ dùng ở chỗ đổi chủ đề** (ghi đè `brand.transition` cho đúng một mối nối):
   `before_order` là `order` của đoạn ĐỨNG SAU mối nối (≥ 1, có thật trong `edl.json`), `kind` là `cut` |
   `dissolve` | `dip_black`. Không liệt kê mọi mối nối — mặc định của brand đã đủ.
@@ -154,7 +158,7 @@ bỏ hẳn file, stage vẫn đạt.
 - [ ] `output/narration.json` đúng `harness.narration/v1`; `lines: []` khi `voice` là `"none"`/`"original"`; mọi `edl_order` tồn tại trong `edl.json`.
 - [ ] Có `expected_outputs.overlays` → `output/overlays.json` đúng `harness.overlays/v1`: mọi `anchor` trỏ
       vào `line_id`/`edl_order`/`speech_index` có thật, ≤ 1 `title` mỗi đoạn, độ dài chữ trong giới hạn
-      48/24/64, khoảng cách theo mật độ của style, `transitions[].before_order` có thật. Không cần chữ thì
+      48/24/64, **số** overlay không vượt ngân sách mật độ ở trên, `transitions[].before_order` có thật. Không cần chữ thì
       bỏ hẳn file (output không bắt buộc), đừng ghi file rỗng.
 
 ## Điều cấm

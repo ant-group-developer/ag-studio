@@ -145,6 +145,48 @@ YouTube Operations Harness: control plane điều phối sản xuất và phân 
 - Xem `docs/runbooks/studio-media.md` (dựng venv, tải trước mô hình, đọc `fit-report.json`/`timeline.json`,
   cache TTS, sự cố, số đo thật, kết luận DoD #2/#3) và `engines/python/README.md` (giao thức job/result).
 
+## Lệnh 5B (dựng hình)
+- `harness library brands set <channel_id> --from <đường dẫn brand.json> [--json]` / `show <channel_id>`
+  (vai `channel`; `studio` chỉ đọc qua `library sync`): parse `harness.brand/v1`, **kiểm font/logo trước khi
+  chạm kho**, copy các file được tham chiếu (đường dẫn tương đối trong chính file brand) vào
+  `brands/<channel_id>/`, ghi `checksums` và nâng `revision`. **Không có lệnh xoá** — xoá thư mục bằng tay là
+  kênh bỏ thương hiệu.
+- `harness library music add --track-id <id> --file <wav|flac|mp3|m4a> --display-name <n> --mood a,b
+  --origin own|licensed|royalty_free [--origin-note <n>] [--loop-ok] [--json]` / `list` / `retire <id>`
+  (vai `channel`): kho nhạc dùng chung `music/<track_id>/`. `add` probe `duration_seconds` bằng ffprobe và
+  **chỉ nhận file có luồng audio**; `retire` là `active → false`, **file vẫn giữ** để tập cũ không gãy.
+  `list` đọc mirror DB (chạy `library sync` trước).
+- `harness media compose|render`: **stage built-in** của `library-production@1.3.0` (đọc `stage-request.json`
+  trong `$HARNESS_WORKSPACE`), **không** cần entry trong `executors/scripts.yaml` và **không gọi tay** —
+  giống bốn stage media của 5A. Dạng chạy tay (`--timeline …`/`--composition …`, spec §6.5) **chưa cài**;
+  dựng lại một tập phải đi qua một run: `harness retry <run_id> --stage media-render` chỉ chạy được khi
+  stage đó **đang FAILED/WAITING_HUMAN**; stage đã SUCCEEDED thì `plan` một run mới (`--no-reuse` nếu muốn
+  ép render lại thay vì tái dùng artifact).
+- `project.yaml` thêm `media.render: { codec: h264|hevc, encoder: auto|nvenc|cpu, fps: auto|24|25|30|50|60,
+  cache_max_gb: 60 }` (mọi khoá optional, có default). `encoder: auto` dò NVENC **một lần mỗi run** (cache
+  15 phút như media probe); không dò được thì cả run dùng CPU.
+- Doctor thêm (vai `studio`): `media:render` — ffmpeg có `ass`, `xfade`, `loudnorm`, `sidechaincompress`,
+  `overlay` và encoder `libx264`; thiếu NVENC thì dòng này in **FAIL "no NVENC, renders on CPU"** nhưng đó
+  là **cảnh báo** theo đúng khuôn `ok: false`-là-cảnh-báo của `media:models` (không dựng alert nào) —
+  `harness doctor` vẫn thoát mã 1, đọc nội dung dòng chứ đừng đọc mã thoát. Cộng `library:brands` (mọi brand
+  trong kho parse được, font tồn tại) và `library:music` (mọi track `active` có file + checksum khớp); vai
+  `channel` có `channel:<id>:brand`. `h264_nvenc` của ffmpeg 8.1.2 đòi **nvenc API 13.1, tức driver NVIDIA
+  ≥ 610.00**; máy build đang ở 581.29 nên đường NVENC mới chỉ được test bằng fake-spawn.
+- Dashboard `media` thêm `last_render_at`, `render_encoder`, `mezz_cache { hit_ratio }` (**không có**
+  `bytes` — không có nguồn dữ liệu); alert `render_cpu_fallback` khi `encoder: auto` giải ra `cpu` trên máy
+  khai `resources.gpu ≥ 1`. Sự kiện `media.composed`, `media.rendered`.
+- **Kiểm brand ở `intake`, trước `claimRequest`** (cùng chỗ với kiểm giọng 5A): brand hỏng → `CONFIG_INVALID`
+  (`contract`) → stage `intake` đỗ **`WAITING_HUMAN`**, request vẫn `open`; sửa kho rồi
+  `harness retry <run_id> --stage intake`.
+- **`overlays-valid` fail ở `plan-edit` KHÔNG replan**: required check fail là lỗi `result` → stage `FAILED`
+  → run FAILED, và request kẹt ở `claimed` (hổng hệ thống của SP4, giống `edl-valid` của 5A — acceptance
+  48(a), `docs/operations/deferred-items.md`). Đường replan thật sự cho lỗi chữ là `library-review` từ chối
+  vì `render-report.text_events.dropped`.
+- Mọi thứ vẽ lên hình trừ logo đi qua **một file ASS duy nhất** (`overlay.ass`, libass), **không** `drawtext`;
+  font chỉ lấy từ `fontsdir` của brand nên kết quả giống nhau trên mọi máy. Harness **không ship font nào**.
+- Xem `docs/runbooks/studio-composition.md` (điều kiện ffmpeg, hồ sơ thương hiệu, kho nhạc, `overlays.json`,
+  đọc `composition.json`/`render-report.json`, cache mezzanine, sự cố, số đo 4K thật, quay về 1.2.0).
+
 ## Giới hạn quyền
 - Không sửa cột `state` ngoài `transition()` và `claim()` trong `packages/core/src/state/` — **trừ** ba bảng
   mirror của kho (`edit_style`, `content_request`, `library_item`) và bảng `channel_package`: `state`/`status`

@@ -882,3 +882,148 @@ proxy được ghi nhận, retry rename, assemble đệm audio từng clip). Kh�
   request `open`, không run FAILED). Vòng replan theo thiếu hình thì đã có (acceptance 42).
 - JSDoc đầu file `packages/adapters/media-python/src/child-env.ts` vẫn thiếu `PATHEXT` trong phần mô tả, dù
   `FIXED_ALLOWLIST` có.
+
+## Sau sub-project 5B (dựng hình 4K: chữ, phụ đề, nhạc, chuyển cảnh — 2026-09-23)
+
+Gom từ sổ SDD của kế hoạch 5B (mọi dòng `minor (deferred)`, `finding`, `ruling` và `NOTE` của Task 1–10),
+phần rủi ro để ngỏ của spec §11, và những gì **lần chạy thật 4K ở Task 11** lộ ra
+(`docs/runbooks/studio-composition.md`). Không dòng nào chặn merge: `library-production@1.3.0` đã chạy thật
+bốn tập đủ 15 stage trên máy build.
+
+### Hai mục đầu bảng (có tác động thật, nên làm trước)
+
+- **Run FAILED ở một stage agent để request kẹt vĩnh viễn ở `claimed`.** `overlays-valid` fail ở `plan-edit`
+  là lỗi `result` → stage `FAILED` → run FAILED. `intake` là chỗ **duy nhất** đưa request `open → claimed`,
+  `library-apply-review` là chỗ **duy nhất** đưa nó ngược lại, và một run chết ở `plan-edit` không bao giờ
+  tới được `library-apply-review` — nên request nằm ở `claimed` mãi mãi, `autoAccept` (chỉ quét request
+  `open`) không bao giờ thấy nó nữa, và **alert `request_stuck` cũng không nổ** (alert đó cũng chỉ nhìn
+  request `open`). Không có gì báo cho người vận hành. Đây là **hổng hệ thống của sub-project 4**, không phải
+  do 5B: `edl-valid` của 5A rơi vào đúng đường đó, và guard "không dựng được proxy nào" của `media index`
+  cũng vậy (mục "Sau sub-project 5A"). `tests/acceptance/48-overlays-too-dense-rejected-then-replanned.test.ts`
+  **ghim nguyên trạng thái bế tắc này ở test (a)**; test (b) đi vòng qua đường duyệt (`text_dropped` →
+  `library-review` từ chối → replan), là đường **duy nhất** hiện chạy được cho một lỗi chữ.
+  **Đề xuất:** ở sub-project sau, cho SP4 **mở lại request kèm ghi chú khi một run kết thúc FAILED**
+  (`request → open`, `request_notes` mang `stage_key` + `error_summary` + danh sách check fail), trong hạn
+  `max_replans` y như đường từ chối — rồi `request.auto_accept_exhausted`/`request_stuck` mới có việc để làm.
+  Sửa ở một chỗ (`library-apply-review`, hoặc một sweep "reopen failed runs" của worker studio) là đủ cho
+  **cả ba** đường (`edl-valid`, `overlays-valid`, `media index`).
+- **Loudness: dây chuyền tiếng không lên nổi −14 LUFS khi hệ số đỉnh của bản trộn > 13 dB.** Phát hiện ở lần
+  chạy thật; số đo và cách chẩn đoán ở `studio-composition.md` mục 6. Lượt 2 xin `linear=true`, nhưng ffmpeg
+  **âm thầm** lùi về `dynamic` khi `measured_TP + (−14 − measured_I) > −1`, tức khi `TP − I > 13 dB`; bộ giới
+  hạn của chế độ dynamic khoá đỉnh ở đúng −1 dBTP và bỏ chương trình lại **dưới** −14. Đo được: một bản trộn
+  ở **−19.35 LUFS / −1.43 dBTP** (hệ số đỉnh 17.9 dB) ra **−16.13 LUFS** → ngoài dải `render-valid`
+  `[−16, −12]` → stage FAILED → **run FAILED, không replan** (mục trên). Giọng OmniVoice đọc **câu thật** có
+  hệ số đỉnh ~12–14 dB nên lọt (−13.85…−14.19 LUFS ở cả bốn tập), nhưng chỉ vừa đủ. Task 11 đã thêm cảnh báo
+  `loudnorm_not_linear` vào `render-report.warnings` để lần sau còn biết vì sao; **chưa** sửa dây chuyền.
+  **Đề xuất (quyết định thiết kế, cố ý không tự làm ở 5B):** chèn một `alimiter`/`acompressor` nhẹ vào lớp
+  lời **trước** `amix` để kéo hệ số đỉnh xuống dưới 13 dB; hoặc nới dải chấp nhận của `render-valid`; hoặc
+  đổi thất bại loudness từ "fail cứng" thành cảnh báo để `library-review` quyết.
+  Một nguyên nhân gốc nằm ở **5A**: `normalizeLoudness` (`packages/core/src/media/tts.ts`) chuẩn hoá **một
+  lượt** (`loudnorm=I=-16:TP=-1.5:LRA=11:linear=true`), mà một lượt thì ffmpeg bỏ qua `linear` và chạy
+  dynamic; trên một dòng lời 2–3 giây (ngắn hơn cửa sổ nhìn trước 3 s của chính nó) kết quả lệch xa mục tiêu
+  — đo được **−21.57 LUFS** thay vì −16. Chuẩn hoá hai lượt từng dòng sửa cả gốc lẫn ngọn, nhưng làm **mọi
+  cache TTS cũ hết hiệu lực**.
+
+### Chưa từng chạy thật
+
+- **NVENC chưa được kiểm trên phần cứng thật, ở đâu cả.** `h264_nvenc` của ffmpeg 8.1.2 đòi nvenc API 13.1,
+  tức **driver NVIDIA ≥ 610.00**; máy build đang ở 581.29 (RTX 3060) nên `probeNvenc` luôn trả `false`,
+  `encoder: auto` giải ra `cpu`, và **toàn bộ** đường NVENC (argv mezzanine `p4 cq 18`, argv phát hành
+  `p6 cq 19 maxrate 60M`, retry-một-lần-bằng-CPU khi NVENC gãy giữa chừng, chuyển cả run sang CPU) chỉ được
+  phủ bằng test fake-spawn. Nâng driver là việc của chủ máy, không phải của harness. Kiểm đầu tiên sau khi
+  nâng: `harness doctor` dòng `media:render` phải `ok … NVENC`, rồi so `render_seconds` với bảng CPU trong
+  `studio-composition.md` mục 7.
+- **Bitrate 4K chưa đo được trên vật liệu thật.** Spec §11 đặt cửa "thấp hơn 30 Mbps thì đổi sang `-cq 17`".
+  Nguồn của lần chạy thật là các mảng màu phẳng sinh bằng `lavfi`, nén gần như miễn phí, nên bitrate ra chỉ
+  **0.51–0.82 Mbps** — con số đó nói về **vật liệu**, không nói gì về cấu hình encoder, và **không** phải lý
+  do để đổi `-cq`/`-crf`. Đo lại trên footage thật trước khi động vào hằng số nào.
+
+### Spec §11 — những điểm để ngỏ, vẫn để ngỏ
+
+- **Nhạc lặp không crossfade**: `aloop` nối thẳng đầu-cuối vòng lặp. Lần chạy thật không chạm tới đường này
+  (track 60 s dài hơn mọi tập, `loop: false`), nên "điểm nối nghe có rõ không" vẫn chưa có câu trả lời.
+  Việc sau: bản trễ + `acrossfade`, quyết khi có một tập dài hơn track.
+- **`duck_threshold_db` trong brand**: ngưỡng sidechain đang là hằng số `0.031` (≈ −30 dBFS), hợp với TTS đã
+  chuẩn hoá; nguồn `original` tiếng nhỏ có thể không kích ducking. Chưa thấy ở lần chạy thật (tập `original`
+  vẫn ducking đủ sâu), nhưng vẫn là một khoá brand nên có.
+- **Dựng theo khối khi > 300 đoạn**: một `filter_complex` cho cả tập là một tiến trình. Lần chạy thật chỉ có
+  3–4 đoạn mà đỉnh RAM ffmpeg đã là **~4.2 GB**, nên trần thật vẫn chưa biết. Phương án lùi ghi sẵn: mỗi 50
+  đoạn một mezzanine cấp 2.
+- **`media-render` vẫn xin lease `gpu` khi render bằng CPU**: giữ đơn giản có chủ đích; nếu nó chặn
+  `media-tts` của run khác thì tách `requires_resources` theo encoder.
+- **`mezz_cache.bytes` trên dashboard**: cố ý không có (ruling Task 9) — snapshot dựng từ event
+  `media.rendered`, mà event đó mang số đoạn cached/rendered chứ không mang dung lượng thư mục cache. Muốn
+  biết thì đo thẳng `<data_root>/cache/mezz/`. Spec §6.4 đã sửa lại cho khớp.
+- **Ngoài phạm vi 5B, ghi lại để khỏi quên** (spec §10): intro/outro, 9:16 / Shorts, kinetic typography,
+  LUT / color grade / ổn định hình, nhiều track nhạc trong một tập, SFX, dịch phụ đề sang ngôn ngữ thứ hai,
+  kiểm giấy phép font/nhạc, render phân tán, HDR.
+
+### CLI và cấu hình
+
+- **Dạng chạy tay của `media compose|render` chưa cài** (spec §6.5 đã sửa lại): chỉ có dạng stage. Dựng lại
+  một tập hiện phải đi qua một run (`harness retry --stage media-render` khi stage đang FAILED/WAITING_HUMAN,
+  hoặc `plan` một run mới), không có đường gọi thẳng từ một `composition.json` có sẵn.
+- **`plan-edit` không có input `edit_style` ở 1.3.0**, nên mật độ chữ mà `overlays-valid` áp **luôn** là
+  `medium` (spacing 8 s) dù style của kênh khai `high`/`low`/`none`. Thêm `edit_style` vào `inputs` của
+  stage là đủ.
+- **Không có đường đặt `subtitles` cho từng request trong vòng autopilot**: `autoAccept` chỉ truyền
+  `{ voice }` vào `startPlannedRun`, nên tuỳ chọn `subtitles` của profile `studio` (ghi đè
+  `brand.subtitles.mode`) chỉ tới được bằng `harness plan --option subtitles=…` chạy tay — đúng cách tập
+  `en` + `burn-in` của lần chạy thật phải dùng. Việc sau: một trường `subtitles` trên `ContentRequest`, hoặc
+  cho `auto_accept` chuyển tiếp options của request.
+- **`library music add` nhận cả file không có phần mở rộng** (đích thành `track.`); danh sách đuôi cho phép
+  chỉ nằm trong phần trợ giúp của CLI, không được ép.
+- **`TRACK_ID_SCHEMA`/`CHANNEL_ID_SCHEMA` trong `packages/core/src/library/files.ts`** chép lại regex của
+  `contracts` thay vì dùng chung.
+
+### `packages/core/src/media/` — dựng hình
+
+- **`packages/cli/src/commands/media.ts` đã 809 dòng cho 7 stage** — tách `compose`/`render` ra file riêng
+  (triage ở review cuối Task 8).
+- **`composition-valid` dựng `Map` theo `order`**, nên hai entry `timeline.video[]` trùng `order` sẽ gộp mất
+  một (`TimelineSchema` không ép `order` duy nhất).
+- **`overlays-valid` duyệt `items` hai lượt**; `compose.ts` lặp lại nhiều lần cùng một guard `brand === null`.
+- **Mật độ `none` cho `limit = 0`** — hiện được đường "luôn cho ít nhất một" lấp lại; nên nói thẳng trong mã.
+- **Trôi lượng tử khung ±0.03 s mỗi đoạn** từ cặp `-t` + `-r fps` khi dựng mezzanine; dung sai của
+  `render-valid` (±0.1 s cho cả tập) che được vài chục đoạn, không che được vài trăm. Cân nhắc `-frames:v`.
+- **`duck.windows`/`duck.gain_db` trong `composition.json` là thông tin, không phải lệnh**: ducking thật do
+  `sidechaincompress` quyết theo **tín hiệu lời**, không đọc hai trường đó. Đã ghi ở runbook mục 5; giữ lại
+  ở đây vì đó là một cái bẫy khi đọc file.
+- **`prober` hỏng và cache mezzanine hỏng không phân biệt được**: cả hai đều đi đường "xoá entry rồi fail".
+- **`report.warnings` không gộp `composition.warnings`** — người/agent đọc phải mở cả hai file (skill
+  `library-review` đã nói đúng điều đó ở bước 0b).
+- **`timeout_seconds` của `media-render` là ngân sách cho cả lượt dựng**, không phải cho từng lệnh ffmpeg.
+- **`pcm_s16le` nằm trong `.mp4`** được ffmpeg 8.1 chấp nhận nhưng không phải tổ hợp chuẩn (mezzanine).
+- **`LoudnormMeasured` sống ở `audio-graph.ts`** và chỉ được import (không re-export) ở `loudnorm.ts`, vì
+  hai dòng `export *` của `packages/core/src/index.ts` sẽ nhập nhằng nếu tên đó xuất ở hai nơi.
+- **`AssInput.logo` được nhận nhưng không dùng** — logo do `final-graph.ts` phủ bằng `overlay`, không qua ASS.
+
+### Vệ sinh test
+
+- `ass.test.ts` khẳng định gần như toàn bộ bằng `toContain`, không có phép so khớp **nguyên dòng**
+  `Style:`/`Dialogue:`; nhánh nội suy mốc `null`/`undefined` chưa được phủ.
+- Không có test `placeOverlays` cho neo `line_id` dưới `voice: original`; biên 0.5 s của `duckWindows` (gộp
+  đúng tại 0.5 s nhờ EPS) chưa được phủ.
+- `render-valid.test.ts` để lại ~10 workspace 4K trong thư mục temp của hệ điều hành, không dọn.
+- `frameStdDev` bị chép lại trong `tests/media.ts` (bản trong checker là private).
+- Acceptance 49(b) (`no_tail`) phụ thuộc vào việc dò cảnh trên clip phẳng ra đúng một shot — canh chừng flake.
+- `sqlite-store.ts`: nhánh `brand_profile.updated_at ?? clock.now()` chưa có test.
+- `mediaRenderInput` ngắt sớm theo vai `channel` chưa có unit test ở tầng composition; nhánh `nvenc: null`
+  của dashboard chưa được phủ.
+
+### Đóng lại từ "Sau sub-project 5A"
+
+Ba mục sau đã được `library-production@1.3.0` giải quyết và **chỉ còn đúng với 1.1.0/1.2.0**, hai release giữ
+lại làm đường lùi:
+
+- **"1.2.0 không sinh artifact `captions` nào, nên item ra kho không có phụ đề"** — 1.3.0 sinh `captions`
+  (SRT + VTT) ở `media-compose` và `library-export` đưa cả hai vào item kho; cùng đó là chữ trên hình,
+  nhạc + ducking và chuyển cảnh. 1.2.0 vẫn không có gì trong số đó.
+- **`assemble.mjs` đệm im lặng cố định `anullsrc=r=44100:cl=stereo`** và **`-shortest` với `anullsrc` vô hạn
+  + `-c:v copy`** — `assemble` không còn là stage của 1.3.0 (`media-render` thay nó: luôn `aresample=48000`,
+  luôn cắt theo `total_seconds`), nên hai mục này chỉ còn áp cho ops project nào vẫn chạy 1.1.0/1.2.0. Bản
+  mẫu `fixtures/ops-project-footage/executors/wrappers/assemble.mjs` giữ nguyên, không sửa.
+
+Một mục 5A khác được lần chạy thật này **xác nhận là không còn nghi vấn**: giả định `fontFamily() = tên file
+không đuôi` (sổ Task 3) đúng trên thực tế — `fonts/arial.ttf` → `Fontname: arial` trong ASS, và libass chỉ
+nhìn `fontsdir` của brand đã vẽ đúng chữ có dấu tiếng Việt ở cả năm khung trích ra cho chủ máy xem.

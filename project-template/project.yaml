@@ -112,6 +112,23 @@ source: { materialize: link }
 #   # Two venvs (`media.transcribe.python` + `media.tts.python`) are the documented fallback for a version
 #   # conflict between OmniVoice's torch and WhisperX's dependencies. On the build machine there was NO
 #   # conflict -- one venv held both -- so use the single `media.python` above unless pip actually fights you.
+#   # --- sub-project 5B: the ffmpeg render of library-production@1.3.0 (media-compose + media-render) -------
+#   # This block needs NO Python and NO `adapters.media: python`: composition is pure TypeScript and the
+#   # render is ffmpeg. Every key is optional with the default shown. See docs/runbooks/studio-composition.md.
+#   render:
+#     codec: h264           # h264 | hevc. hevc encodes smaller but fewer tools ingest it; h264 is the default
+#                           # everywhere and is what the measured numbers in the runbook were taken with.
+#     encoder: auto         # auto | nvenc | cpu. auto probes `h264_nvenc` ONCE per run (cached 15 min) and
+#                           # falls back to libx264 when the probe fails. NVENC in ffmpeg 8.1.2 needs nvenc
+#                           # API 13.1, i.e. NVIDIA driver >= 610.00 -- an older driver simply renders on CPU
+#                           # (`harness doctor`'s `media:render` row says so, dashboard alert
+#                           # `render_cpu_fallback`). Setting `nvenc` explicitly on a machine without it
+#                           # warns and still renders on CPU; it never fails the run.
+#     fps: auto             # auto | 24 | 25 | 30 | 50 | 60. auto takes the most common fps across the
+#                           # shoot's sources (weighted by seconds) and rounds to that set; 30 with no info.
+#     cache_max_gb: 60      # LRU ceiling for <data_root>/cache/mezz (the per-segment 4K mezzanines, swept
+#                           # after every render). 4K mezzanine is roughly 0.5-1 GB per minute of footage, so
+#                           # size this against the disk, not against one episode.
 # publication:
 #   verify_seconds: 900     # how often (>=60s) the worker's idle sweep asks the publisher whether an overdue
 #                           # SCHEDULED job actually went public (settles PUBLISHED or parks

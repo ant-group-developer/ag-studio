@@ -99,7 +99,25 @@ overlay:
   # `package` stage's overlay_text being empty) just copies the candidate thumbnail as-is. Default true.
   enabled: true
   # left | right -- passed to gen-thumb-overlay.mjs as --side. Default right.
+  #
+  # NOTE (sub-project 5B): this block is about the THUMBNAIL of the legacy publish path only. It has nothing
+  # to do with the text, subtitles and corner logo burned into the episode itself by `media-render`, and
+  # `overlay.side` is deliberately NOT wired to `brand.logo.corner` -- the episode's logo corner comes from
+  # the brand profile and from nowhere else.
   side: right
+
+# --- sub-project 5B: the channel's BRAND lives in the kho, not in this file -----------------------------
+# There is no brand key in channel.yaml. A channel has a brand when the shared kho holds
+# `brands/<channel_id>/`, written by the CHANNEL role:
+#
+#   harness library brands set <channel_id> --from ./brand/brand.json --json
+#
+# That directory carries `brand.json` (`harness.brand/v1`: fonts, colours, text/subtitle/logo placement,
+# default transition, music track list) plus the font and logo files it references, copied in by the command
+# and checksummed. The harness ships NO font of its own -- pick one whose Vietnamese diacritics you have
+# actually looked at (Be Vietnam Pro, Noto Sans) and declare `fonts.origin` honestly; nothing verifies it.
+# No brand = the episode still renders, just with no text, no burned-in subtitles, no logo, no music and
+# straight cuts (`render-report.brand: "absent"`). See docs/runbooks/studio-composition.md mục 2.
 
 # Sub-project 3B (channel learning loop): all three blocks below are optional, every field defaults as shown --
 # an absent block is the same as writing it with every field at its default (learning always runs; planning/

@@ -298,6 +298,66 @@ rm -rf fixtures/ops-project-studio/data fixtures/ops-project-channel/data fixtur
 git checkout -- fixtures/ops-project-studio/project.yaml fixtures/ops-project-channel/project.yaml
 ```
 
+## Quick-start: dựng hình 4K có chữ, phụ đề, nhạc (sub-project 5B, engine media giả)
+
+`library-production@1.3.0` bỏ hai wrapper `cut`/`assemble` và thay bằng hai stage built-in:
+**`media-compose`** (thuần TypeScript — tính mọi mốc: phụ đề từ `timeline.json`, chữ trên hình từ
+`overlays.json` của agent, chọn nhạc, gán chuyển cảnh → `composition.json` + `captions/` + `overlay.ass`) và
+**`media-render`** (ffmpeg — mezzanine 4K từng đoạn, nối + `xfade`, đốt ASS, phủ logo, trộn tiếng với ducking,
+loudnorm hai lượt → `full-episode.mp4` + `render-report.json`). Quick-start này chạy với
+`adapters.media: fake` — **không cần GPU, không cần Python**, chỉ cần `ffmpeg`/`ffprobe` trên PATH và **một
+font hệ thống** (Windows: `C:\Windows\Fonts\arial.ttf`). Bản 4K thật ở `docs/runbooks/studio-composition.md`.
+
+Làm tiếp ngay sau mục 5A ở trên (cùng hai fixture, cùng kho tạm `$lib`), thêm ba việc: kho cần `music/`,
+kênh khai một **hồ sơ thương hiệu** và một **track nhạc**, và autopilot đi theo profile thay vì bị ghim.
+
+```bash
+mkdir -p "$lib/music"
+# bỏ ghim 1.2.0 (nếu có) để autopilot đi theo profile studio revision 4 -> library-production@1.3.0
+node -e "const fs=require('fs');const p='fixtures/ops-project-studio/project.yaml';fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace(/, *workflow_release: *library-production@1\.2\.0/,''))"
+
+# 1. một track nhạc trong kho (60 giây hợp âm sinh bằng ffmpeg — không tải gì của ai)
+ffmpeg -y -f lavfi -i "aevalsrc='0.3*sin(2*PI*220*t)+0.2*sin(2*PI*277*t)':d=60:s=48000:c=stereo" \
+  -c:a pcm_s16le /tmp/calm-01.wav
+pnpm harness --project fixtures/ops-project-channel library music add --track-id calm-01 --file /tmp/calm-01.wav \
+  --display-name "Hợp âm tĩnh" --mood calm,neutral --origin own --origin-note "sinh bằng ffmpeg" --loop-ok --json
+
+# 2. hồ sơ thương hiệu của kênh: font + logo + màu + vị trí + chuyển cảnh + danh sách nhạc.
+#    Harness KHÔNG ship font nào — đây là font hệ thống, chỉ để thử; kênh thật dùng font có giấy phép
+#    và có đủ dấu tiếng Việt (Be Vietnam Pro, Noto Sans).
+mkdir -p /tmp/brand/fonts && cp C:/Windows/Fonts/arial.ttf /tmp/brand/fonts/ && cp C:/Windows/Fonts/arialbd.ttf /tmp/brand/fonts/
+ffmpeg -y -f lavfi -i color=c=0xF2C94C:s=400x140:d=1 -frames:v 1 /tmp/brand/logo.png
+cat > /tmp/brand/brand.json <<'JSON'
+{ "schema_version": "harness.brand/v1", "channel_id": "channel-one", "revision": 1,
+  "fonts": { "regular": "fonts/arial.ttf", "bold": "fonts/arialbd.ttf",
+             "origin": "licensed", "origin_note": "Windows system font (thử nghiệm)" },
+  "colors": { "primary": "#F2C94C" },
+  "subtitles": { "mode": "karaoke" },
+  "logo": { "path": "logo.png", "corner": "right" },
+  "transition": { "kind": "dissolve", "seconds": 0.4 },
+  "music": { "tracks": ["calm-01"] } }
+JSON
+pnpm harness --project fixtures/ops-project-channel library brands set channel-one --from /tmp/brand/brand.json --json
+pnpm harness --project fixtures/ops-project-studio library sync --json
+
+pnpm harness --project fixtures/ops-project-studio doctor   # media:render, library:brands, library:music
+                                                            # media:render FAIL "no NVENC" là CẢNH BÁO:
+                                                            # tập vẫn dựng bằng libx264, chỉ chậm hơn
+
+# 3. một request nữa từ cùng buổi quay, rồi để worker chạy 15 stage của 1.3.0
+pnpm harness --project fixtures/ops-project-channel library request create \
+  --portfolio portfolio-channel --channel channel-one --topic "Tập có chữ và nhạc" --style <style_id> \
+  --duration 1,120 --voice tts --voice-id <voice_id> --language vi --source-hint shoot-demo --json
+FAKE_REVIEW_MODE=approve pnpm harness --project fixtures/ops-project-studio worker --once   # lặp tới fulfilled
+
+# 4. đọc kết quả
+pnpm harness --project fixtures/ops-project-studio status <run_id> --json   # 15 stage, không có cut/assemble
+# render-report.json: encoder, segments.cached/rendered, transitions.downgraded, loudness, warnings
+# item kho có thêm captions.srt + captions.vtt
+```
+
+Dọn: như mục 5A, cộng `rm -rf /tmp/brand /tmp/calm-01.wav`.
+
 ## Quick-start: phát hành kênh trên fixture (studio → channel → YouTube)
 
 `fixtures/ops-project-channel` (vai `channel`, workflow `channel-publish`, hai kênh `channel-one`/
@@ -419,15 +479,16 @@ git checkout -- fixtures/ops-project-studio/project.yaml fixtures/ops-project-ch
 
 ## Tài liệu
 - Blueprint: `docs/architecture/YOUTUBE_OPERATIONS_HARNESS_BLUEPRINT_v1.0.md`
-- Spec: `docs/superpowers/specs/2026-09-11-harness-structure-and-control-plane-design.md`, `docs/superpowers/specs/2026-09-12-sub-project-2-footage-production-design.md`, `docs/superpowers/specs/2026-09-14-sub-project-2c-content-library-design.md`, `docs/superpowers/specs/2026-09-14-sub-project-3-channel-publish-design.md`, `docs/superpowers/specs/2026-09-15-sub-project-4-studio-autopilot-design.md`, `docs/superpowers/specs/2026-09-15-sub-project-3b-channel-learning-design.md`, `docs/superpowers/specs/2026-09-21-sub-project-5a-studio-media-design.md`
+- Spec: `docs/superpowers/specs/2026-09-11-harness-structure-and-control-plane-design.md`, `docs/superpowers/specs/2026-09-12-sub-project-2-footage-production-design.md`, `docs/superpowers/specs/2026-09-14-sub-project-2c-content-library-design.md`, `docs/superpowers/specs/2026-09-14-sub-project-3-channel-publish-design.md`, `docs/superpowers/specs/2026-09-15-sub-project-4-studio-autopilot-design.md`, `docs/superpowers/specs/2026-09-15-sub-project-3b-channel-learning-design.md`, `docs/superpowers/specs/2026-09-21-sub-project-5a-studio-media-design.md`, `docs/superpowers/specs/2026-09-22-sub-project-5b-studio-composition-design.md`
 - Plan sub-project 1: `docs/superpowers/plans/2026-09-11-control-plane-minimal.md`
 - Plan sub-project 2A: `docs/superpowers/plans/2026-09-12-sub-project-2a-catalog-planner-resources.md`
 - Plan sub-project 2B: `docs/superpowers/plans/2026-09-13-sub-project-2b-scripts-gate-media-footage.md`
 - Plan sub-project 2C: `docs/superpowers/plans/2026-09-14-sub-project-2c-content-library.md`
 - Plan sub-project 4: `docs/superpowers/plans/2026-09-15-sub-project-4-studio-autopilot.md`
 - Plan sub-project 5A: `docs/superpowers/plans/2026-09-21-sub-project-5a-studio-media.md`
+- Plan sub-project 5B: `docs/superpowers/plans/2026-09-22-sub-project-5b-studio-composition.md`
 - ADR: `docs/adr/`
-- Runbook: `docs/runbooks/` (`go-live.md` — đưa lên máy thật, một máy hai vai; `reconcile-and-retry.md`, `wrap-a-channel.md`, `content-library.md`, `channel-publish.md`, `studio-autopilot.md`, `channel-learning.md`, `studio-media.md` — venv + GPU cho `library-production@1.2.0`)
+- Runbook: `docs/runbooks/` (`go-live.md` — đưa lên máy thật, một máy hai vai; `reconcile-and-retry.md`, `wrap-a-channel.md`, `content-library.md`, `channel-publish.md`, `studio-autopilot.md`, `channel-learning.md`, `studio-media.md` — venv + GPU cho bốn stage media; `studio-composition.md` — thương hiệu, nhạc, chữ, phụ đề và bản dựng 4K của `library-production@1.3.0`)
 - Engine media Python (giao thức job/result, cài đặt, tải trước mô hình): `engines/python/README.md`
 - Việc để lại: `docs/operations/deferred-items.md`
 - Project mới: copy `project-template/` (xem `docs/runbooks/wrap-a-channel.md` bước 1; mẫu kênh ở `project-template/channels/example/channel.yaml`; khối `library.auto_accept` mẫu trong `project-template/project.yaml`)
@@ -480,8 +541,20 @@ theo lời (`fit-edl` cắt/kéo EDL, **không bao giờ fail vì thiếu hình*
 dung, `library-production@1.2.0` + profile `studio` revision 3, doctor `media:python|packages|device|models|
 engine` + `library:voices`, alert `media_engine_unavailable` — **đã chạy thật trên GPU của máy build**: bốn
 tập đủ 15 stage với ba chế độ giọng (`en`+`tts`, `vi`+`tts`, `original`), `alignment: "word"` kể cả tiếng
-Việt, đỉnh VRAM ~4.1 GB, một venv đủ cho cả hai stack; xem `docs/runbooks/studio-media.md` mục 7 và 9). Còn
-lại: chữ trên hình + phụ đề + nhạc/chuyển cảnh (5B — item 1.2.0 hiện ra kho **không có phụ đề**), sửa
-metadata video đã lên theo kết quả, YouTube Test & Compare, học chéo kênh (`fleetLessons`), mục tiêu doanh
-thu/đăng ký, agent tự chọn nguồn phía studio, tự động hoá đăng nhập Studio (xem
-`docs/operations/deferred-items.md`).
+Việt, đỉnh VRAM ~4.1 GB, một venv đủ cho cả hai stack; xem `docs/runbooks/studio-media.md` mục 7 và 9)
++ 5B (dựng hình 4K: hai stage built-in `media-compose` (thuần TypeScript — phụ đề theo từ từ
+`timeline.json`, chữ trên hình theo `overlays.json` của agent, chọn nhạc theo hash request, gán chuyển cảnh,
+`composition.json` + `captions/` + `overlay.ass`) và `media-render` (ffmpeg hai tầng: mezzanine 4K từng đoạn
+có cache theo nội dung → một lệnh nối + `xfade` + đốt ASS + logo + ducking `sidechaincompress` + `loudnorm`
+hai lượt) **thay** hai wrapper `cut`/`assemble`, hồ sơ thương hiệu thuộc kênh trong `brands/` của kho
+(`library brands set|show`, font/màu/vị trí/logo/chuyển cảnh/nhạc, harness **không ship font**) và kho nhạc
+chung trong `music/` (`library music add|list|retire`, `origin` bắt buộc), `overlays.json` là output tuỳ
+chọn thứ tư của `plan-edit` với checker `overlays-valid`, ba checker mới
+`overlays-valid|composition-valid|render-valid`, `library-production@1.3.0` + profile `studio` revision 4,
+doctor `media:render|library:brands|library:music|channel:<id>:brand`, alert `render_cpu_fallback` — **đã
+chạy thật 4K trên máy build**: bốn tập 3840×2160 đủ 15 stage với chữ, phụ đề karaoke tiếng Việt, nhạc ducked
+11.5 dB và dissolve, item ra kho **có `captions.srt`/`.vtt`**; NVENC thì chưa — driver của máy build thấp
+hơn mức ffmpeg 8.1.2 đòi nên mọi số đo là CPU, xem `docs/runbooks/studio-composition.md` mục 7 và 9). Còn
+lại: NVENC trên driver mới, intro/outro, 9:16/Shorts, sửa metadata video đã lên theo kết quả, YouTube Test &
+Compare, học chéo kênh (`fleetLessons`), mục tiêu doanh thu/đăng ký, agent tự chọn nguồn phía studio, tự
+động hoá đăng nhập Studio (xem `docs/operations/deferred-items.md`).

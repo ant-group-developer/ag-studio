@@ -4,6 +4,13 @@
 nghe nguồn (WhisperX), tự đọc lời bình (OmniVoice) và tự khớp hình theo lời — thay vì `FakeMediaEngine` chỉ
 dùng cho test.
 
+> **Bản hiện hành là `library-production@1.3.0`, không phải 1.2.0.** Mọi thứ trong runbook này (venv, mô
+> hình, `media:` trong `project.yaml`, `timeline.json`, cache TTS) vẫn đúng nguyên vẹn và 1.3.0 dùng lại y
+> hệt — nhưng hai stage cuối của phần dựng đã đổi: **`cut` + `assemble` (hai wrapper của ops project) được
+> thay bằng `media-compose` + `media-render`**, hai stage built-in dựng 4K có chữ, phụ đề, nhạc + ducking và
+> chuyển cảnh. Bản mẫu `fixtures/ops-project-footage/executors/wrappers/assemble.mjs` chỉ còn phục vụ 1.1.0/
+> 1.2.0. Xem `docs/runbooks/studio-composition.md`.
+
 Khác với các runbook trước, **mọi con số trong mục 7 là đo thật** trên máy build (RTX 3060 12 GB, Windows 11,
 driver 581.29, Python 3.11.15), không phải ước lượng. Mục 9 chốt DoD #2 và #3 của spec.
 

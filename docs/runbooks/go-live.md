@@ -54,12 +54,14 @@ Mọi lệnh `harness` dưới đây chạy từ thư mục repo: `pnpm harness 
 ## 3. Tạo kho cục bộ
 
 ```bash
-mkdir -p E:/kho/styles E:/kho/requests E:/kho/items E:/kho/voices
+mkdir -p E:/kho/styles E:/kho/requests E:/kho/items E:/kho/voices E:/kho/music
 ```
 
-Doctor **không** tự tạo bốn thư mục này (`content-library.md` §6). Muốn dùng lại kho cũ thì trỏ vào đó,
-nhưng kho phải có đủ bốn thư mục con — `voices/` là của sub-project 5A (hồ sơ giọng đọc, dòng doctor
-`library:voices`) và một kho dựng trước 5A sẽ thiếu nó.
+Doctor **không** tự tạo năm thư mục này (`content-library.md` §6). Muốn dùng lại kho cũ thì trỏ vào đó,
+nhưng kho phải có đủ — `voices/` là của sub-project 5A (hồ sơ giọng đọc, dòng doctor `library:voices`) và
+`music/` là của 5B (kho nhạc nền, dòng `library:music`); một kho dựng trước đó sẽ thiếu chúng.
+`brands/` là ngoại lệ: **không** cần tạo trước, `harness library brands set` tự tạo, và "chưa kênh nào có
+thương hiệu" không phải lỗi.
 
 ## 4. Ops project vai studio (`E:\ops-studio`)
 
@@ -114,8 +116,12 @@ workflows: [style-study@1.1.0, library-production@1.1.0]   # cho doctor kiểm �
 `media:python|packages|device` của doctor đã ok.
 
 3. `executors/scripts.yaml` + `executors/wrappers/*.mjs` — đúng những script mỗi workflow cần:
-   - **`library-production@1.2.0`: ba script** — `thumbnail-candidates`, `cut`, `assemble`. Mọi stage còn
-     lại là built-in (`library-intake`/`library-export`/`library-apply-review`, `watch-source`/
+   - **`library-production@1.3.0` (profile `studio` revision 4, bản hiện hành): đúng MỘT script —
+     `thumbnail-candidates`.** `cut` và `assemble` **không còn trong workflow**: từ 1.3.0, hình được dựng bởi
+     hai stage built-in `media-compose` (thuần TypeScript) + `media-render` (ffmpeg), xem bước 3c. Đây là
+     toàn bộ phần wrapper còn nợ của một máy studio.
+   - **`library-production@1.2.0` (đường lùi): ba script** — `thumbnail-candidates`, `cut`, `assemble`. Mọi
+     stage còn lại là built-in (`library-intake`/`library-export`/`library-apply-review`, `watch-source`/
      `watch-episode`, và bốn stage media `media-index`/`media-transcribe`/`media-tts`/`media-fit-edl`).
      Hai script của 1.1.0 — `index-source` và `tts` — **không còn phải viết**: từ 1.2.0 chúng là stage media
      built-in chạy bằng engine Python cục bộ (bước 3b).
@@ -163,6 +169,32 @@ workflows: [style-study@1.1.0, library-production@1.1.0]   # cho doctor kiểm �
      `studio-media.md` mục 4 có cách sinh clip mẫu bằng voice design để `synthetic` là đúng sự thật.
    - `harness doctor` phải ok: `media:python`, `media:packages`, `media:device`, `media:models`,
      `library:voices`.
+3c. **Dựng hình (sub-project 5B, `library-production@1.3.0`)** — không cần Python, chỉ cần ffmpeg:
+   - Đổi `workflows:` thành `[style-study@1.1.0, library-production@1.3.0]` và **bỏ** ghim
+     `library.auto_accept.workflow_release` (profile `studio` revision 4 đã trỏ 1.3.0). `scripts.yaml` bớt
+     hẳn `cut` và `assemble`.
+   - `project.yaml` thêm khối `media.render` (mọi khoá optional, mẫu đầy đủ trong
+     `project-template/project.yaml`):
+
+     ```yaml
+     media:
+       render:
+         codec: h264
+         encoder: auto        # auto → NVENC nếu dò được, không thì CPU
+         fps: auto
+         cache_max_gb: 60     # LRU cho <data_root>/cache/mezz
+     ```
+
+   - **NVENC cần driver NVIDIA ≥ 610.00** (ffmpeg 8.1.2 đòi nvenc API 13.1). Driver cũ hơn thì
+     `harness doctor` in `media:render FAIL "no NVENC, renders on CPU"` — đó là **cảnh báo**, không phải
+     hỏng: tập vẫn dựng bằng `libx264`, chỉ chậm hơn, và dashboard dựng alert `render_cpu_fallback`.
+   - Kho cần `music/` (`mkdir -p E:/kho/music`, bước 3). `brands/` thì không cần tạo trước.
+   - Vai kênh khai thương hiệu và nhạc trước khi xin tập có chữ/phụ đề/nhạc:
+     `harness library brands set <channel_id> --from <brand.json>` và `harness library music add …`
+     (xem `docs/runbooks/studio-composition.md` mục 2 và 3). **Không khai gì cũng chạy** — tập ra không chữ,
+     không logo, không nhạc, cắt thẳng, phụ đề chỉ là file rời.
+   - `harness doctor` phải ok: `media:render` (trừ dòng NVENC nói trên), `library:brands`, `library:music`,
+     và ở máy kênh là `channel:<id>:brand`.
 4. `source-catalog/sources.yaml`: khai collection `main` trỏ vào corpus nguồn (ví dụ `D:\hub-tai-chinh-us`),
    rồi `harness source ingest …` để `library:auto_accept` có ít nhất một source.
 5. Skill cho agent: `pnpm harness --project E:/ops-studio skills sync` (chép `skills/*` vào
@@ -251,8 +283,10 @@ thứ thật. Mỗi bước dừng lại đọc `status <run_id>` / log trước
    `library request create --portfolio portfolio-channel --channel <channel_id> --topic "…" --style <style_id>
    --duration 600,900` (`--duration` là `min,max` giây và **bắt buộc**: thiếu thì studio kẹt ở stage
    `assemble` — xem deferred-items "Sau sub-project 3B").
-3. **Studio worker** nhận request (`worker --once` lặp) → `library-production@1.2.0` chạy đủ 15 stage → item
-   `approved` trong kho. Đây là lúc wrapper script cũ lộ lỗi; sửa wrapper, không sửa script cũ.
+3. **Studio worker** nhận request (`worker --once` lặp) → `library-production@1.3.0` chạy đủ 15 stage → item
+   `approved` trong kho, kèm `captions.srt`/`captions.vtt`. Đây là lúc wrapper script cũ lộ lỗi; sửa wrapper,
+   không sửa script cũ. Tập đầu tiên có thương hiệu thì mở `render-report.json` ra đọc trước khi tin nó:
+   `encoder`, `transitions.downgraded`, `loudness`, `warnings` (`docs/runbooks/studio-composition.md` mục 5).
 4. **Kênh pick và phát**: `library sync`, `channel pick-next <id>`, `worker --once` lặp → `publish list`
    thấy job SCHEDULED. Stage `package` là lần chạy agent thật cho skill `channel-package`: điền
    `channel-publish.md` §10. Vào Studio xác nhận bản nháp đã lên lịch đúng giờ.
@@ -282,10 +316,13 @@ riêng của máy.
 
 ## 8. Điều chưa từng chạy thật (kiểm đầu tiên khi gãy)
 
-- Wrapper cho script cũ ở `D:\` — chưa viết cái nào: ba cho `library-production@1.2.0`
-  (`thumbnail-candidates`, `cut`, `assemble`), một cho `style-study@1.1.0` (`collect-samples`), cộng hook
-  `transcribe` tuỳ chọn mà `watch-samples` dùng. Hai script của 1.1.0 (`index-source`, `tts`) đã thành stage
-  media built-in ở 1.2.0, không phải viết nữa (bước 3).
+- Wrapper cho script cũ ở `D:\` — chưa viết cái nào. Ở `library-production@1.3.0` (bản hiện hành) studio chỉ
+  còn nợ **một** cái: `thumbnail-candidates`. Thêm `collect-samples` cho `style-study@1.1.0`, cộng hook
+  `transcribe` tuỳ chọn mà `watch-samples` dùng. `index-source`/`tts` đã thành stage media built-in ở 1.2.0
+  và `cut`/`assemble` đã thành `media-compose`/`media-render` ở 1.3.0 (bước 3, 3c).
+- **NVENC chưa từng chạy thật ở đâu cả**: driver của máy build (581.29) thấp hơn mức ffmpeg 8.1.2 đòi
+  (≥ 610.00), nên mọi lần dựng thật cho tới nay đều là CPU và đường NVENC chỉ được phủ bằng test fake-spawn.
+  Máy studio thật có driver mới thì đây là thứ đầu tiên nên kiểm (`harness doctor`, dòng `media:render`).
 - Engine media Python trên **máy studio này**: venv, mô hình, driver CUDA của chính nó chưa từng kiểm. Bản
   thân engine đã chạy thật (bốn tập, ba chế độ giọng) trên máy build — `studio-media.md` mục 7 và 9.
 - `claude -p` / `codex exec` với skill thật, `--allowedTools` cố định trong `RUNTIME_COMMANDS`

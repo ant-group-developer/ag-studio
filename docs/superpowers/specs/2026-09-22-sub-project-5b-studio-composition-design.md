@@ -1,7 +1,7 @@
 # Sub-project 5B: Dựng hình cho studio — chữ, phụ đề, nhạc + ducking, chuyển cảnh, 4K trên `timeline.json`
 
 **Ngày:** 2026-09-22
-**Trạng thái:** Đã duyệt thiết kế qua brainstorming, chờ implementation plan
+**Trạng thái:** Đã cài đặt xong (`library-production@1.3.0`, profile `studio` revision 4) và chạy thật 4K trên máy build — xem `docs/runbooks/studio-composition.md`. Bốn chỗ đã sửa lại cho khớp mã sau Task 10/11: §3 (`overlays-valid` fail **không** replan), §6.4 (`mezz_cache` chỉ có `hit_ratio`), §6.5 (dạng chạy tay của `media compose|render` chưa cài), §7 (brand hỏng ở intake → `WAITING_HUMAN`, không phải run FAILED).
 **Tiền đề:** Sub-project 1, 2A, 2B, 2C, 3, 4, 3B, 5A đã merge vào `main` (`42951c1`). Spec này chỉ mô tả phần thêm vào; mọi thứ không nhắc tới giữ nguyên như spec 5A (`2026-09-21-sub-project-5a-studio-media-design.md`), spec 4 và spec 2C.
 **Tham khảo:** `timeline.json` (`harness.timeline/v1`, spec 5A §4.2, ADR 107) là đầu vào duy nhất mang mốc thời gian; ffmpeg 8.1 trên máy này có `libass`, `xfade`, `sidechaincompress`, `loudnorm`, `h264_nvenc`/`hevc_nvenc` (RTX 3060, driver 581) — không cần engine Python mới; `EditStyleSchema` (`packages/contracts/src/library.ts`) đã có `text_overlay`, `subtitles`, `music`, `transitions`, `aspect_ratio` nhưng chưa stage nào đọc; bản mẫu `fixtures/ops-project-footage/executors/wrappers/assemble.mjs` (5A) chỉ nối clip + trộn tiếng.
 **Phạm vi nội dung:** harness **không** dành cho nội dung hoạt hình (ADR 116). 5B dựng từ footage đã cắt; không sinh hình.
@@ -146,7 +146,9 @@ Output thứ tư, **tuỳ chọn**, của `plan-edit` (`outputs` khai `optional:
 - `transitions[].before_order` = `order` của đoạn **sau** điểm cắt (≥ 1), `kind` ∈ `cut | dissolve | dip_black`; không có `seconds` (theo brand).
 - `music.mood` là chuỗi tự do, khớp chính xác (không phân biệt hoa/thường) với `track.mood[]`.
 
-Checker `overlays-valid` (chạy ở `plan-edit`, chỉ khi output tồn tại): schema; độ dài; `id` duy nhất; ≤ 1 `title` cho mỗi `edl_order` (tính theo neo giải ra); neo tồn tại (đọc `edl.json` pre-fit + `narration.json` cùng stage — `timeline` chưa có ở bước này, nên `word_index` chỉ kiểm `< số từ trong text` theo tách khoảng trắng); mật độ: `seconds = max(total_narration_chars / cps, Σ(out − in) của EDL)` (lời ước lượng theo cps = 15 (en) / 14 (vi) như skill `edit-plan`; `voice: none|original` không có lời thì chỉ còn thời lượng EDL), `limit = max(1, floor(seconds / spacing))` với `spacing` = 5 s (`high`), 8 s (`medium`, mặc định), 15 s (`low`) theo `edit-style.params.text_overlay.density` nếu có trong input; số `items` > `limit` → fail. Luôn cho phép ít nhất một sự kiện (một `title` mở đầu). Vi phạm → stage fail với thông điệp nêu `id` → replan (đường có sẵn của 5A).
+Checker `overlays-valid` (chạy ở `plan-edit`, chỉ khi output tồn tại): schema; độ dài; `id` duy nhất; ≤ 1 `title` cho mỗi `edl_order` (tính theo neo giải ra); neo tồn tại (đọc `edl.json` pre-fit + `narration.json` cùng stage — `timeline` chưa có ở bước này, nên `word_index` chỉ kiểm `< số từ trong text` theo tách khoảng trắng); mật độ: `seconds = max(total_narration_chars / cps, Σ(out − in) của EDL)` (lời ước lượng theo cps = 15 (en) / 14 (vi) như skill `edit-plan`; `voice: none|original` không có lời thì chỉ còn thời lượng EDL), `limit = max(1, floor(seconds / spacing))` với `spacing` = 5 s (`high`), 8 s (`medium`, mặc định), 15 s (`low`) theo `edit-style.params.text_overlay.density` nếu có trong input; số `items` > `limit` → fail. Luôn cho phép ít nhất một sự kiện (một `title` mở đầu).
+
+**Vi phạm `overlays-valid` KHÔNG dẫn tới replan** (sửa sau Task 10, acceptance 48(a)). Một required check fail ở `plan-edit` là lỗi `result`: stage `FAILED` → **run FAILED**, và không có gì mở lại một run đã FAILED — `intake` là chỗ duy nhất đưa request `open → claimed`, `library-apply-review` là chỗ duy nhất đưa nó ngược lại, mà một run chết ở `plan-edit` không bao giờ tới được `library-apply-review`. Request **kẹt ở `claimed`** và `autoAccept` (chỉ nhìn request `open`) không bao giờ thấy nó nữa. Đây là tính chất sẵn có của vòng sub-project 4, giống hệt `edl-valid` của 5A, **không** phải thứ 5B tạo ra; ghi ở `docs/operations/deferred-items.md` mục "Sau sub-project 5B" như hổng hệ thống cần SP4 mở lại request kèm ghi chú. Đường replan **thật sự chạy** cho lỗi chữ là đường duyệt: một bản overlays qua được `overlays-valid` nhưng hỏng ở `media-compose` rơi vào `render-report.text_events.dropped` → `library-review` từ chối → `library-apply-review` đưa request về `open` → replan (acceptance 48(b)).
 
 Skill `edit-plan` sửa: viết `overlays.json`; hướng dẫn: `title` một cái mỗi đoạn lớn, `callout` cho con số/từ khoá đúng lúc lời nói tới, `lower_third` cho nguồn; không lặp lại nguyên câu lời đọc; `transitions` chỉ ở đổi chủ đề; chọn `music.mood` theo brief.
 
@@ -287,13 +289,17 @@ Skill đọc thêm `render-report.json` và `composition.json`. Từ chối khi:
 
 ### 6.4 Doctor, sự kiện, dashboard
 
-Doctor: `media:render` (ffmpeg có `libass`, `xfade`, `loudnorm`, `sidechaincompress`; NVENC probe — không có chỉ `warn` "render bằng CPU"); `library:music` (thư mục, mọi track `active` có file + checksum khớp); `channel:<id>:brand` (vai channel, khi `brands/<id>/` tồn tại: parse, font/logo tồn tại, checksum khớp); vai studio: `library:brands` (mọi brand trong kho parse được, font tồn tại — brand hỏng của kênh nào thì tập kênh đó fail sớm ở `media-compose`).
+Doctor: `media:render` (ffmpeg có `ass`, `xfade`, `loudnorm`, `sidechaincompress`, `overlay` + encoder `libx264`; NVENC probe — không có thì dòng in `FAIL … "no NVENC, renders on CPU"`, nhưng đó là **cảnh báo** theo đúng khuôn `ok: false`-là-cảnh-báo của `media:models`: không dựng alert doctor nào. `DoctorRow` không có mức `warn` riêng, nên `harness doctor` vẫn thoát mã 1 — đọc nội dung dòng, đừng đọc mã thoát); `library:music` (thư mục, mọi track `active` có file + checksum khớp); `channel:<id>:brand` (vai channel, khi `brands/<id>/` tồn tại: parse, font/logo tồn tại, checksum khớp); vai studio: `library:brands` (mọi brand trong kho parse được, font tồn tại — brand hỏng của kênh nào thì tập kênh đó fail sớm ở `media-compose`).
 
-Sự kiện: `media.composed { run_id, cues, text_events, music_track }`, `media.rendered { run_id, seconds, encoder, cached_segments, rendered_segments, render_seconds }`. Dashboard `media` thêm `last_render_at`, `render_encoder`, `mezz_cache { hit_ratio, bytes }`; alert `render_cpu_fallback` khi `encoder: auto` giải ra `cpu` trên máy có GPU lease (`resources.gpu ≥ 1`).
+Sự kiện: `media.composed { run_id, cues, text_events, music_track }`, `media.rendered { run_id, seconds, encoder, cached_segments, rendered_segments, render_seconds }`. Dashboard `media` thêm `last_render_at`, `render_encoder`, `mezz_cache { hit_ratio }`; alert `render_cpu_fallback` khi `encoder: auto` giải ra `cpu` trên máy có GPU lease (`resources.gpu ≥ 1`).
+
+`mezz_cache` **chỉ có `hit_ratio`** (sửa ở Task 9): `bytes` không có nguồn dữ liệu nào — snapshot dashboard dựng từ event `media.rendered`, và event đó mang số đoạn cached/rendered chứ không mang dung lượng thư mục cache. Muốn biết dung lượng thì đo thẳng `<data_root>/cache/mezz/` (runbook `studio-composition.md` mục 5).
 
 ### 6.5 CLI
 
-`harness media compose --run <id>` / `--timeline … --overlays … --brand-dir … --out …` (chạy tay không cần run), `harness media render --composition … --out …`. `library brands set|show`, `library music add|list|retire` (§2).
+`library brands set|show`, `library music add|list|retire` (§2).
+
+`harness media compose` / `harness media render` **chỉ có dạng stage** (đọc `stage-request.json` trong `$HARNESS_WORKSPACE`, như bốn stage media của 5A) — dạng chạy tay `--timeline … --overlays … --brand-dir … --out …` / `--composition … --out …` **chưa cài** ở 1.3.0 (ghi ở deferred-items "Sau sub-project 5B"). Dựng lại một tập thì phải đi qua một run: `harness retry <run_id> --stage media-render` khi stage đó **đang FAILED/WAITING_HUMAN** (`retry` chỉ đưa hai trạng thái đó về READY), còn một stage đã SUCCEEDED thì phải `plan` một run mới (`--no-reuse` nếu muốn ép dựng lại).
 
 ---
 
@@ -301,9 +307,9 @@ Sự kiện: `media.composed { run_id, cues, text_events, music_track }`, `media
 
 | Tình huống | Hành vi |
 |---|---|
-| Brand khai font nhưng file thiếu / checksum lệch | Kiểm ở **`intake`, trước `claimRequest`** (cùng chỗ và cùng cách với kiểm giọng của 5A): `loadBrand` + `verifyBrandFiles` fail → `CONFIG_INVALID` nêu file, run FAILED, request vẫn `open` (không kẹt ở `claimed`); doctor `channel:<id>:brand` đã cảnh báo trước. `media-compose` kiểm lại lần nữa (rẻ) cho chắc. |
+| Brand khai font nhưng file thiếu / checksum lệch | Kiểm ở **`intake`, trước `claimRequest`** (cùng chỗ và cùng cách với kiểm giọng của 5A): `loadBrand` + `verifyBrandFiles` fail → `CONFIG_INVALID` nêu file. Đó là lỗi **`contract`**, mà `retry_on` của `intake` không có `contract` → stage đỗ **`WAITING_HUMAN`** sau đúng một attempt (run **chưa** FAILED); vì fail xảy ra **trước** `claimRequest` nên request vẫn `open`, không kẹt ở `claimed`. Sửa brand trong kho rồi `harness retry <run_id> --stage intake` là chạy tiếp — giống hệt đường kiểm giọng của 5A. Dashboard thấy nó qua alert `stage_waiting_human`; doctor `channel:<id>:brand` đã cảnh báo trước. `media-compose` kiểm lại lần nữa (rẻ) cho chắc. |
 | Không brand | Dựng không chữ/logo/nhạc, warning, không fail (§2.1). |
-| `overlays.json` neo sai / quá dài / quá dày | `overlays-valid` fail ở `plan-edit` → replan (đường 5A). |
+| `overlays.json` neo sai / quá dài / quá dày | `overlays-valid` fail ở `plan-edit` → stage `FAILED` → **run FAILED**, request kẹt ở `claimed`, **không replan** (§3; hổng hệ thống của SP4, acceptance 48(a)). |
 | Chữ va chạm không giải được | Bỏ sự kiện, `warnings`, review từ chối khi có `dropped`. |
 | Source hết đuôi cho dissolve | Hạ `cut`, `downgraded[]`, không fail. |
 | Nhạc không khớp mood / không ứng viên | Warning / `music: null`; review quyết. |

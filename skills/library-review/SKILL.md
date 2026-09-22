@@ -63,6 +63,10 @@ khi tập vào kho — checker cứng đã chặn lỗi kỹ thuật; skill này
    - `render-report.json.loudness.integrated_lufs` nằm ngoài `[−16, −12]`.
    `note` phải nêu rõ `id` của từng overlay bị bỏ và `before_order` của từng mối nối bị hạ cấp, để lượt
    dựng lại (`edit-plan`) sửa đúng chỗ — không nói chung chung "chữ bị lỗi".
+   **Không** từ chối vì những cảnh báo chỉ mang tính thông tin trong `render-report.json.warnings`:
+   `encoder_cpu` (máy không có NVENC), `loudnorm_not_linear` (ffmpeg phải chuẩn hoá độ to theo chế độ
+   dynamic vì hệ số đỉnh của bản trộn quá lớn). Chúng chỉ đáng nhắc trong `note` **khi** `loudness` đã nằm
+   ngoài khoảng — lúc đó `loudnorm_not_linear` chính là lời giải thích.
 1. Đọc `brief.json` để biết `target_duration_seconds` (khoảng đích) và `style_snapshot`.
 2. Đọc `watch.json`, lấy `duration_seconds` của tập — so với khoảng đích ⇒ `duration_in_range`.
 3. Lướt toàn bộ `sheet-*.png` tìm khung đen liên tục hoặc khung đứng hình (hai khung liền kề giống
