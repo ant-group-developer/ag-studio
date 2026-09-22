@@ -10,8 +10,8 @@ import {
   type SubtitleMode, type SurveyIndexV2, type Timeline, type Transcript, type VoiceProfile, type WatchIndex,
 } from "@harness/contracts";
 import {
-  activeTracks, buildComposition, buildTimeline, eventFor, fitEdl, indexSources, loadBrand, probeNvenc, renderComposition, requireActiveVoice,
-  requireValidBrand, synthesizeNarration, transcribeSources, watchFromExistingFrames, watchVideos,
+  activeTracks, buildComposition, buildTimeline, childEnvWithoutSecrets, eventFor, fitEdl, indexSources, loadBrand, probeNvenc, renderComposition,
+  requireActiveVoice, requireValidBrand, synthesizeNarration, transcribeSources, watchFromExistingFrames, watchVideos,
   type PreExtractedVideo, type WatchDeps, type WatchVideoInput,
 } from "@harness/core";
 import { probeDurationSync, probeSync } from "@harness/adapter-ffprobe";
@@ -53,19 +53,6 @@ export function builtinMediaCommands(argv: string[], projectDir: string): Record
  * budgets a tighter window of its own (`renderTimeoutSeconds`); this is only the net that catches an ffmpeg
  * that hung past every inner timeout. */
 export const MEDIA_RENDER_TIMEOUT_SECONDS = 7200;
-
-/** Env for the transcribe hook's child process: everything the harness process itself has, minus every
- * `HARNESS_SECRET_*` var -- transcription needs no secrets, and this is the only allowlist/denylist this
- * hook gets (spec: "child processes never receive HARNESS_SECRET_*"). */
-function childEnvWithoutSecrets(): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (v === undefined) continue;
-    if (k.toUpperCase().startsWith("HARNESS_SECRET_")) continue;
-    out[k] = v;
-  }
-  return out;
-}
 
 /**
  * `app.scripts?.scripts.transcribe`, resolved into `WatchDeps["transcribe"]` the same way
@@ -696,6 +683,33 @@ export function renderTimeoutSeconds(totalSeconds: number, deadlineAt: string, n
 }
 
 /**
+ * Re-bases every `composition.narration[].wav` onto THIS stage's own `voice_set` input directory, in place.
+ *
+ * `media-compose` bakes those paths as absolute strings pointing into its own attempt workspace
+ * (`workspaces/<run>/media-compose/<attempt>/input/voice/voice/<line>.wav`). `media-render` is a separate
+ * attempt with its own workspace and gets the same `voice_set` artifact materialized again under its own
+ * `input/` -- so by the time the render runs, the paths inside `composition.json` describe a directory that
+ * is merely still there by luck. `harness artifacts sweep`, a worker restart, or simply running the render on
+ * another machine leaves them dangling, and the render then fails deep inside ffmpeg with a missing input
+ * (review fix wave, I2).
+ *
+ * Only the basename is kept: `media-tts` writes one flat `voice/` directory, and the artifact is
+ * materialized whole, so a wav is always `<voice_set>/<basename>`. A file that is not there after re-basing
+ * is `CONFIG_INVALID` (a `contract` failure that does not retry) naming the file -- a truncated `voice_set`
+ * is a broken input, not a flaky encode.
+ */
+export function rebaseNarrationWavs(composition: Composition, voiceSetDir: string): Composition {
+  for (const n of composition.narration) {
+    const rebased = join(voiceSetDir, basename(n.wav));
+    if (!existsSync(rebased)) {
+      throw new HarnessError("CONFIG_INVALID", `narration wav not found in the voice_set input: ${rebased}`, { line_id: n.line_id, path: rebased, voice_set: voiceSetDir });
+    }
+    n.wav = rebased;
+  }
+  return composition;
+}
+
+/**
  * `media render` (spec §5): the two-tier ffmpeg render of one `composition.json` -- a cached mezzanine per
  * segment, then one 4K final encode with the ASS overlay burned in and music ducked under the voice. Writes
  * `full-episode.mp4`, `cuts/` (the `clip_set` `thumbnail-candidates` still consumes) and
@@ -705,6 +719,7 @@ async function mediaRenderStage(app: AppContext, sdk: ScriptContext): Promise<vo
   const library = requireLibrary(app);
   const composition = parseCompositionDoc(readJsonFile(sdk.input("composition")));
   const assPath = sdk.hasInput("overlay_ass") ? sdk.input("overlay_ass") : null;
+  if (sdk.hasInput("voice_set")) rebaseNarrationWavs(composition, sdk.input("voice_set"));
 
   // Every segment's source checksum, folded into that segment's mezzanine cache key: re-ingesting a source
   // under the same id with different bytes must not serve the previous bytes' mezzanine (spec §5.1).
