@@ -35,12 +35,17 @@ export function escapeFilterPath(p: string): string {
   return p
     .replace(/\\/g, "/")
     .replace(/:/g, "\\:")
-    // The whole escaped path is wrapped in single quotes by the caller (`filename='...'`); inside ffmpeg's
-    // filtergraph single-quoted strings `\` is NOT an escape character, so `\'` does not escape the quote --
-    // it closes the string early and the rest of the path becomes unparsed filter syntax. The fix is the
-    // standard shell trick: close the quote, emit an escaped quote, reopen the quote (`'\''`) (fix round 1,
-    // Important 3).
-    .replace(/'/g, "'\\''")
+    // The whole escaped path is wrapped in single quotes by the caller (`filename='...'`). ffmpeg parses this
+    // in two passes: pass 1 (the filtergraph tokenizer) copies quoted text literally and only unescapes `\X`
+    // OUTSIDE quotes; pass 2 (the filter's own key=value split) runs on that already-unquoted text and sees
+    // no quote markers, so a bare `'` in it re-opens a quote as far as pass 2 is concerned and swallows
+    // everything after it (e.g. `:fontsdir=...`). The 4-char shell-style trick `'\''` (close, escaped quote,
+    // reopen) is one escaping level short here -- verified against real ffmpeg 8.1 (fix round 1, Important 3
+    // review round 2). The working sequence closes the quote, then emits an ESCAPED BACKSLASH followed by an
+    // ESCAPED QUOTE (both consumed by pass 1's outside-quote unescaping down to one literal `\` and one
+    // literal `'`, which pass 2 then reads as an escaped quote rather than a new quote marker), then reopens
+    // the quote: 6 literal characters `'\\\''` (quote, backslash, backslash, backslash, quote, quote).
+    .replace(/'/g, "'\\\\\\''")
     .replace(/[,[\];]/g, (c) => `\\${c}`);
 }
 

@@ -94,7 +94,7 @@ describe("finalArgs", () => {
     expect(joined).toContain("ass=filename='E\\:/x/overlay.ass':fontsdir='E\\:/x/fonts'");
   });
 
-  it("ass path with an apostrophe: single quotes inside the ffmpeg-quoted filename are closed/re-opened, not backslash-escaped", () => {
+  it("ass path with an apostrophe: single quotes inside the ffmpeg-quoted filename are closed/re-opened with a full escaped-backslash + escaped-quote pair, not a bare backslash-quote (fix round 2 -- verified against real ffmpeg 8.1)", () => {
     const composition = baseComposition({ segments: [segment(0, 0, 5), segment(1, 5, 10)] });
     const mezz = [
       { order: 0, body: "/cache/mezz/b0.mp4", tail: null },
@@ -102,7 +102,7 @@ describe("finalArgs", () => {
     ];
     const { argv } = finalArgs(baseInput({ composition, mezz, assPath: "E:\\x\\it's\\overlay.ass" }));
     const joined = argv.join(" ");
-    expect(joined).toContain("ass=filename='E\\:/x/it'\\''s/overlay.ass'");
+    expect(joined).toContain("ass=filename='E\\:/x/it'\\\\\\''s/overlay.ass'");
   });
 
   it("empty segments[] throws CONFIG_INVALID instead of emitting [undefined]", () => {
@@ -182,9 +182,12 @@ describe("escapeFilterPath", () => {
     expect(escapeFilterPath("E:\\x\\overlay.ass")).toBe("E\\:/x/overlay.ass");
   });
 
-  it("apostrophe inside the path: close-quote/backslash-quote/reopen-quote, not a backslash escape", () => {
-    // Inside ffmpeg's filtergraph single-quoted strings, `\` is not an escape character -- `\'` would close
-    // the quote early and turn the rest of the path into unparsed filter syntax (fix round 1, Important 3).
-    expect(escapeFilterPath("E:\\x\\it's\\overlay.ass")).toBe("E\\:/x/it'\\''s/overlay.ass");
+  it("apostrophe inside the path: close-quote, escaped-backslash, escaped-quote, reopen-quote -- verified against real ffmpeg 8.1 (fix round 2)", () => {
+    // ffmpeg parses this in two passes: pass 1 (the filtergraph tokenizer) copies quoted text literally and
+    // only unescapes `\X` OUTSIDE quotes; pass 2 (the filter's own key=value split) runs on that already-
+    // unquoted text and has no quote markers left, so a bare `'` there (the 4-char `'\''` trick from fix
+    // round 1) re-opens a quote as far as pass 2 is concerned and swallows the rest of the filter
+    // (`:fontsdir=...`). The working 6-char sequence `'\\\''` survives both passes intact.
+    expect(escapeFilterPath("E:\\x\\it's\\overlay.ass")).toBe("E\\:/x/it'\\\\\\''s/overlay.ass");
   });
 });
