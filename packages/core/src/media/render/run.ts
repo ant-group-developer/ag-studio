@@ -377,6 +377,20 @@ export async function renderComposition(d: RenderDeps, p: RenderInput): Promise<
       true_peak_dbtp: round3(renderPass.output.output_tp),
       lra: round3(renderPass.output.output_lra),
     };
+    // The second pass asks for `linear=true`; ffmpeg drops back to `dynamic` without failing whenever the
+    // linear gain would breach `TP=-1` (mix crest factor > 13 dB). Its limiter then pins the true peak at
+    // -1 dBTP and leaves the programme short of -14 LUFS, so `render-valid` fails on a band it could never
+    // have hit. Record WHY, so the report says more than "integrated loudness out of range" (Task 11's real
+    // 4K run, `docs/runbooks/studio-composition.md` mục 6).
+    if (renderPass.output.normalization_type !== null && renderPass.output.normalization_type !== "linear") {
+      warnings.push("loudnorm_not_linear");
+      log(
+        `loudnorm fell back from linear to ${renderPass.output.normalization_type} normalization ` +
+          `(measured ${measured.measured.input_i} LUFS / ${measured.measured.input_tp} dBTP, crest ` +
+          `${round3(measured.measured.input_tp - measured.measured.input_i)} dB > 13 dB); the delivered ` +
+          `loudness may sit below the -14 LUFS target`,
+      );
+    }
   }
 
   // ---- 6) probe the episode, write the report, sweep the cache ----

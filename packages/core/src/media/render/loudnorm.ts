@@ -12,6 +12,18 @@ export interface LoudnormOutput {
   output_i: number;
   output_tp: number;
   output_lra: number;
+  /**
+   * `"linear"` or `"dynamic"`, straight from the block. The second pass ASKS for `linear=true`, but ffmpeg
+   * silently drops back to `dynamic` when the linear gain would push the measured true peak past `TP=-1`
+   * (`measured_tp + (target_i - measured_i) > target_tp`) -- which is exactly what happens to a mix whose
+   * crest factor exceeds `target_tp - target_i` = 13 dB. Dynamic mode then holds the true peak at -1 dBTP and
+   * lands the programme BELOW the -14 target, which `render-valid` rejects as "integrated loudness out of
+   * range" with no hint as to why. Task 11's real 4K run hit precisely that, so the value is lifted out here
+   * and turned into a `loudnorm_not_linear` warning by `run.ts`.
+   *
+   * `null` when the block does not carry the field (a future/older ffmpeg): unknown is not a warning.
+   */
+  normalization_type: string | null;
 }
 
 /** A fully silent mix measures as `-inf`, which is not a JSON number and would poison every later
@@ -90,6 +102,11 @@ export function parseLoudnorm(stderr: string): { measured: LoudnormMeasured; out
       input_thresh: values.input_thresh!,
       target_offset: values.target_offset!,
     },
-    output: { output_i: values.output_i!, output_tp: values.output_tp!, output_lra: values.output_lra! },
+    output: {
+      output_i: values.output_i!,
+      output_tp: values.output_tp!,
+      output_lra: values.output_lra!,
+      normalization_type: typeof raw.normalization_type === "string" ? raw.normalization_type : null,
+    },
   };
 }

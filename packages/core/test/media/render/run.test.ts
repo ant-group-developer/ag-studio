@@ -162,11 +162,18 @@ const LOUDNORM_STDERR = [
   "}",
 ].join("\n");
 
+/** `LOUDNORM_STDERR` with a different `normalization_type` -- ffmpeg's answer when it could not honour
+ * `linear=true` (Task 11: mix crest factor above the 13 dB the -14 LUFS / -1 dBTP pair allows). */
+const loudnormStderr = (normalizationType: string): string =>
+  LOUDNORM_STDERR.replace('"normalization_type" : "linear"', `"normalization_type" : "${normalizationType}"`);
+
 interface FakePlan {
   /** Exit code the child reports; `null` stands for "killed by a signal". Defaults to 0. */
   exit?: number | null;
   /** Never exit and never emit anything, so `runProcess`'s own timer has to kill it. */
   hang?: boolean;
+  /** stderr this call streams instead of the canned `LOUDNORM_STDERR`. */
+  stderr?: string;
 }
 
 /**
@@ -205,7 +212,7 @@ function fakeSpawn(plan: (argv: string[], index: number) => FakePlan = () => ({}
         child.emit("close", exit);
       });
       setTimeout(() => {
-        err.push(LOUDNORM_STDERR);
+        err.push(p.stderr ?? LOUDNORM_STDERR);
         err.push(null);
       }, 0);
     }
@@ -306,6 +313,32 @@ describe("renderComposition (fake ffmpeg)", () => {
     // Both mezzanines plus the failed final attempt used NVENC; the retry did not.
     expect(calls.filter((c) => c.includes("h264_nvenc"))).toHaveLength(3);
     expect(finalAttempts).toBe(2);
+  });
+
+  // Task 11 (the real 4K run): a mix whose true peak sits 17.9 dB above its integrated loudness cannot be
+  // lifted to -14 LUFS without breaching TP=-1, so ffmpeg answers `linear=true` with `dynamic` normalization,
+  // pins the peak at -1 dBTP and delivers ~-16 LUFS -- which `render-valid` then rejects with nothing but
+  // "integrated loudness out of range" to go on. The report has to say that the fallback happened.
+  it("warns loudnorm_not_linear when the final pass reports dynamic normalization", async () => {
+    // Only the FINAL encode (the pass carrying the video output label) answers `dynamic`; the measurement
+    // pass legitimately always runs dynamic and must not raise the warning on its own.
+    const { spawn } = fakeSpawn((argv) => (argv.includes("[vout]") ? { stderr: loudnormStderr("dynamic") } : {}));
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+
+    const { report } = await renderComposition(d, input({ composition: fakeComposition(), outDir, encoderCfg: "cpu", sourceChecksums: CHECKSUMS }));
+
+    expect(report.warnings).toContain("loudnorm_not_linear");
+    // The measured numbers still go into the report: the episode is delivered, `render-valid` judges it.
+    expect(report.loudness).toMatchObject({ integrated_lufs: -14.03, true_peak_dbtp: -1.49 });
+  });
+
+  it("does not warn loudnorm_not_linear when the final pass really normalized linearly", async () => {
+    const { spawn } = fakeSpawn();
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+
+    const { report } = await renderComposition(d, input({ composition: fakeComposition(), outDir, encoderCfg: "cpu", sourceChecksums: CHECKSUMS }));
+
+    expect(report.warnings).not.toContain("loudnorm_not_linear");
   });
 
   it('encoderCfg "nvenc" on a machine without NVENC warns and never emits an nvenc argv', async () => {

@@ -56,7 +56,19 @@ describe("parseLoudnorm", () => {
     const parsed = parseLoudnorm(TWO_BLOCKS);
     expect(parsed).not.toBeNull();
     expect(parsed!.measured).toEqual({ input_i: -23.47, input_tp: -4.61, input_lra: 6.7, input_thresh: -33.86, target_offset: 0.03 });
-    expect(parsed!.output).toEqual({ output_i: -14.03, output_tp: -1.49, output_lra: 6.6 });
+    expect(parsed!.output).toEqual({ output_i: -14.03, output_tp: -1.49, output_lra: 6.6, normalization_type: "linear" });
+  });
+
+  // Task 11 (real 4K run): the second pass asks for `linear=true` but ffmpeg answers `dynamic` when the mix
+  // crest factor is too large for the -14 LUFS / -1 dBTP pair. That single word is the only evidence of the
+  // fallback anywhere, so the parser has to carry it out of the block.
+  it("carries normalization_type out of the block so a linear -> dynamic fallback is visible", () => {
+    expect(parseLoudnorm(TWO_BLOCKS.slice(0, TWO_BLOCKS.indexOf("frame=")))!.output.normalization_type).toBe("dynamic");
+  });
+
+  it("leaves normalization_type null when the block does not carry it (older/newer ffmpeg)", () => {
+    const noType = SILENT_BLOCK.replace('\t"normalization_type" : "linear",\n', "");
+    expect(parseLoudnorm(noType)!.output.normalization_type).toBeNull();
   });
 
   it('maps "-inf" (a fully silent mix) to -99 instead of -Infinity', () => {
