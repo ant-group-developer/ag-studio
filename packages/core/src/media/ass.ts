@@ -110,11 +110,12 @@ function animationTag(animation: TextAnimation, x: number, y: number): string {
 }
 
 /**
- * Karaoke text for one cue: `{\kf<cs>}<word>` per word (`cs` = `round(word duration * 100)`), with an empty
+ * Karaoke text for one cue: `{\kf<cs>}<word>` per word (`cs` = `round(word duration * 100)`), with a
  * `{\kf<cs>}` filler for the gap before the cue's first word (when the cue starts before it) and for any gap
- * between two words, so the sum of every `\kf` value equals the cue's own duration in centiseconds. `\N`
- * breaks land between the words `cue.lines` puts on different lines -- `lines` is `words` re-wrapped at
- * existing spaces, so each line's word count is exactly its whitespace-token count.
+ * between two words, so the sum of every `\kf` value equals the cue's own duration in centiseconds. That
+ * filler carries the SPACE separating the two words (see below). `\N` breaks land between the words
+ * `cue.lines` puts on different lines -- `lines` is `words` re-wrapped at existing spaces, so each line's
+ * word count is exactly its whitespace-token count.
  */
 function karaokeText(cue: CaptionCue): string {
   const lineParts: string[] = [];
@@ -127,7 +128,14 @@ function karaokeText(cue: CaptionCue): string {
       if (!w) break;
       const prevEnd = wordIdx === 0 ? cue.start : cue.words[wordIdx - 1]!.end;
       const gapCs = Math.round((w.start - prevEnd) * 100);
-      if (gapCs > 0) parts.push(`{\\kf${gapCs}}`);
+      // The space between two words of the same line. libass draws exactly the characters inside the `\kf`
+      // segments and nothing else, so a gap filler of `{\kf4}` with no content draws NOTHING: the first real
+      // 4K render (Task 11) came out reading "Chợbênsôngmởtừlúc". The separator rides inside the gap segment
+      // when there is one (so it wipes in with the silence) and is emitted bare when two words abut. No
+      // separator after a `\N`, where the line break already does the job, and none before the first word.
+      const sep = t > 0 ? " " : "";
+      if (gapCs > 0) parts.push(`{\\kf${gapCs}}${sep}`);
+      else if (sep !== "") parts.push(sep);
       parts.push(`{\\kf${Math.round((w.end - w.start) * 100)}}${escapeAss(w.word)}`);
       wordIdx++;
     }

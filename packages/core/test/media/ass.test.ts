@@ -60,6 +60,40 @@ describe("buildAss", () => {
     const totalCs = [...dialogueLine.matchAll(/\\kf(\d+)/g)].reduce((sum, m) => sum + Number(m[1]), 0);
     expect(totalCs).toBeGreaterThanOrEqual(Math.round((karaokeCue.end - karaokeCue.start) * 100) - 1);
     expect(totalCs).toBeLessThanOrEqual(Math.round((karaokeCue.end - karaokeCue.start) * 100) + 1);
+    // Task 11 (the first real render): libass draws only what sits INSIDE the `\kf` segments, so dropping
+    // the separating spaces made every karaoke line read as one long word. Strip the tags and the drawn
+    // text must be the cue's own line back again.
+    // `Dialogue:` has 9 comma-separated fields before the text, and the text itself may contain commas.
+    const drawn = dialogueLine.split(",").slice(9).join(",").replace(/\{[^}]*\}/g, "");
+    expect(drawn).toBe("hi there friend");
+  });
+
+  // Two words that abut (no measurable silence between them) still need the separator, and it must not
+  // invent a `\kf` segment: a zero-length gap has no time to give one.
+  it("separates abutting karaoke words with a bare space, adding no extra \\kf segment", () => {
+    const cue: CaptionCue = {
+      index: 1, start: 0, end: 1, lines: ["one two"], raise_px: 0,
+      words: [{ word: "one", start: 0, end: 0.5 }, { word: "two", start: 0.5, end: 1 }],
+    };
+    const ass = buildAss({ brand: brandFixture(), mode: "karaoke", cues: [cue], text_events: [], logo: null });
+    const line = ass.split("\n").find((l) => l.startsWith("Dialogue: 0,"))!;
+    expect(line.endsWith("{\\kf50}one {\\kf50}two")).toBe(true);
+    expect([...line.matchAll(/\\kf(\d+)/g)]).toHaveLength(2);
+  });
+
+  it("puts no separator space after a \\N line break", () => {
+    const cue: CaptionCue = {
+      index: 1, start: 0, end: 1.2, lines: ["one two", "three"], raise_px: 0,
+      words: [
+        { word: "one", start: 0, end: 0.4 },
+        { word: "two", start: 0.4, end: 0.8 },
+        { word: "three", start: 0.9, end: 1.2 },
+      ],
+    };
+    const ass = buildAss({ brand: brandFixture(), mode: "karaoke", cues: [cue], text_events: [], logo: null });
+    const line = ass.split("\n").find((l) => l.startsWith("Dialogue: 0,"))!;
+    expect(line).toContain("\\N{\\kf10}{\\kf30}three");
+    expect(line).not.toContain("\\N ");
   });
 
   it("emits no cue Dialogue lines in mode none, but keeps text events", () => {
