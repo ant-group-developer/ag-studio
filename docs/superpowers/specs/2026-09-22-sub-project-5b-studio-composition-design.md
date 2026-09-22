@@ -65,7 +65,7 @@ media:
 
 ### 1.2 `channel.yaml`
 
-Không thêm trường. Có thư mục `brands/<channel_id>/` trong kho là kênh dùng thương hiệu. `overlay.side` (đã có) là mặc định của `brand.logo.corner` khi brand không khai.
+Không thêm trường. Có thư mục `brands/<channel_id>/` trong kho là kênh dùng thương hiệu. `overlay.side` (đã có, dùng cho đường sản xuất cũ) **không** liên kết với `brand.logo.corner` — logo của 5B chỉ theo `brand.json`.
 
 ### 1.3 Kho thêm
 
@@ -226,7 +226,7 @@ Inputs: `composition`, `overlay_ass`, `captions`, `edl` (cho `clip-set-complete`
 
 Mỗi `segments[k]` → một lệnh ffmpeg cho **thân** (`-ss in -to out`, độ dài đúng `end − start`) và, khi `transition_out.kind = dissolve`, một lệnh nữa cho **đuôi** (`-ss out -to out + tail_seconds`, file riêng `<key>-tail.mp4`). Thân và đuôi tách file để `clip_set` giữ đúng độ dài và đổi kiểu chuyển cảnh không làm mất cache thân. Video: `scale` (lanczos) về 3840×2160 theo `fit` (`scale_pad`: `scale=3840:2160:force_original_aspect_ratio=decrease,pad=3840:2160:(ow-iw)/2:(oh-ih)/2`; `scale_crop`: `…=increase,crop=3840:2160`), `fps=<output.fps>`, `format=yuv420p`; audio: có → `aresample=48000`, `aformat=stereo`; không có → `anullsrc=r=48000:cl=stereo` cắt đúng độ dài (**mọi mezzanine đều có tiếng**, PCM `pcm_s16le`). Encoder mezz: NVENC `h264_nvenc -preset p4 -rc vbr -cq 18 -b:v 0` / CPU `libx264 -preset veryfast -crf 16`; container `.mp4`, GOP ngắn (`-g <fps>`).
 
-Cache: `data_root/cache/mezz/<key>.mp4` (thân) và `<key>-tail.mp4` (đuôi), `key = sha256({ source_checksum, in, out, fit, w, h, fps, has_audio, encoder_id, mezz_version })`, đuôi thêm `tail_seconds` vào key riêng của nó (`mezz_version` là hằng trong code, tăng khi đổi filter). Hit → không chạy ffmpeg. Dọn LRU theo `media.render.cache_max_gb` sau mỗi run (atime trong bảng `mezz_cache(key, bytes, last_used_at)`, migration 0007). `render-report.segments_cached/rendered`.
+Cache: `data_root/cache/mezz/<key>.mp4` (thân) và `<key>-tail.mp4` (đuôi), `key = sha256({ source_checksum, in, out, fit, w, h, fps, has_audio, encoder_id, mezz_version })`, đuôi thêm `tail_seconds` vào key riêng của nó (`mezz_version` là hằng trong code, tăng khi đổi filter). Hit → không chạy ffmpeg. Mỗi file có sidecar `<key>.json { key, seconds, bytes, created_at, last_used_at }` (atime Windows không tin được); dọn LRU theo `media.render.cache_max_gb` sau mỗi run bằng `last_used_at`; thiếu sidecar → coi như miss và xoá file. Không bảng SQLite cho cache. `render-report.segments.cached/rendered`.
 
 ### 5.2 Tầng cuối — hình (`final-graph.ts`)
 
@@ -301,7 +301,7 @@ Sự kiện: `media.composed { run_id, cues, text_events, music_track }`, `media
 
 | Tình huống | Hành vi |
 |---|---|
-| Brand khai font nhưng file thiếu / checksum lệch | `media-compose` fail **ngay đầu stage** (trước mọi việc nặng), thông điệp nêu file; `library-review` không tới. Doctor đã cảnh báo trước. Nguyên tắc 5A: request không được kẹt ở `claimed` — stage fail này là lỗi máy (không phải biên tập), `deferred-items` đã ghi nhận đường xử lý chung; 5B thêm: `media-compose` fail vì brand/kho → `request_stuck` với `reason: brand_invalid` (không replan). |
+| Brand khai font nhưng file thiếu / checksum lệch | Kiểm ở **`intake`, trước `claimRequest`** (cùng chỗ và cùng cách với kiểm giọng của 5A): `loadBrand` + `verifyBrandFiles` fail → `CONFIG_INVALID` nêu file, run FAILED, request vẫn `open` (không kẹt ở `claimed`); doctor `channel:<id>:brand` đã cảnh báo trước. `media-compose` kiểm lại lần nữa (rẻ) cho chắc. |
 | Không brand | Dựng không chữ/logo/nhạc, warning, không fail (§2.1). |
 | `overlays.json` neo sai / quá dài / quá dày | `overlays-valid` fail ở `plan-edit` → replan (đường 5A). |
 | Chữ va chạm không giải được | Bỏ sự kiện, `warnings`, review từ chối khi có `dropped`. |
