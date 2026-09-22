@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { canonicalJson } from "../../../src/artifacts/checksum.js";
 import { MEZZ_VERSION, mezzArgs, mezzCacheKey, scaleFilter } from "../../../src/media/render/mezzanine.js";
 
 const BASE_KEY = {
@@ -24,12 +26,13 @@ describe("mezzCacheKey", () => {
   it("changes when `encoder` changes", () => {
     expect(mezzCacheKey(BASE_KEY)).not.toBe(mezzCacheKey({ ...BASE_KEY, encoder: "nvenc" }));
   });
-  it("changes when MEZZ_VERSION changes", () => {
-    // MEZZ_VERSION is folded into the key via the same object literal mezzCacheKey builds internally --
-    // simulate a version bump by hashing a key with an extra `mezz_version` override baked in up front is not
-    // possible from outside, so this asserts the constant is what the module says it is and is actually used
-    // (covered indirectly by the other "changes when X changes" cases all sharing this same version).
+  it("matches an independently computed sha256 of canonicalJson({...key, mezz_version}), and changes when mezz_version changes", () => {
     expect(MEZZ_VERSION).toBe(1);
+    const expected = createHash("sha256").update(canonicalJson({ ...BASE_KEY, mezz_version: 1 })).digest("hex");
+    expect(mezzCacheKey(BASE_KEY)).toBe(expected);
+
+    const bumped = createHash("sha256").update(canonicalJson({ ...BASE_KEY, mezz_version: 2 })).digest("hex");
+    expect(mezzCacheKey(BASE_KEY)).not.toBe(bumped);
   });
   it("does not change when key order changes", () => {
     const reordered = { codec: "h264" as const, encoder: "cpu" as const, has_audio: true, fps: 30, h: 2160, w: 3840, fit: "scale_pad" as const, out: 5, in: 0, source_checksum: "sha256:aaaa" };
@@ -41,11 +44,15 @@ describe("mezzCacheKey", () => {
 });
 
 describe("scaleFilter", () => {
-  it("scale_pad", () => {
-    expect(scaleFilter("scale_pad", 3840, 2160)).toBe("scale=3840:2160:force_original_aspect_ratio=decrease:flags=lanczos,pad=3840:2160:(ow-iw)/2:(oh-ih)/2:color=black");
+  it("scale_pad ends in setsar=1 (pins SAR so concat/xfade never aborts on an anamorphic source)", () => {
+    expect(scaleFilter("scale_pad", 3840, 2160)).toBe(
+      "scale=3840:2160:force_original_aspect_ratio=decrease:flags=lanczos,pad=3840:2160:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1",
+    );
   });
-  it("scale_crop contains crop=3840:2160", () => {
-    expect(scaleFilter("scale_crop", 3840, 2160)).toContain("crop=3840:2160");
+  it("scale_crop contains crop=3840:2160 and ends in setsar=1", () => {
+    const f = scaleFilter("scale_crop", 3840, 2160);
+    expect(f).toContain("crop=3840:2160");
+    expect(f.endsWith(",setsar=1")).toBe(true);
   });
 });
 

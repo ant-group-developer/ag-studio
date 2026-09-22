@@ -40,10 +40,12 @@ const DUCK_RATIO = "6";
 
 function buildVoiceGraph(composition: Composition, mezzIndex: (order: number) => number, narrationIndex: (line_id: string) => number): { parts: string[]; label: string } {
   const parts: string[] = [];
+  const total = fmt(composition.total_seconds);
 
   if (composition.voice === "tts") {
     if (composition.narration.length === 0) {
-      parts.push(`anullsrc=r=48000:cl=stereo,atrim=0:${fmt(composition.total_seconds)}[voice]`);
+      // Already spans exactly `total_seconds` -- no pad/trim needed.
+      parts.push(`anullsrc=r=48000:cl=stereo,atrim=0:${total}[voice]`);
       return { parts, label: "voice" };
     }
     const labels: string[] = [];
@@ -54,12 +56,21 @@ function buildVoiceGraph(composition: Composition, mezzIndex: (order: number) =>
       parts.push(`[${i}:a]adelay=${ms}|${ms}[${label}]`);
       labels.push(`[${label}]`);
     });
-    parts.push(`${labels.join("")}amix=inputs=${labels.length}:normalize=0:duration=longest[voice]`);
+    // `amix ... duration=longest` ends at the last narration line, not `total_seconds` -- with a trailing
+    // silent gap (or narration that runs past the last video segment being clamped) that fell short of the
+    // episode's full length, the music's fade-out (anchored at `total_seconds - fade_out`) would never play
+    // and the final `amix=duration=first` below would truncate everything to this short voice layer, making
+    // the tail of the episode silent (fix round 1, Critical 2). `apad` extends with silence when short;
+    // `atrim` clamps if narration somehow ran long.
+    parts.push(`${labels.join("")}amix=inputs=${labels.length}:normalize=0:duration=longest[voice_mixed]`);
+    parts.push(`[voice_mixed]apad,atrim=0:${total}[voice]`);
     return { parts, label: "voice" };
   }
 
   // "original" or "none": every segment's own audio, trimmed to its body length (no tail), 20ms edge fades,
-  // concatenated in segment order.
+  // concatenated in segment order. Mezzanine audio is trimmed exactly to `end - start` per segment, so the
+  // concat's total should already equal `total_seconds`; `apad,atrim` here is defensive (same reasoning as
+  // the `tts` branch above) against per-segment rounding drift accumulating over many segments.
   const segs = [...composition.segments].sort((a, b) => a.order - b.order);
   const labels: string[] = [];
   segs.forEach((seg, idx) => {
@@ -69,12 +80,13 @@ function buildVoiceGraph(composition: Composition, mezzIndex: (order: number) =>
     parts.push(`[${i}:a]atrim=0:${fmt(len)},afade=t=in:d=0.02,afade=t=out:st=${fmt(len - 0.02)}:d=0.02[${label}]`);
     labels.push(`[${label}]`);
   });
+  parts.push(`${labels.join("")}concat=n=${labels.length}:v=0:a=1[voice_concat]`);
 
   if (composition.voice === "none") {
-    parts.push(`${labels.join("")}concat=n=${labels.length}:v=0:a=1[voice_raw]`);
-    parts.push("[voice_raw]volume=-12dB[voice]");
+    parts.push(`[voice_concat]apad,atrim=0:${total}[voice_padded]`);
+    parts.push("[voice_padded]volume=-12dB[voice]");
   } else {
-    parts.push(`${labels.join("")}concat=n=${labels.length}:v=0:a=1[voice]`);
+    parts.push(`[voice_concat]apad,atrim=0:${total}[voice]`);
   }
   return { parts, label: "voice" };
 }

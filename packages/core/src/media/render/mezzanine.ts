@@ -31,12 +31,15 @@ export function mezzCacheKey(p: {
 }
 
 /** `scale`+`pad`/`crop` filter (lanczos) to bring a source up to the fixed output frame -- spec §5.1.
- * `scale_pad` letterboxes to preserve the whole frame; `scale_crop` fills the frame and crops the overflow. */
+ * `scale_pad` letterboxes to preserve the whole frame; `scale_crop` fills the frame and crops the overflow.
+ * Both end with `setsar=1`: an anamorphic source (non-1:1 SAR) would otherwise carry its original SAR through
+ * `scale`, and a mezzanine with SAR != 1:1 makes the final render's `concat`/`xfade` abort with "parameters
+ * do not match" against every other (SAR 1:1) mezzanine (fix round 1, Critical 1). */
 export function scaleFilter(fit: "scale_pad" | "scale_crop", w: number, h: number): string {
   if (fit === "scale_pad") {
-    return `scale=${w}:${h}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=black`;
+    return `scale=${w}:${h}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`;
   }
-  return `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=lanczos,crop=${w}:${h}`;
+  return `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=lanczos,crop=${w}:${h},setsar=1`;
 }
 
 /**

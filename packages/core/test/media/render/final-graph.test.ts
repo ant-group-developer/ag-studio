@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CompositionSchema, newId, type Composition } from "@harness/contracts";
+import { CompositionSchema, isHarnessError, newId, type Composition } from "@harness/contracts";
 import { escapeFilterPath, finalArgs, type FinalGraphInput } from "../../../src/media/render/final-graph.js";
 
 const SRC_A = "src_01JAAAAAAAAAAAAAAAAAAAAAAA";
@@ -77,8 +77,10 @@ describe("finalArgs", () => {
     const joined = argv.join(" ");
     expect(joined).toContain("xfade=transition=fade:duration=0.4:offset=5");
     expect(joined).toContain("concat=n=2:v=1:a=0");
-    expect(joined).toContain("fade=t=out");
-    expect(joined).toContain("fade=t=in");
+    // dip_black at 1-2, s=0.4, segment 1 is 5s long: outgoing fade starts at len-s/2 = 4.8, lasts s/2 = 0.2;
+    // incoming fade on segment 2 starts at 0, also lasts 0.2.
+    expect(joined).toContain("fade=t=out:st=4.8:d=0.2");
+    expect(joined).toContain("fade=t=in:st=0:d=0.2");
   });
 
   it("ass + Windows fontsDir escapes the way escapeFilterPath does", () => {
@@ -90,6 +92,27 @@ describe("finalArgs", () => {
     const { argv } = finalArgs(baseInput({ composition, mezz, assPath: "E:\\x\\overlay.ass", fontsDir: "E:\\x\\fonts" }));
     const joined = argv.join(" ");
     expect(joined).toContain("ass=filename='E\\:/x/overlay.ass':fontsdir='E\\:/x/fonts'");
+  });
+
+  it("ass path with an apostrophe: single quotes inside the ffmpeg-quoted filename are closed/re-opened, not backslash-escaped", () => {
+    const composition = baseComposition({ segments: [segment(0, 0, 5), segment(1, 5, 10)] });
+    const mezz = [
+      { order: 0, body: "/cache/mezz/b0.mp4", tail: null },
+      { order: 1, body: "/cache/mezz/b1.mp4", tail: null },
+    ];
+    const { argv } = finalArgs(baseInput({ composition, mezz, assPath: "E:\\x\\it's\\overlay.ass" }));
+    const joined = argv.join(" ");
+    expect(joined).toContain("ass=filename='E\\:/x/it'\\''s/overlay.ass'");
+  });
+
+  it("empty segments[] throws CONFIG_INVALID instead of emitting [undefined]", () => {
+    const composition = baseComposition({ segments: [] });
+    try {
+      finalArgs(baseInput({ composition, mezz: [] }));
+      expect.fail("expected finalArgs to throw");
+    } catch (e) {
+      expect(isHarnessError(e, "CONFIG_INVALID")).toBe(true);
+    }
   });
 
   it("logo present adds an overlay= filter", () => {
@@ -157,5 +180,11 @@ describe("finalArgs", () => {
 describe("escapeFilterPath", () => {
   it("Windows path: backslashes become slashes, colon escaped", () => {
     expect(escapeFilterPath("E:\\x\\overlay.ass")).toBe("E\\:/x/overlay.ass");
+  });
+
+  it("apostrophe inside the path: close-quote/backslash-quote/reopen-quote, not a backslash escape", () => {
+    // Inside ffmpeg's filtergraph single-quoted strings, `\` is not an escape character -- `\'` would close
+    // the quote early and turn the rest of the path into unparsed filter syntax (fix round 1, Important 3).
+    expect(escapeFilterPath("E:\\x\\it's\\overlay.ass")).toBe("E\\:/x/it'\\''s/overlay.ass");
   });
 });

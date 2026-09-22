@@ -2,7 +2,7 @@
  * the audio graph from `audio-graph.ts` -- sub-project 5B Task 6, spec §5.2/§5.3. Pure: no I/O, no clock, no
  * randomness. Task 7 resolves `ffmpeg`, mezzanine paths, `assPath`/`fontsDir` and `loudnorm` (two ffmpeg
  * passes: `measureOnly: true` to measure, then `false` with the measured values) and spawns the result. */
-import type { Composition } from "@harness/contracts";
+import { HarnessError, type Composition } from "@harness/contracts";
 import { round3 } from "../time.js";
 import { audioGraph, type LoudnormMeasured } from "./audio-graph.js";
 import { videoEncoderArgs, type EncoderChoice } from "./encoder.js";
@@ -35,13 +35,19 @@ export function escapeFilterPath(p: string): string {
   return p
     .replace(/\\/g, "/")
     .replace(/:/g, "\\:")
-    .replace(/'/g, "\\'")
+    // The whole escaped path is wrapped in single quotes by the caller (`filename='...'`); inside ffmpeg's
+    // filtergraph single-quoted strings `\` is NOT an escape character, so `\'` does not escape the quote --
+    // it closes the string early and the rest of the path becomes unparsed filter syntax. The fix is the
+    // standard shell trick: close the quote, emit an escaped quote, reopen the quote (`'\''`) (fix round 1,
+    // Important 3).
+    .replace(/'/g, "'\\''")
     .replace(/[,[\];]/g, (c) => `\\${c}`);
 }
 
 export function finalArgs(p: FinalGraphInput): { argv: string[]; inputs: { kind: FinalGraphInputKind; path: string; index: number }[] } {
   const { ffmpeg, composition, mezz, assPath, fontsDir, encoder, loudnorm, out_path, measureOnly } = p;
   const segs = [...composition.segments].sort((a, b) => a.order - b.order);
+  if (segs.length === 0) throw new HarnessError("CONFIG_INVALID", "finalArgs: composition has no segments", {});
   const mezzByOrder = new Map(mezz.map((m) => [m.order, m]));
 
   // ---- inputs: body_0, tail_0?, body_1, tail_1?, ..., narration wavs (tts), music, logo ----
