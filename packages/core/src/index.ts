@@ -65,3 +65,6 @@ export * from "./media/fit-edl.js";
 export * from "./media/timeline.js";
 export * from "./media/captions.js";
 export * from "./media/ass.js";
+export * from "./media/overlays.js";
+export * from "./media/transitions.js";
+export * from "./media/music.js";
