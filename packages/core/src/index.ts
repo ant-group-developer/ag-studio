@@ -70,3 +70,7 @@ export * from "./media/overlays.js";
 export * from "./media/transitions.js";
 export * from "./media/music.js";
 export * from "./media/compose.js";
+export * from "./media/render/encoder.js";
+export * from "./media/render/mezzanine.js";
+export * from "./media/render/audio-graph.js";
+export * from "./media/render/final-graph.js";
