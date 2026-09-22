@@ -1,9 +1,10 @@
-/** Checkers for sub-project 5B: `overlays-valid` (runs at `plan-edit`, spec §3) and `composition-valid` (runs
- * at `media-compose`, spec §4.5). `render-valid` is Task 7's -- the export below leaves a named spot for it
- * but does not implement it yet. */
+/** Checkers for sub-project 5B: `overlays-valid` (runs at `plan-edit`, spec §3), `composition-valid` (runs at
+ * `media-compose`, spec §4.5) and `render-valid` (runs at `media-render`, spec §6.2). */
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  BrandProfileSchema,
   CompositionSchema,
   EdlSchema,
   EditStyleSchema,
@@ -11,8 +12,11 @@ import {
   NarrationSchema,
   OVERLAY_TEXT_MAX,
   OverlaysSchema,
+  RenderReportSchema,
   TimelineSchema,
   type Checker,
+  type CheckerInput,
+  type Composition,
   type Edl,
   type MediaProber,
   type Narration,
@@ -21,6 +25,64 @@ import { countDialogues } from "../media/ass.js";
 import { overlayDensityLimit } from "../media/overlays.js";
 
 const skip = (reason: string) => ({ verdict: "skip" as const, evidence: { reason } });
+
+/** `render-valid` acceptance band for the delivered loudness (spec §6.2, global constants). */
+const LOUDNESS_MIN_LUFS = -16;
+const LOUDNESS_MAX_LUFS = -12;
+const TRUE_PEAK_MAX_DBTP = -0.5;
+/** Luma standard deviation below which a sampled region counts as "nothing was drawn here" -- a flat fill
+ * (letterbox black, a solid backdrop) measures ~0, any real logo or subtitle edge measures far above 4. */
+const PAINTED_STDDEV_MIN = 4;
+/** Square sampled at the logo corner; comfortably covers the default 140 px logo at a 120 px safe margin. */
+const LOGO_PROBE_PX = 260;
+/** Fallbacks for a composition whose brand directory is unreadable -- the same defaults `BrandProfileSchema`
+ * itself applies to `safe_margin_px` / `subtitles.size_px`. */
+const DEFAULT_SAFE_MARGIN_PX = 120;
+const DEFAULT_SUBTITLE_SIZE_PX = 88;
+
+/** Standard deviation of one gray frame's luma, sampled at `t` seconds inside `crop`; `null` when ffmpeg
+ * could not produce the frame at all. Synchronous on purpose: checkers already shell out this way
+ * (`media-checkers.ts`'s `volumedetect`), and one frame of a 260x260 crop is a few milliseconds. */
+function frameStdDev(ffmpeg: string, file: string, t: number, crop: { w: number; h: number; x: number; y: number }): number | null {
+  const r = spawnSync(
+    ffmpeg,
+    ["-hide_banner", "-ss", String(t), "-i", file, "-frames:v", "1", "-vf", `crop=${crop.w}:${crop.h}:${crop.x}:${crop.y},format=gray`, "-f", "rawvideo", "-"],
+    { maxBuffer: 64 * 1024 * 1024 },
+  );
+  if (r.status !== 0) return null;
+  const buf = r.stdout;
+  if (!buf || buf.length === 0) return null;
+  let sum = 0;
+  for (const byte of buf) sum += byte;
+  const mean = sum / buf.length;
+  let variance = 0;
+  for (const byte of buf) variance += (byte - mean) ** 2;
+  return Math.sqrt(variance / buf.length);
+}
+
+/** `safe_margin_px` / `subtitles.size_px` from the composition's own brand directory, so the sampled caption
+ * band matches where `overlay.ass` actually drew; schema defaults when there is no readable brand. */
+function brandLayout(composition: Composition): { safe: number; subtitleSize: number } {
+  const dir = composition.brand?.dir;
+  if (dir !== undefined) {
+    try {
+      const parsed = BrandProfileSchema.safeParse(JSON.parse(readFileSync(join(dir, "brand.json"), "utf8")));
+      if (parsed.success) return { safe: parsed.data.safe_margin_px, subtitleSize: parsed.data.subtitles.size_px };
+    } catch {
+      // No brand on disk (a hand-run render, or a kho that moved): fall through to the defaults.
+    }
+  }
+  return { safe: DEFAULT_SAFE_MARGIN_PX, subtitleSize: DEFAULT_SUBTITLE_SIZE_PX };
+}
+
+/** The `captions` directory of this stage, whether it was produced here (`media-compose` run standalone) or
+ * consumed as an input (`media-render`, where `captions` comes from the previous stage). */
+function captionsDir(input: CheckerInput): string | null {
+  const out = input.result.outputs.find((o) => o.kind === "directory" && o.type === "captions");
+  if (out) return join(input.workspaceDir, out.path);
+  const asInput = input.request.inputs.find((i) => i.type === "captions");
+  return asInput ? join(input.workspaceDir, asInput.path) : null;
+}
 
 /** `<workspaceDir>/<request input of this type>.path`, JSON-parsed and schema-validated; `undefined` when
  * there is no such input, the file is unreadable/unparsable, or it fails the schema -- every caller here
@@ -48,8 +110,17 @@ function readInput<T>(input: { request: { inputs: { type: string; path: string }
  * the sibling `overlay_ass`/`captions` outputs of the same `media-compose` stage -- the render-plan invariants
  * spec §4.5 locks down (segments identical to the timeline, events/cues within range and non-overlapping, the
  * ASS/SRT dialogue and cue counts matching, transition bookkeeping balanced, and every path it names on disk).
+ *
+ * `render-valid` (Task 7) closes the loop at `media-render`: the rendered `full-episode.mp4` is probed
+ * against the very `composition.json` it was built from, `render-report.json`'s measured loudness must land
+ * in the delivery band, and the burned-in overlays are sampled frame by frame -- see its own comment below.
+ * It is the only one of the three that needs a working `MediaProber` (and ffmpeg), and so the only one that
+ * degrades to `skip` when `opts.available === false`.
  */
 export function compositionCheckers(opts: { prober: MediaProber; available?: boolean; ffmpeg?: string }): Checker[] {
+  const prober = opts.prober;
+  const ffmpeg = opts.ffmpeg ?? "ffmpeg";
+
   const overlaysValid: Checker = {
     id: "overlays-valid",
     version: "1.0.0",
@@ -282,8 +353,126 @@ export function compositionCheckers(opts: { prober: MediaProber; available?: boo
     },
   };
 
-  // `render-valid` (Task 7): validates `render-report.json` (loudness, output dims, encoder) against
-  // `composition.json` once `media-render` exists. Not implemented here.
+  /**
+   * `render-valid` (spec §6.2): the delivered episode really is the composition that was planned. Probes
+   * `episode_video` (one video stream at 3840x2160, the composition's fps, the composition's total length,
+   * 48 kHz stereo audio), reads the measured loudness out of `render-report.json`, counts the SRT cues, and
+   * -- because a probe cannot tell a burned-in overlay from a missing one -- samples the luma standard
+   * deviation of the logo corner and the caption band so a silently-dropped `ass`/`overlay` filter fails
+   * here rather than reaching a channel.
+   */
+  const renderValid: Checker = {
+    id: "render-valid",
+    version: "1.0.0",
+    async check(input) {
+      const videoOut = input.result.outputs.find((o) => o.type === "episode_video");
+      const reportOut = input.result.outputs.find((o) => o.type === "render_report");
+      if (!videoOut || !reportOut) return skip("no matching output");
 
-  return [overlaysValid, compositionValid];
+      const compInput = input.request.inputs.find((i) => i.type === "composition");
+      if (!compInput) return { verdict: "fail", evidence: { reason: "no composition input" } };
+      let composition: Composition;
+      try {
+        const parsed = CompositionSchema.safeParse(JSON.parse(readFileSync(join(input.workspaceDir, compInput.path), "utf8")));
+        if (!parsed.success) return { verdict: "fail", evidence: { path: compInput.path, reason: "invalid composition input", issues: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) } };
+        composition = parsed.data;
+      } catch (e) {
+        return { verdict: "fail", evidence: { path: compInput.path, reason: "unreadable composition input", error: e instanceof Error ? e.message : String(e) } };
+      }
+
+      let report;
+      try {
+        const parsed = RenderReportSchema.safeParse(JSON.parse(readFileSync(join(input.workspaceDir, reportOut.path), "utf8")));
+        if (!parsed.success) return { verdict: "fail", evidence: { path: reportOut.path, reason: "invalid render report", issues: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) } };
+        report = parsed.data;
+      } catch (e) {
+        return { verdict: "fail", evidence: { path: reportOut.path, reason: "unreadable render report", error: e instanceof Error ? e.message : String(e) } };
+      }
+
+      const videoPath = join(input.workspaceDir, videoOut.path);
+      const probed = await prober.probe(videoPath);
+      if (!probed || !probed.video) return { verdict: "fail", evidence: { path: videoOut.path, reason: "no video stream" } };
+      if (probed.video.width !== 3840 || probed.video.height !== 2160) {
+        return { verdict: "fail", evidence: { path: videoOut.path, reason: "wrong frame size", width: probed.video.width, height: probed.video.height } };
+      }
+      const fps = probed.video.fps;
+      if (fps === null || Math.abs(fps - composition.output.fps) > 0.01) {
+        return { verdict: "fail", evidence: { path: videoOut.path, reason: "fps mismatch", expected: composition.output.fps, actual: fps } };
+      }
+      const total = composition.total_seconds;
+      const duration = probed.duration_seconds;
+      if (duration === null || Math.abs(duration - total) > 0.1) {
+        return { verdict: "fail", evidence: { path: videoOut.path, reason: "duration mismatch", expected: total, actual: duration } };
+      }
+      if (!probed.audio) return { verdict: "fail", evidence: { path: videoOut.path, reason: "no audio stream" } };
+      if (probed.audio.sample_rate !== 48000 || probed.audio.channels !== 2) {
+        return { verdict: "fail", evidence: { path: videoOut.path, reason: "audio not 48 kHz stereo", sample_rate: probed.audio.sample_rate, channels: probed.audio.channels } };
+      }
+
+      if (report.loudness === null) return { verdict: "fail", evidence: { reason: "no loudness measurement" } };
+      if (report.loudness.integrated_lufs < LOUDNESS_MIN_LUFS || report.loudness.integrated_lufs > LOUDNESS_MAX_LUFS) {
+        return { verdict: "fail", evidence: { reason: "integrated loudness out of range", integrated_lufs: report.loudness.integrated_lufs, min: LOUDNESS_MIN_LUFS, max: LOUDNESS_MAX_LUFS } };
+      }
+      if (report.loudness.true_peak_dbtp > TRUE_PEAK_MAX_DBTP) {
+        return { verdict: "fail", evidence: { reason: "true peak too high", true_peak_dbtp: report.loudness.true_peak_dbtp, max: TRUE_PEAK_MAX_DBTP } };
+      }
+
+      const capDir = captionsDir(input);
+      if (capDir !== null) {
+        const srtPath = join(capDir, "captions.srt");
+        if (!existsSync(srtPath)) return { verdict: "fail", evidence: { path: srtPath, reason: "missing captions.srt" } };
+        let srtText: string;
+        try {
+          srtText = readFileSync(srtPath, "utf8");
+        } catch (e) {
+          return { verdict: "fail", evidence: { path: srtPath, reason: "unreadable captions.srt", error: e instanceof Error ? e.message : String(e) } };
+        }
+        const blocks = srtText.trim().length === 0 ? 0 : srtText.split(/\r?\n\r?\n/).map((b) => b.trim()).filter((b) => b.length > 0).length;
+        if (blocks !== composition.captions.cues.length) {
+          return { verdict: "fail", evidence: { reason: "captions.srt block count mismatch", expected: composition.captions.cues.length, actual: blocks } };
+        }
+      }
+
+      const { safe, subtitleSize } = brandLayout(composition);
+      /** Times are clamped into the episode: a very short episode would otherwise be sampled at t < 0. */
+      const at = (t: number): number => Math.min(Math.max(t, 0), Math.max(0, total - 0.1));
+
+      if (composition.logo !== null) {
+        const x = composition.logo.corner === "left" ? 0 : 3840 - LOGO_PROBE_PX;
+        const crop = { w: LOGO_PROBE_PX, h: LOGO_PROBE_PX, x, y: 0 };
+        const samples = [at(1), at(total / 2), at(total - 1)].map((t) => ({ t, stddev: frameStdDev(ffmpeg, videoPath, t, crop) }));
+        if (samples.some((s) => s.stddev === null)) {
+          return { verdict: "fail", evidence: { reason: "frame extract failed", region: "logo", samples: samples.map((s) => s.t) } };
+        }
+        // 2 of 3: one sampled frame can legitimately land on a dip_black fade, where the whole frame is flat.
+        const painted = samples.filter((s) => (s.stddev ?? 0) > PAINTED_STDDEV_MIN).length;
+        if (painted < 2) {
+          return { verdict: "fail", evidence: { reason: "logo region looks unpainted", min_stddev: PAINTED_STDDEV_MIN, samples: samples.map((s) => ({ t: s.t, stddev: s.stddev })) } };
+        }
+      }
+
+      const firstCue = composition.captions.cues[0];
+      if (composition.captions.mode !== "none" && firstCue !== undefined) {
+        const t = at((firstCue.start + firstCue.end) / 2);
+        const bandHeight = safe + subtitleSize * 3;
+        const crop = { w: 1000, h: bandHeight, x: 1420, y: Math.max(0, 2160 - bandHeight) };
+        const stddev = frameStdDev(ffmpeg, videoPath, t, crop);
+        if (stddev === null) return { verdict: "fail", evidence: { reason: "frame extract failed", region: "captions", t } };
+        if (stddev <= PAINTED_STDDEV_MIN) {
+          return { verdict: "fail", evidence: { reason: "caption region looks unpainted", min_stddev: PAINTED_STDDEV_MIN, stddev, t } };
+        }
+      }
+
+      return { verdict: "pass", evidence: { checked: videoOut.path, seconds: duration, integrated_lufs: report.loudness.integrated_lufs } };
+    },
+  };
+
+  // `render-valid` is the only prober-backed checker of the three; with no ffprobe on the machine it can
+  // give no verdict at all, exactly as `mediaCheckers` handles its own five (a `NullMediaProber` answers
+  // `null` for every file, which would read as "broken episode").
+  const render: Checker = opts.available === false
+    ? { ...renderValid, check: async () => skip("no media prober available") }
+    : renderValid;
+
+  return [overlaysValid, compositionValid, render];
 }
