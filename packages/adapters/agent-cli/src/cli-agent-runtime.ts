@@ -18,8 +18,11 @@ export type AgentCliRuntimeKind = "claude" | "codex";
 // rest of this list: harmless for the real `claude`/`codex` binaries, needed by the fake CLI in tests.
 // Sub-project 5A task 8 adds FAKE_NARRATION_CHARS: the length of each fake `narration.json` line's
 // placeholder text (edit-plan skill, library-production@1.2.0), used by media-fit-edl tests that need a
-// narration line longer than the footage a fake shoot provides.
-const FAKE_AGENT_TEST_ENV = ["FAKE_AGENT_MODE", "FAKE_REVIEW_MODE", "FAKE_AGENT_FAIL_STAGE", "FAKE_STYLE_STATUS", "FAKE_STYLE_REVIEW", "FAKE_ANGLE", "FAKE_METRIC", "FAKE_NARRATION_CHARS", "FAKE_OVERLAYS"];
+// narration line longer than the footage a fake shoot provides. Sub-project 5B adds FAKE_OVERLAYS (which
+// overlay plan the fake `edit-plan` writes) and, at task 11, FAKE_NARRATION_TEXT: real "|"-separated
+// sentences in place of that placeholder, so a real 4K run on this machine reads real speech and burns real
+// (accented) subtitles instead of a row of `x`.
+const FAKE_AGENT_TEST_ENV = ["FAKE_AGENT_MODE", "FAKE_REVIEW_MODE", "FAKE_AGENT_FAIL_STAGE", "FAKE_STYLE_STATUS", "FAKE_STYLE_REVIEW", "FAKE_ANGLE", "FAKE_METRIC", "FAKE_NARRATION_CHARS", "FAKE_NARRATION_TEXT", "FAKE_OVERLAYS"];
 
 export const RUNTIME_COMMANDS: Record<AgentCliRuntimeKind, { argv: string[]; env_passthrough: string[] }> = {
   claude: {

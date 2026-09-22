@@ -32,6 +32,13 @@
 //                          `brief.json.voice === "tts"` (default 40; a `media-fit-edl` test wanting a line
 //                          longer than the footage available raises this). Ignored (fixed at 20) once
 //                          `brief.json.request_notes` contains "thiếu" -- simulating a replanned, shorter line.
+//   FAKE_NARRATION_TEXT    real sentences to use INSTEAD of the `x` placeholder, "|"-separated and cycled
+//                          over the lines (`FAKE_NARRATION_CHARS` is then ignored). Sub-project 5B task 11:
+//                          the real 4K run needs narration that a TTS engine can actually read -- 40 literal
+//                          `x` characters synthesize into a burst of clicks whose crest factor no loudness
+//                          normaliser can lift to -14 LUFS, and the burned-in subtitles it produces say
+//                          nothing about whether Vietnamese diacritics render. Unset = the old behaviour,
+//                          byte for byte.
 //
 // Extra env var for sub-project 5B task 8's `overlays.json` (edit-plan skill, library-production@1.3.0):
 //   FAKE_OVERLAYS   none | medium (default) | dense | invalid | unresolvable -- see buildOverlays below.
@@ -268,7 +275,11 @@ function buildNarration() {
   const edl = buildEdl();
   const hadShortfallNote = typeof brief.request_notes === "string" && brief.request_notes.includes("thiếu");
   const perLineChars = hadShortfallNote ? 20 : Number(process.env.FAKE_NARRATION_CHARS ?? 40);
-  const lines = edl.entries.map((e, i) => ({ line_id: `L${String(i + 1).padStart(3, "0")}`, edl_order: e.order, text: "x".repeat(Math.max(1, perLineChars)) }));
+  // `FAKE_NARRATION_TEXT` (task 11) wins over the placeholder, and over the shortfall shortening too: a
+  // replan that has to re-read real sentences still reads the same real sentences.
+  const real = (process.env.FAKE_NARRATION_TEXT ?? "").split("|").map((s) => s.trim()).filter((s) => s.length > 0);
+  const textFor = (i) => (real.length > 0 ? real[i % real.length] : "x".repeat(Math.max(1, perLineChars)));
+  const lines = edl.entries.map((e, i) => ({ line_id: `L${String(i + 1).padStart(3, "0")}`, edl_order: e.order, text: textFor(i) }));
   return { schema_version: "harness.narration/v1", language, lines };
 }
 

@@ -470,6 +470,29 @@ describe("fake-agent-cli.mjs: sub-project 5A task 8 (multi-source survey/edl/nar
     expect(narration.lines[0].text.length).toBe(90);
   });
 
+  // Task 11: the real 4K run needs narration a TTS engine can read. `FAKE_NARRATION_TEXT` replaces the
+  // placeholder outright and is cycled over the lines, so an EDL with more entries than sentences still gets
+  // real text on every line.
+  it("edit-plan: FAKE_NARRATION_TEXT replaces the placeholder with real sentences, cycled over the lines", () => {
+    const ws = tmpWorkspace();
+    const sourceIds = [newId("source_item")];
+    const shotsInput = fileInput(ws, "inputs/shots.json", SHOTS_JSON_V2(sourceIds), "shots");
+    const briefJson = JSON.stringify({ topic: "test", style_id: newId("edit_style"), style_revision: 1, voice: "tts", language: "vi", request_notes: "" });
+    const briefInput = fileInput(ws, "inputs/brief.json", briefJson, "brief");
+    const req = makeRequest(ws, {
+      stage_key: "plan-edit",
+      inputs: [shotsInput, briefInput],
+      expected_outputs: [{ type: "narration", mime_type: "application/json", kind: "file", name: "narration.json" }],
+    });
+    const r = run(ws, req, { FAKE_NARRATION_CHARS: "90", FAKE_NARRATION_TEXT: "Câu một có dấu.| Câu hai cũng vậy. " });
+    expect(r.status, `stderr: ${r.err}`).toBe(0);
+    const narration = JSON.parse(readFileSync(join(ws, "output", "narration.json"), "utf8"));
+    expect(narration.lines.length).toBeGreaterThanOrEqual(1);
+    // Trimmed, split on "|", and cycled: line i takes sentence i % 2, so `FAKE_NARRATION_CHARS` is ignored.
+    const expected = ["Câu một có dấu.", "Câu hai cũng vậy."];
+    expect(narration.lines.map((l: { text: string }, i: number) => l.text)).toEqual(narration.lines.map((_: unknown, i: number) => expected[i % 2]));
+  });
+
   it("edit-plan: brief.request_notes containing \"thiếu\" (a prior shortfall rejection) shortens the line to 20 chars regardless of FAKE_NARRATION_CHARS", () => {
     const ws = tmpWorkspace();
     const sourceIds = [newId("source_item")];
