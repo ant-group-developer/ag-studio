@@ -35,8 +35,24 @@ export interface DashboardSnapshot {
  * the newest `media.tts_done` event's timestamp, `cache_hit_ratio` is Σcached / Σlines across the newest 20
  * `media.tts_done` events (`null` when none exist or their lines summed to zero). Present only when the
  * project declares `library` with `role: "studio"` -- a channel project or one with no library at all has
- * nothing running the media pipeline for this block to describe. */
-export interface DashboardMedia { engine: "python" | "fake"; last_tts_at: string | null; cache_hit_ratio: number | null }
+ * nothing running the media pipeline for this block to describe.
+ *
+ * Sub-project 5B Task 9 adds the render-side counterparts: `last_render_at`/`render_encoder` come from the
+ * newest `media.rendered` event (`null`/`null` when none exists), and `mezz_cache.hit_ratio` is
+ * Σcached_segments / Σ(cached_segments + rendered_segments) across the newest 20 `media.rendered` events
+ * (`null` when none exist or that denominator sums to zero) -- the render-time analogue of `cache_hit_ratio`
+ * above, which stays TTS-only. `mezz_cache` deliberately carries no `bytes` field: nothing in the render
+ * pipeline reports mezzanine cache size anywhere an event could pick it up from (`RenderReport` has no such
+ * field), so there is nothing truthful to put there yet -- a future task can add it once the render report
+ * does. */
+export interface DashboardMedia {
+  engine: "python" | "fake";
+  last_tts_at: string | null;
+  cache_hit_ratio: number | null;
+  last_render_at: string | null;
+  render_encoder: "nvenc" | "cpu" | null;
+  mezz_cache: { hit_ratio: number | null };
+}
 
 export interface DashboardLibrary {
   root: string;
@@ -90,7 +106,7 @@ export interface DashboardEpisode {
 
 export interface DashboardActiveRun { run_id: string; channel_id: string; stage_key: string; state: string; since: string }
 
-export type DashboardAlertKind = "reconcile" | "run_failed" | "gate_overdue" | "doctor" | "library_unmounted" | "missing_today" | "request_stuck" | "stage_waiting_human" | "stats_blocked" | "stats_failing" | "planning_failed" | "media_engine_unavailable";
+export type DashboardAlertKind = "reconcile" | "run_failed" | "gate_overdue" | "doctor" | "library_unmounted" | "missing_today" | "request_stuck" | "stage_waiting_human" | "stats_blocked" | "stats_failing" | "planning_failed" | "media_engine_unavailable" | "render_cpu_fallback";
 export interface DashboardAlert { kind: DashboardAlertKind; channel_id?: string; ref: string; message: string; since: string }
 
 export interface SnapshotDeps {
@@ -116,8 +132,14 @@ export interface SnapshotDeps {
    * own adapter instance, never re-derived or re-imported here since `core` must not depend on `adapters/*`).
    * Combined with `store`'s `media.tts_done` events into `DashboardSnapshot.media`, which is `null` unless
    * `library.role === "studio"` regardless of whether this is set.
+   *
+   * Sub-project 5B Task 9 adds two fields the `render_cpu_fallback` alert needs and nothing else in
+   * `SnapshotDeps` carries: `render_encoder_cfg` is `project.yaml`'s `media.render.encoder` verbatim (an
+   * explicit `"cpu"` choice is not a fallback and must never alert), and `resources_gpu` is
+   * `project.yaml.resources.gpu`'s declared capacity (0/undefined on a machine with no GPU resource declared
+   * at all -- same convention `gpuCurrentlyLeased`/`checkScriptStage`'s resource-capacity check use elsewhere).
    */
-  media?: { engine: "python" | "fake" };
+  media?: { engine: "python" | "fake"; render_encoder_cfg?: "auto" | "nvenc" | "cpu"; resources_gpu?: number };
   doctorRows?: DoctorRow[];
   clock: Clock;
   gateWindowSeconds: number;
@@ -170,6 +192,12 @@ const TTS_DONE_FETCH_LIMIT = 200;
  * project-level, not per-channel), so this reads project-wide rather than going through `newestChannelEvent`.
  * `last_tts_at`/`cache_hit_ratio` both only ever look at events with `lines > 0` (a `voice: none`/`original`
  * run's zero-line event says nothing about tts cache health and must not crowd out or null it). */
+/** Sub-project 5B Task 9: how many of the newest `media.rendered` events feed `mezz_cache.hit_ratio` and
+ * `last_render_at`/`render_encoder` -- unlike `media.tts_done` (see `TTS_DONE_FETCH_LIMIT` above), a
+ * `voice: none`/`original` run still renders and still emits a real `media.rendered` event, so there is no
+ * "zero-line" event to filter out here and no need to over-fetch. */
+const RENDER_WINDOW = 20;
+
 function buildMedia(d: SnapshotDeps): DashboardMedia | null {
   if (d.library?.role !== "studio") return null;
   const fetched = d.store.listEvents({ event_type: "media.tts_done", newest: true, limit: TTS_DONE_FETCH_LIMIT });
@@ -181,7 +209,27 @@ function buildMedia(d: SnapshotDeps): DashboardMedia | null {
     cachedSum += typeof e.payload.cached === "number" ? e.payload.cached : 0;
     linesSum += e.payload.lines as number;
   }
-  return { engine: d.media?.engine ?? "fake", last_tts_at, cache_hit_ratio: linesSum > 0 ? cachedSum / linesSum : null };
+
+  const renderEvents = d.store.listEvents({ event_type: "media.rendered", newest: true, limit: RENDER_WINDOW });
+  const lastRender = renderEvents.at(-1);
+  const last_render_at = lastRender?.occurred_at ?? null;
+  const render_encoder = lastRender?.payload.encoder === "nvenc" || lastRender?.payload.encoder === "cpu" ? lastRender.payload.encoder : null;
+  let cachedSegmentsSum = 0;
+  let totalSegmentsSum = 0;
+  for (const e of renderEvents) {
+    const cached = e.payload.cached_segments;
+    const rendered = e.payload.rendered_segments;
+    if (typeof cached !== "number" || typeof rendered !== "number") continue;
+    cachedSegmentsSum += cached;
+    totalSegmentsSum += cached + rendered;
+  }
+
+  return {
+    engine: d.media?.engine ?? "fake",
+    last_tts_at, cache_hit_ratio: linesSum > 0 ? cachedSum / linesSum : null,
+    last_render_at, render_encoder,
+    mezz_cache: { hit_ratio: totalSegmentsSum > 0 ? cachedSegmentsSum / totalSegmentsSum : null },
+  };
 }
 
 function buildLibrary(d: SnapshotDeps): DashboardLibrary | null {
@@ -450,6 +498,28 @@ function planningFailedAlerts(store: StateStore, now: string, channels: Dashboar
   return alerts;
 }
 
+/** `render_cpu_fallback` (spec §6.4, sub-project 5B Task 9): the newest `media.rendered` event resolved to
+ * `cpu` even though this machine declares a `gpu` resource (`project.yaml.resources.gpu >= 1`) and
+ * `media.render.encoder` is `"auto"` -- an explicit `encoder: "cpu"` project config is a deliberate choice,
+ * not a fallback, so no alert then (same distinction `mediaRenderStage`'s own `encoder_cpu` render-report
+ * warning draws). Gated on `library.role === "studio"`, the same condition `DashboardSnapshot.media` itself is
+ * gated on -- a channel project has no render pipeline for this to describe. Queries the store directly
+ * (rather than reusing the already-built `DashboardMedia`) for the same reason `statsBlockedAlerts`/
+ * `planningFailedAlerts` do their own `newestChannelEvent` lookups: one alert function, one self-contained
+ * query, no threading extra state through `buildAlerts`'s signature. */
+function renderCpuFallbackAlerts(d: SnapshotDeps): DashboardAlert[] {
+  if (d.library?.role !== "studio") return [];
+  if (d.media?.render_encoder_cfg !== "auto") return [];
+  if ((d.media?.resources_gpu ?? 0) < 1) return [];
+  const last = d.store.listEvents({ event_type: "media.rendered", newest: true, limit: 1 }).at(-1);
+  if (!last || last.payload.encoder !== "cpu") return [];
+  return [{
+    kind: "render_cpu_fallback", ref: last.event_id,
+    message: `media render fell back to CPU on run ${String(last.payload.run_id ?? "unknown")} despite resources.gpu and media.render.encoder: auto`,
+    since: last.occurred_at,
+  }];
+}
+
 /** Local wall-clock time in `timezone` is past the latest `publishTimes` entry for `now`'s local day. */
 function isPastLastSlot(publishTimes: string[], timezone: string, now: string): boolean {
   const last = [...publishTimes].sort().at(-1);
@@ -482,6 +552,7 @@ function buildAlerts(d: SnapshotDeps, now: string, doctorRows: DoctorRow[], chan
   alerts.push(...statsBlockedAlerts(store, now, channels));
   alerts.push(...statsFailingAlerts(store));
   alerts.push(...planningFailedAlerts(store, now, channels));
+  alerts.push(...renderCpuFallbackAlerts(d));
 
   for (const { run, stage, overdue_seconds } of gateOverdue(store, now, d.gateWindowSeconds)) {
     alerts.push({ kind: "gate_overdue", ref: stage.stage_run_id, message: `gate ${stage.stage_key} of run ${run.run_id} overdue by ${overdue_seconds}s`, since: stage.updated_at });

@@ -17,8 +17,12 @@ describe("acceptance 20: doctor is green on both roles of a freshly mounted kho"
         expect(byCheck.get(check), `${project}: ${check} missing`).toBeDefined();
         expect(byCheck.get(check), `${project}: ${check} -> ${byCheck.get(check)?.detail}`).toMatchObject({ ok: true });
       }
-      // every non-ffprobe row is ok too; ffprobe itself is allowed to fail on a machine without it
-      const failed = rows.filter((r) => !r.ok && r.check !== "ffprobe");
+      // every non-ffprobe row is ok too; ffprobe itself is allowed to fail on a machine without it. `media:render`
+      // (sub-project 5B Task 9, studio role, any adapter) is allowed to fail for exactly ONE reason here: "no
+      // NVENC, renders on CPU" is a machine-dependent warning (same ok:false-as-warning shape as `media:models`'s
+      // "will download on first run"), not something a freshly mounted kho can guarantee either way -- any OTHER
+      // media:render failure (a missing ffmpeg filter/encoder, "ffmpeg not runnable") still fails this test.
+      const failed = rows.filter((r) => !r.ok && r.check !== "ffprobe" && !(r.check === "media:render" && r.detail === "no NVENC, renders on CPU"));
       expect(failed.map((r) => `${r.check}: ${r.detail}`)).toEqual([]);
     }
   }, 120_000);

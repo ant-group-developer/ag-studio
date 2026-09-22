@@ -495,7 +495,10 @@ describe("media block and media_engine_unavailable alert (sub-project 5A, Task 9
     const library = { fs: new LibraryFs({ root: libRoot, role: "studio" as const }), role: "studio" as const };
 
     const noEvents = buildSnapshot({ store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap", library, media: { engine: "python" } });
-    expect(noEvents.media).toEqual({ engine: "python", last_tts_at: null, cache_hit_ratio: null });
+    // Sub-project 5B Task 9 added the render-side fields (last_render_at/render_encoder/mezz_cache) alongside
+    // the tts-side ones this describe block already covered -- amended here rather than left to silently drift,
+    // since `toEqual` needs the literal to match the interface exactly.
+    expect(noEvents.media).toEqual({ engine: "python", last_tts_at: null, cache_hit_ratio: null, last_render_at: null, render_encoder: null, mezz_cache: { hit_ratio: null } });
 
     const appendTts = (lines: number, cached: number): void => {
       store.appendEvent({
@@ -608,6 +611,118 @@ describe("media block and media_engine_unavailable alert (sub-project 5A, Task 9
     });
     expect(snapshot.alerts).toHaveLength(1);
     expect(snapshot.alerts[0]).toMatchObject({ kind: "doctor", ref: "media:models", message: "will download on first run: whisperx" });
+  });
+});
+
+describe("media render block and render_cpu_fallback alert (sub-project 5B, Task 9)", () => {
+  function studioLibrary(): { fs: LibraryFs; role: "studio" } {
+    const libRoot = mkdtempSync(join(tmpdir(), "snapshot-media-render-"));
+    return { fs: new LibraryFs({ root: libRoot, role: "studio" as const }), role: "studio" as const };
+  }
+
+  function appendRendered(store: ReturnType<typeof openTempStore>["store"], o: { encoder: "nvenc" | "cpu"; cached: number; rendered: number }): void {
+    store.appendEvent({
+      run_id: null, stage_run_id: null, attempt_id: null, project_id: null, portfolio_id: null, channel_id: null,
+      content_id: null, variant_id: null, workflow_release: null, severity: "info", event_type: "media.rendered",
+      payload: { run_id: "run_1", seconds: 90, encoder: o.encoder, cached_segments: o.cached, rendered_segments: o.rendered, render_seconds: 42 },
+    });
+  }
+
+  it("last_render_at/render_encoder/mezz_cache.hit_ratio come from the two most recent media.rendered events", () => {
+    const { store, clock } = openTempStore();
+    const library = studioLibrary();
+
+    appendRendered(store, { encoder: "cpu", cached: 2, rendered: 8 });
+    clock.advance(1);
+    appendRendered(store, { encoder: "nvenc", cached: 5, rendered: 5 }); // newest
+
+    const snapshot = buildSnapshot({ store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap", library, media: { engine: "python" } });
+    expect(snapshot.media?.render_encoder).toBe("nvenc"); // newest event's encoder, not the oldest
+    expect(snapshot.media?.last_render_at).not.toBeNull();
+    expect(snapshot.media?.mezz_cache.hit_ratio).toBeCloseTo((2 + 5) / (10 + 10));
+  });
+
+  it("caps the mezz_cache window at the newest 20 media.rendered events", () => {
+    const { store, clock } = openTempStore();
+    const library = studioLibrary();
+
+    for (let i = 0; i < 5; i++) { appendRendered(store, { encoder: "cpu", cached: 0, rendered: 10 }); clock.advance(1); }
+    for (let i = 0; i < 20; i++) { appendRendered(store, { encoder: "cpu", cached: 10, rendered: 0 }); clock.advance(1); }
+
+    const snapshot = buildSnapshot({ store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap", library, media: { engine: "python" } });
+    expect(snapshot.media?.mezz_cache.hit_ratio).toBe(1);
+  });
+
+  it("mezz_cache.hit_ratio and render_encoder are null when no media.rendered event exists yet", () => {
+    const { store, clock } = openTempStore();
+    const library = studioLibrary();
+    const snapshot = buildSnapshot({ store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap", library, media: { engine: "python" } });
+    expect(snapshot.media?.mezz_cache.hit_ratio).toBeNull();
+    expect(snapshot.media?.render_encoder).toBeNull();
+    expect(snapshot.media?.last_render_at).toBeNull();
+  });
+
+  it("render_cpu_fallback fires when the newest render is cpu, resources.gpu >= 1, and render.encoder is auto", () => {
+    const { store, clock } = openTempStore();
+    const library = studioLibrary();
+    appendRendered(store, { encoder: "cpu", cached: 0, rendered: 10 });
+
+    const snapshot = buildSnapshot({
+      store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap", library,
+      media: { engine: "python", render_encoder_cfg: "auto", resources_gpu: 1 },
+    });
+    const alert = snapshot.alerts.find((a) => a.kind === "render_cpu_fallback");
+    expect(alert).toBeDefined();
+    expect(alert?.message).toContain("run_1");
+  });
+
+  it("does not fire when media.render.encoder is explicitly \"cpu\" (a deliberate choice, not a fallback)", () => {
+    const { store, clock } = openTempStore();
+    const library = studioLibrary();
+    appendRendered(store, { encoder: "cpu", cached: 0, rendered: 10 });
+
+    const snapshot = buildSnapshot({
+      store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap", library,
+      media: { engine: "python", render_encoder_cfg: "cpu", resources_gpu: 1 },
+    });
+    expect(snapshot.alerts.some((a) => a.kind === "render_cpu_fallback")).toBe(false);
+  });
+
+  it("does not fire when there is no gpu resource declared", () => {
+    const { store, clock } = openTempStore();
+    const library = studioLibrary();
+    appendRendered(store, { encoder: "cpu", cached: 0, rendered: 10 });
+
+    const snapshot = buildSnapshot({
+      store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap", library,
+      media: { engine: "python", render_encoder_cfg: "auto", resources_gpu: 0 },
+    });
+    expect(snapshot.alerts.some((a) => a.kind === "render_cpu_fallback")).toBe(false);
+  });
+
+  it("does not fire when the newest render used nvenc", () => {
+    const { store, clock } = openTempStore();
+    const library = studioLibrary();
+    appendRendered(store, { encoder: "nvenc", cached: 0, rendered: 10 });
+
+    const snapshot = buildSnapshot({
+      store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap", library,
+      media: { engine: "python", render_encoder_cfg: "auto", resources_gpu: 1 },
+    });
+    expect(snapshot.alerts.some((a) => a.kind === "render_cpu_fallback")).toBe(false);
+  });
+
+  it("does not fire on a channel-role project (no render pipeline there)", () => {
+    const { store, clock } = openTempStore();
+    const libRoot = mkdtempSync(join(tmpdir(), "snapshot-media-render-channel-"));
+    const library = { fs: new LibraryFs({ root: libRoot, role: "channel" as const }), role: "channel" as const };
+    appendRendered(store, { encoder: "cpu", cached: 0, rendered: 10 });
+
+    const snapshot = buildSnapshot({
+      store, channels: [], clock, gateWindowSeconds: 600, project_id: "project-snap", library,
+      media: { engine: "fake", render_encoder_cfg: "auto", resources_gpu: 1 },
+    });
+    expect(snapshot.alerts.some((a) => a.kind === "render_cpu_fallback")).toBe(false);
   });
 });
 

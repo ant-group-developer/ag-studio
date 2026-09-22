@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
 import { HarnessError, isHarnessError, ProjectConfigSchema, type AgentRuntime, type ChannelPackage, type ExecutorRef, type MediaConfig, type MediaEngine, type MediaEngineProbe, type MediaProber, type ProductionProfile, type ProjectConfig, type Publisher, type ScriptCommand, type ScriptsRegistry, type SourcesRegistry, type StatsCollector } from "@harness/contracts";
-import { ArtifactRegistry, type AutoAcceptConfig, BUILTIN_CHECKERS, buildSnapshot, ChannelRegistry, compositionCheckers, Controller, distributionCheckers, type DoctorRow, EnvSecretResolver, ExternalOperationJournal, fullEpisodePath, HARNESS_ROOT, learningCheckers, LibraryFs, libraryCheckers, listWorkflowRefs, loadChannels, type LoadedWorkflow, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, matchCollection, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, resolveWorkflowScope, runDoctor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, writeSnapshotFile, type HarnessLogger, type LibraryRole, type LogLevel } from "@harness/core";
+import { ArtifactRegistry, type AutoAcceptConfig, BUILTIN_CHECKERS, buildSnapshot, ChannelRegistry, compositionCheckers, Controller, distributionCheckers, type DoctorRow, EnvSecretResolver, ExternalOperationJournal, fullEpisodePath, HARNESS_ROOT, learningCheckers, LibraryFs, libraryCheckers, listWorkflowRefs, loadChannels, type LoadedWorkflow, loadProfile, loadScriptsRegistry, loadSourcesRegistry, loadWorkflow, matchCollection, mediaCheckers, MIGRATIONS_DIR, NullMediaProber, Planner, probeNvenc, Redactor, resolveWorkflowScope, runDoctor, scriptCommandsFrom, SourceCatalog, SqliteStateStore, SystemClock, Verifier, createLogger, loadHarnessConfig, writeSnapshotFile, type HarnessLogger, type LibraryRole, type LogLevel } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, FakeMediaEngine, FakeProvider, FakePublisher, FakeStatsCollector, fakeScriptCommands } from "@harness/adapter-fake";
 import { FfprobeMediaProber, probeDurationSync } from "@harness/adapter-ffprobe";
@@ -10,7 +10,7 @@ import { CliAgentRuntime, RUNTIME_COMMANDS } from "@harness/adapter-agent-cli";
 import { PythonMediaEngine, type PythonMediaEngineOptions } from "@harness/adapter-media-python";
 import { PlaywrightPublisher, PlaywrightStatsCollector } from "@harness/adapter-youtube-playwright";
 import { builtinMediaCommands } from "./commands/media.js";
-import { gpuCurrentlyLeased, mediaProbeCacheKey, resolveMediaProbe } from "./media-probe-cache.js";
+import { gpuCurrentlyLeased, mediaProbeCacheKey, resolveFfmpegCapabilities, resolveMediaProbe, resolveNvencProbe } from "./media-probe-cache.js";
 import { cliArgv } from "./self.js";
 
 export interface AppContext {
@@ -264,6 +264,22 @@ function mediaEngineOnFakeInput(ctx: AppContext): { effectiveRelease: string } |
   return effectiveRelease ? { effectiveRelease } : undefined;
 }
 
+/** `DoctorInput.render` (sub-project 5B Task 9): the ffmpeg binary this project would actually spawn for
+ * `media-render`, same `process.env.FFMPEG_PATH ?? "ffmpeg"` convention `buildContext`'s own
+ * `mediaCheckers`/`compositionCheckers` wiring uses just above. Studio role only, regardless of
+ * `adapters.media` -- ffmpeg compose/render never goes through the Python engine. `null` (not `undefined`)
+ * when `resolveFfmpegCapabilities` could not even run ffmpeg -- `doctor.ts`'s `checkMediaRender` turns that
+ * into the "ffmpeg not runnable" row; `undefined` (this function's own return when role is not "studio")
+ * means no row is added at all. */
+async function mediaRenderInput(ctx: AppContext, mode: "fresh" | "cached", nowMs: () => number): Promise<{ filters: string[]; encoders: string[]; nvenc: boolean | null } | null | undefined> {
+  if (ctx.library?.role !== "studio") return undefined;
+  const ffmpeg = process.env.FFMPEG_PATH ?? "ffmpeg";
+  const caps = await resolveFfmpegCapabilities({ ffmpeg, mode, nowMs });
+  if (!caps) return null;
+  const nvenc = await resolveNvencProbe({ ffmpeg, probe: probeNvenc, nowMs });
+  return { filters: caps.filters, encoders: caps.encoders, nvenc };
+}
+
 /**
  * The full `DoctorRow[]` `harness doctor` reports: workflow-scope resolution (`project.yaml.workflows`, or a
  * scan of every `workflow.yaml` under the harness install's `workflows/` dir when unset) and profile loading,
@@ -319,6 +335,7 @@ export async function computeDoctorRows(ctx: AppContext, opts: { mediaProbe?: "f
     if (probe) media = { pythonPath: options.python, device: ctx.mediaConfig.device, probe };
   }
   const mediaEngineOnFake = mediaEngineOnFakeInput(ctx);
+  const render = await mediaRenderInput(ctx, mediaProbeMode, nowMs);
 
   return [
     ...extraRows,
@@ -361,6 +378,7 @@ export async function computeDoctorRows(ctx: AppContext, opts: { mediaProbe?: "f
       publisher: { name: ctx.publisher.name },
       ...(media ? { media } : {}),
       ...(mediaEngineOnFake ? { mediaEngineOnFake } : {}),
+      ...(render !== undefined ? { render } : {}),
     }),
   ];
 }
@@ -376,7 +394,7 @@ export async function writeDashboardSnapshot(ctx: AppContext): Promise<string> {
   const snapshot = buildSnapshot({
     store: ctx.store, channels: ctx.channels.list(), doctorRows, clock: ctx.clock,
     gateWindowSeconds: ctx.harness.resource_wait_warn_seconds, project_id: ctx.project.project_id,
-    media: { engine: ctx.project.adapters.media },
+    media: { engine: ctx.project.adapters.media, render_encoder_cfg: ctx.mediaConfig.render.encoder, resources_gpu: ctx.resourceCapacity.gpu ?? 0 },
     ...(ctx.library ? { library: { fs: ctx.library.fs, role: ctx.library.role, ...(ctx.library.autoAccept ? { autoAccept: ctx.library.autoAccept } : {}) } } : {}),
     ...(ctx.library ? { learning: { libraryItems: ctx.store.listLibraryItems({ status: "approved" }), libraryClaimsOf: (itemId: string) => ctx.library!.fs.listClaims(itemId) } } : {}),
   });

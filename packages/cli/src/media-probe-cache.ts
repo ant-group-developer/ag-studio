@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import type { MediaEngine, MediaEngineProbe, StateStore } from "@harness/contracts";
 
 /**
@@ -100,6 +101,91 @@ export async function resolveNvencProbe(o: ResolveNvencProbeOptions): Promise<bo
   const available = await o.probe(o.ffmpeg);
   nvencCache.set(o.ffmpeg, { available, atMs: o.nowMs() });
   return available;
+}
+
+/** ffmpeg's own reported filter/encoder names (sub-project 5B Task 9) -- just the name tokens, not the
+ * flags/description columns `-filters`/`-encoders` also print. */
+export interface FfmpegCapabilities { filters: string[]; encoders: string[] }
+
+/** How long a resolved `FfmpegCapabilities` answer is trusted -- same 900 s budget as `MEDIA_PROBE_TTL_SECONDS`/
+ * `NVENC_PROBE_TTL_SECONDS` and for the same reason: `harness doctor`'s `media:render` row (studio role, any
+ * adapter) spawns two ffmpeg calls, and the dashboard snapshot path polls doctor roughly every
+ * `dashboard.refreshSeconds` forever -- a given ffmpeg build's filter/encoder list never changes mid-process. */
+export const FFMPEG_CAPS_TTL_SECONDS = 900;
+
+interface FfmpegCapsCacheEntry { caps: FfmpegCapabilities | null; atMs: number }
+const ffmpegCapsCache = new Map<string, FfmpegCapsCacheEntry>();
+
+/** Test-only: clears the module-level ffmpeg-capabilities cache between tests. Never called from production
+ * code. */
+export function _resetFfmpegCapabilitiesCacheForTests(): void {
+  ffmpegCapsCache.clear();
+}
+
+const FFMPEG_CAPS_PROBE_TIMEOUT_MS = 20_000;
+
+/** Only the name token per output line -- ffmpeg's `-filters`/`-encoders` lines are `<flags> <name> <io/type>
+ * <description...>`, so the name is always the second whitespace-separated field. The legend/header lines
+ * ffmpeg prints above the real entries (`Filters:`, `  T.. = Timeline support`, the `------` divider) never
+ * have a real name there -- the legend's second field is always the literal `=`, and the header/divider lines
+ * have no second field at all -- so they drop out on their own without any special-casing. */
+function parseCapabilityNames(stdout: string): string[] {
+  const names: string[] = [];
+  for (const line of stdout.split(/\r?\n/)) {
+    const fields = line.trim().split(/\s+/);
+    const name = fields[1];
+    if (!name || !/^[A-Za-z][\w-]*$/.test(name)) continue;
+    names.push(name);
+  }
+  return names;
+}
+
+/** One `ffmpeg -hide_banner -filters` + one `-encoders` call (20 s timeout each, `spawnSync` -- this is a
+ * doctor/dashboard-only probe, on the same footing as the also-synchronous `FfprobeMediaProber.isAvailable()`
+ * check, never on the render hot path where blocking the event loop would matter). `null` when ffmpeg cannot
+ * even be spawned (missing binary, killed by the timeout) -- `resolveFfmpegCapabilities`'s caller
+ * (`computeDoctorRows`) turns that into `media:render`'s "ffmpeg not runnable" row. Exported with an
+ * injectable `spawnFn` purely for tests; production code only ever calls this through
+ * `resolveFfmpegCapabilities`'s TTL cache below. */
+export function probeFfmpegCapabilities(ffmpeg: string, spawnFn: typeof spawnSync = spawnSync): FfmpegCapabilities | null {
+  const filters = spawnFn(ffmpeg, ["-hide_banner", "-filters"], { encoding: "utf8", timeout: FFMPEG_CAPS_PROBE_TIMEOUT_MS });
+  if (filters.error) return null;
+  const encoders = spawnFn(ffmpeg, ["-hide_banner", "-encoders"], { encoding: "utf8", timeout: FFMPEG_CAPS_PROBE_TIMEOUT_MS });
+  if (encoders.error) return null;
+  return { filters: parseCapabilityNames(filters.stdout ?? ""), encoders: parseCapabilityNames(encoders.stdout ?? "") };
+}
+
+export interface ResolveFfmpegCapabilitiesOptions {
+  /** The ffmpeg binary `media-render` will actually use -- also the cache key, same convention as
+   * `ResolveNvencProbeOptions.ffmpeg`. */
+  ffmpeg: string;
+  mode: "fresh" | "cached";
+  /** Injectable clock (milliseconds since epoch) so tests never need real timers. */
+  nowMs: () => number;
+  /** Injectable for tests; defaults to the real `probeFfmpegCapabilities` (a synchronous, blocking probe --
+   * wrapped in `Promise.resolve` here only so this function has the same async shape as
+   * `resolveMediaProbe`/`resolveNvencProbe`). */
+  probe?: (ffmpeg: string) => FfmpegCapabilities | null;
+}
+
+/** `probeFfmpegCapabilities(ffmpeg)` behind a `FFMPEG_CAPS_TTL_SECONDS` cache, shaped exactly like
+ * `resolveMediaProbe`/`resolveNvencProbe` above: `"fresh"` always spawns (still refreshing the cache so a
+ * following `"cached"` call benefits); `"cached"` reuses a still-fresh entry -- including a cached `null`, so
+ * an unrunnable ffmpeg is not re-spawned every minute either -- and spawns a fresh one once the cache is cold
+ * or stale. No `gpuLeased` gating (unlike `resolveMediaProbe`): this probe never touches the GPU, so it never
+ * needs to defer to a running GPU stage. */
+export async function resolveFfmpegCapabilities(o: ResolveFfmpegCapabilitiesOptions): Promise<FfmpegCapabilities | null> {
+  const probe = o.probe ?? probeFfmpegCapabilities;
+  if (o.mode === "fresh") {
+    const caps = probe(o.ffmpeg);
+    ffmpegCapsCache.set(o.ffmpeg, { caps, atMs: o.nowMs() });
+    return caps;
+  }
+  const cached = ffmpegCapsCache.get(o.ffmpeg);
+  if (cached && o.nowMs() - cached.atMs < FFMPEG_CAPS_TTL_SECONDS * 1000) return cached.caps;
+  const caps = probe(o.ffmpeg);
+  ffmpegCapsCache.set(o.ffmpeg, { caps, atMs: o.nowMs() });
+  return caps;
 }
 
 /** Whether a `gpu` resource lease is currently held (any stage, any run) -- the cheap, already-indexed

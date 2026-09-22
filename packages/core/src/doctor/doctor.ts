@@ -81,6 +81,12 @@ export interface DoctorInput {
    * the real Python engine to do anything useful; an older pinned release (e.g. a rollback to 1.1.0) still
    * runs fine on the fake engine, so `checkMediaEngineOnFake` below adds no row at all then. */
   mediaEngineOnFake?: { effectiveRelease: string };
+  /** Sub-project 5B Task 9 (`media:render`): present only on a studio project (`library.role === "studio"`),
+   * regardless of `adapters.media` -- ffmpeg compose/render is not gated on the Python engine at all. `null`
+   * itself (not merely absent) means ffmpeg could not be probed (`resolveFfmpegCapabilities` returned `null`),
+   * which `checkMediaRender` turns into the "ffmpeg not runnable" fail row; absent (`undefined`, the default)
+   * means this project has no `library` or is `role: "channel"`, so no row is added at all. */
+  render?: { filters: string[]; encoders: string[]; nvenc: boolean | null } | null;
 }
 
 const SCRIPT_FILE_RE = /\.(mjs|js|cjs|ts|py|sh)$/;
@@ -127,6 +133,7 @@ export function runDoctor(i: DoctorInput): DoctorRow[] {
     ...(i.publisher ? [checkPublisher(i.publisher)] : []),
     ...(i.media ? [checkMediaPython(i.media), checkMediaPackages(i.media), checkMediaDevice(i.media), checkMediaModels(i.media)] : []),
     ...(i.mediaEngineOnFake ? checkMediaEngineOnFake(i.mediaEngineOnFake) : []),
+    ...(i.render !== undefined ? [checkMediaRender(i.render)] : []),
   ];
 }
 
@@ -672,6 +679,30 @@ function checkMediaEngineOnFake(m: { effectiveRelease: string }): DoctorRow[] {
   const version = m.effectiveRelease.slice(at + 1);
   if (id !== "library-production" || !versionGte(version, "1.2.0")) return [];
   return [{ check: "media:engine", ok: false, detail: "fake media engine" }];
+}
+
+/** `media:render` (sub-project 5B Task 9, spec §6.4): the ffmpeg filters `buildComposition`/`renderComposition`
+ * actually depend on (ASS burn-in, dissolve, loudness normalization, music ducking, logo/text overlay) plus
+ * the `libx264` CPU encoder every render falls back to. */
+const REQUIRED_RENDER_FILTERS = ["ass", "xfade", "loudnorm", "sidechaincompress", "overlay"];
+const REQUIRED_RENDER_ENCODER = "libx264";
+
+/** `render.nvenc === false` (or, defensively, `null` -- see `DoctorInput.render`'s own doc) is a warning, not a
+ * hard failure, once every required filter/encoder is present: exactly the same `ok: false`-as-warning shape
+ * `checkMediaModels` uses for an uncached model -- it never raises a dashboard alert (`buildAlerts` has no
+ * `media:render` entry in `MEDIA_ENGINE_CHECKS`), only tells the operator this machine renders on CPU. */
+function checkMediaRender(render: { filters: string[]; encoders: string[]; nvenc: boolean | null } | null): DoctorRow {
+  const check = "media:render";
+  if (render === null) return { check, ok: false, detail: "ffmpeg not runnable" };
+
+  const missing = [
+    ...REQUIRED_RENDER_FILTERS.filter((f) => !render.filters.includes(f)),
+    ...(render.encoders.includes(REQUIRED_RENDER_ENCODER) ? [] : [REQUIRED_RENDER_ENCODER]),
+  ];
+  if (missing.length > 0) return { check, ok: false, detail: `missing: ${missing.join(", ")}` };
+
+  if (render.nvenc !== true) return { check, ok: false, detail: "no NVENC, renders on CPU" };
+  return { check, ok: true, detail: `${[...REQUIRED_RENDER_FILTERS, REQUIRED_RENDER_ENCODER].join(", ")}, NVENC` };
 }
 
 function checkSources(i: DoctorInput): DoctorRow {

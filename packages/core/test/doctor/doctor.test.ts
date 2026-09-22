@@ -867,6 +867,56 @@ describe("media:* rows (sub-project 5A, Task 9)", () => {
   });
 });
 
+describe("media:render row (sub-project 5B, Task 9)", () => {
+  const FULL_FILTERS = ["ass", "xfade", "loudnorm", "sidechaincompress", "overlay"];
+
+  function runWith(render: DoctorInput["render"]) {
+    const projectDir = mkdtempSync(join(tmpdir(), "doctor-media-render-"));
+    return runDoctor({ ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [], render });
+  }
+
+  it("adds no row at all when DoctorInput.render is not passed (channel role, or no library)", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "doctor-media-render-none-"));
+    const rows = runDoctor({ ...baseInput(projectDir, {}), scripts: undefined, secrets: new StubSecrets(true), workflows: [], profiles: [] });
+    expect(rows.some((r) => r.check === "media:render")).toBe(false);
+  });
+
+  it("ok when every required filter and libx264 are present and nvenc is true", () => {
+    const rows = runWith({ filters: FULL_FILTERS, encoders: ["libx264", "h264_nvenc"], nvenc: true });
+    expect(new Map(rows.map((r) => [r.check, r])).get("media:render")).toMatchObject({ ok: true });
+  });
+
+  it('fails naming a missing filter (e.g. "ass")', () => {
+    const rows = runWith({ filters: FULL_FILTERS.filter((f) => f !== "ass"), encoders: ["libx264"], nvenc: true });
+    const row = new Map(rows.map((r) => [r.check, r])).get("media:render");
+    expect(row).toMatchObject({ ok: false });
+    expect(row?.detail).toContain("ass");
+  });
+
+  it("fails naming the missing libx264 encoder", () => {
+    const rows = runWith({ filters: FULL_FILTERS, encoders: ["h264_nvenc"], nvenc: true });
+    const row = new Map(rows.map((r) => [r.check, r])).get("media:render");
+    expect(row).toMatchObject({ ok: false });
+    expect(row?.detail).toContain("libx264");
+  });
+
+  it("lists every missing filter plus the missing encoder together", () => {
+    const rows = runWith({ filters: ["overlay"], encoders: [], nvenc: false });
+    const row = new Map(rows.map((r) => [r.check, r])).get("media:render");
+    expect(row?.detail).toBe("missing: ass, xfade, loudnorm, sidechaincompress, libx264");
+  });
+
+  it('ok:false (a warning, not a hard failure) "no NVENC, renders on CPU" when everything required is present but nvenc is false', () => {
+    const rows = runWith({ filters: FULL_FILTERS, encoders: ["libx264"], nvenc: false });
+    expect(new Map(rows.map((r) => [r.check, r])).get("media:render")).toMatchObject({ ok: false, detail: "no NVENC, renders on CPU" });
+  });
+
+  it('fails "ffmpeg not runnable" when render is explicitly null (present, but ffmpeg could not be probed)', () => {
+    const rows = runWith(null);
+    expect(new Map(rows.map((r) => [r.check, r])).get("media:render")).toMatchObject({ ok: false, detail: "ffmpeg not runnable" });
+  });
+});
+
 describe("library:auto_accept collection mode (sub-project 5A Task 9 fix round)", () => {
   const config = { enabled: true, source_collection: "main", source_collections: ["shoot-*"], max_replans: 2, max_concurrent_runs: 1 };
 

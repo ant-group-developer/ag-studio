@@ -329,8 +329,11 @@ describe("harness library CLI", () => {
     const p = libraryProject(root, "studio", "doctor");
     expect(cli(p, "db", "migrate").code).toBe(0);
     const d = cli(p, "doctor", "--json");
-    expect(d.code, d.err).toBe(0);
-    const rows: { check: string; ok: boolean }[] = JSON.parse(d.out);
+    // Not asserting `d.code === 0` as a whole any more (sub-project 5B Task 9): this project is `role: studio`,
+    // so `doctor` now also probes ffmpeg for `media:render`, and that row is legitimately `ok:false` ("no
+    // NVENC, renders on CPU") on a machine whose driver cannot run NVENC right now -- a real, machine-dependent
+    // outcome, not a bug. Every row is still asserted individually below instead.
+    const rows: { check: string; ok: boolean; detail: string }[] = JSON.parse(d.out);
     const byCheck = new Map(rows.map((r) => [r.check, r]));
     expect(byCheck.get("library:root")).toMatchObject({ ok: true });
     expect(byCheck.get("library:write")).toMatchObject({ ok: true });
@@ -340,6 +343,12 @@ describe("harness library CLI", () => {
     // library:brands (studio role only): no channel has a brand yet, but that is not a failure -- unlike
     // library:music, its directory does not even need to exist.
     expect(byCheck.get("library:brands")).toMatchObject({ ok: true });
+    // media:render (studio role, any adapter, sub-project 5B Task 9): the harness ships no ffmpeg, but this
+    // dev/CI machine has one on PATH with every required filter/encoder, so the only legitimate `ok:false`
+    // reason left is "no NVENC" -- never a missing filter or a missing libx264.
+    const renderRow = byCheck.get("media:render");
+    expect(renderRow, JSON.stringify(rows)).toBeDefined();
+    if (!renderRow!.ok) expect(renderRow!.detail).toBe("no NVENC, renders on CPU");
   });
 
   describe("built-in `library stage intake` (run by hand, outside any real workflow)", () => {
