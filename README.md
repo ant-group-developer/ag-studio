@@ -488,7 +488,7 @@ git checkout -- fixtures/ops-project-studio/project.yaml fixtures/ops-project-ch
 - Plan sub-project 5A: `docs/superpowers/plans/2026-09-21-sub-project-5a-studio-media.md`
 - Plan sub-project 5B: `docs/superpowers/plans/2026-09-22-sub-project-5b-studio-composition.md`
 - ADR: `docs/adr/`
-- Runbook: `docs/runbooks/` (`go-live.md` — đưa lên máy thật, một máy hai vai; `reconcile-and-retry.md`, `wrap-a-channel.md`, `content-library.md`, `channel-publish.md`, `studio-autopilot.md`, `channel-learning.md`, `studio-media.md` — venv + GPU cho bốn stage media; `studio-composition.md` — thương hiệu, nhạc, chữ, phụ đề và bản dựng 4K của `library-production@1.3.0`)
+- Runbook: `docs/runbooks/` (`agent-bootstrap.md` — **đọc đầu tiên trên máy mới**: lộ trình cho agent từ clone tới tập đầu lên YouTube; `go-live.md` — đưa lên máy thật, một máy hai vai; `reconcile-and-retry.md`, `wrap-a-channel.md`, `content-library.md`, `channel-publish.md`, `studio-autopilot.md`, `channel-learning.md`, `studio-media.md` — venv + GPU cho bốn stage media; `studio-composition.md` — thương hiệu, nhạc, chữ, phụ đề và bản dựng 4K của `library-production@1.3.0`)
 - Engine media Python (giao thức job/result, cài đặt, tải trước mô hình): `engines/python/README.md`
 - Việc để lại: `docs/operations/deferred-items.md`
 - Project mới: copy `project-template/` (xem `docs/runbooks/wrap-a-channel.md` bước 1; mẫu kênh ở `project-template/channels/example/channel.yaml`; khối `library.auto_accept` mẫu trong `project-template/project.yaml`)

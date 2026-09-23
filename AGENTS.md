@@ -4,6 +4,7 @@
 YouTube Operations Harness: control plane điều phối sản xuất và phân phối video nhiều kênh. Session/agent là **worker tạm thời**; **state store là nguồn sự thật**. Đọc `docs/superpowers/specs/` trước khi đổi kiến trúc.
 
 ## Cách tìm việc
+- **Máy mới, chưa có gì:** đọc `docs/runbooks/agent-bootstrap.md` trước — lộ trình từ `git clone` tới tập đầu tiên lên YouTube, ghi rõ việc nào agent làm, việc nào chỉ người làm.
 - Việc vận hành nằm trong state store của một operations project: `harness --project <dir> status <run_id>` hoặc `harness worker --once`.
 - Việc phát triển: `docs/superpowers/plans/*.md`, làm theo từng task, mỗi task một commit.
 
