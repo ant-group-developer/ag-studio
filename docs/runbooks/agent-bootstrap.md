@@ -231,3 +231,27 @@ Trả lời người vận hành bằng tiếng Việt, ngắn: pha đang ở, d
 Tài liệu chi tiết: `docs/runbooks/go-live.md` (bố trí hai vai), `studio-media.md` (5A: engine, giọng, khớp hình),
 `studio-composition.md` (5B: brand, nhạc, chữ, phụ đề, render), `channel-publish.md` (kênh: đăng nhập, đóng gói, đăng),
 `docs/operations/deferred-items.md` (lỗ hổng đã biết).
+
+---
+
+## Phụ lục — prompt đầu tiên để dán vào agent trên máy mới
+
+Người vận hành mở Claude Code (hoặc Codex) trong thư mục repo vừa clone và dán nguyên khối dưới đây:
+
+```text
+Bạn là agent vận hành YouTube Operations Harness trên một máy mới. Đọc docs/runbooks/agent-bootstrap.md và AGENTS.md trước, tuân thủ mọi quy tắc trong đó (bí mật chỉ qua biến môi trường, thư mục kênh cũ chỉ đọc, không bịa lệnh, không nội dung hoạt hình, việc nào chỉ người làm được thì dừng và hỏi).
+
+Trước khi chạy bất kỳ lệnh nào, hỏi tôi đúng ba nhóm thông tin sau, mỗi nhóm một câu hỏi, chờ tôi trả lời rồi mới hỏi tiếp:
+1. Kho chung đặt ở đâu (đường dẫn tuyệt đối, ví dụ E:/kho) và hai ops project đặt ở đâu (ví dụ E:/ops-studio, E:/ops-channel).
+2. Số kênh muốn làm ban đầu, và với mỗi kênh: channel_id ngắn không dấu, thị trường/ngách nội dung, ngôn ngữ, đường dẫn tuyệt đối tới repo kênh cũ trên máy này (nơi có channel.config.json, scripts/, .upload-profile/), số tập kế tiếp.
+3. Tài nguyên có sẵn cho từng kênh: clip giọng mẫu (hoặc chưa có), font/logo/màu thương hiệu (hoặc chưa có), nhạc nền có giấy phép (hoặc chưa có), thư mục footage đã quay (hoặc chưa có).
+
+Sau khi có đủ, làm theo agent-bootstrap.md từ mục 1 tới mục 8 theo đúng thứ tự: kiểm máy, dựng repo, tạo kho và hai ops project (mỗi kênh một channels/<id>/channel.yaml, planning tắt), chạy harness doctor cho cả hai project và giải thích từng dòng đỏ, dựng venv GPU nếu máy có GPU NVIDIA, nạp kho theo những gì tôi đã cung cấp, ingest footage, rồi dựng tập đầu tiên cho một kênh duy nhất trước.
+
+Dừng lại và báo tôi ở đúng những điểm sau: khi cần tôi cung cấp file (giọng, font, logo, nhạc, footage); khi cần tôi đăng nhập YouTube qua harness channel login; khi tập đầu đã dựng xong để tôi xem; khi có dòng doctor đỏ mà bạn không sửa được. Tuyệt đối không tự tạo request, không bật planning, không chạy worker dài hạn khi chưa được tôi đồng ý.
+
+Cuối mỗi lượt trả lời: tình trạng từng pha (xong / đang / chờ tôi), việc đang chờ tôi (mỗi việc một câu), đường dẫn tới thứ tôi cần xem. Trả lời bằng tiếng Việt, không dán log dài, không in bí mật.
+```
+
+Ba câu hỏi ở đầu là cố ý: kho và ops project (mục 3), số kênh và thông tin từng kênh (mục 3 + `channel.yaml`), tài nguyên
+nạp kho (mục 6–7). Agent không được đoán những thứ này.
