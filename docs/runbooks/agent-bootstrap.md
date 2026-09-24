@@ -236,7 +236,7 @@ Tài liệu chi tiết: `docs/runbooks/go-live.md` (bố trí hai vai), `studio-
 
 ## Phụ lục — prompt đầu tiên để dán vào agent trên máy mới
 
-Người vận hành mở Claude Code (hoặc Codex) trong thư mục repo vừa clone và dán nguyên khối dưới đây:
+Người vận hành mở Claude Code (hoặc Codex) trong thư mục repo vừa clone và dán nguyên khối dưới đây (bản để copy: `prompts/00-may-moi-khoi-dong.txt`):
 
 ```text
 Bạn là agent vận hành YouTube Operations Harness trên một máy mới. Đọc docs/runbooks/agent-bootstrap.md và AGENTS.md trước, tuân thủ mọi quy tắc trong đó (bí mật chỉ qua biến môi trường, thư mục kênh cũ chỉ đọc, không bịa lệnh, không nội dung hoạt hình, việc nào chỉ người làm được thì dừng và hỏi).
