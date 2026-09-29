@@ -88,8 +88,7 @@ async function request<T>(
     throw new StudioHttpError(res.status, parsed);
   }
   if (res.status === 204) return undefined as T;
-  const text = await res.text();
-  return (text ? JSON.parse(text) : undefined) as T;
+  return res.json() as Promise<T>;
 }
 
 export function createStudioClient(getAccessToken: () => Promise<string>) {
