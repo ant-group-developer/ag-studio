@@ -77,8 +77,8 @@ export function farmStorage(bucket: StudioBucket): StudioStorage {
       mkdirSync(dirname(localPath), { recursive: true });
       writeFileSync(localPath, Buffer.from(await res.arrayBuffer()));
     },
-    async downloadOutput(productionId, relPath, localPath) {
-      const body = await bucket.get(productionKey(productionId, relPath));
+    async downloadOutput(outputPrefix, relPath, localPath) {
+      const body = await bucket.get(`${outputPrefix}${relPath}`);
       mkdirSync(dirname(localPath), { recursive: true });
       writeFileSync(localPath, body);
     },

@@ -3,7 +3,7 @@ import { ForbiddenException } from '@nestjs/common';
 import { FarmController } from './farm.controller';
 import { StudioDbService } from '../db/studio-db.service';
 import { ConfigService } from '@nestjs/config';
-import { getStageInputPrefix, getStageOutputPrefix } from './sign-schemas';
+import { getJobOutputPrefix, getStageInputPrefix } from './sign-schemas';
 
 const MOCK_JOB = {
   id: 'row-1',
@@ -246,8 +246,14 @@ describe('Key layout: sign-schemas must match farm-executor stageInputPrefix', (
     });
   }
 
-  it('output prefix is productions/<prodId>/', () => {
-    expect(getStageOutputPrefix('prod-abc')).toBe('productions/prod-abc/');
+  it('output prefix is per job: productions/<prodId>/jobs/<stage>/<attempt>/out/', () => {
+    expect(getJobOutputPrefix('prod-abc', 'render-final', 'att-1')).toBe(
+      'productions/prod-abc/jobs/render-final/att-1/out/',
+    );
+    // two jobs of one production never share an output directory
+    expect(getJobOutputPrefix('prod-abc', 'editor-tts', 'j1')).not.toBe(
+      getJobOutputPrefix('prod-abc', 'editor-tts', 'j2'),
+    );
   });
 
   it('input prefix contains attempt id (prevents cross-attempt collisions)', () => {

@@ -29,6 +29,7 @@ import {
   SignOp,
   SignResult,
   resolveOutputKey,
+  getJobOutputPrefix,
   getStageInputPrefix,
 } from './sign-schemas';
 
@@ -148,8 +149,8 @@ export class FarmController {
         op.op === 'mp_complete' ||
         op.op === 'mp_abort'
       ) {
-        // Output prefix: productions/<prodId>/ (trailing slash stripped by resolveOutputKey)
-        const outputPrefix = `productions/${prodId}`;
+        // Each job writes under its own prefix: productions/<prodId>/jobs/<stage>/<attempt>/out/
+        const outputPrefix = getJobOutputPrefix(prodId, job.stage_key, job.attempt_id);
         const r2Key = resolveOutputKey(outputPrefix, op.output);
         authorizations.push({ op, r2Key });
       } else {

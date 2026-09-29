@@ -60,13 +60,17 @@ export function stageInputPrefix(
 }
 
 /**
- * S3 prefix for worker output objects (the base path the sign endpoint uses
- * when resolving a `put { output }` relative path).
- * Worker uploads to `productions/<prodId>/<relPath>` (e.g. `render.json`,
- * `renders/1/preview.mp4`).
+ * S3 prefix for one job's output objects (the base path the sign endpoint uses
+ * when resolving a `put { output }` relative path). Every job writes under its
+ * own prefix, so two jobs of one production can never overwrite each other's
+ * `tts.json` / `render.json` (the farm protocol's "output directory of the job").
  */
-export function stageOutputPrefix(productionId: string): string {
-  return `productions/${productionId}/`;
+export function jobOutputPrefix(
+  productionId: string,
+  stageKey: string,
+  attemptId: string,
+): string {
+  return `productions/${productionId}/jobs/${stageKey}/${attemptId}/out/`;
 }
 
 // ---------------------------------------------------------------------------
@@ -89,12 +93,12 @@ export interface StudioStorage {
   download(url: string, localPath: string): Promise<void>;
   /**
    * Download a completed worker output object by its relative path under the
-   * production prefix. The implementation resolves the S3 key as
-   * `productions/<productionId>/<relPath>` and downloads directly (using the
-   * API's own S3 credentials — no ticket required).
+   * job's output prefix (`jobOutputPrefix`). The implementation resolves the S3
+   * key as `<outputPrefix><relPath>` and downloads directly (using the API's own
+   * S3 credentials — no ticket required).
    */
   downloadOutput(
-    productionId: string,
+    outputPrefix: string,
     relPath: string,
     localPath: string,
   ): Promise<void>;
@@ -386,6 +390,7 @@ export class FarmExecutor implements Executor {
     const outDir = join(ctx.workspaceDir, "output");
     mkdirSync(outDir, { recursive: true });
 
+    const outputPrefix = jobOutputPrefix(productionId, request.stage_key, request.attempt_id);
     const manifestRelPath = jobResult.manifest;
     if (!manifestRelPath) {
       // No manifest — job produced no output files (unusual but not fatal)
@@ -395,7 +400,7 @@ export class FarmExecutor implements Executor {
       const manifestLocalPath = join(outDir, basename(manifestRelPath));
       try {
         await this.opts.storage.downloadOutput(
-          productionId,
+          outputPrefix,
           manifestRelPath,
           manifestLocalPath,
         );
@@ -420,7 +425,7 @@ export class FarmExecutor implements Executor {
             const dest = join(outDir, line.output);
             mkdirSync(dirname(dest), { recursive: true });
             await this.opts.storage.downloadOutput(
-              productionId,
+              outputPrefix,
               line.output,
               dest,
             );
@@ -434,7 +439,7 @@ export class FarmExecutor implements Executor {
           const videoDest = join(outDir, m.output);
           mkdirSync(dirname(videoDest), { recursive: true });
           await this.opts.storage.downloadOutput(
-            productionId,
+            outputPrefix,
             m.output,
             videoDest,
           );

@@ -334,6 +334,7 @@ const {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  ListObjectsV2Command,
   CreateBucketCommand,
 } = require("@aws-sdk/client-s3") as typeof import("@aws-sdk/client-s3");
 
@@ -827,17 +828,17 @@ describe.skipIf(!isE2E)("farm E2E: studio.render_preview", () => {
         writeFileSync(localPath, Buffer.from(await res.arrayBuffer()));
       },
       async downloadOutput(
-        prodId: string,
+        outputPrefix: string,
         relPath: string,
         localPath: string,
       ): Promise<void> {
         const resp = await s3.send(
           new GetObjectCommand({
             Bucket: S3_BUCKET,
-            Key: `productions/${prodId}/${relPath}`,
+            Key: `${outputPrefix}${relPath}`,
           }),
         );
-        if (!resp.Body) throw new Error(`no body for productions/${prodId}/${relPath}`);
+        if (!resp.Body) throw new Error(`no body for ${outputPrefix}${relPath}`);
         mkdirSync(dirname(localPath), { recursive: true });
         writeFileSync(localPath, Buffer.from(await resp.Body.transformToByteArray()));
       },
@@ -980,10 +981,14 @@ describe.skipIf(!isE2E)("farm E2E: studio.render_preview", () => {
 
   it("render.json in fake S3 validates against RenderManifestSchema", async () => {
     const s3 = makeS3Client();
+    // the render job wrote under its own output prefix: productions/<id>/jobs/<stage>/<attempt>/out/
+    const listed = await s3.send(new ListObjectsV2Command({ Bucket: S3_BUCKET, Prefix: `productions/${productionId}/jobs/` }));
+    const manifestKey = (listed.Contents ?? []).map((o) => o.Key!).find((k) => /\/out\/render\.json$/.test(k));
+    expect(manifestKey, "render.json should sit in the job's out/ prefix").toBeTruthy();
     const resp = await s3.send(
       new GetObjectCommand({
         Bucket: S3_BUCKET,
-        Key: `productions/${productionId}/render.json`,
+        Key: manifestKey!,
       }),
     );
     expect(resp.Body, "render.json should exist in S3").toBeTruthy();
@@ -1062,12 +1067,12 @@ describe.skipIf(!isE2E)("farm E2E: studio.tts", () => {
         writeFileSync(localPath, Buffer.from(await res.arrayBuffer()));
       },
       async downloadOutput(
-        prodId: string,
+        outputPrefix: string,
         relPath: string,
         localPath: string,
       ): Promise<void> {
         const resp = await s3.send(
-          new GetObjectCommand({ Bucket: S3_BUCKET, Key: `productions/${prodId}/${relPath}` }),
+          new GetObjectCommand({ Bucket: S3_BUCKET, Key: `${outputPrefix}${relPath}` }),
         );
         if (!resp.Body) throw new Error(`no body`);
         mkdirSync(dirname(localPath), { recursive: true });

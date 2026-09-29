@@ -8,15 +8,17 @@ import { FarmExecutor, type StudioStorage } from "../src/farm-executor.js";
 const silent = { info() {}, warn() {}, error() {} };
 const wall = { now: () => new Date().toISOString() };
 
-/** Owner client + bucket in memory: a submitted job completes on the first poll with the given outputs. */
+/** Owner client + bucket in memory: a submitted job completes on the first poll with the given outputs,
+ * written under the job's own output prefix (as Studio's /farm/sign maps a worker's `put`). */
 function fakes(outputs: Record<string, string>, manifest: string) {
   const bucket = new Map<string, string>();
+  const read: string[] = [];
   const submitted: { type: string; payload: unknown; correlation_id: string }[] = [];
   const acked: string[] = [];
   const client = {
     async submitJob(b: { type: string; payload: unknown; correlation_id: string }) {
       submitted.push(b);
-      for (const [k, v] of Object.entries(outputs)) bucket.set(`productions/prod-9/${k}`, v);
+      for (const [k, v] of Object.entries(outputs)) bucket.set(`productions/prod-9/jobs/tts/${b.correlation_id}/out/${k}`, v);
       return { job: { id: "job-1" }, created: true };
     },
     async getJob() { return { status: "completed", result: { manifest } }; },
@@ -26,14 +28,15 @@ function fakes(outputs: Record<string, string>, manifest: string) {
   const storage: StudioStorage = {
     async upload(local, key) { bucket.set(key, readFileSync(local, "utf8")); return `stage:${key}`; },
     async download() { throw new Error("unused"); },
-    async downloadOutput(prod, rel, local) {
-      const v = bucket.get(`productions/${prod}/${rel}`);
+    async downloadOutput(prefix, rel, local) {
+      read.push(`${prefix}${rel}`);
+      const v = bucket.get(`${prefix}${rel}`);
       if (v === undefined) throw new Error(`missing ${rel}`);
       mkdirSync(dirname(local), { recursive: true });
       writeFileSync(local, v);
     },
   };
-  return { client, storage, bucket, submitted, acked };
+  return { client, storage, bucket, submitted, acked, read };
 }
 
 function request(stage_config: Record<string, unknown>, expected: StageRequest["expected_outputs"]): StageRequest {

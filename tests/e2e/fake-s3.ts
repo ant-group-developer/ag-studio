@@ -18,7 +18,7 @@
 
 import http from "node:http";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 
 export class FakeS3Server {
@@ -254,6 +254,28 @@ export class FakeS3Server {
     // (also handles presigned GET — X-Amz-* query params are ignored)
     // -----------------------------------------------------------------
     if (method === "GET") {
+      if (!key && url.searchParams.get("list-type") === "2") {
+        // ListObjectsV2 (prefix only, one page): enough for tests that look a job's outputs up
+        const prefix = url.searchParams.get("prefix") ?? "";
+        const root = join(this.dataDir, bucket);
+        const keys: string[] = [];
+        const walk = (dir: string, rel: string): void => {
+          if (!existsSync(dir)) return;
+          for (const e of readdirSync(dir, { withFileTypes: true })) {
+            const k = rel ? `${rel}/${e.name}` : e.name;
+            if (e.isDirectory()) walk(join(dir, e.name), k);
+            else if (k.startsWith(prefix)) keys.push(k);
+          }
+        };
+        walk(root, "");
+        res.writeHead(200, { "Content-Type": "application/xml" });
+        res.end(
+          `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>${bucket}</Name><Prefix>${prefix}</Prefix><KeyCount>${keys.length}</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated>` +
+            keys.map((k) => `<Contents><Key>${k}</Key><Size>${statSync(join(root, k)).size}</Size></Contents>`).join("") +
+            "</ListBucketResult>",
+        );
+        return;
+      }
       if (!key) {
         // ListBuckets or similar – not used in our test
         res.writeHead(200, { "Content-Type": "application/xml" });

@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TimelineV2Schema, type TimelineV2 } from "@harness/contracts";
 import { timelineIssues, type TimelineIssue } from "@harness/core";
-import { stageInputPrefix } from "@harness/executors";
+import { jobOutputPrefix, stageInputPrefix } from "@harness/executors";
 import { RenderManifestSchema, TtsManifestSchema, type StudioTtsPayload } from "@ag-farm/protocol";
 import type { FarmOwnerClient } from "@ag-farm/owner-client";
 import { productionKey, type StudioBucket } from "./bucket.js";
@@ -120,8 +120,7 @@ export function getEditorJob(db: StudioDb, productionId: string, id: string): Ed
 /**
  * Advance one editor job from ag-farm's state. On completion the outputs are made immutable: the line's WAV
  * is copied to a content-addressed `audio/<sha>.wav` (what a revision stores), a preview stays under its own
- * `previews/<job>.mp4`. The shared manifest files (`tts.json`, `render.json`) are checked to really describe
- * this job before anything is trusted.
+ * `previews/<job>.mp4` in the job's own output prefix (`jobOutputPrefix`), next to its manifest.
  */
 export async function pollEditorJob(d: EditorDeps, productionId: string, id: string, opts: { urlTtlSeconds?: number } = {}): Promise<EditorJobView & { url?: string }> {
   const row = d.db.get<EditorJobRow>("SELECT * FROM studio_editor_jobs WHERE id = ? AND production_id = ?", [id, productionId]);
@@ -136,17 +135,18 @@ export async function pollEditorJob(d: EditorDeps, productionId: string, id: str
       try {
         const req = JSON.parse(row.request) as { line_id?: string; text?: string; revision?: number };
         if (row.kind === "tts_line") {
-          const m = TtsManifestSchema.parse(JSON.parse((await d.bucket.get(productionKey(productionId, "tts.json"))).toString("utf8")));
+          const out = jobOutputPrefix(productionId, "editor-tts", id);
+          const m = TtsManifestSchema.parse(JSON.parse((await d.bucket.get(`${out}tts.json`)).toString("utf8")));
           const line = m.lines.find((l) => l.line_id === req.line_id);
-          if (!line || m.lines.length !== 1) throw new Error("tts.json does not describe this job (another TTS finished meanwhile); run it again");
-          const wav = await d.bucket.get(productionKey(productionId, line.output));
+          if (!line) throw new Error(`tts.json has no line ${String(req.line_id)}`);
+          const wav = await d.bucket.get(`${out}${line.output}`);
           const key = `audio/${createHash("sha256").update(wav).digest("hex")}.wav`;
           await d.bucket.put(productionKey(productionId, key), wav, "audio/wav");
           updateJob(d.db, id, { status: "completed", result: JSON.stringify({ line_id: req.line_id, text: req.text, key, duration: line.duration_s }) });
         } else {
-          const m = RenderManifestSchema.parse(JSON.parse((await d.bucket.get(productionKey(productionId, "render.json"))).toString("utf8")));
-          if (m.output !== `previews/${id}.mp4`) throw new Error("render.json does not describe this job (another render finished meanwhile); run it again");
-          updateJob(d.db, id, { status: "completed", result: JSON.stringify({ key: productionKey(productionId, m.output), duration_s: m.duration_s, watermarked: m.watermarked, revision: req.revision }) });
+          const out = jobOutputPrefix(productionId, "editor-preview", id);
+          const m = RenderManifestSchema.parse(JSON.parse((await d.bucket.get(`${out}render.json`)).toString("utf8")));
+          updateJob(d.db, id, { status: "completed", result: JSON.stringify({ key: `${out}${m.output}`, duration_s: m.duration_s, watermarked: m.watermarked, revision: req.revision }) });
         }
       } catch (e) {
         updateJob(d.db, id, { status: "failed", error: e instanceof Error ? e.message : String(e) });

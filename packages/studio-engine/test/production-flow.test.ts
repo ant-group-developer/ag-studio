@@ -79,6 +79,14 @@ describe("ag-studio-production@1.0.0 end to end (fake Claude, fake ag-go, fake f
     expect(done.status).toBe("completed");
     const ttsJob = [...farm.jobs.values()].at(-1)!;
     expect((ttsJob.payload.lines as unknown[]).length).toBe(1);
+    // two sentences re-voiced at once: each job reads its own tts.json, neither is told to "run it again"
+    const other = t.narration[1]!;
+    const deps = { db: w.db, bucket: w.bucket, farm: farm as never };
+    const a = await startLineTts(deps, { productionId: prod, lineId: line.line_id, text: "Câu thứ nhất sửa lại", userId: "auth0|editor" });
+    const b = await startLineTts(deps, { productionId: prod, lineId: other.line_id, text: "Câu thứ hai sửa lại cùng lúc", userId: "auth0|editor" });
+    const [aDone, bDone] = [await pollEditorJob(deps, prod, a.id), await pollEditorJob(deps, prod, b.id)];
+    expect([aDone.status, bDone.status]).toEqual(["completed", "completed"]);
+    expect([aDone.result!.line_id, bDone.result!.line_id]).toEqual([line.line_id, other.line_id]);
     t = setLineAudio(t, line.line_id, "Câu mới do biên tập viên sửa", { key: String(done.result!.key), duration: Number(done.result!.duration) });
     expect(saveTimeline(w.db, prod, { baseRevision: 2, data: t, authorId: "auth0|editor" }).revision).toBe(3);
 

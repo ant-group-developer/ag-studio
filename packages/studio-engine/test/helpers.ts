@@ -50,21 +50,25 @@ export function fakeFarm(bucket: MemoryBucket) {
       const id = `job-${++n}`;
       const p = req.payload as Record<string, unknown>;
       const prod = String(p.production_id);
+      const editor = String(req.correlation_id).startsWith("editor-");
+      const attempt = String(req.correlation_id).replace(/^editor-/, "");
+      const stage = req.type === "studio.tts" ? (editor ? "editor-tts" : "tts") : editor ? "editor-preview" : "render-final";
+      const out = `productions/${prod}/jobs/${stage}/${attempt}/out/`;
       let manifest: string;
       if (req.type === "studio.tts") {
         const lines = (p.lines as { line_id: string; text: string }[]).map((l) => {
           const duration = Math.round(l.text.split(/\s+/).length * 0.2 * 1000) / 1000;
-          bucket.objects.set(`productions/${prod}/tts/${l.line_id}.wav`, wav(duration));
+          bucket.objects.set(`${out}tts/${l.line_id}.wav`, wav(duration));
           return { line_id: l.line_id, output: `tts/${l.line_id}.wav`, duration_s: duration, words: [] };
         });
-        bucket.objects.set(`productions/${prod}/tts.json`, Buffer.from(JSON.stringify({ schema: "ag.studio.tts/v1", production_id: prod, language: String(p.language), lines, engine: { name: "fake", version: null } })));
+        bucket.objects.set(`${out}tts.json`, Buffer.from(JSON.stringify({ schema: "ag.studio.tts/v1", production_id: prod, language: String(p.language), lines, engine: { name: "fake", version: null } })));
         manifest = "tts.json";
       } else {
-        const comp = JSON.parse(bucket.objects.get(`productions/${prod}/jobs/${String(req.correlation_id).startsWith("editor-") ? "editor-preview" : "render-final"}/${String(req.correlation_id).replace(/^editor-/, "")}/in/composition.json`)!.toString("utf8"));
+        const comp = JSON.parse(bucket.objects.get(`productions/${prod}/jobs/${stage}/${attempt}/in/composition.json`)!.toString("utf8"));
         const video = Buffer.from(`fake-mp4-${id}`);
-        bucket.objects.set(`productions/${prod}/${String(p.output)}`, video);
+        bucket.objects.set(`${out}${String(p.output)}`, video);
         const canvas = p.canvas as { width: number; height: number };
-        bucket.objects.set(`productions/${prod}/render.json`, Buffer.from(JSON.stringify({
+        bucket.objects.set(`${out}render.json`, Buffer.from(JSON.stringify({
           schema: "ag.studio.render/v1", production_id: prod, revision: p.revision, output: p.output, width: canvas.width, height: canvas.height,
           duration_s: comp.total_seconds, size_bytes: video.length, watermarked: req.type !== "studio.render_final", sources: [], warnings: [],
         })));

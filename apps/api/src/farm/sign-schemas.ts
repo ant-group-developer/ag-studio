@@ -126,7 +126,7 @@ export function resolveOutputKey(prefix: string, relativePath: string): string {
 
 // --------------------------------------------------------------------------
 // Key-layout helpers — MUST match packages/executors/src/farm-executor.ts
-// (stageInputPrefix / stageOutputPrefix). The sign.spec.ts asserts this.
+// (stageInputPrefix / jobOutputPrefix). The sign.spec.ts asserts this.
 // --------------------------------------------------------------------------
 
 /**
@@ -144,12 +144,15 @@ export function getStageInputPrefix(
 }
 
 /**
- * Base S3 prefix for all worker outputs in a production.
- * Worker uploads relative paths (e.g. `render.json`, `renders/1/preview.mp4`)
- * under this prefix.
+ * S3 prefix for one job's outputs. The worker uploads relative paths (e.g.
+ * `render.json`, `renders/1/preview.mp4`) under it, so jobs never overwrite each other.
  *
- * Mirror of `stageOutputPrefix()` in packages/executors/src/farm-executor.ts.
+ * Mirror of `jobOutputPrefix()` in packages/executors/src/farm-executor.ts.
  */
-export function getStageOutputPrefix(productionId: string): string {
-  return `productions/${productionId}/`;
+export function getJobOutputPrefix(
+  productionId: string,
+  stageKey: string,
+  attemptId: string,
+): string {
+  return `productions/${productionId}/jobs/${stageKey}/${attemptId}/out/`;
 }
