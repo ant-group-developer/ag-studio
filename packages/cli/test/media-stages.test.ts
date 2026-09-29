@@ -316,7 +316,9 @@ describe.skipIf(!hasFfmpeg())("harness media index|transcribe|tts|fit-edl (sub-p
       const ctx = buildContext({ projectDir: world.studio });
       try { mediaTtsClaim = { claim: claimStage(ctx, runId, "media-tts"), runId }; } finally { ctx.close(); }
     }
-  });
+    // ~a dozen `harness` subprocesses (migrate, ingest, plan, enqueue, one per stage): well past vitest's default
+    // 10 s hook budget under full-suite load, like composition-stages.test.ts's own beforeAll.
+  }, 300_000);
 
   it("media index: 2 sources -> shots.json (harness.shots/v2) with 2 sources, 2 proxy files", () => {
     const shotsRaw = JSON.parse(readFileSync(join(indexSnap, "output", "shots.json"), "utf8"));
@@ -476,7 +478,7 @@ describe.skipIf(!hasFfmpeg())("harness media index|transcribe|tts|fit-edl (sub-p
 
       const ctx = buildContext({ projectDir: world.studio });
       try { mediaFitEdlClaim = { claim: claimStage(ctx, runId, "media-fit-edl"), runId }; } finally { ctx.close(); }
-    });
+    }, 120_000);
 
     it("a narration line longer than the picked shot -> fit-report.json has an appended entry; edl.json/timeline.json validate; exit 0", async () => {
       const shots = JSON.parse(readFileSync(join(indexSnap, "output", "shots.json"), "utf8"));
