@@ -1,0 +1,19 @@
+schema_version: harness.production-profile/v1
+profile_id: studio-production
+revision: 1
+status: active
+workflow_release: ag-studio-production@1.0.0
+# 4 h per stage attempt: a farm stage waits in ag-farm's queue inside its own deadline (plan 3.3), and a Claude
+# stage may sit out a subscription limit reset.
+overrides: { default_deadline_seconds: 14400 }
+options_schema: {}
+options_defaults: {}
+# Every production is its own brief and footage; nothing is reused across runs.
+reuse: never
+content: {}
+verification:
+  required_checks: []
+  required_checks_by_stage: {}
+limits:
+  max_cost_usd_per_variant: 50
+  max_concurrency: 4

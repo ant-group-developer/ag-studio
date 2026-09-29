@@ -279,12 +279,18 @@ importers:
       '@ag-farm/protocol':
         specifier: link:../../../ag-farm/packages/protocol
         version: link:../../../ag-farm/packages/protocol
+      '@ag-studio/ag-go-client':
+        specifier: workspace:*
+        version: link:../../packages/ag-go-client
       '@aws-sdk/client-s3':
         specifier: ^3.0.0
         version: 3.1141.0
       '@aws-sdk/s3-request-presigner':
         specifier: ^3.0.0
         version: 3.1141.0
+      '@harness/adapter-agent-cli':
+        specifier: workspace:*
+        version: link:../../packages/adapters/agent-cli
       '@harness/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -297,6 +303,10 @@ importers:
       '@harness/worker':
         specifier: workspace:*
         version: link:../../packages/worker
+    devDependencies:
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.20.2)(@vitest/browser@2.1.9)(jsdom@25.0.1(supports-color@8.1.1))(msw@2.15.0(@types/node@22.20.2)(typescript@5.9.3))(supports-color@8.1.1)(terser@5.51.2)
 
   fixtures/ops-project-footage:
     dependencies:
@@ -443,6 +453,49 @@ importers:
         version: link:../core
 
   packages/script-sdk: {}
+
+  packages/studio-engine:
+    dependencies:
+      '@ag-farm/owner-client':
+        specifier: link:../../../ag-farm/packages/owner-client
+        version: link:../../../ag-farm/packages/owner-client
+      '@ag-farm/protocol':
+        specifier: link:../../../ag-farm/packages/protocol
+        version: link:../../../ag-farm/packages/protocol
+      '@ag-studio/ag-go-client':
+        specifier: workspace:*
+        version: link:../ag-go-client
+      '@aws-sdk/client-s3':
+        specifier: ^3.0.0
+        version: 3.1141.0
+      '@aws-sdk/s3-request-presigner':
+        specifier: ^3.0.0
+        version: 3.1141.0
+      '@harness/adapter-agent-cli':
+        specifier: workspace:*
+        version: link:../adapters/agent-cli
+      '@harness/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@harness/core':
+        specifier: workspace:*
+        version: link:../core
+      '@harness/executors':
+        specifier: workspace:*
+        version: link:../executors
+      '@harness/worker':
+        specifier: workspace:*
+        version: link:../worker
+      zod:
+        specifier: ^3.23.0
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.2
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.20.2)(@vitest/browser@2.1.9)(jsdom@25.0.1(supports-color@8.1.1))(msw@2.15.0(@types/node@22.20.2)(typescript@5.9.3))(supports-color@8.1.1)(terser@5.51.2)
 
   packages/worker:
     dependencies:

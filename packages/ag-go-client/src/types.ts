@@ -13,9 +13,14 @@ export interface GetFoldersResponse {
   folders: FolderItem[];
 }
 
+/** Mirrors ag-go `CatalogFiltersDto` (GĐ2). */
 export interface FootageCatalogFilters {
-  usable?: boolean;
+  /** Default true on the ag-go side. */
+  usableOnly?: boolean;
   minQuality?: number;
+  orientations?: string[];
+  shotSizes?: string[];
+  q?: string;
 }
 
 export interface FootageCatalogBody {
@@ -25,26 +30,27 @@ export interface FootageCatalogBody {
   cursor?: string;
 }
 
+/** Mirrors ag-go `CatalogItem` (GĐ2 footage.service.ts): every field the scan AI fills may be null. */
 export interface CatalogItem {
   segmentId: string;
   assetId: string;
   startMs: number;
   endMs: number;
   durationMs: number;
-  captionVi: string;
-  captionEn: string;
-  tags: string[];
-  keywordsVi: string[];
-  subjects: string[];
-  actions: string[];
-  shotSize: string;
-  cameraMotion: string;
-  timeOfDay: string;
-  setting: string;
-  peopleCount: number;
-  orientation: string;
-  quality: number;
-  usable: boolean;
+  captionVi: string | null;
+  captionEn: string | null;
+  tags: string[] | null;
+  keywordsVi: string[] | null;
+  subjects: string[] | null;
+  actions: string[] | null;
+  shotSize: string | null;
+  cameraMotion: string | null;
+  timeOfDay: string | null;
+  setting: string | null;
+  peopleCount: string | null;
+  orientation: string | null;
+  quality: number | null;
+  usable: boolean | null;
   approved: boolean;
 }
 
@@ -55,10 +61,14 @@ export interface CatalogResponse {
 
 export interface SegmentMediaResponse {
   segmentId: string;
-  keyframes: string[];
-  previewUrl: string | null;
+  assetId: string;
   startMs: number;
   endMs: number;
+  durationMs: number;
+  keyframeUrls: string[];
+  /** Watermarked preview of the whole asset; play it from startMs to endMs. */
+  previewUrl: string | null;
+  previewWidth: number | null;
 }
 
 export interface ResolveSegmentsBody {

@@ -1,0 +1,102 @@
+schema_version: harness.workflow/v1
+id: ag-studio-production
+version: 1.0.0
+defaults: {}
+# AG Studio production (plan GĐ4 4.1). Claude only ever reads text (catalog of captions); every Claude stage is
+# followed by a deterministic checker and every editorial decision by a person at a gate the web drives:
+#   intake -> catalog -> treatment -> [approve-treatment] -> select-shots -> [shot-board] -> narration -> tts
+#   -> build-timeline -> [edit = web editor] -> render-final (+qc) -> export
+# Each stage depends on exactly ONE producer of each document type it reads (inputs are found by type), e.g.
+# `select-shots` reads the treatment the person approved, never Claude's draft.
+# Resources: `claude` (subscription, one call at a time) and `farm` (jobs waiting on ag-farm, not the node's
+# own cpu) are declared in the Studio engine's project config.
+stages:
+  - key: intake
+    executor: { type: script, script: studio-intake }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: studio_brief, mime_type: application/json, name: brief.json }
+  - key: catalog
+    executor: { type: script, script: studio-catalog }
+    depends_on: [intake]
+    retry: { max_attempts: 3, backoff_seconds: [30, 120], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: studio_catalog, mime_type: application/json, name: catalog.json }
+  - key: treatment
+    executor: { type: agent, skill: studio-treatment, brief: "Viết treatment (các beat) cho video theo studio_brief, chỉ dựa trên footage có trong studio_catalog." }
+    depends_on: [intake, catalog]
+    requires_resources: [claude]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, treatment-valid]
+    outputs:
+      - { type: treatment, mime_type: application/json, name: treatment.json }
+  - key: approve-treatment
+    executor: { type: gate, brief: "Người dùng sửa và duyệt từng beat của treatment trên web." }
+    depends_on: [treatment, intake]
+    required_checks: [schema-valid, output-exists, checksum-match, treatment-valid]
+    outputs:
+      - { type: treatment, mime_type: application/json, name: treatment.json }
+  - key: select-shots
+    executor: { type: agent, skill: studio-select-shots, brief: "Chọn đoạn footage cho từng beat của treatment đã duyệt, kèm 3-4 phương án thay thế mỗi beat." }
+    depends_on: [approve-treatment, catalog, intake]
+    requires_resources: [claude]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, selection-valid]
+    outputs:
+      - { type: selection, mime_type: application/json, name: selection.json }
+  - key: shot-board
+    executor: { type: gate, brief: "Người dùng xem keyframe/preview từng beat và đổi đoạn bằng phương án thay thế." }
+    depends_on: [select-shots, approve-treatment, catalog, intake]
+    required_checks: [schema-valid, output-exists, checksum-match, selection-valid]
+    outputs:
+      - { type: selection, mime_type: application/json, name: selection.json }
+  - key: narration
+    executor: { type: agent, skill: studio-narration, brief: "Viết lời dẫn cho từng beat, khớp thời lượng beat." }
+    depends_on: [shot-board, approve-treatment, intake]
+    requires_resources: [claude]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, narration-valid]
+    outputs:
+      - { type: studio_narration, mime_type: application/json, name: narration.json }
+  - key: tts
+    executor: { type: farm, job: studio.tts }
+    config: { payload_builder: studio-tts }
+    depends_on: [narration, intake]
+    requires_resources: [farm]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: tts_manifest, mime_type: application/json, name: tts.json }
+      - { type: voice_set, mime_type: application/x-directory, kind: directory, name: tts }
+  - key: build-timeline
+    executor: { type: script, script: studio-build-timeline }
+    depends_on: [tts, narration, shot-board, approve-treatment, catalog, intake]
+    required_checks: [schema-valid, output-exists, checksum-match, timeline-schema-valid]
+    outputs:
+      - { type: timeline_v2, mime_type: application/json, name: timeline.json }
+  - key: edit
+    executor: { type: gate, brief: "Web editor: mỗi lần lưu là một revision; bấm Hoàn tất để nộp revision mới nhất." }
+    depends_on: [build-timeline, intake]
+    required_checks: [schema-valid, output-exists, checksum-match, timeline-valid]
+    outputs:
+      - { type: timeline_v2, mime_type: application/json, name: timeline.json }
+  - key: render-final
+    executor: { type: farm, job: studio.render_final }
+    config: { payload_builder: studio-render-final }
+    depends_on: [edit, intake]
+    requires_resources: [farm]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, studio-render-valid]
+    outputs:
+      - { type: final_video, mime_type: video/mp4, name: final.mp4 }
+      - { type: render_manifest, mime_type: application/json, name: render.json }
+  - key: export
+    executor: { type: script, script: studio-export }
+    depends_on: [render-final, edit, intake]
+    retry: { max_attempts: 3, backoff_seconds: [30, 120], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, export-valid]
+    outputs:
+      - { type: studio_export, mime_type: application/json, name: export.json }
+      - { type: subtitles, mime_type: application/x-subrip, name: captions.srt }
+      - { type: subtitles_vtt, mime_type: text/vtt, name: captions.vtt }

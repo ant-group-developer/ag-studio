@@ -96,9 +96,9 @@ describe("AgGoClient - getCatalog", () => {
       cameraMotion: "static",
       timeOfDay: "day",
       setting: "outdoor",
-      peopleCount: 1,
+      peopleCount: "1",
       orientation: "landscape",
-      quality: 85,
+      quality: 4,
       usable: true,
       approved: false,
     };
@@ -122,7 +122,7 @@ describe("AgGoClient - getCatalog", () => {
 
     await client.getCatalog(ACT_AS_USER, {
       folderIds: ["f1", "f2"],
-      filters: { usable: true, minQuality: 70 },
+      filters: { usableOnly: true, minQuality: 4 },
       limit: 20,
       cursor: "abc123",
     });
@@ -133,7 +133,7 @@ describe("AgGoClient - getCatalog", () => {
         method: "POST",
         body: JSON.stringify({
           folderIds: ["f1", "f2"],
-          filters: { usable: true, minQuality: 70 },
+          filters: { usableOnly: true, minQuality: 4 },
           limit: 20,
           cursor: "abc123",
         }),
@@ -146,10 +146,13 @@ describe("AgGoClient - getSegmentMedia", () => {
   it("returns segment media on success", async () => {
     const payload: SegmentMediaResponse = {
       segmentId: "seg-1",
-      keyframes: ["https://cdn.example.com/kf1.jpg"],
+      assetId: "asset-1",
+      keyframeUrls: ["https://cdn.example.com/kf1.jpg"],
       previewUrl: "https://cdn.example.com/preview.mp4",
+      previewWidth: 1280,
       startMs: 0,
       endMs: 5000,
+      durationMs: 5000,
     };
     const mockFetch = makeMockFetch(200, payload);
     const client = makeClient(mockFetch);
@@ -157,14 +160,14 @@ describe("AgGoClient - getSegmentMedia", () => {
     const result = await client.getSegmentMedia(ACT_AS_USER, "seg-1");
 
     expect(result.segmentId).toBe("seg-1");
-    expect(result.keyframes).toHaveLength(1);
+    expect(result.keyframeUrls).toHaveLength(1);
     expect(result.previewUrl).toBe("https://cdn.example.com/preview.mp4");
   });
 
   it("URL-encodes the segment ID", async () => {
     const mockFetch = makeMockFetch(200, {
       segmentId: "seg/with/slashes",
-      keyframes: [],
+      keyframeUrls: [],
       previewUrl: null,
       startMs: 0,
       endMs: 1000,

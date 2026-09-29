@@ -1,0 +1,23 @@
+{
+  "name": "@ag-studio/engine",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc -p tsconfig.json --noEmit", "test": "vitest run" },
+  "dependencies": {
+    "@harness/contracts": "workspace:*",
+    "@harness/core": "workspace:*",
+    "@harness/executors": "workspace:*",
+    "@harness/worker": "workspace:*",
+    "@harness/adapter-agent-cli": "workspace:*",
+    "@ag-studio/ag-go-client": "workspace:*",
+    "@ag-farm/owner-client": "link:../../../ag-farm/packages/owner-client",
+    "@ag-farm/protocol": "link:../../../ag-farm/packages/protocol",
+    "@aws-sdk/client-s3": "^3.0.0",
+    "@aws-sdk/s3-request-presigner": "^3.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": { "vitest": "^2.1.0", "@types/node": "^22.10.0" }
+}

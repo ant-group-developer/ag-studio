@@ -50,7 +50,7 @@ export const WorkflowDefinitionSchema = z.object({
 
 export const ProductionProfileSchema = z.object({
   schema_version: schemaVersion("production-profile"),
-  profile_id: z.enum(["cartoon", "avatar", "footage", "studio", "channel", "channel-planning"]),
+  profile_id: z.enum(["cartoon", "avatar", "footage", "studio", "channel", "channel-planning", "studio-production"]),
   revision: revisionSchema,
   status: z.enum(["active", "draft", "retired"]),
   workflow_release: z.string().regex(/^[a-z][a-z0-9-]*@\d+\.\d+\.\d+$/),
