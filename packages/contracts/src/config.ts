@@ -175,6 +175,8 @@ export const mediaConfigSchema = z.object({
     encoder: z.enum(["auto", "nvenc", "cpu"]).default("auto"),
     fps: z.union([z.literal("auto"), z.union([z.literal(24), z.literal(25), z.literal(30), z.literal(50), z.literal(60)])]).default("auto"),
     cache_max_gb: z.number().positive().default(60),
+    canvas: z.object({ width: z.number().int().positive(), height: z.number().int().positive() }).strict()
+      .default({ width: 3840, height: 2160 }),
   }).strict().default({}),
 }).strict();
 export type MediaConfig = z.infer<typeof mediaConfigSchema>;

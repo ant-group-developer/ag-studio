@@ -69,13 +69,18 @@ function makeClip(seconds: number): string {
 // ever reaches a kho path -- not gated on ffmpeg, since these must fail before ffmpeg is even considered
 // (asserted below by walking the kho and finding it byte-for-byte unchanged).
 describe("addVoice / retireVoice reject an invalid voice_id before touching the kho", () => {
+  // voice_id validation fires BEFORE addVoice touches ref_path or ffmpeg, so we pass a dummy path -- calling
+  // makeClip(5) inside the argument list would run ffmpeg BEFORE addVoice, turning a missing-ffmpeg env into
+  // a spurious plain Error instead of the expected CONFIG_INVALID from assertValidVoiceId.
+  const DUMMY_REF = "dummy-ref-never-read.wav";
+
   it("addVoice with a malformed voice_id (not a ULID) throws CONFIG_INVALID and writes nothing anywhere in the kho", async () => {
     const { d, root } = world();
     const before = walkFiles(root);
 
     let caught: unknown;
     try {
-      await addVoice(d, { voice_id: "foo", display_name: "Narrator", ref_path: makeClip(5), ref_text: "hi", language: "vi", origin: "own" });
+      await addVoice(d, { voice_id: "foo", display_name: "Narrator", ref_path: DUMMY_REF, ref_text: "hi", language: "vi", origin: "own" });
     } catch (e) {
       caught = e;
     }
@@ -89,7 +94,7 @@ describe("addVoice / retireVoice reject an invalid voice_id before touching the 
 
     let caught: unknown;
     try {
-      await addVoice(d, { voice_id: "../requests", display_name: "Narrator", ref_path: makeClip(5), ref_text: "hi", language: "vi", origin: "own" });
+      await addVoice(d, { voice_id: "../requests", display_name: "Narrator", ref_path: DUMMY_REF, ref_text: "hi", language: "vi", origin: "own" });
     } catch (e) {
       caught = e;
     }

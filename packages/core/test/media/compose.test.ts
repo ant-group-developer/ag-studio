@@ -89,7 +89,7 @@ function threeSegmentTimeline(): Timeline {
   };
 }
 
-const RENDER: MediaConfig["render"] = { codec: "h264", encoder: "auto", fps: 30, cache_max_gb: 60 };
+const RENDER: MediaConfig["render"] = { codec: "h264", encoder: "auto", fps: 30, cache_max_gb: 60, canvas: { width: 3840, height: 2160 } };
 
 function threeItemOverlays(): Overlays {
   return {

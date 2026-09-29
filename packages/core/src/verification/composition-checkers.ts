@@ -39,8 +39,7 @@ const PAINTED_STDDEV_MIN = 4;
 const DEFAULT_SAFE_MARGIN_PX = 120;
 const DEFAULT_SUBTITLE_SIZE_PX = 88;
 const DEFAULT_SUBTITLE_POSITION = "bottom_center" as const;
-const FRAME_W = 3840;
-const FRAME_H = 2160;
+// Canvas dimensions are now per-composition (composition.output.width/height); these constants are unused.
 
 /** Same ceiling `media/watch.ts` puts on its own synchronous ffmpeg calls: a frame extract that has not
  * finished in five minutes is wedged, and a checker must not hang the verifier waiting for it. */
@@ -87,13 +86,13 @@ function brandLayout(composition: Composition): { safe: number; subtitleSize: nu
   return { safe: DEFAULT_SAFE_MARGIN_PX, subtitleSize: DEFAULT_SUBTITLE_SIZE_PX, subtitlePosition: DEFAULT_SUBTITLE_POSITION };
 }
 
-/** A crop rectangle clamped inside the 3840x2160 frame -- a large `safe_margin_px` (up to 600) or a tall
+/** A crop rectangle clamped inside the canvas frame -- a large `safe_margin_px` (up to 600) or a tall
  * logo can otherwise push a computed window past an edge, where ffmpeg's `crop` refuses to run and every
  * sample comes back `null` ("frame extract failed") on an episode that is in fact perfectly painted. */
-function clampCrop(c: { w: number; h: number; x: number; y: number }): { w: number; h: number; x: number; y: number } {
-  const w = Math.max(1, Math.min(Math.round(c.w), FRAME_W));
-  const h = Math.max(1, Math.min(Math.round(c.h), FRAME_H));
-  return { w, h, x: Math.max(0, Math.min(Math.round(c.x), FRAME_W - w)), y: Math.max(0, Math.min(Math.round(c.y), FRAME_H - h)) };
+function clampCrop(c: { w: number; h: number; x: number; y: number }, canvas: { width: number; height: number }): { w: number; h: number; x: number; y: number } {
+  const w = Math.max(1, Math.min(Math.round(c.w), canvas.width));
+  const h = Math.max(1, Math.min(Math.round(c.h), canvas.height));
+  return { w, h, x: Math.max(0, Math.min(Math.round(c.x), canvas.width - w)), y: Math.max(0, Math.min(Math.round(c.y), canvas.height - h)) };
 }
 
 /**
@@ -104,11 +103,11 @@ function clampCrop(c: { w: number; h: number; x: number; y: number }): { w: numb
  * 260 px square at `y = 0`, which sampled pure background for any brand whose `safe_margin_px` was large
  * (up to 600 -> the logo starts at y = 300) or whose logo was taller than 260 px.
  */
-function logoCrop(logo: NonNullable<Composition["logo"]>, safe: number): { w: number; h: number; x: number; y: number } {
-  const size = Math.min(Math.max(1, Math.round(logo.height_px * 2)), FRAME_W, FRAME_H);
+function logoCrop(logo: NonNullable<Composition["logo"]>, safe: number, canvas: { width: number; height: number }): { w: number; h: number; x: number; y: number } {
+  const size = Math.min(Math.max(1, Math.round(logo.height_px * 2)), canvas.width, canvas.height);
   const m = Math.round(safe / 2);
-  const x = logo.corner === "left" ? m : FRAME_W - m - size;
-  return clampCrop({ w: size, h: size, x, y: m });
+  const x = logo.corner === "left" ? m : canvas.width - m - size;
+  return clampCrop({ w: size, h: size, x, y: m }, canvas);
 }
 
 /**
@@ -119,10 +118,11 @@ function logoCrop(logo: NonNullable<Composition["logo"]>, safe: number): { w: nu
  * edge (margin included) for `bottom_center`. Before the fix wave the bottom band was the only one sampled,
  * so a `top_center` brand had its captions checked against a strip of background.
  */
-function captionCrop(safe: number, subtitleSize: number, position: "bottom_center" | "top_center"): { w: number; h: number; x: number; y: number } {
-  if (position === "top_center") return clampCrop({ w: 1000, h: subtitleSize * 3, x: 1420, y: safe });
+function captionCrop(safe: number, subtitleSize: number, position: "bottom_center" | "top_center", canvas: { width: number; height: number }): { w: number; h: number; x: number; y: number } {
+  const cx = Math.floor((canvas.width - 1000) / 2);
+  if (position === "top_center") return clampCrop({ w: 1000, h: subtitleSize * 3, x: cx, y: safe }, canvas);
   const bandHeight = safe + subtitleSize * 3;
-  return clampCrop({ w: 1000, h: bandHeight, x: 1420, y: FRAME_H - bandHeight });
+  return clampCrop({ w: 1000, h: bandHeight, x: cx, y: canvas.height - bandHeight }, canvas);
 }
 
 /** The `captions` directory of this stage, whether it was produced here (`media-compose`) or consumed as an
@@ -460,8 +460,8 @@ export function compositionCheckers(opts: { prober: MediaProber; available?: boo
       const videoPath = join(input.workspaceDir, videoOut.path);
       const probed = await prober.probe(videoPath);
       if (!probed || !probed.video) return { verdict: "fail", evidence: { path: videoOut.path, reason: "no video stream" } };
-      if (probed.video.width !== 3840 || probed.video.height !== 2160) {
-        return { verdict: "fail", evidence: { path: videoOut.path, reason: "wrong frame size", width: probed.video.width, height: probed.video.height } };
+      if (probed.video.width !== composition.output.width || probed.video.height !== composition.output.height) {
+        return { verdict: "fail", evidence: { path: videoOut.path, reason: "wrong frame size", width: probed.video.width, height: probed.video.height, expected_width: composition.output.width, expected_height: composition.output.height } };
       }
       const fps = probed.video.fps;
       if (fps === null || Math.abs(fps - composition.output.fps) > 0.01) {
@@ -496,7 +496,7 @@ export function compositionCheckers(opts: { prober: MediaProber; available?: boo
       const at = (t: number): number => Math.min(Math.max(t, 0), Math.max(0, total - 0.1));
 
       if (composition.logo !== null) {
-        const crop = logoCrop(composition.logo, safe);
+        const crop = logoCrop(composition.logo, safe, composition.output);
         const samples = [at(1), at(total / 2), at(total - 1)].map((t) => ({ t, stddev: frameStdDev(ffmpeg, videoPath, t, crop) }));
         if (samples.some((s) => s.stddev === null)) {
           return { verdict: "fail", evidence: { reason: "frame extract failed", region: "logo", crop, samples: samples.map((s) => s.t) } };
@@ -511,7 +511,7 @@ export function compositionCheckers(opts: { prober: MediaProber; available?: boo
       const firstCue = composition.captions.cues[0];
       if (composition.captions.mode !== "none" && firstCue !== undefined) {
         const t = at((firstCue.start + firstCue.end) / 2);
-        const crop = captionCrop(safe, subtitleSize, subtitlePosition);
+        const crop = captionCrop(safe, subtitleSize, subtitlePosition, composition.output);
         const stddev = frameStdDev(ffmpeg, videoPath, t, crop);
         if (stddev === null) return { verdict: "fail", evidence: { reason: "frame extract failed", region: "captions", crop, t } };
         if (stddev <= PAINTED_STDDEV_MIN) {

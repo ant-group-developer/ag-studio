@@ -155,8 +155,8 @@ export const TextEventSchema = z.object({
 export const CompositionSchema = z.object({
   schema_version: schemaVersion("composition"),
   output: z.object({
-    width: z.literal(3840),
-    height: z.literal(2160),
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
     fps: z.number().int(),
     codec: z.enum(["h264", "hevc"]),
   }).strict(),

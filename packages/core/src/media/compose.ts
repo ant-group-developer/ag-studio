@@ -196,7 +196,7 @@ export function buildComposition(p: ComposeInput): { composition: Composition; s
 
   const composition = CompositionSchema.parse({
     schema_version: "harness.composition/v1",
-    output: { width: 3840, height: 2160, fps, codec: p.render.codec },
+    output: { width: p.render.canvas.width, height: p.render.canvas.height, fps, codec: p.render.codec },
     voice: timeline.voice,
     language: timeline.language,
     total_seconds: timeline.total_seconds,
@@ -220,6 +220,7 @@ export function buildComposition(p: ComposeInput): { composition: Composition; s
     cues: composition.captions.cues,
     text_events: composition.text_events,
     logo: composition.logo !== null ? { corner: composition.logo.corner, height_px: composition.logo.height_px } : null,
+    canvas: { width: composition.output.width, height: composition.output.height },
   });
 
   return { composition, srt: toSrt(composition.captions.cues), vtt: toVtt(composition.captions.cues), ass };

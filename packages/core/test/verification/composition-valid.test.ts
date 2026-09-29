@@ -168,7 +168,7 @@ function realComposition(tmp: string, opts: { outOfOrderVideo?: boolean } = {}) 
     transitions: [],
   };
 
-  const render: MediaConfig["render"] = { codec: "h264", encoder: "auto", fps: 30, cache_max_gb: 60 };
+  const render: MediaConfig["render"] = { codec: "h264", encoder: "auto", fps: 30, cache_max_gb: 60, canvas: { width: 3840, height: 2160 } };
 
   const composeInput: ComposeInput = {
     timeline,

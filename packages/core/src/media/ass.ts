@@ -10,6 +10,7 @@ export interface AssInput {
   cues: CaptionCue[];
   text_events: TextEvent[];
   logo: { corner: "left" | "right"; height_px: number } | null;
+  canvas: { width: number; height: number };
 }
 
 const STYLES_FORMAT =
@@ -77,22 +78,24 @@ function styleLine(s: {
 }
 
 /** `\an<n>\pos(x,y)` anchor for a text-event `position`, from the brand's `safe_margin_px` (`m`). */
-function positionTag(position: TextPosition, m: number): { an: number; x: number; y: number } {
+function positionTag(position: TextPosition, m: number, canvas: { width: number; height: number }): { an: number; x: number; y: number } {
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
   switch (position) {
     case "top_left":
       return { an: 7, x: m, y: m };
     case "top_center":
-      return { an: 8, x: 1920, y: m };
+      return { an: 8, x: cx, y: m };
     case "top_right":
-      return { an: 9, x: 3840 - m, y: m };
+      return { an: 9, x: canvas.width - m, y: m };
     case "center":
-      return { an: 5, x: 1920, y: 1080 };
+      return { an: 5, x: cx, y: cy };
     case "bottom_left":
-      return { an: 1, x: m, y: 2160 - m };
+      return { an: 1, x: m, y: canvas.height - m };
     case "bottom_center":
-      return { an: 2, x: 1920, y: 2160 - m };
+      return { an: 2, x: cx, y: canvas.height - m };
     case "bottom_right":
-      return { an: 3, x: 3840 - m, y: 2160 - m };
+      return { an: 3, x: canvas.width - m, y: canvas.height - m };
   }
 }
 
@@ -160,8 +163,8 @@ function buildCueDialogue(cue: CaptionCue, mode: SubtitleMode, marginBase: numbe
   return `Dialogue: 0,${formatAssTime(cue.start)},${formatAssTime(cue.end)},${style},,0,0,${marginV},,${cueText(cue, mode)}`;
 }
 
-function buildTextEventDialogue(ev: TextEvent, m: number): string {
-  const { an, x, y } = positionTag(ev.position, m);
+function buildTextEventDialogue(ev: TextEvent, m: number, canvas: { width: number; height: number }): string {
+  const { an, x, y } = positionTag(ev.position, m, canvas);
   const anim = animationTag(ev.animation, x, y);
   const override = `{\\an${an}\\pos(${x},${y})${anim}}`;
   return `Dialogue: 1,${formatAssTime(ev.start)},${formatAssTime(ev.end)},${KIND_STYLE_NAME[ev.kind]},,0,0,0,,${override}${escapeAss(ev.text)}`;
@@ -182,9 +185,9 @@ const NO_BRAND_STYLE = styleLine({
 });
 
 export function buildAss(p: AssInput): string {
-  const { brand, mode, cues, text_events } = p;
+  const { brand, mode, cues, text_events, canvas } = p;
 
-  const scriptInfo = ["[Script Info]", "ScriptType: v4.00+", "PlayResX: 3840", "PlayResY: 2160", "WrapStyle: 2", "ScaledBorderAndShadow: yes"];
+  const scriptInfo = ["[Script Info]", "ScriptType: v4.00+", `PlayResX: ${canvas.width}`, `PlayResY: ${canvas.height}`, "WrapStyle: 2", "ScaledBorderAndShadow: yes"];
 
   if (brand === null) {
     // Brief decision: brand null -> header + default style, zero Dialogue lines, regardless of `mode`.
@@ -239,14 +242,14 @@ export function buildAss(p: AssInput): string {
       back,
       bold,
       borderStyle: cfg.box ? 3 : 1,
-      alignment: positionTag(cfg.position, m).an,
+      alignment: positionTag(cfg.position, m, canvas).an,
       marginV: m,
     });
   };
 
   const eventLines: string[] = [];
   if (mode !== "none") for (const cue of cues) eventLines.push(buildCueDialogue(cue, mode, m));
-  for (const ev of text_events) eventLines.push(buildTextEventDialogue(ev, m));
+  for (const ev of text_events) eventLines.push(buildTextEventDialogue(ev, m, canvas));
 
   return (
     [

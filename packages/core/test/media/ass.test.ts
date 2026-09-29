@@ -35,9 +35,11 @@ const TEXT_EVENTS: TextEvent[] = [
   { id: "OV02", kind: "callout", text: "Wow", start: 1, end: 3, position: "center", animation: "pop" },
 ];
 
+const CANVAS = { width: 3840, height: 2160 };
+
 describe("buildAss", () => {
   it("counts one Dialogue per cue plus one per text event in burn-in mode", () => {
-    const ass = buildAss({ brand: brandFixture(), mode: "burn-in", cues: CUES, text_events: TEXT_EVENTS, logo: null });
+    const ass = buildAss({ brand: brandFixture(), mode: "burn-in", cues: CUES, text_events: TEXT_EVENTS, logo: null, canvas: CANVAS });
     expect(countDialogues(ass)).toBe(5);
   });
 
@@ -54,7 +56,7 @@ describe("buildAss", () => {
         { word: "friend", start: 1.0, end: 1.5 },
       ],
     };
-    const ass = buildAss({ brand: brandFixture(), mode: "karaoke", cues: [karaokeCue], text_events: [], logo: null });
+    const ass = buildAss({ brand: brandFixture(), mode: "karaoke", cues: [karaokeCue], text_events: [], logo: null, canvas: CANVAS });
     const dialogueLine = ass.split("\n").find((l) => l.startsWith("Dialogue: 0,"))!;
     expect(dialogueLine).toContain("\\kf");
     const totalCs = [...dialogueLine.matchAll(/\\kf(\d+)/g)].reduce((sum, m) => sum + Number(m[1]), 0);
@@ -75,7 +77,7 @@ describe("buildAss", () => {
       index: 1, start: 0, end: 1, lines: ["one two"], raise_px: 0,
       words: [{ word: "one", start: 0, end: 0.5 }, { word: "two", start: 0.5, end: 1 }],
     };
-    const ass = buildAss({ brand: brandFixture(), mode: "karaoke", cues: [cue], text_events: [], logo: null });
+    const ass = buildAss({ brand: brandFixture(), mode: "karaoke", cues: [cue], text_events: [], logo: null, canvas: CANVAS });
     const line = ass.split("\n").find((l) => l.startsWith("Dialogue: 0,"))!;
     expect(line.endsWith("{\\kf50}one {\\kf50}two")).toBe(true);
     expect([...line.matchAll(/\\kf(\d+)/g)]).toHaveLength(2);
@@ -90,38 +92,38 @@ describe("buildAss", () => {
         { word: "three", start: 0.9, end: 1.2 },
       ],
     };
-    const ass = buildAss({ brand: brandFixture(), mode: "karaoke", cues: [cue], text_events: [], logo: null });
+    const ass = buildAss({ brand: brandFixture(), mode: "karaoke", cues: [cue], text_events: [], logo: null, canvas: CANVAS });
     const line = ass.split("\n").find((l) => l.startsWith("Dialogue: 0,"))!;
     expect(line).toContain("\\N{\\kf10}{\\kf30}three");
     expect(line).not.toContain("\\N ");
   });
 
   it("emits no cue Dialogue lines in mode none, but keeps text events", () => {
-    const ass = buildAss({ brand: brandFixture(), mode: "none", cues: CUES, text_events: TEXT_EVENTS, logo: null });
+    const ass = buildAss({ brand: brandFixture(), mode: "none", cues: CUES, text_events: TEXT_EVENTS, logo: null, canvas: CANVAS });
     expect(countDialogues(ass)).toBe(2);
   });
 
   it("escapes braces in cue text", () => {
-    const ass = buildAss({ brand: brandFixture(), mode: "burn-in", cues: CUES, text_events: [], logo: null });
+    const ass = buildAss({ brand: brandFixture(), mode: "burn-in", cues: CUES, text_events: [], logo: null, canvas: CANVAS });
     expect(ass).toContain("a\\{b\\}");
     expect(ass).not.toContain("a{b}");
   });
 
   it("converts brand colors to &HAABBGGRR", () => {
     const brand = brandFixture({ colors: { primary: "#112233", text: "#F2C94C", text_outline: "#000000B3", box: "#000000B3" } });
-    const ass = buildAss({ brand, mode: "burn-in", cues: [], text_events: [], logo: null });
+    const ass = buildAss({ brand, mode: "burn-in", cues: [], text_events: [], logo: null, canvas: CANVAS });
     expect(ass).toContain("&H004CC9F2"); // text color, no alpha -> opaque
     expect(ass).toContain("&H4C000000"); // text_outline #000000B3 -> AA = 255-179 = 76 = 0x4C
   });
 
   it("generates \\move for a slide_up text event", () => {
-    const ass = buildAss({ brand: brandFixture(), mode: "none", cues: [], text_events: TEXT_EVENTS, logo: null });
+    const ass = buildAss({ brand: brandFixture(), mode: "none", cues: [], text_events: TEXT_EVENTS, logo: null, canvas: CANVAS });
     expect(ass).toMatch(/\\move\(\d+,\d+,\d+,\d+,0,250\)/);
   });
 
   it("returns zero Dialogue lines and a valid header when brand is null, regardless of mode", () => {
     for (const mode of ["burn-in", "karaoke", "none"] as const) {
-      const ass = buildAss({ brand: null, mode, cues: CUES, text_events: TEXT_EVENTS, logo: null });
+      const ass = buildAss({ brand: null, mode, cues: CUES, text_events: TEXT_EVENTS, logo: null, canvas: CANVAS });
       expect(countDialogues(ass)).toBe(0);
       expect(ass).toContain("[Script Info]");
       expect(ass).toContain("PlayResX: 3840");
