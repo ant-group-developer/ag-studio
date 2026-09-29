@@ -67,6 +67,7 @@ export class FarmController {
     this.s3 = new S3Client({
       endpoint: this.config.get<string>('STUDIO_R2_ENDPOINT') as string,
       region: 'auto',
+      forcePathStyle: true,
       credentials: {
         accessKeyId: this.config.get<string>('STUDIO_R2_ACCESS_KEY_ID') as string,
         secretAccessKey: this.config.get<string>('STUDIO_R2_SECRET_ACCESS_KEY') as string,

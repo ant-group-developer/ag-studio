@@ -1,9 +1,10 @@
 /**
  * `farm` executor: delegates a stage to ag-farm (OmniWorker cluster). The executor:
  *  1. Uploads stage input artifacts to the production's object store under a deterministic
- *     per-attempt prefix (`productions/<prodId>/jobs/<stageKey>/<attemptId>/in/<basename>`).
- *     Each uploaded file becomes a logical input name `stage:<basename>` that the farm sign_url
- *     endpoint understands and authorises.
+ *     per-attempt prefix (`productions/<prodId>/jobs/<stageKey>/<attemptId>/in/<input.path>`).
+ *     The full relative path is preserved so farm_payload can reference inputs as
+ *     `stage:<input.path>` (e.g. `stage:renders/1/composition.json`). The farm sign_url
+ *     endpoint resolves `stage:<path>` → `${inputPrefix}<path>`.
  *  2. Submits the job to ag-farm using `stage_config.farm_payload` directly — the payload must
  *     already conform to the schema for the job type (StudioTtsPayloadSchema /
  *     StudioRenderPayloadSchema). The payload is validated before submission; an extra `inputs:`
@@ -77,7 +78,7 @@ export function stageOutputPrefix(productionId: string): string {
 export interface StudioStorage {
   /**
    * Upload a local file to the shared store at the given object key.
-   * Returns the logical input name the farm worker should use (e.g. `stage:<basename>`).
+   * Returns the logical input name the farm worker should use (e.g. `stage:<input.path>`).
    */
   upload(localPath: string, objectKey: string): Promise<string>;
   /**
@@ -184,15 +185,17 @@ export class FarmExecutor implements Executor {
       request.attempt_id,
     );
     for (const input of request.inputs) {
-      const fileName = basename(input.path);
-      const objectKey = inputPrefix + fileName;
+      // Preserve the full relative path so farm_payload can reference the file
+      // by its exact path (e.g. `stage:renders/1/composition.json`).
+      // The sign endpoint resolves `stage:<path>` → `${inputPrefix}<path>`.
+      const objectKey = inputPrefix + input.path;
       try {
         await this.opts.storage.upload(
           join(ctx.workspaceDir, input.path),
           objectKey,
         );
         ctx.logger.info(
-          `uploaded input ${input.path} → stage:${fileName}`,
+          `uploaded input ${input.path} → stage:${input.path}`,
           { object_key: objectKey },
         );
       } catch (e) {

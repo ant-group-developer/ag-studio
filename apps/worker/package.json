@@ -1,0 +1,21 @@
+{
+  "name": "@ag-studio/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@harness/contracts": "workspace:*",
+    "@harness/core": "workspace:*",
+    "@harness/executors": "workspace:*",
+    "@harness/worker": "workspace:*",
+    "@ag-farm/owner-client": "link:../../../ag-farm/packages/owner-client",
+    "@ag-farm/protocol": "link:../../../ag-farm/packages/protocol",
+    "@aws-sdk/client-s3": "^3.0.0",
+    "@aws-sdk/s3-request-presigner": "^3.0.0"
+  }
+}

@@ -129,7 +129,9 @@ export class TicketGuard implements CanActivate {
       throw new UnauthorizedException('Missing Ticket authorization');
     }
 
-    const publicKey = this.config.get<string>('FARM_TICKET_PUBLIC_KEY') as string;
+    // Support keys passed with escaped newlines (\\n → \n) as is common in env files.
+    const publicKeyRaw = this.config.get<string>('FARM_TICKET_PUBLIC_KEY') as string;
+    const publicKey = publicKeyRaw.replace(/\\n/g, '\n');
     try {
       const claims = verifyTicket(token, publicKey, { owner: 'studio' });
       request.ticketClaims = claims;
