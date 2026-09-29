@@ -789,6 +789,12 @@ describe.skipIf(!isE2E)("farm E2E: studio.render_preview", () => {
           `INSERT OR IGNORE INTO teams (id, name, created_at, updated_at)
            VALUES (?, ?, datetime('now'), datetime('now'))`,
         ).run("team-e2e", "E2E Team");
+        // /farm/sign resolves footage acting as the production's owner (the team owner here), never as the
+        // production itself, and refuses when there is nobody to act as.
+        db.prepare(
+          `INSERT OR IGNORE INTO team_members (team_id, user_id, role, joined_at)
+           VALUES (?, ?, 'owner', datetime('now'))`,
+        ).run("team-e2e", "auth0|e2e-owner");
         // productions table: id, team_id, title, status, canvas, brief, run_id, created_at, updated_at
         db.prepare(
           `INSERT OR IGNORE INTO productions
