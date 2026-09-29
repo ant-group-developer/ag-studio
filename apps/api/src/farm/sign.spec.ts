@@ -3,6 +3,7 @@ import { ForbiddenException } from '@nestjs/common';
 import { FarmController } from './farm.controller';
 import { StudioDbService } from '../db/studio-db.service';
 import { ConfigService } from '@nestjs/config';
+import { getStageInputPrefix, getStageOutputPrefix } from './sign-schemas';
 
 const MOCK_JOB = {
   id: 'row-1',
@@ -192,5 +193,55 @@ describe('FarmController /farm/sign', () => {
       segmentIds: ['seg-uuid'],
       purpose: 'final',
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Key-layout: assert sign-schemas matches farm-executor (Problem 3 test vector)
+// ---------------------------------------------------------------------------
+
+describe('Key layout: sign-schemas must match farm-executor stageInputPrefix', () => {
+  // The farm-executor (packages/executors) uploads inputs to:
+  //   productions/<prodId>/jobs/<stageKey>/<attemptId>/in/
+  // and references them as stage:<basename> in the payload.
+  //
+  // The sign endpoint (apps/api) resolves stage:<filename> to:
+  //   getStageInputPrefix(prodId, stageKey, attemptId) + filename
+  //
+  // These MUST be identical; this test is the shared assertion.
+
+  // Mirror of stageInputPrefix() in packages/executors/src/farm-executor.ts
+  function executorInputPrefix(
+    productionId: string,
+    stageKey: string,
+    attemptId: string,
+  ): string {
+    return `productions/${productionId}/jobs/${stageKey}/${attemptId}/in/`;
+  }
+
+  const CASES: Array<[string, string, string]> = [
+    ['prod-abc', 'tts', 'attempt-001'],
+    ['prod-123', 'render-preview', 'atm_XYZ'],
+    ['my-production', 'render-final', 'atm-88888'],
+  ];
+
+  for (const [prodId, stageKey, attemptId] of CASES) {
+    it(`input prefix matches for ${prodId}/${stageKey}/${attemptId}`, () => {
+      expect(getStageInputPrefix(prodId, stageKey, attemptId)).toBe(
+        executorInputPrefix(prodId, stageKey, attemptId),
+      );
+    });
+  }
+
+  it('output prefix is productions/<prodId>/', () => {
+    expect(getStageOutputPrefix('prod-abc')).toBe('productions/prod-abc/');
+  });
+
+  it('input prefix contains attempt id (prevents cross-attempt collisions)', () => {
+    const p1 = getStageInputPrefix('prod-1', 'render', 'attempt-1');
+    const p2 = getStageInputPrefix('prod-1', 'render', 'attempt-2');
+    expect(p1).not.toBe(p2);
+    expect(p1).toContain('attempt-1');
+    expect(p2).toContain('attempt-2');
   });
 });

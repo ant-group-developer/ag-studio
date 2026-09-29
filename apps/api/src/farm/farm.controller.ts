@@ -29,6 +29,7 @@ import {
   SignOp,
   SignResult,
   resolveOutputKey,
+  getStageInputPrefix,
 } from './sign-schemas';
 
 interface FarmJobRow {
@@ -101,7 +102,6 @@ export class FarmController {
     }
 
     const prodId = job.production_id;
-    const stagePrefix = `productions/${prodId}/jobs/${job.stage_key}`;
     const isFinalRender = job.is_final_render === 1;
 
     // 3. Authorize ALL ops first (fail fast on any unauthorized op)
@@ -116,7 +116,8 @@ export class FarmController {
         const input = op.input;
         if (input.startsWith('stage:')) {
           const subPath = input.slice('stage:'.length);
-          const r2Key = `${stagePrefix}/in/${subPath}`;
+          const inputPrefix = getStageInputPrefix(prodId, job.stage_key, job.attempt_id);
+          const r2Key = `${inputPrefix}${subPath}`;
           authorizations.push({ op, r2Key });
         } else if (input.startsWith('library:')) {
           const subPath = input.slice('library:'.length);
@@ -135,6 +136,7 @@ export class FarmController {
         op.op === 'mp_complete' ||
         op.op === 'mp_abort'
       ) {
+        // Output prefix: productions/<prodId>/ (trailing slash stripped by resolveOutputKey)
         const outputPrefix = `productions/${prodId}`;
         const r2Key = resolveOutputKey(outputPrefix, op.output);
         authorizations.push({ op, r2Key });

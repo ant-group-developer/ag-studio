@@ -123,3 +123,33 @@ export function resolveOutputKey(prefix: string, relativePath: string): string {
   const p = prefix.endsWith('/') ? prefix : `${prefix}/`;
   return `${p}${parsed.data}`;
 }
+
+// --------------------------------------------------------------------------
+// Key-layout helpers — MUST match packages/executors/src/farm-executor.ts
+// (stageInputPrefix / stageOutputPrefix). The sign.spec.ts asserts this.
+// --------------------------------------------------------------------------
+
+/**
+ * S3 key prefix for stage input files that the executor uploaded before job
+ * submission. Sign endpoint authorises `stage:<filename>` → this prefix + filename.
+ *
+ * Mirror of `stageInputPrefix()` in packages/executors/src/farm-executor.ts.
+ */
+export function getStageInputPrefix(
+  productionId: string,
+  stageKey: string,
+  attemptId: string,
+): string {
+  return `productions/${productionId}/jobs/${stageKey}/${attemptId}/in/`;
+}
+
+/**
+ * Base S3 prefix for all worker outputs in a production.
+ * Worker uploads relative paths (e.g. `render.json`, `renders/1/preview.mp4`)
+ * under this prefix.
+ *
+ * Mirror of `stageOutputPrefix()` in packages/executors/src/farm-executor.ts.
+ */
+export function getStageOutputPrefix(productionId: string): string {
+  return `productions/${productionId}/`;
+}

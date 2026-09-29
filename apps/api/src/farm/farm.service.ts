@@ -199,6 +199,10 @@ export class FarmService {
 
       if (input.startsWith('stage:')) {
         const relativePath = input.slice('stage:'.length);
+        // NOTE: This service is currently unused (FarmModule only registers FarmController).
+        // The key layout must include attempt_id to match FarmExecutor's upload prefix.
+        // Without attempt_id from the job row we fall back to stageKey only here —
+        // callers should migrate to FarmController which uses getStageInputPrefix properly.
         const key = `productions/${productionId}/jobs/${stageKey}/in/${relativePath}`;
         const url = await getSignedUrl(
           this.s3,

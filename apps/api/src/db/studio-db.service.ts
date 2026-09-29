@@ -26,14 +26,18 @@ export class StudioDbService implements OnModuleInit {
     }
     this._db = new DatabaseSync(dbPath);
     this.logger.log(`SQLite DB opened at ${dbPath}`);
-    await this.runMigrations();
+    this.runMigrations();
   }
 
-  private async runMigrations(): Promise<void> {
-    // Create schema_migrations tracking table
+  private runMigrations(): void {
+    // Use the same schema_migrations table layout as SqliteStateStore.migrate():
+    //   schema_migrations(name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)
+    // where `name` is the full filename including the .sql extension.
+    // This ensures that both the API DB service and the core SqliteStateStore can
+    // operate on the same SQLite file without schema conflicts.
     this._db.exec(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
-        version TEXT PRIMARY KEY,
+        name       TEXT PRIMARY KEY,
         applied_at TEXT NOT NULL
       )
     `);
@@ -50,17 +54,17 @@ export class StudioDbService implements OnModuleInit {
       .sort();
 
     for (const file of files) {
-      const version = file.replace('.sql', '');
-      const stmt = this._db.prepare('SELECT version FROM schema_migrations WHERE version = ?');
-      const existing = stmt.get(version);
+      // Key by full filename (with .sql extension) to match SqliteStateStore semantics.
+      const stmt = this._db.prepare('SELECT name FROM schema_migrations WHERE name = ?');
+      const existing = stmt.get(file);
       if (existing) {
         continue;
       }
       const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf-8');
       try {
         this._db.exec(sql);
-        this._db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)').run(
-          version,
+        this._db.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)').run(
+          file,
           new Date().toISOString(),
         );
         this.logger.log(`Applied migration: ${file}`);
