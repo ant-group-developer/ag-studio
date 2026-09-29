@@ -13,17 +13,14 @@ import { TimelineV2Schema, type TimelineV2 } from "@harness/contracts";
 import { timelineIssues, type TimelineIssue } from "@harness/core";
 import { stageInputPrefix } from "@harness/executors";
 import { RenderManifestSchema, TtsManifestSchema, type StudioTtsPayload } from "@ag-farm/protocol";
+import type { FarmOwnerClient } from "@ag-farm/owner-client";
 import { productionKey, type StudioBucket } from "./bucket.js";
 import { prepareRender, ttsPayload } from "./payloads.js";
 import { StudioRunError } from "./run-control.js";
 import { getProduction, getRevision, saveRevision, type StudioDb } from "./studio-db.js";
 
 /** The part of `FarmOwnerClient` the editor uses. */
-export interface EditorFarmClient {
-  submitJob(req: { type: string; payload: unknown; correlation_id: string; affinity_key?: string; max_attempts?: number; requirements?: Record<string, unknown> }): Promise<{ job: { id: string } }>;
-  getJob(id: string): Promise<{ status: string; result: unknown; error: unknown }>;
-  ackJob(id: string): Promise<unknown>;
-}
+export type EditorFarmClient = Pick<FarmOwnerClient, "submitJob" | "getJob" | "ackJob">;
 export interface EditorDeps { db: StudioDb; bucket: StudioBucket; farm: EditorFarmClient }
 
 export function saveTimeline(db: StudioDb, productionId: string, p: { baseRevision: number; data: unknown; authorId: string; label?: string }): { revision: number; issues: TimelineIssue[] } {

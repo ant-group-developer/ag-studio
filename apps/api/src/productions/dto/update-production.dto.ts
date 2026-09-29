@@ -1,3 +1,4 @@
+import { BriefFieldsDto } from './brief-fields.dto';
 import { IsString, IsOptional, MaxLength, IsObject, IsNumber } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ValidateNested } from 'class-validator';
@@ -10,7 +11,7 @@ export class CanvasUpdateDto {
   height!: number;
 }
 
-export class UpdateProductionDto {
+export class UpdateProductionDto extends BriefFieldsDto {
   @IsString()
   @IsOptional()
   @MaxLength(200)
@@ -26,7 +27,4 @@ export class UpdateProductionDto {
   @Type(() => CanvasUpdateDto)
   canvas?: CanvasUpdateDto;
 
-  @IsString()
-  @IsOptional()
-  aspect?: string;
 }

@@ -1,51 +1,28 @@
 /**
- * AG Studio Farm Worker
- *
- * Runs a harness Worker that delegates farm-type stages to ag-farm via
- * FarmExecutor.  After each successful job submission, it records the job in
- * studio_farm_jobs (in the same SQLite DB as apps/api) via
- * makeStudioFarmRecorder — so the ag-farm sign endpoint can later authorise
- * presigned-URL requests from the render worker.
+ * AG Studio worker: runs `ag-studio-production@1.0.0` stages -- in-process stages, Claude (subscription,
+ * `claude -p` structured), gates, and ag-farm jobs -- against the same `studio.db` as apps/api.
  *
  * Required environment variables:
- *   HARNESS_DATA_ROOT   - path to harness data directory (contains state/harness.db)
- *   STUDIO_DB_PATH      - path to studio.db (shared with apps/api)
- *   FARM_URL            - ag-farm hub base URL
- *   FARM_OWNER_KEY      - ag-farm owner API key
- *   STUDIO_R2_ENDPOINT  - S3-compatible storage endpoint URL
- *   STUDIO_R2_BUCKET    - bucket name
- *   STUDIO_R2_ACCESS_KEY_ID
- *   STUDIO_R2_SECRET_ACCESS_KEY
+ *   STUDIO_DB_PATH      studio.db shared with apps/api (harness state + Studio tables)
+ *   STUDIO_DATA_ROOT    workspaces and artifacts
+ *   FARM_URL, FARM_OWNER_KEY
+ *   AG_GO_API_URL, AG_GO_SERVICE_KEY           (catalog, acting as the production owner)
+ *   STUDIO_R2_ENDPOINT, STUDIO_R2_BUCKET, STUDIO_R2_ACCESS_KEY_ID, STUDIO_R2_SECRET_ACCESS_KEY
+ *   CLAUDE_CODE_OAUTH_TOKEN                    (subscription; passed through to `claude` only)
  *
  * Optional:
- *   WORKER_OWNER        - lease owner name (default: hostname-pid)
- *   WORKER_POLL_SECONDS - harness poll interval (default: from harness.yaml or 5)
- *   FARM_POLL_MS        - farm job polling interval ms (default: 5000)
- *   HARNESS_ROOT        - harness installation root (default: built-in)
+ *   WORKER_OWNER        lease owner name (default: hostname-pid)
+ *   FARM_POLL_MS        farm job polling interval (default 5000)
+ *   STUDIO_CLAUDE_MODEL default claude-opus-5-5
+ *   STUDIO_CLAUDE_ARGV  JSON array replacing `claude -p ...` (tests: the fake CLI)
+ *   STUDIO_FFMPEG_PATH  ffmpeg for the loudness check of the final render
+ *   HARNESS_ROOT        Studio install root (default: this checkout)
  */
 import { hostname } from "node:os";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
-import {
-  SqliteStateStore,
-  Planner,
-  Controller,
-  ArtifactRegistry,
-  Verifier,
-  SystemClock,
-  HARNESS_ROOT,
-  MIGRATIONS_DIR,
-  loadHarnessConfig,
-  createLogger,
-} from "@harness/core";
-import { ExecutorRegistry, FarmExecutor, makeStudioFarmRecorder, type StudioStorage } from "@harness/executors";
-import { FarmOwnerClient } from "@ag-farm/owner-client";
-import { Worker } from "@harness/worker";
-
-// ---------------------------------------------------------------------------
-// Config helpers
-// ---------------------------------------------------------------------------
+import { AgGoClient } from "@ag-studio/ag-go-client";
+import { createStudioEngineCore, createStudioWorker, FarmOwnerClient, S3Bucket, StudioDb, studioLogger } from "@ag-studio/engine";
+import { HARNESS_ROOT } from "@harness/core";
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -53,153 +30,44 @@ function requireEnv(name: string): string {
   return v;
 }
 
-function optEnv(name: string, fallback: string): string {
-  return process.env[name] ?? fallback;
-}
-
-// ---------------------------------------------------------------------------
-// S3-backed StudioStorage
-// ---------------------------------------------------------------------------
-
-function makeS3Storage(opts: {
-  endpoint: string;
-  bucket: string;
-  accessKeyId: string;
-  secretAccessKey: string;
-}): StudioStorage {
-  const s3 = new S3Client({
-    endpoint: opts.endpoint,
-    region: "auto",
-    credentials: {
-      accessKeyId: opts.accessKeyId,
-      secretAccessKey: opts.secretAccessKey,
-    },
-    forcePathStyle: true,
-  });
-  const bucket = opts.bucket;
-
-  return {
-    async upload(localPath, objectKey) {
-      const body = readFileSync(localPath);
-      await s3.send(
-        new PutObjectCommand({ Bucket: bucket, Key: objectKey, Body: body }),
-      );
-      const name = objectKey.split("/").pop() ?? objectKey;
-      return `stage:${name}`;
-    },
-
-    async download(url, localPath) {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`download failed: ${res.status} ${url}`);
-      const buf = Buffer.from(await res.arrayBuffer());
-      mkdirSync(join(localPath, ".."), { recursive: true });
-      writeFileSync(localPath, buf);
-    },
-
-    async downloadOutput(productionId, relPath, localPath) {
-      const key = `productions/${productionId}/${relPath}`;
-      const resp = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-      if (!resp.Body) throw new Error(`no body for key ${key}`);
-      const buf = Buffer.from(await resp.Body.transformToByteArray());
-      mkdirSync(join(localPath, ".."), { recursive: true });
-      writeFileSync(localPath, buf);
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
-
 async function main(): Promise<void> {
-  const dataRoot = requireEnv("HARNESS_DATA_ROOT");
-  const studioDbPath = requireEnv("STUDIO_DB_PATH");
-  const farmUrl = requireEnv("FARM_URL");
-  const farmOwnerKey = requireEnv("FARM_OWNER_KEY");
-  const s3Endpoint = requireEnv("STUDIO_R2_ENDPOINT");
-  const s3Bucket = requireEnv("STUDIO_R2_BUCKET");
-  const s3KeyId = requireEnv("STUDIO_R2_ACCESS_KEY_ID");
-  const s3Secret = requireEnv("STUDIO_R2_SECRET_ACCESS_KEY");
-  const owner = optEnv("WORKER_OWNER", `${hostname()}-${process.pid}`);
-  const harnessRoot = optEnv("HARNESS_ROOT", HARNESS_ROOT);
-  const farmPollMs = parseInt(optEnv("FARM_POLL_MS", "5000"), 10);
-
-  const logger = createLogger({
-    level: (process.env["HARNESS_LOG_LEVEL"] as "info" | "warn" | "error" | undefined) ?? "info",
-    sink: (l) => process.stderr.write(l + "\n"),
-    bindings: { service: "studio-worker" },
-  });
-
-  // Ensure data directory
-  mkdirSync(join(dataRoot, "state"), { recursive: true });
-
-  const clock = new SystemClock();
-  const store = new SqliteStateStore(join(dataRoot, "state", "harness.db"), clock);
-  const planner = new Planner(store);
-  const registry = new ArtifactRegistry(store, dataRoot);
-  const controller = new Controller({ store, registry, planner, clock });
-  const verifier = new Verifier(store);
-
-  // Create FarmExecutor with shared studio.db recorder
-  const farmClient = new FarmOwnerClient({ baseUrl: farmUrl, ownerKey: farmOwnerKey });
-  const storage = makeS3Storage({
-    endpoint: s3Endpoint,
-    bucket: s3Bucket,
-    accessKeyId: s3KeyId,
-    secretAccessKey: s3Secret,
-  });
-  const farmExecutor = new FarmExecutor({
-    client: farmClient,
-    storage,
-    onSubmitted: makeStudioFarmRecorder(studioDbPath),
-    pollIntervalMs: farmPollMs,
-  });
-
-  const executors = new ExecutorRegistry();
-  executors.register("farm", farmExecutor);
-
-  const harness = loadHarnessConfig(harnessRoot);
-
-  const worker = new Worker({
-    store,
-    planner,
-    controller,
-    registry,
-    verifier,
-    executors,
-    harness,
-    // project and workflows are not used by the farm executor — supply minimal stubs
-    project: {
-      project_id: "studio",
-      data_root: dataRoot,
-      resources: {},
-    } as never,
-    workflows: () => { throw new Error("no workflows in studio worker"); },
-    profiles: () => { throw new Error("no profiles in studio worker"); },
-    dataRoot,
+  const dbPath = requireEnv("STUDIO_DB_PATH");
+  const harnessRoot = process.env.HARNESS_ROOT ?? HARNESS_ROOT;
+  const owner = process.env.WORKER_OWNER ?? `${hostname()}-${process.pid}`;
+  const ffmpeg = process.env.STUDIO_FFMPEG_PATH;
+  const core = createStudioEngineCore({ dbPath, dataRoot: requireEnv("STUDIO_DATA_ROOT"), harnessRoot, ...(ffmpeg ? { ffmpeg } : {}) });
+  const logger = studioLogger({ owner });
+  const argv = process.env.STUDIO_CLAUDE_ARGV ? (JSON.parse(process.env.STUDIO_CLAUDE_ARGV) as string[]) : undefined;
+  const worker = createStudioWorker({
+    core,
+    db: new StudioDb(dbPath),
+    dbPath,
+    bucket: new S3Bucket({
+      endpoint: requireEnv("STUDIO_R2_ENDPOINT"), bucket: requireEnv("STUDIO_R2_BUCKET"),
+      accessKeyId: requireEnv("STUDIO_R2_ACCESS_KEY_ID"), secretAccessKey: requireEnv("STUDIO_R2_SECRET_ACCESS_KEY"),
+    }),
+    footage: new AgGoClient({ baseUrl: requireEnv("AG_GO_API_URL"), serviceKey: requireEnv("AG_GO_SERVICE_KEY") }),
+    farm: new FarmOwnerClient({ baseUrl: requireEnv("FARM_URL"), ownerKey: requireEnv("FARM_OWNER_KEY") }),
+    claude: {
+      skillsDir: join(harnessRoot, "skills"),
+      ...(process.env.STUDIO_CLAUDE_MODEL ? { model: process.env.STUDIO_CLAUDE_MODEL } : {}),
+      ...(argv ? { argv } : {}),
+    },
     owner,
-    capabilities: ["farm"],
     logger,
-    clock,
-    resourceCapacity: {},
+    farmPollMs: Number(process.env.FARM_POLL_MS ?? 5000),
   });
 
-  logger.info("Studio farm worker starting", { owner, farmUrl, dataRoot });
-
+  logger.info("Studio worker starting", { owner, harnessRoot });
   const ac = new AbortController();
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
-    process.on(sig, () => {
-      logger.warn(`received ${sig}, stopping`);
-      ac.abort();
-      store.close();
-    });
+    process.on(sig, () => { logger.warn(`received ${sig}, stopping after the current stage`); ac.abort(); });
   }
-
   await worker.runForever(ac.signal);
-  store.close();
+  core.close();
 }
 
 main().catch((e) => {
-  process.stderr.write(`[studio-worker] fatal: ${String(e)}\n`);
+  process.stderr.write(`[studio-worker] fatal: ${e instanceof Error ? e.stack ?? e.message : String(e)}\n`);
   process.exit(1);
 });

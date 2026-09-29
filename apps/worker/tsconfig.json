@@ -5,11 +5,24 @@
     "outDir": "dist",
     "composite": true
   },
-  "include": ["src"],
+  "include": [
+    "src"
+  ],
   "references": [
-    { "path": "../../packages/contracts" },
-    { "path": "../../packages/core" },
-    { "path": "../../packages/executors" },
-    { "path": "../../packages/worker" }
+    {
+      "path": "../../packages/contracts"
+    },
+    {
+      "path": "../../packages/core"
+    },
+    {
+      "path": "../../packages/executors"
+    },
+    {
+      "path": "../../packages/worker"
+    },
+    {
+      "path": "../../packages/studio-engine"
+    }
   ]
 }

@@ -9,6 +9,7 @@ import { TeamsModule } from './teams/teams.module';
 import { ProductionsModule } from './productions/productions.module';
 import { FarmModule } from './farm/farm.module';
 import { HealthModule } from './health/health.module';
+import { StudioModule } from './studio/studio.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { HealthModule } from './health/health.module';
     ProductionsModule,
     FarmModule,
     HealthModule,
+    StudioModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: Auth0Guard },

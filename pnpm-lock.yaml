@@ -151,6 +151,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@ag-studio/engine':
+        specifier: workspace:*
+        version: link:../../packages/studio-engine
       '@aws-sdk/client-s3':
         specifier: ^3.0.0
         version: 3.1141.0
@@ -282,6 +285,9 @@ importers:
       '@ag-studio/ag-go-client':
         specifier: workspace:*
         version: link:../../packages/ag-go-client
+      '@ag-studio/engine':
+        specifier: workspace:*
+        version: link:../../packages/studio-engine
       '@aws-sdk/client-s3':
         specifier: ^3.0.0
         version: 3.1141.0

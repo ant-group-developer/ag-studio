@@ -41,21 +41,26 @@ export class ProductionsController {
   @Post('teams/:teamId/productions')
   @Roles('producer', 'owner')
   @HttpCode(HttpStatus.CREATED)
-  createProduction(@Param('teamId') teamId: string, @Body() dto: CreateProductionDto) {
+  createProduction(@Param('teamId') teamId: string, @Body() dto: CreateProductionDto, @Req() req: Request) {
+    // The creator is the production's owner: background stages act as them towards ag-go (plan 3.1).
     return this.productionsService.createProduction(
       teamId,
       dto.title,
       dto.brief,
       dto.canvas,
+      req.authContext!.userId,
+      dto,
     );
   }
 
   @Get('teams/:teamId/productions')
+  @Roles('viewer')
   listProductions(@Param('teamId') teamId: string) {
     return this.productionsService.listProductions(teamId);
   }
 
   @Get('productions/:id')
+  @Roles('viewer')
   getProduction(@Param('id') id: string) {
     const prod = this.productionsService.getProduction(id);
     if (!prod) throw new NotFoundException(`Production ${id} not found`);
@@ -99,6 +104,7 @@ export class ProductionsController {
   }
 
   @Get('productions/:id/access')
+  @Roles('viewer')
   async checkAccess(@Param('id') id: string, @Req() req: Request) {
     const userId = req.authContext!.userId;
     const prod = this.productionsService.getProduction(id);

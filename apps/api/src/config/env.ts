@@ -18,6 +18,12 @@ export const envSchema = z.object({
   STUDIO_R2_ACCESS_KEY_ID: z.string(),
   STUDIO_R2_SECRET_ACCESS_KEY: z.string(),
   FARM_URL_TTL_SECONDS: z.coerce.number().default(3600),
+  /** Workspaces and artifacts of the Studio engine (the harness state itself lives in STUDIO_DB_PATH). */
+  STUDIO_DATA_ROOT: z.string().default('./data/harness'),
+  /** ffmpeg used to measure loudness when a gate or the worker verifies a render; unset = not measured. */
+  STUDIO_FFMPEG_PATH: z.string().optional(),
+  /** Lifetime of signed URLs handed to the browser (previews, exports, narration audio). */
+  STUDIO_BROWSER_URL_TTL_SECONDS: z.coerce.number().default(3600),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
