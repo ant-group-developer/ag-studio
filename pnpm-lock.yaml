@@ -269,6 +269,12 @@ importers:
         specifier: workspace:*
         version: link:../script-sdk
 
+  packages/render:
+    dependencies:
+      '@harness/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/script-sdk: {}
 
   packages/worker:
