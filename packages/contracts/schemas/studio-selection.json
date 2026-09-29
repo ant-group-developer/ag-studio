@@ -1,0 +1,86 @@
+{
+  "$ref": "#/definitions/studio-selection",
+  "definitions": {
+    "studio-selection": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.selection/v1"
+        },
+        "beats": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "beat_id": {
+                "type": "string",
+                "pattern": "^B\\d{2}$"
+              },
+              "picks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "segment_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "reason": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
+                    }
+                  },
+                  "required": [
+                    "segment_id",
+                    "reason"
+                  ],
+                  "additionalProperties": false
+                },
+                "minItems": 1,
+                "maxItems": 8
+              },
+              "alternates": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "segment_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "reason": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
+                    }
+                  },
+                  "required": [
+                    "segment_id",
+                    "reason"
+                  ],
+                  "additionalProperties": false
+                },
+                "maxItems": 4
+              }
+            },
+            "required": [
+              "beat_id",
+              "picks",
+              "alternates"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "schema_version",
+        "beats"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

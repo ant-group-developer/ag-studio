@@ -1,0 +1,175 @@
+{
+  "$ref": "#/definitions/studio-brief",
+  "definitions": {
+    "studio-brief": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.brief/v1"
+        },
+        "production_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner_user_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "topic": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "folder_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "maxItems": 50
+        },
+        "target_seconds": {
+          "type": "number",
+          "minimum": 10,
+          "maximum": 1800
+        },
+        "aspect": {
+          "type": "string",
+          "enum": [
+            "16:9",
+            "9:16"
+          ]
+        },
+        "canvas": {
+          "type": "object",
+          "properties": {
+            "width": {
+              "type": "integer",
+              "minimum": 160,
+              "maximum": 7680
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 160,
+              "maximum": 7680
+            }
+          },
+          "required": [
+            "width",
+            "height"
+          ],
+          "additionalProperties": false
+        },
+        "fps": {
+          "type": "number",
+          "enum": [
+            25,
+            30
+          ]
+        },
+        "language": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 10
+        },
+        "voice": {
+          "type": "object",
+          "properties": {
+            "reference": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^library:[A-Za-z0-9._\\-/]+$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reference_text": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 2000
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "speed": {
+              "type": "number",
+              "minimum": 0.5,
+              "maximum": 2
+            }
+          },
+          "required": [
+            "reference",
+            "reference_text",
+            "speed"
+          ],
+          "additionalProperties": false
+        },
+        "music": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "track": {
+                  "type": "string",
+                  "pattern": "^library:[A-Za-z0-9._\\-/]+$"
+                },
+                "gain_db": {
+                  "type": "number",
+                  "minimum": -40,
+                  "maximum": 0
+                },
+                "ducking": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "track",
+                "gain_db",
+                "ducking"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "production_id",
+        "run_id",
+        "owner_user_id",
+        "title",
+        "topic",
+        "folder_ids",
+        "target_seconds",
+        "aspect",
+        "canvas",
+        "fps",
+        "language",
+        "voice",
+        "music"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

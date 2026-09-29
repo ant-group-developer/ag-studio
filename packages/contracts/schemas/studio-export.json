@@ -1,0 +1,76 @@
+{
+  "$ref": "#/definitions/studio-export",
+  "definitions": {
+    "studio-export": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.export/v1"
+        },
+        "production_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "duration_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "mp4",
+                  "srt",
+                  "vtt",
+                  "timeline"
+                ]
+              },
+              "key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "size_bytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "checksum": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "kind",
+              "key",
+              "size_bytes",
+              "checksum"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "watermarked": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema_version",
+        "production_id",
+        "run_id",
+        "duration_seconds",
+        "files",
+        "watermarked"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

@@ -1,0 +1,355 @@
+{
+  "$ref": "#/definitions/studio-timeline-v2",
+  "definitions": {
+    "studio-timeline-v2": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.timeline/v2"
+        },
+        "production_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "canvas": {
+          "type": "object",
+          "properties": {
+            "width": {
+              "type": "integer",
+              "minimum": 160,
+              "maximum": 7680
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 160,
+              "maximum": 7680
+            }
+          },
+          "required": [
+            "width",
+            "height"
+          ],
+          "additionalProperties": false
+        },
+        "fps": {
+          "type": "number",
+          "enum": [
+            25,
+            30
+          ]
+        },
+        "language": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 10
+        },
+        "beats": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "beat_id": {
+                "type": "string",
+                "pattern": "^B\\d{2}$"
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 300
+              }
+            },
+            "required": [
+              "beat_id",
+              "title"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "clips": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "clip_id": {
+                "type": "string",
+                "pattern": "^C\\d{3,4}$"
+              },
+              "beat_id": {
+                "type": "string",
+                "pattern": "^B\\d{2}$"
+              },
+              "segment_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "src_in": {
+                "type": "number",
+                "minimum": 0
+              },
+              "src_out": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "clip_id",
+              "beat_id",
+              "segment_id",
+              "src_in",
+              "src_out"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "narration": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "line_id": {
+                "type": "string",
+                "pattern": "^L\\d{3}$"
+              },
+              "beat_id": {
+                "type": "string",
+                "pattern": "^B\\d{2}$"
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1200
+              },
+              "audio": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9._\\-]+(\\/[A-Za-z0-9._\\-]+)*$"
+                      },
+                      "duration": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "duration"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "line_id",
+              "beat_id",
+              "text",
+              "audio"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "texts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "text_id": {
+                "type": "string",
+                "pattern": "^T\\d{3}$"
+              },
+              "beat_id": {
+                "type": "string",
+                "pattern": "^B\\d{2}$"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "title",
+                  "callout",
+                  "lower_third"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "offset": {
+                "type": "number",
+                "minimum": 0
+              },
+              "duration": {
+                "type": "number",
+                "minimum": 0.5,
+                "maximum": 20
+              },
+              "position": {
+                "type": "string",
+                "enum": [
+                  "top_left",
+                  "top_center",
+                  "top_right",
+                  "center",
+                  "bottom_left",
+                  "bottom_center",
+                  "bottom_right"
+                ]
+              }
+            },
+            "required": [
+              "text_id",
+              "beat_id",
+              "kind",
+              "text",
+              "offset",
+              "duration",
+              "position"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "music": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "track": {
+                  "type": "string",
+                  "pattern": "^library:[A-Za-z0-9._\\-/]+$"
+                },
+                "gain_db": {
+                  "type": "number",
+                  "minimum": -40,
+                  "maximum": 0
+                },
+                "ducking": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "track",
+                "gain_db",
+                "ducking"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_audio": {
+          "type": "object",
+          "properties": {
+            "muted": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "muted"
+          ],
+          "additionalProperties": false
+        },
+        "captions": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enabled"
+          ],
+          "additionalProperties": false
+        },
+        "segments": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "asset_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "start_ms": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "end_ms": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "caption": {
+                "type": "string"
+              },
+              "orientation": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "asset_id",
+              "start_ms",
+              "end_ms",
+              "caption",
+              "orientation"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "alternates": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "segment_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 300
+                }
+              },
+              "required": [
+                "segment_id",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "production_id",
+        "canvas",
+        "fps",
+        "language",
+        "beats",
+        "clips",
+        "narration",
+        "texts",
+        "music",
+        "source_audio",
+        "captions",
+        "segments",
+        "alternates"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

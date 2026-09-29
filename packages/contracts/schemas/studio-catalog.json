@@ -1,0 +1,170 @@
+{
+  "$ref": "#/definitions/studio-catalog",
+  "definitions": {
+    "studio-catalog": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.catalog/v1"
+        },
+        "production_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "folder_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "total_available": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "asset_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "start_ms": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "end_ms": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "duration_s": {
+                "type": "number",
+                "minimum": 0
+              },
+              "caption_vi": {
+                "type": "string"
+              },
+              "caption_en": {
+                "type": "string"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "keywords_vi": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "subjects": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "actions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "shot_size": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "camera_motion": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "time_of_day": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "setting": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "people_count": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "orientation": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "quality": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "usable": {
+                "type": "boolean"
+              },
+              "approved": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "asset_id",
+              "start_ms",
+              "end_ms",
+              "duration_s",
+              "caption_vi",
+              "caption_en",
+              "tags",
+              "keywords_vi",
+              "subjects",
+              "actions",
+              "shot_size",
+              "camera_motion",
+              "time_of_day",
+              "setting",
+              "people_count",
+              "orientation",
+              "quality",
+              "usable",
+              "approved"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "production_id",
+        "folder_ids",
+        "total_available",
+        "truncated",
+        "segments"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

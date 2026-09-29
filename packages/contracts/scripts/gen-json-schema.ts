@@ -13,6 +13,7 @@ import * as CM from "../src/composition.js";
 import * as D from "../src/distribution.js";
 import * as G from "../src/learning.js";
 import { EdlSchema } from "../src/edl.js";
+import * as S from "../src/studio.js";
 
 export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
   run: E.RunSchema, "stage-run": E.StageRunSchema, attempt: E.AttemptSchema, artifact: E.ArtifactSchema,
@@ -40,6 +41,9 @@ export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
   overlays: CM.OverlaysSchema, brand: CM.BrandProfileSchema, "music-track": CM.MusicTrackSchema,
   "caption-cue": CM.CaptionCueSchema, "text-event": CM.TextEventSchema, composition: CM.CompositionSchema,
   "render-report": CM.RenderReportSchema,
+  "studio-brief": S.StudioBriefSchema, "studio-catalog": S.StudioCatalogSchema, "studio-treatment": S.TreatmentSchema,
+  "studio-selection": S.SelectionSchema, "studio-narration": S.StudioNarrationSchema, "studio-timeline-v2": S.TimelineV2Schema,
+  "studio-export": S.StudioExportSchema,
 };
 
 export function toJsonSchema(name: string, schema: ZodTypeAny) {
