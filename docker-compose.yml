@@ -1,0 +1,67 @@
+# AG Studio trên node trung tâm (VPS Linux): api + worker (cùng studio.db trong volume) + web.
+# Cần checkout ag-farm nằm cạnh (../ag-farm): image build các package @ag-farm/* từ đó.
+# Chạy: cp .env.example .env && sửa .env && bash deploy.sh
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${LOG_MAX_SIZE:-50m}
+    max-file: '${LOG_MAX_FILE:-5}'
+
+x-app: &app
+  image: ag-studio-app:${TAG:-latest}
+  env_file:
+    - .env
+  volumes:
+    - studio-data:/data
+  extra_hosts:
+    - 'host.docker.internal:host-gateway'
+  logging: *logging
+  restart: unless-stopped
+
+services:
+  api:
+    <<: *app
+    build:
+      context: .
+      target: app
+      additional_contexts:
+        agfarm: ${AG_FARM_DIR:-../ag-farm}
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3100/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  # Worker migrate cùng studio.db với api: chỉ khởi động khi api đã chạy xong migration và healthy.
+  worker:
+    <<: *app
+    pull_policy: never
+    command: ['node', 'apps/worker/dist/main.js']
+    stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-120s}
+    depends_on:
+      api:
+        condition: service_healthy
+
+  web:
+    image: ag-studio-web:${TAG:-latest}
+    build:
+      context: .
+      target: web
+      additional_contexts:
+        agfarm: ${AG_FARM_DIR:-../ag-farm}
+      args:
+        VITE_STUDIO_API_URL: ''
+        VITE_AG_GO_API_URL: ${VITE_AG_GO_API_URL}
+        VITE_AUTH0_DOMAIN: ${VITE_AUTH0_DOMAIN}
+        VITE_AUTH0_CLIENT_ID: ${VITE_AUTH0_CLIENT_ID}
+        VITE_AUTH0_AUDIENCE: ${VITE_AUTH0_AUDIENCE}
+    ports:
+      - '${STUDIO_PORT:-3100}:80'
+    depends_on:
+      - api
+    logging: *logging
+    restart: unless-stopped
+
+volumes:
+  studio-data:

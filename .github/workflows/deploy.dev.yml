@@ -1,0 +1,73 @@
+name: Deploy development
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ag-studio-dev-deploy
+  cancel-in-progress: false
+
+jobs:
+  # Test chạy trên VPS cùng lúc deploy không được: repo cần ../ag-farm (package private, link:), nên CI
+  # checkout cả hai. Token AG_FARM_READ_TOKEN (quyền đọc repo ag-farm) đặt trong secrets của repo này.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ag-studio
+      - uses: actions/checkout@v4
+        with:
+          repository: ant-group-developer/ag-farm
+          token: ${{ secrets.AG_FARM_READ_TOKEN }}
+          path: ag-farm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - name: Build @ag-farm packages
+        working-directory: ag-farm
+        run: |
+          corepack prepare yarn@1.22.22 --activate
+          yarn install --frozen-lockfile
+          yarn workspace @ag-farm/protocol build
+          yarn workspace @ag-farm/owner-client build
+      - name: Install, build, test
+        working-directory: ag-studio
+        run: |
+          corepack pnpm install --frozen-lockfile
+          corepack pnpm -r run build
+          corepack pnpm test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST_DEV }}
+      VPS_USER: ${{ secrets.VPS_USER_DEV }}
+      VPS_PORT: ${{ secrets.VPS_PORT_DEV || '22' }}
+      APP_PATH: ${{ secrets.STUDIO_APP_PATH_DEV || '/www/wwwroot/dev/ag-studio' }}
+      FARM_PATH: ${{ secrets.FARM_APP_PATH_DEV || '/www/wwwroot/dev/ag-farm' }}
+    steps:
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY_DEV }}
+
+      - name: Deploy via SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" "
+            set -e
+            sudo git config --global --add safe.directory '$APP_PATH'
+            sudo git config --global --add safe.directory '$FARM_PATH'
+            sudo git -C '$FARM_PATH' pull --ff-only origin main
+            cd '$APP_PATH'
+            sudo git pull --ff-only origin main
+            TAG=\$(sudo git rev-parse --short HEAD)
+            sudo env TAG=\$TAG bash ./deploy.sh
+          "
