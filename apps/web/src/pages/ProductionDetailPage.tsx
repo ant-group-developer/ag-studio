@@ -2,6 +2,7 @@ import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Card, Descriptions, Tag, Typography } from "antd";
 import { useStudioClient } from "../api/studio-client";
+import { RunPanel } from "../modules/production/RunPanel";
 
 const { Title } = Typography;
 
@@ -25,7 +26,7 @@ export function ProductionDetailPage() {
     return <div>Đang tải...</div>;
   }
 
-  if (!production) {
+  if (!production || !productionId) {
     return <div>Không tìm thấy production.</div>;
   }
 
@@ -49,14 +50,16 @@ export function ProductionDetailPage() {
           <Descriptions.Item label="Trạng thái">
             <Tag>{production.status}</Tag>
           </Descriptions.Item>
-          <Descriptions.Item label="Tóm tắt" span={2}>
-            {production.brief}
+          <Descriptions.Item label="Chủ đề" span={2}>
+            {production.brief || "—"}
           </Descriptions.Item>
-          <Descriptions.Item label="Tỉ lệ khung hình">
-            {production.aspectRatio}
+          <Descriptions.Item label="Tỉ lệ khung hình">{production.aspect}</Descriptions.Item>
+          <Descriptions.Item label="Thời lượng mục tiêu">
+            {production.targetSeconds ? `${production.targetSeconds}s` : "—"}
           </Descriptions.Item>
+          <Descriptions.Item label="Ngôn ngữ">{production.language}</Descriptions.Item>
           <Descriptions.Item label="Canvas">
-            {production.canvasWidth} x {production.canvasHeight}
+            {production.canvas ? `${production.canvas.width} x ${production.canvas.height}` : "—"}
           </Descriptions.Item>
           <Descriptions.Item label="Nguồn" span={2}>
             {production.sources.join(", ") || "—"}
@@ -64,11 +67,7 @@ export function ProductionDetailPage() {
         </Descriptions>
       </Card>
 
-      <Card>
-        <div style={{ textAlign: "center", padding: "48px 0", color: "#999" }}>
-          Trình chỉnh sửa — GĐ4 (sắp ra mắt)
-        </div>
-      </Card>
+      <RunPanel productionId={productionId} targetSeconds={production.targetSeconds} />
     </div>
   );
 }

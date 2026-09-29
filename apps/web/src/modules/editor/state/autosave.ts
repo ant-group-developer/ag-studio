@@ -12,6 +12,8 @@ export interface AutosaverOptions {
   onSaved(revision: number, timeline: TimelineV2): void;
   onConflict(currentRevision: number): void;
   onError(message: string): void;
+  /** Every status change (the page shows "Đang lưu…" / "Đã lưu" from it). */
+  onStatus?(status: AutosaveStatus): void;
   delayMs?: number;
   /** Test seam. */
   timers?: { set(fn: () => void, ms: number): unknown; clear(handle: unknown): void };
@@ -32,12 +34,18 @@ export class Autosaver {
 
   get status(): AutosaveStatus { return this._status; }
 
+  private setStatus(s: AutosaveStatus): void {
+    if (s === this._status) return;
+    this._status = s;
+    this.o.onStatus?.(s);
+  }
+
   /** Call on every edit with the timeline to save and the revision it is based on. */
   schedule(baseRevision: number, timeline: TimelineV2): void {
     if (this._status === "conflict") return; // nothing is saved until the conflict is resolved
     this.latest = { base: baseRevision, timeline };
     if (this.handle !== null) this.timers.clear(this.handle);
-    this._status = this.inFlight ? "saving" : "pending";
+    this.setStatus(this.inFlight ? "saving" : "pending");
     this.handle = this.timers.set(() => { this.handle = null; void this.flush(); }, this.o.delayMs ?? 1500);
   }
 
@@ -48,20 +56,21 @@ export class Autosaver {
     const job = this.latest;
     if (!job || this._status === "conflict") return;
     this.latest = null;
-    this._status = "saving";
+    this.setStatus("saving");
     this.inFlight = (async () => {
       const r = await this.o.save(job.base, job.timeline).catch((e: unknown): SaveResult => ({ ok: false, conflict: false, error: e instanceof Error ? e.message : String(e) }));
       if (r.ok) {
-        this.o.onSaved(r.revision, job.timeline);
         // an edit that arrived meanwhile was based on the old revision: carry it onto the new one
         if (this.latest) this.latest = { base: r.revision, timeline: this.latest.timeline };
-        this._status = this.latest ? "pending" : "idle";
+        // status first: whoever reacts to onSaved reads the settled status
+        this.setStatus(this.latest ? "pending" : "idle");
+        this.o.onSaved(r.revision, job.timeline);
       } else if (r.conflict) {
-        this._status = "conflict";
+        this.setStatus("conflict");
         this.latest = null;
         this.o.onConflict(r.currentRevision);
       } else {
-        this._status = "error";
+        this.setStatus("error");
         if (!this.latest) this.latest = job; // keep it for the next attempt
         this.o.onError(r.error);
       }
@@ -72,7 +81,7 @@ export class Autosaver {
 
   /** After the page reloaded the newer revision (or chose to overwrite from it). */
   resolveConflict(): void {
-    this._status = "idle";
+    this.setStatus("idle");
   }
 
   dispose(): void {

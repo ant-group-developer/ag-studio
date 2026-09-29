@@ -12,6 +12,7 @@ import { TeamsPage } from "./pages/TeamsPage";
 import { TeamDetailPage } from "./pages/TeamDetailPage";
 import { ProductionsPage } from "./pages/ProductionsPage";
 import { ProductionDetailPage } from "./pages/ProductionDetailPage";
+import { EditorPage } from "./modules/editor/EditorPage";
 
 const { Sider, Content } = Layout;
 
@@ -67,6 +68,7 @@ function AppLayout() {
             <Route path="/teams/:teamId" element={<TeamDetailPage />} />
             <Route path="/teams/:teamId/productions" element={<ProductionsPage />} />
             <Route path="/productions/:productionId" element={<ProductionDetailPage />} />
+            <Route path="/productions/:productionId/editor" element={<EditorPage />} />
           </Routes>
         </Content>
       </Layout>

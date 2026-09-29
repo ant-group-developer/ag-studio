@@ -71,6 +71,21 @@ describe("Autosaver", () => {
     expect(calls).toEqual([1, 2]);
   });
 
+  it("reports every status change, and is already idle when onSaved runs", async () => {
+    const statuses: string[] = [];
+    let statusSeenBySaved = "";
+    const saver: Autosaver = new Autosaver({
+      save: async (base) => ({ ok: true, revision: base + 1 }),
+      onSaved: () => { statusSeenBySaved = saver.status; },
+      onConflict: () => {}, onError: () => {},
+      onStatus: (s) => statuses.push(s),
+    });
+    saver.schedule(1, withText("x"));
+    await saver.flush();
+    expect(statuses).toEqual(["pending", "saving", "idle"]);
+    expect(statusSeenBySaved).toBe("idle");
+  });
+
   it("a network error keeps the edit and retries it on the next flush", async () => {
     const { saver, calls, events } = setup([{ ok: false, conflict: false, error: "offline" }]);
     saver.schedule(2, withText("x"));

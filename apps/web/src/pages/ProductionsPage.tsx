@@ -7,9 +7,11 @@ import {
   Modal,
   Form,
   Input,
+  InputNumber,
   Select,
   TreeSelect,
   Typography,
+  Tag,
 } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import { useAuth0 } from "@auth0/auth0-react";
@@ -26,6 +28,15 @@ const ASPECT_RATIOS = [
   { value: "9:16", label: "9:16" },
 ];
 
+interface CreateProductionForm {
+  title: string;
+  brief: string;
+  targetSeconds: number;
+  aspect: "16:9" | "9:16";
+  language: string;
+  folderIds: string[];
+}
+
 export function ProductionsPage() {
   const { teamId } = useParams<{ teamId: string }>();
   const client = useStudioClient();
@@ -33,12 +44,7 @@ export function ProductionsPage() {
   const navigate = useNavigate();
   const { getAccessTokenSilently } = useAuth0();
   const [open, setOpen] = useState(false);
-  const [form] = Form.useForm<{
-    title: string;
-    brief: string;
-    aspectRatio: string;
-    folderIds: string[];
-  }>();
+  const [form] = Form.useForm<CreateProductionForm>();
 
   const { data: productions = [], isLoading } = useQuery({
     queryKey: ["productions", teamId],
@@ -67,8 +73,20 @@ export function ProductionsPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: CreateProductionData) =>
-      client.createProduction(teamId!, data),
+    mutationFn: async (values: CreateProductionForm) => {
+      const data: CreateProductionData = {
+        title: values.title,
+        brief: values.brief,
+        targetSeconds: values.targetSeconds,
+        aspect: values.aspect,
+        language: values.language,
+      };
+      const production = await client.createProduction(teamId!, data);
+      if (values.folderIds?.length) {
+        await client.setProductionSources(production.id, values.folderIds);
+      }
+      return production;
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["productions", teamId] });
       setOpen(false);
@@ -89,22 +107,24 @@ export function ProductionsPage() {
       title: "Trạng thái",
       dataIndex: "status",
       key: "status",
+      render: (status: string) => <Tag>{status}</Tag>,
     },
     {
       title: "Tỉ lệ khung hình",
-      dataIndex: "aspectRatio",
-      key: "aspectRatio",
+      dataIndex: "aspect",
+      key: "aspect",
+    },
+    {
+      title: "Thời lượng mục tiêu",
+      dataIndex: "targetSeconds",
+      key: "targetSeconds",
+      render: (v: number | null) => (v ? `${v}s` : "—"),
     },
   ];
 
   const handleOk = () => {
     form.validateFields().then((values) => {
-      createMutation.mutate({
-        title: values.title,
-        brief: values.brief,
-        aspectRatio: values.aspectRatio,
-        folderIds: values.folderIds ?? [],
-      });
+      createMutation.mutate(values);
     });
   };
 
@@ -142,7 +162,11 @@ export function ProductionsPage() {
         confirmLoading={createMutation.isPending}
         width={600}
       >
-        <Form form={form} layout="vertical">
+        <Form
+          form={form}
+          layout="vertical"
+          initialValues={{ aspect: "16:9", language: "vi", targetSeconds: 60 }}
+        >
           <Form.Item
             name="title"
             label="Tiêu đề"
@@ -150,15 +174,25 @@ export function ProductionsPage() {
           >
             <Input />
           </Form.Item>
-          <Form.Item name="brief" label="Tóm tắt">
+          <Form.Item name="brief" label="Chủ đề">
             <Input.TextArea rows={3} />
           </Form.Item>
           <Form.Item
-            name="aspectRatio"
+            name="targetSeconds"
+            label="Thời lượng mục tiêu (giây)"
+            rules={[{ required: true, message: "Vui lòng nhập thời lượng mục tiêu" }]}
+          >
+            <InputNumber min={10} max={1800} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item
+            name="aspect"
             label="Tỉ lệ khung hình"
             rules={[{ required: true, message: "Vui lòng chọn tỉ lệ khung hình" }]}
           >
             <Select options={ASPECT_RATIOS} />
+          </Form.Item>
+          <Form.Item name="language" label="Ngôn ngữ">
+            <Input />
           </Form.Item>
           <Form.Item name="folderIds" label="Chọn thư mục nguồn">
             <TreeSelect
