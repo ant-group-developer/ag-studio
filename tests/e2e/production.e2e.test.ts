@@ -25,6 +25,8 @@ import { FakeS3Server } from "./fake-s3.js";
 const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..", "..");
 const AG_FARM_DIR = resolve(ROOT, "..", "ag-farm");
 const AG_RENDER_DIR = resolve(ROOT, "..", "ag-render-worker");
+/** E2E_RENDER_WORKER_ENTRY: run a release bundle (ag-render-worker scripts/release.mjs) instead of its dist/. */
+const RENDER_WORKER_ENTRY = process.env.E2E_RENDER_WORKER_ENTRY ?? join(AG_RENDER_DIR, "dist/main.js");
 const EXE = process.platform === "win32" ? ".exe" : "";
 const FFMPEG = process.env.FFMPEG_PATH ?? resolve(AG_RENDER_DIR, "node_modules", "ffmpeg-static", "ffmpeg") + EXE;
 const FFPROBE = process.env.FFPROBE_PATH ?? resolve(AG_RENDER_DIR, "node_modules", "ffprobe-static", "bin", process.platform, process.arch, "ffprobe") + EXE;
@@ -218,7 +220,7 @@ function startFakeTtsWorker(token: string): () => void {
 
 beforeAll(async () => {
   if (!isE2E) return;
-  for (const f of [FFMPEG, FFPROBE, join(AG_FARM_DIR, "apps/api/dist/main.js"), join(AG_RENDER_DIR, "dist/main.js"), join(ROOT, "apps/api/dist/main.js"), join(ROOT, "apps/worker/dist/main.js")]) {
+  for (const f of [FFMPEG, FFPROBE, join(AG_FARM_DIR, "apps/api/dist/main.js"), RENDER_WORKER_ENTRY, join(ROOT, "apps/api/dist/main.js"), join(ROOT, "apps/worker/dist/main.js")]) {
     if (!existsSync(f)) throw new Error(`missing ${f} (build it first)`);
   }
   testDir = join(tmpdir(), `studio-prod-e2e-${randomUUID()}`);
@@ -305,7 +307,7 @@ beforeAll(async () => {
     "cache:", `  dir: "${join(testDir, "rw-cache").replace(/\\/g, "/")}"`, "  max_gb: 5",
     "extra:", `  ffmpeg_path: "${FFMPEG.replace(/\\/g, "/")}"`, `  ffprobe_path: "${FFPROBE.replace(/\\/g, "/")}"`,
   ].join("\n"));
-  spawnProc(process.execPath, [join(AG_RENDER_DIR, "dist/main.js"), "--config", workerYaml], { FFMPEG_PATH: FFMPEG, FFPROBE_PATH: FFPROBE, NODE_ENV: "production" }, "render-worker");
+  spawnProc(process.execPath, [RENDER_WORKER_ENTRY, "--config", workerYaml], { FFMPEG_PATH: FFMPEG, FFPROBE_PATH: FFPROBE, NODE_ENV: "production" }, "render-worker");
   stopTts = startFakeTtsWorker(ttsToken);
 }, 240_000);
 
