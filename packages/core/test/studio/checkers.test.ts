@@ -36,6 +36,12 @@ describe("studio checkers through the Checker interface", () => {
     expect(r).toEqual({ verdict: "fail", evidence: { reason: `missing input ${STUDIO_TYPES.catalog}` } });
   });
 
+  it("a gate waiting for a person (deferred result) is skipped, not failed", async () => {
+    const input = workspace(inputs, {});
+    (input.result as { outcome?: string }).outcome = "deferred";
+    expect((await selectionValidChecker.check(input)).verdict).toBe("skip");
+  });
+
   it("timeline-valid blocks a timeline with an unvoiced line", async () => {
     const audio = new Map(narration().lines.map((l) => [l.line_id, { key: `audio/${l.line_id}.wav`, duration: 1.5 }]));
     const t = buildStudioTimeline({ brief: brief(), treatment: treatment(), catalog: catalog().segments, selection: selection(), narration: narration(), audio });

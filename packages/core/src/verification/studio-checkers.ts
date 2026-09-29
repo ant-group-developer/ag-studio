@@ -62,6 +62,9 @@ function documentChecker(id: string, outputType: string, validate: (raw: unknown
   return {
     id, version: "1.0.0",
     async check(input) {
+      // A gate parked for a person has produced nothing yet: there is nothing to judge (and "fail" here
+      // would show up in the web as an error under a gate that is simply waiting).
+      if (input.result.outcome === "deferred") return { verdict: "skip", evidence: { reason: "gate waiting for input" } };
       const p = outputPath(input, outputType);
       if (!p || !existsSync(p)) return { verdict: "fail", evidence: { reason: `no ${outputType} output` } };
       let raw: unknown;

@@ -16,6 +16,11 @@ export default defineConfig({
     testTimeout: 300_000,  // 5 min – real renders
     hookTimeout: 120_000,  // 2 min – infra boot
   }),
+  // Every E2E file boots (and tears down) the same Postgres container: never run two at once.
+  test: {
+    ...sharedConfig({ include: ["**/*.e2e.test.ts"], testTimeout: 300_000, hookTimeout: 120_000 }).test,
+    fileParallelism: false,
+  },
   resolve: {
     alias: {
       ...workspaceAliases,
