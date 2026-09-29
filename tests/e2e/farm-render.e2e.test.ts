@@ -1008,10 +1008,14 @@ describe.skipIf(!isE2E)("farm E2E: studio.render_preview", () => {
 
   it("output MP4 has correct dimensions", async () => {
     const s3 = makeS3Client();
+    // the render job wrote under its own output prefix: productions/<id>/jobs/<stage>/<attempt>/out/
+    const listed = await s3.send(new ListObjectsV2Command({ Bucket: S3_BUCKET, Prefix: `productions/${productionId}/jobs/` }));
+    const videoKey = (listed.Contents ?? []).map((o) => o.Key!).find((k) => k.endsWith("/out/renders/1/preview.mp4"));
+    expect(videoKey, "preview.mp4 should sit in the job's out/ prefix").toBeTruthy();
     const resp = await s3.send(
       new GetObjectCommand({
         Bucket: S3_BUCKET,
-        Key: `productions/${productionId}/renders/1/preview.mp4`,
+        Key: videoKey!,
       }),
     );
     expect(resp.Body, "preview.mp4 should exist in S3").toBeTruthy();
