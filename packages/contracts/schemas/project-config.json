@@ -434,6 +434,28 @@
                   "type": "number",
                   "exclusiveMinimum": 0,
                   "default": 60
+                },
+                "canvas": {
+                  "type": "object",
+                  "properties": {
+                    "width": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "height": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "required": [
+                    "width",
+                    "height"
+                  ],
+                  "additionalProperties": false,
+                  "default": {
+                    "width": 3840,
+                    "height": 2160
+                  }
                 }
               },
               "additionalProperties": false,

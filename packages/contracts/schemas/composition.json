@@ -12,12 +12,12 @@
           "type": "object",
           "properties": {
             "width": {
-              "type": "number",
-              "const": 3840
+              "type": "integer",
+              "exclusiveMinimum": 0
             },
             "height": {
-              "type": "number",
-              "const": 2160
+              "type": "integer",
+              "exclusiveMinimum": 0
             },
             "fps": {
               "type": "integer"

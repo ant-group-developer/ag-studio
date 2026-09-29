@@ -137,10 +137,22 @@ describe("MusicTrackSchema", () => {
 });
 
 describe("CompositionSchema", () => {
-  it("rejects an output.width other than 3840", () => {
-    const bad = compositionSample();
-    bad.output.width = 1920;
-    expect(CompositionSchema.safeParse(bad).success).toBe(false);
+  it("accepts any positive integer output.width (canvas is now configurable)", () => {
+    const s1920 = compositionSample();
+    s1920.output.width = 1920;
+    expect(CompositionSchema.safeParse(s1920).success).toBe(true);
+    const s7680 = compositionSample();
+    s7680.output.width = 7680;
+    expect(CompositionSchema.safeParse(s7680).success).toBe(true);
+  });
+
+  it("rejects a non-positive output.width", () => {
+    const badZero = compositionSample();
+    badZero.output.width = 0;
+    expect(CompositionSchema.safeParse(badZero).success).toBe(false);
+    const badNeg = compositionSample();
+    badNeg.output.width = -1;
+    expect(CompositionSchema.safeParse(badNeg).success).toBe(false);
   });
 });
 
@@ -150,9 +162,9 @@ const MINIMAL_PROJECT_CONFIG = {
 };
 
 describe("ProjectConfigSchema media.render", () => {
-  it("an old project.yaml (no media.render) still parses with the new defaults", () => {
+  it("an old project.yaml (no media.render) still parses with the new defaults including canvas", () => {
     const parsed = ProjectConfigSchema.parse(MINIMAL_PROJECT_CONFIG);
-    expect(parsed.media.render).toEqual({ codec: "h264", encoder: "auto", fps: "auto", cache_max_gb: 60 });
+    expect(parsed.media.render).toEqual({ codec: "h264", encoder: "auto", fps: "auto", cache_max_gb: 60, canvas: { width: 3840, height: 2160 } });
   });
 
   it("rejects an fps that is not one of the allowed frame rates or \"auto\"", () => {

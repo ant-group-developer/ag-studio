@@ -18,7 +18,7 @@ export function buildStageRequest(d: RequestDeps, p: { run: Run; stageRun: Stage
   const { run, stageRun } = p;
   const cfg = run.effective_config_snapshot;
   const exec = stageRun.executor;
-  const stage_config = { ...stageRun.stage_config, ...(exec.type === "script" ? { __script: exec.script } : exec.type === "agent" ? { __skill: exec.skill, __brief: exec.brief } : { __brief: exec.brief }) };
+  const stage_config = { ...stageRun.stage_config, ...(exec.type === "script" ? { __script: exec.script } : exec.type === "agent" ? { __skill: exec.skill, __brief: exec.brief } : exec.type === "farm" ? { __farm_job: exec.job } : { __brief: exec.brief }) };
   const content = run.content_id ? d.store.getContentItem(run.content_id) : undefined;
   const source_items = (content?.source_ids ?? []).map((id) => d.store.getSourceItem(id)).filter((s): s is SourceItem => !!s)
     .map((s) => ({ source_id: s.source_id, uri: s.uri, checksum: s.checksum, mime_type: s.mime_type, duration_seconds: s.duration_seconds }));

@@ -249,6 +249,12 @@ importers:
 
   packages/executors:
     dependencies:
+      '@ag-farm/owner-client':
+        specifier: link:../../../ag-farm/packages/owner-client
+        version: link:../../../ag-farm/packages/owner-client
+      '@ag-farm/protocol':
+        specifier: link:../../../ag-farm/packages/protocol
+        version: link:../../../ag-farm/packages/protocol
       '@harness/contracts':
         specifier: workspace:*
         version: link:../contracts

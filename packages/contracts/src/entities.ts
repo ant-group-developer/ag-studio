@@ -27,6 +27,8 @@ export const executorRefSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("script"), script: z.string().min(1) }).strict(),
   z.object({ type: z.literal("agent"), skill: z.string().min(1), brief: z.string().default("") }).strict(),
   z.object({ type: z.literal("gate"), brief: z.string().default("") }).strict(),
+  /** Delegates the stage to ag-farm. `job` is the ag-farm job type (e.g. "studio.tts"). */
+  z.object({ type: z.literal("farm"), job: z.string().min(1) }).strict(),
 ]);
 
 // ---- control plane entities ----
