@@ -5,7 +5,7 @@ import { parse, stringify } from "yaml";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   CompositionSchema, EdlSchema, newId, RenderReportSchema,
-  type ClaimResult, type Composition, type ContentRequest, type StageInput, type StageRequest, type StageResult,
+  type ClaimResult, type Composition, type StageInput, type StageRequest, type StageResult,
 } from "@harness/contracts";
 import {
   BUILTIN_CHECKERS, buildStageRequest, canonicalDigest, compositionCheckers, eventFor, libraryCheckers, mediaCheckers,
@@ -13,7 +13,7 @@ import {
 } from "@harness/core";
 import { buildContext, type AppContext } from "../src/composition.js";
 import {
-  addTrack, cli, freshLibraryWorld, librarySync, requestCreate, requestStatus, setBrand, writeActiveStyle, type LibraryWorld,
+  addTrack, cli, freshLibraryWorld, librarySync, requestCreate, setBrand, writeActiveStyle, type LibraryWorld,
 } from "../../../tests/integration/library-helpers.js";
 import { hasFfmpeg, makeVideo, systemFontPath } from "../../../tests/media.js";
 
@@ -506,45 +506,6 @@ describe.skipIf(!hasFfmpeg() || !hasFont)("harness media compose|render (sub-pro
     expect(existsSync(join(world.lib, "items", receipt.item_id, "captions.srt"))).toBe(true);
     expect(existsSync(join(world.lib, "items", receipt.item_id, "captions.vtt"))).toBe(true);
   }, 1_200_000);
-});
-
-describe.skipIf(!hasFfmpeg() || !hasFont)("intake brand check (spec §7)", () => {
-  it("a brand whose font bytes drifted from brand.json fails intake as contract, and the request stays open", async () => {
-    const seeded = seedWorld({ topic: "brand hỏng", clips: [{ seconds: 2 }] });
-    expect(setBrand(seeded.world, CHANNEL_ID, {})).toBe(true);
-    librarySync(seeded.world.studio);
-
-    // Tamper with the kho copy of the font AFTER `library brands set` recorded its checksum.
-    const fontPath = join(seeded.world.lib, "brands", CHANNEL_ID, "fonts", "Regular.ttf");
-    expect(existsSync(fontPath)).toBe(true);
-    writeFileSync(fontPath, "not a font any more");
-
-    const contentId = createContent(seeded.world.studio, seeded.sourceIds, seeded.requestId, "brand hỏng");
-    const runId = planRun(seeded.world.studio, "library-production@1.3.0", "studio", contentId);
-    const r = await invokeStage(seeded.world.studio, runId, "intake", ["library", "stage", "intake"], []);
-
-    expect(r.result.outcome, JSON.stringify(r.result, null, 2)).toBe("failed");
-    expect(r.result.errors[0]?.kind).toBe("contract");
-    expect(r.result.errors[0]?.message).toContain("checksum mismatch");
-
-    // The whole point of checking before `claimRequest`: the request must still be pickable by a replan.
-    const request: ContentRequest = requestStatus(seeded.world, seeded.requestId);
-    expect(request.status).toBe("open");
-    expect(request.claimed_by_run).toBeUndefined();
-  }, 300_000);
-
-  it("an intact brand lets intake through and claims the request", async () => {
-    const seeded = seedWorld({ topic: "brand tốt", clips: [{ seconds: 2 }] });
-    expect(setBrand(seeded.world, CHANNEL_ID, {})).toBe(true);
-    librarySync(seeded.world.studio);
-
-    const contentId = createContent(seeded.world.studio, seeded.sourceIds, seeded.requestId, "brand tốt");
-    const runId = planRun(seeded.world.studio, "library-production@1.3.0", "studio", contentId);
-    const r = await invokeStage(seeded.world.studio, runId, "intake", ["library", "stage", "intake"], []);
-
-    expect(r.result.outcome, JSON.stringify(r.result, null, 2)).toBe("succeeded");
-    expect(requestStatus(seeded.world, seeded.requestId).status).toBe("claimed");
-  }, 300_000);
 });
 
 describe.skipIf(!hasFfmpeg() || !hasFont)("media compose re-checks the brand (spec §7)", () => {

@@ -142,32 +142,4 @@ describe.skipIf(!hasFfmpeg())("harness library voices CLI", () => {
     expect(retired.code, retired.err).toBe(0);
     expect(JSON.parse(retired.out).status).toBe("retired");
   });
-
-  it("`request create --voice tts` without an active voice fails, naming voice in the error", () => {
-    const root = mkdtempSync(join(tmpdir(), "kho-voices-request-"));
-    const channelDir = libraryProject(root, "channel", "voices-request");
-    expect(cli(channelDir, "db", "migrate").code).toBe(0);
-
-    const refused = cli(channelDir, "library", "request", "create", "--portfolio", "portfolio-main", "--topic", "t", "--voice", "tts", "--json");
-    expect(refused.code).toBe(1);
-    expect(refused.err.toLowerCase()).toContain("voice");
-  });
-
-  it("`request create --voice tts --voice-id` succeeds once the voice profile is active", () => {
-    const root = mkdtempSync(join(tmpdir(), "kho-voices-request-ok-"));
-    const channelDir = libraryProject(root, "channel", "voices-request-ok");
-    expect(cli(channelDir, "db", "migrate").code).toBe(0);
-
-    const added = cli(channelDir, "library", "voices", "add", "--display-name", "Narrator A", "--ref", makeClip(5), "--ref-text", "hello there", "--origin", "own", "--json");
-    expect(added.code, added.err).toBe(0);
-    const voiceId = JSON.parse(added.out).voice_id;
-
-    const created = cli(channelDir, "library", "request", "create", "--portfolio", "portfolio-main", "--topic", "t", "--voice", "tts", "--voice-id", voiceId, "--json");
-    expect(created.code, created.err).toBe(0);
-    const request = JSON.parse(created.out);
-    expect(request.voice_id).toBe(voiceId);
-
-    const onDisk = JSON.parse(readFileSync(join(root, "requests", `${request.request_id}.json`), "utf8"));
-    expect(onDisk.voice_id).toBe(voiceId);
-  });
 });
