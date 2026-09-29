@@ -80,6 +80,16 @@ describe("CliAgentRuntime", () => {
     expect(res.errors[0]!.details.code).toBe("EXECUTOR_FAILED");
   });
 
+  it("rate-limit: fails transient with code RATE_LIMITED, not EXECUTOR_FAILED", async () => {
+    process.env.FAKE_AGENT_MODE = "rate-limit";
+    const { ws, req } = makeWorkspace();
+    const runtime = new CliAgentRuntime({ runtime: "claude", skillsDir, argv: [process.execPath, fixture, "{prompt}"] });
+    const res = await runtime.runTask({ skill: "channel-package", brief: "b", request: req, workspaceDir: ws }, { ...ctx, workspaceDir: ws });
+    expect(res.outcome).toBe("failed");
+    expect(res.errors[0]!.kind).toBe("transient");
+    expect(res.errors[0]!.details.code).toBe("RATE_LIMITED");
+  });
+
   it("env-dump: never leaks a HARNESS_SECRET_* key or value into the stdout log", async () => {
     process.env.FAKE_AGENT_MODE = "env-dump";
     process.env.HARNESS_SECRET_X_Y = "s3cret";

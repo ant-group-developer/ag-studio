@@ -8,6 +8,8 @@
 //              runtime must have stripped those from this process' env before spawning it)
 //   long-title write like "ok" but with a 150-char title (over the skill's 100-char limit)
 //   hang       never exit; the runtime is expected to kill this process once its deadline passes
+//   rate-limit print "You've hit your monthly Usage Rate Limit" to stderr and exit 1; the runtime
+//              must detect this as RATE_LIMITED (not EXECUTOR_FAILED) via RATE_LIMIT_PATTERN
 //   style-active  like "ok", but a `style` output with no existing `style` input defaults to status "active"
 //                 instead of "draft" (see buildStyle below)
 //
@@ -74,6 +76,12 @@ if (failStage && failStage === request.stage_key) process.exit(0);
 
 if (mode === "no-output") process.exit(0);
 if (mode === "crash") process.exit(1);
+if (mode === "rate-limit") {
+  // Simulate the Claude CLI subscription rate-limit message. The runtime's RATE_LIMIT_PATTERN
+  // (/you've hit your … limit/i) must match this output; exit non-zero so the runtime sees a failure.
+  process.stderr.write("You've hit your monthly Usage Rate Limit. Please wait until your limit resets.\n");
+  process.exit(1);
+}
 if (mode === "hang") {
   setInterval(() => {}, 1 << 30); // keep the event loop alive: a bare pending promise does not by itself
   await new Promise(() => {}); // deliberately never resolves; only an external kill ends this process

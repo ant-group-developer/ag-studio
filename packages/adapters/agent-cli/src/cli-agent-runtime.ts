@@ -26,8 +26,12 @@ const FAKE_AGENT_TEST_ENV = ["FAKE_AGENT_MODE", "FAKE_REVIEW_MODE", "FAKE_AGENT_
 
 export const RUNTIME_COMMANDS: Record<AgentCliRuntimeKind, { argv: string[]; env_passthrough: string[] }> = {
   claude: {
+    // File-based (agentic) mode: claude reads agent-prompt.md via PROMPT_POINTER and writes output files.
     argv: ["claude", "-p", "{prompt}", "--output-format", "json", "--permission-mode", "acceptEdits", "--allowedTools", "Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Bash(ffprobe:*)"],
-    env_passthrough: ["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR", ...FAKE_AGENT_TEST_ENV],
+    // CLAUDE_CODE_OAUTH_TOKEN (subscription) is the preferred auth method. When ANTHROPIC_API_KEY is also
+    // present, the CLI uses the key first and ignores OAuth — so we intentionally do NOT pass the API key
+    // here; studio workflows use OAuth tokens only.
+    env_passthrough: ["CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", ...FAKE_AGENT_TEST_ENV],
   },
   codex: {
     argv: ["codex", "exec", "--full-auto", "--json", "{prompt}"],
@@ -35,7 +39,19 @@ export const RUNTIME_COMMANDS: Record<AgentCliRuntimeKind, { argv: string[]; env
   },
 };
 
+/** Argv for studio (structured-output) skills: no file tools, prompt via stdin, JSON schema output.
+ *  `{schema}` is replaced with the JSON-encoded schema string. `{max_turns}` and `{model}` are replaced
+ *  with their configured values. The `--no-session-persistence` flag prevents cross-run state leakage. */
+export const STUDIO_ARGV = ["claude", "-p", "--output-format", "json", "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--max-turns", "{max_turns}", "--model", "{model}"];
+
+/** In studio mode, the prompt + catalog go to the agent via stdin (not via agent-prompt.md + Read).
+ *  This avoids the 100k+ token catalog having to be written to disk and read back in a single Read call,
+ *  and removes the file-system surface for prompt injection via visible_text/caption. */
 export const PROMPT_POINTER = "Read the file ./agent-prompt.md in the current directory and follow it exactly. Work only inside this directory.";
+
+/** `You've hit your … limit` message that the Claude CLI emits when the subscription rate-limit is reached.
+ *  The exact wording varies; we match the stable infix. */
+const RATE_LIMIT_PATTERN = /you'?ve hit your\b.*\blimit\b/i;
 
 export interface CliAgentRuntimeOptions {
   runtime: AgentCliRuntimeKind;
@@ -43,6 +59,16 @@ export interface CliAgentRuntimeOptions {
   argv?: string[];
   redact?: (s: string) => string;
   baseEnv?: Record<string, string | undefined>;
+  /** When set, the runtime operates in structured-output (studio) mode:
+   *  • prompt is sent via stdin rather than written to agent-prompt.md
+   *  • `--tools ""` / `--no-session-persistence` / `--output-format json` are used
+   *  • the `structured_output` field in the JSON response is written to the first expected output file
+   *  • rate-limit detection is active and failures are tagged with code RATE_LIMITED */
+  structured?: {
+    jsonSchema?: string;   // JSON-encoded schema string passed via --json-schema
+    model?: string;        // model to request (default: claude-opus-4-5)
+    maxTurns?: number;     // default: 3
+  };
 }
 
 /** Vars every child CLI process may see regardless of runtime, beyond its own `env_passthrough`. */
@@ -104,11 +130,35 @@ export class CliAgentRuntime implements AgentRuntime {
     const skillPath = join(this.opts.skillsDir, task.skill, "SKILL.md");
     if (!existsSync(skillPath)) return failed("contract", `skill not found: ${task.skill}`, { skill: task.skill, skillPath });
     const skillContent = readFileSync(skillPath, "utf8");
-    const promptContent = `# Skill\n${skillContent}\n\n# Brief\n${task.brief}\n\n# Stage request\nĐọc stage-request.json cùng thư mục. Ghi output vào output/ theo skill.\n`;
-    writeFileSync(join(task.workspaceDir, "agent-prompt.md"), redact(promptContent));
 
-    const rawArgv = this.opts.argv ?? RUNTIME_COMMANDS[this.opts.runtime].argv;
-    const argv = rawArgv.map((a) => (a === "{prompt}" ? PROMPT_POINTER : a));
+    const isStructured = !!this.opts.structured;
+    let stdinPayload: string | null = null;
+
+    if (isStructured) {
+      // Studio (structured-output) mode: prompt + brief sent via stdin; no agent-prompt.md written.
+      // Tools are disabled on the CLI side, so catalog content embedded in the brief cannot trigger tool calls.
+      stdinPayload = `# Skill\n${skillContent}\n\n# Brief\n${task.brief}\n`;
+    } else {
+      // Agentic (file-based) mode: write agent-prompt.md; claude reads it via PROMPT_POINTER.
+      const promptContent = `# Skill\n${skillContent}\n\n# Brief\n${task.brief}\n\n# Stage request\nĐọc stage-request.json cùng thư mục. Ghi output vào output/ theo skill.\n`;
+      writeFileSync(join(task.workspaceDir, "agent-prompt.md"), redact(promptContent));
+    }
+
+    let rawArgv: string[];
+    if (this.opts.argv) {
+      rawArgv = this.opts.argv;
+    } else if (isStructured) {
+      const s = this.opts.structured!;
+      const model = s.model ?? "claude-opus-4-5";
+      const maxTurns = String(s.maxTurns ?? 3);
+      rawArgv = STUDIO_ARGV.map((a) => a === "{model}" ? model : a === "{max_turns}" ? maxTurns : a);
+      if (s.jsonSchema) rawArgv = [...rawArgv, "--json-schema", s.jsonSchema];
+    } else {
+      rawArgv = RUNTIME_COMMANDS[this.opts.runtime].argv;
+    }
+    const argv = isStructured
+      ? rawArgv  // studio mode: no {prompt} substitution; -p reads from stdin
+      : rawArgv.map((a) => (a === "{prompt}" ? PROMPT_POINTER : a));
     const [cmd, ...cmdArgs] = argv;
     if (!cmd) return failed("contract", "empty argv for agent CLI", { runtime: this.opts.runtime });
 
@@ -129,7 +179,12 @@ export class CliAgentRuntime implements AgentRuntime {
 
     type SpawnResult = { code: number | null; timedOut: boolean; spawnError: Error | null };
     const { code, timedOut, spawnError } = await new Promise<SpawnResult>((resolve) => {
-      const child = spawn(cmd, cmdArgs, { cwd: task.workspaceDir, env, stdio: ["ignore", "pipe", "pipe"] });
+      // Studio mode reads the prompt from stdin; agentic mode ignores stdin entirely.
+      const stdinMode = stdinPayload !== null ? "pipe" : "ignore";
+      const child = spawn(cmd, cmdArgs, { cwd: task.workspaceDir, env, stdio: [stdinMode, "pipe", "pipe"] });
+      if (stdinPayload !== null) {
+        child.stdin!.end(stdinPayload, "utf8");
+      }
       let timedOut = false;
       let settled = false;
       const onAbort = () => child.kill();
@@ -142,8 +197,8 @@ export class CliAgentRuntime implements AgentRuntime {
         ctx.signal?.removeEventListener("abort", onAbort);
         resolve(result);
       };
-      child.stdout.on("data", (d) => { const s = String(d); stdoutBuf += s; forward("info", s); });
-      child.stderr.on("data", (d) => forward("warn", String(d)));
+      child.stdout!.on("data", (d) => { const s = String(d); stdoutBuf += s; forward("info", s); });
+      child.stderr!.on("data", (d) => forward("warn", String(d)));
       // Without this handler, a missing binary (ENOENT) or similar spawn failure throws an unhandled
       // "error" event and crashes the whole process instead of resolving the promise.
       child.on("error", (e) => settle({ code: null, timedOut, spawnError: e }));
@@ -157,7 +212,32 @@ export class CliAgentRuntime implements AgentRuntime {
     // set up (doctor's `agent:runtime` row says so up front), not a blip worth retrying the stage over.
     if (spawnError) return failed("contract", `agent CLI failed to start: ${spawnError.message}`, { code: "EXECUTOR_FAILED", reason: spawnError.message });
     if (timedOut) return failed("transient", "agent CLI exceeded deadline", { code: "EXECUTOR_TIMEOUT", timeout_ms: deadlineMs });
+
+    // Rate-limit detection: the Claude CLI prints "You've hit your … limit" and exits non-zero when the
+    // subscription usage limit is reached. Tag it with RATE_LIMITED so the planner can treat it specially
+    // (no retry deduction; wait until reset). Check the combined log since the message may appear on stderr.
+    if (code !== 0 && RATE_LIMIT_PATTERN.test(combinedLog)) {
+      return failed("transient", "Claude subscription rate limit reached", { code: "RATE_LIMITED", exit_code: code });
+    }
     if (code !== 0) return failed("transient", `agent CLI exited with code ${code}`, { code: "EXECUTOR_FAILED", exit_code: code });
+
+    // Structured mode: parse `structured_output` from the JSON response and write it to the first expected
+    // output file. The checker then reads from that file exactly as it would for a file-based stage.
+    if (isStructured) {
+      const eo = request.expected_outputs[0];
+      if (eo?.name) {
+        let structuredOutput: unknown = undefined;
+        try {
+          const parsed = JSON.parse(stdoutBuf.trim()) as Record<string, unknown>;
+          structuredOutput = parsed.structured_output;
+        } catch { /* not valid JSON -- fall through to the missing-output failure below */ }
+        if (structuredOutput !== undefined) {
+          const outDir = join(task.workspaceDir, "output");
+          mkdirSync(outDir, { recursive: true });
+          writeFileSync(join(outDir, eo.name), JSON.stringify(structuredOutput));
+        }
+      }
+    }
 
     const outputs: StageOutput[] = [];
     for (const eo of request.expected_outputs) {
