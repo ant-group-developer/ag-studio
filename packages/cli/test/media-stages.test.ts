@@ -12,13 +12,13 @@ import {
   mimeTypesFor, sha256File, stageDefinitionDigest, stageDefinitionFor, Verifier, type VerifyOutcome,
 } from "@harness/core";
 import { buildContext, type AppContext } from "../src/composition.js";
-import { cli, freshLibraryWorld, librarySync, setResourceCapacity, writeActiveStyle, type LibraryWorld } from "../../../tests/integration/library-helpers.js";
+import { cli, freshLibraryWorld, setResourceCapacity, type LibraryWorld } from "../../../tests/integration/library-helpers.js";
 import { hasFfmpeg, makeVideo } from "../../../tests/media.js";
 
 // Sub-project 5A Task 8: the four built-in `media index|transcribe|tts|fit-edl` stages, driven the same way
 // `learning-stages.test.ts`/`publish-stage.test.ts` drive SP3/SP3B's own built-in stages -- a real
 // run/content (via `plan`+`enqueue`), a real `store.claim()` per stage, a hand-built `stage-request.json`, a
-// spawned `harness media <name>` (or `harness library stage intake` / `harness media watch`) subprocess, and
+// spawned `harness media <name>` (or `harness media watch`) subprocess, and
 // `Controller.commit()` back in-process to unblock the next stage's claim. `survey-source`/`plan-edit` are
 // agent stages with no real skill exercised here (that is `fake-agent-outputs.test.ts`'s job) -- they are
 // fabricated the same way `learning-stages.test.ts` fabricates `propose-topics`: claimed for real, their
@@ -182,6 +182,12 @@ async function fabricateAndCommit(project: string, runId: string, stageKey: stri
   await commitResult(project, runId, claim, workspaceDir, result);
 }
 
+/** `intake` was the built-in `library stage intake` GĐ3 removed; like the agent stages, its `brief.json` is
+ * fabricated so the DAG reaches the media stages. `voice: none`, matching the content's own library_brief. */
+async function fabricateIntake(project: string, runId: string): Promise<void> {
+  await fabricateAndCommit(project, runId, "intake", [{ relPath: "brief.json", type: "brief", value: briefJson({ voice: "none", target_duration_seconds: [3, 30] }) }]);
+}
+
 function planRun(project: string, workflow: string, profile: string, contentId: string, noReuse = false): string {
   const p = cli(project, ["plan", "--workflow", workflow, "--profile", profile, "--content", contentId, "--json", ...(noReuse ? ["--no-reuse"] : [])]);
   if (p.code !== 0) throw new Error(`plan failed: ${p.err}\n${p.out}`);
@@ -235,8 +241,6 @@ describe.skipIf(!hasFfmpeg())("harness media index|transcribe|tts|fit-edl (sub-p
 
   beforeAll(async () => {
     world = freshLibraryWorld({ media: false });
-    writeActiveStyle(world.lib, STYLE_ID);
-    librarySync(world.studio);
     voiceId = seedVoiceProfile(world.studio);
 
     const rawDir = join(world.studio, "raw");
@@ -266,7 +270,7 @@ describe.skipIf(!hasFfmpeg())("harness media index|transcribe|tts|fit-edl (sub-p
 
     runId = planRun(world.studio, "library-production@1.2.0", "studio", contentId);
 
-    await runAndCommit(world.studio, runId, "intake", ["library", "stage", "intake"]);
+    await fabricateIntake(world.studio, runId);
     const indexResult = await runAndCommit(world.studio, runId, "media-index", ["media", "index"]);
     indexSnap = indexResult.workspaceSnapshot;
     const transcribeResult = await runAndCommit(world.studio, runId, "media-transcribe", ["media", "transcribe"], [
@@ -348,7 +352,7 @@ describe.skipIf(!hasFfmpeg())("harness media index|transcribe|tts|fit-edl (sub-p
     let otherRun: string;
     try {
       otherRun = planRun(world.studio, "library-production@1.2.0", "studio", contentId, true);
-      await runAndCommit(world.studio, otherRun, "intake", ["library", "stage", "intake"]);
+      await fabricateIntake(world.studio, otherRun);
       index = await runAndCommit(world.studio, otherRun, "media-index", ["media", "index"]);
       // `watch-source` depends on `media-transcribe` too, so it has to run before the stage is claimable
       await runAndCommit(world.studio, otherRun, "media-transcribe", ["media", "transcribe"], [

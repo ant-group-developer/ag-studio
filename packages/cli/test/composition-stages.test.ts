@@ -13,12 +13,12 @@ import {
 } from "@harness/core";
 import { buildContext, type AppContext } from "../src/composition.js";
 import {
-  addTrack, cli, freshLibraryWorld, librarySync, requestCreate, setBrand, writeActiveStyle, type LibraryWorld,
+  addTrack, cli, freshLibraryWorld, seedRequest, setBrand, type LibraryWorld,
 } from "../../../tests/integration/library-helpers.js";
 import { hasFfmpeg, makeVideo, systemFontPath } from "../../../tests/media.js";
 
-// Sub-project 5B Task 8: the two built-in composition stages (`media compose`, `media render`), the brand
-// check `intake` gained (spec §7) and `library-export`'s captions directory -- driven exactly the way
+// Sub-project 5B Task 8: the two built-in composition stages (`media compose`, `media render`) -- driven
+// exactly the way
 // `media-stages.test.ts` drives 5A's four stages: a real run/content (via `plan` + `enqueue`), a real
 // `store.claim()` per stage, a hand-built `stage-request.json`, a spawned `harness media <name>` subprocess,
 // the REAL `Verifier` over the workflow's own `required_checks`, and `Controller.commit()` to unblock the
@@ -249,14 +249,11 @@ function briefJson(requestId: string, topic = "chợ nổi"): Record<string, unk
   return { request_id: requestId, topic, style_id: STYLE_ID, style_revision: 1, voice: "none", language: "vi", target_duration_seconds: [1, 60] };
 }
 
-/** A studio+channel world with a style, a request and `n` ingested clips, ready to plan a 1.3.0 run on. */
+/** A studio+channel world with a request and `n` ingested clips, ready to plan a 1.3.0 run on. */
 function seedWorld(o: { topic: string; clips: { seconds: number; size?: string }[] }): { world: LibraryWorld; requestId: string; sourceIds: string[] } {
   const world = freshLibraryWorld({ media: false });
   setRenderConfig(world.studio, { encoder: "cpu", fps: 25 });
-  writeActiveStyle(world.lib, STYLE_ID);
-  librarySync(world.studio);
-  const requestId = requestCreate(world, { topic: o.topic, style: STYLE_ID, duration: [1, 60], language: "vi" });
-  librarySync(world.studio);
+  const requestId = seedRequest(world, { topic: o.topic, channelId: CHANNEL_ID });
 
   const rawDir = join(world.studio, "raw");
   mkdirSync(rawDir, { recursive: true });
@@ -268,6 +265,12 @@ function seedWorld(o: { topic: string; clips: { seconds: number; size?: string }
     return (JSON.parse(r.out) as { source_id: string }).source_id;
   });
   return { world, requestId, sourceIds };
+}
+
+/** `intake` was the built-in `library stage intake` GĐ3 removed; like the agent stages, its `brief.json` (the
+ * content's own library_brief) is fabricated so the DAG reaches the media stages. */
+async function fabricateIntake(project: string, runId: string, requestId: string, topic: string): Promise<void> {
+  await fabricateAndCommit(project, runId, "intake", [{ relPath: "brief.json", type: "brief", value: briefJson(requestId, topic) }]);
 }
 
 function createContent(project: string, sourceIds: string[], requestId: string, title: string): string {
@@ -296,16 +299,15 @@ describe.skipIf(!hasFfmpeg() || !hasFont)("harness media compose|render (sub-pro
     requestId = seeded.requestId;
 
     // Brand + one music track, both written by the CHANNEL role (the only role allowed to write under
-    // brands/** and music/**), then mirrored into the studio DB. The brand names the track, so the track
-    // has to exist first.
+    // brands/** and music/**); `addTrack` mirrors the track into the studio DB. The brand names the track,
+    // so the track has to exist first.
     addTrack(world, "calm-01", { mood: ["calm"] });
     expect(setBrand(world, CHANNEL_ID, { withLogo: true, tracks: ["calm-01"], subtitles: "burn-in" })).toBe(true);
-    librarySync(world.studio);
 
     const contentId = createContent(world.studio, seeded.sourceIds, requestId, "chợ nổi");
     runId = planRun(world.studio, "library-production@1.3.0", "studio", contentId);
 
-    await runAndCommit(world.studio, runId, "intake", ["library", "stage", "intake"]);
+    await fabricateIntake(world.studio, runId, requestId, "chợ nổi");
     indexSnap = (await runAndCommit(world.studio, runId, "media-index", ["media", "index"])).workspaceSnapshot;
     const transcribeSnap = (await runAndCommit(world.studio, runId, "media-transcribe", ["media", "transcribe"], [
       { type: "shots", relPath: "input/shots/shots.json", src: join(indexSnap, "output", "shots.json") },
@@ -474,8 +476,6 @@ describe.skipIf(!hasFfmpeg() || !hasFont)("harness media compose|render (sub-pro
     expect(existsSync(join(first.workspaceDir, "output", "tmp"))).toBe(false);
 
     expectAllRequiredPassed(await verifyStage(world.studio, runId, "media-render", first.workspaceDir, first.result));
-    // Taken before `commitResult`, which moves `output/` into the artifact store.
-    const renderSnap = snapshotOutputs(first.workspaceDir);
 
     // Second render of the same composition, same claim: every mezzanine is a hit in the content-addressed
     // cache under `<data_root>/cache/mezz`.
@@ -486,25 +486,6 @@ describe.skipIf(!hasFfmpeg() || !hasFont)("harness media compose|render (sub-pro
     expect(report2.segments.rendered).toBe(0);
 
     await commitResult(world.studio, runId, first.claim, first.workspaceDir, first.result);
-
-    // library-export: the `captions` INPUT is now a directory, so the kho item carries captions.srt/.vtt
-    // instead of the captions.json the older releases declared (and no stage ever wrote).
-    const thumbDir = mkdtempSync(join(tmpdir(), "thumbs-"));
-    writeFileSync(join(thumbDir, "thumbnail-1.png"), "fake thumbnail bytes");
-    const exportInputs: InputSpec[] = [
-      { type: "brief", relPath: "input/brief/brief.json", src: briefPath },
-      { type: "episode_video", relPath: "input/episode/full-episode.mp4", src: join(renderSnap, "output", "full-episode.mp4") },
-      { type: "thumbnail_set", relPath: "input/thumbnails/thumbnails", kind: "directory", src: thumbDir },
-      { type: "edit_plan", relPath: "input/plan/edit-plan.json", src: join(planEditSnap, "output", "edit-plan.json") },
-      { type: "captions", relPath: "input/captions/captions", kind: "directory", src: join(composeSnap, "output", "captions") },
-    ];
-    const exported = await invokeStage(world.studio, runId, "library-export", ["library", "stage", "export"], exportInputs, {}, forceClaim(world.studio, runId, "library-export"));
-    expect(exported.result.outcome, JSON.stringify(exported.result, null, 2)).toBe("succeeded");
-    const receipt = JSON.parse(readFileSync(join(exported.workspaceDir, "output", "export-receipt.json"), "utf8")) as { item_id: string; files: { path: string }[] };
-    expect(receipt.files.map((f) => f.path)).toContain("captions.srt");
-    expect(receipt.files.map((f) => f.path)).toContain("captions.vtt");
-    expect(existsSync(join(world.lib, "items", receipt.item_id, "captions.srt"))).toBe(true);
-    expect(existsSync(join(world.lib, "items", receipt.item_id, "captions.vtt"))).toBe(true);
   }, 1_200_000);
 });
 
@@ -512,11 +493,10 @@ describe.skipIf(!hasFfmpeg() || !hasFont)("media compose re-checks the brand (sp
   it("a brand whose font file has gone missing from the kho fails the stage as contract", async () => {
     const seeded = seedWorld({ topic: "brand mất font", clips: [{ seconds: 4 }] });
     expect(setBrand(seeded.world, CHANNEL_ID, {})).toBe(true);
-    librarySync(seeded.world.studio);
 
     const contentId = createContent(seeded.world.studio, seeded.sourceIds, seeded.requestId, "brand mất font");
     const runId = planRun(seeded.world.studio, "library-production@1.3.0", "studio", contentId);
-    await runAndCommit(seeded.world.studio, runId, "intake", ["library", "stage", "intake"]);
+    await fabricateIntake(seeded.world.studio, runId, seeded.requestId, "brand mất font");
     const indexSnap = (await runAndCommit(seeded.world.studio, runId, "media-index", ["media", "index"])).workspaceSnapshot;
     const shots = JSON.parse(readFileSync(join(indexSnap, "output", "shots.json"), "utf8")) as { sources: { source_id: string }[] };
     const sourceId = shots.sources[0]!.source_id;
@@ -553,15 +533,14 @@ describe.skipIf(!hasFfmpeg())("plan-edit: overlays-valid fails the run exactly l
   it("a too-dense overlays.json and a broken edl.json both fail the stage and the run identically", async () => {
     const seeded = seedWorld({ topic: "replan", clips: [{ seconds: 4 }] });
 
-    /** Runs a fresh 1.3.0 run (on its own request, since `intake` claims one per run) up to `plan-edit`,
+    /** Runs a fresh 1.3.0 run (on its own request) up to `plan-edit`,
      * commits the given plan-edit outputs through the REAL verifier, and reports which required check
      * failed plus the resulting stage/run states. */
     async function outcomeFor(label: string, planEdit: { edl: unknown; overlays: unknown }): Promise<{ failed: string[]; stageState: string; runState: string }> {
-      const requestId = requestCreate(seeded.world, { topic: label, style: STYLE_ID, duration: [1, 60], language: "vi" });
-      librarySync(seeded.world.studio);
+      const requestId = seedRequest(seeded.world, { topic: label, channelId: CHANNEL_ID });
       const contentId = createContent(seeded.world.studio, seeded.sourceIds, requestId, label);
       const runId = planRun(seeded.world.studio, "library-production@1.3.0", "studio", contentId);
-      await runAndCommit(seeded.world.studio, runId, "intake", ["library", "stage", "intake"]);
+      await fabricateIntake(seeded.world.studio, runId, requestId, label);
       const indexSnap = (await runAndCommit(seeded.world.studio, runId, "media-index", ["media", "index"])).workspaceSnapshot;
       const transcribeSnap = (await runAndCommit(seeded.world.studio, runId, "media-transcribe", ["media", "transcribe"], [
         { type: "shots", relPath: "input/shots/shots.json", src: join(indexSnap, "output", "shots.json") },
@@ -638,7 +617,7 @@ describe.skipIf(!hasFfmpeg())("media compose with no brand at all", () => {
     const contentId = createContent(seeded.world.studio, seeded.sourceIds, seeded.requestId, "không brand");
     const runId = planRun(seeded.world.studio, "library-production@1.3.0", "studio", contentId);
 
-    await runAndCommit(seeded.world.studio, runId, "intake", ["library", "stage", "intake"]);
+    await fabricateIntake(seeded.world.studio, runId, seeded.requestId, "không brand");
     const indexSnap = (await runAndCommit(seeded.world.studio, runId, "media-index", ["media", "index"])).workspaceSnapshot;
     const shots = JSON.parse(readFileSync(join(indexSnap, "output", "shots.json"), "utf8")) as { sources: { source_id: string }[] };
     const sourceId = shots.sources[0]!.source_id;
