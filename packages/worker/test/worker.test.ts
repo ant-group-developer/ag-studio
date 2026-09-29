@@ -48,6 +48,20 @@ async function drain(w: ReturnType<typeof makeWorld>, max = 20) {
   throw new Error("did not drain");
 }
 
+/** An executor that parks until `release()`. `started` resolves once the worker has really handed it the stage,
+ * i.e. after the async workspace setup -- which a fixed sleep only usually outlasts under full-suite load. */
+function parkedExecutor(): { executor: Executor; started: Promise<void>; release: () => void } {
+  let onStart!: () => void;
+  const started = new Promise<void>((r) => { onStart = r; });
+  let resolveResult: ((r: StageResult) => void) | undefined;
+  const executor: Executor = { version: "hang@1", execute: () => new Promise<StageResult>((resolve) => { resolveResult = resolve; onStart(); }) };
+  const release = () => {
+    if (!resolveResult) throw new Error("parked executor was never started");
+    resolveResult({ schema_version: "harness.stage-result/v1", attempt_id: "attempt_01J00000000000000000000000", outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [] });
+  };
+  return { executor, started, release };
+}
+
 describe("Worker", () => {
   it("runs the sample workflow end to end with fake adapters", async () => {
     const w = makeWorld();
@@ -75,12 +89,11 @@ describe("Worker", () => {
   });
   it("a worker that dies mid-stage loses its lease; a second worker finishes; the first cannot commit", async () => {
     const clock = new FixedClock("2026-09-11T00:00:00.000Z");
-    let release!: () => void;
-    const hanging: Executor = { version: "hang@1", execute: () => new Promise<StageResult>((resolve) => { release = () => resolve({ schema_version: "harness.stage-result/v1", attempt_id: "attempt_01J00000000000000000000000", outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [] }); }) };
+    const { executor: hanging, started, release } = parkedExecutor();
     const dead = makeWorld({ scriptExecutor: hanging, owner: "dead", clock });
     const run = planAndEnqueue(dead);
     const pending = dead.worker.runOnce();
-    await new Promise((r) => setTimeout(r, 50));
+    await started;
     clock.advance(121); // past the run-scoped lease (cartoon snapshot: 120s)
     const alive = makeWorld({ owner: "alive", clock, dir: dead.dir });
     await drain(alive);
@@ -160,13 +173,12 @@ describe("Worker", () => {
   });
   it("honours the run-scoped lease_seconds from the effective config snapshot", async () => {
     const clock = new FixedClock("2026-09-11T00:00:00.000Z");
-    let release!: () => void;
-    const hanging: Executor = { version: "hang@1", execute: () => new Promise<StageResult>((resolve) => { release = () => resolve({ schema_version: "harness.stage-result/v1", attempt_id: "attempt_01J00000000000000000000000", outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [] }); }) };
+    const { executor: hanging, started, release } = parkedExecutor();
     const w = makeWorld({ scriptExecutor: hanging, clock });
     const run = planAndEnqueue(w);
     expect(w.store.getRun(run.run_id)?.effective_config_snapshot.lease_seconds).toBe(120); // cartoon profile, harness default is 90
     const pending = w.worker.runOnce();
-    await new Promise((r) => setTimeout(r, 50));
+    await started;
     const produce = w.store.listStageRuns(run.run_id).find((s) => s.stage_key === "produce")!;
     expect(w.store.getLease(produce.stage_run_id)?.expires_at).toBe(addSeconds(clock.now(), 120));
     release();
