@@ -271,9 +271,11 @@ describe.skipIf(!hasFfmpeg())("watchVideos (needs ffmpeg)", () => {
     );
     const elapsed = Date.now() - start;
 
-    expect(elapsed).toBeLessThan(4000);
+    // The child sleeps 30 s, so this only bounds "killed, not waited out"; it also carries the frame
+    // extraction, which under full-suite ffmpeg load alone can take several seconds.
+    expect(elapsed).toBeLessThan(15_000);
     const v = index.videos[0];
     expect(v.transcript).toBeNull();
-    expect(v.transcript_error).toBeTruthy();
+    expect(v.transcript_error).toMatch(/ETIMEDOUT|timed out/);
   });
 });
