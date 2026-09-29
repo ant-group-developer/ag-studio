@@ -5,15 +5,15 @@ import { setLineAudio, setLineText, replaceClipSegment, moveBeat, timelineIssues
 import { SelectionSchema, TimelineV2Schema, TreatmentSchema, type TimelineV2 } from "@harness/contracts";
 import {
   createStudioWorker, latestRevision, pollEditorJob, readStageDocument, RevisionConflictError, runView, saveTimeline, startLineTts,
-  startPreview, startRun, StudioRunError, submitStudioGate,
+  cancelRun, resumeRunFrom, retryStage, startPreview, startRun, StudioRunError, submitStudioGate,
 } from "../src/index.js";
 import { FAKE_CLAUDE, fakeFarm, fakeFootage, ROOT, seedProduction, world } from "./helpers.js";
 
 const silent = { info() {}, warn() {}, error() {}, debug() {}, child() { return silent; } } as never;
 
-async function drive(worker: { runOnce(): Promise<string> }, until: () => boolean, max = 60): Promise<void> {
+async function drive(worker: { runOnce(): Promise<string> }, until: () => boolean, max = 60, show?: () => unknown): Promise<void> {
   for (let i = 0; i < max && !until(); i++) await worker.runOnce();
-  if (!until()) throw new Error("workflow did not reach the expected state");
+  if (!until()) throw new Error(`workflow did not reach the expected state${show ? `: ${JSON.stringify(show())}` : ""}`);
 }
 
 describe("ag-studio-production@1.0.0 end to end (fake Claude, fake ag-go, fake farm)", () => {
@@ -113,6 +113,47 @@ describe("ag-studio-production@1.0.0 end to end (fake Claude, fake ag-go, fake f
     expect(final.payload.revision).toBe(3);
     expect(view().stages.every((s) => s.state === "SUCCEEDED")).toBe(true);
     expect(runId).toBe(view().run_id);
+  });
+
+  it("a run that ended at render-final resumes from there, keeping Claude's documents and the gates", async () => {
+    const w = world();
+    const prod = seedProduction(w.db);
+    const farm = fakeFarm(w.bucket, { badFinalRenders: 1 });
+    const worker = createStudioWorker({
+      core: w.core, db: w.db, dbPath: w.dbPath, bucket: w.bucket, footage: fakeFootage(), farm: farm as never, owner: "t", logger: silent, farmPollMs: 1,
+      claude: { skillsDir: join(ROOT, "skills"), argv: [process.execPath, FAKE_CLAUDE], baseEnv: { ...process.env, FAKE_STUDIO_MODE: "ok" } },
+    });
+    const view = () => runView(w.core, w.db, prod);
+    const show = () => [view().state, view().stages.map((s) => [s.key, s.state, s.attempts, s.error?.slice(0, 160)])];
+    const { runId: first } = startRun(w.core, w.db, prod);
+    await drive(worker, () => view().waiting_gate === "approve-treatment");
+    await submitStudioGate(w.core, w.db, prod, "approve-treatment", readStageDocument(w.core, w.db, prod, "treatment", "treatment.json"));
+    await drive(worker, () => view().waiting_gate === "shot-board");
+    await submitStudioGate(w.core, w.db, prod, "shot-board", readStageDocument(w.core, w.db, prod, "select-shots", "selection.json"));
+    await drive(worker, () => view().waiting_gate === "edit");
+    await submitStudioGate(w.core, w.db, prod, "edit");
+    // a broken manifest parks render-final for a person; they give up on this run
+    await drive(worker, () => view().stages.find((s) => s.key === "render-final")!.state === "WAITING_HUMAN", 60, show);
+    expect(() => resumeRunFrom(w.core, w.db, prod, "render-final")).toThrow(StudioRunError); // the run is still live
+    cancelRun(w.core, w.db, prod);
+    await drive(worker, () => view().state === "CANCELLED", 60, show);
+    // the old way out only works on a live run
+    expect(() => retryStage(w.core, w.db, prod, "render-final")).toThrow(StudioRunError);
+    const treatmentBefore = readStageDocument(w.core, w.db, prod, "treatment", "treatment.json");
+
+    const { runId, reused } = resumeRunFrom(w.core, w.db, prod, "render-final");
+    expect(runId).not.toBe(first);
+    expect(reused).toEqual(expect.arrayContaining(["intake", "treatment", "approve-treatment", "select-shots", "shot-board", "narration", "tts", "build-timeline", "edit"]));
+    expect(reused).not.toContain("render-final");
+    expect(() => resumeRunFrom(w.core, w.db, prod, "render-final")).toThrow(StudioRunError); // the new run is live
+    await drive(worker, () => view().state === "SUCCEEDED", 60, show);
+
+    // nothing before render-final ran again: no Claude attempt, no gate waited, one TTS job in all
+    for (const s of view().stages.filter((x) => x.key !== "render-final" && x.key !== "export")) expect(s.attempts, s.key).toBe(0);
+    expect(readStageDocument(w.core, w.db, prod, "treatment", "treatment.json")).toEqual(treatmentBefore);
+    expect([...farm.jobs.values()].map((j) => j.type)).toEqual(["studio.tts", "studio.render_final", "studio.render_final"]);
+    const exp = readStageDocument(w.core, w.db, prod, "export", "export.json") as { files: { kind: string }[] };
+    expect(exp.files.map((f) => f.kind)).toContain("mp4");
   });
 
   it("a selection that is still invalid after the repair round parks select-shots for a person", async () => {

@@ -41,7 +41,8 @@ export function fakeFootage(count = 16, seconds = 8): FootageCatalogSource & { c
  * ag-farm owner API stand-in that runs a job the moment it is submitted: TTS writes one WAV per line
  * (0.2 s per word) + `tts.json`; a render writes `output` + `render.json` with the composition's length.
  */
-export function fakeFarm(bucket: MemoryBucket) {
+export function fakeFarm(bucket: MemoryBucket, opts: { badFinalRenders?: number } = {}) {
+  let badFinals = opts.badFinalRenders ?? 0;
   const jobs = new Map<string, { id: string; type: string; payload: Record<string, unknown>; status: string; result: unknown; error: unknown }>();
   let n = 0;
   return {
@@ -68,7 +69,9 @@ export function fakeFarm(bucket: MemoryBucket) {
         const video = Buffer.from(`fake-mp4-${id}`);
         bucket.objects.set(`${out}${String(p.output)}`, video);
         const canvas = p.canvas as { width: number; height: number };
-        bucket.objects.set(`${out}render.json`, Buffer.from(JSON.stringify({
+        // `badFinalRenders`: a final render whose manifest breaks the schema (a contract failure, not retried)
+        const broken = req.type === "studio.render_final" && badFinals > 0 && badFinals-- > 0;
+        bucket.objects.set(`${out}render.json`, Buffer.from(JSON.stringify(broken ? { schema: "ag.studio.render/v1" } : {
           schema: "ag.studio.render/v1", production_id: prod, revision: p.revision, output: p.output, width: canvas.width, height: canvas.height,
           duration_s: comp.total_seconds, size_bytes: video.length, watermarked: req.type !== "studio.render_final", sources: [], warnings: [],
         })));

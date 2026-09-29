@@ -30,9 +30,12 @@ function stageTagColor(state: string): string {
 function StageRow({
   stage,
   productionId,
+  runEnded,
 }: {
   stage: StageView;
   productionId: string;
+  /** The run is FAILED or CANCELLED: a stage can only be picked up again in a new run. */
+  runEnded: boolean;
 }) {
   const client = useStudioClient();
   const queryClient = useQueryClient();
@@ -41,12 +44,31 @@ function StageRow({
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["run", productionId] }),
   });
 
-  const canRetry = !stage.is_gate && (stage.state === "FAILED" || stage.state === "WAITING_HUMAN");
+  const resumeMutation = useMutation({
+    mutationFn: () => client.resumeRun(productionId, stage.key),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["run", productionId] }),
+  });
+
+  const canRetry = !runEnded && !stage.is_gate && (stage.state === "FAILED" || stage.state === "WAITING_HUMAN");
+  // Stages before this one keep what the ended run accepted (Claude's documents, the gates people submitted).
+  const canResume = runEnded && !stage.is_gate;
 
   return (
     <List.Item
       actions={
-        canRetry
+        canResume
+          ? [
+              <Button
+                key="resume"
+                size="small"
+                icon={<ReloadOutlined />}
+                loading={resumeMutation.isPending}
+                onClick={() => resumeMutation.mutate()}
+              >
+                Chạy lại từ bước này
+              </Button>,
+            ]
+          : canRetry
           ? [
               <Button
                 key="retry"
@@ -71,8 +93,9 @@ function StageRow({
           </Space>
         }
         description={
-          stage.error || stage.failed_checks.length ? (
+          stage.error || stage.failed_checks.length || resumeMutation.error ? (
             <div>
+              {resumeMutation.error && <div><Text type="danger">{String((resumeMutation.error as Error).message)}</Text></div>}
               {stage.error && <Text type="danger">{stage.error}</Text>}
               {stage.failed_checks.map((c) => (
                 <div key={c.check_id}>
@@ -174,7 +197,9 @@ export function RunPanel({
         <List
           dataSource={run.stages}
           rowKey="key"
-          renderItem={(stage) => <StageRow stage={stage} productionId={productionId} />}
+          renderItem={(stage) => (
+            <StageRow stage={stage} productionId={productionId} runEnded={run.state === "FAILED" || run.state === "CANCELLED"} />
+          )}
         />
       </Card>
 

@@ -72,7 +72,11 @@ function stageOf(core: StudioEngineCore, runId: string, key: string): StageRun {
 }
 
 function acceptedOutputs(core: StudioEngineCore, s: StageRun) {
-  return core.store.listArtifacts({ stage_run_id: s.stage_run_id, status: "ACCEPTED" }).map((a) => ({ a, name: basename(fileURLToPath(a.uri)) }));
+  // a stage kept from an earlier run (resumeRunFrom) owns no artifacts: it points at that run's
+  const artifacts = s.reused_artifact_ids
+    ? s.reused_artifact_ids.map((id) => core.store.getArtifact(id)).filter((a): a is NonNullable<typeof a> => !!a && a.status === "ACCEPTED")
+    : core.store.listArtifacts({ stage_run_id: s.stage_run_id, status: "ACCEPTED" });
+  return artifacts.map((a) => ({ a, name: basename(fileURLToPath(a.uri)) }));
 }
 
 export function runView(core: StudioEngineCore, db: StudioDb, productionId: string): RunView {
@@ -151,6 +155,59 @@ export function retryStage(core: StudioEngineCore, db: StudioDb, productionId: s
     core.store.updateStageRun({ ...fresh, ready_at: core.clock.now(), not_before: core.clock.now() });
     if (run.state === "WAITING") core.planner.advance(runId);
   });
+}
+
+/**
+ * "Chạy lại từ bước này" after the run ended (FAILED or CANCELLED): a new run of the production in which
+ * every stage that is neither `fromStage` nor depends on it keeps what the previous run accepted -- Claude's
+ * documents and the gates people already submitted included -- so only `fromStage` and what follows it run
+ * again. The kept stages point at the previous run's artifacts (`reused_artifact_ids`, the harness' cache
+ * mechanism), so the stages that run read them as their inputs as usual.
+ */
+export function resumeRunFrom(core: StudioEngineCore, db: StudioDb, productionId: string, fromStage: string): { runId: string; reused: string[] } {
+  const oldRunId = currentRunId(db, productionId);
+  const old = core.store.getRun(oldRunId);
+  if (!old) throw new StudioRunError("not_found", `run ${oldRunId} not found`);
+  if (!isTerminal("run", old.state)) throw new StudioRunError("conflict", `run is ${old.state}; retry the stage instead`, { state: old.state });
+  const oldStages = core.store.listStageRuns(oldRunId);
+  if (!oldStages.some((s) => s.stage_key === fromStage)) throw new StudioRunError("not_found", `run ${oldRunId} has no stage ${fromStage}`);
+
+  // fromStage and everything downstream of it run again
+  const rerun = new Set([fromStage]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const s of oldStages) {
+      if (rerun.has(s.stage_key)) continue;
+      if ([...s.depends_on, ...s.depends_on_optional].some((d) => rerun.has(d))) { rerun.add(s.stage_key); grew = true; }
+    }
+  }
+  const keep = new Map<string, string[]>();
+  for (const s of oldStages) {
+    if (rerun.has(s.stage_key)) continue;
+    if (s.state !== "SUCCEEDED") {
+      throw new StudioRunError("invalid", `bước ${s.stage_key} chưa xong ở lần chạy trước (${s.state}); chạy lại từ ${s.stage_key}`, { stage: s.stage_key, state: s.state });
+    }
+    const ids = s.reused_artifact_ids ?? core.store.listArtifacts({ stage_run_id: s.stage_run_id, status: "ACCEPTED" }).map((a) => a.artifact_id);
+    keep.set(s.stage_key, ids);
+  }
+
+  const run = core.planner.plan({
+    workflow: core.workflows(STUDIO_WORKFLOW), profile: core.profiles(STUDIO_PROFILE), harness: core.harness,
+    projectId: STUDIO_PROJECT_ID, portfolioId: STUDIO_PORTFOLIO_ID, reuse: false,
+  });
+  core.store.transaction(() => {
+    for (const s of core.store.listStageRuns(run.run_id)) {
+      const ids = keep.get(s.stage_key);
+      if (!ids) continue;
+      core.store.transition("stage_run", s.stage_run_id, "PENDING", "SUCCEEDED",
+        eventFor(run, s, null, "stage.reused", "info", { artifacts: ids, from_run: oldRunId, resumed_from: fromStage, by: "studio-api" }));
+      core.store.updateStageRun({ ...core.store.getStageRun(s.stage_run_id)!, reused_artifact_ids: ids });
+    }
+  });
+  // as in startRun: the production must point at the run before any of its stages can be claimed
+  db.run("UPDATE productions SET run_id = ?, status = 'in_progress', updated_at = ? WHERE id = ?", [run.run_id, new Date().toISOString(), productionId]);
+  core.planner.enqueue(run.run_id);
+  return { runId: run.run_id, reused: [...keep.keys()] };
 }
 
 export function cancelRun(core: StudioEngineCore, db: StudioDb, productionId: string): void {

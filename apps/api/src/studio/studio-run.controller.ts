@@ -14,6 +14,7 @@ import { Request } from 'express';
 import {
   cancelRun,
   readStageDocument,
+  resumeRunFrom,
   retryStage,
   runView,
   startRun,
@@ -83,6 +84,14 @@ export class StudioRunController {
       retryStage(this.engine.core, this.engine.db, id, stage);
       return { ok: true };
     });
+  }
+
+  /** After a FAILED/CANCELLED run: a new run that keeps every stage before `stage` and runs `stage` onwards. */
+  @Post('stages/:stage/resume')
+  @Roles('producer')
+  @HttpCode(HttpStatus.CREATED)
+  resume(@Param('id') id: string, @Param('stage') stage: string) {
+    return mapErrors(() => resumeRunFrom(this.engine.core, this.engine.db, id, stage));
   }
 
   @Post('cancel')

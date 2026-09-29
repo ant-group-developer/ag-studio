@@ -216,6 +216,10 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     retryStage(id: string, stage: string): Promise<{ ok: true }> {
       return request(getAccessToken, "POST", `/api/productions/${id}/run/stages/${stage}/retry`);
     },
+    /** After a FAILED/CANCELLED run: a new run that keeps every stage before `stage` and runs `stage` onwards. */
+    resumeRun(id: string, stage: string): Promise<{ runId: string; reused: string[] }> {
+      return request(getAccessToken, "POST", `/api/productions/${id}/run/stages/${stage}/resume`);
+    },
     cancelRun(id: string): Promise<{ ok: true }> {
       return request(getAccessToken, "POST", `/api/productions/${id}/run/cancel`);
     },
