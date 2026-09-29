@@ -63,5 +63,7 @@ describe("ScriptExecutor + @harness/script-sdk ctx.op.* end to end", () => {
     const check = new SqliteStateStore(join(projectDir, "data", "state", "harness.db"));
     expect(check.getExternalOperation(operationId)?.status).toBe("CONFIRMED");
     check.close();
-  });
+    // Five cold `tsx` CLI starts (migrate, plan, enqueue, then the wrapper's `op intent`/`op confirm`): 12-17 s
+    // under the full suite (up to ~48 s on a loaded machine), well past the package's 20 s default.
+  }, 120_000);
 });
