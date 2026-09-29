@@ -255,6 +255,8 @@ export function Player({
           background: "#000",
           overflow: "hidden",
           borderRadius: 4,
+          // The render burns text and subtitles in Arial (render worker, `studioOverlayAss`): preview in the same font.
+          fontFamily: "Arial, Helvetica, sans-serif",
         }}
       >
         {([0, 1] as const).map((i) => (

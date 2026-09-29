@@ -10,5 +10,6 @@
  */
 export { renderComposition, probeNvenc } from "@harness/core";
 export type { RenderDeps, RenderInput, SpawnFn } from "@harness/core";
+export { studioOverlayAss, studioDefaultBrand, STUDIO_DEFAULT_FONT } from "@harness/core";
 export { CompositionSchema } from "@harness/contracts";
 export type { Composition } from "@harness/contracts";

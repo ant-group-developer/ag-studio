@@ -59,6 +59,10 @@ export interface RenderInput {
    * the loaded brand and passes it here; omitted, `finalArgs` uses the same 120 default the brand schema
    * does. */
   safe_margin_px?: number;
+  /** Fonts directory handed to libass (`ass=...:fontsdir=`) instead of `composition.brand.fonts_dir`: a render
+   * with no brand (Studio) still needs its font found in a known directory, not in whatever the machine's
+   * fontconfig has. */
+  fontsDir?: string | null;
 }
 
 /** How much of a failing ffmpeg's stderr is kept for the error details / log line. */
@@ -351,7 +355,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
   const episodePath = join(outDir, "full-episode.mp4");
   const finalInput = {
     ffmpeg: d.ffmpeg, composition, mezz, assPath: p.assPath,
-    fontsDir: composition.brand?.fonts_dir ?? null,
+    fontsDir: p.fontsDir !== undefined ? p.fontsDir : (composition.brand?.fonts_dir ?? null),
     out_path: episodePath,
     ...(p.safe_margin_px !== undefined ? { safe_margin_px: p.safe_margin_px } : {}),
   };
