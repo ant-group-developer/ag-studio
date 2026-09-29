@@ -78,6 +78,9 @@ export class Worker {
       return "done";
     }
 
+    // An abort that landed during setup already fired: the listener below would never see it and the executor
+    // would run to completion unaborted. Cancel now instead of starting it.
+    if (signal?.aborted) return this.cancelCurrent(claim, run, log);
     const abort = new AbortController();
     const onParentAbort = () => abort.abort();
     signal?.addEventListener("abort", onParentAbort, { once: true });

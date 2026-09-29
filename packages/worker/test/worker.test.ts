@@ -105,6 +105,23 @@ describe("Worker", () => {
     expect(w.store.listAttempts(produce.stage_run_id)[0]?.state).toBe("CANCELLED");
     expect(w.store.getLease(produce.stage_run_id)).toBeUndefined();
   });
+  it("cancels without starting the executor when the abort lands during stage setup", async () => {
+    // runOnce is synchronous up to the claim, so aborting right after the call lands inside the async
+    // workspace setup -- the window a 50 ms head start above only usually clears under full-suite load.
+    const ac = new AbortController();
+    let executed = false;
+    const hanging: Executor = { version: "hang@1", execute: () => { executed = true; return new Promise<StageResult>(() => {}); } };
+    const w = makeWorld({ scriptExecutor: hanging });
+    const run = planAndEnqueue(w);
+    const pending = w.worker.runOnce(ac.signal);
+    ac.abort();
+    expect(await pending).toBe("done");
+    expect(executed).toBe(false);
+    const produce = w.store.listStageRuns(run.run_id).find((s) => s.stage_key === "produce")!;
+    expect(produce.state).toBe("READY");
+    expect(w.store.listAttempts(produce.stage_run_id)[0]?.state).toBe("CANCELLED");
+    expect(w.store.getLease(produce.stage_run_id)).toBeUndefined();
+  });
   it("marks the stage CANCELLED on abort when the run was cancelled while it ran", async () => {
     const ac = new AbortController();
     const hanging: Executor = { version: "hang@1", execute: (_r, ctx) => new Promise((_res, rej) => ctx.signal?.addEventListener("abort", () => rej(new Error("aborted")))) };
