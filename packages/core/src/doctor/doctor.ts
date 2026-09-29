@@ -4,8 +4,6 @@ import { join, resolve } from "node:path";
 import type { HarnessConfig, MediaEngineProbe, ProductionProfile, ProjectConfig, ScriptsRegistry, SecretResolver, StageDefinition, StateStore } from "@harness/contracts";
 import { sha256FileSync } from "../artifacts/checksum.js";
 import { EnvSecretResolver } from "../config/secrets.js";
-import type { LoadedChannel } from "../distribution/channels.js";
-import type { AutoAcceptConfig } from "../library/auto-accept.js";
 import { loadBrand, type LoadedBrand } from "../library/brands.js";
 import type { LibraryFs, LibraryRole } from "../library/files.js";
 import type { LoadedWorkflow } from "../orchestration/registry.js";
@@ -40,34 +38,10 @@ export interface DoctorInput {
    * either and is byte-identical to before. */
   library?: {
     fs: LibraryFs; role: LibraryRole;
-    autoAccept?: {
-      config: AutoAcceptConfig; sourceCount: number; agentIsFake: boolean;
-      /** Collection mode only: every kho collection matching at least one of `config.source_collections`'
-       * patterns that has at least one non-restricted source, with that source count -- computed by the
-       * composition root (`matchCollection`) so `doctor.ts` stays pure. */
-      matchingCollections?: { name: string; count: number }[];
-      /** Only present when `config.workflow_release` is set: whether the composition root could load that
-       * pinned workflow release. */
-      pinnedWorkflowLoadable?: boolean;
-    };
   };
-  /** Only present when the composition root always has channel data available; a per-channel row set is added
-   * for every loaded channel (repo dir, upload scripts, upload profile, identity, secret), plus one summary
-   * `channels:config` row. `errors` mirrors `configErrors.scripts`/`.sources`: a broken `channels/` directory
-   * fails that one row instead of aborting doctor, and no channel is loaded so no per-channel rows follow. */
-  channels?: { loaded: LoadedChannel[]; errors: string[]; secrets: SecretResolver };
-  /** Only present when the composition root has channels loaded; adds two rows per channel (sub-project 3B
-   * Task 6, spec §2.5/§5): `channel:<id>:stats` and, only when that channel's own `planning.enabled` is true,
-   * `channel:<id>:planning`. Kept separate from the (possibly `project.yaml`-scoped) `workflows`/`profiles`
-   * arrays above -- `loadProfile`/`loadWorkflow` here always resolve against the full harness install,
-   * regardless of any `project.yaml` workflows scope, since these two rows must check `channel-planning`/the
-   * stats adapter's own readiness independent of that scope. */
-  learning?: { harnessRoot: string; statsAdapter: "playwright" | "fake"; agentIsFake: boolean; loadProfile: (id: string) => ProductionProfile; loadWorkflow: (ref: string) => LoadedWorkflow };
   /** Only present when the composition root has picked an agent runtime; checks `--version` only (never the
    * model) through the injected `isAvailable`, so doctor never has to import an adapter. */
   agent?: { kind: "cli" | "fake"; runtime: "claude" | "codex"; argv0: string; isAvailable: (argv0: string) => boolean };
-  /** Only present when the composition root has picked a publisher adapter; a single informational row. */
-  publisher?: { name: string };
   /** Sub-project 5A Task 9 (`media:python|packages|device|models`): only present when `adapters.media ===
    * "python"`. `MediaEngine.probe()` is async and spawns a python child process, so the composition root
    * awaits it once (`computeDoctorRows`) and hands the plain result here -- `doctor.ts` stays pure/sync and
@@ -127,10 +101,7 @@ export function runDoctor(i: DoctorInput): DoctorRow[] {
           ...(i.library.role === "studio" ? [checkLibraryBrands(i.library)] : []),
         ]
       : []),
-    ...(i.library?.autoAccept?.config.enabled && i.library.role === "studio" ? [checkLibraryAutoAccept(i.library.autoAccept)] : []),
-    ...checkChannels(i),
     ...(i.agent ? [checkAgentRuntime(i.agent)] : []),
-    ...(i.publisher ? [checkPublisher(i.publisher)] : []),
     ...(i.media ? [checkMediaPython(i.media), checkMediaPackages(i.media), checkMediaDevice(i.media), checkMediaModels(i.media)] : []),
     ...(i.mediaEngineOnFake ? checkMediaEngineOnFake(i.mediaEngineOnFake) : []),
     ...(i.render !== undefined ? [checkMediaRender(i.render)] : []),
@@ -396,222 +367,11 @@ function checkLibraryBrands(library: { fs: LibraryFs; role: LibraryRole }): Doct
   return { check, ok: bad.length === 0, detail: bad.length === 0 ? `${ids.length} brand(s) ok` : bad.join("; ") };
 }
 
-/** `channel:<id>:brand` (sub-project 5B), added only when this channel already has a `brands/<id>/` directory
- * in the kho (a channel with no brand yet is not a failure -- spec §2.1: a brandless channel still renders,
- * just without text/logo/music). Mirrors `checkChannelVoice`'s shape: `loadBrand` + the same checksum
- * verification `checkLibraryBrands` uses, naming the offending file on failure. */
-function checkChannelBrand(library: { fs: LibraryFs; role: LibraryRole }, channel: LoadedChannel): DoctorRow | undefined {
-  const id = channel.config.channel_id;
-  const check = `channel:${id}:brand`;
-  if (!existsSync(library.fs.paths.brandDir(id))) return undefined;
-  try {
-    const loaded = loadBrand(library.fs, id);
-    if (!loaded) return { check, ok: false, detail: `brands/${id}/ exists but brand.json is missing` };
-    const reason = verifyBrandChecksumsSync(loaded);
-    if (reason) return { check, ok: false, detail: reason };
-    return { check, ok: true, detail: `${id} rev${loaded.brand.revision} brand ok` };
-  } catch (e) {
-    return { check, ok: false, detail: e instanceof Error ? e.message : String(e) };
-  }
-}
-
-/** `library:auto_accept`, added only for a studio project with the loop actually enabled (the exact
- * condition the worker's `autoAcceptDepsFor` builds the loop on): checks the two things that would make it
- * silently do nothing forever -- no usable source, or an agent runtime that cannot execute the plans it
- * enqueues. A channel project, or a studio with `enabled: false`, gets no row at all rather than a row about
- * a loop that never runs there.
- *
- * Two modes (sub-project 5A Task 9 fix round -- Task 7 shipped `source_collections` but left this row
- * checking only the legacy `source_collection`, so a correctly configured collection-mode project with an
- * empty `main` FAILed doctor for no reason):
- *  - legacy (`config.source_collections` unset): byte-identical to before -- `sourceCount` (one named
- *    collection) is the whole story.
- *  - collections (`config.source_collections` set): ok when `matchingCollections` (every collection matching
- *    at least one pattern with at least one non-restricted source, computed by the composition root via
- *    `matchCollection`) is non-empty; detail lists up to 5 matching collection names + counts. Fail detail
- *    names the patterns that matched nothing.
- * `config.workflow_release`, when set, is named in every non-"unloadable" detail; an unloadable pinned
- * release fails the row outright, before either mode's own source check.
- */
-function checkLibraryAutoAccept(a: NonNullable<NonNullable<DoctorInput["library"]>["autoAccept"]>): DoctorRow {
-  const check = "library:auto_accept";
-  const pinnedSuffix = a.config.workflow_release ? `, pinned to ${a.config.workflow_release}` : "";
-
-  if (a.config.workflow_release && a.pinnedWorkflowLoadable === false) {
-    return { check, ok: false, detail: `workflow release ${a.config.workflow_release} not loadable` };
-  }
-
-  if (a.config.source_collections && a.config.source_collections.length > 0) {
-    const matches = a.matchingCollections ?? [];
-    if (matches.length === 0) {
-      return { check, ok: false, detail: `no collection matches patterns: ${a.config.source_collections.join(", ")}${pinnedSuffix}` };
-    }
-    if (a.agentIsFake) return { check, ok: false, detail: "adapters.agent is fake" };
-    const shown = matches.slice(0, 5).map((m) => `${m.name} (${m.count})`).join(", ");
-    const more = matches.length > 5 ? `, +${matches.length - 5} more` : "";
-    return { check, ok: true, detail: `enabled, collections ${shown}${more}${pinnedSuffix}` };
-  }
-
-  if (a.sourceCount === 0) return { check, ok: false, detail: `collection ${a.config.source_collection} has no sources` };
-  if (a.agentIsFake) return { check, ok: false, detail: "adapters.agent is fake" };
-  return { check, ok: true, detail: `enabled, collection ${a.config.source_collection} (${a.sourceCount} sources)${pinnedSuffix}` };
-}
-
-const CHANNEL_UPLOAD_SCRIPTS = ["upload-youtube-playwright.mjs", "publish-video-playwright.mjs"];
-
-/** `channels:config` plus, only when `errors` is empty, five rows per loaded channel. A broken `channels/`
- * directory (the composition root swallows the parse error the same way it does for `configErrors.scripts`/
- * `.sources`) fails just the one summary row -- there is nothing loaded to check per-channel. No channels
- * declared at all (the common case for a footage/avatar-only project) adds no row, same as `library:*`. */
-function checkChannels(i: DoctorInput): DoctorRow[] {
-  if (!i.channels) return [];
-  if (i.channels.errors.length > 0) return [{ check: "channels:config", ok: false, detail: i.channels.errors.join("; ") }];
-  if (i.channels.loaded.length === 0) return [];
-  const rows: DoctorRow[] = [{ check: "channels:config", ok: true, detail: `${i.channels.loaded.length} channels` }];
-  for (const channel of i.channels.loaded) {
-    rows.push(...checkOneChannel(channel, i.channels.secrets));
-    if (channel.config.voice) rows.push(checkChannelVoice(i.store, i.library, channel));
-    if (i.library) {
-      const brandRow = checkChannelBrand(i.library, channel);
-      if (brandRow) rows.push(brandRow);
-    }
-    if (i.learning) {
-      rows.push(checkChannelStats(i.learning, channel));
-      if (channel.config.planning.enabled) rows.push(checkChannelPlanning(i.learning, channel));
-    }
-  }
-  return rows;
-}
-
-/** `channel:<id>:voice` (sub-project 5A), added only when this channel's `channel.yaml` declares `voice`
- * (a `voice_id` it wants every `voice: tts` request of its own to use, spec §1.5). Checks the same store
- * mirror `requireActiveVoice` reads at request/intake time -- so this row fails exactly when `library request
- * create --voice tts` or the channel-planning auto-loop would fail too, ahead of time -- plus one thing the
- * mirror alone cannot see: whether the kho's `ref.wav` bytes still match `voice.json`'s recorded checksum. */
-function checkChannelVoice(store: StateStore, library: DoctorInput["library"], channel: LoadedChannel): DoctorRow {
-  const id = channel.config.channel_id;
-  const check = `channel:${id}:voice`;
-  const voiceId = channel.config.voice!.voice_id;
-
-  // Checked first (fix round 1): a channels-only project with no `library` block at all should say so
-  // plainly, not report "run library sync" for a library it has no way to sync in the first place.
-  if (!library) return { check, ok: false, detail: "project.yaml has no library configured; cannot verify ref.wav" };
-
-  const profile = store.getVoiceProfile(voiceId);
-  if (!profile) return { check, ok: false, detail: `voice profile not mirrored: ${voiceId}; run library sync` };
-  if (profile.status !== "active") return { check, ok: false, detail: `voice profile ${voiceId} is ${profile.status}, not active` };
-
-  const refPath = library.fs.paths.voiceRef(voiceId);
-  if (!existsSync(refPath)) return { check, ok: false, detail: `ref.wav missing: ${refPath}` };
-  const { checksum } = sha256FileSync(refPath);
-  if (checksum !== profile.ref_audio.checksum) {
-    return { check, ok: false, detail: `ref.wav checksum mismatch: ${refPath} (voice.json expects ${profile.ref_audio.checksum})` };
-  }
-  return { check, ok: true, detail: `${voiceId} rev${profile.revision} active, ref.wav checksum matches` };
-}
-
-/** `channel:<id>:stats` (sub-project 3B, spec §2.5): with `adapters.stats: fake` there is nothing real to
- * check, so it is always `ok`; with `playwright` it needs both the harness-owned collector script (not
- * per-channel -- one script serves every channel) and this channel's own logged-in Chrome profile, the same
- * `.upload-profile/Default` path `channel:<id>:profile` already checks (the two rows answer different
- * questions -- "did you ever log in" vs "is stats collection actually ready" -- so the overlap is intentional,
- * not redundant). */
-function checkChannelStats(learning: NonNullable<DoctorInput["learning"]>, channel: LoadedChannel): DoctorRow {
-  const id = channel.config.channel_id;
-  const check = `channel:${id}:stats`;
-  if (learning.statsAdapter === "fake") return { check, ok: true, detail: "fake" };
-  const script = join(learning.harnessRoot, "packages", "adapters", "youtube-playwright", "scripts", "collect-stats.mjs");
-  const scriptOk = existsSync(script);
-  const profilePath = join(resolve(channel.config.repo_dir), ".upload-profile", "Default");
-  const profileOk = existsSync(profilePath);
-  if (scriptOk && profileOk) return { check, ok: true, detail: `${script} + ${profilePath} present` };
-  const missing = [...(scriptOk ? [] : [script]), ...(profileOk ? [] : [profilePath])];
-  return { check, ok: false, detail: `missing: ${missing.join(", ")}` };
-}
-
-/** `channel:<id>:planning`, only added for a channel whose own `planning.enabled` is true (spec §2.5/§5):
- * the `channel-planning` profile and its workflow release must both load, and the agent runtime must not be
- * `fake` (a fake agent would enqueue `channel-planning` runs that can never actually propose a real topic). */
-function checkChannelPlanning(learning: NonNullable<DoctorInput["learning"]>, channel: LoadedChannel): DoctorRow {
-  const id = channel.config.channel_id;
-  const check = `channel:${id}:planning`;
-  let profile: ProductionProfile;
-  try {
-    profile = learning.loadProfile("channel-planning");
-  } catch (e) {
-    return { check, ok: false, detail: e instanceof Error ? e.message : String(e) };
-  }
-  try {
-    learning.loadWorkflow(profile.workflow_release);
-  } catch (e) {
-    return { check, ok: false, detail: e instanceof Error ? e.message : String(e) };
-  }
-  if (learning.agentIsFake) return { check, ok: false, detail: "adapters.agent is fake" };
-  return { check, ok: true, detail: `${profile.workflow_release} ready` };
-}
-
-function checkOneChannel(channel: LoadedChannel, secrets: SecretResolver): DoctorRow[] {
-  const id = channel.config.channel_id;
-  const repoDir = resolve(channel.config.repo_dir);
-
-  const repoOk = existsSync(repoDir) && statSync(repoDir).isDirectory();
-  const repoRow: DoctorRow = { check: `channel:${id}:repo`, ok: repoOk, detail: repoOk ? `${repoDir} exists` : `${repoDir} not found or not a directory` };
-
-  const missingScripts = CHANNEL_UPLOAD_SCRIPTS.filter((f) => !existsSync(join(repoDir, "scripts", f)));
-  const scriptsRow: DoctorRow = { check: `channel:${id}:scripts`, ok: missingScripts.length === 0, detail: missingScripts.length === 0 ? `${CHANNEL_UPLOAD_SCRIPTS.join(" + ")} present` : `missing: ${missingScripts.join(", ")}` };
-
-  const profilePath = join(repoDir, ".upload-profile", "Default");
-  const profileOk = existsSync(profilePath);
-  const profileRow: DoctorRow = { check: `channel:${id}:profile`, ok: profileOk, detail: profileOk ? `${profilePath} exists` : `chưa đăng nhập: harness channel login ${id}` };
-
-  const identityRow = checkChannelIdentity(channel, repoDir, secrets);
-
-  let secretsOk = true;
-  let secretsDetail = `${channel.config.youtube.account_email_ref} resolves`;
-  try { secrets.resolve(channel.config.youtube.account_email_ref); }
-  catch (e) { secretsOk = false; secretsDetail = e instanceof Error ? e.message : String(e); }
-  const secretsRow: DoctorRow = { check: `channel:${id}:secrets`, ok: secretsOk, detail: secretsDetail };
-
-  return [repoRow, scriptsRow, profileRow, identityRow, secretsRow];
-}
-
-/** Compares the legacy repo's `channel.config.json` against `channel.yaml`: `youtube.channelId` must match
- * `youtube.expected_channel_id`, `projectId` must match `legacy_project_id`, `youtube.accountEmail` must match
- * the secret `account_email_ref` resolves to. The email comparison is skipped (not failed) when the secret
- * itself does not resolve -- `channel:<id>:secrets` already reports that root cause on its own row. */
-function checkChannelIdentity(channel: LoadedChannel, repoDir: string, secrets: SecretResolver): DoctorRow {
-  const id = channel.config.channel_id;
-  const check = `channel:${id}:identity`;
-  const path = join(repoDir, "channel.config.json");
-  if (!existsSync(path)) return { check, ok: false, detail: `${path} not found` };
-
-  let raw: { projectId?: string; youtube?: { channelId?: string; accountEmail?: string } };
-  try { raw = JSON.parse(readFileSync(path, "utf8")); }
-  catch (e) { return { check, ok: false, detail: e instanceof Error ? e.message : String(e) }; }
-
-  const problems: string[] = [];
-  if (raw.youtube?.channelId !== channel.config.youtube.expected_channel_id) {
-    problems.push(`youtube.channelId "${raw.youtube?.channelId ?? ""}" != expected_channel_id "${channel.config.youtube.expected_channel_id}"`);
-  }
-  if (raw.projectId !== channel.config.legacy_project_id) {
-    problems.push(`projectId "${raw.projectId ?? ""}" != legacy_project_id "${channel.config.legacy_project_id}"`);
-  }
-  try {
-    const expectedEmail = secrets.resolve(channel.config.youtube.account_email_ref);
-    if (raw.youtube?.accountEmail !== expectedEmail) problems.push(`youtube.accountEmail "${raw.youtube?.accountEmail ?? ""}" != resolved ${channel.config.youtube.account_email_ref}`);
-  } catch { /* unresolved secret is channel:<id>:secrets's failure to report, not this row's */ }
-  return { check, ok: problems.length === 0, detail: problems.length === 0 ? `${path} matches channel.yaml` : problems.join("; ") };
-}
-
 /** `--version` only, through the injected `isAvailable` -- doctor never invokes the model itself. */
 function checkAgentRuntime(agent: NonNullable<DoctorInput["agent"]>): DoctorRow {
   if (agent.kind === "fake") return { check: "agent:runtime", ok: true, detail: "fake" };
   const ok = agent.isAvailable(agent.argv0);
   return { check: "agent:runtime", ok, detail: ok ? `${agent.argv0} available` : `${agent.argv0} not on PATH` };
-}
-
-function checkPublisher(publisher: NonNullable<DoctorInput["publisher"]>): DoctorRow {
-  return { check: "publisher", ok: true, detail: publisher.name };
 }
 
 /** `media:python`: `probe.python` is the configured python executable once the probe subprocess actually ran

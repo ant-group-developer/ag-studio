@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
-import { isHarnessError, type Artifact, type ChannelPackage, type ClaimResult, type Clock, type HarnessConfig, type ProductionProfile, type ProjectConfig, type Publisher, type Run, type StageRequest, type StageResult, type StateStore, type StatsCollector } from "@harness/contracts";
-import { acceptedInputsFor, addSeconds, ArtifactRegistry, autoAccept, type AutoAcceptDeps, buildStageRequest, canonicalDigest, type ChannelRegistry, collectStats, Controller, createWorkspace, eventFor, gateOverdue, type LibraryFs, type LibraryRole, type LoadedChannel, type LoadedWorkflow, materializeInputs, mimeTypesFor, Planner, stageDefinitionDigest, stageDefinitionFor, syncLibrary, Verifier, verifyScheduled, workspacePath, type HarnessLogger } from "@harness/core";
+import { isHarnessError, type Artifact, type ClaimResult, type Clock, type HarnessConfig, type ProductionProfile, type ProjectConfig, type Run, type StageRequest, type StageResult, type StateStore } from "@harness/contracts";
+import { acceptedInputsFor, addSeconds, ArtifactRegistry, buildStageRequest, canonicalDigest, Controller, createWorkspace, eventFor, gateOverdue, type LibraryFs, type LibraryRole, type LoadedWorkflow, materializeInputs, mimeTypesFor, Planner, stageDefinitionDigest, stageDefinitionFor, Verifier, workspacePath, type HarnessLogger } from "@harness/core";
 import type { ExecutorRegistry } from "@harness/executors";
 import { startHeartbeat } from "./heartbeat.js";
 
@@ -8,35 +8,9 @@ export interface WorkerDeps {
   store: StateStore; planner: Planner; controller: Controller; registry: ArtifactRegistry; verifier: Verifier; executors: ExecutorRegistry;
   harness: HarnessConfig; project: ProjectConfig; dataRoot: string; owner: string; capabilities: string[]; logger: HarnessLogger; clock: Clock;
   workflows: (ref: string) => LoadedWorkflow; profiles: (id: string) => ProductionProfile; resourceCapacity: Record<string, number>;
-  /** Only present when `project.yaml` declares `library`; an idle poll syncs the kho at most once every
-   * `syncSeconds` so a channel's new request or a studio's fresh style/item reaches this project's DB.
-   * `autoAccept`, only ever present for a studio-role project with `library.auto_accept.enabled`, runs
-   * right after a *successful* sync on that same cadence (see `maybeAutoAccept` below) -- the composition
-   * root supplies everything `autoAccept` needs except `store`/`fs`/`clock`/`logger`, which this worker
-   * already has. */
-  library?: { fs: LibraryFs; role: LibraryRole; syncSeconds: number; autoAccept?: Omit<AutoAcceptDeps, "store" | "fs" | "clock" | "logger"> };
-  /** Only present when the ops project has at least one loaded channel; an idle poll sweeps overdue SCHEDULED
-   * publication jobs at most once every `verifySeconds` (spec §4.1's verify sweep). */
-  publication?: { publisher: Publisher; channels: ChannelRegistry; verifySeconds: number; graceHours: number };
-  /** Only present once the composition root wires a dashboard writer (Task 10); an idle poll calls `write()`
-   * at most once every `refreshSeconds`. The worker only calls it on a cadence -- what it writes is the
-   * composition root's concern, not this package's. */
-  dashboard?: { refreshSeconds: number; write: () => Promise<void> };
-  /** Only present when the ops project has at least one loaded channel (sub-project 3B Task 6, spec §2.4/§4.3/
-   * §4.4): drives three idle-poll sweeps -- collect due video stats, plan requests for channels that need more
-   * episodes queued, and auto-pick the next library item for channels that opted in. `planning.run`/
-   * `autoPick.run` are pre-bound to each channel's full deps by the composition root (`planRequestsRun`/
-   * `autoPick` themselves need catalog/planner/profile/etc. this package has no business assembling); the
-   * worker only ever calls them with a `LoadedChannel` from `channels.list()`.
-   * `durationOf` is not part of the brief's own `WorkerDeps.learning` shape -- an obvious omission (mirrors
-   * `CollectDeps.durationOf`'s own documented fix in packages/core/src/learning/metrics.ts): `collectStats`
-   * needs it to compute `avg_view_pct`, and nothing else on `WorkerDeps` can supply it, so it is added here too. */
-  learning?: {
-    channels: ChannelRegistry; collector: StatsCollector; collectSeconds: number; collectBatch: number;
-    durationOf: (pkg: ChannelPackage) => number | null;
-    planning: { checkSeconds: number; run: (channel: LoadedChannel) => Promise<unknown> };
-    autoPick: { run: (channel: LoadedChannel) => Promise<unknown> };
-  };
+  /** Only present when `project.yaml` declares `library`; the worker holds a reference for resource cleanup
+   * and future use, but does not perform periodic syncs (voices/brands/music are managed via CLI commands). */
+  library?: { fs: LibraryFs; role: LibraryRole; syncSeconds: number };
 }
 
 function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
@@ -48,17 +22,6 @@ function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 export class Worker {
-  /** ms timestamp of the last library sync; `undefined` means "never yet", so the first idle poll always syncs. */
-  private lastLibrarySyncAt: number | undefined;
-  /** ms timestamp of the last publication verify sweep; same "never yet" convention as `lastLibrarySyncAt`. */
-  private lastPublicationVerifyAt: number | undefined;
-  /** ms timestamp of the last dashboard refresh; same "never yet" convention as `lastLibrarySyncAt`. */
-  private lastDashboardRefreshAt: number | undefined;
-  /** ms timestamp of the last collect-stats sweep; same "never yet" convention as `lastLibrarySyncAt`. */
-  private lastCollectAt: number | undefined;
-  /** ms timestamp of the last plan-requests sweep; same "never yet" convention as `lastLibrarySyncAt`. */
-  private lastPlanAt: number | undefined;
-
   constructor(private readonly d: WorkerDeps) {}
 
   async runForever(signal: AbortSignal): Promise<void> {
@@ -75,19 +38,13 @@ export class Worker {
     const reaped = store.reapExpiredLeases(clock.now());
     for (const r of reaped) logger.warn("reaped expired lease", r);
     for (const runId of new Set(reaped.map((r) => r.run_id))) {
-      try { this.d.planner.advance(runId); } // a reaper-completed cancel or requeue may settle the run
+      try { this.d.planner.advance(runId); }
       catch (e) { logger.warn("advance after reap failed", { run_id: runId, error: e instanceof Error ? e.message : String(e) }); }
     }
-    // the run is unknown until the claim lands, so claim on the harness default and widen afterwards
     const defaultLeaseSeconds = this.d.harness.lease_seconds;
     const claim = store.claim({ owner: this.d.owner, capabilities: this.d.capabilities, now: clock.now(), leaseSeconds: defaultLeaseSeconds, resourceCapacity: this.d.resourceCapacity });
     if (!claim) {
       this.warnResourceStarvation(); this.warnGateOverdue();
-      if (await this.maybeSyncLibrary()) { await this.maybeAutoAccept(); await this.maybeAutoPick(); }
-      await this.maybeVerifyPublications();
-      await this.maybeCollectStats();
-      await this.maybePlanRequests();
-      await this.maybeRefreshDashboard();
       return "idle";
     }
     const run = store.getRun(claim.stageRun.run_id)!;
@@ -115,7 +72,6 @@ export class Worker {
       request = buildStageRequest({ store, clock, harness: this.d.harness, profiles: this.d.profiles, workflows: this.d.workflows }, { run, stageRun: claim.stageRun, attempt: claim.attempt, lease: claim.lease, inputs, workspaceDir, capabilities: this.d.capabilities });
     } catch (e) {
       log.error("stage setup failed", { error: e instanceof Error ? e.message : String(e) });
-      // a stale reused input or a corrupt artifact will not fix itself on retry: park the stage for a human
       const setupKind = isHarnessError(e, "STALE_STATE") || isHarnessError(e, "CHECKSUM_MISMATCH") ? "contract" : "transient";
       const failed: StageResult = { schema_version: "harness.stage-result/v1", attempt_id: claim.attempt.attempt_id, outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [{ kind: setupKind, message: e instanceof Error ? e.message : String(e), details: { phase: "setup", ...(isHarnessError(e) ? { code: e.code } : {}) } }] };
       await this.d.controller.commit({ stageRun: claim.stageRun, attempt: claim.attempt, fencingToken: claim.lease.fencing_token, result: failed, verify: { results: [], allRequiredPassed: false, missing: [] }, workspaceDir, executorVersion: "worker-setup", inputArtifactIds: [], mimeTypes: mimeTypesFor(def), stageDefinitionDigest: defDigest });
@@ -127,9 +83,6 @@ export class Worker {
     signal?.addEventListener("abort", onParentAbort, { once: true });
     const hb = startHeartbeat({ store, attemptId: claim.attempt.attempt_id, fencingToken: claim.lease.fencing_token, leaseSeconds, intervalMs: this.d.harness.heartbeat_seconds * 1000, clock, onLost: () => abort.abort() });
     const executor = this.d.executors.resolve(claim.stageRun.executor);
-    // The heartbeat has to outlive `execute`: verification is now ffprobe-backed (a blocking `spawnSync` with
-    // a 120s timeout per probe) and commit moves every output into the artifact store, so stopping it here
-    // would let a slow-but-healthy stage lose its lease to the reaper between execute and commit.
     try {
       let result: StageResult;
       try {
@@ -158,7 +111,6 @@ export class Worker {
 
   private warnResourceStarvation(): void {
     const { store, clock, harness } = this.d;
-    // most idle polls have nothing waiting on a resource: find the candidates once and skip the bookkeeping queries
     const candidates = [...store.listRuns({ state: "RUNNING" }), ...store.listRuns({ state: "READY" })]
       .flatMap((run) => store.listStageRuns(run.run_id).filter((s) => s.state === "READY" && s.requires_resources.length > 0 && s.ready_at).map((s) => ({ run, s })));
     if (!candidates.length) return;
@@ -179,155 +131,11 @@ export class Worker {
     }
   }
 
-  /** At most once every `library.syncSeconds`, on an otherwise-idle poll: pulls the kho's requests/styles/items
-   * into the local DB mirror so a channel's new request (or a studio's fresh style/item) surfaces without a
-   * person running `harness library sync` by hand. Never plans a run on its own (spec §4.2).
-   *
-   * The stamp is set *before* the sync attempt, and a thrown error here is logged and swallowed rather than
-   * propagated: an unreachable or broken kho must not stop the worker loop (or make `worker --once` exit
-   * non-zero), and must not be retried on every single poll while it stays broken -- it gets one attempt per
-   * `syncSeconds`, same as a healthy kho. */
-  /** Returns `true` only when a sync was actually attempted *and* succeeded this call -- `maybeAutoAccept`
-   * uses that (not its own cadence stamp) to run "right after a successful sync", per `runOnce` above. */
-  private async maybeSyncLibrary(): Promise<boolean> {
-    const library = this.d.library;
-    if (!library) return false;
-    const now = Date.parse(this.d.clock.now());
-    if (this.lastLibrarySyncAt !== undefined && now - this.lastLibrarySyncAt < library.syncSeconds * 1000) return false;
-    this.lastLibrarySyncAt = now;
-    try {
-      const report = await syncLibrary({ store: this.d.store, fs: library.fs, role: library.role, clock: this.d.clock });
-      for (const c of report.corrupt) this.d.logger.warn("library sync: corrupt entry", c);
-      for (const m of report.missing) this.d.logger.warn("library sync: missing from kho", m);
-      return true;
-    } catch (e) {
-      this.d.logger.error("library sync failed", { error: e instanceof Error ? e.message : String(e) });
-      return false;
-    }
-  }
-
-  /** Studio autopilot (spec §5): only ever called once a sync just succeeded (see `runOnce`), and only when
-   * this project actually declares `library.autoAccept` (composition root wiring gates that on studio role +
-   * `auto_accept.enabled`). Same log-and-swallow shape as `maybeSyncLibrary`/`maybeVerifyPublications`: a
-   * request the loop cannot plan must not stop the worker, and is already reported inside `report.skipped`. */
-  private async maybeAutoAccept(): Promise<void> {
-    const library = this.d.library;
-    if (!library?.autoAccept) return;
-    try {
-      const report = await autoAccept({ store: this.d.store, fs: library.fs, clock: this.d.clock, logger: this.d.logger, ...library.autoAccept });
-      this.d.logger.info("auto-accept", { accepted: report.accepted.length, skipped: report.skipped.length });
-      for (const s of report.skipped) this.d.logger.warn("auto-accept: skipped", s);
-    } catch (e) {
-      this.d.logger.error("auto-accept failed", { error: e instanceof Error ? e.message : String(e) });
-    }
-  }
-
-  /** At most once every `publication.verifySeconds`, on an otherwise-idle poll: sweeps overdue SCHEDULED
-   * publication jobs through `verifyScheduled` (spec §4.1) so a video the legacy scheduler actually published
-   * settles PUBLISHED, and one that did not park NEEDS_RECONCILIATION for a human, without a person running
-   * `harness publish verify` by hand. Same stamp-before-attempt, log-and-swallow shape as `maybeSyncLibrary`:
-   * an unreachable provider must not stop the worker loop or retry on every single poll. */
-  private async maybeVerifyPublications(): Promise<void> {
-    const publication = this.d.publication;
-    if (!publication) return;
-    const now = Date.parse(this.d.clock.now());
-    if (this.lastPublicationVerifyAt !== undefined && now - this.lastPublicationVerifyAt < publication.verifySeconds * 1000) return;
-    this.lastPublicationVerifyAt = now;
-    try {
-      const report = await verifyScheduled({ store: this.d.store, publisher: publication.publisher, channels: publication.channels, clock: this.d.clock, graceHours: publication.graceHours });
-      for (const w of report.warnings) this.d.logger.warn("publication verify: warning", w);
-      for (const e of report.errors) this.d.logger.warn("publication verify: lookup failed", e);
-    } catch (e) {
-      this.d.logger.error("publication verify failed", { error: e instanceof Error ? e.message : String(e) });
-    }
-  }
-
-  /** At most once every `learning.collectSeconds`, on an otherwise-idle poll, after the publication verify
-   * sweep (spec §2.4): runs one `collectStats` pass across every loaded channel. `collectStats` itself never
-   * throws (a blocked channel, a per-video error, or a failed evaluate/learn pass are all caught and reported
-   * inside its own `CollectReport`), but this still wraps the call the same log-and-swallow way as
-   * `maybeSyncLibrary`/`maybeVerifyPublications`, since a bug here must not be allowed to stop the worker loop
-   * either. */
-  private async maybeCollectStats(): Promise<void> {
-    const learning = this.d.learning;
-    if (!learning) return;
-    const now = Date.parse(this.d.clock.now());
-    if (this.lastCollectAt !== undefined && now - this.lastCollectAt < learning.collectSeconds * 1000) return;
-    this.lastCollectAt = now;
-    try {
-      const report = await collectStats({
-        store: this.d.store, collector: learning.collector, channels: learning.channels, clock: this.d.clock,
-        batch: learning.collectBatch, durationOf: learning.durationOf, logger: this.d.logger,
-      });
-      this.d.logger.info("collect stats", {
-        collected: report.collected.length, blocked: report.blocked.length, failed: report.failed.length, learned: report.learned.length,
-      });
-    } catch (e) {
-      this.d.logger.error("collect stats failed", { error: e instanceof Error ? e.message : String(e) });
-    }
-  }
-
-  /** At most once every `learning.planning.checkSeconds`, on an otherwise-idle poll, after the collect-stats
-   * sweep (spec §4.3): for every loaded channel with `planning.enabled`, calls the composition-supplied
-   * `learning.planning.run(channel)`. `planRequestsRun` itself never throws (spec: any failure -- inside or
-   * outside its own transaction -- is caught, logged, and recorded as `channel.planning_failed`), but each
-   * channel still gets its own `try`/`catch` here: one channel's `run` throwing (a bug, not the documented
-   * failure path) must not stop the sweep from reaching the next channel. */
-  private async maybePlanRequests(): Promise<void> {
-    const learning = this.d.learning;
-    if (!learning) return;
-    const now = Date.parse(this.d.clock.now());
-    if (this.lastPlanAt !== undefined && now - this.lastPlanAt < learning.planning.checkSeconds * 1000) return;
-    this.lastPlanAt = now;
-    for (const channel of learning.channels.list()) {
-      if (!channel.config.planning.enabled) continue;
-      try {
-        await learning.planning.run(channel);
-      } catch (e) {
-        this.d.logger.error("plan requests failed", { channel_id: channel.config.channel_id, error: e instanceof Error ? e.message : String(e) });
-      }
-    }
-  }
-
-  /** Only ever called once a library sync just succeeded (see `runOnce`), same trigger as `maybeAutoAccept`
-   * (spec §4.4): for every loaded channel with `auto_pick.enabled`, calls the composition-supplied
-   * `learning.autoPick.run(channel)`. Same per-channel `try`/`catch` reasoning as `maybePlanRequests` above --
-   * `autoPick` itself already reports its documented failure path as `channel.auto_pick_failed` without
-   * throwing. */
-  private async maybeAutoPick(): Promise<void> {
-    const learning = this.d.learning;
-    if (!learning) return;
-    for (const channel of learning.channels.list()) {
-      if (!channel.config.auto_pick.enabled) continue;
-      try {
-        await learning.autoPick.run(channel);
-      } catch (e) {
-        this.d.logger.error("auto-pick failed", { channel_id: channel.config.channel_id, error: e instanceof Error ? e.message : String(e) });
-      }
-    }
-  }
-
-  /** At most once every `dashboard.refreshSeconds`, on an otherwise-idle poll: calls the composition-provided
-   * `write()` (Task 10 wires an actual snapshot writer; this package only ever calls it on a cadence). Same
-   * stamp-before-attempt, log-and-swallow shape as `maybeSyncLibrary`/`maybeVerifyPublications`. */
-  private async maybeRefreshDashboard(): Promise<void> {
-    const dashboard = this.d.dashboard;
-    if (!dashboard) return;
-    const now = Date.parse(this.d.clock.now());
-    if (this.lastDashboardRefreshAt !== undefined && now - this.lastDashboardRefreshAt < dashboard.refreshSeconds * 1000) return;
-    this.lastDashboardRefreshAt = now;
-    try {
-      await dashboard.write();
-    } catch (e) {
-      this.d.logger.error("dashboard refresh failed", { error: e instanceof Error ? e.message : String(e) });
-    }
-  }
-
   private cancelCurrent(claim: ClaimResult, run: Run, log: HarnessLogger): "done" | "lost" {
     const { store } = this.d;
     try {
       store.transaction(() => {
-        store.assertFencing(claim.stageRun.stage_run_id, claim.lease.fencing_token); // another worker may own the stage by now
+        store.assertFencing(claim.stageRun.stage_run_id, claim.lease.fencing_token);
         const ev = eventFor(run, claim.stageRun, claim.attempt, "attempt.cancelled", "warn", { owner: this.d.owner });
         store.transition("attempt", claim.attempt.attempt_id, "RUNNING", "CANCELLED", ev);
         if (store.getStageRun(claim.stageRun.stage_run_id)!.state === "CANCEL_REQUESTED") {
