@@ -22,7 +22,7 @@ export type AgentCliRuntimeKind = "claude" | "codex";
 // overlay plan the fake `edit-plan` writes) and, at task 11, FAKE_NARRATION_TEXT: real "|"-separated
 // sentences in place of that placeholder, so a real 4K run on this machine reads real speech and burns real
 // (accented) subtitles instead of a row of `x`.
-const FAKE_AGENT_TEST_ENV = ["FAKE_AGENT_MODE", "FAKE_REVIEW_MODE", "FAKE_AGENT_FAIL_STAGE", "FAKE_STYLE_STATUS", "FAKE_STYLE_REVIEW", "FAKE_ANGLE", "FAKE_METRIC", "FAKE_NARRATION_CHARS", "FAKE_NARRATION_TEXT", "FAKE_OVERLAYS"];
+const FAKE_AGENT_TEST_ENV = ["FAKE_AGENT_MODE", "FAKE_REVIEW_MODE", "FAKE_AGENT_FAIL_STAGE", "FAKE_STYLE_STATUS", "FAKE_STYLE_REVIEW", "FAKE_ANGLE", "FAKE_METRIC", "FAKE_NARRATION_CHARS", "FAKE_NARRATION_TEXT", "FAKE_OVERLAYS", "FAKE_STUDIO_MODE"];
 
 export const RUNTIME_COMMANDS: Record<AgentCliRuntimeKind, { argv: string[]; env_passthrough: string[] }> = {
   claude: {
@@ -145,14 +145,16 @@ export class CliAgentRuntime implements AgentRuntime {
     }
 
     let rawArgv: string[];
-    if (this.opts.argv) {
-      rawArgv = this.opts.argv;
-    } else if (isStructured) {
+    if (isStructured) {
       const s = this.opts.structured!;
-      const model = s.model ?? "claude-opus-4-5";
+      const model = s.model ?? "claude-opus-5-5";
       const maxTurns = String(s.maxTurns ?? 3);
-      rawArgv = STUDIO_ARGV.map((a) => a === "{model}" ? model : a === "{max_turns}" ? maxTurns : a);
+      rawArgv = this.opts.argv ?? STUDIO_ARGV.map((a) => a === "{model}" ? model : a === "{max_turns}" ? maxTurns : a);
+      // The schema is part of the contract of a structured call, so it is appended even when `argv` is
+      // overridden (a fake CLI in tests must receive exactly what the real one would).
       if (s.jsonSchema) rawArgv = [...rawArgv, "--json-schema", s.jsonSchema];
+    } else if (this.opts.argv) {
+      rawArgv = this.opts.argv;
     } else {
       rawArgv = RUNTIME_COMMANDS[this.opts.runtime].argv;
     }

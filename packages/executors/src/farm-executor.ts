@@ -20,8 +20,9 @@
  *  6. Cancels the farm job when the stage deadline is exceeded or the stage is aborted.
  *  7. Acks the job (marks it consumed by the owner).
  */
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, mkdirSync, existsSync, copyFileSync } from "node:fs";
 import { join, basename, dirname } from "node:path";
+import { directoryDigest, listDirectoryFiles } from "@harness/core";
 import { FarmOwnerClient } from "@ag-farm/owner-client";
 import {
   StudioTtsPayloadSchema,
@@ -117,8 +118,24 @@ export interface SubmittedInfo {
 // Options
 // ---------------------------------------------------------------------------
 
+/**
+ * Builds the farm payload of a stage from its inputs at run time (GĐ4): the TTS lines come from
+ * `narration.json`, the composition from `timeline.json`, and neither exists when the workflow is written.
+ * Selected by `stage_config.payload_builder`; without one the static `stage_config.farm_payload` is used.
+ */
+export interface FarmPayloadBuild {
+  productionId: string;
+  payload: unknown;
+  /** Extra local files to upload under the attempt's input prefix, referenced as `stage:<relPath>`. */
+  extraUploads?: { localPath: string; relPath: string }[];
+  /** Downloaded output path (relative to `output/`) -> the stage's declared output name. */
+  rename?: Record<string, string>;
+}
+export type FarmPayloadBuilder = (request: StageRequest, ctx: ExecutorContext) => Promise<FarmPayloadBuild>;
+
 export interface FarmExecutorOptions {
   client: FarmOwnerClient;
+  payloadBuilders?: Record<string, FarmPayloadBuilder>;
   storage: StudioStorage;
   /**
    * Called immediately after a farm job is successfully submitted.
@@ -135,7 +152,7 @@ export interface FarmExecutorOptions {
 // ---------------------------------------------------------------------------
 
 export class FarmExecutor implements Executor {
-  readonly version = "0.2.0";
+  readonly version = "0.3.0";
 
   constructor(private readonly opts: FarmExecutorOptions) {}
 
@@ -163,8 +180,28 @@ export class FarmExecutor implements Executor {
     // 0. Extract required stage-config fields
     // -----------------------------------------------------------------------
     const cfg = request.stage_config as Record<string, unknown>;
+    const jobTypeRaw =
+      typeof cfg.job_type === "string" ? cfg.job_type
+        : typeof cfg.__farm_job === "string" ? cfg.__farm_job
+          : "studio.tts";
+    const jobType = jobTypeRaw as JobType;
+    const isFinalRender = jobType === "studio.render_final";
+
+    let build: FarmPayloadBuild | null = null;
+    if (typeof cfg.payload_builder === "string") {
+      const builder = this.opts.payloadBuilders?.[cfg.payload_builder];
+      if (!builder) {
+        return failed("contract", `no farm payload builder registered as "${cfg.payload_builder}"`, { payload_builder: cfg.payload_builder });
+      }
+      try {
+        build = await builder(request, ctx);
+      } catch (e) {
+        return failed("contract", `farm payload builder "${cfg.payload_builder}" failed: ${String(e)}`, { payload_builder: cfg.payload_builder });
+      }
+    }
+
     const productionId =
-      typeof cfg.production_id === "string" ? cfg.production_id : null;
+      build?.productionId ?? (typeof cfg.production_id === "string" ? cfg.production_id : null);
     if (!productionId) {
       return failed(
         "contract",
@@ -172,9 +209,6 @@ export class FarmExecutor implements Executor {
         { stage_config: cfg },
       );
     }
-    const jobTypeRaw = typeof cfg.job_type === "string" ? cfg.job_type : "studio.tts";
-    const jobType = jobTypeRaw as JobType;
-    const isFinalRender = jobType === "studio.render_final";
 
     // -----------------------------------------------------------------------
     // 1. Upload input artifacts to the per-attempt input prefix
@@ -184,25 +218,26 @@ export class FarmExecutor implements Executor {
       request.stage_key,
       request.attempt_id,
     );
-    for (const input of request.inputs) {
+    const uploads = [
+      ...request.inputs.filter((i) => i.kind !== "directory").map((i) => ({ localPath: join(ctx.workspaceDir, i.path), relPath: i.path })),
+      ...(build?.extraUploads ?? []),
+    ];
+    for (const up of uploads) {
       // Preserve the full relative path so farm_payload can reference the file
       // by its exact path (e.g. `stage:renders/1/composition.json`).
       // The sign endpoint resolves `stage:<path>` → `${inputPrefix}<path>`.
-      const objectKey = inputPrefix + input.path;
+      const objectKey = inputPrefix + up.relPath;
       try {
-        await this.opts.storage.upload(
-          join(ctx.workspaceDir, input.path),
-          objectKey,
-        );
+        await this.opts.storage.upload(up.localPath, objectKey);
         ctx.logger.info(
-          `uploaded input ${input.path} → stage:${input.path}`,
+          `uploaded input ${up.relPath} → stage:${up.relPath}`,
           { object_key: objectKey },
         );
       } catch (e) {
         return failed(
           "transient",
-          `failed to upload input ${input.path}: ${String(e)}`,
-          { path: input.path },
+          `failed to upload input ${up.relPath}: ${String(e)}`,
+          { path: up.relPath },
         );
       }
     }
@@ -210,7 +245,7 @@ export class FarmExecutor implements Executor {
     // -----------------------------------------------------------------------
     // 2. Validate farm_payload against the protocol schema
     // -----------------------------------------------------------------------
-    const rawPayload = cfg.farm_payload ?? {};
+    const rawPayload = build ? build.payload : (cfg.farm_payload ?? {});
     let validatedPayload: unknown;
     try {
       if (
@@ -433,6 +468,14 @@ export class FarmExecutor implements Executor {
       );
     }
 
+    for (const [from, to] of Object.entries(build?.rename ?? {})) {
+      const src = join(outDir, from);
+      if (existsSync(src)) {
+        mkdirSync(dirname(join(outDir, to)), { recursive: true });
+        copyFileSync(src, join(outDir, to));
+      }
+    }
+
     // -----------------------------------------------------------------------
     // 8. Build stage result from workspace output files
     // -----------------------------------------------------------------------
@@ -446,6 +489,11 @@ export class FarmExecutor implements Executor {
         return failed("contract", `farm job output missing: ${eo.name}`, {
           name: eo.name,
         });
+      }
+      if (eo.kind === "directory") {
+        const { checksum, size_bytes } = directoryDigest(await listDirectoryFiles(abs));
+        outputs.push({ path: rel, type: eo.type, checksum, size_bytes, kind: "directory" as const });
+        continue;
       }
       const bytes = readFileSync(abs);
       const { createHash } = await import("node:crypto");
