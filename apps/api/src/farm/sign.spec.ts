@@ -129,8 +129,13 @@ describe('FarmController /farm/sign', () => {
     expect(dbRun).not.toHaveBeenCalled();
   });
 
+  /** studio_farm_jobs lookup -> `job`; production owner lookup -> `owner`. */
+  function routeDb(job: unknown, owner: string | null = 'auth0|owner') {
+    dbGet.mockImplementation((sql: string) => (sql.includes('studio_farm_jobs') ? job : { user_id: owner }));
+  }
+
   it('uses purpose=preview when is_final_render=0', async () => {
-    dbGet.mockReturnValue({ ...MOCK_JOB, is_final_render: 0 });
+    routeDb({ ...MOCK_JOB, is_final_render: 0 });
     agGoResolveSegments.mockResolvedValue({
       items: [
         {
@@ -156,14 +161,15 @@ describe('FarmController /farm/sign', () => {
     } as never;
     await controller.sign({ ops: [{ op: 'get', input: 'segment:seg-uuid' }] }, req);
 
-    expect(agGoResolveSegments).toHaveBeenCalledWith('prod-1', {
+    // act-as the production owner, never the production id
+    expect(agGoResolveSegments).toHaveBeenCalledWith('auth0|owner', {
       segmentIds: ['seg-uuid'],
       purpose: 'preview',
     });
   });
 
   it('uses purpose=final when is_final_render=1', async () => {
-    dbGet.mockReturnValue({ ...MOCK_FINAL_JOB, is_final_render: 1 });
+    routeDb({ ...MOCK_FINAL_JOB, is_final_render: 1 });
     agGoResolveSegments.mockResolvedValue({
       items: [
         {
@@ -189,10 +195,17 @@ describe('FarmController /farm/sign', () => {
     } as never;
     await controller.sign({ ops: [{ op: 'get', input: 'segment:seg-uuid' }] }, req);
 
-    expect(agGoResolveSegments).toHaveBeenCalledWith('prod-1', {
+    expect(agGoResolveSegments).toHaveBeenCalledWith('auth0|owner', {
       segmentIds: ['seg-uuid'],
       purpose: 'final',
     });
+  });
+
+  it('refuses to resolve footage when the production has no owner to act as', async () => {
+    routeDb(MOCK_JOB, null);
+    const req = { ticketClaims: makeTicketClaims(MOCK_JOB.farm_job_id), ip: '127.0.0.1' } as never;
+    await expect(controller.sign({ ops: [{ op: 'get', input: 'segment:seg-uuid' }] }, req)).rejects.toThrow(ForbiddenException);
+    expect(agGoResolveSegments).not.toHaveBeenCalled();
   });
 });
 

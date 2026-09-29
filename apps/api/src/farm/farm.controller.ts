@@ -104,6 +104,17 @@ export class FarmController {
 
     const prodId = job.production_id;
     const isFinalRender = job.is_final_render === 1;
+    // ag-go is asked on behalf of the production's owner (plan 3.1), never of the production itself:
+    // `X-Act-As-User` must be a user id or ag-go cannot apply that user's folder scope and rights.
+    const owner = this.db.get<{ user_id: string | null }>(
+      `SELECT COALESCE(p.owner_user_id,
+                (SELECT tm.user_id FROM team_members tm
+                  WHERE tm.team_id = p.team_id AND tm.role = 'owner'
+                  ORDER BY tm.joined_at LIMIT 1)) AS user_id
+         FROM productions p WHERE p.id = ?`,
+      [prodId],
+    );
+    const actAsUserId = owner?.user_id ?? null;
 
     // 3. Authorize ALL ops first (fail fast on any unauthorized op)
     const authorizations: Array<{
@@ -158,7 +169,10 @@ export class FarmController {
       if (op.op === 'get' && auth.segmentId) {
         // Segment resolve via ag-go
         const purpose = isFinalRender ? 'final' : 'preview';
-        const resolveResp = await this.agGoClient.resolveSegments(prodId, {
+        if (!actAsUserId) {
+          throw new ForbiddenException(`Production ${prodId} has no owner to resolve footage as`);
+        }
+        const resolveResp = await this.agGoClient.resolveSegments(actAsUserId, {
           segmentIds: [auth.segmentId],
           purpose,
         });
