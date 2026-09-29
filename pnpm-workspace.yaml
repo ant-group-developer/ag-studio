@@ -3,5 +3,9 @@ packages:
   - "packages/adapters/*"
   - "packages/agent-runtime/*"
   - "fixtures/*"
+  - "apps/*"
 allowBuilds:
+  '@scarf/scarf': false
+  browser-tabs-lock: true
   esbuild: true
+  msw: true
