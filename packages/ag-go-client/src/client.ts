@@ -1,8 +1,10 @@
 import { AgGoClientError, unwrapAgGoResponse } from "./error.js";
 import type {
   GetFoldersResponse,
-  FootageCatalogBody,
-  CatalogResponse,
+  FootageVideoResponse,
+  AssetMediaResponse,
+  ResolveAssetsBody,
+  ResolveAssetsResponse,
   SegmentMediaResponse,
   ResolveSegmentsBody,
   ResolveSegmentsResponse,
@@ -82,8 +84,29 @@ export class AgGoClient {
     return this.request<GetFoldersResponse>("GET", "/footage/folders", actAsUserId);
   }
 
-  getCatalog(actAsUserId: string, body: FootageCatalogBody): Promise<CatalogResponse> {
-    return this.request<CatalogResponse>("POST", "/footage/catalog", actAsUserId, body);
+  /**
+   * GĐ2 (v3): fetch whole-asset footage records from ag-go.
+   * Satisfies `FootageCatalogSource.getCatalog` in @ag-studio/engine.
+   */
+  getCatalog(
+    actAsUserId: string,
+    body: { folderIds: string[]; filters?: Record<string, unknown>; limit?: number; cursor?: string },
+  ): Promise<FootageVideoResponse> {
+    return this.request<FootageVideoResponse>("POST", "/footage/catalog", actAsUserId, body);
+  }
+
+  /** GĐ2 (v3): get media URLs for one asset (preview, poster, keyframes). */
+  getAssetMedia(actAsUserId: string, assetId: string): Promise<AssetMediaResponse> {
+    return this.request<AssetMediaResponse>(
+      "GET",
+      `/footage/assets/${encodeURIComponent(assetId)}/media`,
+      actAsUserId,
+    );
+  }
+
+  /** GĐ2 (v3): resolve asset IDs → signed download URLs (replaces resolveSegments for clip inputs). */
+  resolveAssets(actAsUserId: string, body: ResolveAssetsBody): Promise<ResolveAssetsResponse> {
+    return this.request<ResolveAssetsResponse>("POST", "/footage/assets/resolve", actAsUserId, body);
   }
 
   getSegmentMedia(actAsUserId: string, segmentId: string): Promise<SegmentMediaResponse> {

@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  NotFoundException,
   Param,
   Post,
   Req,
@@ -12,12 +13,12 @@ import {
 } from '@nestjs/common';
 import { Request } from 'express';
 import {
-  cancelRun,
+  cancelPlan,
+  planRunView,
   readStageDocument,
-  resumeRunFrom,
+  resumePlanRunFrom,
   retryStage,
-  runView,
-  startRun,
+  startPlanRun,
   STUDIO_GATES,
   submitStudioGate,
 } from '@ag-studio/engine';
@@ -31,8 +32,8 @@ import { mapErrors } from './http-errors';
 const ORDER: TeamRole[] = ['viewer', 'editor', 'producer', 'owner'];
 
 /**
- * The web drives `ag-studio-production@1.0.0` through these routes (plan GĐ4 item 1): start a run, watch
- * it, read the documents each stage produced, submit the three gates, retry or cancel.
+ * Plan run routes for GĐ2 (series): start the plan run, watch it, read stage documents,
+ * submit the approve-plan gate, retry / resume / cancel.
  */
 @Controller('productions/:id/run')
 @UseGuards(RolesGuard)
@@ -46,32 +47,51 @@ export class StudioRunController {
   @Roles('producer')
   @HttpCode(HttpStatus.CREATED)
   start(@Param('id') id: string) {
-    return mapErrors(() => startRun(this.engine.core, this.engine.db, id));
+    return mapErrors(() => startPlanRun(this.engine.core, this.engine.db, id));
   }
 
   @Get()
   @Roles('viewer')
   status(@Param('id') id: string) {
-    return mapErrors(() => runView(this.engine.core, this.engine.db, id));
+    return mapErrors(() => planRunView(this.engine.core, this.engine.db, id));
   }
 
-  /** A JSON document of a stage (brief, catalog, treatment, selection, narration, timeline, export). Text only. */
+  /** A JSON document produced by a plan-run stage (e.g. `catalog/catalog.json`, `plan-episodes/series-plan.json`). */
   @Get('documents/:stage/:name')
   @Roles('viewer')
   document(@Param('id') id: string, @Param('stage') stage: string, @Param('name') name: string) {
-    return mapErrors(() => readStageDocument(this.engine.core, this.engine.db, id, stage, name));
+    return mapErrors(() => {
+      const runId = this.requireRunId(id);
+      return readStageDocument(this.engine.core, runId, stage, name);
+    });
   }
 
   /**
-   * Submit a gate. The editor gate (`edit`) needs `editor`; approving the treatment and the shot board are
-   * production decisions and need `producer`.
+   * Submit the approve-plan gate: body `{document: SeriesPlan}`.
+   * Returns `{accepted: true}` or 422 `{code: 'gate_rejected', failed: [...]}`.
    */
+  @Post('gates/approve-plan')
+  @Roles('producer')
+  @HttpCode(HttpStatus.OK)
+  approvePlan(@Param('id') id: string, @Body() dto: SubmitGateDto, @Req() req: Request) {
+    this.requireRole(req, id, 'producer');
+    return mapErrors(async () => {
+      const runId = this.requireRunId(id);
+      const report = await submitStudioGate(
+        this.engine.core, this.engine.db, runId, 'approve-plan', dto.document,
+      );
+      return { accepted: true, stageState: report.stageState, runState: report.runState };
+    });
+  }
+
+  /** Generic gate submit (kept for backward compat; use /gates/approve-plan for the plan gate). */
   @Post('gates/:gate')
   @Roles('editor')
   submitGate(@Param('id') id: string, @Param('gate') gate: string, @Body() dto: SubmitGateDto, @Req() req: Request) {
     if (gate in STUDIO_GATES && gate !== 'edit') this.requireRole(req, id, 'producer');
     return mapErrors(async () => {
-      const report = await submitStudioGate(this.engine.core, this.engine.db, id, gate, dto.document);
+      const runId = this.requireRunId(id);
+      const report = await submitStudioGate(this.engine.core, this.engine.db, runId, gate, dto.document);
       return { stageState: report.stageState, runState: report.runState };
     });
   }
@@ -81,17 +101,18 @@ export class StudioRunController {
   @HttpCode(HttpStatus.ACCEPTED)
   retry(@Param('id') id: string, @Param('stage') stage: string) {
     return mapErrors(() => {
-      retryStage(this.engine.core, this.engine.db, id, stage);
+      const runId = this.requireRunId(id);
+      retryStage(this.engine.core, runId, stage);
       return { ok: true };
     });
   }
 
-  /** After a FAILED/CANCELLED run: a new run that keeps every stage before `stage` and runs `stage` onwards. */
+  /** After a FAILED/CANCELLED plan run: a new run that keeps every stage before `stage` and runs `stage` onwards. */
   @Post('stages/:stage/resume')
   @Roles('producer')
   @HttpCode(HttpStatus.CREATED)
   resume(@Param('id') id: string, @Param('stage') stage: string) {
-    return mapErrors(() => resumeRunFrom(this.engine.core, this.engine.db, id, stage));
+    return mapErrors(() => resumePlanRunFrom(this.engine.core, this.engine.db, id, stage));
   }
 
   @Post('cancel')
@@ -99,9 +120,22 @@ export class StudioRunController {
   @HttpCode(HttpStatus.ACCEPTED)
   cancel(@Param('id') id: string) {
     return mapErrors(() => {
-      cancelRun(this.engine.core, this.engine.db, id);
+      cancelPlan(this.engine.core, this.engine.db, id);
       return { ok: true };
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
+
+  private requireRunId(productionId: string): string {
+    const row = this.db.get<{ run_id: string | null }>(
+      'SELECT run_id FROM productions WHERE id = ?',
+      [productionId],
+    );
+    if (!row?.run_id) throw new NotFoundException({ code: 'no_run', message: 'no plan run yet for this production' });
+    return row.run_id;
   }
 
   private requireRole(req: Request, productionId: string, role: TeamRole): void {

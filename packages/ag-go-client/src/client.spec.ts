@@ -3,7 +3,7 @@ import { AgGoClient } from "./client.js";
 import { AgGoClientError } from "./error.js";
 import type {
   GetFoldersResponse,
-  CatalogResponse,
+  FootageVideoResponse,
   SegmentMediaResponse,
   ResolveSegmentsResponse,
 } from "./types.js";
@@ -87,30 +87,21 @@ describe("AgGoClient - getFolders", () => {
 });
 
 describe("AgGoClient - getCatalog", () => {
-  it("returns catalog items on success", async () => {
+  it("returns footage video items on success (v3 whole-asset)", async () => {
     const item = {
-      segmentId: "seg-1",
       assetId: "asset-1",
-      startMs: 0,
-      endMs: 5000,
-      durationMs: 5000,
-      captionVi: "",
-      captionEn: "A test segment",
-      tags: ["tag1"],
-      keywordsVi: [],
-      subjects: ["person"],
-      actions: ["walking"],
-      shotSize: "medium",
-      cameraMotion: "static",
-      timeOfDay: "day",
-      setting: "outdoor",
-      peopleCount: "1",
+      name: "Phở bò Hà Nội",
+      durationMs: 8000,
       orientation: "landscape",
+      titleVi: "Phở bò buổi sáng",
+      summaryVi: "Cảnh phở bò tại Hà Nội",
+      tags: ["pho", "hanoi"],
+      topics: ["ẩm thực"],
       quality: 4,
       usable: true,
       approved: false,
     };
-    const payload: CatalogResponse = { items: [item], nextCursor: null };
+    const payload: FootageVideoResponse = { items: [item], nextCursor: null };
     const mockFetch = makeMockFetch(200, payload);
     const client = makeClient(mockFetch);
 
@@ -120,7 +111,8 @@ describe("AgGoClient - getCatalog", () => {
     });
 
     expect(result.items).toHaveLength(1);
-    expect(result.items[0]?.segmentId).toBe("seg-1");
+    expect(result.items[0]?.assetId).toBe("asset-1");
+    expect(result.items[0]?.durationMs).toBe(8000);
     expect(result.nextCursor).toBeNull();
   });
 

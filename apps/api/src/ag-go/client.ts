@@ -70,6 +70,39 @@ export interface ResolveSegmentsResponse {
   items: ResolvedSegmentItem[];
 }
 
+export interface ResolveAssetsBody {
+  assetIds: string[];
+  purpose: 'preview' | 'final';
+}
+
+export interface ResolvedAssetItem {
+  assetId: string;
+  url: string;
+  sourceKind: 'original' | 'proxy' | 'preview';
+  watermarked: boolean;
+  contentType: string;
+  sizeBytes: number | null;
+  cacheKey: string | null;
+  expiresAt: string;
+}
+
+export interface ResolveAssetsResponse {
+  items: ResolvedAssetItem[];
+}
+
+export interface AssetMediaResponse {
+  assetId: string;
+  previewUrl: string | null;
+  previewWidth: number | null;
+  previewHeight: number | null;
+  watermarked: boolean;
+  posterUrl: string | null;
+  keyframes: { url: string; tMs: number }[];
+  contactSheetUrl: string | null;
+  durationMs: number;
+  expiresAt: string;
+}
+
 export class AgGoClientError extends Error {
   constructor(
     public readonly status: number,
@@ -159,6 +192,16 @@ export class AgGoClient {
       actAsUserId,
       body,
     );
+  }
+
+  /** GĐ2 (v3): resolve whole-asset IDs → signed download URLs. */
+  resolveAssets(actAsUserId: string, body: ResolveAssetsBody): Promise<ResolveAssetsResponse> {
+    return this.request<ResolveAssetsResponse>('POST', '/footage/assets/resolve', actAsUserId, body);
+  }
+
+  /** GĐ2 (v3): get media URLs for one asset. */
+  getAssetMedia(actAsUserId: string, assetId: string): Promise<AssetMediaResponse> {
+    return this.request<AssetMediaResponse>('GET', `/footage/assets/${encodeURIComponent(assetId)}/media`, actAsUserId);
   }
 }
 

@@ -1,5 +1,80 @@
 // Types for ag-go-api footage endpoints
 
+/**
+ * GĐ2 whole-asset record returned by ag-go `/footage/catalog` (v3).
+ * Every AI field is optional/nullable — the scan worker may not have analysed all fields yet.
+ */
+export interface FootageVideo {
+  assetId: string;
+  name: string;
+  projectNames?: string[] | null;
+  durationMs: number;
+  orientation?: string | null;
+  hasSpeech?: boolean | null;
+  titleVi?: string | null;
+  summaryVi?: string | null;
+  genre?: string | null;
+  topics?: string[] | null;
+  subjects?: string[] | null;
+  places?: string[] | null;
+  actions?: string[] | null;
+  keywordsVi?: string[] | null;
+  tags?: string[] | null;
+  mood?: string | null;
+  setting?: string | null;
+  timeOfDay?: string | null;
+  peopleCount?: string | null;
+  shotVariety?: string[] | null;
+  quality?: number | null;
+  usable?: boolean | null;
+  approved?: boolean | null;
+}
+
+export interface FootageVideoResponse {
+  items: FootageVideo[];
+  nextCursor: string | null;
+}
+
+/**
+ * GĐ2 asset media returned by ag-go `/footage/assets/:id/media`.
+ */
+export interface AssetMediaResponse {
+  assetId: string;
+  previewUrl: string | null;
+  previewWidth: number | null;
+  previewHeight: number | null;
+  watermarked: boolean;
+  posterUrl: string | null;
+  keyframes: { url: string; tMs: number }[];
+  contactSheetUrl: string | null;
+  durationMs: number;
+  expiresAt: string;
+}
+
+/**
+ * GĐ2 asset resolve request body (`POST /footage/assets/resolve`).
+ * Used by `/farm/sign` when a render worker requests `asset:<id>` inputs.
+ */
+export interface ResolveAssetsBody {
+  assetIds: string[];
+  purpose: "preview" | "final";
+}
+
+export interface ResolvedAssetItem {
+  assetId: string;
+  url: string;
+  sourceKind: "original" | "proxy" | "preview";
+  watermarked: boolean;
+  contentType: string;
+  sizeBytes: number | null;
+  cacheKey: string | null;
+  expiresAt: string;
+}
+
+export interface ResolveAssetsResponse {
+  items: ResolvedAssetItem[];
+}
+
 export interface FolderItem {
   id: string;
   parentId: string | null;

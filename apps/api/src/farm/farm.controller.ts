@@ -122,6 +122,7 @@ export class FarmController {
       op: SignOp;
       r2Key?: string;
       segmentId?: string;
+      assetId?: string;
     }> = [];
 
     for (const op of ops) {
@@ -136,7 +137,12 @@ export class FarmController {
           const subPath = input.slice('library:'.length);
           const r2Key = `library/${subPath}`;
           authorizations.push({ op, r2Key });
+        } else if (input.startsWith('asset:')) {
+          // GĐ2 (v3): whole-asset input — resolved via ag-go POST /footage/assets/resolve
+          const assetId = input.slice('asset:'.length);
+          authorizations.push({ op, assetId });
         } else if (input.startsWith('segment:')) {
+          // GĐ4 legacy (archived productions only)
           const segmentId = input.slice('segment:'.length);
           authorizations.push({ op, segmentId });
         } else {
@@ -167,8 +173,38 @@ export class FarmController {
       let result: SignResult;
       let resultUrl: string | null = null;
 
-      if (op.op === 'get' && auth.segmentId) {
-        // Segment resolve via ag-go
+      if (op.op === 'get' && auth.assetId) {
+        // GĐ2 asset resolve via ag-go POST /footage/assets/resolve
+        const purpose = isFinalRender ? 'final' : 'preview';
+        if (!actAsUserId) {
+          throw new ForbiddenException(`Production ${prodId} has no owner to resolve footage as`);
+        }
+        const resolveResp = await this.agGoClient.resolveAssets(actAsUserId, {
+          assetIds: [auth.assetId],
+          purpose,
+        });
+        const item = resolveResp.items[0];
+        if (!item) {
+          throw new ForbiddenException(`Asset not found: ${auth.assetId}`);
+        }
+        resultUrl = item.url;
+        result = {
+          op: 'get',
+          input: op.input,
+          url: item.url,
+          expires_at: item.expiresAt,
+          size_bytes: item.sizeBytes,
+          content_type: item.contentType,
+          cache_key: item.cacheKey,
+          source: {
+            source_kind: item.sourceKind,
+            watermarked: item.watermarked,
+            start_ms: null,
+            end_ms: null,
+          },
+        };
+      } else if (op.op === 'get' && auth.segmentId) {
+        // GĐ4 legacy segment resolve via ag-go (archived productions only)
         const purpose = isFinalRender ? 'final' : 'preview';
         if (!actAsUserId) {
           throw new ForbiddenException(`Production ${prodId} has no owner to resolve footage as`);

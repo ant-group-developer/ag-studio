@@ -108,7 +108,7 @@ function planEpisodes() {
       items.push({ asset_id: slice[0].asset_id ?? slice[0].id, reason: "phù hợp topic", section_title: null });
     }
     // Inject a bad id on first call if mode is set
-    if (e === 0 && modes.has("plan-bad-once") && !repairing) {
+    if (e === 0 && (modes.has("plan-bad-always") || (modes.has("plan-bad-once") && !repairing))) {
       items.push({ asset_id: "khong-co-that", reason: "fake bad id", section_title: null });
     }
     // Alternates: remaining assets not used in this episode
