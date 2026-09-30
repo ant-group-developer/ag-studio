@@ -1,13 +1,12 @@
+/**
+ * Shows the plan run stages and handles gates for the production (v3).
+ */
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, List, Space, Spin, Tag, Typography } from "antd";
-import { ReloadOutlined, PlayCircleOutlined } from "@ant-design/icons";
+import { Alert, Button, Card, List, Space, Spin, Tag, Typography, Tooltip } from "antd";
+import { RefreshCw, Play } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useStudioClient, StudioHttpError } from "../../api/studio-client";
 import type { StageView } from "../../api/studio-client";
-import { GateApproveTreatment } from "./GateApproveTreatment";
-import { GateShotBoard } from "./GateShotBoard";
-import { GateEdit } from "./GateEdit";
-import { ExportsPanel } from "./ExportsPanel";
 import { EnumText } from "../../helpers/enum-label";
 
 const { Text } = Typography;
@@ -16,74 +15,39 @@ const TERMINAL_STATES = new Set(["SUCCEEDED", "FAILED", "CANCELLED"]);
 
 function stageTagColor(state: string): string {
   switch (state) {
-    case "SUCCEEDED":
-      return "green";
-    case "FAILED":
-      return "red";
-    case "RUNNING":
-      return "blue";
+    case "SUCCEEDED": return "green";
+    case "FAILED": return "red";
+    case "RUNNING": return "blue";
     case "WAITING_HUMAN":
-    case "WAITING":
-      return "gold";
-    default:
-      return "default";
+    case "WAITING": return "gold";
+    default: return "default";
   }
 }
 
-function StageRow({
-  stage,
-  productionId,
-  runEnded,
-}: {
-  stage: StageView;
-  productionId: string;
-  /** The run is FAILED or CANCELLED: a stage can only be picked up again in a new run. */
-  runEnded: boolean;
-}) {
+function StageRow({ stage, productionId, runEnded }: { stage: StageView; productionId: string; runEnded: boolean }) {
   const { t } = useTranslation();
   const client = useStudioClient();
   const queryClient = useQueryClient();
+
   const retryMutation = useMutation({
     mutationFn: () => client.retryStage(productionId, stage.key),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["run", productionId] }),
   });
-
   const resumeMutation = useMutation({
-    mutationFn: () => client.resumeRun(productionId, stage.key),
+    mutationFn: () => client.resumeStage(productionId, stage.key),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["run", productionId] }),
   });
 
   const canRetry = !runEnded && !stage.is_gate && (stage.state === "FAILED" || stage.state === "WAITING_HUMAN");
-  // Stages before this one keep what the ended run accepted (Claude's documents, the gates people submitted).
   const canResume = runEnded && !stage.is_gate;
 
   return (
     <List.Item
       actions={
         canResume
-          ? [
-              <Button
-                key="resume"
-                size="small"
-                icon={<ReloadOutlined />}
-                loading={resumeMutation.isPending}
-                onClick={() => resumeMutation.mutate()}
-              >
-                {t("run.resumeFromHere")}
-              </Button>,
-            ]
+          ? [<Tooltip key="resume" title={t("run.resumeFromHere")}><Button size="small" icon={<RefreshCw size={14} />} loading={resumeMutation.isPending} onClick={() => resumeMutation.mutate()} aria-label={t("run.resumeFromHere")} /></Tooltip>]
           : canRetry
-          ? [
-              <Button
-                key="retry"
-                size="small"
-                icon={<ReloadOutlined />}
-                loading={retryMutation.isPending}
-                onClick={() => retryMutation.mutate()}
-              >
-                {t("run.retry")}
-              </Button>,
-            ]
+          ? [<Tooltip key="retry" title={t("run.retry")}><Button size="small" icon={<RefreshCw size={14} />} loading={retryMutation.isPending} onClick={() => retryMutation.mutate()} aria-label={t("run.retry")} /></Tooltip>]
           : []
       }
     >
@@ -97,9 +61,8 @@ function StageRow({
           </Space>
         }
         description={
-          stage.error || stage.failed_checks.length || resumeMutation.error ? (
+          stage.error || stage.failed_checks.length ? (
             <div>
-              {resumeMutation.error && <div><Text type="danger">{String((resumeMutation.error as Error).message)}</Text></div>}
               {stage.error && <Text type="danger">{stage.error}</Text>}
               {stage.failed_checks.map((c) => (
                 <div key={c.check_id}>
@@ -107,9 +70,7 @@ function StageRow({
                   {Array.isArray((c.evidence as { problems?: unknown[] }).problems) &&
                     ((c.evidence as { problems: { code: string; message: string }[] }).problems).map((p, i) => (
                       <div key={i} style={{ paddingLeft: 12 }}>
-                        <Text type="secondary">
-                          {p.code}: {p.message}
-                        </Text>
+                        <Text type="secondary">{p.code}: {p.message}</Text>
                       </div>
                     ))}
                 </div>
@@ -122,13 +83,7 @@ function StageRow({
   );
 }
 
-export function RunPanel({
-  productionId,
-  targetSeconds,
-}: {
-  productionId: string;
-  targetSeconds: number | null;
-}) {
+export function RunPanel({ productionId }: { productionId: string; targetSeconds?: number | null }) {
   const { t } = useTranslation();
   const client = useStudioClient();
   const queryClient = useQueryClient();
@@ -151,32 +106,17 @@ export function RunPanel({
 
   const noRun = runQuery.isError && runQuery.error instanceof StudioHttpError && runQuery.error.status === 404;
 
-  if (runQuery.isLoading) {
-    return (
-      <Card title={t("run.title")}>
-        <Spin />
-      </Card>
-    );
-  }
+  if (runQuery.isLoading) return <Card title={t("run.title")}><Spin /></Card>;
 
   if (noRun) {
     return (
       <Card title={t("run.title")}>
-        <Button
-          type="primary"
-          icon={<PlayCircleOutlined />}
-          loading={startMutation.isPending}
-          onClick={() => startMutation.mutate()}
-        >
+        <Button type="primary" icon={<Play size={16} />} loading={startMutation.isPending} onClick={() => startMutation.mutate()}>
           {t("run.start")}
         </Button>
         {startMutation.isError && (
-          <Alert
-            style={{ marginTop: 12 }}
-            type="error"
-            message={t("run.startFailed")}
-            description={startMutation.error instanceof Error ? startMutation.error.message : String(startMutation.error)}
-          />
+          <Alert style={{ marginTop: 12 }} type="error" message={t("run.startFailed")}
+            description={startMutation.error instanceof Error ? startMutation.error.message : String(startMutation.error)} />
         )}
       </Card>
     );
@@ -185,43 +125,22 @@ export function RunPanel({
   if (runQuery.isError || !runQuery.data) {
     return (
       <Card title={t("run.title")}>
-        <Alert
-          type="error"
-          message={t("run.loadFailed")}
-          description={runQuery.error instanceof Error ? runQuery.error.message : String(runQuery.error)}
-        />
+        <Alert type="error" message={t("run.loadFailed")}
+          description={runQuery.error instanceof Error ? runQuery.error.message : String(runQuery.error)} />
       </Card>
     );
   }
 
   const run = runQuery.data;
-
   return (
-    <Space direction="vertical" style={{ width: "100%" }} size={16}>
-      <Card
-        title={
-          <Space>
-            {t("run.title")}
-            <Tag color={stageTagColor(run.state)}><EnumText group="runState" code={run.state} /></Tag>
-          </Space>
-        }
-      >
-        <List
-          dataSource={run.stages}
-          rowKey="key"
-          renderItem={(stage) => (
-            <StageRow stage={stage} productionId={productionId} runEnded={run.state === "FAILED" || run.state === "CANCELLED"} />
-          )}
-        />
-      </Card>
-
-      {run.waiting_gate === "approve-treatment" && (
-        <GateApproveTreatment productionId={productionId} targetSeconds={targetSeconds} />
-      )}
-      {run.waiting_gate === "shot-board" && <GateShotBoard productionId={productionId} />}
-      {run.waiting_gate === "edit" && <GateEdit productionId={productionId} />}
-
-      {run.state === "SUCCEEDED" && <ExportsPanel productionId={productionId} />}
-    </Space>
+    <Card title={<Space>{t("run.title")}<Tag color={stageTagColor(run.state)}><EnumText group="runState" code={run.state} /></Tag></Space>}>
+      <List
+        dataSource={run.stages}
+        rowKey="key"
+        renderItem={(stage) => (
+          <StageRow stage={stage} productionId={productionId} runEnded={run.state === "FAILED" || run.state === "CANCELLED"} />
+        )}
+      />
+    </Card>
   );
 }
