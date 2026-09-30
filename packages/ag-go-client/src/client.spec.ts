@@ -60,6 +60,14 @@ describe("AgGoClient - getFolders", () => {
     await expect(client.getFolders(ACT_AS_USER)).rejects.toMatchObject({ status: 403 });
   });
 
+  it("unwraps ag-go-api's { data, requestId, success, error, timestamp } envelope", async () => {
+    const folders = [{ id: "f-1", name: "Test 1.1", parentId: null, usableSegments: 18 }];
+    const mockFetch = makeMockFetch(200, { data: { folders }, requestId: "req-1", success: true, error: null, timestamp: "2026-09-30T00:00:00Z" });
+    const client = makeClient(mockFetch);
+
+    await expect(client.getFolders(ACT_AS_USER)).resolves.toEqual({ folders });
+  });
+
   it("sends X-Service-Key and X-Act-As-User headers", async () => {
     const mockFetch = makeMockFetch(200, { folders: [] });
     const client = makeClient(mockFetch);

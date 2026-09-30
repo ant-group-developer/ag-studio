@@ -138,7 +138,7 @@ export class AgGoClient {
       throw new AgGoClientError(response.status, responseBody);
     }
 
-    return responseBody as T;
+    return unwrapAgGoResponse<T>(responseBody);
   }
 
   getFolders(actAsUserId: string): Promise<GetFoldersResponse> {
@@ -160,4 +160,16 @@ export class AgGoClient {
       body,
     );
   }
+}
+
+/**
+ * ag-go-api answers `{ data, requestId, success, error, timestamp }` (its ApiResponseInterceptor); the payload
+ * is `data`. A body without that envelope is returned as is.
+ */
+export function unwrapAgGoResponse<T>(body: unknown): T {
+  if (body && typeof body === 'object' && !Array.isArray(body)) {
+    const b = body as Record<string, unknown>;
+    if (typeof b.success === 'boolean' && 'data' in b && typeof b.requestId === 'string') return b.data as T;
+  }
+  return body as T;
 }

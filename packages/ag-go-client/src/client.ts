@@ -1,4 +1,4 @@
-import { AgGoClientError } from "./error.js";
+import { AgGoClientError, unwrapAgGoResponse } from "./error.js";
 import type {
   GetFoldersResponse,
   FootageCatalogBody,
@@ -75,7 +75,7 @@ export class AgGoClient {
       throw new AgGoClientError(response.status, responseBody);
     }
 
-    return responseBody as T;
+    return unwrapAgGoResponse<T>(responseBody);
   }
 
   getFolders(actAsUserId: string): Promise<GetFoldersResponse> {

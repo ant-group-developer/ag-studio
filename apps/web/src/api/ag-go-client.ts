@@ -25,7 +25,7 @@ export async function getFolders(
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}: ${res.statusText}`);
   }
-  return res.json() as Promise<FolderListResponse>;
+  return unwrapAgGoResponse<FolderListResponse>(await res.json());
 }
 
 /**
@@ -63,5 +63,17 @@ export async function getSegmentMedia(
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}: ${res.statusText}`);
   }
-  return res.json() as Promise<SegmentMedia>;
+  return unwrapAgGoResponse<SegmentMedia>(await res.json());
+}
+
+/**
+ * ag-go-api answers `{ data, requestId, success, error, timestamp }` (its ApiResponseInterceptor); the payload
+ * is `data`. A body without that envelope is returned as is.
+ */
+export function unwrapAgGoResponse<T>(body: unknown): T {
+  if (body && typeof body === "object" && !Array.isArray(body)) {
+    const b = body as Record<string, unknown>;
+    if (typeof b.success === "boolean" && "data" in b && typeof b.requestId === "string") return b.data as T;
+  }
+  return body as T;
 }

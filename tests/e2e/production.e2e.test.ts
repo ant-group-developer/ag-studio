@@ -147,16 +147,18 @@ function startFakeAgGo(): Promise<void> {
     const url = req.url ?? "";
     agGoCalls.push({ path: url, actAs });
     const json = (status: number, v: unknown) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(v)); };
+    // ag-go-api wraps every answer in its ApiResponseInterceptor envelope; the fake does the same
+    const ok = (v: unknown) => json(200, { data: v, requestId: `req-${Date.now()}`, success: true, error: null, timestamp: new Date().toISOString() });
     if (url === "/.well-known/jwks.json") return json(200, { keys: [jwk] });
     // everything else is a Studio service call: service key + act-as a USER (never a production id)
     if (req.headers["x-service-key"] !== "e2e-service-key") return json(401, { message: "no service key" });
     if (actAs !== OWNER) return json(403, { message: `act-as ${String(actAs)} is not a user with scope` });
     if (req.method === "GET" && url.startsWith("/footage/folders")) {
-      return json(200, { folders: [{ id: FOLDER, parentId: null, name: "Ẩm thực", path: "/Ẩm thực", analyzedSegments: 6, usableSegments: 6 }] });
+      return ok({ folders: [{ id: FOLDER, parentId: null, name: "Ẩm thực", path: "/Ẩm thực", analyzedSegments: 6, usableSegments: 6 }] });
     }
     if (req.method === "POST" && url === "/footage/catalog") {
       const b = JSON.parse(body) as { folderIds: string[] };
-      return json(200, { items: b.folderIds.includes(FOLDER) ? SEGMENTS : [], nextCursor: null });
+      return ok({ items: b.folderIds.includes(FOLDER) ? SEGMENTS : [], nextCursor: null });
     }
     if (req.method === "POST" && url === "/footage/segments/resolve") {
       const b = JSON.parse(body) as { segmentIds: string[]; purpose: "preview" | "final" };
@@ -166,7 +168,7 @@ function startFakeAgGo(): Promise<void> {
         sourceKind: b.purpose === "final" ? "original" : "proxy", watermarked: false, contentType: "video/mp4",
         sizeBytes: null, cacheKey: null, expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
       }));
-      return json(200, { items });
+      return ok({ items });
     }
     json(404, { message: `fake ag-go has no ${req.method} ${url}` });
   });
