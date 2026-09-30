@@ -322,7 +322,8 @@ export const YoutubeKitSchema = z.object({
   /** Without chapters: the export appends them from the final timeline. */
   description: z.string().min(1).max(YOUTUBE_DESCRIPTION_BODY_MAX),
   tags: z.array(z.string().min(1).max(100)).max(40),
-  hashtags: z.array(z.string().regex(/^#[^\s#]+$/, "one #word")).max(15),
+  /** YouTube only links letters, digits and `_` after `#` (`#Phở_Hà_Nội`, not `#Phở-Hà-Nội` or `#(Tập1)`). */
+  hashtags: z.array(z.string().regex(/^#[\p{L}\p{N}_]+$/u, "one #word of letters, digits or _")).max(15),
   /** Three thumbnails: a frame of this video (taken from its middle in the final render) with this text on it. */
   thumbnails: z.array(z.object({ asset_id: z.string().min(1), text: z.string().min(1).max(40) }).strict()).length(3),
   playlist: z.string().max(150),

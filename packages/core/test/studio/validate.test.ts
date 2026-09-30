@@ -142,6 +142,13 @@ describe("series-plan-valid", () => {
 });
 
 describe("youtube-kit-valid", () => {
+  it("accepts only hashtags YouTube links: letters, digits and _", () => {
+    expect(validateYoutubeKit(youtubeKit({ hashtags: ["#Phở_Hà_Nội", "#Tập1"] }), { episode: episode() }).ok).toBe(true);
+    for (const bad of ["#Phở-Hà-Nội", "#(Tập1)", "#Phở—Bò", "#a.b"]) {
+      expect(validateYoutubeKit(youtubeKit({ hashtags: [bad] }), { episode: episode() }).ok).toBe(false);
+    }
+  });
+
   it("passes a valid youtube kit", () => {
     const r = validateYoutubeKit(youtubeKit(), { episode: episode() });
     expect(r.ok).toBe(true);

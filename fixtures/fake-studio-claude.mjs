@@ -150,7 +150,7 @@ function youtubeKit() {
     ],
     description: `${episode.hook ?? title}\n\nTập này sẽ đưa bạn đến với ${title}. Theo dõi kênh để không bỏ lỡ tập tiếp theo!`,
     tags: ["du lịch", "Việt Nam", ...(brief.keywords ?? []).slice(0, 5), title.split(" ").slice(0, 3).join(" ")],
-    hashtags: ["#ViệtNam", "#DuLịch", `#${title.replace(/\s+/g, "")}`],
+    hashtags: ["#ViệtNam", "#DuLịch", `#${title.replace(/[^\p{L}\p{N}_]+/gu, "").slice(0, 60)}`],
     thumbnails: [
       { asset_id: firstAssetId, text: title.slice(0, 40) },
       { asset_id: midAssetId, text: "Khám Phá Ngay" },

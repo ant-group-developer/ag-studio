@@ -84,7 +84,7 @@ Tên playlist phù hợp để gộp các tập cùng series. Dùng `series_titl
 
 - `titles.length === 3`.
 - `thumbnails.length === 3`; mỗi `asset_id` phải có trong `studio_episode.items`.
-- `hashtags[]`: mỗi cái bắt đầu `#`, không chứa dấu cách.
+- `hashtags[]`: mỗi cái bắt đầu `#`, sau đó chỉ có chữ, số hoặc `_` (không dấu cách, không `-`, `—`, dấu ngoặc hay dấu chấm) — YouTube chỉ nhận như vậy.
 - Tổng ký tự của tất cả `tags` join bằng dấu phẩy ≤ 500.
 
 ## Ví dụ có lời giải
