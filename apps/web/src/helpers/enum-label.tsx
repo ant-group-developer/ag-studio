@@ -11,9 +11,16 @@ export type EnumGroup =
   | "exportKind";
 
 export const PRODUCTION_STATUS_COLORS: Record<string, string> = {
+  draft: "default",
+  planning: "blue",
+  waiting_approval: "gold",
+  producing: "processing",
+  done: "green",
+  failed: "red",
+  archived: "default",
+  // legacy v2
   in_progress: "blue",
   review: "gold",
-  done: "green",
 };
 
 const ASPECT_KEYS: Record<string, string> = { "16:9": "landscape", "9:16": "portrait" };

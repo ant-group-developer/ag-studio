@@ -1,11 +1,9 @@
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Card, Descriptions, Space, Tag, Typography } from "antd";
-import { ArrowLeftOutlined } from "@ant-design/icons";
-import { useAuth0 } from "@auth0/auth0-react";
+import { Alert, Card, Descriptions, Space, Tag, Typography, Tooltip } from "antd";
+import { ChevronLeft, List } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useStudioClient } from "../api/studio-client";
-import { getFolders } from "../api/ag-go-client";
 import { EnumText, PRODUCTION_STATUS_COLORS } from "../helpers/enum-label";
 import { RunPanel } from "../modules/production/RunPanel";
 
@@ -15,7 +13,6 @@ export function ProductionDetailPage() {
   const { t } = useTranslation();
   const { productionId } = useParams<{ productionId: string }>();
   const client = useStudioClient();
-  const { getAccessTokenSilently } = useAuth0();
 
   const { data: production, isLoading: loadingProduction } = useQuery({
     queryKey: ["production", productionId],
@@ -29,18 +26,6 @@ export function ProductionDetailPage() {
     enabled: !!productionId,
   });
 
-  // Source folders are stored as ag-go folder ids; their names come from ag-go (ids stay shown if that fails).
-  const { data: folderData } = useQuery({
-    queryKey: ["folders"],
-    queryFn: async () => {
-      const token = await getAccessTokenSilently();
-      if (!token) throw new Error("No token");
-      return getFolders(token);
-    },
-    enabled: !!production?.sources.length,
-  });
-  const folderNames = new Map(folderData?.folders.map((f) => [f.id, f.name]));
-
   if (loadingProduction) {
     return <div>{t("common.loading")}</div>;
   }
@@ -52,7 +37,10 @@ export function ProductionDetailPage() {
   return (
     <div>
       <Link to={`/teams/${production.teamId}/productions`}>
-        <ArrowLeftOutlined /> {t("productions.backToList")}
+        <Tooltip title={t("productions.backToList")}>
+          <ChevronLeft size={16} style={{ verticalAlign: "middle" }} />
+        </Tooltip>
+        {" "}{t("productions.backToList")}
       </Link>
       <Title level={3} style={{ marginTop: 8 }}>{production.title}</Title>
 
@@ -75,35 +63,51 @@ export function ProductionDetailPage() {
             </Tag>
           </Descriptions.Item>
           <Descriptions.Item label={t("productions.detailFieldBrief")} span={2}>
-            {production.brief || t("productions.empty")}
+            {production.description || t("productions.empty")}
+          </Descriptions.Item>
+          <Descriptions.Item label={t("productions.detailFieldGoal")} span={2}>
+            {production.goal || t("productions.empty")}
           </Descriptions.Item>
           <Descriptions.Item label={t("productions.detailFieldAspect")}>
             <EnumText group="aspect" code={production.aspect} />
           </Descriptions.Item>
           <Descriptions.Item label={t("productions.detailFieldTargetSeconds")}>
-            {production.targetSeconds ? `${production.targetSeconds}s` : t("productions.empty")}
+            {production.episodeTargetSeconds ? `${production.episodeTargetSeconds}s` : t("productions.empty")}
           </Descriptions.Item>
           <Descriptions.Item label={t("productions.detailFieldLanguage")}>
             <EnumText group="language" code={production.language} />
           </Descriptions.Item>
-          <Descriptions.Item label={t("productions.detailFieldCanvas")}>
-            {production.canvas ? `${production.canvas.width} x ${production.canvas.height}` : t("productions.empty")}
+          <Descriptions.Item label={t("productions.detailFieldEpisodes")}>
+            <Space>
+              <List size={14} />
+              {production.episodeCounts.total}
+              {production.episodeCounts.ready > 0 && (
+                <Tag color="green">{t("productions.episodesReady", { count: production.episodeCounts.ready })}</Tag>
+              )}
+            </Space>
           </Descriptions.Item>
-          <Descriptions.Item label={t("productions.detailFieldSources")} span={2}>
-            {production.sources.length ? (
+          {production.sources.length > 0 && (
+            <Descriptions.Item label={t("productions.detailFieldSources")} span={2}>
               <Space size={[4, 4]} wrap>
                 {production.sources.map((id) => (
-                  <Tag key={id} title={id}>{folderNames.get(id) ?? id}</Tag>
+                  <Tag key={id}>{id}</Tag>
                 ))}
               </Space>
-            ) : (
-              t("productions.empty")
-            )}
-          </Descriptions.Item>
+            </Descriptions.Item>
+          )}
+          {production.keywords.length > 0 && (
+            <Descriptions.Item label={t("productions.detailFieldKeywords")} span={2}>
+              <Space size={[4, 4]} wrap>
+                {production.keywords.map((kw) => (
+                  <Tag key={kw}>{kw}</Tag>
+                ))}
+              </Space>
+            </Descriptions.Item>
+          )}
         </Descriptions>
       </Card>
 
-      <RunPanel productionId={productionId} targetSeconds={production.targetSeconds} />
+      <RunPanel productionId={productionId} />
     </div>
   );
 }

@@ -10,9 +10,9 @@ window.matchMedia ??= ((query: string) => ({
   addListener: () => {}, removeListener: () => {}, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
 })) as unknown as typeof window.matchMedia;
 
-const client = { listTeams: vi.fn(), listProductions: vi.fn() };
+// v3: listTeamProductions replaces listProductions for per-team queries
+const client = { listTeams: vi.fn(), listTeamProductions: vi.fn() };
 vi.mock("../api/studio-client", async (orig) => ({ ...(await orig<object>()), useStudioClient: () => client }));
-vi.mock("@auth0/auth0-react", () => ({ useAuth0: () => ({ getAccessTokenSilently: async () => "token" }) }));
 
 const { ProductionsPage } = await import("./ProductionsPage");
 
@@ -31,9 +31,17 @@ function page(path: string) {
   );
 }
 
+function paged<T>(items: T[]) {
+  return { items, total: items.length, page: 1, pageSize: 20 };
+}
+
 const prod = (id: string, title: string) => ({
-  id, teamId: "t-2", title, brief: null, status: "draft", canvas: null, runId: null, sources: [], createdAt: "", updatedAt: "",
-  ownerUserId: null, targetSeconds: 30, aspect: "16:9", language: "vi",
+  id, teamId: "t-2", teamName: "Nhóm A", title,
+  description: "", goal: "", audience: "", tone: "", notes: "",
+  status: "draft" as const, runId: null, sources: [], createdAt: "", updatedAt: "",
+  ownerUserId: null, episodeTargetSeconds: 30, maxEpisodes: 12, aspect: "16:9" as const, language: "vi",
+  music: null, youtubeChannels: [], keywords: [],
+  episodeCounts: { total: 0, ready: 0, producing: 0, failed: 0 },
 });
 
 describe("ProductionsPage", () => {
@@ -42,31 +50,31 @@ describe("ProductionsPage", () => {
   });
   beforeEach(() => {
     client.listTeams.mockReset();
-    client.listProductions.mockReset();
+    client.listTeamProductions.mockReset();
     localStorage.clear();
   });
 
   it("từ menu: chọn nhóm (nhớ nhóm lần trước) rồi hiện production của nhóm đó", async () => {
     localStorage.setItem("ag-studio:last-team", "t-2");
-    client.listTeams.mockResolvedValue([{ id: "t-1", name: "Nhóm A", createdAt: "" }, { id: "t-2", name: "Chạy thử", createdAt: "" }]);
-    client.listProductions.mockResolvedValue([prod("p-1", "Phở sáng")]);
+    client.listTeams.mockResolvedValue(paged([{ id: "t-1", name: "Nhóm A", role: null, memberCount: 1, productionCount: 0, createdAt: "" }, { id: "t-2", name: "Chạy thử", role: null, memberCount: 1, productionCount: 1, createdAt: "" }]));
+    client.listTeamProductions.mockResolvedValue(paged([prod("p-1", "Phở sáng")]));
     page("/productions");
     expect(await screen.findByText("Phở sáng")).toBeTruthy();
-    expect(client.listProductions).toHaveBeenCalledWith("t-2");
+    expect(client.listTeamProductions).toHaveBeenCalledWith("t-2");
     expect(screen.getByText("Chạy thử")).toBeTruthy();
   });
 
   it("chưa ở nhóm nào thì chỉ đường sang trang Nhóm", async () => {
-    client.listTeams.mockResolvedValue([]);
+    client.listTeams.mockResolvedValue(paged([]));
     page("/productions");
     expect(await screen.findByText(/Bạn chưa ở nhóm nào/)).toBeTruthy();
-    expect(client.listProductions).not.toHaveBeenCalled();
+    expect(client.listTeamProductions).not.toHaveBeenCalled();
   });
 
   it("mở từ một nhóm thì dùng nhóm đó, không hỏi chọn nhóm", async () => {
-    client.listProductions.mockResolvedValue([]);
+    client.listTeamProductions.mockResolvedValue(paged([]));
     page("/teams/t-9/productions");
-    await waitFor(() => expect(client.listProductions).toHaveBeenCalledWith("t-9"));
+    await waitFor(() => expect(client.listTeamProductions).toHaveBeenCalledWith("t-9"));
     expect(client.listTeams).not.toHaveBeenCalled();
   });
 });

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Table, Button, Modal, Form, Select, Spin, Typography, Popconfirm } from "antd";
-import { PlusOutlined } from "@ant-design/icons";
+import { Table, Button, Modal, Form, Select, Spin, Typography, Popconfirm, Tooltip } from "antd";
+import { Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useStudioClient } from "../api/studio-client";
 import type { TeamMember } from "../api/studio-client";
@@ -34,11 +34,12 @@ export function TeamDetailPage() {
     { value: "viewer", label: t("roles.viewer") },
   ];
 
-  const { data: members = [], isLoading } = useQuery({
+  const { data: membersPage, isLoading } = useQuery({
     queryKey: ["members", teamId],
     queryFn: () => client.listMembers(teamId!),
     enabled: !!teamId,
   });
+  const members = membersPage?.items ?? [];
 
   const { data: candidates = [], isFetching: searching } = useQuery({
     queryKey: ["member-candidates", teamId, debounced],
@@ -119,13 +120,16 @@ export function TeamDetailPage() {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
         <Title level={3}>{t("teams.detailTitle")}</Title>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => setOpen(true)}
-        >
-          {t("teams.addMember")}
-        </Button>
+        <Tooltip title={t("teams.addMember")}>
+          <Button
+            type="primary"
+            icon={<Plus size={16} />}
+            onClick={() => setOpen(true)}
+            aria-label={t("teams.addMember")}
+          >
+            {t("teams.addMember")}
+          </Button>
+        </Tooltip>
       </div>
 
       <Table

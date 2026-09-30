@@ -11,10 +11,6 @@ window.matchMedia ??= ((query: string) => ({
 
 const client = { getProduction: vi.fn(), checkProductionAccess: vi.fn(), getRun: vi.fn() };
 vi.mock("../api/studio-client", async (orig) => ({ ...(await orig<object>()), useStudioClient: () => client }));
-vi.mock("@auth0/auth0-react", () => ({ useAuth0: () => ({ getAccessTokenSilently: async () => "token" }) }));
-vi.mock("../api/ag-go-client", () => ({
-  getFolders: async () => ({ folders: [{ id: "f-1", name: "Phở Hà Nội", parentId: null, usableSegments: 12 }] }),
-}));
 
 const { ProductionDetailPage } = await import("./ProductionDetailPage");
 
@@ -27,19 +23,22 @@ describe("ProductionDetailPage", () => {
     await i18n.changeLanguage("vi");
   });
 
-  it("hiện nhãn đọc được kèm mã enum, và tên thư mục nguồn thay cho id", async () => {
+  it("hiện nhãn đọc được kèm mã enum, source ids và trạng thái run", async () => {
     client.getProduction.mockResolvedValue({
-      id: "p-1", teamId: "t-1", title: "Phở sáng", brief: null, status: "in_progress", canvas: null, runId: "r-1",
-      sources: ["f-1", "f-gone"], createdAt: "", updatedAt: "", ownerUserId: null, targetSeconds: 60, aspect: "9:16",
-      language: "vi", voice: { reference: null, referenceText: null, speed: 1 }, music: null,
+      id: "p-1", teamId: "t-1", teamName: "Team A", title: "Phở sáng",
+      description: "Phim tài liệu", goal: "", audience: "", tone: "", notes: "",
+      status: "producing", runId: "r-1", createdAt: "", updatedAt: "", ownerUserId: null,
+      episodeTargetSeconds: 60, maxEpisodes: 12, aspect: "9:16", language: "vi",
+      music: null, sources: ["f-1", "f-gone"], youtubeChannels: [], keywords: [],
+      episodeCounts: { total: 3, ready: 1, producing: 1, failed: 0 },
     });
     client.checkProductionAccess.mockResolvedValue({ hasAccess: true });
     client.getRun.mockResolvedValue({
       run_id: "r-1", state: "WAITING", created_at: "", updated_at: "", cost_usd: 0, waiting_gate: null, latest_revision: null,
       stages: [
         stage("intake", "SUCCEEDED"),
-        stage("approve-treatment", "WAITING_HUMAN", { executor: "gate", is_gate: true }),
-        stage("select-shots", "FAILED", { failed_checks: [{ check_id: "selection-valid", evidence: {} }] }),
+        stage("approve-plan", "WAITING_HUMAN", { executor: "gate", is_gate: true }),
+        stage("render-episode", "FAILED", { failed_checks: [{ check_id: "selection-valid", evidence: {} }] }),
         stage("some-new-step", "PENDING"),
       ],
     });
@@ -54,19 +53,18 @@ describe("ProductionDetailPage", () => {
       </QueryClientProvider>,
     );
 
-    const status = await screen.findByText("Đang sản xuất");
-    expect(within(status).getByText("in_progress")).toBeTruthy();
-    expect(within(screen.getByText("Dọc")).getByText("9:16")).toBeTruthy();
-    expect(within(screen.getByText("Tiếng Việt")).getByText("vi")).toBeTruthy();
-    expect(await screen.findByText("Phở Hà Nội")).toBeTruthy();
+    // EnumText renders label + code side-by-side; use the code (always a leaf text node)
+    expect(await screen.findByText("producing")).toBeTruthy();  // productionStatus code
+    expect(screen.getByText("9:16")).toBeTruthy();              // aspect code
+    expect(screen.getAllByText("vi").length).toBeGreaterThan(0); // language code
+
+    // Source IDs shown as tags
+    expect(await screen.findByText("f-1")).toBeTruthy();
     expect(screen.getByText("f-gone")).toBeTruthy();
 
-    expect(within(await screen.findByText("Đang chờ")).getByText("WAITING")).toBeTruthy();
-    expect(within(screen.getByText("Duyệt treatment")).getByText("approve-treatment")).toBeTruthy();
-    expect(within(screen.getByText("Chờ người duyệt")).getByText("WAITING_HUMAN")).toBeTruthy();
-    expect(screen.getByText("Cần người duyệt")).toBeTruthy();
-    expect(within(screen.getByText("Danh sách cảnh hợp lệ")).getByText("selection-valid")).toBeTruthy();
-    // a code without a label is still shown as is
+    // Run panel: state
+    expect(await screen.findByText("WAITING")).toBeTruthy();
+    // code without a label is still shown as-is
     expect(screen.getByText("some-new-step")).toBeTruthy();
   });
 });

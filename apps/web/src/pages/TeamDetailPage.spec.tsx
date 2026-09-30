@@ -11,8 +11,10 @@ window.matchMedia ??= ((query: string) => ({
   addListener: () => {}, removeListener: () => {}, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
 })) as unknown as typeof window.matchMedia;
 
+import type { Paged } from "../api/studio-client";
+
 const client = {
-  listMembers: vi.fn<(teamId: string) => Promise<TeamMember[]>>(),
+  listMembers: vi.fn<(teamId: string) => Promise<Paged<TeamMember>>>(),
   searchMemberCandidates: vi.fn<(teamId: string, keyword: string) => Promise<UserSummary[]>>(),
   addMember: vi.fn(),
   removeMember: vi.fn(),
@@ -41,10 +43,13 @@ describe("TeamDetailPage", () => {
   });
 
   it("hiện tên, email của thành viên thay cho User ID; không rõ tên thì hiện id", async () => {
-    client.listMembers.mockResolvedValue([
-      { userId: "auth0|u-1", role: "owner", joinedAt: "2026-09-30T00:00:00Z", name: "Nguyễn An", email: "an@ant-group.net", avatar: null },
-      { userId: "auth0|u-2", role: "editor", joinedAt: "2026-09-30T00:00:00Z", name: null, email: null, avatar: null },
-    ]);
+    client.listMembers.mockResolvedValue({
+      items: [
+        { userId: "auth0|u-1", role: "owner", joinedAt: "2026-09-30T00:00:00Z", name: "Nguyễn An", email: "an@ant-group.net", avatar: null },
+        { userId: "auth0|u-2", role: "editor", joinedAt: "2026-09-30T00:00:00Z", name: null, email: null, avatar: null },
+      ],
+      total: 2, page: 1, pageSize: 20,
+    });
     page();
     expect(await screen.findByText("Nguyễn An")).toBeTruthy();
     expect(screen.getByText("an@ant-group.net")).toBeTruthy();
@@ -53,7 +58,7 @@ describe("TeamDetailPage", () => {
   });
 
   it("thêm thành viên: tìm theo tên/email, danh sách có tên và email, gửi đúng user id", async () => {
-    client.listMembers.mockResolvedValue([]);
+    client.listMembers.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 });
     client.searchMemberCandidates.mockResolvedValue([
       { userId: "auth0|u-3", name: "Trần Bình", email: "binh@ant-group.net", avatar: null },
     ]);
