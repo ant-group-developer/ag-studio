@@ -5,6 +5,7 @@
  */
 import { useMemo, useState } from "react";
 import { Alert, Modal, Spin } from "antd";
+import { useTranslation } from "react-i18next";
 import { layoutTimeline, timelineIssues } from "@studio/timeline";
 import { useEditor } from "./useEditor";
 import { Toolbar } from "./Toolbar";
@@ -23,6 +24,7 @@ export interface EditorViewProps {
 }
 
 export function EditorView({ productionId, client, media, onDone }: EditorViewProps) {
+  const { t } = useTranslation();
   const editor = useEditor(productionId, client);
   const [seek, setSeek] = useState({ time: 0, token: 0 });
   const [playhead, setPlayhead] = useState(0);
@@ -33,7 +35,7 @@ export function EditorView({ productionId, client, media, onDone }: EditorViewPr
 
   if (editor.loading || !editor.state || !layout) {
     if (editor.loadError) {
-      return <Alert type="error" showIcon message="Không tải được timeline" description={editor.loadError} />;
+      return <Alert type="error" showIcon message={t("editorView.loadFailed")} description={editor.loadError} />;
     }
     return <Spin style={{ margin: 48 }} />;
   }
@@ -91,18 +93,15 @@ export function EditorView({ productionId, client, media, onDone }: EditorViewPr
 
       <Modal
         open={!!editor.conflict}
-        title="Có người vừa lưu revision mới"
+        title={t("editorView.conflictTitle")}
         closable={false}
         maskClosable={false}
         onOk={() => void editor.loadLatest()}
         onCancel={() => void editor.keepMine()}
-        okText="Tải bản mới nhất"
-        cancelText="Giữ bản của tôi"
+        okText={t("editorView.loadLatest")}
+        cancelText={t("editorView.keepMine")}
       >
-        <p>
-          Ai đó vừa lưu revision {editor.conflict?.currentRevision} trong khi bạn đang chỉnh sửa. Bạn có thể tải bản mới
-          nhất (bỏ thay đổi của bạn) hoặc giữ bản của bạn (ghi đè lên bản mới nhất).
-        </p>
+        <p>{t("editorView.conflictBody", { revision: editor.conflict?.currentRevision })}</p>
       </Modal>
     </div>
   );

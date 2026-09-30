@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Card, Space, Spin, Tag, Typography } from "antd";
 import type { Selection, StudioCatalog } from "@harness/contracts";
+import { useTranslation } from "react-i18next";
 import { useStudioClient } from "../../api/studio-client";
 import { useSegmentMedia } from "../common/use-segment-media";
 import { SegmentPreviewCard } from "../common/SegmentPreviewCard";
@@ -23,6 +24,7 @@ function swapPick(beat: SelectionBeat, pickIndex: number, altSegmentId: string):
 }
 
 export function GateShotBoard({ productionId }: { productionId: string }) {
+  const { t } = useTranslation();
   const client = useStudioClient();
   const queryClient = useQueryClient();
   const media = useSegmentMedia();
@@ -60,28 +62,28 @@ export function GateShotBoard({ productionId }: { productionId: string }) {
 
   if (selectionQuery.isLoading || catalogQuery.isLoading) {
     return (
-      <Card title="Duyệt shot board">
+      <Card title={t("shotBoard.title")}>
         <Spin />
       </Card>
     );
   }
   if (selectionQuery.isError || catalogQuery.isError || !selectionQuery.data) {
     return (
-      <Card title="Duyệt shot board">
-        <Alert type="error" message="Không tải được shot board" />
+      <Card title={t("shotBoard.title")}>
+        <Alert type="error" message={t("shotBoard.loadFailed")} />
       </Card>
     );
   }
 
   return (
-    <Card title="Duyệt shot board">
+    <Card title={t("shotBoard.title")}>
       <Space direction="vertical" style={{ width: "100%" }} size={20}>
         {beats.map((beat) => {
           const active = selectedPick[beat.beat_id] ?? 0;
           return (
             <div key={beat.beat_id}>
-              <Title level={5}>Beat {beat.beat_id}</Title>
-              <Text type="secondary">Đang chọn</Text>
+              <Title level={5}>{t("shotBoard.beatTitle", { id: beat.beat_id })}</Title>
+              <Text type="secondary">{t("shotBoard.currentPick")}</Text>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4, marginBottom: 12 }}>
                 {beat.picks.map((pick, i) => (
                   <SegmentPreviewCard
@@ -97,7 +99,7 @@ export function GateShotBoard({ productionId }: { productionId: string }) {
               </div>
               {beat.alternates.length > 0 && (
                 <>
-                  <Text type="secondary">Phương án thay thế — bấm để đổi vào ô đang chọn</Text>
+                  <Text type="secondary">{t("shotBoard.alternatesHint")}</Text>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
                     {beat.alternates.map((alt) => (
                       <SegmentPreviewCard
@@ -126,9 +128,9 @@ export function GateShotBoard({ productionId }: { productionId: string }) {
 
         <Space>
           <Button type="primary" loading={submitMutation.isPending} onClick={() => submitMutation.mutate()}>
-            Duyệt shot board
+            {t("shotBoard.approve")}
           </Button>
-          {catalogQuery.data?.truncated && <Tag color="orange">Danh mục đã bị cắt bớt</Tag>}
+          {catalogQuery.data?.truncated && <Tag color="orange">{t("shotBoard.truncated")}</Tag>}
         </Space>
       </Space>
     </Card>

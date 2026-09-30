@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState, type Dispatch } from "react";
 import { Alert, Button, Card, Divider, Input, InputNumber, Select, Slider, Space, Switch, Typography } from "antd";
 import { DeleteOutlined, SoundOutlined } from "@ant-design/icons";
+import { useTranslation } from "react-i18next";
 import { TEXT_KINDS, TEXT_POSITIONS_V2 } from "@harness/contracts";
 import { MIN_CLIP_SECONDS, segmentSeconds, type TimelineLayout } from "@studio/timeline";
 import type { EditorAction, EditorState } from "./state/editor-reducer";
@@ -31,6 +32,7 @@ export interface PropertiesPanelProps {
 }
 
 export function PropertiesPanel({ productionId, client, state, layout, dispatch }: PropertiesPanelProps) {
+  const { t } = useTranslation();
   const { timeline, selection } = state;
 
   const selectedBeatId: string | null = (() => {
@@ -43,7 +45,7 @@ export function PropertiesPanel({ productionId, client, state, layout, dispatch 
   })();
 
   return (
-    <Card size="small" title="Thuộc tính" style={{ height: "100%" }}>
+    <Card size="small" title={t("properties.title")} style={{ height: "100%" }}>
       <Space direction="vertical" style={{ width: "100%" }} size={16}>
         {selection?.kind === "clip" && (
           <ClipProperties timeline={timeline} layout={layout} clipId={selection.id} dispatch={dispatch} />
@@ -62,10 +64,10 @@ export function PropertiesPanel({ productionId, client, state, layout, dispatch 
         )}
         {selection?.kind === "beat" && (
           <div>
-            <Title level={5}>Beat {selection.id}</Title>
+            <Title level={5}>{t("properties.beatTitle", { id: selection.id })}</Title>
           </div>
         )}
-        {!selection && <Text type="secondary">Chọn một clip, câu lời dẫn hoặc chữ trên timeline để chỉnh sửa.</Text>}
+        {!selection && <Text type="secondary">{t("properties.emptySelection")}</Text>}
 
         <Divider style={{ margin: 0 }} />
 
@@ -78,7 +80,7 @@ export function PropertiesPanel({ productionId, client, state, layout, dispatch 
               text: {
                 beat_id: selectedBeatId ?? layout.beats[0]!.beat_id,
                 kind: "title",
-                text: "Chữ mới",
+                text: t("properties.newText"),
                 offset: 0,
                 duration: 2,
                 position: "bottom_center",
@@ -86,7 +88,7 @@ export function PropertiesPanel({ productionId, client, state, layout, dispatch 
             })
           }
         >
-          Thêm chữ
+          {t("properties.addText")}
         </Button>
 
         <Divider style={{ margin: 0 }} />
@@ -107,6 +109,7 @@ function ClipProperties({
   clipId: string;
   dispatch: Dispatch<EditorAction>;
 }) {
+  const { t } = useTranslation();
   const clip = timeline.clips.find((c) => c.clip_id === clipId);
   const laid = layout.clips.find((c) => c.clip_id === clipId);
   if (!clip) return null;
@@ -115,11 +118,11 @@ function ClipProperties({
 
   return (
     <div>
-      <Title level={5}>Clip {clip.clip_id}</Title>
+      <Title level={5}>{t("properties.clipTitle", { id: clip.clip_id })}</Title>
       <Paragraph type="secondary" style={{ marginBottom: 4 }}>
-        {seg?.caption ?? "(không có mô tả)"}
+        {seg?.caption ?? t("properties.noDescription")}
       </Paragraph>
-      <Text>Cắt trong đoạn (0–{segSeconds.toFixed(2)}s)</Text>
+      <Text>{t("properties.trimRange", { seconds: segSeconds.toFixed(2) })}</Text>
       <Slider
         range
         min={0}
@@ -149,9 +152,11 @@ function ClipProperties({
           onChange={(n) => dispatch({ type: "trimClip", clipId: clip.clip_id, srcIn: clip.src_in, srcOut: n ?? segSeconds })}
         />
       </Space>
-      <Paragraph style={{ marginTop: 4 }}>Độ dài: {(laid?.duration ?? clip.src_out - clip.src_in).toFixed(2)}s</Paragraph>
+      <Paragraph style={{ marginTop: 4 }}>
+        {t("properties.duration", { seconds: (laid?.duration ?? clip.src_out - clip.src_in).toFixed(2) })}
+      </Paragraph>
       <Button danger size="small" icon={<DeleteOutlined />} onClick={() => dispatch({ type: "removeClip", clipId: clip.clip_id })}>
-        Xoá clip
+        {t("properties.removeClip")}
       </Button>
     </div>
   );
@@ -170,6 +175,7 @@ function LineProperties({
   lineId: string;
   dispatch: Dispatch<EditorAction>;
 }) {
+  const { t } = useTranslation();
   const line = timeline.narration.find((l) => l.line_id === lineId);
   const [text, setText] = useState(line?.text ?? "");
   const [ttsBusy, setTtsBusy] = useState(false);
@@ -193,7 +199,7 @@ function LineProperties({
       const done = await pollJob(client, productionId, job.id);
       if (!mounted.current) return;
       if (done.status === "failed") {
-        setTtsError(done.error ?? "TTS thất bại");
+        setTtsError(done.error ?? t("properties.ttsFailed"));
       } else {
         const result = done.result as { line_id: string; text: string; key: string; duration: number } | null;
         if (result) {
@@ -209,7 +215,7 @@ function LineProperties({
 
   return (
     <div>
-      <Title level={5}>Câu {line.line_id}</Title>
+      <Title level={5}>{t("properties.lineTitle", { id: line.line_id })}</Title>
       <Input.TextArea
         rows={3}
         value={text}
@@ -219,10 +225,10 @@ function LineProperties({
         }}
       />
       {line.audio ? (
-        <Text type="secondary">Đã đọc — {line.audio.duration.toFixed(1)}s</Text>
+        <Text type="secondary">{t("properties.lineRead", { seconds: line.audio.duration.toFixed(1) })}</Text>
       ) : (
         <Button size="small" icon={<SoundOutlined />} loading={ttsBusy} onClick={() => void requestTts()} style={{ marginTop: 8 }}>
-          Đọc lại câu này (TTS)
+          {t("properties.rerecord")}
         </Button>
       )}
       {ttsError && <Alert style={{ marginTop: 8 }} type="error" message={ttsError} />}
@@ -239,11 +245,12 @@ function TextProperties({
   textId: string;
   dispatch: Dispatch<EditorAction>;
 }) {
+  const { t } = useTranslation();
   const text = timeline.texts.find((x) => x.text_id === textId);
   if (!text) return null;
   return (
     <div>
-      <Title level={5}>Chữ {text.text_id}</Title>
+      <Title level={5}>{t("properties.textTitle", { id: text.text_id })}</Title>
       <Input
         value={text.text}
         maxLength={64}
@@ -267,7 +274,7 @@ function TextProperties({
       </Space>
       <Space style={{ marginTop: 8 }}>
         <span>
-          <Text type="secondary">Bắt đầu (s)</Text>
+          <Text type="secondary">{t("properties.startSeconds")}</Text>
           <InputNumber
             size="small"
             min={0}
@@ -276,7 +283,7 @@ function TextProperties({
           />
         </span>
         <span>
-          <Text type="secondary">Thời lượng (s)</Text>
+          <Text type="secondary">{t("properties.durationSeconds")}</Text>
           <InputNumber
             size="small"
             min={0.5}
@@ -288,7 +295,7 @@ function TextProperties({
       </Space>
       <div style={{ marginTop: 8 }}>
         <Button danger size="small" icon={<DeleteOutlined />} onClick={() => dispatch({ type: "removeText", textId })}>
-          Xoá chữ
+          {t("properties.removeText")}
         </Button>
       </div>
     </div>
@@ -296,24 +303,25 @@ function TextProperties({
 }
 
 function GlobalProperties({ timeline, dispatch }: { timeline: EditorState["timeline"]; dispatch: Dispatch<EditorAction> }) {
+  const { t } = useTranslation();
   const music = timeline.music;
   return (
     <div>
-      <Title level={5}>Chung</Title>
+      <Title level={5}>{t("properties.generalTitle")}</Title>
       <Space direction="vertical" style={{ width: "100%" }}>
         <Space>
-          <Text>Tiếng gốc</Text>
+          <Text>{t("properties.sourceAudio")}</Text>
           <Switch
             checked={!timeline.source_audio.muted}
             onChange={(checked) => dispatch({ type: "setSourceMuted", muted: !checked })}
           />
         </Space>
         <Space>
-          <Text>Phụ đề</Text>
+          <Text>{t("properties.captions")}</Text>
           <Switch checked={timeline.captions.enabled} onChange={(checked) => dispatch({ type: "setCaptions", enabled: checked })} />
         </Space>
         <Divider style={{ margin: "8px 0" }} />
-        <Text strong>Nhạc nền</Text>
+        <Text strong>{t("properties.music")}</Text>
         {music ? (
           <>
             <Input
@@ -322,7 +330,7 @@ function GlobalProperties({ timeline, dispatch }: { timeline: EditorState["timel
               placeholder="library:music/..."
               onChange={(e) => dispatch({ type: "setMusic", music: { ...music, track: e.target.value } })}
             />
-            <Text type="secondary">Âm lượng (dB)</Text>
+            <Text type="secondary">{t("properties.musicVolume")}</Text>
             <Slider
               min={-40}
               max={0}
@@ -330,11 +338,11 @@ function GlobalProperties({ timeline, dispatch }: { timeline: EditorState["timel
               onChange={(v) => dispatch({ type: "setMusic", music: { ...music, gain_db: v } })}
             />
             <Space>
-              <Text>Ducking khi có lời</Text>
+              <Text>{t("properties.musicDucking")}</Text>
               <Switch checked={music.ducking} onChange={(checked) => dispatch({ type: "setMusic", music: { ...music, ducking: checked } })} />
             </Space>
             <Button size="small" danger onClick={() => dispatch({ type: "setMusic", music: null })}>
-              Xoá nhạc
+              {t("properties.removeMusic")}
             </Button>
           </>
         ) : (
@@ -342,7 +350,7 @@ function GlobalProperties({ timeline, dispatch }: { timeline: EditorState["timel
             size="small"
             onClick={() => dispatch({ type: "setMusic", music: { track: "library:music/calm.mp3", gain_db: -18, ducking: true } })}
           >
-            Thêm nhạc nền
+            {t("properties.addMusic")}
           </Button>
         )}
       </Space>

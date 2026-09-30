@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Card, List, Space, Spin, Tag, Typography } from "antd";
 import { ReloadOutlined, PlayCircleOutlined } from "@ant-design/icons";
+import { useTranslation } from "react-i18next";
 import { useStudioClient, StudioHttpError } from "../../api/studio-client";
 import type { StageView } from "../../api/studio-client";
 import { GateApproveTreatment } from "./GateApproveTreatment";
@@ -37,6 +38,7 @@ function StageRow({
   /** The run is FAILED or CANCELLED: a stage can only be picked up again in a new run. */
   runEnded: boolean;
 }) {
+  const { t } = useTranslation();
   const client = useStudioClient();
   const queryClient = useQueryClient();
   const retryMutation = useMutation({
@@ -65,7 +67,7 @@ function StageRow({
                 loading={resumeMutation.isPending}
                 onClick={() => resumeMutation.mutate()}
               >
-                Chạy lại từ bước này
+                {t("run.resumeFromHere")}
               </Button>,
             ]
           : canRetry
@@ -77,7 +79,7 @@ function StageRow({
                 loading={retryMutation.isPending}
                 onClick={() => retryMutation.mutate()}
               >
-                Chạy lại
+                {t("run.retry")}
               </Button>,
             ]
           : []
@@ -89,7 +91,7 @@ function StageRow({
             <Text strong>{stage.key}</Text>
             <Tag color={stageTagColor(stage.state)}>{stage.state}</Tag>
             {stage.is_gate && <Tag>gate</Tag>}
-            {stage.attempts > 1 && <Text type="secondary">lần thử {stage.attempts}</Text>}
+            {stage.attempts > 1 && <Text type="secondary">{t("run.attempt", { count: stage.attempts })}</Text>}
           </Space>
         }
         description={
@@ -125,6 +127,7 @@ export function RunPanel({
   productionId: string;
   targetSeconds: number | null;
 }) {
+  const { t } = useTranslation();
   const client = useStudioClient();
   const queryClient = useQueryClient();
 
@@ -148,7 +151,7 @@ export function RunPanel({
 
   if (runQuery.isLoading) {
     return (
-      <Card title="Sản xuất">
+      <Card title={t("run.title")}>
         <Spin />
       </Card>
     );
@@ -156,20 +159,20 @@ export function RunPanel({
 
   if (noRun) {
     return (
-      <Card title="Sản xuất">
+      <Card title={t("run.title")}>
         <Button
           type="primary"
           icon={<PlayCircleOutlined />}
           loading={startMutation.isPending}
           onClick={() => startMutation.mutate()}
         >
-          Bắt đầu sản xuất
+          {t("run.start")}
         </Button>
         {startMutation.isError && (
           <Alert
             style={{ marginTop: 12 }}
             type="error"
-            message="Không thể bắt đầu sản xuất"
+            message={t("run.startFailed")}
             description={startMutation.error instanceof Error ? startMutation.error.message : String(startMutation.error)}
           />
         )}
@@ -179,10 +182,10 @@ export function RunPanel({
 
   if (runQuery.isError || !runQuery.data) {
     return (
-      <Card title="Sản xuất">
+      <Card title={t("run.title")}>
         <Alert
           type="error"
-          message="Không tải được tiến trình sản xuất"
+          message={t("run.loadFailed")}
           description={runQuery.error instanceof Error ? runQuery.error.message : String(runQuery.error)}
         />
       </Card>
@@ -193,7 +196,7 @@ export function RunPanel({
 
   return (
     <Space direction="vertical" style={{ width: "100%" }} size={16}>
-      <Card title={`Sản xuất — ${run.state}`}>
+      <Card title={t("run.titleWithState", { state: run.state })}>
         <List
           dataSource={run.stages}
           rowKey="key"

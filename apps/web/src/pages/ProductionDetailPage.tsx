@@ -1,12 +1,14 @@
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Card, Descriptions, Tag, Typography } from "antd";
+import { useTranslation } from "react-i18next";
 import { useStudioClient } from "../api/studio-client";
 import { RunPanel } from "../modules/production/RunPanel";
 
 const { Title } = Typography;
 
 export function ProductionDetailPage() {
+  const { t } = useTranslation();
   const { productionId } = useParams<{ productionId: string }>();
   const client = useStudioClient();
 
@@ -23,11 +25,11 @@ export function ProductionDetailPage() {
   });
 
   if (loadingProduction) {
-    return <div>Đang tải...</div>;
+    return <div>{t("common.loading")}</div>;
   }
 
   if (!production || !productionId) {
-    return <div>Không tìm thấy production.</div>;
+    return <div>{t("productions.notFound")}</div>;
   }
 
   return (
@@ -37,8 +39,8 @@ export function ProductionDetailPage() {
       {access && !access.hasAccess && (
         <Alert
           type="warning"
-          message="Chế độ chỉ xem văn bản"
-          description="Bạn không có quyền truy cập đầy đủ vào production này. Chỉ có thể xem văn bản."
+          message={t("productions.viewOnlyTitle")}
+          description={t("productions.viewOnlyDescription")}
           showIcon
           style={{ marginBottom: 16 }}
         />
@@ -46,23 +48,23 @@ export function ProductionDetailPage() {
 
       <Card style={{ marginBottom: 16 }}>
         <Descriptions bordered column={2}>
-          <Descriptions.Item label="Tiêu đề">{production.title}</Descriptions.Item>
-          <Descriptions.Item label="Trạng thái">
+          <Descriptions.Item label={t("productions.detailFieldTitle")}>{production.title}</Descriptions.Item>
+          <Descriptions.Item label={t("productions.detailFieldStatus")}>
             <Tag>{production.status}</Tag>
           </Descriptions.Item>
-          <Descriptions.Item label="Chủ đề" span={2}>
-            {production.brief || "—"}
+          <Descriptions.Item label={t("productions.detailFieldBrief")} span={2}>
+            {production.brief || t("productions.empty")}
           </Descriptions.Item>
-          <Descriptions.Item label="Tỉ lệ khung hình">{production.aspect}</Descriptions.Item>
-          <Descriptions.Item label="Thời lượng mục tiêu">
-            {production.targetSeconds ? `${production.targetSeconds}s` : "—"}
+          <Descriptions.Item label={t("productions.detailFieldAspect")}>{production.aspect}</Descriptions.Item>
+          <Descriptions.Item label={t("productions.detailFieldTargetSeconds")}>
+            {production.targetSeconds ? `${production.targetSeconds}s` : t("productions.empty")}
           </Descriptions.Item>
-          <Descriptions.Item label="Ngôn ngữ">{production.language}</Descriptions.Item>
-          <Descriptions.Item label="Canvas">
-            {production.canvas ? `${production.canvas.width} x ${production.canvas.height}` : "—"}
+          <Descriptions.Item label={t("productions.detailFieldLanguage")}>{production.language}</Descriptions.Item>
+          <Descriptions.Item label={t("productions.detailFieldCanvas")}>
+            {production.canvas ? `${production.canvas.width} x ${production.canvas.height}` : t("productions.empty")}
           </Descriptions.Item>
-          <Descriptions.Item label="Nguồn" span={2}>
-            {production.sources.join(", ") || "—"}
+          <Descriptions.Item label={t("productions.detailFieldSources")} span={2}>
+            {production.sources.join(", ") || t("productions.empty")}
           </Descriptions.Item>
         </Descriptions>
       </Card>

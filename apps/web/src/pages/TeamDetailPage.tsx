@@ -3,24 +3,26 @@ import { useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Table, Button, Modal, Form, Input, Select, Typography, Popconfirm } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
+import { useTranslation } from "react-i18next";
 import { useStudioClient } from "../api/studio-client";
 import type { TeamMember } from "../api/studio-client";
 import type { ColumnsType } from "antd/es/table";
 
 const { Title } = Typography;
 
-const ROLES = [
-  { value: "owner", label: "Owner" },
-  { value: "editor", label: "Editor" },
-  { value: "viewer", label: "Viewer" },
-];
-
 export function TeamDetailPage() {
+  const { t } = useTranslation();
   const { teamId } = useParams<{ teamId: string }>();
   const client = useStudioClient();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm<{ userId: string; role: string }>();
+
+  const ROLES = [
+    { value: "owner", label: t("roles.owner") },
+    { value: "editor", label: t("roles.editor") },
+    { value: "viewer", label: t("roles.viewer") },
+  ];
 
   const { data: members = [], isLoading } = useQuery({
     queryKey: ["members", teamId],
@@ -55,12 +57,12 @@ export function TeamDetailPage() {
 
   const columns: ColumnsType<TeamMember> = [
     {
-      title: "User ID",
+      title: t("teams.columnUserId"),
       dataIndex: "userId",
       key: "userId",
     },
     {
-      title: "Vai trò",
+      title: t("teams.columnRole"),
       dataIndex: "role",
       key: "role",
       render: (role: string, record: TeamMember) => (
@@ -75,15 +77,15 @@ export function TeamDetailPage() {
       ),
     },
     {
-      title: "Hành động",
+      title: t("teams.columnActions"),
       key: "actions",
       render: (_: unknown, record: TeamMember) => (
         <Popconfirm
-          title="Xóa thành viên này?"
+          title={t("teams.removeConfirm")}
           onConfirm={() => removeMutation.mutate(record.userId)}
         >
           <Button danger size="small">
-            Xóa
+            {t("teams.remove")}
           </Button>
         </Popconfirm>
       ),
@@ -99,13 +101,13 @@ export function TeamDetailPage() {
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-        <Title level={3}>Thành viên nhóm</Title>
+        <Title level={3}>{t("teams.detailTitle")}</Title>
         <Button
           type="primary"
           icon={<PlusOutlined />}
           onClick={() => setOpen(true)}
         >
-          Thêm thành viên
+          {t("teams.addMember")}
         </Button>
       </div>
 
@@ -117,7 +119,7 @@ export function TeamDetailPage() {
       />
 
       <Modal
-        title="Thêm thành viên"
+        title={t("teams.addMemberTitle")}
         open={open}
         onOk={handleOk}
         onCancel={() => setOpen(false)}
@@ -126,15 +128,15 @@ export function TeamDetailPage() {
         <Form form={form} layout="vertical">
           <Form.Item
             name="userId"
-            label="User ID"
-            rules={[{ required: true, message: "Vui lòng nhập User ID" }]}
+            label={t("teams.userIdLabel")}
+            rules={[{ required: true, message: t("teams.userIdRequired") }]}
           >
             <Input />
           </Form.Item>
           <Form.Item
             name="role"
-            label="Vai trò"
-            rules={[{ required: true, message: "Vui lòng chọn vai trò" }]}
+            label={t("teams.roleLabel")}
+            rules={[{ required: true, message: t("teams.roleRequired") }]}
           >
             <Select options={ROLES} />
           </Form.Item>

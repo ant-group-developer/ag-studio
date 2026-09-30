@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Card, Input, InputNumber, Space, Spin, Table, Typography } from "antd";
 import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
 import type { Treatment } from "@harness/contracts";
+import { useTranslation } from "react-i18next";
 import { useStudioClient } from "../../api/studio-client";
 import { GateRejectionAlert } from "./GateRejectionAlert";
 
@@ -22,6 +23,7 @@ export function GateApproveTreatment({
   productionId: string;
   targetSeconds: number | null;
 }) {
+  const { t } = useTranslation();
   const client = useStudioClient();
   const queryClient = useQueryClient();
 
@@ -56,15 +58,15 @@ export function GateApproveTreatment({
 
   if (isLoading) {
     return (
-      <Card title="Duyệt treatment">
+      <Card title={t("treatment.title")}>
         <Spin />
       </Card>
     );
   }
   if (isError || !data) {
     return (
-      <Card title="Duyệt treatment">
-        <Alert type="error" message="Không tải được treatment" />
+      <Card title={t("treatment.title")}>
+        <Alert type="error" message={t("treatment.loadFailed")} />
       </Card>
     );
   }
@@ -78,12 +80,12 @@ export function GateApproveTreatment({
   };
 
   return (
-    <Card title="Duyệt treatment">
+    <Card title={t("treatment.title")}>
       <Space direction="vertical" style={{ width: "100%" }} size={12}>
         <Space direction="vertical" style={{ width: "100%" }}>
-          <Text>Tiêu đề</Text>
+          <Text>{t("treatment.fieldTitle")}</Text>
           <Input value={title} onChange={(e) => setTitle(e.target.value)} />
-          <Text>Logline</Text>
+          <Text>{t("treatment.fieldLogline")}</Text>
           <Input.TextArea rows={2} value={logline} onChange={(e) => setLogline(e.target.value)} />
         </Space>
 
@@ -92,16 +94,16 @@ export function GateApproveTreatment({
           rowKey="beat_id"
           pagination={false}
           columns={[
-            { title: "Beat", dataIndex: "beat_id", width: 70 },
+            { title: t("treatment.columnBeat"), dataIndex: "beat_id", width: 70 },
             {
-              title: "Mục đích",
+              title: t("treatment.columnPurpose"),
               dataIndex: "purpose",
               render: (v: string, r) => (
                 <Input value={v} onChange={(e) => updateBeat(r.beat_id, { purpose: e.target.value })} />
               ),
             },
             {
-              title: "Giây",
+              title: t("treatment.columnSeconds"),
               dataIndex: "seconds",
               width: 100,
               render: (v: number, r) => (
@@ -114,7 +116,7 @@ export function GateApproveTreatment({
               ),
             },
             {
-              title: "Ý tưởng hình ảnh",
+              title: t("treatment.columnVisualIdea"),
               dataIndex: "visual_idea",
               render: (v: string, r) => (
                 <Input.TextArea
@@ -125,7 +127,7 @@ export function GateApproveTreatment({
               ),
             },
             {
-              title: "Ý tưởng lời dẫn",
+              title: t("treatment.columnNarrationIdea"),
               dataIndex: "narration_idea",
               render: (v: string, r) => (
                 <Input.TextArea
@@ -161,16 +163,16 @@ export function GateApproveTreatment({
             ])
           }
         >
-          Thêm beat
+          {t("treatment.addBeat")}
         </Button>
 
         <Paragraph>
-          Tổng thời lượng: <Text strong>{totalSeconds}s</Text>
+          {t("treatment.totalDuration")} <Text strong>{totalSeconds}s</Text>
           {targetSeconds !== null && (
             <>
               {" "}
-              (mục tiêu {targetSeconds}s){" "}
-              {!withinTarget && <Text type="warning">— lệch quá 10% so với mục tiêu</Text>}
+              {t("treatment.targetSuffix", { seconds: targetSeconds })}{" "}
+              {!withinTarget && <Text type="warning">{t("treatment.outsideTarget")}</Text>}
             </>
           )}
         </Paragraph>
@@ -178,7 +180,7 @@ export function GateApproveTreatment({
         {submitMutation.isError && <GateRejectionAlert error={submitMutation.error} />}
 
         <Button type="primary" loading={submitMutation.isPending} onClick={() => submitMutation.mutate()}>
-          Duyệt treatment
+          {t("treatment.approve")}
         </Button>
       </Space>
     </Card>

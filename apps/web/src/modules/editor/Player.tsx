@@ -8,6 +8,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { PauseCircleOutlined, PlayCircleOutlined } from "@ant-design/icons";
+import { useTranslation } from "react-i18next";
 import type { TimelineV2 } from "@harness/contracts";
 import type { LaidClip, LaidLine, LaidText, TimelineLayout } from "@studio/timeline";
 import type { EditorClient, MediaLookup } from "./types";
@@ -58,6 +59,7 @@ export function Player({
   seekToken,
   onTimeUpdate,
 }: PlayerProps) {
+  const { t } = useTranslation();
   const slotRefs = [useRef<HTMLVideoElement | null>(null), useRef<HTMLVideoElement | null>(null)] as const;
   const [activeSlot, setActiveSlot] = useState<0 | 1>(0);
   const [activeCaption, setActiveCaption] = useState<string | null>(null);
@@ -290,7 +292,7 @@ export function Player({
               color: "#fff",
             }}
           >
-            {activeCaption ?? "Không có hình"}
+            {activeCaption ?? t("player.noPreview")}
           </div>
         )}
         {activeTexts.map((x) => (

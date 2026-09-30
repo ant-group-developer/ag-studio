@@ -1,4 +1,5 @@
 import { Alert, Typography } from "antd";
+import { useTranslation } from "react-i18next";
 import { StudioHttpError } from "../../api/studio-client";
 
 const { Text } = Typography;
@@ -11,11 +12,12 @@ interface GateRejectionBody {
 
 /** Renders a gate's 422 rejection (`{ message, code: "rejected", missing, failed }`), or any other error. */
 export function GateRejectionAlert({ error }: { error: unknown }) {
+  const { t } = useTranslation();
   if (!(error instanceof StudioHttpError) || error.status !== 422) {
     return (
       <Alert
         type="error"
-        message="Không thể duyệt"
+        message={t("gateRejection.cannotApprove")}
         description={error instanceof Error ? error.message : String(error)}
         showIcon
       />
@@ -26,10 +28,10 @@ export function GateRejectionAlert({ error }: { error: unknown }) {
     <Alert
       type="error"
       showIcon
-      message={body?.message ?? "Bị từ chối"}
+      message={body?.message ?? t("gateRejection.rejected")}
       description={
         <div>
-          {!!body?.missing?.length && <div>Thiếu: {body.missing.join(", ")}</div>}
+          {!!body?.missing?.length && <div>{t("gateRejection.missing", { items: body.missing.join(", ") })}</div>}
           {body?.failed?.map((f) => (
             <div key={f.check_id} style={{ marginTop: 4 }}>
               <Text strong>{f.check_id}</Text>

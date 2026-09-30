@@ -15,6 +15,7 @@ import {
 } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import { useAuth0 } from "@auth0/auth0-react";
+import { useTranslation } from "react-i18next";
 import { useStudioClient } from "../api/studio-client";
 import type { Production, CreateProductionData } from "../api/studio-client";
 import { getFolders } from "../api/ag-go-client";
@@ -38,6 +39,7 @@ interface CreateProductionForm {
 }
 
 export function ProductionsPage() {
+  const { t } = useTranslation();
   const { teamId } = useParams<{ teamId: string }>();
   const client = useStudioClient();
   const queryClient = useQueryClient();
@@ -96,7 +98,7 @@ export function ProductionsPage() {
 
   const columns: ColumnsType<Production> = [
     {
-      title: "Production",
+      title: t("productions.columnTitle"),
       dataIndex: "title",
       key: "title",
       render: (title: string, record: Production) => (
@@ -104,21 +106,21 @@ export function ProductionsPage() {
       ),
     },
     {
-      title: "Trạng thái",
+      title: t("productions.columnStatus"),
       dataIndex: "status",
       key: "status",
       render: (status: string) => <Tag>{status}</Tag>,
     },
     {
-      title: "Tỉ lệ khung hình",
+      title: t("productions.columnAspect"),
       dataIndex: "aspect",
       key: "aspect",
     },
     {
-      title: "Thời lượng mục tiêu",
+      title: t("productions.columnTargetSeconds"),
       dataIndex: "targetSeconds",
       key: "targetSeconds",
-      render: (v: number | null) => (v ? `${v}s` : "—"),
+      render: (v: number | null) => (v ? `${v}s` : t("productions.empty")),
     },
   ];
 
@@ -137,13 +139,13 @@ export function ProductionsPage() {
           marginBottom: 16,
         }}
       >
-        <Title level={3}>Production</Title>
+        <Title level={3}>{t("productions.title")}</Title>
         <Button
           type="primary"
           icon={<PlusOutlined />}
           onClick={() => setOpen(true)}
         >
-          Tạo production mới
+          {t("productions.create")}
         </Button>
       </div>
 
@@ -155,7 +157,7 @@ export function ProductionsPage() {
       />
 
       <Modal
-        title="Tạo production mới"
+        title={t("productions.createTitle")}
         open={open}
         onOk={handleOk}
         onCancel={() => setOpen(false)}
@@ -169,38 +171,38 @@ export function ProductionsPage() {
         >
           <Form.Item
             name="title"
-            label="Tiêu đề"
-            rules={[{ required: true, message: "Vui lòng nhập tiêu đề" }]}
+            label={t("productions.fieldTitle")}
+            rules={[{ required: true, message: t("productions.fieldTitleRequired") }]}
           >
             <Input />
           </Form.Item>
-          <Form.Item name="brief" label="Chủ đề">
+          <Form.Item name="brief" label={t("productions.fieldBrief")}>
             <Input.TextArea rows={3} />
           </Form.Item>
           <Form.Item
             name="targetSeconds"
-            label="Thời lượng mục tiêu (giây)"
-            rules={[{ required: true, message: "Vui lòng nhập thời lượng mục tiêu" }]}
+            label={t("productions.fieldTargetSeconds")}
+            rules={[{ required: true, message: t("productions.fieldTargetSecondsRequired") }]}
           >
             <InputNumber min={10} max={1800} style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item
             name="aspect"
-            label="Tỉ lệ khung hình"
-            rules={[{ required: true, message: "Vui lòng chọn tỉ lệ khung hình" }]}
+            label={t("productions.fieldAspect")}
+            rules={[{ required: true, message: t("productions.fieldAspectRequired") }]}
           >
             <Select options={ASPECT_RATIOS} />
           </Form.Item>
-          <Form.Item name="language" label="Ngôn ngữ">
+          <Form.Item name="language" label={t("productions.fieldLanguage")}>
             <Input />
           </Form.Item>
-          <Form.Item name="folderIds" label="Chọn thư mục nguồn">
+          <Form.Item name="folderIds" label={t("productions.fieldSourceFolders")}>
             <TreeSelect
               treeData={treeData}
               multiple
               treeCheckable
               showCheckedStrategy={TreeSelect.SHOW_PARENT}
-              placeholder="Chọn thư mục nguồn"
+              placeholder={t("productions.sourceFoldersPlaceholder")}
               style={{ width: "100%" }}
             />
           </Form.Item>

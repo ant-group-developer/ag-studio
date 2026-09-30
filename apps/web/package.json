@@ -15,9 +15,12 @@
     "react-dom": "^18.3.0",
     "antd": "^5.22.0",
     "@ant-design/icons": "^5.5.0",
+    "@ant-design/pro-components": "^2.8.10",
     "@tanstack/react-query": "^5.62.0",
     "@auth0/auth0-react": "^2.2.4",
-    "react-router-dom": "^6.28.0"
+    "react-router-dom": "^6.28.0",
+    "i18next": "^23.16.0",
+    "react-i18next": "^15.1.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.0",

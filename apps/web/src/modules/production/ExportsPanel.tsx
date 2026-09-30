@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Card, List, Space, Spin, Tag, Typography } from "antd";
 import { DownloadOutlined } from "@ant-design/icons";
+import { useTranslation } from "react-i18next";
 import { useStudioClient } from "../../api/studio-client";
 
 const { Text } = Typography;
@@ -12,6 +13,7 @@ function formatSize(bytes: number): string {
 }
 
 export function ExportsPanel({ productionId }: { productionId: string }) {
+  const { t } = useTranslation();
   const client = useStudioClient();
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["exports", productionId],
@@ -20,7 +22,7 @@ export function ExportsPanel({ productionId }: { productionId: string }) {
 
   if (isLoading) {
     return (
-      <Card title="Xuất bản">
+      <Card title={t("exports.title")}>
         <Spin />
       </Card>
     );
@@ -28,17 +30,17 @@ export function ExportsPanel({ productionId }: { productionId: string }) {
 
   if (isError || !data) {
     return (
-      <Card title="Xuất bản">
-        <Alert type="error" message="Không tải được danh sách xuất bản" description={error instanceof Error ? error.message : String(error)} />
+      <Card title={t("exports.title")}>
+        <Alert type="error" message={t("exports.loadFailed")} description={error instanceof Error ? error.message : String(error)} />
       </Card>
     );
   }
 
   return (
-    <Card title="Xuất bản">
+    <Card title={t("exports.title")}>
       <Space style={{ marginBottom: 12 }}>
-        <Text>Thời lượng: {data.durationSeconds.toFixed(1)}s</Text>
-        {data.watermarked && <Tag color="orange">Có watermark</Tag>}
+        <Text>{t("exports.duration", { seconds: data.durationSeconds.toFixed(1) })}</Text>
+        {data.watermarked && <Tag color="orange">{t("exports.watermarked")}</Tag>}
       </Space>
       <List
         dataSource={data.files}
@@ -55,13 +57,13 @@ export function ExportsPanel({ productionId }: { productionId: string }) {
               }
               description={
                 file.urlHidden === "footage_scope" ? (
-                  <Text type="warning">Bạn không có quyền xem footage của production này</Text>
+                  <Text type="warning">{t("exports.noFootageAccess")}</Text>
                 ) : file.url ? (
                   <a href={file.url} target="_blank" rel="noreferrer">
-                    <DownloadOutlined /> Tải xuống
+                    <DownloadOutlined /> {t("exports.download")}
                   </a>
                 ) : (
-                  <Text type="secondary">Chưa có liên kết tải xuống</Text>
+                  <Text type="secondary">{t("exports.noDownloadLink")}</Text>
                 )
               }
             />

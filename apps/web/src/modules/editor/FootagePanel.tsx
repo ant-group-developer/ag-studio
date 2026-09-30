@@ -6,6 +6,7 @@
 import { useState, type Dispatch } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Card, Empty, Input, Space, Spin, Tabs, Typography } from "antd";
+import { useTranslation } from "react-i18next";
 import type { StudioCatalog } from "@harness/contracts";
 import { SegmentPreviewCard } from "../common/SegmentPreviewCard";
 import type { EditorAction, EditorState } from "./state/editor-reducer";
@@ -36,19 +37,20 @@ function selectedBeatId(state: EditorState): string | null {
 }
 
 export function FootagePanel({ productionId, client, media, state, dispatch }: FootagePanelProps) {
+  const { t } = useTranslation();
   return (
-    <Card size="small" title="Footage" style={{ height: "100%" }}>
+    <Card size="small" title={t("footage.title")} style={{ height: "100%" }}>
       <Tabs
         size="small"
         items={[
           {
             key: "catalog",
-            label: "Footage nguồn",
+            label: t("footage.tabCatalog"),
             children: <CatalogTab productionId={productionId} client={client} media={media} state={state} dispatch={dispatch} />,
           },
           {
             key: "alternates",
-            label: "Phương án thay thế",
+            label: t("footage.tabAlternates"),
             children: <AlternatesTab media={media} state={state} dispatch={dispatch} />,
           },
         ]}
@@ -58,6 +60,7 @@ export function FootagePanel({ productionId, client, media, state, dispatch }: F
 }
 
 function CatalogTab({ productionId, client, media, state, dispatch }: FootagePanelProps) {
+  const { t } = useTranslation();
   const { data, isLoading, isError } = useQuery({
     queryKey: ["stage-document", productionId, "catalog"],
     queryFn: () => client.getStageDocument<StudioCatalog>(productionId, "catalog", "catalog.json"),
@@ -65,7 +68,7 @@ function CatalogTab({ productionId, client, media, state, dispatch }: FootagePan
   const [filter, setFilter] = useState("");
 
   if (isLoading) return <Spin />;
-  if (isError || !data) return <Alert type="error" message="Không tải được danh mục footage" />;
+  if (isError || !data) return <Alert type="error" message={t("footage.loadFailed")} />;
 
   const q = filter.trim().toLowerCase();
   const segments = q
@@ -77,7 +80,7 @@ function CatalogTab({ productionId, client, media, state, dispatch }: FootagePan
 
   return (
     <div>
-      <Input.Search placeholder="Tìm theo mô tả hoặc thẻ" allowClear onChange={(e) => setFilter(e.target.value)} style={{ marginBottom: 8 }} />
+      <Input.Search placeholder={t("footage.searchPlaceholder")} allowClear onChange={(e) => setFilter(e.target.value)} style={{ marginBottom: 8 }} />
       <Space direction="vertical" style={{ width: "100%", maxHeight: 520, overflowY: "auto" }}>
         {segments.slice(0, 200).map((s) => (
           <div key={s.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -98,7 +101,7 @@ function CatalogTab({ productionId, client, media, state, dispatch }: FootagePan
                     })
                   }
                 >
-                  Thay clip đang chọn
+                  {t("footage.swapClip")}
                 </Button>
                 <Button
                   size="small"
@@ -113,26 +116,27 @@ function CatalogTab({ productionId, client, media, state, dispatch }: FootagePan
                     })
                   }
                 >
-                  Thêm vào beat
+                  {t("footage.addToBeat")}
                 </Button>
               </Space>
             </Space>
           </div>
         ))}
-        {segments.length === 0 && <Empty description="Không tìm thấy footage phù hợp" />}
+        {segments.length === 0 && <Empty description={t("footage.noResults")} />}
       </Space>
     </div>
   );
 }
 
 function AlternatesTab({ media, state, dispatch }: Pick<FootagePanelProps, "media" | "state" | "dispatch">) {
+  const { t } = useTranslation();
   const clipId = selectedClipId(state);
   const beatId = selectedBeatId(state);
   if (!clipId || !beatId) {
-    return <Empty description="Chọn một clip để xem phương án thay thế" />;
+    return <Empty description={t("footage.selectClipHint")} />;
   }
   const alternates = state.timeline.alternates[beatId] ?? [];
-  if (!alternates.length) return <Empty description="Không có phương án thay thế cho beat này" />;
+  if (!alternates.length) return <Empty description={t("footage.noAlternates")} />;
 
   return (
     <Space direction="vertical" style={{ width: "100%" }}>

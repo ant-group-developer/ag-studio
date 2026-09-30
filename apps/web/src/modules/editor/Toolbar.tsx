@@ -6,6 +6,7 @@
 import { useEffect, useState, type Dispatch } from "react";
 import { Alert, Badge, Button, Modal, Popover, Space, Tag, Typography } from "antd";
 import { RedoOutlined, UndoOutlined, PlayCircleOutlined, CheckCircleOutlined } from "@ant-design/icons";
+import { useTranslation } from "react-i18next";
 import type { TimelineIssue } from "@studio/timeline";
 import type { AutosaveStatus } from "./state/autosave";
 import type { EditorAction, EditorState } from "./state/editor-reducer";
@@ -14,12 +15,12 @@ import { GateRejectionAlert } from "../production/GateRejectionAlert";
 
 const { Text } = Typography;
 
-const STATUS_LABEL: Record<AutosaveStatus, string> = {
-  idle: "Đã lưu",
-  pending: "Đang lưu…",
-  saving: "Đang lưu…",
-  conflict: "Xung đột",
-  error: "Lỗi lưu",
+const STATUS_LABEL_KEY: Record<AutosaveStatus, string> = {
+  idle: "toolbar.statusIdle",
+  pending: "toolbar.statusSaving",
+  saving: "toolbar.statusSaving",
+  conflict: "toolbar.statusConflict",
+  error: "toolbar.statusError",
 };
 const STATUS_COLOR: Record<AutosaveStatus, string> = {
   idle: "success",
@@ -42,6 +43,7 @@ export interface ToolbarProps {
 }
 
 export function Toolbar({ productionId, client, state, dispatch, issues, autosaveStatus, saveError, flush, onDone }: ToolbarProps) {
+  const { t } = useTranslation();
   const errorCount = issues.filter((i) => i.severity === "error").length;
 
   useEffect(() => {
@@ -79,10 +81,10 @@ export function Toolbar({ productionId, client, state, dispatch, issues, autosav
         await new Promise((r) => setTimeout(r, 1500));
         done = await client.getEditorJob(productionId, done.id);
       }
-      if (done.status === "failed") setPreviewError(done.error ?? "Không dựng được bản xem trước");
+      if (done.status === "failed") setPreviewError(done.error ?? t("toolbar.renderFailed"));
       else if (done.urlHidden === "footage_scope") setPreviewHidden(true);
       else if (done.url) setPreviewUrl(done.url);
-      else setPreviewError("Không có liên kết xem trước");
+      else setPreviewError(t("toolbar.noPreviewLink"));
     } catch (e) {
       setPreviewError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -111,18 +113,21 @@ export function Toolbar({ productionId, client, state, dispatch, issues, autosav
     <Space wrap style={{ width: "100%", justifyContent: "space-between", marginBottom: 8 }}>
       <Space>
         <Button icon={<UndoOutlined />} disabled={!state.past.length} onClick={() => dispatch({ type: "undo" })}>
-          Hoàn tác
+          {t("toolbar.undo")}
         </Button>
         <Button icon={<RedoOutlined />} disabled={!state.future.length} onClick={() => dispatch({ type: "redo" })}>
-          Làm lại
+          {t("toolbar.redo")}
         </Button>
-        <Tag color={STATUS_COLOR[autosaveStatus]}>{STATUS_LABEL[autosaveStatus]}{state.revision ? ` · rev ${state.revision}` : ""}</Tag>
+        <Tag color={STATUS_COLOR[autosaveStatus]}>
+          {t(STATUS_LABEL_KEY[autosaveStatus])}
+          {state.revision ? t("toolbar.revisionSuffix", { revision: state.revision }) : ""}
+        </Tag>
         {saveError && autosaveStatus === "error" && <Text type="danger">{saveError}</Text>}
         <Popover
-          title="Vấn đề timeline"
+          title={t("toolbar.issuesTitle")}
           content={
             <div style={{ maxWidth: 360, maxHeight: 300, overflowY: "auto" }}>
-              {issues.length === 0 && <Text type="secondary">Không có vấn đề</Text>}
+              {issues.length === 0 && <Text type="secondary">{t("toolbar.noIssues")}</Text>}
               {issues.map((i, idx) => (
                 <div key={idx}>
                   <Text type={i.severity === "error" ? "danger" : "warning"}>{i.message}</Text>
@@ -132,24 +137,24 @@ export function Toolbar({ productionId, client, state, dispatch, issues, autosav
           }
         >
           <Badge count={errorCount} showZero={false}>
-            <Tag>{issues.length} vấn đề</Tag>
+            <Tag>{t("toolbar.issuesCount", { count: issues.length })}</Tag>
           </Badge>
         </Popover>
       </Space>
 
       <Space>
         <Button icon={<PlayCircleOutlined />} loading={previewBusy} onClick={() => void renderPreview()}>
-          Render preview
+          {t("toolbar.renderPreview")}
         </Button>
         <Button type="primary" icon={<CheckCircleOutlined />} loading={doneBusy} disabled={errorCount > 0} onClick={() => void finish()}>
-          Hoàn tất
+          {t("toolbar.finish")}
         </Button>
       </Space>
 
-      <Modal open={previewOpen} onCancel={() => setPreviewOpen(false)} footer={null} title="Xem trước">
-        {previewBusy && <Text>Đang dựng bản xem trước…</Text>}
+      <Modal open={previewOpen} onCancel={() => setPreviewOpen(false)} footer={null} title={t("toolbar.previewTitle")}>
+        {previewBusy && <Text>{t("toolbar.rendering")}</Text>}
         {previewError && <Alert type="error" message={previewError} />}
-        {previewHidden && <Alert type="warning" message="Bạn không có quyền xem footage của production này" />}
+        {previewHidden && <Alert type="warning" message={t("toolbar.noFootageAccess")} />}
         {previewUrl && <video src={previewUrl} controls style={{ width: "100%" }} />}
       </Modal>
 

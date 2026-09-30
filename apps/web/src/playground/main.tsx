@@ -3,6 +3,7 @@
  * editor can be looked at and exercised directly. Served at http://localhost:5173/playground.html by `vite`
  * dev; not part of `vite build` (that only ever builds `index.html`).
  */
+import "../i18n/config";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { Button, Typography } from "antd";

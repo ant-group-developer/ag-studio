@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Table, Button, Modal, Form, Input, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useStudioClient } from "../api/studio-client";
 import type { Team } from "../api/studio-client";
 import type { ColumnsType } from "antd/es/table";
@@ -10,6 +11,7 @@ import type { ColumnsType } from "antd/es/table";
 const { Title } = Typography;
 
 export function TeamsPage() {
+  const { t } = useTranslation();
   const client = useStudioClient();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -32,7 +34,7 @@ export function TeamsPage() {
 
   const columns: ColumnsType<Team> = [
     {
-      title: "Nhóm",
+      title: t("teams.columnName"),
       dataIndex: "name",
       key: "name",
       render: (name: string, record: Team) => (
@@ -40,14 +42,14 @@ export function TeamsPage() {
       ),
     },
     {
-      title: "Thành viên",
+      title: t("teams.columnMembers"),
       key: "members",
       render: (_: unknown, record: Team) => (
         <Button
           size="small"
           onClick={() => navigate(`/teams/${record.id}`)}
         >
-          Thành viên
+          {t("teams.viewMembers")}
         </Button>
       ),
     },
@@ -62,13 +64,13 @@ export function TeamsPage() {
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-        <Title level={3}>Nhóm</Title>
+        <Title level={3}>{t("teams.title")}</Title>
         <Button
           type="primary"
           icon={<PlusOutlined />}
           onClick={() => setOpen(true)}
         >
-          Tạo nhóm
+          {t("teams.create")}
         </Button>
       </div>
 
@@ -80,7 +82,7 @@ export function TeamsPage() {
       />
 
       <Modal
-        title="Tạo nhóm"
+        title={t("teams.createTitle")}
         open={open}
         onOk={handleOk}
         onCancel={() => setOpen(false)}
@@ -89,8 +91,8 @@ export function TeamsPage() {
         <Form form={form} layout="vertical">
           <Form.Item
             name="name"
-            label="Tên nhóm"
-            rules={[{ required: true, message: "Vui lòng nhập tên nhóm" }]}
+            label={t("teams.nameLabel")}
+            rules={[{ required: true, message: t("teams.nameRequired") }]}
           >
             <Input />
           </Form.Item>
