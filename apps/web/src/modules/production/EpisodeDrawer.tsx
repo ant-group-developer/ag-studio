@@ -28,6 +28,7 @@ import { useStudioClient } from "../../api/studio-client";
 import type { EpisodeDetail, EpisodePatch } from "../../api/studio-client";
 import type { YoutubeKit } from "@harness/contracts";
 import { YOUTUBE_TAGS_MAX_CHARS } from "@harness/contracts";
+import { PremiereExports } from "./PremiereExports";
 
 const { Text, Paragraph } = Typography;
 
@@ -268,6 +269,9 @@ export function EpisodeDrawer({ productionId, episode, open, onClose, canEdit }:
             <video src={episode.finalVideoUrl} controls style={{ width: "100%", borderRadius: 4 }} />
           </Card>
         )}
+
+        {/* Adobe Premiere exports */}
+        <PremiereExports productionId={productionId} episodeId={episode.id} canEdit={canEdit} />
 
         {/* Downloads */}
         {episode.exportFiles.length > 0 && (

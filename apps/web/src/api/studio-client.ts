@@ -237,6 +237,9 @@ export interface RevisionSummary {
   createdAt: string;
 }
 
+/** Media a Premiere project is packed with: the 720p analysis proxy, or the originals (download right needed). */
+export type PremiereMedia = "proxy" | "original";
+
 export interface EditorJob {
   id: string;
   kind: "render_preview" | "export_premiere";
@@ -418,6 +421,14 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     },
     getEditorJob(productionId: string, episodeId: string, jobId: string): Promise<EditorJob> {
       return request(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/editor/jobs/${jobId}`);
+    },
+    /** Latest first. */
+    listEditorJobs(productionId: string, episodeId: string, kind: EditorJob["kind"]): Promise<EditorJob[]> {
+      return request(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/editor/jobs?kind=${kind}`);
+    },
+    /** 403 when `original` is asked for by someone who may not download originals. */
+    exportPremiere(productionId: string, episodeId: string, media: PremiereMedia): Promise<EditorJob> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/exports/premiere`, { media });
     },
   };
 }

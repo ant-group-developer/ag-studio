@@ -16,7 +16,7 @@ import {
   Tag,
   Tooltip,
 } from "antd";
-import { Edit3, RefreshCw, Download, ChevronDown } from "lucide-react";
+import { Edit3, RefreshCw, Package, MoreHorizontal } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQueryState, parseAsInteger, parseAsString } from "nuqs";
 import { useStudioClient } from "../../api/studio-client";
@@ -25,6 +25,7 @@ import { SortDropdown, type SortState } from "../../helpers/sort-dropdown";
 import { TableRefreshButton } from "../../helpers/table-refresh-button";
 import { CONTAINER_TABLE_STICKY } from "../../helpers/sticky-table-header";
 import { EpisodeDrawer } from "./EpisodeDrawer";
+import { premiereMenuItems, useStartPremiereExport } from "./PremiereExports";
 import type { ColumnsType } from "antd/es/table";
 
 const SORT_FIELDS = [
@@ -36,10 +37,11 @@ const SORT_FIELDS = [
 type SF = (typeof SORT_FIELDS)[number]["value"];
 
 const STATUS_COLORS: Record<string, string> = {
-  draft: "default",
+  planned: "default",
   producing: "processing",
   ready: "success",
   failed: "error",
+  cancelled: "warning",
 };
 
 interface Props {
@@ -79,6 +81,8 @@ export function EpisodesPanel({ productionId, canEdit }: Props) {
     enabled: !!drawerEpisodeId,
   });
 
+  const premiere = useStartPremiereExport(productionId);
+
   const rerenderMutation = useMutation({
     mutationFn: (episodeId: string) => client.rerenderEpisode(productionId, episodeId),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["episodes", productionId] }),
@@ -112,7 +116,7 @@ export function EpisodesPanel({ productionId, canEdit }: Props) {
       key: "status",
       width: 130,
       render: (status: string) => (
-        <Tag color={STATUS_COLORS[status] ?? "default"}>{status}</Tag>
+        <Tag color={STATUS_COLORS[status] ?? "default"}>{t(`episodes.status.${status}`, { defaultValue: status })}</Tag>
       ),
     },
     {
@@ -121,7 +125,7 @@ export function EpisodesPanel({ productionId, canEdit }: Props) {
       width: 120,
       render: (_: unknown, r: EpisodeSummary) =>
         r.progress != null ? (
-          <Progress percent={Math.round(r.progress * 100)} size="small" showInfo={false} />
+          <Progress percent={Math.round(r.progress)} size="small" />
         ) : null,
     },
     {
@@ -143,29 +147,35 @@ export function EpisodesPanel({ productionId, canEdit }: Props) {
               size="small"
               icon={<Edit3 size={12} />}
               onClick={() => navigate(`/productions/${productionId}/episodes/${r.id}/editor`)}
-              disabled={r.status !== "ready"}
+              aria-label={t("episodes.openEditor")}
+              disabled={r.status === "planned"}
             />
           </Tooltip>
           {canEdit && (
             <Popconfirm title={t("episodes.rerenderConfirm")} onConfirm={() => void rerenderMutation.mutate(r.id)}>
               <Tooltip title={t("episodes.rerender")}>
-                <Button size="small" icon={<RefreshCw size={12} />} />
+                <Button size="small" icon={<RefreshCw size={12} />} aria-label={t("episodes.rerender")} />
               </Tooltip>
             </Popconfirm>
           )}
           <Dropdown
+            trigger={["click"]}
             menu={{
               items: [
                 {
-                  key: "download",
-                  icon: <Download size={12} />,
-                  label: t("episodes.download"),
+                  key: "youtube-pack",
+                  icon: <Package size={14} />,
+                  label: t("episodes.youtubePack"),
+                  disabled: r.status !== "ready",
                   onClick: () => setDrawerEpisodeId(r.id),
                 },
+                ...(canEdit ? premiereMenuItems(t, (media) => premiere.mutate({ episodeId: r.id, media })).map((i) => ({ ...i, disabled: r.status === "planned" })) : []),
               ],
             }}
           >
-            <Button size="small" icon={<ChevronDown size={12} />}>{t("episodes.export")}</Button>
+            <Tooltip title={t("episodes.export")}>
+              <Button size="small" icon={<MoreHorizontal size={12} />} aria-label={t("episodes.export")} />
+            </Tooltip>
           </Dropdown>
         </Space>
       ),

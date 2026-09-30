@@ -16,8 +16,8 @@ window.matchMedia ??= ((query: string) => ({
 
 const episodeList = {
   items: [
-    { id: "ep-1", idx: 1, title: "Tập 1", hook: "h", status: "ready", currentStage: null, progress: 1, durationSeconds: 310, thumbnailUrl: null, updatedAt: "" },
-    { id: "ep-2", idx: 2, title: "Tập 2", hook: "h", status: "producing", currentStage: "render", progress: 0.5, durationSeconds: null, thumbnailUrl: null, updatedAt: "" },
+    { id: "ep-1", idx: 1, title: "Tập 1", hook: "h", status: "ready", currentStage: null, progress: 100, durationSeconds: 310, thumbnailUrl: null, updatedAt: "" },
+    { id: "ep-2", idx: 2, title: "Tập 2", hook: "h", status: "producing", currentStage: "render", progress: 50, durationSeconds: null, thumbnailUrl: null, updatedAt: "" },
   ],
   total: 2, page: 1, pageSize: 20,
 };
