@@ -22,6 +22,7 @@ import { useStudioClient } from "../api/studio-client";
 import type { Production, CreateProductionData } from "../api/studio-client";
 import { getFolders } from "../api/ag-go-client";
 import { buildFolderTree } from "../helpers/folder-tree";
+import { EnumText, PRODUCTION_STATUS_COLORS } from "../helpers/enum-label";
 import { PAGE_TABLE_STICKY } from "../helpers/sticky-table-header";
 import type { ColumnsType } from "antd/es/table";
 
@@ -141,12 +142,17 @@ export function ProductionsPage() {
       title: t("productions.columnStatus"),
       dataIndex: "status",
       key: "status",
-      render: (status: string) => <Tag>{status}</Tag>,
+      render: (status: string) => (
+        <Tag color={PRODUCTION_STATUS_COLORS[status]}>
+          <EnumText group="productionStatus" code={status} />
+        </Tag>
+      ),
     },
     {
       title: t("productions.columnAspect"),
       dataIndex: "aspect",
       key: "aspect",
+      render: (aspect: string) => <EnumText group="aspect" code={aspect} />,
     },
     {
       title: t("productions.columnTargetSeconds"),

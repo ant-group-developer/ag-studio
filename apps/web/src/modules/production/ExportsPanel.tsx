@@ -3,6 +3,7 @@ import { Alert, Card, List, Space, Spin, Tag, Typography } from "antd";
 import { DownloadOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
 import { useStudioClient } from "../../api/studio-client";
+import { EnumText } from "../../helpers/enum-label";
 
 const { Text } = Typography;
 
@@ -50,7 +51,7 @@ export function ExportsPanel({ productionId }: { productionId: string }) {
             <List.Item.Meta
               title={
                 <Space>
-                  <Tag>{file.kind}</Tag>
+                  <Tag><EnumText group="exportKind" code={file.kind} /></Tag>
                   <Text>{file.name}</Text>
                   <Text type="secondary">{formatSize(file.sizeBytes)}</Text>
                 </Space>

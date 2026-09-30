@@ -8,6 +8,7 @@ import { GateApproveTreatment } from "./GateApproveTreatment";
 import { GateShotBoard } from "./GateShotBoard";
 import { GateEdit } from "./GateEdit";
 import { ExportsPanel } from "./ExportsPanel";
+import { EnumText } from "../../helpers/enum-label";
 
 const { Text } = Typography;
 
@@ -22,6 +23,7 @@ function stageTagColor(state: string): string {
     case "RUNNING":
       return "blue";
     case "WAITING_HUMAN":
+    case "WAITING":
       return "gold";
     default:
       return "default";
@@ -88,9 +90,9 @@ function StageRow({
       <List.Item.Meta
         title={
           <Space>
-            <Text strong>{stage.key}</Text>
-            <Tag color={stageTagColor(stage.state)}>{stage.state}</Tag>
-            {stage.is_gate && <Tag>gate</Tag>}
+            <Text strong><EnumText group="stage" code={stage.key} /></Text>
+            <Tag color={stageTagColor(stage.state)}><EnumText group="stageState" code={stage.state} /></Tag>
+            {stage.is_gate && <Tag>{t("run.gateTag")}</Tag>}
             {stage.attempts > 1 && <Text type="secondary">{t("run.attempt", { count: stage.attempts })}</Text>}
           </Space>
         }
@@ -101,7 +103,7 @@ function StageRow({
               {stage.error && <Text type="danger">{stage.error}</Text>}
               {stage.failed_checks.map((c) => (
                 <div key={c.check_id}>
-                  <Text type="danger">- {c.check_id}</Text>
+                  <Text type="danger">- <EnumText group="check" code={c.check_id} /></Text>
                   {Array.isArray((c.evidence as { problems?: unknown[] }).problems) &&
                     ((c.evidence as { problems: { code: string; message: string }[] }).problems).map((p, i) => (
                       <div key={i} style={{ paddingLeft: 12 }}>
@@ -196,7 +198,14 @@ export function RunPanel({
 
   return (
     <Space direction="vertical" style={{ width: "100%" }} size={16}>
-      <Card title={t("run.titleWithState", { state: run.state })}>
+      <Card
+        title={
+          <Space>
+            {t("run.title")}
+            <Tag color={stageTagColor(run.state)}><EnumText group="runState" code={run.state} /></Tag>
+          </Space>
+        }
+      >
         <List
           dataSource={run.stages}
           rowKey="key"

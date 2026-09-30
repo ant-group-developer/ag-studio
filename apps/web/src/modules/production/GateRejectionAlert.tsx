@@ -1,6 +1,7 @@
 import { Alert, Typography } from "antd";
 import { useTranslation } from "react-i18next";
 import { StudioHttpError } from "../../api/studio-client";
+import { EnumText } from "../../helpers/enum-label";
 
 const { Text } = Typography;
 
@@ -34,7 +35,7 @@ export function GateRejectionAlert({ error }: { error: unknown }) {
           {!!body?.missing?.length && <div>{t("gateRejection.missing", { items: body.missing.join(", ") })}</div>}
           {body?.failed?.map((f) => (
             <div key={f.check_id} style={{ marginTop: 4 }}>
-              <Text strong>{f.check_id}</Text>
+              <Text strong><EnumText group="check" code={f.check_id} /></Text>
               {f.evidence?.problems?.map((p, i) => (
                 <div key={i} style={{ paddingLeft: 12 }}>
                   <Text type="secondary">
