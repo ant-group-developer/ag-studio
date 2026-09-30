@@ -90,7 +90,7 @@ export class AgGoClient {
    */
   getCatalog(
     actAsUserId: string,
-    body: { folderIds: string[]; filters?: Record<string, unknown>; limit?: number; cursor?: string },
+    body: { folderIds: string[]; usableOnly?: boolean; minQuality?: number; orientations?: string[]; q?: string; limit?: number; cursor?: string },
   ): Promise<FootageVideoResponse> {
     return this.request<FootageVideoResponse>("POST", "/footage/catalog", actAsUserId, body);
   }

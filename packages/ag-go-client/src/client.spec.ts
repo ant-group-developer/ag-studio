@@ -122,7 +122,8 @@ describe("AgGoClient - getCatalog", () => {
 
     await client.getCatalog(ACT_AS_USER, {
       folderIds: ["f1", "f2"],
-      filters: { usableOnly: true, minQuality: 4 },
+      usableOnly: true,
+      minQuality: 4,
       limit: 20,
       cursor: "abc123",
     });
@@ -133,7 +134,8 @@ describe("AgGoClient - getCatalog", () => {
         method: "POST",
         body: JSON.stringify({
           folderIds: ["f1", "f2"],
-          filters: { usableOnly: true, minQuality: 4 },
+          usableOnly: true,
+      minQuality: 4,
           limit: 20,
           cursor: "abc123",
         }),

@@ -29,7 +29,7 @@ import {
 
 /** What `studio-catalog` needs from ag-go (GĐ2 whole-asset). */
 export interface FootageCatalogSource {
-  getCatalog(actAsUserId: string, body: { folderIds: string[]; filters?: Record<string, unknown>; limit?: number; cursor?: string }): Promise<{ items: AgGoFootageVideo[]; nextCursor: string | null }>;
+  getCatalog(actAsUserId: string, body: { folderIds: string[]; usableOnly?: boolean; limit?: number; cursor?: string }): Promise<{ items: AgGoFootageVideo[]; nextCursor: string | null }>;
 }
 
 export interface StudioStageDeps {
@@ -43,7 +43,9 @@ export interface StudioStageDeps {
 }
 
 export const DEFAULT_CANVAS = { "16:9": { width: 1920, height: 1080 }, "9:16": { width: 1080, height: 1920 } } as const;
-/** ag-go pages at most 1000; 20 pages is far above the 300 we keep after the pre-filter. */
+/** ag-go `/footage/catalog` answers at most 500 videos a page (a larger `limit` is a 400). */
+export const CATALOG_PAGE_SIZE = 500;
+/** 20 pages = 10 000 videos, far above the 300 kept after the pre-filter. */
 const MAX_CATALOG_PAGES = 20;
 
 export function readInput<T>(request: StageRequest, workspaceDir: string, type: string, parse: (v: unknown) => T): T {
@@ -129,7 +131,7 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       let cursor: string | undefined;
       for (let page = 0; page < MAX_CATALOG_PAGES; page++) {
         const res = await d.footage.getCatalog(brief.owner_user_id, {
-          folderIds: brief.folder_ids, filters: { usableOnly: true }, limit: 1000, ...(cursor ? { cursor } : {}),
+          folderIds: brief.folder_ids, usableOnly: true, limit: CATALOG_PAGE_SIZE, ...(cursor ? { cursor } : {}),
         });
         items.push(...res.items);
         if (!res.nextCursor) break;

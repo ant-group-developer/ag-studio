@@ -366,7 +366,9 @@ function startFakeAgGo(): Promise<void> {
 
     // Whole-asset catalog (GĐ4/v3) — returns AgGoFootageVideo items
     if (req.method === "POST" && url === "/footage/catalog") {
-      const b = JSON.parse(body) as { folderIds: string[] };
+      const b = JSON.parse(body) as { folderIds: string[]; limit?: number };
+      // like ag-go's DTO: 1..500 per page
+      if (b.limit !== undefined && (b.limit < 1 || b.limit > 500)) return json(400, { message: "limit must not be greater than 500" });
       const items = [
         ...(b.folderIds.includes(FOLDER_A) ? ASSETS_FOLDER_A : []),
         ...(b.folderIds.includes(FOLDER_B) ? ASSETS_FOLDER_B : []),

@@ -26,6 +26,10 @@ export class S3Bucket implements StudioBucket {
     this.s3 = new S3Client({
       endpoint: opts.endpoint, region: opts.region ?? "auto", forcePathStyle: true,
       credentials: { accessKeyId: opts.accessKeyId, secretAccessKey: opts.secretAccessKey },
+      // Checksums only where S3 requires them (Cloudflare's advice for R2): with the SDK's default a streamed
+      // PUT is sent aws-chunked with a trailing checksum, which R2 and plain S3 fakes store framing and all.
+      requestChecksumCalculation: "WHEN_REQUIRED",
+      responseChecksumValidation: "WHEN_REQUIRED",
     });
   }
   async put(key: string, body: Buffer, contentType?: string): Promise<void> {
