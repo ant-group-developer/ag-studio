@@ -6,6 +6,8 @@ import { HttpException, HttpStatus } from '@nestjs/common';
 import { of } from 'rxjs';
 import { ApiResponseInterceptor } from './api-response.interceptor';
 import { ApiExceptionFilter } from './api-exception.filter';
+import { AgGoClientError } from '../ag-go/client';
+import { Logger } from '@nestjs/common';
 import type { ArgumentsHost, ExecutionContext } from '@nestjs/common';
 
 // ---------------------------------------------------------------------------
@@ -150,6 +152,39 @@ describe('ApiExceptionFilter', () => {
       timestamp: string;
     };
   }
+
+  function statusOf(exception: unknown): number {
+    const host = makeHost();
+    filter.catch(exception, host);
+    return (host as unknown as { _response: () => { getStatusCode: () => number } })._response().getStatusCode();
+  }
+
+  it('reports an ag-go failure as a bad gateway with the reason ag-go gave', () => {
+    const upstream = new AgGoClientError(503, {
+      data: null, requestId: 'r', timestamp: 't', success: false,
+      error: { code: 'HTTP_503', message: 'Account API request failed' },
+    });
+    const body = runFilter(upstream);
+    expect(statusOf(upstream)).toBe(502);
+    expect(body.error.code).toBe('AG_GO_ERROR');
+    expect(body.error.message).toBe('ag-go: Account API request failed');
+    expect(body.error.details).toMatchObject({ upstreamStatus: 503, upstreamCode: 'HTTP_503' });
+  });
+
+  it('passes ag-go refusing the user (403) through', () => {
+    expect(statusOf(new AgGoClientError(403, { message: 'no folder access' }))).toBe(403);
+  });
+
+  it('logs every 5xx with its request id', () => {
+    const spy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    runFilter(new Error('something broke'), 'req-500');
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining('req-500'));
+    expect(spy.mock.calls[0]![0]).toContain('something broke');
+    spy.mockClear();
+    runFilter(new HttpException('nope', HttpStatus.NOT_FOUND));
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
 
   it('wraps an unknown error as INTERNAL_SERVER_ERROR', () => {
     const body = runFilter(new Error('something broke'));

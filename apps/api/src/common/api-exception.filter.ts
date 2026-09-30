@@ -3,11 +3,13 @@ import {
   Catch,
   HttpException,
   HttpStatus,
+  Logger,
   type ExceptionFilter,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { ApiErrorDto } from './dto/api-error.dto';
 import { ApiResponseDto } from './dto/api-response.dto';
+import { AgGoClientError } from '../ag-go/client';
 
 type ErrorPayload = Record<string, unknown>;
 
@@ -16,6 +18,8 @@ const META_FIELDS = new Set(['message', 'code', 'error', 'statusCode', 'fieldErr
 
 @Catch()
 export class ApiExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger(ApiExceptionFilter.name);
+
   catch(exception: unknown, host: ArgumentsHost): void {
     const http = host.switchToHttp();
     const request = http.getRequest<Request>();
@@ -24,16 +28,43 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const error = this.toApiError(exception, status);
     const requestId = request.requestId ?? String(response.getHeader('x-request-id') ?? '');
 
+    // A 5xx is ours (or an upstream's) to fix: keep what happened, the caller only sees the envelope.
+    if (status >= 500) {
+      const detail = exception instanceof Error ? (exception.stack ?? exception.message) : String(exception);
+      this.logger.error(`${request.method} ${request.originalUrl} -> ${status} ${error.code} [${requestId}]: ${detail}`);
+    }
+
     response.status(status).json(new ApiResponseDto(null, requestId, false, error));
   }
 
   private getStatus(exception: unknown): number {
+    if (exception instanceof AgGoClientError) return this.agGoStatus(exception.status);
     return exception instanceof HttpException
       ? exception.getStatus()
       : HttpStatus.INTERNAL_SERVER_ERROR;
   }
 
+  /**
+   * ag-go refusing the user (403) or not finding a thing (404, 422) passes through; anything else from ag-go
+   * (its own 5xx, a service key it does not accept) is a bad gateway for Studio's caller.
+   */
+  private agGoStatus(upstream: number): number {
+    return upstream === 403 || upstream === 404 || upstream === 422 ? upstream : HttpStatus.BAD_GATEWAY;
+  }
+
+  private toAgGoError(exception: AgGoClientError): ApiErrorDto {
+    const body = this.isRecord(exception.body) ? exception.body : {};
+    const inner = this.isRecord(body.error) ? body.error : body;
+    const message = typeof inner.message === 'string' ? inner.message : `HTTP ${exception.status}`;
+    return new ApiErrorDto('AG_GO_ERROR', `ag-go: ${message}`, {
+      details: { upstreamStatus: exception.status, upstreamCode: typeof inner.code === 'string' ? inner.code : undefined },
+    });
+  }
+
   private toApiError(exception: unknown, status: number): ApiErrorDto {
+    if (exception instanceof AgGoClientError) {
+      return this.toAgGoError(exception);
+    }
     if (!(exception instanceof HttpException)) {
       return new ApiErrorDto('INTERNAL_SERVER_ERROR', 'Internal server error');
     }
