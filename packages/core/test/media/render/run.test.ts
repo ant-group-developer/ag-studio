@@ -190,6 +190,8 @@ interface FakePlan {
   hang?: boolean;
   /** stderr this call streams instead of the canned `LOUDNORM_STDERR`. */
   stderr?: string;
+  /** stdout this call streams (e.g. `-progress pipe:1` lines); none by default. */
+  stdout?: string;
 }
 
 /**
@@ -214,7 +216,14 @@ function fakeSpawn(plan: (argv: string[], index: number) => FakePlan = () => ({}
     const child = new EventEmitter() as EventEmitter & { stderr: Readable; stdout: Readable | null; kill: () => boolean };
     const err = new Readable({ read() {} });
     child.stderr = err;
-    child.stdout = null;
+    const out = p.stdout !== undefined ? new Readable({ read() {} }) : null;
+    child.stdout = out;
+    if (out !== null) {
+      setTimeout(() => {
+        out.push(p.stdout);
+        out.push(null);
+      }, 0);
+    }
     child.kill = () => {
       kills++;
       child.emit("close", null);
@@ -283,6 +292,34 @@ const CHECKSUMS = new Map([[SRC_A, "sha256:" + "f".repeat(64)]]);
 describe("probeNvenc", () => {
   it("answers false (never throws) for a binary that cannot run at all", async () => {
     await expect(probeNvenc(join(tempDir("no-ffmpeg-"), "definitely-not-ffmpeg"))).resolves.toBe(false);
+  });
+});
+
+describe("renderComposition progress and cancel", () => {
+  it("reports progress through mezzanine, loudnorm and the final encode up to 100", async () => {
+    const { spawn, calls } = fakeSpawn((argv) => (argv.includes("-progress") ? { stdout: "frame=10\nout_time=00:00:01.000000\nout_time=00:00:04.000000\nprogress=end\n" } : {}));
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+    const seen: [number, string][] = [];
+    await renderComposition(d, input({ composition: fakeComposition(), outDir, sourceChecksums: CHECKSUMS, onProgress: (pct, stage) => seen.push([pct, stage]) }));
+
+    const stages = [...new Set(seen.map(([, st]) => st))];
+    expect(stages).toEqual(["mezzanine", "loudnorm", "final_encode"]);
+    const pcts = seen.map(([pct]) => pct);
+    expect(pcts.every((v, i) => i === 0 || v >= pcts[i - 1]!)).toBe(true);
+    expect(pcts[pcts.length - 1]).toBe(100);
+    // Every encode asked ffmpeg for progress; the loudnorm measure pass did not.
+    expect(calls.filter((c) => c.includes("-progress")).length).toBe(3);
+  });
+
+  it("a cancelled render kills the running ffmpeg and does not fall back to cpu", async () => {
+    const { spawn, calls, kills } = fakeSpawn(() => ({ hang: true }));
+    const { d, outDir } = fakeWorld({ spawn, nvenc: true });
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 50);
+    await expect(renderComposition(d, input({ composition: fakeComposition(), outDir, encoderCfg: "auto", sourceChecksums: CHECKSUMS, signal: ctrl.signal })))
+      .rejects.toMatchObject({ code: "IO_ERROR", message: expect.stringContaining("aborted") });
+    expect(kills()).toBe(1);
+    expect(calls).toHaveLength(1);
   });
 });
 

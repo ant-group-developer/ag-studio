@@ -72,7 +72,7 @@ export async function startLineTts(d: EditorDeps, p: { productionId: string; lin
   const voice = productionVoice(prod.voice);
   try {
     const { job } = await d.farm.submitJob({
-      type: "studio.tts", correlation_id: `editor-${id}`, affinity_key: prod.id, max_attempts: 1,
+      type: "studio.tts", correlation_id: `editor-${id}`, affinity_key: prod.id, max_attempts: 2,
       payload: ttsPayload({ productionId: prod.id, language: prod.language ?? "vi", voice, lines: [{ line_id: p.lineId, text }] }),
     });
     recordFarmJob(d.db, { farmJobId: job.id, runId: prod.run_id ?? "editor", stageKey: "editor-tts", attemptId: id, productionId: prod.id, jobType: "studio.tts" });
@@ -101,7 +101,7 @@ export async function startPreview(d: EditorDeps, p: { productionId: string; rev
     const build = await prepareRender(d.bucket, work, { productionId: prod.id, timeline: rev.data, revision: p.revision, output, final: false });
     const prefix = stageInputPrefix(prod.id, "editor-preview", id);
     for (const up of build.extraUploads ?? []) await d.bucket.put(prefix + up.relPath, readFileSync(up.localPath));
-    const { job } = await d.farm.submitJob({ type: "studio.render_preview", correlation_id: `editor-${id}`, affinity_key: prod.id, max_attempts: 1, payload: build.payload });
+    const { job } = await d.farm.submitJob({ type: "studio.render_preview", correlation_id: `editor-${id}`, affinity_key: prod.id, max_attempts: 2, payload: build.payload });
     recordFarmJob(d.db, { farmJobId: job.id, runId: prod.run_id ?? "editor", stageKey: "editor-preview", attemptId: id, productionId: prod.id, jobType: "studio.render_preview" });
     updateJob(d.db, id, { farm_job_id: job.id, status: "running" });
   } catch (e) {

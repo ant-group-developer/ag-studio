@@ -63,6 +63,12 @@ export interface RenderInput {
    * with no brand (Studio) still needs its font found in a known directory, not in whatever the machine's
    * fontconfig has. */
   fontsDir?: string | null;
+  /** Cancels the render: the running ffmpeg is killed and the call rejects with `IO_ERROR` (a farm job that
+   * lost its lease or was cancelled must not keep encoding for minutes). */
+  signal?: AbortSignal;
+  /** Progress over the whole render, 0-100, with a short stage name (`mezzanine`, `loudnorm`, `final_encode`).
+   * Called often during encodes; callers throttle. */
+  onProgress?: (percent: number, stage: string) => void;
 }
 
 /** How much of a failing ffmpeg's stderr is kept for the error details / log line. */
@@ -78,6 +84,24 @@ interface ProcResult {
 }
 
 /**
+ * Adds `-progress pipe:1 -nostats` to an ffmpeg argv and turns its `out_time=` lines into a 0-1 fraction of
+ * `seconds`. `-nostats` only drops the stats line from stderr, so the loudnorm json stays parsable.
+ */
+function withProgress(argv: string[], seconds: number, onFraction: ((f: number) => void) | null): { argv: string[]; onStdoutLine?: (line: string) => void } {
+  if (onFraction === null || seconds <= 0) return { argv };
+  const [bin, ...rest] = argv;
+  return {
+    argv: [bin!, "-progress", "pipe:1", "-nostats", ...rest],
+    onStdoutLine: (line) => {
+      const m = /^out_time=(\d+):(\d+):(\d+(?:\.\d+)?)$/.exec(line);
+      if (!m) return;
+      const t = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+      onFraction(Math.min(1, Math.max(0, t / seconds)));
+    },
+  };
+}
+
+/**
  * Spawns `argv[0]` with the rest as arguments and resolves with its captured output. Asynchronous on
  * purpose: `spawnSync` would block the event loop for the whole encode and stop the worker's lease heartbeat
  * from ticking. Only the last `STDERR_TAIL` characters of stderr are kept, so a chatty ffmpeg cannot grow
@@ -89,22 +113,38 @@ interface ProcResult {
  * stage layer maps it to a `contract` failure that does not retry. An ffmpeg that DID run and then failed
  * (non-zero exit, `null` exit after a kill, our own timeout) stays `IO_ERROR` -> `transient`.
  */
-function runProcess(spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, label: string, captureStdout: boolean): Promise<ProcResult> {
+interface RunOptions {
+  signal?: AbortSignal | undefined;
+  /** Every complete stdout line (used for `-progress pipe:1`); implies piping stdout. */
+  onStdoutLine?: ((line: string) => void) | undefined;
+}
+
+function runProcess(spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, label: string, captureStdout: boolean, opts: RunOptions = {}): Promise<ProcResult> {
   const [bin, ...args] = argv;
   if (bin === undefined) throw new HarnessError("CONFIG_INVALID", `${label}: empty ffmpeg argv`, { label });
+  if (opts.signal?.aborted) return Promise.reject(new HarnessError("IO_ERROR", `${label}: aborted before start`, { label, aborted: true }));
 
   return new Promise<ProcResult>((resolve, reject) => {
+    const pipeStdout = captureStdout || opts.onStdoutLine !== undefined;
     // `env`: ffmpeg never needs a secret, and the repo rule is absolute -- see `childEnvWithoutSecrets`.
-    const child = spawnFn(bin, args, { windowsHide: true, env: childEnvWithoutSecrets(), stdio: ["ignore", captureStdout ? "pipe" : "ignore", "pipe"] });
+    const child = spawnFn(bin, args, { windowsHide: true, env: childEnvWithoutSecrets(), stdio: ["ignore", pipeStdout ? "pipe" : "ignore", "pipe"] });
     let stderr = "";
     let stdout = "";
+    let lineBuf = "";
     let timedOut = false;
+    let aborted = false;
     let settled = false;
 
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill();
     }, Math.max(1, timeoutSeconds) * 1000);
+
+    const onAbort = (): void => {
+      aborted = true;
+      child.kill();
+    };
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
 
     child.stderr?.setEncoding("utf8");
     child.stdout?.setEncoding("utf8");
@@ -113,12 +153,22 @@ function runProcess(spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, la
     });
     child.stdout?.on("data", (chunk: string) => {
       if (captureStdout) stdout = (stdout + chunk).slice(-STDERR_TAIL);
+      if (opts.onStdoutLine) {
+        lineBuf += chunk;
+        let nl = lineBuf.indexOf("\n");
+        while (nl >= 0) {
+          opts.onStdoutLine(lineBuf.slice(0, nl).trim());
+          lineBuf = lineBuf.slice(nl + 1);
+          nl = lineBuf.indexOf("\n");
+        }
+      }
     });
 
     const settle = (e: HarnessError): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onAbort);
       reject(e);
     };
 
@@ -126,6 +176,10 @@ function runProcess(spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, la
     child.on("close", (code) => {
       // `timedOut` first: a killed process also reports a non-zero/null exit, and "timed out" is the useful
       // message of the two.
+      if (aborted) {
+        settle(new HarnessError("IO_ERROR", `${label}: aborted`, { label, aborted: true }));
+        return;
+      }
       if (timedOut) {
         settle(new HarnessError("IO_ERROR", `${label}: ffmpeg timed out after ${timeoutSeconds}s and was killed`, { label, timeout_seconds: timeoutSeconds, stderr_tail: stderr }));
         return;
@@ -137,6 +191,7 @@ function runProcess(spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, la
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onAbort);
       resolve({ stdout, stderr });
     });
   });
@@ -209,6 +264,15 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
   /** Whatever is left of the run's budget, for the next ffmpeg call. */
   const remaining = (): number => Math.max(1, (deadlineMs - Date.now()) / 1000);
 
+  /** Share of the 0-100 progress each phase covers. */
+  const MEZZ_SHARE = 70;
+  const MEASURE_AT = 72;
+  const FINAL_FROM = 75;
+  const reportProgress = (percent: number, stage: string): void => {
+    p.onProgress?.(Math.round(Math.min(100, Math.max(0, percent)) * 10) / 10, stage);
+  };
+  const signal = p.signal;
+
   const outDir = p.outDir;
   const tmpDir = join(outDir, "tmp");
   const clipSetDir = join(outDir, "cuts");
@@ -236,7 +300,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
    * segment that falls back to CPU must be looked up, written and committed under the CPU key, or the cache
    * would hold a CPU-encoded file under a name that promises NVENC.
    */
-  const renderMezz = async (o: { keyFor: (e: EncoderChoice) => string; source: string; in: number; out: number; fit: "scale_pad" | "scale_crop"; has_audio: boolean; label: string }): Promise<{ path: string; seconds: number; cached: boolean }> => {
+  const renderMezz = async (o: { keyFor: (e: EncoderChoice) => string; source: string; in: number; out: number; fit: "scale_pad" | "scale_crop"; has_audio: boolean; label: string; onFraction?: (f: number) => void }): Promise<{ path: string; seconds: number; cached: boolean }> => {
     const expected = o.out - o.in;
     let key = o.keyFor(encoder);
 
@@ -259,7 +323,8 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
         ffmpeg: d.ffmpeg, source: o.source, in: o.in, out: o.out, fit: o.fit, w: width, h: height, fps,
         has_audio: o.has_audio, encoder: choice, codec, out_path: tmpPath,
       });
-      await runProcess(spawnFn, args, remaining(), label, false);
+      const prog = withProgress(args, expected, o.onFraction ?? null);
+      await runProcess(spawnFn, prog.argv, remaining(), label, false, { signal, onStdoutLine: prog.onStdoutLine });
       return tmpPath;
     };
 
@@ -269,7 +334,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     } catch (e) {
       // Spec §7: an NVENC failure on one segment gets exactly one CPU retry; a CPU failure is the stage's.
       // `CONFIG_INVALID` (the ffmpeg binary itself cannot be run) is never worth retrying on either encoder.
-      if (encoder !== "nvenc" || !isHarnessError(e, "IO_ERROR")) throw e;
+      if (signal?.aborted || encoder !== "nvenc" || !isHarnessError(e, "IO_ERROR")) throw e;
       warnings.push(`nvenc_segment_fallback:${o.label}`);
       log(`nvenc failed for mezzanine ${o.label}; this run falls back to cpu`);
       rmSync(join(tmpDir, `${key}.mp4`), { force: true });
@@ -296,6 +361,10 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
    * was encoded now or served from the cache. It describes the render PLAN's size, not the work done this
    * run; `rendered`/`cached` next to it are what say how much of it had to be encoded (review round 1, m6). */
   let mezzSeconds = 0;
+  /** Seconds of mezzanine the plan needs (bodies + dissolve tails), to weight the mezzanine phase. */
+  const planSeconds = segs.reduce((sum, s) => sum + (s.out - s.in) + (s.transition_out.kind === "dissolve" && s.transition_out.tail_available ? s.transition_out.seconds : 0), 0);
+  const mezzProgress = (doneSeconds: number): void => reportProgress(planSeconds > 0 ? (MEZZ_SHARE * doneSeconds) / planSeconds : 0, "mezzanine");
+  reportProgress(0, "mezzanine");
 
   for (const seg of segs) {
     const checksum = p.sourceChecksums.get(seg.source_id);
@@ -304,11 +373,14 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     }
     const common = { source_checksum: checksum, fit: seg.fit, w: width, h: height, fps, has_audio: seg.has_audio, codec };
 
+    const bodyStart = mezzSeconds;
     const body = await renderMezz({
       keyFor: (e) => mezzCacheKey({ ...common, encoder: e, in: seg.in, out: seg.out }),
       source: seg.source_path, in: seg.in, out: seg.out, fit: seg.fit, has_audio: seg.has_audio, label: String(seg.order),
+      onFraction: (f) => mezzProgress(bodyStart + f * (seg.out - seg.in)),
     });
     mezzSeconds += body.seconds;
+    mezzProgress(mezzSeconds);
 
     let tail: { path: string; seconds: number; cached: boolean } | null = null;
     if (seg.transition_out.kind === "dissolve" && seg.transition_out.tail_available) {
@@ -320,6 +392,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
         source: seg.source_path, in: seg.out, out: seg.out + tailSeconds, fit: seg.fit, has_audio: seg.has_audio, label: `${seg.order}-tail`,
       });
       mezzSeconds += tail.seconds;
+      mezzProgress(mezzSeconds);
     }
 
     // Counted per SEGMENT (not per file) so `rendered + cached === total` always holds: a segment counts as
@@ -362,7 +435,8 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
 
   // The measurement pass is audio-only (`-vn -f null -`), so `encoder` never reaches its argv; it is passed
   // for the shape of `FinalGraphInput` alone.
-  const measure = await runProcess(spawnFn, finalArgs({ ...finalInput, encoder, loudnorm: null, measureOnly: true }).argv, remaining(), "loudnorm measure", false);
+  reportProgress(MEASURE_AT, "loudnorm");
+  const measure = await runProcess(spawnFn, finalArgs({ ...finalInput, encoder, loudnorm: null, measureOnly: true }).argv, remaining(), "loudnorm measure", false, { signal });
   const measured = parseLoudnorm(measure.stderr);
   if (measured === null) {
     throw new HarnessError("IO_ERROR", "loudnorm measure failed: ffmpeg printed no parsable loudnorm json", { stderr_tail: measure.stderr });
@@ -373,15 +447,21 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
   // point asking it for a 4K final encode first.
   let finalEncoder = encoder;
   let render: ProcResult;
+  const episodeSeconds = segs.reduce((end, s) => Math.max(end, s.end), 0);
+  const finalEncode = (choice: EncoderChoice, label: string): Promise<ProcResult> => {
+    reportProgress(FINAL_FROM, "final_encode");
+    const prog = withProgress(finalArgs({ ...finalInput, encoder: choice, loudnorm: measured.measured, measureOnly: false }).argv, episodeSeconds, (f) => reportProgress(FINAL_FROM + (100 - FINAL_FROM) * f, "final_encode"));
+    return runProcess(spawnFn, prog.argv, remaining(), label, false, { signal, onStdoutLine: prog.onStdoutLine });
+  };
   try {
-    render = await runProcess(spawnFn, finalArgs({ ...finalInput, encoder: finalEncoder, loudnorm: measured.measured, measureOnly: false }).argv, remaining(), "final encode", false);
+    render = await finalEncode(finalEncoder, "final encode");
   } catch (e) {
-    if (finalEncoder !== "nvenc" || !isHarnessError(e, "IO_ERROR")) throw e;
+    if (signal?.aborted || finalEncoder !== "nvenc" || !isHarnessError(e, "IO_ERROR")) throw e;
     warnings.push("nvenc_final_fallback");
     log("nvenc failed on the final encode; retrying once on cpu");
     rmSync(episodePath, { force: true });
     finalEncoder = "cpu";
-    render = await runProcess(spawnFn, finalArgs({ ...finalInput, encoder: finalEncoder, loudnorm: measured.measured, measureOnly: false }).argv, remaining(), "final encode (cpu retry)", false);
+    render = await finalEncode(finalEncoder, "final encode (cpu retry)");
   }
 
   const renderPass = parseLoudnorm(render.stderr);

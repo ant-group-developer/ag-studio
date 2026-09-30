@@ -283,7 +283,9 @@ export class FarmExecutor implements Executor {
         affinity_key: productionId,
         correlation_id: request.attempt_id,
         payload: validatedPayload,
-        max_attempts: 1, // the harness handles retries at the stage level
+        // One farm-level retry: a worker that dies mid-render (lease expired) is requeued right away on
+        // another slot instead of failing the stage and waiting for the stage backoff.
+        max_attempts: 2,
         requirements:
           typeof cfg.requirements === "object" && cfg.requirements !== null
             ? (cfg.requirements as Record<string, unknown>)
