@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeAll, describe, expect, it, vi } from "vitest";
@@ -9,21 +9,25 @@ window.matchMedia ??= ((query: string) => ({
   addListener: () => {}, removeListener: () => {}, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
 })) as unknown as typeof window.matchMedia;
 
-const client = { getProduction: vi.fn(), checkProductionAccess: vi.fn(), getRun: vi.fn() };
+const client = {
+  getProduction: vi.fn(),
+  checkProductionAccess: vi.fn(),
+  getRun: vi.fn(),
+  getResearch: vi.fn().mockResolvedValue(null),
+  getTrendReport: vi.fn().mockResolvedValue(null),
+  getSeriesPlan: vi.fn().mockResolvedValue(null),
+  getProductionCatalog: vi.fn().mockResolvedValue(null),
+};
 vi.mock("../api/studio-client", async (orig) => ({ ...(await orig<object>()), useStudioClient: () => client }));
 
 const { ProductionDetailPage } = await import("./ProductionDetailPage");
-
-const stage = (key: string, state: string, extra: object = {}) => ({
-  key, executor: "agent", state, attempts: 1, is_gate: false, error: null, failed_checks: [], outputs: [], ...extra,
-});
 
 describe("ProductionDetailPage", () => {
   beforeAll(async () => {
     await i18n.changeLanguage("vi");
   });
 
-  it("hiện nhãn đọc được kèm mã enum, source ids và trạng thái run", async () => {
+  it("hiện nhãn đọc được kèm mã enum, source ids và steps component", async () => {
     client.getProduction.mockResolvedValue({
       id: "p-1", teamId: "t-1", teamName: "Team A", title: "Phở sáng",
       description: "Phim tài liệu", goal: "", audience: "", tone: "", notes: "",
@@ -34,12 +38,9 @@ describe("ProductionDetailPage", () => {
     });
     client.checkProductionAccess.mockResolvedValue({ hasAccess: true });
     client.getRun.mockResolvedValue({
-      run_id: "r-1", state: "WAITING", created_at: "", updated_at: "", cost_usd: 0, waiting_gate: null, latest_revision: null,
+      run_id: "r-1", state: "RUNNING", created_at: "", updated_at: "", cost_usd: 0, waiting_gate: null, latest_revision: null,
       stages: [
-        stage("intake", "SUCCEEDED"),
-        stage("approve-plan", "WAITING_HUMAN", { executor: "gate", is_gate: true }),
-        stage("render-episode", "FAILED", { failed_checks: [{ check_id: "selection-valid", evidence: {} }] }),
-        stage("some-new-step", "PENDING"),
+        { key: "intake", executor: "agent", state: "SUCCEEDED", attempts: 1, is_gate: false, error: null, failed_checks: [], outputs: [] },
       ],
     });
 
@@ -62,9 +63,8 @@ describe("ProductionDetailPage", () => {
     expect(await screen.findByText("f-1")).toBeTruthy();
     expect(screen.getByText("f-gone")).toBeTruthy();
 
-    // Run panel: state
-    expect(await screen.findByText("WAITING")).toBeTruthy();
-    // code without a label is still shown as-is
-    expect(screen.getByText("some-new-step")).toBeTruthy();
+    // Steps bar: step 0 title is always shown
+    expect(screen.getByText("Thông tin")).toBeTruthy();
+    expect(screen.getByText("Nghiên cứu thị trường")).toBeTruthy();
   });
 });
