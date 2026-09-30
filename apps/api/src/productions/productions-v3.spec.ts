@@ -1,274 +1,107 @@
 /**
- * Unit tests for Productions v3 API: new fields, paged list, derived status, episodeCounts.
+ * Productions v3: fields, derived status and episode counts, paging/visibility, atomic create — against a real
+ * studio.db and engine core (see test/real-studio.ts).
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { NotFoundException } from '@nestjs/common';
-import { ProductionsService } from './productions.service';
-import { StudioDbService } from '../db/studio-db.service';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { startEpisodeRun, startPlanRun } from '@ag-studio/engine';
+import { countEpisodes, deriveStatus, ProductionsService } from './productions.service';
+import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
 
-function makeDb(overrides: Partial<StudioDbService> = {}): StudioDbService {
-  return {
-    get: vi.fn(),
-    all: vi.fn().mockReturnValue([]),
-    run: vi.fn().mockReturnValue({ changes: 1 }),
-    ...overrides,
-  } as unknown as StudioDbService;
-}
-
-const baseProductionRow = {
-  id: 'prod-1',
-  team_id: 'team-1',
-  title: 'Test Production',
-  status: 'active',
-  canvas: null,
-  brief: 'A description',
-  run_id: null,
-  created_at: '2024-01-01T00:00:00.000Z',
-  updated_at: '2024-01-02T00:00:00.000Z',
-  owner_user_id: 'user-1',
-  aspect: '16:9',
-  language: 'vi',
-  music: null,
-  goal: 'Grow channel',
-  audience: 'Tech enthusiasts',
-  tone: 'Professional',
-  notes: 'Avoid politics',
-  youtube_channels: '["https://youtube.com/@test"]',
-  keywords: '["AI","tech"]',
-  episode_target_seconds: 300,
-  max_episodes: 5,
-};
-
-describe('ProductionsService — v3 fields', () => {
-  let service: ProductionsService;
-  let db: StudioDbService;
-
-  beforeEach(() => {
-    db = makeDb();
-    service = new ProductionsService(db);
+describe('deriveStatus', () => {
+  const live = { status: 'draft' };
+  it.each([
+    ['archived wins', { status: 'archived' }, { state: 'RUNNING', waiting_gate: null }, [], 'archived'],
+    ['no plan run', live, null, [], 'draft'],
+    ['plan run working', live, { state: 'RUNNING', waiting_gate: null }, [], 'planning'],
+    ['waiting at approve-plan', live, { state: 'WAITING', waiting_gate: 'approve-plan' }, [], 'waiting_approval'],
+    ['plan failed before episodes', live, { state: 'FAILED', waiting_gate: null }, [], 'failed'],
+    ['an episode producing', live, { state: 'SUCCEEDED', waiting_gate: null }, ['ready', 'producing'], 'producing'],
+    ['every episode ready', live, { state: 'SUCCEEDED', waiting_gate: null }, ['ready', 'ready'], 'done'],
+    ['an episode failed, none producing', live, { state: 'SUCCEEDED', waiting_gate: null }, ['ready', 'failed'], 'failed'],
+  ] as const)('%s', (_name, row, run, episodes, expected) => {
+    expect(deriveStatus(row, run, [...episodes])).toBe(expected);
   });
 
-  it('rowToDto maps new fields correctly via getProduction', () => {
-    (db.get as ReturnType<typeof vi.fn>)
-      .mockReturnValueOnce(baseProductionRow) // productions SELECT *
-      .mockReturnValueOnce({ name: 'My Team' }); // teams SELECT name
-    (db.all as ReturnType<typeof vi.fn>)
-      .mockReturnValueOnce([{ source_id: 'folder-1' }]) // production_sources
-      .mockReturnValueOnce([]); // episodes
-
-    const prod = service.getProduction('prod-1');
-    expect(prod).not.toBeNull();
-    expect(prod!.description).toBe('A description');
-    expect(prod!.goal).toBe('Grow channel');
-    expect(prod!.audience).toBe('Tech enthusiasts');
-    expect(prod!.tone).toBe('Professional');
-    expect(prod!.notes).toBe('Avoid politics');
-    expect(prod!.sources).toEqual(['folder-1']);
-    expect(prod!.youtubeChannels).toEqual(['https://youtube.com/@test']);
-    expect(prod!.keywords).toEqual(['AI', 'tech']);
-    expect(prod!.episodeTargetSeconds).toBe(300);
-    expect(prod!.maxEpisodes).toBe(5);
-    expect(prod!.teamName).toBe('My Team');
+  it('counts episodes by status', () => {
+    expect(countEpisodes(['ready', 'ready', 'failed', 'producing', 'planned'])).toEqual({ total: 5, ready: 2, producing: 1, failed: 1 });
   });
+});
 
-  it('getProduction returns null for missing production', () => {
-    (db.get as ReturnType<typeof vi.fn>).mockReturnValueOnce(undefined);
-    expect(service.getProduction('nonexistent')).toBeNull();
+describe('ProductionsService (real studio.db)', () => {
+  let s: RealStudio;
+  let svc: ProductionsService;
+  beforeEach(async () => {
+    s = await realStudio();
+    svc = new ProductionsService(s.db, s.engine);
+    insertTeam(s.db, 'team-1', 'owner-1');
   });
+  afterEach(() => s.close());
 
-  it('archiveProduction throws 404 when production does not exist', () => {
-    (db.run as ReturnType<typeof vi.fn>).mockReturnValue({ changes: 0 });
-    expect(() => service.archiveProduction('missing')).toThrow(NotFoundException);
-  });
+  const input = {
+    title: 'Chợ nổi miền Tây',
+    description: 'Series về chợ nổi',
+    goal: 'Tăng người xem',
+    audience: 'Khách du lịch',
+    tone: 'Ấm áp',
+    notes: '',
+    sources: ['folder-1', 'folder-2'],
+    youtubeChannels: ['@kenhA'],
+    keywords: ['chợ nổi', 'miền tây'],
+    episodeTargetSeconds: 300,
+    maxEpisodes: 4,
+  };
 
-  describe('deriveStatus', () => {
-    /**
-     * Call order for getProduction:
-     *   db.get  #1  → productions row (run_id matters: null skips run query)
-     *   db.all  #1  → production_sources
-     *   db.get  #2  → run row (only when run_id != null)
-     *   db.all  #2  → episodes
-     *   db.get  #3  → team name  (db.get #2 when run_id is null)
-     */
-    function setupProdWithRun(runRow: object | null, episodeRows: object[] = []) {
-      const hasRun = runRow !== null;
-      const prodRow = { ...baseProductionRow, run_id: hasRun ? 'run-1' : null };
-
-      const getStub = db.get as ReturnType<typeof vi.fn>;
-      const allStub = db.all as ReturnType<typeof vi.fn>;
-      getStub.mockReset();
-      allStub.mockReset();
-
-      getStub.mockReturnValueOnce(prodRow);             // #1 productions
-      allStub.mockReturnValueOnce([]);                  // #1 production_sources
-      if (hasRun) {
-        getStub.mockReturnValueOnce(runRow);            // #2 run (only when run_id set)
-      }
-      allStub.mockReturnValueOnce(episodeRows);         // #2 episodes
-      getStub.mockReturnValueOnce({ name: 'Team' });   // #3 (or #2) team name
-    }
-
-    it('returns draft when no run', () => {
-      setupProdWithRun(null);
-      const prod = service.getProduction('prod-1');
-      expect(prod!.status).toBe('draft');
-    });
-
-    it('returns planning when run is RUNNING', () => {
-      setupProdWithRun({ state: 'RUNNING', waiting_gate: null });
-      const prod = service.getProduction('prod-1');
-      expect(prod!.status).toBe('planning');
-    });
-
-    it('returns waiting_approval when run WAITING with approve-plan gate', () => {
-      setupProdWithRun({ state: 'WAITING', waiting_gate: 'approve-plan' });
-      const prod = service.getProduction('prod-1');
-      expect(prod!.status).toBe('waiting_approval');
-    });
-
-    it('returns done when run SUCCEEDED and all episodes succeeded', () => {
-      setupProdWithRun(
-        { state: 'SUCCEEDED', waiting_gate: null },
-        [{ status: 'succeeded', run_id: 'r1' }, { status: 'succeeded', run_id: 'r2' }],
-      );
-      const prod = service.getProduction('prod-1');
-      expect(prod!.status).toBe('done');
-    });
-
-    it('returns producing when some episodes are in_progress', () => {
-      setupProdWithRun(
-        { state: 'SUCCEEDED', waiting_gate: null },
-        [{ status: 'in_progress', run_id: 'r1' }, { status: 'succeeded', run_id: 'r2' }],
-      );
-      const prod = service.getProduction('prod-1');
-      expect(prod!.status).toBe('producing');
-    });
-
-    it('returns failed when run FAILED and no episodes', () => {
-      setupProdWithRun({ state: 'FAILED', waiting_gate: null });
-      const prod = service.getProduction('prod-1');
-      expect(prod!.status).toBe('failed');
-    });
-
-    it('returns archived when status column is archived', () => {
-      const getStub = db.get as ReturnType<typeof vi.fn>;
-      const allStub = db.all as ReturnType<typeof vi.fn>;
-      getStub.mockReset().mockReturnValueOnce({ ...baseProductionRow, status: 'archived', run_id: null });
-      getStub.mockReturnValueOnce({ name: 'Team' });
-      allStub.mockReset().mockReturnValueOnce([]).mockReturnValueOnce([]);
-      const prod = service.getProduction('prod-1');
-      expect(prod!.status).toBe('archived');
+  it('creates a production with its sources and maps every v3 field', () => {
+    const p = svc.createProduction('team-1', 'owner-1', input);
+    expect(p).toMatchObject({
+      teamId: 'team-1', teamName: 'Team team-1', title: 'Chợ nổi miền Tây', description: 'Series về chợ nổi',
+      goal: 'Tăng người xem', audience: 'Khách du lịch', tone: 'Ấm áp', sources: ['folder-1', 'folder-2'],
+      youtubeChannels: ['@kenhA'], keywords: ['chợ nổi', 'miền tây'], episodeTargetSeconds: 300, maxEpisodes: 4,
+      status: 'draft', episodeCounts: { total: 0, ready: 0, producing: 0, failed: 0 },
     });
   });
 
-  describe('episodeCounts', () => {
-    it('counts episodes by status', () => {
-      (db.get as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce(baseProductionRow)
-        .mockReturnValueOnce({ state: 'SUCCEEDED', waiting_gate: null })
-        .mockReturnValueOnce({ name: 'Team' });
-      (db.all as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce([])
-        .mockReturnValueOnce([
-          { status: 'succeeded', run_id: 'r1' },
-          { status: 'succeeded', run_id: 'r2' },
-          { status: 'failed', run_id: 'r3' },
-          { status: 'in_progress', run_id: 'r4' },
-        ]);
-      const prod = service.getProduction('prod-1');
-      expect(prod!.episodeCounts).toEqual({ total: 4, ready: 2, producing: 1, failed: 1 });
-    });
+  it('creates nothing when a source cannot be inserted (one transaction)', () => {
+    expect(() => svc.createProduction('team-1', 'owner-1', { ...input, sources: ['same', 'same'] })).toThrow();
+    expect(s.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM productions')?.n).toBe(0);
   });
 
-  describe('listProductionsPaged', () => {
-    it('filters by teamId for non-admin', () => {
-      (db.all as ReturnType<typeof vi.fn>).mockReturnValueOnce([baseProductionRow]);
-      (db.get as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce({ n: 1 })        // COUNT(*)
-        .mockReturnValueOnce([])              // production_sources call via all
-        // remaining calls for rowToDto
-        .mockReturnValue(null);
-      // Reset all mocks for cleaner test
-      const mockGet = vi.fn();
-      const mockAll = vi.fn();
-      const mockRun = vi.fn().mockReturnValue({ changes: 1 });
-      const db2 = { get: mockGet, all: mockAll, run: mockRun } as unknown as StudioDbService;
-      const svc2 = new ProductionsService(db2);
-
-      // productions list
-      mockAll.mockReturnValueOnce([baseProductionRow]);
-      // count query
-      mockGet.mockReturnValueOnce({ n: 1 });
-      // production_sources
-      mockAll.mockReturnValueOnce([]);
-      // episodes (via all)
-      mockAll.mockReturnValueOnce([]);
-      // run (via get)
-      mockGet.mockReturnValueOnce(null);
-      // team name
-      mockGet.mockReturnValueOnce({ name: 'Team' });
-
-      const result = svc2.listProductionsPaged('user-1', false, { teamId: 'team-1', page: 1, pageSize: 10 });
-      expect(result.page).toBe(1);
-      expect(result.pageSize).toBe(10);
-      // The call should include team condition in WHERE
-      const sqlCall = (mockAll as ReturnType<typeof vi.fn>).mock.calls[0];
-      expect(sqlCall[0]).toContain('p.team_id = ?');
-    });
-
-    it('maxEpisodes defaults to 10 when not set', () => {
-      const rowWithoutMaxEpisodes = { ...baseProductionRow, max_episodes: null };
-      const mockGet = vi.fn();
-      const mockAll = vi.fn();
-      const db2 = { get: mockGet, all: mockAll, run: vi.fn() } as unknown as StudioDbService;
-      const svc2 = new ProductionsService(db2);
-
-      mockGet.mockReturnValueOnce(rowWithoutMaxEpisodes);
-      mockAll.mockReturnValueOnce([]);  // sources
-      mockGet.mockReturnValueOnce(null); // run
-      mockAll.mockReturnValueOnce([]);  // episodes
-      mockGet.mockReturnValueOnce({ name: 'Team' }); // team name
-
-      const prod = svc2.getProduction('prod-1');
-      expect(prod!.maxEpisodes).toBe(10);
-    });
+  it('defaults maxEpisodes to 10', () => {
+    expect(svc.createProduction('team-1', 'owner-1', { ...input, maxEpisodes: undefined }).maxEpisodes).toBe(10);
   });
 
-  describe('createProduction', () => {
-    it('inserts sources atomically during creation', () => {
-      const mockGet = vi.fn();
-      const mockAll = vi.fn();
-      const mockRun = vi.fn().mockReturnValue({ changes: 1 });
-      const db2 = { get: mockGet, all: mockAll, run: mockRun } as unknown as StudioDbService;
-      const svc2 = new ProductionsService(db2);
+  it('derives planning from the plan run and counts episodes by their runs', () => {
+    const p = svc.createProduction('team-1', 'owner-1', input);
+    startPlanRun(s.engine.core, s.engine.db, p.id);
+    const now = new Date().toISOString();
+    s.db.run('INSERT INTO episodes (id, production_id, idx, title, hook, plan, created_at, updated_at) VALUES (?, ?, 1, ?, ?, ?, ?, ?)',
+      ['ep-1', p.id, 'Tập 1', 'hook', '{}', now, now]);
+    s.db.run('INSERT INTO episodes (id, production_id, idx, title, hook, plan, created_at, updated_at) VALUES (?, ?, 2, ?, ?, ?, ?, ?)',
+      ['ep-2', p.id, 'Tập 2', 'hook', '{}', now, now]);
+    startEpisodeRun(s.engine.core, s.engine.db, 'ep-1');
+    const view = svc.getProduction(p.id)!;
+    expect(view.status).toBe('planning');
+    expect(view.episodeCounts).toEqual({ total: 2, ready: 0, producing: 1, failed: 0 });
+  });
 
-      // Mock for getProduction after create
-      mockGet
-        .mockReturnValueOnce({
-          ...baseProductionRow,
-          id: expect.any(String),
-        })
-        .mockReturnValueOnce(null) // run
-        .mockReturnValueOnce({ name: 'Team' }); // team name
-      mockAll
-        .mockReturnValueOnce([{ source_id: 'folder-1' }, { source_id: 'folder-2' }]) // sources
-        .mockReturnValueOnce([]); // episodes
+  it('pages what the caller can see; admins see everything; a status filter pages after filtering', () => {
+    insertTeam(s.db, 'team-2', 'someone-else');
+    const a = svc.createProduction('team-1', 'owner-1', input);
+    svc.createProduction('team-1', 'owner-1', { ...input, title: 'B' });
+    svc.createProduction('team-2', 'someone-else', { ...input, title: 'C' });
+    startPlanRun(s.engine.core, s.engine.db, a.id);
 
-      svc2.createProduction('team-1', 'user-1', {
-        title: 'New Series',
-        description: 'About tech',
-        goal: 'Grow',
-        sources: ['folder-1', 'folder-2'],
-        maxEpisodes: 5,
-      });
+    const mine = svc.listProductionsPaged('owner-1', false, { page: 1, pageSize: 10, sortBy: 'title', sortOrder: 'asc' });
+    expect(mine.total).toBe(2);
+    expect(mine.items.map((p) => p.title)).toEqual(['B', 'Chợ nổi miền Tây']);
+    expect(svc.listProductionsPaged('admin', true, { page: 1, pageSize: 10 }).total).toBe(3);
+    const drafts = svc.listProductionsPaged('owner-1', false, { page: 1, pageSize: 1, status: 'draft' });
+    expect(drafts.total).toBe(1);
+    expect(drafts.items.map((p) => p.title)).toEqual(['B']);
+    expect(svc.listProductionsPaged('owner-1', false, { page: 1, pageSize: 10, q: 'miền Tây' }).total).toBe(1);
+  });
 
-      // Should have inserted production + 2 sources = 3 run calls
-      expect(mockRun).toHaveBeenCalledTimes(3);
-      const [prodInsert, src1Insert, src2Insert] = mockRun.mock.calls;
-      expect(prodInsert[0]).toContain('INSERT INTO productions');
-      expect(src1Insert[0]).toContain('INSERT INTO production_sources');
-      expect(src1Insert[1][1]).toBe('folder-1');
-      expect(src2Insert[1][1]).toBe('folder-2');
-    });
+  it('getProduction returns null for a missing production', () => {
+    expect(svc.getProduction('missing')).toBeNull();
   });
 });

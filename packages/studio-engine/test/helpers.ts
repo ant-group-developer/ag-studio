@@ -59,7 +59,7 @@ export function fakeFootage(count = 8, duration_s = 30): FootageCatalogSource & 
  * writes output files into the bucket at the path the FarmExecutor's storage adapter
  * will call `downloadOutput` on: `productions/<productionId>/jobs/<stageKey>/<attemptId>/out/`.
  *
- * correlation_id = attempt_id; stage key for the only farm stage is "studio-episode-render".
+ * correlation_id = attempt_id; stage key for the only farm stage is "render-final".
  */
 export function fakeFarm(bucket: MemoryBucket) {
   const jobs = new Map<string, { id: string; type: string; payload: Record<string, unknown>; status: string; result: unknown; error: unknown }>();
@@ -72,7 +72,7 @@ export function fakeFarm(bucket: MemoryBucket) {
       const prod = String(p.production_id ?? "");
       const attemptId = String(req.correlation_id ?? id);
       // FarmExecutor resolves output prefix as: productions/<productionId>/jobs/<stageKey>/<attemptId>/out/
-      const stageKey = "studio-episode-render";
+      const stageKey = "render-final";
       const out = `productions/${prod}/jobs/${stageKey}/${attemptId}/out/`;
 
       const durationS = 60;
@@ -87,7 +87,7 @@ export function fakeFarm(bucket: MemoryBucket) {
       const canvas = (p.canvas ?? { width: 1920, height: 1080 }) as { width: number; height: number };
       // Read the composition.json that the FarmExecutor uploaded to the input prefix.
       // It has `total_seconds` which the studio-render-valid checker compares to m.duration_s.
-      const inputPrefix = `productions/${prod}/jobs/studio-episode-render/${attemptId}/in/`;
+      const inputPrefix = `productions/${prod}/jobs/${stageKey}/${attemptId}/in/`;
       let effectiveDuration = durationS;
       const compBuf = bucket.objects.get(`${inputPrefix}composition.json`);
       if (compBuf) {

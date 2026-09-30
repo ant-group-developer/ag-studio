@@ -6,46 +6,46 @@ defaults: {}
 #   series-intake → research → catalog → trend-report → plan-episodes →
 #   [approve-plan] → spawn-episodes
 stages:
-  - key: studio-series-intake
+  - key: intake
     executor: { type: script, script: studio-series-intake }
     required_checks: [schema-valid, output-exists, checksum-match]
     outputs:
       - { type: studio_brief, mime_type: application/json, name: brief.json }
 
-  - key: studio-research
+  - key: research
     executor: { type: script, script: studio-research }
-    depends_on: [studio-series-intake]
+    depends_on: [intake]
     retry: { max_attempts: 3, backoff_seconds: [30, 120], retry_on: [transient, abandoned] }
     required_checks: [schema-valid, output-exists, checksum-match]
     outputs:
       - { type: studio_research, mime_type: application/json, name: research.json }
 
-  - key: studio-catalog
+  - key: catalog
     executor: { type: script, script: studio-catalog }
-    depends_on: [studio-series-intake]
+    depends_on: [intake]
     retry: { max_attempts: 3, backoff_seconds: [30, 120], retry_on: [transient, abandoned] }
     required_checks: [schema-valid, output-exists, checksum-match]
     outputs:
       - { type: studio_catalog, mime_type: application/json, name: catalog.json }
 
-  - key: studio-trend-report
+  - key: trend-report
     executor:
       type: agent
       skill: studio-trend-report
       brief: "Dựa trên nghiên cứu YouTube và brief của series, viết một báo cáo xu hướng ngắn gọn (studio_trend_report) giúp người lên kế hoạch hiểu pattern nội dung nào đang hoạt động tốt."
-    depends_on: [studio-research, studio-series-intake]
+    depends_on: [research, intake]
     requires_resources: [claude]
     retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
     required_checks: [schema-valid, output-exists, checksum-match, trend-report-valid]
     outputs:
       - { type: trend_report, mime_type: application/json, name: trend-report.json }
 
-  - key: studio-plan-episodes
+  - key: plan-episodes
     executor:
       type: agent
       skill: studio-plan-episodes
       brief: "Dựa trên brief, báo cáo xu hướng và danh sách footage trong catalog, đề xuất kế hoạch các tập cho series (series_plan). Mỗi tập cần: tiêu đề mạnh, hook 5 giây đầu, logline, danh sách video theo thứ tự, phương án thay thế, các chữ hiển thị trên màn."
-    depends_on: [studio-trend-report, studio-catalog, studio-series-intake]
+    depends_on: [trend-report, catalog, intake]
     requires_resources: [claude]
     retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
     required_checks: [schema-valid, output-exists, checksum-match, series-plan-valid]
@@ -54,14 +54,14 @@ stages:
 
   - key: approve-plan
     executor: { type: gate, brief: "Người dùng xem và chỉnh sửa kế hoạch tập, bấm Duyệt để nộp." }
-    depends_on: [studio-plan-episodes, studio-catalog, studio-series-intake]
+    depends_on: [plan-episodes, catalog, intake]
     required_checks: [schema-valid, output-exists, checksum-match, series-plan-valid]
     outputs:
       - { type: series_plan, mime_type: application/json, name: series-plan.json }
 
-  - key: studio-spawn-episodes
+  - key: spawn-episodes
     executor: { type: script, script: studio-spawn-episodes }
-    depends_on: [approve-plan, studio-trend-report, studio-catalog, studio-series-intake]
+    depends_on: [approve-plan, trend-report, catalog, intake]
     retry: { max_attempts: 3, backoff_seconds: [30, 120], retry_on: [transient, abandoned] }
     required_checks: [schema-valid, output-exists, checksum-match]
     outputs:

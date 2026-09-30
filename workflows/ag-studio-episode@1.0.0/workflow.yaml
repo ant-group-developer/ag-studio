@@ -2,9 +2,9 @@ schema_version: harness.workflow/v1
 id: ag-studio-episode
 version: 1.0.0
 defaults: {}
-# AG Studio episode workflow (GĐ2).  One run per episode.
-#   episode-intake → build-timeline → youtube-kit → [freeze-timeline] →
-#   studio-episode-render → studio-episode-export
+# AG Studio episode workflow (GĐ2): one run per episode, no gate (the series plan was approved once).
+#   episode-intake -> build-timeline -> youtube-kit -> freeze-timeline -> render-final -> export
+# freeze-timeline takes the LATEST editor revision, so "Render lại" = a new run resumed from freeze-timeline.
 stages:
   - key: episode-intake
     executor: { type: script, script: episode-intake }
@@ -33,13 +33,13 @@ stages:
       - { type: youtube_kit, mime_type: application/json, name: youtube-kit.json }
 
   - key: freeze-timeline
-    executor: { type: gate, brief: "Web editor: chỉnh timeline trên web rồi bấm Đông để nộp revision mới nhất." }
+    executor: { type: script, script: studio-freeze-timeline }
     depends_on: [youtube-kit, build-timeline, episode-intake]
     required_checks: [schema-valid, output-exists, checksum-match, timeline-valid]
     outputs:
       - { type: timeline_v3, mime_type: application/json, name: timeline.json }
 
-  - key: studio-episode-render
+  - key: render-final
     executor: { type: farm, job: studio.render_final }
     config: { payload_builder: studio-episode-render }
     depends_on: [freeze-timeline, episode-intake, youtube-kit]
@@ -53,9 +53,9 @@ stages:
       - { type: thumbnail, mime_type: image/jpeg, name: thumb-2.jpg }
       - { type: thumbnail, mime_type: image/jpeg, name: thumb-3.jpg }
 
-  - key: studio-episode-export
+  - key: export
     executor: { type: script, script: studio-episode-export }
-    depends_on: [studio-episode-render, freeze-timeline, youtube-kit, episode-intake]
+    depends_on: [render-final, freeze-timeline, youtube-kit, episode-intake]
     retry: { max_attempts: 3, backoff_seconds: [30, 120], retry_on: [transient, abandoned] }
     required_checks: [schema-valid, output-exists, checksum-match, export-valid]
     outputs:

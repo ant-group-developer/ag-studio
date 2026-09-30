@@ -62,8 +62,7 @@ export function productionOwner(db: StudioDb, p: ProductionRecord): string | nul
 // ---------------------------------------------------------------------------
 
 export interface EpisodeRecord {
-  id: string; production_id: string; idx: number; title: string; hook: string; status: string;
-  current_stage: string | null; run_id: string | null; plan: string | null;
+  id: string; production_id: string; idx: number; title: string; hook: string; run_id: string | null; plan: string | null;
   youtube: string | null; selected_title: number | null; selected_thumbnail: number | null;
   created_at: string; updated_at: string;
 }
@@ -89,18 +88,14 @@ export function replaceEpisodes(db: StudioDb, productionId: string, rows: { id: 
     db.run("DELETE FROM episodes WHERE production_id = ?", [productionId]);
     const now = new Date().toISOString();
     for (const r of rows) {
-      db.run("INSERT INTO episodes (id, production_id, idx, title, hook, status, plan, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
+      db.run("INSERT INTO episodes (id, production_id, idx, title, hook, plan, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [r.id, productionId, r.idx, r.title, r.hook, r.plan, now, now]);
     }
   });
 }
 
 export function updateEpisodeRunId(db: StudioDb, episodeId: string, runId: string): void {
-  db.run("UPDATE episodes SET run_id = ?, status = 'in_progress', updated_at = ? WHERE id = ?", [runId, new Date().toISOString(), episodeId]);
-}
-
-export function updateEpisodeStatus(db: StudioDb, episodeId: string, status: string, stage: string | null = null): void {
-  db.run("UPDATE episodes SET status = ?, current_stage = ?, updated_at = ? WHERE id = ?", [status, stage, new Date().toISOString(), episodeId]);
+  db.run("UPDATE episodes SET run_id = ?, updated_at = ? WHERE id = ?", [runId, new Date().toISOString(), episodeId]);
 }
 
 export function saveTrendReport(db: StudioDb, productionId: string, report: unknown): void {

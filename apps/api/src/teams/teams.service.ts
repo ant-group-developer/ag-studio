@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { isRunActive } from '@ag-studio/engine';
 import { StudioDbService } from '../db/studio-db.service';
+import { EngineService } from '../studio/engine.service';
 import { TeamRole } from '../auth/roles.decorator';
 
 interface TeamRow {
@@ -25,7 +27,10 @@ export interface Paged<T> {
 
 @Injectable()
 export class TeamsService {
-  constructor(private readonly db: StudioDbService) {}
+  constructor(
+    private readonly db: StudioDbService,
+    private readonly engine: EngineService,
+  ) {}
 
   createTeam(name: string, ownerId: string): { id: string; name: string; createdAt: string; members: { userId: string; role: TeamRole }[] } {
     const id = crypto.randomUUID();
@@ -49,14 +54,14 @@ export class TeamsService {
     const existing = this.db.get<TeamRow>('SELECT id FROM teams WHERE id = ?', [teamId]);
     if (!existing) throw new NotFoundException(`Team ${teamId} not found`);
 
-    // 409 team_has_active_runs: any production of this team has an active run
-    const active = this.db.get<{ n: number }>(
-      `SELECT COUNT(*) as n FROM productions p
-       JOIN runs r ON r.run_id = p.run_id
-       WHERE p.team_id = ? AND r.state NOT IN ('SUCCEEDED','FAILED','CANCELLED')`,
-      [teamId],
+    // 409 team_has_active_runs: a plan run or an episode run of one of its productions is still going
+    const runIds = this.db.all<{ run_id: string }>(
+      `SELECT p.run_id FROM productions p WHERE p.team_id = ? AND p.run_id IS NOT NULL
+       UNION ALL
+       SELECT e.run_id FROM episodes e JOIN productions p ON p.id = e.production_id WHERE p.team_id = ? AND e.run_id IS NOT NULL`,
+      [teamId, teamId],
     );
-    if ((active?.n ?? 0) > 0) {
+    if (runIds.some(({ run_id }) => isRunActive(this.engine.core, run_id))) {
       throw new ConflictException({ code: 'team_has_active_runs', message: 'Team has productions with active runs' });
     }
 

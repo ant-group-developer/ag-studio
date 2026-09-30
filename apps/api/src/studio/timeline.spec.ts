@@ -50,7 +50,7 @@ describe('Timeline revisions over HTTP semantics (autosave + 409)', () => {
     db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('t1', 'T', ?, ?)", [now, now]);
     db.run("INSERT INTO productions (id, team_id, title, created_at, updated_at) VALUES (?, 't1', 'P', ?, ?)", [PROD, now, now]);
     db.run(
-      "INSERT INTO episodes (id, production_id, idx, title, hook, status, created_at, updated_at) VALUES (?, ?, 1, 'Ep 1', 'Hook', 'pending', ?, ?)",
+      "INSERT INTO episodes (id, production_id, idx, title, hook, created_at, updated_at) VALUES (?, ?, 1, 'Ep 1', 'Hook', ?, ?)",
       [EP, PROD, now, now],
     );
     const engine = { core, db, bucket: new MemoryBucket(), editor: { db, bucket: new MemoryBucket(), farm: {} }, browserUrlTtl: 60 } as unknown as EngineService;

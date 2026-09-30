@@ -16,18 +16,24 @@ import {
 import { Request } from 'express';
 import {
   cancelEpisode,
+  EPISODE_RENDER_STAGE,
+  episodeExport,
   episodeRunView,
+  episodeState,
+  episodeTimelineSeconds,
   getEpisode,
+  latestEpisodeRevision,
   listEpisodes,
   readStageDocument,
   rerenderEpisode,
   retryStage,
-  submitStudioGate,
   YoutubeKitSchema,
   validateYoutubeKit,
   type EpisodeRecord,
+  type EpisodeStatus,
   type RunView,
 } from '@ag-studio/engine';
+import { Logger } from '@nestjs/common';
 import { IsInt, IsObject, IsOptional, Max, Min } from 'class-validator';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -57,35 +63,22 @@ class PatchEpisodeDto {
 }
 
 // ---------------------------------------------------------------------------
-// Status derivation (episodes.status stored but derived from run state)
+// Views (docs/studio-api-v3.md "Episodes")
 // ---------------------------------------------------------------------------
 
-type EpisodeStatus = 'planned' | 'producing' | 'ready' | 'failed' | 'cancelled';
-
-function deriveStatus(ep: EpisodeRecord): EpisodeStatus {
-  switch (ep.status) {
-    case 'pending':    return 'planned';
-    case 'in_progress': return 'producing';
-    case 'producing':  return 'producing';
-    case 'succeeded':  return 'ready';
-    case 'failed':     return 'failed';
-    default:           return 'planned';
-  }
+export interface EpisodeSummary {
+  id: string; idx: number; title: string; hook: string; status: EpisodeStatus;
+  currentStage: string | null; progress: number | null; durationSeconds: number | null;
+  thumbnailUrl: string | null; updatedAt: string;
 }
 
-function toSummary(ep: EpisodeRecord) {
-  return {
-    id: ep.id,
-    idx: ep.idx,
-    title: ep.title,
-    hook: ep.hook,
-    status: deriveStatus(ep),
-    currentStage: ep.current_stage ?? null,
-    progress: null,
-    durationSeconds: null,
-    thumbnailUrl: null,
-    updatedAt: ep.updated_at,
-  };
+type StudioExport = NonNullable<ReturnType<typeof episodeExport>>;
+
+const STATUS_ORDER: Record<EpisodeStatus, number> = { producing: 0, failed: 1, planned: 2, cancelled: 3, ready: 4 };
+
+/** Thumbnails of an export in thumb-1..3 order. */
+function exportThumbnails(exp: StudioExport | null) {
+  return (exp?.files ?? []).filter((f) => f.kind === 'thumbnail').sort((a, b) => a.key.localeCompare(b.key));
 }
 
 /**
@@ -95,7 +88,51 @@ function toSummary(ep: EpisodeRecord) {
 @Controller('productions/:id/episodes')
 @UseGuards(RolesGuard)
 export class EpisodesController {
+  private readonly logger = new Logger(EpisodesController.name);
+
   constructor(private readonly engine: EngineService) {}
+
+  /** Farm progress of the episode's render, while it renders. The list must not fail because the farm is away. */
+  private async renderProgress(stage: string | null, jobId: string | null): Promise<number | null> {
+    if (stage !== EPISODE_RENDER_STAGE || !jobId) return null;
+    try {
+      const job = await this.engine.editor.farm.getJob(jobId);
+      return job.progress_percent ?? null;
+    } catch (e) {
+      this.logger.warn(`farm job ${jobId} progress unavailable: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
+    }
+  }
+
+  private sign(key: string): Promise<string> {
+    return this.engine.bucket.signedGetUrl(key, this.engine.browserUrlTtl);
+  }
+
+  private async summary(ep: EpisodeRecord, state = episodeState(this.engine.core, this.engine.db, ep)): Promise<EpisodeSummary> {
+    const exp = episodeExport(this.engine.core, ep);
+    const thumbs = exportThumbnails(exp);
+    const thumb = thumbs[ep.selected_thumbnail ?? 0] ?? thumbs[0];
+    return {
+      id: ep.id,
+      idx: ep.idx,
+      title: ep.title,
+      hook: ep.hook,
+      status: state.status,
+      currentStage: state.current_stage,
+      progress: await this.renderProgress(state.current_stage, state.render_job_id),
+      durationSeconds: exp?.duration_seconds ?? episodeTimelineSeconds(this.engine.db, ep.id),
+      thumbnailUrl: thumb ? await this.sign(thumb.key) : null,
+      updatedAt: ep.updated_at,
+    };
+  }
+
+  private requireEpisode(prodId: string, episodeId: string): EpisodeRecord {
+    const ep = getEpisode(this.engine.db, episodeId);
+    if (!ep || ep.production_id !== prodId) {
+      throw new NotFoundException({ code: 'not_found', message: `episode ${episodeId} not found` });
+    }
+    return ep;
+  }
 
   // ---------------------------------------------------------------------------
   // List + detail
@@ -110,49 +147,53 @@ export class EpisodesController {
     @Query('sortBy') sortBy = 'idx',
     @Query('sortOrder') sortOrder = 'asc',
   ) {
-    return mapErrors(() => {
-      const all = listEpisodes(this.engine.db, prodId);
+    return mapErrors(async () => {
       const ps = Math.min(Math.max(1, parseInt(pageSize, 10) || 20), 100);
       const pg = Math.max(1, parseInt(page, 10) || 1);
-      const items = all
-        .sort((a, b) => {
-          const order = sortOrder === 'desc' ? -1 : 1;
-          if (sortBy === 'title') return order * a.title.localeCompare(b.title, 'vi');
-          if (sortBy === 'status') return order * a.status.localeCompare(b.status);
-          if (sortBy === 'updatedAt') return order * a.updated_at.localeCompare(b.updated_at);
-          return order * (a.idx - b.idx); // default: idx asc
-        })
-        .slice((pg - 1) * ps, pg * ps)
-        .map(toSummary);
+      const order = sortOrder === 'desc' ? -1 : 1;
+      // States are cheap (local store); progress, exports and signed URLs only for the page shown.
+      const all = listEpisodes(this.engine.db, prodId).map((ep) => ({ ep, state: episodeState(this.engine.core, this.engine.db, ep) }));
+      all.sort((a, b) => {
+        if (sortBy === 'title') return order * a.ep.title.localeCompare(b.ep.title, 'vi') || a.ep.idx - b.ep.idx;
+        if (sortBy === 'status') return order * (STATUS_ORDER[a.state.status] - STATUS_ORDER[b.state.status]) || a.ep.idx - b.ep.idx;
+        if (sortBy === 'updatedAt') return order * a.ep.updated_at.localeCompare(b.ep.updated_at) || a.ep.idx - b.ep.idx;
+        return order * (a.ep.idx - b.ep.idx);
+      });
+      const items = await Promise.all(all.slice((pg - 1) * ps, pg * ps).map(({ ep, state }) => this.summary(ep, state)));
       return { items, total: all.length, page: pg, pageSize: ps };
     });
   }
 
   @Get(':episodeId')
   @Roles('viewer')
-  detail(@Param('id') prodId: string, @Param('episodeId') episodeId: string, @Req() _req: Request) {
-    return mapErrors(() => {
-      const ep = getEpisode(this.engine.db, episodeId);
-      if (!ep || ep.production_id !== prodId) {
-        throw new NotFoundException({ code: 'not_found', message: `episode ${episodeId} not found` });
-      }
-      let run: RunView | null = null;
-      if (ep.run_id) {
-        try { run = episodeRunView(this.engine.core, this.engine.db, episodeId); } catch { run = null; }
-      }
-      const plan = ep.plan ? JSON.parse(ep.plan) : null;
-      const youtube = ep.youtube ? JSON.parse(ep.youtube) : null;
+  detail(@Param('id') prodId: string, @Param('episodeId') episodeId: string) {
+    return mapErrors(async () => {
+      const ep = this.requireEpisode(prodId, episodeId);
+      const run: RunView | null = ep.run_id ? episodeRunView(this.engine.core, this.engine.db, episodeId) : null;
+      const kitStage = run?.stages.find((s) => s.key === 'youtube-kit');
+      // The person's edits win over Claude's kit
+      const youtube = ep.youtube
+        ? YoutubeKitSchema.parse(JSON.parse(ep.youtube))
+        : kitStage?.state === 'SUCCEEDED' && ep.run_id
+          ? YoutubeKitSchema.parse(readStageDocument(this.engine.core, ep.run_id, 'youtube-kit', 'youtube-kit.json'))
+          : null;
+      const exp = episodeExport(this.engine.core, ep);
+      const exportFiles = await Promise.all((exp?.files ?? []).map(async (f) => ({
+        kind: f.kind, url: await this.sign(f.key), sizeBytes: f.size_bytes, name: f.key.split('/').pop() ?? f.key,
+      })));
+      const thumbnails = await Promise.all(exportThumbnails(exp).map(async (f, index) => ({ url: await this.sign(f.key), index })));
+      const mp4 = exp?.files.find((f) => f.kind === 'mp4');
       return {
-        ...toSummary(ep),
-        plan,
+        ...(await this.summary(ep)),
+        plan: ep.plan ? JSON.parse(ep.plan) : null,
         run,
         youtube,
         selectedTitle: ep.selected_title ?? 0,
         selectedThumbnail: ep.selected_thumbnail ?? 0,
-        thumbnails: [],
-        exportFiles: [],
-        finalVideoUrl: null,
-        latestRevision: null,
+        thumbnails,
+        exportFiles,
+        finalVideoUrl: mp4 ? await this.sign(mp4.key) : null,
+        latestRevision: latestEpisodeRevision(this.engine.db, ep.id)?.revision ?? null,
       };
     });
   }
@@ -196,7 +237,7 @@ export class EpisodesController {
         sets.push('updated_at = ?'); vals.push(new Date().toISOString()); vals.push(episodeId);
         this.engine.db.run(`UPDATE episodes SET ${sets.join(', ')} WHERE id = ?`, vals as string[]);
       }
-      return this.detail(prodId, episodeId, {} as Request);
+      return this.detail(prodId, episodeId);
     });
   }
 
@@ -247,30 +288,6 @@ export class EpisodesController {
       if (!ep.run_id) throw new NotFoundException({ code: 'no_run', message: `episode ${episodeId} has no run` });
       retryStage(this.engine.core, ep.run_id, stage);
       return { ok: true };
-    });
-  }
-
-  // ---------------------------------------------------------------------------
-  // Gates
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Submit the `freeze-timeline` gate for an episode.
-   * No document body required — the gate reads the episode's latest timeline revision automatically.
-   * Returns `{accepted: true}` or 422 `{code: 'gate_rejected', failed: [...]}`.
-   */
-  @Post(':episodeId/gates/freeze-timeline')
-  @Roles('editor')
-  @HttpCode(HttpStatus.OK)
-  freezeTimeline(@Param('id') prodId: string, @Param('episodeId') episodeId: string) {
-    return mapErrors(async () => {
-      const ep = getEpisode(this.engine.db, episodeId);
-      if (!ep || ep.production_id !== prodId) {
-        throw new NotFoundException({ code: 'not_found', message: `episode ${episodeId} not found` });
-      }
-      if (!ep.run_id) throw new NotFoundException({ code: 'no_run', message: `episode ${episodeId} has no run` });
-      const report = await submitStudioGate(this.engine.core, this.engine.db, ep.run_id, 'freeze-timeline');
-      return { accepted: true, stageState: report.stageState, runState: report.runState };
     });
   }
 

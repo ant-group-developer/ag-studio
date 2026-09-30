@@ -5,8 +5,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { eventFor, isTerminal, submitGate, type SubmitReport } from "@harness/core";
-import type { StageRun } from "@harness/contracts";
+import { eventFor, isTerminal, layoutTimeline, submitGate, type SubmitReport } from "@harness/core";
+import { StudioExportSchema, type StageRun, type StudioExport } from "@harness/contracts";
 import { STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, STUDIO_WORKFLOWS, type StudioEngineCore } from "./core.js";
 import {
   getEpisode, getProduction, latestEpisodeRevision, listEpisodes, productionSources, type StudioDb,
@@ -20,11 +20,56 @@ export class StudioRunError extends Error {
   }
 }
 
-/** Gates the plan workflow exposes. */
+/** Gates and the document each submits: only the plan is approved by a person; episodes run on their own. */
 export const STUDIO_GATES: Record<string, string> = {
   "approve-plan": "series-plan.json",
-  "freeze-timeline": "timeline.json",
 };
+
+/** True while the run can still do work (not ended, not being cancelled). */
+export function isRunActive(core: StudioEngineCore, runId: string): boolean {
+  const run = core.store.getRun(runId);
+  return !!run && !isTerminal("run", run.state) && run.state !== "CANCEL_REQUESTED";
+}
+
+/** Length of the episode's latest timeline revision in seconds, null before it has one. */
+export function episodeTimelineSeconds(db: StudioDb, episodeId: string): number | null {
+  const rev = latestEpisodeRevision(db, episodeId);
+  return rev ? layoutTimeline(rev.data).duration : null;
+}
+
+/** The `export.json` of the episode's current run once its export stage succeeded, else null. */
+export function episodeExport(core: StudioEngineCore, ep: { run_id: string | null }): StudioExport | null {
+  if (!ep.run_id) return null;
+  const stage = core.store.listStageRuns(ep.run_id).find((s) => s.stage_key === EPISODE_EXPORT_STAGE);
+  if (stage?.state !== "SUCCEEDED") return null;
+  return StudioExportSchema.parse(readStageDocument(core, ep.run_id, EPISODE_EXPORT_STAGE, "export.json"));
+}
+
+/** Stage keys of the episode workflow the API and web read. */
+export const EPISODE_RENDER_STAGE = "render-final";
+export const EPISODE_FREEZE_STAGE = "freeze-timeline";
+export const EPISODE_EXPORT_STAGE = "export";
+
+export type EpisodeStatus = "planned" | "producing" | "ready" | "failed" | "cancelled";
+
+/**
+ * An episode's status is its run's state (never stored separately, so it cannot go stale): no run -> planned;
+ * SUCCEEDED -> ready; FAILED -> failed; CANCELLED (or being cancelled) -> cancelled; anything else -> producing.
+ * `current_stage` is the first stage of the run that has not succeeded; `render_job_id` the latest farm job of
+ * render-final (its progress is the episode's progress while it renders).
+ */
+export function episodeState(core: StudioEngineCore, db: StudioDb, ep: { run_id: string | null }): { status: EpisodeStatus; current_stage: string | null; render_job_id: string | null } {
+  if (!ep.run_id) return { status: "planned", current_stage: null, render_job_id: null };
+  const run = core.store.getRun(ep.run_id);
+  if (!run) return { status: "planned", current_stage: null, render_job_id: null };
+  const status: EpisodeStatus = run.state === "SUCCEEDED" ? "ready"
+    : run.state === "FAILED" ? "failed"
+    : run.state === "CANCELLED" || run.state === "CANCEL_REQUESTED" ? "cancelled"
+    : "producing";
+  const current = status === "ready" ? null : core.store.listStageRuns(ep.run_id).find((s) => s.state !== "SUCCEEDED")?.stage_key ?? null;
+  const job = db.get<{ farm_job_id: string }>("SELECT farm_job_id FROM studio_farm_jobs WHERE run_id = ? AND stage_key = ? ORDER BY created_at DESC LIMIT 1", [ep.run_id, EPISODE_RENDER_STAGE]);
+  return { status, current_stage: current, render_job_id: job?.farm_job_id ?? null };
+}
 
 // ---------------------------------------------------------------------------
 // Stage view helpers (shared between plan and episode views)
@@ -98,8 +143,8 @@ export function startPlanRun(core: StudioEngineCore, db: StudioDb, productionId:
   if (!p.episode_target_seconds) throw new StudioRunError("invalid", "đặt episode_target_seconds trước khi chạy");
   if (!p.max_episodes) throw new StudioRunError("invalid", "đặt max_episodes trước khi chạy");
   // No episode may be producing right now (would be replaced by spawn-episodes)
-  const producing = listEpisodes(db, productionId).find((e) => e.status === "in_progress");
-  if (producing) throw new StudioRunError("conflict", "một tập đang sản xuất; không thể lên kế hoạch lại", { episode_id: producing.id });
+  const producing = listEpisodes(db, productionId).find((e) => episodeState(core, db, e).status === "producing");
+  if (producing) throw new StudioRunError("conflict", "một tập đang sản xuất; không thể lên kế hoạch lại", { code: "episode_producing", episode_id: producing.id });
   const flow = STUDIO_WORKFLOWS.plan;
   const run = core.planner.plan({
     workflow: core.workflows(flow.workflow), profile: core.profiles(flow.profile),
@@ -136,8 +181,7 @@ export function startEpisodeRun(core: StudioEngineCore, db: StudioDb, episodeId:
     workflow: core.workflows(flow.workflow), profile: core.profiles(flow.profile),
     harness: core.harness, projectId: STUDIO_PROJECT_ID, portfolioId: STUDIO_PORTFOLIO_ID, reuse: false,
   });
-  db.run("UPDATE episodes SET run_id = ?, status = 'in_progress', updated_at = ? WHERE id = ?",
-    [run.run_id, new Date().toISOString(), episodeId]);
+  db.run("UPDATE episodes SET run_id = ?, updated_at = ? WHERE id = ?", [run.run_id, new Date().toISOString(), episodeId]);
   core.planner.enqueue(run.run_id);
   return { runId: run.run_id };
 }
@@ -148,20 +192,33 @@ export function episodeRunView(core: StudioEngineCore, db: StudioDb, episodeId: 
   if (!ep.run_id) throw new StudioRunError("not_found", `episode ${episodeId} has no run yet`);
   const latest = latestEpisodeRevision(db, episodeId);
   const view = buildRunView(core, ep.run_id, latest?.revision ?? null);
-  // Find the current farm job for the render stage
-  const renderJob = db.get<{ farm_job_id: string }>( "SELECT farm_job_id FROM studio_farm_jobs WHERE run_id = ? AND stage_key = 'studio-episode-render' ORDER BY created_at DESC LIMIT 1", [ep.run_id]);
-  return { ...view, farm_job_id: renderJob?.farm_job_id ?? null };
+  return { ...view, farm_job_id: episodeState(core, db, ep).render_job_id };
 }
 
-/** Rerender an episode: resume from studio-episode-render if the run is terminal, else error. */
+/**
+ * "Render lại": render the episode's latest timeline revision.
+ * - no run yet: start one;
+ * - run ended (ready, failed, cancelled): a new run resumed from freeze-timeline (it takes the latest revision;
+ *   everything before it, Claude's YouTube kit included, is kept);
+ * - run parked at freeze-timeline (the timeline had errors, now fixed in the editor): retry that stage;
+ * - otherwise it is still producing: conflict.
+ */
 export function rerenderEpisode(core: StudioEngineCore, db: StudioDb, episodeId: string): { runId: string; reused: string[] } {
   const ep = getEpisode(db, episodeId);
   if (!ep) throw new StudioRunError("not_found", `episode ${episodeId} not found`);
-  if (!ep.run_id) throw new StudioRunError("not_found", `episode ${episodeId} has no run yet`);
+  if (!ep.run_id) return { ...startEpisodeRun(core, db, episodeId), reused: [] };
+  const run = core.store.getRun(ep.run_id);
+  if (run && !isTerminal("run", run.state)) {
+    const freeze = core.store.listStageRuns(ep.run_id).find((s) => s.stage_key === EPISODE_FREEZE_STAGE);
+    if (freeze && (freeze.state === "WAITING_HUMAN" || freeze.state === "FAILED")) {
+      retryStage(core, ep.run_id, EPISODE_FREEZE_STAGE);
+      return { runId: ep.run_id, reused: [] };
+    }
+    throw new StudioRunError("conflict", "tập đang được sản xuất; chờ xong rồi render lại", { code: "episode_running", state: run.state });
+  }
   return resumeRunFrom(core, ep.run_id, (newRunId) => {
-    db.run("UPDATE episodes SET run_id = ?, status = 'in_progress', updated_at = ? WHERE id = ?",
-      [newRunId, new Date().toISOString(), episodeId]);
-  }, "studio-episode-render");
+    db.run("UPDATE episodes SET run_id = ?, updated_at = ? WHERE id = ?", [newRunId, new Date().toISOString(), episodeId]);
+  }, EPISODE_FREEZE_STAGE);
 }
 
 // ---------------------------------------------------------------------------
@@ -189,15 +246,7 @@ export async function submitStudioGate(
   if (!file) throw new StudioRunError("invalid", `${gate} is not a Studio gate`);
   const s = stageOf(core, runId, gate);
   if (s.state !== "WAITING_HUMAN") throw new StudioRunError("conflict", `gate ${gate} is ${s.state}, not waiting for input`, { state: s.state });
-  let body = document;
-  if (gate === "freeze-timeline") {
-    // Find the episode for this run and load its latest revision
-    const ep = db.get<{ id: string }>("SELECT id FROM episodes WHERE run_id = ?", [runId]);
-    if (!ep) throw new StudioRunError("invalid", "freeze-timeline gate: cannot find episode for this run");
-    const rev = latestEpisodeRevision(db, ep.id);
-    if (!rev) throw new StudioRunError("invalid", "chưa có revision timeline nào để nộp");
-    body = rev.data;
-  }
+  const body = document;
   if (body === undefined) throw new StudioRunError("invalid", `gate ${gate} needs a ${file}`);
   const dir = mkdtempSync(join(tmpdir(), "studio-gate-"));
   try {

@@ -30,9 +30,7 @@ CREATE TABLE episodes (
   idx             INTEGER NOT NULL,
   title           TEXT NOT NULL,
   hook            TEXT NOT NULL DEFAULT '',
-  status          TEXT NOT NULL DEFAULT 'pending'
-                    CHECK (status IN ('pending', 'in_progress', 'producing', 'succeeded', 'failed')),
-  current_stage   TEXT,            -- last known workflow stage key
+  -- No status column: an episode's status is its run's state (engine `episodeState`), never a copy of it.
   plan            TEXT NOT NULL DEFAULT '{}',  -- studio.episode/v1 JSON
   run_id          TEXT,            -- the ag-studio-episode@1.0.0 run for this episode
   youtube         TEXT,            -- user-edited YoutubeKit JSON; NULL = use the run's kit

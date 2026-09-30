@@ -70,25 +70,14 @@ export function createStudioEngineCore(o: StudioEngineCoreOptions): StudioEngine
  * Cancel every non-terminal run whose workflow is not one of the two current Studio workflows.
  * Called once at worker start so the dev DB's old segment-based runs don't block new runs.
  */
-export function cancelLegacyRuns(core: StudioEngineCore): void {
-  const knownWorkflows: Set<string> = new Set(Object.values(STUDIO_WORKFLOWS).map((w) => w.workflow));
-  // listRuns is not always available on the store; use a raw query through the underlying store if needed.
-  // Guard with try/catch — the runs table may not exist yet in a fresh DB.
-  let runs: Array<{ run_id: string; state: string; workflow_release: string }> = [];
-  try {
-    const raw = (core.store as unknown as { db?: { prepare: (s: string) => { all: (...p: unknown[]) => unknown[] } } })
-      .db?.prepare("SELECT run_id, state, workflow_release FROM runs")?.all();
-    runs = (raw ?? []) as typeof runs;
-  } catch { /* table doesn't exist yet — nothing to cancel */ }
-  for (const row of runs) {
-    if (isTerminal("run", row.state)) continue;
-    let workflowId: string | undefined;
-    try {
-      const rel = JSON.parse(row.workflow_release) as { id?: string; version?: string };
-      workflowId = rel.id && rel.version ? `${rel.id}@${rel.version}` : undefined;
-    } catch { /* ignore parse errors */ }
-    if (!workflowId || !knownWorkflows.has(workflowId)) {
-      try { core.planner.cancel(row.run_id); } catch { /* already terminal or not found */ }
-    }
+export function cancelLegacyRuns(core: StudioEngineCore): string[] {
+  const known = new Set<string>(Object.values(STUDIO_WORKFLOWS).map((w) => w.workflow));
+  const cancelled: string[] = [];
+  for (const run of core.store.listRuns()) {
+    if (isTerminal("run", run.state) || run.state === "CANCEL_REQUESTED") continue;
+    if (known.has(`${run.workflow_release.id}@${run.workflow_release.version}`)) continue;
+    core.planner.cancel(run.run_id);
+    cancelled.push(run.run_id);
   }
+  return cancelled;
 }

@@ -2,8 +2,7 @@
  * Studio in-process stages for GĐ2 (series of episodes).
  *
  * Plan-run stages: studio-series-intake, studio-research, studio-catalog, studio-spawn-episodes.
- * Episode-run stages: episode-intake, build-timeline, studio-episode-export.
- * (freeze-timeline is a gate, handled by the harness gate executor.)
+ * Episode-run stages: episode-intake, build-timeline, studio-freeze-timeline, studio-episode-export.
  */
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -18,13 +17,13 @@ import {
 } from "@harness/contracts";
 import {
   buildEpisodeTimeline, formatChapters, inputPath, layoutTimeline, normalizeCatalogVideo,
-  orientationFits, prefilterCatalog, STUDIO_TYPES, youtubeChapters, type AgGoFootageVideo,
+  orientationFits, prefilterCatalog, STUDIO_TYPES, timelineIssues, youtubeChapters, type AgGoFootageVideo,
 } from "@harness/core";
 import type { InProcessStage } from "@harness/executors";
 import { productionKey, type StudioBucket } from "./bucket.js";
 import {
-  episodeForRun, getEpisode, getProduction, listEpisodes, productionForRun, productionOwner, productionSources,
-  replaceEpisodes, saveTrendReport, updateEpisodeRunId, type StudioDb,
+  episodeForRun, getEpisode, getProduction, latestEpisodeRevision, listEpisodes, productionForRun, productionOwner, productionSources,
+  replaceEpisodes, saveEpisodeRevision, saveTrendReport, updateEpisodeRunId, type StudioDb,
 } from "./studio-db.js";
 
 /** What `studio-catalog` needs from ag-go (GĐ2 whole-asset). */
@@ -245,20 +244,34 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       const ws = ctx.workspaceDir;
       const brief = readBrief(request, ws);
       const episode = readInput(request, ws, STUDIO_TYPES.episode, (v) => StudioEpisodeSchema.parse(v));
-      const timeline = buildEpisodeTimeline({ brief, episode });
-      writeOutput(ctx, "timeline.json", toBuffer(timeline));
-      // Auto-save as revision 0 -> 1 so the editor has something to start from
-      const ep = getEpisode(d.db, episode.episode_id);
-      if (ep) {
-        try {
-          const { saveEpisodeRevision } = await import("./studio-db.js");
-          const current = d.db.get<{ r: number | null }>("SELECT MAX(revision) AS r FROM episode_revisions WHERE episode_id = ?", [episode.episode_id])?.r ?? 0;
-          if (current === 0) {
-            saveEpisodeRevision(d.db, episode.episode_id, { baseRevision: 0, data: timeline, authorId: "system", label: `build-timeline ${request.run_id}` });
-          }
-        } catch { /* non-fatal */ }
+      if (!getEpisode(d.db, episode.episode_id)) throw new HarnessError("NOT_FOUND", `episode ${episode.episode_id} not found`, {});
+      // The draft becomes revision 1, the editor's starting point; once a revision exists (a person edited, or
+      // this run is a re-run) it is what the episode is, and the plan is not rebuilt over it.
+      let latest = latestEpisodeRevision(d.db, episode.episode_id);
+      if (!latest) {
+        const draft = buildEpisodeTimeline({ brief, episode });
+        saveEpisodeRevision(d.db, episode.episode_id, { baseRevision: 0, data: draft, authorId: "system", label: `build-timeline ${request.run_id}` });
+        latest = latestEpisodeRevision(d.db, episode.episode_id)!;
       }
-      ctx.logger.info("timeline draft built", { clips: timeline.clips.length, episode_id: episode.episode_id });
+      writeOutput(ctx, "timeline.json", toBuffer(latest.data));
+      ctx.logger.info("timeline ready", { revision: latest.revision, clips: latest.data.clips.length, episode_id: episode.episode_id });
+    },
+
+    /**
+     * The timeline the render uses: the episode's LATEST revision at this moment, so whatever a person saved in the
+     * editor (before this run got here, or before "Render lại") is what gets rendered. A timeline the render
+     * cannot play fails here with the problems listed; the person fixes it in the editor and renders again.
+     */
+    "studio-freeze-timeline": async (request, ctx) => {
+      const episode = readInput(request, ctx.workspaceDir, STUDIO_TYPES.episode, (v) => StudioEpisodeSchema.parse(v));
+      const latest = latestEpisodeRevision(d.db, episode.episode_id);
+      if (!latest) throw new HarnessError("NOT_FOUND", `episode ${episode.episode_id} has no timeline revision`, { episode_id: episode.episode_id });
+      const errors = timelineIssues(latest.data).filter((i) => i.severity === "error");
+      if (errors.length) {
+        throw new HarnessError("SCHEMA_INVALID", `timeline revision ${latest.revision}: ${errors.map((e) => e.message).join("; ")}`, { revision: latest.revision, problems: errors });
+      }
+      writeOutput(ctx, "timeline.json", toBuffer(latest.data));
+      ctx.logger.info("timeline frozen for the render", { revision: latest.revision, episode_id: episode.episode_id });
     },
 
     "studio-episode-export": async (request, ctx) => {
