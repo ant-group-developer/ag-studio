@@ -4,6 +4,7 @@ import { ProductionsController } from './productions.controller';
 import { ProductionsService } from './productions.service';
 import { StudioDbService } from '../db/studio-db.service';
 import { ConfigService } from '@nestjs/config';
+import { EngineService } from '../studio/engine.service';
 
 describe('Productions setSources validation', () => {
   let controller: ProductionsController;
@@ -39,10 +40,16 @@ describe('Productions setSources validation', () => {
       }),
     } as unknown as ConfigService;
 
+    const mockEngine = {
+      core: {},
+      db: {},
+    } as unknown as EngineService;
+
     // Direct instantiation — avoids NestJS DI / emitDecoratorMetadata issues in vitest
     controller = new ProductionsController(
       productionsService as ProductionsService,
       mockConfig,
+      mockEngine,
     );
 
     // Replace internal AgGoClient with mock

@@ -17,14 +17,9 @@ export class UpdateProductionDto extends BriefFieldsDto {
   @MaxLength(200)
   title?: string;
 
-  @IsString()
-  @IsOptional()
-  brief?: string;
-
   @IsObject()
   @IsOptional()
   @ValidateNested()
   @Type(() => CanvasUpdateDto)
   canvas?: CanvasUpdateDto;
-
 }

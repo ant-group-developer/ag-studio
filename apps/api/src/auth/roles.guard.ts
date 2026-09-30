@@ -9,6 +9,7 @@ import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
 import { StudioDbService } from '../db/studio-db.service';
 import { ROLES_KEY, TeamRole } from './roles.decorator';
+import { AccountApiService } from './account-api.service';
 
 const ROLE_ORDER: TeamRole[] = ['viewer', 'editor', 'producer', 'owner'];
 
@@ -29,9 +30,10 @@ export class RolesGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly db: StudioDbService,
+    private readonly accountApi: AccountApiService,
   ) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const requiredRoles = this.reflector.getAllAndOverride<TeamRole[]>(ROLES_KEY, [
       context.getHandler(),
       context.getClass(),
@@ -48,6 +50,18 @@ export class RolesGuard implements CanActivate {
     }
 
     const userId = authCtx.userId;
+
+    // Admins bypass all role checks. Cache the result on the request for this session.
+    if (authCtx.isAdmin === undefined) {
+      try {
+        const profile = await this.accountApi.getUserProfile(authCtx.accessToken, userId);
+        authCtx.isAdmin = profile.userType === 'ADMIN';
+      } catch {
+        authCtx.isAdmin = false;
+      }
+    }
+    if (authCtx.isAdmin) return true;
+
     const params = request.params as Record<string, string>;
     let teamId = params['teamId'];
 

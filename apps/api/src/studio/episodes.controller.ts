@@ -22,6 +22,7 @@ import {
   readStageDocument,
   rerenderEpisode,
   retryStage,
+  submitStudioGate,
   YoutubeKitSchema,
   validateYoutubeKit,
   type EpisodeRecord,
@@ -246,6 +247,30 @@ export class EpisodesController {
       if (!ep.run_id) throw new NotFoundException({ code: 'no_run', message: `episode ${episodeId} has no run` });
       retryStage(this.engine.core, ep.run_id, stage);
       return { ok: true };
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Gates
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Submit the `freeze-timeline` gate for an episode.
+   * No document body required — the gate reads the episode's latest timeline revision automatically.
+   * Returns `{accepted: true}` or 422 `{code: 'gate_rejected', failed: [...]}`.
+   */
+  @Post(':episodeId/gates/freeze-timeline')
+  @Roles('editor')
+  @HttpCode(HttpStatus.OK)
+  freezeTimeline(@Param('id') prodId: string, @Param('episodeId') episodeId: string) {
+    return mapErrors(async () => {
+      const ep = getEpisode(this.engine.db, episodeId);
+      if (!ep || ep.production_id !== prodId) {
+        throw new NotFoundException({ code: 'not_found', message: `episode ${episodeId} not found` });
+      }
+      if (!ep.run_id) throw new NotFoundException({ code: 'no_run', message: `episode ${episodeId} has no run` });
+      const report = await submitStudioGate(this.engine.core, this.engine.db, ep.run_id, 'freeze-timeline');
+      return { accepted: true, stageState: report.stageState, runState: report.runState };
     });
   }
 

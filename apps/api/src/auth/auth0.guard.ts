@@ -42,6 +42,8 @@ interface JwtClaims {
 export interface AuthContext {
   userId: string;
   accessToken: string;
+  /** Populated by RolesGuard after the first admin check (not available immediately after auth). */
+  isAdmin?: boolean;
 }
 
 declare module 'express' {

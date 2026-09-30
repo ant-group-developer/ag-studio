@@ -12,6 +12,8 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { Type } from 'class-transformer';
 import { Request } from 'express';
 import { TeamsService } from './teams.service';
 import { CreateTeamDto } from './dto/create-team.dto';
@@ -20,6 +22,68 @@ import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { AccountDirectoryService } from '../auth/account-directory.service';
+
+class ListTeamsQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize?: number;
+
+  @IsOptional()
+  @IsIn(['name', 'createdAt'])
+  sortBy?: string;
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortOrder?: 'asc' | 'desc';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  q?: string;
+}
+
+class ListMembersQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize?: number;
+
+  @IsOptional()
+  @IsIn(['role', 'joinedAt', 'name'])
+  sortBy?: string;
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortOrder?: 'asc' | 'desc';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  q?: string;
+}
+
+class UpdateTeamDto {
+  @IsString()
+  @MaxLength(200)
+  name!: string;
+}
 
 @Controller('teams')
 @UseGuards(RolesGuard)
@@ -35,22 +99,39 @@ export class TeamsController {
     return this.teamsService.createTeam(dto.name, userId);
   }
 
+  /** Paged list of teams visible to the caller (admins see all). */
   @Get()
-  listTeams(@Req() req: Request) {
-    const userId = req.authContext!.userId;
-    return this.teamsService.listTeams(userId);
+  listTeams(@Query() query: ListTeamsQueryDto, @Req() req: Request) {
+    const { userId, isAdmin } = req.authContext!;
+    return this.teamsService.listTeamsPaged(userId, isAdmin ?? false, query);
   }
 
-  /** Members with their name, email and avatar from Account API (empty when Account API has no match). */
+  @Patch(':teamId')
+  @Roles('owner')
+  updateTeam(@Param('teamId') teamId: string, @Body() dto: UpdateTeamDto) {
+    return this.teamsService.updateTeam(teamId, dto.name);
+  }
+
+  @Delete(':teamId')
+  @Roles('owner')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  deleteTeam(@Param('teamId') teamId: string) {
+    this.teamsService.deleteTeam(teamId);
+  }
+
+  /** Paged members list with name/email/avatar from Account API. */
   @Get(':teamId/members')
   @Roles('viewer')
-  async listMembers(@Param('teamId') teamId: string) {
-    const members = this.teamsService.listMembers(teamId);
-    const people = await this.directory.summaries(members.map((m) => m.userId));
-    return members.map((m) => {
-      const p = people.get(m.userId);
-      return { ...m, name: p?.name ?? null, email: p?.email ?? null, avatar: p?.avatar ?? null };
-    });
+  async listMembers(@Param('teamId') teamId: string, @Query() query: ListMembersQueryDto) {
+    const paged = this.teamsService.listMembersPaged(teamId, query);
+    const people = await this.directory.summaries(paged.items.map((m) => m.userId));
+    return {
+      ...paged,
+      items: paged.items.map((m) => {
+        const p = people.get(m.userId);
+        return { ...m, name: p?.name ?? null, email: p?.email ?? null, avatar: p?.avatar ?? null };
+      }),
+    };
   }
 
   /** People the owner can add: Account API search by name or email with the owner's own token, minus members. */

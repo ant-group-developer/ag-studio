@@ -6,6 +6,7 @@ import {
   Delete,
   Param,
   Body,
+  Query,
   Req,
   UseGuards,
   HttpCode,
@@ -14,14 +15,17 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { Request } from 'express';
+import { cancelEpisode, cancelPlan } from '@ag-studio/engine';
 import { ProductionsService } from './productions.service';
 import { CreateProductionDto } from './dto/create-production.dto';
 import { UpdateProductionDto } from './dto/update-production.dto';
 import { SetSourcesDto } from './dto/set-sources.dto';
+import { ListProductionsQueryDto } from './dto/list-productions-query.dto';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { AgGoClient } from '../ag-go/client';
 import { ConfigService } from '@nestjs/config';
+import { EngineService } from '../studio/engine.service';
 
 @Controller()
 @UseGuards(RolesGuard)
@@ -31,6 +35,7 @@ export class ProductionsController {
   constructor(
     private readonly productionsService: ProductionsService,
     private readonly config: ConfigService,
+    private readonly engine: EngineService,
   ) {
     this.agGoClient = new AgGoClient({
       baseUrl: this.config.get<string>('AG_GO_API_URL') as string,
@@ -38,25 +43,31 @@ export class ProductionsController {
     });
   }
 
+  /** Global paged list — all productions visible to the caller (admins see all). */
+  @Get('productions')
+  @Roles('viewer')
+  listAllProductions(@Query() query: ListProductionsQueryDto, @Req() req: Request) {
+    const { userId, isAdmin } = req.authContext!;
+    return this.productionsService.listProductionsPaged(userId, isAdmin ?? false, query);
+  }
+
   @Post('teams/:teamId/productions')
   @Roles('producer', 'owner')
   @HttpCode(HttpStatus.CREATED)
   createProduction(@Param('teamId') teamId: string, @Body() dto: CreateProductionDto, @Req() req: Request) {
-    // The creator is the production's owner: background stages act as them towards ag-go (plan 3.1).
     return this.productionsService.createProduction(
       teamId,
-      dto.title,
-      dto.brief,
-      dto.canvas,
       req.authContext!.userId,
       dto,
     );
   }
 
+  /** Team-scoped paged list (filtered alias of GET /productions?teamId=...). */
   @Get('teams/:teamId/productions')
   @Roles('viewer')
-  listProductions(@Param('teamId') teamId: string) {
-    return this.productionsService.listProductions(teamId);
+  listTeamProductions(@Param('teamId') teamId: string, @Query() query: ListProductionsQueryDto, @Req() req: Request) {
+    const { userId, isAdmin } = req.authContext!;
+    return this.productionsService.listTeamProductionsPaged(teamId, userId, isAdmin ?? false, query);
   }
 
   @Get('productions/:id')
@@ -96,10 +107,33 @@ export class ProductionsController {
     return { ok: true, sourceCount: dto.folderIds.length };
   }
 
+  /**
+   * DELETE cancels the plan run and every episode run before archiving.
+   */
   @Delete('productions/:id')
-  @Roles('owner')
+  @Roles('producer', 'owner')
   @HttpCode(HttpStatus.NO_CONTENT)
   archiveProduction(@Param('id') id: string) {
+    const prod = this.productionsService.getProduction(id);
+    if (!prod) throw new NotFoundException(`Production ${id} not found`);
+
+    // Cancel plan run if active
+    try {
+      if (prod.runId) cancelPlan(this.engine.core, this.engine.db, id);
+    } catch {
+      // no-op: may already be terminal
+    }
+
+    // Cancel every episode run
+    const episodeIds = this.productionsService.getEpisodeIds(id);
+    for (const episodeId of episodeIds) {
+      try {
+        cancelEpisode(this.engine.core, this.engine.db, episodeId);
+      } catch {
+        // no-op: may already be terminal
+      }
+    }
+
     this.productionsService.archiveProduction(id);
   }
 
