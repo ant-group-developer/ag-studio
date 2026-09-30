@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Table, Button, Modal, Form, Input, Select, Typography, Popconfirm } from "antd";
+import { Table, Button, Modal, Form, Select, Spin, Typography, Popconfirm } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
 import { useStudioClient } from "../api/studio-client";
 import type { TeamMember } from "../api/studio-client";
+import { UserCell } from "../modules/common/UserCell";
 import type { ColumnsType } from "antd/es/table";
 
 const { Title } = Typography;
@@ -18,8 +19,16 @@ export function TeamDetailPage() {
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm<{ userId: string; role: string }>();
 
+  const [keyword, setKeyword] = useState("");
+  const [debounced, setDebounced] = useState("");
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(keyword.trim()), 300);
+    return () => clearTimeout(id);
+  }, [keyword]);
+
   const ROLES = [
     { value: "owner", label: t("roles.owner") },
+    { value: "producer", label: t("roles.producer") },
     { value: "editor", label: t("roles.editor") },
     { value: "viewer", label: t("roles.viewer") },
   ];
@@ -30,6 +39,12 @@ export function TeamDetailPage() {
     enabled: !!teamId,
   });
 
+  const { data: candidates = [], isFetching: searching } = useQuery({
+    queryKey: ["member-candidates", teamId, debounced],
+    queryFn: () => client.searchMemberCandidates(teamId!, debounced),
+    enabled: !!teamId && open,
+  });
+
   const addMutation = useMutation({
     mutationFn: ({ userId, role }: { userId: string; role: string }) =>
       client.addMember(teamId!, userId, role),
@@ -37,6 +52,7 @@ export function TeamDetailPage() {
       void queryClient.invalidateQueries({ queryKey: ["members", teamId] });
       setOpen(false);
       form.resetFields();
+      setKeyword("");
     },
   });
 
@@ -57,9 +73,9 @@ export function TeamDetailPage() {
 
   const columns: ColumnsType<TeamMember> = [
     {
-      title: t("teams.columnUserId"),
-      dataIndex: "userId",
-      key: "userId",
+      title: t("teams.columnUser"),
+      key: "user",
+      render: (_: unknown, record: TeamMember) => <UserCell user={record} />,
     },
     {
       title: t("teams.columnRole"),
@@ -122,16 +138,32 @@ export function TeamDetailPage() {
         title={t("teams.addMemberTitle")}
         open={open}
         onOk={handleOk}
-        onCancel={() => setOpen(false)}
+        onCancel={() => {
+          setOpen(false);
+          setKeyword("");
+        }}
         confirmLoading={addMutation.isPending}
       >
         <Form form={form} layout="vertical">
           <Form.Item
             name="userId"
-            label={t("teams.userIdLabel")}
-            rules={[{ required: true, message: t("teams.userIdRequired") }]}
+            label={t("teams.userLabel")}
+            rules={[{ required: true, message: t("teams.userRequired") }]}
           >
-            <Input />
+            <Select
+              showSearch
+              filterOption={false}
+              onSearch={setKeyword}
+              placeholder={t("teams.userSearchPlaceholder")}
+              notFoundContent={searching ? <Spin size="small" /> : t("teams.userSearchEmpty")}
+              optionLabelProp="label"
+              options={candidates.map((u) => ({
+                value: u.userId,
+                label: u.name || u.email || u.userId,
+                user: u,
+              }))}
+              optionRender={(option) => <UserCell user={option.data.user} size={28} />}
+            />
           </Form.Item>
           <Form.Item
             name="role"

@@ -12,8 +12,15 @@ export interface Team {
   createdAt: string;
 }
 
-export interface TeamMember {
+/** A person as Account API knows them; fields are null when Account API has no match. */
+export interface UserSummary {
   userId: string;
+  name: string | null;
+  email: string | null;
+  avatar: string | null;
+}
+
+export interface TeamMember extends UserSummary {
   role: string;
   joinedAt: string;
 }
@@ -106,6 +113,15 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
         getAccessToken,
         "GET",
         `/api/teams/${teamId}/members`
+      );
+    },
+
+    /** People the team owner may add (Account API search by name or email), minus current members. */
+    searchMemberCandidates(teamId: string, keyword: string): Promise<UserSummary[]> {
+      return request<UserSummary[]>(
+        getAccessToken,
+        "GET",
+        `/api/teams/${teamId}/member-candidates?keyword=${encodeURIComponent(keyword)}`
       );
     },
 
