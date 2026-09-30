@@ -121,7 +121,6 @@ export class FarmController {
     const authorizations: Array<{
       op: SignOp;
       r2Key?: string;
-      segmentId?: string;
       assetId?: string;
     }> = [];
 
@@ -141,10 +140,6 @@ export class FarmController {
           // GĐ2 (v3): whole-asset input — resolved via ag-go POST /footage/assets/resolve
           const assetId = input.slice('asset:'.length);
           authorizations.push({ op, assetId });
-        } else if (input.startsWith('segment:')) {
-          // GĐ4 legacy (archived productions only)
-          const segmentId = input.slice('segment:'.length);
-          authorizations.push({ op, segmentId });
         } else {
           throw new ForbiddenException(`Unauthorized input: ${input}`);
         }
@@ -201,36 +196,6 @@ export class FarmController {
             watermarked: item.watermarked,
             start_ms: null,
             end_ms: null,
-          },
-        };
-      } else if (op.op === 'get' && auth.segmentId) {
-        // GĐ4 legacy segment resolve via ag-go (archived productions only)
-        const purpose = isFinalRender ? 'final' : 'preview';
-        if (!actAsUserId) {
-          throw new ForbiddenException(`Production ${prodId} has no owner to resolve footage as`);
-        }
-        const resolveResp = await this.agGoClient.resolveSegments(actAsUserId, {
-          segmentIds: [auth.segmentId],
-          purpose,
-        });
-        const item = resolveResp.items[0];
-        if (!item) {
-          throw new ForbiddenException(`Segment not found: ${auth.segmentId}`);
-        }
-        resultUrl = item.url;
-        result = {
-          op: 'get',
-          input: op.input,
-          url: item.url,
-          expires_at: item.expiresAt,
-          size_bytes: item.sizeBytes,
-          content_type: item.contentType,
-          cache_key: item.cacheKey,
-          source: {
-            source_kind: item.sourceKind,
-            watermarked: item.watermarked,
-            start_ms: item.startMs,
-            end_ms: item.endMs,
           },
         };
       } else if (op.op === 'get' && auth.r2Key) {

@@ -62,8 +62,8 @@ describe('Productions setSources validation', () => {
   it('accepts valid folderIds that are accessible via ag-go', async () => {
     agGoClientGetFolders.mockResolvedValue({
       folders: [
-        { id: 'folder-1', name: 'F1', parentId: null, path: '/F1', analyzedSegments: 0, usableSegments: 0 },
-        { id: 'folder-2', name: 'F2', parentId: null, path: '/F2', analyzedSegments: 0, usableSegments: 0 },
+        { id: 'folder-1', name: 'F1', parentId: null, path: '/F1', analyzedVideos: 0, usableVideos: 0 },
+        { id: 'folder-2', name: 'F2', parentId: null, path: '/F2', analyzedVideos: 0, usableVideos: 0 },
       ],
     });
 
@@ -76,7 +76,7 @@ describe('Productions setSources validation', () => {
   it('rejects folderIds not returned by ag-go getFolders (not accessible)', async () => {
     agGoClientGetFolders.mockResolvedValue({
       folders: [
-        { id: 'folder-1', name: 'F1', parentId: null, path: '/F1', analyzedSegments: 0, usableSegments: 0 },
+        { id: 'folder-1', name: 'F1', parentId: null, path: '/F1', analyzedVideos: 0, usableVideos: 0 },
       ],
     });
 

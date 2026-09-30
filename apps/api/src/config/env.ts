@@ -8,6 +8,8 @@ export const envSchema = z.object({
   AUTH0_ALLOWED_CLIENT_IDS: z.string().optional(),
   ACCOUNT_API_URL: z.string().url(),
   ACCOUNT_API_KEY: z.string().optional(),
+  /** Account API application whose ADMINs and permissions Studio uses (Studio users are ag-go users). */
+  ACCOUNT_APPLICATION_CODE: z.string().optional(),
   AG_GO_API_URL: z.string().url(),
   AG_GO_SERVICE_KEY: z.string(),
   FARM_URL: z.string().url(),

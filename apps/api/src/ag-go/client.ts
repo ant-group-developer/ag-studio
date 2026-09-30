@@ -14,60 +14,12 @@ export interface FolderItem {
   parentId: string | null;
   name: string;
   path: string;
-  analyzedSegments: number;
-  usableSegments: number;
+  analyzedVideos: number;
+  usableVideos: number;
 }
 
 export interface GetFoldersResponse {
   folders: FolderItem[];
-}
-
-export interface FootageCatalogBody {
-  folderIds: string[];
-  filters?: { usable?: boolean; minQuality?: number };
-  limit?: number;
-  cursor?: string;
-}
-
-export interface CatalogItem {
-  segmentId: string;
-  assetId: string;
-  startMs: number;
-  endMs: number;
-  durationMs: number;
-  captionVi: string;
-  captionEn: string;
-  tags: string[];
-  usable: boolean;
-  approved: boolean;
-}
-
-export interface CatalogResponse {
-  items: CatalogItem[];
-  nextCursor: string | null;
-}
-
-export interface ResolveSegmentsBody {
-  segmentIds: string[];
-  purpose: 'preview' | 'final';
-}
-
-export interface ResolvedSegmentItem {
-  segmentId: string;
-  assetId: string;
-  startMs: number;
-  endMs: number;
-  url: string;
-  sourceKind: 'original' | 'proxy' | 'preview';
-  watermarked: boolean;
-  contentType: string;
-  sizeBytes: number | null;
-  cacheKey: string | null;
-  expiresAt: string;
-}
-
-export interface ResolveSegmentsResponse {
-  items: ResolvedSegmentItem[];
 }
 
 export interface ResolveAssetsBody {
@@ -176,22 +128,6 @@ export class AgGoClient {
 
   getFolders(actAsUserId: string): Promise<GetFoldersResponse> {
     return this.request<GetFoldersResponse>('GET', '/footage/folders', actAsUserId);
-  }
-
-  getCatalog(actAsUserId: string, body: FootageCatalogBody): Promise<CatalogResponse> {
-    return this.request<CatalogResponse>('POST', '/footage/catalog', actAsUserId, body);
-  }
-
-  resolveSegments(
-    actAsUserId: string,
-    body: ResolveSegmentsBody,
-  ): Promise<ResolveSegmentsResponse> {
-    return this.request<ResolveSegmentsResponse>(
-      'POST',
-      '/footage/segments/resolve',
-      actAsUserId,
-      body,
-    );
   }
 
   /** GĐ2 (v3): resolve whole-asset IDs → signed download URLs. */

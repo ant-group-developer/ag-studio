@@ -38,6 +38,7 @@ import { IsInt, IsObject, IsOptional, Max, Min } from 'class-validator';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from './engine.service';
+import { FootageAccessService } from './footage-access.service';
 import { mapErrors } from './http-errors';
 
 // ---------------------------------------------------------------------------
@@ -90,7 +91,16 @@ function exportThumbnails(exp: StudioExport | null) {
 export class EpisodesController {
   private readonly logger = new Logger(EpisodesController.name);
 
-  constructor(private readonly engine: EngineService) {}
+  constructor(
+    private readonly engine: EngineService,
+    private readonly access: FootageAccessService,
+  ) {}
+
+  /** Files that show footage (video, thumbnails, the pack) go only to someone whose own ag-go scope covers the
+   *  production (plan decision 9: sharing a production never widens anyone's footage scope). */
+  private covers(req: Request, prodId: string): Promise<boolean> {
+    return this.access.coversProduction(req.authContext!.userId, prodId);
+  }
 
   /** Farm progress of the episode's render, while it renders. The list must not fail because the farm is away. */
   private async renderProgress(stage: string | null, jobId: string | null): Promise<number | null> {
@@ -108,7 +118,7 @@ export class EpisodesController {
     return this.engine.bucket.signedGetUrl(key, this.engine.browserUrlTtl);
   }
 
-  private async summary(ep: EpisodeRecord, state = episodeState(this.engine.core, this.engine.db, ep)): Promise<EpisodeSummary> {
+  private async summary(ep: EpisodeRecord, covers: boolean, state = episodeState(this.engine.core, this.engine.db, ep)): Promise<EpisodeSummary> {
     const exp = episodeExport(this.engine.core, ep);
     const thumbs = exportThumbnails(exp);
     const thumb = thumbs[ep.selected_thumbnail ?? 0] ?? thumbs[0];
@@ -121,7 +131,7 @@ export class EpisodesController {
       currentStage: state.current_stage,
       progress: await this.renderProgress(state.current_stage, state.render_job_id),
       durationSeconds: exp?.duration_seconds ?? episodeTimelineSeconds(this.engine.db, ep.id),
-      thumbnailUrl: thumb ? await this.sign(thumb.key) : null,
+      thumbnailUrl: thumb && covers ? await this.sign(thumb.key) : null,
       updatedAt: ep.updated_at,
     };
   }
@@ -146,8 +156,10 @@ export class EpisodesController {
     @Query('pageSize') pageSize = '20',
     @Query('sortBy') sortBy = 'idx',
     @Query('sortOrder') sortOrder = 'asc',
+    @Req() req: Request,
   ) {
     return mapErrors(async () => {
+      const covers = await this.covers(req, prodId);
       const ps = Math.min(Math.max(1, parseInt(pageSize, 10) || 20), 100);
       const pg = Math.max(1, parseInt(page, 10) || 1);
       const order = sortOrder === 'desc' ? -1 : 1;
@@ -159,16 +171,18 @@ export class EpisodesController {
         if (sortBy === 'updatedAt') return order * a.ep.updated_at.localeCompare(b.ep.updated_at) || a.ep.idx - b.ep.idx;
         return order * (a.ep.idx - b.ep.idx);
       });
-      const items = await Promise.all(all.slice((pg - 1) * ps, pg * ps).map(({ ep, state }) => this.summary(ep, state)));
+      const items = await Promise.all(all.slice((pg - 1) * ps, pg * ps).map(({ ep, state }) => this.summary(ep, covers, state)));
       return { items, total: all.length, page: pg, pageSize: ps };
     });
   }
 
   @Get(':episodeId')
   @Roles('viewer')
-  detail(@Param('id') prodId: string, @Param('episodeId') episodeId: string) {
+  detail(@Param('id') prodId: string, @Param('episodeId') episodeId: string, @Req() req: Request) {
     return mapErrors(async () => {
       const ep = this.requireEpisode(prodId, episodeId);
+      const covers = await this.covers(req, prodId);
+      const showsFootage = (kind: string) => kind === 'mp4' || kind === 'thumbnail' || kind === 'pack';
       const run: RunView | null = ep.run_id ? episodeRunView(this.engine.core, this.engine.db, episodeId) : null;
       const kitStage = run?.stages.find((s) => s.key === 'youtube-kit');
       // The person's edits win over Claude's kit
@@ -178,13 +192,14 @@ export class EpisodesController {
           ? YoutubeKitSchema.parse(readStageDocument(this.engine.core, ep.run_id, 'youtube-kit', 'youtube-kit.json'))
           : null;
       const exp = episodeExport(this.engine.core, ep);
-      const exportFiles = await Promise.all((exp?.files ?? []).map(async (f) => ({
+      const exportFiles = await Promise.all((exp?.files ?? []).filter((f) => covers || !showsFootage(f.kind)).map(async (f) => ({
         kind: f.kind, url: await this.sign(f.key), sizeBytes: f.size_bytes, name: f.key.split('/').pop() ?? f.key,
       })));
-      const thumbnails = await Promise.all(exportThumbnails(exp).map(async (f, index) => ({ url: await this.sign(f.key), index })));
-      const mp4 = exp?.files.find((f) => f.kind === 'mp4');
+      const thumbnails = covers ? await Promise.all(exportThumbnails(exp).map(async (f, index) => ({ url: await this.sign(f.key), index }))) : [];
+      const mp4 = covers ? exp?.files.find((f) => f.kind === 'mp4') : undefined;
       return {
-        ...(await this.summary(ep)),
+        ...(await this.summary(ep, covers)),
+        footageHidden: !covers,
         plan: ep.plan ? JSON.parse(ep.plan) : null,
         run,
         youtube,
@@ -208,6 +223,7 @@ export class EpisodesController {
     @Param('id') prodId: string,
     @Param('episodeId') episodeId: string,
     @Body() dto: PatchEpisodeDto,
+    @Req() req: Request,
   ) {
     return mapErrors(() => {
       const ep = getEpisode(this.engine.db, episodeId);
@@ -237,7 +253,7 @@ export class EpisodesController {
         sets.push('updated_at = ?'); vals.push(new Date().toISOString()); vals.push(episodeId);
         this.engine.db.run(`UPDATE episodes SET ${sets.join(', ')} WHERE id = ?`, vals as string[]);
       }
-      return this.detail(prodId, episodeId);
+      return this.detail(prodId, episodeId, req);
     });
   }
 

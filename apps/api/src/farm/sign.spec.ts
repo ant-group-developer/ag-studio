@@ -41,12 +41,12 @@ describe('FarmController /farm/sign', () => {
   let controller: FarmController;
   let dbGet: ReturnType<typeof vi.fn>;
   let dbRun: ReturnType<typeof vi.fn>;
-  let agGoResolveSegments: ReturnType<typeof vi.fn>;
+  let agGoResolveAssets: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     dbGet = vi.fn();
     dbRun = vi.fn().mockReturnValue({ changes: 1, lastInsertRowid: 1 });
-    agGoResolveSegments = vi.fn();
+    agGoResolveAssets = vi.fn();
 
     const mockDb = {
       get: dbGet,
@@ -75,7 +75,7 @@ describe('FarmController /farm/sign', () => {
     // Replace the internal AgGoClient with a mock so no real HTTP calls are made
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (controller as any).agGoClient = {
-      resolveSegments: agGoResolveSegments,
+      resolveAssets: agGoResolveAssets,
     };
 
     // Replace S3 client so presigning calls are skipped where they reach that branch
@@ -102,7 +102,7 @@ describe('FarmController /farm/sign', () => {
       ticketClaims: makeTicketClaims(MOCK_JOB.farm_job_id),
       ip: '127.0.0.1',
     } as never;
-    // 'unknown:something' passes InputNameSchema but is not stage:/library:/segment:
+    // 'unknown:something' passes InputNameSchema but is not stage:/library:/asset:
     await expect(
       controller.sign({ ops: [{ op: 'get', input: 'unknown:something' }] }, req),
     ).rejects.toThrow(ForbiddenException);
@@ -136,22 +136,21 @@ describe('FarmController /farm/sign', () => {
 
   it('uses purpose=preview when is_final_render=0', async () => {
     routeDb({ ...MOCK_JOB, is_final_render: 0 });
-    agGoResolveSegments.mockResolvedValue({
+    agGoResolveAssets.mockResolvedValue({
       items: [
         {
-          segmentId: 'seg-uuid',
           assetId: 'asset-1',
-          startMs: 0,
-          endMs: 5000,
-          url: 'https://cdn.example.com/seg.mp4',
+          url: 'https://cdn.example.com/asset-1.mp4',
           sourceKind: 'preview',
           watermarked: true,
           contentType: 'video/mp4',
+          durationMs: 30000,
           sizeBytes: null,
           cacheKey: null,
           expiresAt: new Date(Date.now() + 3600000).toISOString(),
         },
       ],
+      missing: [],
     });
     dbRun.mockReturnValue({ changes: 1, lastInsertRowid: 1 });
 
@@ -159,33 +158,32 @@ describe('FarmController /farm/sign', () => {
       ticketClaims: makeTicketClaims(MOCK_JOB.farm_job_id),
       ip: '127.0.0.1',
     } as never;
-    await controller.sign({ ops: [{ op: 'get', input: 'segment:seg-uuid' }] }, req);
+    await controller.sign({ ops: [{ op: 'get', input: 'asset:asset-1' }] }, req);
 
     // act-as the production owner, never the production id
-    expect(agGoResolveSegments).toHaveBeenCalledWith('auth0|owner', {
-      segmentIds: ['seg-uuid'],
+    expect(agGoResolveAssets).toHaveBeenCalledWith('auth0|owner', {
+      assetIds: ['asset-1'],
       purpose: 'preview',
     });
   });
 
   it('uses purpose=final when is_final_render=1', async () => {
     routeDb({ ...MOCK_FINAL_JOB, is_final_render: 1 });
-    agGoResolveSegments.mockResolvedValue({
+    agGoResolveAssets.mockResolvedValue({
       items: [
         {
-          segmentId: 'seg-uuid',
           assetId: 'asset-1',
-          startMs: 0,
-          endMs: 5000,
-          url: 'https://cdn.example.com/seg.mp4',
+          url: 'https://cdn.example.com/asset-1.mp4',
           sourceKind: 'original',
           watermarked: false,
           contentType: 'video/mp4',
+          durationMs: 30000,
           sizeBytes: 1024000,
           cacheKey: 'cache-hash',
           expiresAt: new Date(Date.now() + 3600000).toISOString(),
         },
       ],
+      missing: [],
     });
     dbRun.mockReturnValue({ changes: 1, lastInsertRowid: 1 });
 
@@ -193,19 +191,42 @@ describe('FarmController /farm/sign', () => {
       ticketClaims: makeTicketClaims(MOCK_FINAL_JOB.farm_job_id),
       ip: '127.0.0.1',
     } as never;
-    await controller.sign({ ops: [{ op: 'get', input: 'segment:seg-uuid' }] }, req);
+    await controller.sign({ ops: [{ op: 'get', input: 'asset:asset-1' }] }, req);
 
-    expect(agGoResolveSegments).toHaveBeenCalledWith('auth0|owner', {
-      segmentIds: ['seg-uuid'],
+    expect(agGoResolveAssets).toHaveBeenCalledWith('auth0|owner', {
+      assetIds: ['asset-1'],
       purpose: 'final',
     });
+  });
+
+  it('answers the whole file with its cache key and source, and 403 when ag-go has nothing servable', async () => {
+    routeDb({ ...MOCK_JOB, is_final_render: 0 });
+    agGoResolveAssets.mockResolvedValue({
+      items: [{ assetId: 'asset-1', url: 'https://cdn.example.com/asset-1.mp4', sourceKind: 'proxy', watermarked: false, contentType: 'video/mp4', sizeBytes: 1024, durationMs: 30000, cacheKey: 'proxy:analysis-1', expiresAt: new Date(Date.now() + 3600000).toISOString() }],
+      missing: [],
+    });
+    dbRun.mockReturnValue({ changes: 1, lastInsertRowid: 1 });
+    const req = { ticketClaims: makeTicketClaims(MOCK_JOB.farm_job_id), ip: '127.0.0.1' } as never;
+    const res = await controller.sign({ ops: [{ op: 'get', input: 'asset:asset-1' }] }, req);
+    expect(res.results[0]).toMatchObject({ op: 'get', input: 'asset:asset-1', cache_key: 'proxy:analysis-1', size_bytes: 1024, source: { source_kind: 'proxy', watermarked: false, start_ms: null, end_ms: null } });
+
+    agGoResolveAssets.mockResolvedValue({ items: [], missing: ['asset-2'] });
+    await expect(controller.sign({ ops: [{ op: 'get', input: 'asset:asset-2' }] }, req)).rejects.toThrow(ForbiddenException);
+  });
+
+  it('refuses a segment input: segments no longer exist', async () => {
+    routeDb(MOCK_JOB);
+    agGoResolveAssets.mockClear();
+    const req = { ticketClaims: makeTicketClaims(MOCK_JOB.farm_job_id), ip: '127.0.0.1' } as never;
+    await expect(controller.sign({ ops: [{ op: 'get', input: 'segment:seg-uuid' }] }, req)).rejects.toThrow(ForbiddenException);
+    expect(agGoResolveAssets).not.toHaveBeenCalled();
   });
 
   it('refuses to resolve footage when the production has no owner to act as', async () => {
     routeDb(MOCK_JOB, null);
     const req = { ticketClaims: makeTicketClaims(MOCK_JOB.farm_job_id), ip: '127.0.0.1' } as never;
-    await expect(controller.sign({ ops: [{ op: 'get', input: 'segment:seg-uuid' }] }, req)).rejects.toThrow(ForbiddenException);
-    expect(agGoResolveSegments).not.toHaveBeenCalled();
+    await expect(controller.sign({ ops: [{ op: 'get', input: 'asset:asset-1' }] }, req)).rejects.toThrow(ForbiddenException);
+    expect(agGoResolveAssets).not.toHaveBeenCalled();
   });
 });
 

@@ -2,13 +2,14 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { createStudioEngineCore, MemoryBucket, StudioDb } from '@ag-studio/engine';
 import { TimelineController } from './timeline.controller';
 import { StudioRunController } from './studio-run.controller';
 import type { EngineService } from './engine.service';
 import type { FootageAccessService } from './footage-access.service';
 import type { StudioDbService } from '../db/studio-db.service';
+import type { AccountApiService, UserProfile } from '../auth/account-api.service';
 
 const ROOT = resolve(__dirname, '..', '..', '..', '..');
 const PROD = '22222222-2222-4222-8222-222222222222';
@@ -39,6 +40,9 @@ describe('Timeline revisions over HTTP semantics (autosave + 409)', () => {
   let controller: TimelineController;
   let runs: StudioRunController;
   let db: StudioDb;
+  let bucket: MemoryBucket;
+  let submitted: { type: string; payload: Record<string, unknown> }[];
+  let profile: UserProfile;
   const req = (userId: string) => ({ authContext: { userId, accessToken: 't' } }) as never;
 
   beforeEach(() => {
@@ -53,9 +57,21 @@ describe('Timeline revisions over HTTP semantics (autosave + 409)', () => {
       "INSERT INTO episodes (id, production_id, idx, title, hook, created_at, updated_at) VALUES (?, ?, 1, 'Ep 1', 'Hook', ?, ?)",
       [EP, PROD, now, now],
     );
-    const engine = { core, db, bucket: new MemoryBucket(), editor: { db, bucket: new MemoryBucket(), farm: {} }, browserUrlTtl: 60 } as unknown as EngineService;
+    db.run("INSERT INTO productions (id, team_id, title, created_at, updated_at) VALUES ('other-prod', 't1', 'Q', ?, ?)", [now, now]);
+    db.run("INSERT INTO episodes (id, production_id, idx, title, hook, created_at, updated_at) VALUES ('other-ep', 'other-prod', 1, 'X', 'h', ?, ?)", [now, now]);
+    bucket = new MemoryBucket();
+    submitted = [];
+    let n = 0;
+    const farm = {
+      submitJob: async (r: { type: string; payload: Record<string, unknown> }) => { submitted.push(r); return { job: { id: `job-${++n}` }, created: true }; },
+      getJob: async () => ({ status: 'running', progress_percent: 42 }),
+      ackJob: async () => ({}),
+    };
+    const engine = { core, db, bucket, editor: { db, bucket, farm }, browserUrlTtl: 60 } as unknown as EngineService;
     const access = { coversProduction: async () => false } as unknown as FootageAccessService;
-    controller = new TimelineController(engine, access);
+    profile = { userId: 'u1', userType: 'USER', permissions: [] };
+    const account = { getUserProfile: async () => profile } as unknown as AccountApiService;
+    controller = new TimelineController(engine, access, account);
     runs = new StudioRunController(engine, { get: () => ({ role: 'owner' }) } as unknown as StudioDbService);
   });
 
@@ -64,10 +80,12 @@ describe('Timeline revisions over HTTP semantics (autosave + 409)', () => {
     expect(r1.revision).toBe(1);
     const r2 = await controller.save(PROD, EP, { baseRevision: 1, data: timeline('Bún bò Huế') }, req('u1'));
     expect(r2.revision).toBe(2);
-    const latest = controller.latest(PROD, EP);
+    const latest = await controller.latest(PROD, EP);
     expect(latest.data.clips[0]?.section_title).toBe('Bún bò Huế');
-    const rev1 = controller.revision(EP, 1);
+    expect(latest.authorId).toBe('u1');
+    const rev1 = await controller.revision(PROD, EP, 1);
     expect(rev1.data.clips[0]?.section_title).toBe('Phở bò');
+    expect((await controller.revisions(PROD, EP)).map((r) => [r.revision, r.baseRevision])).toEqual([[2, 1], [1, 0]]);
   });
 
   it('a save based on a stale revision answers 409 with the current revision, and writes nothing', async () => {
@@ -76,7 +94,7 @@ describe('Timeline revisions over HTTP semantics (autosave + 409)', () => {
     const err = await controller.save(PROD, EP, { baseRevision: 1, data: timeline('Bản của B') }, req('u2')).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ConflictException);
     expect((err as ConflictException).getResponse()).toMatchObject({ code: 'revision_conflict', currentRevision: 2, baseRevision: 1 });
-    const latest = controller.latest(PROD, EP);
+    const latest = await controller.latest(PROD, EP);
     expect(latest.revision).toBe(2);
     expect(latest.data.clips[0]?.section_title).toBe('Bản của A');
   });
@@ -84,9 +102,34 @@ describe('Timeline revisions over HTTP semantics (autosave + 409)', () => {
   it('an invalid timeline is 422 with the schema problems; an unknown episode 404', async () => {
     const bad = { ...timeline(), clips: 'nope' };
     await expect(controller.save(PROD, EP, { baseRevision: 0, data: bad }, req('u1'))).rejects.toBeInstanceOf(UnprocessableEntityException);
-    expect(() => controller.latest(PROD, 'ffffffff-ffff-4fff-8fff-ffffffffffff')).toThrow(NotFoundException);
+    await expect(controller.latest(PROD, 'ffffffff-ffff-4fff-8fff-ffffffffffff')).rejects.toBeInstanceOf(NotFoundException);
     const unknownEp = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
     await expect(controller.save(PROD, unknownEp, { baseRevision: 0, data: { ...timeline(), episode_id: unknownEp } }, req('u1'))).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('an episode of another production is 404 through this production (the role guard checked this one)', async () => {
+    await expect(controller.latest(PROD, 'other-ep')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(controller.save(PROD, 'other-ep', { baseRevision: 0, data: timeline() }, req('u1'))).rejects.toBeInstanceOf(NotFoundException);
+    await expect(controller.premiere(PROD, 'other-ep', { media: 'proxy' }, req('u1'))).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('exports a Premiere project of the latest revision; originals need the download right', async () => {
+    await controller.save(PROD, EP, { baseRevision: 0, data: timeline() }, req('u1'));
+    await expect(controller.premiere(PROD, EP, { media: 'original' }, req('u1'))).rejects.toBeInstanceOf(ForbiddenException);
+    expect(submitted).toHaveLength(0);
+
+    const job = await controller.premiere(PROD, EP, { media: 'proxy' }, req('u1'));
+    expect(job).toMatchObject({ kind: 'export_premiere', status: 'running', request: { revision: 1, media: 'proxy' } });
+    expect(submitted[0]).toMatchObject({ type: 'studio.export_premiere', payload: { production_id: PROD, episode_id: EP, media: 'proxy', composition: 'stage:composition.json' } });
+    expect([...bucket.objects.keys()].some((k) => k.endsWith(`/editor-premiere/${job.id}/in/composition.json`) || k.includes(job.id))).toBe(true);
+    const sign = db.get<{ is_final_render: number; stage_key: string }>('SELECT is_final_render, stage_key FROM studio_farm_jobs WHERE attempt_id = ?', [job.id]);
+    expect(sign).toEqual({ is_final_render: 0, stage_key: 'editor-premiere' });
+
+    profile = { userId: 'u1', userType: 'USER', permissions: ['go.project.download_original'] };
+    const original = await controller.premiere(PROD, EP, { media: 'original' }, req('u1'));
+    expect(db.get<{ is_final_render: number }>('SELECT is_final_render FROM studio_farm_jobs WHERE attempt_id = ?', [original.id])?.is_final_render).toBe(1);
+    const listed = await controller.jobs(PROD, EP, 'export_premiere', req('u1'));
+    expect(listed.map((j) => [j.id, j.progress])).toEqual([[original.id, 42], [job.id, 42]]);
   });
 
   it('run routes map engine errors: no run yet -> 404, unknown gate -> 422', async () => {
