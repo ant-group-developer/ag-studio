@@ -1,13 +1,11 @@
-type DeepStringRecord = { [key: string]: string | DeepStringRecord };
-
-export const vi: DeepStringRecord = {
+export const vi = {
   common: {
     create: "Tạo",
     cancel: "Hủy",
     save: "Lưu",
     delete: "Xóa",
     edit: "Sửa",
-    actions: "Hành động",
+    actions: "Thao tác",
     status: "Trạng thái",
     loading: "Đang tải...",
     notFoundTitle: "Không tìm thấy trang",
@@ -17,6 +15,18 @@ export const vi: DeepStringRecord = {
   app: {
     title: "AG Studio",
     logout: "Đăng xuất",
+  },
+  auth: {
+    authenticating: "Đang xác thực...",
+    tagline: "Dựng video từ kho footage của AG Go: kịch bản, lời dẫn, dựng và xuất bản.",
+    pointSecure: "Xác thực bảo mật qua Auth0",
+    pointInternal: "Dành cho thành viên các nhóm sản xuất",
+    welcome: "Chào mừng trở lại",
+    loginPrompt: "Đăng nhập bằng tài khoản công ty để tiếp tục.",
+    login: "Đăng nhập",
+    secureNote: "Bạn sẽ được chuyển đến trang đăng nhập an toàn.",
+    missingConfig: "Thiếu cấu hình Auth0",
+    missingConfigDesc: "Kiểm tra các biến môi trường VITE_AUTH0_DOMAIN, VITE_AUTH0_CLIENT_ID, VITE_AUTH0_AUDIENCE.",
   },
   menu: {
     teams: "Nhóm",
@@ -40,7 +50,7 @@ export const vi: DeepStringRecord = {
     addMemberTitle: "Thêm thành viên",
     columnUserId: "User ID",
     columnRole: "Vai trò",
-    columnActions: "Hành động",
+    columnActions: "Thao tác",
     userIdLabel: "User ID",
     userIdRequired: "Vui lòng nhập User ID",
     roleLabel: "Vai trò",
@@ -203,3 +213,6 @@ export const vi: DeepStringRecord = {
     keepMine: "Giữ bản của tôi",
   },
 };
+
+type Messages<T> = { [K in keyof T]: T[K] extends string ? string : Messages<T[K]> };
+export type LocaleMessages = Messages<typeof vi>;

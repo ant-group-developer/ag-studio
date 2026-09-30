@@ -1,0 +1,13 @@
+body {
+  margin: 0;
+}
+
+.user-dropdown {
+  padding: 0 10px;
+  border-radius: 5px;
+  height: 44px;
+}
+
+.user-dropdown:hover {
+  background-color: rgba(230, 227, 227, 0.466);
+}

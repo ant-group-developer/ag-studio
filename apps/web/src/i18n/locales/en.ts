@@ -1,6 +1,6 @@
-import type { vi } from "./vi";
+import type { LocaleMessages } from "./vi";
 
-export const en: typeof vi = {
+export const en: LocaleMessages = {
   common: {
     create: "Create",
     cancel: "Cancel",
@@ -17,6 +17,18 @@ export const en: typeof vi = {
   app: {
     title: "AG Studio",
     logout: "Log out",
+  },
+  auth: {
+    authenticating: "Authenticating...",
+    tagline: "Make videos from the AG Go footage library: script, narration, edit and export.",
+    pointSecure: "Secure sign-in with Auth0",
+    pointInternal: "For members of the production teams",
+    welcome: "Welcome back",
+    loginPrompt: "Sign in with your company account to continue.",
+    login: "Log in",
+    secureNote: "You will be taken to a secure sign-in page.",
+    missingConfig: "Auth0 is not configured",
+    missingConfigDesc: "Check the VITE_AUTH0_DOMAIN, VITE_AUTH0_CLIENT_ID and VITE_AUTH0_AUDIENCE environment variables.",
   },
   menu: {
     teams: "Teams",

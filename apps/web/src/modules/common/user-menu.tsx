@@ -1,0 +1,65 @@
+import { GlobalOutlined, LogoutOutlined } from "@ant-design/icons";
+import { Avatar, Flex, Typography, theme as antdTheme } from "antd";
+import type { MenuProps } from "antd";
+import { useTranslation } from "react-i18next";
+import { APP_LANGUAGES, changeLanguage, currentLanguage, LANGUAGE_NAMES } from "../../i18n/language";
+
+interface UserMenuOptions {
+  nickname: string;
+  email: string;
+  avatarUrl?: string;
+  initials: string;
+  onLogout: () => void;
+}
+
+/** Menu avatar giống ag-go-web: thẻ người dùng, chọn ngôn ngữ, đăng xuất. */
+export function useUserMenu({ nickname, email, avatarUrl, initials, onLogout }: UserMenuOptions): MenuProps {
+  const { t } = useTranslation();
+  const { token } = antdTheme.useToken();
+  const language = currentLanguage();
+
+  return {
+    // Chỉ các mục ngôn ngữ chọn được; mục đang chọn là ngôn ngữ hiện tại.
+    selectable: true,
+    selectedKeys: [`language:${language}`],
+    items: [
+      {
+        key: "user",
+        label: (
+          <Flex gap={12} align="center">
+            <Avatar src={avatarUrl || undefined} size={40} style={{ backgroundColor: token.colorPrimary, flexShrink: 0 }}>
+              {initials}
+            </Avatar>
+            <Flex vertical style={{ minWidth: 0 }}>
+              <Typography.Text strong ellipsis>
+                {nickname}
+              </Typography.Text>
+              <Typography.Text type="secondary" ellipsis>
+                {email}
+              </Typography.Text>
+            </Flex>
+          </Flex>
+        ),
+        disabled: true,
+      },
+      { type: "divider" },
+      {
+        key: "language",
+        icon: <GlobalOutlined />,
+        label: `${t("common.language")}: ${LANGUAGE_NAMES[language]}`,
+        children: APP_LANGUAGES.map((key) => ({
+          key: `language:${key}`,
+          label: LANGUAGE_NAMES[key],
+          onClick: () => void changeLanguage(key),
+        })),
+      },
+      {
+        key: "logout",
+        icon: <LogoutOutlined />,
+        label: t("app.logout"),
+        onClick: onLogout,
+        danger: true,
+      },
+    ],
+  };
+}

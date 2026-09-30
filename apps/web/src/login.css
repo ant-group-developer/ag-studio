@@ -1,0 +1,301 @@
+/* Màn đăng nhập (chép từ ag-go-web src/styles.css để hai web trông như ag-go-web). */
+.login-screen {
+  --login-accent: #1677ff;
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  color: #fff;
+  background: #0b1220;
+}
+
+/* Backdrop layers are pinned to the viewport (not the scroll area) so they never add scroll extent. */
+.login-backdrop {
+  position: fixed;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+}
+
+.login-overlay {
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(
+      60% 80% at 15% 20%,
+      color-mix(in srgb, var(--login-accent) 45%, transparent) 0%,
+      transparent 70%
+    ),
+    linear-gradient(
+      100deg,
+      rgba(8, 14, 28, 0.92) 0%,
+      rgba(8, 14, 28, 0.7) 55%,
+      rgba(8, 14, 28, 0.45) 100%
+    );
+}
+
+.login-layout {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 440px);
+  align-items: center;
+  gap: 64px;
+  width: min(1120px, 100%);
+  margin: 0 auto;
+  padding: 48px 32px;
+}
+
+/* Hero (left) */
+.login-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  max-width: 560px;
+}
+
+.login-hero-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.login-hero-title.ant-typography {
+  margin: 0;
+  font-size: clamp(36px, 4.5vw, 56px);
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  color: #fff;
+}
+
+.login-hero-description.ant-typography {
+  font-size: 18px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.login-hero-points {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.login-hero-points li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.login-hero-points svg {
+  flex: none;
+  color: var(--login-accent);
+  filter: brightness(1.35);
+}
+
+.login-hero .ant-skeleton-title,
+.login-hero .ant-skeleton-paragraph > li {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* Card (right) */
+.login-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 36px 32px;
+  border-radius: 20px;
+  color: #1f1f1f;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.35),
+    0 1px 0 rgba(255, 255, 255, 0.5) inset;
+}
+
+.login-card-brand {
+  display: none;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.login-card-brand-name {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.login-card-title.ant-typography {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.login-card-subtitle.ant-typography {
+  font-size: 14px;
+  line-height: 1.6;
+  color: rgba(0, 0, 0, 0.6);
+  margin-bottom: 20px;
+}
+
+.login-button.ant-btn {
+  height: 50px;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 12px;
+  border: none;
+  background: linear-gradient(
+    135deg,
+    var(--login-accent) 0%,
+    color-mix(in srgb, var(--login-accent) 70%, #7c3aed) 100%
+  );
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--login-accent) 38%, transparent);
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.login-button.ant-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 28px color-mix(in srgb, var(--login-accent) 46%, transparent);
+}
+
+.login-button.ant-btn:active {
+  transform: translateY(0);
+}
+
+.login-card-note.ant-typography {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 14px;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.login-card-support {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px 14px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.login-card-support a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--login-accent);
+  font-weight: 500;
+}
+
+.login-card-support a:hover {
+  text-decoration: underline;
+}
+
+/* Brand mark */
+.login-logo {
+  display: block;
+  width: auto;
+  object-fit: contain;
+}
+
+.login-monogram {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 22%;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: linear-gradient(
+    135deg,
+    var(--login-accent) 0%,
+    color-mix(in srgb, var(--login-accent) 70%, #7c3aed) 100%
+  );
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--login-accent) 40%, transparent);
+}
+
+/* Language switch, top-right over the backdrop */
+.login-language.ant-btn {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 2;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.login-language.ant-btn:not(:disabled):hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Footer */
+.login-footer {
+  position: relative;
+  z-index: 1;
+  padding: 16px 32px 24px;
+  text-align: center;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* Responsive: stack on tablets and phones */
+@media (max-width: 900px) {
+  .login-layout {
+    grid-template-columns: minmax(0, 480px);
+    justify-content: center;
+    gap: 0;
+    padding: 32px 16px;
+  }
+
+  .login-hero {
+    display: none;
+  }
+
+  .login-card-brand {
+    display: flex;
+  }
+}
+
+@media (max-width: 480px) {
+  .login-card {
+    padding: 28px 20px;
+    border-radius: 16px;
+  }
+
+  .login-card-title.ant-typography {
+    font-size: 22px;
+  }
+}
+
+.login-footer-links {
+  display: inline-flex;
+  gap: 16px;
+  margin-inline-start: 16px;
+}
+
+.login-footer-links a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.login-footer-links a:hover {
+  color: rgba(255, 255, 255, 0.85);
+}
