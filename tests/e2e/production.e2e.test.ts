@@ -355,7 +355,9 @@ afterAll(async () => {
 type RunView = { state: string; waiting_gate: string | null; stages: { key: string; state: string; attempts: number; error: string | null; failed_checks: unknown[] }[] };
 type Timeline = { narration: { line_id: string; text: string; audio: { key: string; duration: number } | null }[]; clips: { clip_id: string; segment_id: string; src_in: number; src_out: number }[]; [k: string]: unknown };
 
-describe.skipIf(!isE2E)("GĐ4 E2E: brief -> Claude (fake) -> gates -> editor -> farm renders -> MP4 + SRT", () => {
+// NOTE: ag-studio-production@1.0.0 was deleted in GĐ3 (superseded by ag-studio-series-plan@1.0.0).
+// This test is archived. Use tests/e2e/series-flow.e2e.test.ts for the current series flow.
+describe.skip("GĐ4 E2E (ARCHIVED — workflow deleted): brief -> Claude (fake) -> gates -> editor -> farm renders -> MP4 + SRT", () => {
   let prodId = "";
   const run = () => ok<RunView>("GET", `/productions/${prodId}/run`);
   const waitGate = (gate: string, ms = 240_000) => waitFor(`gate ${gate}`, async () => {
