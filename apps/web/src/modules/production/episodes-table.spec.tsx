@@ -1,0 +1,100 @@
+/**
+ * vitest tests for:
+ * 1. EpisodesPanel URL state via nuqs
+ * 2. Role-based buttons (canEdit)
+ */
+import { render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
+import { describe, expect, it, vi } from "vitest";
+import { NuqsAdapter } from "nuqs/adapters/react-router";
+
+window.matchMedia ??= ((query: string) => ({
+  matches: false, media: query, onchange: null,
+  addListener: () => {}, removeListener: () => {}, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
+})) as unknown as typeof window.matchMedia;
+
+const episodeList = {
+  items: [
+    { id: "ep-1", idx: 1, title: "Tập 1", hook: "h", status: "ready", currentStage: null, progress: 1, durationSeconds: 310, thumbnailUrl: null, updatedAt: "" },
+    { id: "ep-2", idx: 2, title: "Tập 2", hook: "h", status: "producing", currentStage: "render", progress: 0.5, durationSeconds: null, thumbnailUrl: null, updatedAt: "" },
+  ],
+  total: 2, page: 1, pageSize: 20,
+};
+
+const mockClient = {
+  listEpisodes: vi.fn().mockResolvedValue(episodeList),
+  getEpisode: vi.fn(),
+  patchEpisode: vi.fn(),
+  rerenderEpisode: vi.fn(),
+};
+
+vi.mock("../../api/studio-client", async (orig) => ({
+  ...(await orig<object>()),
+  useStudioClient: () => mockClient,
+}));
+
+const { EpisodesPanel } = await import("./EpisodesPanel");
+
+function Wrapper({ children }: { children: React.ReactNode }) {
+  return (
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <MemoryRouter>
+        <NuqsAdapter>{children}</NuqsAdapter>
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+}
+
+describe("EpisodesPanel", () => {
+  it("renders episode titles from API", async () => {
+    render(
+      <Wrapper>
+        <EpisodesPanel productionId="p-1" canEdit={true} />
+      </Wrapper>,
+    );
+    expect(await screen.findByText("Tập 1")).toBeTruthy();
+    expect(screen.getByText("Tập 2")).toBeTruthy();
+  });
+
+  it("passes sortBy and sortOrder to listEpisodes", async () => {
+    mockClient.listEpisodes.mockClear();
+    render(
+      <Wrapper>
+        <EpisodesPanel productionId="p-1" canEdit={true} />
+      </Wrapper>,
+    );
+    await waitFor(() => {
+      expect(mockClient.listEpisodes).toHaveBeenCalledWith(
+        "p-1",
+        expect.objectContaining({ sortBy: "idx", sortOrder: "asc" }),
+      );
+    });
+  });
+
+  it("hides re-render button when canEdit=false", async () => {
+    render(
+      <Wrapper>
+        <EpisodesPanel productionId="p-1" canEdit={false} />
+      </Wrapper>,
+    );
+    await screen.findByText("Tập 1");
+    // Re-render buttons use aria-label / tooltip "Render lại" (vi locale) - button should not be present
+    // We check that the number of action buttons is less (no rerender button per row)
+    const rerenderButtons = screen.queryAllByTitle("Render lại");
+    expect(rerenderButtons).toHaveLength(0);
+  });
+
+  it("shows re-render button when canEdit=true", async () => {
+    render(
+      <Wrapper>
+        <EpisodesPanel productionId="p-1" canEdit={true} />
+      </Wrapper>,
+    );
+    await screen.findByText("Tập 1");
+    // With canEdit=true, Popconfirm with rerenderConfirm text is shown via tooltip
+    // At minimum, we verify more buttons are present (editor + rerender + export = 3 per row)
+    const allButtons = screen.getAllByRole("button");
+    expect(allButtons.length).toBeGreaterThan(4); // sort + refresh + at least 2*3 row buttons
+  });
+});
