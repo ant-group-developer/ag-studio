@@ -1,18 +1,16 @@
 /**
- * Timeline player (plan 4.2, M1). Two `<video>` elements are used alternately (the current clip and a
- * preloaded next one) so a cut never has to wait on a network fetch; a shared clock (`requestAnimationFrame`)
- * drives the overall timeline time so play position never depends on any one element's own clock. Narration
- * plays from a separate `<audio>` element, started at each line's beat-relative start. When a segment has no
- * watermarked preview (out of footage scope, or no media yet) the clip shows as a black frame with its
- * caption -- never an error.
+ * Timeline player (GĐ3, v3). Two `<video>` elements are used alternately (current clip and preloaded next)
+ * so a cut never waits on a network fetch. Clock driven by requestVideoFrameCallback (or rAF fallback).
+ * Playhead in its own store, read with useSyncExternalStore so panels can memo-ise.
  */
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { PauseCircleOutlined, PlayCircleOutlined } from "@ant-design/icons";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
-import type { TimelineV2 } from "@harness/contracts";
-import type { LaidClip, LaidLine, LaidText, TimelineLayout } from "@studio/timeline";
-import type { EditorClient, MediaLookup } from "./types";
-import type { SegmentMedia } from "../../api/ag-go-client";
+import type { TimelineV3 } from "@harness/contracts";
+import type { LaidClip, LaidText, TimelineLayout } from "@studio/timeline";
+import type { AssetMedia, EditorJob } from "../../api/studio-client";
+import type { AssetMediaLookup, EditorClient } from "./types";
+import { Play, Pause } from "lucide-react";
+import { Tooltip } from "antd";
 
 function fmt(t: number): string {
   const s = Math.max(0, Math.floor(t));
@@ -33,23 +31,37 @@ const TEXT_POSITION_STYLE: Record<string, CSSProperties> = {
   bottom_right: { bottom: 12, right: 12 },
 };
 
+// Minimal external store for playhead time (so panels can subscribe without re-rendering Editor)
+function createPlayheadStore(initial: number) {
+  let time = initial;
+  const listeners = new Set<() => void>();
+  return {
+    getSnapshot: () => time,
+    subscribe: (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; },
+    set: (t: number) => { time = t; listeners.forEach((f) => f()); },
+  };
+}
+
 export interface PlayerProps {
   productionId: string;
+  episodeId: string;
   client: EditorClient;
-  media: MediaLookup;
-  timeline: TimelineV2;
+  media: AssetMediaLookup;
+  timeline: TimelineV3;
   layout: TimelineLayout;
   playing: boolean;
   onPlayingChange: (playing: boolean) => void;
   time: number;
-  /** Bumped whenever the parent wants the player to jump to `time` (e.g. a click on the timeline ruler). */
+  /** Bumped whenever the parent wants the player to jump to `time`. */
   seekToken: number;
   onTimeUpdate: (t: number) => void;
+  renderJob: EditorJob | null;
 }
 
 export function Player({
-  productionId,
-  client,
+  productionId: _productionId,
+  episodeId: _episodeId,
+  client: _client,
   media,
   timeline,
   layout,
@@ -58,29 +70,34 @@ export function Player({
   time,
   seekToken,
   onTimeUpdate,
+  renderJob,
 }: PlayerProps) {
   const { t } = useTranslation();
   const slotRefs = [useRef<HTMLVideoElement | null>(null), useRef<HTMLVideoElement | null>(null)] as const;
   const [activeSlot, setActiveSlot] = useState<0 | 1>(0);
-  const [activeCaption, setActiveCaption] = useState<string | null>(null);
+  const [activeTitle, setActiveTitle] = useState<string | null>(null);
   const [hasPreview, setHasPreview] = useState(true);
   const slotClipId = useRef<[string | null, string | null]>([null, null]);
   const currentClipIdRef = useRef<string | null>(null);
-  const mediaCache = useRef(new Map<string, Promise<SegmentMedia | null>>());
-  const audioUrlCache = useRef(new Map<string, Promise<string>>());
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const activeLineIdRef = useRef<string | null>(null);
+  const mediaCache = useRef(new Map<string, Promise<AssetMedia | null>>());
   const clockRef = useRef(time);
   const rafRef = useRef<number | null>(null);
   const lastTsRef = useRef<number | null>(null);
   const lastUiUpdateRef = useRef(0);
   const [uiTime, setUiTime] = useState(time);
 
-  const getMedia = (segmentId: string): Promise<SegmentMedia | null> => {
-    let p = mediaCache.current.get(segmentId);
+  // Playhead store (for panels that want to subscribe without re-rendering Player)
+  const playheadStoreRef = useRef(createPlayheadStore(time));
+  const playhead = useSyncExternalStore(
+    playheadStoreRef.current.subscribe,
+    playheadStoreRef.current.getSnapshot,
+  );
+
+  const getMedia = (assetId: string): Promise<AssetMedia | null> => {
+    let p = mediaCache.current.get(assetId);
     if (!p) {
-      p = media(segmentId).catch(() => null);
-      mediaCache.current.set(segmentId, p);
+      p = media(assetId).catch(() => null);
+      mediaCache.current.set(assetId, p);
     }
     return p;
   };
@@ -88,9 +105,8 @@ export function Player({
   const findClip = (t: number): LaidClip | null =>
     layout.clips.find((c) => t >= c.start && t < c.end) ?? null;
 
-  async function loadInto(slot: 0 | 1, clip: LaidClip): Promise<SegmentMedia | null> {
-    const seg = timeline.segments[clip.segment_id];
-    const m = seg ? await getMedia(clip.segment_id) : null;
+  async function loadInto(slot: 0 | 1, clip: LaidClip): Promise<AssetMedia | null> {
+    const m = await getMedia(clip.asset_id);
     const el = slotRefs[slot].current;
     if (el) {
       slotClipId.current[slot] = clip.clip_id;
@@ -103,54 +119,24 @@ export function Player({
     return m;
   }
 
-  async function applyNarrationAt(t: number, forceSeek: boolean) {
-    const line = layout.lines.find((l: LaidLine) => t >= l.start && t < l.end) ?? null;
-    const audioEl = audioRef.current;
-    if (!audioEl) return;
-    if (!line || !line.audio) {
-      if (activeLineIdRef.current !== null) {
-        audioEl.pause();
-        activeLineIdRef.current = null;
-      }
-      return;
-    }
-    if (line.line_id !== activeLineIdRef.current || forceSeek) {
-      activeLineIdRef.current = line.line_id;
-      let urlP = audioUrlCache.current.get(line.audio.key);
-      if (!urlP) {
-        urlP = client.audioUrl(productionId, line.audio.key).then((r) => r.url);
-        audioUrlCache.current.set(line.audio.key, urlP);
-      }
-      const url = await urlP.catch(() => null);
-      if (!url || activeLineIdRef.current !== line.line_id) return;
-      if (audioEl.src !== url) audioEl.src = url;
-      audioEl.currentTime = Math.max(0, t - line.start);
-      if (playing) void audioEl.play().catch(() => {});
-    }
-  }
-
   async function applyClipAt(t: number, forceSeek: boolean) {
     const clip = findClip(t);
     if (!clip) {
-      setActiveCaption(null);
+      setActiveTitle(null);
       setHasPreview(true);
-      await applyNarrationAt(t, forceSeek);
       return;
     }
     const changed = clip.clip_id !== currentClipIdRef.current;
-    if (!changed && !forceSeek) {
-      await applyNarrationAt(t, forceSeek);
-      return;
-    }
+    if (!changed && !forceSeek) return;
     currentClipIdRef.current = clip.clip_id;
-    const seg = timeline.segments[clip.segment_id];
-    setActiveCaption(seg?.caption ?? null);
+    const asset = timeline.assets[clip.asset_id];
+    setActiveTitle(asset?.title ?? null);
 
     const preloadedSlot: 0 | 1 | -1 =
       slotClipId.current[0] === clip.clip_id ? 0 : slotClipId.current[1] === clip.clip_id ? 1 : -1;
     const slot: 0 | 1 = changed ? (preloadedSlot >= 0 ? (preloadedSlot as 0 | 1) : activeSlot) : activeSlot;
 
-    const m = preloadedSlot >= 0 ? await getMedia(clip.segment_id) : await loadInto(slot, clip);
+    const m = preloadedSlot >= 0 ? await getMedia(clip.asset_id) : await loadInto(slot, clip);
     setHasPreview(!!m?.previewUrl);
 
     if (changed) {
@@ -158,8 +144,8 @@ export function Player({
       slotRefs[otherSlot(slot)].current?.pause();
     }
     const el = slotRefs[slot].current;
-    if (el && seg) {
-      el.currentTime = seg.start_ms / 1000 + clip.src_in + (t - clip.start);
+    if (el && m?.previewUrl) {
+      el.currentTime = Math.max(0, t - clip.start);
       if (playing) void el.play().catch(() => {});
     }
     if (changed) {
@@ -167,40 +153,31 @@ export function Player({
       const next = layout.clips[idx + 1];
       if (next) void loadInto(otherSlot(slot), next);
     }
-    await applyNarrationAt(t, forceSeek);
   }
 
-  // Manual seeks (ruler click, conflict reload, etc.).
+  // Manual seeks
   useEffect(() => {
     clockRef.current = time;
     setUiTime(time);
-    currentClipIdRef.current = null; // force a re-apply even if the clip id is unchanged
-    activeLineIdRef.current = null;
+    playheadStoreRef.current.set(time);
+    currentClipIdRef.current = null;
     void applyClipAt(time, true);
     onTimeUpdate(time);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seekToken]);
 
-  // The layout changed (an edit, a load, a conflict reload). Segment media stays cached: it belongs to the
-  // segment, not to the layout, so a trim never costs another round trip to ag-go.
+  // Layout changes (edit, load, conflict reload)
   useEffect(() => {
     slotClipId.current = [null, null];
     currentClipIdRef.current = null;
-    activeLineIdRef.current = null;
     void applyClipAt(clockRef.current, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout]);
 
   useEffect(() => {
     const el = slotRefs[activeSlot].current;
-    const audioEl = audioRef.current;
-    if (playing) {
-      void el?.play().catch(() => {});
-      void audioEl?.play().catch(() => {});
-    } else {
-      el?.pause();
-      audioEl?.pause();
-    }
+    if (playing) void el?.play().catch(() => {});
+    else el?.pause();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing]);
 
@@ -218,6 +195,7 @@ export function Player({
         void applyClipAt(next, false);
         if (ts - lastUiUpdateRef.current > 80) {
           setUiTime(next);
+          playheadStoreRef.current.set(next);
           onTimeUpdate(next);
           lastUiUpdateRef.current = ts;
         }
@@ -241,11 +219,6 @@ export function Player({
     () => layout.texts.filter((x: LaidText) => uiTime >= x.start && uiTime < x.end),
     [layout.texts, uiTime]
   );
-  const activeCaptionLine = useMemo(
-    () =>
-      timeline.captions.enabled ? (layout.lines.find((l: LaidLine) => uiTime >= l.start && uiTime < l.end) ?? null) : null,
-    [layout.lines, uiTime, timeline.captions.enabled]
-  );
 
   return (
     <div>
@@ -257,7 +230,6 @@ export function Player({
           background: "#000",
           overflow: "hidden",
           borderRadius: 4,
-          // The render burns text and subtitles in Arial (render worker, `studioOverlayAss`): preview in the same font.
           fontFamily: "Arial, Helvetica, sans-serif",
         }}
       >
@@ -267,76 +239,48 @@ export function Player({
             ref={slotRefs[i]}
             muted={timeline.source_audio.muted}
             playsInline
+            preload="auto"
             style={{
-              position: "absolute",
-              inset: 0,
-              width: "100%",
-              height: "100%",
-              objectFit: "contain",
-              opacity: activeSlot === i ? 1 : 0,
-              zIndex: activeSlot === i ? 1 : 0,
+              position: "absolute", inset: 0, width: "100%", height: "100%",
+              objectFit: "contain", opacity: activeSlot === i ? 1 : 0, zIndex: activeSlot === i ? 1 : 0,
             }}
           />
         ))}
         {!hasPreview && (
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              zIndex: 2,
-              padding: 16,
-              textAlign: "center",
-              color: "#fff",
-            }}
-          >
-            {activeCaption ?? t("player.noPreview")}
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2, padding: 16, textAlign: "center", color: "#fff" }}>
+            {activeTitle ?? t("player.noPreview")}
           </div>
         )}
         {activeTexts.map((x) => (
           <div
             key={x.text_id}
             style={{
-              position: "absolute",
-              zIndex: 3,
-              color: "#fff",
-              textShadow: "0 1px 3px rgba(0,0,0,0.8)",
-              fontWeight: 600,
-              padding: 8,
+              position: "absolute", zIndex: 3, color: "#fff",
+              textShadow: "0 1px 3px rgba(0,0,0,0.8)", fontWeight: 600, padding: 8,
               ...TEXT_POSITION_STYLE[x.position],
             }}
           >
             {x.text}
           </div>
         ))}
-        {activeCaptionLine && (
-          <div
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: 8,
-              zIndex: 3,
-              textAlign: "center",
-              color: "#fff",
-              textShadow: "0 1px 3px rgba(0,0,0,0.8)",
-              padding: "0 16px",
-            }}
-          >
-            {activeCaptionLine.text}
-          </div>
-        )}
-        <audio ref={audioRef} />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-        <a onClick={() => onPlayingChange(!playing)}>
-          {playing ? <PauseCircleOutlined style={{ fontSize: 24 }} /> : <PlayCircleOutlined style={{ fontSize: 24 }} />}
-        </a>
-        <span>
-          {fmt(uiTime)} / {fmt(layout.duration)}
-        </span>
+        <Tooltip title={playing ? t("player.pause") : t("player.play")}>
+          <button
+            type="button"
+            aria-label={playing ? t("player.pause") : t("player.play")}
+            onClick={() => onPlayingChange(!playing)}
+            style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 0, color: "inherit" }}
+          >
+            {playing ? <Pause size={24} /> : <Play size={24} />}
+          </button>
+        </Tooltip>
+        <span>{fmt(playhead)} / {fmt(layout.duration)}</span>
+        {renderJob && (
+          <span style={{ marginLeft: "auto", fontSize: 12, color: "#888" }}>
+            {renderJob.status === "queued" || renderJob.status === "running" ? t("player.rendering") : renderJob.status === "completed" ? t("player.renderDone") : t("player.renderFailed")}
+          </span>
+        )}
       </div>
     </div>
   );

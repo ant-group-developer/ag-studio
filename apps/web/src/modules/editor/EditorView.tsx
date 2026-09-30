@@ -1,7 +1,7 @@
 /**
- * The web editor (plan 4.2, M1). Pure UI: all state comes from `useEditor`, all timeline math comes from
- * `@studio/timeline`. `productionId`/`client`/`media` are injected so the dev playground
- * (`apps/web/playground.html`) can render this with an in-memory fake client and no Auth0.
+ * The web editor (GĐ3, v3). Pure UI: all state comes from `useEditor`, all timeline math from
+ * `@studio/timeline`. `productionId`/`episodeId`/`client`/`media` are injected so the dev playground
+ * can render this with an in-memory fake client and no Auth0.
  */
 import { useMemo, useState } from "react";
 import { Alert, Modal, Spin } from "antd";
@@ -13,22 +13,23 @@ import { Player } from "./Player";
 import { TimelineView } from "./TimelineView";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { FootagePanel } from "./FootagePanel";
-import type { EditorClient, MediaLookup } from "./types";
+import type { AssetMediaLookup, EditorClient } from "./types";
 
 export interface EditorViewProps {
   productionId: string;
+  episodeId: string;
   client: EditorClient;
-  media: MediaLookup;
-  /** Called after "Hoàn tất" successfully submits the `edit` gate. */
-  onDone?: () => void;
+  media: AssetMediaLookup;
+  onRerender?: () => void;
 }
 
-export function EditorView({ productionId, client, media, onDone }: EditorViewProps) {
+export function EditorView({ productionId, episodeId, client, media, onRerender }: EditorViewProps) {
   const { t } = useTranslation();
-  const editor = useEditor(productionId, client);
+  const editor = useEditor(productionId, episodeId, client);
   const [seek, setSeek] = useState({ time: 0, token: 0 });
   const [playhead, setPlayhead] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [renderJob, setRenderJob] = useState<import("../../api/studio-client").EditorJob | null>(null);
 
   const layout = useMemo(() => (editor.state ? layoutTimeline(editor.state.timeline) : null), [editor.state]);
   const issues = useMemo(() => (editor.state ? timelineIssues(editor.state.timeline) : []), [editor.state]);
@@ -46,6 +47,7 @@ export function EditorView({ productionId, client, media, onDone }: EditorViewPr
     <div>
       <Toolbar
         productionId={productionId}
+        episodeId={episodeId}
         client={client}
         state={state}
         dispatch={dispatch}
@@ -53,17 +55,19 @@ export function EditorView({ productionId, client, media, onDone }: EditorViewPr
         autosaveStatus={editor.autosaveStatus}
         saveError={editor.saveError}
         flush={editor.flush}
-        onDone={() => onDone?.()}
+        onRenderJob={setRenderJob}
+        onRerender={onRerender}
       />
 
       <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
         <div style={{ width: 280, flexShrink: 0 }}>
-          <FootagePanel productionId={productionId} client={client} media={media} state={state} dispatch={dispatch} />
+          <FootagePanel productionId={productionId} client={client} state={state} dispatch={dispatch} />
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
           <Player
             productionId={productionId}
+            episodeId={episodeId}
             client={client}
             media={media}
             timeline={state.timeline}
@@ -73,6 +77,7 @@ export function EditorView({ productionId, client, media, onDone }: EditorViewPr
             time={seek.time}
             seekToken={seek.token}
             onTimeUpdate={setPlayhead}
+            renderJob={renderJob}
           />
           <TimelineView
             layout={layout}
@@ -87,7 +92,7 @@ export function EditorView({ productionId, client, media, onDone }: EditorViewPr
         </div>
 
         <div style={{ width: 320, flexShrink: 0 }}>
-          <PropertiesPanel productionId={productionId} client={client} state={state} layout={layout} dispatch={dispatch} />
+          <PropertiesPanel state={state} layout={layout} dispatch={dispatch} />
         </div>
       </div>
 
