@@ -3,12 +3,12 @@ import { Autosaver, type SaveResult } from "./autosave";
 import { sampleTimeline } from "./fixtures";
 
 function setup(results: SaveResult[]) {
-  const calls: { base: number; text: string }[] = [];
+  const calls: { base: number; clips: number }[] = [];
   const events: string[] = [];
   const saver = new Autosaver({
     delayMs: 1000,
     save: async (base, t) => {
-      calls.push({ base, text: t.narration[0]!.text });
+      calls.push({ base, clips: t.clips.length });
       return results.shift() ?? { ok: true, revision: base + 1 };
     },
     onSaved: (rev) => events.push(`saved:${rev}`),
@@ -18,21 +18,21 @@ function setup(results: SaveResult[]) {
   return { saver, calls, events };
 }
 
-const withText = (text: string) => {
+const withClips = (n: number) => {
   const t = sampleTimeline();
-  return { ...t, narration: [{ ...t.narration[0]!, text }, ...t.narration.slice(1)] };
+  return { ...t, clips: t.clips.slice(0, n) };
 };
 
 describe("Autosaver", () => {
   it("debounces: only the last edit of a burst is saved, on top of the held revision", async () => {
     vi.useFakeTimers();
     const { saver, calls, events } = setup([]);
-    saver.schedule(3, withText("a"));
-    saver.schedule(3, withText("ab"));
-    saver.schedule(3, withText("abc"));
+    saver.schedule(3, withClips(3));
+    saver.schedule(3, withClips(2));
+    saver.schedule(3, withClips(1));
     expect(saver.status).toBe("pending");
     await vi.advanceTimersByTimeAsync(1000);
-    expect(calls).toEqual([{ base: 3, text: "abc" }]);
+    expect(calls).toEqual([{ base: 3, clips: 1 }]);
     expect(events).toEqual(["saved:4"]);
     expect(saver.status).toBe("idle");
     vi.useRealTimers();
@@ -40,17 +40,17 @@ describe("Autosaver", () => {
 
   it("409: stops saving, reports the current revision, and ignores edits until resolved", async () => {
     const { saver, calls, events } = setup([{ ok: false, conflict: true, currentRevision: 9 }]);
-    saver.schedule(3, withText("mine"));
+    saver.schedule(3, withClips(3));
     await saver.flush();
     expect(events).toEqual(["conflict:9"]);
     expect(saver.status).toBe("conflict");
-    saver.schedule(3, withText("more"));
+    saver.schedule(3, withClips(2));
     await saver.flush();
     expect(calls).toHaveLength(1); // nothing sent while in conflict
     saver.resolveConflict();
-    saver.schedule(9, withText("rebased"));
+    saver.schedule(9, withClips(2));
     await saver.flush();
-    expect(calls.at(-1)).toEqual({ base: 9, text: "rebased" });
+    expect(calls.at(-1)).toEqual({ base: 9, clips: 2 });
     expect(events.at(-1)).toBe("saved:10");
   });
 
@@ -62,9 +62,9 @@ describe("Autosaver", () => {
       save: async (base) => { calls.push(base); if (calls.length === 1) await gate; return { ok: true, revision: base + 1 }; },
       onSaved: () => {}, onConflict: () => {}, onError: () => {},
     });
-    saver.schedule(1, withText("first"));
+    saver.schedule(1, withClips(3));
     const first = saver.flush();
-    saver.schedule(1, withText("second")); // the page still believes revision 1
+    saver.schedule(1, withClips(2)); // the page still believes revision 1
     release();
     await first;
     await saver.flush();
@@ -80,7 +80,7 @@ describe("Autosaver", () => {
       onConflict: () => {}, onError: () => {},
       onStatus: (s) => statuses.push(s),
     });
-    saver.schedule(1, withText("x"));
+    saver.schedule(1, withClips(3));
     await saver.flush();
     expect(statuses).toEqual(["pending", "saving", "idle"]);
     expect(statusSeenBySaved).toBe("idle");
@@ -88,11 +88,11 @@ describe("Autosaver", () => {
 
   it("a network error keeps the edit and retries it on the next flush", async () => {
     const { saver, calls, events } = setup([{ ok: false, conflict: false, error: "offline" }]);
-    saver.schedule(2, withText("x"));
+    saver.schedule(2, withClips(3));
     await saver.flush();
     expect(saver.status).toBe("error");
     await saver.flush();
-    expect(calls.map((c) => c.text)).toEqual(["x", "x"]);
+    expect(calls.map((c) => c.clips)).toEqual([3, 3]);
     expect(events).toEqual(["error:offline", "saved:3"]);
   });
 });

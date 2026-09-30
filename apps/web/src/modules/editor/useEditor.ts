@@ -1,9 +1,9 @@
 /**
- * Editor state wiring (plan 4.2, M1): loads the latest timeline revision, drives `editorReducer`, and keeps
+ * Editor state wiring (GĐ3): loads the latest timeline v3 revision, drives `editorReducer`, and keeps
  * one `Autosaver` running while the timeline is dirty. `EditorView` is pure UI on top of this.
  */
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import type { TimelineV2 } from "@harness/contracts";
+import type { TimelineV3 } from "@harness/contracts";
 import { editorReducer, initEditor, isDirty, type EditorAction, type EditorState } from "./state/editor-reducer";
 import { Autosaver, type AutosaveStatus, type SaveResult } from "./state/autosave";
 import { StudioHttpError } from "../../api/studio-client";
@@ -27,7 +27,7 @@ export interface UseEditorResult {
   autosaveStatus: AutosaveStatus;
   saveError: string | null;
   conflict: ConflictInfo | null;
-  /** Save now (before "Render preview" / "Hoàn tất"); resolves once the latest edit is saved or refused. */
+  /** Save now (before "Render preview"); resolves once the latest edit is saved or refused. */
   flush: () => Promise<void>;
   /** Conflict resolution: discard local edits and load the revision someone else just saved. */
   loadLatest: () => Promise<void>;
@@ -35,7 +35,7 @@ export interface UseEditorResult {
   keepMine: () => Promise<void>;
 }
 
-export function useEditor(productionId: string, client: EditorClient): UseEditorResult {
+export function useEditor(productionId: string, episodeId: string, client: EditorClient): UseEditorResult {
   const [state, dispatch] = useReducer(wrapReducer, null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -44,9 +44,9 @@ export function useEditor(productionId: string, client: EditorClient): UseEditor
   const [conflict, setConflict] = useState<ConflictInfo | null>(null);
 
   const save = useCallback(
-    async (base: number, timeline: TimelineV2): Promise<SaveResult> => {
+    async (base: number, timeline: TimelineV3): Promise<SaveResult> => {
       try {
-        const r = await client.saveRevision(productionId, base, timeline);
+        const r = await client.saveRevision(productionId, episodeId, base, timeline);
         return { ok: true, revision: r.revision };
       } catch (e) {
         if (e instanceof StudioHttpError && e.status === 409) {
@@ -56,7 +56,7 @@ export function useEditor(productionId: string, client: EditorClient): UseEditor
         return { ok: false, conflict: false, error: e instanceof Error ? e.message : String(e) };
       }
     },
-    [client, productionId]
+    [client, productionId, episodeId]
   );
 
   const saverRef = useRef<Autosaver | null>(null);
@@ -84,20 +84,20 @@ export function useEditor(productionId: string, client: EditorClient): UseEditor
     setLoading(true);
     setLoadError(null);
     try {
-      const r = await client.getTimeline(productionId);
+      const r = await client.getTimeline(productionId, episodeId);
       dispatch({ type: "load", timeline: r.data, revision: r.revision });
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [client, productionId]);
+  }, [client, productionId, episodeId]);
 
   useEffect(() => {
     void reload();
-    // Only on mount / when the production or client identity changes.
+    // Only on mount / when the production or episode changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productionId]);
+  }, [productionId, episodeId]);
 
   useEffect(() => {
     if (!state) return;
@@ -126,7 +126,7 @@ export function useEditor(productionId: string, client: EditorClient): UseEditor
     if (!state || !conflict) return;
     saverRef.current!.resolveConflict();
     try {
-      const r = await client.saveRevision(productionId, conflict.currentRevision, state.timeline);
+      const r = await client.saveRevision(productionId, episodeId, conflict.currentRevision, state.timeline);
       dispatch({ type: "saved", revision: r.revision, timeline: state.timeline });
       setConflict(null);
       setSaveError(null);
@@ -134,7 +134,7 @@ export function useEditor(productionId: string, client: EditorClient): UseEditor
       setSaveError(e instanceof Error ? e.message : String(e));
     }
     setAutosaveStatus(saverRef.current!.status);
-  }, [state, conflict, client, productionId]);
+  }, [state, conflict, client, productionId, episodeId]);
 
   return { state, loading, loadError, dispatch, autosaveStatus, saveError, conflict, flush, loadLatest, keepMine };
 }

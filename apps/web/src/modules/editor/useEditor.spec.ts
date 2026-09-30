@@ -9,41 +9,37 @@ function makeClient(overrides: Partial<EditorClient> = {}): EditorClient {
   return {
     getTimeline: vi.fn().mockResolvedValue({
       revision: 1,
-      base_revision: 0,
       data: sampleTimeline(),
-      author_id: "u1",
-      label: null,
-      created_at: "2024-01-01",
+      authorId: "u1",
+      savedAt: "2024-01-01T00:00:00Z",
       issues: [],
     }),
-    saveRevision: vi.fn(),
-    ttsLine: vi.fn(),
+    saveRevision: vi.fn().mockResolvedValue({ revision: 2, issues: [] }),
     renderPreview: vi.fn(),
     getEditorJob: vi.fn(),
-    audioUrl: vi.fn(),
-    submitGate: vi.fn(),
-    getStageDocument: vi.fn(),
+    getAssetMedia: vi.fn(),
+    getProductionCatalog: vi.fn(),
     ...overrides,
   };
 }
 
-describe("useEditor: save result mapping", () => {
+describe("useEditor: save result mapping (v3)", () => {
   it("loads the latest timeline revision", async () => {
     const client = makeClient();
-    const { result } = renderHook(() => useEditor("prod-1", client));
+    const { result } = renderHook(() => useEditor("prod-1", "ep-1", client));
     await waitFor(() => expect(result.current.state).not.toBeNull());
     expect(result.current.state!.revision).toBe(1);
-    expect(client.getTimeline).toHaveBeenCalledWith("prod-1");
+    expect(client.getTimeline).toHaveBeenCalledWith("prod-1", "ep-1");
   });
 
   it("maps a 409 (revision_conflict) to the conflict state, not a save error", async () => {
     const client = makeClient({
       saveRevision: vi.fn().mockRejectedValue(new StudioHttpError(409, { code: "revision_conflict", currentRevision: 7 })),
     });
-    const { result } = renderHook(() => useEditor("prod-1", client));
+    const { result } = renderHook(() => useEditor("prod-1", "ep-1", client));
     await waitFor(() => expect(result.current.state).not.toBeNull());
 
-    act(() => result.current.dispatch({ type: "setCaptions", enabled: false }));
+    act(() => result.current.dispatch({ type: "setSourceMuted", muted: false }));
     await act(async () => {
       await result.current.flush();
     });
@@ -55,10 +51,10 @@ describe("useEditor: save result mapping", () => {
 
   it("maps a network/other error to a save error and keeps autosave retryable", async () => {
     const client = makeClient({ saveRevision: vi.fn().mockRejectedValue(new Error("network down")) });
-    const { result } = renderHook(() => useEditor("prod-1", client));
+    const { result } = renderHook(() => useEditor("prod-1", "ep-1", client));
     await waitFor(() => expect(result.current.state).not.toBeNull());
 
-    act(() => result.current.dispatch({ type: "setCaptions", enabled: false }));
+    act(() => result.current.dispatch({ type: "setSourceMuted", muted: false }));
     await act(async () => {
       await result.current.flush();
     });
@@ -68,12 +64,12 @@ describe("useEditor: save result mapping", () => {
     expect(result.current.autosaveStatus).toBe("error");
   });
 
-  it("a successful save advances the revision and clears dirtiness", async () => {
+  it("a successful save advances the revision", async () => {
     const client = makeClient({ saveRevision: vi.fn().mockResolvedValue({ revision: 2, issues: [] }) });
-    const { result } = renderHook(() => useEditor("prod-1", client));
+    const { result } = renderHook(() => useEditor("prod-1", "ep-1", client));
     await waitFor(() => expect(result.current.state).not.toBeNull());
 
-    act(() => result.current.dispatch({ type: "setCaptions", enabled: false }));
+    act(() => result.current.dispatch({ type: "setSourceMuted", muted: false }));
     await act(async () => {
       await result.current.flush();
     });

@@ -1,17 +1,15 @@
 import type { StudioClient } from "../../api/studio-client";
-import type { MediaLookup } from "../common/media";
 
-/** The slice of `StudioClient` the editor needs -- injectable so the playground can use an in-memory fake. */
+/** The slice of `StudioClient` the episode editor needs -- injectable so the playground can use an in-memory fake. */
 export type EditorClient = Pick<
   StudioClient,
   | "getTimeline"
   | "saveRevision"
-  | "ttsLine"
   | "renderPreview"
   | "getEditorJob"
-  | "audioUrl"
-  | "submitGate"
-  | "getStageDocument"
+  | "getAssetMedia"
+  | "getProductionCatalog"
 >;
 
-export type { MediaLookup };
+/** Map asset_id -> media info (null when footage is not in scope or not ready). */
+export type AssetMediaLookup = (assetId: string) => Promise<import("../../api/studio-client").AssetMedia | null>;

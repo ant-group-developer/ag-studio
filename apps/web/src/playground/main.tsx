@@ -29,7 +29,7 @@ function Playground() {
           alignItems: "center",
         }}
       >
-        <Text strong>AG Studio — Editor playground (dữ liệu giả lập)</Text>
+        <Text strong>AG Studio — Editor playground v3 (dữ liệu giả lập)</Text>
         <Button size="small" onClick={() => simulateConflictOnNextSave()}>
           Giả lập xung đột
         </Button>
@@ -37,9 +37,9 @@ function Playground() {
       <div style={{ padding: 16 }}>
         <EditorView
           productionId="playground"
+          episodeId="ep-playground"
           client={client}
           media={async () => null}
-          onDone={() => window.alert("Đã gửi duyệt gate 'edit' (giả lập)")}
         />
       </div>
     </div>
