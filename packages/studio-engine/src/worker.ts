@@ -1,26 +1,44 @@
 /**
- * The Studio worker: a harness `Worker` over `ag-studio-production@1.0.0` with every executor the workflow
- * uses -- in-process stages, Claude (structured, subscription), gates, and ag-farm.
+ * The Studio worker (GĐ2): a harness `Worker` over ag-studio-series-plan and ag-studio-episode
+ * with every executor — in-process stages, Claude (structured, subscription), gates, and ag-farm.
  */
 import { CliAgentRuntime } from "@harness/adapter-agent-cli";
 import { createLogger, Redactor, type HarnessLogger } from "@harness/core";
 import { ExecutorRegistry, FarmExecutor, GateExecutor, InProcessExecutor, makeStudioFarmRecorder, StudioAgentExecutor } from "@harness/executors";
 import { Worker } from "@harness/worker";
 import type { FarmOwnerClient } from "@ag-farm/owner-client";
-import type { ProjectConfig } from "@harness/contracts";
+import type { ProjectConfig, StudioSkill } from "@harness/contracts";
 import { farmStorage, type StudioBucket } from "./bucket.js";
-import { STUDIO_FLOWS, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, STUDIO_RESOURCES, type StudioEngineCore } from "./core.js";
+import { cancelLegacyRuns, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, STUDIO_RESOURCES, STUDIO_WORKFLOWS, type StudioEngineCore } from "./core.js";
 import { studioPayloadBuilders } from "./payloads.js";
+import { startEpisodeRun } from "./run-control.js";
 import { studioStages, type FootageCatalogSource } from "./stages.js";
 import type { StudioDb } from "./studio-db.js";
 
+/** Per-skill model env keys. `STUDIO_CLAUDE_MODEL` overrides all. */
+const SKILL_MODEL_ENVS: Record<StudioSkill, string> = {
+  "studio-plan-episodes": "STUDIO_CLAUDE_MODEL_PLAN_EPISODES",
+  "studio-youtube-kit": "STUDIO_CLAUDE_MODEL_YOUTUBE_KIT",
+  "studio-trend-report": "STUDIO_CLAUDE_MODEL_TREND_REPORT",
+};
+const SKILL_DEFAULTS: Record<StudioSkill, string> = {
+  "studio-plan-episodes": "claude-opus-5-5",
+  "studio-youtube-kit": "claude-sonnet-5-5",
+  "studio-trend-report": "claude-sonnet-5-5",
+};
+
+function modelFor(skill: StudioSkill, override?: string): string {
+  if (override) return override;
+  const envKey = SKILL_MODEL_ENVS[skill];
+  const envVal = envKey ? process.env[envKey] : undefined;
+  return envVal ?? SKILL_DEFAULTS[skill];
+}
+
 export interface StudioClaudeOptions {
-  /** `skills/` of the Studio install. */
   skillsDir: string;
-  /** Default `claude-opus-5-5`. */
+  /** Global override: applies to all skills when set. */
   model?: string;
   maxTurns?: number;
-  /** Test seam: replaces `claude -p ...` (the `--json-schema` argument is still appended). */
   argv?: string[];
   baseEnv?: Record<string, string | undefined>;
   rateLimitBackoffMs?: number[];
@@ -45,12 +63,17 @@ export function studioLogger(bindings: Record<string, unknown> = {}): HarnessLog
 
 export function createStudioWorker(o: StudioWorkerOptions): Worker {
   const { core } = o;
+  // Cancel runs from old workflows (segment-based) so they don't block new ones
+  cancelLegacyRuns(core);
   const executors = new ExecutorRegistry();
-  executors.register("script", new InProcessExecutor(studioStages({ db: o.db, bucket: o.bucket, footage: o.footage })));
+  executors.register("script", new InProcessExecutor(studioStages({
+    db: o.db, bucket: o.bucket, footage: o.footage,
+    startEpisodeRun: (episodeId) => Promise.resolve(startEpisodeRun(core, o.db, episodeId)),
+  })));
   executors.register("agent", new StudioAgentExecutor({
-    runtimeFor: (jsonSchema) => new CliAgentRuntime({
+    runtimeFor: (jsonSchema: string, skill?: StudioSkill) => new CliAgentRuntime({
       runtime: "claude", skillsDir: o.claude.skillsDir,
-      structured: { jsonSchema, model: o.claude.model ?? "claude-opus-5-5", maxTurns: o.claude.maxTurns ?? 3 },
+      structured: { jsonSchema, model: modelFor(skill ?? "studio-plan-episodes", o.claude.model), maxTurns: o.claude.maxTurns ?? 3 },
       ...(o.claude.argv ? { argv: o.claude.argv } : {}),
       ...(o.claude.baseEnv ? { baseEnv: o.claude.baseEnv } : {}),
     }),
@@ -67,7 +90,7 @@ export function createStudioWorker(o: StudioWorkerOptions): Worker {
   const project = {
     schema_version: "harness.project-config/v1", project_id: STUDIO_PROJECT_ID, template_release: "0.1.0", runtime: "claude",
     data_root: core.dataRoot, portfolios: [{ portfolio_id: STUDIO_PORTFOLIO_ID, display_name: "AG Studio" }],
-    resources: STUDIO_RESOURCES, source: { materialize: "link" }, workflows: Object.values(STUDIO_FLOWS).map((f) => f.workflow),
+    resources: STUDIO_RESOURCES, source: { materialize: "link" }, workflows: Object.values(STUDIO_WORKFLOWS).map((f) => f.workflow),
   } as unknown as ProjectConfig;
   return new Worker({
     store: core.store, planner: core.planner, controller: core.controller, registry: core.registry, verifier: core.verifier, executors,

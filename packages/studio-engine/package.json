@@ -17,7 +17,8 @@
     "@ag-farm/protocol": "link:../../../ag-farm/packages/protocol",
     "@aws-sdk/client-s3": "^3.0.0",
     "@aws-sdk/s3-request-presigner": "^3.0.0",
-    "zod": "^3.23.0"
+    "zod": "^3.23.0",
+    "yazl": "^2.5.1"
   },
-  "devDependencies": { "vitest": "^2.1.0", "@types/node": "^22.10.0" }
+  "devDependencies": { "vitest": "^2.1.0", "@types/node": "^22.10.0", "@types/yazl": "^2.4.6" }
 }

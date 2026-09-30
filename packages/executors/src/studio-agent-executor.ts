@@ -1,32 +1,31 @@
 /**
- * Executor for Studio's Claude stages (`treatment`, `select-shots`, `narration`; plan 3.2 + 4.1).
+ * Executor for Studio's Claude agent stages (GĐ2: studio-trend-report, studio-plan-episodes, studio-youtube-kit).
  *
  * - The whole prompt goes through stdin: skill + stage brief + every input inlined as JSON. Claude runs with no
- *   tools at all, so nothing in a caption or `visible_text` can make it read or write anything.
- * - The output shape is forced with `--json-schema` (constraints structured outputs cannot express are
- *   stripped, see `claudeOutputJsonSchema`), then checked for real by the stage's deterministic validator.
+ *   tools at all, so nothing in a caption can make it read or write anything.
+ * - The output shape is forced with `--json-schema`, then checked by the stage's deterministic validator.
  * - A rejected answer gets exactly one repair round with the problem list appended; a second rejection fails
- *   the stage as `contract` (it parks WAITING_HUMAN; a person retries or edits at the next gate).
- * - Hitting the subscription limit is not a failed attempt: the executor waits with a growing backoff inside
- *   the stage deadline (the worker's heartbeat keeps the lease) and tries again.
+ *   the stage as `contract` (parks WAITING_HUMAN; a person retries or edits at the next gate).
+ * - Hitting the subscription limit waits with growing backoff inside the deadline; not counted as an attempt.
+ * - `studio-trend-report` is skipped when research has no videos (writes a `skipped: true` document, cost 0).
  */
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { mkdirSync } from "node:fs";
 import {
-  claudeOutputJsonSchema, STUDIO_SKILL_OUTPUTS,
+  claudeOutputJsonSchema, STUDIO_SKILL_OUTPUTS, TrendReportSchema,
   type AgentRuntime, type CheckerInput, type Executor, type ExecutorContext, type StageRequest, type StageResult, type StudioSkill,
 } from "@harness/contracts";
 import {
-  loadBrief, loadCatalog, loadTreatment, STUDIO_TYPES, validateNarration, validateSelection, validateTreatment,
+  loadBrief, loadCatalog, STUDIO_TYPES, validateSeriesPlan, validateTrendReport, validateYoutubeKit,
   type StudioProblem, type StudioValidation,
 } from "@harness/core";
+import { StudioEpisodeSchema } from "@harness/contracts";
 
 export interface StudioAgentExecutorOptions {
-  /** A runtime bound to one output JSON Schema (`CliAgentRuntime` in structured mode in production). */
-  runtimeFor: (jsonSchema: string) => AgentRuntime;
-  /** Waits after a RATE_LIMITED answer, in order; the last value repeats. Default 5, 10, 20, 40, 60 minutes. */
+  /** A runtime bound to one output JSON Schema. Optionally receives the skill name for per-skill model selection. */
+  runtimeFor: (jsonSchema: string, skill?: StudioSkill) => AgentRuntime;
   rateLimitBackoffMs?: number[];
-  /** Test seam for the backoff wait. */
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
 
@@ -42,13 +41,23 @@ function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
 
 type Validator = (raw: unknown, input: CheckerInput) => StudioValidation<unknown>;
 const VALIDATORS: Record<StudioSkill, Validator> = {
-  "studio-treatment": (raw, i) => validateTreatment(raw, loadBrief(i)),
-  "studio-select-shots": (raw, i) => validateSelection(raw, { brief: loadBrief(i), catalog: loadCatalog(i), treatment: loadTreatment(i) }),
-  "studio-narration": (raw, i) => validateNarration(raw, { brief: loadBrief(i), treatment: loadTreatment(i) }),
+  "studio-trend-report": (raw) => validateTrendReport(raw),
+  "studio-plan-episodes": (raw, i) => {
+    const brief = loadBrief(i);
+    const catalog = loadCatalog(i);
+    return validateSeriesPlan(raw, { brief, catalog: catalog.assets });
+  },
+  "studio-youtube-kit": (raw, i) => {
+    const episodePath = i.request.inputs.find((x) => x.type === STUDIO_TYPES.episode);
+    if (!episodePath) return { ok: false, value: undefined, problems: [{ code: "missing_input", message: "missing studio_episode input" }], warnings: [] };
+    const episodeRaw = JSON.parse(readFileSync(join(i.workspaceDir, episodePath.path), "utf8"));
+    const episode = StudioEpisodeSchema.parse(episodeRaw);
+    return validateYoutubeKit(raw, { episode });
+  },
 };
 
-/** Catalog entries without the empty fields: the catalog is by far the largest part of the prompt. */
-function compactJson(value: unknown): string {
+/** Compact a catalog: one line per asset (drop empty/null fields). */
+function compactCatalogLine(value: unknown): string {
   return JSON.stringify(value, (_k, v) => (v === null || (Array.isArray(v) && v.length === 0) || v === "" ? undefined : v));
 }
 
@@ -61,8 +70,41 @@ export function studioPrompt(request: StageRequest, workspaceDir: string, proble
     const text = readFileSync(path, "utf8");
     let body = text;
     if (input.type === STUDIO_TYPES.catalog) {
-      const cat = JSON.parse(text) as { segments: unknown[]; [k: string]: unknown };
-      body = [compactJson({ ...cat, segments: undefined }), ...cat.segments.map((s) => compactJson(s))].join("\n");
+      // Compact v2: header line + one asset per line (omit empty fields)
+      try {
+        const cat = JSON.parse(text) as { assets?: unknown[]; [k: string]: unknown };
+        const assets = cat.assets ?? [];
+        body = [compactCatalogLine({ ...cat, assets: undefined }), ...assets.map((a) => compactCatalogLine(a))].join("\n");
+      } catch { /* leave as-is */ }
+    } else if (input.type === STUDIO_TYPES.research) {
+      // research: per channel/keyword only the top 15 videos by views_per_day
+      try {
+        const r = JSON.parse(text) as { channels?: Array<{ videos?: unknown[] }>; keywords?: Array<{ videos?: unknown[] }>; [k: string]: unknown };
+        const compact = {
+          ...r,
+          channels: (r.channels ?? []).map((ch) => ({
+            ...ch,
+            videos: (ch.videos ?? [])
+              .sort((a, b) => (b as { views_per_day?: number }).views_per_day ?? 0 - ((a as { views_per_day?: number }).views_per_day ?? 0))
+              .slice(0, 15)
+              .map((v) => {
+                const vv = v as Record<string, unknown>;
+                return { title: vv["title"], views: vv["views"], views_per_day: vv["views_per_day"], duration_s: vv["duration_s"], published_at: vv["published_at"], tags: (vv["tags"] as string[] | undefined)?.slice(0, 10), outlier: vv["outlier"] };
+              }),
+          })),
+          keywords: (r.keywords ?? []).map((kw) => ({
+            ...kw,
+            videos: (kw.videos ?? [])
+              .sort((a, b) => (b as { views_per_day?: number }).views_per_day ?? 0 - ((a as { views_per_day?: number }).views_per_day ?? 0))
+              .slice(0, 15)
+              .map((v) => {
+                const vv = v as Record<string, unknown>;
+                return { title: vv["title"], views: vv["views"], views_per_day: vv["views_per_day"], duration_s: vv["duration_s"], published_at: vv["published_at"], tags: (vv["tags"] as string[] | undefined)?.slice(0, 10), outlier: vv["outlier"] };
+              }),
+          })),
+        };
+        body = JSON.stringify(compact, null, 2);
+      } catch { /* leave as-is */ }
     }
     parts.push("", `## ${input.type} (${input.path.split("/").pop()})`, "```json", body.trim(), "```");
   }
@@ -74,8 +116,21 @@ export function studioPrompt(request: StageRequest, workspaceDir: string, proble
   return parts.join("\n");
 }
 
+/** Write a skipped TrendReport (no research videos -> Claude skipped). */
+function writeSkipped(outPath: string, skill: StudioSkill, workspaceDir: string, request: StageRequest): void {
+  void workspaceDir; void request;
+  if (skill !== "studio-trend-report") return;
+  mkdirSync(join(outPath, ".."), { recursive: true });
+  writeFileSync(outPath, JSON.stringify(TrendReportSchema.parse({
+    schema_version: "studio.trend-report/v1",
+    skipped: true, summary: "Không có dữ liệu nghiên cứu.",
+    working_angles: [], title_patterns: [], hook_patterns: [], thumbnail_patterns: [],
+    recommended_duration_s: null, posting_schedule: "", recommendations: [],
+  }), null, 2));
+}
+
 export class StudioAgentExecutor implements Executor {
-  readonly version = "studio-agent-executor@1.0.0";
+  readonly version = "studio-agent-executor@2.0.0";
   constructor(private readonly opts: StudioAgentExecutorOptions) {}
 
   async execute(request: StageRequest, ctx: ExecutorContext): Promise<StageResult> {
@@ -85,16 +140,40 @@ export class StudioAgentExecutor implements Executor {
       schema_version: "harness.stage-result/v1", attempt_id: request.attempt_id, outcome: "failed", outputs: [], checks: [],
       usage: { wall_seconds: (Date.now() - started) / 1000, cost_usd: cost }, external_operations: [], errors: [{ kind, message, details }],
     });
+    const succeeded = (cost = 0): StageResult => ({
+      schema_version: "harness.stage-result/v1", attempt_id: request.attempt_id, outcome: "succeeded", outputs: [], checks: [],
+      usage: { wall_seconds: (Date.now() - started) / 1000, cost_usd: cost }, external_operations: [], errors: [],
+    });
     if (!(skill in STUDIO_SKILL_OUTPUTS)) return failed("contract", `"${skill}" is not a Studio skill`, { skill });
     const out = request.expected_outputs[0];
     if (!out?.name) return failed("contract", "a Studio agent stage needs one named output", { skill });
+    const outPath = join(ctx.workspaceDir, "output", out.name);
 
-    const runtime = this.opts.runtimeFor(JSON.stringify(claudeOutputJsonSchema(skill)));
+    // --- Skip rule for studio-trend-report: no research videos -> write skipped doc ---
+    if (skill === "studio-trend-report") {
+      const resPath = request.inputs.find((x) => x.type === STUDIO_TYPES.research);
+      if (resPath) {
+        try {
+          const res = JSON.parse(readFileSync(join(ctx.workspaceDir, resPath.path), "utf8")) as {
+            channels?: Array<{ videos?: unknown[] }>; keywords?: Array<{ videos?: unknown[] }>;
+          };
+          const totalVideos = (res.channels ?? []).reduce((n, ch) => n + (ch.videos?.length ?? 0), 0)
+            + (res.keywords ?? []).reduce((n, kw) => n + (kw.videos?.length ?? 0), 0);
+          if (totalVideos === 0) {
+            mkdirSync(join(ctx.workspaceDir, "output"), { recursive: true });
+            writeSkipped(outPath, skill, ctx.workspaceDir, request);
+            ctx.logger.info("studio-trend-report skipped (no research videos)");
+            return succeeded(0);
+          }
+        } catch { /* if we can't read it, proceed to Claude */ }
+      }
+    }
+
+    const runtime = this.opts.runtimeFor(JSON.stringify(claudeOutputJsonSchema(skill)), skill);
     const validator = VALIDATORS[skill];
     const backoff = this.opts.rateLimitBackoffMs ?? DEFAULT_BACKOFF_MS;
     const sleep = this.opts.sleep ?? defaultSleep;
     const deadline = Date.parse(request.limits.deadline_at);
-    const outPath = join(ctx.workspaceDir, "output", out.name);
 
     let cost = 0;
     let problems: StudioProblem[] | null = null;
@@ -109,10 +188,10 @@ export class StudioAgentExecutor implements Executor {
         if (err?.details?.code === "RATE_LIMITED") {
           const wait = backoff[Math.min(waits, backoff.length - 1)]!;
           if (Date.parse(ctx.clock.now()) + wait >= deadline) return failed("transient", "Claude rate limit did not reset before the stage deadline", { code: "RATE_LIMITED", waits }, cost);
-          ctx.logger.warn("Claude subscription limit reached; waiting before trying again (not counted as an attempt)", { wait_ms: wait, waits });
+          ctx.logger.warn("Claude subscription limit; waiting before retry (not counted as attempt)", { wait_ms: wait, waits });
           waits++;
           await sleep(wait, ctx.signal);
-          if (ctx.signal?.aborted) return failed("transient", "stage aborted while waiting for the Claude limit to reset", { code: "RATE_LIMITED" }, cost);
+          if (ctx.signal?.aborted) return failed("transient", "stage aborted while waiting for the Claude limit", { code: "RATE_LIMITED" }, cost);
           continue;
         }
         return { ...result, usage: { wall_seconds: (Date.now() - started) / 1000, cost_usd: cost } };
@@ -125,6 +204,8 @@ export class StudioAgentExecutor implements Executor {
       try { verdict = validator(raw, checkerInput); }
       catch (e) { return failed("contract", `cannot validate ${out.name}: ${e instanceof Error ? e.message : String(e)}`, {}, cost); }
       if (verdict.ok) {
+        // warnings never block; just log them
+        if (verdict.warnings.length) ctx.logger.warn("Studio agent output has warnings", { skill, warnings: verdict.warnings.map((w) => w.message) });
         ctx.logger.info("Studio agent output accepted", { skill, repaired: round > 0 });
         return { ...result, usage: { wall_seconds: (Date.now() - started) / 1000, cost_usd: cost } };
       }

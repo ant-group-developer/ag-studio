@@ -5,7 +5,6 @@ export * from "./stages.js";
 export * from "./payloads.js";
 export * from "./run-control.js";
 export * from "./editor.js";
-export * from "./voice.js";
 export * from "./worker.js";
 export { FarmOwnerClient } from "@ag-farm/owner-client";
 export { timelineIssues, layoutTimeline, type TimelineIssue } from "@harness/core";

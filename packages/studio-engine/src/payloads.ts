@@ -4,66 +4,75 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { StudioNarrationSchema, TimelineV2Schema, type TimelineV2 } from "@harness/contracts";
-import { STUDIO_TYPES, timelineIssues, timelineToComposition } from "@harness/core";
+import { StudioEpisodeSchema, TimelineV3Schema, YoutubeKitSchema } from "@harness/contracts";
+import { STUDIO_TYPES, thumbnailTimes, timelineIssues, timelineToComposition } from "@harness/core";
 import type { FarmPayloadBuild, FarmPayloadBuilder } from "@harness/executors";
-import type { StudioRenderPayload, StudioTtsPayload } from "@ag-farm/protocol";
+import type { StudioRenderPayload } from "@ag-farm/protocol";
 import { productionKey, type StudioBucket } from "./bucket.js";
 import { readBrief, readInput } from "./stages.js";
-import { latestRevision, type StudioDb } from "./studio-db.js";
-
-export function ttsPayload(p: { productionId: string; language: string; voice: StudioTtsPayload["voice"]; lines: { line_id: string; text: string }[] }): StudioTtsPayload {
-  return {
-    production_id: p.productionId, language: p.language, voice: p.voice,
-    lines: p.lines.map((l) => ({ line_id: l.line_id, text: l.text, pause_seconds: null })),
-    align_words: false,
-  };
-}
+import { episodeForRun, latestEpisodeRevision, type StudioDb } from "./studio-db.js";
 
 /**
- * Write `composition.json` for a timeline into `workDir` and fetch every narration WAV it uses from the
- * bucket next to it: the render worker can only sign `stage:` names under the job's own input prefix, so
- * everything the composition points at is uploaded with the job.
+ * Write `composition.json` for a v3 timeline into `workDir`.
+ * The render worker resolves `asset:<id>` inputs via Studio's `/farm/sign` endpoint.
  */
-export async function prepareRender(bucket: StudioBucket, workDir: string, p: { productionId: string; timeline: TimelineV2; revision: number; output: string; final: boolean }): Promise<FarmPayloadBuild & { payload: StudioRenderPayload }> {
-  const composition = timelineToComposition(p.timeline, { audioInput: (key) => `stage:${key}` });
-  const extraUploads: { localPath: string; relPath: string }[] = [];
+export async function prepareEpisodeRender(
+  workDir: string,
+  p: { timeline: ReturnType<typeof TimelineV3Schema.parse>; revision: number; productionId: string; episodeId: string; output: string; thumbnails: { t_s: number; text: string }[] },
+): Promise<FarmPayloadBuild & { payload: StudioRenderPayload }> {
+  const composition = timelineToComposition(p.timeline);
   const compPath = join(workDir, "render-plan", "composition.json");
   mkdirSync(dirname(compPath), { recursive: true });
   writeFileSync(compPath, JSON.stringify(composition, null, 2));
-  extraUploads.push({ localPath: compPath, relPath: "composition.json" });
-  for (const key of new Set(p.timeline.narration.flatMap((l) => (l.audio ? [l.audio.key] : [])))) {
-    const local = join(workDir, "render-plan", key);
-    mkdirSync(dirname(local), { recursive: true });
-    writeFileSync(local, await bucket.get(productionKey(p.productionId, key)));
-    extraUploads.push({ localPath: local, relPath: key });
-  }
   return {
     productionId: p.productionId,
     payload: {
-      production_id: p.productionId, revision: p.revision, composition: "stage:composition.json",
-      canvas: p.timeline.canvas, handle_seconds: p.final ? 1 : 0.5, output: p.output,
+      production_id: p.productionId,
+      revision: p.revision,
+      composition: "stage:composition.json",
+      canvas: p.timeline.canvas,
+      handle_seconds: 0,
+      output: p.output,
+      thumbnails: p.thumbnails,
     },
-    extraUploads,
+    extraUploads: [{ localPath: compPath, relPath: "composition.json" }],
   };
 }
 
 export function studioPayloadBuilders(d: { db: StudioDb; bucket: StudioBucket }): Record<string, FarmPayloadBuilder> {
   return {
-    "studio-tts": async (request, ctx) => {
+    "studio-episode-render": async (request, ctx) => {
       const brief = readBrief(request, ctx.workspaceDir);
-      const narration = readInput(request, ctx.workspaceDir, STUDIO_TYPES.narration, (v) => StudioNarrationSchema.parse(v));
-      return { productionId: brief.production_id, payload: ttsPayload({ productionId: brief.production_id, language: narration.language, voice: brief.voice, lines: narration.lines }) };
-    },
-    "studio-render-final": async (request, ctx) => {
-      const brief = readBrief(request, ctx.workspaceDir);
-      const timeline = readInput(request, ctx.workspaceDir, STUDIO_TYPES.timeline, (v) => TimelineV2Schema.parse(v));
+      const episode = readInput(request, ctx.workspaceDir, STUDIO_TYPES.episode, (v) => StudioEpisodeSchema.parse(v));
+      const timeline = readInput(request, ctx.workspaceDir, STUDIO_TYPES.timeline, (v) => TimelineV3Schema.parse(v));
       const errors = timelineIssues(timeline).filter((i) => i.severity === "error");
       if (errors.length) throw new Error(`timeline still has errors: ${errors.map((e) => e.message).join("; ")}`);
-      const revision = latestRevision(d.db, brief.production_id)?.revision ?? 0;
-      const output = `renders/final-${request.attempt_id}.mp4`;
-      const build = await prepareRender(d.bucket, ctx.workspaceDir, { productionId: brief.production_id, timeline, revision, output, final: true });
-      return { ...build, rename: { [output]: "final.mp4" } };
+      // Use episodes.youtube override if set, else the workflow's youtube-kit output
+      const ep = episodeForRun(d.db, request.run_id);
+      const kitRaw = ep?.youtube
+        ? YoutubeKitSchema.parse(JSON.parse(ep.youtube))
+        : readInput(request, ctx.workspaceDir, STUDIO_TYPES.youtubeKit, (v) => YoutubeKitSchema.parse(v));
+      const revision = latestEpisodeRevision(d.db, episode.episode_id)?.revision ?? 0;
+      const output = `episodes/${episode.episode_id}/renders/final-${request.attempt_id}.mp4`;
+      const build = await prepareEpisodeRender(ctx.workspaceDir, {
+        timeline, revision,
+        productionId: brief.production_id, episodeId: episode.episode_id,
+        output,
+        thumbnails: thumbnailTimes(timeline, kitRaw),
+      });
+      return {
+        ...build,
+        rename: {
+          [output]: "final.mp4",
+          [`${output.replace(/\.mp4$/, ".thumb-1.jpg")}`]: "thumb-1.jpg",
+          [`${output.replace(/\.mp4$/, ".thumb-2.jpg")}`]: "thumb-2.jpg",
+          [`${output.replace(/\.mp4$/, ".thumb-3.jpg")}`]: "thumb-3.jpg",
+        },
+      };
     },
   };
 }
+
+// Re-export for the editor's preview job
+export { prepareEpisodeRender as prepareRender };
+export type { StudioBucket };
