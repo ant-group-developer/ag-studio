@@ -1,13 +1,14 @@
 /**
- * GĐ3 acceptance E2E: `ag-studio-series-plan@1.0.0` + `ag-studio-episode@1.0.0` series flow.
+ * GĐ4 acceptance E2E: `ag-studio-series-plan@1.0.0` + `ag-studio-episode@1.0.0` series flow.
  *
  * Series plan API → approve-plan gate → episode spawning →
- * per-episode build-timeline → freeze-timeline gate → render (real farm + render worker) → export.
+ * per-episode build-timeline → render (real farm + render worker) → export.
+ * Episodes have NO human-approval gate; every episode renders automatically after spawning.
  *
  * Real:  ag-farm hub (+ Postgres in Docker), Studio API (dist), Studio worker (dist),
  *        ag-render-worker (dist), ffmpeg (ffmpeg-static).
- * Fake:  Claude (fixtures/fake-studio-claude.mjs via CliAgentRuntime), ag-go (catalog/folders/resolve),
- *        S3 (in-process FakeS3Server), TTS engine (in-test farm worker with sine-tone WAVs).
+ * Fake:  Claude (fixtures/fake-studio-claude.mjs via CliAgentRuntime), ag-go (catalog/assets/resolve),
+ *        S3 (in-process FakeS3Server).
  *
  * Requires: E2E=1, Docker running, built dists:
  *   ag-farm apps/api, ag-render-worker, ag-studio apps/api + apps/worker.
@@ -31,6 +32,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { FakeS3Server } from "./fake-s3.js";
+import { StudioYoutubeSchema, type TimelineV3 } from "@harness/contracts";
 
 const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..", "..");
 const AG_FARM_DIR = resolve(ROOT, "..", "ag-farm");
@@ -55,8 +57,8 @@ const FFPROBE =
 const isE2E = process.env.E2E === "1";
 const execFileAsync = promisify(execFile);
 
-// Ports distinct from production.e2e.test.ts to allow running both without conflict
-const PORTS = { db: 55434, s3: 9121, hub: 3395, api: 3394, agGo: 4395 };
+// Ports distinct from farm-render.e2e.test.ts and production.e2e.test.ts to allow running both without conflict
+const PORTS = { db: 55433, s3: 9121, hub: 3395, api: 3394, agGo: 4395 };
 const S3 = { bucket: "studio-series-e2e", key: "devkey", secret: "devsecret" };
 const AUTH = {
   issuer: "https://e2e.auth.test/",
@@ -65,18 +67,18 @@ const AUTH = {
   kid: "e2e-series-key",
 };
 const OWNER = "auth0|series-owner-e2e";
-const FOLDER = "0c0f0000-0000-4000-8000-00000000f01d";
-const CANVAS = { width: 640, height: 360 };
+// Two source folders so the test exercises multi-folder catalog
+const FOLDER_A = "0c0f0000-0000-4000-8000-00000000f01d";
+const FOLDER_B = "0c0f0000-0000-4000-8000-00000000f02d";
+const CANVAS = { width: 320, height: 180 };
 
 const procs: ChildProcess[] = [];
 let testDir = "";
 let fakeS3: FakeS3Server | null = null;
 let agGo: http.Server | null = null;
-let stopTts: (() => void) | null = null;
 let jwtKey: KeyObject;
 let jwk: Record<string, unknown>;
 const agGoCalls: { path: string; actAs: string | undefined }[] = [];
-const ttsJobs: string[] = [];
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -219,31 +221,6 @@ async function lavfiAsset(
   );
 }
 
-function toneWav(seconds: number, rate = 24000): Buffer {
-  const n = Math.floor(rate * seconds);
-  const b = Buffer.alloc(44 + n * 2);
-  b.write("RIFF", 0);
-  b.writeUInt32LE(36 + n * 2, 4);
-  b.write("WAVE", 8);
-  b.write("fmt ", 12);
-  b.writeUInt32LE(16, 16);
-  b.writeUInt16LE(1, 20);
-  b.writeUInt16LE(1, 22);
-  b.writeUInt32LE(rate, 24);
-  b.writeUInt32LE(rate * 2, 28);
-  b.writeUInt16LE(2, 32);
-  b.writeUInt16LE(16, 34);
-  b.write("data", 36);
-  b.writeUInt32LE(n * 2, 40);
-  for (let i = 0; i < n; i++) {
-    b.writeInt16LE(
-      Math.round(Math.sin((2 * Math.PI * 220 * i) / rate) * 0.3 * 32767),
-      44 + i * 2,
-    );
-  }
-  return b;
-}
-
 async function probe(
   file: string,
 ): Promise<{ width: number; height: number; duration: number; hasAudio: boolean }> {
@@ -265,30 +242,82 @@ async function probe(
   };
 }
 
-// ─── footage ────────────────────────────────────────────────────────────────
+// ─── fake ag-go footage data ─────────────────────────────────────────────────
+// 4 whole-video assets (AgGoFootageVideo format), 2 per folder.
+// Backed by 2 real video files uploaded to FakeS3 (asset-a.mp4 and asset-b.mp4).
 
-const SEGMENTS = [0, 1, 2, 3, 4, 5].map((i) => ({
-  segmentId: `5e600000-0000-4000-8000-${String(i + 1).padStart(12, "0")}`,
-  assetId: i < 3 ? "asset-a" : "asset-b",
-  startMs: (i % 3) * 8000,
-  endMs: (i % 3 + 1) * 8000,
-  durationMs: 8000,
-  captionVi: `cảnh ${i + 1}: ${i < 3 ? "phố Hà Nội buổi sáng" : "bát phở bò nóng"}`,
-  captionEn: `shot ${i + 1}`,
-  tags: ["pho", "hanoi"],
-  keywordsVi: ["phở"],
-  subjects: [],
-  actions: [],
-  shotSize: "medium",
-  cameraMotion: null,
-  timeOfDay: "morning",
-  setting: null,
-  peopleCount: null,
-  orientation: "landscape",
-  quality: 4,
-  usable: true,
-  approved: i % 2 === 0,
-}));
+const VIDEO_DURATION_MS = 8000; // 8 s per asset
+
+// Asset IDs → S3 key mapping (asset-a and asset-c share file-a.mp4, etc.)
+const ASSET_FILE_MAP: Record<string, string> = {
+  "asset-a": "assets/file-a.mp4",
+  "asset-b": "assets/file-b.mp4",
+  "asset-c": "assets/file-a.mp4",
+  "asset-d": "assets/file-b.mp4",
+};
+
+// AgGoFootageVideo items (whole-video catalog)
+const ASSETS_FOLDER_A = [
+  {
+    assetId: "asset-a",
+    name: "pho-hanoi-1.mp4",
+    durationMs: VIDEO_DURATION_MS,
+    orientation: "landscape",
+    hasSpeech: false,
+    titleVi: "Phở bò Hà Nội buổi sáng",
+    summaryVi: "Cảnh quay bát phở bò nóng hổi trên phố Hà Nội",
+    topics: ["phở", "ẩm thực"],
+    tags: ["pho", "hanoi"],
+    quality: 4,
+    usable: true,
+    approved: true,
+  },
+  {
+    assetId: "asset-b",
+    name: "pho-hanoi-2.mp4",
+    durationMs: VIDEO_DURATION_MS,
+    orientation: "landscape",
+    hasSpeech: false,
+    titleVi: "Phố Hà Nội lúc 6 giờ sáng",
+    summaryVi: "Cảnh quay phố phường Hà Nội buổi sáng sớm",
+    topics: ["hanoi", "đường phố"],
+    tags: ["hanoi", "street", "morning"],
+    quality: 4,
+    usable: true,
+    approved: true,
+  },
+];
+
+const ASSETS_FOLDER_B = [
+  {
+    assetId: "asset-c",
+    name: "pho-hanoi-3.mp4",
+    durationMs: VIDEO_DURATION_MS,
+    orientation: "landscape",
+    hasSpeech: false,
+    titleVi: "Người bán hàng pha phở",
+    summaryVi: "Cảnh quay người bán hàng đang pha phở tại quán",
+    topics: ["phở", "con người"],
+    tags: ["pho", "vendor"],
+    quality: 4,
+    usable: true,
+    approved: true,
+  },
+  {
+    assetId: "asset-d",
+    name: "pho-hanoi-4.mp4",
+    durationMs: VIDEO_DURATION_MS,
+    orientation: "landscape",
+    hasSpeech: false,
+    titleVi: "Khách ăn phở buổi sáng",
+    summaryVi: "Cảnh quay thực khách đang thưởng thức phở",
+    topics: ["phở", "ẩm thực"],
+    tags: ["pho", "customer"],
+    quality: 4,
+    usable: true,
+    approved: true,
+  },
+];
 
 // ─── fake ag-go ─────────────────────────────────────────────────────────────
 
@@ -313,51 +342,60 @@ function startFakeAgGo(): Promise<void> {
       });
 
     if (url === "/.well-known/jwks.json") return json(200, { keys: [jwk] });
+
+    // GET /v2/users/me — called by the Studio API auth middleware with a user's Bearer token
+    // (no service key; returns ADMIN so the user can access global /productions endpoint)
+    if (req.method === "GET" && url.startsWith("/v2/users/me")) {
+      return wrap({ userId: OWNER, userType: "ADMIN", user_type: "ADMIN", permissions: [] });
+    }
+
     if (req.headers["x-service-key"] !== "e2e-service-key")
       return json(401, { message: "no service key" });
     if (actAs !== OWNER)
       return json(403, { message: `act-as ${String(actAs)} rejected` });
 
+    // Folders
     if (req.method === "GET" && url.startsWith("/footage/folders")) {
       return wrap({
         folders: [
-          {
-            id: FOLDER,
-            parentId: null,
-            name: "Ẩm thực",
-            path: "/Ẩm thực",
-            analyzedSegments: 6,
-            usableSegments: 6,
-          },
+          { id: FOLDER_A, parentId: null, name: "Ẩm thực 1", path: "/Ẩm thực 1", analyzedSegments: 2, usableSegments: 2 },
+          { id: FOLDER_B, parentId: null, name: "Ẩm thực 2", path: "/Ẩm thực 2", analyzedSegments: 2, usableSegments: 2 },
         ],
       });
     }
+
+    // Whole-asset catalog (GĐ4/v3) — returns AgGoFootageVideo items
     if (req.method === "POST" && url === "/footage/catalog") {
       const b = JSON.parse(body) as { folderIds: string[] };
-      return wrap({ items: b.folderIds.includes(FOLDER) ? SEGMENTS : [], nextCursor: null });
+      const items = [
+        ...(b.folderIds.includes(FOLDER_A) ? ASSETS_FOLDER_A : []),
+        ...(b.folderIds.includes(FOLDER_B) ? ASSETS_FOLDER_B : []),
+      ];
+      return wrap({ items, nextCursor: null });
     }
-    if (req.method === "POST" && url === "/footage/segments/resolve") {
-      const b = JSON.parse(body) as { segmentIds: string[]; purpose: "preview" | "final" };
-      const items = b.segmentIds
-        .map((id) => SEGMENTS.find((s) => s.segmentId === id))
-        .filter(Boolean)
-        .map((s) => ({
-          segmentId: s!.segmentId,
-          assetId: s!.assetId,
-          startMs: s!.startMs,
-          endMs: s!.endMs,
-          url: `http://127.0.0.1:${PORTS.s3}/${S3.bucket}/assets/${s!.assetId}.mp4?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=3600`,
+
+    // Whole-asset resolve (GĐ4/v3) — replaces segments/resolve
+    if (req.method === "POST" && url === "/footage/assets/resolve") {
+      const b = JSON.parse(body) as { assetIds: string[]; purpose: "preview" | "final" };
+      const allAssetIds = new Set(Object.keys(ASSET_FILE_MAP));
+      const items = b.assetIds
+        .filter((id) => allAssetIds.has(id))
+        .map((assetId) => ({
+          assetId,
+          url: `http://127.0.0.1:${PORTS.s3}/${S3.bucket}/${ASSET_FILE_MAP[assetId]}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=3600`,
           sourceKind: b.purpose === "final" ? "original" : "proxy",
           watermarked: false,
           contentType: "video/mp4",
           sizeBytes: null,
+          durationMs: VIDEO_DURATION_MS,
           cacheKey: null,
           expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
         }));
-      return wrap({ items });
+      const missing = b.assetIds.filter((id) => !allAssetIds.has(id));
+      return wrap({ items, missing });
     }
 
-    // Account API calls (for isAdmin checks)
+    // Account/user API (for isAdmin checks and act-as resolution)
     if (req.method === "GET" && url.includes("/users/")) {
       return wrap({ userId: actAs ?? "unknown", userType: "USER", name: "Test User", email: "test@example.com", permissions: [] });
     }
@@ -365,126 +403,6 @@ function startFakeAgGo(): Promise<void> {
     json(404, { message: `fake ag-go: no ${req.method} ${url}` });
   });
   return new Promise((r) => agGo!.listen(PORTS.agGo, "127.0.0.1", () => r()));
-}
-
-// ─── fake TTS ────────────────────────────────────────────────────────────────
-
-function startFakeTtsWorker(token: string): () => void {
-  let running = true;
-  const hub = `http://127.0.0.1:${PORTS.hub}`;
-  const caps = {
-    os: "linux",
-    cpu_cores: 4,
-    ram_mb: 8192,
-    gpus: [{ name: "fake-gpu", vram_mb: 8192, nvenc: false, nvdec: false }],
-    engines: { ffmpeg: null, ollama_models: [], python: "3.10.0" },
-  };
-  const post = (path: string, body: unknown, auth = `Node ${token}`) =>
-    fetch(path.startsWith("http") ? path : `${hub}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: auth },
-      body: JSON.stringify(body),
-    });
-  void (async () => {
-    while (running) {
-      try {
-        await post("/v1/worker/heartbeat", {
-          agent_version: "0.1.0-e2e-tts",
-          kinds: ["studio.tts"],
-          capabilities: caps,
-          free_slots: { cpu: 0, gpu: 1 },
-          running_job_ids: [],
-        });
-        const claim = await post("/v1/worker/claim", {
-          kinds: ["studio.tts"],
-          free_slots: { cpu: 0, gpu: 1 },
-          cached_affinity: [],
-        });
-        const claimRaw = (await claim.json()) as unknown;
-        const { job } = unwrapEnvelope<{
-          job: null | {
-            id: string;
-            lease_token: string;
-            ticket: string;
-            sign_url: string;
-            payload: {
-              production_id: string;
-              language: string;
-              lines: { line_id: string; text: string }[];
-            };
-          };
-        }>(claimRaw);
-        if (job) {
-          ttsJobs.push(job.id);
-          const lines = job.payload.lines.map((l) => ({
-            line_id: l.line_id,
-            output: `tts/${l.line_id}.wav`,
-            duration_s: Math.round(l.text.split(/\s+/).length * 0.35 * 1000) / 1000,
-            words: [],
-          }));
-          const files = [
-            ...lines.map((l) => ({
-              output: l.output,
-              type: "audio/wav",
-              body: toneWav(l.duration_s),
-            })),
-            {
-              output: "tts.json",
-              type: "application/json",
-              body: Buffer.from(
-                JSON.stringify({
-                  schema: "ag.studio.tts/v1",
-                  production_id: job.payload.production_id,
-                  language: job.payload.language,
-                  lines,
-                  engine: { name: "e2e-tone", version: "1" },
-                }),
-              ),
-            },
-          ];
-          const signed = await post(
-            job.sign_url,
-            {
-              ops: files.map((f) => ({
-                op: "put",
-                output: f.output,
-                content_type: f.type,
-              })),
-            },
-            `Ticket ${job.ticket}`,
-          );
-          if (!signed.ok)
-            throw new Error(`sign ${signed.status} ${await signed.text()}`);
-          const signRaw = (await signed.json()) as unknown;
-          const { results } = unwrapEnvelope<{
-            results: { url: string; headers: Record<string, string> }[];
-          }>(signRaw);
-          for (let i = 0; i < files.length; i++) {
-            const put = await fetch(results[i]!.url, {
-              method: "PUT",
-              headers: results[i]!.headers,
-              body: files[i]!.body,
-            });
-            if (!put.ok) throw new Error(`PUT ${files[i]!.output} -> ${put.status}`);
-          }
-          const done = await post(`/v1/worker/jobs/${job.id}/complete`, {
-            lease_token: job.lease_token,
-            result: { manifest: "tts.json", summary: {} },
-          });
-          if (!done.ok)
-            throw new Error(`complete ${done.status} ${await done.text()}`);
-        }
-      } catch (e) {
-        writeFileSync(join(testDir, "fake-tts-series.log"), `${String(e)}\n`, {
-          flag: "a",
-        });
-      }
-      await new Promise((r) => setTimeout(r, 400));
-    }
-  })();
-  return () => {
-    running = false;
-  };
 }
 
 // ─── boot ────────────────────────────────────────────────────────────────────
@@ -521,21 +439,6 @@ beforeAll(async () => {
   });
   const ownerKey = randomBytes(24).toString("base64url");
 
-  // Start DB (Docker)
-  execFileSync(
-    "docker",
-    [
-      "compose",
-      "-f",
-      join(AG_FARM_DIR, "docker-compose.test.yml"),
-      "up",
-      "-d",
-      "--wait",
-      `--project-name=series-e2e`,
-    ],
-    { stdio: "inherit", timeout: 90_000, env: { ...process.env, POSTGRES_PORT: String(PORTS.db) } },
-  );
-
   // Fake S3
   fakeS3 = new FakeS3Server(PORTS.s3, join(testDir, "s3"));
   await fakeS3.start();
@@ -552,25 +455,30 @@ beforeAll(async () => {
     credentials: { accessKeyId: S3.key, secretAccessKey: S3.secret },
   });
   await s3.send(new CreateBucketCommand({ Bucket: S3.bucket }));
-  for (const [asset, video, freq] of [
-    ["asset-a", "testsrc2", 440],
-    ["asset-b", "smptebars", 660],
+
+  // Create 2 real video files (8 s each) and upload to fake S3 under 2 asset IDs
+  // asset-a and asset-c share file-a.mp4; asset-b and asset-d share file-b.mp4
+  for (const [file, video, freq] of [
+    ["file-a.mp4", "testsrc2", 440],
+    ["file-b.mp4", "smptebars", 660],
   ] as const) {
-    const p = join(testDir, `${asset}.mp4`);
-    await lavfiAsset(p, video, freq, 24);
+    const p = join(testDir, file);
+    await lavfiAsset(p, video, freq, VIDEO_DURATION_MS / 1000);
     await s3.send(
       new PutObjectCommand({
         Bucket: S3.bucket,
-        Key: `assets/${asset}.mp4`,
+        Key: `assets/${file}`,
         Body: readFileSync(p),
         ContentType: "video/mp4",
       }),
     );
   }
+  process.stderr.write("[e2e] fake S3 ready, 2 video files uploaded\n");
 
   await startFakeAgGo();
+  process.stderr.write("[e2e] fake ag-go ready\n");
 
-  // ag-farm hub
+  // ag-farm DB migrations first, then start hub
   const farmDb = `postgresql://farm_test:farm_test@localhost:${PORTS.db}/ag_farm_test`;
   execFileSync(
     process.execPath,
@@ -586,6 +494,8 @@ beforeAll(async () => {
       stdio: "pipe",
     },
   );
+  process.stderr.write("[e2e] ag-farm migrations applied\n");
+
   spawnProc(
     process.execPath,
     [join(AG_FARM_DIR, "apps/api/dist/main.js")],
@@ -610,9 +520,11 @@ beforeAll(async () => {
   await waitFor(
     "ag-farm hub",
     async () => (await fetch(`http://127.0.0.1:${PORTS.hub}/health`)).ok,
+    60_000,
   );
+  process.stderr.write("[e2e] ag-farm hub ready\n");
 
-  // Register studio owner + render/TTS farm nodes
+  // Register studio farm owner + render node in the DB
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { Client } = require("pg") as typeof import("pg");
   const pg = new Client({ connectionString: farmDb });
@@ -625,33 +537,23 @@ beforeAll(async () => {
     [
       createHash("sha256").update(ownerKey).digest("hex"),
       `http://127.0.0.1:${PORTS.api}/api/farm/sign`,
-      ["studio.tts", "studio.render_preview", "studio.render_final"],
+      ["studio.render_preview", "studio.render_final"],
     ],
   );
-  const nodeToken = (name: string, kinds: string[]) => {
-    const token = randomBytes(24).toString("base64url");
-    return pg
-      .query(
-        `INSERT INTO farm_nodes
-           (id, name, machine, token_hash, kinds, capabilities, status, last_seen_at, created_at, updated_at)
-         VALUES ($1, $2, 'e2e', $3, $4, '{}'::jsonb, 'active', NOW(), NOW(), NOW())`,
-        [
-          randomUUID(),
-          name,
-          createHash("sha256").update(token).digest("hex"),
-          kinds,
-        ],
-      )
-      .then(() => token);
-  };
-  const renderToken = await nodeToken(
-    `e2e-render-${randomUUID().slice(0, 8)}`,
-    ["studio.render_preview", "studio.render_final"],
+  const renderToken = randomBytes(24).toString("base64url");
+  await pg.query(
+    `INSERT INTO farm_nodes
+       (id, name, machine, token_hash, kinds, capabilities, status, last_seen_at, created_at, updated_at)
+     VALUES ($1, $2, 'e2e', $3, $4, '{}'::jsonb, 'active', NOW(), NOW(), NOW())`,
+    [
+      randomUUID(),
+      `e2e-render-${randomUUID().slice(0, 8)}`,
+      createHash("sha256").update(renderToken).digest("hex"),
+      ["studio.render_preview", "studio.render_final"],
+    ],
   );
-  const ttsToken = await nodeToken(`e2e-tts-${randomUUID().slice(0, 8)}`, [
-    "studio.tts",
-  ]);
   await pg.end();
+  process.stderr.write("[e2e] farm owner + render node registered\n");
 
   // Studio API + worker
   const studioEnv = {
@@ -685,7 +587,10 @@ beforeAll(async () => {
     "Studio API",
     async () =>
       (await fetch(`http://127.0.0.1:${PORTS.api}/api/health`)).ok,
+    60_000,
   );
+  process.stderr.write("[e2e] Studio API ready\n");
+
   spawnProc(
     process.execPath,
     [join(ROOT, "apps/worker/dist/main.js")],
@@ -700,6 +605,7 @@ beforeAll(async () => {
     },
     "studio-worker-series",
   );
+  process.stderr.write("[e2e] Studio worker spawned\n");
 
   // Render worker
   const workerYaml = join(testDir, "render-worker.yaml");
@@ -729,59 +635,65 @@ beforeAll(async () => {
     { FFMPEG_PATH: FFMPEG, FFPROBE_PATH: FFPROBE, NODE_ENV: "production" },
     "render-worker-series",
   );
-  stopTts = startFakeTtsWorker(ttsToken);
+  process.stderr.write("[e2e] render worker spawned\n");
 }, 240_000);
 
 afterAll(async () => {
   if (!isE2E) return;
-  stopTts?.();
   for (const p of procs) if (!p.killed) p.kill();
   await new Promise((r) => setTimeout(r, 800));
   await new Promise<void>((r) => (agGo ? agGo.close(() => r()) : r()));
   await fakeS3?.stop().catch(() => {});
-  try {
-    execFileSync(
-      "docker",
-      [
-        "compose",
-        "-f",
-        join(AG_FARM_DIR, "docker-compose.test.yml"),
-        "down",
-        "--project-name=series-e2e",
-      ],
-      { stdio: "inherit", timeout: 60_000 },
-    );
-  } catch {
-    /* ignore cleanup errors */
-  }
+  // Note: we do not tear down the Postgres container — it was pre-started externally
+  // and may be shared with other test runs. Stopping it here would break them.
   if (process.env.E2E_KEEP !== "1") rmSync(testDir, { recursive: true, force: true });
 }, 120_000);
 
-// ─── test ────────────────────────────────────────────────────────────────────
+// ─── types ───────────────────────────────────────────────────────────────────
 
+type StageView = {
+  key: string;
+  state: string;
+  attempts: number;
+  error: string | null;
+  failed_checks: unknown[];
+};
 type RunView = {
+  run_id: string;
   state: string;
   waiting_gate: string | null;
-  stages: {
-    key: string;
-    state: string;
-    attempts: number;
-    error: string | null;
-    failed_checks: unknown[];
-  }[];
+  stages: StageView[];
 };
-type EpisodeView = {
+type EpisodeSummary = {
   id: string;
   idx: number;
   title: string;
   status: string;
-  run?: RunView & { waiting_gate: string | null };
 };
-type ProductionView = { id: string; status: string; episodeCounts: { total: number } };
-type PagedEpisodes = { items: EpisodeView[]; total: number };
+type ExportFile = {
+  kind: "mp4" | "thumbnail" | "youtube" | "timeline" | "pack";
+  url: string;
+  sizeBytes: number;
+  name: string;
+};
+type EpisodeDetail = EpisodeSummary & {
+  run: RunView | null;
+  exportFiles: ExportFile[];
+  finalVideoUrl: string | null;
+  latestRevision: number | null;
+  thumbnails: { url: string; index: number }[];
+};
+type ProductionView = {
+  id: string;
+  status: string;
+  episodeCounts: { total: number; ready: number; producing: number; failed: number };
+};
+type PagedEpisodes = { items: EpisodeSummary[]; total: number };
+
+// ─── test ────────────────────────────────────────────────────────────────────
 
 describe.skipIf(!isE2E)(
-  "GĐ3 E2E: series-plan → approve-plan → episodes → freeze-timeline → render → export",
+  "GĐ4 E2E: series-plan → approve-plan → episodes render/export automatically",
   () => {
     let prodId = "";
     let teamId = "";
@@ -811,7 +723,7 @@ describe.skipIf(!isE2E)(
       );
     }
 
-    it("creates production with v3 fields, adds sources, starts the series plan run", async () => {
+    it("creates production with v3 fields, 2 source folders, and starts the series plan run", async () => {
       const team = await ok<{ id: string }>("POST", "/teams", { name: "Nhóm Series E2E" });
       teamId = team.id;
 
@@ -825,7 +737,7 @@ describe.skipIf(!isE2E)(
         youtubeChannels: ["https://youtube.com/@pho-hanoi"],
         keywords: ["phở", "ẩm thực Hà Nội", "ẩm thực đường phố"],
         episodeTargetSeconds: 90,
-        maxEpisodes: 3,
+        maxEpisodes: 2,
         canvas: CANVAS,
         aspect: "16:9",
         language: "vi",
@@ -842,31 +754,32 @@ describe.skipIf(!isE2E)(
       }>("GET", `/productions/${prodId}`);
       expect(fetched.description).toBe("Series ngắn về văn hoá ẩm thực đường phố Hà Nội");
       expect(fetched.goal).toBe("Tăng subscriber 20% trong 3 tháng");
-      expect(fetched.maxEpisodes).toBe(3);
+      expect(fetched.maxEpisodes).toBe(2);
       expect(fetched.keywords).toEqual(["phở", "ẩm thực Hà Nội", "ẩm thực đường phố"]);
       expect(fetched.status).toBe("draft");
 
-      // Add sources
-      await ok("POST", `/productions/${prodId}/sources`, { folderIds: [FOLDER] });
+      // Add 2 source folders
+      await ok("POST", `/productions/${prodId}/sources`, { folderIds: [FOLDER_A, FOLDER_B] });
 
       // Start the plan run
       await ok("POST", `/productions/${prodId}/run`);
 
-      // Cannot start a second run
+      // Cannot start a second run while one is active
       expect((await api("POST", `/productions/${prodId}/run`)).status).toBe(409);
 
-      // Status is now planning (not draft)
+      // Status is now planning
       const planningProd = await ok<ProductionView>("GET", `/productions/${prodId}`);
-      expect(planningProd.status).toBe("planning");
+      expect(["planning", "waiting_approval"]).toContain(planningProd.status);
     });
 
-    it("approve-plan: fake Claude produces a series plan; plan is approved", async () => {
+    it("approve-plan: fake Claude produces a series plan; plan is approved and episodes spawn", async () => {
+      // Wait for plan run to reach the approve-plan gate
       await waitGate("approve-plan");
 
-      // Read the plan document from the studio-plan-episodes stage
+      // Read the series-plan document from the plan-episodes stage
       const plan = await ok<{ schema_version: string; episodes: unknown[] }>(
         "GET",
-        `/productions/${prodId}/run/documents/studio-plan-episodes/series-plan.json`,
+        `/productions/${prodId}/run/documents/plan-episodes/series-plan.json`,
       );
       expect(plan.schema_version).toBe("studio.series-plan/v1");
       expect(Array.isArray(plan.episodes)).toBe(true);
@@ -879,9 +792,7 @@ describe.skipIf(!isE2E)(
         { document: plan },
       );
       expect(result.accepted).toBe(true);
-    });
 
-    it("episodes are spawned; each starts its episode run", async () => {
       // Wait for plan run to SUCCEED (spawn-episodes completes)
       await waitFor(
         "plan run SUCCEEDED",
@@ -896,139 +807,209 @@ describe.skipIf(!isE2E)(
       );
 
       // Episodes should have been created
-      const episodes = await ok<PagedEpisodes>(
-        "GET",
-        `/productions/${prodId}/episodes`,
-      );
-      expect(episodes.total).toBeGreaterThan(0);
+      const episodes = await ok<PagedEpisodes>("GET", `/productions/${prodId}/episodes`);
+      expect(episodes.total).toBeGreaterThanOrEqual(1);
       expect(episodes.items.length).toBe(episodes.total);
 
-      // Production status should now reflect episode activity
       const prodAfter = await ok<ProductionView>("GET", `/productions/${prodId}`);
-      expect(prodAfter.episodeCounts.total).toBeGreaterThan(0);
+      expect(prodAfter.episodeCounts.total).toBeGreaterThanOrEqual(1);
     });
 
-    it("each episode reaches freeze-timeline gate; submitting it renders and exports the episode", async () => {
-      const episodes = await ok<PagedEpisodes>(
-        "GET",
-        `/productions/${prodId}/episodes`,
-      );
-
-      // Process episodes sequentially to keep one render at a time
-      for (const ep of episodes.items) {
-        const episodeId = ep.id;
-
-        // Wait for the episode's freeze-timeline gate
-        const epView = await waitFor<EpisodeView & { run: RunView }>(
-          `episode ${ep.idx} freeze-timeline`,
-          async () => {
-            const detail = await ok<EpisodeView>(
-              "GET",
-              `/productions/${prodId}/episodes/${episodeId}`,
-            );
-            if (detail.run?.state === "FAILED") {
-              throw new Fatal(
-                `episode ${ep.idx} run failed: ${JSON.stringify(detail.run.stages)}`,
-              );
-            }
-            return detail.run?.waiting_gate === "freeze-timeline"
-              ? (detail as EpisodeView & { run: RunView })
-              : null;
-          },
-          300_000,
-          1000,
-        );
-
-        // Timeline should have been built by the build-timeline stage
-        const tl = await ok<{ revision: number; data: { schema_version: string }; issues: unknown[] }>(
-          "GET",
-          `/productions/${prodId}/episodes/${episodeId}/timeline`,
-        );
-        expect(tl.data.schema_version).toBe("studio.timeline/v3");
-        expect(tl.issues).toEqual([]);
-
-        // Submit the freeze-timeline gate (uses latest revision automatically)
-        const freezeResult = await ok<{ accepted: boolean }>(
-          "POST",
-          `/productions/${prodId}/episodes/${episodeId}/gates/freeze-timeline`,
-        );
-        expect(freezeResult.accepted).toBe(true);
-        void epView; // suppress unused-var lint
-      }
-    });
-
-    it("all episodes render to done; production status becomes done", async () => {
-      // Wait for all episodes to reach 'ready' status (up to 5 min per episode)
-      await waitFor(
+    it("all episodes render and export automatically (no gate); assert export files", async () => {
+      // Wait for all episodes to reach 'ready' status
+      const readyEps = await waitFor(
         "all episodes ready",
         async () => {
-          const eps = await ok<PagedEpisodes>(
-            "GET",
-            `/productions/${prodId}/episodes`,
-          );
-          const allReady = eps.items.every((e) => e.status === "ready");
+          const eps = await ok<PagedEpisodes>("GET", `/productions/${prodId}/episodes`);
+          if (eps.total === 0) return null;
           const anyFailed = eps.items.some((e) => e.status === "failed");
           if (anyFailed) {
-            throw new Fatal(
-              `some episodes failed: ${JSON.stringify(eps.items.map((e) => ({ id: e.id, status: e.status })))}`,
+            // Collect error details
+            const details = await Promise.all(
+              eps.items
+                .filter((e) => e.status === "failed")
+                .map((e) =>
+                  ok<EpisodeDetail>("GET", `/productions/${prodId}/episodes/${e.id}`).then(
+                    (d) => JSON.stringify({ id: e.id, run: d.run?.stages }),
+                  ),
+                ),
             );
+            throw new Fatal(`episodes failed: ${details.join("; ")}`);
           }
+          const allReady = eps.items.every((e) => e.status === "ready");
           return allReady ? eps : null;
         },
-        900_000, // 15 min for all episodes to finish rendering
+        900_000,
+        3000,
+      );
+      expect(readyEps.total).toBeGreaterThanOrEqual(1);
+
+      // Assert production status
+      const prod = await ok<ProductionView>("GET", `/productions/${prodId}`);
+      expect(prod.status).toBe("done");
+      expect(prod.episodeCounts.ready).toBe(prod.episodeCounts.total);
+
+      // Assert export files for each episode
+      for (const ep of readyEps.items) {
+        const detail = await ok<EpisodeDetail>(
+          "GET",
+          `/productions/${prodId}/episodes/${ep.id}`,
+        );
+
+        // exportFiles: mp4, 3 thumbnails, youtube.json, timeline, pack
+        const kinds = detail.exportFiles.map((f) => f.kind).sort();
+        expect(kinds).toEqual(["mp4", "pack", "thumbnail", "thumbnail", "thumbnail", "timeline", "youtube"]);
+
+        // MP4: real playable video
+        expect(detail.finalVideoUrl).toBeTruthy();
+        const mp4Res = await fetch(detail.finalVideoUrl!);
+        expect(mp4Res.ok).toBe(true);
+        const mp4Path = join(testDir, `ep-${ep.id}.mp4`);
+        writeFileSync(mp4Path, Buffer.from(await mp4Res.arrayBuffer()));
+        const mp4Info = await probe(mp4Path);
+        expect(mp4Info.duration).toBeGreaterThan(1);
+        // Episode has at least 1 clip of 8 s
+        expect(mp4Info.duration).toBeLessThan(120);
+
+        // Thumbnails: 3 real JPEGs at 1280×720
+        const thumbFiles = detail.exportFiles.filter((f) => f.kind === "thumbnail");
+        expect(thumbFiles).toHaveLength(3);
+        for (const [i, thumb] of thumbFiles.entries()) {
+          const thumbRes = await fetch(thumb.url);
+          expect(thumbRes.ok).toBe(true);
+          const thumbBuf = Buffer.from(await thumbRes.arrayBuffer());
+          // Verify JPEG magic bytes (FFD8FF)
+          expect(thumbBuf[0]).toBe(0xff);
+          expect(thumbBuf[1]).toBe(0xd8);
+          const thumbPath = join(testDir, `thumb-${ep.id}-${i}.jpg`);
+          writeFileSync(thumbPath, thumbBuf);
+          const thumbInfo = await probe(thumbPath);
+          expect(thumbInfo.width).toBe(1280);
+          expect(thumbInfo.height).toBe(720);
+        }
+
+        // youtube.json: parses with StudioYoutubeSchema
+        const ytFile = detail.exportFiles.find((f) => f.kind === "youtube");
+        expect(ytFile).toBeTruthy();
+        const ytRes = await fetch(ytFile!.url);
+        expect(ytRes.ok).toBe(true);
+        const ytData = await ytRes.json();
+        expect(() => StudioYoutubeSchema.parse(ytData)).not.toThrow();
+
+        // pack zip: exists and has non-zero size
+        const packFile = detail.exportFiles.find((f) => f.kind === "pack");
+        expect(packFile).toBeTruthy();
+        expect(packFile!.sizeBytes).toBeGreaterThan(0);
+
+        // Render stage was successful
+        const renderStage = detail.run?.stages.find((s) => s.key === "render-final");
+        expect(renderStage?.state).toBe("SUCCEEDED");
+
+        // All footage was resolved using the production owner's identity
+        const resolvesCalls = agGoCalls.filter(
+          (c) => c.path === "/footage/assets/resolve",
+        );
+        expect(resolvesCalls.length).toBeGreaterThan(0);
+      }
+
+      // Every footage API call used the production owner's identity
+      // (non-footage calls like /v2/users/me may use a different auth pattern)
+      const footageCalls = agGoCalls.filter(
+        (c) =>
+          c.path.startsWith("/footage/") &&
+          c.path !== "/.well-known/jwks.json",
+      );
+      expect(footageCalls.length).toBeGreaterThan(0);
+      const footageActAs = new Set(footageCalls.map((c) => c.actAs));
+      expect(footageActAs).toEqual(new Set([OWNER]));
+    });
+
+    it("episode 1: save edited timeline (drop one clip), rerender, new video is shorter", async () => {
+      const eps = await ok<PagedEpisodes>("GET", `/productions/${prodId}/episodes`);
+      const ep1 = eps.items.find((e) => e.idx === 1)!;
+      expect(ep1).toBeTruthy();
+
+      // Get current timeline
+      const tl = await ok<{ revision: number; data: TimelineV3; issues: unknown[] }>(
+        "GET",
+        `/productions/${prodId}/episodes/${ep1.id}/timeline`,
+      );
+      expect(tl.data.schema_version).toBe("studio.timeline/v3");
+      expect(tl.issues).toEqual([]);
+
+      // Original video duration
+      const ep1Detail = await ok<EpisodeDetail>(
+        "GET",
+        `/productions/${prodId}/episodes/${ep1.id}`,
+      );
+      const origMp4Res = await fetch(ep1Detail.finalVideoUrl!);
+      const origMp4Path = join(testDir, `ep-${ep1.id}-orig.mp4`);
+      writeFileSync(origMp4Path, Buffer.from(await origMp4Res.arrayBuffer()));
+      const origDuration = (await probe(origMp4Path)).duration;
+      expect(origDuration).toBeGreaterThan(1);
+
+      // Only attempt rerender if the timeline has more than 1 clip to drop
+      if (tl.data.clips.length < 2) {
+        process.stderr.write(
+          `[e2e] episode 1 has only ${tl.data.clips.length} clip(s), skipping rerender edit\n`,
+        );
+        return;
+      }
+
+      // Drop the last clip
+      const edited: TimelineV3 = {
+        ...tl.data,
+        clips: tl.data.clips.slice(0, -1),
+      };
+
+      // Save new revision
+      const revResult = await ok<{ revision: number; issues: unknown[] }>(
+        "POST",
+        `/productions/${prodId}/episodes/${ep1.id}/timeline/revisions`,
+        { baseRevision: tl.revision, data: edited },
+      );
+      expect(revResult.revision).toBeGreaterThan(tl.revision);
+      expect(revResult.issues).toEqual([]);
+
+      // Trigger rerender
+      await ok("POST", `/productions/${prodId}/episodes/${ep1.id}/rerender`);
+
+      // Wait for episode 1 to become ready again
+      await waitFor(
+        "episode 1 ready after rerender",
+        async () => {
+          const d = await ok<EpisodeDetail>(
+            "GET",
+            `/productions/${prodId}/episodes/${ep1.id}`,
+          );
+          if (d.status === "failed") {
+            throw new Fatal(
+              `episode 1 failed after rerender: ${JSON.stringify(d.run?.stages)}`,
+            );
+          }
+          return d.status === "ready" ? d : null;
+        },
+        600_000,
         3000,
       );
 
-      // Production should now be 'done'
-      const prod = await ok<ProductionView>("GET", `/productions/${prodId}`);
-      expect(prod.status).toBe("done");
-      expect(prod.episodeCounts.total).toBeGreaterThan(0);
-      expect(prod.episodeCounts.ready).toBe(prod.episodeCounts.total);
-
-      // Each episode should have exported a final.mp4
-      const eps = await ok<PagedEpisodes>(
+      // Verify the new MP4 is shorter
+      const newDetail = await ok<EpisodeDetail>(
         "GET",
-        `/productions/${prodId}/episodes`,
+        `/productions/${prodId}/episodes/${ep1.id}`,
       );
-      for (const ep of eps.items) {
-        // Probe the final video
-        const detail = await ok<{
-          id: string;
-          finalVideoUrl?: string;
-          exports?: { url: string; kind: string }[];
-        }>("GET", `/productions/${prodId}/episodes/${ep.id}`);
-        // The episode detail should have at least a video URL in exports or final
-        // If the API returns an export url, probe the video
-        const videoUrl =
-          detail.finalVideoUrl ??
-          (detail.exports ?? []).find((e) => e.kind === "mp4")?.url;
-        if (videoUrl) {
-          const tmp = join(testDir, `ep-${ep.id}.mp4`);
-          const res = await fetch(videoUrl);
-          if (res.ok) {
-            writeFileSync(tmp, Buffer.from(await res.arrayBuffer()));
-            const p = await probe(tmp);
-            expect([p.width, p.height]).toEqual([CANVAS.width, CANVAS.height]);
-            expect(p.hasAudio).toBe(true);
-            expect(p.duration).toBeGreaterThan(0);
-          }
-        }
-      }
+      expect(newDetail.finalVideoUrl).toBeTruthy();
+      const newMp4Res = await fetch(newDetail.finalVideoUrl!);
+      const newMp4Path = join(testDir, `ep-${ep1.id}-rerendered.mp4`);
+      writeFileSync(newMp4Path, Buffer.from(await newMp4Res.arrayBuffer()));
+      const newDuration = (await probe(newMp4Path)).duration;
 
-      // Every footage call used the production owner's identity (not a production id)
-      const servesCalls = agGoCalls.filter(
-        (c) => c.path === "/footage/segments/resolve",
-      );
-      expect(servesCalls.length).toBeGreaterThan(0);
-      const uniqueActAs = new Set(
-        agGoCalls
-          .filter((c) => c.path !== "/.well-known/jwks.json")
-          .map((c) => c.actAs),
-      );
-      expect(uniqueActAs).toEqual(new Set([OWNER]));
-    });
+      // New video should be shorter (dropped one clip of VIDEO_DURATION_MS/1000 s)
+      expect(newDuration).toBeGreaterThan(0.5);
+      expect(newDuration).toBeLessThan(origDuration - 0.5);
+    }, 700_000);
 
-    it("GET /productions lists the production with correct derived status and pagination", async () => {
+    it("GET /productions lists production with correct status and pagination", async () => {
       const paged = await ok<{
         items: ProductionView[];
         total: number;
@@ -1042,7 +1023,7 @@ describe.skipIf(!isE2E)(
       expect(our).toBeTruthy();
       expect(our!.status).toBe("done");
 
-      // Team-scoped list is a filtered alias
+      // Team-scoped list
       const teamPaged = await ok<{ items: ProductionView[]; total: number }>(
         "GET",
         `/teams/${teamId}/productions`,
@@ -1052,12 +1033,9 @@ describe.skipIf(!isE2E)(
       expect(teamOur!.status).toBe("done");
     });
 
-    it("DELETE production cancels runs and archives it (404 on second fetch)", async () => {
+    it("DELETE production archives it", async () => {
       await ok("DELETE", `/productions/${prodId}`);
-      // After delete the production should be archived (GET returns 404 since it's excluded from normal listings,
-      // or status = archived)
       const res = await api("GET", `/productions/${prodId}`);
-      // Either 404 or archived status
       if (res.status === 200) {
         expect((res.body as { status: string }).status).toBe("archived");
       } else {

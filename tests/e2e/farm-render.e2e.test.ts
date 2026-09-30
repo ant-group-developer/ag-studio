@@ -190,7 +190,8 @@ function createSilentWav(outputPath: string, durationSeconds: number): void {
 }
 
 // ------------------------------------------------------------------
-// Fake ag-go server — resolves segment IDs to presigned fake-S3 GET URLs
+// Fake ag-go server — resolves asset IDs to presigned fake-S3 GET URLs
+// (v3/GĐ4 API: POST /footage/assets/resolve)
 // ------------------------------------------------------------------
 
 const segmentRegistry = new Map<
@@ -201,25 +202,22 @@ const segmentRegistry = new Map<
 async function startFakeAgGo(): Promise<void> {
   return new Promise((resolve, reject) => {
     agGoServer = http.createServer(async (req, res) => {
-      if (req.method === "POST" && req.url?.includes("/segments/resolve")) {
+      if (req.method === "POST" && req.url?.includes("/footage/assets/resolve")) {
         let body = "";
         for await (const chunk of req) body += chunk;
         const parsed = JSON.parse(body) as {
-          segmentIds: string[];
+          assetIds: string[];
           purpose: string;
         };
 
-        const items = parsed.segmentIds.map((segId) => {
-          const rec = segmentRegistry.get(segId);
+        const items = parsed.assetIds.map((assetId) => {
+          const rec = segmentRegistry.get(assetId);
           if (!rec) return null;
           const url =
             `http://127.0.0.1:${FAKE_S3_PORT}/${S3_BUCKET}/${rec.s3Key}` +
             `?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=3600`;
           return {
-            segmentId: segId,
-            assetId: `asset-${segId}`,
-            startMs: 0,
-            endMs: Math.round(rec.durationSeconds * 1000),
+            assetId,
             url,
             sourceKind: parsed.purpose === "final" ? "original" : "preview",
             watermarked: parsed.purpose !== "final",
@@ -230,8 +228,11 @@ async function startFakeAgGo(): Promise<void> {
           };
         });
 
+        const resolved = items.filter(Boolean);
+        const resolvedIds = new Set(resolved.map((i) => i!.assetId));
+        const missing = parsed.assetIds.filter((id) => !resolvedIds.has(id));
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ items: items.filter(Boolean) }));
+        res.end(JSON.stringify({ items: resolved, missing }));
       } else {
         res.writeHead(404);
         res.end();
@@ -405,17 +406,23 @@ beforeAll(async () => {
   farmPubKey = keyPair.publicKey;
   ownerKey = randomBytes(24).toString("base64url");
 
-  // Start Postgres
-  process.stderr.write("[e2e] Starting Postgres for ag-farm...\n");
-  execFileSync(
-    "docker",
-    [
-      "compose", "-f",
-      join(AG_FARM_DIR, "docker-compose.test.yml"),
-      "up", "-d", "--wait",
-    ],
-    { stdio: "inherit", timeout: 60_000 },
-  );
+  // Ensure Postgres is running; if not already up, start it via Docker Compose.
+  // The container may be pre-started externally (ag-farm-gd4-postgres-test-1 on port 55433).
+  process.stderr.write("[e2e] Ensuring Postgres for ag-farm is running...\n");
+  try {
+    execFileSync(
+      "docker",
+      [
+        "compose", "-f",
+        join(AG_FARM_DIR, "docker-compose.test.yml"),
+        "up", "-d", "--wait",
+        "--project-name", "ag-farm-gd4",
+      ],
+      { stdio: "inherit", timeout: 60_000 },
+    );
+  } catch (e) {
+    process.stderr.write(`[e2e] docker compose up skipped/failed (may already be running): ${String(e)}\n`);
+  }
 
   // Start FakeS3Server
   const s3DataDir = join(testDir, "s3-data");
@@ -674,17 +681,7 @@ afterAll(async () => {
   await new Promise<void>((r) => agGoServer?.close(() => r()));
   await fakeS3?.stop().catch(() => {});
 
-  try {
-    execFileSync(
-      "docker",
-      [
-        "compose", "-f",
-        join(AG_FARM_DIR, "docker-compose.test.yml"),
-        "down",
-      ],
-      { stdio: "inherit", timeout: 30_000 },
-    );
-  } catch { /* ignore */ }
+  // Note: do NOT stop the Postgres container — it may be shared / pre-started externally.
 
   try {
     rmSync(testDir, { recursive: true, force: true });
@@ -730,7 +727,7 @@ describe.skipIf(!isE2E)("farm E2E: studio.render_preview", () => {
         {
           order: 0,
           source_id: newId("source_item"),
-          source_path: `segment:${segment1Id}`,
+          source_path: `asset:${segment1Id}`,
           in: 0.5,
           out: 2.5,
           start: 0,
@@ -742,7 +739,7 @@ describe.skipIf(!isE2E)("farm E2E: studio.render_preview", () => {
         {
           order: 1,
           source_id: newId("source_item"),
-          source_path: `segment:${segment2Id}`,
+          source_path: `asset:${segment2Id}`,
           in: 0.5,
           out: 2.5,
           start: 2,
