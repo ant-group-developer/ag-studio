@@ -297,7 +297,9 @@ async function startFakeTtsWorker(
         });
 
         if (claimRes.ok) {
-          const { job } = (await claimRes.json()) as {
+          // the hub answers { data, requestId, success, error }; older hubs answer raw
+          const claimBody = (await claimRes.json()) as { data?: unknown };
+          const { job } = (claimBody.data ?? claimBody) as {
             job: { id: string; lease_token: string } | null;
           };
           if (job) {
