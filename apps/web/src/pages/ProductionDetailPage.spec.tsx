@@ -20,6 +20,10 @@ const client = {
 };
 vi.mock("../api/studio-client", async (orig) => ({ ...(await orig<object>()), useStudioClient: () => client }));
 
+// ProductionForm uses ag-go-client for folder tree
+const agGoClient = { getFolders: vi.fn().mockResolvedValue({ folders: [] }) };
+vi.mock("../api/ag-go-client", async (orig) => ({ ...(await orig<object>()), useAgGoClient: () => agGoClient }));
+
 const { ProductionDetailPage } = await import("./ProductionDetailPage");
 
 describe("ProductionDetailPage", () => {
@@ -27,7 +31,7 @@ describe("ProductionDetailPage", () => {
     await i18n.changeLanguage("vi");
   });
 
-  it("hiện nhãn đọc được kèm mã enum, source ids và steps component", async () => {
+  it("hiện form chỉnh sửa với tiêu đề và các bước (Steps)", async () => {
     client.getProduction.mockResolvedValue({
       id: "p-1", teamId: "t-1", teamName: "Team A", title: "Phở sáng",
       description: "Phim tài liệu", goal: "", audience: "", tone: "", notes: "",
@@ -54,16 +58,10 @@ describe("ProductionDetailPage", () => {
       </QueryClientProvider>,
     );
 
-    // EnumText renders label + code side-by-side; use the code (always a leaf text node)
-    expect(await screen.findByText("producing")).toBeTruthy();  // productionStatus code
-    expect(screen.getByText("9:16")).toBeTruthy();              // aspect code
-    expect(screen.getAllByText("vi").length).toBeGreaterThan(0); // language code
+    // Production title is populated in the form
+    expect(await screen.findByDisplayValue("Phở sáng")).toBeTruthy();
 
-    // Source IDs shown as tags
-    expect(await screen.findByText("f-1")).toBeTruthy();
-    expect(screen.getByText("f-gone")).toBeTruthy();
-
-    // Steps bar: step 0 title is always shown
+    // Steps bar: both step 0 and step 1 titles are shown
     expect(screen.getByText("Thông tin")).toBeTruthy();
     expect(screen.getByText("Nghiên cứu thị trường")).toBeTruthy();
   });

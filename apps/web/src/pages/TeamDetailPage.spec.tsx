@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { NuqsTestingAdapter } from "nuqs/adapters/testing";
 import i18n from "../i18n/config";
 import type { TeamMember, UserSummary } from "../api/studio-client";
 
@@ -27,13 +28,15 @@ const { TeamDetailPage } = await import("./TeamDetailPage");
 function page() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={["/teams/team-1"]}>
-        <Routes>
-          <Route path="/teams/:teamId" element={<TeamDetailPage />} />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <NuqsTestingAdapter>
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/teams/team-1"]}>
+          <Routes>
+            <Route path="/teams/:teamId" element={<TeamDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    </NuqsTestingAdapter>,
   );
 }
 

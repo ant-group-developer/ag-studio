@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { NuqsTestingAdapter } from "nuqs/adapters/testing";
 import i18n from "../i18n/config";
 
 // antd's Table and Select watch breakpoints; jsdom has no matchMedia
@@ -19,15 +20,17 @@ const { ProductionsPage } = await import("./ProductionsPage");
 function page(path: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={[path]}>
-        <Routes>
-          <Route path="/productions" element={<ProductionsPage />} />
-          <Route path="/teams/:teamId/productions" element={<ProductionsPage />} />
-          <Route path="/teams" element={<div>teams page</div>} />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <NuqsTestingAdapter>
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={[path]}>
+          <Routes>
+            <Route path="/productions" element={<ProductionsPage />} />
+            <Route path="/teams/:teamId/productions" element={<ProductionsPage />} />
+            <Route path="/teams" element={<div>teams page</div>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    </NuqsTestingAdapter>,
   );
 }
 
@@ -60,7 +63,7 @@ describe("ProductionsPage", () => {
     client.listTeamProductions.mockResolvedValue(paged([prod("p-1", "Phở sáng")]));
     page("/productions");
     expect(await screen.findByText("Phở sáng")).toBeTruthy();
-    expect(client.listTeamProductions).toHaveBeenCalledWith("t-2");
+    expect(client.listTeamProductions).toHaveBeenCalledWith("t-2", expect.any(Object));
     expect(screen.getByText("Chạy thử")).toBeTruthy();
   });
 
@@ -74,7 +77,25 @@ describe("ProductionsPage", () => {
   it("mở từ một nhóm thì dùng nhóm đó, không hỏi chọn nhóm", async () => {
     client.listTeamProductions.mockResolvedValue(paged([]));
     page("/teams/t-9/productions");
-    await waitFor(() => expect(client.listTeamProductions).toHaveBeenCalledWith("t-9"));
+    await waitFor(() => expect(client.listTeamProductions).toHaveBeenCalledWith("t-9", expect.any(Object)));
     expect(client.listTeams).not.toHaveBeenCalled();
+  });
+
+  it("URL state: nuqs params (page, sortBy, sortOrder, pageSize) được truyền vào API", async () => {
+    // This test verifies that the URL-state-driven paging params are wired to the API call.
+    // With NuqsTestingAdapter, hooks return their declared defaults on first render.
+    client.listTeamProductions.mockResolvedValue(paged([prod("p-x", "Test")]));
+    page("/teams/t-7/productions");
+    await waitFor(() =>
+      expect(client.listTeamProductions).toHaveBeenCalledWith(
+        "t-7",
+        expect.objectContaining({
+          page: 1,           // default from parseAsInteger.withDefault(1)
+          pageSize: 20,
+          sortBy: "title",   // default
+          sortOrder: "asc",  // default
+        }),
+      ),
+    );
   });
 });

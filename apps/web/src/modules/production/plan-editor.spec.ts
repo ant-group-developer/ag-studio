@@ -127,6 +127,26 @@ describe("YouTube tags character counter", () => {
     expect(tagsChars(longTags)).toBeGreaterThan(YOUTUBE_TAGS_MAX_CHARS);
   });
 
+  it("catalogPicker: adding a catalog asset to episode still parses the plan", () => {
+    // Simulates the "Thêm video" action from CatalogPickerModal:
+    // user picks an asset from the catalog; it gets appended with reason: "added"
+    const plan = makePlan(1);
+    const ep = plan.episodes[0]!;
+    const catalogAssetId = "catalog-asset-uuid-001";
+
+    // Simulate CatalogPickerModal onAddAsset
+    ep.items = [
+      ...ep.items,
+      { asset_id: catalogAssetId, reason: "added", section_title: null },
+    ];
+
+    const result = SeriesPlanSchema.safeParse(plan);
+    expect(result.success).toBe(true);
+    expect(result.data?.episodes[0]?.items).toHaveLength(2);
+    expect(result.data?.episodes[0]?.items[1]?.asset_id).toBe(catalogAssetId);
+    expect(result.data?.episodes[0]?.items[1]?.reason).toBe("added");
+  });
+
   it("mergeEpisode: combining two episodes keeps both item sets", () => {
     // This is a pure function test for the merge logic used in PlanEditor
     const ep1 = makeEpisode(1);
