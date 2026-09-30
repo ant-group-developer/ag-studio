@@ -8,11 +8,13 @@ import {
   Button,
   Card,
   Collapse,
+  Dropdown,
   Input,
   Modal,
   Popconfirm,
   Progress,
   Space,
+  Spin,
   Tag,
   Tooltip,
   Typography,
@@ -34,15 +36,170 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Trash2, ArrowLeftRight, CheckCircle, AlertTriangle } from "lucide-react";
+import { GripVertical, Trash2, ArrowLeftRight, CheckCircle, AlertTriangle, PlusCircle, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useQueryClient, useMutation } from "@tanstack/react-query";
+import { useQueryClient, useMutation, useQuery } from "@tanstack/react-query";
 import { useStudioClient } from "../../api/studio-client";
+import { useDebouncedValue } from "../../helpers/use-debounced-value";
 import type { SeriesPlan, PlannedEpisode, StudioCatalog, CatalogAsset } from "@harness/contracts";
 import { EPISODE_DURATION_TOLERANCE, SeriesPlanSchema } from "@harness/contracts";
 import { App as AntApp } from "antd";
 
 const { Text, Title } = Typography;
+
+// ---------------------------------------------------------------------------
+// CatalogPickerModal — "Thêm video" per episode
+// ---------------------------------------------------------------------------
+interface AssetRowProps {
+  asset: CatalogAsset;
+  productionId: string;
+  disabled: boolean;
+  onSelect: (assetId: string) => void;
+}
+
+function AssetRow({ asset, productionId, disabled, onSelect }: AssetRowProps) {
+  const client = useStudioClient();
+  const { data: media, isLoading } = useQuery({
+    queryKey: ["asset-media", productionId, asset.asset_id],
+    queryFn: () => client.getAssetMedia(productionId, asset.asset_id),
+    staleTime: 1000 * 60 * 5,
+  });
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "6px 8px",
+        borderRadius: 6,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.45 : 1,
+        background: "transparent",
+      }}
+      onClick={() => {
+        if (!disabled) onSelect(asset.asset_id);
+      }}
+      onMouseEnter={(e) => {
+        if (!disabled) (e.currentTarget as HTMLDivElement).style.background = "var(--ant-color-bg-text-hover, rgba(0,0,0,0.04))";
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLDivElement).style.background = "transparent";
+      }}
+    >
+      <div
+        style={{
+          width: 60,
+          height: 34,
+          borderRadius: 4,
+          overflow: "hidden",
+          flexShrink: 0,
+          background: "#f0f0f0",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        {isLoading ? (
+          <Spin size="small" />
+        ) : media?.posterUrl ? (
+          <img
+            src={media.posterUrl}
+            alt={asset.title_vi}
+            style={{ width: 60, height: 34, objectFit: "cover" }}
+            loading="lazy"
+          />
+        ) : (
+          <div style={{ width: 60, height: 34, background: "#d9d9d9" }} />
+        )}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <Text strong ellipsis style={{ display: "block", fontSize: 13 }}>
+          {asset.title_vi}
+        </Text>
+        <Space size={4}>
+          <Text type="secondary" style={{ fontSize: 11 }}>
+            {Math.round(asset.duration_s)}s
+          </Text>
+          {asset.orientation && (
+            <Tag style={{ fontSize: 10, lineHeight: "16px", padding: "0 4px" }}>{asset.orientation}</Tag>
+          )}
+        </Space>
+      </div>
+    </div>
+  );
+}
+
+interface CatalogPickerModalProps {
+  open: boolean;
+  onClose: () => void;
+  productionId: string;
+  catalog: StudioCatalog | null;
+  ep: PlannedEpisode;
+  onChange: (ep: PlannedEpisode) => void;
+}
+
+function CatalogPickerModal({ open, onClose, productionId, catalog, ep, onChange }: CatalogPickerModalProps) {
+  const { t } = useTranslation();
+  const [searchText, setSearchText] = useState("");
+  const debouncedSearch = useDebouncedValue(searchText, 250);
+
+  const existingIds = new Set(ep.items.map((i) => i.asset_id));
+
+  const filtered = (catalog?.assets ?? []).filter((a) => {
+    if (!debouncedSearch) return true;
+    const q = debouncedSearch.toLowerCase();
+    return (
+      a.title_vi.toLowerCase().includes(q) ||
+      a.summary_vi.toLowerCase().includes(q) ||
+      a.tags.some((tag) => tag.toLowerCase().includes(q))
+    );
+  });
+
+  const handleSelect = (assetId: string) => {
+    onChange({
+      ...ep,
+      items: [...ep.items, { asset_id: assetId, reason: "added", section_title: null }],
+    });
+  };
+
+  return (
+    <Modal
+      open={open}
+      title={t("planEditor.catalogSearch")}
+      onCancel={onClose}
+      footer={null}
+      width={560}
+      destroyOnClose
+    >
+      <Space direction="vertical" style={{ width: "100%" }} size={12}>
+        <Input.Search
+          placeholder={t("planEditor.catalogSearchPlaceholder", { defaultValue: "Tìm kiếm..." })}
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+          allowClear
+        />
+        <div style={{ maxHeight: 420, overflowY: "auto" }}>
+          {filtered.length === 0 ? (
+            <Text type="secondary" style={{ padding: "16px 0", display: "block", textAlign: "center" }}>
+              {t("planEditor.catalogEmpty")}
+            </Text>
+          ) : (
+            filtered.map((asset) => (
+              <AssetRow
+                key={asset.asset_id}
+                asset={asset}
+                productionId={productionId}
+                disabled={existingIds.has(asset.asset_id)}
+                onSelect={handleSelect}
+              />
+            ))
+          )}
+        </div>
+      </Space>
+    </Modal>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Sortable item row
@@ -52,12 +209,13 @@ interface SortableItemProps {
   asset?: CatalogAsset;
   item: PlannedEpisode["items"][number];
   alternates: PlannedEpisode["alternates"];
+  assetMap: Map<string, CatalogAsset>;
   onRemove: () => void;
   onSectionTitleChange: (v: string | null) => void;
   onSwapAlternate: (altAssetId: string) => void;
 }
 
-function SortableItem({ id, asset, item, alternates, onRemove, onSectionTitleChange, onSwapAlternate }: SortableItemProps) {
+function SortableItem({ id, asset, item, alternates, assetMap, onRemove, onSectionTitleChange, onSwapAlternate }: SortableItemProps) {
   const { t } = useTranslation();
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id });
   const style = { transform: CSS.Transform.toString(transform), transition };
@@ -83,16 +241,25 @@ function SortableItem({ id, asset, item, alternates, onRemove, onSectionTitleCha
         />
       </div>
       {alternates.length > 0 && (
-        <Tooltip title={t("planEditor.swapAlternate")}>
-          <Button
-            size="small"
-            icon={<ArrowLeftRight size={12} />}
-            onClick={() => {
-              const alt = alternates[0];
-              if (alt) onSwapAlternate(alt.asset_id);
-            }}
-          />
-        </Tooltip>
+        <Dropdown
+          trigger={["click"]}
+          menu={{
+            items: alternates.map((alt) => ({
+              key: alt.asset_id,
+              label: assetMap.get(alt.asset_id)?.title_vi ?? alt.asset_id,
+              onClick: () => onSwapAlternate(alt.asset_id),
+            })),
+          }}
+        >
+          <Tooltip title={t("planEditor.swapAlternate")}>
+            <Button
+              size="small"
+              icon={<ArrowLeftRight size={12} />}
+            >
+              ({alternates.length})
+            </Button>
+          </Tooltip>
+        </Dropdown>
       )}
       <Tooltip title={t("planEditor.removeItem")}>
         <Button size="small" danger icon={<Trash2 size={12} />} onClick={onRemove} />
@@ -108,14 +275,16 @@ interface EpisodeCardProps {
   ep: PlannedEpisode;
   targetSeconds: number;
   catalog: StudioCatalog | null;
+  productionId: string;
   onChange: (ep: PlannedEpisode) => void;
   onRemove: () => void;
   onMerge: () => void;
   isFirst: boolean;
 }
 
-function EpisodeCard({ ep, targetSeconds, catalog, onChange, onRemove, onMerge, isFirst }: EpisodeCardProps) {
+function EpisodeCard({ ep, targetSeconds, catalog, productionId, onChange, onRemove, onMerge, isFirst }: EpisodeCardProps) {
   const { t } = useTranslation();
+  const [catalogOpen, setCatalogOpen] = useState(false);
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -161,64 +330,85 @@ function EpisodeCard({ ep, targetSeconds, catalog, onChange, onRemove, onMerge, 
   const completionPct = targetSeconds > 0 ? Math.min(100, (actualSeconds / targetSeconds) * 100) : 0;
 
   return (
-    <Card
-      size="small"
-      title={
-        <Space>
-          <strong>{t("planEditor.episodeTitle", { idx: ep.idx })}</strong>
-          <Text type="secondary" style={{ fontSize: 13 }}>{ep.title}</Text>
-        </Space>
-      }
-      extra={
-        <Space>
-          {!isFirst && (
-            <Tooltip title={t("planEditor.mergeEpisode")}>
-              <Button size="small" icon={<ArrowLeftRight size={12} />} onClick={onMerge} />
-            </Tooltip>
-          )}
-          <Popconfirm title={t("planEditor.removeEpisode")} onConfirm={onRemove}>
-            <Button size="small" danger icon={<Trash2 size={12} />} />
-          </Popconfirm>
-        </Space>
-      }
-      style={{ marginBottom: 8 }}
-    >
-      <Space direction="vertical" style={{ width: "100%" }} size={4}>
-        <Text type="secondary" style={{ fontSize: 12 }}>{ep.logline}</Text>
-        <Space size={8}>
-          <Text style={{ fontSize: 12 }}>{t("planEditor.targetDuration", { s: Math.round(targetSeconds) })}</Text>
-          <Text style={{ fontSize: 12, color: durationWarning ? "#faad14" : undefined }}>
-            {t("planEditor.actualDuration", { s: Math.round(actualSeconds) })}
-            {durationWarning && <AlertTriangle size={12} style={{ marginLeft: 4, color: "#faad14" }} />}
-          </Text>
-        </Space>
-        <Progress
-          percent={Math.round(completionPct)}
-          status={durationWarning ? "exception" : completionPct >= 100 ? "success" : "active"}
-          size="small"
-          showInfo={false}
-        />
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext
-            items={ep.items.map((i) => i.asset_id)}
-            strategy={verticalListSortingStrategy}
+    <>
+      <Card
+        size="small"
+        title={
+          <Space>
+            <strong>{t("planEditor.episodeTitle", { idx: ep.idx })}</strong>
+            <Text type="secondary" style={{ fontSize: 13 }}>{ep.title}</Text>
+          </Space>
+        }
+        extra={
+          <Space>
+            {!isFirst && (
+              <Tooltip title={t("planEditor.mergeEpisode")}>
+                <Button size="small" icon={<ArrowLeftRight size={12} />} onClick={onMerge} />
+              </Tooltip>
+            )}
+            <Popconfirm title={t("planEditor.removeEpisode")} onConfirm={onRemove}>
+              <Button size="small" danger icon={<Trash2 size={12} />} />
+            </Popconfirm>
+          </Space>
+        }
+        style={{ marginBottom: 8 }}
+      >
+        <Space direction="vertical" style={{ width: "100%" }} size={4}>
+          <Text type="secondary" style={{ fontSize: 12 }}>{ep.logline}</Text>
+          <Space size={8}>
+            <Text style={{ fontSize: 12 }}>{t("planEditor.targetDuration", { s: Math.round(targetSeconds) })}</Text>
+            <Text style={{ fontSize: 12, color: durationWarning ? "#faad14" : undefined }}>
+              {t("planEditor.actualDuration", { s: Math.round(actualSeconds) })}
+              {durationWarning && <AlertTriangle size={12} style={{ marginLeft: 4, color: "#faad14" }} />}
+            </Text>
+          </Space>
+          <Progress
+            percent={Math.round(completionPct)}
+            status={durationWarning ? "exception" : completionPct >= 100 ? "success" : "active"}
+            size="small"
+            showInfo={false}
+          />
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext
+              items={ep.items.map((i) => i.asset_id)}
+              strategy={verticalListSortingStrategy}
+            >
+              {ep.items.map((item) => (
+                <SortableItem
+                  key={item.asset_id}
+                  id={item.asset_id}
+                  asset={assetMap.get(item.asset_id)}
+                  item={item}
+                  alternates={ep.alternates}
+                  assetMap={assetMap}
+                  onRemove={() => removeItem(item.asset_id)}
+                  onSectionTitleChange={(v) => updateSectionTitle(item.asset_id, v)}
+                  onSwapAlternate={(altId) => swapAlternate(item.asset_id, altId)}
+                />
+              ))}
+            </SortableContext>
+          </DndContext>
+          <Button
+            size="small"
+            icon={<Plus size={12} />}
+            style={{ marginTop: 4 }}
+            onClick={() => setCatalogOpen(true)}
           >
-            {ep.items.map((item) => (
-              <SortableItem
-                key={item.asset_id}
-                id={item.asset_id}
-                asset={assetMap.get(item.asset_id)}
-                item={item}
-                alternates={ep.alternates}
-                onRemove={() => removeItem(item.asset_id)}
-                onSectionTitleChange={(v) => updateSectionTitle(item.asset_id, v)}
-                onSwapAlternate={(altId) => swapAlternate(item.asset_id, altId)}
-              />
-            ))}
-          </SortableContext>
-        </DndContext>
-      </Space>
-    </Card>
+            {t("planEditor.addVideo", { defaultValue: "Thêm video" })}
+          </Button>
+        </Space>
+      </Card>
+      <CatalogPickerModal
+        open={catalogOpen}
+        onClose={() => setCatalogOpen(false)}
+        productionId={productionId}
+        catalog={catalog}
+        ep={ep}
+        onChange={(updated) => {
+          onChange(updated);
+        }}
+      />
+    </>
   );
 }
 
@@ -304,6 +494,21 @@ export function PlanEditor({ productionId, plan: initialPlan, catalog, targetSec
     });
   };
 
+  const addEpisode = () => {
+    const newIdx = plan.episodes.length + 1;
+    const newEp: PlannedEpisode = {
+      idx: newIdx,
+      title: `Tập ${newIdx}`,
+      hook: "",
+      logline: "",
+      target_seconds: targetSeconds || 300,
+      items: [],
+      alternates: [],
+      texts_suggested: [],
+    };
+    setPlan((prev) => ({ ...prev, episodes: [...prev.episodes, newEp] }));
+  };
+
   return (
     <Space direction="vertical" size={12} style={{ width: "100%" }}>
       <Card size="small">
@@ -338,6 +543,7 @@ export function PlanEditor({ productionId, plan: initialPlan, catalog, targetSec
               ep={ep}
               targetSeconds={targetSeconds || ep.target_seconds}
               catalog={catalog}
+              productionId={productionId}
               onChange={(updated) => updateEpisode(idx, updated)}
               onRemove={() => removeEpisode(idx)}
               onMerge={() => mergeEpisode(idx)}
@@ -349,6 +555,12 @@ export function PlanEditor({ productionId, plan: initialPlan, catalog, targetSec
 
       {!readOnly && (
         <Space>
+          <Button
+            icon={<PlusCircle size={14} />}
+            onClick={addEpisode}
+          >
+            {t("planEditor.addEpisode", { defaultValue: "Thêm tập" })}
+          </Button>
           <Button
             icon={<CheckCircle size={14} />}
             onClick={() => validate()}
