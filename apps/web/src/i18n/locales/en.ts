@@ -31,6 +31,7 @@ export const en: LocaleMessages = {
     missingConfigDesc: "Check the VITE_AUTH0_DOMAIN, VITE_AUTH0_CLIENT_ID and VITE_AUTH0_AUDIENCE environment variables.",
   },
   menu: {
+    productions: "Productions",
     teams: "Teams",
   },
   roles: {
@@ -44,6 +45,7 @@ export const en: LocaleMessages = {
     columnName: "Team",
     columnMembers: "Members",
     viewMembers: "Members",
+    viewProductions: "Productions",
     create: "Create team",
     createTitle: "Create team",
     nameLabel: "Team name",
@@ -66,6 +68,11 @@ export const en: LocaleMessages = {
   },
   productions: {
     title: "Productions",
+    teamLabel: "Team",
+    teamPlaceholder: "Choose a team",
+    noTeams: "You are not in any team yet. Create a team first to make productions.",
+    goToTeams: "Go to Teams",
+    backToList: "Production list",
     columnTitle: "Production",
     columnStatus: "Status",
     columnAspect: "Aspect ratio",

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Table, Button, Modal, Form, Input, Typography } from "antd";
+import { Table, Button, Modal, Form, Input, Space, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -42,15 +42,17 @@ export function TeamsPage() {
       ),
     },
     {
-      title: t("teams.columnMembers"),
-      key: "members",
+      title: t("teams.columnActions"),
+      key: "actions",
       render: (_: unknown, record: Team) => (
-        <Button
-          size="small"
-          onClick={() => navigate(`/teams/${record.id}`)}
-        >
-          {t("teams.viewMembers")}
-        </Button>
+        <Space>
+          <Button size="small" type="primary" ghost onClick={() => navigate(`/teams/${record.id}/productions`)}>
+            {t("teams.viewProductions")}
+          </Button>
+          <Button size="small" onClick={() => navigate(`/teams/${record.id}`)}>
+            {t("teams.viewMembers")}
+          </Button>
+        </Space>
       ),
     },
   ];

@@ -29,6 +29,7 @@ export const vi = {
     missingConfigDesc: "Kiểm tra các biến môi trường VITE_AUTH0_DOMAIN, VITE_AUTH0_CLIENT_ID, VITE_AUTH0_AUDIENCE.",
   },
   menu: {
+    productions: "Production",
     teams: "Nhóm",
   },
   roles: {
@@ -42,6 +43,7 @@ export const vi = {
     columnName: "Nhóm",
     columnMembers: "Thành viên",
     viewMembers: "Thành viên",
+    viewProductions: "Production",
     create: "Tạo nhóm",
     createTitle: "Tạo nhóm",
     nameLabel: "Tên nhóm",
@@ -64,6 +66,11 @@ export const vi = {
   },
   productions: {
     title: "Production",
+    teamLabel: "Nhóm",
+    teamPlaceholder: "Chọn nhóm",
+    noTeams: "Bạn chưa ở nhóm nào. Tạo nhóm trước để làm production.",
+    goToTeams: "Tới trang Nhóm",
+    backToList: "Danh sách production",
     columnTitle: "Production",
     columnStatus: "Trạng thái",
     columnAspect: "Tỉ lệ khung hình",

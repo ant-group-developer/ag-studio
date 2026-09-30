@@ -3,7 +3,7 @@ import { useAuth0 } from "@auth0/auth0-react";
 import { App as AntApp, ConfigProvider, Dropdown, theme as antdTheme } from "antd";
 import enUS from "antd/locale/en_US";
 import viVN from "antd/locale/vi_VN";
-import { TeamOutlined } from "@ant-design/icons";
+import { TeamOutlined, VideoCameraOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
 import {
   BrowserRouter,
@@ -20,6 +20,7 @@ import { ProductionDetailPage } from "./pages/ProductionDetailPage";
 import { EditorPage } from "./modules/editor/EditorPage";
 import { AuthGate } from "./auth/auth-provider";
 import { useUserMenu } from "./modules/common/user-menu";
+import { menuKeyFor } from "./helpers/menu";
 import type { AppLanguage } from "./i18n/language";
 
 const ANTD_LOCALES: Record<AppLanguage, typeof viVN> = {
@@ -60,6 +61,11 @@ function AppLayout() {
     path: "/",
     routes: [
       {
+        path: "/productions",
+        name: t("menu.productions"),
+        icon: <VideoCameraOutlined />,
+      },
+      {
         path: "/teams",
         name: t("menu.teams"),
         icon: <TeamOutlined />,
@@ -67,9 +73,9 @@ function AppLayout() {
     ],
   };
 
-  // Team- and production-scoped pages keep "Nhóm" highlighted in the sider even though their path
-  // isn't literally under /teams.
-  const selectedKeys = ["/teams"];
+  // A team's production list and every production page sit under "Production"; the team list and a
+  // team's members under "Nhóm".
+  const selectedKeys = [menuKeyFor(location.pathname)];
 
   return (
     <ProLayout
@@ -77,7 +83,7 @@ function AppLayout() {
       layout="mix"
       fixSiderbar
       fixedHeader
-      location={{ pathname: editorRoute ? "/teams" : location.pathname }}
+      location={{ pathname: editorRoute ? "/productions" : location.pathname }}
       route={route}
       selectedKeys={selectedKeys}
       menuItemRender={(item, dom) => (item.path ? <Link to={item.path}>{dom}</Link> : dom)}
@@ -97,7 +103,8 @@ function AppLayout() {
       }}
     >
       <Routes>
-        <Route path="/" element={<Navigate to="/teams" replace />} />
+        <Route path="/" element={<Navigate to="/productions" replace />} />
+        <Route path="/productions" element={<ProductionsPage />} />
         <Route path="/teams" element={<TeamsPage />} />
         <Route path="/teams/:teamId" element={<TeamDetailPage />} />
         <Route path="/teams/:teamId/productions" element={<ProductionsPage />} />

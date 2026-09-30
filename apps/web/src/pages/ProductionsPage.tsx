@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -12,6 +12,8 @@ import {
   TreeSelect,
   Typography,
   Tag,
+  Empty,
+  Space,
 } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import { useAuth0 } from "@auth0/auth0-react";
@@ -23,6 +25,24 @@ import { buildFolderTree } from "../helpers/folder-tree";
 import type { ColumnsType } from "antd/es/table";
 
 const { Title } = Typography;
+
+const LAST_TEAM_KEY = "ag-studio:last-team";
+
+function rememberedTeam(): string | null {
+  try {
+    return localStorage.getItem(LAST_TEAM_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberTeam(teamId: string): void {
+  try {
+    localStorage.setItem(LAST_TEAM_KEY, teamId);
+  } catch {
+    // private mode: the choice just isn't remembered
+  }
+}
 
 const ASPECT_RATIOS = [
   { value: "16:9", label: "16:9" },
@@ -40,8 +60,19 @@ interface CreateProductionForm {
 
 export function ProductionsPage() {
   const { t } = useTranslation();
-  const { teamId } = useParams<{ teamId: string }>();
+  const { teamId: routeTeamId } = useParams<{ teamId: string }>();
   const client = useStudioClient();
+  // From the sider (/productions) the team is picked here; from a team (/teams/:id/productions) it is fixed.
+  const [pickedTeamId, setPickedTeamId] = useState<string | null>(rememberedTeam());
+  const { data: teams, isLoading: loadingTeams } = useQuery({
+    queryKey: ["teams"],
+    queryFn: () => client.listTeams(),
+    enabled: !routeTeamId,
+  });
+  const teamId = routeTeamId ?? (teams?.some((t) => t.id === pickedTeamId) ? pickedTeamId! : teams?.[0]?.id);
+  useEffect(() => {
+    if (teamId) rememberTeam(teamId);
+  }, [teamId]);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { getAccessTokenSilently } = useAuth0();
@@ -124,6 +155,19 @@ export function ProductionsPage() {
     },
   ];
 
+  if (!routeTeamId && !loadingTeams && teams && teams.length === 0) {
+    return (
+      <div>
+        <Title level={3}>{t("productions.title")}</Title>
+        <Empty description={t("productions.noTeams")}>
+          <Button type="primary" onClick={() => navigate("/teams")}>
+            {t("productions.goToTeams")}
+          </Button>
+        </Empty>
+      </div>
+    );
+  }
+
   const handleOk = () => {
     form.validateFields().then((values) => {
       createMutation.mutate(values);
@@ -139,10 +183,24 @@ export function ProductionsPage() {
           marginBottom: 16,
         }}
       >
-        <Title level={3}>{t("productions.title")}</Title>
+        <Space align="center" size={16}>
+          <Title level={3} style={{ margin: 0 }}>{t("productions.title")}</Title>
+          {!routeTeamId && (
+            <Select
+              aria-label={t("productions.teamLabel")}
+              placeholder={t("productions.teamPlaceholder")}
+              loading={loadingTeams}
+              value={teamId}
+              onChange={(id: string) => setPickedTeamId(id)}
+              options={(teams ?? []).map((team) => ({ value: team.id, label: team.name }))}
+              style={{ minWidth: 220 }}
+            />
+          )}
+        </Space>
         <Button
           type="primary"
           icon={<PlusOutlined />}
+          disabled={!teamId}
           onClick={() => setOpen(true)}
         >
           {t("productions.create")}

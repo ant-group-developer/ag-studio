@@ -1,6 +1,7 @@
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Card, Descriptions, Tag, Typography } from "antd";
+import { ArrowLeftOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
 import { useStudioClient } from "../api/studio-client";
 import { RunPanel } from "../modules/production/RunPanel";
@@ -34,7 +35,10 @@ export function ProductionDetailPage() {
 
   return (
     <div>
-      <Title level={3}>{production.title}</Title>
+      <Link to={`/teams/${production.teamId}/productions`}>
+        <ArrowLeftOutlined /> {t("productions.backToList")}
+      </Link>
+      <Title level={3} style={{ marginTop: 8 }}>{production.title}</Title>
 
       {access && !access.hasAccess && (
         <Alert
