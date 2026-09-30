@@ -16,12 +16,15 @@
  *   STUDIO_CLAUDE_MODEL default claude-opus-5-5
  *   STUDIO_CLAUDE_ARGV  JSON array replacing `claude -p ...` (tests: the fake CLI)
  *   STUDIO_FFMPEG_PATH  ffmpeg for the loudness check of the final render
+ *   YOUTUBE_API_KEY     YouTube Data API v3 key for the market research of a series (none = research skipped)
  *   HARNESS_ROOT        Studio install root (default: this checkout)
  */
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { AgGoClient } from "@ag-studio/ag-go-client";
-import { createStudioEngineCore, createStudioWorker, FarmOwnerClient, S3Bucket, StudioDb, studioLogger } from "@ag-studio/engine";
+import {
+  createStudioEngineCore, createStudioWorker, FarmOwnerClient, S3Bucket, StudioDb, studioLogger, studioResearchCache, YoutubeResearchSource,
+} from "@ag-studio/engine";
 import { HARNESS_ROOT } from "@harness/core";
 
 function requireEnv(name: string): string {
@@ -38,9 +41,11 @@ async function main(): Promise<void> {
   const core = createStudioEngineCore({ dbPath, dataRoot: requireEnv("STUDIO_DATA_ROOT"), harnessRoot, ...(ffmpeg ? { ffmpeg } : {}) });
   const logger = studioLogger({ owner });
   const argv = process.env.STUDIO_CLAUDE_ARGV ? (JSON.parse(process.env.STUDIO_CLAUDE_ARGV) as string[]) : undefined;
+  const db = new StudioDb(dbPath);
+  const youtubeKey = process.env.YOUTUBE_API_KEY?.trim();
   const worker = createStudioWorker({
     core,
-    db: new StudioDb(dbPath),
+    db,
     dbPath,
     bucket: new S3Bucket({
       endpoint: requireEnv("STUDIO_R2_ENDPOINT"), bucket: requireEnv("STUDIO_R2_BUCKET"),
@@ -56,9 +61,10 @@ async function main(): Promise<void> {
     owner,
     logger,
     farmPollMs: Number(process.env.FARM_POLL_MS ?? 5000),
+    ...(youtubeKey ? { research: new YoutubeResearchSource({ apiKey: youtubeKey, cache: studioResearchCache(db) }) } : {}),
   });
 
-  logger.info("Studio worker starting", { owner, harnessRoot });
+  logger.info("Studio worker starting", { owner, harnessRoot, youtube_research: !!youtubeKey });
   const ac = new AbortController();
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
     process.on(sig, () => { logger.warn(`received ${sig}, stopping after the current stage`); ac.abort(); });

@@ -14,6 +14,7 @@ import { studioPayloadBuilders } from "./payloads.js";
 import { startEpisodeRun } from "./run-control.js";
 import { studioStages, type FootageCatalogSource } from "./stages.js";
 import type { StudioDb } from "./studio-db.js";
+import type { ResearchSource } from "./youtube-research.js";
 
 /** Per-skill model env keys. `STUDIO_CLAUDE_MODEL` overrides all. */
 const SKILL_MODEL_ENVS: Record<StudioSkill, string> = {
@@ -55,6 +56,8 @@ export interface StudioWorkerOptions {
   owner: string;
   logger?: HarnessLogger;
   farmPollMs?: number;
+  /** YouTube research for the `research` stage (GĐ5); without it the stage records why nothing was fetched. */
+  research?: ResearchSource;
 }
 
 export function studioLogger(bindings: Record<string, unknown> = {}): HarnessLogger {
@@ -69,6 +72,7 @@ export function createStudioWorker(o: StudioWorkerOptions): Worker {
   executors.register("script", new InProcessExecutor(studioStages({
     db: o.db, bucket: o.bucket, footage: o.footage,
     startEpisodeRun: (episodeId) => Promise.resolve(startEpisodeRun(core, o.db, episodeId)),
+    ...(o.research ? { research: o.research } : {}),
   })));
   executors.register("agent", new StudioAgentExecutor({
     runtimeFor: (jsonSchema: string, skill?: StudioSkill) => new CliAgentRuntime({

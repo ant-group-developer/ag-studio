@@ -8,9 +8,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createStudioWorker, episodeExport, episodeRunView, episodeState, latestEpisodeRevision, listEpisodes,
   planRunView, readStageDocument, rerenderEpisode, saveEpisodeRevision, startEpisodeRun, startPlanRun, STUDIO_WORKFLOWS,
-  StudioRunError, submitStudioGate,
+  StudioRunError, studioResearchCache, submitStudioGate, type ResearchSource,
 } from "../src/index.js";
-import { StudioYoutubeSchema, TrendReportSchema, SeriesPlanSchema, type TimelineV3 } from "@harness/contracts";
+import { StudioResearchSchema, StudioYoutubeSchema, TrendReportSchema, SeriesPlanSchema, type StudioResearch, type TimelineV3 } from "@harness/contracts";
 import { FAKE_CLAUDE, fakeFarm, fakeFootage, seedProduction, world, ROOT } from "./helpers.js";
 
 type Worker = ReturnType<typeof createStudioWorker>;
@@ -22,10 +22,11 @@ async function drain(worker: Worker, maxTicks = 400): Promise<void> {
   throw new Error(`worker still busy after ${maxTicks} ticks`);
 }
 
-function setup(assets = 8, seconds = 30) {
+function setup(assets = 8, seconds = 30, research?: ResearchSource) {
   const w = world();
   const farm = fakeFarm(w.bucket);
   const worker = createStudioWorker({
+    ...(research ? { research } : {}),
     core: w.core, db: w.db, dbPath: w.dbPath, bucket: w.bucket, footage: fakeFootage(assets, seconds), farm: farm as never,
     claude: { skillsDir: join(ROOT, "skills"), argv: ["node", FAKE_CLAUDE], model: "fake", maxTurns: 3 },
     owner: "auth0|owner",
@@ -151,5 +152,40 @@ describe(`${STUDIO_WORKFLOWS.plan.workflow} + ${STUDIO_WORKFLOWS.episode.workflo
     expect((replan as StudioRunError).details.code).toBe("episode_producing");
     const rerender = (() => { try { rerenderEpisode(s.core, s.db, "ep-x"); } catch (e) { return e; } return null; })();
     expect((rerender as StudioRunError).details.code).toBe("episode_running");
+  });
+
+  it("researches the channels and keywords, and the trend report is then written by Claude", async () => {
+    const asked: string[][] = [];
+    const research: ResearchSource = {
+      async research(brief): Promise<StudioResearch> {
+        asked.push([...brief.youtube_channels, ...brief.keywords]);
+        const video = { video_id: "v1", channel_id: "UC1", channel_title: "Kênh A", title: "Phở bò Hà Nội", published_at: "2026-09-01T00:00:00Z",
+          duration_s: 480, views: 90000, likes: 900, comments: 50, tags: ["phở"], views_per_day: 3000, outlier: true };
+        return {
+          schema_version: "studio.research/v1", production_id: brief.production_id, fetched_at: "2026-09-30T00:00:00Z", quota_units: 204,
+          skipped_reason: null, channels: [], keywords: [{ keyword: "phở", error: null, videos: [video] }],
+          insights: { top_title_terms: [], top_tags: [], duration_buckets: [{ bucket: "5-10m", count: 1 }], frequent_channels: [] },
+        };
+      },
+    };
+    s = setup(8, 30, research);
+    const prodId = seedProduction(s.db, { episode_target_seconds: 120, max_episodes: 2 });
+    s.db.run("UPDATE productions SET keywords = ?, youtube_channels = ? WHERE id = ?", [JSON.stringify(["phở"]), JSON.stringify(["@kenhA"]), prodId]);
+    const { runId } = startPlanRun(s.core, s.db, prodId);
+    await drain(s.worker);
+    expect(asked).toEqual([["@kenhA", "phở"]]);
+    const doc = StudioResearchSchema.parse(readStageDocument(s.core, runId, "research", "research.json"));
+    expect(doc.quota_units).toBe(204);
+    const trend = TrendReportSchema.parse(readStageDocument(s.core, runId, "trend-report", "trend-report.json"));
+    expect(trend.skipped).toBe(false);
+  }, 60_000);
+
+  it("keeps YouTube answers in studio.db", async () => {
+    s = setup();
+    const cache = studioResearchCache(s.db);
+    expect(await cache.get("k")).toBeNull();
+    await cache.set("k", "{\"a\":1}", "2026-09-30T00:00:00Z");
+    await cache.set("k", "{\"a\":2}", "2026-09-30T01:00:00Z");
+    expect(await cache.get("k")).toEqual({ body: "{\"a\":2}", fetchedAt: "2026-09-30T01:00:00Z" });
   });
 });

@@ -21,6 +21,7 @@ import {
 } from "@harness/core";
 import type { InProcessStage } from "@harness/executors";
 import { productionKey, type StudioBucket } from "./bucket.js";
+import { emptyResearch, type ResearchSource } from "./youtube-research.js";
 import {
   episodeForRun, getEpisode, getProduction, latestEpisodeRevision, listEpisodes, productionForRun, productionOwner, productionSources,
   replaceEpisodes, saveEpisodeRevision, saveTrendReport, updateEpisodeRunId, type StudioDb,
@@ -37,6 +38,8 @@ export interface StudioStageDeps {
   footage: FootageCatalogSource;
   /** Callback to start one episode run; wired by the worker. */
   startEpisodeRun(episodeId: string): Promise<{ runId: string }>;
+  /** YouTube research (GĐ5); absent when no YouTube API key is configured. */
+  research?: ResearchSource;
 }
 
 export const DEFAULT_CANVAS = { "16:9": { width: 1920, height: 1080 }, "9:16": { width: 1080, height: 1920 } } as const;
@@ -107,18 +110,17 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
 
     "studio-research": async (request, ctx) => {
       const brief = readBrief(request, ctx.workspaceDir);
-      // Stub: emit an empty research (no YouTube API key configured; the trend-report skip rule handles this).
-      const research = StudioResearchSchema.parse({
-        schema_version: "studio.research/v1",
-        production_id: brief.production_id,
-        fetched_at: null,
-        quota_units: 0,
-        skipped_reason: "no YouTube API key configured",
-        channels: [],
-        keywords: [],
-        insights: { top_title_terms: [], top_tags: [], duration_buckets: [], frequent_channels: [] },
-      });
+      const research = !brief.youtube_channels.length && !brief.keywords.length
+        ? emptyResearch(brief.production_id, "Chưa nhập kênh YouTube hoặc từ khoá")
+        : d.research
+          ? await d.research.research(brief)
+          : emptyResearch(brief.production_id, "Chưa cấu hình YOUTUBE_API_KEY cho Studio worker");
+      StudioResearchSchema.parse(research);
       writeOutput(ctx, "research.json", toBuffer(research));
+      ctx.logger.info("research done", {
+        quota_units: research.quota_units, skipped: research.skipped_reason,
+        channel_errors: research.channels.filter((c) => c.error).length, keyword_errors: research.keywords.filter((k) => k.error).length,
+      });
     },
 
     "studio-catalog": async (request, ctx) => {
