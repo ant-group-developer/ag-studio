@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { validateEnv } from './config/env';
@@ -10,6 +10,7 @@ import { ProductionsModule } from './productions/productions.module';
 import { FarmModule } from './farm/farm.module';
 import { HealthModule } from './health/health.module';
 import { StudioModule } from './studio/studio.module';
+import { RequestIdMiddleware } from './common/request-id.middleware';
 
 @Module({
   imports: [
@@ -29,4 +30,8 @@ import { StudioModule } from './studio/studio.module';
     { provide: APP_GUARD, useClass: Auth0Guard },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(RequestIdMiddleware).forRoutes('*');
+  }
+}

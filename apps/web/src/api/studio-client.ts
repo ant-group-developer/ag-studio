@@ -66,12 +66,38 @@ export interface ProductionAccess {
   hasAccess: boolean;
 }
 
-/** A non-2xx answer; `body` is the API's JSON error (e.g. `{ code: "revision_conflict", currentRevision }`). */
+/** A non-2xx answer. `body` is normalised as `{ code, message, ...details }` from the envelope error
+ *  (flat, so `body.currentRevision`, `body.missing`, `body.failed` etc. work as before), or the raw
+ *  JSON body when the server answers without the envelope. */
 export class StudioHttpError extends Error {
   constructor(readonly status: number, readonly body: Record<string, unknown> | null) {
     super(typeof body?.message === "string" ? body.message : `HTTP ${status}`);
     this.name = "StudioHttpError";
   }
+}
+
+/** True when `v` looks like `{ data, success, error, requestId, timestamp }`. */
+function isEnvelope(v: unknown): v is { success: boolean; data: unknown; error: unknown; requestId: string; timestamp: string } {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+  const r = v as Record<string, unknown>;
+  return typeof r.success === "boolean" && "data" in r && "error" in r && typeof r.requestId === "string";
+}
+
+/** Flatten envelope error `{ code, message, details, fieldErrors }` into `{ code, message, ...details, fieldErrors? }`. */
+function flattenEnvelopeError(err: unknown): Record<string, unknown> {
+  if (!err || typeof err !== "object" || Array.isArray(err)) return {};
+  const e = err as Record<string, unknown>;
+  const { code, message, details, fieldErrors } = e;
+  return {
+    ...(code !== undefined ? { code } : {}),
+    ...(message !== undefined ? { message } : {}),
+    ...(details && typeof details === "object" && !Array.isArray(details)
+      ? (details as Record<string, unknown>)
+      : details !== undefined
+        ? { details }
+        : {}),
+    ...(fieldErrors !== undefined ? { fieldErrors } : {}),
+  };
 }
 
 async function request<T>(
@@ -92,10 +118,16 @@ async function request<T>(
   if (!res.ok) {
     let parsed: Record<string, unknown> | null = null;
     try { parsed = (await res.json()) as Record<string, unknown>; } catch { /* not JSON */ }
-    throw new StudioHttpError(res.status, parsed);
+    // Normalize envelope error to flat { code, message, ...details } so consumers keep working
+    const normalised = isEnvelope(parsed) && parsed.error
+      ? flattenEnvelopeError(parsed.error)
+      : parsed;
+    throw new StudioHttpError(res.status, normalised);
   }
   if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+  const json = await res.json() as unknown;
+  // Unwrap the API envelope if present; fall back to the raw body for non-envelope answers.
+  return (isEnvelope(json) ? json.data : json) as T;
 }
 
 export function createStudioClient(getAccessToken: () => Promise<string>) {

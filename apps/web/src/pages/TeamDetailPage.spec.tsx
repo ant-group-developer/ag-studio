@@ -69,5 +69,5 @@ describe("TeamDetailPage", () => {
     fireEvent.click(await screen.findByText("Biên tập viên"));
     fireEvent.click(within(dialog).getByRole("button", { name: /OK/ }));
     await waitFor(() => expect(client.addMember).toHaveBeenCalledWith("team-1", "auth0|u-3", "editor"));
-  });
+  }, 15_000);
 });

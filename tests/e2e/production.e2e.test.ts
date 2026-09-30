@@ -85,13 +85,33 @@ function jwt(sub: string): string {
   return `${header}.${payload}.${b64url(sig)}`;
 }
 
+/** Unwrap `{ data, success, error, requestId, timestamp }` envelope if present; return data/error as flat body. */
+function unwrapEnvelope<T>(raw: unknown): T {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const r = raw as Record<string, unknown>;
+    if (typeof r.success === "boolean" && "data" in r && typeof r.requestId === "string") {
+      if (r.success) return r.data as T;
+      // For error envelopes, flatten error fields so toMatchObject({ code, currentRevision }) still works
+      if (r.error && typeof r.error === "object" && !Array.isArray(r.error)) {
+        const e = r.error as Record<string, unknown>;
+        const details = e.details && typeof e.details === "object" && !Array.isArray(e.details)
+          ? e.details as Record<string, unknown>
+          : {};
+        return { ...e, ...details } as T;
+      }
+    }
+  }
+  return raw as T;
+}
+
 async function api<T = unknown>(method: string, path: string, body?: unknown, user = OWNER): Promise<{ status: number; body: T }> {
   const res = await fetch(`http://127.0.0.1:${PORTS.api}/api${path}`, {
     method, headers: { Authorization: `Bearer ${jwt(user)}`, "Content-Type": "application/json" },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
   const text = await res.text();
-  return { status: res.status, body: (text ? JSON.parse(text) : null) as T };
+  const raw = text ? JSON.parse(text) : null;
+  return { status: res.status, body: unwrapEnvelope<T>(raw) };
 }
 async function ok<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
   const r = await api<T>(method, path, body);
@@ -191,7 +211,9 @@ function startFakeTtsWorker(token: string): () => void {
       try {
         await post("/v1/worker/heartbeat", { agent_version: "0.1.0-e2e-tts", kinds: ["studio.tts"], capabilities: caps, free_slots: { cpu: 0, gpu: 1 }, running_job_ids: [] });
         const claim = await post("/v1/worker/claim", { kinds: ["studio.tts"], free_slots: { cpu: 0, gpu: 1 }, cached_affinity: [] });
-        const { job } = (await claim.json()) as { job: null | { id: string; lease_token: string; ticket: string; sign_url: string; payload: { production_id: string; language: string; lines: { line_id: string; text: string }[] } } };
+        // Accept both enveloped { data: { job } } and raw { job } bodies (ag-farm hub may be updated by another agent)
+        const claimRaw = (await claim.json()) as unknown;
+        const { job } = unwrapEnvelope<{ job: null | { id: string; lease_token: string; ticket: string; sign_url: string; payload: { production_id: string; language: string; lines: { line_id: string; text: string }[] } } }>(claimRaw);
         if (job) {
           ttsJobs.push(job.id);
           const lines = job.payload.lines.map((l) => ({ line_id: l.line_id, output: `tts/${l.line_id}.wav`, duration_s: Math.round(l.text.split(/\s+/).length * 0.35 * 1000) / 1000, words: [] }));
@@ -199,7 +221,9 @@ function startFakeTtsWorker(token: string): () => void {
             { output: "tts.json", type: "application/json", body: Buffer.from(JSON.stringify({ schema: "ag.studio.tts/v1", production_id: job.payload.production_id, language: job.payload.language, lines, engine: { name: "e2e-tone", version: "1" } })) }];
           const signed = await post(job.sign_url, { ops: files.map((f) => ({ op: "put", output: f.output, content_type: f.type })) }, `Ticket ${job.ticket}`);
           if (!signed.ok) throw new Error(`sign ${signed.status} ${await signed.text()}`);
-          const { results } = (await signed.json()) as { results: { url: string; headers: Record<string, string> }[] };
+          // Studio /api/farm/sign now returns the envelope; unwrap to get { results }
+          const signRaw = (await signed.json()) as unknown;
+          const { results } = unwrapEnvelope<{ results: { url: string; headers: Record<string, string> }[] }>(signRaw);
           for (let i = 0; i < files.length; i++) {
             const put = await fetch(results[i]!.url, { method: "PUT", headers: results[i]!.headers, body: files[i]!.body });
             if (!put.ok) throw new Error(`PUT ${files[i]!.output} -> ${put.status}`);
