@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { useStudioClient } from "../api/studio-client";
 import type { Team } from "../api/studio-client";
 import type { ColumnsType } from "antd/es/table";
+import { PAGE_TABLE_STICKY } from "../helpers/sticky-table-header";
 
 const { Title } = Typography;
 
@@ -81,6 +82,7 @@ export function TeamsPage() {
         dataSource={teams}
         rowKey="id"
         loading={isLoading}
+        sticky={PAGE_TABLE_STICKY}
       />
 
       <Modal

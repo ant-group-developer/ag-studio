@@ -22,6 +22,7 @@ import { useStudioClient } from "../api/studio-client";
 import type { Production, CreateProductionData } from "../api/studio-client";
 import { getFolders } from "../api/ag-go-client";
 import { buildFolderTree } from "../helpers/folder-tree";
+import { PAGE_TABLE_STICKY } from "../helpers/sticky-table-header";
 import type { ColumnsType } from "antd/es/table";
 
 const { Title } = Typography;
@@ -212,6 +213,7 @@ export function ProductionsPage() {
         dataSource={productions}
         rowKey="id"
         loading={isLoading}
+        sticky={PAGE_TABLE_STICKY}
       />
 
       <Modal

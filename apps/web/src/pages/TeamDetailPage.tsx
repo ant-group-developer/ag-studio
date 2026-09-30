@@ -8,6 +8,7 @@ import { useStudioClient } from "../api/studio-client";
 import type { TeamMember } from "../api/studio-client";
 import { UserCell } from "../modules/common/UserCell";
 import type { ColumnsType } from "antd/es/table";
+import { PAGE_TABLE_STICKY } from "../helpers/sticky-table-header";
 
 const { Title } = Typography;
 
@@ -132,6 +133,7 @@ export function TeamDetailPage() {
         dataSource={members}
         rowKey="userId"
         loading={isLoading}
+        sticky={PAGE_TABLE_STICKY}
       />
 
       <Modal

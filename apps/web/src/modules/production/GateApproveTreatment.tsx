@@ -6,6 +6,7 @@ import type { Treatment } from "@harness/contracts";
 import { useTranslation } from "react-i18next";
 import { useStudioClient } from "../../api/studio-client";
 import { GateRejectionAlert } from "./GateRejectionAlert";
+import { PAGE_TABLE_STICKY } from "../../helpers/sticky-table-header";
 
 const { Text, Paragraph } = Typography;
 
@@ -93,6 +94,7 @@ export function GateApproveTreatment({
           dataSource={beats}
           rowKey="beat_id"
           pagination={false}
+          sticky={PAGE_TABLE_STICKY}
           columns={[
             { title: t("treatment.columnBeat"), dataIndex: "beat_id", width: 70 },
             {
