@@ -5,10 +5,10 @@
  * Episode-run stages: episode-intake, build-timeline, studio-freeze-timeline, studio-episode-export.
  */
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { pipeline } from "node:stream/promises";
 import { join } from "node:path";
 import JSZip from "yazl";
-import { Writable } from "node:stream";
 import {
   HarnessError, SeriesPlanSchema, SpawnedEpisodesSchema, StudioBriefSchema, StudioCatalogSchema,
   StudioEpisodeSchema, StudioExportSchema, StudioResearchSchema, StudioYoutubeSchema, TimelineV3Schema, YoutubeKitSchema,
@@ -303,7 +303,6 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
         : descriptionBody.slice(0, 5000);
 
       const prefix = `productions/${brief.production_id}/episodes/${episode.episode_id}/exports/${request.run_id}`;
-      const video = readFileSync(videoPath);
       const videoSlug = slug(title);
       const files: StudioExport["files"] = [];
 
@@ -312,17 +311,21 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
         await d.bucket.put(key, body, type);
         files.push({ kind, key, size_bytes: body.length, checksum: `sha256:${sha256(body)}` });
       };
+      // The video and the pack are streamed from disk: an episode can be gigabytes.
+      const uploadFile = async (kind: StudioExport["files"][number]["kind"], name: string, path: string, type: string) => {
+        const key = `${prefix}/${name}`;
+        await d.bucket.putFile(key, path, type);
+        files.push({ kind, key, size_bytes: statSync(path).size, checksum: `sha256:${await sha256File(path)}` });
+      };
 
-      await upload("mp4", `${videoSlug}.mp4`, video, "video/mp4");
+      await uploadFile("mp4", `${videoSlug}.mp4`, videoPath, "video/mp4");
 
       // Thumbnails: all inputs of type `thumbnail` from the render stage
       // thumb-1..3 in order: the index a person picked must stay the same picture
       const thumbInputs = request.inputs.filter((x) => x.type === STUDIO_TYPES.thumbnail).sort((a, b) => a.path.localeCompare(b.path));
-      for (let i = 0; i < thumbInputs.length; i++) {
-        const tPath = join(ws, thumbInputs[i]!.path);
-        if (existsSync(tPath)) {
-          await upload("thumbnail", `thumb-${i + 1}.jpg`, readFileSync(tPath), "image/jpeg");
-        }
+      const thumbFilesLocal = thumbInputs.map((t) => join(ws, t.path)).filter((p) => existsSync(p));
+      for (let i = 0; i < thumbFilesLocal.length; i++) {
+        await upload("thumbnail", `thumb-${i + 1}.jpg`, readFileSync(thumbFilesLocal[i]!), "image/jpeg");
       }
 
       // youtube.json
@@ -348,13 +351,15 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       await upload("timeline", "timeline.json", toBuffer(timeline), "application/json");
 
       // ZIP pack: mp4 + thumbnails + youtube.json + description.txt + tags.txt
-      const zipBuf = await buildZip([
-        { name: `${videoSlug}.mp4`, data: video },
+      const packPath = join(ws, "output", `${videoSlug}-youtube.zip`);
+      await writeZip(packPath, [
+        { name: `${videoSlug}.mp4`, path: videoPath },
+        ...thumbFilesLocal.map((t, i) => ({ name: `thumb-${i + 1}.jpg`, path: t })),
         { name: "youtube.json", data: youtubeBuf },
         { name: "description.txt", data: Buffer.from(fullDescription, "utf8") },
         { name: "tags.txt", data: Buffer.from(effectiveKit.tags.join("\n"), "utf8") },
       ]);
-      await upload("pack", `${videoSlug}-youtube.zip`, zipBuf, "application/zip");
+      await uploadFile("pack", `${videoSlug}-youtube.zip`, packPath, "application/zip");
 
       const exp: StudioExport = StudioExportSchema.parse({
         schema_version: "studio.export/v2",
@@ -374,20 +379,20 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
   };
 }
 
-/** Build a zip buffer in memory using yazl (streaming into a Buffer). */
-async function buildZip(entries: { name: string; data: Buffer }[]): Promise<Buffer> {
+/** Zip64-capable archive written straight to `dest`: files are streamed (the video is stored, not re-compressed). */
+async function writeZip(dest: string, entries: ({ name: string; path: string } | { name: string; data: Buffer })[]): Promise<void> {
+  const zip = new JSZip.ZipFile();
+  for (const e of entries) {
+    if ("path" in e) zip.addFile(e.path, e.name, { mtime: new Date(0), compress: false });
+    else zip.addBuffer(e.data, e.name, { mtime: new Date(0) });
+  }
+  zip.end();
+  await pipeline(zip.outputStream, createWriteStream(dest));
+}
+
+function sha256File(path: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const zipfile = new JSZip.ZipFile();
-    for (const e of entries) {
-      zipfile.addBuffer(e.data, e.name, { mtime: new Date(0) });
-    }
-    zipfile.end();
-    const chunks: Buffer[] = [];
-    const dest = new Writable({
-      write(chunk: Buffer, _enc: string, cb: () => void) { chunks.push(chunk); cb(); },
-    });
-    dest.on("finish", () => resolve(Buffer.concat(chunks)));
-    dest.on("error", reject);
-    zipfile.outputStream.pipe(dest);
+    const h = createHash("sha256");
+    createReadStream(path).on("data", (c) => h.update(c)).on("end", () => resolve(h.digest("hex"))).on("error", reject);
   });
 }

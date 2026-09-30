@@ -2,7 +2,7 @@
  * The Studio bucket (plan 3.1: only Studio holds its R2 keys). Keys are full object keys, e.g.
  * `productions/<id>/audio/<sha>.wav`. `MemoryBucket` backs unit tests; `S3Bucket` is R2/MinIO/the E2E fake S3.
  */
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createReadStream, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -10,6 +10,8 @@ import type { StudioStorage } from "@harness/executors";
 
 export interface StudioBucket {
   put(key: string, body: Buffer, contentType?: string): Promise<void>;
+  /** Streams a local file up without reading it into memory (an episode video can be gigabytes). */
+  putFile(key: string, path: string, contentType?: string): Promise<void>;
   get(key: string): Promise<Buffer>;
   exists(key: string): Promise<{ size: number } | null>;
   /** Short-lived GET URL for a browser (preview renders, exports). */
@@ -28,6 +30,13 @@ export class S3Bucket implements StudioBucket {
   }
   async put(key: string, body: Buffer, contentType?: string): Promise<void> {
     await this.s3.send(new PutObjectCommand({ Bucket: this.opts.bucket, Key: key, Body: body, ...(contentType ? { ContentType: contentType } : {}) }));
+  }
+  async putFile(key: string, path: string, contentType?: string): Promise<void> {
+    // One streamed PUT (up to 5 GB, above any episode); ContentLength lets the SDK send the stream as is.
+    await this.s3.send(new PutObjectCommand({
+      Bucket: this.opts.bucket, Key: key, Body: createReadStream(path), ContentLength: statSync(path).size,
+      ...(contentType ? { ContentType: contentType } : {}),
+    }));
   }
   async get(key: string): Promise<Buffer> {
     const r = await this.s3.send(new GetObjectCommand({ Bucket: this.opts.bucket, Key: key }));
@@ -52,6 +61,7 @@ export class S3Bucket implements StudioBucket {
 export class MemoryBucket implements StudioBucket {
   readonly objects = new Map<string, Buffer>();
   async put(key: string, body: Buffer): Promise<void> { this.objects.set(key, Buffer.from(body)); }
+  async putFile(key: string, path: string): Promise<void> { this.objects.set(key, readFileSync(path)); }
   async get(key: string): Promise<Buffer> {
     const b = this.objects.get(key);
     if (!b) throw new Error(`no object ${key}`);
