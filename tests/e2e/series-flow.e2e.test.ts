@@ -867,9 +867,12 @@ describe.skipIf(!isE2E)(
         const mp4Path = join(testDir, `ep-${ep.id}.mp4`);
         writeFileSync(mp4Path, Buffer.from(await mp4Res.arrayBuffer()));
         const mp4Info = await probe(mp4Path);
-        expect(mp4Info.duration).toBeGreaterThan(1);
-        // Episode has at least 1 clip of 8 s
-        expect(mp4Info.duration).toBeLessThan(120);
+        // as long as the timeline it was rendered from (whole videos back to back)
+        const tl = await ok<{ data: TimelineV3 }>("GET", `/productions/${prodId}/episodes/${ep.id}/timeline`);
+        const expected = tl.data.clips.reduce((sum, c) => sum + tl.data.assets[c.asset_id]!.duration_s, 0);
+        expect(Math.abs(mp4Info.duration - expected)).toBeLessThan(0.5);
+        expect(mp4Info.width).toBe(CANVAS.width);
+        expect(mp4Info.height).toBe(CANVAS.height);
 
         // Thumbnails: 3 real JPEGs at 1280×720
         const thumbFiles = detail.exportFiles.filter((f) => f.kind === "thumbnail");
