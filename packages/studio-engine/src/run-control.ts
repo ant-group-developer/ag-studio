@@ -8,7 +8,7 @@ import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { eventFor, isTerminal, submitGate, type SubmitReport } from "@harness/core";
 import type { StageRun } from "@harness/contracts";
-import { STUDIO_PORTFOLIO_ID, STUDIO_PROFILE, STUDIO_PROJECT_ID, STUDIO_WORKFLOW, type StudioEngineCore } from "./core.js";
+import { STUDIO_FLOWS, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, type StudioEngineCore } from "./core.js";
 import { getProduction, latestRevision, productionSources, type StudioDb } from "./studio-db.js";
 
 export type StudioRunErrorCode = "not_found" | "conflict" | "invalid" | "rejected";
@@ -35,8 +35,9 @@ export function startRun(core: StudioEngineCore, db: StudioDb, productionId: str
   }
   if (!productionSources(db, productionId).length) throw new StudioRunError("invalid", "chọn ít nhất một folder nguồn trước khi chạy");
   if (!p.target_seconds) throw new StudioRunError("invalid", "đặt thời lượng đích trước khi chạy");
+  const flow = STUDIO_FLOWS[core.flow];
   const run = core.planner.plan({
-    workflow: core.workflows(STUDIO_WORKFLOW), profile: core.profiles(STUDIO_PROFILE), harness: core.harness,
+    workflow: core.workflows(flow.workflow), profile: core.profiles(flow.profile), harness: core.harness,
     projectId: STUDIO_PROJECT_ID, portfolioId: STUDIO_PORTFOLIO_ID, reuse: false,
   });
   // The link must exist before `intake` can be claimed: it finds its production by run id.
@@ -116,7 +117,7 @@ export function readStageDocument(core: StudioEngineCore, db: StudioDb, producti
  */
 export async function submitStudioGate(core: StudioEngineCore, db: StudioDb, productionId: string, gate: string, document?: unknown): Promise<SubmitReport> {
   const file = STUDIO_GATES[gate];
-  if (!file) throw new StudioRunError("invalid", `${gate} is not a gate of ${STUDIO_WORKFLOW}`);
+  if (!file) throw new StudioRunError("invalid", `${gate} is not a Studio gate`);
   const runId = currentRunId(db, productionId);
   const s = stageOf(core, runId, gate);
   if (s.state !== "WAITING_HUMAN") throw new StudioRunError("conflict", `gate ${gate} is ${s.state}, not waiting for input`, { state: s.state });
@@ -191,9 +192,10 @@ export function resumeRunFrom(core: StudioEngineCore, db: StudioDb, productionId
     keep.set(s.stage_key, ids);
   }
 
+  // the new run keeps the old one's workflow and profile, whatever flow new runs use now
   const run = core.planner.plan({
-    workflow: core.workflows(STUDIO_WORKFLOW), profile: core.profiles(STUDIO_PROFILE), harness: core.harness,
-    projectId: STUDIO_PROJECT_ID, portfolioId: STUDIO_PORTFOLIO_ID, reuse: false,
+    workflow: core.workflows(`${old.workflow_release.id}@${old.workflow_release.version}`), profile: core.profiles(old.profile_snapshot.id),
+    harness: core.harness, projectId: STUDIO_PROJECT_ID, portfolioId: STUDIO_PORTFOLIO_ID, reuse: false,
   });
   core.store.transaction(() => {
     for (const s of core.store.listStageRuns(run.run_id)) {

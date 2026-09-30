@@ -10,8 +10,30 @@ import {
 } from "@harness/core";
 import type { Clock, HarnessConfig, ProductionProfile } from "@harness/contracts";
 
-export const STUDIO_WORKFLOW = "ag-studio-production@1.0.0";
-export const STUDIO_PROFILE = "studio-production";
+/**
+ * The two Studio flows: `narrated` (Claude narration + TTS) and `montage` (footage cut together, no voice). Both
+ * run under the one `studio-production` profile: its deadlines, limits and reuse policy fit either.
+ */
+export const STUDIO_FLOWS = {
+  narrated: { workflow: "ag-studio-production@1.0.0", profile: "studio-production" },
+  montage: { workflow: "ag-studio-montage@1.0.0", profile: "studio-production" },
+} as const;
+export type StudioFlow = keyof typeof STUDIO_FLOWS;
+export const STUDIO_WORKFLOW = STUDIO_FLOWS.narrated.workflow;
+export const STUDIO_PROFILE = STUDIO_FLOWS.narrated.profile;
+
+/**
+ * The flow new runs use, from `STUDIO_WORKFLOW` (`narrated` | `montage`, or a flow's workflow ref). Unset means
+ * `narrated`; anything else is a configuration error rather than a silent fallback.
+ */
+export function studioFlowFrom(value: string | undefined): StudioFlow {
+  const v = value?.trim();
+  if (!v) return "narrated";
+  for (const [flow, def] of Object.entries(STUDIO_FLOWS) as [StudioFlow, (typeof STUDIO_FLOWS)[StudioFlow]][]) {
+    if (v === flow || v === def.workflow) return flow;
+  }
+  throw new Error(`STUDIO_WORKFLOW=${v} is not a Studio flow (${Object.keys(STUDIO_FLOWS).join(", ")})`);
+}
 export const STUDIO_PROJECT_ID = "ag-studio";
 export const STUDIO_PORTFOLIO_ID = "studio";
 /** `claude`: one subscription call at a time. `farm`: stages waiting on ag-farm, not using this node's cpu. */
@@ -26,12 +48,16 @@ export interface StudioEngineCoreOptions {
   /** ffmpeg for the loudness part of `studio-render-valid`; absent = loudness not measured. */
   ffmpeg?: string;
   clock?: Clock;
+  /** Flow of new runs (default `narrated`). */
+  flow?: StudioFlow;
 }
 
 export interface StudioEngineCore {
   store: SqliteStateStore; planner: Planner; controller: Controller; registry: ArtifactRegistry; verifier: Verifier; clock: Clock;
   harness: HarnessConfig; workflows: (ref: string) => LoadedWorkflow; profiles: (id: string) => ProductionProfile;
   dataRoot: string; harnessRoot: string;
+  /** Flow new runs are planned with; a resumed run keeps the workflow and profile it started with. */
+  flow: StudioFlow;
   close(): void;
 }
 
@@ -54,6 +80,6 @@ export function createStudioEngineCore(o: StudioEngineCoreOptions): StudioEngine
   const profiles = (id: string) => loadProfile(harnessRoot, id);
   return {
     store, planner, controller, registry, verifier, clock, harness: loadHarnessConfig(harnessRoot), workflows, profiles,
-    dataRoot: o.dataRoot, harnessRoot, close: () => store.close(),
+    dataRoot: o.dataRoot, harnessRoot, flow: o.flow ?? "narrated", close: () => store.close(),
   };
 }

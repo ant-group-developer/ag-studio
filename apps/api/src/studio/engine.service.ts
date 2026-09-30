@@ -5,6 +5,7 @@ import {
   FarmOwnerClient,
   S3Bucket,
   StudioDb,
+  studioFlowFrom,
   type EditorDeps,
   type StudioBucket,
   type StudioEngineCore,
@@ -35,6 +36,8 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
       dbPath: this.config.get<string>('STUDIO_DB_PATH', './data/studio.db'),
       dataRoot: this.config.get<string>('STUDIO_DATA_ROOT', './data/harness'),
       ...(ffmpeg ? { ffmpeg } : {}),
+      // Flow of new runs: `narrated` (default) or `montage` (footage cut together, no narration).
+      flow: studioFlowFrom(this.config.get<string>('STUDIO_WORKFLOW')),
     });
     this._db = new StudioDb(this.dbService.db);
     this._bucket = new S3Bucket({

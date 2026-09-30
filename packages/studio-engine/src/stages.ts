@@ -97,21 +97,26 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       const treatment = readInput(request, ws, STUDIO_TYPES.treatment, (v) => TreatmentSchema.parse(v));
       const catalog = readInput(request, ws, STUDIO_TYPES.catalog, (v) => StudioCatalogSchema.parse(v));
       const selection = readInput(request, ws, STUDIO_TYPES.selection, (v) => SelectionSchema.parse(v));
-      const narration = readInput(request, ws, STUDIO_TYPES.narration, (v) => StudioNarrationSchema.parse(v));
-      const manifest = readInput(request, ws, STUDIO_TYPES.ttsManifest, (v) => v as { lines: { line_id: string; output: string; duration_s: number }[] });
-      const voiceDir = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.voiceSet);
-      if (!voiceDir) throw new HarnessError("NOT_FOUND", "build-timeline has no voice_set input", {});
+      // The montage flow (ag-studio-montage) has no narration and no TTS: every beat lasts its treatment seconds
+      // and the footage keeps its own sound.
+      const narrated = !!inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.narration);
+      const narration = narrated ? readInput(request, ws, STUDIO_TYPES.narration, (v) => StudioNarrationSchema.parse(v)) : null;
       // Content-addressed keys: a revision keeps pointing at the audio it was saved with, whatever is
       // synthesized later for the same line id.
       const audio = new Map<string, { key: string; duration: number }>();
-      for (const line of manifest.lines) {
-        const rel = line.output.replace(/^tts\//, "");
-        const local = join(voiceDir, rel);
-        if (!existsSync(local)) throw new HarnessError("NOT_FOUND", `tts output ${line.output} is missing`, { line_id: line.line_id });
-        const bytes = readFileSync(local);
-        const key = `audio/${sha256(bytes)}.wav`;
-        if (!(await d.bucket.exists(productionKey(brief.production_id, key)))) await d.bucket.put(productionKey(brief.production_id, key), bytes, "audio/wav");
-        audio.set(line.line_id, { key, duration: line.duration_s });
+      if (narrated) {
+        const manifest = readInput(request, ws, STUDIO_TYPES.ttsManifest, (v) => v as { lines: { line_id: string; output: string; duration_s: number }[] });
+        const voiceDir = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.voiceSet);
+        if (!voiceDir) throw new HarnessError("NOT_FOUND", "build-timeline has no voice_set input", {});
+        for (const line of manifest.lines) {
+          const rel = line.output.replace(/^tts\//, "");
+          const local = join(voiceDir, rel);
+          if (!existsSync(local)) throw new HarnessError("NOT_FOUND", `tts output ${line.output} is missing`, { line_id: line.line_id });
+          const bytes = readFileSync(local);
+          const key = `audio/${sha256(bytes)}.wav`;
+          if (!(await d.bucket.exists(productionKey(brief.production_id, key)))) await d.bucket.put(productionKey(brief.production_id, key), bytes, "audio/wav");
+          audio.set(line.line_id, { key, duration: line.duration_s });
+        }
       }
       const timeline = buildStudioTimeline({ brief, treatment, catalog: catalog.segments, selection, narration, audio });
       writeOutput(ctx, "timeline.json", JSON.stringify(timeline, null, 2));

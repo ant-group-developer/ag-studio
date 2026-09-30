@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgGoCatalogItem } from "@harness/core";
-import { createStudioEngineCore, MemoryBucket, StudioDb, type FootageCatalogSource } from "../src/index.js";
+import { createStudioEngineCore, MemoryBucket, StudioDb, type FootageCatalogSource, type StudioFlow } from "../src/index.js";
 
 export const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..", "..", "..");
 export const FAKE_CLAUDE = join(ROOT, "fixtures", "fake-studio-claude.mjs");
@@ -86,10 +86,10 @@ export function fakeFarm(bucket: MemoryBucket, opts: { badFinalRenders?: number 
   };
 }
 
-export function world() {
+export function world(o: { flow?: StudioFlow } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "studio-engine-"));
   const dbPath = join(dir, "studio.db");
-  const core = createStudioEngineCore({ dbPath, dataRoot: join(dir, "data"), harnessRoot: ROOT });
+  const core = createStudioEngineCore({ dbPath, dataRoot: join(dir, "data"), harnessRoot: ROOT, ...(o.flow ? { flow: o.flow } : {}) });
   const db = new StudioDb(dbPath);
   const bucket = new MemoryBucket();
   return { dir, dbPath, core, db, bucket };

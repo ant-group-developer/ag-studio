@@ -110,6 +110,8 @@ export const timelineValidChecker = documentChecker("timeline-valid", STUDIO_TYP
 /** Delivered loudness band (same targets as harness `render-valid`, spec §6.2). */
 export const STUDIO_LOUDNESS_MIN_LUFS = -16;
 export const STUDIO_LOUDNESS_MAX_LUFS = -12;
+/** At or below this the mix is taken as silence (loudnorm reports about -70 LUFS for digital silence). */
+export const STUDIO_SILENT_LUFS = -50;
 /** Picture length may differ from the timeline by this much (encoder frame rounding). */
 export const STUDIO_DURATION_TOLERANCE_S = 0.5;
 
@@ -151,7 +153,11 @@ export function studioRenderValidChecker(opts: { ffmpeg?: string } = {}): Checke
       let lufs: number | null = null;
       if (opts.ffmpeg) {
         lufs = measureIntegratedLufs(opts.ffmpeg, video);
-        if (lufs === null) problems.push("không đo được loudness");
+        // A montage (no narration, no music) of footage recorded without sound is silent on purpose.
+        const onlyFootageSound = !t.music && !t.narration.some((l) => l.audio);
+        const silent = lufs === null || lufs <= STUDIO_SILENT_LUFS;
+        if (onlyFootageSound && silent) lufs = null;
+        else if (lufs === null) problems.push("không đo được loudness");
         else if (lufs < STUDIO_LOUDNESS_MIN_LUFS || lufs > STUDIO_LOUDNESS_MAX_LUFS) problems.push(`loudness ${lufs} LUFS ngoài [${STUDIO_LOUDNESS_MIN_LUFS}, ${STUDIO_LOUDNESS_MAX_LUFS}]`);
       }
       const evidence = { duration_s: m.duration_s, expected_s: expected, integrated_lufs: lufs, loudness_checked: !!opts.ffmpeg, watermarked: m.watermarked ?? null };

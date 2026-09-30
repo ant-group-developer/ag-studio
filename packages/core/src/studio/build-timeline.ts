@@ -17,13 +17,15 @@ export interface BuildTimelineInput {
   treatment: Treatment;
   catalog: CatalogSegment[];
   selection: Selection;
-  narration: StudioNarration;
+  /** `null` in the montage flow: no narration, beats last their treatment seconds, the footage keeps its sound. */
+  narration: StudioNarration | null;
   /** Per line: the uploaded WAV's key under `productions/<id>/` and its measured duration. */
   audio: Map<string, { key: string; duration: number }>;
 }
 
 export function buildStudioTimeline(input: BuildTimelineInput): TimelineV2 {
-  const { brief, treatment, selection, narration } = input;
+  const { brief, treatment, selection } = input;
+  const lines = input.narration?.lines ?? [];
   const catalog = new Map(input.catalog.map((s) => [s.id, s]));
   const selByBeat = new Map(selection.beats.map((b) => [b.beat_id, b]));
   const segments: TimelineV2["segments"] = {};
@@ -41,10 +43,10 @@ export function buildStudioTimeline(input: BuildTimelineInput): TimelineV2 {
 
   for (const tb of treatment.beats) {
     const sel = selByBeat.get(tb.beat_id);
-    const lines = narration.lines.filter((l) => l.beat_id === tb.beat_id);
-    const voiced = lines.map((l) => input.audio.get(l.line_id)?.duration ?? 0);
-    const target = lines.length
-      ? r3(voiced.reduce((a, b) => a + b, 0) + NARRATION_GAP * (lines.length - 1) + BEAT_TAIL)
+    const beatLines = lines.filter((l) => l.beat_id === tb.beat_id);
+    const voiced = beatLines.map((l) => input.audio.get(l.line_id)?.duration ?? 0);
+    const target = beatLines.length
+      ? r3(voiced.reduce((a, b) => a + b, 0) + NARRATION_GAP * (beatLines.length - 1) + BEAT_TAIL)
       : tb.seconds;
 
     type Pending = { segment_id: string; seg: CatalogSegment; len: number };
@@ -109,10 +111,11 @@ export function buildStudioTimeline(input: BuildTimelineInput): TimelineV2 {
     language: brief.language,
     beats: treatment.beats.map((b) => ({ beat_id: b.beat_id, title: b.purpose })),
     clips,
-    narration: narration.lines.map((l) => ({ line_id: l.line_id, beat_id: l.beat_id, text: l.text, audio: input.audio.get(l.line_id) ?? null })),
+    narration: lines.map((l) => ({ line_id: l.line_id, beat_id: l.beat_id, text: l.text, audio: input.audio.get(l.line_id) ?? null })),
     texts,
     music: brief.music,
-    source_audio: { muted: true },
+    // narrated: the voice carries the sound; montage: the footage's own sound is all there is
+    source_audio: { muted: input.narration !== null },
     captions: { enabled: true },
     segments,
     alternates,
