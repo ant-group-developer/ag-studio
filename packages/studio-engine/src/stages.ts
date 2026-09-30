@@ -316,7 +316,8 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       await upload("mp4", `${videoSlug}.mp4`, video, "video/mp4");
 
       // Thumbnails: all inputs of type `thumbnail` from the render stage
-      const thumbInputs = request.inputs.filter((x) => x.type === STUDIO_TYPES.thumbnail);
+      // thumb-1..3 in order: the index a person picked must stay the same picture
+      const thumbInputs = request.inputs.filter((x) => x.type === STUDIO_TYPES.thumbnail).sort((a, b) => a.path.localeCompare(b.path));
       for (let i = 0; i < thumbInputs.length; i++) {
         const tPath = join(ws, thumbInputs[i]!.path);
         if (existsSync(tPath)) {
