@@ -2,12 +2,16 @@
  * Production detail page — GĐ3 v3.
  * 5 steps driven by RunView stage keys: Thông tin → Nghiên cứu → Kế hoạch tập → Duyệt → Sản xuất các tập
  */
+import { useEffect } from "react";
 import { Link, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
+  App,
+  Button,
   Card,
-  Descriptions,
+  Form,
+  Popconfirm,
   Space,
   Spin,
   Steps,
@@ -17,11 +21,17 @@ import {
 } from "antd";
 import { ChevronLeft, List } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useStudioClient } from "../api/studio-client";
+import { useStudioClient, StudioHttpError } from "../api/studio-client";
 import { EnumText, PRODUCTION_STATUS_COLORS } from "../helpers/enum-label";
 import { ResearchView } from "../modules/production/ResearchView";
 import { PlanEditor } from "../modules/production/PlanEditor";
 import { EpisodesPanel } from "../modules/production/EpisodesPanel";
+import {
+  ProductionForm,
+  mmssToSeconds,
+  secondsToMmss,
+} from "../modules/production/ProductionForm";
+import type { ProductionFormValues } from "../modules/production/ProductionForm";
 
 const { Title } = Typography;
 
@@ -34,16 +44,36 @@ function runToStepIndex(
   if (!runState || runState === "DRAFT") return 0;
   if (waitingGate === "approve-plan") return 2;
   if (waitingGate === "approve-treatment") return 3;
-  const lastSucceeded = [...stageKeys].reverse().find((k) => k === "plan-episodes" || k === "research" || k === "trend-report");
+  const lastSucceeded = [...stageKeys]
+    .reverse()
+    .find(
+      (k) => k === "plan-episodes" || k === "research" || k === "trend-report",
+    );
   if (lastSucceeded?.includes("plan")) return 3;
-  if (lastSucceeded?.includes("research") || lastSucceeded?.includes("trend")) return 1;
+  if (lastSucceeded?.includes("research") || lastSucceeded?.includes("trend"))
+    return 1;
   return 0;
+}
+
+/** Extract music input from form values (null when musicTrack is absent). */
+function buildMusicInput(values: ProductionFormValues) {
+  return values.musicTrack
+    ? {
+        track: values.musicTrack,
+        gainDb: values.musicGainDb ?? 0,
+        ducking: values.musicDucking ?? false,
+      }
+    : null;
 }
 
 export function ProductionDetailPage() {
   const { t } = useTranslation();
   const { productionId } = useParams<{ productionId: string }>();
   const client = useStudioClient();
+  const queryClient = useQueryClient();
+  const { message } = App.useApp();
+
+  const [form] = Form.useForm<ProductionFormValues>();
 
   const { data: production, isLoading } = useQuery({
     queryKey: ["production", productionId],
@@ -87,36 +117,123 @@ export function ProductionDetailPage() {
     enabled: !!productionId,
   });
 
-  if (isLoading) return <div style={{ padding: 48, textAlign: "center" }}><Spin /></div>;
-  if (!production || !productionId) return <div>{t("productions.notFound")}</div>;
+  // ---- Initialise form when production loads ----
+  useEffect(() => {
+    if (production) {
+      form.setFieldsValue({
+        title: production.title,
+        description: production.description || undefined,
+        goal: production.goal || undefined,
+        audience: production.audience || undefined,
+        tone: production.tone || undefined,
+        notes: production.notes || undefined,
+        durationMmSs: production.episodeTargetSeconds
+          ? secondsToMmss(production.episodeTargetSeconds)
+          : undefined,
+        maxEpisodes: production.maxEpisodes,
+        aspect: production.aspect,
+        language: production.language,
+        sources: production.sources,
+        youtubeChannels: production.youtubeChannels,
+        keywords: production.keywords,
+        musicTrack: production.music?.track,
+        musicGainDb: production.music?.gainDb,
+        musicDucking: production.music?.ducking,
+      });
+    }
+  }, [production, form]);
+
+  // ---- Shared helper: extract ProductionInput from current form ----
+  async function collectInput() {
+    const values = await form.validateFields();
+    return {
+      title: values.title,
+      description: values.description,
+      goal: values.goal,
+      audience: values.audience,
+      tone: values.tone,
+      notes: values.notes,
+      sources: values.sources ?? [],
+      youtubeChannels: values.youtubeChannels ?? [],
+      keywords: values.keywords ?? [],
+      episodeTargetSeconds: values.durationMmSs
+        ? mmssToSeconds(values.durationMmSs)
+        : undefined,
+      maxEpisodes: values.maxEpisodes,
+      aspect: values.aspect,
+      language: values.language,
+      music: buildMusicInput(values),
+    };
+  }
+
+  // ---- Save mutation ----
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const input = await collectInput();
+      return client.updateProduction(productionId!, input);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["production", productionId] });
+      void message.success(t("productions.saveInfo"));
+    },
+    onError: (err) => {
+      void message.error(err instanceof Error ? err.message : "Lưu thất bại");
+    },
+  });
+
+  // ---- Run (plan / replan) mutation ----
+  const runMutation = useMutation({
+    mutationFn: async (saveFirst: boolean) => {
+      if (saveFirst) {
+        const input = await collectInput();
+        await client.updateProduction(productionId!, input);
+      }
+      return client.startRun(productionId!);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["production", productionId] });
+    },
+    onError: (err) => {
+      if (
+        err instanceof StudioHttpError &&
+        err.body?.code === "episode_producing"
+      ) {
+        void message.error(t("productions.episodeProducing"));
+      } else {
+        void message.error(err instanceof Error ? err.message : "Thất bại");
+      }
+    },
+  });
+
+  if (isLoading)
+    return (
+      <div style={{ padding: 48, textAlign: "center" }}>
+        <Spin />
+      </div>
+    );
+  if (!production || !productionId)
+    return <div>{t("productions.notFound")}</div>;
 
   const stageKeys = run?.stages.map((s) => s.key) ?? [];
-  const stepIndex = runToStepIndex(run?.state ?? null, run?.waiting_gate ?? null, stageKeys);
+  const stepIndex = runToStepIndex(
+    run?.state ?? null,
+    run?.waiting_gate ?? null,
+    stageKeys,
+  );
 
   const canEdit = !!(access?.hasAccess);
   const planReadOnly = production.status !== "waiting_approval";
+  const runIsActive =
+    run?.state === "RUNNING" ||
+    run?.state === "WAITING" ||
+    run?.state === "CANCEL_REQUESTED";
 
   const stepItems = [
-    {
-      title: "Thông tin",
-      description: "Cài đặt production",
-    },
-    {
-      title: "Nghiên cứu thị trường",
-      description: "Phân tích YouTube & xu hướng",
-    },
-    {
-      title: "Kế hoạch tập",
-      description: "Danh sách và thứ tự tập",
-    },
-    {
-      title: "Duyệt",
-      description: "Duyệt kế hoạch để tạo tập",
-    },
-    {
-      title: "Sản xuất các tập",
-      description: "Render, xuất bản, editor",
-    },
+    { title: "Thông tin", description: "Cài đặt production" },
+    { title: "Nghiên cứu thị trường", description: "Phân tích YouTube & xu hướng" },
+    { title: "Kế hoạch tập", description: "Danh sách và thứ tự tập" },
+    { title: "Duyệt", description: "Duyệt kế hoạch để tạo tập" },
+    { title: "Sản xuất các tập", description: "Render, xuất bản, editor" },
   ];
 
   return (
@@ -125,9 +242,12 @@ export function ProductionDetailPage() {
         <Tooltip title={t("productions.backToList")}>
           <ChevronLeft size={16} style={{ verticalAlign: "middle" }} />
         </Tooltip>
-        {" "}{t("productions.backToList")}
+        {" "}
+        {t("productions.backToList")}
       </Link>
-      <Title level={3} style={{ marginTop: 8 }}>{production.title}</Title>
+      <Title level={3} style={{ marginTop: 8 }}>
+        {production.title}
+      </Title>
 
       {access && !access.hasAccess && (
         <Alert
@@ -150,59 +270,66 @@ export function ProductionDetailPage() {
         />
       </Card>
 
-      {/* Step 0: production info */}
-      <Card style={{ marginBottom: 16 }}>
-        <Descriptions bordered column={2} size="small">
-          <Descriptions.Item label={t("productions.detailFieldTitle")}>{production.title}</Descriptions.Item>
-          <Descriptions.Item label={t("productions.detailFieldStatus")}>
+      {/* Step 0: editable production info */}
+      <Card
+        style={{ marginBottom: 16 }}
+        extra={
+          <Space>
             <Tag color={PRODUCTION_STATUS_COLORS[production.status]}>
               <EnumText group="productionStatus" code={production.status} />
             </Tag>
-          </Descriptions.Item>
-          <Descriptions.Item label={t("productions.detailFieldBrief")} span={2}>
-            {production.description || t("productions.empty")}
-          </Descriptions.Item>
-          <Descriptions.Item label={t("productions.detailFieldGoal")} span={2}>
-            {production.goal || t("productions.empty")}
-          </Descriptions.Item>
-          <Descriptions.Item label={t("productions.detailFieldAspect")}>
-            <EnumText group="aspect" code={production.aspect} />
-          </Descriptions.Item>
-          <Descriptions.Item label={t("productions.detailFieldTargetSeconds")}>
-            {production.episodeTargetSeconds ? `${production.episodeTargetSeconds}s` : t("productions.empty")}
-          </Descriptions.Item>
-          <Descriptions.Item label={t("productions.detailFieldLanguage")}>
-            <EnumText group="language" code={production.language} />
-          </Descriptions.Item>
-          <Descriptions.Item label={t("productions.detailFieldEpisodes")}>
-            <Space>
+            <Space size={4}>
               <List size={14} />
               {production.episodeCounts.total}
-              {production.episodeCounts.ready > 0 && (
-                <Tag color="green">{t("productions.episodesReady", { count: production.episodeCounts.ready })}</Tag>
-              )}
             </Space>
-          </Descriptions.Item>
-          {production.sources.length > 0 && (
-            <Descriptions.Item label={t("productions.detailFieldSources")} span={2}>
-              <Space size={[4, 4]} wrap>
-                {production.sources.map((id) => <Tag key={id}>{id}</Tag>)}
-              </Space>
-            </Descriptions.Item>
-          )}
-          {production.keywords.length > 0 && (
-            <Descriptions.Item label={t("productions.detailFieldKeywords")} span={2}>
-              <Space size={[4, 4]} wrap>
-                {production.keywords.map((kw) => <Tag key={kw}>{kw}</Tag>)}
-              </Space>
-            </Descriptions.Item>
-          )}
-        </Descriptions>
+          </Space>
+        }
+      >
+        <ProductionForm form={form} readOnly={!canEdit} />
+
+        {canEdit && (
+          <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
+            <Button
+              onClick={() => saveMutation.mutate()}
+              loading={saveMutation.isPending}
+            >
+              {t("productions.saveInfo")}
+            </Button>
+
+            {production.runId === null ? (
+              <Button
+                type="primary"
+                loading={runMutation.isPending}
+                disabled={runIsActive}
+                onClick={() => runMutation.mutate(false)}
+              >
+                {t("productions.startPlan")}
+              </Button>
+            ) : (
+              <Popconfirm
+                title={t("productions.replanConfirmTitle")}
+                description={t("productions.replanConfirmBody")}
+                onConfirm={() => runMutation.mutate(true)}
+                disabled={runMutation.isPending || runIsActive}
+              >
+                <Button loading={runMutation.isPending} disabled={runIsActive}>
+                  {runIsActive
+                    ? t("productions.planRunning")
+                    : t("productions.replanButton")}
+                </Button>
+              </Popconfirm>
+            )}
+          </div>
+        )}
       </Card>
 
       {/* Step 1+2: Research + Trend Report */}
       {stepIndex >= 1 && (
-        <Card style={{ marginBottom: 16 }} title="Nghiên cứu thị trường" size="small">
+        <Card
+          style={{ marginBottom: 16 }}
+          title="Nghiên cứu thị trường"
+          size="small"
+        >
           <ResearchView
             productionId={productionId}
             research={research ?? null}
@@ -213,7 +340,11 @@ export function ProductionDetailPage() {
 
       {/* Step 2+3: Plan editor */}
       {stepIndex >= 2 && plan && (
-        <Card style={{ marginBottom: 16 }} title="Kế hoạch tập" size="small">
+        <Card
+          style={{ marginBottom: 16 }}
+          title="Kế hoạch tập"
+          size="small"
+        >
           <PlanEditor
             productionId={productionId}
             plan={plan}
