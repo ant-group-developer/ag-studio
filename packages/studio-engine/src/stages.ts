@@ -17,6 +17,7 @@ import {
 import type { InProcessStage } from "@harness/executors";
 import { productionKey, type StudioBucket } from "./bucket.js";
 import { productionForRun, productionOwner, productionSources, saveRevision, latestRevision, type StudioDb } from "./studio-db.js";
+import { productionVoice } from "./voice.js";
 
 /** What `catalog` needs from ag-go (`AgGoClient` satisfies it). */
 export interface FootageCatalogSource {
@@ -62,7 +63,7 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
         schema_version: "studio.brief/v1", production_id: p.id, run_id: request.run_id, owner_user_id: owner,
         title: p.title, topic: p.brief?.trim() || p.title, folder_ids: folders, target_seconds: p.target_seconds, aspect,
         canvas: p.canvas ? JSON.parse(p.canvas) : DEFAULT_CANVAS[aspect], fps: 25, language: p.language ?? "vi",
-        voice: p.voice ? JSON.parse(p.voice) : { reference: null, reference_text: null, speed: 1 },
+        voice: productionVoice(p.voice),
         music: p.music ? JSON.parse(p.music) : null,
       });
       writeOutput(ctx, "brief.json", JSON.stringify(brief, null, 2));

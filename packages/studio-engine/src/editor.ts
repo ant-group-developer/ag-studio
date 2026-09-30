@@ -18,6 +18,7 @@ import { productionKey, type StudioBucket } from "./bucket.js";
 import { prepareRender, ttsPayload } from "./payloads.js";
 import { StudioRunError } from "./run-control.js";
 import { getProduction, getRevision, saveRevision, type StudioDb } from "./studio-db.js";
+import { productionVoice } from "./voice.js";
 
 /** The part of `FarmOwnerClient` the editor uses. */
 export type EditorFarmClient = Pick<FarmOwnerClient, "submitJob" | "getJob" | "ackJob">;
@@ -68,7 +69,7 @@ export async function startLineTts(d: EditorDeps, p: { productionId: string; lin
   if (!/^L\d{3}$/.test(p.lineId) || !text) throw new StudioRunError("invalid", "line_id dạng L001 và text không rỗng");
   const id = randomUUID();
   insertJob(d.db, { id, productionId: prod.id, kind: "tts_line", request: { line_id: p.lineId, text }, userId: p.userId });
-  const voice = (prod.voice ? JSON.parse(prod.voice) : { reference: null, reference_text: null, speed: 1 }) as StudioTtsPayload["voice"];
+  const voice = productionVoice(prod.voice);
   try {
     const { job } = await d.farm.submitJob({
       type: "studio.tts", correlation_id: `editor-${id}`, affinity_key: prod.id, max_attempts: 1,
