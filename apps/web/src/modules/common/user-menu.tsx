@@ -1,5 +1,5 @@
-import { GlobalOutlined, LogoutOutlined } from "@ant-design/icons";
 import { Avatar, Flex, Typography, theme as antdTheme } from "antd";
+import { Globe, LogOut } from "lucide-react";
 import type { MenuProps } from "antd";
 import { useTranslation } from "react-i18next";
 import { APP_LANGUAGES, changeLanguage, currentLanguage, LANGUAGE_NAMES } from "../../i18n/language";
@@ -45,7 +45,7 @@ export function useUserMenu({ nickname, email, avatarUrl, initials, onLogout }: 
       { type: "divider" },
       {
         key: "language",
-        icon: <GlobalOutlined />,
+        icon: <Globe size={14} />,
         label: `${t("common.language")}: ${LANGUAGE_NAMES[language]}`,
         children: APP_LANGUAGES.map((key) => ({
           key: `language:${key}`,
@@ -55,7 +55,7 @@ export function useUserMenu({ nickname, email, avatarUrl, initials, onLogout }: 
       },
       {
         key: "logout",
-        icon: <LogoutOutlined />,
+        icon: <LogOut size={14} />,
         label: t("app.logout"),
         onClick: onLogout,
         danger: true,

@@ -1,9 +1,10 @@
+import { lazy, Suspense } from "react";
 import { ProLayout } from "@ant-design/pro-components";
 import { useAuth0 } from "@auth0/auth0-react";
-import { App as AntApp, ConfigProvider, Dropdown, theme as antdTheme } from "antd";
+import { App as AntApp, ConfigProvider, Dropdown, Spin, theme as antdTheme } from "antd";
 import enUS from "antd/locale/en_US";
 import viVN from "antd/locale/vi_VN";
-import { TeamOutlined, VideoCameraOutlined } from "@ant-design/icons";
+import { Film, Users, LayoutList } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   BrowserRouter,
@@ -13,24 +14,26 @@ import {
   Link,
   useLocation,
 } from "react-router-dom";
-import { TeamsPage } from "./pages/TeamsPage";
-import { TeamDetailPage } from "./pages/TeamDetailPage";
-import { ProductionsPage } from "./pages/ProductionsPage";
-import { ProductionDetailPage } from "./pages/ProductionDetailPage";
-import { EditorPage } from "./modules/editor/EditorPage";
+import { NuqsAdapter } from "nuqs/adapters/react-router";
+import { useQuery } from "@tanstack/react-query";
 import { AuthGate } from "./auth/auth-provider";
 import { useUserMenu } from "./modules/common/user-menu";
 import { menuKeyFor } from "./helpers/menu";
+import { useStudioClient } from "./api/studio-client";
 import type { AppLanguage } from "./i18n/language";
 
-const ANTD_LOCALES: Record<AppLanguage, typeof viVN> = {
-  vi: viVN,
-  en: enUS,
-};
+const TeamsPage = lazy(() => import("./pages/TeamsPage").then((m) => ({ default: m.TeamsPage })));
+const TeamDetailPage = lazy(() => import("./pages/TeamDetailPage").then((m) => ({ default: m.TeamDetailPage })));
+const ProductionsPage = lazy(() => import("./pages/ProductionsPage").then((m) => ({ default: m.ProductionsPage })));
+const AllProductionsPage = lazy(() => import("./pages/AllProductionsPage").then((m) => ({ default: m.AllProductionsPage })));
+const ProductionDetailPage = lazy(() => import("./pages/ProductionDetailPage").then((m) => ({ default: m.ProductionDetailPage })));
+const EditorPage = lazy(() => import("./modules/editor/EditorPage").then((m) => ({ default: m.EditorPage })));
+const NotFoundPage = lazy(() => import("./pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
 
-/** The editor route is a full-width workspace: no sider, no content padding. */
+const ANTD_LOCALES: Record<AppLanguage, typeof viVN> = { vi: viVN, en: enUS };
+
 function isEditorRoute(pathname: string): boolean {
-  return /^\/productions\/[^/]+\/editor$/.test(pathname);
+  return /^\/productions\/[^/]+\/episodes\/[^/]+\/editor$/.test(pathname);
 }
 
 function AppLayout() {
@@ -38,44 +41,27 @@ function AppLayout() {
   const { t } = useTranslation();
   const { user, logout } = useAuth0();
   const { token } = antdTheme.useToken();
-
+  const client = useStudioClient();
   const editorRoute = isEditorRoute(location.pathname);
+
+  const { data: me } = useQuery({
+    queryKey: ["me"],
+    queryFn: () => client.getMe(),
+    staleTime: 5 * 60_000,
+  });
+  const isAdmin = me?.isAdmin ?? false;
 
   const userEmail = user?.email ?? "";
   const userInitials = userEmail.slice(0, 2).toUpperCase();
   const nickname = user?.name ?? userEmail;
+  const handleLogout = () => void logout({ logoutParams: { returnTo: window.location.origin } });
+  const avatarMenu = useUserMenu({ nickname, email: userEmail, avatarUrl: user?.picture, initials: userInitials, onLogout: handleLogout });
 
-  const handleLogout = () => {
-    void logout({ logoutParams: { returnTo: window.location.origin } });
-  };
-
-  const avatarMenu = useUserMenu({
-    nickname,
-    email: userEmail,
-    avatarUrl: user?.picture,
-    initials: userInitials,
-    onLogout: handleLogout,
-  });
-
-  const route = {
-    path: "/",
-    routes: [
-      {
-        path: "/productions",
-        name: t("menu.productions"),
-        icon: <VideoCameraOutlined />,
-      },
-      {
-        path: "/teams",
-        name: t("menu.teams"),
-        icon: <TeamOutlined />,
-      },
-    ],
-  };
-
-  // A team's production list and every production page sit under "Production"; the team list and a
-  // team's members under "Nhóm".
-  const selectedKeys = [menuKeyFor(location.pathname)];
+  const sideRoutes = [
+    { path: "/productions", name: t("menu.productions"), icon: <Film size={16} /> },
+    ...(isAdmin ? [{ path: "/all-productions", name: t("menu.allProductions"), icon: <LayoutList size={16} /> }] : []),
+    { path: "/teams", name: t("menu.teams"), icon: <Users size={16} /> },
+  ];
 
   return (
     <ProLayout
@@ -84,8 +70,8 @@ function AppLayout() {
       fixSiderbar
       fixedHeader
       location={{ pathname: editorRoute ? "/productions" : location.pathname }}
-      route={route}
-      selectedKeys={selectedKeys}
+      route={{ path: "/", routes: sideRoutes }}
+      selectedKeys={[menuKeyFor(location.pathname)]}
       menuItemRender={(item, dom) => (item.path ? <Link to={item.path}>{dom}</Link> : dom)}
       contentStyle={{ padding: editorRoute ? 0 : 24 }}
       menuRender={editorRoute ? () => null : undefined}
@@ -102,15 +88,19 @@ function AppLayout() {
         ),
       }}
     >
-      <Routes>
-        <Route path="/" element={<Navigate to="/productions" replace />} />
-        <Route path="/productions" element={<ProductionsPage />} />
-        <Route path="/teams" element={<TeamsPage />} />
-        <Route path="/teams/:teamId" element={<TeamDetailPage />} />
-        <Route path="/teams/:teamId/productions" element={<ProductionsPage />} />
-        <Route path="/productions/:productionId" element={<ProductionDetailPage />} />
-        <Route path="/productions/:productionId/editor" element={<EditorPage />} />
-      </Routes>
+      <Suspense fallback={<div style={{ display: "flex", justifyContent: "center", padding: 48 }}><Spin /></div>}>
+        <Routes>
+          <Route path="/" element={<Navigate to="/productions" replace />} />
+          <Route path="/productions" element={<ProductionsPage />} />
+          <Route path="/all-productions" element={<AllProductionsPage />} />
+          <Route path="/teams" element={<TeamsPage />} />
+          <Route path="/teams/:teamId" element={<TeamDetailPage />} />
+          <Route path="/teams/:teamId/productions" element={<ProductionsPage />} />
+          <Route path="/productions/:productionId" element={<ProductionDetailPage />} />
+          <Route path="/productions/:productionId/episodes/:episodeId/editor" element={<EditorPage />} />
+          <Route path="*" element={<NotFoundPage />} />
+        </Routes>
+      </Suspense>
     </ProLayout>
   );
 }
@@ -118,13 +108,14 @@ function AppLayout() {
 export function App() {
   const { i18n } = useTranslation();
   const locale = ANTD_LOCALES[(i18n.language as AppLanguage) in ANTD_LOCALES ? (i18n.language as AppLanguage) : "vi"];
-
   return (
     <ConfigProvider locale={locale}>
       <AntApp>
         <AuthGate>
           <BrowserRouter>
-            <AppLayout />
+            <NuqsAdapter>
+              <AppLayout />
+            </NuqsAdapter>
           </BrowserRouter>
         </AuthGate>
       </AntApp>

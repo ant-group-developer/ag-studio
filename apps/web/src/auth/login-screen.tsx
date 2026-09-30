@@ -1,5 +1,5 @@
-import { ArrowRightOutlined, SafetyCertificateOutlined, TeamOutlined } from "@ant-design/icons";
 import { Button, Typography } from "antd";
+import { ArrowRight, ShieldCheck, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { LanguageSwitch } from "../modules/common/LanguageSwitch";
 
@@ -25,11 +25,11 @@ export function LoginScreen({ onLogin }: { onLogin: () => void }) {
           </div>
           <ul className="login-hero-points">
             <li>
-              <SafetyCertificateOutlined />
+              <ShieldCheck size={16} />
               <span>{t("auth.pointSecure")}</span>
             </li>
             <li>
-              <TeamOutlined />
+              <Users size={16} />
               <span>{t("auth.pointInternal")}</span>
             </li>
           </ul>
@@ -50,13 +50,13 @@ export function LoginScreen({ onLogin }: { onLogin: () => void }) {
             block
             className="login-button"
             onClick={onLogin}
-            icon={<ArrowRightOutlined />}
+            icon={<ArrowRight size={16} />}
             iconPosition="end"
           >
             {t("auth.login")}
           </Button>
           <Text className="login-card-note">
-            <SafetyCertificateOutlined />
+            <ShieldCheck size={14} style={{ verticalAlign: "middle", marginRight: 4 }} />
             {t("auth.secureNote")}
           </Text>
         </section>

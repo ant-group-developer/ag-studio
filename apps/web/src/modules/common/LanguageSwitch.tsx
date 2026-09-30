@@ -1,5 +1,5 @@
-import { TranslationOutlined } from "@ant-design/icons";
 import { Button, Dropdown } from "antd";
+import { Languages } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   APP_LANGUAGES,
@@ -28,7 +28,7 @@ export function LanguageSwitch({ className }: { className?: string }) {
       <Button
         type="text"
         className={className}
-        icon={<TranslationOutlined />}
+        icon={<Languages size={16} />}
         aria-label={t("common.language")}
         title={t("common.language")}
       >
