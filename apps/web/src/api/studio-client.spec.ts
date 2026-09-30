@@ -115,7 +115,7 @@ describe("createStudioClient", () => {
         json: () => Promise.resolve(errorEnvelope(409, "revision_conflict", "stale", { currentRevision: 5, baseRevision: 3 })),
       });
 
-      const err = await client.saveRevision("prod-1", 3, {} as never).catch((e) => e);
+      const err = await client.saveRevision("prod-1", "ep-1", 3, {} as never).catch((e) => e);
       expect(err).toBeInstanceOf(StudioHttpError);
       expect((err as StudioHttpError).status).toBe(409);
       expect((err as StudioHttpError).body?.code).toBe("revision_conflict");
@@ -124,19 +124,17 @@ describe("createStudioClient", () => {
     });
   });
 
-  describe("submitGate", () => {
-    it("flattens gate rejection details (missing, failed) into body", async () => {
-      const errBody = errorEnvelope(422, "rejected", "Treatment invalid", {
-        missing: ["beat-2"],
-        failed: [{ check_id: "treatment-valid", evidence: {} }],
+  describe("submitApprovePlan", () => {
+    it("flattens 422 rejection details into body so callers can read fieldErrors", async () => {
+      const errBody = errorEnvelope(422, "validation_failed", "Plan invalid", {
+        fieldErrors: [{ field: "episodes[0].title", message: "required" }],
       });
       mockFetch.mockResolvedValueOnce({ ok: false, status: 422, json: () => Promise.resolve(errBody) });
 
-      const err = await client.submitGate("prod-1", "approve-treatment").catch((e) => e);
+      const err = await client.submitApprovePlan("prod-1", {} as never).catch((e) => e);
       expect(err).toBeInstanceOf(StudioHttpError);
-      expect((err as StudioHttpError).body?.code).toBe("rejected");
-      expect((err as StudioHttpError).body?.missing).toEqual(["beat-2"]);
-      expect((err as StudioHttpError).body?.failed).toEqual([{ check_id: "treatment-valid", evidence: {} }]);
+      expect((err as StudioHttpError).body?.code).toBe("validation_failed");
+      expect((err as StudioHttpError).body?.fieldErrors).toBeDefined();
     });
   });
 

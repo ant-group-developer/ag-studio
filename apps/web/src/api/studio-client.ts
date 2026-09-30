@@ -1,14 +1,40 @@
 import { useAuthToken } from "../auth/use-auth-token";
-import type { TimelineV2 } from "@harness/contracts";
+import type { TimelineV3, YoutubeKit, SeriesPlan, StudioCatalog, StudioResearch, TrendReport } from "@harness/contracts";
 import type { TimelineIssue } from "@studio/timeline";
 
 const STUDIO_API_URL =
   (import.meta.env.VITE_STUDIO_API_URL as string | undefined) ??
   "http://localhost:3100";
 
+// ---------------------------------------------------------------------------
+// Common types
+// ---------------------------------------------------------------------------
+
+export type ProductionStatus = "draft" | "planning" | "waiting_approval" | "producing" | "done" | "failed" | "archived";
+export type TeamRole = "owner" | "producer" | "editor" | "viewer";
+export type EpisodeStatus = "planned" | "producing" | "ready" | "failed" | "cancelled";
+
+export interface Paged<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface MeProfile {
+  userId: string;
+  name: string;
+  email: string;
+  avatar: string | null;
+  isAdmin: boolean;
+}
+
 export interface Team {
   id: string;
   name: string;
+  role: TeamRole | null;
+  memberCount: number;
+  productionCount: number;
   createdAt: string;
 }
 
@@ -21,49 +47,86 @@ export interface UserSummary {
 }
 
 export interface TeamMember extends UserSummary {
-  role: string;
+  role: TeamRole;
   joinedAt: string;
 }
 
 export interface Production {
   id: string;
   teamId: string;
+  teamName: string;
   title: string;
-  brief: string | null;
-  status: string;
-  canvas: { width: number; height: number } | null;
-  runId: string | null;
+  description: string;
+  goal: string;
+  audience: string;
+  tone: string;
+  notes: string;
   sources: string[];
-  createdAt: string;
-  updatedAt: string;
-  ownerUserId: string | null;
-  targetSeconds: number | null;
+  youtubeChannels: string[];
+  keywords: string[];
+  episodeTargetSeconds: number | null;
+  maxEpisodes: number;
   aspect: "16:9" | "9:16";
   language: string;
-  voice: { reference: string | null; referenceText: string | null; speed: number };
   music: { track: string; gainDb: number; ducking: boolean } | null;
+  status: ProductionStatus;
+  runId: string | null;
+  episodeCounts: { total: number; ready: number; producing: number; failed: number };
+  ownerUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface BriefFields {
-  targetSeconds?: number;
+export interface ProductionInput {
+  title: string;
+  description?: string;
+  goal?: string;
+  audience?: string;
+  tone?: string;
+  notes?: string;
+  sources: string[];
+  youtubeChannels?: string[];
+  keywords?: string[];
+  episodeTargetSeconds?: number;
+  maxEpisodes?: number;
   aspect?: "16:9" | "9:16";
   language?: string;
-  voice?: { reference?: string | null; referenceText?: string | null; speed: number } | null;
   music?: { track: string; gainDb: number; ducking: boolean } | null;
-}
-
-export interface CreateProductionData extends BriefFields {
-  title: string;
-  brief?: string;
-}
-
-export interface UpdateProductionData extends BriefFields {
-  title: string;
-  brief: string;
 }
 
 export interface ProductionAccess {
   hasAccess: boolean;
+}
+
+export interface EpisodeSummary {
+  id: string;
+  idx: number;
+  title: string;
+  hook: string;
+  status: EpisodeStatus;
+  currentStage: string | null;
+  progress: number | null;
+  durationSeconds: number | null;
+  thumbnailUrl: string | null;
+  updatedAt: string;
+}
+
+export interface EpisodeDetail extends EpisodeSummary {
+  plan: unknown; // StudioEpisode
+  run: RunView | null;
+  youtube: YoutubeKit | null;
+  selectedTitle: number;
+  selectedThumbnail: number;
+  thumbnails: { url: string; index: number }[];
+  exportFiles: { kind: "mp4" | "thumbnail" | "youtube" | "timeline" | "pack"; url: string; sizeBytes: number; name: string }[];
+  finalVideoUrl: string | null;
+  latestRevision: number | null;
+}
+
+export interface EpisodePatch {
+  youtube?: YoutubeKit;
+  selectedTitle?: 0 | 1 | 2;
+  selectedThumbnail?: 0 | 1 | 2;
 }
 
 /** A non-2xx answer. `body` is normalised as `{ code, message, ...details }` from the envelope error
@@ -118,7 +181,6 @@ async function request<T>(
   if (!res.ok) {
     let parsed: Record<string, unknown> | null = null;
     try { parsed = (await res.json()) as Record<string, unknown>; } catch { /* not JSON */ }
-    // Normalize envelope error to flat { code, message, ...details } so consumers keep working
     const normalised = isEnvelope(parsed) && parsed.error
       ? flattenEnvelopeError(parsed.error)
       : parsed;
@@ -126,184 +188,16 @@ async function request<T>(
   }
   if (res.status === 204) return undefined as T;
   const json = await res.json() as unknown;
-  // Unwrap the API envelope if present; fall back to the raw body for non-envelope answers.
   return (isEnvelope(json) ? json.data : json) as T;
 }
 
-export function createStudioClient(getAccessToken: () => Promise<string>) {
-  return {
-    createTeam(name: string): Promise<Team> {
-      return request<Team>(getAccessToken, "POST", "/api/teams", { name });
-    },
-
-    listTeams(): Promise<Team[]> {
-      return request<Team[]>(getAccessToken, "GET", "/api/teams");
-    },
-
-    listMembers(teamId: string): Promise<TeamMember[]> {
-      return request<TeamMember[]>(
-        getAccessToken,
-        "GET",
-        `/api/teams/${teamId}/members`
-      );
-    },
-
-    /** People the team owner may add (Account API search by name or email), minus current members. */
-    searchMemberCandidates(teamId: string, keyword: string): Promise<UserSummary[]> {
-      return request<UserSummary[]>(
-        getAccessToken,
-        "GET",
-        `/api/teams/${teamId}/member-candidates?keyword=${encodeURIComponent(keyword)}`
-      );
-    },
-
-    addMember(
-      teamId: string,
-      userId: string,
-      role: string
-    ): Promise<TeamMember> {
-      return request<TeamMember>(
-        getAccessToken,
-        "POST",
-        `/api/teams/${teamId}/members`,
-        { userId, role }
-      );
-    },
-
-    removeMember(teamId: string, userId: string): Promise<void> {
-      return request<void>(
-        getAccessToken,
-        "DELETE",
-        `/api/teams/${teamId}/members/${userId}`
-      );
-    },
-
-    updateMemberRole(
-      teamId: string,
-      userId: string,
-      role: string
-    ): Promise<TeamMember> {
-      return request<TeamMember>(
-        getAccessToken,
-        "PATCH",
-        `/api/teams/${teamId}/members/${userId}`,
-        { role }
-      );
-    },
-
-    createProduction(
-      teamId: string,
-      data: CreateProductionData
-    ): Promise<Production> {
-      return request<Production>(
-        getAccessToken,
-        "POST",
-        `/api/teams/${teamId}/productions`,
-        data
-      );
-    },
-
-    listProductions(teamId: string): Promise<Production[]> {
-      return request<Production[]>(
-        getAccessToken,
-        "GET",
-        `/api/teams/${teamId}/productions`
-      );
-    },
-
-    getProduction(id: string): Promise<Production> {
-      return request<Production>(
-        getAccessToken,
-        "GET",
-        `/api/productions/${id}`
-      );
-    },
-
-    updateProduction(
-      id: string,
-      data: Partial<UpdateProductionData>
-    ): Promise<Production> {
-      return request<Production>(
-        getAccessToken,
-        "PATCH",
-        `/api/productions/${id}`,
-        data
-      );
-    },
-
-    setProductionSources(id: string, folderIds: string[]): Promise<Production> {
-      return request<Production>(
-        getAccessToken,
-        "POST",
-        `/api/productions/${id}/sources`,
-        { folderIds }
-      );
-    },
-
-    checkProductionAccess(id: string): Promise<ProductionAccess> {
-      return request<ProductionAccess>(
-        getAccessToken,
-        "GET",
-        `/api/productions/${id}/access`
-      );
-    },
-
-    // ---- workflow ag-studio-production@1.0.0 ----
-    startRun(id: string): Promise<{ runId: string }> {
-      return request(getAccessToken, "POST", `/api/productions/${id}/run`);
-    },
-    getRun(id: string): Promise<RunView> {
-      return request(getAccessToken, "GET", `/api/productions/${id}/run`);
-    },
-    getStageDocument<T = unknown>(id: string, stage: string, name: string): Promise<T> {
-      return request(getAccessToken, "GET", `/api/productions/${id}/run/documents/${stage}/${name}`);
-    },
-    submitGate(id: string, gate: "approve-treatment" | "shot-board" | "edit", document?: unknown): Promise<{ stageState: string; runState: string }> {
-      return request(getAccessToken, "POST", `/api/productions/${id}/run/gates/${gate}`, document === undefined ? {} : { document });
-    },
-    retryStage(id: string, stage: string): Promise<{ ok: true }> {
-      return request(getAccessToken, "POST", `/api/productions/${id}/run/stages/${stage}/retry`);
-    },
-    /** After a FAILED/CANCELLED run: a new run that keeps every stage before `stage` and runs `stage` onwards. */
-    resumeRun(id: string, stage: string): Promise<{ runId: string; reused: string[] }> {
-      return request(getAccessToken, "POST", `/api/productions/${id}/run/stages/${stage}/resume`);
-    },
-    cancelRun(id: string): Promise<{ ok: true }> {
-      return request(getAccessToken, "POST", `/api/productions/${id}/run/cancel`);
-    },
-
-    // ---- editor (timeline revisions, TTS, preview) ----
-    getTimeline(id: string): Promise<TimelineRevisionView> {
-      return request(getAccessToken, "GET", `/api/productions/${id}/timeline`);
-    },
-    listRevisions(id: string): Promise<RevisionSummary[]> {
-      return request(getAccessToken, "GET", `/api/productions/${id}/timeline/revisions`);
-    },
-    /** 409 (`StudioHttpError`, body `{ code: "revision_conflict", currentRevision }`) when `baseRevision` is stale. */
-    saveRevision(id: string, baseRevision: number, data: TimelineV2, label?: string): Promise<{ revision: number; issues: TimelineIssue[] }> {
-      return request(getAccessToken, "POST", `/api/productions/${id}/timeline/revisions`, { baseRevision, data, ...(label ? { label } : {}) });
-    },
-    ttsLine(id: string, lineId: string, text: string): Promise<EditorJob> {
-      return request(getAccessToken, "POST", `/api/productions/${id}/editor/tts`, { lineId, text });
-    },
-    renderPreview(id: string, revision: number): Promise<EditorJob> {
-      return request(getAccessToken, "POST", `/api/productions/${id}/editor/previews`, { revision });
-    },
-    getEditorJob(id: string, jobId: string): Promise<EditorJob> {
-      return request(getAccessToken, "GET", `/api/productions/${id}/editor/jobs/${jobId}`);
-    },
-    audioUrl(id: string, key: string): Promise<{ url: string }> {
-      return request(getAccessToken, "GET", `/api/productions/${id}/audio?key=${encodeURIComponent(key)}`);
-    },
-    getExports(id: string): Promise<ExportsView> {
-      return request(getAccessToken, "GET", `/api/productions/${id}/exports`);
-    },
-  };
-}
+// ---------------------------------------------------------------------------
+// Run/Stage views (same shape as GĐ2 for the episode editor)
+// ---------------------------------------------------------------------------
 
 export interface StageView {
   key: string;
-  executor: "script" | "agent" | "gate" | "farm";
+  executor: string;
   state: string;
   attempts: number;
   is_gate: boolean;
@@ -311,43 +205,221 @@ export interface StageView {
   failed_checks: { check_id: string; evidence: Record<string, unknown> }[];
   outputs: { name: string; type: string; size_bytes: number }[];
 }
+
 export interface RunView {
   run_id: string;
   state: string;
   created_at: string;
   updated_at: string;
   cost_usd: number;
-  waiting_gate: "approve-treatment" | "shot-board" | "edit" | null;
+  waiting_gate: string | null;
   stages: StageView[];
   latest_revision: number | null;
 }
+
+// ---------------------------------------------------------------------------
+// Editor (timeline)
+// ---------------------------------------------------------------------------
+
 export interface TimelineRevisionView {
   revision: number;
-  base_revision: number;
-  data: TimelineV2;
-  author_id: string;
-  label: string | null;
-  created_at: string;
+  data: TimelineV3;
   issues: TimelineIssue[];
+  savedAt: string;
+  authorId: string;
 }
-export interface RevisionSummary { revision: number; base_revision: number; author_id: string; label: string | null; created_at: string }
+
+export interface RevisionSummary {
+  revision: number;
+  baseRevision: number;
+  authorId: string;
+  label: string | null;
+  createdAt: string;
+}
+
 export interface EditorJob {
   id: string;
-  kind: "tts_line" | "render_preview";
+  kind: "render_preview" | "export_premiere";
   status: "queued" | "running" | "completed" | "failed";
+  progress: number | null;
   request: Record<string, unknown>;
-  /** tts_line: `{ line_id, text, key, duration }`; render_preview: `{ key, duration_s, watermarked, revision }`. */
   result: Record<string, unknown> | null;
   error: string | null;
-  created_at: string;
-  /** Signed URL of a finished preview, absent when footage scope does not cover the production. */
+  createdAt: string;
   url?: string;
   urlHidden?: "footage_scope";
 }
-export interface ExportsView {
-  durationSeconds: number;
+
+// ---------------------------------------------------------------------------
+// Asset media
+// ---------------------------------------------------------------------------
+
+export interface AssetMedia {
+  assetId: string;
+  previewUrl: string | null;
+  previewWidth: number | null;
+  previewHeight: number | null;
   watermarked: boolean;
-  files: { kind: "mp4" | "srt" | "vtt" | "timeline"; name: string; sizeBytes: number; url: string | null; urlHidden?: "footage_scope" }[];
+  posterUrl: string | null;
+  keyframes: { url: string; tMs: number }[];
+  contactSheetUrl: string | null;
+  durationMs: number;
+  expiresAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Client factory
+// ---------------------------------------------------------------------------
+
+function buildQuery(params: Record<string, string | number | undefined | null>): string {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null) q.set(k, String(v));
+  }
+  const s = q.toString();
+  return s ? `?${s}` : "";
+}
+
+export function createStudioClient(getAccessToken: () => Promise<string>) {
+  return {
+    // ---- Me ----
+    getMe(): Promise<MeProfile> {
+      return request<MeProfile>(getAccessToken, "GET", "/api/me");
+    },
+
+    // ---- Teams ----
+    listTeams(params?: { page?: number; pageSize?: number; sortBy?: string; sortOrder?: string; q?: string }): Promise<Paged<Team>> {
+      return request<Paged<Team>>(getAccessToken, "GET", `/api/teams${buildQuery(params ?? {})}`);
+    },
+    createTeam(name: string): Promise<Team> {
+      return request<Team>(getAccessToken, "POST", "/api/teams", { name });
+    },
+    updateTeam(teamId: string, name: string): Promise<Team> {
+      return request<Team>(getAccessToken, "PATCH", `/api/teams/${teamId}`, { name });
+    },
+    deleteTeam(teamId: string): Promise<void> {
+      return request<void>(getAccessToken, "DELETE", `/api/teams/${teamId}`);
+    },
+
+    // ---- Team members ----
+    listMembers(teamId: string, params?: { page?: number; pageSize?: number; sortBy?: string; sortOrder?: string; q?: string }): Promise<Paged<TeamMember>> {
+      return request<Paged<TeamMember>>(getAccessToken, "GET", `/api/teams/${teamId}/members${buildQuery(params ?? {})}`);
+    },
+    searchMemberCandidates(teamId: string, keyword: string): Promise<UserSummary[]> {
+      return request<UserSummary[]>(getAccessToken, "GET", `/api/teams/${teamId}/member-candidates?keyword=${encodeURIComponent(keyword)}`);
+    },
+    addMember(teamId: string, userId: string, role: string): Promise<TeamMember> {
+      return request<TeamMember>(getAccessToken, "POST", `/api/teams/${teamId}/members`, { userId, role });
+    },
+    removeMember(teamId: string, userId: string): Promise<void> {
+      return request<void>(getAccessToken, "DELETE", `/api/teams/${teamId}/members/${userId}`);
+    },
+    updateMemberRole(teamId: string, userId: string, role: string): Promise<TeamMember> {
+      return request<TeamMember>(getAccessToken, "PATCH", `/api/teams/${teamId}/members/${userId}`, { role });
+    },
+
+    // ---- Productions ----
+    listProductions(params?: { page?: number; pageSize?: number; sortBy?: string; sortOrder?: string; q?: string; teamId?: string; status?: string }): Promise<Paged<Production>> {
+      return request<Paged<Production>>(getAccessToken, "GET", `/api/productions${buildQuery(params ?? {})}`);
+    },
+    listTeamProductions(teamId: string, params?: { page?: number; pageSize?: number; sortBy?: string; sortOrder?: string; q?: string; status?: string }): Promise<Paged<Production>> {
+      return request<Paged<Production>>(getAccessToken, "GET", `/api/teams/${teamId}/productions${buildQuery(params ?? {})}`);
+    },
+    createProduction(teamId: string, data: ProductionInput): Promise<Production> {
+      return request<Production>(getAccessToken, "POST", `/api/teams/${teamId}/productions`, data);
+    },
+    getProduction(id: string): Promise<Production> {
+      return request<Production>(getAccessToken, "GET", `/api/productions/${id}`);
+    },
+    updateProduction(id: string, data: Partial<ProductionInput>): Promise<Production> {
+      return request<Production>(getAccessToken, "PATCH", `/api/productions/${id}`, data);
+    },
+    deleteProduction(id: string): Promise<void> {
+      return request<void>(getAccessToken, "DELETE", `/api/productions/${id}`);
+    },
+    checkProductionAccess(id: string): Promise<ProductionAccess> {
+      return request<ProductionAccess>(getAccessToken, "GET", `/api/productions/${id}/access`);
+    },
+    getProductionCatalog(id: string): Promise<StudioCatalog> {
+      return request<StudioCatalog>(getAccessToken, "GET", `/api/productions/${id}/catalog`);
+    },
+    getAssetMedia(productionId: string, assetId: string): Promise<AssetMedia> {
+      return request<AssetMedia>(getAccessToken, "GET", `/api/productions/${productionId}/assets/${assetId}/media`);
+    },
+
+    // ---- Plan run ----
+    startRun(id: string): Promise<{ runId: string }> {
+      return request(getAccessToken, "POST", `/api/productions/${id}/run`);
+    },
+    getRun(id: string): Promise<RunView> {
+      return request(getAccessToken, "GET", `/api/productions/${id}/run`);
+    },
+    getRunDocument<T = unknown>(id: string, stage: string, name: string): Promise<T> {
+      return request(getAccessToken, "GET", `/api/productions/${id}/run/documents/${stage}/${name}`);
+    },
+    getResearch(id: string): Promise<StudioResearch> {
+      return this.getRunDocument<StudioResearch>(id, "research", "research.json");
+    },
+    getTrendReport(id: string): Promise<TrendReport> {
+      return this.getRunDocument<TrendReport>(id, "trend-report", "trend-report.json");
+    },
+    getSeriesPlan(id: string, stage: "plan-episodes" | "approve-plan" = "plan-episodes"): Promise<SeriesPlan> {
+      return this.getRunDocument<SeriesPlan>(id, stage, "series-plan.json");
+    },
+    submitApprovePlan(id: string, document: SeriesPlan): Promise<{ accepted: true }> {
+      return request(getAccessToken, "POST", `/api/productions/${id}/run/gates/approve-plan`, { document });
+    },
+    retryStage(id: string, stage: string): Promise<{ ok: true }> {
+      return request(getAccessToken, "POST", `/api/productions/${id}/run/stages/${stage}/retry`);
+    },
+    resumeStage(id: string, stage: string): Promise<{ runId: string; reused: string[] }> {
+      return request(getAccessToken, "POST", `/api/productions/${id}/run/stages/${stage}/resume`);
+    },
+    cancelRun(id: string): Promise<{ ok: true }> {
+      return request(getAccessToken, "POST", `/api/productions/${id}/run/cancel`);
+    },
+
+    // ---- Episodes ----
+    listEpisodes(productionId: string, params?: { page?: number; pageSize?: number; sortBy?: string; sortOrder?: string }): Promise<Paged<EpisodeSummary>> {
+      return request<Paged<EpisodeSummary>>(getAccessToken, "GET", `/api/productions/${productionId}/episodes${buildQuery(params ?? {})}`);
+    },
+    getEpisode(productionId: string, episodeId: string): Promise<EpisodeDetail> {
+      return request<EpisodeDetail>(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}`);
+    },
+    patchEpisode(productionId: string, episodeId: string, data: EpisodePatch): Promise<EpisodeDetail> {
+      return request<EpisodeDetail>(getAccessToken, "PATCH", `/api/productions/${productionId}/episodes/${episodeId}`, data);
+    },
+    rerenderEpisode(productionId: string, episodeId: string): Promise<{ runId: string }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/rerender`);
+    },
+    cancelEpisode(productionId: string, episodeId: string): Promise<void> {
+      return request<void>(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/cancel`);
+    },
+    retryEpisodeStage(productionId: string, episodeId: string, stage: string): Promise<{ ok: true }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/stages/${stage}/retry`);
+    },
+    getEpisodeDocument<T = unknown>(productionId: string, episodeId: string, stage: string, name: string): Promise<T> {
+      return request<T>(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/documents/${stage}/${name}`);
+    },
+
+    // ---- Editor (timeline revisions, preview) ----
+    getTimeline(productionId: string, episodeId: string): Promise<TimelineRevisionView> {
+      return request(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/timeline`);
+    },
+    listRevisions(productionId: string, episodeId: string): Promise<RevisionSummary[]> {
+      return request(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/timeline/revisions`);
+    },
+    /** 409 (`StudioHttpError`, body `{ code: "revision_conflict", currentRevision }`) when `baseRevision` is stale. */
+    saveRevision(productionId: string, episodeId: string, baseRevision: number, data: TimelineV3, label?: string): Promise<{ revision: number; issues: TimelineIssue[] }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/timeline/revisions`, { baseRevision, data, ...(label ? { label } : {}) });
+    },
+    renderPreview(productionId: string, episodeId: string, revision: number): Promise<EditorJob> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/editor/previews`, { revision });
+    },
+    getEditorJob(productionId: string, episodeId: string, jobId: string): Promise<EditorJob> {
+      return request(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/editor/jobs/${jobId}`);
+    },
+  };
 }
 
 export type StudioClient = ReturnType<typeof createStudioClient>;
