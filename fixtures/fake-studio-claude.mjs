@@ -101,20 +101,20 @@ function planEpisodes() {
       if (dur >= targetSeconds * 1.2) break;
       const sectionIdx = items.length;
       const section_title = sectionIdx > 0 && sectionIdx % 2 === 0 ? `Phần ${Math.floor(sectionIdx / 2) + 1}` : null;
-      items.push({ asset_id: a.asset_id ?? a.id, section_title });
+      items.push({ asset_id: a.asset_id ?? a.id, reason: "phù hợp topic", section_title });
       dur += (a.duration_s ?? 30);
     }
     if (!items.length && slice.length) {
-      items.push({ asset_id: slice[0].asset_id ?? slice[0].id, section_title: null });
+      items.push({ asset_id: slice[0].asset_id ?? slice[0].id, reason: "phù hợp topic", section_title: null });
     }
     // Inject a bad id on first call if mode is set
     if (e === 0 && modes.has("plan-bad-once") && !repairing) {
-      items.push({ asset_id: "khong-co-that", section_title: null });
+      items.push({ asset_id: "khong-co-that", reason: "fake bad id", section_title: null });
     }
     // Alternates: remaining assets not used in this episode
     const usedIds = new Set(items.map((it) => it.asset_id));
     const alternates = assets.filter((a) => !usedIds.has(a.asset_id ?? a.id)).slice(0, 3).map((a) => ({ asset_id: a.asset_id ?? a.id, reason: "dự phòng" }));
-    const texts_suggested = items.length >= 1 ? [{ at_item: 0, kind: "title", text: `Tập ${e + 1}: ${brief.title ?? "Video"}`.slice(0, 64), position: "top_left" }] : [];
+    const texts_suggested = items.length >= 1 ? [{ at_item: 0, kind: "title", text: `Tập ${e + 1}: ${brief.title ?? "Video"}`.slice(0, 64) }] : [];
     episodes.push({
       idx: e + 1,
       title: `${brief.title ?? "Series"} — Phần ${e + 1}`,

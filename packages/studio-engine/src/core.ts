@@ -72,9 +72,14 @@ export function createStudioEngineCore(o: StudioEngineCoreOptions): StudioEngine
  */
 export function cancelLegacyRuns(core: StudioEngineCore): void {
   const knownWorkflows: Set<string> = new Set(Object.values(STUDIO_WORKFLOWS).map((w) => w.workflow));
-  // listRuns is not always available on the store; use a raw query through the underlying store if needed
-  const runs = (core.store as unknown as { db?: { prepare: (s: string) => { all: (...p: unknown[]) => unknown[] } } })
-    .db?.prepare("SELECT run_id, state, workflow_release FROM runs")?.all() as Array<{ run_id: string; state: string; workflow_release: string }> ?? [];
+  // listRuns is not always available on the store; use a raw query through the underlying store if needed.
+  // Guard with try/catch — the runs table may not exist yet in a fresh DB.
+  let runs: Array<{ run_id: string; state: string; workflow_release: string }> = [];
+  try {
+    const raw = (core.store as unknown as { db?: { prepare: (s: string) => { all: (...p: unknown[]) => unknown[] } } })
+      .db?.prepare("SELECT run_id, state, workflow_release FROM runs")?.all();
+    runs = (raw ?? []) as typeof runs;
+  } catch { /* table doesn't exist yet — nothing to cancel */ }
   for (const row of runs) {
     if (isTerminal("run", row.state)) continue;
     let workflowId: string | undefined;

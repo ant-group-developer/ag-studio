@@ -9,9 +9,9 @@
  * - Hitting the subscription limit waits with growing backoff inside the deadline; not counted as an attempt.
  * - `studio-trend-report` is skipped when research has no videos (writes a `skipped: true` document, cost 0).
  */
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { mkdirSync } from "node:fs";
 import {
   claudeOutputJsonSchema, STUDIO_SKILL_OUTPUTS, TrendReportSchema,
   type AgentRuntime, type CheckerInput, type Executor, type ExecutorContext, type StageRequest, type StageResult, type StudioSkill,
@@ -163,7 +163,16 @@ export class StudioAgentExecutor implements Executor {
             mkdirSync(join(ctx.workspaceDir, "output"), { recursive: true });
             writeSkipped(outPath, skill, ctx.workspaceDir, request);
             ctx.logger.info("studio-trend-report skipped (no research videos)");
-            return succeeded(0);
+            // Register the written file as an output so the harness stages it and checks pass.
+            const bytes = readFileSync(outPath);
+            const checksum = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+            const rel = `output/${out.name}`;
+            return {
+              schema_version: "harness.stage-result/v1", attempt_id: request.attempt_id, outcome: "succeeded",
+              outputs: [{ path: rel, type: out.type, checksum, size_bytes: bytes.length, kind: "file" as const }],
+              checks: [], usage: { wall_seconds: (Date.now() - started) / 1000, cost_usd: 0 },
+              external_operations: [], errors: [],
+            };
           }
         } catch { /* if we can't read it, proceed to Claude */ }
       }

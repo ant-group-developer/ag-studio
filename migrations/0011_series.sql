@@ -29,7 +29,11 @@ CREATE TABLE episodes (
   production_id   TEXT NOT NULL REFERENCES productions(id) ON DELETE CASCADE,
   idx             INTEGER NOT NULL,
   title           TEXT NOT NULL,
-  plan            TEXT NOT NULL,   -- studio.episode/v1 JSON
+  hook            TEXT NOT NULL DEFAULT '',
+  status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'in_progress', 'producing', 'succeeded', 'failed')),
+  current_stage   TEXT,            -- last known workflow stage key
+  plan            TEXT NOT NULL DEFAULT '{}',  -- studio.episode/v1 JSON
   run_id          TEXT,            -- the ag-studio-episode@1.0.0 run for this episode
   youtube         TEXT,            -- user-edited YoutubeKit JSON; NULL = use the run's kit
   selected_title  INTEGER,         -- index into YoutubeKit.titles (NULL = 0)
