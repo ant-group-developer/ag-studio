@@ -1,3 +1,5 @@
+import { useAuthToken } from "../auth/use-auth-token";
+
 const AG_GO_API_URL = import.meta.env.VITE_AG_GO_API_URL as string | undefined;
 
 export interface FolderItem {
@@ -76,4 +78,19 @@ export function unwrapAgGoResponse<T>(body: unknown): T {
     if (typeof b.success === "boolean" && "data" in b && typeof b.requestId === "string") return b.data as T;
   }
   return body as T;
+}
+
+/** React hook that returns ag-go API helpers bound to the current Auth0 token. */
+export function useAgGoClient() {
+  const { getAccessToken } = useAuthToken();
+  return {
+    getFolders: async (): Promise<FolderListResponse> => {
+      const token = await getAccessToken();
+      return getFolders(token);
+    },
+    getSegmentMedia: async (segmentId: string): Promise<SegmentMedia | null> => {
+      const token = await getAccessToken();
+      return getSegmentMedia(token, segmentId);
+    },
+  };
 }
