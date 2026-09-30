@@ -2,31 +2,44 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AgGoCatalogItem } from "@harness/core";
-import { createStudioEngineCore, MemoryBucket, StudioDb, type FootageCatalogSource, type StudioFlow } from "../src/index.js";
+import type { AgGoFootageVideo } from "@harness/core";
+import { createStudioEngineCore, MemoryBucket, StudioDb, type FootageCatalogSource } from "../src/index.js";
 
 export const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..", "..", "..");
 export const FAKE_CLAUDE = join(ROOT, "fixtures", "fake-studio-claude.mjs");
 
-/** A minimal valid 16-bit mono PCM WAV of `seconds` of silence. */
-export function wav(seconds: number, rate = 24000): Buffer {
-  const n = Math.floor(rate * seconds);
-  const b = Buffer.alloc(44 + n * 2);
-  b.write("RIFF", 0); b.writeUInt32LE(36 + n * 2, 4); b.write("WAVE", 8); b.write("fmt ", 12);
-  b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22); b.writeUInt32LE(rate, 24); b.writeUInt32LE(rate * 2, 28);
-  b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34); b.write("data", 36); b.writeUInt32LE(n * 2, 40);
-  return b;
-}
+/** A minimal fake MP4 buffer for farm render results. */
+export function fakeMp4(id: string | number): Buffer { return Buffer.from(`fake-mp4-${id}`); }
 
-/** ag-go `/footage/catalog` stand-in; records who it was called as. */
-export function fakeFootage(count = 16, seconds = 8): FootageCatalogSource & { calls: { actAs: string; folderIds: string[] }[] } {
+/** Minimal fake JPEG for thumbnail results. */
+export function fakeJpeg(id: string | number): Buffer { return Buffer.from(`\xff\xd8fake-thumb-${id}`); }
+
+/**
+ * ag-go footage catalog stand-in — returns whole-asset items (GĐ2).
+ * count assets, each duration_s seconds long, all usable, landscape.
+ */
+export function fakeFootage(count = 8, duration_s = 30): FootageCatalogSource & { calls: { actAs: string; folderIds: string[] }[] } {
   const calls: { actAs: string; folderIds: string[] }[] = [];
-  const items: AgGoCatalogItem[] = Array.from({ length: count }, (_, i) => ({
-    segmentId: `00000000-0000-4000-8000-${String(i + 1).padStart(12, "0")}`, assetId: `asset-${Math.floor(i / 4)}`,
-    startMs: (i % 4) * seconds * 1000, endMs: ((i % 4) + 1) * seconds * 1000, durationMs: seconds * 1000,
-    captionVi: `cảnh phở số ${i + 1}`, captionEn: `pho shot ${i + 1}`, tags: ["pho"], keywordsVi: ["phở"], subjects: [], actions: [],
-    shotSize: "medium", cameraMotion: null, timeOfDay: "morning", setting: null, peopleCount: null,
-    orientation: "landscape", quality: 4, usable: true, approved: i % 2 === 0,
+  const items: AgGoFootageVideo[] = Array.from({ length: count }, (_, i) => ({
+    assetId: `asset-${String(i + 1).padStart(4, "0")}`,
+    name: `Cảnh phở số ${i + 1}`,
+    durationMs: duration_s * 1000,
+    orientation: "landscape",
+    hasSpeech: false,
+    titleVi: `Video phở ${i + 1}`,
+    summaryVi: `Cảnh quay phở buổi sáng số ${i + 1}`,
+    genre: "food",
+    topics: ["food"],
+    subjects: ["pho"],
+    places: ["Hanoi"],
+    actions: ["eating"],
+    keywordsVi: ["phở", "Hà Nội"],
+    tags: ["pho", "food"],
+    mood: "calm",
+    setting: "interior",
+    quality: 4,
+    usable: true,
+    approved: true,
   }));
   return {
     calls,
@@ -38,11 +51,17 @@ export function fakeFootage(count = 16, seconds = 8): FootageCatalogSource & { c
 }
 
 /**
- * ag-farm owner API stand-in that runs a job the moment it is submitted: TTS writes one WAV per line
- * (0.2 s per word) + `tts.json`; a render writes `output` + `render.json` with the composition's length.
+ * ag-farm owner API stand-in for GĐ2 (no TTS; renders episodes).
+ * Runs a studio.render_final job synchronously: writes output MP4 + thumbnails + render.json.
  */
-export function fakeFarm(bucket: MemoryBucket, opts: { badFinalRenders?: number } = {}) {
-  let badFinals = opts.badFinalRenders ?? 0;
+/**
+ * ag-farm owner API stand-in for GĐ2.  Runs studio.render_final synchronously:
+ * writes output files into the bucket at the path the FarmExecutor's storage adapter
+ * will call `downloadOutput` on: `productions/<productionId>/jobs/<stageKey>/<attemptId>/out/`.
+ *
+ * correlation_id = attempt_id; stage key for the only farm stage is "studio-episode-render".
+ */
+export function fakeFarm(bucket: MemoryBucket) {
   const jobs = new Map<string, { id: string; type: string; payload: Record<string, unknown>; status: string; result: unknown; error: unknown }>();
   let n = 0;
   return {
@@ -50,34 +69,40 @@ export function fakeFarm(bucket: MemoryBucket, opts: { badFinalRenders?: number 
     async submitJob(req: { type: string; payload: unknown; correlation_id: string }) {
       const id = `job-${++n}`;
       const p = req.payload as Record<string, unknown>;
-      const prod = String(p.production_id);
-      const editor = String(req.correlation_id).startsWith("editor-");
-      const attempt = String(req.correlation_id).replace(/^editor-/, "");
-      const stage = req.type === "studio.tts" ? (editor ? "editor-tts" : "tts") : editor ? "editor-preview" : "render-final";
-      const out = `productions/${prod}/jobs/${stage}/${attempt}/out/`;
-      let manifest: string;
-      if (req.type === "studio.tts") {
-        const lines = (p.lines as { line_id: string; text: string }[]).map((l) => {
-          const duration = Math.round(l.text.split(/\s+/).length * 0.2 * 1000) / 1000;
-          bucket.objects.set(`${out}tts/${l.line_id}.wav`, wav(duration));
-          return { line_id: l.line_id, output: `tts/${l.line_id}.wav`, duration_s: duration, words: [] };
-        });
-        bucket.objects.set(`${out}tts.json`, Buffer.from(JSON.stringify({ schema: "ag.studio.tts/v1", production_id: prod, language: String(p.language), lines, engine: { name: "fake", version: null } })));
-        manifest = "tts.json";
-      } else {
-        const comp = JSON.parse(bucket.objects.get(`productions/${prod}/jobs/${stage}/${attempt}/in/composition.json`)!.toString("utf8"));
-        const video = Buffer.from(`fake-mp4-${id}`);
-        bucket.objects.set(`${out}${String(p.output)}`, video);
-        const canvas = p.canvas as { width: number; height: number };
-        // `badFinalRenders`: a final render whose manifest breaks the schema (a contract failure, not retried)
-        const broken = req.type === "studio.render_final" && badFinals > 0 && badFinals-- > 0;
-        bucket.objects.set(`${out}render.json`, Buffer.from(JSON.stringify(broken ? { schema: "ag.studio.render/v1" } : {
-          schema: "ag.studio.render/v1", production_id: prod, revision: p.revision, output: p.output, width: canvas.width, height: canvas.height,
-          duration_s: comp.total_seconds, size_bytes: video.length, watermarked: req.type !== "studio.render_final", sources: [], warnings: [],
-        })));
-        manifest = "render.json";
+      const prod = String(p.production_id ?? "");
+      const attemptId = String(req.correlation_id ?? id);
+      // FarmExecutor resolves output prefix as: productions/<productionId>/jobs/<stageKey>/<attemptId>/out/
+      const stageKey = "studio-episode-render";
+      const out = `productions/${prod}/jobs/${stageKey}/${attemptId}/out/`;
+
+      const durationS = 60;
+      const outputFile = String(p.output ?? "final.mp4");
+      const thumbBase = outputFile.replace(/\.mp4$/, "");
+      bucket.objects.set(`${out}${outputFile}`, fakeMp4(id));
+      // Thumbnails — written at paths matching the rename-map keys in payloads.ts:
+      // `${output.replace(/\.mp4$/, ".thumb-N.jpg")}` so the FarmExecutor can
+      // download them before renaming to thumb-1.jpg … thumb-3.jpg.
+      const thumbsPayload = (p.thumbnails ?? []) as { t_s: number; text: string }[];
+      for (let t = 1; t <= 3; t++) { bucket.objects.set(`${out}${thumbBase}.thumb-${t}.jpg`, fakeJpeg(t)); }
+      const canvas = (p.canvas ?? { width: 1920, height: 1080 }) as { width: number; height: number };
+      // Read the composition.json that the FarmExecutor uploaded to the input prefix.
+      // It has `total_seconds` which the studio-render-valid checker compares to m.duration_s.
+      const inputPrefix = `productions/${prod}/jobs/studio-episode-render/${attemptId}/in/`;
+      let effectiveDuration = durationS;
+      const compBuf = bucket.objects.get(`${inputPrefix}composition.json`);
+      if (compBuf) {
+        try {
+          const comp = JSON.parse(compBuf.toString("utf8")) as { total_seconds?: number };
+          if (typeof comp.total_seconds === "number") effectiveDuration = comp.total_seconds;
+        } catch { /* fall back to durationS */ }
       }
-      jobs.set(id, { id, type: req.type, payload: p, status: "completed", result: { manifest }, error: null });
+      bucket.objects.set(`${out}render.json`, Buffer.from(JSON.stringify({
+        schema: "ag.studio.render/v1", production_id: prod,
+        revision: p.revision ?? 1, output: outputFile, width: canvas.width, height: canvas.height,
+        duration_s: effectiveDuration, size_bytes: fakeMp4(id).length, watermarked: false, sources: [], warnings: [],
+        thumbnails: thumbsPayload.map((th, i) => ({ output: `${thumbBase}.thumb-${i + 1}.jpg`, t_s: th.t_s, width: canvas.width, height: canvas.height })),
+      })));
+      jobs.set(id, { id, type: req.type, payload: p, status: "completed", result: { manifest: "render.json" }, error: null });
       return { job: { id }, created: true };
     },
     async getJob(id: string) { const j = jobs.get(id)!; return { ...j, progress_percent: 100 }; },
@@ -86,22 +111,29 @@ export function fakeFarm(bucket: MemoryBucket, opts: { badFinalRenders?: number 
   };
 }
 
-export function world(o: { flow?: StudioFlow } = {}) {
+export function world() {
   const dir = mkdtempSync(join(tmpdir(), "studio-engine-"));
   const dbPath = join(dir, "studio.db");
-  const core = createStudioEngineCore({ dbPath, dataRoot: join(dir, "data"), harnessRoot: ROOT, ...(o.flow ? { flow: o.flow } : {}) });
+  const core = createStudioEngineCore({ dbPath, dataRoot: join(dir, "data"), harnessRoot: ROOT });
   const db = new StudioDb(dbPath);
   const bucket = new MemoryBucket();
   return { dir, dbPath, core, db, bucket };
 }
 
-export function seedProduction(db: StudioDb, over: { target?: number; aspect?: string } = {}): string {
+export function seedProduction(db: StudioDb, over: {
+  title?: string; target?: number; aspect?: string;
+  episode_target_seconds?: number; max_episodes?: number;
+} = {}): string {
   const now = new Date().toISOString();
   db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [now, now]);
   db.run("INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES ('team-1', 'auth0|owner', 'owner', ?)", [now]);
   const id = "11111111-1111-4111-8111-111111111111";
-  db.run(`INSERT INTO productions (id, team_id, title, status, brief, created_at, updated_at, owner_user_id, target_seconds, aspect, language)
-          VALUES (?, 'team-1', 'Phở sáng Hà Nội', 'draft', 'Một bát phở buổi sáng', ?, ?, 'auth0|owner', ?, ?, 'vi')`, [id, now, now, over.target ?? 30, over.aspect ?? "16:9"]);
+  db.run(`INSERT INTO productions (id, team_id, title, status, brief, created_at, updated_at, owner_user_id, target_seconds, aspect, language,
+            goal, audience, tone, episode_target_seconds, max_episodes)
+          VALUES (?, 'team-1', ?, 'draft', 'Một bát phở buổi sáng', ?, ?, 'auth0|owner', ?, ?, 'vi',
+            'Chia sẻ ẩm thực Việt', 'Người Việt trẻ 18-35', 'warm', ?, ?)`,
+    [id, over.title ?? "Phở sáng Hà Nội", now, now, over.target ?? 30, over.aspect ?? "16:9",
+      over.episode_target_seconds ?? 60, over.max_episodes ?? 2]);
   db.run("INSERT INTO production_sources (production_id, source_id, added_at) VALUES (?, 'folder-a', ?)", [id, now]);
   return id;
 }
