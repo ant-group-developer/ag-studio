@@ -6,9 +6,13 @@
       "properties": {
         "schema_version": {
           "type": "string",
-          "const": "studio.export/v1"
+          "const": "studio.export/v2"
         },
         "production_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_id": {
           "type": "string",
           "minLength": 1
         },
@@ -29,9 +33,10 @@
                 "type": "string",
                 "enum": [
                   "mp4",
-                  "srt",
-                  "vtt",
-                  "timeline"
+                  "thumbnail",
+                  "youtube",
+                  "timeline",
+                  "pack"
                 ]
               },
               "key": {
@@ -64,6 +69,7 @@
       "required": [
         "schema_version",
         "production_id",
+        "episode_id",
         "run_id",
         "duration_seconds",
         "files",

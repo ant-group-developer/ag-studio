@@ -1,0 +1,417 @@
+{
+  "$ref": "#/definitions/studio-research",
+  "definitions": {
+    "studio-research": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.research/v1"
+        },
+        "production_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fetched_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quota_units": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "string"
+              },
+              "channel_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "subscribers": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "videos": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "video_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "channel_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "channel_title": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "published_at": {
+                      "type": "string"
+                    },
+                    "duration_s": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "views": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "likes": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "comments": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "views_per_day": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "outlier": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "video_id",
+                    "channel_id",
+                    "channel_title",
+                    "title",
+                    "published_at",
+                    "duration_s",
+                    "views",
+                    "likes",
+                    "comments",
+                    "tags",
+                    "views_per_day",
+                    "outlier"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "stats": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "median_views_per_day": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "uploads_per_week": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "shorts_ratio": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "median_duration_s": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "median_views_per_day",
+                      "uploads_per_week",
+                      "shorts_ratio",
+                      "median_duration_s"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "input",
+              "channel_id",
+              "title",
+              "subscribers",
+              "error",
+              "videos",
+              "stats"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "keyword": {
+                "type": "string"
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "videos": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "video_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "channel_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "channel_title": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "published_at": {
+                      "type": "string"
+                    },
+                    "duration_s": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "views": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "likes": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "comments": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "views_per_day": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "outlier": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "video_id",
+                    "channel_id",
+                    "channel_title",
+                    "title",
+                    "published_at",
+                    "duration_s",
+                    "views",
+                    "likes",
+                    "comments",
+                    "tags",
+                    "views_per_day",
+                    "outlier"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "keyword",
+              "error",
+              "videos"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "insights": {
+          "type": "object",
+          "properties": {
+            "top_title_terms": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "term": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "term",
+                  "count"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "top_tags": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "term": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "term",
+                  "count"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "duration_buckets": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "bucket": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "bucket",
+                  "count"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "frequent_channels": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "channel_id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "channel_id",
+                  "title",
+                  "count"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "top_title_terms",
+            "top_tags",
+            "duration_buckets",
+            "frequent_channels"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema_version",
+        "production_id",
+        "fetched_at",
+        "quota_units",
+        "skipped_reason",
+        "channels",
+        "keywords",
+        "insights"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

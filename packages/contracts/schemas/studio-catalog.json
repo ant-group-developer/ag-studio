@@ -6,7 +6,7 @@
       "properties": {
         "schema_version": {
           "type": "string",
-          "const": "studio.catalog/v1"
+          "const": "studio.catalog/v2"
         },
         "production_id": {
           "type": "string",
@@ -25,44 +25,38 @@
         "truncated": {
           "type": "boolean"
         },
-        "segments": {
+        "assets": {
           "type": "array",
           "items": {
             "type": "object",
             "properties": {
-              "id": {
-                "type": "string",
-                "minLength": 1
-              },
               "asset_id": {
                 "type": "string",
                 "minLength": 1
               },
-              "start_ms": {
-                "type": "integer",
-                "minimum": 0
+              "name": {
+                "type": "string"
               },
-              "end_ms": {
-                "type": "integer",
-                "minimum": 0
+              "title_vi": {
+                "type": "string"
+              },
+              "summary_vi": {
+                "type": "string"
               },
               "duration_s": {
                 "type": "number",
                 "minimum": 0
               },
-              "caption_vi": {
+              "orientation": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "genre": {
                 "type": "string"
               },
-              "caption_en": {
-                "type": "string"
-              },
-              "tags": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "keywords_vi": {
+              "topics": {
                 "type": "array",
                 "items": {
                   "type": "string"
@@ -74,45 +68,51 @@
                   "type": "string"
                 }
               },
+              "places": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
               "actions": {
                 "type": "array",
                 "items": {
                   "type": "string"
                 }
               },
-              "shot_size": {
-                "type": [
-                  "string",
-                  "null"
-                ]
+              "keywords_vi": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               },
-              "camera_motion": {
-                "type": [
-                  "string",
-                  "null"
-                ]
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               },
-              "time_of_day": {
-                "type": [
-                  "string",
-                  "null"
-                ]
+              "mood": {
+                "type": "string"
               },
               "setting": {
-                "type": [
-                  "string",
-                  "null"
-                ]
+                "type": "string"
+              },
+              "time_of_day": {
+                "type": "string"
               },
               "people_count": {
-                "type": [
-                  "string",
-                  "null"
-                ]
+                "type": "string"
               },
-              "orientation": {
+              "shot_variety": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "has_speech": {
                 "type": [
-                  "string",
+                  "boolean",
                   "null"
                 ]
               },
@@ -127,29 +127,38 @@
               },
               "approved": {
                 "type": "boolean"
+              },
+              "project_names": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             },
             "required": [
-              "id",
               "asset_id",
-              "start_ms",
-              "end_ms",
+              "name",
+              "title_vi",
+              "summary_vi",
               "duration_s",
-              "caption_vi",
-              "caption_en",
-              "tags",
-              "keywords_vi",
-              "subjects",
-              "actions",
-              "shot_size",
-              "camera_motion",
-              "time_of_day",
-              "setting",
-              "people_count",
               "orientation",
+              "genre",
+              "topics",
+              "subjects",
+              "places",
+              "actions",
+              "keywords_vi",
+              "tags",
+              "mood",
+              "setting",
+              "time_of_day",
+              "people_count",
+              "shot_variety",
+              "has_speech",
               "quality",
               "usable",
-              "approved"
+              "approved",
+              "project_names"
             ],
             "additionalProperties": false
           }
@@ -161,7 +170,7 @@
         "folder_ids",
         "total_available",
         "truncated",
-        "segments"
+        "assets"
       ],
       "additionalProperties": false
     }

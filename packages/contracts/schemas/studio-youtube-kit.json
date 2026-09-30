@@ -1,0 +1,85 @@
+{
+  "$ref": "#/definitions/studio-youtube-kit",
+  "definitions": {
+    "studio-youtube-kit": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.youtube-kit/v1"
+        },
+        "titles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "maxItems": 40
+        },
+        "hashtags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^#[^\\s#]+$"
+          },
+          "maxItems": 15
+        },
+        "thumbnails": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "asset_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40
+              }
+            },
+            "required": [
+              "asset_id",
+              "text"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "playlist": {
+          "type": "string",
+          "maxLength": 150
+        }
+      },
+      "required": [
+        "schema_version",
+        "titles",
+        "description",
+        "tags",
+        "hashtags",
+        "thumbnails",
+        "playlist"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

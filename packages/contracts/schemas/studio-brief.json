@@ -6,7 +6,7 @@
       "properties": {
         "schema_version": {
           "type": "string",
-          "const": "studio.brief/v1"
+          "const": "studio.brief/v2"
         },
         "production_id": {
           "type": "string",
@@ -25,9 +25,25 @@
           "minLength": 1,
           "maxLength": 200
         },
-        "topic": {
+        "description": {
           "type": "string",
           "minLength": 1,
+          "maxLength": 4000
+        },
+        "goal": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "audience": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "tone": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "notes": {
+          "type": "string",
           "maxLength": 4000
         },
         "folder_ids": {
@@ -39,10 +55,15 @@
           "minItems": 1,
           "maxItems": 50
         },
-        "target_seconds": {
+        "episode_target_seconds": {
           "type": "number",
           "minimum": 10,
-          "maximum": 1800
+          "maximum": 3600
+        },
+        "max_episodes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30
         },
         "aspect": {
           "type": "string",
@@ -83,44 +104,6 @@
           "minLength": 2,
           "maxLength": 10
         },
-        "voice": {
-          "type": "object",
-          "properties": {
-            "reference": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "pattern": "^library:[A-Za-z0-9._\\-/]+$"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "reference_text": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "maxLength": 2000
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "speed": {
-              "type": "number",
-              "minimum": 0.5,
-              "maximum": 2
-            }
-          },
-          "required": [
-            "reference",
-            "reference_text",
-            "speed"
-          ],
-          "additionalProperties": false
-        },
         "music": {
           "anyOf": [
             {
@@ -150,6 +133,24 @@
               "type": "null"
             }
           ]
+        },
+        "youtube_channels": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "maxItems": 20
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "maxItems": 20
         }
       },
       "required": [
@@ -158,15 +159,21 @@
         "run_id",
         "owner_user_id",
         "title",
-        "topic",
+        "description",
+        "goal",
+        "audience",
+        "tone",
+        "notes",
         "folder_ids",
-        "target_seconds",
+        "episode_target_seconds",
+        "max_episodes",
         "aspect",
         "canvas",
         "fps",
         "language",
-        "voice",
-        "music"
+        "music",
+        "youtube_channels",
+        "keywords"
       ],
       "additionalProperties": false
     }

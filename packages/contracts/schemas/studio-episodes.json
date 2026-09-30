@@ -1,0 +1,52 @@
+{
+  "$ref": "#/definitions/studio-episodes",
+  "definitions": {
+    "studio-episodes": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.episodes/v1"
+        },
+        "production_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "episode_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "idx": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "run_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "episode_id",
+              "idx",
+              "run_id"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "schema_version",
+        "production_id",
+        "episodes"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

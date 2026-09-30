@@ -1,0 +1,91 @@
+{
+  "$ref": "#/definitions/studio-trend-report",
+  "definitions": {
+    "studio-trend-report": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.trend-report/v1"
+        },
+        "skipped": {
+          "type": "boolean"
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 3000
+        },
+        "working_angles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "maxItems": 15
+        },
+        "title_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "maxItems": 15
+        },
+        "hook_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "maxItems": 15
+        },
+        "thumbnail_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "maxItems": 15
+        },
+        "recommended_duration_s": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 7200
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "posting_schedule": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "recommendations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "maxItems": 15
+        }
+      },
+      "required": [
+        "schema_version",
+        "skipped",
+        "summary",
+        "working_angles",
+        "title_patterns",
+        "hook_patterns",
+        "thumbnail_patterns",
+        "recommended_duration_s",
+        "posting_schedule",
+        "recommendations"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

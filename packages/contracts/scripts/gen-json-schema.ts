@@ -41,9 +41,10 @@ export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
   overlays: CM.OverlaysSchema, brand: CM.BrandProfileSchema, "music-track": CM.MusicTrackSchema,
   "caption-cue": CM.CaptionCueSchema, "text-event": CM.TextEventSchema, composition: CM.CompositionSchema,
   "render-report": CM.RenderReportSchema,
-  "studio-brief": S.StudioBriefSchema, "studio-catalog": S.StudioCatalogSchema, "studio-treatment": S.TreatmentSchema,
-  "studio-selection": S.SelectionSchema, "studio-narration": S.StudioNarrationSchema, "studio-timeline-v2": S.TimelineV2Schema,
-  "studio-export": S.StudioExportSchema,
+  "studio-brief": S.StudioBriefSchema, "studio-research": S.StudioResearchSchema, "studio-trend-report": S.TrendReportSchema,
+  "studio-catalog": S.StudioCatalogSchema, "studio-series-plan": S.SeriesPlanSchema, "studio-episodes": S.SpawnedEpisodesSchema,
+  "studio-episode": S.StudioEpisodeSchema, "studio-timeline-v3": S.TimelineV3Schema, "studio-youtube-kit": S.YoutubeKitSchema,
+  "studio-youtube": S.StudioYoutubeSchema, "studio-export": S.StudioExportSchema,
 };
 
 export function toJsonSchema(name: string, schema: ZodTypeAny) {
