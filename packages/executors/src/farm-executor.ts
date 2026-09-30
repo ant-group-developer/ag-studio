@@ -448,6 +448,19 @@ export class FarmExecutor implements Executor {
           ctx.logger.info(
             `downloaded render output ${m.output} (${m.size_bytes} bytes)`,
           );
+          // Download any additional rename-map sources (e.g. thumbnails) that
+          // the render worker places alongside the video.
+          for (const [from] of Object.entries(build?.rename ?? {})) {
+            if (from === m.output) continue; // already downloaded
+            const dest = join(outDir, from);
+            try {
+              mkdirSync(dirname(dest), { recursive: true });
+              await this.opts.storage.downloadOutput(outputPrefix, from, dest);
+              ctx.logger.info(`downloaded rename source ${from}`);
+            } catch (e) {
+              ctx.logger.warn(`failed to download rename source ${from}: ${String(e)}`);
+            }
+          }
         }
       } catch (e) {
         // Schema validation of the manifest: fail as contract error (not retryable

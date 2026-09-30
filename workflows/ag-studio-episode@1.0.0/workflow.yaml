@@ -42,7 +42,7 @@ stages:
   - key: studio-episode-render
     executor: { type: farm, job: studio.render_final }
     config: { payload_builder: studio-episode-render }
-    depends_on: [freeze-timeline, episode-intake]
+    depends_on: [freeze-timeline, episode-intake, youtube-kit]
     requires_resources: [farm]
     retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
     required_checks: [schema-valid, output-exists, checksum-match, studio-render-valid]
