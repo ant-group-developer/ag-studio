@@ -1,99 +1,188 @@
 import { describe, expect, it } from "vitest";
-import { validateNarration, validateSelection, validateTreatment } from "../../src/studio/validate.js";
-import { brief, catalog, narration, seg, selection, treatment } from "./fixtures.js";
+import type { CatalogAsset, SeriesPlan, StudioBrief, StudioCatalog, StudioEpisode, YoutubeKit } from "@harness/contracts";
+import { validateSeriesPlan, validateTrendReport, validateYoutubeKit } from "../../src/studio/validate.js";
 
-const ctx = () => ({ brief: brief(), catalog: catalog(), treatment: treatment() });
-const codes = (r: { problems: { code: string }[] }) => r.problems.map((p) => p.code);
+// ---------------------------------------------------------------------------
+// v3 fixtures
+// ---------------------------------------------------------------------------
 
-describe("selection-valid", () => {
-  it("passes a selection that covers every beat with distinct, usable, well-framed footage", () => {
-    const r = validateSelection(selection(), ctx());
-    expect(r.problems).toEqual([]);
+function brief(over: Partial<StudioBrief> = {}): StudioBrief {
+  return {
+    schema_version: "studio.brief/v2", production_id: "prod-1", run_id: "run_X", owner_user_id: "auth0|owner",
+    title: "Phở Hà Nội", description: "Một buổi sáng ăn phở bò ở Hà Nội",
+    goal: "Chia sẻ văn hóa ẩm thực", audience: "Người yêu ẩm thực", tone: "Thân thiện",
+    notes: "", folder_ids: ["f1"], episode_target_seconds: 120, max_episodes: 5,
+    aspect: "16:9", canvas: { width: 1920, height: 1080 }, fps: 25, language: "vi",
+    music: null, youtube_channels: [], keywords: ["phở", "ẩm thực"], ...over,
+  };
+}
+
+function asset(id: string, durationS: number, over: Partial<CatalogAsset> = {}): CatalogAsset {
+  return {
+    asset_id: id, name: `Video ${id}`, title_vi: `Tiêu đề ${id}`, summary_vi: `Tóm tắt ${id}`,
+    duration_s: durationS, orientation: "landscape", genre: "documentary",
+    topics: [], subjects: [], places: [], actions: [], keywords_vi: [],
+    tags: [], mood: "neutral", setting: "outdoor", time_of_day: "day", people_count: "0",
+    shot_variety: [], has_speech: false, quality: 4, usable: true, approved: false, project_names: [], ...over,
+  };
+}
+
+function catalog(extra: CatalogAsset[] = []): StudioCatalog {
+  const assets = [
+    asset("a01", 30), asset("a02", 30), asset("a03", 30),
+    asset("a04", 30), asset("a05", 30), asset("a06", 30),
+  ].concat(extra);
+  return {
+    schema_version: "studio.catalog/v2", production_id: "prod-1", folder_ids: ["f1"],
+    total_available: assets.length, truncated: false, assets,
+  };
+}
+
+function seriesPlan(over: Partial<SeriesPlan> = {}): SeriesPlan {
+  return {
+    schema_version: "studio.series-plan/v1",
+    series_title: "Phở sáng Hà Nội",
+    rationale: "Ba tập đủ để kể câu chuyện",
+    episodes: [
+      {
+        idx: 1, title: "Tập 1: Phở bò truyền thống", hook: "Bát phở đầu ngày",
+        logline: "Khám phá phở bò cổ truyền Hà Nội",
+        target_seconds: 120,
+        items: [
+          { asset_id: "a01", reason: "mở đầu", section_title: "Giới thiệu" },
+          { asset_id: "a02", reason: "nước dùng", section_title: null },
+          { asset_id: "a03", reason: "thưởng thức", section_title: "Trải nghiệm" },
+        ],
+        alternates: [{ asset_id: "a04", reason: "dự phòng" }],
+        texts_suggested: [],
+      },
+    ],
+    ...over,
+  };
+}
+
+function youtubeKit(over: Partial<YoutubeKit> = {}): YoutubeKit {
+  return {
+    schema_version: "studio.youtube-kit/v1",
+    titles: ["Phở bò Hà Nội chuẩn vị — Tập 1", "Bí quyết phở bò Hà Nội", "Một buổi sáng với phở Hà Nội"],
+    description: "Khám phá ẩm thực Hà Nội qua bát phở.",
+    tags: ["phở", "ẩm thực"],
+    hashtags: ["#phở", "#HàNội"],
+    thumbnails: [
+      { asset_id: "a01", text: "Phở bò" },
+      { asset_id: "a02", text: "Nước dùng" },
+      { asset_id: "a03", text: "Thưởng thức" },
+    ],
+    playlist: "Phở Hà Nội",
+    ...over,
+  };
+}
+
+function episode(assetIds: string[] = ["a01", "a02", "a03"]): StudioEpisode {
+  const assetMap = Object.fromEntries(
+    assetIds.map((id) => [id, { title: `Video ${id}`, summary_vi: `Tóm tắt ${id}`, duration_s: 30, orientation: "landscape" }]),
+  );
+  return {
+    schema_version: "studio.episode/v1",
+    production_id: "prod-1", episode_id: "ep-1",
+    idx: 1, title: "Tập 1", hook: "Hook 1", logline: "Logline 1",
+    target_seconds: 120,
+    items: assetIds.map((id) => ({ asset_id: id, reason: "chọn", section_title: null })),
+    alternates: [],
+    texts_suggested: [],
+    assets: assetMap,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe("series-plan-valid", () => {
+  it("passes a valid series plan", () => {
+    const r = validateSeriesPlan(seriesPlan(), { brief: brief(), catalog: catalog().assets });
     expect(r.ok).toBe(true);
+    expect(r.problems).toEqual([]);
   });
 
-  it("rejects an id that is not in the catalog (unknown id)", () => {
-    const s = selection();
-    s.beats[0]!.picks[1]!.segment_id = "does-not-exist";
-    const r = validateSelection(s, ctx());
+  it("rejects an asset not in the catalog", () => {
+    const plan = seriesPlan();
+    plan.episodes[0]!.items[0]!.asset_id = "does-not-exist";
+    const r = validateSeriesPlan(plan, { brief: brief(), catalog: catalog().assets });
     expect(r.ok).toBe(false);
-    expect(r.problems).toContainEqual(expect.objectContaining({ code: "unknown_segment", segment_id: "does-not-exist", beat_id: "B01" }));
+    expect(r.problems).toContainEqual(expect.objectContaining({ code: "unknown_asset" }));
   });
 
-  it("rejects the same segment picked twice (duplicate id), even across beats", () => {
-    const s = selection();
-    s.beats[2]!.picks[0]!.segment_id = "s01";
-    const r = validateSelection(s, ctx());
+  it("rejects a plan with more episodes than max_episodes", () => {
+    const plan = seriesPlan({
+      episodes: [
+        ...seriesPlan().episodes,
+        { ...seriesPlan().episodes[0]!, idx: 2, items: [{ asset_id: "a04", reason: "x", section_title: null }] },
+      ],
+    });
+    const r = validateSeriesPlan(plan, { brief: brief({ max_episodes: 1 }), catalog: catalog().assets });
     expect(r.ok).toBe(false);
-    expect(r.problems).toContainEqual(expect.objectContaining({ code: "duplicate_segment", segment_id: "s01", beat_id: "B03" }));
+    expect(r.problems).toContainEqual(expect.objectContaining({ code: "too_many_episodes" }));
   });
 
-  it("rejects a selection whose footage cannot fill a beat or the brief (wrong duration)", () => {
-    const c = catalog([seg("short1", 2), seg("short2", 2)]);
-    const s = selection();
-    s.beats[1]!.picks = [{ segment_id: "short1", reason: "x" }, { segment_id: "short2", reason: "x" }];
-    const r = validateSelection(s, { ...ctx(), catalog: c });
+  it("rejects non-usable footage", () => {
+    const c = catalog([asset("bad1", 30, { usable: false })]);
+    const plan = seriesPlan();
+    plan.episodes[0]!.items[0]!.asset_id = "bad1";
+    const r = validateSeriesPlan(plan, { brief: brief(), catalog: c.assets });
     expect(r.ok).toBe(false);
-    expect(codes(r)).toContain("beat_too_short");
-    // 10 + 4 + 10 = 24 s deliverable against a 30 s brief: outside ±10 %
-    expect(codes(r)).toContain("duration");
+    expect(r.problems).toContainEqual(expect.objectContaining({ code: "not_usable" }));
   });
 
-  it("rejects a total outside ±10 % even when every beat is covered", () => {
-    const r = validateSelection(selection(), { ...ctx(), brief: brief({ target_seconds: 40 }) });
-    expect(codes(r)).toEqual(["duration"]);
-  });
-
-  it("rejects unusable footage and footage that does not fit the frame", () => {
-    const c = catalog([seg("bad", 8, { usable: false }), seg("tall", 8, { orientation: "portrait" })]);
-    const s = selection();
-    s.beats[0]!.picks = [{ segment_id: "bad", reason: "x" }, { segment_id: "tall", reason: "x" }];
-    const r = validateSelection(s, { ...ctx(), catalog: c });
-    expect(codes(r)).toEqual(expect.arrayContaining(["not_usable", "orientation"]));
-  });
-
-  it("requires every treatment beat and no stranger ones", () => {
-    const s = selection();
-    s.beats[2]!.beat_id = "B09";
-    const r = validateSelection(s, ctx());
-    expect(codes(r)).toEqual(expect.arrayContaining(["unknown_beat", "missing_beat"]));
-  });
-
-  it("asks for 3 alternates per beat, but only as many as the catalog can still offer", () => {
-    const s = selection();
-    s.beats[0]!.alternates = s.beats[0]!.alternates.slice(0, 1);
-    expect(codes(validateSelection(s, ctx()))).toContain("too_few_alternates");
-    // a catalog of exactly the six picks + one spare: one alternate is all that can be asked
-    const tiny = { ...catalog(), segments: catalog().segments.slice(0, 7) };
-    const s2 = selection();
-    for (const b of s2.beats) b.alternates = [{ segment_id: "s07", reason: "x" }];
-    expect(codes(validateSelection(s2, { ...ctx(), catalog: tiny }))).not.toContain("too_few_alternates");
-  });
-
-  it("reports schema problems with a path instead of throwing", () => {
-    const r = validateSelection({ schema_version: "studio.selection/v1", beats: [{ beat_id: "B1", picks: [] }] }, ctx());
+  it("reports schema problems for malformed input", () => {
+    const r = validateSeriesPlan({ schema_version: "studio.series-plan/v1" }, { brief: brief(), catalog: catalog().assets });
     expect(r.ok).toBe(false);
     expect(r.problems.every((p) => p.code === "schema")).toBe(true);
-    expect(r.problems.map((p) => p.message).join("\n")).toMatch(/beats\.0\.beat_id/);
   });
 });
 
-describe("treatment-valid / narration-valid", () => {
-  it("treatment: beats must add up to the brief ±10 % and have unique ids", () => {
-    expect(validateTreatment(treatment(), brief()).ok).toBe(true);
-    const t = treatment();
-    t.beats[2]!.beat_id = "B01";
-    t.beats[0]!.seconds = 20;
-    expect(codes(validateTreatment(t, brief()))).toEqual(expect.arrayContaining(["duplicate_beat", "duration"]));
+describe("youtube-kit-valid", () => {
+  it("passes a valid youtube kit", () => {
+    const r = validateYoutubeKit(youtubeKit(), { episode: episode() });
+    expect(r.ok).toBe(true);
   });
 
-  it("narration: flags a beat whose lines read longer than the beat, and beats left silent", () => {
-    expect(validateNarration(narration(), { brief: brief(), treatment: treatment() }).ok).toBe(true);
-    const n = narration();
-    n.lines[0]!.text = Array.from({ length: 60 }, () => "phở").join(" ");
-    n.lines = n.lines.filter((l) => l.beat_id !== "B03");
-    const r = validateNarration(n, { brief: brief(), treatment: treatment() });
-    expect(r.problems).toContainEqual(expect.objectContaining({ code: "too_long", beat_id: "B01" }));
-    expect(r.problems).toContainEqual(expect.objectContaining({ code: "missing_beat", beat_id: "B03" }));
+  it("rejects a thumbnail whose asset is not in the episode", () => {
+    const kit = youtubeKit();
+    kit.thumbnails[0]!.asset_id = "not-in-episode";
+    const r = validateYoutubeKit(kit, { episode: episode() });
+    expect(r.ok).toBe(false);
+    expect(r.problems).toContainEqual(expect.objectContaining({ code: "thumbnail_not_in_episode" }));
+  });
+
+  it("rejects duplicate titles", () => {
+    const kit = youtubeKit({ titles: ["Phở bò", "Phở bò", "Phở bò khác"] });
+    const r = validateYoutubeKit(kit, { episode: episode() });
+    expect(r.ok).toBe(false);
+    expect(r.problems).toContainEqual(expect.objectContaining({ code: "duplicate_title" }));
+  });
+});
+
+describe("trend-report-valid", () => {
+  it("passes a valid trend report", () => {
+    const r = validateTrendReport({
+      schema_version: "studio.trend-report/v1",
+      skipped: false,
+      summary: "Dữ liệu cho thấy video ngắn 3–5 phút với hook mạnh hoạt động tốt nhất.",
+      working_angles: ["Trải nghiệm thực tế", "Bí mật ít người biết"],
+      title_patterns: ["[Từ khoá] — [Con số]"],
+      hook_patterns: ["Câu hỏi cá nhân hoá"],
+      thumbnail_patterns: ["Cận cảnh khuôn mặt"],
+      recommended_duration_s: 90,
+      posting_schedule: "Thứ 3 và Thứ 6, 18:00–20:00",
+      recommendations: ["Dùng nhạc nhẹ nhàng"],
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it("rejects malformed trend report", () => {
+    const r = validateTrendReport({ schema_version: "studio.trend-report/v1" });
+    expect(r.ok).toBe(false);
+    expect(r.problems.every((p) => p.code === "schema")).toBe(true);
   });
 });

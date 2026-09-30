@@ -15,9 +15,9 @@ function makeRun(): Run {
 }
 
 describe("SqliteStateStore", () => {
-  it("migrates once and creates 32 tables", () => {
+  it("migrates once and creates 35 tables", () => {
     const { store, dir } = openTempStore();
-    expect(store.tableNames().sort()).toEqual(["artifact", "attempt", "brand_profile", "channel_learned", "channel_package", "channel_sequence", "check_result", "comments", "content_item", "content_request", "content_variant", "edit_style", "event", "external_operation", "lease", "library_item", "music_track", "production_sources", "productions", "publication_job", "run", "schema_migrations", "sign_audit_log", "source_item", "stage_run", "studio_editor_jobs", "studio_farm_jobs", "team_members", "teams", "timeline_revisions", "video_metrics", "voice_profile"]);
+    expect(store.tableNames().sort()).toEqual(["artifact", "attempt", "brand_profile", "channel_learned", "channel_package", "channel_sequence", "check_result", "comments", "content_item", "content_request", "content_variant", "edit_style", "episode_jobs", "episode_revisions", "episodes", "event", "external_operation", "lease", "library_item", "music_track", "production_sources", "productions", "publication_job", "run", "schema_migrations", "sign_audit_log", "source_item", "stage_run", "studio_editor_jobs", "studio_farm_jobs", "team_members", "teams", "timeline_revisions", "video_metrics", "voice_profile"]);
     expect(store.migrate(MIGRATIONS_DIR)).toEqual([]);
     const again = new SqliteStateStore(join(dir, "state.db"));
     expect(again.migrate(MIGRATIONS_DIR)).toEqual([]);

@@ -26,8 +26,8 @@ describe("claudeOutputJsonSchema", () => {
   }
 
   it("keeps the enum/const shape Claude has to follow", () => {
-    const t = claudeOutputJsonSchema("studio-treatment") as { properties: { schema_version: { const?: string; enum?: string[] } } };
+    const t = claudeOutputJsonSchema("studio-plan-episodes") as { properties: { schema_version: { const?: string; enum?: string[] } } };
     const v = t.properties.schema_version;
-    expect(v.const ?? v.enum?.[0]).toBe("studio.treatment/v1");
+    expect(v.const ?? v.enum?.[0]).toBe("studio.series-plan/v1");
   });
 });
