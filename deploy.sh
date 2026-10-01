@@ -7,22 +7,22 @@ cd "$(dirname "$0")"
 log() { printf '\n[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 if [[ ! -f .env ]]; then
-  echo "Thiếu .env (sao chép .env.example rồi điền)." >&2
+  echo "Thieu .env (sao chep .env.example roi dien)." >&2
   exit 1
 fi
 farm_dir=$(grep -E '^AG_FARM_DIR=' .env | cut -d= -f2- || true)
 if [[ ! -f "${farm_dir:-../ag-farm}/package.json" ]]; then
-  echo "Không thấy checkout ag-farm ở ${farm_dir:-../ag-farm} (AG_FARM_DIR)." >&2
+  echo "Khong thay checkout ag-farm o ${farm_dir:-../ag-farm} (AG_FARM_DIR)." >&2
   exit 1
 fi
 
 log 'Build image'
 docker compose build api web
 
-log 'Thay api (migrate studio.db) và chờ healthy'
+log 'Thay api (migrate studio.db) va cho healthy'
 docker compose up -d --no-deps --wait api
 
-log 'Thay worker (chạy xong stage đang dở trước khi dừng bản cũ)'
+log 'Thay worker (chay xong stage dang do truoc khi dung ban cu)'
 docker compose up -d --no-deps worker
 
 log 'Thay web'
