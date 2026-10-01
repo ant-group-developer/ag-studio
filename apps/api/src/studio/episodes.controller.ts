@@ -83,6 +83,24 @@ function exportThumbnails(exp: StudioExport | null) {
 }
 
 /**
+ * A YouTube kit stored by an earlier run or edit. A rule tightened since (hashtags: letters, digits and _ only)
+ * must not make the episode unreadable: hashtags are cleaned to the rule, and a kit still invalid is left out.
+ */
+export function readStoredYoutubeKit(raw: unknown): ReturnType<typeof YoutubeKitSchema.parse> | null {
+  const ok = YoutubeKitSchema.safeParse(raw);
+  if (ok.success) return ok.data;
+  const kit = raw as { hashtags?: unknown } | null;
+  if (kit && Array.isArray(kit.hashtags)) {
+    const hashtags = [...new Set(kit.hashtags.map((h) => `#${String(h).replace(/[^\p{L}\p{N}_]/gu, '')}`))]
+      .filter((h) => h.length > 1)
+      .slice(0, 15);
+    const cleaned = YoutubeKitSchema.safeParse({ ...kit, hashtags });
+    if (cleaned.success) return cleaned.data;
+  }
+  return null;
+}
+
+/**
  * Episodes list / detail / PATCH / rerender / cancel / retry routes (GĐ2).
  * Base route: `/productions/:id/episodes`
  */
@@ -187,9 +205,9 @@ export class EpisodesController {
       const kitStage = run?.stages.find((s) => s.key === 'youtube-kit');
       // The person's edits win over Claude's kit
       const youtube = ep.youtube
-        ? YoutubeKitSchema.parse(JSON.parse(ep.youtube))
+        ? readStoredYoutubeKit(JSON.parse(ep.youtube))
         : kitStage?.state === 'SUCCEEDED' && ep.run_id
-          ? YoutubeKitSchema.parse(readStageDocument(this.engine.core, ep.run_id, 'youtube-kit', 'youtube-kit.json'))
+          ? readStoredYoutubeKit(readStageDocument(this.engine.core, ep.run_id, 'youtube-kit', 'youtube-kit.json'))
           : null;
       const exp = episodeExport(this.engine.core, ep);
       const exportFiles = await Promise.all((exp?.files ?? []).filter((f) => covers || !showsFootage(f.kind)).map(async (f) => ({
