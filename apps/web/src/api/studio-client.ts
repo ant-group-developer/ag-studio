@@ -430,7 +430,64 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     exportPremiere(productionId: string, episodeId: string, media: PremiereMedia): Promise<EditorJob> {
       return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/exports/premiere`, { media });
     },
+
+    // ---- Call log (403 `footage_scope` outside the caller's ag-go scope) ----
+    listLlmCalls(productionId: string, params?: { episodeId?: string; page?: number; pageSize?: number }): Promise<Paged<LlmCallSummary>> {
+      return request(getAccessToken, "GET", `/api/productions/${productionId}/llm-calls${buildQuery(params ?? {})}`);
+    },
+    getLlmCall(productionId: string, callId: string): Promise<LlmCallDetail> {
+      return request(getAccessToken, "GET", `/api/productions/${productionId}/llm-calls/${callId}`);
+    },
+    listHumanEdits(productionId: string, params?: { page?: number; pageSize?: number }): Promise<Paged<HumanEditView>> {
+      return request(getAccessToken, "GET", `/api/productions/${productionId}/human-edits${buildQuery(params ?? {})}`);
+    },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Call log
+// ---------------------------------------------------------------------------
+
+export type LlmCallOutcome = "accepted" | "rejected" | "failed" | "rate_limited";
+
+export interface LlmCallSummary {
+  id: string;
+  createdAt: string;
+  episodeId: string | null;
+  episodeIdx: number | null;
+  stageKey: string;
+  skill: string;
+  model: string;
+  round: number;
+  outcome: LlmCallOutcome;
+  problems: { code: string; message: string }[];
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number;
+  wallSeconds: number;
+  hasPayload: boolean;
+}
+
+export interface LlmCallDetail extends LlmCallSummary {
+  prompt: string | null;
+  response: string | null;
+  structuredOutput: unknown;
+  warnings: { code: string; message: string }[];
+}
+
+export type HumanEditKind = "series_plan" | "youtube_kit" | "episode_rerender" | "episode_cancel";
+
+export interface HumanEditView {
+  id: string;
+  createdAt: string;
+  userId: string;
+  episodeId: string | null;
+  episodeIdx: number | null;
+  kind: HumanEditKind;
+  llmCallId: string | null;
+  changed: boolean;
+  before: unknown;
+  after: unknown;
 }
 
 export type StudioClient = ReturnType<typeof createStudioClient>;

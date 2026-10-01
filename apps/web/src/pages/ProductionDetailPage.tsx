@@ -26,6 +26,7 @@ import { EnumText, PRODUCTION_STATUS_COLORS } from "../helpers/enum-label";
 import { ResearchView } from "../modules/production/ResearchView";
 import { PlanEditor } from "../modules/production/PlanEditor";
 import { EpisodesPanel } from "../modules/production/EpisodesPanel";
+import { LlmLogPanel } from "../modules/production/LlmLogPanel";
 import {
   ProductionForm,
 } from "../modules/production/ProductionForm";
@@ -367,6 +368,13 @@ export function ProductionDetailPage() {
       {stepIndex >= 4 && (
         <Card id="step-episodes" style={{ marginBottom: 16 }} size="small">
           <EpisodesPanel productionId={productionId} canEdit={canEdit} />
+        </Card>
+      )}
+
+      {/* Call log: every Claude call and every human edit of a model answer (editors whose footage scope covers it) */}
+      {canEdit && production.runId !== null && (
+        <Card id="step-log" style={{ marginBottom: 16 }} title={t("llmLog.title")} size="small">
+          <LlmLogPanel productionId={productionId} live={runIsActive || stepIndex >= 4} />
         </Card>
       )}
     </div>
