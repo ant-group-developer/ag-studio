@@ -533,8 +533,8 @@ beforeAll(async () => {
   await pg.connect();
   await pg.query("DELETE FROM farm_jobs WHERE owner = 'studio'");
   await pg.query(
-    `INSERT INTO farm_owners (id, key_hash, sign_url, allowed_types, default_lane, created_at, updated_at)
-     VALUES ('studio', $1, $2, $3, 'interactive', NOW(), NOW())
+    `INSERT INTO farm_owners (id, key_hash, sign_url, allowed_types, created_at, updated_at)
+     VALUES ('studio', $1, $2, $3, NOW(), NOW())
      ON CONFLICT (id) DO UPDATE SET key_hash = $1, sign_url = $2, allowed_types = $3`,
     [
       createHash("sha256").update(ownerKey).digest("hex"),

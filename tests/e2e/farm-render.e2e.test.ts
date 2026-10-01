@@ -487,15 +487,14 @@ beforeAll(async () => {
   const ownerKeyHash = createHash("sha256").update(ownerKey).digest("hex");
   await pgClient.query(
     `INSERT INTO farm_owners
-       (id, key_hash, sign_url, allowed_types, default_lane, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+       (id, key_hash, sign_url, allowed_types, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, NOW(), NOW())
      ON CONFLICT (id) DO UPDATE SET key_hash = $2, sign_url = $3`,
     [
       ownerId,
       ownerKeyHash,
       `http://127.0.0.1:${STUDIO_API_PORT}/api/farm/sign`,
       ["studio.tts", "studio.render_preview", "studio.render_final"],
-      "batch",
     ],
   );
 
