@@ -1,13 +1,15 @@
 name: CI
 
-# Kiểm mọi nhánh và PR; deploy.dev.yml gọi lại workflow này trước khi deploy main.
-# Repo cần ../ag-farm (package private, link:), nên checkout cả hai. Token AG_FARM_READ_TOKEN (quyền đọc repo
-# ag-farm) đặt trong secrets của repo này.
+# Kiểm mọi nhánh và PR; deploy.dev.yml (nhánh dev) và deploy.prod.yml (main) gọi lại workflow này trước khi deploy,
+# nên push lên dev/main không chạy CI riêng lần nữa.
+# Repo cần ../ag-farm (package private, link:), nên checkout cả hai: nhánh main của ag-farm khi kiểm main (hoặc PR vào
+# main), còn lại nhánh dev. Token AG_FARM_READ_TOKEN (quyền đọc repo ag-farm) đặt trong secrets của repo này.
 on:
   pull_request:
   push:
     branches-ignore:
       - main
+      - dev
   workflow_call:
     secrets:
       AG_FARM_READ_TOKEN:
@@ -27,6 +29,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: ant-group-developer/ag-farm
+          ref: ${{ (github.base_ref || github.ref_name) == 'main' && 'main' || 'dev' }}
           token: ${{ secrets.AG_FARM_READ_TOKEN }}
           path: ag-farm
       - uses: actions/setup-node@v4

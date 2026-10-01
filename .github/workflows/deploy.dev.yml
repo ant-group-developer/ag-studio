@@ -1,9 +1,11 @@
 name: Deploy development
 
+# Mọi thay đổi vào nhánh dev (merge PR) deploy lên VPS dev; main chỉ lên prod qua deploy.prod.yml.
+# ag-farm nằm cạnh trên VPS dev cũng theo nhánh dev của nó.
 on:
   push:
     branches:
-      - main
+      - dev
   workflow_dispatch:
 
 concurrency:
@@ -18,13 +20,14 @@ jobs:
 
   deploy:
     needs: test
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     env:
       VPS_HOST: ${{ secrets.VPS_HOST_DEV }}
       VPS_USER: ${{ secrets.VPS_USER_DEV }}
       VPS_PORT: ${{ secrets.VPS_PORT_DEV || '22' }}
-      APP_PATH: ${{ secrets.STUDIO_APP_PATH_DEV || '/www/wwwroot/dev/ag-studio' }}
-      FARM_PATH: ${{ secrets.FARM_APP_PATH_DEV || '/www/wwwroot/dev/ag-farm' }}
+      APP_PATH: ${{ secrets.STUDIO_APP_PATH_DEV || '/www/wwwroot/dev/ag-harness-agent/ag-studio' }}
+      FARM_PATH: ${{ secrets.FARM_APP_PATH_DEV || '/www/wwwroot/dev/ag-harness-agent/ag-farm' }}
     steps:
       - name: Start SSH agent
         uses: webfactory/ssh-agent@v0.9.0
@@ -39,9 +42,13 @@ jobs:
             set -e
             sudo git config --global --add safe.directory '$APP_PATH'
             sudo git config --global --add safe.directory '$FARM_PATH'
-            sudo git -C '$FARM_PATH' pull --ff-only origin main
+            # Hai checkout trên VPS dev theo nhánh dev (lần đầu tự tạo nhánh dev từ origin/dev).
+            for dir in '$FARM_PATH' '$APP_PATH'; do
+              sudo git -C \"\$dir\" fetch origin dev
+              sudo git -C \"\$dir\" checkout dev
+              sudo git -C \"\$dir\" merge --ff-only origin/dev
+            done
             cd '$APP_PATH'
-            sudo git pull --ff-only origin main
             TAG=\$(sudo git rev-parse --short HEAD)
             sudo env TAG=\$TAG bash ./deploy.sh
           "
