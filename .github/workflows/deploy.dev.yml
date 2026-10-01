@@ -11,36 +11,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Test chạy trên VPS cùng lúc deploy không được: repo cần ../ag-farm (package private, link:), nên CI
-  # checkout cả hai. Token AG_FARM_READ_TOKEN (quyền đọc repo ag-farm) đặt trong secrets của repo này.
   test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          path: ag-studio
-      - uses: actions/checkout@v4
-        with:
-          repository: ant-group-developer/ag-farm
-          token: ${{ secrets.AG_FARM_READ_TOKEN }}
-          path: ag-farm
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: corepack enable
-      - name: Build @ag-farm packages
-        working-directory: ag-farm
-        run: |
-          corepack prepare yarn@1.22.22 --activate
-          yarn install --frozen-lockfile
-          yarn workspace @ag-farm/protocol build
-          yarn workspace @ag-farm/owner-client build
-      - name: Install, build, test
-        working-directory: ag-studio
-        run: |
-          corepack pnpm install --frozen-lockfile
-          corepack pnpm -r run build
-          corepack pnpm test
+    uses: ./.github/workflows/ci.yml
+    secrets:
+      AG_FARM_READ_TOKEN: ${{ secrets.AG_FARM_READ_TOKEN }}
 
   deploy:
     needs: test

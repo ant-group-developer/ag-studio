@@ -1,0 +1,59 @@
+name: CI
+
+# Kiểm mọi nhánh và PR; deploy.dev.yml gọi lại workflow này trước khi deploy main.
+# Repo cần ../ag-farm (package private, link:), nên checkout cả hai. Token AG_FARM_READ_TOKEN (quyền đọc repo
+# ag-farm) đặt trong secrets của repo này.
+on:
+  pull_request:
+  push:
+    branches-ignore:
+      - main
+  workflow_call:
+    secrets:
+      AG_FARM_READ_TOKEN:
+        required: true
+
+concurrency:
+  group: ag-studio-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ag-studio
+      - uses: actions/checkout@v4
+        with:
+          repository: ant-group-developer/ag-farm
+          token: ${{ secrets.AG_FARM_READ_TOKEN }}
+          path: ag-farm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      # Test render/media chạy ffmpeg thật (thiếu thì bị bỏ qua); Arial cho test chữ trên hình.
+      - name: ffmpeg and fonts
+        run: |
+          echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | sudo debconf-set-selections
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg ttf-mscorefonts-installer
+      - name: Build @ag-farm packages
+        working-directory: ag-farm
+        run: |
+          corepack prepare yarn@1.22.22 --activate
+          yarn install --frozen-lockfile
+          yarn workspace @ag-farm/protocol build
+          yarn workspace @ag-farm/owner-client build
+      - name: Install and build
+        working-directory: ag-studio
+        run: |
+          corepack pnpm install --frozen-lockfile
+          corepack pnpm -r run build
+      - name: Typecheck
+        working-directory: ag-studio
+        run: corepack pnpm typecheck
+      - name: Test
+        working-directory: ag-studio
+        run: corepack pnpm test
