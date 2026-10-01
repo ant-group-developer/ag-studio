@@ -188,6 +188,11 @@ export async function startPremiereExport(
       production_id: p.productionId, episode_id: p.episodeId, composition: "stage:composition.json", media: p.media,
       name: ep.title.slice(0, 200),
       markers: youtubeChapters(layoutTimeline(rev.data)).map((c) => ({ t_s: c.start_s, title: c.title })),
+      // Files in the zip are named after the videos, not their ids.
+      media_names: Object.fromEntries(rev.data.clips.flatMap((c) => {
+        const title = rev.data.assets[c.asset_id]?.title.trim().slice(0, 200);
+        return title ? [[`asset:${c.asset_id}`, title]] : [];
+      })),
       output: `episodes/${p.episodeId}/premiere/${id}.zip`,
     };
     const { job } = await d.farm.submitJob({

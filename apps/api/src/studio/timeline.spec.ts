@@ -120,7 +120,7 @@ describe('Timeline revisions over HTTP semantics (autosave + 409)', () => {
 
     const job = await controller.premiere(PROD, EP, { media: 'proxy' }, req('u1'));
     expect(job).toMatchObject({ kind: 'export_premiere', status: 'running', request: { revision: 1, media: 'proxy' } });
-    expect(submitted[0]).toMatchObject({ type: 'studio.export_premiere', payload: { production_id: PROD, episode_id: EP, media: 'proxy', composition: 'stage:composition.json' } });
+    expect(submitted[0]).toMatchObject({ type: 'studio.export_premiere', payload: { production_id: PROD, episode_id: EP, media: 'proxy', composition: 'stage:composition.json', media_names: { 'asset:asset-1': 'Phở bò Hà Nội' } } });
     expect([...bucket.objects.keys()].some((k) => k.endsWith(`/editor-premiere/${job.id}/in/composition.json`) || k.includes(job.id))).toBe(true);
     const sign = db.get<{ is_final_render: number; stage_key: string }>('SELECT is_final_render, stage_key FROM studio_farm_jobs WHERE attempt_id = ?', [job.id]);
     expect(sign).toEqual({ is_final_render: 0, stage_key: 'editor-premiere' });
