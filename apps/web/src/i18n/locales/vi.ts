@@ -239,7 +239,9 @@ export const vi = {
     drawerThumbnails: "Ảnh đại diện",
     drawerVideo: "Video cuối",
     drawerDownloads: "Tải xuống",
-    drawerCost: "Chi phí: ${{cost}}",
+    drawerCost: "Chi phí ước tính (giá API): ${{cost}}",
+    drawerCostHint:
+      "Claude tính theo bảng giá API cho số token đã dùng. Gói subscription không tính tiền theo token, chỉ trừ vào hạn mức sử dụng.",
     titlePick: "Tiêu đề {{n}}",
     tagCounter: "{{count}}/500 ký tự",
     tagsTooLong: "Tổng thẻ vượt 500 ký tự",

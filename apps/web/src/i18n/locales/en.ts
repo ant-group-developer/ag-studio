@@ -252,7 +252,9 @@ export const en: LocaleMessages = {
     drawerThumbnails: "Thumbnails",
     drawerVideo: "Final video",
     drawerDownloads: "Downloads",
-    drawerCost: "Cost: ${{cost}}",
+    drawerCost: "Estimated cost (API pricing): ${{cost}}",
+    drawerCostHint:
+      "Claude prices the tokens used at API rates. A subscription is not charged per token; it only counts against the usage limits.",
     titlePick: "Title {{n}}",
     tagCounter: "{{count}}/500 chars",
     tagsTooLong: "Total tags exceed 500 chars",

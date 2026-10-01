@@ -141,9 +141,11 @@ export function EpisodeDrawer({ productionId, episode, open, onClose, canEdit }:
               })}
             />
             {episode.run?.cost_usd != null && (
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {t("episodes.drawerCost", { cost: episode.run.cost_usd.toFixed(4) })}
-              </Text>
+              <Tooltip title={t("episodes.drawerCostHint")}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {t("episodes.drawerCost", { cost: episode.run.cost_usd.toFixed(4) })}
+                </Text>
+              </Tooltip>
             )}
           </Card>
         )}
