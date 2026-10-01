@@ -1,0 +1,53 @@
+name: Deploy production
+
+# Prod chỉ deploy khi bấm tay (Actions → Deploy production → Run workflow, chọn main).
+# Commit được deploy là đúng commit của lần chạy này (github.sha); ag-farm nằm cạnh được kéo lên main mới nhất.
+on:
+  workflow_dispatch:
+
+# Không huỷ deploy đang chạy: ngắt SSH giữa chừng để lại container dở dang.
+concurrency:
+  group: ag-studio-prod-deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+    secrets:
+      AG_FARM_READ_TOKEN: ${{ secrets.AG_FARM_READ_TOKEN }}
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # Đặt "Required reviewers" cho environment này nếu muốn duyệt trước khi deploy.
+    environment:
+      name: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST_PROD }}
+      VPS_USER: ${{ secrets.VPS_USER_PROD }}
+      VPS_PORT: ${{ secrets.VPS_PORT_PROD || '22' }}
+      APP_PATH: ${{ secrets.STUDIO_APP_PATH_PROD || '/www/code/ag-harness-agent/ag-studio' }}
+      FARM_PATH: ${{ secrets.FARM_APP_PATH_PROD || '/www/code/ag-harness-agent/ag-farm' }}
+      COMMIT: ${{ github.sha }}
+    steps:
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY_PROD }}
+
+      - name: Deploy via SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" "
+            set -e
+            sudo git config --global --add safe.directory '$APP_PATH'
+            sudo git config --global --add safe.directory '$FARM_PATH'
+            sudo git -C '$FARM_PATH' pull --ff-only origin main
+            cd '$APP_PATH'
+            sudo git fetch origin main
+            sudo git merge --ff-only '$COMMIT'
+            TAG=\$(sudo git rev-parse --short HEAD)
+            sudo env TAG=\$TAG bash ./deploy.sh
+          "
