@@ -7,8 +7,9 @@ import { createLogger, Redactor, type HarnessLogger } from "@harness/core";
 import { ExecutorRegistry, FarmExecutor, GateExecutor, InProcessExecutor, makeStudioFarmRecorder, StudioAgentExecutor } from "@harness/executors";
 import { Worker } from "@harness/worker";
 import type { FarmOwnerClient } from "@ag-farm/owner-client";
-import type { ProjectConfig, StudioSkill } from "@harness/contracts";
+import type { AgentCallTrace, ProjectConfig, StudioSkill } from "@harness/contracts";
 import { farmStorage, type StudioBucket } from "./bucket.js";
+import { recordLlmCall } from "./llm-log.js";
 import { cancelLegacyRuns, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, STUDIO_RESOURCES, STUDIO_WORKFLOWS, type StudioEngineCore } from "./core.js";
 import { studioPayloadBuilders } from "./payloads.js";
 import { startEpisodeRun } from "./run-control.js";
@@ -75,12 +76,14 @@ export function createStudioWorker(o: StudioWorkerOptions): Worker {
     ...(o.research ? { research: o.research } : {}),
   })));
   executors.register("agent", new StudioAgentExecutor({
-    runtimeFor: (jsonSchema: string, skill?: StudioSkill) => new CliAgentRuntime({
+    runtimeFor: (jsonSchema: string, skill?: StudioSkill, onCall?: (trace: AgentCallTrace) => void) => new CliAgentRuntime({
       runtime: "claude", skillsDir: o.claude.skillsDir,
       structured: { jsonSchema, model: modelFor(skill ?? "studio-plan-episodes", o.claude.model), maxTurns: o.claude.maxTurns ?? 3 },
       ...(o.claude.argv ? { argv: o.claude.argv } : {}),
       ...(o.claude.baseEnv ? { baseEnv: o.claude.baseEnv } : {}),
+      ...(onCall ? { onCall } : {}),
     }),
+    recordCall: async (call) => { await recordLlmCall(o.db, o.bucket, call); },
     ...(o.claude.rateLimitBackoffMs ? { rateLimitBackoffMs: o.claude.rateLimitBackoffMs } : {}),
   }));
   executors.register("gate", new GateExecutor());

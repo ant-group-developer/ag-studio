@@ -149,6 +149,25 @@ export interface Executor { readonly version: string; execute(request: StageRequ
 export interface AgentTask { skill: string; brief: string; request: StageRequest; workspaceDir: string }
 export interface AgentRuntime { readonly name: string; readonly version: string; runTask(task: AgentTask, ctx: ExecutorContext): Promise<StageResult> }
 
+/** One structured agent CLI call as it went over the wire (redacted), kept for the call log and the training dataset. */
+export interface AgentCallTrace {
+  model: string;
+  /** Everything sent on stdin: `# Skill` + `# Brief`. */
+  prompt: string;
+  json_schema: string | null;
+  /** Raw stdout of the CLI (its JSON envelope), or what it printed before failing. */
+  response: string;
+  structured_output: unknown;
+  exit_code: number | null;
+  timed_out: boolean;
+  rate_limited: boolean;
+  wall_seconds: number;
+  cost_usd: number;
+  /** All prompt tokens, cache reads and writes included. */
+  input_tokens: number | null;
+  output_tokens: number | null;
+}
+
 export interface CheckerInput { request: StageRequest; result: StageResult; workspaceDir: string }
 export interface Checker { readonly id: string; readonly version: string; check(input: CheckerInput): Promise<{ verdict: "pass" | "fail" | "skip"; evidence: Record<string, unknown> }> }
 

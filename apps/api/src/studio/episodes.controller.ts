@@ -22,9 +22,11 @@ import {
   episodeState,
   episodeTimelineSeconds,
   getEpisode,
+  latestAcceptedCall,
   latestEpisodeRevision,
   listEpisodes,
   readStageDocument,
+  recordHumanEdit,
   rerenderEpisode,
   retryStage,
   readStoredYoutubeKit,
@@ -253,9 +255,45 @@ export class EpisodesController {
       if (sets.length) {
         sets.push('updated_at = ?'); vals.push(new Date().toISOString()); vals.push(episodeId);
         this.engine.db.run(`UPDATE episodes SET ${sets.join(', ')} WHERE id = ?`, vals as string[]);
+        this.recordKitEdit(ep, req?.authContext?.userId);
       }
       return this.detail(prodId, episodeId, req);
     });
+  }
+
+  /** Claude's kit (first title and thumbnail) next to what the person saved (training dataset); never fails the save. */
+  private recordKitEdit(before: EpisodeRecord, userId: string | undefined): void {
+    if (!userId) return;
+    try {
+      const saved = getEpisode(this.engine.db, before.id);
+      if (!saved) return;
+      let proposed: unknown;
+      if (saved.run_id) {
+        try { proposed = readStoredYoutubeKit(readStageDocument(this.engine.core, saved.run_id, 'youtube-kit', 'youtube-kit.json')); } catch { proposed = undefined; }
+      }
+      recordHumanEdit(this.engine.db, {
+        userId, productionId: saved.production_id, episodeId: saved.id, kind: 'youtube_kit',
+        before: proposed === undefined ? undefined : { youtube: proposed, selectedTitle: 0, selectedThumbnail: 0 },
+        after: {
+          youtube: saved.youtube ? JSON.parse(saved.youtube) : proposed ?? null,
+          selectedTitle: saved.selected_title ?? 0,
+          selectedThumbnail: saved.selected_thumbnail ?? 0,
+        },
+        llmCallId: saved.run_id ? latestAcceptedCall(this.engine.db, saved.run_id, 'youtube-kit') : null,
+      });
+    } catch (e) {
+      this.logger.warn(`could not record the YouTube kit edit of ${before.id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  /** A person throwing an episode away or redoing it is a signal on the plan behind it; never fails the action. */
+  private recordEpisodeDecision(ep: EpisodeRecord, kind: 'episode_rerender' | 'episode_cancel', userId: string | undefined): void {
+    if (!userId) return;
+    try {
+      recordHumanEdit(this.engine.db, { userId, productionId: ep.production_id, episodeId: ep.id, kind });
+    } catch (e) {
+      this.logger.warn(`could not record ${kind} of ${ep.id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -265,26 +303,29 @@ export class EpisodesController {
   @Post(':episodeId/rerender')
   @Roles('producer')
   @HttpCode(HttpStatus.ACCEPTED)
-  rerender(@Param('id') prodId: string, @Param('episodeId') episodeId: string) {
+  rerender(@Param('id') prodId: string, @Param('episodeId') episodeId: string, @Req() req: Request) {
     return mapErrors(() => {
       const ep = getEpisode(this.engine.db, episodeId);
       if (!ep || ep.production_id !== prodId) {
         throw new NotFoundException({ code: 'not_found', message: `episode ${episodeId} not found` });
       }
-      return rerenderEpisode(this.engine.core, this.engine.db, episodeId);
+      const out = rerenderEpisode(this.engine.core, this.engine.db, episodeId);
+      this.recordEpisodeDecision(ep, 'episode_rerender', req?.authContext?.userId);
+      return out;
     });
   }
 
   @Post(':episodeId/cancel')
   @Roles('producer')
   @HttpCode(HttpStatus.ACCEPTED)
-  cancel(@Param('id') prodId: string, @Param('episodeId') episodeId: string) {
+  cancel(@Param('id') prodId: string, @Param('episodeId') episodeId: string, @Req() req: Request) {
     return mapErrors(() => {
       const ep = getEpisode(this.engine.db, episodeId);
       if (!ep || ep.production_id !== prodId) {
         throw new NotFoundException({ code: 'not_found', message: `episode ${episodeId} not found` });
       }
       cancelEpisode(this.engine.core, this.engine.db, episodeId);
+      this.recordEpisodeDecision(ep, 'episode_cancel', req?.authContext?.userId);
       return { ok: true };
     });
   }

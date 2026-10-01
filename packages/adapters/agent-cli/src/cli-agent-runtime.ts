@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { directoryListing } from "@harness/script-sdk";
-import type { AgentRuntime, AgentTask, ExecutorContext, StageOutput, StageResult } from "@harness/contracts";
+import type { AgentCallTrace, AgentRuntime, AgentTask, ExecutorContext, StageOutput, StageResult } from "@harness/contracts";
 
 export type AgentCliRuntimeKind = "claude" | "codex";
 
@@ -69,6 +69,25 @@ export interface CliAgentRuntimeOptions {
     model?: string;        // model to request (default: claude-opus-4-5)
     maxTurns?: number;     // default: 3
   };
+  /** Structured mode only: receives every call (redacted prompt and raw answer) once the CLI exits, whatever the outcome. */
+  onCall?: (trace: AgentCallTrace) => void;
+}
+
+/** Cost and token counts from the CLI's JSON envelope (the last stdout line). */
+function envelopeUsage(stdout: string): { cost_usd: number; input_tokens: number | null; output_tokens: number | null; structured_output: unknown } {
+  const out = { cost_usd: 0, input_tokens: null as number | null, output_tokens: null as number | null, structured_output: undefined as unknown };
+  try {
+    const parsed = JSON.parse(stdout.trim().split(/\r?\n/).at(-1) ?? "") as Record<string, unknown>;
+    if (typeof parsed.total_cost_usd === "number") out.cost_usd = parsed.total_cost_usd;
+    out.structured_output = parsed.structured_output;
+    const u = parsed.usage as Record<string, unknown> | undefined;
+    const n = (k: string) => (typeof u?.[k] === "number" ? (u[k] as number) : 0);
+    if (u) {
+      out.input_tokens = n("input_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens");
+      out.output_tokens = n("output_tokens");
+    }
+  } catch { /* not a JSON envelope: the CLI failed before answering */ }
+  return out;
 }
 
 /** Vars every child CLI process may see regardless of runtime, beyond its own `env_passthrough`. */
@@ -209,6 +228,28 @@ export class CliAgentRuntime implements AgentRuntime {
 
     mkdirSync(join(task.workspaceDir, "logs"), { recursive: true });
     writeFileSync(join(task.workspaceDir, "logs", "agent-stdout.log"), redact(combinedLog));
+
+    if (isStructured && stdinPayload !== null && this.opts.onCall) {
+      const usage = envelopeUsage(stdoutBuf);
+      try {
+        this.opts.onCall({
+          model: this.opts.structured!.model ?? "claude-opus-5-5",
+          prompt: redact(stdinPayload),
+          json_schema: this.opts.structured!.jsonSchema ?? null,
+          response: redact(stdoutBuf),
+          structured_output: usage.structured_output,
+          exit_code: code,
+          timed_out: timedOut,
+          rate_limited: code !== 0 && RATE_LIMIT_PATTERN.test(combinedLog),
+          wall_seconds: (Date.now() - started) / 1000,
+          cost_usd: usage.cost_usd,
+          input_tokens: usage.input_tokens,
+          output_tokens: usage.output_tokens,
+        });
+      } catch (e) {
+        ctx.logger.warn("agent call trace hook failed", { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
 
     // Spec §4.3: "CLI không có trên PATH → failed contract" -- a missing agent CLI is a machine that was never
     // set up (doctor's `agent:runtime` row says so up front), not a blip worth retrying the stage over.

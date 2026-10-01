@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Logger,
   NotFoundException,
   Param,
   Post,
@@ -14,8 +15,10 @@ import {
 import { Request } from 'express';
 import {
   cancelPlan,
+  latestAcceptedCall,
   planRunView,
   readStageDocument,
+  recordHumanEdit,
   resumePlanRunFrom,
   retryStage,
   startPlanRun,
@@ -38,6 +41,8 @@ const ORDER: TeamRole[] = ['viewer', 'editor', 'producer', 'owner'];
 @Controller('productions/:id/run')
 @UseGuards(RolesGuard)
 export class StudioRunController {
+  private readonly logger = new Logger(StudioRunController.name);
+
   constructor(
     private readonly engine: EngineService,
     private readonly db: StudioDbService,
@@ -80,8 +85,24 @@ export class StudioRunController {
       const report = await submitStudioGate(
         this.engine.core, this.engine.db, runId, 'approve-plan', dto.document,
       );
+      this.recordPlanApproval(id, runId, dto.document, req?.authContext?.userId);
       return { accepted: true, stageState: report.stageState, runState: report.runState };
     });
+  }
+
+  /** Claude's plan next to the one approved (training dataset); never fails the approval. */
+  private recordPlanApproval(productionId: string, runId: string, approved: unknown, userId: string | undefined): void {
+    if (!userId) return;
+    try {
+      let proposed: unknown;
+      try { proposed = readStageDocument(this.engine.core, runId, 'plan-episodes', 'series-plan.json'); } catch { proposed = undefined; }
+      recordHumanEdit(this.engine.db, {
+        userId, productionId, kind: 'series_plan', before: proposed, after: approved,
+        llmCallId: latestAcceptedCall(this.engine.db, runId, 'plan-episodes'),
+      });
+    } catch (e) {
+      this.logger.warn(`could not record the plan approval of ${productionId}: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   /** Generic gate submit (kept for backward compat; use /gates/approve-plan for the plan gate). */

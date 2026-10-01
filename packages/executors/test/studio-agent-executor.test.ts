@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { newId, type StageRequest } from "@harness/contracts";
 import { CliAgentRuntime } from "@harness/adapter-agent-cli";
 import { STUDIO_TYPES } from "@harness/core";
-import { StudioAgentExecutor } from "../src/studio-agent-executor.js";
+import { StudioAgentExecutor, type StudioLlmCall } from "../src/studio-agent-executor.js";
 
 const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..", "..", "..");
 const FAKE = join(ROOT, "fixtures", "fake-studio-claude.mjs");
@@ -43,7 +43,10 @@ const catalog = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function stage(skill: string, outType: string, outName: string, inputs: Record<string, unknown>, mode = ""): { req: StageRequest; ex: StudioAgentExecutor } {
+function stage(
+  skill: string, outType: string, outName: string, inputs: Record<string, unknown>, mode = "",
+  recordCall?: (call: StudioLlmCall) => Promise<void>,
+): { req: StageRequest; ex: StudioAgentExecutor } {
   const ws = mkdtempSync(join(tmpdir(), "sae-"));
   mkdirSync(join(ws, "output"));
   const reqInputs = Object.entries(inputs).map(([type, value]) => {
@@ -59,10 +62,12 @@ function stage(skill: string, outType: string, outName: string, inputs: Record<s
     limits: { deadline_at: new Date(Date.now() + 60_000).toISOString(), max_cost_usd: 5, max_attempts: 2 }, capabilities: [], fencing_token: 1,
   } as unknown as StageRequest;
   const ex = new StudioAgentExecutor({
-    runtimeFor: (jsonSchema) => new CliAgentRuntime({
+    runtimeFor: (jsonSchema, _skill, onCall) => new CliAgentRuntime({
       runtime: "claude", skillsDir: join(ROOT, "skills"), argv: [process.execPath, FAKE], structured: { jsonSchema },
       baseEnv: { ...process.env, FAKE_STUDIO_MODE: mode },
+      ...(onCall ? { onCall } : {}),
     }),
+    ...(recordCall ? { recordCall } : {}),
     rateLimitBackoffMs: [10],
   });
   return { req, ex };
@@ -118,5 +123,46 @@ describe("StudioAgentExecutor (real CliAgentRuntime, fake claude CLI)", () => {
     const r = await run(s);
     expect(r.outcome).toBe("succeeded");
     expect(readdirSync(join(s.req.workspace_uri, "logs"))).toContain(".rate-limited");
+  });
+});
+
+describe("StudioAgentExecutor call log", () => {
+  it("records every round with the prompt sent, the answer and what the check said", async () => {
+    const calls: StudioLlmCall[] = [];
+    const s = stage("studio-plan-episodes", STUDIO_TYPES.seriesPlan, "series-plan.json", { [STUDIO_TYPES.brief]: brief, [STUDIO_TYPES.catalog]: catalog },
+      "plan-bad-once", async (c) => { calls.push(c); });
+    const r = await run(s);
+    expect(r.outcome).toBe("succeeded");
+    expect(calls.map((c) => [c.round, c.outcome])).toEqual([[0, "rejected"], [1, "accepted"]]);
+    expect(calls[0]!.problems.map((p) => p.code)).toContain("unknown_asset");
+    expect(calls[1]!.problems).toEqual([]);
+    for (const c of calls) {
+      expect(c.run_id).toBe(s.req.run_id);
+      expect(c.stage_key).toBe("studio-plan-episodes");
+      expect(c.attempt_id).toBe(s.req.attempt_id);
+      expect(c.trace.prompt.startsWith("# Skill\n")).toBe(true);
+      expect(c.trace.prompt).toContain('"a01"');
+      expect(c.trace.json_schema).toBeTruthy();
+      expect(c.trace.exit_code).toBe(0);
+      expect(c.trace.structured_output).toBeTruthy();
+    }
+    // The repair prompt is the one with the problems appended
+    expect(calls[1]!.trace.prompt).toContain("unknown_asset");
+    expect(calls[1]!.trace.structured_output).toEqual(out(s, "series-plan.json"));
+  });
+
+  it("records a subscription limit hit as rate_limited before the call that passes", async () => {
+    const calls: StudioLlmCall[] = [];
+    const s = stage("studio-trend-report", STUDIO_TYPES.trendReport, "trend-report.json", { [STUDIO_TYPES.brief]: brief }, "rate-limit-once",
+      async (c) => { calls.push(c); });
+    expect((await run(s)).outcome).toBe("succeeded");
+    expect(calls.map((c) => c.outcome)).toEqual(["rate_limited", "accepted"]);
+    expect(calls[0]!.trace.rate_limited).toBe(true);
+  });
+
+  it("a call log that fails never fails the stage", async () => {
+    const s = stage("studio-plan-episodes", STUDIO_TYPES.seriesPlan, "series-plan.json", { [STUDIO_TYPES.brief]: brief, [STUDIO_TYPES.catalog]: catalog },
+      "", async () => { throw new Error("R2 is down"); });
+    expect((await run(s)).outcome).toBe("succeeded");
   });
 });

@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import { join } from "node:path";
 import {
   claudeOutputJsonSchema, STUDIO_SKILL_OUTPUTS, TrendReportSchema,
-  type AgentRuntime, type CheckerInput, type Executor, type ExecutorContext, type StageRequest, type StageResult, type StudioSkill,
+  type AgentCallTrace, type AgentRuntime, type CheckerInput, type Executor, type ExecutorContext, type StageRequest, type StageResult, type StudioSkill,
 } from "@harness/contracts";
 import {
   loadBrief, loadCatalog, STUDIO_TYPES, validateSeriesPlan, validateTrendReport, validateYoutubeKit,
@@ -22,9 +22,23 @@ import {
 } from "@harness/core";
 import { StudioEpisodeSchema } from "@harness/contracts";
 
+/** One Claude call of a stage with what the deterministic check made of it (the call log / training dataset). */
+export interface StudioLlmCall {
+  run_id: string; stage_key: string; attempt_id: string; skill: StudioSkill;
+  /** 0 = first answer, 1 = the repair round. */
+  round: number;
+  outcome: "accepted" | "rejected" | "failed" | "rate_limited";
+  problems: StudioProblem[];
+  warnings: StudioProblem[];
+  trace: AgentCallTrace;
+}
+
 export interface StudioAgentExecutorOptions {
-  /** A runtime bound to one output JSON Schema. Optionally receives the skill name for per-skill model selection. */
-  runtimeFor: (jsonSchema: string, skill?: StudioSkill) => AgentRuntime;
+  /** A runtime bound to one output JSON Schema. Optionally receives the skill name for per-skill model selection,
+   *  and a hook the runtime hands every call's trace to. */
+  runtimeFor: (jsonSchema: string, skill?: StudioSkill, onCall?: (trace: AgentCallTrace) => void) => AgentRuntime;
+  /** Keeps each call; a failure here is logged and never fails the stage. */
+  recordCall?: (call: StudioLlmCall) => Promise<void>;
   rateLimitBackoffMs?: number[];
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
@@ -178,11 +192,24 @@ export class StudioAgentExecutor implements Executor {
       }
     }
 
-    const runtime = this.opts.runtimeFor(JSON.stringify(claudeOutputJsonSchema(skill)), skill);
+    const last: { trace: AgentCallTrace | null } = { trace: null };
+    const runtime = this.opts.runtimeFor(JSON.stringify(claudeOutputJsonSchema(skill)), skill, (t) => { last.trace = t; });
     const validator = VALIDATORS[skill];
     const backoff = this.opts.rateLimitBackoffMs ?? DEFAULT_BACKOFF_MS;
     const sleep = this.opts.sleep ?? defaultSleep;
     const deadline = Date.parse(request.limits.deadline_at);
+    const record = async (round: number, outcome: StudioLlmCall["outcome"], problems: StudioProblem[] = [], warnings: StudioProblem[] = []) => {
+      const trace = last.trace;
+      last.trace = null;
+      if (!trace || !this.opts.recordCall) return;
+      try {
+        await this.opts.recordCall({
+          run_id: request.run_id, stage_key: request.stage_key, attempt_id: request.attempt_id, skill, round, outcome, problems, warnings, trace,
+        });
+      } catch (e) {
+        ctx.logger.warn("could not record the Claude call", { skill, round, error: e instanceof Error ? e.message : String(e) });
+      }
+    };
 
     let cost = 0;
     let problems: StudioProblem[] | null = null;
@@ -195,6 +222,7 @@ export class StudioAgentExecutor implements Executor {
       const err = result.errors[0];
       if (result.outcome !== "succeeded") {
         if (err?.details?.code === "RATE_LIMITED") {
+          await record(round, "rate_limited");
           const wait = backoff[Math.min(waits, backoff.length - 1)]!;
           if (Date.parse(ctx.clock.now()) + wait >= deadline) return failed("transient", "Claude rate limit did not reset before the stage deadline", { code: "RATE_LIMITED", waits }, cost);
           ctx.logger.warn("Claude subscription limit; waiting before retry (not counted as attempt)", { wait_ms: wait, waits });
@@ -203,21 +231,31 @@ export class StudioAgentExecutor implements Executor {
           if (ctx.signal?.aborted) return failed("transient", "stage aborted while waiting for the Claude limit", { code: "RATE_LIMITED" }, cost);
           continue;
         }
+        await record(round, "failed", [{ code: String(err?.details?.code ?? "agent_failed"), message: err?.message ?? "agent call failed" }]);
         return { ...result, usage: { wall_seconds: (Date.now() - started) / 1000, cost_usd: cost } };
       }
       let raw: unknown;
       try { raw = JSON.parse(readFileSync(outPath, "utf8")); }
-      catch (e) { return failed("contract", `Claude returned no JSON for ${out.name}`, { error: String(e) }, cost); }
+      catch (e) {
+        await record(round, "failed", [{ code: "no_json", message: `Claude returned no JSON for ${out.name}` }]);
+        return failed("contract", `Claude returned no JSON for ${out.name}`, { error: String(e) }, cost);
+      }
       const checkerInput = { request, result, workspaceDir: ctx.workspaceDir } as CheckerInput;
       let verdict: StudioValidation<unknown>;
       try { verdict = validator(raw, checkerInput); }
-      catch (e) { return failed("contract", `cannot validate ${out.name}: ${e instanceof Error ? e.message : String(e)}`, {}, cost); }
+      catch (e) {
+        const message = `cannot validate ${out.name}: ${e instanceof Error ? e.message : String(e)}`;
+        await record(round, "failed", [{ code: "validator_error", message }]);
+        return failed("contract", message, {}, cost);
+      }
       if (verdict.ok) {
         // warnings never block; just log them
         if (verdict.warnings.length) ctx.logger.warn("Studio agent output has warnings", { skill, warnings: verdict.warnings.map((w) => w.message) });
         ctx.logger.info("Studio agent output accepted", { skill, repaired: round > 0 });
+        await record(round, "accepted", [], verdict.warnings);
         return { ...result, usage: { wall_seconds: (Date.now() - started) / 1000, cost_usd: cost } };
       }
+      await record(round, "rejected", verdict.problems, verdict.warnings);
       problems = verdict.problems;
       ctx.logger.warn("Studio agent output rejected by the deterministic check", { skill, round, problems: problems.length });
       round++;

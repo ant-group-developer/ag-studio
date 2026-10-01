@@ -10,3 +10,4 @@ export { FarmOwnerClient } from "@ag-farm/owner-client";
 export { timelineIssues, layoutTimeline, validateYoutubeKit, type TimelineIssue } from "@harness/core";
 export { readStoredYoutubeKit, YoutubeKitSchema, type YoutubeKit, type StudioEpisode } from "@harness/contracts";
 export * from "./youtube-research.js";
+export * from "./llm-log.js";
