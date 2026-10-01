@@ -29,6 +29,7 @@ import type { EpisodeDetail, EpisodePatch } from "../../api/studio-client";
 import type { YoutubeKit } from "@harness/contracts";
 import { YOUTUBE_TAGS_MAX_CHARS } from "@harness/contracts";
 import { PremiereExports } from "./PremiereExports";
+import { EnumText } from "../../helpers/enum-label";
 
 const { Text, Paragraph } = Typography;
 
@@ -107,7 +108,7 @@ export function EpisodeDrawer({ productionId, episode, open, onClose, canEdit }:
               direction="vertical"
               current={runStages.findIndex((s) => s.state === "RUNNING" || s.state === "WAITING_HUMAN")}
               items={runStages.map((s) => ({
-                title: s.key,
+                title: <EnumText group="stage" code={s.key} />,
                 status:
                   s.state === "SUCCEEDED" ? "finish"
                   : s.state === "FAILED" ? "error"

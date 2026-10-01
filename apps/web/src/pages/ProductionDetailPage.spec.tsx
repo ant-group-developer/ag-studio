@@ -24,7 +24,23 @@ vi.mock("../api/studio-client", async (orig) => ({ ...(await orig<object>()), us
 const agGoClient = { getFolders: vi.fn().mockResolvedValue({ folders: [] }) };
 vi.mock("../api/ag-go-client", async (orig) => ({ ...(await orig<object>()), useAgGoClient: () => agGoClient }));
 
-const { ProductionDetailPage } = await import("./ProductionDetailPage");
+const { ProductionDetailPage, runToStepIndex } = await import("./ProductionDetailPage");
+
+const stage = (key: string, state: string) =>
+  ({ key, executor: "script", state, attempts: 1, is_gate: key === "approve-plan", error: null, failed_checks: [], outputs: [] });
+const runOf = (stages: [string, string][], waiting_gate: string | null = null) =>
+  ({ run_id: "r-1", state: "RUNNING", created_at: "", updated_at: "", cost_usd: 0, waiting_gate, latest_revision: null,
+     stages: stages.map(([k, s]) => stage(k, s)) });
+
+describe("runToStepIndex", () => {
+  it("follows the series plan run up to the approved plan", () => {
+    expect(runToStepIndex(null)).toBe(0);
+    expect(runToStepIndex(runOf([["intake", "SUCCEEDED"], ["research", "RUNNING"], ["plan-episodes", "PENDING"]]))).toBe(1);
+    expect(runToStepIndex(runOf([["catalog", "SUCCEEDED"], ["plan-episodes", "RUNNING"]]))).toBe(2);
+    expect(runToStepIndex(runOf([["plan-episodes", "SUCCEEDED"], ["approve-plan", "WAITING"]], "approve-plan"))).toBe(3);
+    expect(runToStepIndex(runOf([["approve-plan", "SUCCEEDED"], ["spawn-episodes", "SUCCEEDED"]]))).toBe(4);
+  });
+});
 
 describe("ProductionDetailPage", () => {
   beforeAll(async () => {
@@ -61,8 +77,10 @@ describe("ProductionDetailPage", () => {
     // Production title is populated in the form
     expect(await screen.findByDisplayValue("Phở sáng")).toBeTruthy();
 
-    // Steps bar: both step 0 and step 1 titles are shown
+    // Steps bar: both step 0 and step 1 titles are shown (the research card repeats the second)
     expect(screen.getByText("Thông tin")).toBeTruthy();
-    expect(screen.getByText("Nghiên cứu thị trường")).toBeTruthy();
+    expect(screen.getAllByText("Nghiên cứu thị trường").length).toBeGreaterThan(0);
+    // The run is read by production id (the route is /productions/:id/run), never by run id
+    expect(client.getRun).toHaveBeenCalledWith("p-1");
   });
 });

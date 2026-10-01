@@ -21,7 +21,7 @@ import {
 } from "antd";
 import { ChevronLeft, List } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useStudioClient, StudioHttpError } from "../api/studio-client";
+import { useStudioClient, StudioHttpError, type RunView } from "../api/studio-client";
 import { EnumText, PRODUCTION_STATUS_COLORS } from "../helpers/enum-label";
 import { ResearchView } from "../modules/production/ResearchView";
 import { PlanEditor } from "../modules/production/PlanEditor";
@@ -35,24 +35,24 @@ import type { ProductionFormValues } from "../modules/production/ProductionForm"
 
 const { Title } = Typography;
 
-/** Map a RunView's waiting_gate / latest finished stage to the 0-based step index */
-function runToStepIndex(
-  runState: string | null,
-  waitingGate: string | null,
-  stageKeys: string[],
-): number {
-  if (!runState || runState === "DRAFT") return 0;
-  if (waitingGate === "approve-plan") return 2;
-  if (waitingGate === "approve-treatment") return 3;
-  const lastSucceeded = [...stageKeys]
-    .reverse()
-    .find(
-      (k) => k === "plan-episodes" || k === "research" || k === "trend-report",
-    );
-  if (lastSucceeded?.includes("plan")) return 3;
-  if (lastSucceeded?.includes("research") || lastSucceeded?.includes("trend"))
-    return 1;
-  return 0;
+/**
+ * 0-based step of the plan run (`ag-studio-series-plan`): 0 no run yet, 1 intake → research → catalog → trend-report,
+ * 2 plan-episodes, 3 waiting at approve-plan, 4 plan approved (spawn-episodes and the episode runs).
+ */
+export function runToStepIndex(run: RunView | null | undefined): number {
+  if (!run) return 0;
+  const state = (key: string) => run.stages.find((s) => s.key === key)?.state ?? "PENDING";
+  if (state("approve-plan") === "SUCCEEDED") return 4;
+  if (run.waiting_gate === "approve-plan") return 3;
+  if (state("plan-episodes") !== "PENDING") return 2;
+  return 1;
+}
+
+/** Card each step scrolls to (Duyệt and Kế hoạch tập share the plan editor). */
+const STEP_SECTIONS = ["step-info", "step-research", "step-plan", "step-plan", "step-episodes"];
+
+function scrollToStep(i: number) {
+  document.getElementById(STEP_SECTIONS[i]!)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 /** Extract music input from form values (null when musicTrack is absent). */
@@ -88,9 +88,11 @@ export function ProductionDetailPage() {
   });
 
   const { data: run } = useQuery({
-    queryKey: ["run", production?.runId],
-    queryFn: () => client.getRun(production!.runId!),
+    queryKey: ["run", productionId, production?.runId],
+    queryFn: () => client.getRun(productionId!),
     enabled: !!production?.runId,
+    // Follow the plan run while it works; a run waiting at the gate or finished does not change by itself.
+    refetchInterval: (q) => (q.state.data?.state === "RUNNING" || q.state.data?.state === "CANCEL_REQUESTED" ? 5_000 : false),
   });
 
   const { data: research } = useQuery({
@@ -214,12 +216,13 @@ export function ProductionDetailPage() {
   if (!production || !productionId)
     return <div>{t("productions.notFound")}</div>;
 
-  const stageKeys = run?.stages.map((s) => s.key) ?? [];
-  const stepIndex = runToStepIndex(
-    run?.state ?? null,
-    run?.waiting_gate ?? null,
-    stageKeys,
-  );
+  const stepIndex = runToStepIndex(run);
+  const stepStatus =
+    run?.state === "FAILED" || production.status === "failed"
+      ? "error"
+      : production.status === "done"
+        ? "finish"
+        : "process";
 
   const canEdit = !!(access?.hasAccess);
   const planReadOnly = production.status !== "waiting_approval";
@@ -228,13 +231,20 @@ export function ProductionDetailPage() {
     run?.state === "WAITING" ||
     run?.state === "CANCEL_REQUESTED";
 
+  // Titles only: five descriptions do not fit side by side and were cut off; each lives in the step's tooltip.
   const stepItems = [
     { title: "Thông tin", description: "Cài đặt production" },
-    { title: "Nghiên cứu thị trường", description: "Phân tích YouTube & xu hướng" },
+    { title: "Nghiên cứu", description: "Nghiên cứu thị trường: phân tích YouTube & xu hướng" },
     { title: "Kế hoạch tập", description: "Danh sách và thứ tự tập" },
     { title: "Duyệt", description: "Duyệt kế hoạch để tạo tập" },
     { title: "Sản xuất các tập", description: "Render, xuất bản, editor" },
-  ];
+  ].map((s, i) => ({
+    title: <Tooltip title={s.description}>{s.title}</Tooltip>,
+    // A step not reached yet has nothing to show.
+    disabled: i > stepIndex,
+    // Steps calls onChange only for a step other than the current one.
+    ...(i === stepIndex ? { onClick: () => scrollToStep(i) } : {}),
+  }));
 
   return (
     <div>
@@ -263,15 +273,17 @@ export function ProductionDetailPage() {
       <Card style={{ marginBottom: 16 }} size="small">
         <Steps
           current={stepIndex}
+          status={stepStatus}
           items={stepItems}
           size="small"
           style={{ marginBottom: 0 }}
-          onChange={() => {}}
+          onChange={scrollToStep}
         />
       </Card>
 
       {/* Step 0: editable production info */}
       <Card
+        id="step-info"
         style={{ marginBottom: 16 }}
         extra={
           <Space>
@@ -326,6 +338,7 @@ export function ProductionDetailPage() {
       {/* Step 1+2: Research + Trend Report */}
       {stepIndex >= 1 && (
         <Card
+          id="step-research"
           style={{ marginBottom: 16 }}
           title="Nghiên cứu thị trường"
           size="small"
@@ -341,6 +354,7 @@ export function ProductionDetailPage() {
       {/* Step 2+3: Plan editor */}
       {stepIndex >= 2 && plan && (
         <Card
+          id="step-plan"
           style={{ marginBottom: 16 }}
           title="Kế hoạch tập"
           size="small"
@@ -355,9 +369,9 @@ export function ProductionDetailPage() {
         </Card>
       )}
 
-      {/* Step 4: Episodes panel */}
+      {/* Step 4: Episodes panel (no card title: the episodes table carries its own "Các tập" header) */}
       {stepIndex >= 4 && (
-        <Card style={{ marginBottom: 16 }} title="Các tập" size="small">
+        <Card id="step-episodes" style={{ marginBottom: 16 }} size="small">
           <EpisodesPanel productionId={productionId} canEdit={canEdit} />
         </Card>
       )}
