@@ -106,8 +106,8 @@ export function AllProductionsPage() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16, alignItems: "center" }}>
-        <Title level={3} style={{ margin: 0 }}>{t("menu.allProductions")}</Title>
+      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 8, marginBottom: 16, alignItems: "center" }}>
+        <Title level={3} style={{ margin: 0, whiteSpace: "nowrap" }}>{t("menu.allProductions")}</Title>
         <Space>
           <SortDropdown
             fields={SORT_FIELDS}

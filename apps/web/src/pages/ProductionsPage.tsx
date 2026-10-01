@@ -247,9 +247,10 @@ export function ProductionsPage() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-        <Space align="center" size={16}>
-          <Title level={3} style={{ margin: 0 }}>
+      {/* Wraps on a narrow window: the toolbar used to squeeze the title into one letter per line */}
+      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 16 }}>
+        <Space align="center" size={16} wrap>
+          <Title level={3} style={{ margin: 0, whiteSpace: "nowrap" }}>
             {t("productions.title")}
           </Title>
           {!routeTeamId && (
@@ -264,7 +265,7 @@ export function ProductionsPage() {
             />
           )}
         </Space>
-        <Space>
+        <Space wrap>
           <Input
             placeholder={t("productions.searchPlaceholder")}
             prefix={<Search size={14} />}

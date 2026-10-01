@@ -9,5 +9,6 @@ describe("menuKeyFor", () => {
     expect(menuKeyFor("/productions")).toBe("/productions");
     expect(menuKeyFor("/productions/p-1")).toBe("/productions");
     expect(menuKeyFor("/productions/p-1/editor")).toBe("/productions");
+    expect(menuKeyFor("/all-productions")).toBe("/all-productions");
   });
 });
