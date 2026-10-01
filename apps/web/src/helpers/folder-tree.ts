@@ -4,7 +4,7 @@ export interface FolderTreeNode {
   key: string;
   title: string;
   children: FolderTreeNode[];
-  usableSegments: number;
+  usableVideos: number;
 }
 
 export function buildFolderTree(folders: FolderItem[]): FolderTreeNode[] {
@@ -15,7 +15,7 @@ export function buildFolderTree(folders: FolderItem[]): FolderTreeNode[] {
       key: folder.id,
       title: folder.name,
       children: [],
-      usableSegments: folder.usableSegments,
+      usableVideos: folder.usableVideos,
     });
   }
 

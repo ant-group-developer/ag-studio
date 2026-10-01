@@ -39,8 +39,8 @@ describe("AgGoClient - getFolders", () => {
           parentId: null,
           name: "Root",
           path: "/root",
-          analyzedSegments: 10,
-          usableSegments: 8,
+          analyzedVideos: 10,
+          usableVideos: 8,
         },
       ],
     };
@@ -61,7 +61,7 @@ describe("AgGoClient - getFolders", () => {
   });
 
   it("unwraps ag-go-api's { data, requestId, success, error, timestamp } envelope", async () => {
-    const folders = [{ id: "f-1", name: "Test 1.1", parentId: null, usableSegments: 18 }];
+    const folders = [{ id: "f-1", name: "Test 1.1", parentId: null, usableVideos: 18 }];
     const mockFetch = makeMockFetch(200, { data: { folders }, requestId: "req-1", success: true, error: null, timestamp: "2026-09-30T00:00:00Z" });
     const client = makeClient(mockFetch);
 

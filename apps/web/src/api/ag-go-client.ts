@@ -6,7 +6,7 @@ export interface FolderItem {
   id: string;
   name: string;
   parentId: string | null;
-  usableSegments: number;
+  usableVideos: number;
 }
 
 export interface FolderListResponse {

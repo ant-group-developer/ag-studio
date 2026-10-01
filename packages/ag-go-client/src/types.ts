@@ -80,8 +80,8 @@ export interface FolderItem {
   parentId: string | null;
   name: string;
   path: string;
-  analyzedSegments: number;
-  usableSegments: number;
+  analyzedVideos: number;
+  usableVideos: number;
 }
 
 export interface GetFoldersResponse {

@@ -358,8 +358,8 @@ function startFakeAgGo(): Promise<void> {
     if (req.method === "GET" && url.startsWith("/footage/folders")) {
       return wrap({
         folders: [
-          { id: FOLDER_A, parentId: null, name: "Ẩm thực 1", path: "/Ẩm thực 1", analyzedSegments: 2, usableSegments: 2 },
-          { id: FOLDER_B, parentId: null, name: "Ẩm thực 2", path: "/Ẩm thực 2", analyzedSegments: 2, usableSegments: 2 },
+          { id: FOLDER_A, parentId: null, name: "Ẩm thực 1", path: "/Ẩm thực 1", analyzedVideos: 2, usableVideos: 2 },
+          { id: FOLDER_B, parentId: null, name: "Ẩm thực 2", path: "/Ẩm thực 2", analyzedVideos: 2, usableVideos: 2 },
         ],
       });
     }

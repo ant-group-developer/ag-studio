@@ -64,7 +64,7 @@ interface TreeSelectNode {
 function toTreeSelectNodes(nodes: ReturnType<typeof buildFolderTree>): TreeSelectNode[] {
   return nodes.map((n) => ({
     value: n.key,
-    title: `${n.title} (${n.usableSegments})`,
+    title: `${n.title} (${n.usableVideos})`,
     children: toTreeSelectNodes(n.children),
   }));
 }

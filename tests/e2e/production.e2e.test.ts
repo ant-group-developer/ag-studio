@@ -174,7 +174,7 @@ function startFakeAgGo(): Promise<void> {
     if (req.headers["x-service-key"] !== "e2e-service-key") return json(401, { message: "no service key" });
     if (actAs !== OWNER) return json(403, { message: `act-as ${String(actAs)} is not a user with scope` });
     if (req.method === "GET" && url.startsWith("/footage/folders")) {
-      return ok({ folders: [{ id: FOLDER, parentId: null, name: "Ẩm thực", path: "/Ẩm thực", analyzedSegments: 6, usableSegments: 6 }] });
+      return ok({ folders: [{ id: FOLDER, parentId: null, name: "Ẩm thực", path: "/Ẩm thực", analyzedVideos: 6, usableVideos: 6 }] });
     }
     if (req.method === "POST" && url === "/footage/catalog") {
       const b = JSON.parse(body) as { folderIds: string[] };
