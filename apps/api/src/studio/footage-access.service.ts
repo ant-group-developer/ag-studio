@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AgGoClient } from '../ag-go/client';
+import { AgGoClient, type AssetMediaResponse } from '../ag-go/client';
 import { StudioDbService } from '../db/studio-db.service';
 
 /**
@@ -41,5 +41,10 @@ export class FootageAccessService {
       }
     }
     return sources.every((s) => entry!.folders.has(s));
+  }
+
+  /** Preview, poster and keyframe URLs of one video, signed by ag-go for the caller's own footage scope. */
+  assetMedia(userId: string, assetId: string): Promise<AssetMediaResponse> {
+    return this.agGo.getAssetMedia(userId, assetId);
   }
 }
