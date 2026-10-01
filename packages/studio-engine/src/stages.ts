@@ -11,7 +11,7 @@ import { join } from "node:path";
 import JSZip from "yazl";
 import {
   HarnessError, SeriesPlanSchema, SpawnedEpisodesSchema, StudioBriefSchema, StudioCatalogSchema,
-  StudioEpisodeSchema, StudioExportSchema, StudioResearchSchema, StudioYoutubeSchema, TimelineV3Schema, YoutubeKitSchema,
+  StudioEpisodeSchema, StudioExportSchema, StudioResearchSchema, StudioYoutubeSchema, TimelineV3Schema, parseStoredYoutubeKit,
   type ExecutorContext, type StageRequest, type StudioBrief, type StudioCatalog, type StudioExport,
   type StudioEpisode,
 } from "@harness/contracts";
@@ -283,14 +283,14 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       const brief = readBrief(request, ws);
       const episode = readInput(request, ws, STUDIO_TYPES.episode, (v) => StudioEpisodeSchema.parse(v));
       const timeline = readInput(request, ws, STUDIO_TYPES.timeline, (v) => TimelineV3Schema.parse(v));
-      const kitRaw = readInput(request, ws, STUDIO_TYPES.youtubeKit, (v) => YoutubeKitSchema.parse(v));
+      const kitRaw = readInput(request, ws, STUDIO_TYPES.youtubeKit, parseStoredYoutubeKit);
       const videoPath = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.finalVideo);
       const manifest = readInput(request, ws, STUDIO_TYPES.renderManifest, (v) => v as { watermarked?: boolean; duration_s?: number; thumbnails?: unknown[] });
       if (!videoPath || !existsSync(videoPath)) throw new HarnessError("NOT_FOUND", "export has no final video input", {});
 
       // Resolve effective youtube kit: episodes.youtube override if set
       const ep = getEpisode(d.db, episode.episode_id);
-      const effectiveKit = (ep?.youtube ? YoutubeKitSchema.parse(JSON.parse(ep.youtube)) : kitRaw);
+      const effectiveKit = (ep?.youtube ? parseStoredYoutubeKit(JSON.parse(ep.youtube)) : kitRaw);
       const selectedTitle = ep?.selected_title ?? 0;
       const selectedThumb = ep?.selected_thumbnail ?? 0;
 

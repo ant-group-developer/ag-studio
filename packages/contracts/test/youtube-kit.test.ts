@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readStoredYoutubeKit } from './episodes.controller';
+import { parseStoredYoutubeKit, readStoredYoutubeKit } from '../src/studio.js';
 
 const kit = (hashtags: string[]) => ({
   schema_version: 'studio.youtube-kit/v1',
@@ -21,7 +21,9 @@ describe('readStoredYoutubeKit', () => {
     expect(read?.hashtags).toEqual(['#PhởHàNội', '#Tập1']);
   });
 
-  it('leaves out a kit that is still invalid', () => {
+  it('leaves out a kit that is still invalid; parseStoredYoutubeKit throws for it', () => {
     expect(readStoredYoutubeKit({ ...kit([]), titles: ['một'] })).toBeNull();
+    expect(() => parseStoredYoutubeKit({ ...kit([]), titles: ['một'] })).toThrow();
+    expect(parseStoredYoutubeKit(kit(['#Phở-Hà-Nội'])).hashtags).toEqual(['#PhởHàNội']);
   });
 });

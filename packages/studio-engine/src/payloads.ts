@@ -4,7 +4,7 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { StudioEpisodeSchema, TimelineV3Schema, YoutubeKitSchema } from "@harness/contracts";
+import { parseStoredYoutubeKit, StudioEpisodeSchema, TimelineV3Schema } from "@harness/contracts";
 import { STUDIO_TYPES, thumbnailTimes, timelineIssues, timelineToComposition } from "@harness/core";
 import type { FarmPayloadBuild, FarmPayloadBuilder } from "@harness/executors";
 import type { StudioRenderPayload } from "@ag-farm/protocol";
@@ -50,8 +50,8 @@ export function studioPayloadBuilders(d: { db: StudioDb; bucket: StudioBucket })
       // Use episodes.youtube override if set, else the workflow's youtube-kit output
       const ep = episodeForRun(d.db, request.run_id);
       const kitRaw = ep?.youtube
-        ? YoutubeKitSchema.parse(JSON.parse(ep.youtube))
-        : readInput(request, ctx.workspaceDir, STUDIO_TYPES.youtubeKit, (v) => YoutubeKitSchema.parse(v));
+        ? parseStoredYoutubeKit(JSON.parse(ep.youtube))
+        : readInput(request, ctx.workspaceDir, STUDIO_TYPES.youtubeKit, parseStoredYoutubeKit);
       const revision = latestEpisodeRevision(d.db, episode.episode_id)?.revision ?? 0;
       const output = `episodes/${episode.episode_id}/renders/final-${request.attempt_id}.mp4`;
       const build = await prepareEpisodeRender(ctx.workspaceDir, {

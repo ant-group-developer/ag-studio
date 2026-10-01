@@ -330,6 +330,30 @@ export const YoutubeKitSchema = z.object({
 }).strict();
 export type YoutubeKit = z.infer<typeof YoutubeKitSchema>;
 
+/**
+ * A kit stored by an earlier run or edit, read under today's rules: hashtags written before the letters, digits
+ * and `_` rule are cleaned to it, so an episode produced earlier still opens, renders and exports. `null` when the
+ * kit is still invalid.
+ */
+export function readStoredYoutubeKit(raw: unknown): YoutubeKit | null {
+  const ok = YoutubeKitSchema.safeParse(raw);
+  if (ok.success) return ok.data;
+  const kit = raw as { hashtags?: unknown } | null;
+  if (kit && Array.isArray(kit.hashtags)) {
+    const hashtags = [...new Set(kit.hashtags.map((h) => `#${String(h).replace(/[^\p{L}\p{N}_]/gu, "")}`))]
+      .filter((h) => h.length > 1)
+      .slice(0, 15);
+    const cleaned = YoutubeKitSchema.safeParse({ ...kit, hashtags });
+    if (cleaned.success) return cleaned.data;
+  }
+  return null;
+}
+
+/** {@link readStoredYoutubeKit}, where a kit that still cannot be read is an error (with the schema's details). */
+export function parseStoredYoutubeKit(raw: unknown): YoutubeKit {
+  return readStoredYoutubeKit(raw) ?? YoutubeKitSchema.parse(raw);
+}
+
 export const YoutubeChapterSchema = z.object({ start_s: z.number().min(0), title: z.string().min(1).max(100) }).strict();
 export type YoutubeChapter = z.infer<typeof YoutubeChapterSchema>;
 

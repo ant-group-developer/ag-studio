@@ -58,14 +58,24 @@ export type EpisodeStatus = "planned" | "producing" | "ready" | "failed" | "canc
  * `current_stage` is the first stage of the run that has not succeeded; `render_job_id` the latest farm job of
  * render-final (its progress is the episode's progress while it renders).
  */
+/**
+ * Status of an episode from its run. The episode workflow has no gate, so a stage waiting for a person (a contract
+ * failure the engine will not retry by itself) is a failed episode: it needs someone to retry it, and "producing"
+ * would have them wait forever.
+ */
+export function episodeStatusOf(runState: string, stageStates: string[]): EpisodeStatus {
+  if (runState === "SUCCEEDED") return "ready";
+  if (runState === "FAILED") return "failed";
+  if (runState === "CANCELLED" || runState === "CANCEL_REQUESTED") return "cancelled";
+  if (stageStates.includes("WAITING_HUMAN") || stageStates.includes("FAILED")) return "failed";
+  return "producing";
+}
+
 export function episodeState(core: StudioEngineCore, db: StudioDb, ep: { run_id: string | null }): { status: EpisodeStatus; current_stage: string | null; render_job_id: string | null } {
   if (!ep.run_id) return { status: "planned", current_stage: null, render_job_id: null };
   const run = core.store.getRun(ep.run_id);
   if (!run) return { status: "planned", current_stage: null, render_job_id: null };
-  const status: EpisodeStatus = run.state === "SUCCEEDED" ? "ready"
-    : run.state === "FAILED" ? "failed"
-    : run.state === "CANCELLED" || run.state === "CANCEL_REQUESTED" ? "cancelled"
-    : "producing";
+  const status = episodeStatusOf(run.state, core.store.listStageRuns(ep.run_id).map((s) => s.state));
   const current = status === "ready" ? null : core.store.listStageRuns(ep.run_id).find((s) => s.state !== "SUCCEEDED")?.stage_key ?? null;
   const job = db.get<{ farm_job_id: string }>("SELECT farm_job_id FROM studio_farm_jobs WHERE run_id = ? AND stage_key = ? ORDER BY created_at DESC LIMIT 1", [ep.run_id, EPISODE_RENDER_STAGE]);
   return { status, current_stage: current, render_job_id: job?.farm_job_id ?? null };

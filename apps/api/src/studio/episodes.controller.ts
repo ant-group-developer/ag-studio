@@ -27,6 +27,7 @@ import {
   readStageDocument,
   rerenderEpisode,
   retryStage,
+  readStoredYoutubeKit,
   YoutubeKitSchema,
   validateYoutubeKit,
   type EpisodeRecord,
@@ -80,24 +81,6 @@ const STATUS_ORDER: Record<EpisodeStatus, number> = { producing: 0, failed: 1, p
 /** Thumbnails of an export in thumb-1..3 order. */
 function exportThumbnails(exp: StudioExport | null) {
   return (exp?.files ?? []).filter((f) => f.kind === 'thumbnail').sort((a, b) => a.key.localeCompare(b.key));
-}
-
-/**
- * A YouTube kit stored by an earlier run or edit. A rule tightened since (hashtags: letters, digits and _ only)
- * must not make the episode unreadable: hashtags are cleaned to the rule, and a kit still invalid is left out.
- */
-export function readStoredYoutubeKit(raw: unknown): ReturnType<typeof YoutubeKitSchema.parse> | null {
-  const ok = YoutubeKitSchema.safeParse(raw);
-  if (ok.success) return ok.data;
-  const kit = raw as { hashtags?: unknown } | null;
-  if (kit && Array.isArray(kit.hashtags)) {
-    const hashtags = [...new Set(kit.hashtags.map((h) => `#${String(h).replace(/[^\p{L}\p{N}_]/gu, '')}`))]
-      .filter((h) => h.length > 1)
-      .slice(0, 15);
-    const cleaned = YoutubeKitSchema.safeParse({ ...kit, hashtags });
-    if (cleaned.success) return cleaned.data;
-  }
-  return null;
 }
 
 /**
