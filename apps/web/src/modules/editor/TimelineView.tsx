@@ -8,10 +8,10 @@ import type { EditorAction, Selection } from "./state/editor-reducer";
 import { Tooltip } from "antd";
 import { GripVertical, X } from "lucide-react";
 import {
-  DndContext, closestCenter, type DragEndEvent, PointerSensor, useSensor, useSensors,
+  DndContext, closestCenter, type DragEndEvent, KeyboardSensor, PointerSensor, useSensor, useSensors,
 } from "@dnd-kit/core";
 import {
-  SortableContext, horizontalListSortingStrategy, useSortable,
+  SortableContext, horizontalListSortingStrategy, sortableKeyboardCoordinates, useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
@@ -24,6 +24,8 @@ function isSelected(selection: Selection, kind: "clip" | "text", id: string): bo
 interface SortableClipProps {
   id: string;
   label: string;
+  /** Tooltip: clip id and the video's name. */
+  hint: string;
   duration: number;
   hasSection: boolean;
   selected: boolean;
@@ -31,13 +33,32 @@ interface SortableClipProps {
   onRemove: () => void;
 }
 
-function SortableClip({ id, label, duration, hasSection, selected, onSelect, onRemove }: SortableClipProps) {
-  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id });
+function SortableClip({ id, label, hint, duration, hasSection, selected, onSelect, onRemove }: SortableClipProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  // Inline like the texts row: the `timeline-clip` class never had a stylesheet, so a clip was white text on nothing.
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
     width: Math.max(40, duration * PX_PER_SECOND),
     flexShrink: 0,
+    boxSizing: "border-box" as const,
+    height: 40,
+    margin: "4px 2px 0 0",
+    padding: "0 6px",
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+    overflow: "hidden",
+    cursor: "pointer",
+    // Dragging by the grip must not select the labels it passes over.
+    userSelect: "none" as const,
+    borderRadius: 4,
+    background: selected ? "#0958d9" : "#4096ff",
+    // A clip that opens a section (chapter) carries a gold left edge.
+    borderLeft: hasSection ? "4px solid #faad14" : undefined,
+    boxShadow: selected ? "0 0 0 2px #91caff" : undefined,
+    opacity: isDragging ? 0.7 : 1,
+    zIndex: isDragging ? 10 : undefined,
   };
   return (
     <div
@@ -45,10 +66,10 @@ function SortableClip({ id, label, duration, hasSection, selected, onSelect, onR
       style={style}
       data-testid={`clip-${id}`}
       onClick={onSelect}
-      title={label}
+      title={hint}
       className={`timeline-clip${selected ? " selected" : ""}${hasSection ? " has-section" : ""}`}
     >
-      <span {...listeners} {...attributes} style={{ cursor: "grab", display: "flex", alignItems: "center", color: "#fff", opacity: 0.7 }}>
+      <span {...listeners} {...attributes} style={{ cursor: "grab", display: "flex", alignItems: "center", color: "#fff", opacity: 0.7, touchAction: "none" }}>
         <GripVertical size={12} />
       </span>
       <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11, color: "#fff" }}>
@@ -70,16 +91,22 @@ function SortableClip({ id, label, duration, hasSection, selected, onSelect, onR
 
 export interface TimelineViewProps {
   layout: TimelineLayout;
+  /** The episode's videos, to name each clip after its video. */
+  assets?: Record<string, { title: string }>;
   selection: Selection;
   dispatch: Dispatch<EditorAction>;
   playhead: number;
   onSeek: (t: number) => void;
 }
 
-export function TimelineView({ layout, selection, dispatch, playhead, onSeek }: TimelineViewProps) {
+export function TimelineView({ layout, assets, selection, dispatch, playhead, onSeek }: TimelineViewProps) {
   const width = Math.max(1, Math.round(layout.duration * PX_PER_SECOND)) + 40;
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
+  // Keyboard too: focus a clip's grip, Space to pick it up, arrows to move, Space to drop.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
@@ -118,7 +145,8 @@ export function TimelineView({ layout, selection, dispatch, playhead, onSeek }: 
                 <SortableClip
                   key={c.clip_id}
                   id={c.clip_id}
-                  label={c.clip_id}
+                  label={assets?.[c.asset_id]?.title || c.clip_id}
+                  hint={`${c.clip_id} · ${assets?.[c.asset_id]?.title ?? c.asset_id}`}
                   duration={c.duration}
                   hasSection={!!sectionByClipId.get(c.clip_id)}
                   selected={isSelected(selection, "clip", c.clip_id)}

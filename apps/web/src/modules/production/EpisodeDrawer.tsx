@@ -69,6 +69,16 @@ export function EpisodeDrawer({ productionId, episode, open, onClose, canEdit }:
     },
   });
 
+  const retryMutation = useMutation({
+    mutationFn: (stage: string) => client.retryEpisodeStage(productionId, episode.id, stage),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["episode", productionId, episode.id] });
+      void qc.invalidateQueries({ queryKey: ["episodes", productionId] });
+      void message.success(t("episodes.retryStageDone"));
+    },
+    onError: (err) => void message.error(err instanceof Error ? err.message : String(err)),
+  });
+
   const handleSave = () => {
     if (!yt) return;
     saveMutation.mutate({ youtube: yt, selectedTitle, selectedThumbnail });
@@ -107,15 +117,28 @@ export function EpisodeDrawer({ productionId, episode, open, onClose, canEdit }:
               size="small"
               direction="vertical"
               current={runStages.findIndex((s) => s.state === "RUNNING" || s.state === "WAITING_HUMAN")}
-              items={runStages.map((s) => ({
-                title: <EnumText group="stage" code={s.key} />,
-                status:
-                  s.state === "SUCCEEDED" ? "finish"
-                  : s.state === "FAILED" ? "error"
-                  : s.state === "RUNNING" || s.state === "WAITING_HUMAN" ? "process"
-                  : "wait",
-                description: s.error ?? undefined,
-              }))}
+              items={runStages.map((s) => {
+                // No gate in an episode run: a stage waiting for a person failed and needs a retry.
+                const stuck = s.state === "FAILED" || s.state === "WAITING_HUMAN";
+                return {
+                  title: <EnumText group="stage" code={s.key} />,
+                  status: s.state === "SUCCEEDED" ? "finish" : stuck ? "error" : s.state === "RUNNING" ? "process" : "wait",
+                  description: stuck ? (
+                    <Space direction="vertical" size={4}>
+                      {s.error && (
+                        <Text type="danger" style={{ fontSize: 12 }} ellipsis={{ tooltip: s.error }}>
+                          {s.error.length > 200 ? `${s.error.slice(0, 200)}…` : s.error}
+                        </Text>
+                      )}
+                      {canEdit && (
+                        <Button size="small" loading={retryMutation.isPending} onClick={() => retryMutation.mutate(s.key)}>
+                          {t("episodes.retryStage")}
+                        </Button>
+                      )}
+                    </Space>
+                  ) : undefined,
+                };
+              })}
             />
             {episode.run?.cost_usd != null && (
               <Text type="secondary" style={{ fontSize: 12 }}>

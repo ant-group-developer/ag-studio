@@ -21,23 +21,15 @@ import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { useAgGoClient } from "../../api/ag-go-client";
 import { buildFolderTree } from "../../helpers/folder-tree";
+import { DurationInput } from "./DurationInput";
 
 // ---------------------------------------------------------------------------
 // Helpers (exported so pages can convert on save)
 // ---------------------------------------------------------------------------
 
-export function mmssToSeconds(v: string): number {
-  const parts = v.split(":");
-  const mm = parseInt(parts[0] ?? "0", 10);
-  const ss = parseInt(parts[1] ?? "0", 10);
-  return mm * 60 + ss;
-}
-
-export function secondsToMmss(s: number): string {
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${m}:${sec.toString().padStart(2, "0")}`;
-}
+/** Target length of an episode the API accepts (`episodeTargetSeconds`, docs/studio-api-v3.md). */
+export const TARGET_SECONDS_MIN = 10;
+export const TARGET_SECONDS_MAX = 3600;
 
 // ---------------------------------------------------------------------------
 // YouTube channel validation
@@ -82,8 +74,8 @@ export interface ProductionFormValues {
   audience?: string;
   tone?: string;
   notes?: string;
-  /** "mm:ss" string; convert with mmssToSeconds() on save */
-  durationMmSs?: string;
+  /** Target length of each episode in seconds (typed as hours / minutes / seconds). */
+  targetSeconds?: number;
   maxEpisodes?: number;
   aspect: "16:9" | "9:16";
   language: string;
@@ -219,23 +211,21 @@ export function ProductionForm({
           <Input.TextArea rows={2} />
         </Form.Item>
 
-        {/* ---- Duration (mm:ss) ---- */}
+        {/* ---- Target length of an episode: hours / minutes / seconds ---- */}
         <Form.Item
-          name="durationMmSs"
+          name="targetSeconds"
           label={t("productions.fieldTargetSeconds")}
+          extra={t("productions.fieldTargetSecondsHelp")}
           rules={[
             {
-              validator: (_, value: string | undefined) => {
-                if (!value) return Promise.resolve();
-                if (!/^\d+:\d{2}$/.test(value)) {
-                  return Promise.reject(new Error(t("productions.fieldTargetSecondsRequired")));
-                }
-                return Promise.resolve();
-              },
+              validator: (_, value: number | undefined) =>
+                value === undefined || (value >= TARGET_SECONDS_MIN && value <= TARGET_SECONDS_MAX)
+                  ? Promise.resolve()
+                  : Promise.reject(new Error(t("productions.fieldTargetSecondsRange"))),
             },
           ]}
         >
-          <Input placeholder="5:00" style={{ width: 140 }} />
+          <DurationInput disabled={readOnly} />
         </Form.Item>
 
         <Form.Item name="maxEpisodes" label={t("productions.fieldMaxEpisodes")}>

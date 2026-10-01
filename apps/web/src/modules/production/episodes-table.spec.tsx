@@ -16,8 +16,8 @@ window.matchMedia ??= ((query: string) => ({
 
 const episodeList = {
   items: [
-    { id: "ep-1", idx: 1, title: "Tập 1", hook: "h", status: "ready", currentStage: null, progress: 100, durationSeconds: 310, thumbnailUrl: null, updatedAt: "" },
-    { id: "ep-2", idx: 2, title: "Tập 2", hook: "h", status: "producing", currentStage: "render", progress: 50, durationSeconds: null, thumbnailUrl: null, updatedAt: "" },
+    { id: "ep-1", idx: 1, title: "Tập 1", hook: "h", status: "ready", currentStage: null, progress: 100, durationSeconds: 310, thumbnailUrl: "https://r2.test/thumb-1.jpg", updatedAt: "" },
+    { id: "ep-2", idx: 2, title: "Tập 2", hook: "h", status: "producing", currentStage: "render-final", progress: 50, durationSeconds: null, thumbnailUrl: null, updatedAt: "" },
   ],
   total: 2, page: 1, pageSize: 20,
 };
@@ -47,6 +47,18 @@ function Wrapper({ children }: { children: React.ReactNode }) {
 }
 
 describe("EpisodesPanel", () => {
+  it("shows each episode's thumbnail and its current step by name", async () => {
+    const i18n = (await import("../../i18n/config")).default;
+    await i18n.changeLanguage("vi");
+    const { container } = render(
+      <Wrapper>
+        <EpisodesPanel productionId="p-1" canEdit={true} />
+      </Wrapper>,
+    );
+    expect(await screen.findByText("Render bản cuối")).toBeTruthy();
+    expect(container.querySelector('img[src="https://r2.test/thumb-1.jpg"]')).toBeTruthy();
+  });
+
   it("renders episode titles from API", async () => {
     render(
       <Wrapper>

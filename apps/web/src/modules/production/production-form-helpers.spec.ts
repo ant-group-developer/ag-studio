@@ -1,12 +1,11 @@
 /**
  * vitest unit tests for helpers that will live in ProductionForm.tsx:
- * – mmssToSeconds / secondsToMmss round-trip
  * – YouTube quota estimate formula
  * – YouTube channel link / handle / id validation
  *
  * The helpers are re-declared inline so this file tests the SPEC, not an import.
  * When ProductionForm exports them, change the top import to:
- *   import { mmssToSeconds, secondsToMmss, isValidYoutubeChannel, calcYoutubeQuota }
+ *   import { isValidYoutubeChannel, calcYoutubeQuota }
  *     from "../production/ProductionForm";
  */
 import { describe, expect, it } from "vitest";
@@ -14,20 +13,6 @@ import { describe, expect, it } from "vitest";
 // ---------------------------------------------------------------------------
 // Inline reference implementations (matching the spec)
 // ---------------------------------------------------------------------------
-
-/** Convert "mm:ss" → total seconds.  Returns NaN for malformed input. */
-function mmssToSeconds(v: string): number {
-  const m = v.match(/^(\d+):(\d{2})$/);
-  if (!m) return NaN;
-  return parseInt(m[1]!, 10) * 60 + parseInt(m[2]!, 10);
-}
-
-/** Convert a non-negative integer seconds value → "mm:ss". */
-function secondsToMmss(s: number): string {
-  const mins = Math.floor(s / 60);
-  const secs = s % 60;
-  return `${mins}:${String(secs).padStart(2, "0")}`;
-}
 
 /** YouTube quota estimate per the spec: N = channels*3 + keywords*201 */
 function calcYoutubeQuota(channels: string[], keywords: string[]): number {
@@ -47,29 +32,6 @@ function isValidYoutubeChannel(v: string): boolean {
   if (YT_CHANNEL_RE.test(v)) return true;
   return false;
 }
-
-// ---------------------------------------------------------------------------
-// mmssToSeconds / secondsToMmss
-// ---------------------------------------------------------------------------
-describe("mmssToSeconds", () => {
-  it("converts '0:00' → 0", () => expect(mmssToSeconds("0:00")).toBe(0));
-  it("converts '1:30' → 90", () => expect(mmssToSeconds("1:30")).toBe(90));
-  it("converts '10:05' → 605", () => expect(mmssToSeconds("10:05")).toBe(605));
-  it("converts '60:00' → 3600", () => expect(mmssToSeconds("60:00")).toBe(3600));
-  it("returns NaN for '1:5' (single-digit seconds)", () => expect(mmssToSeconds("1:5")).toBeNaN());
-  it("returns NaN for 'abc'", () => expect(mmssToSeconds("abc")).toBeNaN());
-  it("returns NaN for empty string", () => expect(mmssToSeconds("")).toBeNaN());
-});
-
-describe("secondsToMmss", () => {
-  it("converts 0 → '0:00'", () => expect(secondsToMmss(0)).toBe("0:00"));
-  it("converts 90 → '1:30'", () => expect(secondsToMmss(90)).toBe("1:30"));
-  it("converts 605 → '10:05'", () => expect(secondsToMmss(605)).toBe("10:05"));
-  it("round-trips: mmssToSeconds(secondsToMmss(300)) === 300", () =>
-    expect(mmssToSeconds(secondsToMmss(300))).toBe(300));
-  it("round-trips: secondsToMmss(mmssToSeconds('7:45')) === '7:45'", () =>
-    expect(secondsToMmss(mmssToSeconds("7:45"))).toBe("7:45"));
-});
 
 // ---------------------------------------------------------------------------
 // YouTube quota estimate

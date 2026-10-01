@@ -28,8 +28,6 @@ import { PlanEditor } from "../modules/production/PlanEditor";
 import { EpisodesPanel } from "../modules/production/EpisodesPanel";
 import {
   ProductionForm,
-  mmssToSeconds,
-  secondsToMmss,
 } from "../modules/production/ProductionForm";
 import type { ProductionFormValues } from "../modules/production/ProductionForm";
 
@@ -129,9 +127,7 @@ export function ProductionDetailPage() {
         audience: production.audience || undefined,
         tone: production.tone || undefined,
         notes: production.notes || undefined,
-        durationMmSs: production.episodeTargetSeconds
-          ? secondsToMmss(production.episodeTargetSeconds)
-          : undefined,
+        targetSeconds: production.episodeTargetSeconds ?? undefined,
         maxEpisodes: production.maxEpisodes,
         aspect: production.aspect,
         language: production.language,
@@ -158,9 +154,7 @@ export function ProductionDetailPage() {
       sources: values.sources ?? [],
       youtubeChannels: values.youtubeChannels ?? [],
       keywords: values.keywords ?? [],
-      episodeTargetSeconds: values.durationMmSs
-        ? mmssToSeconds(values.durationMmSs)
-        : undefined,
+      episodeTargetSeconds: values.targetSeconds,
       maxEpisodes: values.maxEpisodes,
       aspect: values.aspect,
       language: values.language,

@@ -9,6 +9,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Button,
   Dropdown,
+  Image,
   Progress,
   Popconfirm,
   Space,
@@ -26,6 +27,7 @@ import { TableRefreshButton } from "../../helpers/table-refresh-button";
 import { CONTAINER_TABLE_STICKY } from "../../helpers/sticky-table-header";
 import { EpisodeDrawer } from "./EpisodeDrawer";
 import { premiereMenuItems, useStartPremiereExport } from "./PremiereExports";
+import { EnumText } from "../../helpers/enum-label";
 import type { ColumnsType } from "antd/es/table";
 
 const SORT_FIELDS = [
@@ -103,6 +105,15 @@ export function EpisodesPanel({ productionId, canEdit }: Props) {
       render: (v: number) => String(v),
     },
     {
+      title: t("episodes.columnThumbnail"),
+      dataIndex: "thumbnailUrl",
+      key: "thumbnail",
+      width: 96,
+      // The thumbnail picked in the drawer; none before the render, or for someone outside the footage scope.
+      render: (url: string | null) =>
+        url ? <Image src={url} width={80} height={45} style={{ objectFit: "cover", borderRadius: 4 }} /> : "—",
+    },
+    {
       title: t("episodes.columnTitle"),
       dataIndex: "title",
       key: "title",
@@ -118,6 +129,14 @@ export function EpisodesPanel({ productionId, canEdit }: Props) {
       render: (status: string) => (
         <Tag color={STATUS_COLORS[status] ?? "default"}>{t(`episodes.status.${status}`, { defaultValue: status })}</Tag>
       ),
+    },
+    {
+      title: t("episodes.columnStage"),
+      dataIndex: "currentStage",
+      key: "currentStage",
+      width: 150,
+      ellipsis: true,
+      render: (stage: string | null) => (stage ? <EnumText group="stage" code={stage} /> : "—"),
     },
     {
       title: t("episodes.columnProgress"),
@@ -203,7 +222,7 @@ export function EpisodesPanel({ productionId, canEdit }: Props) {
         rowKey="id"
         loading={isLoading}
         sticky={CONTAINER_TABLE_STICKY}
-        scroll={{ x: 700 }}
+        scroll={{ x: 950 }}
         size="small"
         pagination={{
           total: data?.total,

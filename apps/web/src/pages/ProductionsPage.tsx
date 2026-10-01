@@ -26,10 +26,7 @@ import type { ColumnsType } from "antd/es/table";
 import { SortDropdown } from "../helpers/sort-dropdown";
 import { TableRefreshButton } from "../helpers/table-refresh-button";
 import { useDebouncedValue } from "../helpers/use-debounced-value";
-import {
-  ProductionForm,
-  mmssToSeconds,
-} from "../modules/production/ProductionForm";
+import { ProductionForm } from "../modules/production/ProductionForm";
 import type { ProductionFormValues } from "../modules/production/ProductionForm";
 
 const { Title } = Typography;
@@ -138,7 +135,7 @@ export function ProductionsPage() {
         sources: values.sources ?? [],
         youtubeChannels: values.youtubeChannels ?? [],
         keywords: values.keywords ?? [],
-        episodeTargetSeconds: values.durationMmSs ? mmssToSeconds(values.durationMmSs) : undefined,
+        episodeTargetSeconds: values.targetSeconds,
         maxEpisodes: values.maxEpisodes,
         aspect: values.aspect,
         language: values.language,

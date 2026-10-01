@@ -4,7 +4,7 @@
  * can render this with an in-memory fake client and no Auth0.
  */
 import { useMemo, useState } from "react";
-import { Alert, Modal, Spin } from "antd";
+import { Alert, Grid, Modal, Spin } from "antd";
 import { useTranslation } from "react-i18next";
 import { layoutTimeline, timelineIssues } from "@studio/timeline";
 import { useEditor } from "./useEditor";
@@ -26,6 +26,8 @@ export interface EditorViewProps {
 export function EditorView({ productionId, episodeId, client, media, onRerender }: EditorViewProps) {
   const { t } = useTranslation();
   const editor = useEditor(productionId, episodeId, client);
+  // Below 1200 px the two side panels would squeeze the player and timeline: they go full width on top instead.
+  const wide = Grid.useBreakpoint().xl ?? true;
   const [seek, setSeek] = useState({ time: 0, token: 0 });
   const [playhead, setPlayhead] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -59,12 +61,12 @@ export function EditorView({ productionId, episodeId, client, media, onRerender 
         onRerender={onRerender}
       />
 
-      <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-        <div style={{ width: 280, flexShrink: 0 }}>
+      <div style={{ display: "flex", flexWrap: wide ? "nowrap" : "wrap", gap: 12, alignItems: "flex-start" }}>
+        <div style={wide ? { width: 280, flexShrink: 0 } : { flex: "1 1 280px", order: 1 }}>
           <FootagePanel productionId={productionId} client={client} state={state} dispatch={dispatch} />
         </div>
 
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={wide ? { flex: 1, minWidth: 0 } : { flex: "1 1 100%", minWidth: 0, order: 0 }}>
           <Player
             productionId={productionId}
             episodeId={episodeId}
@@ -81,6 +83,7 @@ export function EditorView({ productionId, episodeId, client, media, onRerender 
           />
           <TimelineView
             layout={layout}
+            assets={state.timeline.assets}
             selection={state.selection}
             dispatch={dispatch}
             playhead={playhead}
@@ -91,7 +94,7 @@ export function EditorView({ productionId, episodeId, client, media, onRerender 
           />
         </div>
 
-        <div style={{ width: 320, flexShrink: 0 }}>
+        <div style={wide ? { width: 320, flexShrink: 0 } : { flex: "1 1 320px", order: 2 }}>
           <PropertiesPanel state={state} layout={layout} dispatch={dispatch} />
         </div>
       </div>
