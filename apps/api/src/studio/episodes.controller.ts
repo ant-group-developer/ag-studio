@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -15,11 +16,13 @@ import {
 } from '@nestjs/common';
 import { Request } from 'express';
 import {
+  buildYoutubePack,
   cancelEpisode,
   EPISODE_RENDER_STAGE,
   episodeExport,
   episodeRunView,
   episodeState,
+  episodeThumbnails,
   episodeTimelineSeconds,
   getEpisode,
   latestAcceptedCall,
@@ -30,11 +33,13 @@ import {
   rerenderEpisode,
   retryStage,
   readStoredYoutubeKit,
+  selectedThumbnail,
   YoutubeKitSchema,
   validateYoutubeKit,
   type EpisodeRecord,
   type EpisodeStatus,
   type RunView,
+  type ThumbnailActionDeps,
 } from '@ag-studio/engine';
 import { Logger } from '@nestjs/common';
 import { IsInt, IsObject, IsOptional, Max, Min } from 'class-validator';
@@ -117,6 +122,16 @@ export class EpisodesController {
     }
   }
 
+  private get thumbs(): ThumbnailActionDeps {
+    return { core: this.engine.core, db: this.engine.db, bucket: this.engine.bucket, urlTtlSeconds: this.engine.browserUrlTtl };
+  }
+
+  /** The picture the episode uses (an episode from before 1.2.0 gets its old pictures as rows on first sight). */
+  private pickedThumbnail(ep: EpisodeRecord) {
+    episodeThumbnails(this.thumbs, ep);
+    return selectedThumbnail(this.engine.db, getEpisode(this.engine.db, ep.id) ?? ep);
+  }
+
   /** A URL to show the object; with `downloadName`, one the browser saves under that name. */
   private sign(key: string, downloadName?: string): Promise<string> {
     return this.engine.bucket.signedGetUrl(key, this.engine.browserUrlTtl, downloadName ? { downloadName } : {});
@@ -124,8 +139,7 @@ export class EpisodesController {
 
   private async summary(ep: EpisodeRecord, covers: boolean, state = episodeState(this.engine.core, this.engine.db, ep)): Promise<EpisodeSummary> {
     const exp = episodeExport(this.engine.core, ep);
-    const thumbs = exportThumbnails(exp);
-    const thumb = thumbs[ep.selected_thumbnail ?? 0] ?? thumbs[0];
+    const thumb = covers ? this.pickedThumbnail(ep) : null;
     return {
       id: ep.id,
       idx: ep.idx,
@@ -135,7 +149,7 @@ export class EpisodesController {
       currentStage: state.current_stage,
       progress: await this.renderProgress(state.current_stage, state.render_job_id),
       durationSeconds: exp?.duration_seconds ?? episodeTimelineSeconds(this.engine.db, ep.id),
-      thumbnailUrl: thumb && covers ? await this.sign(thumb.key) : null,
+      thumbnailUrl: thumb ? await this.sign(thumb.image_key) : null,
       updatedAt: ep.updated_at,
     };
   }
@@ -210,6 +224,7 @@ export class EpisodesController {
         youtube,
         selectedTitle: ep.selected_title ?? 0,
         selectedThumbnail: ep.selected_thumbnail ?? 0,
+        selectedThumbnailId: covers ? this.pickedThumbnail(ep)?.id ?? null : null,
         thumbnails,
         exportFiles,
         finalVideoUrl: mp4 ? await this.sign(mp4.key) : null,
@@ -349,6 +364,24 @@ export class EpisodesController {
       if (!ep.run_id) throw new NotFoundException({ code: 'no_run', message: `episode ${episodeId} has no run` });
       retryStage(this.engine.core, ep.run_id, stage);
       return { ok: true };
+    });
+  }
+
+  /**
+   * The YouTube pack as the episode is now (picked thumbnail, title, description with chapters, tags; no video),
+   * built on demand: `{ url, name, sizeBytes }`, the URL saving the zip.
+   */
+  @Post(':episodeId/youtube-pack')
+  @Roles('viewer')
+  @HttpCode(HttpStatus.OK)
+  youtubePack(@Param('id') prodId: string, @Param('episodeId') episodeId: string, @Req() req: Request) {
+    return mapErrors(async () => {
+      const ep = this.requireEpisode(prodId, episodeId);
+      if (!(await this.covers(req, prodId))) {
+        throw new ForbiddenException({ code: 'footage_hidden', message: 'Bạn không có quyền xem footage của production này' });
+      }
+      const pack = await buildYoutubePack(this.thumbs, ep);
+      return { url: await this.sign(pack.key, pack.name), name: pack.name, sizeBytes: pack.size_bytes };
     });
   }
 

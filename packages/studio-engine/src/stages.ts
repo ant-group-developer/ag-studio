@@ -106,7 +106,8 @@ function writeOutput(ctx: ExecutorContext, name: string, body: string | Buffer):
 const sha256 = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 const toBuffer = (v: unknown) => Buffer.from(JSON.stringify(v, null, 2), "utf8");
 
-function slug(text: string): string {
+/** A file name from a title: ASCII, dashes, lower case (Vietnamese marks dropped). */
+export function fileSlug(text: string): string {
   return text.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D")
     .replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase() || "episode";
 }
@@ -447,7 +448,7 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
         : descriptionBody.slice(0, 5000);
 
       const prefix = `productions/${brief.production_id}/episodes/${episode.episode_id}/exports/${request.run_id}`;
-      const videoSlug = slug(title);
+      const videoSlug = fileSlug(title);
       const files: StudioExport["files"] = [];
 
       const upload = async (kind: StudioExport["files"][number]["kind"], name: string, body: Buffer, type: string) => {
@@ -604,7 +605,7 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
         await d.bucket.put(key, data, type);
         files.push({ kind, key, size_bytes: data.length, checksum: `sha256:${sha256(data)}` });
       };
-      const videoKey = `${prefix}/exports/${request.run_id}/${slug(title)}.mp4`;
+      const videoKey = `${prefix}/exports/${request.run_id}/${fileSlug(title)}.mp4`;
       await d.bucket.putFile(videoKey, videoPath, "video/mp4");
       files.push({ kind: "mp4", key: videoKey, size_bytes: statSync(videoPath).size, checksum: `sha256:${await sha256File(videoPath)}` });
 

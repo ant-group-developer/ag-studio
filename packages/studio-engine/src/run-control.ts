@@ -108,6 +108,13 @@ function acceptedOutputs(core: StudioEngineCore, s: StageRun) {
   return artifacts.map((a) => ({ a, name: basename(fileURLToPath(a.uri)) }));
 }
 
+/** Where an accepted output of a stage is on this machine (null when the stage or the file is not there). */
+export function stageArtifactPath(core: StudioEngineCore, runId: string, stageKey: string, name: string): string | null {
+  const s = core.store.listStageRuns(runId).find((x) => x.stage_key === stageKey);
+  const hit = s ? acceptedOutputs(core, s).find((x) => x.name === name) : undefined;
+  return hit ? fileURLToPath(hit.a.uri) : null;
+}
+
 function buildRunView(core: StudioEngineCore, runId: string, latestRevision: number | null): RunView {
   const run = core.store.getRun(runId);
   if (!run) throw new StudioRunError("not_found", `run ${runId} not found`);

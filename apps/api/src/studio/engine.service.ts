@@ -3,11 +3,13 @@ import { ConfigService } from '@nestjs/config';
 import {
   createStudioEngineCore,
   FarmOwnerClient,
+  ffmpegThumbnailRenderer,
   S3Bucket,
   StudioDb,
   type EditorDeps,
   type StudioBucket,
   type StudioEngineCore,
+  type ThumbnailRenderer,
 } from '@ag-studio/engine';
 import { StudioDbService } from '../db/studio-db.service';
 
@@ -22,6 +24,7 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
   private _db?: StudioDb;
   private _bucket?: StudioBucket;
   private _farm?: FarmOwnerClient;
+  private _thumbnails: ThumbnailRenderer | null = null;
 
   constructor(
     private readonly config: ConfigService,
@@ -43,6 +46,8 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
       accessKeyId: this.config.get<string>('STUDIO_R2_ACCESS_KEY_ID') as string,
       secretAccessKey: this.config.get<string>('STUDIO_R2_SECRET_ACCESS_KEY') as string,
     });
+    // Thumbnails a person makes (words, captures, uploads) are drawn here with the worker's ffmpeg and font.
+    if (ffmpeg) this._thumbnails = ffmpegThumbnailRenderer({ ffmpeg });
     this._farm = new FarmOwnerClient({
       baseUrl: this.config.get<string>('FARM_URL') as string,
       ownerKey: this.config.get<string>('FARM_OWNER_KEY') as string,
@@ -57,6 +62,8 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
   get db(): StudioDb { return this.must(this._db); }
   get bucket(): StudioBucket { return this.must(this._bucket); }
   get editor(): EditorDeps { return { db: this.db, bucket: this.bucket, farm: this.must(this._farm) }; }
+  /** Null without STUDIO_FFMPEG_PATH: the thumbnail routes that draw answer 503 then. */
+  get thumbnails(): ThumbnailRenderer | null { return this._thumbnails; }
   get browserUrlTtl(): number { return this.config.get<number>('STUDIO_BROWSER_URL_TTL_SECONDS') ?? 3600; }
 
   private must<T>(v: T | undefined): T {

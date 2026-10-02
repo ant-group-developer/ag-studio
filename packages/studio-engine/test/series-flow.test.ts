@@ -6,12 +6,13 @@
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  createStudioWorker, episodeExport, episodeRunView, episodeState, getEpisode, insertThumbnail, latestEpisodeRevision, listEpisodes, listThumbnails,
+  buildYoutubePack, captureThumbnail, composeThumbnail, createStudioWorker, cutEpisodeFrames, deleteThumbnail, episodeExport, episodeRunView,
+  episodeState, episodeThumbnails, getEpisode, insertThumbnail, latestEpisodeRevision, listEpisodes, listThumbnails, previewThumbnail, uploadThumbnail,
   planRunView, readStageDocument, rerenderEpisode, resumePlanRunFrom, saveEpisodeRevision, startEpisodeRun, startPlanRun, STUDIO_WORKFLOWS,
   selectThumbnail, StudioRunError, studioResearchCache, submitStudioGate, type ResearchSource,
 } from "../src/index.js";
 import { StudioResearchSchema, StudioYoutubeSchema, TrendReportSchema, SeriesPlanSchema, type StudioResearch, type TimelineV3 } from "@harness/contracts";
-import { FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, seedProduction, world, ROOT } from "./helpers.js";
+import { FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, readStoredZip, seedProduction, world, ROOT } from "./helpers.js";
 
 type Worker = ReturnType<typeof createStudioWorker>;
 
@@ -156,6 +157,73 @@ describe(`${PLAN_V1} + ${STUDIO_WORKFLOWS.episode.workflow}`, () => {
     const fresh = listThumbnails(s.db, auto!.id).filter((t) => t.kind === "suggestion");
     expect(getEpisode(s.db, auto!.id)!.selected_thumbnail_id).toBe(fresh[0]!.id);
   }, 90_000);
+
+  it("a person draws words on a clean frame, captures a moment, uploads a picture, and downloads the YouTube pack as it is now", async () => {
+    s = setup();
+    const prodId = seedProduction(s.db, { episode_target_seconds: 120, max_episodes: 2 });
+    await produceSeries(s, prodId);
+    const ep = listEpisodes(s.db, prodId)[0]!;
+    const d = { core: s.core, db: s.db, bucket: s.bucket };
+    const style = { position: "bottom", size: "l", text_color: "#FFFFFF", outline_color: "#000000", box_color: null, uppercase: true } as const;
+    const suggestion = episodeThumbnails(d, ep).find((t) => t.kind === "suggestion")!;
+
+    // words go on the suggestion's clean frame, never on top of its drawn words
+    const preview = await previewThumbnail(d, s.thumbnails, ep, { baseId: suggestion.id, text: "Phở sáng", style });
+    expect(preview.toString("utf8")).toContain("PHỞ SÁNG");
+    const drawn = await composeThumbnail(d, s.thumbnails, ep, { baseId: suggestion.id, text: "Phở sáng", style }, "editor-1");
+    expect(drawn).toMatchObject({ kind: "composed", parent_id: suggestion.id, base_key: suggestion.base_key, text: "Phở sáng", created_by: "editor-1" });
+    const drawnBytes = s.bucket.objects.get(drawn.image_key)!;
+    expect(drawnBytes.subarray(0, s.bucket.objects.get(suggestion.base_key!)!.length)).toEqual(s.bucket.objects.get(suggestion.base_key!));
+    await expect(composeThumbnail(d, s.thumbnails, ep, { baseId: suggestion.id, text: "x".repeat(61), style }, "editor-1")).rejects.toBeInstanceOf(StudioRunError);
+
+    const captured = await captureThumbnail(d, s.thumbnails, ep, 5, "editor-1");
+    expect(captured).toMatchObject({ kind: "frame", t_s: 5, created_by: "editor-1", asset_id: latestEpisodeRevision(s.db, ep.id)!.data.clips[0]!.asset_id });
+    const uploaded = await uploadThumbnail(d, s.thumbnails, ep, Buffer.from("png bytes"), "editor-1");
+    expect(uploaded.kind).toBe("upload");
+    expect(s.thumbnails.calls).toContain("normalize");
+    // a person deletes what they made, not the render's frames
+    deleteThumbnail(s.db, ep.id, captured.id);
+    expect(() => deleteThumbnail(s.db, ep.id, suggestion.id)).toThrow(StudioRunError);
+
+    // the pack follows the latest pick and title; the same pack twice is stored once
+    selectThumbnail(s.db, ep.id, drawn.id);
+    s.db.run("UPDATE episodes SET selected_title = 1 WHERE id = ?", [ep.id]);
+    const now = getEpisode(s.db, ep.id)!;
+    const pack = await buildYoutubePack(d, now);
+    const files = readStoredZip(s.bucket.objects.get(pack.key)!);
+    expect([...files.keys()]).toEqual(["thumbnail.jpg", "youtube.json", "title.txt", "description.txt", "tags.txt"]);
+    expect(files.get("thumbnail.jpg")).toEqual(drawnBytes);
+    const yt = StudioYoutubeSchema.parse(JSON.parse(files.get("youtube.json")!.toString("utf8")));
+    expect(yt.thumbnail_key).toBe(drawn.image_key);
+    expect(files.get("title.txt")!.toString("utf8")).toBe(yt.title);
+    // the second title is the one picked: the first is now an alternative
+    expect(yt.alt_titles).toHaveLength(2);
+    expect(yt.alt_titles[0]).not.toBe(yt.title);
+    expect(pack.name).toMatch(/-youtube\.zip$/);
+    const objects = s.bucket.objects.size;
+    expect((await buildYoutubePack(d, now)).key).toBe(pack.key);
+    expect(s.bucket.objects.size).toBe(objects);
+  }, 60_000);
+
+  it("an episode rendered before 1.2.0 gets its old pictures as suggestions, and clean frames cut once on demand", async () => {
+    s = setup();
+    const prodId = seedProduction(s.db, { episode_target_seconds: 120, max_episodes: 2 });
+    await produceSeries(s, prodId);
+    const ep = listEpisodes(s.db, prodId)[0]!;
+    const d = { core: s.core, db: s.db, bucket: s.bucket };
+    // as if exported by 1.1.0: no rows yet, its 3 pictures only in export.json
+    s.db.run("DELETE FROM episode_thumbnails WHERE episode_id = ?", [ep.id]);
+    s.db.run("UPDATE episodes SET selected_thumbnail_id = NULL, selected_thumbnail = 2 WHERE id = ?", [ep.id]);
+    const old = getEpisode(s.db, ep.id)!;
+    const rows = episodeThumbnails(d, old);
+    expect(rows.map((t) => t.kind)).toEqual(["suggestion", "suggestion", "suggestion"]);
+    expect(getEpisode(s.db, ep.id)!.selected_thumbnail_id).toBe(rows[2]!.id);
+
+    const cut = await cutEpisodeFrames(d, s.thumbnails, old);
+    expect(cut).toBeGreaterThan(0);
+    expect(listThumbnails(s.db, ep.id).filter((t) => t.kind === "frame")).toHaveLength(cut);
+    expect(await cutEpisodeFrames(d, s.thumbnails, old)).toBe(0);
+  }, 60_000);
 
   it("a timeline the render cannot play parks at freeze-timeline; fixing it and Render lại finishes the episode", async () => {
     s = setup();

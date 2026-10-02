@@ -10,8 +10,12 @@ import type { EpisodeRecord, StudioDb } from "./studio-db.js";
 
 export const THUMBNAIL_KINDS = ["frame", "suggestion", "composed", "upload", "canva", "ai"] as const;
 export type ThumbnailKind = (typeof THUMBNAIL_KINDS)[number];
-/** Pictures a person made: the only ones a person may delete. */
+/** Pictures a person made (a frame a person captured is a `frame` they made too). */
 export const USER_THUMBNAIL_KINDS: readonly ThumbnailKind[] = ["composed", "upload", "canva"];
+
+/** Made by a person, so theirs to delete and kept by a new render. */
+export const madeByPerson = (t: Pick<EpisodeThumbnail, "kind" | "created_by">): boolean =>
+  USER_THUMBNAIL_KINDS.includes(t.kind) || t.created_by !== "system";
 
 export interface EpisodeThumbnail {
   id: string; episode_id: string; kind: ThumbnailKind;
@@ -77,22 +81,23 @@ export function replaceRenderThumbnails(db: StudioDb, episodeId: string, runId: 
   return db.immediate(() => {
     const ep = db.get<{ selected_thumbnail_id: string | null }>("SELECT selected_thumbnail_id FROM episodes WHERE id = ?", [episodeId]);
     const picked = ep?.selected_thumbnail_id ? getThumbnail(db, episodeId, ep.selected_thumbnail_id) : null;
-    const stale = (t: EpisodeThumbnail) => (t.kind === "frame" || t.kind === "suggestion") && t.source_run_id !== runId;
+    const stale = (t: EpisodeThumbnail) => !madeByPerson(t) && (t.kind === "frame" || t.kind === "suggestion") && t.source_run_id !== runId;
     if (!picked || stale(picked)) {
       db.run("UPDATE episodes SET selected_thumbnail_id = ?, updated_at = ? WHERE id = ?", [firstSuggestionId, new Date().toISOString(), episodeId]);
     }
     return db.run(
-      "DELETE FROM episode_thumbnails WHERE episode_id = ? AND kind IN ('frame', 'suggestion') AND (source_run_id IS NULL OR source_run_id <> ?)",
+      `DELETE FROM episode_thumbnails WHERE episode_id = ? AND kind IN ('frame', 'suggestion') AND created_by = 'system'
+         AND (source_run_id IS NULL OR source_run_id <> ?)`,
       [episodeId, runId],
     ).changes;
   });
 }
 
-/** Delete a picture a person made (frames and suggestions of a render stay); a deleted selection is cleared. */
+/** Delete a picture a person made (a render's frames and suggestions stay); a deleted selection is cleared. */
 export function deleteThumbnail(db: StudioDb, episodeId: string, id: string): EpisodeThumbnail {
   const t = requireThumbnail(db, episodeId, id);
-  if (!USER_THUMBNAIL_KINDS.includes(t.kind)) {
-    throw new StudioRunError("invalid", "chỉ xoá được ảnh do người dùng tạo (thêm chữ, tải lên, từ Canva)", { code: "not_user_made" });
+  if (!madeByPerson(t)) {
+    throw new StudioRunError("invalid", "chỉ xoá được ảnh do người dùng tạo (thêm chữ, chụp, tải lên, từ Canva)", { code: "not_user_made" });
   }
   db.immediate(() => {
     db.run("UPDATE episodes SET selected_thumbnail_id = NULL WHERE id = ? AND selected_thumbnail_id = ?", [episodeId, id]);
