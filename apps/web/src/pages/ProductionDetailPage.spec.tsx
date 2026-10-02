@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeAll, describe, expect, it, vi } from "vitest";
@@ -114,5 +114,46 @@ describe("ProductionDetailPage", () => {
     expect(screen.getAllByText("Nghiên cứu thị trường").length).toBeGreaterThan(0);
     // The run is read by production id
     expect(client.getRun).toHaveBeenCalledWith("p-1");
+
+    // Only the step the run is at shows: research, not the info form
+    const section = (id: string) => document.getElementById(id)!;
+    await waitFor(() => expect(section("step-info").hidden).toBe(true));
+    expect(section("step-research").hidden).toBe(false);
+
+    // Picking an earlier step on the bar shows that step instead
+    fireEvent.click(screen.getByText("Thông tin production"));
+    expect(section("step-info").hidden).toBe(false);
+    expect(section("step-research").hidden).toBe(true);
+  }, 15000);
+
+  it("báo lỗi và cho kiểm tra lại khi không kiểm tra được quyền, thay vì ẩn nút mà không nói gì", async () => {
+    client.getProduction.mockResolvedValue({
+      id: "p-2", teamId: "t-1", teamName: "Team A", title: "Hành trình Hoa Lư",
+      description: "", goal: "", audience: "", tone: "", notes: "",
+      status: "draft", runId: null, createdAt: "", updatedAt: "", ownerUserId: null,
+      episodeTargetSeconds: 60, maxEpisodes: 12, aspect: "16:9", language: "vi",
+      music: null, sources: ["f-1"], youtubeChannels: [], keywords: [],
+      ownChannels: [], hasRnd: false, hasBranding: false, waitingGate: null,
+      episodeCounts: { total: 0, ready: 0, producing: 0, failed: 0 },
+    });
+    client.checkProductionAccess.mockRejectedValueOnce(new Error("HTTP 500")).mockResolvedValue({ hasAccess: true });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={["/productions/p-2"]}>
+          <Routes>
+            <Route path="/productions/:productionId" element={<ProductionDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Không kiểm tra được quyền truy cập", {}, { timeout: 15000 })).toBeTruthy();
+    expect(screen.queryByText("Bắt đầu nghiên cứu")).toBeNull();
+
+    // Checking again with the API answering shows the buttons and drops the error
+    fireEvent.click(screen.getByText("Kiểm tra lại"));
+    await waitFor(() => expect(screen.queryByText("Không kiểm tra được quyền truy cập")).toBeNull());
+    expect(screen.getByRole("button", { name: /Lưu thông tin/ })).toBeTruthy();
   }, 15000);
 });
