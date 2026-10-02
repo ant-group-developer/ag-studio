@@ -1,5 +1,6 @@
 /**
- * GĐ4 acceptance E2E: `ag-studio-series-plan@1.0.0` + `ag-studio-episode@1.0.0` series flow.
+ * GĐ4 acceptance E2E, research first: `ag-studio-series-plan@2.0.0` (R&D and branding approved before the plan) +
+ * `ag-studio-episode@1.1.0` series flow.
  *
  * Series plan API → approve-plan gate → episode spawning →
  * per-episode build-timeline → render (real farm + render worker) → export.
@@ -772,6 +773,35 @@ describe.skipIf(!isE2E)(
       // Status is now planning
       const planningProd = await ok<ProductionView>("GET", `/productions/${prodId}`);
       expect(["planning", "waiting_approval"]).toContain(planningProd.status);
+    });
+
+    it("approve-rnd and approve-branding: the R&D and branding fake Claude proposes are approved and become the production's", async () => {
+      await waitGate("approve-rnd");
+      const rnd = await ok<{ schema_version: string; direction: { episode_target_seconds: number } }>(
+        "GET",
+        `/productions/${prodId}/run/documents/rnd/rnd.json`,
+      );
+      expect(rnd.schema_version).toBe("studio.rnd/v1");
+      expect(rnd.direction.episode_target_seconds).toBe(90); // the hint typed at creation
+      expect((await ok<{ accepted: boolean }>("POST", `/productions/${prodId}/run/gates/approve-rnd`, { document: rnd })).accepted).toBe(true);
+
+      await waitGate("approve-branding");
+      const branding = await ok<{ schema_version: string }>(
+        "GET",
+        `/productions/${prodId}/run/documents/branding/branding.json`,
+      );
+      expect(branding.schema_version).toBe("studio.branding/v1");
+      expect((await ok<{ accepted: boolean }>("POST", `/productions/${prodId}/run/gates/approve-branding`, { document: branding })).accepted).toBe(true);
+      const saved = await waitFor(
+        "branding applied",
+        async () => {
+          const doc = await ok<{ document: unknown }>("GET", `/productions/${prodId}/branding`);
+          return doc.document ? doc : null;
+        },
+        60_000,
+        1000,
+      );
+      expect(saved.document).toEqual(branding);
     });
 
     it("approve-plan: fake Claude produces a series plan; plan is approved and episodes spawn", async () => {

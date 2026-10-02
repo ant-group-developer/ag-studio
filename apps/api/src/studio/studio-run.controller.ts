@@ -34,6 +34,13 @@ import { mapErrors } from './http-errors';
 
 const ORDER: TeamRole[] = ['viewer', 'editor', 'producer', 'owner'];
 
+/** Each approval gate: the stage whose document Claude proposed, and how the approval is kept in the dataset. */
+const APPROVALS = {
+  'approve-rnd': { stage: 'rnd', file: 'rnd.json', kind: 'rnd' },
+  'approve-branding': { stage: 'branding', file: 'branding.json', kind: 'branding' },
+  'approve-plan': { stage: 'plan-episodes', file: 'series-plan.json', kind: 'series_plan' },
+} as const;
+
 /**
  * Plan run routes for GĐ2 (series): start the plan run, watch it, read stage documents,
  * submit the approve-plan gate, retry / resume / cancel.
@@ -73,35 +80,53 @@ export class StudioRunController {
 
   /**
    * Submit the approve-plan gate: body `{document: SeriesPlan}`.
-   * Returns `{accepted: true}` or 422 `{code: 'gate_rejected', failed: [...]}`.
+   * Returns `{accepted: true}` or 422 `{code: 'rejected', failed: [{check_id, evidence: {problems}}]}`.
    */
   @Post('gates/approve-plan')
   @Roles('producer')
   @HttpCode(HttpStatus.OK)
   approvePlan(@Param('id') id: string, @Body() dto: SubmitGateDto, @Req() req: Request) {
+    return this.approve(id, 'approve-plan', dto, req);
+  }
+
+  /** Submit the approve-rnd gate: body `{document: StudioRnd}` (Claude's R&D, edited). Same answers as approve-plan. */
+  @Post('gates/approve-rnd')
+  @Roles('producer')
+  @HttpCode(HttpStatus.OK)
+  approveRnd(@Param('id') id: string, @Body() dto: SubmitGateDto, @Req() req: Request) {
+    return this.approve(id, 'approve-rnd', dto, req);
+  }
+
+  /** Submit the approve-branding gate: body `{document: StudioBranding}`. Same answers as approve-plan. */
+  @Post('gates/approve-branding')
+  @Roles('producer')
+  @HttpCode(HttpStatus.OK)
+  approveBranding(@Param('id') id: string, @Body() dto: SubmitGateDto, @Req() req: Request) {
+    return this.approve(id, 'approve-branding', dto, req);
+  }
+
+  private approve(id: string, gate: keyof typeof APPROVALS, dto: SubmitGateDto, req: Request) {
     this.requireRole(req, id, 'producer');
     return mapErrors(async () => {
       const runId = this.requireRunId(id);
-      const report = await submitStudioGate(
-        this.engine.core, this.engine.db, runId, 'approve-plan', dto.document,
-      );
-      this.recordPlanApproval(id, runId, dto.document, req?.authContext?.userId);
+      const report = await submitStudioGate(this.engine.core, this.engine.db, runId, gate, dto.document);
+      this.recordApproval(id, runId, gate, dto.document, req?.authContext?.userId);
       return { accepted: true, stageState: report.stageState, runState: report.runState };
     });
   }
 
-  /** Claude's plan next to the one approved (training dataset); never fails the approval. */
-  private recordPlanApproval(productionId: string, runId: string, approved: unknown, userId: string | undefined): void {
+  /** Claude's proposal next to the document approved (training dataset); never fails the approval. */
+  private recordApproval(productionId: string, runId: string, gate: keyof typeof APPROVALS, approved: unknown, userId: string | undefined): void {
     if (!userId) return;
+    const { stage, file, kind } = APPROVALS[gate];
     try {
       let proposed: unknown;
-      try { proposed = readStageDocument(this.engine.core, runId, 'plan-episodes', 'series-plan.json'); } catch { proposed = undefined; }
+      try { proposed = readStageDocument(this.engine.core, runId, stage, file); } catch { proposed = undefined; }
       recordHumanEdit(this.engine.db, {
-        userId, productionId, kind: 'series_plan', before: proposed, after: approved,
-        llmCallId: latestAcceptedCall(this.engine.db, runId, 'plan-episodes'),
+        userId, productionId, kind, before: proposed, after: approved, llmCallId: latestAcceptedCall(this.engine.db, runId, stage),
       });
     } catch (e) {
-      this.logger.warn(`could not record the plan approval of ${productionId}: ${e instanceof Error ? e.message : String(e)}`);
+      this.logger.warn(`could not record the ${gate} approval of ${productionId}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

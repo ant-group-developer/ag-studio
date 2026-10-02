@@ -13,3 +13,4 @@ export { TEAM_SKILL_LIMITS, TEAM_SKILL_STEPS, type TeamGuide, type TeamSkillStep
 export * from "./youtube-research.js";
 export * from "./llm-log.js";
 export * from "./team-skills.js";
+export * from "./production-docs.js";

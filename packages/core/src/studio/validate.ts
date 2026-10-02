@@ -140,7 +140,7 @@ function escapeRegExp(s: string): string {
  * the person named some; content pillars have distinct names. Warnings `hint_*`: the episode length or count the
  * person typed is not the direction's.
  */
-export function validateRnd(raw: unknown, ctx: { seed: StudioSeed }): StudioValidation<StudioRnd> {
+export function validateRnd(raw: unknown, ctx: { seed: Pick<StudioSeed, "channels" | "hints"> }): StudioValidation<StudioRnd> {
   const parsed = StudioRndSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, value: null, problems: zodProblems(parsed.error), warnings: [] };
   const rnd = parsed.data;

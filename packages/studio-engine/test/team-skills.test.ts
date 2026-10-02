@@ -61,7 +61,7 @@ describe("team skills", () => {
     createTeamSkill(w.db, "team-1", { name: "Một", content: "một", purpose: "p", appliesTo: ["youtube-kit"], position: 1 }, "u");
     createTeamSkill(w.db, "team-1", { name: "Tắt", content: "tắt", enabled: false }, "u");
 
-    const { runId } = startPlanRun(w.core, w.db, prodId);
+    const { runId } = startPlanRun(w.core, w.db, prodId, { workflow: "ag-studio-series-plan@1.0.0" });
     expect(teamGuidesForRun(w.db, runId)).toEqual([
       { name: "Một", purpose: "p", applies_to: ["youtube-kit"], content: "một" },
       { name: "Hai", purpose: "", applies_to: [], content: "hai" },
@@ -98,7 +98,7 @@ describe("team skills in the Claude calls of a production", () => {
       claude: { skillsDir: join(ROOT, "skills"), argv: ["node", FAKE_CLAUDE], model: "fake", maxTurns: 3 },
       owner: "auth0|owner",
     });
-    startPlanRun(w.core, w.db, prodId);
+    startPlanRun(w.core, w.db, prodId, { workflow: "ag-studio-series-plan@1.0.0" });
     for (let i = 0; i < 200 && (await worker.runOnce()) !== "idle"; i++);
     const calls = listLlmCalls(w.db, { productionId: prodId, page: 1, pageSize: 20 }).items.filter((c) => c.stage_key === "plan-episodes");
     expect(calls).toHaveLength(1);

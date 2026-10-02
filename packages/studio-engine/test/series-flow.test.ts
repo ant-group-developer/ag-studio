@@ -15,6 +15,9 @@ import { FAKE_CLAUDE, fakeFarm, fakeFootage, seedProduction, world, ROOT } from 
 
 type Worker = ReturnType<typeof createStudioWorker>;
 
+/** This file keeps covering the plan release before the research-first flow (runs of it may still be in flight). */
+const PLAN_V1 = "ag-studio-series-plan@1.0.0";
+
 async function drain(worker: Worker, maxTicks = 400): Promise<void> {
   for (let i = 0; i < maxTicks; i++) {
     if ((await worker.runOnce()) === "idle") return;
@@ -36,7 +39,7 @@ function setup(assets = 8, seconds = 30, research?: ResearchSource) {
 
 /** Plan -> approve as proposed -> spawn; returns once every episode run has finished. */
 async function produceSeries(s: ReturnType<typeof setup>, prodId: string) {
-  const { runId } = startPlanRun(s.core, s.db, prodId);
+  const { runId } = startPlanRun(s.core, s.db, prodId, { workflow: PLAN_V1 });
   await drain(s.worker);
   const waiting = planRunView(s.core, s.db, prodId);
   expect(waiting.waiting_gate).toBe("approve-plan");
@@ -46,7 +49,7 @@ async function produceSeries(s: ReturnType<typeof setup>, prodId: string) {
   return { runId, plan };
 }
 
-describe(`${STUDIO_WORKFLOWS.plan.workflow} + ${STUDIO_WORKFLOWS.episode.workflow}`, () => {
+describe(`${PLAN_V1} + ${STUDIO_WORKFLOWS.episode.workflow}`, () => {
   let s: ReturnType<typeof setup>;
   afterEach(() => s?.core.close());
 
@@ -147,7 +150,7 @@ describe(`${STUDIO_WORKFLOWS.plan.workflow} + ${STUDIO_WORKFLOWS.episode.workflo
     const now = new Date().toISOString();
     s.db.run("INSERT INTO episodes (id, production_id, idx, title, hook, plan, created_at, updated_at) VALUES ('ep-x', ?, 1, 'T', 'h', '{}', ?, ?)", [prodId, now, now]);
     startEpisodeRun(s.core, s.db, "ep-x");
-    const replan = (() => { try { startPlanRun(s.core, s.db, prodId); } catch (e) { return e; } return null; })();
+    const replan = (() => { try { startPlanRun(s.core, s.db, prodId, { workflow: PLAN_V1 }); } catch (e) { return e; } return null; })();
     expect(replan).toBeInstanceOf(StudioRunError);
     expect((replan as StudioRunError).details.code).toBe("episode_producing");
     const rerender = (() => { try { rerenderEpisode(s.core, s.db, "ep-x"); } catch (e) { return e; } return null; })();
@@ -202,7 +205,7 @@ describe(`${STUDIO_WORKFLOWS.plan.workflow} + ${STUDIO_WORKFLOWS.episode.workflo
     s = setup(8, 30, research);
     const prodId = seedProduction(s.db, { episode_target_seconds: 120, max_episodes: 2 });
     s.db.run("UPDATE productions SET keywords = ?, youtube_channels = ? WHERE id = ?", [JSON.stringify(["phở"]), JSON.stringify(["@kenhA"]), prodId]);
-    const { runId } = startPlanRun(s.core, s.db, prodId);
+    const { runId } = startPlanRun(s.core, s.db, prodId, { workflow: PLAN_V1 });
     await drain(s.worker);
     expect(asked).toEqual([["@kenhA", "phở"]]);
     const doc = StudioResearchSchema.parse(readStageDocument(s.core, runId, "research", "research.json"));

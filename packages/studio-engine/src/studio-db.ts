@@ -6,7 +6,10 @@
  */
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
-import { HarnessError, TimelineV3Schema, type TimelineV3 } from "@harness/contracts";
+import {
+  HarnessError, StudioBrandingSchema, StudioRndSchema, TimelineV3Schema,
+  type ChannelRef, type StudioBranding, type StudioHints, type StudioRnd, type TimelineV3,
+} from "@harness/contracts";
 
 type Param = string | number | null;
 
@@ -39,7 +42,43 @@ export interface ProductionRecord {
   youtube_channels: string | null; keywords: string | null;
   episode_target_seconds: number | null; max_episodes: number | null;
   trend_report: string | null;
+  /** Migration 0016: the team's own channels, and the R&D and branding in use (JSON). */
+  own_channels: string | null;
+  rnd: string | null; rnd_updated_at: string | null; rnd_updated_by: string | null;
+  branding: string | null; branding_updated_at: string | null; branding_updated_by: string | null;
   created_at: string; updated_at: string;
+}
+
+const parseList = (v: string | null): string[] => (v ? (JSON.parse(v) as string[]) : []);
+
+/** Own channels first, then reference channels; a link given in both counts as the team's own. */
+export function productionChannels(p: ProductionRecord): ChannelRef[] {
+  const own = parseList(p.own_channels).map((url) => ({ url, role: "own" as const }));
+  const seen = new Set(own.map((c) => c.url.trim().toLowerCase()));
+  const reference = parseList(p.youtube_channels).filter((url) => !seen.has(url.trim().toLowerCase())).map((url) => ({ url, role: "reference" as const }));
+  return [...own, ...reference];
+}
+
+/** What the person typed before research (the R&D keeps it): the production's description and direction fields. */
+export function productionHints(p: ProductionRecord): StudioHints {
+  return {
+    description: p.brief ?? "", goal: p.goal ?? "", audience: p.audience ?? "", tone: p.tone ?? "", notes: p.notes ?? "",
+    episode_target_seconds: p.episode_target_seconds ?? null, max_episodes: p.max_episodes ?? null,
+  };
+}
+
+export function productionRnd(p: ProductionRecord): StudioRnd | null {
+  return p.rnd ? StudioRndSchema.parse(JSON.parse(p.rnd)) : null;
+}
+export function productionBranding(p: ProductionRecord): StudioBranding | null {
+  return p.branding ? StudioBrandingSchema.parse(JSON.parse(p.branding)) : null;
+}
+
+/** Keep `rnd` / `branding` as the production's current one (`by`: a user id, or `gate:<run_id>` for an approval). */
+export function saveProductionDocument(db: StudioDb, productionId: string, kind: "rnd" | "branding", doc: StudioRnd | StudioBranding, by: string): void {
+  const now = new Date().toISOString();
+  db.run(`UPDATE productions SET ${kind} = ?, ${kind}_updated_at = ?, ${kind}_updated_by = ?, updated_at = ? WHERE id = ?`,
+    [JSON.stringify(doc), now, by, now, productionId]);
 }
 
 export function getProduction(db: StudioDb, id: string): ProductionRecord | null {
