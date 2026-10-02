@@ -42,6 +42,16 @@ export class TeamsService {
     return { id, name, createdAt: now, members: [{ userId: ownerId, role: 'owner' }] };
   }
 
+  /** One team with the caller's role (null for an admin who is not a member) and its counts. */
+  getTeam(teamId: string, userId: string): { id: string; name: string; createdAt: string; updatedAt: string; role: TeamRole | null; memberCount: number; productionCount: number } {
+    const team = this.db.get<TeamRow>('SELECT * FROM teams WHERE id = ?', [teamId]);
+    if (!team) throw new NotFoundException(`Team ${teamId} not found`);
+    const role = this.db.get<{ role: TeamRole }>('SELECT role FROM team_members WHERE team_id = ? AND user_id = ?', [teamId, userId])?.role ?? null;
+    const memberCount = this.db.get<{ n: number }>('SELECT COUNT(*) as n FROM team_members WHERE team_id = ?', [teamId])?.n ?? 0;
+    const productionCount = this.db.get<{ n: number }>("SELECT COUNT(*) as n FROM productions WHERE team_id = ? AND status != 'archived'", [teamId])?.n ?? 0;
+    return { id: team.id, name: team.name, createdAt: team.created_at, updatedAt: team.updated_at, role, memberCount, productionCount };
+  }
+
   updateTeam(teamId: string, name: string): { id: string; name: string; createdAt: string; updatedAt: string } {
     const existing = this.db.get<TeamRow>('SELECT * FROM teams WHERE id = ?', [teamId]);
     if (!existing) throw new NotFoundException(`Team ${teamId} not found`);
