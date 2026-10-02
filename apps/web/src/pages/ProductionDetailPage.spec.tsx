@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeAll, describe, expect, it, vi } from "vitest";
@@ -114,5 +114,15 @@ describe("ProductionDetailPage", () => {
     expect(screen.getAllByText("Nghiên cứu thị trường").length).toBeGreaterThan(0);
     // The run is read by production id
     expect(client.getRun).toHaveBeenCalledWith("p-1");
+
+    // Only the step the run is at shows: research, not the info form
+    const section = (id: string) => document.getElementById(id)!;
+    await waitFor(() => expect(section("step-info").hidden).toBe(true));
+    expect(section("step-research").hidden).toBe(false);
+
+    // Picking an earlier step on the bar shows that step instead
+    fireEvent.click(screen.getByText("Thông tin production"));
+    expect(section("step-info").hidden).toBe(false);
+    expect(section("step-research").hidden).toBe(true);
   }, 15000);
 });

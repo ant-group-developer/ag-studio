@@ -57,13 +57,6 @@ export function runToStepIndex(run: RunView | null | undefined): number {
   return 1;
 }
 
-/** Card each step scrolls to */
-const STEP_SECTIONS = ["step-info", "step-research", "step-rnd", "step-branding", "step-plan", "step-episodes"];
-
-function scrollToStep(i: number) {
-  document.getElementById(STEP_SECTIONS[i]!)?.scrollIntoView({ behavior: "smooth", block: "start" });
-}
-
 /** Extract music input from form values (null when musicTrack is absent). */
 function buildMusicInput(values: ProductionFormValues) {
   return values.musicTrack
@@ -172,6 +165,11 @@ export function ProductionDetailPage() {
     queryFn: () => client.getSeriesPlan(productionId!, "approve-plan"),
     enabled: !!runId && stepIdx >= 5,
   });
+
+  // Step shown on the page: the run's own step, unless an earlier one was picked on the bar.
+  // The run moving on brings the page back to where it is.
+  const [pickedStep, setPickedStep] = useState<number | null>(null);
+  useEffect(() => setPickedStep(null), [stepIdx]);
 
   const { data: catalog } = useQuery({
     queryKey: ["catalog", productionId],
@@ -369,7 +367,7 @@ export function ProductionDetailPage() {
     return <div>{t("productions.notFound")}</div>;
 
   const stepIndex = runToStepIndex(run);
-  const stepStatus =
+  const stepStatus: "error" | "finish" | "process" =
     run?.state === "FAILED" || production.status === "failed"
       ? "error"
       : production.status === "done"
@@ -377,12 +375,11 @@ export function ProductionDetailPage() {
         : "process";
 
   const canEdit = !!(access?.hasAccess);
+  const isV1Run = run ? !run.stages.find((s) => s.key === "rnd") : false;
   const runIsActive =
     run?.state === "RUNNING" ||
     run?.state === "WAITING" ||
     run?.state === "CANCEL_REQUESTED";
-
-  const isV1Run = run ? !run.stages.find((s) => s.key === "rnd") : false;
 
   // Determine which plan to show (approved if step >= 5, else draft)
   const planDoc = stepIndex >= 5 ? (approvedPlan ?? plan) : plan;
@@ -411,10 +408,15 @@ export function ProductionDetailPage() {
     t("productions.stepEpisodes"),
   ];
 
+  // V1 runs go straight from research to the plan: R&D and branding have nothing to show
+  const skipped = (i: number) => isV1Run && (i === 2 || i === 3);
+  const viewStep = pickedStep !== null && pickedStep <= stepIndex && !skipped(pickedStep) ? pickedStep : stepIndex;
+
+  // `current` marks the step on view, so each step carries its own progress status
   const stepItems = stepTitles.map((title, i) => ({
     title: <Tooltip title={stepDescriptions[i]}>{title}</Tooltip>,
-    disabled: i > stepIndex,
-    ...(i === stepIndex ? { onClick: () => scrollToStep(i) } : {}),
+    disabled: i > stepIndex || skipped(i),
+    status: i < stepIndex ? ("finish" as const) : i === stepIndex ? stepStatus : ("wait" as const),
   }));
 
   // Re-run dropdown items
@@ -528,16 +530,16 @@ export function ProductionDetailPage() {
       {/* 6-step progress bar */}
       <Card style={{ marginBottom: 16 }} size="small">
         <Steps
-          current={stepIndex}
-          status={stepStatus}
+          type="navigation"
+          current={viewStep}
           items={stepItems}
           size="small"
           style={{ marginBottom: 0 }}
-          onChange={scrollToStep}
+          onChange={setPickedStep}
         />
       </Card>
 
-      {/* PlanRunStages — failed/waiting non-gate stages */}
+      {/* PlanRunStages — failed/waiting non-gate stages, whatever step is on view */}
       {run && (
         <PlanRunStages
           productionId={productionId}
@@ -546,9 +548,13 @@ export function ProductionDetailPage() {
         />
       )}
 
+      {/* One step on view at a time. Steps reached stay mounted (hidden) so the form and unsaved edits keep */}
+      {/* their state when another step is looked at */}
+
       {/* Step 0: editable production info */}
       <Card
         id="step-info"
+        hidden={viewStep !== 0}
         style={{ marginBottom: 16 }}
         extra={
           <Space>
@@ -611,6 +617,7 @@ export function ProductionDetailPage() {
       {stepIndex >= 1 && (
         <Card
           id="step-research"
+          hidden={viewStep !== 1}
           style={{ marginBottom: 16 }}
           title={t("productions.stepResearch")}
           size="small"
@@ -627,6 +634,7 @@ export function ProductionDetailPage() {
       {showV2Rnd && (
         <Card
           id="step-rnd"
+          hidden={viewStep !== 2}
           style={{ marginBottom: 16 }}
           title={t("productions.stepRnd")}
           size="small"
@@ -683,6 +691,7 @@ export function ProductionDetailPage() {
       {showV2Branding && (
         <Card
           id="step-branding"
+          hidden={viewStep !== 3}
           style={{ marginBottom: 16 }}
           title={t("productions.stepBranding")}
           size="small"
@@ -739,6 +748,7 @@ export function ProductionDetailPage() {
       {stepIndex >= 4 && planDoc && (
         <Card
           id="step-plan"
+          hidden={viewStep !== 4}
           style={{ marginBottom: 16 }}
           title={t("productions.stepPlan")}
           size="small"
@@ -764,7 +774,7 @@ export function ProductionDetailPage() {
 
       {/* Step 5: Episodes panel */}
       {stepIndex >= 5 && (
-        <Card id="step-episodes" style={{ marginBottom: 16 }} size="small">
+        <Card id="step-episodes" hidden={viewStep !== 5} style={{ marginBottom: 16 }} size="small">
           <EpisodesPanel productionId={productionId} canEdit={canEdit} />
         </Card>
       )}
