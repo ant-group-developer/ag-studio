@@ -134,24 +134,42 @@ export function BrandingEditor({
     setPreviewState(updated);
   };
 
+  // Problems found before sending (the server's come in through `problems`)
+  const [localProblems, setLocalProblems] = useState<string[]>([]);
+  const shownProblems = [...localProblems, ...problems];
+
   const handleSubmit = useCallback(async () => {
-    const values = await form.validateFields();
-    // Normalise palette hex colours
-    if (values.thumbnail?.palette) {
-      values.thumbnail.palette.text = toHex(values.thumbnail.palette.text);
-      values.thumbnail.palette.outline = toHex(values.thumbnail.palette.outline);
-      values.thumbnail.palette.accent = toHex(values.thumbnail.palette.accent);
+    setLocalProblems([]);
+    try {
+      await form.validateFields();
+    } catch (e) {
+      // antd shows the message under the field; bring it into view
+      const first = (e as { errorFields?: { name: (string | number)[] }[] }).errorFields?.[0];
+      if (first) form.scrollToField(first.name, { block: "center" });
+      return;
     }
-    // Validate with Zod
-    const result = StudioBrandingSchema.safeParse(values);
+    // The whole store, not validateFields' result: that holds only mounted fields, so it misses schema_version
+    // and every field of a folded panel, and the strict schema then rejects the document.
+    // getFieldsValue(true) is the store itself, so copy before normalising the palette.
+    const values = form.getFieldsValue(true) as StudioBranding;
+    const palette = values.thumbnail?.palette;
+    const doc = palette
+      ? {
+          ...values,
+          thumbnail: {
+            ...values.thumbnail,
+            palette: { text: toHex(palette.text), outline: toHex(palette.outline), accent: toHex(palette.accent) },
+          },
+        }
+      : values;
+    const result = StudioBrandingSchema.safeParse(doc);
     if (!result.success) {
-      const schemaErrors = result.error.errors.map((e) => `${e.path.join(".")}: ${e.message}`);
-      throw Object.assign(new Error(t("brandingEditor.schemaErrors")), {
-        body: { problems: schemaErrors.map((m) => ({ code: "schema", message: m })) },
-      });
+      setLocalProblems(result.error.errors.map((e) => `${e.path.join(".")}: ${e.message}`));
+      return;
     }
-    await onSubmit(result.data);
-  }, [form, onSubmit, t]);
+    // A failed request is shown by the parent's onError
+    await onSubmit(result.data).catch(() => undefined);
+  }, [form, onSubmit]);
 
   return (
     <Form
@@ -161,11 +179,11 @@ export function BrandingEditor({
       disabled={readOnly}
       onValuesChange={handleValuesChange}
     >
-      {problems.length > 0 && (
+      {shownProblems.length > 0 && (
         <Alert
           type="error"
           message={t("brandingEditor.problemsTitle")}
-          description={<ul style={{ margin: 0, paddingLeft: 20 }}>{problems.map((p, i) => <li key={i}>{p}</li>)}</ul>}
+          description={<ul style={{ margin: 0, paddingLeft: 20 }}>{shownProblems.map((p, i) => <li key={i}>{p}</li>)}</ul>}
           showIcon
           style={{ marginBottom: 12 }}
         />
