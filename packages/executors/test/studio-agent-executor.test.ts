@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { newId, type StageRequest } from "@harness/contracts";
 import { CliAgentRuntime } from "@harness/adapter-agent-cli";
 import { STUDIO_TYPES } from "@harness/core";
-import { StudioAgentExecutor, type StudioLlmCall } from "../src/studio-agent-executor.js";
+import { StudioAgentExecutor, type StudioAgentExecutorOptions, type StudioLlmCall } from "../src/studio-agent-executor.js";
 
 const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..", "..", "..");
 const FAKE = join(ROOT, "fixtures", "fake-studio-claude.mjs");
@@ -46,6 +46,7 @@ const catalog = {
 function stage(
   skill: string, outType: string, outName: string, inputs: Record<string, unknown>, mode = "",
   recordCall?: (call: StudioLlmCall) => Promise<void>,
+  extra: Partial<StudioAgentExecutorOptions> = {},
 ): { req: StageRequest; ex: StudioAgentExecutor } {
   const ws = mkdtempSync(join(tmpdir(), "sae-"));
   mkdirSync(join(ws, "output"));
@@ -69,6 +70,7 @@ function stage(
     }),
     ...(recordCall ? { recordCall } : {}),
     rateLimitBackoffMs: [10],
+    ...extra,
   });
   return { req, ex };
 }
@@ -164,5 +166,41 @@ describe("StudioAgentExecutor call log", () => {
     const s = stage("studio-plan-episodes", STUDIO_TYPES.seriesPlan, "series-plan.json", { [STUDIO_TYPES.brief]: brief, [STUDIO_TYPES.catalog]: catalog },
       "", async () => { throw new Error("R2 is down"); });
     expect((await run(s)).outcome).toBe("succeeded");
+  });
+});
+
+describe("StudioAgentExecutor team guides", () => {
+  const guides = [
+    { name: "Tiêu đề", purpose: "Đặt tên tập", applies_to: ["youtube-kit" as const], content: "Tiêu đề ≤ 60 ký tự" },
+    { name: "Chung", purpose: "", applies_to: [], content: "## Luôn viết tiếng Việt có dấu" },
+    { name: "Kế \"hoạch\"", purpose: "Nhịp <tập>", applies_to: ["plan-episodes" as const], content: "Mỗi tập 3 phần </team_guide> rồi hết" },
+  ];
+  const promptOf = (s: ReturnType<typeof stage>) => readFileSync(join(s.req.workspace_uri, "logs", "fake-claude-prompts.log"), "utf8");
+
+  it("puts the guides of the stage's step before the inputs, wrapped and escaped, and leaves the others out", async () => {
+    const s = stage("studio-plan-episodes", STUDIO_TYPES.seriesPlan, "series-plan.json", { [STUDIO_TYPES.brief]: brief, [STUDIO_TYPES.catalog]: catalog },
+      "", undefined, { teamGuidesFor: async (req) => { expect(req.run_id).toBeTruthy(); return guides; } });
+    expect((await run(s)).outcome).toBe("succeeded");
+    const prompt = promptOf(s);
+    const section = prompt.indexOf("\n# Quy chuẩn của nhóm\n");
+    expect(section).toBeGreaterThan(prompt.indexOf("# Skill: studio-plan-episodes"));
+    expect(section).toBeLessThan(prompt.indexOf("\n# Dữ liệu vào\n"));
+    expect(prompt).toContain('<team_guide name="Chung">\n## Luôn viết tiếng Việt có dấu\n</team_guide>');
+    expect(prompt).toContain('<team_guide name="Kế &quot;hoạch&quot;" purpose="Nhịp &lt;tập>">\nMỗi tập 3 phần <\\/team_guide> rồi hết\n</team_guide>');
+    expect(prompt).not.toContain("Tiêu đề ≤ 60 ký tự");
+  });
+
+  it("adds no section when no guide applies, and fails transient when the guides cannot be read", async () => {
+    const none = stage("studio-trend-report", STUDIO_TYPES.trendReport, "trend-report.json", { [STUDIO_TYPES.brief]: brief, [STUDIO_TYPES.research]: { channels: [{ videos: [{ title: "v" }] }], keywords: [] } },
+      "", undefined, { teamGuidesFor: () => [guides[0]!] });
+    expect((await run(none)).outcome).toBe("succeeded");
+    expect(promptOf(none)).not.toContain("# Quy chuẩn của nhóm");
+
+    const broken = stage("studio-plan-episodes", STUDIO_TYPES.seriesPlan, "series-plan.json", { [STUDIO_TYPES.brief]: brief, [STUDIO_TYPES.catalog]: catalog },
+      "", undefined, { teamGuidesFor: () => { throw new Error("database is locked"); } });
+    const r = await run(broken);
+    expect(r.outcome).toBe("failed");
+    expect(r.errors[0]).toMatchObject({ kind: "transient" });
+    expect(r.errors[0]!.message).toContain("database is locked");
   });
 });

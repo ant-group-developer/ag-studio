@@ -14,6 +14,7 @@ import { cancelLegacyRuns, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, STUDIO_RESOUR
 import { studioPayloadBuilders } from "./payloads.js";
 import { startEpisodeRun } from "./run-control.js";
 import { studioStages, type FootageCatalogSource } from "./stages.js";
+import { teamGuidesForRun } from "./team-skills.js";
 import type { StudioDb } from "./studio-db.js";
 import type { ResearchSource } from "./youtube-research.js";
 
@@ -84,6 +85,7 @@ export function createStudioWorker(o: StudioWorkerOptions): Worker {
       ...(onCall ? { onCall } : {}),
     }),
     recordCall: async (call) => { await recordLlmCall(o.db, o.bucket, call); },
+    teamGuidesFor: (request) => teamGuidesForRun(o.db, request.run_id),
     ...(o.claude.rateLimitBackoffMs ? { rateLimitBackoffMs: o.claude.rateLimitBackoffMs } : {}),
   }));
   executors.register("gate", new GateExecutor());

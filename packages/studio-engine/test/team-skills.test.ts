@@ -3,11 +3,12 @@
  * stage belongs to (plan run -> production -> team; episode run -> episode -> production -> team).
  */
 import { afterEach, describe, expect, it } from "vitest";
+import { join } from "node:path";
 import {
-  createTeamSkill, deleteTeamSkill, listTeamSkills, startEpisodeRun, startPlanRun, StudioRunError, teamGuidesForRun,
-  updateTeamSkill,
+  createStudioWorker, createTeamSkill, deleteTeamSkill, listLlmCalls, listTeamSkills, readLlmCallPayload, startEpisodeRun,
+  startPlanRun, StudioRunError, teamGuidesForRun, updateTeamSkill,
 } from "../src/index.js";
-import { seedProduction, world } from "./helpers.js";
+import { FAKE_CLAUDE, fakeFarm, fakeFootage, ROOT, seedProduction, world } from "./helpers.js";
 
 function code(fn: () => unknown): string | undefined {
   try { fn(); } catch (e) { if (e instanceof StudioRunError) return String(e.details.code ?? e.code); throw e; }
@@ -80,5 +81,29 @@ describe("team skills", () => {
     createTeamSkill(w.db, "team-1", { name: "A", content: "a" }, "u");
     w.db.run("DELETE FROM teams WHERE id = 'team-1'");
     expect(w.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM team_skills")?.n).toBe(0);
+  });
+});
+
+describe("team skills in the Claude calls of a production", () => {
+  let w: ReturnType<typeof world>;
+  afterEach(() => w?.core.close());
+
+  it("sends the team's skills of the step with the plan-episodes call and keeps them in the call log", async () => {
+    w = world();
+    const prodId = seedProduction(w.db);
+    createTeamSkill(w.db, "team-1", { name: "Nhịp tập", content: "Mỗi tập mở bằng cảnh đẹp nhất.", appliesTo: ["plan-episodes"] }, "u");
+    createTeamSkill(w.db, "team-1", { name: "Chỉ cho tiêu đề", content: "KHÔNG-ĐƯỢC-THẤY", appliesTo: ["youtube-kit"] }, "u");
+    const worker = createStudioWorker({
+      core: w.core, db: w.db, dbPath: w.dbPath, bucket: w.bucket, footage: fakeFootage(6, 30), farm: fakeFarm(w.bucket) as never,
+      claude: { skillsDir: join(ROOT, "skills"), argv: ["node", FAKE_CLAUDE], model: "fake", maxTurns: 3 },
+      owner: "auth0|owner",
+    });
+    startPlanRun(w.core, w.db, prodId);
+    for (let i = 0; i < 200 && (await worker.runOnce()) !== "idle"; i++);
+    const calls = listLlmCalls(w.db, { productionId: prodId, page: 1, pageSize: 20 }).items.filter((c) => c.stage_key === "plan-episodes");
+    expect(calls).toHaveLength(1);
+    const payload = await readLlmCallPayload(w.bucket, calls[0]!.payload_key!);
+    expect(payload.prompt).toContain('<team_guide name="Nhịp tập">\nMỗi tập mở bằng cảnh đẹp nhất.\n</team_guide>');
+    expect(payload.prompt).not.toContain("KHÔNG-ĐƯỢC-THẤY");
   });
 });

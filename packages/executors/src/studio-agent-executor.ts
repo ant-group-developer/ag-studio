@@ -13,8 +13,9 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  claudeOutputJsonSchema, STUDIO_SKILL_OUTPUTS, TrendReportSchema,
+  claudeOutputJsonSchema, STUDIO_SKILL_OUTPUTS, STUDIO_SKILL_STEP, teamGuidesForStep, TrendReportSchema,
   type AgentCallTrace, type AgentRuntime, type CheckerInput, type Executor, type ExecutorContext, type StageRequest, type StageResult, type StudioSkill,
+  type TeamGuide,
 } from "@harness/contracts";
 import {
   loadBrief, loadCatalog, STUDIO_TYPES, validateSeriesPlan, validateTrendReport, validateYoutubeKit,
@@ -41,6 +42,9 @@ export interface StudioAgentExecutorOptions {
   recordCall?: (call: StudioLlmCall) => Promise<void>;
   rateLimitBackoffMs?: number[];
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  /** Every enabled skill of the team the run works for; the executor keeps the ones of its step. A failure to read
+   *  them fails the attempt as transient (a call without the team's rules would be a different answer). */
+  teamGuidesFor?: (request: StageRequest) => TeamGuide[] | Promise<TeamGuide[]>;
 }
 
 const DEFAULT_BACKOFF_MS = [5, 10, 20, 40, 60].map((m) => m * 60_000);
@@ -75,8 +79,31 @@ function compactCatalogLine(value: unknown): string {
   return JSON.stringify(value, (_k, v) => (v === null || (Array.isArray(v) && v.length === 0) || v === "" ? undefined : v));
 }
 
-export function studioPrompt(request: StageRequest, workspaceDir: string, problems: StudioProblem[] | null): string {
-  const parts: string[] = [String(request.stage_config.__brief ?? ""), "", "# Dữ liệu vào"];
+const attr = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/\s+/g, " ").trim();
+
+/**
+ * The team's own rules, before the inputs: instructions the team wrote (unlike the inputs, which are data). Each one
+ * in its own tag so its headings cannot pass for the prompt's own sections; a closing tag inside is escaped.
+ */
+export function teamGuidesSection(guides: readonly TeamGuide[]): string[] {
+  if (!guides.length) return [];
+  return [
+    "# Quy chuẩn của nhóm",
+    "Nhóm sản xuất đặt các quy chuẩn dưới đây cho bước này. Làm theo chúng; quy chuẩn nào trái với quy tắc kiểm tra tự động " +
+      "hay định dạng đầu ra ở phần Skill thì làm theo phần Skill.",
+    ...guides.flatMap((g) => [
+      "",
+      `<team_guide name="${attr(g.name)}"${g.purpose.trim() ? ` purpose="${attr(g.purpose)}"` : ""}>`,
+      g.content.replace(/<\/team_guide/gi, "<\\/team_guide").trim(),
+      "</team_guide>",
+    ]),
+  ];
+}
+
+export function studioPrompt(request: StageRequest, workspaceDir: string, problems: StudioProblem[] | null, guides: readonly TeamGuide[] = []): string {
+  const parts: string[] = [String(request.stage_config.__brief ?? "")];
+  if (guides.length) parts.push("", ...teamGuidesSection(guides));
+  parts.push("", "# Dữ liệu vào");
   for (const input of request.inputs) {
     if (input.kind === "directory") continue;
     const path = join(workspaceDir, input.path);
@@ -192,6 +219,15 @@ export class StudioAgentExecutor implements Executor {
       }
     }
 
+    let guides: TeamGuide[] = [];
+    if (this.opts.teamGuidesFor) {
+      try {
+        guides = teamGuidesForStep(await this.opts.teamGuidesFor(request), STUDIO_SKILL_STEP[skill]);
+      } catch (e) {
+        return failed("transient", `could not read the team's skills: ${e instanceof Error ? e.message : String(e)}`, { skill });
+      }
+    }
+
     const last: { trace: AgentCallTrace | null } = { trace: null };
     const runtime = this.opts.runtimeFor(JSON.stringify(claudeOutputJsonSchema(skill)), skill, (t) => { last.trace = t; });
     const validator = VALIDATORS[skill];
@@ -216,7 +252,7 @@ export class StudioAgentExecutor implements Executor {
     let waits = 0;
     for (let round = 0; round < 2;) {
       rmSync(outPath, { force: true });
-      const brief = studioPrompt(request, ctx.workspaceDir, problems);
+      const brief = studioPrompt(request, ctx.workspaceDir, problems, guides);
       const result = await runtime.runTask({ skill, brief, request, workspaceDir: ctx.workspaceDir }, ctx);
       cost += result.usage.cost_usd;
       const err = result.errors[0];
