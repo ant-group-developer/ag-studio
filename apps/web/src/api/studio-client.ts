@@ -157,8 +157,10 @@ export interface EpisodeDetail extends EpisodeSummary {
   selectedTitle: number;
   selectedThumbnail: number;
   thumbnails: { url: string; index: number }[];
-  exportFiles: { kind: "mp4" | "thumbnail" | "youtube" | "timeline" | "pack"; url: string; sizeBytes: number; name: string }[];
+  /** `url` shows the file; `downloadUrl` makes the browser save it (Content-Disposition: attachment). */
+  exportFiles: { kind: "mp4" | "thumbnail" | "youtube" | "timeline" | "pack"; url: string; downloadUrl: string; sizeBytes: number; name: string }[];
   finalVideoUrl: string | null;
+  finalVideoDownloadUrl: string | null;
   latestRevision: number | null;
 }
 

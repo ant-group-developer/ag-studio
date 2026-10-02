@@ -14,8 +14,21 @@ export interface StudioBucket {
   putFile(key: string, path: string, contentType?: string): Promise<void>;
   get(key: string): Promise<Buffer>;
   exists(key: string): Promise<{ size: number } | null>;
-  /** Short-lived GET URL for a browser (preview renders, exports). */
-  signedGetUrl(key: string, ttlSeconds: number): Promise<string>;
+  /** Short-lived GET URL for a browser (preview renders, exports); with `downloadName` the browser saves the file. */
+  signedGetUrl(key: string, ttlSeconds: number, opts?: SignedUrlOptions): Promise<string>;
+}
+
+export interface SignedUrlOptions {
+  /** Name to save the object under (Content-Disposition: attachment). */
+  downloadName?: string;
+}
+
+/** `Content-Disposition` that makes a browser save the object: an ASCII fallback and the UTF-8 name (RFC 6266). */
+export function attachmentDisposition(name: string): string {
+  const ascii = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D")
+    .replace(/[^\x20-\x7e]|["\\]/g, "_");
+  const utf8 = encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${utf8}`;
 }
 
 export const productionKey = (productionId: string, rel: string) => `productions/${productionId}/${rel}`;
@@ -57,8 +70,11 @@ export class S3Bucket implements StudioBucket {
       throw e;
     }
   }
-  signedGetUrl(key: string, ttlSeconds: number): Promise<string> {
-    return getSignedUrl(this.s3, new GetObjectCommand({ Bucket: this.opts.bucket, Key: key }), { expiresIn: ttlSeconds });
+  signedGetUrl(key: string, ttlSeconds: number, opts: SignedUrlOptions = {}): Promise<string> {
+    return getSignedUrl(this.s3, new GetObjectCommand({
+      Bucket: this.opts.bucket, Key: key,
+      ...(opts.downloadName ? { ResponseContentDisposition: attachmentDisposition(opts.downloadName) } : {}),
+    }), { expiresIn: ttlSeconds });
   }
 }
 
@@ -75,7 +91,9 @@ export class MemoryBucket implements StudioBucket {
     const b = this.objects.get(key);
     return b ? { size: b.length } : null;
   }
-  async signedGetUrl(key: string): Promise<string> { return `memory://${key}`; }
+  async signedGetUrl(key: string, _ttlSeconds?: number, opts: SignedUrlOptions = {}): Promise<string> {
+    return opts.downloadName ? `memory://${key}?download=${opts.downloadName}` : `memory://${key}`;
+  }
 }
 
 /** The farm executor's view of the bucket. */

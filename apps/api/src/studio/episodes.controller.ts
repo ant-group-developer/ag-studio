@@ -117,8 +117,9 @@ export class EpisodesController {
     }
   }
 
-  private sign(key: string): Promise<string> {
-    return this.engine.bucket.signedGetUrl(key, this.engine.browserUrlTtl);
+  /** A URL to show the object; with `downloadName`, one the browser saves under that name. */
+  private sign(key: string, downloadName?: string): Promise<string> {
+    return this.engine.bucket.signedGetUrl(key, this.engine.browserUrlTtl, downloadName ? { downloadName } : {});
   }
 
   private async summary(ep: EpisodeRecord, covers: boolean, state = episodeState(this.engine.core, this.engine.db, ep)): Promise<EpisodeSummary> {
@@ -195,9 +196,10 @@ export class EpisodesController {
           ? readStoredYoutubeKit(readStageDocument(this.engine.core, ep.run_id, 'youtube-kit', 'youtube-kit.json'))
           : null;
       const exp = episodeExport(this.engine.core, ep);
-      const exportFiles = await Promise.all((exp?.files ?? []).filter((f) => covers || !showsFootage(f.kind)).map(async (f) => ({
-        kind: f.kind, url: await this.sign(f.key), sizeBytes: f.size_bytes, name: f.key.split('/').pop() ?? f.key,
-      })));
+      const exportFiles = await Promise.all((exp?.files ?? []).filter((f) => covers || !showsFootage(f.kind)).map(async (f) => {
+        const name = f.key.split('/').pop() ?? f.key;
+        return { kind: f.kind, url: await this.sign(f.key), downloadUrl: await this.sign(f.key, name), sizeBytes: f.size_bytes, name };
+      }));
       const thumbnails = covers ? await Promise.all(exportThumbnails(exp).map(async (f, index) => ({ url: await this.sign(f.key), index }))) : [];
       const mp4 = covers ? exp?.files.find((f) => f.kind === 'mp4') : undefined;
       return {
@@ -211,6 +213,7 @@ export class EpisodesController {
         thumbnails,
         exportFiles,
         finalVideoUrl: mp4 ? await this.sign(mp4.key) : null,
+        finalVideoDownloadUrl: mp4 ? await this.sign(mp4.key, mp4.key.split('/').pop()) : null,
         latestRevision: latestEpisodeRevision(this.engine.db, ep.id)?.revision ?? null,
       };
     });

@@ -304,7 +304,7 @@ export function EpisodeDrawer({ productionId, episode, open, onClose, canEdit }:
           <Card title={t("episodes.drawerDownloads")} size="small">
             <Space wrap>
               {episode.exportFiles.map((f, i) => (
-                <Button key={i} size="small" icon={<Download size={12} />} href={f.url} download={f.name}>
+                <Button key={i} size="small" icon={<Download size={12} />} href={f.downloadUrl}>
                   {f.name}
                 </Button>
               ))}
