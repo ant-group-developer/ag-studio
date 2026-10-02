@@ -159,7 +159,9 @@ export class StudioRunController {
     return row.run_id;
   }
 
+  /** The gate routes check the role again (a gate key decides it); a Studio admin passes, as with RolesGuard. */
   private requireRole(req: Request, productionId: string, role: TeamRole): void {
+    if (req.authContext?.isAdmin) return;
     const row = this.db.get<{ role: TeamRole }>(
       'SELECT tm.role FROM team_members tm JOIN productions p ON p.team_id = tm.team_id WHERE p.id = ? AND tm.user_id = ?',
       [productionId, req.authContext!.userId],
