@@ -83,7 +83,12 @@ export function ProductionDetailPage() {
     enabled: !!productionId,
   });
 
-  const { data: access } = useQuery({
+  const {
+    data: access,
+    isError: accessFailed,
+    refetch: refetchAccess,
+    isFetching: accessFetching,
+  } = useQuery({
     queryKey: ["production-access", productionId],
     queryFn: () => client.checkProductionAccess(productionId!),
     enabled: !!productionId,
@@ -523,6 +528,22 @@ export function ProductionDetailPage() {
           message={t("productions.viewOnlyTitle")}
           description={t("productions.viewOnlyDescription")}
           showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
+
+      {/* The access check failing hides saving and running: say so instead of leaving the page without buttons */}
+      {!access && accessFailed && (
+        <Alert
+          type="error"
+          message={t("productions.accessCheckFailedTitle")}
+          description={t("productions.accessCheckFailedDescription")}
+          showIcon
+          action={
+            <Button size="small" loading={accessFetching} onClick={() => refetchAccess()}>
+              {t("productions.accessCheckRetry")}
+            </Button>
+          }
           style={{ marginBottom: 16 }}
         />
       )}
