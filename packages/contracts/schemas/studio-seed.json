@@ -1,0 +1,221 @@
+{
+  "$ref": "#/definitions/studio-seed",
+  "definitions": {
+    "studio-seed": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.seed/v1"
+        },
+        "production_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner_user_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "folder_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "maxItems": 50
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "own",
+                  "reference"
+                ]
+              }
+            },
+            "required": [
+              "url",
+              "role"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 20
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "maxItems": 20
+        },
+        "aspect": {
+          "type": "string",
+          "enum": [
+            "16:9",
+            "9:16"
+          ]
+        },
+        "canvas": {
+          "type": "object",
+          "properties": {
+            "width": {
+              "type": "integer",
+              "minimum": 160,
+              "maximum": 7680
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 160,
+              "maximum": 7680
+            }
+          },
+          "required": [
+            "width",
+            "height"
+          ],
+          "additionalProperties": false
+        },
+        "fps": {
+          "type": "number",
+          "enum": [
+            25,
+            30
+          ]
+        },
+        "language": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 10
+        },
+        "music": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "track": {
+                  "type": "string",
+                  "pattern": "^library:[A-Za-z0-9._\\-/]+$"
+                },
+                "gain_db": {
+                  "type": "number",
+                  "minimum": -40,
+                  "maximum": 0
+                },
+                "ducking": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "track",
+                "gain_db",
+                "ducking"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hints": {
+          "type": "object",
+          "properties": {
+            "description": {
+              "type": "string",
+              "maxLength": 4000
+            },
+            "goal": {
+              "type": "string",
+              "maxLength": 1000
+            },
+            "audience": {
+              "type": "string",
+              "maxLength": 1000
+            },
+            "tone": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "notes": {
+              "type": "string",
+              "maxLength": 4000
+            },
+            "episode_target_seconds": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 10,
+                  "maximum": 3600
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "max_episodes": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 30
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "description",
+            "goal",
+            "audience",
+            "tone",
+            "notes",
+            "episode_target_seconds",
+            "max_episodes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema_version",
+        "production_id",
+        "run_id",
+        "owner_user_id",
+        "title",
+        "folder_ids",
+        "channels",
+        "keywords",
+        "aspect",
+        "canvas",
+        "fps",
+        "language",
+        "music",
+        "hints"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

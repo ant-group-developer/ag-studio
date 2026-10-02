@@ -13,14 +13,16 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  claudeOutputJsonSchema, STUDIO_SKILL_OUTPUTS, TrendReportSchema,
+  claudeOutputJsonSchema, STUDIO_SKILL_OUTPUTS, STUDIO_SKILL_STEP, teamGuidesForStep, TrendReportSchema,
   type AgentCallTrace, type AgentRuntime, type CheckerInput, type Executor, type ExecutorContext, type StageRequest, type StageResult, type StudioSkill,
+  type TeamGuide,
 } from "@harness/contracts";
 import {
-  loadBrief, loadCatalog, STUDIO_TYPES, validateSeriesPlan, validateTrendReport, validateYoutubeKit,
+  isFollowUpWarning, loadBrief, loadCatalog, loadOptionalBranding, loadSeed, STUDIO_TYPES, summarizeCatalog, validateBranding, validateRnd,
+  validateSeriesPlan, validateTrendReport, validateYoutubeKit,
   type StudioProblem, type StudioValidation,
 } from "@harness/core";
-import { StudioEpisodeSchema } from "@harness/contracts";
+import { StudioCatalogSchema, StudioEpisodeSchema } from "@harness/contracts";
 
 /** One Claude call of a stage with what the deterministic check made of it (the call log / training dataset). */
 export interface StudioLlmCall {
@@ -41,6 +43,9 @@ export interface StudioAgentExecutorOptions {
   recordCall?: (call: StudioLlmCall) => Promise<void>;
   rateLimitBackoffMs?: number[];
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  /** Every enabled skill of the team the run works for; the executor keeps the ones of its step. A failure to read
+   *  them fails the attempt as transient (a call without the team's rules would be a different answer). */
+  teamGuidesFor?: (request: StageRequest) => TeamGuide[] | Promise<TeamGuide[]>;
 }
 
 const DEFAULT_BACKOFF_MS = [5, 10, 20, 40, 60].map((m) => m * 60_000);
@@ -54,8 +59,21 @@ function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 type Validator = (raw: unknown, input: CheckerInput) => StudioValidation<unknown>;
+
+/**
+ * Claude must follow what a person decided (a hint typed before research, the approved branding): those warnings
+ * become problems here, so the repair round fixes them. The same validators at a gate keep them as warnings.
+ */
+function followUpsAsProblems(v: StudioValidation<unknown>): StudioValidation<unknown> {
+  const followUps = v.warnings.filter(isFollowUpWarning);
+  if (!followUps.length) return v;
+  return { ...v, ok: false, problems: [...v.problems, ...followUps], warnings: v.warnings.filter((w) => !isFollowUpWarning(w)) };
+}
+
 const VALIDATORS: Record<StudioSkill, Validator> = {
   "studio-trend-report": (raw) => validateTrendReport(raw),
+  "studio-rnd": (raw, i) => followUpsAsProblems(validateRnd(raw, { seed: loadSeed(i) })),
+  "studio-branding": (raw) => validateBranding(raw),
   "studio-plan-episodes": (raw, i) => {
     const brief = loadBrief(i);
     const catalog = loadCatalog(i);
@@ -66,24 +84,92 @@ const VALIDATORS: Record<StudioSkill, Validator> = {
     if (!episodePath) return { ok: false, value: undefined, problems: [{ code: "missing_input", message: "missing studio_episode input" }], warnings: [] };
     const episodeRaw = JSON.parse(readFileSync(join(i.workspaceDir, episodePath.path), "utf8"));
     const episode = StudioEpisodeSchema.parse(episodeRaw);
-    return validateYoutubeKit(raw, { episode });
+    return followUpsAsProblems(validateYoutubeKit(raw, { episode, branding: loadOptionalBranding(i) }));
   },
 };
+
+/** Skills that get a summary of the footage instead of every asset (they decide a direction, not a cut). */
+const CATALOG_SUMMARY_SKILLS = new Set<string>(["studio-rnd", "studio-branding"]);
 
 /** Compact a catalog: one line per asset (drop empty/null fields). */
 function compactCatalogLine(value: unknown): string {
   return JSON.stringify(value, (_k, v) => (v === null || (Array.isArray(v) && v.length === 0) || v === "" ? undefined : v));
 }
 
-export function studioPrompt(request: StageRequest, workspaceDir: string, problems: StudioProblem[] | null): string {
-  const parts: string[] = [String(request.stage_config.__brief ?? ""), "", "# Dữ liệu vào"];
+type ResearchVideoLike = Record<string, unknown> & { views_per_day?: number | null };
+type ResearchLike = { channels?: Array<{ videos?: ResearchVideoLike[] } & Record<string, unknown>>; keywords?: Array<{ videos?: ResearchVideoLike[] } & Record<string, unknown>>; [k: string]: unknown };
+
+/** The fields of a research video Claude reads (tags cut to 10). */
+function promptVideo(v: ResearchVideoLike): Record<string, unknown> {
+  return {
+    title: v["title"], views: v["views"], views_per_day: v["views_per_day"], duration_s: v["duration_s"], published_at: v["published_at"],
+    tags: (v["tags"] as string[] | undefined)?.slice(0, 10), outlier: v["outlier"],
+  };
+}
+
+/** Videos by views per day, best first (on a copy: the research document is not reordered). */
+function byViewsPerDay(videos: ResearchVideoLike[] | undefined): ResearchVideoLike[] {
+  return [...(videos ?? [])].sort((a, b) => (b.views_per_day ?? 0) - (a.views_per_day ?? 0));
+}
+
+/**
+ * Research as Claude reads it: per reference channel and per keyword only the 15 videos with the most views per day.
+ * The team's own channels show what works AND what does not: their 10 best and 5 weakest.
+ */
+export function compactResearch(r: ResearchLike): { channels: Array<Record<string, unknown> & { videos: Record<string, unknown>[] }>; keywords: Array<Record<string, unknown> & { videos: Record<string, unknown>[] }>; [k: string]: unknown } {
+  return {
+    ...r,
+    channels: (r.channels ?? []).map((ch) => {
+      const sorted = byViewsPerDay(ch.videos);
+      const picked = ch["role"] === "own" ? [...sorted.slice(0, 10), ...sorted.slice(Math.max(10, sorted.length - 5))] : sorted.slice(0, 15);
+      return { ...ch, videos: picked.map(promptVideo) };
+    }),
+    keywords: (r.keywords ?? []).map((kw) => ({ ...kw, videos: byViewsPerDay(kw.videos).slice(0, 15).map(promptVideo) })),
+  };
+}
+
+const attr = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/\s+/g, " ").trim();
+
+/**
+ * The team's own rules, before the inputs: instructions the team wrote (unlike the inputs, which are data). Each one
+ * in its own tag so its headings cannot pass for the prompt's own sections; a closing tag inside is escaped.
+ */
+export function teamGuidesSection(guides: readonly TeamGuide[]): string[] {
+  if (!guides.length) return [];
+  return [
+    "# Quy chuẩn của nhóm",
+    "Nhóm sản xuất đặt các quy chuẩn dưới đây cho bước này. Làm theo chúng; quy chuẩn nào trái với quy tắc kiểm tra tự động " +
+      "hay định dạng đầu ra ở phần Skill thì làm theo phần Skill.",
+    ...guides.flatMap((g) => [
+      "",
+      `<team_guide name="${attr(g.name)}"${g.purpose.trim() ? ` purpose="${attr(g.purpose)}"` : ""}>`,
+      g.content.replace(/<\/team_guide/gi, "<\\/team_guide").trim(),
+      "</team_guide>",
+    ]),
+  ];
+}
+
+export function studioPrompt(request: StageRequest, workspaceDir: string, problems: StudioProblem[] | null, guides: readonly TeamGuide[] = []): string {
+  const parts: string[] = [String(request.stage_config.__brief ?? "")];
+  if (guides.length) parts.push("", ...teamGuidesSection(guides));
+  parts.push("", "# Dữ liệu vào");
+  const skill = String(request.stage_config.__skill ?? "");
+  // The brief already carries what the seed had (and the approved R&D on top): one copy, the brief's.
+  const hasBrief = request.inputs.some((x) => x.type === STUDIO_TYPES.brief);
   for (const input of request.inputs) {
     if (input.kind === "directory") continue;
+    if (input.type === STUDIO_TYPES.seed && hasBrief) continue;
     const path = join(workspaceDir, input.path);
     if (!existsSync(path)) continue;
     const text = readFileSync(path, "utf8");
     let body = text;
-    if (input.type === STUDIO_TYPES.catalog) {
+    let heading = input.type;
+    if (input.type === STUDIO_TYPES.catalog && CATALOG_SUMMARY_SKILLS.has(skill)) {
+      try {
+        body = JSON.stringify(summarizeCatalog(StudioCatalogSchema.parse(JSON.parse(text))), null, 2);
+        heading = "studio_catalog_summary";
+      } catch { /* leave as-is */ }
+    } else if (input.type === STUDIO_TYPES.catalog) {
       // Compact v2: header line + one asset per line (omit empty fields)
       try {
         const cat = JSON.parse(text) as { assets?: unknown[]; [k: string]: unknown };
@@ -91,36 +177,11 @@ export function studioPrompt(request: StageRequest, workspaceDir: string, proble
         body = [compactCatalogLine({ ...cat, assets: undefined }), ...assets.map((a) => compactCatalogLine(a))].join("\n");
       } catch { /* leave as-is */ }
     } else if (input.type === STUDIO_TYPES.research) {
-      // research: per channel/keyword only the top 15 videos by views_per_day
       try {
-        const r = JSON.parse(text) as { channels?: Array<{ videos?: unknown[] }>; keywords?: Array<{ videos?: unknown[] }>; [k: string]: unknown };
-        const compact = {
-          ...r,
-          channels: (r.channels ?? []).map((ch) => ({
-            ...ch,
-            videos: (ch.videos ?? [])
-              .sort((a, b) => (b as { views_per_day?: number }).views_per_day ?? 0 - ((a as { views_per_day?: number }).views_per_day ?? 0))
-              .slice(0, 15)
-              .map((v) => {
-                const vv = v as Record<string, unknown>;
-                return { title: vv["title"], views: vv["views"], views_per_day: vv["views_per_day"], duration_s: vv["duration_s"], published_at: vv["published_at"], tags: (vv["tags"] as string[] | undefined)?.slice(0, 10), outlier: vv["outlier"] };
-              }),
-          })),
-          keywords: (r.keywords ?? []).map((kw) => ({
-            ...kw,
-            videos: (kw.videos ?? [])
-              .sort((a, b) => (b as { views_per_day?: number }).views_per_day ?? 0 - ((a as { views_per_day?: number }).views_per_day ?? 0))
-              .slice(0, 15)
-              .map((v) => {
-                const vv = v as Record<string, unknown>;
-                return { title: vv["title"], views: vv["views"], views_per_day: vv["views_per_day"], duration_s: vv["duration_s"], published_at: vv["published_at"], tags: (vv["tags"] as string[] | undefined)?.slice(0, 10), outlier: vv["outlier"] };
-              }),
-          })),
-        };
-        body = JSON.stringify(compact, null, 2);
+        body = JSON.stringify(compactResearch(JSON.parse(text) as ResearchLike), null, 2);
       } catch { /* leave as-is */ }
     }
-    parts.push("", `## ${input.type} (${input.path.split("/").pop()})`, "```json", body.trim(), "```");
+    parts.push("", `## ${heading} (${input.path.split("/").pop()})`, "```json", body.trim(), "```");
   }
   parts.push("", "# Đầu ra", "Trả lời bằng đúng một đối tượng JSON khớp JSON Schema đã cho. Không viết gì ngoài JSON đó.");
   if (problems) {
@@ -192,6 +253,15 @@ export class StudioAgentExecutor implements Executor {
       }
     }
 
+    let guides: TeamGuide[] = [];
+    if (this.opts.teamGuidesFor) {
+      try {
+        guides = teamGuidesForStep(await this.opts.teamGuidesFor(request), STUDIO_SKILL_STEP[skill]);
+      } catch (e) {
+        return failed("transient", `could not read the team's skills: ${e instanceof Error ? e.message : String(e)}`, { skill });
+      }
+    }
+
     const last: { trace: AgentCallTrace | null } = { trace: null };
     const runtime = this.opts.runtimeFor(JSON.stringify(claudeOutputJsonSchema(skill)), skill, (t) => { last.trace = t; });
     const validator = VALIDATORS[skill];
@@ -216,7 +286,7 @@ export class StudioAgentExecutor implements Executor {
     let waits = 0;
     for (let round = 0; round < 2;) {
       rmSync(outPath, { force: true });
-      const brief = studioPrompt(request, ctx.workspaceDir, problems);
+      const brief = studioPrompt(request, ctx.workspaceDir, problems, guides);
       const result = await runtime.runTask({ skill, brief, request, workspaceDir: ctx.workspaceDir }, ctx);
       cost += result.usage.cost_usd;
       const err = result.errors[0];

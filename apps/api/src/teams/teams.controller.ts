@@ -106,6 +106,13 @@ export class TeamsController {
     return this.teamsService.listTeamsPaged(userId, isAdmin ?? false, query);
   }
 
+  /** One team: name, the caller's role and counts (the team page header). */
+  @Get(':teamId')
+  @Roles('viewer')
+  getTeam(@Param('teamId') teamId: string, @Req() req: Request) {
+    return this.teamsService.getTeam(teamId, req.authContext!.userId);
+  }
+
   @Patch(':teamId')
   @Roles('owner')
   updateTeam(@Param('teamId') teamId: string, @Body() dto: UpdateTeamDto) {

@@ -1,7 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, Matches,
-  Max, MaxLength, Min, ValidateNested, ArrayMaxSize, ArrayMinSize,
+  Max, MaxLength, Min, MinLength, ValidateNested, ArrayMaxSize, ArrayMinSize,
 } from 'class-validator';
 
 const LIBRARY_INPUT = /^library:[A-Za-z0-9._\-/]+$/;
@@ -21,29 +21,30 @@ export class MusicDto {
 }
 
 /**
- * All production fields that map to the v3 brief / the productions table.
+ * All production fields that map to the brief / the productions table.
  * Both `CreateProductionDto` and `UpdateProductionDto` extend this.
+ *
+ * Research first: only the footage folders and something to research (channels or keywords) are needed to start;
+ * description, goal, audience, tone, notes, episode length and count are HINTS the R&D keeps when given and
+ * proposes when empty. Lengths match the documents they end up in (`studio.seed/v1` hints, `studio.brief/v2`).
  */
 export class BriefFieldsDto {
-  /** Description of what this series is about (stored in productions.brief). */
+  /** What this series is about (stored in productions.brief). */
   @IsOptional()
   @IsString()
-  @MaxLength(2000)
+  @MaxLength(4000)
   description?: string;
 
-  /** What the series should achieve ("goal" in the v3 brief). */
   @IsOptional()
   @IsString()
-  @MaxLength(500)
+  @MaxLength(1000)
   goal?: string;
 
-  /** Target audience ("audience" in the v3 brief). */
   @IsOptional()
   @IsString()
-  @MaxLength(500)
+  @MaxLength(1000)
   audience?: string;
 
-  /** Tone of voice ("tone" in the v3 brief). */
   @IsOptional()
   @IsString()
   @MaxLength(500)
@@ -52,7 +53,7 @@ export class BriefFieldsDto {
   /** Extra producer notes passed verbatim to the AI. */
   @IsOptional()
   @IsString()
-  @MaxLength(2000)
+  @MaxLength(4000)
   notes?: string;
 
   /** ag-go folder ids that make up the footage pool (1–50). */
@@ -63,34 +64,46 @@ export class BriefFieldsDto {
   @IsString({ each: true })
   sources?: string[];
 
-  /** YouTube channel ids to include in trend research. */
+  /** The team's own YouTube channels (links, @handles or channel ids): the R&D assesses them. */
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(20)
   @IsString({ each: true })
+  @MinLength(1, { each: true })
+  @MaxLength(300, { each: true })
+  ownChannels?: string[];
+
+  /** Reference channels to learn from (own + reference together at most 20). */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @MinLength(1, { each: true })
+  @MaxLength(300, { each: true })
   youtubeChannels?: string[];
 
-  /** SEO keywords for the series (each ≤ 100 chars, max 20). */
+  /** Keywords to research (each 1–100 chars, max 20). */
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(20)
   @IsString({ each: true })
+  @MinLength(1, { each: true })
   @MaxLength(100, { each: true })
   keywords?: string[];
 
-  /** Target episode duration in seconds (10–3600). */
+  /** Target episode duration in seconds (10–3600); null / absent = the R&D proposes it. */
   @IsOptional()
   @IsNumber()
   @Min(10)
   @Max(3600)
-  episodeTargetSeconds?: number;
+  episodeTargetSeconds?: number | null;
 
-  /** Maximum number of episodes to plan (1–30). Default 10. */
+  /** Maximum number of episodes (1–30); null / absent = the R&D proposes it. */
   @IsOptional()
   @IsNumber()
   @Min(1)
   @Max(30)
-  maxEpisodes?: number;
+  maxEpisodes?: number | null;
 
   @IsOptional()
   @IsIn(['16:9', '9:16'])

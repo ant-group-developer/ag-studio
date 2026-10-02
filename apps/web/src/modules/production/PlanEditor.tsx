@@ -41,6 +41,7 @@ import { useTranslation } from "react-i18next";
 import { useQueryClient, useMutation, useQuery } from "@tanstack/react-query";
 import { useStudioClient } from "../../api/studio-client";
 import { useDebouncedValue } from "../../helpers/use-debounced-value";
+import { gateProblems } from "./gate-problems";
 import type { SeriesPlan, PlannedEpisode, StudioCatalog, CatalogAsset } from "@harness/contracts";
 import { EPISODE_DURATION_TOLERANCE, SeriesPlanSchema } from "@harness/contracts";
 import { App as AntApp } from "antd";
@@ -454,10 +455,7 @@ export function PlanEditor({ productionId, plan: initialPlan, catalog, targetSec
       onApproved?.();
     },
     onError: (err: unknown) => {
-      const e = err as { body?: { missing?: string[] } };
-      if (e?.body?.missing) {
-        setCheckerIssues(e.body.missing);
-      }
+      setCheckerIssues(gateProblems(err));
       void message.error(t("planEditor.approveFailed"));
     },
   });

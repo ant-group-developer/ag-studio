@@ -32,10 +32,11 @@ RUN corepack pnpm --filter "@ag-studio/api..." --filter "@ag-studio/worker..." r
 
 # ---- api + worker ----
 FROM build AS app
-# ffmpeg: kiểm loudness bản render final. Claude Code CLI: các stage Claude chạy `claude -p` bằng
-# CLAUDE_CODE_OAUTH_TOKEN (gói subscription).
+# ffmpeg: kiểm loudness bản render final, cắt khung và vẽ chữ thumbnail. fonts-liberation2: font của chữ thumbnail
+# (fontconfig đổi Arial sang Liberation Sans: cùng số đo, đủ dấu tiếng Việt). Claude Code CLI: các stage Claude chạy
+# `claude -p` bằng CLAUDE_CODE_OAUTH_TOKEN (gói subscription).
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+  && apt-get install -y --no-install-recommends ffmpeg fonts-liberation2 fontconfig ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
   && npm install -g @anthropic-ai/claude-code \
   && claude --version

@@ -14,6 +14,8 @@ describe('deriveStatus', () => {
     ['no plan run', live, null, [], 'draft'],
     ['plan run working', live, { state: 'RUNNING', waiting_gate: null }, [], 'planning'],
     ['waiting at approve-plan', live, { state: 'WAITING', waiting_gate: 'approve-plan' }, [], 'waiting_approval'],
+    ['waiting at approve-rnd', live, { state: 'WAITING', waiting_gate: 'approve-rnd' }, [], 'waiting_approval'],
+    ['waiting at approve-branding', live, { state: 'WAITING', waiting_gate: 'approve-branding' }, [], 'waiting_approval'],
     ['plan failed before episodes', live, { state: 'FAILED', waiting_gate: null }, [], 'failed'],
     ['an episode producing', live, { state: 'SUCCEEDED', waiting_gate: null }, ['ready', 'producing'], 'producing'],
     ['every episode ready', live, { state: 'SUCCEEDED', waiting_gate: null }, ['ready', 'ready'], 'done'],
@@ -66,8 +68,11 @@ describe('ProductionsService (real studio.db)', () => {
     expect(s.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM productions')?.n).toBe(0);
   });
 
-  it('defaults maxEpisodes to 10', () => {
-    expect(svc.createProduction('team-1', 'owner-1', { ...input, maxEpisodes: undefined }).maxEpisodes).toBe(10);
+  it('leaves the episode count and length empty for the R&D to propose; keeps own channels apart from reference ones', () => {
+    const p = svc.createProduction('team-1', 'owner-1', { ...input, maxEpisodes: undefined, episodeTargetSeconds: undefined, ownChannels: ['@kenhMinh'] });
+    expect(p).toMatchObject({ maxEpisodes: null, episodeTargetSeconds: null, ownChannels: ['@kenhMinh'], youtubeChannels: ['@kenhA'], hasRnd: false, hasBranding: false, waitingGate: null });
+    expect(svc.updateProduction(p.id, { ownChannels: [] }).ownChannels).toEqual([]);
+    expect(() => svc.createProduction('team-1', 'owner-1', { ...input, ownChannels: Array.from({ length: 20 }, (_, i) => `@k${i}`) })).toThrow(/20/);
   });
 
   it('derives planning from the plan run and counts episodes by their runs', () => {

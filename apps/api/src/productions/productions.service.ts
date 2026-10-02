@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import {
   episodeState,
   listEpisodes,
@@ -30,6 +30,9 @@ interface ProductionRow {
   keywords: string | null;
   episode_target_seconds: number | null;
   max_episodes: number | null;
+  own_channels: string | null;
+  rnd: string | null;
+  branding: string | null;
 }
 
 interface ProductionSourceRow {
@@ -74,15 +77,23 @@ export interface ProductionDto {
   tone: string;
   notes: string;
   sources: string[];
+  /** The team's own channels; `youtubeChannels` are the reference channels. */
+  ownChannels: string[];
   youtubeChannels: string[];
   keywords: string[];
+  /** Hints for the R&D (null = the R&D proposes); the approved R&D's values are in GET /productions/:id/rnd. */
   episodeTargetSeconds: number | null;
-  maxEpisodes: number;
+  maxEpisodes: number | null;
+  /** Whether an approved R&D / branding exists (GET /productions/:id/rnd, /branding). */
+  hasRnd: boolean;
+  hasBranding: boolean;
   aspect: "16:9" | "9:16";
   language: string;
   music: { track: string; gainDb: number; ducking: boolean } | null;
   canvas: { width: number; height: number } | null;
   status: ProductionStatus;
+  /** With `waiting_approval`: which approval the plan run waits for. */
+  waitingGate: "approve-rnd" | "approve-branding" | "approve-plan" | null;
   runId: string | null;
   episodeCounts: EpisodeCounts;
   ownerUserId: string | null;
@@ -115,6 +126,18 @@ function parseMusic(
   return { track: m.track, gainDb: m.gain_db, ducking: m.ducking };
 }
 
+/** The plan run's approvals: R&D, branding, episode plan. */
+const APPROVAL_GATES = new Set(["approve-rnd", "approve-branding", "approve-plan"]);
+
+/** Own and reference channels together are what research reads: at most 20. */
+function checkChannelCount(own: string[] | undefined, reference: string[] | undefined): void {
+  if ((own?.length ?? 0) + (reference?.length ?? 0) > 20) {
+    throw new BadRequestException({ code: "too_many_channels", message: "Tối đa 20 kênh (của mình và tham khảo cộng lại)" });
+  }
+}
+
+const listOrNull = (v: string[] | undefined | null): string | null => (v?.length ? JSON.stringify(v) : null);
+
 /**
  * Derive ProductionStatus from the plan run state, waiting gate, and episode states.
  * The DB status column is only used for 'archived'.
@@ -128,11 +151,11 @@ export function deriveStatus(
   if (!run) return "draft";
 
   const runState = run.state;
-  if (runState === "WAITING") {
-    if (run.waiting_gate === "approve-plan") return "waiting_approval";
+  if (run.waiting_gate && APPROVAL_GATES.has(run.waiting_gate) && !["SUCCEEDED", "FAILED", "CANCELLED"].includes(runState)) {
+    return "waiting_approval";
   }
   if (!["SUCCEEDED", "FAILED", "CANCELLED"].includes(runState)) {
-    // run is actively going (RUNNING, WAITING for non-approve-plan gate, etc.)
+    // run is actively going (RUNNING, or a stage waiting for someone to retry it)
     return "planning";
   }
 
@@ -182,12 +205,15 @@ export class ProductionsService {
       tone: row.tone ?? "",
       notes: row.notes ?? "",
       sources,
+      ownChannels: row.own_channels ? (JSON.parse(row.own_channels) as string[]) : [],
       youtubeChannels: row.youtube_channels
         ? (JSON.parse(row.youtube_channels) as string[])
         : [],
       keywords: row.keywords ? (JSON.parse(row.keywords) as string[]) : [],
       episodeTargetSeconds: row.episode_target_seconds,
-      maxEpisodes: row.max_episodes ?? 10,
+      maxEpisodes: row.max_episodes,
+      hasRnd: !!row.rnd,
+      hasBranding: !!row.branding,
       aspect: (row.aspect ?? "16:9") as "16:9" | "9:16",
       language: row.language ?? "vi",
       music: parseMusic(row.music),
@@ -195,6 +221,9 @@ export class ProductionsService {
         ? (JSON.parse(row.canvas) as { width: number; height: number })
         : null,
       status: deriveStatus(row, run, episodes),
+      waitingGate: run?.waiting_gate && APPROVAL_GATES.has(run.waiting_gate)
+        ? (run.waiting_gate as ProductionDto["waitingGate"])
+        : null,
       runId: row.run_id,
       episodeCounts: countEpisodes(episodes),
       ownerUserId: row.owner_user_id,
@@ -246,6 +275,7 @@ export class ProductionsService {
       canvas?: { width: number; height: number };
     },
   ): ProductionDto {
+    checkChannelCount(dto.ownChannels, dto.youtubeChannels);
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
 
@@ -254,8 +284,8 @@ export class ProductionsService {
         `INSERT INTO productions
          (id, team_id, title, brief, canvas, created_at, updated_at, owner_user_id,
           goal, audience, tone, notes, youtube_channels, keywords,
-          episode_target_seconds, max_episodes, aspect, language, music)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          episode_target_seconds, max_episodes, aspect, language, music, own_channels)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
           teamId,
@@ -278,6 +308,7 @@ export class ProductionsService {
           dto.aspect ?? null,
           dto.language ?? null,
           musicToDb(dto.music),
+          listOrNull(dto.ownChannels),
         ],
       );
 
@@ -433,6 +464,11 @@ export class ProductionsService {
     const now = new Date().toISOString();
     const pick = <T>(v: T | undefined, current: T): T =>
       v !== undefined ? v : current;
+    const currentList = (v: string | null): string[] => (v ? (JSON.parse(v) as string[]) : []);
+    checkChannelCount(
+      updates.ownChannels ?? currentList(existing.own_channels),
+      updates.youtubeChannels ?? currentList(existing.youtube_channels),
+    );
 
     this.db.run(
       `UPDATE productions SET
@@ -440,7 +476,7 @@ export class ProductionsService {
          goal = ?, audience = ?, tone = ?, notes = ?,
          youtube_channels = ?, keywords = ?,
          episode_target_seconds = ?, max_episodes = ?,
-         aspect = ?, language = ?, music = ?, updated_at = ?
+         aspect = ?, language = ?, music = ?, own_channels = ?, updated_at = ?
        WHERE id = ?`,
       [
         pick(updates.title, existing.title),
@@ -469,6 +505,7 @@ export class ProductionsService {
         pick(updates.aspect, existing.aspect),
         pick(updates.language, existing.language),
         updates.music !== undefined ? musicToDb(updates.music) : existing.music,
+        updates.ownChannels !== undefined ? listOrNull(updates.ownChannels) : existing.own_channels,
         now,
         id,
       ],

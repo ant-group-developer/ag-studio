@@ -10,23 +10,30 @@ import type { FarmOwnerClient } from "@ag-farm/owner-client";
 import type { AgentCallTrace, ProjectConfig, StudioSkill } from "@harness/contracts";
 import { farmStorage, type StudioBucket } from "./bucket.js";
 import { recordLlmCall } from "./llm-log.js";
-import { cancelLegacyRuns, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, STUDIO_RESOURCES, STUDIO_WORKFLOWS, type StudioEngineCore } from "./core.js";
+import { cancelLegacyRuns, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, STUDIO_RESOURCES, studioWorkflowRefs, type StudioEngineCore } from "./core.js";
 import { studioPayloadBuilders } from "./payloads.js";
-import { startEpisodeRun } from "./run-control.js";
+import { isRunActive, startEpisodeRun } from "./run-control.js";
 import { studioStages, type FootageCatalogSource } from "./stages.js";
+import { teamGuidesForRun } from "./team-skills.js";
 import type { StudioDb } from "./studio-db.js";
 import type { ResearchSource } from "./youtube-research.js";
+import type { ThumbnailRenderer } from "./thumbnail-render.js";
 
 /** Per-skill model env keys. `STUDIO_CLAUDE_MODEL` overrides all. */
 const SKILL_MODEL_ENVS: Record<StudioSkill, string> = {
   "studio-plan-episodes": "STUDIO_CLAUDE_MODEL_PLAN_EPISODES",
   "studio-youtube-kit": "STUDIO_CLAUDE_MODEL_YOUTUBE_KIT",
   "studio-trend-report": "STUDIO_CLAUDE_MODEL_TREND_REPORT",
+  "studio-rnd": "STUDIO_CLAUDE_MODEL_RND",
+  "studio-branding": "STUDIO_CLAUDE_MODEL_BRANDING",
 };
+/** The R&D decides the whole series once per production: Opus, like the episode plan. */
 const SKILL_DEFAULTS: Record<StudioSkill, string> = {
   "studio-plan-episodes": "claude-opus-5-5",
   "studio-youtube-kit": "claude-sonnet-5-5",
   "studio-trend-report": "claude-sonnet-5-5",
+  "studio-rnd": "claude-opus-5-5",
+  "studio-branding": "claude-sonnet-5-5",
 };
 
 function modelFor(skill: StudioSkill, override?: string): string {
@@ -59,6 +66,8 @@ export interface StudioWorkerOptions {
   farmPollMs?: number;
   /** YouTube research for the `research` stage (GĐ5); without it the stage records why nothing was fetched. */
   research?: ResearchSource;
+  /** Cuts and draws thumbnails (`thumbnails` stage of episode 1.2.0); without it that stage parks for a person. */
+  thumbnails?: ThumbnailRenderer;
 }
 
 export function studioLogger(bindings: Record<string, unknown> = {}): HarnessLogger {
@@ -73,7 +82,9 @@ export function createStudioWorker(o: StudioWorkerOptions): Worker {
   executors.register("script", new InProcessExecutor(studioStages({
     db: o.db, bucket: o.bucket, footage: o.footage,
     startEpisodeRun: (episodeId) => Promise.resolve(startEpisodeRun(core, o.db, episodeId)),
+    isRunActive: (runId) => isRunActive(core, runId),
     ...(o.research ? { research: o.research } : {}),
+    ...(o.thumbnails ? { thumbnails: o.thumbnails } : {}),
   })));
   executors.register("agent", new StudioAgentExecutor({
     runtimeFor: (jsonSchema: string, skill?: StudioSkill, onCall?: (trace: AgentCallTrace) => void) => new CliAgentRuntime({
@@ -84,6 +95,7 @@ export function createStudioWorker(o: StudioWorkerOptions): Worker {
       ...(onCall ? { onCall } : {}),
     }),
     recordCall: async (call) => { await recordLlmCall(o.db, o.bucket, call); },
+    teamGuidesFor: (request) => teamGuidesForRun(o.db, request.run_id),
     ...(o.claude.rateLimitBackoffMs ? { rateLimitBackoffMs: o.claude.rateLimitBackoffMs } : {}),
   }));
   executors.register("gate", new GateExecutor());
@@ -97,7 +109,7 @@ export function createStudioWorker(o: StudioWorkerOptions): Worker {
   const project = {
     schema_version: "harness.project-config/v1", project_id: STUDIO_PROJECT_ID, template_release: "0.1.0", runtime: "claude",
     data_root: core.dataRoot, portfolios: [{ portfolio_id: STUDIO_PORTFOLIO_ID, display_name: "AG Studio" }],
-    resources: STUDIO_RESOURCES, source: { materialize: "link" }, workflows: Object.values(STUDIO_WORKFLOWS).map((f) => f.workflow),
+    resources: STUDIO_RESOURCES, source: { materialize: "link" }, workflows: studioWorkflowRefs(core.harnessRoot),
   } as unknown as ProjectConfig;
   return new Worker({
     store: core.store, planner: core.planner, controller: core.controller, registry: core.registry, verifier: core.verifier, executors,

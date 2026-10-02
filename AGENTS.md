@@ -188,6 +188,22 @@ YouTube Operations Harness: control plane điều phối sản xuất và phân 
 - Xem `docs/runbooks/studio-composition.md` (điều kiện ffmpeg, hồ sơ thương hiệu, kho nhạc, `overlays.json`,
   đọc `composition.json`/`render-report.json`, cache mezzanine, sự cố, số đo 4K thật, quay về 1.2.0).
 
+## AG Studio (series: apps/api, apps/web, apps/worker, packages/studio-engine)
+- Hợp đồng API: `docs/studio-api-v3.md`. Run kế hoạch `ag-studio-series-plan@2.0.0` (nghiên cứu → R&D → duyệt →
+  branding → duyệt → kế hoạch tập → duyệt → tạo tập), run tập `ag-studio-episode@1.2.0`; phiên bản đang dùng ở
+  `STUDIO_WORKFLOWS` (`packages/studio-engine/src/core.ts`).
+- Thư mục workflow đã phát hành **không bao giờ sửa**: làm phiên bản mới. Script/payload builder đổi đầu ra thì đặt
+  **tên mới** (`studio-episode-export-v2`…) và giữ tên cũ cho run cũ; `workflow-wiring.test.ts` kiểm mọi phiên bản.
+  Một stage chỉ nhận artifact của stage nó phụ thuộc **trực tiếp**, và mỗi kiểu chỉ đến từ một nguồn.
+- Quy chuẩn & skill của nhóm (`team_skills`) được chèn vào prompt lúc gọi Claude (`teamGuidesFor`), không thành
+  artifact; ghi R&D/branding vào production bằng stage script sau gate (`apply-rnd`, `apply-branding`), không ghi trong
+  API lúc nộp gate.
+- Thumbnail cắt và vẽ chữ trên máy Studio từ `final.mp4` (ffmpeg chạy bất đồng bộ, không `spawnSync`); font là Arial
+  của hệ thống (`STUDIO_FONTS_DIR`, Windows, hoặc Liberation Sans qua fontconfig trong image) — không ship font.
+  Ảnh có hình footage chỉ đưa cho người có quyền xem footage của production (`coversProduction`), kể cả sang Canva.
+- Canva: token mỗi người dùng mã hoá bằng `CANVA_TOKEN_KEY`, không bao giờ trả về trình duyệt; refresh token chỉ dùng
+  một lần nên làm mới tuần tự theo người dùng (`docs/runbooks/canva.md`).
+
 ## Giới hạn quyền
 - Không sửa cột `state` ngoài `transition()` và `claim()` trong `packages/core/src/state/` — **trừ** ba bảng
   mirror của kho (`edit_style`, `content_request`, `library_item`) và bảng `channel_package`: `state`/`status`

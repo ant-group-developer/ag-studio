@@ -26,6 +26,15 @@ export const envSchema = z.object({
   STUDIO_FFMPEG_PATH: z.string().optional(),
   /** Lifetime of signed URLs handed to the browser (previews, exports, narration audio). */
   STUDIO_BROWSER_URL_TTL_SECONDS: z.coerce.number().default(3600),
+  /** Canva Connect (public integration); Canva is off unless all four are set. */
+  CANVA_CLIENT_ID: z.string().optional(),
+  CANVA_CLIENT_SECRET: z.string().optional(),
+  /** `https://<studio>/api/canva/oauth/callback`, as registered in the Canva Developer Portal. */
+  CANVA_REDIRECT_URI: z.string().url().optional(),
+  /** 32 bytes (64 hex characters or base64) encrypting the Canva tokens at rest. */
+  CANVA_TOKEN_KEY: z.string().optional(),
+  /** Origin of the web app the Canva callback sends the browser back to; empty = the API's own origin. */
+  STUDIO_WEB_URL: z.string().url().optional(),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

@@ -1,7 +1,7 @@
 import { IsInt, IsObject, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 
 export class SubmitGateDto {
-  /** series-plan.json (approve-plan); ignored by `edit`. */
+  /** The gate's document (rnd.json, branding.json, series-plan.json), or the R&D / branding a person saves. */
   @IsOptional()
   @IsObject()
   document?: Record<string, unknown>;

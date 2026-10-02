@@ -1,8 +1,8 @@
 /**
- * Production detail page — GĐ3 v3.
- * 5 steps driven by RunView stage keys: Thông tin → Nghiên cứu → Kế hoạch tập → Duyệt → Sản xuất các tập
+ * Production detail page — GĐ3 v4.
+ * 6 steps: Thông tin → Nghiên cứu thị trường → R&D → Branding → Kế hoạch tập → Sản xuất các tập
  */
-import { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -10,6 +10,7 @@ import {
   App,
   Button,
   Card,
+  Dropdown,
   Form,
   Popconfirm,
   Space,
@@ -19,7 +20,7 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { ChevronLeft, List } from "lucide-react";
+import { ChevronLeft, List, MoreHorizontal } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useStudioClient, StudioHttpError, type RunView } from "../api/studio-client";
 import { EnumText, PRODUCTION_STATUS_COLORS } from "../helpers/enum-label";
@@ -27,6 +28,10 @@ import { ResearchView } from "../modules/production/ResearchView";
 import { PlanEditor } from "../modules/production/PlanEditor";
 import { EpisodesPanel } from "../modules/production/EpisodesPanel";
 import { LlmLogPanel } from "../modules/production/LlmLogPanel";
+import { RndEditor, RndWritingSpinner } from "../modules/production/RndEditor";
+import { BrandingEditor, BrandingWritingSpinner } from "../modules/production/BrandingEditor";
+import { PlanRunStages } from "../modules/production/PlanRunStages";
+import { gateProblems } from "../modules/production/gate-problems";
 import {
   ProductionForm,
 } from "../modules/production/ProductionForm";
@@ -35,20 +40,25 @@ import type { ProductionFormValues } from "../modules/production/ProductionForm"
 const { Title } = Typography;
 
 /**
- * 0-based step of the plan run (`ag-studio-series-plan`): 0 no run yet, 1 intake → research → catalog → trend-report,
- * 2 plan-episodes, 3 waiting at approve-plan, 4 plan approved (spawn-episodes and the episode runs).
+ * 0-based step of the plan run:
+ * 0 = no run, 1 = research, 2 = R&D, 3 = branding, 4 = plan, 5 = episodes
+ * V1 runs (no rnd stage) only go 0/1/4/5.
  */
 export function runToStepIndex(run: RunView | null | undefined): number {
   if (!run) return 0;
   const state = (key: string) => run.stages.find((s) => s.key === key)?.state ?? "PENDING";
-  if (state("approve-plan") === "SUCCEEDED") return 4;
-  if (run.waiting_gate === "approve-plan") return 3;
-  if (state("plan-episodes") !== "PENDING") return 2;
+  const isV1 = !run.stages.find((s) => s.key === "rnd");
+
+  if (state("approve-plan") === "SUCCEEDED") return 5;
+  if (run.waiting_gate === "approve-plan" || state("plan-episodes") !== "PENDING") return 4;
+  if (isV1) return 1;
+  if (run.waiting_gate === "approve-branding" || state("branding") !== "PENDING") return 3;
+  if (run.waiting_gate === "approve-rnd" || state("rnd") !== "PENDING") return 2;
   return 1;
 }
 
-/** Card each step scrolls to (Duyệt and Kế hoạch tập share the plan editor). */
-const STEP_SECTIONS = ["step-info", "step-research", "step-plan", "step-plan", "step-episodes"];
+/** Card each step scrolls to */
+const STEP_SECTIONS = ["step-info", "step-research", "step-rnd", "step-branding", "step-plan", "step-episodes"];
 
 function scrollToStep(i: number) {
   document.getElementById(STEP_SECTIONS[i]!)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -86,11 +96,12 @@ export function ProductionDetailPage() {
     enabled: !!productionId,
   });
 
+  const runId = production?.runId;
+
   const { data: run } = useQuery({
-    queryKey: ["run", productionId, production?.runId],
+    queryKey: ["run", productionId, runId],
     queryFn: () => client.getRun(productionId!),
-    enabled: !!production?.runId,
-    // Follow the plan run while it works; a run waiting at the gate or finished does not change by itself.
+    enabled: !!runId,
     refetchInterval: (q) => (q.state.data?.state === "RUNNING" || q.state.data?.state === "CANCEL_REQUESTED" ? 5_000 : false),
   });
 
@@ -106,10 +117,60 @@ export function ProductionDetailPage() {
     enabled: !!productionId,
   });
 
+  // A stage's document exists once the stage succeeded: keyed by its state so it is read when it lands
+  const stageState = (key: string) => run?.stages.find((s) => s.key === key)?.state ?? null;
+  const rndState = stageState("rnd");
+  const brandingState = stageState("branding");
+  const briefState = stageState("brief");
+  const planState = stageState("plan-episodes");
+
+  // RND draft (Claude's output at rnd stage)
+  const { data: rndDraft } = useQuery({
+    queryKey: ["doc", productionId, runId, "rnd", "rnd.json", rndState],
+    queryFn: () => client.getRndDraft(productionId!),
+    enabled: !!runId && rndState === "SUCCEEDED",
+  });
+
+  // Production's saved R&D (after approval)
+  const { data: productionRndData } = useQuery({
+    queryKey: ["production-rnd", productionId],
+    queryFn: () => client.getProductionRnd(productionId!),
+    enabled: !!(production?.hasRnd),
+  });
+
+  // Branding draft
+  const { data: brandingDraft } = useQuery({
+    queryKey: ["doc", productionId, runId, "branding", "branding.json", brandingState],
+    queryFn: () => client.getBrandingDraft(productionId!),
+    enabled: !!runId && brandingState === "SUCCEEDED",
+  });
+
+  // Production's saved branding (after approval)
+  const { data: productionBrandingData } = useQuery({
+    queryKey: ["production-branding", productionId],
+    queryFn: () => client.getProductionBranding(productionId!),
+    enabled: !!(production?.hasBranding),
+  });
+
+  // Brief doc (for targetSeconds)
+  const { data: briefDoc } = useQuery({
+    queryKey: ["doc", productionId, runId, "brief", "brief.json", briefState],
+    queryFn: () => client.getBriefDoc(productionId!),
+    enabled: !!runId && briefState === "SUCCEEDED",
+  });
+
   const { data: plan } = useQuery({
-    queryKey: ["series-plan", productionId],
+    queryKey: ["doc", productionId, runId, "plan-episodes", "series-plan.json", planState],
     queryFn: () => client.getSeriesPlan(productionId!),
-    enabled: !!productionId,
+    enabled: !!runId && planState === "SUCCEEDED",
+  });
+
+  // Approved plan (after approve-plan SUCCEEDED)
+  const stepIdx = runToStepIndex(run);
+  const { data: approvedPlan } = useQuery({
+    queryKey: ["doc", productionId, runId, "approve-plan", "series-plan.json"],
+    queryFn: () => client.getSeriesPlan(productionId!, "approve-plan"),
+    enabled: !!runId && stepIdx >= 5,
   });
 
   const { data: catalog } = useQuery({
@@ -129,10 +190,11 @@ export function ProductionDetailPage() {
         tone: production.tone || undefined,
         notes: production.notes || undefined,
         targetSeconds: production.episodeTargetSeconds ?? undefined,
-        maxEpisodes: production.maxEpisodes,
+        maxEpisodes: production.maxEpisodes ?? undefined,
         aspect: production.aspect,
         language: production.language,
         sources: production.sources,
+        ownChannels: production.ownChannels ?? [],
         youtubeChannels: production.youtubeChannels,
         keywords: production.keywords,
         musicTrack: production.music?.track,
@@ -153,10 +215,11 @@ export function ProductionDetailPage() {
       tone: values.tone,
       notes: values.notes,
       sources: values.sources ?? [],
+      ownChannels: values.ownChannels ?? [],
       youtubeChannels: values.youtubeChannels ?? [],
       keywords: values.keywords ?? [],
-      episodeTargetSeconds: values.targetSeconds,
-      maxEpisodes: values.maxEpisodes,
+      episodeTargetSeconds: values.targetSeconds ?? null,
+      maxEpisodes: values.maxEpisodes ?? null,
       aspect: values.aspect,
       language: values.language,
       music: buildMusicInput(values),
@@ -178,27 +241,121 @@ export function ProductionDetailPage() {
     },
   });
 
-  // ---- Run (plan / replan) mutation ----
-  const runMutation = useMutation({
-    mutationFn: async (saveFirst: boolean) => {
-      if (saveFirst) {
-        const input = await collectInput();
-        await client.updateProduction(productionId!, input);
-      }
+  // ---- Start run (save first then POST /run) ----
+  const startRunMutation = useMutation({
+    mutationFn: async () => {
+      const input = await collectInput();
+      await client.updateProduction(productionId!, input);
       return client.startRun(productionId!);
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["production", productionId] });
+      void queryClient.invalidateQueries({ queryKey: ["run", productionId] });
     },
     onError: (err) => {
-      if (
-        err instanceof StudioHttpError &&
-        err.body?.code === "episode_producing"
-      ) {
+      if (err instanceof StudioHttpError && err.body?.code === "episode_producing") {
+        void message.error(t("productions.episodeProducing"));
+      } else if (err instanceof StudioHttpError && err.body?.code === "nothing_to_research") {
+        void message.error(t("productions.atLeastOneResearchSource"));
+      } else {
+        void message.error(err instanceof Error ? err.message : "Thất bại");
+      }
+    },
+  });
+
+  // ---- Resume / re-run mutations ----
+  const resumeMutation = useMutation({
+    mutationFn: async (stage: string) => {
+      return client.resumeStage(productionId!, stage);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["production", productionId] });
+      void queryClient.invalidateQueries({ queryKey: ["run", productionId] });
+    },
+    onError: (err) => {
+      if (err instanceof StudioHttpError && err.body?.code === "episode_producing") {
         void message.error(t("productions.episodeProducing"));
       } else {
         void message.error(err instanceof Error ? err.message : "Thất bại");
       }
+    },
+  });
+
+  const cancelRunMutation = useMutation({
+    mutationFn: () => client.cancelRun(productionId!),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["run", productionId] });
+    },
+    onError: (err) => {
+      void message.error(err instanceof Error ? err.message : "Thất bại");
+    },
+  });
+
+  // ---- R&D approve mutation ----
+  const [rndProblems, setRndProblems] = useState<string[]>([]);
+  const approveRndMutation = useMutation({
+    mutationFn: (doc: import("@harness/contracts").StudioRnd) => client.submitApproveRnd(productionId!, doc),
+    onSuccess: () => {
+      setRndProblems([]);
+      void queryClient.invalidateQueries({ queryKey: ["production", productionId] });
+      void queryClient.invalidateQueries({ queryKey: ["run", productionId] });
+      void queryClient.invalidateQueries({ queryKey: ["doc", productionId] });
+      void queryClient.invalidateQueries({ queryKey: ["production-rnd", productionId] });
+      void message.success(t("rndEditor.approveSuccess"));
+    },
+    onError: (err: unknown) => {
+      setRndProblems(gateProblems(err));
+      void message.error(t("rndEditor.approveFailed"));
+    },
+  });
+
+  // ---- R&D save mutation (PUT) ----
+  const [rndWarnings, setRndWarnings] = useState<string[]>([]);
+  const saveRndMutation = useMutation({
+    mutationFn: (doc: import("@harness/contracts").StudioRnd) => client.putProductionRnd(productionId!, doc),
+    onSuccess: (res) => {
+      setRndProblems([]);
+      setRndWarnings(res.warnings?.map((w) => w.message) ?? []);
+      void queryClient.invalidateQueries({ queryKey: ["production-rnd", productionId] });
+      void message.success(t("rndEditor.saveSuccess"));
+    },
+    onError: (err: unknown) => {
+      setRndProblems(gateProblems(err));
+      void message.error(t("rndEditor.saveFailed"));
+    },
+  });
+
+  // ---- Branding approve mutation ----
+  const [brandingProblems, setBrandingProblems] = useState<string[]>([]);
+  const approveBrandingMutation = useMutation({
+    mutationFn: (doc: import("@harness/contracts").StudioBranding) => client.submitApproveBranding(productionId!, doc),
+    onSuccess: () => {
+      setBrandingProblems([]);
+      void queryClient.invalidateQueries({ queryKey: ["production", productionId] });
+      void queryClient.invalidateQueries({ queryKey: ["run", productionId] });
+      void queryClient.invalidateQueries({ queryKey: ["doc", productionId] });
+      void queryClient.invalidateQueries({ queryKey: ["production-branding", productionId] });
+      void message.success(t("brandingEditor.approveSuccess"));
+    },
+    onError: (err: unknown) => {
+      setBrandingProblems(gateProblems(err));
+      void message.error(t("brandingEditor.approveFailed"));
+    },
+  });
+
+  // ---- Branding save mutation (PUT) ----
+  const [brandingWarnings, setBrandingWarnings] = useState<string[]>([]);
+  const saveBrandingMutation = useMutation({
+    mutationFn: (doc: import("@harness/contracts").StudioBranding) => client.putProductionBranding(productionId!, doc),
+    onSuccess: (res) => {
+      setBrandingProblems([]);
+      setBrandingWarnings(res.warnings?.map((w) => w.message) ?? []);
+      void queryClient.invalidateQueries({ queryKey: ["production-branding", productionId] });
+      void message.success(t("brandingEditor.saveSuccess"));
+    },
+    onError: (err: unknown) => {
+      setBrandingProblems(gateProblems(err));
+      void message.error(t("brandingEditor.saveFailed"));
     },
   });
 
@@ -220,26 +377,130 @@ export function ProductionDetailPage() {
         : "process";
 
   const canEdit = !!(access?.hasAccess);
-  const planReadOnly = production.status !== "waiting_approval";
   const runIsActive =
     run?.state === "RUNNING" ||
     run?.state === "WAITING" ||
     run?.state === "CANCEL_REQUESTED";
 
-  // Titles only: five descriptions do not fit side by side and were cut off; each lives in the step's tooltip.
-  const stepItems = [
-    { title: "Thông tin", description: "Cài đặt production" },
-    { title: "Nghiên cứu", description: "Nghiên cứu thị trường: phân tích YouTube & xu hướng" },
-    { title: "Kế hoạch tập", description: "Danh sách và thứ tự tập" },
-    { title: "Duyệt", description: "Duyệt kế hoạch để tạo tập" },
-    { title: "Sản xuất các tập", description: "Render, xuất bản, editor" },
-  ].map((s, i) => ({
-    title: <Tooltip title={s.description}>{s.title}</Tooltip>,
-    // A step not reached yet has nothing to show.
+  const isV1Run = run ? !run.stages.find((s) => s.key === "rnd") : false;
+
+  // Determine which plan to show (approved if step >= 5, else draft)
+  const planDoc = stepIndex >= 5 ? (approvedPlan ?? plan) : plan;
+  const targetSeconds =
+    briefDoc?.episode_target_seconds ??
+    production.episodeTargetSeconds ??
+    300;
+
+  const hasEpisodes = production.episodeCounts.total > 0;
+
+  // Steps items
+  const stepDescriptions = [
+    t("productions.stepInfoDesc"),
+    t("productions.stepResearchDesc"),
+    t("productions.stepRndDesc"),
+    t("productions.stepBrandingDesc"),
+    t("productions.stepPlanDesc"),
+    t("productions.stepEpisodesDesc"),
+  ];
+  const stepTitles = [
+    t("productions.stepInfo"),
+    t("productions.stepResearch"),
+    t("productions.stepRnd"),
+    t("productions.stepBranding"),
+    t("productions.stepPlan"),
+    t("productions.stepEpisodes"),
+  ];
+
+  const stepItems = stepTitles.map((title, i) => ({
+    title: <Tooltip title={stepDescriptions[i]}>{title}</Tooltip>,
     disabled: i > stepIndex,
-    // Steps calls onChange only for a step other than the current one.
     ...(i === stepIndex ? { onClick: () => scrollToStep(i) } : {}),
   }));
+
+  // Re-run dropdown items
+  const rerunItems = runIsActive
+    ? [{
+        key: "cancel",
+        label: (
+          <Popconfirm title={t("productions.rerunConfirmTitle")} onConfirm={() => cancelRunMutation.mutate()}>
+            <span>{t("productions.cancelRun")}</span>
+          </Popconfirm>
+        ),
+      }]
+    : [
+        {
+          key: "plan",
+          label: (
+            <Popconfirm
+              title={t("productions.rerunConfirmTitle")}
+              description={hasEpisodes ? t("productions.rerunConfirmBody") : undefined}
+              onConfirm={() => {
+                const resumeStage = isV1Run ? "plan-episodes" : "brief";
+                resumeMutation.mutate(resumeStage);
+              }}
+            >
+              <span>{t("productions.rerunPlanEpisodes")}</span>
+            </Popconfirm>
+          ),
+        },
+        ...(!isV1Run ? [
+          {
+            key: "branding",
+            label: (
+              <Popconfirm
+                title={t("productions.rerunConfirmTitle")}
+                description={hasEpisodes ? t("productions.rerunConfirmBody") : undefined}
+                onConfirm={() => resumeMutation.mutate("approve-rnd")}
+              >
+                <span>{t("productions.rerunBranding")}</span>
+              </Popconfirm>
+            ),
+          },
+          {
+            key: "rnd",
+            label: (
+              <Popconfirm
+                title={t("productions.rerunConfirmTitle")}
+                description={hasEpisodes ? t("productions.rerunConfirmBody") : undefined}
+                onConfirm={() => resumeMutation.mutate("rnd")}
+              >
+                <span>{t("productions.rerunRnd")}</span>
+              </Popconfirm>
+            ),
+          },
+        ] : []),
+        {
+          key: "scratch",
+          label: (
+            <Popconfirm
+              title={t("productions.rerunConfirmTitle")}
+              description={hasEpisodes ? t("productions.rerunConfirmBody") : undefined}
+              onConfirm={() => startRunMutation.mutate()}
+            >
+              <span>{t("productions.rerunFromScratch")}</span>
+            </Popconfirm>
+          ),
+        },
+      ];
+
+  // R&D card logic
+  const waitingApproveRnd = run?.waiting_gate === "approve-rnd";
+  const rndStage = run?.stages.find((s) => s.key === "rnd");
+  const rndStageRunning = rndStage?.state === "RUNNING" || rndStage?.state === "CLAIMED";
+  // A run resumed from approve-rnd reuses Claude's R&D: the gate starts from the R&D in use (with any edit made
+  // after the first approval), not from Claude's draft
+  const rndDocForGate = rndStage?.reused ? (productionRndData?.document ?? rndDraft) : rndDraft;
+  const rndDocForEdit = productionRndData?.document;
+
+  // Branding card logic
+  const waitingApproveBranding = run?.waiting_gate === "approve-branding";
+  const brandingStage = run?.stages.find((s) => s.key === "branding");
+  const brandingStageRunning = brandingStage?.state === "RUNNING" || brandingStage?.state === "CLAIMED";
+  const brandingDocForGate = brandingStage?.reused ? (productionBrandingData?.document ?? brandingDraft) : brandingDraft;
+  const brandingDocForEdit = productionBrandingData?.document;
+
+  const showV2Rnd = !isV1Run && stepIndex >= 2;
+  const showV2Branding = !isV1Run && stepIndex >= 3;
 
   return (
     <div>
@@ -264,7 +525,7 @@ export function ProductionDetailPage() {
         />
       )}
 
-      {/* 5-step progress bar */}
+      {/* 6-step progress bar */}
       <Card style={{ marginBottom: 16 }} size="small">
         <Steps
           current={stepIndex}
@@ -275,6 +536,15 @@ export function ProductionDetailPage() {
           onChange={scrollToStep}
         />
       </Card>
+
+      {/* PlanRunStages — failed/waiting non-gate stages */}
+      {run && (
+        <PlanRunStages
+          productionId={productionId}
+          stages={run.stages}
+          canEdit={canEdit}
+        />
+      )}
 
       {/* Step 0: editable production info */}
       <Card
@@ -292,50 +562,57 @@ export function ProductionDetailPage() {
           </Space>
         }
       >
-        <ProductionForm form={form} readOnly={!canEdit} />
+        <ProductionForm
+          form={form}
+          readOnly={!canEdit}
+          directionApproved={production.hasRnd}
+        />
 
         {canEdit && (
           <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
-            <Button
-              onClick={() => saveMutation.mutate()}
-              loading={saveMutation.isPending}
-            >
-              {t("productions.saveInfo")}
-            </Button>
+            <Tooltip title={t("productions.saveInfo")}>
+              <Button
+                onClick={() => saveMutation.mutate()}
+                loading={saveMutation.isPending}
+                aria-label={t("productions.saveInfo")}
+              >
+                {t("productions.saveInfo")}
+              </Button>
+            </Tooltip>
 
             {production.runId === null ? (
               <Button
                 type="primary"
-                loading={runMutation.isPending}
+                loading={startRunMutation.isPending}
                 disabled={runIsActive}
-                onClick={() => runMutation.mutate(false)}
+                onClick={() => startRunMutation.mutate()}
               >
-                {t("productions.startPlan")}
+                {t("productions.startResearch")}
               </Button>
             ) : (
-              <Popconfirm
-                title={t("productions.replanConfirmTitle")}
-                description={t("productions.replanConfirmBody")}
-                onConfirm={() => runMutation.mutate(true)}
-                disabled={runMutation.isPending || runIsActive}
+              <Dropdown
+                trigger={["click"]}
+                menu={{ items: rerunItems }}
+                disabled={startRunMutation.isPending || resumeMutation.isPending || cancelRunMutation.isPending}
               >
-                <Button loading={runMutation.isPending} disabled={runIsActive}>
-                  {runIsActive
-                    ? t("productions.planRunning")
-                    : t("productions.replanButton")}
-                </Button>
-              </Popconfirm>
+                <Tooltip title={t("productions.rerunMenu")}>
+                  <Button
+                    icon={<MoreHorizontal size={14} />}
+                    aria-label={t("productions.rerunMenu")}
+                  />
+                </Tooltip>
+              </Dropdown>
             )}
           </div>
         )}
       </Card>
 
-      {/* Step 1+2: Research + Trend Report */}
+      {/* Step 1: Research + Trend Report */}
       {stepIndex >= 1 && (
         <Card
           id="step-research"
           style={{ marginBottom: 16 }}
-          title="Nghiên cứu thị trường"
+          title={t("productions.stepResearch")}
           size="small"
         >
           <ResearchView
@@ -346,35 +623,156 @@ export function ProductionDetailPage() {
         </Card>
       )}
 
-      {/* Step 2+3: Plan editor */}
-      {stepIndex >= 2 && plan && (
+      {/* Step 2: R&D (v2 runs only) */}
+      {showV2Rnd && (
+        <Card
+          id="step-rnd"
+          style={{ marginBottom: 16 }}
+          title={t("productions.stepRnd")}
+          size="small"
+        >
+          {waitingApproveRnd && rndDocForGate ? (
+            <RndEditor
+              key={runId}
+              value={rndDocForGate}
+              readOnly={!canEdit}
+              primaryLabel={t("rndEditor.approveButton")}
+              onSubmit={(doc) => approveRndMutation.mutateAsync(doc)}
+              submitting={approveRndMutation.isPending}
+              problems={rndProblems}
+            />
+          ) : rndStageRunning ? (
+            <RndWritingSpinner />
+          ) : rndDocForEdit ? (
+            <>
+              {production.hasRnd && (
+                <Alert
+                  type="info"
+                  message={t("rndEditor.editNote")}
+                  showIcon
+                  style={{ marginBottom: 12 }}
+                />
+              )}
+              <RndEditor
+                key={runId}
+                value={rndDocForEdit}
+                readOnly={!canEdit}
+                primaryLabel={t("rndEditor.saveButton")}
+                onSubmit={(doc) => saveRndMutation.mutateAsync(doc)}
+                submitting={saveRndMutation.isPending}
+                problems={rndProblems}
+                warnings={rndWarnings}
+              />
+            </>
+          ) : rndDraft ? (
+            <RndEditor
+              key={runId}
+              value={rndDraft}
+              readOnly={!canEdit}
+              primaryLabel={t("rndEditor.saveButton")}
+              onSubmit={(doc) => saveRndMutation.mutateAsync(doc)}
+              submitting={saveRndMutation.isPending}
+              problems={rndProblems}
+              warnings={rndWarnings}
+            />
+          ) : null}
+        </Card>
+      )}
+
+      {/* Step 3: Branding (v2 runs only) */}
+      {showV2Branding && (
+        <Card
+          id="step-branding"
+          style={{ marginBottom: 16 }}
+          title={t("productions.stepBranding")}
+          size="small"
+        >
+          {waitingApproveBranding && brandingDocForGate ? (
+            <BrandingEditor
+              key={runId}
+              value={brandingDocForGate}
+              readOnly={!canEdit}
+              primaryLabel={t("brandingEditor.approveButton")}
+              onSubmit={(doc) => approveBrandingMutation.mutateAsync(doc)}
+              submitting={approveBrandingMutation.isPending}
+              problems={brandingProblems}
+            />
+          ) : brandingStageRunning ? (
+            <BrandingWritingSpinner />
+          ) : brandingDocForEdit ? (
+            <>
+              {production.hasBranding && (
+                <Alert
+                  type="info"
+                  message={t("brandingEditor.editNote")}
+                  showIcon
+                  style={{ marginBottom: 12 }}
+                />
+              )}
+              <BrandingEditor
+                key={runId}
+                value={brandingDocForEdit}
+                readOnly={!canEdit}
+                primaryLabel={t("brandingEditor.saveButton")}
+                onSubmit={(doc) => saveBrandingMutation.mutateAsync(doc)}
+                submitting={saveBrandingMutation.isPending}
+                problems={brandingProblems}
+                warnings={brandingWarnings}
+              />
+            </>
+          ) : brandingDraft ? (
+            <BrandingEditor
+              key={runId}
+              value={brandingDraft}
+              readOnly={!canEdit}
+              primaryLabel={t("brandingEditor.saveButton")}
+              onSubmit={(doc) => saveBrandingMutation.mutateAsync(doc)}
+              submitting={saveBrandingMutation.isPending}
+              problems={brandingProblems}
+              warnings={brandingWarnings}
+            />
+          ) : null}
+        </Card>
+      )}
+
+      {/* Step 4: Plan editor */}
+      {stepIndex >= 4 && planDoc && (
         <Card
           id="step-plan"
           style={{ marginBottom: 16 }}
-          title="Kế hoạch tập"
+          title={t("productions.stepPlan")}
           size="small"
         >
+          {stepIndex >= 5 && (
+            <Alert
+              type="info"
+              message={t("planEditor.approvedPlanNote")}
+              showIcon
+              style={{ marginBottom: 12 }}
+            />
+          )}
           <PlanEditor
+            key={runId}
             productionId={productionId}
-            plan={plan}
+            plan={planDoc}
             catalog={catalog ?? null}
-            targetSeconds={production.episodeTargetSeconds ?? 300}
-            readOnly={planReadOnly}
+            targetSeconds={targetSeconds}
+            readOnly={stepIndex >= 5}
           />
         </Card>
       )}
 
-      {/* Step 4: Episodes panel (no card title: the episodes table carries its own "Các tập" header) */}
-      {stepIndex >= 4 && (
+      {/* Step 5: Episodes panel */}
+      {stepIndex >= 5 && (
         <Card id="step-episodes" style={{ marginBottom: 16 }} size="small">
           <EpisodesPanel productionId={productionId} canEdit={canEdit} />
         </Card>
       )}
 
-      {/* Call log: every Claude call and every human edit of a model answer (editors whose footage scope covers it) */}
+      {/* Call log */}
       {canEdit && production.runId !== null && (
         <Card id="step-log" style={{ marginBottom: 16 }} title={t("llmLog.title")} size="small">
-          <LlmLogPanel productionId={productionId} live={runIsActive || stepIndex >= 4} />
+          <LlmLogPanel productionId={productionId} live={runIsActive || stepIndex >= 5} />
         </Card>
       )}
     </div>

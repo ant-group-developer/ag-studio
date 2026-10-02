@@ -39,6 +39,9 @@ function memoryCache(): ResearchCache & { store: Map<string, { body: string; fet
   return { store, async get(k) { return store.get(k) ?? null; }, async set(k, body, fetchedAt) { store.set(k, { body, fetchedAt }); } };
 }
 
+/** Reference channels as the research query takes them. */
+const ref = (...urls: string[]) => urls.map((url) => ({ url, role: "reference" as const }));
+
 describe("parseChannelInput", () => {
   it.each([
     [CHANNEL, { kind: "id", value: CHANNEL }],
@@ -82,7 +85,7 @@ describe("helpers", () => {
 });
 
 describe("YoutubeResearchSource", () => {
-  const brief = { production_id: "p1", youtube_channels: ["@KenhA"], keywords: ["phở hà nội"] };
+  const brief = { production_id: "p1", channels: ref("@KenhA"), keywords: ["phở hà nội"] };
 
   it("researches a channel and a keyword into a valid document", async () => {
     const uploads = [
@@ -130,7 +133,7 @@ describe("YoutubeResearchSource", () => {
       channels: (q) => ({ body: { items: [{ id: q.get("id"), snippet: { title: "Kênh A" }, statistics: { hiddenSubscriberCount: true }, contentDetails: { relatedPlaylists: {} } }] } }),
     });
     const r = await new YoutubeResearchSource({ apiKey: "k", fetch: yt.impl, now: () => NOW })
-      .research({ production_id: "p1", youtube_channels: ["https://youtu.be/dQw4w9WgXcQ"], keywords: [] });
+      .research({ production_id: "p1", channels: ref("https://youtu.be/dQw4w9WgXcQ"), keywords: [] });
     expect(r.channels[0]).toMatchObject({ channel_id: CHANNEL, subscribers: null, error: null });
   });
 
@@ -138,8 +141,8 @@ describe("YoutubeResearchSource", () => {
     const yt = fakeYoutube({ search: () => ({ body: { items: [] } }), videos: () => ({ body: { items: [] } }) });
     const cache = memoryCache();
     const src = new YoutubeResearchSource({ apiKey: "k", fetch: yt.impl, now: () => NOW, cache });
-    await src.research({ production_id: "p1", youtube_channels: [], keywords: ["phở"] });
-    const second = await src.research({ production_id: "p1", youtube_channels: [], keywords: ["phở"] });
+    await src.research({ production_id: "p1", channels: ref(), keywords: ["phở"] });
+    const second = await src.research({ production_id: "p1", channels: ref(), keywords: ["phở"] });
     expect(yt.calls.filter((c) => c.resource === "search")).toHaveLength(2);
     expect(second.quota_units).toBe(0);
     expect([...cache.store.keys()].every((k) => !k.includes("key="))).toBe(true);
@@ -150,7 +153,7 @@ describe("YoutubeResearchSource", () => {
       channels: () => ({ status: 403, body: { error: { errors: [{ reason: "quotaExceeded" }] } } }),
     });
     const r = await new YoutubeResearchSource({ apiKey: "k", fetch: yt.impl, now: () => NOW })
-      .research({ production_id: "p1", youtube_channels: ["@A1c", "@B2c"], keywords: ["phở"] });
+      .research({ production_id: "p1", channels: ref("@A1c", "@B2c"), keywords: ["phở"] });
     expect(r.channels.map((c) => c.error)).toEqual(["Hết hạn mức YouTube Data API trong ngày", "Hết hạn mức YouTube Data API trong ngày"]);
     expect(r.keywords[0]!.error).toBe("Hết hạn mức YouTube Data API trong ngày");
     expect(yt.calls).toHaveLength(1);
@@ -158,7 +161,7 @@ describe("YoutubeResearchSource", () => {
 
   it("skips without calling YouTube when there is nothing to research", async () => {
     const yt = fakeYoutube({});
-    const r = await new YoutubeResearchSource({ apiKey: "k", fetch: yt.impl }).research({ production_id: "p1", youtube_channels: [], keywords: [] });
+    const r = await new YoutubeResearchSource({ apiKey: "k", fetch: yt.impl }).research({ production_id: "p1", channels: ref(), keywords: [] });
     expect(r.fetched_at).toBeNull();
     expect(r.skipped_reason).toBeTruthy();
     expect(yt.calls).toHaveLength(0);
@@ -167,8 +170,39 @@ describe("YoutubeResearchSource", () => {
   it("flags an unreadable channel input without a call", async () => {
     const yt = fakeYoutube({});
     const r = await new YoutubeResearchSource({ apiKey: "k", fetch: yt.impl, now: () => NOW })
-      .research({ production_id: "p1", youtube_channels: ["không phải link"], keywords: [] });
+      .research({ production_id: "p1", channels: ref("không phải link"), keywords: [] });
     expect(r.channels[0]!.error).toMatch(/Không nhận ra/);
     expect(yt.calls).toHaveLength(0);
+  });
+});
+
+describe("own and reference channels", () => {
+  it("marks each channel's role and keeps the team's own videos out of the market insights", async () => {
+    const OWN = "UC" + "o".repeat(22);
+    const yt = fakeYoutube({
+      channels: (q) => {
+        const own = q.get("forHandle") === "@Minh";
+        return { body: { items: [{ id: own ? OWN : CHANNEL, snippet: { title: own ? "Kênh mình" : "Kênh A" }, statistics: { subscriberCount: "10" }, contentDetails: { relatedPlaylists: { uploads: own ? "UUO" : "UUA" } } }] } };
+      },
+      playlistItems: (q) => ({
+        body: { items: (q.get("playlistId") === "UUO" ? ["o0000000001", "o0000000002"] : ["a0000000001", "a0000000002"]).map((videoId) => ({ contentDetails: { videoId } })) },
+      }),
+      videos: (q) => ({
+        body: {
+          items: [
+            video("o0000000001", { views: 900000, daysAgo: 3, channel: OWN, tags: ["riêng của mình"] }),
+            video("o0000000002", { views: 800000, daysAgo: 3, channel: OWN, tags: ["riêng của mình"] }),
+            video("a0000000001", { views: 5000, daysAgo: 3, tags: ["phở"] }),
+            video("a0000000002", { views: 4000, daysAgo: 3, tags: ["phở"] }),
+          ].filter((v) => q.get("id")!.split(",").includes(v.id)),
+        },
+      }),
+    });
+    const r = await new YoutubeResearchSource({ apiKey: "k", fetch: yt.impl, now: () => NOW })
+      .research({ production_id: "p1", channels: [{ url: "@Minh", role: "own" }, { url: "@KenhA", role: "reference" }], keywords: [] });
+    expect(r.channels.map((c) => [c.title, c.role])).toEqual([["Kênh mình", "own"], ["Kênh A", "reference"]]);
+    const tags = r.insights.top_tags.map((t) => t.term);
+    expect(tags).toContain("phở");
+    expect(tags).not.toContain("riêng của mình");
   });
 });

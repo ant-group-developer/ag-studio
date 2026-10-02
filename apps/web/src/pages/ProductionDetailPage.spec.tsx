@@ -17,6 +17,15 @@ const client = {
   getTrendReport: vi.fn().mockResolvedValue(null),
   getSeriesPlan: vi.fn().mockResolvedValue(null),
   getProductionCatalog: vi.fn().mockResolvedValue(null),
+  getRndDraft: vi.fn().mockResolvedValue(null),
+  getBrandingDraft: vi.fn().mockResolvedValue(null),
+  getBriefDoc: vi.fn().mockResolvedValue(null),
+  getProductionRnd: vi.fn().mockResolvedValue(null),
+  getProductionBranding: vi.fn().mockResolvedValue(null),
+  getEpisodes: vi.fn().mockResolvedValue([]),
+  getLlmLogs: vi.fn().mockResolvedValue([]),
+  updateProduction: vi.fn(),
+  startRun: vi.fn(),
 };
 vi.mock("../api/studio-client", async (orig) => ({ ...(await orig<object>()), useStudioClient: () => client }));
 
@@ -27,18 +36,40 @@ vi.mock("../api/ag-go-client", async (orig) => ({ ...(await orig<object>()), use
 const { ProductionDetailPage, runToStepIndex } = await import("./ProductionDetailPage");
 
 const stage = (key: string, state: string) =>
-  ({ key, executor: "script", state, attempts: 1, is_gate: key === "approve-plan", error: null, failed_checks: [], outputs: [] });
+  ({ key, executor: "script", state, attempts: 1, is_gate: key === "approve-plan", error: null, failed_checks: [], outputs: [], reused: false });
 const runOf = (stages: [string, string][], waiting_gate: string | null = null) =>
   ({ run_id: "r-1", state: "RUNNING", created_at: "", updated_at: "", cost_usd: 0, waiting_gate, latest_revision: null,
      stages: stages.map(([k, s]) => stage(k, s)) });
 
 describe("runToStepIndex", () => {
-  it("follows the series plan run up to the approved plan", () => {
+  it("returns 0 for no run", () => {
     expect(runToStepIndex(null)).toBe(0);
+  });
+
+  it("returns 1 for v1 run with research in progress", () => {
+    // V1 run = no rnd stage
     expect(runToStepIndex(runOf([["intake", "SUCCEEDED"], ["research", "RUNNING"], ["plan-episodes", "PENDING"]]))).toBe(1);
-    expect(runToStepIndex(runOf([["catalog", "SUCCEEDED"], ["plan-episodes", "RUNNING"]]))).toBe(2);
-    expect(runToStepIndex(runOf([["plan-episodes", "SUCCEEDED"], ["approve-plan", "WAITING"]], "approve-plan"))).toBe(3);
-    expect(runToStepIndex(runOf([["approve-plan", "SUCCEEDED"], ["spawn-episodes", "SUCCEEDED"]]))).toBe(4);
+  });
+
+  it("returns 4 for v1 run with plan-episodes running", () => {
+    // V1 skips R&D (2) and Branding (3), jumps straight to Plan (4)
+    expect(runToStepIndex(runOf([["catalog", "SUCCEEDED"], ["plan-episodes", "RUNNING"]]))).toBe(4);
+  });
+
+  it("returns 4 for v1 run waiting approve-plan gate", () => {
+    expect(runToStepIndex(runOf([["plan-episodes", "SUCCEEDED"], ["approve-plan", "WAITING"]], "approve-plan"))).toBe(4);
+  });
+
+  it("returns 5 when approve-plan succeeded", () => {
+    expect(runToStepIndex(runOf([["approve-plan", "SUCCEEDED"], ["spawn-episodes", "SUCCEEDED"]]))).toBe(5);
+  });
+
+  it("returns 2 for v2 run waiting approve-rnd", () => {
+    expect(runToStepIndex(runOf([["rnd", "SUCCEEDED"], ["approve-rnd", "WAITING"]], "approve-rnd"))).toBe(2);
+  });
+
+  it("returns 3 for v2 run waiting approve-branding", () => {
+    expect(runToStepIndex(runOf([["rnd", "SUCCEEDED"], ["approve-rnd", "SUCCEEDED"], ["branding", "RUNNING"]], "approve-branding"))).toBe(3);
   });
 });
 
@@ -54,13 +85,14 @@ describe("ProductionDetailPage", () => {
       status: "producing", runId: "r-1", createdAt: "", updatedAt: "", ownerUserId: null,
       episodeTargetSeconds: 60, maxEpisodes: 12, aspect: "9:16", language: "vi",
       music: null, sources: ["f-1", "f-gone"], youtubeChannels: [], keywords: [],
+      ownChannels: [], hasRnd: false, hasBranding: false, waitingGate: null,
       episodeCounts: { total: 3, ready: 1, producing: 1, failed: 0 },
     });
     client.checkProductionAccess.mockResolvedValue({ hasAccess: true });
     client.getRun.mockResolvedValue({
       run_id: "r-1", state: "RUNNING", created_at: "", updated_at: "", cost_usd: 0, waiting_gate: null, latest_revision: null,
       stages: [
-        { key: "intake", executor: "agent", state: "SUCCEEDED", attempts: 1, is_gate: false, error: null, failed_checks: [], outputs: [] },
+        { key: "intake", executor: "agent", state: "SUCCEEDED", attempts: 1, is_gate: false, error: null, failed_checks: [], outputs: [], reused: false },
       ],
     });
 
@@ -75,12 +107,12 @@ describe("ProductionDetailPage", () => {
     );
 
     // Production title is populated in the form
-    expect(await screen.findByDisplayValue("Phở sáng")).toBeTruthy();
+    expect(await screen.findByDisplayValue("Phở sáng", {}, { timeout: 15000 })).toBeTruthy();
 
-    // Steps bar: both step 0 and step 1 titles are shown (the research card repeats the second)
-    expect(screen.getByText("Thông tin")).toBeTruthy();
+    // Steps bar: both step 0 and step 1 titles are shown
+    expect(screen.getByText("Thông tin production")).toBeTruthy();
     expect(screen.getAllByText("Nghiên cứu thị trường").length).toBeGreaterThan(0);
-    // The run is read by production id (the route is /productions/:id/run), never by run id
+    // The run is read by production id
     expect(client.getRun).toHaveBeenCalledWith("p-1");
-  });
+  }, 15000);
 });

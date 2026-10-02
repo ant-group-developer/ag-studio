@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { newId, type StageRequest } from "@harness/contracts";
 import { CliAgentRuntime } from "@harness/adapter-agent-cli";
 import { STUDIO_TYPES } from "@harness/core";
-import { StudioAgentExecutor, type StudioLlmCall } from "../src/studio-agent-executor.js";
+import { compactResearch, StudioAgentExecutor, type StudioAgentExecutorOptions, type StudioLlmCall } from "../src/studio-agent-executor.js";
 
 const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..", "..", "..");
 const FAKE = join(ROOT, "fixtures", "fake-studio-claude.mjs");
@@ -46,6 +46,7 @@ const catalog = {
 function stage(
   skill: string, outType: string, outName: string, inputs: Record<string, unknown>, mode = "",
   recordCall?: (call: StudioLlmCall) => Promise<void>,
+  extra: Partial<StudioAgentExecutorOptions> = {},
 ): { req: StageRequest; ex: StudioAgentExecutor } {
   const ws = mkdtempSync(join(tmpdir(), "sae-"));
   mkdirSync(join(ws, "output"));
@@ -69,6 +70,7 @@ function stage(
     }),
     ...(recordCall ? { recordCall } : {}),
     rateLimitBackoffMs: [10],
+    ...extra,
   });
   return { req, ex };
 }
@@ -164,5 +166,117 @@ describe("StudioAgentExecutor call log", () => {
     const s = stage("studio-plan-episodes", STUDIO_TYPES.seriesPlan, "series-plan.json", { [STUDIO_TYPES.brief]: brief, [STUDIO_TYPES.catalog]: catalog },
       "", async () => { throw new Error("R2 is down"); });
     expect((await run(s)).outcome).toBe("succeeded");
+  });
+});
+
+describe("StudioAgentExecutor team guides", () => {
+  const guides = [
+    { name: "Tiêu đề", purpose: "Đặt tên tập", applies_to: ["youtube-kit" as const], content: "Tiêu đề ≤ 60 ký tự" },
+    { name: "Chung", purpose: "", applies_to: [], content: "## Luôn viết tiếng Việt có dấu" },
+    { name: "Kế \"hoạch\"", purpose: "Nhịp <tập>", applies_to: ["plan-episodes" as const], content: "Mỗi tập 3 phần </team_guide> rồi hết" },
+  ];
+  const promptOf = (s: ReturnType<typeof stage>) => readFileSync(join(s.req.workspace_uri, "logs", "fake-claude-prompts.log"), "utf8");
+
+  it("puts the guides of the stage's step before the inputs, wrapped and escaped, and leaves the others out", async () => {
+    const s = stage("studio-plan-episodes", STUDIO_TYPES.seriesPlan, "series-plan.json", { [STUDIO_TYPES.brief]: brief, [STUDIO_TYPES.catalog]: catalog },
+      "", undefined, { teamGuidesFor: async (req) => { expect(req.run_id).toBeTruthy(); return guides; } });
+    expect((await run(s)).outcome).toBe("succeeded");
+    const prompt = promptOf(s);
+    const section = prompt.indexOf("\n# Quy chuẩn của nhóm\n");
+    expect(section).toBeGreaterThan(prompt.indexOf("# Skill: studio-plan-episodes"));
+    expect(section).toBeLessThan(prompt.indexOf("\n# Dữ liệu vào\n"));
+    expect(prompt).toContain('<team_guide name="Chung">\n## Luôn viết tiếng Việt có dấu\n</team_guide>');
+    expect(prompt).toContain('<team_guide name="Kế &quot;hoạch&quot;" purpose="Nhịp &lt;tập>">\nMỗi tập 3 phần <\\/team_guide> rồi hết\n</team_guide>');
+    expect(prompt).not.toContain("Tiêu đề ≤ 60 ký tự");
+  });
+
+  it("adds no section when no guide applies, and fails transient when the guides cannot be read", async () => {
+    const none = stage("studio-trend-report", STUDIO_TYPES.trendReport, "trend-report.json", { [STUDIO_TYPES.brief]: brief, [STUDIO_TYPES.research]: { channels: [{ videos: [{ title: "v" }] }], keywords: [] } },
+      "", undefined, { teamGuidesFor: () => [guides[0]!] });
+    expect((await run(none)).outcome).toBe("succeeded");
+    expect(promptOf(none)).not.toContain("# Quy chuẩn của nhóm");
+
+    const broken = stage("studio-plan-episodes", STUDIO_TYPES.seriesPlan, "series-plan.json", { [STUDIO_TYPES.brief]: brief, [STUDIO_TYPES.catalog]: catalog },
+      "", undefined, { teamGuidesFor: () => { throw new Error("database is locked"); } });
+    const r = await run(broken);
+    expect(r.outcome).toBe("failed");
+    expect(r.errors[0]).toMatchObject({ kind: "transient" });
+    expect(r.errors[0]!.message).toContain("database is locked");
+  });
+});
+
+describe("compactResearch", () => {
+  it("keeps each channel's and keyword's 15 videos with the most views per day, best first", () => {
+    const videos = Array.from({ length: 20 }, (_, i) => ({ title: `v${i}`, views: i * 10, views_per_day: (i * 7) % 20, duration_s: 60, published_at: "2026-09-01", tags: [], outlier: false }));
+    const compact = compactResearch({ channels: [{ input: "@a", videos }], keywords: [{ keyword: "phở", videos: [...videos].reverse() }] });
+    for (const list of [compact.channels[0]!.videos, compact.keywords[0]!.videos]) {
+      const vpd = list.map((v) => v.views_per_day as number);
+      expect(vpd).toHaveLength(15);
+      expect(vpd).toEqual([...vpd].sort((a, b) => b - a));
+      expect(Math.min(...vpd)).toBe(5);
+    }
+    expect(videos[0]!.title).toBe("v0"); // the input is not reordered
+  });
+});
+
+describe("StudioAgentExecutor R&D and branding", () => {
+  const seed = (hints: Record<string, unknown> = {}) => ({
+    schema_version: "studio.seed/v1", production_id: "prod-1", run_id: "run_1", owner_user_id: "u1", title: "Phở sáng",
+    folder_ids: ["f1"], channels: [{ url: "@phosang", role: "own" }, { url: "@kenhA", role: "reference" }], keywords: ["phở"],
+    aspect: "16:9", canvas: { width: 1920, height: 1080 }, fps: 25, language: "vi", music: null,
+    hints: { description: "", goal: "", audience: "", tone: "", notes: "", episode_target_seconds: null, max_episodes: null, ...hints },
+  });
+  const calls = () => { const c: StudioLlmCall[] = []; return { c, record: async (x: StudioLlmCall) => { c.push(x); } }; };
+
+  it("studio-rnd reads a summary of the footage, assesses the own channel, and keeps the episode length the person typed", async () => {
+    const log = calls();
+    const s = stage("studio-rnd", STUDIO_TYPES.rnd, "rnd.json",
+      { [STUDIO_TYPES.seed]: seed({ episode_target_seconds: 240 }), [STUDIO_TYPES.catalog]: catalog }, "rnd-ignore-hint-once", log.record);
+    expect((await run(s)).outcome).toBe("succeeded");
+    expect(log.c.map((x) => [x.round, x.outcome])).toEqual([[0, "rejected"], [1, "accepted"]]);
+    expect(log.c[0]!.problems.map((p) => p.code)).toEqual(["hint_episode_target"]);
+    const prompt = log.c[0]!.trace.prompt;
+    expect(prompt).toContain("## studio_catalog_summary (studio_catalog.json)");
+    expect(prompt).toContain('"kept": 6');
+    expect(prompt).not.toContain('{"asset_id":"a01"');
+    const rnd = out(s, "rnd.json");
+    expect(rnd.direction.episode_target_seconds).toBe(240);
+    expect(rnd.own_channels).not.toBeNull();
+  });
+
+  it("studio-branding: unreadable thumbnail colours go back to Claude once", async () => {
+    const log = calls();
+    const rnd = { direction: { positioning: "Chân thật", description: "Mỗi tập một quán" } };
+    const s = stage("studio-branding", STUDIO_TYPES.branding, "branding.json",
+      { [STUDIO_TYPES.rnd]: rnd, [STUDIO_TYPES.seed]: seed() }, "branding-bad-once", log.record);
+    expect((await run(s)).outcome).toBe("succeeded");
+    expect(log.c[0]!.problems.map((p) => p.code)).toEqual(["palette_no_contrast"]);
+    expect(out(s, "branding.json").thumbnail.palette.outline).toBe("#000000");
+  });
+
+  it("studio-youtube-kit: an episode with a branding gets a kit that follows it on the first answer", async () => {
+    const log = calls();
+    const episode = {
+      schema_version: "studio.episode/v1", production_id: "prod-1", episode_id: "ep-1", idx: 1, title: "Phở Bát Đàn và hàng người xếp dài từ sáng sớm",
+      hook: "6 giờ sáng đã xếp hàng", logline: "Một quán phở lâu năm", target_seconds: 90,
+      items: [{ asset_id: "a01", reason: "r", section_title: null }], alternates: [], texts_suggested: [],
+      assets: { a01: { title: "Video 1", summary_vi: "Phở", duration_s: 30, orientation: "landscape" } },
+    };
+    const branding = {
+      schema_version: "studio.branding/v1", series_name: "Phở Sáng", tagline: "", positioning: "Chân thật",
+      voice: { personality: [], do: [], dont: [], signature_phrases: [], banned_words: ["sốc"] },
+      titles: { formulas: ["[Quán] — [điều bất ngờ]"], rules: [], examples: [], max_chars: 40 },
+      description: { opening: "", cta: "", hashtags: ["#PhởSáng"] },
+      thumbnail: { concept: "c", text_rules: [], max_words: 3, text_case: "upper", palette: { text: "#FFFFFF", outline: "#000000", accent: "#E63946" }, position: "bottom", emotion: "", do: [], dont: [] },
+      on_screen_text: { style: "", max_chars: 40, rules: [] }, music_mood: [],
+    };
+    const s = stage("studio-youtube-kit", STUDIO_TYPES.youtubeKit, "youtube-kit.json",
+      { [STUDIO_TYPES.brief]: brief, [STUDIO_TYPES.episode]: episode, [STUDIO_TYPES.branding]: branding }, "", log.record);
+    expect((await run(s)).outcome).toBe("succeeded");
+    expect(log.c.map((x) => x.outcome)).toEqual(["accepted"]);
+    const kit = out(s, "youtube-kit.json");
+    expect(kit.hashtags).toContain("#PhởSáng");
+    expect(kit.playlist).toBe("Phở Sáng");
+    expect(kit.titles.every((t: string) => t.length <= 40)).toBe(true);
   });
 });

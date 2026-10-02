@@ -36,6 +36,7 @@ const inputs = {};
 for (const m of stdin.matchAll(/^## (\S+) \([^)]*\)\n```json\n([\s\S]*?)\n```/gm)) {
   const [, type, body] = m;
   if (type === "studio_catalog") {
+    // full catalog (plan-episodes): a header line, then one asset per line; the R&D gets `studio_catalog_summary`
     // v2: first line is header JSON, rest are one asset per line (compact)
     const lines = body.split("\n").filter(Boolean);
     const [head, ...rows] = lines;
@@ -46,6 +47,7 @@ for (const m of stdin.matchAll(/^## (\S+) \([^)]*\)\n```json\n([\s\S]*?)\n```/gm
 }
 const repairing = stdin.includes("# Lần trả lời trước bị hệ thống kiểm tra từ chối");
 const brief = inputs.studio_brief ?? {};
+const seed = inputs.studio_seed ?? {};
 
 function fits(asset) {
   const o = asset.orientation ?? null;
@@ -66,7 +68,7 @@ function trendReport() {
     title_patterns: ["[Từ khoá] — [Con số/Bí mật]", "Lần đầu [Hành động] tại [Địa điểm]"],
     hook_patterns: ["Câu hỏi cá nhân hoá", "Con số gây ngạc nhiên", "Cảnh đẹp + nhạc nền"],
     thumbnail_patterns: ["Cận cảnh khuôn mặt + chữ nổi bật", "Cảnh đẹp panorama + logo nhỏ"],
-    recommended_duration_s: brief.episode_target_seconds ?? 180,
+    recommended_duration_s: brief.episode_target_seconds ?? seed.hints?.episode_target_seconds ?? 180,
     posting_schedule: "Thứ 3 và Thứ 6, 18:00–20:00 (UTC+7)",
     recommendations: ["Dùng hook câu hỏi trong 5 giây đầu", "Thumbnail luôn có yếu tố con người", "Upload phụ đề tiếng Anh để mở rộng reach"],
   };
@@ -141,27 +143,103 @@ function youtubeKit() {
   const midAssetId = items[Math.floor(items.length / 2)]?.asset_id ?? firstAssetId;
   const lastAssetId = items[items.length - 1]?.asset_id ?? firstAssetId;
   const title = episode.title ?? brief.title ?? "Video";
+  // Follow the production's branding when the episode has one (title length, thumbnail words and case, series
+  // hashtags): the kit check asks Claude to fix those, so the fake must already comply.
+  const b = inputs.studio_branding ?? null;
+  const maxChars = b?.titles?.max_chars ?? 100;
+  const maxWords = b?.thumbnail?.max_words ?? 8;
+  const thumbText = (t) => {
+    const words = t.split(/[^\p{L}\p{N}]+/u).filter(Boolean).slice(0, maxWords).join(" ").slice(0, 40);
+    return b?.thumbnail?.text_case === "upper" ? words.toLocaleUpperCase("vi") : words;
+  };
   return {
     schema_version: "studio.youtube-kit/v1",
     titles: [
       `${title} — Khám Phá Đầy Đủ`,
       `Bí Mật Về ${title} Ít Ai Biết`,
       `Lần Đầu Trải Nghiệm ${title}`,
-    ],
+    ].map((t) => t.slice(0, maxChars)),
     description: `${episode.hook ?? title}\n\nTập này sẽ đưa bạn đến với ${title}. Theo dõi kênh để không bỏ lỡ tập tiếp theo!`,
     tags: ["du lịch", "Việt Nam", ...(brief.keywords ?? []).slice(0, 5), title.split(" ").slice(0, 3).join(" ")],
-    hashtags: ["#ViệtNam", "#DuLịch", `#${title.replace(/[^\p{L}\p{N}_]+/gu, "").slice(0, 60)}`],
+    hashtags: [...new Set([...(b?.description?.hashtags ?? []), "#ViệtNam", "#DuLịch", `#${title.replace(/[^\p{L}\p{N}_]+/gu, "").slice(0, 60)}`])],
     thumbnails: [
-      { asset_id: firstAssetId, text: title.slice(0, 40) },
-      { asset_id: midAssetId, text: "Khám Phá Ngay" },
-      { asset_id: lastAssetId, text: "Không Thể Bỏ Lỡ" },
+      { asset_id: firstAssetId, text: thumbText(title) },
+      { asset_id: midAssetId, text: thumbText("Khám Phá Ngay") },
+      { asset_id: lastAssetId, text: thumbText("Không Thể Bỏ Lỡ") },
     ],
-    playlist: brief.title ?? "Series",
+    playlist: b?.series_name ?? brief.title ?? "Series",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Research first (plan v2): R&D and branding
+// ---------------------------------------------------------------------------
+
+function rnd() {
+  const h = seed.hints ?? {};
+  const own = (seed.channels ?? []).filter((c) => c.role === "own");
+  const footage = inputs.studio_catalog_summary ?? {};
+  const title = seed.title ?? "Series";
+  // rnd-ignore-hint-once: the first answer leaves the episode length the person typed (the check asks for a repair)
+  const ignoreHint = modes.has("rnd-ignore-hint-once") && !repairing && h.episode_target_seconds != null;
+  return {
+    schema_version: "studio.rnd/v1",
+    summary: `Series "${title}" dựng từ ${footage.kept ?? 0} video có sẵn, cho người xem trẻ thích khám phá.`,
+    market: {
+      opportunities: ["Ít kênh làm chủ đề này đều đặn"],
+      gaps: ["Thiếu video quay buổi sáng"],
+      risks: ["Kênh lớn đã có loạt tương tự"],
+      competitors: [],
+    },
+    own_channels: own.length
+      ? { assessment: `Kênh ${own[0].url} còn mới, cần nhịp đăng đều.`, strengths: ["Kho footage sẵn có"], weaknesses: ["Tiêu đề chưa có công thức"], recommendations: ["Đăng 2 tập mỗi tuần"] }
+      : null,
+    footage_fit: { summary: "Footage hợp các tập ngắn về món ăn và phố phường.", strong_themes: ["ẩm thực"], gaps: [] },
+    direction: {
+      description: h.description || `Mỗi tập kể một câu chuyện về ${title}.`,
+      goal: h.goal || "Tăng người xem trung thành",
+      audience: h.audience || "Người Việt 18–35 thích khám phá",
+      tone: h.tone || "Ấm áp, gần gũi",
+      positioning: `${title}: chân thật, không dàn dựng`,
+      content_pillars: [{ name: "Câu chuyện", description: "Mỗi tập một câu chuyện trọn vẹn" }],
+      episode_target_seconds: ignoreHint ? h.episode_target_seconds + 60 : (h.episode_target_seconds ?? 120),
+      max_episodes: h.max_episodes ?? 2,
+      posting_schedule: "Thứ 3 và Thứ 6, 19:00",
+      keywords: (seed.keywords ?? []).slice(0, 5),
+      episode_ideas: [{ title: `${title} — tập mở màn`.slice(0, 150), angle: "Giới thiệu chủ đề bằng cảnh đẹp nhất" }],
+      notes: h.notes || "",
+    },
+  };
+}
+
+function branding() {
+  const d = inputs.studio_rnd?.direction ?? {};
+  const name = (seed.title ?? "Series").slice(0, 100);
+  const tag = `#${name.replace(/[^\p{L}\p{N}_]+/gu, "").slice(0, 40) || "Series"}`;
+  // branding-bad-once: the first answer has unreadable thumbnail colours (text = outline)
+  const bad = modes.has("branding-bad-once") && !repairing;
+  return {
+    schema_version: "studio.branding/v1",
+    series_name: name,
+    tagline: (d.positioning ?? "").slice(0, 200),
+    positioning: d.positioning || `${name}: chân thật`,
+    voice: { personality: ["ấm áp", "gần gũi"], do: ["Kể như đang nói với bạn"], dont: ["Giật tít sai sự thật"], signature_phrases: ["Đi cùng mình nhé"], banned_words: ["sốc"] },
+    titles: { formulas: ["[Chủ đề] — [điều bất ngờ]"], rules: ["Từ khoá chính ở đầu"], examples: [`${name} — tập mở màn`.slice(0, 60)], max_chars: 70 },
+    description: { opening: (d.description ?? "").slice(0, 500), cta: "Theo dõi kênh để xem tập tiếp theo", hashtags: [tag] },
+    thumbnail: {
+      concept: "Cận cảnh chủ thể chính, chữ lớn tương phản", text_rules: ["2–4 chữ"], max_words: 4, text_case: "upper",
+      palette: { text: "#FFFFFF", outline: bad ? "#FFFFFF" : "#000000", accent: "#E63946" }, position: "bottom", emotion: "tò mò",
+      do: ["Chữ to"], dont: ["Chữ nhỏ"],
+    },
+    on_screen_text: { style: "Chữ trắng viền đen", max_chars: 40, rules: ["Tối đa 2 dòng"] },
+    music_mood: ["ấm áp"],
   };
 }
 
 let out;
 if (skill === "studio-trend-report") out = trendReport();
+else if (skill === "studio-rnd") out = rnd();
+else if (skill === "studio-branding") out = branding();
 else if (skill === "studio-plan-episodes") out = planEpisodes();
 else if (skill === "studio-youtube-kit") out = youtubeKit();
 else { process.stderr.write(`fake-studio-claude: unknown skill ${skill}\n`); process.exit(3); }

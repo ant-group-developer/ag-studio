@@ -3,10 +3,10 @@
  * every 5s while any episode is "producing", row actions: open editor, re-render,
  * download, export dropdown. Opens EpisodeDrawer on row click.
  */
-import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  App as AntApp,
   Button,
   Dropdown,
   Image,
@@ -17,10 +17,10 @@ import {
   Tag,
   Tooltip,
 } from "antd";
-import { Edit3, RefreshCw, Package, MoreHorizontal } from "lucide-react";
+import { Download, Edit3, RefreshCw, Package, MoreHorizontal } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQueryState, parseAsInteger, parseAsString } from "nuqs";
-import { useStudioClient } from "../../api/studio-client";
+import { StudioHttpError, useStudioClient } from "../../api/studio-client";
 import type { EpisodeDetail, EpisodeSummary } from "../../api/studio-client";
 import { SortDropdown, type SortState } from "../../helpers/sort-dropdown";
 import { TableRefreshButton } from "../../helpers/table-refresh-button";
@@ -56,6 +56,7 @@ export function EpisodesPanel({ productionId, canEdit }: Props) {
   const client = useStudioClient();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { message } = AntApp.useApp();
 
   const [page, setPage] = useQueryState("ep_page", parseAsInteger.withDefault(1));
   const [sortByRaw, setSortByRaw] = useQueryState("ep_sortBy", parseAsString.withDefault("idx"));
@@ -63,7 +64,9 @@ export function EpisodesPanel({ productionId, canEdit }: Props) {
   const setSortBy = (v: SF) => setSortByRaw(v);
   const [sortOrder, setSortOrder] = useQueryState("ep_sortOrder", parseAsString.withDefault("asc"));
 
-  const [drawerEpisodeId, setDrawerEpisodeId] = useState<string | null>(null);
+  // URL-backed (not plain state): so a round trip through Canva's OAuth (`returnTo` = this page) reopens
+  // the same episode's drawer.
+  const [drawerEpisodeId, setDrawerEpisodeId] = useQueryState("episode", parseAsString);
 
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["episodes", productionId, page, sortBy, sortOrder],
@@ -88,6 +91,27 @@ export function EpisodesPanel({ productionId, canEdit }: Props) {
   const rerenderMutation = useMutation({
     mutationFn: (episodeId: string) => client.rerenderEpisode(productionId, episodeId),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["episodes", productionId] }),
+  });
+
+  const exportForbidden = (err: unknown) =>
+    void message.error(err instanceof StudioHttpError && err.status === 403 ? t("episodes.footageForbidden") : err instanceof Error ? err.message : String(err));
+
+  // The mp4's download URL only lives on the episode's detail — reuse it if the drawer already fetched it.
+  const exportVideoMutation = useMutation({
+    mutationFn: async (episodeId: string) => {
+      const cached = qc.getQueryData<EpisodeDetail>(["episode", productionId, episodeId]);
+      const detail = cached ?? (await client.getEpisode(productionId, episodeId));
+      if (!detail.finalVideoDownloadUrl) throw new Error(t("episodes.exportNoVideo"));
+      return detail.finalVideoDownloadUrl;
+    },
+    onSuccess: (url) => { window.location.href = url; },
+    onError: exportForbidden,
+  });
+
+  const exportPackMutation = useMutation({
+    mutationFn: (episodeId: string) => client.youtubePack(productionId, episodeId),
+    onSuccess: (res) => { window.location.href = res.url; },
+    onError: exportForbidden,
   });
 
   const handleSort = (change: Partial<SortState<SF>>) => {
@@ -118,7 +142,7 @@ export function EpisodesPanel({ productionId, canEdit }: Props) {
       dataIndex: "title",
       key: "title",
       render: (title: string, r: EpisodeSummary) => (
-        <a onClick={() => setDrawerEpisodeId(r.id)}>{title}</a>
+        <a onClick={() => void setDrawerEpisodeId(r.id)}>{title}</a>
       ),
     },
     {
@@ -182,18 +206,30 @@ export function EpisodesPanel({ productionId, canEdit }: Props) {
             menu={{
               items: [
                 {
+                  key: "export-video",
+                  icon: <Download size={14} />,
+                  label: t("episodes.exportVideo"),
+                  disabled: r.status !== "ready",
+                  onClick: () => exportVideoMutation.mutate(r.id),
+                },
+                {
                   key: "youtube-pack",
                   icon: <Package size={14} />,
                   label: t("episodes.youtubePack"),
                   disabled: r.status !== "ready",
-                  onClick: () => setDrawerEpisodeId(r.id),
+                  onClick: () => exportPackMutation.mutate(r.id),
                 },
-                ...(canEdit ? premiereMenuItems(t, (media) => premiere.mutate({ episodeId: r.id, media })).map((i) => ({ ...i, disabled: r.status === "planned" })) : []),
+                ...(canEdit
+                  ? [
+                      { type: "divider" as const },
+                      ...premiereMenuItems(t, (media) => premiere.mutate({ episodeId: r.id, media })).map((i) => ({ ...i, disabled: r.status === "planned" })),
+                    ]
+                  : []),
               ],
             }}
           >
             <Tooltip title={t("episodes.export")}>
-              <Button size="small" icon={<MoreHorizontal size={12} />} aria-label={t("episodes.export")} />
+              <Button size="small" icon={<MoreHorizontal size={12} />} aria-label={t("episodes.export")} loading={exportVideoMutation.isPending || exportPackMutation.isPending} />
             </Tooltip>
           </Dropdown>
         </Space>
@@ -237,7 +273,7 @@ export function EpisodesPanel({ productionId, canEdit }: Props) {
           productionId={productionId}
           episode={drawerData as EpisodeDetail}
           open={!!drawerEpisodeId}
-          onClose={() => setDrawerEpisodeId(null)}
+          onClose={() => void setDrawerEpisodeId(null)}
           canEdit={canEdit}
         />
       )}

@@ -1,8 +1,9 @@
 /**
- * GĐ4 acceptance E2E: `ag-studio-series-plan@1.0.0` + `ag-studio-episode@1.0.0` series flow.
+ * GĐ4 acceptance E2E, research first: `ag-studio-series-plan@2.0.0` (R&D and branding approved before the plan) +
+ * `ag-studio-episode@1.2.0` series flow.
  *
  * Series plan API → approve-plan gate → episode spawning →
- * per-episode build-timeline → render (real farm + render worker) → export.
+ * per-episode build-timeline → render (real farm + render worker) → thumbnails (Studio ffmpeg) → export.
  * Episodes have NO human-approval gate; every episode renders automatically after spawning.
  *
  * Real:  ag-farm hub (+ Postgres in Docker), Studio API (dist), Studio worker (dist),
@@ -774,6 +775,35 @@ describe.skipIf(!isE2E)(
       expect(["planning", "waiting_approval"]).toContain(planningProd.status);
     });
 
+    it("approve-rnd and approve-branding: the R&D and branding fake Claude proposes are approved and become the production's", async () => {
+      await waitGate("approve-rnd");
+      const rnd = await ok<{ schema_version: string; direction: { episode_target_seconds: number } }>(
+        "GET",
+        `/productions/${prodId}/run/documents/rnd/rnd.json`,
+      );
+      expect(rnd.schema_version).toBe("studio.rnd/v1");
+      expect(rnd.direction.episode_target_seconds).toBe(90); // the hint typed at creation
+      expect((await ok<{ accepted: boolean }>("POST", `/productions/${prodId}/run/gates/approve-rnd`, { document: rnd })).accepted).toBe(true);
+
+      await waitGate("approve-branding");
+      const branding = await ok<{ schema_version: string }>(
+        "GET",
+        `/productions/${prodId}/run/documents/branding/branding.json`,
+      );
+      expect(branding.schema_version).toBe("studio.branding/v1");
+      expect((await ok<{ accepted: boolean }>("POST", `/productions/${prodId}/run/gates/approve-branding`, { document: branding })).accepted).toBe(true);
+      const saved = await waitFor(
+        "branding applied",
+        async () => {
+          const doc = await ok<{ document: unknown }>("GET", `/productions/${prodId}/branding`);
+          return doc.document ? doc : null;
+        },
+        60_000,
+        1000,
+      );
+      expect(saved.document).toEqual(branding);
+    });
+
     it("approve-plan: fake Claude produces a series plan; plan is approved and episodes spawn", async () => {
       // Wait for plan run to reach the approve-plan gate
       await waitGate("approve-plan");
@@ -858,9 +888,9 @@ describe.skipIf(!isE2E)(
           `/productions/${prodId}/episodes/${ep.id}`,
         );
 
-        // exportFiles: mp4, 3 thumbnails, youtube.json, timeline, pack
+        // exportFiles: mp4, the 3 suggested thumbnails, youtube.json, timeline (no zip: the pack is built on download)
         const kinds = detail.exportFiles.map((f) => f.kind).sort();
-        expect(kinds).toEqual(["mp4", "pack", "thumbnail", "thumbnail", "thumbnail", "timeline", "youtube"]);
+        expect(kinds).toEqual(["mp4", "thumbnail", "thumbnail", "thumbnail", "timeline", "youtube"]);
 
         // MP4: real playable video
         expect(detail.finalVideoUrl).toBeTruthy();
@@ -876,9 +906,16 @@ describe.skipIf(!isE2E)(
         expect(mp4Info.width).toBe(CANVAS.width);
         expect(mp4Info.height).toBe(CANVAS.height);
 
-        // Thumbnails: 3 real JPEGs at 1280×720
-        const thumbFiles = detail.exportFiles.filter((f) => f.kind === "thumbnail");
-        expect(thumbFiles).toHaveLength(3);
+        // Thumbnails: clean frames cut on the Studio node + 3 suggestions with words, all real 1280×720 JPEGs
+        const list = await ok<{ items: { id: string; kind: string; url: string; createdBy: string }[]; selectedId: string | null }>(
+          "GET", `/productions/${prodId}/episodes/${ep.id}/thumbnails`,
+        );
+        const frames = list.items.filter((t) => t.kind === "frame");
+        const suggestions = list.items.filter((t) => t.kind === "suggestion");
+        expect(frames.length).toBeGreaterThan(0);
+        expect(suggestions).toHaveLength(3);
+        expect(list.selectedId).toBe(suggestions[0]!.id);
+        const thumbFiles = [...suggestions, frames[0]!];
         for (const [i, thumb] of thumbFiles.entries()) {
           const thumbRes = await fetch(thumb.url);
           expect(thumbRes.ok).toBe(true);
@@ -901,10 +938,14 @@ describe.skipIf(!isE2E)(
         const ytData = await ytRes.json();
         expect(() => StudioYoutubeSchema.parse(ytData)).not.toThrow();
 
-        // pack zip: exists and has non-zero size
-        const packFile = detail.exportFiles.find((f) => f.kind === "pack");
-        expect(packFile).toBeTruthy();
-        expect(packFile!.sizeBytes).toBeGreaterThan(0);
+        // YouTube pack: a zip built on download (picked thumbnail + texts, no video)
+        const pack = await ok<{ url: string; name: string; sizeBytes: number }>("POST", `/productions/${prodId}/episodes/${ep.id}/youtube-pack`);
+        expect(pack.name).toMatch(/-youtube\.zip$/);
+        const packRes = await fetch(pack.url);
+        expect(packRes.ok).toBe(true);
+        const packBuf = Buffer.from(await packRes.arrayBuffer());
+        expect(packBuf.subarray(0, 2).toString("latin1")).toBe("PK");
+        expect(packBuf.length).toBe(pack.sizeBytes);
 
         // Render stage was successful
         const renderStage = detail.run?.stages.find((s) => s.key === "render-final");

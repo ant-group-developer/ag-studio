@@ -29,7 +29,8 @@ export interface LlmCallPayload {
   input_tokens: number | null; output_tokens: number | null;
 }
 
-export type HumanEditKind = "series_plan" | "youtube_kit" | "episode_rerender" | "episode_cancel";
+/** `rnd` / `branding`: approved at their gate (before = Claude's proposal); `*_edit`: changed by hand after approval. */
+export type HumanEditKind = "series_plan" | "youtube_kit" | "episode_rerender" | "episode_cancel" | "rnd" | "branding" | "rnd_edit" | "branding_edit" | "thumbnail";
 
 export interface HumanEditRow {
   id: string; created_at: string; user_id: string; production_id: string; episode_id: string | null;

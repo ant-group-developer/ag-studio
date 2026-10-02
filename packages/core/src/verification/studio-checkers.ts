@@ -9,19 +9,25 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
-  StudioBriefSchema, StudioCatalogSchema, StudioEpisodeSchema, StudioExportSchema, TimelineV3Schema,
+  StudioBrandingSchema, StudioBriefSchema, StudioCatalogSchema, StudioEpisodeSchema, StudioExportSchema, StudioSeedSchema, StudioThumbnailsSchema,
+  TimelineV3Schema,
   TrendReportSchema,
-  type CatalogAsset, type Checker, type CheckerInput, type StudioBrief, type StudioCatalog,
+  type CatalogAsset, type Checker, type CheckerInput, type StudioBranding, type StudioBrief, type StudioCatalog, type StudioSeed,
 } from "@harness/contracts";
 import { childEnvWithoutSecrets } from "../media/child-env.js";
 import { layoutTimeline, timelineIssues } from "../studio/layout.js";
-import { validateSeriesPlan, validateTrendReport, validateYoutubeKit, type StudioValidation } from "../studio/validate.js";
+import {
+  validateBranding, validateRnd, validateSeriesPlan, validateTrendReport, validateYoutubeKit, type StudioValidation,
+} from "../studio/validate.js";
 
 // ---------------------------------------------------------------------------
 // Artifact type names (workflow stage defs and checkers must agree)
 // ---------------------------------------------------------------------------
 
 export const STUDIO_TYPES = {
+  seed: "studio_seed",
+  rnd: "studio_rnd",
+  branding: "studio_branding",
   brief: "studio_brief",
   research: "studio_research",
   trendReport: "trend_report",
@@ -34,6 +40,8 @@ export const STUDIO_TYPES = {
   finalVideo: "final_video",
   renderManifest: "render_manifest",
   thumbnail: "thumbnail",
+  thumbnailSet: "thumbnail_set",
+  thumbnails: "studio_thumbnails",
   youtube: "studio_youtube",
   export: "studio_export",
 } as const;
@@ -62,6 +70,12 @@ function requireInput<T>(input: CheckerInput, type: string, parse: (v: unknown) 
 
 export const loadBrief = (i: CheckerInput): StudioBrief => requireInput(i, STUDIO_TYPES.brief, (v) => StudioBriefSchema.parse(v));
 export const loadCatalog = (i: CheckerInput): StudioCatalog => requireInput(i, STUDIO_TYPES.catalog, (v) => StudioCatalogSchema.parse(v));
+export const loadSeed = (i: CheckerInput): StudioSeed => requireInput(i, STUDIO_TYPES.seed, (v) => StudioSeedSchema.parse(v));
+/** The branding input when the stage has one (episode runs of a production planned before branding have none). */
+export function loadOptionalBranding(i: Pick<CheckerInput, "request" | "workspaceDir">): StudioBranding | null {
+  const p = inputPath(i, STUDIO_TYPES.branding);
+  return p && existsSync(p) ? StudioBrandingSchema.parse(readJson(p)) : null;
+}
 
 type Verdict = Awaited<ReturnType<Checker["check"]>>;
 
@@ -100,8 +114,14 @@ export const seriesPlanValidChecker = documentChecker("series-plan-valid", STUDI
 export const youtubeKitValidChecker = documentChecker("youtube-kit-valid", STUDIO_TYPES.youtubeKit,
   (raw, i) => {
     const episode = requireInput(i, STUDIO_TYPES.episode, (v) => StudioEpisodeSchema.parse(v));
-    return fromValidation(validateYoutubeKit(raw, { episode }));
+    return fromValidation(validateYoutubeKit(raw, { episode, branding: loadOptionalBranding(i) }));
   });
+
+export const rndValidChecker = documentChecker("rnd-valid", STUDIO_TYPES.rnd,
+  (raw, i) => fromValidation(validateRnd(raw, { seed: loadSeed(i) })));
+
+export const brandingValidChecker = documentChecker("branding-valid", STUDIO_TYPES.branding,
+  (raw) => fromValidation(validateBranding(raw)));
 
 export const timelineSchemaValidChecker = documentChecker("timeline-schema-valid", STUDIO_TYPES.timeline, (raw) => {
   const r = TimelineV3Schema.safeParse(raw);
@@ -173,18 +193,36 @@ export const exportValidChecker = documentChecker("export-valid", STUDIO_TYPES.e
   const r = StudioExportSchema.safeParse(raw);
   if (!r.success) return { verdict: "fail", evidence: { problems: r.error.issues.map((x) => `${x.path.join(".")}: ${x.message}`) } };
   const kinds = new Set(r.data.files.map((f) => f.kind));
-  const missing = (["mp4", "youtube", "pack"] as const).filter((k) => !kinds.has(k));
+  // the YouTube pack is built when someone downloads it (ag-studio-episode@1.2.0); older exports also hold one
+  const missing = (["mp4", "youtube"] as const).filter((k) => !kinds.has(k));
   return missing.length ? { verdict: "fail", evidence: { missing } } : { verdict: "pass", evidence: { files: r.data.files.length } };
+});
+
+/** The thumbnails of a render: the manifest reads, there is at least one frame, and every listed file is there. */
+export const thumbnailsValidChecker = documentChecker("thumbnails-valid", STUDIO_TYPES.thumbnails, (raw, i) => {
+  const r = StudioThumbnailsSchema.safeParse(raw);
+  if (!r.success) return { verdict: "fail", evidence: { problems: r.error.issues.map((x) => `${x.path.join(".")}: ${x.message}`) } };
+  const dir = outputPath(i, STUDIO_TYPES.thumbnailSet);
+  const files = [...r.data.frames.map((f) => f.file), ...r.data.suggestions.map((s) => s.file)];
+  const missing = dir ? files.filter((f) => !existsSync(join(dir, f))) : files;
+  const problems = [
+    ...(r.data.frames.length ? [] : ["không cắt được khung hình nào"]),
+    ...missing.map((f) => `thiếu file ${f}`),
+  ];
+  return problems.length ? { verdict: "fail", evidence: { problems } } : { verdict: "pass", evidence: { frames: r.data.frames.length, suggestions: r.data.suggestions.length } };
 });
 
 export function studioCheckers(opts: { ffmpeg?: string } = {}): Checker[] {
   return [
     trendReportValidChecker,
+    rndValidChecker,
+    brandingValidChecker,
     seriesPlanValidChecker,
     youtubeKitValidChecker,
     timelineSchemaValidChecker,
     timelineValidChecker,
     studioRenderValidChecker(opts),
     exportValidChecker,
+    thumbnailsValidChecker,
   ];
 }

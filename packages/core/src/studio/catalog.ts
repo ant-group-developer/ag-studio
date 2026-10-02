@@ -5,7 +5,7 @@
  * CatalogAsset shape the contracts define (camelCase in -> snake_case out, nulls for missing AI fields)
  * and then pre-filter down to the `limit` most relevant assets before Claude reads them.
  */
-import type { CatalogAsset, StudioBrief } from "@harness/contracts";
+import type { CatalogAsset, StudioBrief, StudioCatalog } from "@harness/contracts";
 
 /** @deprecated GĐ4 segment shape, kept only for archive reads of ag-studio-production@1.0.0. */
 export interface CatalogSegment {
@@ -114,6 +114,64 @@ export function prefilterCatalog(
   });
   scored.sort((x, y) => y.hits - x.hits || y.quality - x.quality || y.approved - x.approved || x.order - y.order);
   return { assets: scored.slice(0, limit).map((x) => x.a), truncated: true };
+}
+
+/** What the footage of a production is about, short enough for the R&D and branding prompts (not every asset). */
+export interface CatalogSummary {
+  total_available: number;
+  kept: number;
+  truncated: boolean;
+  total_duration_s: number;
+  orientations: { term: string; count: number }[];
+  with_speech: number;
+  top: Record<"genre" | "topics" | "subjects" | "places" | "actions" | "mood" | "setting" | "time_of_day" | "shot_variety", { term: string; count: number }[]>;
+  /** Up to `samples` assets spread over the catalog, title and a short summary each. */
+  samples: { asset_id: string; title: string; summary: string; duration_s: number }[];
+}
+
+function countTerms(values: string[], limit: number): { term: string; count: number }[] {
+  const counts = new Map<string, { term: string; count: number }>();
+  for (const v of values) {
+    const term = v.trim();
+    if (!term) continue;
+    const key = term.toLocaleLowerCase("vi");
+    const hit = counts.get(key);
+    if (hit) hit.count++;
+    else counts.set(key, { term, count: 1 });
+  }
+  return [...counts.values()].sort((a, b) => b.count - a.count || a.term.localeCompare(b.term)).slice(0, limit);
+}
+
+export function summarizeCatalog(catalog: StudioCatalog, opts: { topTerms?: number; samples?: number } = {}): CatalogSummary {
+  const a = catalog.assets;
+  const top = opts.topTerms ?? 12;
+  const n = Math.min(opts.samples ?? 40, a.length);
+  const picks = Array.from({ length: n }, (_, i) => a[Math.floor((i * a.length) / n)]!);
+  return {
+    total_available: catalog.total_available,
+    kept: a.length,
+    truncated: catalog.truncated,
+    total_duration_s: Math.round(a.reduce((s, x) => s + x.duration_s, 0)),
+    orientations: countTerms(a.map((x) => x.orientation ?? "unknown"), 4),
+    with_speech: a.filter((x) => x.has_speech === true).length,
+    top: {
+      genre: countTerms(a.map((x) => x.genre), top),
+      topics: countTerms(a.flatMap((x) => x.topics), top),
+      subjects: countTerms(a.flatMap((x) => x.subjects), top),
+      places: countTerms(a.flatMap((x) => x.places), top),
+      actions: countTerms(a.flatMap((x) => x.actions), top),
+      mood: countTerms(a.map((x) => x.mood), top),
+      setting: countTerms(a.map((x) => x.setting), top),
+      time_of_day: countTerms(a.map((x) => x.time_of_day), top),
+      shot_variety: countTerms(a.flatMap((x) => x.shot_variety), top),
+    },
+    samples: picks.map((x) => ({
+      asset_id: x.asset_id,
+      title: x.title_vi || x.name,
+      summary: x.summary_vi.length > 160 ? `${x.summary_vi.slice(0, 157)}…` : x.summary_vi,
+      duration_s: Math.round(x.duration_s),
+    })),
+  };
 }
 
 // ---------------------------------------------------------------------------

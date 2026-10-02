@@ -6,7 +6,10 @@
  */
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
-import { HarnessError, TimelineV3Schema, type TimelineV3 } from "@harness/contracts";
+import {
+  HarnessError, StudioBrandingSchema, StudioRndSchema, TimelineV3Schema,
+  type ChannelRef, type StudioBranding, type StudioHints, type StudioRnd, type TimelineV3,
+} from "@harness/contracts";
 
 type Param = string | number | null;
 
@@ -39,7 +42,43 @@ export interface ProductionRecord {
   youtube_channels: string | null; keywords: string | null;
   episode_target_seconds: number | null; max_episodes: number | null;
   trend_report: string | null;
+  /** Migration 0016: the team's own channels, and the R&D and branding in use (JSON). */
+  own_channels: string | null;
+  rnd: string | null; rnd_updated_at: string | null; rnd_updated_by: string | null;
+  branding: string | null; branding_updated_at: string | null; branding_updated_by: string | null;
   created_at: string; updated_at: string;
+}
+
+const parseList = (v: string | null): string[] => (v ? (JSON.parse(v) as string[]) : []);
+
+/** Own channels first, then reference channels; a link given in both counts as the team's own. */
+export function productionChannels(p: ProductionRecord): ChannelRef[] {
+  const own = parseList(p.own_channels).map((url) => ({ url, role: "own" as const }));
+  const seen = new Set(own.map((c) => c.url.trim().toLowerCase()));
+  const reference = parseList(p.youtube_channels).filter((url) => !seen.has(url.trim().toLowerCase())).map((url) => ({ url, role: "reference" as const }));
+  return [...own, ...reference];
+}
+
+/** What the person typed before research (the R&D keeps it): the production's description and direction fields. */
+export function productionHints(p: ProductionRecord): StudioHints {
+  return {
+    description: p.brief ?? "", goal: p.goal ?? "", audience: p.audience ?? "", tone: p.tone ?? "", notes: p.notes ?? "",
+    episode_target_seconds: p.episode_target_seconds ?? null, max_episodes: p.max_episodes ?? null,
+  };
+}
+
+export function productionRnd(p: ProductionRecord): StudioRnd | null {
+  return p.rnd ? StudioRndSchema.parse(JSON.parse(p.rnd)) : null;
+}
+export function productionBranding(p: ProductionRecord): StudioBranding | null {
+  return p.branding ? StudioBrandingSchema.parse(JSON.parse(p.branding)) : null;
+}
+
+/** Keep `rnd` / `branding` as the production's current one (`by`: a user id, or `gate:<run_id>` for an approval). */
+export function saveProductionDocument(db: StudioDb, productionId: string, kind: "rnd" | "branding", doc: StudioRnd | StudioBranding, by: string): void {
+  const now = new Date().toISOString();
+  db.run(`UPDATE productions SET ${kind} = ?, ${kind}_updated_at = ?, ${kind}_updated_by = ?, updated_at = ? WHERE id = ?`,
+    [JSON.stringify(doc), now, by, now, productionId]);
 }
 
 export function getProduction(db: StudioDb, id: string): ProductionRecord | null {
@@ -63,6 +102,10 @@ export function productionOwner(db: StudioDb, p: ProductionRecord): string | nul
 
 export interface EpisodeRecord {
   id: string; production_id: string; idx: number; title: string; hook: string; run_id: string | null; plan: string | null;
+  /** The plan run that created the episode (null for episodes made before migration 0015). */
+  plan_run_id: string | null;
+  /** The thumbnail the episode uses (migration 0017; `selected_thumbnail` is the index of the 3 older ones). */
+  selected_thumbnail_id: string | null;
   youtube: string | null; selected_title: number | null; selected_thumbnail: number | null;
   created_at: string; updated_at: string;
 }
@@ -78,18 +121,18 @@ export function listEpisodes(db: StudioDb, productionId: string): EpisodeRecord[
 }
 
 /**
- * Replace all episodes of a production with a fresh set (called by studio-spawn-episodes).
- * The deletion is safe because no episode is in a non-terminal state when we get here.
+ * Replace all episodes of a production with a fresh set made by plan run `planRunId` (studio-spawn-episodes; the
+ * stage first checks that none of the old ones is still producing).
  */
-export function replaceEpisodes(db: StudioDb, productionId: string, rows: { id: string; idx: number; title: string; hook: string; plan: string }[]): void {
+export function replaceEpisodes(db: StudioDb, productionId: string, rows: { id: string; idx: number; title: string; hook: string; plan: string }[], planRunId: string): void {
   db.immediate(() => {
     db.run("DELETE FROM episode_revisions WHERE episode_id IN (SELECT id FROM episodes WHERE production_id = ?)", [productionId]);
     db.run("DELETE FROM episode_jobs WHERE episode_id IN (SELECT id FROM episodes WHERE production_id = ?)", [productionId]);
     db.run("DELETE FROM episodes WHERE production_id = ?", [productionId]);
     const now = new Date().toISOString();
     for (const r of rows) {
-      db.run("INSERT INTO episodes (id, production_id, idx, title, hook, plan, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [r.id, productionId, r.idx, r.title, r.hook, r.plan, now, now]);
+      db.run("INSERT INTO episodes (id, production_id, idx, title, hook, plan, plan_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [r.id, productionId, r.idx, r.title, r.hook, r.plan, planRunId, now, now]);
     }
   });
 }

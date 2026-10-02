@@ -1,0 +1,308 @@
+{
+  "$ref": "#/definitions/studio-branding",
+  "definitions": {
+    "studio-branding": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.branding/v1"
+        },
+        "series_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "tagline": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "positioning": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "voice": {
+          "type": "object",
+          "properties": {
+            "personality": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "maxItems": 6
+            },
+            "do": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "maxItems": 10
+            },
+            "dont": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "maxItems": 10
+            },
+            "signature_phrases": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "maxItems": 10
+            },
+            "banned_words": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "maxItems": 20
+            }
+          },
+          "required": [
+            "personality",
+            "do",
+            "dont",
+            "signature_phrases",
+            "banned_words"
+          ],
+          "additionalProperties": false
+        },
+        "titles": {
+          "type": "object",
+          "properties": {
+            "formulas": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "minItems": 1,
+              "maxItems": 8
+            },
+            "rules": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "maxItems": 10
+            },
+            "examples": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "maxItems": 10
+            },
+            "max_chars": {
+              "type": "integer",
+              "minimum": 20,
+              "maximum": 100
+            }
+          },
+          "required": [
+            "formulas",
+            "rules",
+            "examples",
+            "max_chars"
+          ],
+          "additionalProperties": false
+        },
+        "description": {
+          "type": "object",
+          "properties": {
+            "opening": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "cta": {
+              "type": "string",
+              "maxLength": 300
+            },
+            "hashtags": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^#[\\p{L}\\p{N}_]+$"
+              },
+              "maxItems": 5
+            }
+          },
+          "required": [
+            "opening",
+            "cta",
+            "hashtags"
+          ],
+          "additionalProperties": false
+        },
+        "thumbnail": {
+          "type": "object",
+          "properties": {
+            "concept": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "text_rules": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "maxItems": 8
+            },
+            "max_words": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            },
+            "text_case": {
+              "type": "string",
+              "enum": [
+                "upper",
+                "sentence"
+              ]
+            },
+            "palette": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "pattern": "^#[0-9A-Fa-f]{6}$"
+                },
+                "outline": {
+                  "type": "string",
+                  "pattern": "^#[0-9A-Fa-f]{6}$"
+                },
+                "accent": {
+                  "type": "string",
+                  "pattern": "^#[0-9A-Fa-f]{6}$"
+                }
+              },
+              "required": [
+                "text",
+                "outline",
+                "accent"
+              ],
+              "additionalProperties": false
+            },
+            "position": {
+              "type": "string",
+              "enum": [
+                "top",
+                "center",
+                "bottom",
+                "left",
+                "right"
+              ]
+            },
+            "emotion": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "do": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "maxItems": 8
+            },
+            "dont": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "maxItems": 8
+            }
+          },
+          "required": [
+            "concept",
+            "text_rules",
+            "max_words",
+            "text_case",
+            "palette",
+            "position",
+            "emotion",
+            "do",
+            "dont"
+          ],
+          "additionalProperties": false
+        },
+        "on_screen_text": {
+          "type": "object",
+          "properties": {
+            "style": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "max_chars": {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 64
+            },
+            "rules": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "maxItems": 8
+            }
+          },
+          "required": [
+            "style",
+            "max_chars",
+            "rules"
+          ],
+          "additionalProperties": false
+        },
+        "music_mood": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "maxItems": 5
+        }
+      },
+      "required": [
+        "schema_version",
+        "series_name",
+        "tagline",
+        "positioning",
+        "voice",
+        "titles",
+        "description",
+        "thumbnail",
+        "on_screen_text",
+        "music_mood"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
