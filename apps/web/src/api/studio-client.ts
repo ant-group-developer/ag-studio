@@ -1,5 +1,5 @@
 import { useAuthToken } from "../auth/use-auth-token";
-import type { TimelineV3, YoutubeKit, SeriesPlan, StudioCatalog, StudioResearch, TrendReport } from "@harness/contracts";
+import type { TimelineV3, YoutubeKit, SeriesPlan, StudioCatalog, StudioResearch, TrendReport, StudioRnd, StudioBranding, StudioBrief } from "@harness/contracts";
 import type { TimelineIssue } from "@studio/timeline";
 
 const STUDIO_API_URL =
@@ -102,9 +102,13 @@ export interface Production {
   notes: string;
   sources: string[];
   youtubeChannels: string[];
+  ownChannels: string[];
+  hasRnd: boolean;
+  hasBranding: boolean;
+  waitingGate: "approve-rnd" | "approve-branding" | "approve-plan" | null;
   keywords: string[];
   episodeTargetSeconds: number | null;
-  maxEpisodes: number;
+  maxEpisodes: number | null;
   aspect: "16:9" | "9:16";
   language: string;
   music: { track: string; gainDb: number; ducking: boolean } | null;
@@ -125,9 +129,10 @@ export interface ProductionInput {
   notes?: string;
   sources: string[];
   youtubeChannels?: string[];
+  ownChannels?: string[];
   keywords?: string[];
-  episodeTargetSeconds?: number;
-  maxEpisodes?: number;
+  episodeTargetSeconds?: number | null;
+  maxEpisodes?: number | null;
   aspect?: "16:9" | "9:16";
   language?: string;
   music?: { track: string; gainDb: number; ducking: boolean } | null;
@@ -242,6 +247,7 @@ export interface StageView {
   state: string;
   attempts: number;
   is_gate: boolean;
+  reused: boolean;
   error: string | null;
   failed_checks: { check_id: string; evidence: Record<string, unknown> }[];
   outputs: { name: string; type: string; size_bytes: number }[];
@@ -431,6 +437,42 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     submitApprovePlan(id: string, document: SeriesPlan): Promise<{ accepted: true }> {
       return request(getAccessToken, "POST", `/api/productions/${id}/run/gates/approve-plan`, { document });
     },
+    getRndDraft(id: string): Promise<StudioRnd | null> {
+      return this.getRunDocument<StudioRnd>(id, "rnd", "rnd.json").catch((e: unknown) => {
+        if (e instanceof StudioHttpError && e.status === 404) return null;
+        throw e;
+      });
+    },
+    getBrandingDraft(id: string): Promise<StudioBranding | null> {
+      return this.getRunDocument<StudioBranding>(id, "branding", "branding.json").catch((e: unknown) => {
+        if (e instanceof StudioHttpError && e.status === 404) return null;
+        throw e;
+      });
+    },
+    getBriefDoc(id: string): Promise<StudioBrief | null> {
+      return this.getRunDocument<StudioBrief>(id, "brief", "brief.json").catch((e: unknown) => {
+        if (e instanceof StudioHttpError && e.status === 404) return null;
+        throw e;
+      });
+    },
+    getProductionRnd(id: string): Promise<{ document: StudioRnd | null; updatedAt: string; updatedBy: string }> {
+      return request(getAccessToken, "GET", `/api/productions/${id}/rnd`);
+    },
+    putProductionRnd(id: string, document: StudioRnd): Promise<{ document: StudioRnd; updatedAt: string; updatedBy: string; warnings: { code: string; message: string }[] }> {
+      return request(getAccessToken, "PUT", `/api/productions/${id}/rnd`, { document });
+    },
+    getProductionBranding(id: string): Promise<{ document: StudioBranding | null; updatedAt: string; updatedBy: string }> {
+      return request(getAccessToken, "GET", `/api/productions/${id}/branding`);
+    },
+    putProductionBranding(id: string, document: StudioBranding): Promise<{ document: StudioBranding; updatedAt: string; updatedBy: string; warnings: { code: string; message: string }[] }> {
+      return request(getAccessToken, "PUT", `/api/productions/${id}/branding`, { document });
+    },
+    submitApproveRnd(id: string, document: StudioRnd): Promise<{ accepted: true }> {
+      return request(getAccessToken, "POST", `/api/productions/${id}/run/gates/approve-rnd`, { document });
+    },
+    submitApproveBranding(id: string, document: StudioBranding): Promise<{ accepted: true }> {
+      return request(getAccessToken, "POST", `/api/productions/${id}/run/gates/approve-branding`, { document });
+    },
     retryStage(id: string, stage: string): Promise<{ ok: true }> {
       return request(getAccessToken, "POST", `/api/productions/${id}/run/stages/${stage}/retry`);
     },
@@ -534,7 +576,7 @@ export interface LlmCallDetail extends LlmCallSummary {
   warnings: { code: string; message: string }[];
 }
 
-export type HumanEditKind = "series_plan" | "youtube_kit" | "episode_rerender" | "episode_cancel";
+export type HumanEditKind = "series_plan" | "youtube_kit" | "episode_rerender" | "episode_cancel" | "rnd" | "branding" | "rnd_edit" | "branding_edit";
 
 export interface HumanEditView {
   id: string;
