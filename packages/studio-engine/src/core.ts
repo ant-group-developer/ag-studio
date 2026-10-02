@@ -5,7 +5,7 @@
  */
 import { mkdirSync } from "node:fs";
 import {
-  ArtifactRegistry, BUILTIN_CHECKERS, Controller, HARNESS_ROOT, isTerminal, loadHarnessConfig, loadProfile, loadWorkflow, MIGRATIONS_DIR,
+  ArtifactRegistry, BUILTIN_CHECKERS, Controller, HARNESS_ROOT, isTerminal, listWorkflowRefs, loadHarnessConfig, loadProfile, loadWorkflow, MIGRATIONS_DIR,
   Planner, SqliteStateStore, studioCheckers, SystemClock, Verifier, type LoadedWorkflow,
 } from "@harness/core";
 import type { Clock, HarnessConfig, ProductionProfile } from "@harness/contracts";
@@ -67,11 +67,23 @@ export function createStudioEngineCore(o: StudioEngineCoreOptions): StudioEngine
 }
 
 /**
- * Cancel every non-terminal run whose workflow is not one of the two current Studio workflows.
+ * Cancel every non-terminal run whose workflow is not a Studio series workflow release on disk.
  * Called once at worker start so the dev DB's old segment-based runs don't block new runs.
  */
+/** The Studio workflow ids: every release of them on disk stays runnable. */
+const STUDIO_WORKFLOW_IDS = ["ag-studio-series-plan", "ag-studio-episode"];
+
+/**
+ * Every Studio workflow release on disk (`workflows/ag-studio-*@*`). `STUDIO_WORKFLOWS` only says what a NEW run
+ * uses; a run keeps executing the release it was planned with, so a release is retired only by deleting its folder
+ * (and a released folder is never edited: runs read it by id and version, with no digest check).
+ */
+export function studioWorkflowRefs(harnessRoot: string): string[] {
+  return listWorkflowRefs(harnessRoot).filter((ref) => STUDIO_WORKFLOW_IDS.includes(ref.split("@")[0]!));
+}
+
 export function cancelLegacyRuns(core: StudioEngineCore): string[] {
-  const known = new Set<string>(Object.values(STUDIO_WORKFLOWS).map((w) => w.workflow));
+  const known = new Set<string>([...Object.values(STUDIO_WORKFLOWS).map((w) => w.workflow), ...studioWorkflowRefs(core.harnessRoot)]);
   const cancelled: string[] = [];
   for (const run of core.store.listRuns()) {
     if (isTerminal("run", run.state) || run.state === "CANCEL_REQUESTED") continue;

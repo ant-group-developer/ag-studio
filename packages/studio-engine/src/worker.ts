@@ -10,7 +10,7 @@ import type { FarmOwnerClient } from "@ag-farm/owner-client";
 import type { AgentCallTrace, ProjectConfig, StudioSkill } from "@harness/contracts";
 import { farmStorage, type StudioBucket } from "./bucket.js";
 import { recordLlmCall } from "./llm-log.js";
-import { cancelLegacyRuns, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, STUDIO_RESOURCES, STUDIO_WORKFLOWS, type StudioEngineCore } from "./core.js";
+import { cancelLegacyRuns, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, STUDIO_RESOURCES, studioWorkflowRefs, type StudioEngineCore } from "./core.js";
 import { studioPayloadBuilders } from "./payloads.js";
 import { isRunActive, startEpisodeRun } from "./run-control.js";
 import { studioStages, type FootageCatalogSource } from "./stages.js";
@@ -100,7 +100,7 @@ export function createStudioWorker(o: StudioWorkerOptions): Worker {
   const project = {
     schema_version: "harness.project-config/v1", project_id: STUDIO_PROJECT_ID, template_release: "0.1.0", runtime: "claude",
     data_root: core.dataRoot, portfolios: [{ portfolio_id: STUDIO_PORTFOLIO_ID, display_name: "AG Studio" }],
-    resources: STUDIO_RESOURCES, source: { materialize: "link" }, workflows: Object.values(STUDIO_WORKFLOWS).map((f) => f.workflow),
+    resources: STUDIO_RESOURCES, source: { materialize: "link" }, workflows: studioWorkflowRefs(core.harnessRoot),
   } as unknown as ProjectConfig;
   return new Worker({
     store: core.store, planner: core.planner, controller: core.controller, registry: core.registry, verifier: core.verifier, executors,
