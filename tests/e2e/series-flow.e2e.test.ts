@@ -1,9 +1,9 @@
 /**
  * GĐ4 acceptance E2E, research first: `ag-studio-series-plan@2.0.0` (R&D and branding approved before the plan) +
- * `ag-studio-episode@1.1.0` series flow.
+ * `ag-studio-episode@1.2.0` series flow.
  *
  * Series plan API → approve-plan gate → episode spawning →
- * per-episode build-timeline → render (real farm + render worker) → export.
+ * per-episode build-timeline → render (real farm + render worker) → thumbnails (Studio ffmpeg) → export.
  * Episodes have NO human-approval gate; every episode renders automatically after spawning.
  *
  * Real:  ag-farm hub (+ Postgres in Docker), Studio API (dist), Studio worker (dist),
