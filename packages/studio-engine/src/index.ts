@@ -11,3 +11,4 @@ export { timelineIssues, layoutTimeline, validateYoutubeKit, type TimelineIssue 
 export { readStoredYoutubeKit, YoutubeKitSchema, type YoutubeKit, type StudioEpisode } from "@harness/contracts";
 export * from "./youtube-research.js";
 export * from "./llm-log.js";
+export * from "./team-skills.js";

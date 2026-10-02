@@ -401,6 +401,38 @@ export const STUDIO_SKILL_OUTPUTS = {
 } as const;
 export type StudioSkill = keyof typeof STUDIO_SKILL_OUTPUTS;
 
+// ---------------------------------------------------------------------------
+// Team skills ("quy chuẩn & skill" of a team): markdown the team writes, put into the team's Claude prompts
+// ---------------------------------------------------------------------------
+
+/** The AI steps a team skill can be limited to; a skill limited to none applies to every step. */
+export const TEAM_SKILL_STEPS = ["trend-report", "rnd", "branding", "plan-episodes", "youtube-kit"] as const;
+export type TeamSkillStep = (typeof TEAM_SKILL_STEPS)[number];
+
+/** Lengths in characters. `enabledTotal` bounds every enabled skill of a team together (prompt cost). */
+export const TEAM_SKILL_LIMITS = { name: 100, purpose: 500, content: 20_000, enabledTotal: 60_000 } as const;
+
+/** The step a Studio skill is, for picking the team skills that apply to it. */
+export const STUDIO_SKILL_STEP: Record<StudioSkill, TeamSkillStep> = {
+  "studio-trend-report": "trend-report",
+  "studio-plan-episodes": "plan-episodes",
+  "studio-youtube-kit": "youtube-kit",
+};
+
+/** A team skill as it goes into a prompt. */
+export interface TeamGuide {
+  name: string;
+  purpose: string;
+  /** Empty = every step. */
+  applies_to: TeamSkillStep[];
+  content: string;
+}
+
+/** The guides of `guides` that apply to `step`, in their order. */
+export function teamGuidesForStep(guides: readonly TeamGuide[], step: TeamSkillStep): TeamGuide[] {
+  return guides.filter((g) => g.applies_to.length === 0 || g.applies_to.includes(step));
+}
+
 const UNSUPPORTED_KEYWORDS = new Set([
   "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
   "minLength", "maxLength", "pattern", "minItems", "maxItems", "uniqueItems", "minProperties", "maxProperties",
