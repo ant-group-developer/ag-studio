@@ -1,16 +1,15 @@
 /**
  * Episode drawer: YouTube kit editor (3-title pick, description+chapters preview, tags counter,
- * hashtags, playlist, copy buttons), 3 thumbnail picks, final video player, download links,
- * cost_usd, role-based buttons.
+ * hashtags, playlist, copy buttons), ThumbnailPanel (pick/draw/upload/Canva), final video player with a
+ * "capture this frame" button, download links, cost_usd, role-based buttons.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Alert,
   Button,
   Card,
   Descriptions,
   Drawer,
-  Image,
   Input,
   Progress,
   Radio,
@@ -21,7 +20,7 @@ import {
   Typography,
   App as AntApp,
 } from "antd";
-import { Copy, Download } from "lucide-react";
+import { Camera, Copy, Download } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useStudioClient } from "../../api/studio-client";
@@ -29,6 +28,7 @@ import type { EpisodeDetail, EpisodePatch } from "../../api/studio-client";
 import type { YoutubeKit } from "@harness/contracts";
 import { YOUTUBE_TAGS_MAX_CHARS } from "@harness/contracts";
 import { PremiereExports } from "./PremiereExports";
+import { ThumbnailPanel } from "./ThumbnailPanel";
 import { EnumText } from "../../helpers/enum-label";
 
 const { Text, Paragraph } = Typography;
@@ -55,9 +55,7 @@ export function EpisodeDrawer({ productionId, episode, open, onClose, canEdit }:
   const [selectedTitle, setSelectedTitle] = useState<0 | 1 | 2>(
     (episode.selectedTitle as 0 | 1 | 2) ?? 0
   );
-  const [selectedThumbnail, setSelectedThumbnail] = useState<0 | 1 | 2>(
-    (episode.selectedThumbnail as 0 | 1 | 2) ?? 0
-  );
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   const saveMutation = useMutation({
     mutationFn: (patch: EpisodePatch) =>
@@ -79,9 +77,19 @@ export function EpisodeDrawer({ productionId, episode, open, onClose, canEdit }:
     onError: (err) => void message.error(err instanceof Error ? err.message : String(err)),
   });
 
+  // Picking a thumbnail is its own PUT (inside ThumbnailPanel) — this save only covers the YouTube kit now.
+  const captureMutation = useMutation({
+    mutationFn: (tS: number) => client.captureThumbnail(productionId, episode.id, tS),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["thumbnails", productionId, episode.id] });
+      void message.success(t("thumbnails.captureDone"));
+    },
+    onError: (err) => void message.error(err instanceof Error ? err.message : String(err)),
+  });
+
   const handleSave = () => {
     if (!yt) return;
-    saveMutation.mutate({ youtube: yt, selectedTitle, selectedThumbnail });
+    saveMutation.mutate({ youtube: yt, selectedTitle });
   };
 
   const copyToClipboard = async (text: string) => {
@@ -265,34 +273,25 @@ export function EpisodeDrawer({ productionId, episode, open, onClose, canEdit }:
         )}
 
         {/* Thumbnails */}
-        {episode.thumbnails.length > 0 && (
-          <Card title={t("episodes.drawerThumbnails")} size="small">
-            <Radio.Group
-              value={selectedThumbnail}
-              onChange={(e) => setSelectedThumbnail(e.target.value as 0 | 1 | 2)}
-            >
-              <Space size={8}>
-                {episode.thumbnails.map((thumb) => (
-                  <div key={thumb.index} style={{ position: "relative" }}>
-                    <Radio value={thumb.index as 0 | 1 | 2} style={{ position: "absolute", top: 4, left: 4, zIndex: 1 }} />
-                    <Image
-                      src={thumb.url}
-                      width={160}
-                      height={90}
-                      style={{ objectFit: "cover", borderRadius: 4 }}
-                      fallback="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"
-                    />
-                  </div>
-                ))}
-              </Space>
-            </Radio.Group>
-          </Card>
-        )}
+        <Card title={t("episodes.drawerThumbnails")} size="small">
+          <ThumbnailPanel productionId={productionId} episodeId={episode.id} youtubeKit={episode.youtube} canEdit={canEdit} />
+        </Card>
 
         {/* Final video */}
         {episode.finalVideoUrl && (
           <Card title={t("episodes.drawerVideo")} size="small">
-            <video src={episode.finalVideoUrl} controls style={{ width: "100%", borderRadius: 4 }} />
+            <video ref={videoRef} src={episode.finalVideoUrl} controls style={{ width: "100%", borderRadius: 4 }} />
+            {canEdit && (
+              <Button
+                size="small"
+                icon={<Camera size={12} />}
+                style={{ marginTop: 8 }}
+                loading={captureMutation.isPending}
+                onClick={() => captureMutation.mutate(videoRef.current?.currentTime ?? 0)}
+              >
+                {t("thumbnails.capture")}
+              </Button>
+            )}
           </Card>
         )}
 
@@ -304,7 +303,7 @@ export function EpisodeDrawer({ productionId, episode, open, onClose, canEdit }:
           <Card title={t("episodes.drawerDownloads")} size="small">
             <Space wrap>
               {episode.exportFiles.map((f, i) => (
-                <Button key={i} size="small" icon={<Download size={12} />} href={f.url} download={f.name}>
+                <Button key={i} size="small" icon={<Download size={12} />} href={f.downloadUrl}>
                   {f.name}
                 </Button>
               ))}

@@ -33,7 +33,7 @@ function fontFamily(path: string): string {
 }
 
 /** `&HAABBGGRR`, AA = 255 - css alpha (css with no alpha channel means opaque, i.e. AA = "00"). */
-function assColor(hex: string): string {
+export function assColor(hex: string): string {
   const clean = hex.slice(1);
   const r = clean.slice(0, 2);
   const g = clean.slice(2, 4);
@@ -43,7 +43,7 @@ function assColor(hex: string): string {
   return `&H${assAlpha}${b}${g}${r}`.toUpperCase();
 }
 
-function escapeAss(text: string): string {
+export function escapeAss(text: string): string {
   return text.replace(/\\/g, "\\\\").replace(/\{/g, "\\{").replace(/\}/g, "\\}").replace(/\n/g, "\\N");
 }
 

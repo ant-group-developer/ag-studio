@@ -9,7 +9,7 @@ import { eventFor, isTerminal, layoutTimeline, submitGate, type SubmitReport } f
 import { StudioExportSchema, type StageRun, type StudioExport } from "@harness/contracts";
 import { STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, STUDIO_WORKFLOWS, type StudioEngineCore } from "./core.js";
 import {
-  getEpisode, getProduction, latestEpisodeRevision, listEpisodes, productionSources, type StudioDb,
+  getEpisode, getProduction, latestEpisodeRevision, listEpisodes, productionChannels, productionSources, type StudioDb,
 } from "./studio-db.js";
 
 export type StudioRunErrorCode = "not_found" | "conflict" | "invalid" | "rejected";
@@ -20,8 +20,10 @@ export class StudioRunError extends Error {
   }
 }
 
-/** Gates and the document each submits: only the plan is approved by a person; episodes run on their own. */
+/** Gates and the document each submits: the R&D, the branding and the episode plan; episodes run on their own. */
 export const STUDIO_GATES: Record<string, string> = {
+  "approve-rnd": "rnd.json",
+  "approve-branding": "branding.json",
   "approve-plan": "series-plan.json",
 };
 
@@ -87,6 +89,8 @@ export function episodeState(core: StudioEngineCore, db: StudioDb, ep: { run_id:
 
 export interface StageView {
   key: string; executor: string; state: string; attempts: number; is_gate: boolean;
+  /** Kept from an earlier run when this one was resumed from a later stage (its documents are that run's). */
+  reused: boolean;
   error: string | null; failed_checks: { check_id: string; evidence: Record<string, unknown> }[];
   outputs: { name: string; type: string; size_bytes: number }[];
 }
@@ -104,6 +108,13 @@ function acceptedOutputs(core: StudioEngineCore, s: StageRun) {
   return artifacts.map((a) => ({ a, name: basename(fileURLToPath(a.uri)) }));
 }
 
+/** Where an accepted output of a stage is on this machine (null when the stage or the file is not there). */
+export function stageArtifactPath(core: StudioEngineCore, runId: string, stageKey: string, name: string): string | null {
+  const s = core.store.listStageRuns(runId).find((x) => x.stage_key === stageKey);
+  const hit = s ? acceptedOutputs(core, s).find((x) => x.name === name) : undefined;
+  return hit ? fileURLToPath(hit.a.uri) : null;
+}
+
 function buildRunView(core: StudioEngineCore, runId: string, latestRevision: number | null): RunView {
   const run = core.store.getRun(runId);
   if (!run) throw new StudioRunError("not_found", `run ${runId} not found`);
@@ -113,7 +124,7 @@ function buildRunView(core: StudioEngineCore, runId: string, latestRevision: num
     const failed = last ? core.store.listCheckResults(last.attempt_id).filter((c) => c.verdict === "fail").map((c) => ({ check_id: c.check_id, evidence: c.evidence })) : [];
     return {
       key: s.stage_key, executor: s.executor.type, state: s.state, attempts: attempts.length,
-      is_gate: s.executor.type === "gate",
+      is_gate: s.executor.type === "gate", reused: !!s.reused_artifact_ids,
       error: last?.error_summary ?? null, failed_checks: failed,
       outputs: acceptedOutputs(core, s).map(({ a, name }) => ({ name, type: a.type, size_bytes: a.size_bytes })),
     };
@@ -135,11 +146,15 @@ function stageOf(core: StudioEngineCore, runId: string, key: string): StageRun {
 // Plan run
 // ---------------------------------------------------------------------------
 
+/** The plan release before the research-first flow: it needs the description, episode length and count typed in. */
+const PLAN_V1 = "ag-studio-series-plan@1.0.0";
+
 /**
- * Start a plan run (one per production). Checks: folders set, description present,
- * episode_target_seconds and max_episodes set, no active plan run, no episode producing.
+ * Start a plan run (one per production) on `opts.workflow` (default: the current plan release). Checks: no active
+ * plan run, no episode producing, at least one footage folder, and — research first — at least one channel or
+ * keyword to research (the R&D proposes the rest). The 1.0.0 release still needs description, length and count.
  */
-export function startPlanRun(core: StudioEngineCore, db: StudioDb, productionId: string): { runId: string } {
+export function startPlanRun(core: StudioEngineCore, db: StudioDb, productionId: string, opts: { workflow?: string } = {}): { runId: string } {
   const p = getProduction(db, productionId);
   if (!p) throw new StudioRunError("not_found", `production ${productionId} not found`);
   if (p.run_id) {
@@ -148,22 +163,34 @@ export function startPlanRun(core: StudioEngineCore, db: StudioDb, productionId:
       throw new StudioRunError("conflict", `production already has an active plan run ${p.run_id} (${current.state})`, { run_id: p.run_id, state: current.state });
     }
   }
+  assertNoEpisodeProducing(core, db, productionId);
+  const workflow = opts.workflow ?? STUDIO_WORKFLOWS.plan.workflow;
   if (!productionSources(db, productionId).length) throw new StudioRunError("invalid", "chọn ít nhất một folder nguồn trước khi chạy");
-  if (!(p.brief?.trim())) throw new StudioRunError("invalid", "nhập mô tả (description) trước khi chạy");
-  if (!p.episode_target_seconds) throw new StudioRunError("invalid", "đặt episode_target_seconds trước khi chạy");
-  if (!p.max_episodes) throw new StudioRunError("invalid", "đặt max_episodes trước khi chạy");
-  // No episode may be producing right now (would be replaced by spawn-episodes)
-  const producing = listEpisodes(db, productionId).find((e) => episodeState(core, db, e).status === "producing");
-  if (producing) throw new StudioRunError("conflict", "một tập đang sản xuất; không thể lên kế hoạch lại", { code: "episode_producing", episode_id: producing.id });
+  if (workflow === PLAN_V1) {
+    if (!(p.brief?.trim())) throw new StudioRunError("invalid", "nhập mô tả (description) trước khi chạy");
+    if (!p.episode_target_seconds) throw new StudioRunError("invalid", "đặt episode_target_seconds trước khi chạy");
+    if (!p.max_episodes) throw new StudioRunError("invalid", "đặt max_episodes trước khi chạy");
+  } else {
+    const keywords = p.keywords ? (JSON.parse(p.keywords) as string[]) : [];
+    if (!productionChannels(p).length && !keywords.length) {
+      throw new StudioRunError("invalid", "nhập ít nhất một kênh YouTube (của mình hoặc tham khảo) hoặc một từ khoá để nghiên cứu", { code: "nothing_to_research" });
+    }
+  }
   const flow = STUDIO_WORKFLOWS.plan;
   const run = core.planner.plan({
-    workflow: core.workflows(flow.workflow), profile: core.profiles(flow.profile),
+    workflow: core.workflows(workflow), profile: core.profiles(flow.profile),
     harness: core.harness, projectId: STUDIO_PROJECT_ID, portfolioId: STUDIO_PORTFOLIO_ID, reuse: false,
   });
   db.run("UPDATE productions SET run_id = ?, status = 'in_progress', updated_at = ? WHERE id = ?",
     [run.run_id, new Date().toISOString(), productionId]);
   core.planner.enqueue(run.run_id);
   return { runId: run.run_id };
+}
+
+/** A new plan replaces the production's episodes: refused while one of them is still producing. */
+function assertNoEpisodeProducing(core: StudioEngineCore, db: StudioDb, productionId: string): void {
+  const producing = listEpisodes(db, productionId).find((e) => episodeState(core, db, e).status === "producing");
+  if (producing) throw new StudioRunError("conflict", "một tập đang sản xuất; không thể lên kế hoạch lại", { code: "episode_producing", episode_id: producing.id });
 }
 
 export function planRunView(core: StudioEngineCore, db: StudioDb, productionId: string): RunView {
@@ -177,7 +204,7 @@ export function planRunView(core: StudioEngineCore, db: StudioDb, productionId: 
 // Episode run
 // ---------------------------------------------------------------------------
 
-export function startEpisodeRun(core: StudioEngineCore, db: StudioDb, episodeId: string): { runId: string } {
+export function startEpisodeRun(core: StudioEngineCore, db: StudioDb, episodeId: string, opts: { workflow?: string } = {}): { runId: string } {
   const ep = getEpisode(db, episodeId);
   if (!ep) throw new StudioRunError("not_found", `episode ${episodeId} not found`);
   if (ep.run_id) {
@@ -188,7 +215,7 @@ export function startEpisodeRun(core: StudioEngineCore, db: StudioDb, episodeId:
   }
   const flow = STUDIO_WORKFLOWS.episode;
   const run = core.planner.plan({
-    workflow: core.workflows(flow.workflow), profile: core.profiles(flow.profile),
+    workflow: core.workflows(opts.workflow ?? flow.workflow), profile: core.profiles(flow.profile),
     harness: core.harness, projectId: STUDIO_PROJECT_ID, portfolioId: STUDIO_PORTFOLIO_ID, reuse: false,
   });
   db.run("UPDATE episodes SET run_id = ?, updated_at = ? WHERE id = ?", [run.run_id, new Date().toISOString(), episodeId]);
@@ -345,6 +372,7 @@ function resumeRunFrom(
 export function resumePlanRunFrom(core: StudioEngineCore, db: StudioDb, productionId: string, fromStage: string): { runId: string; reused: string[] } {
   const p = getProduction(db, productionId);
   if (!p?.run_id) throw new StudioRunError("not_found", `production ${productionId} has no plan run`);
+  assertNoEpisodeProducing(core, db, productionId);
   return resumeRunFrom(core, p.run_id, (newRunId) => {
     db.run("UPDATE productions SET run_id = ?, status = 'in_progress', updated_at = ? WHERE id = ?",
       [newRunId, new Date().toISOString(), productionId]);

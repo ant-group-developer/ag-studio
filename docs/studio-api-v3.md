@@ -17,6 +17,30 @@ page, pageSize}`.
   `team_has_active_runs` while any production of it has an active run)
 - `GET /teams/:teamId/members?page&pageSize&sortBy(role|joinedAt|name)&sortOrder&q` -> `Paged<TeamMember>`;
   existing member add/role/remove routes keep working; removing or demoting the last owner -> 409 `last_owner`
+- `GET /teams/:teamId` (viewer) -> `{id, name, role: TeamRole | null, memberCount, productionCount, createdAt, updatedAt}`
+
+## Team skills ("quy chuẩn & skill")
+
+Markdown a team writes about how it makes videos. Every Claude stage of one of the team's productions gets the
+enabled skills that apply to its step, read when the call is made (`teamGuidesForRun`), in a `# Quy chuẩn của nhóm`
+section before `# Dữ liệu vào`, each one in `<team_guide name="…" purpose="…">…</team_guide>`.
+
+```ts
+type TeamSkillStep = 'trend-report' | 'rnd' | 'branding' | 'plan-episodes' | 'youtube-kit';
+interface TeamSkill {
+  id: string; teamId: string; name: string; purpose: string;
+  appliesTo: TeamSkillStep[];      // [] = every step
+  content: string;                 // markdown
+  enabled: boolean; position: number;
+  createdBy: string; updatedBy: string; createdAt: string; updatedAt: string;
+}
+```
+- `GET /teams/:teamId/skills` (viewer) -> `TeamSkill[]` ordered by `position`, then creation
+- `POST /teams/:teamId/skills` (producer) `{name, purpose?, appliesTo?, content, enabled?, position?}` -> 201 TeamSkill
+- `PATCH /teams/:teamId/skills/:skillId` (producer) `Partial<…>` -> TeamSkill
+- `DELETE /teams/:teamId/skills/:skillId` (producer) -> 204
+- Limits: name 1..100, purpose ≤ 500, content 1..20 000 characters; the enabled skills of a team together ≤ 60 000
+  (422 `team_skills_too_long`); a name used twice in a team -> 409 `team_skill_name_taken`; another team's skill -> 404.
 
 ## Productions
 
@@ -24,11 +48,17 @@ page, pageSize}`.
 type ProductionStatus = 'draft' | 'planning' | 'waiting_approval' | 'producing' | 'done' | 'failed' | 'archived';
 interface Production {
   id: string; teamId: string; teamName: string; title: string;
+  // What the person typed before research: hints for the R&D (it must follow those given). The values in use
+  // come from the approved R&D (`GET /productions/:id/rnd`).
   description: string;            // stored in productions.brief
   goal: string; audience: string; tone: string; notes: string;
   sources: string[];              // ag-go folder ids
-  youtubeChannels: string[]; keywords: string[];
-  episodeTargetSeconds: number | null; maxEpisodes: number;   // default 10
+  ownChannels: string[];          // the team's own YouTube channels (assessed by the R&D)
+  youtubeChannels: string[];      // reference channels
+  keywords: string[];
+  episodeTargetSeconds: number | null; maxEpisodes: number | null;   // null = the R&D proposes it
+  hasRnd: boolean; hasBranding: boolean;   // an approved R&D / branding is in use
+  waitingGate: 'approve-rnd' | 'approve-branding' | 'approve-plan' | null;
   aspect: '16:9' | '9:16'; language: string;
   music: { track: string; gainDb: number; ducking: boolean } | null;
   status: ProductionStatus;       // derived, see below
@@ -38,7 +68,7 @@ interface Production {
 }
 ```
 Status: `archived` if archived; `draft` without plan run; `planning` while the plan run is active and not waiting
-at approve-plan; `waiting_approval` when approve-plan waits; `producing` when some episode is producing; `failed`
+at a gate; `waiting_approval` when approve-rnd, approve-branding or approve-plan waits; `producing` when some episode is producing; `failed`
 when the plan run failed or an episode failed and none is producing; `done` when every episode is ready.
 
 - `GET /productions?page&pageSize&sortBy(title|updatedAt|createdAt|status)&sortOrder&q&teamId&status` -> `Paged<Production>`
@@ -48,9 +78,16 @@ when the plan run failed or an episode failed and none is producing; `done` when
 - `GET /productions/:id` -> Production (404 when missing)
 - `PATCH /productions/:id` (producer) body = `Partial<ProductionInput>` -> Production
 - `DELETE /productions/:id` (producer) — cancels the plan run and every episode run first
-- `ProductionInput = {title, description, goal?, audience?, tone?, notes?, sources: string[1..50], youtubeChannels?:
-  string[≤20], keywords?: string[≤20, each ≤100], episodeTargetSeconds: 10..3600, maxEpisodes?: 1..30, aspect,
-  language, music?}`
+- `ProductionInput = {title, description?, goal?, audience?, tone?, notes?, sources: string[1..50], ownChannels?: string[],
+  youtubeChannels?: string[], keywords?: string[≤20, each ≤100], episodeTargetSeconds?: 10..3600 | null,
+  maxEpisodes?: 1..30 | null, aspect, language, music?}` — own + reference channels ≤ 20 together (422
+  `too_many_channels`); description ≤ 4000, goal/audience/tone ≤ 1000/1000/500, notes ≤ 4000
+- `GET /productions/:id/rnd`, `GET /productions/:id/branding` -> `{document: StudioRnd | StudioBranding | null,
+  updatedAt, updatedBy}` (the approved one in use, or the last edit of it)
+- `PUT /productions/:id/rnd`, `PUT /productions/:id/branding` (producer) body `{document}` -> the same plus
+  `warnings: {code, message}[]`: an edit after approval, used by the AI steps from then on ("Lập lại kế hoạch tập"
+  takes it). 409 `not_approved_yet` before the first approval, `gate_waiting` while that gate waits, `apply_pending`
+  while the approved one is being applied; 422 `{problems}` when the check fails
 - `GET /productions/:id/access` (as today)
 - `GET /productions/:id/catalog` -> `StudioCatalog` of the plan run (404 before the catalog stage ran)
 - `GET /productions/:id/assets/:assetId/media` -> ag-go `FootageAssetMedia` for the caller:
@@ -58,13 +95,20 @@ when the plan run failed or an episode failed and none is producing; `done` when
 
 ## Plan run (`/productions/:id/run`)
 
-- `POST` (producer) -> `{runId}` starts the plan run. 409 `episode_producing` while an episode is producing (re-plan
-  refused), 409 when a plan run is active, 422 with a Vietnamese `message` when the production is incomplete.
+- `POST` (producer) -> `{runId}` starts the plan run (`ag-studio-series-plan@2.0.0`: research -> trend report ->
+  R&D -> approve-rnd -> branding -> approve-branding -> brief -> episode plan -> approve-plan -> episodes). Needs a
+  footage folder and a channel or keyword. 409 `episode_producing` while an episode is producing (re-plan refused),
+  409 when a plan run is active, 422 with a Vietnamese `message` when the production is incomplete.
 - `GET` -> `RunView` (404 `no_run` before the first run)
 - `GET documents/:stage/:name` -> the JSON document (e.g. `research/research.json`, `trend-report/trend-report.json`,
   `catalog/catalog.json`, `plan-episodes/series-plan.json`, `approve-plan/series-plan.json`)
-- `POST gates/approve-plan` (producer) body `{document: SeriesPlan}` -> `{accepted: true}`; refused -> 422
-  `{code: 'gate_rejected', failed: [{check_id, evidence: {problems: {code, message}[]}}]}`
+- `POST gates/approve-rnd` body `{document: StudioRnd}`, `POST gates/approve-branding` body `{document:
+  StudioBranding}`, `POST gates/approve-plan` body `{document: SeriesPlan}` (producer; admins too) ->
+  `{accepted: true}`; refused -> 422 `{code: 'gate_rejected', failed: [{check_id, evidence: {problems: {code,
+  message}[]}}]}`. What Claude proposed and what was approved go to the dataset (`human_edits` rnd / branding /
+  series_plan).
+- Doing a step again (run ended, no episode producing): `POST stages/brief/resume` re-plans the episodes with the
+  latest R&D and branding; `stages/approve-rnd/resume` proposes the branding again; `stages/rnd/resume` the R&D.
 - `POST stages/:stage/retry`, `POST stages/:stage/resume` (producer), `POST cancel` (producer)
 
 ```ts
@@ -84,17 +128,19 @@ interface EpisodeSummary {
   currentStage: string | null;       // key of the running/waiting/failed stage of its run
   progress: number | null;           // 0..100 while render-final runs (farm job progress), else null
   durationSeconds: number | null;    // from the latest export, else the timeline length
-  thumbnailUrl: string | null;       // signed, the selected thumbnail of the latest export
+  thumbnailUrl: string | null;       // signed, the picture the episode uses (null without the footage scope)
   updatedAt: string;
 }
 interface EpisodeDetail extends EpisodeSummary {
   plan: StudioEpisode;                    // episodes.plan
   run: RunView | null;
   youtube: YoutubeKit | null;             // effective kit: episodes.youtube ?? the run's youtube-kit.json
-  selectedTitle: number; selectedThumbnail: number;
-  thumbnails: { url: string; index: number }[];                 // latest render
-  exportFiles: { kind: 'mp4' | 'thumbnail' | 'youtube' | 'timeline' | 'pack'; url: string; sizeBytes: number; name: string }[];
-  finalVideoUrl: string | null;
+  selectedTitle: number;
+  selectedThumbnailId: string | null;     // see Thumbnails
+  selectedThumbnail: number; thumbnails: { url: string; index: number }[];   // deprecated: the export's 3 pictures
+  exportFiles: { kind: 'mp4' | 'thumbnail' | 'youtube' | 'timeline' | 'pack'; url: string; downloadUrl: string;
+    sizeBytes: number; name: string }[];   // 'pack' only for episodes exported before 1.2.0
+  finalVideoUrl: string | null; finalVideoDownloadUrl: string | null;   // the download URL saves the file
   latestRevision: number | null;
 }
 ```
@@ -105,6 +151,59 @@ interface EpisodeDetail extends EpisodeSummary {
 - `POST /:episodeId/rerender` (producer) -> `{runId}`; 409 `episode_running` while its run is active
 - `POST /:episodeId/cancel` (producer); `POST /:episodeId/stages/:stage/retry` (producer)
 - `GET /:episodeId/documents/:stage/:name`
+- `POST /:episodeId/youtube-pack` (viewer with the footage scope) -> `{url, name, sizeBytes}`: the zip as the episode
+  is now — the picked thumbnail, `youtube.json`, `title.txt`, `description.txt` (with the chapters), `tags.txt`; no
+  video (download it on its own). Built on demand, stored once per content; the URL saves the file.
+
+## Thumbnails (`/productions/:id/episodes/:episodeId/thumbnails`)
+
+Episode runs `ag-studio-episode@1.2.0` cut up to 36 clean frames of the final video (away from on-screen words and
+clip edges) and draw the YouTube kit's 3 suggestions on them in the branding's thumbnail style. Every picture
+carries footage: the routes answer only someone whose footage scope covers the production (`GET` returns
+`footageHidden: true` and no items; the others 403 `footage_hidden`). Drawing needs ffmpeg on the API box (503
+`thumbnails_unavailable` without it).
+
+```ts
+type ThumbnailKind = 'frame' | 'suggestion' | 'composed' | 'upload' | 'canva' | 'ai';
+interface ThumbnailView {
+  id: string; kind: ThumbnailKind; tS: number | null; assetId: string | null; parentId: string | null;
+  text: string | null; style: ThumbnailStyle | null; width: number; height: number; sizeBytes: number;
+  createdBy: string;                 // 'system' for a render's frames and suggestions
+  createdAt: string; url: string; downloadUrl: string;
+  deletable: boolean;                // a person made it
+  drawable: boolean;                 // words can go on its clean picture
+  inCanva: boolean;                  // the caller opened a Canva design for it
+}
+interface ThumbnailStyle { position: 'bottom' | 'top' | 'center' | 'left' | 'right'; size: 's' | 'm' | 'l';
+  text_color: string; outline_color: string; box_color: string | null; uppercase: boolean }   // colours #RRGGBB
+interface ThumbnailList { items: ThumbnailView[]; selectedId: string | null; canDraw: boolean;
+  canCutFrames: boolean; framesPending: boolean; framesError: string | null; footageHidden: boolean }
+```
+- `GET` -> ThumbnailList (an episode exported before 1.2.0 shows its 3 old pictures as suggestions)
+- `PUT selected` (editor) `{thumbnailId}` -> ThumbnailList; the pick goes to the dataset (`human_edits` thumbnail)
+- `POST preview` (editor) `{baseId, text, style}` -> `{dataUrl}` (half size JPEG, not kept)
+- `POST compose` (editor) `{baseId, text ≤60, style}` -> ThumbnailView (`composed`; words on the clean picture under
+  `baseId`, never on top of a suggestion's words)
+- `POST capture` (editor) `{tS}` -> ThumbnailView (a `frame` of the final video at `tS` seconds)
+- `POST upload` (editor) multipart `file` (JPEG/PNG/WebP ≤ 10 MB) -> ThumbnailView (`upload`, filled to 1280×720 or
+  720×1280, JPEG ≤ 2 MB)
+- `POST frames` (editor) -> 202 `{started, pending}`: cuts the clean frames of an episode rendered before 1.2.0 in the
+  background (`framesPending` until they land)
+- `DELETE :thumbnailId` (editor) -> ThumbnailList; only pictures a person made (422 `not_user_made`)
+- `POST :thumbnailId/canva` (editor) -> `{designId, editUrl}`: the picture as a design in the caller's Canva (with
+  words: a PDF import whose words stay editable; else, or when the import fails, the flat picture on a design of its
+  size); the same user gets the same design next time. 409 `canva_not_connected` / `canva_reconnect`, 503
+  `canva_disabled`, 429 `canva_busy`, 502 `canva_failed`
+- `POST :thumbnailId/canva/pull` (editor) -> ThumbnailView: the design as edited, exported and added as a new `canva`
+  picture (`parentId` = that thumbnail); 404 `no_canva_design` when the caller never opened it
+
+## Canva (`/canva`) — the caller's own Canva account (docs/runbooks/canva.md)
+
+- `GET connection` -> `{enabled, connected, displayName}` (`enabled` false without the CANVA_* settings: hide Canva)
+- `POST authorize` `{returnTo?: string}` (a path of the web app) -> `{authorizeUrl}`; the browser goes there, Canva
+  sends it to `GET oauth/callback` (public), which redirects to `STUDIO_WEB_URL + returnTo` with `canva=connected` or
+  `canva=error&reason=<code>`
+- `DELETE connection` -> `{ok: true}` (the token is revoked at Canva, best effort)
 
 ## Editor (`/productions/:id/episodes/:episodeId`)
 

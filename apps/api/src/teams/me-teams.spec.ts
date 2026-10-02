@@ -32,8 +32,8 @@ describe('TeamsService (real studio.db)', () => {
   function production(id: string): void {
     const now = new Date().toISOString();
     s.db.run(
-      `INSERT INTO productions (id, team_id, title, brief, created_at, updated_at, owner_user_id, episode_target_seconds, max_episodes)
-       VALUES (?, 'team-1', 'P', 'mô tả', ?, ?, 'owner-1', 300, 3)`,
+      `INSERT INTO productions (id, team_id, title, brief, created_at, updated_at, owner_user_id, episode_target_seconds, max_episodes, keywords)
+       VALUES (?, 'team-1', 'P', 'mô tả', ?, ?, 'owner-1', 300, 3, '["phở"]')`,
       [id, now, now],
     );
     s.db.run('INSERT INTO production_sources (production_id, source_id, added_at) VALUES (?, ?, ?)', [id, 'folder-1', now]);

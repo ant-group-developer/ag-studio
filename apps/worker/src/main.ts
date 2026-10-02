@@ -15,7 +15,8 @@
  *   FARM_POLL_MS        farm job polling interval (default 5000)
  *   STUDIO_CLAUDE_MODEL default claude-opus-5-5
  *   STUDIO_CLAUDE_ARGV  JSON array replacing `claude -p ...` (tests: the fake CLI)
- *   STUDIO_FFMPEG_PATH  ffmpeg for the loudness check of the final render
+ *   STUDIO_FFMPEG_PATH  ffmpeg for the loudness check of the final render and for cutting thumbnails
+ *   STUDIO_FONTS_DIR    a folder with the thumbnail font (Arial); default: Windows fonts, else fontconfig (Liberation Sans)
  *   YOUTUBE_API_KEY     YouTube Data API v3 key for the market research of a series (none = research skipped)
  *   HARNESS_ROOT        Studio install root (default: this checkout)
  */
@@ -23,7 +24,8 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { AgGoClient } from "@ag-studio/ag-go-client";
 import {
-  createStudioEngineCore, createStudioWorker, FarmOwnerClient, S3Bucket, StudioDb, studioLogger, studioResearchCache, YoutubeResearchSource,
+  createStudioEngineCore, createStudioWorker, FarmOwnerClient, ffmpegThumbnailRenderer, S3Bucket, StudioDb, studioLogger, studioResearchCache,
+  YoutubeResearchSource,
 } from "@ag-studio/engine";
 import { HARNESS_ROOT } from "@harness/core";
 
@@ -62,6 +64,7 @@ async function main(): Promise<void> {
     logger,
     farmPollMs: Number(process.env.FARM_POLL_MS ?? 5000),
     ...(youtubeKey ? { research: new YoutubeResearchSource({ apiKey: youtubeKey, cache: studioResearchCache(db) }) } : {}),
+    ...(ffmpeg ? { thumbnails: ffmpegThumbnailRenderer({ ffmpeg }) } : {}),
   });
 
   logger.info("Studio worker starting", { owner, harnessRoot, youtube_research: !!youtubeKey });

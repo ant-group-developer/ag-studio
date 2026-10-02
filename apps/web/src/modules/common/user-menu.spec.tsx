@@ -1,14 +1,23 @@
 import { renderHook } from "@testing-library/react";
 import type { MenuProps } from "antd";
+import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n/config";
 import { useUserMenu } from "./user-menu";
 
 type Item = { key?: string; label?: unknown; onClick?: () => void; children?: Item[] };
 
-function render(onLogout = vi.fn()) {
+function render(opts: {
+  onLogout?: () => void;
+  canvaEnabled?: boolean;
+  canvaConnected?: boolean;
+  canvaDisplayName?: string | null;
+  onConnectCanva?: () => void;
+  onDisconnectCanva?: () => void;
+} = {}) {
+  const onLogout = opts.onLogout ?? vi.fn();
   const { result } = renderHook(() =>
-    useUserMenu({ nickname: "Demo", email: "demo@example.com", initials: "DE", onLogout }),
+    useUserMenu({ nickname: "Demo", email: "demo@example.com", initials: "DE", onLogout, ...opts }),
   );
   return { menu: result.current as MenuProps, items: result.current.items as Item[], onLogout };
 }
@@ -31,5 +40,32 @@ describe("useUserMenu", () => {
     items.find((i) => i?.key === "logout")!.onClick!();
     expect(onLogout).toHaveBeenCalledOnce();
     await i18n.changeLanguage("vi");
+  });
+
+  it("không có mục Canva khi tích hợp đang tắt", () => {
+    const { items } = render({ canvaEnabled: false });
+    expect(items.find((i) => i?.key === "canva")).toBeUndefined();
+  });
+
+  it("chưa kết nối: mục Canva gọi onConnectCanva", async () => {
+    await i18n.changeLanguage("vi");
+    const onConnectCanva = vi.fn();
+    const { items } = render({ canvaEnabled: true, canvaConnected: false, onConnectCanva });
+    const canva = items.find((i) => i?.key === "canva")!;
+    expect(canva.label).toBe("Kết nối Canva");
+    canva.onClick!();
+    expect(onConnectCanva).toHaveBeenCalledOnce();
+  });
+
+  it("đã kết nối: mục Canva xác nhận rồi gọi onDisconnectCanva", async () => {
+    await i18n.changeLanguage("vi");
+    const onDisconnectCanva = vi.fn();
+    const { items } = render({ canvaEnabled: true, canvaConnected: true, canvaDisplayName: "ACME", onDisconnectCanva });
+    const canva = items.find((i) => i?.key === "canva")!;
+    const label = canva.label as ReactElement<{ title: ReactElement; onConfirm: () => void }>;
+    expect(label.props.title).toBe("Ngắt kết nối Canva?");
+    expect(label.props.onConfirm).toBe(onDisconnectCanva);
+    label.props.onConfirm();
+    expect(onDisconnectCanva).toHaveBeenCalledOnce();
   });
 });

@@ -3,6 +3,7 @@
  */
 import React, { useEffect, useRef, useState } from "react";
 import {
+  Alert,
   App,
   Collapse,
   Form,
@@ -81,6 +82,8 @@ export interface ProductionFormValues {
   language: string;
   /** Folder ids from TreeSelect */
   sources?: string[];
+  /** The team's own YouTube channels */
+  ownChannels?: string[];
   youtubeChannels?: string[];
   keywords?: string[];
   musicTrack?: string;
@@ -100,6 +103,8 @@ export interface ProductionFormProps {
   youtubeChannels?: string[];
   /** Passed from parent only if quota display should reflect an external keyword list (optional) */
   keywords?: string[];
+  /** When true, show info alert that approved R&D is in use — hints are for a new research run */
+  directionApproved?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -120,9 +125,9 @@ export function ProductionForm({
   teams,
   loadingTeams,
   onTeamChange,
+  directionApproved,
 }: ProductionFormProps) {
   const { t } = useTranslation();
-  // unused — suppress linter
   void App.useApp;
 
   // ---- Folders ----
@@ -136,14 +141,47 @@ export function ProductionForm({
     [foldersData],
   );
 
-  // ---- Quota estimate ----
-  const watchedChannels: string[] = Form.useWatch("youtubeChannels", form) ?? [];
+  // ---- Quota estimate (own + reference channels × 3 + keywords × 201) ----
+  const watchedOwnChannels: string[] = Form.useWatch("ownChannels", form) ?? [];
+  const watchedRefChannels: string[] = Form.useWatch("youtubeChannels", form) ?? [];
   const watchedKeywords: string[] = Form.useWatch("keywords", form) ?? [];
-  const quotaN = watchedChannels.length * 3 + watchedKeywords.length * 201;
+  const quotaN = (watchedOwnChannels.length + watchedRefChannels.length) * 3 + watchedKeywords.length * 201;
   const quotaWarn = quotaN > 5000;
 
+  // ---- Hints collapse (auto-open when any hint has a value) ----
+  const watchedDescription: string | undefined = Form.useWatch("description", form);
+  const watchedGoal: string | undefined = Form.useWatch("goal", form);
+  const watchedAudience: string | undefined = Form.useWatch("audience", form);
+  const watchedTone: string | undefined = Form.useWatch("tone", form);
+  const watchedNotes: string | undefined = Form.useWatch("notes", form);
+  const watchedTargetSeconds: number | undefined = Form.useWatch("targetSeconds", form);
+  const watchedMaxEpisodes: number | undefined = Form.useWatch("maxEpisodes", form);
+
+  const hintsHasValue =
+    !!watchedDescription ||
+    !!watchedGoal ||
+    !!watchedAudience ||
+    !!watchedTone ||
+    !!watchedNotes ||
+    watchedTargetSeconds !== undefined ||
+    watchedMaxEpisodes !== undefined;
+
+  const hintsManuallySet = useRef(false);
+  const [hintsEnabled, setHintsEnabled] = useState(false);
+
+  useEffect(() => {
+    if (hintsHasValue && !hintsManuallySet.current) {
+      setHintsEnabled(true);
+    }
+  }, [hintsHasValue]);
+
+  function handleHintsCollapseChange(keys: string | string[]) {
+    const active = Array.isArray(keys) ? keys.includes("hints") : keys === "hints";
+    hintsManuallySet.current = true;
+    setHintsEnabled(active);
+  }
+
   // ---- Music collapse ----
-  // Auto-open if musicTrack has a value (e.g. loaded from existing production)
   const watchedMusicTrack: string | undefined = Form.useWatch("musicTrack", form);
   const musicManuallySet = useRef(false);
   const [musicEnabled, setMusicEnabled] = useState(false);
@@ -191,60 +229,7 @@ export function ProductionForm({
           <Input />
         </Form.Item>
 
-        <Form.Item name="description" label={t("productions.fieldBrief")}>
-          <Input.TextArea rows={3} />
-        </Form.Item>
-
-        <Form.Item name="goal" label={t("productions.fieldGoal")}>
-          <Input.TextArea rows={2} />
-        </Form.Item>
-
-        <Form.Item name="audience" label={t("productions.fieldAudience")}>
-          <Input />
-        </Form.Item>
-
-        <Form.Item name="tone" label={t("productions.fieldTone")}>
-          <Input />
-        </Form.Item>
-
-        <Form.Item name="notes" label={t("productions.fieldNotes")}>
-          <Input.TextArea rows={2} />
-        </Form.Item>
-
-        {/* ---- Target length of an episode: hours / minutes / seconds ---- */}
-        <Form.Item
-          name="targetSeconds"
-          label={t("productions.fieldTargetSeconds")}
-          extra={t("productions.fieldTargetSecondsHelp")}
-          rules={[
-            {
-              validator: (_, value: number | undefined) =>
-                value === undefined || (value >= TARGET_SECONDS_MIN && value <= TARGET_SECONDS_MAX)
-                  ? Promise.resolve()
-                  : Promise.reject(new Error(t("productions.fieldTargetSecondsRange"))),
-            },
-          ]}
-        >
-          <DurationInput disabled={readOnly} />
-        </Form.Item>
-
-        <Form.Item name="maxEpisodes" label={t("productions.fieldMaxEpisodes")}>
-          <InputNumber min={1} max={100} style={{ width: "100%" }} />
-        </Form.Item>
-
-        <Form.Item
-          name="aspect"
-          label={t("productions.fieldAspect")}
-          rules={[{ required: true, message: t("productions.fieldAspectRequired") }]}
-        >
-          <Select options={ASPECT_OPTIONS} style={{ width: 120 }} />
-        </Form.Item>
-
-        <Form.Item name="language" label={t("productions.fieldLanguage")}>
-          <Input style={{ width: 120 }} />
-        </Form.Item>
-
-        {/* ---- Source folders ---- */}
+        {/* ---- Source folders (required) ---- */}
         <Form.Item
           name="sources"
           label={
@@ -253,6 +238,7 @@ export function ProductionForm({
               {loadingFolders && <Spin size="small" />}
             </Space>
           }
+          rules={[{ required: true, message: "Vui lòng chọn ít nhất một thư mục nguồn" }]}
         >
           <TreeSelect
             treeData={treeData}
@@ -265,7 +251,43 @@ export function ProductionForm({
           />
         </Form.Item>
 
-        {/* ---- YouTube channels ---- */}
+        {/* ---- Own channels (team's) ---- */}
+        <Form.Item
+          name="ownChannels"
+          label={t("productions.fieldOwnChannels")}
+          rules={[
+            {
+              validator: (_, value: string[] = []) => {
+                const invalid = value.filter((v) => !isValidYTChannel(v));
+                if (invalid.length > 0) {
+                  return Promise.reject(new Error(t("productions.ownChannelInvalid")));
+                }
+                return Promise.resolve();
+              },
+            },
+          ]}
+        >
+          <Select
+            mode="tags"
+            placeholder={t("productions.ownChannelsPlaceholder")}
+            tokenSeparators={[","]}
+            tagRender={(props) => {
+              const invalid = !isValidYTChannel(String(props.value));
+              return (
+                <Tag
+                  color={invalid ? "error" : undefined}
+                  closable={props.closable}
+                  onClose={props.onClose}
+                  style={{ marginRight: 3 }}
+                >
+                  {props.label}
+                </Tag>
+              );
+            }}
+          />
+        </Form.Item>
+
+        {/* ---- Reference YouTube channels ---- */}
         <Form.Item
           name="youtubeChannels"
           label={t("productions.fieldYoutubeChannels")}
@@ -300,12 +322,6 @@ export function ProductionForm({
             }}
           />
         </Form.Item>
-        <div style={{ marginTop: -20, marginBottom: 16, fontSize: 12 }}>
-          <Text type={quotaWarn ? "warning" : "secondary"}>
-            {t("productions.quotaEstimate", { n: quotaN })}
-            {quotaWarn && <span style={{ marginLeft: 8 }}>{t("productions.quotaWarning")}</span>}
-          </Text>
-        </div>
 
         {/* ---- Keywords ---- */}
         <Form.Item
@@ -328,9 +344,122 @@ export function ProductionForm({
             tokenSeparators={[","]}
           />
         </Form.Item>
-        <div style={{ marginTop: -20, marginBottom: 16, fontSize: 12 }}>
-          <Text type="secondary">{watchedKeywords.length}/20 từ khóa</Text>
+
+        {/* ---- Form-level validation: at least one channel or keyword ---- */}
+        <Form.Item
+          name="_research_source_check"
+          style={{ display: "none" }}
+          rules={[{
+            validator: () => {
+              const own = form.getFieldValue("ownChannels") as string[] | undefined;
+              const ref = form.getFieldValue("youtubeChannels") as string[] | undefined;
+              const kw = form.getFieldValue("keywords") as string[] | undefined;
+              const totalChannels = (own?.length ?? 0) + (ref?.length ?? 0);
+              const totalKw = kw?.length ?? 0;
+              if (totalChannels === 0 && totalKw === 0) {
+                return Promise.reject(new Error(t("productions.atLeastOneResearchSource")));
+              }
+              return Promise.resolve();
+            },
+          }]}
+        >
+          <Input type="hidden" />
+        </Form.Item>
+
+        {/* ---- Quota estimate ---- */}
+        <div style={{ marginBottom: 16, fontSize: 12 }}>
+          <Text type={quotaWarn ? "warning" : "secondary"}>
+            {t("productions.quotaEstimate", { n: quotaN })}
+            {quotaWarn && <span style={{ marginLeft: 8 }}>{t("productions.quotaWarning")}</span>}
+          </Text>
+          <div style={{ marginTop: 4 }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>{watchedKeywords.length}/20 từ khóa</Text>
+          </div>
         </div>
+
+        {/* ---- Aspect and language ---- */}
+        <Form.Item
+          name="aspect"
+          label={t("productions.fieldAspect")}
+          rules={[{ required: true, message: t("productions.fieldAspectRequired") }]}
+        >
+          <Select options={ASPECT_OPTIONS} style={{ width: 120 }} />
+        </Form.Item>
+
+        <Form.Item name="language" label={t("productions.fieldLanguage")}>
+          <Input style={{ width: 120 }} />
+        </Form.Item>
+
+        {/* ---- AI hints collapse (collapsed by default; auto-opens when any hint has a value) ---- */}
+        <Collapse
+          activeKey={hintsEnabled ? ["hints"] : []}
+          onChange={handleHintsCollapseChange}
+          style={{ marginBottom: 16 }}
+          items={[
+            {
+              key: "hints",
+              label: t("productions.hintsSectionLabel"),
+              children: (
+                <Space direction="vertical" style={{ width: "100%" }}>
+                  {directionApproved && (
+                    <Alert
+                      type="info"
+                      message={t("productions.hintsApprovedRdNote")}
+                      showIcon
+                      style={{ marginBottom: 8 }}
+                    />
+                  )}
+
+                  <Form.Item name="description" label={t("productions.fieldBrief")} style={{ marginBottom: 0 }}>
+                    <Input.TextArea rows={3} maxLength={4000} showCount />
+                  </Form.Item>
+
+                  <Form.Item name="goal" label={t("productions.fieldGoal")} style={{ marginBottom: 0 }}>
+                    <Input.TextArea rows={2} maxLength={1000} />
+                  </Form.Item>
+
+                  <Form.Item name="audience" label={t("productions.fieldAudience")} style={{ marginBottom: 0 }}>
+                    <Input maxLength={1000} />
+                  </Form.Item>
+
+                  <Form.Item name="tone" label={t("productions.fieldTone")} style={{ marginBottom: 0 }}>
+                    <Input maxLength={500} />
+                  </Form.Item>
+
+                  <Form.Item name="notes" label={t("productions.fieldNotes")} style={{ marginBottom: 0 }}>
+                    <Input.TextArea rows={2} maxLength={4000} />
+                  </Form.Item>
+
+                  <Form.Item
+                    name="targetSeconds"
+                    label={t("productions.fieldTargetSeconds")}
+                    extra={t("productions.fieldTargetSecondsHelp")}
+                    style={{ marginBottom: 0 }}
+                    rules={[
+                      {
+                        validator: (_, value: number | undefined) =>
+                          value === undefined || (value >= TARGET_SECONDS_MIN && value <= TARGET_SECONDS_MAX)
+                            ? Promise.resolve()
+                            : Promise.reject(new Error(t("productions.fieldTargetSecondsRange"))),
+                      },
+                    ]}
+                  >
+                    <DurationInput disabled={readOnly} />
+                  </Form.Item>
+
+                  <Form.Item
+                    name="maxEpisodes"
+                    label={t("productions.fieldMaxEpisodes")}
+                    extra="Để trống = AI đề xuất trong R&D"
+                    style={{ marginBottom: 0 }}
+                  >
+                    <InputNumber min={1} max={30} style={{ width: "100%" }} placeholder="AI đề xuất" />
+                  </Form.Item>
+                </Space>
+              ),
+            },
+          ]}
+        />
 
         {/* ---- Music (collapsible) ---- */}
         <Collapse

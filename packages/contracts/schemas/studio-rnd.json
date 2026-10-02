@@ -1,0 +1,302 @@
+{
+  "$ref": "#/definitions/studio-rnd",
+  "definitions": {
+    "studio-rnd": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.rnd/v1"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 3000
+        },
+        "market": {
+          "type": "object",
+          "properties": {
+            "opportunities": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "maxItems": 10
+            },
+            "gaps": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "maxItems": 10
+            },
+            "risks": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "maxItems": 10
+            },
+            "competitors": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "channel": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "strengths": {
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  "weaknesses": {
+                    "type": "string",
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "channel",
+                  "strengths",
+                  "weaknesses"
+                ],
+                "additionalProperties": false
+              },
+              "maxItems": 10
+            }
+          },
+          "required": [
+            "opportunities",
+            "gaps",
+            "risks",
+            "competitors"
+          ],
+          "additionalProperties": false
+        },
+        "own_channels": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "assessment": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                },
+                "strengths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 300
+                  },
+                  "maxItems": 8
+                },
+                "weaknesses": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 300
+                  },
+                  "maxItems": 8
+                },
+                "recommendations": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  "maxItems": 8
+                }
+              },
+              "required": [
+                "assessment",
+                "strengths",
+                "weaknesses",
+                "recommendations"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "footage_fit": {
+          "type": "object",
+          "properties": {
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "strong_themes": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "maxItems": 10
+            },
+            "gaps": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "maxItems": 10
+            }
+          },
+          "required": [
+            "summary",
+            "strong_themes",
+            "gaps"
+          ],
+          "additionalProperties": false
+        },
+        "direction": {
+          "type": "object",
+          "properties": {
+            "description": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "goal": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "audience": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "tone": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "positioning": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "content_pillars": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "name",
+                  "description"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 1,
+              "maxItems": 8
+            },
+            "episode_target_seconds": {
+              "type": "number",
+              "minimum": 10,
+              "maximum": 3600
+            },
+            "max_episodes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30
+            },
+            "posting_schedule": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "keywords": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "maxItems": 20
+            },
+            "episode_ideas": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 150
+                  },
+                  "angle": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "title",
+                  "angle"
+                ],
+                "additionalProperties": false
+              },
+              "maxItems": 15
+            },
+            "notes": {
+              "type": "string",
+              "maxLength": 4000
+            }
+          },
+          "required": [
+            "description",
+            "goal",
+            "audience",
+            "tone",
+            "positioning",
+            "content_pillars",
+            "episode_target_seconds",
+            "max_episodes",
+            "posting_schedule",
+            "keywords",
+            "episode_ideas",
+            "notes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema_version",
+        "summary",
+        "market",
+        "own_channels",
+        "footage_fit",
+        "direction"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

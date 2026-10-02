@@ -13,6 +13,12 @@ series sao cho mỗi tập kể một câu chuyện hoàn chỉnh, đa dạng h�
   `keywords`.
 - `trend_report` (tùy chọn, có thể `skipped: true`): xu hướng YouTube cho series — dùng `working_angles`
   và `recommended_duration_s` làm gợi ý, nhưng không bắt buộc phải theo.
+- `studio_rnd` (khi production đã qua bước R&D): định hướng người dùng **đã duyệt** — `direction.content_pillars`
+  (mỗi tập nên thuộc một trụ cột), `direction.episode_ideas` (ưu tiên dựng thành tập khi footage cho phép),
+  `direction.positioning`, `footage_fit`. Brief đã mang sẵn mô tả, khán giả, thời lượng và số tập của R&D.
+- `studio_branding` (khi có): tiêu đề tập theo `titles.formulas`, dài tối đa `titles.max_chars`, không chứa
+  `voice.banned_words`; hook và logline theo `voice` (`do` / `dont`); chữ trên màn hình (`texts_suggested`) theo
+  `on_screen_text` (tối đa `on_screen_text.max_chars` ký tự).
 - `studio_catalog`: dòng đầu là JSON thông tin chung (`total_available`, `truncated`), mỗi dòng sau là một
   JSON asset: `asset_id`, `name`, `title_vi`, `summary_vi`, `duration_s`, `orientation`, `genre`, `topics`,
   `subjects`, `places`, `actions`, `keywords_vi`, `tags`, `mood`, `setting`, `people_count`, `shot_variety`,

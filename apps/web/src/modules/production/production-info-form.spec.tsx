@@ -30,6 +30,16 @@ const client = {
   getSeriesPlan: vi.fn().mockResolvedValue(null),
   getProductionCatalog: vi.fn().mockResolvedValue(null),
   updateProduction: vi.fn(),
+  getRndDraft: vi.fn().mockResolvedValue(null),
+  getApprovedRnd: vi.fn().mockResolvedValue(null),
+  getBrandingDraft: vi.fn().mockResolvedValue(null),
+  getApprovedBranding: vi.fn().mockResolvedValue(null),
+  getBriefDoc: vi.fn().mockResolvedValue(null),
+  getProductionRnd: vi.fn().mockResolvedValue(null),
+  getProductionBranding: vi.fn().mockResolvedValue(null),
+  getEpisodes: vi.fn().mockResolvedValue([]),
+  getLlmLogs: vi.fn().mockResolvedValue([]),
+  startRun: vi.fn(),
 };
 vi.mock("../../api/studio-client", async (orig) => ({
   ...(await orig<object>()),
@@ -43,7 +53,12 @@ const baseProd = {
   description: "", goal: "", audience: "", tone: "", notes: "",
   status: "draft", runId: null, createdAt: "", updatedAt: "", ownerUserId: null,
   episodeTargetSeconds: null, maxEpisodes: 5, aspect: "16:9", language: "vi",
-  music: null, sources: [], youtubeChannels: [], keywords: [],
+  music: null,
+  // sources must be non-empty (required), and at least one channel or keyword must be present
+  sources: ["folder-1"],
+  youtubeChannels: ["@testchannel"],
+  keywords: [],
+  ownChannels: [], hasRnd: false, hasBranding: false, waitingGate: null,
   episodeCounts: { total: 0, ready: 0, producing: 0, failed: 0 },
 } as const;
 
@@ -74,6 +89,15 @@ describe("ProductionDetailPage – info form", () => {
     client.getTrendReport.mockResolvedValue(null);
     client.getSeriesPlan.mockResolvedValue(null);
     client.getProductionCatalog.mockResolvedValue(null);
+    client.getRndDraft.mockResolvedValue(null);
+    client.getApprovedRnd.mockResolvedValue(null);
+    client.getBrandingDraft.mockResolvedValue(null);
+    client.getApprovedBranding.mockResolvedValue(null);
+    client.getBriefDoc.mockResolvedValue(null);
+    client.getProductionRnd.mockResolvedValue(null);
+    client.getProductionBranding.mockResolvedValue(null);
+    client.getEpisodes.mockResolvedValue([]);
+    client.getLlmLogs.mockResolvedValue([]);
   });
 
   it("quota estimate shown correctly: 2 channels + 5 keywords → 2×3 + 5×201 = 1011", async () => {

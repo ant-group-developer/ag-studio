@@ -14,10 +14,11 @@ import {
   Input,
   Tag,
   Space,
+  Tabs,
 } from "antd";
 import { Plus, Trash2, Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useQueryState, parseAsString, parseAsInteger } from "nuqs";
+import { useQueryState, parseAsString, parseAsInteger, parseAsStringLiteral } from "nuqs";
 import { useStudioClient } from "../api/studio-client";
 import type { TeamMember } from "../api/studio-client";
 import { UserCell } from "../modules/common/UserCell";
@@ -26,6 +27,7 @@ import { PAGE_TABLE_STICKY } from "../helpers/sticky-table-header";
 import { SortDropdown } from "../helpers/sort-dropdown";
 import { TableRefreshButton } from "../helpers/table-refresh-button";
 import { useDebouncedValue } from "../helpers/use-debounced-value";
+import { TeamSkillsTab } from "../modules/team/TeamSkillsTab";
 import type { SortDirection } from "../helpers/compare-sort-values";
 
 const { Title } = Typography;
@@ -54,6 +56,7 @@ export function TeamDetailPage() {
   const queryClient = useQueryClient();
 
   // URL state
+  const [tab, setTab] = useQueryState("tab", parseAsStringLiteral(["members", "skills"] as const).withDefault("members"));
   const [page, setPage] = useQueryState("m_page", parseAsInteger.withDefault(1));
   const [sortBy, setSortBy] = useQueryState("m_sortBy", parseAsString.withDefault("name"));
   const [sortOrder, setSortOrder] = useQueryState(
@@ -83,6 +86,15 @@ export function TeamDetailPage() {
     { value: "editor", label: t("roles.editor") },
     { value: "viewer", label: t("roles.viewer") },
   ];
+
+  const { data: team } = useQuery({
+    queryKey: ["team", teamId],
+    queryFn: () => client.getTeam(teamId!),
+    enabled: !!teamId,
+  });
+  const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => client.getMe(), staleTime: 5 * 60_000 });
+  // Team rules: owners and producers write them (admins too); everyone else reads.
+  const canEditSkills = !!me?.isAdmin || team?.role === "owner" || team?.role === "producer";
 
   const queryKey = ["members", teamId, { page, sortBy, sortOrder, q: debouncedQ }] as const;
 
@@ -208,32 +220,8 @@ export function TeamDetailPage() {
     },
   ];
 
-  return (
+  const membersTab = (
     <div>
-      {/* Header row */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: 16,
-        }}
-      >
-        <Title level={3} style={{ margin: 0 }}>
-          {t("teams.detailTitle")}
-        </Title>
-        <Tooltip title={t("teams.addMember")}>
-          <Button
-            type="primary"
-            icon={<Plus size={16} />}
-            onClick={() => setOpen(true)}
-            aria-label={t("teams.addMember")}
-          >
-            {t("teams.addMember")}
-          </Button>
-        </Tooltip>
-      </div>
-
       {/* Toolbar */}
       <div
         style={{
@@ -244,6 +232,13 @@ export function TeamDetailPage() {
           alignItems: "center",
         }}
       >
+        <Button
+          type="primary"
+          icon={<Plus size={16} />}
+          onClick={() => setOpen(true)}
+        >
+          {t("teams.addMember")}
+        </Button>
         <Input
           placeholder={t("teams.searchPlaceholder")}
           allowClear
@@ -279,6 +274,22 @@ export function TeamDetailPage() {
           showSizeChanger: false,
           onChange: (p) => void setPage(p),
         }}
+      />
+    </div>
+  );
+
+  return (
+    <div>
+      <Title level={3} style={{ margin: "0 0 8px" }}>
+        {team?.name ?? t("teams.detailTitle")}
+      </Title>
+      <Tabs
+        activeKey={tab}
+        onChange={(k) => void setTab(k as "members" | "skills")}
+        items={[
+          { key: "members", label: t("teamSkills.tabMembers"), children: membersTab },
+          { key: "skills", label: t("teamSkills.tabSkills"), children: teamId ? <TeamSkillsTab teamId={teamId} canEdit={canEditSkills} /> : null },
+        ]}
       />
 
       <Modal

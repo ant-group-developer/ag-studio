@@ -15,9 +15,9 @@ function makeRun(): Run {
 }
 
 describe("SqliteStateStore", () => {
-  it("migrates once and creates 38 tables", () => {
+  it("migrates once and creates 43 tables", () => {
     const { store, dir } = openTempStore();
-    expect(store.tableNames().sort()).toEqual(["artifact", "attempt", "brand_profile", "channel_learned", "channel_package", "channel_sequence", "check_result", "comments", "content_item", "content_request", "content_variant", "edit_style", "episode_jobs", "episode_revisions", "episodes", "event", "external_operation", "human_edits", "lease", "library_item", "llm_calls", "music_track", "production_sources", "productions", "publication_job", "run", "schema_migrations", "sign_audit_log", "source_item", "stage_run", "studio_editor_jobs", "studio_farm_jobs", "team_members", "teams", "timeline_revisions", "video_metrics", "voice_profile", "youtube_cache"]);
+    expect(store.tableNames().sort()).toEqual(["artifact", "attempt", "brand_profile", "canva_connections", "canva_oauth_states", "channel_learned", "channel_package", "channel_sequence", "check_result", "comments", "content_item", "content_request", "content_variant", "edit_style", "episode_jobs", "episode_revisions", "episode_thumbnails", "episodes", "event", "external_operation", "human_edits", "lease", "library_item", "llm_calls", "music_track", "production_sources", "productions", "publication_job", "run", "schema_migrations", "sign_audit_log", "source_item", "stage_run", "studio_editor_jobs", "studio_farm_jobs", "team_members", "team_skills", "teams", "thumbnail_canva_designs", "timeline_revisions", "video_metrics", "voice_profile", "youtube_cache"]);
     expect(store.migrate(MIGRATIONS_DIR)).toEqual([]);
     const again = new SqliteStateStore(join(dir, "state.db"));
     expect(again.migrate(MIGRATIONS_DIR)).toEqual([]);

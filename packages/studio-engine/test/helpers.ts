@@ -1,9 +1,9 @@
-import { mkdtempSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgGoFootageVideo } from "@harness/core";
-import { createStudioEngineCore, MemoryBucket, StudioDb, type FootageCatalogSource } from "../src/index.js";
+import { createStudioEngineCore, MemoryBucket, StudioDb, type FootageCatalogSource, type ThumbnailRenderer } from "../src/index.js";
 
 export const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..", "..", "..");
 export const FAKE_CLAUDE = join(ROOT, "fixtures", "fake-studio-claude.mjs");
@@ -136,4 +136,34 @@ export function seedProduction(db: StudioDb, over: {
       over.episode_target_seconds ?? 60, over.max_episodes ?? 2]);
   db.run("INSERT INTO production_sources (production_id, source_id, added_at) VALUES (?, 'folder-a', ?)", [id, now]);
   return id;
+}
+
+/** Thumbnail pictures without ffmpeg: a frame is a small fake JPEG naming its moment, words are appended to it. */
+export function fakeThumbnails(): ThumbnailRenderer & { calls: string[] } {
+  const calls: string[] = [];
+  return {
+    calls,
+    async extractFrame(_video, t_s, out) { calls.push(`frame ${t_s}`); writeFileSync(out, fakeJpeg(`frame-${t_s}`)); },
+    async compose(base, out, p) { calls.push(`compose ${p.lines.join("|")}`); writeFileSync(out, Buffer.concat([readFileSync(base), Buffer.from(` ${p.lines.join("|")}`)])); },
+    async normalize(input, out) { calls.push("normalize"); copyFileSync(input, out); },
+  };
+}
+
+/** The files of a zip whose entries are stored (not deflated), by name, read through its central directory. */
+export function readStoredZip(zip: Buffer): Map<string, Buffer> {
+  const end = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  const count = zip.readUInt16LE(end + 10);
+  let at = zip.readUInt32LE(end + 16);
+  const files = new Map<string, Buffer>();
+  for (let i = 0; i < count; i++) {
+    const size = zip.readUInt32LE(at + 20);
+    const nameLen = zip.readUInt16LE(at + 28);
+    const skip = nameLen + zip.readUInt16LE(at + 30) + zip.readUInt16LE(at + 32);
+    const local = zip.readUInt32LE(at + 42);
+    const name = zip.subarray(at + 46, at + 46 + nameLen).toString("utf8");
+    const data = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28);
+    files.set(name, zip.subarray(data, data + size));
+    at += 46 + skip;
+  }
+  return files;
 }
