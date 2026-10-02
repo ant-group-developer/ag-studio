@@ -212,24 +212,10 @@
 .login-logo {
   display: block;
   width: auto;
+  align-self: flex-start;
   object-fit: contain;
 }
 
-.login-monogram {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 22%;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-  color: #fff;
-  background: linear-gradient(
-    135deg,
-    var(--login-accent) 0%,
-    color-mix(in srgb, var(--login-accent) 70%, #7c3aed) 100%
-  );
-  box-shadow: 0 8px 20px color-mix(in srgb, var(--login-accent) 40%, transparent);
-}
 
 /* Language switch, top-right over the backdrop */
 .login-language.ant-btn {
