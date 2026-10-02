@@ -1,5 +1,5 @@
 import { useAuthToken } from "../auth/use-auth-token";
-import type { TimelineV3, YoutubeKit, SeriesPlan, StudioCatalog, StudioResearch, TrendReport, StudioRnd, StudioBranding, StudioBrief } from "@harness/contracts";
+import type { TimelineV3, YoutubeKit, SeriesPlan, StudioCatalog, StudioResearch, TrendReport, StudioRnd, StudioBranding, StudioBrief, ThumbnailStyle } from "@harness/contracts";
 import type { TimelineIssue } from "@studio/timeline";
 
 const STUDIO_API_URL =
@@ -160,7 +160,12 @@ export interface EpisodeDetail extends EpisodeSummary {
   run: RunView | null;
   youtube: YoutubeKit | null;
   selectedTitle: number;
+  /** The picture the episode uses (new thumbnails API — see `listThumbnails`/`selectThumbnail`). */
+  selectedThumbnailId: string | null;
+  /** @deprecated superseded by `selectedThumbnailId` + the thumbnails routes; kept only for episodes exported
+   *  before 1.2.0. Not used by the UI any more. */
   selectedThumbnail: number;
+  /** @deprecated see `selectedThumbnail`. */
   thumbnails: { url: string; index: number }[];
   /** `url` shows the file; `downloadUrl` makes the browser save it (Content-Disposition: attachment). */
   exportFiles: { kind: "mp4" | "thumbnail" | "youtube" | "timeline" | "pack"; url: string; downloadUrl: string; sizeBytes: number; name: string }[];
@@ -172,7 +177,6 @@ export interface EpisodeDetail extends EpisodeSummary {
 export interface EpisodePatch {
   youtube?: YoutubeKit;
   selectedTitle?: 0 | 1 | 2;
-  selectedThumbnail?: 0 | 1 | 2;
 }
 
 /** A non-2xx answer. `body` is normalised as `{ code, message, ...details }` from the envelope error
@@ -216,13 +220,16 @@ async function request<T>(
   body?: unknown
 ): Promise<T> {
   const token = await getAccessToken();
+  // FormData (file uploads) must keep the browser's own multipart Content-Type (with its boundary);
+  // everything else goes as JSON.
+  const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
   const res = await fetch(`${STUDIO_API_URL}${path}`, {
     method,
     headers: {
-      "Content-Type": "application/json",
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
       Authorization: `Bearer ${token}`,
     },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: isFormData ? (body as FormData) : body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
     let parsed: Record<string, unknown> | null = null;
@@ -315,6 +322,54 @@ export interface AssetMedia {
   contactSheetUrl: string | null;
   durationMs: number;
   expiresAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Thumbnails (ag-studio-episode@1.2.0): clean frames + words drawn by Studio, plus Canva
+// ---------------------------------------------------------------------------
+
+export type ThumbnailKind = "frame" | "suggestion" | "composed" | "upload" | "canva" | "ai";
+
+export interface ThumbnailView {
+  id: string;
+  kind: ThumbnailKind;
+  tS: number | null;
+  assetId: string | null;
+  parentId: string | null;
+  text: string | null;
+  style: ThumbnailStyle | null;
+  width: number;
+  height: number;
+  sizeBytes: number;
+  /** "system" for a render's own frames/suggestions; a user id otherwise. */
+  createdBy: string;
+  createdAt: string;
+  url: string;
+  /** Sets the file to be saved (Content-Disposition: attachment). */
+  downloadUrl: string;
+  /** A person made it: can be deleted. */
+  deletable: boolean;
+  /** Words can be drawn on its clean picture. */
+  drawable: boolean;
+  /** The caller opened a Canva design for this picture. */
+  inCanva: boolean;
+}
+
+export interface ThumbnailList {
+  items: ThumbnailView[];
+  selectedId: string | null;
+  canDraw: boolean;
+  canCutFrames: boolean;
+  framesPending: boolean;
+  framesError: string | null;
+  footageHidden: boolean;
+}
+
+/** `GET /api/canva/connection`: enabled=false hides every Canva control in the UI. */
+export interface CanvaConnection {
+  enabled: boolean;
+  connected: boolean;
+  displayName: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -505,6 +560,64 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     getEpisodeDocument<T = unknown>(productionId: string, episodeId: string, stage: string, name: string): Promise<T> {
       return request<T>(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/documents/${stage}/${name}`);
     },
+    /** 403 `footage_hidden`, built on demand, stored once per content; the URL saves the zip (no video). */
+    youtubePack(productionId: string, episodeId: string): Promise<{ url: string; name: string; sizeBytes: number }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/youtube-pack`);
+    },
+
+    // ---- Thumbnails (403 `footage_hidden` outside the caller's footage scope, 503 `thumbnails_unavailable`
+    // without ffmpeg on the API box) ----
+    listThumbnails(productionId: string, episodeId: string): Promise<ThumbnailList> {
+      return request(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails`);
+    },
+    selectThumbnail(productionId: string, episodeId: string, thumbnailId: string): Promise<ThumbnailList> {
+      return request(getAccessToken, "PUT", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/selected`, { thumbnailId });
+    },
+    /** Half-size JPEG data URL, not kept. */
+    previewThumbnail(productionId: string, episodeId: string, baseId: string, text: string, style: ThumbnailStyle): Promise<{ dataUrl: string }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/preview`, { baseId, text, style });
+    },
+    composeThumbnail(productionId: string, episodeId: string, baseId: string, text: string, style: ThumbnailStyle): Promise<ThumbnailView> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/compose`, { baseId, text, style });
+    },
+    /** A clean `frame` of the final video at `tS` seconds. */
+    captureThumbnail(productionId: string, episodeId: string, tS: number): Promise<ThumbnailView> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/capture`, { tS });
+    },
+    /** JPEG/PNG/WebP ≤ 10 MB. */
+    uploadThumbnail(productionId: string, episodeId: string, file: File): Promise<ThumbnailView> {
+      const form = new FormData();
+      form.append("file", file);
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/upload`, form);
+    },
+    /** 202 `{started, pending}`: cuts the clean frames of an episode rendered before 1.2.0 in the background. */
+    startCutFrames(productionId: string, episodeId: string): Promise<{ started: boolean; pending: boolean }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/frames`);
+    },
+    /** Only pictures a person made (422 `not_user_made` otherwise). */
+    deleteThumbnail(productionId: string, episodeId: string, thumbnailId: string): Promise<ThumbnailList> {
+      return request(getAccessToken, "DELETE", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/${thumbnailId}`);
+    },
+
+    // ---- Canva ----
+    getCanvaConnection(): Promise<CanvaConnection> {
+      return request(getAccessToken, "GET", "/api/canva/connection");
+    },
+    /** `returnTo` is a path in the web app; the caller sets `window.location.href = authorizeUrl` next. */
+    authorizeCanva(returnTo: string): Promise<{ authorizeUrl: string }> {
+      return request(getAccessToken, "POST", "/api/canva/authorize", { returnTo });
+    },
+    disconnectCanva(): Promise<{ ok: true }> {
+      return request(getAccessToken, "DELETE", "/api/canva/connection");
+    },
+    /** 409 `canva_not_connected`/`canva_reconnect`, 503 `canva_disabled`, 502 `canva_failed`, 429 `canva_busy`. */
+    openThumbnailInCanva(productionId: string, episodeId: string, thumbnailId: string): Promise<{ designId: string; editUrl: string }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/${thumbnailId}/canva`);
+    },
+    /** A new `canva` picture, `parentId` = `thumbnailId`. 404 `no_canva_design` if it was never opened. */
+    pullCanvaThumbnail(productionId: string, episodeId: string, thumbnailId: string): Promise<ThumbnailView> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/${thumbnailId}/canva/pull`);
+    },
 
     // ---- Editor (timeline revisions, preview) ----
     getTimeline(productionId: string, episodeId: string): Promise<TimelineRevisionView> {
@@ -576,7 +689,7 @@ export interface LlmCallDetail extends LlmCallSummary {
   warnings: { code: string; message: string }[];
 }
 
-export type HumanEditKind = "series_plan" | "youtube_kit" | "episode_rerender" | "episode_cancel" | "rnd" | "branding" | "rnd_edit" | "branding_edit";
+export type HumanEditKind = "series_plan" | "youtube_kit" | "episode_rerender" | "episode_cancel" | "rnd" | "branding" | "rnd_edit" | "branding_edit" | "thumbnail";
 
 export interface HumanEditView {
   id: string;

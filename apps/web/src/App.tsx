@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { ProLayout } from "@ant-design/pro-components";
 import { useAuth0 } from "@auth0/auth0-react";
 import { App as AntApp, ConfigProvider, Dropdown, Spin, theme as antdTheme } from "antd";
@@ -13,9 +13,10 @@ import {
   Navigate,
   Link,
   useLocation,
+  useNavigate,
 } from "react-router-dom";
 import { NuqsAdapter } from "nuqs/adapters/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AuthGate } from "./auth/auth-provider";
 import { useUserMenu } from "./modules/common/user-menu";
 import { menuKeyFor } from "./helpers/menu";
@@ -38,10 +39,13 @@ function isEditorRoute(pathname: string): boolean {
 
 function AppLayout() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { t } = useTranslation();
+  const { message } = AntApp.useApp();
   const { user, logout } = useAuth0();
   const { token } = antdTheme.useToken();
   const client = useStudioClient();
+  const qc = useQueryClient();
   const editorRoute = isEditorRoute(location.pathname);
 
   const { data: me } = useQuery({
@@ -51,11 +55,58 @@ function AppLayout() {
   });
   const isAdmin = me?.isAdmin ?? false;
 
+  const { data: canva } = useQuery({
+    queryKey: ["canva-connection"],
+    queryFn: () => client.getCanvaConnection(),
+  });
+  const disconnectCanva = useMutation({
+    mutationFn: () => client.disconnectCanva(),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["canva-connection"] });
+      void message.success(t("canva.disconnectDone"));
+    },
+  });
+  const connectCanva = async () => {
+    const returnTo = location.pathname + location.search;
+    const { authorizeUrl } = await client.authorizeCanva(returnTo);
+    window.location.href = authorizeUrl;
+  };
+
+  // The browser lands back here (`returnTo`) after a Canva OAuth round trip with `?canva=connected` or
+  // `?canva=error&reason=...`: show a message once, then strip those params from the URL.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const outcome = params.get("canva");
+    if (!outcome) return;
+    if (outcome === "connected") {
+      void qc.invalidateQueries({ queryKey: ["canva-connection"] });
+      void message.success(t("canva.connectedMessage"));
+    } else {
+      void message.error(t("canva.errorMessage"));
+    }
+    params.delete("canva");
+    params.delete("reason");
+    const search = params.toString();
+    navigate({ pathname: location.pathname, search: search ? `?${search}` : "" }, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search]);
+
   const userEmail = user?.email ?? "";
   const userInitials = userEmail.slice(0, 2).toUpperCase();
   const nickname = user?.name ?? userEmail;
   const handleLogout = () => void logout({ logoutParams: { returnTo: window.location.origin } });
-  const avatarMenu = useUserMenu({ nickname, email: userEmail, avatarUrl: user?.picture, initials: userInitials, onLogout: handleLogout });
+  const avatarMenu = useUserMenu({
+    nickname,
+    email: userEmail,
+    avatarUrl: user?.picture,
+    initials: userInitials,
+    onLogout: handleLogout,
+    canvaEnabled: canva?.enabled ?? false,
+    canvaConnected: canva?.connected ?? false,
+    canvaDisplayName: canva?.displayName ?? null,
+    onConnectCanva: () => void connectCanva(),
+    onDisconnectCanva: () => disconnectCanva.mutate(),
+  });
 
   const sideRoutes = [
     { path: "/productions", name: t("menu.productions"), icon: <Film size={16} /> },

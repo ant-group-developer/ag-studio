@@ -3,8 +3,9 @@
  * 1. EpisodesPanel URL state via nuqs
  * 2. Role-based buttons (canEdit)
  */
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { App as AntApp } from "antd";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { NuqsAdapter } from "nuqs/adapters/react-router";
@@ -27,6 +28,7 @@ const mockClient = {
   getEpisode: vi.fn(),
   patchEpisode: vi.fn(),
   rerenderEpisode: vi.fn(),
+  youtubePack: vi.fn(),
 };
 
 vi.mock("../../api/studio-client", async (orig) => ({
@@ -39,9 +41,11 @@ const { EpisodesPanel } = await import("./EpisodesPanel");
 function Wrapper({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <MemoryRouter>
-        <NuqsAdapter>{children}</NuqsAdapter>
-      </MemoryRouter>
+      <AntApp>
+        <MemoryRouter>
+          <NuqsAdapter>{children}</NuqsAdapter>
+        </MemoryRouter>
+      </AntApp>
     </QueryClientProvider>
   );
 }
@@ -108,5 +112,31 @@ describe("EpisodesPanel", () => {
     // At minimum, we verify more buttons are present (editor + rerender + export = 3 per row)
     const allButtons = screen.getAllByRole("button");
     expect(allButtons.length).toBeGreaterThan(4); // sort + refresh + at least 2*3 row buttons
+  });
+
+  it("'Xuất' > 'Video (mp4)' fetches the episode detail and downloads its finalVideoDownloadUrl", async () => {
+    mockClient.getEpisode.mockResolvedValue({ finalVideoDownloadUrl: "https://r2.test/ep-1.mp4" });
+    render(
+      <Wrapper>
+        <EpisodesPanel productionId="p-1" canEdit={true} />
+      </Wrapper>,
+    );
+    await screen.findByText("Tập 1");
+    fireEvent.click(screen.getAllByRole("button", { name: "Xuất" })[0]!);
+    fireEvent.click(await screen.findByText("Video (mp4)"));
+    await waitFor(() => expect(mockClient.getEpisode).toHaveBeenCalledWith("p-1", "ep-1"));
+  });
+
+  it("'Xuất' > 'Gói đăng YouTube (zip)' calls the youtube-pack route", async () => {
+    mockClient.youtubePack.mockResolvedValue({ url: "https://r2.test/ep-1-pack.zip", name: "pack.zip", sizeBytes: 10 });
+    render(
+      <Wrapper>
+        <EpisodesPanel productionId="p-1" canEdit={true} />
+      </Wrapper>,
+    );
+    await screen.findByText("Tập 1");
+    fireEvent.click(screen.getAllByRole("button", { name: "Xuất" })[0]!);
+    fireEvent.click(await screen.findByText("Gói đăng YouTube (zip)"));
+    await waitFor(() => expect(mockClient.youtubePack).toHaveBeenCalledWith("p-1", "ep-1"));
   });
 });
