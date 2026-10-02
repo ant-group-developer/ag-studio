@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { StudioBranding, ThumbnailStyle } from "@harness/contracts";
 import type { TimelineLayout } from "../../src/studio/layout.js";
 import {
-  frameCandidateTimes, suggestionFrame, thumbnailAss, thumbnailFontSize, thumbnailStyle, thumbnailTextLines,
+  frameCandidateTimes, suggestionFrame, thumbnailAss, thumbnailFontSize, thumbnailStyle, thumbnailTextLayout, thumbnailTextLines,
 } from "../../src/studio/thumbnails.js";
 
 function layout(clips: [string, number][], texts: [number, number][] = []): TimelineLayout {
@@ -85,5 +85,22 @@ describe("thumbnail words", () => {
     expect(ass).toContain("PHỞ \\{NGON\\}\\N6 GIỜ");
     const boxed = thumbnailAss({ width: 1280, height: 720, lines: ["A"], style: style({ box_color: "#E63946" }) });
     expect(boxed.split("\n").find((l) => l.startsWith("Style: Thumb"))!.split(",")[15]).toBe("3");
+  });
+
+  it("places the lines for the Canva PDF where libass puts them: margin, alignment, line height", () => {
+    const measure = (text: string, size: number) => text.length * size * 0.5;
+    const bottom = thumbnailTextLayout({ width: 1280, height: 720, lines: ["AB", "ABCD"], style: style(), measure });
+    // 720 * 0.15 = 108 px font, 36 px margin, two 124.2 px lines ending at the margin
+    expect(bottom.size).toBe(108);
+    expect(bottom.lines.map((l) => Math.round(l.x))).toEqual([586, 532]);
+    expect(Math.round(bottom.lines[1]!.baseline - bottom.lines[0]!.baseline)).toBe(124);
+    expect(Math.round(bottom.lines[0]!.baseline)).toBe(Math.round(720 - 36 - 2 * 124.2 + 108 * 0.905));
+    const left = thumbnailTextLayout({ width: 1280, height: 720, lines: ["AB"], style: style({ position: "left" }), measure });
+    expect(left.lines[0]!.x).toBe(36);
+    const right = thumbnailTextLayout({ width: 1280, height: 720, lines: ["AB"], style: style({ position: "right" }), measure });
+    expect(right.lines[0]!.x).toBe(1280 - 36 - 108);
+    const top = thumbnailTextLayout({ width: 720, height: 1280, lines: ["AB"], style: style({ position: "top", size: "s" }), measure });
+    expect(top.size).toBe(65);
+    expect(top.lines[0]!.baseline).toBeCloseTo(36 + 65 * 0.905);
   });
 });

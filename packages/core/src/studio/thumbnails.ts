@@ -112,6 +112,34 @@ export function thumbnailTextLines(text: string, opts: { width: number; height: 
   return [...lines.slice(0, 2), lines.slice(2).join(" ")];
 }
 
+/** A line of thumbnail words placed on the picture: `x` its left edge, `baseline` from the top, in pixels. */
+export interface PlacedThumbnailLine { text: string; x: number; baseline: number; width: number }
+
+/**
+ * Where each line goes, as libass places them in `thumbnailAss` (same font size, 5% margin, alignment per position;
+ * Arial's ascent 0.905 em and line height 1.15 em): for the Canva PDF, whose words must sit where the JPEG's do.
+ * `measure` gives a line's width in pixels at `size` (the embedded font's advance widths).
+ */
+export function thumbnailTextLayout(p: {
+  width: number; height: number; lines: string[]; style: ThumbnailStyle; measure: (text: string, size: number) => number;
+}): { size: number; lineHeight: number; lines: PlacedThumbnailLine[] } {
+  const size = thumbnailFontSize(p.width, p.height, p.style.size);
+  const margin = Math.round(Math.min(p.width, p.height) * 0.05);
+  const lineHeight = size * 1.15;
+  const block = p.lines.length * lineHeight;
+  const top = p.style.position === "bottom" ? p.height - margin - block
+    : p.style.position === "top" ? margin
+      : (p.height - block) / 2;
+  const lines = p.lines.map((text, i) => {
+    const width = p.measure(text, size);
+    const x = p.style.position === "left" ? margin
+      : p.style.position === "right" ? p.width - margin - width
+        : (p.width - width) / 2;
+    return { text, x, baseline: top + i * lineHeight + size * 0.905, width };
+  });
+  return { size, lineHeight, lines };
+}
+
 /** libass alignment (numpad) of each position. */
 const ALIGNMENT: Record<ThumbnailTextPosition, number> = { bottom: 2, top: 8, center: 5, left: 4, right: 6 };
 
