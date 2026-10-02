@@ -26,7 +26,7 @@ export function StringListField({
   readOnly,
   addLabel,
   placeholder,
-  rows = 2,
+  rows = 8,
 }: StringListFieldProps) {
   const { t } = useTranslation();
 
@@ -37,10 +37,12 @@ export function StringListField({
           {label && <div style={{ marginBottom: 4, fontSize: 14 }}>{label}</div>}
           <Space direction="vertical" style={{ width: "100%" }} size={4}>
             {fields.map((field) => (
-              <Space key={field.key} align="start" style={{ width: "100%", display: "flex" }}>
+              // A plain flex row, not <Space>: Space wraps each child in its own item div, so the
+              // textarea's flex: 1 never applies and it shrinks to its minimum width.
+              <div key={field.key} style={{ display: "flex", alignItems: "flex-start", gap: 8, width: "100%" }}>
                 <Form.Item
                   {...field}
-                  style={{ flex: 1, marginBottom: 0 }}
+                  style={{ flex: 1, minWidth: 0, marginBottom: 0 }}
                   rules={
                     maxChars
                       ? [{ max: maxChars, message: `Tối đa ${maxChars} ký tự` }]
@@ -57,15 +59,15 @@ export function StringListField({
                 {!readOnly && (
                   <Tooltip title={t("common.delete")}>
                     <Button
-                      size="small"
                       danger
-                      icon={<Trash2 size={12} />}
+                      type="text"
+                      icon={<Trash2 size={14} />}
                       onClick={() => remove(field.name)}
                       aria-label={t("common.delete")}
                     />
                   </Tooltip>
                 )}
-              </Space>
+              </div>
             ))}
             {!readOnly && fields.length < maxItems && (
               <Button
