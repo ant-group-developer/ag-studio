@@ -63,6 +63,8 @@ export function productionOwner(db: StudioDb, p: ProductionRecord): string | nul
 
 export interface EpisodeRecord {
   id: string; production_id: string; idx: number; title: string; hook: string; run_id: string | null; plan: string | null;
+  /** The plan run that created the episode (null for episodes made before migration 0015). */
+  plan_run_id: string | null;
   youtube: string | null; selected_title: number | null; selected_thumbnail: number | null;
   created_at: string; updated_at: string;
 }
@@ -78,18 +80,18 @@ export function listEpisodes(db: StudioDb, productionId: string): EpisodeRecord[
 }
 
 /**
- * Replace all episodes of a production with a fresh set (called by studio-spawn-episodes).
- * The deletion is safe because no episode is in a non-terminal state when we get here.
+ * Replace all episodes of a production with a fresh set made by plan run `planRunId` (studio-spawn-episodes; the
+ * stage first checks that none of the old ones is still producing).
  */
-export function replaceEpisodes(db: StudioDb, productionId: string, rows: { id: string; idx: number; title: string; hook: string; plan: string }[]): void {
+export function replaceEpisodes(db: StudioDb, productionId: string, rows: { id: string; idx: number; title: string; hook: string; plan: string }[], planRunId: string): void {
   db.immediate(() => {
     db.run("DELETE FROM episode_revisions WHERE episode_id IN (SELECT id FROM episodes WHERE production_id = ?)", [productionId]);
     db.run("DELETE FROM episode_jobs WHERE episode_id IN (SELECT id FROM episodes WHERE production_id = ?)", [productionId]);
     db.run("DELETE FROM episodes WHERE production_id = ?", [productionId]);
     const now = new Date().toISOString();
     for (const r of rows) {
-      db.run("INSERT INTO episodes (id, production_id, idx, title, hook, plan, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [r.id, productionId, r.idx, r.title, r.hook, r.plan, now, now]);
+      db.run("INSERT INTO episodes (id, production_id, idx, title, hook, plan, plan_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [r.id, productionId, r.idx, r.title, r.hook, r.plan, planRunId, now, now]);
     }
   });
 }

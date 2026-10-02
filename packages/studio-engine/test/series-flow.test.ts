@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createStudioWorker, episodeExport, episodeRunView, episodeState, latestEpisodeRevision, listEpisodes,
-  planRunView, readStageDocument, rerenderEpisode, saveEpisodeRevision, startEpisodeRun, startPlanRun, STUDIO_WORKFLOWS,
+  planRunView, readStageDocument, rerenderEpisode, resumePlanRunFrom, saveEpisodeRevision, startEpisodeRun, startPlanRun, STUDIO_WORKFLOWS,
   StudioRunError, studioResearchCache, submitStudioGate, type ResearchSource,
 } from "../src/index.js";
 import { StudioResearchSchema, StudioYoutubeSchema, TrendReportSchema, SeriesPlanSchema, type StudioResearch, type TimelineV3 } from "@harness/contracts";
@@ -153,6 +153,37 @@ describe(`${STUDIO_WORKFLOWS.plan.workflow} + ${STUDIO_WORKFLOWS.episode.workflo
     const rerender = (() => { try { rerenderEpisode(s.core, s.db, "ep-x"); } catch (e) { return e; } return null; })();
     expect((rerender as StudioRunError).details.code).toBe("episode_running");
   });
+
+  it("a re-plan replaces the previous plan's episodes with the new plan's", async () => {
+    s = setup();
+    const prodId = seedProduction(s.db, { episode_target_seconds: 120, max_episodes: 2 });
+    const first = await produceSeries(s, prodId);
+    const before = listEpisodes(s.db, prodId);
+    expect(before.map((e) => e.plan_run_id)).toEqual([first.runId, first.runId]);
+
+    const { runId } = resumePlanRunFrom(s.core, s.db, prodId, "plan-episodes");
+    await drain(s.worker);
+    const plan = SeriesPlanSchema.parse(readStageDocument(s.core, runId, "plan-episodes", "series-plan.json"));
+    await submitStudioGate(s.core, s.db, runId, "approve-plan", { ...plan, episodes: plan.episodes.slice(0, 1) });
+    await drain(s.worker);
+
+    const after = listEpisodes(s.db, prodId);
+    expect(after).toHaveLength(1);
+    expect(after[0]!.plan_run_id).toBe(runId);
+    expect(before.map((e) => e.id)).not.toContain(after[0]!.id);
+    expect(episodeState(s.core, s.db, after[0]!).status).toBe("ready");
+  }, 60_000);
+
+  it("refuses to resume the plan while an episode is producing", async () => {
+    s = setup();
+    const prodId = seedProduction(s.db, { episode_target_seconds: 120, max_episodes: 2 });
+    await produceSeries(s, prodId);
+    const ep = listEpisodes(s.db, prodId)[0]!;
+    rerenderEpisode(s.core, s.db, ep.id);
+    const resumed = (() => { try { resumePlanRunFrom(s.core, s.db, prodId, "plan-episodes"); } catch (e) { return e; } return null; })();
+    expect(resumed).toBeInstanceOf(StudioRunError);
+    expect((resumed as StudioRunError).details.code).toBe("episode_producing");
+  }, 60_000);
 
   it("researches the channels and keywords, and the trend report is then written by Claude", async () => {
     const asked: string[][] = [];

@@ -40,6 +40,8 @@ export interface StudioStageDeps {
   startEpisodeRun(episodeId: string): Promise<{ runId: string }>;
   /** YouTube research (GĐ5); absent when no YouTube API key is configured. */
   research?: ResearchSource;
+  /** Whether a run can still do work (wired by the worker); spawn-episodes will not delete an episode that renders. */
+  isRunActive?: (runId: string) => boolean;
 }
 
 export const DEFAULT_CANVAS = { "16:9": { width: 1920, height: 1080 }, "9:16": { width: 1080, height: 1920 } } as const;
@@ -164,18 +166,27 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       }
       // Build asset lookup from catalog
       const assetMap = new Map(catalog.assets.map((a) => [a.asset_id, a]));
-      // Create episode rows (idempotent: if they already exist with runs, skip re-inserting)
+      // The episodes of this very plan run (a retry of this stage): keep them, start the runs still missing.
+      // Any other episodes belong to an earlier plan: this plan replaces them, unless one is still producing.
       const existing = listEpisodes(d.db, brief.production_id);
       const { randomUUID } = await import("node:crypto");
       const episodeRows: { id: string; idx: number; title: string; hook: string; plan: string }[] = [];
       const spawnedEpisodes: { episode_id: string; idx: number; run_id: string }[] = [];
 
-      if (existing.length > 0 && existing.every((e) => e.run_id)) {
-        // Idempotent retry: episodes already exist with runs
+      if (existing.length > 0 && existing.every((e) => e.plan_run_id === request.run_id)) {
         for (const e of existing) {
-          spawnedEpisodes.push({ episode_id: e.id, idx: e.idx, run_id: e.run_id! });
+          let runId = e.run_id;
+          if (!runId) {
+            runId = (await d.startEpisodeRun(e.id)).runId;
+            updateEpisodeRunId(d.db, e.id, runId);
+          }
+          spawnedEpisodes.push({ episode_id: e.id, idx: e.idx, run_id: runId });
         }
       } else {
+        const busy = existing.find((e) => e.run_id && d.isRunActive?.(e.run_id));
+        if (busy) {
+          throw new HarnessError("CONFIG_INVALID", `tập ${busy.idx} của kế hoạch cũ đang sản xuất; chờ xong hoặc huỷ rồi thử lại bước này`, { episode_id: busy.id });
+        }
         for (const ep of plan.episodes) {
           // Build the StudioEpisode plan snapshot (assets from catalog)
           const episodeAssets: Record<string, { title: string; summary_vi: string; duration_s: number; orientation: string | null }> = {};
@@ -195,7 +206,7 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
             })),
           });
         }
-        replaceEpisodes(d.db, brief.production_id, episodeRows);
+        replaceEpisodes(d.db, brief.production_id, episodeRows, request.run_id);
         // Start an episode run for each episode
         for (const row of episodeRows) {
           const { runId } = await d.startEpisodeRun(row.id);

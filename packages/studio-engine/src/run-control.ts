@@ -152,9 +152,7 @@ export function startPlanRun(core: StudioEngineCore, db: StudioDb, productionId:
   if (!(p.brief?.trim())) throw new StudioRunError("invalid", "nhập mô tả (description) trước khi chạy");
   if (!p.episode_target_seconds) throw new StudioRunError("invalid", "đặt episode_target_seconds trước khi chạy");
   if (!p.max_episodes) throw new StudioRunError("invalid", "đặt max_episodes trước khi chạy");
-  // No episode may be producing right now (would be replaced by spawn-episodes)
-  const producing = listEpisodes(db, productionId).find((e) => episodeState(core, db, e).status === "producing");
-  if (producing) throw new StudioRunError("conflict", "một tập đang sản xuất; không thể lên kế hoạch lại", { code: "episode_producing", episode_id: producing.id });
+  assertNoEpisodeProducing(core, db, productionId);
   const flow = STUDIO_WORKFLOWS.plan;
   const run = core.planner.plan({
     workflow: core.workflows(flow.workflow), profile: core.profiles(flow.profile),
@@ -164,6 +162,12 @@ export function startPlanRun(core: StudioEngineCore, db: StudioDb, productionId:
     [run.run_id, new Date().toISOString(), productionId]);
   core.planner.enqueue(run.run_id);
   return { runId: run.run_id };
+}
+
+/** A new plan replaces the production's episodes: refused while one of them is still producing. */
+function assertNoEpisodeProducing(core: StudioEngineCore, db: StudioDb, productionId: string): void {
+  const producing = listEpisodes(db, productionId).find((e) => episodeState(core, db, e).status === "producing");
+  if (producing) throw new StudioRunError("conflict", "một tập đang sản xuất; không thể lên kế hoạch lại", { code: "episode_producing", episode_id: producing.id });
 }
 
 export function planRunView(core: StudioEngineCore, db: StudioDb, productionId: string): RunView {
@@ -345,6 +349,7 @@ function resumeRunFrom(
 export function resumePlanRunFrom(core: StudioEngineCore, db: StudioDb, productionId: string, fromStage: string): { runId: string; reused: string[] } {
   const p = getProduction(db, productionId);
   if (!p?.run_id) throw new StudioRunError("not_found", `production ${productionId} has no plan run`);
+  assertNoEpisodeProducing(core, db, productionId);
   return resumeRunFrom(core, p.run_id, (newRunId) => {
     db.run("UPDATE productions SET run_id = ?, status = 'in_progress', updated_at = ? WHERE id = ?",
       [newRunId, new Date().toISOString(), productionId]);

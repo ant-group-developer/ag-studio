@@ -12,7 +12,7 @@ import { farmStorage, type StudioBucket } from "./bucket.js";
 import { recordLlmCall } from "./llm-log.js";
 import { cancelLegacyRuns, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, STUDIO_RESOURCES, STUDIO_WORKFLOWS, type StudioEngineCore } from "./core.js";
 import { studioPayloadBuilders } from "./payloads.js";
-import { startEpisodeRun } from "./run-control.js";
+import { isRunActive, startEpisodeRun } from "./run-control.js";
 import { studioStages, type FootageCatalogSource } from "./stages.js";
 import { teamGuidesForRun } from "./team-skills.js";
 import type { StudioDb } from "./studio-db.js";
@@ -74,6 +74,7 @@ export function createStudioWorker(o: StudioWorkerOptions): Worker {
   executors.register("script", new InProcessExecutor(studioStages({
     db: o.db, bucket: o.bucket, footage: o.footage,
     startEpisodeRun: (episodeId) => Promise.resolve(startEpisodeRun(core, o.db, episodeId)),
+    isRunActive: (runId) => isRunActive(core, runId),
     ...(o.research ? { research: o.research } : {}),
   })));
   executors.register("agent", new StudioAgentExecutor({
