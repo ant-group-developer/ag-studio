@@ -27,13 +27,13 @@ import {
   deleteThumbnail,
   episodeExport,
   episodeKit,
+  canvaDesignThumbnailIds,
   episodeThumbnails,
-  fileSlug,
   getEpisode,
   latestAcceptedCall,
-  madeByPerson,
   previewThumbnail,
   recordHumanEdit,
+  requireThumbnail,
   selectThumbnail,
   selectedThumbnail,
   uploadThumbnail,
@@ -45,11 +45,13 @@ import {
 } from '@ag-studio/engine';
 import { IsNumber, IsObject, IsString, MaxLength, Min } from 'class-validator';
 import { Roles } from '../auth/roles.decorator';
+import { CanvaService } from '../canva/canva.service';
 import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from './engine.service';
 import { FootageAccessService } from './footage-access.service';
 import { mapErrors } from './http-errors';
 import { ThumbnailWorkService } from './thumbnail-work.service';
+import { thumbnailView, type ThumbnailView } from './thumbnail-view';
 
 class WordsDto {
   @IsString()
@@ -81,12 +83,6 @@ const UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 const UPLOAD_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 interface UploadedPicture { buffer: Buffer; mimetype: string; size: number }
 
-export interface ThumbnailView {
-  id: string; kind: EpisodeThumbnail['kind']; tS: number | null; assetId: string | null; parentId: string | null;
-  text: string | null; style: ThumbnailStyle | null; width: number; height: number; sizeBytes: number;
-  createdBy: string; createdAt: string; url: string; downloadUrl: string; deletable: boolean; drawable: boolean;
-}
-
 /**
  * The thumbnails of an episode (docs/studio-api-v3.md "Thumbnails"): every picture to pick from, the pick, and
  * what a person makes — words drawn on a picture (seen first), a captured moment, an upload. Pictures carry
@@ -102,6 +98,7 @@ export class ThumbnailsController {
     private readonly engine: EngineService,
     private readonly access: FootageAccessService,
     private readonly work: ThumbnailWorkService,
+    private readonly canva: CanvaService,
   ) {}
 
   private get deps(): ThumbnailActionDeps {
@@ -126,28 +123,18 @@ export class ThumbnailsController {
     return r;
   }
 
-  private async view(ep: EpisodeRecord, t: EpisodeThumbnail): Promise<ThumbnailView> {
-    const ttl = this.engine.browserUrlTtl;
-    const name = `${fileSlug(ep.title)}-${t.kind}-${t.id.slice(0, 8)}.jpg`;
-    return {
-      id: t.id, kind: t.kind, tS: t.t_s, assetId: t.asset_id, parentId: t.parent_id, text: t.text, style: t.style,
-      width: t.width, height: t.height, sizeBytes: t.size_bytes, createdBy: t.created_by, createdAt: t.created_at,
-      url: await this.engine.bucket.signedGetUrl(t.image_key, ttl),
-      downloadUrl: await this.engine.bucket.signedGetUrl(t.image_key, ttl, { downloadName: name }),
-      deletable: madeByPerson(t),
-      // words go on a clean picture (a frame, an upload, the frame under a suggestion or drawn picture); a Canva
-      // design has its own words, and a picture from before 1.2.0 has them burnt in with no clean frame kept
-      drawable: t.kind !== 'canva' && t.base_key !== null,
-    };
+  private view(ep: EpisodeRecord, t: EpisodeThumbnail): Promise<ThumbnailView> {
+    return thumbnailView(this.engine, ep, t);
   }
 
-  private async list(ep: EpisodeRecord) {
+  private async list(ep: EpisodeRecord, userId: string) {
     const rows = episodeThumbnails(this.deps, ep);
+    const inCanva = canvaDesignThumbnailIds(this.engine.db, ep.id, userId);
     const picked = selectedThumbnail(this.engine.db, getEpisode(this.engine.db, ep.id) ?? ep);
     const cut = this.work.cutState(ep.id);
     const exp = episodeExport(this.engine.core, ep);
     return {
-      items: await Promise.all(rows.map((t) => this.view(ep, t))),
+      items: await Promise.all(rows.map((t) => thumbnailView(this.engine, ep, t, inCanva.has(t.id)))),
       selectedId: picked?.id ?? null,
       canDraw: this.engine.thumbnails !== null,
       // an episode rendered before 1.2.0 has no clean frame yet: they can be cut from its video
@@ -180,7 +167,7 @@ export class ThumbnailsController {
       if (!(await this.access.coversProduction(req.authContext!.userId, prodId))) {
         return { items: [], selectedId: null, canDraw: false, canCutFrames: false, framesPending: false, framesError: null, footageHidden: true };
       }
-      return { ...(await this.list(ep)), footageHidden: false };
+      return { ...(await this.list(ep, req.authContext!.userId)), footageHidden: false };
     });
   }
 
@@ -195,7 +182,7 @@ export class ThumbnailsController {
       selectThumbnail(this.engine.db, ep.id, dto.thumbnailId);
       const picked = selectedThumbnail(this.engine.db, getEpisode(this.engine.db, ep.id)!)!;
       this.recordPick(ep, picked, req.authContext!.userId);
-      return { ...(await this.list(ep)), footageHidden: false };
+      return { ...(await this.list(ep, req.authContext!.userId)), footageHidden: false };
     });
   }
 
@@ -275,6 +262,35 @@ export class ThumbnailsController {
     });
   }
 
+  /**
+   * The picture as a design in the caller's Canva (words still editable when it has them): `{designId, editUrl}`.
+   * 409 `canva_not_connected` / `canva_reconnect` when the caller has to (re)connect Canva first.
+   */
+  @Post(':thumbnailId/canva')
+  @Roles('editor')
+  @HttpCode(HttpStatus.OK)
+  openInCanva(@Param('id') prodId: string, @Param('episodeId') episodeId: string, @Param('thumbnailId') thumbnailId: string, @Req() req: Request) {
+    return mapErrors(async () => {
+      const ep = this.requireEpisode(prodId, episodeId);
+      await this.requireCovers(req, prodId);
+      return this.canva.openThumbnail(req.authContext!.userId, ep, requireThumbnail(this.engine.db, ep.id, thumbnailId));
+    });
+  }
+
+  /** The design as edited in Canva, back as a new `canva` picture of the episode. */
+  @Post(':thumbnailId/canva/pull')
+  @Roles('editor')
+  pullFromCanva(@Param('id') prodId: string, @Param('episodeId') episodeId: string, @Param('thumbnailId') thumbnailId: string, @Req() req: Request) {
+    return mapErrors(async () => {
+      const ep = this.requireEpisode(prodId, episodeId);
+      await this.requireCovers(req, prodId);
+      const renderer = this.renderer();
+      const source = requireThumbnail(this.engine.db, ep.id, thumbnailId);
+      const t = await this.work.run(() => this.canva.pullThumbnail(req.authContext!.userId, ep, source, renderer));
+      return this.view(ep, t);
+    });
+  }
+
   /** Delete a picture a person made (a render's frames and suggestions stay). */
   @Delete(':thumbnailId')
   @Roles('editor')
@@ -283,7 +299,7 @@ export class ThumbnailsController {
       const ep = this.requireEpisode(prodId, episodeId);
       await this.requireCovers(req, prodId);
       deleteThumbnail(this.engine.db, ep.id, thumbnailId);
-      return { ...(await this.list(ep)), footageHidden: false };
+      return { ...(await this.list(ep, req.authContext!.userId)), footageHidden: false };
     });
   }
 }

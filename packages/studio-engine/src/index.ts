@@ -7,7 +7,7 @@ export * from "./run-control.js";
 export * from "./editor.js";
 export * from "./worker.js";
 export { FarmOwnerClient } from "@ag-farm/owner-client";
-export { timelineIssues, layoutTimeline, validateYoutubeKit, type TimelineIssue } from "@harness/core";
+export { timelineIssues, layoutTimeline, thumbnailTextLines, validateYoutubeKit, type TimelineIssue } from "@harness/core";
 export { readStoredYoutubeKit, YoutubeKitSchema, type YoutubeKit, type StudioEpisode, type ThumbnailStyle } from "@harness/contracts";
 export { TEAM_SKILL_LIMITS, TEAM_SKILL_STEPS, type TeamGuide, type TeamSkillStep } from "@harness/contracts";
 export * from "./youtube-research.js";

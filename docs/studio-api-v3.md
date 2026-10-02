@@ -172,6 +172,7 @@ interface ThumbnailView {
   createdAt: string; url: string; downloadUrl: string;
   deletable: boolean;                // a person made it
   drawable: boolean;                 // words can go on its clean picture
+  inCanva: boolean;                  // the caller opened a Canva design for it
 }
 interface ThumbnailStyle { position: 'bottom' | 'top' | 'center' | 'left' | 'right'; size: 's' | 'm' | 'l';
   text_color: string; outline_color: string; box_color: string | null; uppercase: boolean }   // colours #RRGGBB
@@ -189,6 +190,20 @@ interface ThumbnailList { items: ThumbnailView[]; selectedId: string | null; can
 - `POST frames` (editor) -> 202 `{started, pending}`: cuts the clean frames of an episode rendered before 1.2.0 in the
   background (`framesPending` until they land)
 - `DELETE :thumbnailId` (editor) -> ThumbnailList; only pictures a person made (422 `not_user_made`)
+- `POST :thumbnailId/canva` (editor) -> `{designId, editUrl}`: the picture as a design in the caller's Canva (with
+  words: a PDF import whose words stay editable; else, or when the import fails, the flat picture on a design of its
+  size); the same user gets the same design next time. 409 `canva_not_connected` / `canva_reconnect`, 503
+  `canva_disabled`, 429 `canva_busy`, 502 `canva_failed`
+- `POST :thumbnailId/canva/pull` (editor) -> ThumbnailView: the design as edited, exported and added as a new `canva`
+  picture (`parentId` = that thumbnail); 404 `no_canva_design` when the caller never opened it
+
+## Canva (`/canva`) — the caller's own Canva account (docs/runbooks/canva.md)
+
+- `GET connection` -> `{enabled, connected, displayName}` (`enabled` false without the CANVA_* settings: hide Canva)
+- `POST authorize` `{returnTo?: string}` (a path of the web app) -> `{authorizeUrl}`; the browser goes there, Canva
+  sends it to `GET oauth/callback` (public), which redirects to `STUDIO_WEB_URL + returnTo` with `canva=connected` or
+  `canva=error&reason=<code>`
+- `DELETE connection` -> `{ok: true}` (the token is revoked at Canva, best effort)
 
 ## Editor (`/productions/:id/episodes/:episodeId`)
 

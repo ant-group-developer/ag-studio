@@ -122,3 +122,27 @@ export function backfillExportThumbnails(db: StudioDb, ep: EpisodeRecord, exp: S
   const pick = rows[ep.selected_thumbnail ?? 0] ?? rows[0];
   if (pick && !ep.selected_thumbnail_id) selectThumbnail(db, ep.id, pick.id);
 }
+
+/** The Canva design a user opened for a thumbnail (migration 0018). */
+export interface ThumbnailCanvaDesign { thumbnail_id: string; user_id: string; design_id: string; imported: number; created_at: string; updated_at: string }
+
+export function getCanvaDesign(db: StudioDb, thumbnailId: string, userId: string): ThumbnailCanvaDesign | null {
+  return db.get<ThumbnailCanvaDesign>("SELECT * FROM thumbnail_canva_designs WHERE thumbnail_id = ? AND user_id = ?", [thumbnailId, userId]) ?? null;
+}
+
+export function saveCanvaDesign(db: StudioDb, d: { thumbnail_id: string; user_id: string; design_id: string; imported: boolean }): void {
+  const now = new Date().toISOString();
+  db.run(
+    `INSERT INTO thumbnail_canva_designs (thumbnail_id, user_id, design_id, imported, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (thumbnail_id, user_id) DO UPDATE SET design_id = excluded.design_id, imported = excluded.imported, updated_at = excluded.updated_at`,
+    [d.thumbnail_id, d.user_id, d.design_id, d.imported ? 1 : 0, now, now],
+  );
+}
+
+/** Thumbnails of the episode the user has a Canva design for. */
+export function canvaDesignThumbnailIds(db: StudioDb, episodeId: string, userId: string): Set<string> {
+  return new Set(db.all<{ thumbnail_id: string }>(
+    `SELECT d.thumbnail_id FROM thumbnail_canva_designs d JOIN episode_thumbnails t ON t.id = d.thumbnail_id
+     WHERE t.episode_id = ? AND d.user_id = ?`, [episodeId, userId],
+  ).map((r) => r.thumbnail_id));
+}

@@ -16,6 +16,8 @@ import type { EngineService } from './engine.service';
 import type { FootageAccessService } from './footage-access.service';
 import { ThumbnailsController } from './thumbnails.controller';
 import { ThumbnailWorkService } from './thumbnail-work.service';
+import { CanvaService } from '../canva/canva.service';
+import type { ConfigService } from '@nestjs/config';
 
 const PROD = '55555555-5555-4555-8555-555555555555';
 const EP = 'ep-1';
@@ -42,7 +44,8 @@ describe('ThumbnailsController (real studio.db)', () => {
   function controller(renderer: ThumbnailRenderer | null) {
     const engine = Object.assign(s.engine, { bucket, thumbnails: renderer, browserUrlTtl: 60 });
     const access = { coversProduction: async () => covered } as unknown as FootageAccessService;
-    return new ThumbnailsController(engine as unknown as EngineService, access, new ThumbnailWorkService());
+    const canva = new CanvaService({ get: () => undefined } as unknown as ConfigService, engine as unknown as EngineService);
+    return new ThumbnailsController(engine as unknown as EngineService, access, new ThumbnailWorkService(), canva);
   }
 
   beforeEach(async () => {
