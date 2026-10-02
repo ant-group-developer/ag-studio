@@ -3,9 +3,9 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Button,
+  Drawer,
   Empty,
   Form,
-  Modal,
   Popconfirm,
   Select,
   Space,
@@ -91,7 +91,7 @@ export function ProductionsPage() {
     if (teamId) rememberTeam(teamId);
   }, [teamId]);
 
-  // Create modal
+  // Create drawer
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm<ProductionFormValues>();
 
@@ -112,7 +112,7 @@ export function ProductionsPage() {
   const productions = productionsPage?.items ?? [];
   const total = productionsPage?.total ?? 0;
 
-  // When the modal opens, seed teamId
+  // When the drawer opens, seed teamId
   useEffect(() => {
     if (open && teamId) form.setFieldValue("teamId", teamId);
   }, [open, teamId, form]);
@@ -311,14 +311,17 @@ export function ProductionsPage() {
         }}
       />
 
-      <Modal
+      <Drawer
         title={t("productions.createTitle")}
         open={open}
-        onOk={() => createMutation.mutate()}
-        onCancel={() => { setOpen(false); form.resetFields(); }}
-        confirmLoading={createMutation.isPending}
-        width={680}
-        destroyOnClose
+        onClose={() => { setOpen(false); form.resetFields(); }}
+        width="min(760px, 100vw)"
+        destroyOnHidden
+        extra={
+          <Button type="primary" icon={<Plus size={16} />} loading={createMutation.isPending} onClick={() => createMutation.mutate()}>
+            {t("common.create")}
+          </Button>
+        }
       >
         <ProductionForm
           form={form}
@@ -327,7 +330,7 @@ export function ProductionsPage() {
           loadingTeams={loadingTeams}
           onTeamChange={(id) => setPickedTeamId(id)}
         />
-      </Modal>
+      </Drawer>
     </div>
   );
 }
