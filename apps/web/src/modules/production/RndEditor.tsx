@@ -5,7 +5,7 @@
  *  - Gate mode (onSubmit = submitApproveRnd): primaryLabel = "Duyệt R&D"
  *  - Edit mode (onSubmit = putProductionRnd): primaryLabel = "Lưu R&D"
  */
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import {
   Alert,
   Button,
@@ -14,6 +14,7 @@ import {
   Form,
   Input,
   InputNumber,
+  Select,
   Space,
   Spin,
   Typography,
@@ -52,33 +53,38 @@ export function RndEditor({
   // (parent re-mounts with key={runId} so we don't need an effect here)
   const initialValues = value;
 
+  // Problems found before sending (the server's come in through `problems`)
+  const [localProblems, setLocalProblems] = useState<string[]>([]);
+  const shownProblems = [...localProblems, ...problems];
+
   const handleSubmit = useCallback(async () => {
+    setLocalProblems([]);
     try {
-      const values = await form.validateFields();
-      // Validate with Zod schema
-      const result = StudioRndSchema.safeParse(values);
-      if (!result.success) {
-        // Schema errors go through the same problems list mechanism
-        const schemaErrors = result.error.errors.map((e) => `${e.path.join(".")}: ${e.message}`);
-        // Throw a synthetic error object that gateProblems can extract
-        throw Object.assign(new Error(t("rndEditor.schemaErrors")), {
-          body: { problems: schemaErrors.map((m) => ({ code: "schema", message: m })) },
-        });
-      }
-      await onSubmit(result.data);
+      await form.validateFields();
     } catch (e) {
-      // Re-throw so parent's useMutation onError fires
-      throw e;
+      // antd shows the message under the field; bring it into view
+      const first = (e as { errorFields?: { name: (string | number)[] }[] }).errorFields?.[0];
+      if (first) form.scrollToField(first.name, { block: "center" });
+      return;
     }
-  }, [form, onSubmit, t]);
+    // The whole store, not validateFields' result: that holds only mounted fields, so it misses schema_version
+    // and every field of a folded panel, and the strict schema then rejects the document.
+    const result = StudioRndSchema.safeParse(form.getFieldsValue(true));
+    if (!result.success) {
+      setLocalProblems(result.error.errors.map((e) => `${e.path.join(".")}: ${e.message}`));
+      return;
+    }
+    // A failed request is shown by the parent's onError
+    await onSubmit(result.data).catch(() => undefined);
+  }, [form, onSubmit]);
 
   return (
     <Form form={form} layout="vertical" initialValues={initialValues} disabled={readOnly}>
-      {problems.length > 0 && (
+      {shownProblems.length > 0 && (
         <Alert
           type="error"
           message={t("rndEditor.problemsTitle")}
-          description={<ul style={{ margin: 0, paddingLeft: 20 }}>{problems.map((p, i) => <li key={i}>{p}</li>)}</ul>}
+          description={<ul style={{ margin: 0, paddingLeft: 20 }}>{shownProblems.map((p, i) => <li key={i}>{p}</li>)}</ul>}
           showIcon
           style={{ marginBottom: 12 }}
         />
@@ -286,11 +292,14 @@ export function RndEditor({
               <Form.Item name={["direction", "posting_schedule"]} label={t("rndEditor.postingSchedule")}>
                 <Input maxLength={500} />
               </Form.Item>
+              {/* keywords is a string[]: a TextArea would turn it into one string the schema rejects */}
               <Form.Item name={["direction", "keywords"]} label={t("rndEditor.keywords")}>
-                <Input.TextArea
-                  autoSize={{ minRows: 1, maxRows: 3 }}
+                <Select
+                  mode="tags"
+                  tokenSeparators={[","]}
                   placeholder="keyword1, keyword2"
-                  readOnly={readOnly}
+                  maxCount={20}
+                  disabled={readOnly}
                 />
               </Form.Item>
 
