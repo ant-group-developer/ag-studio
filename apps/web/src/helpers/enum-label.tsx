@@ -10,7 +10,8 @@ export type EnumGroup =
   | "aspect"
   | "exportKind"
   | "llmOutcome"
-  | "humanEdit";
+  | "humanEdit"
+  | "teamSkillStep";
 
 export const PRODUCTION_STATUS_COLORS: Record<string, string> = {
   draft: "default",

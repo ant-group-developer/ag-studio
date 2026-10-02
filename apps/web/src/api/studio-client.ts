@@ -51,6 +51,45 @@ export interface TeamMember extends UserSummary {
   joinedAt: string;
 }
 
+/** One team as its page shows it: the caller's role (null for an admin who is not a member) and counts. */
+export interface TeamDetail {
+  id: string;
+  name: string;
+  role: TeamRole | null;
+  memberCount: number;
+  productionCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The AI steps a team skill can apply to (an empty list = every step). */
+export type TeamSkillStep = "trend-report" | "rnd" | "branding" | "plan-episodes" | "youtube-kit";
+
+/** "Quy chuẩn & skill" of a team: markdown its Claude calls follow. */
+export interface TeamSkill {
+  id: string;
+  teamId: string;
+  name: string;
+  purpose: string;
+  appliesTo: TeamSkillStep[];
+  content: string;
+  enabled: boolean;
+  position: number;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TeamSkillInput {
+  name: string;
+  purpose?: string;
+  appliesTo?: TeamSkillStep[];
+  content: string;
+  enabled?: boolean;
+  position?: number;
+}
+
 export interface Production {
   id: string;
   teamId: string;
@@ -302,6 +341,24 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     },
     deleteTeam(teamId: string): Promise<void> {
       return request<void>(getAccessToken, "DELETE", `/api/teams/${teamId}`);
+    },
+
+    getTeam(teamId: string): Promise<TeamDetail> {
+      return request<TeamDetail>(getAccessToken, "GET", `/api/teams/${teamId}`);
+    },
+
+    // ---- Team skills ----
+    listTeamSkills(teamId: string): Promise<TeamSkill[]> {
+      return request<TeamSkill[]>(getAccessToken, "GET", `/api/teams/${teamId}/skills`);
+    },
+    createTeamSkill(teamId: string, input: TeamSkillInput): Promise<TeamSkill> {
+      return request<TeamSkill>(getAccessToken, "POST", `/api/teams/${teamId}/skills`, input);
+    },
+    updateTeamSkill(teamId: string, skillId: string, patch: Partial<TeamSkillInput>): Promise<TeamSkill> {
+      return request<TeamSkill>(getAccessToken, "PATCH", `/api/teams/${teamId}/skills/${skillId}`, patch);
+    },
+    deleteTeamSkill(teamId: string, skillId: string): Promise<void> {
+      return request<void>(getAccessToken, "DELETE", `/api/teams/${teamId}/skills/${skillId}`);
     },
 
     // ---- Team members ----

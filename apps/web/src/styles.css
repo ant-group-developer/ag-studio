@@ -11,3 +11,32 @@ body {
 .user-dropdown:hover {
   background-color: rgba(230, 227, 227, 0.466);
 }
+
+/* Markdown a team wrote (team skills preview): compact, inside cards and drawers. */
+.markdown-preview {
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.markdown-preview h1,
+.markdown-preview h2,
+.markdown-preview h3 {
+  margin: 16px 0 8px;
+  line-height: 1.3;
+}
+.markdown-preview h1 { font-size: 20px; }
+.markdown-preview h2 { font-size: 17px; }
+.markdown-preview h3 { font-size: 15px; }
+.markdown-preview > :first-child { margin-top: 0; }
+.markdown-preview ul,
+.markdown-preview ol { padding-left: 22px; margin: 4px 0 8px; }
+.markdown-preview p { margin: 4px 0 8px; }
+.markdown-preview code {
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.markdown-preview pre { background: rgba(0, 0, 0, 0.04); padding: 8px 12px; border-radius: 6px; overflow-x: auto; }
+.markdown-preview table { border-collapse: collapse; }
+.markdown-preview th,
+.markdown-preview td { border: 1px solid rgba(0, 0, 0, 0.12); padding: 4px 8px; }
