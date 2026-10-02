@@ -17,6 +17,30 @@ page, pageSize}`.
   `team_has_active_runs` while any production of it has an active run)
 - `GET /teams/:teamId/members?page&pageSize&sortBy(role|joinedAt|name)&sortOrder&q` -> `Paged<TeamMember>`;
   existing member add/role/remove routes keep working; removing or demoting the last owner -> 409 `last_owner`
+- `GET /teams/:teamId` (viewer) -> `{id, name, role: TeamRole | null, memberCount, productionCount, createdAt, updatedAt}`
+
+## Team skills ("quy chuẩn & skill")
+
+Markdown a team writes about how it makes videos. Every Claude stage of one of the team's productions gets the
+enabled skills that apply to its step, read when the call is made (`teamGuidesForRun`), in a `# Quy chuẩn của nhóm`
+section before `# Dữ liệu vào`, each one in `<team_guide name="…" purpose="…">…</team_guide>`.
+
+```ts
+type TeamSkillStep = 'trend-report' | 'rnd' | 'branding' | 'plan-episodes' | 'youtube-kit';
+interface TeamSkill {
+  id: string; teamId: string; name: string; purpose: string;
+  appliesTo: TeamSkillStep[];      // [] = every step
+  content: string;                 // markdown
+  enabled: boolean; position: number;
+  createdBy: string; updatedBy: string; createdAt: string; updatedAt: string;
+}
+```
+- `GET /teams/:teamId/skills` (viewer) -> `TeamSkill[]` ordered by `position`, then creation
+- `POST /teams/:teamId/skills` (producer) `{name, purpose?, appliesTo?, content, enabled?, position?}` -> 201 TeamSkill
+- `PATCH /teams/:teamId/skills/:skillId` (producer) `Partial<…>` -> TeamSkill
+- `DELETE /teams/:teamId/skills/:skillId` (producer) -> 204
+- Limits: name 1..100, purpose ≤ 500, content 1..20 000 characters; the enabled skills of a team together ≤ 60 000
+  (422 `team_skills_too_long`); a name used twice in a team -> 409 `team_skill_name_taken`; another team's skill -> 404.
 
 ## Productions
 
