@@ -17,6 +17,7 @@ import { studioStages, type FootageCatalogSource } from "./stages.js";
 import { teamGuidesForRun } from "./team-skills.js";
 import type { StudioDb } from "./studio-db.js";
 import type { ResearchSource } from "./youtube-research.js";
+import type { ThumbnailRenderer } from "./thumbnail-render.js";
 
 /** Per-skill model env keys. `STUDIO_CLAUDE_MODEL` overrides all. */
 const SKILL_MODEL_ENVS: Record<StudioSkill, string> = {
@@ -65,6 +66,8 @@ export interface StudioWorkerOptions {
   farmPollMs?: number;
   /** YouTube research for the `research` stage (GĐ5); without it the stage records why nothing was fetched. */
   research?: ResearchSource;
+  /** Cuts and draws thumbnails (`thumbnails` stage of episode 1.2.0); without it that stage parks for a person. */
+  thumbnails?: ThumbnailRenderer;
 }
 
 export function studioLogger(bindings: Record<string, unknown> = {}): HarnessLogger {
@@ -81,6 +84,7 @@ export function createStudioWorker(o: StudioWorkerOptions): Worker {
     startEpisodeRun: (episodeId) => Promise.resolve(startEpisodeRun(core, o.db, episodeId)),
     isRunActive: (runId) => isRunActive(core, runId),
     ...(o.research ? { research: o.research } : {}),
+    ...(o.thumbnails ? { thumbnails: o.thumbnails } : {}),
   })));
   executors.register("agent", new StudioAgentExecutor({
     runtimeFor: (jsonSchema: string, skill?: StudioSkill, onCall?: (trace: AgentCallTrace) => void) => new CliAgentRuntime({

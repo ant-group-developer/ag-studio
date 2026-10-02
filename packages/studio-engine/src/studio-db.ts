@@ -104,6 +104,8 @@ export interface EpisodeRecord {
   id: string; production_id: string; idx: number; title: string; hook: string; run_id: string | null; plan: string | null;
   /** The plan run that created the episode (null for episodes made before migration 0015). */
   plan_run_id: string | null;
+  /** The thumbnail the episode uses (migration 0017; `selected_thumbnail` is the index of the 3 older ones). */
+  selected_thumbnail_id: string | null;
   youtube: string | null; selected_title: number | null; selected_thumbnail: number | null;
   created_at: string; updated_at: string;
 }

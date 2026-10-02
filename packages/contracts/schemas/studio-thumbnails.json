@@ -1,0 +1,175 @@
+{
+  "$ref": "#/definitions/studio-thumbnails",
+  "definitions": {
+    "studio-thumbnails": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.thumbnails/v1"
+        },
+        "production_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "width": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "height": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "frames": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string",
+                "minLength": 1
+              },
+              "t_s": {
+                "type": "number",
+                "minimum": 0
+              },
+              "clip_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "asset_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "file",
+              "t_s",
+              "clip_id",
+              "asset_id"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "suggestions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string",
+                "minLength": 1
+              },
+              "frame": {
+                "type": "string",
+                "minLength": 1
+              },
+              "t_s": {
+                "type": "number",
+                "minimum": 0
+              },
+              "asset_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60
+              },
+              "style": {
+                "type": "object",
+                "properties": {
+                  "position": {
+                    "type": "string",
+                    "enum": [
+                      "top",
+                      "center",
+                      "bottom",
+                      "left",
+                      "right"
+                    ]
+                  },
+                  "size": {
+                    "type": "string",
+                    "enum": [
+                      "s",
+                      "m",
+                      "l"
+                    ]
+                  },
+                  "text_color": {
+                    "type": "string",
+                    "pattern": "^#[0-9A-Fa-f]{6}$"
+                  },
+                  "outline_color": {
+                    "type": "string",
+                    "pattern": "^#[0-9A-Fa-f]{6}$"
+                  },
+                  "box_color": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^#[0-9A-Fa-f]{6}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "uppercase": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "position",
+                  "size",
+                  "text_color",
+                  "outline_color",
+                  "box_color",
+                  "uppercase"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "file",
+              "frame",
+              "t_s",
+              "asset_id",
+              "text",
+              "style"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "production_id",
+        "episode_id",
+        "run_id",
+        "width",
+        "height",
+        "frames",
+        "suggestions"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

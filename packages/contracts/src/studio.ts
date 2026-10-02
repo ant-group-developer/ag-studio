@@ -398,6 +398,60 @@ export const StudioBrandingSchema = z.object({
 export type StudioBranding = z.infer<typeof StudioBrandingSchema>;
 
 // ---------------------------------------------------------------------------
+// Thumbnails (ag-studio-episode@1.2.0): clean frames of the final video, words drawn by Studio
+// ---------------------------------------------------------------------------
+
+/** YouTube's thumbnail size for each frame (and the 2 MB limit it puts on the file). */
+export const THUMBNAIL_SIZES = { "16:9": { width: 1280, height: 720 }, "9:16": { width: 720, height: 1280 } } as const;
+export const THUMBNAIL_MAX_BYTES = 2 * 1024 * 1024;
+export const THUMBNAIL_TEXT_SIZES = ["s", "m", "l"] as const;
+export type ThumbnailTextSize = (typeof THUMBNAIL_TEXT_SIZES)[number];
+
+/** How the words of a thumbnail look: position, size preset, colours, an optional band behind them, case. */
+export const ThumbnailStyleSchema = z.object({
+  position: z.enum(THUMBNAIL_TEXT_POSITIONS),
+  size: z.enum(THUMBNAIL_TEXT_SIZES),
+  text_color: HexColorSchema,
+  outline_color: HexColorSchema,
+  /** A band in this colour behind the words; null = outlined words only. */
+  box_color: HexColorSchema.nullable(),
+  uppercase: z.boolean(),
+}).strict();
+export type ThumbnailStyle = z.infer<typeof ThumbnailStyleSchema>;
+
+/** At most this many words on a thumbnail, in at most this many lines. */
+export const THUMBNAIL_TEXT_MAX = 60;
+
+/**
+ * `thumbnails.json` (`thumbnails` of an episode run): the clean candidate frames cut from the final video (files in
+ * the `thumbnails/` directory output) and the 3 suggestions of the YouTube kit drawn on them.
+ */
+export const StudioThumbnailsSchema = z.object({
+  schema_version: studioVersion("thumbnails"),
+  production_id: z.string().min(1),
+  episode_id: z.string().min(1),
+  run_id: z.string().min(1),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  frames: z.array(z.object({
+    file: z.string().min(1),
+    t_s: z.number().min(0),
+    clip_id: z.string().nullable(),
+    asset_id: z.string().nullable(),
+  }).strict()),
+  suggestions: z.array(z.object({
+    file: z.string().min(1),
+    /** The clean frame it was drawn on. */
+    frame: z.string().min(1),
+    t_s: z.number().min(0),
+    asset_id: z.string().nullable(),
+    text: z.string().min(1).max(THUMBNAIL_TEXT_MAX),
+    style: ThumbnailStyleSchema,
+  }).strict()),
+}).strict();
+export type StudioThumbnails = z.infer<typeof StudioThumbnailsSchema>;
+
+// ---------------------------------------------------------------------------
 // Episode run
 // ---------------------------------------------------------------------------
 

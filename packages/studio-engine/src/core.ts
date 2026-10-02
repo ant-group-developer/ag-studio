@@ -16,7 +16,7 @@ import type { Clock, HarnessConfig, ProductionProfile } from "@harness/contracts
  */
 export const STUDIO_WORKFLOWS = {
   plan: { workflow: "ag-studio-series-plan@2.0.0", profile: "studio-production" },
-  episode: { workflow: "ag-studio-episode@1.1.0", profile: "studio-production" },
+  episode: { workflow: "ag-studio-episode@1.2.0", profile: "studio-production" },
 } as const;
 export type StudioWorkflowKind = keyof typeof STUDIO_WORKFLOWS;
 

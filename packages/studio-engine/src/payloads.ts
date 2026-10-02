@@ -70,6 +70,24 @@ export function studioPayloadBuilders(d: { db: StudioDb; bucket: StudioBucket })
         },
       };
     },
+
+    /**
+     * ag-studio-episode@1.2.0: the video only. Thumbnails are cut afterwards on this node (`thumbnails` stage), from
+     * the final video, clean of words, so the render worker draws none.
+     */
+    "studio-episode-render-v2": async (request, ctx) => {
+      const brief = readBrief(request, ctx.workspaceDir);
+      const episode = readInput(request, ctx.workspaceDir, STUDIO_TYPES.episode, (v) => StudioEpisodeSchema.parse(v));
+      const timeline = readInput(request, ctx.workspaceDir, STUDIO_TYPES.timeline, (v) => TimelineV3Schema.parse(v));
+      const errors = timelineIssues(timeline).filter((i) => i.severity === "error");
+      if (errors.length) throw new Error(`timeline still has errors: ${errors.map((e) => e.message).join("; ")}`);
+      const revision = latestEpisodeRevision(d.db, episode.episode_id)?.revision ?? 0;
+      const output = `episodes/${episode.episode_id}/renders/final-${request.attempt_id}.mp4`;
+      const build = await prepareEpisodeRender(ctx.workspaceDir, {
+        timeline, revision, productionId: brief.production_id, episodeId: episode.episode_id, output, thumbnails: [],
+      });
+      return { ...build, rename: { [output]: "final.mp4" } };
+    },
   };
 }
 

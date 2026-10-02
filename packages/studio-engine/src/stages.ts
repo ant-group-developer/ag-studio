@@ -14,15 +14,18 @@ import {
   StudioEpisodeSchema, StudioExportSchema, StudioResearchSchema, StudioRndSchema, StudioSeedSchema, StudioYoutubeSchema, TimelineV3Schema,
   TrendReportSchema, parseStoredYoutubeKit,
   type ChannelRef, type ExecutorContext, type StageRequest, type StudioBrief, type StudioCatalog, type StudioExport,
-  type StudioEpisode, type TrendReport,
+  type StudioEpisode, type TrendReport, StudioThumbnailsSchema, THUMBNAIL_SIZES, type StudioThumbnails,
 } from "@harness/contracts";
 import {
-  buildEpisodeTimeline, effectiveBrief, formatChapters, inputPath, layoutTimeline, normalizeCatalogVideo,
-  orientationFits, prefilterCatalog, STUDIO_TYPES, timelineIssues, youtubeChapters, type AgGoFootageVideo,
+  buildEpisodeTimeline, effectiveBrief, formatChapters, frameCandidateTimes, inputPath, layoutTimeline, normalizeCatalogVideo,
+  orientationFits, prefilterCatalog, STUDIO_TYPES, suggestionFrame, thumbnailStyle, thumbnailTextLines, timelineIssues, youtubeChapters,
+  type AgGoFootageVideo,
 } from "@harness/core";
 import type { InProcessStage } from "@harness/executors";
 import { productionKey, type StudioBucket } from "./bucket.js";
 import { emptyResearch, type ResearchSource } from "./youtube-research.js";
+import type { ThumbnailRenderer } from "./thumbnail-render.js";
+import { insertThumbnail, listThumbnails, replaceRenderThumbnails } from "./thumbnails-db.js";
 import {
   episodeForRun, getEpisode, getProduction, latestEpisodeRevision, listEpisodes, productionBranding, productionChannels, productionForRun,
   productionHints, productionOwner, productionRnd, productionSources, replaceEpisodes, saveEpisodeRevision, saveProductionDocument,
@@ -44,6 +47,8 @@ export interface StudioStageDeps {
   research?: ResearchSource;
   /** Whether a run can still do work (wired by the worker); spawn-episodes will not delete an episode that renders. */
   isRunActive?: (runId: string) => boolean;
+  /** Cuts thumbnail frames and draws their words (ffmpeg on this node); absent = no ffmpeg configured. */
+  thumbnails?: ThumbnailRenderer;
 }
 
 export const DEFAULT_CANVAS = { "16:9": { width: 1920, height: 1080 }, "9:16": { width: 1080, height: 1920 } } as const;
@@ -514,6 +519,139 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       ctx.logger.info("episode export uploaded", {
         episode_id: episode.episode_id, files: files.map((f) => f.key), bytes: statSync(videoPath).size,
       });
+    },
+
+    // ---- Thumbnails cut from the final video (ag-studio-episode@1.2.0) --------------------------------------
+
+    /**
+     * Clean candidate frames of the final video (away from on-screen words and clip edges) and the YouTube kit's 3
+     * suggestions drawn on them in the production's branding style. Files only: the export uploads and records them.
+     */
+    "studio-episode-thumbnails": async (request, ctx) => {
+      if (!d.thumbnails) throw new HarnessError("CONFIG_INVALID", "Studio worker không có ffmpeg (STUDIO_FFMPEG_PATH) để cắt thumbnail", {});
+      const ws = ctx.workspaceDir;
+      const brief = readBrief(request, ws);
+      const episode = readInput(request, ws, STUDIO_TYPES.episode, (v) => StudioEpisodeSchema.parse(v));
+      const timeline = readInput(request, ws, STUDIO_TYPES.timeline, (v) => TimelineV3Schema.parse(v));
+      const ep = getEpisode(d.db, episode.episode_id);
+      const kit = ep?.youtube ? parseStoredYoutubeKit(JSON.parse(ep.youtube)) : readInput(request, ws, STUDIO_TYPES.youtubeKit, parseStoredYoutubeKit);
+      const brandingPath = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.branding);
+      const branding = brandingPath && existsSync(brandingPath) ? StudioBrandingSchema.parse(JSON.parse(readFileSync(brandingPath, "utf8"))) : null;
+      const video = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.finalVideo);
+      if (!video || !existsSync(video)) throw new HarnessError("NOT_FOUND", "thumbnails has no final video input", {});
+
+      const size = THUMBNAIL_SIZES[brief.aspect];
+      const layout = layoutTimeline(timeline);
+      const times = frameCandidateTimes(layout, { kitAssetIds: kit.thumbnails.map((t) => t.asset_id) });
+      const dir = join(ws, "output", "thumbnails");
+      mkdirSync(dir, { recursive: true });
+      const frames: StudioThumbnails["frames"] = [];
+      for (const [i, t] of times.entries()) {
+        const file = `frame-${String(i + 1).padStart(3, "0")}.jpg`;
+        await d.thumbnails.extractFrame(video, t.t_s, join(dir, file), size);
+        frames.push({ file, t_s: t.t_s, clip_id: t.clip_id, asset_id: t.asset_id });
+      }
+      const style = thumbnailStyle(branding);
+      const suggestions: StudioThumbnails["suggestions"] = [];
+      for (const [i, th] of kit.thumbnails.entries()) {
+        const at = suggestionFrame(layout, times, th.asset_id) ?? times[i % Math.max(1, times.length)];
+        const frame = at ? frames.find((f) => f.t_s === at.t_s) : undefined;
+        if (!frame) continue;
+        const file = `suggestion-${i + 1}.jpg`;
+        await d.thumbnails.compose(join(dir, frame.file), join(dir, file), { lines: thumbnailTextLines(th.text, { ...size, style }), style, size });
+        suggestions.push({ file, frame: frame.file, t_s: frame.t_s, asset_id: frame.asset_id, text: th.text, style });
+      }
+      const manifest = StudioThumbnailsSchema.parse({
+        schema_version: "studio.thumbnails/v1", production_id: brief.production_id, episode_id: episode.episode_id, run_id: request.run_id,
+        width: size.width, height: size.height, frames, suggestions,
+      });
+      writeOutput(ctx, "thumbnails.json", toBuffer(manifest));
+      ctx.logger.info("thumbnails cut", { frames: frames.length, suggestions: suggestions.length, episode_id: episode.episode_id });
+    },
+
+    /**
+     * Export of ag-studio-episode@1.2.0: the video, `youtube.json` and `timeline.json` in the bucket, the render's
+     * frames and suggestions uploaded and recorded as the episode's thumbnails (the first suggestion is the pick
+     * unless a person picked one). No zip: the YouTube pack is built when someone downloads it, from the latest kit
+     * and pick.
+     */
+    "studio-episode-export-v2": async (request, ctx) => {
+      const ws = ctx.workspaceDir;
+      const brief = readBrief(request, ws);
+      const episode = readInput(request, ws, STUDIO_TYPES.episode, (v) => StudioEpisodeSchema.parse(v));
+      const timeline = readInput(request, ws, STUDIO_TYPES.timeline, (v) => TimelineV3Schema.parse(v));
+      const kitRaw = readInput(request, ws, STUDIO_TYPES.youtubeKit, parseStoredYoutubeKit);
+      const thumbs = readInput(request, ws, STUDIO_TYPES.thumbnails, (v) => StudioThumbnailsSchema.parse(v));
+      const thumbDir = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.thumbnailSet);
+      const videoPath = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.finalVideo);
+      const manifest = readInput(request, ws, STUDIO_TYPES.renderManifest, (v) => v as { watermarked?: boolean; duration_s?: number });
+      if (!videoPath || !existsSync(videoPath)) throw new HarnessError("NOT_FOUND", "export has no final video input", {});
+      if (!thumbDir || !existsSync(thumbDir)) throw new HarnessError("NOT_FOUND", "export has no thumbnails input", {});
+
+      const ep = getEpisode(d.db, episode.episode_id);
+      const kit = ep?.youtube ? parseStoredYoutubeKit(JSON.parse(ep.youtube)) : kitRaw;
+      const selectedTitle = ep?.selected_title ?? 0;
+      const title = kit.titles[selectedTitle] ?? kit.titles[0]!;
+      const layout = layoutTimeline(timeline);
+      const chapters = youtubeChapters(layout);
+      const chaptersText = chapters.length >= 3 ? formatChapters(chapters) : "";
+      const body = kit.description.slice(0, 4000);
+      const description = (chaptersText ? `${body}\n\n${chaptersText}` : body).slice(0, 5000);
+
+      const prefix = `productions/${brief.production_id}/episodes/${episode.episode_id}`;
+      const files: StudioExport["files"] = [];
+      const upload = async (kind: StudioExport["files"][number]["kind"], key: string, data: Buffer, type: string) => {
+        await d.bucket.put(key, data, type);
+        files.push({ kind, key, size_bytes: data.length, checksum: `sha256:${sha256(data)}` });
+      };
+      const videoKey = `${prefix}/exports/${request.run_id}/${slug(title)}.mp4`;
+      await d.bucket.putFile(videoKey, videoPath, "video/mp4");
+      files.push({ kind: "mp4", key: videoKey, size_bytes: statSync(videoPath).size, checksum: `sha256:${await sha256File(videoPath)}` });
+
+      // Thumbnails: frames, then suggestions over them (each recorded once: the image key is unique)
+      const thumbPrefix = `${prefix}/thumbnails/${request.run_id}`;
+      const frameKeys = new Map<string, string>();
+      for (const f of thumbs.frames) {
+        const data = readFileSync(join(thumbDir, f.file));
+        const key = `${thumbPrefix}/${f.file}`;
+        await d.bucket.put(key, data, "image/jpeg");
+        frameKeys.set(f.file, key);
+        insertThumbnail(d.db, {
+          episode_id: episode.episode_id, kind: "frame", source_run_id: request.run_id, parent_id: null, t_s: f.t_s, asset_id: f.asset_id,
+          base_key: key, image_key: key, text: null, style: null, width: thumbs.width, height: thumbs.height, size_bytes: data.length, created_by: "system",
+        });
+      }
+      const suggestionIds: string[] = [];
+      for (const sug of thumbs.suggestions) {
+        const data = readFileSync(join(thumbDir, sug.file));
+        const key = `${thumbPrefix}/${sug.file}`;
+        await upload("thumbnail", key, data, "image/jpeg");
+        const row = insertThumbnail(d.db, {
+          episode_id: episode.episode_id, kind: "suggestion", source_run_id: request.run_id, parent_id: null, t_s: sug.t_s, asset_id: sug.asset_id,
+          base_key: frameKeys.get(sug.frame) ?? null, image_key: key, text: sug.text, style: sug.style,
+          width: thumbs.width, height: thumbs.height, size_bytes: data.length, created_by: "system",
+        });
+        suggestionIds.push(row.id);
+      }
+      replaceRenderThumbnails(d.db, episode.episode_id, request.run_id, suggestionIds[0] ?? null);
+      const picked = listThumbnails(d.db, episode.episode_id).find((t) => t.id === getEpisode(d.db, episode.episode_id)?.selected_thumbnail_id);
+
+      const youtubeDoc = StudioYoutubeSchema.parse({
+        schema_version: "studio.youtube/v1", production_id: brief.production_id, episode_id: episode.episode_id,
+        title, alt_titles: kit.titles.filter((_, i) => i !== selectedTitle), description, tags: kit.tags, hashtags: kit.hashtags,
+        playlist: kit.playlist, chapters: chapters.length >= 3 ? chapters : [], thumbnail_key: picked?.image_key ?? null,
+      });
+      const youtubeBuf = toBuffer(youtubeDoc);
+      await upload("youtube", `${prefix}/exports/${request.run_id}/youtube.json`, youtubeBuf, "application/json");
+      await upload("timeline", `${prefix}/exports/${request.run_id}/timeline.json`, toBuffer(timeline), "application/json");
+
+      const exp: StudioExport = StudioExportSchema.parse({
+        schema_version: "studio.export/v2", production_id: brief.production_id, episode_id: episode.episode_id, run_id: request.run_id,
+        duration_seconds: manifest.duration_s ?? layout.duration, files, watermarked: manifest.watermarked === true,
+      });
+      writeOutput(ctx, "export.json", toBuffer(exp));
+      writeOutput(ctx, "youtube.json", youtubeBuf);
+      ctx.logger.info("episode export uploaded", { episode_id: episode.episode_id, frames: thumbs.frames.length, suggestions: thumbs.suggestions.length });
     },
   };
 }

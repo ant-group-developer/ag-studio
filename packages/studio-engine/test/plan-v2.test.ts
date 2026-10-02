@@ -13,7 +13,7 @@ import {
   createStudioWorker, createTeamSkill, getProduction, listEpisodes, listLlmCalls, planRunView, productionBranding, productionRnd,
   readLlmCallPayload, readStageDocument, resumePlanRunFrom, startPlanRun, StudioRunError, submitStudioGate,
 } from "../src/index.js";
-import { FAKE_CLAUDE, fakeFarm, fakeFootage, ROOT, seedProduction, world } from "./helpers.js";
+import { FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, ROOT, seedProduction, world } from "./helpers.js";
 
 const PLAN_V2 = "ag-studio-series-plan@2.0.0";
 
@@ -22,7 +22,7 @@ function setup(mode = "") {
   const worker = createStudioWorker({
     core: w.core, db: w.db, dbPath: w.dbPath, bucket: w.bucket, footage: fakeFootage(8, 30), farm: fakeFarm(w.bucket) as never,
     claude: { skillsDir: join(ROOT, "skills"), argv: ["node", FAKE_CLAUDE], model: "fake", maxTurns: 3, baseEnv: { ...process.env, FAKE_STUDIO_MODE: mode } },
-    owner: "auth0|owner",
+    owner: "auth0|owner", thumbnails: fakeThumbnails(),
   });
   return { ...w, worker };
 }

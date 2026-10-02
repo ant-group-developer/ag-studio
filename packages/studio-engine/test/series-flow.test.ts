@@ -6,12 +6,12 @@
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  createStudioWorker, episodeExport, episodeRunView, episodeState, latestEpisodeRevision, listEpisodes,
+  createStudioWorker, episodeExport, episodeRunView, episodeState, getEpisode, insertThumbnail, latestEpisodeRevision, listEpisodes, listThumbnails,
   planRunView, readStageDocument, rerenderEpisode, resumePlanRunFrom, saveEpisodeRevision, startEpisodeRun, startPlanRun, STUDIO_WORKFLOWS,
-  StudioRunError, studioResearchCache, submitStudioGate, type ResearchSource,
+  selectThumbnail, StudioRunError, studioResearchCache, submitStudioGate, type ResearchSource,
 } from "../src/index.js";
 import { StudioResearchSchema, StudioYoutubeSchema, TrendReportSchema, SeriesPlanSchema, type StudioResearch, type TimelineV3 } from "@harness/contracts";
-import { FAKE_CLAUDE, fakeFarm, fakeFootage, seedProduction, world, ROOT } from "./helpers.js";
+import { FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, seedProduction, world, ROOT } from "./helpers.js";
 
 type Worker = ReturnType<typeof createStudioWorker>;
 
@@ -28,13 +28,14 @@ async function drain(worker: Worker, maxTicks = 400): Promise<void> {
 function setup(assets = 8, seconds = 30, research?: ResearchSource) {
   const w = world();
   const farm = fakeFarm(w.bucket);
+  const thumbnails = fakeThumbnails();
   const worker = createStudioWorker({
     ...(research ? { research } : {}),
     core: w.core, db: w.db, dbPath: w.dbPath, bucket: w.bucket, footage: fakeFootage(assets, seconds), farm: farm as never,
     claude: { skillsDir: join(ROOT, "skills"), argv: ["node", FAKE_CLAUDE], model: "fake", maxTurns: 3 },
-    owner: "auth0|owner",
+    owner: "auth0|owner", thumbnails,
   });
-  return { ...w, farm, worker };
+  return { ...w, farm, worker, thumbnails };
 }
 
 /** Plan -> approve as proposed -> spawn; returns once every episode run has finished. */
@@ -53,7 +54,7 @@ describe(`${PLAN_V1} + ${STUDIO_WORKFLOWS.episode.workflow}`, () => {
   let s: ReturnType<typeof setup>;
   afterEach(() => s?.core.close());
 
-  it("plans, spawns and produces every episode without a gate: video, 3 thumbnails, youtube.json, pack", async () => {
+  it("plans, spawns and produces every episode without a gate: video, clean frames + 3 suggestions recorded as thumbnails, youtube.json", async () => {
     s = setup();
     const prodId = seedProduction(s.db, { episode_target_seconds: 120, max_episodes: 2 });
     const { runId, plan } = await produceSeries(s, prodId);
@@ -69,24 +70,31 @@ describe(`${PLAN_V1} + ${STUDIO_WORKFLOWS.episode.workflow}`, () => {
     for (const ep of episodes) {
       expect(episodeState(s.core, s.db, ep)).toMatchObject({ status: "ready", current_stage: null });
       const view = episodeRunView(s.core, s.db, ep.id);
-      expect(view.stages.map((x) => x.key)).toEqual(["episode-intake", "build-timeline", "youtube-kit", "freeze-timeline", "render-final", "export"]);
+      expect(view.stages.map((x) => x.key)).toEqual(["episode-intake", "build-timeline", "youtube-kit", "freeze-timeline", "render-final", "thumbnails", "export"]);
       expect(view.waiting_gate).toBeNull();
       const exp = episodeExport(s.core, ep)!;
-      expect(exp.files.map((f) => f.kind).sort()).toEqual(["mp4", "pack", "thumbnail", "thumbnail", "thumbnail", "timeline", "youtube"]);
+      expect(exp.files.map((f) => f.kind).sort()).toEqual(["mp4", "thumbnail", "thumbnail", "thumbnail", "timeline", "youtube"]);
       for (const f of exp.files) expect(s.bucket.objects.has(f.key)).toBe(true);
+      // every frame and suggestion is a thumbnail of the episode, in the bucket; the first suggestion is the pick
+      const thumbs = listThumbnails(s.db, ep.id);
+      const frames = thumbs.filter((t) => t.kind === "frame");
+      const suggestions = thumbs.filter((t) => t.kind === "suggestion");
+      expect(frames.length).toBeGreaterThan(0);
+      expect(suggestions).toHaveLength(3);
+      for (const t of thumbs) expect(s.bucket.objects.has(t.image_key)).toBe(true);
+      expect(suggestions.every((t) => t.base_key && frames.some((f) => f.image_key === t.base_key) && t.text && t.style)).toBe(true);
+      const current = getEpisode(s.db, ep.id)!;
+      expect(current.selected_thumbnail_id).toBe(suggestions[0]!.id);
       const yt = StudioYoutubeSchema.parse(JSON.parse(s.bucket.objects.get(exp.files.find((f) => f.kind === "youtube")!.key)!.toString("utf8")));
       expect(yt.episode_id).toBe(ep.id);
-      expect(yt.thumbnail_key).toBe(exp.files.filter((f) => f.kind === "thumbnail").map((f) => f.key).sort()[0]);
+      expect(yt.thumbnail_key).toBe(suggestions[0]!.image_key);
       expect(latestEpisodeRevision(s.db, ep.id)?.revision).toBe(1);
     }
-    // each render asked for 3 thumbnails inside the episode
+    // the render worker draws no thumbnail any more: Studio cuts them from the final video
     const renders = [...s.farm.jobs.values()].filter((j) => j.type === "studio.render_final");
     expect(renders).toHaveLength(2);
-    for (const r of renders) {
-      const thumbs = r.payload.thumbnails as { t_s: number; text: string }[];
-      expect(thumbs).toHaveLength(3);
-      for (const t of thumbs) expect(t.t_s).toBeGreaterThanOrEqual(0);
-    }
+    for (const r of renders) expect(r.payload.thumbnails).toEqual([]);
+    expect(s.thumbnails.calls.filter((c) => c.startsWith("compose"))).toHaveLength(6);
   }, 60_000);
 
   it("Render lại renders the latest revision and keeps Claude's YouTube kit", async () => {
@@ -118,6 +126,36 @@ describe(`${PLAN_V1} + ${STUDIO_WORKFLOWS.episode.workflow}`, () => {
     expect(yt.chapters.map((c) => c.title)).toEqual(["Chương 1", "Chương 2", "Chương 3"]);
     expect(yt.description).toContain("0:00 Chương 1");
   }, 60_000);
+
+  it("Render lại brings new frames and suggestions; pictures a person made, and the pick of one, stay", async () => {
+    s = setup();
+    const prodId = seedProduction(s.db, { episode_target_seconds: 120, max_episodes: 2 });
+    await produceSeries(s, prodId);
+    const [mine, auto] = listEpisodes(s.db, prodId);
+    // episode 1: a person drew words on a frame and uses it; episode 2: a person picked the 2nd suggestion
+    const frame = listThumbnails(s.db, mine!.id).find((t) => t.kind === "frame")!;
+    const drawn = insertThumbnail(s.db, {
+      episode_id: mine!.id, kind: "composed", source_run_id: null, parent_id: frame.id, t_s: frame.t_s, asset_id: frame.asset_id,
+      base_key: frame.image_key, image_key: `${frame.image_key}.mine.jpg`, text: "Chữ của tôi", style: null,
+      width: 1280, height: 720, size_bytes: 10, created_by: "editor-1",
+    });
+    selectThumbnail(s.db, mine!.id, drawn.id);
+    selectThumbnail(s.db, auto!.id, listThumbnails(s.db, auto!.id).filter((t) => t.kind === "suggestion")[1]!.id);
+
+    for (const ep of [mine!, auto!]) {
+      const { runId } = rerenderEpisode(s.core, s.db, ep.id);
+      await drain(s.worker);
+      const system = listThumbnails(s.db, ep.id).filter((t) => t.kind === "frame" || t.kind === "suggestion");
+      expect(system.length).toBeGreaterThan(3);
+      expect(system.every((t) => t.source_run_id === runId)).toBe(true);
+    }
+    const kept = listThumbnails(s.db, mine!.id).find((t) => t.id === drawn.id)!;
+    expect(kept.parent_id).toBeNull();
+    expect(kept.base_key).toBe(frame.image_key);
+    expect(getEpisode(s.db, mine!.id)!.selected_thumbnail_id).toBe(drawn.id);
+    const fresh = listThumbnails(s.db, auto!.id).filter((t) => t.kind === "suggestion");
+    expect(getEpisode(s.db, auto!.id)!.selected_thumbnail_id).toBe(fresh[0]!.id);
+  }, 90_000);
 
   it("a timeline the render cannot play parks at freeze-timeline; fixing it and Render lại finishes the episode", async () => {
     s = setup();
