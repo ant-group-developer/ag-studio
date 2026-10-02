@@ -21,7 +21,7 @@ import {
 } from "@harness/core";
 import type { InProcessStage } from "@harness/executors";
 import { productionKey, type StudioBucket } from "./bucket.js";
-import { emptyResearch, type ResearchSource } from "./youtube-research.js";
+import { emptyResearch, researchQueryOfBrief, type ResearchSource } from "./youtube-research.js";
 import {
   episodeForRun, getEpisode, getProduction, latestEpisodeRevision, listEpisodes, productionForRun, productionOwner, productionSources,
   replaceEpisodes, saveEpisodeRevision, saveTrendReport, updateEpisodeRunId, type StudioDb,
@@ -117,7 +117,7 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       const research = !brief.youtube_channels.length && !brief.keywords.length
         ? emptyResearch(brief.production_id, "Chưa nhập kênh YouTube hoặc từ khoá")
         : d.research
-          ? await d.research.research(brief)
+          ? await d.research.research(researchQueryOfBrief(brief))
           : emptyResearch(brief.production_id, "Chưa cấu hình YOUTUBE_API_KEY cho Studio worker");
       StudioResearchSchema.parse(research);
       writeOutput(ctx, "research.json", toBuffer(research));

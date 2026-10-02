@@ -218,3 +218,65 @@ describe("compactResearch", () => {
     expect(videos[0]!.title).toBe("v0"); // the input is not reordered
   });
 });
+
+describe("StudioAgentExecutor R&D and branding", () => {
+  const seed = (hints: Record<string, unknown> = {}) => ({
+    schema_version: "studio.seed/v1", production_id: "prod-1", run_id: "run_1", owner_user_id: "u1", title: "Phở sáng",
+    folder_ids: ["f1"], channels: [{ url: "@phosang", role: "own" }, { url: "@kenhA", role: "reference" }], keywords: ["phở"],
+    aspect: "16:9", canvas: { width: 1920, height: 1080 }, fps: 25, language: "vi", music: null,
+    hints: { description: "", goal: "", audience: "", tone: "", notes: "", episode_target_seconds: null, max_episodes: null, ...hints },
+  });
+  const calls = () => { const c: StudioLlmCall[] = []; return { c, record: async (x: StudioLlmCall) => { c.push(x); } }; };
+
+  it("studio-rnd reads a summary of the footage, assesses the own channel, and keeps the episode length the person typed", async () => {
+    const log = calls();
+    const s = stage("studio-rnd", STUDIO_TYPES.rnd, "rnd.json",
+      { [STUDIO_TYPES.seed]: seed({ episode_target_seconds: 240 }), [STUDIO_TYPES.catalog]: catalog }, "rnd-ignore-hint-once", log.record);
+    expect((await run(s)).outcome).toBe("succeeded");
+    expect(log.c.map((x) => [x.round, x.outcome])).toEqual([[0, "rejected"], [1, "accepted"]]);
+    expect(log.c[0]!.problems.map((p) => p.code)).toEqual(["hint_episode_target"]);
+    const prompt = log.c[0]!.trace.prompt;
+    expect(prompt).toContain("## studio_catalog_summary (studio_catalog.json)");
+    expect(prompt).toContain('"kept": 6');
+    expect(prompt).not.toContain('{"asset_id":"a01"');
+    const rnd = out(s, "rnd.json");
+    expect(rnd.direction.episode_target_seconds).toBe(240);
+    expect(rnd.own_channels).not.toBeNull();
+  });
+
+  it("studio-branding: unreadable thumbnail colours go back to Claude once", async () => {
+    const log = calls();
+    const rnd = { direction: { positioning: "Chân thật", description: "Mỗi tập một quán" } };
+    const s = stage("studio-branding", STUDIO_TYPES.branding, "branding.json",
+      { [STUDIO_TYPES.rnd]: rnd, [STUDIO_TYPES.seed]: seed() }, "branding-bad-once", log.record);
+    expect((await run(s)).outcome).toBe("succeeded");
+    expect(log.c[0]!.problems.map((p) => p.code)).toEqual(["palette_no_contrast"]);
+    expect(out(s, "branding.json").thumbnail.palette.outline).toBe("#000000");
+  });
+
+  it("studio-youtube-kit: an episode with a branding gets a kit that follows it on the first answer", async () => {
+    const log = calls();
+    const episode = {
+      schema_version: "studio.episode/v1", production_id: "prod-1", episode_id: "ep-1", idx: 1, title: "Phở Bát Đàn và hàng người xếp dài từ sáng sớm",
+      hook: "6 giờ sáng đã xếp hàng", logline: "Một quán phở lâu năm", target_seconds: 90,
+      items: [{ asset_id: "a01", reason: "r", section_title: null }], alternates: [], texts_suggested: [],
+      assets: { a01: { title: "Video 1", summary_vi: "Phở", duration_s: 30, orientation: "landscape" } },
+    };
+    const branding = {
+      schema_version: "studio.branding/v1", series_name: "Phở Sáng", tagline: "", positioning: "Chân thật",
+      voice: { personality: [], do: [], dont: [], signature_phrases: [], banned_words: ["sốc"] },
+      titles: { formulas: ["[Quán] — [điều bất ngờ]"], rules: [], examples: [], max_chars: 40 },
+      description: { opening: "", cta: "", hashtags: ["#PhởSáng"] },
+      thumbnail: { concept: "c", text_rules: [], max_words: 3, text_case: "upper", palette: { text: "#FFFFFF", outline: "#000000", accent: "#E63946" }, position: "bottom", emotion: "", do: [], dont: [] },
+      on_screen_text: { style: "", max_chars: 40, rules: [] }, music_mood: [],
+    };
+    const s = stage("studio-youtube-kit", STUDIO_TYPES.youtubeKit, "youtube-kit.json",
+      { [STUDIO_TYPES.brief]: brief, [STUDIO_TYPES.episode]: episode, [STUDIO_TYPES.branding]: branding }, "", log.record);
+    expect((await run(s)).outcome).toBe("succeeded");
+    expect(log.c.map((x) => x.outcome)).toEqual(["accepted"]);
+    const kit = out(s, "youtube-kit.json");
+    expect(kit.hashtags).toContain("#PhởSáng");
+    expect(kit.playlist).toBe("Phở Sáng");
+    expect(kit.titles.every((t: string) => t.length <= 40)).toBe(true);
+  });
+});

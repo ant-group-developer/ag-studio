@@ -10,7 +10,7 @@
  * One failing channel or keyword is recorded on its entry and the research goes on; running out of quota stops
  * every later call (they would all fail the same way).
  */
-import type { ResearchVideo, StudioBrief, StudioResearch } from "@harness/contracts";
+import type { ChannelRole, ResearchVideo, StudioBrief, StudioResearch } from "@harness/contracts";
 import type { StudioDb } from "./studio-db.js";
 
 export const YOUTUBE_API = "https://www.googleapis.com/youtube/v3";
@@ -27,9 +27,21 @@ export interface ResearchCache {
   set(key: string, body: string, fetchedAt: string): Promise<void>;
 }
 
+/** What to research: the team's own channels, the reference channels and the keywords. */
+export interface ResearchQuery {
+  production_id: string;
+  channels: { url: string; role: ChannelRole }[];
+  keywords: string[];
+}
+
+/** A brief of the old flow names reference channels only. */
+export function researchQueryOfBrief(brief: Pick<StudioBrief, "production_id" | "youtube_channels" | "keywords">): ResearchQuery {
+  return { production_id: brief.production_id, channels: brief.youtube_channels.map((url) => ({ url, role: "reference" as const })), keywords: brief.keywords };
+}
+
 /** What the `research` stage calls; absent when no YouTube API key is configured. */
 export interface ResearchSource {
-  research(brief: Pick<StudioBrief, "production_id" | "youtube_channels" | "keywords">): Promise<StudioResearch>;
+  research(query: ResearchQuery): Promise<StudioResearch>;
 }
 
 /** The cache in `studio.db` (migration 0012), shared by the worker's runs. */
@@ -191,17 +203,18 @@ export class YoutubeResearchSource implements ResearchSource {
     this.now = o.now ?? (() => new Date());
   }
 
-  async research(brief: Pick<StudioBrief, "production_id" | "youtube_channels" | "keywords">): Promise<StudioResearch> {
+  async research(q: ResearchQuery): Promise<StudioResearch> {
     this.units = 0;
     this.quotaGone = false;
-    if (!brief.youtube_channels.length && !brief.keywords.length) return emptyResearch(brief.production_id, "Chưa nhập kênh YouTube hoặc từ khoá");
+    if (!q.channels.length && !q.keywords.length) return emptyResearch(q.production_id, "Chưa nhập kênh YouTube hoặc từ khoá");
     const now = this.now();
     const channels: StudioResearch["channels"] = [];
-    for (const input of brief.youtube_channels) channels.push(await this.channel(input, now));
+    for (const c of q.channels) channels.push(await this.channel(c.url, c.role, now));
     const keywords: StudioResearch["keywords"] = [];
-    for (const keyword of brief.keywords) keywords.push(await this.keyword(keyword, now));
+    for (const keyword of q.keywords) keywords.push(await this.keyword(keyword, now));
 
-    const all = [...channels.flatMap((c) => c.videos), ...keywords.flatMap((k) => k.videos)];
+    // The market is the reference channels and the keyword results; the team's own channels are measured, not copied.
+    const all = [...channels.filter((c) => c.role === "reference").flatMap((c) => c.videos), ...keywords.flatMap((k) => k.videos)];
     const unique = [...new Map(all.map((v) => [v.video_id, v])).values()];
     const buckets = new Map(BUCKETS.map((b) => [b, 0]));
     for (const v of unique) buckets.set(durationBucket(v.duration_s), (buckets.get(durationBucket(v.duration_s)) ?? 0) + 1);
@@ -214,7 +227,7 @@ export class YoutubeResearchSource implements ResearchSource {
     // What performs: terms and tags of the better half by views/day
     const perf = [...unique].sort((a, b) => b.views_per_day - a.views_per_day).slice(0, Math.max(10, Math.ceil(unique.length / 2)));
     return {
-      schema_version: "studio.research/v1", production_id: brief.production_id, fetched_at: now.toISOString(), quota_units: this.units,
+      schema_version: "studio.research/v1", production_id: q.production_id, fetched_at: now.toISOString(), quota_units: this.units,
       skipped_reason: null, channels, keywords,
       insights: {
         top_title_terms: topCounts(perf.map((v) => titleTerms(v.title)), 30),
@@ -226,8 +239,8 @@ export class YoutubeResearchSource implements ResearchSource {
     };
   }
 
-  private async channel(input: string, now: Date): Promise<StudioResearch["channels"][number]> {
-    const entry: StudioResearch["channels"][number] = { input, channel_id: null, title: null, subscribers: null, error: null, videos: [], stats: null };
+  private async channel(input: string, role: ChannelRole, now: Date): Promise<StudioResearch["channels"][number]> {
+    const entry: StudioResearch["channels"][number] = { input, role, channel_id: null, title: null, subscribers: null, error: null, videos: [], stats: null };
     const ref = parseChannelInput(input);
     if (!ref) return { ...entry, error: "Không nhận ra link kênh, @handle hoặc ID kênh" };
     try {

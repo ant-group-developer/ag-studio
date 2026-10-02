@@ -23,11 +23,16 @@ const SKILL_MODEL_ENVS: Record<StudioSkill, string> = {
   "studio-plan-episodes": "STUDIO_CLAUDE_MODEL_PLAN_EPISODES",
   "studio-youtube-kit": "STUDIO_CLAUDE_MODEL_YOUTUBE_KIT",
   "studio-trend-report": "STUDIO_CLAUDE_MODEL_TREND_REPORT",
+  "studio-rnd": "STUDIO_CLAUDE_MODEL_RND",
+  "studio-branding": "STUDIO_CLAUDE_MODEL_BRANDING",
 };
+/** The R&D decides the whole series once per production: Opus, like the episode plan. */
 const SKILL_DEFAULTS: Record<StudioSkill, string> = {
   "studio-plan-episodes": "claude-opus-5-5",
   "studio-youtube-kit": "claude-sonnet-5-5",
   "studio-trend-report": "claude-sonnet-5-5",
+  "studio-rnd": "claude-opus-5-5",
+  "studio-branding": "claude-sonnet-5-5",
 };
 
 function modelFor(skill: StudioSkill, override?: string): string {

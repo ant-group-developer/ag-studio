@@ -9,19 +9,24 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
-  StudioBriefSchema, StudioCatalogSchema, StudioEpisodeSchema, StudioExportSchema, TimelineV3Schema,
+  StudioBrandingSchema, StudioBriefSchema, StudioCatalogSchema, StudioEpisodeSchema, StudioExportSchema, StudioSeedSchema, TimelineV3Schema,
   TrendReportSchema,
-  type CatalogAsset, type Checker, type CheckerInput, type StudioBrief, type StudioCatalog,
+  type CatalogAsset, type Checker, type CheckerInput, type StudioBranding, type StudioBrief, type StudioCatalog, type StudioSeed,
 } from "@harness/contracts";
 import { childEnvWithoutSecrets } from "../media/child-env.js";
 import { layoutTimeline, timelineIssues } from "../studio/layout.js";
-import { validateSeriesPlan, validateTrendReport, validateYoutubeKit, type StudioValidation } from "../studio/validate.js";
+import {
+  validateBranding, validateRnd, validateSeriesPlan, validateTrendReport, validateYoutubeKit, type StudioValidation,
+} from "../studio/validate.js";
 
 // ---------------------------------------------------------------------------
 // Artifact type names (workflow stage defs and checkers must agree)
 // ---------------------------------------------------------------------------
 
 export const STUDIO_TYPES = {
+  seed: "studio_seed",
+  rnd: "studio_rnd",
+  branding: "studio_branding",
   brief: "studio_brief",
   research: "studio_research",
   trendReport: "trend_report",
@@ -62,6 +67,12 @@ function requireInput<T>(input: CheckerInput, type: string, parse: (v: unknown) 
 
 export const loadBrief = (i: CheckerInput): StudioBrief => requireInput(i, STUDIO_TYPES.brief, (v) => StudioBriefSchema.parse(v));
 export const loadCatalog = (i: CheckerInput): StudioCatalog => requireInput(i, STUDIO_TYPES.catalog, (v) => StudioCatalogSchema.parse(v));
+export const loadSeed = (i: CheckerInput): StudioSeed => requireInput(i, STUDIO_TYPES.seed, (v) => StudioSeedSchema.parse(v));
+/** The branding input when the stage has one (episode runs of a production planned before branding have none). */
+export function loadOptionalBranding(i: Pick<CheckerInput, "request" | "workspaceDir">): StudioBranding | null {
+  const p = inputPath(i, STUDIO_TYPES.branding);
+  return p && existsSync(p) ? StudioBrandingSchema.parse(readJson(p)) : null;
+}
 
 type Verdict = Awaited<ReturnType<Checker["check"]>>;
 
@@ -100,8 +111,14 @@ export const seriesPlanValidChecker = documentChecker("series-plan-valid", STUDI
 export const youtubeKitValidChecker = documentChecker("youtube-kit-valid", STUDIO_TYPES.youtubeKit,
   (raw, i) => {
     const episode = requireInput(i, STUDIO_TYPES.episode, (v) => StudioEpisodeSchema.parse(v));
-    return fromValidation(validateYoutubeKit(raw, { episode }));
+    return fromValidation(validateYoutubeKit(raw, { episode, branding: loadOptionalBranding(i) }));
   });
+
+export const rndValidChecker = documentChecker("rnd-valid", STUDIO_TYPES.rnd,
+  (raw, i) => fromValidation(validateRnd(raw, { seed: loadSeed(i) })));
+
+export const brandingValidChecker = documentChecker("branding-valid", STUDIO_TYPES.branding,
+  (raw) => fromValidation(validateBranding(raw)));
 
 export const timelineSchemaValidChecker = documentChecker("timeline-schema-valid", STUDIO_TYPES.timeline, (raw) => {
   const r = TimelineV3Schema.safeParse(raw);
@@ -180,6 +197,8 @@ export const exportValidChecker = documentChecker("export-valid", STUDIO_TYPES.e
 export function studioCheckers(opts: { ffmpeg?: string } = {}): Checker[] {
   return [
     trendReportValidChecker,
+    rndValidChecker,
+    brandingValidChecker,
     seriesPlanValidChecker,
     youtubeKitValidChecker,
     timelineSchemaValidChecker,

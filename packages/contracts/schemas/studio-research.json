@@ -36,6 +36,14 @@
               "input": {
                 "type": "string"
               },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "own",
+                  "reference"
+                ],
+                "default": "reference"
+              },
               "channel_id": {
                 "type": [
                   "string",

@@ -115,6 +115,8 @@ export const StudioResearchSchema = z.object({
   skipped_reason: z.string().nullable(),
   channels: z.array(z.object({
     input: z.string(),
+    /** `own`: a channel of the team (its current results); `reference`: one to learn from. Older documents: reference. */
+    role: z.enum(["own", "reference"]).default("reference"),
     channel_id: z.string().nullable(),
     title: z.string().nullable(),
     subscribers: z.number().int().min(0).nullable(),
@@ -247,6 +249,155 @@ export const SpawnedEpisodesSchema = z.object({
 export type SpawnedEpisodes = z.infer<typeof SpawnedEpisodesSchema>;
 
 // ---------------------------------------------------------------------------
+// Research first (ag-studio-series-plan@2.0.0): seed -> research -> R&D (approved) -> branding (approved) -> brief
+// ---------------------------------------------------------------------------
+
+export const CHANNEL_ROLES = ["own", "reference"] as const;
+export type ChannelRole = (typeof CHANNEL_ROLES)[number];
+export const ChannelRefSchema = z.object({ url: z.string().min(1).max(300), role: z.enum(CHANNEL_ROLES) }).strict();
+export type ChannelRef = z.infer<typeof ChannelRefSchema>;
+
+/** What the person filled in beyond the minimum. The R&D keeps a value given here; empty / null = the AI proposes. */
+export const StudioHintsSchema = z.object({
+  description: shortText(4000),
+  goal: shortText(1000),
+  audience: shortText(1000),
+  tone: shortText(500),
+  notes: shortText(4000),
+  episode_target_seconds: z.number().min(10).max(3600).nullable(),
+  max_episodes: z.number().int().min(1).max(MAX_EPISODES_LIMIT).nullable(),
+}).strict();
+export type StudioHints = z.infer<typeof StudioHintsSchema>;
+
+/** `seed.json` (`intake` of plan v2): footage, channels, keywords and hints as the person gave them, frozen for the run. */
+export const StudioSeedSchema = z.object({
+  schema_version: studioVersion("seed"),
+  production_id: z.string().min(1),
+  run_id: z.string().min(1),
+  /** Background stages act as this user towards ag-go. */
+  owner_user_id: z.string().min(1),
+  title: z.string().min(1).max(200),
+  folder_ids: z.array(z.string().min(1)).min(1).max(50),
+  /** The team's own channels and the reference channels, each as typed (link, @handle or channel id). */
+  channels: z.array(ChannelRefSchema).max(MAX_RESEARCH_CHANNELS),
+  keywords: z.array(z.string().min(1).max(100)).max(MAX_RESEARCH_KEYWORDS),
+  aspect: z.enum(STUDIO_ASPECTS),
+  canvas: StudioCanvasSchema,
+  fps: z.union([z.literal(25), z.literal(30)]),
+  language: z.string().min(2).max(10),
+  music: StudioMusicSchema.nullable(),
+  hints: StudioHintsSchema,
+}).strict();
+export type StudioSeed = z.infer<typeof StudioSeedSchema>;
+
+const textList = (maxItems: number, maxChars: number) => z.array(z.string().min(1).max(maxChars)).max(maxItems);
+/** YouTube only links letters, digits and `_` after `#` (`#Phở_Hà_Nội`, not `#Phở-Hà-Nội` or `#(Tập1)`). */
+export const HashtagSchema = z.string().regex(/^#[\p{L}\p{N}_]+$/u, "one #word of letters, digits or _");
+
+/**
+ * `rnd.json` (`rnd`, Claude; edited and approved at `approve-rnd`, then the production's R&D): the market, the
+ * team's own channels, what the footage supports, and the direction of the series. `direction` fills what the
+ * person left out (description, goal, audience, tone, episode length and count); every later AI step reads it.
+ */
+export const StudioRndSchema = z.object({
+  schema_version: studioVersion("rnd"),
+  /** The R&D in a few sentences: what to make, for whom, and why it can work. */
+  summary: z.string().min(1).max(3000),
+  market: z.object({
+    opportunities: textList(10, 500),
+    gaps: textList(10, 500),
+    risks: textList(10, 500),
+    competitors: z.array(z.object({
+      channel: z.string().min(1).max(200),
+      strengths: z.string().max(500),
+      weaknesses: z.string().max(500),
+    }).strict()).max(10),
+  }).strict(),
+  /** The team's own channels as research saw them; null when the person named none. */
+  own_channels: z.object({
+    assessment: z.string().min(1).max(2000),
+    strengths: textList(8, 300),
+    weaknesses: textList(8, 300),
+    recommendations: textList(8, 500),
+  }).strict().nullable(),
+  /** What the footage folders hold and the directions they can carry. */
+  footage_fit: z.object({
+    summary: z.string().min(1).max(2000),
+    strong_themes: textList(10, 200),
+    gaps: textList(10, 300),
+  }).strict(),
+  direction: z.object({
+    description: z.string().min(1).max(4000),
+    goal: z.string().min(1).max(1000),
+    audience: z.string().min(1).max(1000),
+    tone: z.string().min(1).max(500),
+    positioning: z.string().min(1).max(1000),
+    content_pillars: z.array(z.object({ name: z.string().min(1).max(100), description: z.string().min(1).max(500) }).strict()).min(1).max(8),
+    episode_target_seconds: z.number().min(10).max(3600),
+    max_episodes: z.number().int().min(1).max(MAX_EPISODES_LIMIT),
+    posting_schedule: z.string().max(500),
+    /** SEO keywords for titles, descriptions and tags (not the research keywords). */
+    keywords: z.array(z.string().min(1).max(100)).max(20),
+    episode_ideas: z.array(z.object({ title: z.string().min(1).max(150), angle: z.string().min(1).max(500) }).strict()).max(15),
+    notes: z.string().max(4000),
+  }).strict(),
+}).strict();
+export type StudioRnd = z.infer<typeof StudioRndSchema>;
+
+/** Where the words of a thumbnail sit (Studio draws them; the AI image of a later phase leaves room there). */
+export const THUMBNAIL_TEXT_POSITIONS = ["top", "center", "bottom", "left", "right"] as const;
+export type ThumbnailTextPosition = (typeof THUMBNAIL_TEXT_POSITIONS)[number];
+export const HexColorSchema = z.string().regex(/^#[0-9A-Fa-f]{6}$/, "#RRGGBB");
+
+/**
+ * `branding.json` (`branding`, Claude from the approved R&D; edited and approved at `approve-branding`, then the
+ * production's branding): how the series sounds and looks, written so an AI step can follow it — title formulas,
+ * voice, description opening and CTA, series hashtags, thumbnail style (words, case, colours, where the text sits).
+ */
+export const StudioBrandingSchema = z.object({
+  schema_version: studioVersion("branding"),
+  series_name: z.string().min(1).max(100),
+  tagline: z.string().max(200),
+  positioning: z.string().min(1).max(1000),
+  voice: z.object({
+    personality: textList(6, 100),
+    do: textList(10, 300),
+    dont: textList(10, 300),
+    signature_phrases: textList(10, 200),
+    banned_words: textList(20, 100),
+  }).strict(),
+  titles: z.object({
+    formulas: z.array(z.string().min(1).max(200)).min(1).max(8),
+    rules: textList(10, 300),
+    examples: textList(10, 100),
+    max_chars: z.number().int().min(20).max(100),
+  }).strict(),
+  description: z.object({
+    opening: z.string().max(500),
+    cta: z.string().max(300),
+    hashtags: z.array(HashtagSchema).max(5),
+  }).strict(),
+  thumbnail: z.object({
+    concept: z.string().min(1).max(500),
+    text_rules: textList(8, 300),
+    max_words: z.number().int().min(1).max(8),
+    text_case: z.enum(["upper", "sentence"]),
+    palette: z.object({ text: HexColorSchema, outline: HexColorSchema, accent: HexColorSchema }).strict(),
+    position: z.enum(THUMBNAIL_TEXT_POSITIONS),
+    emotion: z.string().max(200),
+    do: textList(8, 300),
+    dont: textList(8, 300),
+  }).strict(),
+  on_screen_text: z.object({
+    style: z.string().max(500),
+    max_chars: z.number().int().min(10).max(64),
+    rules: textList(8, 300),
+  }).strict(),
+  music_mood: textList(5, 100),
+}).strict();
+export type StudioBranding = z.infer<typeof StudioBrandingSchema>;
+
+// ---------------------------------------------------------------------------
 // Episode run
 // ---------------------------------------------------------------------------
 
@@ -322,8 +473,7 @@ export const YoutubeKitSchema = z.object({
   /** Without chapters: the export appends them from the final timeline. */
   description: z.string().min(1).max(YOUTUBE_DESCRIPTION_BODY_MAX),
   tags: z.array(z.string().min(1).max(100)).max(40),
-  /** YouTube only links letters, digits and `_` after `#` (`#Phở_Hà_Nội`, not `#Phở-Hà-Nội` or `#(Tập1)`). */
-  hashtags: z.array(z.string().regex(/^#[\p{L}\p{N}_]+$/u, "one #word of letters, digits or _")).max(15),
+  hashtags: z.array(HashtagSchema).max(15),
   /** Three thumbnails: a frame of this video (taken from its middle in the final render) with this text on it. */
   thumbnails: z.array(z.object({ asset_id: z.string().min(1), text: z.string().min(1).max(40) }).strict()).length(3),
   playlist: z.string().max(150),
@@ -396,6 +546,8 @@ export type StudioExport = z.infer<typeof StudioExportSchema>;
 /** Output schema per Studio skill: what Claude must return, and what the stage writes to disk. */
 export const STUDIO_SKILL_OUTPUTS = {
   "studio-trend-report": TrendReportSchema,
+  "studio-rnd": StudioRndSchema,
+  "studio-branding": StudioBrandingSchema,
   "studio-plan-episodes": SeriesPlanSchema,
   "studio-youtube-kit": YoutubeKitSchema,
 } as const;
@@ -415,6 +567,8 @@ export const TEAM_SKILL_LIMITS = { name: 100, purpose: 500, content: 20_000, ena
 /** The step a Studio skill is, for picking the team skills that apply to it. */
 export const STUDIO_SKILL_STEP: Record<StudioSkill, TeamSkillStep> = {
   "studio-trend-report": "trend-report",
+  "studio-rnd": "rnd",
+  "studio-branding": "branding",
   "studio-plan-episodes": "plan-episodes",
   "studio-youtube-kit": "youtube-kit",
 };

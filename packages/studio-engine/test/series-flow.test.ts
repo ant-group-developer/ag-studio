@@ -188,12 +188,12 @@ describe(`${STUDIO_WORKFLOWS.plan.workflow} + ${STUDIO_WORKFLOWS.episode.workflo
   it("researches the channels and keywords, and the trend report is then written by Claude", async () => {
     const asked: string[][] = [];
     const research: ResearchSource = {
-      async research(brief): Promise<StudioResearch> {
-        asked.push([...brief.youtube_channels, ...brief.keywords]);
+      async research(q): Promise<StudioResearch> {
+        asked.push([...q.channels.map((c) => c.url), ...q.keywords]);
         const video = { video_id: "v1", channel_id: "UC1", channel_title: "Kênh A", title: "Phở bò Hà Nội", published_at: "2026-09-01T00:00:00Z",
           duration_s: 480, views: 90000, likes: 900, comments: 50, tags: ["phở"], views_per_day: 3000, outlier: true };
         return {
-          schema_version: "studio.research/v1", production_id: brief.production_id, fetched_at: "2026-09-30T00:00:00Z", quota_units: 204,
+          schema_version: "studio.research/v1", production_id: q.production_id, fetched_at: "2026-09-30T00:00:00Z", quota_units: 204,
           skipped_reason: null, channels: [], keywords: [{ keyword: "phở", error: null, videos: [video] }],
           insights: { top_title_terms: [], top_tags: [], duration_buckets: [{ bucket: "5-10m", count: 1 }], frequent_channels: [] },
         };

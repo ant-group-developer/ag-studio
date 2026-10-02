@@ -5,3 +5,4 @@ export * from "./build-timeline.js";
 export * from "./render-plan.js";
 export * from "./chapters.js";
 export * from "./overlay.js";
+export * from "./brief.js";
