@@ -79,6 +79,31 @@ function compactCatalogLine(value: unknown): string {
   return JSON.stringify(value, (_k, v) => (v === null || (Array.isArray(v) && v.length === 0) || v === "" ? undefined : v));
 }
 
+type ResearchVideoLike = Record<string, unknown> & { views_per_day?: number | null };
+type ResearchLike = { channels?: Array<{ videos?: ResearchVideoLike[] } & Record<string, unknown>>; keywords?: Array<{ videos?: ResearchVideoLike[] } & Record<string, unknown>>; [k: string]: unknown };
+
+/** The fields of a research video Claude reads (tags cut to 10). */
+function promptVideo(v: ResearchVideoLike): Record<string, unknown> {
+  return {
+    title: v["title"], views: v["views"], views_per_day: v["views_per_day"], duration_s: v["duration_s"], published_at: v["published_at"],
+    tags: (v["tags"] as string[] | undefined)?.slice(0, 10), outlier: v["outlier"],
+  };
+}
+
+/** The 15 videos with the most views per day, best first (on a copy: the research document is not reordered). */
+function topVideos(videos: ResearchVideoLike[] | undefined): Record<string, unknown>[] {
+  return [...(videos ?? [])].sort((a, b) => (b.views_per_day ?? 0) - (a.views_per_day ?? 0)).slice(0, 15).map(promptVideo);
+}
+
+/** Research as Claude reads it: per channel and per keyword only the top 15 videos by views per day. */
+export function compactResearch(r: ResearchLike): { channels: Array<Record<string, unknown> & { videos: Record<string, unknown>[] }>; keywords: Array<Record<string, unknown> & { videos: Record<string, unknown>[] }>; [k: string]: unknown } {
+  return {
+    ...r,
+    channels: (r.channels ?? []).map((ch) => ({ ...ch, videos: topVideos(ch.videos) })),
+    keywords: (r.keywords ?? []).map((kw) => ({ ...kw, videos: topVideos(kw.videos) })),
+  };
+}
+
 const attr = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/\s+/g, " ").trim();
 
 /**
@@ -118,33 +143,8 @@ export function studioPrompt(request: StageRequest, workspaceDir: string, proble
         body = [compactCatalogLine({ ...cat, assets: undefined }), ...assets.map((a) => compactCatalogLine(a))].join("\n");
       } catch { /* leave as-is */ }
     } else if (input.type === STUDIO_TYPES.research) {
-      // research: per channel/keyword only the top 15 videos by views_per_day
       try {
-        const r = JSON.parse(text) as { channels?: Array<{ videos?: unknown[] }>; keywords?: Array<{ videos?: unknown[] }>; [k: string]: unknown };
-        const compact = {
-          ...r,
-          channels: (r.channels ?? []).map((ch) => ({
-            ...ch,
-            videos: (ch.videos ?? [])
-              .sort((a, b) => (b as { views_per_day?: number }).views_per_day ?? 0 - ((a as { views_per_day?: number }).views_per_day ?? 0))
-              .slice(0, 15)
-              .map((v) => {
-                const vv = v as Record<string, unknown>;
-                return { title: vv["title"], views: vv["views"], views_per_day: vv["views_per_day"], duration_s: vv["duration_s"], published_at: vv["published_at"], tags: (vv["tags"] as string[] | undefined)?.slice(0, 10), outlier: vv["outlier"] };
-              }),
-          })),
-          keywords: (r.keywords ?? []).map((kw) => ({
-            ...kw,
-            videos: (kw.videos ?? [])
-              .sort((a, b) => (b as { views_per_day?: number }).views_per_day ?? 0 - ((a as { views_per_day?: number }).views_per_day ?? 0))
-              .slice(0, 15)
-              .map((v) => {
-                const vv = v as Record<string, unknown>;
-                return { title: vv["title"], views: vv["views"], views_per_day: vv["views_per_day"], duration_s: vv["duration_s"], published_at: vv["published_at"], tags: (vv["tags"] as string[] | undefined)?.slice(0, 10), outlier: vv["outlier"] };
-              }),
-          })),
-        };
-        body = JSON.stringify(compact, null, 2);
+        body = JSON.stringify(compactResearch(JSON.parse(text) as ResearchLike), null, 2);
       } catch { /* leave as-is */ }
     }
     parts.push("", `## ${input.type} (${input.path.split("/").pop()})`, "```json", body.trim(), "```");

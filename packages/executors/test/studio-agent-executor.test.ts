@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { newId, type StageRequest } from "@harness/contracts";
 import { CliAgentRuntime } from "@harness/adapter-agent-cli";
 import { STUDIO_TYPES } from "@harness/core";
-import { StudioAgentExecutor, type StudioAgentExecutorOptions, type StudioLlmCall } from "../src/studio-agent-executor.js";
+import { compactResearch, StudioAgentExecutor, type StudioAgentExecutorOptions, type StudioLlmCall } from "../src/studio-agent-executor.js";
 
 const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..", "..", "..");
 const FAKE = join(ROOT, "fixtures", "fake-studio-claude.mjs");
@@ -202,5 +202,19 @@ describe("StudioAgentExecutor team guides", () => {
     expect(r.outcome).toBe("failed");
     expect(r.errors[0]).toMatchObject({ kind: "transient" });
     expect(r.errors[0]!.message).toContain("database is locked");
+  });
+});
+
+describe("compactResearch", () => {
+  it("keeps each channel's and keyword's 15 videos with the most views per day, best first", () => {
+    const videos = Array.from({ length: 20 }, (_, i) => ({ title: `v${i}`, views: i * 10, views_per_day: (i * 7) % 20, duration_s: 60, published_at: "2026-09-01", tags: [], outlier: false }));
+    const compact = compactResearch({ channels: [{ input: "@a", videos }], keywords: [{ keyword: "phở", videos: [...videos].reverse() }] });
+    for (const list of [compact.channels[0]!.videos, compact.keywords[0]!.videos]) {
+      const vpd = list.map((v) => v.views_per_day as number);
+      expect(vpd).toHaveLength(15);
+      expect(vpd).toEqual([...vpd].sort((a, b) => b - a));
+      expect(Math.min(...vpd)).toBe(5);
+    }
+    expect(videos[0]!.title).toBe("v0"); // the input is not reordered
   });
 });
