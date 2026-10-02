@@ -18,7 +18,7 @@ export function LoginScreen({ onLogin }: { onLogin: () => void }) {
 
       <div className="login-layout">
         <section className="login-hero">
-          <Monogram name={siteName} size={64} />
+          <Logo size={64} />
           <div className="login-hero-copy">
             <Title className="login-hero-title">{siteName}</Title>
             <Text className="login-hero-description">{t("auth.tagline")}</Text>
@@ -37,7 +37,7 @@ export function LoginScreen({ onLogin }: { onLogin: () => void }) {
 
         <section className="login-card" aria-labelledby="login-card-title">
           <div className="login-card-brand">
-            <Monogram name={siteName} size={44} />
+            <Logo size={44} />
             <span className="login-card-brand-name">{siteName}</span>
           </div>
           <Title level={3} id="login-card-title" className="login-card-title">
@@ -71,12 +71,6 @@ export function LoginScreen({ onLogin }: { onLogin: () => void }) {
   );
 }
 
-function Monogram({ name, size }: { name: string; size: number }) {
-  const words = name.split(/\s+/).filter(Boolean);
-  const initials = words.length >= 2 ? words[0]![0]! + words[1]![0]! : name.slice(0, 2);
-  return (
-    <span className="login-monogram" style={{ width: size, height: size, fontSize: Math.round(size * 0.42) }} aria-hidden>
-      {initials.toUpperCase()}
-    </span>
-  );
+function Logo({ size }: { size: number }) {
+  return <img className="login-logo" src="/favicon.png" alt="" style={{ height: size }} aria-hidden />;
 }

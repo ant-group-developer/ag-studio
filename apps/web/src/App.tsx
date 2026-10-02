@@ -117,6 +117,7 @@ function AppLayout() {
   return (
     <ProLayout
       title={t("app.title")}
+      logo="/favicon.png"
       layout="mix"
       fixSiderbar
       fixedHeader
