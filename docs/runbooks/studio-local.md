@@ -153,5 +153,6 @@ Không chạy song song với chế độ trực tiếp: hai bên dùng chung c�
 | Chat hiện "Claude đang trả lời…" mãi | Worker không chạy (vòng chat nằm trong worker) | `local-stack.mjs status`, log `studio-worker` |
 | Chat hiện "Đang chờ lượt" lâu | Đủ số lượt Claude cùng lúc | Chờ, hoặc admin tăng số lượt ở màn Hàng đợi |
 | Render bản cuối "Đang chờ máy phù hợp" mãi | Không node nào khớp kiểu máy đã chọn (vd chọn GPU, máy không có) | Web farm 3011 xem khả năng node; huỷ tập rồi Render lại với "Bất kỳ máy nào" |
+| `render-final` hỏng, job farm `failed` ở `download_composition` với `fetch failed` | `sign_url` của chủ job `studio` trong DB farm còn trỏ cổng 3100 (chế độ Docker); chạy trực tiếp thì 3100 là web, API ở 3101 | `docker exec postgres16 psql -U postgres -d ag_farm -c "UPDATE farm_owners SET sign_url = 'http://<IP máy>:3101/api/farm/sign' WHERE id = 'studio'"`; chuyển lại Docker thì đặt về `:3100` |
 | Màn Hàng đợi "Không đọc được hàng đợi farm" | Farm hub không chạy, hoặc `FARM_OWNER_KEY` sai | `local-stack.mjs status`; log `studio-api` |
 | Kiểm trong khung trình duyệt của app desktop, số liệu không tự cập nhật | Khung đó báo trang luôn ẩn nên không polling | Tải lại trang sau mỗi bước |
