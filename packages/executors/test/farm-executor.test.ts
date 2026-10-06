@@ -13,10 +13,10 @@ const wall = { now: () => new Date().toISOString() };
 function fakes(outputs: Record<string, string>, manifest: string) {
   const bucket = new Map<string, string>();
   const read: string[] = [];
-  const submitted: { type: string; payload: unknown; correlation_id: string }[] = [];
+  const submitted: { type: string; payload: unknown; correlation_id: string; requirements?: Record<string, unknown> }[] = [];
   const acked: string[] = [];
   const client = {
-    async submitJob(b: { type: string; payload: unknown; correlation_id: string }) {
+    async submitJob(b: { type: string; payload: unknown; correlation_id: string; requirements?: Record<string, unknown> }) {
       submitted.push(b);
       for (const [k, v] of Object.entries(outputs)) bucket.set(`productions/prod-9/jobs/tts/${b.correlation_id}/out/${k}`, v);
       return { job: { id: "job-1" }, created: true };
@@ -117,5 +117,43 @@ describe("FarmExecutor with a payload builder (GĐ4)", () => {
       expect(res.errors[0]!.kind).toBe("contract");
     }
     expect(f.submitted).toHaveLength(0);
+  });
+});
+
+describe("FarmExecutor requirements (machine type, phase 3)", () => {
+  const tts = JSON.stringify({ schema: "ag.studio.tts/v1", production_id: "prod-9", language: "vi", lines: [], engine: { name: "fake", version: null } });
+  const builders = {
+    tts: async () => ({ productionId: "prod-9", payload: { production_id: "prod-9", language: "vi", voice: { reference: null, reference_text: null, speed: 1 }, lines: [{ line_id: "L001", text: "x", pause_seconds: null }], align_words: false } }),
+  };
+  async function run(cfg: Record<string, unknown>, requirementsFor?: (r: StageRequest) => Record<string, unknown> | undefined) {
+    const f = fakes({ "tts.json": tts }, "tts.json");
+    const recorded: (Record<string, unknown> | undefined)[] = [];
+    const seen: string[] = [];
+    const ex = new FarmExecutor({
+      client: f.client as never, storage: f.storage, pollIntervalMs: 1, payloadBuilders: builders,
+      onSubmitted: (info) => { recorded.push(info.requirements); },
+      ...(requirementsFor ? { requirementsFor: (r: StageRequest) => { seen.push(r.attempt_id); return requirementsFor(r); } } : {}),
+    });
+    const req = request({ __farm_job: "studio.tts", payload_builder: "tts", ...cfg }, [{ type: "tts_manifest", mime_type: "application/json", kind: "file", name: "tts.json" }]);
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.outcome, JSON.stringify(res.errors)).toBe("succeeded");
+    return { submitted: f.submitted[0]!.requirements, recorded: recorded[0], seen, req };
+  }
+
+  it("without a callback the job goes out as before: the stage config's requirements, else {}", async () => {
+    expect(await run({})).toMatchObject({ submitted: {}, recorded: {} });
+    expect(await run({ requirements: { gpu: true } })).toMatchObject({ submitted: { gpu: true }, recorded: { gpu: true } });
+  });
+
+  it("the callback's requirements win over the stage config, and reach the recorder", async () => {
+    const r = await run({ requirements: { gpu: true } }, () => ({ nvenc: true }));
+    expect(r.submitted).toEqual({ nvenc: true });
+    expect(r.recorded).toEqual({ nvenc: true });
+    expect(r.seen).toEqual([r.req.attempt_id]);
+  });
+
+  it("a callback with no answer for this stage leaves the stage config's value", async () => {
+    expect((await run({ requirements: { gpu: true } }, () => undefined)).submitted).toEqual({ gpu: true });
+    expect((await run({}, () => undefined)).submitted).toEqual({});
   });
 });

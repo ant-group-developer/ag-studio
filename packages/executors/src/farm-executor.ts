@@ -5,7 +5,8 @@
  *     The full relative path is preserved so farm_payload can reference inputs as
  *     `stage:<input.path>` (e.g. `stage:renders/1/composition.json`). The farm sign_url
  *     endpoint resolves `stage:<path>` → `${inputPrefix}<path>`.
- *  2. Submits the job to ag-farm using `stage_config.farm_payload` directly — the payload must
+ *  2. Submits the job to ag-farm (requirements: `requirementsFor`, else `stage_config.requirements`, else any
+ *     node) using `stage_config.farm_payload` directly — the payload must
  *     already conform to the schema for the job type (StudioTtsPayloadSchema /
  *     StudioRenderPayloadSchema). The payload is validated before submission; an extra `inputs:`
  *     key is never added (the strict hub schema would reject it).
@@ -151,6 +152,11 @@ export interface FarmExecutorOptions {
   onSubmitted?: (info: SubmittedInfo) => Promise<void> | void;
   /** Poll interval in ms (default 5000). */
   pollIntervalMs?: number;
+  /**
+   * ag-farm `requirements` for this attempt, chosen at run time (the machine type a person picked for a final
+   * render). `undefined` leaves `stage_config.requirements`, else `{}` (any node).
+   */
+  requirementsFor?: (request: StageRequest) => Record<string, unknown> | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -158,7 +164,7 @@ export interface FarmExecutorOptions {
 // ---------------------------------------------------------------------------
 
 export class FarmExecutor implements Executor {
-  readonly version = "0.3.0";
+  readonly version = "0.4.0";
 
   constructor(private readonly opts: FarmExecutorOptions) {}
 
@@ -278,6 +284,8 @@ export class FarmExecutor implements Executor {
     // -----------------------------------------------------------------------
     // 3. Submit job (idempotent via correlation_id = attempt_id)
     // -----------------------------------------------------------------------
+    const requirements = this.opts.requirementsFor?.(request)
+      ?? (typeof cfg.requirements === "object" && cfg.requirements !== null ? (cfg.requirements as Record<string, unknown>) : {});
     let jobId: string;
     try {
       const resp = await this.opts.client.submitJob({
@@ -288,15 +296,12 @@ export class FarmExecutor implements Executor {
         // One farm-level retry: a worker that dies mid-render (lease expired) is requeued right away on
         // another slot instead of failing the stage and waiting for the stage backoff.
         max_attempts: 2,
-        requirements:
-          typeof cfg.requirements === "object" && cfg.requirements !== null
-            ? (cfg.requirements as Record<string, unknown>)
-            : {},
+        requirements,
       });
       jobId = resp.job.id;
       ctx.logger.info(
         `farm job submitted id=${jobId} created=${resp.created}`,
-        { job_id: jobId, job_type: jobType },
+        { job_id: jobId, job_type: jobType, requirements },
       );
     } catch (e) {
       return failed("transient", `failed to submit farm job: ${String(e)}`, {
@@ -317,6 +322,7 @@ export class FarmExecutor implements Executor {
           productionId,
           jobType,
           isFinalRender,
+          requirements,
         });
       } catch (e) {
         // Recorder failure is fatal: the worker would get 403 on every sign call.

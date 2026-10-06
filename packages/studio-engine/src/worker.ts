@@ -7,7 +7,7 @@ import { createLogger, Redactor, type HarnessLogger } from "@harness/core";
 import { ExecutorRegistry, FarmExecutor, GateExecutor, InProcessExecutor, makeStudioFarmRecorder, StudioAgentExecutor } from "@harness/executors";
 import { Worker } from "@harness/worker";
 import type { FarmOwnerClient } from "@ag-farm/owner-client";
-import type { AgentCallTrace, ProjectConfig, StudioSkill } from "@harness/contracts";
+import { renderRequirements, type AgentCallTrace, type ProjectConfig, type StudioSkill } from "@harness/contracts";
 import { farmStorage, type StudioBucket } from "./bucket.js";
 import { modelFor } from "./models.js";
 import { createChatRunner, type ChatRunner } from "./chat-runner.js";
@@ -15,6 +15,7 @@ import { chatFeedback } from "./chat-db.js";
 import { recordLlmCall } from "./llm-log.js";
 import { cancelLegacyRuns, DEFAULT_CLAUDE_MAX_CONCURRENT, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, studioResources, studioWorkflowRefs, type StudioEngineCore } from "./core.js";
 import { claudeMaxConcurrent } from "./settings.js";
+import { renderChoiceFor } from "./render-choice.js";
 import { studioPayloadBuilders } from "./payloads.js";
 import { isRunActive, startEpisodeRun } from "./run-control.js";
 import { studioStages, type FootageCatalogSource } from "./stages.js";
@@ -89,6 +90,11 @@ function workerFactory(o: StudioWorkerOptions, single: boolean): { next: () => W
     onSubmitted: makeStudioFarmRecorder(o.dbPath),
     payloadBuilders: studioPayloadBuilders({ db: o.db, bucket: o.bucket }),
     pollIntervalMs: o.farmPollMs ?? 5000,
+    // the machine type picked for this run's render (phase 3); none picked: the farm executor's default
+    requirementsFor: (request) => {
+      const machine = renderChoiceFor(o.db, request.run_id, request.stage_key);
+      return machine ? renderRequirements(machine) : undefined;
+    },
   }));
   const capacity = () => studioResources(claudeMaxConcurrent(o.db, o.claudeMaxConcurrent ?? DEFAULT_CLAUDE_MAX_CONCURRENT).value);
   const project = {
