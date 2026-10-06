@@ -49,6 +49,16 @@ describe("ChatThread", () => {
     expect(screen.getByText(/Bước 2 · Chọn cảnh · chờ bạn/)).toBeInTheDocument();
   });
 
+  it.each([["approve-survey", "Chọn cảnh"], ["approve-edit-plan", "Kế hoạch dựng"]])("%s: the approve card names the step %s", (gate, name) => {
+    const onCard = vi.fn();
+    const ok = turn({ stage_key: gate, episode_id: "e", text: "Bấm Duyệt.", action: "suggest_approve" });
+    render(<ChatThread onCard={onCard} episode workflow="ag-studio-episode-cut@1.0.0"
+      thread={view([ok], { scope: { productionId: "p", episodeId: "e", runId: "r", stageKey: gate, scope: "gate" } })} />);
+    expect(screen.getByText(`Duyệt ${name} và chuyển sang bước sau?`)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Duyệt" }));
+    expect(onCard).toHaveBeenCalledWith("approve", ok);
+  });
+
   it("shows the divider of the step the production is at before anyone wrote in it", () => {
     render(<ChatThread onCard={vi.fn()} thread={view([])} />);
     expect(screen.getByText(/Bước 2 · R&D · chờ bạn/)).toBeInTheDocument();

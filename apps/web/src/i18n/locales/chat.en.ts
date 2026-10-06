@@ -77,6 +77,15 @@ export const chatEn: typeof chatVi = {
     noVideo: "This video cannot be shown (it needs the footage right on ag-go).",
     empty: "No shot here.",
   },
+  editPlan: {
+    total: "{{n}} shots · {{duration}} of picture (target {{target}})",
+    shot: "Shot", range: "In–out", length: "Length",
+    dissolve: "dissolve",
+    narration: "Narration",
+    atShot: "from shot {{n}}",
+    unanchored: "not on any shot",
+    texts: "Words on screen (estimated time)",
+  },
   timeline: {
     music: "Music", sourceAudio: "Original sound", on: "on", off: "off", text: "Text", clips: "Clips", clipCount: "{{n}} clips",
     changes: "Changes to the current version (not applied)", previewRendering: "Rendering the preview… {{p}}%",

@@ -230,6 +230,16 @@
 .chat-shots__player { display: flex; flex-direction: column; gap: 4px; }
 .chat-shots__player video { width: 100%; border-radius: 6px; background: #000; }
 .chat-shots__player p { margin: 0; }
+/* Kế hoạch dựng (mockup screen 9) */
+.chat-plan { display: flex; flex-direction: column; gap: 12px; }
+.chat-plan h3 { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
+.chat-plan__shots { width: 100%; border-collapse: collapse; font-size: 12px; }
+.chat-plan__shots th { text-align: left; font-weight: 500; color: var(--chat-faint); border-bottom: 1px solid var(--chat-line); padding: 2px 6px; }
+.chat-plan__shots td { padding: 3px 6px; border-bottom: 1px solid var(--chat-line); white-space: nowrap; }
+.chat-plan__row--changed { background: var(--chat-added-bg); }
+.chat-plan__tag { margin-left: 6px; font-size: 11px; color: var(--chat-run-fg); background: var(--chat-run-bg); border-radius: 999px; padding: 0 6px; }
+.chat-plan__lines { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+.chat-plan__anchor { display: block; font-size: 11px; color: var(--chat-faint); }
 .chat-timeline__clips li { display: flex; gap: 10px; }
 .chat-timeline__time { width: 44px; color: var(--chat-faint); font-variant-numeric: tabular-nums; }
 .chat-timeline__section { margin-left: auto; font-size: 12px; color: var(--chat-faint); }

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Dropdown, Popover, type MenuProps } from "antd";
 import { MoreHorizontal } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type { StudioSurvey, TimelineV3 } from "@harness/contracts";
+import type { EditPlan, StudioSurvey, TimelineV3 } from "@harness/contracts";
 import type { ChatThreadView, ChatTurn, RenderMachine } from "../../api/studio-client";
 import { RenderMachinePicker } from "../render/RenderMachinePicker";
 import { KIT_GATE, type CardOptions } from "./ChatThread";
@@ -12,6 +12,7 @@ import { DocView } from "./views/DocView";
 import { docKindOf } from "./views/doc-specs";
 import { EpisodeOutputs } from "./views/EpisodeOutputs";
 import { HAND_EDITABLE } from "./ManualEditDrawer";
+import { EditPlanResult } from "./views/EditPlanResult";
 import { SurveyResult } from "./views/SurveyResult";
 import { TimelineResult } from "./views/TimelineResult";
 
@@ -104,7 +105,8 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
   const isTimeline = !!episodeId && (scope?.stageKey === "approve-timeline" || scope?.scope === "timeline");
   // shot-cut episodes (phase 5): the scene selection shot by shot
   const isSurvey = !!episodeId && scope?.scope === "gate" && scope.stageKey === "approve-survey";
-  const versioned = !!kind || isSurvey;
+  const isEditPlan = !!episodeId && scope?.scope === "gate" && scope.stageKey === "approve-edit-plan";
+  const versioned = !!kind || isSurvey || isEditPlan;
   const { n, previous } = versionOf(thread);
   const doc = thread.current?.document;
   const changes = previous !== undefined && versioned ? diffDoc(previous, doc).length : 0;
@@ -144,6 +146,8 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
   let body: React.ReactNode = null;
   if (isSurvey && doc) {
     body = <SurveyResult productionId={productionId} episodeId={episodeId!} survey={doc as StudioSurvey} previous={previous as StudioSurvey | undefined} />;
+  } else if (isEditPlan && doc) {
+    body = <EditPlanResult plan={doc as EditPlan} previous={previous as EditPlan | undefined} />;
   } else if (isTimeline && doc) {
     const pending = thread.current?.pendingApply ? thread.turns.find((x) => x.id === thread.current?.turnId) : undefined;
     body = <TimelineResult productionId={productionId} episodeId={episodeId!} timeline={doc as TimelineV3}

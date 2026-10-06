@@ -75,6 +75,15 @@ export const chatVi = {
     noVideo: "Không xem được video này (cần quyền xem footage trên ag-go).",
     empty: "Không có shot nào ở mục này.",
   },
+  editPlan: {
+    total: "{{n}} shot · {{duration}} hình (mục tiêu {{target}})",
+    shot: "Shot", range: "Vào–ra", length: "Dài",
+    dissolve: "chuyển mờ",
+    narration: "Lời dẫn",
+    atShot: "từ shot {{n}}",
+    unanchored: "chưa neo vào shot nào",
+    texts: "Chữ trên hình (mốc ước tính)",
+  },
   timeline: {
     music: "Nhạc", sourceAudio: "Tiếng gốc", on: "bật", off: "tắt", text: "Chữ", clips: "Clip", clipCount: "{{n}} clip",
     changes: "Thay đổi so với bản hiện tại (chưa áp dụng)", previewRendering: "Đang render bản xem trước… {{p}}%",
