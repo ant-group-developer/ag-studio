@@ -34,3 +34,23 @@ export const CutSourcesSchema = z.object({
   }).strict()).min(1).max(60),
 }).strict();
 export type CutSources = z.infer<typeof CutSourcesSchema>;
+
+/**
+ * `proxies/proxies.json` inside the `proxy_set` directory (`fetch-proxies`): one 720p file per source, named
+ * `<source_id>.mp4`, as ag-go served it (`resolve purpose=preview`: the scan worker's proxy for a person allowed to see
+ * originals, else a preview variant, possibly watermarked). Only for looking at the footage; the final render
+ * downloads the originals itself.
+ */
+export const CutProxySetSchema = z.object({
+  schema_version: studioVersion("cut-proxies"),
+  proxies: z.array(z.object({
+    index: z.number().int().min(0),
+    asset_id: z.string().min(1),
+    source_id: SourceIdSchema,
+    file: z.string().regex(/^src_[0-9A-HJKMNP-TV-Z]{26}\.mp4$/),
+    source_kind: z.enum(["original", "proxy", "preview"]),
+    watermarked: z.boolean(),
+    bytes: z.number().int().min(0),
+  }).strict()),
+}).strict();
+export type CutProxySet = z.infer<typeof CutProxySetSchema>;

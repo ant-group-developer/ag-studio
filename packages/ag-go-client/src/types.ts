@@ -73,6 +73,8 @@ export interface ResolvedAssetItem {
 
 export interface ResolveAssetsResponse {
   items: ResolvedAssetItem[];
+  /** Asset ids ag-go could not serve to this user (no servable file, no access). */
+  missing?: string[];
 }
 
 export interface FolderItem {

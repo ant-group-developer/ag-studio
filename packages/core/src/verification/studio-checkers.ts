@@ -38,6 +38,9 @@ export const STUDIO_TYPES = {
   timeline: "timeline_v3",
   /** Timeline v4 of a shot-cut episode (`ag-studio-episode-cut`). */
   timelineV4: "timeline_v4",
+  /** Shot-cut episodes (`ag-studio-episode-cut`): the videos, their 720p proxies. */
+  cutSources: "cut_sources",
+  proxySet: "proxy_set",
   youtubeKit: "youtube_kit",
   finalVideo: "final_video",
   renderManifest: "render_manifest",

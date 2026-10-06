@@ -26,6 +26,7 @@ import { productionKey, type StudioBucket } from "./bucket.js";
 import { emptyResearch, type ResearchSource } from "./youtube-research.js";
 import { episodeWorkflowForPlan } from "./run-control.js";
 import type { ThumbnailRenderer } from "./thumbnail-render.js";
+import type { CutMediaDeps } from "./cut-stages.js";
 import { insertThumbnail, listThumbnails, replaceRenderThumbnails } from "./thumbnails-db.js";
 import {
   episodeForRun, getEpisode, getProduction, latestEpisodeRevision, listEpisodes, productionBranding, productionChannels, productionForRun,
@@ -51,6 +52,8 @@ export interface StudioStageDeps {
   isRunActive?: (runId: string) => boolean;
   /** Cuts thumbnail frames and draws their words (ffmpeg on this node); absent = no ffmpeg configured. */
   thumbnails?: ThumbnailRenderer;
+  /** What the shot-cut stages need (ffmpeg, ag-go resolve, downloads); absent = this worker cannot run them. */
+  media?: CutMediaDeps;
 }
 
 export const DEFAULT_CANVAS = { "16:9": { width: 1920, height: 1080 }, "9:16": { width: 1080, height: 1920 } } as const;

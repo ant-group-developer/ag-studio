@@ -19,7 +19,7 @@ import { renderChoiceFor } from "./render-choice.js";
 import { studioPayloadBuilders } from "./payloads.js";
 import { isRunActive, startEpisodeRun } from "./run-control.js";
 import type { FootageCatalogSource } from "./stages.js";
-import { studioInProcessStages } from "./cut-stages.js";
+import { studioInProcessStages, type CutMediaDeps } from "./cut-stages.js";
 import { teamGuidesForRun } from "./team-skills.js";
 import type { StudioDb } from "./studio-db.js";
 import type { ResearchSource } from "./youtube-research.js";
@@ -50,6 +50,8 @@ export interface StudioWorkerOptions {
   research?: ResearchSource;
   /** Cuts and draws thumbnails (`thumbnails` stage of episode 1.2.0); without it that stage parks for a person. */
   thumbnails?: ThumbnailRenderer;
+  /** ffmpeg, ag-go resolve and downloads for the shot-cut stages; without it those stages park for a person. */
+  media?: CutMediaDeps;
   /** Claude calls run at once across this worker's loops; default `DEFAULT_CLAUDE_MAX_CONCURRENT` (20). */
   claudeMaxConcurrent?: number;
 }
@@ -70,6 +72,7 @@ function workerFactory(o: StudioWorkerOptions, single: boolean): { next: () => W
     isRunActive: (runId) => isRunActive(core, runId),
     ...(o.research ? { research: o.research } : {}),
     ...(o.thumbnails ? { thumbnails: o.thumbnails } : {}),
+    ...(o.media ? { media: o.media } : {}),
   })));
   executors.register("agent", new StudioAgentExecutor({
     runtimeFor: (jsonSchema: string, skill?: StudioSkill, onCall?: (trace: AgentCallTrace) => void) => new CliAgentRuntime({
