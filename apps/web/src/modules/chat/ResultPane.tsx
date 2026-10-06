@@ -2,12 +2,12 @@ import { useState } from "react";
 import { Dropdown, Popover, type MenuProps } from "antd";
 import { MoreHorizontal } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type { EditPlan, StudioSurvey, TimelineV3 } from "@harness/contracts";
+import type { EditPlan, StoredTimeline, StudioSurvey } from "@harness/contracts";
 import type { ChatThreadView, ChatTurn, RenderMachine } from "../../api/studio-client";
 import { RenderMachinePicker } from "../render/RenderMachinePicker";
 import { KIT_GATE, type CardOptions } from "./ChatThread";
 import { diffDoc } from "./diff-doc";
-import { stepLabelKey, stepOf } from "./steps";
+import { isCutWorkflow, stepLabelKey, stepOf } from "./steps";
 import { DocView } from "./views/DocView";
 import { docKindOf } from "./views/doc-specs";
 import { EpisodeOutputs } from "./views/EpisodeOutputs";
@@ -17,7 +17,7 @@ import { SurveyResult } from "./views/SurveyResult";
 import { TimelineResult } from "./views/TimelineResult";
 
 export type ResultAction = "approve" | "start" | "apply" | "retry";
-export type MenuAction = "manual" | "editor" | "preview" | "finalRender" | "export" | "log" | "oldScreen";
+export type MenuAction = "manual" | "editor" | "preview" | "finalRender" | "export" | "rerunSurvey" | "rerunEditPlan" | "log" | "oldScreen";
 
 interface Props {
   productionId: string;
@@ -103,6 +103,7 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
   const step = stepOf(stageKey, workflow);
   const kind = scope ? docKindOf(scope.stageKey) : null;
   const isTimeline = !!episodeId && (scope?.stageKey === "approve-timeline" || scope?.scope === "timeline");
+  const cut = !!episodeId && isCutWorkflow(workflow);
   // shot-cut episodes (phase 5): the scene selection shot by shot
   const isSurvey = !!episodeId && scope?.scope === "gate" && scope.stageKey === "approve-survey";
   const isEditPlan = !!episodeId && scope?.scope === "gate" && scope.stageKey === "approve-edit-plan";
@@ -137,7 +138,12 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
       { key: "editor", label: t("chat.menu.editor") },
       { key: "preview", label: t("chat.menu.preview") },
       { key: "finalRender", label: t("chat.menu.finalRender"), disabled: !canRenderFinal || !canApprove },
-      { key: "export", label: t("chat.menu.export") },
+      // Premiere cannot read trims, transitions or narration yet (phase 4)
+      ...(cut ? [] : [{ key: "export", label: t("chat.menu.export") }]),
+      ...(cut ? [
+        { key: "rerunSurvey", label: t("chat.menu.rerunSurvey"), disabled: !canApprove },
+        { key: "rerunEditPlan", label: t("chat.menu.rerunEditPlan"), disabled: !canApprove },
+      ] : []),
     ] : []),
     { key: "log", label: t("chat.menu.log") },
     { key: "oldScreen", label: t("chat.menu.oldScreen") },
@@ -150,8 +156,8 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
     body = <EditPlanResult plan={doc as EditPlan} previous={previous as EditPlan | undefined} />;
   } else if (isTimeline && doc) {
     const pending = thread.current?.pendingApply ? thread.turns.find((x) => x.id === thread.current?.turnId) : undefined;
-    body = <TimelineResult productionId={productionId} episodeId={episodeId!} timeline={doc as TimelineV3}
-      proposal={(pending?.proposal as { timeline?: TimelineV3 } | undefined)?.timeline ?? null} />;
+    body = <TimelineResult productionId={productionId} episodeId={episodeId!} timeline={doc as StoredTimeline}
+      proposal={(pending?.proposal as { timeline?: StoredTimeline } | undefined)?.timeline ?? null} />;
   } else if (kind && doc) {
     body = (
       <>

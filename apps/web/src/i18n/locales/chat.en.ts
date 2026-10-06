@@ -158,6 +158,19 @@ export const chatEn: typeof chatVi = {
   menu: {
     more: "More actions", manual: "Edit by hand", editor: "Open the timeline editor", preview: "Render a 720p preview", finalRender: "Render the final cut…",
     export: "Export a Premiere project", log: "Claude call log", oldScreen: "Open the old screen",
+    rerunSurvey: "Run again from scene selection…", rerunEditPlan: "Run again from the edit plan…",
+  },
+  rerun: {
+    survey: {
+      title: "Run again from scene selection?",
+      body: "The episode goes back to Choose scenes with Claude's selection; the edit plan, narration and timeline after it are made again. The footage and shots already prepared are kept.",
+    },
+    editPlan: {
+      title: "Run again from the edit plan?",
+      body: "The episode goes back to Edit plan with Claude's plan; the narration and timeline after it are made again. The approved scene selection is kept.",
+    },
+    ok: "Run again", cancel: "Cancel",
+    started: "Running again: the episode waits for you at that step.",
   },
   manual: {
     title: "Edit by hand",

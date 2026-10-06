@@ -1,15 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { TimelineV3 } from "@harness/contracts";
-import { layoutTimeline } from "@studio/timeline";
+import type { StoredTimeline } from "@harness/contracts";
+import { isTimelineV4, layoutTimeline } from "@studio/timeline";
 import { useStudioClient } from "../../../api/studio-client";
 
+const secs = (s: number) => `${Math.round(s * 10) / 10}s`;
 const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
 
 export interface TimelineChange { key: string; label: string; before?: string | undefined; after?: string | undefined }
 
 /** What a proposal changes in a timeline, as a list people read (mockup "Thay đổi so với bản trước"). */
-export function timelineChanges(before: TimelineV3, after: TimelineV3, t: (k: string, o?: Record<string, unknown>) => string): TimelineChange[] {
+export function timelineChanges(before: StoredTimeline, after: StoredTimeline, t: (k: string, o?: Record<string, unknown>) => string): TimelineChange[] {
   const out: TimelineChange[] = [];
   if (JSON.stringify(before.music) !== JSON.stringify(after.music)) {
     out.push({ key: "music", label: t("chat.timeline.music"), before: before.music ? `${before.music.gain_db} dB` : "—", after: after.music ? `${after.music.gain_db} dB` : "—" });
@@ -24,7 +25,7 @@ export function timelineChanges(before: TimelineV3, after: TimelineV3, t: (k: st
     else if (JSON.stringify(old) !== JSON.stringify(x)) out.push({ key: `text-${x.text_id}`, label: t("chat.timeline.text"), before: `"${old.text}"`, after: `"${x.text}" · ${at}` });
   }
   for (const y of before.texts) if (!after.texts.some((x) => x.text_id === y.text_id)) out.push({ key: `text-${y.text_id}`, label: t("chat.timeline.text"), before: `"${y.text}"` });
-  const ids = (tl: TimelineV3) => tl.clips.map((c) => c.asset_id).join(",");
+  const ids = (tl: StoredTimeline) => tl.clips.map((c) => c.asset_id).join(",");
   if (ids(before) !== ids(after)) {
     out.push({ key: "clips", label: t("chat.timeline.clips"), before: t("chat.timeline.clipCount", { n: before.clips.length }), after: t("chat.timeline.clipCount", { n: after.clips.length }) });
   }
@@ -33,7 +34,7 @@ export function timelineChanges(before: TimelineV3, after: TimelineV3, t: (k: st
 
 /** The timeline of an episode (mockup screen 7): its preview, its clips and words, what the proposal changes. */
 export function TimelineResult({ productionId, episodeId, timeline, proposal }: {
-  productionId: string; episodeId: string; timeline: TimelineV3; proposal?: TimelineV3 | null | undefined;
+  productionId: string; episodeId: string; timeline: StoredTimeline; proposal?: StoredTimeline | null | undefined;
 }) {
   const { t } = useTranslation();
   const client = useStudioClient();
@@ -49,6 +50,7 @@ export function TimelineResult({ productionId, episodeId, timeline, proposal }: 
     refetchInterval: (q) => (q.state.data && (q.state.data.status === "queued" || q.state.data.status === "running") ? 3000 : false),
   });
   const changes = proposal ? timelineChanges(timeline, proposal, t) : [];
+  const cut = isTimelineV4(shown) && shown.edit_style === "cut";
   return (
     <div className="chat-timeline">
       {preview?.status === "completed" && preview.url ? (
@@ -74,6 +76,7 @@ export function TimelineResult({ productionId, episodeId, timeline, proposal }: 
           <li key={c.clip_id}>
             <span className="chat-timeline__time">{mmss(c.start)}</span>
             <span>{shown.assets[c.asset_id]?.title ?? c.asset_id}</span>
+            {cut ? <span className="chat-timeline__range">{secs(c.in)}–{secs(c.source_out)}</span> : null}
             {c.section_title ? <span className="chat-timeline__section">{c.section_title}</span> : null}
           </li>
         ))}

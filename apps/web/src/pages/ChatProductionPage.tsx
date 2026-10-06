@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { App as AntApp, Drawer } from "antd";
+import type { EpisodeRerunGate } from "../api/studio-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "react-router-dom";
@@ -34,7 +35,7 @@ function stillWorking(thread: ChatThreadView | undefined): boolean {
 export function ChatProductionPage() {
   const { productionId = "", episodeId } = useParams();
   const { t } = useTranslation();
-  const { message } = AntApp.useApp();
+  const { message, modal } = AntApp.useApp();
   const navigate = useNavigate();
   const client = useStudioClient();
   const qc = useQueryClient();
@@ -120,7 +121,22 @@ export function ChatProductionPage() {
     onError: fail,
   });
 
+  const rerun = useMutation({
+    mutationFn: (stage: EpisodeRerunGate) => client.rerunEpisodeFrom(productionId, episodeId!, stage),
+    onSuccess: () => { void message.success(t("chat.rerun.started")); refresh(); },
+    onError: fail,
+  });
+  const confirmRerun = (stage: EpisodeRerunGate) => {
+    const which = stage === "approve-survey" ? "survey" : "editPlan";
+    void modal.confirm({
+      title: t(`chat.rerun.${which}.title`), content: t(`chat.rerun.${which}.body`),
+      okText: t("chat.rerun.ok"), cancelText: t("chat.rerun.cancel"), onOk: () => rerun.mutateAsync(stage),
+    });
+  };
+
   const onMenu = (m: MenuAction) => {
+    if (m === "rerunSurvey" && episodeId) confirmRerun("approve-survey");
+    if (m === "rerunEditPlan" && episodeId) confirmRerun("approve-edit-plan");
     if (m === "manual") setManualOpen(true);
     if (m === "editor" && episodeId) navigate(`/productions/${productionId}/episodes/${episodeId}/editor`);
     if (m === "preview") act.mutate({ kind: "render" });

@@ -22,10 +22,10 @@ const turn = (over: Partial<ChatTurn>): ChatTurn => ({
   llm_call_id: null, created_by: null, applied_at: null, created_at: "", updated_at: "", ...over,
 });
 
-const mount = (thread: ChatThreadView, props: { onPrimary?: () => void; onMenu?: () => void; canApprove?: boolean; episodeId?: string; canRenderFinal?: boolean } = {}) => render(
+const mount = (thread: ChatThreadView, props: { onPrimary?: () => void; onMenu?: () => void; canApprove?: boolean; episodeId?: string; canRenderFinal?: boolean; workflow?: string } = {}) => render(
   <QueryClientProvider client={new QueryClient()}>
     <ResultPane productionId="p" episodeId={props.episodeId} thread={thread} onPrimary={props.onPrimary ?? vi.fn()} onMenu={props.onMenu ?? vi.fn()} canApprove={props.canApprove ?? true}
-      renderDefault="any" canRenderFinal={props.canRenderFinal} />
+      renderDefault="any" canRenderFinal={props.canRenderFinal} workflow={props.workflow} />
   </QueryClientProvider>,
 );
 
@@ -115,5 +115,21 @@ describe("ResultPane", () => {
     fireEvent.click(screen.getByRole("button", { name: "Thêm thao tác" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "Render bản cuối…" }));
     expect(onMenu).toHaveBeenCalledWith("finalRender");
+  });
+
+  it("⋯ of a shot-cut episode runs it again from a gate, and has no Premiere export (phase 4)", async () => {
+    const onMenu = vi.fn();
+    const done: ChatThreadView = { turns: [], scope: null, blocked: { code: "nothing_to_chat", stage: null }, current: null, queueAhead: 0 };
+    const { unmount } = mount(done, { episodeId: "e", onMenu, workflow: "ag-studio-episode-cut@1.0.0" });
+    fireEvent.click(screen.getByRole("button", { name: "Thêm thao tác" }));
+    expect(await screen.findByRole("menuitem", { name: "Chạy lại từ kế hoạch dựng…" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Xuất project Premiere" })).toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Chạy lại từ chọn cảnh…" }));
+    expect(onMenu).toHaveBeenCalledWith("rerunSurvey");
+    unmount();
+    mount(done, { episodeId: "e", onMenu, workflow: "ag-studio-episode@1.3.0" });
+    fireEvent.click(screen.getByRole("button", { name: "Thêm thao tác" }));
+    expect(await screen.findByRole("menuitem", { name: "Xuất project Premiere" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Chạy lại từ chọn cảnh…" })).toBeNull();
   });
 });

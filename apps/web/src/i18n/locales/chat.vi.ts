@@ -156,6 +156,19 @@ export const chatVi = {
   menu: {
     more: "Thêm thao tác", manual: "Sửa tay", editor: "Mở editor timeline", preview: "Render xem trước 720p", finalRender: "Render bản cuối…",
     export: "Xuất project Premiere", log: "Nhật ký Claude", oldScreen: "Mở màn hình cũ",
+    rerunSurvey: "Chạy lại từ chọn cảnh…", rerunEditPlan: "Chạy lại từ kế hoạch dựng…",
+  },
+  rerun: {
+    survey: {
+      title: "Chạy lại từ chọn cảnh?",
+      body: "Tập quay về bước Chọn cảnh với bản Claude chọn; kế hoạch dựng, lời dẫn và timeline sau đó làm lại. Footage và shot đã chuẩn bị được giữ.",
+    },
+    editPlan: {
+      title: "Chạy lại từ kế hoạch dựng?",
+      body: "Tập quay về bước Kế hoạch dựng với bản Claude viết; lời dẫn và timeline sau đó làm lại. Bản chọn cảnh đã duyệt được giữ.",
+    },
+    ok: "Chạy lại", cancel: "Thôi",
+    started: "Đã chạy lại, tập đang chờ bạn duyệt lại bước đó.",
   },
   manual: {
     title: "Sửa tay",

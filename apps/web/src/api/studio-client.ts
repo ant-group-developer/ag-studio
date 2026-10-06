@@ -1,5 +1,5 @@
 import { useAuthToken } from "../auth/use-auth-token";
-import type { TimelineV3, YoutubeKit, SeriesPlan, StudioCatalog, StudioResearch, TrendReport, StudioRnd, StudioBranding, StudioBrief, ThumbnailStyle } from "@harness/contracts";
+import type { StoredTimeline, TimelineV3, YoutubeKit, SeriesPlan, StudioCatalog, StudioResearch, TrendReport, StudioRnd, StudioBranding, StudioBrief, ThumbnailStyle } from "@harness/contracts";
 import type { TimelineIssue } from "@studio/timeline";
 
 const STUDIO_API_URL =
@@ -322,7 +322,8 @@ export interface RunView {
 
 export interface TimelineRevisionView {
   revision: number;
-  data: TimelineV3;
+  /** v3 for a whole-video episode, v4 for a shot-cut one (an episode keeps the version of its first revision). */
+  data: StoredTimeline;
   issues: TimelineIssue[];
   savedAt: string;
   authorId: string;
@@ -681,7 +682,7 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
       return request(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/timeline/revisions`);
     },
     /** 409 (`StudioHttpError`, body `{ code: "revision_conflict", currentRevision }`) when `baseRevision` is stale. */
-    saveRevision(productionId: string, episodeId: string, baseRevision: number, data: TimelineV3, label?: string): Promise<{ revision: number; issues: TimelineIssue[]; approved?: boolean }> {
+    saveRevision(productionId: string, episodeId: string, baseRevision: number, data: StoredTimeline, label?: string): Promise<{ revision: number; issues: TimelineIssue[]; approved?: boolean }> {
       return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/timeline/revisions`, { baseRevision, data, ...(label ? { label } : {}) });
     },
     renderPreview(productionId: string, episodeId: string, revision: number): Promise<EditorJob> {

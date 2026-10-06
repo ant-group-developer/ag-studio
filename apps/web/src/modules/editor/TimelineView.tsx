@@ -1,5 +1,6 @@
 /**
- * Timeline tracks (GĐ3, v3): clips row (width ∝ duration) + sections row + texts row.
+ * Timeline tracks (GĐ3; v4 in phase 5): clips row (width ∝ the trimmed play length, dissolves marked between
+ * clips) + narration row (shot-cut episodes) + texts row.
  * Reordering via @dnd-kit/sortable; remove/select via dispatch.
  */
 import type { Dispatch } from "react";
@@ -91,6 +92,8 @@ function SortableClip({ id, label, hint, duration, hasSection, selected, onSelec
 
 export interface TimelineViewProps {
   layout: TimelineLayout;
+  /** The narration's lines by id (shot-cut episodes): the row under the picture shows them where they are read. */
+  narration?: Record<string, string> | undefined;
   /** The episode's videos, to name each clip after its video. */
   assets?: Record<string, { title: string }>;
   selection: Selection;
@@ -99,7 +102,7 @@ export interface TimelineViewProps {
   onSeek: (t: number) => void;
 }
 
-export function TimelineView({ layout, assets, selection, dispatch, playhead, onSeek }: TimelineViewProps) {
+export function TimelineView({ layout, assets, narration, selection, dispatch, playhead, onSeek }: TimelineViewProps) {
   const width = Math.max(1, Math.round(layout.duration * PX_PER_SECOND)) + 40;
 
   // Keyboard too: focus a clip's grip, Space to pick it up, arrows to move, Space to drop.
@@ -157,6 +160,44 @@ export function TimelineView({ layout, assets, selection, dispatch, playhead, on
             </div>
           </SortableContext>
         </DndContext>
+
+        {/* Transitions: a dissolve / dip to black where a clip ends into the next */}
+        {layout.clips.some((c) => c.transition_out.kind !== "cut") ? (
+          <div style={{ height: 0, position: "relative" }}>
+            {layout.clips.slice(0, -1).filter((c) => c.transition_out.kind !== "cut").map((c) => (
+              <div
+                key={c.clip_id}
+                data-testid={`transition-${c.clip_id}`}
+                title={`${c.transition_out.kind} ${c.transition_out.seconds}s`}
+                style={{
+                  position: "absolute", top: -34, left: c.end * PX_PER_SECOND - 7, width: 14, height: 20, zIndex: 4,
+                  background: c.transition_out.kind === "dip_black" ? "#141414" : "linear-gradient(90deg, #4096ff, #fff, #4096ff)",
+                  borderRadius: 3, border: "1px solid #fff", pointerEvents: "none",
+                }}
+              />
+            ))}
+          </div>
+        ) : null}
+
+        {/* Narration row (shot-cut episodes): each line from the clip it starts on */}
+        {layout.lines.length ? (
+          <div style={{ height: 24, borderTop: "1px solid #eee", position: "relative" }}>
+            {layout.lines.map((l) => (
+              <div
+                key={l.line_id}
+                data-testid={`line-${l.line_id}`}
+                title={narration?.[l.line_id] ?? l.line_id}
+                style={{
+                  position: "absolute", left: l.start * PX_PER_SECOND, width: Math.max(4, (l.end - l.start) * PX_PER_SECOND),
+                  height: 18, top: 3, background: "#d9f7be", border: l.estimated ? "1px dashed #73d13d" : undefined, borderRadius: 2,
+                  fontSize: 10, padding: "0 4px", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis",
+                }}
+              >
+                {narration?.[l.line_id] ?? l.line_id}
+              </div>
+            ))}
+          </div>
+        ) : null}
 
         {/* Texts row */}
         <div style={{ height: 28, borderTop: "1px solid #eee", position: "relative" }}>

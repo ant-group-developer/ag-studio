@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { layoutTimeline, timelineIssues } from "@studio/timeline";
 import { editorReducer, HISTORY_LIMIT, initEditor, isDirty, type EditorAction, type EditorState } from "./editor-reducer";
-import { sampleTimeline } from "./fixtures";
+import { sampleCutTimeline, sampleTimeline } from "./fixtures";
 
 const run = (s: EditorState, ...actions: EditorAction[]) => actions.reduce(editorReducer, s);
 const clip = (s: EditorState, id: string) => s.timeline.clips.find((c) => c.clip_id === id)!;
@@ -111,5 +111,37 @@ describe("editor reducer (v3)", () => {
     const s3 = run(s2, { type: "redo" });
     expect(s3.timeline).toBe(s1.timeline);
     expect(run(s3, { type: "redo" })).toBe(s3); // nothing left to redo
+  });
+});
+
+describe("editor reducer (v4, shot-cut episodes)", () => {
+  it("trims a clip: its play length follows, nudges of one clip are one undo step", () => {
+    const s0 = initEditor(sampleCutTimeline(), 2);
+    expect(layoutTimeline(s0.timeline).clips[0]!.duration).toBe(4);
+    const s1 = run(s0, { type: "trimClip", clipId: "C001", in: 1.5, out: 5 }, { type: "trimClip", clipId: "C001", in: 1.5, out: 4.5 });
+    expect(clip(s1, "C001")).toMatchObject({ in: 1.5, out: 4.5 });
+    expect(layoutTimeline(s1.timeline).clips[0]!.duration).toBe(3);
+    expect(s1.past).toHaveLength(1);
+    expect(run(s1, { type: "undo" }).timeline).toBe(s0.timeline);
+  });
+
+  it("an out past the video's end is refused, the timeline kept", () => {
+    const s0 = initEditor(sampleCutTimeline(), 2);
+    const s1 = run(s0, { type: "trimClip", clipId: "C001", in: 0, out: 11 });
+    expect(s1.timeline).toBe(s0.timeline);
+    expect(s1.error).toMatch(/ngoài video/);
+  });
+
+  it("sets a clip's transition and the captions", () => {
+    const s1 = run(initEditor(sampleCutTimeline(), 2), { type: "setTransition", clipId: "C002", kind: "dip_black", seconds: 0.8 }, { type: "setCaptions", mode: "karaoke" });
+    expect(clip(s1, "C002")).toMatchObject({ transition_out: { kind: "dip_black", seconds: 0.8 } });
+    expect(s1.timeline).toMatchObject({ captions: { mode: "karaoke" } });
+  });
+
+  it("a whole-video (v3) timeline refuses trims", () => {
+    const s0 = initEditor(sampleTimeline(), 1);
+    const s1 = run(s0, { type: "trimClip", clipId: "C001", in: 1, out: 3 });
+    expect(s1.timeline).toBe(s0.timeline);
+    expect(s1.error).toMatch(/cắt theo shot/);
   });
 });
