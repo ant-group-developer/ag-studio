@@ -65,6 +65,16 @@ export const chatVi = {
     skippedResearch: "Không có dữ liệu nghiên cứu YouTube cho series này; các bước sau tự đề xuất.",
     roles: { own: "kênh của mình", reference: "tham khảo" },
   },
+  survey: {
+    filter: "Lọc shot",
+    filters: { usable: "Dùng được ({{n}})", rejected: "Bị loại ({{n}})", all: "Tất cả ({{n}})" },
+    kept: "{{score}}/5 · dùng được",
+    play: "Xem shot {{shot}}",
+    player: "Đoạn video của shot {{shot}}",
+    loadingVideo: "Đang tải đoạn video…",
+    noVideo: "Không xem được video này (cần quyền xem footage trên ag-go).",
+    empty: "Không có shot nào ở mục này.",
+  },
   timeline: {
     music: "Nhạc", sourceAudio: "Tiếng gốc", on: "bật", off: "tắt", text: "Chữ", clips: "Clip", clipCount: "{{n}} clip",
     changes: "Thay đổi so với bản hiện tại (chưa áp dụng)", previewRendering: "Đang render bản xem trước… {{p}}%",

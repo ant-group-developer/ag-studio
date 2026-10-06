@@ -67,6 +67,16 @@ export const chatEn: typeof chatVi = {
     skippedResearch: "No YouTube research for this series; the next steps propose on their own.",
     roles: { own: "own channel", reference: "reference" },
   },
+  survey: {
+    filter: "Filter shots",
+    filters: { usable: "Usable ({{n}})", rejected: "Rejected ({{n}})", all: "All ({{n}})" },
+    kept: "{{score}}/5 · usable",
+    play: "Play shot {{shot}}",
+    player: "Video of shot {{shot}}",
+    loadingVideo: "Loading the video…",
+    noVideo: "This video cannot be shown (it needs the footage right on ag-go).",
+    empty: "No shot here.",
+  },
   timeline: {
     music: "Music", sourceAudio: "Original sound", on: "on", off: "off", text: "Text", clips: "Clips", clipCount: "{{n}} clips",
     changes: "Changes to the current version (not applied)", previewRendering: "Rendering the preview… {{p}}%",
