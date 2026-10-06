@@ -81,7 +81,7 @@ describe("intake draft", () => {
   });
 
   it("chat skills have a team-skill step of their own", () => {
-    expect(STUDIO_CHAT_SKILLS).toEqual(["studio-intake", "studio-timeline"]);
+    expect(STUDIO_CHAT_SKILLS).toEqual(["studio-intake", "studio-timeline", "studio-survey"]);
     for (const s of STUDIO_CHAT_SKILLS) expect(TEAM_SKILL_STEPS).toContain(STUDIO_CHAT_SKILL_STEP[s]);
   });
 });

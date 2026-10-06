@@ -66,10 +66,12 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
   **sau** khi API healthy. Không có Postgres.
 - API dựng engine core ngay trong tiến trình (`apps/api/src/studio/engine.service.ts` → `createStudioEngineCore`),
   nên gate nộp từ web được kiểm bằng đúng checker worker dùng. API ghi `studio.db` bằng `BEGIN IMMEDIATE`.
-- Bảng Studio (migration `0008`–`0021`): `teams`, `team_members`, `team_skills`, `productions`, `episodes`,
+- Bảng Studio (migration `0008`–`0024`): `teams`, `team_members`, `team_skills`, `productions`, `episodes`,
   `episode_revisions`, `episode_jobs`, `episode_thumbnails`, `studio_farm_jobs` (có `requirements`, `episode_id`),
   `sign_audit_log`, `youtube_cache`, `llm_calls`, `human_edits`, `canva_*`, `stage_chat_turns` (chat, 0019),
-  `studio_settings` (cấu hình chỉnh trên web, 0020), `studio_render_choices` (kiểu máy render, 0021). `comments`, `timeline_revisions`, `studio_editor_jobs` là bảng cũ, không dùng.
+  `studio_settings` (cấu hình chỉnh trên web, 0020), `studio_render_choices` (kiểu máy render, 0021),
+  `studio_agent_sessions` (session Claude của stage file mode, 0022), `episodes.edit_style` (0023),
+  `studio_voice_lines` (kho giọng, 0024). `comments`, `timeline_revisions`, `studio_editor_jobs` là bảng cũ, không dùng.
 - File hướng ra trình duyệt nằm trên R2 (`S3Bucket`, `packages/studio-engine/src/bucket.ts`), URL ký có hạn.
 - Biến môi trường: `.env.example` (nhóm Auth0, Account API, ag-go, farm, R2, Claude, Canva, YouTube). API kiểm
   bằng zod ở `apps/api/src/config/env.ts`; worker dùng `requireEnv` ở `apps/worker/src/main.ts`. **Không bao giờ in
@@ -91,6 +93,15 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
   **`approve-timeline`** (nộp revision mới nhất) → `youtube-kit` → **`approve-youtube-kit`** → `freeze-timeline`
   (`studio-freeze-timeline-v2`: timeline **đã duyệt**) → `render-final` (farm) → `thumbnails` → `export`. Tập chờ
   gate có trạng thái `waiting_approval`. Plan 1.0.0/2.0.0 vẫn sinh tập 1.2.0 không gate (`episodeWorkflowForPlan`).
+- **Plan `ag-studio-series-plan@3.1.0`** (đang dùng) chỉ khác 3.0.0 ở `spawn-episodes` (`studio-spawn-episodes-v2`):
+  `plan-episodes` chọn kiểu dựng từng tập (`edit_style: whole|cut`, `narration: none|tts|original`), lưu ở
+  `episodes.edit_style`; tập `cut` chạy **`ag-studio-episode-cut@1.0.0`** (`episodeWorkflowFor`): `episode-intake`
+  → `fetch-proxies` (proxy 720p từ ag-go) → `media-index` (shot) → `transcribe` (farm `studio.transcribe`) →
+  `watch-source` (khung + contact sheet) → `source-survey` → **`approve-survey`** → `plan-edit` →
+  **`approve-edit-plan`** → `tts` (farm `studio.tts`) → `fit-timeline` (timeline v4) → **`approve-timeline`** →
+  `youtube-kit` → **`approve-youtube-kit`** → `freeze-timeline` → `render-final` → `thumbnails` → `export`. Các khoá
+  gate/render giống 1.3.0 để `run-control` dùng chung (ADR mục 158). Stage media ở
+  `packages/studio-engine/src/cut-stages.ts`; chạy lại từ một gate: `rerunEpisodeFrom` (`cut-episode.ts`).
   Phiên bản đang dùng ở `STUDIO_WORKFLOWS` (`packages/studio-engine/src/core.ts`), gate ở `STUDIO_GATES`
   (`packages/studio-engine/src/run-control.ts`).
 - Thư mục workflow đã phát hành **không bao giờ sửa**: làm phiên bản mới. Script/payload builder đổi đầu ra thì đặt
@@ -102,6 +113,12 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
 - Timeline v3: clip luôn là **cả asset**, nối tiếp, không trim; không trùng trong một tập, được dùng lại giữa các
   tập; lệch thời lượng ±20% chỉ cảnh báo. Thao tác thuần ở `packages/core/src/studio/layout.ts` (web dùng chung qua
   alias `@studio/timeline`). Render: `timelineToComposition` → `harness.composition/v1`.
+- **Timeline v4** (tập cắt theo shot, hợp đồng ở `TimelineV4Schema`, ADR mục 151): clip là đoạn `[in, out)` của video
+  (`out: null` = tới hết), có `shot_id`, `line_id`, `transition_out`; timeline có `edit_style`, `narration`,
+  `captions`. **Đọc** luôn ra v4 (`readTimeline`); **ghi** giữ phiên bản revision đầu của tập (`timelineAsVersion`):
+  tập ghép nguyên video vẫn lưu v3, v4 mất dữ liệu trên tập đó là 422 `not_v3`. Không bao giờ ghi lại revision v3 cũ.
+  `trimClip`/`setTransition`/`setCaptions` chỉ cho v4 (`needs_v4`). Composition luôn suy từ revision (không có stage
+  compose): lời dẫn `stage:voice/<line_id>.wav`, phụ đề, ducking, chuyển cảnh.
 - Stage in-process (`InProcessExecutor`) nằm ở `packages/studio-engine/src/stages.ts`. Các workflow harness cũ
   (`library-production*`, `channel-*`, `style-study*`, `footage-production`) vẫn trong `workflows/` nhưng **không
   chạy được** vì built-in của chúng đã bị gỡ (ADR mục 127).
@@ -114,8 +131,12 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
 - `StudioAgentExecutor` (`packages/executors/src/studio-agent-executor.ts`): prompt = skill + brief + quy chuẩn nhóm
   (`<team_guide>`) + input inline; kiểm bằng `VALIDATORS` theo skill; **một** vòng sửa rồi `contract`. Lỗi giới hạn
   gói (`RATE_LIMITED`) chờ 5→60 phút, không tính là attempt.
-- Model theo skill (`packages/studio-engine/src/models.ts`): Opus cho `studio-rnd`/`studio-plan-episodes`, Sonnet
-  còn lại; ghi đè bằng `STUDIO_CLAUDE_MODEL[_<SKILL>]`.
+- Model theo skill (`packages/studio-engine/src/models.ts`): Opus cho `studio-rnd`/`studio-plan-episodes`/
+  `studio-edit-plan`, Sonnet còn lại; ghi đè bằng `STUDIO_CLAUDE_MODEL[_<SKILL>]`.
+- **File mode có session** (ADR mục 155): chỉ `studio-source-survey` (bước chọn cảnh xem contact sheet) chạy
+  `CliAgentRuntime` mode `files` (`--allowedTools Read,Write,Glob,Grep`, không Bash, không web, giữ session); Claude
+  tự ghi `output/survey.json`, vòng sửa `--resume` đúng session; session + thư mục lưu ở `studio_agent_sessions`
+  (`saveAgentSession`/`agentSessionFor`). Mọi skill khác vẫn structured.
 - Số lượt Claude cùng lúc: `studio_settings.claude.max_concurrent` (admin sửa trên web, `PUT /api/studio/settings`)
   thắng `STUDIO_CLAUDE_MAX_CONCURRENT` (1–100, mặc định 20; env sai là `CONFIG_INVALID` lúc khởi động) → capacity
   `claude` của `studioResources()`, đọc lại ở mỗi lần claim. Worker chạy `createStudioWorkerPool`: `claude + farm +
@@ -132,7 +153,10 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
 - `runChatTurn` (`chat.ts`): prompt = phần đầu prompt của stage nguồn (`studioPromptHead`, giống từng byte) +
   `# Bản hiện tại` + `# Góp ý` + `# Đầu ra (chat)`; trả `{reply, action, proposal}`; `proposal` kiểm bằng validator
   của stage, một vòng sửa. Ghi `llm_calls` với `source = 'claude-chat'`. Skill chỉ có ở chat: `studio-intake`,
-  `studio-timeline` (đề xuất `TimelineOp`, áp bằng `applyTimelineOps`).
+  `studio-timeline` (đề xuất `TimelineOp`, áp bằng `applyTimelineOps`), `studio-survey` (gate `approve-survey`:
+  đề xuất `SurveyOp` keep/reject/setScore/setNote, áp bằng `applySurveyOps`; còn thư mục của stage thì lượt chat
+  chạy `claude --resume <session> --fork-session --json-schema` trong đó, chỉ Read/Glob/Grep — mất thì structured).
+  `approve-edit-plan` chat bằng `studio-edit-plan` như mọi gate tài liệu.
 - Không gì được áp dụng tới khi người bấm (`chat-actions.ts`): Bắt đầu (`startFromIntake`), Duyệt
   (`approveChatScope`, nộp bản đang hiện theo `turnId`), Áp dụng (intake/timeline, `applyChatProposal`), Chạy lại
   (`retryStageWithFeedback`, tin nhắn vào prompt dạng `# Góp ý của người dùng`), Sửa tay (`saveManualEdit`).
@@ -164,7 +188,12 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
 - **Màn Hàng đợi** (`/queue`, `GET /api/studio/queue`, `queue.ts`): lượt Claude (dòng `lease` giữ `claude`) và job farm
   chưa xong (owner API `listJobs`, cache 3 s) của video người xem thấy. Owner API **không** có danh sách node nên không
   có danh sách máy; `JobView` chỉ có `node_id`. Job `queued` quá 10 phút hiện cảnh báo (farm không báo vì sao chờ).
-- Xuất Premiere: job farm `studio.export_premiere`, FCP7 XML (xmeml v5), chữ là PNG, zip kèm README relink.
+- Xuất Premiere: job farm `studio.export_premiere`, FCP7 XML (xmeml v5), chữ là PNG, zip kèm README relink. **Tắt cho
+  tập cắt theo shot** tới pha 4 (422 `premiere_needs_phase_4`, web ẩn mục; ADR mục 159).
+- **Lời dẫn và nhận dạng lời nói ở farm** (tập cắt, ADR mục 154, 156): `studio.tts` chỉ gửi các dòng chưa có trong
+  kho giọng (`voice-store.ts`, khoá theo nội dung, WAV ở `<STUDIO_DATA_ROOT>/voice`); `studio.transcribe` nhận WAV 16 kHz
+  Studio đã tách. Không có gì để gửi thì payload builder trả `skip` (`FarmExecutor` ghi đầu ra, không gọi farm).
+  Render worker phải khai `python` (`extra.python_bin` trong `render.yaml`) mới nhận được hai job này.
 - Thumbnail cắt và vẽ chữ trên máy Studio từ `final.mp4` (ffmpeg bất đồng bộ, không `spawnSync`); font Arial của hệ
   thống (`STUDIO_FONTS_DIR`) — không ship font.
 - Canva: token mỗi người dùng mã hoá bằng `CANVA_TOKEN_KEY`, không bao giờ trả về trình duyệt; refresh token chỉ
@@ -172,9 +201,12 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
 - Quy chuẩn & skill của nhóm (`team_skills`, ≤20 000 ký tự mỗi bản, ≤60 000 tổng) chèn vào prompt lúc gọi Claude
   (`teamGuidesForRun`), không thành artifact.
 
-## Pipeline media của harness (giữ nguyên, chưa workflow Studio nào dùng)
+## Pipeline media của harness
 Code 5A/5B vẫn còn trong `packages/core/src/media/*` và lệnh `harness media …`; render ở farm dùng
-`renderComposition` của nó. Kiểu tập "cắt theo shot" (spec local-chat, pha 5) sẽ dùng lại phần này.
+`renderComposition` của nó. **Studio dùng phần này qua `cut-stages.ts`** (tập cắt theo shot): chỉ hàm thuần
+(`buildShots`, `shotId`, `fitEdl`, `buildTimeline`); lệnh ffmpeg là bản bất đồng bộ ở
+`packages/studio-engine/src/cut-ffmpeg.ts` vì worker Studio là một tiến trình cho cả pool (không `spawnSync`).
+Test media cần ffmpeg + ffprobe (`FFMPEG_PATH`/`FFPROBE_PATH`), không có thì skip.
 - `harness library voices|brands|music …` (`packages/cli/src/commands/library.ts`): quản lý giọng TTS, hồ sơ
   thương hiệu, nhạc trong thư mục `library.root`. **Không bao giờ nhân giọng một người thật khi chưa có quyền**
   (`--origin` chỉ ghi lời khai, ADR mục 105).

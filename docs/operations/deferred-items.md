@@ -87,6 +87,36 @@ Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-3-render.md`. Cố ý c
 - `chat.test.ts` › "the subscription limit leaves the reply waiting, then it runs" chập chờn khi chạy cả bộ
   `packages/studio-engine` (máy tải nặng); chạy riêng thì pass.
 
+### Sau pha 5 — kiểu dựng "cắt theo shot" (2026-10-06)
+
+Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-5-cut.md`, ADR-0001 mục 151–160. Cố ý chưa làm:
+
+- **Xem trước có giọng ở gate kế hoạch dựng** (Q7): cần TTS + khớp hình + render mỗi lần sửa; nghe thử ở `approve-timeline`.
+- **Tiếng gốc dưới lời dẫn** (Q9): `voice: tts` tắt hẳn tiếng gốc; muốn tiếng môi trường phải đổi `audio-graph.ts` của
+  render worker.
+- **Premiere/CapCut đọc `in`/`out`, chuyển cảnh và lời dẫn** (pha 4/6): tới đó `exports/premiere` của tập cắt là 422
+  `premiere_needs_phase_4`.
+- **Session Claude không dọn:** `studio_agent_sessions` và thư mục workspace của `source-survey` giữ mãi; mất thư mục
+  thì chat lùi về structured.
+- **Kho giọng và file theo run không dọn:** `<STUDIO_DATA_ROOT>/voice`, proxy 720p, khung và contact sheet trong
+  workspace; khung shot trên R2 (`episodes/<e>/shots/`).
+- **`has_speech` của ag-go chỉ là gợi ý** (từ tỉ lệ im lặng): `false` thì không gửi đi nhận dạng, kể cả khi thật ra có lời.
+- **Nhãn contact sheet cần font**; không có font thì khung vẫn cắt nhưng ảnh không có mã shot.
+- **Chạy lại từ một gate hiện lại bản Claude viết**, không phải bản người đã duyệt lần trước.
+- **`human_edits` chưa ghi hai gate mới** (`approve-survey`, `approve-edit-plan` chưa có trong `EDIT_KINDS`): duyệt vẫn
+  chạy, nhưng dataset sửa tay thiếu bản chọn cảnh và kế hoạch dựng.
+- **Không có `studio-freeze-timeline-v4`:** `studio-freeze-timeline-v2` nhận cả `timeline_v4`. `build-timeline.ts` chưa
+  chuyển sang `layoutTimeline` (giữ composition v3 đúng từng byte). Dọn các method segment của `ag-go-client` để sau.
+- **Test media cần ffmpeg + ffprobe** (`FFMPEG_PATH`/`FFPROBE_PATH`, máy dev trỏ `ffmpeg-static` của ag-render-worker);
+  không có thì cả luồng tập cắt (engine, integration) bị skip. E2E farm cần render worker có handler transcribe
+  (`AG_RENDER_DIR` trỏ checkout/worktree đó).
+- **Test media cũ của harness lệch nguồn ffmpeg:** `hasFfmpeg()` (`tests/media.ts`) nhận `FFMPEG_PATH`, nhưng các test
+  `harness media watch|compose|render`, `FakeMediaEngine`, `transcribeSources`, acceptance 30 gọi `ffmpeg` trên PATH:
+  đặt `FFMPEG_PATH` mà PATH không có ffmpeg thì 27 test đó hỏng thay vì skip (có từ trước pha 5).
+- Lịch sử: commit C2 của pha 5 typecheck hỏng tạm, commit kế sửa.
+- Cuối pha 5: `corepack pnpm -r run build` và `pnpm -r typecheck` sạch; `vitest run` 1671 pass, 191 skip, 0 fail (không đặt `FFMPEG_PATH`); với `FFMPEG_PATH`/`FFPROBE_PATH`, các test tập cắt (engine 190, integration `cut-episode` 6) pass. `E2E=1` farm-render 9/9
+  pass (render worker 0.6.0).
+
 ### Rủi ro vận hành
 
 - Build bắt buộc có checkout `../ag-farm` (`@ag-farm/*` là `link:`), kể cả khi không dùng farm.

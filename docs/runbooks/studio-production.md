@@ -17,14 +17,34 @@ Từ lúc tạo production tới khi có các tập đã render, kèm cách xử
 | Bước | Ai làm | Trên web | Ghi chú |
 |---|---|---|---|
 | Video mới | Người (producer) | Trang chủ: gõ một câu, gắn folder bằng `@` ("Làm series vlog Kyoto từ @Kyoto 2025, giống kênh Mei Time…") | Tạo production nháp; Claude (`studio-intake`) tóm yêu cầu ở cột phải và hỏi lại từng câu còn thiếu |
-| Bắt đầu | Người | Nút "Bắt đầu" (bật khi đủ: tên, folder, khung hình, ngôn ngữ, kênh hoặc từ khoá) | Ghi vào production rồi chạy `ag-studio-series-plan@3.0.0` |
+| Bắt đầu | Người | Nút "Bắt đầu" (bật khi đủ: tên, folder, khung hình, ngôn ngữ, kênh hoặc từ khoá) | Ghi vào production rồi chạy `ag-studio-series-plan@3.1.0` |
 | Nghiên cứu thị trường | Tự động → **người duyệt** | Cột phải: báo cáo xu hướng; chat để sửa; "Duyệt" | Không có video nghiên cứu thì báo cáo trống, không gọi Claude |
 | R&D | Claude (Opus) → **người duyệt** | Chat để sửa ("gộp tập 3 và 4"); cột phải hiện "Bản n · k thay đổi" | Duyệt nộp đúng bản đang hiện |
 | Branding | Claude → **người duyệt** | Như trên | |
-| Kế hoạch tập | Claude (Opus) → **người duyệt** | Như trên; sửa kéo thả ở `⋯ → Sửa tay` (PlanEditor) | Lệch thời lượng ±20% chỉ cảnh báo |
+| Kế hoạch tập | Claude (Opus) → **người duyệt** | Như trên; sửa kéo thả ở `⋯ → Sửa tay` (PlanEditor) | Lệch thời lượng ±20% chỉ cảnh báo. Mỗi tập có kiểu dựng: ghép nguyên video, hoặc **cắt theo shot** (có thể có lời dẫn) — xem mục 2a |
 | Timeline mỗi tập | Tự động → **người duyệt** | Mở tập ở cột trái; chat ("nhạc nhỏ lại, thêm chữ … ở clip 2") → "Áp dụng" → "Duyệt"; editor ở `⋯` | `ag-studio-episode@1.3.0`; xem trước 720p ở `⋯ → Render xem trước` (farm) |
 | YouTube kit | Claude → **người duyệt** | Chat để sửa tiêu đề, mô tả, tag | Thumbnail thật chọn sau khi render |
 | Render, thumbnail, xuất | Tự động | Cột phải của tập: tiến độ, video, file | Render dùng timeline **đã duyệt** |
+
+### 2a. Tập cắt theo shot (`ag-studio-episode-cut@1.0.0`)
+
+Claude chọn kiểu này ở kế hoạch tập khi footage nhiều hơn tập cần (≥ 1,5 lần) hoặc khi nên có lời dẫn ("cắt theo shot
+kiểu đi bộ du lịch, có lời dẫn"). Đầu tập có dòng "cắt theo shot · khoảng N phút · có lời dẫn".
+
+| Bước | Ai làm | Trên web | Ghi chú |
+|---|---|---|---|
+| Chuẩn bị footage | Tự động | Vạch ngăn "tự động · N video, M shot" | Tải proxy 720p, dò shot, nghe tiếng nói (farm `studio.transcribe`), cắt khung + contact sheet |
+| Chọn cảnh | Claude (xem contact sheet) → **người duyệt** | Lưới shot ở cột phải, lọc Dùng được / Bị loại / Tất cả; bấm shot để xem đoạn 720p; chat "giữ lại s000-002", "bỏ mấy cảnh có người nhìn máy" | Claude chat **nhớ các khung đã xem** (cùng session của bước này); shot đổi so với bản trước được tô |
+| Kế hoạch dựng | Claude (Opus) → **người duyệt** | Bảng `# · Shot · Vào–ra · Dài`, lời dẫn từng dòng, chữ trên hình; chat "câu L002 ngắn lại" | Không có video xem trước ở bước này; nghe thử ở bước Timeline |
+| Lời dẫn, khớp hình | Tự động | — | Farm đọc **chỉ các câu chưa đọc** (kho giọng theo nội dung); hình kéo dài/cắt bớt theo độ dài câu |
+| Timeline | **Người duyệt** | Như tập thường; thêm: cắt đầu/cuối clip, chuyển cảnh, phụ đề (chat "ngắn lại clip đầu", hoặc editor: ô Vào/Ra, chuyển cảnh, phụ đề) | Xem trước 720p có giọng |
+| YouTube kit, render | Như tập thường | | Bản cuối theo khung của production (4K nếu đặt 3840×2160) |
+
+- **Chạy lại từ một bước:** `⋯ → Chạy lại từ chọn cảnh…` hoặc `⋯ → Chạy lại từ kế hoạch dựng…` (có thẻ xác nhận). Run
+  mới giữ footage, shot, khung đã làm và dừng ở bước đó với bản Claude viết; được khi tập đã xong hoặc đang chờ duyệt
+  ở bước sau (run đang chờ bị huỷ). Đang có bước chạy thì 409 `episode_running`.
+- **Không xuất Premiere** cho tập cắt theo shot tới pha 4 (Premiere chưa đọc được trim, chuyển cảnh, lời dẫn).
+- Tập ghép nguyên video không có các ô cắt đầu/cuối, chuyển cảnh, phụ đề.
 
 "Duyệt" luôn là nút; gõ "ok" trong chat chỉ làm Claude hiện thẻ xác nhận. Production bắt đầu trên màn cũ
 (`series-plan@1.0.0`/`@2.0.0`) vẫn sinh tập 1.2.0 không gate và chạy như trước.

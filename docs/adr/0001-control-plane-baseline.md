@@ -990,3 +990,69 @@ Các mục dưới đây ghi lại quyết định của nhánh AG Studio, viế
     "ffmpeg của nó có encoder `h264_nvenc`" (worker-sdk dò `ffmpeg -encoders` một lần lúc khởi động), không phải driver
     chạy được NVENC — máy dev (Quadro P1000, driver 582 < 610) có thể khai `nvenc` rồi render bằng CPU
     (`encoder: auto` tự lùi), và `render.json` không ghi encoder đã dùng.
+151. **Timeline v4: clip là một đoạn của video, kèm lời dẫn và phụ đề; hợp đồng cho pha 4 và 6 (2026-10-06).**
+    `studio.timeline/v4` (`TimelineV4Schema`, `packages/contracts/src/studio.ts`, chú thích ở đầu schema là hợp đồng):
+    clip có `in`, `out` (null = tới hết video), `shot_id`, `line_id`, `transition_out {cut|dissolve|dip_black, 0–1 s}`;
+    timeline có `edit_style whole|cut`, `narration {voice none|tts|original, lead_seconds, lines[{line_id, text,
+    audio{key, duration_s, words}|null}]}`, `captions {mode}`. Đọc thì v3 luôn ra v4 (`upgradeTimelineV3`,
+    `readTimeline`); **ghi thì giữ phiên bản của revision đầu tiên của tập** (`timelineAsVersion`): tập ghép nguyên
+    video vẫn lưu v3 — hạ v4 → v3, ném `TimelineVersionError not_v3` (API 422) khi mất dữ liệu (trim, chuyển cảnh,
+    lời dẫn, phụ đề) — tập cắt theo shot lưu v4. Không bao giờ ghi lại một revision v3 cũ thành v4, nên artifact
+    `timeline_v3`, checker và digest của run cũ giữ nguyên byte. Thao tác trong `layout.ts` là generic (tập v3 vẫn v3);
+    `trimClip`/`setTransition`/`setCaptions` chỉ cho v4 (`TimelineOpError needs_v4`). `timelineToComposition` của v3 ra
+    đúng từng byte như trước (snapshot). Pha 4 (Premiere) và 6 (CapCut) đọc `in`/`out`, `transition_out` và
+    `narration` của v4.
+152. **Hai kiểu dựng theo tập, chọn ở `plan-episodes`: `ag-studio-series-plan@3.1.0` (2026-10-06). Đảo D1.**
+    `PlannedEpisodeSchema` có hai khoá tuỳ chọn `edit_style: whole|cut` (vắng = `whole`) và `narration: none|tts|original`
+    (ADR mục 126: khoá vắng giữ hợp lệ cho plan cũ). Plan 3.1.0 chỉ khác 3.0.0 ở `spawn-episodes`
+    (`studio-spawn-episodes-v2`): ghi `episodes.edit_style` (migration 0023) và chọn workflow từng tập
+    (`episodeWorkflowFor`): `cut` → `ag-studio-episode-cut@1.0.0`, `whole` → `ag-studio-episode@1.3.0`. Plan 3.0.0 vẫn
+    sinh mọi tập 1.3.0, kể cả khi Claude ghi `cut`. Kiểm kế hoạch thêm: tối đa 40 video một tập cắt
+    (`too_many_sources`), footage ≥ 1,5 × thời lượng (`pool_too_short`, cảnh báo), lời dẫn chỉ với tập `cut`
+    (`narration_needs_cut`).
+153. **Shot dò trong Studio trên proxy 720p, lưu theo run, không về ag-go (2026-10-06). Đảo D10 trong Studio.**
+    Tập cắt: `episode-intake` → `fetch-proxies` (ag-go `resolve purpose=preview`, proxy của scan worker) →
+    `media-index` (dò cắt cảnh bằng ffmpeg, `harness.shots/v2`) → `transcribe` → `watch-source` (khung giữa mỗi shot,
+    contact sheet 4 cột × 16 shot, khung đẩy lên R2 `productions/<p>/episodes/<e>/shots/<shot_id>.jpg` cho lưới shot
+    trên web, URL chỉ cho người qua `coversProduction`). ag-go vẫn chọn theo cả video; không đổi hợp đồng ag-go. Worker
+    Studio dùng chung một tiến trình cho cả pool, nên mọi lệnh media ở `cut-ffmpeg.ts` là bất đồng bộ; của
+    `packages/core/src/media` chỉ dùng phần thuần (`buildShots`, `shotId`, `fitEdl`, `buildTimeline`), không dùng các hàm
+    gọi `spawnSync`.
+154. **Nhận dạng lời nói là job farm `studio.transcribe` (đổi hợp đồng ag-farm, đã duyệt, Q1 = a) (2026-10-06).
+    Đảo D11.** Studio tách tiếng của từng nguồn thành WAV 16 kHz mono và gửi kèm job (`stage:audio/<id>.wav`), nên máy
+    farm không tải footage; nguồn không có tiếng, hoặc ag-go nói không có lời (`has_speech = false`, chỉ là gợi ý), bị
+    bỏ qua. Payload `StudioTranscribePayloadSchema`, manifest `ag.studio.transcribe/v1` (`transcribe.json`), slot `gpu`,
+    base `{gpu, python}`; hub migration cho owner đã có `studio.tts` quyền `studio.transcribe`; render worker 0.6.0 chạy
+    `engines/python/transcribe.py`. Phương án chạy WhisperX trong worker Studio bị loại: worker Studio là một tiến trình
+    Node cho cả pool (một job Python chiếm CPU/GPU hàng phút chặn mọi vòng khác), máy chạy Studio không chắc có GPU, và
+    farm đã có sẵn lịch theo GPU, hàng đợi, thử lại.
+155. **Agent file mode có session cho bước xem hình; chat ở gate đó `--resume --fork-session` (2026-10-06).**
+    `source-survey` (`studio-source-survey`) là stage Claude duy nhất được đọc file: `CliAgentRuntime` mode `files`
+    (`--allowedTools Read,Write,Glob,Grep`, `--permission-mode acceptEdits`, không Bash, không web, session được giữ).
+    Claude tự ghi `output/survey.json`; vòng sửa resume đúng session. Session và thư mục lưu ở `studio_agent_sessions`
+    (migration 0022). Chat ở `approve-survey` (skill `studio-survey`, đề xuất `SurveyOp` keep/reject/setScore/setNote áp
+    bằng `applySurveyOps`) chạy `--resume <session> --fork-session --json-schema` trong thư mục đó, chỉ Read/Glob/Grep,
+    20 lượt; session gốc không đổi. Mất thư mục (đã dọn) thì lùi về chat structured như mọi gate. `plan-edit`
+    (`studio-edit-plan`) vẫn structured: thông tin hình đã nằm trong bản chọn cảnh. JSON Schema gửi Claude luôn bắt
+    buộc mọi khoá (`stripForClaude`), kể cả khoá tuỳ chọn trên đĩa.
+156. **Lời dẫn đọc ở farm, kho giọng theo nội dung; `skip` không gửi job (2026-10-06).** `tts` gửi `studio.tts` chỉ
+    cho các dòng chưa có trong kho (`voiceKey` = sha256 của chữ, ngôn ngữ, giọng tham chiếu, chữ tham chiếu, tốc độ,
+    engine; WAV ở `<STUDIO_DATA_ROOT>/voice/<key>.wav`, bảng `studio_voice_lines`, migration 0024): chạy lại từ kế hoạch
+    dựng sau khi sửa một câu chỉ đọc câu đó. Payload builder trả `skip: {files}` khi không có gì để gửi
+    (`FarmExecutor` 0.5.0 ghi các file đó làm đầu ra, không gọi farm) — dùng cho TTS và transcribe. Dò Python của
+    worker-sdk nhận `pythonBin` (đổi code ag-farm, không đổi giao thức) để render worker khai `python` (Q13).
+157. **Không có stage compose: composition luôn suy từ revision v4 (2026-10-06).** `studio-cut-fit` khớp kế hoạch
+    dựng với độ dài từng câu lời dẫn (`fitCutTimeline`, thuần) và ghi timeline v4 đầu tiên; người còn sửa timeline sau
+    đó, nên `timelineToComposition(v4)` tự sinh `narration[]` (`stage:voice/<line_id>.wav`), phụ đề
+    (`buildCaptionCues`, mặc định `burn-in` khi có lời dẫn), cửa sổ ducking nhạc và chuyển cảnh (`resolveTransitions`:
+    dissolve cần đuôi video, hạ thành cắt thẳng khi thiếu). `voice: tts` tắt tiếng gốc như `renderComposition` vẫn
+    làm (Q9); tiếng môi trường dưới lời dẫn cần đổi `audio-graph.ts` của render worker, để sau.
+158. **`ag-studio-episode-cut@1.0.0` giữ các khoá gate và render của 1.3.0 (2026-10-06).** `approve-timeline`,
+    `youtube-kit`, `approve-youtube-kit`, `freeze-timeline` (`studio-freeze-timeline-v2`, nhận cả `timeline_v4`),
+    `render-final` (builder `studio-episode-render-v4`), `thumbnails`, `export` có cùng khoá, nên `run-control`
+    (Render lại, kiểu máy, Hàng đợi, trạng thái tập) dùng chung không đổi. Hai gate mới `approve-survey`,
+    `approve-edit-plan`; `rerunEpisodeFrom` chạy lại tập từ một trong hai (run mới giữ footage, shot, khung đã làm), chỉ
+    khi run đã xong hoặc đang chờ ở gate sau (run đó bị huỷ trước).
+159. **Xuất Premiere tắt cho tập cắt theo shot tới pha 4 (2026-10-06).** `premiere-xml.ts` bỏ qua in-point và không có
+    track lời dẫn: timeline v4 có trim, chuyển cảnh hoặc lời dẫn → `POST …/exports/premiere` 422
+    `premiere_needs_phase_4`; web ẩn mục xuất Premiere của tập `cut` ở cả chat và màn cũ.

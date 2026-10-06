@@ -137,6 +137,17 @@ ag-go và ag-farm có `docker-compose.yml` riêng; cấu hình sinh bằng `node
 farm|go|studio`, đổi Claude giả/thật bằng `config-local.cjs claude fake|real` rồi tạo lại container api và worker.
 Không chạy song song với chế độ trực tiếp: hai bên dùng chung cổng.
 
+## 4a. Lời dẫn và nhận dạng lời nói trên farm local (tập cắt theo shot)
+
+- `local-render` nhận `studio.tts` và `studio.transcribe` khi `E:\ag-local\dev-run\render.yaml` có hai kind đó và
+  `extra.python_bin: 'E:/ag-local/venv/Scripts/python.exe'` (venv có OmniVoice + WhisperX, `engines/python/README.md`),
+  và render worker từ 0.6.0 (có handler transcribe; worker-sdk dò Python theo `python_bin`). Kiểm ở web farm 3011: node
+  khai `python` và hai kind mới. DB farm cần migration `1600000000000-studio-transcribe` (mục 3: chạy migration hub).
+- **Kho giọng:** `E:\ag-local\studio-data\voice\<sha256>.wav` + bảng `studio_voice_lines`; một câu (cùng chữ, giọng,
+  tốc độ) chỉ đọc một lần cho mọi tập. Không có gì dọn kho này (deferred).
+- **Contact sheet thiếu nhãn:** khung vẫn được cắt; nhãn `s000-001` trên ảnh cần font (`STUDIO_FONTS_DIR`).
+- Thời gian từng bước đo trên máy dev ghi ở ADR-0001 mục 160 (lần kiểm tay I3 của pha 5).
+
 ## 6. Sự cố thường gặp
 
 | Hiện tượng | Nguyên nhân hay gặp | Cách xử lý |
@@ -156,3 +167,5 @@ Không chạy song song với chế độ trực tiếp: hai bên dùng chung c�
 | `render-final` hỏng, job farm `failed` ở `download_composition` với `fetch failed` | `sign_url` của chủ job `studio` trong DB farm còn trỏ cổng 3100 (chế độ Docker); chạy trực tiếp thì 3100 là web, API ở 3101 | `docker exec postgres16 psql -U postgres -d ag_farm -c "UPDATE farm_owners SET sign_url = 'http://<IP máy>:3101/api/farm/sign' WHERE id = 'studio'"`; chuyển lại Docker thì đặt về `:3100` |
 | Màn Hàng đợi "Không đọc được hàng đợi farm" | Farm hub không chạy, hoặc `FARM_OWNER_KEY` sai | `local-stack.mjs status`; log `studio-api` |
 | Kiểm trong khung trình duyệt của app desktop, số liệu không tự cập nhật | Khung đó báo trang luôn ẩn nên không polling | Tải lại trang sau mỗi bước |
+| Tập cắt theo shot treo ở `tts` hoặc `transcribe` | `local-render` không khai `python` hoặc thiếu kind `studio.tts`/`studio.transcribe` | Mục 4a; web farm 3011 xem khả năng node |
+| Job `studio.transcribe` bị hub từ chối "not allowed for owner studio" | DB farm chưa chạy migration `studio-transcribe` | Chạy migration hub (mục 3) |
