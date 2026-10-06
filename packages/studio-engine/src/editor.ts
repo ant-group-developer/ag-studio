@@ -47,7 +47,7 @@ const view = (r: EpisodeJobRecord, progress: number | null = null): EditorJobVie
  */
 function recordFarmJob(db: StudioDb, p: { farmJobId: string; runId: string; stageKey: string; attemptId: string; productionId: string; episodeId: string; jobType: string; finalMedia?: boolean }): void {
   db.run(
-    "INSERT INTO studio_farm_jobs (id, farm_job_id, run_id, stage_key, attempt_id, production_id, episode_id, job_type, is_final_render, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO studio_farm_jobs (id, farm_job_id, run_id, stage_key, attempt_id, production_id, episode_id, job_type, is_final_render, requirements, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?)",
     [randomUUID(), p.farmJobId, p.runId, p.stageKey, p.attemptId, p.productionId, p.episodeId, p.jobType, p.finalMedia ? 1 : 0, new Date().toISOString()],
   );
 }

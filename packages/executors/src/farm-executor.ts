@@ -116,6 +116,8 @@ export interface SubmittedInfo {
   productionId: string;
   jobType: string;
   isFinalRender: boolean;
+  /** The ag-farm `requirements` the job was submitted with. */
+  requirements?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
