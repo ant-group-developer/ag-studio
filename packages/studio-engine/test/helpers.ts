@@ -72,8 +72,27 @@ export function fakeFarm(bucket: MemoryBucket) {
       const prod = String(p.production_id ?? "");
       const attemptId = String(req.correlation_id ?? id);
       // FarmExecutor resolves output prefix as: productions/<productionId>/jobs/<stageKey>/<attemptId>/out/
-      const stageKey = "render-final";
+      const stageKey = req.type === "studio.tts" ? "tts" : req.type === "studio.transcribe" ? "transcribe" : "render-final";
       const out = `productions/${prod}/jobs/${stageKey}/${attemptId}/out/`;
+      // Shot-cut episodes (phase 5): narration read and footage listened to, as the render worker answers them
+      if (req.type === "studio.tts") {
+        const lines = (p.lines as { line_id: string; text: string }[]).map((l) => {
+          const words = l.text.split(/\s+/).filter(Boolean);
+          const duration = Math.round((l.text.length / 14 + 0.4) * 1000) / 1000;
+          bucket.objects.set(`${out}tts/${l.line_id}.wav`, Buffer.from(`RIFF-${l.line_id}`));
+          return { line_id: l.line_id, output: `tts/${l.line_id}.wav`, duration_s: duration,
+            words: words.map((w, i) => ({ word: w, start: Math.round((i * duration / words.length) * 1000) / 1000, end: Math.round(((i + 1) * duration / words.length) * 1000) / 1000 })) };
+        });
+        bucket.objects.set(`${out}tts.json`, Buffer.from(JSON.stringify({ schema: "ag.studio.tts/v1", production_id: prod, language: p.language, lines, engine: { name: "fake", version: null } })));
+        jobs.set(id, { id, type: req.type, payload: p, requirements: req.requirements ?? {}, status: "completed", result: { manifest: "tts.json" }, error: null });
+        return { job: { id }, created: true };
+      }
+      if (req.type === "studio.transcribe") {
+        const sources = (p.sources as { source_id: string }[]).map((s) => ({ source_id: s.source_id, language: "vi", alignment: "word", segments: [] }));
+        bucket.objects.set(`${out}transcribe.json`, Buffer.from(JSON.stringify({ schema: "ag.studio.transcribe/v1", production_id: prod, engine: { name: "fake", version: null }, sources })));
+        jobs.set(id, { id, type: req.type, payload: p, requirements: req.requirements ?? {}, status: "completed", result: { manifest: "transcribe.json" }, error: null });
+        return { job: { id }, created: true };
+      }
 
       const durationS = 60;
       const outputFile = String(p.output ?? "final.mp4");
