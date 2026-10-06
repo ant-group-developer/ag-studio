@@ -24,3 +24,4 @@ export * from "./claude-slots.js";
 export * from "./chat-context.js";
 export * from "./models.js";
 export * from "./chat.js";
+export * from "./chat-runner.js";

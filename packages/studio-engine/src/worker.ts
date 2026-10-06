@@ -10,6 +10,7 @@ import type { FarmOwnerClient } from "@ag-farm/owner-client";
 import type { AgentCallTrace, ProjectConfig, StudioSkill } from "@harness/contracts";
 import { farmStorage, type StudioBucket } from "./bucket.js";
 import { modelFor } from "./models.js";
+import { createChatRunner, type ChatRunner } from "./chat-runner.js";
 import { recordLlmCall } from "./llm-log.js";
 import { cancelLegacyRuns, DEFAULT_CLAUDE_MAX_CONCURRENT, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, studioResources, studioWorkflowRefs, type StudioEngineCore } from "./core.js";
 import { claudeMaxConcurrent } from "./settings.js";
@@ -112,6 +113,8 @@ export function createStudioWorker(o: StudioWorkerOptions): Worker {
 }
 
 export interface StudioWorkerPool {
+  /** The chat loop running next to the stage loops (people's messages to Claude). */
+  readonly chat: ChatRunner;
   /** The loops in use now (loops let go after the cap dropped are no longer listed, though they may finish a stage). */
   readonly workers: Worker[];
   /** Matches the number of loops to the capacity now (`claude` from the web setting or env, + farm + cpu). */
@@ -130,8 +133,12 @@ export const STUDIO_POOL_RESIZE_MS = 10_000;
  * The `claude` cap can change on the web while running: claims read it every time, and the pool adds loops or lets
  * extra ones go after their current stage (never cutting a stage short).
  */
-export function createStudioWorkerPool(o: StudioWorkerOptions & { resizeEveryMs?: number }): StudioWorkerPool {
+export function createStudioWorkerPool(o: StudioWorkerOptions & { resizeEveryMs?: number; chatPollMs?: number }): StudioWorkerPool {
   const factory = workerFactory(o, false);
+  const chat = createChatRunner({
+    core: o.core, db: o.db, bucket: o.bucket, claude: o.claude, logger: o.logger ?? studioLogger({ owner: `${o.owner}#chat` }),
+    cap: () => factory.capacity().claude, ...(o.chatPollMs ? { pollMs: o.chatPollMs } : {}),
+  });
   const loops: { worker: Worker; drain: AbortController; done?: Promise<void> }[] = [];
   let signal: AbortSignal | undefined;
   const start = (l: (typeof loops)[number]) => { if (signal && !l.done) l.done = l.worker.runForever(signal, { drain: l.drain.signal }); };
@@ -145,14 +152,16 @@ export function createStudioWorkerPool(o: StudioWorkerOptions & { resizeEveryMs?
   resize();
   return {
     get workers() { return loops.map((l) => l.worker); },
+    chat,
     resize,
     runForever: async (s) => {
       signal = s;
       for (const l of loops) start(l);
       const timer = setInterval(resize, o.resizeEveryMs ?? STUDIO_POOL_RESIZE_MS);
+      const chatDone = chat.runForever(s);
       await new Promise<void>((res) => { if (s.aborted) res(); else s.addEventListener("abort", () => res(), { once: true }); });
       clearInterval(timer);
-      await Promise.all([...loops.map((l) => l.done), ...retired]);
+      await Promise.all([...loops.map((l) => l.done), ...retired, chatDone]);
     },
   };
 }

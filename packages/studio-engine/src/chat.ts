@@ -32,7 +32,8 @@ export interface ChatRunDeps {
   logger: HarnessLogger;
 }
 
-export type ChatRunOutcome = { status: "done" | "failed" } | { status: "rate_limited"; notBefore: string };
+/** `aborted`: the worker is stopping; the turn is left running for the caller to put back in line. */
+export type ChatRunOutcome = { status: "done" | "failed" | "aborted" } | { status: "rate_limited"; notBefore: string };
 
 const DEFAULT_BACKOFF_MS = [5, 10, 20, 40, 60].map((m) => m * 60_000);
 /** How long one reply may take (Claude call, both rounds). */
@@ -163,6 +164,7 @@ export async function runChatTurn(d: ChatRunDeps, turnId: string, signal?: Abort
     const result = await runtime.runTask({ skill: ctx.skill, brief: chatBrief(ctx, head, turns, problems), request, workspaceDir: ws },
       { workspaceDir: ws, logger: d.logger, clock: core.clock, ...(signal ? { signal } : {}) });
     const err = result.errors[0];
+    if (signal?.aborted) { last.trace = null; return { status: "aborted" }; }
     if (result.outcome !== "succeeded") {
       if (err?.details?.code === "RATE_LIMITED") {
         await record(round, "rate_limited");

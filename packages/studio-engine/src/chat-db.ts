@@ -177,3 +177,14 @@ export function currentProposal(db: StudioDb, k: ChatScopeKey): ChatTurn | undef
 export function markTurnApplied(db: StudioDb, id: string, now: string): void {
   db.run("UPDATE stage_chat_turns SET applied_at = ?, updated_at = ? WHERE id = ?", [now, now, id]);
 }
+
+/** Puts a reply back in line (its process stopped before it finished). */
+export function requeueTurn(db: StudioDb, id: string, now: string): void {
+  db.run("UPDATE stage_chat_turns SET status = 'pending', updated_at = ? WHERE id = ? AND status = 'running'", [now, id]);
+}
+
+/** Replies marked running that hold no slot: their process died. */
+export function orphanedRunningTurns(db: StudioDb, holding: readonly string[]): string[] {
+  const held = new Set(holding);
+  return db.all<{ id: string }>("SELECT id FROM stage_chat_turns WHERE role = 'assistant' AND status = 'running'").map((r) => r.id).filter((id) => !held.has(id));
+}
