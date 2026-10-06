@@ -1,18 +1,30 @@
 # AGENTS.md — nguyên tắc cho mọi agent làm việc trong repo này
 
 ## Repo này là gì
-YouTube Operations Harness: control plane điều phối sản xuất và phân phối video nhiều kênh. Session/agent là **worker tạm thời**; **state store là nguồn sự thật**. Đọc `docs/superpowers/specs/` trước khi đổi kiến trúc.
+**AG Studio**: engine dựng video nội bộ, fork từ YouTube Operations Harness (ADR-0001 mục 127). Người dùng tạo
+một *production* (series nhiều tập) từ footage trên **ag-go**; Claude nghiên cứu rồi đề xuất R&D, branding, kế hoạch
+tập; người duyệt; mỗi tập tự dựng timeline và render qua **ag-farm**. Bên dưới vẫn là control plane của harness:
+session/agent là **worker tạm thời**, **state store (`studio.db`) là nguồn sự thật**. Đọc ADR-0001 (mục 127 trở đi
+cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
 
 ## Cách tìm việc
-- **Máy mới, chưa có gì:** đọc `docs/runbooks/agent-bootstrap.md` trước — lộ trình từ `git clone` tới tập đầu tiên lên YouTube, ghi rõ việc nào agent làm, việc nào chỉ người làm.
-- Việc vận hành nằm trong state store của một operations project: `harness --project <dir> status <run_id>` hoặc `harness worker --once`.
-- Việc phát triển: `docs/superpowers/plans/*.md`, làm theo từng task, mỗi task một commit.
+- **Chạy trên một máy:** `docs/runbooks/studio-local.md`. **Vận hành một production:** `docs/runbooks/studio-production.md`.
+- **Việc phát triển:** `docs/superpowers/plans/*.md`, làm theo từng task, mỗi task một commit. Chương trình đang làm:
+  `docs/superpowers/specs/2026-10-06-ag-studio-local-chat-design.md` và các plan cùng ngày.
+- **Việc còn nợ, lỗi đã biết:** `docs/operations/deferred-items.md` (mục "AG Studio" ở đầu file).
+- **Skill nào cho bước nào:** `skills/README.md`.
 
 ## Lệnh chuẩn
 - Cài: `corepack enable && pnpm install`
 - Test: `pnpm test` (toàn bộ), `pnpm vitest run packages/<pkg>` (một package)
 - Typecheck: `pnpm -r typecheck` · Build: `pnpm build` · Sinh JSON Schema: `pnpm gen:schemas`
 - CLI dev: `pnpm harness --project fixtures/ops-project-minimal <command>`
+- Studio dev (cần `.env` ở root, `apps/api/.env`, `apps/web/.env`, xem `docs/runbooks/studio-local.md`):
+  `pnpm --filter @ag-studio/api start:dev` · `pnpm --filter @ag-studio/web dev` · worker:
+  `pnpm --filter @ag-studio/worker build` rồi `node apps/worker/dist/main.js`. Triển khai: `docker-compose.yml`
+  (api → worker → web, cần checkout `../ag-farm`), `deploy.sh`, `.github/workflows/deploy.{dev,prod}.yml`.
+- E2E (vitest, không phải Playwright): `E2E=1 pnpm vitest run tests/e2e` — dựng ag-farm hub (Docker Postgres),
+  api/worker Studio và ag-render-worker thật, Claude/ag-go/S3 giả.
 - `pnpm typecheck` cần chạy sau `pnpm build`: typecheck từng package dùng `tsc --noEmit` và cần `dist/*.d.ts` của các package phụ thuộc; test (`vitest`) thì không cần build vì `vitest.shared.ts` ở root đã cấu hình alias `@harness/*` trỏ thẳng vào `src`.
 - `node:sqlite` in ra `ExperimentalWarning` trên Node 22 — đây là bình thường, không phải lỗi; có thể tắt bằng `NODE_OPTIONS=--no-warnings` khi chạy test nếu muốn output sạch.
 - Sau khi sửa bất kỳ schema Zod nào trong `packages/contracts/src/` (entity, config, execution): chạy `pnpm gen:schemas` rồi commit các file JSON Schema sinh ra cùng lúc — `test/json-schema.test.ts` kiểm tra chúng khớp.
@@ -43,179 +55,101 @@ YouTube Operations Harness: control plane điều phối sản xuất và phân 
 - `harness resources status [--json]`: capacity khai trong `project.yaml.resources` so với số lease đang giữ mỗi tài nguyên.
 - `harness artifacts sweep [--older-than-minutes 60] [--dry-run] [--json]`: xoá thư mục artifact cũ hơn ngưỡng không có hàng DB không-PROVISIONAL đứng sau (crash/cancel để lại rác giữa lúc ghi output và commit).
 
-## Lệnh 2C (kho nội dung)
-- `harness library sync [--verify] [--json]`: kéo `styles/`, `requests/`, `items/` từ kho vào mirror DB (`edit_style`, `content_request`, `library_item`); báo `imported`/`updated`/`corrupt`/`missing`, thoát mã 1 nếu có `corrupt`. Chạy trước mọi lệnh `library list`/`accept` khác — chúng đọc mirror, không đọc kho trực tiếp. Mặc định chỉ hash lại file dữ liệu của item **mới/đã đổi**; `--verify` ép kiểm toàn bộ (audit, chậm) — đó là cách duy nhất phát hiện file dữ liệu bị sửa sau khi item đã import. Kho chưa mount (root không tồn tại) ném `IO_ERROR` (exit 1), **không** báo mọi thứ `missing`.
-- `harness library list <items|requests|styles> [--status <s>] [--json]`: liệt kê từ mirror DB.
-- `harness library request create --portfolio <id> [--channel <id>] --topic <topic> [--style <style_id>] [--duration <min,max>] [--voice none|tts|original] [--language <code>] [--count 1] [--due <date>] [--json]` (vai `channel`): tạo một `content_request` `open` trong kho. `count` ghim ở 1 (`ContentRequestSchema`); `--count` khác 1 là `CONFIG_INVALID`.
-- `harness library accept (--request <id> | --topic <t> --style <style_id>) --source <src_id>... [--title <t>] [--json]` (vai `studio`): build `library_brief` + `ContentItem` cho `plan` tiếp theo — **không** claim request, **không** tiền-kiểm `status` của nó (accept một request không còn `open` vẫn thành công, lỗi lộ ra sau ở `intake` của run vừa plan).
-- `harness library review <item_id> (--approve|--reject) [--note <n>] [--json]` (vai `studio`, không qua gate): ghi kết quả duyệt thẳng vào kho — cùng một hàm `applyReview` mà stage built-in `library-apply-review` gọi sau gate `library-review`. Idempotent: chạy lại cùng một quyết định không lỗi, và áp nốt nửa request nếu lần trước chỉ kịp ghi item (lỗi mang `item_written: true`).
-- `harness library withdraw <item_id> [--note <n>] [--json]` (vai `studio`): `approved|rejected → withdrawn` — cách kho biểu diễn "coi như đã xoá", **không có đường quay lại**. Claim đã tồn tại vẫn được tôn trọng sau đó (mục dưới).
-- `harness library pick <item_id> --channel <channel_id> [--portfolio <id>] [--json]` (vai `channel`): claim một item `approved` thành `ContentItem` cục bộ (`library_item_id` + `library_channel_id` trỏ về kho và về kênh), in `content_id` cho `plan` của workflow phát hành. Idempotent theo channel: `pick` lại cùng item/channel trả lại đúng claim cũ, không đòi `approved` lần hai; hai channel cùng `pick` một item là **hai** `ContentItem` riêng.
-- `harness library styles show <style_id> [--json]`: in một edit style đã sync.
-- `harness library stage <intake|style-export|export|apply-review>`: nội bộ, do executor `script` tự gọi lại CLI này khi chạy bốn stage kho built-in trong `library-production`/`style-study` — không gọi tay; xem `docs/runbooks/content-library.md`.
 
-## Lệnh 3 (phát hành kênh, dashboard)
-- `harness channel list [--json]` · `show <id> [--json]` (config + `config_revision` + đếm `PublicationJob` theo `state`) · `hypotheses <id> [--json]` (từ `channel_package.hypothesis` của các gói `committed`) · `login <id>`: spawn `scripts/open-channel-chrome.mjs` của repo kênh nếu có, ngược lại in dòng lệnh mở Chrome tay với `--user-data-dir=.upload-profile` — không có đường nào khác đưa một profile Chrome vào trạng thái đã đăng nhập; Chrome ≥127 App-Bound Encryption khoá cookie theo máy nên **không copy `.upload-profile` giữa các máy**.
-- `harness publish list [--channel <id>] [--state <s>] [--json]` · `show <job> [--json]` (kèm title/episode_no từ package + event của job) · `slots <channel> [--count 7] [--json]` (xem trước **n khung giờ kế tiếp**, không phải n ngày — `--days` giữ lại làm bí danh ẩn; không đặt lịch gì) · `verify [--json]` (chạy `verifyScheduled` một lần, không đợi chu kỳ worker) · `reconcile <job> [--json]` (hỏi `Publisher.lookup` rồi tự sửa job) · `cancel <job> --note <text> [--json]` (`READY|PROCESSING|SCHEDULED → FAILED`, không đụng YouTube). `harness reconcile --publication <job>` tương đương `publish reconcile <job>` (không được truyền cùng lúc với `<id>` thường — `CONFIG_INVALID`).
-- `Publisher.lookup` phân biệt **ba** kết quả: `found: true`; `found: false` (provider trả lời dứt khoát "không có video đó"); `found: false, error: true` (**không hỏi được**: mất mạng, oEmbed 5xx, profile Studio chưa đăng nhập, `lookup.mjs` chết/in JSON hỏng). `verify` tính `error: true` vào bộ đếm hai lần liên tiếp (`receipt.verify_failures`) như một lookup ném lỗi; `reconcile` gặp `error: true` thì **ném `CONNECTION_LOST`** (CLI exit 1) và giữ nguyên job/op/stage — một lookup hỏng không bao giờ được phép kích hoạt upload lại. Job quay về `READY` bị xoá `youtube_video_id`.
-- `publish stage schedule` ghi `receipt.schedule_attempted_at` ngay **trước** mỗi lần gọi `Publisher.schedule`; attempt sau thấy dấu đó trên một job `PROCESSING` thì `lookup` trước — video đã có lịch tương lai thì chỉ ghi nhận (`PROCESSING → SCHEDULED`), không đặt lịch lần hai.
-- `harness publish stage fetch|build-package|upload|schedule`: nội bộ, bốn stage built-in của workflow `channel-publish` (`publish-fetch|publish-build-package|publish-upload|publish-schedule` trong composition) — do executor `script` tự gọi lại CLI này, không gọi tay; xem `docs/runbooks/channel-publish.md`.
-- `harness skills sync [--json]`: copy `<harnessRoot>/skills/*` (hiện chỉ có `channel-package`) vào `.claude/skills/` **và** `.agents/skills/` của ops project — cả hai đích luôn được ghi, không phân biệt `project.yaml.runtime`; chạy lại **chỉ xoá và chép lại thư mục skill trùng tên** (`rm -rf <dest>/<tên>` rồi copy), không đụng tới skill khác đã có trong hai thư mục đích.
-- `harness dashboard snapshot [--json]` (ghi `dashboard/snapshot.json` nguyên tử, in đường dẫn hoặc nội dung) · `serve [--port]` (ghi một snapshot rồi phục vụ `/hub` tới khi Ctrl+C; cổng theo thứ tự `--port` > `HARNESS_DASHBOARD_PORT` > `project.yaml.dashboard.port`, mặc định 5200; bind `127.0.0.1`).
-- Doctor thêm cho vai `channel`: `channels:config` (một dòng cho cả khối `channels/`; lỗi parse/`channel_id` khác tên thư mục/`portfolio_id` lạ làm dòng này FAIL và **không** có năm dòng theo kênh nào cả), rồi năm dòng mỗi kênh nạp được — `channel:<id>:repo` (`repo_dir` tồn tại), `:scripts` (hai script Playwright cũ có mặt), `:profile` (`.upload-profile/Default/` tồn tại — không kiểm đăng nhập thật), `:identity` (`channel.config.json.youtube.channelId`/`projectId`/`accountEmail` khớp `channel.yaml`), `:secrets` (`account_email_ref` resolve được). Cộng `agent:runtime` (CLI của `runtime` có trên PATH, `--version` chạy được — không gọi model) và `publisher` (tên adapter đang chọn, luôn `ok`). Không có `channels/` → không dòng nào trong nhóm này (giống `library:*` khi không khai `library`).
+## AG Studio (apps/api, apps/web, apps/worker, packages/studio-engine)
 
-### Ranh giới ghi repo kênh cũ, secret của agent
-- Harness chỉ được **ghi** vào repo kênh cũ (`channel.yaml.repo_dir`) dưới ba đường: `outputs/<legacy_project_id>/episodes/episode-NN/{full-episode/,thumbnails/,publish/}` (do `build-package` tạo), và để chính script cũ tự ghi `outputs/<legacy_project_id>/publish-queue.json`, `publish/upload-debug/`, `work/research/upload-blocked.json`. **Không bao giờ** sửa `scripts/`, `channel.config.json`, `.upload-profile/` — những thứ đó là của người vận hành kênh, đọc-only từ phía harness.
-- `youtube.account_email_ref` chỉ dùng để **đối chiếu** (`channel-identity` checker, doctor `channel:<id>:identity`/`:secrets`) — script cũ tự đọc `youtube.accountEmail` từ `channel.config.json` của chính nó để làm cổng chặn nhầm tài khoản; harness không bao giờ truyền giá trị email cho script qua argv/env.
-- Bốn stage built-in của `channel-publish` chạy trong **tiến trình CLI con riêng** (`harness publish stage <tên>`, giống khuôn 2C) — Redactor của một tiến trình chỉ che giá trị secret **chính tiến trình đó** đã `resolve()`. `channel-identity` (chạy ở `build-package`) resolve `account_email_ref` không giúp gì hai stage `upload`/`schedule` chạy sau, trong hai tiến trình khác — hai stage đó phải tự `app.secrets.resolve(...)` (bọc try/catch, không fail stage vì unresolved) ngay trước khi gọi `Publisher`, chỉ để đăng ký giá trị với Redactor của chính tiến trình mình (ADR-0001 mục 80).
-- Hai script Playwright cũ (và `scripts/lookup.mjs` của adapter) cũng **không bao giờ** thấy `HARNESS_SECRET_*`: `publisherChildEnv()` lọc theo tiền tố tên biến khỏi env con. Khác `agentChildEnv` ở chỗ đây **không phải danh sách trắng** — Chrome/Playwright thật cần một môi trường người dùng bình thường, nên mọi biến khác giữ nguyên.
-- Agent runtime (`@harness/adapter-agent-cli`) **không bao giờ** nhận `HARNESS_SECRET_*` trong env con, dù có lỡ liệt kê trong `env_passthrough` của runtime — lọc theo tiền tố tên biến, không theo danh sách trắng. Prompt đưa vào agent qua file (`agent-prompt.md` trong workspace), không qua argv/stdin.
+### Tiến trình và dữ liệu
+- Ba tiến trình dùng chung **một** `studio.db` (`STUDIO_DB_PATH`, mặc định `./data/studio.db`) và một
+  `STUDIO_DATA_ROOT` (workspace, artifact): `apps/api` (NestJS, cổng `PORT`, mặc định 3100), `apps/worker`
+  (`createStudioWorker(...).runForever()`), `apps/web` (Vite/React). API migrate lúc khởi động; chạy worker
+  **sau** khi API healthy. Không có Postgres.
+- API dựng engine core ngay trong tiến trình (`apps/api/src/studio/engine.service.ts` → `createStudioEngineCore`),
+  nên gate nộp từ web được kiểm bằng đúng checker worker dùng. API ghi `studio.db` bằng `BEGIN IMMEDIATE`.
+- Bảng Studio (migration `0008`–`0018`): `teams`, `team_members`, `team_skills`, `productions`, `episodes`,
+  `episode_revisions`, `episode_jobs`, `episode_thumbnails`, `studio_farm_jobs`, `sign_audit_log`, `youtube_cache`,
+  `llm_calls`, `human_edits`, `canva_*`. `comments`, `timeline_revisions`, `studio_editor_jobs` là bảng cũ, không dùng.
+- File hướng ra trình duyệt nằm trên R2 (`S3Bucket`, `packages/studio-engine/src/bucket.ts`), URL ký có hạn.
+- Biến môi trường: `.env.example` (nhóm Auth0, Account API, ag-go, farm, R2, Claude, Canva, YouTube). API kiểm
+  bằng zod ở `apps/api/src/config/env.ts`; worker dùng `requireEnv` ở `apps/worker/src/main.ts`. **Không bao giờ in
+  hay commit giá trị** — chỉ nhắc tên khoá.
 
-## Lệnh 4 (studio tự vận hành)
-- `harness media watch --mode samples|source|episode`: stage built-in (không gọi tay, `executor: { type: script, script: "watch-<mode>" }` của `style-study@1.1.0`/`library-production@1.1.0`/`library-production@1.2.0` tự gọi lại CLI này — 1.2.0 nối `watch-source` (đa nguồn, đọc `proxy_set`) và `watch-episode`) trích khung (scene-change + mốc đều, khử trùng, cắt theo `max_frames`), sinh contact sheet 4×4 và (khi `executors/scripts.yaml.transcribe` có khai) transcript, ghi `output/watch/watch.json` (`harness.watch/v1`). Cần `ffmpeg`/`ffprobe` trên PATH — thiếu thì `contract`, không retry (doctor `ffprobe` báo trước). Hook `transcribe` lỗi/timeout/JSON sai chỉ cảnh báo, ghi `transcript: null` + `transcript_error`, stage vẫn `succeeded`.
-- `harness library styles activate <style_id> [--note <n>] [--json]` (vai `studio`): `draft|retired → active` trong kho — dùng khi stage agent `style-review` giữ `style.json` ở `draft` (lệch ≥2 tham số khi đối chiếu với khung) và người xem `review-notes.md` rồi quyết định chấp nhận tay. Idempotent trên style đã `active`.
-- `harness library request create ... --source-hint <collection> --source-id <src_id>...` (vai `channel`, thêm vào lệnh đã có từ 2C): ghi `ContentRequest.source_hint` (`{ source_ids?, collection? }`, optional) để vòng tự nhận của studio biết ưu tiên nguồn nào; không truyền thì auto-accept rơi về `library.auto_accept.source_collection` của project studio.
-- `library.auto_accept` (`project.yaml`, optional, `.strict()`): `{ enabled, source_collection: "main", max_replans: 2, max_concurrent_runs: 1 }` — bật vòng `autoAccept` (`packages/core/src/library/auto-accept.ts`) gọi từ worker studio ở nhánh idle, sau `maybeSyncLibrary`, mỗi `library.sync_seconds`. `max_replans` đếm theo **số run đã kết thúc** của một request (`isTerminal`), không theo số lần từ chối — tối đa `max_replans + 1` run trước khi request bị đánh dấu kẹt.
-- `harness doctor` thêm dòng `library:auto_accept` **chỉ khi** `library.role: studio` **và** `auto_accept.enabled: true` (đúng điều kiện worker mới dựng vòng autopilot; vai `channel` hay `enabled: false` không có dòng nào): FAIL nếu `source_collection` không có source nào, hoặc `adapters.agent` là `fake` (autopilot cần agent thật để dispatch được các stage agent); còn lại `ok`. Alert `request_stuck` của dashboard cũng theo đúng điều kiện đó.
-- Request vượt trần replan sinh event `request.auto_accept_exhausted { request_id, finished_runs, max_replans }` **một lần duy nhất** cho mỗi request (dedupe theo `event_type` như `request.auto_accept_skipped { reason: "exhausted" }` đi kèm).
-- Dashboard alert `stage_waiting_human { ref: stage_run_id }` (`buildSnapshot`): mọi stage đỗ `WAITING_HUMAN` của một run chưa kết thúc, **mọi loại executor** (`agent`/`gate`/`script`), kèm `stage_key` + `run_id` + tóm tắt lỗi attempt cuối — `gate_overdue` chỉ thấy gate có deadline, `request_stuck` chỉ thấy request `open`, nên đây là đường duy nhất một stage agent lỗi `contract` lên dashboard.
-- Dashboard alert `request_stuck { request_id }` (`buildSnapshot`, `packages/core/src/dashboard/snapshot.ts`): một request `open` có số run kết thúc vượt `max_replans` của `library.auto_accept` — auto-accept đã bỏ cuộc, cần người sửa request/source hoặc nới `max_replans` rồi tạo lại request.
-- Xem `docs/runbooks/studio-autopilot.md` cho chu trình đầy đủ (bật autopilot, xử lý `WAITING_HUMAN` của stage agent, `request_stuck`, `style-review` giữ draft, quay về workflow 1.0.0 gate người).
+### Đăng nhập, quyền
+- Web đăng nhập Auth0 (`VITE_AUTH0_*`); API kiểm JWT bằng `Auth0Guard` toàn cục (issuer, audience, `azp` thuộc
+  `AUTH0_ALLOWED_CLIENT_IDS`). Vai trong team: `viewer < editor < producer < owner` (`RolesGuard`, bảng
+  `team_members`); admin Studio là `user_type = ADMIN` từ Account API và qua mọi phép kiểm vai.
+- Footage: web gọi thẳng ag-go bằng bearer của người dùng (cây folder, xem trước). Worker và API gọi ag-go bằng
+  `AG_GO_SERVICE_KEY` + `X-Act-As-User` = Auth0 sub của chủ production. Ảnh/URL có hình footage chỉ trả cho người
+  xem được các folder của production (`FootageAccessService.coversProduction`), kể cả khi đẩy sang Canva.
 
-### Quy tắc stage agent (năm skill của kho)
-- Agent chỉ đọc `brief.md`, `stage-request.json`, input theo `inputs[].path`; ghi output duy nhất dưới `output/` — không sửa gì khác trong workspace, không có secret nào trong prompt/env (agent runtime lọc `HARNESS_SECRET_*` theo tiền tố, ADR mục 77 áp dụng y hệt cho agent kho).
-- Đọc contact sheet (`output/watch/<label>/sheet-NN.png`) **trước**, chỉ mở tối đa 20 khung đơn (`frames/f-<t>.png`) — ngân sách khung của spec §2.3, giữ chi phí agent thấp.
-- Cả năm skill khai `retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }` — **không có `contract`** trong `retry_on`: một agent không ghi output đúng `expected_outputs` hay JSON sai schema là lỗi `contract`, không bao giờ retry, đỗ `WAITING_HUMAN` sau **đúng một attempt** (không phải hai — spec §7 viết "2 attempt" cho acceptance 29 là sai so với hành vi thật, xem ADR mục 88).
-- Biến `FAKE_AGENT_MODE`/`FAKE_REVIEW_MODE`/`FAKE_AGENT_FAIL_STAGE`/`FAKE_STYLE_STATUS`/`FAKE_STYLE_REVIEW` nằm trong `env_passthrough` của `@harness/adapter-agent-cli` **chỉ để test** (bộ tích hợp chạy `fake-agent-cli.mjs` qua đúng đường runtime thật) — `claude`/`codex` thật không đọc các biến này nên vô hại nếu vô tình có mặt, nhưng không dựa vào chúng khi vận hành production.
-
-## Lệnh 3B (vòng học kênh)
-- `harness channel stats <id> [--json]`: ảnh chụp `video_metrics` mới nhất mỗi `PublicationJob` `PUBLISHED` của kênh, kèm `source` (`studio` hay `manual`) của ảnh chụp đó. `harness channel collect [--channel <id>] [--job <id>] [--force] [--json]`: một lượt sweep thu số tay (`--force` bỏ điều kiện đến hạn `horizon_hours`/`recollect_hours`, chỉ xét job đã `PUBLISHED`); thoát mã 1 nếu có video lỗi thu (`report.failed`). `harness channel learned <id> [--json]`: chuẩn kênh hiện tại (`standard`), trung vị (`medians`), top nhóm theo `lift` (`winners`), `history` tối đa 20 dòng đổi chuẩn. `harness channel demand <id> [--json]`: `needed`/`slots`/`covered`/`open_requests` (spec §4.1). `harness channel plan-requests <id> [--json]`/`pick-next <id> [--json]`: chạy tay một lượt `maybePlanRequests`/`maybeAutoPick`, bỏ qua cadence của chính kênh đó. `harness channel metrics import <id> <jsonl> [--json]`: nhập sổ `channel-metrics.jsonl` hệ cũ thành ảnh chụp `source: "manual"`, khớp theo `videoId` với `PublicationJob.youtube_video_id`, bỏ dòng không khớp và báo số bỏ kèm lý do.
-- **Thu số chỉ đọc, không cổng học**: `StatsCollector`/`collect-stats.mjs` không bao giờ gõ hay nộp gì trên Studio (chỉ `goto` hai tab, bấm đúng một tab Reach) — cùng nguyên tắc read-only với `lookup.mjs` (Lệnh 3). Giả thuyết/chuẩn kênh chỉ **ưu tiên** đề xuất kế tiếp (`propose-topics` đọc `learned.standard`, `channel-package` dẫn chứng `basis` kind `channel`), không bao giờ chặn `channel-publish` hay `channel-planning` — một kênh chưa học được gì (`standard` rỗng, `learned: null`) vẫn phát đều theo `channel.yaml.seo` như trước sub-project 3B. Studio chặn thu số (`stats_blocked`) hay lỗi thu liên tiếp (`stats_failing`) đều không dừng phát hành, chỉ dừng riêng việc thu ảnh chụp của video/kênh đó.
-- Ba khối mới trong `channel.yaml` (mọi trường optional, default; xem `project-template/channels/example/channel.yaml`): `learning` (cadence/sàn thu số học), `planning` (bật sweep tự sinh `ContentRequest` qua workflow `channel-planning@1.0.0`), `auto_pick` (bật sweep tự `claimItem` + phát). `project.yaml` thêm `learning: { collect_seconds, collect_batch }` (cadence sweep thu số mức project) và `adapters.stats: playwright | fake` (mặc định `fake`). `harness worker` chạy bốn sweep kênh theo thứ tự cố định mỗi vòng rảnh: đồng bộ kho + `maybeAutoAccept`/`maybeAutoPick` → `maybeVerifyPublications` (Lệnh 3) → `maybeCollectStats` → `maybePlanRequests`; cả bốn không bao giờ ném, lỗi chỉ log + event.
-- Planning chạy **tối đa một run mỗi kênh mỗi ngày UTC** (`planRequestsRun` chặn `run-active` cho mọi run `channel-planning` mà `content.title` khớp tiền tố `"planning <channel_id> "`, dù run đó còn sống hay đã kết thúc trong đúng ngày hôm nay); một run FAILED vào cooldown 24h riêng (`channel.planning_failed`, không tính theo ngày UTC). `create-requests` cắt số chủ đề ở `min(demand.needed, max_open_requests − open_requests, topics_per_run)` và luôn gán `target_duration_seconds` cho mọi request tạo ra (đề xuất của agent → `content.target_duration_seconds` của profile `channel-planning` → mặc định rộng `[1, 1800]`) — thiếu trường này làm `library-production@1.1.0`'s checker `brief-duration` (bắt buộc) `skip`, mà `skip` không phải `pass`, nên request auto-plan không có thời lượng sẽ kẹt ở studio tới `max_replans` rồi `request_stuck` vĩnh viễn; một `harness library request create` **tay** không kèm `--duration` vẫn có lỗ hổng y hệt (chưa sửa, sub-project 4, xem `docs/operations/deferred-items.md`).
-- Chuẩn kênh (`learnChannelStandard`) không bao giờ hình thành chỉ từ hai tập: `lift` so với trung vị kênh, và trung vị của đúng hai mẫu là trung bình của chính chúng nên `lift` luôn bằng 1.0 (không `> 1`) — cần thêm ít nhất một mẫu khác (kể cả `refuted`, góc khác) để kéo trung vị lệch đi thì một nhóm hai-mẫu mới có cơ hội vượt trung vị. Chuẩn cũ chỉ bị thay khi nhóm mới có `lift ≥ lift cũ × 1.10`.
-- **Ảnh chụp "tại mốc" có cả cận trên**: `snapshotAtHorizon` lấy ảnh chụp có `age_hours` **gần `horizon_hours` nhất trong `[mốc − 12, mốc + 24]`** (spec §2.2: gần 72 nhất trong `[60, 96]`), không phải "ảnh chụp đầu tiên đạt mốc" — thu số 72 h bị chặn thì ảnh chụp 168 h **không** được coi là số 72 h: giả thuyết ở nguyên `open` và job đó không góp vào `medians`. `medians` của `learnChannelStandard` tính tại `horizon_hours` **của chính kênh** (tên trường `medians.views_72h` giữ nguyên, nghĩa là "views tại mốc của kênh"). Giá trị metric đọc không ra (`ctr_pct` null dù đủ `min_impressions`, `avg_view_sec` null, thời lượng null hoặc ≤ 0) → `void`, **không bao giờ** `refuted` với `metric_value: 0` — một số chưa từng đo được không được phép kéo trung bình nhóm xuống.
-- **Timeout thu số khai đúng một chỗ**: `COLLECT_STATS_TIMEOUT_SECONDS = 300` (`packages/adapters/youtube-playwright/src/playwright-stats-collector.ts`) vừa là budget `spawnSync` vừa là `StatsCollector.timeout_seconds` mà `collectStats` truyền ngược lại vào `collect()` (collector không khai thì sweep dùng `DEFAULT_COLLECT_TIMEOUT_SECONDS = 120`). Ngân sách trong `scripts/collect-stats.mjs` (`LABEL_WAIT_MS` 45 s × 4 + `NAV_TIMEOUT_MS` 15 s × 5 + launch 20 s = 275 s) phải luôn nhỏ hơn nó — sửa một bên thì tính lại bên kia.
-- `HARNESS_FAKE_STATS_FILE` **chỉ** tới `FakeStatsCollector` (`adapters.stats: fake`): `PlaywrightStatsCollector` không đọc biến môi trường nào, chỉ nhận `statsFile` truyền tay trong test — một biến còn sót trong shell của người vận hành không bao giờ được phép biến một lượt thu số thật thành đọc file JSON rồi ghi lại như ảnh chụp `source: "studio"`.
-- `maybeAutoPick` ưu tiên item `approved` gắn `request_id` của request do chính kênh tạo (theo `created_at` request, cũ trước) trước khi cân nhắc item chung không `request_id` — item chung chỉ được cân nhắc khi `demand.needed + demand.covered.items > 0`, tức còn khung phát chưa được job/run/request che phủ (không tính chính các item chung vào phần "đã che phủ" ở phép so này, vì tính vào sẽ tự chặn — item chung đang tồn tại luôn kéo `covered.items` lên, khiến `needed` một mình về 0 và item đó vĩnh viễn không bao giờ được pick).
-
-## Lệnh 5A (media studio)
-- `harness source ingest <path> [--collection <name>] [--recursive] [--rights …] [--language <code>]`: từ 5A
-  `<path>` nhận cả **một thư mục** — mọi file video trong đó được đăng ký thành một buổi quay (`--recursive`
-  để xuống thư mục con). Dedupe theo sha256 vẫn như cũ và **giữ collection cũ** của file trùng byte, nên
-  ingest lại cùng thư mục dưới tên collection khác sẽ không đổi được gì.
-- `harness library voices add|list|retire` (vai `channel`; `studio` chỉ đọc qua `library sync`):
-  `add --display-name <n> --ref <wav> --ref-text <text_or_path> --origin synthetic|own|licensed
-  [--language <code>] [--origin-note <n>] [--speed <n>] [--num-step <n>] [--voice-id <id>]` — bốn tuỳ chọn
-  đầu là `requiredOption`, `--language` **không bắt buộc** (mặc định `vi`,
-  `packages/cli/src/commands/library.ts`). `--ref` phải dài 3–30 s và được
-  chuyển thành PCM mono 24 kHz `ref.wav` trong kho trước khi ghi; `--ref-text` là lời đọc đúng từng chữ của
-  clip mẫu (hoặc đường dẫn file chứa nó); `--voice-id` **nâng revision** của hồ sơ đã có thay vì tạo mới.
-  `list [--status active|retired]` đọc mirror DB (chạy `library sync` trước); `retire <voice_id>` là
-  `active → retired`, idempotent.
-- **Không bao giờ nhân giọng một người thật khi chưa có quyền.** `origin` là trường bắt buộc và harness
-  **không xác minh được** nó — nó chỉ ghi lại lời khai của người tạo hồ sơ (spec §10, ADR mục 105). Cách an
-  toàn: sinh clip mẫu bằng voice design của OmniVoice (chỉ từ mô tả chữ, không có audio tham chiếu) rồi khai
-  `--origin synthetic`; xem `docs/runbooks/studio-media.md` mục 4.
-- `harness library request create … --voice tts --voice-id <id>`: `--voice tts` **bắt buộc** có `--voice-id`
-  trỏ một hồ sơ `active`, kiểm ngay lúc tạo (`requireActiveVoice`). Request do chính kênh tự sinh
-  (`channel-planning`) thì thiếu giọng dùng được sẽ **hạ xuống `voice: none` kèm ghi chú**
-  (`receipt.downgraded_voice`), không làm hỏng stage.
-- `harness media index|transcribe|tts|fit-edl`: **stage built-in** của `library-production@1.2.0` (đọc
-  `stage-request.json` trong `$HARNESS_WORKSPACE`), do composition root tự đăng ký — **không** cần entry
-  trong `executors/scripts.yaml`, **không** gọi tay, giống `media watch` và bốn lệnh `library stage`.
-- `project.yaml`: `adapters.media: python | fake` (mặc định `fake`; đây là chỗ **duy nhất** chọn engine, đọc
-  chỉ ở `packages/cli/src/composition.ts`) và khối `media:` — `python` (bắt buộc khi `python`), `device`
-  (`cuda:<n>|cpu`), `transcribe.{engine,model,compute_type,batch_size,python}`,
-  `tts.{engine,model,dtype,num_step,max_chars,pause_seconds,loudness_lufs,python}`,
-  `scene.{threshold,min_shot_seconds,max_shot_seconds,proxy_height}`, `watch.max_sheets`. Hai khoá
-  `transcribe.python`/`tts.python` ghi đè `media.python` theo từng engine (phương án hai venv khi torch của
-  OmniVoice xung đột với WhisperX — trên máy build **không** xung đột, một venv là đủ).
-- `library.auto_accept.source_collections` (danh sách glob, `.min(1)`) bật **chế độ collection**: một request
-  lấy cả buổi quay khớp glob, trần `max_sources` (mặc định 40), và collection đã được một run thành công dùng
-  thì không request nào khác lấy lại (miễn trừ cho chính request đó khi replan). **Không khai** khoá này =
-  chế độ cũ của sub-project 4 nguyên vẹn (một source một request). `library.auto_accept.workflow_release`
-  (`<id>@<x.y.z>`) ghim vòng autopilot vào một release thay vì đi theo profile — nút lùi về
-  `library-production@1.1.0`, và là cách test SP4 ở lại 1.1.0 khi profile đã sang 1.2.0.
-- `channels/<id>/channel.yaml` thêm `voice: { voice_id: <voice_profile_id> }` — giọng mặc định của kênh.
-- Doctor thêm `library:voices` (thư mục `voices/` của kho tồn tại, cả hai vai) và — chỉ khi
-  `adapters.media: python` — `media:python|packages|device|models`; `media:models` FAIL là **cảnh báo** "sẽ
-  tải lúc chạy đầu", không dựng alert. Khi `adapters.media: fake` mà release hiệu lực của autopilot ≥
-  `library-production@1.2.0` thì có thêm dòng `media:engine` FAIL. Phép dò bị **bỏ qua khi đang giữ lease
-  GPU** và được cache 900 s trên đường dashboard; `harness doctor` gõ tay luôn dò mới.
-- Xem `docs/runbooks/studio-media.md` (dựng venv, tải trước mô hình, đọc `fit-report.json`/`timeline.json`,
-  cache TTS, sự cố, số đo thật, kết luận DoD #2/#3) và `engines/python/README.md` (giao thức job/result).
-
-## Lệnh 5B (dựng hình)
-- `harness library brands set <channel_id> --from <đường dẫn brand.json> [--json]` / `show <channel_id>`
-  (vai `channel`; `studio` chỉ đọc qua `library sync`): parse `harness.brand/v1`, **kiểm font/logo trước khi
-  chạm kho**, copy các file được tham chiếu (đường dẫn tương đối trong chính file brand) vào
-  `brands/<channel_id>/`, ghi `checksums` và nâng `revision`. **Không có lệnh xoá** — xoá thư mục bằng tay là
-  kênh bỏ thương hiệu.
-- `harness library music add --track-id <id> --file <wav|flac|mp3|m4a> --display-name <n> --mood a,b
-  --origin own|licensed|royalty_free [--origin-note <n>] [--loop-ok] [--json]` / `list` / `retire <id>`
-  (vai `channel`): kho nhạc dùng chung `music/<track_id>/`. `add` probe `duration_seconds` bằng ffprobe và
-  **chỉ nhận file có luồng audio**; `retire` là `active → false`, **file vẫn giữ** để tập cũ không gãy.
-  `list` đọc mirror DB (chạy `library sync` trước).
-- `harness media compose|render`: **stage built-in** của `library-production@1.3.0` (đọc `stage-request.json`
-  trong `$HARNESS_WORKSPACE`), **không** cần entry trong `executors/scripts.yaml` và **không gọi tay** —
-  giống bốn stage media của 5A. Dạng chạy tay (`--timeline …`/`--composition …`, spec §6.5) **chưa cài**;
-  dựng lại một tập phải đi qua một run: `harness retry <run_id> --stage media-render` chỉ chạy được khi
-  stage đó **đang FAILED/WAITING_HUMAN**; stage đã SUCCEEDED thì `plan` một run mới (`--no-reuse` nếu muốn
-  ép render lại thay vì tái dùng artifact).
-- `project.yaml` thêm `media.render: { codec: h264|hevc, encoder: auto|nvenc|cpu, fps: auto|24|25|30|50|60,
-  cache_max_gb: 60 }` (mọi khoá optional, có default). `encoder: auto` dò NVENC **một lần mỗi run** (cache
-  15 phút như media probe); không dò được thì cả run dùng CPU.
-- Doctor thêm (vai `studio`): `media:render` — ffmpeg có `ass`, `xfade`, `loudnorm`, `sidechaincompress`,
-  `overlay` và encoder `libx264`; thiếu NVENC thì dòng này in **FAIL "no NVENC, renders on CPU"** nhưng đó
-  là **cảnh báo** theo đúng khuôn `ok: false`-là-cảnh-báo của `media:models` (không dựng alert nào) —
-  `harness doctor` vẫn thoát mã 1, đọc nội dung dòng chứ đừng đọc mã thoát. Cộng `library:brands` (mọi brand
-  trong kho parse được, font tồn tại) và `library:music` (mọi track `active` có file + checksum khớp); vai
-  `channel` có `channel:<id>:brand`. `h264_nvenc` của ffmpeg 8.1.2 đòi **nvenc API 13.1, tức driver NVIDIA
-  ≥ 610.00**; máy build đang ở 581.29 nên đường NVENC mới chỉ được test bằng fake-spawn.
-- Dashboard `media` thêm `last_render_at`, `render_encoder`, `mezz_cache { hit_ratio }` (**không có**
-  `bytes` — không có nguồn dữ liệu); alert `render_cpu_fallback` khi `encoder: auto` giải ra `cpu` trên máy
-  khai `resources.gpu ≥ 1`. Sự kiện `media.composed`, `media.rendered`.
-- **Kiểm brand ở `intake`, trước `claimRequest`** (cùng chỗ với kiểm giọng 5A): brand hỏng → `CONFIG_INVALID`
-  (`contract`) → stage `intake` đỗ **`WAITING_HUMAN`**, request vẫn `open`; sửa kho rồi
-  `harness retry <run_id> --stage intake`.
-- **`overlays-valid` fail ở `plan-edit` KHÔNG replan**: required check fail là lỗi `result` → stage `FAILED`
-  → run FAILED, và request kẹt ở `claimed` (hổng hệ thống của SP4, giống `edl-valid` của 5A — acceptance
-  48(a), `docs/operations/deferred-items.md`). Đường replan thật sự cho lỗi chữ là `library-review` từ chối
-  vì `render-report.text_events.dropped`.
-- Mọi thứ vẽ lên hình trừ logo đi qua **một file ASS duy nhất** (`overlay.ass`, libass), **không** `drawtext`;
-  font chỉ lấy từ `fontsdir` của brand nên kết quả giống nhau trên mọi máy. Harness **không ship font nào**.
-- Xem `docs/runbooks/studio-composition.md` (điều kiện ffmpeg, hồ sơ thương hiệu, kho nhạc, `overlays.json`,
-  đọc `composition.json`/`render-report.json`, cache mezzanine, sự cố, số đo 4K thật, quay về 1.2.0).
-
-## AG Studio (series: apps/api, apps/web, apps/worker, packages/studio-engine)
-- Hợp đồng API: `docs/studio-api-v3.md`. Run kế hoạch `ag-studio-series-plan@2.0.0` (nghiên cứu → R&D → duyệt →
-  branding → duyệt → kế hoạch tập → duyệt → tạo tập), run tập `ag-studio-episode@1.2.0`; phiên bản đang dùng ở
-  `STUDIO_WORKFLOWS` (`packages/studio-engine/src/core.ts`).
+### Workflow, gate, run
+- Hợp đồng API: `docs/studio-api-v3.md`. Run kế hoạch `ag-studio-series-plan@2.0.0`: `intake` → `research`
+  (YouTube Data API) + `catalog` (ag-go) → `trend-report` → `rnd` → **`approve-rnd`** → `apply-rnd` → `branding` →
+  **`approve-branding`** → `apply-branding` → `brief` → `plan-episodes` → **`approve-plan`** → `spawn-episodes`.
+  Run tập `ag-studio-episode@1.2.0`: `episode-intake` → `build-timeline` → `youtube-kit` → `freeze-timeline` →
+  `render-final` (farm) → `thumbnails` → `export`. Phiên bản đang dùng ở `STUDIO_WORKFLOWS`
+  (`packages/studio-engine/src/core.ts`), gate ở `STUDIO_GATES` (`packages/studio-engine/src/run-control.ts`).
 - Thư mục workflow đã phát hành **không bao giờ sửa**: làm phiên bản mới. Script/payload builder đổi đầu ra thì đặt
   **tên mới** (`studio-episode-export-v2`…) và giữ tên cũ cho run cũ; `workflow-wiring.test.ts` kiểm mọi phiên bản.
   Một stage chỉ nhận artifact của stage nó phụ thuộc **trực tiếp**, và mỗi kiểu chỉ đến từ một nguồn.
-- Quy chuẩn & skill của nhóm (`team_skills`) được chèn vào prompt lúc gọi Claude (`teamGuidesFor`), không thành
-  artifact; ghi R&D/branding vào production bằng stage script sau gate (`apply-rnd`, `apply-branding`), không ghi trong
-  API lúc nộp gate.
-- Thumbnail cắt và vẽ chữ trên máy Studio từ `final.mp4` (ffmpeg chạy bất đồng bộ, không `spawnSync`); font là Arial
-  của hệ thống (`STUDIO_FONTS_DIR`, Windows, hoặc Liberation Sans qua fontconfig trong image) — không ship font.
-  Ảnh có hình footage chỉ đưa cho người có quyền xem footage của production (`coversProduction`), kể cả sang Canva.
-- Canva: token mỗi người dùng mã hoá bằng `CANVA_TOKEN_KEY`, không bao giờ trả về trình duyệt; refresh token chỉ dùng
-  một lần nên làm mới tuần tự theo người dùng (`docs/runbooks/canva.md`).
+- Gate nhận **tài liệu người đã sửa** (`submitStudioGate` → core `submitGate`); R&D/branding chỉ được ghi vào
+  production bởi stage script **sau** gate (`apply-rnd`, `apply-branding`), không ghi trong API lúc nộp gate. Sửa
+  sau khi duyệt: `PUT /productions/:id/rnd|branding` rồi chạy lại từ `brief` (`resumeRunFrom`).
+- Timeline v3: clip luôn là **cả asset**, nối tiếp, không trim; không trùng trong một tập, được dùng lại giữa các
+  tập; lệch thời lượng ±20% chỉ cảnh báo. Thao tác thuần ở `packages/core/src/studio/layout.ts` (web dùng chung qua
+  alias `@studio/timeline`). Render: `timelineToComposition` → `harness.composition/v1`.
+- Stage in-process (`InProcessExecutor`) nằm ở `packages/studio-engine/src/stages.ts`. Các workflow harness cũ
+  (`library-production*`, `channel-*`, `style-study*`, `footage-production`) vẫn trong `workflows/` nhưng **không
+  chạy được** vì built-in của chúng đã bị gỡ (ADR mục 127).
+
+### Claude
+- Gọi qua CLI bằng gói subscription, dạng **structured**: `STUDIO_ARGV` trong
+  `packages/adapters/agent-cli/src/cli-agent-runtime.ts` (`--tools ""`, `--no-session-persistence`,
+  `--json-schema`, prompt qua stdin). Env con là danh sách trắng: có `CLAUDE_CODE_OAUTH_TOKEN`/`CLAUDE_CONFIG_DIR`,
+  **không** có `ANTHROPIC_API_KEY`, không bao giờ có `HARNESS_SECRET_*`.
+- `StudioAgentExecutor` (`packages/executors/src/studio-agent-executor.ts`): prompt = skill + brief + quy chuẩn nhóm
+  (`<team_guide>`) + input inline; kiểm bằng `VALIDATORS` theo skill; **một** vòng sửa rồi `contract`. Lỗi giới hạn
+  gói (`RATE_LIMITED`) chờ 5→60 phút, không tính là attempt.
+- Model theo skill (`packages/studio-engine/src/worker.ts`): Opus cho `studio-rnd`/`studio-plan-episodes`, Sonnet
+  còn lại; ghi đè bằng `STUDIO_CLAUDE_MODEL[_<SKILL>]`. Số lượt Claude cùng lúc mỗi worker: `STUDIO_RESOURCES.claude`.
+- Mọi lượt gọi ghi `llm_calls` (payload gzip trên bucket), mọi lần người duyệt/sửa ghi `human_edits`.
+- Test luôn dùng Claude giả `fixtures/fake-studio-claude.mjs` (đặt `STUDIO_CLAUDE_ARGV`); **không gọi Claude thật
+  trong test**.
+
+### Render, xuất, thumbnail
+- `render-final` và bản xem trước trong editor chạy ở **ag-farm** (`FarmExecutor`, job `studio.render_*`); render
+  worker (`E:\CODE\ag-render-worker`) chạy `renderComposition` của `@harness/core`. Worker xin URL qua
+  `POST /api/farm/sign` (vé của farm): `asset:` → ag-go `/footage/assets/resolve` (`final` hoặc `preview`),
+  `stage:` → input của job; mọi lần ký ghi `sign_audit_log`. Build cần checkout `../ag-farm` (`@ag-farm/*` link
+  tới đó).
+- Xuất Premiere: job farm `studio.export_premiere`, FCP7 XML (xmeml v5), chữ là PNG, zip kèm README relink.
+- Thumbnail cắt và vẽ chữ trên máy Studio từ `final.mp4` (ffmpeg bất đồng bộ, không `spawnSync`); font Arial của hệ
+  thống (`STUDIO_FONTS_DIR`) — không ship font.
+- Canva: token mỗi người dùng mã hoá bằng `CANVA_TOKEN_KEY`, không bao giờ trả về trình duyệt; refresh token chỉ
+  dùng một lần nên làm mới tuần tự theo người dùng (`docs/runbooks/canva.md`).
+- Quy chuẩn & skill của nhóm (`team_skills`, ≤20 000 ký tự mỗi bản, ≤60 000 tổng) chèn vào prompt lúc gọi Claude
+  (`teamGuidesForRun`), không thành artifact.
+
+## Pipeline media của harness (giữ nguyên, chưa workflow Studio nào dùng)
+Code 5A/5B vẫn còn trong `packages/core/src/media/*` và lệnh `harness media …`; render ở farm dùng
+`renderComposition` của nó. Kiểu tập "cắt theo shot" (spec local-chat, pha 5) sẽ dùng lại phần này.
+- `harness library voices|brands|music …` (`packages/cli/src/commands/library.ts`): quản lý giọng TTS, hồ sơ
+  thương hiệu, nhạc trong thư mục `library.root`. **Không bao giờ nhân giọng một người thật khi chưa có quyền**
+  (`--origin` chỉ ghi lời khai, ADR mục 105).
+- `harness media watch|index|transcribe|tts|fit-edl|compose|render`: stage built-in, đọc `stage-request.json`
+  trong `$HARNESS_WORKSPACE`, không gọi tay.
+- `project.yaml` của harness: `adapters.media: python | fake` và khối `media:` (`python`, `device`, `transcribe`,
+  `tts`, `scene`, `watch`, `render { codec, encoder, fps, cache_max_gb }`). Engine Python: `engines/python/README.md`.
+- Mọi thứ vẽ lên hình trừ logo đi qua **một file ASS** (libass), không `drawtext`; font chỉ lấy từ `fontsdir`.
+- `h264_nvenc` của ffmpeg 8.1 cần **driver NVIDIA ≥ 610**; không có thì render bằng CPU (`encoder: auto`).
+- Chi tiết: `docs/runbooks/studio-media.md`, `docs/runbooks/studio-composition.md`, ADR mục 102–126.
 
 ## Giới hạn quyền
-- Không sửa cột `state` ngoài `transition()` và `claim()` trong `packages/core/src/state/` — **trừ** ba bảng
-  mirror của kho (`edit_style`, `content_request`, `library_item`) và bảng `channel_package`: `state`/`status`
-  ở đó chỉ là bản sao nội dung (từ file trong kho, hoặc từ `ChannelPackage.status`), `syncLibrary`/`upsert*`/
-  `commitPackage` ghi thẳng (xem "Quy tắc kho nội dung" và ADR-0001 mục 51, 70). `publication_job.state`
-  **không** nằm trong ngoại lệ này — luôn qua `transitionPublication()`.
+- Không sửa cột `state` ngoài `transition()` và `claim()` trong `packages/core/src/state/`. Bảng Studio (`productions`, `episodes`, …) không phải entity của harness: ghi qua `StudioDb` (`packages/studio-engine/src/studio-db.ts`), không qua `transition()`.
 - Không import `adapters/*` hay `agent-runtime/*` từ `packages/core`.
 - Không ghi giá trị secret vào file, event, log, manifest; chỉ dùng `secret://scope/name`.
 - Không gọi mạng hay LLM trong test.
-- Đường upload/schedule thật (`playwright` adapter, sub-project 3) bọc lại script Playwright cũ của kênh,
-  luôn đăng nhập bằng tay trước (`harness channel login`) — harness không bao giờ gõ mật khẩu/2FA. Adapter
-  YouTube Data API thật vẫn chưa tồn tại (không cần, thiết kế cố ý dùng script cũ thay vì gọi API).
+- Không in, ghi file hay commit giá trị của biến môi trường bí mật (`AUTH0_*`, `ACCOUNT_API_KEY`, `AG_GO_SERVICE_KEY`, `FARM_OWNER_KEY`, `STUDIO_R2_*`, `CLAUDE_CODE_OAUTH_TOKEN`, `CANVA_*`, `YOUTUBE_API_KEY`); khi kiểm chỉ in tên khoá.
+- Không push, không mở PR khi chưa hỏi người dùng.
 
 ## Quy tắc artifact
 - Worker ghi vào `workspaces/<run>/<stage>/<attempt>/output/`. Controller mới chuyển vào `artifacts/` và đánh dấu ACCEPTED.
@@ -234,17 +168,6 @@ YouTube Operations Harness: control plane điều phối sản xuất và phân 
 - Khi một stage commit artifact ACCEPTED mới, mọi artifact ACCEPTED của chính stage đó và các stage phụ thuộc (transitive, kể cả `depends_on_optional`) ở các run **trước đó** của cùng variant chuyển sang STALE (`artifact.stale`), kèm event `stage.invalidated_downstream` trên run vừa commit. Artifact STALE không còn được downstream đọc.
 - Invalidation theo **nội dung**, không chỉ theo graph (spec §3.2): run cũ nào đang giữ đúng tập checksum vừa commit ở chính stage đó thì được bỏ qua nguyên vẹn — submit lại một gate với nội dung y hệt không làm hỏng gì của run trước. **Ngoại lệ:** một stage commit **không output nào** (tập checksum rỗng) không có gì để so nội dung, nên vẫn invalidate thuần theo graph như trước — không có "byte giống hệt" để so sánh thì không thể bỏ qua.
 - Reuse còn xảy ra **lúc release**: một stage PENDING có đủ dependency SUCCEEDED sẽ tính lại cache_key từ input ACCEPTED thật (`stage_definition_digest`, `expected_executor_version`, `reuse_eligible` planner ghi sẵn lên StageRun) và nếu trúng thì đi thẳng `PENDING → SUCCEEDED` với event `stage.reused` (`at: "release"`), không dispatch. Nhờ đó stage nằm dưới một gate — thứ không bao giờ reuse lúc plan — vẫn tái sử dụng được khi gate cho ra đúng nội dung cũ. Ngân sách (variant) chặn nhánh reuse-lúc-release này y hệt dispatch thường (nằm trong cùng vòng lặp `releaseReady`) dù bản thân nó miễn phí; reuse lúc `plan()` thì không bao giờ bị ngân sách chặn.
-
-## Quy tắc kho nội dung
-- Kho là filesystem chia sẻ, không phải service; mỗi file có đúng một chủ ghi theo vai (`LibraryFs.assertWritable`): `studio` ghi `styles/**`, `items/**` (trừ mọi đường có đoạn `claims`), `index.json`, và chỉ overwrite `requests/<id>.json` đã tồn tại; `channel` tạo/ghi đè `requests/<id>.json` và `items/<id>/claims/<channel_id>.json`. Ghi ngoài các đường này ném `CONFIG_INVALID` trước khi chạm đĩa; mọi ghi đi qua file tạm `<file>.tmp-<uuid>` cùng thư mục rồi `renameSync`.
-- Ba bảng mirror `edit_style`/`content_request`/`library_item` (migration `0003_library.sql`) không đi qua `transition()` — `state` chỉ phản ánh nội dung đọc được từ kho, `syncLibrary`/`upsert*` ghi trực tiếp.
-- `intake` là nơi duy nhất một request chuyển `open → claimed`; `library-apply-review` (built-in stage) và `harness library review` (CLI) là hai đường duy nhất ghi kết quả duyệt vào kho, cả hai gọi chung `applyReview`.
-- Một run mà `library-apply-review` ghi `rejected` kết thúc **SUCCEEDED** với mọi stage `SUCCEEDED` — không có gì để `retry --stage <key>` (retry chỉ đưa `FAILED`/`WAITING_HUMAN` về `READY`). Làm lại: request đã về `open`, `library accept --request <cùng id>` rồi `plan` một run mới, không `retry` run cũ.
-- `claimItem` (`library pick`) idempotent theo channel, không theo run: một claim đã tồn tại được tôn trọng bất kể trạng thái hiện tại của item (kể cả sau khi item đó chuyển `withdrawn`/`rejected`); chỉ một claim **mới** mới đòi item đang `approved`.
-- `exportItem` (`library-export`) là chỗ duy nhất kho xoá file: re-export cùng `item_id` ghi đè `items/<id>/`, ghi `manifest.json` **trước** rồi mới xoá file lẻ không còn trong bộ output mới (không đệ quy — `claims/` không bao giờ bị đụng), để máy khác đang sync không thấy manifest bảo chứng cho file vừa xoá.
-- `harness worker` tự `syncLibrary` mỗi khi rảnh việc, tối đa một lần mỗi `library.sync_seconds` (mặc định 300, tối thiểu 10); lỗi sync chỉ log, không dừng worker, và worker không bao giờ tự `plan` một run từ request mới thấy.
-- Mọi ghi vào kho kiểm `library.root` còn mount không trước khi chạm đĩa — thiếu root là `IO_ERROR`, không bao giờ `mkdir -p` một kho giả cục bộ. `readRequest`/`readItem` chỉ trả `NOT_FOUND` khi file **không tồn tại**; file tồn tại mà hỏng giữ `IO_ERROR`/`CONFIG_INVALID`.
-- `harness doctor` không bao giờ tự tạo thư mục kho còn thiếu; `library:root`/`library:write`/`library:index` chỉ kiểm tra, không mutate ngoài một file thử viết-rồi-xoá tên `.doctor-<role>-<uuid>.tmp` (dot-name; mọi `list*Ids` của `LibraryFs` bỏ qua tên bắt đầu bằng `.`).
 
 ## Cách commit state
 - Mọi kết quả stage đi qua `Controller.commit()` với fencing token của attempt hiện tại.
