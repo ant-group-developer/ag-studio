@@ -50,9 +50,17 @@ export const STUDIO_ARGV = ["claude", "-p", "--output-format", "json", "--tools"
  *  and removes the file-system surface for prompt injection via visible_text/caption. */
 export const PROMPT_POINTER = "Read the file ./agent-prompt.md in the current directory and follow it exactly. Work only inside this directory.";
 
-/** `You've hit your … limit` message that the Claude CLI emits when the subscription rate-limit is reached.
- *  The exact wording varies; we match the stable infix. */
-const RATE_LIMIT_PATTERN = /you'?ve hit your\b.*\blimit\b/i;
+/** What the Claude CLI prints when the subscription limit is reached. The wording varies between versions:
+ *  "You've hit your 5-hour limit" (straight or curly apostrophe, or "you have"), "You've reached your usage
+ *  limit", "Claude AI usage limit reached|<epoch>". */
+const RATE_LIMIT_PATTERNS = [
+  /\byou(?:['’]ve| have) (?:hit|reached) your\b[^\n]*\blimit\b/i,
+  /\busage limit reached\b/i,
+];
+
+export function isRateLimitMessage(text: string): boolean {
+  return RATE_LIMIT_PATTERNS.some((p) => p.test(text));
+}
 
 export interface CliAgentRuntimeOptions {
   runtime: AgentCliRuntimeKind;
@@ -244,7 +252,7 @@ export class CliAgentRuntime implements AgentRuntime {
           structured_output: usage.structured_output,
           exit_code: code,
           timed_out: timedOut,
-          rate_limited: code !== 0 && RATE_LIMIT_PATTERN.test(combinedLog),
+          rate_limited: code !== 0 && isRateLimitMessage(combinedLog),
           wall_seconds: (Date.now() - started) / 1000,
           cost_usd: usage.cost_usd,
           input_tokens: usage.input_tokens,
@@ -263,7 +271,7 @@ export class CliAgentRuntime implements AgentRuntime {
     // Rate-limit detection: the Claude CLI prints "You've hit your … limit" and exits non-zero when the
     // subscription usage limit is reached. Tag it with RATE_LIMITED so the planner can treat it specially
     // (no retry deduction; wait until reset). Check the combined log since the message may appear on stderr.
-    if (code !== 0 && RATE_LIMIT_PATTERN.test(combinedLog)) {
+    if (code !== 0 && isRateLimitMessage(combinedLog)) {
       return failed("transient", "Claude subscription rate limit reached", { code: "RATE_LIMITED", exit_code: code });
     }
     if (code !== 0) return failed("transient", `agent CLI exited with code ${code}`, { code: "EXECUTOR_FAILED", exit_code: code });

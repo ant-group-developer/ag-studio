@@ -11,9 +11,9 @@ Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142)
   (spec local-chat, pha 4).
 - **Xuất Premiere: gain nhạc luôn 0 dB, mất fade.** Cùng file, `gainDb: 0`; `cues[].gain_db` và fade của
   composition bị bỏ qua. Sửa cùng lúc với mục trên.
-- **Không nhận ra mọi câu báo hết hạn mức Claude.** `RATE_LIMIT_PATTERN` trong
-  `packages/adapters/agent-cli/src/cli-agent-runtime.ts` không khớp dấu nháy cong ("You’ve hit your…") và câu
-  "usage limit reached"; khi đó lỗi thành `transient` thường, tốn attempt thay vì chờ.
+- ✅ **Đã đóng 2026-10-06 — Không nhận ra mọi câu báo hết hạn mức Claude.** `isRateLimitMessage`
+  (`packages/adapters/agent-cli/src/cli-agent-runtime.ts`) khớp cả nháy cong, "you have", "reached your … limit" và
+  "usage limit reached".
 - ✅ **Đã đóng 2026-10-06 — Spawn `claude` hỏng trên Windows khi chạy ngoài Docker.** `resolveCommand`
   (`packages/adapters/agent-cli/src/resolve-command.ts`) đi theo shim `claude.cmd` tới `claude.exe`.
 
@@ -48,7 +48,7 @@ Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142)
 ### Rủi ro vận hành
 
 - Build bắt buộc có checkout `../ag-farm` (`@ag-farm/*` là `link:`), kể cả khi không dùng farm.
-- Mỗi worker chỉ một lượt Claude cùng lúc (`STUDIO_RESOURCES.claude = 1`); nhiều production cùng chạy sẽ xếp hàng.
+- ✅ Đã đóng 2026-10-06 — Mỗi worker chỉ một lượt Claude cùng lúc: giờ là `STUDIO_CLAUDE_MAX_CONCURRENT` (mặc định 20) và pool vòng lặp (ADR mục 143).
 - Render chỉ có đường farm: farm hoặc render worker dừng thì `render-final` chờ tới hết deadline 4 giờ.
 
 ---
