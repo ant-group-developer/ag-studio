@@ -773,6 +773,7 @@ export const vi = {
       rate_limited: "Chạm hạn mức",
     },
     humanEdit: {
+      trend_report: "Duyệt báo cáo xu hướng",
       series_plan: "Duyệt kế hoạch",
       youtube_kit: "Lưu YouTube Kit",
       episode_rerender: "Render lại tập",

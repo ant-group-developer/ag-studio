@@ -20,8 +20,9 @@ export class StudioRunError extends Error {
   }
 }
 
-/** Gates and the document each submits: the R&D, the branding and the episode plan; episodes run on their own. */
+/** Gates and the document each submits: the trend report (plan 3.0.0), the R&D, the branding and the episode plan. */
 export const STUDIO_GATES: Record<string, string> = {
+  "approve-trend-report": "trend-report.json",
   "approve-rnd": "rnd.json",
   "approve-branding": "branding.json",
   "approve-plan": "series-plan.json",

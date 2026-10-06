@@ -127,7 +127,7 @@ function parseMusic(
 }
 
 /** The plan run's approvals: R&D, branding, episode plan. */
-const APPROVAL_GATES = new Set(["approve-rnd", "approve-branding", "approve-plan"]);
+const APPROVAL_GATES = new Set(["approve-trend-report", "approve-rnd", "approve-branding", "approve-plan"]);
 
 /** Own and reference channels together are what research reads: at most 20. */
 function checkChannelCount(own: string[] | undefined, reference: string[] | undefined): void {

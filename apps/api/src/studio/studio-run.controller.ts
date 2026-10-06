@@ -36,6 +36,7 @@ const ORDER: TeamRole[] = ['viewer', 'editor', 'producer', 'owner'];
 
 /** Each approval gate: the stage whose document Claude proposed, and how the approval is kept in the dataset. */
 const APPROVALS = {
+  'approve-trend-report': { stage: 'trend-report', file: 'trend-report.json', kind: 'trend_report' },
   'approve-rnd': { stage: 'rnd', file: 'rnd.json', kind: 'rnd' },
   'approve-branding': { stage: 'branding', file: 'branding.json', kind: 'branding' },
   'approve-plan': { stage: 'plan-episodes', file: 'series-plan.json', kind: 'series_plan' },
@@ -87,6 +88,14 @@ export class StudioRunController {
   @HttpCode(HttpStatus.OK)
   approvePlan(@Param('id') id: string, @Body() dto: SubmitGateDto, @Req() req: Request) {
     return this.approve(id, 'approve-plan', dto, req);
+  }
+
+  /** Submit the approve-trend-report gate (plan 3.0.0): body `{document: TrendReport}`. Same answers as approve-plan. */
+  @Post('gates/approve-trend-report')
+  @Roles('producer')
+  @HttpCode(HttpStatus.OK)
+  approveTrendReport(@Param('id') id: string, @Body() dto: SubmitGateDto, @Req() req: Request) {
+    return this.approve(id, 'approve-trend-report', dto, req);
   }
 
   /** Submit the approve-rnd gate: body `{document: StudioRnd}` (Claude's R&D, edited). Same answers as approve-plan. */

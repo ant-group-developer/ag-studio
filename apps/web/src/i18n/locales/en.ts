@@ -774,6 +774,7 @@ export const en: LocaleMessages = {
       rate_limited: "Limit reached",
     },
     humanEdit: {
+      trend_report: "Trend report approved",
       series_plan: "Plan approved",
       youtube_kit: "YouTube kit saved",
       episode_rerender: "Episode re-rendered",

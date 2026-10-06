@@ -689,7 +689,7 @@ export interface LlmCallDetail extends LlmCallSummary {
   warnings: { code: string; message: string }[];
 }
 
-export type HumanEditKind = "series_plan" | "youtube_kit" | "episode_rerender" | "episode_cancel" | "rnd" | "branding" | "rnd_edit" | "branding_edit" | "thumbnail";
+export type HumanEditKind = "trend_report" | "series_plan" | "youtube_kit" | "episode_rerender" | "episode_cancel" | "rnd" | "branding" | "rnd_edit" | "branding_edit" | "thumbnail";
 
 export interface HumanEditView {
   id: string;

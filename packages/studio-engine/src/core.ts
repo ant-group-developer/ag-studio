@@ -15,7 +15,7 @@ import { HarnessError, type Clock, type HarnessConfig, type ProductionProfile } 
  * `episode` (one run per episode, builds and renders one episode).
  */
 export const STUDIO_WORKFLOWS = {
-  plan: { workflow: "ag-studio-series-plan@2.0.0", profile: "studio-production" },
+  plan: { workflow: "ag-studio-series-plan@3.0.0", profile: "studio-production" },
   episode: { workflow: "ag-studio-episode@1.2.0", profile: "studio-production" },
 } as const;
 export type StudioWorkflowKind = keyof typeof STUDIO_WORKFLOWS;
