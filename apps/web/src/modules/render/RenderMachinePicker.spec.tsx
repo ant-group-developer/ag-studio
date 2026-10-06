@@ -17,4 +17,11 @@ describe("RenderMachinePicker", () => {
     fireEvent.click(screen.getByRole("radio", { name: /Máy có GPU/ }));
     expect(onChange).toHaveBeenCalledWith("gpu");
   });
+
+  it("names each option by its machine type alone; the hint is its description", () => {
+    render(<RenderMachinePicker value="any" onChange={vi.fn()} />);
+    const nvenc = screen.getByRole("radio", { name: "Máy có NVENC" });
+    expect(nvenc).toHaveAccessibleDescription("Encode bằng GPU NVIDIA, nhanh hơn với 4K.");
+    expect(screen.getByRole("radio", { name: "Bất kỳ máy nào" })).toBeChecked();
+  });
 });

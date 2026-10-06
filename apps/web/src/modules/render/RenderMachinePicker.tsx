@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { Radio } from "antd";
 import { useTranslation } from "react-i18next";
 import { RENDER_MACHINES, type RenderMachine } from "../../api/studio-client";
@@ -8,14 +9,16 @@ import { RENDER_MACHINES, type RenderMachine } from "../../api/studio-client";
  */
 export function RenderMachinePicker({ value, onChange }: { value: RenderMachine; onChange: (m: RenderMachine) => void }) {
   const { t } = useTranslation();
+  const id = useId();
   return (
     <div className="render-machine">
       <div role="radiogroup" aria-label={t("chat.render.machine")}>
         <Radio.Group value={value} onChange={(e) => onChange(e.target.value as RenderMachine)} className="render-machine__group">
           {RENDER_MACHINES.map((m) => (
-            <Radio key={m} value={m} className="render-machine__option">
+            // the input is named by the machine type alone; the hint describes it
+            <Radio key={m} value={m} className="render-machine__option" aria-label={t(`chat.render.machines.${m}`)} aria-describedby={`${id}-${m}`}>
               <span className="render-machine__name">{t(`chat.render.machines.${m}`)}</span>
-              <span className="render-machine__hint">{t(`chat.render.hints.${m}`)}</span>
+              <span className="render-machine__hint" id={`${id}-${m}`}>{t(`chat.render.hints.${m}`)}</span>
             </Radio>
           ))}
         </Radio.Group>
