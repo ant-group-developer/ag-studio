@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { newId, type TranscribeJob, type TtsJob } from "@harness/contracts";
 import { FakeMediaEngine } from "../src/fake-media-engine.js";
-import { hasFfmpeg, makeWav } from "../../../../tests/media.js";
+import { hasFfmpegOnPath as hasFfmpeg, makeWav } from "../../../../tests/media.js";
 
 /** Same technique `FakeMediaEngine.transcribe` uses internally (`ffmpeg -i <path>`, no output, parse the
  * "Duration:" line from stderr) -- used here only to independently verify the wav `synthesize()` wrote. */

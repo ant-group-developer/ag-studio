@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { isHarnessError, type MediaProbe, type MediaProber } from "@harness/contracts";
-import { hasFfmpeg, makeVideo } from "../../../../tests/media.js";
+import { hasFfmpegOnPath as hasFfmpeg, makeVideo } from "../../../../tests/media.js";
 import {
   WATCH_DEFAULTS,
   detectSceneChanges,

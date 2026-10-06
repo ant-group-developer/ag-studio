@@ -109,9 +109,9 @@ Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-5-cut.md`, ADR-0001 m�
 - **Test media cần ffmpeg + ffprobe** (`FFMPEG_PATH`/`FFPROBE_PATH`, máy dev trỏ `ffmpeg-static` của ag-render-worker);
   không có thì cả luồng tập cắt (engine, integration) bị skip. E2E farm cần render worker có handler transcribe
   (`AG_RENDER_DIR` trỏ checkout/worktree đó).
-- **Test media cũ của harness lệch nguồn ffmpeg:** `hasFfmpeg()` (`tests/media.ts`) nhận `FFMPEG_PATH`, nhưng các test
-  `harness media watch|compose|render`, `FakeMediaEngine`, `transcribeSources`, acceptance 30 gọi `ffmpeg` trên PATH:
-  đặt `FFMPEG_PATH` mà PATH không có ffmpeg thì 27 test đó hỏng thay vì skip (có từ trước pha 5).
+- ✅ Đã đóng — test media cũ của harness gọi `ffmpeg` trên PATH nên skip theo `hasFfmpegOnPath()` (`tests/media.ts`);
+  `hasFfmpeg()` (nhận `FFMPEG_PATH`) chỉ cho code nhận đường dẫn ffmpeg. Có ffmpeg ở `FFMPEG_PATH` mà không ở PATH: 1771 pass, 0
+  hỏng ngoài các test web chập chờn khi máy tải nặng (chạy riêng thì pass).
 - Lịch sử: commit C2 của pha 5 typecheck hỏng tạm, commit kế sửa.
 - Cuối pha 5: `corepack pnpm -r run build` và `pnpm -r typecheck` sạch; `vitest run` 1671 pass, 191 skip, 0 fail (không đặt `FFMPEG_PATH`); với `FFMPEG_PATH`/`FFPROBE_PATH`, các test tập cắt (engine 190, integration `cut-episode` 6) pass. `E2E=1` farm-render 9/9
   pass (render worker 0.6.0).

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse, stringify } from "yaml";
-import { hasFfmpeg, makeVideo } from "../media.js";
+import { hasFfmpegOnPath as hasFfmpeg, makeVideo } from "../media.js";
 import { cli, freshLibraryWorld } from "../integration/library-helpers.js";
 
 const SHA = "sha256:" + "a".repeat(64);

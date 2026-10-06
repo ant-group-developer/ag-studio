@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { MediaProbe, MediaProber, WatchTranscript } from "@harness/contracts";
-import { hasFfmpeg, makeVideo } from "../../../../tests/media.js";
+import { hasFfmpegOnPath as hasFfmpeg, makeVideo } from "../../../../tests/media.js";
 import { watchVideos } from "../../src/media/watch.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
