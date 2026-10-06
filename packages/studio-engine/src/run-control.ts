@@ -29,9 +29,12 @@ export const STUDIO_GATES: Record<string, string> = {
   "approve-rnd": "rnd.json",
   "approve-branding": "branding.json",
   "approve-plan": "series-plan.json",
-  // episode 1.3.0
+  // episode 1.3.0 and shot-cut 1.0.0
   "approve-timeline": "timeline.json",
   "approve-youtube-kit": "youtube-kit.json",
+  // shot-cut episode 1.0.0: the scene selection and the edit plan
+  "approve-survey": "survey.json",
+  "approve-edit-plan": "edit-plan.json",
 };
 
 /** True while the run can still do work (not ended, not being cancelled). */
@@ -74,7 +77,7 @@ export function episodeWorkflowForPlan(planVersion: string): string {
 }
 
 /** The shot-cut episode release (timeline v4, spec local-chat §3.3). */
-export const EPISODE_CUT_WORKFLOW = "ag-studio-episode-cut@1.0.0";
+export const EPISODE_CUT_WORKFLOW = STUDIO_WORKFLOWS.episodeCut.workflow;
 
 /**
  * The release one episode runs on: from plan 3.1.0 on, an episode the plan cuts shot by shot runs the shot-cut
@@ -248,7 +251,8 @@ export function startEpisodeRun(core: StudioEngineCore, db: StudioDb, episodeId:
       throw new StudioRunError("conflict", `episode already has an active run ${ep.run_id}`, { run_id: ep.run_id });
     }
   }
-  const flow = STUDIO_WORKFLOWS.episode;
+  // a new run of an episode follows its edit style ("Render lại" with no run yet starts here too)
+  const flow = ep.edit_style === "cut" ? STUDIO_WORKFLOWS.episodeCut : STUDIO_WORKFLOWS.episode;
   const run = core.planner.plan({
     workflow: core.workflows(opts.workflow ?? flow.workflow), profile: core.profiles(flow.profile),
     harness: core.harness, projectId: STUDIO_PROJECT_ID, portfolioId: STUDIO_PORTFOLIO_ID, reuse: false,

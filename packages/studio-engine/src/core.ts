@@ -15,8 +15,10 @@ import { HarnessError, type Clock, type HarnessConfig, type ProductionProfile } 
  * `episode` (one run per episode, builds and renders one episode).
  */
 export const STUDIO_WORKFLOWS = {
-  plan: { workflow: "ag-studio-series-plan@3.0.0", profile: "studio-production" },
+  plan: { workflow: "ag-studio-series-plan@3.1.0", profile: "studio-production" },
   episode: { workflow: "ag-studio-episode@1.3.0", profile: "studio-production" },
+  /** An episode the plan cuts shot by shot (spec local-chat §3.3). */
+  episodeCut: { workflow: "ag-studio-episode-cut@1.0.0", profile: "studio-production" },
 } as const;
 export type StudioWorkflowKind = keyof typeof STUDIO_WORKFLOWS;
 
@@ -89,7 +91,7 @@ export function createStudioEngineCore(o: StudioEngineCoreOptions): StudioEngine
  * Called once at worker start so the dev DB's old segment-based runs don't block new runs.
  */
 /** The Studio workflow ids: every release of them on disk stays runnable. */
-const STUDIO_WORKFLOW_IDS = ["ag-studio-series-plan", "ag-studio-episode"];
+const STUDIO_WORKFLOW_IDS = ["ag-studio-series-plan", "ag-studio-episode", "ag-studio-episode-cut"];
 
 /**
  * Every Studio workflow release on disk (`workflows/ag-studio-*@*`). `STUDIO_WORKFLOWS` only says what a NEW run

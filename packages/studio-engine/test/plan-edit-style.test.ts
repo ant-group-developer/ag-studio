@@ -1,7 +1,7 @@
 /** Plan 3.1.0: plan-episodes says how each episode is edited; spawn-episodes-v2 runs each on its workflow. */
 import { describe, expect, it } from "vitest";
 import { SeriesPlanSchema, StudioEpisodeSchema, type StudioCatalog } from "@harness/contracts";
-import { episodeWorkflowFor, EPISODE_CUT_WORKFLOW, listEpisodes, studioStages, STUDIO_WORKFLOWS } from "../src/index.js";
+import { episodeWorkflowFor, EPISODE_CUT_WORKFLOW, listEpisodes, replaceEpisodes, startEpisodeRun, studioStages, STUDIO_WORKFLOWS } from "../src/index.js";
 import { fakeFootage, seedProduction, world } from "./helpers.js";
 import { runStage, stageWorkspace } from "./stage-harness.js";
 
@@ -57,5 +57,21 @@ describe("studio-spawn-episodes-v2", () => {
     const whole = StudioEpisodeSchema.parse(JSON.parse(eps[1]!.plan!));
     expect(whole.edit_style).toBe("whole");
     expect(whole.asset_hints).toBeUndefined();
+  });
+});
+
+describe("startEpisodeRun follows the episode's edit style", () => {
+  it("a shot-cut episode runs ag-studio-episode-cut, a whole-video one 1.3.0", () => {
+    const { core, db } = world();
+    const prod = seedProduction(db);
+    replaceEpisodes(db, prod, [
+      { id: "ep-cut", idx: 1, title: "Phố cổ", hook: "h", plan: "{}", edit_style: "cut" },
+      { id: "ep-whole", idx: 2, title: "Đền", hook: "h", plan: "{}" },
+    ], "plan-run");
+    const cut = core.store.getRun(startEpisodeRun(core, db, "ep-cut").runId)!;
+    const whole = core.store.getRun(startEpisodeRun(core, db, "ep-whole").runId)!;
+    expect(`${cut.workflow_release.id}@${cut.workflow_release.version}`).toBe(STUDIO_WORKFLOWS.episodeCut.workflow);
+    expect(`${whole.workflow_release.id}@${whole.workflow_release.version}`).toBe(STUDIO_WORKFLOWS.episode.workflow);
+    core.close();
   });
 });

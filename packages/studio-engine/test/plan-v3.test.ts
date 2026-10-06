@@ -1,5 +1,5 @@
 /**
- * Chat first (ag-studio-series-plan@3.0.0): a gate after every Claude stage. The run stops at the trend report for a
+ * Chat first (ag-studio-series-plan@3.0.0, and 3.1.0 which only adds the edit style per episode): a gate after every Claude stage. The run stops at the trend report for a
  * person to approve; R&D, branding, the plan and the episodes read the trend report as approved. Runs on 2.0.0 keep
  * going as before.
  */
@@ -34,12 +34,12 @@ function seedMinimal(s: Setup, id?: string): string {
   return prod;
 }
 
-describe("ag-studio-series-plan@3.0.0", () => {
+describe("ag-studio-series-plan@3.0.0 / 3.1.0", () => {
   let s: Setup;
   afterEach(() => s?.core.close());
 
   it("is the plan release new runs use, and its trend-report gate submits trend-report.json", () => {
-    expect(STUDIO_WORKFLOWS.plan.workflow).toBe("ag-studio-series-plan@3.0.0");
+    expect(STUDIO_WORKFLOWS.plan.workflow).toBe("ag-studio-series-plan@3.1.0");
     expect(STUDIO_GATES["approve-trend-report"]).toBe("trend-report.json");
   });
 
