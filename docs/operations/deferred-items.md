@@ -14,9 +14,20 @@ Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142)
 - **Không nhận ra mọi câu báo hết hạn mức Claude.** `RATE_LIMIT_PATTERN` trong
   `packages/adapters/agent-cli/src/cli-agent-runtime.ts` không khớp dấu nháy cong ("You’ve hit your…") và câu
   "usage limit reached"; khi đó lỗi thành `transient` thường, tốn attempt thay vì chờ.
-- **Spawn `claude` hỏng trên Windows khi chạy ngoài Docker.** `CliAgentRuntime` gọi `spawn("claude", …)` không
-  qua shell; bản cài bằng npm chỉ có `claude.cmd` nên spawn báo `ENOENT` → `contract`. Trong image Docker không
-  gặp. Sửa ở pha 0 của spec local-chat.
+- ✅ **Đã đóng 2026-10-06 — Spawn `claude` hỏng trên Windows khi chạy ngoài Docker.** `resolveCommand`
+  (`packages/adapters/agent-cli/src/resolve-command.ts`) đi theo shim `claude.cmd` tới `claude.exe`.
+
+### Baseline test trên máy dev Windows (2026-10-06)
+
+- `pnpm -r typecheck` sạch. `vitest run`: 1330 pass, 168 skip (E2E cần `E2E=1`, test media cần ffmpeg trên PATH,
+  test Claude thật cần `HARNESS_REAL_CLAUDE_TEST=1`), **1 fail chập chờn**:
+  `apps/web/src/modules/production/episodes-table.spec.tsx` › "Video (mp4)" quá 5 s khi chạy cả bộ (máy tải nặng),
+  chạy riêng thì pass (2,3 s). Nên tăng timeout riêng cho test này hoặc giảm việc render trong nó.
+- `pnpm build` ở gốc repo gọi `pnpm -r run build`, hỏng khi `pnpm` không có trên PATH (chỉ có qua `corepack`).
+  Dùng `corepack pnpm -r run build`.
+- Ngoài repo: script `migration:run` của `ag-farm/apps/api` trỏ `./node_modules/typeorm/cli.js` nhưng typeorm
+  được hoist ra `ag-farm/node_modules`; chạy tay `node --require ts-node/register ../../node_modules/typeorm/cli.js
+  migration:run -d src/database/data-source.ts`.
 
 ### Nợ dọn dẹp
 
