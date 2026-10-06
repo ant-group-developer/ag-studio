@@ -143,3 +143,33 @@
   background: var(--chat-run-bg); color: var(--chat-run-fg);
 }
 .chat-mention button { border: 0; background: none; padding: 0; color: inherit; cursor: pointer; display: flex; }
+
+.chat-thread { flex: 1; display: flex; flex-direction: column; gap: 12px; }
+.chat-thread__section { display: flex; flex-direction: column; gap: 12px; }
+.chat-divider { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--chat-faint); margin: 4px 0; }
+.chat-divider::before, .chat-divider::after { content: ""; flex: 1; height: 1px; background: var(--chat-line); }
+.chat-bubble { align-self: flex-end; max-width: 80%; background: var(--chat-chip); padding: 8px 12px; border-radius: 12px 12px 4px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-system { align-self: center; margin: 0; font-size: 12px; color: var(--chat-faint); }
+.chat-reply { max-width: 90%; display: flex; flex-direction: column; gap: 8px; }
+.chat-reply p { margin: 0; }
+.chat-reply__who { font-size: 12px; font-weight: 500; color: var(--chat-faint); }
+.chat-reply__text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-reply__text--failed { color: var(--chat-bad-fg); }
+.chat-reply__wait { color: var(--chat-faint); font-style: italic; }
+.chat-reply__problems { font-size: 13px; color: var(--chat-bad-fg); background: var(--chat-bad-bg); border-radius: 8px; padding: 8px 12px; }
+.chat-reply__problems ul { margin: 4px 0 0; padding-left: 18px; }
+.chat-quick { display: flex; flex-wrap: wrap; gap: 8px; }
+.chat-quick button {
+  min-height: 36px; padding: 0 14px; border: 1px solid var(--chat-line-strong); border-radius: 999px;
+  background: var(--chat-surface); font: inherit; font-size: 13px; color: var(--chat-text); cursor: pointer;
+}
+.chat-card {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 14px;
+  border: 1px solid var(--chat-line-strong); border-radius: 10px; background: var(--chat-surface);
+}
+.chat-card > span { flex: 1; min-width: 200px; }
+.chat-card__button {
+  min-height: 40px; padding: 0 16px; border: 1px solid var(--chat-line-strong); border-radius: 8px;
+  background: var(--chat-surface); font: inherit; font-weight: 500; color: var(--chat-text); cursor: pointer;
+}
+.chat-card__button:disabled { opacity: 0.5; cursor: default; }
