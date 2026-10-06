@@ -20,6 +20,7 @@ import {
   cancelEpisode,
   EPISODE_RENDER_STAGE,
   episodeExport,
+  episodeRenderInfo,
   episodeRunView,
   episodeState,
   episodeThumbnails,
@@ -33,16 +34,18 @@ import {
   rerenderEpisode,
   retryStage,
   readStoredYoutubeKit,
+  RENDER_MACHINES,
   selectedThumbnail,
   YoutubeKitSchema,
   validateYoutubeKit,
   type EpisodeRecord,
   type EpisodeStatus,
+  type RenderMachine,
   type RunView,
   type ThumbnailActionDeps,
 } from '@ag-studio/engine';
 import { Logger } from '@nestjs/common';
-import { IsInt, IsObject, IsOptional, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsObject, IsOptional, Max, Min } from 'class-validator';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from './engine.service';
@@ -52,6 +55,11 @@ import { mapErrors } from './http-errors';
 // ---------------------------------------------------------------------------
 // DTOs
 // ---------------------------------------------------------------------------
+
+export class RerenderDto {
+  /** The farm machine type the final render runs on (phase 3); absent: the run's choice, or any machine. */
+  @IsOptional() @IsIn(RENDER_MACHINES) renderMachine?: RenderMachine;
+}
 
 class PatchEpisodeDto {
   @IsOptional()
@@ -108,6 +116,22 @@ export class EpisodesController {
    *  production (plan decision 9: sharing a production never widens anyone's footage scope). */
   private covers(req: Request, prodId: string): Promise<boolean> {
     return this.access.coversProduction(req.authContext!.userId, prodId);
+  }
+
+  /** The final render: machine type, where Render lại starts, and the farm status of the job while it renders. */
+  private async renderInfo(episodeId: string) {
+    const info = episodeRenderInfo(this.engine.core, this.engine.db, episodeId);
+    const running = info.job && info.restartFrom === null && info.job.runId === getEpisode(this.engine.db, episodeId)?.run_id;
+    let farmStatus: { status: string; progress: number | null } | null = null;
+    if (running) {
+      try {
+        const job = await this.engine.editor.farm.getJob(info.job!.farmJobId);
+        farmStatus = { status: job.status, progress: job.progress_percent ?? null };
+      } catch (e) {
+        this.logger.warn(`farm job ${info.job!.farmJobId} status unavailable: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    return { ...info, farmStatus };
   }
 
   /** Farm progress of the episode's render, while it renders. The list must not fail because the farm is away. */
@@ -230,6 +254,7 @@ export class EpisodesController {
         finalVideoUrl: mp4 ? await this.sign(mp4.key) : null,
         finalVideoDownloadUrl: mp4 ? await this.sign(mp4.key, mp4.key.split('/').pop()) : null,
         latestRevision: latestEpisodeRevision(this.engine.db, ep.id)?.revision ?? null,
+        render: await this.renderInfo(ep.id),
       };
     });
   }
@@ -321,13 +346,16 @@ export class EpisodesController {
   @Post(':episodeId/rerender')
   @Roles('producer')
   @HttpCode(HttpStatus.ACCEPTED)
-  rerender(@Param('id') prodId: string, @Param('episodeId') episodeId: string, @Req() req: Request) {
+  rerender(@Param('id') prodId: string, @Param('episodeId') episodeId: string, @Body() dto: RerenderDto, @Req() req: Request) {
     return mapErrors(() => {
       const ep = getEpisode(this.engine.db, episodeId);
       if (!ep || ep.production_id !== prodId) {
         throw new NotFoundException({ code: 'not_found', message: `episode ${episodeId} not found` });
       }
-      const out = rerenderEpisode(this.engine.core, this.engine.db, episodeId);
+      const out = rerenderEpisode(this.engine.core, this.engine.db, episodeId, {
+        ...(dto?.renderMachine !== undefined ? { machine: dto.renderMachine } : {}),
+        ...(req?.authContext?.userId ? { by: req.authContext.userId } : {}),
+      });
       this.recordEpisodeDecision(ep, 'episode_rerender', req?.authContext?.userId);
       return out;
     });

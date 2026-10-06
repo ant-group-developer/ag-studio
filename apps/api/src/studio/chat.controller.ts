@@ -15,7 +15,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Type } from 'class-transformer';
-import { IsInt, IsObject, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
+import { IsIn, IsInt, IsObject, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
 import { Request } from 'express';
 import {
   applyChatProposal,
@@ -30,6 +30,8 @@ import {
   sendChatMessage,
   startFromIntake,
   type IntakeFolder,
+  RENDER_MACHINES,
+  type RenderMachine,
 } from '@ag-studio/engine';
 import { AgGoClient } from '../ag-go/client';
 import { Roles, type TeamRole } from '../auth/roles.decorator';
@@ -55,6 +57,8 @@ export class ChatApproveDto {
   @IsOptional() @IsString() episodeId?: string;
   /** The turn of the version on show (absent/null: what the stage wrote). A newer version answers 409 `stale_version`. */
   @IsOptional() @IsString() turnId?: string | null;
+  /** Approving `approve-youtube-kit` starts the final render: the farm machine type it runs on (any other gate: 422). */
+  @IsOptional() @IsIn(RENDER_MACHINES) renderMachine?: RenderMachine;
 }
 
 export class ChatStepDto {
@@ -166,6 +170,7 @@ export class ChatController {
   approve(@Param('id') id: string, @Body() dto: ChatApproveDto, @Req() req: Request) {
     return mapErrors(() => approveChatScope(this.engine.core, this.engine.db, {
       productionId: id, episodeId: dto.episodeId ?? null, stageKey: dto.stageKey, turnId: dto.turnId ?? null, userId: req.authContext!.userId,
+      ...(dto.renderMachine !== undefined ? { renderMachine: dto.renderMachine } : {}),
     }));
   }
 
