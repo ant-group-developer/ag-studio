@@ -145,6 +145,7 @@ export const en: LocaleMessages = {
     columnEpisodes: "Episodes done / total",
     create: "Create new production",
     createTitle: "Create new production",
+    createFailed: "Could not create the production",
     fieldTitle: "Title",
     fieldTitleRequired: "Please enter a title",
     fieldBrief: "Description",

@@ -143,6 +143,7 @@ export const vi = {
     columnEpisodes: "Tập hoàn tất / tổng",
     create: "Tạo production mới",
     createTitle: "Tạo production mới",
+    createFailed: "Không tạo được production",
     fieldTitle: "Tiêu đề",
     fieldTitleRequired: "Vui lòng nhập tiêu đề",
     fieldBrief: "Chủ đề / mô tả",

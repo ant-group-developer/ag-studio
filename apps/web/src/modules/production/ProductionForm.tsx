@@ -323,16 +323,23 @@ export function ProductionForm({
           />
         </Form.Item>
 
-        {/* ---- Keywords ---- */}
+        {/* ---- Keywords; also says when there is nothing to research (no channel and no keyword).
+             That check used to sit on a hidden field, so its message never showed and Create looked dead. ---- */}
         <Form.Item
           name="keywords"
           label={t("productions.fieldKeywords")}
+          dependencies={["ownChannels", "youtubeChannels"]}
           rules={[
             {
               validator: (_, value: string[] = []) => {
                 if (value.length > 20) return Promise.reject(new Error("Tối đa 20 từ khóa"));
                 if (value.some((k) => k.length > 100))
                   return Promise.reject(new Error("Từ khóa tối đa 100 ký tự"));
+                const own = form.getFieldValue("ownChannels") as string[] | undefined;
+                const ref = form.getFieldValue("youtubeChannels") as string[] | undefined;
+                if ((own?.length ?? 0) + (ref?.length ?? 0) + value.length === 0) {
+                  return Promise.reject(new Error(t("productions.atLeastOneResearchSource")));
+                }
                 return Promise.resolve();
               },
             },
@@ -343,27 +350,6 @@ export function ProductionForm({
             placeholder={t("productions.keywordsPlaceholder")}
             tokenSeparators={[","]}
           />
-        </Form.Item>
-
-        {/* ---- Form-level validation: at least one channel or keyword ---- */}
-        <Form.Item
-          name="_research_source_check"
-          style={{ display: "none" }}
-          rules={[{
-            validator: () => {
-              const own = form.getFieldValue("ownChannels") as string[] | undefined;
-              const ref = form.getFieldValue("youtubeChannels") as string[] | undefined;
-              const kw = form.getFieldValue("keywords") as string[] | undefined;
-              const totalChannels = (own?.length ?? 0) + (ref?.length ?? 0);
-              const totalKw = kw?.length ?? 0;
-              if (totalChannels === 0 && totalKw === 0) {
-                return Promise.reject(new Error(t("productions.atLeastOneResearchSource")));
-              }
-              return Promise.resolve();
-            },
-          }]}
-        >
-          <Input type="hidden" />
         </Form.Item>
 
         {/* ---- Quota estimate ---- */}

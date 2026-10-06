@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  App,
   Button,
   Drawer,
   Empty,
@@ -64,6 +65,7 @@ export function ProductionsPage() {
   const client = useStudioClient();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { message } = App.useApp();
 
   // URL state (nuqs)
   const [page, setPage] = useQueryState("p_page", parseAsInteger.withDefault(1));
@@ -133,6 +135,7 @@ export function ProductionsPage() {
         tone: values.tone,
         notes: values.notes,
         sources: values.sources ?? [],
+        ownChannels: values.ownChannels ?? [],
         youtubeChannels: values.youtubeChannels ?? [],
         keywords: values.keywords ?? [],
         episodeTargetSeconds: values.targetSeconds,
@@ -146,6 +149,15 @@ export function ProductionsPage() {
       void queryClient.invalidateQueries({ queryKey: ["productions", created.teamId] });
       setOpen(false);
       form.resetFields();
+    },
+    onError: (err) => {
+      // A field the form rejected shows its own message; bring it into view, the button sits in the drawer header
+      const firstInvalid = (err as { errorFields?: { name: (string | number)[] }[] }).errorFields?.[0];
+      if (firstInvalid) {
+        form.scrollToField(firstInvalid.name, { block: "center" });
+        return;
+      }
+      void message.error(err instanceof Error ? err.message : t("productions.createFailed"));
     },
   });
 
