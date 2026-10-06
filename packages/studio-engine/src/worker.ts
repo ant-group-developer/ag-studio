@@ -10,7 +10,8 @@ import type { FarmOwnerClient } from "@ag-farm/owner-client";
 import type { AgentCallTrace, ProjectConfig, StudioSkill } from "@harness/contracts";
 import { farmStorage, type StudioBucket } from "./bucket.js";
 import { recordLlmCall } from "./llm-log.js";
-import { cancelLegacyRuns, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, studioResources, studioWorkflowRefs, type StudioEngineCore } from "./core.js";
+import { cancelLegacyRuns, DEFAULT_CLAUDE_MAX_CONCURRENT, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, studioResources, studioWorkflowRefs, type StudioEngineCore } from "./core.js";
+import { claudeMaxConcurrent } from "./settings.js";
 import { studioPayloadBuilders } from "./payloads.js";
 import { isRunActive, startEpisodeRun } from "./run-control.js";
 import { studioStages, type FootageCatalogSource } from "./stages.js";
@@ -76,7 +77,8 @@ export function studioLogger(bindings: Record<string, unknown> = {}): HarnessLog
   return createLogger({ redactor: new Redactor(() => []), sink: (l) => process.stderr.write(l + "\n"), bindings: { service: "studio-worker", ...bindings } });
 }
 
-function buildWorkers(o: StudioWorkerOptions, count: number): Worker[] {
+/** Makes worker loops that share one set of executors; `next()` names each new loop after the last one. */
+function workerFactory(o: StudioWorkerOptions, single: boolean): { next: () => Worker; capacity: () => { claude: number; farm: number; cpu: number } } {
   const { core } = o;
   // Cancel runs from old workflows (segment-based) so they don't block new ones
   cancelLegacyRuns(core);
@@ -108,40 +110,72 @@ function buildWorkers(o: StudioWorkerOptions, count: number): Worker[] {
     payloadBuilders: studioPayloadBuilders({ db: o.db, bucket: o.bucket }),
     pollIntervalMs: o.farmPollMs ?? 5000,
   }));
-  const resources = studioResources(o.claudeMaxConcurrent);
+  const capacity = () => studioResources(claudeMaxConcurrent(o.db, o.claudeMaxConcurrent ?? DEFAULT_CLAUDE_MAX_CONCURRENT).value);
   const project = {
     schema_version: "harness.project-config/v1", project_id: STUDIO_PROJECT_ID, template_release: "0.1.0", runtime: "claude",
     data_root: core.dataRoot, portfolios: [{ portfolio_id: STUDIO_PORTFOLIO_ID, display_name: "AG Studio" }],
-    resources, source: { materialize: "link" }, workflows: studioWorkflowRefs(core.harnessRoot),
+    resources: capacity(), source: { materialize: "link" }, workflows: studioWorkflowRefs(core.harnessRoot),
   } as unknown as ProjectConfig;
-  return Array.from({ length: count }, (_, i) => {
-    const owner = count === 1 ? o.owner : `${o.owner}#${i + 1}`;
+  let made = 0;
+  const next = () => {
+    made += 1;
+    const owner = single ? o.owner : `${o.owner}#${made}`;
     return new Worker({
       store: core.store, planner: core.planner, controller: core.controller, registry: core.registry, verifier: core.verifier, executors,
       harness: core.harness, project, dataRoot: core.dataRoot, owner, capabilities: [], logger: o.logger ?? studioLogger({ owner }),
-      clock: core.clock, workflows: core.workflows, profiles: core.profiles, resourceCapacity: resources,
+      clock: core.clock, workflows: core.workflows, profiles: core.profiles, resourceCapacity: capacity,
     });
-  });
+  };
+  return { next, capacity };
 }
 
 /** One worker loop: claims and runs one stage at a time. */
 export function createStudioWorker(o: StudioWorkerOptions): Worker {
-  return buildWorkers(o, 1)[0]!;
+  return workerFactory(o, true).next();
 }
 
 export interface StudioWorkerPool {
-  workers: Worker[];
+  /** The loops in use now (loops let go after the cap dropped are no longer listed, though they may finish a stage). */
+  readonly workers: Worker[];
+  /** Matches the number of loops to the capacity now (`claude` from the web setting or env, + farm + cpu). */
+  resize(): void;
   runForever(signal: AbortSignal): Promise<void>;
 }
+
+/** How often a running pool reads the capacity again to add or let go loops. */
+export const STUDIO_POOL_RESIZE_MS = 10_000;
 
 /**
  * Enough worker loops to fill every resource at once (`claude` + `farm` + `cpu`), sharing one store and one set of
  * executors. One loop runs one stage at a time and a farm stage holds its loop until the render is done, so a
  * single loop would serialize every production; with a pool, `claude` capacity alone decides how many Claude
  * calls run together. Loops coordinate through `claim()`/leases exactly like separate worker processes.
+ * The `claude` cap can change on the web while running: claims read it every time, and the pool adds loops or lets
+ * extra ones go after their current stage (never cutting a stage short).
  */
-export function createStudioWorkerPool(o: StudioWorkerOptions): StudioWorkerPool {
-  const r = studioResources(o.claudeMaxConcurrent);
-  const workers = buildWorkers(o, r.claude + r.farm + r.cpu);
-  return { workers, runForever: async (signal) => { await Promise.all(workers.map((w) => w.runForever(signal))); } };
+export function createStudioWorkerPool(o: StudioWorkerOptions & { resizeEveryMs?: number }): StudioWorkerPool {
+  const factory = workerFactory(o, false);
+  const loops: { worker: Worker; drain: AbortController; done?: Promise<void> }[] = [];
+  let signal: AbortSignal | undefined;
+  const start = (l: (typeof loops)[number]) => { if (signal && !l.done) l.done = l.worker.runForever(signal, { drain: l.drain.signal }); };
+  const retired: Promise<void>[] = [];
+  const resize = () => {
+    const c = factory.capacity();
+    const want = c.claude + c.farm + c.cpu;
+    while (loops.length < want) { const l = { worker: factory.next(), drain: new AbortController() }; loops.push(l); start(l); }
+    while (loops.length > want) { const l = loops.pop()!; l.drain.abort(); if (l.done) retired.push(l.done); }
+  };
+  resize();
+  return {
+    get workers() { return loops.map((l) => l.worker); },
+    resize,
+    runForever: async (s) => {
+      signal = s;
+      for (const l of loops) start(l);
+      const timer = setInterval(resize, o.resizeEveryMs ?? STUDIO_POOL_RESIZE_MS);
+      await new Promise<void>((res) => { if (s.aborted) res(); else s.addEventListener("abort", () => res(), { once: true }); });
+      clearInterval(timer);
+      await Promise.all([...loops.map((l) => l.done), ...retired]);
+    },
+  };
 }

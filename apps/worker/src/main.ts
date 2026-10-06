@@ -26,7 +26,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { AgGoClient } from "@ag-studio/ag-go-client";
 import {
-  createStudioEngineCore, createStudioWorkerPool, FarmOwnerClient, parseClaudeMaxConcurrent, ffmpegThumbnailRenderer, S3Bucket, StudioDb, studioLogger, studioResearchCache,
+  claudeMaxConcurrent as studioClaudeMaxConcurrent, createStudioEngineCore, createStudioWorkerPool, FarmOwnerClient, parseClaudeMaxConcurrent, ffmpegThumbnailRenderer, S3Bucket, StudioDb, studioLogger, studioResearchCache,
   YoutubeResearchSource,
 } from "@ag-studio/engine";
 import { HARNESS_ROOT } from "@harness/core";
@@ -71,7 +71,8 @@ async function main(): Promise<void> {
     ...(ffmpeg ? { thumbnails: ffmpegThumbnailRenderer({ ffmpeg }) } : {}),
   });
 
-  logger.info("Studio worker starting", { owner, harnessRoot, youtube_research: !!youtubeKey, claude_max_concurrent: claudeMaxConcurrent, loops: pool.workers.length });
+  const claudeCap = studioClaudeMaxConcurrent(db, claudeMaxConcurrent);
+  logger.info("Studio worker starting", { owner, harnessRoot, youtube_research: !!youtubeKey, claude_max_concurrent: claudeCap.value, claude_max_concurrent_from: claudeCap.source, loops: pool.workers.length });
   const ac = new AbortController();
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
     process.on(sig, () => { logger.warn(`received ${sig}, stopping after the current stage`); ac.abort(); });

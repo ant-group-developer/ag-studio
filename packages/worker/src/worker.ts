@@ -7,7 +7,9 @@ import { startHeartbeat } from "./heartbeat.js";
 export interface WorkerDeps {
   store: StateStore; planner: Planner; controller: Controller; registry: ArtifactRegistry; verifier: Verifier; executors: ExecutorRegistry;
   harness: HarnessConfig; project: ProjectConfig; dataRoot: string; owner: string; capabilities: string[]; logger: HarnessLogger; clock: Clock;
-  workflows: (ref: string) => LoadedWorkflow; profiles: (id: string) => ProductionProfile; resourceCapacity: Record<string, number>;
+  workflows: (ref: string) => LoadedWorkflow; profiles: (id: string) => ProductionProfile;
+  /** Slots per resource; a function is read again on every claim, so a capacity changed while running applies at once. */
+  resourceCapacity: Record<string, number> | (() => Record<string, number>);
   /** Only present when `project.yaml` declares `library`; the worker holds a reference for resource cleanup
    * and future use, but does not perform periodic syncs (voices/brands/music are managed via CLI commands). */
   library?: { fs: LibraryFs; role: LibraryRole; syncSeconds: number };
@@ -24,13 +26,23 @@ function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
 export class Worker {
   constructor(private readonly d: WorkerDeps) {}
 
-  async runForever(signal: AbortSignal): Promise<void> {
-    while (!signal.aborted) {
+  /**
+   * Claims and runs stages until `signal` aborts (which also cancels the stage running). `drain` stops the loop
+   * gently: the stage running finishes, then no new one is claimed.
+   */
+  async runForever(signal: AbortSignal, opts: { drain?: AbortSignal } = {}): Promise<void> {
+    const stop = opts.drain ? AbortSignal.any([signal, opts.drain]) : signal;
+    while (!stop.aborted) {
       let r: "idle" | "done" | "lost";
       try { r = await this.runOnce(signal); }
       catch (e) { this.d.logger.error("runOnce failed; worker keeps polling", { error: e instanceof Error ? e.message : String(e) }); r = "idle"; }
-      if (r === "idle" && !signal.aborted) await sleepUnlessAborted(this.d.harness.poll_seconds * 1000, signal);
+      if (r === "idle" && !stop.aborted) await sleepUnlessAborted(this.d.harness.poll_seconds * 1000, stop);
     }
+  }
+
+  private capacity(): Record<string, number> {
+    const c = this.d.resourceCapacity;
+    return typeof c === "function" ? c() : c;
   }
 
   async runOnce(signal?: AbortSignal): Promise<"idle" | "done" | "lost"> {
@@ -42,7 +54,7 @@ export class Worker {
       catch (e) { logger.warn("advance after reap failed", { run_id: runId, error: e instanceof Error ? e.message : String(e) }); }
     }
     const defaultLeaseSeconds = this.d.harness.lease_seconds;
-    const claim = store.claim({ owner: this.d.owner, capabilities: this.d.capabilities, now: clock.now(), leaseSeconds: defaultLeaseSeconds, resourceCapacity: this.d.resourceCapacity });
+    const claim = store.claim({ owner: this.d.owner, capabilities: this.d.capabilities, now: clock.now(), leaseSeconds: defaultLeaseSeconds, resourceCapacity: this.capacity() });
     if (!claim) {
       this.warnResourceStarvation(); this.warnGateOverdue();
       return "idle";
@@ -117,10 +129,10 @@ export class Worker {
     const candidates = [...store.listRuns({ state: "RUNNING" }), ...store.listRuns({ state: "READY" })]
       .flatMap((run) => store.listStageRuns(run.run_id).filter((s) => s.state === "READY" && s.requires_resources.length > 0 && s.ready_at).map((s) => ({ run, s })));
     if (!candidates.length) return;
-    const held = store.countLeasedResources(); const now = clock.now();
+    const held = store.countLeasedResources(); const now = clock.now(); const cap = this.capacity();
     for (const { run, s } of candidates) {
       if (Date.parse(now) - Date.parse(s.ready_at!) < harness.resource_wait_warn_seconds * 1000) continue;
-      const starved = s.requires_resources.filter((r) => (held[r] ?? 0) >= (this.d.resourceCapacity[r] ?? 0));
+      const starved = s.requires_resources.filter((r) => (held[r] ?? 0) >= (cap[r] ?? 0));
       if (!starved.length) continue;
       const recent = store.listEvents({ run_id: run.run_id, limit: 200, newest: true }).some((e) => e.event_type === "stage.waiting_resource" && e.stage_run_id === s.stage_run_id && Date.parse(now) - Date.parse(e.occurred_at) < harness.resource_wait_warn_seconds * 1000);
       if (!recent) store.appendEvent(eventFor(run, s, null, "stage.waiting_resource", "warn", { resources: starved, waiting_since: s.ready_at }));
