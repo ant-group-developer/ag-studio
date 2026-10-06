@@ -143,13 +143,26 @@ interface EpisodeDetail extends EpisodeSummary {
     sizeBytes: number; name: string }[];   // 'pack' only for episodes exported before 1.2.0
   finalVideoUrl: string | null; finalVideoDownloadUrl: string | null;   // the download URL saves the file
   latestRevision: number | null;
+  render: EpisodeRender;
+}
+type RenderMachine = 'any' | 'nvenc' | 'gpu';   // ag-farm requirements {} | {nvenc: true} | {gpu: true}
+interface EpisodeRender {
+  machine: RenderMachine | null;          // chosen for the current run's final render (null: none, the job goes out as {})
+  defaultMachine: RenderMachine;          // what a picker starts on: machine ?? the production's latest choice ?? 'any'
+  // where Render lại starts now: 'start' (no run), 'render-final' (the approved timeline did not change),
+  // 'approve-timeline' (edited since approval), 'freeze-timeline' (episode 1.2.0, or a run parked there); null: producing
+  restartFrom: 'start' | 'render-final' | 'approve-timeline' | 'freeze-timeline' | null;
+  job: { farmJobId: string; runId: string; machine: RenderMachine | null; createdAt: string } | null;   // latest final render
+  farmStatus: { status: string; progress: number | null } | null;   // the farm's view of `job` while the run renders it
 }
 ```
 - `GET ?page&pageSize&sortBy(idx|title|status|updatedAt)&sortOrder` -> `Paged<EpisodeSummary>` (default idx asc)
 - `GET /:episodeId` -> EpisodeDetail
 - `PATCH /:episodeId` (editor) `{youtube?: YoutubeKit, selectedTitle?: 0..2, selectedThumbnail?: 0..2}` -> EpisodeDetail
   (the kit is validated with YoutubeKitSchema + validateYoutubeKit; 422 with problems)
-- `POST /:episodeId/rerender` (producer) -> `{runId}`; 409 `episode_running` while its run is active
+- `POST /:episodeId/rerender` (producer) `{renderMachine?: RenderMachine}` -> `{runId, reused, from}`; `from` as
+  `render.restartFrom`. The type is kept for that run's final render; without one the run's choice stays, or `{}`.
+  409 `episode_running` while its run is active
 - `POST /:episodeId/cancel` (producer); `POST /:episodeId/stages/:stage/retry` (producer)
 - `GET /:episodeId/documents/:stage/:name`
 - `POST /:episodeId/youtube-pack` (viewer with the footage scope) -> `{url, name, sizeBytes}`: the zip as the episode
@@ -262,10 +275,11 @@ interface ChatThreadView { turns: ChatTurn[];
   `superseded` / `already_applied`)
 - `POST /productions/:id/start` (producer) -> `{runId}`: the newest intake draft into the production, then the plan
   run; 422 `intake_incomplete` with `missing: ('title'|'folder_ids'|'aspect'|'language'|'research')[]`
-- `POST /productions/:id/chat/approve` (producer) `{stageKey, episodeId?, turnId?}` -> `{stageState, runState,
-  revision?}`: approves the document on show (`turnId` = `current.turnId`; 409 `stale_version` when a newer one
-  exists, `stale_step` when the gate is no longer waiting). `approve-timeline` submits the latest revision (409
+- `POST /productions/:id/chat/approve` (producer) `{stageKey, episodeId?, turnId?, renderMachine?}` -> `{stageState,
+  runState, revision?}`: approves the document on show (`turnId` = `current.turnId`; 409 `stale_version` when a newer
+  one exists, `stale_step` when the gate is no longer waiting). `approve-timeline` submits the latest revision (409
   `not_applied` when `turnId` is a timeline proposal not applied yet). Draft and approved version go to `human_edits`.
+  `renderMachine` only with `approve-youtube-kit` (it starts the final render; 422 `no_render_here` on another gate).
 - `POST /productions/:id/chat/retry` (producer) `{stageKey, episodeId?}` -> 202: runs the failed Claude stage again
   with the chat's messages about it in its prompt; 409 `not_failed`
 - `POST /productions/:id/chat/manual` (producer) `{stageKey, episodeId?, document}` -> ChatTurn: a version written by
@@ -281,3 +295,17 @@ interface ChatThreadView { turns: ChatTurn[];
   replies in line, the cap
 - `PUT settings` (Studio admin) `{claudeMaxConcurrent: 1..100}` -> the same as `GET claude`; the worker applies it on
   its next claim
+- `GET queue` -> the Queue screen, filtered like `overview` (others' items are only counted in `hidden*`):
+  ```ts
+  interface Where { productionId; productionTitle; episodeId: string | null; episodeIdx: number | null; episodeTitle: string | null }
+  {
+    claude: { running; waiting; max; hidden: number;
+      items: (Where & { source: 'chat' | 'stage'; waiting: boolean; step: string; since: string | null })[] };
+    renders: (Where & { farmJobId; kind: 'final' | 'preview' | 'export_premiere' | 'other'; machine: RenderMachine | null;
+      status: 'queued' | 'leased' | 'paused'; progress: number | null; progressStage: string | null; attempt: number;
+      createdAt: string; stuck: boolean })[];   // stuck: queued > 10 min — no node took it, maybe none fits
+    hiddenRenders: number;
+    farm: { ok: true } | { ok: false; error: string };   // the farm out of reach is not an error
+  }
+  ```
+  Jobs come from ag-farm's owner API (`listJobs`, cached 3 s); it names no machines, so there is no machine list.
