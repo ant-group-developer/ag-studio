@@ -24,6 +24,7 @@ import {
 import type { InProcessStage } from "@harness/executors";
 import { productionKey, type StudioBucket } from "./bucket.js";
 import { emptyResearch, type ResearchSource } from "./youtube-research.js";
+import { episodeWorkflowForPlan } from "./run-control.js";
 import type { ThumbnailRenderer } from "./thumbnail-render.js";
 import { insertThumbnail, listThumbnails, replaceRenderThumbnails } from "./thumbnails-db.js";
 import {
@@ -42,7 +43,8 @@ export interface StudioStageDeps {
   bucket: StudioBucket;
   footage: FootageCatalogSource;
   /** Callback to start one episode run; wired by the worker. */
-  startEpisodeRun(episodeId: string): Promise<{ runId: string }>;
+  /** Starts an episode's run on `workflow` (the release that goes with the plan release spawning it). */
+  startEpisodeRun(episodeId: string, workflow: string): Promise<{ runId: string }>;
   /** YouTube research (GĐ5); absent when no YouTube API key is configured. */
   research?: ResearchSource;
   /** Whether a run can still do work (wired by the worker); spawn-episodes will not delete an episode that renders. */
@@ -278,7 +280,7 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
         for (const e of existing) {
           let runId = e.run_id;
           if (!runId) {
-            runId = (await d.startEpisodeRun(e.id)).runId;
+            runId = (await d.startEpisodeRun(e.id, episodeWorkflowForPlan(request.workflow.version))).runId;
             updateEpisodeRunId(d.db, e.id, runId);
           }
           spawnedEpisodes.push({ episode_id: e.id, idx: e.idx, run_id: runId });
@@ -310,7 +312,7 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
         replaceEpisodes(d.db, brief.production_id, episodeRows, request.run_id);
         // Start an episode run for each episode
         for (const row of episodeRows) {
-          const { runId } = await d.startEpisodeRun(row.id);
+          const { runId } = await d.startEpisodeRun(row.id, episodeWorkflowForPlan(request.workflow.version));
           updateEpisodeRunId(d.db, row.id, runId);
           const ep = plan.episodes.find((e) => e.idx === row.idx)!;
           spawnedEpisodes.push({ episode_id: row.id, idx: row.idx, run_id: runId });
@@ -419,6 +421,20 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       }
       writeOutput(ctx, "timeline.json", toBuffer(latest.data));
       ctx.logger.info("timeline frozen for the render", { revision: latest.revision, episode_id: episode.episode_id });
+    },
+
+    /**
+     * Episode 1.3.0: the timeline the render uses is the one the person APPROVED at approve-timeline (its input), not
+     * the latest revision: an edit made after approving is not rendered until it is approved too.
+     */
+    "studio-freeze-timeline-v2": async (request, ctx) => {
+      const timeline = readInput(request, ctx.workspaceDir, STUDIO_TYPES.timeline, (v) => TimelineV3Schema.parse(v));
+      const errors = timelineIssues(timeline).filter((i) => i.severity === "error");
+      if (errors.length) {
+        throw new HarnessError("SCHEMA_INVALID", `approved timeline: ${errors.map((e) => e.message).join("; ")}`, { problems: errors });
+      }
+      writeOutput(ctx, "timeline.json", toBuffer(timeline));
+      ctx.logger.info("approved timeline frozen for the render", { episode_id: timeline.episode_id });
     },
 
     "studio-episode-export": async (request, ctx) => {

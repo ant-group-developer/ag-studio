@@ -85,7 +85,7 @@ function workerFactory(o: StudioWorkerOptions, single: boolean): { next: () => W
   const executors = new ExecutorRegistry();
   executors.register("script", new InProcessExecutor(studioStages({
     db: o.db, bucket: o.bucket, footage: o.footage,
-    startEpisodeRun: (episodeId) => Promise.resolve(startEpisodeRun(core, o.db, episodeId)),
+    startEpisodeRun: (episodeId, workflow) => Promise.resolve(startEpisodeRun(core, o.db, episodeId, { workflow })),
     isRunActive: (runId) => isRunActive(core, runId),
     ...(o.research ? { research: o.research } : {}),
     ...(o.thumbnails ? { thumbnails: o.thumbnails } : {}),

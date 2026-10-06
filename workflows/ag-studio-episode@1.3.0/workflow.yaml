@@ -1,0 +1,91 @@
+schema_version: harness.workflow/v1
+id: ag-studio-episode
+version: 1.3.0
+defaults: {}
+# AG Studio episode workflow, chat first (spec local-chat §3.1). One run per episode.
+#   episode-intake -> build-timeline -> [approve-timeline] -> youtube-kit -> [approve-youtube-kit]
+#   -> freeze-timeline -> render-final (farm) -> thumbnails -> export
+# A person chats about the draft timeline (edits are saved as revisions) and approves it; the YouTube kit is written
+# from the approved timeline, then approved too. freeze-timeline renders the timeline AS APPROVED (not the latest
+# revision): an edit after approval needs the run again from approve-timeline. Every later stage reads the kit from
+# its gate and the timeline from freeze-timeline (one source per type).
+# Released: never edit this file; make a new version.
+stages:
+  - key: episode-intake
+    executor: { type: script, script: studio-episode-intake-v2 }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: studio_brief, mime_type: application/json, name: brief.json }
+      - { type: studio_episode, mime_type: application/json, name: episode.json }
+      - { type: studio_branding, mime_type: application/json, name: branding.json, optional: true }
+      - { type: trend_report, mime_type: application/json, name: trend-report.json }
+
+  - key: build-timeline
+    executor: { type: script, script: build-timeline }
+    depends_on: [episode-intake]
+    required_checks: [schema-valid, output-exists, checksum-match, timeline-schema-valid]
+    outputs:
+      - { type: timeline_v3, mime_type: application/json, name: timeline.json }
+
+  - key: approve-timeline
+    executor: { type: gate, brief: "Người dùng xem bản nháp timeline, sửa qua chat hoặc editor, bấm Duyệt để nộp bản mới nhất." }
+    depends_on: [build-timeline, episode-intake]
+    required_checks: [schema-valid, output-exists, checksum-match, timeline-valid]
+    outputs:
+      - { type: timeline_v3, mime_type: application/json, name: timeline.json }
+
+  - key: youtube-kit
+    executor:
+      type: agent
+      skill: studio-youtube-kit
+      brief: "Dựa trên brief, branding của series (nếu có), báo cáo xu hướng, episode và timeline đã duyệt, tạo youtube-kit gồm 3 tiêu đề, mô tả, tags, hashtags và 3 ý tưởng thumbnail — theo đúng branding."
+    depends_on: [approve-timeline, episode-intake]
+    requires_resources: [claude]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, youtube-kit-valid]
+    outputs:
+      - { type: youtube_kit, mime_type: application/json, name: youtube-kit.json }
+
+  - key: approve-youtube-kit
+    executor: { type: gate, brief: "Người dùng xem YouTube kit, góp ý qua chat, bấm Duyệt để nộp." }
+    depends_on: [youtube-kit, episode-intake]
+    required_checks: [schema-valid, output-exists, checksum-match, youtube-kit-valid]
+    outputs:
+      - { type: youtube_kit, mime_type: application/json, name: youtube-kit.json }
+
+  - key: freeze-timeline
+    executor: { type: script, script: studio-freeze-timeline-v2 }
+    depends_on: [approve-youtube-kit, approve-timeline, episode-intake]
+    required_checks: [schema-valid, output-exists, checksum-match, timeline-valid]
+    outputs:
+      - { type: timeline_v3, mime_type: application/json, name: timeline.json }
+
+  - key: render-final
+    executor: { type: farm, job: studio.render_final }
+    config: { payload_builder: studio-episode-render-v2 }
+    depends_on: [freeze-timeline, episode-intake, approve-youtube-kit]
+    requires_resources: [farm]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, studio-render-valid]
+    outputs:
+      - { type: final_video, mime_type: video/mp4, name: final.mp4 }
+      - { type: render_manifest, mime_type: application/json, name: render.json }
+
+  - key: thumbnails
+    executor: { type: script, script: studio-episode-thumbnails }
+    depends_on: [render-final, freeze-timeline, approve-youtube-kit, episode-intake]
+    requires_resources: [cpu]
+    retry: { max_attempts: 2, backoff_seconds: [30], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, thumbnails-valid]
+    outputs:
+      - { type: thumbnail_set, mime_type: application/x-directory, kind: directory, name: thumbnails }
+      - { type: studio_thumbnails, mime_type: application/json, name: thumbnails.json }
+
+  - key: export
+    executor: { type: script, script: studio-episode-export-v2 }
+    depends_on: [thumbnails, render-final, freeze-timeline, approve-youtube-kit, episode-intake]
+    retry: { max_attempts: 3, backoff_seconds: [30, 120], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, export-valid]
+    outputs:
+      - { type: studio_export, mime_type: application/json, name: export.json }
+      - { type: studio_youtube, mime_type: application/json, name: youtube.json }

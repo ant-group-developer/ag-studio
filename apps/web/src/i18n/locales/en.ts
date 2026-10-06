@@ -301,7 +301,7 @@ export const en: LocaleMessages = {
     writing: "AI is writing the episode plan…",
   },
   episodes: {
-    status: { planned: "Planned", producing: "Producing", ready: "Ready", failed: "Failed", cancelled: "Cancelled" },
+    status: { planned: "Planned", producing: "Producing", waiting_approval: "Waiting for approval", ready: "Ready", failed: "Failed", cancelled: "Cancelled" },
     jobStatus: { queued: "Queued", running: "Running", completed: "Done", failed: "Failed" },
     youtubePack: "YouTube upload pack (zip)",
     premiereTitle: "Adobe Premiere project",
@@ -675,7 +675,7 @@ export const en: LocaleMessages = {
     productionStatus: {
       draft: "Draft",
       planning: "Planning",
-      waiting_approval: "Waiting for plan approval",
+      waiting_approval: "Waiting for your approval",
       producing: "Producing",
       done: "Done",
       failed: "Failed",

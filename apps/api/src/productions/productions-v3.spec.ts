@@ -16,6 +16,8 @@ describe('deriveStatus', () => {
     ['waiting at approve-plan', live, { state: 'WAITING', waiting_gate: 'approve-plan' }, [], 'waiting_approval'],
     ['waiting at approve-rnd', live, { state: 'WAITING', waiting_gate: 'approve-rnd' }, [], 'waiting_approval'],
     ['waiting at approve-branding', live, { state: 'WAITING', waiting_gate: 'approve-branding' }, [], 'waiting_approval'],
+    ['waiting at approve-trend-report', live, { state: 'WAITING', waiting_gate: 'approve-trend-report' }, [], 'waiting_approval'],
+    ['an episode waiting for approval', live, { state: 'SUCCEEDED', waiting_gate: null }, ['producing', 'waiting_approval'], 'waiting_approval'],
     ['plan failed before episodes', live, { state: 'FAILED', waiting_gate: null }, [], 'failed'],
     ['an episode producing', live, { state: 'SUCCEEDED', waiting_gate: null }, ['ready', 'producing'], 'producing'],
     ['every episode ready', live, { state: 'SUCCEEDED', waiting_gate: null }, ['ready', 'ready'], 'done'],
@@ -25,7 +27,7 @@ describe('deriveStatus', () => {
   });
 
   it('counts episodes by status', () => {
-    expect(countEpisodes(['ready', 'ready', 'failed', 'producing', 'planned'])).toEqual({ total: 5, ready: 2, producing: 1, failed: 1 });
+    expect(countEpisodes(['ready', 'ready', 'failed', 'producing', 'waiting_approval', 'planned'])).toEqual({ total: 6, ready: 2, producing: 1, waitingApproval: 1, failed: 1 });
   });
 });
 
@@ -59,7 +61,7 @@ describe('ProductionsService (real studio.db)', () => {
       teamId: 'team-1', teamName: 'Team team-1', title: 'Chợ nổi miền Tây', description: 'Series về chợ nổi',
       goal: 'Tăng người xem', audience: 'Khách du lịch', tone: 'Ấm áp', sources: ['folder-1', 'folder-2'],
       youtubeChannels: ['@kenhA'], keywords: ['chợ nổi', 'miền tây'], episodeTargetSeconds: 300, maxEpisodes: 4,
-      status: 'draft', episodeCounts: { total: 0, ready: 0, producing: 0, failed: 0 },
+      status: 'draft', episodeCounts: { total: 0, ready: 0, producing: 0, waitingApproval: 0, failed: 0 },
     });
   });
 
@@ -86,7 +88,7 @@ describe('ProductionsService (real studio.db)', () => {
     startEpisodeRun(s.engine.core, s.engine.db, 'ep-1');
     const view = svc.getProduction(p.id)!;
     expect(view.status).toBe('planning');
-    expect(view.episodeCounts).toEqual({ total: 2, ready: 0, producing: 1, failed: 0 });
+    expect(view.episodeCounts).toEqual({ total: 2, ready: 0, producing: 1, waitingApproval: 0, failed: 0 });
   });
 
   it('pages what the caller can see; admins see everything; a status filter pages after filtering', () => {

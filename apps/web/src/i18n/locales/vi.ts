@@ -338,7 +338,7 @@ export const vi = {
     retryStageDone: "Đã chạy lại bước",
     noVideo: "Chưa có video",
     noThumbnail: "Chưa có ảnh",
-    status: { planned: "Chờ sản xuất", producing: "Đang sản xuất", ready: "Hoàn tất", failed: "Thất bại", cancelled: "Đã huỷ" },
+    status: { planned: "Chờ sản xuất", producing: "Đang sản xuất", waiting_approval: "Chờ duyệt", ready: "Hoàn tất", failed: "Thất bại", cancelled: "Đã huỷ" },
     jobStatus: { queued: "Đang chờ", running: "Đang chạy", completed: "Xong", failed: "Lỗi" },
     youtubePack: "Gói đăng YouTube (zip)",
     premiereTitle: "Project Adobe Premiere",
@@ -674,7 +674,7 @@ export const vi = {
     productionStatus: {
       draft: "Nháp",
       planning: "Đang lên kế hoạch",
-      waiting_approval: "Chờ duyệt kế hoạch",
+      waiting_approval: "Chờ bạn duyệt",
       producing: "Đang sản xuất",
       done: "Hoàn tất",
       failed: "Thất bại",

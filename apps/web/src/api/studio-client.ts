@@ -12,7 +12,7 @@ const STUDIO_API_URL =
 
 export type ProductionStatus = "draft" | "planning" | "waiting_approval" | "producing" | "done" | "failed" | "archived";
 export type TeamRole = "owner" | "producer" | "editor" | "viewer";
-export type EpisodeStatus = "planned" | "producing" | "ready" | "failed" | "cancelled";
+export type EpisodeStatus = "planned" | "producing" | "waiting_approval" | "ready" | "failed" | "cancelled";
 
 export interface Paged<T> {
   items: T[];
@@ -114,7 +114,7 @@ export interface Production {
   music: { track: string; gainDb: number; ducking: boolean } | null;
   status: ProductionStatus;
   runId: string | null;
-  episodeCounts: { total: number; ready: number; producing: number; failed: number };
+  episodeCounts: { total: number; ready: number; producing: number; waitingApproval: number; failed: number };
   ownerUserId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -627,7 +627,7 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
       return request(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/timeline/revisions`);
     },
     /** 409 (`StudioHttpError`, body `{ code: "revision_conflict", currentRevision }`) when `baseRevision` is stale. */
-    saveRevision(productionId: string, episodeId: string, baseRevision: number, data: TimelineV3, label?: string): Promise<{ revision: number; issues: TimelineIssue[] }> {
+    saveRevision(productionId: string, episodeId: string, baseRevision: number, data: TimelineV3, label?: string): Promise<{ revision: number; issues: TimelineIssue[]; approved?: boolean }> {
       return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/timeline/revisions`, { baseRevision, data, ...(label ? { label } : {}) });
     },
     renderPreview(productionId: string, episodeId: string, revision: number): Promise<EditorJob> {

@@ -83,7 +83,7 @@ export interface EpisodeSummary {
 
 type StudioExport = NonNullable<ReturnType<typeof episodeExport>>;
 
-const STATUS_ORDER: Record<EpisodeStatus, number> = { producing: 0, failed: 1, planned: 2, cancelled: 3, ready: 4 };
+const STATUS_ORDER: Record<EpisodeStatus, number> = { waiting_approval: 0, producing: 1, failed: 2, planned: 3, cancelled: 4, ready: 5 };
 
 /** Thumbnails of an export in thumb-1..3 order. */
 function exportThumbnails(exp: StudioExport | null) {

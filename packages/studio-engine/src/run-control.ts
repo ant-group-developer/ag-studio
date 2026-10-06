@@ -20,12 +20,16 @@ export class StudioRunError extends Error {
   }
 }
 
-/** Gates and the document each submits: the trend report (plan 3.0.0), the R&D, the branding and the episode plan. */
+/** Gates and the document each submits: the trend report (plan 3.0.0), the R&D, the branding, the episode plan, and
+ *  for an episode (1.3.0) its timeline and YouTube kit. */
 export const STUDIO_GATES: Record<string, string> = {
   "approve-trend-report": "trend-report.json",
   "approve-rnd": "rnd.json",
   "approve-branding": "branding.json",
   "approve-plan": "series-plan.json",
+  // episode 1.3.0
+  "approve-timeline": "timeline.json",
+  "approve-youtube-kit": "youtube-kit.json",
 };
 
 /** True while the run can still do work (not ended, not being cancelled). */
@@ -52,8 +56,20 @@ export function episodeExport(core: StudioEngineCore, ep: { run_id: string | nul
 export const EPISODE_RENDER_STAGE = "render-final";
 export const EPISODE_FREEZE_STAGE = "freeze-timeline";
 export const EPISODE_EXPORT_STAGE = "export";
+export const EPISODE_TIMELINE_GATE = "approve-timeline";
 
-export type EpisodeStatus = "planned" | "producing" | "ready" | "failed" | "cancelled";
+/** The episode release without gates, which plans before the chat (1.0.0, 2.0.0) keep spawning. */
+export const EPISODE_WITHOUT_GATES = "ag-studio-episode@1.2.0";
+
+/**
+ * The release a plan run's episodes run on: a chat-first plan (3.0.0 on) spawns the current one, with gates; a plan
+ * started before keeps spawning episodes without gates, so a series begun on the old screens ends as it began.
+ */
+export function episodeWorkflowForPlan(planVersion: string): string {
+  return Number(planVersion.split(".")[0]) >= 3 ? STUDIO_WORKFLOWS.episode.workflow : EPISODE_WITHOUT_GATES;
+}
+
+export type EpisodeStatus = "planned" | "producing" | "waiting_approval" | "ready" | "failed" | "cancelled";
 
 /**
  * An episode's status is its run's state (never stored separately, so it cannot go stale): no run -> planned;
@@ -62,15 +78,16 @@ export type EpisodeStatus = "planned" | "producing" | "ready" | "failed" | "canc
  * render-final (its progress is the episode's progress while it renders).
  */
 /**
- * Status of an episode from its run. The episode workflow has no gate, so a stage waiting for a person (a contract
- * failure the engine will not retry by itself) is a failed episode: it needs someone to retry it, and "producing"
- * would have them wait forever.
+ * Status of an episode from its run. A gate waiting (episode 1.3.0: approve-timeline, approve-youtube-kit) is an
+ * episode waiting for approval. Any other stage waiting for a person (a contract failure the engine will not retry
+ * by itself) is a failed episode: it needs someone to retry it, and "producing" would have them wait forever.
  */
-export function episodeStatusOf(runState: string, stageStates: string[]): EpisodeStatus {
+export function episodeStatusOf(runState: string, stages: { state: string; gate: boolean }[]): EpisodeStatus {
   if (runState === "SUCCEEDED") return "ready";
   if (runState === "FAILED") return "failed";
   if (runState === "CANCELLED" || runState === "CANCEL_REQUESTED") return "cancelled";
-  if (stageStates.includes("WAITING_HUMAN") || stageStates.includes("FAILED")) return "failed";
+  if (stages.some((x) => x.state === "FAILED" || (x.state === "WAITING_HUMAN" && !x.gate))) return "failed";
+  if (stages.some((x) => x.state === "WAITING_HUMAN" && x.gate)) return "waiting_approval";
   return "producing";
 }
 
@@ -78,7 +95,7 @@ export function episodeState(core: StudioEngineCore, db: StudioDb, ep: { run_id:
   if (!ep.run_id) return { status: "planned", current_stage: null, render_job_id: null };
   const run = core.store.getRun(ep.run_id);
   if (!run) return { status: "planned", current_stage: null, render_job_id: null };
-  const status = episodeStatusOf(run.state, core.store.listStageRuns(ep.run_id).map((s) => s.state));
+  const status = episodeStatusOf(run.state, core.store.listStageRuns(ep.run_id).map((s) => ({ state: s.state, gate: s.executor.type === "gate" })));
   const current = status === "ready" ? null : core.store.listStageRuns(ep.run_id).find((s) => s.state !== "SUCCEEDED")?.stage_key ?? null;
   const job = db.get<{ farm_job_id: string }>("SELECT farm_job_id FROM studio_farm_jobs WHERE run_id = ? AND stage_key = ? ORDER BY created_at DESC LIMIT 1", [ep.run_id, EPISODE_RENDER_STAGE]);
   return { status, current_stage: current, render_job_id: job?.farm_job_id ?? null };
@@ -190,7 +207,7 @@ export function startPlanRun(core: StudioEngineCore, db: StudioDb, productionId:
 
 /** A new plan replaces the production's episodes: refused while one of them is still producing. */
 function assertNoEpisodeProducing(core: StudioEngineCore, db: StudioDb, productionId: string): void {
-  const producing = listEpisodes(db, productionId).find((e) => episodeState(core, db, e).status === "producing");
+  const producing = listEpisodes(db, productionId).find((e) => ["producing", "waiting_approval"].includes(episodeState(core, db, e).status));
   if (producing) throw new StudioRunError("conflict", "một tập đang sản xuất; không thể lên kế hoạch lại", { code: "episode_producing", episode_id: producing.id });
 }
 
@@ -237,7 +254,8 @@ export function episodeRunView(core: StudioEngineCore, db: StudioDb, episodeId: 
  * "Render lại": render the episode's latest timeline revision.
  * - no run yet: start one;
  * - run ended (ready, failed, cancelled): a new run resumed from freeze-timeline (it takes the latest revision;
- *   everything before it, Claude's YouTube kit included, is kept);
+ *   everything before it, Claude's YouTube kit included, is kept). An episode 1.3.0 renders the timeline as approved,
+ *   so its new run resumes from approve-timeline instead: the latest revision is approved again first;
  * - run parked at freeze-timeline (the timeline had errors, now fixed in the editor): retry that stage;
  * - otherwise it is still producing: conflict.
  */
@@ -256,7 +274,31 @@ export function rerenderEpisode(core: StudioEngineCore, db: StudioDb, episodeId:
   }
   return resumeRunFrom(core, ep.run_id, (newRunId) => {
     db.run("UPDATE episodes SET run_id = ?, updated_at = ? WHERE id = ?", [newRunId, new Date().toISOString(), episodeId]);
-  }, EPISODE_FREEZE_STAGE);
+  }, core.store.listStageRuns(ep.run_id).some((s) => s.stage_key === EPISODE_TIMELINE_GATE) ? EPISODE_TIMELINE_GATE : EPISODE_FREEZE_STAGE);
+}
+
+/**
+ * True once the episode's current run approved its timeline (episode 1.3.0): a revision saved from then on is not
+ * rendered until the run goes again from approve-timeline ("Render lại").
+ */
+export function episodeTimelineApproved(core: StudioEngineCore, db: StudioDb, episodeId: string): boolean {
+  const ep = getEpisode(db, episodeId);
+  if (!ep?.run_id) return false;
+  return core.store.listStageRuns(ep.run_id).some((s) => s.stage_key === EPISODE_TIMELINE_GATE && s.state === "SUCCEEDED");
+}
+
+/**
+ * Approves an episode's timeline (episode 1.3.0, gate approve-timeline): the document submitted is the episode's
+ * latest revision, whatever the person saved in the editor or applied from the chat.
+ */
+export async function submitEpisodeTimelineGate(core: StudioEngineCore, db: StudioDb, episodeId: string): Promise<SubmitReport & { revision: number }> {
+  const ep = getEpisode(db, episodeId);
+  if (!ep) throw new StudioRunError("not_found", `episode ${episodeId} not found`);
+  if (!ep.run_id) throw new StudioRunError("conflict", `episode ${episodeId} has no run`);
+  const latest = latestEpisodeRevision(db, episodeId);
+  if (!latest) throw new StudioRunError("conflict", `episode ${episodeId} has no timeline yet`);
+  const report = await submitStudioGate(core, db, ep.run_id, EPISODE_TIMELINE_GATE, latest.data);
+  return { ...report, revision: latest.revision };
 }
 
 // ---------------------------------------------------------------------------
