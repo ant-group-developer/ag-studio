@@ -57,6 +57,8 @@ export const EPISODE_RENDER_STAGE = "render-final";
 export const EPISODE_FREEZE_STAGE = "freeze-timeline";
 export const EPISODE_EXPORT_STAGE = "export";
 export const EPISODE_TIMELINE_GATE = "approve-timeline";
+/** The last gate of an episode 1.3.0: approving it starts freeze-timeline and the final render. */
+export const EPISODE_KIT_GATE = "approve-youtube-kit";
 
 /** The episode release without gates, which plans before the chat (1.0.0, 2.0.0) keep spawning. */
 export const EPISODE_WITHOUT_GATES = "ag-studio-episode@1.2.0";

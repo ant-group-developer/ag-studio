@@ -7,6 +7,11 @@ import { RenderMachineSchema, type RenderMachine } from "@harness/contracts";
 import { StudioRunError } from "./run-control.js";
 import { episodeForRun, getEpisode, type StudioDb } from "./studio-db.js";
 
+/** How the chat names a machine type ("Render bản cuối trên …"). */
+export const RENDER_MACHINE_LABELS: Record<RenderMachine, string> = {
+  any: "bất kỳ máy nào", nvenc: "máy có NVENC", gpu: "máy có GPU",
+};
+
 export function setRenderChoice(db: StudioDb, p: {
   runId: string; stageKey: string; machine: RenderMachine; by: string; now: string;
   /** The run's episode, when the episode does not point at that run (yet, or any more). */
