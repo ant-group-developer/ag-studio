@@ -46,6 +46,8 @@ export interface StudioAgentExecutorOptions {
   /** Every enabled skill of the team the run works for; the executor keeps the ones of its step. A failure to read
    *  them fails the attempt as transient (a call without the team's rules would be a different answer). */
   teamGuidesFor?: (request: StageRequest) => TeamGuide[] | Promise<TeamGuide[]>;
+  /** What a person said in the chat about this stage's refused answer, oldest first, for running it again. */
+  feedbackFor?: (request: StageRequest) => string[] | Promise<string[]>;
 }
 
 const DEFAULT_BACKOFF_MS = [5, 10, 20, 40, 60].map((m) => m * 60_000);
@@ -210,10 +212,23 @@ export function studioPromptTail(problems: StudioProblem[] | null): string {
   return parts.join("\n");
 }
 
-export function studioPrompt(request: StageRequest, workspaceDir: string, problems: StudioProblem[] | null, guides: readonly TeamGuide[] = []): string {
-  return `${studioPromptHead(request, workspaceDir, guides)}
-
-${studioPromptTail(problems)}`;
+/**
+ * A stage's prompt. `feedback`: what a person said in the chat about the stage's last answer when running it again
+ * (spec local-chat); none = exactly the stage's usual prompt.
+ */
+export function studioPrompt(
+  request: StageRequest, workspaceDir: string, problems: StudioProblem[] | null, guides: readonly TeamGuide[] = [], feedback: readonly string[] = [],
+): string {
+  const parts = [studioPromptHead(request, workspaceDir, guides)];
+  if (feedback.length) {
+    parts.push([
+      "# Góp ý của người dùng",
+      "Lần trước câu trả lời của bước này bị từ chối; người dùng góp ý như sau, làm theo:",
+      ...feedback.map((f) => `- ${f.trim().replace(/\r?\n/g, "\n  ")}`),
+    ].join("\n"));
+  }
+  parts.push(studioPromptTail(problems));
+  return parts.join("\n\n");
 }
 
 /** Write a skipped TrendReport (no research videos -> Claude skipped). */
@@ -287,6 +302,12 @@ export class StudioAgentExecutor implements Executor {
       }
     }
 
+    let feedback: string[] = [];
+    if (this.opts.feedbackFor) {
+      try { feedback = await this.opts.feedbackFor(request); }
+      catch (e) { ctx.logger.warn("could not read the chat feedback; running without it", { error: e instanceof Error ? e.message : String(e) }); }
+    }
+
     const last: { trace: AgentCallTrace | null } = { trace: null };
     const runtime = this.opts.runtimeFor(JSON.stringify(claudeOutputJsonSchema(skill)), skill, (t) => { last.trace = t; });
     const validator = VALIDATORS[skill];
@@ -311,7 +332,7 @@ export class StudioAgentExecutor implements Executor {
     let waits = 0;
     for (let round = 0; round < 2;) {
       rmSync(outPath, { force: true });
-      const brief = studioPrompt(request, ctx.workspaceDir, problems, guides);
+      const brief = studioPrompt(request, ctx.workspaceDir, problems, guides, feedback);
       const result = await runtime.runTask({ skill, brief, request, workspaceDir: ctx.workspaceDir }, ctx);
       cost += result.usage.cost_usd;
       const err = result.errors[0];

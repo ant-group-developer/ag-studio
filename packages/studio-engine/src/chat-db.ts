@@ -188,3 +188,11 @@ export function orphanedRunningTurns(db: StudioDb, holding: readonly string[]): 
   const held = new Set(holding);
   return db.all<{ id: string }>("SELECT id FROM stage_chat_turns WHERE role = 'assistant' AND status = 'running'").map((r) => r.id).filter((id) => !held.has(id));
 }
+
+/** What people said in the chat about a failed stage, oldest first: it goes into the prompt when the stage runs again. */
+export function chatFeedback(db: StudioDb, runId: string, stageKey: string): string[] {
+  return db.all<{ text: string }>(
+    "SELECT text FROM stage_chat_turns WHERE scope = 'failed' AND role = 'user' AND run_id = ? AND stage_key = ? AND text <> '' ORDER BY turn",
+    [runId, stageKey],
+  ).map((r) => r.text);
+}

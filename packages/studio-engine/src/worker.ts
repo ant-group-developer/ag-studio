@@ -11,6 +11,7 @@ import type { AgentCallTrace, ProjectConfig, StudioSkill } from "@harness/contra
 import { farmStorage, type StudioBucket } from "./bucket.js";
 import { modelFor } from "./models.js";
 import { createChatRunner, type ChatRunner } from "./chat-runner.js";
+import { chatFeedback } from "./chat-db.js";
 import { recordLlmCall } from "./llm-log.js";
 import { cancelLegacyRuns, DEFAULT_CLAUDE_MAX_CONCURRENT, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, studioResources, studioWorkflowRefs, type StudioEngineCore } from "./core.js";
 import { claudeMaxConcurrent } from "./settings.js";
@@ -78,6 +79,7 @@ function workerFactory(o: StudioWorkerOptions, single: boolean): { next: () => W
     }),
     recordCall: async (call) => { await recordLlmCall(o.db, o.bucket, call); },
     teamGuidesFor: (request) => teamGuidesForRun(o.db, request.run_id),
+    feedbackFor: (request) => chatFeedback(o.db, request.run_id, request.stage_key),
     ...(o.claude.rateLimitBackoffMs ? { rateLimitBackoffMs: o.claude.rateLimitBackoffMs } : {}),
   }));
   executors.register("gate", new GateExecutor());

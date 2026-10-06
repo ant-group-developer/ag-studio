@@ -22,8 +22,8 @@ import {
 } from "@harness/core";
 import { studioPromptHead, studioValidator, teamGuidesSection } from "@harness/executors";
 import type { StudioEngineCore } from "./core.js";
-import { currentProposal, type ChatProblem, type ChatScopeKey } from "./chat-db.js";
-import { readStageDocument, StudioRunError, STUDIO_GATES } from "./run-control.js";
+import { currentProposal, insertSystemTurn, type ChatProblem, type ChatScopeKey } from "./chat-db.js";
+import { readStageDocument, retryStage, StudioRunError, STUDIO_GATES } from "./run-control.js";
 import {
   getEpisode, getProduction, latestEpisodeRevision, productionChannels, productionHints, productionSources, type ProductionRecord, type StudioDb,
 } from "./studio-db.js";
@@ -283,4 +283,18 @@ export function chatContext(core: StudioEngineCore, db: StudioDb, key: ChatScope
   return stageDocContext(core, db, key, p, {
     sourceStage: key.stageKey, skill, draft: rejectedOutput(core, key.runId!, key.stageKey, file), problems: lastProblems(db, key.runId!, key.stageKey),
   });
+}
+
+/**
+ * "Chạy lại" on a Claude stage that failed its check: the stage runs again, and what people said in the chat about
+ * it goes into its prompt (`# Góp ý của người dùng`). Refused unless that stage is the one failed now.
+ */
+export function retryStageWithFeedback(core: StudioEngineCore, db: StudioDb, productionId: string, o: { episodeId?: string | null; stageKey: string }): ChatScopeKey {
+  const key = chatScopeFor(core, db, productionId, o.episodeId ?? null);
+  if (key.scope !== "failed" || key.stageKey !== o.stageKey) {
+    throw new StudioRunError("conflict", `bước ${o.stageKey} không phải bước đang hỏng`, { code: "not_failed", scope: key.scope, stage: key.stageKey });
+  }
+  retryStage(core, key.runId!, key.stageKey);
+  insertSystemTurn(db, key, "Đang chạy lại bước này với góp ý của bạn.", core.clock.now());
+  return key;
 }
