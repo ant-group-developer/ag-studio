@@ -21,7 +21,7 @@
  *  6. Cancels the farm job when the stage deadline is exceeded or the stage is aborted.
  *  7. Acks the job (marks it consumed by the owner).
  */
-import { readFileSync, mkdirSync, existsSync, copyFileSync } from "node:fs";
+import { readFileSync, mkdirSync, existsSync, copyFileSync, writeFileSync } from "node:fs";
 import { join, basename, dirname } from "node:path";
 import { directoryDigest, listDirectoryFiles } from "@harness/core";
 import { FarmOwnerClient } from "@ag-farm/owner-client";
@@ -137,6 +137,11 @@ export interface FarmPayloadBuild {
   extraUploads?: { localPath: string; relPath: string }[];
   /** Downloaded output path (relative to `output/`) -> the stage's declared output name. */
   rename?: Record<string, string>;
+  /**
+   * Nothing to send (every narration line is already in the voice store, no source has speech…): these files,
+   * relative to `output/`, are the stage's outputs and no job is submitted (phase 5).
+   */
+  skip?: { files: Record<string, string | Buffer> };
 }
 export type FarmPayloadBuilder = (request: StageRequest, ctx: ExecutorContext) => Promise<FarmPayloadBuild>;
 
@@ -164,7 +169,7 @@ export interface FarmExecutorOptions {
 // ---------------------------------------------------------------------------
 
 export class FarmExecutor implements Executor {
-  readonly version = "0.4.0";
+  readonly version = "0.5.0";
 
   constructor(private readonly opts: FarmExecutorOptions) {}
 
@@ -209,6 +214,15 @@ export class FarmExecutor implements Executor {
         build = await builder(request, ctx);
       } catch (e) {
         return failed("contract", `farm payload builder "${cfg.payload_builder}" failed: ${String(e)}`, { payload_builder: cfg.payload_builder });
+      }
+      if (build.skip) {
+        const outDir = join(ctx.workspaceDir, "output");
+        for (const [rel, content] of Object.entries(build.skip.files)) {
+          mkdirSync(dirname(join(outDir, rel)), { recursive: true });
+          writeFileSync(join(outDir, rel), content);
+        }
+        ctx.logger.info("nothing to send to the farm: outputs written by the payload builder", { files: Object.keys(build.skip.files) });
+        return this.collectOutputs(request, ctx, started, failed);
       }
     }
 
@@ -504,9 +518,16 @@ export class FarmExecutor implements Executor {
       }
     }
 
-    // -----------------------------------------------------------------------
-    // 8. Build stage result from workspace output files
-    // -----------------------------------------------------------------------
+    return this.collectOutputs(request, ctx, started, failed);
+  }
+
+  /** 8. Build the stage result from the workspace output files. */
+  private async collectOutputs(
+    request: StageRequest,
+    ctx: ExecutorContext,
+    started: number,
+    failed: (kind: "transient" | "contract", message: string, details?: Record<string, unknown>) => StageResult,
+  ): Promise<StageResult> {
     const outputs: StageResult["outputs"] = [];
     for (const eo of request.expected_outputs) {
       if (!eo.name) continue;

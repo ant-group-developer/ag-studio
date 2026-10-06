@@ -157,3 +157,39 @@ describe("FarmExecutor requirements (machine type, phase 3)", () => {
     expect((await run({}, () => undefined)).submitted).toEqual({});
   });
 });
+
+describe("FarmExecutor skip (phase 5): a builder with nothing to send", () => {
+  it("writes the builder's files as the outputs and never touches the farm", async () => {
+    const f = fakes({}, "tts.json");
+    const req = request({ __farm_job: "studio.tts", payload_builder: "nothing" }, [
+      { type: "tts_manifest", mime_type: "application/json", kind: "file", name: "tts.json" },
+      { type: "voice_set", mime_type: "application/x-directory", kind: "directory", name: "tts", optional: true },
+    ]);
+    const manifest = JSON.stringify({ schema: "ag.studio.tts/v1", production_id: "prod-9", language: "vi", lines: [], engine: { name: "cache", version: null } });
+    const ex = new FarmExecutor({
+      client: f.client as never, storage: f.storage, pollIntervalMs: 1,
+      payloadBuilders: { nothing: async () => ({ productionId: "prod-9", payload: null, skip: { files: { "tts.json": manifest } } }) },
+    });
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.outcome, JSON.stringify(res.errors)).toBe("succeeded");
+    expect(f.submitted).toEqual([]);
+    expect(f.bucket.size).toBe(0);
+    expect(res.outputs.map((o) => [o.path, o.type])).toEqual([["output/tts.json", "tts_manifest"]]);
+    expect(readFileSync(join(req.workspace_uri, "output", "tts.json"), "utf8")).toBe(manifest);
+  });
+
+  it("a skip that leaves out a required output is a contract failure", async () => {
+    const f = fakes({}, "tts.json");
+    const req = request({ __farm_job: "studio.tts", payload_builder: "nothing" }, [
+      { type: "tts_manifest", mime_type: "application/json", kind: "file", name: "tts.json" },
+    ]);
+    const ex = new FarmExecutor({
+      client: f.client as never, storage: f.storage, pollIntervalMs: 1,
+      payloadBuilders: { nothing: async () => ({ productionId: "prod-9", payload: null, skip: { files: {} } }) },
+    });
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.outcome).toBe("failed");
+    expect(res.errors[0]).toMatchObject({ kind: "contract" });
+    expect(f.submitted).toEqual([]);
+  });
+});
