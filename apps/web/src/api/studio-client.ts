@@ -704,6 +704,10 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     getOverview(): Promise<{ items: OverviewItem[] }> {
       return request(getAccessToken, "GET", "/api/studio/overview");
     },
+    /** The Queue screen: Claude calls and farm jobs of the videos the caller can see. */
+    getQueue(): Promise<StudioQueueView> {
+      return request(getAccessToken, "GET", "/api/studio/queue");
+    },
     getClaudeUsage(): Promise<ClaudeUsage> {
       return request(getAccessToken, "GET", "/api/studio/claude");
     },
@@ -745,6 +749,21 @@ export interface OverviewEpisode { id: string; idx: number; title: string; statu
 export interface OverviewItem { id: string; teamId: string; title: string; updatedAt: string; step: string | null; group: OverviewGroup; episodes: OverviewEpisode[] }
 
 export interface ClaudeUsage { running: number; waiting: number; max: number; source: "settings" | "env" }
+
+interface QueueWhere { productionId: string; productionTitle: string; episodeId: string | null; episodeIdx: number | null; episodeTitle: string | null }
+export interface QueueClaudeItem extends QueueWhere { source: "chat" | "stage"; waiting: boolean; step: string; since: string | null }
+export interface QueueRender extends QueueWhere {
+  farmJobId: string; kind: "final" | "preview" | "export_premiere" | "other"; machine: RenderMachine | null;
+  status: "queued" | "leased" | "paused" | string; progress: number | null; progressStage: string | null; attempt: number; createdAt: string;
+  /** Queued for more than 10 minutes: no node took it, maybe none fits. */
+  stuck: boolean;
+}
+export interface StudioQueueView {
+  claude: { running: number; waiting: number; max: number; hidden: number; items: QueueClaudeItem[] };
+  renders: QueueRender[];
+  hiddenRenders: number;
+  farm: { ok: true } | { ok: false; error: string };
+}
 
 /** Kind of farm machine for a final render: ag-farm requirements `{}`, `{nvenc: true}`, `{gpu: true}`. */
 export const RENDER_MACHINES = ["any", "nvenc", "gpu"] as const;

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { useAppUserMenu } from "../common/use-app-user-menu";
 import { ClaudeChip } from "./ClaudeChip";
+import { RenderChip } from "./RenderChip";
 import { VideoTree } from "./VideoTree";
 import "./chat.css";
 
@@ -23,6 +24,7 @@ export function ChatShell({ children, productionId, episodeId }: { children: Rea
         <Link to="/" className="chat-header__brand"><img src="/favicon.png" alt="" />{t("app.title")}</Link>
         <div className="chat-header__right">
           <ClaudeChip />
+          <RenderChip />
           <Dropdown menu={menu} trigger={["click"]} placement="bottomRight">
             <button type="button" className="chat-link-button" aria-label={nickname}>
               <Avatar src={picture} size="small">{picture ? undefined : initials}</Avatar>

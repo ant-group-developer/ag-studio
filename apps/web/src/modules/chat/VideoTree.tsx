@@ -41,6 +41,7 @@ export function VideoTree({ productionId, episodeId }: { productionId?: string |
         </div>
       ))}
       {data && items.length === 0 ? <p className="chat-nav__label">{t("chat.noVideos")}</p> : null}
+      <Link to="/queue" className="chat-nav__queue">{t("chat.queue.nav")}</Link>
     </nav>
   );
 }
