@@ -300,6 +300,11 @@ function timelineOps(msg, bad) {
   const timeline = inputs.Timeline ?? {};
   const ops = [];
   if (/nhạc nhỏ/.test(low) && timeline.music) ops.push({ op: "setMusic", music: { ...timeline.music, gain_db: Math.max(-40, timeline.music.gain_db - 4) } });
+  // shot-cut edits (timeline v4): shorten the first clip to 1.5 s, dissolve out of it, karaoke captions
+  const firstClip = timeline.clips?.[0];
+  if (/ngắn lại/.test(low) && firstClip) ops.push({ op: "trimClip", clip_id: firstClip.clip_id, in: firstClip.in ?? 0, out: Math.round(((firstClip.in ?? 0) + 1.5) * 1000) / 1000 });
+  if (/mờ dần/.test(low) && firstClip) ops.push({ op: "setTransition", clip_id: firstClip.clip_id, kind: "dissolve", seconds: 0.5 });
+  if (/karaoke/.test(low)) ops.push({ op: "setCaptions", mode: "karaoke" });
   const quoted = /"([^"]{1,64})"/.exec(msg)?.[1];
   if (quoted || /chữ/.test(low) || !ops.length) {
     const clip = timeline.clips?.[1] ?? timeline.clips?.[0];

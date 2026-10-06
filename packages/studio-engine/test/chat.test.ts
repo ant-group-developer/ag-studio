@@ -164,5 +164,10 @@ describe("runChatTurn", () => {
     expect(p.timeline.texts.some((t) => t.text === "Phở sáng")).toBe(true);
     const [call] = chatCalls(s, id);
     expect(call).toMatchObject({ episode_id: ep.id, stage_key: "approve-timeline", skill: "studio-timeline" });
+
+    // a whole-video episode (timeline v3) has no clip ranges: trimming is refused, twice, and nothing is proposed
+    const trim = await say(s, key, "Ngắn lại clip đầu");
+    expect(trim.turn).toMatchObject({ status: "done", action: "answer", proposal: null });
+    expect(trim.turn.problems).toEqual([expect.objectContaining({ code: "needs_v4" })]);
   }, 90_000);
 });

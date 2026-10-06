@@ -165,7 +165,7 @@ describe("edit operations on v4", () => {
 
   it("trim, transition and captions are v4 only and checked", () => {
     expect(() => trimClip(v3() as never, "C001", 1, 2)).toThrow(TimelineOpError);
-    try { setCaptions(v3() as never, "karaoke"); } catch (e) { expect((e as TimelineOpError).code).toBe("not_v3"); }
+    try { setCaptions(v3() as never, "karaoke"); } catch (e) { expect((e as TimelineOpError).code).toBe("needs_v4"); }
     expect(() => trimClip(cut(), "C001", 3, 3)).toThrow(TimelineOpError);
     expect(() => trimClip(cut(), "C001", 2, 25)).toThrow(TimelineOpError);
     expect(() => trimClip(cut(), "C404", 0, 1)).toThrow(TimelineOpError);
@@ -198,6 +198,6 @@ describe("edit operations on v4", () => {
     expect(after.clips[1]).toMatchObject({ in: 1, out: 3, transition_out: { kind: "dissolve", seconds: 0.5 } });
     expect(after.captions.mode).toBe("karaoke");
     try { applyTimelineOps(v3(), [{ op: "trimClip", clip_id: "C001", in: 1, out: 2 }], {}); }
-    catch (e) { expect((e as TimelineOpError).code).toBe("not_v3"); }
+    catch (e) { expect((e as TimelineOpError).code).toBe("needs_v4"); }
   });
 });

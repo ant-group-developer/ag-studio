@@ -4,12 +4,13 @@
  * that session is gone; approving sends the edited selection on. The edit plan: a new version of the document,
  * checked like the stage's answer. Needs ffmpeg + ffprobe.
  */
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { EditPlanSchema, StudioSurveySchema } from "@harness/contracts";
+import { EditPlanSchema, StudioSurveySchema, TimelineV4Schema } from "@harness/contracts";
 import {
-  agentSessionFor, approveChatScope, chatContext, chatScopeFor, getTurn, insertUserTurn, markTurnRunning, readStageDocument, runChatTurn,
-  studioLogger, type ChatScopeKey, type SurveyProposal,
+  agentSessionFor, applyChatProposal, approveChatScope, chatContext, chatScopeFor, getTurn, insertUserTurn, latestEpisodeRevision, markTurnRunning,
+  readStageDocument, runChatTurn, studioLogger, submitStudioGate, type ChatScopeKey, type SurveyProposal, type TimelineProposal,
 } from "../src/index.js";
 import { cutEpisodeAtSurvey, cutSetup, drain, hasFfmpeg, waiting, type CutSetup } from "./cut-flow.js";
 
@@ -75,6 +76,35 @@ describe.skipIf(!hasFfmpeg())("chat at the gates of a shot-cut episode (needs ff
     await approveChatScope(s.core, s.db, { productionId: prod, episodeId: ep.id, stageKey: "approve-edit-plan", turnId: revised.turn.id, userId: "auth0|owner" });
     await drain(s);
     expect(waiting(s, runId)).toEqual(["approve-timeline"]);
+  }, 120_000);
+
+  it("edits the cut timeline: a clip shortened, a dissolve out of it, karaoke captions, saved as a v4 revision", async () => {
+    s = cutSetup();
+    const { prod, ep, runId } = await cutEpisodeAtSurvey(s);
+    for (const [gate, stage, file] of [["approve-survey", "source-survey", "survey.json"], ["approve-edit-plan", "plan-edit", "edit-plan.json"]] as const) {
+      await submitStudioGate(s.core, s.db, runId, gate, readStageDocument(s.core, runId, stage, file));
+      await drain(s);
+    }
+    expect(waiting(s, runId)).toEqual(["approve-timeline"]);
+    const key = chatScopeFor(s.core, s.db, prod, ep.id);
+    const before = TimelineV4Schema.parse(latestEpisodeRevision(s.db, ep.id)!.data);
+    const first = before.clips[0]!;
+
+    const { turn } = await say(s, key, "Ngắn lại clip đầu, cho nó mờ dần sang clip sau, phụ đề karaoke");
+    expect(turn).toMatchObject({ status: "done", action: "revise", problems: [] });
+    const p = turn.proposal as TimelineProposal;
+    expect(p.ops.map((o) => o.op)).toEqual(["trimClip", "setTransition", "setCaptions"]);
+    const after = TimelineV4Schema.parse(p.timeline);
+    expect(after.clips[0]).toMatchObject({ clip_id: first.clip_id, in: first.in, out: first.in + 1.5, transition_out: { kind: "dissolve", seconds: 0.5 } });
+    expect(after.captions.mode).toBe("karaoke");
+    // the prompt showed Claude each clip's range and the narration
+    const prompt = readFileSync(join(s.core.dataRoot, "chat", turn.id, "logs", "fake-claude-prompts.log"), "utf8");
+    expect(prompt).toContain("Tập cắt theo shot");
+    expect(prompt).toContain(`"shot_id": "${first.shot_id}"`);
+
+    expect(applyChatProposal(s.core, s.db, { productionId: prod, turnId: turn.id, userId: "auth0|owner" })).toEqual({ revision: 2 });
+    const saved = latestEpisodeRevision(s.db, ep.id)!;
+    expect(TimelineV4Schema.parse(saved.data).clips[0]!.out).toBe(first.in + 1.5);
   }, 120_000);
 
   it("refuses a proposal naming a shot the selection does not have, and replies plainly when the session is gone", async () => {

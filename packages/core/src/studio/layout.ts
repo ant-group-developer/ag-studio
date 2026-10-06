@@ -309,7 +309,7 @@ function clipIndex(t: AnyTimeline, clipId: string): number {
   return i;
 }
 function requireV4(t: AnyTimeline, what: string): TimelineV4 {
-  if (!isTimelineV4(t)) throw new TimelineOpError("not_v3", `${what} chỉ có ở tập cắt theo shot (timeline v4)`);
+  if (!isTimelineV4(t)) throw new TimelineOpError("needs_v4", `${what} chỉ có ở tập cắt theo shot (timeline v4)`);
   return t;
 }
 
