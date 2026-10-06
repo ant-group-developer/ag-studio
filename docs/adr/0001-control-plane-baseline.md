@@ -969,3 +969,24 @@ Các mục dưới đây ghi lại quyết định của nhánh AG Studio, viế
     Chat ở scope `failed` giải thích lỗi; "Chạy lại" (`retryStageWithFeedback`) đưa tin nhắn của scope đó vào prompt
     của stage (`# Góp ý của người dùng`, `StudioAgentExecutor.feedbackFor`). Ghi đè output REJECTED bằng bản Claude
     sửa sẽ phải đổi core; chạy lại giữ đúng checker và lineage.
+148. **Kiểu máy render bản cuối bằng `requirements` sẵn có của ag-farm, lưu theo run (2026-10-06).** Ba kiểu
+    `any` (`{}`), `nvenc` (`{ nvenc: true }`), `gpu` (`{ gpu: true }`); Studio lưu **tên kiểu**, không lưu requirements thô,
+    nên không route nào gửi được khoá farm từ chối (schema của hub là strict). Bảng `studio_render_choices` (migration
+    0021) khoá theo `(run_id, stage_key)`: mỗi lần render là một run, run cũ và màn cũ không có dòng nào nên vẫn gửi `{}`.
+    Worker đọc lúc gửi job (`FarmExecutor.requirementsFor`, executor 0.4.0), nên không cần workflow mới; chọn khi duyệt
+    `approve-youtube-kit` (gate cuối trước render) hoặc khi Render lại. Requirements gửi đi được ghi vào
+    `studio_farm_jobs.requirements`. Không làm: ghim một máy theo tên (cần trường mới trong giao thức farm), đổi máy cho
+    job đã gửi (farm không cho sửa requirements; phải huỷ rồi gửi lại).
+149. **Render lại chạy từ `render-final` khi timeline đã duyệt không đổi (2026-10-06).** Trước đây Render lại một tập
+    1.3.0 luôn chạy lại từ `approve-timeline`, kéo theo `youtube-kit` (một lượt Claude) và hai lần duyệt cho đúng timeline
+    cũ. Giờ `renderRestartFrom` so revision mới nhất với `timeline.json` của `approve-timeline` (`isDeepStrictEqual`):
+    giống thì `resumeRunFrom(render-final)` — mọi bước trước được giữ — khác thì như cũ. Run Studio không có variant nên
+    không có cache reuse: render-final chạy thật. Áp dụng cho cả nút Render lại của màn cũ.
+150. **Màn Hàng đợi đọc owner API của ag-farm; không có danh sách máy (2026-10-06).** Owner API chỉ có job
+    (`listJobs`, `JobView` có `node_id` nhưng không tên máy, không requirements); danh sách node chỉ ở admin API
+    (`GET /v1/admin/nodes`, JWT Auth0 admin). Màn Hàng đợi hiện job ghép với `studio_farm_jobs` (kiểu máy, tập), lọc
+    theo team, cache `listJobs` 3 s trong API. Hai điều về farm cần biết khi chọn máy: job không máy nào khớp nằm
+    `queued` mãi, không lỗi (Studio cảnh báo sau 10 phút; stage chờ tới hết deadline 4 giờ); và `nvenc` của một node là
+    "ffmpeg của nó có encoder `h264_nvenc`" (worker-sdk dò `ffmpeg -encoders` một lần lúc khởi động), không phải driver
+    chạy được NVENC — máy dev (Quadro P1000, driver 582 < 610) có thể khai `nvenc` rồi render bằng CPU
+    (`encoder: auto` tự lùi), và `render.json` không ghi encoder đã dùng.

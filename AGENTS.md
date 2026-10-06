@@ -66,10 +66,10 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
   **sau** khi API healthy. Không có Postgres.
 - API dựng engine core ngay trong tiến trình (`apps/api/src/studio/engine.service.ts` → `createStudioEngineCore`),
   nên gate nộp từ web được kiểm bằng đúng checker worker dùng. API ghi `studio.db` bằng `BEGIN IMMEDIATE`.
-- Bảng Studio (migration `0008`–`0020`): `teams`, `team_members`, `team_skills`, `productions`, `episodes`,
-  `episode_revisions`, `episode_jobs`, `episode_thumbnails`, `studio_farm_jobs`, `sign_audit_log`, `youtube_cache`,
-  `llm_calls`, `human_edits`, `canva_*`, `stage_chat_turns` (chat, 0019), `studio_settings` (cấu hình chỉnh trên web,
-  0020). `comments`, `timeline_revisions`, `studio_editor_jobs` là bảng cũ, không dùng.
+- Bảng Studio (migration `0008`–`0021`): `teams`, `team_members`, `team_skills`, `productions`, `episodes`,
+  `episode_revisions`, `episode_jobs`, `episode_thumbnails`, `studio_farm_jobs` (có `requirements`, `episode_id`),
+  `sign_audit_log`, `youtube_cache`, `llm_calls`, `human_edits`, `canva_*`, `stage_chat_turns` (chat, 0019),
+  `studio_settings` (cấu hình chỉnh trên web, 0020), `studio_render_choices` (kiểu máy render, 0021). `comments`, `timeline_revisions`, `studio_editor_jobs` là bảng cũ, không dùng.
 - File hướng ra trình duyệt nằm trên R2 (`S3Bucket`, `packages/studio-engine/src/bucket.ts`), URL ký có hạn.
 - Biến môi trường: `.env.example` (nhóm Auth0, Account API, ag-go, farm, R2, Claude, Canva, YouTube). API kiểm
   bằng zod ở `apps/api/src/config/env.ts`; worker dùng `requireEnv` ở `apps/worker/src/main.ts`. **Không bao giờ in
@@ -136,8 +136,9 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
 - Không gì được áp dụng tới khi người bấm (`chat-actions.ts`): Bắt đầu (`startFromIntake`), Duyệt
   (`approveChatScope`, nộp bản đang hiện theo `turnId`), Áp dụng (intake/timeline, `applyChatProposal`), Chạy lại
   (`retryStageWithFeedback`, tin nhắn vào prompt dạng `# Góp ý của người dùng`), Sửa tay (`saveManualEdit`).
-- Web chat: `/` (trang chủ), `/v/:productionId`, `/v/:productionId/e/:episodeId` (`apps/web/src/modules/chat`,
-  `pages/Chat*Page.tsx`); màn cũ giữ ở `/productions`, `/teams`, editor timeline.
+- Web chat: `/` (trang chủ), `/v/:productionId`, `/v/:productionId/e/:episodeId`, `/queue` (`apps/web/src/modules/chat`,
+  `pages/Chat*Page.tsx`, `pages/QueuePage.tsx`); màn cũ giữ ở `/productions`, `/teams`, editor timeline. Khung trình
+  duyệt nhúng của app desktop báo trang luôn ẩn nên react-query không polling: kiểm bằng khung đó thì tải lại trang.
 - Test chạm `claude` thật chỉ chạy khi `HARNESS_REAL_CLAUDE_TEST=1`. Trên Windows `resolveCommand`
   (`packages/adapters/agent-cli/src/resolve-command.ts`) dò shim `claude.cmd` của npm ra `claude.exe`.
 - Mọi lượt gọi ghi `llm_calls` (payload gzip trên bucket), mọi lần người duyệt/sửa ghi `human_edits`.
@@ -150,6 +151,19 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
   `POST /api/farm/sign` (vé của farm): `asset:` → ag-go `/footage/assets/resolve` (`final` hoặc `preview`),
   `stage:` → input của job; mọi lần ký ghi `sign_audit_log`. Build cần checkout `../ag-farm` (`@ag-farm/*` link
   tới đó).
+- **Kiểu máy render bản cuối** (spec local-chat §3.4, ADR mục 148–150): `any` → `{}`, `nvenc` → `{ nvenc: true }`,
+  `gpu` → `{ gpu: true }` — `requirements` sẵn có của ag-farm (`renderRequirements`, `packages/contracts/src/studio.ts`).
+  Lựa chọn lưu theo `(run_id, stage_key)` ở `studio_render_choices` (`render-choice.ts`); worker đọc qua
+  `FarmExecutor.requirementsFor` lúc gửi job; không có dòng nào thì gửi `{}` như trước. Chọn khi duyệt
+  `approve-youtube-kit` (`approveChatScope({ renderMachine })`, gate khác → 422 `no_render_here`) hoặc khi Render lại
+  (`POST …/episodes/:id/rerender { renderMachine }`). Xem trước 720p và xuất Premiere luôn `{}`. **Ghim một máy theo tên
+  node là đổi hợp đồng ag-farm: hỏi trước.**
+- **Render lại** (`rerenderEpisode`): run 1.3.0 đã xong mà revision mới nhất **giống** timeline đã duyệt thì chạy lại
+  từ `render-final` (không gọi Claude, không duyệt lại); đã sửa sau khi duyệt thì từ `approve-timeline`; tập 1.2.0 từ
+  `freeze-timeline`. `episodeRenderInfo` (trường `render` của chi tiết tập) nói bước bắt đầu (`restartFrom`).
+- **Màn Hàng đợi** (`/queue`, `GET /api/studio/queue`, `queue.ts`): lượt Claude (dòng `lease` giữ `claude`) và job farm
+  chưa xong (owner API `listJobs`, cache 3 s) của video người xem thấy. Owner API **không** có danh sách node nên không
+  có danh sách máy; `JobView` chỉ có `node_id`. Job `queued` quá 10 phút hiện cảnh báo (farm không báo vì sao chờ).
 - Xuất Premiere: job farm `studio.export_premiere`, FCP7 XML (xmeml v5), chữ là PNG, zip kèm README relink.
 - Thumbnail cắt và vẽ chữ trên máy Studio từ `final.mp4` (ffmpeg bất đồng bộ, không `spawnSync`); font Arial của hệ
   thống (`STUDIO_FONTS_DIR`) — không ship font.

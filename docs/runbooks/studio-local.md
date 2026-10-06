@@ -113,11 +113,18 @@ node --require ts-node/register ../../node_modules/typeorm/cli.js migration:run 
 - **Claude giả hay thật:** `STUDIO_CLAUDE_ARGV` trong `apps/api/.env` trỏ `fixtures/fake-studio-claude.mjs` (không tốn
   hạn mức). Bỏ dòng đó để dùng `claude` thật bằng `CLAUDE_CODE_OAUTH_TOKEN` (hoặc đăng nhập `claude` → `/login`).
   Trên Windows, `claude.cmd` của npm được tự dò ra `claude.exe` (`resolveCommand`).
-- **Số lượt Claude cùng lúc:** admin Studio chỉnh trên web (bấm chip "Claude: n/max" ở header; lưu vào
+- **Số lượt Claude cùng lúc:** admin Studio chỉnh trên web (màn Hàng đợi, cột phải; lưu vào
   `studio_settings`, worker áp dụng ngay). Chưa ai lưu thì dùng `STUDIO_CLAUDE_MAX_CONCURRENT` (1–100, mặc định 20).
   Worker chạy số vòng bằng `claude + 8 (farm) + 2 (cpu)` và tự thêm/bớt khi số này đổi; tin nhắn chat dùng chung số
   lượt đó và được xếp trước các bước tự chạy. Nhiều lượt hơn thì hạn mức gói hết nhanh hơn, mỗi lượt một tiến trình
   `claude`.
+- **Kiểu máy render bản cuối:** chọn trên thẻ duyệt YouTube kit hoặc ⋯ → Render bản cuối…: bất kỳ máy nào, máy có
+  NVENC, máy có GPU (requirements của ag-farm). Xem máy `local-render` khai gì (số GPU, `nvenc`) ở web farm 3011 trước khi
+  chọn: không máy nào khớp thì job nằm chờ mãi. `nvenc` của node chỉ nói ffmpeg của nó có encoder NVENC; máy dev
+  (driver < 610) vẫn có thể nhận job "máy có NVENC" rồi render bằng CPU.
+- **Màn Hàng đợi** (`http://localhost:3100/queue`, hoặc bấm chip "Claude"/"Render" ở header): lượt Claude, job farm
+  chưa xong kèm kiểu máy, việc chờ duyệt; admin chỉnh số lượt Claude ở cột phải. Không có danh sách máy (owner API của
+  farm không trả node).
 - Auth0: client SPA phải cho phép `http://localhost:3100` (callback, logout, web origin); client id nằm trong
   `AUTH0_ALLOWED_CLIENT_IDS` của Studio, ag-go và farm.
 - Thumbnail và kiểm loudness dùng ffmpeg ở `STUDIO_FFMPEG_PATH` (máy dev trỏ tới `ffmpeg-static` của
@@ -144,4 +151,7 @@ Không chạy song song với chế độ trực tiếp: hai bên dùng chung c�
 | Stage Claude lỗi `agent CLI failed to start` | Không tìm thấy `claude` / `claude.exe` | Cài Claude Code, hoặc đặt lại `STUDIO_CLAUDE_ARGV` về Claude giả |
 | `up` báo "chưa lên sau 180 s" | Dịch vụ lỗi khi khởi động | Xem `E:\ag-local\dev-run\<tên>.log` |
 | Chat hiện "Claude đang trả lời…" mãi | Worker không chạy (vòng chat nằm trong worker) | `local-stack.mjs status`, log `studio-worker` |
-| Chat hiện "Đang chờ lượt" lâu | Đủ số lượt Claude cùng lúc | Chờ, hoặc admin tăng số lượt ở chip header |
+| Chat hiện "Đang chờ lượt" lâu | Đủ số lượt Claude cùng lúc | Chờ, hoặc admin tăng số lượt ở màn Hàng đợi |
+| Render bản cuối "Đang chờ máy phù hợp" mãi | Không node nào khớp kiểu máy đã chọn (vd chọn GPU, máy không có) | Web farm 3011 xem khả năng node; huỷ tập rồi Render lại với "Bất kỳ máy nào" |
+| Màn Hàng đợi "Không đọc được hàng đợi farm" | Farm hub không chạy, hoặc `FARM_OWNER_KEY` sai | `local-stack.mjs status`; log `studio-api` |
+| Kiểm trong khung trình duyệt của app desktop, số liệu không tự cập nhật | Khung đó báo trang luôn ẩn nên không polling | Tải lại trang sau mỗi bước |

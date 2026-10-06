@@ -34,8 +34,10 @@ Từ lúc tạo production tới khi có các tập đã render, kèm cách xử
 - **YouTube kit:** đã duyệt ở bước kit; sửa thêm trong ngăn kéo của tập ở màn cũ.
 - **Thumbnail:** chọn trong các gợi ý, khung cắt từ video, hoặc ảnh tự tải lên; vẽ chữ theo branding có xem trước;
   mở sang Canva rồi lấy bản sửa về (`docs/runbooks/canva.md`).
-- **Sửa hình:** chat trên timeline của tập (hoặc `⋯ → Mở editor timeline`), "Áp dụng", rồi "Render lại" ở màn cũ:
+- **Sửa hình:** chat trên timeline của tập (hoặc `⋯ → Mở editor timeline`), "Áp dụng", rồi `⋯ → Render bản cuối…`:
   run mới chạy lại từ `approve-timeline`, duyệt lại timeline rồi kit.
+- **Render lại trên kiểu máy khác** (timeline không đổi): `⋯ → Render bản cuối…`, chọn kiểu máy — chỉ bước render chạy
+  lại, không gọi Claude, không duyệt lại. Lần render đầu chọn kiểu máy ngay trên thẻ duyệt YouTube kit.
 - **Tải về:** file mp4, hoặc "gói YouTube" (zip, tạo lúc tải).
 - **Xuất Premiere:** `⋯ → Xuất project Premiere` (proxy 720p), hoặc màn cũ để chọn bản gốc (cần quyền tải gốc trên
   ag-go). Job farm `studio.export_premiere`; zip FCP7 XML + media + PNG chữ + `README.txt` hướng dẫn relink. Hai lỗi

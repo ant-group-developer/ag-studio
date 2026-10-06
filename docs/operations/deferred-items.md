@@ -66,7 +66,26 @@ Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-2-chat.md`. Cố ý ch�
 - **Prompt cache của chat chưa đo** với Claude thật: phần đầu prompt giống từng byte với stage, nhưng `--json-schema`
   khác nhau giữa stage và chat.
 - Trang video lấy vai của người xem qua `GET /teams?pageSize=100`: người ở hơn 100 team có thể bị coi là không có vai.
-- Render xem trước trên "máy này" và chọn máy cho bản cuối: pha 3.
+- ✅ Đã đóng ở pha 3 — chọn máy cho bản cuối. "Render trên máy này" đã bỏ (spec §3.4: mọi render qua farm).
+
+### Sau pha 3 — kiểu máy render, màn Hàng đợi (2026-10-06)
+
+Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-3-render.md`. Cố ý chưa làm, hoặc lệch mockup (màn 11, 12):
+
+- **Không có danh sách máy** trên màn Hàng đợi: owner API của ag-farm không trả node. Admin API `GET /v1/admin/nodes`
+  có sẵn (JWT Auth0 của admin, không đổi hợp đồng): web có thể gọi thẳng cho admin nếu cần.
+- **Không có tên máy trên job** ("render-01" của mockup): `JobView` chỉ có `node_id`.
+- **Ghim một máy theo tên node**: cần trường mới trong giao thức ag-farm — đổi hợp đồng, phải hỏi.
+- **Đổi máy cho job đang chờ**: farm không cho sửa requirements sau khi gửi; người dùng huỷ tập rồi Render lại.
+- **Job không máy nào khớp chờ mãi**: farm không timeout job `queued`; stage `render-final` chờ tới hết deadline 4 giờ
+  rồi thử lại một lần (tổng ~8 giờ). Studio chỉ cảnh báo sau 10 phút.
+- **`nvenc` của node theo bản ffmpeg, không theo driver**; `render.json` không ghi encoder thật đã dùng, nên Studio không
+  nói được bản render có thật sự dùng NVENC không.
+- Cột kết quả chỉ hiện dòng "Render trên: …" khi bước đang là render/xuất file; khi run đã xong, scope là `timeline`
+  và cột phải hiện timeline (dòng kiểu máy nằm ở thẻ ⋯ → Render bản cuối… và màn Hàng đợi).
+- Cuối pha 3: `corepack pnpm -r run build` và `pnpm -r typecheck` sạch; `vitest run` 1532 pass, 170 skip, 0 fail.
+- `chat.test.ts` › "the subscription limit leaves the reply waiting, then it runs" chập chờn khi chạy cả bộ
+  `packages/studio-engine` (máy tải nặng); chạy riêng thì pass.
 
 ### Rủi ro vận hành
 
