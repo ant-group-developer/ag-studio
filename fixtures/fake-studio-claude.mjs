@@ -126,6 +126,8 @@ function planEpisodes() {
       items,
       alternates,
       texts_suggested,
+      // "plan-cut": the first episode is cut shot by shot with narration (phase 5); others whole videos
+      ...(modes.has("plan-cut") ? (e === 0 ? { edit_style: "cut", narration: "tts" } : { edit_style: "whole", narration: "none" }) : {}),
     });
   }
   return {

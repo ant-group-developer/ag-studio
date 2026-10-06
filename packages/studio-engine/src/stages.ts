@@ -13,7 +13,7 @@ import {
   HarnessError, MAX_RESEARCH_CHANNELS, SeriesPlanSchema, SpawnedEpisodesSchema, StudioBrandingSchema, StudioBriefSchema, StudioCatalogSchema,
   StudioEpisodeSchema, StudioExportSchema, StudioResearchSchema, StudioRndSchema, StudioSeedSchema, StudioYoutubeSchema, StoredTimelineSchema,
   TrendReportSchema, parseStoredYoutubeKit,
-  type ChannelRef, type ExecutorContext, type StageRequest, type StudioBrief, type StudioCatalog, type StudioExport,
+  type AssetHints, type ChannelRef, type ExecutorContext, type StageRequest, type StudioBrief, type StudioCatalog, type StudioExport,
   type StudioEpisode, type TrendReport, StudioThumbnailsSchema, THUMBNAIL_SIZES, type StudioThumbnails, type StoredTimeline,
 } from "@harness/contracts";
 import {
@@ -24,7 +24,7 @@ import {
 import type { InProcessStage } from "@harness/executors";
 import { productionKey, type StudioBucket } from "./bucket.js";
 import { emptyResearch, type ResearchSource } from "./youtube-research.js";
-import { episodeWorkflowForPlan } from "./run-control.js";
+import { episodeWorkflowFor, episodeWorkflowForPlan } from "./run-control.js";
 import type { ThumbnailRenderer } from "./thumbnail-render.js";
 import type { CutMediaDeps } from "./cut-stages.js";
 import { insertThumbnail, listThumbnails, replaceRenderThumbnails } from "./thumbnails-db.js";
@@ -153,6 +153,95 @@ export function writeEpisodeIntake(d: Pick<StudioStageDeps, "db">, request: Stag
   const trend = prod.trend_report ? TrendReportSchema.parse(JSON.parse(prod.trend_report)) : SKIPPED_TREND_REPORT;
   writeOutput(ctx, "trend-report.json", toBuffer(trend));
   return { brief, episode };
+}
+
+/** ag-go's AI description of each video, as the hints of a shot-cut episode. */
+function assetHints(ids: string[], assets: Map<string, StudioCatalog["assets"][number]>): Record<string, AssetHints> {
+  const out: Record<string, AssetHints> = {};
+  for (const id of ids) {
+    const a = assets.get(id);
+    if (a) out[id] = { subjects: a.subjects, places: a.places, mood: a.mood, setting: a.setting, time_of_day: a.time_of_day, people_count: a.people_count, shot_variety: a.shot_variety, has_speech: a.has_speech };
+  }
+  return out;
+}
+
+/**
+ * The episodes of an approved plan: their records (each with a snapshot of its plan and videos) and their runs. A retry
+ * of the same plan run keeps the episodes it made and starts the runs still missing; any other episodes belong to an
+ * earlier plan and are replaced, unless one is still producing.
+ */
+async function spawnEpisodes(d: StudioStageDeps, request: StageRequest, ctx: ExecutorContext, v2: boolean): Promise<void> {
+  const ws = ctx.workspaceDir;
+  const brief = readBrief(request, ws);
+  const catalog = readCatalog(request, ws);
+  const plan = readInput(request, ws, STUDIO_TYPES.seriesPlan, (v) => SeriesPlanSchema.parse(v));
+  // Store the trend report in the production (if it was produced)
+  const trendPath = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.trendReport);
+  if (trendPath && existsSync(trendPath)) {
+    const trendRaw = JSON.parse(readFileSync(trendPath, "utf8"));
+    saveTrendReport(d.db, brief.production_id, trendRaw);
+  }
+  // Build asset lookup from catalog
+  const assetMap = new Map(catalog.assets.map((a) => [a.asset_id, a]));
+  // The episodes of this very plan run (a retry of this stage): keep them, start the runs still missing.
+  // Any other episodes belong to an earlier plan: this plan replaces them, unless one is still producing.
+  const existing = listEpisodes(d.db, brief.production_id);
+  const { randomUUID } = await import("node:crypto");
+  const episodeRows: { id: string; idx: number; title: string; hook: string; plan: string; edit_style: "whole" | "cut" }[] = [];
+  const spawnedEpisodes: { episode_id: string; idx: number; run_id: string }[] = [];
+
+  if (existing.length > 0 && existing.every((e) => e.plan_run_id === request.run_id)) {
+    for (const e of existing) {
+      let runId = e.run_id;
+      if (!runId) {
+        runId = (await d.startEpisodeRun(e.id, v2 ? episodeWorkflowFor(request.workflow.version, e.edit_style) : episodeWorkflowForPlan(request.workflow.version))).runId;
+        updateEpisodeRunId(d.db, e.id, runId);
+      }
+      spawnedEpisodes.push({ episode_id: e.id, idx: e.idx, run_id: runId });
+    }
+  } else {
+    const busy = existing.find((e) => e.run_id && d.isRunActive?.(e.run_id));
+    if (busy) {
+      throw new HarnessError("CONFIG_INVALID", `tập ${busy.idx} của kế hoạch cũ đang sản xuất; chờ xong hoặc huỷ rồi thử lại bước này`, { episode_id: busy.id });
+    }
+    for (const ep of plan.episodes) {
+      // Build the StudioEpisode plan snapshot (assets from catalog)
+      const episodeAssets: Record<string, { title: string; summary_vi: string; duration_s: number; orientation: string | null }> = {};
+      for (const item of [...ep.items, ...(ep.alternates ?? [])]) {
+        const a = assetMap.get(item.asset_id);
+        if (a) episodeAssets[item.asset_id] = { title: a.title_vi || a.name, summary_vi: a.summary_vi, duration_s: a.duration_s, orientation: a.orientation };
+      }
+      const episodeId = randomUUID();
+      const style = v2 && ep.edit_style === "cut" ? "cut" : "whole";
+      episodeRows.push({
+        id: episodeId, idx: ep.idx, title: ep.title, hook: ep.hook, edit_style: style,
+        plan: JSON.stringify(StudioEpisodeSchema.parse({
+          schema_version: "studio.episode/v1",
+          production_id: brief.production_id, episode_id: episodeId,
+          idx: ep.idx, title: ep.title, hook: ep.hook, logline: ep.logline,
+          target_seconds: ep.target_seconds, items: ep.items, alternates: ep.alternates ?? [],
+          texts_suggested: ep.texts_suggested ?? [], assets: episodeAssets,
+          // v2: how the episode is edited, and for a shot-cut one ag-go's description of each video as a hint
+          ...(v2 ? { edit_style: style } : {}),
+          ...(style === "cut" ? { narration: ep.narration ?? "tts", asset_hints: assetHints(ep.items.map((i) => i.asset_id), assetMap) } : {}),
+        })),
+      });
+    }
+    replaceEpisodes(d.db, brief.production_id, episodeRows, request.run_id);
+    // Start an episode run for each episode
+    for (const row of episodeRows) {
+      const { runId } = await d.startEpisodeRun(row.id, v2 ? episodeWorkflowFor(request.workflow.version, row.edit_style) : episodeWorkflowForPlan(request.workflow.version));
+      updateEpisodeRunId(d.db, row.id, runId);
+      const ep = plan.episodes.find((e) => e.idx === row.idx)!;
+      spawnedEpisodes.push({ episode_id: row.id, idx: row.idx, run_id: runId });
+      ctx.logger.info("episode spawned", { episode_id: row.id, idx: row.idx, run_id: runId });
+      void ep; // used indirectly above
+    }
+  }
+  const spawned = SpawnedEpisodesSchema.parse({
+    schema_version: "studio.episodes/v1", production_id: brief.production_id, episodes: spawnedEpisodes,
+  });
+  writeOutput(ctx, "episodes.json", toBuffer(spawned));
 }
 
 export function studioStages(d: StudioStageDeps): Record<string, InProcessStage> {
@@ -297,75 +386,10 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       writeOutput(ctx, "branding.json", toBuffer(branding));
     },
 
-    "studio-spawn-episodes": async (request, ctx) => {
-      const ws = ctx.workspaceDir;
-      const brief = readBrief(request, ws);
-      const catalog = readCatalog(request, ws);
-      const plan = readInput(request, ws, STUDIO_TYPES.seriesPlan, (v) => SeriesPlanSchema.parse(v));
-      // Store the trend report in the production (if it was produced)
-      const trendPath = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.trendReport);
-      if (trendPath && existsSync(trendPath)) {
-        const trendRaw = JSON.parse(readFileSync(trendPath, "utf8"));
-        saveTrendReport(d.db, brief.production_id, trendRaw);
-      }
-      // Build asset lookup from catalog
-      const assetMap = new Map(catalog.assets.map((a) => [a.asset_id, a]));
-      // The episodes of this very plan run (a retry of this stage): keep them, start the runs still missing.
-      // Any other episodes belong to an earlier plan: this plan replaces them, unless one is still producing.
-      const existing = listEpisodes(d.db, brief.production_id);
-      const { randomUUID } = await import("node:crypto");
-      const episodeRows: { id: string; idx: number; title: string; hook: string; plan: string }[] = [];
-      const spawnedEpisodes: { episode_id: string; idx: number; run_id: string }[] = [];
-
-      if (existing.length > 0 && existing.every((e) => e.plan_run_id === request.run_id)) {
-        for (const e of existing) {
-          let runId = e.run_id;
-          if (!runId) {
-            runId = (await d.startEpisodeRun(e.id, episodeWorkflowForPlan(request.workflow.version))).runId;
-            updateEpisodeRunId(d.db, e.id, runId);
-          }
-          spawnedEpisodes.push({ episode_id: e.id, idx: e.idx, run_id: runId });
-        }
-      } else {
-        const busy = existing.find((e) => e.run_id && d.isRunActive?.(e.run_id));
-        if (busy) {
-          throw new HarnessError("CONFIG_INVALID", `tập ${busy.idx} của kế hoạch cũ đang sản xuất; chờ xong hoặc huỷ rồi thử lại bước này`, { episode_id: busy.id });
-        }
-        for (const ep of plan.episodes) {
-          // Build the StudioEpisode plan snapshot (assets from catalog)
-          const episodeAssets: Record<string, { title: string; summary_vi: string; duration_s: number; orientation: string | null }> = {};
-          for (const item of [...ep.items, ...(ep.alternates ?? [])]) {
-            const a = assetMap.get(item.asset_id);
-            if (a) episodeAssets[item.asset_id] = { title: a.title_vi || a.name, summary_vi: a.summary_vi, duration_s: a.duration_s, orientation: a.orientation };
-          }
-          const episodeId = randomUUID();
-          episodeRows.push({
-            id: episodeId, idx: ep.idx, title: ep.title, hook: ep.hook,
-            plan: JSON.stringify(StudioEpisodeSchema.parse({
-              schema_version: "studio.episode/v1",
-              production_id: brief.production_id, episode_id: episodeId,
-              idx: ep.idx, title: ep.title, hook: ep.hook, logline: ep.logline,
-              target_seconds: ep.target_seconds, items: ep.items, alternates: ep.alternates ?? [],
-              texts_suggested: ep.texts_suggested ?? [], assets: episodeAssets,
-            })),
-          });
-        }
-        replaceEpisodes(d.db, brief.production_id, episodeRows, request.run_id);
-        // Start an episode run for each episode
-        for (const row of episodeRows) {
-          const { runId } = await d.startEpisodeRun(row.id, episodeWorkflowForPlan(request.workflow.version));
-          updateEpisodeRunId(d.db, row.id, runId);
-          const ep = plan.episodes.find((e) => e.idx === row.idx)!;
-          spawnedEpisodes.push({ episode_id: row.id, idx: row.idx, run_id: runId });
-          ctx.logger.info("episode spawned", { episode_id: row.id, idx: row.idx, run_id: runId });
-          void ep; // used indirectly above
-        }
-      }
-      const spawned = SpawnedEpisodesSchema.parse({
-        schema_version: "studio.episodes/v1", production_id: brief.production_id, episodes: spawnedEpisodes,
-      });
-      writeOutput(ctx, "episodes.json", toBuffer(spawned));
-    },
+    /** Plans 2.0.0 and 3.0.0: every episode whole videos on the plan's episode release. */
+    "studio-spawn-episodes": async (request, ctx) => spawnEpisodes(d, request, ctx, false),
+    /** Plan 3.1.0: each episode on the release of its edit style (`episodeWorkflowFor`), the style recorded. */
+    "studio-spawn-episodes-v2": async (request, ctx) => spawnEpisodes(d, request, ctx, true),
 
     // -------------------------------------------------------------------------
     // Episode-run stages

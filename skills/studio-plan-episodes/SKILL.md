@@ -56,9 +56,12 @@ Không chỉ xếp ngẫu nhiên. Đặt câu hỏi:
 
 ### 3b. Đảm bảo thời lượng
 
-Tổng `duration_s` của items phải nằm trong [0.8 × target, 1.2 × target]. Nếu thiếu:
-thêm video từ `alternates` tốt nhất (khác orientation, bổ sung chủ đề). Nếu dư: bỏ bớt video
-kém quan trọng nhất.
+Tập ghép nguyên video (`edit_style: "whole"`): tổng `duration_s` của items phải nằm trong [0.8 × target, 1.2 × target].
+Nếu thiếu: thêm video từ `alternates` tốt nhất (khác orientation, bổ sung chủ đề). Nếu dư: bỏ bớt video kém quan trọng
+nhất.
+
+Tập cắt theo shot (`edit_style: "cut"`): items là **footage để cắt**, không phải clip. Tổng `duration_s` nên ít nhất
+1,5 × target (đủ shot để chọn), tối đa 40 video.
 
 ### 3c. section_title
 
@@ -71,7 +74,16 @@ Tiêu đề section ngắn, ≤ 30 ký tự tiếng Việt, mô tả chủ đề
 Tối đa 10 `alternates` mỗi tập: video usable chưa dùng trong tập này, cùng topic/genre, ưu tiên
 quality cao. Mỗi alternate có `reason` ngắn (≤ 60 ký tự) giải thích tại sao là lựa chọn tốt.
 
-### 3e. texts_suggested
+### 3e. Kiểu dựng (`edit_style`) và lời dẫn (`narration`)
+
+Ghi cho **mọi** tập:
+- `"cut"` (cắt theo shot) khi footage của tập là video **quay dài, liên tục** (trung bình > 60 giây: đi bộ, du lịch,
+  phố, chợ…) cần chọn từng đoạn, hoặc khi brief/góp ý xin "cắt theo shot", "có lời dẫn", "kiểu vlog du lịch".
+- `"whole"` (ghép nguyên video) khi footage là các clip ngắn đã hoàn chỉnh, mỗi clip là một cảnh.
+- `narration`: tập `cut` thường `"tts"` (lời dẫn đọc bằng giọng tổng hợp); `"original"` khi footage có người nói
+  cần giữ (`has_speech`), `"none"` khi chỉ cần hình, nhạc và tiếng môi trường. Tập `whole` luôn `"none"`.
+
+### 3f. texts_suggested
 
 Tối đa 5 `texts_suggested`. Gợi ý chữ overlay hữu ích:
 - `at_item = 0`: tiêu đề tập (kind = "title").
@@ -85,7 +97,8 @@ Tối đa 5 `texts_suggested`. Gợi ý chữ overlay hữu ích:
 - Cùng `asset_id` không được xuất hiện hai lần trong cùng một tập.
 - `alternates`: `asset_id` phải trong catalog; không trùng với items trong cùng tập; không trùng nhau.
 - `texts_suggested[].at_item < items.length`.
-- Tổng thời lượng nằm trong ±20% target_seconds (cảnh báo, không chặn khi lệch 20–30%; chặn > 30%).
+- Tập `whole`: tổng thời lượng nằm trong ±20% target_seconds (cảnh báo, không chặn); `narration` phải là `"none"`.
+- Tập `cut`: tối đa 40 video; footage < 1,5 × target thì cảnh báo.
 
 ## Ví dụ có lời giải
 
@@ -115,19 +128,21 @@ phố (185s ≈ 3 phút). 3 video cà phê + phố còn lại làm alternates v�
     "logline": "Theo chân một buổi sáng ở phố cổ Hà Nội: từ khoảnh khắc tĩnh lặng đầu ngày đến nhịp sống bếp phở.",
     "target_seconds": 180,
     "items": [
-      { "asset_id": "a08", "section_title": "Hà Nội lúc bình minh" },
-      { "asset_id": "a02", "section_title": null },
-      { "asset_id": "a03", "section_title": "Nghề nấu phở" },
-      { "asset_id": "a04", "section_title": null }
+      { "asset_id": "a08", "reason": "sương sớm, mở tập yên tĩnh", "section_title": null },
+      { "asset_id": "a02", "reason": "tô phở cận cảnh, đúng hook", "section_title": null },
+      { "asset_id": "a03", "reason": "người nấu, mở chương nghề phở", "section_title": "Nghề nấu phở" },
+      { "asset_id": "a04", "reason": "khách ăn, kết thoả mãn", "section_title": null }
     ],
     "alternates": [
       { "asset_id": "a01", "reason": "cảnh phố sáng, thay thế a08 nếu cần góc khác" },
       { "asset_id": "a05", "reason": "toàn cảnh kiến trúc, phù hợp mở section địa điểm" }
     ],
     "texts_suggested": [
-      { "at_item": 0, "kind": "title", "text": "Hà Nội Sáng Sớm — Tập 1", "position": "bottom_center" },
-      { "at_item": 2, "kind": "lower_third", "text": "Phở Gia Truyền · Phố Cổ Hà Nội", "position": "bottom_left" }
-    ]
+      { "at_item": 0, "kind": "title", "text": "Hà Nội Sáng Sớm — Tập 1" },
+      { "at_item": 2, "kind": "lower_third", "text": "Phở Gia Truyền · Phố Cổ Hà Nội" }
+    ],
+    "edit_style": "whole",
+    "narration": "none"
   }]
 }
 ```
@@ -146,9 +161,11 @@ Một đối tượng JSON `studio.series-plan/v1`:
     "hook": "...",
     "logline": "...",
     "target_seconds": 180,
-    "items": [{ "asset_id": "...", "section_title": "..." }],
+    "items": [{ "asset_id": "...", "reason": "...", "section_title": null }],
     "alternates": [{ "asset_id": "...", "reason": "..." }],
-    "texts_suggested": [{ "at_item": 0, "kind": "title", "text": "...", "position": "bottom_center" }]
+    "texts_suggested": [{ "at_item": 0, "kind": "title", "text": "..." }],
+    "edit_style": "whole",
+    "narration": "none"
   }]
 }
 ```

@@ -134,6 +134,30 @@ describe("series-plan-valid", () => {
     expect(r.problems).toContainEqual(expect.objectContaining({ code: "not_usable" }));
   });
 
+  it("a shot-cut episode is cut from longer footage: no ±20% on the videos' total, but a pool large enough", () => {
+    const cut = (target: number, over: Partial<SeriesPlan["episodes"][number]> = {}) => seriesPlan({
+      episodes: [{ ...seriesPlan().episodes[0]!, target_seconds: target, edit_style: "cut", narration: "tts", ...over }],
+    });
+    // 3 × 30 s of footage for a 30 s cut: fine (a whole-video episode would be 200% off target)
+    const ok = validateSeriesPlan(cut(30), { brief: brief(), catalog: catalog().assets });
+    expect(ok.problems).toEqual([]);
+    expect(ok.warnings.map((w) => w.code)).not.toContain("duration_off_target");
+    expect(validateSeriesPlan(seriesPlan({ episodes: [{ ...seriesPlan().episodes[0]!, target_seconds: 30 }] }), { brief: brief(), catalog: catalog().assets })
+      .warnings.map((w) => w.code)).toContain("duration_off_target");
+    // 90 s of footage for an 80 s cut: too little to choose from
+    expect(validateSeriesPlan(cut(80), { brief: brief(), catalog: catalog().assets }).warnings.map((w) => w.code)).toContain("pool_too_short");
+    // a whole-video episode has no narration to choose
+    const r = validateSeriesPlan(seriesPlan({ episodes: [{ ...seriesPlan().episodes[0]!, edit_style: "whole", narration: "tts" }] }), { brief: brief(), catalog: catalog().assets });
+    expect(r.problems.map((p) => p.code)).toContain("narration_needs_cut");
+  });
+
+  it("a shot-cut episode takes at most 40 videos", () => {
+    const many = Array.from({ length: 41 }, (_, i) => asset(`c${i}`, 30));
+    const plan = seriesPlan({ episodes: [{ ...seriesPlan().episodes[0]!, edit_style: "cut", items: many.map((a) => ({ asset_id: a.asset_id, reason: "r", section_title: null })), alternates: [] }] });
+    const r = validateSeriesPlan(plan, { brief: brief(), catalog: catalog(many).assets });
+    expect(r.problems.map((p) => p.code)).toContain("too_many_sources");
+  });
+
   it("reports schema problems for malformed input", () => {
     const r = validateSeriesPlan({ schema_version: "studio.series-plan/v1" }, { brief: brief(), catalog: catalog().assets });
     expect(r.ok).toBe(false);
