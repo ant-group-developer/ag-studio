@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { join } from "node:path";
 import { directoryListing } from "@harness/script-sdk";
 import type { AgentCallTrace, AgentRuntime, AgentTask, ExecutorContext, StageOutput, StageResult } from "@harness/contracts";
+import { defaultResolveDeps, resolveCommand } from "./resolve-command.js";
 
 export type AgentCliRuntimeKind = "claude" | "codex";
 
@@ -133,7 +134,8 @@ export class CliAgentRuntime implements AgentRuntime {
 
   /** Cheap availability probe (`<argv0> --version`); never invokes the model. Used by `doctor` and by tests to skip real-CLI runs. */
   static isAvailable(runtime: AgentCliRuntimeKind, argv0?: string): boolean {
-    const r = spawnSync(argv0 ?? runtime, ["--version"], { timeout: 10000 });
+    const { cmd, prefixArgs } = resolveCommand(argv0 ?? runtime, defaultResolveDeps(process.env.PATH));
+    const r = spawnSync(cmd, [...prefixArgs, "--version"], { timeout: 10000 });
     return r.status === 0;
   }
 
@@ -202,7 +204,9 @@ export class CliAgentRuntime implements AgentRuntime {
     const { code, timedOut, spawnError } = await new Promise<SpawnResult>((resolve) => {
       // Studio mode reads the prompt from stdin; agentic mode ignores stdin entirely.
       const stdinMode = stdinPayload !== null ? "pipe" : "ignore";
-      const child = spawn(cmd, cmdArgs, { cwd: task.workspaceDir, env, stdio: [stdinMode, "pipe", "pipe"] });
+      // `claude` on Windows is usually an npm .cmd shim that spawn() cannot run; follow it to the real binary.
+      const resolved = resolveCommand(cmd, defaultResolveDeps(env.PATH));
+      const child = spawn(resolved.cmd, [...resolved.prefixArgs, ...cmdArgs], { cwd: task.workspaceDir, env, stdio: [stdinMode, "pipe", "pipe"] });
       if (stdinPayload !== null) {
         child.stdin!.end(stdinPayload, "utf8");
       }

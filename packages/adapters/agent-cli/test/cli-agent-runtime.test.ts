@@ -171,10 +171,11 @@ describe("agentChildEnv", () => {
   });
 });
 
-// Exercises the real `claude` CLI end to end: skipped wherever the binary is not on PATH (most dev/CI
-// machines). Costs real API usage — do not loop or retry this test; if it flakes on network/auth, convert
-// it to `it.skip` with a comment rather than leaving a flaky assertion in the suite.
-describe.skipIf(!CliAgentRuntime.isAvailable("claude"))("CliAgentRuntime against the real claude CLI", () => {
+// Exercises the real `claude` CLI end to end. Opt-in only (HARNESS_REAL_CLAUDE_TEST=1): tests must not call
+// an LLM by default, and since `claude` now resolves through its npm .cmd shim on Windows, "installed" alone
+// would run it on every dev machine, logged in or not. Costs real usage — do not loop or retry this test; if
+// it flakes on network/auth, convert it to `it.skip` with a comment rather than leaving a flaky assertion.
+describe.skipIf(process.env.HARNESS_REAL_CLAUDE_TEST !== "1" || !CliAgentRuntime.isAvailable("claude"))("CliAgentRuntime against the real claude CLI", () => {
   it("writes a schema-valid output/package.json from the channel-package skill", async () => {
     const { ws, req } = makeWorkspace(300_000);
     const runtime = new CliAgentRuntime({ runtime: "claude", skillsDir });
