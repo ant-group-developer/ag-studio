@@ -31,6 +31,8 @@ interface Props {
   renderDefault?: RenderMachine | undefined;
   /** ⋯ → Render bản cuối… can start now (the episode is not producing). */
   canRenderFinal?: boolean | undefined;
+  /** The episode run's workflow (`id@version`). */
+  workflow?: string | null | undefined;
 }
 
 /** Duyệt on the YouTube kit: it starts the final render, so it confirms the machine type first (spec §2.5, §3.4). */
@@ -92,11 +94,11 @@ function Problems({ problems }: { problems: { code: string; message: string }[] 
 }
 
 /** The result column (spec local-chat §2.3–2.4): the step's document, readable, changes marked; one main button; ⋯. */
-export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu, busy, canApprove = true, renderDefault = "any", canRenderFinal = false }: Props) {
+export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu, busy, canApprove = true, renderDefault = "any", canRenderFinal = false, workflow }: Props) {
   const { t } = useTranslation();
   const scope = thread.scope;
   const stageKey = scope?.stageKey ?? thread.blocked?.stage ?? null;
-  const step = stepOf(stageKey);
+  const step = stepOf(stageKey, workflow);
   const kind = scope ? docKindOf(scope.stageKey) : null;
   const isTimeline = !!episodeId && (scope?.stageKey === "approve-timeline" || scope?.scope === "timeline");
   const { n, previous } = versionOf(thread);

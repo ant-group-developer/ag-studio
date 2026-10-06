@@ -153,11 +153,17 @@ export interface EpisodeSummary {
   durationSeconds: number | null;
   thumbnailUrl: string | null;
   updatedAt: string;
+  /** `whole` (whole videos) or `cut` (shot by shot, phase 5). */
+  editStyle?: "whole" | "cut";
 }
 
 export interface EpisodeDetail extends EpisodeSummary {
   plan: unknown; // StudioEpisode
   run: RunView | null;
+  /** The caller's ag-go scope does not cover the production: no footage, frames or video URLs. */
+  footageHidden?: boolean;
+  /** The run's workflow, `id@version` (`ag-studio-episode-cut@1.0.0`…); null before a run. */
+  workflow?: string | null;
   youtube: YoutubeKit | null;
   selectedTitle: number;
   /** The picture the episode uses (new thumbnails API — see `listThumbnails`/`selectThumbnail`). */
@@ -174,6 +180,31 @@ export interface EpisodeDetail extends EpisodeSummary {
   latestRevision: number | null;
   render: EpisodeRender;
 }
+
+/** The scene selection of a shot-cut episode (`GET …/shots`, viewer with the footage scope). */
+export interface EpisodeShot {
+  sourceId: string;
+  /** `s000-002` = first video, third shot. */
+  shotId: string;
+  /** Seconds in the video. */
+  in: number;
+  out: number;
+  score: number;
+  tags: string[];
+  usable: boolean;
+  note: string;
+  speech: "none" | "talking" | "ambient";
+  /** Signed middle frame (null before the frames are made). */
+  frameUrl: string | null;
+  /** Differs from Claude's selection. */
+  changed: boolean;
+}
+export interface EpisodeShots {
+  state: "pending" | "waiting" | "approved";
+  turnId: string | null;
+  shots: EpisodeShot[];
+}
+export type EpisodeRerunGate = "approve-survey" | "approve-edit-plan";
 
 /** The final render of an episode (phase 3). */
 export interface EpisodeRender {
@@ -565,6 +596,14 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     /** Render lại; `renderMachine` is the farm machine type of the final render (none: the run's, or any). */
     rerenderEpisode(productionId: string, episodeId: string, renderMachine?: RenderMachine): Promise<{ runId: string; from: NonNullable<EpisodeRender["restartFrom"]> }> {
       return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/rerender`, renderMachine ? { renderMachine } : undefined);
+    },
+    /** 403 `footage_hidden`, 422 `not_cut` for a whole-video episode. */
+    getEpisodeShots(productionId: string, episodeId: string): Promise<EpisodeShots> {
+      return request<EpisodeShots>(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/shots`);
+    },
+    /** A shot-cut episode again from its scene selection or edit plan gate; 409 `gate_not_passed` / `episode_running`. */
+    rerunEpisodeFrom(productionId: string, episodeId: string, stage: EpisodeRerunGate): Promise<{ runId: string; reused: string[] }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/rerun-from`, { stage });
     },
     cancelEpisode(productionId: string, episodeId: string): Promise<void> {
       return request<void>(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/cancel`);

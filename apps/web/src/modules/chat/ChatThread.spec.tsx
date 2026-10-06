@@ -39,6 +39,16 @@ describe("ChatThread", () => {
     expect(onCard).toHaveBeenCalledWith("approve", ok);
   });
 
+  it("a shot-cut episode numbers its own steps, and the footage step says what was found", () => {
+    const scope = { productionId: "p", episodeId: "e", runId: "r", stageKey: "approve-survey", scope: "gate" as const };
+    render(<ChatThread onCard={vi.fn()} episode workflow="ag-studio-episode-cut@1.0.0" notes={{ footage: "tự động · 24 video, 112 shot" }} thread={view([
+      turn({ role: "system", stage_key: "watch-source", scope: "gate", text: "Đã chuẩn bị footage." }),
+      turn({ stage_key: "approve-survey", text: "Giữ lại s000-000" }),
+    ], { scope })} />);
+    expect(screen.getByText(/Bước 1 · Chuẩn bị footage · tự động · 24 video, 112 shot · đã duyệt/)).toBeInTheDocument();
+    expect(screen.getByText(/Bước 2 · Chọn cảnh · chờ bạn/)).toBeInTheDocument();
+  });
+
   it("shows the divider of the step the production is at before anyone wrote in it", () => {
     render(<ChatThread onCard={vi.fn()} thread={view([])} />);
     expect(screen.getByText(/Bước 2 · R&D · chờ bạn/)).toBeInTheDocument();

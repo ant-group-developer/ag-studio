@@ -9,12 +9,21 @@ import { ChatShell } from "../modules/chat/ChatShell";
 import { ChatThread, type CardOptions, type ChatCard } from "../modules/chat/ChatThread";
 import { ManualEditDrawer } from "../modules/chat/ManualEditDrawer";
 import { ResultPane, type MenuAction, type ResultAction } from "../modules/chat/ResultPane";
-import { EPISODE_STEPS, PLAN_STEPS, stepLabelKey, stepOf, stepPosition } from "../modules/chat/steps";
+import { episodeStepsFor, isCutWorkflow, PLAN_STEPS, stepLabelKey, stepOf, stepPosition, type ChatStep } from "../modules/chat/steps";
 import { gateProblems } from "../modules/production/gate-problems";
 import { LlmLogPanel } from "../modules/production/LlmLogPanel";
 import { RenderFinalModal } from "../modules/render/RenderFinalModal";
 
 const MANAGES = new Set(["producer", "owner"]);
+
+/** "cắt theo shot · khoảng 10 phút · có lời dẫn" from the episode's plan (null for a whole-video episode). */
+export function cutHeader(plan: unknown, t: (k: string, o?: Record<string, unknown>) => string): string | null {
+  const p = (plan ?? {}) as { edit_style?: string; target_seconds?: number; narration?: "tts" | "original" | "none" };
+  if (p.edit_style !== "cut") return null;
+  const s = p.target_seconds ?? 0;
+  const length = s >= 90 ? t("chat.cut.minutes", { n: Math.round(s / 60) }) : t("chat.cut.seconds", { n: s });
+  return t("chat.cut.header", { length, narration: t(`chat.cut.narration.${p.narration ?? "none"}`) });
+}
 const EDITS = new Set(["editor", "producer", "owner"]);
 
 function stillWorking(thread: ChatThreadView | undefined): boolean {
@@ -44,6 +53,16 @@ export function ChatProductionPage() {
   const { data: episode } = useQuery({
     queryKey: ["episode", productionId, episodeId], queryFn: () => client.getEpisode(productionId, episodeId!), enabled: !!episodeId,
   });
+  const workflow = episode?.workflow ?? null;
+  const cut = isCutWorkflow(workflow);
+  // the footage step's divider counts the videos and shots (frames show footage: only with the footage scope)
+  const { data: shots } = useQuery({
+    queryKey: ["episode-shots", productionId, episodeId], queryFn: () => client.getEpisodeShots(productionId, episodeId!),
+    enabled: !!episodeId && cut && !episode?.footageHidden, retry: false,
+  });
+  const notes: Partial<Record<ChatStep, string>> = shots?.shots.length
+    ? { footage: t("chat.cut.footageNote", { videos: new Set(shots.shots.map((x) => x.sourceId)).size, shots: shots.shots.length }) }
+    : {};
   const { data: teams } = useQuery({ queryKey: ["teams", "all"], queryFn: () => client.listTeams({ page: 1, pageSize: 100 }) });
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => client.getMe(), staleTime: 5 * 60_000 });
   const role = teams?.items.find((x) => x.id === production?.teamId)?.role ?? null;
@@ -55,6 +74,7 @@ export function ChatProductionPage() {
     void qc.invalidateQueries({ queryKey: ["overview"] });
     void qc.invalidateQueries({ queryKey: ["production", productionId] });
     if (episodeId) void qc.invalidateQueries({ queryKey: ["episode", productionId, episodeId] });
+    if (episodeId) void qc.invalidateQueries({ queryKey: ["episode-shots", productionId, episodeId] });
   };
   const fail = (e: unknown) => {
     const problems = gateProblems(e);
@@ -113,8 +133,9 @@ export function ChatProductionPage() {
   // An episode whose run ended chats about its timeline, but its chips show where the run is: all done when it is
   // ready, else the step it stopped at (a failed render).
   const ended = !!episodeId && thread?.scope?.scope === "timeline" && !!episode?.run;
-  const step = stepOf((ended && episode?.status !== "ready" ? episode?.currentStage : null) ?? thread?.scope?.stageKey ?? thread?.blocked?.stage ?? null);
-  const row = episodeId ? EPISODE_STEPS : PLAN_STEPS;
+  const step = stepOf((ended && episode?.status !== "ready" ? episode?.currentStage : null) ?? thread?.scope?.stageKey ?? thread?.blocked?.stage ?? null, workflow);
+  const row = episodeId ? episodeStepsFor(workflow) : PLAN_STEPS;
+  const header = episodeId && episode ? cutHeader(episode.plan, t) : null;
   const at = stepPosition(step, row);
   const finished = thread?.blocked?.code === "nothing_to_chat" || (ended && episode?.status === "ready");
   const title = episodeId ? (episode ? t("chat.episodeTitle", { idx: episode.idx, title: episode.title }) : "") : production?.title ?? "";
@@ -129,6 +150,7 @@ export function ChatProductionPage() {
           <h1>{title}</h1>
           {episodeId ? <button type="button" className="chat-link-button" onClick={() => navigate(`/v/${productionId}`)}>{t("chat.page.backToSeries")}</button> : null}
         </div>
+        {header ? <p className="chat-page__sub">{header}</p> : null}
         {thread?.scope?.scope !== "intake" ? (
           <ol className="chat-steps" aria-label={t("chat.page.steps")}>
             {row.map((s, i) => (
@@ -139,7 +161,7 @@ export function ChatProductionPage() {
           </ol>
         ) : null}
         {thread ? (
-          <ChatThread thread={thread} episode={!!episodeId} busyCard={act.isPending ? (act.variables?.kind as ChatCard) : null}
+          <ChatThread thread={thread} episode={!!episodeId} workflow={workflow} notes={notes} busyCard={act.isPending ? (act.variables?.kind as ChatCard) : null}
             renderDefault={episode?.render?.defaultMachine}
             onCard={(card, turn, options) => (card === "renderFinal" ? setFinalOpen(true) : act.mutate({ kind: card, turn, options }))}
             onQuickAnswer={(text) => send.mutate(text)} />
@@ -149,7 +171,7 @@ export function ChatProductionPage() {
       </main>
       {thread ? (
         <ResultPane productionId={productionId} episodeId={episodeId} thread={thread} busy={act.isPending} canApprove={canManage || thread.scope?.scope === "timeline"}
-          renderDefault={episode?.render?.defaultMachine} canRenderFinal={!!episode?.render && episode.render.restartFrom !== null}
+          renderDefault={episode?.render?.defaultMachine} canRenderFinal={!!episode?.render && episode.render.restartFrom !== null} workflow={workflow}
           onPrimary={(a, options) => act.mutate({ kind: a, options })} onMenu={onMenu} />
       ) : null}
       <Drawer open={logOpen} onClose={() => setLogOpen(false)} width="min(900px, 100vw)" title={t("chat.menu.log")} destroyOnClose>

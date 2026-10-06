@@ -12,6 +12,14 @@ export const chatVi = {
   steps: {
     intake: "Hỏi thông tin", research: "Nghiên cứu thị trường", rnd: "R&D", branding: "Branding", plan: "Kế hoạch tập",
     episodes: "Dựng các tập", draft: "Dựng nháp", timeline: "Timeline", kit: "YouTube kit", render: "Render", export: "Xuất file",
+    footage: "Chuẩn bị footage", survey: "Chọn cảnh", editPlan: "Kế hoạch dựng",
+  },
+  cut: {
+    header: "cắt theo shot · {{length}} · {{narration}}",
+    minutes: "khoảng {{n}} phút",
+    seconds: "khoảng {{n}} giây",
+    narration: { tts: "có lời dẫn", original: "giữ tiếng gốc", none: "không lời dẫn" },
+    footageNote: "tự động · {{videos}} video, {{shots}} shot",
   },
   composer: {
     label: "Yêu cầu cho Claude",

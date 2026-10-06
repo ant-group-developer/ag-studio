@@ -3,12 +3,35 @@
  * A step groups the stages that serve it: the Claude stage, its gate, the script that saves what was approved.
  */
 export type PlanStep = "intake" | "research" | "rnd" | "branding" | "plan" | "episodes";
-export type EpisodeStep = "draft" | "timeline" | "kit" | "render" | "export";
+export type EpisodeStep = "draft" | "footage" | "survey" | "editPlan" | "timeline" | "kit" | "render" | "export";
 export type ChatStep = PlanStep | EpisodeStep;
 
 /** The steps of a series once it started (intake comes before, on its own). */
 export const PLAN_STEPS: PlanStep[] = ["research", "rnd", "branding", "plan", "episodes"];
 export const EPISODE_STEPS: EpisodeStep[] = ["draft", "timeline", "kit", "render", "export"];
+/** A shot-cut episode (mockup screens 8–9): footage made ready, scenes chosen, the edit planned, then as before. */
+export const CUT_EPISODE_STEPS: EpisodeStep[] = ["footage", "survey", "editPlan", "timeline", "kit", "render"];
+
+const CUT_WORKFLOW_ID = "ag-studio-episode-cut";
+
+/** The episode runs `ag-studio-episode-cut` (its detail's `workflow`, "id@version"). */
+export function isCutWorkflow(workflow: string | null | undefined): boolean {
+  return !!workflow && workflow.split("@")[0] === CUT_WORKFLOW_ID;
+}
+
+/** The row of steps an episode shows, by the workflow its run follows (none yet: the whole-video steps). */
+export function episodeStepsFor(workflow: string | null | undefined): EpisodeStep[] {
+  return isCutWorkflow(workflow) ? CUT_EPISODE_STEPS : EPISODE_STEPS;
+}
+
+const CUT_STAGE_STEP: Record<string, EpisodeStep> = {
+  "episode-intake": "footage", "fetch-proxies": "footage", "media-index": "footage", transcribe: "footage", "watch-source": "footage",
+  "source-survey": "survey", "approve-survey": "survey",
+  "plan-edit": "editPlan", "approve-edit-plan": "editPlan", tts: "editPlan", "fit-timeline": "editPlan",
+  "approve-timeline": "timeline", timeline: "timeline",
+  "youtube-kit": "kit", "approve-youtube-kit": "kit",
+  "freeze-timeline": "render", "render-final": "render", thumbnails: "render", export: "render",
+};
 
 const STAGE_STEP: Record<string, ChatStep> = {
   intake: "intake",
@@ -24,9 +47,10 @@ const STAGE_STEP: Record<string, ChatStep> = {
   export: "export",
 };
 
-/** The step a stage key belongs to (null for a key the UI does not know). */
-export function stepOf(stageKey: string | null | undefined): ChatStep | null {
-  return stageKey ? STAGE_STEP[stageKey] ?? null : null;
+/** The step a stage key belongs to (null for a key the UI does not know); a shot-cut episode groups its own way. */
+export function stepOf(stageKey: string | null | undefined, workflow?: string | null): ChatStep | null {
+  if (!stageKey) return null;
+  return (isCutWorkflow(workflow) ? CUT_STAGE_STEP[stageKey] : undefined) ?? STAGE_STEP[stageKey] ?? null;
 }
 
 /** i18n key of a step's name. */

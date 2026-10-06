@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import i18n from "../../i18n/config";
+import { cutHeader } from "../../pages/ChatProductionPage";
 import { changesUnder, diffDoc, listDiff } from "./diff-doc";
-import { EPISODE_STEPS, PLAN_STEPS, stepOf, stepPosition } from "./steps";
+import { CUT_EPISODE_STEPS, EPISODE_STEPS, episodeStepsFor, isCutWorkflow, PLAN_STEPS, stepOf, stepPosition } from "./steps";
 
 describe("stepOf", () => {
   it.each([
@@ -13,6 +15,38 @@ describe("stepOf", () => {
     expect(stepOf(null)).toBeNull();
     expect(stepPosition("rnd", PLAN_STEPS)).toBe(1);
     expect(stepPosition("rnd", EPISODE_STEPS)).toBe(-1);
+  });
+});
+
+describe("steps of a shot-cut episode (ag-studio-episode-cut)", () => {
+  const CUT = "ag-studio-episode-cut@1.0.0";
+  it.each([
+    ["episode-intake", "footage"], ["fetch-proxies", "footage"], ["media-index", "footage"], ["transcribe", "footage"], ["watch-source", "footage"],
+    ["source-survey", "survey"], ["approve-survey", "survey"],
+    ["plan-edit", "editPlan"], ["approve-edit-plan", "editPlan"], ["tts", "editPlan"], ["fit-timeline", "editPlan"],
+    ["approve-timeline", "timeline"], ["timeline", "timeline"], ["approve-youtube-kit", "kit"],
+    ["freeze-timeline", "render"], ["render-final", "render"], ["thumbnails", "render"], ["export", "render"],
+  ])("%s -> %s", (stage, step) => expect(stepOf(stage, CUT)).toBe(step));
+
+  it("the episode header says how it is cut, how long, and its voice", async () => {
+    await i18n.changeLanguage("vi");
+    const t = i18n.t.bind(i18n) as (k: string, o?: Record<string, unknown>) => string;
+    expect(cutHeader({ edit_style: "cut", target_seconds: 600, narration: "tts" }, t)).toBe("cắt theo shot · khoảng 10 phút · có lời dẫn");
+    expect(cutHeader({ edit_style: "cut", target_seconds: 45, narration: "original" }, t)).toBe("cắt theo shot · khoảng 45 giây · giữ tiếng gốc");
+    expect(cutHeader({ edit_style: "whole", target_seconds: 600 }, t)).toBeNull();
+    expect(cutHeader(null, t)).toBeNull();
+  });
+
+  it("a whole-video episode (or none known yet) keeps the old steps", () => {
+    expect(isCutWorkflow(CUT)).toBe(true);
+    expect(isCutWorkflow("ag-studio-episode@1.3.0")).toBe(false);
+    expect(isCutWorkflow(null)).toBe(false);
+    expect(episodeStepsFor(CUT)).toEqual(CUT_EPISODE_STEPS);
+    expect(CUT_EPISODE_STEPS).toEqual(["footage", "survey", "editPlan", "timeline", "kit", "render"]);
+    expect(episodeStepsFor("ag-studio-episode@1.3.0")).toEqual(EPISODE_STEPS);
+    expect(episodeStepsFor(undefined)).toEqual(EPISODE_STEPS);
+    expect(stepOf("episode-intake", "ag-studio-episode@1.3.0")).toBe("draft");
+    expect(stepOf("export")).toBe("export");
   });
 });
 

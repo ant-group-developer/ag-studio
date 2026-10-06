@@ -14,6 +14,14 @@ export const chatEn: typeof chatVi = {
   steps: {
     intake: "Questions", research: "Market research", rnd: "R&D", branding: "Branding", plan: "Episode plan",
     episodes: "Build episodes", draft: "Draft", timeline: "Timeline", kit: "YouTube kit", render: "Render", export: "Export",
+    footage: "Prepare footage", survey: "Choose scenes", editPlan: "Edit plan",
+  },
+  cut: {
+    header: "cut shot by shot · {{length}} · {{narration}}",
+    minutes: "about {{n}} min",
+    seconds: "about {{n}} s",
+    narration: { tts: "narrated", original: "original sound", none: "no narration" },
+    footageNote: "automatic · {{videos}} videos, {{shots}} shots",
   },
   composer: {
     label: "Message to Claude",

@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { ChatThreadView, ChatTurn, RenderMachine } from "../../api/studio-client";
 import { RenderMachinePicker } from "../render/RenderMachinePicker";
 import { messageParts } from "./mentions";
-import { EPISODE_STEPS, PLAN_STEPS, stepLabelKey, stepOf, stepPosition } from "./steps";
+import { episodeStepsFor, PLAN_STEPS, stepLabelKey, stepOf, stepPosition, type ChatStep } from "./steps";
 
 /** What a card under Claude's newest reply asks the person to confirm (spec local-chat §2.5). */
 export type ChatCard = "approve" | "start" | "apply" | "render" | "renderFinal" | "export" | "retry";
@@ -22,16 +22,20 @@ interface Props {
   busyCard?: ChatCard | null | undefined;
   /** Episode thread (render / export cards make sense there). */
   episode?: boolean | undefined;
+  /** The episode run's workflow (`id@version`): a shot-cut episode has its own steps. */
+  workflow?: string | null | undefined;
+  /** A line a step's divider adds ("tự động · 24 video, 112 shot"). */
+  notes?: Partial<Record<ChatStep, string>> | undefined;
 }
 
 interface Section { stageKey: string; turns: ChatTurn[] }
 
-function sections(turns: ChatTurn[]): Section[] {
+function sections(turns: ChatTurn[], workflow: string | null | undefined): Section[] {
   const out: Section[] = [];
   for (const t of turns) {
-    const step = stepOf(t.stage_key);
+    const step = stepOf(t.stage_key, workflow);
     const last = out.at(-1);
-    if (last && stepOf(last.stageKey) === step) last.turns.push(t);
+    if (last && stepOf(last.stageKey, workflow) === step) last.turns.push(t);
     else out.push({ stageKey: t.stage_key, turns: [t] });
   }
   return out;
@@ -78,20 +82,21 @@ function KitRenderCard({ turn, busy, initial, onCard }: { turn: ChatTurn; busy: 
 }
 
 /** The chat (mockup screens 2–13): messages by step, dividers, Claude's state, and confirm cards. */
-export function ChatThread({ thread, onCard, onQuickAnswer, busyCard, episode = false, renderDefault = "any" }: Props) {
+export function ChatThread({ thread, onCard, onQuickAnswer, busyCard, episode = false, renderDefault = "any", workflow, notes }: Props) {
   const { t } = useTranslation();
   const [opened, setOpened] = useState<Set<number>>(new Set());
-  const all = sections(thread.turns);
+  const all = sections(thread.turns, workflow);
   // the step the production is at shows its divider even before anyone wrote in it
   const at = thread.scope && thread.scope.scope !== "intake" ? thread.scope.stageKey : null;
-  if (at && !all.some((sec) => stepOf(sec.stageKey) === stepOf(at))) all.push({ stageKey: at, turns: [] });
+  if (at && !all.some((sec) => stepOf(sec.stageKey, workflow) === stepOf(at, workflow))) all.push({ stageKey: at, turns: [] });
   const newestReply = [...thread.turns].reverse().find((x) => x.role === "assistant");
-  const row = episode ? EPISODE_STEPS : PLAN_STEPS;
+  const row = episode ? episodeStepsFor(workflow) : PLAN_STEPS;
 
   return (
     <div className="chat-thread" aria-live="polite">
       {all.map((sec, i) => {
-        const step = stepOf(sec.stageKey);
+        const step = stepOf(sec.stageKey, workflow);
+        const note = step ? notes?.[step] : undefined;
         const current = thread.scope?.stageKey === sec.stageKey || (i === all.length - 1 && !thread.scope);
         const n = stepPosition(step, row);
         const state = current
@@ -103,7 +108,7 @@ export function ChatThread({ thread, onCard, onQuickAnswer, busyCard, episode = 
             {step && step !== "intake" ? (
               <div className="chat-divider">
                 <span>
-                  {n >= 0 ? `${t("chat.thread.step", { n: n + 1 })} · ` : ""}{t(stepLabelKey(step))}{state ? ` · ${state}` : ""}
+                  {n >= 0 ? `${t("chat.thread.step", { n: n + 1 })} · ` : ""}{t(stepLabelKey(step))}{note ? ` · ${note}` : ""}{state ? ` · ${state}` : ""}
                   {collapsed ? <> · <button type="button" className="chat-link-button" onClick={() => setOpened(new Set(opened).add(i))}>{t("chat.thread.show")}</button></> : null}
                 </span>
               </div>
