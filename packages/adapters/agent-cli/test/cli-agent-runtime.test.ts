@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ChannelPackageDraftSchema, newId, type ExecutorContext, type StageRequest } from "@harness/contracts";
-import { agentChildEnv, CliAgentRuntime } from "../src/cli-agent-runtime.js";
+import { agentChildEnv, CliAgentRuntime, studioFilesArgv } from "../src/cli-agent-runtime.js";
 
 const skillsDir = fileURLToPath(new URL("../../../../skills", import.meta.url));
 const fixture = fileURLToPath(new URL("../../../../fixtures/fake-agent-cli.mjs", import.meta.url));
@@ -189,4 +189,68 @@ describe.skipIf(process.env.HARNESS_REAL_CLAUDE_TEST !== "1" || !CliAgentRuntime
     const draft = JSON.parse(readFileSync(join(ws, "output", "package.json"), "utf8"));
     expect(ChannelPackageDraftSchema.safeParse(draft).success).toBe(true);
   }, 300_000);
+});
+
+describe("CliAgentRuntime files mode (Studio stages that look at pictures, phase 5)", () => {
+  /** A fake `claude`: records its argv and stdin, writes output/survey.json in its cwd, answers with a session id. */
+  function fakeCli(): string {
+    const dir = mkdtempSync(join(tmpdir(), "fake-files-cli-"));
+    const path = join(dir, "fake.mjs");
+    writeFileSync(path, [
+      "import { mkdirSync, writeFileSync } from 'node:fs';",
+      "let stdin = ''; process.stdin.on('data', (d) => { stdin += d; });",
+      "process.stdin.on('end', () => {",
+      "  writeFileSync('argv.json', JSON.stringify(process.argv.slice(2)));",
+      "  writeFileSync('stdin.txt', stdin);",
+      "  mkdirSync('output', { recursive: true });",
+      "  writeFileSync('output/survey.json', JSON.stringify({ ok: true }));",
+      "  const resume = process.argv.indexOf('--resume');",
+      "  console.log(JSON.stringify({ type: 'result', session_id: resume > 0 ? process.argv[resume + 1] + '-next' : 'sess-1', total_cost_usd: 0.25 }));",
+      "});",
+    ].join("\n"));
+    return path;
+  }
+
+  function surveyWorkspace(): { ws: string; req: StageRequest } {
+    const { ws, req } = makeWorkspace();
+    return { ws, req: { ...req, stage_key: "source-survey", expected_outputs: [{ type: "survey_index", mime_type: "application/json", kind: "file", name: "survey.json" }] } };
+  }
+
+  it("default argv: file tools only, edits allowed, the session kept (no --no-session-persistence)", () => {
+    const argv = studioFilesArgv({ model: "claude-sonnet-5-5", maxTurns: 40, tools: ["Read", "Write", "Glob"] });
+    expect(argv).toEqual(["claude", "-p", "--output-format", "json", "--permission-mode", "acceptEdits", "--allowedTools", "Read,Write,Glob",
+      "--strict-mcp-config", "--max-turns", "40", "--model", "claude-sonnet-5-5"]);
+    expect(studioFilesArgv({ model: "m", maxTurns: 5, tools: ["Read"], resume: "abc", forkSession: true, jsonSchema: "{}" }))
+      .toEqual(expect.arrayContaining(["--resume", "abc", "--fork-session", "--json-schema", "{}"]));
+  });
+
+  it("sends the prompt on stdin, collects the files the agent wrote and reports its session", async () => {
+    const { ws, req } = surveyWorkspace();
+    let trace: { session_id?: string | null; cost_usd: number } | null = null;
+    const runtime = new CliAgentRuntime({
+      runtime: "claude", skillsDir, argv: [process.execPath, fakeCli()],
+      files: { model: "m", maxTurns: 40, tools: ["Read", "Write", "Glob"] },
+      onCall: (t) => { trace = t; },
+    });
+    const res = await runtime.runTask({ skill: "channel-package", brief: "Chọn cảnh", request: req, workspaceDir: ws }, { ...ctx, workspaceDir: ws });
+    expect(res.outcome, JSON.stringify(res.errors)).toBe("succeeded");
+    expect(res.outputs.map((o) => o.path)).toEqual(["output/survey.json"]);
+    expect(readFileSync(join(ws, "stdin.txt"), "utf8")).toContain("# Brief\nChọn cảnh");
+    expect(JSON.parse(readFileSync(join(ws, "argv.json"), "utf8"))).not.toContain("--no-session-persistence");
+    expect(trace).toMatchObject({ session_id: "sess-1", cost_usd: 0.25 });
+  });
+
+  it("resumes the session it is given (the repair round)", async () => {
+    const { ws, req } = surveyWorkspace();
+    let trace: { session_id?: string | null } | null = null;
+    const runtime = new CliAgentRuntime({
+      runtime: "claude", skillsDir, argv: [process.execPath, fakeCli()],
+      files: { model: "m", maxTurns: 40, tools: ["Read", "Write"], resume: "sess-1" },
+      onCall: (t) => { trace = t; },
+    });
+    const res = await runtime.runTask({ skill: "channel-package", brief: "sửa", request: req, workspaceDir: ws }, { ...ctx, workspaceDir: ws });
+    expect(res.outcome).toBe("succeeded");
+    expect(JSON.parse(readFileSync(join(ws, "argv.json"), "utf8"))).toEqual(expect.arrayContaining(["--resume", "sess-1"]));
+    expect(trace).toMatchObject({ session_id: "sess-1-next" });
+  });
 });

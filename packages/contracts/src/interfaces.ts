@@ -166,6 +166,8 @@ export interface AgentCallTrace {
   /** All prompt tokens, cache reads and writes included. */
   input_tokens: number | null;
   output_tokens: number | null;
+  /** The CLI session the call ran in (files mode keeps it, to resume); null when the CLI did not say. */
+  session_id?: string | null;
 }
 
 export interface CheckerInput { request: StageRequest; result: StageResult; workspaceDir: string }
