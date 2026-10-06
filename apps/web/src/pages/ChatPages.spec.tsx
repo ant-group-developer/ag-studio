@@ -133,4 +133,28 @@ describe("chat pages", () => {
     fireEvent.click(screen.getByRole("button", { name: "Render" }));
     await waitFor(() => expect(client.rerenderEpisode).toHaveBeenCalledWith("p1", "e1", "gpu"));
   });
+
+  it("the step chips of an episode whose run ended ready are all done", async () => {
+    client.getChatThread.mockResolvedValue({
+      turns: [], scope: { productionId: "p1", episodeId: "e1", runId: "r", stageKey: "timeline", scope: "timeline" }, blocked: null,
+      current: null, queueAhead: 0,
+    } satisfies ChatThreadView);
+    const render = { machine: null, defaultMachine: "any", restartFrom: "render-final", job: null, farmStatus: null };
+    client.getEpisode.mockResolvedValue({ id: "e1", idx: 1, title: "Rừng tre", status: "ready", currentStage: null, run: { state: "SUCCEEDED" }, progress: null, finalVideoUrl: null, exportFiles: [], render });
+    mount("/v/p1/e/e1");
+    expect(await screen.findByText(/✓ Xuất file/)).toHaveClass("chat-steps__done");
+    expect(screen.getByText(/✓ Timeline/)).toHaveClass("chat-steps__done");
+  });
+
+  it("an episode whose render failed shows Render as the step it is at", async () => {
+    client.getChatThread.mockResolvedValue({
+      turns: [], scope: { productionId: "p1", episodeId: "e1", runId: "r", stageKey: "timeline", scope: "timeline" }, blocked: null,
+      current: null, queueAhead: 0,
+    } satisfies ChatThreadView);
+    const render = { machine: "gpu", defaultMachine: "gpu", restartFrom: "render-final", job: null, farmStatus: null };
+    client.getEpisode.mockResolvedValue({ id: "e1", idx: 1, title: "Rừng tre", status: "failed", currentStage: "render-final", run: { state: "FAILED" }, progress: null, finalVideoUrl: null, exportFiles: [], render });
+    mount("/v/p1/e/e1");
+    await waitFor(() => expect(screen.getByText("4 · Render")).toHaveClass("chat-steps__now"));
+    expect(screen.getByText(/✓ YouTube kit/)).toHaveClass("chat-steps__done");
+  });
 });

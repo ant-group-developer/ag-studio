@@ -110,10 +110,13 @@ export function ChatProductionPage() {
     if (m === "oldScreen") navigate(`/productions/${productionId}`);
   };
 
-  const step = stepOf(thread?.scope?.stageKey ?? thread?.blocked?.stage ?? null);
+  // An episode whose run ended chats about its timeline, but its chips show where the run is: all done when it is
+  // ready, else the step it stopped at (a failed render).
+  const ended = !!episodeId && thread?.scope?.scope === "timeline" && !!episode?.run;
+  const step = stepOf((ended && episode?.status !== "ready" ? episode?.currentStage : null) ?? thread?.scope?.stageKey ?? thread?.blocked?.stage ?? null);
   const row = episodeId ? EPISODE_STEPS : PLAN_STEPS;
   const at = stepPosition(step, row);
-  const finished = thread?.blocked?.code === "nothing_to_chat";
+  const finished = thread?.blocked?.code === "nothing_to_chat" || (ended && episode?.status === "ready");
   const title = episodeId ? (episode ? t("chat.episodeTitle", { idx: episode.idx, title: episode.title }) : "") : production?.title ?? "";
   const placeholder = thread?.blocked
     ? t(thread.blocked.code === "busy" ? "chat.page.busy" : "chat.page.finished")
