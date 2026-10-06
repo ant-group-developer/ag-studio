@@ -5,6 +5,7 @@ import type { StudioChatSkill, StudioSkill } from "@harness/contracts";
 const SKILL_MODEL_ENVS: Record<StudioSkill | StudioChatSkill, string> = {
   "studio-intake": "STUDIO_CLAUDE_MODEL_INTAKE",
   "studio-timeline": "STUDIO_CLAUDE_MODEL_TIMELINE",
+  "studio-survey": "STUDIO_CLAUDE_MODEL_SOURCE_SURVEY",
   "studio-plan-episodes": "STUDIO_CLAUDE_MODEL_PLAN_EPISODES",
   "studio-youtube-kit": "STUDIO_CLAUDE_MODEL_YOUTUBE_KIT",
   "studio-trend-report": "STUDIO_CLAUDE_MODEL_TREND_REPORT",
@@ -17,6 +18,7 @@ const SKILL_MODEL_ENVS: Record<StudioSkill | StudioChatSkill, string> = {
 const SKILL_DEFAULTS: Record<StudioSkill | StudioChatSkill, string> = {
   "studio-intake": "claude-sonnet-5-5",
   "studio-timeline": "claude-sonnet-5-5",
+  "studio-survey": "claude-sonnet-5-5",
   "studio-plan-episodes": "claude-opus-5-5",
   "studio-youtube-kit": "claude-sonnet-5-5",
   "studio-trend-report": "claude-sonnet-5-5",

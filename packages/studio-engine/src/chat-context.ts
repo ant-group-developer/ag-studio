@@ -8,17 +8,19 @@
  * - timeline: the episode's latest revision; a proposal is a list of edits run through `layout.ts` and `timelineIssues`;
  * - intake: the production before its run; a proposal is the whole draft of what the series needs.
  */
-import { mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
-  IntakeDraftSchema, STUDIO_CHAT_SKILL_STEP, STUDIO_SKILL_OUTPUTS, STUDIO_SKILL_STEP, StudioEpisodeSchema, TimelineChatProposalSchema,
-  StoredTimelineSchema, teamGuidesForStep,
+  IntakeDraftSchema, ShotsIndexSchema, STUDIO_CHAT_SKILL_STEP, STUDIO_SKILL_OUTPUTS, STUDIO_SKILL_STEP, StudioEpisodeSchema, StudioSurveySchema,
+  SurveyChatProposalSchema, TimelineChatProposalSchema, StoredTimelineSchema, teamGuidesForStep,
+  type StudioSurvey, type SurveyChatProposal,
   type IntakeDraft, type StudioChatSkill, type StudioSkill, type TeamGuide, type TimelineChatProposal, type StoredTimeline,
 } from "@harness/contracts";
 import {
-  acceptedInputsFor, applyTimelineOps, buildStageRequest, isTerminal, isTimelineV4, layoutTimeline, materializeInputs, timelineIssues,
+  acceptedInputsFor, applySurveyOps, applyTimelineOps, buildStageRequest, isTerminal, isTimelineV4, layoutTimeline, materializeInputs, STUDIO_TYPES,
+  timelineIssues, validateStudioSurvey,
   TimelineOpError,
 } from "@harness/core";
 import { studioPromptHead, studioValidator, teamGuidesSection } from "@harness/executors";
@@ -29,19 +31,26 @@ import {
   getEpisode, getProduction, latestEpisodeRevision, productionChannels, productionHints, productionSources, type ProductionRecord, type StudioDb,
 } from "./studio-db.js";
 import { teamGuides } from "./team-skills.js";
+import { agentSessionFor } from "./agent-sessions.js";
 
 /** Title a production has until the intake chat names it. */
 export const DRAFT_PRODUCTION_TITLE = "Video mới";
 
 /** Each gate the chat can work on: the stage that wrote the document, the skill that knows it, the file it is. */
-export const GATE_SOURCES: Record<string, { stage: string; skill: StudioSkill | "studio-timeline"; file: string }> = {
+export const GATE_SOURCES: Record<string, { stage: string; skill: StudioSkill | "studio-timeline" | "studio-survey"; file: string }> = {
   "approve-trend-report": { stage: "trend-report", skill: "studio-trend-report", file: "trend-report.json" },
   "approve-rnd": { stage: "rnd", skill: "studio-rnd", file: "rnd.json" },
   "approve-branding": { stage: "branding", skill: "studio-branding", file: "branding.json" },
   "approve-plan": { stage: "plan-episodes", skill: "studio-plan-episodes", file: "series-plan.json" },
   "approve-youtube-kit": { stage: "youtube-kit", skill: "studio-youtube-kit", file: "youtube-kit.json" },
   "approve-timeline": { stage: "build-timeline", skill: "studio-timeline", file: "timeline.json" },
+  // shot-cut episode: the scene selection is edited shot by shot (its stage looked at pictures); the edit plan as a document
+  "approve-survey": { stage: "source-survey", skill: "studio-survey", file: "survey.json" },
+  "approve-edit-plan": { stage: "plan-edit", skill: "studio-edit-plan", file: "edit-plan.json" },
 };
+
+/** A scene-selection proposal as kept in the chat: the edits and the selection they give. */
+export interface SurveyProposal extends SurveyChatProposal { survey: StudioSurvey }
 
 export interface ChatValidation { ok: boolean; value: unknown; problems: ChatProblem[]; warnings: ChatProblem[] }
 
@@ -57,6 +66,11 @@ export interface ChatContext {
   currentTurnId: string | null;
   /** What the stage wrote, before any chat (null for intake and timeline). */
   draft: unknown;
+  /**
+   * The Claude session of the stage this chat is about and the folder it ran in (files-mode stages, ADR-0001 item 155):
+   * a reply resumes it (forked) there, so Claude still has the pictures it looked at. Absent: a plain structured reply.
+   */
+  resume?: { sessionId: string; cwd: string };
   /** Why the stage failed (failed scope). */
   problems: ChatProblem[];
   /** What Claude proposes in this scope (the `proposal` of its reply). */
@@ -145,6 +159,45 @@ function stageDocContext(core: StudioEngineCore, db: StudioDb, key: ChatScopeKey
         validate: (raw) => {
           try { return check(raw, request, ws); }
           catch (e) { return { ok: false, value: undefined, problems: [{ code: "validator_error", message: e instanceof Error ? e.message : String(e) }], warnings: [] }; }
+        },
+      };
+    },
+  };
+}
+
+/**
+ * The scene selection of a shot-cut episode at `approve-survey`: Claude proposes edits to shots (`SurveyOp`), applied
+ * to the selection on show and checked like the stage's answer. When the stage's session and workspace are still
+ * there, the reply resumes that session (the contact sheets it looked at).
+ */
+function surveyContext(core: StudioEngineCore, db: StudioDb, key: ChatScopeKey, p: ProductionRecord, draft: unknown): ChatContext {
+  const proposal = currentProposal(db, key);
+  const current = proposal ? (proposal.proposal as SurveyProposal).survey : draft;
+  const session = agentSessionFor(db, key.runId!, GATE_SOURCES["approve-survey"]!.stage);
+  return {
+    key, skill: "studio-survey", draft, problems: [],
+    current, currentTurnId: proposal?.id ?? null,
+    proposalSchema: SurveyChatProposalSchema,
+    ...(session && existsSync(session.cwd) ? { resume: { sessionId: session.sessionId, cwd: session.cwd } } : {}),
+    prepare: async (ws) => {
+      const request = await stageRequestIn(core, key.runId!, GATE_SOURCES["approve-survey"]!.stage, ws);
+      const shotsInput = request.inputs.find((x) => x.type === STUDIO_TYPES.shots);
+      const shots = shotsInput ? ShotsIndexSchema.parse(JSON.parse(readFileSync(join(ws, shotsInput.path), "utf8"))) : null;
+      return {
+        head: studioPromptHead(request, ws, guidesFor(db, p.team_id, "studio-survey")),
+        validate: (raw) => {
+          const parsed = SurveyChatProposalSchema.safeParse(raw);
+          if (!parsed.success) return { ok: false, value: undefined, problems: parsed.error.issues.map((x) => ({ code: "schema", message: `${x.path.join(".")}: ${x.message}` })), warnings: [] };
+          let survey: StudioSurvey;
+          try { survey = applySurveyOps(StudioSurveySchema.parse(current), parsed.data.ops); }
+          catch (e) {
+            const code = e instanceof TimelineOpError ? e.code : "schema";
+            return { ok: false, value: undefined, problems: [{ code, message: e instanceof Error ? e.message : String(e) }], warnings: [] };
+          }
+          if (!shots) return { ok: false, value: undefined, problems: [{ code: "missing_input", message: "không đọc được danh sách shot" }], warnings: [] };
+          const v = validateStudioSurvey(survey, { shots });
+          const value: SurveyProposal = { ops: parsed.data.ops, survey };
+          return { ok: v.ok, value, problems: v.problems, warnings: v.warnings };
         },
       };
     },
@@ -287,6 +340,7 @@ export function chatContext(core: StudioEngineCore, db: StudioDb, key: ChatScope
     const src = GATE_SOURCES[key.stageKey];
     if (!src || !STUDIO_GATES[key.stageKey]) throw new StudioRunError("invalid", `${key.stageKey} is not a gate the chat knows`);
     if (src.skill === "studio-timeline") return timelineContext(core, db, key, p);
+    if (src.skill === "studio-survey") return surveyContext(core, db, key, p, readStageDocument(core, key.runId!, src.stage, src.file));
     return stageDocContext(core, db, key, p, {
       sourceStage: src.stage, skill: src.skill, problems: [], draft: readStageDocument(core, key.runId!, src.stage, src.file),
     });

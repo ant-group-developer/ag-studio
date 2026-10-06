@@ -29,12 +29,30 @@ export function chatReplySchema<T extends z.ZodTypeAny>(proposal: T) {
 // Skills that only exist in chat
 // ---------------------------------------------------------------------------
 
-export const STUDIO_CHAT_SKILLS = ["studio-intake", "studio-timeline"] as const;
+export const STUDIO_CHAT_SKILLS = ["studio-intake", "studio-timeline", "studio-survey"] as const;
 export type StudioChatSkill = (typeof STUDIO_CHAT_SKILLS)[number];
 export const STUDIO_CHAT_SKILL_STEP: Record<StudioChatSkill, TeamSkillStep> = {
   "studio-intake": "intake",
   "studio-timeline": "timeline",
+  "studio-survey": "source-survey",
 };
+
+// ---------------------------------------------------------------------------
+// Scene selection of a shot-cut episode: chat proposes edits to shots (the selection has a row per shot; rewriting
+// all of them for one change would be slow and error-prone), applied to the version on show
+// ---------------------------------------------------------------------------
+
+const shotId = z.string().regex(/^s\d{3}-\d{3}$/);
+export const SurveyOpSchema = z.discriminatedUnion("op", [
+  /** Keep a shot (usable), with a note when there is one to give ("giữ lại · rung nhẹ"). */
+  z.object({ op: z.literal("keep"), shot_id: shotId, note: z.string().max(300).nullable() }).strict(),
+  z.object({ op: z.literal("reject"), shot_id: shotId, reason: z.string().min(1).max(300) }).strict(),
+  z.object({ op: z.literal("setScore"), shot_id: shotId, score: z.number().int().min(0).max(5) }).strict(),
+  z.object({ op: z.literal("setNote"), shot_id: shotId, note: z.string().max(300) }).strict(),
+]);
+export type SurveyOp = z.infer<typeof SurveyOpSchema>;
+export const SurveyChatProposalSchema = z.object({ ops: z.array(SurveyOpSchema).min(1).max(100) }).strict();
+export type SurveyChatProposal = z.infer<typeof SurveyChatProposalSchema>;
 
 // ---------------------------------------------------------------------------
 // Intake: a free sentence and @folders → what the series needs before it can start

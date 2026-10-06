@@ -36,6 +36,8 @@ export interface ChatRunDeps {
 export type ChatRunOutcome = { status: "done" | "failed" | "aborted" } | { status: "rate_limited"; notBefore: string };
 
 const DEFAULT_BACKOFF_MS = [5, 10, 20, 40, 60].map((m) => m * 60_000);
+/** Turns of a reply that resumes a files-mode session: it may open a few frames again before answering. */
+const CHAT_RESUME_MAX_TURNS = 20;
 /** How long one reply may take (Claude call, both rounds). */
 const CHAT_DEADLINE_MS = 15 * 60_000;
 const REPLY_FILE = "chat-reply.json";
@@ -52,6 +54,7 @@ const json = (v: unknown) => ["```json", JSON.stringify(v, null, 2), "```"];
 
 function proposalRule(ctx: ChatContext): string {
   if (ctx.skill === "studio-timeline") return "- `proposal`: `{ \"ops\": [...] }` — các thao tác sửa timeline (xem phần Skill) khi có sửa; `null` khi chỉ trả lời.";
+  if (ctx.skill === "studio-survey") return "- `proposal`: `{ \"ops\": [...] }` — các thao tác sửa từng shot (xem phần Skill) khi có sửa; `null` khi chỉ trả lời.";
   if (ctx.skill === "studio-intake") return "- `proposal`: toàn bộ bản nháp mới khi có gì thay đổi; `null` khi chỉ trả lời.";
   return "- `proposal`: TOÀN BỘ tài liệu mới (đúng định dạng đầu ra của bước, như phần Skill) khi có sửa; `null` khi chỉ trả lời.";
 }
@@ -127,9 +130,14 @@ export async function runChatTurn(d: ChatRunDeps, turnId: string, signal?: Abort
   const replySchema = chatReplySchema(ctx.proposalSchema);
   const loose = chatReplySchema(z.unknown());
   const last: { trace: AgentCallTrace | null } = { trace: null };
+  const jsonSchema = JSON.stringify(claudeJsonSchemaFor(replySchema));
+  // a files-mode stage (scene selection): fork its session in its folder, reading allowed; the reply is its structured output
+  const resume = ctx.resume;
   const runtime = new CliAgentRuntime({
     runtime: "claude", skillsDir: d.claude.skillsDir,
-    structured: { jsonSchema: JSON.stringify(claudeJsonSchemaFor(replySchema)), model: modelFor(ctx.skill, d.claude.model), maxTurns: d.claude.maxTurns ?? 3 },
+    ...(resume
+      ? { files: { jsonSchema, model: modelFor(ctx.skill, d.claude.model), maxTurns: CHAT_RESUME_MAX_TURNS, tools: ["Read", "Glob", "Grep"], resume: resume.sessionId, forkSession: true } }
+      : { structured: { jsonSchema, model: modelFor(ctx.skill, d.claude.model), maxTurns: d.claude.maxTurns ?? 3 } }),
     ...(d.claude.argv ? { argv: d.claude.argv } : {}),
     ...(d.claude.baseEnv ? { baseEnv: d.claude.baseEnv } : {}),
     onCall: (t) => { last.trace = t; },
@@ -137,7 +145,7 @@ export async function runChatTurn(d: ChatRunDeps, turnId: string, signal?: Abort
   const request = {
     schema_version: "harness.stage-request/v1", run_id: key.runId ?? "intake", stage_run_id: "chat", attempt_id: turnId, stage_key: key.stageKey,
     inputs: [], workspace_uri: ws, stage_config: {}, options: {}, source_items: [], resources: [],
-    expected_outputs: [{ type: "chat_reply", mime_type: "application/json", kind: "file", name: REPLY_FILE }],
+    expected_outputs: resume ? [] : [{ type: "chat_reply", mime_type: "application/json", kind: "file", name: REPLY_FILE }],
     limits: { deadline_at: new Date(Date.parse(now()) + CHAT_DEADLINE_MS).toISOString(), max_cost_usd: 5, max_attempts: 1 },
     capabilities: [], fencing_token: 1,
   } as unknown as StageRequest;
@@ -161,8 +169,11 @@ export async function runChatTurn(d: ChatRunDeps, turnId: string, signal?: Abort
   let callId: string | null = null;
   for (let round = 0; round < 2; round++) {
     rmSync(join(ws, "output", REPLY_FILE), { force: true });
-    const result = await runtime.runTask({ skill: ctx.skill, brief: chatBrief(ctx, head, turns, problems), request, workspaceDir: ws },
-      { workspaceDir: ws, logger: d.logger, clock: core.clock, ...(signal ? { signal } : {}) });
+    const cwd = resume?.cwd ?? ws;
+    const result = await runtime.runTask({ skill: ctx.skill, brief: chatBrief(ctx, head, turns, problems), request, workspaceDir: cwd },
+      { workspaceDir: cwd, logger: d.logger, clock: core.clock, ...(signal ? { signal } : {}) });
+    const resumedReply = resume ? last.trace?.structured_output : undefined;
+    if (resume && last.trace?.session_id) db.run("UPDATE stage_chat_turns SET session_id = ? WHERE id = ?", [last.trace.session_id, turnId]);
     const err = result.errors[0];
     if (signal?.aborted) { last.trace = null; return { status: "aborted" }; }
     if (result.outcome !== "succeeded") {
@@ -178,7 +189,10 @@ export async function runChatTurn(d: ChatRunDeps, turnId: string, signal?: Abort
       return fail("Claude chưa trả lời được, gửi lại tin nhắn để thử lại.", [{ code: "agent_failed", message: err?.message ?? "agent call failed" }], id);
     }
     let raw: unknown;
-    try { raw = JSON.parse(readFileSync(join(ws, "output", REPLY_FILE), "utf8")); }
+    try {
+      raw = resume ? resumedReply : JSON.parse(readFileSync(join(ws, "output", REPLY_FILE), "utf8"));
+      if (raw === undefined) throw new Error("no structured output");
+    }
     catch { callId = await record(round, "rejected", [{ code: "no_json", message: "no JSON reply" }]); problems = [{ code: "no_json", message: "Câu trả lời không phải JSON" }]; continue; }
     const shape = loose.safeParse(raw);
     if (!shape.success) {

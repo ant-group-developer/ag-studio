@@ -5,10 +5,10 @@
  */
 import {
   EditPlanSchema, EPISODE_DURATION_TOLERANCE, StudioSurveySchema,
-  type EditPlan, type ShotsIndex, type StudioSurvey,
+  type EditPlan, type ShotsIndex, type StudioSurvey, type SurveyOp,
 } from "@harness/contracts";
 import type { ZodError } from "zod";
-import { narrationCps } from "./layout.js";
+import { narrationCps, TimelineOpError } from "./layout.js";
 import type { StudioProblem, StudioValidation } from "./validate.js";
 
 /** How far a row's or a shot's `in`/`out` may stray from the detected shot (rounding of the 0.1 s cut grid). */
@@ -139,4 +139,23 @@ export function validateEditPlan(raw: unknown, ctx: { survey: StudioSurvey; shot
   }
 
   return { ok: problems.length === 0, value: problems.length ? null : plan, problems, warnings };
+}
+
+/**
+ * Runs chat edits of a scene selection in order on `survey` (never changed): keep, reject (the reason becomes the
+ * note), set a score, set a note. A shot the selection does not have throws `TimelineOpError` naming the edit.
+ */
+export function applySurveyOps(survey: StudioSurvey, ops: readonly SurveyOp[]): StudioSurvey {
+  const shots = survey.shots.map((r) => ({ ...r }));
+  ops.forEach((op, i) => {
+    const row = shots.find((r) => r.shot_id === op.shot_id);
+    if (!row) throw new TimelineOpError("not_found", `thao tác ${i + 1} (${op.op}): không có shot ${op.shot_id}`);
+    switch (op.op) {
+      case "keep": row.usable = true; if (op.note !== null) row.note = op.note; if (row.score === 0) row.score = 1; break;
+      case "reject": row.usable = false; row.note = op.reason; break;
+      case "setScore": row.score = op.score; break;
+      case "setNote": row.note = op.note; break;
+    }
+  });
+  return { ...survey, shots };
 }

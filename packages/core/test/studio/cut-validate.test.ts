@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { EditPlan, ShotsIndex, StudioSurvey } from "@harness/contracts";
 import { studioSourceId } from "../../src/studio/render-plan.js";
-import { validateEditPlan, validateStudioSurvey } from "../../src/studio/cut-validate.js";
+import { applySurveyOps, validateEditPlan, validateStudioSurvey } from "../../src/studio/cut-validate.js";
+import { TimelineOpError } from "../../src/studio/layout.js";
 
 const A = studioSourceId("a");
 const B = studioSourceId("b");
@@ -106,5 +107,36 @@ describe("validateEditPlan", () => {
     const long = plan({ lines: [{ line_id: "L001", text: "Một câu lời dẫn dài hơn rất nhiều so với hình đang có trước dòng sau, ".repeat(2) + "vẫn còn đọc tiếp khi hình đã sang cảnh khác." }, plan().lines[1]!] });
     expect(codes(validateEditPlan(long, { survey: survey(), shots: shots() })).warnings).toContain("line_too_long");
     expect(codes(validateEditPlan(plan({ target_seconds: 60 }), { survey: survey(), shots: shots() })).warnings).toContain("duration_off_target");
+  });
+});
+
+describe("applySurveyOps", () => {
+  it("keeps, rejects, scores and notes shots in order, never changing the selection it was given", () => {
+    const before = survey();
+    const after = applySurveyOps(before, [
+      { op: "keep", shot_id: "s000-001", note: "giữ lại · rung nhẹ" },
+      { op: "reject", shot_id: "s001-000", reason: "có người nhìn máy" },
+      { op: "setScore", shot_id: "s000-000", score: 5 },
+      { op: "setNote", shot_id: "s000-002", note: "cảnh mở đầu" },
+    ]);
+    expect(after.shots.map((r) => [r.shot_id, r.usable, r.score, r.note])).toEqual([
+      ["s000-000", true, 5, "đẹp"], ["s000-001", true, 1, "giữ lại · rung nhẹ"], ["s000-002", true, 4, "cảnh mở đầu"], ["s001-000", false, 4, "có người nhìn máy"],
+    ]);
+    expect(before).toEqual(survey());
+    expect(validateStudioSurvey(after, { shots: shots() }).ok).toBe(true);
+  });
+
+  it("keep with a null note keeps the note; a kept shot scored 0 gets 1", () => {
+    const s = survey();
+    s.shots[1]!.score = 0;
+    const row = applySurveyOps(s, [{ op: "keep", shot_id: "s000-001", note: null }]).shots[1]!;
+    expect(row).toMatchObject({ usable: true, note: "rung", score: 1 });
+  });
+
+  it("a shot the selection does not have throws, naming the edit; rejecting every shot is left to the validator", () => {
+    expect(() => applySurveyOps(survey(), [{ op: "setScore", shot_id: "s000-000", score: 3 }, { op: "keep", shot_id: "s009-009", note: null }]))
+      .toThrow(new TimelineOpError("not_found", "thao tác 2 (keep): không có shot s009-009"));
+    const none = applySurveyOps(survey(), survey().shots.map((r) => ({ op: "reject" as const, shot_id: r.shot_id, reason: "tối" })));
+    expect(validateStudioSurvey(none, { shots: shots() }).problems.map((p) => p.code)).toEqual(["none_usable"]);
   });
 });

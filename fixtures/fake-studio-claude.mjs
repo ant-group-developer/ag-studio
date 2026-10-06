@@ -259,7 +259,8 @@ function lastUserMessage() {
 function reviseDoc(doc) {
   const d = structuredClone(doc);
   const mark = (s, room) => `${String(s).slice(0, room)} (đã sửa)`;
-  if (Array.isArray(d.titles)) d.titles[0] = mark(d.titles[0], 40);
+  if (d.schema_version === "studio.edit-plan/v1" && d.texts?.[0]) d.texts[0].text = mark(d.texts[0].text, 40);
+  else if (Array.isArray(d.titles)) d.titles[0] = mark(d.titles[0], 40);
   else if (Array.isArray(d.episodes) && d.episodes[0]) d.episodes[0].title = mark(d.episodes[0].title, 40);
   else if (typeof d.series_name === "string") d.series_name = mark(d.series_name, 30);
   else if (typeof d.summary === "string") d.summary = mark(d.summary, 200);
@@ -307,6 +308,23 @@ function timelineOps(msg, bad) {
   return { ops };
 }
 
+/**
+ * Scene selection: "giữ lại <shot>" keeps it (the first rejected shot when none is named), "bỏ <shot>" rejects it (the
+ * first usable one when none is named). Resumed from the stage session, the note says it looked again.
+ */
+function surveyOps(msg, bad) {
+  if (bad) return { ops: [{ op: "keep", shot_id: "s999-999", note: null }] };
+  const survey = chatCurrent() ?? { shots: [] };
+  const named = /s\d{3}-\d{3}/.exec(msg)?.[0];
+  const seen = resumed && existsSync(join(cwd, "logs", `fake-session-${resumed}.json`));
+  if (/(^|\s)bỏ(\s|$)/i.test(msg)) {
+    const id = named ?? survey.shots.find((r) => r.usable)?.shot_id;
+    return { ops: [{ op: "reject", shot_id: id, reason: msg.slice(0, 300) }] };
+  }
+  const id = named ?? survey.shots.find((r) => !r.usable)?.shot_id ?? survey.shots[0]?.shot_id;
+  return { ops: [{ op: "keep", shot_id: id, note: seen ? "giữ lại · đã xem lại, rung nhẹ" : "giữ lại · rung nhẹ" }] };
+}
+
 function chat() {
   const msg = lastUserMessage();
   const low = msg.toLowerCase();
@@ -318,6 +336,7 @@ function chat() {
     return { reply: d.questions[0]?.question ?? "Đã đủ thông tin, bấm Bắt đầu.", action: d.questions.length ? "revise" : "suggest_approve", proposal: d };
   }
   if (skill === "studio-timeline") return { reply: `Đã sửa timeline theo góp ý: ${msg.slice(0, 60)}`, action: "revise", proposal: timelineOps(msg, bad) };
+  if (skill === "studio-survey") return { reply: `Đã sửa bản chọn cảnh theo góp ý: ${msg.slice(0, 60)}`, action: "revise", proposal: surveyOps(msg, bad) };
   const current = chatCurrent();
   return { reply: `Đã sửa theo góp ý: ${msg.slice(0, 60)}`, action: "revise", proposal: bad ? { schema_version: "broken" } : reviseDoc(current ?? {}) };
 }
@@ -406,4 +425,6 @@ else if (skill === "studio-plan-episodes") out = planEpisodes();
 else if (skill === "studio-youtube-kit") out = youtubeKit();
 else { process.stderr.write(`fake-studio-claude: unknown skill ${skill}\n`); process.exit(3); }
 
-process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, structured_output: out, total_cost_usd: 0, num_turns: 1 }) + "\n");
+// a resumed (forked) session answers with a new session id of its own, like the real CLI
+const sessionId = resumed ? { session_id: `${resumed}-chat-${n}` } : {};
+process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, structured_output: out, ...sessionId, total_cost_usd: 0, num_turns: 1 }) + "\n");

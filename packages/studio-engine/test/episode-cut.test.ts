@@ -4,81 +4,22 @@
  * gate passed: scene selection (one shot kept back by the person), edit plan, timeline, YouTube kit. Skipped without
  * ffmpeg + ffprobe (FFMPEG_PATH / FFPROBE_PATH may point at any build).
  */
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CompositionSchema, EditPlanSchema, StudioSurveySchema, TimelineV4Schema } from "@harness/contracts";
-import {
-  createStudioWorker, listEpisodes, planRunView, readStageDocument, startPlanRun, STUDIO_WORKFLOWS, submitEpisodeTimelineGate, submitStudioGate,
-  type CutMediaDeps,
-} from "../src/index.js";
-import { FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, ROOT, seedProduction, world } from "./helpers.js";
-import { hasFfmpeg, makeSceneClip } from "../../../tests/media.js";
-
-const FFMPEG = process.env.FFMPEG_PATH ?? "ffmpeg";
-const FFPROBE = process.env.FFPROBE_PATH ?? "ffprobe";
-const VOICE = { reference: "library:voices/mai.wav", reference_text: "Xin chào, tôi là Mai.", speed: 1 };
-
-function setup() {
-  const w = world();
-  const farm = fakeFarm(w.bucket);
-  const clips = mkdtempSync(join(tmpdir(), "ag-go-clips-"));
-  const media: CutMediaDeps = {
-    ffmpeg: FFMPEG, ffprobe: FFPROBE, voiceDir: join(w.dir, "voice"),
-    // ag-go: every asset is a 20 s clip of four solid colours (four shots), with sound
-    resolveAssets: async (_actAs, ids) => ({
-      items: ids.map((id) => {
-        const path = join(clips, `${id}.mp4`);
-        makeSceneClip(path, { seconds: 20, colors: ["black", "white", "gray", "navy"] });
-        return { assetId: id, url: path, sourceKind: "proxy" as const, watermarked: false };
-      }),
-      missing: [],
-    }),
-    download: async (url, dest) => { (await import("node:fs")).copyFileSync(url, dest); },
-  };
-  const worker = createStudioWorker({
-    core: w.core, db: w.db, dbPath: w.dbPath, bucket: w.bucket, footage: fakeFootage(2, 20), farm: farm as never,
-    claude: { skillsDir: join(ROOT, "skills"), argv: ["node", FAKE_CLAUDE], model: "fake", maxTurns: 3 },
-    owner: "auth0|owner", thumbnails: fakeThumbnails(), media, farmPollMs: 5,
-  });
-  return { ...w, farm, worker, media };
-}
-type Setup = ReturnType<typeof setup>;
-
-async function drain(s: Setup): Promise<void> {
-  for (let i = 0; i < 600; i++) if ((await s.worker.runOnce()) === "idle") return;
-  throw new Error("worker still busy");
-}
-
-const waiting = (s: Setup, runId: string) => s.core.store.listStageRuns(runId).filter((x) => x.state === "WAITING_HUMAN").map((x) => x.stage_key);
+import { readStageDocument, STUDIO_WORKFLOWS, submitEpisodeTimelineGate, submitStudioGate } from "../src/index.js";
+import { cutEpisodeAtSurvey, cutSetup, drain, hasFfmpeg, waiting, type CutSetup } from "./cut-flow.js";
 
 describe.skipIf(!hasFfmpeg())("ag-studio-episode-cut@1.0.0 end to end (needs ffmpeg + ffprobe)", () => {
-  let s: Setup;
+  let s: CutSetup;
   beforeEach(() => { process.env.FAKE_STUDIO_MODE = "plan-cut"; });
   afterEach(() => { delete process.env.FAKE_STUDIO_MODE; s?.core.close(); });
 
   it("plans a shot-cut episode, selects and plans its shots with the person, reads the narration, renders it cut", async () => {
-    s = setup();
-    const prod = seedProduction(s.db, { episode_target_seconds: 16, max_episodes: 1 });
-    s.db.run("UPDATE productions SET keywords = ?, voice = ? WHERE id = ?", [JSON.stringify(["phố cổ"]), JSON.stringify(VOICE), prod]);
-
-    // the series plan: every gate as Claude proposed it
-    const { runId: planRun } = startPlanRun(s.core, s.db, prod);
-    for (const [gate, stage, file] of [
-      ["approve-trend-report", "trend-report", "trend-report.json"], ["approve-rnd", "rnd", "rnd.json"],
-      ["approve-branding", "branding", "branding.json"], ["approve-plan", "plan-episodes", "series-plan.json"],
-    ] as const) {
-      await drain(s);
-      expect(planRunView(s.core, s.db, prod).waiting_gate).toBe(gate);
-      await submitStudioGate(s.core, s.db, planRun, gate, readStageDocument(s.core, planRun, stage, file));
-    }
-    await drain(s);
-    const ep = listEpisodes(s.db, prod)[0]!;
+    s = cutSetup();
+    const { ep, runId } = await cutEpisodeAtSurvey(s);
     expect(ep.edit_style).toBe("cut");
-    const run = s.core.store.getRun(ep.run_id!)!;
+    const run = s.core.store.getRun(runId)!;
     expect(`${run.workflow_release.id}@${run.workflow_release.version}`).toBe(STUDIO_WORKFLOWS.episodeCut.workflow);
-    const runId = run.run_id;
 
     // 1. scene selection: the fake drops the first shot as shaky; the person keeps it anyway
     expect(waiting(s, runId)).toEqual(["approve-survey"]);
