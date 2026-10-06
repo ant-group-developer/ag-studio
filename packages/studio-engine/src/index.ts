@@ -21,3 +21,4 @@ export * from "./canva-pdf.js";
 export * from "./chat-db.js";
 export * from "./settings.js";
 export * from "./claude-slots.js";
+export * from "./chat-context.js";
