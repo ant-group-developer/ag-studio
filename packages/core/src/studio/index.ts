@@ -7,3 +7,4 @@ export * from "./chapters.js";
 export * from "./overlay.js";
 export * from "./brief.js";
 export * from "./thumbnails.js";
+export * from "./cut-validate.js";

@@ -10,11 +10,13 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   StudioBrandingSchema, StudioBriefSchema, StudioCatalogSchema, StudioEpisodeSchema, StudioExportSchema, StudioSeedSchema, StudioThumbnailsSchema,
-  StoredTimelineSchema,
+  ShotsIndexSchema, StoredTimelineSchema, StudioSurveySchema,
   TrendReportSchema,
-  type CatalogAsset, type Checker, type CheckerInput, type StudioBranding, type StudioBrief, type StudioCatalog, type StudioSeed,
+  type CatalogAsset, type Checker, type CheckerInput, type ShotsIndex, type StudioBranding, type StudioBrief, type StudioCatalog, type StudioSeed,
+  type StudioSurvey,
 } from "@harness/contracts";
 import { childEnvWithoutSecrets } from "../media/child-env.js";
+import { validateEditPlan, validateStudioSurvey } from "../studio/cut-validate.js";
 import { layoutTimeline, timelineIssues } from "../studio/layout.js";
 import {
   validateBranding, validateRnd, validateSeriesPlan, validateTrendReport, validateYoutubeKit, type StudioValidation,
@@ -44,6 +46,9 @@ export const STUDIO_TYPES = {
   /** `harness.shots/v2` of the proxies, and the farm's `transcribe.json` (`ag.studio.transcribe/v1`). */
   shots: "shots",
   watch: "watch",
+  /** The scene selection (`harness.survey-index/v2`) and the edit plan (`studio.edit-plan/v1`) Claude writes. */
+  surveyIndex: "survey_index",
+  editPlan: "studio_edit_plan",
   transcript: "transcript",
   youtubeKit: "youtube_kit",
   finalVideo: "final_video",
@@ -83,6 +88,8 @@ function requireInput<T>(input: CheckerInput, type: string, parse: (v: unknown) 
 export const loadBrief = (i: CheckerInput): StudioBrief => requireInput(i, STUDIO_TYPES.brief, (v) => StudioBriefSchema.parse(v));
 export const loadCatalog = (i: CheckerInput): StudioCatalog => requireInput(i, STUDIO_TYPES.catalog, (v) => StudioCatalogSchema.parse(v));
 export const loadSeed = (i: CheckerInput): StudioSeed => requireInput(i, STUDIO_TYPES.seed, (v) => StudioSeedSchema.parse(v));
+export const loadShots = (i: CheckerInput): ShotsIndex => requireInput(i, STUDIO_TYPES.shots, (v) => ShotsIndexSchema.parse(v));
+export const loadSurvey = (i: CheckerInput): StudioSurvey => requireInput(i, STUDIO_TYPES.surveyIndex, (v) => StudioSurveySchema.parse(v));
 /** The branding input when the stage has one (episode runs of a production planned before branding have none). */
 export function loadOptionalBranding(i: Pick<CheckerInput, "request" | "workspaceDir">): StudioBranding | null {
   const p = inputPath(i, STUDIO_TYPES.branding);
@@ -113,6 +120,14 @@ function documentChecker(id: string, outputType: string | readonly string[], val
     },
   };
 }
+
+/** Shot-cut scene selection: one row per shot of the `shots` input (`validateStudioSurvey`). */
+export const studioSurveyValidChecker = documentChecker("studio-survey-valid", STUDIO_TYPES.surveyIndex,
+  (raw, i) => fromValidation(validateStudioSurvey(raw, { shots: loadShots(i) })));
+
+/** Shot-cut edit plan against the approved selection (`survey_index` input) and the shots (`validateEditPlan`). */
+export const editPlanValidChecker = documentChecker("edit-plan-valid", STUDIO_TYPES.editPlan,
+  (raw, i) => fromValidation(validateEditPlan(raw, { survey: loadSurvey(i), shots: loadShots(i) })));
 
 export const trendReportValidChecker = documentChecker("trend-report-valid", STUDIO_TYPES.trendReport,
   (raw) => fromValidation(validateTrendReport(raw)));
@@ -237,5 +252,7 @@ export function studioCheckers(opts: { ffmpeg?: string } = {}): Checker[] {
     studioRenderValidChecker(opts),
     exportValidChecker,
     thumbnailsValidChecker,
+    studioSurveyValidChecker,
+    editPlanValidChecker,
   ];
 }

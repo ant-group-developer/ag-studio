@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
+import { surveyIndexSchemaV2 } from "./library.js";
 
 /**
  * AG Studio production documents: a production is a SERIES of episodes cut from whole analysed videos.
@@ -814,6 +815,58 @@ export const StudioExportSchema = z.object({
 }).strict();
 export type StudioExport = z.infer<typeof StudioExportSchema>;
 
+// ---------------------------------------------------------------------------
+// Shot-cut episodes (spec local-chat §3.3): the scene selection and the edit plan Claude writes
+// ---------------------------------------------------------------------------
+
+/**
+ * `survey.json` (`source-survey`, Claude looking at contact sheets; corrected and approved at `approve-survey`): the
+ * harness `harness.survey-index/v2`, exactly one row per shot of `shots.json`, scored 0–5 with a reason in `note`.
+ */
+export const StudioSurveySchema = surveyIndexSchemaV2;
+export type StudioSurvey = z.infer<typeof StudioSurveySchema>;
+
+/**
+ * `edit-plan.json` (`plan-edit`, Claude; corrected and approved at `approve-edit-plan`): the cut of a shot-cut
+ * episode before it is fitted to the narration. `shots` play in `order`; each is `[in, out)` of an approved usable
+ * shot (`source_id` + `shot_id`); `line_id` marks the shot a narration line starts on; texts are anchored on a shot
+ * (`at_order`, `offset_s` into it). The fit stage turns this into a timeline v4.
+ */
+export const EditPlanSchema = z.object({
+  schema_version: studioVersion("edit-plan"),
+  episode_id: z.string().min(1),
+  narration: z.enum(NARRATION_VOICES),
+  language: z.string().min(2).max(10),
+  target_seconds: z.number().min(10).max(3600),
+  shots: z.array(z.object({
+    order: z.number().int().min(1),
+    shot_id: z.string().regex(/^s\d{3}-\d{3}$/),
+    source_id: z.string().regex(/^src_[0-9A-HJKMNP-TV-Z]{26}$/),
+    in: z.number().min(0),
+    out: z.number().positive(),
+    line_id: z.string().regex(/^L\d{3}$/).nullable(),
+    transition: z.enum(["cut", "dissolve"]),
+    section_title: z.string().min(1).max(100).nullable(),
+    note: z.string().max(300),
+  }).strict()).min(1).max(400),
+  lines: z.array(z.object({
+    line_id: z.string().regex(/^L\d{3}$/),
+    text: z.string().min(1).max(1200),
+  }).strict()).max(300),
+  texts: z.array(z.object({
+    text_id: z.string().regex(/^T\d{3}$/),
+    kind: z.enum(TEXT_KINDS),
+    text: z.string().min(1).max(64),
+    at_order: z.number().int().min(1),
+    offset_s: z.number().min(0),
+    duration: z.number().min(0.5).max(20),
+    position: z.enum(TEXT_POSITIONS_V2),
+  }).strict()).max(30),
+  /** A mood for the music (the production's track is used; kept for later). */
+  music_mood: z.string().max(40).nullable(),
+}).strict();
+export type EditPlan = z.infer<typeof EditPlanSchema>;
+
 /** Output schema per Studio skill: what Claude must return, and what the stage writes to disk. */
 export const STUDIO_SKILL_OUTPUTS = {
   "studio-trend-report": TrendReportSchema,
@@ -821,7 +874,15 @@ export const STUDIO_SKILL_OUTPUTS = {
   "studio-branding": StudioBrandingSchema,
   "studio-plan-episodes": SeriesPlanSchema,
   "studio-youtube-kit": YoutubeKitSchema,
+  "studio-source-survey": StudioSurveySchema,
+  "studio-edit-plan": EditPlanSchema,
 } as const;
+
+/**
+ * Skills that run in files mode (`CliAgentRuntime` `files`): the agent opens pictures in its workspace and its session
+ * is kept so the repair round and the chat can resume it (ADR-0001 item 155). The others are structured, no tools.
+ */
+export const STUDIO_FILE_SKILLS: ReadonlySet<StudioSkill> = new Set<StudioSkill>(["studio-source-survey"]);
 export type StudioSkill = keyof typeof STUDIO_SKILL_OUTPUTS;
 
 // ---------------------------------------------------------------------------
@@ -829,7 +890,7 @@ export type StudioSkill = keyof typeof STUDIO_SKILL_OUTPUTS;
 // ---------------------------------------------------------------------------
 
 /** The AI steps a team skill can be limited to; a skill limited to none applies to every step. */
-export const TEAM_SKILL_STEPS = ["intake", "trend-report", "rnd", "branding", "plan-episodes", "timeline", "youtube-kit"] as const;
+export const TEAM_SKILL_STEPS = ["intake", "trend-report", "rnd", "branding", "plan-episodes", "source-survey", "edit-plan", "timeline", "youtube-kit"] as const;
 export type TeamSkillStep = (typeof TEAM_SKILL_STEPS)[number];
 
 /** Lengths in characters. `enabledTotal` bounds every enabled skill of a team together (prompt cost). */
@@ -842,6 +903,8 @@ export const STUDIO_SKILL_STEP: Record<StudioSkill, TeamSkillStep> = {
   "studio-branding": "branding",
   "studio-plan-episodes": "plan-episodes",
   "studio-youtube-kit": "youtube-kit",
+  "studio-source-survey": "source-survey",
+  "studio-edit-plan": "edit-plan",
 };
 
 /** A team skill as it goes into a prompt. */
