@@ -330,6 +330,17 @@ function surveyOps(msg, bad) {
   return { ops: [{ op: "keep", shot_id: id, note: seen ? "giữ lại · đã xem lại, rung nhẹ" : "giữ lại · rung nhẹ" }] };
 }
 
+/** Edit plan: "câu L002 ngắn lại" shortens that narration line (first half of its words); anything else, the title. */
+function editPlanRevise(current, msg) {
+  const named = /L\d{3}/.exec(msg)?.[0];
+  const line = named && current.lines?.find((l) => l.line_id === named);
+  if (!line || !/ngắn/i.test(msg)) return reviseDoc(current);
+  const d = structuredClone(current);
+  const words = line.text.split(/\s+/);
+  d.lines.find((l) => l.line_id === named).text = `${words.slice(0, Math.max(1, Math.ceil(words.length / 2))).join(" ").replace(/[.,]$/, "")}.`;
+  return d;
+}
+
 function chat() {
   const msg = lastUserMessage();
   const low = msg.toLowerCase();
@@ -341,6 +352,9 @@ function chat() {
     return { reply: d.questions[0]?.question ?? "Đã đủ thông tin, bấm Bắt đầu.", action: d.questions.length ? "revise" : "suggest_approve", proposal: d };
   }
   if (skill === "studio-timeline") return { reply: `Đã sửa timeline theo góp ý: ${msg.slice(0, 60)}`, action: "revise", proposal: timelineOps(msg, bad) };
+  if (skill === "studio-edit-plan" && !bad) {
+    return { reply: `Đã sửa kế hoạch dựng theo góp ý: ${msg.slice(0, 60)}`, action: "revise", proposal: editPlanRevise(chatCurrent() ?? {}, msg) };
+  }
   if (skill === "studio-survey") return { reply: `Đã sửa bản chọn cảnh theo góp ý: ${msg.slice(0, 60)}`, action: "revise", proposal: surveyOps(msg, bad) };
   const current = chatCurrent();
   return { reply: `Đã sửa theo góp ý: ${msg.slice(0, 60)}`, action: "revise", proposal: bad ? { schema_version: "broken" } : reviseDoc(current ?? {}) };
