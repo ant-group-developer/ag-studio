@@ -10,7 +10,7 @@ import type { FarmOwnerClient } from "@ag-farm/owner-client";
 import type { AgentCallTrace, ProjectConfig, StudioSkill } from "@harness/contracts";
 import { farmStorage, type StudioBucket } from "./bucket.js";
 import { recordLlmCall } from "./llm-log.js";
-import { cancelLegacyRuns, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, STUDIO_RESOURCES, studioWorkflowRefs, type StudioEngineCore } from "./core.js";
+import { cancelLegacyRuns, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, studioResources, studioWorkflowRefs, type StudioEngineCore } from "./core.js";
 import { studioPayloadBuilders } from "./payloads.js";
 import { isRunActive, startEpisodeRun } from "./run-control.js";
 import { studioStages, type FootageCatalogSource } from "./stages.js";
@@ -68,13 +68,15 @@ export interface StudioWorkerOptions {
   research?: ResearchSource;
   /** Cuts and draws thumbnails (`thumbnails` stage of episode 1.2.0); without it that stage parks for a person. */
   thumbnails?: ThumbnailRenderer;
+  /** Claude calls run at once across this worker's loops; default `DEFAULT_CLAUDE_MAX_CONCURRENT` (20). */
+  claudeMaxConcurrent?: number;
 }
 
 export function studioLogger(bindings: Record<string, unknown> = {}): HarnessLogger {
   return createLogger({ redactor: new Redactor(() => []), sink: (l) => process.stderr.write(l + "\n"), bindings: { service: "studio-worker", ...bindings } });
 }
 
-export function createStudioWorker(o: StudioWorkerOptions): Worker {
+function buildWorkers(o: StudioWorkerOptions, count: number): Worker[] {
   const { core } = o;
   // Cancel runs from old workflows (segment-based) so they don't block new ones
   cancelLegacyRuns(core);
@@ -106,14 +108,40 @@ export function createStudioWorker(o: StudioWorkerOptions): Worker {
     payloadBuilders: studioPayloadBuilders({ db: o.db, bucket: o.bucket }),
     pollIntervalMs: o.farmPollMs ?? 5000,
   }));
+  const resources = studioResources(o.claudeMaxConcurrent);
   const project = {
     schema_version: "harness.project-config/v1", project_id: STUDIO_PROJECT_ID, template_release: "0.1.0", runtime: "claude",
     data_root: core.dataRoot, portfolios: [{ portfolio_id: STUDIO_PORTFOLIO_ID, display_name: "AG Studio" }],
-    resources: STUDIO_RESOURCES, source: { materialize: "link" }, workflows: studioWorkflowRefs(core.harnessRoot),
+    resources, source: { materialize: "link" }, workflows: studioWorkflowRefs(core.harnessRoot),
   } as unknown as ProjectConfig;
-  return new Worker({
-    store: core.store, planner: core.planner, controller: core.controller, registry: core.registry, verifier: core.verifier, executors,
-    harness: core.harness, project, dataRoot: core.dataRoot, owner: o.owner, capabilities: [], logger: o.logger ?? studioLogger({ owner: o.owner }),
-    clock: core.clock, workflows: core.workflows, profiles: core.profiles, resourceCapacity: STUDIO_RESOURCES,
+  return Array.from({ length: count }, (_, i) => {
+    const owner = count === 1 ? o.owner : `${o.owner}#${i + 1}`;
+    return new Worker({
+      store: core.store, planner: core.planner, controller: core.controller, registry: core.registry, verifier: core.verifier, executors,
+      harness: core.harness, project, dataRoot: core.dataRoot, owner, capabilities: [], logger: o.logger ?? studioLogger({ owner }),
+      clock: core.clock, workflows: core.workflows, profiles: core.profiles, resourceCapacity: resources,
+    });
   });
+}
+
+/** One worker loop: claims and runs one stage at a time. */
+export function createStudioWorker(o: StudioWorkerOptions): Worker {
+  return buildWorkers(o, 1)[0]!;
+}
+
+export interface StudioWorkerPool {
+  workers: Worker[];
+  runForever(signal: AbortSignal): Promise<void>;
+}
+
+/**
+ * Enough worker loops to fill every resource at once (`claude` + `farm` + `cpu`), sharing one store and one set of
+ * executors. One loop runs one stage at a time and a farm stage holds its loop until the render is done, so a
+ * single loop would serialize every production; with a pool, `claude` capacity alone decides how many Claude
+ * calls run together. Loops coordinate through `claim()`/leases exactly like separate worker processes.
+ */
+export function createStudioWorkerPool(o: StudioWorkerOptions): StudioWorkerPool {
+  const r = studioResources(o.claudeMaxConcurrent);
+  const workers = buildWorkers(o, r.claude + r.farm + r.cpu);
+  return { workers, runForever: async (signal) => { await Promise.all(workers.map((w) => w.runForever(signal))); } };
 }

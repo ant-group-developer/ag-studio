@@ -8,7 +8,7 @@ import {
   ArtifactRegistry, BUILTIN_CHECKERS, Controller, HARNESS_ROOT, isTerminal, listWorkflowRefs, loadHarnessConfig, loadProfile, loadWorkflow, MIGRATIONS_DIR,
   Planner, SqliteStateStore, studioCheckers, SystemClock, Verifier, type LoadedWorkflow,
 } from "@harness/core";
-import type { Clock, HarnessConfig, ProductionProfile } from "@harness/contracts";
+import { HarnessError, type Clock, type HarnessConfig, type ProductionProfile } from "@harness/contracts";
 
 /**
  * The two Studio series workflows: `plan` (one run per production, plans all episodes) and
@@ -22,8 +22,26 @@ export type StudioWorkflowKind = keyof typeof STUDIO_WORKFLOWS;
 
 export const STUDIO_PROJECT_ID = "ag-studio";
 export const STUDIO_PORTFOLIO_ID = "studio";
-/** `claude`: one subscription call at a time. `farm`: stages waiting on ag-farm, not using this node's cpu. */
-export const STUDIO_RESOURCES = { claude: 1, farm: 8, cpu: 2 };
+/** Claude calls a Studio worker runs at once by default (`STUDIO_CLAUDE_MAX_CONCURRENT`). */
+export const DEFAULT_CLAUDE_MAX_CONCURRENT = 20;
+/** Stages waiting on ag-farm (they hold a worker loop while the farm renders, not this node's cpu). */
+export const STUDIO_FARM_SLOTS = 8;
+export const STUDIO_CPU_SLOTS = 2;
+
+/** Resource capacities of a Studio worker: `claude` calls (subscription), `farm` waits, local `cpu` stages. */
+export function studioResources(claudeMaxConcurrent: number = DEFAULT_CLAUDE_MAX_CONCURRENT): { claude: number; farm: number; cpu: number } {
+  return { claude: claudeMaxConcurrent, farm: STUDIO_FARM_SLOTS, cpu: STUDIO_CPU_SLOTS };
+}
+
+/** `STUDIO_CLAUDE_MAX_CONCURRENT`: unset or blank → default; anything but a whole number 1–100 is refused at start. */
+export function parseClaudeMaxConcurrent(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === "") return DEFAULT_CLAUDE_MAX_CONCURRENT;
+  const n = Number(raw.trim());
+  if (!Number.isInteger(n) || n < 1 || n > 100) {
+    throw new HarnessError("CONFIG_INVALID", `STUDIO_CLAUDE_MAX_CONCURRENT must be a whole number from 1 to 100, got "${raw}"`, { value: raw });
+  }
+  return n;
+}
 
 export interface StudioEngineCoreOptions {
   /** `studio.db`: harness state + Studio tables. */

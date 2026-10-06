@@ -123,11 +123,13 @@ export function world() {
 export function seedProduction(db: StudioDb, over: {
   title?: string; target?: number; aspect?: string;
   episode_target_seconds?: number; max_episodes?: number;
+  /** A second production in the same db needs its own id. */
+  id?: string;
 } = {}): string {
   const now = new Date().toISOString();
-  db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [now, now]);
-  db.run("INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES ('team-1', 'auth0|owner', 'owner', ?)", [now]);
-  const id = "11111111-1111-4111-8111-111111111111";
+  db.run("INSERT OR IGNORE INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [now, now]);
+  db.run("INSERT OR IGNORE INTO team_members (team_id, user_id, role, joined_at) VALUES ('team-1', 'auth0|owner', 'owner', ?)", [now]);
+  const id = over.id ?? "11111111-1111-4111-8111-111111111111";
   db.run(`INSERT INTO productions (id, team_id, title, status, brief, created_at, updated_at, owner_user_id, target_seconds, aspect, language,
             goal, audience, tone, episode_target_seconds, max_episodes)
           VALUES (?, 'team-1', ?, 'draft', 'Một bát phở buổi sáng', ?, ?, 'auth0|owner', ?, ?, 'vi',

@@ -934,3 +934,10 @@ Các mục dưới đây ghi lại quyết định của nhánh AG Studio, viế
 142. **Quy trình tài liệu bị bỏ qua trong đợt fork, từ nay áp lại.** 138 commit trong 4 ngày nhưng chỉ ~11 commit
     đụng `docs/`/`skills/`/`AGENTS.md`, không có spec/plan trong repo, ADR dừng ở mục 126. Từ 2026-10-06 mỗi pha có
     spec + plan trong `docs/superpowers/`, cuối pha cập nhật AGENTS.md, ADR, runbook, `deferred-items.md`.
+143. **Số lượt Claude cùng lúc cấu hình được, mặc định 20; worker chạy một pool vòng lặp (2026-10-06).**
+    `STUDIO_RESOURCES.claude = 1` cũ không chỉ giới hạn Claude: mỗi tiến trình worker chỉ có **một** vòng
+    claim → chạy → commit, và một stage farm giữ vòng đó suốt lúc render, nên mọi production xếp hàng sau nhau.
+    Giờ `STUDIO_CLAUDE_MAX_CONCURRENT` (1–100, mặc định 20, giá trị sai là `CONFIG_INVALID` lúc khởi động) đặt
+    capacity `claude`; `createStudioWorkerPool` chạy `claude + farm + cpu` vòng trong cùng tiến trình, dùng chung
+    store và executor, phối hợp qua `claim()`/lease như nhiều tiến trình worker. Capacity mới là thứ quyết định số
+    lượt Claude song song. Đánh đổi: hạn mức gói subscription hết nhanh hơn, mỗi lượt là một tiến trình `claude`.
