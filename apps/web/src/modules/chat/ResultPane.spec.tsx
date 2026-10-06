@@ -22,10 +22,10 @@ const turn = (over: Partial<ChatTurn>): ChatTurn => ({
   llm_call_id: null, created_by: null, applied_at: null, created_at: "", updated_at: "", ...over,
 });
 
-const mount = (thread: ChatThreadView, props: { onPrimary?: () => void; canApprove?: boolean; episodeId?: string } = {}) => render(
+const mount = (thread: ChatThreadView, props: { onPrimary?: () => void; onMenu?: () => void; canApprove?: boolean; episodeId?: string; canRenderFinal?: boolean } = {}) => render(
   <QueryClientProvider client={new QueryClient()}>
-    <ResultPane productionId="p" episodeId={props.episodeId} thread={thread} onPrimary={props.onPrimary ?? vi.fn()} onMenu={vi.fn()} canApprove={props.canApprove ?? true}
-      renderDefault="any" />
+    <ResultPane productionId="p" episodeId={props.episodeId} thread={thread} onPrimary={props.onPrimary ?? vi.fn()} onMenu={props.onMenu ?? vi.fn()} canApprove={props.canApprove ?? true}
+      renderDefault="any" canRenderFinal={props.canRenderFinal} />
   </QueryClientProvider>,
 );
 
@@ -102,5 +102,18 @@ describe("ResultPane", () => {
     fireEvent.click(await screen.findByRole("radio", { name: /Máy có NVENC/ }));
     fireEvent.click(screen.getByRole("button", { name: "Duyệt và render" }));
     expect(onPrimary).toHaveBeenCalledWith("approve", { renderMachine: "nvenc" });
+  });
+
+  it("⋯ of an episode offers the final render, not while the episode is producing", async () => {
+    const onMenu = vi.fn();
+    const busy: ChatThreadView = { turns: [], scope: null, blocked: { code: "busy", stage: "render-final" }, current: null, queueAhead: 0 };
+    const { unmount } = mount(busy, { episodeId: "e", onMenu, canRenderFinal: false });
+    fireEvent.click(screen.getByRole("button", { name: "Thêm thao tác" }));
+    expect(await screen.findByRole("menuitem", { name: "Render bản cuối…" })).toHaveAttribute("aria-disabled", "true");
+    unmount();
+    mount(busy, { episodeId: "e", onMenu, canRenderFinal: true });
+    fireEvent.click(screen.getByRole("button", { name: "Thêm thao tác" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Render bản cuối…" }));
+    expect(onMenu).toHaveBeenCalledWith("finalRender");
   });
 });

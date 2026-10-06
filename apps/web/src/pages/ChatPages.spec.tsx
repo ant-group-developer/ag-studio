@@ -27,6 +27,7 @@ const client = {
   approveChat: vi.fn().mockResolvedValue({ stageState: "SUCCEEDED", runState: "RUNNING" }),
   startProduction: vi.fn().mockResolvedValue({ runId: "r" }),
   getEpisode: vi.fn(),
+  rerenderEpisode: vi.fn().mockResolvedValue({ runId: "r2", from: "render-final" }),
 };
 vi.mock("../api/studio-client", async (orig) => ({ ...(await orig<object>()), useStudioClient: () => client }));
 vi.mock("../api/ag-go-client", async (orig) => ({ ...(await orig<object>()), useAgGoClient: () => ({ getFolders: vi.fn().mockResolvedValue({ folders: [] }) }) }));
@@ -114,5 +115,22 @@ describe("chat pages", () => {
     await waitFor(() => expect(screen.getByRole("radio", { name: /Máy có GPU/ })).toBeChecked());
     fireEvent.click(screen.getByRole("button", { name: "Duyệt và render" }));
     await waitFor(() => expect(client.approveChat).toHaveBeenCalledWith("p1", { stageKey: "approve-youtube-kit", episodeId: "e1", turnId: null, renderMachine: "gpu" }));
+  });
+
+  it("⋯ → Render bản cuối…: only the render runs again, on the machine type picked", async () => {
+    client.getChatThread.mockResolvedValue({
+      turns: [], scope: { productionId: "p1", episodeId: "e1", runId: "r", stageKey: "timeline", scope: "timeline" }, blocked: null,
+      current: null, queueAhead: 0,
+    } satisfies ChatThreadView);
+    client.getEpisode.mockResolvedValue({ id: "e1", idx: 1, title: "Rừng tre", status: "ready", progress: null, finalVideoUrl: null, exportFiles: [],
+      render: { machine: "nvenc", defaultMachine: "nvenc", restartFrom: "render-final", job: null, farmStatus: null } });
+    mount("/v/p1/e/e1");
+    await screen.findByRole("heading", { name: "Tập 1 · Rừng tre" });
+    fireEvent.click(screen.getByRole("button", { name: "Thêm thao tác" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Render bản cuối…" }));
+    expect(await screen.findByText("Chỉ render lại, giữ timeline và YouTube kit đã duyệt.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: /Máy có GPU/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Render" }));
+    await waitFor(() => expect(client.rerenderEpisode).toHaveBeenCalledWith("p1", "e1", "gpu"));
   });
 });

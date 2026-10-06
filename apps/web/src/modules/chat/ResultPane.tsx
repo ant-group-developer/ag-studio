@@ -15,7 +15,7 @@ import { HAND_EDITABLE } from "./ManualEditDrawer";
 import { TimelineResult } from "./views/TimelineResult";
 
 export type ResultAction = "approve" | "start" | "apply" | "retry";
-export type MenuAction = "manual" | "editor" | "preview" | "export" | "log" | "oldScreen";
+export type MenuAction = "manual" | "editor" | "preview" | "finalRender" | "export" | "log" | "oldScreen";
 
 interface Props {
   productionId: string;
@@ -29,6 +29,8 @@ interface Props {
   canApprove?: boolean | undefined;
   /** Where the machine picker starts (the episode's `render.defaultMachine`). */
   renderDefault?: RenderMachine | undefined;
+  /** ⋯ → Render bản cuối… can start now (the episode is not producing). */
+  canRenderFinal?: boolean | undefined;
 }
 
 /** Duyệt on the YouTube kit: it starts the final render, so it confirms the machine type first (spec §2.5, §3.4). */
@@ -90,7 +92,7 @@ function Problems({ problems }: { problems: { code: string; message: string }[] 
 }
 
 /** The result column (spec local-chat §2.3–2.4): the step's document, readable, changes marked; one main button; ⋯. */
-export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu, busy, canApprove = true, renderDefault = "any" }: Props) {
+export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu, busy, canApprove = true, renderDefault = "any", canRenderFinal = false }: Props) {
   const { t } = useTranslation();
   const scope = thread.scope;
   const stageKey = scope?.stageKey ?? thread.blocked?.stage ?? null;
@@ -126,6 +128,7 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
     ...(episodeId ? [
       { key: "editor", label: t("chat.menu.editor") },
       { key: "preview", label: t("chat.menu.preview") },
+      { key: "finalRender", label: t("chat.menu.finalRender"), disabled: !canRenderFinal || !canApprove },
       { key: "export", label: t("chat.menu.export") },
     ] : []),
     { key: "log", label: t("chat.menu.log") },

@@ -99,4 +99,14 @@ describe("ChatThread", () => {
     render(<ChatThread onCard={vi.fn()} thread={view([turn({ action: "suggest_approve" })])} />);
     expect(screen.queryByRole("radiogroup")).toBeNull();
   });
+
+  it("a render card offers the 720p preview or the final cut", () => {
+    const onCard = vi.fn();
+    const r = turn({ stage_key: "timeline", scope: "timeline", episode_id: "e", text: "Render nhé?", action: "render" });
+    render(<ChatThread episode onCard={onCard} thread={view([r], { scope: { productionId: "p", episodeId: "e", runId: "r", stageKey: "timeline", scope: "timeline" } })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Xem trước 720p" }));
+    expect(onCard).toHaveBeenCalledWith("render", r);
+    fireEvent.click(screen.getByRole("button", { name: "Bản cuối…" }));
+    expect(onCard).toHaveBeenCalledWith("renderFinal", r);
+  });
 });

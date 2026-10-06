@@ -3,7 +3,7 @@ import { App as AntApp, Drawer } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "react-router-dom";
-import { StudioHttpError, useStudioClient, type ChatThreadView, type ChatTurn } from "../api/studio-client";
+import { StudioHttpError, useStudioClient, type ChatThreadView, type ChatTurn, type RenderMachine } from "../api/studio-client";
 import { ChatComposer } from "../modules/chat/ChatComposer";
 import { ChatShell } from "../modules/chat/ChatShell";
 import { ChatThread, type CardOptions, type ChatCard } from "../modules/chat/ChatThread";
@@ -12,6 +12,7 @@ import { ResultPane, type MenuAction, type ResultAction } from "../modules/chat/
 import { EPISODE_STEPS, PLAN_STEPS, stepLabelKey, stepOf, stepPosition } from "../modules/chat/steps";
 import { gateProblems } from "../modules/production/gate-problems";
 import { LlmLogPanel } from "../modules/production/LlmLogPanel";
+import { RenderFinalModal } from "../modules/render/RenderFinalModal";
 
 const MANAGES = new Set(["producer", "owner"]);
 const EDITS = new Set(["editor", "producer", "owner"]);
@@ -30,6 +31,7 @@ export function ChatProductionPage() {
   const qc = useQueryClient();
   const [logOpen, setLogOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
+  const [finalOpen, setFinalOpen] = useState(false);
   const [draft, setDraft] = useState("");
 
   const threadKey = ["chat", productionId, episodeId ?? null];
@@ -88,10 +90,21 @@ export function ChatProductionPage() {
     onError: fail,
   });
 
+  const renderFinal = useMutation({
+    mutationFn: (machine: RenderMachine) => client.rerenderEpisode(productionId, episodeId!, machine),
+    onSuccess: (r) => {
+      setFinalOpen(false);
+      void message.success(t(r.from === "render-final" || r.from === "freeze-timeline" ? "chat.render.started" : "chat.render.startedAfterApproval"));
+      refresh();
+    },
+    onError: fail,
+  });
+
   const onMenu = (m: MenuAction) => {
     if (m === "manual") setManualOpen(true);
     if (m === "editor" && episodeId) navigate(`/productions/${productionId}/episodes/${episodeId}/editor`);
     if (m === "preview") act.mutate({ kind: "render" });
+    if (m === "finalRender") setFinalOpen(true);
     if (m === "export") act.mutate({ kind: "export" });
     if (m === "log") setLogOpen(true);
     if (m === "oldScreen") navigate(`/productions/${productionId}`);
@@ -125,7 +138,7 @@ export function ChatProductionPage() {
         {thread ? (
           <ChatThread thread={thread} episode={!!episodeId} busyCard={act.isPending ? (act.variables?.kind as ChatCard) : null}
             renderDefault={episode?.render?.defaultMachine}
-            onCard={(card, turn, options) => act.mutate({ kind: card, turn, options })}
+            onCard={(card, turn, options) => (card === "renderFinal" ? setFinalOpen(true) : act.mutate({ kind: card, turn, options }))}
             onQuickAnswer={(text) => send.mutate(text)} />
         ) : null}
         <ChatComposer value={draft} onValueChange={setDraft} disabled={!thread || !!thread.blocked || !canEdit}
@@ -133,12 +146,16 @@ export function ChatProductionPage() {
       </main>
       {thread ? (
         <ResultPane productionId={productionId} episodeId={episodeId} thread={thread} busy={act.isPending} canApprove={canManage || thread.scope?.scope === "timeline"}
-          renderDefault={episode?.render?.defaultMachine}
+          renderDefault={episode?.render?.defaultMachine} canRenderFinal={!!episode?.render && episode.render.restartFrom !== null}
           onPrimary={(a, options) => act.mutate({ kind: a, options })} onMenu={onMenu} />
       ) : null}
       <Drawer open={logOpen} onClose={() => setLogOpen(false)} width="min(900px, 100vw)" title={t("chat.menu.log")} destroyOnClose>
         <LlmLogPanel productionId={productionId} live={stillWorking(thread)} />
       </Drawer>
+      {episode?.render ? (
+        <RenderFinalModal open={finalOpen} render={episode.render} busy={renderFinal.isPending} onClose={() => setFinalOpen(false)}
+          onConfirm={(m) => renderFinal.mutate(m)} />
+      ) : null}
       {thread ? <ManualEditDrawer open={manualOpen} onClose={() => setManualOpen(false)} productionId={productionId} episodeId={episodeId} thread={thread} onSaved={refresh} /> : null}
     </ChatShell>
   );

@@ -6,7 +6,7 @@ import { messageParts } from "./mentions";
 import { EPISODE_STEPS, PLAN_STEPS, stepLabelKey, stepOf, stepPosition } from "./steps";
 
 /** What a card under Claude's newest reply asks the person to confirm (spec local-chat §2.5). */
-export type ChatCard = "approve" | "start" | "apply" | "render" | "export" | "retry";
+export type ChatCard = "approve" | "start" | "apply" | "render" | "renderFinal" | "export" | "retry";
 /** Approving the YouTube kit starts the final render, so its card carries the machine type (phase 3). */
 export const KIT_GATE = "approve-youtube-kit";
 export interface CardOptions { renderMachine: RenderMachine }
@@ -139,6 +139,14 @@ export function ChatThread({ thread, onCard, onQuickAnswer, busyCard, episode = 
                   ) : null}
                   {card === "approve" && turn.stage_key === KIT_GATE ? (
                     <KitRenderCard key={renderDefault} turn={turn} busy={busyCard === card} initial={renderDefault} onCard={onCard} />
+                  ) : card === "render" ? (
+                    <div className="chat-card">
+                      <span>{t("chat.cards.render.question")}</span>
+                      <button type="button" className="chat-card__button" disabled={busyCard === "render"} onClick={() => onCard("render", turn)}>
+                        {t("chat.cards.render.button")}
+                      </button>
+                      <button type="button" className="chat-card__button" onClick={() => onCard("renderFinal", turn)}>{t("chat.cards.render.final")}</button>
+                    </div>
                   ) : card ? (
                     <div className="chat-card">
                       <span>{t(`chat.cards.${card}.question`, { step: step ? t(stepLabelKey(step)) : "" })}</span>

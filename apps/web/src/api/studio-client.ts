@@ -562,8 +562,9 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     patchEpisode(productionId: string, episodeId: string, data: EpisodePatch): Promise<EpisodeDetail> {
       return request<EpisodeDetail>(getAccessToken, "PATCH", `/api/productions/${productionId}/episodes/${episodeId}`, data);
     },
-    rerenderEpisode(productionId: string, episodeId: string): Promise<{ runId: string }> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/rerender`);
+    /** Render lại; `renderMachine` is the farm machine type of the final render (none: the run's, or any). */
+    rerenderEpisode(productionId: string, episodeId: string, renderMachine?: RenderMachine): Promise<{ runId: string; from: NonNullable<EpisodeRender["restartFrom"]> }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/rerender`, renderMachine ? { renderMachine } : undefined);
     },
     cancelEpisode(productionId: string, episodeId: string): Promise<void> {
       return request<void>(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/cancel`);
