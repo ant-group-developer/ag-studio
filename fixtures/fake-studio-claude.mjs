@@ -9,7 +9,7 @@
 // FAKE_STUDIO_MODE, comma-separated:
 //   plan-bad-once     plan-episodes answers with an unknown asset_id the first time, valid on repair
 //   rate-limit-once   the first call in a workspace prints the subscription-limit message and exits 1
-import { appendFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 if (process.argv[2] === "--version") { console.log("fake-studio-claude 2.0.0"); process.exit(0); }
@@ -320,8 +320,83 @@ function chat() {
   return { reply: `Đã sửa theo góp ý: ${msg.slice(0, 60)}`, action: "revise", proposal: bad ? { schema_version: "broken" } : reviseDoc(current ?? {}) };
 }
 
+// ---------------------------------------------------------------------------
+// Shot-cut skills (phase 5). The scene selection runs in files mode: it writes output/survey.json itself and answers
+// with a session id; "--resume <id>" stands in for Claude remembering what it saw (the inputs it was given are kept
+// in logs/fake-session-<id>.json of the workspace).
+// ---------------------------------------------------------------------------
+
+const resumeIdx = process.argv.indexOf("--resume");
+const resumed = resumeIdx > 0 ? process.argv[resumeIdx + 1] : null;
+function sessionInputs() {
+  if (!resumed) return inputs;
+  const p = join(cwd, "logs", `fake-session-${resumed}.json`);
+  return existsSync(p) ? { ...JSON.parse(readFileSync(p, "utf8")), ...inputs } : inputs;
+}
+function newSession(kept) {
+  const id = resumed ? `${resumed}-r` : `fake-sess-${n}`;
+  writeFileSync(join(cwd, "logs", `fake-session-${id}.json`), JSON.stringify(kept));
+  return id;
+}
+
+/** Every shot usable (score 4) but the first, which is too shaky, unless FAKE_STUDIO_MODE has "survey-keep-all". */
+function sourceSurvey(kept) {
+  const repairingFile = stdin.includes("bị hệ thống kiểm tra từ chối");
+  const shots = (kept.shots?.sources ?? []).flatMap((src) => (src.shots ?? []).map((x) => ({ src, x })));
+  const rows = shots.map(({ src, x }, i) => {
+    const reject = i === 0 && !modes.has("survey-keep-all") && shots.length > 1;
+    return {
+      source_id: src.source_id, shot_id: x.shot_id, in: x.in, out: x.out, score: reject ? 1 : 4, tags: reject ? ["rung"] : ["phố"],
+      usable: !reject, note: reject ? "Loại: rung mạnh" : `Cảnh ${x.shot_id} dùng được`, speech: src.has_audio ? "ambient" : "none",
+    };
+  });
+  // "survey-bad-once": the first answer forgets the last shot; the repair (resumed session) adds it back
+  if (modes.has("survey-bad-once") && !repairingFile) rows.pop();
+  return { schema_version: "harness.survey-index/v2", shots: rows };
+}
+
+/** Usable shots in order, 2–4 s pieces from each shot's start until the target is reached; a line every 3 shots. */
+function editPlan() {
+  const survey = inputs.survey_index ?? { shots: [] };
+  const sources = inputs.cut_sources ?? { narration: "tts", language: "vi", episode_id: "e" };
+  const episode = inputs.studio_episode ?? {};
+  const target = episode.target_seconds ?? 60;
+  const narration = sources.narration ?? "tts";
+  const usable = (survey.shots ?? []).filter((r) => r.usable);
+  const shots = [];
+  let total = 0;
+  for (const r of usable) {
+    if (total >= target) break;
+    const length = Math.min(4, Math.max(0.5, r.out - r.in - 0.5));
+    const order = shots.length + 1;
+    shots.push({
+      order, shot_id: r.shot_id, source_id: r.source_id, in: r.in, out: Math.round((r.in + length) * 1000) / 1000,
+      line_id: narration === "tts" && order % 3 === 1 ? `L${String(Math.floor(order / 3) + 1).padStart(3, "0")}` : null,
+      transition: r.out - r.in - length >= 0.5 && order % 2 === 1 ? "dissolve" : "cut", section_title: null, note: r.note.slice(0, 100),
+    });
+    total += length;
+  }
+  const lines = shots.filter((x) => x.line_id).map((x) => ({ line_id: x.line_id, text: `Câu dẫn ${x.line_id} về cảnh này.` }));
+  if (modes.has("edit-plan-bad-once") && !repairing && shots[0]) shots[0].in = -1;
+  return {
+    schema_version: "studio.edit-plan/v1", episode_id: sources.episode_id ?? episode.episode_id ?? "e", narration, language: sources.language ?? "vi",
+    target_seconds: target, shots, lines,
+    texts: shots.length ? [{ text_id: "T001", kind: "title", text: (episode.title ?? "Tập").slice(0, 64), at_order: 1, offset_s: 0.3, duration: 3, position: "top_left" }] : [],
+    music_mood: "calm",
+  };
+}
+
+if (skill === "studio-source-survey" && !stdin.includes("\n# Góp ý\n")) {
+  const kept = sessionInputs();
+  mkdirSync(join(cwd, "output"), { recursive: true });
+  writeFileSync(join(cwd, "output", "survey.json"), JSON.stringify(sourceSurvey(kept), null, 2));
+  process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "Đã ghi output/survey.json", session_id: newSession(kept), total_cost_usd: 0, num_turns: 3 }) + "\n");
+  process.exit(0);
+}
+
 let out;
 if (stdin.includes("\n# Góp ý\n")) out = chat();
+else if (skill === "studio-edit-plan") out = editPlan();
 else if (skill === "studio-trend-report") out = trendReport();
 else if (skill === "studio-rnd") out = rnd();
 else if (skill === "studio-branding") out = branding();

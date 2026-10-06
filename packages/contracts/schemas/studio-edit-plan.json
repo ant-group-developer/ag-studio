@@ -1,0 +1,220 @@
+{
+  "$ref": "#/definitions/studio-edit-plan",
+  "definitions": {
+    "studio-edit-plan": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.edit-plan/v1"
+        },
+        "episode_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "narration": {
+          "type": "string",
+          "enum": [
+            "none",
+            "tts",
+            "original"
+          ]
+        },
+        "language": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 10
+        },
+        "target_seconds": {
+          "type": "number",
+          "minimum": 10,
+          "maximum": 3600
+        },
+        "shots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "order": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "shot_id": {
+                "type": "string",
+                "pattern": "^s\\d{3}-\\d{3}$"
+              },
+              "source_id": {
+                "type": "string",
+                "pattern": "^src_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "in": {
+                "type": "number",
+                "minimum": 0
+              },
+              "out": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "line_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^L\\d{3}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "transition": {
+                "type": "string",
+                "enum": [
+                  "cut",
+                  "dissolve"
+                ]
+              },
+              "section_title": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 300
+              }
+            },
+            "required": [
+              "order",
+              "shot_id",
+              "source_id",
+              "in",
+              "out",
+              "line_id",
+              "transition",
+              "section_title",
+              "note"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 400
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "line_id": {
+                "type": "string",
+                "pattern": "^L\\d{3}$"
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1200
+              }
+            },
+            "required": [
+              "line_id",
+              "text"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 300
+        },
+        "texts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "text_id": {
+                "type": "string",
+                "pattern": "^T\\d{3}$"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "title",
+                  "callout",
+                  "lower_third"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "at_order": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "offset_s": {
+                "type": "number",
+                "minimum": 0
+              },
+              "duration": {
+                "type": "number",
+                "minimum": 0.5,
+                "maximum": 20
+              },
+              "position": {
+                "type": "string",
+                "enum": [
+                  "top_left",
+                  "top_center",
+                  "top_right",
+                  "center",
+                  "bottom_left",
+                  "bottom_center",
+                  "bottom_right"
+                ]
+              }
+            },
+            "required": [
+              "text_id",
+              "kind",
+              "text",
+              "at_order",
+              "offset_s",
+              "duration",
+              "position"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 30
+        },
+        "music_mood": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 40
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "episode_id",
+        "narration",
+        "language",
+        "target_seconds",
+        "shots",
+        "lines",
+        "texts",
+        "music_mood"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
