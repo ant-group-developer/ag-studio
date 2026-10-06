@@ -12,7 +12,7 @@
 import {
   upgradeTimelineV3,
   type CaptionMode, type EpisodeAsset, type StudioMusic, type TimelineClipV4, type TimelineOp, type TimelineText,
-  type TimelineTransitionKind, type TimelineV3, type TimelineV4,
+  type StoredTimeline, type TimelineTransitionKind, type TimelineV4,
 } from "@harness/contracts";
 
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
@@ -22,7 +22,8 @@ const RANGE_SLACK = 0.05;
 /** Shortest clip a shot-cut episode may hold. */
 export const MIN_CLIP_SECONDS = 0.5;
 
-export type AnyTimeline = TimelineV3 | TimelineV4;
+/** A timeline of either version (`StoredTimeline` of contracts). */
+export type AnyTimeline = StoredTimeline;
 
 export function isTimelineV4(t: AnyTimeline): t is TimelineV4 {
   return t.schema_version === "studio.timeline/v4";

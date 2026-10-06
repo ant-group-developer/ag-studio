@@ -7,8 +7,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import {
-  HarnessError, StudioBrandingSchema, StudioRndSchema, TimelineV3Schema,
-  type ChannelRef, type StudioBranding, type StudioHints, type StudioRnd, type TimelineV3,
+  HarnessError, StoredTimelineSchema, StudioBrandingSchema, StudioRndSchema, timelineAsVersion, timelineVersion,
+  type ChannelRef, type StoredTimeline, type StudioBranding, type StudioHints, type StudioRnd,
 } from "@harness/contracts";
 
 type Param = string | number | null;
@@ -149,20 +149,30 @@ export function saveTrendReport(db: StudioDb, productionId: string, report: unkn
 // Episode revisions (per-episode timeline revisions)
 // ---------------------------------------------------------------------------
 
+/**
+ * `data` is the timeline as stored, in its own version (v3 for whole-video episodes made before timeline v4, v4 for
+ * shot-cut episodes): edits return the version they are given, and a save writes the episode's version (ADR item 151).
+ */
 export interface EpisodeRevision {
-  revision: number; base_revision: number; data: TimelineV3;
+  revision: number; base_revision: number; data: StoredTimeline;
   author_id: string; label: string | null; created_at: string;
 }
 
 export function latestEpisodeRevision(db: StudioDb, episodeId: string): EpisodeRevision | null {
   const row = db.get<{ revision: number; base_revision: number; data: string; author_id: string; label: string | null; created_at: string }>(
     "SELECT revision, base_revision, data, author_id, label, created_at FROM episode_revisions WHERE episode_id = ? ORDER BY revision DESC LIMIT 1", [episodeId]);
-  return row ? { ...row, data: TimelineV3Schema.parse(JSON.parse(row.data)) } : null;
+  return row ? { ...row, data: StoredTimelineSchema.parse(JSON.parse(row.data)) } : null;
 }
 export function getEpisodeRevision(db: StudioDb, episodeId: string, revision: number): EpisodeRevision | null {
   const row = db.get<{ revision: number; base_revision: number; data: string; author_id: string; label: string | null; created_at: string }>(
     "SELECT revision, base_revision, data, author_id, label, created_at FROM episode_revisions WHERE episode_id = ? AND revision = ?", [episodeId, revision]);
-  return row ? { ...row, data: TimelineV3Schema.parse(JSON.parse(row.data)) } : null;
+  return row ? { ...row, data: StoredTimelineSchema.parse(JSON.parse(row.data)) } : null;
+}
+
+/** The timeline version of an episode: that of its first revision, `null` before it has one. */
+export function episodeTimelineVersion(db: StudioDb, episodeId: string): 3 | 4 | null {
+  const row = db.get<{ data: string }>("SELECT data FROM episode_revisions WHERE episode_id = ? ORDER BY revision ASC LIMIT 1", [episodeId]);
+  return row ? timelineVersion(JSON.parse(row.data)) : null;
 }
 export function listEpisodeRevisions(db: StudioDb, episodeId: string): Omit<EpisodeRevision, "data">[] {
   return db.all("SELECT revision, base_revision, author_id, label, created_at FROM episode_revisions WHERE episode_id = ? ORDER BY revision DESC", [episodeId]);
@@ -176,9 +186,12 @@ export class RevisionConflictError extends Error {
   }
 }
 
-export function saveEpisodeRevision(db: StudioDb, episodeId: string, p: { baseRevision: number; data: TimelineV3; authorId: string; label?: string | null }): { revision: number } {
-  const data = TimelineV3Schema.parse(p.data);
-  if (data.episode_id !== episodeId) throw new HarnessError("SCHEMA_INVALID", `timeline belongs to episode ${data.episode_id}`, {});
+/** Throws `TimelineVersionError` when a v3 episode is sent a v4 timeline it cannot hold. */
+export function saveEpisodeRevision(db: StudioDb, episodeId: string, p: { baseRevision: number; data: StoredTimeline; authorId: string; label?: string | null }): { revision: number } {
+  const given = StoredTimelineSchema.parse(p.data);
+  if (given.episode_id !== episodeId) throw new HarnessError("SCHEMA_INVALID", `timeline belongs to episode ${given.episode_id}`, {});
+  const version = episodeTimelineVersion(db, episodeId);
+  const data = version ? timelineAsVersion(given, version) : given;
   return db.immediate(() => {
     const current = db.get<{ r: number | null }>("SELECT MAX(revision) AS r FROM episode_revisions WHERE episode_id = ?", [episodeId])?.r ?? 0;
     if (current !== p.baseRevision) throw new RevisionConflictError(current, p.baseRevision);

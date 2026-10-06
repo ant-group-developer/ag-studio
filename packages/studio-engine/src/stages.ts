@@ -11,14 +11,14 @@ import { join } from "node:path";
 import JSZip from "yazl";
 import {
   HarnessError, MAX_RESEARCH_CHANNELS, SeriesPlanSchema, SpawnedEpisodesSchema, StudioBrandingSchema, StudioBriefSchema, StudioCatalogSchema,
-  StudioEpisodeSchema, StudioExportSchema, StudioResearchSchema, StudioRndSchema, StudioSeedSchema, StudioYoutubeSchema, TimelineV3Schema,
+  StudioEpisodeSchema, StudioExportSchema, StudioResearchSchema, StudioRndSchema, StudioSeedSchema, StudioYoutubeSchema, StoredTimelineSchema,
   TrendReportSchema, parseStoredYoutubeKit,
   type ChannelRef, type ExecutorContext, type StageRequest, type StudioBrief, type StudioCatalog, type StudioExport,
-  type StudioEpisode, type TrendReport, StudioThumbnailsSchema, THUMBNAIL_SIZES, type StudioThumbnails,
+  type StudioEpisode, type TrendReport, StudioThumbnailsSchema, THUMBNAIL_SIZES, type StudioThumbnails, type StoredTimeline,
 } from "@harness/contracts";
 import {
   buildEpisodeTimeline, effectiveBrief, formatChapters, frameCandidateTimes, inputPath, layoutTimeline, normalizeCatalogVideo,
-  orientationFits, prefilterCatalog, STUDIO_TYPES, suggestionFrame, thumbnailStyle, thumbnailTextLines, timelineIssues, youtubeChapters,
+  orientationFits, prefilterCatalog, STUDIO_TIMELINE_TYPES, STUDIO_TYPES, suggestionFrame, thumbnailStyle, thumbnailTextLines, timelineIssues, youtubeChapters,
   type AgGoFootageVideo,
 } from "@harness/core";
 import type { InProcessStage } from "@harness/executors";
@@ -63,6 +63,11 @@ export function readInput<T>(request: StageRequest, workspaceDir: string, type: 
   const p = inputPath({ request, workspaceDir }, type);
   if (!p || !existsSync(p)) throw new HarnessError("NOT_FOUND", `stage ${request.stage_key} has no ${type} input`, { type });
   return parse(JSON.parse(readFileSync(p, "utf8")));
+}
+/** The timeline input of a stage, v3 (`timeline_v3`) or v4 (`timeline_v4`), as stored. */
+export function readTimelineInput(request: StageRequest, workspaceDir: string): StoredTimeline {
+  const type = STUDIO_TIMELINE_TYPES.find((t) => request.inputs.some((i) => i.type === t)) ?? STUDIO_TYPES.timeline;
+  return readInput(request, workspaceDir, type, (v) => StoredTimelineSchema.parse(v));
 }
 export const readBrief = (r: StageRequest, ws: string) => readInput(r, ws, STUDIO_TYPES.brief, (v) => StudioBriefSchema.parse(v));
 export const readCatalog = (r: StageRequest, ws: string) => readInput(r, ws, STUDIO_TYPES.catalog, (v) => StudioCatalogSchema.parse(v));
@@ -428,7 +433,7 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
      * the latest revision: an edit made after approving is not rendered until it is approved too.
      */
     "studio-freeze-timeline-v2": async (request, ctx) => {
-      const timeline = readInput(request, ctx.workspaceDir, STUDIO_TYPES.timeline, (v) => TimelineV3Schema.parse(v));
+      const timeline = readTimelineInput(request, ctx.workspaceDir);
       const errors = timelineIssues(timeline).filter((i) => i.severity === "error");
       if (errors.length) {
         throw new HarnessError("SCHEMA_INVALID", `approved timeline: ${errors.map((e) => e.message).join("; ")}`, { problems: errors });
@@ -441,7 +446,7 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       const ws = ctx.workspaceDir;
       const brief = readBrief(request, ws);
       const episode = readInput(request, ws, STUDIO_TYPES.episode, (v) => StudioEpisodeSchema.parse(v));
-      const timeline = readInput(request, ws, STUDIO_TYPES.timeline, (v) => TimelineV3Schema.parse(v));
+      const timeline = readTimelineInput(request, ws);
       const kitRaw = readInput(request, ws, STUDIO_TYPES.youtubeKit, parseStoredYoutubeKit);
       const videoPath = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.finalVideo);
       const manifest = readInput(request, ws, STUDIO_TYPES.renderManifest, (v) => v as { watermarked?: boolean; duration_s?: number; thumbnails?: unknown[] });
@@ -549,7 +554,7 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       const ws = ctx.workspaceDir;
       const brief = readBrief(request, ws);
       const episode = readInput(request, ws, STUDIO_TYPES.episode, (v) => StudioEpisodeSchema.parse(v));
-      const timeline = readInput(request, ws, STUDIO_TYPES.timeline, (v) => TimelineV3Schema.parse(v));
+      const timeline = readTimelineInput(request, ws);
       const ep = getEpisode(d.db, episode.episode_id);
       const kit = ep?.youtube ? parseStoredYoutubeKit(JSON.parse(ep.youtube)) : readInput(request, ws, STUDIO_TYPES.youtubeKit, parseStoredYoutubeKit);
       const brandingPath = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.branding);
@@ -596,7 +601,7 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       const ws = ctx.workspaceDir;
       const brief = readBrief(request, ws);
       const episode = readInput(request, ws, STUDIO_TYPES.episode, (v) => StudioEpisodeSchema.parse(v));
-      const timeline = readInput(request, ws, STUDIO_TYPES.timeline, (v) => TimelineV3Schema.parse(v));
+      const timeline = readTimelineInput(request, ws);
       const kitRaw = readInput(request, ws, STUDIO_TYPES.youtubeKit, parseStoredYoutubeKit);
       const thumbs = readInput(request, ws, STUDIO_TYPES.thumbnails, (v) => StudioThumbnailsSchema.parse(v));
       const thumbDir = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.thumbnailSet);

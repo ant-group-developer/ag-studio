@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { CheckerInput } from "@harness/contracts";
+import { TimelineV3Schema, upgradeTimelineV3, type CheckerInput } from "@harness/contracts";
 import {
   seriesPlanValidChecker, timelineSchemaValidChecker, timelineValidChecker, trendReportValidChecker,
   youtubeKitValidChecker, STUDIO_TYPES,
@@ -165,6 +165,24 @@ describe("studio checkers through the Checker interface", () => {
     const r2 = await timelineValidChecker.check(workspace({}, { [STUDIO_TYPES.timeline]: bad }));
     expect(r2.verdict).toBe("fail");
     expect(JSON.stringify(r2.evidence)).toContain("unknown_asset");
+  });
+
+  it("the timeline checkers read a v4 timeline of a shot-cut episode (type timeline_v4)", async () => {
+    const v4 = {
+      ...upgradeTimelineV3(TimelineV3Schema.parse(timeline())),
+      edit_style: "cut",
+      clips: [{ clip_id: "C001", asset_id: "a01", section_title: null, in: 1, out: 4, shot_id: "s000-001", line_id: null, transition_out: { kind: "cut", seconds: 0 } }],
+    };
+    expect((await timelineSchemaValidChecker.check(workspace({}, { [STUDIO_TYPES.timelineV4]: v4 }))).verdict).toBe("pass");
+    expect((await timelineValidChecker.check(workspace({}, { [STUDIO_TYPES.timelineV4]: v4 }))).verdict).toBe("pass");
+
+    const beyond = { ...v4, clips: [{ ...v4.clips[0]!, out: 30 }] };
+    const r = await timelineValidChecker.check(workspace({}, { [STUDIO_TYPES.timelineV4]: beyond }));
+    expect(r.verdict).toBe("fail");
+    expect(JSON.stringify(r.evidence)).toContain("bad_range");
+
+    const none = await timelineValidChecker.check(workspace({}, {}));
+    expect(none.verdict).toBe("fail");
   });
 
   it("trend-report-valid passes a good trend report", async () => {

@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TimelineV3Schema, type TimelineV3 } from "@harness/contracts";
+import { StoredTimelineSchema, TimelineVersionError, type StoredTimeline, type TimelineV3 } from "@harness/contracts";
 import { layoutTimeline, timelineIssues, timelineToComposition, youtubeChapters, type TimelineIssue } from "@harness/core";
 import { jobOutputPrefix, stageInputPrefix } from "@harness/executors";
 import { PREMIERE_MANIFEST_PATH, PremiereManifestSchema, RenderManifestSchema, type StudioExportPremierePayload } from "@ag-farm/protocol";
@@ -57,11 +57,17 @@ export function saveEpisodeTimeline(
   db: StudioDb, episodeId: string, p: { baseRevision: number; data: unknown; authorId: string; label?: string },
 ): { revision: number; issues: TimelineIssue[] } {
   if (!getEpisode(db, episodeId)) throw new StudioRunError("not_found", `episode ${episodeId} not found`);
-  const parsed = TimelineV3Schema.safeParse(p.data);
+  const parsed = StoredTimelineSchema.safeParse(p.data);
   if (!parsed.success) {
     throw new StudioRunError("invalid", "timeline không hợp lệ", { problems: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) });
   }
-  const saved = saveEpisodeRevision(db, episodeId, { baseRevision: p.baseRevision, data: parsed.data, authorId: p.authorId, label: p.label ?? "autosave" });
+  let saved: { revision: number };
+  try {
+    saved = saveEpisodeRevision(db, episodeId, { baseRevision: p.baseRevision, data: parsed.data, authorId: p.authorId, label: p.label ?? "autosave" });
+  } catch (e) {
+    if (e instanceof TimelineVersionError) throw new StudioRunError("invalid", "tập này ghép nguyên video: không cắt clip, không chuyển cảnh, không lời dẫn", { code: e.code, problems: [e.message] });
+    throw e;
+  }
   return { revision: saved.revision, issues: timelineIssues(parsed.data) };
 }
 
@@ -209,4 +215,4 @@ export async function startPremiereExport(
   return view(getEpisodeJob(d.db, p.episodeId, id)!);
 }
 
-export type { TimelineV3 };
+export type { StoredTimeline, TimelineV3 };

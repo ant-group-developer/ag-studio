@@ -9,8 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import JSZip from "yazl";
 import {
-  readStoredYoutubeKit, StudioYoutubeSchema, THUMBNAIL_SIZES, THUMBNAIL_TEXT_MAX, ThumbnailStyleSchema, TimelineV3Schema,
-  type StudioExport, type ThumbnailStyle, type TimelineV3, type YoutubeKit,
+  readStoredYoutubeKit, StudioYoutubeSchema, THUMBNAIL_SIZES, THUMBNAIL_TEXT_MAX, ThumbnailStyleSchema, StoredTimelineSchema,
+  type StudioExport, type ThumbnailStyle, type StoredTimeline, type YoutubeKit,
 } from "@harness/contracts";
 import { formatChapters, frameCandidateTimes, layoutTimeline, thumbnailTextLines, youtubeChapters } from "@harness/core";
 import type { StudioBucket } from "./bucket.js";
@@ -66,10 +66,10 @@ function requireExport(core: StudioEngineCore, ep: EpisodeRecord): StudioExport 
 }
 
 /** The timeline the final video was rendered from (kept with the export). */
-async function renderedTimeline(d: ThumbnailActionDeps, exp: StudioExport): Promise<TimelineV3> {
+async function renderedTimeline(d: ThumbnailActionDeps, exp: StudioExport): Promise<StoredTimeline> {
   const f = exp.files.find((x) => x.kind === "timeline");
   if (!f) throw new StudioRunError("conflict", "bản export không có timeline", { code: "no_timeline" });
-  return TimelineV3Schema.parse(JSON.parse((await d.bucket.get(f.key)).toString("utf8")));
+  return StoredTimelineSchema.parse(JSON.parse((await d.bucket.get(f.key)).toString("utf8")));
 }
 
 /** The final video for ffmpeg: the render's copy on this machine, else a short-lived URL of the exported one. */

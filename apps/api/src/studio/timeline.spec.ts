@@ -107,6 +107,22 @@ describe('Timeline revisions over HTTP semantics (autosave + 409)', () => {
     await expect(controller.save(PROD, unknownEp, { baseRevision: 0, data: { ...timeline(), episode_id: unknownEp } }, req('u1'))).rejects.toBeInstanceOf(NotFoundException);
   });
 
+  it('a whole-video (v3) episode keeps v3; a trim it cannot hold is 422 not_v3', async () => {
+    await controller.save(PROD, EP, { baseRevision: 0, data: timeline() }, req('u1'));
+    const v4 = {
+      ...timeline(), schema_version: 'studio.timeline/v4', edit_style: 'whole',
+      clips: [{ clip_id: 'C001', asset_id: 'asset-1', section_title: 'Phở bò', in: 0, out: null, shot_id: null, line_id: null, transition_out: { kind: 'cut', seconds: 0 } }],
+      narration: { voice: 'none', lead_seconds: 0.3, lines: [] }, captions: { mode: 'none' },
+    };
+    const same = await controller.save(PROD, EP, { baseRevision: 1, data: v4 }, req('u1'));
+    expect((await controller.revision(PROD, EP, same.revision)).data.schema_version).toBe('studio.timeline/v3');
+
+    const trimmed = { ...v4, clips: [{ ...v4.clips[0]!, in: 1, out: 4 }] };
+    const err = await controller.save(PROD, EP, { baseRevision: same.revision, data: trimmed }, req('u1')).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UnprocessableEntityException);
+    expect((err as UnprocessableEntityException).getResponse()).toMatchObject({ code: 'not_v3' });
+  });
+
   it('an episode of another production is 404 through this production (the role guard checked this one)', async () => {
     await expect(controller.latest(PROD, 'other-ep')).rejects.toBeInstanceOf(NotFoundException);
     await expect(controller.save(PROD, 'other-ep', { baseRevision: 0, data: timeline() }, req('u1'))).rejects.toBeInstanceOf(NotFoundException);

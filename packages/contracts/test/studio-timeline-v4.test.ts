@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  AnyTimelineSchema, downgradeTimelineV4, readTimeline, TimelineV3Schema, TimelineV4Schema, TimelineVersionError,
-  timelineVersion, upgradeTimelineV3, type TimelineV3, type TimelineV4,
+  AnyTimelineSchema, downgradeTimelineV4, readTimeline, StoredTimelineSchema, timelineAsVersion, TimelineV3Schema, TimelineV4Schema,
+  TimelineVersionError, timelineVersion, upgradeTimelineV3, type TimelineV3, type TimelineV4,
 } from "../src/studio.js";
 
 const V3: TimelineV3 = TimelineV3Schema.parse({
@@ -91,6 +91,16 @@ describe("timeline v4", () => {
     expect(timelineVersion({ schema_version: "studio.timeline/v2" })).toBeNull();
     expect(timelineVersion(null)).toBeNull();
     expect(() => readTimeline({ schema_version: "studio.timeline/v2" })).toThrow();
+  });
+
+  it("keeps a stored timeline in its own version, and converts on request", () => {
+    const cut = cutTimeline();
+    expect(StoredTimelineSchema.parse(V3)).toEqual(V3);
+    expect(StoredTimelineSchema.parse(cut)).toEqual(cut);
+    expect(timelineAsVersion(V3, 3)).toBe(V3);
+    expect(timelineAsVersion(upgradeTimelineV3(V3), 3)).toEqual(V3);
+    expect(timelineAsVersion(V3, 4)).toEqual(upgradeTimelineV3(V3));
+    expect(() => timelineAsVersion(cut, 3)).toThrow(TimelineVersionError);
   });
 
   it("checks a clip's range, its narration line and its transition", () => {

@@ -681,6 +681,19 @@ export function timelineVersion(raw: unknown): 3 | 4 | null {
   return v === "studio.timeline/v3" ? 3 : v === "studio.timeline/v4" ? 4 : null;
 }
 
+/** A timeline as stored: either version, kept as it is (edits return the version they were given). */
+export const StoredTimelineSchema = z.union([TimelineV4Schema, TimelineV3Schema]);
+export type StoredTimeline = TimelineV3 | TimelineV4;
+
+/**
+ * `timeline` in the version `version` (the version an episode's timeline was first stored in): a v3 episode keeps
+ * v3 — a v4 document is written down to v3 when nothing is lost, else `TimelineVersionError`.
+ */
+export function timelineAsVersion(t: StoredTimeline, version: 3 | 4): StoredTimeline {
+  if (version === 4) return t.schema_version === "studio.timeline/v4" ? t : upgradeTimelineV3(t);
+  return t.schema_version === "studio.timeline/v3" ? t : downgradeTimelineV4(t);
+}
+
 /** Either version, read as v4. */
 export const AnyTimelineSchema = z.union([TimelineV4Schema, TimelineV3Schema.transform(upgradeTimelineV3)]);
 

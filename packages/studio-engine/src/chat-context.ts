@@ -14,11 +14,12 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
   IntakeDraftSchema, STUDIO_CHAT_SKILL_STEP, STUDIO_SKILL_OUTPUTS, STUDIO_SKILL_STEP, StudioEpisodeSchema, TimelineChatProposalSchema,
-  TimelineV3Schema, teamGuidesForStep,
-  type IntakeDraft, type StudioChatSkill, type StudioSkill, type TeamGuide, type TimelineChatProposal, type TimelineV3,
+  StoredTimelineSchema, teamGuidesForStep,
+  type IntakeDraft, type StudioChatSkill, type StudioSkill, type TeamGuide, type TimelineChatProposal, type StoredTimeline,
 } from "@harness/contracts";
 import {
-  acceptedInputsFor, applyTimelineOps, buildStageRequest, isTerminal, layoutTimeline, materializeInputs, timelineIssues, TimelineOpError,
+  acceptedInputsFor, applyTimelineOps, buildStageRequest, isTerminal, isTimelineV4, layoutTimeline, materializeInputs, timelineIssues,
+  TimelineOpError,
 } from "@harness/core";
 import { studioPromptHead, studioValidator, teamGuidesSection } from "@harness/executors";
 import type { StudioEngineCore } from "./core.js";
@@ -45,7 +46,7 @@ export const GATE_SOURCES: Record<string, { stage: string; skill: StudioSkill | 
 export interface ChatValidation { ok: boolean; value: unknown; problems: ChatProblem[]; warnings: ChatProblem[] }
 
 /** A timeline proposal as kept in the chat: the edits, the timeline they give, and the revision they apply to. */
-export interface TimelineProposal extends TimelineChatProposal { base_revision: number; timeline: TimelineV3 }
+export interface TimelineProposal extends TimelineChatProposal { base_revision: number; timeline: StoredTimeline }
 
 export interface ChatContext {
   key: ChatScopeKey;
@@ -179,15 +180,30 @@ function timelineContext(core: StudioEngineCore, db: StudioDb, key: ChatScopeKey
     proposalSchema: TimelineChatProposalSchema,
     prepare: async () => {
       const laid = layoutTimeline(latest.data);
+      // A shot-cut episode shows Claude each clip's range, transition and narration; a whole-video one the same as before.
+      const shots = isTimelineV4(latest.data) && latest.data.edit_style === "cut" ? latest.data : null;
+      const cutStyle = shots !== null;
       const head = [
-        `Tập ${ep.idx}: ${ep.title}. Timeline hiện tại là bản ${latest.revision}. Clip ghép nguyên video, nối tiếp nhau, không cắt.`,
+        `Tập ${ep.idx}: ${ep.title}. Timeline hiện tại là bản ${latest.revision}. ${cutStyle
+          ? "Tập cắt theo shot: mỗi clip lấy đoạn [in, out) giây của video (out null = tới hết video), nối tiếp nhau; lời dẫn đọc từ clip neo nó (line_id). Sửa đoạn bằng trimClip, chuyển cảnh bằng setTransition, phụ đề bằng setCaptions; lời dẫn không sửa ở đây."
+          : "Clip ghép nguyên video, nối tiếp nhau, không cắt."}`,
         ...(() => { const g = guidesFor(db, p.team_id, "studio-timeline"); return g.length ? ["", ...teamGuidesSection(g)] : []; })(),
         "", "# Dữ liệu vào",
         "", "## Video tập này được dùng (asset_id → mô tả)", "```json", JSON.stringify(allowed, null, 2), "```",
         "", "## Timeline (thời điểm tính bằng giây)", "```json",
         JSON.stringify({
-          clips: laid.clips.map((c, i) => ({ index: i, clip_id: c.clip_id, asset_id: c.asset_id, start: c.start, end: c.end, section_title: c.section_title })),
+          clips: laid.clips.map((c, i) => ({
+            index: i, clip_id: c.clip_id, asset_id: c.asset_id, start: c.start, end: c.end, section_title: c.section_title,
+            ...(cutStyle ? { in: c.in, out: c.out, shot_id: c.shot_id, line_id: c.line_id, transition_out: c.transition_out } : {}),
+          })),
           texts: latest.data.texts, music: latest.data.music, source_audio: latest.data.source_audio, duration: laid.duration,
+          ...(shots ? {
+            narration: {
+              voice: shots.narration.voice,
+              lines: laid.lines.map((l) => ({ ...l, text: shots.narration.lines.find((x) => x.line_id === l.line_id)?.text ?? "" })),
+            },
+            captions: shots.captions,
+          } : {}),
         }, null, 2), "```",
         ...(episode ? ["", "## Kế hoạch của tập", "```json", JSON.stringify({ title: episode.title, hook: episode.hook, logline: episode.logline }, null, 2), "```"] : []),
       ].join("\n");
@@ -196,8 +212,8 @@ function timelineContext(core: StudioEngineCore, db: StudioDb, key: ChatScopeKey
         validate: (raw) => {
           const parsed = TimelineChatProposalSchema.safeParse(raw);
           if (!parsed.success) return { ok: false, value: undefined, problems: parsed.error.issues.map((x) => ({ code: "schema", message: `${x.path.join(".")}: ${x.message}` })), warnings: [] };
-          let timeline: TimelineV3;
-          try { timeline = TimelineV3Schema.parse(applyTimelineOps(latest.data, parsed.data.ops, allowed)); }
+          let timeline: StoredTimeline;
+          try { timeline = StoredTimelineSchema.parse(applyTimelineOps(latest.data, parsed.data.ops, allowed)); }
           catch (e) {
             const code = e instanceof TimelineOpError ? e.code : "schema";
             return { ok: false, value: undefined, problems: [{ code, message: e instanceof Error ? e.message : String(e) }], warnings: [] };

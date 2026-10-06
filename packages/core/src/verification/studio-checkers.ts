@@ -10,7 +10,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   StudioBrandingSchema, StudioBriefSchema, StudioCatalogSchema, StudioEpisodeSchema, StudioExportSchema, StudioSeedSchema, StudioThumbnailsSchema,
-  TimelineV3Schema,
+  StoredTimelineSchema,
   TrendReportSchema,
   type CatalogAsset, type Checker, type CheckerInput, type StudioBranding, type StudioBrief, type StudioCatalog, type StudioSeed,
 } from "@harness/contracts";
@@ -36,6 +36,8 @@ export const STUDIO_TYPES = {
   episodes: "studio_episodes",
   episode: "studio_episode",
   timeline: "timeline_v3",
+  /** Timeline v4 of a shot-cut episode (`ag-studio-episode-cut`). */
+  timelineV4: "timeline_v4",
   youtubeKit: "youtube_kit",
   finalVideo: "final_video",
   renderManifest: "render_manifest",
@@ -45,6 +47,9 @@ export const STUDIO_TYPES = {
   youtube: "studio_youtube",
   export: "studio_export",
 } as const;
+
+/** A timeline artifact of either version, in the order a stage or checker looks for them. */
+export const STUDIO_TIMELINE_TYPES = [STUDIO_TYPES.timeline, STUDIO_TYPES.timelineV4] as const;
 
 export class StudioInputError extends Error {}
 
@@ -83,13 +88,14 @@ function fromValidation(v: StudioValidation<unknown>): Verdict {
   return v.ok ? { verdict: "pass", evidence: { warnings: v.warnings } } : { verdict: "fail", evidence: { problems: v.problems } };
 }
 
-function documentChecker(id: string, outputType: string, validate: (raw: unknown, input: CheckerInput) => Verdict): Checker {
+function documentChecker(id: string, outputType: string | readonly string[], validate: (raw: unknown, input: CheckerInput) => Verdict): Checker {
+  const types = typeof outputType === "string" ? [outputType] : outputType;
   return {
     id, version: "1.0.0",
     async check(input) {
       if (input.result.outcome === "deferred") return { verdict: "skip", evidence: { reason: "gate waiting for input" } };
-      const p = outputPath(input, outputType);
-      if (!p || !existsSync(p)) return { verdict: "fail", evidence: { reason: `no ${outputType} output` } };
+      const p = types.map((t) => outputPath(input, t)).find((x) => x !== null) ?? null;
+      if (!p || !existsSync(p)) return { verdict: "fail", evidence: { reason: `no ${types.join(" or ")} output` } };
       let raw: unknown;
       try { raw = readJson(p); } catch (e) { return { verdict: "fail", evidence: { reason: "output is not JSON", error: String(e) } }; }
       try { return validate(raw, input); }
@@ -123,14 +129,14 @@ export const rndValidChecker = documentChecker("rnd-valid", STUDIO_TYPES.rnd,
 export const brandingValidChecker = documentChecker("branding-valid", STUDIO_TYPES.branding,
   (raw) => fromValidation(validateBranding(raw)));
 
-export const timelineSchemaValidChecker = documentChecker("timeline-schema-valid", STUDIO_TYPES.timeline, (raw) => {
-  const r = TimelineV3Schema.safeParse(raw);
+export const timelineSchemaValidChecker = documentChecker("timeline-schema-valid", STUDIO_TIMELINE_TYPES, (raw) => {
+  const r = StoredTimelineSchema.safeParse(raw);
   if (!r.success) return { verdict: "fail", evidence: { problems: r.error.issues.map((x) => `${x.path.join(".")}: ${x.message}`) } };
   return { verdict: "pass", evidence: { issues: timelineIssues(r.data) } };
 });
 
-export const timelineValidChecker = documentChecker("timeline-valid", STUDIO_TYPES.timeline, (raw) => {
-  const r = TimelineV3Schema.safeParse(raw);
+export const timelineValidChecker = documentChecker("timeline-valid", STUDIO_TIMELINE_TYPES, (raw) => {
+  const r = StoredTimelineSchema.safeParse(raw);
   if (!r.success) return { verdict: "fail", evidence: { problems: r.error.issues.map((x) => `${x.path.join(".")}: ${x.message}`) } };
   const errors = timelineIssues(r.data).filter((x) => x.severity === "error");
   return errors.length ? { verdict: "fail", evidence: { problems: errors } } : { verdict: "pass", evidence: {} };
@@ -160,9 +166,9 @@ export function studioRenderValidChecker(opts: { ffmpeg?: string } = {}): Checke
       if (!video || !existsSync(video)) return { verdict: "fail", evidence: { reason: "no final video" } };
       if (!manifestPath || !existsSync(manifestPath)) return { verdict: "fail", evidence: { reason: "no render manifest" } };
       const m = readJson(manifestPath) as { schema?: string; width?: number; height?: number; duration_s?: number; size_bytes?: number; watermarked?: boolean; thumbnails?: unknown[] };
-      const tlPath = inputPath(input, STUDIO_TYPES.timeline);
+      const tlPath = STUDIO_TIMELINE_TYPES.map((type) => inputPath(input, type)).find((x) => x !== null) ?? null;
       if (!tlPath || !existsSync(tlPath)) return { verdict: "fail", evidence: { reason: "no timeline input" } };
-      const t = TimelineV3Schema.parse(readJson(tlPath));
+      const t = StoredTimelineSchema.parse(readJson(tlPath));
       const expected = layoutTimeline(t).duration;
       const problems: string[] = [];
       if (m.schema !== "ag.studio.render/v1") problems.push(`render.json schema ${String(m.schema)}`);
