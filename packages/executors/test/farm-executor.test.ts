@@ -193,3 +193,37 @@ describe("FarmExecutor skip (phase 5): a builder with nothing to send", () => {
     expect(f.submitted).toEqual([]);
   });
 });
+
+describe("FarmExecutor studio.transcribe (phase 5)", () => {
+  const manifest = (sources: unknown[]) => JSON.stringify({ schema: "ag.studio.transcribe/v1", production_id: "prod-9", engine: { name: "whisperx:large-v3", version: null }, sources });
+  const payload = { production_id: "prod-9", model: "large-v3", sources: [{ source_id: "src_A", audio: "stage:audio/src_A.wav", language: null }], align_words: true };
+  const expected: StageRequest["expected_outputs"] = [{ type: "transcript", mime_type: "application/json", kind: "file", name: "transcribe.json" }];
+
+  it("checks the payload, submits it and keeps the checked manifest as the output", async () => {
+    const f = fakes({ "transcribe.json": manifest([{ source_id: "src_A", language: "vi", alignment: "word", segments: [] }]) }, "transcribe.json");
+    const req = request({ __farm_job: "studio.transcribe", payload_builder: "t" }, expected);
+    const ex = new FarmExecutor({ client: f.client as never, storage: f.storage, pollIntervalMs: 1, payloadBuilders: { t: async () => ({ productionId: "prod-9", payload }) } });
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.outcome, JSON.stringify(res.errors)).toBe("succeeded");
+    expect(f.submitted[0]).toMatchObject({ type: "studio.transcribe", payload });
+    expect(res.outputs.map((o) => o.type)).toEqual(["transcript"]);
+  });
+
+  it("a payload the farm would refuse is a contract failure before anything is sent", async () => {
+    const f = fakes({}, "transcribe.json");
+    const req = request({ __farm_job: "studio.transcribe", payload_builder: "t" }, expected);
+    const ex = new FarmExecutor({ client: f.client as never, storage: f.storage, pollIntervalMs: 1, payloadBuilders: { t: async () => ({ productionId: "prod-9", payload: { ...payload, sources: [] } }) } });
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.errors[0]).toMatchObject({ kind: "contract" });
+    expect(f.submitted).toEqual([]);
+  });
+
+  it("a manifest that is not a transcription is a contract failure", async () => {
+    const f = fakes({ "transcribe.json": JSON.stringify({ schema: "ag.studio.tts/v1" }) }, "transcribe.json");
+    const req = request({ __farm_job: "studio.transcribe", payload_builder: "t" }, expected);
+    const ex = new FarmExecutor({ client: f.client as never, storage: f.storage, pollIntervalMs: 1, payloadBuilders: { t: async () => ({ productionId: "prod-9", payload }) } });
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.outcome).toBe("failed");
+    expect(res.errors[0]).toMatchObject({ kind: "contract" });
+  });
+});

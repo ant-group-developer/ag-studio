@@ -41,6 +41,9 @@ export const STUDIO_TYPES = {
   /** Shot-cut episodes (`ag-studio-episode-cut`): the videos, their 720p proxies. */
   cutSources: "cut_sources",
   proxySet: "proxy_set",
+  /** `harness.shots/v2` of the proxies, and the farm's `transcribe.json` (`ag.studio.transcribe/v1`). */
+  shots: "shots",
+  transcript: "transcript",
   youtubeKit: "youtube_kit",
   finalVideo: "final_video",
   renderManifest: "render_manifest",

@@ -19,7 +19,7 @@ import { renderChoiceFor } from "./render-choice.js";
 import { studioPayloadBuilders } from "./payloads.js";
 import { isRunActive, startEpisodeRun } from "./run-control.js";
 import type { FootageCatalogSource } from "./stages.js";
-import { studioInProcessStages, type CutMediaDeps } from "./cut-stages.js";
+import { cutPayloadBuilders, studioInProcessStages, type CutMediaDeps } from "./cut-stages.js";
 import { teamGuidesForRun } from "./team-skills.js";
 import type { StudioDb } from "./studio-db.js";
 import type { ResearchSource } from "./youtube-research.js";
@@ -92,7 +92,7 @@ function workerFactory(o: StudioWorkerOptions, single: boolean): { next: () => W
     client: o.farm,
     storage: farmStorage(o.bucket),
     onSubmitted: makeStudioFarmRecorder(o.dbPath),
-    payloadBuilders: studioPayloadBuilders({ db: o.db, bucket: o.bucket }),
+    payloadBuilders: { ...studioPayloadBuilders({ db: o.db, bucket: o.bucket }), ...cutPayloadBuilders({ db: o.db, bucket: o.bucket, ...(o.media ? { media: o.media } : {}) }) },
     pollIntervalMs: o.farmPollMs ?? 5000,
     // the machine type picked for this run's render (phase 3); none picked: the farm executor's default
     requirementsFor: (request) => {

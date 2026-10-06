@@ -1,18 +1,26 @@
 /**
  * In-process stages of the shot-cut episode workflow (`ag-studio-episode-cut@1.0.0`, spec local-chat §3.3). They run in
- * the Studio worker and call the harness media pipeline (`@harness/core` media functions) directly — the harness CLI
- * built-ins need an ops project and are not used (ADR-0001 item 153).
+ * the Studio worker and use the pure parts of the harness media pipeline (`buildShots`, `shotId`, …); ffmpeg runs
+ * asynchronously through `cut-ffmpeg.ts` — the harness CLI built-ins need an ops project and spawn synchronously
+ * (ADR-0001 item 153).
  */
-import { mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import {
-  CutProxySetSchema, CutSourcesSchema, HarnessError,
-  type CutProxySet, type CutSources, type ExecutorContext, type StageRequest,
+  CutProxySetSchema, CutSourcesSchema, HarnessError, ShotsIndexSchema,
+  type CutProxySet, type CutSources, type ExecutorContext, type ShotsIndex, type StageRequest, type Transcript,
 } from "@harness/contracts";
-import { STUDIO_TYPES, studioSourceId } from "@harness/core";
-import type { InProcessStage } from "@harness/executors";
+import { StudioTranscribePayloadSchema, TRANSCRIBE_MANIFEST_SCHEMA, type StudioTranscribePayload, type TranscribeManifest } from "@ag-farm/protocol";
+import { buildShots, inputPath, shotId, STUDIO_TYPES, studioSourceId } from "@harness/core";
+import type { FarmPayloadBuild, FarmPayloadBuilder, InProcessStage } from "@harness/executors";
+import { detectCuts, extractAudio16k, probeMedia } from "./cut-ffmpeg.js";
 import { readInput, studioStages, toBuffer, writeEpisodeIntake, writeOutput, type StudioStageDeps } from "./stages.js";
+
+/** Shot detection on the proxies: the harness `media.scene` defaults (ADR-0001 item 113 measured them). */
+export const CUT_SCENE = { threshold: 0.3, min_shot_seconds: 1, max_shot_seconds: 20 } as const;
+/** faster-whisper model for `studio.transcribe`. */
+export const CUT_TRANSCRIBE_MODEL = "large-v3";
 
 /** What a shot-cut episode is read with when its plan says nothing (plans written before the field existed). */
 export const DEFAULT_CUT_NARRATION = "tts" as const;
@@ -38,7 +46,7 @@ export interface CutMediaDeps {
   download(url: string, dest: string): Promise<void>;
 }
 
-function requireMedia(d: StudioStageDeps): CutMediaDeps {
+function requireMedia(d: Pick<StudioStageDeps, "media">): CutMediaDeps {
   if (!d.media) throw new HarnessError("CONFIG_INVALID", "Studio worker này không có công cụ media (ffmpeg, ag-go) để dựng tập cắt theo shot", {});
   return d.media;
 }
@@ -115,6 +123,107 @@ export function cutStages(d: StudioStageDeps): Record<string, InProcessStage> {
         return { index: s.index, asset_id: s.asset_id, source_id: s.source_id, file, source_kind: item.sourceKind, watermarked: item.watermarked, bytes };
       });
       writeOutput(ctx, "proxies/proxies.json", toBuffer(CutProxySetSchema.parse({ schema_version: "studio.cut-proxies/v1", proxies })));
+    },
+
+    /**
+     * `shots.json` (`harness.shots/v2`): each proxy probed (duration, sound) and cut into shots where the picture
+     * changes (`buildShots`: 1–20 s, merged and split as the harness does), numbered `s<source index>-<shot>`. A proxy
+     * that cannot be read gets no shots and an `error`; none readable at all is a contract error.
+     */
+    "studio-media-index": async (request, ctx) => {
+      const media = requireMedia(d);
+      const sources = readSources(request, ctx.workspaceDir);
+      const proxies = readProxies(request, ctx.workspaceDir);
+      const out: ShotsIndex["sources"] = [];
+      for (const s of sources.sources) {
+        const proxy = proxies.byAsset.get(s.asset_id);
+        const unusable = (error: string): ShotsIndex["sources"][number] =>
+          ({ source_id: s.source_id, index: s.index, file_name: proxy?.file ?? `${s.source_id}.mp4`, duration_seconds: 0, has_audio: false, error, shots: [] });
+        if (!proxy) { out.push(unusable("no proxy")); continue; }
+        const path = join(proxies.dir, proxy.file);
+        const facts = await probeMedia(media.ffprobe, path);
+        if (!facts || facts.duration_s === null) {
+          ctx.logger.warn("proxy unreadable", { asset_id: s.asset_id });
+          out.push(unusable(facts ? "duration unknown" : "probe failed"));
+          continue;
+        }
+        const cuts = await detectCuts(media.ffmpeg, path, CUT_SCENE.threshold);
+        const shots = buildShots(cuts, facts.duration_s, CUT_SCENE).map((x, i) => ({ shot_id: shotId(s.index, i), in: x.in, out: x.out }));
+        ctx.logger.info("shots found", { asset_id: s.asset_id, shots: shots.length, duration_s: facts.duration_s });
+        out.push({ source_id: s.source_id, index: s.index, file_name: proxy.file, duration_seconds: facts.duration_s, has_audio: facts.has_audio, shots });
+      }
+      if (out.every((s) => s.shots.length === 0)) {
+        throw new HarnessError("CONFIG_INVALID", "không đọc được video nào của tập để tìm shot", { sources: out.map((s) => s.source_id) });
+      }
+      writeOutput(ctx, "shots.json", toBuffer(ShotsIndexSchema.parse({ schema_version: "harness.shots/v2", sources: out })));
+    },
+  };
+}
+
+/** The `proxy_set` input: its folder and its files by asset. */
+function readProxies(request: StageRequest, ws: string): { dir: string; byAsset: Map<string, CutProxySet["proxies"][number]> } {
+  const dir = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.proxySet);
+  if (!dir || !existsSync(join(dir, "proxies.json"))) throw new HarnessError("NOT_FOUND", `stage ${request.stage_key} has no proxy_set input`, {});
+  const set = CutProxySetSchema.parse(JSON.parse(readFileSync(join(dir, "proxies.json"), "utf8")));
+  return { dir, byAsset: new Map(set.proxies.map((p) => [p.asset_id, p])) };
+}
+
+/** An empty `transcribe.json`: what the transcription answers when no source has anything to say. */
+function emptyTranscribeManifest(productionId: string): TranscribeManifest {
+  return { schema: TRANSCRIBE_MANIFEST_SCHEMA, production_id: productionId, engine: { name: "none", version: null }, sources: [] };
+}
+
+/**
+ * The farm's `transcribe.json` as the harness `transcript.json` the media pipeline reads (`fitEdl`, the survey): one
+ * entry per source of the episode, empty for a source that was not sent (no sound, or ag-go says it has no speech).
+ */
+export function transcriptFromManifest(m: TranscribeManifest, sourceIds: readonly string[]): Transcript {
+  const bySource = new Map(m.sources.map((s) => [s.source_id, s]));
+  return {
+    schema_version: "harness.transcript/v1",
+    engine: m.engine.name,
+    sources: sourceIds.map((id) => {
+      const s = bySource.get(id);
+      return s
+        ? { source_id: id, language: s.language, alignment: s.alignment, segments: s.segments.map((g) => ({ start: g.start, end: g.end, text: g.text, words: g.words })) }
+        : { source_id: id, language: null, alignment: "segment" as const, segments: [] };
+    }),
+  };
+}
+
+/** Farm payload builders of the shot-cut workflow (`stage_config.payload_builder`). */
+export function cutPayloadBuilders(d: Pick<StudioStageDeps, "db" | "bucket" | "media">): Record<string, FarmPayloadBuilder> {
+  return {
+    /**
+     * `studio.transcribe`: the sound of every source that has some (and that ag-go does not say is silent of speech),
+     * extracted here as 16 kHz mono WAV and uploaded with the job, so the farm node never downloads the footage. No
+     * such source: `skip`, with an empty transcription.
+     */
+    "studio-cut-transcribe": async (request, ctx): Promise<FarmPayloadBuild> => {
+      const sources = readSources(request, ctx.workspaceDir);
+      const shots = readInput(request, ctx.workspaceDir, STUDIO_TYPES.shots, (v) => ShotsIndexSchema.parse(v));
+      const withSound = new Set(shots.sources.filter((s) => s.has_audio && s.shots.length > 0).map((s) => s.source_id));
+      const wanted = sources.sources.filter((s) => withSound.has(s.source_id) && s.has_speech !== false);
+      if (wanted.length === 0) {
+        ctx.logger.info("no source to transcribe", {});
+        return { productionId: sources.production_id, payload: null, skip: { files: { "transcribe.json": JSON.stringify(emptyTranscribeManifest(sources.production_id), null, 2) } } };
+      }
+      const media = requireMedia(d);
+      const proxies = readProxies(request, ctx.workspaceDir);
+      const extraUploads: NonNullable<FarmPayloadBuild["extraUploads"]> = [];
+      const sent: StudioTranscribePayload["sources"] = [];
+      for (const s of wanted) {
+        const relPath = `audio/${s.source_id}.wav`;
+        const localPath = join(ctx.workspaceDir, "transcribe", relPath);
+        if (!(await extractAudio16k(media.ffmpeg, join(proxies.dir, proxies.byAsset.get(s.asset_id)!.file), localPath))) continue;
+        extraUploads.push({ localPath, relPath });
+        sent.push({ source_id: s.source_id, audio: `stage:${relPath}`, language: null });
+      }
+      if (sent.length === 0) {
+        return { productionId: sources.production_id, payload: null, skip: { files: { "transcribe.json": JSON.stringify(emptyTranscribeManifest(sources.production_id), null, 2) } } };
+      }
+      const payload = StudioTranscribePayloadSchema.parse({ production_id: sources.production_id, model: CUT_TRANSCRIBE_MODEL, sources: sent, align_words: true });
+      return { productionId: sources.production_id, payload, extraUploads };
     },
   };
 }

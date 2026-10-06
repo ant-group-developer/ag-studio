@@ -32,3 +32,4 @@ export * from "./render-choice.js";
 export * from "./queue.js";
 export * from "./cut-stages.js";
 export * from "./cut-media.js";
+export * from "./cut-ffmpeg.js";

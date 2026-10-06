@@ -28,6 +28,8 @@ import { FarmOwnerClient } from "@ag-farm/owner-client";
 import {
   StudioTtsPayloadSchema,
   StudioRenderPayloadSchema,
+  StudioTranscribePayloadSchema,
+  TranscribeManifestSchema,
   TtsManifestSchema,
   RenderManifestSchema,
   type JobType,
@@ -283,6 +285,8 @@ export class FarmExecutor implements Executor {
         jobType === "studio.render_final"
       ) {
         validatedPayload = StudioRenderPayloadSchema.parse(rawPayload);
+      } else if (jobType === "studio.transcribe") {
+        validatedPayload = StudioTranscribePayloadSchema.parse(rawPayload);
       } else {
         // Unknown job type: pass the payload through without schema validation
         validatedPayload = rawPayload;
@@ -443,7 +447,10 @@ export class FarmExecutor implements Executor {
       ) as unknown;
 
       try {
-        if (jobType === "studio.tts") {
+        if (jobType === "studio.transcribe") {
+          // the manifest IS the output (`transcribe.json`): nothing else to download
+          TranscribeManifestSchema.parse(manifestRaw);
+        } else if (jobType === "studio.tts") {
           const m = TtsManifestSchema.parse(manifestRaw);
           for (const line of m.lines) {
             const dest = join(outDir, line.output);
