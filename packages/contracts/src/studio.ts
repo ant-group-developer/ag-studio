@@ -200,6 +200,16 @@ export type StudioCatalog = z.infer<typeof StudioCatalogSchema>;
 
 const reasonedAsset = z.object({ asset_id: z.string().min(1), reason: z.string().min(1).max(300) }).strict();
 
+/**
+ * How an episode is edited (spec local-chat §3.3): `whole` plays whole videos back to back (timeline v3), `cut`
+ * cuts it shot by shot from longer footage, with narration (`ag-studio-episode-cut`, timeline v4).
+ */
+export const EDIT_STYLES = ["whole", "cut"] as const;
+export type StudioEditStyle = (typeof EDIT_STYLES)[number];
+/** `tts`: lines read over the picture; `original`: the footage's own speech; `none`: picture, music, ambience. */
+export const NARRATION_VOICES = ["none", "tts", "original"] as const;
+export type NarrationVoice = (typeof NARRATION_VOICES)[number];
+
 export const TEXT_KINDS = ["title", "callout", "lower_third"] as const;
 export const TEXT_POSITIONS_V2 = ["top_left", "top_center", "top_right", "center", "bottom_left", "bottom_center", "bottom_right"] as const;
 export type TextKind = (typeof TEXT_KINDS)[number];
@@ -227,6 +237,13 @@ export const PlannedEpisodeSchema = z.object({
     text: z.string().min(1).max(64),
     at_item: z.number().int().min(0),
   }).strict()).max(10),
+  /**
+   * Absent = `whole` (plans written before shot-cut episodes existed). For `cut`, `items` are the videos the
+   * episode is cut from, in story order, not clips.
+   */
+  edit_style: z.enum(EDIT_STYLES).optional(),
+  /** Shot-cut episodes only; absent = `tts`. */
+  narration: z.enum(NARRATION_VOICES).optional(),
 }).strict();
 export type PlannedEpisode = z.infer<typeof PlannedEpisodeSchema>;
 
@@ -455,6 +472,20 @@ export type StudioThumbnails = z.infer<typeof StudioThumbnailsSchema>;
 // Episode run
 // ---------------------------------------------------------------------------
 
+/** What ag-go's AI description says about a whole video, kept as a hint (ag-go has nothing per shot). */
+export const AssetHintsSchema = z.object({
+  subjects: z.array(z.string()),
+  places: z.array(z.string()),
+  mood: z.string(),
+  setting: z.string(),
+  time_of_day: z.string(),
+  people_count: z.string(),
+  shot_variety: z.array(z.string()),
+  /** ag-go's speech hint (from the silence ratio, not a transcript); `null` when unknown. */
+  has_speech: z.boolean().nullable(),
+}).strict();
+export type AssetHints = z.infer<typeof AssetHintsSchema>;
+
 /** What an episode run knows about a video it may use (snapshot of the catalog entry). */
 export const EpisodeAssetSchema = z.object({
   title: z.string(),
@@ -471,6 +502,8 @@ export const StudioEpisodeSchema = PlannedEpisodeSchema.extend({
   episode_id: z.string().min(1),
   /** Every asset of `items` and `alternates`. */
   assets: z.record(z.string(), EpisodeAssetSchema),
+  /** Shot-cut episodes: ag-go's AI description of each video, a hint for scene selection (absent before phase 5). */
+  asset_hints: z.record(z.string(), AssetHintsSchema).optional(),
 }).strict();
 export type StudioEpisode = z.infer<typeof StudioEpisodeSchema>;
 
@@ -539,12 +572,8 @@ export type TimelineText = TimelineV3["texts"][number];
  * A v3 document reads as v4 through `upgradeTimelineV3` (`in: 0`, `out: null`, cuts, no narration, no captions);
  * an episode whose timeline was v3 keeps being stored as v3 (`downgradeTimelineV4`), never rewritten.
  */
-export const EDIT_STYLES = ["whole", "cut"] as const;
-export type StudioEditStyle = (typeof EDIT_STYLES)[number];
 export const TIMELINE_TRANSITIONS = ["cut", "dissolve", "dip_black"] as const;
 export type TimelineTransitionKind = (typeof TIMELINE_TRANSITIONS)[number];
-export const NARRATION_VOICES = ["none", "tts", "original"] as const;
-export type NarrationVoice = (typeof NARRATION_VOICES)[number];
 export const CAPTION_MODES = ["none", "burn-in", "karaoke"] as const;
 export type CaptionMode = (typeof CAPTION_MODES)[number];
 /** Narration starts this long after the start of the clip it is anchored on (harness `fitEdl` lead-in). */
@@ -851,7 +880,9 @@ function stripForClaude(node: unknown): unknown {
     // Structured outputs require every object closed; `z.record` has no fixed properties and is not used in
     // any Claude-facing schema, so closing is always right here.
     out.additionalProperties = false;
-    if (out.properties && !out.required) out.required = Object.keys(out.properties as object);
+    // Every property is required: a key optional on disk (absent in documents written before it existed, such as an
+    // episode's `edit_style`) is one Claude always answers.
+    if (out.properties) out.required = Object.keys(out.properties as object);
   }
   return out;
 }

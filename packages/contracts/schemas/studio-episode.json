@@ -121,6 +121,21 @@
           },
           "maxItems": 10
         },
+        "edit_style": {
+          "type": "string",
+          "enum": [
+            "whole",
+            "cut"
+          ]
+        },
+        "narration": {
+          "type": "string",
+          "enum": [
+            "none",
+            "tts",
+            "original"
+          ]
+        },
         "schema_version": {
           "type": "string",
           "const": "studio.episode/v1"
@@ -160,6 +175,61 @@
               "summary_vi",
               "duration_s",
               "orientation"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "asset_hints": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "subjects": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "places": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "mood": {
+                "type": "string"
+              },
+              "setting": {
+                "type": "string"
+              },
+              "time_of_day": {
+                "type": "string"
+              },
+              "people_count": {
+                "type": "string"
+              },
+              "shot_variety": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "has_speech": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "subjects",
+              "places",
+              "mood",
+              "setting",
+              "time_of_day",
+              "people_count",
+              "shot_variety",
+              "has_speech"
             ],
             "additionalProperties": false
           }

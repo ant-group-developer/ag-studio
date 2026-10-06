@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  claudeOutputJsonSchema, STUDIO_SKILL_OUTPUTS, StudioBrandingSchema, StudioResearchSchema, StudioRndSchema, StudioSeedSchema, type StudioSkill,
+  claudeOutputJsonSchema, SeriesPlanSchema, STUDIO_SKILL_OUTPUTS, StudioBrandingSchema, StudioResearchSchema, StudioRndSchema, StudioSeedSchema,
+  type StudioSkill,
 } from "../src/studio.js";
 
 const UNSUPPORTED = ["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "minLength", "maxLength", "pattern", "minItems", "maxItems"];
@@ -26,6 +27,22 @@ describe("claudeOutputJsonSchema", () => {
       });
     });
   }
+
+  it("an episode's edit style is optional on disk but always answered by Claude", () => {
+    const t = claudeOutputJsonSchema("studio-plan-episodes") as {
+      properties: { episodes: { items: { required: string[]; properties: Record<string, { enum?: string[] }> } } };
+    };
+    const ep = t.properties.episodes.items;
+    expect(ep.required).toEqual(expect.arrayContaining(["edit_style", "narration"]));
+    expect(ep.properties.edit_style?.enum).toEqual(["whole", "cut"]);
+    const plan = {
+      schema_version: "studio.series-plan/v1", series_title: "S", rationale: "R",
+      episodes: [{ idx: 1, title: "T", hook: "H", logline: "L", target_seconds: 60, items: [{ asset_id: "a", reason: "r", section_title: null }], alternates: [], texts_suggested: [] }],
+    };
+    expect(SeriesPlanSchema.parse(plan).episodes[0]!.edit_style).toBeUndefined();
+    expect(SeriesPlanSchema.parse({ ...plan, episodes: [{ ...plan.episodes[0]!, edit_style: "cut", narration: "none" }] }).episodes[0]).toMatchObject({ edit_style: "cut", narration: "none" });
+    expect(SeriesPlanSchema.safeParse({ ...plan, episodes: [{ ...plan.episodes[0]!, edit_style: "trim" }] }).success).toBe(false);
+  });
 
   it("keeps the enum/const shape Claude has to follow", () => {
     const t = claudeOutputJsonSchema("studio-plan-episodes") as { properties: { schema_version: { const?: string; enum?: string[] } } };

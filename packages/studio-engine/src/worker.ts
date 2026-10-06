@@ -18,7 +18,8 @@ import { claudeMaxConcurrent } from "./settings.js";
 import { renderChoiceFor } from "./render-choice.js";
 import { studioPayloadBuilders } from "./payloads.js";
 import { isRunActive, startEpisodeRun } from "./run-control.js";
-import { studioStages, type FootageCatalogSource } from "./stages.js";
+import type { FootageCatalogSource } from "./stages.js";
+import { studioInProcessStages } from "./cut-stages.js";
 import { teamGuidesForRun } from "./team-skills.js";
 import type { StudioDb } from "./studio-db.js";
 import type { ResearchSource } from "./youtube-research.js";
@@ -63,7 +64,7 @@ function workerFactory(o: StudioWorkerOptions, single: boolean): { next: () => W
   // Cancel runs from old workflows (segment-based) so they don't block new ones
   cancelLegacyRuns(core);
   const executors = new ExecutorRegistry();
-  executors.register("script", new InProcessExecutor(studioStages({
+  executors.register("script", new InProcessExecutor(studioInProcessStages({
     db: o.db, bucket: o.bucket, footage: o.footage,
     startEpisodeRun: (episodeId, workflow) => Promise.resolve(startEpisodeRun(core, o.db, episodeId, { workflow })),
     isRunActive: (runId) => isRunActive(core, runId),

@@ -139,6 +139,21 @@
                   "additionalProperties": false
                 },
                 "maxItems": 10
+              },
+              "edit_style": {
+                "type": "string",
+                "enum": [
+                  "whole",
+                  "cut"
+                ]
+              },
+              "narration": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "tts",
+                  "original"
+                ]
               }
             },
             "required": [

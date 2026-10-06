@@ -1,0 +1,150 @@
+{
+  "$ref": "#/definitions/studio-cut-sources",
+  "definitions": {
+    "studio-cut-sources": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.cut-sources/v1"
+        },
+        "production_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "language": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 10
+        },
+        "narration": {
+          "type": "string",
+          "enum": [
+            "none",
+            "tts",
+            "original"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 999
+              },
+              "asset_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_id": {
+                "type": "string",
+                "pattern": "^src_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "title": {
+                "type": "string"
+              },
+              "duration_s": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "has_speech": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "hints": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "subjects": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "places": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "mood": {
+                        "type": "string"
+                      },
+                      "setting": {
+                        "type": "string"
+                      },
+                      "time_of_day": {
+                        "type": "string"
+                      },
+                      "people_count": {
+                        "type": "string"
+                      },
+                      "shot_variety": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "has_speech": {
+                        "type": [
+                          "boolean",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "subjects",
+                      "places",
+                      "mood",
+                      "setting",
+                      "time_of_day",
+                      "people_count",
+                      "shot_variety",
+                      "has_speech"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "index",
+              "asset_id",
+              "source_id",
+              "title",
+              "duration_s",
+              "has_speech",
+              "hints"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 60
+        }
+      },
+      "required": [
+        "schema_version",
+        "production_id",
+        "episode_id",
+        "language",
+        "narration",
+        "sources"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

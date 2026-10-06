@@ -104,19 +104,52 @@ function requirePlanProduction(d: StudioStageDeps, runId: string): ProductionRec
   return p;
 }
 
-function writeOutput(ctx: ExecutorContext, name: string, body: string | Buffer): string {
+export function writeOutput(ctx: ExecutorContext, name: string, body: string | Buffer): string {
   const path = join(ctx.workspaceDir, "output", name);
   mkdirSync(join(ctx.workspaceDir, "output"), { recursive: true });
   writeFileSync(path, body);
   return path;
 }
 const sha256 = (b: Buffer) => createHash("sha256").update(b).digest("hex");
-const toBuffer = (v: unknown) => Buffer.from(JSON.stringify(v, null, 2), "utf8");
+export const toBuffer = (v: unknown) => Buffer.from(JSON.stringify(v, null, 2), "utf8");
 
 /** A file name from a title: ASCII, dashes, lower case (Vietnamese marks dropped). */
 export function fileSlug(text: string): string {
   return text.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D")
     .replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase() || "episode";
+}
+
+/**
+ * The episode intake of `ag-studio-episode@1.1.0` and later (a shot-cut episode adds its sources): the brief with the
+ * production's current R&D on top, the episode, and for the YouTube kit the production's branding (when it has one) and
+ * its trend report (a skipped one when research found nothing) — read when the episode run starts, so later edits reach
+ * later episodes.
+ */
+export function writeEpisodeIntake(d: Pick<StudioStageDeps, "db">, request: StageRequest, ctx: ExecutorContext): { brief: StudioBrief; episode: StudioEpisode } {
+  const ep = episodeForRun(d.db, request.run_id);
+  if (!ep) throw new HarnessError("NOT_FOUND", `no episode is linked to run ${request.run_id}`, { run_id: request.run_id });
+  if (!ep.plan) throw new HarnessError("CONFIG_INVALID", `episode ${ep.id} has no plan`, { episode_id: ep.id });
+  const episode = StudioEpisodeSchema.parse(JSON.parse(ep.plan));
+  const prod = getProduction(d.db, episode.production_id);
+  if (!prod) throw new HarnessError("NOT_FOUND", `production ${episode.production_id} not found`, {});
+  const owner = productionOwner(d.db, prod);
+  if (!owner) throw new HarnessError("CONFIG_INVALID", `production ${episode.production_id} has no owner`, {});
+  const aspect = (prod.aspect ?? "16:9") as StudioBrief["aspect"];
+  const hints = productionHints(prod);
+  const brief = effectiveBrief({
+    production_id: episode.production_id, run_id: request.run_id, owner_user_id: owner, title: prod.title,
+    folder_ids: productionSources(d.db, episode.production_id), aspect, canvas: prod.canvas ? JSON.parse(prod.canvas) : DEFAULT_CANVAS[aspect],
+    fps: 25, language: prod.language ?? "vi", music: prod.music ? JSON.parse(prod.music) : null,
+    youtube_channels: productionChannels(prod).filter((c) => c.role === "reference").map((c) => c.url),
+    keywords: prod.keywords ? (JSON.parse(prod.keywords) as string[]) : [],
+  }, { ...hints, episode_target_seconds: hints.episode_target_seconds ?? episode.target_seconds, max_episodes: hints.max_episodes ?? 1 }, productionRnd(prod));
+  writeOutput(ctx, "brief.json", toBuffer(brief));
+  writeOutput(ctx, "episode.json", toBuffer(episode));
+  const branding = productionBranding(prod);
+  if (branding) writeOutput(ctx, "branding.json", toBuffer(branding));
+  const trend = prod.trend_report ? TrendReportSchema.parse(JSON.parse(prod.trend_report)) : SKIPPED_TREND_REPORT;
+  writeOutput(ctx, "trend-report.json", toBuffer(trend));
+  return { brief, episode };
 }
 
 export function studioStages(d: StudioStageDeps): Record<string, InProcessStage> {
@@ -369,29 +402,7 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
      * found nothing) — read when the episode run starts, so later edits reach later episodes.
      */
     "studio-episode-intake-v2": async (request, ctx) => {
-      const ep = episodeForRun(d.db, request.run_id);
-      if (!ep) throw new HarnessError("NOT_FOUND", `no episode is linked to run ${request.run_id}`, { run_id: request.run_id });
-      if (!ep.plan) throw new HarnessError("CONFIG_INVALID", `episode ${ep.id} has no plan`, { episode_id: ep.id });
-      const episode = StudioEpisodeSchema.parse(JSON.parse(ep.plan));
-      const prod = getProduction(d.db, episode.production_id);
-      if (!prod) throw new HarnessError("NOT_FOUND", `production ${episode.production_id} not found`, {});
-      const owner = productionOwner(d.db, prod);
-      if (!owner) throw new HarnessError("CONFIG_INVALID", `production ${episode.production_id} has no owner`, {});
-      const aspect = (prod.aspect ?? "16:9") as StudioBrief["aspect"];
-      const hints = productionHints(prod);
-      const brief = effectiveBrief({
-        production_id: episode.production_id, run_id: request.run_id, owner_user_id: owner, title: prod.title,
-        folder_ids: productionSources(d.db, episode.production_id), aspect, canvas: prod.canvas ? JSON.parse(prod.canvas) : DEFAULT_CANVAS[aspect],
-        fps: 25, language: prod.language ?? "vi", music: prod.music ? JSON.parse(prod.music) : null,
-        youtube_channels: productionChannels(prod).filter((c) => c.role === "reference").map((c) => c.url),
-        keywords: prod.keywords ? (JSON.parse(prod.keywords) as string[]) : [],
-      }, { ...hints, episode_target_seconds: hints.episode_target_seconds ?? episode.target_seconds, max_episodes: hints.max_episodes ?? 1 }, productionRnd(prod));
-      writeOutput(ctx, "brief.json", toBuffer(brief));
-      writeOutput(ctx, "episode.json", toBuffer(episode));
-      const branding = productionBranding(prod);
-      if (branding) writeOutput(ctx, "branding.json", toBuffer(branding));
-      const trend = prod.trend_report ? TrendReportSchema.parse(JSON.parse(prod.trend_report)) : SKIPPED_TREND_REPORT;
-      writeOutput(ctx, "trend-report.json", toBuffer(trend));
+      writeEpisodeIntake(d, request, ctx);
     },
 
     "build-timeline": async (request, ctx) => {
