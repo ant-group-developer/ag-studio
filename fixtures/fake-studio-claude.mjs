@@ -236,8 +236,93 @@ function branding() {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Chat (spec local-chat §3.1): a prompt with `# Góp ý` answers {reply, action, proposal}. Deterministic from the
+// last message: "?" → answer; "ok"/"duyệt"/"được" → suggest_approve; anything else → revise with a visible change.
+//   chat-bad-once     the first answer of a turn proposes something the check refuses, valid on repair
+//   chat-bad-always   every answer proposes something the check refuses
+// ---------------------------------------------------------------------------
+
+function chatCurrent() {
+  const m = /\n# Bản hiện tại\n```json\n([\s\S]*?)\n```/.exec(stdin);
+  if (!m) return null;
+  try { return JSON.parse(m[1]); } catch { return null; }
+}
+
+function lastUserMessage() {
+  const section = stdin.split("\n# Góp ý\n")[1]?.split("\n# Đầu ra")[0] ?? "";
+  return [...section.matchAll(/^- Người dùng: (.*)$/gm)].at(-1)?.[1] ?? "";
+}
+
+function reviseDoc(doc) {
+  const d = structuredClone(doc);
+  const mark = (s, room) => `${String(s).slice(0, room)} (đã sửa)`;
+  if (Array.isArray(d.titles)) d.titles[0] = mark(d.titles[0], 40);
+  else if (Array.isArray(d.episodes) && d.episodes[0]) d.episodes[0].title = mark(d.episodes[0].title, 40);
+  else if (typeof d.series_name === "string") d.series_name = mark(d.series_name, 30);
+  else if (typeof d.summary === "string") d.summary = mark(d.summary, 200);
+  return d;
+}
+
+function intakeDraft(current, msg, bad) {
+  const d = current ?? {
+    schema_version: "studio.intake-draft/v1", title: null, folder_ids: [], channels: [], keywords: [], aspect: null, language: null,
+    hints: { description: "", goal: "", audience: "", tone: "", notes: "", episode_target_seconds: null, max_episodes: null }, questions: [],
+  };
+  let firstFolder = null;
+  for (const m of msg.matchAll(/@\[([^\]]+)\]\(folder:([^)]+)\)/g)) {
+    firstFolder ??= m[1];
+    if (!d.folder_ids.includes(m[2])) d.folder_ids.push(m[2]);
+  }
+  for (const m of msg.replace(/@\[[^\]]+\]\([^)]+\)/g, "").matchAll(/(?:^|\s)(@[A-Za-z0-9_.-]+)/g)) {
+    if (!d.channels.some((c) => c.url === m[1])) d.channels.push({ url: m[1], role: "reference" });
+  }
+  const low = msg.toLowerCase();
+  if (/ngang|16:9/.test(low)) d.aspect = "16:9";
+  if (/dọc|9:16/.test(low)) d.aspect = "9:16";
+  d.title ??= firstFolder ? `Series ${firstFolder}` : null;
+  d.language ??= "vi";
+  if (bad) d.folder_ids = ["folder-khong-co"];
+  d.questions = [];
+  if (!d.title) d.questions.push({ field: "title", question: "Series tên là gì?", options: [] });
+  if (!d.folder_ids.length) d.questions.push({ field: "folder_ids", question: "Dùng footage ở folder nào? Gắn bằng @.", options: [] });
+  if (!d.aspect) d.questions.push({ field: "aspect", question: "Video ngang hay dọc?", options: ["Ngang 16:9", "Dọc 9:16"] });
+  if (!d.channels.length && !d.keywords.length) d.questions.push({ field: "research", question: "Kênh nào để tham khảo?", options: [] });
+  return d;
+}
+
+function timelineOps(msg, bad) {
+  if (bad) return { ops: [{ op: "addClip", asset_id: "asset-khong-co", index: 0 }] };
+  const low = msg.toLowerCase();
+  const timeline = inputs.Timeline ?? {};
+  const ops = [];
+  if (/nhạc nhỏ/.test(low) && timeline.music) ops.push({ op: "setMusic", music: { ...timeline.music, gain_db: Math.max(-40, timeline.music.gain_db - 4) } });
+  const quoted = /"([^"]{1,64})"/.exec(msg)?.[1];
+  if (quoted || /chữ/.test(low) || !ops.length) {
+    const clip = timeline.clips?.[1] ?? timeline.clips?.[0];
+    ops.push({ op: "addText", kind: "lower_third", text: quoted ?? "Chữ mới", start: clip ? clip.start + 1 : 1, duration: 4, position: "bottom_left" });
+  }
+  return { ops };
+}
+
+function chat() {
+  const msg = lastUserMessage();
+  const low = msg.toLowerCase();
+  const bad = modes.has("chat-bad-always") || (modes.has("chat-bad-once") && !repairing);
+  if (msg.includes("?")) return { reply: `Trả lời: ${msg.slice(0, 80)}`, action: "answer", proposal: null };
+  if (/(^|\s)(ok|duyệt|được)(\s|$|[.!])/.test(low)) return { reply: "Bấm Duyệt để chuyển sang bước sau.", action: "suggest_approve", proposal: null };
+  if (skill === "studio-intake") {
+    const d = intakeDraft(chatCurrent(), msg, bad);
+    return { reply: d.questions[0]?.question ?? "Đã đủ thông tin, bấm Bắt đầu.", action: d.questions.length ? "revise" : "suggest_approve", proposal: d };
+  }
+  if (skill === "studio-timeline") return { reply: `Đã sửa timeline theo góp ý: ${msg.slice(0, 60)}`, action: "revise", proposal: timelineOps(msg, bad) };
+  const current = chatCurrent();
+  return { reply: `Đã sửa theo góp ý: ${msg.slice(0, 60)}`, action: "revise", proposal: bad ? { schema_version: "broken" } : reviseDoc(current ?? {}) };
+}
+
 let out;
-if (skill === "studio-trend-report") out = trendReport();
+if (stdin.includes("\n# Góp ý\n")) out = chat();
+else if (skill === "studio-trend-report") out = trendReport();
 else if (skill === "studio-rnd") out = rnd();
 else if (skill === "studio-branding") out = branding();
 else if (skill === "studio-plan-episodes") out = planEpisodes();

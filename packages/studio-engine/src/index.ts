@@ -22,3 +22,5 @@ export * from "./chat-db.js";
 export * from "./settings.js";
 export * from "./claude-slots.js";
 export * from "./chat-context.js";
+export * from "./models.js";
+export * from "./chat.js";

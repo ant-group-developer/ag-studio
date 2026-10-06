@@ -20,7 +20,7 @@ export interface LlmCallRow {
 
 export interface LlmCallPayload {
   schema: typeof LLM_CALL_PAYLOAD_SCHEMA;
-  id: string; created_at: string; source: "claude";
+  id: string; created_at: string; source: LlmCallSource;
   production_id: string | null; episode_id: string | null; run_id: string; stage_key: string; attempt_id: string;
   skill: string; round: number; outcome: StudioLlmCall["outcome"];
   problems: StudioLlmCall["problems"]; warnings: StudioLlmCall["warnings"];
@@ -28,6 +28,9 @@ export interface LlmCallPayload {
   exit_code: number | null; timed_out: boolean; wall_seconds: number; cost_usd: number;
   input_tokens: number | null; output_tokens: number | null;
 }
+
+/** `claude`: a stage's call; `claude-chat`: a chat reply (spec local-chat §3.1). */
+export type LlmCallSource = "claude" | "claude-chat";
 
 /** `rnd` / `branding`: approved at their gate (before = Claude's proposal); `*_edit`: changed by hand after approval. */
 export type HumanEditKind = "trend_report" | "series_plan" | "youtube_kit" | "episode_rerender" | "episode_cancel" | "rnd" | "branding" | "rnd_edit" | "branding_edit" | "thumbnail";
@@ -53,13 +56,18 @@ function ownersOfRun(db: StudioDb, runId: string): { production_id: string | nul
  * Keeps one call: the payload goes up first; the row is written even when the upload fails (payload_key null),
  * then the upload error is thrown so the caller logs it.
  */
-export async function recordLlmCall(db: StudioDb, bucket: StudioBucket, call: StudioLlmCall): Promise<string> {
+export async function recordLlmCall(db: StudioDb, bucket: StudioBucket, call: StudioLlmCall, o: {
+  source?: LlmCallSource;
+  /** Owners when the run does not tell them (a chat before the production has a run). */
+  owners?: { production_id: string; episode_id: string | null };
+} = {}): Promise<string> {
   const id = randomUUID();
   const createdAt = new Date().toISOString();
-  const owners = ownersOfRun(db, call.run_id);
+  const source = o.source ?? "claude";
+  const owners = o.owners ?? ownersOfRun(db, call.run_id);
   const t = call.trace;
   const payload: LlmCallPayload = {
-    schema: LLM_CALL_PAYLOAD_SCHEMA, id, created_at: createdAt, source: "claude", ...owners,
+    schema: LLM_CALL_PAYLOAD_SCHEMA, id, created_at: createdAt, source, ...owners,
     run_id: call.run_id, stage_key: call.stage_key, attempt_id: call.attempt_id, skill: call.skill, round: call.round,
     outcome: call.outcome, problems: call.problems, warnings: call.warnings,
     model: t.model, prompt: t.prompt, json_schema: t.json_schema, response: t.response, structured_output: t.structured_output ?? null,
@@ -76,8 +84,8 @@ export async function recordLlmCall(db: StudioDb, bucket: StudioBucket, call: St
   db.run(
     `INSERT INTO llm_calls (id, created_at, source, production_id, episode_id, run_id, stage_key, attempt_id, skill, model, round, outcome,
        problems, input_tokens, output_tokens, cost_usd, wall_seconds, payload_key)
-     VALUES (?, ?, 'claude', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, createdAt, owners.production_id, owners.episode_id, call.run_id, call.stage_key, call.attempt_id, call.skill, t.model, call.round,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, createdAt, source, owners.production_id, owners.episode_id, call.run_id, call.stage_key, call.attempt_id, call.skill, t.model, call.round,
       call.outcome, JSON.stringify(call.problems), t.input_tokens, t.output_tokens, t.cost_usd, t.wall_seconds, uploadError ? null : key],
   );
   if (uploadError) throw uploadError;

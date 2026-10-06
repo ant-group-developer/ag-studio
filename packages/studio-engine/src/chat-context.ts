@@ -160,7 +160,7 @@ function rejectedOutput(core: StudioEngineCore, runId: string, stageKey: string,
 
 function lastProblems(db: StudioDb, runId: string, stageKey: string): ChatProblem[] {
   const row = db.get<{ problems: string }>(
-    "SELECT problems FROM llm_calls WHERE run_id = ? AND stage_key = ? AND outcome IN ('rejected', 'failed') ORDER BY created_at DESC LIMIT 1", [runId, stageKey]);
+    "SELECT problems FROM llm_calls WHERE run_id = ? AND stage_key = ? AND source = 'claude' AND outcome IN ('rejected', 'failed') ORDER BY created_at DESC LIMIT 1", [runId, stageKey]);
   return row ? (JSON.parse(row.problems) as ChatProblem[]).map((x) => ({ code: x.code, message: x.message })) : [];
 }
 

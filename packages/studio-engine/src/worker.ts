@@ -9,6 +9,7 @@ import { Worker } from "@harness/worker";
 import type { FarmOwnerClient } from "@ag-farm/owner-client";
 import type { AgentCallTrace, ProjectConfig, StudioSkill } from "@harness/contracts";
 import { farmStorage, type StudioBucket } from "./bucket.js";
+import { modelFor } from "./models.js";
 import { recordLlmCall } from "./llm-log.js";
 import { cancelLegacyRuns, DEFAULT_CLAUDE_MAX_CONCURRENT, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, studioResources, studioWorkflowRefs, type StudioEngineCore } from "./core.js";
 import { claudeMaxConcurrent } from "./settings.js";
@@ -19,30 +20,6 @@ import { teamGuidesForRun } from "./team-skills.js";
 import type { StudioDb } from "./studio-db.js";
 import type { ResearchSource } from "./youtube-research.js";
 import type { ThumbnailRenderer } from "./thumbnail-render.js";
-
-/** Per-skill model env keys. `STUDIO_CLAUDE_MODEL` overrides all. */
-const SKILL_MODEL_ENVS: Record<StudioSkill, string> = {
-  "studio-plan-episodes": "STUDIO_CLAUDE_MODEL_PLAN_EPISODES",
-  "studio-youtube-kit": "STUDIO_CLAUDE_MODEL_YOUTUBE_KIT",
-  "studio-trend-report": "STUDIO_CLAUDE_MODEL_TREND_REPORT",
-  "studio-rnd": "STUDIO_CLAUDE_MODEL_RND",
-  "studio-branding": "STUDIO_CLAUDE_MODEL_BRANDING",
-};
-/** The R&D decides the whole series once per production: Opus, like the episode plan. */
-const SKILL_DEFAULTS: Record<StudioSkill, string> = {
-  "studio-plan-episodes": "claude-opus-5-5",
-  "studio-youtube-kit": "claude-sonnet-5-5",
-  "studio-trend-report": "claude-sonnet-5-5",
-  "studio-rnd": "claude-opus-5-5",
-  "studio-branding": "claude-sonnet-5-5",
-};
-
-function modelFor(skill: StudioSkill, override?: string): string {
-  if (override) return override;
-  const envKey = SKILL_MODEL_ENVS[skill];
-  const envVal = envKey ? process.env[envKey] : undefined;
-  return envVal ?? SKILL_DEFAULTS[skill];
-}
 
 export interface StudioClaudeOptions {
   skillsDir: string;

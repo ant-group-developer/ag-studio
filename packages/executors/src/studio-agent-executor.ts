@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import { join } from "node:path";
 import {
   claudeOutputJsonSchema, STUDIO_SKILL_OUTPUTS, STUDIO_SKILL_STEP, teamGuidesForStep, TrendReportSchema,
-  type AgentCallTrace, type AgentRuntime, type CheckerInput, type Executor, type ExecutorContext, type StageRequest, type StageResult, type StudioSkill,
+  type AgentCallTrace, type AgentRuntime, type CheckerInput, type StudioChatSkill, type Executor, type ExecutorContext, type StageRequest, type StageResult, type StudioSkill,
   type TeamGuide,
 } from "@harness/contracts";
 import {
@@ -26,7 +26,7 @@ import { StudioCatalogSchema, StudioEpisodeSchema } from "@harness/contracts";
 
 /** One Claude call of a stage with what the deterministic check made of it (the call log / training dataset). */
 export interface StudioLlmCall {
-  run_id: string; stage_key: string; attempt_id: string; skill: StudioSkill;
+  run_id: string; stage_key: string; attempt_id: string; skill: StudioSkill | StudioChatSkill;
   /** 0 = first answer, 1 = the repair round. */
   round: number;
   outcome: "accepted" | "rejected" | "failed" | "rate_limited";
