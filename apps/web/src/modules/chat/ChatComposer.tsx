@@ -52,6 +52,8 @@ export function ChatComposer({ onSend, placeholder, disabled, rows = 2, value, o
       await onSend(encodeMentions(body, picked));
       setText("");
       setPicked([]);
+    } catch {
+      // the caller says what went wrong; the text stays so it can be sent again
     } finally {
       setSending(false);
     }

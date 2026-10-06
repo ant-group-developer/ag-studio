@@ -76,5 +76,23 @@ export const chatVi = {
   home: {
     title: "Bạn muốn làm video gì?",
     lead: "Gõ yêu cầu và gắn footage bằng @. Claude hỏi thêm khi còn thiếu thông tin, rồi tự đề xuất phần còn lại.",
+    placeholder: "Làm series vlog Kyoto từ @Kyoto 2025, giống kênh Mei Time, mỗi tập khoảng 15 phút",
+    team: "Làm cho team",
+    noTeam: "Bạn cần vai producer trong một team để tạo video.",
+    createFailed: "Không tạo được video, thử lại.",
+    suggestSeries: "Làm series nhiều tập từ folder",
+    suggestReference: "Làm series giống kênh tham khảo, footage ở",
+    yourWork: "Việc của bạn",
+    sections: { waiting_you: "Đang chờ bạn duyệt", needs_attention: "Cần xử lý", running: "Đang chạy", done: "Xong gần đây" },
+  },
+  page: {
+    steps: "Các bước",
+    backToSeries: "← Về series",
+    failed: "Không làm được, thử lại.",
+    previewStarted: "Đã gửi render bản xem trước lên farm.",
+    exportStarted: "Đã bắt đầu xuất project Premiere.",
+    busy: "Claude hoặc máy render đang làm bước này, chờ xong rồi nhắn…",
+    finished: "Các bước đã xong.",
+    intakePlaceholder: "Trả lời Claude, thêm kênh tham khảo, gắn thêm footage bằng @…",
   },
 };

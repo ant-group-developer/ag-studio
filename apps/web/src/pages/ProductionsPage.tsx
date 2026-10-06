@@ -29,27 +29,11 @@ import { TableRefreshButton } from "../helpers/table-refresh-button";
 import { useDebouncedValue } from "../helpers/use-debounced-value";
 import { ProductionForm } from "../modules/production/ProductionForm";
 import type { ProductionFormValues } from "../modules/production/ProductionForm";
+import { rememberedTeam, rememberTeam } from "../helpers/last-team";
 
 const { Title } = Typography;
 
 const PAGE_SIZE = 20;
-const LAST_TEAM_KEY = "ag-studio:last-team";
-
-function rememberedTeam(): string | null {
-  try {
-    return localStorage.getItem(LAST_TEAM_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function rememberTeam(teamId: string): void {
-  try {
-    localStorage.setItem(LAST_TEAM_KEY, teamId);
-  } catch {
-    // private mode
-  }
-}
 
 const SORT_FIELDS = [
   { value: "title", label: "Tiêu đề" },

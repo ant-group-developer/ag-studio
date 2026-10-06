@@ -78,5 +78,23 @@ export const chatEn: typeof chatVi = {
   home: {
     title: "What video do you want to make?",
     lead: "Type what you want and tag footage with @. Claude asks when something is missing, then proposes the rest.",
+    placeholder: "A Kyoto vlog series from @Kyoto 2025, like the Mei Time channel, about 15 minutes per episode",
+    team: "For team",
+    noTeam: "You need the producer role in a team to make a video.",
+    createFailed: "Could not create the video, try again.",
+    suggestSeries: "A multi-episode series from folder",
+    suggestReference: "A series like a reference channel, footage in",
+    yourWork: "Your work",
+    sections: { waiting_you: "Waiting for your approval", needs_attention: "Needs attention", running: "Running", done: "Done recently" },
+  },
+  page: {
+    steps: "Steps",
+    backToSeries: "← Back to the series",
+    failed: "That did not work, try again.",
+    previewStarted: "Preview render sent to the farm.",
+    exportStarted: "Premiere export started.",
+    busy: "Claude or the render farm is working on this step; message when it is done…",
+    finished: "Every step is done.",
+    intakePlaceholder: "Answer Claude, add a reference channel, tag more footage with @…",
   },
 };
