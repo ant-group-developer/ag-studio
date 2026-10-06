@@ -5,14 +5,15 @@
  * (ADR-0001 item 153).
  */
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { z } from "zod";
 import {
-  CUT_FRAME_WIDTH, CUT_SHEET_COLS, CUT_SHEET_SHOTS, CutProxySetSchema, CutSourcesSchema, CutWatchSchema, EditPlanSchema, HarnessError, ShotsIndexSchema,
+  CUT_FRAME_WIDTH, CUT_SHEET_COLS, CUT_SHEET_SHOTS, CutProxySetSchema, CutSourcesSchema, CutWatchSchema, EditPlanSchema, EpisodeAssetSchema, HarnessError,
+  ShotsIndexSchema, StudioCanvasSchema, StudioMusicSchema, StudioSurveySchema,
   type CutProxySet, type CutSources, type CutWatch, type ExecutorContext, type ShotsIndex, type StageRequest, type Transcript,
 } from "@harness/contracts";
 import {
-  StudioTranscribePayloadSchema, StudioTtsPayloadSchema, TRANSCRIBE_MANIFEST_SCHEMA, TTS_MANIFEST_SCHEMA,
+  StudioTranscribePayloadSchema, StudioTtsPayloadSchema, TRANSCRIBE_MANIFEST_SCHEMA, TranscribeManifestSchema, TTS_MANIFEST_SCHEMA, TtsManifestSchema,
   type StudioTranscribePayload, type TranscribeManifest, type TtsManifest,
 } from "@ag-farm/protocol";
 import { buildShots, inputPath, shotId, STUDIO_TYPES, studioSourceId } from "@harness/core";
@@ -20,9 +21,10 @@ import type { FarmPayloadBuild, FarmPayloadBuilder, InProcessStage } from "@harn
 import { productionKey } from "./bucket.js";
 import { detectCuts, extractAudio16k, grabFrame, probeMedia, tileSheet } from "./cut-ffmpeg.js";
 import { readInput, studioStages, toBuffer, writeEpisodeIntake, writeOutput, type StudioStageDeps } from "./stages.js";
-import { getProduction } from "./studio-db.js";
+import { getProduction, latestEpisodeRevision, saveEpisodeRevision } from "./studio-db.js";
+import { fitCutTimeline, type ReadLine } from "./cut-fit.js";
 import { productionVoice } from "./voice.js";
-import { getVoiceLine, voiceKey } from "./voice-store.js";
+import { getVoiceLine, putVoiceLine, voiceKey } from "./voice-store.js";
 
 /** Shot detection on the proxies: the harness `media.scene` defaults (ADR-0001 item 113 measured them). */
 export const CUT_SCENE = { threshold: 0.3, min_shot_seconds: 1, max_shot_seconds: 20 } as const;
@@ -207,8 +209,64 @@ export function cutStages(d: StudioStageDeps): Record<string, InProcessStage> {
         schema_version: "studio.cut-watch/v1", frame_width: CUT_FRAME_WIDTH, sheet_cols: CUT_SHEET_COLS, sources: watched,
       })));
     },
+
+    /**
+     * The approved edit plan fitted to its narration, as the episode's timeline v4 (`fitCutTimeline`). The lines the farm
+     * just read go into the voice store first; every line then comes from the store. The result is saved as a new
+     * revision of the episode (author `system`, label `fit`): running again from the edit plan replaces the cut.
+     */
+    "studio-cut-fit": async (request, ctx) => {
+      const media = requireMedia(d);
+      const ws = ctx.workspaceDir;
+      const plan = readInput(request, ws, STUDIO_TYPES.editPlan, (v) => EditPlanSchema.parse(v));
+      const shots = readInput(request, ws, STUDIO_TYPES.shots, (v) => ShotsIndexSchema.parse(v));
+      const survey = readInput(request, ws, STUDIO_TYPES.surveyIndex, (v) => StudioSurveySchema.parse(v));
+      const sources = readSources(request, ws);
+      const manifest = readInput(request, ws, STUDIO_TYPES.transcript, (v) => TranscribeManifestSchema.parse(v));
+      const episode = readInput(request, ws, STUDIO_TYPES.episode, (v) => z.object({ assets: z.record(z.string(), EpisodeAssetSchema) }).passthrough().parse(v));
+      const brief = readInput(request, ws, STUDIO_TYPES.brief, (v) => FitBriefSchema.parse(v));
+      const now = new Date().toISOString();
+
+      const voice = plan.narration === "tts" ? narrationVoice(d.db, brief.production_id) : null;
+      const textOf = new Map(plan.lines.map((l) => [l.line_id, l.text]));
+      const keyOf = (lineId: string) => voiceKey({ text: textOf.get(lineId)!, language: plan.language, voice: voice! });
+      if (voice) {
+        const tts = readInput(request, ws, STUDIO_TYPES.voiceManifest, (v) => TtsManifestSchema.parse(v));
+        const setDir = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.voiceSet);
+        for (const line of tts.lines) {
+          if (!textOf.has(line.line_id)) continue;
+          const wav = setDir ? join(setDir, basename(line.output)) : "";
+          if (!wav || !existsSync(wav)) throw new HarnessError("NOT_FOUND", `the farm read ${line.line_id} but its WAV is not here`, { line_id: line.line_id });
+          putVoiceLine(d.db, media.voiceDir, keyOf(line.line_id), wav, { duration_s: line.duration_s, words: line.words, language: tts.language }, now);
+        }
+      }
+      const read: Record<string, ReadLine> = {};
+      for (const l of voice ? plan.lines : []) {
+        const v = getVoiceLine(d.db, media.voiceDir, keyOf(l.line_id), now);
+        if (!v) throw new HarnessError("CONFIG_INVALID", `lời dẫn ${l.line_id} chưa được đọc`, { line_id: l.line_id });
+        read[l.line_id] = { key: v.key, duration_s: v.duration_s, words: v.words };
+      }
+      const transcript = transcriptFromManifest(manifest, sources.sources.map((x) => x.source_id));
+      const { timeline, report } = fitCutTimeline({
+        productionId: brief.production_id, plan, shots, survey, transcript, voice: read,
+        sources: sources.sources, assets: episode.assets, canvas: brief.canvas, fps: brief.fps, music: brief.music,
+      });
+      const latest = latestEpisodeRevision(d.db, plan.episode_id);
+      const { revision } = saveEpisodeRevision(d.db, plan.episode_id, { baseRevision: latest?.revision ?? 0, data: timeline, authorId: "system", label: "fit" });
+      ctx.logger.info("shot-cut timeline fitted", { episode_id: plan.episode_id, revision, clips: timeline.clips.length, shortfalls: report.shortfalls.length });
+      writeOutput(ctx, "timeline.json", toBuffer(timeline));
+      writeOutput(ctx, "fit-report.json", toBuffer(report));
+    },
   };
 }
+
+/** What the fit reads of the episode brief. */
+const FitBriefSchema = z.object({
+  production_id: z.string().min(1),
+  canvas: StudioCanvasSchema,
+  fps: z.union([z.literal(25), z.literal(30)]),
+  music: StudioMusicSchema.nullable(),
+}).passthrough();
 
 /** The `proxy_set` input: its folder and its files by asset. */
 function readProxies(request: StageRequest, ws: string): { dir: string; byAsset: Map<string, CutProxySet["proxies"][number]> } {
