@@ -90,6 +90,9 @@ export const PROMPT_POINTER = "Read the file ./agent-prompt.md in the current di
 const RATE_LIMIT_PATTERNS = [
   /\byou(?:['’]ve| have) (?:hit|reached) your\b[^\n]*\blimit\b/i,
   /\busage limit reached\b/i,
+  // claude 2.x JSON mode: the envelope only says "Request rejected (429) · Subscription limit exceeded", api_error_status 429
+  /\bsubscription limit exceeded\b/i,
+  /"api_error_status"\s*:\s*429\b/,
 ];
 
 export function isRateLimitMessage(text: string): boolean {
