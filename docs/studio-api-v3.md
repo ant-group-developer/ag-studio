@@ -95,14 +95,14 @@ when the plan run failed or an episode failed and none is producing; `done` when
 
 ## Plan run (`/productions/:id/run`)
 
-- `POST` (producer) -> `{runId}` starts the plan run (`ag-studio-series-plan@2.0.0`: research -> trend report ->
-  R&D -> approve-rnd -> branding -> approve-branding -> brief -> episode plan -> approve-plan -> episodes). Needs a
+- `POST` (producer) -> `{runId}` starts the plan run (`ag-studio-series-plan@3.0.0`: research -> trend report ->
+  approve-trend-report -> R&D -> approve-rnd -> branding -> approve-branding -> brief -> episode plan -> approve-plan -> episodes). Needs a
   footage folder and a channel or keyword. 409 `episode_producing` while an episode is producing (re-plan refused),
   409 when a plan run is active, 422 with a Vietnamese `message` when the production is incomplete.
 - `GET` -> `RunView` (404 `no_run` before the first run)
 - `GET documents/:stage/:name` -> the JSON document (e.g. `research/research.json`, `trend-report/trend-report.json`,
   `catalog/catalog.json`, `plan-episodes/series-plan.json`, `approve-plan/series-plan.json`)
-- `POST gates/approve-rnd` body `{document: StudioRnd}`, `POST gates/approve-branding` body `{document:
+- `POST gates/approve-trend-report` body `{document: TrendReport}` (plan 3.0.0), `POST gates/approve-rnd` body `{document: StudioRnd}`, `POST gates/approve-branding` body `{document:
   StudioBranding}`, `POST gates/approve-plan` body `{document: SeriesPlan}` (producer; admins too) ->
   `{accepted: true}`; refused -> 422 `{code: 'gate_rejected', failed: [{check_id, evidence: {problems: {code,
   message}[]}}]}`. What Claude proposed and what was approved go to the dataset (`human_edits` rnd / branding /
@@ -122,7 +122,8 @@ interface StageView { key: string; executor: string; state: string; attempts: nu
 ## Episodes (`/productions/:id/episodes`)
 
 ```ts
-type EpisodeStatus = 'planned' | 'producing' | 'ready' | 'failed' | 'cancelled';
+// waiting_approval: an episode 1.3.0 waits at approve-timeline or approve-youtube-kit
+type EpisodeStatus = 'planned' | 'producing' | 'waiting_approval' | 'ready' | 'failed' | 'cancelled';
 interface EpisodeSummary {
   id: string; idx: number; title: string; hook: string; status: EpisodeStatus;
   currentStage: string | null;       // key of the running/waiting/failed stage of its run
@@ -209,9 +210,73 @@ interface ThumbnailList { items: ThumbnailView[]; selectedId: string | null; can
 
 - `GET timeline` -> `{revision: number, data: TimelineV3, issues: TimelineIssue[], savedAt, authorId}` (404 before build-timeline)
 - `GET timeline/revisions` -> `{revision, baseRevision, authorId, label, createdAt}[]`; `GET timeline/revisions/:rev`
-- `POST timeline/revisions` (editor) `{baseRevision, data: TimelineV3, label?}` -> `{revision, issues}`; 409
-  `revision_conflict` with `currentRevision`
+- `POST timeline/revisions` (editor) `{baseRevision, data: TimelineV3, label?}` -> `{revision, issues, approved}`; 409
+  `revision_conflict` with `currentRevision`. `approved`: the episode's timeline is already approved (episode 1.3.0),
+  so this revision is rendered only after Render lại (`rerender` resumes such a run from approve-timeline).
 - `POST editor/previews` (editor) `{revision}` -> EditorJob; `GET editor/jobs/:jobId` -> EditorJob & `{url?}`
 - `EditorJob = {id, kind: 'render_preview' | 'export_premiere', status: 'queued'|'running'|'completed'|'failed',
   progress: number | null, request, result, error, createdAt}`
 - (GĐ6) `POST exports/premiere {media: 'proxy'|'original'}` -> EditorJob; `GET editor/jobs?kind=export_premiere`
+
+## Call log (`/productions/:id`)
+
+- `GET llm-calls?episodeId&page&pageSize` (editor, footage scope) -> `Paged<LlmCallView>`: every Claude call of the
+  production, `source` `claude` (a stage) or `claude-chat` (a chat reply; `attemptId` is the reply's turn id)
+- `GET llm-calls/:callId` -> the call with its prompt and answer (from the bucket)
+- `GET human-edits?page&pageSize` (editor) -> what people approved or changed next to what Claude proposed
+
+## Chat (spec local-chat §3.1)
+
+One thread per production and one per episode. A message goes to the step the production (or episode) is at now —
+its **scope**: `intake` (no run yet), `gate` (a gate waiting: `approve-trend-report`, `approve-rnd`,
+`approve-branding`, `approve-plan`, `approve-timeline`, `approve-youtube-kit`), `failed` (a Claude stage that
+failed its check), `timeline` (an episode with no gate waiting). Claude's reply is written by the worker (it waits
+for a `claude` slot, ahead of the steps that run on their own); poll the thread. Nothing a reply proposes is applied
+until someone presses Áp dụng / Bắt đầu / Duyệt.
+
+```ts
+interface ChatTurn { id: string; production_id: string; episode_id: string | null; run_id: string | null;
+  scope: 'intake' | 'gate' | 'failed' | 'timeline'; stage_key: string; turn: number; role: 'user' | 'assistant' | 'system';
+  text: string; mentions: {kind: 'folder'; id: string; name: string}[]; context: unknown;
+  proposal: unknown | null;   // the stage's document; intake: IntakeDraft; timeline: {ops, base_revision, timeline}
+  action: 'answer' | 'revise' | 'suggest_approve' | 'render' | 'export' | 'retry' | null;
+  status: 'pending' | 'running' | 'done' | 'failed' | 'rate_limited'; not_before: string | null;
+  problems: {code: string; message: string}[];   // a proposal Claude could not make pass the check
+  llm_call_id: string | null; created_by: string | null; applied_at: string | null; created_at: string; updated_at: string }
+interface ChatThreadView { turns: ChatTurn[];
+  scope: {productionId; episodeId; runId; stageKey; scope} | null;
+  blocked: {code: 'busy' | 'nothing_to_chat'; stage: string | null} | null;   // why no message can be sent now
+  current: {turnId: string | null; document: unknown; draft: unknown; pendingApply: boolean} | null;   // on show
+  queueAhead: number }   // replies of other threads waiting for a Claude slot before this one
+```
+
+- `POST /teams/:teamId/drafts` (producer) `{text}` -> `{productionId, user, assistant}`: a draft production (title
+  "Video mới") and its first intake message. `@[name](folder:<id>)` in the text names an ag-go folder; one the
+  person cannot see -> 422 `folder_not_accessible`.
+- `GET /productions/:id/chat?episodeId&after` (viewer) -> ChatThreadView (`after`: a turn number)
+- `POST /productions/:id/chat` (editor) `{text, episodeId?}` -> `{user, assistant}`; 409 `busy` while Claude or a
+  render works on the step, `nothing_to_chat` when the run is over. A message sent while a reply waits joins it.
+- `POST /productions/:id/chat/:turnId/apply` (intake: producer; timeline: editor) -> `{revision?}`: the intake draft
+  into the production, or timeline edits saved as a revision (409 `revision_conflict` when it changed since, 409
+  `superseded` / `already_applied`)
+- `POST /productions/:id/start` (producer) -> `{runId}`: the newest intake draft into the production, then the plan
+  run; 422 `intake_incomplete` with `missing: ('title'|'folder_ids'|'aspect'|'language'|'research')[]`
+- `POST /productions/:id/chat/approve` (producer) `{stageKey, episodeId?, turnId?}` -> `{stageState, runState,
+  revision?}`: approves the document on show (`turnId` = `current.turnId`; 409 `stale_version` when a newer one
+  exists, `stale_step` when the gate is no longer waiting). `approve-timeline` submits the latest revision (409
+  `not_applied` when `turnId` is a timeline proposal not applied yet). Draft and approved version go to `human_edits`.
+- `POST /productions/:id/chat/retry` (producer) `{stageKey, episodeId?}` -> 202: runs the failed Claude stage again
+  with the chat's messages about it in its prompt; 409 `not_failed`
+- `POST /productions/:id/chat/manual` (producer) `{stageKey, episodeId?, document}` -> ChatTurn: a version written by
+  hand becomes the one on show (422 `rejected` with `failed` when it does not match the stage's schema)
+
+## Studio (`/studio`)
+
+- `GET overview` -> `{items: OverviewItem[]}`, most urgent first:
+  `{id, teamId, title, updatedAt, step: string | null, group: 'waiting_you' | 'needs_attention' | 'running' | 'done',
+  episodes: {id, idx, title, status: EpisodeStatus, step, group}[]}` — the productions of the caller's teams (an admin:
+  all), not archived
+- `GET claude` -> `{running, waiting, max, source: 'settings' | 'env'}`: Claude slots held (stages and chat replies),
+  replies in line, the cap
+- `PUT settings` (Studio admin) `{claudeMaxConcurrent: 1..100}` -> the same as `GET claude`; the worker applies it on
+  its next claim
