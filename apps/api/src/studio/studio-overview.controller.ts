@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { IsInt, Max, Min } from 'class-validator';
 import { Request } from 'express';
 import {
-  claudeMaxConcurrent, claudeUsage, parseClaudeMaxConcurrent, setClaudeMaxConcurrent, studioOverview,
+  claudeMaxConcurrent, claudeUsage, parseClaudeMaxConcurrent, setClaudeMaxConcurrent, studioOverview, studioQueue,
 } from '@ag-studio/engine';
 import { AccountApiService } from '../auth/account-api.service';
 import { EngineService } from './engine.service';
@@ -16,8 +16,8 @@ export class StudioSettingsDto {
 
 /**
  * Studio-wide reads for the chat UI: the videos a person can see (left column, home page), Claude calls in use (the
- * header chip), and the settings only a Studio admin may change. No team in the path, so no `@Roles`: the list is
- * filtered by team membership here.
+ * header chip), the Queue screen, and the settings only a Studio admin may change. No team in the path, so no
+ * `@Roles`: lists are filtered by team membership here.
  */
 @Controller('studio')
 export class StudioOverviewController {
@@ -38,6 +38,19 @@ export class StudioOverviewController {
   claude() {
     const cap = claudeMaxConcurrent(this.engine.db, this.envCap());
     return { ...claudeUsage(this.engine.db, this.engine.core.clock.now()), max: cap.value, source: cap.source };
+  }
+
+  /**
+   * The Queue screen: Claude calls running and waiting, and the farm jobs not done (from ag-farm's owner API, which
+   * lists no machines). The farm out of reach is `farm.ok = false`, not an error.
+   */
+  @Get('queue')
+  async queue(@Req() req: Request) {
+    const isAdmin = await this.isAdmin(req);
+    const cap = claudeMaxConcurrent(this.engine.db, this.envCap());
+    return studioQueue(this.engine.core, this.engine.db, this.engine.queueFarm, {
+      userId: req.authContext!.userId, isAdmin, now: this.engine.core.clock.now(), claudeMax: cap.value,
+    });
   }
 
   @Put('settings')

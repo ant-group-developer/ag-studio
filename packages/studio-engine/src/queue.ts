@@ -140,3 +140,22 @@ function productionOfRun(db: StudioDb, runId: string): { productionId: string; e
   const p = db.get<{ id: string }>("SELECT id FROM productions WHERE run_id = ?", [runId]);
   return p ? { productionId: p.id, episodeId: null } : null;
 }
+
+/**
+ * `listJobs` answered from memory for `ttlMs` per query: every open Queue screen and header chip polls, and they
+ * should not each reach the farm. A failure is not kept.
+ */
+export function cachedQueueFarm(farm: QueueFarm, ttlMs: number, now: () => number = Date.now): QueueFarm {
+  const hits = new Map<string, { at: number; value: Promise<Awaited<ReturnType<QueueFarm["listJobs"]>>> }>();
+  return {
+    listJobs(query) {
+      const key = JSON.stringify(query ?? {});
+      const hit = hits.get(key);
+      if (hit && now() - hit.at <= ttlMs) return hit.value;
+      const value = farm.listJobs(query);
+      hits.set(key, { at: now(), value });
+      value.catch(() => { if (hits.get(key)?.value === value) hits.delete(key); });
+      return value;
+    },
+  };
+}

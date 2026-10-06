@@ -3,7 +3,7 @@
  * may see. Farm jobs are read from ag-farm's owner API; the owner API lists no nodes, so no machine list here.
  */
 import { describe, expect, it } from "vitest";
-import { acquireChatSlot, insertUserTurn, startPlanRun, studioQueue, type QueueFarm } from "../src/index.js";
+import { acquireChatSlot, cachedQueueFarm, insertUserTurn, startPlanRun, studioQueue, type QueueFarm } from "../src/index.js";
 import { seedProduction, world } from "./helpers.js";
 
 const NOW = "2026-10-06T10:30:00.000Z";
@@ -109,5 +109,29 @@ describe("studioQueue", () => {
       { source: "chat", waiting: false, ...prod, step: "approve-rnd", since: "2026-10-06T10:29:00.000Z" },
       { source: "stage", waiting: false, ...prod, step: stage.stage_key, since: null },
     ]);
+  });
+});
+
+describe("cachedQueueFarm", () => {
+  it("asks the farm once per query within the time to live, then again", async () => {
+    let t = 0;
+    let calls = 0;
+    const f = cachedQueueFarm({ async listJobs() { calls += 1; return { jobs: [], next_cursor: null }; } }, 3000, () => t);
+    await f.listJobs({ status: "queued" });
+    await f.listJobs({ status: "queued" });
+    expect(calls).toBe(1);
+    await f.listJobs({ status: "queued", after: "x" });
+    expect(calls).toBe(2);
+    t = 3001;
+    await f.listJobs({ status: "queued" });
+    expect(calls).toBe(3);
+  });
+
+  it("does not keep a failure", async () => {
+    let fail = true;
+    const f = cachedQueueFarm({ async listJobs() { if (fail) throw new Error("down"); return { jobs: [], next_cursor: null }; } }, 3000, () => 0);
+    await expect(f.listJobs({})).rejects.toThrow("down");
+    fail = false;
+    await expect(f.listJobs({})).resolves.toEqual({ jobs: [], next_cursor: null });
   });
 });
