@@ -18,3 +18,4 @@ export * from "./thumbnail-render.js";
 export * from "./thumbnails-db.js";
 export * from "./thumbnail-actions.js";
 export * from "./canva-pdf.js";
+export * from "./chat-db.js";
