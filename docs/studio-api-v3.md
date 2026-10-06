@@ -122,7 +122,8 @@ interface StageView { key: string; executor: string; state: string; attempts: nu
 ## Episodes (`/productions/:id/episodes`)
 
 ```ts
-// waiting_approval: an episode 1.3.0 waits at approve-timeline or approve-youtube-kit
+// waiting_approval: an episode 1.3.0 waits at approve-timeline or approve-youtube-kit (shot-cut 1.0.0: also
+// approve-survey, approve-edit-plan)
 type EpisodeStatus = 'planned' | 'producing' | 'waiting_approval' | 'ready' | 'failed' | 'cancelled';
 interface EpisodeSummary {
   id: string; idx: number; title: string; hook: string; status: EpisodeStatus;
@@ -131,10 +132,12 @@ interface EpisodeSummary {
   durationSeconds: number | null;    // from the latest export, else the timeline length
   thumbnailUrl: string | null;       // signed, the picture the episode uses (null without the footage scope)
   updatedAt: string;
+  editStyle: 'whole' | 'cut';        // whole videos (timeline v3) or shot by shot (timeline v4, phase 5)
 }
 interface EpisodeDetail extends EpisodeSummary {
   plan: StudioEpisode;                    // episodes.plan
   run: RunView | null;
+  workflow: string | null;                // the run's workflow 'id@version' ('ag-studio-episode-cut@1.0.0'…); null before a run
   youtube: YoutubeKit | null;             // effective kit: episodes.youtube ?? the run's youtube-kit.json
   selectedTitle: number;
   selectedThumbnailId: string | null;     // see Thumbnails
@@ -144,6 +147,16 @@ interface EpisodeDetail extends EpisodeSummary {
   finalVideoUrl: string | null; finalVideoDownloadUrl: string | null;   // the download URL saves the file
   latestRevision: number | null;
   render: EpisodeRender;
+}
+// The scene selection of a shot-cut episode (survey.json, harness.survey-index/v2), shot by shot
+interface EpisodeShots {
+  state: 'pending' | 'waiting' | 'approved';   // not made yet / at approve-survey (chat edits included) / as approved
+  turnId: string | null;                        // the chat turn of the version on show while waiting (for chat/approve)
+  shots: { sourceId: string; shotId: string;   // shotId 's000-002' = first video, third shot
+    in: number; out: number;                    // seconds in the video
+    score: number; tags: string[]; usable: boolean; note: string; speech: 'none' | 'talking' | 'ambient';
+    frameUrl: string | null;                    // signed middle frame of the shot (null before watch-source)
+    changed: boolean }[];                       // usable/score/note differs from Claude's selection
 }
 type RenderMachine = 'any' | 'nvenc' | 'gpu';   // ag-farm requirements {} | {nvenc: true} | {gpu: true}
 interface EpisodeRender {
@@ -163,8 +176,16 @@ interface EpisodeRender {
 - `POST /:episodeId/rerender` (producer) `{renderMachine?: RenderMachine}` -> `{runId, reused, from}`; `from` as
   `render.restartFrom`. The type is kept for that run's final render; without one the run's choice stays, or `{}`.
   409 `episode_running` while its run is active
+- `POST /:episodeId/rerun-from` (producer) `{stage: 'approve-survey' | 'approve-edit-plan'}` -> `{runId, reused}`
+  (shot-cut episodes): a new run waiting at that gate again with Claude's document, the stages before it reused
+  (proxies, shots and frames are not made again). Only when the run has ended or waits at a later gate (that run is
+  cancelled); 409 `gate_not_passed`, 409 `episode_running`; 422 `not_cut` for a whole-video episode; any other
+  stage -> 400
+- `GET /:episodeId/shots` (viewer with the footage scope, else 403 `footage_hidden`) -> EpisodeShots; 422 `not_cut`
 - `POST /:episodeId/cancel` (producer); `POST /:episodeId/stages/:stage/retry` (producer)
 - `GET /:episodeId/documents/:stage/:name`
+  (shot-cut: `source-survey/survey.json`, `approve-survey/survey.json`, `plan-edit/edit-plan.json`,
+  `approve-edit-plan/edit-plan.json`, `fit-timeline/fit-report.json`, `media-index/shots.json`)
 - `POST /:episodeId/youtube-pack` (viewer with the footage scope) -> `{url, name, sizeBytes}`: the zip as the episode
   is now — the picked thumbnail, `youtube.json`, `title.txt`, `description.txt` (with the chapters), `tags.txt`; no
   video (download it on its own). Built on demand, stored once per content; the URL saves the file.
@@ -221,15 +242,19 @@ interface ThumbnailList { items: ThumbnailView[]; selectedId: string | null; can
 
 ## Editor (`/productions/:id/episodes/:episodeId`)
 
-- `GET timeline` -> `{revision: number, data: TimelineV3, issues: TimelineIssue[], savedAt, authorId}` (404 before build-timeline)
+- `GET timeline` -> `{revision: number, data: TimelineV3 | TimelineV4, issues: TimelineIssue[], savedAt, authorId}` (404
+  before build-timeline / fit-timeline). An episode keeps the version of its first revision: whole-video episodes v3,
+  shot-cut episodes v4 (contract in `packages/contracts/src/studio.ts`, ADR-0001 item 151)
 - `GET timeline/revisions` -> `{revision, baseRevision, authorId, label, createdAt}[]`; `GET timeline/revisions/:rev`
-- `POST timeline/revisions` (editor) `{baseRevision, data: TimelineV3, label?}` -> `{revision, issues, approved}`; 409
+- `POST timeline/revisions` (editor) `{baseRevision, data: TimelineV3 | TimelineV4, label?}` -> `{revision, issues, approved}`; 409
   `revision_conflict` with `currentRevision`. `approved`: the episode's timeline is already approved (episode 1.3.0),
-  so this revision is rendered only after Render lại (`rerender` resumes such a run from approve-timeline).
+  so this revision is rendered only after Render lại (`rerender` resumes such a run from approve-timeline). A v4
+  timeline on a v3 episode is stored as v3; one v3 cannot hold (a trim, a transition, narration, captions) -> 422 `not_v3`.
 - `POST editor/previews` (editor) `{revision}` -> EditorJob; `GET editor/jobs/:jobId` -> EditorJob & `{url?}`
 - `EditorJob = {id, kind: 'render_preview' | 'export_premiere', status: 'queued'|'running'|'completed'|'failed',
   progress: number | null, request, result, error, createdAt}`
-- (GĐ6) `POST exports/premiere {media: 'proxy'|'original'}` -> EditorJob; `GET editor/jobs?kind=export_premiere`
+- (GĐ6) `POST exports/premiere {media: 'proxy'|'original'}` -> EditorJob; `GET editor/jobs?kind=export_premiere`.
+  A v4 timeline with trims, transitions or narration -> 422 `premiere_needs_phase_4`.
 
 ## Call log (`/productions/:id`)
 
@@ -242,7 +267,8 @@ interface ThumbnailList { items: ThumbnailView[]; selectedId: string | null; can
 
 One thread per production and one per episode. A message goes to the step the production (or episode) is at now —
 its **scope**: `intake` (no run yet), `gate` (a gate waiting: `approve-trend-report`, `approve-rnd`,
-`approve-branding`, `approve-plan`, `approve-timeline`, `approve-youtube-kit`), `failed` (a Claude stage that
+`approve-branding`, `approve-plan`, `approve-timeline`, `approve-youtube-kit`; shot-cut episodes also `approve-survey`,
+`approve-edit-plan`), `failed` (a Claude stage that
 failed its check), `timeline` (an episode with no gate waiting). Claude's reply is written by the worker (it waits
 for a `claude` slot, ahead of the steps that run on their own); poll the thread. Nothing a reply proposes is applied
 until someone presses Áp dụng / Bắt đầu / Duyệt.
@@ -251,7 +277,8 @@ until someone presses Áp dụng / Bắt đầu / Duyệt.
 interface ChatTurn { id: string; production_id: string; episode_id: string | null; run_id: string | null;
   scope: 'intake' | 'gate' | 'failed' | 'timeline'; stage_key: string; turn: number; role: 'user' | 'assistant' | 'system';
   text: string; mentions: {kind: 'folder'; id: string; name: string}[]; context: unknown;
-  proposal: unknown | null;   // the stage's document; intake: IntakeDraft; timeline: {ops, base_revision, timeline}
+  proposal: unknown | null;   // the stage's document; intake: IntakeDraft; timeline: {ops, base_revision, timeline};
+                              // approve-survey: {ops: SurveyOp[], survey} (SurveyOp: keep | reject | setScore | setNote)
   action: 'answer' | 'revise' | 'suggest_approve' | 'render' | 'export' | 'retry' | null;
   status: 'pending' | 'running' | 'done' | 'failed' | 'rate_limited'; not_before: string | null;
   problems: {code: string; message: string}[];   // a proposal Claude could not make pass the check

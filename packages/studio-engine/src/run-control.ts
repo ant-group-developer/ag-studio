@@ -500,6 +500,15 @@ function resumeRunFrom(
   return { runId: run.run_id, reused: [...keep.keys()] };
 }
 
+/** An episode's ended run resumed from `fromStage` (see `resumeRunFrom`), the episode pointing at the new run. */
+export function resumeEpisodeRunFrom(core: StudioEngineCore, db: StudioDb, episodeId: string, fromStage: string): { runId: string; reused: string[] } {
+  const ep = getEpisode(db, episodeId);
+  if (!ep?.run_id) throw new StudioRunError("not_found", `episode ${episodeId} has no run`);
+  return resumeRunFrom(core, ep.run_id, (newRunId) => {
+    db.run("UPDATE episodes SET run_id = ?, updated_at = ? WHERE id = ?", [newRunId, new Date().toISOString(), episodeId]);
+  }, fromStage);
+}
+
 export function resumePlanRunFrom(core: StudioEngineCore, db: StudioDb, productionId: string, fromStage: string): { runId: string; reused: string[] } {
   const p = getProduction(db, productionId);
   if (!p?.run_id) throw new StudioRunError("not_found", `production ${productionId} has no plan run`);

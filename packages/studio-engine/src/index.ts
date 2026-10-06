@@ -34,5 +34,6 @@ export * from "./cut-stages.js";
 export * from "./cut-media.js";
 export * from "./cut-ffmpeg.js";
 export * from "./agent-sessions.js";
+export * from "./cut-episode.js";
 export * from "./voice-store.js";
 export * from "./cut-fit.js";

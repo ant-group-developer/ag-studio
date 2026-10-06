@@ -22,6 +22,8 @@ import {
   episodeExport,
   episodeRenderInfo,
   episodeRunView,
+  episodeShots,
+  EPISODE_RERUN_GATES,
   episodeState,
   episodeThumbnails,
   episodeTimelineSeconds,
@@ -32,6 +34,7 @@ import {
   readStageDocument,
   recordHumanEdit,
   rerenderEpisode,
+  rerunEpisodeFrom,
   retryStage,
   readStoredYoutubeKit,
   RENDER_MACHINES,
@@ -39,6 +42,7 @@ import {
   YoutubeKitSchema,
   validateYoutubeKit,
   type EpisodeRecord,
+  type EpisodeRerunGate,
   type EpisodeStatus,
   type RenderMachine,
   type RunView,
@@ -59,6 +63,11 @@ import { mapErrors } from './http-errors';
 export class RerenderDto {
   /** The farm machine type the final render runs on (phase 3); absent: the run's choice, or any machine. */
   @IsOptional() @IsIn(RENDER_MACHINES) renderMachine?: RenderMachine;
+}
+
+/** Where a shot-cut episode runs again from: its scene selection or its edit plan gate (phase 5). */
+export class RerunFromDto {
+  @IsIn(EPISODE_RERUN_GATES) stage!: EpisodeRerunGate;
 }
 
 class PatchEpisodeDto {
@@ -87,6 +96,8 @@ export interface EpisodeSummary {
   id: string; idx: number; title: string; hook: string; status: EpisodeStatus;
   currentStage: string | null; progress: number | null; durationSeconds: number | null;
   thumbnailUrl: string | null; updatedAt: string;
+  /** `whole` (whole videos) or `cut` (shot by shot, phase 5). */
+  editStyle: 'whole' | 'cut';
 }
 
 type StudioExport = NonNullable<ReturnType<typeof episodeExport>>;
@@ -175,6 +186,7 @@ export class EpisodesController {
       durationSeconds: exp?.duration_seconds ?? episodeTimelineSeconds(this.engine.db, ep.id),
       thumbnailUrl: thumb ? await this.sign(thumb.image_key) : null,
       updatedAt: ep.updated_at,
+      editStyle: ep.edit_style,
     };
   }
 
@@ -240,11 +252,14 @@ export class EpisodesController {
       }));
       const thumbnails = covers ? await Promise.all(exportThumbnails(exp).map(async (f, index) => ({ url: await this.sign(f.key), index }))) : [];
       const mp4 = covers ? exp?.files.find((f) => f.kind === 'mp4') : undefined;
+      const release = ep.run_id ? this.engine.core.store.getRun(ep.run_id)?.workflow_release : undefined;
       return {
         ...(await this.summary(ep, covers)),
         footageHidden: !covers,
         plan: ep.plan ? JSON.parse(ep.plan) : null,
         run,
+        /** The episode run's workflow as `id@version` (the web picks the steps it shows by it); null before a run. */
+        workflow: release ? `${release.id}@${release.version}` : null,
         youtube,
         selectedTitle: ep.selected_title ?? 0,
         selectedThumbnail: ep.selected_thumbnail ?? 0,
@@ -361,6 +376,20 @@ export class EpisodesController {
     });
   }
 
+  /**
+   * Runs a shot-cut episode again from its scene selection or edit plan gate (phase 5): when the run has ended or
+   * waits at a later gate; the footage work before the gate is reused.
+   */
+  @Post(':episodeId/rerun-from')
+  @Roles('producer')
+  @HttpCode(HttpStatus.ACCEPTED)
+  rerunFrom(@Param('id') prodId: string, @Param('episodeId') episodeId: string, @Body() dto: RerunFromDto) {
+    return mapErrors(() => {
+      this.requireEpisode(prodId, episodeId);
+      return rerunEpisodeFrom(this.engine.core, this.engine.db, episodeId, dto.stage);
+    });
+  }
+
   @Post(':episodeId/cancel')
   @Roles('producer')
   @HttpCode(HttpStatus.ACCEPTED)
@@ -410,6 +439,34 @@ export class EpisodesController {
       }
       const pack = await buildYoutubePack(this.thumbs, ep);
       return { url: await this.sign(pack.key, pack.name), name: pack.name, sizeBytes: pack.size_bytes };
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Shots (shot-cut episodes, phase 5)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The scene selection of a shot-cut episode now (at its gate, chat edits included, or as approved), each shot
+   * with a signed URL of its frame. Frames show footage: 403 for someone whose ag-go scope does not cover the
+   * production.
+   */
+  @Get(':episodeId/shots')
+  @Roles('viewer')
+  shots(@Param('id') prodId: string, @Param('episodeId') episodeId: string, @Req() req: Request) {
+    return mapErrors(async () => {
+      this.requireEpisode(prodId, episodeId);
+      if (!(await this.covers(req, prodId))) {
+        throw new ForbiddenException({ code: 'footage_hidden', message: 'Bạn không có quyền xem footage của production này' });
+      }
+      const view = episodeShots(this.engine.core, this.engine.db, episodeId);
+      return {
+        state: view.state,
+        turnId: view.turnId,
+        shots: await Promise.all(view.shots.map(async ({ frame_key, source_id, shot_id, ...x }) => ({
+          ...x, sourceId: source_id, shotId: shot_id, frameUrl: frame_key ? await this.sign(frame_key) : null,
+        }))),
+      };
     });
   }
 
