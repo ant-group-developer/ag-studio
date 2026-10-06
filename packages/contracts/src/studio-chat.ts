@@ -1,7 +1,7 @@
 import { z } from "zod";
 import {
-  ChannelRefSchema, MAX_RESEARCH_CHANNELS, MAX_RESEARCH_KEYWORDS, STUDIO_ASPECTS, StudioHintsSchema, StudioMusicSchema, studioVersion,
-  TEXT_KINDS, TEXT_POSITIONS_V2, type TeamSkillStep,
+  CAPTION_MODES, ChannelRefSchema, MAX_RESEARCH_CHANNELS, MAX_RESEARCH_KEYWORDS, STUDIO_ASPECTS, StudioHintsSchema, StudioMusicSchema,
+  studioVersion, TEXT_KINDS, TEXT_POSITIONS_V2, TIMELINE_TRANSITIONS, type TeamSkillStep,
 } from "./studio.js";
 
 /**
@@ -106,6 +106,10 @@ export const TimelineOpSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("removeText"), text_id: textId }).strict(),
   z.object({ op: z.literal("setMusic"), music: StudioMusicSchema.nullable() }).strict(),
   z.object({ op: z.literal("setSourceMuted"), muted: z.boolean() }).strict(),
+  /** Timeline v4 only (shot-cut episodes): seconds into the asset; `out: null` = to the end of the asset. */
+  z.object({ op: z.literal("trimClip"), clip_id: clipId, in: z.number().min(0), out: z.number().positive().nullable() }).strict(),
+  z.object({ op: z.literal("setTransition"), clip_id: clipId, kind: z.enum(TIMELINE_TRANSITIONS), seconds: z.number().min(0).max(1) }).strict(),
+  z.object({ op: z.literal("setCaptions"), mode: z.enum(CAPTION_MODES) }).strict(),
 ]);
 export type TimelineOp = z.infer<typeof TimelineOpSchema>;
 

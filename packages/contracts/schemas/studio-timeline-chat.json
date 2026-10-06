@@ -348,6 +348,96 @@
                   "muted"
                 ],
                 "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "trimClip"
+                  },
+                  "clip_id": {
+                    "type": "string",
+                    "pattern": "^C\\d{3,4}$"
+                  },
+                  "in": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "out": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "clip_id",
+                  "in",
+                  "out"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "setTransition"
+                  },
+                  "clip_id": {
+                    "type": "string",
+                    "pattern": "^C\\d{3,4}$"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "cut",
+                      "dissolve",
+                      "dip_black"
+                    ]
+                  },
+                  "seconds": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "required": [
+                  "op",
+                  "clip_id",
+                  "kind",
+                  "seconds"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "setCaptions"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "burn-in",
+                      "karaoke"
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "mode"
+                ],
+                "additionalProperties": false
               }
             ]
           },
