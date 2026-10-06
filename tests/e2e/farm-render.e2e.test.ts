@@ -1181,3 +1181,34 @@ describe.skipIf(!isE2E)("farm E2E: studio.tts", () => {
     expect(["succeeded", "failed"], "TTS must reach a terminal state").toContain(outcome);
   }, 120_000);
 });
+
+// ------------------------------------------------------------------
+// Phase 3: the three machine types are requirements the real hub accepts (its schema is strict: an unknown key would be
+// a 400). Jobs are held back with not_before so no worker takes them, then cancelled.
+// ------------------------------------------------------------------
+describe.skipIf(!isE2E)("farm E2E: render machine types", () => {
+  it("the hub takes a final render with the requirements of any, nvenc and gpu", async () => {
+    const { RENDER_MACHINES, renderRequirements } = await import("@harness/contracts");
+    const ownerClient = new FarmOwnerClient({ baseUrl: `http://127.0.0.1:${FARM_HUB_PORT}`, ownerKey, timeoutMs: 15_000 });
+    const later = new Date(Date.now() + 24 * 3600_000).toISOString();
+    const ids: string[] = [];
+    for (const machine of RENDER_MACHINES) {
+      const resp = await ownerClient.submitJob({
+        type: "studio.render_final",
+        correlation_id: `machine-${machine}-${randomUUID()}`,
+        affinity_key: productionId,
+        not_before: later,
+        requirements: renderRequirements(machine),
+        payload: {
+          production_id: productionId, revision: 1, composition: "stage:composition.json", canvas: CANVAS, handle_seconds: 0.5,
+          output: `renders/machine-${machine}/final.mp4`,
+        },
+      });
+      expect(resp.created).toBe(true);
+      ids.push(resp.job.id);
+    }
+    const queued = await ownerClient.listJobs({ status: "queued", type: "studio.render_final", limit: 500 });
+    expect(queued.jobs.map((j) => j.id)).toEqual(expect.arrayContaining(ids));
+    for (const id of ids) expect((await ownerClient.cancelJob(id)).status).toBe("cancelled");
+  });
+});
