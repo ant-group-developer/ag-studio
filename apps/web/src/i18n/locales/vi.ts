@@ -758,10 +758,12 @@ export const vi = {
       timeline: "Timeline",
     },
     teamSkillStep: {
+      intake: "Hỏi thông tin video mới",
       "trend-report": "Báo cáo xu hướng",
       rnd: "R&D",
       branding: "Branding",
       "plan-episodes": "Kế hoạch tập",
+      timeline: "Sửa timeline bằng chat",
       "youtube-kit": "Gói YouTube & thumbnail",
     },
     llmOutcome: {

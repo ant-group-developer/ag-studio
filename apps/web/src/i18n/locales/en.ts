@@ -759,10 +759,12 @@ export const en: LocaleMessages = {
       timeline: "Timeline",
     },
     teamSkillStep: {
+      intake: "New video questions",
       "trend-report": "Trend report",
       rnd: "R&D",
       branding: "Branding",
       "plan-episodes": "Episode plan",
+      timeline: "Timeline chat",
       "youtube-kit": "YouTube kit & thumbnails",
     },
     llmOutcome: {

@@ -63,7 +63,7 @@ export interface TeamDetail {
 }
 
 /** The AI steps a team skill can apply to (an empty list = every step). */
-export type TeamSkillStep = "trend-report" | "rnd" | "branding" | "plan-episodes" | "youtube-kit";
+export type TeamSkillStep = "intake" | "trend-report" | "rnd" | "branding" | "plan-episodes" | "timeline" | "youtube-kit";
 
 /** "Quy chuẩn & skill" of a team: markdown its Claude calls follow. */
 export interface TeamSkill {

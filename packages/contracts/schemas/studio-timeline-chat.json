@@ -1,0 +1,365 @@
+{
+  "$ref": "#/definitions/studio-timeline-chat",
+  "definitions": {
+    "studio-timeline-chat": {
+      "type": "object",
+      "properties": {
+        "ops": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "addClip"
+                  },
+                  "asset_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "index": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "op",
+                  "asset_id",
+                  "index"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "removeClip"
+                  },
+                  "clip_id": {
+                    "type": "string",
+                    "pattern": "^C\\d{3,4}$"
+                  }
+                },
+                "required": [
+                  "op",
+                  "clip_id"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "moveClip"
+                  },
+                  "from": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "to": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "op",
+                  "from",
+                  "to"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "replaceClipAsset"
+                  },
+                  "clip_id": {
+                    "type": "string",
+                    "pattern": "^C\\d{3,4}$"
+                  },
+                  "asset_id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "op",
+                  "clip_id",
+                  "asset_id"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "setSectionTitle"
+                  },
+                  "clip_id": {
+                    "type": "string",
+                    "pattern": "^C\\d{3,4}$"
+                  },
+                  "title": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "clip_id",
+                  "title"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "addText"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "title",
+                      "callout",
+                      "lower_third"
+                    ]
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "start": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "duration": {
+                    "type": "number",
+                    "minimum": 0.5,
+                    "maximum": 20
+                  },
+                  "position": {
+                    "type": "string",
+                    "enum": [
+                      "top_left",
+                      "top_center",
+                      "top_right",
+                      "center",
+                      "bottom_left",
+                      "bottom_center",
+                      "bottom_right"
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "kind",
+                  "text",
+                  "start",
+                  "duration",
+                  "position"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "updateText"
+                  },
+                  "text_id": {
+                    "type": "string",
+                    "pattern": "^T\\d{3}$"
+                  },
+                  "kind": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "title",
+                          "callout",
+                          "lower_third"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "text": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "start": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "duration": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "minimum": 0.5,
+                        "maximum": 20
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "position": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "top_left",
+                          "top_center",
+                          "top_right",
+                          "center",
+                          "bottom_left",
+                          "bottom_center",
+                          "bottom_right"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "text_id",
+                  "kind",
+                  "text",
+                  "start",
+                  "duration",
+                  "position"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "removeText"
+                  },
+                  "text_id": {
+                    "type": "string",
+                    "pattern": "^T\\d{3}$"
+                  }
+                },
+                "required": [
+                  "op",
+                  "text_id"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "setMusic"
+                  },
+                  "music": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "track": {
+                            "type": "string",
+                            "pattern": "^library:[A-Za-z0-9._\\-/]+$"
+                          },
+                          "gain_db": {
+                            "type": "number",
+                            "minimum": -40,
+                            "maximum": 0
+                          },
+                          "ducking": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "track",
+                          "gain_db",
+                          "ducking"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "music"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "setSourceMuted"
+                  },
+                  "muted": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "op",
+                  "muted"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 50
+        }
+      },
+      "required": [
+        "ops"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

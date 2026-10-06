@@ -14,6 +14,7 @@ import * as D from "../src/distribution.js";
 import * as G from "../src/learning.js";
 import { EdlSchema } from "../src/edl.js";
 import * as S from "../src/studio.js";
+import * as SC from "../src/studio-chat.js";
 
 export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
   run: E.RunSchema, "stage-run": E.StageRunSchema, attempt: E.AttemptSchema, artifact: E.ArtifactSchema,
@@ -47,6 +48,7 @@ export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
   "studio-youtube": S.StudioYoutubeSchema, "studio-export": S.StudioExportSchema,
   "studio-seed": S.StudioSeedSchema, "studio-rnd": S.StudioRndSchema, "studio-branding": S.StudioBrandingSchema,
   "studio-thumbnails": S.StudioThumbnailsSchema,
+  "studio-intake-draft": SC.IntakeDraftSchema, "studio-timeline-chat": SC.TimelineChatProposalSchema,
 };
 
 export function toJsonSchema(name: string, schema: ZodTypeAny) {

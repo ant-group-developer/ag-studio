@@ -1,0 +1,210 @@
+{
+  "$ref": "#/definitions/studio-intake-draft",
+  "definitions": {
+    "studio-intake-draft": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.intake-draft/v1"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "folder_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "maxItems": 50
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "own",
+                  "reference"
+                ]
+              }
+            },
+            "required": [
+              "url",
+              "role"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 20
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "maxItems": 20
+        },
+        "aspect": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "16:9",
+                "9:16"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "language": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 10
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hints": {
+          "type": "object",
+          "properties": {
+            "description": {
+              "type": "string",
+              "maxLength": 4000
+            },
+            "goal": {
+              "type": "string",
+              "maxLength": 1000
+            },
+            "audience": {
+              "type": "string",
+              "maxLength": 1000
+            },
+            "tone": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "notes": {
+              "type": "string",
+              "maxLength": 4000
+            },
+            "episode_target_seconds": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 10,
+                  "maximum": 3600
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "max_episodes": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 30
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "description",
+            "goal",
+            "audience",
+            "tone",
+            "notes",
+            "episode_target_seconds",
+            "max_episodes"
+          ],
+          "additionalProperties": false
+        },
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string",
+                "enum": [
+                  "title",
+                  "folder_ids",
+                  "aspect",
+                  "language",
+                  "research",
+                  "episode_target_seconds",
+                  "max_episodes",
+                  "tone",
+                  "audience"
+                ]
+              },
+              "question": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 60
+                },
+                "maxItems": 4
+              }
+            },
+            "required": [
+              "field",
+              "question",
+              "options"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 5
+        }
+      },
+      "required": [
+        "schema_version",
+        "title",
+        "folder_ids",
+        "channels",
+        "keywords",
+        "aspect",
+        "language",
+        "hints",
+        "questions"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

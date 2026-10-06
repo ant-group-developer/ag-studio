@@ -612,7 +612,7 @@ export type StudioSkill = keyof typeof STUDIO_SKILL_OUTPUTS;
 // ---------------------------------------------------------------------------
 
 /** The AI steps a team skill can be limited to; a skill limited to none applies to every step. */
-export const TEAM_SKILL_STEPS = ["trend-report", "rnd", "branding", "plan-episodes", "youtube-kit"] as const;
+export const TEAM_SKILL_STEPS = ["intake", "trend-report", "rnd", "branding", "plan-episodes", "timeline", "youtube-kit"] as const;
 export type TeamSkillStep = (typeof TEAM_SKILL_STEPS)[number];
 
 /** Lengths in characters. `enabledTotal` bounds every enabled skill of a team together (prompt cost). */
@@ -674,6 +674,11 @@ function stripForClaude(node: unknown): unknown {
  * checker (one repair round, see `StudioAgentExecutor`).
  */
 export function claudeOutputJsonSchema(skill: StudioSkill): Record<string, unknown> {
-  const raw = zodToJsonSchema(STUDIO_SKILL_OUTPUTS[skill], { $refStrategy: "none", target: "jsonSchema7" });
+  return claudeJsonSchemaFor(STUDIO_SKILL_OUTPUTS[skill]);
+}
+
+/** `claudeOutputJsonSchema` for any Zod schema (chat replies wrap a stage's schema). It must hold no `z.record`. */
+export function claudeJsonSchemaFor(schema: z.ZodTypeAny): Record<string, unknown> {
+  const raw = zodToJsonSchema(schema, { $refStrategy: "none", target: "jsonSchema7" });
   return stripForClaude(raw) as Record<string, unknown>;
 }

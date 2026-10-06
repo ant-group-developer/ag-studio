@@ -7,7 +7,7 @@
  * Model: clips play back to back in array order, each for its WHOLE asset (no trimming); texts sit at
  * absolute times; sections start wherever a clip has a non-null `section_title`.
  */
-import type { EpisodeAsset, StudioMusic, TimelineClip, TimelineText, TimelineV3 } from "@harness/contracts";
+import type { EpisodeAsset, StudioMusic, TimelineClip, TimelineOp, TimelineText, TimelineV3 } from "@harness/contracts";
 
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
@@ -222,4 +222,53 @@ export function setMusic(t: TimelineV3, music: StudioMusic | null): TimelineV3 {
 
 export function setSourceMuted(t: TimelineV3, muted: boolean): TimelineV3 {
   return { ...t, source_audio: { muted } };
+}
+
+// ---------------------------------------------------------------------------
+// Edits proposed in chat (`TimelineOp`, contracts/studio-chat.ts)
+// ---------------------------------------------------------------------------
+
+function applyOne(t: TimelineV3, op: TimelineOp, allowed: Record<string, EpisodeAsset>): TimelineV3 {
+  const withAsset = (x: TimelineV3, id: string) => {
+    if (x.assets[id]) return x;
+    const info = allowed[id];
+    if (!info) throw new TimelineOpError("unknown_asset", `video ${id} không nằm trong danh sách video tập này được dùng`);
+    return ensureAsset(x, id, info);
+  };
+  switch (op.op) {
+    case "addClip": return addClip(withAsset(t, op.asset_id), op.asset_id, op.index);
+    case "removeClip": return removeClip(t, op.clip_id);
+    case "moveClip": return moveClip(t, op.from, op.to);
+    case "replaceClipAsset": return replaceClipAsset(withAsset(t, op.asset_id), op.clip_id, op.asset_id);
+    case "setSectionTitle": return setSectionTitle(t, op.clip_id, op.title);
+    case "addText": return addText(t, { kind: op.kind, text: op.text, start: op.start, duration: op.duration, position: op.position });
+    case "updateText": {
+      const patch: Partial<Omit<TimelineText, "text_id">> = {};
+      if (op.kind !== null) patch.kind = op.kind;
+      if (op.text !== null) patch.text = op.text;
+      if (op.start !== null) patch.start = op.start;
+      if (op.duration !== null) patch.duration = op.duration;
+      if (op.position !== null) patch.position = op.position;
+      return updateText(t, op.text_id, patch);
+    }
+    case "removeText":
+      if (!t.texts.some((x) => x.text_id === op.text_id)) throw new TimelineOpError("not_found", `không có chữ ${op.text_id}`);
+      return removeText(t, op.text_id);
+    case "setMusic": return setMusic(t, op.music);
+    case "setSourceMuted": return setSourceMuted(t, op.muted);
+  }
+}
+
+/**
+ * Runs chat edits in order on `t` (never changed). A video not yet in the timeline may be added only from `allowed`
+ * (the episode's candidate videos). A failing edit throws `TimelineOpError` naming its position.
+ */
+export function applyTimelineOps(t: TimelineV3, ops: readonly TimelineOp[], allowed: Record<string, EpisodeAsset>): TimelineV3 {
+  return ops.reduce((acc, op, i) => {
+    try { return applyOne(acc, op, allowed); }
+    catch (e) {
+      if (e instanceof TimelineOpError) throw new TimelineOpError(e.code, `thao tác ${i + 1} (${op.op}): ${e.message}`);
+      throw e;
+    }
+  }, t);
 }
