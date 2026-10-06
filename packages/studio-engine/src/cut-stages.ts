@@ -16,11 +16,12 @@ import {
   StudioTranscribePayloadSchema, StudioTtsPayloadSchema, TRANSCRIBE_MANIFEST_SCHEMA, TranscribeManifestSchema, TTS_MANIFEST_SCHEMA, TtsManifestSchema,
   type StudioTranscribePayload, type TranscribeManifest, type TtsManifest,
 } from "@ag-farm/protocol";
-import { buildShots, inputPath, shotId, STUDIO_TYPES, studioSourceId } from "@harness/core";
+import { buildShots, inputPath, shotId, STUDIO_TYPES, studioSourceId, timelineIssues } from "@harness/core";
 import type { FarmPayloadBuild, FarmPayloadBuilder, InProcessStage } from "@harness/executors";
 import { productionKey } from "./bucket.js";
 import { detectCuts, extractAudio16k, grabFrame, probeMedia, tileSheet } from "./cut-ffmpeg.js";
-import { readInput, studioStages, toBuffer, writeEpisodeIntake, writeOutput, type StudioStageDeps } from "./stages.js";
+import { readInput, readTimelineInput, studioStages, toBuffer, writeEpisodeIntake, writeOutput, type StudioStageDeps } from "./stages.js";
+import { prepareRender } from "./payloads.js";
 import { getProduction, latestEpisodeRevision, saveEpisodeRevision } from "./studio-db.js";
 import { fitCutTimeline, type ReadLine } from "./cut-fit.js";
 import { productionVoice } from "./voice.js";
@@ -316,6 +317,22 @@ export function narrationVoice(db: StudioStageDeps["db"], productionId: string):
 /** Farm payload builders of the shot-cut workflow (`stage_config.payload_builder`). */
 export function cutPayloadBuilders(d: Pick<StudioStageDeps, "db" | "bucket" | "media">): Record<string, FarmPayloadBuilder> {
   return {
+    /**
+     * `studio.render_final` of a shot-cut episode: the approved timeline v4 (frozen), its narration from the voice store.
+     * The video only; thumbnails are cut afterwards on this node (as `studio-episode-render-v2`).
+     */
+    "studio-episode-render-v4": async (request, ctx): Promise<FarmPayloadBuild> => {
+      const media = requireMedia(d);
+      const { production_id: productionId } = readInput(request, ctx.workspaceDir, STUDIO_TYPES.brief, (v) => z.object({ production_id: z.string() }).passthrough().parse(v));
+      const timeline = readTimelineInput(request, ctx.workspaceDir);
+      const errors = timelineIssues(timeline).filter((i) => i.severity === "error");
+      if (errors.length) throw new HarnessError("SCHEMA_INVALID", `timeline still has errors: ${errors.map((e) => e.message).join("; ")}`, { problems: errors });
+      const revision = latestEpisodeRevision(d.db, timeline.episode_id)?.revision ?? 0;
+      const output = `episodes/${timeline.episode_id}/renders/final-${request.attempt_id}.mp4`;
+      const build = await prepareRender(ctx.workspaceDir, { timeline, revision, productionId, episodeId: timeline.episode_id, output, thumbnails: [], voiceDir: media.voiceDir });
+      return { ...build, rename: { [output]: "final.mp4" } };
+    },
+
     /**
      * `studio.tts`: the narration lines of the approved edit plan not yet in the voice store, in the production's voice,
      * with word timings (subtitles). None left, or no narration: `skip` with an empty `tts.json`.

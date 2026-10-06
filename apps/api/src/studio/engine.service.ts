@@ -1,4 +1,5 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { join } from 'node:path';
 import { ConfigService } from '@nestjs/config';
 import {
   cachedQueueFarm,
@@ -67,7 +68,9 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
   get core(): StudioEngineCore { return this.must(this._core); }
   get db(): StudioDb { return this.must(this._db); }
   get bucket(): StudioBucket { return this.must(this._bucket); }
-  get editor(): EditorDeps { return { db: this.db, bucket: this.bucket, farm: this.must(this._farm) }; }
+  /** The voice store the worker fills (shot-cut narration), shared through STUDIO_DATA_ROOT. */
+  get voiceDir(): string { return join(this.config.get<string>('STUDIO_DATA_ROOT', './data/harness'), 'voice'); }
+  get editor(): EditorDeps { return { db: this.db, bucket: this.bucket, farm: this.must(this._farm), voiceDir: this.voiceDir }; }
   /** The farm's job list for the Queue screen, cached a few seconds (every open screen polls it). */
   get queueFarm(): QueueFarm { return this.must(this._queueFarm); }
   /** Null without STUDIO_FFMPEG_PATH: the thumbnail routes that draw answer 503 then. */

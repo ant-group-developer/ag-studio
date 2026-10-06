@@ -2,24 +2,44 @@
  * Farm payloads built at run time (`stage_config.payload_builder`), and the same render plan for the
  * editor's "Render preview" (which runs outside the workflow).
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { parseStoredYoutubeKit, StudioEpisodeSchema, type StoredTimeline } from "@harness/contracts";
-import { STUDIO_TYPES, thumbnailTimes, timelineIssues, timelineToComposition } from "@harness/core";
+import { HarnessError, parseStoredYoutubeKit, StudioEpisodeSchema, type StoredTimeline } from "@harness/contracts";
+import { isTimelineV4, layoutTimeline, STUDIO_TYPES, thumbnailTimes, timelineIssues, timelineToComposition } from "@harness/core";
 import type { FarmPayloadBuild, FarmPayloadBuilder } from "@harness/executors";
 import type { StudioRenderPayload } from "@ag-farm/protocol";
 import { productionKey, type StudioBucket } from "./bucket.js";
 import { readBrief, readInput, readTimelineInput } from "./stages.js";
 import { episodeForRun, latestEpisodeRevision, type StudioDb } from "./studio-db.js";
+import { voicePath } from "./voice-store.js";
+
+/**
+ * The WAV of every narration line the composition plays, from the voice store, uploaded with the job as
+ * `voice/<line_id>.wav` (the composition reads `stage:voice/<line_id>.wav`). A v3 timeline has none.
+ */
+function narrationUploads(t: StoredTimeline, voiceDir: string | undefined): { localPath: string; relPath: string }[] {
+  if (!isTimelineV4(t) || t.narration.voice !== "tts") return [];
+  const audio = new Map(t.narration.lines.map((l) => [l.line_id, l.audio]));
+  return layoutTimeline(t).lines.map((l) => {
+    const a = audio.get(l.line_id);
+    if (!a) throw new HarnessError("CONFIG_INVALID", `lời dẫn ${l.line_id} chưa được đọc`, { line_id: l.line_id });
+    if (!voiceDir) throw new HarnessError("CONFIG_INVALID", "the voice store is not configured here: a narrated timeline cannot be rendered", {});
+    const localPath = voicePath(voiceDir, a.key);
+    if (!existsSync(localPath)) throw new HarnessError("CONFIG_INVALID", `lời dẫn ${l.line_id}: WAV không còn trong kho giọng`, { line_id: l.line_id, key: a.key });
+    return { localPath, relPath: `voice/${l.line_id}.wav` };
+  });
+}
 
 /**
  * Write `composition.json` for a timeline (v3 or v4) into `workDir`.
- * The render worker resolves `asset:<id>` inputs via Studio's `/farm/sign` endpoint.
+ * The render worker resolves `asset:<id>` inputs via Studio's `/farm/sign` endpoint. A shot-cut timeline's narration
+ * goes with the job from `voiceDir` (the voice store).
  */
 export async function prepareEpisodeRender(
   workDir: string,
-  p: { timeline: StoredTimeline; revision: number; productionId: string; episodeId: string; output: string; thumbnails: { t_s: number; text: string }[] },
+  p: { timeline: StoredTimeline; revision: number; productionId: string; episodeId: string; output: string; thumbnails: { t_s: number; text: string }[]; voiceDir?: string },
 ): Promise<FarmPayloadBuild & { payload: StudioRenderPayload }> {
+  const voice = narrationUploads(p.timeline, p.voiceDir);
   const composition = timelineToComposition(p.timeline);
   const compPath = join(workDir, "render-plan", "composition.json");
   mkdirSync(dirname(compPath), { recursive: true });
@@ -35,7 +55,7 @@ export async function prepareEpisodeRender(
       output: p.output,
       thumbnails: p.thumbnails,
     },
-    extraUploads: [{ localPath: compPath, relPath: "composition.json" }],
+    extraUploads: [{ localPath: compPath, relPath: "composition.json" }, ...voice],
   };
 }
 
@@ -72,7 +92,7 @@ export function studioPayloadBuilders(d: { db: StudioDb; bucket: StudioBucket })
     },
 
     /**
-     * ag-studio-episode@1.2.0: the video only. Thumbnails are cut afterwards on this node (`thumbnails` stage), from
+     * ag-studio-episode@1.2.0 on: the video only. Thumbnails are cut afterwards on this node (`thumbnails` stage), from
      * the final video, clean of words, so the render worker draws none.
      */
     "studio-episode-render-v2": async (request, ctx) => {
