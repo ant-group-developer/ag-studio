@@ -25,3 +25,4 @@ export * from "./chat-context.js";
 export * from "./models.js";
 export * from "./chat.js";
 export * from "./chat-runner.js";
+export * from "./chat-actions.js";
