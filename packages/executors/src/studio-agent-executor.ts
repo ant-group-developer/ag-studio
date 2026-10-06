@@ -88,6 +88,15 @@ const VALIDATORS: Record<StudioSkill, Validator> = {
   },
 };
 
+/**
+ * The check a stage's answer must pass, for anything else that writes the same document (a chat reply proposing a
+ * new version): `raw` against the inputs of `request` materialised in `workspaceDir`.
+ */
+export function studioValidator(skill: StudioSkill): (raw: unknown, request: StageRequest, workspaceDir: string) => StudioValidation<unknown> {
+  const v = VALIDATORS[skill];
+  return (raw, request, workspaceDir) => v(raw, { request, workspaceDir } as CheckerInput);
+}
+
 /** Skills that get a summary of the footage instead of every asset (they decide a direction, not a cut). */
 const CATALOG_SUMMARY_SKILLS = new Set<string>(["studio-rnd", "studio-branding"]);
 
@@ -149,7 +158,12 @@ export function teamGuidesSection(guides: readonly TeamGuide[]): string[] {
   ];
 }
 
-export function studioPrompt(request: StageRequest, workspaceDir: string, problems: StudioProblem[] | null, guides: readonly TeamGuide[] = []): string {
+/**
+ * The part of a stage's prompt that does not change between its calls: the brief, the team's rules and the inputs.
+ * Chat replies about the stage's document start with exactly this (spec local-chat §3.1), so a prompt cache hit
+ * covers it.
+ */
+export function studioPromptHead(request: StageRequest, workspaceDir: string, guides: readonly TeamGuide[] = []): string {
   const parts: string[] = [String(request.stage_config.__brief ?? "")];
   if (guides.length) parts.push("", ...teamGuidesSection(guides));
   parts.push("", "# Dữ liệu vào");
@@ -183,12 +197,23 @@ export function studioPrompt(request: StageRequest, workspaceDir: string, proble
     }
     parts.push("", `## ${heading} (${input.path.split("/").pop()})`, "```json", body.trim(), "```");
   }
-  parts.push("", "# Đầu ra", "Trả lời bằng đúng một đối tượng JSON khớp JSON Schema đã cho. Không viết gì ngoài JSON đó.");
+  return parts.join("\n");
+}
+
+/** What the stage asks for after the head: the output, and in the repair round what the check refused. */
+export function studioPromptTail(problems: StudioProblem[] | null): string {
+  const parts = ["# Đầu ra", "Trả lời bằng đúng một đối tượng JSON khớp JSON Schema đã cho. Không viết gì ngoài JSON đó."];
   if (problems) {
     parts.push("", "# Lần trả lời trước bị hệ thống kiểm tra từ chối", "Sửa đúng các lỗi sau rồi trả lại toàn bộ đối tượng JSON:",
       ...problems.map((p) => `- [${p.code}] ${p.message}`));
   }
   return parts.join("\n");
+}
+
+export function studioPrompt(request: StageRequest, workspaceDir: string, problems: StudioProblem[] | null, guides: readonly TeamGuide[] = []): string {
+  return `${studioPromptHead(request, workspaceDir, guides)}
+
+${studioPromptTail(problems)}`;
 }
 
 /** Write a skipped TrendReport (no research videos -> Claude skipped). */
