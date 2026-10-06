@@ -14,10 +14,12 @@ interface Props {
   /** Text to start with (a quick-answer chip fills it). */
   value?: string | undefined;
   onValueChange?: ((v: string) => void) | undefined;
+  /** Open the folder list under the box (the box sits high on the page). */
+  menuBelow?: boolean | undefined;
 }
 
 /** The chat box (mockup): Enter sends, Shift+Enter a new line, `@` picks an ag-go folder. */
-export function ChatComposer({ onSend, placeholder, disabled, rows = 2, value, onValueChange }: Props) {
+export function ChatComposer({ onSend, placeholder, disabled, rows = 2, value, onValueChange, menuBelow }: Props) {
   const { t } = useTranslation();
   const agGo = useAgGoClient();
   const [own, setOwn] = useState("");
@@ -69,7 +71,7 @@ export function ChatComposer({ onSend, placeholder, disabled, rows = 2, value, o
 
   const attached = mentionsIn(text, picked);
   return (
-    <div className="chat-composer">
+    <div className={menuBelow ? "chat-composer chat-composer--below" : "chat-composer"}>
       {options.length > 0 ? (
         <ul className="chat-composer__folders" role="listbox" aria-label={t("chat.composer.folders")}>
           {options.map((f) => (

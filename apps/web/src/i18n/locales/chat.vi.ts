@@ -54,6 +54,7 @@ export const chatVi = {
     music: "Nhạc nền", rationale: "Lý do chia tập", episodes: "Các tập", titles: "Tiêu đề", description: "Mô tả",
     tags: "Tag", thumbnailIdeas: "Ý tưởng thumbnail", playlist: "Playlist",
     skippedResearch: "Không có dữ liệu nghiên cứu YouTube cho series này; các bước sau tự đề xuất.",
+    roles: { own: "kênh của mình", reference: "tham khảo" },
   },
   timeline: {
     music: "Nhạc", sourceAudio: "Tiếng gốc", on: "bật", off: "tắt", text: "Chữ", clips: "Clip", clipCount: "{{n}} clip",
@@ -66,7 +67,7 @@ export const chatVi = {
     label: "Kết quả bước hiện tại", waiting: "chờ bạn duyệt", failed: "cần xử lý", running: "đang chạy",
     missing: "còn {{n}} thông tin", ready: "đủ thông tin", version: "Bản {{n}}", versionChanges: "Bản {{n}} · {{k}} thay đổi",
     problems: "Vấn đề", failedNoDoc: "Không đọc được câu trả lời bị từ chối. Nói trong chat cách sửa rồi bấm Chạy lại.",
-    busy: "Claude hoặc máy render đang làm bước {{step}}. Kết quả hiện ở đây khi xong.", allDone: "Các bước đã xong.",
+    busy: "Claude hoặc máy render đang làm bước {{step}}. Kết quả hiện ở đây khi xong.", allDone: "Kế hoạch đã xong. Mở từng tập ở cột trái để duyệt timeline và YouTube kit.",
     primary: { approve: "Duyệt", start: "Bắt đầu", apply: "Áp dụng", retry: "Chạy lại" },
   },
   menu: {

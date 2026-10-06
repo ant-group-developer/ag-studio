@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n/config";
-import { encodeMentions, insertMention, mentionQuery, messageParts } from "./mentions";
+import { encodeMentions, insertMention, mentionQuery, mentionsIn, messageParts } from "./mentions";
 
 const agGo = { getFolders: vi.fn().mockResolvedValue({ folders: [
   { id: "f1", name: "Kyoto 2025", parentId: null, usableVideos: 38 },
@@ -16,7 +16,14 @@ describe("mentions", () => {
   it("finds the @word being typed and replaces it by the folder", () => {
     expect(mentionQuery("Làm từ @Ky", 10)).toEqual({ start: 7, query: "Ky" });
     expect(mentionQuery("email a@b", 9)).toBeNull();
+    expect(mentionQuery("từ @Kyoto 20", 12)).toEqual({ start: 3, query: "Kyoto 20" });
     expect(insertMention("Làm từ @Ky nhé", 7, 10, "Kyoto 2025")).toEqual({ text: "Làm từ @Kyoto 2025  nhé", caret: 19 });
+  });
+
+  it("counts a folder only where its own name is written, not inside a longer one", () => {
+    const picked = [{ id: "a", name: "Test 1" }, { id: "b", name: "Test 1.1" }];
+    expect(mentionsIn("từ @Test 1.1 nhé", picked)).toEqual([{ id: "b", name: "Test 1.1" }]);
+    expect(mentionsIn("từ @Test 1.1 và @Test 1", picked)).toEqual(picked);
   });
 
   it("sends picked folders by id, and reads them back for display", () => {

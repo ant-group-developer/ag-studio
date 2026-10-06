@@ -39,6 +39,11 @@ describe("ChatThread", () => {
     expect(onCard).toHaveBeenCalledWith("approve", ok);
   });
 
+  it("shows the divider of the step the production is at before anyone wrote in it", () => {
+    render(<ChatThread onCard={vi.fn()} thread={view([])} />);
+    expect(screen.getByText(/Bước 2 · R&D · chờ bạn/)).toBeInTheDocument();
+  });
+
   it("says what Claude is doing: replying, waiting for a slot, waiting for the plan limit", () => {
     const { rerender } = render(<ChatThread onCard={vi.fn()} thread={view([turn({ role: "user", text: "a" }), turn({ status: "pending" })], { queueAhead: 3 })} />);
     expect(screen.getByText("Đang chờ lượt (3 lượt trước)")).toBeInTheDocument();

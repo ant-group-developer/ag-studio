@@ -94,6 +94,7 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
     badge = t("chat.result.running");
   }
   const startDisabled = primary === "start" && intakeMissing(doc as Parameters<typeof intakeMissing>[0]).length > 0;
+  const badgeTone = scope?.scope === "failed" ? "needs_attention" : scope?.scope === "intake" && !startDisabled ? "done" : scope ? "waiting_you" : "running";
 
   const menu: MenuProps["items"] = [
     ...(kind && HAND_EDITABLE.has(kind) && scope?.scope === "gate" ? [{ key: "manual", label: t("chat.menu.manual") }] : []),
@@ -132,7 +133,7 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
     <aside className="chat-aside" aria-label={t("chat.result.label")}>
       <div className="chat-aside__head">
         <h2>{step ? t(stepLabelKey(step)) : t("chat.result.label")}</h2>
-        {badge ? <span className={`chat-badge chat-badge--${scope?.scope === "failed" ? "needs_attention" : scope ? "waiting_you" : "running"}`}>{badge}</span> : null}
+        {badge ? <span className={`chat-badge chat-badge--${badgeTone}`}>{badge}</span> : null}
         {kind && scope?.scope !== "intake" ? (
           <span className="chat-aside__version">{changes ? t("chat.result.versionChanges", { n, k: changes }) : t("chat.result.version", { n })}</span>
         ) : null}

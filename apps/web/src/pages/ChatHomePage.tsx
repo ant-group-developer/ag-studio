@@ -60,7 +60,7 @@ export function ChatHomePage() {
           </label>
         ) : null}
         {teams && !teamId ? <p className="chat-doc__note">{t("chat.home.noTeam")}</p> : null}
-        <ChatComposer rows={3} value={text} onValueChange={setText} disabled={!teamId || create.isPending}
+        <ChatComposer rows={3} menuBelow value={text} onValueChange={setText} disabled={!teamId || create.isPending}
           placeholder={t("chat.home.placeholder")} onSend={(body) => create.mutateAsync(body)} />
         <div className="chat-quick">
           {suggestions.map((s) => <button key={s} type="button" onClick={() => setText(`${s} @`)}>{s}</button>)}

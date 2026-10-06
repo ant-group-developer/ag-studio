@@ -4,9 +4,12 @@
  */
 export interface FolderMention { id: string; name: string }
 
-/** The `@word` being typed right before the caret, if any (what to filter the folder list by). */
+/**
+ * The `@name` being typed right before the caret, if any (what to filter the folder list by). Folder names have
+ * spaces ("Kyoto 2025"), so the name may too; the list simply closes once nothing matches it any more.
+ */
 export function mentionQuery(text: string, caret: number): { start: number; query: string } | null {
-  const m = /(^|\s)@([^\s@[\]()]*)$/.exec(text.slice(0, caret));
+  const m = /(^|\s)@([^\n@[\]()]{0,60})$/.exec(text.slice(0, caret));
   return m ? { start: caret - m[2]!.length - 1, query: m[2]! } : null;
 }
 
@@ -25,9 +28,16 @@ export function encodeMentions(text: string, picked: readonly FolderMention[]): 
   return out;
 }
 
-/** The picked folders still named in the text. */
+/** The picked folders still named in the text (a longer name counts first: `@Test 1.1` is not also `@Test 1`). */
 export function mentionsIn(text: string, picked: readonly FolderMention[]): FolderMention[] {
-  return picked.filter((f) => text.includes(`@${f.name}`));
+  let rest = text;
+  const named = new Set<string>();
+  for (const f of [...picked].sort((a, b) => b.name.length - a.name.length)) {
+    if (!rest.includes(`@${f.name}`)) continue;
+    named.add(f.id);
+    rest = rest.split(`@${f.name}`).join("");
+  }
+  return picked.filter((f) => named.has(f.id));
 }
 
 /** A message as people read it: `@[Kyoto 2025](folder:f1)` shown as `@Kyoto 2025`, split for highlighting. */

@@ -28,6 +28,7 @@ function Changed({ before, after }: { before: string; after: ReactNode }) {
 }
 
 function Field({ field, doc, prev, names }: { field: FieldSpec; doc: unknown; prev: unknown; names: Record<string, string> }) {
+  const { t } = useTranslation();
   const v = valueAt(doc, field.path);
   const p = prev === undefined ? v : valueAt(prev, field.path);
   const changed = prev !== undefined && !same(v, p);
@@ -59,7 +60,8 @@ function Field({ field, doc, prev, names }: { field: FieldSpec; doc: unknown; pr
         <ul className="chat-doc__list">
           {items.map((it, i) => {
             const fresh = changed && !before.some((x) => same(x, it));
-            const body = <><strong>{String(it[a] ?? "")}</strong>{it[b] ? ` — ${String(it[b])}` : ""}</>;
+            const second = field.path === "channels" && it[b] ? t(`chat.fields.roles.${String(it[b])}`) : it[b];
+            const body = <><strong>{String(it[a] ?? "")}</strong>{second ? ` — ${String(second)}` : ""}</>;
             return <li key={i}>{fresh ? <ins className="chat-doc__new">{body}</ins> : body}</li>;
           })}
         </ul>

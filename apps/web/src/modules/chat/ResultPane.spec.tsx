@@ -64,9 +64,11 @@ describe("ResultPane", () => {
     expect(screen.getByText("Kyoto 2025")).toBeInTheDocument(); // the folder's name, not its id
     expect(screen.getByRole("button", { name: "Bắt đầu" })).toBeDisabled();
     unmount();
-    const full = { ...draft, aspect: "16:9", keywords: ["kyoto vlog"] };
+    const full = { ...draft, aspect: "16:9", keywords: ["kyoto vlog"], channels: [{ url: "@meitime", role: "reference" }] };
     const again = mount(thread(full));
     expect(screen.getByRole("button", { name: "Bắt đầu" })).toBeEnabled();
+    expect(screen.getByText("đủ thông tin")).toHaveClass("chat-badge--done");
+    expect(screen.getByText(/— tham khảo/)).toBeInTheDocument();
     again.unmount();
     mount(thread(full), { canApprove: false });
     expect(screen.getByRole("button", { name: "Bắt đầu" })).toBeDisabled();

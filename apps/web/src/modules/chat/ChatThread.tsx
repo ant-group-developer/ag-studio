@@ -62,6 +62,9 @@ export function ChatThread({ thread, onCard, onQuickAnswer, busyCard, episode = 
   const { t } = useTranslation();
   const [opened, setOpened] = useState<Set<number>>(new Set());
   const all = sections(thread.turns);
+  // the step the production is at shows its divider even before anyone wrote in it
+  const at = thread.scope && thread.scope.scope !== "intake" ? thread.scope.stageKey : null;
+  if (at && !all.some((sec) => stepOf(sec.stageKey) === stepOf(at))) all.push({ stageKey: at, turns: [] });
   const newestReply = [...thread.turns].reverse().find((x) => x.role === "assistant");
   const row = episode ? EPISODE_STEPS : PLAN_STEPS;
 

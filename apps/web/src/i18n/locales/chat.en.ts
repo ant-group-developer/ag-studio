@@ -56,6 +56,7 @@ export const chatEn: typeof chatVi = {
     music: "Music", rationale: "Why this split", episodes: "Episodes", titles: "Titles", description: "Description",
     tags: "Tags", thumbnailIdeas: "Thumbnail ideas", playlist: "Playlist",
     skippedResearch: "No YouTube research for this series; the next steps propose on their own.",
+    roles: { own: "own channel", reference: "reference" },
   },
   timeline: {
     music: "Music", sourceAudio: "Original sound", on: "on", off: "off", text: "Text", clips: "Clips", clipCount: "{{n}} clips",
@@ -68,7 +69,7 @@ export const chatEn: typeof chatVi = {
     label: "Result of the current step", waiting: "waiting for you", failed: "needs attention", running: "running",
     missing: "{{n}} things missing", ready: "ready", version: "Version {{n}}", versionChanges: "Version {{n}} · {{k}} changes",
     problems: "Problems", failedNoDoc: "The refused answer cannot be read. Say in the chat how to fix it, then Run again.",
-    busy: "Claude or the render farm is working on {{step}}. The result shows here when done.", allDone: "Every step is done.",
+    busy: "Claude or the render farm is working on {{step}}. The result shows here when done.", allDone: "The plan is done. Open each episode on the left to approve its timeline and YouTube kit.",
     primary: { approve: "Approve", start: "Start", apply: "Apply", retry: "Run again" },
   },
   menu: {
