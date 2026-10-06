@@ -58,4 +58,5 @@ production (tab "Lần gọi Claude" và "Người sửa").
   hoạch tập (Opus, catalog ≤300 video) khoảng 0,9 USD, YouTube kit khoảng 0,04 USD mỗi tập.
 - Gói subscription có hạn mức theo cửa sổ vài giờ và theo tuần, dùng chung với Claude Code/desktop của cùng tài
   khoản. Nên dùng tài khoản riêng cho Studio.
-- Mỗi worker chạy tối đa `STUDIO_RESOURCES.claude` lượt Claude cùng lúc (hiện là 1).
+- Số lượt Claude chạy cùng lúc: `STUDIO_CLAUDE_MAX_CONCURRENT` (mặc định 20). Nhiều production chạy song song thì
+  hạn mức gói hết nhanh hơn; khi hết, các lượt tự chờ rồi chạy lại.

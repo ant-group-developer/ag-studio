@@ -1,6 +1,9 @@
 # Plan pha 0–1: build trên Windows, số lượt Claude cấu hình được, bật stack local một lệnh
 
 Spec: `docs/superpowers/specs/2026-10-06-ag-studio-local-chat-design.md` (mục 3.2, bảng pha 0–1).
+
+**Cập nhật khi làm:** tăng capacity `claude` là chưa đủ — mỗi tiến trình worker chỉ có một vòng chạy stage, nên
+việc 1.1 thêm pool vòng lặp (`createStudioWorkerPool`, ADR mục 143).
 Nhánh: tách từ `docs/sync-ag-studio` sau khi pha D được duyệt. Mỗi task một commit; test viết trước.
 
 ## Pha 0 — build và test chạy được trên máy dev Windows
@@ -40,16 +43,15 @@ Nhánh: tách từ `docs/sync-ag-studio` sau khi pha D được duyệt. Mỗi t
 - Test: bảng câu mẫu khớp / không khớp. Gỡ mục tương ứng trong `deferred-items.md`.
 
 ### 1.3 Bật/tắt cả stack local một lệnh
-- `scripts/local-stack.mjs up|down|status` (Node, không phụ thuộc shell):
-  - đường dẫn lấy từ env, mặc định cạnh repo: `AG_GO_DIR=../ag-go-v2/ag-go-api`, `AG_FARM_DIR=../ag-farm`,
-    `AG_LOCAL_DIR=E:/ag-local` (thư mục worker);
-  - `up`: `docker compose up -d` cho ag-go rồi ag-farm, chờ health; Studio theo đúng thứ tự `deploy.sh` (api
-    `--wait` → worker → web); chạy hai worker Windows ở chế độ tách, log vào `AG_LOCAL_DIR/*.log`;
-  - `status`: in một bảng thành phần → ok/hỏng (health của ag-go `/api/health`, farm, Studio `/api/health`, tiến trình
-    worker); **không in giá trị biến môi trường**;
-  - `down`: dừng worker và các compose theo thứ tự ngược.
-- Không đụng `E:\ag-local\setup` (sinh cấu hình là việc của script đó).
-- Test: hàm thuần dựng danh sách lệnh và thứ tự (không chạy Docker trong test).
+- Người dùng chọn chạy **trực tiếp trên máy, không Docker** (chỉ hạ tầng và Account API ở trong Docker).
+- `scripts/local-stack.mjs up|down|status [tên…|all]` + phần lập kế hoạch thuần `scripts/local-stack-lib.mjs`
+  (`planServices`, `selectServices`): ag-go-api 3738 → (ag-go worker) → farm hub 3010 → Studio API 3101 → Studio
+  worker → render worker → scan worker → Studio web 3100 → (farm web 3011, ag-go web 5173). Đợi health từng dịch vụ có
+  cổng; dịch vụ đã lên thì bỏ qua; log và pid ở `AG_LOCAL_DIR/dev-run`; `down` chỉ tắt tiến trình script đã bật.
+- Đường dẫn qua env, mặc định cạnh repo: `AG_GO_DIR`, `AG_FARM_DIR`, `AG_RENDER_WORKER_DIR`, `AG_SCAN_WORKER_DIR`,
+  `AG_LOCAL_DIR=E:/ag-local`.
+- Test (`tests/integration/local-stack.test.ts`): thứ tự, thư mục, cổng, ghi đè bằng env, chọn dịch vụ — không
+  spawn gì trong test.
 
 ### 1.4 Tài liệu
 - `docs/runbooks/studio-local.md`: mục "Bật hằng ngày" dùng `node scripts/local-stack.mjs up`; thêm

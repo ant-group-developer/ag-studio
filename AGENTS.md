@@ -19,10 +19,11 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
 - Test: `pnpm test` (toàn bộ), `pnpm vitest run packages/<pkg>` (một package)
 - Typecheck: `pnpm -r typecheck` · Build: `pnpm build` · Sinh JSON Schema: `pnpm gen:schemas`
 - CLI dev: `pnpm harness --project fixtures/ops-project-minimal <command>`
-- Studio dev (cần `.env` ở root, `apps/api/.env`, `apps/web/.env`, xem `docs/runbooks/studio-local.md`):
-  `pnpm --filter @ag-studio/api start:dev` · `pnpm --filter @ag-studio/web dev` · worker:
-  `pnpm --filter @ag-studio/worker build` rồi `node apps/worker/dist/main.js`. Triển khai: `docker-compose.yml`
-  (api → worker → web, cần checkout `../ag-farm`), `deploy.sh`, `.github/workflows/deploy.{dev,prod}.yml`.
+- Build trên máy không có `pnpm` trên PATH: `corepack pnpm -r run build` (script `build` ở gốc gọi `pnpm` trần).
+- Stack local chạy trực tiếp (không Docker): `node scripts/local-stack.mjs up|down|status` — ag-go-api 3738, farm
+  3010, Studio API 3101, Studio web 3100, worker Studio/render/scan; chi tiết, lệnh chạy tay từng dịch vụ và cấu hình
+  ở `docs/runbooks/studio-local.md`. Triển khai: `docker-compose.yml` (api → worker → web, cần checkout
+  `../ag-farm`), `deploy.sh`, `.github/workflows/deploy.{dev,prod}.yml`.
 - E2E (vitest, không phải Playwright): `E2E=1 pnpm vitest run tests/e2e` — dựng ag-farm hub (Docker Postgres),
   api/worker Studio và ag-render-worker thật, Claude/ag-go/S3 giả.
 - `pnpm typecheck` cần chạy sau `pnpm build`: typecheck từng package dùng `tsc --noEmit` và cần `dist/*.d.ts` của các package phụ thuộc; test (`vitest`) thì không cần build vì `vitest.shared.ts` ở root đã cấu hình alias `@harness/*` trỏ thẳng vào `src`.
@@ -110,7 +111,13 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
   (`<team_guide>`) + input inline; kiểm bằng `VALIDATORS` theo skill; **một** vòng sửa rồi `contract`. Lỗi giới hạn
   gói (`RATE_LIMITED`) chờ 5→60 phút, không tính là attempt.
 - Model theo skill (`packages/studio-engine/src/worker.ts`): Opus cho `studio-rnd`/`studio-plan-episodes`, Sonnet
-  còn lại; ghi đè bằng `STUDIO_CLAUDE_MODEL[_<SKILL>]`. Số lượt Claude cùng lúc mỗi worker: `STUDIO_RESOURCES.claude`.
+  còn lại; ghi đè bằng `STUDIO_CLAUDE_MODEL[_<SKILL>]`.
+- Số lượt Claude cùng lúc: `STUDIO_CLAUDE_MAX_CONCURRENT` (1–100, mặc định 20; sai là `CONFIG_INVALID` lúc khởi
+  động) → capacity `claude` của `studioResources()`. Worker chạy `createStudioWorkerPool`: `claude + farm + cpu` vòng
+  trong một tiến trình, phối hợp qua `claim()`/lease (ADR mục 143). Đừng quay lại một vòng duy nhất: stage farm giữ
+  vòng của nó suốt lúc render.
+- Test chạm `claude` thật chỉ chạy khi `HARNESS_REAL_CLAUDE_TEST=1`. Trên Windows `resolveCommand`
+  (`packages/adapters/agent-cli/src/resolve-command.ts`) dò shim `claude.cmd` của npm ra `claude.exe`.
 - Mọi lượt gọi ghi `llm_calls` (payload gzip trên bucket), mọi lần người duyệt/sửa ghi `human_edits`.
 - Test luôn dùng Claude giả `fixtures/fake-studio-claude.mjs` (đặt `STUDIO_CLAUDE_ARGV`); **không gọi Claude thật
   trong test**.
