@@ -12,7 +12,7 @@ const turn = (over: Partial<ChatTurn>): ChatTurn => ({
 });
 const view = (turns: ChatTurn[], over: Partial<ChatThreadView> = {}): ChatThreadView => ({
   turns, scope: { productionId: "p", episodeId: null, runId: "r", stageKey: "approve-rnd", scope: "gate" }, blocked: null,
-  current: { turnId: null, document: {}, draft: {}, pendingApply: false }, queueAhead: 0, ...over,
+  current: { turnId: null, document: {}, draft: {}, pendingApply: false, problems: [] }, queueAhead: 0, ...over,
 });
 
 describe("ChatThread", () => {
@@ -71,7 +71,7 @@ describe("ChatThread", () => {
     const prop = turn({ stage_key: "approve-timeline", episode_id: "e", text: "Đã thêm chữ", action: "revise", proposal: { ops: [] } });
     render(<ChatThread episode onCard={onCard} thread={view([prop], {
       scope: { productionId: "p", episodeId: "e", runId: "r", stageKey: "approve-timeline", scope: "gate" },
-      current: { turnId: prop.id, document: {}, draft: null, pendingApply: true },
+      current: { turnId: prop.id, document: {}, draft: null, pendingApply: true, problems: [] },
     })} />);
     fireEvent.click(screen.getByRole("button", { name: "Áp dụng" }));
     expect(onCard).toHaveBeenCalledWith("apply", prop);

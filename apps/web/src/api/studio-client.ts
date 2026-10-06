@@ -720,7 +720,7 @@ export interface ChatThreadView {
   turns: ChatTurn[];
   scope: ChatScopeKey | null;
   blocked: { code: "busy" | "nothing_to_chat" | string; stage: string | null } | null;
-  current: { turnId: string | null; document: unknown; draft: unknown; pendingApply: boolean } | null;
+  current: { turnId: string | null; document: unknown; draft: unknown; pendingApply: boolean; problems: { code: string; message: string }[] } | null;
   queueAhead: number;
 }
 

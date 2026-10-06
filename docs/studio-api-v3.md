@@ -246,7 +246,8 @@ interface ChatTurn { id: string; production_id: string; episode_id: string | nul
 interface ChatThreadView { turns: ChatTurn[];
   scope: {productionId; episodeId; runId; stageKey; scope} | null;
   blocked: {code: 'busy' | 'nothing_to_chat'; stage: string | null} | null;   // why no message can be sent now
-  current: {turnId: string | null; document: unknown; draft: unknown; pendingApply: boolean} | null;   // on show
+  current: {turnId: string | null; document: unknown; draft: unknown; pendingApply: boolean;
+    problems: {code, message}[]} | null;   // on show; problems: why a failed stage was refused
   queueAhead: number }   // replies of other threads waiting for a Claude slot before this one
 ```
 

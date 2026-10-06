@@ -8,7 +8,7 @@ import { intakeMissing, IntakeDraftSchema, type IntakeDraft, type IntakeField } 
 import { chatContext, chatScopeFor, DRAFT_PRODUCTION_TITLE, GATE_SOURCES, type TimelineProposal } from "./chat-context.js";
 import {
   currentProposal, getTurn, insertSystemTurn, insertUserTurn, listTurns,
-  markTurnApplied, type ChatMention, type ChatScopeKey, type ChatTurn,
+  markTurnApplied, type ChatMention, type ChatProblem, type ChatScopeKey, type ChatTurn,
 } from "./chat-db.js";
 import type { StudioEngineCore } from "./core.js";
 import { latestAcceptedCall, recordHumanEdit, type HumanEditKind } from "./llm-log.js";
@@ -189,7 +189,7 @@ export interface ChatThreadView {
   scope: ChatScopeKey | null;
   blocked: { code: string; stage: string | null } | null;
   /** The document on show and its turn (null: what the stage wrote), for the result pane. */
-  current: { turnId: string | null; document: unknown; draft: unknown; pendingApply: boolean } | null;
+  current: { turnId: string | null; document: unknown; draft: unknown; pendingApply: boolean; problems: ChatProblem[] } | null;
   /** Replies waiting for a Claude slot before the oldest one of this thread. */
   queueAhead: number;
 }
@@ -209,7 +209,7 @@ export function chatThread(core: StudioEngineCore, db: StudioDb, productionId: s
     try {
       const ctx = chatContext(core, db, scope);
       const pending = scope.scope === "timeline" || ctx.skill === "studio-timeline" ? currentProposal(db, scope) : undefined;
-      current = { turnId: ctx.currentTurnId, document: ctx.current, draft: ctx.draft, pendingApply: !!pending && !pending.applied_at };
+      current = { turnId: ctx.currentTurnId, document: ctx.current, draft: ctx.draft, pendingApply: !!pending && !pending.applied_at, problems: ctx.problems };
     } catch { current = null; }
   }
   const mine = db.get<{ created_at: string }>(
