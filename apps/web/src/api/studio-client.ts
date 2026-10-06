@@ -730,6 +730,10 @@ export interface OverviewItem { id: string; teamId: string; title: string; updat
 
 export interface ClaudeUsage { running: number; waiting: number; max: number; source: "settings" | "env" }
 
+/** Kind of farm machine for a final render: ag-farm requirements `{}`, `{nvenc: true}`, `{gpu: true}`. */
+export const RENDER_MACHINES = ["any", "nvenc", "gpu"] as const;
+export type RenderMachine = (typeof RENDER_MACHINES)[number];
+
 // ---------------------------------------------------------------------------
 // Call log
 // ---------------------------------------------------------------------------

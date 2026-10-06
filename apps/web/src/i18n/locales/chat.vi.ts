@@ -62,6 +62,12 @@ export const chatVi = {
     noPreview: "Chưa có bản xem trước. Chọn ⋯ → Render xem trước.", summary: "{{clips}} clip · {{duration}}",
     musicLine: "Nhạc nền {{gain}} dB",
   },
+  render: {
+    machine: "Máy render",
+    machines: { any: "Bất kỳ máy nào", nvenc: "Máy có NVENC", gpu: "Máy có GPU" },
+    hints: { any: "Máy nào rảnh trước thì nhận.", nvenc: "Encode bằng GPU NVIDIA, nhanh hơn với 4K.", gpu: "Máy có card NVIDIA." },
+    waitNote: "Nếu không máy nào hợp, job sẽ chờ tới khi có máy.",
+  },
   outputs: { rendering: "Tiến độ render", notYet: "Chưa có file xuất." },
   result: {
     label: "Kết quả bước hiện tại", waiting: "chờ bạn duyệt", failed: "cần xử lý", running: "đang chạy",

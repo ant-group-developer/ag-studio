@@ -64,6 +64,12 @@ export const chatEn: typeof chatVi = {
     noPreview: "No preview yet. Use ⋯ → Render preview.", summary: "{{clips}} clips · {{duration}}",
     musicLine: "Music {{gain}} dB",
   },
+  render: {
+    machine: "Render machine",
+    machines: { any: "Any machine", nvenc: "A machine with NVENC", gpu: "A machine with a GPU" },
+    hints: { any: "Whichever machine is free first.", nvenc: "Encodes on an NVIDIA GPU, faster for 4K.", gpu: "Has an NVIDIA card." },
+    waitNote: "If no machine fits, the job waits until one does.",
+  },
   outputs: { rendering: "Render progress", notYet: "No exported files yet." },
   result: {
     label: "Result of the current step", waiting: "waiting for you", failed: "needs attention", running: "running",
