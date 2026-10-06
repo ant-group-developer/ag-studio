@@ -794,6 +794,8 @@ export const en: LocaleMessages = {
       rnd_edit: "R&D edited",
       branding_edit: "Branding edited",
       thumbnail: "Thumbnail picked",
+      survey: "Scene selection approved",
+      edit_plan: "Edit plan approved",
     },
   },
 };

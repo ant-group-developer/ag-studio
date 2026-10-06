@@ -76,6 +76,14 @@ describe.skipIf(!hasFfmpeg())("chat at the gates of a shot-cut episode (needs ff
     await approveChatScope(s.core, s.db, { productionId: prod, episodeId: ep.id, stageKey: "approve-edit-plan", turnId: revised.turn.id, userId: "auth0|owner" });
     await drain(s);
     expect(waiting(s, runId)).toEqual(["approve-timeline"]);
+
+    // both approvals are in the dataset: Claude's document, the one approved, the call that wrote it
+    const edits = s.db.all<{ kind: string; changed: number; llm_call_id: string | null; episode_id: string | null }>(
+      "SELECT kind, changed, llm_call_id, episode_id FROM human_edits WHERE production_id = ? ORDER BY created_at", [prod]);
+    expect(edits.filter((e) => e.kind === "survey" || e.kind === "edit_plan")).toEqual([
+      { kind: "survey", changed: 1, llm_call_id: expect.any(String), episode_id: ep.id },
+      { kind: "edit_plan", changed: 1, llm_call_id: expect.any(String), episode_id: ep.id },
+    ]);
   }, 120_000);
 
   it("edits the cut timeline: a clip shortened, a dissolve out of it, karaoke captions, saved as a v4 revision", async () => {

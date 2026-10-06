@@ -794,6 +794,8 @@ export const vi = {
       rnd_edit: "Sửa R&D",
       branding_edit: "Sửa branding",
       thumbnail: "Chọn ảnh đại diện",
+      survey: "Duyệt chọn cảnh",
+      edit_plan: "Duyệt kế hoạch dựng",
     },
   },
 };

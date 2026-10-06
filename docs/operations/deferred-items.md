@@ -103,8 +103,7 @@ Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-5-cut.md`, ADR-0001 m�
 - **`has_speech` của ag-go chỉ là gợi ý** (từ tỉ lệ im lặng): `false` thì không gửi đi nhận dạng, kể cả khi thật ra có lời.
 - **Nhãn contact sheet cần font**; không có font thì khung vẫn cắt nhưng ảnh không có mã shot.
 - **Chạy lại từ một gate hiện lại bản Claude viết**, không phải bản người đã duyệt lần trước.
-- **`human_edits` chưa ghi hai gate mới** (`approve-survey`, `approve-edit-plan` chưa có trong `EDIT_KINDS`): duyệt vẫn
-  chạy, nhưng dataset sửa tay thiếu bản chọn cảnh và kế hoạch dựng.
+- ✅ Đã đóng — `human_edits` ghi cả hai gate mới (`survey`, `edit_plan`).
 - **Không có `studio-freeze-timeline-v4`:** `studio-freeze-timeline-v2` nhận cả `timeline_v4`. `build-timeline.ts` chưa
   chuyển sang `layoutTimeline` (giữ composition v3 đúng từng byte). Dọn các method segment của `ag-go-client` để sau.
 - **Test media cần ffmpeg + ffprobe** (`FFMPEG_PATH`/`FFPROBE_PATH`, máy dev trỏ `ffmpeg-static` của ag-render-worker);
