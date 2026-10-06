@@ -38,6 +38,7 @@ export const chatEn: typeof chatVi = {
   cards: {
     approve: { question: "Approve {{step}} and go to the next step?", button: "Approve" },
     start: { question: "That is enough to start. Research and plan now?", button: "Start" },
+    approveRender: { question: "Approve the YouTube kit and render the final cut?", button: "Approve and render" },
     apply: { question: "Apply this change to the timeline?", button: "Apply" },
     render: { question: "Render a 720p preview?", button: "Render" },
     export: { question: "Export a Premiere project?", button: "Export" },

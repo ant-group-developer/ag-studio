@@ -172,6 +172,20 @@ export interface EpisodeDetail extends EpisodeSummary {
   finalVideoUrl: string | null;
   finalVideoDownloadUrl: string | null;
   latestRevision: number | null;
+  render: EpisodeRender;
+}
+
+/** The final render of an episode (phase 3). */
+export interface EpisodeRender {
+  /** Chosen for the current run's render; null: none, the farm job goes out as any machine. */
+  machine: RenderMachine | null;
+  /** What a picker starts on. */
+  defaultMachine: RenderMachine;
+  /** Where Render lại starts: no run yet, only the render, the timeline approved again first, freeze; null: producing. */
+  restartFrom: "start" | "render-final" | "approve-timeline" | "freeze-timeline" | null;
+  job: { farmJobId: string; runId: string; machine: RenderMachine | null; createdAt: string } | null;
+  /** The farm's view of `job` while the run renders it. */
+  farmStatus: { status: string; progress: number | null } | null;
 }
 
 export interface EpisodePatch {
@@ -672,9 +686,10 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     startProduction(productionId: string): Promise<{ runId: string }> {
       return request(getAccessToken, "POST", `/api/productions/${productionId}/start`);
     },
-    approveChat(productionId: string, input: { stageKey: string; episodeId?: string | null; turnId?: string | null }): Promise<{ stageState: string; runState: string; revision?: number }> {
+    approveChat(productionId: string, input: { stageKey: string; episodeId?: string | null; turnId?: string | null; renderMachine?: RenderMachine }): Promise<{ stageState: string; runState: string; revision?: number }> {
       return request(getAccessToken, "POST", `/api/productions/${productionId}/chat/approve`, {
         stageKey: input.stageKey, ...(input.episodeId ? { episodeId: input.episodeId } : {}), ...(input.turnId ? { turnId: input.turnId } : {}),
+        ...(input.renderMachine ? { renderMachine: input.renderMachine } : {}),
       });
     },
     retryChatStep(productionId: string, stageKey: string, episodeId?: string | null): Promise<{ ok: true }> {

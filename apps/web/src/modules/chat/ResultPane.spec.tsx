@@ -22,9 +22,10 @@ const turn = (over: Partial<ChatTurn>): ChatTurn => ({
   llm_call_id: null, created_by: null, applied_at: null, created_at: "", updated_at: "", ...over,
 });
 
-const mount = (thread: ChatThreadView, props: { onPrimary?: () => void; canApprove?: boolean } = {}) => render(
+const mount = (thread: ChatThreadView, props: { onPrimary?: () => void; canApprove?: boolean; episodeId?: string } = {}) => render(
   <QueryClientProvider client={new QueryClient()}>
-    <ResultPane productionId="p" thread={thread} onPrimary={props.onPrimary ?? vi.fn()} onMenu={vi.fn()} canApprove={props.canApprove ?? true} />
+    <ResultPane productionId="p" episodeId={props.episodeId} thread={thread} onPrimary={props.onPrimary ?? vi.fn()} onMenu={vi.fn()} canApprove={props.canApprove ?? true}
+      renderDefault="any" />
   </QueryClientProvider>,
 );
 
@@ -87,5 +88,19 @@ describe("ResultPane", () => {
     mount({ turns: [], scope: null, blocked: { code: "busy", stage: "branding" }, current: null, queueAhead: 0 });
     expect(screen.getByText("Claude hoặc máy render đang làm bước Branding. Kết quả hiện ở đây khi xong.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Duyệt" })).toBeNull();
+  });
+
+  it("Duyệt on the YouTube kit asks for the machine type of the final render before anything is sent", async () => {
+    const onPrimary = vi.fn();
+    const kit = { schema_version: "studio.youtube-kit/v1", titles: ["A", "B", "C"], description: "Mô tả", tags: ["kyoto"], hashtags: ["#kyoto"], thumbnails: [], chapters: [] };
+    mount({
+      turns: [], scope: { productionId: "p", episodeId: "e", runId: "r", stageKey: "approve-youtube-kit", scope: "gate" }, blocked: null,
+      current: { turnId: null, document: kit, draft: kit, pendingApply: false, problems: [] }, queueAhead: 0,
+    }, { onPrimary, episodeId: "e" });
+    fireEvent.click(screen.getByRole("button", { name: "Duyệt" }));
+    expect(onPrimary).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("radio", { name: /Máy có NVENC/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Duyệt và render" }));
+    expect(onPrimary).toHaveBeenCalledWith("approve", { renderMachine: "nvenc" });
   });
 });

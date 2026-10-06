@@ -26,6 +26,7 @@ const client = {
   sendChat: vi.fn().mockResolvedValue({}),
   approveChat: vi.fn().mockResolvedValue({ stageState: "SUCCEEDED", runState: "RUNNING" }),
   startProduction: vi.fn().mockResolvedValue({ runId: "r" }),
+  getEpisode: vi.fn(),
 };
 vi.mock("../api/studio-client", async (orig) => ({ ...(await orig<object>()), useStudioClient: () => client }));
 vi.mock("../api/ag-go-client", async (orig) => ({ ...(await orig<object>()), useAgGoClient: () => ({ getFolders: vi.fn().mockResolvedValue({ folders: [] }) }) }));
@@ -98,5 +99,20 @@ describe("chat pages", () => {
     mount("/v/p1");
     const box = await screen.findByPlaceholderText("Claude hoặc máy render đang làm bước này, chờ xong rồi nhắn…");
     expect(box).toBeDisabled();
+  });
+
+  it("the YouTube kit: the card approves and renders on the machine type, starting on the episode's default", async () => {
+    const ok = turn({ episode_id: "e1", stage_key: "approve-youtube-kit", text: "Kit ổn rồi.", action: "suggest_approve" });
+    client.getChatThread.mockResolvedValue({
+      turns: [ok], scope: { productionId: "p1", episodeId: "e1", runId: "r", stageKey: "approve-youtube-kit", scope: "gate" }, blocked: null,
+      current: { turnId: null, document: null, draft: null, pendingApply: false, problems: [] }, queueAhead: 0,
+    } satisfies ChatThreadView);
+    client.getEpisode.mockResolvedValue({ id: "e1", idx: 1, title: "Rừng tre", status: "waiting_approval",
+      render: { machine: null, defaultMachine: "gpu", restartFrom: null, job: null, farmStatus: null } });
+    mount("/v/p1/e/e1");
+    expect(await screen.findByText("Duyệt YouTube kit và render bản cuối?")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("radio", { name: /Máy có GPU/ })).toBeChecked());
+    fireEvent.click(screen.getByRole("button", { name: "Duyệt và render" }));
+    await waitFor(() => expect(client.approveChat).toHaveBeenCalledWith("p1", { stageKey: "approve-youtube-kit", episodeId: "e1", turnId: null, renderMachine: "gpu" }));
   });
 });

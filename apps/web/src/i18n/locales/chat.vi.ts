@@ -36,6 +36,7 @@ export const chatVi = {
   cards: {
     approve: { question: "Duyệt {{step}} và chuyển sang bước sau?", button: "Duyệt" },
     start: { question: "Đủ thông tin rồi. Bắt đầu nghiên cứu và lên kế hoạch?", button: "Bắt đầu" },
+    approveRender: { question: "Duyệt YouTube kit và render bản cuối?", button: "Duyệt và render" },
     apply: { question: "Áp dụng thay đổi này vào timeline?", button: "Áp dụng" },
     render: { question: "Render bản xem trước 720p?", button: "Render" },
     export: { question: "Xuất project Premiere?", button: "Xuất" },

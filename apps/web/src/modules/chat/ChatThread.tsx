@@ -1,16 +1,22 @@
 import { Fragment, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { ChatThreadView, ChatTurn } from "../../api/studio-client";
+import type { ChatThreadView, ChatTurn, RenderMachine } from "../../api/studio-client";
+import { RenderMachinePicker } from "../render/RenderMachinePicker";
 import { messageParts } from "./mentions";
 import { EPISODE_STEPS, PLAN_STEPS, stepLabelKey, stepOf, stepPosition } from "./steps";
 
 /** What a card under Claude's newest reply asks the person to confirm (spec local-chat §2.5). */
 export type ChatCard = "approve" | "start" | "apply" | "render" | "export" | "retry";
+/** Approving the YouTube kit starts the final render, so its card carries the machine type (phase 3). */
+export const KIT_GATE = "approve-youtube-kit";
+export interface CardOptions { renderMachine: RenderMachine }
 
 interface Props {
   thread: ChatThreadView;
-  /** Called when a card's button is pressed. */
-  onCard: (card: ChatCard, turn: ChatTurn) => void;
+  /** Called when a card's button is pressed; the kit's approve card adds the machine type picked. */
+  onCard: (card: ChatCard, turn: ChatTurn, options?: CardOptions) => void;
+  /** Where the machine picker starts (the episode's `render.defaultMachine`). */
+  renderDefault?: RenderMachine | undefined;
   /** A quick answer chip was pressed (intake questions). */
   onQuickAnswer?: ((text: string) => void) | undefined;
   busyCard?: ChatCard | null | undefined;
@@ -57,8 +63,22 @@ function cardFor(turn: ChatTurn, thread: ChatThreadView, episode: boolean): Chat
   return null;
 }
 
+function KitRenderCard({ turn, busy, initial, onCard }: { turn: ChatTurn; busy: boolean; initial: RenderMachine; onCard: Props["onCard"] }) {
+  const { t } = useTranslation();
+  const [machine, setMachine] = useState<RenderMachine>(initial);
+  return (
+    <div className="chat-card chat-card--column">
+      <span>{t("chat.cards.approveRender.question")}</span>
+      <RenderMachinePicker value={machine} onChange={setMachine} />
+      <button type="button" className="chat-card__button" disabled={busy} onClick={() => onCard("approve", turn, { renderMachine: machine })}>
+        {t("chat.cards.approveRender.button")}
+      </button>
+    </div>
+  );
+}
+
 /** The chat (mockup screens 2–13): messages by step, dividers, Claude's state, and confirm cards. */
-export function ChatThread({ thread, onCard, onQuickAnswer, busyCard, episode = false }: Props) {
+export function ChatThread({ thread, onCard, onQuickAnswer, busyCard, episode = false, renderDefault = "any" }: Props) {
   const { t } = useTranslation();
   const [opened, setOpened] = useState<Set<number>>(new Set());
   const all = sections(thread.turns);
@@ -117,7 +137,9 @@ export function ChatThread({ thread, onCard, onQuickAnswer, busyCard, episode = 
                       {options.map((o) => <button key={o} type="button" onClick={() => onQuickAnswer(o)}>{o}</button>)}
                     </div>
                   ) : null}
-                  {card ? (
+                  {card === "approve" && turn.stage_key === KIT_GATE ? (
+                    <KitRenderCard key={renderDefault} turn={turn} busy={busyCard === card} initial={renderDefault} onCard={onCard} />
+                  ) : card ? (
                     <div className="chat-card">
                       <span>{t(`chat.cards.${card}.question`, { step: step ? t(stepLabelKey(step)) : "" })}</span>
                       <button type="button" className="chat-card__button" disabled={busyCard === card} onClick={() => onCard(card, turn)}>

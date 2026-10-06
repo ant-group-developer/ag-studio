@@ -6,7 +6,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { StudioHttpError, useStudioClient, type ChatThreadView, type ChatTurn } from "../api/studio-client";
 import { ChatComposer } from "../modules/chat/ChatComposer";
 import { ChatShell } from "../modules/chat/ChatShell";
-import { ChatThread, type ChatCard } from "../modules/chat/ChatThread";
+import { ChatThread, type CardOptions, type ChatCard } from "../modules/chat/ChatThread";
 import { ManualEditDrawer } from "../modules/chat/ManualEditDrawer";
 import { ResultPane, type MenuAction, type ResultAction } from "../modules/chat/ResultPane";
 import { EPISODE_STEPS, PLAN_STEPS, stepLabelKey, stepOf, stepPosition } from "../modules/chat/steps";
@@ -62,10 +62,13 @@ export function ChatProductionPage() {
 
   const send = useMutation({ mutationFn: (text: string) => client.sendChat(productionId, text, episodeId), onSuccess: refresh, onError: fail });
   const act = useMutation({
-    mutationFn: async (a: { kind: ResultAction | ChatCard; turn?: ChatTurn }) => {
+    mutationFn: async (a: { kind: ResultAction | ChatCard; turn?: ChatTurn; options?: CardOptions | undefined }) => {
       const scope = thread?.scope;
       switch (a.kind) {
-        case "approve": return client.approveChat(productionId, { stageKey: scope!.stageKey, episodeId, turnId: thread?.current?.turnId ?? null });
+        case "approve": return client.approveChat(productionId, {
+          stageKey: scope!.stageKey, episodeId, turnId: thread?.current?.turnId ?? null,
+          ...(a.options?.renderMachine ? { renderMachine: a.options.renderMachine } : {}),
+        });
         case "start": return client.startProduction(productionId);
         case "apply": return client.applyChatProposal(productionId, a.turn?.id ?? thread!.current!.turnId!);
         case "retry": return client.retryChatStep(productionId, scope!.stageKey, episodeId);
@@ -121,7 +124,8 @@ export function ChatProductionPage() {
         ) : null}
         {thread ? (
           <ChatThread thread={thread} episode={!!episodeId} busyCard={act.isPending ? (act.variables?.kind as ChatCard) : null}
-            onCard={(card, turn) => act.mutate({ kind: card, turn })}
+            renderDefault={episode?.render?.defaultMachine}
+            onCard={(card, turn, options) => act.mutate({ kind: card, turn, options })}
             onQuickAnswer={(text) => send.mutate(text)} />
         ) : null}
         <ChatComposer value={draft} onValueChange={setDraft} disabled={!thread || !!thread.blocked || !canEdit}
@@ -129,7 +133,8 @@ export function ChatProductionPage() {
       </main>
       {thread ? (
         <ResultPane productionId={productionId} episodeId={episodeId} thread={thread} busy={act.isPending} canApprove={canManage || thread.scope?.scope === "timeline"}
-          onPrimary={(a) => act.mutate({ kind: a })} onMenu={onMenu} />
+          renderDefault={episode?.render?.defaultMachine}
+          onPrimary={(a, options) => act.mutate({ kind: a, options })} onMenu={onMenu} />
       ) : null}
       <Drawer open={logOpen} onClose={() => setLogOpen(false)} width="min(900px, 100vw)" title={t("chat.menu.log")} destroyOnClose>
         <LlmLogPanel productionId={productionId} live={stillWorking(thread)} />

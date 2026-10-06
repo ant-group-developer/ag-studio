@@ -81,4 +81,22 @@ describe("ChatThread", () => {
     fireEvent.click(screen.getByRole("button", { name: "Áp dụng" }));
     expect(onCard).toHaveBeenCalledWith("apply", prop);
   });
+
+  it("approving the YouTube kit starts the final render: the card asks for the machine type", () => {
+    const onCard = vi.fn();
+    const ok = turn({ stage_key: "approve-youtube-kit", episode_id: "e", text: "Kit ổn rồi.", action: "suggest_approve" });
+    render(<ChatThread episode renderDefault="nvenc" onCard={onCard} thread={view([ok], {
+      scope: { productionId: "p", episodeId: "e", runId: "r", stageKey: "approve-youtube-kit", scope: "gate" },
+    })} />);
+    expect(screen.getByText("Duyệt YouTube kit và render bản cuối?")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /Máy có NVENC/ })).toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: /Máy có GPU/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Duyệt và render" }));
+    expect(onCard).toHaveBeenCalledWith("approve", ok, { renderMachine: "gpu" });
+  });
+
+  it("the approve card of any other gate has no machine type", () => {
+    render(<ChatThread onCard={vi.fn()} thread={view([turn({ action: "suggest_approve" })])} />);
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+  });
 });

@@ -1,8 +1,11 @@
-import { Dropdown, type MenuProps } from "antd";
+import { useState } from "react";
+import { Dropdown, Popover, type MenuProps } from "antd";
 import { MoreHorizontal } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { TimelineV3 } from "@harness/contracts";
-import type { ChatThreadView, ChatTurn } from "../../api/studio-client";
+import type { ChatThreadView, ChatTurn, RenderMachine } from "../../api/studio-client";
+import { RenderMachinePicker } from "../render/RenderMachinePicker";
+import { KIT_GATE, type CardOptions } from "./ChatThread";
 import { diffDoc } from "./diff-doc";
 import { stepLabelKey, stepOf } from "./steps";
 import { DocView } from "./views/DocView";
@@ -18,11 +21,33 @@ interface Props {
   productionId: string;
   episodeId?: string | undefined;
   thread: ChatThreadView;
-  onPrimary: (action: ResultAction) => void;
+  /** The kit's Duyệt adds the machine type of the final render it starts. */
+  onPrimary: (action: ResultAction, options?: CardOptions) => void;
   onMenu: (action: MenuAction) => void;
   busy?: boolean | undefined;
   /** The person may approve, start and run again (producer and up). */
   canApprove?: boolean | undefined;
+  /** Where the machine picker starts (the episode's `render.defaultMachine`). */
+  renderDefault?: RenderMachine | undefined;
+}
+
+/** Duyệt on the YouTube kit: it starts the final render, so it confirms the machine type first (spec §2.5, §3.4). */
+function ApproveAndRender({ disabled, initial, onConfirm }: { disabled: boolean; initial: RenderMachine; onConfirm: (m: RenderMachine) => void }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [machine, setMachine] = useState<RenderMachine>(initial);
+  const content = (
+    <div className="chat-card chat-card--column chat-card--popover">
+      <span>{t("chat.cards.approveRender.question")}</span>
+      <RenderMachinePicker value={machine} onChange={setMachine} />
+      <button type="button" className="chat-card__button" onClick={() => { setOpen(false); onConfirm(machine); }}>{t("chat.cards.approveRender.button")}</button>
+    </div>
+  );
+  return (
+    <Popover open={open} onOpenChange={(o) => { if (o) setMachine(initial); setOpen(o); }} trigger="click" placement="topLeft" content={content}>
+      <button type="button" className="chat-primary" disabled={disabled}>{t("chat.result.primary.approve")}</button>
+    </Popover>
+  );
 }
 
 /** What still blocks Bắt đầu, from the intake draft (same rules as the API: `intakeMissing`). */
@@ -65,7 +90,7 @@ function Problems({ problems }: { problems: { code: string; message: string }[] 
 }
 
 /** The result column (spec local-chat §2.3–2.4): the step's document, readable, changes marked; one main button; ⋯. */
-export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu, busy, canApprove = true }: Props) {
+export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu, busy, canApprove = true, renderDefault = "any" }: Props) {
   const { t } = useTranslation();
   const scope = thread.scope;
   const stageKey = scope?.stageKey ?? thread.blocked?.stage ?? null;
@@ -140,7 +165,9 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
       </div>
       <div className="chat-aside__body">{body}</div>
       <div className="chat-aside__foot">
-        {primary ? (
+        {primary === "approve" && scope?.stageKey === KIT_GATE ? (
+          <ApproveAndRender disabled={!!busy || !canApprove} initial={renderDefault} onConfirm={(m) => onPrimary("approve", { renderMachine: m })} />
+        ) : primary ? (
           <button type="button" className="chat-primary" disabled={busy || startDisabled || !canApprove} onClick={() => onPrimary(primary)}>
             {t(`chat.result.primary.${primary}`)}
           </button>
