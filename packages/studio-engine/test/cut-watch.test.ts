@@ -11,7 +11,7 @@ import { runStage, stageWorkspace } from "./stage-harness.js";
 import { hasFfmpeg, makeSceneClip } from "../../../tests/media.js";
 
 const media: CutMediaDeps = {
-  ffmpeg: process.env.FFMPEG_PATH ?? "ffmpeg", ffprobe: process.env.FFPROBE_PATH ?? "ffprobe",
+  ffmpeg: process.env.FFMPEG_PATH ?? "ffmpeg", ffprobe: process.env.FFPROBE_PATH ?? "ffprobe", voiceDir: join(tmpdir(), "voice"),
   resolveAssets: async () => ({ items: [], missing: [] }), download: async () => {},
 };
 

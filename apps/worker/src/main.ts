@@ -59,6 +59,7 @@ async function main(): Promise<void> {
       return { items: r.items, missing: r.missing ?? [] };
     },
     download: (url, dest) => httpDownload(url, dest),
+    voiceDir: join(requireEnv("STUDIO_DATA_ROOT"), "voice"),
   } : null;
   const pool = createStudioWorkerPool({
     core,

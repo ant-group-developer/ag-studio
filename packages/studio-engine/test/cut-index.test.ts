@@ -18,7 +18,7 @@ const FFMPEG = process.env.FFMPEG_PATH ?? "ffmpeg";
 const FFPROBE = process.env.FFPROBE_PATH ?? "ffprobe";
 
 const media: CutMediaDeps = {
-  ffmpeg: FFMPEG, ffprobe: FFPROBE,
+  ffmpeg: FFMPEG, ffprobe: FFPROBE, voiceDir: join(tmpdir(), "voice"),
   resolveAssets: async () => ({ items: [], missing: [] }),
   download: async () => {},
 };

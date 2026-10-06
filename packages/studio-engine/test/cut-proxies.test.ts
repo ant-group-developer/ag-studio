@@ -26,7 +26,7 @@ function media(over: Partial<CutMediaDeps> = {}): CutMediaDeps & { resolved: { a
   const resolved: { actAs: string; ids: string[]; purpose: string }[] = [];
   const downloaded: string[] = [];
   return {
-    ffmpeg: "ffmpeg", ffprobe: "ffprobe",
+    ffmpeg: "ffmpeg", ffprobe: "ffprobe", voiceDir: join(tmpdir(), "voice"),
     async resolveAssets(actAs, ids, purpose) {
       resolved.push({ actAs, ids, purpose });
       return {

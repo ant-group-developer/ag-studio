@@ -49,6 +49,10 @@ export const STUDIO_TYPES = {
   /** The scene selection (`harness.survey-index/v2`) and the edit plan (`studio.edit-plan/v1`) Claude writes. */
   surveyIndex: "survey_index",
   editPlan: "studio_edit_plan",
+  /** The farm's `tts.json` and its WAVs (`tts/`), then the fitted timeline report. */
+  voiceManifest: "voice_manifest",
+  voiceSet: "voice_set",
+  fitReport: "fit_report",
   transcript: "transcript",
   youtubeKit: "youtube_kit",
   finalVideo: "final_video",

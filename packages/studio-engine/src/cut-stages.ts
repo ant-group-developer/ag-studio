@@ -8,15 +8,21 @@ import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import {
-  CUT_FRAME_WIDTH, CUT_SHEET_COLS, CUT_SHEET_SHOTS, CutProxySetSchema, CutSourcesSchema, CutWatchSchema, HarnessError, ShotsIndexSchema,
+  CUT_FRAME_WIDTH, CUT_SHEET_COLS, CUT_SHEET_SHOTS, CutProxySetSchema, CutSourcesSchema, CutWatchSchema, EditPlanSchema, HarnessError, ShotsIndexSchema,
   type CutProxySet, type CutSources, type CutWatch, type ExecutorContext, type ShotsIndex, type StageRequest, type Transcript,
 } from "@harness/contracts";
-import { StudioTranscribePayloadSchema, TRANSCRIBE_MANIFEST_SCHEMA, type StudioTranscribePayload, type TranscribeManifest } from "@ag-farm/protocol";
+import {
+  StudioTranscribePayloadSchema, StudioTtsPayloadSchema, TRANSCRIBE_MANIFEST_SCHEMA, TTS_MANIFEST_SCHEMA,
+  type StudioTranscribePayload, type TranscribeManifest, type TtsManifest,
+} from "@ag-farm/protocol";
 import { buildShots, inputPath, shotId, STUDIO_TYPES, studioSourceId } from "@harness/core";
 import type { FarmPayloadBuild, FarmPayloadBuilder, InProcessStage } from "@harness/executors";
 import { productionKey } from "./bucket.js";
 import { detectCuts, extractAudio16k, grabFrame, probeMedia, tileSheet } from "./cut-ffmpeg.js";
 import { readInput, studioStages, toBuffer, writeEpisodeIntake, writeOutput, type StudioStageDeps } from "./stages.js";
+import { getProduction } from "./studio-db.js";
+import { productionVoice } from "./voice.js";
+import { getVoiceLine, voiceKey } from "./voice-store.js";
 
 /** Shot detection on the proxies: the harness `media.scene` defaults (ADR-0001 item 113 measured them). */
 export const CUT_SCENE = { threshold: 0.3, min_shot_seconds: 1, max_shot_seconds: 20 } as const;
@@ -45,6 +51,8 @@ export interface CutMediaDeps {
   resolveAssets(actAs: string, assetIds: string[], purpose: "preview" | "final"): Promise<{ items: ResolvedFootage[]; missing: string[] }>;
   /** Downloads `url` to the local file `dest`; throws on any HTTP or network error. */
   download(url: string, dest: string): Promise<void>;
+  /** The voice store (`<STUDIO_DATA_ROOT>/voice`), shared with the API for previews. */
+  voiceDir: string;
 }
 
 function requireMedia(d: Pick<StudioStageDeps, "media">): CutMediaDeps {
@@ -233,9 +241,47 @@ export function transcriptFromManifest(m: TranscribeManifest, sourceIds: readonl
   };
 }
 
+/** An empty `tts.json`: every line was already in the voice store, or the episode has no narration. */
+function emptyTtsManifest(productionId: string, language: string): TtsManifest {
+  return { schema: TTS_MANIFEST_SCHEMA, production_id: productionId, language, lines: [], engine: { name: "voice-store", version: null } };
+}
+
+/** The voice a production's narration is read in; a production with none to clone cannot be read. */
+export function narrationVoice(db: StudioStageDeps["db"], productionId: string): ReturnType<typeof productionVoice> {
+  const voice = productionVoice(getProduction(db, productionId)?.voice ?? null);
+  if (!voice.reference) {
+    throw new HarnessError("CONFIG_INVALID", "production chưa có giọng đọc: đặt giọng cho production hoặc STUDIO_DEFAULT_VOICE_REFERENCE", { production_id: productionId });
+  }
+  return voice;
+}
+
 /** Farm payload builders of the shot-cut workflow (`stage_config.payload_builder`). */
 export function cutPayloadBuilders(d: Pick<StudioStageDeps, "db" | "bucket" | "media">): Record<string, FarmPayloadBuilder> {
   return {
+    /**
+     * `studio.tts`: the narration lines of the approved edit plan not yet in the voice store, in the production's voice,
+     * with word timings (subtitles). None left, or no narration: `skip` with an empty `tts.json`.
+     */
+    "studio-cut-tts": async (request, ctx): Promise<FarmPayloadBuild> => {
+      const plan = readInput(request, ctx.workspaceDir, STUDIO_TYPES.editPlan, (v) => EditPlanSchema.parse(v));
+      const { production_id: productionId } = readInput(request, ctx.workspaceDir, STUDIO_TYPES.brief, (v) => z.object({ production_id: z.string() }).passthrough().parse(v));
+      if (plan.narration !== "tts" || plan.lines.length === 0) {
+        return { productionId, payload: null, skip: { files: { "tts.json": JSON.stringify(emptyTtsManifest(productionId, plan.language), null, 2) } } };
+      }
+      const media = requireMedia(d);
+      const voice = narrationVoice(d.db, productionId);
+      const missing = plan.lines.filter((l) => !getVoiceLine(d.db, media.voiceDir, voiceKey({ text: l.text, language: plan.language, voice })));
+      ctx.logger.info("narration lines to read", { lines: plan.lines.length, to_read: missing.length });
+      if (missing.length === 0) {
+        return { productionId, payload: null, skip: { files: { "tts.json": JSON.stringify(emptyTtsManifest(productionId, plan.language), null, 2) } } };
+      }
+      const payload = StudioTtsPayloadSchema.parse({
+        production_id: productionId, language: plan.language, voice,
+        lines: missing.map((l) => ({ line_id: l.line_id, text: l.text, pause_seconds: null })), align_words: true,
+      });
+      return { productionId, payload };
+    },
+
     /**
      * `studio.transcribe`: the sound of every source that has some (and that ag-go does not say is silent of speech),
      * extracted here as 16 kHz mono WAV and uploaded with the job, so the farm node never downloads the footage. No
