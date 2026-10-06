@@ -57,7 +57,7 @@ import { RenderManifestSchema } from "@ag-farm/protocol";
 
 const ROOT = pathResolve(fileURLToPath(import.meta.url), "..", "..", "..");
 const AG_FARM_DIR = pathResolve(ROOT, "..", "ag-farm");
-const AG_RENDER_DIR = pathResolve(ROOT, "..", "ag-render-worker");
+const AG_RENDER_DIR = process.env["AG_RENDER_DIR"] ? pathResolve(process.env["AG_RENDER_DIR"]) : pathResolve(ROOT, "..", "ag-render-worker");
 const EXE = process.platform === "win32" ? ".exe" : "";
 // ag-render-worker ships its own ffmpeg/ffprobe; fall back to those if not set via env.
 const FFMPEG_PATH =
@@ -489,12 +489,13 @@ beforeAll(async () => {
     `INSERT INTO farm_owners
        (id, key_hash, sign_url, allowed_types, created_at, updated_at)
      VALUES ($1, $2, $3, $4, NOW(), NOW())
-     ON CONFLICT (id) DO UPDATE SET key_hash = $2, sign_url = $3`,
+     ON CONFLICT (id) DO UPDATE SET key_hash = $2, sign_url = $3, allowed_types = $4`,
     [
       ownerId,
       ownerKeyHash,
       `http://127.0.0.1:${STUDIO_API_PORT}/api/farm/sign`,
-      ["studio.tts", "studio.render_preview", "studio.render_final"],
+      // the test DB outlives a run: an older row keeps whatever types it was given unless they are set again here
+      ["studio.tts", "studio.transcribe", "studio.render_preview", "studio.render_final"],
     ],
   );
 
@@ -1211,4 +1212,168 @@ describe.skipIf(!isE2E)("farm E2E: render machine types", () => {
     expect(queued.jobs.map((j) => j.id)).toEqual(expect.arrayContaining(ids));
     for (const id of ids) expect((await ownerClient.cancelJob(id)).status).toBe("cancelled");
   });
+});
+
+// ------------------------------------------------------------------
+// Phase 5: the shot-cut job types as the Studio builds them (studio-cut-tts, studio-cut-transcribe) are taken by the
+// real hub (its schema is strict; studio.transcribe needs the hub migration of ag-farm T1). Held back with not_before
+// so no worker takes them, then cancelled.
+// ------------------------------------------------------------------
+describe.skipIf(!isE2E)("farm E2E: shot-cut job types", () => {
+  it("the hub takes studio.tts and studio.transcribe from the Studio's payload builders", async () => {
+    const { studioSourceId } = await import("@harness/core");
+    const { cutPayloadBuilders, cutStages } = await import("@ag-studio/engine");
+    const { seedProduction, world } = await import("../../packages/studio-engine/test/helpers.js");
+    const { runStage, stageWorkspace } = await import("../../packages/studio-engine/test/stage-harness.js");
+    const w = world();
+    const prod = seedProduction(w.db);
+    w.db.run("UPDATE productions SET voice = ? WHERE id = ?", [JSON.stringify({ reference: "library:voices/mai.wav", reference_text: "Xin chào.", speed: 1 }), prod]);
+    const media = {
+      ffmpeg: FFMPEG_PATH, ffprobe: FFPROBE_PATH, voiceDir: join(testDir, "voice-cut"),
+      resolveAssets: async () => ({ items: [], missing: [] }), download: async () => {},
+    };
+    const builders = cutPayloadBuilders({ db: w.db, bucket: w.bucket, media });
+
+    // TTS: the lines of an edit plan, none read yet
+    const plan = {
+      schema_version: "studio.edit-plan/v1", episode_id: "ep-1", narration: "tts", language: "vi", target_seconds: 30,
+      shots: [{ order: 1, shot_id: "s000-000", source_id: studioSourceId("a"), in: 0, out: 3, line_id: "L001", transition: "cut", section_title: null, note: "" }],
+      lines: [{ line_id: "L001", text: "Phố cổ Hoa Lư lúc chiều." }, { line_id: "L002", text: "Đền vua Đinh." }],
+      texts: [], music_mood: null,
+    };
+    const ttsRun = stageWorkspace({ runId: "r", stageKey: "tts", inputs: [
+      { type: "studio_edit_plan", name: "edit-plan.json", json: plan },
+      { type: "studio_brief", name: "brief.json", json: { production_id: prod, language: "vi" } },
+    ] });
+    const tts = await builders["studio-cut-tts"]!(ttsRun.request, ttsRun.ctx);
+
+    // Transcribe: one proxy with sound, its shots found by the real stage
+    const dir = join(testDir, "cut-proxies", "proxies");
+    mkdirSync(dir, { recursive: true });
+    const file = `${studioSourceId("a")}.mp4`;
+    await createLavfiVideo(join(dir, file), 4, CANVAS.width, CANVAS.height);
+    writeFileSync(join(dir, "proxies.json"), JSON.stringify({ schema_version: "studio.cut-proxies/v1", proxies: [
+      { index: 0, asset_id: "a", source_id: studioSourceId("a"), file, source_kind: "proxy", watermarked: false, bytes: 1 },
+    ] }));
+    const sources = {
+      schema_version: "studio.cut-sources/v1", production_id: prod, episode_id: "ep-1", language: "vi", narration: "tts",
+      sources: [{ index: 0, asset_id: "a", source_id: studioSourceId("a"), title: "a", duration_s: 4, has_speech: null, hints: null }],
+    };
+    const index = stageWorkspace({ runId: "r", inputs: [{ type: "cut_sources", name: "sources.json", json: sources }, { type: "proxy_set", name: "proxies", dir }] });
+    await runStage(cutStages({ db: w.db, bucket: w.bucket, footage: { getCatalog: async () => ({ items: [], nextCursor: null }) }, startEpisodeRun: async () => ({ runId: "x" }), media } as never)["studio-media-index"], index);
+    const trRun = stageWorkspace({ runId: "r", inputs: [
+      { type: "cut_sources", name: "sources.json", json: sources }, { type: "proxy_set", name: "proxies", dir },
+      { type: "shots", name: "shots.json", json: index.json("shots.json") },
+    ] });
+    const transcribe = await builders["studio-cut-transcribe"]!(trRun.request, trRun.ctx);
+    expect(tts.payload).toBeTruthy();
+    expect(transcribe.payload).toBeTruthy();
+
+    const ownerClient = new FarmOwnerClient({ baseUrl: `http://127.0.0.1:${FARM_HUB_PORT}`, ownerKey, timeoutMs: 15_000 });
+    const later = new Date(Date.now() + 24 * 3600_000).toISOString();
+    const ids: string[] = [];
+    for (const [type, payload] of [["studio.tts", tts.payload], ["studio.transcribe", transcribe.payload]] as const) {
+      const resp = await ownerClient.submitJob({ type, correlation_id: `cut-${type}-${randomUUID()}`, affinity_key: prod, not_before: later, requirements: {}, payload: payload as never });
+      expect(resp.created, `${type} taken by the hub`).toBe(true);
+      ids.push(resp.job.id);
+    }
+    const queued = await ownerClient.listJobs({ status: "queued", limit: 500 });
+    expect(queued.jobs.map((j) => j.id)).toEqual(expect.arrayContaining(ids));
+    for (const id of ids) expect((await ownerClient.cancelJob(id)).status).toBe("cancelled");
+    w.core.close();
+  }, 120_000);
+});
+
+// ------------------------------------------------------------------
+// Phase 5: the real render worker renders a small composition made from a timeline v4 (timelineToComposition):
+// three trimmed pieces, a dissolve, a narration line from a synthetic WAV; the file is as long as the composition.
+// ------------------------------------------------------------------
+describe.skipIf(!isE2E)("farm E2E: a shot-cut (v4) composition", () => {
+  it("renders three trimmed pieces with a dissolve and narration, to the composition's length", async () => {
+    const { timelineToComposition } = await import("@harness/core");
+    const s3 = makeS3Client();
+    const studioDbPath = join(testDir, "studio.db");
+    const attemptId = `atm_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+    const stageKey = "render-preview";
+    const inputPrefix = stageInputPrefix(productionId, stageKey, attemptId);
+
+    const timeline = {
+      schema_version: "studio.timeline/v4" as const, production_id: productionId, episode_id: "ep-cut", canvas: CANVAS, fps: 25 as const, language: "vi",
+      edit_style: "cut" as const,
+      clips: [
+        { clip_id: "C001", asset_id: segment1Id, section_title: null, in: 0.5, out: 2.5, shot_id: "s000-000", line_id: "L001", transition_out: { kind: "dissolve" as const, seconds: 0.5 } },
+        { clip_id: "C002", asset_id: segment2Id, section_title: null, in: 1, out: 3, shot_id: "s001-000", line_id: null, transition_out: { kind: "cut" as const, seconds: 0 } },
+        { clip_id: "C003", asset_id: segment1Id, section_title: null, in: 3, out: 4.5, shot_id: "s000-001", line_id: null, transition_out: { kind: "cut" as const, seconds: 0 } },
+      ],
+      texts: [], music: null, source_audio: { muted: true },
+      assets: {
+        [segment1Id]: { title: "Đoạn 1", summary_vi: "", duration_s: 5, orientation: "landscape" as const },
+        [segment2Id]: { title: "Đoạn 2", summary_vi: "", duration_s: 5, orientation: "landscape" as const },
+      },
+      alternates: [],
+      narration: { voice: "tts" as const, lead_seconds: 0.3, lines: [{ line_id: "L001", text: "Phố cổ Hoa Lư.", audio: { key: "0".repeat(64), duration_s: 2, words: [] } }] },
+      captions: { mode: "none" as const },
+    };
+    const composition = timelineToComposition(timeline as never);
+    expect(composition.segments.map((x) => x.in)).toEqual([0.5, 1, 3]);
+    expect(composition.transitions.applied).toBe(1);
+    expect(composition.narration).toEqual([expect.objectContaining({ line_id: "L001", wav: "stage:voice/L001.wav" })]);
+
+    const wav = join(testDir, "cut-L001.wav");
+    createSilentWav(wav, 2);
+    await s3Put(s3, `${inputPrefix}voice/L001.wav`, readFileSync(wav), "audio/wav");
+    const wsDir = join(testDir, "workspace-cut");
+    mkdirSync(join(wsDir, "renders", "cut"), { recursive: true });
+    const compositionJson = JSON.stringify(composition);
+    writeFileSync(join(wsDir, "renders", "cut", "composition.json"), compositionJson);
+
+    const storage: StudioStorage = {
+      async upload(localPath: string, objectKey: string): Promise<string> {
+        await s3Put(s3, objectKey, readFileSync(localPath));
+        return `stage:${objectKey.slice(inputPrefix.length)}`;
+      },
+      async download(url: string, localPath: string): Promise<void> {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`download failed: ${res.status} ${url}`);
+        mkdirSync(dirname(localPath), { recursive: true });
+        writeFileSync(localPath, Buffer.from(await res.arrayBuffer()));
+      },
+      async downloadOutput(outputPrefix: string, relPath: string, localPath: string): Promise<void> {
+        const resp = await s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: `${outputPrefix}${relPath}` }));
+        if (!resp.Body) throw new Error(`no body for ${outputPrefix}${relPath}`);
+        mkdirSync(dirname(localPath), { recursive: true });
+        writeFileSync(localPath, Buffer.from(await resp.Body.transformToByteArray()));
+      },
+    };
+    const executor = new FarmExecutor({
+      client: new FarmOwnerClient({ baseUrl: `http://127.0.0.1:${FARM_HUB_PORT}`, ownerKey, timeoutMs: 15_000 }),
+      storage, onSubmitted: async (info: SubmittedInfo) => { await makeStudioFarmRecorder(studioDbPath)(info); }, pollIntervalMs: 2000,
+    });
+    const { SystemClock } = await import("@harness/core");
+    const log = (msg: string) => process.stderr.write(`[executor:cut] ${msg}\n`);
+    const logger = { info: log, warn: log, error: log, child: () => ({ info: log, warn: log, error: log }) };
+    const result = await executor.execute({
+      schema_version: "harness.stage-request/v1", run_id: `run_cut_${randomUUID().replace(/-/g, "").slice(0, 16)}`, stage_key: stageKey,
+      attempt_id: attemptId, attempt_number: 1,
+      stage_config: {
+        production_id: productionId, job_type: "studio.render_preview", requirements: {},
+        farm_payload: { production_id: productionId, revision: 1, composition: "stage:renders/cut/composition.json", canvas: CANVAS, handle_seconds: 0.5, output: "renders/cut/preview.mp4" },
+      },
+      inputs: [{ path: "renders/cut/composition.json", type: "application/json", checksum: `sha256:${"0".repeat(64)}`, size_bytes: compositionJson.length, kind: "file" }],
+      expected_outputs: [],
+      limits: { deadline_at: new Date(Date.now() + 5 * 60_000).toISOString(), cost_usd_limit: null, wall_seconds_limit: 300 },
+      budget: { remaining_usd: null },
+    } as never, { workspaceDir: wsDir, clock: new SystemClock(), logger, signal: undefined } as never);
+    expect((result as { outcome: string }).outcome).toBe("succeeded");
+
+    const listed = await s3.send(new ListObjectsV2Command({ Bucket: S3_BUCKET, Prefix: `productions/${productionId}/jobs/${stageKey}/${attemptId}/out/` }));
+    const videoKey = (listed.Contents ?? []).map((o) => o.Key!).find((k) => k.endsWith("/renders/cut/preview.mp4"))!;
+    const resp = await s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: videoKey }));
+    const mp4 = join(testDir, "cut-preview.mp4");
+    writeFileSync(mp4, Buffer.from(await resp.Body!.transformToByteArray()));
+    const { stdout } = await execFileAsync(FFPROBE_PATH, ["-v", "quiet", "-print_format", "json", "-show_streams", "-show_format", mp4], { timeout: 10_000 });
+    const probe = JSON.parse(stdout) as { streams?: { codec_type?: string }[]; format?: { duration?: string } };
+    expect(probe.streams?.some((x) => x.codec_type === "audio"), "the narration is in the file").toBe(true);
+    expect(parseFloat(probe.format?.duration ?? "0")).toBeCloseTo(composition.total_seconds, 0);
+  }, 300_000);
 });
