@@ -682,3 +682,21 @@ export function claudeJsonSchemaFor(schema: z.ZodTypeAny): Record<string, unknow
   const raw = zodToJsonSchema(schema, { $refStrategy: "none", target: "jsonSchema7" });
   return stripForClaude(raw) as Record<string, unknown>;
 }
+
+// ---------------------------------------------------------------------------
+// Render machine (spec local-chat §3.4): which kind of farm machine renders a final cut, said with the job
+// `requirements` ag-farm already has. Studio stores the type, never raw requirements, so no caller can send the farm
+// a key it would refuse. Pinning one named machine would need a new ag-farm field: not done here.
+// ---------------------------------------------------------------------------
+export const RENDER_MACHINES = ["any", "nvenc", "gpu"] as const;
+export const RenderMachineSchema = z.enum(RENDER_MACHINES);
+export type RenderMachine = z.infer<typeof RenderMachineSchema>;
+
+/** ag-farm `requirements` of a machine type: `{}` matches any node. A fresh object every call. */
+export function renderRequirements(machine: RenderMachine): { nvenc?: boolean; gpu?: boolean } {
+  switch (machine) {
+    case "nvenc": return { nvenc: true };
+    case "gpu": return { gpu: true };
+    default: return {};
+  }
+}
