@@ -44,7 +44,7 @@ export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
   "render-report": CM.RenderReportSchema,
   "studio-brief": S.StudioBriefSchema, "studio-research": S.StudioResearchSchema, "studio-trend-report": S.TrendReportSchema,
   "studio-catalog": S.StudioCatalogSchema, "studio-series-plan": S.SeriesPlanSchema, "studio-episodes": S.SpawnedEpisodesSchema,
-  "studio-episode": S.StudioEpisodeSchema, "studio-timeline-v3": S.TimelineV3Schema, "studio-youtube-kit": S.YoutubeKitSchema,
+  "studio-episode": S.StudioEpisodeSchema, "studio-timeline-v3": S.TimelineV3Schema, "studio-timeline-v4": S.TimelineV4Schema, "studio-youtube-kit": S.YoutubeKitSchema,
   "studio-youtube": S.StudioYoutubeSchema, "studio-export": S.StudioExportSchema,
   "studio-seed": S.StudioSeedSchema, "studio-rnd": S.StudioRndSchema, "studio-branding": S.StudioBrandingSchema,
   "studio-thumbnails": S.StudioThumbnailsSchema,

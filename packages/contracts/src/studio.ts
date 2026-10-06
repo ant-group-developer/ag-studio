@@ -474,6 +474,16 @@ export const StudioEpisodeSchema = PlannedEpisodeSchema.extend({
 }).strict();
 export type StudioEpisode = z.infer<typeof StudioEpisodeSchema>;
 
+/** One text on the picture (T). `start` is seconds from the start of the episode. Same in v3 and v4. */
+export const TimelineTextSchema = z.object({
+  text_id: z.string().regex(/^T\d{3}$/),
+  kind: z.enum(TEXT_KINDS),
+  text: z.string().min(1).max(64),
+  start: z.number().min(0),
+  duration: z.number().min(0.5).max(20),
+  position: z.enum(TEXT_POSITIONS_V2),
+}).strict();
+
 /**
  * `timeline.json` (Timeline v3): what the editor edits and the renderer plays. Clips play back to back in array
  * order, each for its whole video; texts sit at absolute times. Only facts are stored: positions come from
@@ -493,14 +503,7 @@ export const TimelineV3Schema = z.object({
     section_title: z.string().min(1).max(100).nullable(),
   }).strict()),
   /** T. `start` is seconds from the start of the episode. */
-  texts: z.array(z.object({
-    text_id: z.string().regex(/^T\d{3}$/),
-    kind: z.enum(TEXT_KINDS),
-    text: z.string().min(1).max(64),
-    start: z.number().min(0),
-    duration: z.number().min(0.5).max(20),
-    position: z.enum(TEXT_POSITIONS_V2),
-  }).strict()),
+  texts: z.array(TimelineTextSchema),
   /** A2. */
   music: StudioMusicSchema.nullable(),
   /** A1: the videos' own sound (on or off; the composition has no gain for it). */
@@ -513,6 +516,178 @@ export const TimelineV3Schema = z.object({
 export type TimelineV3 = z.infer<typeof TimelineV3Schema>;
 export type TimelineClip = TimelineV3["clips"][number];
 export type TimelineText = TimelineV3["texts"][number];
+
+/**
+ * `timeline.json` (Timeline v4, spec local-chat §3.3, ADR-0001 item 151): v3 plus what the shot-cut edit style
+ * needs. Both edit styles use it: `whole` (each clip plays its whole video, as v3) and `cut` (clips are shots
+ * trimmed out of longer footage, with narration).
+ *
+ * - A clip plays `[in, out)` seconds of its asset (`out: null` = to the end of the asset), so its length is
+ *   `(out ?? assets[asset_id].duration_s) - in`. Clips play back to back in array order.
+ * - `transition_out` never moves a clip: a dissolve takes a tail of `seconds` from the SAME asset after `out`
+ *   (ADR item 118). Without that tail, or when the next clip is shorter than `2 × seconds`, the composition
+ *   downgrades it to a cut and says so in `transitions.downgraded`. The last clip always cuts.
+ * - `line_id` marks the clip a narration line STARTS on; a line is anchored by at most one clip and plays from
+ *   `clip.start + narration.lead_seconds` for `audio.duration_s`. `audio.words[]` are seconds from the start
+ *   of the line. The WAV lives in the Studio voice store under `audio.key` (sha256 of what was read).
+ *
+ * Contract for the exports (phases 4 and 6): they read the `harness.composition/v1` that
+ * `timelineToComposition` (core) builds from this, where `segments[].in/out` are seconds in the SOURCE file,
+ * `transition_out` has `tail_available` resolved, `narration[].wav` is the input `stage:voice/<line_id>.wav`
+ * with `start/end` on the episode axis, and `captions.cues` / `text_events` carry absolute times.
+ *
+ * A v3 document reads as v4 through `upgradeTimelineV3` (`in: 0`, `out: null`, cuts, no narration, no captions);
+ * an episode whose timeline was v3 keeps being stored as v3 (`downgradeTimelineV4`), never rewritten.
+ */
+export const EDIT_STYLES = ["whole", "cut"] as const;
+export type StudioEditStyle = (typeof EDIT_STYLES)[number];
+export const TIMELINE_TRANSITIONS = ["cut", "dissolve", "dip_black"] as const;
+export type TimelineTransitionKind = (typeof TIMELINE_TRANSITIONS)[number];
+export const NARRATION_VOICES = ["none", "tts", "original"] as const;
+export type NarrationVoice = (typeof NARRATION_VOICES)[number];
+export const CAPTION_MODES = ["none", "burn-in", "karaoke"] as const;
+export type CaptionMode = (typeof CAPTION_MODES)[number];
+/** Narration starts this long after the start of the clip it is anchored on (harness `fitEdl` lead-in). */
+export const DEFAULT_NARRATION_LEAD_SECONDS = 0.3;
+
+export const TimelineClipV4Schema = z.object({
+  clip_id: z.string().regex(/^C\d{3,4}$/),
+  asset_id: z.string().min(1),
+  section_title: z.string().min(1).max(100).nullable(),
+  /** Seconds into the asset. */
+  in: z.number().min(0),
+  /** Seconds into the asset; `null` = to the end of the asset. */
+  out: z.number().positive().nullable(),
+  /** The shot of the scene selection this clip was cut from (`s<source>-<shot>`). */
+  shot_id: z.string().regex(/^s\d{3}-\d{3}$/).nullable(),
+  /** The narration line that starts on this clip. */
+  line_id: z.string().regex(/^L\d{3}$/).nullable(),
+  transition_out: z.object({
+    kind: z.enum(TIMELINE_TRANSITIONS),
+    seconds: z.number().min(0).max(1),
+  }).strict(),
+}).strict().refine((c) => c.out === null || c.out > c.in, { message: "out must be after in", path: ["out"] });
+
+export const NarrationWordSchema = z.object({
+  word: z.string().min(1),
+  start: z.number().min(0),
+  end: z.number().min(0),
+}).strict();
+
+export const TimelineNarrationLineSchema = z.object({
+  line_id: z.string().regex(/^L\d{3}$/),
+  text: z.string().min(1).max(1200),
+  /** `null` until the line has been read (TTS). */
+  audio: z.object({
+    key: z.string().regex(/^[0-9a-f]{64}$/),
+    duration_s: z.number().positive(),
+    words: z.array(NarrationWordSchema),
+  }).strict().nullable(),
+}).strict();
+
+export const TimelineV4Schema = z.object({
+  schema_version: studioVersion("timeline", 4),
+  production_id: z.string().min(1),
+  episode_id: z.string().min(1),
+  canvas: StudioCanvasSchema,
+  fps: z.union([z.literal(25), z.literal(30)]),
+  language: z.string().min(2).max(10),
+  edit_style: z.enum(EDIT_STYLES),
+  /** V1, in play order. */
+  clips: z.array(TimelineClipV4Schema),
+  texts: z.array(TimelineTextSchema),
+  narration: z.object({
+    /** `tts`: read lines over the picture (source sound off); `original`: the footage's own speech; `none`. */
+    voice: z.enum(NARRATION_VOICES),
+    lead_seconds: z.number().min(0).max(2),
+    lines: z.array(TimelineNarrationLineSchema),
+  }).strict(),
+  /** Burnt-in subtitles from the narration's words. */
+  captions: z.object({ mode: z.enum(CAPTION_MODES) }).strict(),
+  music: StudioMusicSchema.nullable(),
+  source_audio: z.object({ muted: z.boolean() }).strict(),
+  assets: z.record(z.string(), EpisodeAssetSchema),
+  alternates: z.array(reasonedAsset),
+}).strict();
+export type TimelineV4 = z.infer<typeof TimelineV4Schema>;
+export type TimelineClipV4 = TimelineV4["clips"][number];
+export type TimelineNarrationLine = TimelineV4["narration"]["lines"][number];
+
+/** A v4 timeline asked to be written as v3 holds something v3 cannot (trim, transition, narration, captions). */
+export class TimelineVersionError extends Error {
+  readonly code = "not_v3" as const;
+  constructor(message: string) {
+    super(message);
+    this.name = "TimelineVersionError";
+  }
+}
+
+export function upgradeTimelineV3(t: TimelineV3): TimelineV4 {
+  return {
+    schema_version: "studio.timeline/v4",
+    production_id: t.production_id,
+    episode_id: t.episode_id,
+    canvas: t.canvas,
+    fps: t.fps,
+    language: t.language,
+    edit_style: "whole",
+    clips: t.clips.map((c) => ({
+      clip_id: c.clip_id, asset_id: c.asset_id, section_title: c.section_title,
+      in: 0, out: null, shot_id: null, line_id: null, transition_out: { kind: "cut", seconds: 0 },
+    })),
+    texts: t.texts,
+    narration: { voice: "none", lead_seconds: DEFAULT_NARRATION_LEAD_SECONDS, lines: [] },
+    captions: { mode: "none" },
+    music: t.music,
+    source_audio: t.source_audio,
+    assets: t.assets,
+    alternates: t.alternates,
+  };
+}
+
+/** The v3 document a v4 timeline stands for; throws `TimelineVersionError` when that would lose anything. */
+export function downgradeTimelineV4(t: TimelineV4): TimelineV3 {
+  const lost: string[] = [];
+  if (t.edit_style !== "whole") lost.push("edit_style");
+  for (const c of t.clips) {
+    if (c.in !== 0 || c.out !== null) lost.push(`${c.clip_id} trim`);
+    if (c.shot_id !== null) lost.push(`${c.clip_id} shot_id`);
+    if (c.line_id !== null) lost.push(`${c.clip_id} line_id`);
+    if (c.transition_out.kind !== "cut" || c.transition_out.seconds !== 0) lost.push(`${c.clip_id} transition`);
+  }
+  const n = t.narration;
+  if (n.voice !== "none" || n.lines.length > 0 || n.lead_seconds !== DEFAULT_NARRATION_LEAD_SECONDS) lost.push("narration");
+  if (t.captions.mode !== "none") lost.push("captions");
+  if (lost.length > 0) throw new TimelineVersionError(`a v3 timeline cannot hold: ${lost.join(", ")}`);
+  return {
+    schema_version: "studio.timeline/v3",
+    production_id: t.production_id,
+    episode_id: t.episode_id,
+    canvas: t.canvas,
+    fps: t.fps,
+    language: t.language,
+    clips: t.clips.map((c) => ({ clip_id: c.clip_id, asset_id: c.asset_id, section_title: c.section_title })),
+    texts: t.texts,
+    music: t.music,
+    source_audio: t.source_audio,
+    assets: t.assets,
+    alternates: t.alternates,
+  };
+}
+
+/** 3 or 4 by `schema_version`, `null` for anything else (no parsing). */
+export function timelineVersion(raw: unknown): 3 | 4 | null {
+  const v = raw && typeof raw === "object" ? (raw as { schema_version?: unknown }).schema_version : undefined;
+  return v === "studio.timeline/v3" ? 3 : v === "studio.timeline/v4" ? 4 : null;
+}
+
+/** Either version, read as v4. */
+export const AnyTimelineSchema = z.union([TimelineV4Schema, TimelineV3Schema.transform(upgradeTimelineV3)]);
+
+/** Parses a stored timeline of either version and returns it as v4 (throws the zod error otherwise). */
+export function readTimeline(raw: unknown): TimelineV4 {
+  return AnyTimelineSchema.parse(raw);
+}
 
 export const YOUTUBE_TITLE_MAX = 100;
 export const YOUTUBE_DESCRIPTION_MAX = 5000;
