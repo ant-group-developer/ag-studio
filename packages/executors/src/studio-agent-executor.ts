@@ -13,13 +13,13 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  claudeOutputJsonSchema, STUDIO_SKILL_OUTPUTS, STUDIO_SKILL_STEP, teamGuidesForStep, TrendReportSchema,
+  claudeOutputJsonSchema, STUDIO_FILE_SKILLS, STUDIO_SKILL_OUTPUTS, STUDIO_SKILL_STEP, teamGuidesForStep, TrendReportSchema,
   type AgentCallTrace, type AgentRuntime, type CheckerInput, type StudioChatSkill, type Executor, type ExecutorContext, type StageRequest, type StageResult, type StudioSkill,
   type TeamGuide,
 } from "@harness/contracts";
 import {
-  isFollowUpWarning, loadBrief, loadCatalog, loadOptionalBranding, loadSeed, STUDIO_TYPES, summarizeCatalog, validateBranding, validateRnd,
-  validateSeriesPlan, validateTrendReport, validateYoutubeKit,
+  isFollowUpWarning, loadBrief, loadCatalog, loadOptionalBranding, loadSeed, loadShots, loadSurvey, STUDIO_TYPES, summarizeCatalog, validateBranding,
+  validateEditPlan, validateRnd, validateSeriesPlan, validateStudioSurvey, validateTrendReport, validateYoutubeKit,
   type StudioProblem, type StudioValidation,
 } from "@harness/core";
 import { StudioCatalogSchema, StudioEpisodeSchema } from "@harness/contracts";
@@ -38,7 +38,9 @@ export interface StudioLlmCall {
 export interface StudioAgentExecutorOptions {
   /** A runtime bound to one output JSON Schema. Optionally receives the skill name for per-skill model selection,
    *  and a hook the runtime hands every call's trace to. */
-  runtimeFor: (jsonSchema: string, skill?: StudioSkill, onCall?: (trace: AgentCallTrace) => void) => AgentRuntime;
+  runtimeFor: (jsonSchema: string, skill?: StudioSkill, onCall?: (trace: AgentCallTrace) => void, files?: { resume?: string }) => AgentRuntime;
+  /** Files-mode skills (`STUDIO_FILE_SKILLS`): the CLI session of each call, to resume it (repair round, chat). */
+  onSession?: (request: StageRequest, sessionId: string) => void | Promise<void>;
   /** Keeps each call; a failure here is logged and never fails the stage. */
   recordCall?: (call: StudioLlmCall) => Promise<void>;
   rateLimitBackoffMs?: number[];
@@ -81,6 +83,8 @@ const VALIDATORS: Record<StudioSkill, Validator> = {
     const catalog = loadCatalog(i);
     return validateSeriesPlan(raw, { brief, catalog: catalog.assets });
   },
+  "studio-source-survey": (raw, i) => validateStudioSurvey(raw, { shots: loadShots(i) }),
+  "studio-edit-plan": (raw, i) => validateEditPlan(raw, { survey: loadSurvey(i), shots: loadShots(i) }),
   "studio-youtube-kit": (raw, i) => {
     const episodePath = i.request.inputs.find((x) => x.type === STUDIO_TYPES.episode);
     if (!episodePath) return { ok: false, value: undefined, problems: [{ code: "missing_input", message: "missing studio_episode input" }], warnings: [] };
@@ -199,7 +203,30 @@ export function studioPromptHead(request: StageRequest, workspaceDir: string, gu
     }
     parts.push("", `## ${heading} (${input.path.split("/").pop()})`, "```json", body.trim(), "```");
   }
+  const dirs = request.inputs.filter((x) => x.kind === "directory");
+  if (dirs.length) {
+    parts.push("", "## Thư mục trong thư mục làm việc", "Mở các tệp trong đó bằng công cụ đọc tệp (ảnh xem được trực tiếp).",
+      ...dirs.map((x) => `- ${x.type}: ${x.path}/`));
+  }
   return parts.join("\n");
+}
+
+/** Files-mode output: the agent writes the file itself (no JSON on stdout). */
+export function studioFilesPromptTail(outName: string): string {
+  return [
+    "# Đầu ra",
+    `Ghi đúng một tệp \`output/${outName}\` (JSON đúng định dạng đầu ra của skill). Chỉ đọc tệp trong thư mục làm việc này, không dùng mạng.`,
+    "Ghi xong thì trả lời một dòng ngắn nói đã ghi.",
+  ].join("\n");
+}
+
+/** The repair round of a files-mode stage, sent into the resumed session (which already holds everything else). */
+export function studioFilesRepairPrompt(outName: string, problems: StudioProblem[]): string {
+  return [
+    `# Tệp output/${outName} bị hệ thống kiểm tra từ chối`,
+    "Sửa đúng các lỗi sau rồi ghi lại toàn bộ tệp:",
+    ...problems.map((p) => `- [${p.code}] ${p.message}`),
+  ].join("\n");
 }
 
 /** What the stage asks for after the head: the output, and in the repair round what the check refused. */
@@ -228,6 +255,21 @@ export function studioPrompt(
     ].join("\n"));
   }
   parts.push(studioPromptTail(problems));
+  return parts.join("\n\n");
+}
+
+/** A files-mode stage's prompt: the same head (inputs inlined, folders listed), then where to write the answer. */
+export function studioFilesPrompt(
+  request: StageRequest, workspaceDir: string, outName: string, problems: StudioProblem[] | null,
+  guides: readonly TeamGuide[] = [], feedback: readonly string[] = [],
+): string {
+  const parts = [studioPromptHead(request, workspaceDir, guides)];
+  if (feedback.length) {
+    parts.push(["# Góp ý của người dùng", "Lần trước câu trả lời của bước này bị từ chối; người dùng góp ý như sau, làm theo:",
+      ...feedback.map((f) => `- ${f.trim().replace(/\r?\n/g, "\n  ")}`)].join("\n"));
+  }
+  parts.push(studioFilesPromptTail(outName));
+  if (problems) parts.push(studioFilesRepairPrompt(outName, problems));
   return parts.join("\n\n");
 }
 
@@ -309,7 +351,11 @@ export class StudioAgentExecutor implements Executor {
     }
 
     const last: { trace: AgentCallTrace | null } = { trace: null };
-    const runtime = this.opts.runtimeFor(JSON.stringify(claudeOutputJsonSchema(skill)), skill, (t) => { last.trace = t; });
+    const files = STUDIO_FILE_SKILLS.has(skill);
+    const schema = JSON.stringify(claudeOutputJsonSchema(skill));
+    const onCall = (t: AgentCallTrace) => { last.trace = t; };
+    let runtime = this.opts.runtimeFor(schema, skill, onCall);
+    let session: string | null = null;
     const validator = VALIDATORS[skill];
     const backoff = this.opts.rateLimitBackoffMs ?? DEFAULT_BACKOFF_MS;
     const sleep = this.opts.sleep ?? defaultSleep;
@@ -332,9 +378,16 @@ export class StudioAgentExecutor implements Executor {
     let waits = 0;
     for (let round = 0; round < 2;) {
       rmSync(outPath, { force: true });
-      const brief = studioPrompt(request, ctx.workspaceDir, problems, guides, feedback);
+      const brief = !files ? studioPrompt(request, ctx.workspaceDir, problems, guides, feedback)
+        : problems && session ? studioFilesRepairPrompt(out.name, problems)
+          : studioFilesPrompt(request, ctx.workspaceDir, out.name, problems, guides, feedback);
       const result = await runtime.runTask({ skill, brief, request, workspaceDir: ctx.workspaceDir }, ctx);
       cost += result.usage.cost_usd;
+      if (files && last.trace?.session_id) {
+        session = last.trace.session_id;
+        try { await this.opts.onSession?.(request, session); }
+        catch (e) { ctx.logger.warn("could not keep the Claude session", { error: e instanceof Error ? e.message : String(e) }); }
+      }
       const err = result.errors[0];
       if (result.outcome !== "succeeded") {
         if (err?.details?.code === "RATE_LIMITED") {
@@ -374,6 +427,8 @@ export class StudioAgentExecutor implements Executor {
       await record(round, "rejected", verdict.problems, verdict.warnings);
       problems = verdict.problems;
       ctx.logger.warn("Studio agent output rejected by the deterministic check", { skill, round, problems: problems.length });
+      // a files-mode repair continues the session that looked at the pictures
+      if (files && session) runtime = this.opts.runtimeFor(schema, skill, onCall, { resume: session });
       round++;
     }
     return failed("contract", `${skill}: output still invalid after one repair round`, { problems }, cost);

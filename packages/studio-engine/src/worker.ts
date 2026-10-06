@@ -7,9 +7,15 @@ import { createLogger, Redactor, type HarnessLogger } from "@harness/core";
 import { ExecutorRegistry, FarmExecutor, GateExecutor, InProcessExecutor, makeStudioFarmRecorder, StudioAgentExecutor } from "@harness/executors";
 import { Worker } from "@harness/worker";
 import type { FarmOwnerClient } from "@ag-farm/owner-client";
-import { renderRequirements, type AgentCallTrace, type ProjectConfig, type StudioSkill } from "@harness/contracts";
+import { renderRequirements, STUDIO_FILE_SKILLS, type AgentCallTrace, type ProjectConfig, type StudioSkill } from "@harness/contracts";
 import { farmStorage, type StudioBucket } from "./bucket.js";
 import { modelFor } from "./models.js";
+import { saveAgentSession } from "./agent-sessions.js";
+
+/** Tools of a files-mode stage: read and write its workspace, nothing else (no Bash, no web). */
+export const STUDIO_FILE_TOOLS = ["Read", "Write", "Glob", "Grep"] as const;
+/** Turns of a files-mode call: opening a few dozen contact sheets and frames, then writing the answer. */
+export const STUDIO_FILES_MAX_TURNS = 60;
 import { createChatRunner, type ChatRunner } from "./chat-runner.js";
 import { chatFeedback } from "./chat-db.js";
 import { recordLlmCall } from "./llm-log.js";
@@ -75,13 +81,22 @@ function workerFactory(o: StudioWorkerOptions, single: boolean): { next: () => W
     ...(o.media ? { media: o.media } : {}),
   })));
   executors.register("agent", new StudioAgentExecutor({
-    runtimeFor: (jsonSchema: string, skill?: StudioSkill, onCall?: (trace: AgentCallTrace) => void) => new CliAgentRuntime({
-      runtime: "claude", skillsDir: o.claude.skillsDir,
-      structured: { jsonSchema, model: modelFor(skill ?? "studio-plan-episodes", o.claude.model), maxTurns: o.claude.maxTurns ?? 3 },
-      ...(o.claude.argv ? { argv: o.claude.argv } : {}),
-      ...(o.claude.baseEnv ? { baseEnv: o.claude.baseEnv } : {}),
-      ...(onCall ? { onCall } : {}),
-    }),
+    runtimeFor: (jsonSchema: string, skill?: StudioSkill, onCall?: (trace: AgentCallTrace) => void, files?: { resume?: string }) => {
+      const model = modelFor(skill ?? "studio-plan-episodes", o.claude.model);
+      // the scene selection looks at contact sheets: files mode, session kept (ADR item 155); every other skill: no tools
+      const mode = skill && STUDIO_FILE_SKILLS.has(skill)
+        ? { files: { model, maxTurns: STUDIO_FILES_MAX_TURNS, tools: [...STUDIO_FILE_TOOLS], ...(files?.resume ? { resume: files.resume } : {}) } }
+        : { structured: { jsonSchema, model, maxTurns: o.claude.maxTurns ?? 3 } };
+      return new CliAgentRuntime({
+        runtime: "claude", skillsDir: o.claude.skillsDir, ...mode,
+        ...(o.claude.argv ? { argv: o.claude.argv } : {}),
+        ...(o.claude.baseEnv ? { baseEnv: o.claude.baseEnv } : {}),
+        ...(onCall ? { onCall } : {}),
+      });
+    },
+    onSession: (request, sessionId) => saveAgentSession(o.db, {
+      runId: request.run_id, stageKey: request.stage_key, attemptId: request.attempt_id, sessionId, cwd: request.workspace_uri,
+    }, core.clock.now()),
     recordCall: async (call) => { await recordLlmCall(o.db, o.bucket, call); },
     teamGuidesFor: (request) => teamGuidesForRun(o.db, request.run_id),
     feedbackFor: (request) => chatFeedback(o.db, request.run_id, request.stage_key),
