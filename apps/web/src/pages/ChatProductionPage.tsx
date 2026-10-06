@@ -7,6 +7,7 @@ import { StudioHttpError, useStudioClient, type ChatThreadView, type ChatTurn } 
 import { ChatComposer } from "../modules/chat/ChatComposer";
 import { ChatShell } from "../modules/chat/ChatShell";
 import { ChatThread, type ChatCard } from "../modules/chat/ChatThread";
+import { ManualEditDrawer } from "../modules/chat/ManualEditDrawer";
 import { ResultPane, type MenuAction, type ResultAction } from "../modules/chat/ResultPane";
 import { EPISODE_STEPS, PLAN_STEPS, stepLabelKey, stepOf, stepPosition } from "../modules/chat/steps";
 import { gateProblems } from "../modules/production/gate-problems";
@@ -28,6 +29,7 @@ export function ChatProductionPage() {
   const client = useStudioClient();
   const qc = useQueryClient();
   const [logOpen, setLogOpen] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
   const [draft, setDraft] = useState("");
 
   const threadKey = ["chat", productionId, episodeId ?? null];
@@ -84,6 +86,7 @@ export function ChatProductionPage() {
   });
 
   const onMenu = (m: MenuAction) => {
+    if (m === "manual") setManualOpen(true);
     if (m === "editor" && episodeId) navigate(`/productions/${productionId}/episodes/${episodeId}/editor`);
     if (m === "preview") act.mutate({ kind: "render" });
     if (m === "export") act.mutate({ kind: "export" });
@@ -131,6 +134,7 @@ export function ChatProductionPage() {
       <Drawer open={logOpen} onClose={() => setLogOpen(false)} width="min(900px, 100vw)" title={t("chat.menu.log")} destroyOnClose>
         <LlmLogPanel productionId={productionId} live={stillWorking(thread)} />
       </Drawer>
+      {thread ? <ManualEditDrawer open={manualOpen} onClose={() => setManualOpen(false)} productionId={productionId} episodeId={episodeId} thread={thread} onSaved={refresh} /> : null}
     </ChatShell>
   );
 }

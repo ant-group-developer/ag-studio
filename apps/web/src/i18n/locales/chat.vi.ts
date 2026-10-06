@@ -73,6 +73,12 @@ export const chatVi = {
     more: "Thêm thao tác", manual: "Sửa tay", editor: "Mở editor timeline", preview: "Render xem trước 720p",
     export: "Xuất project Premiere", log: "Nhật ký Claude", oldScreen: "Mở màn hình cũ",
   },
+  manual: {
+    title: "Sửa tay",
+    lead: "Lưu sẽ tạo một bản mới trong chat; bấm Duyệt ở cột kết quả để nộp bản đó.",
+    save: "Lưu thành bản mới",
+    backToChat: "← Quay lại chat",
+  },
   home: {
     title: "Bạn muốn làm video gì?",
     lead: "Gõ yêu cầu và gắn footage bằng @. Claude hỏi thêm khi còn thiếu thông tin, rồi tự đề xuất phần còn lại.",

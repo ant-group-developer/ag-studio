@@ -75,6 +75,12 @@ export const chatEn: typeof chatVi = {
     more: "More actions", manual: "Edit by hand", editor: "Open the timeline editor", preview: "Render a 720p preview",
     export: "Export a Premiere project", log: "Claude call log", oldScreen: "Open the old screen",
   },
+  manual: {
+    title: "Edit by hand",
+    lead: "Saving adds a new version to the chat; press Approve in the result column to submit it.",
+    save: "Save as a new version",
+    backToChat: "← Back to the chat",
+  },
   home: {
     title: "What video do you want to make?",
     lead: "Type what you want and tag footage with @. Claude asks when something is missing, then proposes the rest.",

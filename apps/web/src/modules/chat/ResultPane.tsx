@@ -8,6 +8,7 @@ import { stepLabelKey, stepOf } from "./steps";
 import { DocView } from "./views/DocView";
 import { docKindOf } from "./views/doc-specs";
 import { EpisodeOutputs } from "./views/EpisodeOutputs";
+import { HAND_EDITABLE } from "./ManualEditDrawer";
 import { TimelineResult } from "./views/TimelineResult";
 
 export type ResultAction = "approve" | "start" | "apply" | "retry";
@@ -95,7 +96,7 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
   const startDisabled = primary === "start" && intakeMissing(doc as Parameters<typeof intakeMissing>[0]).length > 0;
 
   const menu: MenuProps["items"] = [
-    ...(kind && scope?.scope === "gate" ? [{ key: "manual", label: t("chat.menu.manual") }] : []),
+    ...(kind && HAND_EDITABLE.has(kind) && scope?.scope === "gate" ? [{ key: "manual", label: t("chat.menu.manual") }] : []),
     ...(episodeId ? [
       { key: "editor", label: t("chat.menu.editor") },
       { key: "preview", label: t("chat.menu.preview") },
