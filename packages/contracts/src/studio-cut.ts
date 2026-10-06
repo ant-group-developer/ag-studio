@@ -54,3 +54,36 @@ export const CutProxySetSchema = z.object({
   }).strict()),
 }).strict();
 export type CutProxySet = z.infer<typeof CutProxySetSchema>;
+
+/** Contact sheets: shots per sheet (4 × 4) and the width of every frame. */
+export const CUT_SHEET_COLS = 4;
+export const CUT_SHEET_SHOTS = 16;
+export const CUT_FRAME_WIDTH = 480;
+
+/**
+ * `watch/watch.json` inside the `watch` directory (`watch-source`): one frame per shot (the middle of the shot,
+ * `frames/<shot_id>.jpg`) and, per source, contact sheets of those frames in shot order, `CUT_SHEET_COLS` across,
+ * left to right then top to bottom (`sheets/<sheet>.jpg`). `shots[k]` of a sheet is its k-th tile. The survey
+ * agent reads the sheets and opens single frames; the web shows each shot's frame from the Studio bucket
+ * (`bucket_key`).
+ */
+export const CutWatchSchema = z.object({
+  schema_version: studioVersion("cut-watch"),
+  frame_width: z.number().int().positive(),
+  sheet_cols: z.number().int().positive(),
+  sources: z.array(z.object({
+    source_id: SourceIdSchema,
+    index: z.number().int().min(0),
+    shots: z.array(z.object({
+      shot_id: ShotIdSchema,
+      t: z.number().min(0),
+      frame: z.string().regex(/^frames\/s\d{3}-\d{3}\.jpg$/),
+      bucket_key: z.string().min(1),
+    }).strict()),
+    sheets: z.array(z.object({
+      file: z.string().regex(/^sheets\/s\d{3}-\d{2}\.jpg$/),
+      shots: z.array(ShotIdSchema).min(1).max(CUT_SHEET_SHOTS),
+    }).strict()),
+  }).strict()),
+}).strict();
+export type CutWatch = z.infer<typeof CutWatchSchema>;

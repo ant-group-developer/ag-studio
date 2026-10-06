@@ -8,13 +8,14 @@ import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import {
-  CutProxySetSchema, CutSourcesSchema, HarnessError, ShotsIndexSchema,
-  type CutProxySet, type CutSources, type ExecutorContext, type ShotsIndex, type StageRequest, type Transcript,
+  CUT_FRAME_WIDTH, CUT_SHEET_COLS, CUT_SHEET_SHOTS, CutProxySetSchema, CutSourcesSchema, CutWatchSchema, HarnessError, ShotsIndexSchema,
+  type CutProxySet, type CutSources, type CutWatch, type ExecutorContext, type ShotsIndex, type StageRequest, type Transcript,
 } from "@harness/contracts";
 import { StudioTranscribePayloadSchema, TRANSCRIBE_MANIFEST_SCHEMA, type StudioTranscribePayload, type TranscribeManifest } from "@ag-farm/protocol";
 import { buildShots, inputPath, shotId, STUDIO_TYPES, studioSourceId } from "@harness/core";
 import type { FarmPayloadBuild, FarmPayloadBuilder, InProcessStage } from "@harness/executors";
-import { detectCuts, extractAudio16k, probeMedia } from "./cut-ffmpeg.js";
+import { productionKey } from "./bucket.js";
+import { detectCuts, extractAudio16k, grabFrame, probeMedia, tileSheet } from "./cut-ffmpeg.js";
 import { readInput, studioStages, toBuffer, writeEpisodeIntake, writeOutput, type StudioStageDeps } from "./stages.js";
 
 /** Shot detection on the proxies: the harness `media.scene` defaults (ADR-0001 item 113 measured them). */
@@ -156,6 +157,47 @@ export function cutStages(d: StudioStageDeps): Record<string, InProcessStage> {
         throw new HarnessError("CONFIG_INVALID", "không đọc được video nào của tập để tìm shot", { sources: out.map((s) => s.source_id) });
       }
       writeOutput(ctx, "shots.json", toBuffer(ShotsIndexSchema.parse({ schema_version: "harness.shots/v2", sources: out })));
+    },
+
+    /**
+     * What Claude looks at to choose the shots (`watch` directory, `CutWatchSchema`): the middle frame of every shot and
+     * contact sheets of them, 16 per sheet in shot order. Each frame also goes to the Studio bucket for the web's shot
+     * grid (served only to people who can see the production's folders).
+     */
+    "studio-watch-source": async (request, ctx) => {
+      const media = requireMedia(d);
+      const sources = readSources(request, ctx.workspaceDir);
+      const proxies = readProxies(request, ctx.workspaceDir);
+      const shots = readInput(request, ctx.workspaceDir, STUDIO_TYPES.shots, (v) => ShotsIndexSchema.parse(v));
+      const root = join(ctx.workspaceDir, "output", "watch");
+      const watched: CutWatch["sources"] = [];
+      for (const s of shots.sources) {
+        const source = sources.sources.find((x) => x.source_id === s.source_id);
+        const proxy = source ? proxies.byAsset.get(source.asset_id) : undefined;
+        if (!source || !proxy || s.shots.length === 0) continue;
+        const path = join(proxies.dir, proxy.file);
+        const frames: CutWatch["sources"][number]["shots"] = [];
+        for (const shot of s.shots) {
+          const t = Math.round(((shot.in + shot.out) / 2) * 1000) / 1000;
+          const frame = `frames/${shot.shot_id}.jpg`;
+          await grabFrame(media.ffmpeg, path, t, join(root, frame), CUT_FRAME_WIDTH);
+          const bucketKey = productionKey(sources.production_id, `episodes/${sources.episode_id}/shots/${shot.shot_id}.jpg`);
+          await d.bucket.putFile(bucketKey, join(root, frame), "image/jpeg");
+          frames.push({ shot_id: shot.shot_id, t, frame, bucket_key: bucketKey });
+        }
+        const sheets: CutWatch["sources"][number]["sheets"] = [];
+        for (let k = 0; k < frames.length; k += CUT_SHEET_SHOTS) {
+          const group = frames.slice(k, k + CUT_SHEET_SHOTS);
+          const file = `sheets/s${String(s.index).padStart(3, "0")}-${String(sheets.length + 1).padStart(2, "0")}.jpg`;
+          await tileSheet(media.ffmpeg, group.map((f) => join(root, f.frame)), CUT_SHEET_COLS, join(root, file));
+          sheets.push({ file, shots: group.map((f) => f.shot_id) });
+        }
+        watched.push({ source_id: s.source_id, index: s.index, shots: frames, sheets });
+        ctx.logger.info("contact sheets made", { source_id: s.source_id, shots: frames.length, sheets: sheets.length });
+      }
+      writeOutput(ctx, "watch/watch.json", toBuffer(CutWatchSchema.parse({
+        schema_version: "studio.cut-watch/v1", frame_width: CUT_FRAME_WIDTH, sheet_cols: CUT_SHEET_COLS, sources: watched,
+      })));
     },
   };
 }

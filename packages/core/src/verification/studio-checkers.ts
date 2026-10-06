@@ -43,6 +43,7 @@ export const STUDIO_TYPES = {
   proxySet: "proxy_set",
   /** `harness.shots/v2` of the proxies, and the farm's `transcribe.json` (`ag.studio.transcribe/v1`). */
   shots: "shots",
+  watch: "watch",
   transcript: "transcript",
   youtubeKit: "youtube_kit",
   finalVideo: "final_video",
