@@ -5,12 +5,14 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { eventFor, isTerminal, layoutTimeline, submitGate, type SubmitReport } from "@harness/core";
-import { StudioExportSchema, type StageRun, type StudioExport } from "@harness/contracts";
+import { StudioExportSchema, type RenderMachine, type StageRun, type StudioExport } from "@harness/contracts";
 import { STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, STUDIO_WORKFLOWS, type StudioEngineCore } from "./core.js";
 import {
-  getEpisode, getProduction, latestEpisodeRevision, listEpisodes, productionChannels, productionSources, type StudioDb,
+  getEpisode, getProduction, latestEpisodeRevision, listEpisodes, productionChannels, productionSources, type EpisodeRecord, type StudioDb,
 } from "./studio-db.js";
+import { defaultRenderMachine, machineOfRequirements, renderChoiceFor, setRenderChoice } from "./render-choice.js";
 
 export type StudioRunErrorCode = "not_found" | "conflict" | "invalid" | "rejected";
 export class StudioRunError extends Error {
@@ -253,30 +255,97 @@ export function episodeRunView(core: StudioEngineCore, db: StudioDb, episodeId: 
 }
 
 /**
- * "Render lại": render the episode's latest timeline revision.
+ * "Render lại" for an episode:
  * - no run yet: start one;
- * - run ended (ready, failed, cancelled): a new run resumed from freeze-timeline (it takes the latest revision;
- *   everything before it, Claude's YouTube kit included, is kept). An episode 1.3.0 renders the timeline as approved,
- *   so its new run resumes from approve-timeline instead: the latest revision is approved again first;
+ * - run ended (ready, failed, cancelled): a new run resumed from the step `renderRestartFrom` names. An episode
+ *   1.3.0 whose latest revision is the timeline it approved renders again from render-final (nothing is asked or
+ *   written again: no Claude, no approval); edited since, it goes from approve-timeline (the latest revision is
+ *   approved again). An episode without gates (1.2.0) goes from freeze-timeline, which takes the latest revision;
  * - run parked at freeze-timeline (the timeline had errors, now fixed in the editor): retry that stage;
  * - otherwise it is still producing: conflict.
+ * `machine` is the farm machine type the final render of that run uses (phase 3); none keeps the run's choice, or
+ * `{}` for a new run.
  */
-export function rerenderEpisode(core: StudioEngineCore, db: StudioDb, episodeId: string): { runId: string; reused: string[] } {
+export function rerenderEpisode(
+  core: StudioEngineCore, db: StudioDb, episodeId: string, o: { machine?: RenderMachine; by?: string } = {},
+): { runId: string; reused: string[]; from: string } {
   const ep = getEpisode(db, episodeId);
   if (!ep) throw new StudioRunError("not_found", `episode ${episodeId} not found`);
-  if (!ep.run_id) return { ...startEpisodeRun(core, db, episodeId), reused: [] };
-  const run = core.store.getRun(ep.run_id);
-  if (run && !isTerminal("run", run.state)) {
-    const freeze = core.store.listStageRuns(ep.run_id).find((s) => s.stage_key === EPISODE_FREEZE_STAGE);
-    if (freeze && (freeze.state === "WAITING_HUMAN" || freeze.state === "FAILED")) {
-      retryStage(core, ep.run_id, EPISODE_FREEZE_STAGE);
-      return { runId: ep.run_id, reused: [] };
-    }
-    throw new StudioRunError("conflict", "tập đang được sản xuất; chờ xong rồi render lại", { code: "episode_running", state: run.state });
+  const choose = (runId: string) => {
+    if (o.machine === undefined) return;
+    setRenderChoice(db, { runId, stageKey: EPISODE_RENDER_STAGE, machine: o.machine, by: o.by ?? "studio-api", now: core.clock.now(), episodeId });
+  };
+  const from = renderRestartFrom(core, db, ep);
+  if (from === null) {
+    const run = ep.run_id ? core.store.getRun(ep.run_id) : undefined;
+    throw new StudioRunError("conflict", "tập đang được sản xuất; chờ xong rồi render lại", { code: "episode_running", state: run?.state ?? null });
   }
-  return resumeRunFrom(core, ep.run_id, (newRunId) => {
+  if (from === "start") {
+    const started = startEpisodeRun(core, db, episodeId);
+    choose(started.runId);
+    return { ...started, reused: [], from };
+  }
+  const run = core.store.getRun(ep.run_id!)!;
+  if (!isTerminal("run", run.state)) {
+    // parked at freeze-timeline: render-final has not been submitted yet, so the choice still applies to this run
+    choose(ep.run_id!);
+    retryStage(core, ep.run_id!, EPISODE_FREEZE_STAGE);
+    return { runId: ep.run_id!, reused: [], from };
+  }
+  const resumed = resumeRunFrom(core, ep.run_id!, (newRunId) => {
+    choose(newRunId);
     db.run("UPDATE episodes SET run_id = ?, updated_at = ? WHERE id = ?", [newRunId, new Date().toISOString(), episodeId]);
-  }, core.store.listStageRuns(ep.run_id).some((s) => s.stage_key === EPISODE_TIMELINE_GATE) ? EPISODE_TIMELINE_GATE : EPISODE_FREEZE_STAGE);
+  }, from);
+  return { ...resumed, from };
+}
+
+/**
+ * Where "Render lại" would start for this episode now (see `rerenderEpisode`): `start` (no run), a stage key, or
+ * null while the run is producing.
+ */
+export function renderRestartFrom(core: StudioEngineCore, db: StudioDb, ep: EpisodeRecord): "start" | typeof EPISODE_RENDER_STAGE | typeof EPISODE_TIMELINE_GATE | typeof EPISODE_FREEZE_STAGE | null {
+  if (!ep.run_id) return "start";
+  const run = core.store.getRun(ep.run_id);
+  if (!run) return "start";
+  const stages = core.store.listStageRuns(ep.run_id);
+  const freeze = stages.find((s) => s.stage_key === EPISODE_FREEZE_STAGE);
+  if (!isTerminal("run", run.state)) {
+    return freeze && (freeze.state === "WAITING_HUMAN" || freeze.state === "FAILED") ? EPISODE_FREEZE_STAGE : null;
+  }
+  const gate = stages.find((s) => s.stage_key === EPISODE_TIMELINE_GATE);
+  if (!gate) return EPISODE_FREEZE_STAGE;
+  if (freeze?.state !== "SUCCEEDED") return EPISODE_TIMELINE_GATE;
+  const latest = latestEpisodeRevision(db, ep.id);
+  let approved: unknown;
+  try { approved = readStageDocument(core, ep.run_id, EPISODE_TIMELINE_GATE, "timeline.json"); }
+  catch { return EPISODE_TIMELINE_GATE; }
+  return latest && isDeepStrictEqual(latest.data, approved) ? EPISODE_RENDER_STAGE : EPISODE_TIMELINE_GATE;
+}
+
+/** The final render of an episode as the render pickers and the result pane show it. */
+export interface EpisodeRenderInfo {
+  /** The type chosen for the current run's render, if any. */
+  machine: RenderMachine | null;
+  /** What a picker starts on: the run's choice, else the production's latest, else any. */
+  defaultMachine: RenderMachine;
+  restartFrom: ReturnType<typeof renderRestartFrom>;
+  /** The latest final render job of the episode (any run), with the type it was sent with (null: unknown). */
+  job: { farmJobId: string; runId: string; machine: RenderMachine | null; createdAt: string } | null;
+}
+
+export function episodeRenderInfo(core: StudioEngineCore, db: StudioDb, episodeId: string): EpisodeRenderInfo {
+  const ep = getEpisode(db, episodeId);
+  if (!ep) throw new StudioRunError("not_found", `episode ${episodeId} not found`);
+  const machine = ep.run_id ? renderChoiceFor(db, ep.run_id, EPISODE_RENDER_STAGE) : null;
+  const job = db.get<{ farm_job_id: string; run_id: string; requirements: string | null; created_at: string }>(
+    "SELECT farm_job_id, run_id, requirements, created_at FROM studio_farm_jobs WHERE episode_id = ? AND stage_key = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+    [episodeId, EPISODE_RENDER_STAGE]);
+  return {
+    machine,
+    defaultMachine: machine ?? defaultRenderMachine(db, ep.production_id),
+    restartFrom: renderRestartFrom(core, db, ep),
+    job: job ? { farmJobId: job.farm_job_id, runId: job.run_id, machine: machineOfRequirements(job.requirements), createdAt: job.created_at } : null,
+  };
 }
 
 /**

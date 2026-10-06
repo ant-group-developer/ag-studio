@@ -3,7 +3,8 @@
  * kept per run and stage; the worker turns it into the job's ag-farm `requirements` when it submits
  * (`requirementsFor` of `FarmExecutor`). No row means `{}`, as before phase 3.
  */
-import { RenderMachineSchema, type RenderMachine } from "@harness/contracts";
+import { isDeepStrictEqual } from "node:util";
+import { RENDER_MACHINES, renderRequirements, RenderMachineSchema, type RenderMachine } from "@harness/contracts";
 import { StudioRunError } from "./run-control.js";
 import { episodeForRun, getEpisode, type StudioDb } from "./studio-db.js";
 
@@ -39,4 +40,12 @@ export function defaultRenderMachine(db: StudioDb, productionId: string): Render
     "SELECT machine FROM studio_render_choices WHERE production_id = ? ORDER BY chosen_at DESC LIMIT 1", [productionId]);
   const parsed = RenderMachineSchema.safeParse(r?.machine);
   return parsed.success ? parsed.data : "any";
+}
+
+/** The type a farm job was sent as, from `studio_farm_jobs.requirements` (null: before phase 3, or not one of ours). */
+export function machineOfRequirements(json: string | null): RenderMachine | null {
+  if (json === null) return null;
+  let req: unknown;
+  try { req = JSON.parse(json); } catch { return null; }
+  return RENDER_MACHINES.find((m) => isDeepStrictEqual(renderRequirements(m), req)) ?? null;
 }

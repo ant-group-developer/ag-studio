@@ -79,3 +79,15 @@ describe("farm job recorder", () => {
     ]);
   });
 });
+
+describe("machineOfRequirements", () => {
+  it("reads back the type a job was sent as", async () => {
+    const { machineOfRequirements } = await import("../src/index.js");
+    expect(machineOfRequirements("{}")).toBe("any");
+    expect(machineOfRequirements('{"nvenc":true}')).toBe("nvenc");
+    expect(machineOfRequirements('{"gpu":true}')).toBe("gpu");
+    expect(machineOfRequirements(null)).toBeNull();
+    expect(machineOfRequirements('{"gpu":true,"min_vram_mb":8000}')).toBeNull();
+    expect(machineOfRequirements("not json")).toBeNull();
+  });
+});
