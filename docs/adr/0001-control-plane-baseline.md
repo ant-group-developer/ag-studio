@@ -941,3 +941,31 @@ Các mục dưới đây ghi lại quyết định của nhánh AG Studio, viế
     capacity `claude`; `createStudioWorkerPool` chạy `claude + farm + cpu` vòng trong cùng tiến trình, dùng chung
     store và executor, phối hợp qua `claim()`/lease như nhiều tiến trình worker. Capacity mới là thứ quyết định số
     lượt Claude song song. Đánh đổi: hạn mức gói subscription hết nhanh hơn, mỗi lượt là một tiến trình `claude`.
+144. **Chat với Claude theo production, chạy trong worker, giữ slot `claude` trên bảng `lease` (2026-10-06).**
+    Mỗi tin nhắn là một dòng `stage_chat_turns` (migration 0019) kèm một câu trả lời `pending`; vòng chat của
+    `createStudioWorkerPool` (`chat-runner.ts`) chạy nó — không qua `claim()`, vì API và worker là hai tiến trình
+    và chỉ worker có env Claude. Mỗi lượt chat giữ một dòng lease `owner = chat:<turn>` với `resources ["claude"]`
+    (id `stage_run_…`/`attempt_…` hợp lệ để reaper đọc được rồi bỏ qua); khi đủ cap, lượt chờ giữ dòng
+    `chat-wait:<turn>` cũng tính vào cap, nên slot vừa trống thuộc về tin nhắn chứ không về stage xếp hàng — chat
+    được ưu tiên mà không sửa `claim()`. Một scope (gate/intake/timeline/stage hỏng) chỉ chạy một lượt một lúc; tin
+    gửi khi lượt trước còn chờ gộp vào lượt đó. Cap đọc lại mỗi lần claim: `studio_settings` (migration 0020, admin
+    sửa trên web) thắng `STUDIO_CLAUDE_MAX_CONCURRENT`; pool thêm hoặc thả vòng (thả sau khi stage đang chạy xong).
+145. **Prompt chat dùng lại phần đầu prompt của stage, đề xuất kiểm bằng validator của stage (2026-10-06).**
+    `studioPrompt` tách `studioPromptHead` (brief, quy chuẩn nhóm, dữ liệu vào) + `studioPromptTail`, byte-identical
+    (snapshot). Lượt chat dựng lại request của stage nguồn (`acceptedInputsFor` + `materializeInputs`) nên head
+    giống hệt lượt stage — trúng prompt cache — rồi thêm `# Bản hiện tại`, `# Góp ý`, `# Đầu ra (chat)`; trả
+    `{reply, action, proposal}` (`chatReplySchema`). `proposal` qua đúng validator của skill, một vòng sửa; vẫn sai
+    thì giữ `reply`, bỏ `proposal`, ghi `problems`. Không gì được áp dụng cho tới khi người bấm Duyệt/Áp dụng/Bắt
+    đầu: Duyệt nộp đúng bản đang hiện (theo `turnId`, bản cũ hơn bị 409 `stale_version`) qua `submitStudioGate`.
+    Timeline không đề xuất cả tài liệu (có `z.record`) mà đề xuất thao tác `TimelineOp` chạy qua `layout.ts`.
+146. **Mọi stage Claude có gate đi sau: `ag-studio-series-plan@3.0.0`, `ag-studio-episode@1.3.0` (2026-10-06).**
+    Plan thêm `approve-trend-report`; tập thêm `approve-timeline` (nộp revision mới nhất) trước `youtube-kit` và
+    `approve-youtube-kit` sau nó; `studio-freeze-timeline-v2` render timeline **đã duyệt** (sửa sau khi duyệt chỉ
+    render khi Render lại, chạy lại từ `approve-timeline`). Tập chờ gate có trạng thái mới `waiting_approval`. Plan
+    1.0.0/2.0.0 vẫn sinh tập 1.2.0 (`episodeWorkflowForPlan`): series bắt đầu trên màn cũ kết thúc như cũ. Intake
+    qua chat chạy **trước** run trên production nháp (skill `studio-intake`), Bắt đầu ghi vào production rồi
+    `startPlanRun`; stage `intake` của workflow giữ nguyên.
+147. **Stage Claude hỏng được chạy lại kèm góp ý, Claude không sửa thẳng đầu ra đã bị từ chối (2026-10-06).**
+    Chat ở scope `failed` giải thích lỗi; "Chạy lại" (`retryStageWithFeedback`) đưa tin nhắn của scope đó vào prompt
+    của stage (`# Góp ý của người dùng`, `StudioAgentExecutor.feedbackFor`). Ghi đè output REJECTED bằng bản Claude
+    sửa sẽ phải đổi core; chạy lại giữ đúng checker và lineage.

@@ -66,9 +66,10 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
   **sau** khi API healthy. Không có Postgres.
 - API dựng engine core ngay trong tiến trình (`apps/api/src/studio/engine.service.ts` → `createStudioEngineCore`),
   nên gate nộp từ web được kiểm bằng đúng checker worker dùng. API ghi `studio.db` bằng `BEGIN IMMEDIATE`.
-- Bảng Studio (migration `0008`–`0018`): `teams`, `team_members`, `team_skills`, `productions`, `episodes`,
+- Bảng Studio (migration `0008`–`0020`): `teams`, `team_members`, `team_skills`, `productions`, `episodes`,
   `episode_revisions`, `episode_jobs`, `episode_thumbnails`, `studio_farm_jobs`, `sign_audit_log`, `youtube_cache`,
-  `llm_calls`, `human_edits`, `canva_*`. `comments`, `timeline_revisions`, `studio_editor_jobs` là bảng cũ, không dùng.
+  `llm_calls`, `human_edits`, `canva_*`, `stage_chat_turns` (chat, 0019), `studio_settings` (cấu hình chỉnh trên web,
+  0020). `comments`, `timeline_revisions`, `studio_editor_jobs` là bảng cũ, không dùng.
 - File hướng ra trình duyệt nằm trên R2 (`S3Bucket`, `packages/studio-engine/src/bucket.ts`), URL ký có hạn.
 - Biến môi trường: `.env.example` (nhóm Auth0, Account API, ag-go, farm, R2, Claude, Canva, YouTube). API kiểm
   bằng zod ở `apps/api/src/config/env.ts`; worker dùng `requireEnv` ở `apps/worker/src/main.ts`. **Không bao giờ in
@@ -83,12 +84,15 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
   xem được các folder của production (`FootageAccessService.coversProduction`), kể cả khi đẩy sang Canva.
 
 ### Workflow, gate, run
-- Hợp đồng API: `docs/studio-api-v3.md`. Run kế hoạch `ag-studio-series-plan@2.0.0`: `intake` → `research`
-  (YouTube Data API) + `catalog` (ag-go) → `trend-report` → `rnd` → **`approve-rnd`** → `apply-rnd` → `branding` →
-  **`approve-branding`** → `apply-branding` → `brief` → `plan-episodes` → **`approve-plan`** → `spawn-episodes`.
-  Run tập `ag-studio-episode@1.2.0`: `episode-intake` → `build-timeline` → `youtube-kit` → `freeze-timeline` →
-  `render-final` (farm) → `thumbnails` → `export`. Phiên bản đang dùng ở `STUDIO_WORKFLOWS`
-  (`packages/studio-engine/src/core.ts`), gate ở `STUDIO_GATES` (`packages/studio-engine/src/run-control.ts`).
+- Hợp đồng API: `docs/studio-api-v3.md`. Run kế hoạch `ag-studio-series-plan@3.0.0`: `intake` → `research`
+  (YouTube Data API) + `catalog` (ag-go) → `trend-report` → **`approve-trend-report`** → `rnd` → **`approve-rnd`** →
+  `apply-rnd` → `branding` → **`approve-branding`** → `apply-branding` → `brief` → `plan-episodes` →
+  **`approve-plan`** → `spawn-episodes`. Run tập `ag-studio-episode@1.3.0`: `episode-intake` → `build-timeline` →
+  **`approve-timeline`** (nộp revision mới nhất) → `youtube-kit` → **`approve-youtube-kit`** → `freeze-timeline`
+  (`studio-freeze-timeline-v2`: timeline **đã duyệt**) → `render-final` (farm) → `thumbnails` → `export`. Tập chờ
+  gate có trạng thái `waiting_approval`. Plan 1.0.0/2.0.0 vẫn sinh tập 1.2.0 không gate (`episodeWorkflowForPlan`).
+  Phiên bản đang dùng ở `STUDIO_WORKFLOWS` (`packages/studio-engine/src/core.ts`), gate ở `STUDIO_GATES`
+  (`packages/studio-engine/src/run-control.ts`).
 - Thư mục workflow đã phát hành **không bao giờ sửa**: làm phiên bản mới. Script/payload builder đổi đầu ra thì đặt
   **tên mới** (`studio-episode-export-v2`…) và giữ tên cũ cho run cũ; `workflow-wiring.test.ts` kiểm mọi phiên bản.
   Một stage chỉ nhận artifact của stage nó phụ thuộc **trực tiếp**, và mỗi kiểu chỉ đến từ một nguồn.
@@ -110,12 +114,30 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
 - `StudioAgentExecutor` (`packages/executors/src/studio-agent-executor.ts`): prompt = skill + brief + quy chuẩn nhóm
   (`<team_guide>`) + input inline; kiểm bằng `VALIDATORS` theo skill; **một** vòng sửa rồi `contract`. Lỗi giới hạn
   gói (`RATE_LIMITED`) chờ 5→60 phút, không tính là attempt.
-- Model theo skill (`packages/studio-engine/src/worker.ts`): Opus cho `studio-rnd`/`studio-plan-episodes`, Sonnet
+- Model theo skill (`packages/studio-engine/src/models.ts`): Opus cho `studio-rnd`/`studio-plan-episodes`, Sonnet
   còn lại; ghi đè bằng `STUDIO_CLAUDE_MODEL[_<SKILL>]`.
-- Số lượt Claude cùng lúc: `STUDIO_CLAUDE_MAX_CONCURRENT` (1–100, mặc định 20; sai là `CONFIG_INVALID` lúc khởi
-  động) → capacity `claude` của `studioResources()`. Worker chạy `createStudioWorkerPool`: `claude + farm + cpu` vòng
-  trong một tiến trình, phối hợp qua `claim()`/lease (ADR mục 143). Đừng quay lại một vòng duy nhất: stage farm giữ
-  vòng của nó suốt lúc render.
+- Số lượt Claude cùng lúc: `studio_settings.claude.max_concurrent` (admin sửa trên web, `PUT /api/studio/settings`)
+  thắng `STUDIO_CLAUDE_MAX_CONCURRENT` (1–100, mặc định 20; env sai là `CONFIG_INVALID` lúc khởi động) → capacity
+  `claude` của `studioResources()`, đọc lại ở mỗi lần claim. Worker chạy `createStudioWorkerPool`: `claude + farm +
+  cpu` vòng trong một tiến trình, phối hợp qua `claim()`/lease (ADR mục 143), tự thêm/thả vòng khi cap đổi. Đừng
+  quay lại một vòng duy nhất: stage farm giữ vòng của nó suốt lúc render.
+
+### Chat (spec local-chat §3.1, ADR mục 144–147)
+- Mỗi production và mỗi tập có một luồng chat (`stage_chat_turns`). Tin nhắn đi vào **scope** bước đang ở
+  (`chatScopeFor`, `packages/studio-engine/src/chat-context.ts`): `intake` (chưa có run), `gate`, `failed` (stage
+  Claude hỏng), `timeline` (tập không còn gate chờ). Đang chạy thì 409 `busy`.
+- Vòng chat (`chat-runner.ts`) chạy **trong worker pool**, không qua `claim()`: mỗi lượt giữ dòng lease
+  `owner = chat:<turn>` (`claude-slots.ts`); hết slot thì giữ `chat-wait:<turn>` — cũng tính vào cap, nên tin nhắn
+  được ưu tiên trước stage xếp hàng. Một scope một lượt một lúc. Hết hạn mức: `rate_limited` tới `not_before`.
+- `runChatTurn` (`chat.ts`): prompt = phần đầu prompt của stage nguồn (`studioPromptHead`, giống từng byte) +
+  `# Bản hiện tại` + `# Góp ý` + `# Đầu ra (chat)`; trả `{reply, action, proposal}`; `proposal` kiểm bằng validator
+  của stage, một vòng sửa. Ghi `llm_calls` với `source = 'claude-chat'`. Skill chỉ có ở chat: `studio-intake`,
+  `studio-timeline` (đề xuất `TimelineOp`, áp bằng `applyTimelineOps`).
+- Không gì được áp dụng tới khi người bấm (`chat-actions.ts`): Bắt đầu (`startFromIntake`), Duyệt
+  (`approveChatScope`, nộp bản đang hiện theo `turnId`), Áp dụng (intake/timeline, `applyChatProposal`), Chạy lại
+  (`retryStageWithFeedback`, tin nhắn vào prompt dạng `# Góp ý của người dùng`), Sửa tay (`saveManualEdit`).
+- Web chat: `/` (trang chủ), `/v/:productionId`, `/v/:productionId/e/:episodeId` (`apps/web/src/modules/chat`,
+  `pages/Chat*Page.tsx`); màn cũ giữ ở `/productions`, `/teams`, editor timeline.
 - Test chạm `claude` thật chỉ chạy khi `HARNESS_REAL_CLAUDE_TEST=1`. Trên Windows `resolveCommand`
   (`packages/adapters/agent-cli/src/resolve-command.ts`) dò shim `claude.cmd` của npm ra `claude.exe`.
 - Mọi lượt gọi ghi `llm_calls` (payload gzip trên bucket), mọi lần người duyệt/sửa ghi `human_edits`.

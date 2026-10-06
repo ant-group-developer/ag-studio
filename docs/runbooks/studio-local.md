@@ -78,8 +78,9 @@ cd E:/CODE/ag-studio/apps/web; corepack pnpm exec vite --port 3100 --strictPort
 ```
 
 **Kiểm nhanh:** `http://localhost:3738/api/health`, `http://localhost:3010/health`, `http://localhost:3101/api/health`
-trả `ok`; web farm (3011) thấy `local-render`, `local-scan` Online; mở `http://localhost:3100`, đăng nhập Auth0, tạo
-production: cây folder ag-go phải hiện các folder đã quét.
+trả `ok`; web farm (3011) thấy `local-render`, `local-scan` Online; mở `http://localhost:3100` (giao diện chat), đăng
+nhập Auth0, gõ một câu và `@` trong ô chat: danh sách folder ag-go phải hiện các folder đã quét. Màn cũ ở
+`http://localhost:3100/productions`.
 
 ## 3. Build lại khi code đổi
 
@@ -112,8 +113,11 @@ node --require ts-node/register ../../node_modules/typeorm/cli.js migration:run 
 - **Claude giả hay thật:** `STUDIO_CLAUDE_ARGV` trong `apps/api/.env` trỏ `fixtures/fake-studio-claude.mjs` (không tốn
   hạn mức). Bỏ dòng đó để dùng `claude` thật bằng `CLAUDE_CODE_OAUTH_TOKEN` (hoặc đăng nhập `claude` → `/login`).
   Trên Windows, `claude.cmd` của npm được tự dò ra `claude.exe` (`resolveCommand`).
-- **Số lượt Claude cùng lúc:** `STUDIO_CLAUDE_MAX_CONCURRENT` (1–100, mặc định 20). Worker chạy số vòng bằng
-  `claude + 8 (farm) + 2 (cpu)`; nhiều lượt hơn thì hạn mức gói hết nhanh hơn, mỗi lượt là một tiến trình `claude`.
+- **Số lượt Claude cùng lúc:** admin Studio chỉnh trên web (bấm chip "Claude: n/max" ở header; lưu vào
+  `studio_settings`, worker áp dụng ngay). Chưa ai lưu thì dùng `STUDIO_CLAUDE_MAX_CONCURRENT` (1–100, mặc định 20).
+  Worker chạy số vòng bằng `claude + 8 (farm) + 2 (cpu)` và tự thêm/bớt khi số này đổi; tin nhắn chat dùng chung số
+  lượt đó và được xếp trước các bước tự chạy. Nhiều lượt hơn thì hạn mức gói hết nhanh hơn, mỗi lượt một tiến trình
+  `claude`.
 - Auth0: client SPA phải cho phép `http://localhost:3100` (callback, logout, web origin); client id nằm trong
   `AUTH0_ALLOWED_CLIENT_IDS` của Studio, ag-go và farm.
 - Thumbnail và kiểm loudness dùng ffmpeg ở `STUDIO_FFMPEG_PATH` (máy dev trỏ tới `ffmpeg-static` của
@@ -139,3 +143,5 @@ Không chạy song song với chế độ trực tiếp: hai bên dùng chung c�
 | Stage Claude chờ lâu, log có `RATE_LIMITED` | Hết hạn mức gói | Đợi; tự thử lại 5→60 phút, không tính là lỗi |
 | Stage Claude lỗi `agent CLI failed to start` | Không tìm thấy `claude` / `claude.exe` | Cài Claude Code, hoặc đặt lại `STUDIO_CLAUDE_ARGV` về Claude giả |
 | `up` báo "chưa lên sau 180 s" | Dịch vụ lỗi khi khởi động | Xem `E:\ag-local\dev-run\<tên>.log` |
+| Chat hiện "Claude đang trả lời…" mãi | Worker không chạy (vòng chat nằm trong worker) | `local-stack.mjs status`, log `studio-worker` |
+| Chat hiện "Đang chờ lượt" lâu | Đủ số lượt Claude cùng lúc | Chờ, hoặc admin tăng số lượt ở chip header |
