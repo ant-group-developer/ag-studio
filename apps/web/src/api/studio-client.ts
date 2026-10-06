@@ -655,8 +655,80 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     listHumanEdits(productionId: string, params?: { page?: number; pageSize?: number }): Promise<Paged<HumanEditView>> {
       return request(getAccessToken, "GET", `/api/productions/${productionId}/human-edits${buildQuery(params ?? {})}`);
     },
+
+    // ---- Chat (spec local-chat §3.1) ----
+    createDraft(teamId: string, text: string): Promise<{ productionId: string; user: ChatTurn; assistant: ChatTurn | null }> {
+      return request(getAccessToken, "POST", `/api/teams/${teamId}/drafts`, { text });
+    },
+    getChatThread(productionId: string, episodeId?: string | null): Promise<ChatThreadView> {
+      return request(getAccessToken, "GET", `/api/productions/${productionId}/chat${buildQuery({ episodeId: episodeId ?? undefined })}`);
+    },
+    sendChat(productionId: string, text: string, episodeId?: string | null): Promise<{ user: ChatTurn; assistant: ChatTurn | null }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/chat`, { text, ...(episodeId ? { episodeId } : {}) });
+    },
+    applyChatProposal(productionId: string, turnId: string): Promise<{ revision?: number }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/chat/${turnId}/apply`);
+    },
+    startProduction(productionId: string): Promise<{ runId: string }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/start`);
+    },
+    approveChat(productionId: string, input: { stageKey: string; episodeId?: string | null; turnId?: string | null }): Promise<{ stageState: string; runState: string; revision?: number }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/chat/approve`, {
+        stageKey: input.stageKey, ...(input.episodeId ? { episodeId: input.episodeId } : {}), ...(input.turnId ? { turnId: input.turnId } : {}),
+      });
+    },
+    retryChatStep(productionId: string, stageKey: string, episodeId?: string | null): Promise<{ ok: true }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/chat/retry`, { stageKey, ...(episodeId ? { episodeId } : {}) });
+    },
+    saveManualEdit(productionId: string, input: { stageKey: string; episodeId?: string | null; document: unknown }): Promise<ChatTurn> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/chat/manual`, {
+        stageKey: input.stageKey, document: input.document, ...(input.episodeId ? { episodeId: input.episodeId } : {}),
+      });
+    },
+    getOverview(): Promise<{ items: OverviewItem[] }> {
+      return request(getAccessToken, "GET", "/api/studio/overview");
+    },
+    getClaudeUsage(): Promise<ClaudeUsage> {
+      return request(getAccessToken, "GET", "/api/studio/claude");
+    },
+    setClaudeMaxConcurrent(claudeMaxConcurrent: number): Promise<ClaudeUsage> {
+      return request(getAccessToken, "PUT", "/api/studio/settings", { claudeMaxConcurrent });
+    },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Chat
+// ---------------------------------------------------------------------------
+
+export type ChatScopeName = "intake" | "gate" | "failed" | "timeline";
+export type ChatAction = "answer" | "revise" | "suggest_approve" | "render" | "export" | "retry";
+
+export interface ChatTurn {
+  id: string; production_id: string; episode_id: string | null; run_id: string | null;
+  scope: ChatScopeName; stage_key: string; turn: number; role: "user" | "assistant" | "system";
+  text: string; mentions: { kind: "folder"; id: string; name: string }[]; context: unknown;
+  proposal: unknown; action: ChatAction | null;
+  status: "pending" | "running" | "done" | "failed" | "rate_limited"; not_before: string | null;
+  problems: { code: string; message: string }[];
+  llm_call_id: string | null; created_by: string | null; applied_at: string | null; created_at: string; updated_at: string;
+}
+
+export interface ChatScopeKey { productionId: string; episodeId: string | null; runId: string | null; stageKey: string; scope: ChatScopeName }
+
+export interface ChatThreadView {
+  turns: ChatTurn[];
+  scope: ChatScopeKey | null;
+  blocked: { code: "busy" | "nothing_to_chat" | string; stage: string | null } | null;
+  current: { turnId: string | null; document: unknown; draft: unknown; pendingApply: boolean } | null;
+  queueAhead: number;
+}
+
+export type OverviewGroup = "waiting_you" | "needs_attention" | "running" | "done";
+export interface OverviewEpisode { id: string; idx: number; title: string; status: EpisodeStatus; step: string | null; group: OverviewGroup }
+export interface OverviewItem { id: string; teamId: string; title: string; updatedAt: string; step: string | null; group: OverviewGroup; episodes: OverviewEpisode[] }
+
+export interface ClaudeUsage { running: number; waiting: number; max: number; source: "settings" | "env" }
 
 // ---------------------------------------------------------------------------
 // Call log

@@ -1,3 +1,5 @@
+import { chatVi } from "./chat.vi";
+
 export const vi = {
   common: {
     create: "Tạo",
@@ -670,6 +672,7 @@ export const vi = {
     preview: "Xem trước thumbnail",
   },
   // Readable names for codes the API returns; shown next to the code (see helpers/enum-label).
+  chat: chatVi,
   enums: {
     productionStatus: {
       draft: "Nháp",

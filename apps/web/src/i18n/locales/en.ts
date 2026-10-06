@@ -1,3 +1,4 @@
+import { chatEn } from "./chat.en";
 import type { LocaleMessages } from "./vi";
 
 export const en: LocaleMessages = {
@@ -671,6 +672,7 @@ export const en: LocaleMessages = {
     hashtagInvalid: "Hashtag must start with # and contain only letters, digits or underscores",
     preview: "Thumbnail preview",
   },
+  chat: chatEn,
   enums: {
     productionStatus: {
       draft: "Draft",
