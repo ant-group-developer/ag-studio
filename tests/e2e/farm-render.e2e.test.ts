@@ -413,10 +413,10 @@ beforeAll(async () => {
     execFileSync(
       "docker",
       [
-        "compose", "-f",
+        // --project-name is a flag of `docker compose`, not of `up`: after `up` it is refused
+        "compose", "--project-name", "ag-farm-gd4", "-f",
         join(AG_FARM_DIR, "docker-compose.test.yml"),
         "up", "-d", "--wait",
-        "--project-name", "ag-farm-gd4",
       ],
       { stdio: "inherit", timeout: 60_000 },
     );
