@@ -295,6 +295,8 @@ export const vi = {
     catalogEmpty: "Không tìm thấy video",
     episodeTitle: "Tập {{idx}}",
     approvedPlanNote: "Kế hoạch đã duyệt — dùng dropdown \"Chạy lại\" để lập lại từ bước này.",
+    queued: "Đang chờ worker nhận việc lập kế hoạch tập…",
+    writing: "AI đang lập kế hoạch tập…",
   },
   episodes: {
     title: "Các tập",

@@ -297,6 +297,8 @@ export const en: LocaleMessages = {
     catalogEmpty: "No videos found",
     episodeTitle: "Episode {{idx}}",
     approvedPlanNote: "Plan approved — use the \"Re-run\" dropdown to re-plan from this step.",
+    queued: "Waiting for a worker to pick up the episode plan…",
+    writing: "AI is writing the episode plan…",
   },
   episodes: {
     status: { planned: "Planned", producing: "Producing", ready: "Ready", failed: "Failed", cancelled: "Cancelled" },
