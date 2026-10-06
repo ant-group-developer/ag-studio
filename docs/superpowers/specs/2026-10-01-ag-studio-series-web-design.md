@@ -1,7 +1,7 @@
 # GĐ3 — Studio web (and the API it needs) spec
 
-Approved plan: `C:\Users\AG-89\.claude\plans\lively-riding-sunrise.md` (Vietnamese; sections 2.7 and 3.x). The
-backend of the series (GĐ2) is done: read `docs/series-gd2-spec.md`, `packages/contracts/src/studio.ts`,
+Approved plan: `docs/superpowers/plans/2026-09-30-ag-studio-series-plan.md` (Vietnamese; sections 2.7 and 3.x). The
+backend of the series (GĐ2) is done: read `docs/superpowers/specs/2026-09-30-ag-studio-series-backend-design.md`, `packages/contracts/src/studio.ts`,
 `packages/core/src/studio/*` (layout/ops/issues for Timeline v3 — the editor reducer must reuse these pure
 functions, imported by alias as today) and the API controllers under `apps/api/src/studio` for the routes.
 

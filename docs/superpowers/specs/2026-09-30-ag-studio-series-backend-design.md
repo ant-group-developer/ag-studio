@@ -1,6 +1,6 @@
 # GĐ2 — Studio series (backend) spec
 
-Approved plan: `C:\Users\AG-89\.claude\plans\lively-riding-sunrise.md` (Vietnamese). This file is the
+Approved plan: `docs/superpowers/plans/2026-09-30-ag-studio-series-plan.md` (Vietnamese). This file is the
 implementation contract for the backend of Giai đoạn 2. The documents are defined in
 `packages/contracts/src/studio.ts` (already written — treat it as fixed; small additive fixes are OK if you
 find a real problem, say so in your report).
