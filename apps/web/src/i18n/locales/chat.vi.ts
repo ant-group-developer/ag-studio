@@ -79,9 +79,17 @@ export const chatVi = {
     producing: "Tập đang chạy; chờ xong rồi render lại.",
     started: "Đã gửi render bản cuối.",
     startedAfterApproval: "Đã chạy lại từ timeline; duyệt timeline và YouTube kit để render.",
+    inline: { any: "bất kỳ máy nào", nvenc: "máy có NVENC", gpu: "máy có GPU" },
     waitNote: "Nếu không máy nào hợp, job sẽ chờ tới khi có máy.",
   },
-  outputs: { rendering: "Tiến độ render", notYet: "Chưa có file xuất." },
+  outputs: {
+    rendering: "Tiến độ render", notYet: "Chưa có file xuất.",
+    farm: "Farm · {{machine}} · {{p}}%", farmNoProgress: "Farm · {{machine}} · đang render",
+    waiting: "Đang chờ máy phù hợp · {{min}} phút",
+    stuck: "Chưa máy nào nhận job; có thể không có {{machine}} nào đang chạy. Huỷ rồi Render lại với kiểu máy khác nếu cần.",
+    stuckAny: "Chưa máy nào nhận job; có thể không có máy render nào đang chạy.",
+    paused: "Job trên farm đang tạm dừng ({{machine}})", renderedOn: "Render trên: {{machine}}",
+  },
   result: {
     label: "Kết quả bước hiện tại", waiting: "chờ bạn duyệt", failed: "cần xử lý", running: "đang chạy",
     missing: "còn {{n}} thông tin", ready: "đủ thông tin", version: "Bản {{n}}", versionChanges: "Bản {{n}} · {{k}} thay đổi",

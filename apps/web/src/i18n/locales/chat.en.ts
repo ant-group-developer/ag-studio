@@ -81,9 +81,17 @@ export const chatEn: typeof chatVi = {
     producing: "The episode is running; render again once it is done.",
     started: "The final render was sent.",
     startedAfterApproval: "Running again from the timeline; approve the timeline and the YouTube kit to render.",
+    inline: { any: "any machine", nvenc: "a machine with NVENC", gpu: "a machine with a GPU" },
     waitNote: "If no machine fits, the job waits until one does.",
   },
-  outputs: { rendering: "Render progress", notYet: "No exported files yet." },
+  outputs: {
+    rendering: "Render progress", notYet: "No exported files yet.",
+    farm: "Farm · {{machine}} · {{p}}%", farmNoProgress: "Farm · {{machine}} · rendering",
+    waiting: "Waiting for a fitting machine · {{min}} min",
+    stuck: "No machine took the job yet; maybe no {{machine}} is running. Cancel and Render again with another machine type if needed.",
+    stuckAny: "No machine took the job yet; maybe no render machine is running.",
+    paused: "The farm job is paused ({{machine}})", renderedOn: "Rendered on: {{machine}}",
+  },
   result: {
     label: "Result of the current step", waiting: "waiting for you", failed: "needs attention", running: "running",
     missing: "{{n}} things missing", ready: "ready", version: "Version {{n}}", versionChanges: "Version {{n}} · {{k}} changes",
