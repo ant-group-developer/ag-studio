@@ -234,3 +234,8 @@
 .chat-work--needs_attention { border-color: #f3c4c4; background: #fff7f7; }
 .chat-work__title { font-weight: 500; }
 .chat-work__step { font-size: 13px; color: var(--chat-muted); }
+
+.chat-claude { max-width: 320px; display: flex; flex-direction: column; gap: 6px; }
+.chat-claude p { margin: 0; }
+.chat-claude__form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
+.chat-claude__form label { width: 100%; font-weight: 500; }
