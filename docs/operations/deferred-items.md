@@ -1,4 +1,48 @@
-# Việc để lại sau sub-project 1 (control plane tối thiểu)
+# Việc để lại (deferred items)
+
+## AG Studio (cập nhật 2026-10-06)
+
+Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142). Mỗi dòng: hiện tượng · chỗ trong code · ghi chú.
+
+### Lỗi đã biết
+
+- **Xuất Premiere: tiếng gốc đã tắt vẫn có trong project.** `ag-render-worker/src/premiere-handler.ts` đặt cứng
+  `sourceAudioMuted: false`, bỏ qua `source_audio.muted` của timeline. Sửa khi đưa xuất Premiere về chạy local
+  (spec local-chat, pha 4).
+- **Xuất Premiere: gain nhạc luôn 0 dB, mất fade.** Cùng file, `gainDb: 0`; `cues[].gain_db` và fade của
+  composition bị bỏ qua. Sửa cùng lúc với mục trên.
+- **Không nhận ra mọi câu báo hết hạn mức Claude.** `RATE_LIMIT_PATTERN` trong
+  `packages/adapters/agent-cli/src/cli-agent-runtime.ts` không khớp dấu nháy cong ("You’ve hit your…") và câu
+  "usage limit reached"; khi đó lỗi thành `transient` thường, tốn attempt thay vì chờ.
+- **Spawn `claude` hỏng trên Windows khi chạy ngoài Docker.** `CliAgentRuntime` gọi `spawn("claude", …)` không
+  qua shell; bản cài bằng npm chỉ có `claude.cmd` nên spawn báo `ENOENT` → `contract`. Trong image Docker không
+  gặp. Sửa ở pha 0 của spec local-chat.
+
+### Nợ dọn dẹp
+
+- `packages/ag-go-client` còn `getSegmentMedia`/`resolveSegments` gọi `/footage/segments/*`, route mà ag-go-api v2
+  đã gỡ. Chỉ test của chính client dùng; web còn `useSegmentMedia` không ai import. Xoá được.
+- `production-profiles/studio-production/profile.yaml` khai `workflow_release: ag-studio-production@1.0.0`, workflow
+  đã bị xoá. Vô hại vì engine truyền workflow tường minh, nhưng gây hiểu nhầm.
+- `.env` của máy dev còn `STUDIO_WORKFLOW` (do `E:ag-localsetupconfig-local.cjs flow …` ghi), không còn code nào đọc.
+- Bảng `comments` (migration `0008`) chưa bao giờ được dùng; `timeline_revisions`, `studio_editor_jobs` là bảng cũ.
+- `packages/studio-engine/src/voice.ts` và job farm `studio.tts` là phần sót từ luồng có lời dẫn; không workflow
+  Studio nào dùng.
+- Kiểu thumbnail `ai` có trong schema nhưng không có bộ sinh.
+- Workflow harness cũ (`library-production*`, `channel-*`, `style-study*`, `footage-production`) còn trong
+  `workflows/` nhưng không chạy được vì built-in đã bị gỡ (ADR mục 127). Giữ cho test byte-identical và cho kiểu
+  "cắt theo shot" về sau; không dùng để chạy.
+- `tests/e2e/production.e2e.test.ts` là `describe.skip` (luồng đã xoá) và còn mock `/footage/segments/resolve`.
+
+### Rủi ro vận hành
+
+- Build bắt buộc có checkout `../ag-farm` (`@ag-farm/*` là `link:`), kể cả khi không dùng farm.
+- Mỗi worker chỉ một lượt Claude cùng lúc (`STUDIO_RESOURCES.claude = 1`); nhiều production cùng chạy sẽ xếp hàng.
+- Render chỉ có đường farm: farm hoặc render worker dừng thì `render-final` chờ tới hết deadline 4 giờ.
+
+---
+
+## Việc để lại sau sub-project 1 (control plane tối thiểu)
 
 Danh sách rút từ các vòng review trong quá trình xây dựng (ledger SDD, 2026-09-11 → 2026-09-12). Mỗi mục đã được xem xét và cố ý hoãn; không mục nào chặn merge. Mục có dấu ★ nên làm sớm ở sub-project 2.
 
