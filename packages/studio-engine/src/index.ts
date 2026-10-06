@@ -20,3 +20,4 @@ export * from "./thumbnail-actions.js";
 export * from "./canva-pdf.js";
 export * from "./chat-db.js";
 export * from "./settings.js";
+export * from "./claude-slots.js";
