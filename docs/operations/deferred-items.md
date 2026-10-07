@@ -37,7 +37,8 @@ Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142)
 - `.env` của máy dev còn `STUDIO_WORKFLOW` (do `E:ag-localsetupconfig-local.cjs flow …` ghi), không còn code nào đọc.
 - ✅ 2026-10-07 — migration `0025` xoá `comments`, `timeline_revisions`, `studio_editor_jobs` (dòng GĐ4 cũ mất theo).
 - **Giọng và nhạc tuỳ chọn (plan 2026-10-07 optional-audio), còn để sau:**
-  - Bỏ lời dẫn chỉ có cấp production; bỏ cho riêng một tập cần cột mới (Q1).
+  - ✅ 2026-10-07 — bỏ lời dẫn cho riêng một tập: `episodes.narration_override` (migration `0027`), nút "Bỏ lời dẫn cho
+    tập này" khi tập chờ giọng, `POST …/episodes/:id/narration`.
   - Lời dẫn bị bỏ thì mất, không thành phụ đề (Q2): cần ước thời điểm từng câu khi không có WAV.
   - Giọng máy không cần file mẫu (pha C): OmniVoice voice design (`instruct`) cần trường mới trong `studio.tts`.
   - ✅ 2026-10-07 — file audio cũ dưới `library/studio/<production>/` được dọn (xem `cleanup.ts`).

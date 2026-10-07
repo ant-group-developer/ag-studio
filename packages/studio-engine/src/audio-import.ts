@@ -19,8 +19,8 @@ import { isTerminal } from "@harness/core";
 import type { StudioBucket } from "./bucket.js";
 import type { StudioEngineCore } from "./core.js";
 import { probeMedia, runTool } from "./cut-ffmpeg.js";
-import { retryStage } from "./run-control.js";
-import { listEpisodes, type ProductionRecord, type StudioDb } from "./studio-db.js";
+import { retryStage, StudioRunError } from "./run-control.js";
+import { getEpisode, listEpisodes, type ProductionRecord, type StudioDb } from "./studio-db.js";
 
 export { VOICE_ORIGINS, type AudioSource, type VoiceOrigin } from "@harness/contracts";
 
@@ -227,6 +227,18 @@ export function declineNarration(db: StudioDb, productionId: string, userId: str
   return voice;
 }
 
+/**
+ * Narration declined (`none`) or wanted again (null) for one episode, whatever the production has; an episode waiting
+ * for a voice runs on at once (its `tts` again). Returns whether it was resumed.
+ */
+export function setEpisodeNarration(core: StudioEngineCore, db: StudioDb, episodeId: string, o: { declined: boolean }): { resumed: boolean } {
+  const ep = getEpisode(db, episodeId);
+  if (!ep) throw new StudioRunError("not_found", `episode ${episodeId} not found`);
+  if (ep.edit_style !== "cut") throw new StudioRunError("invalid", "chỉ tập cắt theo shot có lời dẫn", { code: "no_narration_here" });
+  db.run("UPDATE episodes SET narration_override = ?, updated_at = ? WHERE id = ?", [o.declined ? "none" : null, new Date().toISOString(), episodeId]);
+  return { resumed: o.declined && resumeEpisodeTts(core, ep.run_id) };
+}
+
 /** Back to "not asked": a voice the person removed. */
 export function clearProductionAudio(db: StudioDb, productionId: string, kind: AudioKind): void {
   db.run(`UPDATE productions SET ${kind === "voice" ? "voice" : "music"} = NULL, updated_at = ? WHERE id = ?`, [new Date().toISOString(), productionId]);
@@ -234,18 +246,19 @@ export function clearProductionAudio(db: StudioDb, productionId: string, kind: A
 
 /** Runs `tts` again in every episode of the production stopped there (waiting for a voice); returns those episodes. */
 export function resumeVoiceWaiting(core: StudioEngineCore, db: StudioDb, productionId: string): string[] {
-  const resumed: string[] = [];
-  for (const ep of listEpisodes(db, productionId)) {
-    if (!ep.run_id) continue;
-    const run = core.store.getRun(ep.run_id);
-    if (!run || isTerminal("run", run.state) || run.state === "CANCEL_REQUESTED") continue;
-    const tts = core.store.listStageRuns(ep.run_id)
-      .find((s) => s.executor.type === "farm" && s.executor.job === "studio.tts" && (s.state === "WAITING_HUMAN" || s.state === "FAILED"));
-    if (!tts) continue;
-    retryStage(core, ep.run_id, tts.stage_key);
-    resumed.push(ep.id);
-  }
-  return resumed;
+  return listEpisodes(db, productionId).filter((ep) => resumeEpisodeTts(core, ep.run_id)).map((ep) => ep.id);
+}
+
+/** `tts` again in a run stopped there; false when the run is not stopped at `tts`. */
+function resumeEpisodeTts(core: StudioEngineCore, runId: string | null): boolean {
+  if (!runId) return false;
+  const run = core.store.getRun(runId);
+  if (!run || isTerminal("run", run.state) || run.state === "CANCEL_REQUESTED") return false;
+  const tts = core.store.listStageRuns(runId)
+    .find((s) => s.executor.type === "farm" && s.executor.job === "studio.tts" && (s.state === "WAITING_HUMAN" || s.state === "FAILED"));
+  if (!tts) return false;
+  retryStage(core, runId, tts.stage_key);
+  return true;
 }
 
 /** What a production has, for a screen: its voice (or narration declined) and its music, with the inputs to listen to. */

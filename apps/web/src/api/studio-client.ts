@@ -158,6 +158,8 @@ export interface EpisodeSummary {
 }
 
 export interface EpisodeDetail extends EpisodeSummary {
+  /** Narration declined for this episode alone (a shot-cut episode). */
+  narrationDeclined?: boolean;
   plan: unknown; // StudioEpisode
   run: RunView | null;
   /** The caller's ag-go scope does not cover the production: no footage, frames or video URLs. */
@@ -764,6 +766,10 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     /** "Bỏ lời dẫn": no narration for the production; episodes waiting for a voice run on without lines. */
     declineNarration(productionId: string): Promise<ProductionAudio & { resumedEpisodes: string[] }> {
       return request(getAccessToken, "POST", `/api/productions/${productionId}/audio/voice/none`);
+    },
+    /** Narration of one shot-cut episode declined (cut without lines, at once if it waits for a voice), or wanted again. */
+    setEpisodeNarration(productionId: string, episodeId: string, declined: boolean): Promise<{ resumed: boolean }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/narration`, { declined });
     },
     removeProductionAudio(productionId: string, kind: AudioKind): Promise<ProductionAudio> {
       return request(getAccessToken, "DELETE", `/api/productions/${productionId}/audio/${kind}`);

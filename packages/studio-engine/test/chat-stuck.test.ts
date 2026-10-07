@@ -5,7 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  chatScopeFor, chatThread, declineNarration, readStageDocument, resumeVoiceWaiting, StudioRunError, submitStudioGate,
+  chatScopeFor, chatThread, declineNarration, readStageDocument, resumeVoiceWaiting, setEpisodeNarration, StudioRunError, submitStudioGate,
 } from "../src/index.js";
 import { cutEpisodeAtSurvey, cutSetup, drain, hasFfmpeg, VOICE, waiting, type CutSetup } from "./cut-flow.js";
 
@@ -57,6 +57,19 @@ describe.skipIf(!hasFfmpeg())("a machine step that stopped, in the chat (needs f
     const t = readStageDocument(s.core, runId, "fit-timeline", "timeline.json") as { narration: { voice: string; lines: unknown[] } };
     expect(t.narration.voice).toBe("tts");
     expect(t.narration.lines.length).toBeGreaterThan(0);
+  }, 120_000);
+
+  it("narration declined for this episode alone: it runs on without lines, the production still asks for a voice", async () => {
+    const { prod, ep, runId } = await toTts(null);
+    expect(setEpisodeNarration(s.core, s.db, ep.id, { declined: true })).toEqual({ resumed: true });
+    await drain(s);
+    expect(waiting(s, runId)).toEqual(["approve-timeline"]);
+    const t = readStageDocument(s.core, runId, "fit-timeline", "timeline.json") as { narration: { voice: string; lines: unknown[] } };
+    expect(t.narration).toMatchObject({ voice: "none", lines: [] });
+    expect(s.db.get<{ voice: string | null }>("SELECT voice FROM productions WHERE id = ?", [prod])?.voice ?? null).toBeNull();
+    // wanted again: nothing to resume, the next run of it reads the lines
+    expect(setEpisodeNarration(s.core, s.db, ep.id, { declined: false })).toEqual({ resumed: false });
+    expect(s.db.get<{ narration_override: string | null }>("SELECT narration_override FROM episodes WHERE id = ?", [ep.id])?.narration_override).toBeNull();
   }, 120_000);
 
   it("narration declined: the episode runs on and is cut without lines", async () => {

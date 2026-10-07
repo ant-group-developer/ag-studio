@@ -22,7 +22,7 @@ import { productionKey } from "./bucket.js";
 import { detectCuts, extractAudio16k, grabFrame, probeMedia, tileSheet } from "./cut-ffmpeg.js";
 import { readInput, readTimelineInput, studioStages, toBuffer, writeEpisodeIntake, writeOutput, type StudioStageDeps } from "./stages.js";
 import { prepareRender } from "./payloads.js";
-import { getProduction, latestEpisodeRevision, saveEpisodeRevision } from "./studio-db.js";
+import { getEpisode, getProduction, latestEpisodeRevision, saveEpisodeRevision } from "./studio-db.js";
 import { fitCutTimeline, type ReadLine } from "./cut-fit.js";
 import { productionVoice, type StudioVoice } from "./voice.js";
 import { getVoiceLine, putVoiceLine, voiceKey } from "./voice-store.js";
@@ -228,7 +228,7 @@ export function cutStages(d: StudioStageDeps): Record<string, InProcessStage> {
       const brief = readInput(request, ws, STUDIO_TYPES.brief, (v) => FitBriefSchema.parse(v));
       const now = new Date().toISOString();
 
-      const voice = approved.narration === "tts" ? narrationVoice(d.db, brief.production_id) : null;
+      const voice = approved.narration === "tts" ? narrationVoice(d.db, brief.production_id, approved.episode_id) : null;
       // narration declined after the plan was approved: cut it without lines
       const plan = approved.narration === "tts" && !voice ? withoutNarration(approved) : approved;
       const textOf = new Map(plan.lines.map((l) => [l.line_id, l.text]));
@@ -308,11 +308,13 @@ function emptyTtsManifest(productionId: string, language: string): TtsManifest {
 }
 
 /**
- * The voice a production's narration is read in, or null when the person declined narration (the episode is cut
- * without lines). No voice yet: a contract error with `details.code = "needs_voice"`; the stage waits and the chat asks
- * for a sample (`chatScopeFor`), then runs it again (ADR-0001 item 167).
+ * The voice a production's narration is read in, or null when the person declined narration — for the production, or
+ * for this episode alone (`episodes.narration_override`) — and the episode is cut without lines. No voice yet: a
+ * contract error with `details.code = "needs_voice"`; the stage waits and the chat asks for a sample
+ * (`chatScopeFor`), then runs it again (ADR-0001 item 167).
  */
-export function narrationVoice(db: StudioStageDeps["db"], productionId: string): StudioVoice | null {
+export function narrationVoice(db: StudioStageDeps["db"], productionId: string, episodeId?: string): StudioVoice | null {
+  if (episodeId && getEpisode(db, episodeId)?.narration_override === "none") return null;
   const v = productionVoice(getProduction(db, productionId)?.voice ?? null);
   if (v.kind === "none") return null;
   if (v.kind === "missing") {
@@ -361,9 +363,9 @@ export function cutPayloadBuilders(d: Pick<StudioStageDeps, "db" | "bucket" | "m
       if (plan.narration !== "tts" || plan.lines.length === 0) {
         return { productionId, payload: null, skip: { files: { "tts.json": JSON.stringify(emptyTtsManifest(productionId, plan.language), null, 2) } } };
       }
-      const voice = narrationVoice(d.db, productionId);
+      const voice = narrationVoice(d.db, productionId, plan.episode_id);
       if (!voice) {
-        ctx.logger.info("narration declined for the production: nothing to read", { production_id: productionId });
+        ctx.logger.info("narration declined: nothing to read", { production_id: productionId, episode_id: plan.episode_id });
         return { productionId, payload: null, skip: { files: { "tts.json": JSON.stringify(emptyTtsManifest(productionId, plan.language), null, 2) } } };
       }
       const media = requireMedia(d);

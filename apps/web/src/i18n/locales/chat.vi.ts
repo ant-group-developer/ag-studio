@@ -100,7 +100,7 @@ export const chatVi = {
     header: "cắt theo shot · {{length}} · {{narration}}",
     minutes: "khoảng {{n}} phút",
     seconds: "khoảng {{n}} giây",
-    narration: { tts: "có lời dẫn", original: "giữ tiếng gốc", none: "không lời dẫn" },
+    narration: { tts: "có lời dẫn", original: "giữ tiếng gốc", none: "không lời dẫn", declined: "bỏ lời dẫn (riêng tập này)" },
     footageNote: "tự động · {{videos}} video, {{shots}} shot",
   },
   composer: {
@@ -268,6 +268,8 @@ export const chatVi = {
     referenceText: "Câu nói trong file (không bắt buộc, để trống thì máy tự nghe)",
     save: "Lưu", cancel: "Huỷ", saving: "Đang tải và kiểm file…",
     saved: { voice: "Đã lưu giọng đọc.", music: "Đã lưu nhạc nền.", resumed: "Đã lưu giọng đọc. {{n}} tập chạy tiếp." },
+    declineEpisode: "Bỏ lời dẫn cho tập này", declineEpisodeConfirm: "Tập này dựng không lời dẫn (chỉ hình, tiếng gốc và nhạc); các tập khác vẫn chờ giọng đọc.",
+    declinedEpisode_ok: "Tập này dựng không lời dẫn.",
     decline: "Bỏ lời dẫn", declineConfirm: "Bỏ lời dẫn cho cả series? Các tập đang chờ giọng sẽ dựng không lời. Muốn có lời dẫn lại thì đưa giọng mẫu.",
     declined_ok: "Đã bỏ lời dẫn. {{n}} tập chạy tiếp.",
     suggested: "Link bạn dán trong chat: {{url}}", useLink: "Dùng link này",

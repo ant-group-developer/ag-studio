@@ -114,6 +114,8 @@ export interface EpisodeRecord {
   youtube: string | null; selected_title: number | null; selected_thumbnail: number | null;
   /** `whole` (whole videos, timeline v3) or `cut` (shot by shot, timeline v4); migration 0023. */
   edit_style: "whole" | "cut";
+  /** `none`: narration declined for this episode alone (migration 0027); null: the production decides. */
+  narration_override?: "none" | null;
   created_at: string; updated_at: string;
 }
 

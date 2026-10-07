@@ -81,8 +81,10 @@ function describe(a: ProductionAudio, kind: AudioKind, t: (k: string, o?: Record
  * The production's voice sample and background music (plan optional-audio): both optional, given by link or upload.
  * `needsVoice`: an episode waits at its narration step; the panel says so and offers to drop narration instead.
  */
-export function ProductionAudioPanel({ productionId, canEdit, needsVoice = false, suggested, onChanged }: {
+export function ProductionAudioPanel({ productionId, episodeId, canEdit, needsVoice = false, suggested, onChanged }: {
   productionId: string; canEdit: boolean; needsVoice?: boolean;
+  /** The episode waiting for a voice: it may drop narration for itself alone. */
+  episodeId?: string | undefined;
   /** Links the person pasted in the intake chat (`audio_links`). */
   suggested?: { voice?: string | null; music?: string | null } | null | undefined;
   onChanged?: () => void;
@@ -110,13 +112,18 @@ export function ProductionAudioPanel({ productionId, canEdit, needsVoice = false
     onSuccess: (r) => { setOpen(null); void message.success(t("chat.audio.declined_ok", { n: r.resumedEpisodes.length })); changed(r); },
     onError: (e) => { void message.error(errorText(e, t)); },
   });
+  const declineEpisode = useMutation({
+    mutationFn: () => client.setEpisodeNarration(productionId, episodeId!, true),
+    onSuccess: () => { setOpen(null); void message.success(t("chat.audio.declinedEpisode_ok")); onChanged?.(); },
+    onError: (e) => { void message.error(errorText(e, t)); },
+  });
   const remove = useMutation({
     mutationFn: (kind: AudioKind) => client.removeProductionAudio(productionId, kind),
     onSuccess: changed,
     onError: (e) => { void message.error(errorText(e, t)); },
   });
   const audio: ProductionAudio = data ?? { voice: null, music: null };
-  const busy = give.isPending || decline.isPending || remove.isPending;
+  const busy = give.isPending || decline.isPending || declineEpisode.isPending || remove.isPending;
 
   const row = (kind: AudioKind) => {
     const what = kind === "voice" ? audio.voice : audio.music;
@@ -155,9 +162,16 @@ export function ProductionAudioPanel({ productionId, canEdit, needsVoice = false
       {row("voice")}
       {row("music")}
       {needsVoice && canEdit ? (
-        <Popconfirm title={t("chat.audio.declineConfirm")} onConfirm={() => decline.mutate()} okText={t("chat.audio.decline")} cancelText={t("chat.audio.cancel")}>
-          <button type="button" className="chat-card__button chat-button--secondary" disabled={busy}>{t("chat.audio.decline")}</button>
-        </Popconfirm>
+        <div className="chat-audio__buttons">
+          <Popconfirm title={t("chat.audio.declineConfirm")} onConfirm={() => decline.mutate()} okText={t("chat.audio.decline")} cancelText={t("chat.audio.cancel")}>
+            <button type="button" className="chat-card__button chat-button--secondary" disabled={busy}>{t("chat.audio.decline")}</button>
+          </Popconfirm>
+          {episodeId ? (
+            <Popconfirm title={t("chat.audio.declineEpisodeConfirm")} onConfirm={() => declineEpisode.mutate()} okText={t("chat.audio.declineEpisode")} cancelText={t("chat.audio.cancel")}>
+              <button type="button" className="chat-card__button chat-button--secondary" disabled={busy}>{t("chat.audio.declineEpisode")}</button>
+            </Popconfirm>
+          ) : null}
+        </div>
       ) : null}
     </section>
   );

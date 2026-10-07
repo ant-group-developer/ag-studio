@@ -102,7 +102,7 @@ export const chatEn: typeof chatVi = {
     header: "cut shot by shot · {{length}} · {{narration}}",
     minutes: "about {{n}} min",
     seconds: "about {{n}} s",
-    narration: { tts: "narrated", original: "original sound", none: "no narration" },
+    narration: { tts: "narrated", original: "original sound", none: "no narration", declined: "narration dropped (this episode)" },
     footageNote: "automatic · {{videos}} videos, {{shots}} shots",
   },
   composer: {
@@ -270,6 +270,8 @@ export const chatEn: typeof chatVi = {
     referenceText: "What is said in the file (optional; left empty, the machine listens)",
     save: "Save", cancel: "Cancel", saving: "Fetching and checking the file…",
     saved: { voice: "Voice saved.", music: "Music saved.", resumed: "Voice saved. {{n}} episodes run on." },
+    declineEpisode: "Drop narration for this episode", declineEpisodeConfirm: "This episode is cut without narration (picture, source sound and music); the others still wait for a voice.",
+    declinedEpisode_ok: "This episode is cut without narration.",
     decline: "Drop narration", declineConfirm: "Drop narration for the whole series? Episodes waiting for a voice are cut without it. Give a voice sample to have narration again.",
     declined_ok: "Narration dropped. {{n}} episodes run on.",
     suggested: "Link you pasted in the chat: {{url}}", useLink: "Use this link",
