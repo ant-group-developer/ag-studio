@@ -68,12 +68,15 @@ export function ChatProductionPage() {
   const notes: Partial<Record<ChatStep, string>> = shots?.shots.length
     ? { footage: t("chat.cut.footageNote", { videos: new Set(shots.shots.map((x) => x.sourceId)).size, shots: shots.shots.length }) }
     : {};
-  const { data: teams } = useQuery({ queryKey: ["teams", "all"], queryFn: () => client.listTeams({ page: 1, pageSize: 100 }) });
+  // the caller's role in this video's team, asked of that team (a page of all their teams may not hold it)
+  const { data: team } = useQuery({
+    queryKey: ["team", production?.teamId], queryFn: () => client.getTeam(production!.teamId), enabled: !!production?.teamId, retry: false,
+  });
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => client.getMe(), staleTime: 5 * 60_000 });
   // the farm machines a final render may be pinned to (an episode only); none listed: no pinning offered
   const { data: farmNodes } = useQuery({ queryKey: ["farm-nodes"], queryFn: () => client.listFarmNodes(), enabled: !!episodeId, staleTime: 30_000 });
   const renderNodes = farmNodes?.nodes;
-  const role = teams?.items.find((x) => x.id === production?.teamId)?.role ?? null;
+  const role = team?.role ?? null;
   const canManage = !!me?.isAdmin || (!!role && MANAGES.has(role));
   const canEdit = !!me?.isAdmin || (!!role && EDITS.has(role));
 

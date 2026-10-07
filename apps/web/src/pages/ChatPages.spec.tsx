@@ -15,6 +15,7 @@ const client = {
   getMe: vi.fn().mockResolvedValue({ userId: "u", isAdmin: false }),
   getCanvaConnection: vi.fn().mockResolvedValue({ enabled: false, connected: false, displayName: null }),
   listTeams: vi.fn().mockResolvedValue({ items: [{ id: "team-1", name: "Du lịch", role: "producer" }], total: 1, page: 1, pageSize: 100 }),
+  getTeam: vi.fn().mockResolvedValue({ id: "team-1", name: "Du lịch", role: "producer" }),
   getOverview: vi.fn().mockResolvedValue({ items: [
     { id: "p1", teamId: "team-1", title: "Series Kyoto", updatedAt: "", step: "approve-branding", group: "waiting_you", episodes: [] },
     { id: "p2", teamId: "team-1", title: "Huế", updatedAt: "", step: "plan-episodes", group: "needs_attention", episodes: [] },
@@ -94,6 +95,18 @@ describe("chat pages", () => {
     fireEvent.change(box, { target: { value: "Bỏ màu cam", selectionStart: 10 } });
     fireEvent.keyDown(box, { key: "Enter" });
     await waitFor(() => expect(client.sendChat).toHaveBeenCalledWith("p1", "Bỏ màu cam", undefined));
+  });
+
+  it("the person's role is the video's team's own answer, not a page of their teams (one in 100+ teams keeps it)", async () => {
+    client.listTeams.mockResolvedValueOnce({ items: [], total: 140, page: 1, pageSize: 100 });
+    const thread: ChatThreadView = {
+      turns: [], scope: { productionId: "p1", episodeId: null, runId: "r", stageKey: "approve-branding", scope: "gate" }, blocked: null,
+      current: { turnId: null, document: { series_name: "Quiet" }, draft: { series_name: "Quiet" }, pendingApply: false, problems: [] }, queueAhead: 0,
+    };
+    client.getChatThread.mockResolvedValue(thread);
+    mount("/v/p1");
+    await waitFor(() => expect(client.getTeam).toHaveBeenCalledWith("team-1"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Duyệt" })).toBeEnabled());
   });
 
   it("while Claude or a render works, nothing can be sent", async () => {
