@@ -113,6 +113,9 @@ node --require ts-node/register ../../node_modules/typeorm/cli.js migration:run 
 - **Claude giả hay thật:** `STUDIO_CLAUDE_ARGV` trong `apps/api/.env` trỏ `fixtures/fake-studio-claude.mjs` (không tốn
   hạn mức). Bỏ dòng đó để dùng `claude` thật bằng `CLAUDE_CODE_OAUTH_TOKEN` (hoặc đăng nhập `claude` → `/login`).
   Trên Windows, `claude.cmd` của npm được tự dò ra `claude.exe` (`resolveCommand`).
+- **Dọn dữ liệu cũ:** worker tự dọn mỗi `STUDIO_CLEANUP_HOURS` giờ (mặc định 6; `0` = tắt), lần đầu sau 1 phút:
+  workspace của run đã kết thúc (`STUDIO_RETENTION_WORKSPACE_DAYS`, 14), kho giọng (`_VOICE_DAYS`, 90), audio
+  production không còn dùng (`_AUDIO_DAYS`, 7). Log `cleanup swept` ghi số đã xoá từng loại.
 - **Số lượt Claude cùng lúc:** admin Studio chỉnh trên web (màn Hàng đợi, cột phải; lưu vào
   `studio_settings`, worker áp dụng ngay). Chưa ai lưu thì dùng `STUDIO_CLAUDE_MAX_CONCURRENT` (1–100, mặc định 20).
   Worker chạy số vòng bằng `claude + 8 (farm) + 2 (cpu)` và tự thêm/bớt khi số này đổi; tin nhắn chat dùng chung số

@@ -4,7 +4,7 @@
  */
 import { createReadStream, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectsCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { StudioStorage } from "@harness/executors";
 
@@ -16,7 +16,13 @@ export interface StudioBucket {
   exists(key: string): Promise<{ size: number } | null>;
   /** Short-lived GET URL for a browser (preview renders, exports); with `downloadName` the browser saves the file. */
   signedGetUrl(key: string, ttlSeconds: number, opts?: SignedUrlOptions): Promise<string>;
+  /** Every object under `prefix` (the cleanup sweep, `cleanup.ts`). */
+  list(prefix: string): Promise<BucketObject[]>;
+  /** Removes the objects; a missing key is not an error. */
+  deleteMany(keys: string[]): Promise<void>;
 }
+
+export interface BucketObject { key: string; size: number; lastModified: Date }
 
 export interface SignedUrlOptions {
   /** Name to save the object under (Content-Disposition: attachment). */
@@ -70,6 +76,22 @@ export class S3Bucket implements StudioBucket {
       throw e;
     }
   }
+  async list(prefix: string): Promise<BucketObject[]> {
+    const out: BucketObject[] = [];
+    let token: string | undefined;
+    do {
+      const r = await this.s3.send(new ListObjectsV2Command({ Bucket: this.opts.bucket, Prefix: prefix, ...(token ? { ContinuationToken: token } : {}) }));
+      for (const o of r.Contents ?? []) if (o.Key) out.push({ key: o.Key, size: Number(o.Size ?? 0), lastModified: o.LastModified ?? new Date(0) });
+      token = r.IsTruncated ? r.NextContinuationToken : undefined;
+    } while (token);
+    return out;
+  }
+  async deleteMany(keys: string[]): Promise<void> {
+    // DeleteObjects takes up to 1000 keys a call (S3 and R2).
+    for (let i = 0; i < keys.length; i += 1000) {
+      await this.s3.send(new DeleteObjectsCommand({ Bucket: this.opts.bucket, Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })), Quiet: true } }));
+    }
+  }
   signedGetUrl(key: string, ttlSeconds: number, opts: SignedUrlOptions = {}): Promise<string> {
     return getSignedUrl(this.s3, new GetObjectCommand({
       Bucket: this.opts.bucket, Key: key,
@@ -80,8 +102,14 @@ export class S3Bucket implements StudioBucket {
 
 export class MemoryBucket implements StudioBucket {
   readonly objects = new Map<string, Buffer>();
-  async put(key: string, body: Buffer): Promise<void> { this.objects.set(key, Buffer.from(body)); }
-  async putFile(key: string, path: string): Promise<void> { this.objects.set(key, readFileSync(path)); }
+  /** When each object was written (tests may set it back to make one old). */
+  readonly modified = new Map<string, Date>();
+  async put(key: string, body: Buffer): Promise<void> { this.objects.set(key, Buffer.from(body)); this.modified.set(key, new Date()); }
+  async putFile(key: string, path: string): Promise<void> { this.objects.set(key, readFileSync(path)); this.modified.set(key, new Date()); }
+  async list(prefix: string): Promise<BucketObject[]> {
+    return [...this.objects].filter(([k]) => k.startsWith(prefix)).map(([key, b]) => ({ key, size: b.length, lastModified: this.modified.get(key) ?? new Date(0) }));
+  }
+  async deleteMany(keys: string[]): Promise<void> { for (const k of keys) { this.objects.delete(k); this.modified.delete(k); } }
   async get(key: string): Promise<Buffer> {
     const b = this.objects.get(key);
     if (!b) throw new Error(`no object ${key}`);
