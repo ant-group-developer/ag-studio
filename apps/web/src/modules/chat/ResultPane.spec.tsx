@@ -121,6 +121,31 @@ describe("ResultPane", () => {
     expect(onMenu).toHaveBeenCalledWith("finalRender");
   });
 
+  it("an episode whose run ended shows its render, not the timeline; a render that failed says why and offers Render lại", async () => {
+    client.getEpisode.mockResolvedValue({ status: "failed", render: null, progress: null, finalVideoUrl: null, exportFiles: [] });
+    const onMenu = vi.fn();
+    const timeline = { schema_version: "studio.timeline/v4", clips: [], texts: [] };
+    const failed: ChatThreadView = {
+      turns: [], scope: { productionId: "p", episodeId: "e", runId: "r", stageKey: "timeline", scope: "timeline" }, blocked: null,
+      current: { turnId: null, document: timeline, draft: timeline, pendingApply: false, problems: [] }, queueAhead: 0,
+      stopped: { stage: "render-final", problems: [{ code: "transient", message: "farm job failed: fetch failed" }] },
+    };
+    const { unmount } = mount(failed, { episodeId: "e", onMenu, canRenderFinal: true, workflow: "ag-studio-episode-cut@1.0.0" });
+    expect(screen.getByRole("heading", { name: "Render" })).toBeInTheDocument();
+    expect(screen.getByText("cần xử lý")).toBeInTheDocument();
+    expect(screen.getByText("farm job failed: fetch failed")).toBeInTheDocument();
+    expect(await screen.findByText("Chưa có file xuất.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Render lại" }));
+    expect(onMenu).toHaveBeenCalledWith("finalRender");
+    unmount();
+
+    // rendered: the files, no error, no main button
+    mount({ ...failed, stopped: null }, { episodeId: "e", onMenu, canRenderFinal: true, workflow: "ag-studio-episode-cut@1.0.0" });
+    expect(screen.getByRole("heading", { name: "Render" })).toBeInTheDocument();
+    expect(screen.queryByText("farm job failed: fetch failed")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Render lại" })).toBeNull();
+  });
+
   it("⋯ of a shot-cut episode runs it again from a gate, and has no Premiere export (phase 4)", async () => {
     const onMenu = vi.fn();
     const done: ChatThreadView = { turns: [], scope: null, blocked: { code: "nothing_to_chat", stage: null }, current: null, queueAhead: 0 };

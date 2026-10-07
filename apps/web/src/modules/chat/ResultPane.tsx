@@ -16,7 +16,7 @@ import { ProductionAudioPanel } from "./views/ProductionAudioPanel";
 import { useAiTranslation } from "../common/assistant-name";
 
 /** `rerunStep`: run again a machine step that stopped (`blocked.code = stage_failed`). */
-export type ResultAction = "approve" | "start" | "apply" | "retry" | "rerunStep";
+export type ResultAction = "approve" | "start" | "apply" | "retry" | "rerunStep" | "renderAgain";
 export type MenuAction = "editor" | "preview" | "finalRender" | "export" | "rerunSurvey" | "rerunEditPlan" | "log" | "oldScreen";
 
 interface Props {
@@ -103,10 +103,14 @@ function Problems({ problems }: { problems: { code: string; message: string }[] 
 export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu, busy, canApprove = true, renderDefault = "any", canRenderFinal = false, workflow, onSaveEdit, onAudioChanged }: Props) {
   const { t } = useAiTranslation();
   const scope = thread.scope;
-  const stageKey = scope?.stageKey ?? thread.blocked?.stage ?? null;
+  // An episode whose run ended (rendered, or stopped at the render): its render and files, not the timeline. The chat
+  // still edits the timeline; a change waiting for Áp dụng shows it again.
+  const ended = !!episodeId && scope?.scope === "timeline" && !!scope.runId && !thread.current?.pendingApply;
+  const stopped = ended ? thread.stopped ?? null : null;
+  const stageKey = ended ? stopped?.stage ?? "render-final" : scope?.stageKey ?? thread.blocked?.stage ?? null;
   const step = stepOf(stageKey, workflow);
   const kind = scope ? docKindOf(scope.stageKey) : null;
-  const isTimeline = !!episodeId && (scope?.stageKey === "approve-timeline" || scope?.scope === "timeline");
+  const isTimeline = !!episodeId && !ended && (scope?.stageKey === "approve-timeline" || scope?.scope === "timeline");
   const cut = !!episodeId && isCutWorkflow(workflow);
   // shot-cut episodes (phase 5): the scene selection shot by shot
   const isSurvey = !!episodeId && scope?.scope === "gate" && scope.stageKey === "approve-survey";
@@ -140,6 +144,9 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
   } else if (scope?.scope === "failed") {
     badge = t("chat.result.failed");
     primary = "retry";
+  } else if (stopped) {
+    badge = t("chat.result.failed");
+    primary = "renderAgain";
   } else if (scope?.scope === "timeline") {
     primary = thread.current?.pendingApply ? "apply" : null;
   } else if (thread.blocked?.code === "needs_voice") {
@@ -151,8 +158,8 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
     badge = t("chat.result.running");
   }
   const startDisabled = primary === "start" && intakeMissing(doc as Parameters<typeof intakeMissing>[0]).length > 0;
-  const stopped = thread.blocked?.code === "needs_voice" || thread.blocked?.code === "stage_failed";
-  const badgeTone = scope?.scope === "failed" || stopped ? "needs_attention" : scope?.scope === "intake" && !startDisabled ? "done" : scope ? "waiting_you" : "running";
+  const halted = !!stopped || thread.blocked?.code === "needs_voice" || thread.blocked?.code === "stage_failed";
+  const badgeTone = scope?.scope === "failed" || halted ? "needs_attention" : scope?.scope === "intake" && !startDisabled ? "done" : scope ? "waiting_you" : "running";
 
   const menu: MenuProps["items"] = [
     ...(episodeId ? [
@@ -175,6 +182,13 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
     body = <StepDocEditor kind={editKind} value={draft} onChange={setDraft} productionId={productionId} episodeId={episodeId} />;
   } else if ((isSurvey || isEditPlan) && doc) {
     body = <StepDocBody kind={isSurvey ? "survey" : "edit_plan"} doc={doc} previous={previous} productionId={productionId} episodeId={episodeId} />;
+  } else if (ended) {
+    body = (
+      <>
+        {stopped ? <><Problems problems={stopped.problems} /><p className="chat-doc__note">{t("chat.result.renderStopped")}</p></> : null}
+        <EpisodeOutputs productionId={productionId} episodeId={episodeId!} />
+      </>
+    );
   } else if (isTimeline && doc) {
     const pending = thread.current?.pendingApply ? thread.turns.find((x) => x.id === thread.current?.turnId) : undefined;
     body = <TimelineResult productionId={productionId} episodeId={episodeId!} timeline={doc as StoredTimeline}
@@ -222,6 +236,10 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
           </>
         ) : primary === "approve" && scope?.stageKey === KIT_GATE ? (
           <ApproveAndRender disabled={!!busy || !canApprove} initial={renderDefault} onConfirm={(m) => onPrimary("approve", { renderMachine: m })} />
+        ) : primary === "renderAgain" ? (
+          <button type="button" className="chat-primary" disabled={busy || !canRenderFinal || !canApprove} onClick={() => onMenu("finalRender")}>
+            {t("chat.result.primary.renderAgain")}
+          </button>
         ) : primary ? (
           <button type="button" className="chat-primary" disabled={busy || startDisabled || !canApprove} onClick={() => onPrimary(primary)}>
             {t(`chat.result.primary.${primary}`)}
