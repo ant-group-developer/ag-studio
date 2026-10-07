@@ -232,6 +232,15 @@ export const chatEn: typeof chatVi = {
     onNode: "on {{name}}",
     renderChip: "Render: {{n}} jobs",
   },
+  kitThumbs: {
+    title: "Thumbnail",
+    hint: "Pick a picture for each idea: a frame of its own video, the idea's words drawn on it in the branding style. Your pick stays after the render.",
+    pick: "Use the frame at {{s}} s for “{{text}}”",
+    picked: "Thumbnail picked.",
+    selected: "Thumbnail in use",
+    none: "None picked: after the render, the thumbnail is the first suggestion.",
+    noFrames: "This video's frames could not be read (footage scope, or ag-go has no keyframes yet).",
+  },
   files: {
     download: "Download", copy: "Copy", unreadable: "This file cannot be opened here.",
     thumbnails: "Thumbnail suggestions", youtube: "YouTube pack", description: "Description", chapters: "Chapters", tags: "Tags",

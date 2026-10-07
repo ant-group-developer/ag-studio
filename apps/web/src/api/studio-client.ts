@@ -634,6 +634,10 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     listThumbnails(productionId: string, episodeId: string): Promise<ThumbnailList> {
       return request(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails`);
     },
+    /** Before the render (kit gate): a keyframe of one of the episode's videos, with the idea's words, as the pick. */
+    pickFootageThumbnail(productionId: string, episodeId: string, p: { assetId: string; keyframe: number; text: string }): Promise<ThumbnailView> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/footage`, p);
+    },
     selectThumbnail(productionId: string, episodeId: string, thumbnailId: string): Promise<ThumbnailList> {
       return request(getAccessToken, "PUT", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/selected`, { thumbnailId });
     },

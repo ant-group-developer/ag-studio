@@ -12,6 +12,7 @@ import { docKindOf } from "./views/doc-specs";
 import { EpisodeOutputs } from "./views/EpisodeOutputs";
 import { canEditDoc, StepDocBody, StepDocEditor } from "./views/StepBody";
 import { TimelineResult } from "./views/TimelineResult";
+import { KitThumbnails } from "./views/KitThumbnails";
 import { ProductionAudioPanel } from "./views/ProductionAudioPanel";
 import { useAiTranslation } from "../common/assistant-name";
 
@@ -208,6 +209,10 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
       <>
         {scope?.scope === "failed" ? <Problems problems={thread.current?.problems ?? []} /> : null}
         <DocView kind={kind} doc={doc} previous={previous} names={folderNames(thread)} />
+        {episodeId && scope?.stageKey === KIT_GATE ? (
+          <KitThumbnails productionId={productionId} episodeId={episodeId} canEdit={canApprove}
+            ideas={(doc as { thumbnails?: { asset_id: string; text: string }[] }).thumbnails ?? []} />
+        ) : null}
         {scope?.scope === "intake" ? (
           <ProductionAudioPanel productionId={productionId} canEdit={canApprove} onChanged={onAudioChanged}
             suggested={(doc as { audio_links?: { voice?: string | null; music?: string | null } }).audio_links} />

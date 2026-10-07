@@ -13,6 +13,7 @@ import {
   Put,
   Req,
   ServiceUnavailableException,
+  BadGatewayException,
   UnprocessableEntityException,
   UploadedFile,
   UseGuards,
@@ -23,6 +24,8 @@ import { Request } from 'express';
 import {
   captureThumbnail,
   composeThumbnail,
+  footageThumbnail,
+  latestEpisodeRevision,
   cutEpisodeFrames,
   deleteThumbnail,
   episodeExport,
@@ -43,7 +46,7 @@ import {
   type ThumbnailRenderer,
   type ThumbnailStyle,
 } from '@ag-studio/engine';
-import { IsNumber, IsObject, IsString, MaxLength, Min } from 'class-validator';
+import { IsInt, IsNumber, IsObject, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { Roles } from '../auth/roles.decorator';
 import { CanvaService } from '../canva/canva.service';
 import { RolesGuard } from '../auth/roles.guard';
@@ -71,6 +74,27 @@ class CaptureDto {
   @Min(0)
   tS!: number;
 }
+
+/** A picture of one of the episode's videos, before any render: its keyframe `keyframe` (none: the poster). */
+class FootageDto {
+  @IsString()
+  @MaxLength(100)
+  assetId!: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  keyframe?: number;
+
+  /** The kit idea's words, drawn in the branding style; none: the clean picture. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  text?: string;
+}
+
+/** Largest keyframe the server takes from ag-go. */
+const FOOTAGE_MAX_BYTES = 10 * 1024 * 1024;
 
 class SelectDto {
   @IsString()
@@ -208,6 +232,34 @@ export class ThumbnailsController {
       await this.requireCovers(req, prodId);
       const renderer = this.renderer();
       const t = await this.work.run(() => composeThumbnail(this.deps, renderer, ep, dto, req.authContext!.userId));
+      return this.view(ep, t);
+    });
+  }
+
+  /**
+   * At the YouTube kit gate, before any render: a keyframe of one of the episode's videos (signed by ag-go for this
+   * person) with the kit idea's words drawn on it, kept as theirs and picked; a render keeps it.
+   */
+  @Post('footage')
+  @Roles('editor')
+  footage(@Param('id') prodId: string, @Param('episodeId') episodeId: string, @Body() dto: FootageDto, @Req() req: Request) {
+    return mapErrors(async () => {
+      const ep = this.requireEpisode(prodId, episodeId);
+      await this.requireCovers(req, prodId);
+      const renderer = this.renderer();
+      if (!latestEpisodeRevision(this.engine.db, ep.id)?.data.assets[dto.assetId]) {
+        throw new UnprocessableEntityException({ code: 'asset_not_in_episode', message: 'video này không có trong tập' });
+      }
+      const userId = req.authContext!.userId;
+      const media = await this.access.assetMedia(userId, dto.assetId);
+      const url = dto.keyframe === undefined ? media.posterUrl ?? media.keyframes[0]?.url : media.keyframes[dto.keyframe]?.url;
+      if (!url) throw new UnprocessableEntityException({ code: 'no_keyframe', message: 'video này chưa có ảnh khung' });
+      const res = await fetch(url);
+      const image = res.ok ? Buffer.from(await res.arrayBuffer()) : null;
+      if (!image || image.length === 0 || image.length > FOOTAGE_MAX_BYTES) {
+        throw new BadGatewayException({ code: 'keyframe_fetch_failed', message: `không tải được ảnh khung (HTTP ${res.status})` });
+      }
+      const t = await this.work.run(() => footageThumbnail(this.deps, renderer, ep, { assetId: dto.assetId, image, text: dto.text ?? null, userId }));
       return this.view(ep, t);
     });
   }

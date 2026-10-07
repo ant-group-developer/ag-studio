@@ -63,8 +63,9 @@ Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-2-chat.md`. Cố ý ch�
 - ✅ 2026-10-07 — SSE cho luồng chat: `GET …/chat/events` gửi `changed` khi dấu vân tay của thread đổi (server xem
   `studio.db` mỗi giây) và `ping` mỗi 20 s; web đọc bằng `fetch` (gửi bearer), tải lại thread khi có `changed`, polling
   còn 30 s khi luồng mở và như cũ khi không. Cột trái, chip header, Hàng đợi vẫn polling 5 s.
-- **Chọn thumbnail ở bước YouTube kit** (mockup màn 10) chưa làm: thumbnail cắt từ `final.mp4`, chỉ có sau render.
-  Gate kit chỉ sửa tiêu đề, mô tả, tag, ý tưởng thumbnail.
+- ✅ 2026-10-07 — chọn thumbnail ở bước YouTube kit (mockup màn 10), trước render: mỗi ý tưởng hiện keyframe của chính
+  video đó (ag-go ký theo quyền footage của người xem); bấm một khung thì `POST …/thumbnails/footage` lưu khung làm ảnh
+  của người dùng, vẽ chữ của ý tưởng theo branding và chọn nó (`footageThumbnail`). Render sau đó giữ lựa chọn này.
 - **Màn 13 "Áp dụng đề xuất và chạy lại"**: Claude không sửa thẳng đầu ra REJECTED của stage hỏng (phải đổi core);
   thay bằng "Chạy lại" kèm góp ý trong chat (ADR mục 147).
 - ✅ 2026-10-07 — menu `⋯` có "Chạy lại từ bước…" (run đã xong: Claude viết lại bước chọn, giữ các bước trước;

@@ -230,6 +230,15 @@ export const chatVi = {
     onNode: "trên {{name}}",
     renderChip: "Render: {{n}} job",
   },
+  kitThumbs: {
+    title: "Thumbnail",
+    hint: "Chọn ảnh nền cho mỗi ý tưởng: khung của chính video đó, chữ của ý tưởng được vẽ lên theo branding. Ảnh bạn chọn được giữ sau khi render.",
+    pick: "Dùng khung giây {{s}} cho “{{text}}”",
+    picked: "Đã chọn thumbnail.",
+    selected: "Thumbnail đang dùng",
+    none: "Chưa chọn: sau khi render, thumbnail lấy gợi ý đầu tiên.",
+    noFrames: "Không lấy được khung của video này (quyền footage hoặc ag-go chưa có keyframe).",
+  },
   files: {
     download: "Tải về", copy: "Sao chép", unreadable: "Không mở được file này ở đây.",
     thumbnails: "Gợi ý thumbnail", youtube: "Gói YouTube", description: "Mô tả", chapters: "Chapter", tags: "Tag",
