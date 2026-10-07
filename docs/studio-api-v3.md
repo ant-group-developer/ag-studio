@@ -190,6 +190,24 @@ interface EpisodeRender {
   is now — the picked thumbnail, `youtube.json`, `title.txt`, `description.txt` (with the chapters), `tags.txt`; no
   video (download it on its own). Built on demand, stored once per content; the URL saves the file.
 
+## Step documents (`/productions/:id/steps/:kind`, `/productions/:id/episodes/:episodeId/steps/:kind`)
+
+A step's document read again after its approval and edited (plan 2026-10-07 step history). `kind`: series
+`trend_report | rnd | branding | series_plan`, episode `youtube_kit | survey | edit_plan` (the other side: 422
+`bad_kind`).
+- `GET` (viewer) -> `{kind, gate, state: 'not_yet' | 'waiting' | 'approved', document, inUse, edit: {inPlace,
+  inPlaceCode, reopen, reopenCode, replacesEpisodes, reruns: string[]}}`. `document` (approved only): the version in
+  use when one was edited (`productions.trend_report|rnd|branding`, `episodes.youtube`), else the gate's approved
+  output. `waiting`: edit through the chat's manual edit at that gate.
+- `PUT` body `{document, reopen?: boolean}` -> `{mode: 'saved' | 'reopened', runId?, warnings, view}`. `reopen`
+  false replaces the version in use (only trend report once the episodes exist, R&D, branding, YouTube kit; 409
+  `only_reopen` otherwise, `apply_pending`). `reopen` true starts the run again from the gate (a run parked at a later
+  gate with nothing working is cancelled first) and puts the edit on show there as a manual-edit turn: approving it
+  runs the steps after. 409 `running`, `episode_producing` (plan steps), `render_again` (the kit: save, then Render
+  lại), `at_gate`, `not_approved_yet`; 422 `{problems}` when the schema check fails (the gate's checks run when it is
+  approved again). Reopening a series step makes the episodes again after `approve-plan` (`replacesEpisodes`).
+  Series: producer. Episode: editor for the kit in place, producer otherwise.
+
 ## Thumbnails (`/productions/:id/episodes/:episodeId/thumbnails`)
 
 Episode runs `ag-studio-episode@1.2.0` cut up to 36 clean frames of the final video (away from on-screen words and

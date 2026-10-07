@@ -20,6 +20,7 @@ import {
   cancelEpisode,
   EPISODE_RENDER_STAGE,
   episodeExport,
+  episodeKit,
   episodeRenderInfo,
   episodeRunView,
   episodeShots,
@@ -239,12 +240,8 @@ export class EpisodesController {
       const showsFootage = (kind: string) => kind === 'mp4' || kind === 'thumbnail' || kind === 'pack';
       const run: RunView | null = ep.run_id ? episodeRunView(this.engine.core, this.engine.db, episodeId) : null;
       const kitStage = run?.stages.find((s) => s.key === 'youtube-kit');
-      // The person's edits win over Claude's kit
-      const youtube = ep.youtube
-        ? readStoredYoutubeKit(JSON.parse(ep.youtube))
-        : kitStage?.state === 'SUCCEEDED' && ep.run_id
-          ? readStoredYoutubeKit(readStageDocument(this.engine.core, ep.run_id, 'youtube-kit', 'youtube-kit.json'))
-          : null;
+      // The person's edits, else the kit approved at its gate, else Claude's (episodeKit)
+      const youtube = (ep.youtube || kitStage?.state === 'SUCCEEDED') ? episodeKit(this.engine.core, ep) : null;
       const exp = episodeExport(this.engine.core, ep);
       const exportFiles = await Promise.all((exp?.files ?? []).filter((f) => covers || !showsFootage(f.kind)).map(async (f) => {
         const name = f.key.split('/').pop() ?? f.key;

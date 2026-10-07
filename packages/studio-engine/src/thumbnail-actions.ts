@@ -45,11 +45,17 @@ export function episodeThumbnails(d: ThumbnailActionDeps, ep: EpisodeRecord): Ep
   return listThumbnails(d.db, ep.id);
 }
 
-/** The kit the episode uses: the person's edits, else Claude's of the current run. */
+/**
+ * The kit the episode uses: the person's edits, else the one approved at `approve-youtube-kit` (with what was edited
+ * at the gate), else Claude's of the current run (an episode 1.2.0 has no gate).
+ */
 export function episodeKit(core: StudioEngineCore, ep: EpisodeRecord): YoutubeKit | null {
   if (ep.youtube) return readStoredYoutubeKit(JSON.parse(ep.youtube));
   if (!ep.run_id) return null;
-  try { return readStoredYoutubeKit(readStageDocument(core, ep.run_id, "youtube-kit", "youtube-kit.json")); } catch { return null; }
+  for (const stage of ["approve-youtube-kit", "youtube-kit"]) {
+    try { return readStoredYoutubeKit(readStageDocument(core, ep.run_id, stage, "youtube-kit.json")); } catch { /* not there: the next */ }
+  }
+  return null;
 }
 
 const userKey = (ep: EpisodeRecord, id: string) => `productions/${ep.production_id}/episodes/${ep.id}/thumbnails/mine/${id}.jpg`;

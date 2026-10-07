@@ -4,8 +4,8 @@
  * the scope again so a stale screen cannot approve or apply the wrong thing.
  */
 import { randomUUID } from "node:crypto";
-import { intakeMissing, IntakeDraftSchema, type IntakeDraft, type IntakeField, type RenderMachine } from "@harness/contracts";
-import { chatContext, chatScopeFor, DRAFT_PRODUCTION_TITLE, GATE_SOURCES, type TimelineProposal } from "./chat-context.js";
+import { intakeMissing, IntakeDraftSchema, StudioSurveySchema, type IntakeDraft, type IntakeField, type RenderMachine, type StudioSurvey } from "@harness/contracts";
+import { chatContext, chatScopeFor, DRAFT_PRODUCTION_TITLE, GATE_SOURCES, type SurveyProposal, type TimelineProposal } from "./chat-context.js";
 import {
   currentProposal, getTurn, insertSystemTurn, insertUserTurn, listTurns,
   markTurnApplied, type ChatMention, type ChatProblem, type ChatScopeKey, type ChatTurn,
@@ -61,9 +61,12 @@ export function saveManualEdit(core: StudioEngineCore, db: StudioDb, p: { produc
   }
   const ctx = chatContext(core, db, key);
   if (ctx.skill === "studio-timeline") throw new StudioRunError("invalid", "timeline được sửa tay trong editor");
-  const parsed = ctx.proposalSchema.safeParse(p.document);
+  // the scene selection is edited whole by hand (the chat proposes ops): it is stored like an applied proposal
+  const survey = ctx.skill === "studio-survey";
+  const parsed = (survey ? StudioSurveySchema : ctx.proposalSchema).safeParse(p.document);
   if (!parsed.success) throw new StudioRunError("rejected", "tài liệu không hợp lệ", { failed: parsed.error.issues.map((x) => `${x.path.join(".")}: ${x.message}`) });
-  return insertUserTurn(db, key, { text: "Sửa tay", createdBy: p.userId, proposal: parsed.data, ask: false }, core.clock.now()).user;
+  const proposal = survey ? ({ ops: [], survey: parsed.data as StudioSurvey } satisfies SurveyProposal) : parsed.data;
+  return insertUserTurn(db, key, { text: "Sửa tay", createdBy: p.userId, proposal, ask: false }, core.clock.now()).user;
 }
 
 // ---------------------------------------------------------------------------

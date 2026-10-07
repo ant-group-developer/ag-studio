@@ -226,7 +226,7 @@ export function startPlanRun(core: StudioEngineCore, db: StudioDb, productionId:
 }
 
 /** A new plan replaces the production's episodes: refused while one of them is still producing. */
-function assertNoEpisodeProducing(core: StudioEngineCore, db: StudioDb, productionId: string): void {
+export function assertNoEpisodeProducing(core: StudioEngineCore, db: StudioDb, productionId: string): void {
   const producing = listEpisodes(db, productionId).find((e) => ["producing", "waiting_approval"].includes(episodeState(core, db, e).status));
   if (producing) throw new StudioRunError("conflict", "một tập đang sản xuất; không thể lên kế hoạch lại", { code: "episode_producing", episode_id: producing.id });
 }
@@ -449,6 +449,19 @@ export function retryStage(core: StudioEngineCore, runId: string, stageKey: stri
   });
 }
 
+/** `fromStage` and every stage that depends on it, transitively: what a resume from it runs again (run order). */
+export function stagesFrom(stages: readonly { stage_key: string; depends_on: string[]; depends_on_optional: string[] }[], fromStage: string): string[] {
+  const rerun = new Set([fromStage]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const s of stages) {
+      if (rerun.has(s.stage_key)) continue;
+      if ([...s.depends_on, ...s.depends_on_optional].some((d) => rerun.has(d))) { rerun.add(s.stage_key); grew = true; }
+    }
+  }
+  return stages.filter((s) => rerun.has(s.stage_key)).map((s) => s.stage_key);
+}
+
 /**
  * Resume a terminal run from `fromStage` (creating a new run that reuses the stages before it).
  * `updateLink` is called with the new run id so the production/episode can point at it.
@@ -464,14 +477,7 @@ function resumeRunFrom(
   if (!isTerminal("run", old.state)) throw new StudioRunError("conflict", `run is ${old.state}; retry the stage instead`, { state: old.state });
   const oldStages = core.store.listStageRuns(oldRunId);
   if (!oldStages.some((s) => s.stage_key === fromStage)) throw new StudioRunError("not_found", `run ${oldRunId} has no stage ${fromStage}`);
-  const rerun = new Set([fromStage]);
-  for (let grew = true; grew; ) {
-    grew = false;
-    for (const s of oldStages) {
-      if (rerun.has(s.stage_key)) continue;
-      if ([...s.depends_on, ...s.depends_on_optional].some((d) => rerun.has(d))) { rerun.add(s.stage_key); grew = true; }
-    }
-  }
+  const rerun = new Set(stagesFrom(oldStages, fromStage));
   const keep = new Map<string, string[]>();
   for (const s of oldStages) {
     if (rerun.has(s.stage_key)) continue;

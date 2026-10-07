@@ -15,6 +15,7 @@ export * from "./youtube-research.js";
 export * from "./llm-log.js";
 export * from "./team-skills.js";
 export * from "./production-docs.js";
+export * from "./step-docs.js";
 export * from "./thumbnail-render.js";
 export * from "./thumbnails-db.js";
 export * from "./thumbnail-actions.js";
