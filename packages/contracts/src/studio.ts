@@ -21,6 +21,9 @@ export function studioVersion<N extends string, V extends number = 1>(name: N, v
 export const STUDIO_ASPECTS = ["16:9", "9:16"] as const;
 export type StudioAspect = (typeof STUDIO_ASPECTS)[number];
 
+export const NARRATION_VOICE_STATES = ["ready", "missing", "none"] as const;
+export type NarrationVoiceState = (typeof NARRATION_VOICE_STATES)[number];
+
 /** A logical input the render worker asks Studio's `/farm/sign` for, e.g. `library:music/calm.mp3`. */
 export const LibraryInputSchema = z.string().regex(/^library:[A-Za-z0-9._\-/]+$/, "expected library:<path>");
 /** A key relative to `productions/<id>/` in the Studio bucket, e.g. `exports/<run>/video.mp4`. */
@@ -133,6 +136,11 @@ export const StudioBriefSchema = z.object({
   /** Competitor channels as the user typed them (links, @handles or channel ids). */
   youtube_channels: z.array(z.string().min(1).max(300)).max(MAX_RESEARCH_CHANNELS),
   keywords: z.array(z.string().min(1).max(100)).max(MAX_RESEARCH_KEYWORDS),
+  /**
+   * Whether narration can be read when the plan is made (ADR-0001 item 167): `ready` (a voice), `missing` (none yet,
+   * the episode asks before reading), `none` (declined: no episode is `tts`). Absent on briefs written before.
+   */
+  narration_voice: z.enum(NARRATION_VOICE_STATES).optional(),
 }).strict();
 export type StudioBrief = z.infer<typeof StudioBriefSchema>;
 

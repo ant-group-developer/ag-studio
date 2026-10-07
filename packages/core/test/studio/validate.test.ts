@@ -151,6 +151,20 @@ describe("series-plan-valid", () => {
     expect(r.problems.map((p) => p.code)).toContain("narration_needs_cut");
   });
 
+  it("narration declined for the production: no episode is read aloud", () => {
+    const cut = (narration?: "tts" | "none" | "original") => seriesPlan({
+      episodes: [{ ...seriesPlan().episodes[0]!, target_seconds: 30, edit_style: "cut", ...(narration ? { narration } : {}) }],
+    });
+    const declined = brief({ narration_voice: "none" });
+    expect(validateSeriesPlan(cut("tts"), { brief: declined, catalog: catalog().assets }).problems.map((p) => p.code)).toContain("narration_needs_voice");
+    // absent = tts
+    expect(validateSeriesPlan(cut(), { brief: declined, catalog: catalog().assets }).problems.map((p) => p.code)).toContain("narration_needs_voice");
+    expect(validateSeriesPlan(cut("original"), { brief: declined, catalog: catalog().assets }).problems).toEqual([]);
+    // no voice yet: still allowed, the episode asks before reading
+    expect(validateSeriesPlan(cut("tts"), { brief: brief({ narration_voice: "missing" }), catalog: catalog().assets }).problems).toEqual([]);
+    expect(validateSeriesPlan(cut("tts"), { brief: brief(), catalog: catalog().assets }).problems).toEqual([]);
+  });
+
   it("a shot-cut episode takes at most 40 videos", () => {
     const many = Array.from({ length: 41 }, (_, i) => asset(`c${i}`, 30));
     const plan = seriesPlan({ episodes: [{ ...seriesPlan().episodes[0]!, edit_style: "cut", items: many.map((a) => ({ asset_id: a.asset_id, reason: "r", section_title: null })), alternates: [] }] });

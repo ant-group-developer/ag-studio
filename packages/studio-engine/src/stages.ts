@@ -28,6 +28,7 @@ import { episodeWorkflowFor, episodeWorkflowForPlan } from "./run-control.js";
 import type { ThumbnailRenderer } from "./thumbnail-render.js";
 import type { CutMediaDeps } from "./cut-stages.js";
 import { insertThumbnail, listThumbnails, replaceRenderThumbnails } from "./thumbnails-db.js";
+import { productionVoice } from "./voice.js";
 import {
   episodeForRun, getEpisode, getProduction, latestEpisodeRevision, listEpisodes, productionBranding, productionChannels, productionForRun,
   productionHints, productionMusic, productionOwner, productionRnd, productionSources, replaceEpisodes, saveEpisodeRevision, saveProductionDocument,
@@ -381,7 +382,10 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
         aspect: seed.aspect, canvas: seed.canvas, fps: seed.fps, language: seed.language, music: seed.music,
         youtube_channels: seed.channels.filter((c) => c.role === "reference").map((c) => c.url), keywords: seed.keywords,
       }, seed.hints, rnd);
-      writeOutput(ctx, "brief.json", toBuffer(brief));
+      // whether the plan may narrate: read now, not frozen in the seed (the person may have declined since)
+      const narration = productionVoice(p.voice).kind;
+      brief.narration_voice = narration === "clone" ? "ready" : narration;
+      writeOutput(ctx, "brief.json", toBuffer(StudioBriefSchema.parse(brief)));
       writeOutput(ctx, "rnd.json", toBuffer(rnd));
       writeOutput(ctx, "branding.json", toBuffer(branding));
     },
