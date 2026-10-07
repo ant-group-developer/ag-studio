@@ -112,7 +112,7 @@ describe("ChatThread", () => {
     expect(screen.getByRole("radio", { name: /Máy có NVENC/ })).toBeChecked();
     fireEvent.click(screen.getByRole("radio", { name: /Máy có GPU/ }));
     fireEvent.click(screen.getByRole("button", { name: "Duyệt và render" }));
-    expect(onCard).toHaveBeenCalledWith("approve", ok, { renderMachine: "gpu" });
+    expect(onCard).toHaveBeenCalledWith("approve", ok, { renderMachine: "gpu", renderNodeId: null });
   });
 
   it("the approve card of any other gate has no machine type", () => {

@@ -214,7 +214,9 @@ export interface EpisodeRender {
   defaultMachine: RenderMachine;
   /** Where Render lại starts: no run yet, only the render, the timeline approved again first, freeze; null: producing. */
   restartFrom: "start" | "render-final" | "approve-timeline" | "freeze-timeline" | null;
-  job: { farmJobId: string; runId: string; machine: RenderMachine | null; createdAt: string } | null;
+  /** The farm node the current run's render is pinned to. */
+  node?: RenderNode | null;
+  job: { farmJobId: string; runId: string; machine: RenderMachine | null; node?: RenderNode | null; createdAt: string } | null;
   /** The farm's view of `job` while the run renders it. */
   farmStatus: { status: string; progress: number | null } | null;
 }
@@ -595,8 +597,9 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
       return request<EpisodeDetail>(getAccessToken, "PATCH", `/api/productions/${productionId}/episodes/${episodeId}`, data);
     },
     /** Render lại; `renderMachine` is the farm machine type of the final render (none: the run's, or any). */
-    rerenderEpisode(productionId: string, episodeId: string, renderMachine?: RenderMachine): Promise<{ runId: string; from: NonNullable<EpisodeRender["restartFrom"]> }> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/rerender`, renderMachine ? { renderMachine } : undefined);
+    rerenderEpisode(productionId: string, episodeId: string, renderMachine?: RenderMachine, renderNodeId?: string | null): Promise<{ runId: string; from: NonNullable<EpisodeRender["restartFrom"]> }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/rerender`,
+        renderMachine ? { renderMachine, ...(renderNodeId ? { renderNodeId } : {}) } : undefined);
     },
     /** 403 `footage_hidden`, 422 `not_cut` for a whole-video episode. */
     getEpisodeShots(productionId: string, episodeId: string): Promise<EpisodeShots> {
@@ -727,10 +730,10 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     startProduction(productionId: string): Promise<{ runId: string }> {
       return request(getAccessToken, "POST", `/api/productions/${productionId}/start`);
     },
-    approveChat(productionId: string, input: { stageKey: string; episodeId?: string | null; turnId?: string | null; renderMachine?: RenderMachine }): Promise<{ stageState: string; runState: string; revision?: number }> {
+    approveChat(productionId: string, input: { stageKey: string; episodeId?: string | null; turnId?: string | null; renderMachine?: RenderMachine; renderNodeId?: string | null }): Promise<{ stageState: string; runState: string; revision?: number }> {
       return request(getAccessToken, "POST", `/api/productions/${productionId}/chat/approve`, {
         stageKey: input.stageKey, ...(input.episodeId ? { episodeId: input.episodeId } : {}), ...(input.turnId ? { turnId: input.turnId } : {}),
-        ...(input.renderMachine ? { renderMachine: input.renderMachine } : {}),
+        ...(input.renderMachine ? { renderMachine: input.renderMachine, ...(input.renderNodeId ? { renderNodeId: input.renderNodeId } : {}) } : {}),
       });
     },
     /** The production's voice sample (or narration declined) and background music (plan optional-audio). */
@@ -789,6 +792,10 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     /** The Queue screen: Claude calls and farm jobs of the videos the caller can see. */
     getQueue(): Promise<StudioQueueView> {
       return request(getAccessToken, "GET", "/api/studio/queue");
+    },
+    /** Farm machines a final render may be pinned to (empty: none listed). */
+    listFarmNodes(): Promise<{ nodes: FarmNode[] }> {
+      return request(getAccessToken, "GET", "/api/studio/farm/nodes");
     },
     getClaudeUsage(): Promise<ClaudeUsage> {
       return request(getAccessToken, "GET", "/api/studio/claude");
@@ -883,12 +890,25 @@ export interface QueueRender extends QueueWhere {
   status: "queued" | "leased" | "paused" | string; progress: number | null; progressStage: string | null; attempt: number; createdAt: string;
   /** Queued for more than 10 minutes: no node took it, maybe none fits. */
   stuck: boolean;
+  /** The node running it, and the one it was pinned to (`name` null: the farm did not list it). */
+  node?: { id: string; name: string | null } | null;
+  pinned?: { id: string; name: string | null } | null;
 }
 export interface StudioQueueView {
   claude: { running: number; waiting: number; max: number; hidden: number; items: QueueClaudeItem[] };
   renders: QueueRender[];
   hiddenRenders: number;
+  /** The farm's machines; null when the hub does not list them. */
+  machines?: FarmNode[] | null;
   farm: { ok: true } | { ok: false; error: string };
+}
+
+/** A farm node a final render may be pinned to. */
+export interface RenderNode { id: string; name: string }
+/** A machine of the farm (ag-farm `GET /v1/owner/nodes`). */
+export interface FarmNode {
+  id: string; name: string; online: boolean; kinds: string[];
+  gpus: { name: string; vram_mb: number; nvenc: boolean }[]; running_jobs: number; last_seen_at: string | null;
 }
 
 /** Kind of farm machine for a final render: ag-farm requirements `{}`, `{nvenc: true}`, `{gpu: true}`. */

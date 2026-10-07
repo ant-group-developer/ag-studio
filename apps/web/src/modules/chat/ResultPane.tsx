@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Dropdown, Popover, type MenuProps } from "antd";
 import { MoreHorizontal } from "lucide-react";
 import type { StoredTimeline } from "@harness/contracts";
-import type { ChatThreadView, ChatTurn, RenderMachine, StepDocKind } from "../../api/studio-client";
+import type { ChatThreadView, ChatTurn, FarmNode, RenderMachine, StepDocKind } from "../../api/studio-client";
 import { RenderMachinePicker } from "../render/RenderMachinePicker";
 import { KIT_GATE, type CardOptions } from "./ChatThread";
 import { diffDoc } from "./diff-doc";
@@ -31,6 +31,8 @@ interface Props {
   canApprove?: boolean | undefined;
   /** Where the machine picker starts (the episode's `render.defaultMachine`). */
   renderDefault?: RenderMachine | undefined;
+  /** The farm machines a final render may be pinned to. */
+  renderNodes?: FarmNode[] | undefined;
   /** ⋯ → Render bản cuối… can start now (the episode is not producing). */
   canRenderFinal?: boolean | undefined;
   /** The episode run's workflow (`id@version`). */
@@ -42,19 +44,22 @@ interface Props {
 }
 
 /** Duyệt on the YouTube kit: it starts the final render, so it confirms the machine type first (spec §2.5, §3.4). */
-function ApproveAndRender({ disabled, initial, onConfirm }: { disabled: boolean; initial: RenderMachine; onConfirm: (m: RenderMachine) => void }) {
+function ApproveAndRender({ disabled, initial, nodes, onConfirm }: {
+  disabled: boolean; initial: RenderMachine; nodes?: FarmNode[] | undefined; onConfirm: (m: RenderMachine, node: string | null) => void;
+}) {
   const { t } = useAiTranslation();
   const [open, setOpen] = useState(false);
   const [machine, setMachine] = useState<RenderMachine>(initial);
+  const [node, setNode] = useState<string | null>(null);
   const content = (
     <div className="chat-card chat-card--column chat-card--popover">
       <span>{t("chat.cards.approveRender.question")}</span>
-      <RenderMachinePicker value={machine} onChange={setMachine} />
-      <button type="button" className="chat-card__button" onClick={() => { setOpen(false); onConfirm(machine); }}>{t("chat.cards.approveRender.button")}</button>
+      <RenderMachinePicker value={machine} onChange={setMachine} nodes={nodes} node={node} onNode={setNode} />
+      <button type="button" className="chat-card__button" onClick={() => { setOpen(false); onConfirm(machine, node); }}>{t("chat.cards.approveRender.button")}</button>
     </div>
   );
   return (
-    <Popover open={open} onOpenChange={(o) => { if (o) setMachine(initial); setOpen(o); }} trigger="click" placement="topLeft" content={content}>
+    <Popover open={open} onOpenChange={(o) => { if (o) { setMachine(initial); setNode(null); } setOpen(o); }} trigger="click" placement="topLeft" content={content}>
       <button type="button" className="chat-primary" disabled={disabled}>{t("chat.result.primary.approve")}</button>
     </Popover>
   );
@@ -100,7 +105,7 @@ function Problems({ problems }: { problems: { code: string; message: string }[] 
 }
 
 /** The result column (spec local-chat §2.3–2.4): the step's document, readable, changes marked; one main button; ⋯. */
-export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu, busy, canApprove = true, renderDefault = "any", canRenderFinal = false, workflow, onSaveEdit, onAudioChanged }: Props) {
+export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu, busy, canApprove = true, renderDefault = "any", renderNodes, canRenderFinal = false, workflow, onSaveEdit, onAudioChanged }: Props) {
   const { t } = useAiTranslation();
   const scope = thread.scope;
   // An episode whose run ended (rendered, or stopped at the render): its render and files, not the timeline. The chat
@@ -234,7 +239,8 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
             <button type="button" className="chat-card__button chat-button--secondary" onClick={() => setDraft(null)}>{t("chat.edit.cancel")}</button>
           </>
         ) : primary === "approve" && scope?.stageKey === KIT_GATE ? (
-          <ApproveAndRender disabled={!!busy || !canApprove} initial={renderDefault} onConfirm={(m) => onPrimary("approve", { renderMachine: m })} />
+          <ApproveAndRender disabled={!!busy || !canApprove} initial={renderDefault} nodes={renderNodes}
+            onConfirm={(m, node) => onPrimary("approve", { renderMachine: m, renderNodeId: node })} />
         ) : primary === "renderAgain" ? (
           <button type="button" className="chat-primary" disabled={busy || !canRenderFinal || !canApprove} onClick={() => onMenu("finalRender")}>
             {t("chat.result.primary.renderAgain")}

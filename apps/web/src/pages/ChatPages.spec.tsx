@@ -115,7 +115,7 @@ describe("chat pages", () => {
     expect(await screen.findByText("Duyệt YouTube kit và render bản cuối?")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("radio", { name: /Máy có GPU/ })).toBeChecked());
     fireEvent.click(screen.getByRole("button", { name: "Duyệt và render" }));
-    await waitFor(() => expect(client.approveChat).toHaveBeenCalledWith("p1", { stageKey: "approve-youtube-kit", episodeId: "e1", turnId: null, renderMachine: "gpu" }));
+    await waitFor(() => expect(client.approveChat).toHaveBeenCalledWith("p1", { stageKey: "approve-youtube-kit", episodeId: "e1", turnId: null, renderMachine: "gpu", renderNodeId: null }));
   });
 
   it("⋯ → Render bản cuối…: only the render runs again, on the machine type picked", async () => {
@@ -132,7 +132,7 @@ describe("chat pages", () => {
     expect(await screen.findByText("Chỉ render lại, giữ timeline và YouTube kit đã duyệt.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: /Máy có GPU/ }));
     fireEvent.click(screen.getByRole("button", { name: "Render" }));
-    await waitFor(() => expect(client.rerenderEpisode).toHaveBeenCalledWith("p1", "e1", "gpu"));
+    await waitFor(() => expect(client.rerenderEpisode).toHaveBeenCalledWith("p1", "e1", "gpu", null));
   });
 
   it("the step chips of an episode whose run ended ready are all done", async () => {

@@ -79,13 +79,13 @@ Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-2-chat.md`. Cố ý ch�
 
 Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-3-render.md`. Cố ý chưa làm, hoặc lệch mockup (màn 11, 12):
 
-- **Không có danh sách máy** trên màn Hàng đợi: owner API của ag-farm không trả node. Admin API `GET /v1/admin/nodes`
-  có sẵn (JWT Auth0 của admin, không đổi hợp đồng): web có thể gọi thẳng cho admin nếu cần.
-- **Không có tên máy trên job** ("render-01" của mockup): `JobView` chỉ có `node_id`.
-- **Ghim một máy theo tên node**: cần trường mới trong giao thức ag-farm — đổi hợp đồng, phải hỏi.
+- ✅ 2026-10-07 — màn Hàng đợi có danh sách máy (ag-farm `GET /v1/owner/nodes`, owner-client `listNodes`).
+- ✅ 2026-10-07 — job ghi tên máy đang chạy và máy được ghim (tra `node_id` qua danh sách máy).
+- ✅ 2026-10-07 — ghim bản cuối vào một máy: `requirements.node_id` (ag-farm `nodeMeetsRequirements`), migration
+  `0026`, ô "Máy cụ thể" trong bộ chọn máy. Hub/worker cũ từ chối `node_id` (`strictObject`).
 - **Đổi máy cho job đang chờ**: farm không cho sửa requirements sau khi gửi; người dùng huỷ tập rồi Render lại.
-- **Job không máy nào khớp chờ mãi**: farm không timeout job `queued`; stage `render-final` chờ tới hết deadline 4 giờ
-  rồi thử lại một lần (tổng ~8 giờ). Studio chỉ cảnh báo sau 10 phút.
+- ✅ 2026-10-07 — job farm không máy nào nhận sau `STUDIO_FARM_QUEUE_TIMEOUT_MINUTES` (mặc định 120) bị huỷ, bước dừng
+  hẳn (lỗi contract, không thử lại) và chat báo lý do kèm nút Render lại.
 - **`nvenc` của node theo bản ffmpeg, không theo driver**; `render.json` không ghi encoder thật đã dùng, nên Studio không
   nói được bản render có thật sự dùng NVENC không.
 - ✅ Đã đóng 2026-10-07 — khi run của tập đã xong, cột phải hiện timeline thay vì bản render; run `FAILED` ở
