@@ -29,6 +29,11 @@ Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142)
   được hoist ra `ag-farm/node_modules`; chạy tay `node --require ts-node/register ../../node_modules/typeorm/cli.js
   migration:run -d src/database/data-source.ts`.
 
+- **E2E chạy cả thư mục thì đè nhau** (2026-10-07): `E2E=1 pnpm vitest run tests/e2e` từ gốc repo chạy các file song song
+  dù `tests/e2e/vitest.config.ts` đặt `fileParallelism: false` (chế độ workspace); `farm-render` và `series-flow` ghi
+  đè khoá của chủ job `studio` trong DB farm test → `Invalid owner key`. Chạy từng file một thì xanh (farm-render 10,
+  series-flow 7, chat-flow 1).
+
 ### Nợ dọn dẹp
 
 - ✅ 2026-10-07 — đã gỡ `getSegmentMedia`/`resolveSegments` của `ag-go-client`, bản sao ở web, `useSegmentMedia`,
