@@ -140,6 +140,12 @@ describe("runChatTurn", () => {
     expect(second.turn.action).toBe("suggest_approve");
     const [call] = chatCalls(s, id);
     expect(call).toMatchObject({ run_id: "intake", stage_key: "intake", skill: "studio-intake" });
+    // a voice sample and music pasted in the chat: offered in the draft, nothing fetched, still ready to start
+    const third = await say(s, key, "Giọng đọc: https://drive.google.com/file/d/abc/view , nhạc nền https://cdn.example.com/calm.mp3");
+    const d3 = third.turn.proposal as IntakeDraft;
+    expect(third.turn.problems).toEqual([]);
+    expect(d3.audio_links).toEqual({ voice: "https://drive.google.com/file/d/abc/view", music: "https://cdn.example.com/calm.mp3" });
+    expect(intakeMissing(d3)).toEqual([]);
   }, 60_000);
 
   it("timeline: edits proposed as operations, with the timeline they give", async () => {

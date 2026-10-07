@@ -285,6 +285,11 @@ function intakeDraft(current, msg, bad) {
   if (/dọc|9:16/.test(low)) d.aspect = "9:16";
   d.title ??= firstFolder ? `Series ${firstFolder}` : null;
   d.language ??= "vi";
+  // links pasted for a voice sample / background music: whichever word comes before each link
+  for (const m of msg.matchAll(/(giọng|nhạc)[^h]*?(https?:\/\/\S+)/gi)) {
+    d.audio_links ??= { voice: null, music: null };
+    d.audio_links[m[1].toLowerCase() === "giọng" ? "voice" : "music"] = m[2];
+  }
   if (bad) d.folder_ids = ["folder-khong-co"];
   d.questions = [];
   if (!d.title) d.questions.push({ field: "title", question: "Series tên là gì?", options: [] });
