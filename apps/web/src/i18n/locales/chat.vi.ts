@@ -220,6 +220,11 @@ export const chatVi = {
     machinesNote: "Farm không cho Studio xem danh sách máy, nên ở đây chỉ có job. Mỗi lần render bản cuối, bạn chọn một kiểu máy; farm giao job cho máy hợp yêu cầu.",
     renderChip: "Render: {{n}} job",
   },
+  files: {
+    download: "Tải về", copy: "Sao chép", unreadable: "Không mở được file này ở đây.",
+    thumbnails: "Gợi ý thumbnail", youtube: "Gói YouTube", description: "Mô tả", chapters: "Chapter", tags: "Tag",
+    playlist: "Playlist: {{name}}", timeline: "Timeline đã render", timelineCount: "Timeline đã render · {{n}} clip",
+  },
   outputs: {
     rendering: "Tiến độ render", notYet: "Chưa có file xuất.",
     farm: "Farm · {{machine}} · {{p}}%", farmNoProgress: "Farm · {{machine}} · đang render",

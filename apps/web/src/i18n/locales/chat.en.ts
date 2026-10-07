@@ -222,6 +222,11 @@ export const chatEn: typeof chatVi = {
     machinesNote: "The farm does not let Studio list its machines, so only jobs are shown here. Each final render, you pick a machine type; the farm gives the job to a machine that fits.",
     renderChip: "Render: {{n}} jobs",
   },
+  files: {
+    download: "Download", copy: "Copy", unreadable: "This file cannot be opened here.",
+    thumbnails: "Thumbnail suggestions", youtube: "YouTube pack", description: "Description", chapters: "Chapters", tags: "Tags",
+    playlist: "Playlist: {{name}}", timeline: "Rendered timeline", timelineCount: "Rendered timeline · {{n}} clips",
+  },
   outputs: {
     rendering: "Render progress", notYet: "No exported files yet.",
     farm: "Farm · {{machine}} · {{p}}%", farmNoProgress: "Farm · {{machine}} · rendering",
