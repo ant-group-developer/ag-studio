@@ -1,4 +1,5 @@
 import { Fragment, useState } from "react";
+import { Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ChatThreadView, ChatTurn, RenderMachine } from "../../api/studio-client";
 import { RenderMachinePicker } from "../render/RenderMachinePicker";
@@ -102,11 +103,12 @@ export function ChatThread({ thread, onCard, onQuickAnswer, busyCard, episode = 
         const state = current
           ? thread.scope?.scope === "failed" ? t("chat.thread.needsAttention") : thread.scope ? t("chat.thread.yourTurn") : ""
           : t("chat.thread.done");
+        const tone = !current ? "done" : thread.scope?.scope === "failed" ? "bad" : thread.scope ? "now" : "idle";
         const collapsed = !!step && step !== "intake" && !current && !opened.has(i) && i < all.length - 1;
         return (
           <section key={`${sec.stageKey}-${i}`} className="chat-thread__section">
             {step && step !== "intake" ? (
-              <div className="chat-divider">
+              <div className={`chat-divider chat-divider--${tone}`}>
                 <span>
                   {n >= 0 ? `${t("chat.thread.step", { n: n + 1 })} · ` : ""}{t(stepLabelKey(step))}{note ? ` · ${note}` : ""}{state ? ` · ${state}` : ""}
                   {collapsed ? <> · <button type="button" className="chat-link-button" onClick={() => setOpened(new Set(opened).add(i))}>{t("chat.thread.show")}</button></> : null}
@@ -121,7 +123,7 @@ export function ChatThread({ thread, onCard, onQuickAnswer, busyCard, episode = 
               const options = turn.id === newestReply?.id && turn.scope === "intake" ? questions?.[0]?.options ?? [] : [];
               return (
                 <div key={turn.id} className="chat-reply">
-                  <p className="chat-reply__who">Claude</p>
+                  <p className="chat-reply__who"><span className="chat-reply__avatar" aria-hidden><Sparkles size={12} /></span>Claude</p>
                   {turn.status === "pending" ? (
                     <p className="chat-reply__wait">{thread.queueAhead > 0 ? t("chat.thread.queued", { n: thread.queueAhead }) : t("chat.thread.writing")}</p>
                   ) : turn.status === "running" ? (

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { App as AntApp, Drawer } from "antd";
+import { ArrowDown, ArrowLeft } from "lucide-react";
 import type { EpisodeRerunGate } from "../api/studio-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -9,6 +10,7 @@ import { ChatComposer } from "../modules/chat/ChatComposer";
 import { ChatShell } from "../modules/chat/ChatShell";
 import { ChatThread, type CardOptions, type ChatCard } from "../modules/chat/ChatThread";
 import { ManualEditDrawer } from "../modules/chat/ManualEditDrawer";
+import { useStickToBottom } from "../modules/chat/use-stick-to-bottom";
 import { ResultPane, type MenuAction, type ResultAction } from "../modules/chat/ResultPane";
 import { episodeStepsFor, isCutWorkflow, PLAN_STEPS, stepLabelKey, stepOf, stepPosition, type ChatStep } from "../modules/chat/steps";
 import { gateProblems } from "../modules/production/gate-problems";
@@ -155,35 +157,56 @@ export function ChatProductionPage() {
   const at = stepPosition(step, row);
   const finished = thread?.blocked?.code === "nothing_to_chat" || (ended && episode?.status === "ready");
   const title = episodeId ? (episode ? t("chat.episodeTitle", { idx: episode.idx, title: episode.title }) : "") : production?.title ?? "";
+  const last = thread?.turns.at(-1);
+  const stick = useStickToBottom(`${productionId}/${episodeId ?? ""}`, `${thread?.turns.length ?? 0}:${last?.id ?? ""}:${last?.status ?? ""}:${thread?.scope?.stageKey ?? ""}`);
   const placeholder = thread?.blocked
     ? t(thread.blocked.code === "busy" ? "chat.page.busy" : "chat.page.finished")
     : thread?.scope?.scope === "intake" ? t("chat.page.intakePlaceholder") : t("chat.composer.placeholder");
 
   return (
     <ChatShell productionId={productionId} episodeId={episodeId}>
-      <main className="chat-main">
-        <div className="chat-page__head">
-          <h1>{title}</h1>
-          {episodeId ? <button type="button" className="chat-link-button" onClick={() => navigate(`/v/${productionId}`)}>{t("chat.page.backToSeries")}</button> : null}
+      <main className="chat-main chat-main--thread">
+        <div className="chat-main__head">
+          <div className="chat-main__inner">
+            <div className="chat-page__head">
+              {episodeId ? (
+                <button type="button" className="chat-page__back" onClick={() => navigate(`/v/${productionId}`)}>
+                  <ArrowLeft size={14} aria-hidden />{t("chat.page.backToSeries")}
+                </button>
+              ) : null}
+              <h1>{title}</h1>
+            </div>
+            {header ? <p className="chat-page__sub">{header}</p> : null}
+            {thread?.scope?.scope !== "intake" ? (
+              <ol className="chat-steps" aria-label={t("chat.page.steps")}>
+                {row.map((s, i) => (
+                  <li key={s} className={finished || i < at ? "chat-steps__done" : i === at ? "chat-steps__now" : undefined}>
+                    {finished || i < at ? "✓ " : `${i + 1} · `}{t(stepLabelKey(s))}
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+          </div>
         </div>
-        {header ? <p className="chat-page__sub">{header}</p> : null}
-        {thread?.scope?.scope !== "intake" ? (
-          <ol className="chat-steps" aria-label={t("chat.page.steps")}>
-            {row.map((s, i) => (
-              <li key={s} className={finished || i < at ? "chat-steps__done" : i === at ? "chat-steps__now" : undefined}>
-                {finished || i < at ? "✓ " : `${i + 1} · `}{t(stepLabelKey(s))}
-              </li>
-            ))}
-          </ol>
-        ) : null}
-        {thread ? (
-          <ChatThread thread={thread} episode={!!episodeId} workflow={workflow} notes={notes} busyCard={act.isPending ? (act.variables?.kind as ChatCard) : null}
-            renderDefault={episode?.render?.defaultMachine}
-            onCard={(card, turn, options) => (card === "renderFinal" ? setFinalOpen(true) : act.mutate({ kind: card, turn, options }))}
-            onQuickAnswer={(text) => send.mutate(text)} />
-        ) : null}
-        <ChatComposer value={draft} onValueChange={setDraft} disabled={!thread || !!thread.blocked || !canEdit}
-          placeholder={placeholder} onSend={(text) => send.mutateAsync(text)} />
+        <div className="chat-main__scroll" ref={stick.ref} onScroll={stick.onScroll}>
+          <div className="chat-main__inner">
+            {thread ? (
+              <ChatThread thread={thread} episode={!!episodeId} workflow={workflow} notes={notes} busyCard={act.isPending ? (act.variables?.kind as ChatCard) : null}
+                renderDefault={episode?.render?.defaultMachine}
+                onCard={(card, turn, options) => (card === "renderFinal" ? setFinalOpen(true) : act.mutate({ kind: card, turn, options }))}
+                onQuickAnswer={(text) => { stick.toBottom(); send.mutate(text); }} />
+            ) : null}
+          </div>
+        </div>
+        <div className="chat-main__foot">
+          {!stick.atBottom ? (
+            <button type="button" className="chat-jump" onClick={stick.toBottom}><ArrowDown size={14} aria-hidden />{t("chat.nav.latest")}</button>
+          ) : null}
+          <div className="chat-main__inner">
+            <ChatComposer value={draft} onValueChange={setDraft} disabled={!thread || !!thread.blocked || !canEdit}
+              placeholder={placeholder} onSend={(text) => { stick.toBottom(); return send.mutateAsync(text); }} />
+          </div>
+        </div>
       </main>
       {thread ? (
         <ResultPane productionId={productionId} episodeId={episodeId} thread={thread} busy={act.isPending} canApprove={canManage || thread.scope?.scope === "timeline"}

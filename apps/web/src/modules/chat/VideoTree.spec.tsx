@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { beforeAll, describe, expect, it, vi } from "vitest";
@@ -37,5 +37,35 @@ describe("VideoTree", () => {
     expect(ep).toHaveTextContent("Render");
     expect(screen.getByRole("link", { name: /Huế/ })).toHaveTextContent("cần xử lý");
     expect(screen.getByRole("link", { name: /Video mới/ })).toHaveAttribute("href", "/");
+  });
+
+  it("folds the episodes of a series one is not on, unless one of them waits for you; a search shows past five videos", async () => {
+    const ep = (id: string, idx: number, group: "running" | "waiting_you") => ({ id, idx, title: `Tập ${id}`, status: "producing", step: "render-final", group });
+    const series = (id: string, title: string, episodes: ReturnType<typeof ep>[] = []) => ({ id, teamId: "t", title, updatedAt: "", step: null, group: "running", episodes });
+    client.getOverview.mockResolvedValueOnce({
+      items: [
+        series("a", "Đà Lạt", [ep("a1", 1, "running"), ep("a2", 2, "running")]),
+        series("b", "Huế", [ep("b1", 1, "waiting_you")]),
+        series("c", "Hội An"), series("d", "Sa Pa"), series("e", "Ninh Bình"), series("f", "Cần Thơ"),
+      ],
+    });
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter><VideoTree productionId="c" /></MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole("button", { name: "2 tập" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Tập a1/ })).toBeNull();
+    expect(screen.getByRole("link", { name: /Tập b1/ })).toHaveAttribute("href", "/v/b/e/b1");
+    fireEvent.click(screen.getByRole("button", { name: "Mở các tập của Đà Lạt" }));
+    expect(screen.getByRole("link", { name: /Tập a2/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Thu gọn các tập của Đà Lạt" }));
+    expect(screen.queryByRole("link", { name: /Tập a2/ })).toBeNull();
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Tìm video…" }), { target: { value: "hu" } });
+    expect(screen.getByRole("link", { name: /Huế/ })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Sa Pa/ })).toBeNull();
+    fireEvent.change(screen.getByRole("searchbox", { name: "Tìm video…" }), { target: { value: "zz" } });
+    expect(screen.getByText("Không có video nào khớp.")).toBeInTheDocument();
   });
 });
