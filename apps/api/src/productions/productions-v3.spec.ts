@@ -65,6 +65,16 @@ describe('ProductionsService (real studio.db)', () => {
     });
   });
 
+  it('a track the person gave keeps where it came from when the form saves only its gain', () => {
+    const p = svc.createProduction('team-1', 'owner-1', input);
+    const given = { track: 'library:studio/p/music/abc.m4a', gain_db: -18, ducking: true, source: { kind: 'link', url: 'https://a.b/x.mp3' }, sha256: 'abc', duration_s: 90 };
+    s.db.run('UPDATE productions SET music = ? WHERE id = ?', [JSON.stringify(given), p.id]);
+    svc.updateProduction(p.id, { music: { track: given.track, gainDb: -12, ducking: false } });
+    expect(JSON.parse(s.db.get<{ music: string }>('SELECT music FROM productions WHERE id = ?', [p.id])!.music)).toEqual({ ...given, gain_db: -12, ducking: false });
+    svc.updateProduction(p.id, { music: { track: 'library:music/calm.mp3', gainDb: -18, ducking: true } });
+    expect(JSON.parse(s.db.get<{ music: string }>('SELECT music FROM productions WHERE id = ?', [p.id])!.music)).toEqual({ track: 'library:music/calm.mp3', gain_db: -18, ducking: true });
+  });
+
   it('creates nothing when a source cannot be inserted (one transaction)', () => {
     expect(() => svc.createProduction('team-1', 'owner-1', { ...input, sources: ['same', 'same'] })).toThrow();
     expect(s.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM productions')?.n).toBe(0);

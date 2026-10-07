@@ -109,10 +109,17 @@ export interface Paged<T> {
   pageSize: number;
 }
 
-function musicToDb(m: BriefFieldsDto["music"]): string | null {
-  return m
-    ? JSON.stringify({ track: m.track, gain_db: m.gainDb, ducking: m.ducking })
-    : null;
+/**
+ * The music column from a form. A track the person gave by link or upload keeps where it came from while the form sends
+ * the same track back (only gain or ducking changed).
+ */
+function musicToDb(m: BriefFieldsDto["music"], existing: string | null = null): string | null {
+  if (!m) return null;
+  const before = existing ? (JSON.parse(existing) as { track?: string; source?: unknown; sha256?: string; duration_s?: number }) : null;
+  const kept = before && before.track === m.track && before.source
+    ? { source: before.source, sha256: before.sha256, duration_s: before.duration_s }
+    : {};
+  return JSON.stringify({ track: m.track, gain_db: m.gainDb, ducking: m.ducking, ...kept });
 }
 
 function parseMusic(
@@ -507,7 +514,7 @@ export class ProductionsService {
         pick(updates.maxEpisodes, existing.max_episodes),
         pick(updates.aspect, existing.aspect),
         pick(updates.language, existing.language),
-        updates.music !== undefined ? musicToDb(updates.music) : existing.music,
+        updates.music !== undefined ? musicToDb(updates.music, existing.music) : existing.music,
         updates.ownChannels !== undefined ? listOrNull(updates.ownChannels) : existing.own_channels,
         now,
         id,

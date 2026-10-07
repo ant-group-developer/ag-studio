@@ -6,6 +6,7 @@ import { EngineService } from './engine.service';
 import { EpisodesController } from './episodes.controller';
 import { FootageAccessService } from './footage-access.service';
 import { LlmLogController } from './llm-log.controller';
+import { ProductionAudioController } from './production-audio.controller';
 import { ProductionDocsController } from './production-docs.controller';
 import { StepDocsController } from './step-docs.controller';
 import { ProductionFootageController } from './production-footage.controller';
@@ -18,7 +19,7 @@ import { TimelineController } from './timeline.controller';
 @Module({
   controllers: [
     StudioRunController, EpisodesController, ThumbnailsController, TimelineController, ProductionFootageController, ProductionDocsController, StepDocsController,
-    LlmLogController, CanvaController, ChatController, StudioOverviewController,
+    LlmLogController, CanvaController, ChatController, StudioOverviewController, ProductionAudioController,
   ],
   providers: [EngineService, FootageAccessService, ThumbnailWorkService, CanvaService, ChatFolders],
   exports: [EngineService],

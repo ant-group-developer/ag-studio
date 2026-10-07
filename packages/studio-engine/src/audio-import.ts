@@ -20,7 +20,9 @@ import type { StudioBucket } from "./bucket.js";
 import type { StudioEngineCore } from "./core.js";
 import { probeMedia, runTool } from "./cut-ffmpeg.js";
 import { retryStage } from "./run-control.js";
-import { listEpisodes, type StudioDb } from "./studio-db.js";
+import { listEpisodes, type ProductionRecord, type StudioDb } from "./studio-db.js";
+
+export { VOICE_ORIGINS, type AudioSource, type VoiceOrigin } from "@harness/contracts";
 
 export type AudioKind = "voice" | "music";
 
@@ -244,4 +246,29 @@ export function resumeVoiceWaiting(core: StudioEngineCore, db: StudioDb, product
     resumed.push(ep.id);
   }
   return resumed;
+}
+
+/** What a production has, for a screen: its voice (or narration declined) and its music, with the inputs to listen to. */
+export interface ProductionAudioView {
+  voice:
+    | { mode: "none"; decided_at: string }
+    | { mode: "clone"; origin: VoiceOrigin | null; source: AudioSource | null; duration_s: number | null; reference_text: string | null; reference: string }
+    | null;
+  music: { track: string; gain_db: number; ducking: boolean; source: AudioSource | null; duration_s: number | null } | null;
+}
+
+export function productionAudio(p: Pick<ProductionRecord, "voice" | "music">): ProductionAudioView {
+  let voice: ProductionAudioView["voice"] = null;
+  if (p.voice) {
+    const v = ProductionVoiceSchema.parse(JSON.parse(p.voice));
+    if ("mode" in v && v.mode === "none") voice = { mode: "none", decided_at: v.decided_at };
+    else if ("mode" in v) voice = { mode: "clone", origin: v.origin, source: v.source, duration_s: v.duration_s, reference_text: v.reference_text, reference: v.reference };
+    else if (v.reference) voice = { mode: "clone", origin: null, source: null, duration_s: null, reference_text: v.reference_text, reference: v.reference };
+  }
+  let music: ProductionAudioView["music"] = null;
+  if (p.music) {
+    const m = ProductionMusicSchema.parse(JSON.parse(p.music));
+    music = { track: m.track, gain_db: m.gain_db, ducking: m.ducking, source: m.source ?? null, duration_s: m.duration_s ?? null };
+  }
+  return { voice, music };
 }
