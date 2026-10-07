@@ -811,6 +811,14 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     listFarmNodes(): Promise<{ nodes: FarmNode[] }> {
       return request(getAccessToken, "GET", "/api/studio/farm/nodes");
     },
+    /** The chat's event stream (server-sent events), read with fetch so the bearer token goes with it. */
+    async openChatEvents(productionId: string, episodeId: string | undefined, signal: AbortSignal): Promise<Response> {
+      const token = await getAccessToken();
+      const qs = episodeId ? `?episodeId=${encodeURIComponent(episodeId)}` : "";
+      return fetch(`${STUDIO_API_URL}/api/productions/${productionId}/chat/events${qs}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream" }, signal,
+      });
+    },
     getClaudeUsage(): Promise<ClaudeUsage> {
       return request(getAccessToken, "GET", "/api/studio/claude");
     },

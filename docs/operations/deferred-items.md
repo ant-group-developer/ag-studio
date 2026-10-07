@@ -60,7 +60,9 @@ Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142)
 
 Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-2-chat.md`. Cố ý chưa làm, hoặc lệch mockup:
 
-- **Không có SSE**: luồng chat polling 2 s khi Claude đang trả lời, 5 s khi không; cột trái và chip header 5 s.
+- ✅ 2026-10-07 — SSE cho luồng chat: `GET …/chat/events` gửi `changed` khi dấu vân tay của thread đổi (server xem
+  `studio.db` mỗi giây) và `ping` mỗi 20 s; web đọc bằng `fetch` (gửi bearer), tải lại thread khi có `changed`, polling
+  còn 30 s khi luồng mở và như cũ khi không. Cột trái, chip header, Hàng đợi vẫn polling 5 s.
 - **Chọn thumbnail ở bước YouTube kit** (mockup màn 10) chưa làm: thumbnail cắt từ `final.mp4`, chỉ có sau render.
   Gate kit chỉ sửa tiêu đề, mô tả, tag, ý tưởng thumbnail.
 - **Màn 13 "Áp dụng đề xuất và chạy lại"**: Claude không sửa thẳng đầu ra REJECTED của stage hỏng (phải đổi core);

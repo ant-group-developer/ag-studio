@@ -16,6 +16,7 @@ import { gateProblems } from "../modules/production/gate-problems";
 import { LlmLogPanel } from "../modules/production/LlmLogPanel";
 import { RenderFinalModal } from "../modules/render/RenderFinalModal";
 import { RerunFromModal } from "../modules/chat/RerunFromModal";
+import { useChatEvents } from "../modules/chat/use-chat-events";
 import { useAiTranslation } from "../modules/common/assistant-name";
 
 const MANAGES = new Set(["producer", "owner"]);
@@ -52,10 +53,16 @@ export function ChatProductionPage() {
   const [draft, setDraft] = useState("");
 
   const threadKey = ["chat", productionId, episodeId ?? null];
+  // the chat's event stream says when to read the thread again; polling is the fallback (slower while it is open)
+  const live = useChatEvents(productionId, episodeId, () => {
+    void qc.invalidateQueries({ queryKey: ["chat", productionId] });
+    void qc.invalidateQueries({ queryKey: ["overview"] });
+    if (episodeId) void qc.invalidateQueries({ queryKey: ["episode", productionId, episodeId] });
+  });
   const { data: thread } = useQuery({
     queryKey: threadKey,
     queryFn: () => client.getChatThread(productionId, episodeId),
-    refetchInterval: (q) => (stillWorking(q.state.data) ? 2000 : 5000),
+    refetchInterval: (q) => (live ? 30_000 : stillWorking(q.state.data) ? 2000 : 5000),
   });
   const { data: production } = useQuery({ queryKey: ["production", productionId], queryFn: () => client.getProduction(productionId) });
   const { data: episode } = useQuery({
