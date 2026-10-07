@@ -146,13 +146,13 @@ describe("ResultPane", () => {
     expect(screen.queryByRole("button", { name: "Render lại" })).toBeNull();
   });
 
-  it("⋯ of a shot-cut episode runs it again from a gate, and has no Premiere export (phase 4)", async () => {
+  it("⋯ of a shot-cut episode runs it again from a gate, and exports to Premiere (phase 4)", async () => {
     const onMenu = vi.fn();
     const done: ChatThreadView = { turns: [], scope: null, blocked: { code: "nothing_to_chat", stage: null }, current: null, queueAhead: 0 };
     const { unmount } = mount(done, { episodeId: "e", onMenu, workflow: "ag-studio-episode-cut@1.0.0" });
     fireEvent.click(screen.getByRole("button", { name: "Thêm thao tác" }));
     expect(await screen.findByRole("menuitem", { name: "Chạy lại từ kế hoạch dựng…" })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: "Xuất project Premiere" })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Xuất project Premiere" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("menuitem", { name: "Chạy lại từ chọn cảnh…" }));
     expect(onMenu).toHaveBeenCalledWith("rerunSurvey");
     unmount();

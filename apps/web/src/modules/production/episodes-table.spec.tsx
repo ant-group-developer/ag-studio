@@ -18,7 +18,7 @@ window.matchMedia ??= ((query: string) => ({
 const episodeList = {
   items: [
     { id: "ep-1", idx: 1, title: "Tập 1", hook: "h", status: "ready", currentStage: null, progress: 100, durationSeconds: 310, thumbnailUrl: "https://r2.test/thumb-1.jpg", updatedAt: "" },
-    { id: "ep-2", idx: 2, title: "Tập 2", hook: "h", status: "producing", currentStage: "render-final", progress: 50, durationSeconds: null, thumbnailUrl: null, updatedAt: "" },
+    { id: "ep-2", idx: 2, title: "Tập 2", hook: "h", status: "producing", currentStage: "render-final", progress: 50, durationSeconds: null, thumbnailUrl: null, updatedAt: "", editStyle: "cut" },
   ],
   total: 2, page: 1, pageSize: 20,
 };
@@ -50,7 +50,8 @@ function Wrapper({ children }: { children: React.ReactNode }) {
   );
 }
 
-describe("EpisodesPanel", () => {
+// Each case mounts the whole panel with antd menus: past 5 s when the full suite loads the machine (alone ~2 s).
+describe("EpisodesPanel", { timeout: 20_000 }, () => {
   it("shows each episode's thumbnail and its current step by name", async () => {
     const i18n = (await import("../../i18n/config")).default;
     await i18n.changeLanguage("vi");
@@ -138,5 +139,17 @@ describe("EpisodesPanel", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Xuất" })[0]!);
     fireEvent.click(await screen.findByText("Gói đăng YouTube (zip)"));
     await waitFor(() => expect(mockClient.youtubePack).toHaveBeenCalledWith("p-1", "ep-1"));
+  });
+
+  it("'Xuất' of a shot-cut episode offers Premiere too (phase 4)", async () => {
+    render(
+      <Wrapper>
+        <EpisodesPanel productionId="p-1" canEdit={true} />
+      </Wrapper>,
+    );
+    await screen.findByText("Tập 2");
+    fireEvent.click(screen.getAllByRole("button", { name: "Xuất" })[1]!);
+    expect(await screen.findByText("Premiere (proxy 720p)")).toBeInTheDocument();
+    expect(screen.getByText("Premiere (bản gốc)")).toBeInTheDocument();
   });
 });

@@ -350,6 +350,7 @@ export const vi = {
     premiereMediaOriginal: "Bản gốc",
     premiereStarted: "Đã bắt đầu xuất project Premiere",
     premiereForbidden: "Bạn không có quyền tải bản gốc; hãy xuất bản proxy 720p",
+    premiereWarnings: "Bản xuất có cảnh báo:",
     premiereNone: "Chưa xuất project Premiere nào",
     statusDraft: "Nháp",
     statusProducing: "Đang sản xuất",

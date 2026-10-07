@@ -16,8 +16,9 @@ import { voicePath } from "./voice-store.js";
 /**
  * The WAV of every narration line the composition plays, from the voice store, uploaded with the job as
  * `voice/<line_id>.wav` (the composition reads `stage:voice/<line_id>.wav`). A v3 timeline has none.
+ * Used by renders and by the Premiere export.
  */
-function narrationUploads(t: StoredTimeline, voiceDir: string | undefined): { localPath: string; relPath: string }[] {
+export function narrationUploads(t: StoredTimeline, voiceDir: string | undefined): { localPath: string; relPath: string }[] {
   if (!isTimelineV4(t) || t.narration.voice !== "tts") return [];
   const audio = new Map(t.narration.lines.map((l) => [l.line_id, l.audio]));
   return layoutTimeline(t).lines.map((l) => {

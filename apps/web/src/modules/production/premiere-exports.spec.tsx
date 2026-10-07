@@ -10,7 +10,7 @@ window.matchMedia ??= ((query: string) => ({
 })) as unknown as typeof window.matchMedia;
 
 const jobs = [
-  { id: "j2", kind: "export_premiere", status: "completed", progress: 100, request: { media: "proxy" }, result: {}, error: null, createdAt: "2026-10-01T01:00:00Z", url: "https://bucket.test/premiere.zip" },
+  { id: "j2", kind: "export_premiere", status: "completed", progress: 100, request: { media: "proxy" }, result: { warnings: ["Failed to probe music: timeout"] }, error: null, createdAt: "2026-10-01T01:00:00Z", url: "https://bucket.test/premiere.zip" },
   { id: "j1", kind: "export_premiere", status: "failed", progress: null, request: { media: "original" }, result: null, error: "hết dung lượng", createdAt: "2026-10-01T00:00:00Z" },
 ];
 const mockClient = {
@@ -43,6 +43,9 @@ describe("PremiereExports", () => {
     expect(mockClient.listEditorJobs).toHaveBeenCalledWith("p1", "e1", "export_premiere");
     const link = screen.getByRole("link", { name: "Tải xuống" });
     expect(link.getAttribute("href")).toBe("https://bucket.test/premiere.zip");
+    // what the export could not carry over is said under it
+    expect(screen.getByText("Bản xuất có cảnh báo:")).toBeTruthy();
+    expect(screen.getByText("Failed to probe music: timeout")).toBeTruthy();
     // viewers cannot start an export
     expect(screen.queryByRole("button", { name: /Xuất/ })).toBeNull();
   });

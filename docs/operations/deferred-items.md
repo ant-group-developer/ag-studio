@@ -6,11 +6,10 @@ Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142)
 
 ### Lỗi đã biết
 
-- **Xuất Premiere: tiếng gốc đã tắt vẫn có trong project.** `ag-render-worker/src/premiere-handler.ts` đặt cứng
-  `sourceAudioMuted: false`, bỏ qua `source_audio.muted` của timeline. Sửa khi đưa xuất Premiere về chạy local
-  (spec local-chat, pha 4).
-- **Xuất Premiere: gain nhạc luôn 0 dB, mất fade.** Cùng file, `gainDb: 0`; `cues[].gain_db` và fade của
-  composition bị bỏ qua. Sửa cùng lúc với mục trên.
+- ✅ **Đã đóng 2026-10-07 (pha 4) — Xuất Premiere: tiếng gốc đã tắt vẫn có trong project.** `ag-render-worker`
+  `08c1344`: A1 trống khi composition tắt tiếng gốc; `d0132f1`: A1 −12 dB khi `voice: none` (0.5.4).
+- ✅ **Đã đóng 2026-10-07 (pha 4) — Xuất Premiere: gain nhạc luôn 0 dB, mất fade.** `ag-render-worker` `09894e6`: A2
+  lấy `cues[0].gain_db` và fade của nhạc.
 - ✅ **Đã đóng 2026-10-06 — Không nhận ra mọi câu báo hết hạn mức Claude.** `isRateLimitMessage`
   (`packages/adapters/agent-cli/src/cli-agent-runtime.ts`) khớp cả nháy cong, "you have", "reached your … limit" và
   "usage limit reached".
@@ -23,6 +22,7 @@ Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142)
   test Claude thật cần `HARNESS_REAL_CLAUDE_TEST=1`), **1 fail chập chờn**:
   `apps/web/src/modules/production/episodes-table.spec.tsx` › "Video (mp4)" quá 5 s khi chạy cả bộ (máy tải nặng),
   chạy riêng thì pass (2,3 s). Nên tăng timeout riêng cho test này hoặc giảm việc render trong nó.
+  ✅ 2026-10-07 (pha 4): `describe("EpisodesPanel")` có timeout 20 s.
 - `pnpm build` ở gốc repo gọi `pnpm -r run build`, hỏng khi `pnpm` không có trên PATH (chỉ có qua `corepack`).
   Dùng `corepack pnpm -r run build`.
 - Ngoài repo: script `migration:run` của `ag-farm/apps/api` trỏ `./node_modules/typeorm/cli.js` nhưng typeorm
@@ -104,8 +104,7 @@ Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-5-cut.md`, ADR-0001 m�
 - **Xem trước có giọng ở gate kế hoạch dựng** (Q7): cần TTS + khớp hình + render mỗi lần sửa; nghe thử ở `approve-timeline`.
 - **Tiếng gốc dưới lời dẫn** (Q9): `voice: tts` tắt hẳn tiếng gốc; muốn tiếng môi trường phải đổi `audio-graph.ts` của
   render worker.
-- **Premiere/CapCut đọc `in`/`out`, chuyển cảnh và lời dẫn** (pha 4/6): tới đó `exports/premiere` của tập cắt là 422
-  `premiere_needs_phase_4`.
+- **CapCut đọc `in`/`out`, chuyển cảnh và lời dẫn** (pha 6). Premiere: ✅ đã đóng ở pha 4 (ADR mục 171).
 - **Session Claude không dọn:** `studio_agent_sessions` và thư mục workspace của `source-survey` giữ mãi; mất thư mục
   thì chat lùi về structured.
 - **Kho giọng và file theo run không dọn:** `<STUDIO_DATA_ROOT>/voice`, proxy 720p, khung và contact sheet trong
@@ -125,6 +124,16 @@ Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-5-cut.md`, ADR-0001 m�
 - Lịch sử: commit C2 của pha 5 typecheck hỏng tạm, commit kế sửa.
 - Cuối pha 5: `corepack pnpm -r run build` và `pnpm -r typecheck` sạch; `vitest run` 1671 pass, 191 skip, 0 fail (không đặt `FFMPEG_PATH`); với `FFMPEG_PATH`/`FFPROBE_PATH`, các test tập cắt (engine 190, integration `cut-episode` 6) pass. `E2E=1` farm-render 9/9
   pass (render worker 0.6.0).
+
+### Sau pha 4 — Premiere đọc tập cắt theo shot (2026-10-07)
+
+Plan: `docs/superpowers/plans/2026-10-07-ag-studio-phase-4-premiere.md`, ADR-0001 mục 171. Cố ý chưa làm:
+
+- **Không chặn worker cũ ở hợp đồng:** farm không ghim phiên bản; máy còn render worker trước `e882a6c` nhận job xuất
+  của tập cắt và âm thầm bỏ trim, chuyển cảnh, lời dẫn. Hiện chỉ dựa vào thứ tự deploy (runbook). Muốn chặn: một trường
+  mới trong `StudioExportPremierePayloadSchema` (`strictObject`, worker cũ từ chối) — đổi hợp đồng ag-farm, phải hỏi.
+- **Phụ đề không nằm sẵn trên timeline Premiere:** chỉ có `captions.srt` để nhập tay; karaoke thành chữ thường (SRT).
+- **Mở thử trong Premiere bằng tay** (plan, nhóm C) chưa làm: cần máy có Premiere và stack local.
 
 ### Rủi ro vận hành
 
