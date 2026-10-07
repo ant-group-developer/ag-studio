@@ -67,7 +67,7 @@ describe('Timeline revisions over HTTP semantics (autosave + 409)', () => {
       getJob: async () => ({ status: 'running', progress_percent: 42 }),
       ackJob: async () => ({}),
     };
-    const engine = { core, db, bucket, editor: { db, bucket, farm }, browserUrlTtl: 60 } as unknown as EngineService;
+    const engine = { core, db, bucket, editor: { db, bucket, farm, voiceDir: join(dir, 'voice') }, browserUrlTtl: 60 } as unknown as EngineService;
     const access = { coversProduction: async () => false } as unknown as FootageAccessService;
     profile = { userId: 'u1', userType: 'USER', permissions: [] };
     const account = { getUserProfile: async () => profile } as unknown as AccountApiService;
@@ -123,7 +123,7 @@ describe('Timeline revisions over HTTP semantics (autosave + 409)', () => {
     expect((err as UnprocessableEntityException).getResponse()).toMatchObject({ code: 'not_v3' });
   });
 
-  it('a shot-cut timeline with trims and a dissolve is 422 premiere_needs_phase_4 for Premiere, nothing sent', async () => {
+  it('a shot-cut timeline with trims and a dissolve exports to Premiere (phase 4)', async () => {
     const now = new Date().toISOString();
     db.run("INSERT INTO episodes (id, production_id, idx, title, hook, edit_style, created_at, updated_at) VALUES ('cut-ep', ?, 2, 'Ep 2', 'h', 'cut', ?, ?)", [PROD, now, now]);
     const cut = {
@@ -136,9 +136,25 @@ describe('Timeline revisions over HTTP semantics (autosave + 409)', () => {
     };
     await controller.save(PROD, 'cut-ep', { baseRevision: 0, data: cut }, req('u1'));
     expect((await controller.revision(PROD, 'cut-ep', 1)).data.schema_version).toBe('studio.timeline/v4');
+    const job = await controller.premiere(PROD, 'cut-ep', { media: 'proxy' }, req('u1'));
+    expect(job.status).toBe('running');
+    expect(submitted.map((s) => s.type)).toEqual(['studio.export_premiere']);
+    expect(submitted[0]!.payload).toMatchObject({ episode_id: 'cut-ep', composition: 'stage:composition.json', media: 'proxy', name: 'Ep 2' });
+  });
+
+  it('a narrated shot-cut timeline whose WAV is not in the voice store is 422 narration_missing, nothing sent', async () => {
+    const now = new Date().toISOString();
+    db.run("INSERT INTO episodes (id, production_id, idx, title, hook, edit_style, created_at, updated_at) VALUES ('cut-ep', ?, 2, 'Ep 2', 'h', 'cut', ?, ?)", [PROD, now, now]);
+    const cut = {
+      ...timeline(), episode_id: 'cut-ep', schema_version: 'studio.timeline/v4', edit_style: 'cut',
+      clips: [{ clip_id: 'C001', asset_id: 'asset-1', section_title: null, in: 1, out: 5, shot_id: null, line_id: 'L001', transition_out: { kind: 'cut', seconds: 0 } }],
+      narration: { voice: 'tts', lead_seconds: 0.3, lines: [{ line_id: 'L001', text: 'Phố cổ.', audio: { key: 'c'.repeat(64), duration_s: 1.2, words: [] } }] },
+      captions: { mode: 'none' },
+    };
+    await controller.save(PROD, 'cut-ep', { baseRevision: 0, data: cut }, req('u1'));
     const err = await controller.premiere(PROD, 'cut-ep', { media: 'proxy' }, req('u1')).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(UnprocessableEntityException);
-    expect((err as UnprocessableEntityException).getResponse()).toMatchObject({ code: 'premiere_needs_phase_4' });
+    expect((err as UnprocessableEntityException).getResponse()).toMatchObject({ code: 'narration_missing', line_id: 'L001' });
     expect(submitted).toHaveLength(0);
   });
 
