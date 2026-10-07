@@ -32,9 +32,12 @@ import {
   fetchAudioUrl,
   getProduction,
   importProductionAudio,
+  pollVoiceDesign,
   productionAudio,
   recordHumanEdit,
   resumeVoiceWaiting,
+  startVoiceDesign,
+  VOICE_DESIGN_OPTIONS,
   VOICE_ORIGINS,
   type AudioKind,
   type AudioSource,
@@ -61,6 +64,13 @@ const AudioBodySchema = z.object({
   gainDb: num.pipe(z.number().min(-40).max(0)).optional(),
   ducking: bool.optional(),
 });
+
+/** A machine voice described in OmniVoice's own words (`voice-design.ts`). */
+const VoiceDesignBodySchema = z.object({
+  gender: z.enum(VOICE_DESIGN_OPTIONS.gender),
+  age: z.enum(VOICE_DESIGN_OPTIONS.age),
+  pitch: z.enum(VOICE_DESIGN_OPTIONS.pitch),
+}).strict();
 
 /** Engine refusals of an audio file or link -> HTTP. */
 function audioHttpError(e: AudioImportError): HttpException {
@@ -110,6 +120,7 @@ export class ProductionAudioController {
   @Roles('viewer')
   get(@Param('id') id: string) {
     return mapErrors(async () => {
+      await this.pollDesign(id);
       const a = productionAudio(this.requireProduction(id));
       const listen = (input: string) => this.engine.bucket.signedGetUrl(`library/${input.slice('library:'.length)}`, this.engine.browserUrlTtl);
       // only files the person gave are ours to play back (a Studio default or a typed library: track may be anywhere)
@@ -189,6 +200,33 @@ export class ProductionAudioController {
         throw e;
       }
     });
+  }
+
+  /**
+   * "Giọng máy": the farm reads a sample sentence in a voice designed from `{ gender, age, pitch }`; reading this
+   * production's audio again turns the finished sample into its voice and runs on the episodes waiting for one.
+   */
+  @Post('voice/design')
+  @Roles('editor')
+  design(@Param('id') id: string, @Body() body: unknown, @Req() req: Request) {
+    return mapErrors(async () => {
+      const p = this.requireProduction(id);
+      const parsed = VoiceDesignBodySchema.safeParse(body);
+      if (!parsed.success) throw new UnprocessableEntityException({ code: 'voice_design_invalid', message: 'chọn giới tính, độ tuổi và cao độ của giọng' });
+      this.tools(); // the sample is checked and normalised with ffmpeg once read
+      const userId = req.authContext!.userId;
+      const after = await startVoiceDesign({ db: this.engine.db, farm: this.engine.editor.farm }, { productionId: id, design: parsed.data, userId });
+      recordHumanEdit(this.engine.db, { userId, productionId: id, kind: 'voice', before: p.voice ? JSON.parse(p.voice) : null, after });
+      return this.get(id);
+    });
+  }
+
+  /** A machine voice being designed: its finished sample becomes the voice, and the episodes waiting run on. */
+  private async pollDesign(id: string): Promise<void> {
+    let tools: AudioTools;
+    try { tools = this.tools(); } catch { return; }
+    const r = await pollVoiceDesign({ db: this.engine.db, bucket: this.engine.bucket, farm: this.engine.editor.farm, ...tools }, id).catch(() => 'none' as const);
+    if (r === 'done') resumeVoiceWaiting(this.engine.core, this.engine.db, id);
   }
 
   /** "Bỏ lời dẫn": the production has no narration; episodes waiting for a voice are cut without lines. */

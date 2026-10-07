@@ -114,7 +114,8 @@ export function chatScopeFor(core: StudioEngineCore, db: StudioDb, productionId:
   // a machine step (farm, script, in-process) that stopped: not "working" (ADR-0001 item 169)
   const stopped = stages.find((s) => AGENT_FAILED.has(s.state) && s.executor.type !== "agent" && s.executor.type !== "gate");
   if (stopped && !isTerminal("run", run.state)) {
-    if (stopped.executor.type === "farm" && stopped.executor.job === "studio.tts" && productionVoice(p.voice).kind === "missing") {
+    if (stopped.executor.type === "farm" && stopped.executor.job === "studio.tts" && productionVoice(p.voice).kind === "missing"
+      && !(episodeId && getEpisode(db, episodeId)?.narration_override === "none")) {
       throw new StudioRunError("conflict", "tập có lời dẫn nhưng production chưa có giọng đọc", { code: "needs_voice", stage: stopped.stage_key });
     }
     throw new StudioRunError("conflict", `bước ${stopped.stage_key} dừng vì lỗi`, {

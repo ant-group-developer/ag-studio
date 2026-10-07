@@ -158,6 +158,8 @@ export interface EpisodeSummary {
 }
 
 export interface EpisodeDetail extends EpisodeSummary {
+  /** Narration declined for this episode alone (a shot-cut episode). */
+  narrationDeclined?: boolean;
   plan: unknown; // StudioEpisode
   run: RunView | null;
   /** The caller's ag-go scope does not cover the production: no footage, frames or video URLs. */
@@ -762,8 +764,16 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
       return request(getAccessToken, "POST", path, { ...fields, url: input.url });
     },
     /** "Bỏ lời dẫn": no narration for the production; episodes waiting for a voice run on without lines. */
+    /** A machine voice: the farm reads a sample sentence in a voice designed from the description. */
+    designVoice(productionId: string, design: VoiceDesign): Promise<ProductionAudio> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/audio/voice/design`, design);
+    },
     declineNarration(productionId: string): Promise<ProductionAudio & { resumedEpisodes: string[] }> {
       return request(getAccessToken, "POST", `/api/productions/${productionId}/audio/voice/none`);
+    },
+    /** Narration of one shot-cut episode declined (cut without lines, at once if it waits for a voice), or wanted again. */
+    setEpisodeNarration(productionId: string, episodeId: string, declined: boolean): Promise<{ resumed: boolean }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/narration`, { declined });
     },
     removeProductionAudio(productionId: string, kind: AudioKind): Promise<ProductionAudio> {
       return request(getAccessToken, "DELETE", `/api/productions/${productionId}/audio/${kind}`);
@@ -831,7 +841,13 @@ export interface ChatScopeKey { productionId: string; episodeId: string | null; 
 
 export type AudioKind = "voice" | "music";
 export type VoiceOrigin = "synthetic" | "own" | "licensed";
-export type AudioSource = { kind: "link"; url: string } | { kind: "upload"; filename: string } | { kind: "ag-go"; asset_id: string };
+export type AudioSource = { kind: "link"; url: string } | { kind: "upload"; filename: string } | { kind: "design"; instruct: string };
+/** A machine voice described in OmniVoice's own words. */
+export interface VoiceDesign {
+  gender: "female" | "male";
+  age: "young adult" | "middle-aged" | "elderly";
+  pitch: "low pitch" | "moderate pitch" | "high pitch";
+}
 export interface AudioInput {
   file?: File; url?: string;
   origin?: VoiceOrigin; confirm?: boolean; referenceText?: string;
@@ -840,6 +856,8 @@ export interface AudioInput {
 export interface ProductionAudio {
   voice:
     | { mode: "none"; decided_at: string }
+    /** The farm is making a machine voice from a description; `error`: it could not. */
+    | { mode: "designing"; instruct: string; requested_at: string; error: string | null }
     | { mode: "clone"; origin: VoiceOrigin | null; source: AudioSource | null; duration_s: number | null; reference_text: string | null; reference: string; listenUrl: string | null }
     | null;
   music: { track: string; gain_db: number; ducking: boolean; source: AudioSource | null; duration_s: number | null; listenUrl: string | null } | null;

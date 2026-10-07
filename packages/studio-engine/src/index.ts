@@ -38,6 +38,7 @@ export * from "./agent-sessions.js";
 export * from "./cut-episode.js";
 export * from "./voice-store.js";
 export * from "./cleanup.js";
+export * from "./voice-design.js";
 export * from "./voice.js";
 export * from "./audio-import.js";
 export * from "./cut-fit.js";

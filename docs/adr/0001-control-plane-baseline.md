@@ -1104,3 +1104,11 @@ Các mục dưới đây ghi lại quyết định của nhánh AG Studio, viế
     bộ chọn máy bản cuối có ô "Máy cụ thể" (`renderNodeId`, kiểm trên farm, 422 `unknown_node`), lưu cạnh kiểu máy
     (migration `0026`). `FarmExecutor.queueTimeoutMsFor`: job còn `queued` quá hạn (mặc định 120 phút) bị huỷ và bước
     dừng là lỗi contract, không thử lại — job y hệt sẽ lại chờ; job `paused` không tính. Thứ tự deploy: ag-farm trước.
+174. **Giọng máy: một giọng mẫu thiết kế cho cả series, không thiết kế từng câu (2026-10-07).** OmniVoice dựng được giọng
+    từ mô tả (`instruct`, các nhãn `female|male`, `young adult|middle-aged|elderly`, `low|moderate|high pitch`) nhưng
+    mỗi lần sinh là một người đọc khác, nên Studio không gửi `instruct` cho câu lời dẫn: nó gửi **một** job `studio.tts`
+    đọc câu mẫu (~7 giây, theo ngôn ngữ) bằng giọng thiết kế (`voice.instruct`, `reference: null`), rồi lấy WAV đó qua
+    đường nhập giọng mẫu sẵn có (`origin: synthetic`, `source: {kind: design}`, câu mẫu là `reference_text`). Mọi tập
+    clone file đó nên series giữ một giọng. Trong lúc farm đọc, `productions.voice` là `designing` (tập chờ như thiếu
+    giọng); `GET …/audio` kiểm job và hoàn tất. Nguồn `ag-go` bị gỡ khỏi `AudioSourceSchema`: ag-go chỉ giữ footage.
+    `tts.py` nghe câu nói của giọng mẫu một lần mỗi job khi không ai gõ (WhisperX `large-v3`).

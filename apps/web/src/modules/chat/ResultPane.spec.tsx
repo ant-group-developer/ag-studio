@@ -7,7 +7,7 @@ import type { ChatThreadView, ChatTurn } from "../../api/studio-client";
 const client = {
   listEditorJobs: vi.fn().mockResolvedValue([]), getEditorJob: vi.fn(), getEpisode: vi.fn(),
   getProductionAudio: vi.fn().mockResolvedValue({ voice: null, music: null }),
-  giveProductionAudio: vi.fn(), declineNarration: vi.fn(), removeProductionAudio: vi.fn(),
+  giveProductionAudio: vi.fn(), declineNarration: vi.fn(), removeProductionAudio: vi.fn(), setEpisodeNarration: vi.fn(),
 };
 vi.mock("../../api/studio-client", async (orig) => ({ ...(await orig<object>()), useStudioClient: () => client }));
 const { ResultPane, intakeMissing, versionOf } = await import("./ResultPane");
@@ -182,6 +182,24 @@ describe("ResultPane", () => {
     client.giveProductionAudio.mockResolvedValue({ voice: null, music: null, resumedEpisodes: ["e"] });
     fireEvent.click(save);
     await waitFor(() => expect(client.giveProductionAudio).toHaveBeenCalledWith("p", "voice", { url: "https://drive.google.com/file/d/abc/view", origin: "own", confirm: true }));
+  });
+
+  it("an episode waiting for a voice may drop narration for itself alone", async () => {
+    const onAudioChanged = vi.fn();
+    client.setEpisodeNarration.mockResolvedValue({ resumed: true });
+    const thread: ChatThreadView = { turns: [], scope: null, blocked: { code: "needs_voice", stage: "tts" }, current: null, queueAhead: 0 };
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ResultPane productionId="p" episodeId="e" thread={thread} onPrimary={vi.fn()} onMenu={vi.fn()} workflow="ag-studio-episode-cut@1.0.0" onAudioChanged={onAudioChanged} />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Bỏ lời dẫn cho tập này" }));
+    // the confirm says what happens, and its OK button is named like the action
+    expect(await screen.findByText(/các tập khác vẫn chờ giọng đọc/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Bỏ lời dẫn cho tập này" })).toHaveLength(2));
+    fireEvent.click(screen.getAllByRole("button", { name: "Bỏ lời dẫn cho tập này" }).at(-1)!);
+    await waitFor(() => expect(client.setEpisodeNarration).toHaveBeenCalledWith("p", "e", true));
+    await waitFor(() => expect(onAudioChanged).toHaveBeenCalled());
   });
 
   it("a machine step that stopped says why and runs again", () => {
