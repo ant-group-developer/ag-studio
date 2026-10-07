@@ -70,6 +70,9 @@ export function ChatProductionPage() {
     : {};
   const { data: teams } = useQuery({ queryKey: ["teams", "all"], queryFn: () => client.listTeams({ page: 1, pageSize: 100 }) });
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => client.getMe(), staleTime: 5 * 60_000 });
+  // the farm machines a final render may be pinned to (an episode only); none listed: no pinning offered
+  const { data: farmNodes } = useQuery({ queryKey: ["farm-nodes"], queryFn: () => client.listFarmNodes(), enabled: !!episodeId, staleTime: 30_000 });
+  const renderNodes = farmNodes?.nodes;
   const role = teams?.items.find((x) => x.id === production?.teamId)?.role ?? null;
   const canManage = !!me?.isAdmin || (!!role && MANAGES.has(role));
   const canEdit = !!me?.isAdmin || (!!role && EDITS.has(role));
@@ -100,7 +103,7 @@ export function ChatProductionPage() {
       switch (a.kind) {
         case "approve": return client.approveChat(productionId, {
           stageKey: scope!.stageKey, episodeId, turnId: thread?.current?.turnId ?? null,
-          ...(a.options?.renderMachine ? { renderMachine: a.options.renderMachine } : {}),
+          ...(a.options?.renderMachine ? { renderMachine: a.options.renderMachine, renderNodeId: a.options.renderNodeId ?? null } : {}),
         });
         case "start": return client.startProduction(productionId);
         case "apply": return client.applyChatProposal(productionId, a.turn?.id ?? thread!.current!.turnId!);
@@ -126,7 +129,7 @@ export function ChatProductionPage() {
   });
 
   const renderFinal = useMutation({
-    mutationFn: (machine: RenderMachine) => client.rerenderEpisode(productionId, episodeId!, machine),
+    mutationFn: (pick: { machine: RenderMachine; node: string | null }) => client.rerenderEpisode(productionId, episodeId!, pick.machine, pick.node),
     onSuccess: (r) => {
       setFinalOpen(false);
       void message.success(t(r.from === "render-final" || r.from === "freeze-timeline" ? "chat.render.started" : "chat.render.startedAfterApproval"));
@@ -216,7 +219,7 @@ export function ChatProductionPage() {
           <div className="chat-main__inner">
             {thread ? (
               <ChatThread thread={thread} episode={!!episodeId} workflow={workflow} notes={notes} busyCard={act.isPending ? (act.variables?.kind as ChatCard) : null}
-                renderDefault={episode?.render?.defaultMachine}
+                renderDefault={episode?.render?.defaultMachine} renderNodes={renderNodes}
                 onCard={(card, turn, options) => (card === "renderFinal" ? setFinalOpen(true) : act.mutate({ kind: card, turn, options }))}
                 onQuickAnswer={(text) => { stick.toBottom(); send.mutate(text); }}
                 onViewStep={(s) => setViewing(s === step ? null : s)} />
@@ -238,7 +241,7 @@ export function ChatProductionPage() {
           onBack={() => setViewing(null)} onChanged={refresh} onOpenEditor={() => onMenu("editor")} />
       ) : thread ? (
         <ResultPane productionId={productionId} episodeId={episodeId} thread={thread} busy={act.isPending} canApprove={canManage || thread.scope?.scope === "timeline"}
-          renderDefault={episode?.render?.defaultMachine} canRenderFinal={!!episode?.render && episode.render.restartFrom !== null} workflow={workflow}
+          renderDefault={episode?.render?.defaultMachine} renderNodes={renderNodes} canRenderFinal={!!episode?.render && episode.render.restartFrom !== null} workflow={workflow}
           onPrimary={(a, options) => act.mutate({ kind: a, options })} onMenu={onMenu}
           onSaveEdit={(stageKey, document) => manual.mutateAsync({ stageKey, document })} onAudioChanged={refresh} />
       ) : null}
@@ -247,7 +250,7 @@ export function ChatProductionPage() {
       </Drawer>
       {episode?.render ? (
         <RenderFinalModal open={finalOpen} render={episode.render} busy={renderFinal.isPending} onClose={() => setFinalOpen(false)}
-          onConfirm={(m) => renderFinal.mutate(m)} />
+          nodes={renderNodes} onConfirm={(machine, node) => renderFinal.mutate({ machine, node })} />
       ) : null}
     </ChatShell>
   );

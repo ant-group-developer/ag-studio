@@ -1098,3 +1098,9 @@ Các mục dưới đây ghi lại quyết định của nhánh AG Studio, viế
     cho timeline v4 kiểu cắt. Payload là `strictObject`, nên hub và worker build trước đó từ chối job (lỗi rõ ràng) thay
     vì âm thầm bỏ điểm cắt, chuyển cảnh, lời dẫn; tập ghép nguyên video không gửi trường này nên mọi worker vẫn xuất được.
     Thứ tự deploy: protocol (hub) và render worker trước, Studio sau.
+173. **Máy farm: danh sách, tên trên job, ghim một máy, job chờ có hạn (2026-10-07).** ag-farm thêm `GET /v1/owner/nodes`
+    (máy đang bật nhận ít nhất một loại job của chủ job: tên, loại job, GPU, số job đang chạy; không token, không cấu
+    hình máy) và `requirements.node_id` (hub chỉ giao job cho máy đó). Studio: màn Hàng đợi hiện máy và tên máy của job;
+    bộ chọn máy bản cuối có ô "Máy cụ thể" (`renderNodeId`, kiểm trên farm, 422 `unknown_node`), lưu cạnh kiểu máy
+    (migration `0026`). `FarmExecutor.queueTimeoutMsFor`: job còn `queued` quá hạn (mặc định 120 phút) bị huỷ và bước
+    dừng là lỗi contract, không thử lại — job y hệt sẽ lại chờ; job `paused` không tính. Thứ tự deploy: ag-farm trước.

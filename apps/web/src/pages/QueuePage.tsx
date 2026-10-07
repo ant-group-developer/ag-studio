@@ -44,7 +44,9 @@ function ClaudeRow({ item }: { item: QueueClaudeItem }) {
 function RenderRow({ job }: { job: QueueRender }) {
   const { t } = useAiTranslation();
   const where = useWhere();
-  const machine = job.machine ? t(`chat.render.inline.${job.machine}`) : t("chat.queue.unknownMachine");
+  const machine = job.pinned ? t("chat.queue.pinnedTo", { name: job.pinned.name ?? job.pinned.id.slice(0, 8) })
+    : job.machine ? t(`chat.render.inline.${job.machine}`) : t("chat.queue.unknownMachine");
+  const on = job.status === "leased" && job.node ? ` · ${t("chat.queue.onNode", { name: job.node.name ?? job.node.id.slice(0, 8) })}` : "";
   const status = t(`chat.queue.status.${job.status}`, { defaultValue: job.status });
   const extra = job.status === "leased" && job.progress !== null ? ` · ${job.progress}%`
     : job.status === "queued" ? ` · ${t("chat.queue.minutes", { n: Math.max(0, Math.floor((Date.now() - Date.parse(job.createdAt)) / 60_000)) })}` : "";
@@ -53,7 +55,7 @@ function RenderRow({ job }: { job: QueueRender }) {
     <li>
       <div className="chat-queue__row">
         <Link to={to} className="chat-queue__what">{`${where(job)} · ${t(`chat.queue.kinds.${job.kind}`)}`}</Link>
-        <span className="chat-queue__meta">{`farm · ${machine} · ${status}${extra}`}</span>
+        <span className="chat-queue__meta">{`farm · ${machine} · ${status}${on}${extra}`}</span>
       </div>
       {job.status === "leased" && job.progress !== null ? (
         <div className="chat-progress" role="progressbar" aria-valuenow={job.progress} aria-valuemin={0} aria-valuemax={100} aria-label={t("chat.outputs.rendering")}>
@@ -134,6 +136,17 @@ export function QueuePage() {
         {me?.isAdmin ? <><h2>{t("chat.assistant.title")}</h2><AssistantNameForm /></> : null}
         <h2>{t("chat.claude.title")}</h2>
         {usage ? <ClaudeSettingsForm usage={usage} isAdmin={me?.isAdmin ?? false} /> : null}
+        <h2>{t("chat.queue.farmMachines")}</h2>
+        {queue?.machines?.length ? (
+          <ul className="chat-doc__list chat-queue__machines">
+            {queue.machines.map((m) => (
+              <li key={m.id}>
+                <strong>{m.name}</strong>{m.gpus.some((g) => g.nvenc) ? " · NVENC" : m.gpus.length ? " · GPU" : ""}
+                <div className="chat-doc__note">{t("chat.queue.machineLine", { state: t(m.online ? "chat.render.online" : "chat.render.offline"), jobs: m.running_jobs })}</div>
+              </li>
+            ))}
+          </ul>
+        ) : queue ? <p className="chat-doc__note">{t("chat.queue.noMachines")}</p> : null}
         <h2>{t("chat.queue.machines")}</h2>
         <p className="chat-doc__note">{t("chat.queue.machinesNote")}</p>
         <ul className="chat-doc__list">

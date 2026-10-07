@@ -12,7 +12,7 @@ import {
   type QueueFarm,
   type StudioBucket,
   type StudioEngineCore,
-  type ThumbnailRenderer,
+  type ThumbnailRenderer, resolveRenderNode, type RenderNode,
 } from '@ag-studio/engine';
 import { StudioDbService } from '../db/studio-db.service';
 
@@ -71,6 +71,8 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
   /** The voice store the worker fills (shot-cut narration), shared through STUDIO_DATA_ROOT. */
   get voiceDir(): string { return join(this.config.get<string>('STUDIO_DATA_ROOT', './data/harness'), 'voice'); }
   get editor(): EditorDeps { return { db: this.db, bucket: this.bucket, farm: this.must(this._farm), voiceDir: this.voiceDir }; }
+  /** A node picked for a final render, as the farm lists it now (422 `unknown_node` otherwise). */
+  renderNode(nodeId: string): Promise<RenderNode> { return resolveRenderNode(this.must(this._farm), nodeId); }
   /** The farm's job list for the Queue screen, cached a few seconds (every open screen polls it). */
   get queueFarm(): QueueFarm { return this.must(this._queueFarm); }
   /** Null without STUDIO_FFMPEG_PATH: the thumbnail routes that draw answer 503 then. */

@@ -23,6 +23,8 @@
  *   STUDIO_FONTS_DIR    a folder with the thumbnail font (Arial); default: Windows fonts, else fontconfig (Liberation Sans)
  *   YOUTUBE_API_KEY     YouTube Data API v3 key for the market research of a series (none = research skipped)
  *   HARNESS_ROOT        Studio install root (default: this checkout)
+ *   STUDIO_FARM_QUEUE_TIMEOUT_MINUTES a farm job no node takes this long is cancelled and its step stops, saying so
+ *                       (default 120; 0 = wait to the stage deadline, 4 h)
  *   STUDIO_CLEANUP_HOURS how often the cleanup sweep runs (default 6; 0 = never): workspaces of ended runs, agent
  *                       sessions without a workspace, unused voice lines, production audio and shot frames nothing uses
  *   STUDIO_RETENTION_WORKSPACE_DAYS / _VOICE_DAYS / _AUDIO_DAYS  how old before the sweep removes them (14 / 90 / 7)
@@ -89,6 +91,7 @@ async function main(): Promise<void> {
     logger,
     claudeMaxConcurrent,
     farmPollMs: Number(process.env.FARM_POLL_MS ?? 5000),
+    farmQueueTimeoutMs: numberEnv("STUDIO_FARM_QUEUE_TIMEOUT_MINUTES", 120) * 60_000,
     ...(youtubeKey ? { research: new YoutubeResearchSource({ apiKey: youtubeKey, cache: studioResearchCache(db) }) } : {}),
     ...(ffmpeg ? { thumbnails: ffmpegThumbnailRenderer({ ffmpeg }) } : {}),
     ...(media ? { media } : {}),

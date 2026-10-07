@@ -11,7 +11,8 @@ function RenderMachineLine({ render, failed }: { render: EpisodeRender; failed: 
   const { t } = useTranslation();
   const job = render.job;
   if (!job?.machine) return null;
-  const machine = t(`chat.render.inline.${job.machine}`);
+  // a render pinned to one node is named by it
+  const machine = job.node ? t("chat.render.nodeInline", { name: job.node.name }) : t(`chat.render.inline.${job.machine}`);
   const farm = render.farmStatus;
   if (farm?.status === "queued") {
     const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(job.createdAt)) / 60_000));

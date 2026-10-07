@@ -1213,6 +1213,21 @@ describe.skipIf(!isE2E)("farm E2E: render machine types", () => {
     expect(queued.jobs.map((j) => j.id)).toEqual(expect.arrayContaining(ids));
     for (const id of ids) expect((await ownerClient.cancelJob(id)).status).toBe("cancelled");
   });
+
+  it("the hub lists its render node to the Studio, and takes a final render pinned to it", async () => {
+    const ownerClient = new FarmOwnerClient({ baseUrl: `http://127.0.0.1:${FARM_HUB_PORT}`, ownerKey, timeoutMs: 15_000 });
+    const { nodes } = await ownerClient.listNodes();
+    const node = nodes.find((n) => n.name === "e2e-render-worker");
+    expect(node, JSON.stringify(nodes)).toBeTruthy();
+    expect(node!.kinds).toContain("studio.render_final");
+    const resp = await ownerClient.submitJob({
+      type: "studio.render_final", correlation_id: `pinned-${randomUUID()}`, affinity_key: productionId,
+      not_before: new Date(Date.now() + 24 * 3600_000).toISOString(), requirements: { node_id: node!.id },
+      payload: { production_id: productionId, revision: 1, composition: "stage:composition.json", canvas: CANVAS, handle_seconds: 0.5, output: "renders/pinned/final.mp4" },
+    });
+    expect(resp.created).toBe(true);
+    expect((await ownerClient.cancelJob(resp.job.id)).status).toBe("cancelled");
+  });
 });
 
 // ------------------------------------------------------------------

@@ -13,7 +13,7 @@ import {
 import type { StudioEngineCore } from "./core.js";
 import { latestAcceptedCall, recordHumanEdit, type HumanEditKind } from "./llm-log.js";
 import { EPISODE_KIT_GATE, EPISODE_RENDER_STAGE, startPlanRun, StudioRunError, submitEpisodeTimelineGate, submitStudioGate } from "./run-control.js";
-import { RENDER_MACHINE_LABELS, setRenderChoice } from "./render-choice.js";
+import { renderTargetLabel, setRenderChoice, type RenderNode } from "./render-choice.js";
 import { getProduction, saveEpisodeRevision, type StudioDb } from "./studio-db.js";
 
 /** `@[Kyoto 2025](folder:<id>)` in a message: the folders it names. */
@@ -153,6 +153,8 @@ export async function approveChatScope(core: StudioEngineCore, db: StudioDb, p: 
   productionId: string; episodeId?: string | null; stageKey: string; turnId?: string | null; userId: string;
   /** Approving the YouTube kit starts the final render: the machine type it runs on (phase 3). */
   renderMachine?: RenderMachine;
+  /** …and the one node it must run on, if any (`resolveRenderNode`). */
+  renderNode?: RenderNode | null;
 }): Promise<{ stageState: string; runState: string; revision?: number }> {
   if (p.renderMachine !== undefined && p.stageKey !== EPISODE_KIT_GATE) {
     throw new StudioRunError("invalid", `chỉ chọn máy render khi duyệt ${EPISODE_KIT_GATE}`, { code: "no_render_here", stage: p.stageKey });
@@ -177,7 +179,10 @@ export async function approveChatScope(core: StudioEngineCore, db: StudioDb, p: 
   }
   if (p.renderMachine !== undefined) {
     // before the gate goes: the worker reads it when render-final is submitted, which may follow at once
-    setRenderChoice(db, { runId: key.runId!, stageKey: EPISODE_RENDER_STAGE, machine: p.renderMachine, by: p.userId, now, ...(p.episodeId ? { episodeId: p.episodeId } : {}) });
+    setRenderChoice(db, {
+      runId: key.runId!, stageKey: EPISODE_RENDER_STAGE, machine: p.renderMachine, node: p.renderNode ?? null, by: p.userId, now,
+      ...(p.episodeId ? { episodeId: p.episodeId } : {}),
+    });
   }
   const report = await submitStudioGate(core, db, key.runId!, key.stageKey, ctx.current);
   if (ctx.currentTurnId) markTurnApplied(db, ctx.currentTurnId, now);
@@ -190,7 +195,7 @@ export async function approveChatScope(core: StudioEngineCore, db: StudioDb, p: 
       });
     } catch { /* the dataset never blocks an approval */ }
   }
-  insertSystemTurn(db, key, p.renderMachine !== undefined ? `Đã duyệt. Render bản cuối trên ${RENDER_MACHINE_LABELS[p.renderMachine]}.` : "Đã duyệt.", now);
+  insertSystemTurn(db, key, p.renderMachine !== undefined ? `Đã duyệt. Render bản cuối trên ${renderTargetLabel(p.renderMachine, p.renderNode)}.` : "Đã duyệt.", now);
   return { stageState: report.stageState, runState: report.runState };
 }
 

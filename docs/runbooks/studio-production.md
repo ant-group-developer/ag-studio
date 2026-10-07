@@ -69,6 +69,8 @@ kiểu đi bộ du lịch, có lời dẫn"). Đầu tập có dòng "cắt theo
   theo shot: clip đúng điểm vào/ra, chuyển cảnh, lời dẫn trên A3 (A1 trống), nhạc tự hạ dưới lời dẫn (keyframe A2);
   phụ đề là `captions.srt` trong zip, nhập bằng File → Import rồi kéo lên timeline. "Lời dẫn … không còn trong kho
   giọng" (422 `narration_missing`): render lại tập để đọc lại lời. Cảnh báo của bản xuất hiện dưới dòng job.
+- **Ghim một máy:** bộ chọn máy bản cuối có ô "Máy cụ thể" (danh sách lấy từ farm). Máy tắt thì job chờ; quá
+  `STUDIO_FARM_QUEUE_TIMEOUT_MINUTES` (120) không máy nào nhận thì bước render dừng, chat nói lý do, bấm Render lại.
 - **Thứ tự deploy:** render worker đọc v4 (`ag-render-worker` từ `e882a6c`) lên **mọi** máy farm trước, rồi mới tới
   Studio. Job xuất Premiere của tập cắt mang `edit_style: cut`: hub hoặc máy còn bản cũ từ chối job ("Invalid
   export_premiere payload") thay vì ra project sai (ADR mục 172). Gặp lỗi đó thì cập nhật ag-farm và render worker.

@@ -105,7 +105,7 @@ describe("ResultPane", () => {
     expect(onPrimary).not.toHaveBeenCalled();
     fireEvent.click(await screen.findByRole("radio", { name: /Máy có NVENC/ }));
     fireEvent.click(screen.getByRole("button", { name: "Duyệt và render" }));
-    expect(onPrimary).toHaveBeenCalledWith("approve", { renderMachine: "nvenc" });
+    expect(onPrimary).toHaveBeenCalledWith("approve", { renderMachine: "nvenc", renderNodeId: null });
   });
 
   it("⋯ of an episode offers the final render, not while the episode is producing", async () => {

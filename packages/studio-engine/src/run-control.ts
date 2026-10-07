@@ -12,7 +12,7 @@ import { STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, STUDIO_WORKFLOWS, type StudioEn
 import {
   getEpisode, getProduction, latestEpisodeRevision, listEpisodes, productionChannels, productionSources, type EpisodeRecord, type StudioDb,
 } from "./studio-db.js";
-import { defaultRenderMachine, machineOfRequirements, renderChoiceFor, setRenderChoice } from "./render-choice.js";
+import { defaultRenderMachine, machineOfRequirements, renderChoiceFor, renderNodeFor, setRenderChoice, type RenderNode } from "./render-choice.js";
 
 export type StudioRunErrorCode = "not_found" | "conflict" | "invalid" | "rejected";
 export class StudioRunError extends Error {
@@ -284,13 +284,13 @@ export function episodeRunView(core: StudioEngineCore, db: StudioDb, episodeId: 
  * `{}` for a new run.
  */
 export function rerenderEpisode(
-  core: StudioEngineCore, db: StudioDb, episodeId: string, o: { machine?: RenderMachine; by?: string } = {},
+  core: StudioEngineCore, db: StudioDb, episodeId: string, o: { machine?: RenderMachine; node?: RenderNode | null; by?: string } = {},
 ): { runId: string; reused: string[]; from: string } {
   const ep = getEpisode(db, episodeId);
   if (!ep) throw new StudioRunError("not_found", `episode ${episodeId} not found`);
   const choose = (runId: string) => {
     if (o.machine === undefined) return;
-    setRenderChoice(db, { runId, stageKey: EPISODE_RENDER_STAGE, machine: o.machine, by: o.by ?? "studio-api", now: core.clock.now(), episodeId });
+    setRenderChoice(db, { runId, stageKey: EPISODE_RENDER_STAGE, machine: o.machine, node: o.node ?? null, by: o.by ?? "studio-api", now: core.clock.now(), episodeId });
   };
   const from = renderRestartFrom(core, db, ep);
   if (from === null) {
@@ -343,11 +343,13 @@ export function renderRestartFrom(core: StudioEngineCore, db: StudioDb, ep: Epis
 export interface EpisodeRenderInfo {
   /** The type chosen for the current run's render, if any. */
   machine: RenderMachine | null;
+  /** The node the current run's render is pinned to, if any. */
+  node: RenderNode | null;
   /** What a picker starts on: the run's choice, else the production's latest, else any. */
   defaultMachine: RenderMachine;
   restartFrom: ReturnType<typeof renderRestartFrom>;
   /** The latest final render job of the episode (any run), with the type it was sent with (null: unknown). */
-  job: { farmJobId: string; runId: string; machine: RenderMachine | null; createdAt: string } | null;
+  job: { farmJobId: string; runId: string; machine: RenderMachine | null; node: RenderNode | null; createdAt: string } | null;
 }
 
 export function episodeRenderInfo(core: StudioEngineCore, db: StudioDb, episodeId: string): EpisodeRenderInfo {
@@ -359,9 +361,13 @@ export function episodeRenderInfo(core: StudioEngineCore, db: StudioDb, episodeI
     [episodeId, EPISODE_RENDER_STAGE]);
   return {
     machine,
+    node: ep.run_id ? renderNodeFor(db, ep.run_id, EPISODE_RENDER_STAGE) : null,
     defaultMachine: machine ?? defaultRenderMachine(db, ep.production_id),
     restartFrom: renderRestartFrom(core, db, ep),
-    job: job ? { farmJobId: job.farm_job_id, runId: job.run_id, machine: machineOfRequirements(job.requirements), createdAt: job.created_at } : null,
+    job: job ? {
+      farmJobId: job.farm_job_id, runId: job.run_id, machine: machineOfRequirements(job.requirements),
+      node: renderNodeFor(db, job.run_id, EPISODE_RENDER_STAGE), createdAt: job.created_at,
+    } : null,
   };
 }
 

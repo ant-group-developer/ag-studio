@@ -97,10 +97,33 @@ describe("QueuePage", () => {
     expect(await screen.findByText("episode page")).toBeInTheDocument();
   });
 
-  it("the farm out of reach is said; there is no machine list, only what the types mean", async () => {
+  it("lists the farm's machines and names the node a job runs on or is pinned to", async () => {
+    client.getQueue.mockResolvedValue({
+      ...queue,
+      renders: [
+        { ...queue.renders[0]!, node: { id: "n1", name: "render-01" }, pinned: null },
+        { ...queue.renders[1]!, node: null, pinned: { id: "n2", name: "render-02" } },
+      ],
+      machines: [
+        { id: "n1", name: "render-01", online: true, kinds: ["studio.render_final"], gpus: [{ name: "RTX 3060", vram_mb: 12288, nvenc: true }], running_jobs: 1, last_seen_at: null },
+        { id: "n2", name: "render-02", online: false, kinds: ["studio.render_final"], gpus: [], running_jobs: 0, last_seen_at: null },
+      ],
+    });
+    mount();
+    const renders = screen.getByRole("region", { name: "Render" });
+    expect(await within(renders).findByText("farm · máy có NVENC · đang chạy · trên render-01 · 62%")).toBeInTheDocument();
+    expect(within(renders).getByText("farm · ghim render-02 · chờ máy · 30 phút")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Máy trên farm" })).toBeInTheDocument();
+    expect(screen.getByText("render-01")).toBeInTheDocument();
+    expect(screen.getByText("đang bật · 1 job đang chạy")).toBeInTheDocument();
+    expect(screen.getByText("đang tắt · 0 job đang chạy")).toBeInTheDocument();
+  });
+
+  it("the farm out of reach is said; no machine is listed, only what the types mean", async () => {
     client.getQueue.mockResolvedValue({ ...queue, renders: [], hiddenRenders: 0, farm: { ok: false, error: "connect ECONNREFUSED" } });
     mount();
     expect(await screen.findByText("Không đọc được hàng đợi farm: connect ECONNREFUSED")).toBeInTheDocument();
+    expect(screen.getByText("Farm chưa liệt kê máy nào (hub cũ hoặc chưa máy nào bật).")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Kiểu máy render" })).toBeInTheDocument();
     expect(screen.getByText("Máy có NVENC")).toBeInTheDocument();
   });
