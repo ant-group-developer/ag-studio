@@ -1056,3 +1056,31 @@ Các mục dưới đây ghi lại quyết định của nhánh AG Studio, viế
 159. **Xuất Premiere tắt cho tập cắt theo shot tới pha 4 (2026-10-06).** `premiere-xml.ts` bỏ qua in-point và không có
     track lời dẫn: timeline v4 có trim, chuyển cảnh hoặc lời dẫn → `POST …/exports/premiere` 422
     `premiere_needs_phase_4`; web ẩn mục xuất Premiere của tập `cut` ở cả chat và màn cũ.
+167. **Giọng đọc là tuỳ chọn; thiếu giọng thì tập hỏi, không treo (2026-10-07).** `productions.voice` có ba trạng thái:
+    NULL (chưa hỏi: dùng `STUDIO_DEFAULT_VOICE_REFERENCE` nếu có), `{mode: "clone", reference: library:..., origin, ...}`
+    (giọng mẫu người dùng đưa) và `{mode: "none"}` (bỏ lời dẫn **cho cả production**, Q1 của plan optional-audio).
+    `productionVoice` trả `clone | none | missing`. `tts` skip khi `none`, ném `CONFIG_INVALID` với
+    `details.code = "needs_voice"` khi `missing` (stage đỗ `WAITING_HUMAN` như trước); `fit-timeline` cắt kế hoạch đã
+    duyệt không lời khi production bỏ lời dẫn sau khi duyệt (lời đã viết bị bỏ, không thành phụ đề: Q2). Đặt giọng hoặc
+    bỏ lời dẫn thì `resumeVoiceWaiting` chạy lại `tts` của mọi tập đang đứng ở đó. Brief của kế hoạch ghi
+    `narration_voice` (`ready | missing | none`, tuỳ chọn để brief cũ vẫn hợp lệ: thêm trường tuỳ chọn, không đổi tên
+    builder); `none` thì validator chặn tập `tts` (`narration_needs_voice`). Đúng ADR mục 105: thiếu giọng hạ về không
+    lời, không làm hỏng.
+168. **Audio người dùng đưa: link hoặc file, kiểm và chuẩn hoá ở Studio, lưu theo nội dung (2026-10-07).**
+    `audio-import.ts`: link do server tải từng bước (tự theo redirect, tối đa 3), mỗi bước phân giải DNS và chặn địa
+    chỉ nội bộ/loopback/link-local/CGNAT/ULA trừ khi `STUDIO_AUDIO_ALLOW_PRIVATE_URLS` (stack local); link chia sẻ
+    Google Drive đổi sang link tải; dừng khi quá cỡ (giọng 20 MB, nhạc 100 MB). ffprobe kiểm có tiếng và đủ dài (giọng
+    >= 3 s, nhạc >= 5 s); giọng thành WAV mono 24 kHz, 20 s đầu; nhạc thành AAC. Lưu R2
+    `library/studio/<production>/<voice|music>/<sha256>.<ext>`, input `library:...` mà farm vốn ký (render worker không
+    đổi). Giọng bắt buộc khai `origin` (`synthetic | own | licensed`) và xác nhận quyền dùng (ADR mục 105; lời khai,
+    không xác minh). Còn hở: phân giải DNS rồi fetch là hai lần tra (DNS rebinding), chấp nhận cho công cụ nội bộ.
+    Audio từ folder ag-go chờ ag-go nhận file audio (pha B, hỏi trước).
+169. **Bước máy dừng thì nói là dừng, không "đang chạy" (2026-10-07).** `chatScopeFor` trước đây chỉ coi stage `agent`
+    hỏng là bước hỏng; stage farm/script/in-process ở `WAITING_HUMAN`/`FAILED` rơi xuống `busy` nên web hiện "đang
+    chạy" mãi (Tập 2 "Ga Ninh Bình", 2026-10-07). Nay: `tts` thiếu giọng là conflict `needs_voice`; bước máy khác là
+    `stage_failed` kèm lỗi của attempt hỏng gần nhất (event `attempt.failed`). Không mở chat cho các bước này (không
+    skill nào sửa được chúng); web hiện lỗi và **Chạy lại** (`POST .../stages/:stage/retry` sẵn có).
+170. **Nhạc lấy lúc khớp hình (2026-10-07).** `studio-cut-fit` lấy nhạc **hiện tại** của production, không có thì
+    `brief.music` (đóng băng lúc `episode-intake`): nhạc đưa vào lúc tập đang chờ giọng có tác dụng ngay. Tập đã có
+    timeline giữ nhạc cũ; muốn đổi thì sửa timeline. `productions.music` giữ nguồn của file (`source`, `sha256`); stage
+    chỉ đóng băng `{track, gain_db, ducking}` (`productionMusic`, `studioMusicOf`).

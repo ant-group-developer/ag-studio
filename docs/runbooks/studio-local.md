@@ -158,6 +158,8 @@ Không chạy song song với chế độ trực tiếp: hai bên dùng chung c�
 | Cây folder trống, lỗi CORS khi web gọi ag-go | `CORS_EXTRA_ORIGINS` của ag-go thiếu `http://localhost:3100` | Sửa `ag-go-api/.env`, bật lại ag-go-api |
 | Account API không với tới | Container account dừng | Vẫn vào được, nhưng không ai là admin và tên hiện thiếu |
 | `render-final` treo tới hết deadline | Farm hub hoặc `local-render` không chạy | `local-stack.mjs status`, web farm 3011 |
+| Tập cắt dừng ở lời dẫn, "cần giọng đọc" | Production chưa có giọng mẫu, không có `STUDIO_DEFAULT_VOICE_REFERENCE` | Đưa giọng ở cột phải (link/tải lên) hoặc Bỏ lời dẫn. Link tới máy local (`http://localhost…`) cần `STUDIO_AUDIO_ALLOW_PRIVATE_URLS=true` trong `apps/api/.env` |
+| Đưa audio báo 503 `audio_disabled` | API thiếu `STUDIO_FFMPEG_PATH` hoặc `STUDIO_FFPROBE_PATH` | Đặt cả hai trong `apps/api/.env` (máy dev: ffmpeg-static/ffprobe-static của ag-render-worker) rồi bật lại API |
 | Stage Claude chờ lâu, log có `RATE_LIMITED` | Hết hạn mức gói | Đợi; tự thử lại 5→60 phút, không tính là lỗi |
 | Stage Claude lỗi `agent CLI failed to start` | Không tìm thấy `claude` / `claude.exe` | Cài Claude Code, hoặc đặt lại `STUDIO_CLAUDE_ARGV` về Claude giả |
 | `up` báo "chưa lên sau 180 s" | Dịch vụ lỗi khi khởi động | Xem `E:\ag-local\dev-run\<tên>.log` |

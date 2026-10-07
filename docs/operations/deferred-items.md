@@ -37,8 +37,12 @@ Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142)
   đã bị xoá. Vô hại vì engine truyền workflow tường minh, nhưng gây hiểu nhầm.
 - `.env` của máy dev còn `STUDIO_WORKFLOW` (do `E:ag-localsetupconfig-local.cjs flow …` ghi), không còn code nào đọc.
 - Bảng `comments` (migration `0008`) chưa bao giờ được dùng; `timeline_revisions`, `studio_editor_jobs` là bảng cũ.
-- `packages/studio-engine/src/voice.ts` và job farm `studio.tts` là phần sót từ luồng có lời dẫn; không workflow
-  Studio nào dùng.
+- **Giọng và nhạc tuỳ chọn (plan 2026-10-07 optional-audio), còn để sau:**
+  - Bỏ lời dẫn chỉ có cấp production; bỏ cho riêng một tập cần cột mới (Q1).
+  - Lời dẫn bị bỏ thì mất, không thành phụ đề (Q2): cần ước thời điểm từng câu khi không có WAV.
+  - Audio từ folder ag-go (pha B): ag-go chỉ có `image|video`, scan worker từ chối file chỉ có tiếng.
+  - Giọng máy không cần file mẫu (pha C): OmniVoice voice design (`instruct`) cần trường mới trong `studio.tts`.
+  - Không có gì dọn file audio cũ dưới `library/studio/<production>/` khi người dùng đổi giọng/nhạc.
 - Kiểu thumbnail `ai` có trong schema nhưng không có bộ sinh.
 - Workflow harness cũ (`library-production*`, `channel-*`, `style-study*`, `footage-production`) còn trong
   `workflows/` nhưng không chạy được vì built-in đã bị gỡ (ADR mục 127). Giữ cho test byte-identical và cho kiểu

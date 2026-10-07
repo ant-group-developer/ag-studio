@@ -207,6 +207,16 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
   kho giọng (`voice-store.ts`, khoá theo nội dung, WAV ở `<STUDIO_DATA_ROOT>/voice`); `studio.transcribe` nhận WAV 16 kHz
   Studio đã tách. Không có gì để gửi thì payload builder trả `skip` (`FarmExecutor` ghi đầu ra, không gọi farm).
   Render worker phải khai `python` (`extra.python_bin` trong `render.yaml`) mới nhận được hai job này.
+- **Giọng đọc và nhạc nền là tuỳ chọn** (plan `2026-10-07-ag-studio-optional-audio.md`, ADR mục 167–170):
+  `productions.voice` = NULL (chưa hỏi; `STUDIO_DEFAULT_VOICE_REFERENCE` nếu có) | `{mode: "clone", …}` | `{mode:
+  "none"}` (bỏ lời dẫn cả production), đọc qua `productionVoice` (`voice.ts`). Thiếu giọng thì `tts` dừng với
+  `needs_voice`, chat báo `blocked.code = "needs_voice"` (không còn `busy`); bước máy hỏng khác là `stage_failed`.
+  Người dùng đưa giọng/nhạc qua `/productions/:id/audio` (link hoặc file; `audio-import.ts`: chặn IP nội bộ trừ khi
+  `STUDIO_AUDIO_ALLOW_PRIVATE_URLS`, ffprobe kiểm, lưu `library/studio/<production>/…`), giọng phải khai `origin` và
+  xác nhận quyền dùng. Đặt giọng hoặc bỏ lời dẫn thì `resumeVoiceWaiting` chạy lại `tts`. Stage đóng băng nhạc qua
+  `productionMusic` (chỉ `{track, gain_db, ducking}`); `fit-timeline` lấy nhạc hiện tại của production. API cần cả
+  `STUDIO_FFMPEG_PATH` và `STUDIO_FFPROBE_PATH` để nhận audio. Audio từ ag-go (pha B) và giọng máy không file mẫu (pha
+  C) chưa làm: hỏi trước.
 - Thumbnail cắt và vẽ chữ trên máy Studio từ `final.mp4` (ffmpeg bất đồng bộ, không `spawnSync`); font Arial của hệ
   thống (`STUDIO_FONTS_DIR`) — không ship font.
 - Canva: token mỗi người dùng mã hoá bằng `CANVA_TOKEN_KEY`, không bao giờ trả về trình duyệt; refresh token chỉ
