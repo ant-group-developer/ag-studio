@@ -5,7 +5,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { intakeMissing, IntakeDraftSchema, StudioSurveySchema, type IntakeDraft, type IntakeField, type RenderMachine, type StudioSurvey } from "@harness/contracts";
-import { chatContext, chatScopeFor, DRAFT_PRODUCTION_TITLE, GATE_SOURCES, type SurveyProposal, type TimelineProposal } from "./chat-context.js";
+import { chatContext, chatScopeFor, DRAFT_PRODUCTION_TITLE, episodeRunStopped, GATE_SOURCES, type SurveyProposal, type TimelineProposal } from "./chat-context.js";
 import {
   currentProposal, getTurn, insertSystemTurn, insertUserTurn, listTurns,
   markTurnApplied, type ChatMention, type ChatProblem, type ChatScopeKey, type ChatTurn,
@@ -206,6 +206,8 @@ export interface ChatThreadView {
   blocked: { code: string; stage: string | null; problems?: ChatProblem[] } | null;
   /** The document on show and its turn (null: what the stage wrote), for the result pane. */
   current: { turnId: string | null; document: unknown; draft: unknown; pendingApply: boolean; problems: ChatProblem[] } | null;
+  /** An episode whose run ended on a failed machine step (its final render): which step and why. The chat goes on. */
+  stopped: { stage: string; problems: ChatProblem[] } | null;
   /** Replies waiting for a Claude slot before the oldest one of this thread. */
   queueAhead: number;
 }
@@ -234,5 +236,6 @@ export function chatThread(core: StudioEngineCore, db: StudioDb, productionId: s
   const queueAhead = mine?.created_at
     ? db.get<{ n: number }>("SELECT COUNT(*) AS n FROM stage_chat_turns WHERE role = 'assistant' AND status IN ('pending', 'rate_limited') AND created_at < ?", [mine.created_at])?.n ?? 0
     : 0;
-  return { turns, scope, blocked, current, queueAhead };
+  const stopped = scope?.scope === "timeline" && scope.runId ? episodeRunStopped(core, scope.runId) : null;
+  return { turns, scope, blocked, current, stopped, queueAhead };
 }
