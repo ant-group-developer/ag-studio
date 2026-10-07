@@ -1,5 +1,5 @@
 /**
- * Autosave to `timeline_revisions` (plan 4.2): a change is saved `delayMs` after the last edit, on top of the
+ * Autosave to `episode_revisions` (plan 4.2): a change is saved `delayMs` after the last edit, on top of the
  * revision the editor holds. The server answers 409 when someone else saved first; autosave then stops and
  * the page asks the person to load the newer revision (or to overwrite it deliberately).
  */

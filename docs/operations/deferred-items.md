@@ -31,16 +31,14 @@ Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142)
 
 ### Nợ dọn dẹp
 
-- `packages/ag-go-client` còn `getSegmentMedia`/`resolveSegments` gọi `/footage/segments/*`, route mà ag-go-api v2
-  đã gỡ. Chỉ test của chính client dùng; web còn `useSegmentMedia` không ai import. Xoá được.
-- `production-profiles/studio-production/profile.yaml` khai `workflow_release: ag-studio-production@1.0.0`, workflow
-  đã bị xoá. Vô hại vì engine truyền workflow tường minh, nhưng gây hiểu nhầm.
+- ✅ 2026-10-07 — đã gỡ `getSegmentMedia`/`resolveSegments` của `ag-go-client`, bản sao ở web, `useSegmentMedia`,
+  `SegmentPreviewCard`.
+- ✅ 2026-10-07 — `profile.yaml` của `studio-production` trỏ `ag-studio-series-plan@3.1.0` (workflow đầu vào).
 - `.env` của máy dev còn `STUDIO_WORKFLOW` (do `E:ag-localsetupconfig-local.cjs flow …` ghi), không còn code nào đọc.
-- Bảng `comments` (migration `0008`) chưa bao giờ được dùng; `timeline_revisions`, `studio_editor_jobs` là bảng cũ.
+- ✅ 2026-10-07 — migration `0025` xoá `comments`, `timeline_revisions`, `studio_editor_jobs` (dòng GĐ4 cũ mất theo).
 - **Giọng và nhạc tuỳ chọn (plan 2026-10-07 optional-audio), còn để sau:**
   - Bỏ lời dẫn chỉ có cấp production; bỏ cho riêng một tập cần cột mới (Q1).
   - Lời dẫn bị bỏ thì mất, không thành phụ đề (Q2): cần ước thời điểm từng câu khi không có WAV.
-  - Audio từ folder ag-go (pha B): ag-go chỉ có `image|video`, scan worker từ chối file chỉ có tiếng.
   - Giọng máy không cần file mẫu (pha C): OmniVoice voice design (`instruct`) cần trường mới trong `studio.tts`.
   - Không có gì dọn file audio cũ dưới `library/studio/<production>/` khi người dùng đổi giọng/nhạc.
   - Giọng mẫu không kèm câu nói (Q5): render worker gửi `ref_text: ''` nên OmniVoice clone không có lời mẫu (kém hơn).
@@ -49,9 +47,10 @@ Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142)
     Chưa làm (repo ag-render-worker): hỏi trước. Tới lúc đó nên gõ câu nói khi đưa giọng mẫu.
 - Kiểu thumbnail `ai` có trong schema nhưng không có bộ sinh.
 - Workflow harness cũ (`library-production*`, `channel-*`, `style-study*`, `footage-production`) còn trong
-  `workflows/` nhưng không chạy được vì built-in đã bị gỡ (ADR mục 127). Giữ cho test byte-identical và cho kiểu
-  "cắt theo shot" về sau; không dùng để chạy.
-- `tests/e2e/production.e2e.test.ts` là `describe.skip` (luồng đã xoá) và còn mock `/footage/segments/resolve`.
+  `workflows/` nhưng không chạy được vì built-in đã bị gỡ (ADR mục 127). **Giữ** (quyết định 2026-10-07): test sha256
+  byte-identical, test của planner/registry/CLI/acceptance, các profile `studio`/`footage`/`channel` và code harness
+  (`library-checkers`, `doctor`, lệnh `media`) còn trỏ vào chúng; gỡ là việc của cả harness, không riêng Studio.
+- ✅ 2026-10-07 — đã xoá `tests/e2e/production.e2e.test.ts` (luồng đã gỡ).
 
 ### Sau pha 2 — giao diện chat (2026-10-06)
 

@@ -1,5 +1,5 @@
 /**
- * AG Studio worker: runs `ag-studio-production@1.0.0` stages -- in-process stages, Claude (subscription,
+ * AG Studio worker: runs the Studio workflows' stages (series plan, episode, shot-cut episode) -- in-process stages, Claude (subscription,
  * `claude -p` structured), gates, and ag-farm jobs -- against the same `studio.db` as apps/api.
  *
  * Required environment variables:
