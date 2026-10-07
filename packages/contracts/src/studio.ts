@@ -48,11 +48,14 @@ export type StudioMusic = z.infer<typeof StudioMusicSchema>;
 // Audio the person gives a production: a narration voice sample, background music (ADR-0001 items 167-168)
 // ---------------------------------------------------------------------------
 
-/** Where an audio file came from. `ag-go` waits for ag-go to hold audio (plan optional-audio, phase B). */
+/**
+ * Where an audio file came from: a link, an upload, or a machine voice the farm designed from a description
+ * (`design`, OmniVoice `instruct`). ag-go holds footage only, never audio.
+ */
 export const AudioSourceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("link"), url: z.string().url().max(2000) }).strict(),
   z.object({ kind: z.literal("upload"), filename: z.string().min(1).max(255) }).strict(),
-  z.object({ kind: z.literal("ag-go"), asset_id: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal("design"), instruct: z.string().min(1).max(200) }).strict(),
 ]);
 export type AudioSource = z.infer<typeof AudioSourceSchema>;
 
@@ -62,11 +65,25 @@ export type VoiceOrigin = (typeof VOICE_ORIGINS)[number];
 
 /**
  * `productions.voice`. NULL (not this schema) = not asked yet: `STUDIO_DEFAULT_VOICE_REFERENCE` if set, else the
- * episode stops at `tts` and asks. `none`: the person declined narration for the whole production. The third shape is
- * the column as tests wrote it before (no mode), read as a clone.
+ * episode stops at `tts` and asks. `none`: the person declined narration for the whole production. `designing`: the
+ * farm is reading a sample sentence in a voice designed from `instruct`; once read it becomes a `clone` of that sample
+ * (`voice-design.ts`), and until then episodes wait as for a missing voice. The last shape is the column as tests
+ * wrote it before (no mode), read as a clone.
  */
 export const ProductionVoiceSchema = z.union([
   z.object({ mode: z.literal("none"), decided_by: z.string().min(1), decided_at: z.string() }).strict(),
+  z.object({
+    mode: z.literal("designing"),
+    instruct: z.string().min(1).max(200),
+    /** The sentence read, in the production's language: it becomes the sample's `reference_text`. */
+    text: z.string().min(1).max(500),
+    /** The `studio.tts` job reading it; null when it could not be sent. */
+    farm_job_id: z.string().nullable(),
+    requested_by: z.string().min(1),
+    requested_at: z.string(),
+    /** Why the last try failed (the person may try again). */
+    error: z.string().max(2000).nullable(),
+  }).strict(),
   z.object({
     mode: z.literal("clone"),
     reference: LibraryInputSchema,

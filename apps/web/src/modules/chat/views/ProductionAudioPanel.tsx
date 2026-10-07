@@ -1,8 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Checkbox, Input, Popconfirm, Radio, message } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  StudioHttpError, useStudioClient, type AudioInput, type AudioKind, type ProductionAudio, type VoiceOrigin,
+  StudioHttpError, useStudioClient, type AudioInput, type AudioKind, type ProductionAudio, type VoiceDesign, type VoiceOrigin,
 } from "../../../api/studio-client";
 import { useAiTranslation } from "../../common/assistant-name";
 
@@ -17,13 +17,43 @@ function errorText(e: unknown, t: (k: string) => string): string {
   return known && known !== `chat.audio.errors.${code}` ? known : e instanceof Error ? e.message : String(e);
 }
 
+/** OmniVoice's own words for a voice, one of each (`voice-design.ts`). */
+const DESIGN_OPTIONS = {
+  gender: ["female", "male"],
+  age: ["young adult", "middle-aged", "elderly"],
+  pitch: ["low pitch", "moderate pitch", "high pitch"],
+} as const;
+
+/** "Giọng máy": the voice described, no sample; the farm makes it. */
+function MachineVoice({ saving, onDesign, onCancel }: { saving: boolean; onDesign: (d: VoiceDesign) => void; onCancel: () => void }) {
+  const { t } = useAiTranslation();
+  const [design, setDesign] = useState<Partial<VoiceDesign>>({});
+  const ready = !!design.gender && !!design.age && !!design.pitch;
+  return (
+    <>
+      <p className="chat-doc__note">{t("chat.audio.machine.hint")}</p>
+      {(["gender", "age", "pitch"] as const).map((k) => (
+        <Radio.Group key={k} value={design[k]} aria-label={t(`chat.audio.machine.${k}.label`)}
+          onChange={(e) => setDesign({ ...design, [k]: e.target.value as never })}
+          options={DESIGN_OPTIONS[k].map((v) => ({ value: v, label: t(`chat.audio.machine.${k}.${v}`) }))} />
+      ))}
+      <div className="chat-audio__actions">
+        <button type="button" className="chat-card__button" disabled={!ready || saving} onClick={() => onDesign(design as VoiceDesign)}>
+          {t("chat.audio.machine.make")}
+        </button>
+        <button type="button" className="chat-card__button chat-button--secondary" disabled={saving} onClick={onCancel}>{t("chat.audio.cancel")}</button>
+      </div>
+    </>
+  );
+}
+
 /** Give one audio file: paste a link or upload; a voice also says whose it is and that the person may use it. */
-function AudioPicker({ kind, suggestedUrl, saving, onSave, onCancel }: {
+function AudioPicker({ kind, suggestedUrl, saving, onSave, onDesign, onCancel }: {
   kind: AudioKind; suggestedUrl?: string | null | undefined; saving: boolean;
-  onSave: (input: AudioInput) => void; onCancel: () => void;
+  onSave: (input: AudioInput) => void; onDesign?: ((d: VoiceDesign) => void) | undefined; onCancel: () => void;
 }) {
   const { t } = useAiTranslation();
-  const [tab, setTab] = useState<"link" | "upload">("link");
+  const [tab, setTab] = useState<"link" | "upload" | "machine">("link");
   const [url, setUrl] = useState(suggestedUrl ?? "");
   const [file, setFile] = useState<File | null>(null);
   const [origin, setOrigin] = useState<VoiceOrigin | null>(null);
@@ -39,9 +69,13 @@ function AudioPicker({ kind, suggestedUrl, saving, onSave, onCancel }: {
 
   return (
     <div className="chat-audio__picker">
-      <Radio.Group size="small" value={tab} onChange={(e) => setTab(e.target.value as "link" | "upload")} optionType="button"
-        options={[{ value: "link", label: t("chat.audio.tabs.link") }, { value: "upload", label: t("chat.audio.tabs.upload") }]} />
-      {tab === "link" ? (
+      <Radio.Group size="small" value={tab} onChange={(e) => setTab(e.target.value as "link" | "upload" | "machine")} optionType="button"
+        options={[
+          { value: "link", label: t("chat.audio.tabs.link") }, { value: "upload", label: t("chat.audio.tabs.upload") },
+          ...(kind === "voice" && onDesign ? [{ value: "machine", label: t("chat.audio.tabs.machine") }] : []),
+        ]} />
+      {tab === "machine" && onDesign ? <MachineVoice saving={saving} onDesign={onDesign} onCancel={onCancel} /> : null}
+      {tab === "machine" ? null : tab === "link" ? (
         <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder={t("chat.audio.linkPlaceholder")} aria-label={t("chat.audio.tabs.link")} />
       ) : (
         <div>
@@ -51,7 +85,7 @@ function AudioPicker({ kind, suggestedUrl, saving, onSave, onCancel }: {
           {file ? <span className="chat-audio__hint"> {t("chat.audio.picked", { name: file.name })}</span> : null}
         </div>
       )}
-      {kind === "voice" ? (
+      {tab === "machine" ? null : kind === "voice" ? (
         <>
           <Radio.Group value={origin} onChange={(e) => setOrigin(e.target.value as VoiceOrigin)} aria-label={t("chat.audio.origin.label")}
             options={(["synthetic", "own", "licensed"] as const).map((o) => ({ value: o, label: t(`chat.audio.origin.${o}`) }))} />
@@ -59,10 +93,12 @@ function AudioPicker({ kind, suggestedUrl, saving, onSave, onCancel }: {
           <Checkbox checked={confirm} onChange={(e) => setConfirm(e.target.checked)}>{t("chat.audio.confirm")}</Checkbox>
         </>
       ) : null}
-      <div className="chat-audio__actions">
-        <button type="button" className="chat-card__button" disabled={!ready || saving} onClick={save}>{saving ? t("chat.audio.saving") : t("chat.audio.save")}</button>
-        <button type="button" className="chat-card__button chat-button--secondary" disabled={saving} onClick={onCancel}>{t("chat.audio.cancel")}</button>
-      </div>
+      {tab === "machine" ? null : (
+        <div className="chat-audio__actions">
+          <button type="button" className="chat-card__button" disabled={!ready || saving} onClick={save}>{saving ? t("chat.audio.saving") : t("chat.audio.save")}</button>
+          <button type="button" className="chat-card__button chat-button--secondary" disabled={saving} onClick={onCancel}>{t("chat.audio.cancel")}</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -71,9 +107,13 @@ function describe(a: ProductionAudio, kind: AudioKind, t: (k: string, o?: Record
   const what = kind === "voice" ? a.voice : a.music;
   if (!what) return t("chat.audio.none");
   if ("mode" in what && what.mode === "none") return t("chat.audio.declined");
+  if ("mode" in what && what.mode === "designing") {
+    return what.error ? t("chat.audio.machine.failed", { error: what.error }) : t("chat.audio.machine.making");
+  }
   const source = what.source;
   const from = !source ? (kind === "voice" ? t("chat.audio.studioDefault") : t("chat.audio.typed"))
-    : source.kind === "upload" ? t("chat.audio.fromUpload", { name: source.filename }) : t("chat.audio.fromLink");
+    : source.kind === "upload" ? t("chat.audio.fromUpload", { name: source.filename })
+    : source.kind === "design" ? t("chat.audio.machine.from") : t("chat.audio.fromLink");
   return what.duration_s ? `${from} · ${t("chat.audio.seconds", { s: Math.round(what.duration_s) })}` : from;
 }
 
@@ -93,7 +133,18 @@ export function ProductionAudioPanel({ productionId, episodeId, canEdit, needsVo
   const client = useStudioClient();
   const qc = useQueryClient();
   const [open, setOpen] = useState<AudioKind | null>(needsVoice ? "voice" : null);
-  const { data } = useQuery({ queryKey: productionAudioKey(productionId), queryFn: () => client.getProductionAudio(productionId) });
+  const { data } = useQuery({
+    queryKey: productionAudioKey(productionId), queryFn: () => client.getProductionAudio(productionId),
+    // a machine voice being made: reading the audio again is what turns the farm's sample into the voice
+    refetchInterval: (q) => (q.state.data?.voice?.mode === "designing" && !q.state.data.voice.error ? 3000 : false),
+  });
+  // the voice just made: the episodes waiting for it run on, so the page around reads again
+  const wasDesigning = useRef(false);
+  useEffect(() => {
+    const designing = data?.voice?.mode === "designing";
+    if (wasDesigning.current && !designing) onChanged?.();
+    wasDesigning.current = designing;
+  }, [data?.voice?.mode, onChanged]);
   const changed = (next: ProductionAudio) => {
     qc.setQueryData(productionAudioKey(productionId), next);
     onChanged?.();
@@ -112,6 +163,11 @@ export function ProductionAudioPanel({ productionId, episodeId, canEdit, needsVo
     onSuccess: (r) => { setOpen(null); void message.success(t("chat.audio.declined_ok", { n: r.resumedEpisodes.length })); changed(r); },
     onError: (e) => { void message.error(errorText(e, t)); },
   });
+  const designVoice = useMutation({
+    mutationFn: (design: VoiceDesign) => client.designVoice(productionId, design),
+    onSuccess: (r) => { setOpen(null); qc.setQueryData(productionAudioKey(productionId), r); },
+    onError: (e) => { void message.error(errorText(e, t)); },
+  });
   const declineEpisode = useMutation({
     mutationFn: () => client.setEpisodeNarration(productionId, episodeId!, true),
     onSuccess: () => { setOpen(null); void message.success(t("chat.audio.declinedEpisode_ok")); onChanged?.(); },
@@ -123,7 +179,7 @@ export function ProductionAudioPanel({ productionId, episodeId, canEdit, needsVo
     onError: (e) => { void message.error(errorText(e, t)); },
   });
   const audio: ProductionAudio = data ?? { voice: null, music: null };
-  const busy = give.isPending || decline.isPending || declineEpisode.isPending || remove.isPending;
+  const busy = give.isPending || decline.isPending || declineEpisode.isPending || designVoice.isPending || remove.isPending;
 
   const row = (kind: AudioKind) => {
     const what = kind === "voice" ? audio.voice : audio.music;
@@ -149,8 +205,8 @@ export function ProductionAudioPanel({ productionId, episodeId, canEdit, needsVo
           </div>
         ) : null}
         {open === kind ? (
-          <AudioPicker kind={kind} suggestedUrl={suggestedUrl} saving={give.isPending}
-            onSave={(input) => give.mutate({ kind, input })} onCancel={() => setOpen(null)} />
+          <AudioPicker kind={kind} suggestedUrl={suggestedUrl} saving={give.isPending || designVoice.isPending}
+            onSave={(input) => give.mutate({ kind, input })} onDesign={(d) => designVoice.mutate(d)} onCancel={() => setOpen(null)} />
         ) : null}
       </div>
     );

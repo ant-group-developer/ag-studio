@@ -26,8 +26,10 @@ describe('ProductionAudioController (real studio.db)', () => {
   let s: RealStudio;
   let bucket: MemoryBucket;
 
+  const farm = { submitted: [] as unknown[], async submitJob(j: unknown) { this.submitted.push(j); return { job: { id: 'job-1' }, created: true }; },
+    async getJob() { return { status: 'queued', error: null }; }, async ackJob() { return {}; } };
   function controller(env: Record<string, unknown>) {
-    const engine = Object.assign(s.engine, { bucket, browserUrlTtl: 60 });
+    const engine = Object.assign(s.engine, { bucket, browserUrlTtl: 60, editor: { db: s.engine.db, bucket, farm } });
     const config = { get: (k: string) => env[k] } as unknown as ConfigService;
     return new ProductionAudioController(engine as unknown as EngineService, config);
   }
@@ -71,6 +73,18 @@ describe('ProductionAudioController (real studio.db)', () => {
 
   it('no ffmpeg on the box: 503', async () => {
     await expect(controller({}).give(PROD, 'music', { url: 'https://a.b/x.mp3' }, undefined, req())).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it('a machine voice: the farm is asked to read a sample in it, and the voice says it is being made', async () => {
+    const ctl = controller(tools());
+    expect(await code(ctl.design(PROD, { gender: 'female', age: 'teen', pitch: 'low pitch' }, req()))).toEqual({ type: 'UnprocessableEntityException', code: 'voice_design_invalid' });
+    const out = await ctl.design(PROD, { gender: 'female', age: 'young adult', pitch: 'low pitch' }, req());
+    expect(out.voice).toMatchObject({ mode: 'designing', instruct: 'female, young adult, low pitch', error: null });
+    expect(farm.submitted).toHaveLength(1);
+    expect(listHumanEdits(s.engine.db, { productionId: PROD, page: 1, pageSize: 10 }).items.map((x) => x.kind)).toEqual(['voice']);
+    // still being read: reading the audio again says so
+    expect((await ctl.get(PROD)).voice).toMatchObject({ mode: 'designing' });
+    await expect(controller({}).design(PROD, { gender: 'male', age: 'elderly', pitch: 'high pitch' }, req())).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 
   it('declining narration is kept and in the dataset; removing the voice asks again', async () => {

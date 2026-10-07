@@ -27,9 +27,10 @@ describe("production voice", () => {
 });
 
 describe("audio source", () => {
-  it("is a link, an upload or an ag-go asset", () => {
+  it("is a link, an upload or a machine voice designed from a description; never ag-go (footage only)", () => {
     expect(AudioSourceSchema.parse({ kind: "link", url: "https://drive.google.com/file/d/x/view" }).kind).toBe("link");
-    expect(AudioSourceSchema.parse({ kind: "ag-go", asset_id: "a1" }).kind).toBe("ag-go");
+    expect(AudioSourceSchema.parse({ kind: "design", instruct: "female, young adult, moderate pitch" }).kind).toBe("design");
+    expect(AudioSourceSchema.safeParse({ kind: "ag-go", asset_id: "a1" }).success).toBe(false);
     expect(AudioSourceSchema.safeParse({ kind: "link", url: "not a url" }).success).toBe(false);
   });
 });

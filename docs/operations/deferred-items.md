@@ -42,12 +42,13 @@ Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142)
   - ✅ 2026-10-07 — lời dẫn bị bỏ thành phụ đề: các câu của kế hoạch dựng giữ trong timeline (`voice: none`, không
     audio), mỗi câu dài theo số ký tự (14/s tiếng Việt, như `layoutTimeline`), hình vẫn chờ câu; render đốt phụ đề với
     chữ chia đều trong câu, không WAV, không hạ nhạc.
-  - Giọng máy không cần file mẫu (pha C): OmniVoice voice design (`instruct`) cần trường mới trong `studio.tts`.
+  - ✅ 2026-10-07 — giọng máy không cần file mẫu: người dùng chọn giới tính, độ tuổi, cao độ; farm đọc một câu mẫu
+    bằng giọng OmniVoice thiết kế (`studio.tts` `voice.instruct`), file đó thành giọng mẫu (`synthetic`, câu mẫu là
+    `reference_text`) và mọi tập clone nó (`voice-design.ts`, ADR mục 174).
   - ✅ 2026-10-07 — file audio cũ dưới `library/studio/<production>/` được dọn (xem `cleanup.ts`).
-  - Giọng mẫu không kèm câu nói (Q5): render worker gửi `ref_text: ''` nên OmniVoice clone không có lời mẫu (kém hơn).
-    Gửi `None` thì OmniVoice tự tải Whisper large-v3-turbo (~1,6 GB, HuggingFace) và nghe lại file mẫu ở **mỗi** câu;
-    muốn làm thì `tts.py` nghe file mẫu một lần mỗi job (`load_asr_model` + `transcribe`), và máy farm cần sẵn model.
-    Chưa làm (repo ag-render-worker): hỏi trước. Tới lúc đó nên gõ câu nói khi đưa giọng mẫu.
+  - ✅ 2026-10-07 — giọng mẫu không kèm câu nói: `tts.py` nghe file mẫu **một lần mỗi job** bằng WhisperX `large-v3`
+    (model `studio.transcribe` đã dùng, máy GPU có sẵn; `extra.tts_ref_asr_model`, `''` = tắt) trước khi nạp OmniVoice.
+    Nghe hỏng thì đọc như trước. Câu gõ tay vẫn được ưu tiên.
 - Kiểu thumbnail `ai` có trong schema nhưng không có bộ sinh.
 - Workflow harness cũ (`library-production*`, `channel-*`, `style-study*`, `footage-production`) còn trong
   `workflows/` nhưng không chạy được vì built-in đã bị gỡ (ADR mục 127). **Giữ** (quyết định 2026-10-07): test sha256

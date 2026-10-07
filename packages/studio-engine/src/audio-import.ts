@@ -265,6 +265,7 @@ function resumeEpisodeTts(core: StudioEngineCore, runId: string | null): boolean
 export interface ProductionAudioView {
   voice:
     | { mode: "none"; decided_at: string }
+    | { mode: "designing"; instruct: string; requested_at: string; error: string | null }
     | { mode: "clone"; origin: VoiceOrigin | null; source: AudioSource | null; duration_s: number | null; reference_text: string | null; reference: string }
     | null;
   music: { track: string; gain_db: number; ducking: boolean; source: AudioSource | null; duration_s: number | null } | null;
@@ -275,6 +276,7 @@ export function productionAudio(p: Pick<ProductionRecord, "voice" | "music">): P
   if (p.voice) {
     const v = ProductionVoiceSchema.parse(JSON.parse(p.voice));
     if ("mode" in v && v.mode === "none") voice = { mode: "none", decided_at: v.decided_at };
+    else if ("mode" in v && v.mode === "designing") voice = { mode: "designing", instruct: v.instruct, requested_at: v.requested_at, error: v.error };
     else if ("mode" in v) voice = { mode: "clone", origin: v.origin, source: v.source, duration_s: v.duration_s, reference_text: v.reference_text, reference: v.reference };
     else if (v.reference) voice = { mode: "clone", origin: null, source: null, duration_s: null, reference_text: v.reference_text, reference: v.reference };
   }
