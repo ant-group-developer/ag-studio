@@ -5,7 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  chatScopeFor, chatThread, readStageDocument, StudioRunError, submitStudioGate,
+  chatScopeFor, chatThread, declineNarration, readStageDocument, resumeVoiceWaiting, StudioRunError, submitStudioGate,
 } from "../src/index.js";
 import { cutEpisodeAtSurvey, cutSetup, drain, hasFfmpeg, VOICE, waiting, type CutSetup } from "./cut-flow.js";
 
@@ -45,5 +45,27 @@ describe.skipIf(!hasFfmpeg())("a machine step that stopped, in the chat (needs f
     const blocked = chatThread(s.core, s.db, prod, { episodeId: ep.id }).blocked!;
     expect(blocked).toMatchObject({ code: "stage_failed", stage: "tts" });
     expect(blocked.problems?.[0]?.message).toContain("giọng đọc");
+  }, 120_000);
+
+  it("given a voice, the episodes waiting at tts run on: read on the farm, then the timeline", async () => {
+    const { prod, ep, runId } = await toTts(null);
+    s.db.run("UPDATE productions SET voice = ? WHERE id = ?", [JSON.stringify(VOICE), prod]);
+    expect(resumeVoiceWaiting(s.core, s.db, prod)).toEqual([ep.id]);
+    expect(resumeVoiceWaiting(s.core, s.db, prod)).toEqual([]);
+    await drain(s);
+    expect(waiting(s, runId)).toEqual(["approve-timeline"]);
+    const t = readStageDocument(s.core, runId, "fit-timeline", "timeline.json") as { narration: { voice: string; lines: unknown[] } };
+    expect(t.narration.voice).toBe("tts");
+    expect(t.narration.lines.length).toBeGreaterThan(0);
+  }, 120_000);
+
+  it("narration declined: the episode runs on and is cut without lines", async () => {
+    const { prod, runId } = await toTts(null);
+    declineNarration(s.db, prod, "auth0|owner");
+    resumeVoiceWaiting(s.core, s.db, prod);
+    await drain(s);
+    expect(waiting(s, runId)).toEqual(["approve-timeline"]);
+    const t = readStageDocument(s.core, runId, "fit-timeline", "timeline.json") as { narration: { voice: string; lines: unknown[] } };
+    expect(t.narration).toMatchObject({ voice: "none", lines: [] });
   }, 120_000);
 });

@@ -35,7 +35,9 @@ export type LlmCallSource = "claude" | "claude-chat";
 /** `rnd` / `branding`: approved at their gate (before = Claude's proposal); `*_edit`: changed by hand after approval. */
 export type HumanEditKind = "trend_report" | "series_plan" | "youtube_kit" | "episode_rerender" | "episode_cancel" | "rnd" | "branding" | "rnd_edit" | "branding_edit" | "thumbnail"
   // shot-cut episodes (phase 5): the scene selection and the edit plan approved at their gates
-  | "survey" | "edit_plan";
+  | "survey" | "edit_plan"
+  // audio the person gave a production, or narration declined (plan optional-audio)
+  | "voice" | "music";
 
 export interface HumanEditRow {
   id: string; created_at: string; user_id: string; production_id: string; episode_id: string | null;
