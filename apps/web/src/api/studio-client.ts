@@ -754,6 +754,10 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     setClaudeMaxConcurrent(claudeMaxConcurrent: number): Promise<ClaudeUsage> {
       return request(getAccessToken, "PUT", "/api/studio/settings", { claudeMaxConcurrent });
     },
+    /** A blank name goes back to "Claude". */
+    setAssistantName(assistantName: string): Promise<ClaudeUsage> {
+      return request(getAccessToken, "PUT", "/api/studio/settings", { assistantName });
+    },
   };
 }
 
@@ -788,7 +792,8 @@ export type OverviewGroup = "waiting_you" | "needs_attention" | "running" | "don
 export interface OverviewEpisode { id: string; idx: number; title: string; status: EpisodeStatus; step: string | null; group: OverviewGroup }
 export interface OverviewItem { id: string; teamId: string; title: string; updatedAt: string; step: string | null; group: OverviewGroup; episodes: OverviewEpisode[] }
 
-export interface ClaudeUsage { running: number; waiting: number; max: number; source: "settings" | "env" }
+/** `assistantName`: what the web calls the AI ("Claude" until a Studio admin names it). */
+export interface ClaudeUsage { running: number; waiting: number; max: number; source: "settings" | "env"; assistantName?: string }
 
 interface QueueWhere { productionId: string; productionTitle: string; episodeId: string | null; episodeIdx: number | null; episodeTitle: string | null }
 export interface QueueClaudeItem extends QueueWhere { source: "chat" | "stage"; waiting: boolean; step: string; since: string | null }

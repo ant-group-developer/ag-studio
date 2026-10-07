@@ -8,12 +8,12 @@ import { Alert, App as AntApp, Button, Col, Drawer, Empty, Row, Spin, Table, Tab
 import type { ColumnsType } from "antd/es/table";
 import { useQuery } from "@tanstack/react-query";
 import { Copy, Eye } from "lucide-react";
-import { useTranslation } from "react-i18next";
 import {
   StudioHttpError, useStudioClient,
   type HumanEditView, type LlmCallOutcome, type LlmCallSummary,
 } from "../../api/studio-client";
 import { EnumText } from "../../helpers/enum-label";
+import { useAiTranslation } from "../common/assistant-name";
 
 const OUTCOME_COLOR: Record<LlmCallOutcome, string> = { accepted: "success", rejected: "warning", failed: "error", rate_limited: "gold" };
 const PAGE_SIZE = 20;
@@ -29,7 +29,7 @@ function pretty(value: unknown): string {
 }
 
 function CopyButton({ text }: { text: string }) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const { message } = AntApp.useApp();
   return (
     <Tooltip title={t("llmLog.copy")}>
@@ -50,7 +50,7 @@ function Block({ text, empty }: { text: string; empty: string }) {
 }
 
 function CallDrawer({ productionId, callId, onClose }: { productionId: string; callId: string | null; onClose: () => void }) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const client = useStudioClient();
   const { data, isLoading, error } = useQuery({
     queryKey: ["llm-call", productionId, callId],
@@ -89,7 +89,7 @@ function CallDrawer({ productionId, callId, onClose }: { productionId: string; c
 }
 
 function EditDrawer({ edit, onClose }: { edit: HumanEditView | null; onClose: () => void }) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   return (
     <Drawer open={!!edit} onClose={onClose} width="min(1200px, 100vw)" title={edit ? <EnumText group="humanEdit" code={edit.kind} /> : null} destroyOnClose>
       {edit && (
@@ -109,7 +109,7 @@ function EditDrawer({ edit, onClose }: { edit: HumanEditView | null; onClose: ()
 }
 
 export function LlmLogPanel({ productionId, live }: { productionId: string; live: boolean }) {
-  const { t, i18n } = useTranslation();
+  const { t, i18n } = useAiTranslation();
   const client = useStudioClient();
   const [callsPage, setCallsPage] = useState(1);
   const [editsPage, setEditsPage] = useState(1);

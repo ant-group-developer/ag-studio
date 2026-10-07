@@ -530,7 +530,7 @@ export const en: LocaleMessages = {
   },
   llmLog: {
     title: "Log",
-    tabCalls: "Claude calls",
+    tabCalls: "{{ai}} calls",
     tabEdits: "Human edits",
     forbidden: "The log shows footage outside your ag-go scope.",
     empty: "No calls yet.",
@@ -550,7 +550,7 @@ export const en: LocaleMessages = {
     unchanged: "Kept as is",
     user: "User",
     view: "View",
-    callTitle: "Claude call",
+    callTitle: "{{ai}} call",
     tabPrompt: "Prompt",
     tabAnswer: "Answer",
     tabProblems: "Check problems",

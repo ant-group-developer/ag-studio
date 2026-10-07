@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import { BrowserRouter, Routes, Route, Link, useLocation } from "react-router-dom";
 import { NuqsAdapter } from "nuqs/adapters/react-router";
 import { AuthGate } from "./auth/auth-provider";
+import { AssistantNameProvider } from "./modules/common/assistant-name";
 import { useAppUserMenu } from "./modules/common/use-app-user-menu";
 import { menuKeyFor } from "./helpers/menu";
 import type { AppLanguage } from "./i18n/language";
@@ -93,19 +94,21 @@ export function App() {
     <ConfigProvider locale={locale}>
       <AntApp>
         <AuthGate>
-          <BrowserRouter>
-            <NuqsAdapter>
-              <Suspense fallback={<div style={{ display: "flex", justifyContent: "center", padding: 48 }}><Spin /></div>}>
-                <Routes>
-                  <Route path="/" element={<ChatHomePage />} />
-                  <Route path="/v/:productionId" element={<ChatProductionPage />} />
-                  <Route path="/v/:productionId/e/:episodeId" element={<ChatProductionPage />} />
-                  <Route path="/queue" element={<QueuePage />} />
-                  <Route path="*" element={<AppLayout />} />
-                </Routes>
-              </Suspense>
-            </NuqsAdapter>
-          </BrowserRouter>
+          <AssistantNameProvider>
+            <BrowserRouter>
+              <NuqsAdapter>
+                <Suspense fallback={<div style={{ display: "flex", justifyContent: "center", padding: 48 }}><Spin /></div>}>
+                  <Routes>
+                    <Route path="/" element={<ChatHomePage />} />
+                    <Route path="/v/:productionId" element={<ChatProductionPage />} />
+                    <Route path="/v/:productionId/e/:episodeId" element={<ChatProductionPage />} />
+                    <Route path="/queue" element={<QueuePage />} />
+                    <Route path="*" element={<AppLayout />} />
+                  </Routes>
+                </Suspense>
+              </NuqsAdapter>
+            </BrowserRouter>
+          </AssistantNameProvider>
         </AuthGate>
       </AntApp>
     </ConfigProvider>

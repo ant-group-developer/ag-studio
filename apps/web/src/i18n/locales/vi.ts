@@ -529,7 +529,7 @@ export const vi = {
   },
   llmLog: {
     title: "Log",
-    tabCalls: "Lần gọi Claude",
+    tabCalls: "Lần gọi {{ai}}",
     tabEdits: "Người sửa",
     forbidden: "Log có nội dung footage ngoài phạm vi ag-go của bạn.",
     empty: "Chưa có lần gọi nào.",
@@ -549,7 +549,7 @@ export const vi = {
     unchanged: "Giữ nguyên",
     user: "Người",
     view: "Xem",
-    callTitle: "Lần gọi Claude",
+    callTitle: "Lần gọi {{ai}}",
     tabPrompt: "Prompt",
     tabAnswer: "Trả lời",
     tabProblems: "Lỗi kiểm tra",

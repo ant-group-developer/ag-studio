@@ -1,19 +1,19 @@
 import { useState } from "react";
 import { App as AntApp, Select } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useTranslation } from "react-i18next";
 import { Link, useNavigate } from "react-router-dom";
 import { StudioHttpError, useStudioClient, type OverviewGroup, type OverviewItem } from "../api/studio-client";
 import { rememberedTeam, rememberTeam } from "../helpers/last-team";
 import { ChatComposer } from "../modules/chat/ChatComposer";
 import { ChatShell } from "../modules/chat/ChatShell";
 import { stepLabelKey, stepOf } from "../modules/chat/steps";
+import { useAiTranslation } from "../modules/common/assistant-name";
 
 const SECTIONS: OverviewGroup[] = ["waiting_you", "needs_attention", "running", "done"];
 const CAN_CREATE = new Set(["producer", "owner"]);
 
 function WorkItem({ p }: { p: OverviewItem }) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const step = stepOf(p.step) ?? stepOf(p.episodes.find((e) => e.group === p.group)?.step);
   return (
     <Link to={`/v/${p.id}`} className={`chat-work chat-work--${p.group}`}>
@@ -25,7 +25,7 @@ function WorkItem({ p }: { p: OverviewItem }) {
 
 /** Home of the chat UI (mockup screen 1): one message makes a video; on the right, what waits for you. */
 export function ChatHomePage() {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const { message } = AntApp.useApp();
   const navigate = useNavigate();
   const client = useStudioClient();

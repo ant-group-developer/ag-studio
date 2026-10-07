@@ -1,10 +1,10 @@
 import { Fragment, useState } from "react";
 import { Sparkles } from "lucide-react";
-import { useTranslation } from "react-i18next";
 import type { ChatThreadView, ChatTurn, RenderMachine } from "../../api/studio-client";
 import { RenderMachinePicker } from "../render/RenderMachinePicker";
 import { messageParts } from "./mentions";
 import { episodeStepsFor, PLAN_STEPS, stepLabelKey, stepOf, stepPosition, type ChatStep } from "./steps";
+import { useAssistantName, useAiTranslation } from "../common/assistant-name";
 
 /** What a card under Claude's newest reply asks the person to confirm (spec local-chat §2.5). */
 export type ChatCard = "approve" | "start" | "apply" | "render" | "renderFinal" | "export" | "retry";
@@ -69,7 +69,7 @@ function cardFor(turn: ChatTurn, thread: ChatThreadView, episode: boolean): Chat
 }
 
 function KitRenderCard({ turn, busy, initial, onCard }: { turn: ChatTurn; busy: boolean; initial: RenderMachine; onCard: Props["onCard"] }) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const [machine, setMachine] = useState<RenderMachine>(initial);
   return (
     <div className="chat-card chat-card--column">
@@ -84,7 +84,8 @@ function KitRenderCard({ turn, busy, initial, onCard }: { turn: ChatTurn; busy: 
 
 /** The chat (mockup screens 2–13): messages by step, dividers, Claude's state, and confirm cards. */
 export function ChatThread({ thread, onCard, onQuickAnswer, busyCard, episode = false, renderDefault = "any", workflow, notes }: Props) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
+  const ai = useAssistantName();
   const [opened, setOpened] = useState<Set<number>>(new Set());
   const all = sections(thread.turns, workflow);
   // the step the production is at shows its divider even before anyone wrote in it
@@ -123,7 +124,7 @@ export function ChatThread({ thread, onCard, onQuickAnswer, busyCard, episode = 
               const options = turn.id === newestReply?.id && turn.scope === "intake" ? questions?.[0]?.options ?? [] : [];
               return (
                 <div key={turn.id} className="chat-reply">
-                  <p className="chat-reply__who"><span className="chat-reply__avatar" aria-hidden><Sparkles size={12} /></span>Claude</p>
+                  <p className="chat-reply__who"><span className="chat-reply__avatar" aria-hidden><Sparkles size={12} /></span>{ai}</p>
                   {turn.status === "pending" ? (
                     <p className="chat-reply__wait">{thread.queueAhead > 0 ? t("chat.thread.queued", { n: thread.queueAhead }) : t("chat.thread.writing")}</p>
                   ) : turn.status === "running" ? (

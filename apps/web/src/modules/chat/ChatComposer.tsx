@@ -1,9 +1,9 @@
 import { useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, AtSign, Folder, X } from "lucide-react";
-import { useTranslation } from "react-i18next";
 import { useAgGoClient } from "../../api/ag-go-client";
 import { encodeMentions, insertMention, mentionQuery, mentionsIn, type FolderMention } from "./mentions";
+import { useAiTranslation } from "../common/assistant-name";
 
 interface Props {
   onSend: (text: string) => unknown | Promise<unknown>;
@@ -20,7 +20,7 @@ interface Props {
 
 /** The chat box (mockup): Enter sends, Shift+Enter a new line, `@` picks an ag-go folder. */
 export function ChatComposer({ onSend, placeholder, disabled, rows = 2, value, onValueChange, menuBelow }: Props) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const agGo = useAgGoClient();
   const [own, setOwn] = useState("");
   const text = value ?? own;

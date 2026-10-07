@@ -3,7 +3,6 @@ import { App as AntApp, Drawer } from "antd";
 import { ArrowDown, ArrowLeft } from "lucide-react";
 import type { EpisodeRerunGate } from "../api/studio-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "react-router-dom";
 import { StudioHttpError, useStudioClient, type ChatThreadView, type ChatTurn, type RenderMachine } from "../api/studio-client";
 import { ChatComposer } from "../modules/chat/ChatComposer";
@@ -16,6 +15,7 @@ import { episodeStepsFor, isCutWorkflow, PLAN_STEPS, stepLabelKey, stepOf, stepP
 import { gateProblems } from "../modules/production/gate-problems";
 import { LlmLogPanel } from "../modules/production/LlmLogPanel";
 import { RenderFinalModal } from "../modules/render/RenderFinalModal";
+import { useAiTranslation } from "../modules/common/assistant-name";
 
 const MANAGES = new Set(["producer", "owner"]);
 
@@ -36,7 +36,7 @@ function stillWorking(thread: ChatThreadView | undefined): boolean {
 /** One video, or one of its episodes (mockup screens 2–13): the chat in the middle, the result of the step on the right. */
 export function ChatProductionPage() {
   const { productionId = "", episodeId } = useParams();
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const { message, modal } = AntApp.useApp();
   const navigate = useNavigate();
   const client = useStudioClient();

@@ -1,12 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { Sparkles } from "lucide-react";
-import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { useStudioClient } from "../../api/studio-client";
+import { useAiTranslation } from "../common/assistant-name";
 
 /** Header chip: Claude calls running against the cap and replies waiting; opens the Queue screen. */
 export function ClaudeChip() {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const client = useStudioClient();
   const { data } = useQuery({ queryKey: ["claude-usage"], queryFn: () => client.getClaudeUsage(), refetchInterval: 5000 });
   if (!data) return null;

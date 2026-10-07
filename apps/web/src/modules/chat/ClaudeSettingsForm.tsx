@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { App as AntApp, InputNumber } from "antd";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useTranslation } from "react-i18next";
 import { useStudioClient, type ClaudeUsage } from "../../api/studio-client";
+import { useAiTranslation } from "../common/assistant-name";
 
 /** Claude calls at once (mockup 12, right column): what runs and waits; a Studio admin sets the cap. */
 export function ClaudeSettingsForm({ usage, isAdmin }: { usage: ClaudeUsage; isAdmin: boolean }) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const { message } = AntApp.useApp();
   const client = useStudioClient();
   const qc = useQueryClient();

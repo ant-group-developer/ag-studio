@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Dropdown, Popover, type MenuProps } from "antd";
 import { MoreHorizontal } from "lucide-react";
-import { useTranslation } from "react-i18next";
 import type { EditPlan, StoredTimeline, StudioSurvey } from "@harness/contracts";
 import type { ChatThreadView, ChatTurn, RenderMachine } from "../../api/studio-client";
 import { RenderMachinePicker } from "../render/RenderMachinePicker";
@@ -15,6 +14,7 @@ import { HAND_EDITABLE } from "./ManualEditDrawer";
 import { EditPlanResult } from "./views/EditPlanResult";
 import { SurveyResult } from "./views/SurveyResult";
 import { TimelineResult } from "./views/TimelineResult";
+import { useAiTranslation } from "../common/assistant-name";
 
 export type ResultAction = "approve" | "start" | "apply" | "retry";
 export type MenuAction = "manual" | "editor" | "preview" | "finalRender" | "export" | "rerunSurvey" | "rerunEditPlan" | "log" | "oldScreen";
@@ -39,7 +39,7 @@ interface Props {
 
 /** Duyệt on the YouTube kit: it starts the final render, so it confirms the machine type first (spec §2.5, §3.4). */
 function ApproveAndRender({ disabled, initial, onConfirm }: { disabled: boolean; initial: RenderMachine; onConfirm: (m: RenderMachine) => void }) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const [open, setOpen] = useState(false);
   const [machine, setMachine] = useState<RenderMachine>(initial);
   const content = (
@@ -85,7 +85,7 @@ function folderNames(thread: ChatThreadView): Record<string, string> {
 }
 
 function Problems({ problems }: { problems: { code: string; message: string }[] }) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   if (!problems.length) return null;
   return (
     <section className="chat-reply__problems">
@@ -97,7 +97,7 @@ function Problems({ problems }: { problems: { code: string; message: string }[] 
 
 /** The result column (spec local-chat §2.3–2.4): the step's document, readable, changes marked; one main button; ⋯. */
 export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu, busy, canApprove = true, renderDefault = "any", canRenderFinal = false, workflow }: Props) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const scope = thread.scope;
   const stageKey = scope?.stageKey ?? thread.blocked?.stage ?? null;
   const step = stepOf(stageKey, workflow);

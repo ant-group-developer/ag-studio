@@ -142,6 +142,9 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
   `claude` của `studioResources()`, đọc lại ở mỗi lần claim. Worker chạy `createStudioWorkerPool`: `claude + farm +
   cpu` vòng trong một tiến trình, phối hợp qua `claim()`/lease (ADR mục 143), tự thêm/thả vòng khi cap đổi. Đừng
   quay lại một vòng duy nhất: stage farm giữ vòng của nó suốt lúc render.
+- **Tên AI trên web** (`studio_settings.assistant.name`, `assistantName`/`setAssistantName` ở `settings.ts`): admin đặt ở
+  màn Hàng đợi, mặc định `Claude`; chỉ là tên hiển thị, không đổi model/CLI/prompt. Chuỗi i18n nhắc AI dùng `{{ai}}` và
+  component gọi `useAiTranslation()` (`apps/web/src/modules/common/assistant-name.tsx`) thay cho `useTranslation()`.
 
 ### Chat (spec local-chat §3.1, ADR mục 144–147)
 - Mỗi production và mỗi tập có một luồng chat (`stage_chat_turns`). Tin nhắn đi vào **scope** bước đang ở

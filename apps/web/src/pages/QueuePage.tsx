@@ -1,12 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import {
   RENDER_MACHINES, useStudioClient, type OverviewItem, type QueueClaudeItem, type QueueRender,
 } from "../api/studio-client";
 import { ChatShell } from "../modules/chat/ChatShell";
+import { AssistantNameForm } from "../modules/chat/AssistantNameForm";
 import { ClaudeSettingsForm } from "../modules/chat/ClaudeSettingsForm";
 import { stepLabelKey, stepOf } from "../modules/chat/steps";
+import { useAiTranslation } from "../modules/common/assistant-name";
 
 /** "m:ss" since `iso`. */
 function elapsed(iso: string): string {
@@ -15,7 +16,7 @@ function elapsed(iso: string): string {
 }
 
 function useWhere() {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   return (w: { productionTitle: string; episodeIdx: number | null }, step?: string | null) => {
     const label = step ? stepOf(step) : null;
     return [w.productionTitle, w.episodeIdx !== null ? t("chat.queue.episode", { idx: w.episodeIdx }) : null, label ? t(stepLabelKey(label)) : null]
@@ -24,7 +25,7 @@ function useWhere() {
 }
 
 function ClaudeRow({ item }: { item: QueueClaudeItem }) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const where = useWhere();
   const source = t(item.source === "chat" ? "chat.queue.sourceChat" : "chat.queue.sourceStage");
   const meta = item.waiting ? `${t("chat.queue.waitingSlot")} · ${source}` : item.since ? `${elapsed(item.since)} · ${source}` : source;
@@ -41,7 +42,7 @@ function ClaudeRow({ item }: { item: QueueClaudeItem }) {
 }
 
 function RenderRow({ job }: { job: QueueRender }) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const where = useWhere();
   const machine = job.machine ? t(`chat.render.inline.${job.machine}`) : t("chat.queue.unknownMachine");
   const status = t(`chat.queue.status.${job.status}`, { defaultValue: job.status });
@@ -81,7 +82,7 @@ function waitingYou(items: OverviewItem[]) {
 
 /** The Queue (mockup 12): Claude calls, farm render jobs, what waits for you; the Claude cap; machine types. */
 export function QueuePage() {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const client = useStudioClient();
   const where = useWhere();
   const { data: queue } = useQuery({ queryKey: ["queue"], queryFn: () => client.getQueue(), refetchInterval: 5000 });
@@ -130,6 +131,7 @@ export function QueuePage() {
         </section>
       </main>
       <aside className="chat-aside chat-queue-aside" aria-label={t("chat.queue.title")}>
+        {me?.isAdmin ? <><h2>{t("chat.assistant.title")}</h2><AssistantNameForm /></> : null}
         <h2>{t("chat.claude.title")}</h2>
         {usage ? <ClaudeSettingsForm usage={usage} isAdmin={me?.isAdmin ?? false} /> : null}
         <h2>{t("chat.queue.machines")}</h2>
