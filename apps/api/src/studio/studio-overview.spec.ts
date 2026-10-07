@@ -34,8 +34,19 @@ describe('StudioOverviewController (real studio.db)', () => {
     const now = new Date().toISOString();
     acquireChatSlot(s.engine.db, 'turn-1', 1, now);
     acquireChatSlot(s.engine.db, 'turn-2', 1, now);
-    expect(ctl.claude()).toEqual({ running: 1, waiting: 1, max: 5, source: 'env' });
+    expect(ctl.claude()).toEqual({ running: 1, waiting: 1, max: 5, source: 'env', assistantName: 'Claude' });
     await expect(ctl.settings({ claudeMaxConcurrent: 3 }, req('auth0|owner'))).rejects.toBeInstanceOf(ForbiddenException);
     expect(await ctl.settings({ claudeMaxConcurrent: 3 }, req('auth0|admin'))).toMatchObject({ max: 3, source: 'settings' });
+  });
+
+  it('names the AI: Claude until an admin saves a name, a blank one goes back to Claude', async () => {
+    const ctl = new StudioOverviewController(s.engine as EngineService, accounts, config('5'));
+    await expect(ctl.settings({ assistantName: 'AG AI' }, req('auth0|owner'))).rejects.toBeInstanceOf(ForbiddenException);
+    expect(await ctl.settings({ assistantName: 'AG AI' }, req('auth0|admin'))).toMatchObject({ assistantName: 'AG AI', max: 5 });
+    expect(ctl.claude().assistantName).toBe('AG AI');
+    expect(await ctl.settings({ assistantName: '' }, req('auth0|admin'))).toMatchObject({ assistantName: 'Claude' });
+    await expect(ctl.settings({}, req('auth0|admin'))).rejects.toMatchObject({ status: 400 });
+    await expect(ctl.settings({ claudeMaxConcurrent: 4, assistantName: 'x'.repeat(41) }, req('auth0|admin'))).rejects.toMatchObject({ status: 422 });
+    expect(ctl.claude()).toMatchObject({ max: 5, assistantName: 'Claude' });
   });
 });

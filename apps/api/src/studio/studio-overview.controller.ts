@@ -1,9 +1,10 @@
-import { Body, Controller, ForbiddenException, Get, Put, Req } from '@nestjs/common';
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Put, Req, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { IsInt, Max, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Request } from 'express';
 import {
-  claudeMaxConcurrent, claudeUsage, parseClaudeMaxConcurrent, setClaudeMaxConcurrent, studioOverview, studioQueue,
+  assistantName, claudeMaxConcurrent, claudeUsage, parseClaudeMaxConcurrent, setAssistantName, setClaudeMaxConcurrent, studioOverview,
+  studioQueue,
 } from '@ag-studio/engine';
 import { AccountApiService } from '../auth/account-api.service';
 import { EngineService } from './engine.service';
@@ -11,7 +12,9 @@ import { mapErrors } from './http-errors';
 
 export class StudioSettingsDto {
   /** Claude calls at once for the whole Studio (chat and steps that run on their own). */
-  @IsInt() @Min(1) @Max(100) claudeMaxConcurrent!: number;
+  @IsOptional() @IsInt() @Min(1) @Max(100) claudeMaxConcurrent?: number;
+  /** The name the web shows for the AI; blank goes back to "Claude". */
+  @IsOptional() @IsString() @MaxLength(60) assistantName?: string;
 }
 
 /**
@@ -33,11 +36,16 @@ export class StudioOverviewController {
     return { items: studioOverview(this.engine.core, this.engine.db, { userId: req.authContext!.userId, isAdmin }) };
   }
 
-  /** `running` counts stages and chat replies holding a slot; `waiting` the replies in line for one. */
+  /**
+   * `running` counts stages and chat replies holding a slot; `waiting` the replies in line for one; `assistantName` is
+   * what the web calls the AI.
+   */
   @Get('claude')
   claude() {
     const cap = claudeMaxConcurrent(this.engine.db, this.envCap());
-    return { ...claudeUsage(this.engine.db, this.engine.core.clock.now()), max: cap.value, source: cap.source };
+    return {
+      ...claudeUsage(this.engine.db, this.engine.core.clock.now()), max: cap.value, source: cap.source, assistantName: assistantName(this.engine.db),
+    };
   }
 
   /**
@@ -56,8 +64,24 @@ export class StudioOverviewController {
   @Put('settings')
   async settings(@Body() dto: StudioSettingsDto, @Req() req: Request) {
     if (!(await this.isAdmin(req))) throw new ForbiddenException('Requires a Studio admin');
+    if (dto.claudeMaxConcurrent === undefined && dto.assistantName === undefined) {
+      throw new BadRequestException('Send claudeMaxConcurrent or assistantName');
+    }
     return mapErrors(() => {
-      setClaudeMaxConcurrent(this.engine.db, dto.claudeMaxConcurrent, req.authContext!.userId, this.engine.core.clock.now());
+      const by = req.authContext!.userId;
+      const now = this.engine.core.clock.now();
+      // one transaction: a bad name does not leave the cap half saved
+      try {
+        this.engine.db.immediate(() => {
+          if (dto.claudeMaxConcurrent !== undefined) setClaudeMaxConcurrent(this.engine.db, dto.claudeMaxConcurrent, by, now);
+          if (dto.assistantName !== undefined) setAssistantName(this.engine.db, dto.assistantName, by, now);
+        });
+      } catch (e) {
+        // the engine's HarnessError (`@harness/contracts` is not a dependency of the API)
+        const err = e as { code?: string; message?: string };
+        if (err.code === 'CONFIG_INVALID') throw new UnprocessableEntityException({ message: err.message, code: 'invalid_setting' });
+        throw e;
+      }
       return this.claude();
     });
   }

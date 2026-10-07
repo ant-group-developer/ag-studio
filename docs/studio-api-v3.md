@@ -318,10 +318,12 @@ interface ChatThreadView { turns: ChatTurn[];
   `{id, teamId, title, updatedAt, step: string | null, group: 'waiting_you' | 'needs_attention' | 'running' | 'done',
   episodes: {id, idx, title, status: EpisodeStatus, step, group}[]}` — the productions of the caller's teams (an admin:
   all), not archived
-- `GET claude` -> `{running, waiting, max, source: 'settings' | 'env'}`: Claude slots held (stages and chat replies),
-  replies in line, the cap
-- `PUT settings` (Studio admin) `{claudeMaxConcurrent: 1..100}` -> the same as `GET claude`; the worker applies it on
-  its next claim
+- `GET claude` -> `{running, waiting, max, source: 'settings' | 'env', assistantName}`: Claude slots held (stages and
+  chat replies), replies in line, the cap; `assistantName` is what the web calls the AI (`"Claude"` until set)
+- `PUT settings` (Studio admin) `{claudeMaxConcurrent?: 1..100, assistantName?: string}` (at least one, else 400) -> the
+  same as `GET claude`; the worker applies the cap on its next claim. `assistantName` is display only (1–40 characters
+  on one line, 422 `invalid_setting` otherwise; blank goes back to `"Claude"`): the model, CLI and prompts stay as they
+  are. Both are saved in one transaction
 - `GET queue` -> the Queue screen, filtered like `overview` (others' items are only counted in `hidden*`):
   ```ts
   interface Where { productionId; productionTitle; episodeId: string | null; episodeIdx: number | null; episodeTitle: string | null }
