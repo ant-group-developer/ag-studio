@@ -16,6 +16,8 @@ const client = {
   getCanvaConnection: vi.fn().mockResolvedValue({ enabled: false, connected: false, displayName: null }),
   listTeams: vi.fn().mockResolvedValue({ items: [{ id: "team-1", name: "Du lịch", role: "producer" }], total: 1, page: 1, pageSize: 100 }),
   getTeam: vi.fn().mockResolvedValue({ id: "team-1", name: "Du lịch", role: "producer" }),
+  resumeEpisodeStage: vi.fn().mockResolvedValue({ runId: "r2", reused: [] }), resumeStage: vi.fn().mockResolvedValue({ runId: "r2", reused: [] }),
+  cancelEpisode: vi.fn().mockResolvedValue(undefined), cancelRun: vi.fn().mockResolvedValue({ ok: true }),
   getOverview: vi.fn().mockResolvedValue({ items: [
     { id: "p1", teamId: "team-1", title: "Series Kyoto", updatedAt: "", step: "approve-branding", group: "waiting_you", episodes: [] },
     { id: "p2", teamId: "team-1", title: "Huế", updatedAt: "", step: "plan-episodes", group: "needs_attention", episodes: [] },
@@ -61,7 +63,8 @@ const turn = (over: Partial<ChatTurn>): ChatTurn => ({
   llm_call_id: null, created_by: null, applied_at: null, created_at: "", updated_at: "", ...over,
 });
 
-describe("chat pages", () => {
+// Each case mounts the whole chat page with antd menus and modals: past 5 s when the full suite loads the machine.
+describe("chat pages", { timeout: 20_000 }, () => {
   beforeAll(async () => { await i18n.changeLanguage("vi"); });
   beforeEach(() => { vi.clearAllMocks(); });
 
@@ -146,6 +149,40 @@ describe("chat pages", () => {
     fireEvent.click(screen.getByRole("radio", { name: /Máy có GPU/ }));
     fireEvent.click(screen.getByRole("button", { name: "Render" }));
     await waitFor(() => expect(client.rerenderEpisode).toHaveBeenCalledWith("p1", "e1", "gpu", null));
+  });
+
+  it("⋯ → Chạy lại từ bước…: an ended episode goes again from a step it passed, its Claude stage writing it anew", async () => {
+    client.getChatThread.mockResolvedValue({
+      turns: [], scope: { productionId: "p1", episodeId: "e1", runId: "r", stageKey: "timeline", scope: "timeline" }, blocked: null,
+      current: null, queueAhead: 0, stopped: null,
+    } satisfies ChatThreadView);
+    client.getEpisode.mockResolvedValue({ id: "e1", idx: 1, title: "Rừng tre", status: "ready", currentStage: null, run: { state: "SUCCEEDED" }, progress: null,
+      finalVideoUrl: null, exportFiles: [], render: { machine: null, defaultMachine: "any", restartFrom: "render-final", job: null, farmStatus: null } });
+    mount("/v/p1/e/e1");
+    await screen.findByRole("heading", { name: "Tập 1 · Rừng tre" });
+    fireEvent.click(screen.getByRole("button", { name: "Thêm thao tác" }));
+    expect(screen.queryByRole("menuitem", { name: "Huỷ lần chạy này…" })).toBeNull();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Chạy lại từ bước…" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Dựng nháp");
+    expect(dialog).toHaveTextContent("YouTube kit");
+    fireEvent.click(screen.getByRole("radio", { name: "YouTube kit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Chạy lại" }));
+    await waitFor(() => expect(client.resumeEpisodeStage).toHaveBeenCalledWith("p1", "e1", "youtube-kit"));
+  });
+
+  it("⋯ → Huỷ lần chạy này…: a run waiting at a gate is cancelled after a confirm", async () => {
+    client.getChatThread.mockResolvedValue({
+      turns: [], scope: { productionId: "p1", episodeId: null, runId: "r", stageKey: "approve-branding", scope: "gate" }, blocked: null,
+      current: { turnId: null, document: { series_name: "Quiet" }, draft: { series_name: "Quiet" }, pendingApply: false, problems: [] }, queueAhead: 0,
+    } satisfies ChatThreadView);
+    mount("/v/p1");
+    fireEvent.click(await screen.findByRole("button", { name: "Thêm thao tác" }));
+    expect(screen.queryByRole("menuitem", { name: "Chạy lại từ bước…" })).toBeNull();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Huỷ lần chạy này…" }));
+    expect((await screen.findAllByText("Huỷ lần chạy này?")).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Huỷ lần chạy" }));
+    await waitFor(() => expect(client.cancelRun).toHaveBeenCalledWith("p1"));
   });
 
   it("the step chips of an episode whose run ended ready are all done", async () => {

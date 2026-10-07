@@ -293,7 +293,21 @@ export const chatVi = {
   menu: {
     more: "Thêm thao tác", manual: "Sửa tay", editor: "Mở editor timeline", preview: "Render xem trước 720p", finalRender: "Render bản cuối…",
     export: "Xuất project Premiere", log: "Nhật ký {{ai}}", oldScreen: "Mở màn hình cũ",
-    rerunSurvey: "Chạy lại từ chọn cảnh…", rerunEditPlan: "Chạy lại từ kế hoạch dựng…",
+    rerunSurvey: "Chạy lại từ chọn cảnh…", rerunEditPlan: "Chạy lại từ kế hoạch dựng…", rerunFrom: "Chạy lại từ bước…", cancelRun: "Huỷ lần chạy này…",
+  },
+  rerunFrom: {
+    title: "Chạy lại từ bước nào?",
+    body: "{{ai}} viết lại bước bạn chọn từ đầu; các bước trước được giữ, các bước sau chạy lại và chờ bạn duyệt như lần đầu.",
+    planNote: "Khi kế hoạch tập được duyệt lại, các tập hiện có sẽ bị thay bằng tập mới (timeline, bản render và chỉnh sửa của chúng mất).",
+    episodeNote: "Timeline và YouTube kit làm lại thành bản mới; các bản cũ vẫn ở lịch sử của tập.",
+    ok: "Chạy lại",
+    started: "Đã chạy lại từ bước bạn chọn.",
+  },
+  cancelRun: {
+    title: "Huỷ lần chạy này?",
+    body: "Bước đang chạy hoặc chờ duyệt dừng lại; những gì đã xong được giữ. Muốn tiếp tục thì dùng ⋯ → Chạy lại từ bước….",
+    ok: "Huỷ lần chạy",
+    done: "Đã huỷ.",
   },
   rerun: {
     survey: {

@@ -295,7 +295,21 @@ export const chatEn: typeof chatVi = {
   menu: {
     more: "More actions", manual: "Edit by hand", editor: "Open the timeline editor", preview: "Render a 720p preview", finalRender: "Render the final cut…",
     export: "Export a Premiere project", log: "{{ai}} call log", oldScreen: "Open the old screen",
-    rerunSurvey: "Run again from scene selection…", rerunEditPlan: "Run again from the edit plan…",
+    rerunSurvey: "Run again from scene selection…", rerunEditPlan: "Run again from the edit plan…", rerunFrom: "Run again from a step…", cancelRun: "Cancel this run…",
+  },
+  rerunFrom: {
+    title: "Run again from which step?",
+    body: "{{ai}} writes the step you pick anew; the steps before are kept, the ones after run again and wait for you as the first time.",
+    planNote: "Once the episode plan is approved again, the episodes there are replaced by new ones (their timelines, renders and edits are lost).",
+    episodeNote: "The timeline and the YouTube kit are made again as new versions; the old ones stay in the episode's history.",
+    ok: "Run again",
+    started: "Running again from the step you picked.",
+  },
+  cancelRun: {
+    title: "Cancel this run?",
+    body: "The step running or waiting for approval stops; what is done is kept. To go on, use ⋯ → Run again from a step….",
+    ok: "Cancel the run",
+    done: "Cancelled.",
   },
   rerun: {
     survey: {

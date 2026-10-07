@@ -584,6 +584,10 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     resumeStage(id: string, stage: string): Promise<{ runId: string; reused: string[] }> {
       return request(getAccessToken, "POST", `/api/productions/${id}/run/stages/${stage}/resume`);
     },
+    /** ⋯ → Chạy lại từ bước…: an episode's ended run again from `stage`. */
+    resumeEpisodeStage(productionId: string, episodeId: string, stage: string): Promise<{ runId: string; reused: string[] }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/stages/${stage}/resume`);
+    },
     cancelRun(id: string): Promise<{ ok: true }> {
       return request(getAccessToken, "POST", `/api/productions/${id}/run/cancel`);
     },

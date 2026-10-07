@@ -92,6 +92,19 @@ describe('render machine routes (real studio.db)', () => {
     expect(Reflect.getMetadata(ROLES_KEY, EpisodesController.prototype.episodeNarration)).toEqual(['producer']);
   });
 
+  it('Chạy lại từ bước: an ended run goes again from the stage asked; a run still going is 409, an unknown stage 404', async () => {
+    const ctl = new EpisodesController(engine, access);
+    const first = await ctl.rerender(PROD, 'ep-1', {}, req('auth0|owner'));
+    expect((await ctl.resumeEpisodeStage(PROD, 'ep-1', 'youtube-kit', req('auth0|owner')).catch((e: unknown) => e)) as Error)
+      .toMatchObject({ status: 409 });
+    s.engine.core.planner.cancel(first.runId);
+    expect(((await ctl.resumeEpisodeStage(PROD, 'ep-1', 'nope', req('auth0|owner')).catch((e: unknown) => e)) as { status: number }).status).toBe(404);
+    const again = await ctl.resumeEpisodeStage(PROD, 'ep-1', 'episode-intake', req('auth0|owner'));
+    expect(again.runId).not.toBe(first.runId);
+    expect(s.db.get<{ run_id: string }>("SELECT run_id FROM episodes WHERE id = 'ep-1'")?.run_id).toBe(again.runId);
+    expect(Reflect.getMetadata(ROLES_KEY, EpisodesController.prototype.resumeEpisodeStage)).toEqual(['producer']);
+  });
+
   it('Render lại with an empty body works as before', async () => {
     const ctl = new EpisodesController(engine, access);
     const out = await ctl.rerender(PROD, 'ep-1', {}, req('auth0|owner'));

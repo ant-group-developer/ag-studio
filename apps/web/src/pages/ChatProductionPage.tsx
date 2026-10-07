@@ -11,10 +11,11 @@ import { ChatThread, type CardOptions, type ChatCard } from "../modules/chat/Cha
 import { StepPane } from "../modules/chat/StepPane";
 import { useStickToBottom } from "../modules/chat/use-stick-to-bottom";
 import { ResultPane, type MenuAction, type ResultAction } from "../modules/chat/ResultPane";
-import { episodeStepsFor, isCutWorkflow, PLAN_STEPS, STEP_SHOWS, stepLabelKey, stepOf, stepPosition, type ChatStep } from "../modules/chat/steps";
+import { episodeStepsFor, isCutWorkflow, PLAN_STEPS, resumeStageOf, STEP_SHOWS, stepLabelKey, stepOf, stepPosition, type ChatStep } from "../modules/chat/steps";
 import { gateProblems } from "../modules/production/gate-problems";
 import { LlmLogPanel } from "../modules/production/LlmLogPanel";
 import { RenderFinalModal } from "../modules/render/RenderFinalModal";
+import { RerunFromModal } from "../modules/chat/RerunFromModal";
 import { useAiTranslation } from "../modules/common/assistant-name";
 
 const MANAGES = new Set(["producer", "owner"]);
@@ -156,7 +157,26 @@ export function ChatProductionPage() {
     });
   };
 
+  const [rerunFromOpen, setRerunFromOpen] = useState(false);
+  const resumeFrom = useMutation({
+    mutationFn: (stage: string) => (episodeId ? client.resumeEpisodeStage(productionId, episodeId, stage) : client.resumeStage(productionId, stage)),
+    onSuccess: () => { setRerunFromOpen(false); void message.success(t("chat.rerunFrom.started")); refresh(); },
+    onError: fail,
+  });
+  const cancelRun = useMutation({
+    mutationFn: async (): Promise<void> => { if (episodeId) await client.cancelEpisode(productionId, episodeId); else await client.cancelRun(productionId); },
+    onSuccess: () => { void message.success(t("chat.cancelRun.done")); refresh(); },
+    onError: fail,
+  });
+
   const onMenu = (m: MenuAction) => {
+    if (m === "rerunFrom") setRerunFromOpen(true);
+    if (m === "cancelRun") {
+      void modal.confirm({
+        title: t("chat.cancelRun.title"), content: t("chat.cancelRun.body"), okText: t("chat.cancelRun.ok"), okButtonProps: { danger: true },
+        cancelText: t("chat.rerun.cancel"), onOk: () => cancelRun.mutateAsync(),
+      });
+    }
     if (m === "rerunSurvey" && episodeId) confirmRerun("approve-survey");
     if (m === "rerunEditPlan" && episodeId) confirmRerun("approve-edit-plan");
     if (m === "editor" && episodeId) navigate(`/productions/${productionId}/episodes/${episodeId}/editor`);
@@ -250,6 +270,12 @@ export function ChatProductionPage() {
           onPrimary={(a, options) => act.mutate({ kind: a, options })} onMenu={onMenu}
           onSaveEdit={(stageKey, document) => manual.mutateAsync({ stageKey, document })} onAudioChanged={refresh} />
       ) : null}
+      <RerunFromModal open={rerunFromOpen} plan={!episodeId} busy={resumeFrom.isPending} onClose={() => setRerunFromOpen(false)}
+        onConfirm={(stage) => resumeFrom.mutate(stage)}
+        steps={row.flatMap((s, i) => {
+          const stage = (finished || i < at) ? resumeStageOf(s, { episode: !!episodeId, workflow }) : null;
+          return stage ? [{ step: s, stage }] : [];
+        })} />
       <Drawer open={logOpen} onClose={() => setLogOpen(false)} width="min(900px, 100vw)" title={t("chat.menu.log")} destroyOnClose>
         <LlmLogPanel productionId={productionId} live={stillWorking(thread)} />
       </Drawer>
