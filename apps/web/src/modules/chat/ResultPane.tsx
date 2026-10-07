@@ -159,8 +159,7 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
       { key: "editor", label: t("chat.menu.editor") },
       { key: "preview", label: t("chat.menu.preview") },
       { key: "finalRender", label: t("chat.menu.finalRender"), disabled: !canRenderFinal || !canApprove },
-      // Premiere cannot read trims, transitions or narration yet (phase 4)
-      ...(cut ? [] : [{ key: "export", label: t("chat.menu.export") }]),
+      { key: "export", label: t("chat.menu.export") },
       ...(cut ? [
         { key: "rerunSurvey", label: t("chat.menu.rerunSurvey"), disabled: !canApprove },
         { key: "rerunEditPlan", label: t("chat.menu.rerunEditPlan"), disabled: !canApprove },

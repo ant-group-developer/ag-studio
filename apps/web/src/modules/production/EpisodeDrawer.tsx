@@ -295,8 +295,8 @@ export function EpisodeDrawer({ productionId, episode, open, onClose, canEdit }:
           </Card>
         )}
 
-        {/* Adobe Premiere exports (not for a shot-cut episode until phase 4) */}
-        {episode.editStyle !== "cut" ? <PremiereExports productionId={productionId} episodeId={episode.id} canEdit={canEdit} /> : null}
+        {/* Adobe Premiere exports */}
+        <PremiereExports productionId={productionId} episodeId={episode.id} canEdit={canEdit} />
 
         {/* Downloads */}
         {episode.exportFiles.length > 0 && (
