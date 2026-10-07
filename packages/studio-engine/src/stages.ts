@@ -30,7 +30,7 @@ import type { CutMediaDeps } from "./cut-stages.js";
 import { insertThumbnail, listThumbnails, replaceRenderThumbnails } from "./thumbnails-db.js";
 import {
   episodeForRun, getEpisode, getProduction, latestEpisodeRevision, listEpisodes, productionBranding, productionChannels, productionForRun,
-  productionHints, productionOwner, productionRnd, productionSources, replaceEpisodes, saveEpisodeRevision, saveProductionDocument,
+  productionHints, productionMusic, productionOwner, productionRnd, productionSources, replaceEpisodes, saveEpisodeRevision, saveProductionDocument,
   saveTrendReport, updateEpisodeRunId, type ProductionRecord, type StudioDb,
 } from "./studio-db.js";
 
@@ -142,7 +142,7 @@ export function writeEpisodeIntake(d: Pick<StudioStageDeps, "db">, request: Stag
   const brief = effectiveBrief({
     production_id: episode.production_id, run_id: request.run_id, owner_user_id: owner, title: prod.title,
     folder_ids: productionSources(d.db, episode.production_id), aspect, canvas: prod.canvas ? JSON.parse(prod.canvas) : DEFAULT_CANVAS[aspect],
-    fps: 25, language: prod.language ?? "vi", music: prod.music ? JSON.parse(prod.music) : null,
+    fps: 25, language: prod.language ?? "vi", music: productionMusic(prod),
     youtube_channels: productionChannels(prod).filter((c) => c.role === "reference").map((c) => c.url),
     keywords: prod.keywords ? (JSON.parse(prod.keywords) as string[]) : [],
   }, { ...hints, episode_target_seconds: hints.episode_target_seconds ?? episode.target_seconds, max_episodes: hints.max_episodes ?? 1 }, productionRnd(prod));
@@ -277,7 +277,7 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
         canvas: p.canvas ? JSON.parse(p.canvas) : DEFAULT_CANVAS[aspect],
         fps: 25,
         language: p.language ?? "vi",
-        music: p.music ? JSON.parse(p.music) : null,
+        music: productionMusic(p),
         youtube_channels: p.youtube_channels ? JSON.parse(p.youtube_channels) : [],
         keywords: p.keywords ? JSON.parse(p.keywords) : [],
       });
@@ -343,7 +343,7 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       const seed = StudioSeedSchema.parse({
         schema_version: "studio.seed/v1", production_id: p.id, run_id: request.run_id, owner_user_id: owner, title: p.title,
         folder_ids: folders, channels, keywords, aspect, canvas: p.canvas ? JSON.parse(p.canvas) : DEFAULT_CANVAS[aspect], fps: 25,
-        language: p.language ?? "vi", music: p.music ? JSON.parse(p.music) : null, hints: productionHints(p),
+        language: p.language ?? "vi", music: productionMusic(p), hints: productionHints(p),
       });
       writeOutput(ctx, "seed.json", toBuffer(seed));
     },
@@ -415,7 +415,7 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
         max_episodes: prod.max_episodes ?? 1,
         aspect, canvas: prod.canvas ? JSON.parse(prod.canvas) : DEFAULT_CANVAS[aspect],
         fps: 25, language: prod.language ?? "vi",
-        music: prod.music ? JSON.parse(prod.music) : null,
+        music: productionMusic(prod),
         youtube_channels: prod.youtube_channels ? JSON.parse(prod.youtube_channels) : [],
         keywords: prod.keywords ? JSON.parse(prod.keywords) : [],
       });

@@ -7,8 +7,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import {
-  HarnessError, StoredTimelineSchema, StudioBrandingSchema, StudioRndSchema, timelineAsVersion, timelineVersion,
-  type ChannelRef, type StoredTimeline, type StudioBranding, type StudioHints, type StudioRnd,
+  HarnessError, ProductionMusicSchema, StoredTimelineSchema, StudioBrandingSchema, StudioRndSchema, studioMusicOf, timelineAsVersion, timelineVersion,
+  type ChannelRef, type StoredTimeline, type StudioBranding, type StudioHints, type StudioMusic, type StudioRnd,
 } from "@harness/contracts";
 
 type Param = string | number | null;
@@ -79,6 +79,11 @@ export function saveProductionDocument(db: StudioDb, productionId: string, kind:
   const now = new Date().toISOString();
   db.run(`UPDATE productions SET ${kind} = ?, ${kind}_updated_at = ?, ${kind}_updated_by = ?, updated_at = ? WHERE id = ?`,
     [JSON.stringify(doc), now, by, now, productionId]);
+}
+
+/** The music stages freeze (seed, brief, timeline): the production's, without where the file came from. */
+export function productionMusic(p: Pick<ProductionRecord, "music">): StudioMusic | null {
+  return p.music ? studioMusicOf(ProductionMusicSchema.parse(JSON.parse(p.music))) : null;
 }
 
 export function getProduction(db: StudioDb, id: string): ProductionRecord | null {

@@ -9,8 +9,8 @@ import { basename, join } from "node:path";
 import { z } from "zod";
 import {
   CUT_FRAME_WIDTH, CUT_SHEET_COLS, CUT_SHEET_SHOTS, CutProxySetSchema, CutSourcesSchema, CutWatchSchema, EditPlanSchema, EpisodeAssetSchema, HarnessError,
-  ShotsIndexSchema, StudioCanvasSchema, StudioMusicSchema, StudioSurveySchema,
-  type CutProxySet, type CutSources, type CutWatch, type ExecutorContext, type ShotsIndex, type StageRequest, type Transcript,
+  ProductionMusicSchema, ShotsIndexSchema, StudioCanvasSchema, StudioMusicSchema, StudioSurveySchema, studioMusicOf,
+  type CutProxySet, type EditPlan, type StudioMusic, type CutSources, type CutWatch, type ExecutorContext, type ShotsIndex, type StageRequest, type Transcript,
 } from "@harness/contracts";
 import {
   StudioTranscribePayloadSchema, StudioTtsPayloadSchema, TRANSCRIBE_MANIFEST_SCHEMA, TranscribeManifestSchema, TTS_MANIFEST_SCHEMA, TtsManifestSchema,
@@ -24,7 +24,7 @@ import { readInput, readTimelineInput, studioStages, toBuffer, writeEpisodeIntak
 import { prepareRender } from "./payloads.js";
 import { getProduction, latestEpisodeRevision, saveEpisodeRevision } from "./studio-db.js";
 import { fitCutTimeline, type ReadLine } from "./cut-fit.js";
-import { productionVoice } from "./voice.js";
+import { productionVoice, type StudioVoice } from "./voice.js";
 import { getVoiceLine, putVoiceLine, voiceKey } from "./voice-store.js";
 
 /** Shot detection on the proxies: the harness `media.scene` defaults (ADR-0001 item 113 measured them). */
@@ -219,7 +219,7 @@ export function cutStages(d: StudioStageDeps): Record<string, InProcessStage> {
     "studio-cut-fit": async (request, ctx) => {
       const media = requireMedia(d);
       const ws = ctx.workspaceDir;
-      const plan = readInput(request, ws, STUDIO_TYPES.editPlan, (v) => EditPlanSchema.parse(v));
+      const approved = readInput(request, ws, STUDIO_TYPES.editPlan, (v) => EditPlanSchema.parse(v));
       const shots = readInput(request, ws, STUDIO_TYPES.shots, (v) => ShotsIndexSchema.parse(v));
       const survey = readInput(request, ws, STUDIO_TYPES.surveyIndex, (v) => StudioSurveySchema.parse(v));
       const sources = readSources(request, ws);
@@ -228,7 +228,9 @@ export function cutStages(d: StudioStageDeps): Record<string, InProcessStage> {
       const brief = readInput(request, ws, STUDIO_TYPES.brief, (v) => FitBriefSchema.parse(v));
       const now = new Date().toISOString();
 
-      const voice = plan.narration === "tts" ? narrationVoice(d.db, brief.production_id) : null;
+      const voice = approved.narration === "tts" ? narrationVoice(d.db, brief.production_id) : null;
+      // narration declined after the plan was approved: cut it without lines
+      const plan = approved.narration === "tts" && !voice ? withoutNarration(approved) : approved;
       const textOf = new Map(plan.lines.map((l) => [l.line_id, l.text]));
       const keyOf = (lineId: string) => voiceKey({ text: textOf.get(lineId)!, language: plan.language, voice: voice! });
       if (voice) {
@@ -250,7 +252,7 @@ export function cutStages(d: StudioStageDeps): Record<string, InProcessStage> {
       const transcript = transcriptFromManifest(manifest, sources.sources.map((x) => x.source_id));
       const { timeline, report } = fitCutTimeline({
         productionId: brief.production_id, plan, shots, survey, transcript, voice: read,
-        sources: sources.sources, assets: episode.assets, canvas: brief.canvas, fps: brief.fps, music: brief.music,
+        sources: sources.sources, assets: episode.assets, canvas: brief.canvas, fps: brief.fps, music: currentMusic(d.db, brief.production_id, brief.music),
       });
       const latest = latestEpisodeRevision(d.db, plan.episode_id);
       const { revision } = saveEpisodeRevision(d.db, plan.episode_id, { baseRevision: latest?.revision ?? 0, data: timeline, authorId: "system", label: "fit" });
@@ -305,13 +307,29 @@ function emptyTtsManifest(productionId: string, language: string): TtsManifest {
   return { schema: TTS_MANIFEST_SCHEMA, production_id: productionId, language, lines: [], engine: { name: "voice-store", version: null } };
 }
 
-/** The voice a production's narration is read in; a production with none to clone cannot be read. */
-export function narrationVoice(db: StudioStageDeps["db"], productionId: string): ReturnType<typeof productionVoice> {
-  const voice = productionVoice(getProduction(db, productionId)?.voice ?? null);
-  if (!voice.reference) {
-    throw new HarnessError("CONFIG_INVALID", "production chưa có giọng đọc: đặt giọng cho production hoặc STUDIO_DEFAULT_VOICE_REFERENCE", { production_id: productionId });
+/**
+ * The voice a production's narration is read in, or null when the person declined narration (the episode is cut
+ * without lines). No voice yet: a contract error with `details.code = "needs_voice"`; the stage waits and the chat asks
+ * for a sample (`chatScopeFor`), then runs it again (ADR-0001 item 167).
+ */
+export function narrationVoice(db: StudioStageDeps["db"], productionId: string): StudioVoice | null {
+  const v = productionVoice(getProduction(db, productionId)?.voice ?? null);
+  if (v.kind === "none") return null;
+  if (v.kind === "missing") {
+    throw new HarnessError("CONFIG_INVALID", "production chưa có giọng đọc: đưa giọng mẫu hoặc chọn Bỏ lời dẫn", { production_id: productionId, code: "needs_voice" });
   }
-  return voice;
+  return v.voice;
+}
+
+/** The plan as cut without narration: no lines, no shot waits for one. */
+function withoutNarration(plan: EditPlan): EditPlan {
+  return { ...plan, narration: "none", lines: [], shots: plan.shots.map((s) => ({ ...s, line_id: null })) };
+}
+
+/** The production's music as it is now (set while the episode waited, e.g.), else the one frozen in the brief. */
+function currentMusic(db: StudioStageDeps["db"], productionId: string, frozen: StudioMusic | null): StudioMusic | null {
+  const raw = getProduction(db, productionId)?.music;
+  return raw ? studioMusicOf(ProductionMusicSchema.parse(JSON.parse(raw))) : frozen;
 }
 
 /** Farm payload builders of the shot-cut workflow (`stage_config.payload_builder`). */
@@ -343,8 +361,12 @@ export function cutPayloadBuilders(d: Pick<StudioStageDeps, "db" | "bucket" | "m
       if (plan.narration !== "tts" || plan.lines.length === 0) {
         return { productionId, payload: null, skip: { files: { "tts.json": JSON.stringify(emptyTtsManifest(productionId, plan.language), null, 2) } } };
       }
-      const media = requireMedia(d);
       const voice = narrationVoice(d.db, productionId);
+      if (!voice) {
+        ctx.logger.info("narration declined for the production: nothing to read", { production_id: productionId });
+        return { productionId, payload: null, skip: { files: { "tts.json": JSON.stringify(emptyTtsManifest(productionId, plan.language), null, 2) } } };
+      }
+      const media = requireMedia(d);
       const missing = plan.lines.filter((l) => !getVoiceLine(d.db, media.voiceDir, voiceKey({ text: l.text, language: plan.language, voice })));
       ctx.logger.info("narration lines to read", { lines: plan.lines.length, to_read: missing.length });
       if (missing.length === 0) {
