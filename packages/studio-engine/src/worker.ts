@@ -27,7 +27,7 @@ import { isRunActive, startEpisodeRun } from "./run-control.js";
 import type { FootageCatalogSource } from "./stages.js";
 import { cutPayloadBuilders, studioInProcessStages, type CutMediaDeps } from "./cut-stages.js";
 import { teamGuidesForRun } from "./team-skills.js";
-import type { StudioDb } from "./studio-db.js";
+import { earlierFarmJobs, type StudioDb } from "./studio-db.js";
 import type { ResearchSource } from "./youtube-research.js";
 import type { ThumbnailRenderer } from "./thumbnail-render.js";
 
@@ -114,6 +114,8 @@ function workerFactory(o: StudioWorkerOptions, single: boolean): { next: () => W
       const machine = renderChoiceFor(o.db, request.run_id, request.stage_key);
       return machine ? renderRequirements(machine) : undefined;
     },
+    // what an abandoned attempt left on the farm (the worker restarted mid-job) is cancelled, not run for nobody
+    earlierJobsFor: (request) => earlierFarmJobs(o.db, { runId: request.run_id, stageKey: request.stage_key, attemptId: request.attempt_id }),
   }));
   const capacity = () => studioResources(claudeMaxConcurrent(o.db, o.claudeMaxConcurrent ?? DEFAULT_CLAUDE_MAX_CONCURRENT).value);
   const project = {

@@ -143,6 +143,14 @@ export function updateEpisodeRunId(db: StudioDb, episodeId: string, runId: strin
   db.run("UPDATE episodes SET run_id = ?, updated_at = ? WHERE id = ?", [runId, new Date().toISOString(), episodeId]);
 }
 
+/** Farm jobs submitted by the other attempts of a run's stage (`FarmExecutor.earlierJobsFor`). */
+export function earlierFarmJobs(db: StudioDb, p: { runId: string; stageKey: string; attemptId: string }): string[] {
+  return db.all<{ farm_job_id: string }>(
+    "SELECT farm_job_id FROM studio_farm_jobs WHERE run_id = ? AND stage_key = ? AND attempt_id <> ?",
+    [p.runId, p.stageKey, p.attemptId],
+  ).map((r) => r.farm_job_id);
+}
+
 export function saveTrendReport(db: StudioDb, productionId: string, report: unknown): void {
   db.run("UPDATE productions SET trend_report = ?, updated_at = ? WHERE id = ?", [JSON.stringify(report), new Date().toISOString(), productionId]);
 }

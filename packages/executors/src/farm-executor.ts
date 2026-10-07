@@ -18,6 +18,7 @@
  *     production's output prefix, validates it with the appropriate schema, and downloads the
  *     listed output artifacts into the stage workspace so checkers and downstream stages can
  *     read them exactly like any other stage output.
+ *  0. Cancels the farm jobs earlier attempts of the stage left behind (`earlierJobsFor`).
  *  6. Cancels the farm job when the stage deadline is exceeded or the stage is aborted.
  *  7. Acks the job (marks it consumed by the owner).
  */
@@ -164,6 +165,12 @@ export interface FarmExecutorOptions {
    * render). `undefined` leaves `stage_config.requirements`, else `{}` (any node).
    */
   requirementsFor?: (request: StageRequest) => Record<string, unknown> | undefined;
+  /**
+   * Farm jobs that earlier attempts of this stage submitted (Studio: `studio_farm_jobs`). An attempt that ends
+   * without its executor seeing it out (the worker restarted, the lease expired) leaves its job on the farm, where
+   * it would still run and nobody would read its result; the next attempt cancels them before it submits its own.
+   */
+  earlierJobsFor?: (request: StageRequest) => string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -205,6 +212,8 @@ export class FarmExecutor implements Executor {
           : "studio.tts";
     const jobType = jobTypeRaw as JobType;
     const isFinalRender = jobType === "studio.render_final";
+
+    await this.cancelEarlierJobs(request, ctx);
 
     let build: FarmPayloadBuild | null = null;
     if (typeof cfg.payload_builder === "string") {
@@ -526,6 +535,29 @@ export class FarmExecutor implements Executor {
     }
 
     return this.collectOutputs(request, ctx, started, failed);
+  }
+
+  /**
+   * Cancels what earlier attempts of this stage left on the farm. Best effort: the farm answers a job that already
+   * ended as it is, and neither a failed lookup nor a failed cancel stops this attempt.
+   */
+  private async cancelEarlierJobs(request: StageRequest, ctx: ExecutorContext): Promise<void> {
+    if (!this.opts.earlierJobsFor) return;
+    let ids: string[];
+    try {
+      ids = this.opts.earlierJobsFor(request);
+    } catch (e) {
+      ctx.logger.warn(`could not list the farm jobs of earlier attempts: ${String(e)}`, {});
+      return;
+    }
+    for (const id of ids) {
+      try {
+        await this.opts.client.cancelJob(id);
+      } catch (e) {
+        ctx.logger.warn(`could not cancel farm job ${id} of an earlier attempt: ${String(e)}`, { job_id: id });
+      }
+    }
+    if (ids.length > 0) ctx.logger.info("cancelled the farm jobs of earlier attempts", { job_ids: ids });
   }
 
   /** 8. Build the stage result from the workspace output files. */
