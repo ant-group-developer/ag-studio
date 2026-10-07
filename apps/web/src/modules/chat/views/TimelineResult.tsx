@@ -33,8 +33,10 @@ export function timelineChanges(before: StoredTimeline, after: StoredTimeline, t
 }
 
 /** The timeline of an episode (mockup screen 7): its preview, its clips and words, what the proposal changes. */
-export function TimelineResult({ productionId, episodeId, timeline, proposal }: {
+export function TimelineResult({ productionId, episodeId, timeline, proposal, withPreview = true }: {
   productionId: string; episodeId: string; timeline: StoredTimeline; proposal?: StoredTimeline | null | undefined;
+  /** The render preview above the clips (off for a rendered episode's timeline.json, shown under its final video). */
+  withPreview?: boolean | undefined;
 }) {
   const { t } = useTranslation();
   const client = useStudioClient();
@@ -48,12 +50,13 @@ export function TimelineResult({ productionId, episodeId, timeline, proposal }: 
       return last ? client.getEditorJob(productionId, episodeId, last.id) : null;
     },
     refetchInterval: (q) => (q.state.data && (q.state.data.status === "queued" || q.state.data.status === "running") ? 3000 : false),
+    enabled: withPreview,
   });
   const changes = proposal ? timelineChanges(timeline, proposal, t) : [];
   const cut = isTimelineV4(shown) && shown.edit_style === "cut";
   return (
     <div className="chat-timeline">
-      {preview?.status === "completed" && preview.url ? (
+      {!withPreview ? null : preview?.status === "completed" && preview.url ? (
         <video className="chat-timeline__video" src={preview.url} controls preload="metadata" />
       ) : preview && (preview.status === "queued" || preview.status === "running") ? (
         <p className="chat-doc__note">{t("chat.timeline.previewRendering", { p: preview.progress ?? 0 })}</p>

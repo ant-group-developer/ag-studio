@@ -220,6 +220,11 @@ export const chatVi = {
     machinesNote: "Farm không cho Studio xem danh sách máy, nên ở đây chỉ có job. Mỗi lần render bản cuối, bạn chọn một kiểu máy; farm giao job cho máy hợp yêu cầu.",
     renderChip: "Render: {{n}} job",
   },
+  files: {
+    download: "Tải về", copy: "Sao chép", unreadable: "Không mở được file này ở đây.",
+    thumbnails: "Gợi ý thumbnail", youtube: "Gói YouTube", description: "Mô tả", chapters: "Chapter", tags: "Tag",
+    playlist: "Playlist: {{name}}", timeline: "Timeline đã render", timelineCount: "Timeline đã render · {{n}} clip",
+  },
   outputs: {
     rendering: "Tiến độ render", notYet: "Chưa có file xuất.",
     farm: "Farm · {{machine}} · {{p}}%", farmNoProgress: "Farm · {{machine}} · đang render",
@@ -233,8 +238,9 @@ export const chatVi = {
     missing: "còn {{n}} thông tin", ready: "đủ thông tin", version: "Bản {{n}}", versionChanges: "Bản {{n}} · {{k}} thay đổi",
     problems: "Vấn đề", failedNoDoc: "Không đọc được câu trả lời bị từ chối. Nói trong chat cách sửa rồi bấm Chạy lại.",
     busy: "{{ai}} hoặc máy render đang làm bước {{step}}. Kết quả hiện ở đây khi xong.", allDone: "Kế hoạch đã xong. Mở từng tập ở cột trái để duyệt timeline và YouTube kit.",
-    primary: { approve: "Duyệt", start: "Bắt đầu", apply: "Áp dụng", retry: "Chạy lại", rerunStep: "Chạy lại" },
+    primary: { approve: "Duyệt", start: "Bắt đầu", apply: "Áp dụng", retry: "Chạy lại", rerunStep: "Chạy lại", renderAgain: "Render lại" },
     needsVoice: "cần giọng đọc", stageFailed: "Bước này dừng vì lỗi. Sửa nguyên nhân rồi bấm Chạy lại.",
+    renderStopped: "Render bản cuối không xong. Sửa nguyên nhân rồi bấm Render lại; timeline vẫn sửa được qua chat.",
   },
   audio: {
     title: "Giọng đọc và nhạc nền",

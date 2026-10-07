@@ -129,6 +129,17 @@ export function chatScopeFor(core: StudioEngineCore, db: StudioDb, productionId:
   throw new StudioRunError("conflict", "không còn bước nào để trao đổi", { code: "nothing_to_chat" });
 }
 
+/**
+ * The step an episode's ended run stopped at, and why: a run that failed on a machine step (a final render the farm
+ * could not do). The chat still edits the timeline then (scope `timeline`); the result pane says what stopped.
+ */
+export function episodeRunStopped(core: StudioEngineCore, runId: string): { stage: string; problems: ChatProblem[] } | null {
+  const run = core.store.getRun(runId);
+  if (!run || run.state !== "FAILED") return null;
+  const stopped = core.store.listStageRuns(runId).find((s) => AGENT_FAILED.has(s.state) && s.executor.type !== "gate");
+  return stopped ? { stage: stopped.stage_key, problems: stageFailure(core, runId, stopped.stage_run_id) } : null;
+}
+
 /** Why a machine step stopped: the errors of its newest failed attempt. */
 function stageFailure(core: StudioEngineCore, runId: string, stageRunId: string): ChatProblem[] {
   const last = core.store.listEvents({ run_id: runId, event_type: "attempt.failed", limit: 200, newest: true })

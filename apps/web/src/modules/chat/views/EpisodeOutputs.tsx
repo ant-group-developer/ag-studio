@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useStudioClient, type EpisodeRender } from "../../../api/studio-client";
+import { OutputFiles } from "./OutputFiles";
 
 /** A queued job no node took for this long: maybe none fits its machine type (the farm does not say why). */
 const STUCK_MINUTES = 10;
@@ -47,11 +48,8 @@ export function EpisodeOutputs({ productionId, episodeId }: { productionId: stri
         </div>
       ) : null}
       {ep.finalVideoUrl ? <video className="chat-timeline__video" src={ep.finalVideoUrl} controls preload="metadata" /> : null}
-      {ep.exportFiles.length ? (
-        <ul className="chat-doc__list">
-          {ep.exportFiles.map((f) => <li key={f.url}><a href={f.downloadUrl}>{f.name}</a></li>)}
-        </ul>
-      ) : <p className="chat-doc__note">{t("chat.outputs.notYet")}</p>}
+      {ep.exportFiles.length ? <OutputFiles files={ep.exportFiles} productionId={productionId} episodeId={episodeId} />
+        : <p className="chat-doc__note">{t("chat.outputs.notYet")}</p>}
     </div>
   );
 }

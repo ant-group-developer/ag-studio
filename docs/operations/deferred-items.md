@@ -89,8 +89,10 @@ Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-3-render.md`. Cố ý c
   rồi thử lại một lần (tổng ~8 giờ). Studio chỉ cảnh báo sau 10 phút.
 - **`nvenc` của node theo bản ffmpeg, không theo driver**; `render.json` không ghi encoder thật đã dùng, nên Studio không
   nói được bản render có thật sự dùng NVENC không.
-- Cột kết quả chỉ hiện dòng "Render trên: …" khi bước đang là render/xuất file; khi run đã xong, scope là `timeline`
-  và cột phải hiện timeline (dòng kiểu máy nằm ở thẻ ⋯ → Render bản cuối… và màn Hàng đợi).
+- ✅ Đã đóng 2026-10-07 — khi run của tập đã xong, cột phải hiện timeline thay vì bản render; run `FAILED` ở
+  `render-final` (vd. farm `fetch failed`) không báo gì. Giờ run đã xong thì cột phải hiện bản render, tiến độ, file
+  (`EpisodeOutputs`); run hỏng thì thêm lỗi và nút **Render lại** (`ChatThreadView.stopped`, `episodeRunStopped`). Chat
+  vẫn sửa timeline (scope `timeline`); đề xuất chờ "Áp dụng" thì cột phải hiện lại timeline.
 - Cuối pha 3: `corepack pnpm -r run build` và `pnpm -r typecheck` sạch; `vitest run` 1532 pass, 170 skip, 0 fail.
 - `chat.test.ts` › "the subscription limit leaves the reply waiting, then it runs" chập chờn khi chạy cả bộ
   `packages/studio-engine` (máy tải nặng); chạy riêng thì pass.

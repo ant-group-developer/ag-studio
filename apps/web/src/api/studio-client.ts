@@ -847,6 +847,8 @@ export interface ChatThreadView {
    */
   blocked: { code: "busy" | "nothing_to_chat" | "needs_voice" | "stage_failed" | string; stage: string | null; problems?: { code: string; message: string }[] } | null;
   current: { turnId: string | null; document: unknown; draft: unknown; pendingApply: boolean; problems: { code: string; message: string }[] } | null;
+  /** An episode whose run ended on a failed machine step (its final render): which step and why. The chat goes on. */
+  stopped?: { stage: string; problems: { code: string; message: string }[] } | null;
   queueAhead: number;
 }
 

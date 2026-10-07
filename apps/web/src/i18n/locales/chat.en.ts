@@ -222,6 +222,11 @@ export const chatEn: typeof chatVi = {
     machinesNote: "The farm does not let Studio list its machines, so only jobs are shown here. Each final render, you pick a machine type; the farm gives the job to a machine that fits.",
     renderChip: "Render: {{n}} jobs",
   },
+  files: {
+    download: "Download", copy: "Copy", unreadable: "This file cannot be opened here.",
+    thumbnails: "Thumbnail suggestions", youtube: "YouTube pack", description: "Description", chapters: "Chapters", tags: "Tags",
+    playlist: "Playlist: {{name}}", timeline: "Rendered timeline", timelineCount: "Rendered timeline · {{n}} clips",
+  },
   outputs: {
     rendering: "Render progress", notYet: "No exported files yet.",
     farm: "Farm · {{machine}} · {{p}}%", farmNoProgress: "Farm · {{machine}} · rendering",
@@ -235,8 +240,9 @@ export const chatEn: typeof chatVi = {
     missing: "{{n}} things missing", ready: "ready", version: "Version {{n}}", versionChanges: "Version {{n}} · {{k}} changes",
     problems: "Problems", failedNoDoc: "The refused answer cannot be read. Say in the chat how to fix it, then Run again.",
     busy: "{{ai}} or the render farm is working on {{step}}. The result shows here when done.", allDone: "The plan is done. Open each episode on the left to approve its timeline and YouTube kit.",
-    primary: { approve: "Approve", start: "Start", apply: "Apply", retry: "Run again", rerunStep: "Run again" },
+    primary: { approve: "Approve", start: "Start", apply: "Apply", retry: "Run again", rerunStep: "Run again", renderAgain: "Render again" },
     needsVoice: "needs a voice", stageFailed: "This step stopped on an error. Fix the cause, then Run again.",
+    renderStopped: "The final render did not finish. Fix the cause, then Render again; the chat still edits the timeline.",
   },
   audio: {
     title: "Voice and music",
