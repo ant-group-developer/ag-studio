@@ -39,7 +39,9 @@ Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142)
 - **Giọng và nhạc tuỳ chọn (plan 2026-10-07 optional-audio), còn để sau:**
   - ✅ 2026-10-07 — bỏ lời dẫn cho riêng một tập: `episodes.narration_override` (migration `0027`), nút "Bỏ lời dẫn cho
     tập này" khi tập chờ giọng, `POST …/episodes/:id/narration`.
-  - Lời dẫn bị bỏ thì mất, không thành phụ đề (Q2): cần ước thời điểm từng câu khi không có WAV.
+  - ✅ 2026-10-07 — lời dẫn bị bỏ thành phụ đề: các câu của kế hoạch dựng giữ trong timeline (`voice: none`, không
+    audio), mỗi câu dài theo số ký tự (14/s tiếng Việt, như `layoutTimeline`), hình vẫn chờ câu; render đốt phụ đề với
+    chữ chia đều trong câu, không WAV, không hạ nhạc.
   - Giọng máy không cần file mẫu (pha C): OmniVoice voice design (`instruct`) cần trường mới trong `studio.tts`.
   - ✅ 2026-10-07 — file audio cũ dưới `library/studio/<production>/` được dọn (xem `cleanup.ts`).
   - Giọng mẫu không kèm câu nói (Q5): render worker gửi `ref_text: ''` nên OmniVoice clone không có lời mẫu (kém hơn).

@@ -97,6 +97,25 @@ describe("timelineToComposition on v4", () => {
     expect(timelineToComposition(flat).music?.duck.windows).toEqual([]);
   });
 
+  it("lines written but not read (narration declined) become subtitles only: no WAV, no ducking, timed by length", () => {
+    const t = cut();
+    t.narration = { voice: "none", lead_seconds: 0.3, lines: t.narration.lines.map((l) => ({ ...l, audio: null })) };
+    const c = CompositionSchema.parse(timelineToComposition(t));
+    expect(c.voice).toBe("none");
+    expect(c.narration).toEqual([]);
+    expect(c.music?.duck.windows).toEqual([]);
+    expect(c.captions.mode).toBe("burn-in");
+    expect(c.captions.cues.flatMap((q) => q.words.map((w) => w.word))).toEqual(["Phố", "cổ", "Hoa", "Lư", "lúc", "chiều", "tà.", "Đền", "vua", "Đinh."]);
+    // each line is its characters at 14 per second (vi), from 0.3 s after its clip
+    expect(c.captions.cues[0]?.start).toBeCloseTo(0.3, 3);
+    const l1 = c.captions.cues.filter((q) => q.start < 7).at(-1)!;
+    expect(l1.end).toBeCloseTo(0.3 + "Phố cổ Hoa Lư lúc chiều tà.".length / 14, 2);
+    expect(c.captions.cues.at(-1)?.end).toBeCloseTo(7.3 + "Đền vua Đinh.".length / 14, 2);
+    expect(c.warnings.some((w) => w.startsWith("word_interpolated"))).toBe(false);
+    // captions off: nothing at all
+    expect(timelineToComposition({ ...t, captions: { mode: "none" } }).captions).toEqual({ mode: "none", cues: [] });
+  });
+
   it("a timeline with no narration and no captions renders as before", () => {
     const t = cut();
     t.narration = { voice: "none", lead_seconds: 0.3, lines: [] };

@@ -10,7 +10,7 @@ import { z } from "zod";
 import {
   CUT_FRAME_WIDTH, CUT_SHEET_COLS, CUT_SHEET_SHOTS, CutProxySetSchema, CutSourcesSchema, CutWatchSchema, EditPlanSchema, EpisodeAssetSchema, HarnessError,
   ProductionMusicSchema, ShotsIndexSchema, StudioCanvasSchema, StudioMusicSchema, StudioSurveySchema, studioMusicOf,
-  type CutProxySet, type EditPlan, type StudioMusic, type CutSources, type CutWatch, type ExecutorContext, type ShotsIndex, type StageRequest, type Transcript,
+  type CutProxySet, type StudioMusic, type CutSources, type CutWatch, type ExecutorContext, type ShotsIndex, type StageRequest, type Transcript,
 } from "@harness/contracts";
 import {
   StudioTranscribePayloadSchema, StudioTtsPayloadSchema, TRANSCRIBE_MANIFEST_SCHEMA, TranscribeManifestSchema, TTS_MANIFEST_SCHEMA, TtsManifestSchema,
@@ -229,8 +229,9 @@ export function cutStages(d: StudioStageDeps): Record<string, InProcessStage> {
       const now = new Date().toISOString();
 
       const voice = approved.narration === "tts" ? narrationVoice(d.db, brief.production_id, approved.episode_id) : null;
-      // narration declined after the plan was approved: cut it without lines
-      const plan = approved.narration === "tts" && !voice ? withoutNarration(approved) : approved;
+      // narration declined after the plan was approved: its lines are not read, they stay as subtitles
+      const written = approved.narration === "tts" && !voice;
+      const plan = approved;
       const textOf = new Map(plan.lines.map((l) => [l.line_id, l.text]));
       const keyOf = (lineId: string) => voiceKey({ text: textOf.get(lineId)!, language: plan.language, voice: voice! });
       if (voice) {
@@ -244,14 +245,14 @@ export function cutStages(d: StudioStageDeps): Record<string, InProcessStage> {
         }
       }
       const read: Record<string, ReadLine> = {};
-      for (const l of voice ? plan.lines : []) {
+      for (const l of voice && !written ? plan.lines : []) {
         const v = getVoiceLine(d.db, media.voiceDir, keyOf(l.line_id), now);
         if (!v) throw new HarnessError("CONFIG_INVALID", `lời dẫn ${l.line_id} chưa được đọc`, { line_id: l.line_id });
         read[l.line_id] = { key: v.key, duration_s: v.duration_s, words: v.words };
       }
       const transcript = transcriptFromManifest(manifest, sources.sources.map((x) => x.source_id));
       const { timeline, report } = fitCutTimeline({
-        productionId: brief.production_id, plan, shots, survey, transcript, voice: read,
+        productionId: brief.production_id, plan, shots, survey, transcript, voice: read, written,
         sources: sources.sources, assets: episode.assets, canvas: brief.canvas, fps: brief.fps, music: currentMusic(d.db, brief.production_id, brief.music),
       });
       const latest = latestEpisodeRevision(d.db, plan.episode_id);
@@ -321,11 +322,6 @@ export function narrationVoice(db: StudioStageDeps["db"], productionId: string, 
     throw new HarnessError("CONFIG_INVALID", "production chưa có giọng đọc: đưa giọng mẫu hoặc chọn Bỏ lời dẫn", { production_id: productionId, code: "needs_voice" });
   }
   return v.voice;
-}
-
-/** The plan as cut without narration: no lines, no shot waits for one. */
-function withoutNarration(plan: EditPlan): EditPlan {
-  return { ...plan, narration: "none", lines: [], shots: plan.shots.map((s) => ({ ...s, line_id: null })) };
 }
 
 /** The production's music as it is now (set while the episode waited, e.g.), else the one frozen in the brief. */

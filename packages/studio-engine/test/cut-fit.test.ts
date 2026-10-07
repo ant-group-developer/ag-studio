@@ -39,9 +39,9 @@ const assets = {
   b: { title: "Đền", summary_vi: "Đền", duration_s: 15, orientation: "landscape" },
 };
 
-function fit(voice: Record<string, { key: string; duration_s: number; words: { word: string; start: number; end: number }[] }>) {
+function fit(voice: Record<string, { key: string; duration_s: number; words: { word: string; start: number; end: number }[] }>, written = false) {
   return fitCutTimeline({
-    productionId: "prod-1", plan, shots, survey, transcript: null, voice,
+    productionId: "prod-1", plan, shots, survey, transcript: null, voice, written,
     sources: [{ asset_id: "a", source_id: A }, { asset_id: "b", source_id: B }], assets,
     canvas: { width: 3840, height: 2160 }, fps: 30, music: { track: "library:music/calm.mp3", gain_db: -18, ducking: true },
   });
@@ -76,6 +76,19 @@ describe("fitCutTimeline", () => {
     const next = laid.lines.find((l) => l.line_id === "L002")!;
     expect(l1.end).toBeLessThanOrEqual(next.start + 1e-6);
     expect(report.entries.some((e) => e.action === "extended" || e.action === "appended")).toBe(true);
+  });
+
+  it("narration declined: the lines stay as subtitles, sized by their length, the picture still waits for them", () => {
+    const { timeline } = fit({}, true);
+    const t = TimelineV4Schema.parse(timeline);
+    expect(t.narration).toMatchObject({ voice: "none" });
+    expect(t.narration.lines.map((l) => [l.line_id, l.text, l.audio])).toEqual([["L001", "Phố cổ Hoa Lư lúc chiều tà.", null], ["L002", "Đền vua Đinh.", null]]);
+    expect(t.captions).toEqual({ mode: "burn-in" });
+    expect(t.clips.map((c) => c.line_id)).toEqual(["L001", null, "L002"]);
+    const laid = layoutTimeline(t);
+    expect(laid.lines.every((l) => l.estimated)).toBe(true);
+    expect(laid.lines[0]!.end).toBeLessThanOrEqual(laid.lines[1]!.start + 1e-6);
+    expect(timelineIssues(t, { targetSeconds: 12 }).filter((i) => i.severity === "error")).toEqual([]);
   });
 
   it("a line with no audio cannot be placed", () => {
