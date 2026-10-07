@@ -50,7 +50,8 @@ function Wrapper({ children }: { children: React.ReactNode }) {
   );
 }
 
-describe("EpisodesPanel", () => {
+// Each case mounts the whole panel with antd menus: past 5 s when the full suite loads the machine (alone ~2 s).
+describe("EpisodesPanel", { timeout: 20_000 }, () => {
   it("shows each episode's thumbnail and its current step by name", async () => {
     const i18n = (await import("../../i18n/config")).default;
     await i18n.changeLanguage("vi");

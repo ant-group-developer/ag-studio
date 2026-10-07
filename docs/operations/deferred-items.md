@@ -22,6 +22,7 @@ Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142)
   test Claude thật cần `HARNESS_REAL_CLAUDE_TEST=1`), **1 fail chập chờn**:
   `apps/web/src/modules/production/episodes-table.spec.tsx` › "Video (mp4)" quá 5 s khi chạy cả bộ (máy tải nặng),
   chạy riêng thì pass (2,3 s). Nên tăng timeout riêng cho test này hoặc giảm việc render trong nó.
+  ✅ 2026-10-07 (pha 4): `describe("EpisodesPanel")` có timeout 20 s.
 - `pnpm build` ở gốc repo gọi `pnpm -r run build`, hỏng khi `pnpm` không có trên PATH (chỉ có qua `corepack`).
   Dùng `corepack pnpm -r run build`.
 - Ngoài repo: script `migration:run` của `ag-farm/apps/api` trỏ `./node_modules/typeorm/cli.js` nhưng typeorm
