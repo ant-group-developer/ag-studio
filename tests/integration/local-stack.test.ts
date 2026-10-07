@@ -5,7 +5,7 @@
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error plain .mjs script without type declarations
-import { planServices, selectServices } from "../../scripts/local-stack-lib.mjs";
+import { lanAddress, planServices, selectServices, signUrlFixes } from "../../scripts/local-stack-lib.mjs";
 
 type Service = { name: string; cwd: string; command: string; args: string[]; env: Record<string, string>; health: string | null; optional: boolean; log: string };
 
@@ -71,5 +71,30 @@ describe("selectServices", () => {
 
   it("refuses an unknown name", () => {
     expect(() => selectServices(services, ["studio"])).toThrow(/unknown service "studio"/);
+  });
+});
+
+describe("the farm's sign_url follows this machine's address", () => {
+  const nic = (address: string, extra: Record<string, unknown> = {}) => ({ address, family: "IPv4", internal: false, ...extra });
+
+  it("takes the LAN address, not loopback, link-local or a virtual switch", () => {
+    expect(lanAddress({
+      "Loopback Pseudo-Interface 1": [nic("127.0.0.1", { internal: true })],
+      "vEthernet (WSL (Hyper-V firewall))": [nic("172.29.128.1")],
+      "vEthernet (Default Switch)": [nic("172.21.128.1")],
+      "Ethernet 2": [nic("169.254.10.2")],
+      Ethernet: [nic("fe80::1", { family: "IPv6" }), nic("192.168.1.27")],
+    })).toBe("192.168.1.27");
+    expect(lanAddress({ "vEthernet (Default Switch)": [nic("172.21.128.1")] })).toBeNull();
+  });
+
+  it("points the Studio and ag-go owners at the address and the direct-run ports; others are left alone", () => {
+    expect(signUrlFixes([
+      { id: "studio", sign_url: "http://192.168.1.2:3101/api/farm/sign" },
+      { id: "ag-go", sign_url: "http://192.168.1.27:3738/api/analysis/farm/sign" },
+      { id: "someone-else", sign_url: "http://10.0.0.1:9/x" },
+    ], "192.168.1.27")).toEqual([
+      { id: "studio", from: "http://192.168.1.2:3101/api/farm/sign", to: "http://192.168.1.27:3101/api/farm/sign" },
+    ]);
   });
 });
