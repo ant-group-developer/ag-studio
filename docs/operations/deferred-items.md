@@ -40,7 +40,7 @@ Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142)
   - Bỏ lời dẫn chỉ có cấp production; bỏ cho riêng một tập cần cột mới (Q1).
   - Lời dẫn bị bỏ thì mất, không thành phụ đề (Q2): cần ước thời điểm từng câu khi không có WAV.
   - Giọng máy không cần file mẫu (pha C): OmniVoice voice design (`instruct`) cần trường mới trong `studio.tts`.
-  - Không có gì dọn file audio cũ dưới `library/studio/<production>/` khi người dùng đổi giọng/nhạc.
+  - ✅ 2026-10-07 — file audio cũ dưới `library/studio/<production>/` được dọn (xem `cleanup.ts`).
   - Giọng mẫu không kèm câu nói (Q5): render worker gửi `ref_text: ''` nên OmniVoice clone không có lời mẫu (kém hơn).
     Gửi `None` thì OmniVoice tự tải Whisper large-v3-turbo (~1,6 GB, HuggingFace) và nghe lại file mẫu ở **mỗi** câu;
     muốn làm thì `tts.py` nghe file mẫu một lần mỗi job (`load_asr_model` + `transcribe`), và máy farm cần sẵn model.
@@ -104,10 +104,10 @@ Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-5-cut.md`, ADR-0001 m�
 - **Tiếng gốc dưới lời dẫn** (Q9): `voice: tts` tắt hẳn tiếng gốc; muốn tiếng môi trường phải đổi `audio-graph.ts` của
   render worker.
 - **CapCut đọc `in`/`out`, chuyển cảnh và lời dẫn** (pha 6). Premiere: ✅ đã đóng ở pha 4 (ADR mục 171).
-- **Session Claude không dọn:** `studio_agent_sessions` và thư mục workspace của `source-survey` giữ mãi; mất thư mục
-  thì chat lùi về structured.
-- **Kho giọng và file theo run không dọn:** `<STUDIO_DATA_ROOT>/voice`, proxy 720p, khung và contact sheet trong
-  workspace; khung shot trên R2 (`episodes/<e>/shots/`).
+- ✅ 2026-10-07 — worker dọn định kỳ (`cleanup.ts`, `STUDIO_CLEANUP_HOURS`, mặc định 6 giờ): workspace của run đã kết
+  thúc quá 14 ngày (proxy, khung, contact sheet, thư mục session), session không còn thư mục, câu trong kho giọng 90
+  ngày không đọc, audio production không còn ai trỏ (quá 7 ngày, bỏ qua production có run đang mở), khung shot của tập
+  đã bị thay. Run còn mở giữ nguyên workspace, nên chat ở gate vẫn resume được session.
 - **`has_speech` của ag-go chỉ là gợi ý** (từ tỉ lệ im lặng): `false` thì không gửi đi nhận dạng, kể cả khi thật ra có lời.
 - **Nhãn contact sheet cần font**; không có font thì khung vẫn cắt nhưng ảnh không có mã shot.
 - **Chạy lại từ một gate hiện lại bản Claude viết**, không phải bản người đã duyệt lần trước.

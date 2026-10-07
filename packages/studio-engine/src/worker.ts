@@ -27,6 +27,7 @@ import { isRunActive, startEpisodeRun } from "./run-control.js";
 import type { FootageCatalogSource } from "./stages.js";
 import { cutPayloadBuilders, studioInProcessStages, type CutMediaDeps } from "./cut-stages.js";
 import { teamGuidesForRun } from "./team-skills.js";
+import { sweepStudioData, type RetentionConfig } from "./cleanup.js";
 import { earlierFarmJobs, type StudioDb } from "./studio-db.js";
 import type { ResearchSource } from "./youtube-research.js";
 import type { ThumbnailRenderer } from "./thumbnail-render.js";
@@ -162,7 +163,11 @@ export const STUDIO_POOL_RESIZE_MS = 10_000;
  * The `claude` cap can change on the web while running: claims read it every time, and the pool adds loops or lets
  * extra ones go after their current stage (never cutting a stage short).
  */
-export function createStudioWorkerPool(o: StudioWorkerOptions & { resizeEveryMs?: number; chatPollMs?: number }): StudioWorkerPool {
+export function createStudioWorkerPool(o: StudioWorkerOptions & {
+  resizeEveryMs?: number; chatPollMs?: number;
+  /** The cleanup sweep (`cleanup.ts`) every `everyMs`, first a minute after start; absent or 0: never. */
+  cleanup?: { everyMs: number; retention?: Partial<RetentionConfig> };
+}): StudioWorkerPool {
   const factory = workerFactory(o, false);
   const chat = createChatRunner({
     core: o.core, db: o.db, bucket: o.bucket, claude: o.claude, logger: o.logger ?? studioLogger({ owner: `${o.owner}#chat` }),
@@ -187,10 +192,36 @@ export function createStudioWorkerPool(o: StudioWorkerOptions & { resizeEveryMs?
       signal = s;
       for (const l of loops) start(l);
       const timer = setInterval(resize, o.resizeEveryMs ?? STUDIO_POOL_RESIZE_MS);
+      const sweeps = startCleanup(o);
       const chatDone = chat.runForever(s);
       await new Promise<void>((res) => { if (s.aborted) res(); else s.addEventListener("abort", () => res(), { once: true }); });
       clearInterval(timer);
+      sweeps.stop();
       await Promise.all([...loops.map((l) => l.done), ...retired, chatDone]);
     },
   };
+}
+
+/** Runs the cleanup sweep on a timer, one at a time; a failed sweep is logged and tried again next time. */
+function startCleanup(o: StudioWorkerOptions & { cleanup?: { everyMs: number; retention?: Partial<RetentionConfig> } }): { stop: () => void } {
+  const every = o.cleanup?.everyMs ?? 0;
+  if (every <= 0) return { stop: () => {} };
+  const log = o.logger ?? studioLogger({ owner: `${o.owner}#cleanup` });
+  let running = false;
+  const sweep = async () => {
+    if (running) return;
+    running = true;
+    try {
+      const report = await sweepStudioData(
+        { core: o.core, db: o.db, bucket: o.bucket, voiceDir: o.media?.voiceDir },
+        { now: new Date(), ...(o.cleanup?.retention ? { retention: o.cleanup.retention } : {}) },
+      );
+      log.info("cleanup swept", { ...report });
+    } catch (e) {
+      log.warn("cleanup failed", { error: e instanceof Error ? e.message : String(e) });
+    } finally { running = false; }
+  };
+  const first = setTimeout(() => void sweep(), Math.min(60_000, every));
+  const timer = setInterval(() => void sweep(), every);
+  return { stop: () => { clearTimeout(first); clearInterval(timer); } };
 }
