@@ -50,7 +50,7 @@ import {
   type ThumbnailActionDeps,
 } from '@ag-studio/engine';
 import { Logger } from '@nestjs/common';
-import { IsIn, IsInt, IsObject, IsOptional, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsObject, IsOptional, IsUUID, Max, Min } from 'class-validator';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from './engine.service';
@@ -64,6 +64,8 @@ import { mapErrors } from './http-errors';
 export class RerenderDto {
   /** The farm machine type the final render runs on (phase 3); absent: the run's choice, or any machine. */
   @IsOptional() @IsIn(RENDER_MACHINES) renderMachine?: RenderMachine;
+  /** …and the one farm node it must run on (`GET /api/studio/farm/nodes`); with `renderMachine` only. */
+  @IsOptional() @IsUUID() renderNodeId?: string;
 }
 
 /** Where a shot-cut episode runs again from: its scene selection or its edit plan gate (phase 5). */
@@ -359,13 +361,14 @@ export class EpisodesController {
   @Roles('producer')
   @HttpCode(HttpStatus.ACCEPTED)
   rerender(@Param('id') prodId: string, @Param('episodeId') episodeId: string, @Body() dto: RerenderDto, @Req() req: Request) {
-    return mapErrors(() => {
+    return mapErrors(async () => {
       const ep = getEpisode(this.engine.db, episodeId);
       if (!ep || ep.production_id !== prodId) {
         throw new NotFoundException({ code: 'not_found', message: `episode ${episodeId} not found` });
       }
+      const node = dto?.renderNodeId && dto.renderMachine !== undefined ? await this.engine.renderNode(dto.renderNodeId) : null;
       const out = rerenderEpisode(this.engine.core, this.engine.db, episodeId, {
-        ...(dto?.renderMachine !== undefined ? { machine: dto.renderMachine } : {}),
+        ...(dto?.renderMachine !== undefined ? { machine: dto.renderMachine, node } : {}),
         ...(req?.authContext?.userId ? { by: req.authContext.userId } : {}),
       });
       this.recordEpisodeDecision(ep, 'episode_rerender', req?.authContext?.userId);

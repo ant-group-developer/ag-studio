@@ -7,7 +7,7 @@ import { UnprocessableEntityException } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import type { Request } from 'express';
-import { MemoryBucket, renderChoiceFor } from '@ag-studio/engine';
+import { MemoryBucket, renderChoiceFor, renderNodeFor, resolveRenderNode } from '@ag-studio/engine';
 import { ROLES_KEY } from '../auth/roles.decorator';
 import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
 import { ChatApproveDto, ChatController, type ChatFolders } from './chat.controller';
@@ -16,6 +16,7 @@ import { EpisodesController, RerenderDto } from './episodes.controller';
 import type { FootageAccessService } from './footage-access.service';
 
 const PROD = '22222222-2222-4222-8222-222222222222';
+const NODE = '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a41';
 const req = (userId: string, isAdmin = false) => ({ authContext: { userId, isAdmin } }) as unknown as Request;
 
 async function invalid(cls: new () => object, body: object): Promise<string[]> {
@@ -32,7 +33,11 @@ describe('render machine routes (real studio.db)', () => {
     s = await realStudio();
     const bucket = new MemoryBucket();
     const farm = { getJob: async () => ({ status: 'queued', progress_percent: null }) };
-    engine = { ...s.engine, core: s.engine.core, db: s.engine.db, bucket, editor: { db: s.engine.db, bucket, farm }, browserUrlTtl: 60 } as unknown as EngineService;
+    const nodes = { listNodes: async () => ({ nodes: [{ id: NODE, name: 'render-01', online: true, kinds: ['studio.render_final'], gpus: [], running_jobs: 0, last_seen_at: null }] }) };
+    engine = {
+      ...s.engine, core: s.engine.core, db: s.engine.db, bucket, editor: { db: s.engine.db, bucket, farm }, browserUrlTtl: 60,
+      renderNode: (id: string) => resolveRenderNode(nodes as never, id),
+    } as unknown as EngineService;
     insertTeam(s.db, 'team-1', 'auth0|owner');
     const now = new Date().toISOString();
     s.db.run(`INSERT INTO productions (id, team_id, title, status, created_at, updated_at, owner_user_id, keywords, aspect, language)
@@ -66,6 +71,15 @@ describe('render machine routes (real studio.db)', () => {
     expect(Reflect.getMetadata(ROLES_KEY, EpisodesController.prototype.rerender)).toEqual(['producer']);
   });
 
+  it('Render lại pinned to a node keeps it for the render; a node the farm does not list is 422 unknown_node', async () => {
+    const ctl = new EpisodesController(engine, access);
+    expect(await invalid(RerenderDto, { renderMachine: 'any', renderNodeId: 'render-01' })).toEqual(['renderNodeId']);
+    const out = await ctl.rerender(PROD, 'ep-1', { renderMachine: 'any', renderNodeId: NODE }, req('auth0|owner'));
+    expect(renderNodeFor(s.engine.db, out.runId, 'render-final')).toEqual({ id: NODE, name: 'render-01' });
+    const err = await ctl.rerender(PROD, 'ep-1', { renderMachine: 'any', renderNodeId: '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a49' }, req('auth0|owner')).catch((e: unknown) => e);
+    expect((err as UnprocessableEntityException).getResponse()).toMatchObject({ code: 'unknown_node' });
+  });
+
   it('Render lại with an empty body works as before', async () => {
     const ctl = new EpisodesController(engine, access);
     const out = await ctl.rerender(PROD, 'ep-1', {}, req('auth0|owner'));
@@ -76,7 +90,7 @@ describe('render machine routes (real studio.db)', () => {
   it('the episode detail says the type, the default and where Render lại would start', async () => {
     const ctl = new EpisodesController(engine, access);
     expect((await ctl.detail(PROD, 'ep-1', req('auth0|owner'))).render)
-      .toEqual({ machine: null, defaultMachine: 'any', restartFrom: 'start', job: null, farmStatus: null });
+      .toEqual({ machine: null, node: null, defaultMachine: 'any', restartFrom: 'start', job: null, farmStatus: null });
     await ctl.rerender(PROD, 'ep-1', { renderMachine: 'gpu' }, req('auth0|owner'));
     expect((await ctl.detail(PROD, 'ep-1', req('auth0|owner'))).render)
       .toMatchObject({ machine: 'gpu', defaultMachine: 'gpu', restartFrom: null, job: null, farmStatus: null });

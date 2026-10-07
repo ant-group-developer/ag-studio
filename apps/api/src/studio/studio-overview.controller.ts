@@ -49,8 +49,8 @@ export class StudioOverviewController {
   }
 
   /**
-   * The Queue screen: Claude calls running and waiting, and the farm jobs not done (from ag-farm's owner API, which
-   * lists no machines). The farm out of reach is `farm.ok = false`, not an error.
+   * The Queue screen: Claude calls running and waiting, the farm jobs not done and the farm's machines (ag-farm's
+   * owner API). The farm out of reach is `farm.ok = false`, not an error.
    */
   @Get('queue')
   async queue(@Req() req: Request) {
@@ -59,6 +59,22 @@ export class StudioOverviewController {
     return studioQueue(this.engine.core, this.engine.db, this.engine.queueFarm, {
       userId: req.authContext!.userId, isAdmin, now: this.engine.core.clock.now(), claudeMax: cap.value,
     });
+  }
+
+  /**
+   * The farm machines a final render may be pinned to (the render pickers): those taking `studio.render_final`.
+   * A hub without `GET /v1/owner/nodes`, or one out of reach, gives none.
+   */
+  @Get('farm/nodes')
+  async farmNodes() {
+    const farm = this.engine.queueFarm;
+    if (!farm.listNodes) return { nodes: [] };
+    try {
+      const { nodes } = await farm.listNodes();
+      return { nodes: nodes.filter((n) => n.kinds.includes('studio.render_final')) };
+    } catch {
+      return { nodes: [] };
+    }
   }
 
   @Put('settings')

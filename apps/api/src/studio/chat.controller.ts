@@ -15,7 +15,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsObject, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
+import { IsIn, IsInt, IsObject, IsOptional, IsString, IsUUID, MaxLength, Min, MinLength } from 'class-validator';
 import { Request } from 'express';
 import {
   applyChatProposal,
@@ -59,6 +59,8 @@ export class ChatApproveDto {
   @IsOptional() @IsString() turnId?: string | null;
   /** Approving `approve-youtube-kit` starts the final render: the farm machine type it runs on (any other gate: 422). */
   @IsOptional() @IsIn(RENDER_MACHINES) renderMachine?: RenderMachine;
+  /** …and the one farm node it must run on (`GET /api/studio/farm/nodes`); with `renderMachine` only. */
+  @IsOptional() @IsUUID() renderNodeId?: string;
 }
 
 export class ChatStepDto {
@@ -168,10 +170,13 @@ export class ChatController {
   @Roles('producer')
   @HttpCode(HttpStatus.OK)
   approve(@Param('id') id: string, @Body() dto: ChatApproveDto, @Req() req: Request) {
-    return mapErrors(() => approveChatScope(this.engine.core, this.engine.db, {
-      productionId: id, episodeId: dto.episodeId ?? null, stageKey: dto.stageKey, turnId: dto.turnId ?? null, userId: req.authContext!.userId,
-      ...(dto.renderMachine !== undefined ? { renderMachine: dto.renderMachine } : {}),
-    }));
+    return mapErrors(async () => {
+      const renderNode = dto.renderNodeId && dto.renderMachine !== undefined ? await this.engine.renderNode(dto.renderNodeId) : null;
+      return approveChatScope(this.engine.core, this.engine.db, {
+        productionId: id, episodeId: dto.episodeId ?? null, stageKey: dto.stageKey, turnId: dto.turnId ?? null, userId: req.authContext!.userId,
+        ...(dto.renderMachine !== undefined ? { renderMachine: dto.renderMachine, renderNode } : {}),
+      });
+    });
   }
 
   /** Chạy lại a Claude stage that failed its check, with what was said in the chat. */
