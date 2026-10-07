@@ -202,7 +202,8 @@ export interface ChatThreadView {
   turns: ChatTurn[];
   /** Where a new message would go now, or why none can be sent (`busy`, `nothing_to_chat`). */
   scope: ChatScopeKey | null;
-  blocked: { code: string; stage: string | null } | null;
+  /** `needs_voice`: a narrated episode waits for a voice sample; `stage_failed`: a machine step stopped, `problems` say why. */
+  blocked: { code: string; stage: string | null; problems?: ChatProblem[] } | null;
   /** The document on show and its turn (null: what the stage wrote), for the result pane. */
   current: { turnId: string | null; document: unknown; draft: unknown; pendingApply: boolean; problems: ChatProblem[] } | null;
   /** Replies waiting for a Claude slot before the oldest one of this thread. */
@@ -216,8 +217,8 @@ export function chatThread(core: StudioEngineCore, db: StudioDb, productionId: s
   try { scope = chatScopeFor(core, db, productionId, o.episodeId ?? null); }
   catch (e) {
     if (!(e instanceof StudioRunError) || e.code !== "conflict") throw e;
-    const d = e.details as { code?: string; stage?: string | null };
-    blocked = { code: d.code ?? "busy", stage: d.stage ?? null };
+    const d = e.details as { code?: string; stage?: string | null; problems?: ChatProblem[] };
+    blocked = { code: d.code ?? "busy", stage: d.stage ?? null, ...(d.problems ? { problems: d.problems } : {}) };
   }
   let current: ChatThreadView["current"] = null;
   if (scope) {

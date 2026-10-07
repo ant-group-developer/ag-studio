@@ -32,6 +32,7 @@ import {
 } from "./studio-db.js";
 import { teamGuides } from "./team-skills.js";
 import { agentSessionFor } from "./agent-sessions.js";
+import { productionVoice } from "./voice.js";
 
 /** Title a production has until the intake chat names it. */
 export const DRAFT_PRODUCTION_TITLE = "Video mới";
@@ -110,12 +111,30 @@ export function chatScopeFor(core: StudioEngineCore, db: StudioDb, productionId:
   if (gate && !isTerminal("run", run.state)) return { ...base, runId, stageKey: gate.stage_key, scope: "gate" };
   const failed = stages.find((s) => AGENT_FAILED.has(s.state) && s.executor.type === "agent");
   if (failed) return { ...base, runId, stageKey: failed.stage_key, scope: "failed" };
+  // a machine step (farm, script, in-process) that stopped: not "working" (ADR-0001 item 169)
+  const stopped = stages.find((s) => AGENT_FAILED.has(s.state) && s.executor.type !== "agent" && s.executor.type !== "gate");
+  if (stopped && !isTerminal("run", run.state)) {
+    if (stopped.executor.type === "farm" && stopped.executor.job === "studio.tts" && productionVoice(p.voice).kind === "missing") {
+      throw new StudioRunError("conflict", "tập có lời dẫn nhưng production chưa có giọng đọc", { code: "needs_voice", stage: stopped.stage_key });
+    }
+    throw new StudioRunError("conflict", `bước ${stopped.stage_key} dừng vì lỗi`, {
+      code: "stage_failed", stage: stopped.stage_key, problems: stageFailure(core, runId, stopped.stage_run_id),
+    });
+  }
   if (episodeId && isTerminal("run", run.state)) return { ...base, runId, stageKey: "timeline", scope: "timeline" };
   if (!isTerminal("run", run.state)) {
     const at = stages.find((s) => s.state !== "SUCCEEDED" && s.state !== "PENDING")?.stage_key ?? null;
     throw new StudioRunError("conflict", "Claude hoặc máy render đang làm bước này; chờ xong rồi nhắn", { code: "busy", stage: at });
   }
   throw new StudioRunError("conflict", "không còn bước nào để trao đổi", { code: "nothing_to_chat" });
+}
+
+/** Why a machine step stopped: the errors of its newest failed attempt. */
+function stageFailure(core: StudioEngineCore, runId: string, stageRunId: string): ChatProblem[] {
+  const last = core.store.listEvents({ run_id: runId, event_type: "attempt.failed", limit: 200, newest: true })
+    .filter((e) => e.stage_run_id === stageRunId).at(-1);
+  const errors = (last?.payload as { errors?: { kind?: string; message?: string }[] } | undefined)?.errors ?? [];
+  return errors.map((x) => ({ code: x.kind ?? "error", message: x.message ?? "" }));
 }
 
 // ---------------------------------------------------------------------------
