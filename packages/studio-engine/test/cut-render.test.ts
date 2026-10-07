@@ -63,7 +63,8 @@ describe("rendering a shot-cut timeline", () => {
     const job = await startPremiereExport({ db: w.db, bucket: w.bucket, farm: w.farm, voiceDir }, { productionId: w.prod, episodeId: "ep-1", media: "proxy", userId: "u" });
     expect(job.status).toBe("running");
     expect(w.submitted.map((j) => j.type)).toEqual(["studio.export_premiere"]);
-    expect(w.submitted[0]!.payload).toMatchObject({ composition: "stage:composition.json", media: "proxy" });
+    // a worker that cannot read shot-cut episodes refuses the job instead of dropping trims and narration
+    expect(w.submitted[0]!.payload).toMatchObject({ composition: "stage:composition.json", media: "proxy", edit_style: "cut" });
     const keys = [...w.bucket.objects.keys()].filter((k) => k.includes(`/editor-premiere/${job.id}/`));
     expect(keys.map((k) => k.slice(k.indexOf("/in/") + 4)).sort()).toEqual(["composition.json", "voice/L001.wav"]);
     expect(w.bucket.objects.get(keys.find((k) => k.endsWith("voice/L001.wav"))!)!.toString("utf8")).toBe("RIFF-L001");

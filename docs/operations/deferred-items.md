@@ -129,9 +129,7 @@ Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-5-cut.md`, ADR-0001 m�
 
 Plan: `docs/superpowers/plans/2026-10-07-ag-studio-phase-4-premiere.md`, ADR-0001 mục 171. Cố ý chưa làm:
 
-- **Không chặn worker cũ ở hợp đồng:** farm không ghim phiên bản; máy còn render worker trước `e882a6c` nhận job xuất
-  của tập cắt và âm thầm bỏ trim, chuyển cảnh, lời dẫn. Hiện chỉ dựa vào thứ tự deploy (runbook). Muốn chặn: một trường
-  mới trong `StudioExportPremierePayloadSchema` (`strictObject`, worker cũ từ chối) — đổi hợp đồng ag-farm, phải hỏi.
+- ✅ Đã đóng 2026-10-07 — chặn worker cũ ở hợp đồng: payload có `edit_style: cut`, worker cũ từ chối (ADR mục 172).
 - **Phụ đề không nằm sẵn trên timeline Premiere:** chỉ có `captions.srt` để nhập tay; karaoke thành chữ thường (SRT).
 - **Mở thử trong Premiere bằng tay** (plan, nhóm C) chưa làm: cần máy có Premiere và stack local.
 
