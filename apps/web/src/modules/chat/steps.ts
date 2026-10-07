@@ -1,3 +1,5 @@
+import type { StepDocKind } from "../../api/studio-client";
+
 /**
  * The steps a person sees in the chat UI (mockup: "1 · Nghiên cứu · 2 · R&D …"), from the workflow stage keys.
  * A step groups the stages that serve it: the Claude stage, its gate, the script that saves what was approved.
@@ -60,3 +62,13 @@ export const stepLabelKey = (step: ChatStep) => `chat.steps.${step}` as const;
 export function stepPosition(step: ChatStep | null, row: readonly ChatStep[]): number {
   return step ? row.indexOf(step) : -1;
 }
+
+/**
+ * What a step shows when looked at again (plan 2026-10-07 step history): its document, the episode's timeline, or the
+ * files it made. Steps not listed have nothing of their own to show (intake, episodes, draft, footage).
+ */
+export type StepShows = StepDocKind | "timeline" | "outputs";
+export const STEP_SHOWS: Partial<Record<ChatStep, StepShows>> = {
+  research: "trend_report", rnd: "rnd", branding: "branding", plan: "series_plan",
+  survey: "survey", editPlan: "edit_plan", timeline: "timeline", kit: "youtube_kit", render: "outputs", export: "outputs",
+};

@@ -28,6 +28,7 @@ const client = {
   startProduction: vi.fn().mockResolvedValue({ runId: "r" }),
   getEpisode: vi.fn(),
   rerenderEpisode: vi.fn().mockResolvedValue({ runId: "r2", from: "render-final" }),
+  getStepDocument: vi.fn(),
 };
 vi.mock("../api/studio-client", async (orig) => ({ ...(await orig<object>()), useStudioClient: () => client }));
 vi.mock("../api/ag-go-client", async (orig) => ({ ...(await orig<object>()), useAgGoClient: () => ({ getFolders: vi.fn().mockResolvedValue({ folders: [] }) }) }));
@@ -85,8 +86,8 @@ describe("chat pages", () => {
     client.getChatThread.mockResolvedValue(thread);
     mount("/v/p1");
     expect(await screen.findByText("Đã đổi chữ to hơn")).toBeInTheDocument();
-    expect(screen.getByText("3 · Branding")).toHaveClass("chat-steps__now");
-    expect(screen.getByText(/✓ R&D/)).toHaveClass("chat-steps__done");
+    expect(screen.getByText("3 · Branding").closest("li")).toHaveClass("chat-steps__now");
+    expect(screen.getByText(/✓ R&D/).closest("li")).toHaveClass("chat-steps__done");
     fireEvent.click(await screen.findByRole("button", { name: "Duyệt" }));
     await waitFor(() => expect(client.approveChat).toHaveBeenCalledWith("p1", { stageKey: "approve-branding", episodeId: undefined, turnId: v2.id }));
     const box = screen.getByLabelText("Yêu cầu cho Claude");
@@ -142,8 +143,8 @@ describe("chat pages", () => {
     const render = { machine: null, defaultMachine: "any", restartFrom: "render-final", job: null, farmStatus: null };
     client.getEpisode.mockResolvedValue({ id: "e1", idx: 1, title: "Rừng tre", status: "ready", currentStage: null, run: { state: "SUCCEEDED" }, progress: null, finalVideoUrl: null, exportFiles: [], render });
     mount("/v/p1/e/e1");
-    expect(await screen.findByText(/✓ Xuất file/)).toHaveClass("chat-steps__done");
-    expect(screen.getByText(/✓ Timeline/)).toHaveClass("chat-steps__done");
+    expect((await screen.findByText(/✓ Xuất file/)).closest("li")).toHaveClass("chat-steps__done");
+    expect(screen.getByText(/✓ Timeline/).closest("li")).toHaveClass("chat-steps__done");
   });
 
   it("an episode whose render failed shows Render as the step it is at", async () => {
@@ -154,7 +155,29 @@ describe("chat pages", () => {
     const render = { machine: "gpu", defaultMachine: "gpu", restartFrom: "render-final", job: null, farmStatus: null };
     client.getEpisode.mockResolvedValue({ id: "e1", idx: 1, title: "Rừng tre", status: "failed", currentStage: "render-final", run: { state: "FAILED" }, progress: null, finalVideoUrl: null, exportFiles: [], render });
     mount("/v/p1/e/e1");
-    await waitFor(() => expect(screen.getByText("4 · Render")).toHaveClass("chat-steps__now"));
-    expect(screen.getByText(/✓ YouTube kit/)).toHaveClass("chat-steps__done");
+    await waitFor(() => expect(screen.getByText("4 · Render").closest("li")).toHaveClass("chat-steps__now"));
+    expect(screen.getByText(/✓ YouTube kit/).closest("li")).toHaveClass("chat-steps__done");
   });
+
+  it("a step passed opens its document on the right, from its chip or its divider; back returns to the step at hand", async () => {
+    client.getStepDocument.mockResolvedValue({
+      kind: "rnd", gate: "approve-rnd", state: "approved", inUse: false,
+      document: { schema_version: "studio.rnd/v1", summary: "R&D đã duyệt", direction: {} },
+      edit: { inPlace: true, inPlaceCode: null, reopen: true, reopenCode: null, replacesEpisodes: false, reruns: ["approve-rnd"] },
+    });
+    client.getChatThread.mockResolvedValue({
+      turns: [turn({ stage_key: "approve-rnd", text: "R&D xong" }), turn({ stage_key: "approve-branding", text: "Branding đây" })],
+      scope: { productionId: "p1", episodeId: null, runId: "r", stageKey: "approve-branding", scope: "gate" }, blocked: null,
+      current: { turnId: null, document: { series_name: "Quiet" }, draft: { series_name: "Quiet" }, pendingApply: false, problems: [] }, queueAhead: 0,
+    } satisfies ChatThreadView);
+    mount("/v/p1");
+    fireEvent.click(await screen.findByRole("button", { name: "Xem R&D" }));
+    expect(await screen.findByText("R&D đã duyệt")).toBeInTheDocument();
+    expect(client.getStepDocument).toHaveBeenCalledWith("p1", "rnd", undefined);
+    expect(screen.getByRole("button", { name: "Xem R&D" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Về bước hiện tại" }));
+    expect(await screen.findByRole("heading", { name: "Branding" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "xem tài liệu" }));
+    expect(await screen.findByText("R&D đã duyệt")).toBeInTheDocument();
+  }, 20_000);
 });

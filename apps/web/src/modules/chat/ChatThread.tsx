@@ -3,7 +3,7 @@ import { Sparkles } from "lucide-react";
 import type { ChatThreadView, ChatTurn, RenderMachine } from "../../api/studio-client";
 import { RenderMachinePicker } from "../render/RenderMachinePicker";
 import { messageParts } from "./mentions";
-import { episodeStepsFor, PLAN_STEPS, stepLabelKey, stepOf, stepPosition, type ChatStep } from "./steps";
+import { episodeStepsFor, PLAN_STEPS, STEP_SHOWS, stepLabelKey, stepOf, stepPosition, type ChatStep } from "./steps";
 import { useAssistantName, useAiTranslation } from "../common/assistant-name";
 
 /** What a card under Claude's newest reply asks the person to confirm (spec local-chat §2.5). */
@@ -27,6 +27,8 @@ interface Props {
   workflow?: string | null | undefined;
   /** A line a step's divider adds ("tự động · 24 video, 112 shot"). */
   notes?: Partial<Record<ChatStep, string>> | undefined;
+  /** "xem tài liệu" on a step passed: its document opens in the result column. */
+  onViewStep?: ((step: ChatStep) => void) | undefined;
 }
 
 interface Section { stageKey: string; turns: ChatTurn[] }
@@ -83,7 +85,7 @@ function KitRenderCard({ turn, busy, initial, onCard }: { turn: ChatTurn; busy: 
 }
 
 /** The chat (mockup screens 2–13): messages by step, dividers, Claude's state, and confirm cards. */
-export function ChatThread({ thread, onCard, onQuickAnswer, busyCard, episode = false, renderDefault = "any", workflow, notes }: Props) {
+export function ChatThread({ thread, onCard, onQuickAnswer, busyCard, episode = false, renderDefault = "any", workflow, notes, onViewStep }: Props) {
   const { t } = useAiTranslation();
   const ai = useAssistantName();
   const [opened, setOpened] = useState<Set<number>>(new Set());
@@ -113,6 +115,7 @@ export function ChatThread({ thread, onCard, onQuickAnswer, busyCard, episode = 
                 <span>
                   {n >= 0 ? `${t("chat.thread.step", { n: n + 1 })} · ` : ""}{t(stepLabelKey(step))}{note ? ` · ${note}` : ""}{state ? ` · ${state}` : ""}
                   {collapsed ? <> · <button type="button" className="chat-link-button" onClick={() => setOpened(new Set(opened).add(i))}>{t("chat.thread.show")}</button></> : null}
+                  {thread.scope?.stageKey !== sec.stageKey && onViewStep && STEP_SHOWS[step] ? <> · <button type="button" className="chat-link-button" onClick={() => onViewStep(step)}>{t("chat.stepDoc.view")}</button></> : null}
                 </span>
               </div>
             ) : null}

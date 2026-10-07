@@ -163,6 +163,13 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
 - Không gì được áp dụng tới khi người bấm (`chat-actions.ts`): Bắt đầu (`startFromIntake`), Duyệt
   (`approveChatScope`, nộp bản đang hiện theo `turnId`), Áp dụng (intake/timeline, `applyChatProposal`), Chạy lại
   (`retryStageWithFeedback`, tin nhắn vào prompt dạng `# Góp ý của người dùng`), Sửa tay (`saveManualEdit`).
+- **Xem lại / sửa bước đã duyệt** (`step-docs.ts`, `GET|PUT …/steps/:kind`, plan 2026-10-07-ag-studio-step-history-edit):
+  bản đã duyệt đọc từ chính gate (`readStageDocument(run, gate, STUDIO_GATES[gate])`), đè bằng bản đang dùng
+  (`productions.trend_report|rnd|branding`, `episodes.youtube`). Sửa = **chỉ lưu** bản đang dùng (chỉ khi có bước sau
+  đọc nó) hoặc **mở lại bước**: chạy lại từ gate (run đỗ ở gate sau mà không gì đang chạy thì huỷ trước) và đặt bản
+  sửa thành lượt "Sửa tay" trên scope gate của run mới — người bấm Duyệt mới chạy tiếp. Mở lại bước của series thay
+  toàn bộ tập. Web: chip bước bấm được (`StepPane`), Sửa tại chỗ trong cột phải (`DocEditor` từ `DOC_SPECS`,
+  `SurveyEditor`, `EditPlanEditor`); không còn drawer Sửa tay.
 - Web chat: `/` (trang chủ), `/v/:productionId`, `/v/:productionId/e/:episodeId`, `/queue` (`apps/web/src/modules/chat`,
   `pages/Chat*Page.tsx`, `pages/QueuePage.tsx`); màn cũ giữ ở `/productions`, `/teams`, editor timeline. Khung trình
   duyệt nhúng của app desktop báo trang luôn ẩn nên react-query không polling: kiểm bằng khung đó thì tải lại trang.

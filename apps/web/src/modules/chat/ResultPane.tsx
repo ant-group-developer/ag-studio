@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Dropdown, Popover, type MenuProps } from "antd";
 import { MoreHorizontal } from "lucide-react";
-import type { EditPlan, StoredTimeline, StudioSurvey } from "@harness/contracts";
-import type { ChatThreadView, ChatTurn, RenderMachine } from "../../api/studio-client";
+import type { StoredTimeline } from "@harness/contracts";
+import type { ChatThreadView, ChatTurn, RenderMachine, StepDocKind } from "../../api/studio-client";
 import { RenderMachinePicker } from "../render/RenderMachinePicker";
 import { KIT_GATE, type CardOptions } from "./ChatThread";
 import { diffDoc } from "./diff-doc";
@@ -10,14 +10,12 @@ import { isCutWorkflow, stepLabelKey, stepOf } from "./steps";
 import { DocView } from "./views/DocView";
 import { docKindOf } from "./views/doc-specs";
 import { EpisodeOutputs } from "./views/EpisodeOutputs";
-import { HAND_EDITABLE } from "./ManualEditDrawer";
-import { EditPlanResult } from "./views/EditPlanResult";
-import { SurveyResult } from "./views/SurveyResult";
+import { canEditDoc, StepDocBody, StepDocEditor } from "./views/StepBody";
 import { TimelineResult } from "./views/TimelineResult";
 import { useAiTranslation } from "../common/assistant-name";
 
 export type ResultAction = "approve" | "start" | "apply" | "retry";
-export type MenuAction = "manual" | "editor" | "preview" | "finalRender" | "export" | "rerunSurvey" | "rerunEditPlan" | "log" | "oldScreen";
+export type MenuAction = "editor" | "preview" | "finalRender" | "export" | "rerunSurvey" | "rerunEditPlan" | "log" | "oldScreen";
 
 interface Props {
   productionId: string;
@@ -35,6 +33,8 @@ interface Props {
   canRenderFinal?: boolean | undefined;
   /** The episode run's workflow (`id@version`). */
   workflow?: string | null | undefined;
+  /** Sửa at a waiting gate: the edited document becomes the version on show (a manual-edit turn). */
+  onSaveEdit?: ((stageKey: string, document: unknown) => Promise<unknown>) | undefined;
 }
 
 /** Duyệt on the YouTube kit: it starts the final render, so it confirms the machine type first (spec §2.5, §3.4). */
@@ -96,7 +96,7 @@ function Problems({ problems }: { problems: { code: string; message: string }[] 
 }
 
 /** The result column (spec local-chat §2.3–2.4): the step's document, readable, changes marked; one main button; ⋯. */
-export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu, busy, canApprove = true, renderDefault = "any", canRenderFinal = false, workflow }: Props) {
+export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu, busy, canApprove = true, renderDefault = "any", canRenderFinal = false, workflow, onSaveEdit }: Props) {
   const { t } = useAiTranslation();
   const scope = thread.scope;
   const stageKey = scope?.stageKey ?? thread.blocked?.stage ?? null;
@@ -111,6 +111,18 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
   const { n, previous } = versionOf(thread);
   const doc = thread.current?.document;
   const changes = previous !== undefined && versioned ? diffDoc(previous, doc).length : 0;
+  // Sửa in place at a waiting gate: every document but the timeline (its editor) and the intake (its own flow)
+  const editKind: StepDocKind | null = scope?.scope !== "gate" ? null
+    : isSurvey ? "survey" : isEditPlan ? "edit_plan" : kind && kind !== "intake" ? kind : null;
+  const canEditHere = !!editKind && !!doc && !!onSaveEdit && canApprove && canEditDoc(editKind, doc);
+  const [draft, setDraft] = useState<unknown>(null);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setDraft(null); }, [scope?.stageKey, thread.current?.turnId]);
+  const saveDraft = async () => {
+    if (!scope || !onSaveEdit) return;
+    setSaving(true);
+    try { await onSaveEdit(scope.stageKey, draft); setDraft(null); } catch { /* the page says what went wrong; the form stays */ } finally { setSaving(false); }
+  };
 
   let badge: string | null = null;
   let primary: ResultAction | null = null;
@@ -133,7 +145,6 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
   const badgeTone = scope?.scope === "failed" ? "needs_attention" : scope?.scope === "intake" && !startDisabled ? "done" : scope ? "waiting_you" : "running";
 
   const menu: MenuProps["items"] = [
-    ...(kind && HAND_EDITABLE.has(kind) && scope?.scope === "gate" ? [{ key: "manual", label: t("chat.menu.manual") }] : []),
     ...(episodeId ? [
       { key: "editor", label: t("chat.menu.editor") },
       { key: "preview", label: t("chat.menu.preview") },
@@ -150,10 +161,10 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
   ];
 
   let body: React.ReactNode = null;
-  if (isSurvey && doc) {
-    body = <SurveyResult productionId={productionId} episodeId={episodeId!} survey={doc as StudioSurvey} previous={previous as StudioSurvey | undefined} />;
-  } else if (isEditPlan && doc) {
-    body = <EditPlanResult plan={doc as EditPlan} previous={previous as EditPlan | undefined} />;
+  if (draft !== null && editKind) {
+    body = <StepDocEditor kind={editKind} value={draft} onChange={setDraft} productionId={productionId} episodeId={episodeId} />;
+  } else if ((isSurvey || isEditPlan) && doc) {
+    body = <StepDocBody kind={isSurvey ? "survey" : "edit_plan"} doc={doc} previous={previous} productionId={productionId} episodeId={episodeId} />;
   } else if (isTimeline && doc) {
     const pending = thread.current?.pendingApply ? thread.turns.find((x) => x.id === thread.current?.turnId) : undefined;
     body = <TimelineResult productionId={productionId} episodeId={episodeId!} timeline={doc as StoredTimeline}
@@ -186,13 +197,21 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
       </div>
       <div className="chat-aside__body">{body}</div>
       <div className="chat-aside__foot">
-        {primary === "approve" && scope?.stageKey === KIT_GATE ? (
+        {draft !== null ? (
+          <>
+            <button type="button" className="chat-primary" disabled={saving} onClick={() => void saveDraft()}>{t("chat.edit.save")}</button>
+            <button type="button" className="chat-card__button chat-button--secondary" onClick={() => setDraft(null)}>{t("chat.edit.cancel")}</button>
+          </>
+        ) : primary === "approve" && scope?.stageKey === KIT_GATE ? (
           <ApproveAndRender disabled={!!busy || !canApprove} initial={renderDefault} onConfirm={(m) => onPrimary("approve", { renderMachine: m })} />
         ) : primary ? (
           <button type="button" className="chat-primary" disabled={busy || startDisabled || !canApprove} onClick={() => onPrimary(primary)}>
             {t(`chat.result.primary.${primary}`)}
           </button>
         ) : <span className="chat-aside__spacer" />}
+        {draft === null && canEditHere ? (
+          <button type="button" className="chat-card__button chat-button--secondary" disabled={busy} onClick={() => setDraft(structuredClone(doc))}>{t("chat.edit.button")}</button>
+        ) : null}
         <Dropdown menu={{ items: menu, onClick: ({ key }) => onMenu(key as MenuAction) }} trigger={["click"]} placement="topRight">
           <button type="button" className="chat-icon-button" aria-label={t("chat.menu.more")}><MoreHorizontal size={18} /></button>
         </Dropdown>

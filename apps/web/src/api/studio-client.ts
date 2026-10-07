@@ -736,6 +736,16 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     retryChatStep(productionId: string, stageKey: string, episodeId?: string | null): Promise<{ ok: true }> {
       return request(getAccessToken, "POST", `/api/productions/${productionId}/chat/retry`, { stageKey, ...(episodeId ? { episodeId } : {}) });
     },
+    /** A step's document after its approval, and what editing it would do (plan 2026-10-07 step history). */
+    getStepDocument(productionId: string, kind: StepDocKind, episodeId?: string | null): Promise<StepDocView> {
+      const base = `/api/productions/${productionId}${episodeId ? `/episodes/${episodeId}` : ""}`;
+      return request(getAccessToken, "GET", `${base}/steps/${kind}`);
+    },
+    /** `reopen` false replaces the version in use; true opens the step again with this version on show. */
+    editStepDocument(productionId: string, kind: StepDocKind, input: { document: unknown; reopen: boolean; episodeId?: string | null }): Promise<StepEditResult> {
+      const base = `/api/productions/${productionId}${input.episodeId ? `/episodes/${input.episodeId}` : ""}`;
+      return request(getAccessToken, "PUT", `${base}/steps/${kind}`, { document: input.document, reopen: input.reopen });
+    },
     saveManualEdit(productionId: string, input: { stageKey: string; episodeId?: string | null; document: unknown }): Promise<ChatTurn> {
       return request(getAccessToken, "POST", `/api/productions/${productionId}/chat/manual`, {
         stageKey: input.stageKey, document: input.document, ...(input.episodeId ? { episodeId: input.episodeId } : {}),
@@ -786,6 +796,23 @@ export interface ChatThreadView {
   blocked: { code: "busy" | "nothing_to_chat" | string; stage: string | null } | null;
   current: { turnId: string | null; document: unknown; draft: unknown; pendingApply: boolean; problems: { code: string; message: string }[] } | null;
   queueAhead: number;
+}
+
+export type StepDocKind = "trend_report" | "rnd" | "branding" | "series_plan" | "youtube_kit" | "survey" | "edit_plan";
+export interface StepDocView {
+  kind: StepDocKind;
+  gate: string;
+  state: "not_yet" | "waiting" | "approved";
+  document: unknown;
+  /** The document is a version edited after the approval. */
+  inUse: boolean;
+  edit: { inPlace: boolean; inPlaceCode: string | null; reopen: boolean; reopenCode: string | null; replacesEpisodes: boolean; reruns: string[] };
+}
+export interface StepEditResult {
+  mode: "saved" | "reopened";
+  runId?: string;
+  warnings: { code: string; message: string }[];
+  view: StepDocView;
 }
 
 export type OverviewGroup = "waiting_you" | "needs_attention" | "running" | "done";

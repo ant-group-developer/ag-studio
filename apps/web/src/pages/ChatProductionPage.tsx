@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { App as AntApp, Drawer } from "antd";
 import { ArrowDown, ArrowLeft } from "lucide-react";
 import type { EpisodeRerunGate } from "../api/studio-client";
@@ -8,10 +8,10 @@ import { StudioHttpError, useStudioClient, type ChatThreadView, type ChatTurn, t
 import { ChatComposer } from "../modules/chat/ChatComposer";
 import { ChatShell } from "../modules/chat/ChatShell";
 import { ChatThread, type CardOptions, type ChatCard } from "../modules/chat/ChatThread";
-import { ManualEditDrawer } from "../modules/chat/ManualEditDrawer";
+import { StepPane } from "../modules/chat/StepPane";
 import { useStickToBottom } from "../modules/chat/use-stick-to-bottom";
 import { ResultPane, type MenuAction, type ResultAction } from "../modules/chat/ResultPane";
-import { episodeStepsFor, isCutWorkflow, PLAN_STEPS, stepLabelKey, stepOf, stepPosition, type ChatStep } from "../modules/chat/steps";
+import { episodeStepsFor, isCutWorkflow, PLAN_STEPS, STEP_SHOWS, stepLabelKey, stepOf, stepPosition, type ChatStep } from "../modules/chat/steps";
 import { gateProblems } from "../modules/production/gate-problems";
 import { LlmLogPanel } from "../modules/production/LlmLogPanel";
 import { RenderFinalModal } from "../modules/render/RenderFinalModal";
@@ -42,7 +42,9 @@ export function ChatProductionPage() {
   const client = useStudioClient();
   const qc = useQueryClient();
   const [logOpen, setLogOpen] = useState(false);
-  const [manualOpen, setManualOpen] = useState(false);
+  // a step looked at again in the result column (null: the step the video is at)
+  const [viewing, setViewing] = useState<ChatStep | null>(null);
+  useEffect(() => { setViewing(null); }, [productionId, episodeId]);
   const [finalOpen, setFinalOpen] = useState(false);
   const [draft, setDraft] = useState("");
 
@@ -76,6 +78,7 @@ export function ChatProductionPage() {
     void qc.invalidateQueries({ queryKey: ["chat", productionId] });
     void qc.invalidateQueries({ queryKey: ["overview"] });
     void qc.invalidateQueries({ queryKey: ["production", productionId] });
+    void qc.invalidateQueries({ queryKey: ["step-doc", productionId] });
     if (episodeId) void qc.invalidateQueries({ queryKey: ["episode", productionId, episodeId] });
     if (episodeId) void qc.invalidateQueries({ queryKey: ["episode-shots", productionId, episodeId] });
   };
@@ -86,6 +89,11 @@ export function ChatProductionPage() {
   };
 
   const send = useMutation({ mutationFn: (text: string) => client.sendChat(productionId, text, episodeId), onSuccess: refresh, onError: fail });
+  const manual = useMutation({
+    mutationFn: (m: { stageKey: string; document: unknown }) => client.saveManualEdit(productionId, { ...m, episodeId }),
+    onSuccess: () => { void message.success(t("chat.edit.saved")); refresh(); },
+    onError: fail,
+  });
   const act = useMutation({
     mutationFn: async (a: { kind: ResultAction | ChatCard; turn?: ChatTurn; options?: CardOptions | undefined }) => {
       const scope = thread?.scope;
@@ -139,7 +147,6 @@ export function ChatProductionPage() {
   const onMenu = (m: MenuAction) => {
     if (m === "rerunSurvey" && episodeId) confirmRerun("approve-survey");
     if (m === "rerunEditPlan" && episodeId) confirmRerun("approve-edit-plan");
-    if (m === "manual") setManualOpen(true);
     if (m === "editor" && episodeId) navigate(`/productions/${productionId}/episodes/${episodeId}/editor`);
     if (m === "preview") act.mutate({ kind: "render" });
     if (m === "finalRender") setFinalOpen(true);
@@ -156,6 +163,8 @@ export function ChatProductionPage() {
   const header = episodeId && episode ? cutHeader(episode.plan, t) : null;
   const at = stepPosition(step, row);
   const finished = thread?.blocked?.code === "nothing_to_chat" || (ended && episode?.status === "ready");
+  const looking = viewing && viewing !== step ? viewing : null;
+  const shown = looking ?? step;
   const title = episodeId ? (episode ? t("chat.episodeTitle", { idx: episode.idx, title: episode.title }) : "") : production?.title ?? "";
   const last = thread?.turns.at(-1);
   const stick = useStickToBottom(`${productionId}/${episodeId ?? ""}`, `${thread?.turns.length ?? 0}:${last?.id ?? ""}:${last?.status ?? ""}:${thread?.scope?.stageKey ?? ""}`);
@@ -179,11 +188,20 @@ export function ChatProductionPage() {
             {header ? <p className="chat-page__sub">{header}</p> : null}
             {thread?.scope?.scope !== "intake" ? (
               <ol className="chat-steps" aria-label={t("chat.page.steps")}>
-                {row.map((s, i) => (
-                  <li key={s} className={finished || i < at ? "chat-steps__done" : i === at ? "chat-steps__now" : undefined}>
-                    {finished || i < at ? "✓ " : `${i + 1} · `}{t(stepLabelKey(s))}
-                  </li>
-                ))}
+                {row.map((s, i) => {
+                  const cls = [finished || i < at ? "chat-steps__done" : i === at ? "chat-steps__now" : "", shown === s ? "chat-steps__open" : ""].filter(Boolean).join(" ") || undefined;
+                  const text = <>{finished || i < at ? "✓ " : `${i + 1} · `}{t(stepLabelKey(s))}</>;
+                  // a step passed or the one the video is at opens its document on the right
+                  const open = (finished || i <= at) && !!STEP_SHOWS[s];
+                  return (
+                    <li key={s} className={cls}>
+                      {open ? (
+                        <button type="button" aria-pressed={shown === s} aria-label={t("chat.stepDoc.viewStep", { step: t(stepLabelKey(s)) })}
+                          onClick={() => setViewing(s === step ? null : s)}>{text}</button>
+                      ) : text}
+                    </li>
+                  );
+                })}
               </ol>
             ) : null}
           </div>
@@ -194,7 +212,8 @@ export function ChatProductionPage() {
               <ChatThread thread={thread} episode={!!episodeId} workflow={workflow} notes={notes} busyCard={act.isPending ? (act.variables?.kind as ChatCard) : null}
                 renderDefault={episode?.render?.defaultMachine}
                 onCard={(card, turn, options) => (card === "renderFinal" ? setFinalOpen(true) : act.mutate({ kind: card, turn, options }))}
-                onQuickAnswer={(text) => { stick.toBottom(); send.mutate(text); }} />
+                onQuickAnswer={(text) => { stick.toBottom(); send.mutate(text); }}
+                onViewStep={(s) => setViewing(s === step ? null : s)} />
             ) : null}
           </div>
         </div>
@@ -208,10 +227,14 @@ export function ChatProductionPage() {
           </div>
         </div>
       </main>
-      {thread ? (
+      {looking ? (
+        <StepPane productionId={productionId} episodeId={episodeId} step={looking} workflow={workflow} canManage={canManage} canEdit={canEdit}
+          onBack={() => setViewing(null)} onChanged={refresh} onOpenEditor={() => onMenu("editor")} />
+      ) : thread ? (
         <ResultPane productionId={productionId} episodeId={episodeId} thread={thread} busy={act.isPending} canApprove={canManage || thread.scope?.scope === "timeline"}
           renderDefault={episode?.render?.defaultMachine} canRenderFinal={!!episode?.render && episode.render.restartFrom !== null} workflow={workflow}
-          onPrimary={(a, options) => act.mutate({ kind: a, options })} onMenu={onMenu} />
+          onPrimary={(a, options) => act.mutate({ kind: a, options })} onMenu={onMenu}
+          onSaveEdit={(stageKey, document) => manual.mutateAsync({ stageKey, document })} />
       ) : null}
       <Drawer open={logOpen} onClose={() => setLogOpen(false)} width="min(900px, 100vw)" title={t("chat.menu.log")} destroyOnClose>
         <LlmLogPanel productionId={productionId} live={stillWorking(thread)} />
@@ -220,7 +243,6 @@ export function ChatProductionPage() {
         <RenderFinalModal open={finalOpen} render={episode.render} busy={renderFinal.isPending} onClose={() => setFinalOpen(false)}
           onConfirm={(m) => renderFinal.mutate(m)} />
       ) : null}
-      {thread ? <ManualEditDrawer open={manualOpen} onClose={() => setManualOpen(false)} productionId={productionId} episodeId={episodeId} thread={thread} onSaved={refresh} /> : null}
     </ChatShell>
   );
 }
