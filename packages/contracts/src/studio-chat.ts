@@ -59,7 +59,9 @@ export type SurveyChatProposal = z.infer<typeof SurveyChatProposalSchema>;
 // ---------------------------------------------------------------------------
 
 /** Fields Claude may still need to ask about. `research` = at least one channel or keyword. */
-export const INTAKE_FIELDS = ["title", "folder_ids", "aspect", "language", "research", "episode_target_seconds", "max_episodes", "tone", "audience"] as const;
+const httpUrl = z.string().url().max(2000).refine((v) => /^https?:\/\//i.test(v), "expected an http(s) link");
+
+export const INTAKE_FIELDS =["title", "folder_ids", "aspect", "language", "research", "episode_target_seconds", "max_episodes", "tone", "audience"] as const;
 export type IntakeField = (typeof INTAKE_FIELDS)[number];
 
 /** The production as the chat has understood it so far; null = not known yet. */
@@ -78,6 +80,11 @@ export const IntakeDraftSchema = z.object({
     question: z.string().min(1).max(300),
     options: z.array(z.string().min(1).max(60)).max(4),
   }).strict()).max(5),
+  /**
+   * Links to a voice sample and to background music the person pasted in the chat (optional). Nothing is fetched until
+   * the person presses "Dùng link này" in the result pane.
+   */
+  audio_links: z.object({ voice: httpUrl.nullable(), music: httpUrl.nullable() }).strict().optional(),
 }).strict();
 export type IntakeDraft = z.infer<typeof IntakeDraftSchema>;
 

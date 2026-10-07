@@ -190,6 +190,40 @@
             "additionalProperties": false
           },
           "maxItems": 5
+        },
+        "audio_links": {
+          "type": "object",
+          "properties": {
+            "voice": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uri",
+                  "maxLength": 2000
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "music": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uri",
+                  "maxLength": 2000
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "voice",
+            "music"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

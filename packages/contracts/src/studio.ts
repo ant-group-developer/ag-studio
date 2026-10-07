@@ -41,6 +41,59 @@ export const StudioMusicSchema = z.object({
 }).strict();
 export type StudioMusic = z.infer<typeof StudioMusicSchema>;
 
+// ---------------------------------------------------------------------------
+// Audio the person gives a production: a narration voice sample, background music (ADR-0001 items 167-168)
+// ---------------------------------------------------------------------------
+
+/** Where an audio file came from. `ag-go` waits for ag-go to hold audio (plan optional-audio, phase B). */
+export const AudioSourceSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("link"), url: z.string().url().max(2000) }).strict(),
+  z.object({ kind: z.literal("upload"), filename: z.string().min(1).max(255) }).strict(),
+  z.object({ kind: z.literal("ag-go"), asset_id: z.string().min(1) }).strict(),
+]);
+export type AudioSource = z.infer<typeof AudioSourceSchema>;
+
+/** Who may be heard in a voice sample (ADR-0001 item 105): a synthetic voice, the person's own, or one licensed to them. */
+export const VOICE_ORIGINS = ["synthetic", "own", "licensed"] as const;
+export type VoiceOrigin = (typeof VOICE_ORIGINS)[number];
+
+/**
+ * `productions.voice`. NULL (not this schema) = not asked yet: `STUDIO_DEFAULT_VOICE_REFERENCE` if set, else the
+ * episode stops at `tts` and asks. `none`: the person declined narration for the whole production. The third shape is
+ * the column as tests wrote it before (no mode), read as a clone.
+ */
+export const ProductionVoiceSchema = z.union([
+  z.object({ mode: z.literal("none"), decided_by: z.string().min(1), decided_at: z.string() }).strict(),
+  z.object({
+    mode: z.literal("clone"),
+    reference: LibraryInputSchema,
+    /** What is said in the sample; null = the TTS engine transcribes it. */
+    reference_text: z.string().max(2000).nullable(),
+    speed: z.number().min(0.5).max(2),
+    origin: z.enum(VOICE_ORIGINS),
+    source: AudioSourceSchema,
+    sha256: z.string().min(1),
+    duration_s: z.number().positive(),
+    confirmed_by: z.string().min(1),
+    confirmed_at: z.string(),
+  }).strict(),
+  z.object({ reference: z.string().nullable(), reference_text: z.string().nullable(), speed: z.number() }).strict(),
+]);
+export type ProductionVoice = z.infer<typeof ProductionVoiceSchema>;
+
+/** `productions.music`: the music stages use, plus where the file came from (absent on tracks typed as `library:`). */
+export const ProductionMusicSchema = StudioMusicSchema.extend({
+  source: AudioSourceSchema.optional(),
+  sha256: z.string().min(1).optional(),
+  duration_s: z.number().positive().optional(),
+}).strict();
+export type ProductionMusic = z.infer<typeof ProductionMusicSchema>;
+
+/** The music a stage freezes into seed, brief and timeline: without where it came from. */
+export function studioMusicOf(m: ProductionMusic): StudioMusic {
+  return { track: m.track, gain_db: m.gain_db, ducking: m.ducking };
+}
+
 /** Soft target: an episode may differ from `episode_target_seconds` by this fraction (a warning, never a block). */
 export const EPISODE_DURATION_TOLERANCE = 0.2;
 export const MAX_EPISODES_LIMIT = 30;
