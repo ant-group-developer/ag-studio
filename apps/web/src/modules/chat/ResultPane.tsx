@@ -211,7 +211,7 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
   } else if (scope?.scope === "failed") {
     body = <><Problems problems={thread.current?.problems ?? []} /><p className="chat-doc__note">{t("chat.result.failedNoDoc")}</p></>;
   } else if (thread.blocked?.code === "needs_voice") {
-    body = <ProductionAudioPanel productionId={productionId} canEdit={canApprove} needsVoice onChanged={onAudioChanged} />;
+    body = <ProductionAudioPanel productionId={productionId} episodeId={episodeId} canEdit={canApprove} needsVoice onChanged={onAudioChanged} />;
   } else if (thread.blocked?.code === "stage_failed") {
     body = <><Problems problems={thread.blocked.problems ?? []} /><p className="chat-doc__note">{t("chat.result.stageFailed")}</p></>;
   } else if (episodeId && (step === "render" || step === "export" || thread.blocked?.code === "nothing_to_chat")) {

@@ -43,6 +43,9 @@ kiểu đi bộ du lịch, có lời dẫn"). Đầu tập có dòng "cắt theo
 - **Chạy lại từ một bước:** `⋯ → Chạy lại từ chọn cảnh…` hoặc `⋯ → Chạy lại từ kế hoạch dựng…` (có thẻ xác nhận). Run
   mới giữ footage, shot, khung đã làm và dừng ở bước đó với bản Claude viết; được khi tập đã xong hoặc đang chờ duyệt
   ở bước sau (run đang chờ bị huỷ). Đang có bước chạy thì 409 `episode_running`.
+- **Giọng máy (không cần file mẫu):** ở ô giọng đọc chọn tab "Giọng máy", chọn giới tính, độ tuổi, cao độ, bấm "Tạo
+  giọng". Farm đọc một câu mẫu (máy cần GPU và render worker có `instruct`); xong thì nghe thử được và các tập đang
+  chờ giọng chạy tiếp. Lỗi thì ô giọng ghi lý do, tạo lại được.
 - **Giọng đọc và nhạc nền (tuỳ chọn):** đưa ở cột phải lúc intake, ở màn cũ, hoặc khi tập dừng với "cần giọng đọc":
   dán link (file audio, Google Drive chia sẻ công khai) hoặc tải file lên. Giọng mẫu 3–20 giây, một người nói rõ;
   phải chọn giọng là của ai (giọng máy / của mình / có giấy phép) và tick xác nhận có quyền dùng. Có giọng thì các tập

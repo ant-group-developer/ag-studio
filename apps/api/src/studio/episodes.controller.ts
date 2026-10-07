@@ -48,9 +48,10 @@ import {
   type RenderMachine,
   type RunView,
   type ThumbnailActionDeps,
+  setEpisodeNarration,
 } from '@ag-studio/engine';
 import { Logger } from '@nestjs/common';
-import { IsIn, IsInt, IsObject, IsOptional, IsUUID, Max, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsUUID, Max, Min } from 'class-validator';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from './engine.service';
@@ -66,6 +67,10 @@ export class RerenderDto {
   @IsOptional() @IsIn(RENDER_MACHINES) renderMachine?: RenderMachine;
   /** …and the one farm node it must run on (`GET /api/studio/farm/nodes`); with `renderMachine` only. */
   @IsOptional() @IsUUID() renderNodeId?: string;
+}
+
+export class EpisodeNarrationDto {
+  @IsBoolean() declined!: boolean;
 }
 
 /** Where a shot-cut episode runs again from: its scene selection or its edit plan gate (phase 5). */
@@ -101,6 +106,8 @@ export interface EpisodeSummary {
   thumbnailUrl: string | null; updatedAt: string;
   /** `whole` (whole videos) or `cut` (shot by shot, phase 5). */
   editStyle: 'whole' | 'cut';
+  /** Narration declined for this episode alone (a shot-cut episode). */
+  narrationDeclined: boolean;
 }
 
 type StudioExport = NonNullable<ReturnType<typeof episodeExport>>;
@@ -190,6 +197,7 @@ export class EpisodesController {
       thumbnailUrl: thumb ? await this.sign(thumb.image_key) : null,
       updatedAt: ep.updated_at,
       editStyle: ep.edit_style,
+      narrationDeclined: ep.narration_override === 'none',
     };
   }
 
@@ -402,6 +410,33 @@ export class EpisodesController {
       cancelEpisode(this.engine.core, this.engine.db, episodeId);
       this.recordEpisodeDecision(ep, 'episode_cancel', req?.authContext?.userId);
       return { ok: true };
+    });
+  }
+
+  /**
+   * Narration of this episode alone: `declined: true` cuts it without lines whatever the production's voice (an
+   * episode waiting for a voice runs on at once); `false` follows the production again.
+   */
+  @Post(':episodeId/narration')
+  @Roles('producer')
+  @HttpCode(HttpStatus.OK)
+  episodeNarration(@Param('id') prodId: string, @Param('episodeId') episodeId: string, @Body() dto: EpisodeNarrationDto, @Req() req: Request) {
+    return mapErrors(() => {
+      const ep = getEpisode(this.engine.db, episodeId);
+      if (!ep || ep.production_id !== prodId) {
+        throw new NotFoundException({ code: 'not_found', message: `episode ${episodeId} not found` });
+      }
+      const out = setEpisodeNarration(this.engine.core, this.engine.db, episodeId, { declined: dto.declined });
+      const userId = req?.authContext?.userId;
+      if (userId) {
+        try {
+          recordHumanEdit(this.engine.db, {
+            userId, productionId: prodId, episodeId, kind: 'voice',
+            before: { narration_override: ep.narration_override ?? null }, after: { narration_override: dto.declined ? 'none' : null },
+          });
+        } catch { /* the dataset never blocks a decision */ }
+      }
+      return out;
     });
   }
 

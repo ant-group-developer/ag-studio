@@ -20,12 +20,14 @@ import { useAiTranslation } from "../modules/common/assistant-name";
 const MANAGES = new Set(["producer", "owner"]);
 
 /** "cắt theo shot · khoảng 10 phút · có lời dẫn" from the episode's plan (null for a whole-video episode). */
-export function cutHeader(plan: unknown, t: (k: string, o?: Record<string, unknown>) => string): string | null {
+export function cutHeader(plan: unknown, t: (k: string, o?: Record<string, unknown>) => string, narrationDeclined = false): string | null {
   const p = (plan ?? {}) as { edit_style?: string; target_seconds?: number; narration?: "tts" | "original" | "none" };
   if (p.edit_style !== "cut") return null;
   const s = p.target_seconds ?? 0;
   const length = s >= 90 ? t("chat.cut.minutes", { n: Math.round(s / 60) }) : t("chat.cut.seconds", { n: s });
-  return t("chat.cut.header", { length, narration: t(`chat.cut.narration.${p.narration ?? "none"}`) });
+  // narration declined for this episode alone (`episodes.narration_override`)
+  const narration = narrationDeclined && p.narration === "tts" ? "declined" : p.narration ?? "none";
+  return t("chat.cut.header", { length, narration: t(`chat.cut.narration.${narration}`) });
 }
 const EDITS = new Set(["editor", "producer", "owner"]);
 
@@ -168,7 +170,7 @@ export function ChatProductionPage() {
   const endedAt = ended ? (episode?.status !== "ready" ? episode?.currentStage : null) ?? "render-final" : null;
   const step = stepOf(endedAt ?? thread?.scope?.stageKey ?? thread?.blocked?.stage ?? null, workflow);
   const row = episodeId ? episodeStepsFor(workflow) : PLAN_STEPS;
-  const header = episodeId && episode ? cutHeader(episode.plan, t) : null;
+  const header = episodeId && episode ? cutHeader(episode.plan, t, episode.narrationDeclined) : null;
   const at = stepPosition(step, row);
   const finished = thread?.blocked?.code === "nothing_to_chat" || (ended && episode?.status === "ready");
   const looking = viewing && viewing !== step ? viewing : null;

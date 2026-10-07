@@ -16,6 +16,8 @@ export function productionVoice(voiceJson: string | null, env: Record<string, st
   if (voiceJson) {
     const v = ProductionVoiceSchema.parse(JSON.parse(voiceJson));
     if ("mode" in v && v.mode === "none") return { kind: "none" };
+    // a machine voice still being made: episodes wait for it as for a missing one (never the Studio default)
+    if ("mode" in v && v.mode === "designing") return { kind: "missing" };
     // the voice the farm reads with and the voice store keys by: reference, its text, speed (nothing about provenance)
     if (v.reference) return { kind: "clone", voice: { reference: v.reference, reference_text: v.reference_text, speed: v.speed } };
   }

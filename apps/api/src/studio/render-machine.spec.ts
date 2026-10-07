@@ -80,6 +80,18 @@ describe('render machine routes (real studio.db)', () => {
     expect((err as UnprocessableEntityException).getResponse()).toMatchObject({ code: 'unknown_node' });
   });
 
+  it('narration of one shot-cut episode is declined and wanted again; a whole-video episode has none to decline', async () => {
+    const ctl = new EpisodesController(engine, access);
+    expect(await ctl.episodeNarration(PROD, 'ep-1', { declined: true }, req('auth0|owner')).catch((e: unknown) => (e as UnprocessableEntityException).getResponse()))
+      .toMatchObject({ code: 'no_narration_here' });
+    s.db.run("UPDATE episodes SET edit_style = 'cut' WHERE id = 'ep-1'");
+    expect(await ctl.episodeNarration(PROD, 'ep-1', { declined: true }, req('auth0|owner'))).toEqual({ resumed: false });
+    expect((await ctl.detail(PROD, 'ep-1', req('auth0|owner'))).narrationDeclined).toBe(true);
+    await ctl.episodeNarration(PROD, 'ep-1', { declined: false }, req('auth0|owner'));
+    expect((await ctl.detail(PROD, 'ep-1', req('auth0|owner'))).narrationDeclined).toBe(false);
+    expect(Reflect.getMetadata(ROLES_KEY, EpisodesController.prototype.episodeNarration)).toEqual(['producer']);
+  });
+
   it('Render lại with an empty body works as before', async () => {
     const ctl = new EpisodesController(engine, access);
     const out = await ctl.rerender(PROD, 'ep-1', {}, req('auth0|owner'));

@@ -64,6 +64,27 @@ function narrationTimeline(input: AnyTimeline, layout: TimelineLayout): Timeline
   };
 }
 
+/**
+ * Lines written but not read (narration declined: `voice: none`, lines without audio) as a timeline for the caption
+ * helper only: each line where the layout puts it (its length estimated from its characters), its words spread evenly
+ * over it. Nothing here is played or ducks the music.
+ */
+function writtenLines(input: AnyTimeline, layout: TimelineLayout): Timeline | null {
+  const t = isTimelineV4(input) ? input : upgradeTimelineV3(input);
+  if (t.narration.voice !== "none") return null;
+  const lines = new Map(t.narration.lines.map((l) => [l.line_id, l]));
+  const narration = layout.lines.flatMap((laid) => {
+    const line = lines.get(laid.line_id);
+    if (!line || line.audio) return [];
+    const tokens = line.text.split(/\s+/).filter(Boolean);
+    const step = (laid.end - laid.start) / Math.max(1, tokens.length);
+    const words = tokens.map((word, i) => ({ word, start: r3(laid.start + i * step), end: r3(laid.start + (i + 1) * step) }));
+    return [{ line_id: laid.line_id, wav: "", start: laid.start, end: laid.end, words }];
+  });
+  if (narration.length === 0) return null;
+  return { ...narrationTimeline(input, layout), voice: "tts", narration };
+}
+
 /** Build `composition.json` from a frozen timeline. */
 export function timelineToComposition(t: AnyTimeline): Composition {
   const layout = layoutTimeline(t);
@@ -85,8 +106,10 @@ export function timelineToComposition(t: AnyTimeline): Composition {
 
   const captionMode = v4?.captions.mode ?? "none";
   let captions: Composition["captions"] = { mode: "none", cues: [] };
-  if (captionMode !== "none" && spoken.voice === "tts") {
-    const built = buildCaptionCues({ timeline: spoken, max_chars_per_line: CAPTION_MAX_CHARS_PER_LINE, max_lines: CAPTION_MAX_LINES });
+  // read lines give the words their timings; lines only written (narration declined) are captioned by their length
+  const captioned = spoken.voice === "tts" ? spoken : writtenLines(t, layout);
+  if (captionMode !== "none" && captioned) {
+    const built = buildCaptionCues({ timeline: captioned, max_chars_per_line: CAPTION_MAX_CHARS_PER_LINE, max_lines: CAPTION_MAX_LINES });
     captions = { mode: captionMode, cues: built.cues };
     warnings.push(...built.warnings);
   }

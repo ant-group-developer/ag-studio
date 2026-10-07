@@ -9,7 +9,7 @@ import {
   type EditPlan, type EpisodeAsset, type FitReport, type NarrationTiming, type ShotsIndex, type StudioCanvas, type StudioMusic,
   type StudioSurvey, type TimelineClipV4, type TimelineV4, type Transcript,
 } from "@harness/contracts";
-import { buildTimeline, fitEdl } from "@harness/core";
+import { buildTimeline, fitEdl, narrationCps } from "@harness/core";
 
 /** The read audio of a narration line (voice store). */
 export interface ReadLine { key: string; duration_s: number; words: { word: string; start: number; end: number }[] }
@@ -22,6 +22,12 @@ export interface FitCutInput {
   transcript: Transcript | null;
   /** Every narration line of the plan, by `line_id`. */
   voice: Record<string, ReadLine>;
+  /**
+   * Narration declined after the plan was written: its lines are not read but kept as subtitles (`voice: none`, lines
+   * without audio, captions burnt in), each sized by its characters as `layoutTimeline` sizes an unread line, so the
+   * picture still waits for them. `voice` is not read then.
+   */
+  written?: boolean;
   /** asset of each source of the episode. */
   sources: { asset_id: string; source_id: string }[];
   assets: Record<string, EpisodeAsset>;
@@ -46,7 +52,11 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
   const narrated = plan.narration === "tts";
   const anchors = new Map(plan.shots.filter((s) => s.line_id).map((s) => [s.line_id!, s.order]));
   const lines = narrated ? plan.lines.filter((l) => anchors.has(l.line_id)) : [];
-  const unread = lines.filter((l) => !p.voice[l.line_id]).map((l) => l.line_id);
+  // lines only written: their "audio" is their length in characters, read at the layout's pace
+  const voiceOf: Record<string, ReadLine> = p.written
+    ? Object.fromEntries(lines.map((l) => [l.line_id, { key: "", duration_s: r3(l.text.length / narrationCps(plan.language)), words: [] }]))
+    : p.voice;
+  const unread = lines.filter((l) => !voiceOf[l.line_id]).map((l) => l.line_id);
   if (unread.length) throw new Error(`narration lines without audio: ${unread.join(", ")}`);
 
   const edl = EdlSchema.parse({
@@ -55,9 +65,9 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
   });
   const timing: NarrationTiming = NarrationTimingSchema.parse({
     schema_version: "harness.narration-timing/v1", voice_id: null, voice_revision: null,
-    total_seconds: r3(lines.reduce((sum, l) => sum + p.voice[l.line_id]!.duration_s, 0)),
+    total_seconds: r3(lines.reduce((sum, l) => sum + voiceOf[l.line_id]!.duration_s, 0)),
     lines: lines.map((l) => {
-      const v = p.voice[l.line_id]!;
+      const v = voiceOf[l.line_id]!;
       return {
         line_id: l.line_id, edl_order: anchors.get(l.line_id)!, text: l.text, wav: `voice/${v.key}.wav`, duration_seconds: v.duration_s,
         chunks: [{ text: l.text, start: 0, end: v.duration_s }], words: v.words, alignment: v.words.length ? "word" : "chunk", cached: true,
@@ -113,8 +123,11 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
     edit_style: "cut",
     clips, texts,
     narration: {
-      voice, lead_seconds: DEFAULT_NARRATION_LEAD_SECONDS,
-      lines: lines.map((l) => ({ line_id: l.line_id, text: l.text, audio: { key: p.voice[l.line_id]!.key, duration_s: p.voice[l.line_id]!.duration_s, words: p.voice[l.line_id]!.words } })),
+      voice: p.written ? "none" : voice, lead_seconds: DEFAULT_NARRATION_LEAD_SECONDS,
+      lines: lines.map((l) => ({
+        line_id: l.line_id, text: l.text,
+        audio: p.written ? null : { key: voiceOf[l.line_id]!.key, duration_s: voiceOf[l.line_id]!.duration_s, words: voiceOf[l.line_id]!.words },
+      })),
     },
     captions: { mode: narrated ? "burn-in" : "none" },
     music: p.music,
