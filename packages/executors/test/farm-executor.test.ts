@@ -253,6 +253,34 @@ describe("FarmExecutor: jobs of earlier attempts", () => {
     expect(f.submitted).toHaveLength(1);
   });
 
+  it("a job no node takes within the queue timeout is cancelled; the stage fails for good, saying so", async () => {
+    const f = fakes({ "tts.json": tts }, "tts.json");
+    f.client.getJob = async () => ({ status: "queued", result: null }) as never;
+    const ex = new FarmExecutor({ client: f.client as never, storage: f.storage, pollIntervalMs: 5, payloadBuilders: builders, queueTimeoutMsFor: () => 30 });
+    const req = request({ __farm_job: "studio.tts", payload_builder: "tts" }, expected);
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.outcome).toBe("failed");
+    expect(res.errors[0]).toMatchObject({ kind: "contract", details: { job_id: "job-1", farm_status: "queued" } });
+    expect(res.errors[0]!.message).toMatch(/no farm node took the job/);
+    expect(f.cancelled.map((c) => c.id)).toEqual(["job-1"]);
+  });
+
+  it("a paused job, or one a node took, is not timed out while queued", async () => {
+    const f = fakes({ "tts.json": tts }, "tts.json");
+    let polls = 0;
+    f.client.getJob = async () => {
+      polls += 1;
+      if (polls < 4) return { status: "paused", result: null } as never;
+      if (polls < 8) return { status: "leased", result: null } as never;
+      return { status: "completed", result: { manifest: "tts.json" } } as never;
+    };
+    const ex = new FarmExecutor({ client: f.client as never, storage: f.storage, pollIntervalMs: 10, payloadBuilders: builders, queueTimeoutMsFor: () => 15 });
+    const req = request({ __farm_job: "studio.tts", payload_builder: "tts" }, expected);
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.outcome, JSON.stringify(res.errors)).toBe("succeeded");
+    expect(f.cancelled).toEqual([]);
+  });
+
   it("cancels them too when this attempt has nothing to send", async () => {
     const f = fakes({}, "tts.json");
     const ex = new FarmExecutor({ client: f.client as never, storage: f.storage, pollIntervalMs: 1, payloadBuilders: builders, earlierJobsFor: () => ["old-1"] });

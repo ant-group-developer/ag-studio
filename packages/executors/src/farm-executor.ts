@@ -171,6 +171,12 @@ export interface FarmExecutorOptions {
    * it would still run and nobody would read its result; the next attempt cancels them before it submits its own.
    */
   earlierJobsFor?: (request: StageRequest) => string[];
+  /**
+   * How long a job may sit `queued` (taken by no node) before it is cancelled and the stage fails as a contract
+   * failure (not retried: the same job would wait again). The farm never times a queued job out, so without this a
+   * job no node fits waits for the whole stage deadline. `undefined`: no limit. A paused job is not counted.
+   */
+  queueTimeoutMsFor?: (request: StageRequest) => number | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -370,6 +376,8 @@ export class FarmExecutor implements Executor {
     const pollMs = this.opts.pollIntervalMs ?? 5000;
     const deadline = Date.now() + Math.max(deadlineMs, 0);
 
+    const queueTimeoutMs = this.opts.queueTimeoutMsFor?.(request);
+    let queuedSince = Date.now();
     let jobResult: JobResult | null = null;
     pollLoop: while (Date.now() < deadline) {
       if (ctx.signal?.aborted) {
@@ -396,6 +404,16 @@ export class FarmExecutor implements Executor {
       if (job.status === "completed") {
         jobResult = job.result as JobResult | null;
         break pollLoop;
+      }
+      if (job.status !== "queued") queuedSince = Date.now();
+      else if (queueTimeoutMs !== undefined && Date.now() - queuedSince > queueTimeoutMs) {
+        await this.opts.client.cancelJob(jobId).catch(() => {});
+        const minutes = Math.round(queueTimeoutMs / 60_000);
+        return failed(
+          "contract",
+          `no farm node took the job in ${minutes} min (requirements ${JSON.stringify(requirements)}): is a fitting machine running?`,
+          { job_id: jobId, farm_status: "queued", queue_timeout_ms: queueTimeoutMs, requirements },
+        );
       }
       if (job.status === "failed" || job.status === "cancelled") {
         await this.opts.client.ackJob(jobId).catch(() => {});

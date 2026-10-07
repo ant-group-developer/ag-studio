@@ -7,7 +7,7 @@ import { createLogger, Redactor, type HarnessLogger } from "@harness/core";
 import { ExecutorRegistry, FarmExecutor, GateExecutor, InProcessExecutor, makeStudioFarmRecorder, StudioAgentExecutor } from "@harness/executors";
 import { Worker } from "@harness/worker";
 import type { FarmOwnerClient } from "@ag-farm/owner-client";
-import { renderRequirements, STUDIO_FILE_SKILLS, type AgentCallTrace, type ProjectConfig, type StudioSkill } from "@harness/contracts";
+import { STUDIO_FILE_SKILLS, type AgentCallTrace, type ProjectConfig, type StudioSkill } from "@harness/contracts";
 import { farmStorage, type StudioBucket } from "./bucket.js";
 import { modelFor } from "./models.js";
 import { saveAgentSession } from "./agent-sessions.js";
@@ -21,7 +21,7 @@ import { chatFeedback } from "./chat-db.js";
 import { recordLlmCall } from "./llm-log.js";
 import { cancelLegacyRuns, DEFAULT_CLAUDE_MAX_CONCURRENT, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, studioResources, studioWorkflowRefs, type StudioEngineCore } from "./core.js";
 import { claudeMaxConcurrent } from "./settings.js";
-import { renderChoiceFor } from "./render-choice.js";
+import { renderChoiceRequirements } from "./render-choice.js";
 import { studioPayloadBuilders } from "./payloads.js";
 import { isRunActive, startEpisodeRun } from "./run-control.js";
 import type { FootageCatalogSource } from "./stages.js";
@@ -59,6 +59,8 @@ export interface StudioWorkerOptions {
   thumbnails?: ThumbnailRenderer;
   /** ffmpeg, ag-go resolve and downloads for the shot-cut stages; without it those stages park for a person. */
   media?: CutMediaDeps;
+  /** A farm job taken by no node this long is cancelled and its stage stops, saying so (none: wait to the deadline). */
+  farmQueueTimeoutMs?: number;
   /** Claude calls run at once across this worker's loops; default `DEFAULT_CLAUDE_MAX_CONCURRENT` (20). */
   claudeMaxConcurrent?: number;
 }
@@ -111,10 +113,8 @@ function workerFactory(o: StudioWorkerOptions, single: boolean): { next: () => W
     payloadBuilders: { ...studioPayloadBuilders({ db: o.db, bucket: o.bucket }), ...cutPayloadBuilders({ db: o.db, bucket: o.bucket, ...(o.media ? { media: o.media } : {}) }) },
     pollIntervalMs: o.farmPollMs ?? 5000,
     // the machine type picked for this run's render (phase 3); none picked: the farm executor's default
-    requirementsFor: (request) => {
-      const machine = renderChoiceFor(o.db, request.run_id, request.stage_key);
-      return machine ? renderRequirements(machine) : undefined;
-    },
+    requirementsFor: (request) => renderChoiceRequirements(o.db, request.run_id, request.stage_key),
+    ...(o.farmQueueTimeoutMs ? { queueTimeoutMsFor: () => o.farmQueueTimeoutMs } : {}),
     // what an abandoned attempt left on the farm (the worker restarted mid-job) is cancelled, not run for nobody
     earlierJobsFor: (request) => earlierFarmJobs(o.db, { runId: request.run_id, stageKey: request.stage_key, attemptId: request.attempt_id }),
   }));
