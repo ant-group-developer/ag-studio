@@ -145,6 +145,9 @@ describe("chat pages", () => {
     mount("/v/p1/e/e1");
     expect((await screen.findByText(/✓ Xuất file/)).closest("li")).toHaveClass("chat-steps__done");
     expect(screen.getByText(/✓ Timeline/).closest("li")).toHaveClass("chat-steps__done");
+    // the result column shows the render: its chip is the one open, not the timeline's
+    expect(screen.getByText(/✓ Render/).closest("li")).toHaveClass("chat-steps__open");
+    expect(screen.getByText(/✓ Timeline/).closest("li")).not.toHaveClass("chat-steps__open");
   });
 
   it("an episode whose render failed shows Render as the step it is at", async () => {

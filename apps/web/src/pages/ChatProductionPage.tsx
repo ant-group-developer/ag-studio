@@ -160,9 +160,10 @@ export function ChatProductionPage() {
   };
 
   // An episode whose run ended chats about its timeline, but its chips show where the run is: all done when it is
-  // ready, else the step it stopped at (a failed render).
+  // ready, else the step it stopped at (a failed render). The step on show is the render, as in the result column.
   const ended = !!episodeId && thread?.scope?.scope === "timeline" && !!episode?.run;
-  const step = stepOf((ended && episode?.status !== "ready" ? episode?.currentStage : null) ?? thread?.scope?.stageKey ?? thread?.blocked?.stage ?? null, workflow);
+  const endedAt = ended ? (episode?.status !== "ready" ? episode?.currentStage : null) ?? "render-final" : null;
+  const step = stepOf(endedAt ?? thread?.scope?.stageKey ?? thread?.blocked?.stage ?? null, workflow);
   const row = episodeId ? episodeStepsFor(workflow) : PLAN_STEPS;
   const header = episodeId && episode ? cutHeader(episode.plan, t) : null;
   const at = stepPosition(step, row);
