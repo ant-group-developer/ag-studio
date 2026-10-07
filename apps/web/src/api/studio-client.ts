@@ -584,6 +584,10 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     resumeStage(id: string, stage: string): Promise<{ runId: string; reused: string[] }> {
       return request(getAccessToken, "POST", `/api/productions/${id}/run/stages/${stage}/resume`);
     },
+    /** ⋯ → Chạy lại từ bước…: an episode's ended run again from `stage`. */
+    resumeEpisodeStage(productionId: string, episodeId: string, stage: string): Promise<{ runId: string; reused: string[] }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/stages/${stage}/resume`);
+    },
     cancelRun(id: string): Promise<{ ok: true }> {
       return request(getAccessToken, "POST", `/api/productions/${id}/run/cancel`);
     },
@@ -629,6 +633,10 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     // without ffmpeg on the API box) ----
     listThumbnails(productionId: string, episodeId: string): Promise<ThumbnailList> {
       return request(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails`);
+    },
+    /** Before the render (kit gate): a keyframe of one of the episode's videos, with the idea's words, as the pick. */
+    pickFootageThumbnail(productionId: string, episodeId: string, p: { assetId: string; keyframe: number; text: string }): Promise<ThumbnailView> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/footage`, p);
     },
     selectThumbnail(productionId: string, episodeId: string, thumbnailId: string): Promise<ThumbnailList> {
       return request(getAccessToken, "PUT", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/selected`, { thumbnailId });
@@ -806,6 +814,14 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     /** Farm machines a final render may be pinned to (empty: none listed). */
     listFarmNodes(): Promise<{ nodes: FarmNode[] }> {
       return request(getAccessToken, "GET", "/api/studio/farm/nodes");
+    },
+    /** The chat's event stream (server-sent events), read with fetch so the bearer token goes with it. */
+    async openChatEvents(productionId: string, episodeId: string | undefined, signal: AbortSignal): Promise<Response> {
+      const token = await getAccessToken();
+      const qs = episodeId ? `?episodeId=${encodeURIComponent(episodeId)}` : "";
+      return fetch(`${STUDIO_API_URL}/api/productions/${productionId}/chat/events${qs}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream" }, signal,
+      });
     },
     getClaudeUsage(): Promise<ClaudeUsage> {
       return request(getAccessToken, "GET", "/api/studio/claude");

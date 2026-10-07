@@ -12,12 +12,13 @@ import { docKindOf } from "./views/doc-specs";
 import { EpisodeOutputs } from "./views/EpisodeOutputs";
 import { canEditDoc, StepDocBody, StepDocEditor } from "./views/StepBody";
 import { TimelineResult } from "./views/TimelineResult";
+import { KitThumbnails } from "./views/KitThumbnails";
 import { ProductionAudioPanel } from "./views/ProductionAudioPanel";
 import { useAiTranslation } from "../common/assistant-name";
 
 /** `rerunStep`: run again a machine step that stopped (`blocked.code = stage_failed`). */
 export type ResultAction = "approve" | "start" | "apply" | "retry" | "rerunStep" | "renderAgain";
-export type MenuAction = "editor" | "preview" | "finalRender" | "export" | "rerunSurvey" | "rerunEditPlan" | "log" | "oldScreen";
+export type MenuAction = "editor" | "preview" | "finalRender" | "export" | "rerunSurvey" | "rerunEditPlan" | "rerunFrom" | "cancelRun" | "log" | "oldScreen";
 
 interface Props {
   productionId: string;
@@ -166,6 +167,9 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
   const halted = !!stopped || thread.blocked?.code === "needs_voice" || thread.blocked?.code === "stage_failed";
   const badgeTone = scope?.scope === "failed" || halted ? "needs_attention" : scope?.scope === "intake" && !startDisabled ? "done" : scope ? "waiting_you" : "running";
 
+  const runEnded = episodeId ? scope?.scope === "timeline" && !!scope.runId : thread.blocked?.code === "nothing_to_chat";
+  const runActive = (!!scope && (scope.scope === "gate" || scope.scope === "failed"))
+    || ["busy", "needs_voice", "stage_failed"].includes(thread.blocked?.code ?? "");
   const menu: MenuProps["items"] = [
     ...(episodeId ? [
       { key: "editor", label: t("chat.menu.editor") },
@@ -177,6 +181,9 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
         { key: "rerunEditPlan", label: t("chat.menu.rerunEditPlan"), disabled: !canApprove },
       ] : []),
     ] : []),
+    // the run ended: go again from a step; the run going: stop it
+    ...(runEnded ? [{ key: "rerunFrom", label: t("chat.menu.rerunFrom"), disabled: !canApprove }] : []),
+    ...(runActive ? [{ key: "cancelRun", label: t("chat.menu.cancelRun"), disabled: !canApprove, danger: true }] : []),
     { key: "log", label: t("chat.menu.log") },
     { key: "oldScreen", label: t("chat.menu.oldScreen") },
   ];
@@ -202,6 +209,10 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
       <>
         {scope?.scope === "failed" ? <Problems problems={thread.current?.problems ?? []} /> : null}
         <DocView kind={kind} doc={doc} previous={previous} names={folderNames(thread)} />
+        {episodeId && scope?.stageKey === KIT_GATE ? (
+          <KitThumbnails productionId={productionId} episodeId={episodeId} canEdit={canApprove}
+            ideas={(doc as { thumbnails?: { asset_id: string; text: string }[] }).thumbnails ?? []} />
+        ) : null}
         {scope?.scope === "intake" ? (
           <ProductionAudioPanel productionId={productionId} canEdit={canApprove} onChanged={onAudioChanged}
             suggested={(doc as { audio_links?: { voice?: string | null; music?: string | null } }).audio_links} />

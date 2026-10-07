@@ -36,6 +36,22 @@ describe('ChatController (real studio.db)', () => {
     expect(thread.scope).toMatchObject({ scope: 'intake' });
   });
 
+  it('the event stream says the chat changed when it did: first at once, then on a new message', async () => {
+    const r = await ctl.createDraft('team-1', { text: 'Làm series từ @[Kyoto 2025](folder:f-kyoto)' }, req('auth0|owner'));
+    const seen: { type?: string; data?: unknown }[] = [];
+    const sub = ctl.events(r.productionId, {}).subscribe((e) => seen.push(e));
+    await new Promise((res) => setTimeout(res, 50));
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ type: 'changed', data: { fingerprint: expect.any(String) } });
+    await new Promise((res) => setTimeout(res, 1100));
+    expect(seen).toHaveLength(1); // nothing moved: nothing sent
+    await ctl.send(r.productionId, { text: 'Thêm từ khoá phở' }, req('auth0|owner'));
+    await new Promise((res) => setTimeout(res, 1100));
+    sub.unsubscribe();
+    expect(seen.filter((e) => e.type === 'changed')).toHaveLength(2);
+    expect(Reflect.getMetadata('rawResponse', ChatController.prototype.events)).toBe(true);
+  }, 10_000);
+
   it('refuses a folder the person cannot see', async () => {
     await expect(ctl.createDraft('team-1', { text: 'từ @[Bí mật](folder:f-secret)' }, req('auth0|owner'))).rejects.toBeInstanceOf(UnprocessableEntityException);
   });

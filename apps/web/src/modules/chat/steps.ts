@@ -49,6 +49,15 @@ const STAGE_STEP: Record<string, ChatStep> = {
   export: "export",
 };
 
+/** The stage a step's "Chạy lại từ bước…" runs from: the one that writes it anew (its Claude stage, or the build). */
+const PLAN_RESUME: Partial<Record<ChatStep, string>> = { research: "research", rnd: "rnd", branding: "branding", plan: "plan-episodes" };
+const EPISODE_RESUME: Partial<Record<ChatStep, string>> = { draft: "build-timeline", kit: "youtube-kit" };
+const CUT_RESUME: Partial<Record<ChatStep, string>> = { survey: "source-survey", editPlan: "plan-edit", timeline: "fit-timeline", kit: "youtube-kit" };
+export function resumeStageOf(step: ChatStep, o: { episode: boolean; workflow?: string | null | undefined }): string | null {
+  const map = !o.episode ? PLAN_RESUME : isCutWorkflow(o.workflow) ? CUT_RESUME : EPISODE_RESUME;
+  return map[step] ?? null;
+}
+
 /** The step a stage key belongs to (null for a key the UI does not know); a shot-cut episode groups its own way. */
 export function stepOf(stageKey: string | null | undefined, workflow?: string | null): ChatStep | null {
   if (!stageKey) return null;

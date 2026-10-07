@@ -230,6 +230,15 @@ export const chatVi = {
     onNode: "trên {{name}}",
     renderChip: "Render: {{n}} job",
   },
+  kitThumbs: {
+    title: "Thumbnail",
+    hint: "Chọn ảnh nền cho mỗi ý tưởng: khung của chính video đó, chữ của ý tưởng được vẽ lên theo branding. Ảnh bạn chọn được giữ sau khi render.",
+    pick: "Dùng khung giây {{s}} cho “{{text}}”",
+    picked: "Đã chọn thumbnail.",
+    selected: "Thumbnail đang dùng",
+    none: "Chưa chọn: sau khi render, thumbnail lấy gợi ý đầu tiên.",
+    noFrames: "Không lấy được khung của video này (quyền footage hoặc ag-go chưa có keyframe).",
+  },
   files: {
     download: "Tải về", copy: "Sao chép", unreadable: "Không mở được file này ở đây.",
     thumbnails: "Gợi ý thumbnail", youtube: "Gói YouTube", description: "Mô tả", chapters: "Chapter", tags: "Tag",
@@ -293,7 +302,21 @@ export const chatVi = {
   menu: {
     more: "Thêm thao tác", manual: "Sửa tay", editor: "Mở editor timeline", preview: "Render xem trước 720p", finalRender: "Render bản cuối…",
     export: "Xuất project Premiere", log: "Nhật ký {{ai}}", oldScreen: "Mở màn hình cũ",
-    rerunSurvey: "Chạy lại từ chọn cảnh…", rerunEditPlan: "Chạy lại từ kế hoạch dựng…",
+    rerunSurvey: "Chạy lại từ chọn cảnh…", rerunEditPlan: "Chạy lại từ kế hoạch dựng…", rerunFrom: "Chạy lại từ bước…", cancelRun: "Huỷ lần chạy này…",
+  },
+  rerunFrom: {
+    title: "Chạy lại từ bước nào?",
+    body: "{{ai}} viết lại bước bạn chọn từ đầu; các bước trước được giữ, các bước sau chạy lại và chờ bạn duyệt như lần đầu.",
+    planNote: "Khi kế hoạch tập được duyệt lại, các tập hiện có sẽ bị thay bằng tập mới (timeline, bản render và chỉnh sửa của chúng mất).",
+    episodeNote: "Timeline và YouTube kit làm lại thành bản mới; các bản cũ vẫn ở lịch sử của tập.",
+    ok: "Chạy lại",
+    started: "Đã chạy lại từ bước bạn chọn.",
+  },
+  cancelRun: {
+    title: "Huỷ lần chạy này?",
+    body: "Bước đang chạy hoặc chờ duyệt dừng lại; những gì đã xong được giữ. Muốn tiếp tục thì dùng ⋯ → Chạy lại từ bước….",
+    ok: "Huỷ lần chạy",
+    done: "Đã huỷ.",
   },
   rerun: {
     survey: {

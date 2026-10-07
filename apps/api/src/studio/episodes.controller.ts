@@ -49,6 +49,7 @@ import {
   type RunView,
   type ThumbnailActionDeps,
   setEpisodeNarration,
+  resumeEpisodeRunFrom,
 } from '@ag-studio/engine';
 import { Logger } from '@nestjs/common';
 import { IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsUUID, Max, Min } from 'class-validator';
@@ -436,6 +437,22 @@ export class EpisodesController {
           });
         } catch { /* the dataset never blocks a decision */ }
       }
+      return out;
+    });
+  }
+
+  /** "Chạy lại từ bước…": the episode's ended run again from `stage` (a new run reusing every stage before it). */
+  @Post(':episodeId/stages/:stage/resume')
+  @Roles('producer')
+  @HttpCode(HttpStatus.CREATED)
+  resumeEpisodeStage(@Param('id') prodId: string, @Param('episodeId') episodeId: string, @Param('stage') stage: string, @Req() req: Request) {
+    return mapErrors(() => {
+      const ep = getEpisode(this.engine.db, episodeId);
+      if (!ep || ep.production_id !== prodId) {
+        throw new NotFoundException({ code: 'not_found', message: `episode ${episodeId} not found` });
+      }
+      const out = resumeEpisodeRunFrom(this.engine.core, this.engine.db, episodeId, stage);
+      this.recordEpisodeDecision(ep, 'episode_rerender', req?.authContext?.userId);
       return out;
     });
   }

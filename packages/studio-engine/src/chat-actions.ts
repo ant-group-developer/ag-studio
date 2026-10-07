@@ -217,6 +217,23 @@ export interface ChatThreadView {
   queueAhead: number;
 }
 
+/**
+ * A short string that changes whenever what `chatThread` shows may have changed: the chat's turns, the production or
+ * episode row, its run and the run's stages. The event stream sends it when it moves, so screens read the thread then
+ * instead of every 2–5 s. Cheap: a few indexed reads of `studio.db`.
+ */
+export function chatFingerprint(db: StudioDb, productionId: string, episodeId: string | null): string {
+  const turns = db.get<{ n: number; u: string | null }>(
+    "SELECT COUNT(*) AS n, MAX(updated_at) AS u FROM stage_chat_turns WHERE production_id = ? AND episode_id IS ?", [productionId, episodeId]);
+  const owner = episodeId
+    ? db.get<{ run_id: string | null; updated_at: string }>("SELECT run_id, updated_at FROM episodes WHERE id = ?", [episodeId])
+    : db.get<{ run_id: string | null; updated_at: string }>("SELECT run_id, updated_at FROM productions WHERE id = ?", [productionId]);
+  const run = owner?.run_id ? db.get<{ state: string; updated_at: string }>("SELECT state, updated_at FROM run WHERE id = ?", [owner.run_id]) : undefined;
+  const stages = owner?.run_id
+    ? db.get<{ n: number; u: string | null }>("SELECT COUNT(*) AS n, MAX(updated_at) AS u FROM stage_run WHERE run_id = ?", [owner.run_id]) : undefined;
+  return [turns?.n, turns?.u, owner?.updated_at, owner?.run_id, run?.state, run?.updated_at, stages?.n, stages?.u].map((x) => x ?? "").join("|");
+}
+
 export function chatThread(core: StudioEngineCore, db: StudioDb, productionId: string, o: { episodeId?: string | null; after?: number } = {}): ChatThreadView {
   const turns = listTurns(db, productionId, { episodeId: o.episodeId ?? null, ...(o.after !== undefined ? { after: o.after } : {}) });
   let scope: ChatScopeKey | null = null;

@@ -60,12 +60,16 @@ Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142)
 
 Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-2-chat.md`. Cố ý chưa làm, hoặc lệch mockup:
 
-- **Không có SSE**: luồng chat polling 2 s khi Claude đang trả lời, 5 s khi không; cột trái và chip header 5 s.
-- **Chọn thumbnail ở bước YouTube kit** (mockup màn 10) chưa làm: thumbnail cắt từ `final.mp4`, chỉ có sau render.
-  Gate kit chỉ sửa tiêu đề, mô tả, tag, ý tưởng thumbnail.
+- ✅ 2026-10-07 — SSE cho luồng chat: `GET …/chat/events` gửi `changed` khi dấu vân tay của thread đổi (server xem
+  `studio.db` mỗi giây) và `ping` mỗi 20 s; web đọc bằng `fetch` (gửi bearer), tải lại thread khi có `changed`, polling
+  còn 30 s khi luồng mở và như cũ khi không. Cột trái, chip header, Hàng đợi vẫn polling 5 s.
+- ✅ 2026-10-07 — chọn thumbnail ở bước YouTube kit (mockup màn 10), trước render: mỗi ý tưởng hiện keyframe của chính
+  video đó (ag-go ký theo quyền footage của người xem); bấm một khung thì `POST …/thumbnails/footage` lưu khung làm ảnh
+  của người dùng, vẽ chữ của ý tưởng theo branding và chọn nó (`footageThumbnail`). Render sau đó giữ lựa chọn này.
 - **Màn 13 "Áp dụng đề xuất và chạy lại"**: Claude không sửa thẳng đầu ra REJECTED của stage hỏng (phải đổi core);
   thay bằng "Chạy lại" kèm góp ý trong chat (ADR mục 147).
-- **Menu `⋯` chưa có "Làm lại bước này"** (resume từ một bước khi run đã xong) và "Huỷ": dùng màn cũ.
+- ✅ 2026-10-07 — menu `⋯` có "Chạy lại từ bước…" (run đã xong: Claude viết lại bước chọn, giữ các bước trước;
+  tập dùng `POST …/episodes/:id/stages/:stage/resume`) và "Huỷ lần chạy này…" (run đang chạy hoặc chờ duyệt).
 - **Màn cũ không có nút cho các gate mới** (`approve-trend-report` của plan 3.0.0, `approve-timeline`,
   `approve-youtube-kit` của tập 1.3.0): production tạo sau pha 2 phải duyệt trong giao diện chat (API gate cũ
   `POST /productions/:id/run/gates/approve-trend-report` vẫn có). `EpisodesPanel` cũ không coi `waiting_approval`
@@ -76,7 +80,7 @@ Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-2-chat.md`. Cố ý ch�
 - `queueAhead` của luồng chat đếm mọi câu trả lời đang chờ cũ hơn, kể cả của scope đang chạy — số gần đúng.
 - **Prompt cache của chat chưa đo** với Claude thật: phần đầu prompt giống từng byte với stage, nhưng `--json-schema`
   khác nhau giữa stage và chat.
-- Trang video lấy vai của người xem qua `GET /teams?pageSize=100`: người ở hơn 100 team có thể bị coi là không có vai.
+- ✅ 2026-10-07 — trang video hỏi vai qua `GET /teams/:teamId` của chính video đó.
 - ✅ Đã đóng ở pha 3 — chọn máy cho bản cuối. "Render trên máy này" đã bỏ (spec §3.4: mọi render qua farm).
 
 ### Sau pha 3 — kiểu máy render, màn Hàng đợi (2026-10-06)

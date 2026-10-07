@@ -11,10 +11,12 @@ import { ChatThread, type CardOptions, type ChatCard } from "../modules/chat/Cha
 import { StepPane } from "../modules/chat/StepPane";
 import { useStickToBottom } from "../modules/chat/use-stick-to-bottom";
 import { ResultPane, type MenuAction, type ResultAction } from "../modules/chat/ResultPane";
-import { episodeStepsFor, isCutWorkflow, PLAN_STEPS, STEP_SHOWS, stepLabelKey, stepOf, stepPosition, type ChatStep } from "../modules/chat/steps";
+import { episodeStepsFor, isCutWorkflow, PLAN_STEPS, resumeStageOf, STEP_SHOWS, stepLabelKey, stepOf, stepPosition, type ChatStep } from "../modules/chat/steps";
 import { gateProblems } from "../modules/production/gate-problems";
 import { LlmLogPanel } from "../modules/production/LlmLogPanel";
 import { RenderFinalModal } from "../modules/render/RenderFinalModal";
+import { RerunFromModal } from "../modules/chat/RerunFromModal";
+import { useChatEvents } from "../modules/chat/use-chat-events";
 import { useAiTranslation } from "../modules/common/assistant-name";
 
 const MANAGES = new Set(["producer", "owner"]);
@@ -51,10 +53,16 @@ export function ChatProductionPage() {
   const [draft, setDraft] = useState("");
 
   const threadKey = ["chat", productionId, episodeId ?? null];
+  // the chat's event stream says when to read the thread again; polling is the fallback (slower while it is open)
+  const live = useChatEvents(productionId, episodeId, () => {
+    void qc.invalidateQueries({ queryKey: ["chat", productionId] });
+    void qc.invalidateQueries({ queryKey: ["overview"] });
+    if (episodeId) void qc.invalidateQueries({ queryKey: ["episode", productionId, episodeId] });
+  });
   const { data: thread } = useQuery({
     queryKey: threadKey,
     queryFn: () => client.getChatThread(productionId, episodeId),
-    refetchInterval: (q) => (stillWorking(q.state.data) ? 2000 : 5000),
+    refetchInterval: (q) => (live ? 30_000 : stillWorking(q.state.data) ? 2000 : 5000),
   });
   const { data: production } = useQuery({ queryKey: ["production", productionId], queryFn: () => client.getProduction(productionId) });
   const { data: episode } = useQuery({
@@ -70,12 +78,15 @@ export function ChatProductionPage() {
   const notes: Partial<Record<ChatStep, string>> = shots?.shots.length
     ? { footage: t("chat.cut.footageNote", { videos: new Set(shots.shots.map((x) => x.sourceId)).size, shots: shots.shots.length }) }
     : {};
-  const { data: teams } = useQuery({ queryKey: ["teams", "all"], queryFn: () => client.listTeams({ page: 1, pageSize: 100 }) });
+  // the caller's role in this video's team, asked of that team (a page of all their teams may not hold it)
+  const { data: team } = useQuery({
+    queryKey: ["team", production?.teamId], queryFn: () => client.getTeam(production!.teamId), enabled: !!production?.teamId, retry: false,
+  });
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => client.getMe(), staleTime: 5 * 60_000 });
   // the farm machines a final render may be pinned to (an episode only); none listed: no pinning offered
   const { data: farmNodes } = useQuery({ queryKey: ["farm-nodes"], queryFn: () => client.listFarmNodes(), enabled: !!episodeId, staleTime: 30_000 });
   const renderNodes = farmNodes?.nodes;
-  const role = teams?.items.find((x) => x.id === production?.teamId)?.role ?? null;
+  const role = team?.role ?? null;
   const canManage = !!me?.isAdmin || (!!role && MANAGES.has(role));
   const canEdit = !!me?.isAdmin || (!!role && EDITS.has(role));
 
@@ -153,7 +164,26 @@ export function ChatProductionPage() {
     });
   };
 
+  const [rerunFromOpen, setRerunFromOpen] = useState(false);
+  const resumeFrom = useMutation({
+    mutationFn: (stage: string) => (episodeId ? client.resumeEpisodeStage(productionId, episodeId, stage) : client.resumeStage(productionId, stage)),
+    onSuccess: () => { setRerunFromOpen(false); void message.success(t("chat.rerunFrom.started")); refresh(); },
+    onError: fail,
+  });
+  const cancelRun = useMutation({
+    mutationFn: async (): Promise<void> => { if (episodeId) await client.cancelEpisode(productionId, episodeId); else await client.cancelRun(productionId); },
+    onSuccess: () => { void message.success(t("chat.cancelRun.done")); refresh(); },
+    onError: fail,
+  });
+
   const onMenu = (m: MenuAction) => {
+    if (m === "rerunFrom") setRerunFromOpen(true);
+    if (m === "cancelRun") {
+      void modal.confirm({
+        title: t("chat.cancelRun.title"), content: t("chat.cancelRun.body"), okText: t("chat.cancelRun.ok"), okButtonProps: { danger: true },
+        cancelText: t("chat.rerun.cancel"), onOk: () => cancelRun.mutateAsync(),
+      });
+    }
     if (m === "rerunSurvey" && episodeId) confirmRerun("approve-survey");
     if (m === "rerunEditPlan" && episodeId) confirmRerun("approve-edit-plan");
     if (m === "editor" && episodeId) navigate(`/productions/${productionId}/episodes/${episodeId}/editor`);
@@ -247,6 +277,12 @@ export function ChatProductionPage() {
           onPrimary={(a, options) => act.mutate({ kind: a, options })} onMenu={onMenu}
           onSaveEdit={(stageKey, document) => manual.mutateAsync({ stageKey, document })} onAudioChanged={refresh} />
       ) : null}
+      <RerunFromModal open={rerunFromOpen} plan={!episodeId} busy={resumeFrom.isPending} onClose={() => setRerunFromOpen(false)}
+        onConfirm={(stage) => resumeFrom.mutate(stage)}
+        steps={row.flatMap((s, i) => {
+          const stage = (finished || i < at) ? resumeStageOf(s, { episode: !!episodeId, workflow }) : null;
+          return stage ? [{ step: s, stage }] : [];
+        })} />
       <Drawer open={logOpen} onClose={() => setLogOpen(false)} width="min(900px, 100vw)" title={t("chat.menu.log")} destroyOnClose>
         <LlmLogPanel productionId={productionId} live={stillWorking(thread)} />
       </Drawer>
