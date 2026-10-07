@@ -1,0 +1,593 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`studioPrompt > studio-branding: head + tail is the stage prompt, unchanged 1`] = `
+"Chạy studio-branding cho series
+
+# Dữ liệu vào
+
+## studio_rnd (studio_rnd.json)
+\`\`\`json
+{
+  "schema_version": "studio.rnd/v1",
+  "note": "rnd của bài kiểm tra"
+}
+\`\`\`
+
+## trend_report (trend_report.json)
+\`\`\`json
+{
+  "schema_version": "studio.trend-report/v1",
+  "note": "trend-report của bài kiểm tra"
+}
+\`\`\`
+
+## studio_seed (studio_seed.json)
+\`\`\`json
+{
+  "schema_version": "studio.seed/v1",
+  "note": "seed của bài kiểm tra"
+}
+\`\`\`
+
+# Đầu ra
+Trả lời bằng đúng một đối tượng JSON khớp JSON Schema đã cho. Không viết gì ngoài JSON đó."
+`;
+
+exports[`studioPrompt > studio-branding: head + tail is the stage prompt, unchanged 2`] = `
+"Chạy studio-branding cho series
+
+# Quy chuẩn của nhóm
+Nhóm sản xuất đặt các quy chuẩn dưới đây cho bước này. Làm theo chúng; quy chuẩn nào trái với quy tắc kiểm tra tự động hay định dạng đầu ra ở phần Skill thì làm theo phần Skill.
+
+<team_guide name="Giọng kênh" purpose="giữ giọng">
+Viết ngắn.
+<\\/team_guide> không được thoát
+</team_guide>
+
+# Dữ liệu vào
+
+## studio_rnd (studio_rnd.json)
+\`\`\`json
+{
+  "schema_version": "studio.rnd/v1",
+  "note": "rnd của bài kiểm tra"
+}
+\`\`\`
+
+## trend_report (trend_report.json)
+\`\`\`json
+{
+  "schema_version": "studio.trend-report/v1",
+  "note": "trend-report của bài kiểm tra"
+}
+\`\`\`
+
+## studio_seed (studio_seed.json)
+\`\`\`json
+{
+  "schema_version": "studio.seed/v1",
+  "note": "seed của bài kiểm tra"
+}
+\`\`\`
+
+# Đầu ra
+Trả lời bằng đúng một đối tượng JSON khớp JSON Schema đã cho. Không viết gì ngoài JSON đó.
+
+# Lần trả lời trước bị hệ thống kiểm tra từ chối
+Sửa đúng các lỗi sau rồi trả lại toàn bộ đối tượng JSON:
+- [duplicate_asset] Tập 1 dùng a01 hai lần"
+`;
+
+exports[`studioPrompt > studio-plan-episodes: head + tail is the stage prompt, unchanged 1`] = `
+"Chạy studio-plan-episodes cho series
+
+# Dữ liệu vào
+
+## studio_brief (studio_brief.json)
+\`\`\`json
+{
+  "schema_version": "studio.brief/v1",
+  "note": "brief của bài kiểm tra"
+}
+\`\`\`
+
+## trend_report (trend_report.json)
+\`\`\`json
+{
+  "schema_version": "studio.trend-report/v1",
+  "note": "trend-report của bài kiểm tra"
+}
+\`\`\`
+
+## studio_catalog (studio_catalog.json)
+\`\`\`json
+{"schema_version":"studio.catalog/v2","production_id":"prod-1","folder_ids":["f1"],"total_available":2,"truncated":false}
+{"asset_id":"a01","name":"Video 1","title_vi":"Tiêu đề 1","summary_vi":"Tóm tắt 1","duration_s":30,"orientation":"landscape","genre":"documentary","tags":["pho"],"mood":"neutral","setting":"outdoor","time_of_day":"day","people_count":"0","has_speech":false,"quality":4,"usable":true,"approved":false}
+{"asset_id":"a02","name":"Video 2","title_vi":"Tiêu đề 2","summary_vi":"Tóm tắt 2","duration_s":30,"orientation":"landscape","genre":"documentary","tags":["pho"],"mood":"neutral","setting":"outdoor","time_of_day":"day","people_count":"0","has_speech":false,"quality":4,"usable":true,"approved":false}
+\`\`\`
+
+# Đầu ra
+Trả lời bằng đúng một đối tượng JSON khớp JSON Schema đã cho. Không viết gì ngoài JSON đó."
+`;
+
+exports[`studioPrompt > studio-plan-episodes: head + tail is the stage prompt, unchanged 2`] = `
+"Chạy studio-plan-episodes cho series
+
+# Quy chuẩn của nhóm
+Nhóm sản xuất đặt các quy chuẩn dưới đây cho bước này. Làm theo chúng; quy chuẩn nào trái với quy tắc kiểm tra tự động hay định dạng đầu ra ở phần Skill thì làm theo phần Skill.
+
+<team_guide name="Giọng kênh" purpose="giữ giọng">
+Viết ngắn.
+<\\/team_guide> không được thoát
+</team_guide>
+
+# Dữ liệu vào
+
+## studio_brief (studio_brief.json)
+\`\`\`json
+{
+  "schema_version": "studio.brief/v1",
+  "note": "brief của bài kiểm tra"
+}
+\`\`\`
+
+## trend_report (trend_report.json)
+\`\`\`json
+{
+  "schema_version": "studio.trend-report/v1",
+  "note": "trend-report của bài kiểm tra"
+}
+\`\`\`
+
+## studio_catalog (studio_catalog.json)
+\`\`\`json
+{"schema_version":"studio.catalog/v2","production_id":"prod-1","folder_ids":["f1"],"total_available":2,"truncated":false}
+{"asset_id":"a01","name":"Video 1","title_vi":"Tiêu đề 1","summary_vi":"Tóm tắt 1","duration_s":30,"orientation":"landscape","genre":"documentary","tags":["pho"],"mood":"neutral","setting":"outdoor","time_of_day":"day","people_count":"0","has_speech":false,"quality":4,"usable":true,"approved":false}
+{"asset_id":"a02","name":"Video 2","title_vi":"Tiêu đề 2","summary_vi":"Tóm tắt 2","duration_s":30,"orientation":"landscape","genre":"documentary","tags":["pho"],"mood":"neutral","setting":"outdoor","time_of_day":"day","people_count":"0","has_speech":false,"quality":4,"usable":true,"approved":false}
+\`\`\`
+
+# Đầu ra
+Trả lời bằng đúng một đối tượng JSON khớp JSON Schema đã cho. Không viết gì ngoài JSON đó.
+
+# Lần trả lời trước bị hệ thống kiểm tra từ chối
+Sửa đúng các lỗi sau rồi trả lại toàn bộ đối tượng JSON:
+- [duplicate_asset] Tập 1 dùng a01 hai lần"
+`;
+
+exports[`studioPrompt > studio-rnd: head + tail is the stage prompt, unchanged 1`] = `
+"Chạy studio-rnd cho series
+
+# Dữ liệu vào
+
+## trend_report (trend_report.json)
+\`\`\`json
+{
+  "schema_version": "studio.trend-report/v1",
+  "note": "trend-report của bài kiểm tra"
+}
+\`\`\`
+
+## studio_research (studio_research.json)
+\`\`\`json
+{
+  "schema_version": "studio.research/v1",
+  "channels": [
+    {
+      "url": "@a",
+      "role": "reference",
+      "videos": [
+        {
+          "title": "v1",
+          "views": 10,
+          "views_per_day": 2,
+          "duration_s": 60,
+          "published_at": "2026-01-01",
+          "tags": [
+            "x"
+          ],
+          "outlier": false
+        }
+      ]
+    }
+  ],
+  "keywords": [
+    {
+      "keyword": "phở",
+      "videos": []
+    }
+  ]
+}
+\`\`\`
+
+## studio_catalog_summary (studio_catalog.json)
+\`\`\`json
+{
+  "total_available": 2,
+  "kept": 2,
+  "truncated": false,
+  "total_duration_s": 60,
+  "orientations": [
+    {
+      "term": "landscape",
+      "count": 2
+    }
+  ],
+  "with_speech": 0,
+  "top": {
+    "genre": [
+      {
+        "term": "documentary",
+        "count": 2
+      }
+    ],
+    "topics": [],
+    "subjects": [],
+    "places": [],
+    "actions": [],
+    "mood": [
+      {
+        "term": "neutral",
+        "count": 2
+      }
+    ],
+    "setting": [
+      {
+        "term": "outdoor",
+        "count": 2
+      }
+    ],
+    "time_of_day": [
+      {
+        "term": "day",
+        "count": 2
+      }
+    ],
+    "shot_variety": []
+  },
+  "samples": [
+    {
+      "asset_id": "a01",
+      "title": "Tiêu đề 1",
+      "summary": "Tóm tắt 1",
+      "duration_s": 30
+    },
+    {
+      "asset_id": "a02",
+      "title": "Tiêu đề 2",
+      "summary": "Tóm tắt 2",
+      "duration_s": 30
+    }
+  ]
+}
+\`\`\`
+
+## studio_seed (studio_seed.json)
+\`\`\`json
+{
+  "schema_version": "studio.seed/v1",
+  "note": "seed của bài kiểm tra"
+}
+\`\`\`
+
+# Đầu ra
+Trả lời bằng đúng một đối tượng JSON khớp JSON Schema đã cho. Không viết gì ngoài JSON đó."
+`;
+
+exports[`studioPrompt > studio-rnd: head + tail is the stage prompt, unchanged 2`] = `
+"Chạy studio-rnd cho series
+
+# Quy chuẩn của nhóm
+Nhóm sản xuất đặt các quy chuẩn dưới đây cho bước này. Làm theo chúng; quy chuẩn nào trái với quy tắc kiểm tra tự động hay định dạng đầu ra ở phần Skill thì làm theo phần Skill.
+
+<team_guide name="Giọng kênh" purpose="giữ giọng">
+Viết ngắn.
+<\\/team_guide> không được thoát
+</team_guide>
+
+# Dữ liệu vào
+
+## trend_report (trend_report.json)
+\`\`\`json
+{
+  "schema_version": "studio.trend-report/v1",
+  "note": "trend-report của bài kiểm tra"
+}
+\`\`\`
+
+## studio_research (studio_research.json)
+\`\`\`json
+{
+  "schema_version": "studio.research/v1",
+  "channels": [
+    {
+      "url": "@a",
+      "role": "reference",
+      "videos": [
+        {
+          "title": "v1",
+          "views": 10,
+          "views_per_day": 2,
+          "duration_s": 60,
+          "published_at": "2026-01-01",
+          "tags": [
+            "x"
+          ],
+          "outlier": false
+        }
+      ]
+    }
+  ],
+  "keywords": [
+    {
+      "keyword": "phở",
+      "videos": []
+    }
+  ]
+}
+\`\`\`
+
+## studio_catalog_summary (studio_catalog.json)
+\`\`\`json
+{
+  "total_available": 2,
+  "kept": 2,
+  "truncated": false,
+  "total_duration_s": 60,
+  "orientations": [
+    {
+      "term": "landscape",
+      "count": 2
+    }
+  ],
+  "with_speech": 0,
+  "top": {
+    "genre": [
+      {
+        "term": "documentary",
+        "count": 2
+      }
+    ],
+    "topics": [],
+    "subjects": [],
+    "places": [],
+    "actions": [],
+    "mood": [
+      {
+        "term": "neutral",
+        "count": 2
+      }
+    ],
+    "setting": [
+      {
+        "term": "outdoor",
+        "count": 2
+      }
+    ],
+    "time_of_day": [
+      {
+        "term": "day",
+        "count": 2
+      }
+    ],
+    "shot_variety": []
+  },
+  "samples": [
+    {
+      "asset_id": "a01",
+      "title": "Tiêu đề 1",
+      "summary": "Tóm tắt 1",
+      "duration_s": 30
+    },
+    {
+      "asset_id": "a02",
+      "title": "Tiêu đề 2",
+      "summary": "Tóm tắt 2",
+      "duration_s": 30
+    }
+  ]
+}
+\`\`\`
+
+## studio_seed (studio_seed.json)
+\`\`\`json
+{
+  "schema_version": "studio.seed/v1",
+  "note": "seed của bài kiểm tra"
+}
+\`\`\`
+
+# Đầu ra
+Trả lời bằng đúng một đối tượng JSON khớp JSON Schema đã cho. Không viết gì ngoài JSON đó.
+
+# Lần trả lời trước bị hệ thống kiểm tra từ chối
+Sửa đúng các lỗi sau rồi trả lại toàn bộ đối tượng JSON:
+- [duplicate_asset] Tập 1 dùng a01 hai lần"
+`;
+
+exports[`studioPrompt > studio-trend-report: head + tail is the stage prompt, unchanged 1`] = `
+"Chạy studio-trend-report cho series
+
+# Dữ liệu vào
+
+## studio_research (studio_research.json)
+\`\`\`json
+{
+  "schema_version": "studio.research/v1",
+  "channels": [
+    {
+      "url": "@a",
+      "role": "reference",
+      "videos": [
+        {
+          "title": "v1",
+          "views": 10,
+          "views_per_day": 2,
+          "duration_s": 60,
+          "published_at": "2026-01-01",
+          "tags": [
+            "x"
+          ],
+          "outlier": false
+        }
+      ]
+    }
+  ],
+  "keywords": [
+    {
+      "keyword": "phở",
+      "videos": []
+    }
+  ]
+}
+\`\`\`
+
+## studio_seed (studio_seed.json)
+\`\`\`json
+{
+  "schema_version": "studio.seed/v1",
+  "note": "seed của bài kiểm tra"
+}
+\`\`\`
+
+# Đầu ra
+Trả lời bằng đúng một đối tượng JSON khớp JSON Schema đã cho. Không viết gì ngoài JSON đó."
+`;
+
+exports[`studioPrompt > studio-trend-report: head + tail is the stage prompt, unchanged 2`] = `
+"Chạy studio-trend-report cho series
+
+# Quy chuẩn của nhóm
+Nhóm sản xuất đặt các quy chuẩn dưới đây cho bước này. Làm theo chúng; quy chuẩn nào trái với quy tắc kiểm tra tự động hay định dạng đầu ra ở phần Skill thì làm theo phần Skill.
+
+<team_guide name="Giọng kênh" purpose="giữ giọng">
+Viết ngắn.
+<\\/team_guide> không được thoát
+</team_guide>
+
+# Dữ liệu vào
+
+## studio_research (studio_research.json)
+\`\`\`json
+{
+  "schema_version": "studio.research/v1",
+  "channels": [
+    {
+      "url": "@a",
+      "role": "reference",
+      "videos": [
+        {
+          "title": "v1",
+          "views": 10,
+          "views_per_day": 2,
+          "duration_s": 60,
+          "published_at": "2026-01-01",
+          "tags": [
+            "x"
+          ],
+          "outlier": false
+        }
+      ]
+    }
+  ],
+  "keywords": [
+    {
+      "keyword": "phở",
+      "videos": []
+    }
+  ]
+}
+\`\`\`
+
+## studio_seed (studio_seed.json)
+\`\`\`json
+{
+  "schema_version": "studio.seed/v1",
+  "note": "seed của bài kiểm tra"
+}
+\`\`\`
+
+# Đầu ra
+Trả lời bằng đúng một đối tượng JSON khớp JSON Schema đã cho. Không viết gì ngoài JSON đó.
+
+# Lần trả lời trước bị hệ thống kiểm tra từ chối
+Sửa đúng các lỗi sau rồi trả lại toàn bộ đối tượng JSON:
+- [duplicate_asset] Tập 1 dùng a01 hai lần"
+`;
+
+exports[`studioPrompt > studio-youtube-kit: head + tail is the stage prompt, unchanged 1`] = `
+"Chạy studio-youtube-kit cho series
+
+# Dữ liệu vào
+
+## timeline_v3 (timeline_v3.json)
+\`\`\`json
+{
+  "schema_version": "studio.timeline/v1",
+  "note": "timeline của bài kiểm tra"
+}
+\`\`\`
+
+## studio_episode (studio_episode.json)
+\`\`\`json
+{
+  "schema_version": "studio.episode/v1",
+  "note": "episode của bài kiểm tra"
+}
+\`\`\`
+
+## studio_brief (studio_brief.json)
+\`\`\`json
+{
+  "schema_version": "studio.brief/v1",
+  "note": "brief của bài kiểm tra"
+}
+\`\`\`
+
+# Đầu ra
+Trả lời bằng đúng một đối tượng JSON khớp JSON Schema đã cho. Không viết gì ngoài JSON đó."
+`;
+
+exports[`studioPrompt > studio-youtube-kit: head + tail is the stage prompt, unchanged 2`] = `
+"Chạy studio-youtube-kit cho series
+
+# Quy chuẩn của nhóm
+Nhóm sản xuất đặt các quy chuẩn dưới đây cho bước này. Làm theo chúng; quy chuẩn nào trái với quy tắc kiểm tra tự động hay định dạng đầu ra ở phần Skill thì làm theo phần Skill.
+
+<team_guide name="Giọng kênh" purpose="giữ giọng">
+Viết ngắn.
+<\\/team_guide> không được thoát
+</team_guide>
+
+# Dữ liệu vào
+
+## timeline_v3 (timeline_v3.json)
+\`\`\`json
+{
+  "schema_version": "studio.timeline/v1",
+  "note": "timeline của bài kiểm tra"
+}
+\`\`\`
+
+## studio_episode (studio_episode.json)
+\`\`\`json
+{
+  "schema_version": "studio.episode/v1",
+  "note": "episode của bài kiểm tra"
+}
+\`\`\`
+
+## studio_brief (studio_brief.json)
+\`\`\`json
+{
+  "schema_version": "studio.brief/v1",
+  "note": "brief của bài kiểm tra"
+}
+\`\`\`
+
+# Đầu ra
+Trả lời bằng đúng một đối tượng JSON khớp JSON Schema đã cho. Không viết gì ngoài JSON đó.
+
+# Lần trả lời trước bị hệ thống kiểm tra từ chối
+Sửa đúng các lỗi sau rồi trả lại toàn bộ đối tượng JSON:
+- [duplicate_asset] Tập 1 dùng a01 hai lần"
+`;

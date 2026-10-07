@@ -13,7 +13,7 @@ export class SaveRevisionDto {
   @Min(0)
   baseRevision!: number;
 
-  /** Full TimelineV3 (`studio.timeline/v3`). */
+  /** A full timeline, v3 (`studio.timeline/v3`) or v4 (`studio.timeline/v4`); it is stored in the episode's version. */
   @IsObject()
   data!: Record<string, unknown>;
 

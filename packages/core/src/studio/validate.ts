@@ -29,6 +29,11 @@ function zodProblems(e: ZodError): StudioProblem[] {
   return e.issues.map((i) => ({ code: "schema", message: `${i.path.join(".") || "(root)"}: ${i.message}` }));
 }
 
+/** A shot-cut episode is cut from at most this many videos (one `index` each in the shot ids). */
+export const MAX_CUT_SOURCES = 40;
+/** A shot-cut episode should have at least this many times its length in footage to choose shots from. */
+export const CUT_POOL_FACTOR = 1.5;
+
 export function validateSeriesPlan(
   raw: unknown,
   ctx: { brief: StudioBrief; catalog: CatalogAsset[] },
@@ -102,6 +107,19 @@ export function validateSeriesPlan(
     const totalDuration = ep.items.reduce((s, item) => s + (assetById.get(item.asset_id)?.duration_s ?? 0), 0);
     const target = ep.target_seconds;
     const tolerance = target * EPISODE_DURATION_TOLERANCE;
+    if (ep.edit_style === "cut") {
+      // the videos are footage to cut from, not clips: what matters is enough of it to choose shots from
+      if (ep.items.length > MAX_CUT_SOURCES) {
+        problems.push({ code: "too_many_sources", message: `tập ${ep.idx}: cắt theo shot từ ${ep.items.length} video, tối đa ${MAX_CUT_SOURCES}` });
+      }
+      if (totalDuration < target * CUT_POOL_FACTOR - 1e-6) {
+        warnings.push({ code: "pool_too_short", message: `tập ${ep.idx}: chỉ có ${totalDuration.toFixed(0)}s footage cho ${target}s cắt theo shot (nên ≥ ${CUT_POOL_FACTOR}×)` });
+      }
+      continue;
+    }
+    if (ep.narration && ep.narration !== "none") {
+      problems.push({ code: "narration_needs_cut", message: `tập ${ep.idx}: tập ghép nguyên video không có lời dẫn; muốn lời dẫn thì đặt edit_style "cut"` });
+    }
     if (Math.abs(totalDuration - target) > tolerance + 1e-6) {
       const pct = Math.round(Math.abs(totalDuration - target) / target * 100);
       warnings.push({ code: "duration_off_target", message: `tập ${ep.idx}: tổng thời lượng ${totalDuration.toFixed(1)}s lệch ${pct}% so với mục tiêu ${target}s (±20%)` });

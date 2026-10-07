@@ -156,4 +156,44 @@ describe("ProductionDetailPage", () => {
     await waitFor(() => expect(screen.queryByText("Không kiểm tra được quyền truy cập")).toBeNull());
     expect(screen.getByRole("button", { name: /Lưu thông tin/ })).toBeTruthy();
   }, 15000);
+
+  it("bước kế hoạch tập nói đang chờ worker hay AI đang viết khi chưa có kế hoạch, thay vì để trống", async () => {
+    client.getProduction.mockResolvedValue({
+      id: "p-3", teamId: "t-1", teamName: "Team A", title: "Hành trình Hoa Lư",
+      description: "", goal: "", audience: "", tone: "", notes: "",
+      status: "producing", runId: "r-3", createdAt: "", updatedAt: "", ownerUserId: null,
+      episodeTargetSeconds: 60, maxEpisodes: 12, aspect: "16:9", language: "vi",
+      music: null, sources: ["f-1"], youtubeChannels: [], keywords: [],
+      ownChannels: [], hasRnd: true, hasBranding: true, waitingGate: null,
+      episodeCounts: { total: 0, ready: 0, producing: 0, failed: 0 },
+    });
+    client.checkProductionAccess.mockResolvedValue({ hasAccess: true });
+    const planRun = (planState: string) => ({
+      run_id: "r-3", state: "RUNNING", created_at: "", updated_at: "", cost_usd: 0, waiting_gate: null, latest_revision: null,
+      stages: [
+        ...["intake", "research", "trend-report", "rnd", "approve-rnd", "branding", "approve-branding", "brief"].map((key) => (
+          { key, executor: "agent", state: "SUCCEEDED", attempts: 1, is_gate: key.startsWith("approve"), error: null, failed_checks: [], outputs: [], reused: false }
+        )),
+        { key: "plan-episodes", executor: "agent", state: planState, attempts: 0, is_gate: false, error: null, failed_checks: [], outputs: [], reused: false },
+      ],
+    });
+    client.getRun.mockResolvedValue(planRun("READY"));
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={["/productions/p-3"]}>
+          <Routes>
+            <Route path="/productions/:productionId" element={<ProductionDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Đang chờ worker nhận việc lập kế hoạch tập…", {}, { timeout: 15000 })).toBeTruthy();
+
+    client.getRun.mockResolvedValue(planRun("RUNNING"));
+    await queryClient.invalidateQueries({ queryKey: ["run", "p-3"] });
+    expect(await screen.findByText("AI đang lập kế hoạch tập…")).toBeTruthy();
+  }, 15000);
 });

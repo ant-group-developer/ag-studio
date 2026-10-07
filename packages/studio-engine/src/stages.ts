@@ -11,20 +11,22 @@ import { join } from "node:path";
 import JSZip from "yazl";
 import {
   HarnessError, MAX_RESEARCH_CHANNELS, SeriesPlanSchema, SpawnedEpisodesSchema, StudioBrandingSchema, StudioBriefSchema, StudioCatalogSchema,
-  StudioEpisodeSchema, StudioExportSchema, StudioResearchSchema, StudioRndSchema, StudioSeedSchema, StudioYoutubeSchema, TimelineV3Schema,
+  StudioEpisodeSchema, StudioExportSchema, StudioResearchSchema, StudioRndSchema, StudioSeedSchema, StudioYoutubeSchema, StoredTimelineSchema,
   TrendReportSchema, parseStoredYoutubeKit,
-  type ChannelRef, type ExecutorContext, type StageRequest, type StudioBrief, type StudioCatalog, type StudioExport,
-  type StudioEpisode, type TrendReport, StudioThumbnailsSchema, THUMBNAIL_SIZES, type StudioThumbnails,
+  type AssetHints, type ChannelRef, type ExecutorContext, type StageRequest, type StudioBrief, type StudioCatalog, type StudioExport,
+  type StudioEpisode, type TrendReport, StudioThumbnailsSchema, THUMBNAIL_SIZES, type StudioThumbnails, type StoredTimeline,
 } from "@harness/contracts";
 import {
   buildEpisodeTimeline, effectiveBrief, formatChapters, frameCandidateTimes, inputPath, layoutTimeline, normalizeCatalogVideo,
-  orientationFits, prefilterCatalog, STUDIO_TYPES, suggestionFrame, thumbnailStyle, thumbnailTextLines, timelineIssues, youtubeChapters,
+  orientationFits, prefilterCatalog, STUDIO_TIMELINE_TYPES, STUDIO_TYPES, suggestionFrame, thumbnailStyle, thumbnailTextLines, timelineIssues, youtubeChapters,
   type AgGoFootageVideo,
 } from "@harness/core";
 import type { InProcessStage } from "@harness/executors";
 import { productionKey, type StudioBucket } from "./bucket.js";
 import { emptyResearch, type ResearchSource } from "./youtube-research.js";
+import { episodeWorkflowFor, episodeWorkflowForPlan } from "./run-control.js";
 import type { ThumbnailRenderer } from "./thumbnail-render.js";
+import type { CutMediaDeps } from "./cut-stages.js";
 import { insertThumbnail, listThumbnails, replaceRenderThumbnails } from "./thumbnails-db.js";
 import {
   episodeForRun, getEpisode, getProduction, latestEpisodeRevision, listEpisodes, productionBranding, productionChannels, productionForRun,
@@ -42,13 +44,16 @@ export interface StudioStageDeps {
   bucket: StudioBucket;
   footage: FootageCatalogSource;
   /** Callback to start one episode run; wired by the worker. */
-  startEpisodeRun(episodeId: string): Promise<{ runId: string }>;
+  /** Starts an episode's run on `workflow` (the release that goes with the plan release spawning it). */
+  startEpisodeRun(episodeId: string, workflow: string): Promise<{ runId: string }>;
   /** YouTube research (GĐ5); absent when no YouTube API key is configured. */
   research?: ResearchSource;
   /** Whether a run can still do work (wired by the worker); spawn-episodes will not delete an episode that renders. */
   isRunActive?: (runId: string) => boolean;
   /** Cuts thumbnail frames and draws their words (ffmpeg on this node); absent = no ffmpeg configured. */
   thumbnails?: ThumbnailRenderer;
+  /** What the shot-cut stages need (ffmpeg, ag-go resolve, downloads); absent = this worker cannot run them. */
+  media?: CutMediaDeps;
 }
 
 export const DEFAULT_CANVAS = { "16:9": { width: 1920, height: 1080 }, "9:16": { width: 1080, height: 1920 } } as const;
@@ -61,6 +66,11 @@ export function readInput<T>(request: StageRequest, workspaceDir: string, type: 
   const p = inputPath({ request, workspaceDir }, type);
   if (!p || !existsSync(p)) throw new HarnessError("NOT_FOUND", `stage ${request.stage_key} has no ${type} input`, { type });
   return parse(JSON.parse(readFileSync(p, "utf8")));
+}
+/** The timeline input of a stage, v3 (`timeline_v3`) or v4 (`timeline_v4`), as stored. */
+export function readTimelineInput(request: StageRequest, workspaceDir: string): StoredTimeline {
+  const type = STUDIO_TIMELINE_TYPES.find((t) => request.inputs.some((i) => i.type === t)) ?? STUDIO_TYPES.timeline;
+  return readInput(request, workspaceDir, type, (v) => StoredTimelineSchema.parse(v));
 }
 export const readBrief = (r: StageRequest, ws: string) => readInput(r, ws, STUDIO_TYPES.brief, (v) => StudioBriefSchema.parse(v));
 export const readCatalog = (r: StageRequest, ws: string) => readInput(r, ws, STUDIO_TYPES.catalog, (v) => StudioCatalogSchema.parse(v));
@@ -97,19 +107,141 @@ function requirePlanProduction(d: StudioStageDeps, runId: string): ProductionRec
   return p;
 }
 
-function writeOutput(ctx: ExecutorContext, name: string, body: string | Buffer): string {
+export function writeOutput(ctx: ExecutorContext, name: string, body: string | Buffer): string {
   const path = join(ctx.workspaceDir, "output", name);
   mkdirSync(join(ctx.workspaceDir, "output"), { recursive: true });
   writeFileSync(path, body);
   return path;
 }
 const sha256 = (b: Buffer) => createHash("sha256").update(b).digest("hex");
-const toBuffer = (v: unknown) => Buffer.from(JSON.stringify(v, null, 2), "utf8");
+export const toBuffer = (v: unknown) => Buffer.from(JSON.stringify(v, null, 2), "utf8");
 
 /** A file name from a title: ASCII, dashes, lower case (Vietnamese marks dropped). */
 export function fileSlug(text: string): string {
   return text.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D")
     .replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase() || "episode";
+}
+
+/**
+ * The episode intake of `ag-studio-episode@1.1.0` and later (a shot-cut episode adds its sources): the brief with the
+ * production's current R&D on top, the episode, and for the YouTube kit the production's branding (when it has one) and
+ * its trend report (a skipped one when research found nothing) — read when the episode run starts, so later edits reach
+ * later episodes.
+ */
+export function writeEpisodeIntake(d: Pick<StudioStageDeps, "db">, request: StageRequest, ctx: ExecutorContext): { brief: StudioBrief; episode: StudioEpisode } {
+  const ep = episodeForRun(d.db, request.run_id);
+  if (!ep) throw new HarnessError("NOT_FOUND", `no episode is linked to run ${request.run_id}`, { run_id: request.run_id });
+  if (!ep.plan) throw new HarnessError("CONFIG_INVALID", `episode ${ep.id} has no plan`, { episode_id: ep.id });
+  const episode = StudioEpisodeSchema.parse(JSON.parse(ep.plan));
+  const prod = getProduction(d.db, episode.production_id);
+  if (!prod) throw new HarnessError("NOT_FOUND", `production ${episode.production_id} not found`, {});
+  const owner = productionOwner(d.db, prod);
+  if (!owner) throw new HarnessError("CONFIG_INVALID", `production ${episode.production_id} has no owner`, {});
+  const aspect = (prod.aspect ?? "16:9") as StudioBrief["aspect"];
+  const hints = productionHints(prod);
+  const brief = effectiveBrief({
+    production_id: episode.production_id, run_id: request.run_id, owner_user_id: owner, title: prod.title,
+    folder_ids: productionSources(d.db, episode.production_id), aspect, canvas: prod.canvas ? JSON.parse(prod.canvas) : DEFAULT_CANVAS[aspect],
+    fps: 25, language: prod.language ?? "vi", music: prod.music ? JSON.parse(prod.music) : null,
+    youtube_channels: productionChannels(prod).filter((c) => c.role === "reference").map((c) => c.url),
+    keywords: prod.keywords ? (JSON.parse(prod.keywords) as string[]) : [],
+  }, { ...hints, episode_target_seconds: hints.episode_target_seconds ?? episode.target_seconds, max_episodes: hints.max_episodes ?? 1 }, productionRnd(prod));
+  writeOutput(ctx, "brief.json", toBuffer(brief));
+  writeOutput(ctx, "episode.json", toBuffer(episode));
+  const branding = productionBranding(prod);
+  if (branding) writeOutput(ctx, "branding.json", toBuffer(branding));
+  const trend = prod.trend_report ? TrendReportSchema.parse(JSON.parse(prod.trend_report)) : SKIPPED_TREND_REPORT;
+  writeOutput(ctx, "trend-report.json", toBuffer(trend));
+  return { brief, episode };
+}
+
+/** ag-go's AI description of each video, as the hints of a shot-cut episode. */
+function assetHints(ids: string[], assets: Map<string, StudioCatalog["assets"][number]>): Record<string, AssetHints> {
+  const out: Record<string, AssetHints> = {};
+  for (const id of ids) {
+    const a = assets.get(id);
+    if (a) out[id] = { subjects: a.subjects, places: a.places, mood: a.mood, setting: a.setting, time_of_day: a.time_of_day, people_count: a.people_count, shot_variety: a.shot_variety, has_speech: a.has_speech };
+  }
+  return out;
+}
+
+/**
+ * The episodes of an approved plan: their records (each with a snapshot of its plan and videos) and their runs. A retry
+ * of the same plan run keeps the episodes it made and starts the runs still missing; any other episodes belong to an
+ * earlier plan and are replaced, unless one is still producing.
+ */
+async function spawnEpisodes(d: StudioStageDeps, request: StageRequest, ctx: ExecutorContext, v2: boolean): Promise<void> {
+  const ws = ctx.workspaceDir;
+  const brief = readBrief(request, ws);
+  const catalog = readCatalog(request, ws);
+  const plan = readInput(request, ws, STUDIO_TYPES.seriesPlan, (v) => SeriesPlanSchema.parse(v));
+  // Store the trend report in the production (if it was produced)
+  const trendPath = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.trendReport);
+  if (trendPath && existsSync(trendPath)) {
+    const trendRaw = JSON.parse(readFileSync(trendPath, "utf8"));
+    saveTrendReport(d.db, brief.production_id, trendRaw);
+  }
+  // Build asset lookup from catalog
+  const assetMap = new Map(catalog.assets.map((a) => [a.asset_id, a]));
+  // The episodes of this very plan run (a retry of this stage): keep them, start the runs still missing.
+  // Any other episodes belong to an earlier plan: this plan replaces them, unless one is still producing.
+  const existing = listEpisodes(d.db, brief.production_id);
+  const { randomUUID } = await import("node:crypto");
+  const episodeRows: { id: string; idx: number; title: string; hook: string; plan: string; edit_style: "whole" | "cut" }[] = [];
+  const spawnedEpisodes: { episode_id: string; idx: number; run_id: string }[] = [];
+
+  if (existing.length > 0 && existing.every((e) => e.plan_run_id === request.run_id)) {
+    for (const e of existing) {
+      let runId = e.run_id;
+      if (!runId) {
+        runId = (await d.startEpisodeRun(e.id, v2 ? episodeWorkflowFor(request.workflow.version, e.edit_style) : episodeWorkflowForPlan(request.workflow.version))).runId;
+        updateEpisodeRunId(d.db, e.id, runId);
+      }
+      spawnedEpisodes.push({ episode_id: e.id, idx: e.idx, run_id: runId });
+    }
+  } else {
+    const busy = existing.find((e) => e.run_id && d.isRunActive?.(e.run_id));
+    if (busy) {
+      throw new HarnessError("CONFIG_INVALID", `tập ${busy.idx} của kế hoạch cũ đang sản xuất; chờ xong hoặc huỷ rồi thử lại bước này`, { episode_id: busy.id });
+    }
+    for (const ep of plan.episodes) {
+      // Build the StudioEpisode plan snapshot (assets from catalog)
+      const episodeAssets: Record<string, { title: string; summary_vi: string; duration_s: number; orientation: string | null }> = {};
+      for (const item of [...ep.items, ...(ep.alternates ?? [])]) {
+        const a = assetMap.get(item.asset_id);
+        if (a) episodeAssets[item.asset_id] = { title: a.title_vi || a.name, summary_vi: a.summary_vi, duration_s: a.duration_s, orientation: a.orientation };
+      }
+      const episodeId = randomUUID();
+      const style = v2 && ep.edit_style === "cut" ? "cut" : "whole";
+      episodeRows.push({
+        id: episodeId, idx: ep.idx, title: ep.title, hook: ep.hook, edit_style: style,
+        plan: JSON.stringify(StudioEpisodeSchema.parse({
+          schema_version: "studio.episode/v1",
+          production_id: brief.production_id, episode_id: episodeId,
+          idx: ep.idx, title: ep.title, hook: ep.hook, logline: ep.logline,
+          target_seconds: ep.target_seconds, items: ep.items, alternates: ep.alternates ?? [],
+          texts_suggested: ep.texts_suggested ?? [], assets: episodeAssets,
+          // v2: how the episode is edited, and for a shot-cut one ag-go's description of each video as a hint
+          ...(v2 ? { edit_style: style } : {}),
+          ...(style === "cut" ? { narration: ep.narration ?? "tts", asset_hints: assetHints(ep.items.map((i) => i.asset_id), assetMap) } : {}),
+        })),
+      });
+    }
+    replaceEpisodes(d.db, brief.production_id, episodeRows, request.run_id);
+    // Start an episode run for each episode
+    for (const row of episodeRows) {
+      const { runId } = await d.startEpisodeRun(row.id, v2 ? episodeWorkflowFor(request.workflow.version, row.edit_style) : episodeWorkflowForPlan(request.workflow.version));
+      updateEpisodeRunId(d.db, row.id, runId);
+      const ep = plan.episodes.find((e) => e.idx === row.idx)!;
+      spawnedEpisodes.push({ episode_id: row.id, idx: row.idx, run_id: runId });
+      ctx.logger.info("episode spawned", { episode_id: row.id, idx: row.idx, run_id: runId });
+      void ep; // used indirectly above
+    }
+  }
+  const spawned = SpawnedEpisodesSchema.parse({
+    schema_version: "studio.episodes/v1", production_id: brief.production_id, episodes: spawnedEpisodes,
+  });
+  writeOutput(ctx, "episodes.json", toBuffer(spawned));
 }
 
 export function studioStages(d: StudioStageDeps): Record<string, InProcessStage> {
@@ -254,75 +386,10 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       writeOutput(ctx, "branding.json", toBuffer(branding));
     },
 
-    "studio-spawn-episodes": async (request, ctx) => {
-      const ws = ctx.workspaceDir;
-      const brief = readBrief(request, ws);
-      const catalog = readCatalog(request, ws);
-      const plan = readInput(request, ws, STUDIO_TYPES.seriesPlan, (v) => SeriesPlanSchema.parse(v));
-      // Store the trend report in the production (if it was produced)
-      const trendPath = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.trendReport);
-      if (trendPath && existsSync(trendPath)) {
-        const trendRaw = JSON.parse(readFileSync(trendPath, "utf8"));
-        saveTrendReport(d.db, brief.production_id, trendRaw);
-      }
-      // Build asset lookup from catalog
-      const assetMap = new Map(catalog.assets.map((a) => [a.asset_id, a]));
-      // The episodes of this very plan run (a retry of this stage): keep them, start the runs still missing.
-      // Any other episodes belong to an earlier plan: this plan replaces them, unless one is still producing.
-      const existing = listEpisodes(d.db, brief.production_id);
-      const { randomUUID } = await import("node:crypto");
-      const episodeRows: { id: string; idx: number; title: string; hook: string; plan: string }[] = [];
-      const spawnedEpisodes: { episode_id: string; idx: number; run_id: string }[] = [];
-
-      if (existing.length > 0 && existing.every((e) => e.plan_run_id === request.run_id)) {
-        for (const e of existing) {
-          let runId = e.run_id;
-          if (!runId) {
-            runId = (await d.startEpisodeRun(e.id)).runId;
-            updateEpisodeRunId(d.db, e.id, runId);
-          }
-          spawnedEpisodes.push({ episode_id: e.id, idx: e.idx, run_id: runId });
-        }
-      } else {
-        const busy = existing.find((e) => e.run_id && d.isRunActive?.(e.run_id));
-        if (busy) {
-          throw new HarnessError("CONFIG_INVALID", `tập ${busy.idx} của kế hoạch cũ đang sản xuất; chờ xong hoặc huỷ rồi thử lại bước này`, { episode_id: busy.id });
-        }
-        for (const ep of plan.episodes) {
-          // Build the StudioEpisode plan snapshot (assets from catalog)
-          const episodeAssets: Record<string, { title: string; summary_vi: string; duration_s: number; orientation: string | null }> = {};
-          for (const item of [...ep.items, ...(ep.alternates ?? [])]) {
-            const a = assetMap.get(item.asset_id);
-            if (a) episodeAssets[item.asset_id] = { title: a.title_vi || a.name, summary_vi: a.summary_vi, duration_s: a.duration_s, orientation: a.orientation };
-          }
-          const episodeId = randomUUID();
-          episodeRows.push({
-            id: episodeId, idx: ep.idx, title: ep.title, hook: ep.hook,
-            plan: JSON.stringify(StudioEpisodeSchema.parse({
-              schema_version: "studio.episode/v1",
-              production_id: brief.production_id, episode_id: episodeId,
-              idx: ep.idx, title: ep.title, hook: ep.hook, logline: ep.logline,
-              target_seconds: ep.target_seconds, items: ep.items, alternates: ep.alternates ?? [],
-              texts_suggested: ep.texts_suggested ?? [], assets: episodeAssets,
-            })),
-          });
-        }
-        replaceEpisodes(d.db, brief.production_id, episodeRows, request.run_id);
-        // Start an episode run for each episode
-        for (const row of episodeRows) {
-          const { runId } = await d.startEpisodeRun(row.id);
-          updateEpisodeRunId(d.db, row.id, runId);
-          const ep = plan.episodes.find((e) => e.idx === row.idx)!;
-          spawnedEpisodes.push({ episode_id: row.id, idx: row.idx, run_id: runId });
-          ctx.logger.info("episode spawned", { episode_id: row.id, idx: row.idx, run_id: runId });
-          void ep; // used indirectly above
-        }
-      }
-      const spawned = SpawnedEpisodesSchema.parse({
-        schema_version: "studio.episodes/v1", production_id: brief.production_id, episodes: spawnedEpisodes,
-      });
-      writeOutput(ctx, "episodes.json", toBuffer(spawned));
-    },
+    /** Plans 2.0.0 and 3.0.0: every episode whole videos on the plan's episode release. */
+    "studio-spawn-episodes": async (request, ctx) => spawnEpisodes(d, request, ctx, false),
+    /** Plan 3.1.0: each episode on the release of its edit style (`episodeWorkflowFor`), the style recorded. */
+    "studio-spawn-episodes-v2": async (request, ctx) => spawnEpisodes(d, request, ctx, true),
 
     // -------------------------------------------------------------------------
     // Episode-run stages
@@ -362,29 +429,7 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
      * found nothing) — read when the episode run starts, so later edits reach later episodes.
      */
     "studio-episode-intake-v2": async (request, ctx) => {
-      const ep = episodeForRun(d.db, request.run_id);
-      if (!ep) throw new HarnessError("NOT_FOUND", `no episode is linked to run ${request.run_id}`, { run_id: request.run_id });
-      if (!ep.plan) throw new HarnessError("CONFIG_INVALID", `episode ${ep.id} has no plan`, { episode_id: ep.id });
-      const episode = StudioEpisodeSchema.parse(JSON.parse(ep.plan));
-      const prod = getProduction(d.db, episode.production_id);
-      if (!prod) throw new HarnessError("NOT_FOUND", `production ${episode.production_id} not found`, {});
-      const owner = productionOwner(d.db, prod);
-      if (!owner) throw new HarnessError("CONFIG_INVALID", `production ${episode.production_id} has no owner`, {});
-      const aspect = (prod.aspect ?? "16:9") as StudioBrief["aspect"];
-      const hints = productionHints(prod);
-      const brief = effectiveBrief({
-        production_id: episode.production_id, run_id: request.run_id, owner_user_id: owner, title: prod.title,
-        folder_ids: productionSources(d.db, episode.production_id), aspect, canvas: prod.canvas ? JSON.parse(prod.canvas) : DEFAULT_CANVAS[aspect],
-        fps: 25, language: prod.language ?? "vi", music: prod.music ? JSON.parse(prod.music) : null,
-        youtube_channels: productionChannels(prod).filter((c) => c.role === "reference").map((c) => c.url),
-        keywords: prod.keywords ? (JSON.parse(prod.keywords) as string[]) : [],
-      }, { ...hints, episode_target_seconds: hints.episode_target_seconds ?? episode.target_seconds, max_episodes: hints.max_episodes ?? 1 }, productionRnd(prod));
-      writeOutput(ctx, "brief.json", toBuffer(brief));
-      writeOutput(ctx, "episode.json", toBuffer(episode));
-      const branding = productionBranding(prod);
-      if (branding) writeOutput(ctx, "branding.json", toBuffer(branding));
-      const trend = prod.trend_report ? TrendReportSchema.parse(JSON.parse(prod.trend_report)) : SKIPPED_TREND_REPORT;
-      writeOutput(ctx, "trend-report.json", toBuffer(trend));
+      writeEpisodeIntake(d, request, ctx);
     },
 
     "build-timeline": async (request, ctx) => {
@@ -421,11 +466,25 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       ctx.logger.info("timeline frozen for the render", { revision: latest.revision, episode_id: episode.episode_id });
     },
 
+    /**
+     * Episode 1.3.0: the timeline the render uses is the one the person APPROVED at approve-timeline (its input), not
+     * the latest revision: an edit made after approving is not rendered until it is approved too.
+     */
+    "studio-freeze-timeline-v2": async (request, ctx) => {
+      const timeline = readTimelineInput(request, ctx.workspaceDir);
+      const errors = timelineIssues(timeline).filter((i) => i.severity === "error");
+      if (errors.length) {
+        throw new HarnessError("SCHEMA_INVALID", `approved timeline: ${errors.map((e) => e.message).join("; ")}`, { problems: errors });
+      }
+      writeOutput(ctx, "timeline.json", toBuffer(timeline));
+      ctx.logger.info("approved timeline frozen for the render", { episode_id: timeline.episode_id });
+    },
+
     "studio-episode-export": async (request, ctx) => {
       const ws = ctx.workspaceDir;
       const brief = readBrief(request, ws);
       const episode = readInput(request, ws, STUDIO_TYPES.episode, (v) => StudioEpisodeSchema.parse(v));
-      const timeline = readInput(request, ws, STUDIO_TYPES.timeline, (v) => TimelineV3Schema.parse(v));
+      const timeline = readTimelineInput(request, ws);
       const kitRaw = readInput(request, ws, STUDIO_TYPES.youtubeKit, parseStoredYoutubeKit);
       const videoPath = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.finalVideo);
       const manifest = readInput(request, ws, STUDIO_TYPES.renderManifest, (v) => v as { watermarked?: boolean; duration_s?: number; thumbnails?: unknown[] });
@@ -533,7 +592,7 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       const ws = ctx.workspaceDir;
       const brief = readBrief(request, ws);
       const episode = readInput(request, ws, STUDIO_TYPES.episode, (v) => StudioEpisodeSchema.parse(v));
-      const timeline = readInput(request, ws, STUDIO_TYPES.timeline, (v) => TimelineV3Schema.parse(v));
+      const timeline = readTimelineInput(request, ws);
       const ep = getEpisode(d.db, episode.episode_id);
       const kit = ep?.youtube ? parseStoredYoutubeKit(JSON.parse(ep.youtube)) : readInput(request, ws, STUDIO_TYPES.youtubeKit, parseStoredYoutubeKit);
       const brandingPath = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.branding);
@@ -580,7 +639,7 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       const ws = ctx.workspaceDir;
       const brief = readBrief(request, ws);
       const episode = readInput(request, ws, STUDIO_TYPES.episode, (v) => StudioEpisodeSchema.parse(v));
-      const timeline = readInput(request, ws, STUDIO_TYPES.timeline, (v) => TimelineV3Schema.parse(v));
+      const timeline = readTimelineInput(request, ws);
       const kitRaw = readInput(request, ws, STUDIO_TYPES.youtubeKit, parseStoredYoutubeKit);
       const thumbs = readInput(request, ws, STUDIO_TYPES.thumbnails, (v) => StudioThumbnailsSchema.parse(v));
       const thumbDir = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.thumbnailSet);

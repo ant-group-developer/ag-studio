@@ -1,16 +1,20 @@
 /**
- * Right-hand properties panel (GĐ3, v3): editing surface for the selected clip or text, plus
+ * Right-hand properties panel (GĐ3; shot-cut fields in phase 5): editing surface for the selected clip or text, plus
  * global settings (music, source audio). Every change goes through dispatch.
  */
 import { type Dispatch } from "react";
 import { Button, Card, Divider, Input, InputNumber, Select, Slider, Space, Switch, Typography, Tooltip } from "antd";
 import { Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { TEXT_KINDS, TEXT_POSITIONS_V2 } from "@harness/contracts";
-import type { TimelineLayout } from "@studio/timeline";
+import { CAPTION_MODES, TEXT_KINDS, TEXT_POSITIONS_V2, TIMELINE_TRANSITIONS, type StoredTimeline, type TimelineV4 } from "@harness/contracts";
+import { isTimelineV4, type TimelineLayout } from "@studio/timeline";
 import type { EditorAction, EditorState } from "./state/editor-reducer";
 
 const { Text, Title } = Typography;
+
+/** A shot-cut episode's timeline: clips have an in/out, a transition and a narration line. */
+const cutTimeline = (t: StoredTimeline): t is TimelineV4 => isTimelineV4(t) && t.edit_style === "cut";
+const r1 = (n: number) => Math.round(n * 10) / 10;
 
 export interface PropertiesPanelProps {
   state: EditorState;
@@ -82,6 +86,7 @@ function ClipProperties({
           {asset.title} · {asset.duration_s.toFixed(1)}s
         </Text>
       )}
+      {cutTimeline(timeline) ? <CutClipProperties timeline={timeline} clipId={clip.clip_id} dispatch={dispatch} /> : null}
       <div style={{ marginBottom: 8 }}>
         <Text type="secondary">{t("properties.sectionTitle")}</Text>
         <Input
@@ -102,6 +107,50 @@ function ClipProperties({
           {t("properties.removeClip")}
         </Button>
       </Tooltip>
+    </div>
+  );
+}
+
+function CutClipProperties({ timeline, clipId, dispatch }: { timeline: TimelineV4; clipId: string; dispatch: Dispatch<EditorAction> }) {
+  const { t } = useTranslation();
+  const clip = timeline.clips.find((c) => c.clip_id === clipId)!;
+  const length = timeline.assets[clip.asset_id]?.duration_s ?? 0;
+  const out = clip.out ?? length;
+  // clamped inside the video, at least 0.1 s long; the shared op refuses anything else
+  const trim = (inS: number, outS: number) => {
+    const i = r1(Math.min(Math.max(0, inS), length - 0.1));
+    const o = r1(Math.min(Math.max(i + 0.1, outS), length));
+    dispatch({ type: "trimClip", clipId, in: i, out: o });
+  };
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <Space wrap>
+        <span>
+          <Text type="secondary">{t("properties.inSeconds")}</Text>
+          <InputNumber size="small" aria-label={t("properties.inSeconds")} min={0} max={length} step={0.1} value={clip.in}
+            onChange={(n) => trim(n ?? 0, out)} />
+        </span>
+        <span>
+          <Text type="secondary">{t("properties.outSeconds")}</Text>
+          <InputNumber size="small" aria-label={t("properties.outSeconds")} min={0} max={length} step={0.1} value={out}
+            onChange={(n) => trim(clip.in, n ?? length)} />
+        </span>
+      </Space>
+      <div style={{ marginTop: 8 }}>
+        <Text type="secondary">{t("properties.transition")}</Text>
+        <Space wrap>
+          <Select size="small" aria-label={t("properties.transition")} value={clip.transition_out.kind} style={{ width: 140 }}
+            options={TIMELINE_TRANSITIONS.map((k) => ({ value: k, label: t(`properties.transitions.${k}`) }))}
+            onChange={(kind) => dispatch({ type: "setTransition", clipId, kind, seconds: kind === "cut" ? 0 : clip.transition_out.seconds || 0.5 })} />
+          {clip.transition_out.kind !== "cut" ? (
+            <InputNumber size="small" aria-label={t("properties.transitionSeconds")} min={0.1} max={1} step={0.1} value={clip.transition_out.seconds}
+              onChange={(n) => dispatch({ type: "setTransition", clipId, kind: clip.transition_out.kind, seconds: r1(n ?? 0.5) })} />
+          ) : null}
+        </Space>
+      </div>
+      <Text type="secondary" style={{ display: "block", marginTop: 8 }}>
+        {clip.line_id ? t("properties.narrationLine", { id: clip.line_id }) : t("properties.noNarrationLine")}
+      </Text>
     </div>
   );
 }
@@ -187,6 +236,14 @@ function GlobalProperties({ timeline, dispatch }: { timeline: EditorState["timel
     <div>
       <Title level={5}>{t("properties.generalTitle")}</Title>
       <Space direction="vertical" style={{ width: "100%" }}>
+        {cutTimeline(timeline) ? (
+          <Space>
+            <Text>{t("properties.captions")}</Text>
+            <Select size="small" aria-label={t("properties.captions")} value={timeline.captions.mode} style={{ width: 140 }}
+              options={CAPTION_MODES.map((m) => ({ value: m, label: t(`properties.captionModes.${m}`) }))}
+              onChange={(mode) => dispatch({ type: "setCaptions", mode })} />
+          </Space>
+        ) : null}
         <Space>
           <Text>{t("properties.sourceAudio")}</Text>
           <Switch

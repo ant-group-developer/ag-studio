@@ -10,11 +10,13 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   StudioBrandingSchema, StudioBriefSchema, StudioCatalogSchema, StudioEpisodeSchema, StudioExportSchema, StudioSeedSchema, StudioThumbnailsSchema,
-  TimelineV3Schema,
+  ShotsIndexSchema, StoredTimelineSchema, StudioSurveySchema,
   TrendReportSchema,
-  type CatalogAsset, type Checker, type CheckerInput, type StudioBranding, type StudioBrief, type StudioCatalog, type StudioSeed,
+  type CatalogAsset, type Checker, type CheckerInput, type ShotsIndex, type StudioBranding, type StudioBrief, type StudioCatalog, type StudioSeed,
+  type StudioSurvey,
 } from "@harness/contracts";
 import { childEnvWithoutSecrets } from "../media/child-env.js";
+import { validateEditPlan, validateStudioSurvey } from "../studio/cut-validate.js";
 import { layoutTimeline, timelineIssues } from "../studio/layout.js";
 import {
   validateBranding, validateRnd, validateSeriesPlan, validateTrendReport, validateYoutubeKit, type StudioValidation,
@@ -36,6 +38,22 @@ export const STUDIO_TYPES = {
   episodes: "studio_episodes",
   episode: "studio_episode",
   timeline: "timeline_v3",
+  /** Timeline v4 of a shot-cut episode (`ag-studio-episode-cut`). */
+  timelineV4: "timeline_v4",
+  /** Shot-cut episodes (`ag-studio-episode-cut`): the videos, their 720p proxies. */
+  cutSources: "cut_sources",
+  proxySet: "proxy_set",
+  /** `harness.shots/v2` of the proxies, and the farm's `transcribe.json` (`ag.studio.transcribe/v1`). */
+  shots: "shots",
+  watch: "watch",
+  /** The scene selection (`harness.survey-index/v2`) and the edit plan (`studio.edit-plan/v1`) Claude writes. */
+  surveyIndex: "survey_index",
+  editPlan: "studio_edit_plan",
+  /** The farm's `tts.json` and its WAVs (`tts/`), then the fitted timeline report. */
+  voiceManifest: "voice_manifest",
+  voiceSet: "voice_set",
+  fitReport: "fit_report",
+  transcript: "transcript",
   youtubeKit: "youtube_kit",
   finalVideo: "final_video",
   renderManifest: "render_manifest",
@@ -45,6 +63,9 @@ export const STUDIO_TYPES = {
   youtube: "studio_youtube",
   export: "studio_export",
 } as const;
+
+/** A timeline artifact of either version, in the order a stage or checker looks for them. */
+export const STUDIO_TIMELINE_TYPES = [STUDIO_TYPES.timeline, STUDIO_TYPES.timelineV4] as const;
 
 export class StudioInputError extends Error {}
 
@@ -71,6 +92,8 @@ function requireInput<T>(input: CheckerInput, type: string, parse: (v: unknown) 
 export const loadBrief = (i: CheckerInput): StudioBrief => requireInput(i, STUDIO_TYPES.brief, (v) => StudioBriefSchema.parse(v));
 export const loadCatalog = (i: CheckerInput): StudioCatalog => requireInput(i, STUDIO_TYPES.catalog, (v) => StudioCatalogSchema.parse(v));
 export const loadSeed = (i: CheckerInput): StudioSeed => requireInput(i, STUDIO_TYPES.seed, (v) => StudioSeedSchema.parse(v));
+export const loadShots = (i: CheckerInput): ShotsIndex => requireInput(i, STUDIO_TYPES.shots, (v) => ShotsIndexSchema.parse(v));
+export const loadSurvey = (i: CheckerInput): StudioSurvey => requireInput(i, STUDIO_TYPES.surveyIndex, (v) => StudioSurveySchema.parse(v));
 /** The branding input when the stage has one (episode runs of a production planned before branding have none). */
 export function loadOptionalBranding(i: Pick<CheckerInput, "request" | "workspaceDir">): StudioBranding | null {
   const p = inputPath(i, STUDIO_TYPES.branding);
@@ -83,13 +106,14 @@ function fromValidation(v: StudioValidation<unknown>): Verdict {
   return v.ok ? { verdict: "pass", evidence: { warnings: v.warnings } } : { verdict: "fail", evidence: { problems: v.problems } };
 }
 
-function documentChecker(id: string, outputType: string, validate: (raw: unknown, input: CheckerInput) => Verdict): Checker {
+function documentChecker(id: string, outputType: string | readonly string[], validate: (raw: unknown, input: CheckerInput) => Verdict): Checker {
+  const types = typeof outputType === "string" ? [outputType] : outputType;
   return {
     id, version: "1.0.0",
     async check(input) {
       if (input.result.outcome === "deferred") return { verdict: "skip", evidence: { reason: "gate waiting for input" } };
-      const p = outputPath(input, outputType);
-      if (!p || !existsSync(p)) return { verdict: "fail", evidence: { reason: `no ${outputType} output` } };
+      const p = types.map((t) => outputPath(input, t)).find((x) => x !== null) ?? null;
+      if (!p || !existsSync(p)) return { verdict: "fail", evidence: { reason: `no ${types.join(" or ")} output` } };
       let raw: unknown;
       try { raw = readJson(p); } catch (e) { return { verdict: "fail", evidence: { reason: "output is not JSON", error: String(e) } }; }
       try { return validate(raw, input); }
@@ -100,6 +124,14 @@ function documentChecker(id: string, outputType: string, validate: (raw: unknown
     },
   };
 }
+
+/** Shot-cut scene selection: one row per shot of the `shots` input (`validateStudioSurvey`). */
+export const studioSurveyValidChecker = documentChecker("studio-survey-valid", STUDIO_TYPES.surveyIndex,
+  (raw, i) => fromValidation(validateStudioSurvey(raw, { shots: loadShots(i) })));
+
+/** Shot-cut edit plan against the approved selection (`survey_index` input) and the shots (`validateEditPlan`). */
+export const editPlanValidChecker = documentChecker("edit-plan-valid", STUDIO_TYPES.editPlan,
+  (raw, i) => fromValidation(validateEditPlan(raw, { survey: loadSurvey(i), shots: loadShots(i) })));
 
 export const trendReportValidChecker = documentChecker("trend-report-valid", STUDIO_TYPES.trendReport,
   (raw) => fromValidation(validateTrendReport(raw)));
@@ -123,14 +155,14 @@ export const rndValidChecker = documentChecker("rnd-valid", STUDIO_TYPES.rnd,
 export const brandingValidChecker = documentChecker("branding-valid", STUDIO_TYPES.branding,
   (raw) => fromValidation(validateBranding(raw)));
 
-export const timelineSchemaValidChecker = documentChecker("timeline-schema-valid", STUDIO_TYPES.timeline, (raw) => {
-  const r = TimelineV3Schema.safeParse(raw);
+export const timelineSchemaValidChecker = documentChecker("timeline-schema-valid", STUDIO_TIMELINE_TYPES, (raw) => {
+  const r = StoredTimelineSchema.safeParse(raw);
   if (!r.success) return { verdict: "fail", evidence: { problems: r.error.issues.map((x) => `${x.path.join(".")}: ${x.message}`) } };
   return { verdict: "pass", evidence: { issues: timelineIssues(r.data) } };
 });
 
-export const timelineValidChecker = documentChecker("timeline-valid", STUDIO_TYPES.timeline, (raw) => {
-  const r = TimelineV3Schema.safeParse(raw);
+export const timelineValidChecker = documentChecker("timeline-valid", STUDIO_TIMELINE_TYPES, (raw) => {
+  const r = StoredTimelineSchema.safeParse(raw);
   if (!r.success) return { verdict: "fail", evidence: { problems: r.error.issues.map((x) => `${x.path.join(".")}: ${x.message}`) } };
   const errors = timelineIssues(r.data).filter((x) => x.severity === "error");
   return errors.length ? { verdict: "fail", evidence: { problems: errors } } : { verdict: "pass", evidence: {} };
@@ -160,9 +192,9 @@ export function studioRenderValidChecker(opts: { ffmpeg?: string } = {}): Checke
       if (!video || !existsSync(video)) return { verdict: "fail", evidence: { reason: "no final video" } };
       if (!manifestPath || !existsSync(manifestPath)) return { verdict: "fail", evidence: { reason: "no render manifest" } };
       const m = readJson(manifestPath) as { schema?: string; width?: number; height?: number; duration_s?: number; size_bytes?: number; watermarked?: boolean; thumbnails?: unknown[] };
-      const tlPath = inputPath(input, STUDIO_TYPES.timeline);
+      const tlPath = STUDIO_TIMELINE_TYPES.map((type) => inputPath(input, type)).find((x) => x !== null) ?? null;
       if (!tlPath || !existsSync(tlPath)) return { verdict: "fail", evidence: { reason: "no timeline input" } };
-      const t = TimelineV3Schema.parse(readJson(tlPath));
+      const t = StoredTimelineSchema.parse(readJson(tlPath));
       const expected = layoutTimeline(t).duration;
       const problems: string[] = [];
       if (m.schema !== "ag.studio.render/v1") problems.push(`render.json schema ${String(m.schema)}`);
@@ -224,5 +256,7 @@ export function studioCheckers(opts: { ffmpeg?: string } = {}): Checker[] {
     studioRenderValidChecker(opts),
     exportValidChecker,
     thumbnailsValidChecker,
+    studioSurveyValidChecker,
+    editPlanValidChecker,
   ];
 }

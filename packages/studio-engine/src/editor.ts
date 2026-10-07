@@ -6,8 +6,8 @@ import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TimelineV3Schema, type TimelineV3 } from "@harness/contracts";
-import { layoutTimeline, timelineIssues, timelineToComposition, youtubeChapters, type TimelineIssue } from "@harness/core";
+import { StoredTimelineSchema, TimelineVersionError, type StoredTimeline, type TimelineV3 } from "@harness/contracts";
+import { isTimelineV4, layoutTimeline, timelineIssues, timelineToComposition, youtubeChapters, type TimelineIssue } from "@harness/core";
 import { jobOutputPrefix, stageInputPrefix } from "@harness/executors";
 import { PREMIERE_MANIFEST_PATH, PremiereManifestSchema, RenderManifestSchema, type StudioExportPremierePayload } from "@ag-farm/protocol";
 import type { FarmOwnerClient } from "@ag-farm/owner-client";
@@ -25,7 +25,11 @@ export const EDITOR_PREMIERE_STAGE = "editor-premiere";
 export type PremiereMedia = StudioExportPremierePayload["media"];
 
 export type EditorFarmClient = Pick<FarmOwnerClient, "submitJob" | "getJob" | "ackJob">;
-export interface EditorDeps { db: StudioDb; bucket: StudioBucket; farm: EditorFarmClient }
+export interface EditorDeps {
+  db: StudioDb; bucket: StudioBucket; farm: EditorFarmClient;
+  /** The voice store, for previews of a narrated (shot-cut) timeline. */
+  voiceDir?: string;
+}
 
 export interface EditorJobView {
   id: string; kind: EpisodeJobRecord["kind"]; status: EpisodeJobRecord["status"];
@@ -47,7 +51,7 @@ const view = (r: EpisodeJobRecord, progress: number | null = null): EditorJobVie
  */
 function recordFarmJob(db: StudioDb, p: { farmJobId: string; runId: string; stageKey: string; attemptId: string; productionId: string; episodeId: string; jobType: string; finalMedia?: boolean }): void {
   db.run(
-    "INSERT INTO studio_farm_jobs (id, farm_job_id, run_id, stage_key, attempt_id, production_id, episode_id, job_type, is_final_render, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO studio_farm_jobs (id, farm_job_id, run_id, stage_key, attempt_id, production_id, episode_id, job_type, is_final_render, requirements, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?)",
     [randomUUID(), p.farmJobId, p.runId, p.stageKey, p.attemptId, p.productionId, p.episodeId, p.jobType, p.finalMedia ? 1 : 0, new Date().toISOString()],
   );
 }
@@ -57,15 +61,30 @@ export function saveEpisodeTimeline(
   db: StudioDb, episodeId: string, p: { baseRevision: number; data: unknown; authorId: string; label?: string },
 ): { revision: number; issues: TimelineIssue[] } {
   if (!getEpisode(db, episodeId)) throw new StudioRunError("not_found", `episode ${episodeId} not found`);
-  const parsed = TimelineV3Schema.safeParse(p.data);
+  const parsed = StoredTimelineSchema.safeParse(p.data);
   if (!parsed.success) {
     throw new StudioRunError("invalid", "timeline không hợp lệ", { problems: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) });
   }
-  const saved = saveEpisodeRevision(db, episodeId, { baseRevision: p.baseRevision, data: parsed.data, authorId: p.authorId, label: p.label ?? "autosave" });
+  let saved: { revision: number };
+  try {
+    saved = saveEpisodeRevision(db, episodeId, { baseRevision: p.baseRevision, data: parsed.data, authorId: p.authorId, label: p.label ?? "autosave" });
+  } catch (e) {
+    if (e instanceof TimelineVersionError) throw new StudioRunError("invalid", "tập này ghép nguyên video: không cắt clip, không chuyển cảnh, không lời dẫn", { code: e.code, problems: [e.message] });
+    throw e;
+  }
   return { revision: saved.revision, issues: timelineIssues(parsed.data) };
 }
 
 const RENDER_BLOCKERS = new Set(["no_clips", "duplicate_id", "unknown_asset", "duplicate_asset"]);
+
+/**
+ * Whether the Premiere export (render worker `premiere-xml.ts`) can hold a timeline: it writes every clip from 0 and
+ * has no narration track, so a trimmed, dissolving or narrated timeline waits for phase 4 (ADR-0001 item 159).
+ */
+export function premiereCanExport(t: StoredTimeline): boolean {
+  if (!isTimelineV4(t)) return true;
+  return t.clips.every((c) => c.in === 0 && c.out === null && c.transition_out.kind === "cut") && t.narration.lines.length === 0;
+}
 
 /** Start a render-preview farm job for one episode revision. */
 export async function startEpisodePreview(
@@ -85,7 +104,7 @@ export async function startEpisodePreview(
     const build = await prepareRender(work, {
       timeline: rev.data, revision: p.revision,
       productionId: p.productionId, episodeId: p.episodeId,
-      output, thumbnails: [],
+      output, thumbnails: [], ...(d.voiceDir ? { voiceDir: d.voiceDir } : {}),
     });
     const prefix = stageInputPrefix(p.productionId, EDITOR_PREVIEW_STAGE, id);
     for (const up of build.extraUploads ?? []) {
@@ -179,6 +198,9 @@ export async function startPremiereExport(
   if (!rev) throw new StudioRunError("invalid", "tập chưa có timeline để xuất");
   const blocking = timelineIssues(rev.data).filter((i) => i.severity === "error");
   if (blocking.length) throw new StudioRunError("invalid", "timeline còn lỗi, chưa xuất được", { problems: blocking });
+  if (!premiereCanExport(rev.data)) {
+    throw new StudioRunError("invalid", "xuất Premiere chưa đọc được clip cắt đầu/cuối, chuyển cảnh và lời dẫn (pha 4)", { code: "premiere_needs_phase_4" });
+  }
   const id = randomUUID();
   insertEpisodeJob(d.db, { id, episodeId: p.episodeId, kind: "export_premiere", request: { revision: rev.revision, media: p.media }, userId: p.userId });
   try {
@@ -209,4 +231,4 @@ export async function startPremiereExport(
   return view(getEpisodeJob(d.db, p.episodeId, id)!);
 }
 
-export type { TimelineV3 };
+export type { StoredTimeline, TimelineV3 };

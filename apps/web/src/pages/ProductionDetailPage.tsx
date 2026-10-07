@@ -506,6 +506,10 @@ export function ProductionDetailPage() {
   const brandingDocForGate = brandingStage?.reused ? (productionBrandingData?.document ?? brandingDraft) : brandingDraft;
   const brandingDocForEdit = productionBrandingData?.document;
 
+  // Plan card logic: the step is reached as soon as plan-episodes leaves PENDING, the plan exists once it SUCCEEDED
+  const planQueued = planState === "READY";
+  const planWriting = planState === "CLAIMED" || planState === "RUNNING" || planState === "VERIFYING";
+
   const showV2Rnd = !isV1Run && stepIndex >= 2;
   const showV2Branding = !isV1Run && stepIndex >= 3;
 
@@ -766,6 +770,22 @@ export function ProductionDetailPage() {
       )}
 
       {/* Step 4: Plan editor */}
+      {stepIndex >= 4 && !planDoc && (planQueued || planWriting) && (
+        <Card
+          id="step-plan"
+          hidden={viewStep !== 4}
+          style={{ marginBottom: 16 }}
+          title={t("productions.stepPlan")}
+          size="small"
+        >
+          <div style={{ textAlign: "center", padding: 32 }}>
+            <Spin />
+            <div style={{ marginTop: 8, color: "var(--ant-color-text-secondary)" }}>
+              {t(planQueued ? "planEditor.queued" : "planEditor.writing")}
+            </div>
+          </div>
+        </Card>
+      )}
       {stepIndex >= 4 && planDoc && (
         <Card
           id="step-plan"

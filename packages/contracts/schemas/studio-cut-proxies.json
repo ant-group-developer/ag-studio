@@ -1,0 +1,69 @@
+{
+  "$ref": "#/definitions/studio-cut-proxies",
+  "definitions": {
+    "studio-cut-proxies": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.cut-proxies/v1"
+        },
+        "proxies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "asset_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_id": {
+                "type": "string",
+                "pattern": "^src_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "file": {
+                "type": "string",
+                "pattern": "^src_[0-9A-HJKMNP-TV-Z]{26}\\.mp4$"
+              },
+              "source_kind": {
+                "type": "string",
+                "enum": [
+                  "original",
+                  "proxy",
+                  "preview"
+                ]
+              },
+              "watermarked": {
+                "type": "boolean"
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "index",
+              "asset_id",
+              "source_id",
+              "file",
+              "source_kind",
+              "watermarked",
+              "bytes"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "proxies"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

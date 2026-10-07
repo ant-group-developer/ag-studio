@@ -22,7 +22,7 @@ import {
   listEpisodeJobs,
   listEpisodeRevisions,
   pollEpisodeJob,
-  saveEpisodeTimeline,
+  episodeTimelineApproved, saveEpisodeTimeline,
   startEpisodePreview,
   startPremiereExport,
   timelineIssues,
@@ -128,7 +128,11 @@ export class TimelineController {
     });
   }
 
-  /** Autosave. 201 `{ revision, issues }`; 409 `{ currentRevision }` when `baseRevision` is not the latest. */
+  /**
+   * Autosave. 201 `{ revision, issues, approved }`; 409 `{ currentRevision }` when `baseRevision` is not the latest.
+   * `approved`: the episode's timeline was already approved (episode 1.3.0), so this edit is rendered only after
+   * "Render lại" and approving it again.
+   */
   @Post('timeline/revisions')
   @Roles('editor')
   @HttpCode(HttpStatus.CREATED)
@@ -137,15 +141,16 @@ export class TimelineController {
     @Param('episodeId') episodeId: string,
     @Body() dto: SaveRevisionDto,
     @Req() req: Request,
-  ): Promise<{ revision: number; issues: TimelineIssue[] }> {
+  ): Promise<{ revision: number; issues: TimelineIssue[]; approved: boolean }> {
     return mapErrors(() => {
       this.requireEpisode(prodId, episodeId);
-      return saveEpisodeTimeline(this.engine.db, episodeId, {
+      const saved = saveEpisodeTimeline(this.engine.db, episodeId, {
         baseRevision: dto.baseRevision,
         data: dto.data,
         authorId: req.authContext!.userId,
         label: dto.label ?? 'autosave',
       });
+      return { ...saved, approved: episodeTimelineApproved(this.engine.core, this.engine.db, episodeId) };
     });
   }
 

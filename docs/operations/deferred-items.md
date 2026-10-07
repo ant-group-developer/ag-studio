@@ -1,4 +1,130 @@
-# Việc để lại sau sub-project 1 (control plane tối thiểu)
+# Việc để lại (deferred items)
+
+## AG Studio (cập nhật 2026-10-06)
+
+Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142). Mỗi dòng: hiện tượng · chỗ trong code · ghi chú.
+
+### Lỗi đã biết
+
+- **Xuất Premiere: tiếng gốc đã tắt vẫn có trong project.** `ag-render-worker/src/premiere-handler.ts` đặt cứng
+  `sourceAudioMuted: false`, bỏ qua `source_audio.muted` của timeline. Sửa khi đưa xuất Premiere về chạy local
+  (spec local-chat, pha 4).
+- **Xuất Premiere: gain nhạc luôn 0 dB, mất fade.** Cùng file, `gainDb: 0`; `cues[].gain_db` và fade của
+  composition bị bỏ qua. Sửa cùng lúc với mục trên.
+- ✅ **Đã đóng 2026-10-06 — Không nhận ra mọi câu báo hết hạn mức Claude.** `isRateLimitMessage`
+  (`packages/adapters/agent-cli/src/cli-agent-runtime.ts`) khớp cả nháy cong, "you have", "reached your … limit" và
+  "usage limit reached".
+- ✅ **Đã đóng 2026-10-06 — Spawn `claude` hỏng trên Windows khi chạy ngoài Docker.** `resolveCommand`
+  (`packages/adapters/agent-cli/src/resolve-command.ts`) đi theo shim `claude.cmd` tới `claude.exe`.
+
+### Baseline test trên máy dev Windows (2026-10-06)
+
+- `pnpm -r typecheck` sạch. `vitest run`: 1330 pass, 168 skip (E2E cần `E2E=1`, test media cần ffmpeg trên PATH,
+  test Claude thật cần `HARNESS_REAL_CLAUDE_TEST=1`), **1 fail chập chờn**:
+  `apps/web/src/modules/production/episodes-table.spec.tsx` › "Video (mp4)" quá 5 s khi chạy cả bộ (máy tải nặng),
+  chạy riêng thì pass (2,3 s). Nên tăng timeout riêng cho test này hoặc giảm việc render trong nó.
+- `pnpm build` ở gốc repo gọi `pnpm -r run build`, hỏng khi `pnpm` không có trên PATH (chỉ có qua `corepack`).
+  Dùng `corepack pnpm -r run build`.
+- Ngoài repo: script `migration:run` của `ag-farm/apps/api` trỏ `./node_modules/typeorm/cli.js` nhưng typeorm
+  được hoist ra `ag-farm/node_modules`; chạy tay `node --require ts-node/register ../../node_modules/typeorm/cli.js
+  migration:run -d src/database/data-source.ts`.
+
+### Nợ dọn dẹp
+
+- `packages/ag-go-client` còn `getSegmentMedia`/`resolveSegments` gọi `/footage/segments/*`, route mà ag-go-api v2
+  đã gỡ. Chỉ test của chính client dùng; web còn `useSegmentMedia` không ai import. Xoá được.
+- `production-profiles/studio-production/profile.yaml` khai `workflow_release: ag-studio-production@1.0.0`, workflow
+  đã bị xoá. Vô hại vì engine truyền workflow tường minh, nhưng gây hiểu nhầm.
+- `.env` của máy dev còn `STUDIO_WORKFLOW` (do `E:ag-localsetupconfig-local.cjs flow …` ghi), không còn code nào đọc.
+- Bảng `comments` (migration `0008`) chưa bao giờ được dùng; `timeline_revisions`, `studio_editor_jobs` là bảng cũ.
+- `packages/studio-engine/src/voice.ts` và job farm `studio.tts` là phần sót từ luồng có lời dẫn; không workflow
+  Studio nào dùng.
+- Kiểu thumbnail `ai` có trong schema nhưng không có bộ sinh.
+- Workflow harness cũ (`library-production*`, `channel-*`, `style-study*`, `footage-production`) còn trong
+  `workflows/` nhưng không chạy được vì built-in đã bị gỡ (ADR mục 127). Giữ cho test byte-identical và cho kiểu
+  "cắt theo shot" về sau; không dùng để chạy.
+- `tests/e2e/production.e2e.test.ts` là `describe.skip` (luồng đã xoá) và còn mock `/footage/segments/resolve`.
+
+### Sau pha 2 — giao diện chat (2026-10-06)
+
+Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-2-chat.md`. Cố ý chưa làm, hoặc lệch mockup:
+
+- **Không có SSE**: luồng chat polling 2 s khi Claude đang trả lời, 5 s khi không; cột trái và chip header 5 s.
+- **Chọn thumbnail ở bước YouTube kit** (mockup màn 10) chưa làm: thumbnail cắt từ `final.mp4`, chỉ có sau render.
+  Gate kit chỉ sửa tiêu đề, mô tả, tag, ý tưởng thumbnail.
+- **Màn 13 "Áp dụng đề xuất và chạy lại"**: Claude không sửa thẳng đầu ra REJECTED của stage hỏng (phải đổi core);
+  thay bằng "Chạy lại" kèm góp ý trong chat (ADR mục 147).
+- **Menu `⋯` chưa có "Làm lại bước này"** (resume từ một bước khi run đã xong) và "Huỷ": dùng màn cũ.
+- **Màn cũ không có nút cho các gate mới** (`approve-trend-report` của plan 3.0.0, `approve-timeline`,
+  `approve-youtube-kit` của tập 1.3.0): production tạo sau pha 2 phải duyệt trong giao diện chat (API gate cũ
+  `POST /productions/:id/run/gates/approve-trend-report` vẫn có). `EpisodesPanel` cũ không coi `waiting_approval`
+  là đang chạy (không polling).
+- **Sửa tay** chỉ có cho R&D, branding, kế hoạch tập (editor sẵn có); báo cáo xu hướng và YouTube kit chỉ sửa qua chat.
+- Lưu ở editor timeline **không** thêm dòng hệ thống vào chat (autosave lưu nhiều lần); cột phải vẫn hiện revision
+  mới nhất.
+- `queueAhead` của luồng chat đếm mọi câu trả lời đang chờ cũ hơn, kể cả của scope đang chạy — số gần đúng.
+- **Prompt cache của chat chưa đo** với Claude thật: phần đầu prompt giống từng byte với stage, nhưng `--json-schema`
+  khác nhau giữa stage và chat.
+- Trang video lấy vai của người xem qua `GET /teams?pageSize=100`: người ở hơn 100 team có thể bị coi là không có vai.
+- ✅ Đã đóng ở pha 3 — chọn máy cho bản cuối. "Render trên máy này" đã bỏ (spec §3.4: mọi render qua farm).
+
+### Sau pha 3 — kiểu máy render, màn Hàng đợi (2026-10-06)
+
+Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-3-render.md`. Cố ý chưa làm, hoặc lệch mockup (màn 11, 12):
+
+- **Không có danh sách máy** trên màn Hàng đợi: owner API của ag-farm không trả node. Admin API `GET /v1/admin/nodes`
+  có sẵn (JWT Auth0 của admin, không đổi hợp đồng): web có thể gọi thẳng cho admin nếu cần.
+- **Không có tên máy trên job** ("render-01" của mockup): `JobView` chỉ có `node_id`.
+- **Ghim một máy theo tên node**: cần trường mới trong giao thức ag-farm — đổi hợp đồng, phải hỏi.
+- **Đổi máy cho job đang chờ**: farm không cho sửa requirements sau khi gửi; người dùng huỷ tập rồi Render lại.
+- **Job không máy nào khớp chờ mãi**: farm không timeout job `queued`; stage `render-final` chờ tới hết deadline 4 giờ
+  rồi thử lại một lần (tổng ~8 giờ). Studio chỉ cảnh báo sau 10 phút.
+- **`nvenc` của node theo bản ffmpeg, không theo driver**; `render.json` không ghi encoder thật đã dùng, nên Studio không
+  nói được bản render có thật sự dùng NVENC không.
+- Cột kết quả chỉ hiện dòng "Render trên: …" khi bước đang là render/xuất file; khi run đã xong, scope là `timeline`
+  và cột phải hiện timeline (dòng kiểu máy nằm ở thẻ ⋯ → Render bản cuối… và màn Hàng đợi).
+- Cuối pha 3: `corepack pnpm -r run build` và `pnpm -r typecheck` sạch; `vitest run` 1532 pass, 170 skip, 0 fail.
+- `chat.test.ts` › "the subscription limit leaves the reply waiting, then it runs" chập chờn khi chạy cả bộ
+  `packages/studio-engine` (máy tải nặng); chạy riêng thì pass.
+
+### Sau pha 5 — kiểu dựng "cắt theo shot" (2026-10-06)
+
+Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-5-cut.md`, ADR-0001 mục 151–160. Cố ý chưa làm:
+
+- **Xem trước có giọng ở gate kế hoạch dựng** (Q7): cần TTS + khớp hình + render mỗi lần sửa; nghe thử ở `approve-timeline`.
+- **Tiếng gốc dưới lời dẫn** (Q9): `voice: tts` tắt hẳn tiếng gốc; muốn tiếng môi trường phải đổi `audio-graph.ts` của
+  render worker.
+- **Premiere/CapCut đọc `in`/`out`, chuyển cảnh và lời dẫn** (pha 4/6): tới đó `exports/premiere` của tập cắt là 422
+  `premiere_needs_phase_4`.
+- **Session Claude không dọn:** `studio_agent_sessions` và thư mục workspace của `source-survey` giữ mãi; mất thư mục
+  thì chat lùi về structured.
+- **Kho giọng và file theo run không dọn:** `<STUDIO_DATA_ROOT>/voice`, proxy 720p, khung và contact sheet trong
+  workspace; khung shot trên R2 (`episodes/<e>/shots/`).
+- **`has_speech` của ag-go chỉ là gợi ý** (từ tỉ lệ im lặng): `false` thì không gửi đi nhận dạng, kể cả khi thật ra có lời.
+- **Nhãn contact sheet cần font**; không có font thì khung vẫn cắt nhưng ảnh không có mã shot.
+- **Chạy lại từ một gate hiện lại bản Claude viết**, không phải bản người đã duyệt lần trước.
+- ✅ Đã đóng — `human_edits` ghi cả hai gate mới (`survey`, `edit_plan`).
+- **Không có `studio-freeze-timeline-v4`:** `studio-freeze-timeline-v2` nhận cả `timeline_v4`. `build-timeline.ts` chưa
+  chuyển sang `layoutTimeline` (giữ composition v3 đúng từng byte). Dọn các method segment của `ag-go-client` để sau.
+- **Test media cần ffmpeg + ffprobe** (`FFMPEG_PATH`/`FFPROBE_PATH`, máy dev trỏ `ffmpeg-static` của ag-render-worker);
+  không có thì cả luồng tập cắt (engine, integration) bị skip. E2E farm cần render worker có handler transcribe
+  (`AG_RENDER_DIR` trỏ checkout/worktree đó).
+- ✅ Đã đóng — test media cũ của harness gọi `ffmpeg` trên PATH nên skip theo `hasFfmpegOnPath()` (`tests/media.ts`);
+  `hasFfmpeg()` (nhận `FFMPEG_PATH`) chỉ cho code nhận đường dẫn ffmpeg. Có ffmpeg ở `FFMPEG_PATH` mà không ở PATH: 1771 pass, 0
+  hỏng ngoài các test web chập chờn khi máy tải nặng (chạy riêng thì pass).
+- Lịch sử: commit C2 của pha 5 typecheck hỏng tạm, commit kế sửa.
+- Cuối pha 5: `corepack pnpm -r run build` và `pnpm -r typecheck` sạch; `vitest run` 1671 pass, 191 skip, 0 fail (không đặt `FFMPEG_PATH`); với `FFMPEG_PATH`/`FFPROBE_PATH`, các test tập cắt (engine 190, integration `cut-episode` 6) pass. `E2E=1` farm-render 9/9
+  pass (render worker 0.6.0).
+
+### Rủi ro vận hành
+
+- Build bắt buộc có checkout `../ag-farm` (`@ag-farm/*` là `link:`), kể cả khi không dùng farm.
+- ✅ Đã đóng 2026-10-06 — Mỗi worker chỉ một lượt Claude cùng lúc: giờ là `STUDIO_CLAUDE_MAX_CONCURRENT` (mặc định 20) và pool vòng lặp (ADR mục 143).
+- Render chỉ có đường farm: farm hoặc render worker dừng thì `render-final` chờ tới hết deadline 4 giờ.
+
+---
+
+## Việc để lại sau sub-project 1 (control plane tối thiểu)
 
 Danh sách rút từ các vòng review trong quá trình xây dựng (ledger SDD, 2026-09-11 → 2026-09-12). Mỗi mục đã được xem xét và cố ý hoãn; không mục nào chặn merge. Mục có dấu ★ nên làm sớm ở sub-project 2.
 

@@ -1,5 +1,5 @@
 import { useAuthToken } from "../auth/use-auth-token";
-import type { TimelineV3, YoutubeKit, SeriesPlan, StudioCatalog, StudioResearch, TrendReport, StudioRnd, StudioBranding, StudioBrief, ThumbnailStyle } from "@harness/contracts";
+import type { StoredTimeline, TimelineV3, YoutubeKit, SeriesPlan, StudioCatalog, StudioResearch, TrendReport, StudioRnd, StudioBranding, StudioBrief, ThumbnailStyle } from "@harness/contracts";
 import type { TimelineIssue } from "@studio/timeline";
 
 const STUDIO_API_URL =
@@ -12,7 +12,7 @@ const STUDIO_API_URL =
 
 export type ProductionStatus = "draft" | "planning" | "waiting_approval" | "producing" | "done" | "failed" | "archived";
 export type TeamRole = "owner" | "producer" | "editor" | "viewer";
-export type EpisodeStatus = "planned" | "producing" | "ready" | "failed" | "cancelled";
+export type EpisodeStatus = "planned" | "producing" | "waiting_approval" | "ready" | "failed" | "cancelled";
 
 export interface Paged<T> {
   items: T[];
@@ -63,7 +63,7 @@ export interface TeamDetail {
 }
 
 /** The AI steps a team skill can apply to (an empty list = every step). */
-export type TeamSkillStep = "trend-report" | "rnd" | "branding" | "plan-episodes" | "youtube-kit";
+export type TeamSkillStep = "intake" | "trend-report" | "rnd" | "branding" | "plan-episodes" | "timeline" | "youtube-kit";
 
 /** "Quy chuẩn & skill" of a team: markdown its Claude calls follow. */
 export interface TeamSkill {
@@ -114,7 +114,7 @@ export interface Production {
   music: { track: string; gainDb: number; ducking: boolean } | null;
   status: ProductionStatus;
   runId: string | null;
-  episodeCounts: { total: number; ready: number; producing: number; failed: number };
+  episodeCounts: { total: number; ready: number; producing: number; waitingApproval: number; failed: number };
   ownerUserId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -153,11 +153,17 @@ export interface EpisodeSummary {
   durationSeconds: number | null;
   thumbnailUrl: string | null;
   updatedAt: string;
+  /** `whole` (whole videos) or `cut` (shot by shot, phase 5). */
+  editStyle?: "whole" | "cut";
 }
 
 export interface EpisodeDetail extends EpisodeSummary {
   plan: unknown; // StudioEpisode
   run: RunView | null;
+  /** The caller's ag-go scope does not cover the production: no footage, frames or video URLs. */
+  footageHidden?: boolean;
+  /** The run's workflow, `id@version` (`ag-studio-episode-cut@1.0.0`…); null before a run. */
+  workflow?: string | null;
   youtube: YoutubeKit | null;
   selectedTitle: number;
   /** The picture the episode uses (new thumbnails API — see `listThumbnails`/`selectThumbnail`). */
@@ -172,6 +178,45 @@ export interface EpisodeDetail extends EpisodeSummary {
   finalVideoUrl: string | null;
   finalVideoDownloadUrl: string | null;
   latestRevision: number | null;
+  render: EpisodeRender;
+}
+
+/** The scene selection of a shot-cut episode (`GET …/shots`, viewer with the footage scope). */
+export interface EpisodeShot {
+  sourceId: string;
+  /** `s000-002` = first video, third shot. */
+  shotId: string;
+  /** Seconds in the video. */
+  in: number;
+  out: number;
+  score: number;
+  tags: string[];
+  usable: boolean;
+  note: string;
+  speech: "none" | "talking" | "ambient";
+  /** Signed middle frame (null before the frames are made). */
+  frameUrl: string | null;
+  /** Differs from Claude's selection. */
+  changed: boolean;
+}
+export interface EpisodeShots {
+  state: "pending" | "waiting" | "approved";
+  turnId: string | null;
+  shots: EpisodeShot[];
+}
+export type EpisodeRerunGate = "approve-survey" | "approve-edit-plan";
+
+/** The final render of an episode (phase 3). */
+export interface EpisodeRender {
+  /** Chosen for the current run's render; null: none, the farm job goes out as any machine. */
+  machine: RenderMachine | null;
+  /** What a picker starts on. */
+  defaultMachine: RenderMachine;
+  /** Where Render lại starts: no run yet, only the render, the timeline approved again first, freeze; null: producing. */
+  restartFrom: "start" | "render-final" | "approve-timeline" | "freeze-timeline" | null;
+  job: { farmJobId: string; runId: string; machine: RenderMachine | null; createdAt: string } | null;
+  /** The farm's view of `job` while the run renders it. */
+  farmStatus: { status: string; progress: number | null } | null;
 }
 
 export interface EpisodePatch {
@@ -277,7 +322,8 @@ export interface RunView {
 
 export interface TimelineRevisionView {
   revision: number;
-  data: TimelineV3;
+  /** v3 for a whole-video episode, v4 for a shot-cut one (an episode keeps the version of its first revision). */
+  data: StoredTimeline;
   issues: TimelineIssue[];
   savedAt: string;
   authorId: string;
@@ -548,8 +594,17 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     patchEpisode(productionId: string, episodeId: string, data: EpisodePatch): Promise<EpisodeDetail> {
       return request<EpisodeDetail>(getAccessToken, "PATCH", `/api/productions/${productionId}/episodes/${episodeId}`, data);
     },
-    rerenderEpisode(productionId: string, episodeId: string): Promise<{ runId: string }> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/rerender`);
+    /** Render lại; `renderMachine` is the farm machine type of the final render (none: the run's, or any). */
+    rerenderEpisode(productionId: string, episodeId: string, renderMachine?: RenderMachine): Promise<{ runId: string; from: NonNullable<EpisodeRender["restartFrom"]> }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/rerender`, renderMachine ? { renderMachine } : undefined);
+    },
+    /** 403 `footage_hidden`, 422 `not_cut` for a whole-video episode. */
+    getEpisodeShots(productionId: string, episodeId: string): Promise<EpisodeShots> {
+      return request<EpisodeShots>(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/shots`);
+    },
+    /** A shot-cut episode again from its scene selection or edit plan gate; 409 `gate_not_passed` / `episode_running`. */
+    rerunEpisodeFrom(productionId: string, episodeId: string, stage: EpisodeRerunGate): Promise<{ runId: string; reused: string[] }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/rerun-from`, { stage });
     },
     cancelEpisode(productionId: string, episodeId: string): Promise<void> {
       return request<void>(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/cancel`);
@@ -627,7 +682,7 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
       return request(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/timeline/revisions`);
     },
     /** 409 (`StudioHttpError`, body `{ code: "revision_conflict", currentRevision }`) when `baseRevision` is stale. */
-    saveRevision(productionId: string, episodeId: string, baseRevision: number, data: TimelineV3, label?: string): Promise<{ revision: number; issues: TimelineIssue[] }> {
+    saveRevision(productionId: string, episodeId: string, baseRevision: number, data: StoredTimeline, label?: string): Promise<{ revision: number; issues: TimelineIssue[]; approved?: boolean }> {
       return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/timeline/revisions`, { baseRevision, data, ...(label ? { label } : {}) });
     },
     renderPreview(productionId: string, episodeId: string, revision: number): Promise<EditorJob> {
@@ -655,8 +710,104 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     listHumanEdits(productionId: string, params?: { page?: number; pageSize?: number }): Promise<Paged<HumanEditView>> {
       return request(getAccessToken, "GET", `/api/productions/${productionId}/human-edits${buildQuery(params ?? {})}`);
     },
+
+    // ---- Chat (spec local-chat §3.1) ----
+    createDraft(teamId: string, text: string): Promise<{ productionId: string; user: ChatTurn; assistant: ChatTurn | null }> {
+      return request(getAccessToken, "POST", `/api/teams/${teamId}/drafts`, { text });
+    },
+    getChatThread(productionId: string, episodeId?: string | null): Promise<ChatThreadView> {
+      return request(getAccessToken, "GET", `/api/productions/${productionId}/chat${buildQuery({ episodeId: episodeId ?? undefined })}`);
+    },
+    sendChat(productionId: string, text: string, episodeId?: string | null): Promise<{ user: ChatTurn; assistant: ChatTurn | null }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/chat`, { text, ...(episodeId ? { episodeId } : {}) });
+    },
+    applyChatProposal(productionId: string, turnId: string): Promise<{ revision?: number }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/chat/${turnId}/apply`);
+    },
+    startProduction(productionId: string): Promise<{ runId: string }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/start`);
+    },
+    approveChat(productionId: string, input: { stageKey: string; episodeId?: string | null; turnId?: string | null; renderMachine?: RenderMachine }): Promise<{ stageState: string; runState: string; revision?: number }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/chat/approve`, {
+        stageKey: input.stageKey, ...(input.episodeId ? { episodeId: input.episodeId } : {}), ...(input.turnId ? { turnId: input.turnId } : {}),
+        ...(input.renderMachine ? { renderMachine: input.renderMachine } : {}),
+      });
+    },
+    retryChatStep(productionId: string, stageKey: string, episodeId?: string | null): Promise<{ ok: true }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/chat/retry`, { stageKey, ...(episodeId ? { episodeId } : {}) });
+    },
+    saveManualEdit(productionId: string, input: { stageKey: string; episodeId?: string | null; document: unknown }): Promise<ChatTurn> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/chat/manual`, {
+        stageKey: input.stageKey, document: input.document, ...(input.episodeId ? { episodeId: input.episodeId } : {}),
+      });
+    },
+    getOverview(): Promise<{ items: OverviewItem[] }> {
+      return request(getAccessToken, "GET", "/api/studio/overview");
+    },
+    /** The Queue screen: Claude calls and farm jobs of the videos the caller can see. */
+    getQueue(): Promise<StudioQueueView> {
+      return request(getAccessToken, "GET", "/api/studio/queue");
+    },
+    getClaudeUsage(): Promise<ClaudeUsage> {
+      return request(getAccessToken, "GET", "/api/studio/claude");
+    },
+    setClaudeMaxConcurrent(claudeMaxConcurrent: number): Promise<ClaudeUsage> {
+      return request(getAccessToken, "PUT", "/api/studio/settings", { claudeMaxConcurrent });
+    },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Chat
+// ---------------------------------------------------------------------------
+
+export type ChatScopeName = "intake" | "gate" | "failed" | "timeline";
+export type ChatAction = "answer" | "revise" | "suggest_approve" | "render" | "export" | "retry";
+
+export interface ChatTurn {
+  id: string; production_id: string; episode_id: string | null; run_id: string | null;
+  scope: ChatScopeName; stage_key: string; turn: number; role: "user" | "assistant" | "system";
+  text: string; mentions: { kind: "folder"; id: string; name: string }[]; context: unknown;
+  proposal: unknown; action: ChatAction | null;
+  status: "pending" | "running" | "done" | "failed" | "rate_limited"; not_before: string | null;
+  problems: { code: string; message: string }[];
+  llm_call_id: string | null; created_by: string | null; applied_at: string | null; created_at: string; updated_at: string;
+}
+
+export interface ChatScopeKey { productionId: string; episodeId: string | null; runId: string | null; stageKey: string; scope: ChatScopeName }
+
+export interface ChatThreadView {
+  turns: ChatTurn[];
+  scope: ChatScopeKey | null;
+  blocked: { code: "busy" | "nothing_to_chat" | string; stage: string | null } | null;
+  current: { turnId: string | null; document: unknown; draft: unknown; pendingApply: boolean; problems: { code: string; message: string }[] } | null;
+  queueAhead: number;
+}
+
+export type OverviewGroup = "waiting_you" | "needs_attention" | "running" | "done";
+export interface OverviewEpisode { id: string; idx: number; title: string; status: EpisodeStatus; step: string | null; group: OverviewGroup }
+export interface OverviewItem { id: string; teamId: string; title: string; updatedAt: string; step: string | null; group: OverviewGroup; episodes: OverviewEpisode[] }
+
+export interface ClaudeUsage { running: number; waiting: number; max: number; source: "settings" | "env" }
+
+interface QueueWhere { productionId: string; productionTitle: string; episodeId: string | null; episodeIdx: number | null; episodeTitle: string | null }
+export interface QueueClaudeItem extends QueueWhere { source: "chat" | "stage"; waiting: boolean; step: string; since: string | null }
+export interface QueueRender extends QueueWhere {
+  farmJobId: string; kind: "final" | "preview" | "export_premiere" | "other"; machine: RenderMachine | null;
+  status: "queued" | "leased" | "paused" | string; progress: number | null; progressStage: string | null; attempt: number; createdAt: string;
+  /** Queued for more than 10 minutes: no node took it, maybe none fits. */
+  stuck: boolean;
+}
+export interface StudioQueueView {
+  claude: { running: number; waiting: number; max: number; hidden: number; items: QueueClaudeItem[] };
+  renders: QueueRender[];
+  hiddenRenders: number;
+  farm: { ok: true } | { ok: false; error: string };
+}
+
+/** Kind of farm machine for a final render: ag-farm requirements `{}`, `{nvenc: true}`, `{gpu: true}`. */
+export const RENDER_MACHINES = ["any", "nvenc", "gpu"] as const;
+export type RenderMachine = (typeof RENDER_MACHINES)[number];
 
 // ---------------------------------------------------------------------------
 // Call log
@@ -689,7 +840,7 @@ export interface LlmCallDetail extends LlmCallSummary {
   warnings: { code: string; message: string }[];
 }
 
-export type HumanEditKind = "series_plan" | "youtube_kit" | "episode_rerender" | "episode_cancel" | "rnd" | "branding" | "rnd_edit" | "branding_edit" | "thumbnail";
+export type HumanEditKind = "trend_report" | "series_plan" | "youtube_kit" | "episode_rerender" | "episode_cancel" | "rnd" | "branding" | "rnd_edit" | "branding_edit" | "thumbnail" | "survey" | "edit_plan";
 
 export interface HumanEditView {
   id: string;

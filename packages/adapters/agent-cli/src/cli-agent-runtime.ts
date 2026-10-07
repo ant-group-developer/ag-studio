@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { join } from "node:path";
 import { directoryListing } from "@harness/script-sdk";
 import type { AgentCallTrace, AgentRuntime, AgentTask, ExecutorContext, StageOutput, StageResult } from "@harness/contracts";
+import { defaultResolveDeps, resolveCommand } from "./resolve-command.js";
 
 export type AgentCliRuntimeKind = "claude" | "codex";
 
@@ -44,14 +45,59 @@ export const RUNTIME_COMMANDS: Record<AgentCliRuntimeKind, { argv: string[]; env
  *  with their configured values. The `--no-session-persistence` flag prevents cross-run state leakage. */
 export const STUDIO_ARGV = ["claude", "-p", "--output-format", "json", "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--max-turns", "{max_turns}", "--model", "{model}"];
 
+/**
+ * Studio stages that must LOOK at files (contact sheets of the shot-cut workflow, ADR-0001 item 155): the prompt on
+ * stdin as in structured mode, but the agent may read and write files in its workspace and the session is kept, so
+ * a repair round or a chat turn can `--resume` it with every frame it already saw.
+ */
+export interface StudioFilesMode {
+  model?: string;
+  maxTurns?: number;
+  /** `--allowedTools`, e.g. `["Read", "Write", "Glob", "Grep"]`: no Bash, no web. */
+  tools: string[];
+  /** Session to continue (`--resume`); with `forkSession` the answer runs in a new session forked from it. */
+  resume?: string;
+  forkSession?: boolean;
+  /** A structured answer as well (`--json-schema`), e.g. a chat reply. */
+  jsonSchema?: string;
+}
+
+export function studioFilesArgv(f: StudioFilesMode): string[] {
+  return [
+    "claude", "-p", "--output-format", "json", "--permission-mode", "acceptEdits", "--allowedTools", f.tools.join(","),
+    "--strict-mcp-config", "--max-turns", String(f.maxTurns ?? 40), "--model", f.model ?? "claude-sonnet-5-5",
+    ...studioFilesFlags(f),
+  ];
+}
+
+/** The flags a files-mode call needs whatever the argv (a fake CLI in tests must receive them too). */
+function studioFilesFlags(f: StudioFilesMode): string[] {
+  return [
+    ...(f.resume ? ["--resume", f.resume] : []),
+    ...(f.resume && f.forkSession ? ["--fork-session"] : []),
+    ...(f.jsonSchema ? ["--json-schema", f.jsonSchema] : []),
+  ];
+}
+
 /** In studio mode, the prompt + catalog go to the agent via stdin (not via agent-prompt.md + Read).
  *  This avoids the 100k+ token catalog having to be written to disk and read back in a single Read call,
  *  and removes the file-system surface for prompt injection via visible_text/caption. */
 export const PROMPT_POINTER = "Read the file ./agent-prompt.md in the current directory and follow it exactly. Work only inside this directory.";
 
-/** `You've hit your … limit` message that the Claude CLI emits when the subscription rate-limit is reached.
- *  The exact wording varies; we match the stable infix. */
-const RATE_LIMIT_PATTERN = /you'?ve hit your\b.*\blimit\b/i;
+/** What the Claude CLI prints when the subscription limit is reached. The wording varies between versions:
+ *  "You've hit your 5-hour limit" (straight or curly apostrophe, or "you have"), "You've reached your usage
+ *  limit", "Claude AI usage limit reached|<epoch>". */
+const RATE_LIMIT_PATTERNS = [
+  /\byou(?:['’]ve| have) (?:hit|reached) your\b[^\n]*\blimit\b/i,
+  /\busage limit reached\b/i,
+  // claude 2.x JSON mode: the envelope only says "Request rejected (429) · Subscription limit exceeded", api_error_status 429
+  /\bsubscription limit exceeded\b/i,
+  /"api_error_status"\s*:\s*429\b/,
+];
+
+export function isRateLimitMessage(text: string): boolean {
+  return RATE_LIMIT_PATTERNS.some((p) => p.test(text));
+}
 
 export interface CliAgentRuntimeOptions {
   runtime: AgentCliRuntimeKind;
@@ -69,17 +115,20 @@ export interface CliAgentRuntimeOptions {
     model?: string;        // model to request (default: claude-opus-4-5)
     maxTurns?: number;     // default: 3
   };
+  /** Studio files mode (see `StudioFilesMode`); exclusive with `structured`. */
+  files?: StudioFilesMode;
   /** Structured mode only: receives every call (redacted prompt and raw answer) once the CLI exits, whatever the outcome. */
   onCall?: (trace: AgentCallTrace) => void;
 }
 
 /** Cost and token counts from the CLI's JSON envelope (the last stdout line). */
-function envelopeUsage(stdout: string): { cost_usd: number; input_tokens: number | null; output_tokens: number | null; structured_output: unknown } {
-  const out = { cost_usd: 0, input_tokens: null as number | null, output_tokens: null as number | null, structured_output: undefined as unknown };
+function envelopeUsage(stdout: string): { cost_usd: number; input_tokens: number | null; output_tokens: number | null; structured_output: unknown; session_id: string | null } {
+  const out = { cost_usd: 0, input_tokens: null as number | null, output_tokens: null as number | null, structured_output: undefined as unknown, session_id: null as string | null };
   try {
     const parsed = JSON.parse(stdout.trim().split(/\r?\n/).at(-1) ?? "") as Record<string, unknown>;
     if (typeof parsed.total_cost_usd === "number") out.cost_usd = parsed.total_cost_usd;
     out.structured_output = parsed.structured_output;
+    if (typeof parsed.session_id === "string") out.session_id = parsed.session_id;
     const u = parsed.usage as Record<string, unknown> | undefined;
     const n = (k: string) => (typeof u?.[k] === "number" ? (u[k] as number) : 0);
     if (u) {
@@ -133,7 +182,8 @@ export class CliAgentRuntime implements AgentRuntime {
 
   /** Cheap availability probe (`<argv0> --version`); never invokes the model. Used by `doctor` and by tests to skip real-CLI runs. */
   static isAvailable(runtime: AgentCliRuntimeKind, argv0?: string): boolean {
-    const r = spawnSync(argv0 ?? runtime, ["--version"], { timeout: 10000 });
+    const { cmd, prefixArgs } = resolveCommand(argv0 ?? runtime, defaultResolveDeps(process.env.PATH));
+    const r = spawnSync(cmd, [...prefixArgs, "--version"], { timeout: 10000 });
     return r.status === 0;
   }
 
@@ -151,9 +201,10 @@ export class CliAgentRuntime implements AgentRuntime {
     const skillContent = readFileSync(skillPath, "utf8");
 
     const isStructured = !!this.opts.structured;
+    const files = this.opts.files;
     let stdinPayload: string | null = null;
 
-    if (isStructured) {
+    if (isStructured || files) {
       // Studio (structured-output) mode: prompt + brief sent via stdin; no agent-prompt.md written.
       // Tools are disabled on the CLI side, so catalog content embedded in the brief cannot trigger tool calls.
       stdinPayload = `# Skill\n${skillContent}\n\n# Brief\n${task.brief}\n`;
@@ -172,12 +223,14 @@ export class CliAgentRuntime implements AgentRuntime {
       // The schema is part of the contract of a structured call, so it is appended even when `argv` is
       // overridden (a fake CLI in tests must receive exactly what the real one would).
       if (s.jsonSchema) rawArgv = [...rawArgv, "--json-schema", s.jsonSchema];
+    } else if (files) {
+      rawArgv = this.opts.argv ? [...this.opts.argv, ...studioFilesFlags(files)] : studioFilesArgv(files);
     } else if (this.opts.argv) {
       rawArgv = this.opts.argv;
     } else {
       rawArgv = RUNTIME_COMMANDS[this.opts.runtime].argv;
     }
-    const argv = isStructured
+    const argv = isStructured || files
       ? rawArgv  // studio mode: no {prompt} substitution; -p reads from stdin
       : rawArgv.map((a) => (a === "{prompt}" ? PROMPT_POINTER : a));
     const [cmd, ...cmdArgs] = argv;
@@ -202,7 +255,9 @@ export class CliAgentRuntime implements AgentRuntime {
     const { code, timedOut, spawnError } = await new Promise<SpawnResult>((resolve) => {
       // Studio mode reads the prompt from stdin; agentic mode ignores stdin entirely.
       const stdinMode = stdinPayload !== null ? "pipe" : "ignore";
-      const child = spawn(cmd, cmdArgs, { cwd: task.workspaceDir, env, stdio: [stdinMode, "pipe", "pipe"] });
+      // `claude` on Windows is usually an npm .cmd shim that spawn() cannot run; follow it to the real binary.
+      const resolved = resolveCommand(cmd, defaultResolveDeps(env.PATH));
+      const child = spawn(resolved.cmd, [...resolved.prefixArgs, ...cmdArgs], { cwd: task.workspaceDir, env, stdio: [stdinMode, "pipe", "pipe"] });
       if (stdinPayload !== null) {
         child.stdin!.end(stdinPayload, "utf8");
       }
@@ -229,22 +284,23 @@ export class CliAgentRuntime implements AgentRuntime {
     mkdirSync(join(task.workspaceDir, "logs"), { recursive: true });
     writeFileSync(join(task.workspaceDir, "logs", "agent-stdout.log"), redact(combinedLog));
 
-    if (isStructured && stdinPayload !== null && this.opts.onCall) {
+    if ((isStructured || files) && stdinPayload !== null && this.opts.onCall) {
       const usage = envelopeUsage(stdoutBuf);
       try {
         this.opts.onCall({
-          model: this.opts.structured!.model ?? "claude-opus-5-5",
+          model: (isStructured ? this.opts.structured!.model : files!.model) ?? "claude-opus-5-5",
           prompt: redact(stdinPayload),
-          json_schema: this.opts.structured!.jsonSchema ?? null,
+          json_schema: (isStructured ? this.opts.structured!.jsonSchema : files!.jsonSchema) ?? null,
           response: redact(stdoutBuf),
           structured_output: usage.structured_output,
           exit_code: code,
           timed_out: timedOut,
-          rate_limited: code !== 0 && RATE_LIMIT_PATTERN.test(combinedLog),
+          rate_limited: code !== 0 && isRateLimitMessage(combinedLog),
           wall_seconds: (Date.now() - started) / 1000,
           cost_usd: usage.cost_usd,
           input_tokens: usage.input_tokens,
           output_tokens: usage.output_tokens,
+          session_id: usage.session_id,
         });
       } catch (e) {
         ctx.logger.warn("agent call trace hook failed", { error: e instanceof Error ? e.message : String(e) });
@@ -259,7 +315,7 @@ export class CliAgentRuntime implements AgentRuntime {
     // Rate-limit detection: the Claude CLI prints "You've hit your … limit" and exits non-zero when the
     // subscription usage limit is reached. Tag it with RATE_LIMITED so the planner can treat it specially
     // (no retry deduction; wait until reset). Check the combined log since the message may appear on stderr.
-    if (code !== 0 && RATE_LIMIT_PATTERN.test(combinedLog)) {
+    if (code !== 0 && isRateLimitMessage(combinedLog)) {
       return failed("transient", "Claude subscription rate limit reached", { code: "RATE_LIMITED", exit_code: code });
     }
     if (code !== 0) return failed("transient", `agent CLI exited with code ${code}`, { code: "EXECUTOR_FAILED", exit_code: code });

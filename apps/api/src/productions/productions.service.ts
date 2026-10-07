@@ -63,6 +63,7 @@ export interface EpisodeCounts {
   total: number;
   ready: number;
   producing: number;
+  waitingApproval: number;
   failed: number;
 }
 
@@ -127,7 +128,7 @@ function parseMusic(
 }
 
 /** The plan run's approvals: R&D, branding, episode plan. */
-const APPROVAL_GATES = new Set(["approve-rnd", "approve-branding", "approve-plan"]);
+const APPROVAL_GATES = new Set(["approve-trend-report", "approve-rnd", "approve-branding", "approve-plan"]);
 
 /** Own and reference channels together are what research reads: at most 20. */
 function checkChannelCount(own: string[] | undefined, reference: string[] | undefined): void {
@@ -165,6 +166,7 @@ export function deriveStatus(
     return "planning"; // ran but no episodes yet
   }
 
+  if (episodes.some((e) => e === "waiting_approval")) return "waiting_approval";
   if (episodes.some((e) => e === "producing")) return "producing";
   if (episodes.every((e) => e === "ready")) return "done";
   if (episodes.some((e) => e === "failed")) return "failed";
@@ -176,6 +178,7 @@ export function countEpisodes(episodes: EpisodeStatus[]): EpisodeCounts {
     total: episodes.length,
     ready: episodes.filter((e) => e === "ready").length,
     producing: episodes.filter((e) => e === "producing").length,
+    waitingApproval: episodes.filter((e) => e === "waiting_approval").length,
     failed: episodes.filter((e) => e === "failed").length,
   };
 }

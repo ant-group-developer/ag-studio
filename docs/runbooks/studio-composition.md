@@ -4,6 +4,10 @@
 — phụ đề theo từ, chữ trên hình theo hồ sơ thương hiệu của kênh, nhạc nền có ducking, chuyển cảnh dissolve —
 mà không cần một wrapper nào của ops project ngoài `thumbnail-candidates`.
 
+> **AG Studio (pha 5):** không có stage `media-compose`. Tập cắt theo shot sinh composition thẳng từ timeline v4
+> (`timelineToComposition`, `packages/core/src/studio/render-plan.ts`): `narration[]`, phụ đề (`buildCaptionCues`),
+> ducking và chuyển cảnh (`resolveTransitions`); render ở farm bằng `renderComposition` của phần này.
+
 Hai stage built-in thay hẳn `cut` + `assemble`:
 
 | Stage | Chạy bằng | Vào | Ra |

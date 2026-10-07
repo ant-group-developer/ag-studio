@@ -15,7 +15,11 @@
  *   FARM_POLL_MS        farm job polling interval (default 5000)
  *   STUDIO_CLAUDE_MODEL default claude-opus-5-5
  *   STUDIO_CLAUDE_ARGV  JSON array replacing `claude -p ...` (tests: the fake CLI)
- *   STUDIO_FFMPEG_PATH  ffmpeg for the loudness check of the final render and for cutting thumbnails
+ *   STUDIO_CLAUDE_MAX_CONCURRENT  Claude calls at once, 1-100 (default 20); the worker runs that many loops plus
+ *                       one per farm/cpu slot, so a farm render never holds up another production
+ *   STUDIO_FFMPEG_PATH  ffmpeg for the loudness check of the final render, for cutting thumbnails, and for the
+ *                       shot-cut stages (shots, audio for transcription, contact sheets); none = those stages park
+ *   STUDIO_FFPROBE_PATH ffprobe for the shot-cut stages (default: ffprobe next to STUDIO_FFMPEG_PATH)
  *   STUDIO_FONTS_DIR    a folder with the thumbnail font (Arial); default: Windows fonts, else fontconfig (Liberation Sans)
  *   YOUTUBE_API_KEY     YouTube Data API v3 key for the market research of a series (none = research skipped)
  *   HARNESS_ROOT        Studio install root (default: this checkout)
@@ -24,7 +28,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { AgGoClient } from "@ag-studio/ag-go-client";
 import {
-  createStudioEngineCore, createStudioWorker, FarmOwnerClient, ffmpegThumbnailRenderer, S3Bucket, StudioDb, studioLogger, studioResearchCache,
+  claudeMaxConcurrent as studioClaudeMaxConcurrent, createStudioEngineCore, ffprobeBeside, httpDownload, type CutMediaDeps, createStudioWorkerPool, FarmOwnerClient, parseClaudeMaxConcurrent, ffmpegThumbnailRenderer, S3Bucket, StudioDb, studioLogger, studioResearchCache,
   YoutubeResearchSource,
 } from "@ag-studio/engine";
 import { HARNESS_ROOT } from "@harness/core";
@@ -45,7 +49,19 @@ async function main(): Promise<void> {
   const argv = process.env.STUDIO_CLAUDE_ARGV ? (JSON.parse(process.env.STUDIO_CLAUDE_ARGV) as string[]) : undefined;
   const db = new StudioDb(dbPath);
   const youtubeKey = process.env.YOUTUBE_API_KEY?.trim();
-  const worker = createStudioWorker({
+  const claudeMaxConcurrent = parseClaudeMaxConcurrent(process.env.STUDIO_CLAUDE_MAX_CONCURRENT);
+  const agGo = new AgGoClient({ baseUrl: requireEnv("AG_GO_API_URL"), serviceKey: requireEnv("AG_GO_SERVICE_KEY") });
+  const media: CutMediaDeps | null = ffmpeg ? {
+    ffmpeg,
+    ffprobe: process.env.STUDIO_FFPROBE_PATH ?? ffprobeBeside(ffmpeg),
+    resolveAssets: async (actAs, assetIds, purpose) => {
+      const r = await agGo.resolveAssets(actAs, { assetIds, purpose });
+      return { items: r.items, missing: r.missing ?? [] };
+    },
+    download: (url, dest) => httpDownload(url, dest),
+    voiceDir: join(requireEnv("STUDIO_DATA_ROOT"), "voice"),
+  } : null;
+  const pool = createStudioWorkerPool({
     core,
     db,
     dbPath,
@@ -53,7 +69,7 @@ async function main(): Promise<void> {
       endpoint: requireEnv("STUDIO_R2_ENDPOINT"), bucket: requireEnv("STUDIO_R2_BUCKET"),
       accessKeyId: requireEnv("STUDIO_R2_ACCESS_KEY_ID"), secretAccessKey: requireEnv("STUDIO_R2_SECRET_ACCESS_KEY"),
     }),
-    footage: new AgGoClient({ baseUrl: requireEnv("AG_GO_API_URL"), serviceKey: requireEnv("AG_GO_SERVICE_KEY") }),
+    footage: agGo,
     farm: new FarmOwnerClient({ baseUrl: requireEnv("FARM_URL"), ownerKey: requireEnv("FARM_OWNER_KEY") }),
     claude: {
       skillsDir: join(harnessRoot, "skills"),
@@ -62,17 +78,20 @@ async function main(): Promise<void> {
     },
     owner,
     logger,
+    claudeMaxConcurrent,
     farmPollMs: Number(process.env.FARM_POLL_MS ?? 5000),
     ...(youtubeKey ? { research: new YoutubeResearchSource({ apiKey: youtubeKey, cache: studioResearchCache(db) }) } : {}),
     ...(ffmpeg ? { thumbnails: ffmpegThumbnailRenderer({ ffmpeg }) } : {}),
+    ...(media ? { media } : {}),
   });
 
-  logger.info("Studio worker starting", { owner, harnessRoot, youtube_research: !!youtubeKey });
+  const claudeCap = studioClaudeMaxConcurrent(db, claudeMaxConcurrent);
+  logger.info("Studio worker starting", { owner, harnessRoot, youtube_research: !!youtubeKey, claude_max_concurrent: claudeCap.value, claude_max_concurrent_from: claudeCap.source, loops: pool.workers.length });
   const ac = new AbortController();
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
     process.on(sig, () => { logger.warn(`received ${sig}, stopping after the current stage`); ac.abort(); });
   }
-  await worker.runForever(ac.signal);
+  await pool.runForever(ac.signal);
   core.close();
 }
 

@@ -1,0 +1,171 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`timelineToComposition on v3 > a muted single clip, no music 1`] = `
+"{
+ "schema_version": "harness.composition/v1",
+ "output": {
+  "width": 1080,
+  "height": 1920,
+  "fps": 25,
+  "codec": "h264"
+ },
+ "voice": "none",
+ "language": "vi",
+ "total_seconds": 8.5,
+ "request_id": "req_1TN5D57SHAJBKEWWF9R5D8RXFW",
+ "brand": null,
+ "segments": [
+  {
+   "order": 0,
+   "source_id": "src_5Z38Y4H90R9BN8V74XBVH6218R",
+   "source_path": "asset:a02",
+   "in": 0,
+   "out": 8.5,
+   "start": 0,
+   "end": 8.5,
+   "fit": "scale_pad",
+   "has_audio": false,
+   "transition_out": {
+    "kind": "cut",
+    "seconds": 0,
+    "tail_available": false
+   }
+  }
+ ],
+ "text_events": [],
+ "captions": {
+  "mode": "none",
+  "cues": []
+ },
+ "narration": [],
+ "music": null,
+ "logo": null,
+ "transitions": {
+  "requested": 0,
+  "applied": 0,
+  "downgraded": []
+ },
+ "text_dropped": [],
+ "warnings": []
+}"
+`;
+
+exports[`timelineToComposition on v3 > a timeline with music, texts and sections 1`] = `
+"{
+ "schema_version": "harness.composition/v1",
+ "output": {
+  "width": 3840,
+  "height": 2160,
+  "fps": 30,
+  "codec": "h264"
+ },
+ "voice": "none",
+ "language": "vi",
+ "total_seconds": 40.846,
+ "request_id": "req_6CWBG181SDTX4KTN4SAFKWQJK4",
+ "brand": null,
+ "segments": [
+  {
+   "order": 0,
+   "source_id": "src_3ECVY1Q3VEQ9TABFMEWP05R3PV",
+   "source_path": "asset:a01",
+   "in": 0,
+   "out": 12.346,
+   "start": 0,
+   "end": 12.346,
+   "fit": "scale_pad",
+   "has_audio": true,
+   "transition_out": {
+    "kind": "cut",
+    "seconds": 0,
+    "tail_available": false
+   }
+  },
+  {
+   "order": 1,
+   "source_id": "src_5Z38Y4H90R9BN8V74XBVH6218R",
+   "source_path": "asset:a02",
+   "in": 0,
+   "out": 8.5,
+   "start": 12.346,
+   "end": 20.846,
+   "fit": "scale_pad",
+   "has_audio": true,
+   "transition_out": {
+    "kind": "cut",
+    "seconds": 0,
+    "tail_available": false
+   }
+  },
+  {
+   "order": 2,
+   "source_id": "src_3HPPCS6SC2BA5NNRR8XP3JC8NJ",
+   "source_path": "asset:a03",
+   "in": 0,
+   "out": 20,
+   "start": 20.846,
+   "end": 40.846,
+   "fit": "scale_pad",
+   "has_audio": true,
+   "transition_out": {
+    "kind": "cut",
+    "seconds": 0,
+    "tail_available": false
+   }
+  }
+ ],
+ "text_events": [
+  {
+   "id": "T001",
+   "kind": "title",
+   "text": "Hoa Lư",
+   "start": 0.5,
+   "end": 4,
+   "position": "top_left",
+   "animation": "fade"
+  },
+  {
+   "id": "T002",
+   "kind": "lower_third",
+   "text": "Đền vua Đinh",
+   "start": 21.25,
+   "end": 26.25,
+   "position": "bottom_left",
+   "animation": "fade"
+  }
+ ],
+ "captions": {
+  "mode": "none",
+  "cues": []
+ },
+ "narration": [],
+ "music": {
+  "track_id": "67RY2V6355V1KPFES0ZP27K7AB",
+  "path": "library:music/calm.mp3",
+  "loop": true,
+  "fade_in": 1,
+  "fade_out": 2,
+  "cues": [
+   {
+    "start": 0,
+    "end": 40.846,
+    "gain_db": -18
+   }
+  ],
+  "duck": {
+   "windows": [],
+   "gain_db": -8,
+   "attack_ms": 200,
+   "release_ms": 500
+  }
+ },
+ "logo": null,
+ "transitions": {
+  "requested": 0,
+  "applied": 0,
+  "downgraded": []
+ },
+ "text_dropped": [],
+ "warnings": []
+}"
+`;

@@ -219,7 +219,8 @@ export function EpisodesPanel({ productionId, canEdit }: Props) {
                   disabled: r.status !== "ready",
                   onClick: () => exportPackMutation.mutate(r.id),
                 },
-                ...(canEdit
+                // a shot-cut episode: Premiere cannot read its trims, transitions or narration yet (phase 4)
+                ...(canEdit && r.editStyle !== "cut"
                   ? [
                       { type: "divider" as const },
                       ...premiereMenuItems(t, (media) => premiere.mutate({ episodeId: r.id, media })).map((i) => ({ ...i, disabled: r.status === "planned" })),

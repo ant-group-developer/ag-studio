@@ -14,6 +14,11 @@ dùng cho test.
 Khác với các runbook trước, **mọi con số trong mục 7 là đo thật** trên máy build (RTX 3060 12 GB, Windows 11,
 driver 581.29, Python 3.11.15), không phải ước lượng. Mục 9 chốt DoD #2 và #3 của spec.
 
+> **AG Studio (pha 5) dùng một phần của pipeline này** cho tập cắt theo shot, qua
+> `packages/studio-engine/src/cut-stages.ts`: `buildShots`/`shotId` (dò shot), `fitEdl`/`buildTimeline` (khớp hình
+> theo lời dẫn) là hàm thuần; ffmpeg chạy bằng bản bất đồng bộ `cut-ffmpeg.ts`. WhisperX và OmniVoice không chạy trên
+> máy Studio mà trên render worker của farm (job `studio.transcribe`, `studio.tts`, cùng hai script Python).
+
 Đọc kèm: `engines/python/README.md` (giao thức job/result của hai script), `studio-autopilot.md` (vòng tự
 nhận request), `content-library.md` (kho), `go-live.md` §4 (dựng máy studio thật).
 

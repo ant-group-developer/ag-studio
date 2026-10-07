@@ -22,7 +22,8 @@ import type { SubmittedInfo } from "./farm-executor.js";
 
 /**
  * Returns an async function that inserts a `studio_farm_jobs` row for the
- * submitted farm job, using the provided path to the AG Studio SQLite
+ * submitted farm job (with its episode, when the run is an episode's, and the
+ * requirements it was sent with), using the provided path to the AG Studio SQLite
  * database (`STUDIO_DB_PATH`).
  *
  * The database must already exist and have `studio_farm_jobs` created (by
@@ -38,8 +39,9 @@ export function makeStudioFarmRecorder(
       db.prepare(
         `INSERT OR IGNORE INTO studio_farm_jobs
          (id, farm_job_id, run_id, stage_key, attempt_id, production_id,
-          job_type, is_final_render, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          episode_id, job_type, is_final_render, requirements, created_at)
+         VALUES (?, ?, ?, ?, ?, ?,
+          (SELECT id FROM episodes WHERE run_id = ?), ?, ?, ?, ?)`,
       ).run(
         randomUUID(),
         info.farmJobId,
@@ -47,8 +49,10 @@ export function makeStudioFarmRecorder(
         info.stageKey,
         info.attemptId,
         info.productionId,
+        info.runId,
         info.jobType,
         info.isFinalRender ? 1 : 0,
+        info.requirements ? JSON.stringify(info.requirements) : null,
         new Date().toISOString(),
       );
     } finally {

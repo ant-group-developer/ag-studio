@@ -863,3 +863,196 @@ library-production}@1.1.0/`, `skills/{style-analyze,style-review,source-survey,e
     **không đổi một byte**, nên `library-production@1.0.0`/`1.1.0`/`1.2.0` vẫn byte-identical và cache_key
     của mọi run cũ vẫn trúng. Một `optional: false` mặc định sẽ xuất hiện trong digest và làm mất cache của
     toàn bộ lịch sử — đây là cách chung để thêm bất kỳ khoá nào vào một schema đã được băm.
+
+## AG Studio (fork, 2026-09-29 → 2026-10-03)
+
+Các mục dưới đây ghi lại quyết định của nhánh AG Studio, viết bù ngày 2026-10-06 từ lịch sử commit và kế hoạch
+`docs/superpowers/plans/2026-09-30-ag-studio-series-plan.md` (bảng "Quyết định đã chốt", đánh số D1–D13 bên dưới).
+
+127. **AG Studio là fork của harness, gỡ hẳn phần đa kênh.** Commit `40d2d67` (2026-09-29) xoá adapter
+    `youtube-playwright`, `packages/core/src/{distribution,learning,dashboard}`, luồng request/review/export/
+    auto-accept của kho, các lệnh CLI `channel`/`publish`/`dashboard` và mọi idle sweep của worker. Giữ lại: core
+    điều phối (state machine, Planner/Controller/Verifier, artifact, gate, reuse), `CliAgentRuntime`, và nguyên
+    pipeline media/render của 5A/5B. Hệ quả: các workflow cũ `channel-*`, `library-production*`, `style-study*`,
+    `footage-production` **vẫn nằm trong `workflows/` nhưng không chạy được** (built-in của chúng đã bị gỡ);
+    chúng được giữ chỉ để test byte-identical và để kiểu cắt theo shot sau này lấy lại.
+128. **Ba tiến trình, một `studio.db`.** `apps/api` (NestJS), `apps/worker` và web cùng dùng một file SQLite
+    (`STUDIO_DB_PATH`) qua `createStudioEngineCore` (`packages/studio-engine/src/core.ts`). API migrate lúc khởi
+    động, worker chỉ chạy sau khi API healthy; API ghi bằng `BEGIN IMMEDIATE` (`apps/api/src/db/studio-db.service.ts`).
+    Gate nộp từ web được kiểm bằng **cùng checker** worker dùng, vì API dựng engine core ngay trong tiến trình.
+    Không có Postgres trong Studio.
+129. **Claude gọi qua CLI bằng gói subscription, dạng structured, không có tool.** `STUDIO_ARGV`
+    (`packages/adapters/agent-cli/src/cli-agent-runtime.ts`): `claude -p --output-format json --tools ""
+    --strict-mcp-config --no-session-persistence --max-turns 3 --model <m>` cộng `--json-schema`; prompt đi qua
+    stdin; `ANTHROPIC_API_KEY` cố ý không chuyển cho tiến trình con để luôn dùng `CLAUDE_CODE_OAUTH_TOKEN`.
+    `StudioAgentExecutor` (`packages/executors/src/studio-agent-executor.ts`) kiểm câu trả lời bằng validator
+    tất định theo skill, cho **đúng một vòng sửa** (gọi lại kèm danh sách lỗi), rồi `contract`. Model theo skill:
+    Opus cho `studio-rnd`/`studio-plan-episodes`, Sonnet cho phần còn lại (`STUDIO_CLAUDE_MODEL_*`). Lý do không
+    dùng file mode như harness: đầu ra là một tài liệu JSON, kiểm được bằng schema, rẻ và lặp lại được.
+130. **Gặp giới hạn của gói thì chờ, không tính là thất bại.** Lỗi khớp `you've hit your … limit` là `transient`
+    với `details.code = "RATE_LIMITED"`; executor chờ 5/10/20/40/60 phút, không tăng `attempt_count`, chỉ bỏ cuộc
+    khi sắp quá deadline của stage. `STUDIO_RESOURCES = { claude: 1, farm: 8, cpu: 2 }`: mỗi worker chỉ một lượt
+    Claude cùng lúc (sẽ thành cấu hình, xem spec local-chat).
+131. **Production = series nhiều tập, duyệt kế hoạch một lần (D2, D4).** Run kế hoạch
+    `ag-studio-series-plan@2.0.0`: nghiên cứu → R&D → gate → branding → gate → kế hoạch tập → gate → tạo tập. Ba gate
+    `approve-rnd`/`approve-branding`/`approve-plan` nhận tài liệu người đã sửa (`submitStudioGate`, `run-control.ts`);
+    stage `apply-rnd`/`apply-branding` **sau gate** mới ghi vào production — API không ghi lúc nộp gate. Sau khi
+    duyệt kế hoạch, `spawn-episodes` tạo mỗi tập một run `ag-studio-episode@1.2.0` tự chạy tới hết, không gate.
+132. **Ghép nguyên cả video, không trim, không lời dẫn (D1, D3, D5, D11).** Timeline v3 (`studio.ts`): clip luôn
+    là cả asset, phát nối tiếp; một video không trùng trong một tập nhưng được dùng lại ở tập khác; lệch thời lượng
+    ±20% chỉ cảnh báo. Không TTS, không phụ đề (`voice.ts` và job `studio.tts` là phần sót). `timelineToComposition`
+    (`core/src/studio/render-plan.ts`) chuyển timeline sang `harness.composition/v1` với `in: 0, out: duration`,
+    cắt thẳng, để dùng lại `renderComposition`.
+133. **Footage chỉ đến từ ag-go, chọn theo cả video (D10).** `studio-catalog` gọi `POST /footage/catalog` (mô tả AI
+    cả video), lọc trước tối đa 300; Claude chọn `asset_id`. Worker và API gọi ag-go bằng service key +
+    `X-Act-As-User` = chủ production; web gọi thẳng ag-go bằng bearer Auth0 của người dùng. Ảnh/URL footage chỉ trả
+    cho người có quyền xem các folder của production (`FootageAccessService.coversProduction`).
+134. **Render chạy ở farm, renderer là code của harness.** Stage `render-final` là executor `farm`
+    (`packages/executors/src/farm-executor.ts`): đẩy input lên R2, gửi job `studio.render_final` cho ag-farm, chờ,
+    tải output theo manifest. Render worker (`E:\CODE\ag-render-worker`) link `@ag-studio/render` → chạy đúng
+    `renderComposition` của `@harness/core`. Worker xin URL ký qua `POST /api/farm/sign` (vé EdDSA của farm):
+    `asset:` → ag-go `/footage/assets/resolve` (`final` cho render cuối, `preview` cho xem trước), `stage:` →
+    prefix input, mọi lần ký ghi `sign_audit_log`. Studio không có đường render local.
+135. **File hướng ra trình duyệt nằm trên R2.** `S3Bucket` (`studio-engine/src/bucket.ts`): export, thumbnail,
+    payload nhật ký LLM, input/output của farm. URL ký có hạn `STUDIO_BROWSER_URL_TTL_SECONDS`.
+136. **Xuất Premiere = FCP7 XML (xmeml v5), chạy ở farm (D7).** Job `studio.export_premiere`
+    (`ag-render-worker/src/premiere-{xml,handler}.ts`): V1 các clip nối tiếp, V2 chữ dạng PNG trong suốt (Premiere
+    không đọc generator chữ trong XML), A1 tiếng gốc, A2 nhạc, chương thành marker, zip kèm `README.txt` hướng dẫn
+    relink. Proxy hay bản gốc do ag-go `resolve` quyết theo quyền tải gốc của người dùng.
+137. **Quy chuẩn của nhóm vào prompt, không thành artifact.** `team_skills` (≤20 000 ký tự mỗi bản, ≤60 000 cho
+    mọi bản đang bật) được chèn vào prompt lúc gọi Claude (`teamGuidesForRun`), bọc `<team_guide>`.
+138. **Mọi lượt gọi Claude và mọi chỉnh sửa của người được ghi lại.** `llm_calls` (payload gzip trên bucket) và
+    `human_edits` (trước/sau khi duyệt hoặc sửa); `exportLlmDataset` xuất JSONL để làm dữ liệu huấn luyện/đánh giá.
+139. **Nghiên cứu thị trường bằng YouTube Data API v3 (D6).** `youtube-research.ts`: `search.list` tốn 100 đơn vị,
+    cache 24 h trong `youtube_cache`; dừng khi hết quota; Claude phân tích không dùng tool.
+140. **Thumbnail làm trên máy Studio.** ffmpeg chạy bất đồng bộ cắt khung từ `final.mp4` và vẽ chữ theo branding;
+    font là Arial của hệ thống (không ship font). Canva: token từng người mã hoá bằng `CANVA_TOKEN_KEY`, không về
+    trình duyệt, refresh tuần tự theo người dùng.
+141. **Quy tắc phát hành workflow giữ nguyên từ harness.** Thư mục `workflows/<id>@<ver>/` đã phát hành không sửa;
+    script/payload builder đổi đầu ra thì đặt tên mới (`studio-episode-export-v2`) và giữ tên cũ cho run cũ;
+    `packages/studio-engine/test/workflow-wiring.test.ts` kiểm mọi phiên bản.
+142. **Quy trình tài liệu bị bỏ qua trong đợt fork, từ nay áp lại.** 138 commit trong 4 ngày nhưng chỉ ~11 commit
+    đụng `docs/`/`skills/`/`AGENTS.md`, không có spec/plan trong repo, ADR dừng ở mục 126. Từ 2026-10-06 mỗi pha có
+    spec + plan trong `docs/superpowers/`, cuối pha cập nhật AGENTS.md, ADR, runbook, `deferred-items.md`.
+143. **Số lượt Claude cùng lúc cấu hình được, mặc định 20; worker chạy một pool vòng lặp (2026-10-06).**
+    `STUDIO_RESOURCES.claude = 1` cũ không chỉ giới hạn Claude: mỗi tiến trình worker chỉ có **một** vòng
+    claim → chạy → commit, và một stage farm giữ vòng đó suốt lúc render, nên mọi production xếp hàng sau nhau.
+    Giờ `STUDIO_CLAUDE_MAX_CONCURRENT` (1–100, mặc định 20, giá trị sai là `CONFIG_INVALID` lúc khởi động) đặt
+    capacity `claude`; `createStudioWorkerPool` chạy `claude + farm + cpu` vòng trong cùng tiến trình, dùng chung
+    store và executor, phối hợp qua `claim()`/lease như nhiều tiến trình worker. Capacity mới là thứ quyết định số
+    lượt Claude song song. Đánh đổi: hạn mức gói subscription hết nhanh hơn, mỗi lượt là một tiến trình `claude`.
+144. **Chat với Claude theo production, chạy trong worker, giữ slot `claude` trên bảng `lease` (2026-10-06).**
+    Mỗi tin nhắn là một dòng `stage_chat_turns` (migration 0019) kèm một câu trả lời `pending`; vòng chat của
+    `createStudioWorkerPool` (`chat-runner.ts`) chạy nó — không qua `claim()`, vì API và worker là hai tiến trình
+    và chỉ worker có env Claude. Mỗi lượt chat giữ một dòng lease `owner = chat:<turn>` với `resources ["claude"]`
+    (id `stage_run_…`/`attempt_…` hợp lệ để reaper đọc được rồi bỏ qua); khi đủ cap, lượt chờ giữ dòng
+    `chat-wait:<turn>` cũng tính vào cap, nên slot vừa trống thuộc về tin nhắn chứ không về stage xếp hàng — chat
+    được ưu tiên mà không sửa `claim()`. Một scope (gate/intake/timeline/stage hỏng) chỉ chạy một lượt một lúc; tin
+    gửi khi lượt trước còn chờ gộp vào lượt đó. Cap đọc lại mỗi lần claim: `studio_settings` (migration 0020, admin
+    sửa trên web) thắng `STUDIO_CLAUDE_MAX_CONCURRENT`; pool thêm hoặc thả vòng (thả sau khi stage đang chạy xong).
+145. **Prompt chat dùng lại phần đầu prompt của stage, đề xuất kiểm bằng validator của stage (2026-10-06).**
+    `studioPrompt` tách `studioPromptHead` (brief, quy chuẩn nhóm, dữ liệu vào) + `studioPromptTail`, byte-identical
+    (snapshot). Lượt chat dựng lại request của stage nguồn (`acceptedInputsFor` + `materializeInputs`) nên head
+    giống hệt lượt stage — trúng prompt cache — rồi thêm `# Bản hiện tại`, `# Góp ý`, `# Đầu ra (chat)`; trả
+    `{reply, action, proposal}` (`chatReplySchema`). `proposal` qua đúng validator của skill, một vòng sửa; vẫn sai
+    thì giữ `reply`, bỏ `proposal`, ghi `problems`. Không gì được áp dụng cho tới khi người bấm Duyệt/Áp dụng/Bắt
+    đầu: Duyệt nộp đúng bản đang hiện (theo `turnId`, bản cũ hơn bị 409 `stale_version`) qua `submitStudioGate`.
+    Timeline không đề xuất cả tài liệu (có `z.record`) mà đề xuất thao tác `TimelineOp` chạy qua `layout.ts`.
+146. **Mọi stage Claude có gate đi sau: `ag-studio-series-plan@3.0.0`, `ag-studio-episode@1.3.0` (2026-10-06).**
+    Plan thêm `approve-trend-report`; tập thêm `approve-timeline` (nộp revision mới nhất) trước `youtube-kit` và
+    `approve-youtube-kit` sau nó; `studio-freeze-timeline-v2` render timeline **đã duyệt** (sửa sau khi duyệt chỉ
+    render khi Render lại, chạy lại từ `approve-timeline`). Tập chờ gate có trạng thái mới `waiting_approval`. Plan
+    1.0.0/2.0.0 vẫn sinh tập 1.2.0 (`episodeWorkflowForPlan`): series bắt đầu trên màn cũ kết thúc như cũ. Intake
+    qua chat chạy **trước** run trên production nháp (skill `studio-intake`), Bắt đầu ghi vào production rồi
+    `startPlanRun`; stage `intake` của workflow giữ nguyên.
+147. **Stage Claude hỏng được chạy lại kèm góp ý, Claude không sửa thẳng đầu ra đã bị từ chối (2026-10-06).**
+    Chat ở scope `failed` giải thích lỗi; "Chạy lại" (`retryStageWithFeedback`) đưa tin nhắn của scope đó vào prompt
+    của stage (`# Góp ý của người dùng`, `StudioAgentExecutor.feedbackFor`). Ghi đè output REJECTED bằng bản Claude
+    sửa sẽ phải đổi core; chạy lại giữ đúng checker và lineage.
+148. **Kiểu máy render bản cuối bằng `requirements` sẵn có của ag-farm, lưu theo run (2026-10-06).** Ba kiểu
+    `any` (`{}`), `nvenc` (`{ nvenc: true }`), `gpu` (`{ gpu: true }`); Studio lưu **tên kiểu**, không lưu requirements thô,
+    nên không route nào gửi được khoá farm từ chối (schema của hub là strict). Bảng `studio_render_choices` (migration
+    0021) khoá theo `(run_id, stage_key)`: mỗi lần render là một run, run cũ và màn cũ không có dòng nào nên vẫn gửi `{}`.
+    Worker đọc lúc gửi job (`FarmExecutor.requirementsFor`, executor 0.4.0), nên không cần workflow mới; chọn khi duyệt
+    `approve-youtube-kit` (gate cuối trước render) hoặc khi Render lại. Requirements gửi đi được ghi vào
+    `studio_farm_jobs.requirements`. Không làm: ghim một máy theo tên (cần trường mới trong giao thức farm), đổi máy cho
+    job đã gửi (farm không cho sửa requirements; phải huỷ rồi gửi lại).
+149. **Render lại chạy từ `render-final` khi timeline đã duyệt không đổi (2026-10-06).** Trước đây Render lại một tập
+    1.3.0 luôn chạy lại từ `approve-timeline`, kéo theo `youtube-kit` (một lượt Claude) và hai lần duyệt cho đúng timeline
+    cũ. Giờ `renderRestartFrom` so revision mới nhất với `timeline.json` của `approve-timeline` (`isDeepStrictEqual`):
+    giống thì `resumeRunFrom(render-final)` — mọi bước trước được giữ — khác thì như cũ. Run Studio không có variant nên
+    không có cache reuse: render-final chạy thật. Áp dụng cho cả nút Render lại của màn cũ.
+150. **Màn Hàng đợi đọc owner API của ag-farm; không có danh sách máy (2026-10-06).** Owner API chỉ có job
+    (`listJobs`, `JobView` có `node_id` nhưng không tên máy, không requirements); danh sách node chỉ ở admin API
+    (`GET /v1/admin/nodes`, JWT Auth0 admin). Màn Hàng đợi hiện job ghép với `studio_farm_jobs` (kiểu máy, tập), lọc
+    theo team, cache `listJobs` 3 s trong API. Hai điều về farm cần biết khi chọn máy: job không máy nào khớp nằm
+    `queued` mãi, không lỗi (Studio cảnh báo sau 10 phút; stage chờ tới hết deadline 4 giờ); và `nvenc` của một node là
+    "ffmpeg của nó có encoder `h264_nvenc`" (worker-sdk dò `ffmpeg -encoders` một lần lúc khởi động), không phải driver
+    chạy được NVENC — máy dev (Quadro P1000, driver 582 < 610) có thể khai `nvenc` rồi render bằng CPU
+    (`encoder: auto` tự lùi), và `render.json` không ghi encoder đã dùng.
+151. **Timeline v4: clip là một đoạn của video, kèm lời dẫn và phụ đề; hợp đồng cho pha 4 và 6 (2026-10-06).**
+    `studio.timeline/v4` (`TimelineV4Schema`, `packages/contracts/src/studio.ts`, chú thích ở đầu schema là hợp đồng):
+    clip có `in`, `out` (null = tới hết video), `shot_id`, `line_id`, `transition_out {cut|dissolve|dip_black, 0–1 s}`;
+    timeline có `edit_style whole|cut`, `narration {voice none|tts|original, lead_seconds, lines[{line_id, text,
+    audio{key, duration_s, words}|null}]}`, `captions {mode}`. Đọc thì v3 luôn ra v4 (`upgradeTimelineV3`,
+    `readTimeline`); **ghi thì giữ phiên bản của revision đầu tiên của tập** (`timelineAsVersion`): tập ghép nguyên
+    video vẫn lưu v3 — hạ v4 → v3, ném `TimelineVersionError not_v3` (API 422) khi mất dữ liệu (trim, chuyển cảnh,
+    lời dẫn, phụ đề) — tập cắt theo shot lưu v4. Không bao giờ ghi lại một revision v3 cũ thành v4, nên artifact
+    `timeline_v3`, checker và digest của run cũ giữ nguyên byte. Thao tác trong `layout.ts` là generic (tập v3 vẫn v3);
+    `trimClip`/`setTransition`/`setCaptions` chỉ cho v4 (`TimelineOpError needs_v4`). `timelineToComposition` của v3 ra
+    đúng từng byte như trước (snapshot). Pha 4 (Premiere) và 6 (CapCut) đọc `in`/`out`, `transition_out` và
+    `narration` của v4.
+152. **Hai kiểu dựng theo tập, chọn ở `plan-episodes`: `ag-studio-series-plan@3.1.0` (2026-10-06). Đảo D1.**
+    `PlannedEpisodeSchema` có hai khoá tuỳ chọn `edit_style: whole|cut` (vắng = `whole`) và `narration: none|tts|original`
+    (ADR mục 126: khoá vắng giữ hợp lệ cho plan cũ). Plan 3.1.0 chỉ khác 3.0.0 ở `spawn-episodes`
+    (`studio-spawn-episodes-v2`): ghi `episodes.edit_style` (migration 0023) và chọn workflow từng tập
+    (`episodeWorkflowFor`): `cut` → `ag-studio-episode-cut@1.0.0`, `whole` → `ag-studio-episode@1.3.0`. Plan 3.0.0 vẫn
+    sinh mọi tập 1.3.0, kể cả khi Claude ghi `cut`. Kiểm kế hoạch thêm: tối đa 40 video một tập cắt
+    (`too_many_sources`), footage ≥ 1,5 × thời lượng (`pool_too_short`, cảnh báo), lời dẫn chỉ với tập `cut`
+    (`narration_needs_cut`).
+153. **Shot dò trong Studio trên proxy 720p, lưu theo run, không về ag-go (2026-10-06). Đảo D10 trong Studio.**
+    Tập cắt: `episode-intake` → `fetch-proxies` (ag-go `resolve purpose=preview`, proxy của scan worker) →
+    `media-index` (dò cắt cảnh bằng ffmpeg, `harness.shots/v2`) → `transcribe` → `watch-source` (khung giữa mỗi shot,
+    contact sheet 4 cột × 16 shot, khung đẩy lên R2 `productions/<p>/episodes/<e>/shots/<shot_id>.jpg` cho lưới shot
+    trên web, URL chỉ cho người qua `coversProduction`). ag-go vẫn chọn theo cả video; không đổi hợp đồng ag-go. Worker
+    Studio dùng chung một tiến trình cho cả pool, nên mọi lệnh media ở `cut-ffmpeg.ts` là bất đồng bộ; của
+    `packages/core/src/media` chỉ dùng phần thuần (`buildShots`, `shotId`, `fitEdl`, `buildTimeline`), không dùng các hàm
+    gọi `spawnSync`.
+154. **Nhận dạng lời nói là job farm `studio.transcribe` (đổi hợp đồng ag-farm, đã duyệt, Q1 = a) (2026-10-06).
+    Đảo D11.** Studio tách tiếng của từng nguồn thành WAV 16 kHz mono và gửi kèm job (`stage:audio/<id>.wav`), nên máy
+    farm không tải footage; nguồn không có tiếng, hoặc ag-go nói không có lời (`has_speech = false`, chỉ là gợi ý), bị
+    bỏ qua. Payload `StudioTranscribePayloadSchema`, manifest `ag.studio.transcribe/v1` (`transcribe.json`), slot `gpu`,
+    base `{gpu, python}`; hub migration cho owner đã có `studio.tts` quyền `studio.transcribe`; render worker 0.6.0 chạy
+    `engines/python/transcribe.py`. Phương án chạy WhisperX trong worker Studio bị loại: worker Studio là một tiến trình
+    Node cho cả pool (một job Python chiếm CPU/GPU hàng phút chặn mọi vòng khác), máy chạy Studio không chắc có GPU, và
+    farm đã có sẵn lịch theo GPU, hàng đợi, thử lại.
+155. **Agent file mode có session cho bước xem hình; chat ở gate đó `--resume --fork-session` (2026-10-06).**
+    `source-survey` (`studio-source-survey`) là stage Claude duy nhất được đọc file: `CliAgentRuntime` mode `files`
+    (`--allowedTools Read,Write,Glob,Grep`, `--permission-mode acceptEdits`, không Bash, không web, session được giữ).
+    Claude tự ghi `output/survey.json`; vòng sửa resume đúng session. Session và thư mục lưu ở `studio_agent_sessions`
+    (migration 0022). Chat ở `approve-survey` (skill `studio-survey`, đề xuất `SurveyOp` keep/reject/setScore/setNote áp
+    bằng `applySurveyOps`) chạy `--resume <session> --fork-session --json-schema` trong thư mục đó, chỉ Read/Glob/Grep,
+    20 lượt; session gốc không đổi. Mất thư mục (đã dọn) thì lùi về chat structured như mọi gate. `plan-edit`
+    (`studio-edit-plan`) vẫn structured: thông tin hình đã nằm trong bản chọn cảnh. JSON Schema gửi Claude luôn bắt
+    buộc mọi khoá (`stripForClaude`), kể cả khoá tuỳ chọn trên đĩa.
+156. **Lời dẫn đọc ở farm, kho giọng theo nội dung; `skip` không gửi job (2026-10-06).** `tts` gửi `studio.tts` chỉ
+    cho các dòng chưa có trong kho (`voiceKey` = sha256 của chữ, ngôn ngữ, giọng tham chiếu, chữ tham chiếu, tốc độ,
+    engine; WAV ở `<STUDIO_DATA_ROOT>/voice/<key>.wav`, bảng `studio_voice_lines`, migration 0024): chạy lại từ kế hoạch
+    dựng sau khi sửa một câu chỉ đọc câu đó. Payload builder trả `skip: {files}` khi không có gì để gửi
+    (`FarmExecutor` 0.5.0 ghi các file đó làm đầu ra, không gọi farm) — dùng cho TTS và transcribe. Dò Python của
+    worker-sdk nhận `pythonBin` (đổi code ag-farm, không đổi giao thức) để render worker khai `python` (Q13).
+157. **Không có stage compose: composition luôn suy từ revision v4 (2026-10-06).** `studio-cut-fit` khớp kế hoạch
+    dựng với độ dài từng câu lời dẫn (`fitCutTimeline`, thuần) và ghi timeline v4 đầu tiên; người còn sửa timeline sau
+    đó, nên `timelineToComposition(v4)` tự sinh `narration[]` (`stage:voice/<line_id>.wav`), phụ đề
+    (`buildCaptionCues`, mặc định `burn-in` khi có lời dẫn), cửa sổ ducking nhạc và chuyển cảnh (`resolveTransitions`:
+    dissolve cần đuôi video, hạ thành cắt thẳng khi thiếu). `voice: tts` tắt tiếng gốc như `renderComposition` vẫn
+    làm (Q9); tiếng môi trường dưới lời dẫn cần đổi `audio-graph.ts` của render worker, để sau.
+158. **`ag-studio-episode-cut@1.0.0` giữ các khoá gate và render của 1.3.0 (2026-10-06).** `approve-timeline`,
+    `youtube-kit`, `approve-youtube-kit`, `freeze-timeline` (`studio-freeze-timeline-v2`, nhận cả `timeline_v4`),
+    `render-final` (builder `studio-episode-render-v4`), `thumbnails`, `export` có cùng khoá, nên `run-control`
+    (Render lại, kiểu máy, Hàng đợi, trạng thái tập) dùng chung không đổi. Hai gate mới `approve-survey`,
+    `approve-edit-plan`; `rerunEpisodeFrom` chạy lại tập từ một trong hai (run mới giữ footage, shot, khung đã làm), chỉ
+    khi run đã xong hoặc đang chờ ở gate sau (run đó bị huỷ trước).
+159. **Xuất Premiere tắt cho tập cắt theo shot tới pha 4 (2026-10-06).** `premiere-xml.ts` bỏ qua in-point và không có
+    track lời dẫn: timeline v4 có trim, chuyển cảnh hoặc lời dẫn → `POST …/exports/premiere` 422
+    `premiere_needs_phase_4`; web ẩn mục xuất Premiere của tập `cut` ở cả chat và màn cũ.

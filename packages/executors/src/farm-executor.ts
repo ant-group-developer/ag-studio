@@ -5,7 +5,8 @@
  *     The full relative path is preserved so farm_payload can reference inputs as
  *     `stage:<input.path>` (e.g. `stage:renders/1/composition.json`). The farm sign_url
  *     endpoint resolves `stage:<path>` → `${inputPrefix}<path>`.
- *  2. Submits the job to ag-farm using `stage_config.farm_payload` directly — the payload must
+ *  2. Submits the job to ag-farm (requirements: `requirementsFor`, else `stage_config.requirements`, else any
+ *     node) using `stage_config.farm_payload` directly — the payload must
  *     already conform to the schema for the job type (StudioTtsPayloadSchema /
  *     StudioRenderPayloadSchema). The payload is validated before submission; an extra `inputs:`
  *     key is never added (the strict hub schema would reject it).
@@ -20,13 +21,15 @@
  *  6. Cancels the farm job when the stage deadline is exceeded or the stage is aborted.
  *  7. Acks the job (marks it consumed by the owner).
  */
-import { readFileSync, mkdirSync, existsSync, copyFileSync } from "node:fs";
+import { readFileSync, mkdirSync, existsSync, copyFileSync, writeFileSync } from "node:fs";
 import { join, basename, dirname } from "node:path";
 import { directoryDigest, listDirectoryFiles } from "@harness/core";
 import { FarmOwnerClient } from "@ag-farm/owner-client";
 import {
   StudioTtsPayloadSchema,
   StudioRenderPayloadSchema,
+  StudioTranscribePayloadSchema,
+  TranscribeManifestSchema,
   TtsManifestSchema,
   RenderManifestSchema,
   type JobType,
@@ -116,6 +119,8 @@ export interface SubmittedInfo {
   productionId: string;
   jobType: string;
   isFinalRender: boolean;
+  /** The ag-farm `requirements` the job was submitted with. */
+  requirements?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +139,11 @@ export interface FarmPayloadBuild {
   extraUploads?: { localPath: string; relPath: string }[];
   /** Downloaded output path (relative to `output/`) -> the stage's declared output name. */
   rename?: Record<string, string>;
+  /**
+   * Nothing to send (every narration line is already in the voice store, no source has speech…): these files,
+   * relative to `output/`, are the stage's outputs and no job is submitted (phase 5).
+   */
+  skip?: { files: Record<string, string | Buffer> };
 }
 export type FarmPayloadBuilder = (request: StageRequest, ctx: ExecutorContext) => Promise<FarmPayloadBuild>;
 
@@ -149,6 +159,11 @@ export interface FarmExecutorOptions {
   onSubmitted?: (info: SubmittedInfo) => Promise<void> | void;
   /** Poll interval in ms (default 5000). */
   pollIntervalMs?: number;
+  /**
+   * ag-farm `requirements` for this attempt, chosen at run time (the machine type a person picked for a final
+   * render). `undefined` leaves `stage_config.requirements`, else `{}` (any node).
+   */
+  requirementsFor?: (request: StageRequest) => Record<string, unknown> | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -156,7 +171,7 @@ export interface FarmExecutorOptions {
 // ---------------------------------------------------------------------------
 
 export class FarmExecutor implements Executor {
-  readonly version = "0.3.0";
+  readonly version = "0.5.0";
 
   constructor(private readonly opts: FarmExecutorOptions) {}
 
@@ -201,6 +216,15 @@ export class FarmExecutor implements Executor {
         build = await builder(request, ctx);
       } catch (e) {
         return failed("contract", `farm payload builder "${cfg.payload_builder}" failed: ${String(e)}`, { payload_builder: cfg.payload_builder });
+      }
+      if (build.skip) {
+        const outDir = join(ctx.workspaceDir, "output");
+        for (const [rel, content] of Object.entries(build.skip.files)) {
+          mkdirSync(dirname(join(outDir, rel)), { recursive: true });
+          writeFileSync(join(outDir, rel), content);
+        }
+        ctx.logger.info("nothing to send to the farm: outputs written by the payload builder", { files: Object.keys(build.skip.files) });
+        return this.collectOutputs(request, ctx, started, failed);
       }
     }
 
@@ -261,6 +285,8 @@ export class FarmExecutor implements Executor {
         jobType === "studio.render_final"
       ) {
         validatedPayload = StudioRenderPayloadSchema.parse(rawPayload);
+      } else if (jobType === "studio.transcribe") {
+        validatedPayload = StudioTranscribePayloadSchema.parse(rawPayload);
       } else {
         // Unknown job type: pass the payload through without schema validation
         validatedPayload = rawPayload;
@@ -276,6 +302,8 @@ export class FarmExecutor implements Executor {
     // -----------------------------------------------------------------------
     // 3. Submit job (idempotent via correlation_id = attempt_id)
     // -----------------------------------------------------------------------
+    const requirements = this.opts.requirementsFor?.(request)
+      ?? (typeof cfg.requirements === "object" && cfg.requirements !== null ? (cfg.requirements as Record<string, unknown>) : {});
     let jobId: string;
     try {
       const resp = await this.opts.client.submitJob({
@@ -286,15 +314,12 @@ export class FarmExecutor implements Executor {
         // One farm-level retry: a worker that dies mid-render (lease expired) is requeued right away on
         // another slot instead of failing the stage and waiting for the stage backoff.
         max_attempts: 2,
-        requirements:
-          typeof cfg.requirements === "object" && cfg.requirements !== null
-            ? (cfg.requirements as Record<string, unknown>)
-            : {},
+        requirements,
       });
       jobId = resp.job.id;
       ctx.logger.info(
         `farm job submitted id=${jobId} created=${resp.created}`,
-        { job_id: jobId, job_type: jobType },
+        { job_id: jobId, job_type: jobType, requirements },
       );
     } catch (e) {
       return failed("transient", `failed to submit farm job: ${String(e)}`, {
@@ -315,6 +340,7 @@ export class FarmExecutor implements Executor {
           productionId,
           jobType,
           isFinalRender,
+          requirements,
         });
       } catch (e) {
         // Recorder failure is fatal: the worker would get 403 on every sign call.
@@ -421,7 +447,10 @@ export class FarmExecutor implements Executor {
       ) as unknown;
 
       try {
-        if (jobType === "studio.tts") {
+        if (jobType === "studio.transcribe") {
+          // the manifest IS the output (`transcribe.json`): nothing else to download
+          TranscribeManifestSchema.parse(manifestRaw);
+        } else if (jobType === "studio.tts") {
           const m = TtsManifestSchema.parse(manifestRaw);
           for (const line of m.lines) {
             const dest = join(outDir, line.output);
@@ -496,9 +525,16 @@ export class FarmExecutor implements Executor {
       }
     }
 
-    // -----------------------------------------------------------------------
-    // 8. Build stage result from workspace output files
-    // -----------------------------------------------------------------------
+    return this.collectOutputs(request, ctx, started, failed);
+  }
+
+  /** 8. Build the stage result from the workspace output files. */
+  private async collectOutputs(
+    request: StageRequest,
+    ctx: ExecutorContext,
+    started: number,
+    failed: (kind: "transient" | "contract", message: string, details?: Record<string, unknown>) => StageResult,
+  ): Promise<StageResult> {
     const outputs: StageResult["outputs"] = [];
     for (const eo of request.expected_outputs) {
       if (!eo.name) continue;

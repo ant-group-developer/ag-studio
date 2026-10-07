@@ -10,6 +10,14 @@ function ffprobePath(): string {
   return process.env.FFPROBE_PATH ?? "ffprobe";
 }
 
+/**
+ * For suites whose code under test spawns a bare `ffmpeg`/`ffprobe` (the harness media pipeline, `FakeMediaEngine`):
+ * `FFMPEG_PATH` does not reach that code, so the tools must be on PATH or the suite skips.
+ */
+export function hasFfmpegOnPath(): boolean {
+  return spawnSync("ffmpeg", ["-version"]).status === 0 && spawnSync("ffprobe", ["-version"]).status === 0;
+}
+
 export function hasFfmpeg(): boolean {
   const ffmpeg = spawnSync(ffmpegPath(), ["-version"]);
   const ffprobe = spawnSync(ffprobePath(), ["-version"]);

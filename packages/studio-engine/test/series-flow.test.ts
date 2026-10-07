@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   buildYoutubePack, captureThumbnail, composeThumbnail, createStudioWorker, cutEpisodeFrames, deleteThumbnail, episodeExport, episodeRunView,
   episodeState, episodeThumbnails, getEpisode, insertThumbnail, latestEpisodeRevision, listEpisodes, listThumbnails, previewThumbnail, uploadThumbnail,
-  planRunView, readStageDocument, rerenderEpisode, resumePlanRunFrom, saveEpisodeRevision, startEpisodeRun, startPlanRun, STUDIO_WORKFLOWS,
+  planRunView, readStageDocument, rerenderEpisode, resumePlanRunFrom, saveEpisodeRevision, startEpisodeRun, startPlanRun,
   selectThumbnail, StudioRunError, studioResearchCache, submitStudioGate, type ResearchSource,
 } from "../src/index.js";
 import { StudioResearchSchema, StudioYoutubeSchema, TrendReportSchema, SeriesPlanSchema, type StudioResearch, type TimelineV3 } from "@harness/contracts";
@@ -18,6 +18,8 @@ type Worker = ReturnType<typeof createStudioWorker>;
 
 /** This file keeps covering the plan release before the research-first flow (runs of it may still be in flight). */
 const PLAN_V1 = "ag-studio-series-plan@1.0.0";
+/** …whose episodes run on the release without gates (episode 1.3.0 has its own test). */
+const EPISODE_V12 = "ag-studio-episode@1.2.0";
 
 async function drain(worker: Worker, maxTicks = 400): Promise<void> {
   for (let i = 0; i < maxTicks; i++) {
@@ -51,7 +53,7 @@ async function produceSeries(s: ReturnType<typeof setup>, prodId: string) {
   return { runId, plan };
 }
 
-describe(`${PLAN_V1} + ${STUDIO_WORKFLOWS.episode.workflow}`, () => {
+describe(`${PLAN_V1} + ${EPISODE_V12}`, () => {
   let s: ReturnType<typeof setup>;
   afterEach(() => s?.core.close());
 
@@ -255,7 +257,7 @@ describe(`${PLAN_V1} + ${STUDIO_WORKFLOWS.episode.workflow}`, () => {
     const prodId = seedProduction(s.db, { episode_target_seconds: 60, max_episodes: 1 });
     const now = new Date().toISOString();
     s.db.run("INSERT INTO episodes (id, production_id, idx, title, hook, plan, created_at, updated_at) VALUES ('ep-x', ?, 1, 'T', 'h', '{}', ?, ?)", [prodId, now, now]);
-    startEpisodeRun(s.core, s.db, "ep-x");
+    startEpisodeRun(s.core, s.db, "ep-x", { workflow: EPISODE_V12 });
     const replan = (() => { try { startPlanRun(s.core, s.db, prodId, { workflow: PLAN_V1 }); } catch (e) { return e; } return null; })();
     expect(replan).toBeInstanceOf(StudioRunError);
     expect((replan as StudioRunError).details.code).toBe("episode_producing");

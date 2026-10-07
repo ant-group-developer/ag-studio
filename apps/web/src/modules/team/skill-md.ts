@@ -5,7 +5,7 @@
 import type { TeamSkillStep } from "../../api/studio-client";
 
 /** Canonical order of the steps (the API keeps the same order). */
-export const SKILL_STEPS: TeamSkillStep[] = ["trend-report", "rnd", "branding", "plan-episodes", "youtube-kit"];
+export const SKILL_STEPS: TeamSkillStep[] = ["intake", "trend-report", "rnd", "branding", "plan-episodes", "timeline", "youtube-kit"];
 /** Character limits shared with the API (`TEAM_SKILL_LIMITS`). */
 export const SKILL_LIMITS = { name: 100, purpose: 500, content: 20_000, enabledTotal: 60_000 } as const;
 
