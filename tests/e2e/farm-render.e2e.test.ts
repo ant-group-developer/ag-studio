@@ -39,6 +39,7 @@ import { tmpdir } from "node:os";
 import { randomUUID, generateKeyPairSync, createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { inflateRawSync } from "node:zlib";
 import http from "node:http";
 import { FakeS3Server } from "./fake-s3.js";
 import {
@@ -49,7 +50,7 @@ import {
   type StudioStorage,
 } from "@harness/executors";
 import { FarmOwnerClient } from "@ag-farm/owner-client";
-import { RenderManifestSchema } from "@ag-farm/protocol";
+import { PremiereManifestSchema, RenderManifestSchema } from "@ag-farm/protocol";
 
 // ------------------------------------------------------------------
 // Workspace root and repo paths
@@ -495,7 +496,7 @@ beforeAll(async () => {
       ownerKeyHash,
       `http://127.0.0.1:${STUDIO_API_PORT}/api/farm/sign`,
       // the test DB outlives a run: an older row keeps whatever types it was given unless they are set again here
-      ["studio.tts", "studio.transcribe", "studio.render_preview", "studio.render_final"],
+      ["studio.tts", "studio.transcribe", "studio.render_preview", "studio.render_final", "studio.export_premiere"],
     ],
   );
 
@@ -513,7 +514,7 @@ beforeAll(async () => {
       "e2e-render-worker",
       "localhost",
       nodeTokenHash,
-      ["studio.tts", "studio.render_preview", "studio.render_final"],
+      ["studio.tts", "studio.render_preview", "studio.render_final", "studio.export_premiere"],
       JSON.stringify({
         os: { platform: process.platform, arch: process.arch, cpus: 4, mem_gb: 8 },
         gpus: [],
@@ -635,7 +636,7 @@ beforeAll(async () => {
       `hub_url: "http://127.0.0.1:${FARM_HUB_PORT}"`,
       `token: "${nodeToken}"`,
       `name: "e2e-render-worker"`,
-      `kinds: ["studio.tts", "studio.render_preview", "studio.render_final"]`,
+      `kinds: ["studio.tts", "studio.render_preview", "studio.render_final", "studio.export_premiere"]`,
       `work_dir: "${workerWorkDir.replace(/\\/g, "/")}"`,
       `machine_file: "${machineYamlPath.replace(/\\/g, "/")}"`,
       `cache:`,
@@ -1284,6 +1285,44 @@ describe.skipIf(!isE2E)("farm E2E: shot-cut job types", () => {
   }, 120_000);
 });
 
+/** The entries of a zip (yazl writes zip64): name → reader. */
+function zipEntries(buf: Buffer): Map<string, () => Buffer> {
+  const MAX = 0xffffffff;
+  const eocd = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  let count = buf.readUInt16LE(eocd + 10);
+  let at = buf.readUInt32LE(eocd + 16);
+  if (at === MAX || count === 0xffff) {
+    const z64 = Number(buf.readBigUInt64LE(eocd - 20 + 8)); // zip64 end of central directory, from its locator
+    count = Number(buf.readBigUInt64LE(z64 + 32));
+    at = Number(buf.readBigUInt64LE(z64 + 48));
+  }
+  const out = new Map<string, () => Buffer>();
+  for (let i = 0; i < count; i++) {
+    const method = buf.readUInt16LE(at + 10);
+    let size = buf.readUInt32LE(at + 20);
+    const usize = buf.readUInt32LE(at + 24);
+    const nameLen = buf.readUInt16LE(at + 28);
+    const extraLen = buf.readUInt16LE(at + 30);
+    let local = buf.readUInt32LE(at + 42);
+    const name = buf.subarray(at + 46, at + 46 + nameLen).toString("utf8");
+    // zip64 extended information (0x0001): the 8-byte values whose 4-byte fields are 0xffffffff, in this order
+    for (let e = at + 46 + nameLen; e < at + 46 + nameLen + extraLen; e += 4 + buf.readUInt16LE(e + 2)) {
+      if (buf.readUInt16LE(e) !== 0x0001) continue;
+      let f = e + 4;
+      if (usize === MAX) f += 8;
+      if (size === MAX) { size = Number(buf.readBigUInt64LE(f)); f += 8; }
+      if (local === MAX) local = Number(buf.readBigUInt64LE(f));
+    }
+    out.set(name, () => {
+      const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+      const data = buf.subarray(start, start + size);
+      return method === 8 ? inflateRawSync(data) : Buffer.from(data);
+    });
+    at += 46 + nameLen + extraLen + buf.readUInt16LE(at + 32);
+  }
+  return out;
+}
+
 // ------------------------------------------------------------------
 // Phase 5: the real render worker renders a small composition made from a timeline v4 (timelineToComposition):
 // three trimmed pieces, a dissolve, a narration line from a synthetic WAV; the file is as long as the composition.
@@ -1375,5 +1414,53 @@ describe.skipIf(!isE2E)("farm E2E: a shot-cut (v4) composition", () => {
     const probe = JSON.parse(stdout) as { streams?: { codec_type?: string }[]; format?: { duration?: string } };
     expect(probe.streams?.some((x) => x.codec_type === "audio"), "the narration is in the file").toBe(true);
     expect(parseFloat(probe.format?.duration ?? "0")).toBeCloseTo(composition.total_seconds, 0);
-  }, 300_000);
+
+    // Phase 4: the same composition exported to Premiere — trims, the dissolve, the narration on A3, A1 empty.
+    const premiereAttempt = `atm_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+    const premierePrefix = stageInputPrefix(productionId, "editor-premiere", premiereAttempt);
+    await s3Put(s3, `${premierePrefix}voice/L001.wav`, readFileSync(wav), "audio/wav");
+    const premiereStorage: StudioStorage = {
+      ...storage,
+      async upload(localPath: string, objectKey: string): Promise<string> {
+        await s3Put(s3, objectKey, readFileSync(localPath));
+        return `stage:${objectKey.slice(premierePrefix.length)}`;
+      },
+    };
+    const premiereExecutor = new FarmExecutor({
+      client: new FarmOwnerClient({ baseUrl: `http://127.0.0.1:${FARM_HUB_PORT}`, ownerKey, timeoutMs: 15_000 }),
+      storage: premiereStorage, onSubmitted: async (info: SubmittedInfo) => { await makeStudioFarmRecorder(studioDbPath)(info); }, pollIntervalMs: 2000,
+    });
+    const exported = await premiereExecutor.execute({
+      schema_version: "harness.stage-request/v1", run_id: `run_cutp_${randomUUID().replace(/-/g, "").slice(0, 16)}`, stage_key: "editor-premiere",
+      attempt_id: premiereAttempt, attempt_number: 1,
+      stage_config: {
+        production_id: productionId, job_type: "studio.export_premiere", requirements: {},
+        farm_payload: {
+          production_id: productionId, episode_id: "ep-cut", composition: "stage:renders/cut/composition.json", media: "proxy", name: "Tập cắt",
+          markers: [{ t_s: 0, title: "Mở đầu" }], output: "premiere/cut.zip",
+        },
+      },
+      inputs: [{ path: "renders/cut/composition.json", type: "application/json", checksum: `sha256:${"0".repeat(64)}`, size_bytes: compositionJson.length, kind: "file" }],
+      expected_outputs: [],
+      limits: { deadline_at: new Date(Date.now() + 5 * 60_000).toISOString(), cost_usd_limit: null, wall_seconds_limit: 300 },
+      budget: { remaining_usd: null },
+    } as never, { workspaceDir: wsDir, clock: new SystemClock(), logger, signal: undefined } as never);
+    expect((exported as { outcome: string }).outcome, JSON.stringify(exported)).toBe("succeeded");
+
+    const outPrefix = `productions/${productionId}/jobs/editor-premiere/${premiereAttempt}/out/`;
+    const outKeys = ((await s3.send(new ListObjectsV2Command({ Bucket: S3_BUCKET, Prefix: outPrefix }))).Contents ?? []).map((o) => o.Key!);
+    const manifestKey = outKeys.find((k) => k.endsWith("/premiere.json"))!;
+    const manifest = PremiereManifestSchema.parse(JSON.parse(Buffer.from(await (await s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: manifestKey }))).Body!.transformToByteArray()).toString("utf8")));
+    const zipKey = outKeys.find((k) => k.endsWith(`/${manifest.output}`))!;
+    // Media are stored, text is deflated: read the entries from the zip's central directory.
+    const zipBuf = Buffer.from(await (await s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: zipKey }))).Body!.transformToByteArray());
+    const entries = zipEntries(zipBuf);
+    expect([...entries.keys()].some((n) => n.startsWith("media/voice-")), "the narration WAV is in the zip").toBe(true);
+    const xml = entries.get("project.xml")!().toString("utf8");
+    expect(xml).toContain("Cross Dissolve");
+    const ins = [...xml.matchAll(/<clipitem id="clipitem-v\d+">[\s\S]*?<in>(-?\d+)<\/in>/g)].map((m) => Number(m[1]));
+    expect(ins.some((n) => n > 0), "a clip starts inside its file").toBe(true);
+    expect(xml, "A1 is empty when the voice is tts").not.toContain('id="clipitem-a1"');
+    expect(xml, "the narration line is on its own track").toContain('id="clipitem-n1"');
+  }, 420_000);
 });
