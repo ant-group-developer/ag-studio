@@ -12,6 +12,11 @@ export const chatVi = {
     collapse: "Thu gọn các tập của {{title}}",
     latest: "Xuống tin mới nhất",
   },
+  resize: {
+    nav: "Đổi độ rộng cột video",
+    aside: "Đổi độ rộng cột kết quả",
+    hint: "Kéo để đổi độ rộng · bấm đúp để về mặc định",
+  },
   episodeTitle: "Tập {{idx}} · {{title}}",
   oldScreens: "Bảng production cũ",
   backToChat: "Giao diện chat",

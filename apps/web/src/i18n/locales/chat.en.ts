@@ -14,6 +14,11 @@ export const chatEn: typeof chatVi = {
     collapse: "Hide the episodes of {{title}}",
     latest: "Jump to the latest message",
   },
+  resize: {
+    nav: "Resize the videos column",
+    aside: "Resize the result column",
+    hint: "Drag to resize · double-click to reset",
+  },
   episodeTitle: "Episode {{idx}} · {{title}}",
   oldScreens: "Old production screens",
   backToChat: "Chat screens",
