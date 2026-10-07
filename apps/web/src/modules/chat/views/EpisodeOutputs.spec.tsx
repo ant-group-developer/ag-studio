@@ -34,6 +34,13 @@ describe("EpisodeOutputs: the final render's machine", () => {
     expect(screen.getByText(/Chưa máy nào nhận job/)).toBeInTheDocument();
   });
 
+  it("failed: says which type it was tried on, not that it was rendered", async () => {
+    client.getEpisode.mockResolvedValue(episode({ restartFrom: "render-final", job: job("2026-10-06T10:00:00.000Z") }, { status: "failed" }));
+    mount();
+    expect(await screen.findByText("Đã thử render trên: máy có NVENC")).toBeInTheDocument();
+    expect(screen.queryByText(/^Render trên:/)).toBeNull();
+  });
+
   it("done: says which type it was rendered on", async () => {
     client.getEpisode.mockResolvedValue(episode({ restartFrom: "render-final", job: job("2026-10-06T10:00:00.000Z") }, { status: "ready" }));
     mount();

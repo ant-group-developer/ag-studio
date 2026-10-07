@@ -233,7 +233,7 @@ export const chatEn: typeof chatVi = {
     waiting: "Waiting for a fitting machine · {{min}} min",
     stuck: "No machine took the job yet; maybe no {{machine}} is running. Cancel and Render again with another machine type if needed.",
     stuckAny: "No machine took the job yet; maybe no render machine is running.",
-    paused: "The farm job is paused ({{machine}})", renderedOn: "Rendered on: {{machine}}",
+    paused: "The farm job is paused ({{machine}})", renderedOn: "Rendered on: {{machine}}", triedOn: "Tried to render on: {{machine}}",
   },
   result: {
     label: "Result of the current step", waiting: "waiting for you", failed: "needs attention", running: "running",

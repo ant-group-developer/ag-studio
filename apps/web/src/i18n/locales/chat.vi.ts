@@ -231,7 +231,7 @@ export const chatVi = {
     waiting: "Đang chờ máy phù hợp · {{min}} phút",
     stuck: "Chưa máy nào nhận job; có thể không có {{machine}} nào đang chạy. Huỷ rồi Render lại với kiểu máy khác nếu cần.",
     stuckAny: "Chưa máy nào nhận job; có thể không có máy render nào đang chạy.",
-    paused: "Job trên farm đang tạm dừng ({{machine}})", renderedOn: "Render trên: {{machine}}",
+    paused: "Job trên farm đang tạm dừng ({{machine}})", renderedOn: "Render trên: {{machine}}", triedOn: "Đã thử render trên: {{machine}}",
   },
   result: {
     label: "Kết quả bước hiện tại", waiting: "chờ bạn duyệt", failed: "cần xử lý", running: "đang chạy",
