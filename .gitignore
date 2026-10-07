@@ -18,4 +18,5 @@ fixtures/legacy-channel-repo/outputs/
 fixtures/legacy-channel-repo/work/
 !.env.example
 
-.claude
+.claude
+.history
