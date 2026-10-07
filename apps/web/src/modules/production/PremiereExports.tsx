@@ -66,6 +66,8 @@ export function PremiereExports({ productionId, episodeId, canEdit }: { producti
           dataSource={jobs}
           renderItem={(job) => {
             const media = job.request.media === "original" ? t("episodes.premiereMediaOriginal") : t("episodes.premiereMediaProxy");
+            // what the render worker could not carry over (`premiere.json` warnings)
+            const warnings = Array.isArray(job.result?.["warnings"]) ? (job.result["warnings"] as unknown[]).map(String) : [];
             return (
               <List.Item
                 actions={job.status === "completed" && job.url ? [
@@ -84,6 +86,12 @@ export function PremiereExports({ productionId, episodeId, canEdit }: { producti
                   </Space>
                   {ACTIVE.includes(job.status) && <Progress percent={Math.round(job.progress ?? 0)} size="small" />}
                   {job.status === "failed" && job.error && <Typography.Text type="danger" style={{ fontSize: 12 }}>{job.error}</Typography.Text>}
+                  {warnings.length > 0 && (
+                    <Typography.Text type="warning" style={{ fontSize: 12 }}>
+                      {t("episodes.premiereWarnings")}
+                      {warnings.map((w) => <div key={w}>{w}</div>)}
+                    </Typography.Text>
+                  )}
                 </Space>
               </List.Item>
             );

@@ -312,6 +312,7 @@ export const en: LocaleMessages = {
     premiereMediaOriginal: "Originals",
     premiereStarted: "Premiere project export started",
     premiereForbidden: "You may not download originals; export the 720p proxy instead",
+    premiereWarnings: "The export has warnings:",
     premiereNone: "No Premiere export yet",
     title: "Episodes",
     loadFailed: "Could not load the episode list",
