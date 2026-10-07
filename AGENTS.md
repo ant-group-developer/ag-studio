@@ -201,8 +201,9 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
 - **Màn Hàng đợi** (`/queue`, `GET /api/studio/queue`, `queue.ts`): lượt Claude (dòng `lease` giữ `claude`) và job farm
   chưa xong (owner API `listJobs`, cache 3 s) của video người xem thấy. Owner API **không** có danh sách node nên không
   có danh sách máy; `JobView` chỉ có `node_id`. Job `queued` quá 10 phút hiện cảnh báo (farm không báo vì sao chờ).
-- Xuất Premiere: job farm `studio.export_premiere`, FCP7 XML (xmeml v5), chữ là PNG, zip kèm README relink. **Tắt cho
-  tập cắt theo shot** tới pha 4 (422 `premiere_needs_phase_4`, web ẩn mục; ADR mục 159).
+- Xuất Premiere: job farm `studio.export_premiere`, FCP7 XML (xmeml v5), chữ là PNG, zip kèm README relink. Cả hai kiểu
+  dựng (ADR mục 171): tập cắt gửi kèm WAV lời dẫn từ kho giọng; thiếu WAV là 422 `narration_missing`. Render worker
+  phải là bản đọc v4 (`e882a6c`) trên **mọi** máy farm: worker cũ âm thầm bỏ trim, chuyển cảnh, lời dẫn.
 - **Lời dẫn và nhận dạng lời nói ở farm** (tập cắt, ADR mục 154, 156): `studio.tts` chỉ gửi các dòng chưa có trong
   kho giọng (`voice-store.ts`, khoá theo nội dung, WAV ở `<STUDIO_DATA_ROOT>/voice`); `studio.transcribe` nhận WAV 16 kHz
   Studio đã tách. Không có gì để gửi thì payload builder trả `skip` (`FarmExecutor` ghi đầu ra, không gọi farm).

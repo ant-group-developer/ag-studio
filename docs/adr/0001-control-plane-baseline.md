@@ -1055,7 +1055,7 @@ Các mục dưới đây ghi lại quyết định của nhánh AG Studio, viế
     khi run đã xong hoặc đang chờ ở gate sau (run đó bị huỷ trước).
 159. **Xuất Premiere tắt cho tập cắt theo shot tới pha 4 (2026-10-06).** `premiere-xml.ts` bỏ qua in-point và không có
     track lời dẫn: timeline v4 có trim, chuyển cảnh hoặc lời dẫn → `POST …/exports/premiere` 422
-    `premiere_needs_phase_4`; web ẩn mục xuất Premiere của tập `cut` ở cả chat và màn cũ.
+    `premiere_needs_phase_4`; web ẩn mục xuất Premiere của tập `cut` ở cả chat và màn cũ. *Thay bằng mục 171.*
 167. **Giọng đọc là tuỳ chọn; thiếu giọng thì tập hỏi, không treo (2026-10-07).** `productions.voice` có ba trạng thái:
     NULL (chưa hỏi: dùng `STUDIO_DEFAULT_VOICE_REFERENCE` nếu có), `{mode: "clone", reference: library:..., origin, ...}`
     (giọng mẫu người dùng đưa) và `{mode: "none"}` (bỏ lời dẫn **cho cả production**, Q1 của plan optional-audio).
@@ -1084,3 +1084,12 @@ Các mục dưới đây ghi lại quyết định của nhánh AG Studio, viế
     `brief.music` (đóng băng lúc `episode-intake`): nhạc đưa vào lúc tập đang chờ giọng có tác dụng ngay. Tập đã có
     timeline giữ nhạc cũ; muốn đổi thì sửa timeline. `productions.music` giữ nguồn của file (`source`, `sha256`); stage
     chỉ đóng băng `{track, gain_db, ducking}` (`productionMusic`, `studioMusicOf`).
+171. **Premiere đọc timeline v4; tập cắt theo shot xuất được (pha 4, 2026-10-07).** Thay mục 159. Render worker
+    (`ag-render-worker` `e882a6c`, sau 0.5.4) phát `[in, out)` của file, dissolve có đuôi thành Cross Dissolve,
+    `dip_black` thành Dip to Color, lời dẫn lên A3 (A1 trống khi `voice: tts`), duck window thành keyframe A2, phụ đề
+    thành `captions.srt`. Studio bỏ `premiereCanExport`; `startPremiereExport` gửi kèm WAV lời dẫn từ kho giọng như render
+    (`narrationUploads`, `stage:voice/<line_id>.wav`). Dòng nào thiếu WAV thì 422 `narration_missing` (kèm `line_id`),
+    trước khi tạo job. Cảnh báo trong `premiere.json` hiện dưới bản xuất. **Không đổi hợp đồng ag-farm:** farm không ghim
+    phiên bản worker, và composition của tập cắt cùng schema `harness.composition/v1`, nên máy chạy worker cũ vẫn nhận job
+    và **âm thầm** bỏ in-point, chuyển cảnh, lời dẫn. Vì vậy deploy render worker lên mọi máy farm **trước** Studio
+    (runbook). Chặn ở hợp đồng (một trường mới trong payload để worker cũ từ chối) để ngỏ, cần hỏi trước.

@@ -43,7 +43,6 @@ kiểu đi bộ du lịch, có lời dẫn"). Đầu tập có dòng "cắt theo
 - **Chạy lại từ một bước:** `⋯ → Chạy lại từ chọn cảnh…` hoặc `⋯ → Chạy lại từ kế hoạch dựng…` (có thẻ xác nhận). Run
   mới giữ footage, shot, khung đã làm và dừng ở bước đó với bản Claude viết; được khi tập đã xong hoặc đang chờ duyệt
   ở bước sau (run đang chờ bị huỷ). Đang có bước chạy thì 409 `episode_running`.
-- **Không xuất Premiere** cho tập cắt theo shot tới pha 4 (Premiere chưa đọc được trim, chuyển cảnh, lời dẫn).
 - **Giọng đọc và nhạc nền (tuỳ chọn):** đưa ở cột phải lúc intake, ở màn cũ, hoặc khi tập dừng với "cần giọng đọc":
   dán link (file audio, Google Drive chia sẻ công khai) hoặc tải file lên. Giọng mẫu 3–20 giây, một người nói rõ;
   phải chọn giọng là của ai (giọng máy / của mình / có giấy phép) và tick xác nhận có quyền dùng. Có giọng thì các tập
@@ -66,8 +65,13 @@ kiểu đi bộ du lịch, có lời dẫn"). Đầu tập có dòng "cắt theo
   lại, không gọi Claude, không duyệt lại. Lần render đầu chọn kiểu máy ngay trên thẻ duyệt YouTube kit.
 - **Tải về:** file mp4, hoặc "gói YouTube" (zip, tạo lúc tải).
 - **Xuất Premiere:** `⋯ → Xuất project Premiere` (proxy 720p), hoặc màn cũ để chọn bản gốc (cần quyền tải gốc trên
-  ag-go). Job farm `studio.export_premiere`; zip FCP7 XML + media + PNG chữ + `README.txt` hướng dẫn relink. Hai lỗi
-  đã biết (tiếng gốc đã tắt vẫn có, gain nhạc luôn 0 dB): `docs/operations/deferred-items.md`.
+  ag-go). Job farm `studio.export_premiere`; zip FCP7 XML + media + PNG chữ + `README.txt` hướng dẫn relink. Tập cắt
+  theo shot: clip đúng điểm vào/ra, chuyển cảnh, lời dẫn trên A3 (A1 trống), nhạc tự hạ dưới lời dẫn (keyframe A2);
+  phụ đề là `captions.srt` trong zip, nhập bằng File → Import rồi kéo lên timeline. "Lời dẫn … không còn trong kho
+  giọng" (422 `narration_missing`): render lại tập để đọc lại lời. Cảnh báo của bản xuất hiện dưới dòng job.
+- **Thứ tự deploy:** render worker đọc v4 (`ag-render-worker` từ `e882a6c`) lên **mọi** máy farm trước, rồi mới tới
+  Studio. Máy còn worker cũ vẫn nhận job xuất Premiere của tập cắt và ra project sai (clip từ đầu file, không chuyển
+  cảnh, không lời dẫn) mà không báo lỗi (ADR mục 171).
 
 ## 4. Khi một bước hỏng
 
