@@ -43,6 +43,10 @@ Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142)
   - Audio từ folder ag-go (pha B): ag-go chỉ có `image|video`, scan worker từ chối file chỉ có tiếng.
   - Giọng máy không cần file mẫu (pha C): OmniVoice voice design (`instruct`) cần trường mới trong `studio.tts`.
   - Không có gì dọn file audio cũ dưới `library/studio/<production>/` khi người dùng đổi giọng/nhạc.
+  - Giọng mẫu không kèm câu nói (Q5): render worker gửi `ref_text: ''` nên OmniVoice clone không có lời mẫu (kém hơn).
+    Gửi `None` thì OmniVoice tự tải Whisper large-v3-turbo (~1,6 GB, HuggingFace) và nghe lại file mẫu ở **mỗi** câu;
+    muốn làm thì `tts.py` nghe file mẫu một lần mỗi job (`load_asr_model` + `transcribe`), và máy farm cần sẵn model.
+    Chưa làm (repo ag-render-worker): hỏi trước. Tới lúc đó nên gõ câu nói khi đưa giọng mẫu.
 - Kiểu thumbnail `ai` có trong schema nhưng không có bộ sinh.
 - Workflow harness cũ (`library-production*`, `channel-*`, `style-study*`, `footage-production`) còn trong
   `workflows/` nhưng không chạy được vì built-in đã bị gỡ (ADR mục 127). Giữ cho test byte-identical và cho kiểu
