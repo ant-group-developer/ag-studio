@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HarnessError, StoredTimelineSchema, TimelineVersionError, type StoredTimeline, type TimelineV3 } from "@harness/contracts";
-import { layoutTimeline, timelineIssues, timelineToComposition, youtubeChapters, type TimelineIssue } from "@harness/core";
+import { isTimelineV4, layoutTimeline, timelineIssues, timelineToComposition, youtubeChapters, type TimelineIssue } from "@harness/core";
 import { jobOutputPrefix, stageInputPrefix } from "@harness/executors";
 import { PREMIERE_MANIFEST_PATH, PremiereManifestSchema, RenderManifestSchema, type StudioExportPremierePayload } from "@ag-farm/protocol";
 import type { FarmOwnerClient } from "@ag-farm/owner-client";
@@ -215,6 +215,8 @@ export async function startPremiereExport(
       name: ep.title.slice(0, 200),
       markers: youtubeChapters(layoutTimeline(rev.data)).map((c) => ({ t_s: c.start_s, title: c.title })),
       // Files in the zip are named after the videos, not their ids.
+      // A worker that cannot read a shot-cut episode (trims, transitions, narration) refuses `edit_style`.
+      ...(isTimelineV4(rev.data) && rev.data.edit_style === "cut" ? { edit_style: "cut" as const } : {}),
       media_names: Object.fromEntries(rev.data.clips.flatMap((c) => {
         const title = rev.data.assets[c.asset_id]?.title.trim().slice(0, 200);
         return title ? [[`asset:${c.asset_id}`, title]] : [];

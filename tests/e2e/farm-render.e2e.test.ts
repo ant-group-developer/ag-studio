@@ -1437,7 +1437,7 @@ describe.skipIf(!isE2E)("farm E2E: a shot-cut (v4) composition", () => {
         production_id: productionId, job_type: "studio.export_premiere", requirements: {},
         farm_payload: {
           production_id: productionId, episode_id: "ep-cut", composition: "stage:renders/cut/composition.json", media: "proxy", name: "Tập cắt",
-          markers: [{ t_s: 0, title: "Mở đầu" }], output: "premiere/cut.zip",
+          markers: [{ t_s: 0, title: "Mở đầu" }], output: "premiere/cut.zip", edit_style: "cut",
         },
       },
       inputs: [{ path: "renders/cut/composition.json", type: "application/json", checksum: `sha256:${"0".repeat(64)}`, size_bytes: compositionJson.length, kind: "file" }],

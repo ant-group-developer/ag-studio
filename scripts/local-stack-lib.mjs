@@ -42,3 +42,30 @@ export function selectServices(services, names) {
   }
   return services.filter((s) => names.includes(s.name));
 }
+
+/** Interfaces of a virtual switch (WSL, Hyper-V, Docker, VMs, VPNs): the farm does not reach this machine there. */
+const VIRTUAL_NIC = /vEthernet|WSL|Hyper-V|Docker|VirtualBox|VMware|Loopback|Tailscale|ZeroTier/i;
+
+/**
+ * The LAN IPv4 address other machines (render workers on the farm) reach this one on, from `os.networkInterfaces()`:
+ * not loopback, not link-local (169.254), not a virtual switch. `null` when there is none.
+ */
+export function lanAddress(interfaces) {
+  for (const [name, addrs] of Object.entries(interfaces)) {
+    if (VIRTUAL_NIC.test(name)) continue;
+    for (const a of addrs ?? []) {
+      if ((a.family === "IPv4" || a.family === 4) && !a.internal && !a.address.startsWith("169.254.")) return a.address;
+    }
+  }
+  return null;
+}
+
+/**
+ * The farm signs each job's downloads at its owner's `sign_url` (table `farm_owners` of ag-farm). Run directly on this
+ * machine, those are the Studio API (3101) and the ag-go API (3738) at the LAN address: a changed address (DHCP) makes
+ * every render fail at its first download with `fetch failed`. Returns the rows to change.
+ */
+export function signUrlFixes(owners, ip) {
+  const want = { studio: `http://${ip}:3101/api/farm/sign`, "ag-go": `http://${ip}:3738/api/analysis/farm/sign` };
+  return owners.filter((o) => want[o.id] && o.sign_url !== want[o.id]).map((o) => ({ id: o.id, from: o.sign_url, to: want[o.id] }));
+}

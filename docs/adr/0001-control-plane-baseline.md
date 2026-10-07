@@ -1093,3 +1093,8 @@ Các mục dưới đây ghi lại quyết định của nhánh AG Studio, viế
     phiên bản worker, và composition của tập cắt cùng schema `harness.composition/v1`, nên máy chạy worker cũ vẫn nhận job
     và **âm thầm** bỏ in-point, chuyển cảnh, lời dẫn. Vì vậy deploy render worker lên mọi máy farm **trước** Studio
     (runbook). Chặn ở hợp đồng (một trường mới trong payload để worker cũ từ chối) để ngỏ, cần hỏi trước.
+172. **Worker không đọc được tập cắt thì từ chối job xuất Premiere (2026-10-07).** Sửa phần "không đổi hợp đồng" của mục
+    171. `StudioExportPremierePayloadSchema` (ag-farm `26d1b6a`) có thêm `edit_style?: whole|cut`; Studio chỉ gửi `cut`,
+    cho timeline v4 kiểu cắt. Payload là `strictObject`, nên hub và worker build trước đó từ chối job (lỗi rõ ràng) thay
+    vì âm thầm bỏ điểm cắt, chuyển cảnh, lời dẫn; tập ghép nguyên video không gửi trường này nên mọi worker vẫn xuất được.
+    Thứ tự deploy: protocol (hub) và render worker trước, Studio sau.

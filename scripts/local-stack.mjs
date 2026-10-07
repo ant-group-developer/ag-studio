@@ -5,14 +5,18 @@
 //   node scripts/local-stack.mjs down [tên...|all]   tắt những gì script này đã bật
 //   node scripts/local-stack.mjs status              dịch vụ nào đang lên
 //
+// `up` cũng trỏ `sign_url` của chủ job `studio` và `ag-go` trong DB farm (container postgres16) về địa chỉ LAN hiện tại
+// của máy: đổi IP (DHCP) thì mọi job farm hỏng ở bước tải đầu tiên với `fetch failed`. `status` chỉ báo khi lệch.
+//
 // Dịch vụ đã lên (health trả 200, hoặc tiến trình do script bật còn sống) thì `up` bỏ qua, nên chạy lại an toàn.
 // `down` chỉ tắt tiến trình do script bật (pid trong <AG_LOCAL_DIR>/dev-run/local-stack.json), không đụng tiến trình
 // bạn tự bật ở terminal khác, và không đụng container Docker. Không in giá trị biến môi trường nào.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { networkInterfaces } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { planServices, selectServices } from "./local-stack-lib.mjs";
+import { lanAddress, planServices, selectServices, signUrlFixes } from "./local-stack-lib.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const services = planServices({ repoRoot, env: process.env });
@@ -47,6 +51,32 @@ function stop(pid) {
   else { try { process.kill(-pid, "SIGTERM"); } catch { /* already gone */ } }
 }
 
+// ag-farm's database (Docker): the job owners' sign_url follow this machine's LAN address.
+const farmPg = process.env.AG_FARM_PG_CONTAINER ?? "postgres16";
+const farmDb = process.env.AG_FARM_DB ?? "ag_farm";
+function psql(sql) {
+  const r = spawnSync("docker", ["exec", farmPg, "psql", "-U", "postgres", "-d", farmDb, "-At", "-F", "|", "-c", sql], { encoding: "utf8" });
+  if (r.status !== 0) throw new Error((r.stderr || r.error?.message || "docker exec failed").trim());
+  return r.stdout;
+}
+/** `fix`: write the new sign_url; otherwise only say which are stale. */
+function syncSignUrls(fix) {
+  const ip = lanAddress(networkInterfaces());
+  if (!ip) { console.log("! sign_url: không tìm thấy địa chỉ LAN của máy"); return; }
+  let owners;
+  try {
+    owners = psql("SELECT id, sign_url FROM farm_owners WHERE id IN ('studio', 'ag-go')").trim().split(/\r?\n/).filter(Boolean)
+      .map((l) => { const [id, sign_url] = l.split("|"); return { id, sign_url }; });
+  } catch (e) { console.log(`? sign_url: không đọc được DB farm (${e.message})`); return; }
+  const fixes = signUrlFixes(owners, ip);
+  if (!fixes.length) { console.log(`= sign_url: đã trỏ ${ip}`); return; }
+  for (const f of fixes) {
+    if (!fix) { console.log(`! sign_url ${f.id}: ${f.from} (máy đang là ${ip}; chạy "up" để sửa)`); continue; }
+    psql(`UPDATE farm_owners SET sign_url = '${f.to}', updated_at = NOW() WHERE id = '${f.id}'`);
+    console.log(`~ sign_url ${f.id}: ${f.from} → ${f.to}`);
+  }
+}
+
 async function up(list) {
   const state = readState();
   for (const s of list) {
@@ -73,6 +103,7 @@ async function up(list) {
       if (!ok) return 1;
     }
   }
+  syncSignUrls(true);
   return 0;
 }
 
@@ -99,6 +130,7 @@ async function status(list) {
     const who = alive(pid) ? `pid ${pid}` : unknown ? "không đo được nếu bật ngoài script" : upNow ? "bật ngoài script" : "";
     console.log(`${mark} ${s.name.padEnd(14)} ${(s.health ?? "(không có cổng)").padEnd(36)} ${who}`);
   }
+  syncSignUrls(false);
   return 0;
 }
 
