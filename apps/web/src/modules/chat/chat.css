@@ -523,3 +523,16 @@ body.chat-resizing iframe, body.chat-resizing video { pointer-events: none; }
 .chat-edit__table td { vertical-align: middle; }
 .chat-edit__table .ant-input-number { width: 72px; }
 .chat-edit__actions { display: flex; gap: 4px; }
+
+/* Voice and music of a production (plan optional-audio) */
+.chat-audio { display: flex; flex-direction: column; gap: 10px; margin: 8px 0 12px; }
+.chat-audio__row { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; border-top: 1px solid var(--chat-line); }
+.chat-audio__line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.chat-audio__state { color: var(--chat-muted); font-size: 13px; }
+.chat-audio__buttons { margin-left: auto; display: flex; gap: 10px; }
+.chat-audio__buttons .chat-link-button { color: var(--chat-accent); }
+.chat-audio__player { height: 28px; max-width: 100%; }
+.chat-audio__picker { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid var(--chat-line); border-radius: 8px; background: var(--chat-surface); }
+.chat-audio__actions { display: flex; gap: 6px; }
+.chat-audio__hint { color: var(--chat-faint); font-size: 12px; word-break: break-all; }
+.chat-audio__hint .chat-link-button { color: var(--chat-accent); font-size: 12px; }

@@ -12,9 +12,11 @@ import { docKindOf } from "./views/doc-specs";
 import { EpisodeOutputs } from "./views/EpisodeOutputs";
 import { canEditDoc, StepDocBody, StepDocEditor } from "./views/StepBody";
 import { TimelineResult } from "./views/TimelineResult";
+import { ProductionAudioPanel } from "./views/ProductionAudioPanel";
 import { useAiTranslation } from "../common/assistant-name";
 
-export type ResultAction = "approve" | "start" | "apply" | "retry";
+/** `rerunStep`: run again a machine step that stopped (`blocked.code = stage_failed`). */
+export type ResultAction = "approve" | "start" | "apply" | "retry" | "rerunStep";
 export type MenuAction = "editor" | "preview" | "finalRender" | "export" | "rerunSurvey" | "rerunEditPlan" | "log" | "oldScreen";
 
 interface Props {
@@ -35,6 +37,8 @@ interface Props {
   workflow?: string | null | undefined;
   /** Sửa at a waiting gate: the edited document becomes the version on show (a manual-edit turn). */
   onSaveEdit?: ((stageKey: string, document: unknown) => Promise<unknown>) | undefined;
+  /** The production's voice or music changed (the thread may have moved on: an episode waiting for a voice runs). */
+  onAudioChanged?: (() => void) | undefined;
 }
 
 /** Duyệt on the YouTube kit: it starts the final render, so it confirms the machine type first (spec §2.5, §3.4). */
@@ -96,7 +100,7 @@ function Problems({ problems }: { problems: { code: string; message: string }[] 
 }
 
 /** The result column (spec local-chat §2.3–2.4): the step's document, readable, changes marked; one main button; ⋯. */
-export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu, busy, canApprove = true, renderDefault = "any", canRenderFinal = false, workflow, onSaveEdit }: Props) {
+export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu, busy, canApprove = true, renderDefault = "any", canRenderFinal = false, workflow, onSaveEdit, onAudioChanged }: Props) {
   const { t } = useAiTranslation();
   const scope = thread.scope;
   const stageKey = scope?.stageKey ?? thread.blocked?.stage ?? null;
@@ -138,11 +142,17 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
     primary = "retry";
   } else if (scope?.scope === "timeline") {
     primary = thread.current?.pendingApply ? "apply" : null;
+  } else if (thread.blocked?.code === "needs_voice") {
+    badge = t("chat.result.needsVoice");
+  } else if (thread.blocked?.code === "stage_failed") {
+    badge = t("chat.result.failed");
+    primary = "rerunStep";
   } else if (thread.blocked?.code === "busy") {
     badge = t("chat.result.running");
   }
   const startDisabled = primary === "start" && intakeMissing(doc as Parameters<typeof intakeMissing>[0]).length > 0;
-  const badgeTone = scope?.scope === "failed" ? "needs_attention" : scope?.scope === "intake" && !startDisabled ? "done" : scope ? "waiting_you" : "running";
+  const stopped = thread.blocked?.code === "needs_voice" || thread.blocked?.code === "stage_failed";
+  const badgeTone = scope?.scope === "failed" || stopped ? "needs_attention" : scope?.scope === "intake" && !startDisabled ? "done" : scope ? "waiting_you" : "running";
 
   const menu: MenuProps["items"] = [
     ...(episodeId ? [
@@ -174,10 +184,18 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
       <>
         {scope?.scope === "failed" ? <Problems problems={thread.current?.problems ?? []} /> : null}
         <DocView kind={kind} doc={doc} previous={previous} names={folderNames(thread)} />
+        {scope?.scope === "intake" ? (
+          <ProductionAudioPanel productionId={productionId} canEdit={canApprove} onChanged={onAudioChanged}
+            suggested={(doc as { audio_links?: { voice?: string | null; music?: string | null } }).audio_links} />
+        ) : null}
       </>
     );
   } else if (scope?.scope === "failed") {
     body = <><Problems problems={thread.current?.problems ?? []} /><p className="chat-doc__note">{t("chat.result.failedNoDoc")}</p></>;
+  } else if (thread.blocked?.code === "needs_voice") {
+    body = <ProductionAudioPanel productionId={productionId} canEdit={canApprove} needsVoice onChanged={onAudioChanged} />;
+  } else if (thread.blocked?.code === "stage_failed") {
+    body = <><Problems problems={thread.blocked.problems ?? []} /><p className="chat-doc__note">{t("chat.result.stageFailed")}</p></>;
   } else if (episodeId && (step === "render" || step === "export" || thread.blocked?.code === "nothing_to_chat")) {
     body = <EpisodeOutputs productionId={productionId} episodeId={episodeId} />;
   } else if (thread.blocked?.code === "busy") {

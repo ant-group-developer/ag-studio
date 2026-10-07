@@ -105,6 +105,10 @@ export function ChatProductionPage() {
         case "start": return client.startProduction(productionId);
         case "apply": return client.applyChatProposal(productionId, a.turn?.id ?? thread!.current!.turnId!);
         case "retry": return client.retryChatStep(productionId, scope!.stageKey, episodeId);
+        case "rerunStep": {
+          const stage = thread!.blocked!.stage!;
+          return episodeId ? client.retryEpisodeStage(productionId, episodeId, stage) : client.retryStage(productionId, stage);
+        }
         case "render": {
           const tl = await client.getTimeline(productionId, episodeId!);
           return client.renderPreview(productionId, episodeId!, tl.revision);
@@ -169,7 +173,8 @@ export function ChatProductionPage() {
   const last = thread?.turns.at(-1);
   const stick = useStickToBottom(`${productionId}/${episodeId ?? ""}`, `${thread?.turns.length ?? 0}:${last?.id ?? ""}:${last?.status ?? ""}:${thread?.scope?.stageKey ?? ""}`);
   const placeholder = thread?.blocked
-    ? t(thread.blocked.code === "busy" ? "chat.page.busy" : "chat.page.finished")
+    ? t(thread.blocked.code === "busy" ? "chat.page.busy" : thread.blocked.code === "needs_voice" ? "chat.page.needsVoice"
+      : thread.blocked.code === "stage_failed" ? "chat.page.stageFailed" : "chat.page.finished")
     : thread?.scope?.scope === "intake" ? t("chat.page.intakePlaceholder") : t("chat.composer.placeholder");
 
   return (
@@ -234,7 +239,7 @@ export function ChatProductionPage() {
         <ResultPane productionId={productionId} episodeId={episodeId} thread={thread} busy={act.isPending} canApprove={canManage || thread.scope?.scope === "timeline"}
           renderDefault={episode?.render?.defaultMachine} canRenderFinal={!!episode?.render && episode.render.restartFrom !== null} workflow={workflow}
           onPrimary={(a, options) => act.mutate({ kind: a, options })} onMenu={onMenu}
-          onSaveEdit={(stageKey, document) => manual.mutateAsync({ stageKey, document })} />
+          onSaveEdit={(stageKey, document) => manual.mutateAsync({ stageKey, document })} onAudioChanged={refresh} />
       ) : null}
       <Drawer open={logOpen} onClose={() => setLogOpen(false)} width="min(900px, 100vw)" title={t("chat.menu.log")} destroyOnClose>
         <LlmLogPanel productionId={productionId} live={stillWorking(thread)} />

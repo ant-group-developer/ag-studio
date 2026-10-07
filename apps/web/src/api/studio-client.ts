@@ -733,6 +733,38 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
         ...(input.renderMachine ? { renderMachine: input.renderMachine } : {}),
       });
     },
+    /** The production's voice sample (or narration declined) and background music (plan optional-audio). */
+    getProductionAudio(productionId: string): Promise<ProductionAudio> {
+      return request(getAccessToken, "GET", `/api/productions/${productionId}/audio`);
+    },
+    /**
+     * A voice sample or music from a link or a file. A voice needs its origin and `confirm` (ADR-0001 item 105).
+     * Errors: 400 `voice_consent` / `url_not_allowed` / `audio_missing`, 413 `audio_too_large`, 422 `audio_invalid`,
+     * 502 `url_fetch_failed`, 503 `audio_disabled`.
+     */
+    giveProductionAudio(productionId: string, kind: AudioKind, input: AudioInput): Promise<ProductionAudio & { resumedEpisodes: string[] }> {
+      const fields: Record<string, string> = {};
+      if (input.origin) fields.origin = input.origin;
+      if (input.confirm !== undefined) fields.confirm = String(input.confirm);
+      if (input.referenceText) fields.referenceText = input.referenceText;
+      if (input.gainDb !== undefined) fields.gainDb = String(input.gainDb);
+      if (input.ducking !== undefined) fields.ducking = String(input.ducking);
+      const path = `/api/productions/${productionId}/audio/${kind}`;
+      if (input.file) {
+        const form = new FormData();
+        for (const [k, v] of Object.entries(fields)) form.append(k, v);
+        form.append("file", input.file);
+        return request(getAccessToken, "POST", path, form);
+      }
+      return request(getAccessToken, "POST", path, { ...fields, url: input.url });
+    },
+    /** "Bỏ lời dẫn": no narration for the production; episodes waiting for a voice run on without lines. */
+    declineNarration(productionId: string): Promise<ProductionAudio & { resumedEpisodes: string[] }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/audio/voice/none`);
+    },
+    removeProductionAudio(productionId: string, kind: AudioKind): Promise<ProductionAudio> {
+      return request(getAccessToken, "DELETE", `/api/productions/${productionId}/audio/${kind}`);
+    },
     retryChatStep(productionId: string, stageKey: string, episodeId?: string | null): Promise<{ ok: true }> {
       return request(getAccessToken, "POST", `/api/productions/${productionId}/chat/retry`, { stageKey, ...(episodeId ? { episodeId } : {}) });
     },
@@ -790,10 +822,30 @@ export interface ChatTurn {
 
 export interface ChatScopeKey { productionId: string; episodeId: string | null; runId: string | null; stageKey: string; scope: ChatScopeName }
 
+export type AudioKind = "voice" | "music";
+export type VoiceOrigin = "synthetic" | "own" | "licensed";
+export type AudioSource = { kind: "link"; url: string } | { kind: "upload"; filename: string } | { kind: "ag-go"; asset_id: string };
+export interface AudioInput {
+  file?: File; url?: string;
+  origin?: VoiceOrigin; confirm?: boolean; referenceText?: string;
+  gainDb?: number; ducking?: boolean;
+}
+export interface ProductionAudio {
+  voice:
+    | { mode: "none"; decided_at: string }
+    | { mode: "clone"; origin: VoiceOrigin | null; source: AudioSource | null; duration_s: number | null; reference_text: string | null; reference: string; listenUrl: string | null }
+    | null;
+  music: { track: string; gain_db: number; ducking: boolean; source: AudioSource | null; duration_s: number | null; listenUrl: string | null } | null;
+}
+
 export interface ChatThreadView {
   turns: ChatTurn[];
   scope: ChatScopeKey | null;
-  blocked: { code: "busy" | "nothing_to_chat" | string; stage: string | null } | null;
+  /**
+   * Why no message can be sent: `busy`, `nothing_to_chat`, `needs_voice` (a narrated episode waits for a voice sample),
+   * `stage_failed` (a machine step stopped; `problems` say why).
+   */
+  blocked: { code: "busy" | "nothing_to_chat" | "needs_voice" | "stage_failed" | string; stage: string | null; problems?: { code: string; message: string }[] } | null;
   current: { turnId: string | null; document: unknown; draft: unknown; pendingApply: boolean; problems: { code: string; message: string }[] } | null;
   queueAhead: number;
 }
