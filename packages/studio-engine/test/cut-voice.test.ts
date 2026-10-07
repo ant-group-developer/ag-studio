@@ -108,12 +108,13 @@ describe("studio-cut-fit without a voice", () => {
     return TimelineV4Schema.parse(run.json("timeline.json"));
   }
 
-  it("narration declined: the cut keeps its shots, without lines or captions", async () => {
+  it("narration declined: the cut keeps its shots, and its lines unread, as subtitles", async () => {
     const t = await fit({ voice: DECLINED });
     expect(t.narration.voice).toBe("none");
-    expect(t.narration.lines).toEqual([]);
-    expect(t.clips.map((c) => c.line_id)).toEqual([null, null]);
-    expect(t.captions.mode).toBe("none");
+    expect(t.narration.lines.length).toBeGreaterThan(0);
+    expect(t.narration.lines.every((l) => l.audio === null)).toBe(true);
+    expect(t.clips.some((c) => c.line_id !== null)).toBe(true);
+    expect(t.captions.mode).toBe("burn-in");
   });
 
   it("the production's music now wins over the one frozen in the brief", async () => {

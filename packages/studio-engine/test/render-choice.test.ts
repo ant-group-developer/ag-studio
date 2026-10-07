@@ -23,7 +23,7 @@ describe("render machine choice", () => {
     expect(renderChoiceFor(db, "run-1", "render-final")).toBe("gpu");
     expect(renderChoiceFor(db, "run-1", "render-preview")).toBeNull();
     expect(db.all("SELECT * FROM studio_render_choices")).toEqual([
-      { run_id: "run-1", stage_key: "render-final", production_id: prod, episode_id: "ep-1", machine: "gpu", chosen_by: "auth0|b", chosen_at: T2 },
+      { run_id: "run-1", stage_key: "render-final", production_id: prod, episode_id: "ep-1", machine: "gpu", node_id: null, node_name: null, chosen_by: "auth0|b", chosen_at: T2 },
     ]);
   });
 
