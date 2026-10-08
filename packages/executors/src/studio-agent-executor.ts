@@ -13,12 +13,12 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  claudeOutputJsonSchema, STUDIO_FILE_SKILLS, STUDIO_SKILL_OUTPUTS, STUDIO_SKILL_STEP, teamGuidesForStep, TrendReportSchema,
+  claudeOutputJsonSchema, STUDIO_FILE_SKILLS, STUDIO_SKILL_OUTPUTS, STUDIO_SKILL_STEP, teamGuidesForStep, TrendReportSchema, StudioWebFindsSchema,
   type AgentCallTrace, type AgentRuntime, type CheckerInput, type StudioChatSkill, type Executor, type ExecutorContext, type StageRequest, type StageResult, type StudioSkill,
   type TeamGuide,
 } from "@harness/contracts";
 import {
-  isFollowUpWarning, loadBrief, loadCatalog, loadOptionalBranding, loadOptionalStyleWatch, loadSeed, loadShots, loadSurvey, researchGapsOf, STUDIO_TYPES,
+  hasGaps, isFollowUpWarning, loadBrief, loadCatalog, loadOptionalBranding, loadOptionalStyleWatch, loadSeed, loadShots, loadSurvey, researchGapsOf, STUDIO_TYPES,
   summarizeCatalog, validateBranding, validateEditPlan, validateRnd, validateSeriesPlan, validateStudioSurvey, validateStyle, validateTrendReport,
   validateWebFinds, validateYoutubeKit,
   type StudioProblem, type StudioValidation,
@@ -203,6 +203,12 @@ export function studioPromptHead(request: StageRequest, workspaceDir: string, gu
       try {
         body = JSON.stringify(compactResearch(JSON.parse(text) as ResearchLike), null, 2);
       } catch { /* leave as-is */ }
+    } else if (input.type === STUDIO_TYPES.researchApi && skill === "studio-web-research") {
+      // the web research is told only what is missing, not what the API already found
+      try {
+        body = JSON.stringify(researchGapsOf({ request, workspaceDir } as CheckerInput), null, 2);
+        heading = "research_gaps";
+      } catch { /* leave as-is */ }
     }
     parts.push("", `## ${heading} (${input.path.split("/").pop()})`, "```json", body.trim(), "```");
   }
@@ -294,16 +300,39 @@ export function researchSkipSummary(res: ResearchSeen): string {
   return (why ? `Không có dữ liệu nghiên cứu: ${why}` : "Không có dữ liệu nghiên cứu.").slice(0, 3000);
 }
 
-/** Write a skipped TrendReport (no research videos -> Claude skipped). */
-function writeSkipped(outPath: string, skill: StudioSkill, summary: string): void {
-  if (skill !== "studio-trend-report") return;
-  mkdirSync(join(outPath, ".."), { recursive: true });
-  writeFileSync(outPath, JSON.stringify(TrendReportSchema.parse({
+/** A skipped trend report (no research videos), saying why. */
+function skippedTrendReport(summary: string): unknown {
+  return TrendReportSchema.parse({
     schema_version: "studio.trend-report/v1",
     skipped: true, summary,
     working_angles: [], title_patterns: [], hook_patterns: [], thumbnail_patterns: [],
     recommended_duration_s: null, posting_schedule: "", recommendations: [],
-  }), null, 2));
+  });
+}
+
+/**
+ * The document a stage writes WITHOUT calling Claude, when there is nothing for Claude to do: a trend report with no
+ * research videos, a web research with nothing missing. `null`: call Claude. An input it cannot read means Claude
+ * is called (and the validator says what is wrong).
+ */
+function skippedOutput(skill: StudioSkill, request: StageRequest, workspaceDir: string): { doc: unknown; why: string } | null {
+  try {
+    if (skill === "studio-trend-report") {
+      const resPath = request.inputs.find((x) => x.type === STUDIO_TYPES.research);
+      if (!resPath) return null;
+      const res = JSON.parse(readFileSync(join(workspaceDir, resPath.path), "utf8")) as ResearchSeen;
+      const totalVideos = (res.channels ?? []).reduce((n, ch) => n + (ch.videos?.length ?? 0), 0)
+        + (res.keywords ?? []).reduce((n, kw) => n + (kw.videos?.length ?? 0), 0);
+      if (totalVideos > 0) return null;
+      const summary = researchSkipSummary(res);
+      return { doc: skippedTrendReport(summary), why: summary };
+    }
+    if (skill === "studio-web-research") {
+      if (hasGaps(researchGapsOf({ request, workspaceDir } as CheckerInput))) return null;
+      return { doc: StudioWebFindsSchema.parse({ schema_version: "studio.web-finds/v1", skipped: true, channels: [], keywords: [], sources: [] }), why: "nothing missing from the YouTube research" };
+    }
+  } catch { /* unreadable input: let Claude answer, the validator will say what is wrong */ }
+  return null;
 }
 
 export class StudioAgentExecutor implements Executor {
@@ -326,32 +355,21 @@ export class StudioAgentExecutor implements Executor {
     if (!out?.name) return failed("contract", "a Studio agent stage needs one named output", { skill });
     const outPath = join(ctx.workspaceDir, "output", out.name);
 
-    // --- Skip rule for studio-trend-report: no research videos -> write skipped doc ---
-    if (skill === "studio-trend-report") {
-      const resPath = request.inputs.find((x) => x.type === STUDIO_TYPES.research);
-      if (resPath) {
-        try {
-          const res = JSON.parse(readFileSync(join(ctx.workspaceDir, resPath.path), "utf8")) as ResearchSeen;
-          const totalVideos = (res.channels ?? []).reduce((n, ch) => n + (ch.videos?.length ?? 0), 0)
-            + (res.keywords ?? []).reduce((n, kw) => n + (kw.videos?.length ?? 0), 0);
-          if (totalVideos === 0) {
-            mkdirSync(join(ctx.workspaceDir, "output"), { recursive: true });
-            const summary = researchSkipSummary(res);
-            writeSkipped(outPath, skill, summary);
-            ctx.logger.warn("studio-trend-report skipped (no research videos)", { summary });
-            // Register the written file as an output so the harness stages it and checks pass.
-            const bytes = readFileSync(outPath);
-            const checksum = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-            const rel = `output/${out.name}`;
-            return {
-              schema_version: "harness.stage-result/v1", attempt_id: request.attempt_id, outcome: "succeeded",
-              outputs: [{ path: rel, type: out.type, checksum, size_bytes: bytes.length, kind: "file" as const }],
-              checks: [], usage: { wall_seconds: (Date.now() - started) / 1000, cost_usd: 0 },
-              external_operations: [], errors: [],
-            };
-          }
-        } catch { /* if we can't read it, proceed to Claude */ }
-      }
+    // --- Nothing for Claude to do (a trend report without research videos, a web research with nothing missing) ---
+    const skipped = skippedOutput(skill, request, ctx.workspaceDir);
+    if (skipped) {
+      mkdirSync(join(ctx.workspaceDir, "output"), { recursive: true });
+      writeFileSync(outPath, JSON.stringify(skipped.doc, null, 2));
+      ctx.logger.warn(`${skill} skipped without calling Claude`, { why: skipped.why });
+      // Register the written file as an output so the harness stages it and checks pass.
+      const bytes = readFileSync(outPath);
+      const checksum = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+      return {
+        schema_version: "harness.stage-result/v1", attempt_id: request.attempt_id, outcome: "succeeded",
+        outputs: [{ path: `output/${out.name}`, type: out.type, checksum, size_bytes: bytes.length, kind: "file" as const }],
+        checks: [], usage: { wall_seconds: (Date.now() - started) / 1000, cost_usd: 0 },
+        external_operations: [], errors: [],
+      };
     }
 
     let guides: TeamGuide[] = [];

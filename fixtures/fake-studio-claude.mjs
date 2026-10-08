@@ -9,6 +9,7 @@
 // FAKE_STUDIO_MODE, comma-separated:
 //   plan-bad-once     plan-episodes answers with an unknown asset_id the first time, valid on repair
 //   rate-limit-once   the first call in a workspace prints the subscription-limit message and exits 1
+//   web-research-bad-once  the web research first answers a link that is not YouTube, valid on repair
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -431,6 +432,26 @@ function editPlan() {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Series plan 3.2.0: the web research (web mode) answers each gap with two video links (fake ids); a channel gets its
+// page back. "web-research-bad-once": the first answer has a link that is not YouTube, the repair fixes it.
+// ---------------------------------------------------------------------------
+function webResearch() {
+  const gaps = inputs.research_gaps ?? { channels: [], keywords: [] };
+  const vid = (prefix, i) => ({ url: `https://www.youtube.com/watch?v=${`${prefix}${i}`.replace(/[^\w-]/g, "").padEnd(11, "x").slice(0, 11)}`, title: `${prefix} ${i}`, views: null, duration_s: null, published_at: null });
+  const bad = modes.has("web-research-bad-once") && !repairing;
+  return {
+    schema_version: "studio.web-finds/v1", skipped: false,
+    channels: gaps.channels.map((c, k) => ({
+      input: c.input, channel_url: c.input.startsWith("@") ? `https://www.youtube.com/${c.input}` : null, title: `Kênh ${c.input}`,
+      videos: bad && k === 0 ? [{ ...vid("ch", 1), url: "https://example.com/video.mp4" }] : [vid(`ch${k}v`, 1), vid(`ch${k}v`, 2)],
+      notes: "Kênh chính chủ (giả)",
+    })),
+    keywords: gaps.keywords.map((keyword, k) => ({ keyword, videos: [vid(`kw${k}v`, 1), vid(`kw${k}v`, 2)] })),
+    sources: ["https://www.youtube.com/results"],
+  };
+}
+
 if (skill === "studio-source-survey" && !stdin.includes("\n# Góp ý\n")) {
   const kept = sessionInputs();
   mkdirSync(join(cwd, "output"), { recursive: true });
@@ -447,6 +468,7 @@ else if (skill === "studio-rnd") out = rnd();
 else if (skill === "studio-branding") out = branding();
 else if (skill === "studio-plan-episodes") out = planEpisodes();
 else if (skill === "studio-youtube-kit") out = youtubeKit();
+else if (skill === "studio-web-research") out = webResearch();
 else { process.stderr.write(`fake-studio-claude: unknown skill ${skill}\n`); process.exit(3); }
 
 // a resumed (forked) session answers with a new session id of its own, like the real CLI
