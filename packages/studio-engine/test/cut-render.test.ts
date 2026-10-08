@@ -83,6 +83,31 @@ describe("rendering a shot-cut timeline", () => {
     expect(w.db.all("SELECT id FROM episode_jobs")).toHaveLength(0);
   });
 
+  it("cut 1.1.0: the text look goes with the render unless asked not to (render v4); a clip muted on its own asks Premiere for per-clip sound", async () => {
+    const voiceDir = mkdtempSync(join(tmpdir(), "voice-"));
+    writeFileSync(voicePath(voiceDir, KEY), "RIFF-L001");
+    const look = { text_color: "#FFD166", outline_color: "#000000", box_color: null, size: "s" as const };
+    const styled = { ...cut(), text_style: look };
+    const read = async (textStyle?: boolean) => {
+      const build = await prepareRender(mkdtempSync(join(tmpdir(), "render-")), {
+        timeline: styled, revision: 2, productionId: "prod-1", episodeId: "ep-1", output: "o.mp4", thumbnails: [], voiceDir, ...(textStyle === undefined ? {} : { textStyle }),
+      });
+      return CompositionSchema.parse(JSON.parse(readFileSync(build.extraUploads![0]!.localPath, "utf8")));
+    };
+    expect((await read()).text_style).toEqual(look);
+    expect("text_style" in (await read(false))).toBe(false);
+
+    const t = cut();
+    t.clips[1] = { ...t.clips[1]!, muted: true };
+    const w = premiereWorld(t);
+    await startPremiereExport({ db: w.db, bucket: w.bucket, farm: w.farm, voiceDir }, { productionId: w.prod, episodeId: "ep-1", media: "proxy", userId: "u" });
+    expect(w.submitted[0]!.payload).toMatchObject({ edit_style: "cut", audio: "per_segment" });
+    // every clip with its sound (or none with it): no audio field, any worker reading cuts may export it
+    const plain = premiereWorld(cut());
+    await startPremiereExport({ db: plain.db, bucket: plain.bucket, farm: plain.farm, voiceDir }, { productionId: plain.prod, episodeId: "ep-1", media: "proxy", userId: "u" });
+    expect("audio" in plain.submitted[0]!.payload).toBe(false);
+  });
+
   it("Premiere of a timeline without narration sends no WAV, and needs no voice store", async () => {
     const t = cut();
     t.narration = { ...t.narration, voice: "none", lines: [] };

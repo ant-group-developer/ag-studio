@@ -397,17 +397,10 @@ export function cutPayloadBuilders(d: Pick<StudioStageDeps, "db" | "bucket" | "m
      * `studio.render_final` of a shot-cut episode: the approved timeline v4 (frozen), its narration from the voice store.
      * The video only; thumbnails are cut afterwards on this node (as `studio-episode-render-v2`).
      */
-    "studio-episode-render-v4": async (request, ctx): Promise<FarmPayloadBuild> => {
-      const media = requireMedia(d);
-      const { production_id: productionId } = readInput(request, ctx.workspaceDir, STUDIO_TYPES.brief, (v) => z.object({ production_id: z.string() }).passthrough().parse(v));
-      const timeline = readTimelineInput(request, ctx.workspaceDir);
-      const errors = timelineIssues(timeline).filter((i) => i.severity === "error");
-      if (errors.length) throw new HarnessError("SCHEMA_INVALID", `timeline still has errors: ${errors.map((e) => e.message).join("; ")}`, { problems: errors });
-      const revision = latestEpisodeRevision(d.db, timeline.episode_id)?.revision ?? 0;
-      const output = `episodes/${timeline.episode_id}/renders/final-${request.attempt_id}.mp4`;
-      const build = await prepareRender(ctx.workspaceDir, { timeline, revision, productionId, episodeId: timeline.episode_id, output, thumbnails: [], voiceDir: media.voiceDir });
-      return { ...build, rename: { [output]: "final.mp4" } };
-    },
+    "studio-episode-render-v4": (request, ctx) => renderCut(d, request, ctx, false),
+
+    /** Cut 1.1.0: the same, with the timeline's text look (only a render worker that draws it takes the job). */
+    "studio-episode-render-v5": (request, ctx) => renderCut(d, request, ctx, true),
 
     /**
      * `studio.tts`: the narration lines of the approved edit plan not yet in the voice store, in the production's voice,
@@ -469,6 +462,24 @@ export function cutPayloadBuilders(d: Pick<StudioStageDeps, "db" | "bucket" | "m
       return { productionId: sources.production_id, payload, extraUploads };
     },
   };
+}
+
+/**
+ * The final render of a shot-cut episode: the approved timeline v4 (frozen), its narration from the voice store; the
+ * video only. `textStyle` false (render v4, cut 1.0.0): the composition leaves out the text look.
+ */
+async function renderCut(d: Pick<StudioStageDeps, "db" | "media">, request: StageRequest, ctx: ExecutorContext, textStyle: boolean): Promise<FarmPayloadBuild> {
+  const media = requireMedia(d);
+  const { production_id: productionId } = readInput(request, ctx.workspaceDir, STUDIO_TYPES.brief, (v) => z.object({ production_id: z.string() }).passthrough().parse(v));
+  const timeline = readTimelineInput(request, ctx.workspaceDir);
+  const errors = timelineIssues(timeline).filter((i) => i.severity === "error");
+  if (errors.length) throw new HarnessError("SCHEMA_INVALID", `timeline still has errors: ${errors.map((e) => e.message).join("; ")}`, { problems: errors });
+  const revision = latestEpisodeRevision(d.db, timeline.episode_id)?.revision ?? 0;
+  const output = `episodes/${timeline.episode_id}/renders/final-${request.attempt_id}.mp4`;
+  const build = await prepareRender(ctx.workspaceDir, {
+    timeline, revision, productionId, episodeId: timeline.episode_id, output, thumbnails: [], voiceDir: media.voiceDir, textStyle,
+  });
+  return { ...build, rename: { [output]: "final.mp4" } };
 }
 
 /** Every in-process stage the Studio worker runs: the series and whole-video episode stages plus the shot-cut ones. */
