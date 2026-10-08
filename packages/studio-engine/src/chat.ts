@@ -181,8 +181,10 @@ export async function runChatTurn(d: ChatRunDeps, turnId: string, signal?: Abort
         await record(round, "rate_limited");
         const hits = db.get<{ n: number }>("SELECT COUNT(*) AS n FROM llm_calls WHERE attempt_id = ? AND outcome = 'rate_limited'", [turnId])?.n ?? 1;
         const backoff = d.claude.rateLimitBackoffMs ?? DEFAULT_BACKOFF_MS;
-        const notBefore = new Date(Date.parse(now()) + backoff[Math.min(Math.max(hits - 1, 0), backoff.length - 1)]!).toISOString();
-        rateLimitTurn(db, turnId, notBefore, now());
+        // one reading of the clock: the wait is exactly the backoff after the moment the reply is marked
+        const at = now();
+        const notBefore = new Date(Date.parse(at) + backoff[Math.min(Math.max(hits - 1, 0), backoff.length - 1)]!).toISOString();
+        rateLimitTurn(db, turnId, notBefore, at);
         return { status: "rate_limited", notBefore };
       }
       const id = await record(round, "failed", [{ code: String(err?.details?.code ?? "agent_failed"), message: err?.message ?? "agent call failed" }]);
