@@ -37,6 +37,7 @@ export * from "./cut-ffmpeg.js";
 export * from "./yt-dlp.js";
 export * from "./research-merge.js";
 export * from "./transcript-clean.js";
+export * from "./music-library.js";
 export { styleFrameKey } from "./style-stages.js";
 export * from "./agent-sessions.js";
 export * from "./cut-episode.js";

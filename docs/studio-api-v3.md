@@ -405,3 +405,15 @@ Every change goes to `human_edits` (`kind: voice | music`).
   }
   ```
   Jobs come from ag-farm's owner API (`listJobs`, cached 3 s); it names no machines, so there is no machine list.
+- Music library (plan 2026-10-08 task 29): background tracks tagged by mood that a shot-cut episode with no music of
+  its own gets when its cut is fitted (cut 1.1.0: the first of the edit plan's, the branding's, the style's moods some
+  track has, compared without case or marks; tracks long enough or that loop first). Rows of `music_track`, files AAC
+  under `library/music/` (not swept: a retired track still renders where a timeline uses it).
+  - `GET music` -> `{tracks: {trackId, displayName, moods: string[], durationSeconds, loopOk, origin: 'own' | 'licensed' |
+    'royalty_free', originNote, active, track: 'library:music/<sha>.m4a', listenUrl}[]}` — active ones; a Studio admin
+    sees the retired ones too
+  - `POST music` (Studio admin, multipart) `file` + `displayName`, `moods` (comma-separated, 1–10), `origin`,
+    `originNote`, `loopOk?` -> the track. The same file again is the same track (id from its content), its fields
+    updated. 400 `invalid` / `audio_missing`, 413 `audio_too_large`, 422 for a file that is not audio, 503
+    `audio_disabled` without ffmpeg
+  - `PATCH music/:trackId` (Studio admin) `{displayName?, moods?, active?}` -> the track; 404 `not_found`

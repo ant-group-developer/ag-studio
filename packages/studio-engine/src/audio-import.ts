@@ -170,7 +170,7 @@ export async function prepareMusic(t: AudioTools, src: string, dest: string): Pr
   return { duration_s: duration };
 }
 
-async function sha256Of(path: string): Promise<string> {
+export async function sha256Of(path: string): Promise<string> {
   const h = createHash("sha256");
   await pipeline(createReadStream(path), h);
   return h.digest("hex");

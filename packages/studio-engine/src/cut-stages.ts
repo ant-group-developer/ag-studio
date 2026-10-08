@@ -16,13 +16,14 @@ import {
   StudioTranscribePayloadSchema, StudioTtsPayloadSchema, TRANSCRIBE_MANIFEST_SCHEMA, TranscribeManifestSchema, TTS_MANIFEST_SCHEMA, TtsManifestSchema,
   type StudioTranscribePayload, type TranscribeManifest, type TtsManifest,
 } from "@ag-farm/protocol";
-import { buildShots, inputPath, loadOptionalBranding, shotId, STUDIO_TYPES, studioSourceId, timelineIssues } from "@harness/core";
+import { buildShots, inputPath, loadOptionalBranding, loadOptionalStyle, shotId, STUDIO_TYPES, studioSourceId, timelineIssues } from "@harness/core";
 import type { FarmPayloadBuild, FarmPayloadBuilder, InProcessStage } from "@harness/executors";
 import { productionKey } from "./bucket.js";
 import { detectCuts, extractAudio16k, grabFrame, probeMedia, tileSheet } from "./cut-ffmpeg.js";
 import { readInput, readTimelineInput, studioStages, toBuffer, writeEpisodeIntake, writeOutput, type StudioStageDeps } from "./stages.js";
 import { styleStages } from "./style-stages.js";
 import { cleanTranscribeManifest } from "./transcript-clean.js";
+import { listLibraryMusic, pickLibraryMusic } from "./music-library.js";
 import { prepareRender } from "./payloads.js";
 import { activeProductionStyle, getEpisode, getProduction, latestEpisodeRevision, saveEpisodeRevision } from "./studio-db.js";
 import { fitCutTimeline, type ReadLine } from "./cut-fit.js";
@@ -247,8 +248,9 @@ export function cutStages(d: StudioStageDeps): Record<string, InProcessStage> {
     "studio-cut-fit": (request, ctx) => fitCut(d, request, ctx, false),
 
     /**
-     * Cut 1.1.0: the same fit; a shot the edit plan mutes (`source_audio: "mute"`) gives muted clips, and the
-     * branding's text look (when it has one) is frozen into the timeline.
+     * Cut 1.1.0: the same fit; a shot the edit plan mutes (`source_audio: "mute"`) gives muted clips, the branding's
+     * text look (when it has one) is frozen into the timeline, and a production with no music of its own gets a track
+     * of the team's library picked by mood.
      */
     "studio-cut-fit-v2": (request, ctx) => fitCut(d, request, ctx, true),
   };
@@ -258,7 +260,8 @@ export function cutStages(d: StudioStageDeps): Record<string, InProcessStage> {
  * The approved edit plan fitted to its narration, as the episode's timeline v4 (`fitCutTimeline`). The lines the farm
  * just read go into the voice store first; every line then comes from the store. The result is saved as a new
  * revision of the episode (author `system`, label `fit`): running again from the edit plan replaces the cut.
- * `v2` (cut 1.1.0): the clips carry the plan's per-shot sound, the timeline the branding's text look.
+ * `v2` (cut 1.1.0): the clips carry the plan's per-shot sound, the timeline the branding's text look, and with no
+ * music of the production's own, the library track of the first mood that has one (edit plan, branding, style).
  */
 async function fitCut(d: StudioStageDeps, request: StageRequest, ctx: ExecutorContext, v2: boolean): Promise<void> {
   const media = requireMedia(d);
@@ -295,16 +298,27 @@ async function fitCut(d: StudioStageDeps, request: StageRequest, ctx: ExecutorCo
     read[l.line_id] = { key: v.key, duration_s: v.duration_s, words: v.words };
   }
   const transcript = transcriptFromManifest(manifest, sources.sources.map((x) => x.source_id));
+  const branding = v2 ? loadOptionalBranding({ request, workspaceDir: ws }) : null;
+  let music = currentMusic(d.db, brief.production_id, brief.music);
+  const fromLibrary = v2 && !music
+    ? pickLibraryMusic(listLibraryMusic(d.db, { activeOnly: true }), [
+      plan.music_mood, ...(branding?.music_mood ?? []), loadOptionalStyle({ request, workspaceDir: ws })?.params?.music.mood,
+    ], { seed: plan.episode_id, seconds: plan.target_seconds })
+    : null;
+  if (fromLibrary) music = fromLibrary.music;
   const { timeline, report } = fitCutTimeline({
     productionId: brief.production_id, plan, shots, survey, transcript, voice: read, written,
-    sources: sources.sources, assets: episode.assets, canvas: brief.canvas, fps: brief.fps, music: currentMusic(d.db, brief.production_id, brief.music),
-    ...(v2 ? { clipAudio: true, textStyle: loadOptionalBranding({ request, workspaceDir: ws })?.on_screen_text.look ?? null } : {}),
+    sources: sources.sources, assets: episode.assets, canvas: brief.canvas, fps: brief.fps, music,
+    ...(v2 ? { clipAudio: true, textStyle: branding?.on_screen_text.look ?? null } : {}),
   });
   const latest = latestEpisodeRevision(d.db, plan.episode_id);
   const { revision } = saveEpisodeRevision(d.db, plan.episode_id, { baseRevision: latest?.revision ?? 0, data: timeline, authorId: "system", label: "fit" });
   ctx.logger.info("shot-cut timeline fitted", {
     episode_id: plan.episode_id, revision, clips: timeline.clips.length, shortfalls: report.shortfalls.length,
-    ...(v2 ? { muted_clips: timeline.clips.filter((c) => c.muted).length, text_style: !!timeline.text_style } : {}),
+    ...(v2 ? {
+      muted_clips: timeline.clips.filter((c) => c.muted).length, text_style: !!timeline.text_style,
+      library_music: fromLibrary ? { track_id: fromLibrary.track.track_id, mood: fromLibrary.mood } : null,
+    } : {}),
   });
   writeOutput(ctx, "timeline.json", toBuffer(timeline));
   writeOutput(ctx, "fit-report.json", toBuffer(report));

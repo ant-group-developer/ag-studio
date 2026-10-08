@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { TimelineV4Schema } from "@harness/contracts";
 import { studioSourceId } from "@harness/core";
-import { cutStages, getVoiceLine, latestEpisodeRevision, replaceEpisodes, voiceKey, type CutMediaDeps } from "../src/index.js";
+import { cutStages, getVoiceLine, latestEpisodeRevision, replaceEpisodes, saveLibraryMusic, voiceKey, type CutMediaDeps } from "../src/index.js";
 import { fakeFootage, seedProduction, world } from "./helpers.js";
 import { runStage, stageWorkspace, type StageInput } from "./stage-harness.js";
 
@@ -47,7 +47,7 @@ function setup(shot2: Record<string, unknown> = {}, extra: StageInput[] = []) {
     ...extra,
   ] });
   const stages = cutStages({ db, bucket, footage: fakeFootage(), startEpisodeRun: async () => ({ runId: "x" }), media });
-  return { db, voiceDir, run, stages };
+  return { db, prod, voiceDir, run, stages };
 }
 
 describe("studio-cut-fit", () => {
@@ -101,5 +101,47 @@ describe("studio-cut-fit-v2: the branding's text look", () => {
     const plain = setup({}, [{ type: "studio_branding", name: "branding.json", json: branding(false) }]);
     await runStage(plain.stages["studio-cut-fit-v2"], plain.run);
     expect(TimelineV4Schema.parse(plain.run.json("timeline.json")).text_style).toBeUndefined();
+  });
+});
+
+describe("studio-cut-fit-v2: music from the team's library", () => {
+  const track = (id: string, mood: string[]) => ({
+    schema_version: "harness.music-track/v1", track_id: id, display_name: id, file: `library:music/${id}.m4a`, mood, duration_seconds: 300,
+    loop_ok: true, origin: "own", origin_note: "nhóm", checksum: `sha256:${"a".repeat(64)}`, active: true,
+    created_at: "2026-10-08T00:00:00.000Z", updated_at: "2026-10-08T00:00:00.000Z",
+  } as const);
+  const branding = (music_mood: string[]) => ({
+    schema_version: "studio.branding/v1", series_name: "Phố Cổ", tagline: "", positioning: "Chân thật",
+    voice: { personality: [], do: [], dont: [], signature_phrases: [], banned_words: [] },
+    titles: { formulas: ["[Nơi]"], rules: [], examples: [], max_chars: 60 }, description: { opening: "", cta: "", hashtags: [] },
+    thumbnail: { concept: "Phố", text_rules: [], max_words: 3, text_case: "upper", palette: { text: "#FFFFFF", outline: "#000000", accent: "#E63946" }, position: "bottom", emotion: "", do: [], dont: [] },
+    on_screen_text: { style: "", max_chars: 40, rules: [] }, music_mood,
+  });
+
+  it("no music of the production's own: the track of the first mood the library has (the branding's here)", async () => {
+    const s = setup({}, [{ type: "studio_branding", name: "branding.json", json: branding(["Jazz", "Ấm áp"]) }]);
+    saveLibraryMusic(s.db, track("am-ap", ["ấm áp"]));
+    saveLibraryMusic(s.db, track("upbeat", ["upbeat"]));
+    await runStage(s.stages["studio-cut-fit-v2"], s.run);
+    expect(TimelineV4Schema.parse(s.run.json("timeline.json")).music).toEqual({ track: "library:music/am-ap.m4a", gain_db: -18, ducking: true });
+    expect(s.run.logs.find((l) => l.msg === "shot-cut timeline fitted")?.fields).toMatchObject({ library_music: { track_id: "am-ap", mood: "Ấm áp" } });
+  });
+
+  it("the production's own music wins; fit v1 never picks one; no mood in the library: no music", async () => {
+    const own = setup({}, [{ type: "studio_branding", name: "branding.json", json: branding(["ấm áp"]) }]);
+    saveLibraryMusic(own.db, track("am-ap", ["ấm áp"]));
+    own.db.run("UPDATE productions SET music = ? WHERE id = ?", [JSON.stringify({ track: "library:studio/p/music/x.m4a", gain_db: -20, ducking: false }), own.prod]);
+    await runStage(own.stages["studio-cut-fit-v2"], own.run);
+    expect(TimelineV4Schema.parse(own.run.json("timeline.json")).music?.track).toBe("library:studio/p/music/x.m4a");
+
+    const v1 = setup({}, [{ type: "studio_branding", name: "branding.json", json: branding(["ấm áp"]) }]);
+    saveLibraryMusic(v1.db, track("am-ap", ["ấm áp"]));
+    await runStage(v1.stages["studio-cut-fit"], v1.run);
+    expect(TimelineV4Schema.parse(v1.run.json("timeline.json")).music).toBeNull();
+
+    const none = setup({}, [{ type: "studio_branding", name: "branding.json", json: branding(["jazz"]) }]);
+    saveLibraryMusic(none.db, track("am-ap", ["ấm áp"]));
+    await runStage(none.stages["studio-cut-fit-v2"], none.run);
+    expect(TimelineV4Schema.parse(none.run.json("timeline.json")).music).toBeNull();
   });
 });
