@@ -10,6 +10,7 @@
 //   plan-bad-once     plan-episodes answers with an unknown asset_id the first time, valid on repair
 //   rate-limit-once   the first call in a workspace prints the subscription-limit message and exits 1
 //   web-research-bad-once  the web research first answers a link that is not YouTube, valid on repair
+//   style-bad-once    the style first misquotes the measured median, valid on repair (resumed session)
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -450,6 +451,45 @@ function webResearch() {
     keywords: gaps.keywords.map((keyword, k) => ({ keyword, videos: [vid(`kw${k}v`, 1), vid(`kw${k}v`, 2)] })),
     sources: ["https://www.youtube.com/results"],
   };
+}
+
+// Series plan 3.2.0: the style step runs in files mode — it reads style_watch/watch.json (the directory named in the
+// prompt, remembered by the session for the repair round) and writes output/style.json. "style-bad-once": the first
+// answer misquotes the measured median, the repair copies it right.
+function styleFromWatch(kept) {
+  const watch = JSON.parse(readFileSync(join(cwd, kept.watchDir, "watch.json"), "utf8"));
+  const picks = kept.refs?.picks ?? [];
+  const watched = (watch.videos ?? []).filter((v) => !v.error);
+  const m = watch.measured;
+  const measured = modes.has("style-bad-once") && !stdin.includes("bị hệ thống kiểm tra từ chối") ? { ...m, shot_seconds: { ...m.shot_seconds, median: m.shot_seconds.median + 3 } } : m;
+  const med = m.shot_seconds.median;
+  const frames = watched.flatMap((v) => v.frames.map((f) => ({ video_id: v.video_id, t: f.t })));
+  return {
+    schema_version: "studio.style/v1", skipped: false, skipped_reason: null, name: "Phong cách giả", summary: `Cảnh trung bình ${med} giây.`,
+    references: watched.map((v) => {
+      const p = picks.find((x) => x.video_id === v.video_id) ?? {};
+      return { video_id: v.video_id, title: p.title ?? v.title, channel_title: p.channel_title ?? "", url: p.url ?? `https://www.youtube.com/watch?v=${v.video_id}`, duration_s: p.duration_s ?? v.duration_s ?? 0 };
+    }),
+    measured,
+    params: {
+      cut_rhythm: med < 2.5 ? "fast" : med > 5 ? "slow" : "medium",
+      shot_seconds: { min: Math.max(0.5, Math.min(m.shot_seconds.p25, med)), max: Math.max(m.shot_seconds.p75, med, 0.5) },
+      transitions: ["cut"], opening: { seconds: Math.min(60, Math.round(m.first_shot_s * 4)), structure: "montage ngắn" },
+      text_overlay: { density: "low", style: "chữ nhỏ góc dưới" }, subtitles: "none", voice: "unknown", music: { mood: "", ducking: null },
+      visual: "khung rộng", pace_notes: "",
+    },
+    do: ["Mở bằng montage ngắn"], dont: [],
+    evidence: frames.slice(0, 3).map((f, i) => ({ param: ["opening", "text_overlay", "visual"][i], video_id: f.video_id, t: f.t, note: "khung giả" })),
+  };
+}
+
+if (skill === "studio-style" && !stdin.includes("\n# Góp ý\n")) {
+  const dir = (/^- style_watch: (.+?)\/?$/m.exec(stdin) ?? [])[1];
+  const kept = resumed ? JSON.parse(readFileSync(join(cwd, "logs", `fake-session-${resumed}.json`), "utf8")) : { watchDir: dir, refs: inputs.style_refs };
+  mkdirSync(join(cwd, "output"), { recursive: true });
+  writeFileSync(join(cwd, "output", "style.json"), JSON.stringify(styleFromWatch(kept), null, 2));
+  process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "Đã ghi output/style.json", session_id: newSession(kept), total_cost_usd: 0, num_turns: 4 }) + "\n");
+  process.exit(0);
 }
 
 if (skill === "studio-source-survey" && !stdin.includes("\n# Góp ý\n")) {

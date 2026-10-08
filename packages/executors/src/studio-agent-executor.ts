@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  claudeOutputJsonSchema, STUDIO_FILE_SKILLS, STUDIO_SKILL_OUTPUTS, STUDIO_SKILL_STEP, teamGuidesForStep, TrendReportSchema, StudioWebFindsSchema,
+  claudeOutputJsonSchema, STUDIO_FILE_SKILLS, STUDIO_SKILL_OUTPUTS, STUDIO_SKILL_STEP, teamGuidesForStep, TrendReportSchema, StudioStyleSchema, StudioWebFindsSchema,
   type AgentCallTrace, type AgentRuntime, type CheckerInput, type StudioChatSkill, type Executor, type ExecutorContext, type StageRequest, type StageResult, type StudioSkill,
   type TeamGuide,
 } from "@harness/contracts";
@@ -330,6 +330,18 @@ function skippedOutput(skill: StudioSkill, request: StageRequest, workspaceDir: 
     if (skill === "studio-web-research") {
       if (hasGaps(researchGapsOf({ request, workspaceDir } as CheckerInput))) return null;
       return { doc: StudioWebFindsSchema.parse({ schema_version: "studio.web-finds/v1", skipped: true, channels: [], keywords: [], sources: [] }), why: "nothing missing from the YouTube research" };
+    }
+    if (skill === "studio-style") {
+      const watch = loadOptionalStyleWatch({ request, workspaceDir });
+      if (watch?.measured && watch.videos.some((v) => !v.error)) return null;
+      const why = watch?.skipped_reason ?? "Không xem được video mẫu nào";
+      return {
+        doc: StudioStyleSchema.parse({
+          schema_version: "studio.style/v1", skipped: true, skipped_reason: why.slice(0, 500), name: "", summary: "",
+          references: [], measured: null, params: null, do: [], dont: [], evidence: [],
+        }),
+        why,
+      };
     }
   } catch { /* unreadable input: let Claude answer, the validator will say what is wrong */ }
   return null;
