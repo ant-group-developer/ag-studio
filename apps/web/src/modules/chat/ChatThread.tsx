@@ -1,16 +1,16 @@
 import { Fragment, useState } from "react";
 import { Sparkles } from "lucide-react";
-import type { ChatThreadView, ChatTurn, RenderMachine } from "../../api/studio-client";
+import type { ChatThreadView, ChatTurn, FarmNode, RenderMachine } from "../../api/studio-client";
 import { RenderMachinePicker } from "../render/RenderMachinePicker";
 import { messageParts } from "./mentions";
-import { episodeStepsFor, PLAN_STEPS, stepLabelKey, stepOf, stepPosition, type ChatStep } from "./steps";
+import { episodeStepsFor, PLAN_STEPS, STEP_SHOWS, stepLabelKey, stepOf, stepPosition, type ChatStep } from "./steps";
 import { useAssistantName, useAiTranslation } from "../common/assistant-name";
 
 /** What a card under Claude's newest reply asks the person to confirm (spec local-chat §2.5). */
 export type ChatCard = "approve" | "start" | "apply" | "render" | "renderFinal" | "export" | "retry";
 /** Approving the YouTube kit starts the final render, so its card carries the machine type (phase 3). */
 export const KIT_GATE = "approve-youtube-kit";
-export interface CardOptions { renderMachine: RenderMachine }
+export interface CardOptions { renderMachine: RenderMachine; renderNodeId?: string | null }
 
 interface Props {
   thread: ChatThreadView;
@@ -18,6 +18,8 @@ interface Props {
   onCard: (card: ChatCard, turn: ChatTurn, options?: CardOptions) => void;
   /** Where the machine picker starts (the episode's `render.defaultMachine`). */
   renderDefault?: RenderMachine | undefined;
+  /** The farm machines a final render may be pinned to (none: no pinning offered). */
+  renderNodes?: FarmNode[] | undefined;
   /** A quick answer chip was pressed (intake questions). */
   onQuickAnswer?: ((text: string) => void) | undefined;
   busyCard?: ChatCard | null | undefined;
@@ -27,6 +29,8 @@ interface Props {
   workflow?: string | null | undefined;
   /** A line a step's divider adds ("tự động · 24 video, 112 shot"). */
   notes?: Partial<Record<ChatStep, string>> | undefined;
+  /** "xem tài liệu" on a step passed: its document opens in the result column. */
+  onViewStep?: ((step: ChatStep) => void) | undefined;
 }
 
 interface Section { stageKey: string; turns: ChatTurn[] }
@@ -68,14 +72,15 @@ function cardFor(turn: ChatTurn, thread: ChatThreadView, episode: boolean): Chat
   return null;
 }
 
-function KitRenderCard({ turn, busy, initial, onCard }: { turn: ChatTurn; busy: boolean; initial: RenderMachine; onCard: Props["onCard"] }) {
+function KitRenderCard({ turn, busy, initial, nodes, onCard }: { turn: ChatTurn; busy: boolean; initial: RenderMachine; nodes?: FarmNode[] | undefined; onCard: Props["onCard"] }) {
   const { t } = useAiTranslation();
   const [machine, setMachine] = useState<RenderMachine>(initial);
+  const [node, setNode] = useState<string | null>(null);
   return (
     <div className="chat-card chat-card--column">
       <span>{t("chat.cards.approveRender.question")}</span>
-      <RenderMachinePicker value={machine} onChange={setMachine} />
-      <button type="button" className="chat-card__button" disabled={busy} onClick={() => onCard("approve", turn, { renderMachine: machine })}>
+      <RenderMachinePicker value={machine} onChange={setMachine} nodes={nodes} node={node} onNode={setNode} />
+      <button type="button" className="chat-card__button" disabled={busy} onClick={() => onCard("approve", turn, { renderMachine: machine, renderNodeId: node })}>
         {t("chat.cards.approveRender.button")}
       </button>
     </div>
@@ -83,7 +88,7 @@ function KitRenderCard({ turn, busy, initial, onCard }: { turn: ChatTurn; busy: 
 }
 
 /** The chat (mockup screens 2–13): messages by step, dividers, Claude's state, and confirm cards. */
-export function ChatThread({ thread, onCard, onQuickAnswer, busyCard, episode = false, renderDefault = "any", workflow, notes }: Props) {
+export function ChatThread({ thread, onCard, onQuickAnswer, busyCard, episode = false, renderDefault = "any", renderNodes, workflow, notes, onViewStep }: Props) {
   const { t } = useAiTranslation();
   const ai = useAssistantName();
   const [opened, setOpened] = useState<Set<number>>(new Set());
@@ -113,6 +118,7 @@ export function ChatThread({ thread, onCard, onQuickAnswer, busyCard, episode = 
                 <span>
                   {n >= 0 ? `${t("chat.thread.step", { n: n + 1 })} · ` : ""}{t(stepLabelKey(step))}{note ? ` · ${note}` : ""}{state ? ` · ${state}` : ""}
                   {collapsed ? <> · <button type="button" className="chat-link-button" onClick={() => setOpened(new Set(opened).add(i))}>{t("chat.thread.show")}</button></> : null}
+                  {thread.scope?.stageKey !== sec.stageKey && onViewStep && STEP_SHOWS[step] ? <> · <button type="button" className="chat-link-button" onClick={() => onViewStep(step)}>{t("chat.stepDoc.view")}</button></> : null}
                 </span>
               </div>
             ) : null}
@@ -146,7 +152,7 @@ export function ChatThread({ thread, onCard, onQuickAnswer, busyCard, episode = 
                     </div>
                   ) : null}
                   {card === "approve" && turn.stage_key === KIT_GATE ? (
-                    <KitRenderCard key={renderDefault} turn={turn} busy={busyCard === card} initial={renderDefault} onCard={onCard} />
+                    <KitRenderCard key={renderDefault} turn={turn} busy={busyCard === card} initial={renderDefault} nodes={renderNodes} onCard={onCard} />
                   ) : card === "render" ? (
                     <div className="chat-card">
                       <span>{t("chat.cards.render.question")}</span>

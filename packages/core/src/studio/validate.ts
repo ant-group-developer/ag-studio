@@ -108,6 +108,9 @@ export function validateSeriesPlan(
     const target = ep.target_seconds;
     const tolerance = target * EPISODE_DURATION_TOLERANCE;
     if (ep.edit_style === "cut") {
+      if (ctx.brief.narration_voice === "none" && (ep.narration ?? "tts") === "tts") {
+        problems.push({ code: "narration_needs_voice", message: `tập ${ep.idx}: production đã bỏ lời dẫn; đặt narration "none" hoặc "original"` });
+      }
       // the videos are footage to cut from, not clips: what matters is enough of it to choose shots from
       if (ep.items.length > MAX_CUT_SOURCES) {
         problems.push({ code: "too_many_sources", message: `tập ${ep.idx}: cắt theo shot từ ${ep.items.length} video, tối đa ${MAX_CUT_SOURCES}` });

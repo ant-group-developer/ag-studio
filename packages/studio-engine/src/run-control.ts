@@ -12,7 +12,7 @@ import { STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, STUDIO_WORKFLOWS, type StudioEn
 import {
   getEpisode, getProduction, latestEpisodeRevision, listEpisodes, productionChannels, productionSources, type EpisodeRecord, type StudioDb,
 } from "./studio-db.js";
-import { defaultRenderMachine, machineOfRequirements, renderChoiceFor, setRenderChoice } from "./render-choice.js";
+import { defaultRenderMachine, machineOfRequirements, renderChoiceFor, renderNodeFor, setRenderChoice, type RenderNode } from "./render-choice.js";
 
 export type StudioRunErrorCode = "not_found" | "conflict" | "invalid" | "rejected";
 export class StudioRunError extends Error {
@@ -226,7 +226,7 @@ export function startPlanRun(core: StudioEngineCore, db: StudioDb, productionId:
 }
 
 /** A new plan replaces the production's episodes: refused while one of them is still producing. */
-function assertNoEpisodeProducing(core: StudioEngineCore, db: StudioDb, productionId: string): void {
+export function assertNoEpisodeProducing(core: StudioEngineCore, db: StudioDb, productionId: string): void {
   const producing = listEpisodes(db, productionId).find((e) => ["producing", "waiting_approval"].includes(episodeState(core, db, e).status));
   if (producing) throw new StudioRunError("conflict", "một tập đang sản xuất; không thể lên kế hoạch lại", { code: "episode_producing", episode_id: producing.id });
 }
@@ -284,13 +284,13 @@ export function episodeRunView(core: StudioEngineCore, db: StudioDb, episodeId: 
  * `{}` for a new run.
  */
 export function rerenderEpisode(
-  core: StudioEngineCore, db: StudioDb, episodeId: string, o: { machine?: RenderMachine; by?: string } = {},
+  core: StudioEngineCore, db: StudioDb, episodeId: string, o: { machine?: RenderMachine; node?: RenderNode | null; by?: string } = {},
 ): { runId: string; reused: string[]; from: string } {
   const ep = getEpisode(db, episodeId);
   if (!ep) throw new StudioRunError("not_found", `episode ${episodeId} not found`);
   const choose = (runId: string) => {
     if (o.machine === undefined) return;
-    setRenderChoice(db, { runId, stageKey: EPISODE_RENDER_STAGE, machine: o.machine, by: o.by ?? "studio-api", now: core.clock.now(), episodeId });
+    setRenderChoice(db, { runId, stageKey: EPISODE_RENDER_STAGE, machine: o.machine, node: o.node ?? null, by: o.by ?? "studio-api", now: core.clock.now(), episodeId });
   };
   const from = renderRestartFrom(core, db, ep);
   if (from === null) {
@@ -343,11 +343,13 @@ export function renderRestartFrom(core: StudioEngineCore, db: StudioDb, ep: Epis
 export interface EpisodeRenderInfo {
   /** The type chosen for the current run's render, if any. */
   machine: RenderMachine | null;
+  /** The node the current run's render is pinned to, if any. */
+  node: RenderNode | null;
   /** What a picker starts on: the run's choice, else the production's latest, else any. */
   defaultMachine: RenderMachine;
   restartFrom: ReturnType<typeof renderRestartFrom>;
   /** The latest final render job of the episode (any run), with the type it was sent with (null: unknown). */
-  job: { farmJobId: string; runId: string; machine: RenderMachine | null; createdAt: string } | null;
+  job: { farmJobId: string; runId: string; machine: RenderMachine | null; node: RenderNode | null; createdAt: string } | null;
 }
 
 export function episodeRenderInfo(core: StudioEngineCore, db: StudioDb, episodeId: string): EpisodeRenderInfo {
@@ -359,9 +361,13 @@ export function episodeRenderInfo(core: StudioEngineCore, db: StudioDb, episodeI
     [episodeId, EPISODE_RENDER_STAGE]);
   return {
     machine,
+    node: ep.run_id ? renderNodeFor(db, ep.run_id, EPISODE_RENDER_STAGE) : null,
     defaultMachine: machine ?? defaultRenderMachine(db, ep.production_id),
     restartFrom: renderRestartFrom(core, db, ep),
-    job: job ? { farmJobId: job.farm_job_id, runId: job.run_id, machine: machineOfRequirements(job.requirements), createdAt: job.created_at } : null,
+    job: job ? {
+      farmJobId: job.farm_job_id, runId: job.run_id, machine: machineOfRequirements(job.requirements),
+      node: renderNodeFor(db, job.run_id, EPISODE_RENDER_STAGE), createdAt: job.created_at,
+    } : null,
   };
 }
 
@@ -449,6 +455,19 @@ export function retryStage(core: StudioEngineCore, runId: string, stageKey: stri
   });
 }
 
+/** `fromStage` and every stage that depends on it, transitively: what a resume from it runs again (run order). */
+export function stagesFrom(stages: readonly { stage_key: string; depends_on: string[]; depends_on_optional: string[] }[], fromStage: string): string[] {
+  const rerun = new Set([fromStage]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const s of stages) {
+      if (rerun.has(s.stage_key)) continue;
+      if ([...s.depends_on, ...s.depends_on_optional].some((d) => rerun.has(d))) { rerun.add(s.stage_key); grew = true; }
+    }
+  }
+  return stages.filter((s) => rerun.has(s.stage_key)).map((s) => s.stage_key);
+}
+
 /**
  * Resume a terminal run from `fromStage` (creating a new run that reuses the stages before it).
  * `updateLink` is called with the new run id so the production/episode can point at it.
@@ -464,14 +483,7 @@ function resumeRunFrom(
   if (!isTerminal("run", old.state)) throw new StudioRunError("conflict", `run is ${old.state}; retry the stage instead`, { state: old.state });
   const oldStages = core.store.listStageRuns(oldRunId);
   if (!oldStages.some((s) => s.stage_key === fromStage)) throw new StudioRunError("not_found", `run ${oldRunId} has no stage ${fromStage}`);
-  const rerun = new Set([fromStage]);
-  for (let grew = true; grew; ) {
-    grew = false;
-    for (const s of oldStages) {
-      if (rerun.has(s.stage_key)) continue;
-      if ([...s.depends_on, ...s.depends_on_optional].some((d) => rerun.has(d))) { rerun.add(s.stage_key); grew = true; }
-    }
-  }
+  const rerun = new Set(stagesFrom(oldStages, fromStage));
   const keep = new Map<string, string[]>();
   for (const s of oldStages) {
     if (rerun.has(s.stage_key)) continue;

@@ -163,6 +163,13 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
 - Không gì được áp dụng tới khi người bấm (`chat-actions.ts`): Bắt đầu (`startFromIntake`), Duyệt
   (`approveChatScope`, nộp bản đang hiện theo `turnId`), Áp dụng (intake/timeline, `applyChatProposal`), Chạy lại
   (`retryStageWithFeedback`, tin nhắn vào prompt dạng `# Góp ý của người dùng`), Sửa tay (`saveManualEdit`).
+- **Xem lại / sửa bước đã duyệt** (`step-docs.ts`, `GET|PUT …/steps/:kind`, plan 2026-10-07-ag-studio-step-history-edit):
+  bản đã duyệt đọc từ chính gate (`readStageDocument(run, gate, STUDIO_GATES[gate])`), đè bằng bản đang dùng
+  (`productions.trend_report|rnd|branding`, `episodes.youtube`). Sửa = **chỉ lưu** bản đang dùng (chỉ khi có bước sau
+  đọc nó) hoặc **mở lại bước**: chạy lại từ gate (run đỗ ở gate sau mà không gì đang chạy thì huỷ trước) và đặt bản
+  sửa thành lượt "Sửa tay" trên scope gate của run mới — người bấm Duyệt mới chạy tiếp. Mở lại bước của series thay
+  toàn bộ tập. Web: chip bước bấm được (`StepPane`), Sửa tại chỗ trong cột phải (`DocEditor` từ `DOC_SPECS`,
+  `SurveyEditor`, `EditPlanEditor`); không còn drawer Sửa tay.
 - Web chat: `/` (trang chủ), `/v/:productionId`, `/v/:productionId/e/:episodeId`, `/queue` (`apps/web/src/modules/chat`,
   `pages/Chat*Page.tsx`, `pages/QueuePage.tsx`); màn cũ giữ ở `/productions`, `/teams`, editor timeline. Khung trình
   duyệt nhúng của app desktop báo trang luôn ẩn nên react-query không polling: kiểm bằng khung đó thì tải lại trang.
@@ -185,18 +192,32 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
   `approve-youtube-kit` (`approveChatScope({ renderMachine })`, gate khác → 422 `no_render_here`) hoặc khi Render lại
   (`POST …/episodes/:id/rerender { renderMachine }`). Xem trước 720p và xuất Premiere luôn `{}`. **Ghim một máy theo tên
   node là đổi hợp đồng ag-farm: hỏi trước.**
+- Attempt mới của một stage farm huỷ trước các job farm mà attempt trước của cùng stage để lại (`earlierJobsFor` của
+  `FarmExecutor` → `earlierFarmJobs`, tra `studio_farm_jobs`): worker khởi động lại giữa lúc chờ farm thì job cũ không
+  còn chạy cho không ai đọc. Huỷ hỏng không làm hỏng attempt.
 - **Render lại** (`rerenderEpisode`): run 1.3.0 đã xong mà revision mới nhất **giống** timeline đã duyệt thì chạy lại
   từ `render-final` (không gọi Claude, không duyệt lại); đã sửa sau khi duyệt thì từ `approve-timeline`; tập 1.2.0 từ
   `freeze-timeline`. `episodeRenderInfo` (trường `render` của chi tiết tập) nói bước bắt đầu (`restartFrom`).
 - **Màn Hàng đợi** (`/queue`, `GET /api/studio/queue`, `queue.ts`): lượt Claude (dòng `lease` giữ `claude`) và job farm
   chưa xong (owner API `listJobs`, cache 3 s) của video người xem thấy. Owner API **không** có danh sách node nên không
   có danh sách máy; `JobView` chỉ có `node_id`. Job `queued` quá 10 phút hiện cảnh báo (farm không báo vì sao chờ).
-- Xuất Premiere: job farm `studio.export_premiere`, FCP7 XML (xmeml v5), chữ là PNG, zip kèm README relink. **Tắt cho
-  tập cắt theo shot** tới pha 4 (422 `premiere_needs_phase_4`, web ẩn mục; ADR mục 159).
+- Xuất Premiere: job farm `studio.export_premiere`, FCP7 XML (xmeml v5), chữ là PNG, zip kèm README relink. Cả hai kiểu
+  dựng (ADR mục 171): tập cắt gửi kèm WAV lời dẫn từ kho giọng; thiếu WAV là 422 `narration_missing`. Render worker
+  phải là bản đọc v4 (`e882a6c`) trên **mọi** máy farm: worker cũ âm thầm bỏ trim, chuyển cảnh, lời dẫn.
 - **Lời dẫn và nhận dạng lời nói ở farm** (tập cắt, ADR mục 154, 156): `studio.tts` chỉ gửi các dòng chưa có trong
   kho giọng (`voice-store.ts`, khoá theo nội dung, WAV ở `<STUDIO_DATA_ROOT>/voice`); `studio.transcribe` nhận WAV 16 kHz
   Studio đã tách. Không có gì để gửi thì payload builder trả `skip` (`FarmExecutor` ghi đầu ra, không gọi farm).
   Render worker phải khai `python` (`extra.python_bin` trong `render.yaml`) mới nhận được hai job này.
+- **Giọng đọc và nhạc nền là tuỳ chọn** (plan `2026-10-07-ag-studio-optional-audio.md`, ADR mục 167–170):
+  `productions.voice` = NULL (chưa hỏi; `STUDIO_DEFAULT_VOICE_REFERENCE` nếu có) | `{mode: "clone", …}` | `{mode:
+  "none"}` (bỏ lời dẫn cả production), đọc qua `productionVoice` (`voice.ts`). Thiếu giọng thì `tts` dừng với
+  `needs_voice`, chat báo `blocked.code = "needs_voice"` (không còn `busy`); bước máy hỏng khác là `stage_failed`.
+  Người dùng đưa giọng/nhạc qua `/productions/:id/audio` (link hoặc file; `audio-import.ts`: chặn IP nội bộ trừ khi
+  `STUDIO_AUDIO_ALLOW_PRIVATE_URLS`, ffprobe kiểm, lưu `library/studio/<production>/…`), giọng phải khai `origin` và
+  xác nhận quyền dùng. Đặt giọng hoặc bỏ lời dẫn thì `resumeVoiceWaiting` chạy lại `tts`. Stage đóng băng nhạc qua
+  `productionMusic` (chỉ `{track, gain_db, ducking}`); `fit-timeline` lấy nhạc hiện tại của production. API cần cả
+  `STUDIO_FFMPEG_PATH` và `STUDIO_FFPROBE_PATH` để nhận audio. Audio từ ag-go (pha B) và giọng máy không file mẫu (pha
+  C) chưa làm: hỏi trước.
 - Thumbnail cắt và vẽ chữ trên máy Studio từ `final.mp4` (ffmpeg bất đồng bộ, không `spawnSync`); font Arial của hệ
   thống (`STUDIO_FONTS_DIR`) — không ship font.
 - Canva: token mỗi người dùng mã hoá bằng `CANVA_TOKEN_KEY`, không bao giờ trả về trình duyệt; refresh token chỉ

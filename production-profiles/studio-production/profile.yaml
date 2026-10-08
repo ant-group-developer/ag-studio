@@ -2,7 +2,9 @@ schema_version: harness.production-profile/v1
 profile_id: studio-production
 revision: 1
 status: active
-workflow_release: ag-studio-production@1.0.0
+# The engine names each run's workflow itself (studio-engine core.ts: series plan, episode, shot-cut episode); this is
+# the one a production starts with, for `doctor`.
+workflow_release: ag-studio-series-plan@3.1.0
 # 4 h per stage attempt: a farm stage waits in ag-farm's queue inside its own deadline (plan 3.3), and a Claude
 # stage may sit out a subscription limit reset.
 overrides: { default_deadline_seconds: 14400 }

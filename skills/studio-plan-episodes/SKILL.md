@@ -82,6 +82,9 @@ Ghi cho **mọi** tập:
 - `"whole"` (ghép nguyên video) khi footage là các clip ngắn đã hoàn chỉnh, mỗi clip là một cảnh.
 - `narration`: tập `cut` thường `"tts"` (lời dẫn đọc bằng giọng tổng hợp); `"original"` khi footage có người nói
   cần giữ (`has_speech`), `"none"` khi chỉ cần hình, nhạc và tiếng môi trường. Tập `whole` luôn `"none"`.
+- `brief.narration_voice` nói production có đọc lời dẫn được không: `"ready"` (đã có giọng), `"missing"` (chưa có
+  giọng; vẫn được chọn `"tts"`, Studio sẽ hỏi người dùng giọng mẫu trước khi đọc), `"none"` (người dùng **đã bỏ lời
+  dẫn**: không tập nào được `"tts"`, chọn `"original"` hoặc `"none"`). Vắng thì coi như `"ready"`.
 
 ### 3f. texts_suggested
 
@@ -99,6 +102,7 @@ Tối đa 5 `texts_suggested`. Gợi ý chữ overlay hữu ích:
 - `texts_suggested[].at_item < items.length`.
 - Tập `whole`: tổng thời lượng nằm trong ±20% target_seconds (cảnh báo, không chặn); `narration` phải là `"none"`.
 - Tập `cut`: tối đa 40 video; footage < 1,5 × target thì cảnh báo.
+- `brief.narration_voice = "none"`: không tập nào có `narration` `"tts"` (kể cả để trống, vì trống là `"tts"`).
 
 ## Ví dụ có lời giải
 

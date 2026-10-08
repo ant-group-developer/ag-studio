@@ -20,6 +20,7 @@ import {
   cancelEpisode,
   EPISODE_RENDER_STAGE,
   episodeExport,
+  episodeKit,
   episodeRenderInfo,
   episodeRunView,
   episodeShots,
@@ -47,9 +48,11 @@ import {
   type RenderMachine,
   type RunView,
   type ThumbnailActionDeps,
+  setEpisodeNarration,
+  resumeEpisodeRunFrom,
 } from '@ag-studio/engine';
 import { Logger } from '@nestjs/common';
-import { IsIn, IsInt, IsObject, IsOptional, Max, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsUUID, Max, Min } from 'class-validator';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from './engine.service';
@@ -63,6 +66,12 @@ import { mapErrors } from './http-errors';
 export class RerenderDto {
   /** The farm machine type the final render runs on (phase 3); absent: the run's choice, or any machine. */
   @IsOptional() @IsIn(RENDER_MACHINES) renderMachine?: RenderMachine;
+  /** …and the one farm node it must run on (`GET /api/studio/farm/nodes`); with `renderMachine` only. */
+  @IsOptional() @IsUUID() renderNodeId?: string;
+}
+
+export class EpisodeNarrationDto {
+  @IsBoolean() declined!: boolean;
 }
 
 /** Where a shot-cut episode runs again from: its scene selection or its edit plan gate (phase 5). */
@@ -98,6 +107,8 @@ export interface EpisodeSummary {
   thumbnailUrl: string | null; updatedAt: string;
   /** `whole` (whole videos) or `cut` (shot by shot, phase 5). */
   editStyle: 'whole' | 'cut';
+  /** Narration declined for this episode alone (a shot-cut episode). */
+  narrationDeclined: boolean;
 }
 
 type StudioExport = NonNullable<ReturnType<typeof episodeExport>>;
@@ -187,6 +198,7 @@ export class EpisodesController {
       thumbnailUrl: thumb ? await this.sign(thumb.image_key) : null,
       updatedAt: ep.updated_at,
       editStyle: ep.edit_style,
+      narrationDeclined: ep.narration_override === 'none',
     };
   }
 
@@ -239,12 +251,8 @@ export class EpisodesController {
       const showsFootage = (kind: string) => kind === 'mp4' || kind === 'thumbnail' || kind === 'pack';
       const run: RunView | null = ep.run_id ? episodeRunView(this.engine.core, this.engine.db, episodeId) : null;
       const kitStage = run?.stages.find((s) => s.key === 'youtube-kit');
-      // The person's edits win over Claude's kit
-      const youtube = ep.youtube
-        ? readStoredYoutubeKit(JSON.parse(ep.youtube))
-        : kitStage?.state === 'SUCCEEDED' && ep.run_id
-          ? readStoredYoutubeKit(readStageDocument(this.engine.core, ep.run_id, 'youtube-kit', 'youtube-kit.json'))
-          : null;
+      // The person's edits, else the kit approved at its gate, else Claude's (episodeKit)
+      const youtube = (ep.youtube || kitStage?.state === 'SUCCEEDED') ? episodeKit(this.engine.core, ep) : null;
       const exp = episodeExport(this.engine.core, ep);
       const exportFiles = await Promise.all((exp?.files ?? []).filter((f) => covers || !showsFootage(f.kind)).map(async (f) => {
         const name = f.key.split('/').pop() ?? f.key;
@@ -362,13 +370,14 @@ export class EpisodesController {
   @Roles('producer')
   @HttpCode(HttpStatus.ACCEPTED)
   rerender(@Param('id') prodId: string, @Param('episodeId') episodeId: string, @Body() dto: RerenderDto, @Req() req: Request) {
-    return mapErrors(() => {
+    return mapErrors(async () => {
       const ep = getEpisode(this.engine.db, episodeId);
       if (!ep || ep.production_id !== prodId) {
         throw new NotFoundException({ code: 'not_found', message: `episode ${episodeId} not found` });
       }
+      const node = dto?.renderNodeId && dto.renderMachine !== undefined ? await this.engine.renderNode(dto.renderNodeId) : null;
       const out = rerenderEpisode(this.engine.core, this.engine.db, episodeId, {
-        ...(dto?.renderMachine !== undefined ? { machine: dto.renderMachine } : {}),
+        ...(dto?.renderMachine !== undefined ? { machine: dto.renderMachine, node } : {}),
         ...(req?.authContext?.userId ? { by: req.authContext.userId } : {}),
       });
       this.recordEpisodeDecision(ep, 'episode_rerender', req?.authContext?.userId);
@@ -402,6 +411,49 @@ export class EpisodesController {
       cancelEpisode(this.engine.core, this.engine.db, episodeId);
       this.recordEpisodeDecision(ep, 'episode_cancel', req?.authContext?.userId);
       return { ok: true };
+    });
+  }
+
+  /**
+   * Narration of this episode alone: `declined: true` cuts it without lines whatever the production's voice (an
+   * episode waiting for a voice runs on at once); `false` follows the production again.
+   */
+  @Post(':episodeId/narration')
+  @Roles('producer')
+  @HttpCode(HttpStatus.OK)
+  episodeNarration(@Param('id') prodId: string, @Param('episodeId') episodeId: string, @Body() dto: EpisodeNarrationDto, @Req() req: Request) {
+    return mapErrors(() => {
+      const ep = getEpisode(this.engine.db, episodeId);
+      if (!ep || ep.production_id !== prodId) {
+        throw new NotFoundException({ code: 'not_found', message: `episode ${episodeId} not found` });
+      }
+      const out = setEpisodeNarration(this.engine.core, this.engine.db, episodeId, { declined: dto.declined });
+      const userId = req?.authContext?.userId;
+      if (userId) {
+        try {
+          recordHumanEdit(this.engine.db, {
+            userId, productionId: prodId, episodeId, kind: 'voice',
+            before: { narration_override: ep.narration_override ?? null }, after: { narration_override: dto.declined ? 'none' : null },
+          });
+        } catch { /* the dataset never blocks a decision */ }
+      }
+      return out;
+    });
+  }
+
+  /** "Chạy lại từ bước…": the episode's ended run again from `stage` (a new run reusing every stage before it). */
+  @Post(':episodeId/stages/:stage/resume')
+  @Roles('producer')
+  @HttpCode(HttpStatus.CREATED)
+  resumeEpisodeStage(@Param('id') prodId: string, @Param('episodeId') episodeId: string, @Param('stage') stage: string, @Req() req: Request) {
+    return mapErrors(() => {
+      const ep = getEpisode(this.engine.db, episodeId);
+      if (!ep || ep.production_id !== prodId) {
+        throw new NotFoundException({ code: 'not_found', message: `episode ${episodeId} not found` });
+      }
+      const out = resumeEpisodeRunFrom(this.engine.core, this.engine.db, episodeId, stage);
+      this.recordEpisodeDecision(ep, 'episode_rerender', req?.authContext?.userId);
+      return out;
     });
   }
 

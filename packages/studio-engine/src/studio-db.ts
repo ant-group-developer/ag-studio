@@ -7,8 +7,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import {
-  HarnessError, StoredTimelineSchema, StudioBrandingSchema, StudioRndSchema, timelineAsVersion, timelineVersion,
-  type ChannelRef, type StoredTimeline, type StudioBranding, type StudioHints, type StudioRnd,
+  HarnessError, ProductionMusicSchema, StoredTimelineSchema, StudioBrandingSchema, StudioRndSchema, studioMusicOf, timelineAsVersion, timelineVersion,
+  type ChannelRef, type StoredTimeline, type StudioBranding, type StudioHints, type StudioMusic, type StudioRnd,
 } from "@harness/contracts";
 
 type Param = string | number | null;
@@ -81,6 +81,11 @@ export function saveProductionDocument(db: StudioDb, productionId: string, kind:
     [JSON.stringify(doc), now, by, now, productionId]);
 }
 
+/** The music stages freeze (seed, brief, timeline): the production's, without where the file came from. */
+export function productionMusic(p: Pick<ProductionRecord, "music">): StudioMusic | null {
+  return p.music ? studioMusicOf(ProductionMusicSchema.parse(JSON.parse(p.music))) : null;
+}
+
 export function getProduction(db: StudioDb, id: string): ProductionRecord | null {
   return db.get<ProductionRecord>("SELECT * FROM productions WHERE id = ?", [id]) ?? null;
 }
@@ -109,6 +114,8 @@ export interface EpisodeRecord {
   youtube: string | null; selected_title: number | null; selected_thumbnail: number | null;
   /** `whole` (whole videos, timeline v3) or `cut` (shot by shot, timeline v4); migration 0023. */
   edit_style: "whole" | "cut";
+  /** `none`: narration declined for this episode alone (migration 0027); null: the production decides. */
+  narration_override?: "none" | null;
   created_at: string; updated_at: string;
 }
 
@@ -141,6 +148,14 @@ export function replaceEpisodes(db: StudioDb, productionId: string, rows: { id: 
 
 export function updateEpisodeRunId(db: StudioDb, episodeId: string, runId: string): void {
   db.run("UPDATE episodes SET run_id = ?, updated_at = ? WHERE id = ?", [runId, new Date().toISOString(), episodeId]);
+}
+
+/** Farm jobs submitted by the other attempts of a run's stage (`FarmExecutor.earlierJobsFor`). */
+export function earlierFarmJobs(db: StudioDb, p: { runId: string; stageKey: string; attemptId: string }): string[] {
+  return db.all<{ farm_job_id: string }>(
+    "SELECT farm_job_id FROM studio_farm_jobs WHERE run_id = ? AND stage_key = ? AND attempt_id <> ?",
+    [p.runId, p.stageKey, p.attemptId],
+  ).map((r) => r.farm_job_id);
 }
 
 export function saveTrendReport(db: StudioDb, productionId: string, report: unknown): void {

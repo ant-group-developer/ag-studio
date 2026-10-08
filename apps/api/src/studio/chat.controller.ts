@@ -10,16 +10,20 @@ import {
   Post,
   Query,
   Req,
+  Sse,
   UnprocessableEntityException,
   UseGuards,
+  type MessageEvent,
 } from '@nestjs/common';
+import { distinctUntilChanged, interval, map, merge, Observable, startWith } from 'rxjs';
 import { ConfigService } from '@nestjs/config';
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsObject, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
+import { IsIn, IsInt, IsObject, IsOptional, IsString, IsUUID, MaxLength, Min, MinLength } from 'class-validator';
 import { Request } from 'express';
 import {
   applyChatProposal,
   approveChatScope,
+  chatFingerprint,
   chatScopeFor,
   chatThread,
   createDraftProduction,
@@ -34,6 +38,7 @@ import {
   type RenderMachine,
 } from '@ag-studio/engine';
 import { AgGoClient } from '../ag-go/client';
+import { RawResponse } from '../common/raw-response.decorator';
 import { Roles, type TeamRole } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { StudioDbService } from '../db/studio-db.service';
@@ -59,6 +64,8 @@ export class ChatApproveDto {
   @IsOptional() @IsString() turnId?: string | null;
   /** Approving `approve-youtube-kit` starts the final render: the farm machine type it runs on (any other gate: 422). */
   @IsOptional() @IsIn(RENDER_MACHINES) renderMachine?: RenderMachine;
+  /** …and the one farm node it must run on (`GET /api/studio/farm/nodes`); with `renderMachine` only. */
+  @IsOptional() @IsUUID() renderNodeId?: string;
 }
 
 export class ChatStepDto {
@@ -90,6 +97,10 @@ export class ChatFolders {
     return r.folders.map((f) => ({ id: f.id, name: f.name, usableVideos: f.usableVideos }));
   }
 }
+
+/** How often the chat event stream looks at `studio.db`, and how often it says it is alive. */
+const CHAT_EVENTS_CHECK_MS = 1000;
+const CHAT_EVENTS_PING_MS = 20_000;
 
 /**
  * Chat with Claude on a production (spec local-chat §3.1): one thread per production and one per episode. A message
@@ -125,6 +136,27 @@ export class ChatController {
     return mapErrors(() => chatThread(this.engine.core, this.engine.db, id, {
       episodeId: q.episodeId ?? null, ...(q.after !== undefined ? { after: q.after } : {}),
     }));
+  }
+
+  /**
+   * Server-sent events of the chat (deferred-items: "Không có SSE"): `changed` with the chat's fingerprint whenever
+   * the thread may have changed (checked every second here, against `studio.db`), and `ping` every 20 s to keep
+   * proxies from closing an idle stream. The web reads the thread on `changed` instead of polling it every 2–5 s.
+   * Browsers cannot set headers on `EventSource`: the web reads this with `fetch`, which sends the bearer token.
+   */
+  @Sse('productions/:id/chat/events')
+  @Roles('viewer')
+  @RawResponse()
+  events(@Param('id') id: string, @Query() q: ChatThreadQuery): Observable<MessageEvent> {
+    const episodeId = q.episodeId ?? null;
+    const changes = interval(CHAT_EVENTS_CHECK_MS).pipe(
+      startWith(0),
+      map(() => chatFingerprint(this.engine.db, id, episodeId)),
+      distinctUntilChanged(),
+      map((fingerprint): MessageEvent => ({ type: 'changed', data: { fingerprint } })),
+    );
+    const pings = interval(CHAT_EVENTS_PING_MS).pipe(map((): MessageEvent => ({ type: 'ping', data: '' })));
+    return merge(changes, pings);
   }
 
   @Post('productions/:id/chat')
@@ -168,10 +200,13 @@ export class ChatController {
   @Roles('producer')
   @HttpCode(HttpStatus.OK)
   approve(@Param('id') id: string, @Body() dto: ChatApproveDto, @Req() req: Request) {
-    return mapErrors(() => approveChatScope(this.engine.core, this.engine.db, {
-      productionId: id, episodeId: dto.episodeId ?? null, stageKey: dto.stageKey, turnId: dto.turnId ?? null, userId: req.authContext!.userId,
-      ...(dto.renderMachine !== undefined ? { renderMachine: dto.renderMachine } : {}),
-    }));
+    return mapErrors(async () => {
+      const renderNode = dto.renderNodeId && dto.renderMachine !== undefined ? await this.engine.renderNode(dto.renderNodeId) : null;
+      return approveChatScope(this.engine.core, this.engine.db, {
+        productionId: id, episodeId: dto.episodeId ?? null, stageKey: dto.stageKey, turnId: dto.turnId ?? null, userId: req.authContext!.userId,
+        ...(dto.renderMachine !== undefined ? { renderMachine: dto.renderMachine, renderNode } : {}),
+      });
+    });
   }
 
   /** Chạy lại a Claude stage that failed its check, with what was said in the chat. */

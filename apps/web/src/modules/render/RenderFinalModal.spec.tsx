@@ -21,7 +21,7 @@ describe("RenderFinalModal", () => {
     expect(screen.getByRole("radio", { name: /Máy có NVENC/ })).toBeChecked();
     fireEvent.click(screen.getByRole("radio", { name: /Bất kỳ máy nào/ }));
     fireEvent.click(screen.getByRole("button", { name: "Render" }));
-    expect(onConfirm).toHaveBeenCalledWith("any");
+    expect(onConfirm).toHaveBeenCalledWith("any", null);
   });
 
   it("a timeline edited since approval is approved again first, and the run of a new episode starts from the top", () => {

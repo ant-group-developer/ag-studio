@@ -190,6 +190,24 @@ interface EpisodeRender {
   is now — the picked thumbnail, `youtube.json`, `title.txt`, `description.txt` (with the chapters), `tags.txt`; no
   video (download it on its own). Built on demand, stored once per content; the URL saves the file.
 
+## Step documents (`/productions/:id/steps/:kind`, `/productions/:id/episodes/:episodeId/steps/:kind`)
+
+A step's document read again after its approval and edited (plan 2026-10-07 step history). `kind`: series
+`trend_report | rnd | branding | series_plan`, episode `youtube_kit | survey | edit_plan` (the other side: 422
+`bad_kind`).
+- `GET` (viewer) -> `{kind, gate, state: 'not_yet' | 'waiting' | 'approved', document, inUse, edit: {inPlace,
+  inPlaceCode, reopen, reopenCode, replacesEpisodes, reruns: string[]}}`. `document` (approved only): the version in
+  use when one was edited (`productions.trend_report|rnd|branding`, `episodes.youtube`), else the gate's approved
+  output. `waiting`: edit through the chat's manual edit at that gate.
+- `PUT` body `{document, reopen?: boolean}` -> `{mode: 'saved' | 'reopened', runId?, warnings, view}`. `reopen`
+  false replaces the version in use (only trend report once the episodes exist, R&D, branding, YouTube kit; 409
+  `only_reopen` otherwise, `apply_pending`). `reopen` true starts the run again from the gate (a run parked at a later
+  gate with nothing working is cancelled first) and puts the edit on show there as a manual-edit turn: approving it
+  runs the steps after. 409 `running`, `episode_producing` (plan steps), `render_again` (the kit: save, then Render
+  lại), `at_gate`, `not_approved_yet`; 422 `{problems}` when the schema check fails (the gate's checks run when it is
+  approved again). Reopening a series step makes the episodes again after `approve-plan` (`replacesEpisodes`).
+  Series: producer. Episode: editor for the kit in place, producer otherwise.
+
 ## Thumbnails (`/productions/:id/episodes/:episodeId/thumbnails`)
 
 Episode runs `ag-studio-episode@1.2.0` cut up to 36 clean frames of the final video (away from on-screen words and
@@ -285,11 +303,18 @@ interface ChatTurn { id: string; production_id: string; episode_id: string | nul
   llm_call_id: string | null; created_by: string | null; applied_at: string | null; created_at: string; updated_at: string }
 interface ChatThreadView { turns: ChatTurn[];
   scope: {productionId; episodeId; runId; stageKey; scope} | null;
-  blocked: {code: 'busy' | 'nothing_to_chat'; stage: string | null} | null;   // why no message can be sent now
+  blocked: {code: 'busy' | 'nothing_to_chat' | 'needs_voice' | 'stage_failed'; stage: string | null;
+    problems?: {code, message}[]} | null;   // why no message can be sent now (see below)
   current: {turnId: string | null; document: unknown; draft: unknown; pendingApply: boolean;
     problems: {code, message}[]} | null;   // on show; problems: why a failed stage was refused
   queueAhead: number }   // replies of other threads waiting for a Claude slot before this one
 ```
+
+`blocked.code`: `busy` (Claude or a machine is working on the step), `nothing_to_chat` (the run is over),
+`needs_voice` (a narrated shot-cut episode stopped at `tts`: the production has no voice; give one or decline narration
+under "Audio" below), `stage_failed` (a machine step (farm, script, in-process) stopped; `problems` are the errors of
+its newest failed attempt; run it again with `POST .../stages/:stage/retry`). The intake draft may carry
+`audio_links: {voice, music}` (links the person pasted in the chat; nothing is fetched until they press it).
 
 - `POST /teams/:teamId/drafts` (producer) `{text}` -> `{productionId, user, assistant}`: a draft production (title
   "Video mới") and its first intake message. `@[name](folder:<id>)` in the text names an ag-go folder; one the
@@ -311,6 +336,35 @@ interface ChatThreadView { turns: ChatTurn[];
   with the chat's messages about it in its prompt; 409 `not_failed`
 - `POST /productions/:id/chat/manual` (producer) `{stageKey, episodeId?, document}` -> ChatTurn: a version written by
   hand becomes the one on show (422 `rejected` with `failed` when it does not match the stage's schema)
+
+## Audio (`/productions/:id/audio`): voice sample and music, both optional (ADR-0001 items 167-168)
+
+```ts
+interface ProductionAudio {
+  voice: {mode: 'none'; decided_at: string}                                  // narration declined
+    | {mode: 'clone'; origin: 'synthetic' | 'own' | 'licensed' | null; source: AudioSource | null; duration_s: number | null;
+       reference_text: string | null; reference: string; listenUrl: string | null}   // source null: set before (SQL/env)
+    | null;                                                                   // not asked (Studio default if configured)
+  music: {track: string; gain_db: number; ducking: boolean; source: AudioSource | null; duration_s: number | null;
+    listenUrl: string | null} | null }
+type AudioSource = {kind: 'link'; url: string} | {kind: 'upload'; filename: string} | {kind: 'ag-go'; asset_id: string}
+```
+
+- `GET /productions/:id/audio` (viewer) -> ProductionAudio (`listenUrl`: signed, only for files a person gave)
+- `POST /productions/:id/audio/voice|music` (editor): multipart `file` **or** JSON `{url}`, plus for a voice
+  `origin` and `confirm: true` (the person vouches they may use it), `referenceText?` (what is said; empty = the TTS
+  engine listens); for music `gainDb?` (default -18), `ducking?` (default true) -> ProductionAudio &
+  `{resumedEpisodes: string[]}`. The server fetches a link itself (public addresses only unless
+  `STUDIO_AUDIO_ALLOW_PRIVATE_URLS`; Google Drive share links work), checks it with ffprobe, keeps a voice as 24 kHz mono
+  WAV (first 20 s) and music as AAC under `library/studio/<production>/...`. A voice runs on the episodes stopped at
+  `tts`. 400 `voice_consent` / `audio_missing` / `url_not_allowed` / `invalid`, 413 `audio_too_large` (voice 20 MB,
+  music 100 MB), 422 `audio_invalid` (no sound, voice < 3 s, music < 5 s), 502 `url_fetch_failed`, 503 `audio_disabled`
+  (no `STUDIO_FFMPEG_PATH`/`STUDIO_FFPROBE_PATH`).
+- `POST /productions/:id/audio/voice/none` (editor) -> ProductionAudio & `{resumedEpisodes}`: "Bỏ lời dẫn" for the whole
+  production; episodes waiting for a voice are cut without lines; the series plan no longer picks `tts`.
+- `DELETE /productions/:id/audio/voice|music` (editor) -> ProductionAudio: back to not asked / no music.
+
+Every change goes to `human_edits` (`kind: voice | music`).
 
 ## Studio (`/studio`)
 

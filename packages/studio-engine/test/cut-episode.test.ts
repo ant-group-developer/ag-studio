@@ -4,7 +4,10 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { StudioSurveySchema } from "@harness/contracts";
-import { episodeShots, getEpisode, readStageDocument, rerunEpisodeFrom, StudioRunError, submitStudioGate } from "../src/index.js";
+import {
+  approveChatScope, chatThread, editStepDocument, episodeShots, getEpisode, readStageDocument, rerunEpisodeFrom, saveManualEdit, stepDocument,
+  StudioRunError, submitStudioGate,
+} from "../src/index.js";
 import { cutEpisodeAtSurvey, cutSetup, drain, hasFfmpeg, waiting, type CutSetup } from "./cut-flow.js";
 
 const refusal = (f: () => unknown) => {
@@ -61,4 +64,28 @@ describe.skipIf(!hasFfmpeg())("a shot-cut episode through the API (needs ffmpeg 
     expect(waiting(s, out.runId)).toEqual(["approve-survey"]);
     expect(episodeShots(s.core, s.db, ep.id).state).toBe("waiting");
   }, 120_000);
+
+  it("the scene selection is edited by hand at its gate, and after approval by reopening it with the edit on show", async () => {
+    s = cutSetup();
+    const { ep, runId } = await cutEpisodeAtSurvey(s);
+    const draft = StudioSurveySchema.parse(readStageDocument(s.core, runId, "source-survey", "survey.json"));
+    const byHand = { ...draft, shots: draft.shots.map((x, i) => (i === 0 ? { ...x, note: "chọn tay" } : x)) };
+    const turn = saveManualEdit(s.core, s.db, { productionId: ep.production_id, episodeId: ep.id, stageKey: "approve-survey", document: byHand, userId: "u" });
+    const atGate = chatThread(s.core, s.db, ep.production_id, { episodeId: ep.id });
+    expect(atGate.current?.turnId).toBe(turn.id);
+    expect((atGate.current?.document as typeof byHand).shots[0]!.note).toBe("chọn tay");
+    await approveChatScope(s.core, s.db, { productionId: ep.production_id, episodeId: ep.id, stageKey: "approve-survey", turnId: turn.id, userId: "u" });
+    await drain(s);
+    expect(waiting(s, runId)).toEqual(["approve-edit-plan"]);
+
+    const view = stepDocument(s.core, s.db, { productionId: ep.production_id, episodeId: ep.id, kind: "survey" });
+    expect(view).toMatchObject({ state: "approved", edit: { inPlace: false, reopen: true } });
+    expect((view.document as typeof byHand).shots[0]!.note).toBe("chọn tay");
+    const again = { ...byHand, shots: byHand.shots.map((x, i) => (i === 1 ? { ...x, note: "sửa lại" } : x)) };
+    const out = editStepDocument(s.core, s.db, { productionId: ep.production_id, episodeId: ep.id, kind: "survey", document: again, reopen: true, userId: "u" });
+    expect(s.core.store.getRun(runId)!.state).toBe("CANCELLED");
+    await drain(s);
+    expect(waiting(s, out.runId!)).toEqual(["approve-survey"]);
+    expect(episodeShots(s.core, s.db, ep.id).shots[1]).toMatchObject({ note: "sửa lại" });
+  }, 180_000);
 });

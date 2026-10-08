@@ -44,14 +44,52 @@ describe("rendering a shot-cut timeline", () => {
       .rejects.toThrow(/voice store/);
   });
 
-  it("Premiere does not yet take a trimmed or narrated timeline (phase 4)", async () => {
+  function premiereWorld(timeline: TimelineV4 = cut()) {
     const { db, bucket } = world();
     const prod = seedProduction(db);
     replaceEpisodes(db, prod, [{ id: "ep-1", idx: 1, title: "T", hook: "h", plan: "{}", edit_style: "cut" }], "plan-run");
-    saveEpisodeRevision(db, "ep-1", { baseRevision: 0, data: { ...cut(), production_id: prod }, authorId: "system" });
-    const farm = { submitJob: async () => { throw new Error("must not be called"); } };
-    const err = await startPremiereExport({ db, bucket, farm: farm as never }, { productionId: prod, episodeId: "ep-1", media: "proxy", userId: "u" }).catch((e: unknown) => e);
+    saveEpisodeRevision(db, "ep-1", { baseRevision: 0, data: { ...timeline, production_id: prod }, authorId: "system" });
+    const submitted: { type: string; payload: Record<string, unknown> }[] = [];
+    const farm = { submitJob: async (j: { type: string; payload: Record<string, unknown> }) => { submitted.push(j); return { job: { id: `farm-${submitted.length}` } }; } };
+    return { db, bucket, prod, submitted, farm: farm as never };
+  }
+
+  it("Premiere takes a trimmed, dissolved, narrated timeline: the composition and each line's WAV go with the job", async () => {
+    const voiceDir = mkdtempSync(join(tmpdir(), "voice-"));
+    writeFileSync(voicePath(voiceDir, KEY), "RIFF-L001");
+    const t = cut();
+    t.clips[0]!.transition_out = { kind: "dissolve", seconds: 0.5 };
+    const w = premiereWorld(t);
+    const job = await startPremiereExport({ db: w.db, bucket: w.bucket, farm: w.farm, voiceDir }, { productionId: w.prod, episodeId: "ep-1", media: "proxy", userId: "u" });
+    expect(job.status).toBe("running");
+    expect(w.submitted.map((j) => j.type)).toEqual(["studio.export_premiere"]);
+    // a worker that cannot read shot-cut episodes refuses the job instead of dropping trims and narration
+    expect(w.submitted[0]!.payload).toMatchObject({ composition: "stage:composition.json", media: "proxy", edit_style: "cut" });
+    const keys = [...w.bucket.objects.keys()].filter((k) => k.includes(`/editor-premiere/${job.id}/`));
+    expect(keys.map((k) => k.slice(k.indexOf("/in/") + 4)).sort()).toEqual(["composition.json", "voice/L001.wav"]);
+    expect(w.bucket.objects.get(keys.find((k) => k.endsWith("voice/L001.wav"))!)!.toString("utf8")).toBe("RIFF-L001");
+    const composition = CompositionSchema.parse(JSON.parse(w.bucket.objects.get(keys.find((k) => k.endsWith("composition.json"))!)!.toString("utf8")));
+    expect(composition.segments[0]).toMatchObject({ in: 1, out: 5 });
+    expect(composition.narration).toEqual([{ line_id: "L001", wav: "stage:voice/L001.wav", start: 0.3, end: 1.5 }]);
+  });
+
+  it("Premiere of a timeline whose narration WAV is gone is refused, naming the line; no job is made", async () => {
+    const w = premiereWorld();
+    const err = await startPremiereExport({ db: w.db, bucket: w.bucket, farm: w.farm, voiceDir: mkdtempSync(join(tmpdir(), "voice-")) }, { productionId: w.prod, episodeId: "ep-1", media: "proxy", userId: "u" }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(StudioRunError);
-    expect((err as StudioRunError).details).toMatchObject({ code: "premiere_needs_phase_4" });
+    expect((err as StudioRunError).code).toBe("invalid");
+    expect((err as StudioRunError).details).toMatchObject({ code: "narration_missing", line_id: "L001" });
+    expect(w.submitted).toHaveLength(0);
+    expect(w.db.all("SELECT id FROM episode_jobs")).toHaveLength(0);
+  });
+
+  it("Premiere of a timeline without narration sends no WAV, and needs no voice store", async () => {
+    const t = cut();
+    t.narration = { ...t.narration, voice: "none", lines: [] };
+    t.clips[0]!.line_id = null;
+    const w = premiereWorld(t);
+    const job = await startPremiereExport({ db: w.db, bucket: w.bucket, farm: w.farm }, { productionId: w.prod, episodeId: "ep-1", media: "original", userId: "u" });
+    expect(job.status).toBe("running");
+    expect([...w.bucket.objects.keys()].filter((k) => k.includes("/voice/"))).toEqual([]);
   });
 });

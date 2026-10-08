@@ -1,6 +1,6 @@
 /**
  * The Queue screen (mockup 12): Claude calls running and waiting, the farm jobs not done, filtered to what the person
- * may see. Farm jobs are read from ag-farm's owner API; the owner API lists no nodes, so no machine list here.
+ * may see. Farm jobs and machines are read from ag-farm's owner API.
  */
 import { describe, expect, it } from "vitest";
 import { acquireChatSlot, cachedQueueFarm, insertUserTurn, startPlanRun, studioQueue, type QueueFarm } from "../src/index.js";
@@ -64,13 +64,29 @@ describe("studioQueue", () => {
     expect(q.farm).toEqual({ ok: true });
     const ep = { productionId: s.mine, productionTitle: "Series Kyoto", episodeId: "ep-1", episodeIdx: 1, episodeTitle: "Rừng tre" };
     expect(q.renders).toEqual([
-      { farmJobId: "f-final", kind: "final", ...ep, machine: "nvenc", status: "leased", progress: 62, progressStage: null, attempt: 1, createdAt: "2026-10-06T10:25:00.000Z", stuck: false },
-      { farmJobId: "f-preview", kind: "preview", ...ep, machine: "any", status: "queued", progress: null, progressStage: null, attempt: 1, createdAt: "2026-10-06T10:28:00.000Z", stuck: false },
+      { farmJobId: "f-final", kind: "final", ...ep, machine: "nvenc", status: "leased", progress: 62, progressStage: null, attempt: 1, createdAt: "2026-10-06T10:25:00.000Z", stuck: false, node: null, pinned: null },
+      { farmJobId: "f-preview", kind: "preview", ...ep, machine: "any", status: "queued", progress: null, progressStage: null, attempt: 1, createdAt: "2026-10-06T10:28:00.000Z", stuck: false, node: null, pinned: null },
       // queued for 30 minutes: no node took it, maybe none fits
-      { farmJobId: "f-old", kind: "final", ...ep, machine: null, status: "queued", progress: null, progressStage: null, attempt: 1, createdAt: "2026-10-06T10:00:00.000Z", stuck: true },
+      { farmJobId: "f-old", kind: "final", ...ep, machine: null, status: "queued", progress: null, progressStage: null, attempt: 1, createdAt: "2026-10-06T10:00:00.000Z", stuck: true, node: null, pinned: null },
     ]);
     expect(q.hiddenRenders).toBe(1);
     expect(f.calls[0]).toMatchObject({ status: "queued,leased,paused" });
+  });
+
+  it("lists the farm's machines, names the node running a job and the one it was pinned to", async () => {
+    const s = seed();
+    const n1 = "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a41";
+    const n2 = "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a42";
+    s.db.run("UPDATE studio_farm_jobs SET requirements = ? WHERE farm_job_id = 'f-final'", [JSON.stringify({ nvenc: true, node_id: n2 })]);
+    const machine = (id: string, name: string) => ({ id, name, online: true, kinds: ["studio.render_final" as const], gpus: [], running_jobs: 0, last_seen_at: null });
+    const f = farm({ "f-final": { status: "leased" } });
+    const withNodes: QueueFarm = { listJobs: async (q) => ({ ...(await f.listJobs(q)), jobs: (await f.listJobs(q)).jobs.map((j) => ({ ...j, node_id: n2 })) }),
+      listNodes: async () => ({ nodes: [machine(n1, "render-01"), machine(n2, "render-02")] }) };
+    const q = await studioQueue(s.core, s.db, withNodes, { userId: "auth0|owner", isAdmin: false, now: NOW, claudeMax: 20 });
+    expect(q.machines?.map((m) => m.name)).toEqual(["render-01", "render-02"]);
+    expect(q.renders[0]).toMatchObject({ farmJobId: "f-final", machine: "nvenc", node: { id: n2, name: "render-02" }, pinned: { id: n2, name: "render-02" } });
+    // a hub that lists no machines: none shown, jobs still listed
+    expect((await studioQueue(s.core, s.db, f, { userId: "auth0|owner", isAdmin: false, now: NOW, claudeMax: 20 })).machines).toBeNull();
   });
 
   it("an admin sees every job; pages of the farm are followed", async () => {

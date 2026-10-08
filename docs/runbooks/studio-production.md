@@ -36,14 +36,22 @@ kiểu đi bộ du lịch, có lời dẫn"). Đầu tập có dòng "cắt theo
 | Chuẩn bị footage | Tự động | Vạch ngăn "tự động · N video, M shot" | Tải proxy 720p, dò shot, nghe tiếng nói (farm `studio.transcribe`), cắt khung + contact sheet |
 | Chọn cảnh | Claude (xem contact sheet) → **người duyệt** | Lưới shot ở cột phải, lọc Dùng được / Bị loại / Tất cả; bấm shot để xem đoạn 720p; chat "giữ lại s000-002", "bỏ mấy cảnh có người nhìn máy" | Claude chat **nhớ các khung đã xem** (cùng session của bước này); shot đổi so với bản trước được tô |
 | Kế hoạch dựng | Claude (Opus) → **người duyệt** | Bảng `# · Shot · Vào–ra · Dài`, lời dẫn từng dòng, chữ trên hình; chat "câu L002 ngắn lại" | Không có video xem trước ở bước này; nghe thử ở bước Timeline |
-| Lời dẫn, khớp hình | Tự động | — | Farm đọc **chỉ các câu chưa đọc** (kho giọng theo nội dung); hình kéo dài/cắt bớt theo độ dài câu |
+| Lời dẫn, khớp hình | Tự động | — | Farm đọc **chỉ các câu chưa đọc** (kho giọng theo nội dung); hình kéo dài/cắt bớt theo độ dài câu. Series chưa có giọng thì tập dừng ở đây với "cần giọng đọc" (xem dưới) |
 | Timeline | **Người duyệt** | Như tập thường; thêm: cắt đầu/cuối clip, chuyển cảnh, phụ đề (chat "ngắn lại clip đầu", hoặc editor: ô Vào/Ra, chuyển cảnh, phụ đề) | Xem trước 720p có giọng |
 | YouTube kit, render | Như tập thường | | Bản cuối theo khung của production (4K nếu đặt 3840×2160) |
 
 - **Chạy lại từ một bước:** `⋯ → Chạy lại từ chọn cảnh…` hoặc `⋯ → Chạy lại từ kế hoạch dựng…` (có thẻ xác nhận). Run
   mới giữ footage, shot, khung đã làm và dừng ở bước đó với bản Claude viết; được khi tập đã xong hoặc đang chờ duyệt
   ở bước sau (run đang chờ bị huỷ). Đang có bước chạy thì 409 `episode_running`.
-- **Không xuất Premiere** cho tập cắt theo shot tới pha 4 (Premiere chưa đọc được trim, chuyển cảnh, lời dẫn).
+- **Giọng máy (không cần file mẫu):** ở ô giọng đọc chọn tab "Giọng máy", chọn giới tính, độ tuổi, cao độ, bấm "Tạo
+  giọng". Farm đọc một câu mẫu (máy cần GPU và render worker có `instruct`); xong thì nghe thử được và các tập đang
+  chờ giọng chạy tiếp. Lỗi thì ô giọng ghi lý do, tạo lại được.
+- **Giọng đọc và nhạc nền (tuỳ chọn):** đưa ở cột phải lúc intake, ở màn cũ, hoặc khi tập dừng với "cần giọng đọc":
+  dán link (file audio, Google Drive chia sẻ công khai) hoặc tải file lên. Giọng mẫu 3–20 giây, một người nói rõ;
+  phải chọn giọng là của ai (giọng máy / của mình / có giấy phép) và tick xác nhận có quyền dùng. Có giọng thì các tập
+  đang chờ tự chạy tiếp. **Bỏ lời dẫn** áp cho cả series: tập dựng chỉ với hình, tiếng gốc và nhạc; lời đã viết trong
+  kế hoạch dựng bị bỏ; kế hoạch tập sau đó không chọn lời dẫn nữa. Nhạc đưa vào trước bước khớp hình thì tập dùng nhạc
+  đó; tập đã có timeline thì sửa nhạc trong timeline.
 - Tập ghép nguyên video không có các ô cắt đầu/cuối, chuyển cảnh, phụ đề.
 
 "Duyệt" luôn là nút; gõ "ok" trong chat chỉ làm Claude hiện thẻ xác nhận. Production bắt đầu trên màn cũ
@@ -60,8 +68,15 @@ kiểu đi bộ du lịch, có lời dẫn"). Đầu tập có dòng "cắt theo
   lại, không gọi Claude, không duyệt lại. Lần render đầu chọn kiểu máy ngay trên thẻ duyệt YouTube kit.
 - **Tải về:** file mp4, hoặc "gói YouTube" (zip, tạo lúc tải).
 - **Xuất Premiere:** `⋯ → Xuất project Premiere` (proxy 720p), hoặc màn cũ để chọn bản gốc (cần quyền tải gốc trên
-  ag-go). Job farm `studio.export_premiere`; zip FCP7 XML + media + PNG chữ + `README.txt` hướng dẫn relink. Hai lỗi
-  đã biết (tiếng gốc đã tắt vẫn có, gain nhạc luôn 0 dB): `docs/operations/deferred-items.md`.
+  ag-go). Job farm `studio.export_premiere`; zip FCP7 XML + media + PNG chữ + `README.txt` hướng dẫn relink. Tập cắt
+  theo shot: clip đúng điểm vào/ra, chuyển cảnh, lời dẫn trên A3 (A1 trống), nhạc tự hạ dưới lời dẫn (keyframe A2);
+  phụ đề là `captions.srt` trong zip, nhập bằng File → Import rồi kéo lên timeline. "Lời dẫn … không còn trong kho
+  giọng" (422 `narration_missing`): render lại tập để đọc lại lời. Cảnh báo của bản xuất hiện dưới dòng job.
+- **Ghim một máy:** bộ chọn máy bản cuối có ô "Máy cụ thể" (danh sách lấy từ farm). Máy tắt thì job chờ; quá
+  `STUDIO_FARM_QUEUE_TIMEOUT_MINUTES` (120) không máy nào nhận thì bước render dừng, chat nói lý do, bấm Render lại.
+- **Thứ tự deploy:** render worker đọc v4 (`ag-render-worker` từ `e882a6c`) lên **mọi** máy farm trước, rồi mới tới
+  Studio. Job xuất Premiere của tập cắt mang `edit_style: cut`: hub hoặc máy còn bản cũ từ chối job ("Invalid
+  export_premiere payload") thay vì ra project sai (ADR mục 172). Gặp lỗi đó thì cập nhật ag-farm và render worker.
 
 ## 4. Khi một bước hỏng
 
@@ -72,6 +87,8 @@ kiểu đi bộ du lịch, có lời dẫn"). Đầu tập có dòng "cắt theo
 | Hết hạn mức gói Claude | Chat hiện "hết hạn mức, tự thử lại lúc …"; stage log `RATE_LIMITED` | Không làm gì; tự chờ 5→60 phút rồi chạy lại |
 | Tin nhắn chờ lâu | "Đang chờ lượt (n lượt trước)" | Đủ số lượt Claude cùng lúc; admin tăng ở chip header |
 | Render treo | `render-final` chạy tới deadline (4 giờ) | Kiểm farm (web 3011) và render worker; huỷ run tập rồi "Render lại" |
+| Tập dừng ở lời dẫn | Cột phải "cần giọng đọc" | Đưa giọng mẫu, hoặc **Bỏ lời dẫn** (cả series) |
+| Bước máy hỏng (farm, ffmpeg…) | Cột phải "cần xử lý" kèm lỗi | Sửa nguyên nhân (máy farm, cấu hình) rồi bấm "Chạy lại" |
 | Muốn đổi R&D/branding sau khi đã duyệt | | Màn cũ: sửa (`PUT /productions/:id/rnd|branding`), rồi "Chạy lại từ bước này" ở `brief` |
 | Muốn làm lại từ R&D | | Màn cũ: "Chạy lại từ bước này" ở `rnd` hoặc `approve-rnd` (`resumeRunFrom`) |
 | Gate từ chối tài liệu | 422 kèm danh sách vấn đề | Sửa đúng các mục được liệt kê (chat hoặc Sửa tay) rồi duyệt lại |

@@ -113,6 +113,9 @@ node --require ts-node/register ../../node_modules/typeorm/cli.js migration:run 
 - **Claude giả hay thật:** `STUDIO_CLAUDE_ARGV` trong `apps/api/.env` trỏ `fixtures/fake-studio-claude.mjs` (không tốn
   hạn mức). Bỏ dòng đó để dùng `claude` thật bằng `CLAUDE_CODE_OAUTH_TOKEN` (hoặc đăng nhập `claude` → `/login`).
   Trên Windows, `claude.cmd` của npm được tự dò ra `claude.exe` (`resolveCommand`).
+- **Dọn dữ liệu cũ:** worker tự dọn mỗi `STUDIO_CLEANUP_HOURS` giờ (mặc định 6; `0` = tắt), lần đầu sau 1 phút:
+  workspace của run đã kết thúc (`STUDIO_RETENTION_WORKSPACE_DAYS`, 14), kho giọng (`_VOICE_DAYS`, 90), audio
+  production không còn dùng (`_AUDIO_DAYS`, 7). Log `cleanup swept` ghi số đã xoá từng loại.
 - **Số lượt Claude cùng lúc:** admin Studio chỉnh trên web (màn Hàng đợi, cột phải; lưu vào
   `studio_settings`, worker áp dụng ngay). Chưa ai lưu thì dùng `STUDIO_CLAUDE_MAX_CONCURRENT` (1–100, mặc định 20).
   Worker chạy số vòng bằng `claude + 8 (farm) + 2 (cpu)` và tự thêm/bớt khi số này đổi; tin nhắn chat dùng chung số
@@ -153,18 +156,21 @@ Không chạy song song với chế độ trực tiếp: hai bên dùng chung c�
 | Hiện tượng | Nguyên nhân hay gặp | Cách xử lý |
 |---|---|---|
 | Studio API không khởi động, lỗi zod về biến môi trường | `.env` thiếu khoá (Auth0, Account, ag-go, farm, R2 đều bắt buộc) | So `apps/api/.env` với `.env.example` |
+| Báo cáo xu hướng ghi "Chưa cấu hình YOUTUBE_API_KEY cho Studio worker"; log worker `"youtube_research":false` | Khoá chỉ nằm ở `.env` gốc (bộ Docker); worker chạy trực tiếp đọc `apps/api/.env` | Thêm `YOUTUBE_API_KEY` vào `apps/api/.env`, bật lại worker, rồi chạy lại series từ bước `research` (kết quả "bỏ qua" cũ không tự làm lại) |
 | Worker thoát ngay với `STUDIO_CLAUDE_MAX_CONCURRENT must be…` | Giá trị không phải số nguyên 1–100 | Sửa hoặc bỏ khoá (mặc định 20) |
 | Đăng nhập Auth0 báo callback không hợp lệ | Web không chạy ở `localhost:3100` hoặc tenant chưa cho phép | Chạy web đúng cổng 3100 |
 | Cây folder trống, lỗi CORS khi web gọi ag-go | `CORS_EXTRA_ORIGINS` của ag-go thiếu `http://localhost:3100` | Sửa `ag-go-api/.env`, bật lại ag-go-api |
 | Account API không với tới | Container account dừng | Vẫn vào được, nhưng không ai là admin và tên hiện thiếu |
 | `render-final` treo tới hết deadline | Farm hub hoặc `local-render` không chạy | `local-stack.mjs status`, web farm 3011 |
+| Tập cắt dừng ở lời dẫn, "cần giọng đọc" | Production chưa có giọng mẫu, không có `STUDIO_DEFAULT_VOICE_REFERENCE` | Đưa giọng ở cột phải (link/tải lên) hoặc Bỏ lời dẫn. Link tới máy local (`http://localhost…`) cần `STUDIO_AUDIO_ALLOW_PRIVATE_URLS=true` trong `apps/api/.env` |
+| Đưa audio báo 503 `audio_disabled` | API thiếu `STUDIO_FFMPEG_PATH` hoặc `STUDIO_FFPROBE_PATH` | Đặt cả hai trong `apps/api/.env` (máy dev: ffmpeg-static/ffprobe-static của ag-render-worker) rồi bật lại API |
 | Stage Claude chờ lâu, log có `RATE_LIMITED` | Hết hạn mức gói | Đợi; tự thử lại 5→60 phút, không tính là lỗi |
 | Stage Claude lỗi `agent CLI failed to start` | Không tìm thấy `claude` / `claude.exe` | Cài Claude Code, hoặc đặt lại `STUDIO_CLAUDE_ARGV` về Claude giả |
 | `up` báo "chưa lên sau 180 s" | Dịch vụ lỗi khi khởi động | Xem `E:\ag-local\dev-run\<tên>.log` |
 | Chat hiện "Claude đang trả lời…" mãi | Worker không chạy (vòng chat nằm trong worker) | `local-stack.mjs status`, log `studio-worker` |
 | Chat hiện "Đang chờ lượt" lâu | Đủ số lượt Claude cùng lúc | Chờ, hoặc admin tăng số lượt ở màn Hàng đợi |
 | Render bản cuối "Đang chờ máy phù hợp" mãi | Không node nào khớp kiểu máy đã chọn (vd chọn GPU, máy không có) | Web farm 3011 xem khả năng node; huỷ tập rồi Render lại với "Bất kỳ máy nào" |
-| `render-final` hỏng, job farm `failed` ở `download_composition` với `fetch failed` | `sign_url` của chủ job `studio` trong DB farm còn trỏ cổng 3100 (chế độ Docker); chạy trực tiếp thì 3100 là web, API ở 3101 | `docker exec postgres16 psql -U postgres -d ag_farm -c "UPDATE farm_owners SET sign_url = 'http://<IP máy>:3101/api/farm/sign' WHERE id = 'studio'"`; chuyển lại Docker thì đặt về `:3100` |
+| `render-final` hỏng, job farm `failed` ở `download_composition` với `fetch failed` | `sign_url` của chủ job `studio` trong DB farm trỏ sai: IP máy đã đổi (DHCP), hoặc còn cổng 3100 (chế độ Docker; chạy trực tiếp thì 3100 là web, API ở 3101). `node scripts/local-stack.mjs status` báo khi lệch, `up` tự sửa theo IP LAN hiện tại | `docker exec postgres16 psql -U postgres -d ag_farm -c "UPDATE farm_owners SET sign_url = 'http://<IP máy>:3101/api/farm/sign' WHERE id = 'studio'"`; chuyển lại Docker thì đặt về `:3100` |
 | Quét video trên ag-go hỏng hàng loạt, job farm `scan.extract` `failed` ở `download` với `fetch failed` | `sign_url` của chủ job `ag-go` trong DB farm còn trỏ cổng 3737 (chế độ Docker); chạy trực tiếp thì ag-go-api ở 3738 | `docker exec postgres16 psql -U postgres -d ag_farm -c "UPDATE farm_owners SET sign_url = 'http://<IP máy>:3738/api/analysis/farm/sign' WHERE id = 'ag-go'"`, rồi quét lại các video hỏng (backfill "Chỉ chưa phân tích") |
 | Màn Hàng đợi "Không đọc được hàng đợi farm" | Farm hub không chạy, hoặc `FARM_OWNER_KEY` sai | `local-stack.mjs status`; log `studio-api` |
 | Kiểm trong khung trình duyệt của app desktop, số liệu không tự cập nhật | Khung đó báo trang luôn ẩn nên không polling | Tải lại trang sau mỗi bước |

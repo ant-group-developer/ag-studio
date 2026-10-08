@@ -1055,4 +1055,60 @@ Các mục dưới đây ghi lại quyết định của nhánh AG Studio, viế
     khi run đã xong hoặc đang chờ ở gate sau (run đó bị huỷ trước).
 159. **Xuất Premiere tắt cho tập cắt theo shot tới pha 4 (2026-10-06).** `premiere-xml.ts` bỏ qua in-point và không có
     track lời dẫn: timeline v4 có trim, chuyển cảnh hoặc lời dẫn → `POST …/exports/premiere` 422
-    `premiere_needs_phase_4`; web ẩn mục xuất Premiere của tập `cut` ở cả chat và màn cũ.
+    `premiere_needs_phase_4`; web ẩn mục xuất Premiere của tập `cut` ở cả chat và màn cũ. *Thay bằng mục 171.*
+167. **Giọng đọc là tuỳ chọn; thiếu giọng thì tập hỏi, không treo (2026-10-07).** `productions.voice` có ba trạng thái:
+    NULL (chưa hỏi: dùng `STUDIO_DEFAULT_VOICE_REFERENCE` nếu có), `{mode: "clone", reference: library:..., origin, ...}`
+    (giọng mẫu người dùng đưa) và `{mode: "none"}` (bỏ lời dẫn **cho cả production**, Q1 của plan optional-audio).
+    `productionVoice` trả `clone | none | missing`. `tts` skip khi `none`, ném `CONFIG_INVALID` với
+    `details.code = "needs_voice"` khi `missing` (stage đỗ `WAITING_HUMAN` như trước); `fit-timeline` cắt kế hoạch đã
+    duyệt không lời khi production bỏ lời dẫn sau khi duyệt (lời đã viết bị bỏ, không thành phụ đề: Q2). Đặt giọng hoặc
+    bỏ lời dẫn thì `resumeVoiceWaiting` chạy lại `tts` của mọi tập đang đứng ở đó. Brief của kế hoạch ghi
+    `narration_voice` (`ready | missing | none`, tuỳ chọn để brief cũ vẫn hợp lệ: thêm trường tuỳ chọn, không đổi tên
+    builder); `none` thì validator chặn tập `tts` (`narration_needs_voice`). Đúng ADR mục 105: thiếu giọng hạ về không
+    lời, không làm hỏng.
+168. **Audio người dùng đưa: link hoặc file, kiểm và chuẩn hoá ở Studio, lưu theo nội dung (2026-10-07).**
+    `audio-import.ts`: link do server tải từng bước (tự theo redirect, tối đa 3), mỗi bước phân giải DNS và chặn địa
+    chỉ nội bộ/loopback/link-local/CGNAT/ULA trừ khi `STUDIO_AUDIO_ALLOW_PRIVATE_URLS` (stack local); link chia sẻ
+    Google Drive đổi sang link tải; dừng khi quá cỡ (giọng 20 MB, nhạc 100 MB). ffprobe kiểm có tiếng và đủ dài (giọng
+    >= 3 s, nhạc >= 5 s); giọng thành WAV mono 24 kHz, 20 s đầu; nhạc thành AAC. Lưu R2
+    `library/studio/<production>/<voice|music>/<sha256>.<ext>`, input `library:...` mà farm vốn ký (render worker không
+    đổi). Giọng bắt buộc khai `origin` (`synthetic | own | licensed`) và xác nhận quyền dùng (ADR mục 105; lời khai,
+    không xác minh). Còn hở: phân giải DNS rồi fetch là hai lần tra (DNS rebinding), chấp nhận cho công cụ nội bộ.
+    Audio từ folder ag-go chờ ag-go nhận file audio (pha B, hỏi trước).
+169. **Bước máy dừng thì nói là dừng, không "đang chạy" (2026-10-07).** `chatScopeFor` trước đây chỉ coi stage `agent`
+    hỏng là bước hỏng; stage farm/script/in-process ở `WAITING_HUMAN`/`FAILED` rơi xuống `busy` nên web hiện "đang
+    chạy" mãi (Tập 2 "Ga Ninh Bình", 2026-10-07). Nay: `tts` thiếu giọng là conflict `needs_voice`; bước máy khác là
+    `stage_failed` kèm lỗi của attempt hỏng gần nhất (event `attempt.failed`). Không mở chat cho các bước này (không
+    skill nào sửa được chúng); web hiện lỗi và **Chạy lại** (`POST .../stages/:stage/retry` sẵn có).
+170. **Nhạc lấy lúc khớp hình (2026-10-07).** `studio-cut-fit` lấy nhạc **hiện tại** của production, không có thì
+    `brief.music` (đóng băng lúc `episode-intake`): nhạc đưa vào lúc tập đang chờ giọng có tác dụng ngay. Tập đã có
+    timeline giữ nhạc cũ; muốn đổi thì sửa timeline. `productions.music` giữ nguồn của file (`source`, `sha256`); stage
+    chỉ đóng băng `{track, gain_db, ducking}` (`productionMusic`, `studioMusicOf`).
+171. **Premiere đọc timeline v4; tập cắt theo shot xuất được (pha 4, 2026-10-07).** Thay mục 159. Render worker
+    (`ag-render-worker` `e882a6c`, sau 0.5.4) phát `[in, out)` của file, dissolve có đuôi thành Cross Dissolve,
+    `dip_black` thành Dip to Color, lời dẫn lên A3 (A1 trống khi `voice: tts`), duck window thành keyframe A2, phụ đề
+    thành `captions.srt`. Studio bỏ `premiereCanExport`; `startPremiereExport` gửi kèm WAV lời dẫn từ kho giọng như render
+    (`narrationUploads`, `stage:voice/<line_id>.wav`). Dòng nào thiếu WAV thì 422 `narration_missing` (kèm `line_id`),
+    trước khi tạo job. Cảnh báo trong `premiere.json` hiện dưới bản xuất. **Không đổi hợp đồng ag-farm:** farm không ghim
+    phiên bản worker, và composition của tập cắt cùng schema `harness.composition/v1`, nên máy chạy worker cũ vẫn nhận job
+    và **âm thầm** bỏ in-point, chuyển cảnh, lời dẫn. Vì vậy deploy render worker lên mọi máy farm **trước** Studio
+    (runbook). Chặn ở hợp đồng (một trường mới trong payload để worker cũ từ chối) để ngỏ, cần hỏi trước.
+172. **Worker không đọc được tập cắt thì từ chối job xuất Premiere (2026-10-07).** Sửa phần "không đổi hợp đồng" của mục
+    171. `StudioExportPremierePayloadSchema` (ag-farm `26d1b6a`) có thêm `edit_style?: whole|cut`; Studio chỉ gửi `cut`,
+    cho timeline v4 kiểu cắt. Payload là `strictObject`, nên hub và worker build trước đó từ chối job (lỗi rõ ràng) thay
+    vì âm thầm bỏ điểm cắt, chuyển cảnh, lời dẫn; tập ghép nguyên video không gửi trường này nên mọi worker vẫn xuất được.
+    Thứ tự deploy: protocol (hub) và render worker trước, Studio sau.
+173. **Máy farm: danh sách, tên trên job, ghim một máy, job chờ có hạn (2026-10-07).** ag-farm thêm `GET /v1/owner/nodes`
+    (máy đang bật nhận ít nhất một loại job của chủ job: tên, loại job, GPU, số job đang chạy; không token, không cấu
+    hình máy) và `requirements.node_id` (hub chỉ giao job cho máy đó). Studio: màn Hàng đợi hiện máy và tên máy của job;
+    bộ chọn máy bản cuối có ô "Máy cụ thể" (`renderNodeId`, kiểm trên farm, 422 `unknown_node`), lưu cạnh kiểu máy
+    (migration `0026`). `FarmExecutor.queueTimeoutMsFor`: job còn `queued` quá hạn (mặc định 120 phút) bị huỷ và bước
+    dừng là lỗi contract, không thử lại — job y hệt sẽ lại chờ; job `paused` không tính. Thứ tự deploy: ag-farm trước.
+174. **Giọng máy: một giọng mẫu thiết kế cho cả series, không thiết kế từng câu (2026-10-07).** OmniVoice dựng được giọng
+    từ mô tả (`instruct`, các nhãn `female|male`, `young adult|middle-aged|elderly`, `low|moderate|high pitch`) nhưng
+    mỗi lần sinh là một người đọc khác, nên Studio không gửi `instruct` cho câu lời dẫn: nó gửi **một** job `studio.tts`
+    đọc câu mẫu (~7 giây, theo ngôn ngữ) bằng giọng thiết kế (`voice.instruct`, `reference: null`), rồi lấy WAV đó qua
+    đường nhập giọng mẫu sẵn có (`origin: synthetic`, `source: {kind: design}`, câu mẫu là `reference_text`). Mọi tập
+    clone file đó nên series giữ một giọng. Trong lúc farm đọc, `productions.voice` là `designing` (tập chờ như thiếu
+    giọng); `GET …/audio` kiểm job và hoàn tất. Nguồn `ag-go` bị gỡ khỏi `AudioSourceSchema`: ag-go chỉ giữ footage.
+    `tts.py` nghe câu nói của giọng mẫu một lần mỗi job khi không ai gõ (WhisperX `large-v3`).

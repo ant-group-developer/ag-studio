@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { YoutubeKitSchema } from "@harness/contracts";
 import {
-  approveChatScope, chatThread, episodeRenderInfo, latestEpisodeRevision, rerenderEpisode, saveEpisodeRevision, episodeRunView, episodeState, readStageDocument, renderChoiceFor, setRenderChoice, StudioRunError, submitEpisodeTimelineGate, submitStudioGate,
+  approveChatScope, chatThread, episodeRenderInfo, resolveRenderNode, latestEpisodeRevision, rerenderEpisode, saveEpisodeRevision, episodeRunView, episodeState, readStageDocument, renderChoiceFor, setRenderChoice, StudioRunError, submitEpisodeTimelineGate, submitStudioGate,
 } from "../src/index.js";
 import { drain, oneEpisode, setup, type Setup } from "./episode-flow.js";
 
@@ -46,6 +46,21 @@ describe("render machine of an episode's final render", () => {
     expect(finalJobs(s).map((j) => j.requirements)).toEqual([{ gpu: true }]);
     expect(s.db.all("SELECT episode_id, requirements FROM studio_farm_jobs WHERE stage_key = 'render-final'"))
       .toEqual([{ episode_id: ep.id, requirements: '{"gpu":true}' }]);
+  }, 60_000);
+
+  it("a render pinned to one node: the job carries its node_id, the chat names the node, the render info keeps it", async () => {
+    s = setup();
+    const ep = await oneEpisode(s);
+    await submitEpisodeTimelineGate(s.core, s.db, ep.id);
+    await drain(s);
+    const node = { id: "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a41", name: "render-01" };
+    await approveChatScope(s.core, s.db, { productionId: ep.production_id, episodeId: ep.id, stageKey: "approve-youtube-kit", turnId: null, userId: "auth0|owner", renderMachine: "nvenc", renderNode: node });
+    await drain(s);
+    expect(finalJobs(s).map((j) => j.requirements)).toEqual([{ nvenc: true, node_id: node.id }]);
+    expect(chatThread(s.core, s.db, ep.production_id, { episodeId: ep.id }).turns.some((t) => t.text === "Đã duyệt. Render bản cuối trên máy render-01.")).toBe(true);
+    const info = episodeRenderInfo(s.core, s.db, ep.id);
+    expect(info.node).toEqual(node);
+    expect(info.job).toMatchObject({ machine: "nvenc", node });
   }, 60_000);
 
   it("no choice: the job goes out with {} as before phase 3", async () => {
@@ -133,4 +148,18 @@ describe("render machine of an episode's final render", () => {
     expect(() => rerenderEpisode(s.core, s.db, ep.id, { machine: "gpu", by: "u" })).toThrow(StudioRunError);
     expect(s.db.all("SELECT * FROM studio_render_choices")).toEqual([]);
   }, 60_000);
+});
+
+describe("resolveRenderNode", () => {
+  it("a pinned node must be on the farm and take final renders", async () => {
+    const farm = { listNodes: async () => ({ nodes: [
+      { id: "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a41", name: "render-01", online: true, kinds: ["studio.render_final" as const], gpus: [], running_jobs: 0, last_seen_at: null },
+      { id: "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a42", name: "tts-01", online: true, kinds: ["studio.tts" as const], gpus: [], running_jobs: 0, last_seen_at: null },
+    ] }) };
+    expect(await resolveRenderNode(farm, "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a41")).toEqual({ id: "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a41", name: "render-01" });
+    for (const id of ["6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a42", "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a43"]) {
+      const err = await resolveRenderNode(farm, id).catch((e: unknown) => e);
+      expect((err as StudioRunError).details).toMatchObject({ code: "unknown_node" });
+    }
+  });
 });

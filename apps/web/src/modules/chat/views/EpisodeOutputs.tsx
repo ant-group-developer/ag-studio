@@ -1,16 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useStudioClient, type EpisodeRender } from "../../../api/studio-client";
+import { OutputFiles } from "./OutputFiles";
 
 /** A queued job no node took for this long: maybe none fits its machine type (the farm does not say why). */
 const STUCK_MINUTES = 10;
 
 /** Where the final render is: on which kind of farm machine, waiting for one, or done on one. */
-function RenderMachineLine({ render }: { render: EpisodeRender }) {
+function RenderMachineLine({ render, failed }: { render: EpisodeRender; failed: boolean }) {
   const { t } = useTranslation();
   const job = render.job;
   if (!job?.machine) return null;
-  const machine = t(`chat.render.inline.${job.machine}`);
+  // a render pinned to one node is named by it
+  const machine = job.node ? t("chat.render.nodeInline", { name: job.node.name }) : t(`chat.render.inline.${job.machine}`);
   const farm = render.farmStatus;
   if (farm?.status === "queued") {
     const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(job.createdAt)) / 60_000));
@@ -25,7 +27,9 @@ function RenderMachineLine({ render }: { render: EpisodeRender }) {
   if (farm) {
     return <p className="chat-outputs__machine">{farm.progress !== null ? t("chat.outputs.farm", { machine, p: farm.progress }) : t("chat.outputs.farmNoProgress", { machine })}</p>;
   }
-  return render.restartFrom !== null ? <p className="chat-outputs__machine">{t("chat.outputs.renderedOn", { machine })}</p> : null;
+  if (render.restartFrom === null) return null;
+  // a render that failed was only tried there
+  return <p className="chat-outputs__machine">{t(failed ? "chat.outputs.triedOn" : "chat.outputs.renderedOn", { machine })}</p>;
 }
 
 /** Render and export of an episode (mockup screen 11): the machine type, progress, video, files. */
@@ -40,18 +44,15 @@ export function EpisodeOutputs({ productionId, episodeId }: { productionId: stri
   if (!ep) return null;
   return (
     <div className="chat-outputs">
-      {ep.render ? <RenderMachineLine render={ep.render} /> : null}
+      {ep.render ? <RenderMachineLine render={ep.render} failed={ep.status === "failed"} /> : null}
       {ep.progress !== null ? (
         <div className="chat-progress" role="progressbar" aria-valuenow={ep.progress} aria-valuemin={0} aria-valuemax={100} aria-label={t("chat.outputs.rendering")}>
           <span style={{ width: `${ep.progress}%` }} />
         </div>
       ) : null}
       {ep.finalVideoUrl ? <video className="chat-timeline__video" src={ep.finalVideoUrl} controls preload="metadata" /> : null}
-      {ep.exportFiles.length ? (
-        <ul className="chat-doc__list">
-          {ep.exportFiles.map((f) => <li key={f.url}><a href={f.downloadUrl}>{f.name}</a></li>)}
-        </ul>
-      ) : <p className="chat-doc__note">{t("chat.outputs.notYet")}</p>}
+      {ep.exportFiles.length ? <OutputFiles files={ep.exportFiles} productionId={productionId} episodeId={episodeId} />
+        : <p className="chat-doc__note">{t("chat.outputs.notYet")}</p>}
     </div>
   );
 }

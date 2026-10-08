@@ -1,3 +1,5 @@
+import type { StepDocKind } from "../../api/studio-client";
+
 /**
  * The steps a person sees in the chat UI (mockup: "1 · Nghiên cứu · 2 · R&D …"), from the workflow stage keys.
  * A step groups the stages that serve it: the Claude stage, its gate, the script that saves what was approved.
@@ -47,6 +49,15 @@ const STAGE_STEP: Record<string, ChatStep> = {
   export: "export",
 };
 
+/** The stage a step's "Chạy lại từ bước…" runs from: the one that writes it anew (its Claude stage, or the build). */
+const PLAN_RESUME: Partial<Record<ChatStep, string>> = { research: "research", rnd: "rnd", branding: "branding", plan: "plan-episodes" };
+const EPISODE_RESUME: Partial<Record<ChatStep, string>> = { draft: "build-timeline", kit: "youtube-kit" };
+const CUT_RESUME: Partial<Record<ChatStep, string>> = { survey: "source-survey", editPlan: "plan-edit", timeline: "fit-timeline", kit: "youtube-kit" };
+export function resumeStageOf(step: ChatStep, o: { episode: boolean; workflow?: string | null | undefined }): string | null {
+  const map = !o.episode ? PLAN_RESUME : isCutWorkflow(o.workflow) ? CUT_RESUME : EPISODE_RESUME;
+  return map[step] ?? null;
+}
+
 /** The step a stage key belongs to (null for a key the UI does not know); a shot-cut episode groups its own way. */
 export function stepOf(stageKey: string | null | undefined, workflow?: string | null): ChatStep | null {
   if (!stageKey) return null;
@@ -60,3 +71,13 @@ export const stepLabelKey = (step: ChatStep) => `chat.steps.${step}` as const;
 export function stepPosition(step: ChatStep | null, row: readonly ChatStep[]): number {
   return step ? row.indexOf(step) : -1;
 }
+
+/**
+ * What a step shows when looked at again (plan 2026-10-07 step history): its document, the episode's timeline, or the
+ * files it made. Steps not listed have nothing of their own to show (intake, episodes, draft, footage).
+ */
+export type StepShows = StepDocKind | "timeline" | "outputs";
+export const STEP_SHOWS: Partial<Record<ChatStep, StepShows>> = {
+  research: "trend_report", rnd: "rnd", branding: "branding", plan: "series_plan",
+  survey: "survey", editPlan: "edit_plan", timeline: "timeline", kit: "youtube_kit", render: "outputs", export: "outputs",
+};

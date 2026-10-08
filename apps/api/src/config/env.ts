@@ -24,6 +24,10 @@ export const envSchema = z.object({
   STUDIO_DATA_ROOT: z.string().default('./data/harness'),
   /** ffmpeg used to measure loudness when a gate or the worker verifies a render; unset = not measured. */
   STUDIO_FFMPEG_PATH: z.string().optional(),
+  /** ffprobe beside it (not always in the same folder); with STUDIO_FFMPEG_PATH it lets people give audio. */
+  STUDIO_FFPROBE_PATH: z.string().optional(),
+  /** Let audio links reach private addresses (the local stack, where ag-go is on localhost). Never on a deployed box. */
+  STUDIO_AUDIO_ALLOW_PRIVATE_URLS: z.enum(['true', 'false', '1', '0']).optional().transform((v) => v === 'true' || v === '1'),
   /** Lifetime of signed URLs handed to the browser (previews, exports, narration audio). */
   STUDIO_BROWSER_URL_TTL_SECONDS: z.coerce.number().default(3600),
   /** Canva Connect (public integration); Canva is off unless all four are set. */

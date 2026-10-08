@@ -21,6 +21,9 @@ export function studioVersion<N extends string, V extends number = 1>(name: N, v
 export const STUDIO_ASPECTS = ["16:9", "9:16"] as const;
 export type StudioAspect = (typeof STUDIO_ASPECTS)[number];
 
+export const NARRATION_VOICE_STATES = ["ready", "missing", "none"] as const;
+export type NarrationVoiceState = (typeof NARRATION_VOICE_STATES)[number];
+
 /** A logical input the render worker asks Studio's `/farm/sign` for, e.g. `library:music/calm.mp3`. */
 export const LibraryInputSchema = z.string().regex(/^library:[A-Za-z0-9._\-/]+$/, "expected library:<path>");
 /** A key relative to `productions/<id>/` in the Studio bucket, e.g. `exports/<run>/video.mp4`. */
@@ -40,6 +43,76 @@ export const StudioMusicSchema = z.object({
   ducking: z.boolean(),
 }).strict();
 export type StudioMusic = z.infer<typeof StudioMusicSchema>;
+
+// ---------------------------------------------------------------------------
+// Audio the person gives a production: a narration voice sample, background music (ADR-0001 items 167-168)
+// ---------------------------------------------------------------------------
+
+/**
+ * Where an audio file came from: a link, an upload, or a machine voice the farm designed from a description
+ * (`design`, OmniVoice `instruct`). ag-go holds footage only, never audio.
+ */
+export const AudioSourceSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("link"), url: z.string().url().max(2000) }).strict(),
+  z.object({ kind: z.literal("upload"), filename: z.string().min(1).max(255) }).strict(),
+  z.object({ kind: z.literal("design"), instruct: z.string().min(1).max(200) }).strict(),
+]);
+export type AudioSource = z.infer<typeof AudioSourceSchema>;
+
+/** Who may be heard in a voice sample (ADR-0001 item 105): a synthetic voice, the person's own, or one licensed to them. */
+export const VOICE_ORIGINS = ["synthetic", "own", "licensed"] as const;
+export type VoiceOrigin = (typeof VOICE_ORIGINS)[number];
+
+/**
+ * `productions.voice`. NULL (not this schema) = not asked yet: `STUDIO_DEFAULT_VOICE_REFERENCE` if set, else the
+ * episode stops at `tts` and asks. `none`: the person declined narration for the whole production. `designing`: the
+ * farm is reading a sample sentence in a voice designed from `instruct`; once read it becomes a `clone` of that sample
+ * (`voice-design.ts`), and until then episodes wait as for a missing voice. The last shape is the column as tests
+ * wrote it before (no mode), read as a clone.
+ */
+export const ProductionVoiceSchema = z.union([
+  z.object({ mode: z.literal("none"), decided_by: z.string().min(1), decided_at: z.string() }).strict(),
+  z.object({
+    mode: z.literal("designing"),
+    instruct: z.string().min(1).max(200),
+    /** The sentence read, in the production's language: it becomes the sample's `reference_text`. */
+    text: z.string().min(1).max(500),
+    /** The `studio.tts` job reading it; null when it could not be sent. */
+    farm_job_id: z.string().nullable(),
+    requested_by: z.string().min(1),
+    requested_at: z.string(),
+    /** Why the last try failed (the person may try again). */
+    error: z.string().max(2000).nullable(),
+  }).strict(),
+  z.object({
+    mode: z.literal("clone"),
+    reference: LibraryInputSchema,
+    /** What is said in the sample; null = the TTS engine transcribes it. */
+    reference_text: z.string().max(2000).nullable(),
+    speed: z.number().min(0.5).max(2),
+    origin: z.enum(VOICE_ORIGINS),
+    source: AudioSourceSchema,
+    sha256: z.string().min(1),
+    duration_s: z.number().positive(),
+    confirmed_by: z.string().min(1),
+    confirmed_at: z.string(),
+  }).strict(),
+  z.object({ reference: z.string().nullable(), reference_text: z.string().nullable(), speed: z.number() }).strict(),
+]);
+export type ProductionVoice = z.infer<typeof ProductionVoiceSchema>;
+
+/** `productions.music`: the music stages use, plus where the file came from (absent on tracks typed as `library:`). */
+export const ProductionMusicSchema = StudioMusicSchema.extend({
+  source: AudioSourceSchema.optional(),
+  sha256: z.string().min(1).optional(),
+  duration_s: z.number().positive().optional(),
+}).strict();
+export type ProductionMusic = z.infer<typeof ProductionMusicSchema>;
+
+/** The music a stage freezes into seed, brief and timeline: without where it came from. */
+export function studioMusicOf(m: ProductionMusic): StudioMusic {
+  return { track: m.track, gain_db: m.gain_db, ducking: m.ducking };
+}
 
 /** Soft target: an episode may differ from `episode_target_seconds` by this fraction (a warning, never a block). */
 export const EPISODE_DURATION_TOLERANCE = 0.2;
@@ -80,6 +153,11 @@ export const StudioBriefSchema = z.object({
   /** Competitor channels as the user typed them (links, @handles or channel ids). */
   youtube_channels: z.array(z.string().min(1).max(300)).max(MAX_RESEARCH_CHANNELS),
   keywords: z.array(z.string().min(1).max(100)).max(MAX_RESEARCH_KEYWORDS),
+  /**
+   * Whether narration can be read when the plan is made (ADR-0001 item 167): `ready` (a voice), `missing` (none yet,
+   * the episode asks before reading), `none` (declined: no episode is `tts`). Absent on briefs written before.
+   */
+  narration_voice: z.enum(NARRATION_VOICE_STATES).optional(),
 }).strict();
 export type StudioBrief = z.infer<typeof StudioBriefSchema>;
 

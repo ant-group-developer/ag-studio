@@ -1,13 +1,17 @@
 import { useId } from "react";
-import { Radio } from "antd";
+import { Radio, Select } from "antd";
 import { useTranslation } from "react-i18next";
-import { RENDER_MACHINES, type RenderMachine } from "../../api/studio-client";
+import { RENDER_MACHINES, type FarmNode, type RenderMachine } from "../../api/studio-client";
 
 /**
  * Which kind of farm machine renders the final cut (spec local-chat §3.4): any, one with NVENC, one with a GPU —
- * ag-farm's `requirements`, so no named machine. Shown on every confirm that starts a final render.
+ * ag-farm's `requirements`. With `nodes` (the farm's machines taking final renders) and `onNode`, the render may also
+ * be pinned to one machine. Shown on every confirm that starts a final render.
  */
-export function RenderMachinePicker({ value, onChange }: { value: RenderMachine; onChange: (m: RenderMachine) => void }) {
+export function RenderMachinePicker({ value, onChange, nodes, node = null, onNode }: {
+  value: RenderMachine; onChange: (m: RenderMachine) => void;
+  nodes?: FarmNode[] | undefined; node?: string | null | undefined; onNode?: ((id: string | null) => void) | undefined;
+}) {
   const { t } = useTranslation();
   const id = useId();
   return (
@@ -23,6 +27,24 @@ export function RenderMachinePicker({ value, onChange }: { value: RenderMachine;
           ))}
         </Radio.Group>
       </div>
+      {nodes?.length && onNode ? (
+        <label className="render-machine__node">
+          <span>{t("chat.render.node")}</span>
+          <Select<string>
+            aria-label={t("chat.render.node")}
+            value={node ?? ""}
+            onChange={(v) => onNode(v || null)}
+            options={[
+              { value: "", label: t("chat.render.noNode") },
+              ...nodes.map((n) => ({
+                value: n.id,
+                label: t("chat.render.nodeOption", { name: n.name, state: t(n.online ? "chat.render.online" : "chat.render.offline") })
+                  + (n.gpus.some((g) => g.nvenc) ? " · NVENC" : ""),
+              })),
+            ]}
+          />
+        </label>
+      ) : null}
       <p className="chat-doc__note">{t("chat.render.waitNote")}</p>
     </div>
   );

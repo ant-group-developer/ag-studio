@@ -36,6 +36,7 @@ import {
   ProductionForm,
 } from "../modules/production/ProductionForm";
 import type { ProductionFormValues } from "../modules/production/ProductionForm";
+import { ProductionAudioPanel } from "../modules/chat/views/ProductionAudioPanel";
 
 const { Title } = Typography;
 
@@ -597,6 +598,13 @@ export function ProductionDetailPage() {
           form={form}
           readOnly={!canEdit}
           directionApproved={production.hasRnd}
+        />
+
+        {/* voice sample and music by link or upload (plan optional-audio); the form above refills from the production */}
+        <ProductionAudioPanel
+          productionId={productionId!}
+          canEdit={canEdit}
+          onChanged={() => void queryClient.invalidateQueries({ queryKey: ["production", productionId] })}
         />
 
         {canEdit && (

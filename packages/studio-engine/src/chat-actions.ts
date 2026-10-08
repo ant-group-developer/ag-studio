@@ -4,8 +4,8 @@
  * the scope again so a stale screen cannot approve or apply the wrong thing.
  */
 import { randomUUID } from "node:crypto";
-import { intakeMissing, IntakeDraftSchema, type IntakeDraft, type IntakeField, type RenderMachine } from "@harness/contracts";
-import { chatContext, chatScopeFor, DRAFT_PRODUCTION_TITLE, GATE_SOURCES, type TimelineProposal } from "./chat-context.js";
+import { intakeMissing, IntakeDraftSchema, StudioSurveySchema, type IntakeDraft, type IntakeField, type RenderMachine, type StudioSurvey } from "@harness/contracts";
+import { chatContext, chatScopeFor, DRAFT_PRODUCTION_TITLE, episodeRunStopped, GATE_SOURCES, type SurveyProposal, type TimelineProposal } from "./chat-context.js";
 import {
   currentProposal, getTurn, insertSystemTurn, insertUserTurn, listTurns,
   markTurnApplied, type ChatMention, type ChatProblem, type ChatScopeKey, type ChatTurn,
@@ -13,7 +13,7 @@ import {
 import type { StudioEngineCore } from "./core.js";
 import { latestAcceptedCall, recordHumanEdit, type HumanEditKind } from "./llm-log.js";
 import { EPISODE_KIT_GATE, EPISODE_RENDER_STAGE, startPlanRun, StudioRunError, submitEpisodeTimelineGate, submitStudioGate } from "./run-control.js";
-import { RENDER_MACHINE_LABELS, setRenderChoice } from "./render-choice.js";
+import { renderTargetLabel, setRenderChoice, type RenderNode } from "./render-choice.js";
 import { getProduction, saveEpisodeRevision, type StudioDb } from "./studio-db.js";
 
 /** `@[Kyoto 2025](folder:<id>)` in a message: the folders it names. */
@@ -61,9 +61,12 @@ export function saveManualEdit(core: StudioEngineCore, db: StudioDb, p: { produc
   }
   const ctx = chatContext(core, db, key);
   if (ctx.skill === "studio-timeline") throw new StudioRunError("invalid", "timeline được sửa tay trong editor");
-  const parsed = ctx.proposalSchema.safeParse(p.document);
+  // the scene selection is edited whole by hand (the chat proposes ops): it is stored like an applied proposal
+  const survey = ctx.skill === "studio-survey";
+  const parsed = (survey ? StudioSurveySchema : ctx.proposalSchema).safeParse(p.document);
   if (!parsed.success) throw new StudioRunError("rejected", "tài liệu không hợp lệ", { failed: parsed.error.issues.map((x) => `${x.path.join(".")}: ${x.message}`) });
-  return insertUserTurn(db, key, { text: "Sửa tay", createdBy: p.userId, proposal: parsed.data, ask: false }, core.clock.now()).user;
+  const proposal = survey ? ({ ops: [], survey: parsed.data as StudioSurvey } satisfies SurveyProposal) : parsed.data;
+  return insertUserTurn(db, key, { text: "Sửa tay", createdBy: p.userId, proposal, ask: false }, core.clock.now()).user;
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +153,8 @@ export async function approveChatScope(core: StudioEngineCore, db: StudioDb, p: 
   productionId: string; episodeId?: string | null; stageKey: string; turnId?: string | null; userId: string;
   /** Approving the YouTube kit starts the final render: the machine type it runs on (phase 3). */
   renderMachine?: RenderMachine;
+  /** …and the one node it must run on, if any (`resolveRenderNode`). */
+  renderNode?: RenderNode | null;
 }): Promise<{ stageState: string; runState: string; revision?: number }> {
   if (p.renderMachine !== undefined && p.stageKey !== EPISODE_KIT_GATE) {
     throw new StudioRunError("invalid", `chỉ chọn máy render khi duyệt ${EPISODE_KIT_GATE}`, { code: "no_render_here", stage: p.stageKey });
@@ -174,7 +179,10 @@ export async function approveChatScope(core: StudioEngineCore, db: StudioDb, p: 
   }
   if (p.renderMachine !== undefined) {
     // before the gate goes: the worker reads it when render-final is submitted, which may follow at once
-    setRenderChoice(db, { runId: key.runId!, stageKey: EPISODE_RENDER_STAGE, machine: p.renderMachine, by: p.userId, now, ...(p.episodeId ? { episodeId: p.episodeId } : {}) });
+    setRenderChoice(db, {
+      runId: key.runId!, stageKey: EPISODE_RENDER_STAGE, machine: p.renderMachine, node: p.renderNode ?? null, by: p.userId, now,
+      ...(p.episodeId ? { episodeId: p.episodeId } : {}),
+    });
   }
   const report = await submitStudioGate(core, db, key.runId!, key.stageKey, ctx.current);
   if (ctx.currentTurnId) markTurnApplied(db, ctx.currentTurnId, now);
@@ -187,7 +195,7 @@ export async function approveChatScope(core: StudioEngineCore, db: StudioDb, p: 
       });
     } catch { /* the dataset never blocks an approval */ }
   }
-  insertSystemTurn(db, key, p.renderMachine !== undefined ? `Đã duyệt. Render bản cuối trên ${RENDER_MACHINE_LABELS[p.renderMachine]}.` : "Đã duyệt.", now);
+  insertSystemTurn(db, key, p.renderMachine !== undefined ? `Đã duyệt. Render bản cuối trên ${renderTargetLabel(p.renderMachine, p.renderNode)}.` : "Đã duyệt.", now);
   return { stageState: report.stageState, runState: report.runState };
 }
 
@@ -199,11 +207,31 @@ export interface ChatThreadView {
   turns: ChatTurn[];
   /** Where a new message would go now, or why none can be sent (`busy`, `nothing_to_chat`). */
   scope: ChatScopeKey | null;
-  blocked: { code: string; stage: string | null } | null;
+  /** `needs_voice`: a narrated episode waits for a voice sample; `stage_failed`: a machine step stopped, `problems` say why. */
+  blocked: { code: string; stage: string | null; problems?: ChatProblem[] } | null;
   /** The document on show and its turn (null: what the stage wrote), for the result pane. */
   current: { turnId: string | null; document: unknown; draft: unknown; pendingApply: boolean; problems: ChatProblem[] } | null;
+  /** An episode whose run ended on a failed machine step (its final render): which step and why. The chat goes on. */
+  stopped: { stage: string; problems: ChatProblem[] } | null;
   /** Replies waiting for a Claude slot before the oldest one of this thread. */
   queueAhead: number;
+}
+
+/**
+ * A short string that changes whenever what `chatThread` shows may have changed: the chat's turns, the production or
+ * episode row, its run and the run's stages. The event stream sends it when it moves, so screens read the thread then
+ * instead of every 2–5 s. Cheap: a few indexed reads of `studio.db`.
+ */
+export function chatFingerprint(db: StudioDb, productionId: string, episodeId: string | null): string {
+  const turns = db.get<{ n: number; u: string | null }>(
+    "SELECT COUNT(*) AS n, MAX(updated_at) AS u FROM stage_chat_turns WHERE production_id = ? AND episode_id IS ?", [productionId, episodeId]);
+  const owner = episodeId
+    ? db.get<{ run_id: string | null; updated_at: string }>("SELECT run_id, updated_at FROM episodes WHERE id = ?", [episodeId])
+    : db.get<{ run_id: string | null; updated_at: string }>("SELECT run_id, updated_at FROM productions WHERE id = ?", [productionId]);
+  const run = owner?.run_id ? db.get<{ state: string; updated_at: string }>("SELECT state, updated_at FROM run WHERE id = ?", [owner.run_id]) : undefined;
+  const stages = owner?.run_id
+    ? db.get<{ n: number; u: string | null }>("SELECT COUNT(*) AS n, MAX(updated_at) AS u FROM stage_run WHERE run_id = ?", [owner.run_id]) : undefined;
+  return [turns?.n, turns?.u, owner?.updated_at, owner?.run_id, run?.state, run?.updated_at, stages?.n, stages?.u].map((x) => x ?? "").join("|");
 }
 
 export function chatThread(core: StudioEngineCore, db: StudioDb, productionId: string, o: { episodeId?: string | null; after?: number } = {}): ChatThreadView {
@@ -213,8 +241,8 @@ export function chatThread(core: StudioEngineCore, db: StudioDb, productionId: s
   try { scope = chatScopeFor(core, db, productionId, o.episodeId ?? null); }
   catch (e) {
     if (!(e instanceof StudioRunError) || e.code !== "conflict") throw e;
-    const d = e.details as { code?: string; stage?: string | null };
-    blocked = { code: d.code ?? "busy", stage: d.stage ?? null };
+    const d = e.details as { code?: string; stage?: string | null; problems?: ChatProblem[] };
+    blocked = { code: d.code ?? "busy", stage: d.stage ?? null, ...(d.problems ? { problems: d.problems } : {}) };
   }
   let current: ChatThreadView["current"] = null;
   if (scope) {
@@ -230,5 +258,6 @@ export function chatThread(core: StudioEngineCore, db: StudioDb, productionId: s
   const queueAhead = mine?.created_at
     ? db.get<{ n: number }>("SELECT COUNT(*) AS n FROM stage_chat_turns WHERE role = 'assistant' AND status IN ('pending', 'rate_limited') AND created_at < ?", [mine.created_at])?.n ?? 0
     : 0;
-  return { turns, scope, blocked, current, queueAhead };
+  const stopped = scope?.scope === "timeline" && scope.runId ? episodeRunStopped(core, scope.runId) : null;
+  return { turns, scope, blocked, current, stopped, queueAhead };
 }

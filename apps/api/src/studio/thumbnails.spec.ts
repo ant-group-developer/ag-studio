@@ -5,12 +5,14 @@
  * when the box has no ffmpeg.
  */
 import { readFileSync, writeFileSync, copyFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   ForbiddenException, NotFoundException, ServiceUnavailableException, UnprocessableEntityException,
 } from '@nestjs/common';
 import type { Request } from 'express';
-import { insertThumbnail, listHumanEdits, MemoryBucket, type ThumbnailRenderer } from '@ag-studio/engine';
+import { insertThumbnail, listHumanEdits, MemoryBucket, saveEpisodeRevision, type ThumbnailRenderer } from '@ag-studio/engine';
 import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
 import type { EngineService } from './engine.service';
 import type { FootageAccessService } from './footage-access.service';
@@ -40,10 +42,14 @@ describe('ThumbnailsController (real studio.db)', () => {
   let ctl: ThumbnailsController;
   let frameId: string;
   let suggestionId: string;
+  let keyframeUrl: string | null = null;
 
   function controller(renderer: ThumbnailRenderer | null) {
     const engine = Object.assign(s.engine, { bucket, thumbnails: renderer, browserUrlTtl: 60 });
-    const access = { coversProduction: async () => covered } as unknown as FootageAccessService;
+    const access = {
+      coversProduction: async () => covered,
+      assetMedia: async (_u: string, assetId: string) => ({ assetId, posterUrl: null, keyframes: keyframeUrl ? [{ url: keyframeUrl, tMs: 1000 }] : [] }),
+    } as unknown as FootageAccessService;
     const canva = new CanvaService({ get: () => undefined } as unknown as ConfigService, engine as unknown as EngineService);
     return new ThumbnailsController(engine as unknown as EngineService, access, new ThumbnailWorkService(), canva);
   }
@@ -78,6 +84,30 @@ describe('ThumbnailsController (real studio.db)', () => {
     expect(await ctl.get(PROD, EP, req())).toMatchObject({ items: [], footageHidden: true });
     await expect(ctl.select(PROD, EP, { thumbnailId: frameId }, req())).rejects.toBeInstanceOf(ForbiddenException);
     await expect(ctl.get(PROD, 'nope', req())).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('at the kit gate, a keyframe of one of the episode videos becomes the picked thumbnail with the idea words', async () => {
+    const server = createServer((_q, res) => { res.writeHead(200, { 'content-type': 'image/jpeg' }); res.end('keyframe'); });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    keyframeUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/k1.jpg`;
+    try {
+      // not one of the episode videos (no timeline yet): refused
+      expect(await ctl.footage(PROD, EP, { assetId: 'asset-1', keyframe: 0, text: 'Lúa vàng' }, req()).catch((e: { getResponse: () => unknown }) => e.getResponse()))
+        .toMatchObject({ code: 'asset_not_in_episode' });
+      saveEpisodeRevision(s.engine.db, EP, { baseRevision: 0, authorId: 'system', data: {
+        schema_version: 'studio.timeline/v3', production_id: PROD, episode_id: EP, canvas: { width: 1920, height: 1080 }, fps: 30, language: 'vi',
+        clips: [{ clip_id: 'C001', asset_id: 'asset-1', section_title: null }], texts: [], music: null, source_audio: { muted: false },
+        assets: { 'asset-1': { title: 'Lúa', summary_vi: 'Lúa', duration_s: 20, orientation: 'landscape' } }, alternates: [],
+      } });
+      const picked = await ctl.footage(PROD, EP, { assetId: 'asset-1', keyframe: 0, text: 'Lúa vàng' }, req());
+      expect(picked).toMatchObject({ kind: 'composed', text: 'Lúa vàng', createdBy: 'auth0|editor' });
+      expect((await ctl.get(PROD, EP, req())).selectedId).toBe(picked.id);
+      expect(await ctl.footage(PROD, EP, { assetId: 'asset-1', keyframe: 3 }, req()).catch((e: { getResponse: () => unknown }) => e.getResponse()))
+        .toMatchObject({ code: 'no_keyframe' });
+    } finally {
+      keyframeUrl = null;
+      server.close();
+    }
   });
 
   it('draws the words on the clean frame under a suggestion, previews them, and keeps the pick in the dataset', async () => {

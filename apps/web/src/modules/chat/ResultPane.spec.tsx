@@ -1,10 +1,14 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n/config";
 import type { ChatThreadView, ChatTurn } from "../../api/studio-client";
 
-const client = { listEditorJobs: vi.fn().mockResolvedValue([]), getEditorJob: vi.fn(), getEpisode: vi.fn() };
+const client = {
+  listEditorJobs: vi.fn().mockResolvedValue([]), getEditorJob: vi.fn(), getEpisode: vi.fn(),
+  getProductionAudio: vi.fn().mockResolvedValue({ voice: null, music: null }),
+  giveProductionAudio: vi.fn(), declineNarration: vi.fn(), removeProductionAudio: vi.fn(), setEpisodeNarration: vi.fn(),
+};
 vi.mock("../../api/studio-client", async (orig) => ({ ...(await orig<object>()), useStudioClient: () => client }));
 const { ResultPane, intakeMissing, versionOf } = await import("./ResultPane");
 
@@ -101,7 +105,7 @@ describe("ResultPane", () => {
     expect(onPrimary).not.toHaveBeenCalled();
     fireEvent.click(await screen.findByRole("radio", { name: /Máy có NVENC/ }));
     fireEvent.click(screen.getByRole("button", { name: "Duyệt và render" }));
-    expect(onPrimary).toHaveBeenCalledWith("approve", { renderMachine: "nvenc" });
+    expect(onPrimary).toHaveBeenCalledWith("approve", { renderMachine: "nvenc", renderNodeId: null });
   });
 
   it("⋯ of an episode offers the final render, not while the episode is producing", async () => {
@@ -117,13 +121,38 @@ describe("ResultPane", () => {
     expect(onMenu).toHaveBeenCalledWith("finalRender");
   });
 
-  it("⋯ of a shot-cut episode runs it again from a gate, and has no Premiere export (phase 4)", async () => {
+  it("an episode whose run ended shows its render, not the timeline; a render that failed says why and offers Render lại", async () => {
+    client.getEpisode.mockResolvedValue({ status: "failed", render: null, progress: null, finalVideoUrl: null, exportFiles: [] });
+    const onMenu = vi.fn();
+    const timeline = { schema_version: "studio.timeline/v4", clips: [], texts: [] };
+    const failed: ChatThreadView = {
+      turns: [], scope: { productionId: "p", episodeId: "e", runId: "r", stageKey: "timeline", scope: "timeline" }, blocked: null,
+      current: { turnId: null, document: timeline, draft: timeline, pendingApply: false, problems: [] }, queueAhead: 0,
+      stopped: { stage: "render-final", problems: [{ code: "transient", message: "farm job failed: fetch failed" }] },
+    };
+    const { unmount } = mount(failed, { episodeId: "e", onMenu, canRenderFinal: true, workflow: "ag-studio-episode-cut@1.0.0" });
+    expect(screen.getByRole("heading", { name: "Render" })).toBeInTheDocument();
+    expect(screen.getByText("cần xử lý")).toBeInTheDocument();
+    expect(screen.getByText("farm job failed: fetch failed")).toBeInTheDocument();
+    expect(await screen.findByText("Chưa có file xuất.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Render lại" }));
+    expect(onMenu).toHaveBeenCalledWith("finalRender");
+    unmount();
+
+    // rendered: the files, no error, no main button
+    mount({ ...failed, stopped: null }, { episodeId: "e", onMenu, canRenderFinal: true, workflow: "ag-studio-episode-cut@1.0.0" });
+    expect(screen.getByRole("heading", { name: "Render" })).toBeInTheDocument();
+    expect(screen.queryByText("farm job failed: fetch failed")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Render lại" })).toBeNull();
+  });
+
+  it("⋯ of a shot-cut episode runs it again from a gate, and exports to Premiere (phase 4)", async () => {
     const onMenu = vi.fn();
     const done: ChatThreadView = { turns: [], scope: null, blocked: { code: "nothing_to_chat", stage: null }, current: null, queueAhead: 0 };
     const { unmount } = mount(done, { episodeId: "e", onMenu, workflow: "ag-studio-episode-cut@1.0.0" });
     fireEvent.click(screen.getByRole("button", { name: "Thêm thao tác" }));
     expect(await screen.findByRole("menuitem", { name: "Chạy lại từ kế hoạch dựng…" })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: "Xuất project Premiere" })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Xuất project Premiere" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("menuitem", { name: "Chạy lại từ chọn cảnh…" }));
     expect(onMenu).toHaveBeenCalledWith("rerunSurvey");
     unmount();
@@ -131,5 +160,58 @@ describe("ResultPane", () => {
     fireEvent.click(screen.getByRole("button", { name: "Thêm thao tác" }));
     expect(await screen.findByRole("menuitem", { name: "Xuất project Premiere" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Chạy lại từ chọn cảnh…" })).toBeNull();
+  });
+
+  it("an episode waiting for a voice asks for one, offers to drop narration, and never says it is working", async () => {
+    const thread: ChatThreadView = { turns: [], scope: null, blocked: { code: "needs_voice", stage: "tts" }, current: null, queueAhead: 0 };
+    mount(thread, { episodeId: "e", workflow: "ag-studio-episode-cut@1.0.0" });
+    expect(screen.getByText("cần giọng đọc")).toBeInTheDocument();
+    expect(screen.queryByText(/đang làm bước/)).not.toBeInTheDocument();
+    expect(screen.getByText(/series chưa có giọng đọc/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bỏ lời dẫn" })).toBeInTheDocument();
+    await waitFor(() => expect(client.getProductionAudio).toHaveBeenCalledWith("p"));
+
+    // the voice picker is open: Lưu waits for a link, whose voice it is, and the person's word
+    const save = screen.getByRole("button", { name: "Lưu" });
+    fireEvent.change(screen.getByPlaceholderText(/^https:/), { target: { value: "https://drive.google.com/file/d/abc/view" } });
+    expect(save).toBeDisabled();
+    fireEvent.click(screen.getByLabelText("Giọng của tôi"));
+    expect(save).toBeDisabled();
+    fireEvent.click(screen.getByLabelText("Tôi có quyền dùng giọng này để làm video."));
+    expect(save).toBeEnabled();
+    client.giveProductionAudio.mockResolvedValue({ voice: null, music: null, resumedEpisodes: ["e"] });
+    fireEvent.click(save);
+    await waitFor(() => expect(client.giveProductionAudio).toHaveBeenCalledWith("p", "voice", { url: "https://drive.google.com/file/d/abc/view", origin: "own", confirm: true }));
+  });
+
+  it("an episode waiting for a voice may drop narration for itself alone", async () => {
+    const onAudioChanged = vi.fn();
+    client.setEpisodeNarration.mockResolvedValue({ resumed: true });
+    const thread: ChatThreadView = { turns: [], scope: null, blocked: { code: "needs_voice", stage: "tts" }, current: null, queueAhead: 0 };
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ResultPane productionId="p" episodeId="e" thread={thread} onPrimary={vi.fn()} onMenu={vi.fn()} workflow="ag-studio-episode-cut@1.0.0" onAudioChanged={onAudioChanged} />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Bỏ lời dẫn cho tập này" }));
+    // the confirm says what happens, and its OK button is named like the action
+    expect(await screen.findByText(/các tập khác vẫn chờ giọng đọc/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Bỏ lời dẫn cho tập này" })).toHaveLength(2));
+    fireEvent.click(screen.getAllByRole("button", { name: "Bỏ lời dẫn cho tập này" }).at(-1)!);
+    await waitFor(() => expect(client.setEpisodeNarration).toHaveBeenCalledWith("p", "e", true));
+    await waitFor(() => expect(onAudioChanged).toHaveBeenCalled());
+  });
+
+  it("a machine step that stopped says why and runs again", () => {
+    const onPrimary = vi.fn();
+    const thread: ChatThreadView = {
+      turns: [], scope: null, current: null, queueAhead: 0,
+      blocked: { code: "stage_failed", stage: "transcribe", problems: [{ code: "transient", message: "farm job failed: no python" }] },
+    };
+    mount(thread, { onPrimary, episodeId: "e", workflow: "ag-studio-episode-cut@1.0.0" });
+    expect(screen.getByText("cần xử lý")).toBeInTheDocument();
+    expect(screen.getByText("farm job failed: no python")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Chạy lại" }));
+    expect(onPrimary).toHaveBeenCalledWith("rerunStep");
   });
 });

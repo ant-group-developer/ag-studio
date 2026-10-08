@@ -92,6 +92,8 @@ describe(PLAN_V2, () => {
     expect(view.waiting_gate).toBe("approve-plan");
     const brief = StudioBriefSchema.parse(readStageDocument(s.core, runId, "brief", "brief.json"));
     expect(brief).toMatchObject({ description: "Mỗi tập một quán phở lúc 6 giờ sáng.", episode_target_seconds: 90, max_episodes: 2, youtube_channels: ["@kenhA"] });
+    // no voice and no Studio default: the plan may narrate, the episode will ask for a voice
+    expect(brief.narration_voice).toBe(process.env.STUDIO_DEFAULT_VOICE_REFERENCE ? "ready" : "missing");
     expect(StudioBrandingSchema.parse(readStageDocument(s.core, runId, "brief", "branding.json")).series_name).toBe("Phở 6 Giờ");
 
     const plan = SeriesPlanSchema.parse(readStageDocument(s.core, runId, "plan-episodes", "series-plan.json"));

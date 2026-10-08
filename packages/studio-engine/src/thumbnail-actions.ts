@@ -12,15 +12,15 @@ import {
   readStoredYoutubeKit, StudioYoutubeSchema, THUMBNAIL_SIZES, THUMBNAIL_TEXT_MAX, ThumbnailStyleSchema, StoredTimelineSchema,
   type StudioExport, type ThumbnailStyle, type StoredTimeline, type YoutubeKit,
 } from "@harness/contracts";
-import { formatChapters, frameCandidateTimes, layoutTimeline, thumbnailTextLines, youtubeChapters } from "@harness/core";
+import { formatChapters, frameCandidateTimes, layoutTimeline, thumbnailStyle, thumbnailTextLines, youtubeChapters } from "@harness/core";
 import type { StudioBucket } from "./bucket.js";
 import type { StudioEngineCore } from "./core.js";
 import { episodeExport, EPISODE_RENDER_STAGE, readStageDocument, stageArtifactPath, StudioRunError } from "./run-control.js";
 import { fileSlug } from "./stages.js";
-import { getProduction, type EpisodeRecord, type StudioDb } from "./studio-db.js";
+import { getProduction, productionBranding, type EpisodeRecord, type StudioDb } from "./studio-db.js";
 import type { ThumbnailRenderer, ThumbnailSize } from "./thumbnail-render.js";
 import {
-  backfillExportThumbnails, insertThumbnail, listThumbnails, requireThumbnail, selectedThumbnail, type EpisodeThumbnail,
+  backfillExportThumbnails, insertThumbnail, listThumbnails, requireThumbnail, selectedThumbnail, selectThumbnail, type EpisodeThumbnail,
 } from "./thumbnails-db.js";
 
 export interface ThumbnailActionDeps {
@@ -45,11 +45,17 @@ export function episodeThumbnails(d: ThumbnailActionDeps, ep: EpisodeRecord): Ep
   return listThumbnails(d.db, ep.id);
 }
 
-/** The kit the episode uses: the person's edits, else Claude's of the current run. */
+/**
+ * The kit the episode uses: the person's edits, else the one approved at `approve-youtube-kit` (with what was edited
+ * at the gate), else Claude's of the current run (an episode 1.2.0 has no gate).
+ */
 export function episodeKit(core: StudioEngineCore, ep: EpisodeRecord): YoutubeKit | null {
   if (ep.youtube) return readStoredYoutubeKit(JSON.parse(ep.youtube));
   if (!ep.run_id) return null;
-  try { return readStoredYoutubeKit(readStageDocument(core, ep.run_id, "youtube-kit", "youtube-kit.json")); } catch { return null; }
+  for (const stage of ["approve-youtube-kit", "youtube-kit"]) {
+    try { return readStoredYoutubeKit(readStageDocument(core, ep.run_id, stage, "youtube-kit.json")); } catch { /* not there: the next */ }
+  }
+  return null;
 }
 
 const userKey = (ep: EpisodeRecord, id: string) => `productions/${ep.production_id}/episodes/${ep.id}/thumbnails/mine/${id}.jpg`;
@@ -174,6 +180,41 @@ export async function uploadThumbnail(
       width: size.width, height: size.height, size_bytes: jpeg.length, created_by: userId,
     });
   });
+}
+
+/**
+ * A thumbnail picked before the render, at the YouTube kit gate (mockup screen 10): a picture of one of the episode's
+ * videos (a keyframe ag-go signed for the person), kept as their frame — a render keeps the person's pictures and their
+ * pick — and, with `text`, the kit idea's words drawn on it in the production's branding style. The result is the
+ * episode's thumbnail.
+ */
+export async function footageThumbnail(
+  d: ThumbnailActionDeps, renderer: ThumbnailRenderer, ep: EpisodeRecord,
+  p: { assetId: string; image: Buffer; text: string | null; userId: string },
+): Promise<EpisodeThumbnail> {
+  const size = thumbnailSizeOf(d.db, ep);
+  const frame = await inTemp(async (dir) => {
+    const input = join(dir, "in");
+    const out = join(dir, "out.jpg");
+    writeFileSync(input, p.image);
+    await renderer.normalize(input, out, size);
+    const id = randomUUID();
+    const jpeg = readFileSync(out);
+    await d.bucket.put(userKey(ep, id), jpeg, "image/jpeg");
+    return insertThumbnail(d.db, {
+      id, episode_id: ep.id, kind: "frame", source_run_id: null, parent_id: null, t_s: null, asset_id: p.assetId,
+      base_key: userKey(ep, id), image_key: userKey(ep, id), text: null, style: null,
+      width: size.width, height: size.height, size_bytes: jpeg.length, created_by: p.userId,
+    });
+  });
+  const text = p.text?.trim();
+  const picked = text
+    ? await composeThumbnail(d, renderer, ep, {
+      baseId: frame.id, text, style: thumbnailStyle(productionBranding(getProduction(d.db, ep.production_id)!)),
+    }, p.userId)
+    : frame;
+  selectThumbnail(d.db, ep.id, picked.id);
+  return picked;
 }
 
 /**

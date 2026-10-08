@@ -6,13 +6,13 @@ import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { StoredTimelineSchema, TimelineVersionError, type StoredTimeline, type TimelineV3 } from "@harness/contracts";
+import { HarnessError, StoredTimelineSchema, TimelineVersionError, type StoredTimeline, type TimelineV3 } from "@harness/contracts";
 import { isTimelineV4, layoutTimeline, timelineIssues, timelineToComposition, youtubeChapters, type TimelineIssue } from "@harness/core";
 import { jobOutputPrefix, stageInputPrefix } from "@harness/executors";
 import { PREMIERE_MANIFEST_PATH, PremiereManifestSchema, RenderManifestSchema, type StudioExportPremierePayload } from "@ag-farm/protocol";
 import type { FarmOwnerClient } from "@ag-farm/owner-client";
 import { productionKey, type StudioBucket } from "./bucket.js";
-import { prepareRender } from "./payloads.js";
+import { narrationUploads, prepareRender } from "./payloads.js";
 import { StudioRunError } from "./run-control.js";
 import {
   getEpisode, getEpisodeJob, getEpisodeRevision, insertEpisodeJob, latestEpisodeRevision,
@@ -27,7 +27,7 @@ export type PremiereMedia = StudioExportPremierePayload["media"];
 export type EditorFarmClient = Pick<FarmOwnerClient, "submitJob" | "getJob" | "ackJob">;
 export interface EditorDeps {
   db: StudioDb; bucket: StudioBucket; farm: EditorFarmClient;
-  /** The voice store, for previews of a narrated (shot-cut) timeline. */
+  /** The voice store, for previews and Premiere exports of a narrated (shot-cut) timeline. */
   voiceDir?: string;
 }
 
@@ -81,11 +81,6 @@ const RENDER_BLOCKERS = new Set(["no_clips", "duplicate_id", "unknown_asset", "d
  * Whether the Premiere export (render worker `premiere-xml.ts`) can hold a timeline: it writes every clip from 0 and
  * has no narration track, so a trimmed, dissolving or narrated timeline waits for phase 4 (ADR-0001 item 159).
  */
-export function premiereCanExport(t: StoredTimeline): boolean {
-  if (!isTimelineV4(t)) return true;
-  return t.clips.every((c) => c.in === 0 && c.out === null && c.transition_out.kind === "cut") && t.narration.lines.length === 0;
-}
-
 /** Start a render-preview farm job for one episode revision. */
 export async function startEpisodePreview(
   d: EditorDeps, p: { productionId: string; episodeId: string; revision: number; userId: string },
@@ -198,19 +193,30 @@ export async function startPremiereExport(
   if (!rev) throw new StudioRunError("invalid", "tập chưa có timeline để xuất");
   const blocking = timelineIssues(rev.data).filter((i) => i.severity === "error");
   if (blocking.length) throw new StudioRunError("invalid", "timeline còn lỗi, chưa xuất được", { problems: blocking });
-  if (!premiereCanExport(rev.data)) {
-    throw new StudioRunError("invalid", "xuất Premiere chưa đọc được clip cắt đầu/cuối, chuyển cảnh và lời dẫn (pha 4)", { code: "premiere_needs_phase_4" });
+  // A shot-cut episode's narration goes with the job (`stage:voice/<line_id>.wav`); a line not in the voice store is
+  // refused here, before a job is made.
+  let voice: { localPath: string; relPath: string }[];
+  try {
+    voice = narrationUploads(rev.data, d.voiceDir);
+  } catch (e) {
+    if (!(e instanceof HarnessError)) throw e;
+    throw new StudioRunError("invalid", e.message, { code: "narration_missing", ...e.details });
   }
   const id = randomUUID();
   insertEpisodeJob(d.db, { id, episodeId: p.episodeId, kind: "export_premiere", request: { revision: rev.revision, media: p.media }, userId: p.userId });
   try {
     await d.bucket.put(`${stageInputPrefix(p.productionId, EDITOR_PREMIERE_STAGE, id)}composition.json`,
       Buffer.from(JSON.stringify(timelineToComposition(rev.data)), "utf8"), "application/json");
+    for (const up of voice) {
+      await d.bucket.put(stageInputPrefix(p.productionId, EDITOR_PREMIERE_STAGE, id) + up.relPath, readFileSync(up.localPath));
+    }
     const payload: StudioExportPremierePayload = {
       production_id: p.productionId, episode_id: p.episodeId, composition: "stage:composition.json", media: p.media,
       name: ep.title.slice(0, 200),
       markers: youtubeChapters(layoutTimeline(rev.data)).map((c) => ({ t_s: c.start_s, title: c.title })),
       // Files in the zip are named after the videos, not their ids.
+      // A worker that cannot read a shot-cut episode (trims, transitions, narration) refuses `edit_style`.
+      ...(isTimelineV4(rev.data) && rev.data.edit_style === "cut" ? { edit_style: "cut" as const } : {}),
       media_names: Object.fromEntries(rev.data.clips.flatMap((c) => {
         const title = rev.data.assets[c.asset_id]?.title.trim().slice(0, 200);
         return title ? [[`asset:${c.asset_id}`, title]] : [];

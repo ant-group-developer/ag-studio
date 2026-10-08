@@ -1,16 +1,18 @@
 /**
  * The Queue screen (mockup 12, plan phase 3): Claude calls running or waiting for a slot, and the farm jobs not done
- * yet, limited to the videos a person can see (team members; a Studio admin sees all). Farm jobs come from ag-farm's
- * owner API (`listJobs`); that API names no nodes and lists none, so the screen shows jobs, not machines.
+ * yet, limited to the videos a person can see (team members; a Studio admin sees all). Farm jobs and machines come
+ * from ag-farm's owner API (`listJobs`, `listNodes`): each job says which node runs it, and which one it is pinned to.
  */
 import type { FarmOwnerClient } from "@ag-farm/owner-client";
+import type { OwnerNodeView } from "@ag-farm/protocol";
 import type { RenderMachine } from "@harness/contracts";
 import { claudeUsage } from "./claude-slots.js";
 import type { StudioEngineCore } from "./core.js";
-import { machineOfRequirements } from "./render-choice.js";
+import { machineOfRequirements, pinnedNodeOfRequirements } from "./render-choice.js";
 import type { StudioDb } from "./studio-db.js";
 
-export type QueueFarm = Pick<FarmOwnerClient, "listJobs">;
+/** `listNodes` is optional: a hub from before `GET /v1/owner/nodes` lists no machines. */
+export type QueueFarm = Pick<FarmOwnerClient, "listJobs"> & Partial<Pick<FarmOwnerClient, "listNodes">>;
 
 /** A job queued this long was taken by no node: maybe none fits its requirements (the farm does not say). */
 export const QUEUE_STUCK_MINUTES = 10;
@@ -35,12 +37,18 @@ export interface QueueRender extends Where {
   machine: RenderMachine | null;
   status: string; progress: number | null; progressStage: string | null; attempt: number; createdAt: string;
   stuck: boolean;
+  /** The node running it (a leased job); `name` null when the hub did not list it. */
+  node: { id: string; name: string | null } | null;
+  /** The node it was pinned to, if any. */
+  pinned: { id: string; name: string | null } | null;
 }
 export interface StudioQueue {
   claude: { running: number; waiting: number; max: number; items: QueueClaudeItem[]; hidden: number };
   renders: QueueRender[];
   /** Jobs of videos the person cannot see. */
   hiddenRenders: number;
+  /** The farm's machines this Studio can use; null when the hub does not list them. */
+  machines: OwnerNodeView[] | null;
   farm: { ok: true } | { ok: false; error: string };
 }
 
@@ -72,6 +80,11 @@ export async function studioQueue(
   } catch (e) {
     farmState = { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
+  let machines: OwnerNodeView[] | null = null;
+  if (farmState.ok && farm.listNodes) {
+    try { machines = (await farm.listNodes()).nodes; } catch { machines = null; }
+  }
+  const nodeRef = (id: string | null) => (id ? { id, name: machines?.find((m) => m.id === id)?.name ?? null } : null);
 
   const renders: QueueRender[] = [];
   let hiddenRenders = 0;
@@ -86,11 +99,12 @@ export async function studioQueue(
       status: j.status, progress: j.progress_percent ?? null, progressStage: j.progress_stage ?? null, attempt: j.attempt_count,
       createdAt: j.created_at,
       stuck: j.status === "queued" && Date.parse(who.now) - Date.parse(j.created_at) > QUEUE_STUCK_MINUTES * 60_000,
+      node: nodeRef(j.node_id ?? null), pinned: nodeRef(pinnedNodeOfRequirements(row.requirements)),
     });
   }
   return {
     claude: { ...usage, max: who.claudeMax, items: claude.items, hidden: claude.hidden },
-    renders, hiddenRenders, farm: farmState,
+    renders, hiddenRenders, machines, farm: farmState,
   };
 }
 
@@ -147,7 +161,19 @@ function productionOfRun(db: StudioDb, runId: string): { productionId: string; e
  */
 export function cachedQueueFarm(farm: QueueFarm, ttlMs: number, now: () => number = Date.now): QueueFarm {
   const hits = new Map<string, { at: number; value: Promise<Awaited<ReturnType<QueueFarm["listJobs"]>>> }>();
+  let nodes: { at: number; value: Promise<Awaited<ReturnType<NonNullable<QueueFarm["listNodes"]>>>> } | null = null;
+  const listNodes = farm.listNodes?.bind(farm);
   return {
+    ...(listNodes ? {
+      listNodes() {
+        if (nodes && now() - nodes.at <= ttlMs) return nodes.value;
+        const value = listNodes();
+        const entry = { at: now(), value };
+        nodes = entry;
+        value.catch(() => { if (nodes === entry) nodes = null; });
+        return value;
+      },
+    } : {}),
     listJobs(query) {
       const key = JSON.stringify(query ?? {});
       const hit = hits.get(key);

@@ -1,5 +1,5 @@
 /**
- * AG Studio worker: runs `ag-studio-production@1.0.0` stages -- in-process stages, Claude (subscription,
+ * AG Studio worker: runs the Studio workflows' stages (series plan, episode, shot-cut episode) -- in-process stages, Claude (subscription,
  * `claude -p` structured), gates, and ag-farm jobs -- against the same `studio.db` as apps/api.
  *
  * Required environment variables:
@@ -23,15 +23,26 @@
  *   STUDIO_FONTS_DIR    a folder with the thumbnail font (Arial); default: Windows fonts, else fontconfig (Liberation Sans)
  *   YOUTUBE_API_KEY     YouTube Data API v3 key for the market research of a series (none = research skipped)
  *   HARNESS_ROOT        Studio install root (default: this checkout)
+ *   STUDIO_FARM_QUEUE_TIMEOUT_MINUTES a farm job no node takes this long is cancelled and its step stops, saying so
+ *                       (default 120; 0 = wait to the stage deadline, 4 h)
+ *   STUDIO_CLEANUP_HOURS how often the cleanup sweep runs (default 6; 0 = never): workspaces of ended runs, agent
+ *                       sessions without a workspace, unused voice lines, production audio and shot frames nothing uses
+ *   STUDIO_RETENTION_WORKSPACE_DAYS / _VOICE_DAYS / _AUDIO_DAYS  how old before the sweep removes them (14 / 90 / 7)
  */
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { AgGoClient } from "@ag-studio/ag-go-client";
 import {
   claudeMaxConcurrent as studioClaudeMaxConcurrent, createStudioEngineCore, ffprobeBeside, httpDownload, type CutMediaDeps, createStudioWorkerPool, FarmOwnerClient, parseClaudeMaxConcurrent, ffmpegThumbnailRenderer, S3Bucket, StudioDb, studioLogger, studioResearchCache,
-  YoutubeResearchSource,
+  YoutubeResearchSource, DEFAULT_RETENTION,
 } from "@ag-studio/engine";
 import { HARNESS_ROOT } from "@harness/core";
+
+/** A non-negative number from the environment, or `fallback` when unset or not a number. */
+function numberEnv(name: string, fallback: number): number {
+  const n = Number(process.env[name]);
+  return process.env[name] !== undefined && process.env[name] !== "" && Number.isFinite(n) && n >= 0 ? n : fallback;
+}
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -80,9 +91,18 @@ async function main(): Promise<void> {
     logger,
     claudeMaxConcurrent,
     farmPollMs: Number(process.env.FARM_POLL_MS ?? 5000),
+    farmQueueTimeoutMs: numberEnv("STUDIO_FARM_QUEUE_TIMEOUT_MINUTES", 120) * 60_000,
     ...(youtubeKey ? { research: new YoutubeResearchSource({ apiKey: youtubeKey, cache: studioResearchCache(db) }) } : {}),
     ...(ffmpeg ? { thumbnails: ffmpegThumbnailRenderer({ ffmpeg }) } : {}),
     ...(media ? { media } : {}),
+    cleanup: {
+      everyMs: numberEnv("STUDIO_CLEANUP_HOURS", 6) * 3_600_000,
+      retention: {
+        workspaceDays: numberEnv("STUDIO_RETENTION_WORKSPACE_DAYS", DEFAULT_RETENTION.workspaceDays),
+        voiceDays: numberEnv("STUDIO_RETENTION_VOICE_DAYS", DEFAULT_RETENTION.voiceDays),
+        audioGraceDays: numberEnv("STUDIO_RETENTION_AUDIO_DAYS", DEFAULT_RETENTION.audioGraceDays),
+      },
+    },
   });
 
   const claudeCap = studioClaudeMaxConcurrent(db, claudeMaxConcurrent);

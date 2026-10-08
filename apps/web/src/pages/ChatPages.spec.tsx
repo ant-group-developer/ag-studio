@@ -15,6 +15,9 @@ const client = {
   getMe: vi.fn().mockResolvedValue({ userId: "u", isAdmin: false }),
   getCanvaConnection: vi.fn().mockResolvedValue({ enabled: false, connected: false, displayName: null }),
   listTeams: vi.fn().mockResolvedValue({ items: [{ id: "team-1", name: "Du lịch", role: "producer" }], total: 1, page: 1, pageSize: 100 }),
+  getTeam: vi.fn().mockResolvedValue({ id: "team-1", name: "Du lịch", role: "producer" }),
+  resumeEpisodeStage: vi.fn().mockResolvedValue({ runId: "r2", reused: [] }), resumeStage: vi.fn().mockResolvedValue({ runId: "r2", reused: [] }),
+  cancelEpisode: vi.fn().mockResolvedValue(undefined), cancelRun: vi.fn().mockResolvedValue({ ok: true }),
   getOverview: vi.fn().mockResolvedValue({ items: [
     { id: "p1", teamId: "team-1", title: "Series Kyoto", updatedAt: "", step: "approve-branding", group: "waiting_you", episodes: [] },
     { id: "p2", teamId: "team-1", title: "Huế", updatedAt: "", step: "plan-episodes", group: "needs_attention", episodes: [] },
@@ -28,6 +31,7 @@ const client = {
   startProduction: vi.fn().mockResolvedValue({ runId: "r" }),
   getEpisode: vi.fn(),
   rerenderEpisode: vi.fn().mockResolvedValue({ runId: "r2", from: "render-final" }),
+  getStepDocument: vi.fn(),
 };
 vi.mock("../api/studio-client", async (orig) => ({ ...(await orig<object>()), useStudioClient: () => client }));
 vi.mock("../api/ag-go-client", async (orig) => ({ ...(await orig<object>()), useAgGoClient: () => ({ getFolders: vi.fn().mockResolvedValue({ folders: [] }) }) }));
@@ -59,7 +63,8 @@ const turn = (over: Partial<ChatTurn>): ChatTurn => ({
   llm_call_id: null, created_by: null, applied_at: null, created_at: "", updated_at: "", ...over,
 });
 
-describe("chat pages", () => {
+// Each case mounts the whole chat page with antd menus and modals: past 5 s when the full suite loads the machine.
+describe("chat pages", { timeout: 20_000 }, () => {
   beforeAll(async () => { await i18n.changeLanguage("vi"); });
   beforeEach(() => { vi.clearAllMocks(); });
 
@@ -85,14 +90,26 @@ describe("chat pages", () => {
     client.getChatThread.mockResolvedValue(thread);
     mount("/v/p1");
     expect(await screen.findByText("Đã đổi chữ to hơn")).toBeInTheDocument();
-    expect(screen.getByText("3 · Branding")).toHaveClass("chat-steps__now");
-    expect(screen.getByText(/✓ R&D/)).toHaveClass("chat-steps__done");
+    expect(screen.getByText("3 · Branding").closest("li")).toHaveClass("chat-steps__now");
+    expect(screen.getByText(/✓ R&D/).closest("li")).toHaveClass("chat-steps__done");
     fireEvent.click(await screen.findByRole("button", { name: "Duyệt" }));
     await waitFor(() => expect(client.approveChat).toHaveBeenCalledWith("p1", { stageKey: "approve-branding", episodeId: undefined, turnId: v2.id }));
     const box = screen.getByLabelText("Yêu cầu cho Claude");
     fireEvent.change(box, { target: { value: "Bỏ màu cam", selectionStart: 10 } });
     fireEvent.keyDown(box, { key: "Enter" });
     await waitFor(() => expect(client.sendChat).toHaveBeenCalledWith("p1", "Bỏ màu cam", undefined));
+  });
+
+  it("the person's role is the video's team's own answer, not a page of their teams (one in 100+ teams keeps it)", async () => {
+    client.listTeams.mockResolvedValueOnce({ items: [], total: 140, page: 1, pageSize: 100 });
+    const thread: ChatThreadView = {
+      turns: [], scope: { productionId: "p1", episodeId: null, runId: "r", stageKey: "approve-branding", scope: "gate" }, blocked: null,
+      current: { turnId: null, document: { series_name: "Quiet" }, draft: { series_name: "Quiet" }, pendingApply: false, problems: [] }, queueAhead: 0,
+    };
+    client.getChatThread.mockResolvedValue(thread);
+    mount("/v/p1");
+    await waitFor(() => expect(client.getTeam).toHaveBeenCalledWith("team-1"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Duyệt" })).toBeEnabled());
   });
 
   it("while Claude or a render works, nothing can be sent", async () => {
@@ -114,7 +131,7 @@ describe("chat pages", () => {
     expect(await screen.findByText("Duyệt YouTube kit và render bản cuối?")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("radio", { name: /Máy có GPU/ })).toBeChecked());
     fireEvent.click(screen.getByRole("button", { name: "Duyệt và render" }));
-    await waitFor(() => expect(client.approveChat).toHaveBeenCalledWith("p1", { stageKey: "approve-youtube-kit", episodeId: "e1", turnId: null, renderMachine: "gpu" }));
+    await waitFor(() => expect(client.approveChat).toHaveBeenCalledWith("p1", { stageKey: "approve-youtube-kit", episodeId: "e1", turnId: null, renderMachine: "gpu", renderNodeId: null }));
   });
 
   it("⋯ → Render bản cuối…: only the render runs again, on the machine type picked", async () => {
@@ -131,7 +148,41 @@ describe("chat pages", () => {
     expect(await screen.findByText("Chỉ render lại, giữ timeline và YouTube kit đã duyệt.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: /Máy có GPU/ }));
     fireEvent.click(screen.getByRole("button", { name: "Render" }));
-    await waitFor(() => expect(client.rerenderEpisode).toHaveBeenCalledWith("p1", "e1", "gpu"));
+    await waitFor(() => expect(client.rerenderEpisode).toHaveBeenCalledWith("p1", "e1", "gpu", null));
+  });
+
+  it("⋯ → Chạy lại từ bước…: an ended episode goes again from a step it passed, its Claude stage writing it anew", async () => {
+    client.getChatThread.mockResolvedValue({
+      turns: [], scope: { productionId: "p1", episodeId: "e1", runId: "r", stageKey: "timeline", scope: "timeline" }, blocked: null,
+      current: null, queueAhead: 0, stopped: null,
+    } satisfies ChatThreadView);
+    client.getEpisode.mockResolvedValue({ id: "e1", idx: 1, title: "Rừng tre", status: "ready", currentStage: null, run: { state: "SUCCEEDED" }, progress: null,
+      finalVideoUrl: null, exportFiles: [], render: { machine: null, defaultMachine: "any", restartFrom: "render-final", job: null, farmStatus: null } });
+    mount("/v/p1/e/e1");
+    await screen.findByRole("heading", { name: "Tập 1 · Rừng tre" });
+    fireEvent.click(screen.getByRole("button", { name: "Thêm thao tác" }));
+    expect(screen.queryByRole("menuitem", { name: "Huỷ lần chạy này…" })).toBeNull();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Chạy lại từ bước…" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Dựng nháp");
+    expect(dialog).toHaveTextContent("YouTube kit");
+    fireEvent.click(screen.getByRole("radio", { name: "YouTube kit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Chạy lại" }));
+    await waitFor(() => expect(client.resumeEpisodeStage).toHaveBeenCalledWith("p1", "e1", "youtube-kit"));
+  });
+
+  it("⋯ → Huỷ lần chạy này…: a run waiting at a gate is cancelled after a confirm", async () => {
+    client.getChatThread.mockResolvedValue({
+      turns: [], scope: { productionId: "p1", episodeId: null, runId: "r", stageKey: "approve-branding", scope: "gate" }, blocked: null,
+      current: { turnId: null, document: { series_name: "Quiet" }, draft: { series_name: "Quiet" }, pendingApply: false, problems: [] }, queueAhead: 0,
+    } satisfies ChatThreadView);
+    mount("/v/p1");
+    fireEvent.click(await screen.findByRole("button", { name: "Thêm thao tác" }));
+    expect(screen.queryByRole("menuitem", { name: "Chạy lại từ bước…" })).toBeNull();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Huỷ lần chạy này…" }));
+    expect((await screen.findAllByText("Huỷ lần chạy này?")).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Huỷ lần chạy" }));
+    await waitFor(() => expect(client.cancelRun).toHaveBeenCalledWith("p1"));
   });
 
   it("the step chips of an episode whose run ended ready are all done", async () => {
@@ -142,8 +193,11 @@ describe("chat pages", () => {
     const render = { machine: null, defaultMachine: "any", restartFrom: "render-final", job: null, farmStatus: null };
     client.getEpisode.mockResolvedValue({ id: "e1", idx: 1, title: "Rừng tre", status: "ready", currentStage: null, run: { state: "SUCCEEDED" }, progress: null, finalVideoUrl: null, exportFiles: [], render });
     mount("/v/p1/e/e1");
-    expect(await screen.findByText(/✓ Xuất file/)).toHaveClass("chat-steps__done");
-    expect(screen.getByText(/✓ Timeline/)).toHaveClass("chat-steps__done");
+    expect((await screen.findByText(/✓ Xuất file/)).closest("li")).toHaveClass("chat-steps__done");
+    expect(screen.getByText(/✓ Timeline/).closest("li")).toHaveClass("chat-steps__done");
+    // the result column shows the render: its chip is the one open, not the timeline's
+    expect(screen.getByText(/✓ Render/).closest("li")).toHaveClass("chat-steps__open");
+    expect(screen.getByText(/✓ Timeline/).closest("li")).not.toHaveClass("chat-steps__open");
   });
 
   it("an episode whose render failed shows Render as the step it is at", async () => {
@@ -154,7 +208,29 @@ describe("chat pages", () => {
     const render = { machine: "gpu", defaultMachine: "gpu", restartFrom: "render-final", job: null, farmStatus: null };
     client.getEpisode.mockResolvedValue({ id: "e1", idx: 1, title: "Rừng tre", status: "failed", currentStage: "render-final", run: { state: "FAILED" }, progress: null, finalVideoUrl: null, exportFiles: [], render });
     mount("/v/p1/e/e1");
-    await waitFor(() => expect(screen.getByText("4 · Render")).toHaveClass("chat-steps__now"));
-    expect(screen.getByText(/✓ YouTube kit/)).toHaveClass("chat-steps__done");
+    await waitFor(() => expect(screen.getByText("4 · Render").closest("li")).toHaveClass("chat-steps__now"));
+    expect(screen.getByText(/✓ YouTube kit/).closest("li")).toHaveClass("chat-steps__done");
   });
+
+  it("a step passed opens its document on the right, from its chip or its divider; back returns to the step at hand", async () => {
+    client.getStepDocument.mockResolvedValue({
+      kind: "rnd", gate: "approve-rnd", state: "approved", inUse: false,
+      document: { schema_version: "studio.rnd/v1", summary: "R&D đã duyệt", direction: {} },
+      edit: { inPlace: true, inPlaceCode: null, reopen: true, reopenCode: null, replacesEpisodes: false, reruns: ["approve-rnd"] },
+    });
+    client.getChatThread.mockResolvedValue({
+      turns: [turn({ stage_key: "approve-rnd", text: "R&D xong" }), turn({ stage_key: "approve-branding", text: "Branding đây" })],
+      scope: { productionId: "p1", episodeId: null, runId: "r", stageKey: "approve-branding", scope: "gate" }, blocked: null,
+      current: { turnId: null, document: { series_name: "Quiet" }, draft: { series_name: "Quiet" }, pendingApply: false, problems: [] }, queueAhead: 0,
+    } satisfies ChatThreadView);
+    mount("/v/p1");
+    fireEvent.click(await screen.findByRole("button", { name: "Xem R&D" }));
+    expect(await screen.findByText("R&D đã duyệt")).toBeInTheDocument();
+    expect(client.getStepDocument).toHaveBeenCalledWith("p1", "rnd", undefined);
+    expect(screen.getByRole("button", { name: "Xem R&D" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Về bước hiện tại" }));
+    expect(await screen.findByRole("heading", { name: "Branding" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "xem tài liệu" }));
+    expect(await screen.findByText("R&D đã duyệt")).toBeInTheDocument();
+  }, 20_000);
 });

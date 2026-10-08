@@ -158,6 +158,8 @@ export interface EpisodeSummary {
 }
 
 export interface EpisodeDetail extends EpisodeSummary {
+  /** Narration declined for this episode alone (a shot-cut episode). */
+  narrationDeclined?: boolean;
   plan: unknown; // StudioEpisode
   run: RunView | null;
   /** The caller's ag-go scope does not cover the production: no footage, frames or video URLs. */
@@ -214,7 +216,9 @@ export interface EpisodeRender {
   defaultMachine: RenderMachine;
   /** Where Render lại starts: no run yet, only the render, the timeline approved again first, freeze; null: producing. */
   restartFrom: "start" | "render-final" | "approve-timeline" | "freeze-timeline" | null;
-  job: { farmJobId: string; runId: string; machine: RenderMachine | null; createdAt: string } | null;
+  /** The farm node the current run's render is pinned to. */
+  node?: RenderNode | null;
+  job: { farmJobId: string; runId: string; machine: RenderMachine | null; node?: RenderNode | null; createdAt: string } | null;
   /** The farm's view of `job` while the run renders it. */
   farmStatus: { status: string; progress: number | null } | null;
 }
@@ -580,6 +584,10 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     resumeStage(id: string, stage: string): Promise<{ runId: string; reused: string[] }> {
       return request(getAccessToken, "POST", `/api/productions/${id}/run/stages/${stage}/resume`);
     },
+    /** ⋯ → Chạy lại từ bước…: an episode's ended run again from `stage`. */
+    resumeEpisodeStage(productionId: string, episodeId: string, stage: string): Promise<{ runId: string; reused: string[] }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/stages/${stage}/resume`);
+    },
     cancelRun(id: string): Promise<{ ok: true }> {
       return request(getAccessToken, "POST", `/api/productions/${id}/run/cancel`);
     },
@@ -595,8 +603,9 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
       return request<EpisodeDetail>(getAccessToken, "PATCH", `/api/productions/${productionId}/episodes/${episodeId}`, data);
     },
     /** Render lại; `renderMachine` is the farm machine type of the final render (none: the run's, or any). */
-    rerenderEpisode(productionId: string, episodeId: string, renderMachine?: RenderMachine): Promise<{ runId: string; from: NonNullable<EpisodeRender["restartFrom"]> }> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/rerender`, renderMachine ? { renderMachine } : undefined);
+    rerenderEpisode(productionId: string, episodeId: string, renderMachine?: RenderMachine, renderNodeId?: string | null): Promise<{ runId: string; from: NonNullable<EpisodeRender["restartFrom"]> }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/rerender`,
+        renderMachine ? { renderMachine, ...(renderNodeId ? { renderNodeId } : {}) } : undefined);
     },
     /** 403 `footage_hidden`, 422 `not_cut` for a whole-video episode. */
     getEpisodeShots(productionId: string, episodeId: string): Promise<EpisodeShots> {
@@ -624,6 +633,10 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     // without ffmpeg on the API box) ----
     listThumbnails(productionId: string, episodeId: string): Promise<ThumbnailList> {
       return request(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails`);
+    },
+    /** Before the render (kit gate): a keyframe of one of the episode's videos, with the idea's words, as the pick. */
+    pickFootageThumbnail(productionId: string, episodeId: string, p: { assetId: string; keyframe: number; text: string }): Promise<ThumbnailView> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/footage`, p);
     },
     selectThumbnail(productionId: string, episodeId: string, thumbnailId: string): Promise<ThumbnailList> {
       return request(getAccessToken, "PUT", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/selected`, { thumbnailId });
@@ -727,14 +740,64 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     startProduction(productionId: string): Promise<{ runId: string }> {
       return request(getAccessToken, "POST", `/api/productions/${productionId}/start`);
     },
-    approveChat(productionId: string, input: { stageKey: string; episodeId?: string | null; turnId?: string | null; renderMachine?: RenderMachine }): Promise<{ stageState: string; runState: string; revision?: number }> {
+    approveChat(productionId: string, input: { stageKey: string; episodeId?: string | null; turnId?: string | null; renderMachine?: RenderMachine; renderNodeId?: string | null }): Promise<{ stageState: string; runState: string; revision?: number }> {
       return request(getAccessToken, "POST", `/api/productions/${productionId}/chat/approve`, {
         stageKey: input.stageKey, ...(input.episodeId ? { episodeId: input.episodeId } : {}), ...(input.turnId ? { turnId: input.turnId } : {}),
-        ...(input.renderMachine ? { renderMachine: input.renderMachine } : {}),
+        ...(input.renderMachine ? { renderMachine: input.renderMachine, ...(input.renderNodeId ? { renderNodeId: input.renderNodeId } : {}) } : {}),
       });
+    },
+    /** The production's voice sample (or narration declined) and background music (plan optional-audio). */
+    getProductionAudio(productionId: string): Promise<ProductionAudio> {
+      return request(getAccessToken, "GET", `/api/productions/${productionId}/audio`);
+    },
+    /**
+     * A voice sample or music from a link or a file. A voice needs its origin and `confirm` (ADR-0001 item 105).
+     * Errors: 400 `voice_consent` / `url_not_allowed` / `audio_missing`, 413 `audio_too_large`, 422 `audio_invalid`,
+     * 502 `url_fetch_failed`, 503 `audio_disabled`.
+     */
+    giveProductionAudio(productionId: string, kind: AudioKind, input: AudioInput): Promise<ProductionAudio & { resumedEpisodes: string[] }> {
+      const fields: Record<string, string> = {};
+      if (input.origin) fields.origin = input.origin;
+      if (input.confirm !== undefined) fields.confirm = String(input.confirm);
+      if (input.referenceText) fields.referenceText = input.referenceText;
+      if (input.gainDb !== undefined) fields.gainDb = String(input.gainDb);
+      if (input.ducking !== undefined) fields.ducking = String(input.ducking);
+      const path = `/api/productions/${productionId}/audio/${kind}`;
+      if (input.file) {
+        const form = new FormData();
+        for (const [k, v] of Object.entries(fields)) form.append(k, v);
+        form.append("file", input.file);
+        return request(getAccessToken, "POST", path, form);
+      }
+      return request(getAccessToken, "POST", path, { ...fields, url: input.url });
+    },
+    /** "Bỏ lời dẫn": no narration for the production; episodes waiting for a voice run on without lines. */
+    /** A machine voice: the farm reads a sample sentence in a voice designed from the description. */
+    designVoice(productionId: string, design: VoiceDesign): Promise<ProductionAudio> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/audio/voice/design`, design);
+    },
+    declineNarration(productionId: string): Promise<ProductionAudio & { resumedEpisodes: string[] }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/audio/voice/none`);
+    },
+    /** Narration of one shot-cut episode declined (cut without lines, at once if it waits for a voice), or wanted again. */
+    setEpisodeNarration(productionId: string, episodeId: string, declined: boolean): Promise<{ resumed: boolean }> {
+      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/narration`, { declined });
+    },
+    removeProductionAudio(productionId: string, kind: AudioKind): Promise<ProductionAudio> {
+      return request(getAccessToken, "DELETE", `/api/productions/${productionId}/audio/${kind}`);
     },
     retryChatStep(productionId: string, stageKey: string, episodeId?: string | null): Promise<{ ok: true }> {
       return request(getAccessToken, "POST", `/api/productions/${productionId}/chat/retry`, { stageKey, ...(episodeId ? { episodeId } : {}) });
+    },
+    /** A step's document after its approval, and what editing it would do (plan 2026-10-07 step history). */
+    getStepDocument(productionId: string, kind: StepDocKind, episodeId?: string | null): Promise<StepDocView> {
+      const base = `/api/productions/${productionId}${episodeId ? `/episodes/${episodeId}` : ""}`;
+      return request(getAccessToken, "GET", `${base}/steps/${kind}`);
+    },
+    /** `reopen` false replaces the version in use; true opens the step again with this version on show. */
+    editStepDocument(productionId: string, kind: StepDocKind, input: { document: unknown; reopen: boolean; episodeId?: string | null }): Promise<StepEditResult> {
+      const base = `/api/productions/${productionId}${input.episodeId ? `/episodes/${input.episodeId}` : ""}`;
+      return request(getAccessToken, "PUT", `${base}/steps/${kind}`, { document: input.document, reopen: input.reopen });
     },
     saveManualEdit(productionId: string, input: { stageKey: string; episodeId?: string | null; document: unknown }): Promise<ChatTurn> {
       return request(getAccessToken, "POST", `/api/productions/${productionId}/chat/manual`, {
@@ -747,6 +810,18 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     /** The Queue screen: Claude calls and farm jobs of the videos the caller can see. */
     getQueue(): Promise<StudioQueueView> {
       return request(getAccessToken, "GET", "/api/studio/queue");
+    },
+    /** Farm machines a final render may be pinned to (empty: none listed). */
+    listFarmNodes(): Promise<{ nodes: FarmNode[] }> {
+      return request(getAccessToken, "GET", "/api/studio/farm/nodes");
+    },
+    /** The chat's event stream (server-sent events), read with fetch so the bearer token goes with it. */
+    async openChatEvents(productionId: string, episodeId: string | undefined, signal: AbortSignal): Promise<Response> {
+      const token = await getAccessToken();
+      const qs = episodeId ? `?episodeId=${encodeURIComponent(episodeId)}` : "";
+      return fetch(`${STUDIO_API_URL}/api/productions/${productionId}/chat/events${qs}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream" }, signal,
+      });
     },
     getClaudeUsage(): Promise<ClaudeUsage> {
       return request(getAccessToken, "GET", "/api/studio/claude");
@@ -780,12 +855,59 @@ export interface ChatTurn {
 
 export interface ChatScopeKey { productionId: string; episodeId: string | null; runId: string | null; stageKey: string; scope: ChatScopeName }
 
+export type AudioKind = "voice" | "music";
+export type VoiceOrigin = "synthetic" | "own" | "licensed";
+export type AudioSource = { kind: "link"; url: string } | { kind: "upload"; filename: string } | { kind: "design"; instruct: string };
+/** A machine voice described in OmniVoice's own words. */
+export interface VoiceDesign {
+  gender: "female" | "male";
+  age: "young adult" | "middle-aged" | "elderly";
+  pitch: "low pitch" | "moderate pitch" | "high pitch";
+}
+export interface AudioInput {
+  file?: File; url?: string;
+  origin?: VoiceOrigin; confirm?: boolean; referenceText?: string;
+  gainDb?: number; ducking?: boolean;
+}
+export interface ProductionAudio {
+  voice:
+    | { mode: "none"; decided_at: string }
+    /** The farm is making a machine voice from a description; `error`: it could not. */
+    | { mode: "designing"; instruct: string; requested_at: string; error: string | null }
+    | { mode: "clone"; origin: VoiceOrigin | null; source: AudioSource | null; duration_s: number | null; reference_text: string | null; reference: string; listenUrl: string | null }
+    | null;
+  music: { track: string; gain_db: number; ducking: boolean; source: AudioSource | null; duration_s: number | null; listenUrl: string | null } | null;
+}
+
 export interface ChatThreadView {
   turns: ChatTurn[];
   scope: ChatScopeKey | null;
-  blocked: { code: "busy" | "nothing_to_chat" | string; stage: string | null } | null;
+  /**
+   * Why no message can be sent: `busy`, `nothing_to_chat`, `needs_voice` (a narrated episode waits for a voice sample),
+   * `stage_failed` (a machine step stopped; `problems` say why).
+   */
+  blocked: { code: "busy" | "nothing_to_chat" | "needs_voice" | "stage_failed" | string; stage: string | null; problems?: { code: string; message: string }[] } | null;
   current: { turnId: string | null; document: unknown; draft: unknown; pendingApply: boolean; problems: { code: string; message: string }[] } | null;
+  /** An episode whose run ended on a failed machine step (its final render): which step and why. The chat goes on. */
+  stopped?: { stage: string; problems: { code: string; message: string }[] } | null;
   queueAhead: number;
+}
+
+export type StepDocKind = "trend_report" | "rnd" | "branding" | "series_plan" | "youtube_kit" | "survey" | "edit_plan";
+export interface StepDocView {
+  kind: StepDocKind;
+  gate: string;
+  state: "not_yet" | "waiting" | "approved";
+  document: unknown;
+  /** The document is a version edited after the approval. */
+  inUse: boolean;
+  edit: { inPlace: boolean; inPlaceCode: string | null; reopen: boolean; reopenCode: string | null; replacesEpisodes: boolean; reruns: string[] };
+}
+export interface StepEditResult {
+  mode: "saved" | "reopened";
+  runId?: string;
+  warnings: { code: string; message: string }[];
+  view: StepDocView;
 }
 
 export type OverviewGroup = "waiting_you" | "needs_attention" | "running" | "done";
@@ -802,12 +924,25 @@ export interface QueueRender extends QueueWhere {
   status: "queued" | "leased" | "paused" | string; progress: number | null; progressStage: string | null; attempt: number; createdAt: string;
   /** Queued for more than 10 minutes: no node took it, maybe none fits. */
   stuck: boolean;
+  /** The node running it, and the one it was pinned to (`name` null: the farm did not list it). */
+  node?: { id: string; name: string | null } | null;
+  pinned?: { id: string; name: string | null } | null;
 }
 export interface StudioQueueView {
   claude: { running: number; waiting: number; max: number; hidden: number; items: QueueClaudeItem[] };
   renders: QueueRender[];
   hiddenRenders: number;
+  /** The farm's machines; null when the hub does not list them. */
+  machines?: FarmNode[] | null;
   farm: { ok: true } | { ok: false; error: string };
+}
+
+/** A farm node a final render may be pinned to. */
+export interface RenderNode { id: string; name: string }
+/** A machine of the farm (ag-farm `GET /v1/owner/nodes`). */
+export interface FarmNode {
+  id: string; name: string; online: boolean; kinds: string[];
+  gpus: { name: string; vram_mb: number; nvenc: boolean }[]; running_jobs: number; last_seen_at: string | null;
 }
 
 /** Kind of farm machine for a final render: ag-farm requirements `{}`, `{nvenc: true}`, `{gpu: true}`. */
