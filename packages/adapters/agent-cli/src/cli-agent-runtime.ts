@@ -46,6 +46,18 @@ export const RUNTIME_COMMANDS: Record<AgentCliRuntimeKind, { argv: string[]; env
 export const STUDIO_ARGV = ["claude", "-p", "--output-format", "json", "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--max-turns", "{max_turns}", "--model", "{model}"];
 
 /**
+ * A structured call's argv. With `tools` (web mode, ADR-0001 item 176: `WebSearch`, `WebFetch`) those are the only
+ * tools available and they are allowed without asking; still no session, no MCP server, no file or shell tool.
+ */
+export function studioStructuredArgv(o: { model: string; maxTurns: number; tools?: readonly string[] }): string[] {
+  const tools = o.tools?.length ? o.tools.join(",") : "";
+  const argv = STUDIO_ARGV.map((a) => (a === "{model}" ? o.model : a === "{max_turns}" ? String(o.maxTurns) : a));
+  if (!tools) return argv;
+  argv[argv.indexOf("--tools") + 1] = tools;
+  return [...argv, "--allowedTools", tools];
+}
+
+/**
  * Studio stages that must LOOK at files (contact sheets of the shot-cut workflow, ADR-0001 item 155): the prompt on
  * stdin as in structured mode, but the agent may read and write files in its workspace and the session is kept, so
  * a repair round or a chat turn can `--resume` it with every frame it already saw.
@@ -114,6 +126,8 @@ export interface CliAgentRuntimeOptions {
     jsonSchema?: string;   // JSON-encoded schema string passed via --json-schema
     model?: string;        // model to request (default: claude-opus-4-5)
     maxTurns?: number;     // default: 3
+    /** Web mode: the only tools available (`WebSearch`, `WebFetch`); none by default. */
+    tools?: string[];
   };
   /** Studio files mode (see `StudioFilesMode`); exclusive with `structured`. */
   files?: StudioFilesMode;
@@ -218,10 +232,10 @@ export class CliAgentRuntime implements AgentRuntime {
     if (isStructured) {
       const s = this.opts.structured!;
       const model = s.model ?? "claude-opus-5-5";
-      const maxTurns = String(s.maxTurns ?? 3);
-      rawArgv = this.opts.argv ?? STUDIO_ARGV.map((a) => a === "{model}" ? model : a === "{max_turns}" ? maxTurns : a);
-      // The schema is part of the contract of a structured call, so it is appended even when `argv` is
-      // overridden (a fake CLI in tests must receive exactly what the real one would).
+      rawArgv = this.opts.argv ?? studioStructuredArgv({ model, maxTurns: s.maxTurns ?? 3, ...(s.tools ? { tools: s.tools } : {}) });
+      // The schema and the tools allowed are part of the contract of a structured call, so they are appended even
+      // when `argv` is overridden (a fake CLI in tests must receive exactly what the real one would).
+      if (this.opts.argv && s.tools?.length) rawArgv = [...rawArgv, "--allowedTools", s.tools.join(",")];
       if (s.jsonSchema) rawArgv = [...rawArgv, "--json-schema", s.jsonSchema];
     } else if (files) {
       rawArgv = this.opts.argv ? [...this.opts.argv, ...studioFilesFlags(files)] : studioFilesArgv(files);
