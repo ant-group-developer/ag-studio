@@ -18,7 +18,7 @@ export const STUDIO_WORKFLOWS = {
   plan: { workflow: "ag-studio-series-plan@3.2.0", profile: "studio-production" },
   episode: { workflow: "ag-studio-episode@1.3.0", profile: "studio-production" },
   /** An episode the plan cuts shot by shot (spec local-chat §3.3). */
-  episodeCut: { workflow: "ag-studio-episode-cut@1.0.0", profile: "studio-production" },
+  episodeCut: { workflow: "ag-studio-episode-cut@1.1.0", profile: "studio-production" },
 } as const;
 export type StudioWorkflowKind = keyof typeof STUDIO_WORKFLOWS;
 

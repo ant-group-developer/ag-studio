@@ -9,7 +9,7 @@ import { CompositionSchema, EditPlanSchema, StudioSurveySchema, TimelineV4Schema
 import { readStageDocument, STUDIO_WORKFLOWS, submitEpisodeTimelineGate, submitStudioGate } from "../src/index.js";
 import { cutEpisodeAtSurvey, cutSetup, drain, hasFfmpeg, waiting, type CutSetup } from "./cut-flow.js";
 
-describe.skipIf(!hasFfmpeg())("ag-studio-episode-cut@1.0.0 end to end (needs ffmpeg + ffprobe)", () => {
+describe.skipIf(!hasFfmpeg())("the current shot-cut release end to end (needs ffmpeg + ffprobe)", () => {
   let s: CutSetup;
   beforeEach(() => { process.env.FAKE_STUDIO_MODE = "plan-cut"; });
   afterEach(() => { delete process.env.FAKE_STUDIO_MODE; s?.core.close(); });
