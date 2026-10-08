@@ -1165,5 +1165,5 @@ Các mục dưới đây ghi lại quyết định của nhánh AG Studio, viế
     hộp lấy màu hộp; composition có `text_style` chỉ worker mới nhận (schema strict là cổng phiên bản); kho nhạc chung
     (`music_track`, file `library/music/`, admin tải lên, gắn mood) cho tập không có nhạc riêng: mood của kế hoạch dựng →
     branding → style, so không phân biệt hoa thường và dấu. Phong cách dựng (mục 175) tới tập qua `studio-cut-intake-v2`;
-    lệch độ dài shot là follow-up `style_shot_length`. 1.1.0 chỉ thành bản đang dùng sau khi mọi node farm chạy
-    ag-render-worker ≥ 0.8.0.
+    lệch độ dài shot là follow-up `style_shot_length`. 1.1.0 thành bản đang dùng sau khi mọi node farm render chạy
+    ag-render-worker ≥ 0.8.0 (2026-10-08, node `local-render`).

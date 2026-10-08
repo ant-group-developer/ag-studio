@@ -28,7 +28,7 @@ Từ lúc tạo production tới khi có các tập đã render, kèm cách xử
 | YouTube kit | Claude → **người duyệt** | Chat để sửa tiêu đề, mô tả, tag | Thumbnail thật chọn sau khi render |
 | Render, thumbnail, xuất | Tự động | Cột phải của tập: tiến độ, video, file | Render dùng timeline **đã duyệt** |
 
-### 2a. Tập cắt theo shot (`ag-studio-episode-cut@1.0.0`)
+### 2a. Tập cắt theo shot (`ag-studio-episode-cut@1.1.0`; tập cũ: 1.0.0)
 
 Claude chọn kiểu này ở kế hoạch tập khi footage nhiều hơn tập cần (≥ 1,5 lần) hoặc khi nên có lời dẫn ("cắt theo shot
 kiểu đi bộ du lịch, có lời dẫn"). Đầu tập có dòng "cắt theo shot · khoảng N phút · có lời dẫn".
@@ -56,7 +56,7 @@ kiểu đi bộ du lịch, có lời dẫn"). Đầu tập có dòng "cắt theo
   đó; tập đã có timeline thì sửa nhạc trong timeline.
 - Tập ghép nguyên video không có các ô cắt đầu/cuối, chuyển cảnh, phụ đề.
 
-**Tập cắt 1.1.0** (`ag-studio-episode-cut@1.1.0`, ADR-0001 mục 178; chỉ dùng sau khi chuyển bản, xem dưới):
+**Tập cắt 1.1.0** (`ag-studio-episode-cut@1.1.0`, ADR-0001 mục 178; đang dùng từ 2026-10-08):
 
 - Đầu bước footage có thêm **lọc lời nói**: câu Whisper bịa (điểm từ thấp, "đăng ký kênh"…) bị bỏ trước khi Claude chọn
   cảnh; xem câu đã bỏ ở `clean-report.json` của bước `clean-transcript` (`⋯ → Nhật ký`).
@@ -69,11 +69,9 @@ kiểu đi bộ du lịch, có lời dẫn"). Đầu tập có dòng "cắt theo
   trong editor (ô "Lọc theo mood", "Bài nhạc").
 - YouTube kit đọc bản chọn cảnh: tiêu đề không nói điều hình không có; thumbnail chỉ lấy video còn trong timeline.
 
-**Chuyển tập cắt mới sang 1.1.0** (một lần, người vận hành): (1) cài ag-render-worker **0.8.0** lên **mọi** node farm
-(`release/ag-render-worker-0.8.0.zip`, `node scripts/release.mjs` trong repo đó); node cũ từ chối job có kiểu chữ và
-xuất Premiere có clip tắt tiếng (job hỏng có báo lỗi, không render sai). (2) Đổi `STUDIO_WORKFLOWS.episodeCut`
-(`packages/studio-engine/src/core.ts`) sang `ag-studio-episode-cut@1.1.0`, build, khởi động lại worker. Tập đang chạy
-trên 1.0.0 vẫn chạy và render như cũ.
+**Node farm render phải chạy ag-render-worker ≥ 0.8.0** (`release/ag-render-worker-0.8.0.zip`, `node scripts/release.mjs`
+trong repo đó): node cũ từ chối job render có kiểu chữ và xuất Premiere có clip tắt tiếng (job hỏng có báo lỗi, không
+render sai). Khi thêm node mới, cài bản đó. Tập đã chạy trên 1.0.0 vẫn chạy và render như cũ.
 
 **Kho nhạc của nhóm** (`/music`, link ở trang Hàng đợi): mọi người nghe thử; Studio admin tải bài lên (tên, mood, nguồn
 gốc, có lặp liền mạch không), sửa mood, ngừng dùng hoặc dùng lại. Bài ngừng dùng không được chọn cho tập mới nhưng tập

@@ -109,8 +109,8 @@ Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-3-render.md`. Cố ý c
 - Cuối pha 3: `corepack pnpm -r run build` và `pnpm -r typecheck` sạch; `vitest run` 1532 pass, 170 skip, 0 fail.
 - `chat.test.ts` › "the subscription limit leaves the reply waiting, then it runs" chập chờn khi chạy cả bộ
   `packages/studio-engine` (máy tải nặng); chạy riêng thì pass. Nguyên nhân (2026-10-08): test so
-  `notBefore − updated_at` **đúng bằng** 60 000 ms, hai mốc lấy từ hai lần gọi đồng hồ nên có thể lệch 1 ms khi máy bận;
-  nên so trong khoảng hoặc lấy cùng một mốc.
+  `notBefore − updated_at` **đúng bằng** 60 000 ms, hai mốc lấy từ hai lần gọi đồng hồ nên có thể lệch 1 ms khi máy bận.
+  ✅ 2026-10-08: `runChatTurn` đọc đồng hồ một lần cho cả hai mốc.
 
 ### Sau pha 5 — kiểu dựng "cắt theo shot" (2026-10-06)
 
@@ -160,15 +160,15 @@ render "Ninh Bình Chậm #1" ngày 08/10):
 - ✅ Worker khởi động lại làm mất job farm (huỷ và gửi lại cuối hàng đợi; lần bỏ dở tính vào `max_attempts`): nhận lại
   job theo fingerprint, abort không huỷ job, lần bỏ dở trả lượt (trần riêng 5; ADR 177).
 - ✅ Tiêu đề sai sự thật, thông báo trên tàu lọt vào video, câu Whisper bịa, branding không vào render (hộp chữ đen
-  đặc), không nhạc: tập cắt 1.1.0 (ADR 178) — **có sẵn nhưng chưa là bản đang dùng**, xem dưới.
+  đặc), không nhạc: tập cắt 1.1.0 (ADR 178), đang dùng từ 2026-10-08 (node `local-render` lên ag-render-worker 0.8.0
+  trước).
 
 Còn để lại:
 
-- **Chuyển `STUDIO_WORKFLOWS.episodeCut` sang 1.1.0** sau khi mọi node farm chạy ag-render-worker 0.8.0
-  (`studio-production.md` mục 2a). Sau khi chuyển: chạy E2E `farm-render` và một tập thật trên stack local (plan, mục
-  Kiểm chứng 4: loa thông báo im trong `final.mp4`, chữ đúng màu và hộp, nhạc đúng mood, A1 trống ở clip đã tắt trong
-  Premiere).
-- **Nhánh ở repo khác chưa gộp:** ag-farm `fix/studio-premiere-per-clip-audio` (trường `audio` của
+- ✅ 2026-10-08 — `STUDIO_WORKFLOWS.episodeCut` là 1.1.0; node render duy nhất (`local-render`, máy dev) chạy
+  ag-render-worker 0.8.0. **Còn:** một tập thật trên stack local (plan, mục Kiểm chứng 4: loa thông báo im trong
+  `final.mp4`, chữ đúng màu và hộp, nhạc đúng mood, A1 trống ở clip đã tắt trong Premiere).
+- ✅ 2026-10-08 — đã gộp vào `dev`: ag-farm `fix/studio-premiere-per-clip-audio` (trường `audio` của
   `studio.export_premiere`), ag-render-worker `fix/premiere-per-clip-audio-text-style` (0.8.0). Studio dùng protocol qua
   `link:` nên build Studio cần checkout ag-farm có commit đó.
 - **yt-dlp chưa cài trên máy dev** (không cài khi chưa hỏi): ở stack local, bước phong cách dựng bị bỏ qua và số liệu

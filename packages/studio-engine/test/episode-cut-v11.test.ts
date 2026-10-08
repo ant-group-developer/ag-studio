@@ -1,7 +1,7 @@
 /**
- * ag-studio-episode-cut@1.1.0 end to end in process (plan 2026-10-08 phase 4–5), before it is the current release: a
- * cut episode of plan 3.2.0 run on 1.1.0 with the production's style, the branding's text look and music moods, and a
- * track in the team's library. Skipped without ffmpeg + ffprobe (FFMPEG_PATH / FFPROBE_PATH may point at any build).
+ * ag-studio-episode-cut@1.1.0 end to end in process (plan 2026-10-08 phase 4–5), pinned to that release: a cut episode
+ * of plan 3.2.0 run on 1.1.0 with the production's style, the branding's text look and music moods, and a track in the
+ * team's library. Skipped without ffmpeg + ffprobe (FFMPEG_PATH / FFPROBE_PATH may point at any build).
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
