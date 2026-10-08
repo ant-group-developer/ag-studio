@@ -1112,3 +1112,17 @@ Các mục dưới đây ghi lại quyết định của nhánh AG Studio, viế
     clone file đó nên series giữ một giọng. Trong lúc farm đọc, `productions.voice` là `designing` (tập chờ như thiếu
     giọng); `GET …/audio` kiểm job và hoàn tất. Nguồn `ag-go` bị gỡ khỏi `AudioSourceSchema`: ag-go chỉ giữ footage.
     `tts.py` nghe câu nói của giọng mẫu một lần mỗi job khi không ai gõ (WhisperX `large-v3`).
+177. **Worker khởi động lại không làm mất job farm, không làm hỏng stage (2026-10-08).** Ngày 07/10, 6 tập chạy cùng lúc:
+    job `transcribe` xếp hàng farm khoảng 1,5 giờ, worker Studio khởi động lại hai lần, mỗi lần attempt mới huỷ job cũ
+    rồi gửi lại từ cuối hàng, và lần bỏ dở thứ hai làm stage `FAILED` (`max_attempts: 2`) — 4/6 tập hỏng. Đổi ba chỗ:
+    (1) mỗi job farm ghi dấu vân tay (`farmJobFingerprint`: loại job, requirements, payload với id attempt thay bằng chỗ
+    giữ, bytes của mọi file job đọc; `studio_farm_jobs.fingerprint`, migration `0028`); attempt sau dựng payload trước,
+    và nếu sẽ gửi lại đúng job mới nhất mà farm còn giữ (`queued|paused|leased|completed`) thì nhận job đó, đọc output
+    từ prefix của attempt cũ (đổi tên file render theo attempt mới); job farm mất, `failed`, `cancelled` thì gửi job
+    mới; mọi job cũ khác bị huỷ như trước. (2) `ExecutorContext.signal.reason` nói vì sao attempt dừng:
+    `STAGE_CANCELLED` khi run bị huỷ (heartbeat thấy stage `CANCEL_REQUESTED` thì abort executor — trước đây executor
+    chạy tiếp tới hết), `worker-stopping`/`lease-lost` khi stage sẽ chạy lại; executor farm chỉ huỷ job khi run bị huỷ.
+    (3) Attempt bị bỏ dở (`ABANDONED`) hay bị dừng vì worker tắt êm được trả lại lượt thử (`attempt_count − 1`);
+    `retry.max_attempts` chỉ tính lần stage tự hỏng, còn bỏ dở có trần riêng `MAX_ABANDONED_ATTEMPTS = 5` (đếm dòng
+    `attempt` ABANDONED) để một stage làm sập worker không lặp mãi. Huỷ run khi không worker nào đang giữ stage (worker
+    đã chết) thì job farm của nó không bị huỷ: chạy hết rồi không ai đọc.

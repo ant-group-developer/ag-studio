@@ -147,6 +147,7 @@ describe("Worker", () => {
     await p;
     const produce = w.store.listStageRuns(run.run_id).find((s) => s.stage_key === "produce")!;
     expect(produce.state).toBe("READY");
+    expect(produce.attempt_count).toBe(0); // a worker stopping is not the stage failing: its attempt is given back
     expect(w.store.listAttempts(produce.stage_run_id)[0]?.state).toBe("CANCELLED");
     expect(w.store.getLease(produce.stage_run_id)).toBeUndefined();
   });
@@ -164,6 +165,7 @@ describe("Worker", () => {
     expect(executed).toBe(false);
     const produce = w.store.listStageRuns(run.run_id).find((s) => s.stage_key === "produce")!;
     expect(produce.state).toBe("READY");
+    expect(produce.attempt_count).toBe(0); // a worker stopping is not the stage failing: its attempt is given back
     expect(w.store.listAttempts(produce.stage_run_id)[0]?.state).toBe("CANCELLED");
     expect(w.store.getLease(produce.stage_run_id)).toBeUndefined();
   });

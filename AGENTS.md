@@ -192,9 +192,12 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
   `approve-youtube-kit` (`approveChatScope({ renderMachine })`, gate khác → 422 `no_render_here`) hoặc khi Render lại
   (`POST …/episodes/:id/rerender { renderMachine }`). Xem trước 720p và xuất Premiere luôn `{}`. **Ghim một máy theo tên
   node là đổi hợp đồng ag-farm: hỏi trước.**
-- Attempt mới của một stage farm huỷ trước các job farm mà attempt trước của cùng stage để lại (`earlierJobsFor` của
-  `FarmExecutor` → `earlierFarmJobs`, tra `studio_farm_jobs`): worker khởi động lại giữa lúc chờ farm thì job cũ không
-  còn chạy cho không ai đọc. Huỷ hỏng không làm hỏng attempt.
+- Attempt mới của một stage farm **nhận lại** job mà attempt trước để lại nếu sẽ gửi lại đúng job đó (cùng
+  `farmJobFingerprint`, cột `studio_farm_jobs.fingerprint`) và farm còn giữ nó (`queued|paused|leased|completed`): không
+  upload, không gửi lại, đọc output từ prefix của attempt cũ. Job cũ khác thì huỷ (`earlierJobsFor` →
+  `earlierFarmJobs`). Abort vì worker tắt hay mất lease **giữ** job cho attempt sau; chỉ run bị huỷ
+  (`signal.reason === STAGE_CANCELLED`, heartbeat thấy `CANCEL_REQUESTED`) mới huỷ job. Attempt bị bỏ dở hay bị dừng vì
+  worker tắt được trả lượt thử; trần riêng `MAX_ABANDONED_ATTEMPTS` (5). ADR mục 177.
 - **Render lại** (`rerenderEpisode`): run 1.3.0 đã xong mà revision mới nhất **giống** timeline đã duyệt thì chạy lại
   từ `render-final` (không gọi Claude, không duyệt lại); đã sửa sau khi duyệt thì từ `approve-timeline`; tập 1.2.0 từ
   `freeze-timeline`. `episodeRenderInfo` (trường `render` của chi tiết tập) nói bước bắt đầu (`restartFrom`).

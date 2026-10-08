@@ -170,7 +170,8 @@ export class Worker {
         }
         store.transition("stage_run", claim.stageRun.stage_run_id, "RUNNING", "READY", { ...ev, event_type: "stage.requeued_after_cancel" });
         const s = store.getStageRun(claim.stageRun.stage_run_id)!;
-        store.updateStageRun({ ...s, ready_at: this.d.clock.now(), not_before: this.d.clock.now() });
+        // the worker stopping is not the stage failing: the attempt is given back
+        store.updateStageRun({ ...s, attempt_count: Math.max(0, s.attempt_count - 1), ready_at: this.d.clock.now(), not_before: this.d.clock.now() });
         store.releaseLease(claim.stageRun.stage_run_id, claim.lease.fencing_token);
       });
       return "done";

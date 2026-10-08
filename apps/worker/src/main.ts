@@ -112,7 +112,7 @@ async function main(): Promise<void> {
   }
   const ac = new AbortController();
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
-    process.on(sig, () => { logger.warn(`received ${sig}, stopping after the current stage`); ac.abort(); });
+    process.on(sig, () => { logger.warn(`received ${sig}, stopping: running stages go back to the queue and their farm jobs stay for the next attempt`); ac.abort(); });
   }
   await pool.runForever(ac.signal);
   core.close();
