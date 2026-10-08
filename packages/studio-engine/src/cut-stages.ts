@@ -21,6 +21,7 @@ import type { FarmPayloadBuild, FarmPayloadBuilder, InProcessStage } from "@harn
 import { productionKey } from "./bucket.js";
 import { detectCuts, extractAudio16k, grabFrame, probeMedia, tileSheet } from "./cut-ffmpeg.js";
 import { readInput, readTimelineInput, studioStages, toBuffer, writeEpisodeIntake, writeOutput, type StudioStageDeps } from "./stages.js";
+import { styleStages } from "./style-stages.js";
 import { prepareRender } from "./payloads.js";
 import { getEpisode, getProduction, latestEpisodeRevision, saveEpisodeRevision } from "./studio-db.js";
 import { fitCutTimeline, type ReadLine } from "./cut-fit.js";
@@ -413,5 +414,5 @@ export function cutPayloadBuilders(d: Pick<StudioStageDeps, "db" | "bucket" | "m
 
 /** Every in-process stage the Studio worker runs: the series and whole-video episode stages plus the shot-cut ones. */
 export function studioInProcessStages(d: StudioStageDeps): Record<string, InProcessStage> {
-  return { ...studioStages(d), ...cutStages(d) };
+  return { ...studioStages(d), ...cutStages(d), ...styleStages(d) };
 }

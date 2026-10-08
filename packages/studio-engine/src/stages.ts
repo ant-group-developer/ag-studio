@@ -32,7 +32,7 @@ import type { CutMediaDeps } from "./cut-stages.js";
 import { insertThumbnail, listThumbnails, replaceRenderThumbnails } from "./thumbnails-db.js";
 import { productionVoice } from "./voice.js";
 import {
-  episodeForRun, getEpisode, getProduction, latestEpisodeRevision, listEpisodes, productionBranding, productionChannels, productionForRun,
+  activeProductionStyle, episodeForRun, getEpisode, getProduction, latestEpisodeRevision, listEpisodes, productionBranding, productionChannels, productionForRun,
   productionHints, productionMusic, productionOwner, productionRnd, productionSources, replaceEpisodes, saveEpisodeRevision, saveProductionDocument,
   saveTrendReport, updateEpisodeRunId, type ProductionRecord, type StudioDb,
 } from "./studio-db.js";
@@ -115,6 +115,34 @@ function requirePlanProduction(d: StudioStageDeps, runId: string): ProductionRec
   const p = productionForRun(d.db, runId);
   if (!p) throw new HarnessError("NOT_FOUND", `no production is linked to run ${runId}`, { run_id: runId });
   return p;
+}
+
+/**
+ * The brief the planning reads: the seed's footage and frame, and the production's CURRENT R&D and branding (as
+ * approved, or as a person edited them since: running this stage again re-reads them); with `withStyle`, its current
+ * style too.
+ */
+async function finalizeBrief(d: StudioStageDeps, request: StageRequest, ctx: ExecutorContext, withStyle: boolean): Promise<void> {
+  const seed = readSeed(request, ctx.workspaceDir);
+  const p = requirePlanProduction(d, request.run_id);
+  const rnd = productionRnd(p);
+  const branding = productionBranding(p);
+  if (!rnd || !branding) {
+    throw new HarnessError("CONFIG_INVALID", "production chưa có R&D và branding đã duyệt", { production_id: p.id, rnd: !!rnd, branding: !!branding });
+  }
+  const brief = effectiveBrief({
+    production_id: p.id, run_id: request.run_id, owner_user_id: seed.owner_user_id, title: p.title, folder_ids: seed.folder_ids,
+    aspect: seed.aspect, canvas: seed.canvas, fps: seed.fps, language: seed.language, music: seed.music,
+    youtube_channels: seed.channels.filter((c) => c.role === "reference").map((c) => c.url), keywords: seed.keywords,
+  }, seed.hints, rnd);
+  // whether the plan may narrate: read now, not frozen in the seed (the person may have declined since)
+  const narration = productionVoice(p.voice).kind;
+  brief.narration_voice = narration === "clone" ? "ready" : narration;
+  writeOutput(ctx, "brief.json", toBuffer(StudioBriefSchema.parse(brief)));
+  writeOutput(ctx, "rnd.json", toBuffer(rnd));
+  writeOutput(ctx, "branding.json", toBuffer(branding));
+  const style = withStyle ? activeProductionStyle(p) : null;
+  if (style) writeOutput(ctx, "style.json", toBuffer(style));
 }
 
 export function writeOutput(ctx: ExecutorContext, name: string, body: string | Buffer): string {
@@ -391,30 +419,10 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       ctx.logger.info("approved branding applied to the production", { production_id: p.id });
     },
 
-    /**
-     * The brief the planning reads: the seed's footage and frame, and the production's CURRENT R&D and branding (as
-     * approved, or as a person edited them since: running this stage again re-reads them).
-     */
-    "studio-finalize-brief": async (request, ctx) => {
-      const seed = readSeed(request, ctx.workspaceDir);
-      const p = requirePlanProduction(d, request.run_id);
-      const rnd = productionRnd(p);
-      const branding = productionBranding(p);
-      if (!rnd || !branding) {
-        throw new HarnessError("CONFIG_INVALID", "production chưa có R&D và branding đã duyệt", { production_id: p.id, rnd: !!rnd, branding: !!branding });
-      }
-      const brief = effectiveBrief({
-        production_id: p.id, run_id: request.run_id, owner_user_id: seed.owner_user_id, title: p.title, folder_ids: seed.folder_ids,
-        aspect: seed.aspect, canvas: seed.canvas, fps: seed.fps, language: seed.language, music: seed.music,
-        youtube_channels: seed.channels.filter((c) => c.role === "reference").map((c) => c.url), keywords: seed.keywords,
-      }, seed.hints, rnd);
-      // whether the plan may narrate: read now, not frozen in the seed (the person may have declined since)
-      const narration = productionVoice(p.voice).kind;
-      brief.narration_voice = narration === "clone" ? "ready" : narration;
-      writeOutput(ctx, "brief.json", toBuffer(StudioBriefSchema.parse(brief)));
-      writeOutput(ctx, "rnd.json", toBuffer(rnd));
-      writeOutput(ctx, "branding.json", toBuffer(branding));
-    },
+    /** The brief the planning reads (`finalizeBrief`). */
+    "studio-finalize-brief": async (request, ctx) => finalizeBrief(d, request, ctx, false),
+    /** Plan 3.2.0: also the production's current style (`style.json`), when it has one that was not skipped. */
+    "studio-finalize-brief-v2": async (request, ctx) => finalizeBrief(d, request, ctx, true),
 
     /** Plans 2.0.0 and 3.0.0: every episode whole videos on the plan's episode release. */
     "studio-spawn-episodes": async (request, ctx) => spawnEpisodes(d, request, ctx, false),
