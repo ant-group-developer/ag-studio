@@ -135,6 +135,8 @@ export const TimelineOpSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("trimClip"), clip_id: clipId, in: z.number().min(0), out: z.number().positive().nullable() }).strict(),
   z.object({ op: z.literal("setTransition"), clip_id: clipId, kind: z.enum(TIMELINE_TRANSITIONS), seconds: z.number().min(0).max(1) }).strict(),
   z.object({ op: z.literal("setCaptions"), mode: z.enum(CAPTION_MODES) }).strict(),
+  /** Timeline v4 only: one clip's own sound off (or on again). */
+  z.object({ op: z.literal("setClipMuted"), clip_id: clipId, muted: z.boolean() }).strict(),
 ]);
 export type TimelineOp = z.infer<typeof TimelineOpSchema>;
 

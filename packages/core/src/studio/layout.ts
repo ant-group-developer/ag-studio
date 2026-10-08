@@ -413,6 +413,16 @@ export function setTransition(t: TimelineV4, clipId: string, kind: TimelineTrans
   return { ...v4, clips };
 }
 
+/** One clip's own sound off (`muted`) or as the timeline's again (the key removed). Timeline v4 only. */
+export function setClipMuted(t: TimelineV4, clipId: string, muted: boolean): TimelineV4 {
+  const v4 = requireV4(t, "Tắt tiếng clip");
+  const i = clipIndex(v4, clipId);
+  const { muted: _was, ...clip } = v4.clips[i]!;
+  const clips = v4.clips.slice();
+  clips[i] = muted ? { ...clip, muted: true } : clip;
+  return { ...v4, clips };
+}
+
 /** Burnt-in subtitles from the narration. Timeline v4 only. */
 export function setCaptions(t: TimelineV4, mode: CaptionMode): TimelineV4 {
   return { ...requireV4(t, "Phụ đề"), captions: { mode } };
@@ -478,6 +488,7 @@ function applyOne<T extends AnyTimeline>(t: T, op: TimelineOp, allowed: Record<s
     case "trimClip": return trimClip(requireV4(t, "Cắt đầu/cuối clip"), op.clip_id, op.in, op.out) as T;
     case "setTransition": return setTransition(requireV4(t, "Chuyển cảnh"), op.clip_id, op.kind, op.seconds) as T;
     case "setCaptions": return setCaptions(requireV4(t, "Phụ đề"), op.mode) as T;
+    case "setClipMuted": return setClipMuted(requireV4(t, "Tắt tiếng clip"), op.clip_id, op.muted) as T;
   }
 }
 

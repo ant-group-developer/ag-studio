@@ -687,6 +687,11 @@ export const TimelineClipV4Schema = z.object({
     kind: z.enum(TIMELINE_TRANSITIONS),
     seconds: z.number().min(0).max(1),
   }).strict(),
+  /**
+   * Cut 1.1.0: this clip's own sound is off (a station announcement, a café's music, a stranger talking) while the
+   * other clips keep theirs. Absent = as the timeline's `source_audio`.
+   */
+  muted: z.boolean().optional(),
 }).strict().refine((c) => c.out === null || c.out > c.in, { message: "out must be after in", path: ["out"] });
 
 export const NarrationWordSchema = z.object({
@@ -775,6 +780,7 @@ export function downgradeTimelineV4(t: TimelineV4): TimelineV3 {
     if (c.shot_id !== null) lost.push(`${c.clip_id} shot_id`);
     if (c.line_id !== null) lost.push(`${c.clip_id} line_id`);
     if (c.transition_out.kind !== "cut" || c.transition_out.seconds !== 0) lost.push(`${c.clip_id} transition`);
+    if (c.muted) lost.push(`${c.clip_id} muted`);
   }
   const n = t.narration;
   if (n.voice !== "none" || n.lines.length > 0 || n.lead_seconds !== DEFAULT_NARRATION_LEAD_SECONDS) lost.push("narration");
@@ -939,6 +945,8 @@ export const EditPlanSchema = z.object({
     transition: z.enum(["cut", "dissolve"]),
     section_title: z.string().min(1).max(100).nullable(),
     note: z.string().max(300),
+    /** Cut 1.1.0: `mute` = this shot's own sound is not heard (announcements, music, strangers). Absent = `keep`. */
+    source_audio: z.enum(["keep", "mute"]).optional(),
   }).strict()).min(1).max(400),
   lines: z.array(z.object({
     line_id: z.string().regex(/^L\d{3}$/),

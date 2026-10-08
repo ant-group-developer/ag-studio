@@ -271,7 +271,7 @@ function timelineContext(core: StudioEngineCore, db: StudioDb, key: ChatScopeKey
       const cutStyle = shots !== null;
       const head = [
         `Tập ${ep.idx}: ${ep.title}. Timeline hiện tại là bản ${latest.revision}. ${cutStyle
-          ? "Tập cắt theo shot: mỗi clip lấy đoạn [in, out) giây của video (out null = tới hết video), nối tiếp nhau; lời dẫn đọc từ clip neo nó (line_id). Sửa đoạn bằng trimClip, chuyển cảnh bằng setTransition, phụ đề bằng setCaptions; lời dẫn không sửa ở đây."
+          ? "Tập cắt theo shot: mỗi clip lấy đoạn [in, out) giây của video (out null = tới hết video), nối tiếp nhau; lời dẫn đọc từ clip neo nó (line_id). Sửa đoạn bằng trimClip, chuyển cảnh bằng setTransition, phụ đề bằng setCaptions, tắt tiếng riêng một clip bằng setClipMuted (muted: true trong timeline); lời dẫn không sửa ở đây."
           : "Clip ghép nguyên video, nối tiếp nhau, không cắt."}`,
         ...(() => { const g = guidesFor(db, p.team_id, "studio-timeline"); return g.length ? ["", ...teamGuidesSection(g)] : []; })(),
         "", "# Dữ liệu vào",
@@ -280,7 +280,7 @@ function timelineContext(core: StudioEngineCore, db: StudioDb, key: ChatScopeKey
         JSON.stringify({
           clips: laid.clips.map((c, i) => ({
             index: i, clip_id: c.clip_id, asset_id: c.asset_id, start: c.start, end: c.end, section_title: c.section_title,
-            ...(cutStyle ? { in: c.in, out: c.out, shot_id: c.shot_id, line_id: c.line_id, transition_out: c.transition_out } : {}),
+            ...(cutStyle ? { in: c.in, out: c.out, shot_id: c.shot_id, line_id: c.line_id, transition_out: c.transition_out, ...(c.muted ? { muted: true } : {}) } : {}),
           })),
           texts: latest.data.texts, music: latest.data.music, source_audio: latest.data.source_audio, duration: laid.duration,
           ...(shots ? {

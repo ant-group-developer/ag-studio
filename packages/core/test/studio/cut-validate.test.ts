@@ -96,6 +96,10 @@ describe("validateEditPlan", () => {
 
   it("usable shots in range, anchored lines, one title: ok", () => {
     expect(validateEditPlan(plan(), { survey: survey(), shots: shots() })).toMatchObject({ ok: true, problems: [], warnings: [] });
+    // cut 1.1.0: a shot may say its own sound is not heard
+    const muted = plan({ shots: plan().shots.map((s, i) => (i === 1 ? { ...s, source_audio: "mute" as const } : s)) });
+    expect(validateEditPlan(muted, { survey: survey(), shots: shots() }).ok).toBe(true);
+    expect(validateEditPlan({ ...muted, shots: [{ ...muted.shots[0]!, source_audio: "loud" }, ...muted.shots.slice(1)] }, { survey: survey(), shots: shots() }).problems[0]?.code).toBe("schema");
   });
 
   it("only usable shots of the approved selection, inside the shot, at least half a second", () => {

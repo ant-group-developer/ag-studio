@@ -313,6 +313,10 @@ function timelineOps(msg, bad) {
   if (/ngắn lại/.test(low) && firstClip) ops.push({ op: "trimClip", clip_id: firstClip.clip_id, in: firstClip.in ?? 0, out: Math.round(((firstClip.in ?? 0) + 1.5) * 1000) / 1000 });
   if (/mờ dần/.test(low) && firstClip) ops.push({ op: "setTransition", clip_id: firstClip.clip_id, kind: "dissolve", seconds: 0.5 });
   if (/karaoke/.test(low)) ops.push({ op: "setCaptions", mode: "karaoke" });
+  // cut 1.1.0: "tắt tiếng clip 2" mutes the second clip's own sound
+  const mute = /tắt tiếng clip (d+)/.exec(low);
+  const muteClip = mute ? timeline.clips?.[Number(mute[1]) - 1] : undefined;
+  if (muteClip) ops.push({ op: "setClipMuted", clip_id: muteClip.clip_id, muted: true });
   const quoted = /"([^"]{1,64})"/.exec(msg)?.[1];
   if (quoted || /chữ/.test(low) || !ops.length) {
     const clip = timeline.clips?.[1] ?? timeline.clips?.[0];

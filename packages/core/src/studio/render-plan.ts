@@ -153,7 +153,8 @@ export function timelineToComposition(t: AnyTimeline): Composition {
       start: c.start,
       end: c.end,
       fit: "scale_pad" as const,
-      has_audio: hasAudio,
+      // a clip muted on its own (cut 1.1.0) is silent; every render worker reads this per segment
+      has_audio: hasAudio && !c.muted,
       transition_out: { kind: transitions[order]!.kind, seconds: transitions[order]!.seconds, tail_available: transitions[order]!.tail_available },
     })),
     text_events: textEvents,

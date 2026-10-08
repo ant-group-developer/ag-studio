@@ -74,6 +74,7 @@ describe("timeline v4", () => {
       { ...base, narration: { voice: "tts", lead_seconds: 0.3, lines: [] } },
       { ...base, narration: { ...base.narration, lead_seconds: 0.5 } },
       { ...base, captions: { mode: "karaoke" } },
+      { ...base, clips: [{ ...base.clips[0]!, muted: true }, base.clips[1]!] },
     ];
     for (const t of lossy) {
       expect(() => downgradeTimelineV4(t)).toThrow(TimelineVersionError);

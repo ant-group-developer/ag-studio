@@ -139,6 +139,9 @@
                   "seconds"
                 ],
                 "additionalProperties": false
+              },
+              "muted": {
+                "type": "boolean"
               }
             },
             "required": [

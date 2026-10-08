@@ -38,6 +38,10 @@ qua chat rồi bấm **Duyệt**; sau đó hệ thống đọc lời dẫn và k
    tiết đáng nhớ. `at_order` là shot chữ hiện, `offset_s` là giây tính từ đầu shot đó. Tối đa một tiêu đề mỗi shot,
    tối đa một chữ mỗi 8 giây hình. Chữ ≤ 64 ký tự.
 6. `music_mood`: một từ (`calm`, `upbeat`, `nostalgic`…).
+7. `source_audio` của từng shot: `"mute"` khi tiếng của shot đó không nên nghe — loa thông báo (nhà ga, sân bay, tàu),
+   nhạc của quán hay loa đường phố, người lạ nói chuyện, tiếng gió thổi vào micro; `"keep"` (hoặc bỏ trống) cho tiếng
+   môi trường đẹp và người trong tập nói. Dựa vào `transcript` (câu tiếng nước ngoài kiểu thông báo, câu không liên
+   quan) và `note`/`speech` của survey. Với `narration: "original"`, chỉ tắt tiếng shot thật sự làm phiền.
 
 ```json
 {
@@ -45,7 +49,7 @@ qua chat rồi bấm **Duyệt**; sau đó hệ thống đọc lời dẫn và k
   "episode_id": "…", "narration": "tts", "language": "vi", "target_seconds": 240,
   "shots": [
     { "order": 1, "shot_id": "s011-002", "source_id": "src_…", "in": 1.0, "out": 3.0, "line_id": "L001",
-      "transition": "cut", "section_title": null, "note": "Chùa Cầu mở đầu" }
+      "transition": "cut", "section_title": null, "note": "Chùa Cầu mở đầu", "source_audio": "keep" }
   ],
   "lines": [{ "line_id": "L001", "text": "Khi đèn lồng bắt đầu sáng, phố cổ như chậm lại." }],
   "texts": [{ "text_id": "T001", "kind": "title", "text": "Hội An", "at_order": 1, "offset_s": 0.5, "duration": 3,

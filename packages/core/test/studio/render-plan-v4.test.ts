@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CompositionSchema, TimelineV4Schema, upgradeTimelineV3, type TimelineV3, type TimelineV4 } from "@harness/contracts";
-import { setCaptions, setTransition, trimClip } from "../../src/studio/layout.js";
+import { applyTimelineOps, setCaptions, setClipMuted, setTransition, TimelineOpError, trimClip } from "../../src/studio/layout.js";
 import { studioOverlayAss } from "../../src/studio/overlay.js";
 import { timelineToComposition } from "../../src/studio/render-plan.js";
 
@@ -126,6 +126,19 @@ describe("timelineToComposition on v4", () => {
     expect(c.narration).toEqual([]);
     expect(c.captions).toEqual({ mode: "none", cues: [] });
     expect(c.music?.duck.windows).toEqual([]);
+  });
+
+  it("cut 1.1.0: a clip muted on its own is silent, the others keep their sound; the timeline's switch still wins", () => {
+    const t = setClipMuted(cut(), "C002", true);
+    expect(t.clips.map((c) => c.muted)).toEqual([undefined, true, undefined]);
+    expect(CompositionSchema.parse(timelineToComposition(t)).segments.map((s) => s.has_audio)).toEqual([true, false, true]);
+    // on again: the key goes, the document is as before
+    expect(setClipMuted(t, "C002", false)).toEqual(cut());
+    expect(timelineToComposition({ ...t, source_audio: { muted: true } }).segments.map((s) => s.has_audio)).toEqual([false, false, false]);
+    // the chat's edit, and only on a shot-cut timeline's clips
+    expect(applyTimelineOps(cut(), [{ op: "setClipMuted", clip_id: "C003", muted: true }], {}).clips[2]!.muted).toBe(true);
+    expect(() => applyTimelineOps(cut(), [{ op: "setClipMuted", clip_id: "C009", muted: true }], {})).toThrow(TimelineOpError);
+    expect(TimelineV4Schema.parse(t).clips[1]!.muted).toBe(true);
   });
 
   it("the footage's own speech (narration original) plays at its own level, not lowered as background", () => {
