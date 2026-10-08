@@ -83,6 +83,30 @@ interface ProcResult {
   stderr: string;
 }
 
+/** How much of the stderr summary goes into the error message (the farm caps a job error at 2000 chars). */
+const STDERR_SUMMARY_CHARS = 600;
+/** ffmpeg's knock-on lines after the real failure: they say THAT it failed, never why. */
+const STDERR_NOISE = /Task finished with error code|Terminating thread with return code|Could not open encoder before EOF|Nothing was written into output file|Error reinitializing filters|Conversion failed!|^Press \[q\]|^\s*Stream #|^\s*Stream mapping|^frame=|^\s*$/;
+const STDERR_ERRORISH = /error|invalid|failed|fail to|cannot|can't|could not|unable|no such|not found|does not|do not|needs|must|mismatch|unsupported|unknown|not supported/i;
+
+/**
+ * The line or two of a failing ffmpeg's stderr that say WHY it failed, for the error message: an exit code
+ * alone ("ffmpeg exited 234" = EINVAL) is all the farm job and Studio ever showed, and the worker deletes the
+ * job's workspace right after. ffmpeg prints the cause first and a cascade of generic "Task finished with
+ * error code -22" lines after it, so this takes the FIRST error-looking lines once that noise is dropped, and
+ * falls back to the last line left. `[Parsed_xfade_15 @ 0x7f..]` loses its address, which only differs per run.
+ */
+export function stderrSummary(stderr: string): string {
+  const lines = stderr
+    .split(/\r?\n/)
+    .map((l) => l.replace(/ @ 0x[0-9a-f]+\]/i, "]").trim())
+    .filter((l) => !STDERR_NOISE.test(l));
+  const errorish = lines.filter((l) => STDERR_ERRORISH.test(l));
+  const picked = errorish.length > 0 ? errorish.slice(0, 2) : lines.slice(-1);
+  const text = picked.join(" | ");
+  return text.length > STDERR_SUMMARY_CHARS ? `${text.slice(0, STDERR_SUMMARY_CHARS - 3)}...` : text;
+}
+
 /**
  * Adds `-progress pipe:1 -nostats` to an ffmpeg argv and turns its `out_time=` lines into a 0-1 fraction of
  * `seconds`. `-nostats` only drops the stats line from stderr, so the loudnorm json stays parsable.
@@ -185,7 +209,8 @@ function runProcess(spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, la
         return;
       }
       if (code !== 0) {
-        settle(new HarnessError("IO_ERROR", `${label}: ffmpeg exited ${String(code)}`, { label, exit_code: code, stderr_tail: stderr }));
+        const why = stderrSummary(stderr);
+        settle(new HarnessError("IO_ERROR", `${label}: ffmpeg exited ${String(code)}${why ? `: ${why}` : ""}`, { label, exit_code: code, stderr_tail: stderr }));
         return;
       }
       if (settled) return;
@@ -336,7 +361,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
       // `CONFIG_INVALID` (the ffmpeg binary itself cannot be run) is never worth retrying on either encoder.
       if (signal?.aborted || encoder !== "nvenc" || !isHarnessError(e, "IO_ERROR")) throw e;
       warnings.push(`nvenc_segment_fallback:${o.label}`);
-      log(`nvenc failed for mezzanine ${o.label}; this run falls back to cpu`);
+      log(`nvenc failed for mezzanine ${o.label} (${(e as Error).message}); this run falls back to cpu`);
       rmSync(join(tmpDir, `${key}.mp4`), { force: true });
       encoder = "cpu";
       key = o.keyFor("cpu");
@@ -458,7 +483,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
   } catch (e) {
     if (signal?.aborted || finalEncoder !== "nvenc" || !isHarnessError(e, "IO_ERROR")) throw e;
     warnings.push("nvenc_final_fallback");
-    log("nvenc failed on the final encode; retrying once on cpu");
+    log(`nvenc failed on the final encode (${(e as Error).message}); retrying once on cpu`);
     rmSync(episodePath, { force: true });
     finalEncoder = "cpu";
     render = await finalEncode(finalEncoder, "final encode (cpu retry)");
