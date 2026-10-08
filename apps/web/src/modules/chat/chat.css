@@ -496,6 +496,11 @@
 .chat-queue__chips a { display: flex; align-items: center; min-height: 40px; padding: 0 14px; border: 1px solid var(--chat-line-strong); border-radius: 999px; background: var(--chat-surface); color: var(--chat-text); font-size: 13px; }
 .chat-queue__chips a.chat-queue__chip--bad { border-color: #f3c4c4; background: #fff7f7; color: var(--chat-bad-fg); }
 .chat-queue-aside { padding: 20px; gap: 12px; }
+.chat-queue__list > li.chat-music__track { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 12px; }
+.chat-music__track > div:first-child { flex: 1 1 220px; min-width: 0; }
+.chat-music__track audio { height: 32px; }
+.chat-music__form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+.chat-music__form .ant-input { width: 220px; }
 .chat-queue-aside h2 { margin: 0; font-size: 15px; font-weight: 600; }
 .chat-queue-aside .chat-claude { max-width: none; border: 1px solid var(--chat-line); border-radius: 10px; padding: 12px 14px; }
 

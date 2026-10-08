@@ -2,7 +2,7 @@
  * How each document of a step reads in the result column (spec local-chat §2.3): the fields shown, in order, and
  * how each one reads. The same spec drives the highlight of what changed since the previous version.
  */
-export type FieldKind = "text" | "list" | "chips" | "number" | "seconds" | "pairs" | "palette" | "episodes" | "choice";
+export type FieldKind = "text" | "list" | "chips" | "number" | "seconds" | "pairs" | "palette" | "episodes" | "choice" | "look";
 
 export interface FieldSpec {
   /** Dotted path in the document. */
@@ -70,6 +70,7 @@ export const DOC_SPECS: Record<DocKind, FieldSpec[]> = {
     { path: "thumbnail.concept", label: "thumbnail", kind: "text" },
     { path: "thumbnail.palette", label: "palette", kind: "palette" },
     { path: "on_screen_text.style", label: "onScreenText", kind: "text" },
+    { path: "on_screen_text.look", label: "textLook", kind: "look" },
     { path: "description.opening", label: "descriptionOpening", kind: "text" },
     { path: "description.hashtags", label: "hashtags", kind: "chips" },
     { path: "music_mood", label: "music", kind: "chips" },

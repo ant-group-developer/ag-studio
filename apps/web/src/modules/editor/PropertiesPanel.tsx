@@ -2,12 +2,13 @@
  * Right-hand properties panel (GĐ3; shot-cut fields in phase 5): editing surface for the selected clip or text, plus
  * global settings (music, source audio). Every change goes through dispatch.
  */
-import { type Dispatch } from "react";
+import { useMemo, useState, type Dispatch } from "react";
 import { Button, Card, Divider, Input, InputNumber, Select, Slider, Space, Switch, Typography, Tooltip } from "antd";
 import { Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { CAPTION_MODES, TEXT_KINDS, TEXT_POSITIONS_V2, TIMELINE_TRANSITIONS, type StoredTimeline, type TimelineV4 } from "@harness/contracts";
+import { CAPTION_MODES, TEXT_KINDS, TEXT_POSITIONS_V2, TIMELINE_TRANSITIONS, type StoredTimeline, type StudioMusic, type TimelineV4 } from "@harness/contracts";
 import { isTimelineV4, type TimelineLayout } from "@studio/timeline";
+import type { MusicTrackView } from "../../api/studio-client";
 import type { EditorAction, EditorState } from "./state/editor-reducer";
 
 const { Text, Title } = Typography;
@@ -20,9 +21,11 @@ export interface PropertiesPanelProps {
   state: EditorState;
   layout: TimelineLayout;
   dispatch: Dispatch<EditorAction>;
+  /** The team's music library (active tracks); empty: the music is typed as a `library:` path. */
+  musicLibrary?: MusicTrackView[];
 }
 
-export function PropertiesPanel({ state, layout: _layout, dispatch }: PropertiesPanelProps) {
+export function PropertiesPanel({ state, layout: _layout, dispatch, musicLibrary = [] }: PropertiesPanelProps) {
   const { t } = useTranslation();
   const { timeline, selection } = state;
 
@@ -58,7 +61,7 @@ export function PropertiesPanel({ state, layout: _layout, dispatch }: Properties
         </Button>
 
         <Divider style={{ margin: 0 }} />
-        <GlobalProperties timeline={timeline} dispatch={dispatch} />
+        <GlobalProperties timeline={timeline} dispatch={dispatch} library={musicLibrary} />
       </Space>
     </Card>
   );
@@ -148,6 +151,13 @@ function CutClipProperties({ timeline, clipId, dispatch }: { timeline: TimelineV
           ) : null}
         </Space>
       </div>
+      <Space style={{ marginTop: 8 }}>
+        <Text>{t("properties.clipSound")}</Text>
+        <Switch size="small" aria-label={t("properties.clipSound")} disabled={timeline.source_audio.muted}
+          checked={!timeline.source_audio.muted && !clip.muted}
+          onChange={(on) => dispatch({ type: "setClipMuted", clipId, muted: !on })} />
+      </Space>
+      {timeline.source_audio.muted ? <Text type="secondary" style={{ display: "block" }}>{t("properties.clipSoundAllOff")}</Text> : null}
       <Text type="secondary" style={{ display: "block", marginTop: 8 }}>
         {clip.line_id ? t("properties.narrationLine", { id: clip.line_id }) : t("properties.noNarrationLine")}
       </Text>
@@ -229,7 +239,30 @@ function TextProperties({
   );
 }
 
-function GlobalProperties({ timeline, dispatch }: { timeline: EditorState["timeline"]; dispatch: Dispatch<EditorAction> }) {
+/**
+ * The music from the team's library, narrowed by a mood; a track the library does not list (typed before, or retired)
+ * stays shown as its path.
+ */
+function MusicPicker({ music, library, dispatch }: { music: StudioMusic; library: MusicTrackView[]; dispatch: Dispatch<EditorAction> }) {
+  const { t } = useTranslation();
+  const [mood, setMood] = useState<string | null>(null);
+  const moods = useMemo(() => [...new Set(library.flatMap((x) => x.moods))].sort((a, b) => a.localeCompare(b, "vi")), [library]);
+  const shown = mood ? library.filter((x) => x.moods.includes(mood)) : library;
+  const options = [
+    ...(library.some((x) => x.track === music.track) ? [] : [{ value: music.track, label: music.track }]),
+    ...shown.map((x) => ({ value: x.track, label: `${x.displayName} · ${x.moods.join(", ")}` })),
+  ];
+  return (
+    <>
+      <Select size="small" allowClear aria-label={t("properties.musicMood")} placeholder={t("properties.musicMoodAll")} value={mood}
+        options={moods.map((m) => ({ value: m, label: m }))} onChange={(v) => setMood(v ?? null)} />
+      <Select size="small" showSearch optionFilterProp="label" aria-label={t("properties.musicTrack")} value={music.track} options={options}
+        onChange={(track: string) => dispatch({ type: "setMusic", music: { ...music, track } })} />
+    </>
+  );
+}
+
+function GlobalProperties({ timeline, dispatch, library }: { timeline: EditorState["timeline"]; dispatch: Dispatch<EditorAction>; library: MusicTrackView[] }) {
   const { t } = useTranslation();
   const music = timeline.music;
   return (
@@ -255,12 +288,14 @@ function GlobalProperties({ timeline, dispatch }: { timeline: EditorState["timel
         <Text strong>{t("properties.music")}</Text>
         {music ? (
           <>
-            <Input
-              size="small"
-              value={music.track}
-              placeholder="library:music/..."
-              onChange={(e) => dispatch({ type: "setMusic", music: { ...music, track: e.target.value } })}
-            />
+            {library.length ? <MusicPicker music={music} library={library} dispatch={dispatch} /> : (
+              <Input
+                size="small"
+                value={music.track}
+                placeholder="library:music/..."
+                onChange={(e) => dispatch({ type: "setMusic", music: { ...music, track: e.target.value } })}
+              />
+            )}
             <Text type="secondary">{t("properties.musicVolume")}</Text>
             <Slider
               min={-40}
@@ -279,7 +314,7 @@ function GlobalProperties({ timeline, dispatch }: { timeline: EditorState["timel
         ) : (
           <Button
             size="small"
-            onClick={() => dispatch({ type: "setMusic", music: { track: "library:music/calm.mp3", gain_db: -18, ducking: true } })}
+            onClick={() => dispatch({ type: "setMusic", music: { track: library[0]?.track ?? "library:music/calm.mp3", gain_db: -18, ducking: true } })}
           >
             {t("properties.addMusic")}
           </Button>

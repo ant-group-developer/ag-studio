@@ -23,3 +23,17 @@ describe("DocView of a skipped trend report", () => {
     expect(container.querySelectorAll("p")).toHaveLength(1);
   });
 });
+
+describe("DocView of a branding with a text look (cut 1.1.0)", () => {
+  beforeAll(async () => { await i18n.changeLanguage("vi"); });
+
+  it("draws a sample in the look and says it in words; no look, no row", () => {
+    const branding = (look?: unknown) => ({ series_name: "Phở Sáng", on_screen_text: { style: "", max_chars: 40, rules: [], ...(look ? { look } : {}) } });
+    render(<DocView kind="branding" doc={branding({ text_color: "#FFD166", outline_color: "#000000", box_color: "#1D3557", size: "l" })} />);
+    expect(screen.getByText("Kiểu chữ trên video")).toBeInTheDocument();
+    expect(screen.getByText("Chữ #FFD166 trên hộp #1D3557, cỡ Lớn")).toBeInTheDocument();
+    expect(screen.getByText("Tiêu đề mẫu")).toHaveStyle({ color: "#FFD166" });
+    const { container } = render(<DocView kind="branding" doc={branding()} />);
+    expect(container.textContent).not.toContain("Kiểu chữ trên video");
+  });
+});

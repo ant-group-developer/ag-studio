@@ -842,6 +842,25 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     setAssistantName(assistantName: string): Promise<ClaudeUsage> {
       return request(getAccessToken, "PUT", "/api/studio/settings", { assistantName });
     },
+    /** The team's music library: active tracks (a Studio admin also gets the retired ones). */
+    listMusic(): Promise<{ tracks: MusicTrackView[] }> {
+      return request(getAccessToken, "GET", "/api/studio/music");
+    },
+    /** Studio admin: upload a track to the library (the same file again updates it). */
+    addMusic(input: MusicTrackInput): Promise<MusicTrackView> {
+      const form = new FormData();
+      form.append("displayName", input.displayName);
+      form.append("moods", input.moods.join(","));
+      form.append("origin", input.origin);
+      form.append("originNote", input.originNote);
+      form.append("loopOk", String(input.loopOk));
+      form.append("file", input.file);
+      return request(getAccessToken, "POST", "/api/studio/music", form);
+    },
+    /** Studio admin: rename, retag, retire or bring back a track. */
+    updateMusic(trackId: string, patch: { displayName?: string; moods?: string[]; active?: boolean }): Promise<MusicTrackView> {
+      return request(getAccessToken, "PATCH", `/api/studio/music/${encodeURIComponent(trackId)}`, patch);
+    },
   };
 }
 
@@ -863,6 +882,31 @@ export interface ChatTurn {
 }
 
 export interface ChatScopeKey { productionId: string; episodeId: string | null; runId: string | null; stageKey: string; scope: ChatScopeName }
+
+/** Plan 2026-10-08 task 29: a track of the team's music library. */
+export const MUSIC_ORIGINS = ["own", "licensed", "royalty_free"] as const;
+export type MusicOrigin = (typeof MUSIC_ORIGINS)[number];
+export interface MusicTrackView {
+  trackId: string;
+  displayName: string;
+  moods: string[];
+  durationSeconds: number;
+  loopOk: boolean;
+  origin: MusicOrigin;
+  originNote: string;
+  active: boolean;
+  /** What a timeline's music points at, e.g. `library:music/<sha>.m4a`. */
+  track: string;
+  listenUrl: string;
+}
+export interface MusicTrackInput {
+  file: File;
+  displayName: string;
+  moods: string[];
+  origin: MusicOrigin;
+  originNote: string;
+  loopOk: boolean;
+}
 
 export type AudioKind = "voice" | "music";
 export type VoiceOrigin = "synthetic" | "own" | "licensed";

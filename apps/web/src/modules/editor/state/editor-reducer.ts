@@ -6,7 +6,7 @@
  */
 import {
   addClip, addText, ensureAsset, moveClip, removeClip, removeText,
-  replaceClipAsset, setCaptions, setSectionTitle, setMusic, setSourceMuted, setTransition, trimClip, updateText,
+  replaceClipAsset, setCaptions, setClipMuted, setSectionTitle, setMusic, setSourceMuted, setTransition, trimClip, updateText,
   TimelineOpError,
 } from "@studio/timeline";
 import type { CaptionMode, EpisodeAsset, StoredTimeline, TimelineText, TimelineTransitionKind, TimelineV4 } from "@harness/contracts";
@@ -43,7 +43,9 @@ export type EditAction =
   // timeline v4 (shot-cut episodes); on a v3 timeline they are refused like any invalid edit
   | { type: "trimClip"; clipId: string; in: number; out: number | null }
   | { type: "setTransition"; clipId: string; kind: TimelineTransitionKind; seconds: number }
-  | { type: "setCaptions"; mode: CaptionMode };
+  | { type: "setCaptions"; mode: CaptionMode }
+  /** Cut 1.1.0: one clip's own sound off or back on. */
+  | { type: "setClipMuted"; clipId: string; muted: boolean };
 
 export type EditorAction =
   | EditAction
@@ -82,6 +84,7 @@ function apply(t: StoredTimeline, a: EditAction): StoredTimeline {
     case "trimClip": return trimClip(t as TimelineV4, a.clipId, a.in, a.out);
     case "setTransition": return setTransition(t as TimelineV4, a.clipId, a.kind, a.seconds);
     case "setCaptions": return setCaptions(t as TimelineV4, a.mode);
+    case "setClipMuted": return setClipMuted(t as TimelineV4, a.clipId, a.muted);
   }
 }
 

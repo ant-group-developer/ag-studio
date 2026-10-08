@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { listDiff } from "../diff-doc";
+import type { TextLook } from "@harness/contracts";
+import { TextLookSample } from "../../production/TextLookInput";
 import { DOC_SPECS, valueAt, type DocKind, type FieldSpec } from "./doc-specs";
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -65,6 +67,21 @@ function Field({ field, doc, prev, names }: { field: FieldSpec; doc: unknown; pr
             return <li key={i}>{fresh ? <ins className="chat-doc__new">{body}</ins> : body}</li>;
           })}
         </ul>
+      );
+    }
+    case "look": {
+      if (!v) return null;
+      const look = v as TextLook;
+      const sample = <TextLookSample look={look} />;
+      return (
+        <div className="chat-doc__value">
+          {changed ? <ins className="chat-doc__new">{sample}</ins> : sample}
+          <span>{t("brandingEditor.textLookSummary", {
+            text: look.text_color, behind: look.box_color ?? look.outline_color,
+            on: look.box_color ? t("brandingEditor.textLookOnBox") : t("brandingEditor.textLookOnOutline"),
+            size: t(`brandingEditor.textLookSizes.${look.size}`),
+          })}</span>
+        </div>
       );
     }
     case "palette": {

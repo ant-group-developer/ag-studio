@@ -20,6 +20,7 @@ const AllProductionsPage = lazy(() => import("./pages/AllProductionsPage").then(
 const ProductionDetailPage = lazy(() => import("./pages/ProductionDetailPage").then((m) => ({ default: m.ProductionDetailPage })));
 const EditorPage = lazy(() => import("./modules/editor/EditorPage").then((m) => ({ default: m.EditorPage })));
 const QueuePage = lazy(() => import("./pages/QueuePage").then((m) => ({ default: m.QueuePage })));
+const MusicLibraryPage = lazy(() => import("./pages/MusicLibraryPage").then((m) => ({ default: m.MusicLibraryPage })));
 const ChatHomePage = lazy(() => import("./pages/ChatHomePage").then((m) => ({ default: m.ChatHomePage })));
 const ChatProductionPage = lazy(() => import("./pages/ChatProductionPage").then((m) => ({ default: m.ChatProductionPage })));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
@@ -103,6 +104,7 @@ export function App() {
                     <Route path="/v/:productionId" element={<ChatProductionPage />} />
                     <Route path="/v/:productionId/e/:episodeId" element={<ChatProductionPage />} />
                     <Route path="/queue" element={<QueuePage />} />
+                    <Route path="/music" element={<MusicLibraryPage />} />
                     <Route path="*" element={<AppLayout />} />
                   </Routes>
                 </Suspense>

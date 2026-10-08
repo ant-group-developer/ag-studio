@@ -1,6 +1,8 @@
 import { Input, InputNumber, Select } from "antd";
 import { Plus, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import type { TextLook } from "@harness/contracts";
+import { TextLookInput } from "../../production/TextLookInput";
 import { DOC_SPECS, valueAt, type DocKind, type FieldSpec } from "./doc-specs";
 
 /** `doc` with `value` at the dotted `path`, copied along the way (the rest is shared). */
@@ -83,6 +85,8 @@ function FieldInput({ field, value, onChange, label }: { field: FieldSpec; value
         </div>
       );
     }
+    case "look":
+      return <TextLookInput value={(value ?? null) as TextLook | null} onChange={(v) => onChange(v)} />;
     case "palette": {
       const pal = (value && typeof value === "object" ? value : {}) as Record<string, string>;
       return (

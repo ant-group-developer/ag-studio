@@ -1,7 +1,7 @@
 /**
  * Dev-only playground: renders `EditorView` against an in-memory fake client (no Auth0, no API) so the
  * editor can be looked at and exercised directly. Served at http://localhost:5173/playground.html by `vite`
- * dev; not part of `vite build` (that only ever builds `index.html`).
+ * dev; not part of `vite build` (that only ever builds `index.html`). `?cut`: a shot-cut episode (cut 1.1.0).
  */
 import "../i18n/config";
 import React from "react";
@@ -14,7 +14,7 @@ import { createFakeEditorClient } from "./fake-client";
 const { Text } = Typography;
 
 const queryClient = new QueryClient();
-const { client, simulateConflictOnNextSave } = createFakeEditorClient();
+const { client, simulateConflictOnNextSave } = createFakeEditorClient({ cut: new URLSearchParams(window.location.search).has("cut") });
 
 function Playground() {
   return (

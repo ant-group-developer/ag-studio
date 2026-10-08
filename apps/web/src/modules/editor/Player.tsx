@@ -5,8 +5,8 @@
  */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
-import type { StoredTimeline } from "@harness/contracts";
-import type { LaidClip, LaidText, TimelineLayout } from "@studio/timeline";
+import type { StoredTimeline, TextLook } from "@harness/contracts";
+import { isTimelineV4, type LaidClip, type LaidText, type TimelineLayout } from "@studio/timeline";
 import type { AssetMedia, EditorJob } from "../../api/studio-client";
 import type { AssetMediaLookup, EditorClient } from "./types";
 import { Play, Pause } from "lucide-react";
@@ -24,6 +24,29 @@ const otherSlot = (s: 0 | 1): 0 | 1 => (s === 0 ? 1 : 0);
 /** Where in its video a clip is at timeline time `t`: a shot-cut clip is a piece of it, from `in` (0 for a whole video). */
 export function sourceTimeAt(clip: Pick<LaidClip, "start" | "in">, t: number): number {
   return Math.max(0, t - clip.start + clip.in);
+}
+
+/** Size steps of a team's text look (as the render's overlay scales them). */
+const LOOK_SCALE = { s: 0.8, m: 1, l: 1.25 } as const;
+
+/**
+ * How a text looks in the preview: the default look (white, a soft shadow), or the timeline's text look (cut 1.1.0) —
+ * its colours and size, titles and lower thirds on a box of its box colour (70% opaque, as rendered), else outlined.
+ */
+export function textLookStyle(look: TextLook | null | undefined, kind: string): CSSProperties {
+  if (!look) return { color: "#fff", textShadow: "0 1px 3px rgba(0,0,0,0.8)" };
+  const boxed = look.box_color !== null && (kind === "title" || kind === "lower_third");
+  const o = look.outline_color;
+  return {
+    color: look.text_color,
+    fontSize: `${LOOK_SCALE[look.size]}em`,
+    ...(boxed ? { background: `${look.box_color}B3` } : { textShadow: `0 0 2px ${o}, 0 0 2px ${o}, 0 0 3px ${o}` }),
+  };
+}
+
+/** A clip's own sound is heard unless the timeline's source sound is off or the clip is muted on its own. */
+export function clipMuted(timeline: Pick<StoredTimeline, "source_audio">, clip: { muted?: boolean } | null): boolean {
+  return timeline.source_audio.muted || !!clip?.muted;
 }
 
 const TEXT_POSITION_STYLE: Record<string, CSSProperties> = {
@@ -115,6 +138,8 @@ export function Player({
     const el = slotRefs[slot].current;
     if (el) {
       slotClipId.current[slot] = clip.clip_id;
+      // the clip this slot plays decides whether its sound is heard (a clip muted on its own, cut 1.1.0)
+      el.muted = clipMuted(timeline, clip);
       if (m?.previewUrl) {
         if (el.src !== m.previewUrl) el.src = m.previewUrl;
       } else {
@@ -220,6 +245,7 @@ export function Player({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, layout]);
 
+  const look = isTimelineV4(timeline) ? timeline.text_style : undefined;
   const activeTexts = useMemo(
     () => layout.texts.filter((x: LaidText) => uiTime >= x.start && uiTime < x.end),
     [layout.texts, uiTime]
@@ -260,8 +286,8 @@ export function Player({
           <div
             key={x.text_id}
             style={{
-              position: "absolute", zIndex: 3, color: "#fff",
-              textShadow: "0 1px 3px rgba(0,0,0,0.8)", fontWeight: 600, padding: 8,
+              position: "absolute", zIndex: 3, fontWeight: 600, padding: 8,
+              ...textLookStyle(look, x.kind),
               ...TEXT_POSITION_STYLE[x.position],
             }}
           >

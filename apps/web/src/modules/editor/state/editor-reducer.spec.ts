@@ -138,6 +138,18 @@ describe("editor reducer (v4, shot-cut episodes)", () => {
     expect(s1.timeline).toMatchObject({ captions: { mode: "karaoke" } });
   });
 
+  it("cut 1.1.0: mutes one clip's own sound and brings it back (the key goes); a whole-video timeline refuses", () => {
+    const s0 = initEditor(sampleCutTimeline(), 2);
+    const s1 = run(s0, { type: "setClipMuted", clipId: "C002", muted: true });
+    expect(clip(s1, "C002")).toMatchObject({ muted: true });
+    expect(clip(s1, "C001")).not.toHaveProperty("muted");
+    const s2 = run(s1, { type: "setClipMuted", clipId: "C002", muted: false });
+    expect(clip(s2, "C002")).not.toHaveProperty("muted");
+    expect(run(s2, { type: "undo" }).timeline).toBe(s1.timeline);
+    const v3 = run(initEditor(sampleTimeline(), 1), { type: "setClipMuted", clipId: "C001", muted: true });
+    expect(v3.error).toMatch(/cắt theo shot/);
+  });
+
   it("a whole-video (v3) timeline refuses trims", () => {
     const s0 = initEditor(sampleTimeline(), 1);
     const s1 = run(s0, { type: "trimClip", clipId: "C001", in: 1, out: 3 });
