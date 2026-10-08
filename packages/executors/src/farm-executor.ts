@@ -18,8 +18,10 @@
  *     production's output prefix, validates it with the appropriate schema, and downloads the
  *     listed output artifacts into the stage workspace so checkers and downstream stages can
  *     read them exactly like any other stage output.
- *  0. Cancels the farm jobs earlier attempts of the stage left behind (`earlierJobsFor`).
- *  6. Cancels the farm job when the stage deadline is exceeded or the stage is aborted.
+ *  0. Takes over the job an earlier attempt of the stage left on the farm when it would send it again unchanged
+ *     (`earlierJobsFor`, `farmJobFingerprint`), and cancels the other earlier jobs.
+ *  6. Cancels the farm job when the stage deadline is exceeded or the run is cancelled (`STAGE_CANCELLED`); a worker
+ *     stopping or a lost lease leaves it for the next attempt to take over.
  *  7. Acks the job (marks it consumed by the owner).
  */
 import { createHash } from "node:crypto";
@@ -39,6 +41,7 @@ import {
 } from "@ag-farm/protocol";
 import {
   HarnessError,
+  STAGE_CANCELLED,
   type Executor,
   type ExecutorContext,
   type StageRequest,
@@ -418,11 +421,13 @@ export class FarmExecutor implements Executor {
     let jobResult: JobResult | null = null;
     pollLoop: while (Date.now() < deadline) {
       if (ctx.signal?.aborted) {
-        await this.opts.client.cancelJob(jobId).catch(() => {});
+        // a cancelled run will not read the job; a worker stopping or a lost lease leaves it to the next attempt
+        const cancelled = ctx.signal.reason === STAGE_CANCELLED;
+        if (cancelled) await this.opts.client.cancelJob(jobId).catch(() => {});
         return failed(
           "transient",
-          "stage aborted while waiting for farm job",
-          { job_id: jobId },
+          cancelled ? "stage cancelled while waiting for farm job" : "stage stopped while waiting for farm job; the job stays for the next attempt",
+          { job_id: jobId, reason: String(ctx.signal.reason) },
         );
       }
       await delay(pollMs);

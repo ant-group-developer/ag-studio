@@ -1,5 +1,5 @@
 import { pathToFileURL } from "node:url";
-import { isHarnessError, type Artifact, type ClaimResult, type Clock, type HarnessConfig, type ProductionProfile, type ProjectConfig, type Run, type StageRequest, type StageResult, type StateStore } from "@harness/contracts";
+import { isHarnessError, STAGE_CANCELLED, type Artifact, type ClaimResult, type Clock, type HarnessConfig, type ProductionProfile, type ProjectConfig, type Run, type StageRequest, type StageResult, type StateStore } from "@harness/contracts";
 import { acceptedInputsFor, addSeconds, ArtifactRegistry, buildStageRequest, canonicalDigest, Controller, createWorkspace, eventFor, gateOverdue, type LibraryFs, type LibraryRole, type LoadedWorkflow, materializeInputs, mimeTypesFor, Planner, stageDefinitionDigest, stageDefinitionFor, Verifier, workspacePath, type HarnessLogger } from "@harness/core";
 import type { ExecutorRegistry } from "@harness/executors";
 import { startHeartbeat } from "./heartbeat.js";
@@ -14,6 +14,10 @@ export interface WorkerDeps {
    * and future use, but does not perform periodic syncs (voices/brands/music are managed via CLI commands). */
   library?: { fs: LibraryFs; role: LibraryRole; syncSeconds: number };
 }
+
+/** Abort reasons of an attempt that another attempt will follow (see `STAGE_CANCELLED` for the one that will not). */
+const WORKER_STOPPING = "worker-stopping";
+const LEASE_LOST = "lease-lost";
 
 function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((res) => {
@@ -94,9 +98,14 @@ export class Worker {
     // would run to completion unaborted. Cancel now instead of starting it.
     if (signal?.aborted) return this.cancelCurrent(claim, run, log);
     const abort = new AbortController();
-    const onParentAbort = () => abort.abort();
+    // the reason tells the executor whether the stage will run again (worker stopping, lease lost) or not (run cancelled)
+    const onParentAbort = () => abort.abort(WORKER_STOPPING);
     signal?.addEventListener("abort", onParentAbort, { once: true });
-    const hb = startHeartbeat({ store, attemptId: claim.attempt.attempt_id, fencingToken: claim.lease.fencing_token, leaseSeconds, intervalMs: this.d.harness.heartbeat_seconds * 1000, clock, onLost: () => abort.abort() });
+    const hb = startHeartbeat({
+      store, attemptId: claim.attempt.attempt_id, fencingToken: claim.lease.fencing_token, leaseSeconds, intervalMs: this.d.harness.heartbeat_seconds * 1000, clock,
+      onLost: () => abort.abort(LEASE_LOST),
+      stageRunId: claim.stageRun.stage_run_id, onCancelRequested: () => abort.abort(STAGE_CANCELLED),
+    });
     const executor = this.d.executors.resolve(claim.stageRun.executor);
     try {
       let result: StageResult;

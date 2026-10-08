@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { newId, type StageRequest } from "@harness/contracts";
+import { newId, STAGE_CANCELLED, type StageRequest } from "@harness/contracts";
 import { FarmExecutor, type EarlierFarmJob, type StudioStorage, type SubmittedInfo } from "../src/farm-executor.js";
 
 const silent = { info() {}, warn() {}, error() {} };
@@ -303,6 +303,37 @@ describe("FarmExecutor: jobs of earlier attempts", () => {
       expect(res.outcome, JSON.stringify(res.errors)).toBe("succeeded");
       expect(f.submitted).toHaveLength(1);
     }
+  });
+});
+
+describe("FarmExecutor: an attempt stopped while its job waits on the farm", () => {
+  const ttsPayload = { production_id: "prod-9", language: "vi", voice: { reference: null, reference_text: null, speed: 1 }, lines: [{ line_id: "L001", text: "x", pause_seconds: null }], align_words: false };
+  const expected: StageRequest["expected_outputs"] = [{ type: "tts_manifest", mime_type: "application/json", kind: "file", name: "tts.json" }];
+
+  async function stopped(reason: string) {
+    const f = fakes({}, "tts.json");
+    f.client.getJob = async () => ({ status: "queued", result: null }) as never;
+    const ex = new FarmExecutor({ client: f.client as never, storage: f.storage, pollIntervalMs: 2, payloadBuilders: { b: async () => ({ productionId: "prod-9", payload: ttsPayload }) } });
+    const req = request({ __farm_job: "studio.tts", payload_builder: "b" }, expected);
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(reason), 20);
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall, signal: ac.signal });
+    return { f, res };
+  }
+
+  it("a worker stopping, or a lost lease, leaves the job on the farm for the next attempt to take over", async () => {
+    for (const reason of ["worker-stopping", "lease-lost"]) {
+      const { f, res } = await stopped(reason);
+      expect(res.outcome).toBe("failed");
+      expect(res.errors[0]).toMatchObject({ kind: "transient", details: { job_id: "job-1" } });
+      expect(f.cancelled).toEqual([]);
+    }
+  });
+
+  it("a cancelled run cancels the job: nobody will read it", async () => {
+    const { f, res } = await stopped(STAGE_CANCELLED);
+    expect(res.outcome).toBe("failed");
+    expect(f.cancelled.map((c) => c.id)).toEqual(["job-1"]);
   });
 });
 

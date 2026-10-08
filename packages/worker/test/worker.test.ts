@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { getEventListeners } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { newId, ProductionProfileSchema, ProjectConfigSchema, WorkflowDefinitionSchema, type Executor, type StageRequest, type StageResult } from "@harness/contracts";
+import { newId, ProductionProfileSchema, ProjectConfigSchema, STAGE_CANCELLED, WorkflowDefinitionSchema, type Executor, type StageRequest, type StageResult } from "@harness/contracts";
 import { ArtifactRegistry, BUILTIN_CHECKERS, Controller, FixedClock, HARNESS_ROOT, MIGRATIONS_DIR, NullMediaProber, Planner, Redactor, SourceCatalog, SqliteStateStore, Verifier, addSeconds, createLogger, loadHarnessConfig, loadProfile, loadWorkflow } from "@harness/core";
 import { AgentExecutor, ExecutorRegistry, GateExecutor, ScriptExecutor } from "@harness/executors";
 import { FakeAgentRuntime, fakeScriptCommands } from "@harness/adapter-fake";
@@ -103,6 +103,38 @@ describe("Worker", () => {
     const produce = alive.store.listStageRuns(run.run_id).find((s) => s.stage_key === "produce")!;
     expect(alive.store.listAttempts(produce.stage_run_id).map((a) => [a.lease_owner, a.state])).toEqual([["dead", "ABANDONED"], ["alive", "SUCCEEDED"]]);
     expect(alive.store.listArtifacts({ stage_run_id: produce.stage_run_id, status: "ACCEPTED" })).toHaveLength(1);
+  });
+  it("a stage whose run is cancelled while it runs is aborted, saying so; the run ends cancelled", async () => {
+    let reason: unknown;
+    const hanging: Executor = {
+      version: "hang@1",
+      execute: (r, ctx) => new Promise((res) => ctx.signal?.addEventListener("abort", () => {
+        reason = ctx.signal?.reason;
+        res({ schema_version: "harness.stage-result/v1", attempt_id: r.attempt_id, outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [{ kind: "transient", message: "aborted", details: {} }] });
+      })),
+    };
+    const w = makeWorld({ scriptExecutor: hanging });
+    const run = planAndEnqueue(w);
+    const worker = new Worker({ ...w.deps, harness: { ...w.deps.harness, heartbeat_seconds: 0.02 } });
+    const pending = worker.runOnce();
+    await new Promise((r) => setTimeout(r, 50));
+    w.planner.cancel(run.run_id);
+    expect(await pending).toBe("done");
+    expect(reason).toBe(STAGE_CANCELLED);
+    expect(w.store.getRun(run.run_id)?.state).toBe("CANCELLED");
+  });
+  it("a worker stopping aborts its stage with a reason that is not a cancel: the stage will run again", async () => {
+    const ac = new AbortController();
+    let reason: unknown;
+    const hanging: Executor = { version: "hang@1", execute: (_r, ctx) => new Promise((_res, rej) => ctx.signal?.addEventListener("abort", () => { reason = ctx.signal?.reason; rej(new Error("aborted")); })) };
+    const w = makeWorld({ scriptExecutor: hanging });
+    planAndEnqueue(w);
+    const p = w.worker.runForever(ac.signal);
+    await new Promise((r) => setTimeout(r, 50));
+    ac.abort();
+    await p;
+    expect(reason).not.toBe(STAGE_CANCELLED);
+    expect(reason).toBeDefined();
   });
   it("cancels the current attempt on abort and requeues the stage", async () => {
     const ac = new AbortController();
