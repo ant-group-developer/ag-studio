@@ -11,6 +11,7 @@
 //   rate-limit-once   the first call in a workspace prints the subscription-limit message and exits 1
 //   web-research-bad-once  the web research first answers a link that is not YouTube, valid on repair
 //   style-bad-once    the style first misquotes the measured median, valid on repair (resumed session)
+//   edit-plan-ignore-style-once  the edit plan first cuts 4 s pieces whatever the style says, follows it on repair
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -402,9 +403,14 @@ function sourceSurvey(kept) {
   return { schema_version: "harness.survey-index/v2", shots: rows };
 }
 
-/** Usable shots in order, 2–4 s pieces from each shot's start until the target is reached; a line every 3 shots. */
+/**
+ * Usable shots in order, pieces from each shot's start until the target is reached (up to 4 s; with a style, the middle
+ * of its shot length); a line every 3 shots.
+ */
 function editPlan() {
   const survey = inputs.survey_index ?? { shots: [] };
+  const range = inputs.studio_style?.skipped === false ? inputs.studio_style.params?.shot_seconds : null;
+  const longest = range && !(modes.has("edit-plan-ignore-style-once") && !repairing) ? (range.min + range.max) / 2 : 4;
   const sources = inputs.cut_sources ?? { narration: "tts", language: "vi", episode_id: "e" };
   const episode = inputs.studio_episode ?? {};
   const target = episode.target_seconds ?? 60;
@@ -414,7 +420,7 @@ function editPlan() {
   let total = 0;
   for (const r of usable) {
     if (total >= target) break;
-    const length = Math.min(4, Math.max(0.5, r.out - r.in - 0.5));
+    const length = Math.min(longest, Math.max(0.5, r.out - r.in - 0.5));
     const order = shots.length + 1;
     shots.push({
       order, shot_id: r.shot_id, source_id: r.source_id, in: r.in, out: Math.round((r.in + length) * 1000) / 1000,

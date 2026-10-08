@@ -10,10 +10,10 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   StudioBrandingSchema, StudioBriefSchema, StudioCatalogSchema, StudioEpisodeSchema, StudioExportSchema, StudioResearchSchema, StudioSeedSchema, StudioThumbnailsSchema,
-  ShotsIndexSchema, StoredTimelineSchema, StudioSurveySchema, StyleWatchSchema, TimelineV4Schema,
+  ShotsIndexSchema, StoredTimelineSchema, StudioStyleSchema, StudioSurveySchema, StyleWatchSchema, TimelineV4Schema,
   TrendReportSchema,
   type CatalogAsset, type Checker, type CheckerInput, type ShotsIndex, type StudioBranding, type StudioBrief, type StudioCatalog, type StudioResearch,
-  type StudioSeed, type StudioSurvey, type StyleWatch, type TimelineV4,
+  type StudioSeed, type StudioStyle, type StudioSurvey, type StyleWatch, type TimelineV4,
 } from "@harness/contracts";
 import { childEnvWithoutSecrets } from "../media/child-env.js";
 import { validateEditPlan, validateStudioSurvey } from "../studio/cut-validate.js";
@@ -109,6 +109,12 @@ export function loadOptionalBranding(i: Pick<CheckerInput, "request" | "workspac
   return p && existsSync(p) ? StudioBrandingSchema.parse(readJson(p)) : null;
 }
 
+/** The production's edit style when the stage has one (cut 1.1.0: the episode intake passes it on). */
+export function loadOptionalStyle(i: Pick<CheckerInput, "request" | "workspaceDir">): StudioStyle | null {
+  const p = inputPath(i, STUDIO_TYPES.style);
+  return p && existsSync(p) ? StudioStyleSchema.parse(readJson(p)) : null;
+}
+
 /** The approved timeline v4 when the stage has one (the YouTube kit of a shot-cut episode). */
 export function loadOptionalTimelineV4(i: Pick<CheckerInput, "request" | "workspaceDir">): TimelineV4 | null {
   const p = inputPath(i, STUDIO_TYPES.timelineV4);
@@ -162,7 +168,7 @@ export const studioSurveyValidChecker = documentChecker("studio-survey-valid", S
 
 /** Shot-cut edit plan against the approved selection (`survey_index` input) and the shots (`validateEditPlan`). */
 export const editPlanValidChecker = documentChecker("edit-plan-valid", STUDIO_TYPES.editPlan,
-  (raw, i) => fromValidation(validateEditPlan(raw, { survey: loadSurvey(i), shots: loadShots(i) })));
+  (raw, i) => fromValidation(validateEditPlan(raw, { survey: loadSurvey(i), shots: loadShots(i), style: loadOptionalStyle(i) })));
 
 export const trendReportValidChecker = documentChecker("trend-report-valid", STUDIO_TYPES.trendReport,
   (raw) => fromValidation(validateTrendReport(raw)));

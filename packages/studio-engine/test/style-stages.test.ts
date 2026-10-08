@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { StudioBranding, StudioResearch, StudioRnd, StudioStyle, StyleRefs } from "@harness/contracts";
 import { STUDIO_TYPES } from "@harness/core";
 import { getProduction, productionStyle, saveProductionDocument, studioInProcessStages, type StudioStageDeps } from "../src/index.js";
-import { fakeFootage, seedProduction, world } from "./helpers.js";
+import { fakeFootage, seedProduction, world, STYLE } from "./helpers.js";
 import { runStage, stageWorkspace } from "./stage-harness.js";
 
 const RUN = "run_plan";
@@ -31,14 +31,6 @@ const research = (prod: string): StudioResearch => ({
     videos: [video("a", 1250, 5), video("b", 30, 99), video("c", 900, 1)] }],
   keywords: [], insights: { top_title_terms: [], top_tags: [], duration_buckets: [], frequent_channels: [] },
 });
-export const STYLE: StudioStyle = {
-  schema_version: "studio.style/v1", skipped: false, skipped_reason: null, name: "Chậm", summary: "Cảnh dài, ít chữ.",
-  references: [{ video_id: "U_17EqTHUIo", title: "Kyoto", channel_title: "Mei Time", url: "https://www.youtube.com/watch?v=U_17EqTHUIo", duration_s: 1299 }],
-  measured: { videos: 1, shots: 200, cuts_per_minute: 9, shot_seconds: { p25: 5, median: 6.5, p75: 8 }, first_shot_s: 2 },
-  params: { cut_rhythm: "slow", shot_seconds: { min: 5, max: 8 }, transitions: ["cut"], opening: { seconds: 16, structure: "montage" },
-    text_overlay: { density: "low", style: "serif nhỏ" }, subtitles: "none", voice: "unknown", music: { mood: "calm", ducking: null }, visual: "", pace_notes: "" },
-  do: ["Mở bằng montage"], dont: [], evidence: [{ param: "opening", video_id: "U_17EqTHUIo", t: 2.5, note: "a" }],
-};
 const RND: StudioRnd = {
   schema_version: "studio.rnd/v1", summary: "Series phở sáng.", market: { opportunities: [], gaps: [], risks: [], competitors: [] }, own_channels: null,
   footage_fit: { summary: "Nhiều cảnh phở", strong_themes: ["phở"], gaps: [] },

@@ -24,7 +24,7 @@ import { readInput, readTimelineInput, studioStages, toBuffer, writeEpisodeIntak
 import { styleStages } from "./style-stages.js";
 import { cleanTranscribeManifest } from "./transcript-clean.js";
 import { prepareRender } from "./payloads.js";
-import { getEpisode, getProduction, latestEpisodeRevision, saveEpisodeRevision } from "./studio-db.js";
+import { activeProductionStyle, getEpisode, getProduction, latestEpisodeRevision, saveEpisodeRevision } from "./studio-db.js";
 import { fitCutTimeline, type ReadLine } from "./cut-fit.js";
 import { productionVoice, type StudioVoice } from "./voice.js";
 import { getVoiceLine, putVoiceLine, voiceKey } from "./voice-store.js";
@@ -108,6 +108,19 @@ export function cutStages(d: StudioStageDeps): Record<string, InProcessStage> {
     "studio-cut-intake": async (request: StageRequest, ctx: ExecutorContext) => {
       const { brief, episode } = writeEpisodeIntake(d, request, ctx);
       writeOutput(ctx, "sources.json", toBuffer(cutSources(episode, brief.language)));
+    },
+
+    /**
+     * Cut 1.1.0: the same, plus the production's edit style as it is now (`style.json`, when it has one that was not
+     * skipped) for the edit plan to follow. Read when the episode starts: a style edited later reaches the next episode.
+     */
+    "studio-cut-intake-v2": async (request: StageRequest, ctx: ExecutorContext) => {
+      const { brief, episode } = writeEpisodeIntake(d, request, ctx);
+      writeOutput(ctx, "sources.json", toBuffer(cutSources(episode, brief.language)));
+      const prod = getProduction(d.db, episode.production_id);
+      const style = prod ? activeProductionStyle(prod) : null;
+      if (style) writeOutput(ctx, "style.json", toBuffer(style));
+      ctx.logger.info("episode intake", { episode_id: episode.episode_id, style: style?.name ?? null });
     },
 
     /**

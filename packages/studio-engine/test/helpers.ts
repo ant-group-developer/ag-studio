@@ -2,6 +2,7 @@ import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { StudioStyle } from "@harness/contracts";
 import type { AgGoFootageVideo } from "@harness/core";
 import {
   approveChatScope, createStudioEngineCore, GATE_SOURCES, MemoryBucket, planRunView, readStageDocument, StudioDb, submitStudioGate,
@@ -246,3 +247,13 @@ export async function approvePlanGatesLive(
   if (until) throw new Error(`the plan never waited at ${until} (approved ${approved.join(", ")})`);
   return approved;
 }
+
+/** An approved edit style (series plan 3.2.0): slow cuts, 5–8 s shots. */
+export const STYLE: StudioStyle = {
+  schema_version: "studio.style/v1", skipped: false, skipped_reason: null, name: "Chậm", summary: "Cảnh dài, ít chữ.",
+  references: [{ video_id: "U_17EqTHUIo", title: "Kyoto", channel_title: "Mei Time", url: "https://www.youtube.com/watch?v=U_17EqTHUIo", duration_s: 1299 }],
+  measured: { videos: 1, shots: 200, cuts_per_minute: 9, shot_seconds: { p25: 5, median: 6.5, p75: 8 }, first_shot_s: 2 },
+  params: { cut_rhythm: "slow", shot_seconds: { min: 5, max: 8 }, transitions: ["cut"], opening: { seconds: 16, structure: "montage" },
+    text_overlay: { density: "low", style: "serif nhỏ" }, subtitles: "none", voice: "unknown", music: { mood: "calm", ducking: null }, visual: "", pace_notes: "" },
+  do: ["Mở bằng montage"], dont: [], evidence: [{ param: "opening", video_id: "U_17EqTHUIo", t: 2.5, note: "a" }],
+};

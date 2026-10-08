@@ -18,7 +18,7 @@ import {
   type TeamGuide,
 } from "@harness/contracts";
 import {
-  hasGaps, isFollowUpWarning, loadBrief, loadCatalog, loadOptionalBranding, loadOptionalStyleWatch, loadOptionalTimelineV4, loadSeed, loadShots, loadSurvey, researchGapsOf, STUDIO_TYPES,
+  hasGaps, isFollowUpWarning, loadBrief, loadCatalog, loadOptionalBranding, loadOptionalStyle, loadOptionalStyleWatch, loadOptionalTimelineV4, loadSeed, loadShots, loadSurvey, researchGapsOf, STUDIO_TYPES,
   summarizeCatalog, validateBranding, validateEditPlan, validateRnd, validateSeriesPlan, validateStudioSurvey, validateStyle, validateTrendReport,
   validateWebFinds, validateYoutubeKit,
   type StudioProblem, type StudioValidation,
@@ -85,7 +85,7 @@ const VALIDATORS: Record<StudioSkill, Validator> = {
     return validateSeriesPlan(raw, { brief, catalog: catalog.assets });
   },
   "studio-source-survey": (raw, i) => validateStudioSurvey(raw, { shots: loadShots(i) }),
-  "studio-edit-plan": (raw, i) => validateEditPlan(raw, { survey: loadSurvey(i), shots: loadShots(i) }),
+  "studio-edit-plan": (raw, i) => followUpsAsProblems(validateEditPlan(raw, { survey: loadSurvey(i), shots: loadShots(i), style: loadOptionalStyle(i) })),
   "studio-youtube-kit": (raw, i) => {
     const episodePath = i.request.inputs.find((x) => x.type === STUDIO_TYPES.episode);
     if (!episodePath) return { ok: false, value: undefined, problems: [{ code: "missing_input", message: "missing studio_episode input" }], warnings: [] };
@@ -105,6 +105,12 @@ export function studioValidator(skill: StudioSkill): (raw: unknown, request: Sta
   const v = VALIDATORS[skill];
   return (raw, request, workspaceDir) => v(raw, { request, workspaceDir } as CheckerInput);
 }
+
+/**
+ * Skills that read the production's edit style (series plan 3.2.0, cut 1.1.0). A stage of another skill may have it
+ * among its inputs (every stage after the episode intake does): its prompt leaves it out, as before the style.
+ */
+const STYLE_PROMPT_SKILLS = new Set<string>(["studio-branding", "studio-plan-episodes", "studio-edit-plan"]);
 
 /** Skills that get a summary of the footage instead of every asset (they decide a direction, not a cut). */
 const CATALOG_SUMMARY_SKILLS = new Set<string>(["studio-rnd", "studio-branding"]);
@@ -194,6 +200,7 @@ export function studioPromptHead(request: StageRequest, workspaceDir: string, gu
   for (const input of request.inputs) {
     if (input.kind === "directory") continue;
     if (input.type === STUDIO_TYPES.seed && hasBrief) continue;
+    if (input.type === STUDIO_TYPES.style && !STYLE_PROMPT_SKILLS.has(skill)) continue;
     const path = join(workspaceDir, input.path);
     if (!existsSync(path)) continue;
     const text = readFileSync(path, "utf8");
