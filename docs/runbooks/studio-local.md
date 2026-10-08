@@ -151,6 +151,28 @@ Không chạy song song với chế độ trực tiếp: hai bên dùng chung c�
 - **Contact sheet thiếu nhãn:** khung vẫn được cắt; nhãn `s000-001` trên ảnh cần font (`STUDIO_FONTS_DIR`).
 - Thời gian từng bước đo trên máy dev ghi ở ADR-0001 mục 160 (lần kiểm tay I3 của pha 5).
 
+## 4b. yt-dlp: research dự phòng và học phong cách dựng (series 3.2.0)
+
+Series `ag-studio-series-plan@3.2.0` dùng yt-dlp cho hai việc (ADR-0001 mục 175–176):
+
+- **Research dự phòng:** API YouTube không có khoá hay từ chối một kênh/từ khoá thì Claude (chỉ WebSearch/WebFetch) tìm
+  link YouTube, worker đọc số liệu thật bằng `yt-dlp --dump-json`. Không có yt-dlp: giữ số Claude đọc được, đánh dấu
+  `estimated`.
+- **Học phong cách:** tải ≤3 video của kênh tham khảo ở ≤480p (≤30 phút, ≤300 MB, không live), đo nhịp cắt, giữ ≤48 khung
+  ≤480 px mỗi video, **xoá video ngay trong stage**. Không cookie, không đăng nhập: video YouTube chặn thì bỏ qua và ghi
+  lỗi. Đây là quyết định của người dùng, chấp nhận rủi ro điều khoản YouTube; tắt hẳn bằng `STUDIO_REFERENCE_DOWNLOADS=0`.
+
+Cài trên máy dev Windows (một lần), rồi khai trong `apps/api/.env` (worker chạy trực tiếp đọc file này):
+
+```
+py -m pip install --user yt-dlp
+```
+
+`YTDLP_PATH` trỏ `yt-dlp.exe` (thường `%APPDATA%PythonPython311Scriptsyt-dlp.exe`), bật lại worker. Log khởi động
+worker ghi `"ytdlp":"<phiên bản>"`; `null` kèm `warn` "yt-dlp cannot run" nghĩa là sai đường dẫn. Cập nhật khi YouTube
+đổi: `py -m pip install --user -U yt-dlp` (image Docker: đổi `YTDLP_VERSION` trong `Dockerfile`). Bản yt-dlp mới có
+thể cần thêm một JS runtime (Deno) cho YouTube: làm theo thông báo lỗi của yt-dlp.
+
 ## 6. Sự cố thường gặp
 
 | Hiện tượng | Nguyên nhân hay gặp | Cách xử lý |
@@ -176,3 +198,6 @@ Không chạy song song với chế độ trực tiếp: hai bên dùng chung c�
 | Kiểm trong khung trình duyệt của app desktop, số liệu không tự cập nhật | Khung đó báo trang luôn ẩn nên không polling | Tải lại trang sau mỗi bước |
 | Tập cắt theo shot treo ở `tts` hoặc `transcribe` | `local-render` không khai `python` hoặc thiếu kind `studio.tts`/`studio.transcribe` | Mục 4a; web farm 3011 xem khả năng node |
 | Job `studio.transcribe` bị hub từ chối "not allowed for owner studio" | DB farm chưa chạy migration `studio-transcribe` | Chạy migration hub (mục 3) |
+| Bước "Phong cách dựng" ghi "Máy chạy Studio không có yt-dlp để tải video mẫu" | Worker không chạy được yt-dlp | Mục 4b; bật lại worker; chạy lại series từ bước Phong cách (⋯ → Chạy lại từ bước…) |
+| Bước "Phong cách dựng" ghi "Không xem được video mẫu nào: … Sign in to confirm you're not a bot" | YouTube chặn IP máy chạy worker | Cập nhật yt-dlp; thử máy/mạng khác. Studio không lách chặn (không cookie) |
+| Báo cáo xu hướng ghi số liệu "ước lượng từ web" | Không có khoá API, và worker không có yt-dlp nên giữ số Claude đọc | Đặt `YOUTUBE_API_KEY` hoặc cài yt-dlp (mục 4b), chạy lại từ Nghiên cứu |

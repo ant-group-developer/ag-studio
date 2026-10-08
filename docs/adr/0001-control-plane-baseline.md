@@ -1126,3 +1126,29 @@ Các mục dưới đây ghi lại quyết định của nhánh AG Studio, viế
     `retry.max_attempts` chỉ tính lần stage tự hỏng, còn bỏ dở có trần riêng `MAX_ABANDONED_ATTEMPTS = 5` (đếm dòng
     `attempt` ABANDONED) để một stage làm sập worker không lặp mãi. Huỷ run khi không worker nào đang giữ stage (worker
     đã chết) thì job farm của nó không bị huỷ: chạy hết rồi không ai đọc.
+175. **Học phong cách dựng từ video của kênh tham khảo: tải video YouTube là quyết định của người dùng (2026-10-08).**
+    Phiên gốc (harness `style-study`) học nhịp cắt từ file video mẫu; Studio trước đây chỉ đọc số liệu YouTube của kênh
+    tham khảo. Người dùng chọn tải video mẫu từ YouTube và chấp nhận rủi ro điều khoản YouTube. Giới hạn cứng: chỉ kênh
+    người dùng nhập làm kênh **tham khảo**; ≤3 video (`pickReferenceVideos`: độ dài hợp khung hình, gần độ dài tập đích);
+    yt-dlp `--ignore-config`, không cookie, không đăng nhập, không lách chặn (video bị chặn, giới hạn tuổi, live thì bỏ
+    qua); ≤480p, ≤30 phút, ≤300 MB; URL luôn dựng lại từ id 11 ký tự đã kiểm; tải vào thư mục nháp **ngoài** `output/`,
+    đo cắt cảnh, giữ ≤48 khung ≤480 px, **xoá video trong cùng stage** (`finally`), không bao giờ là artifact; khung chỉ
+    người trong team xem (URL ký), dọn khi style không còn trích (`sweepStyleFrames`), thư mục tải sót sau crash dọn sau
+    6 giờ. Không phân tích tiếng (khung không có âm thanh: `voice`/`music` để `unknown`). Công tắc
+    `STUDIO_REFERENCE_DOWNLOADS=0`. Bước nằm trong series `ag-studio-series-plan@3.2.0`: `pick-references` →
+    `watch-references` → `analyze-style` (Claude files mode, skill `studio-style`, số đo chép từ `measured`, mỗi tham số
+    có khung bằng chứng; `style-valid` kiểm) → `approve-style` → `apply-style` (`productions.style`, migration `0029`).
+    Branding và brief (nên plan-episodes và từng tập) đọc style; `rnd` không chờ style. Không xem được video nào thì style
+    `skipped` nói lý do, không gọi Claude, các bước sau chạy như không có style.
+176. **Research dự phòng: Claude có web, nhưng chỉ trả link YouTube; số liệu do yt-dlp đọc (2026-10-08).** Thiếu
+    `YOUTUBE_API_KEY` hay API lỗi (hết quota, sai khoá, một kênh/từ khoá bị từ chối) trước đây làm báo cáo xu hướng trống
+    lặng lẽ. Series 3.2.0 tách research làm ba: `research-api` (API như cũ, kiểu `studio_research_api`), `research-web`
+    (skill `studio-web-research`, **web mode**: structured `--json-schema` với `--tools WebSearch,WebFetch --allowedTools
+    WebSearch,WebFetch`, ≤30 lượt, không session, không MCP, không file/shell — skill Studio đầu tiên ra mạng) chỉ được
+    hỏi đúng các chỗ trống (`researchGaps`; không có chỗ trống thì không gọi Claude), `research` (script
+    `studio-research-merge`, giữ khoá stage và kiểu `studio_research` cũ) đọc số liệu thật của link Claude tìm bằng
+    `yt-dlp --dump-json`, liệt kê 30 video mới nhất của kênh bằng `--flat-playlist`, chỉ giữ video đúng kênh, tính lại
+    stats/insights, ghi `source: web|mixed`. Không có yt-dlp thì giữ số Claude đọc trên trang, `estimated: true`, skill
+    báo cáo xu hướng được dặn không coi là số thật. Nội dung web là dữ liệu: đầu ra của Claude chỉ là link qua
+    `validateWebFinds` (chỉ link YouTube, chỉ chỗ được hỏi), không gì được thực thi. Báo cáo xu hướng bị bỏ qua giờ ghi lý
+    do (khoá thiếu hay lỗi từng kênh/từ khoá).
