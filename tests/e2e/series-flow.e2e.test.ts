@@ -1,6 +1,8 @@
 /**
- * GĐ4 acceptance E2E, research first: `ag-studio-series-plan@2.0.0` (R&D and branding approved before the plan) +
- * `ag-studio-episode@1.2.0` series flow.
+ * GĐ4 acceptance E2E, research first, on the plan release new series run (`ag-studio-series-plan@3.2.0`): with no
+ * YouTube key the research falls back to the web (fake Claude finds the links, fake yt-dlp reads their numbers), the
+ * edit style is learned from the reference videos (fake yt-dlp downloads them, ffmpeg measures and frames them), then
+ * the trend report, style, R&D and branding are approved before the plan.
  *
  * Series plan API → approve-plan gate → episode spawning →
  * per-episode build-timeline → render (real farm + render worker) → thumbnails (Studio ffmpeg) → export.
@@ -8,7 +10,8 @@
  *
  * Real:  ag-farm hub (+ Postgres in Docker), Studio API (dist), Studio worker (dist),
  *        ag-render-worker (dist), ffmpeg (ffmpeg-static).
- * Fake:  Claude (fixtures/fake-studio-claude.mjs via CliAgentRuntime), ag-go (catalog/assets/resolve),
+ * Fake:  Claude (fixtures/fake-studio-claude.mjs via CliAgentRuntime), yt-dlp (fixtures/fake-yt-dlp.mjs, never on the
+ *        network), ag-go (catalog/assets/resolve),
  *        S3 (in-process FakeS3Server).
  *
  * Requires: E2E=1, Docker running, built dists:
@@ -605,6 +608,11 @@ beforeAll(async () => {
         process.execPath,
         join(ROOT, "fixtures", "fake-studio-claude.mjs"),
       ]),
+      // no YouTube key, whatever the shell has: the research takes the web fallback
+      YOUTUBE_API_KEY: "",
+      // ffmpeg-static has no ffprobe beside it: watching the reference videos needs it
+      STUDIO_FFPROBE_PATH: FFPROBE,
+      STUDIO_YTDLP_ARGV: JSON.stringify([process.execPath, join(ROOT, "fixtures", "fake-yt-dlp.mjs")]),
     },
     "studio-worker-series",
   );
@@ -725,6 +733,9 @@ describe.skipIf(!isE2E)(
       return approved;
     }
 
+    /** The plan's gates; the style's may wait beside the trend report's or the R&D's (series plan 3.2.0). */
+    const PLAN_GATES = ["approve-trend-report", "approve-style", "approve-rnd", "approve-branding", "approve-plan"];
+
     function waitGate(gate: string, ms = 300_000): Promise<RunView> {
       return waitFor(
         `gate ${gate}`,
@@ -733,13 +744,13 @@ describe.skipIf(!isE2E)(
           const stuck = v.stages.find(
             (s) =>
               s.state === "FAILED" ||
-              (s.state === "WAITING_HUMAN" && s.key !== gate),
+              (s.state === "WAITING_HUMAN" && !PLAN_GATES.includes(s.key)),
           );
           if (stuck)
             throw new Fatal(
               `stage ${stuck.key} ${stuck.state}: ${stuck.error} ${JSON.stringify(stuck.failed_checks)}`,
             );
-          return v.waiting_gate === gate ? v : null;
+          return v.stages.some((s) => s.key === gate && s.state === "WAITING_HUMAN") ? v : null;
         },
         ms,
         1000,
@@ -795,11 +806,43 @@ describe.skipIf(!isE2E)(
       expect(["planning", "waiting_approval"]).toContain(planningProd.status);
     });
 
-    it("approve-rnd and approve-branding: the R&D and branding fake Claude proposes are approved and become the production's", async () => {
-      // plan 3.x: the trend report is approved first
+    it("research on the web, then the trend report and the style learned from the reference videos are approved", async () => {
       await waitGate("approve-trend-report");
-      const trend = await ok<{ schema_version: string }>("GET", `/productions/${prodId}/run/documents/trend-report/trend-report.json`);
+      // no YouTube key: fake Claude found the links on the web, fake yt-dlp read their real numbers
+      const research = await ok<{ source?: string; channels: { videos: { views: number | null; estimated?: boolean }[] }[] }>(
+        "GET", `/productions/${prodId}/run/documents/research/research.json`);
+      expect(research.source).toBe("web");
+      expect(research.channels[0]!.videos.length).toBeGreaterThan(0);
+      expect(research.channels[0]!.videos.every((v) => v.views === 12345 && !v.estimated)).toBe(true);
+      const trend = await ok<{ schema_version: string; skipped: boolean }>("GET", `/productions/${prodId}/run/documents/trend-report/trend-report.json`);
+      expect(trend.skipped).toBe(false);
       expect((await ok<{ accepted: boolean }>("POST", `/productions/${prodId}/run/gates/approve-trend-report`, { document: trend })).accepted).toBe(true);
+
+      await waitGate("approve-style");
+      const style = await ok<{ schema_version: string; skipped: boolean; references: unknown[]; evidence: { video_id: string; t: number }[] }>(
+        "GET", `/productions/${prodId}/run/documents/analyze-style/style.json`);
+      expect(style).toMatchObject({ schema_version: "studio.style/v1", skipped: false });
+      expect(style.references.length).toBeGreaterThan(0);
+      expect((await ok<{ accepted: boolean }>("POST", `/productions/${prodId}/run/gates/approve-style`, { document: style })).accepted).toBe(true);
+      // apply-style keeps it on the production; the frames it cites are on the bucket, the downloaded videos are not
+      const saved = await waitFor(
+        "style applied",
+        async () => {
+          const doc = await ok<{ document: unknown }>("GET", `/productions/${prodId}/style`);
+          return doc.document ? doc : null;
+        },
+        60_000,
+        1000,
+      );
+      expect(saved.document).toEqual(style);
+      const at = style.evidence.slice(0, 2).map((e) => `${e.video_id}@${e.t}`).join(",");
+      if (at) {
+        const { frames } = await ok<{ frames: { url: string }[] }>("GET", `/productions/${prodId}/style/frames?at=${encodeURIComponent(at)}`);
+        for (const fr of frames) expect((await fetch(fr.url)).ok).toBe(true);
+      }
+    });
+
+    it("approve-rnd and approve-branding: the R&D and branding fake Claude proposes are approved and become the production's", async () => {
 
       await waitGate("approve-rnd");
       const rnd = await ok<{ schema_version: string; direction: { episode_target_seconds: number } }>(

@@ -15,3 +15,4 @@ export * from "./edl.js";
 export * from "./studio.js";
 export * from "./studio-chat.js";
 export * from "./studio-cut.js";
+export * from "./studio-style.js";

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ChannelPackageDraftSchema, newId, type ExecutorContext, type StageRequest } from "@harness/contracts";
-import { agentChildEnv, CliAgentRuntime, studioFilesArgv } from "../src/cli-agent-runtime.js";
+import { agentChildEnv, CliAgentRuntime, studioFilesArgv, studioStructuredArgv } from "../src/cli-agent-runtime.js";
 
 const skillsDir = fileURLToPath(new URL("../../../../skills", import.meta.url));
 const fixture = fileURLToPath(new URL("../../../../fixtures/fake-agent-cli.mjs", import.meta.url));
@@ -215,6 +215,16 @@ describe("CliAgentRuntime files mode (Studio stages that look at pictures, phase
     const { ws, req } = makeWorkspace();
     return { ws, req: { ...req, stage_key: "source-survey", expected_outputs: [{ type: "survey_index", mime_type: "application/json", kind: "file", name: "survey.json" }] } };
   }
+
+  it("web mode argv: structured, no session kept, only the web tools named available and allowed", () => {
+    expect(studioStructuredArgv({ model: "claude-sonnet-5-5", maxTurns: 3 })).toEqual([
+      "claude", "-p", "--output-format", "json", "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--max-turns", "3", "--model", "claude-sonnet-5-5",
+    ]);
+    expect(studioStructuredArgv({ model: "claude-sonnet-5-5", maxTurns: 30, tools: ["WebSearch", "WebFetch"] })).toEqual([
+      "claude", "-p", "--output-format", "json", "--tools", "WebSearch,WebFetch", "--strict-mcp-config", "--no-session-persistence", "--max-turns", "30",
+      "--model", "claude-sonnet-5-5", "--allowedTools", "WebSearch,WebFetch",
+    ]);
+  });
 
   it("default argv: file tools only, edits allowed, the session kept (no --no-session-persistence)", () => {
     const argv = studioFilesArgv({ model: "claude-sonnet-5-5", maxTurns: 40, tools: ["Read", "Write", "Glob"] });

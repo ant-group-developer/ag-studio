@@ -9,7 +9,7 @@ import {
   chatScopeFor, createStudioWorker, currentProposal, getTurn, insertUserTurn, listEpisodes, listLlmCalls, markTurnRunning, readLlmCallPayload,
   readStageDocument, runChatTurn, startPlanRun, studioLogger, submitStudioGate, type ChatScopeKey, type TimelineProposal,
 } from "../src/index.js";
-import { FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, ROOT, seedProduction, world } from "./helpers.js";
+import { approvePlanGatesUntil, FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, ROOT, seedProduction, world } from "./helpers.js";
 
 function setup(mode = "") {
   const w = world();
@@ -152,13 +152,7 @@ describe("runChatTurn", () => {
     s = setup();
     const id = prod(s);
     const { runId } = startPlanRun(s.core, s.db, id);
-    for (const [gate, stage, file] of [
-      ["approve-trend-report", "trend-report", "trend-report.json"], ["approve-rnd", "rnd", "rnd.json"],
-      ["approve-branding", "branding", "branding.json"], ["approve-plan", "plan-episodes", "series-plan.json"],
-    ] as const) {
-      await drain(s);
-      await submitStudioGate(s.core, s.db, runId, gate, readStageDocument(s.core, runId, stage, file));
-    }
+    await approvePlanGatesUntil(s, id, () => drain(s), null);
     await drain(s);
     const ep = listEpisodes(s.db, id)[0]!;
     const key = chatScopeFor(s.core, s.db, id, ep.id);

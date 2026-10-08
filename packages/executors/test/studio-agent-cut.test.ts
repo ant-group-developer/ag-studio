@@ -89,4 +89,34 @@ describe("shot-cut skills with the fake Claude", () => {
     expect(plan.shots.map((x: { shot_id: string }) => x.shot_id)).toEqual(["s000-001", "s000-002", "s000-003"]);
     expect(plan.lines.length).toBeGreaterThan(0);
   });
+
+  it("cut 1.1.0: an edit plan off the style's shot length goes back once (style_shot_length) and follows it", async () => {
+    process.env.FAKE_STUDIO_MODE = "edit-plan-ignore-style-once";
+    const long = { ...shots, sources: [{ ...shots.sources[0]!, duration_seconds: 60, shots: Array.from({ length: 6 }, (_, i) => ({ shot_id: `s000-00${i}`, in: i * 10, out: i * 10 + 10 })) }] };
+    const survey = { schema_version: "harness.survey-index/v2", shots: long.sources[0]!.shots.map((x) => ({ source_id: SRC, shot_id: x.shot_id, in: x.in, out: x.out, score: 4, tags: [], usable: true, note: "ok", speech: "ambient" })) };
+    const style = { schema_version: "studio.style/v1", skipped: false, skipped_reason: null, name: "Nhanh", summary: "", references: [], measured: null,
+      params: { cut_rhythm: "fast", shot_seconds: { min: 1.5, max: 2.5 }, transitions: ["cut"], opening: { seconds: 5, structure: "" },
+        text_overlay: { density: "low", style: "" }, subtitles: "none", voice: "unknown", music: { mood: "", ducking: null }, visual: "", pace_notes: "" },
+      do: [], dont: [], evidence: [] };
+    const req = request("studio-edit-plan", "studio_edit_plan", "edit-plan.json", {
+      survey_index: survey, shots: long, cut_sources: sources, studio_style: style,
+      studio_episode: { schema_version: "studio.episode/v1", episode_id: "ep-1", title: "Phố cổ", target_seconds: 40 },
+    });
+    const res = await executor([], []).execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.outcome, JSON.stringify(res.errors)).toBe("succeeded");
+    const prompts = readFileSync(join(req.workspace_uri, "logs", "fake-claude-prompts.log"), "utf8");
+    expect(prompts).toContain("## studio_style (studio_style.json)");
+    // the repair round: what the check refused
+    expect(prompts.split("----- call ").length - 1).toBe(2);
+    expect(prompts).toContain("[style_shot_length]");
+    const plan = JSON.parse(readFileSync(join(req.workspace_uri, "output", "edit-plan.json"), "utf8"));
+    expect(plan.shots.every((x: { in: number; out: number }) => x.out - x.in === 2)).toBe(true);
+  });
+
+  it("the style stays out of the scene selection's prompt", async () => {
+    const req = request("studio-source-survey", "survey_index", "survey.json", { shots, cut_sources: sources, studio_style: { schema_version: "studio.style/v1" } });
+    const res = await executor([], []).execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.outcome, JSON.stringify(res.errors)).toBe("succeeded");
+    expect(readFileSync(join(req.workspace_uri, "logs", "fake-claude-prompts.log"), "utf8")).not.toContain("studio_style");
+  });
 });

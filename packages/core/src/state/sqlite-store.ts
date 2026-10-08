@@ -14,6 +14,12 @@ import { assertTransition, STATE_FIELD_BY_KIND, TABLE_BY_KIND } from "./transiti
 
 export const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "migrations");
 
+/**
+ * How many of a stage's attempts may be abandoned (their worker died, was restarted, lost its lease) before the stage
+ * fails. Abandoned attempts do not count toward `retry.max_attempts`, which is for the stage failing on its own.
+ */
+export const MAX_ABANDONED_ATTEMPTS = 5;
+
 type Row = { data: string };
 
 export class SqliteStateStore implements StateStore {
@@ -537,12 +543,16 @@ export class SqliteStateStore implements StateStore {
           continue;
         }
         const active = ["CLAIMED", "RUNNING", "VERIFYING"].includes(stage.state);
-        const canRetry = active && stage.retry.retry_on.includes("abandoned") && stage.attempt_count < stage.retry.max_attempts;
+        // A worker that died (or was restarted) is not the stage failing: its attempt is given back, and only a
+        // stage that keeps losing its worker -- MAX_ABANDONED_ATTEMPTS times -- fails.
+        const abandoned = (this.db.prepare("SELECT COUNT(*) AS n FROM attempt WHERE stage_run_id = ? AND state = 'ABANDONED'").get(stage.stage_run_id) as { n: number }).n;
+        const canRetry = active && stage.retry.retry_on.includes("abandoned") && abandoned < MAX_ABANDONED_ATTEMPTS;
         if (active) {
           const next = canRetry ? "READY" : "FAILED";
-          this.transition("stage_run", stage.stage_run_id, stage.state, next, { ...this.eventBase(stage, attempt.attempt_id), severity: "warn", event_type: "stage.lease_expired", payload: { requeued: canRetry } });
+          this.transition("stage_run", stage.stage_run_id, stage.state, next, { ...this.eventBase(stage, attempt.attempt_id), severity: "warn", event_type: "stage.lease_expired", payload: { requeued: canRetry, abandoned } });
           const fresh = this.getStageRun(stage.stage_run_id)!;
-          this.updateStageRun({ ...fresh, last_failure_kind: "abandoned", ready_at: now, not_before: now });
+          const attempt_count = canRetry ? Math.max(0, fresh.attempt_count - 1) : fresh.attempt_count;
+          this.updateStageRun({ ...fresh, attempt_count, last_failure_kind: "abandoned", ready_at: now, not_before: now });
         }
         out.push({ stage_run_id: stage.stage_run_id, run_id: stage.run_id, attempt_id: attempt.attempt_id, owner: lease.owner, requeued: canRetry });
       }

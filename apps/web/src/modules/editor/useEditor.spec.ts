@@ -19,6 +19,7 @@ function makeClient(overrides: Partial<EditorClient> = {}): EditorClient {
     getEditorJob: vi.fn(),
     getAssetMedia: vi.fn(),
     getProductionCatalog: vi.fn(),
+    listMusic: vi.fn().mockResolvedValue({ tracks: [] }),
     ...overrides,
   };
 }

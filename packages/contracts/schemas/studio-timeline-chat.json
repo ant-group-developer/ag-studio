@@ -438,6 +438,28 @@
                   "mode"
                 ],
                 "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "setClipMuted"
+                  },
+                  "clip_id": {
+                    "type": "string",
+                    "pattern": "^C\\d{3,4}$"
+                  },
+                  "muted": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "op",
+                  "clip_id",
+                  "muted"
+                ],
+                "additionalProperties": false
               }
             ]
           },

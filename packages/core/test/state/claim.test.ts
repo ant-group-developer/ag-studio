@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { join } from "node:path";
 import { isHarnessError } from "@harness/contracts";
-import { addSeconds, FixedClock, MIGRATIONS_DIR, SqliteStateStore } from "../../src/index.js";
+import { addSeconds, FixedClock, MAX_ABANDONED_ATTEMPTS, MIGRATIONS_DIR, SqliteStateStore } from "../../src/index.js";
 import { openTempStore, seedStage } from "../helpers.js";
 
 const claimWith = (store: SqliteStateStore, owner: string, caps: string[] = ["write_workspace"]) =>
@@ -56,7 +56,7 @@ describe("claim", () => {
     expect(store.getAttempt(first.attempt.attempt_id)?.state).toBe("ABANDONED");
     const stage = store.getStageRun(first.stageRun.stage_run_id)!;
     expect(stage.state).toBe("READY");
-    expect(stage.attempt_count).toBe(1);
+    expect(stage.attempt_count).toBe(0); // an attempt a dead worker abandoned is given back
     expect(stage.last_failure_kind).toBe("abandoned");
     expect(store.getLease(stage.stage_run_id)).toBeUndefined();
     const second = claimWith(store, "w2")!;
@@ -66,9 +66,22 @@ describe("claim", () => {
     expect(() => store.assertFencing(stage.stage_run_id, 2)).not.toThrow();
   });
 
-  it("fails the stage when abandoned attempts exhaust max_attempts", () => {
+  it("abandoned attempts do not use up max_attempts: a stage is requeued until MAX_ABANDONED_ATTEMPTS were abandoned", () => {
     const { store, clock } = openTempStore();
-    seedStage(store, { retry: { max_attempts: 1 } });
+    const { stage: seeded } = seedStage(store, { retry: { max_attempts: 1 } });
+    const results: boolean[] = [];
+    for (let i = 0; i < MAX_ABANDONED_ATTEMPTS; i++) {
+      claimWith(store, `w${i}`);
+      clock.advance(91);
+      results.push(store.reapExpiredLeases(clock.now())[0]!.requeued);
+    }
+    expect(results).toEqual([...Array(MAX_ABANDONED_ATTEMPTS - 1).fill(true), false]);
+    expect(store.getStageRun(seeded.stage_run_id)?.state).toBe("FAILED");
+  });
+
+  it("a stage that does not retry abandoned attempts fails at the first one, as before", () => {
+    const { store, clock } = openTempStore();
+    seedStage(store, { retry: { max_attempts: 3, retry_on: ["transient"] } });
     claimWith(store, "w1");
     clock.advance(91);
     const [r] = store.reapExpiredLeases(clock.now());

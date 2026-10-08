@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { StageRequest } from "@harness/contracts";
 import { STUDIO_TYPES } from "@harness/core";
-import { studioPrompt, studioPromptHead, studioPromptTail, studioValidator } from "../src/studio-agent-executor.js";
+import { studioPrompt, studioPromptHead, studioPromptTail, studioValidator, surveyForKit } from "../src/studio-agent-executor.js";
 
 const catalog = {
   schema_version: "studio.catalog/v2", production_id: "prod-1", folder_ids: ["f1"], total_available: 2, truncated: false,
@@ -60,6 +60,46 @@ ${studioPromptTail(p)}`).toBe(full);
       }
     });
   }
+});
+
+describe("the YouTube kit of a shot-cut episode (cut 1.1.0)", () => {
+  const src = "src_01J0000000000000000000000A";
+  const shot = (shot_id: string, note: string) => ({ source_id: src, shot_id, in: 0, out: 4, score: 4, tags: ["tàu"], usable: true, note, speech: "none" as const });
+  const survey = { schema_version: "harness.survey-index/v2", shots: [shot("s000-000", "tranh cánh đồng lúa treo trong toa"), shot("s000-001", "ga Ninh Bình"), shot("s000-002", "không dùng")] };
+  const clip = (clip_id: string, shot_id: string) => ({ clip_id, asset_id: "a01", section_title: null, in: 0, out: 4, shot_id, line_id: null, transition_out: { kind: "cut", seconds: 0 } });
+
+  it("reads what Claude saw in the shots the cut uses, not the others", () => {
+    expect(surveyForKit(survey as never, { clips: [clip("C001", "s000-001"), clip("C002", "s000-000")] })).toEqual({
+      shots: [
+        { shot_id: "s000-000", usable: true, score: 4, tags: ["tàu"], note: "tranh cánh đồng lúa treo trong toa" },
+        { shot_id: "s000-001", usable: true, score: 4, tags: ["tàu"], note: "ga Ninh Bình" },
+      ],
+    });
+    expect(surveyForKit(survey as never, null).shots).toHaveLength(3);
+  });
+
+  it("the head carries the survey of the cut under survey_index", () => {
+    const ws = mkdtempSync(join(tmpdir(), "prompt-"));
+    const files: [string, string, unknown][] = [
+      [STUDIO_TYPES.surveyIndex, "survey.json", survey],
+      [STUDIO_TYPES.timelineV4, "timeline.json", {
+        schema_version: "studio.timeline/v4", production_id: "prod-1", episode_id: "ep-1", canvas: { width: 1920, height: 1080 }, fps: 25,
+        language: "vi", edit_style: "cut", clips: [clip("C001", "s000-000")], texts: [], narration: { voice: "none", lead_seconds: 0, lines: [] },
+        captions: { mode: "none" }, music: null, source_audio: { muted: false }, assets: {}, alternates: [],
+      }],
+      [STUDIO_TYPES.episode, "episode.json", doc("episode")],
+    ];
+    const inputs = files.map(([type, name, value]) => {
+      mkdirSync(join(ws, "inputs", type), { recursive: true });
+      writeFileSync(join(ws, "inputs", type, name), JSON.stringify(value));
+      return { path: `inputs/${type}/${name}`, type, checksum: `sha256:${"0".repeat(64)}`, size_bytes: 1, kind: "file" as const };
+    });
+    const req = { inputs, stage_config: { __skill: "studio-youtube-kit", __brief: "Kit" } } as unknown as StageRequest;
+    const head = studioPromptHead(req, ws);
+    expect(head).toContain("## survey_index (survey.json)");
+    expect(head).toContain("tranh cánh đồng lúa treo trong toa");
+    expect(head).not.toContain("ga Ninh Bình");
+  });
 });
 
 describe("studioValidator", () => {

@@ -1,9 +1,10 @@
-import type { EditPlan, StudioSurvey } from "@harness/contracts";
+import type { EditPlan, StudioStyle, StudioSurvey } from "@harness/contracts";
 import type { StepDocKind } from "../../../api/studio-client";
 import { EditPlanEditor, SurveyEditor } from "./CutEditors";
 import { DocEditor } from "./DocEditor";
 import { DocView } from "./DocView";
 import { EditPlanResult } from "./EditPlanResult";
+import { StyleEvidence } from "./StyleEvidence";
 import { SurveyResult } from "./SurveyResult";
 
 interface Where { productionId: string; episodeId?: string | undefined }
@@ -14,12 +15,15 @@ export function StepDocBody({ kind, doc, previous, names, productionId, episodeI
 }) {
   if (kind === "survey") return <SurveyResult productionId={productionId} episodeId={episodeId!} survey={doc as StudioSurvey} previous={previous as StudioSurvey | undefined} />;
   if (kind === "edit_plan") return <EditPlanResult plan={doc as EditPlan} previous={previous as EditPlan | undefined} />;
+  if (kind === "style") {
+    return <><DocView kind="style" doc={doc} {...(previous !== undefined ? { previous } : {})} /><StyleEvidence productionId={productionId} style={doc as StudioStyle} /></>;
+  }
   return <DocView kind={kind} doc={doc} previous={previous} {...(names ? { names } : {})} />;
 }
 
-/** A trend report skipped for want of research has nothing to edit. */
+/** A trend report skipped for want of research, or a style skipped for want of reference videos, has nothing to edit. */
 export function canEditDoc(kind: StepDocKind, doc: unknown): boolean {
-  return !(kind === "trend_report" && (doc as { skipped?: boolean } | null)?.skipped);
+  return !((kind === "trend_report" || kind === "style") && (doc as { skipped?: boolean } | null)?.skipped);
 }
 
 /** A step's document as a form (the same for a step waiting and one looked at again). */

@@ -5,6 +5,7 @@
  */
 import { useMemo, useState } from "react";
 import { Alert, Grid, Modal, Spin } from "antd";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { isTimelineV4, layoutTimeline, timelineIssues } from "@studio/timeline";
 import { useEditor } from "./useEditor";
@@ -26,6 +27,8 @@ export interface EditorViewProps {
 export function EditorView({ productionId, episodeId, client, media, onRerender }: EditorViewProps) {
   const { t } = useTranslation();
   const editor = useEditor(productionId, episodeId, client);
+  // the team's music library, for the music picker (none: the track is typed)
+  const musicLibrary = useQuery({ queryKey: ["music-library"], queryFn: () => client.listMusic(), staleTime: 5 * 60_000 });
   // Below 1200 px the two side panels would squeeze the player and timeline: they go full width on top instead.
   const wide = Grid.useBreakpoint().xl ?? true;
   const [seek, setSeek] = useState({ time: 0, token: 0 });
@@ -96,7 +99,7 @@ export function EditorView({ productionId, episodeId, client, media, onRerender 
         </div>
 
         <div style={wide ? { width: 320, flexShrink: 0 } : { flex: "1 1 320px", order: 2 }}>
-          <PropertiesPanel state={state} layout={layout} dispatch={dispatch} />
+          <PropertiesPanel state={state} layout={layout} dispatch={dispatch} musicLibrary={musicLibrary.data?.tracks ?? []} />
         </div>
       </div>
 

@@ -15,11 +15,12 @@ import { StudioRunController } from './studio-run.controller';
 import { ThumbnailWorkService } from './thumbnail-work.service';
 import { ThumbnailsController } from './thumbnails.controller';
 import { TimelineController } from './timeline.controller';
+import { MusicLibraryController } from './music-library.controller';
 
 @Module({
   controllers: [
     StudioRunController, EpisodesController, ThumbnailsController, TimelineController, ProductionFootageController, ProductionDocsController, StepDocsController,
-    LlmLogController, CanvaController, ChatController, StudioOverviewController, ProductionAudioController,
+    LlmLogController, CanvaController, ChatController, StudioOverviewController, ProductionAudioController, MusicLibraryController,
   ],
   providers: [EngineService, FootageAccessService, ThumbnailWorkService, CanvaService, ChatFolders],
   exports: [EngineService],

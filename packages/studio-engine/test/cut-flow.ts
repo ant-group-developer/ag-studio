@@ -7,9 +7,9 @@ import { copyFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  createStudioWorker, listEpisodes, planRunView, readStageDocument, startPlanRun, submitStudioGate, type CutMediaDeps,
+  createStudioWorker, listEpisodes, startPlanRun, type CutMediaDeps,
 } from "../src/index.js";
-import { FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, ROOT, seedProduction, world } from "./helpers.js";
+import { approvePlanGatesUntil, FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, ROOT, seedProduction, world } from "./helpers.js";
 import { makeSceneClip } from "../../../tests/media.js";
 
 export { hasFfmpeg } from "../../../tests/media.js";
@@ -59,15 +59,8 @@ export const waiting = (s: CutSetup, runId: string) =>
 export async function cutEpisodeAtSurvey(s: CutSetup) {
   const prod = seedProduction(s.db, { episode_target_seconds: 16, max_episodes: 1 });
   s.db.run("UPDATE productions SET keywords = ?, voice = ? WHERE id = ?", [JSON.stringify(["phố cổ"]), JSON.stringify(VOICE), prod]);
-  const { runId: planRun } = startPlanRun(s.core, s.db, prod);
-  for (const [gate, stage, file] of [
-    ["approve-trend-report", "trend-report", "trend-report.json"], ["approve-rnd", "rnd", "rnd.json"],
-    ["approve-branding", "branding", "branding.json"], ["approve-plan", "plan-episodes", "series-plan.json"],
-  ] as const) {
-    await drain(s);
-    if (planRunView(s.core, s.db, prod).waiting_gate !== gate) throw new Error(`expected ${gate}`);
-    await submitStudioGate(s.core, s.db, planRun, gate, readStageDocument(s.core, planRun, stage, file));
-  }
+  startPlanRun(s.core, s.db, prod);
+  await approvePlanGatesUntil(s, prod, () => drain(s), null);
   await drain(s);
   const ep = listEpisodes(s.db, prod)[0]!;
   return { prod, ep, runId: ep.run_id! };

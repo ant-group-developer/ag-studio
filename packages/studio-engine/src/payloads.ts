@@ -38,10 +38,18 @@ export function narrationUploads(t: StoredTimeline, voiceDir: string | undefined
  */
 export async function prepareEpisodeRender(
   workDir: string,
-  p: { timeline: StoredTimeline; revision: number; productionId: string; episodeId: string; output: string; thumbnails: { t_s: number; text: string }[]; voiceDir?: string },
+  p: {
+    timeline: StoredTimeline; revision: number; productionId: string; episodeId: string; output: string; thumbnails: { t_s: number; text: string }[]; voiceDir?: string;
+    /**
+     * false: the composition leaves out the timeline's text look (`studio-episode-render-v4`, cut 1.0.0, renders as it
+     * always did on any worker). Default: kept (a worker that cannot draw it refuses the composition).
+     */
+    textStyle?: boolean;
+  },
 ): Promise<FarmPayloadBuild & { payload: StudioRenderPayload }> {
   const voice = narrationUploads(p.timeline, p.voiceDir);
   const composition = timelineToComposition(p.timeline);
+  if (p.textStyle === false) delete composition.text_style;
   const compPath = join(workDir, "render-plan", "composition.json");
   mkdirSync(dirname(compPath), { recursive: true });
   writeFileSync(compPath, JSON.stringify(composition, null, 2));

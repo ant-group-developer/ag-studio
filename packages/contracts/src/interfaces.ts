@@ -138,10 +138,18 @@ export interface StateStore {
   assertFencing(stageRunId: string, fencingToken: number): void;
 }
 
+/**
+ * The `reason` of `ExecutorContext.signal` when the stage's run was cancelled: the stage will not run again, so
+ * external work it started (a farm job) should be stopped. Any other reason (the worker is stopping, its lease was
+ * lost) means another attempt will run the stage, which may take that work over.
+ */
+export const STAGE_CANCELLED = "stage-cancelled";
+
 export interface ExecutorContext {
   workspaceDir: string;
   logger: { info(msg: string, data?: object): void; warn(msg: string, data?: object): void; error(msg: string, data?: object): void };
   clock: Clock;
+  /** Aborted when the attempt must stop; `signal.reason` is `STAGE_CANCELLED` when the run was cancelled. */
   signal?: AbortSignal;
 }
 export interface Executor { readonly version: string; execute(request: StageRequest, ctx: ExecutorContext): Promise<StageResult> }

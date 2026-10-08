@@ -137,7 +137,7 @@ export function validateSeriesPlan(
  * branding). The agent executor turns them into problems so Claude fixes them in its repair round; at a gate, or
  * when a person edits by hand, they stay warnings: a person may decide differently.
  */
-export const FOLLOW_UP_WARNING_PREFIXES = ["hint_", "branding_"] as const;
+export const FOLLOW_UP_WARNING_PREFIXES = ["hint_", "branding_", "style_"] as const;
 export function isFollowUpWarning(p: StudioProblem): boolean {
   return FOLLOW_UP_WARNING_PREFIXES.some((prefix) => p.code.startsWith(prefix));
 }
@@ -191,6 +191,22 @@ export function validateRnd(raw: unknown, ctx: { seed: Pick<StudioSeed, "channel
 }
 
 /** Branding (`studio-branding`, the `approve-branding` gate, a person's later edit): schema, plus consistency warnings. */
+/** WCAG contrast ratio of two #RRGGBB colours (1 … 21). */
+export function contrastRatio(a: string, b: string): number {
+  const lum = (hex: string) => {
+    const [r, g, bl] = [1, 3, 5].map((i) => {
+      const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r! + 0.7152 * g! + 0.0722 * bl!;
+  };
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+  return (hi! + 0.05) / (lo! + 0.05);
+}
+
+/** The words on the video must stand out from what is right behind them: the box, or else the outline. */
+export const TEXT_LOOK_MIN_CONTRAST = 3;
+
 export function validateBranding(raw: unknown): StudioValidation<StudioBranding> {
   const parsed = StudioBrandingSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, value: null, problems: zodProblems(parsed.error), warnings: [] };
@@ -204,12 +220,27 @@ export function validateBranding(raw: unknown): StudioValidation<StudioBranding>
   if (b.thumbnail.palette.text.toLowerCase() === b.thumbnail.palette.outline.toLowerCase()) {
     problems.push({ code: "palette_no_contrast", message: "màu chữ thumbnail trùng màu viền: chữ sẽ không đọc được" });
   }
+  const look = b.on_screen_text.look;
+  if (look) {
+    const behind = look.box_color ?? look.outline_color;
+    const ratio = contrastRatio(look.text_color, behind);
+    if (ratio < TEXT_LOOK_MIN_CONTRAST) {
+      problems.push({
+        code: "text_look_no_contrast",
+        message: `chữ trên video ${look.text_color} trên ${look.box_color ? "hộp" : "viền"} ${behind} chỉ tương phản ${ratio.toFixed(1)}:1 (cần ≥ ${TEXT_LOOK_MIN_CONTRAST}:1): chữ sẽ khó đọc`,
+      });
+    }
+  }
   return { ok: problems.length === 0, value: b, problems, warnings };
 }
 
 export function validateYoutubeKit(
   raw: unknown,
-  ctx: { episode: StudioEpisode; branding?: StudioBranding | null },
+  /**
+   * `timeline`: the approved cut of a shot-cut episode (timeline v4). Its thumbnails are frames of the cut, so a video
+   * the cut left out cannot be one.
+   */
+  ctx: { episode: StudioEpisode; branding?: StudioBranding | null; timeline?: { clips: readonly { asset_id: string }[] } | null },
 ): StudioValidation<YoutubeKit> {
   const parsed = YoutubeKitSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, value: null, problems: zodProblems(parsed.error), warnings: [] };
@@ -219,10 +250,13 @@ export function validateYoutubeKit(
   const warnings: StudioProblem[] = [];
 
   const episodeAssetIds = new Set(ctx.episode.items.map((i) => i.asset_id));
+  const cutAssetIds = ctx.timeline ? new Set(ctx.timeline.clips.map((c) => c.asset_id)) : null;
 
   for (const thumb of kit.thumbnails) {
     if (!episodeAssetIds.has(thumb.asset_id)) {
       problems.push({ code: "thumbnail_not_in_episode", message: `thumbnail dùng video ${thumb.asset_id} không có trong danh sách items của tập` });
+    } else if (cutAssetIds && !cutAssetIds.has(thumb.asset_id)) {
+      problems.push({ code: "thumbnail_not_in_timeline", message: `thumbnail dùng video ${thumb.asset_id} nhưng timeline đã duyệt không còn clip nào của video đó` });
     }
   }
 

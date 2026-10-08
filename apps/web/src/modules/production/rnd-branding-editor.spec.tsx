@@ -68,4 +68,21 @@ describe("BrandingEditor", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0]![0]).toEqual(branding);
   });
+
+  it("cut 1.1.0: a look for the text on the video is switched on, chosen and sent; switched off it is not sent", async () => {
+    const onSubmit = vi.fn().mockResolvedValue({ accepted: true });
+    render(<App><BrandingEditor value={branding} primaryLabel="Duyệt branding" onSubmit={onSubmit} /></App>);
+    fireEvent.click(screen.getByText("Chữ trên hình"));
+    fireEvent.click(await screen.findByRole("switch", { name: "Dùng kiểu chữ riêng" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Có hộp sau tiêu đề" }));
+    fireEvent.change(screen.getByLabelText("Màu chữ"), { target: { value: "#ffd166" } });
+    fireEvent.click(screen.getByRole("button", { name: "Duyệt branding" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0]![0].on_screen_text.look).toEqual({ text_color: "#FFD166", outline_color: "#000000", box_color: "#1D3557", size: "m" });
+
+    fireEvent.click(screen.getByRole("switch", { name: "Dùng kiểu chữ riêng" }));
+    fireEvent.click(screen.getByRole("button", { name: "Duyệt branding" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
+    expect(onSubmit.mock.calls[1]![0].on_screen_text.look).toBeUndefined();
+  }, 30_000);
 });

@@ -11,6 +11,7 @@
  * every later call (they would all fail the same way).
  */
 import type { ChannelRole, ResearchVideo, StudioBrief, StudioResearch } from "@harness/contracts";
+import { parseChannelInput } from "@harness/core";
 import type { StudioDb } from "./studio-db.js";
 
 export const YOUTUBE_API = "https://www.googleapis.com/youtube/v3";
@@ -72,40 +73,8 @@ export function estimateQuota(channels: number, keywords: number): number {
   return channels * 3 + keywords * (2 * SEARCH_UNITS + 1);
 }
 
-export type ChannelRef =
-  | { kind: "id"; value: string }
-  | { kind: "handle"; value: string }
-  | { kind: "username"; value: string }
-  | { kind: "video"; value: string };
-
-/**
- * What the user typed -> how to find the channel. Accepts channel ids (`UC…`), `@handle`, channel URLs
- * (`/channel/UC…`, `/@handle`, `/user/name`, `/c/name` — custom URLs are looked up as a handle, which is what
- * YouTube migrated them to), and video links (`watch?v=`, `youtu.be/`, `/shorts/`, `/live/`), whose channel is used.
- */
-export function parseChannelInput(raw: string): ChannelRef | null {
-  const input = raw.trim();
-  if (!input) return null;
-  if (/^UC[\w-]{22}$/.test(input)) return { kind: "id", value: input };
-  if (/^@[\w.\-·]{3,100}$/u.test(input)) return { kind: "handle", value: input };
-  let url: URL;
-  try { url = new URL(/^https?:\/\//i.test(input) ? input : `https://${input}`); } catch { return null; }
-  const host = url.hostname.replace(/^(www|m|music)\./, "");
-  if (host === "youtu.be") {
-    const id = url.pathname.split("/")[1];
-    return id && /^[\w-]{11}$/.test(id) ? { kind: "video", value: id } : null;
-  }
-  if (host !== "youtube.com") return null;
-  const parts = url.pathname.split("/").filter(Boolean).map((p) => decodeURIComponent(p));
-  const v = url.searchParams.get("v");
-  if (parts[0] === "watch" && v && /^[\w-]{11}$/.test(v)) return { kind: "video", value: v };
-  if ((parts[0] === "shorts" || parts[0] === "live" || parts[0] === "embed") && parts[1] && /^[\w-]{11}$/.test(parts[1])) return { kind: "video", value: parts[1] };
-  if (parts[0] === "channel" && parts[1] && /^UC[\w-]{22}$/.test(parts[1])) return { kind: "id", value: parts[1] };
-  if (parts[0]?.startsWith("@")) return { kind: "handle", value: parts[0] };
-  if (parts[0] === "user" && parts[1]) return { kind: "username", value: parts[1] };
-  if (parts[0] === "c" && parts[1]) return { kind: "handle", value: `@${parts[1]}` };
-  return null;
-}
+// Parsing what a person typed is shared with the web fallback (core `research-web.ts`).
+export { parseChannelInput, type ChannelRef } from "@harness/core";
 
 /** ISO 8601 duration (`PT1H2M3S`, `P1DT2H`) -> seconds; 0 when absent (live streams, premieres). */
 export function parseIsoDuration(iso: string | undefined | null): number {
@@ -134,18 +103,21 @@ interface ApiVideo {
   contentDetails?: { duration?: string };
 }
 
+/** A video as research keeps it, its views per day counted from `now` (at least one day). */
+export function researchVideo(v: Omit<ResearchVideo, "views_per_day" | "outlier">, now: Date): ResearchVideo {
+  const days = Math.max(1, (now.getTime() - Date.parse(v.published_at)) / 86400_000);
+  return { ...v, views_per_day: r2(v.views / days), outlier: false };
+}
+
 function toVideo(v: ApiVideo, now: Date): ResearchVideo | null {
   const publishedAt = v.snippet?.publishedAt;
   if (!publishedAt || !v.snippet?.channelId) return null;
-  const views = Number(v.statistics?.viewCount ?? 0);
-  const days = Math.max(1, (now.getTime() - Date.parse(publishedAt)) / 86400_000);
   const num = (x: string | undefined) => (x === undefined ? null : Number(x));
-  return {
+  return researchVideo({
     video_id: v.id, channel_id: v.snippet.channelId, channel_title: v.snippet.channelTitle ?? "", title: v.snippet.title ?? "",
-    published_at: publishedAt, duration_s: parseIsoDuration(v.contentDetails?.duration), views,
+    published_at: publishedAt, duration_s: parseIsoDuration(v.contentDetails?.duration), views: Number(v.statistics?.viewCount ?? 0),
     likes: num(v.statistics?.likeCount), comments: num(v.statistics?.commentCount), tags: v.snippet.tags ?? [],
-    views_per_day: r2(views / days), outlier: false,
-  };
+  }, now);
 }
 
 /** Marks videos at least `OUTLIER_FACTOR` x the median views/day of their group. */
@@ -153,6 +125,51 @@ function markOutliers(videos: ResearchVideo[]): number {
   const med = median(videos.map((v) => v.views_per_day));
   for (const v of videos) v.outlier = med > 0 && v.views_per_day >= OUTLIER_FACTOR * med;
   return med;
+}
+
+/** A channel's recent uploads summed up (outliers marked on the videos); null without videos. */
+export function channelStats(videos: ResearchVideo[]): StudioResearch["channels"][number]["stats"] {
+  if (!videos.length) return null;
+  const med = markOutliers(videos);
+  const times = videos.map((v) => Date.parse(v.published_at)).sort((a, b) => a - b);
+  const spanWeeks = times.length > 1 ? Math.max(1, (times[times.length - 1]! - times[0]!) / (7 * 86400_000)) : 1;
+  return {
+    median_views_per_day: r2(med),
+    uploads_per_week: r2(videos.length / spanWeeks),
+    shorts_ratio: r2(videos.filter((v) => v.duration_s > 0 && v.duration_s < SHORTS_MAX_SECONDS).length / videos.length),
+    median_duration_s: Math.round(median(videos.map((v) => v.duration_s))),
+  };
+}
+
+/** A keyword's results: outliers marked, best views/day first. */
+export function keywordVideos(videos: ResearchVideo[]): ResearchVideo[] {
+  markOutliers(videos);
+  return videos.sort((a, b) => b.views_per_day - a.views_per_day);
+}
+
+/**
+ * What the market says, over the reference channels and the keyword results (the team's own channels are measured,
+ * not copied): frequent title terms and tags of the better half by views/day, lengths, channels seen in many searches.
+ */
+export function researchInsights(channels: StudioResearch["channels"], keywords: StudioResearch["keywords"]): StudioResearch["insights"] {
+  const all = [...channels.filter((c) => c.role === "reference").flatMap((c) => c.videos), ...keywords.flatMap((k) => k.videos)];
+  const unique = [...new Map(all.map((v) => [v.video_id, v])).values()];
+  const buckets = new Map(BUCKETS.map((b) => [b, 0]));
+  for (const v of unique) buckets.set(durationBucket(v.duration_s), (buckets.get(durationBucket(v.duration_s)) ?? 0) + 1);
+  const inKeywords = new Map<string, { title: string; count: number }>();
+  for (const v of keywords.flatMap((k) => k.videos)) {
+    const e = inKeywords.get(v.channel_id) ?? { title: v.channel_title, count: 0 };
+    e.count++;
+    inKeywords.set(v.channel_id, e);
+  }
+  const perf = [...unique].sort((a, b) => b.views_per_day - a.views_per_day).slice(0, Math.max(10, Math.ceil(unique.length / 2)));
+  return {
+    top_title_terms: topCounts(perf.map((v) => titleTerms(v.title)), 30),
+    top_tags: topCounts(perf.map((v) => v.tags.map((t) => t.toLocaleLowerCase("vi").trim()).filter(Boolean)), 30),
+    duration_buckets: BUCKETS.map((bucket) => ({ bucket, count: buckets.get(bucket) ?? 0 })),
+    frequent_channels: [...inKeywords.entries()].filter(([, e]) => e.count >= 2).sort((a, b) => b[1].count - a[1].count).slice(0, 15)
+      .map(([channel_id, e]) => ({ channel_id, title: e.title, count: e.count })),
+  };
 }
 
 // Vietnamese function words that say nothing about a title's topic.
@@ -212,30 +229,9 @@ export class YoutubeResearchSource implements ResearchSource {
     for (const c of q.channels) channels.push(await this.channel(c.url, c.role, now));
     const keywords: StudioResearch["keywords"] = [];
     for (const keyword of q.keywords) keywords.push(await this.keyword(keyword, now));
-
-    // The market is the reference channels and the keyword results; the team's own channels are measured, not copied.
-    const all = [...channels.filter((c) => c.role === "reference").flatMap((c) => c.videos), ...keywords.flatMap((k) => k.videos)];
-    const unique = [...new Map(all.map((v) => [v.video_id, v])).values()];
-    const buckets = new Map(BUCKETS.map((b) => [b, 0]));
-    for (const v of unique) buckets.set(durationBucket(v.duration_s), (buckets.get(durationBucket(v.duration_s)) ?? 0) + 1);
-    const inKeywords = new Map<string, { title: string; count: number }>();
-    for (const v of keywords.flatMap((k) => k.videos)) {
-      const e = inKeywords.get(v.channel_id) ?? { title: v.channel_title, count: 0 };
-      e.count++;
-      inKeywords.set(v.channel_id, e);
-    }
-    // What performs: terms and tags of the better half by views/day
-    const perf = [...unique].sort((a, b) => b.views_per_day - a.views_per_day).slice(0, Math.max(10, Math.ceil(unique.length / 2)));
     return {
       schema_version: "studio.research/v1", production_id: q.production_id, fetched_at: now.toISOString(), quota_units: this.units,
-      skipped_reason: null, channels, keywords,
-      insights: {
-        top_title_terms: topCounts(perf.map((v) => titleTerms(v.title)), 30),
-        top_tags: topCounts(perf.map((v) => v.tags.map((t) => t.toLocaleLowerCase("vi").trim()).filter(Boolean)), 30),
-        duration_buckets: BUCKETS.map((bucket) => ({ bucket, count: buckets.get(bucket) ?? 0 })),
-        frequent_channels: [...inKeywords.entries()].filter(([, e]) => e.count >= 2).sort((a, b) => b[1].count - a[1].count).slice(0, 15)
-          .map(([channel_id, e]) => ({ channel_id, title: e.title, count: e.count })),
-      },
+      skipped_reason: null, channels, keywords, insights: researchInsights(channels, keywords),
     };
   }
 
@@ -263,15 +259,7 @@ export class YoutubeResearchSource implements ResearchSource {
       const pl = await this.get<{ items?: { contentDetails?: { videoId?: string } }[] }>("playlistItems", { part: "contentDetails", playlistId: uploads, maxResults: "50" });
       const ids = (pl.items ?? []).map((i) => i.contentDetails?.videoId).filter((x): x is string => !!x);
       entry.videos = await this.videos(ids, now);
-      const med = markOutliers(entry.videos);
-      const times = entry.videos.map((v) => Date.parse(v.published_at)).sort((a, b) => a - b);
-      const spanWeeks = times.length > 1 ? Math.max(1, (times[times.length - 1]! - times[0]!) / (7 * 86400_000)) : 1;
-      entry.stats = entry.videos.length ? {
-        median_views_per_day: r2(med),
-        uploads_per_week: r2(entry.videos.length / spanWeeks),
-        shorts_ratio: r2(entry.videos.filter((v) => v.duration_s > 0 && v.duration_s < SHORTS_MAX_SECONDS).length / entry.videos.length),
-        median_duration_s: Math.round(median(entry.videos.map((v) => v.duration_s))),
-      } : null;
+      entry.stats = channelStats(entry.videos);
       return entry;
     } catch (e) {
       return { ...entry, error: errorText(e) };
@@ -289,9 +277,7 @@ export class YoutubeResearchSource implements ResearchSource {
         }, { cacheable: true });
         for (const it of res.items ?? []) if (it.id?.videoId && !ids.includes(it.id.videoId)) ids.push(it.id.videoId);
       }
-      entry.videos = await this.videos(ids, now);
-      markOutliers(entry.videos);
-      entry.videos.sort((a, b) => b.views_per_day - a.views_per_day);
+      entry.videos = keywordVideos(await this.videos(ids, now));
       return entry;
     } catch (e) {
       return { ...entry, error: errorText(e) };

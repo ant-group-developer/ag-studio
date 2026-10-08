@@ -39,6 +39,7 @@ Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142)
 - ✅ 2026-10-07 — đã gỡ `getSegmentMedia`/`resolveSegments` của `ag-go-client`, bản sao ở web, `useSegmentMedia`,
   `SegmentPreviewCard`.
 - ✅ 2026-10-07 — `profile.yaml` của `studio-production` trỏ `ag-studio-series-plan@3.1.0` (workflow đầu vào).
+  2026-10-08: trỏ `@3.2.0`.
 - `.env` của máy dev còn `STUDIO_WORKFLOW` (do `E:ag-localsetupconfig-local.cjs flow …` ghi), không còn code nào đọc.
 - ✅ 2026-10-07 — migration `0025` xoá `comments`, `timeline_revisions`, `studio_editor_jobs` (dòng GĐ4 cũ mất theo).
 - **Giọng và nhạc tuỳ chọn (plan 2026-10-07 optional-audio), còn để sau:**
@@ -107,7 +108,9 @@ Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-3-render.md`. Cố ý c
   vẫn sửa timeline (scope `timeline`); đề xuất chờ "Áp dụng" thì cột phải hiện lại timeline.
 - Cuối pha 3: `corepack pnpm -r run build` và `pnpm -r typecheck` sạch; `vitest run` 1532 pass, 170 skip, 0 fail.
 - `chat.test.ts` › "the subscription limit leaves the reply waiting, then it runs" chập chờn khi chạy cả bộ
-  `packages/studio-engine` (máy tải nặng); chạy riêng thì pass.
+  `packages/studio-engine` (máy tải nặng); chạy riêng thì pass. Nguyên nhân (2026-10-08): test so
+  `notBefore − updated_at` **đúng bằng** 60 000 ms, hai mốc lấy từ hai lần gọi đồng hồ nên có thể lệch 1 ms khi máy bận;
+  nên so trong khoảng hoặc lấy cùng một mốc.
 
 ### Sau pha 5 — kiểu dựng "cắt theo shot" (2026-10-06)
 
@@ -144,6 +147,45 @@ Plan: `docs/superpowers/plans/2026-10-07-ag-studio-phase-4-premiere.md`, ADR-000
 - ✅ Đã đóng 2026-10-07 — chặn worker cũ ở hợp đồng: payload có `edit_style: cut`, worker cũ từ chối (ADR mục 172).
 - **Phụ đề không nằm sẵn trên timeline Premiere:** chỉ có `captions.srt` để nhập tay; karaoke thành chữ thường (SRT).
 - **Mở thử trong Premiere bằng tay** (plan, nhóm C) chưa làm: cần máy có Premiere và stack local.
+
+### Sau plan chất lượng 2026-10-08 (series 3.2.0, tập cắt 1.1.0)
+
+Plan: `docs/superpowers/plans/2026-10-08-ag-studio-quality-fixes.md`, ADR-0001 mục 175–178. Đã đóng (đánh giá bản
+render "Ninh Bình Chậm #1" ngày 08/10):
+
+- ✅ Research bị bỏ qua lặng lẽ khi thiếu `YOUTUBE_API_KEY`: báo cáo xu hướng ghi lý do; series 3.2.0 có đường dự phòng
+  web (Claude tìm link, yt-dlp đọc số; ADR 176).
+- ✅ Kênh mẫu chỉ dùng cho số liệu: series 3.2.0 học phong cách dựng từ ≤3 video mẫu (ADR 175), tập 1.1.0 theo nó.
+- ✅ `narration: original` render thành `voice: none`.
+- ✅ Worker khởi động lại làm mất job farm (huỷ và gửi lại cuối hàng đợi; lần bỏ dở tính vào `max_attempts`): nhận lại
+  job theo fingerprint, abort không huỷ job, lần bỏ dở trả lượt (trần riêng 5; ADR 177).
+- ✅ Tiêu đề sai sự thật, thông báo trên tàu lọt vào video, câu Whisper bịa, branding không vào render (hộp chữ đen
+  đặc), không nhạc: tập cắt 1.1.0 (ADR 178) — **có sẵn nhưng chưa là bản đang dùng**, xem dưới.
+
+Còn để lại:
+
+- **Chuyển `STUDIO_WORKFLOWS.episodeCut` sang 1.1.0** sau khi mọi node farm chạy ag-render-worker 0.8.0
+  (`studio-production.md` mục 2a). Sau khi chuyển: chạy E2E `farm-render` và một tập thật trên stack local (plan, mục
+  Kiểm chứng 4: loa thông báo im trong `final.mp4`, chữ đúng màu và hộp, nhạc đúng mood, A1 trống ở clip đã tắt trong
+  Premiere).
+- **Nhánh ở repo khác chưa gộp:** ag-farm `fix/studio-premiere-per-clip-audio` (trường `audio` của
+  `studio.export_premiere`), ag-render-worker `fix/premiere-per-clip-audio-text-style` (0.8.0). Studio dùng protocol qua
+  `link:` nên build Studio cần checkout ag-farm có commit đó.
+- **yt-dlp chưa cài trên máy dev** (không cài khi chưa hỏi): ở stack local, bước phong cách dựng bị bỏ qua và số liệu
+  research dự phòng là số Claude đọc (`estimated`). Bản ghim trong `Dockerfile` (`YTDLP_VERSION`) chưa build thử thành
+  image.
+- **Chạy thật trên stack local** (Claude thật, ag-go, farm) cho series 3.2.0 chưa làm; đã có E2E series-flow (fake Claude,
+  fake yt-dlp, ffmpeg thật: học style từ video giả, khung bằng chứng ký URL).
+- **Màn cũ `/productions`** không có gate `approve-style` và `ResearchView` cũ không ghi nguồn web / số ước lượng.
+- **Chat ở bước phong cách dựng** dùng prompt như mọi bước structured, không resume session files mode của stage.
+- **Tắt tiếng clip dựa vào Claude** (kế hoạch dựng đọc transcript và survey); không có bộ dò loa thông báo tự động.
+- **Kho nhạc trống lúc đầu**: admin phải tải bài lên; không có bài nào đúng mood thì tập không có nhạc (vẫn chọn tay
+  được trong editor).
+- `apps/web` `thumbnail-panel.spec.tsx` › "opens Canva…" quá 5 s khi chạy cả bộ web cùng engine (máy tải nặng); chạy riêng
+  thì pass.
+- Cuối plan (2026-10-08): engine 59 file / 283 test (+ `episode-cut-v11`), integration, web 47 / 280, API, core,
+  contracts, executors pass với `FFMPEG_PATH`/`FFPROBE_PATH`; E2E từng file: series-flow 8/8, chat-flow 1/1,
+  farm-render 10/10 (render worker 0.8.0); ag-render-worker 120, ag-farm protocol 60.
 
 ### Rủi ro vận hành
 

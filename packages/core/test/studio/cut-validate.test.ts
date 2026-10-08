@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { EditPlan, ShotsIndex, StudioSurvey } from "@harness/contracts";
+import type { EditPlan, ShotsIndex, StudioStyle, StudioSurvey } from "@harness/contracts";
 import { studioSourceId } from "../../src/studio/render-plan.js";
 import { applySurveyOps, validateEditPlan, validateStudioSurvey } from "../../src/studio/cut-validate.js";
 import { TimelineOpError } from "../../src/studio/layout.js";
@@ -70,8 +70,36 @@ function plan(over: Partial<EditPlan> = {}): EditPlan {
 }
 
 describe("validateEditPlan", () => {
+  it("cut 1.1.0: a median shot length outside the style's range (widened) is a style_ follow-up, from five shots on", () => {
+    const piece = (order: number, shot_id: string, source_id: string, inS: number) =>
+      ({ order, shot_id, source_id, in: inS, out: inS + 2, line_id: null, transition: "cut" as const, section_title: null, note: "" });
+    const five = plan({
+      target_seconds: 10,
+      shots: [
+        { ...piece(1, "s000-000", A, 1), line_id: "L001" }, piece(2, "s001-000", B, 0), { ...piece(3, "s000-002", A, 14), line_id: "L002" },
+        piece(4, "s000-002", A, 16), piece(5, "s001-000", B, 2),
+      ],
+    });
+    const style = (min: number, max: number, skipped = false) =>
+      ({ skipped, name: "Mei Time", params: { shot_seconds: { min, max } } }) as unknown as StudioStyle;
+    const ctx = { survey: survey(), shots: shots() };
+    expect(validateEditPlan(five, ctx)).toMatchObject({ ok: true, warnings: [] });
+    const slow = validateEditPlan(five, { ...ctx, style: style(4, 8) });
+    expect(slow.ok).toBe(true);
+    expect(slow.warnings).toEqual([{ code: "style_shot_length", message: expect.stringContaining("shot dài hơn") }]);
+    expect(validateEditPlan(five, { ...ctx, style: style(0.5, 1) }).warnings[0]?.message).toContain("shot ngắn hơn");
+    // within min × 0.7 … max × 1.3, a skipped style, or fewer than five shots: nothing
+    expect(validateEditPlan(five, { ...ctx, style: style(2.5, 6) }).warnings).toEqual([]);
+    expect(validateEditPlan(five, { ...ctx, style: style(4, 8, true) }).warnings).toEqual([]);
+    expect(validateEditPlan({ ...five, shots: five.shots.slice(0, 4) }, { ...ctx, style: style(4, 8) }).warnings.map((w) => w.code)).not.toContain("style_shot_length");
+  });
+
   it("usable shots in range, anchored lines, one title: ok", () => {
     expect(validateEditPlan(plan(), { survey: survey(), shots: shots() })).toMatchObject({ ok: true, problems: [], warnings: [] });
+    // cut 1.1.0: a shot may say its own sound is not heard
+    const muted = plan({ shots: plan().shots.map((s, i) => (i === 1 ? { ...s, source_audio: "mute" as const } : s)) });
+    expect(validateEditPlan(muted, { survey: survey(), shots: shots() }).ok).toBe(true);
+    expect(validateEditPlan({ ...muted, shots: [{ ...muted.shots[0]!, source_audio: "loud" }, ...muted.shots.slice(1)] }, { survey: survey(), shots: shots() }).problems[0]?.code).toBe("schema");
   });
 
   it("only usable shots of the approved selection, inside the shot, at least half a second", () => {

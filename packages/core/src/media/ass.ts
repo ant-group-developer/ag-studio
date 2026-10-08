@@ -11,6 +11,11 @@ export interface AssInput {
   text_events: TextEvent[];
   logo: { corner: "left" | "right"; height_px: number } | null;
   canvas: { width: number; height: number };
+  /**
+   * libass fills a BorderStyle 3 box with the OutlineColour: true puts the brand's box colour there for boxed text
+   * (Studio's text look, cut 1.1.0). Absent = the outline colour, as harness renders always did.
+   */
+  boxColorInOutline?: boolean;
 }
 
 const STYLES_FORMAT =
@@ -238,7 +243,7 @@ export function buildAss(p: AssInput): string {
       size: cfg.size_px,
       primary,
       secondary: primary,
-      outline,
+      outline: cfg.box && p.boxColorInOutline ? back : outline,
       back,
       bold,
       borderStyle: cfg.box ? 3 : 1,

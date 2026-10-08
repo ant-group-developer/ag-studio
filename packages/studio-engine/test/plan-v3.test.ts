@@ -38,15 +38,15 @@ describe("ag-studio-series-plan@3.0.0 / 3.1.0", () => {
   let s: Setup;
   afterEach(() => s?.core.close());
 
-  it("is the plan release new runs use, and its trend-report gate submits trend-report.json", () => {
-    expect(STUDIO_WORKFLOWS.plan.workflow).toBe("ag-studio-series-plan@3.1.0");
+  it("its trend-report gate submits trend-report.json (new runs use 3.2.0, which adds the style)", () => {
+    expect(STUDIO_WORKFLOWS.plan.workflow).toBe("ag-studio-series-plan@3.2.0");
     expect(STUDIO_GATES["approve-trend-report"]).toBe("trend-report.json");
   });
 
   it("stops at the trend report, and the approved one is what R&D and the episodes read", async () => {
     s = setup();
     const prod = seedMinimal(s);
-    const { runId } = startPlanRun(s.core, s.db, prod);
+    const { runId } = startPlanRun(s.core, s.db, prod, { workflow: "ag-studio-series-plan@3.1.0" });
     await drain(s);
     expect(planRunView(s.core, s.db, prod).waiting_gate).toBe("approve-trend-report");
     expect(planRunView(s.core, s.db, prod).stages.find((x) => x.key === "rnd")?.state).toBe("PENDING");

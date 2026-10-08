@@ -2,8 +2,12 @@ import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { StudioStyle } from "@harness/contracts";
 import type { AgGoFootageVideo } from "@harness/core";
-import { createStudioEngineCore, MemoryBucket, StudioDb, type FootageCatalogSource, type ThumbnailRenderer } from "../src/index.js";
+import {
+  approveChatScope, createStudioEngineCore, GATE_SOURCES, MemoryBucket, planRunView, readStageDocument, StudioDb, submitStudioGate,
+  type FootageCatalogSource, type StudioEngineCore, type ThumbnailRenderer,
+} from "../src/index.js";
 
 export const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..", "..", "..");
 export const FAKE_CLAUDE = join(ROOT, "fixtures", "fake-studio-claude.mjs");
@@ -188,3 +192,68 @@ export function readStoredZip(zip: Buffer): Map<string, Buffer> {
   }
   return files;
 }
+
+/**
+ * Approves, as Claude proposed them, the plan gates a test does not look at, in the order the run asks, until `until`
+ * waits (then returns, leaving it waiting) or the plan waits for nothing more (`until` null). The plan's gates change
+ * between releases (3.2.0 added approve-style beside the trend report), so a test names only the gate it is about.
+ * Returns the gates approved, in order.
+ */
+export async function approvePlanGatesUntil(
+  s: { core: StudioEngineCore; db: StudioDb }, productionId: string, drain: () => Promise<void>, until: string | null,
+): Promise<string[]> {
+  const approved: string[] = [];
+  for (let i = 0; i < 12; i++) {
+    await drain();
+    const view = planRunView(s.core, s.db, productionId);
+    const gate = view.waiting_gate;
+    if (!gate || gate === until) {
+      if (until && gate !== until) throw new Error(`the plan never waited at ${until} (approved ${approved.join(", ")})`);
+      return approved;
+    }
+    const src = GATE_SOURCES[gate];
+    if (!src) throw new Error(`no document source for gate ${gate}`);
+    await submitStudioGate(s.core, s.db, view.run_id, gate, readStageDocument(s.core, view.run_id, src.stage, src.file));
+    approved.push(gate);
+  }
+  throw new Error(`the plan kept asking (approved ${approved.join(", ")})`);
+}
+
+/**
+ * The same with a worker running on its own (integration tests): waits for each gate the plan asks for, approves it
+ * as shown (`approveChatScope`, no turn), and returns once `until` waits — or, with `until` null, once approve-plan
+ * is approved. Two gates may wait at once (the style beside the trend report); the plan shows the earlier stage's.
+ */
+export async function approvePlanGatesLive(
+  s: { core: StudioEngineCore; db: StudioDb }, productionId: string, userId: string, until: string | null, ms = 60_000,
+): Promise<string[]> {
+  const approved: string[] = [];
+  while (approved.at(-1) !== "approve-plan") {
+    const since = Date.now();
+    let gate: string | null = null;
+    while (!gate) {
+      try {
+        const g = planRunView(s.core, s.db, productionId).waiting_gate;
+        if (g && !approved.includes(g)) gate = g;
+      } catch { /* no plan run yet */ }
+      if (gate) break;
+      if (Date.now() - since > ms) throw new Error(`no plan gate within ${ms} ms (approved ${approved.join(", ") || "none"})`);
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    if (gate === until) return approved;
+    await approveChatScope(s.core, s.db, { productionId, stageKey: gate, turnId: null, userId });
+    approved.push(gate);
+  }
+  if (until) throw new Error(`the plan never waited at ${until} (approved ${approved.join(", ")})`);
+  return approved;
+}
+
+/** An approved edit style (series plan 3.2.0): slow cuts, 5–8 s shots. */
+export const STYLE: StudioStyle = {
+  schema_version: "studio.style/v1", skipped: false, skipped_reason: null, name: "Chậm", summary: "Cảnh dài, ít chữ.",
+  references: [{ video_id: "U_17EqTHUIo", title: "Kyoto", channel_title: "Mei Time", url: "https://www.youtube.com/watch?v=U_17EqTHUIo", duration_s: 1299 }],
+  measured: { videos: 1, shots: 200, cuts_per_minute: 9, shot_seconds: { p25: 5, median: 6.5, p75: 8 }, first_shot_s: 2 },
+  params: { cut_rhythm: "slow", shot_seconds: { min: 5, max: 8 }, transitions: ["cut"], opening: { seconds: 16, structure: "montage" },
+    text_overlay: { density: "low", style: "serif nhỏ" }, subtitles: "none", voice: "unknown", music: { mood: "calm", ducking: null }, visual: "", pace_notes: "" },
+  do: ["Mở bằng montage"], dont: [], evidence: [{ param: "opening", video_id: "U_17EqTHUIo", t: 2.5, note: "a" }],
+};

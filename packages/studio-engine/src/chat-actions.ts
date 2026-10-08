@@ -143,6 +143,8 @@ const EDIT_KINDS: Record<string, HumanEditKind> = {
   "approve-youtube-kit": "youtube_kit",
   // shot-cut episode 1.0.0
   "approve-survey": "survey", "approve-edit-plan": "edit_plan",
+  // series plan 3.2.0
+  "approve-style": "style",
 };
 
 /**

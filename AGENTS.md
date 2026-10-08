@@ -93,7 +93,7 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
   **`approve-timeline`** (nộp revision mới nhất) → `youtube-kit` → **`approve-youtube-kit`** → `freeze-timeline`
   (`studio-freeze-timeline-v2`: timeline **đã duyệt**) → `render-final` (farm) → `thumbnails` → `export`. Tập chờ
   gate có trạng thái `waiting_approval`. Plan 1.0.0/2.0.0 vẫn sinh tập 1.2.0 không gate (`episodeWorkflowForPlan`).
-- **Plan `ag-studio-series-plan@3.1.0`** (đang dùng) chỉ khác 3.0.0 ở `spawn-episodes` (`studio-spawn-episodes-v2`):
+- **Plan `ag-studio-series-plan@3.1.0`** chỉ khác 3.0.0 ở `spawn-episodes` (`studio-spawn-episodes-v2`):
   `plan-episodes` chọn kiểu dựng từng tập (`edit_style: whole|cut`, `narration: none|tts|original`), lưu ở
   `episodes.edit_style`; tập `cut` chạy **`ag-studio-episode-cut@1.0.0`** (`episodeWorkflowFor`): `episode-intake`
   → `fetch-proxies` (proxy 720p từ ag-go) → `media-index` (shot) → `transcribe` (farm `studio.transcribe`) →
@@ -104,6 +104,27 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
   `packages/studio-engine/src/cut-stages.ts`; chạy lại từ một gate: `rerunEpisodeFrom` (`cut-episode.ts`).
   Phiên bản đang dùng ở `STUDIO_WORKFLOWS` (`packages/studio-engine/src/core.ts`), gate ở `STUDIO_GATES`
   (`packages/studio-engine/src/run-control.ts`).
+- **Plan `ag-studio-series-plan@3.2.0`** (đang dùng; ADR-0001 mục 175–176) thêm vào 3.1.0 hai việc. (1) Research có
+  đường dự phòng: `research-api` (YouTube Data API như cũ) → `research-web` (skill `studio-web-research`, Claude chế
+  độ `web`: chỉ WebSearch/WebFetch, trả về link YouTube đã kiểm; chỉ gọi khi API thiếu khoá, lỗi, hay trống kênh/từ
+  khoá) → `research` (`studio-research-merge`: yt-dlp đọc số thật của link; không có yt-dlp thì số Claude đọc, đánh
+  dấu `estimated`). Stage cuối vẫn tên `research`. (2) Học phong cách dựng từ video mẫu: `pick-references` (≤3 video
+  của kênh `reference`) → `watch-references` (yt-dlp ≤480p, đo cut, trích khung lên `productions/<p>/style/`, xoá
+  video ngay) → `analyze-style` (skill `studio-style`, files mode) → **`approve-style`** → `apply-style` (ghi
+  `productions.style`). Thiếu yt-dlp/ffmpeg, `STUDIO_REFERENCE_DOWNLOADS=0`, hay không có kênh mẫu: style `skipped`
+  có lý do, gate vẫn chờ duyệt. `branding` chờ thêm `approve-style`; `brief` (`studio-finalize-brief-v2`) chuyển
+  `style.json` cho `plan-episodes`. `approve-style` có thể chờ cùng lúc với `approve-trend-report` hay
+  `approve-rnd`: `waiting_gate` và chat lấy gate của stage đứng trước. Test đi qua gate của plan bằng
+  `approvePlanGatesUntil`/`approvePlanGatesLive` (`packages/studio-engine/test/helpers.ts`), không viết cứng thứ tự.
+- **Tập cắt `ag-studio-episode-cut@1.1.0`** (đã có, **chưa phải bản đang dùng**; ADR-0001 mục 178): cùng khoá stage/gate
+  với 1.0.0, thêm `clean-transcript` (`studio-cut-clean-transcript`: bỏ câu Whisper bịa) giữa `transcribe` và các bước
+  đọc lời nói; `episode-intake` = `studio-cut-intake-v2` (chuyển `style.json` của production); `youtube-kit` đọc thêm
+  `approve-survey`; `fit-timeline` = `studio-cut-fit-v2` (clip `muted` theo `source_audio` của kế hoạch dựng,
+  `text_style` từ `branding.on_screen_text.look`, nhạc từ kho `/studio/music` theo mood khi production không có nhạc);
+  `render-final` = `studio-episode-render-v5` (composition mang `text_style`). **Chỉ chuyển
+  `STUDIO_WORKFLOWS.episodeCut` sang 1.1.0 sau khi mọi node farm chạy ag-render-worker ≥ 0.8.0** (worker cũ từ chối
+  composition có `text_style` và payload Premiere có `audio: per_segment`, có báo lỗi). Test chạy 1.1.0 bằng
+  `startEpisodeRun(…, { workflow })` (`episode-cut-v11.test.ts`).
 - Thư mục workflow đã phát hành **không bao giờ sửa**: làm phiên bản mới. Script/payload builder đổi đầu ra thì đặt
   **tên mới** (`studio-episode-export-v2`…) và giữ tên cũ cho run cũ; `workflow-wiring.test.ts` kiểm mọi phiên bản.
   Một stage chỉ nhận artifact của stage nó phụ thuộc **trực tiếp**, và mỗi kiểu chỉ đến từ một nguồn.
@@ -192,9 +213,12 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
   `approve-youtube-kit` (`approveChatScope({ renderMachine })`, gate khác → 422 `no_render_here`) hoặc khi Render lại
   (`POST …/episodes/:id/rerender { renderMachine }`). Xem trước 720p và xuất Premiere luôn `{}`. **Ghim một máy theo tên
   node là đổi hợp đồng ag-farm: hỏi trước.**
-- Attempt mới của một stage farm huỷ trước các job farm mà attempt trước của cùng stage để lại (`earlierJobsFor` của
-  `FarmExecutor` → `earlierFarmJobs`, tra `studio_farm_jobs`): worker khởi động lại giữa lúc chờ farm thì job cũ không
-  còn chạy cho không ai đọc. Huỷ hỏng không làm hỏng attempt.
+- Attempt mới của một stage farm **nhận lại** job mà attempt trước để lại nếu sẽ gửi lại đúng job đó (cùng
+  `farmJobFingerprint`, cột `studio_farm_jobs.fingerprint`) và farm còn giữ nó (`queued|paused|leased|completed`): không
+  upload, không gửi lại, đọc output từ prefix của attempt cũ. Job cũ khác thì huỷ (`earlierJobsFor` →
+  `earlierFarmJobs`). Abort vì worker tắt hay mất lease **giữ** job cho attempt sau; chỉ run bị huỷ
+  (`signal.reason === STAGE_CANCELLED`, heartbeat thấy `CANCEL_REQUESTED`) mới huỷ job. Attempt bị bỏ dở hay bị dừng vì
+  worker tắt được trả lượt thử; trần riêng `MAX_ABANDONED_ATTEMPTS` (5). ADR mục 177.
 - **Render lại** (`rerenderEpisode`): run 1.3.0 đã xong mà revision mới nhất **giống** timeline đã duyệt thì chạy lại
   từ `render-final` (không gọi Claude, không duyệt lại); đã sửa sau khi duyệt thì từ `approve-timeline`; tập 1.2.0 từ
   `freeze-timeline`. `episodeRenderInfo` (trường `render` của chi tiết tập) nói bước bắt đầu (`restartFrom`).

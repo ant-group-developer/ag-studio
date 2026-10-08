@@ -200,6 +200,18 @@ describe("youtube-kit-valid", () => {
     expect(r.problems).toContainEqual(expect.objectContaining({ code: "thumbnail_not_in_episode" }));
   });
 
+  it("a shot-cut episode: a thumbnail's video must still have a clip in the approved cut", () => {
+    const timeline = { clips: [{ asset_id: "a01" }, { asset_id: "a02" }, { asset_id: "a01" }] };
+    const r = validateYoutubeKit(youtubeKit(), { episode: episode(), timeline });
+    expect(r.ok).toBe(false);
+    expect(r.problems).toEqual([expect.objectContaining({ code: "thumbnail_not_in_timeline", message: expect.stringContaining("a03") })]);
+    expect(validateYoutubeKit(youtubeKit(), { episode: episode(), timeline: { clips: [...timeline.clips, { asset_id: "a03" }] } }).ok).toBe(true);
+    // not in the episode at all: that problem only
+    const kit = youtubeKit();
+    kit.thumbnails[2]!.asset_id = "nowhere";
+    expect(validateYoutubeKit(kit, { episode: episode(), timeline }).problems.map((p) => p.code)).toEqual(["thumbnail_not_in_episode"]);
+  });
+
   it("rejects duplicate titles", () => {
     const kit = youtubeKit({ titles: ["Phở bò", "Phở bò", "Phở bò khác"] });
     const r = validateYoutubeKit(kit, { episode: episode() });

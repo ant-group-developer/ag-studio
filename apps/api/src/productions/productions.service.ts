@@ -33,6 +33,8 @@ interface ProductionRow {
   own_channels: string | null;
   rnd: string | null;
   branding: string | null;
+  /** Migration 0029: the edit style (JSON), series plan 3.2.0. */
+  style?: string | null;
 }
 
 interface ProductionSourceRow {
@@ -44,6 +46,8 @@ interface PlanRunState {
   state: string;
   /** Gate waiting for a person, if any. */
   waiting_gate: string | null;
+  /** The release the plan run follows, `id@version`. */
+  workflow?: string;
 }
 
 interface TeamRow {
@@ -88,13 +92,17 @@ export interface ProductionDto {
   /** Whether an approved R&D / branding exists (GET /productions/:id/rnd, /branding). */
   hasRnd: boolean;
   hasBranding: boolean;
+  /** Series plan 3.2.0: whether the production has an edit style (a skipped one counts: GET /productions/:id/style). */
+  hasStyle: boolean;
+  /** The release of the plan run (`ag-studio-series-plan@3.2.0`…); null before the first run. 3.2.0 on has the style step. */
+  planWorkflow: string | null;
   aspect: "16:9" | "9:16";
   language: string;
   music: { track: string; gainDb: number; ducking: boolean } | null;
   canvas: { width: number; height: number } | null;
   status: ProductionStatus;
   /** With `waiting_approval`: which approval the plan run waits for. */
-  waitingGate: "approve-rnd" | "approve-branding" | "approve-plan" | null;
+  waitingGate: "approve-trend-report" | "approve-rnd" | "approve-branding" | "approve-plan" | "approve-style" | null;
   runId: string | null;
   episodeCounts: EpisodeCounts;
   ownerUserId: string | null;
@@ -135,7 +143,8 @@ function parseMusic(
 }
 
 /** The plan run's approvals: R&D, branding, episode plan. */
-const APPROVAL_GATES = new Set(["approve-trend-report", "approve-rnd", "approve-branding", "approve-plan"]);
+/** Series plan 3.2.0 adds the edit style learned from reference videos. */
+const APPROVAL_GATES = new Set(["approve-trend-report", "approve-rnd", "approve-branding", "approve-plan", "approve-style"]);
 
 /** Own and reference channels together are what research reads: at most 20. */
 function checkChannelCount(own: string[] | undefined, reference: string[] | undefined): void {
@@ -224,6 +233,8 @@ export class ProductionsService {
       maxEpisodes: row.max_episodes,
       hasRnd: !!row.rnd,
       hasBranding: !!row.branding,
+      hasStyle: !!row.style,
+      planWorkflow: run?.workflow ?? null,
       aspect: (row.aspect ?? "16:9") as "16:9" | "9:16",
       language: row.language ?? "vi",
       music: parseMusic(row.music),
@@ -255,6 +266,7 @@ export class ProductionsService {
     const run: PlanRunState | null = r
       ? {
           state: r.state,
+          workflow: `${r.workflow_release.id}@${r.workflow_release.version}`,
           waiting_gate:
             core.store
               .listStageRuns(r.run_id)
