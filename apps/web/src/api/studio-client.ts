@@ -63,7 +63,7 @@ export interface TeamDetail {
 }
 
 /** The AI steps a team skill can apply to (an empty list = every step). */
-export type TeamSkillStep = "intake" | "trend-report" | "rnd" | "branding" | "plan-episodes" | "timeline" | "youtube-kit";
+export type TeamSkillStep = "intake" | "web-research" | "trend-report" | "style" | "rnd" | "branding" | "plan-episodes" | "source-survey" | "edit-plan" | "timeline" | "youtube-kit";
 
 /** "Quy chuẩn & skill" of a team: markdown its Claude calls follow. */
 export interface TeamSkill {
@@ -105,7 +105,11 @@ export interface Production {
   ownChannels: string[];
   hasRnd: boolean;
   hasBranding: boolean;
-  waitingGate: "approve-rnd" | "approve-branding" | "approve-plan" | null;
+  /** Series plan 3.2.0: the production has an edit style (a skipped one counts). */
+  hasStyle?: boolean;
+  /** The release of the plan run (`ag-studio-series-plan@3.2.0`…); null before the first run. */
+  planWorkflow?: string | null;
+  waitingGate: "approve-trend-report" | "approve-rnd" | "approve-branding" | "approve-plan" | "approve-style" | null;
   keywords: string[];
   episodeTargetSeconds: number | null;
   maxEpisodes: number | null;
@@ -794,6 +798,11 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
       const base = `/api/productions/${productionId}${episodeId ? `/episodes/${episodeId}` : ""}`;
       return request(getAccessToken, "GET", `${base}/steps/${kind}`);
     },
+    /** Short-lived URLs of frames of the reference videos a style cites (at most 12). */
+    getStyleFrames(productionId: string, frames: { video_id: string; t: number }[]): Promise<{ frames: { video_id: string; t: number; url: string }[] }> {
+      const at = frames.slice(0, 12).map((f) => `${f.video_id}@${f.t}`).join(",");
+      return request(getAccessToken, "GET", `/api/productions/${productionId}/style/frames?at=${encodeURIComponent(at)}`);
+    },
     /** `reopen` false replaces the version in use; true opens the step again with this version on show. */
     editStepDocument(productionId: string, kind: StepDocKind, input: { document: unknown; reopen: boolean; episodeId?: string | null }): Promise<StepEditResult> {
       const base = `/api/productions/${productionId}${input.episodeId ? `/episodes/${input.episodeId}` : ""}`;
@@ -893,7 +902,7 @@ export interface ChatThreadView {
   queueAhead: number;
 }
 
-export type StepDocKind = "trend_report" | "rnd" | "branding" | "series_plan" | "youtube_kit" | "survey" | "edit_plan";
+export type StepDocKind = "trend_report" | "rnd" | "branding" | "series_plan" | "youtube_kit" | "survey" | "edit_plan" | "style";
 export interface StepDocView {
   kind: StepDocKind;
   gate: string;

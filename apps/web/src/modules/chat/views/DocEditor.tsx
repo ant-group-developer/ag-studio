@@ -29,6 +29,9 @@ function FieldInput({ field, value, onChange, label }: { field: FieldSpec; value
   switch (field.kind) {
     case "text":
       return <Input.TextArea aria-label={label} value={str(value)} autoSize={{ minRows: 1, maxRows: 14 }} onChange={(e) => onChange(e.target.value)} />;
+    case "choice":
+      return <Select aria-label={label} value={str(value) || undefined} style={{ width: "100%" }} onChange={(v: string) => onChange(v)}
+        options={(field.options ?? []).map((o) => ({ value: o, label: o }))} />;
     case "number":
       return <InputNumber aria-label={label} value={typeof value === "number" ? value : null} min={0} precision={0} onChange={(v) => onChange(v ?? null)} />;
     case "seconds":

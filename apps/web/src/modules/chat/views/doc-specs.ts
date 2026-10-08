@@ -2,7 +2,7 @@
  * How each document of a step reads in the result column (spec local-chat §2.3): the fields shown, in order, and
  * how each one reads. The same spec drives the highlight of what changed since the previous version.
  */
-export type FieldKind = "text" | "list" | "chips" | "number" | "seconds" | "pairs" | "palette" | "episodes";
+export type FieldKind = "text" | "list" | "chips" | "number" | "seconds" | "pairs" | "palette" | "episodes" | "choice";
 
 export interface FieldSpec {
   /** Dotted path in the document. */
@@ -12,9 +12,11 @@ export interface FieldSpec {
   kind: FieldKind;
   /** `pairs`: the keys of each item's title and text. */
   pair?: [string, string];
+  /** `choice`: the values it may take (a select when edited). */
+  options?: readonly string[];
 }
 
-export type DocKind = "trend_report" | "rnd" | "branding" | "series_plan" | "youtube_kit" | "intake";
+export type DocKind = "trend_report" | "rnd" | "branding" | "series_plan" | "youtube_kit" | "intake" | "style";
 
 export const DOC_SPECS: Record<DocKind, FieldSpec[]> = {
   intake: [
@@ -85,6 +87,28 @@ export const DOC_SPECS: Record<DocKind, FieldSpec[]> = {
     { path: "thumbnails", label: "thumbnailIdeas", kind: "pairs", pair: ["text", "asset_id"] },
     { path: "playlist", label: "playlist", kind: "text" },
   ],
+  // series plan 3.2.0: the edit style learned from reference videos (the frames it cites are shown beside it)
+  style: [
+    { path: "name", label: "styleName", kind: "text" },
+    { path: "summary", label: "summary", kind: "text" },
+    { path: "skipped_reason", label: "styleSkipped", kind: "text" },
+    { path: "measured.shot_seconds.median", label: "measuredShot", kind: "seconds" },
+    { path: "measured.cuts_per_minute", label: "cutsPerMinute", kind: "number" },
+    { path: "params.cut_rhythm", label: "cutRhythm", kind: "choice", options: ["fast", "medium", "slow"] },
+    { path: "params.shot_seconds.min", label: "shotMin", kind: "seconds" },
+    { path: "params.shot_seconds.max", label: "shotMax", kind: "seconds" },
+    { path: "params.transitions", label: "transitions", kind: "chips" },
+    { path: "params.opening.seconds", label: "openingLength", kind: "seconds" },
+    { path: "params.opening.structure", label: "opening", kind: "text" },
+    { path: "params.text_overlay.density", label: "textDensity", kind: "choice", options: ["none", "low", "medium", "high"] },
+    { path: "params.text_overlay.style", label: "onScreenText", kind: "text" },
+    { path: "params.subtitles", label: "subtitles", kind: "choice", options: ["none", "burn-in", "karaoke"] },
+    { path: "params.visual", label: "visual", kind: "text" },
+    { path: "params.pace_notes", label: "pace", kind: "text" },
+    { path: "do", label: "styleDo", kind: "list" },
+    { path: "dont", label: "styleDont", kind: "list" },
+    { path: "references", label: "references", kind: "pairs", pair: ["title", "channel_title"] },
+  ],
 };
 
 /** The document a step shows, by its stage key (gates and the Claude stages before them). */
@@ -96,6 +120,7 @@ export function docKindOf(stageKey: string): DocKind | null {
     case "branding": case "approve-branding": return "branding";
     case "plan-episodes": case "approve-plan": return "series_plan";
     case "youtube-kit": case "approve-youtube-kit": return "youtube_kit";
+    case "analyze-style": case "approve-style": return "style";
     default: return null;
   }
 }

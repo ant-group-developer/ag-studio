@@ -413,6 +413,11 @@
 .chat-kit-thumbs__frame { padding: 0; border: 2px solid transparent; border-radius: 6px; background: none; cursor: pointer; overflow: hidden; }
 .chat-kit-thumbs__frame:hover, .chat-kit-thumbs__frame:focus-visible { border-color: var(--chat-accent); }
 .chat-kit-thumbs__frame img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
+/* the edit style's evidence: reference video frames, each with what it shows (series plan 3.2.0) */
+.chat-style { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.chat-style__frames { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.chat-style__frame { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.chat-style__frame img, .chat-style__placeholder { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 6px; background: var(--chat-muted-bg, rgba(127, 127, 127, 0.15)); }
 .chat-files__item { display: flex; flex-direction: column; gap: 8px; }
 .chat-files__head, .chat-files__row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .chat-files__name { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }

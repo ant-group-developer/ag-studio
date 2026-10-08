@@ -46,6 +46,8 @@ interface PlanRunState {
   state: string;
   /** Gate waiting for a person, if any. */
   waiting_gate: string | null;
+  /** The release the plan run follows, `id@version`. */
+  workflow?: string;
 }
 
 interface TeamRow {
@@ -92,6 +94,8 @@ export interface ProductionDto {
   hasBranding: boolean;
   /** Series plan 3.2.0: whether the production has an edit style (a skipped one counts: GET /productions/:id/style). */
   hasStyle: boolean;
+  /** The release of the plan run (`ag-studio-series-plan@3.2.0`…); null before the first run. 3.2.0 on has the style step. */
+  planWorkflow: string | null;
   aspect: "16:9" | "9:16";
   language: string;
   music: { track: string; gainDb: number; ducking: boolean } | null;
@@ -230,6 +234,7 @@ export class ProductionsService {
       hasRnd: !!row.rnd,
       hasBranding: !!row.branding,
       hasStyle: !!row.style,
+      planWorkflow: run?.workflow ?? null,
       aspect: (row.aspect ?? "16:9") as "16:9" | "9:16",
       language: row.language ?? "vi",
       music: parseMusic(row.music),
@@ -261,6 +266,7 @@ export class ProductionsService {
     const run: PlanRunState | null = r
       ? {
           state: r.state,
+          workflow: `${r.workflow_release.id}@${r.workflow_release.version}`,
           waiting_gate:
             core.store
               .listStageRuns(r.run_id)

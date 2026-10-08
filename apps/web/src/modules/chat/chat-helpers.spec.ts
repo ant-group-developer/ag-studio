@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import i18n from "../../i18n/config";
 import { cutHeader } from "../../pages/ChatProductionPage";
 import { changesUnder, diffDoc, listDiff } from "./diff-doc";
-import { CUT_EPISODE_STEPS, EPISODE_STEPS, episodeStepsFor, isCutWorkflow, PLAN_STEPS, stepOf, stepPosition } from "./steps";
+import { CUT_EPISODE_STEPS, EPISODE_STEPS, episodeStepsFor, isCutWorkflow, PLAN_STEPS, planHasStyle, planStepsFor, resumeStageOf, stepOf, stepPosition } from "./steps";
 
 describe("stepOf", () => {
   it.each([
@@ -68,5 +68,25 @@ describe("diffDoc", () => {
     const d = listDiff(["kyoto vlog", "kyoto food"], ["kyoto vlog", "arashiyama"]);
     expect([...d.added]).toEqual(["arashiyama"]);
     expect(d.removed).toEqual(["kyoto food"]);
+  });
+});
+
+describe("the style step of series plan 3.2.0", () => {
+  it("shows beside the research only for plan 3.2.0 on", () => {
+    expect(planHasStyle("ag-studio-series-plan@3.2.0")).toBe(true);
+    expect(planHasStyle("ag-studio-series-plan@4.0.0")).toBe(true);
+    expect(planHasStyle("ag-studio-series-plan@3.1.0")).toBe(false);
+    expect(planHasStyle(null)).toBe(false);
+    expect(planStepsFor("ag-studio-series-plan@3.2.0")).toEqual(["research", "style", "rnd", "branding", "plan", "episodes"]);
+    expect(planStepsFor("ag-studio-series-plan@3.1.0")).toEqual(PLAN_STEPS);
+  });
+
+  it("groups its stages and the research's new ones; runs again from the API and from picking the references", () => {
+    for (const k of ["pick-references", "watch-references", "analyze-style", "approve-style", "apply-style"]) expect(stepOf(k)).toBe("style");
+    expect(stepOf("research-api")).toBe("research");
+    expect(stepOf("research-web")).toBe("research");
+    expect(resumeStageOf("research", { episode: false, workflow: "ag-studio-series-plan@3.2.0" })).toBe("research-api");
+    expect(resumeStageOf("style", { episode: false, workflow: "ag-studio-series-plan@3.2.0" })).toBe("pick-references");
+    expect(resumeStageOf("research", { episode: false, workflow: "ag-studio-series-plan@3.1.0" })).toBe("research");
   });
 });

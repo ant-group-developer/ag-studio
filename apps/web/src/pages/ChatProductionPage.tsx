@@ -11,7 +11,7 @@ import { ChatThread, type CardOptions, type ChatCard } from "../modules/chat/Cha
 import { StepPane } from "../modules/chat/StepPane";
 import { useStickToBottom } from "../modules/chat/use-stick-to-bottom";
 import { ResultPane, type MenuAction, type ResultAction } from "../modules/chat/ResultPane";
-import { episodeStepsFor, isCutWorkflow, PLAN_STEPS, resumeStageOf, STEP_SHOWS, stepLabelKey, stepOf, stepPosition, type ChatStep } from "../modules/chat/steps";
+import { episodeStepsFor, isCutWorkflow, planStepsFor, resumeStageOf, STEP_SHOWS, stepLabelKey, stepOf, stepPosition, type ChatStep } from "../modules/chat/steps";
 import { gateProblems } from "../modules/production/gate-problems";
 import { LlmLogPanel } from "../modules/production/LlmLogPanel";
 import { RenderFinalModal } from "../modules/render/RenderFinalModal";
@@ -68,7 +68,8 @@ export function ChatProductionPage() {
   const { data: episode } = useQuery({
     queryKey: ["episode", productionId, episodeId], queryFn: () => client.getEpisode(productionId, episodeId!), enabled: !!episodeId,
   });
-  const workflow = episode?.workflow ?? null;
+  // the episode's release, or the plan run's (3.2.0 on shows the style step)
+  const workflow = episodeId ? episode?.workflow ?? null : production?.planWorkflow ?? null;
   const cut = isCutWorkflow(workflow);
   // the footage step's divider counts the videos and shots (frames show footage: only with the footage scope)
   const { data: shots } = useQuery({
@@ -199,7 +200,7 @@ export function ChatProductionPage() {
   const ended = !!episodeId && thread?.scope?.scope === "timeline" && !!episode?.run;
   const endedAt = ended ? (episode?.status !== "ready" ? episode?.currentStage : null) ?? "render-final" : null;
   const step = stepOf(endedAt ?? thread?.scope?.stageKey ?? thread?.blocked?.stage ?? null, workflow);
-  const row = episodeId ? episodeStepsFor(workflow) : PLAN_STEPS;
+  const row = episodeId ? episodeStepsFor(workflow) : planStepsFor(workflow);
   const header = episodeId && episode ? cutHeader(episode.plan, t, episode.narrationDeclined) : null;
   const at = stepPosition(step, row);
   const finished = thread?.blocked?.code === "nothing_to_chat" || (ended && episode?.status === "ready");

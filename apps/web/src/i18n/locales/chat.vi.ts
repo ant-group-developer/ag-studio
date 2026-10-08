@@ -94,7 +94,7 @@ export const chatVi = {
   steps: {
     intake: "Hỏi thông tin", research: "Nghiên cứu thị trường", rnd: "R&D", branding: "Branding", plan: "Kế hoạch tập",
     episodes: "Dựng các tập", draft: "Dựng nháp", timeline: "Timeline", kit: "YouTube kit", render: "Render", export: "Xuất file",
-    footage: "Chuẩn bị footage", survey: "Chọn cảnh", editPlan: "Kế hoạch dựng",
+    footage: "Chuẩn bị footage", survey: "Chọn cảnh", editPlan: "Kế hoạch dựng", style: "Phong cách dựng",
   },
   cut: {
     header: "cắt theo shot · {{length}} · {{narration}}",
@@ -144,8 +144,20 @@ export const chatVi = {
     palette: "Màu", onScreenText: "Chữ trên hình", descriptionOpening: "Mở đầu mô tả", hashtags: "Hashtag",
     music: "Nhạc nền", rationale: "Lý do chia tập", episodes: "Các tập", titles: "Tiêu đề", description: "Mô tả",
     tags: "Tag", thumbnailIdeas: "Ý tưởng thumbnail", playlist: "Playlist",
+    styleName: "Phong cách", styleSkipped: "Không học được vì", measuredShot: "Cảnh dài (đo được, trung vị)",
+    cutsPerMinute: "Số lần cắt mỗi phút", cutRhythm: "Nhịp cắt", shotMin: "Cảnh ngắn nhất", shotMax: "Cảnh dài nhất",
+    transitions: "Chuyển cảnh", openingLength: "Độ dài mở đầu", opening: "Cách mở đầu", textDensity: "Mật độ chữ",
+    subtitles: "Phụ đề", visual: "Hình ảnh", pace: "Nhịp", styleDo: "Nên làm", styleDont: "Không làm", references: "Video mẫu",
     skippedResearch: "Không có dữ liệu nghiên cứu YouTube cho series này; các bước sau tự đề xuất.",
     roles: { own: "kênh của mình", reference: "tham khảo" },
+  },
+  style: {
+    skipped: "Không học được phong cách từ video mẫu: {{reason}}. Các bước sau dựng theo branding.",
+    evidence: "Bằng chứng (khung hình video mẫu)",
+    noFrames: "Không tải được khung hình.",
+    frameAlt: "Khung {{param}} tại {{t}} giây",
+    learnedFrom: "Học từ",
+    internalOnly: "Video mẫu chỉ tải bản 480p để phân tích nội bộ và đã xoá; chỉ giữ khung hình nhỏ.",
   },
   survey: {
     filter: "Lọc shot",

@@ -33,7 +33,7 @@ function Field({ field, doc, prev, names }: { field: FieldSpec; doc: unknown; pr
   const p = prev === undefined ? v : valueAt(prev, field.path);
   const changed = prev !== undefined && !same(v, p);
   switch (field.kind) {
-    case "text": case "number": case "seconds": {
+    case "text": case "number": case "seconds": case "choice": {
       const now = scalar(field, v);
       if (!now && !changed) return null;
       return <div className="chat-doc__value">{changed ? <Changed before={scalar(field, p)} after={now} /> : now}</div>;

@@ -96,7 +96,7 @@ export const chatEn: typeof chatVi = {
   steps: {
     intake: "Questions", research: "Market research", rnd: "R&D", branding: "Branding", plan: "Episode plan",
     episodes: "Build episodes", draft: "Draft", timeline: "Timeline", kit: "YouTube kit", render: "Render", export: "Export",
-    footage: "Prepare footage", survey: "Choose scenes", editPlan: "Edit plan",
+    footage: "Prepare footage", survey: "Choose scenes", editPlan: "Edit plan", style: "Edit style",
   },
   cut: {
     header: "cut shot by shot · {{length}} · {{narration}}",
@@ -146,8 +146,20 @@ export const chatEn: typeof chatVi = {
     palette: "Colours", onScreenText: "On-screen text", descriptionOpening: "Description opening", hashtags: "Hashtags",
     music: "Music", rationale: "Why this split", episodes: "Episodes", titles: "Titles", description: "Description",
     tags: "Tags", thumbnailIdeas: "Thumbnail ideas", playlist: "Playlist",
+    styleName: "Style", styleSkipped: "Not learned because", measuredShot: "Shot length (measured, median)",
+    cutsPerMinute: "Cuts per minute", cutRhythm: "Cut rhythm", shotMin: "Shortest shot", shotMax: "Longest shot",
+    transitions: "Transitions", openingLength: "Opening length", opening: "Opening", textDensity: "Text density",
+    subtitles: "Subtitles", visual: "Look", pace: "Pace", styleDo: "Do", styleDont: "Don't", references: "Reference videos",
     skippedResearch: "No YouTube research for this series; the next steps propose on their own.",
     roles: { own: "own channel", reference: "reference" },
+  },
+  style: {
+    skipped: "No edit style learned from reference videos: {{reason}}. The next steps follow the branding.",
+    evidence: "Evidence (reference video frames)",
+    noFrames: "Could not load the frames.",
+    frameAlt: "{{param}} frame at {{t}} s",
+    learnedFrom: "Learned from",
+    internalOnly: "Reference videos were downloaded at 480p for internal analysis only and deleted; only small frames are kept.",
   },
   survey: {
     filter: "Filter shots",
