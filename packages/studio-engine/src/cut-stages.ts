@@ -243,57 +243,68 @@ export function cutStages(d: StudioStageDeps): Record<string, InProcessStage> {
       writeOutput(ctx, "clean-report.json", toBuffer(report));
     },
 
-    /**
-     * The approved edit plan fitted to its narration, as the episode's timeline v4 (`fitCutTimeline`). The lines the farm
-     * just read go into the voice store first; every line then comes from the store. The result is saved as a new
-     * revision of the episode (author `system`, label `fit`): running again from the edit plan replaces the cut.
-     */
-    "studio-cut-fit": async (request, ctx) => {
-      const media = requireMedia(d);
-      const ws = ctx.workspaceDir;
-      const approved = readInput(request, ws, STUDIO_TYPES.editPlan, (v) => EditPlanSchema.parse(v));
-      const shots = readInput(request, ws, STUDIO_TYPES.shots, (v) => ShotsIndexSchema.parse(v));
-      const survey = readInput(request, ws, STUDIO_TYPES.surveyIndex, (v) => StudioSurveySchema.parse(v));
-      const sources = readSources(request, ws);
-      const manifest = readInput(request, ws, STUDIO_TYPES.transcript, (v) => TranscribeManifestSchema.parse(v));
-      const episode = readInput(request, ws, STUDIO_TYPES.episode, (v) => z.object({ assets: z.record(z.string(), EpisodeAssetSchema) }).passthrough().parse(v));
-      const brief = readInput(request, ws, STUDIO_TYPES.brief, (v) => FitBriefSchema.parse(v));
-      const now = new Date().toISOString();
+    /** The approved edit plan fitted to its narration (`fitCut`). */
+    "studio-cut-fit": (request, ctx) => fitCut(d, request, ctx, false),
 
-      const voice = approved.narration === "tts" ? narrationVoice(d.db, brief.production_id, approved.episode_id) : null;
-      // narration declined after the plan was approved: its lines are not read, they stay as subtitles
-      const written = approved.narration === "tts" && !voice;
-      const plan = approved;
-      const textOf = new Map(plan.lines.map((l) => [l.line_id, l.text]));
-      const keyOf = (lineId: string) => voiceKey({ text: textOf.get(lineId)!, language: plan.language, voice: voice! });
-      if (voice) {
-        const tts = readInput(request, ws, STUDIO_TYPES.voiceManifest, (v) => TtsManifestSchema.parse(v));
-        const setDir = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.voiceSet);
-        for (const line of tts.lines) {
-          if (!textOf.has(line.line_id)) continue;
-          const wav = setDir ? join(setDir, basename(line.output)) : "";
-          if (!wav || !existsSync(wav)) throw new HarnessError("NOT_FOUND", `the farm read ${line.line_id} but its WAV is not here`, { line_id: line.line_id });
-          putVoiceLine(d.db, media.voiceDir, keyOf(line.line_id), wav, { duration_s: line.duration_s, words: line.words, language: tts.language }, now);
-        }
-      }
-      const read: Record<string, ReadLine> = {};
-      for (const l of voice && !written ? plan.lines : []) {
-        const v = getVoiceLine(d.db, media.voiceDir, keyOf(l.line_id), now);
-        if (!v) throw new HarnessError("CONFIG_INVALID", `lời dẫn ${l.line_id} chưa được đọc`, { line_id: l.line_id });
-        read[l.line_id] = { key: v.key, duration_s: v.duration_s, words: v.words };
-      }
-      const transcript = transcriptFromManifest(manifest, sources.sources.map((x) => x.source_id));
-      const { timeline, report } = fitCutTimeline({
-        productionId: brief.production_id, plan, shots, survey, transcript, voice: read, written,
-        sources: sources.sources, assets: episode.assets, canvas: brief.canvas, fps: brief.fps, music: currentMusic(d.db, brief.production_id, brief.music),
-      });
-      const latest = latestEpisodeRevision(d.db, plan.episode_id);
-      const { revision } = saveEpisodeRevision(d.db, plan.episode_id, { baseRevision: latest?.revision ?? 0, data: timeline, authorId: "system", label: "fit" });
-      ctx.logger.info("shot-cut timeline fitted", { episode_id: plan.episode_id, revision, clips: timeline.clips.length, shortfalls: report.shortfalls.length });
-      writeOutput(ctx, "timeline.json", toBuffer(timeline));
-      writeOutput(ctx, "fit-report.json", toBuffer(report));
-    },
+    /** Cut 1.1.0: the same fit, and a shot the edit plan mutes (`source_audio: "mute"`) gives muted clips. */
+    "studio-cut-fit-v2": (request, ctx) => fitCut(d, request, ctx, true),
   };
+}
+
+/**
+ * The approved edit plan fitted to its narration, as the episode's timeline v4 (`fitCutTimeline`). The lines the farm
+ * just read go into the voice store first; every line then comes from the store. The result is saved as a new
+ * revision of the episode (author `system`, label `fit`): running again from the edit plan replaces the cut.
+ * `v2` (cut 1.1.0): the clips carry the plan's per-shot sound.
+ */
+async function fitCut(d: StudioStageDeps, request: StageRequest, ctx: ExecutorContext, v2: boolean): Promise<void> {
+  const media = requireMedia(d);
+  const ws = ctx.workspaceDir;
+  const approved = readInput(request, ws, STUDIO_TYPES.editPlan, (v) => EditPlanSchema.parse(v));
+  const shots = readInput(request, ws, STUDIO_TYPES.shots, (v) => ShotsIndexSchema.parse(v));
+  const survey = readInput(request, ws, STUDIO_TYPES.surveyIndex, (v) => StudioSurveySchema.parse(v));
+  const sources = readSources(request, ws);
+  const manifest = readInput(request, ws, STUDIO_TYPES.transcript, (v) => TranscribeManifestSchema.parse(v));
+  const episode = readInput(request, ws, STUDIO_TYPES.episode, (v) => z.object({ assets: z.record(z.string(), EpisodeAssetSchema) }).passthrough().parse(v));
+  const brief = readInput(request, ws, STUDIO_TYPES.brief, (v) => FitBriefSchema.parse(v));
+  const now = new Date().toISOString();
+
+  const voice = approved.narration === "tts" ? narrationVoice(d.db, brief.production_id, approved.episode_id) : null;
+  // narration declined after the plan was approved: its lines are not read, they stay as subtitles
+  const written = approved.narration === "tts" && !voice;
+  const plan = approved;
+  const textOf = new Map(plan.lines.map((l) => [l.line_id, l.text]));
+  const keyOf = (lineId: string) => voiceKey({ text: textOf.get(lineId)!, language: plan.language, voice: voice! });
+  if (voice) {
+    const tts = readInput(request, ws, STUDIO_TYPES.voiceManifest, (v) => TtsManifestSchema.parse(v));
+    const setDir = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.voiceSet);
+    for (const line of tts.lines) {
+      if (!textOf.has(line.line_id)) continue;
+      const wav = setDir ? join(setDir, basename(line.output)) : "";
+      if (!wav || !existsSync(wav)) throw new HarnessError("NOT_FOUND", `the farm read ${line.line_id} but its WAV is not here`, { line_id: line.line_id });
+      putVoiceLine(d.db, media.voiceDir, keyOf(line.line_id), wav, { duration_s: line.duration_s, words: line.words, language: tts.language }, now);
+    }
+  }
+  const read: Record<string, ReadLine> = {};
+  for (const l of voice && !written ? plan.lines : []) {
+    const v = getVoiceLine(d.db, media.voiceDir, keyOf(l.line_id), now);
+    if (!v) throw new HarnessError("CONFIG_INVALID", `lời dẫn ${l.line_id} chưa được đọc`, { line_id: l.line_id });
+    read[l.line_id] = { key: v.key, duration_s: v.duration_s, words: v.words };
+  }
+  const transcript = transcriptFromManifest(manifest, sources.sources.map((x) => x.source_id));
+  const { timeline, report } = fitCutTimeline({
+    productionId: brief.production_id, plan, shots, survey, transcript, voice: read, written,
+    sources: sources.sources, assets: episode.assets, canvas: brief.canvas, fps: brief.fps, music: currentMusic(d.db, brief.production_id, brief.music),
+    ...(v2 ? { clipAudio: true } : {}),
+  });
+  const latest = latestEpisodeRevision(d.db, plan.episode_id);
+  const { revision } = saveEpisodeRevision(d.db, plan.episode_id, { baseRevision: latest?.revision ?? 0, data: timeline, authorId: "system", label: "fit" });
+  ctx.logger.info("shot-cut timeline fitted", {
+    episode_id: plan.episode_id, revision, clips: timeline.clips.length, shortfalls: report.shortfalls.length,
+    ...(v2 ? { muted_clips: timeline.clips.filter((c) => c.muted).length } : {}),
+  });
+  writeOutput(ctx, "timeline.json", toBuffer(timeline));
+  writeOutput(ctx, "fit-report.json", toBuffer(report));
 }
 
 /** What the fit reads of the episode brief. */

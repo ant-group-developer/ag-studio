@@ -91,7 +91,19 @@ describe("fitCutTimeline", () => {
     expect(timelineIssues(t, { targetSeconds: 12 }).filter((i) => i.severity === "error")).toEqual([]);
   });
 
-  it("a line with no audio cannot be placed", () => {
+  it("fit v2: every clip cut from a shot the plan mutes is muted; v1 never sets the key", () => {
+    const voice = { L001: { key: KEY(1), duration_s: 2.2, words: [] }, L002: { key: KEY(2), duration_s: 1.4, words: [] } };
+    const muted = { ...plan, shots: plan.shots.map((s) => (s.order === 2 ? { ...s, source_audio: "mute" as const } : s)) };
+    const args = {
+      productionId: "prod-1", shots, survey, transcript: null, voice, sources: [{ asset_id: "a", source_id: A }, { asset_id: "b", source_id: B }], assets,
+      canvas: { width: 3840, height: 2160 }, fps: 30 as const, music: null,
+    };
+    const v2 = fitCutTimeline({ ...args, plan: muted, clipAudio: true }).timeline;
+    expect(v2.clips.map((x) => [x.asset_id, x.muted ?? false])).toEqual([["a", false], ["b", true], ["a", false]]);
+    expect(fitCutTimeline({ ...args, plan: muted }).timeline.clips.some((x) => "muted" in x)).toBe(false);
+  });
+
+    it("a line with no audio cannot be placed", () => {
     expect(() => fit({ L001: { key: KEY(1), duration_s: 2, words: [] } })).toThrow(/L002/);
   });
 });

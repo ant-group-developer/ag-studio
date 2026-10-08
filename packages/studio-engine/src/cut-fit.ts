@@ -34,6 +34,11 @@ export interface FitCutInput {
   canvas: StudioCanvas;
   fps: 25 | 30;
   music: StudioMusic | null;
+  /**
+   * Fit v2 (cut 1.1.0): a plan shot with `source_audio: "mute"` makes every clip cut from it `muted`. Fit v1 leaves
+   * the clips as they were (its timelines never carry the key).
+   */
+  clipAudio?: boolean;
 }
 
 /** A dissolve, when the plan asks for one: the harness brand default length. */
@@ -105,6 +110,8 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
       section_title: origin?.first ? origin.shot.section_title : null,
       in: v.in, out: v.out, shot_id: shotAt(p.shots, v.source_id, v.in, v.out),
       line_id: lineAt.get(v.order) ?? null, transition_out: transition,
+      // a piece the fit appended to cover the narration comes from no plan shot: it keeps its sound
+      ...(p.clipAudio && origin?.shot.source_audio === "mute" ? { muted: true } : {}),
     };
   });
 
