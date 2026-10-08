@@ -209,7 +209,11 @@ export function validateBranding(raw: unknown): StudioValidation<StudioBranding>
 
 export function validateYoutubeKit(
   raw: unknown,
-  ctx: { episode: StudioEpisode; branding?: StudioBranding | null },
+  /**
+   * `timeline`: the approved cut of a shot-cut episode (timeline v4). Its thumbnails are frames of the cut, so a video
+   * the cut left out cannot be one.
+   */
+  ctx: { episode: StudioEpisode; branding?: StudioBranding | null; timeline?: { clips: readonly { asset_id: string }[] } | null },
 ): StudioValidation<YoutubeKit> {
   const parsed = YoutubeKitSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, value: null, problems: zodProblems(parsed.error), warnings: [] };
@@ -219,10 +223,13 @@ export function validateYoutubeKit(
   const warnings: StudioProblem[] = [];
 
   const episodeAssetIds = new Set(ctx.episode.items.map((i) => i.asset_id));
+  const cutAssetIds = ctx.timeline ? new Set(ctx.timeline.clips.map((c) => c.asset_id)) : null;
 
   for (const thumb of kit.thumbnails) {
     if (!episodeAssetIds.has(thumb.asset_id)) {
       problems.push({ code: "thumbnail_not_in_episode", message: `thumbnail dùng video ${thumb.asset_id} không có trong danh sách items của tập` });
+    } else if (cutAssetIds && !cutAssetIds.has(thumb.asset_id)) {
+      problems.push({ code: "thumbnail_not_in_timeline", message: `thumbnail dùng video ${thumb.asset_id} nhưng timeline đã duyệt không còn clip nào của video đó` });
     }
   }
 

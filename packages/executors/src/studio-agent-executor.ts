@@ -18,12 +18,12 @@ import {
   type TeamGuide,
 } from "@harness/contracts";
 import {
-  hasGaps, isFollowUpWarning, loadBrief, loadCatalog, loadOptionalBranding, loadOptionalStyleWatch, loadSeed, loadShots, loadSurvey, researchGapsOf, STUDIO_TYPES,
+  hasGaps, isFollowUpWarning, loadBrief, loadCatalog, loadOptionalBranding, loadOptionalStyleWatch, loadOptionalTimelineV4, loadSeed, loadShots, loadSurvey, researchGapsOf, STUDIO_TYPES,
   summarizeCatalog, validateBranding, validateEditPlan, validateRnd, validateSeriesPlan, validateStudioSurvey, validateStyle, validateTrendReport,
   validateWebFinds, validateYoutubeKit,
   type StudioProblem, type StudioValidation,
 } from "@harness/core";
-import { StudioCatalogSchema, StudioEpisodeSchema } from "@harness/contracts";
+import { StudioCatalogSchema, StudioEpisodeSchema, StudioSurveySchema, type StudioSurvey } from "@harness/contracts";
 
 /** One Claude call of a stage with what the deterministic check made of it (the call log / training dataset). */
 export interface StudioLlmCall {
@@ -91,7 +91,7 @@ const VALIDATORS: Record<StudioSkill, Validator> = {
     if (!episodePath) return { ok: false, value: undefined, problems: [{ code: "missing_input", message: "missing studio_episode input" }], warnings: [] };
     const episodeRaw = JSON.parse(readFileSync(join(i.workspaceDir, episodePath.path), "utf8"));
     const episode = StudioEpisodeSchema.parse(episodeRaw);
-    return followUpsAsProblems(validateYoutubeKit(raw, { episode, branding: loadOptionalBranding(i) }));
+    return followUpsAsProblems(validateYoutubeKit(raw, { episode, branding: loadOptionalBranding(i), timeline: loadOptionalTimelineV4(i) }));
   },
   "studio-web-research": (raw, i) => validateWebFinds(raw, { gaps: researchGapsOf(i) }),
   "studio-style": (raw, i) => followUpsAsProblems(validateStyle(raw, { watch: loadOptionalStyleWatch(i) })),
@@ -143,6 +143,18 @@ export function compactResearch(r: ResearchLike): { channels: Array<Record<strin
       return { ...ch, videos: picked.map(promptVideo) };
     }),
     keywords: (r.keywords ?? []).map((kw) => ({ ...kw, videos: byViewsPerDay(kw.videos).slice(0, 15).map(promptVideo) })),
+  };
+}
+
+/**
+ * The scene selection as the YouTube kit reads it (cut 1.1.0): what Claude saw in each shot the approved cut uses —
+ * truer than ag-go's AI titles in the episode. Every shot when there is no cut to go by.
+ */
+export function surveyForKit(survey: StudioSurvey, timeline: { clips: readonly { shot_id: string | null }[] } | null) {
+  const used = timeline ? new Set(timeline.clips.map((c) => c.shot_id).filter((x): x is string => !!x)) : null;
+  return {
+    shots: survey.shots.filter((s) => !used || used.has(s.shot_id))
+      .map((s) => ({ shot_id: s.shot_id, usable: s.usable, score: s.score, tags: s.tags, note: s.note })),
   };
 }
 
@@ -202,6 +214,10 @@ export function studioPromptHead(request: StageRequest, workspaceDir: string, gu
     } else if (input.type === STUDIO_TYPES.research) {
       try {
         body = JSON.stringify(compactResearch(JSON.parse(text) as ResearchLike), null, 2);
+      } catch { /* leave as-is */ }
+    } else if (input.type === STUDIO_TYPES.surveyIndex && skill === "studio-youtube-kit") {
+      try {
+        body = JSON.stringify(surveyForKit(StudioSurveySchema.parse(JSON.parse(text)), loadOptionalTimelineV4({ request, workspaceDir })), null, 2);
       } catch { /* leave as-is */ }
     } else if (input.type === STUDIO_TYPES.researchApi && skill === "studio-web-research") {
       // the web research is told only what is missing, not what the API already found

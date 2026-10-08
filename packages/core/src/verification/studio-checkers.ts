@@ -10,10 +10,10 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   StudioBrandingSchema, StudioBriefSchema, StudioCatalogSchema, StudioEpisodeSchema, StudioExportSchema, StudioResearchSchema, StudioSeedSchema, StudioThumbnailsSchema,
-  ShotsIndexSchema, StoredTimelineSchema, StudioSurveySchema, StyleWatchSchema,
+  ShotsIndexSchema, StoredTimelineSchema, StudioSurveySchema, StyleWatchSchema, TimelineV4Schema,
   TrendReportSchema,
   type CatalogAsset, type Checker, type CheckerInput, type ShotsIndex, type StudioBranding, type StudioBrief, type StudioCatalog, type StudioResearch,
-  type StudioSeed, type StudioSurvey, type StyleWatch,
+  type StudioSeed, type StudioSurvey, type StyleWatch, type TimelineV4,
 } from "@harness/contracts";
 import { childEnvWithoutSecrets } from "../media/child-env.js";
 import { validateEditPlan, validateStudioSurvey } from "../studio/cut-validate.js";
@@ -109,6 +109,12 @@ export function loadOptionalBranding(i: Pick<CheckerInput, "request" | "workspac
   return p && existsSync(p) ? StudioBrandingSchema.parse(readJson(p)) : null;
 }
 
+/** The approved timeline v4 when the stage has one (the YouTube kit of a shot-cut episode). */
+export function loadOptionalTimelineV4(i: Pick<CheckerInput, "request" | "workspaceDir">): TimelineV4 | null {
+  const p = inputPath(i, STUDIO_TYPES.timelineV4);
+  return p && existsSync(p) ? TimelineV4Schema.parse(readJson(p)) : null;
+}
+
 /** The `watch.json` of the `style_watch` directory input, when the stage or gate has it. */
 export function loadOptionalStyleWatch(i: Pick<CheckerInput, "request" | "workspaceDir">): StyleWatch | null {
   const dir = inputPath(i, STUDIO_TYPES.styleWatch);
@@ -171,7 +177,7 @@ export const seriesPlanValidChecker = documentChecker("series-plan-valid", STUDI
 export const youtubeKitValidChecker = documentChecker("youtube-kit-valid", STUDIO_TYPES.youtubeKit,
   (raw, i) => {
     const episode = requireInput(i, STUDIO_TYPES.episode, (v) => StudioEpisodeSchema.parse(v));
-    return fromValidation(validateYoutubeKit(raw, { episode, branding: loadOptionalBranding(i) }));
+    return fromValidation(validateYoutubeKit(raw, { episode, branding: loadOptionalBranding(i), timeline: loadOptionalTimelineV4(i) }));
   });
 
 export const rndValidChecker = documentChecker("rnd-valid", STUDIO_TYPES.rnd,
