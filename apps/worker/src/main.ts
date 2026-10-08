@@ -107,6 +107,9 @@ async function main(): Promise<void> {
 
   const claudeCap = studioClaudeMaxConcurrent(db, claudeMaxConcurrent);
   logger.info("Studio worker starting", { owner, harnessRoot, youtube_research: !!youtubeKey, claude_max_concurrent: claudeCap.value, claude_max_concurrent_from: claudeCap.source, loops: pool.workers.length });
+  if (!youtubeKey) {
+    logger.warn("YOUTUBE_API_KEY is not set for this worker: series research will be skipped and the trend report will say so (a direct run reads apps/api/.env)");
+  }
   const ac = new AbortController();
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
     process.on(sig, () => { logger.warn(`received ${sig}, stopping after the current stage`); ac.abort(); });

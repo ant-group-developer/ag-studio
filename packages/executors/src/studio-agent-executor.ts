@@ -273,14 +273,31 @@ export function studioFilesPrompt(
   return parts.join("\n\n");
 }
 
+type ResearchSeen = {
+  skipped_reason?: string | null;
+  channels?: Array<{ input?: string; error?: string | null; videos?: unknown[] }>;
+  keywords?: Array<{ keyword?: string; error?: string | null; videos?: unknown[] }>;
+};
+
+/**
+ * Why research found nothing, for the person reading the skipped trend report: the reason it was skipped, or what
+ * YouTube refused for each channel and keyword.
+ */
+export function researchSkipSummary(res: ResearchSeen): string {
+  const why = res.skipped_reason?.trim() || [
+    ...(res.channels ?? []).filter((c) => c.error).map((c) => `kênh ${c.input ?? "?"}: ${c.error}`),
+    ...(res.keywords ?? []).filter((k) => k.error).map((k) => `từ khoá "${k.keyword ?? "?"}": ${k.error}`),
+  ].join("; ");
+  return (why ? `Không có dữ liệu nghiên cứu: ${why}` : "Không có dữ liệu nghiên cứu.").slice(0, 3000);
+}
+
 /** Write a skipped TrendReport (no research videos -> Claude skipped). */
-function writeSkipped(outPath: string, skill: StudioSkill, workspaceDir: string, request: StageRequest): void {
-  void workspaceDir; void request;
+function writeSkipped(outPath: string, skill: StudioSkill, summary: string): void {
   if (skill !== "studio-trend-report") return;
   mkdirSync(join(outPath, ".."), { recursive: true });
   writeFileSync(outPath, JSON.stringify(TrendReportSchema.parse({
     schema_version: "studio.trend-report/v1",
-    skipped: true, summary: "Không có dữ liệu nghiên cứu.",
+    skipped: true, summary,
     working_angles: [], title_patterns: [], hook_patterns: [], thumbnail_patterns: [],
     recommended_duration_s: null, posting_schedule: "", recommendations: [],
   }), null, 2));
@@ -311,15 +328,14 @@ export class StudioAgentExecutor implements Executor {
       const resPath = request.inputs.find((x) => x.type === STUDIO_TYPES.research);
       if (resPath) {
         try {
-          const res = JSON.parse(readFileSync(join(ctx.workspaceDir, resPath.path), "utf8")) as {
-            channels?: Array<{ videos?: unknown[] }>; keywords?: Array<{ videos?: unknown[] }>;
-          };
+          const res = JSON.parse(readFileSync(join(ctx.workspaceDir, resPath.path), "utf8")) as ResearchSeen;
           const totalVideos = (res.channels ?? []).reduce((n, ch) => n + (ch.videos?.length ?? 0), 0)
             + (res.keywords ?? []).reduce((n, kw) => n + (kw.videos?.length ?? 0), 0);
           if (totalVideos === 0) {
             mkdirSync(join(ctx.workspaceDir, "output"), { recursive: true });
-            writeSkipped(outPath, skill, ctx.workspaceDir, request);
-            ctx.logger.info("studio-trend-report skipped (no research videos)");
+            const summary = researchSkipSummary(res);
+            writeSkipped(outPath, skill, summary);
+            ctx.logger.warn("studio-trend-report skipped (no research videos)", { summary });
             // Register the written file as an output so the harness stages it and checks pass.
             const bytes = readFileSync(outPath);
             const checksum = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;

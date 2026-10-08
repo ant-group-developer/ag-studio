@@ -103,14 +103,25 @@ function Field({ field, doc, prev, names }: { field: FieldSpec; doc: unknown; pr
   }
 }
 
+/** The summary of a skipped trend report that does not say why (written before the reason was kept). */
+const SKIPPED_WITHOUT_REASON = "Không có dữ liệu nghiên cứu.";
+
 /**
  * A step's document as people read it (spec local-chat §2.3), fields in the order of its spec; with `previous`, what
  * changed is highlighted — the new value marked, the old one struck through.
  */
 export function DocView({ kind, doc, previous, names = {} }: { kind: DocKind; doc: unknown; previous?: unknown; names?: Record<string, string> }) {
   const { t } = useTranslation();
-  if (kind === "trend_report" && (doc as { skipped?: boolean } | null)?.skipped) {
-    return <p className="chat-doc__note">{t("chat.fields.skippedResearch")}</p>;
+  const report = doc as { skipped?: boolean; summary?: string } | null;
+  if (kind === "trend_report" && report?.skipped) {
+    // older skipped reports carry only the generic sentence; newer ones say why the research found nothing
+    const why = report.summary && report.summary !== SKIPPED_WITHOUT_REASON ? report.summary : null;
+    return (
+      <>
+        <p className="chat-doc__note">{t("chat.fields.skippedResearch")}</p>
+        {why ? <p className="chat-doc__note">{why}</p> : null}
+      </>
+    );
   }
   return (
     <dl className="chat-doc">
