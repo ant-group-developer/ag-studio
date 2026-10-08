@@ -22,6 +22,7 @@ import { productionKey } from "./bucket.js";
 import { detectCuts, extractAudio16k, grabFrame, probeMedia, tileSheet } from "./cut-ffmpeg.js";
 import { readInput, readTimelineInput, studioStages, toBuffer, writeEpisodeIntake, writeOutput, type StudioStageDeps } from "./stages.js";
 import { styleStages } from "./style-stages.js";
+import { cleanTranscribeManifest } from "./transcript-clean.js";
 import { prepareRender } from "./payloads.js";
 import { getEpisode, getProduction, latestEpisodeRevision, saveEpisodeRevision } from "./studio-db.js";
 import { fitCutTimeline, type ReadLine } from "./cut-fit.js";
@@ -210,6 +211,23 @@ export function cutStages(d: StudioStageDeps): Record<string, InProcessStage> {
       writeOutput(ctx, "watch/watch.json", toBuffer(CutWatchSchema.parse({
         schema_version: "studio.cut-watch/v1", frame_width: CUT_FRAME_WIDTH, sheet_cols: CUT_SHEET_COLS, sources: watched,
       })));
+    },
+
+    /**
+     * Cut 1.1.0: the farm's transcription without what nobody said (`cleanTranscribeManifest`: word scores near zero,
+     * Whisper's made-up outros), as `transcribe.json` again for the survey, the edit plan and the fit; what it dropped
+     * in `clean-report.json`. The farm's own stays the `transcribe` stage's output.
+     */
+    "studio-cut-clean-transcript": async (request, ctx) => {
+      const raw = readInput(request, ctx.workspaceDir, STUDIO_TYPES.transcript, (v) => TranscribeManifestSchema.parse(v));
+      const { manifest, report } = cleanTranscribeManifest(raw);
+      ctx.logger.info("transcript cleaned", {
+        kept: report.kept, dropped: report.dropped.length,
+        low_score: report.dropped.filter((x) => x.reason === "low_score").length,
+        phrases: report.dropped.filter((x) => x.reason === "hallucinated_phrase").length,
+      });
+      writeOutput(ctx, "transcribe.json", toBuffer(TranscribeManifestSchema.parse(manifest)));
+      writeOutput(ctx, "clean-report.json", toBuffer(report));
     },
 
     /**

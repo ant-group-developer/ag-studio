@@ -42,7 +42,8 @@ export function episodeStepsFor(workflow: string | null | undefined): EpisodeSte
 }
 
 const CUT_STAGE_STEP: Record<string, EpisodeStep> = {
-  "episode-intake": "footage", "fetch-proxies": "footage", "media-index": "footage", transcribe: "footage", "watch-source": "footage",
+  "episode-intake": "footage", "fetch-proxies": "footage", "media-index": "footage", transcribe: "footage", "clean-transcript": "footage",
+  "watch-source": "footage",
   "source-survey": "survey", "approve-survey": "survey",
   "plan-edit": "editPlan", "approve-edit-plan": "editPlan", tts: "editPlan", "fit-timeline": "editPlan",
   "approve-timeline": "timeline", timeline: "timeline",
