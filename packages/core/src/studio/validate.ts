@@ -137,7 +137,7 @@ export function validateSeriesPlan(
  * branding). The agent executor turns them into problems so Claude fixes them in its repair round; at a gate, or
  * when a person edits by hand, they stay warnings: a person may decide differently.
  */
-export const FOLLOW_UP_WARNING_PREFIXES = ["hint_", "branding_"] as const;
+export const FOLLOW_UP_WARNING_PREFIXES = ["hint_", "branding_", "style_"] as const;
 export function isFollowUpWarning(p: StudioProblem): boolean {
   return FOLLOW_UP_WARNING_PREFIXES.some((prefix) => p.code.startsWith(prefix));
 }

@@ -18,8 +18,9 @@ import {
   type TeamGuide,
 } from "@harness/contracts";
 import {
-  isFollowUpWarning, loadBrief, loadCatalog, loadOptionalBranding, loadSeed, loadShots, loadSurvey, STUDIO_TYPES, summarizeCatalog, validateBranding,
-  validateEditPlan, validateRnd, validateSeriesPlan, validateStudioSurvey, validateTrendReport, validateYoutubeKit,
+  isFollowUpWarning, loadBrief, loadCatalog, loadOptionalBranding, loadOptionalStyleWatch, loadSeed, loadShots, loadSurvey, researchGapsOf, STUDIO_TYPES,
+  summarizeCatalog, validateBranding, validateEditPlan, validateRnd, validateSeriesPlan, validateStudioSurvey, validateStyle, validateTrendReport,
+  validateWebFinds, validateYoutubeKit,
   type StudioProblem, type StudioValidation,
 } from "@harness/core";
 import { StudioCatalogSchema, StudioEpisodeSchema } from "@harness/contracts";
@@ -92,6 +93,8 @@ const VALIDATORS: Record<StudioSkill, Validator> = {
     const episode = StudioEpisodeSchema.parse(episodeRaw);
     return followUpsAsProblems(validateYoutubeKit(raw, { episode, branding: loadOptionalBranding(i) }));
   },
+  "studio-web-research": (raw, i) => validateWebFinds(raw, { gaps: researchGapsOf(i) }),
+  "studio-style": (raw, i) => followUpsAsProblems(validateStyle(raw, { watch: loadOptionalStyleWatch(i) })),
 };
 
 /**

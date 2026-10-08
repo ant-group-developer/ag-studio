@@ -8,3 +8,5 @@ export * from "./overlay.js";
 export * from "./brief.js";
 export * from "./thumbnails.js";
 export * from "./cut-validate.js";
+export * from "./research-web.js";
+export * from "./style.js";

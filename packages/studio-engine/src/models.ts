@@ -13,6 +13,8 @@ const SKILL_MODEL_ENVS: Record<StudioSkill | StudioChatSkill, string> = {
   "studio-branding": "STUDIO_CLAUDE_MODEL_BRANDING",
   "studio-source-survey": "STUDIO_CLAUDE_MODEL_SOURCE_SURVEY",
   "studio-edit-plan": "STUDIO_CLAUDE_MODEL_EDIT_PLAN",
+  "studio-web-research": "STUDIO_CLAUDE_MODEL_WEB_RESEARCH",
+  "studio-style": "STUDIO_CLAUDE_MODEL_STYLE",
 };
 /** The R&D decides the whole series once per production: Opus, like the episode plan. */
 const SKILL_DEFAULTS: Record<StudioSkill | StudioChatSkill, string> = {
@@ -27,6 +29,9 @@ const SKILL_DEFAULTS: Record<StudioSkill | StudioChatSkill, string> = {
   // looks at dozens of contact sheets: Sonnet; the edit plan decides the rhythm of the cut: Opus
   "studio-source-survey": "claude-sonnet-5-5",
   "studio-edit-plan": "claude-opus-5-5",
+  // finding links on the web, and reading frames of the reference videos: Sonnet
+  "studio-web-research": "claude-sonnet-5-5",
+  "studio-style": "claude-sonnet-5-5",
 };
 
 /** The model of a skill (a chat reply uses the model of the skill it talks about). */
