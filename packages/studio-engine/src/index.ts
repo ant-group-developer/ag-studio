@@ -34,6 +34,7 @@ export * from "./queue.js";
 export * from "./cut-stages.js";
 export * from "./cut-media.js";
 export * from "./cut-ffmpeg.js";
+export * from "./yt-dlp.js";
 export * from "./agent-sessions.js";
 export * from "./cut-episode.js";
 export * from "./voice-store.js";

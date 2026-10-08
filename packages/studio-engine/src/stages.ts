@@ -24,6 +24,7 @@ import {
 import type { InProcessStage } from "@harness/executors";
 import { productionKey, type StudioBucket } from "./bucket.js";
 import { emptyResearch, type ResearchSource } from "./youtube-research.js";
+import type { YtDlp } from "./yt-dlp.js";
 import { episodeWorkflowFor, episodeWorkflowForPlan } from "./run-control.js";
 import type { ThumbnailRenderer } from "./thumbnail-render.js";
 import type { CutMediaDeps } from "./cut-stages.js";
@@ -55,6 +56,13 @@ export interface StudioStageDeps {
   thumbnails?: ThumbnailRenderer;
   /** What the shot-cut stages need (ffmpeg, ag-go resolve, downloads); absent = this worker cannot run them. */
   media?: CutMediaDeps;
+  /**
+   * yt-dlp: the real numbers of the links the web research found, and the reference videos of the style step; absent
+   * = not installed (research keeps the numbers Claude read, the style step is skipped and says why).
+   */
+  ytdlp?: YtDlp;
+  /** False when downloading reference videos is switched off (`STUDIO_REFERENCE_DOWNLOADS=0`). Default on. */
+  referenceDownloads?: boolean;
 }
 
 export const DEFAULT_CANVAS = { "16:9": { width: 1920, height: 1080 }, "9:16": { width: 1080, height: 1920 } } as const;

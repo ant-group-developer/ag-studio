@@ -30,6 +30,7 @@ import { teamGuidesForRun } from "./team-skills.js";
 import { sweepStudioData, type RetentionConfig } from "./cleanup.js";
 import { earlierFarmJobs, type StudioDb } from "./studio-db.js";
 import type { ResearchSource } from "./youtube-research.js";
+import type { YtDlp } from "./yt-dlp.js";
 import type { ThumbnailRenderer } from "./thumbnail-render.js";
 
 export interface StudioClaudeOptions {
@@ -59,6 +60,10 @@ export interface StudioWorkerOptions {
   thumbnails?: ThumbnailRenderer;
   /** ffmpeg, ag-go resolve and downloads for the shot-cut stages; without it those stages park for a person. */
   media?: CutMediaDeps;
+  /** yt-dlp (web research numbers, reference videos); without it research keeps Claude's estimates and the style step is skipped. */
+  ytdlp?: YtDlp;
+  /** False: reference videos are never downloaded (`STUDIO_REFERENCE_DOWNLOADS=0`). */
+  referenceDownloads?: boolean;
   /** A farm job taken by no node this long is cancelled and its stage stops, saying so (none: wait to the deadline). */
   farmQueueTimeoutMs?: number;
   /** Claude calls run at once across this worker's loops; default `DEFAULT_CLAUDE_MAX_CONCURRENT` (20). */
@@ -82,6 +87,8 @@ function workerFactory(o: StudioWorkerOptions, single: boolean): { next: () => W
     ...(o.research ? { research: o.research } : {}),
     ...(o.thumbnails ? { thumbnails: o.thumbnails } : {}),
     ...(o.media ? { media: o.media } : {}),
+    ...(o.ytdlp ? { ytdlp: o.ytdlp } : {}),
+    ...(o.referenceDownloads !== undefined ? { referenceDownloads: o.referenceDownloads } : {}),
   })));
   executors.register("agent", new StudioAgentExecutor({
     runtimeFor: (jsonSchema: string, skill?: StudioSkill, onCall?: (trace: AgentCallTrace) => void, files?: { resume?: string }) => {

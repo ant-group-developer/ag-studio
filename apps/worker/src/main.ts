@@ -34,7 +34,7 @@ import { join } from "node:path";
 import { AgGoClient } from "@ag-studio/ag-go-client";
 import {
   claudeMaxConcurrent as studioClaudeMaxConcurrent, createStudioEngineCore, ffprobeBeside, httpDownload, type CutMediaDeps, createStudioWorkerPool, FarmOwnerClient, parseClaudeMaxConcurrent, ffmpegThumbnailRenderer, S3Bucket, StudioDb, studioLogger, studioResearchCache,
-  YoutubeResearchSource, DEFAULT_RETENTION,
+  YoutubeResearchSource, DEFAULT_RETENTION, ytDlp,
 } from "@ag-studio/engine";
 import { HARNESS_ROOT } from "@harness/core";
 
@@ -60,6 +60,11 @@ async function main(): Promise<void> {
   const argv = process.env.STUDIO_CLAUDE_ARGV ? (JSON.parse(process.env.STUDIO_CLAUDE_ARGV) as string[]) : undefined;
   const db = new StudioDb(dbPath);
   const youtubeKey = process.env.YOUTUBE_API_KEY?.trim();
+  // yt-dlp: STUDIO_YTDLP_ARGV (JSON array, tests) else YTDLP_PATH else `yt-dlp` on PATH; checked once, below
+  const ytdlpArgv = process.env.STUDIO_YTDLP_ARGV ? (JSON.parse(process.env.STUDIO_YTDLP_ARGV) as string[]) : [process.env.YTDLP_PATH?.trim() || "yt-dlp"];
+  const ytdlp = ytDlp({ argv: ytdlpArgv, ...(ffmpeg ? { ffmpeg } : {}) });
+  const ytdlpVersion = await ytdlp.version();
+  const referenceDownloads = process.env.STUDIO_REFERENCE_DOWNLOADS !== "0";
   const claudeMaxConcurrent = parseClaudeMaxConcurrent(process.env.STUDIO_CLAUDE_MAX_CONCURRENT);
   const agGo = new AgGoClient({ baseUrl: requireEnv("AG_GO_API_URL"), serviceKey: requireEnv("AG_GO_SERVICE_KEY") });
   const media: CutMediaDeps | null = ffmpeg ? {
@@ -93,6 +98,8 @@ async function main(): Promise<void> {
     farmPollMs: Number(process.env.FARM_POLL_MS ?? 5000),
     farmQueueTimeoutMs: numberEnv("STUDIO_FARM_QUEUE_TIMEOUT_MINUTES", 120) * 60_000,
     ...(youtubeKey ? { research: new YoutubeResearchSource({ apiKey: youtubeKey, cache: studioResearchCache(db) }) } : {}),
+    ...(ytdlpVersion ? { ytdlp } : {}),
+    referenceDownloads,
     ...(ffmpeg ? { thumbnails: ffmpegThumbnailRenderer({ ffmpeg }) } : {}),
     ...(media ? { media } : {}),
     cleanup: {
@@ -106,7 +113,10 @@ async function main(): Promise<void> {
   });
 
   const claudeCap = studioClaudeMaxConcurrent(db, claudeMaxConcurrent);
-  logger.info("Studio worker starting", { owner, harnessRoot, youtube_research: !!youtubeKey, claude_max_concurrent: claudeCap.value, claude_max_concurrent_from: claudeCap.source, loops: pool.workers.length });
+  logger.info("Studio worker starting", { owner, harnessRoot, youtube_research: !!youtubeKey, ytdlp: ytdlpVersion, reference_downloads: referenceDownloads, claude_max_concurrent: claudeCap.value, claude_max_concurrent_from: claudeCap.source, loops: pool.workers.length });
+  if (!ytdlpVersion) {
+    logger.warn(`yt-dlp cannot run (${ytdlpArgv[0]}): web research keeps the numbers Claude reads off pages, and the style step is skipped (set YTDLP_PATH)`);
+  }
   if (!youtubeKey) {
     logger.warn("YOUTUBE_API_KEY is not set for this worker: series research will be skipped and the trend report will say so (a direct run reads apps/api/.env)");
   }
