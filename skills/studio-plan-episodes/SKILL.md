@@ -19,6 +19,9 @@ series sao cho mỗi tập kể một câu chuyện hoàn chỉnh, đa dạng h�
 - `studio_branding` (khi có): tiêu đề tập theo `titles.formulas`, dài tối đa `titles.max_chars`, không chứa
   `voice.banned_words`; hook và logline theo `voice` (`do` / `dont`); chữ trên màn hình (`texts_suggested`) theo
   `on_screen_text` (tối đa `on_screen_text.max_chars` ký tự).
+- `studio_style` (series 3.2.0, khi có): phong cách dựng người dùng đã duyệt (học từ kênh tham khảo). Dùng
+  `params.cut_rhythm`, `params.shot_seconds` và `params.opening` để chọn kiểu dựng và lượng footage: nhịp nhanh, cảnh
+  ngắn thì cần nhiều video hơn cho cùng thời lượng; `params.text_overlay.density` thấp thì `texts_suggested` ít.
 - `studio_catalog`: dòng đầu là JSON thông tin chung (`total_available`, `truncated`), mỗi dòng sau là một
   JSON asset: `asset_id`, `name`, `title_vi`, `summary_vi`, `duration_s`, `orientation`, `genre`, `topics`,
   `subjects`, `places`, `actions`, `keywords_vi`, `tags`, `mood`, `setting`, `people_count`, `shot_variety`,

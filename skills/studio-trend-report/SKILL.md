@@ -15,6 +15,10 @@ tốt và nên làm gì cho series này. Báo cáo phải cụ thể, có con s�
 - `studio_research`: dữ liệu YouTube về các kênh và từ khoá. Trường `channels[]` (có `role`) và `keywords[]` mỗi cái
   có `videos[]`. Mỗi video: `title`, `views`, `views_per_day`, `published_at`, `duration_s`, `tags`, `outlier`.
   `outlier = true` là video tốt hơn hẳn trung bình của kênh/từ khoá đó — đây là manh mối quan trọng nhất.
+  `source` cho biết dữ liệu lấy từ đâu: không có hoặc `youtube_api` là YouTube Data API; `web` / `mixed` là phần API
+  không trả được đã được tìm trên web (link do AI tìm, số liệu đọc lại từ YouTube). Video có `estimated: true` mang số
+  ước lượng đọc từ trang web: đừng tính views/ngày hay outlier từ chúng như số thật, và nói rõ trong `summary` khi
+  phần lớn dữ liệu là ước lượng.
   Pattern thị trường lấy từ kênh `reference` và từ khoá; kênh `own` (kênh của nhóm) chỉ để so sánh — bước R&D
   sau sẽ đánh giá riêng.
 

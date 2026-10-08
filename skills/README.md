@@ -12,13 +12,15 @@ Không có tool, không đọc/ghi file.
 
 | Skill | Workflow | Stage | Đầu ra | Model mặc định | Người duyệt |
 |---|---|---|---|---|---|
-| `studio-trend-report` | `ag-studio-series-plan@1.0.0`–`@3.0.0` | `trend-report` | `TrendReport` | Sonnet | Gate `approve-trend-report` (3.0.0); trước đó chỉ xem |
-| `studio-rnd` | `ag-studio-series-plan@2.0.0`, `@3.0.0` | `rnd` | `StudioRnd` | Opus | Gate `approve-rnd` |
-| `studio-branding` | `ag-studio-series-plan@2.0.0`, `@3.0.0` | `branding` | `StudioBranding` | Sonnet | Gate `approve-branding` |
-| `studio-plan-episodes` | `ag-studio-series-plan@1.0.0`–`@3.1.0` | `plan-episodes` | `SeriesPlan` | Opus | Gate `approve-plan` |
+| `studio-trend-report` | `ag-studio-series-plan@1.0.0`–`@3.2.0` | `trend-report` | `TrendReport` | Sonnet | Gate `approve-trend-report` (3.0.0); trước đó chỉ xem |
+| `studio-rnd` | `ag-studio-series-plan@2.0.0`–`@3.2.0` | `rnd` | `StudioRnd` | Opus | Gate `approve-rnd` |
+| `studio-branding` | `ag-studio-series-plan@2.0.0`–`@3.2.0` | `branding` | `StudioBranding` | Sonnet | Gate `approve-branding` |
+| `studio-plan-episodes` | `ag-studio-series-plan@1.0.0`–`@3.2.0` | `plan-episodes` | `SeriesPlan` | Opus | Gate `approve-plan` |
 | `studio-youtube-kit` | `ag-studio-episode@1.0.0`–`@1.3.0`, `ag-studio-episode-cut@1.0.0` | `youtube-kit` | `YoutubeKit` | Sonnet | Gate `approve-youtube-kit` (1.3.0); trước đó sửa sau trong `EpisodeDrawer` |
 | `studio-source-survey` | `ag-studio-episode-cut@1.0.0` | `source-survey` | `StudioSurvey` (`harness.survey-index/v2`, `survey.json`) — **file mode**: xem contact sheet, tự ghi `output/survey.json`, session được giữ | Sonnet | Gate `approve-survey` |
 | `studio-edit-plan` | `ag-studio-episode-cut@1.0.0` | `plan-edit` | `EditPlan` (`studio.edit-plan/v1`): shot theo thứ tự, lời dẫn, chữ trên hình | Opus | Gate `approve-edit-plan` |
+| `studio-web-research` | `ag-studio-series-plan@3.2.0` | `research-web` | `StudioWebFinds` (`studio.web-finds/v1`): link YouTube cho kênh/từ khoá API không trả được — **web mode**: chỉ WebSearch/WebFetch; không có chỗ trống thì không gọi Claude | Sonnet | Không (số liệu thật do yt-dlp đọc ở `research`) |
+| `studio-style` | `ag-studio-series-plan@3.2.0` | `analyze-style` | `StudioStyle` (`studio.style/v1`): phong cách dựng học từ ≤3 video kênh tham khảo — **file mode**: xem contact sheet và số đo nhịp cắt; không xem được video nào thì không gọi Claude | Sonnet | Gate `approve-style` |
 
 Model ghi đè bằng `STUDIO_CLAUDE_MODEL` hoặc `STUDIO_CLAUDE_MODEL_<SKILL>` (`packages/studio-engine/src/models.ts`).
 Claude giả cho test: `fixtures/fake-studio-claude.mjs` (có nhánh cho từng skill ở trên, và nhánh chat khi prompt có

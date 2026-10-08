@@ -35,6 +35,8 @@ export const STUDIO_GATES: Record<string, string> = {
   // shot-cut episode 1.0.0: the scene selection and the edit plan
   "approve-survey": "survey.json",
   "approve-edit-plan": "edit-plan.json",
+  // series plan 3.2.0: the edit style learned from reference videos
+  "approve-style": "style.json",
 };
 
 /** True while the run can still do work (not ended, not being cancelled). */
