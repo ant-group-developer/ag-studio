@@ -9,7 +9,7 @@ import {
   approveChatScope, chatThread, createStudioWorker, editStepDocument, episodeKit, getEpisode, getProduction, listEpisodes, listHumanEdits,
   readStageDocument, startPlanRun, stepDocument, StudioRunError, submitStudioGate,
 } from "../src/index.js";
-import { FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, ROOT, seedProduction, world } from "./helpers.js";
+import { approvePlanGatesUntil, FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, ROOT, seedProduction, world } from "./helpers.js";
 
 function setup() {
   const w = world();
@@ -49,7 +49,7 @@ describe("step documents", () => {
     expect(stepDocument(s.core, s.db, { productionId: id, kind: "rnd" }).state).toBe("not_yet");
     const proposed = readStageDocument(s.core, runId, "trend-report", "trend-report.json") as TrendReport;
     await submitStudioGate(s.core, s.db, runId, "approve-trend-report", proposed);
-    await drain(s);
+    await approvePlanGatesUntil(s, id, () => drain(s), "approve-rnd");
     expect(waiting(s, runId)).toEqual(["approve-rnd"]);
 
     const view = stepDocument(s.core, s.db, { productionId: id, kind: "trend_report" });
@@ -78,13 +78,7 @@ describe("step documents", () => {
 
   it("once the episodes exist: R&D and the trend report change in place, the plan only by reopening, not while an episode waits", async () => {
     const { id, runId } = await atTrend();
-    for (const [gate, stage, file] of [
-      ["approve-trend-report", "trend-report", "trend-report.json"], ["approve-rnd", "rnd", "rnd.json"],
-      ["approve-branding", "branding", "branding.json"], ["approve-plan", "plan-episodes", "series-plan.json"],
-    ] as const) {
-      if (gate !== "approve-trend-report") await drain(s);
-      await submitStudioGate(s.core, s.db, runId, gate, readStageDocument(s.core, runId, stage, file));
-    }
+    await approvePlanGatesUntil(s, id, () => drain(s), null);
     await drain(s);
     const ep = listEpisodes(s.db, id)[0]!;
     expect(waiting(s, getEpisode(s.db, ep.id)!.run_id!)).toEqual(["approve-timeline"]);
@@ -113,13 +107,7 @@ describe("step documents", () => {
 
   it("an approved YouTube kit changes in place (the render reads it), never by reopening", async () => {
     const { id, runId } = await atTrend();
-    for (const [gate, stage, file] of [
-      ["approve-trend-report", "trend-report", "trend-report.json"], ["approve-rnd", "rnd", "rnd.json"],
-      ["approve-branding", "branding", "branding.json"], ["approve-plan", "plan-episodes", "series-plan.json"],
-    ] as const) {
-      if (gate !== "approve-trend-report") await drain(s);
-      await submitStudioGate(s.core, s.db, runId, gate, readStageDocument(s.core, runId, stage, file));
-    }
+    await approvePlanGatesUntil(s, id, () => drain(s), null);
     await drain(s);
     const ep = listEpisodes(s.db, id)[0]!;
     const epRun = getEpisode(s.db, ep.id)!.run_id!;

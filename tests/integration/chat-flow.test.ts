@@ -13,7 +13,7 @@ import {
   applyChatProposal, approveChatScope, chatThread, createDraftProduction, createStudioWorkerPool, episodeRunView, getProduction, latestEpisodeRevision,
   listEpisodes, planRunView, productionRnd, sendChatMessage, startFromIntake, type ChatThreadView, type StudioWorkerPool,
 } from "@ag-studio/engine";
-import { FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, ROOT, world } from "../../packages/studio-engine/test/helpers.js";
+import { approvePlanGatesLive, FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, ROOT, world } from "../../packages/studio-engine/test/helpers.js";
 
 const USER = "auth0|owner";
 const FOLDERS = { folders: [{ id: "folder-a", name: "Kyoto 2025", usableVideos: 8 }] };
@@ -75,14 +75,15 @@ describe("chat-first series with the fake Claude", () => {
   it("the trend report waits for approval, then the R&D is revised in the chat and approved", async () => {
     await waitingAt("approve-trend-report");
     await approveChatScope(w.core, w.db, { productionId: prod, stageKey: "approve-trend-report", turnId: thread().current?.turnId ?? null, userId: USER });
-    await waitingAt("approve-rnd");
+    // the style (series plan 3.2.0; skipped here, no yt-dlp) is approved as shown whenever it asks
+    await approvePlanGatesLive(w, prod, USER, "approve-rnd");
     const reply = await say("Gộp tập 3 và 4, làm 3 tập thôi");
     expect(reply.action).toBe("revise");
     const shown = thread().current!;
     expect(shown.turnId).toBe(reply.id);
     await approveChatScope(w.core, w.db, { productionId: prod, stageKey: "approve-rnd", turnId: shown.turnId, userId: USER });
     // branding runs on its own after the R&D, which apply-rnd wrote into the production as approved
-    await waitingAt("approve-branding");
+    await approvePlanGatesLive(w, prod, USER, "approve-branding");
     expect(productionRnd(getProduction(w.db, prod)!)?.summary).toBe((shown.document as { summary: string }).summary);
   });
 
