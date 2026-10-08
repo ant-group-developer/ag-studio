@@ -177,8 +177,16 @@ export const ResearchVideoSchema = z.object({
   views_per_day: z.number().min(0),
   /** At least twice the median views/day of its channel (or of its keyword's results). */
   outlier: z.boolean(),
+  /** Its numbers are what Claude read off a web page (yt-dlp could not read them): approximate. */
+  estimated: z.boolean().optional(),
 }).strict();
 export type ResearchVideo = z.infer<typeof ResearchVideoSchema>;
+
+export const RESEARCH_SOURCES = ["youtube_api", "web", "mixed"] as const;
+export type ResearchSource = (typeof RESEARCH_SOURCES)[number];
+
+/** A YouTube video id (11 characters of `[A-Za-z0-9_-]`): the only form a link is rebuilt from. */
+export const YoutubeVideoIdSchema = z.string().regex(/^[\w-]{11}$/);
 
 const termCount = z.object({ term: z.string(), count: z.number().int().min(0) }).strict();
 
@@ -192,6 +200,11 @@ export const StudioResearchSchema = z.object({
   quota_units: z.number().int().min(0),
   /** Why nothing was fetched, when nothing was. */
   skipped_reason: z.string().nullable(),
+  /**
+   * Where the videos come from: the YouTube Data API, the web (Claude found the links, yt-dlp read their numbers), or
+   * both. Absent in documents written before the web fallback: the API.
+   */
+  source: z.enum(RESEARCH_SOURCES).optional(),
   channels: z.array(z.object({
     input: z.string(),
     /** `own`: a channel of the team (its current results); `reference`: one to learn from. Older documents: reference. */
@@ -945,6 +958,108 @@ export const EditPlanSchema = z.object({
 }).strict();
 export type EditPlan = z.infer<typeof EditPlanSchema>;
 
+// ---------------------------------------------------------------------------
+// Research found on the web (plan 2026-10-08 quality-fixes, ADR-0001 item 176): when the YouTube Data API has no key
+// or refuses a channel or keyword, Claude (WebSearch/WebFetch only) finds the links and yt-dlp reads their numbers.
+// ---------------------------------------------------------------------------
+
+/** One video Claude found, with the numbers it could read on the page (null: not shown); used only without yt-dlp. */
+const WebFoundVideoSchema = z.object({
+  url: z.string().min(1).max(300),
+  title: z.string().max(300),
+  views: z.number().int().min(0).nullable(),
+  duration_s: z.number().min(0).nullable(),
+  published_at: z.string().max(40).nullable(),
+}).strict();
+
+/**
+ * `web-finds.json` (`studio_web_finds`, skill `studio-web-research`): for each channel and keyword the API left empty,
+ * the YouTube links Claude found. `skipped`: nothing was missing, written without calling Claude.
+ */
+export const StudioWebFindsSchema = z.object({
+  schema_version: studioVersion("web-finds"),
+  skipped: z.boolean(),
+  channels: z.array(z.object({
+    /** The channel as the person typed it (the research input), matched back to the gap. */
+    input: z.string().max(300),
+    channel_url: z.string().max(300).nullable(),
+    title: z.string().max(200).nullable(),
+    videos: z.array(WebFoundVideoSchema).max(20),
+    notes: z.string().max(500),
+  }).strict()).max(MAX_RESEARCH_CHANNELS),
+  keywords: z.array(z.object({
+    keyword: z.string().max(100),
+    videos: z.array(WebFoundVideoSchema).max(15),
+  }).strict()).max(MAX_RESEARCH_KEYWORDS),
+  /** Pages it read, for the person checking where a number came from. */
+  sources: z.array(z.string().max(300)).max(30),
+}).strict();
+export type StudioWebFinds = z.infer<typeof StudioWebFindsSchema>;
+
+// ---------------------------------------------------------------------------
+// Edit style learned from reference videos (plan 2026-10-08 quality-fixes, ADR-0001 item 175): ≤3 videos of the
+// reference channels, downloaded at ≤480p, measured (scene changes) and looked at (contact sheets), then deleted.
+// ---------------------------------------------------------------------------
+
+export const STYLE_MAX_REFERENCES = 3;
+export const STYLE_CUT_RHYTHMS = ["fast", "medium", "slow"] as const;
+export const STYLE_TEXT_DENSITIES = ["none", "low", "medium", "high"] as const;
+export const STYLE_VOICES = ["none", "voiceover", "on_camera", "unknown"] as const;
+
+/** What the scene-change detection measured on the reference videos (all of them, or one). */
+export const StyleMeasuredSchema = z.object({
+  videos: z.number().int().min(0),
+  shots: z.number().int().min(0),
+  cuts_per_minute: z.number().min(0),
+  shot_seconds: z.object({ p25: z.number().min(0), median: z.number().min(0), p75: z.number().min(0) }).strict(),
+  first_shot_s: z.number().min(0),
+}).strict();
+export type StyleMeasured = z.infer<typeof StyleMeasuredSchema>;
+
+/**
+ * `style.json` (`studio_style`, skill `studio-style`): how the reference channels edit, the numbers measured and
+ * Claude's reading of the frames, each claim with a frame as evidence. `skipped` (no reference channel, nothing could
+ * be downloaded…) says why and has no params: the next steps go on without a style.
+ */
+export const StudioStyleSchema = z.object({
+  schema_version: studioVersion("style"),
+  skipped: z.boolean(),
+  skipped_reason: z.string().max(500).nullable(),
+  name: z.string().max(100),
+  summary: z.string().max(1500),
+  references: z.array(z.object({
+    video_id: YoutubeVideoIdSchema,
+    title: z.string().max(300),
+    channel_title: z.string().max(200),
+    url: z.string().max(100),
+    duration_s: z.number().min(0),
+  }).strict()).max(STYLE_MAX_REFERENCES),
+  measured: StyleMeasuredSchema.nullable(),
+  params: z.object({
+    cut_rhythm: z.enum(STYLE_CUT_RHYTHMS),
+    /** Length of a shot this style keeps, in seconds. */
+    shot_seconds: z.object({ min: z.number().min(0.5).max(120), max: z.number().min(0.5).max(300) }).strict(),
+    transitions: z.array(z.enum(TIMELINE_TRANSITIONS)).min(1).max(3),
+    opening: z.object({ seconds: z.number().min(0).max(60), structure: z.string().max(300) }).strict(),
+    text_overlay: z.object({ density: z.enum(STYLE_TEXT_DENSITIES), style: z.string().max(300) }).strict(),
+    subtitles: z.enum(CAPTION_MODES),
+    /** Frames carry no sound: `unknown` unless the picture shows it (a person talking to the camera…). */
+    voice: z.enum(STYLE_VOICES),
+    music: z.object({ mood: z.string().max(100), ducking: z.boolean().nullable() }).strict(),
+    visual: z.string().max(500),
+    pace_notes: z.string().max(1000),
+  }).strict().nullable(),
+  do: z.array(z.string().max(300)).max(8),
+  dont: z.array(z.string().max(300)).max(8),
+  evidence: z.array(z.object({
+    param: z.string().max(40),
+    video_id: YoutubeVideoIdSchema,
+    t: z.number().min(0),
+    note: z.string().max(300),
+  }).strict()).max(12),
+}).strict();
+export type StudioStyle = z.infer<typeof StudioStyleSchema>;
+
 /** Output schema per Studio skill: what Claude must return, and what the stage writes to disk. */
 export const STUDIO_SKILL_OUTPUTS = {
   "studio-trend-report": TrendReportSchema,
@@ -954,13 +1069,20 @@ export const STUDIO_SKILL_OUTPUTS = {
   "studio-youtube-kit": YoutubeKitSchema,
   "studio-source-survey": StudioSurveySchema,
   "studio-edit-plan": EditPlanSchema,
+  "studio-web-research": StudioWebFindsSchema,
+  "studio-style": StudioStyleSchema,
 } as const;
 
 /**
  * Skills that run in files mode (`CliAgentRuntime` `files`): the agent opens pictures in its workspace and its session
  * is kept so the repair round and the chat can resume it (ADR-0001 item 155). The others are structured, no tools.
  */
-export const STUDIO_FILE_SKILLS: ReadonlySet<StudioSkill> = new Set<StudioSkill>(["studio-source-survey"]);
+export const STUDIO_FILE_SKILLS: ReadonlySet<StudioSkill> = new Set<StudioSkill>(["studio-source-survey", "studio-style"]);
+/**
+ * Skills that run in web mode: structured output like the others, with WebSearch/WebFetch as their only tools
+ * (ADR-0001 item 176). What they read on the web is data, never instructions; their output is only checked links.
+ */
+export const STUDIO_WEB_SKILLS: ReadonlySet<StudioSkill> = new Set<StudioSkill>(["studio-web-research"]);
 export type StudioSkill = keyof typeof STUDIO_SKILL_OUTPUTS;
 
 // ---------------------------------------------------------------------------
@@ -968,7 +1090,7 @@ export type StudioSkill = keyof typeof STUDIO_SKILL_OUTPUTS;
 // ---------------------------------------------------------------------------
 
 /** The AI steps a team skill can be limited to; a skill limited to none applies to every step. */
-export const TEAM_SKILL_STEPS = ["intake", "trend-report", "rnd", "branding", "plan-episodes", "source-survey", "edit-plan", "timeline", "youtube-kit"] as const;
+export const TEAM_SKILL_STEPS = ["intake", "web-research", "trend-report", "style", "rnd", "branding", "plan-episodes", "source-survey", "edit-plan", "timeline", "youtube-kit"] as const;
 export type TeamSkillStep = (typeof TEAM_SKILL_STEPS)[number];
 
 /** Lengths in characters. `enabledTotal` bounds every enabled skill of a team together (prompt cost). */
@@ -983,6 +1105,8 @@ export const STUDIO_SKILL_STEP: Record<StudioSkill, TeamSkillStep> = {
   "studio-youtube-kit": "youtube-kit",
   "studio-source-survey": "source-survey",
   "studio-edit-plan": "edit-plan",
+  "studio-web-research": "web-research",
+  "studio-style": "style",
 };
 
 /** A team skill as it goes into a prompt. */
