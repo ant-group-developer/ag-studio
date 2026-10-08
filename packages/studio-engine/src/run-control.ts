@@ -7,7 +7,7 @@ import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { eventFor, isTerminal, layoutTimeline, submitGate, type SubmitReport } from "@harness/core";
-import { StudioExportSchema, type RenderMachine, type StageRun, type StudioEditStyle, type StudioExport } from "@harness/contracts";
+import { StudioExportSchema, type RenderMachine, type Run, type StageRun, type StudioEditStyle, type StudioExport } from "@harness/contracts";
 import { STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, STUDIO_WORKFLOWS, type StudioEngineCore } from "./core.js";
 import {
   getEpisode, getProduction, latestEpisodeRevision, listEpisodes, productionChannels, productionSources, type EpisodeRecord, type StudioDb,
@@ -78,6 +78,12 @@ export function episodeWorkflowForPlan(planVersion: string): string {
 
 /** The shot-cut episode release (timeline v4, spec local-chat §3.3). */
 export const EPISODE_CUT_WORKFLOW = STUDIO_WORKFLOWS.episodeCut.workflow;
+const EPISODE_CUT_WORKFLOW_ID = "ag-studio-episode-cut";
+
+/** The run is a shot-cut episode, of any release: an older one stays open once a newer release is current. */
+export function isCutRun(run: Pick<Run, "workflow_release"> | undefined): boolean {
+  return run?.workflow_release.id === EPISODE_CUT_WORKFLOW_ID;
+}
 
 /**
  * The release one episode runs on: from plan 3.1.0 on, an episode the plan cuts shot by shot runs the shot-cut
