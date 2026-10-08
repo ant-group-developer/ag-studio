@@ -3,27 +3,32 @@
  * checked like the gate checks it and only reaches later AI steps (the next episode runs, a re-plan from `brief`);
  * nothing already made changes.
  */
-import { isTerminal, validateBranding, validateRnd, type StudioProblem } from "@harness/core";
-import type { StudioBranding, StudioRnd } from "@harness/contracts";
+import { isTerminal, validateBranding, validateRnd, validateStyle, type StudioProblem } from "@harness/core";
+import type { StudioBranding, StudioRnd, StudioStyle } from "@harness/contracts";
 import type { StudioEngineCore } from "./core.js";
 import { StudioRunError } from "./run-control.js";
 import {
-  getProduction, productionBranding, productionChannels, productionHints, productionRnd, saveProductionDocument, type StudioDb,
+  getProduction, productionBranding, productionChannels, productionHints, productionRnd, productionStyle, saveProductionDocument, type StudioDb,
 } from "./studio-db.js";
 
-export type ProductionDocKind = "rnd" | "branding";
+export type ProductionDocKind = "rnd" | "branding" | "style";
 const GATE: Record<ProductionDocKind, { gate: string; apply: string }> = {
   rnd: { gate: "approve-rnd", apply: "apply-rnd" },
   branding: { gate: "approve-branding", apply: "apply-branding" },
+  // series plan 3.2.0: the edit style learned from reference videos
+  style: { gate: "approve-style", apply: "apply-style" },
 };
+const DOC_LABEL: Record<ProductionDocKind, string> = { rnd: "R&D", branding: "branding", style: "phong cách dựng" };
 
 export interface ProductionDocView<T> { document: T | null; updatedAt: string | null; updatedBy: string | null }
 
 export function productionDocument(db: StudioDb, productionId: string, kind: "rnd"): ProductionDocView<StudioRnd>;
 export function productionDocument(db: StudioDb, productionId: string, kind: "branding"): ProductionDocView<StudioBranding>;
-export function productionDocument(db: StudioDb, productionId: string, kind: ProductionDocKind): ProductionDocView<StudioRnd | StudioBranding> {
+export function productionDocument(db: StudioDb, productionId: string, kind: "style"): ProductionDocView<StudioStyle>;
+export function productionDocument(db: StudioDb, productionId: string, kind: ProductionDocKind): ProductionDocView<StudioRnd | StudioBranding | StudioStyle> {
   const p = getProduction(db, productionId);
   if (!p) throw new StudioRunError("not_found", `production ${productionId} not found`);
+  if (kind === "style") return { document: productionStyle(p), updatedAt: p.style_updated_at ?? null, updatedBy: p.style_updated_by ?? null };
   return kind === "rnd"
     ? { document: productionRnd(p), updatedAt: p.rnd_updated_at, updatedBy: p.rnd_updated_by }
     : { document: productionBranding(p), updatedAt: p.branding_updated_at, updatedBy: p.branding_updated_by };
@@ -37,12 +42,12 @@ export function productionDocument(db: StudioDb, productionId: string, kind: Pro
  */
 export function editProductionDocument(
   core: StudioEngineCore, db: StudioDb, productionId: string, kind: ProductionDocKind, raw: unknown, by: string,
-): { document: StudioRnd | StudioBranding; before: StudioRnd | StudioBranding; warnings: StudioProblem[] } {
+): { document: StudioRnd | StudioBranding | StudioStyle; before: StudioRnd | StudioBranding | StudioStyle; warnings: StudioProblem[] } {
   const p = getProduction(db, productionId);
   if (!p) throw new StudioRunError("not_found", `production ${productionId} not found`);
-  const before = kind === "rnd" ? productionRnd(p) : productionBranding(p);
+  const before = kind === "rnd" ? productionRnd(p) : kind === "branding" ? productionBranding(p) : productionStyle(p);
   if (!before) {
-    throw new StudioRunError("conflict", `${kind === "rnd" ? "R&D" : "branding"} chưa được duyệt lần nào: duyệt ở bước của nó trước`, { code: "not_approved_yet" });
+    throw new StudioRunError("conflict", `${DOC_LABEL[kind]} chưa được duyệt lần nào: duyệt ở bước của nó trước`, { code: "not_approved_yet" });
   }
   if (p.run_id) {
     const run = core.store.getRun(p.run_id);
@@ -58,7 +63,7 @@ export function editProductionDocument(
   }
   const v = kind === "rnd"
     ? validateRnd(raw, { seed: { channels: productionChannels(p), hints: productionHints(p) } })
-    : validateBranding(raw);
+    : kind === "branding" ? validateBranding(raw) : validateStyle(raw, {});
   if (!v.ok || !v.value) throw new StudioRunError("rejected", `${kind} không hợp lệ`, { problems: v.problems, warnings: v.warnings });
   saveProductionDocument(db, productionId, kind, v.value, by);
   return { document: v.value, before, warnings: v.warnings };

@@ -11,7 +11,7 @@ import {
   type StudioResearch,
 } from "@harness/contracts";
 import {
-  activeProductionStyle, createStudioWorker, getProduction, planRunView, productionStyle, readStageDocument, startPlanRun, submitStudioGate, ytDlp,
+  activeProductionStyle, createStudioWorker, getProduction, planRunView, productionStyle, readStageDocument, startPlanRun, stepDocument, submitStudioGate, ytDlp,
   type CutMediaDeps, type ResearchSource,
 } from "../src/index.js";
 import { hasFfmpeg } from "../../../tests/media.js";
@@ -103,6 +103,9 @@ describe(PLAN_V32, () => {
     expect(style).toMatchObject({ skipped: true });
     expect(style!.skipped_reason).toMatch(/ffmpeg/);
     expect(activeProductionStyle(getProduction(s.db, s.prod)!)).toBeNull();
+    // the style step reads again as approved, and may be edited in place (the episodes read the version in use)
+    const step = stepDocument(s.core, s.db, { productionId: s.prod, kind: "style" });
+    expect(step).toMatchObject({ state: "approved", gate: "approve-style", document: { skipped: true }, edit: { inPlace: true } });
   }, 120_000);
 
   it.skipIf(!hasFfmpeg())("the API answers everything (no web call); the reference videos are watched and the style reaches the plan", async () => {

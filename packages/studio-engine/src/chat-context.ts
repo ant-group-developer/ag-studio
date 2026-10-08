@@ -48,6 +48,8 @@ export const GATE_SOURCES: Record<string, { stage: string; skill: StudioSkill | 
   // shot-cut episode: the scene selection is edited shot by shot (its stage looked at pictures); the edit plan as a document
   "approve-survey": { stage: "source-survey", skill: "studio-survey", file: "survey.json" },
   "approve-edit-plan": { stage: "plan-edit", skill: "studio-edit-plan", file: "edit-plan.json" },
+  // series plan 3.2.0: the style is talked about as a document (its stage looked at frames; the chat reads the words)
+  "approve-style": { stage: "analyze-style", skill: "studio-style", file: "style.json" },
 };
 
 /** A scene-selection proposal as kept in the chat: the edits and the selection they give. */

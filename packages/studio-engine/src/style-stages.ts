@@ -25,6 +25,11 @@ const SHEET_FRAMES = 16;
 const WATCH_DIR = "style-watch";
 
 const frameName = (t: number) => `f-${t.toFixed(3)}.jpg`;
+
+/** Where a frame of a reference video is kept on the bucket (the web shows the style's evidence from there). */
+export function styleFrameKey(productionId: string, videoId: string, t: number): string {
+  return productionKey(productionId, `style/${videoId}/${frameName(t)}`);
+}
 const tail = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(-300);
 
 /**
@@ -66,7 +71,7 @@ async function watchReferences(d: StudioStageDeps, refs: StyleRefs, out: string,
         const local = join(out, rel);
         try { await grabFrame(ffmpeg, path, t, local, FRAME_WIDTH); } catch { continue; }
         files.push(local);
-        entry.frames.push({ t, file: rel, kind: t <= OPENING_SECONDS && opening.includes(f.t) ? "opening" : f.kind, key: productionKey(refs.production_id, `style/${pick.video_id}/${frameName(t)}`) });
+        entry.frames.push({ t, file: rel, kind: t <= OPENING_SECONDS && opening.includes(f.t) ? "opening" : f.kind, key: styleFrameKey(refs.production_id, pick.video_id, t) });
       }
       for (let s = 0; s * SHEET_FRAMES < files.length; s++) {
         const rel = `${label}/sheet-${String(s + 1).padStart(2, "0")}.jpg`;

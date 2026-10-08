@@ -37,7 +37,9 @@ export type HumanEditKind = "trend_report" | "series_plan" | "youtube_kit" | "ep
   // shot-cut episodes (phase 5): the scene selection and the edit plan approved at their gates
   | "survey" | "edit_plan"
   // audio the person gave a production, or narration declined (plan optional-audio)
-  | "voice" | "music";
+  | "voice" | "music"
+  // the edit style learned from reference videos (series plan 3.2.0), approved at its gate or edited after
+  | "style" | "style_edit";
 
 export interface HumanEditRow {
   id: string; created_at: string; user_id: string; production_id: string; episode_id: string | null;
