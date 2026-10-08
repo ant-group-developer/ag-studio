@@ -6,13 +6,13 @@ import { TimelineV4Schema } from "@harness/contracts";
 import { studioSourceId } from "@harness/core";
 import { cutStages, getVoiceLine, latestEpisodeRevision, replaceEpisodes, voiceKey, type CutMediaDeps } from "../src/index.js";
 import { fakeFootage, seedProduction, world } from "./helpers.js";
-import { runStage, stageWorkspace } from "./stage-harness.js";
+import { runStage, stageWorkspace, type StageInput } from "./stage-harness.js";
 
 const A = studioSourceId("a");
 const VOICE = { reference: "library:voices/mai.wav", reference_text: "Xin chào.", speed: 1 };
 
 /** A production with a voice, one shot-cut episode, and the fit's inputs for a two-shot plan (`shot2`: over its second shot). */
-function setup(shot2: Record<string, unknown> = {}) {
+function setup(shot2: Record<string, unknown> = {}, extra: StageInput[] = []) {
   const { db, bucket } = world();
   const prod = seedProduction(db);
   db.run("UPDATE productions SET voice = ? WHERE id = ?", [JSON.stringify(VOICE), prod]);
@@ -44,6 +44,7 @@ function setup(shot2: Record<string, unknown> = {}) {
     { type: "studio_brief", name: "brief.json", json: { production_id: prod, language: "vi", canvas: { width: 3840, height: 2160 }, fps: 30, music: null } },
     { type: "voice_manifest", name: "tts.json", json: { schema: "ag.studio.tts/v1", production_id: prod, language: "vi", lines: [{ line_id: "L001", output: "tts/L001.wav", duration_s: 1.9, words: [{ word: "Phố", start: 0, end: 0.3 }] }], engine: { name: "omnivoice", version: null } } },
     { type: "voice_set", name: "tts", dir: ttsDir },
+    ...extra,
   ] });
   const stages = cutStages({ db, bucket, footage: fakeFootage(), startEpisodeRun: async () => ({ runId: "x" }), media });
   return { db, voiceDir, run, stages };
@@ -75,5 +76,30 @@ describe("studio-cut-fit-v2 (cut 1.1.0)", () => {
     const t = TimelineV4Schema.parse(run.json("timeline.json"));
     expect(t.clips.map((x) => [x.shot_id, x.muted ?? false])).toEqual([["s000-000", false], ["s000-001", true]]);
     expect(run.logs.find((l) => l.msg === "shot-cut timeline fitted")?.fields).toMatchObject({ muted_clips: 1 });
+  });
+});
+
+describe("studio-cut-fit-v2: the branding's text look", () => {
+  const look = { text_color: "#FFD166", outline_color: "#000000", box_color: "#1D3557", size: "l" };
+  const branding = (withLook: boolean) => ({
+    schema_version: "studio.branding/v1", series_name: "Phố Cổ", tagline: "", positioning: "Chân thật",
+    voice: { personality: [], do: [], dont: [], signature_phrases: [], banned_words: [] },
+    titles: { formulas: ["[Nơi]"], rules: [], examples: [], max_chars: 60 }, description: { opening: "", cta: "", hashtags: [] },
+    thumbnail: { concept: "Phố", text_rules: [], max_words: 3, text_case: "upper", palette: { text: "#FFFFFF", outline: "#000000", accent: "#E63946" }, position: "bottom", emotion: "", do: [], dont: [] },
+    on_screen_text: { style: "", max_chars: 40, rules: [], ...(withLook ? { look } : {}) }, music_mood: [],
+  });
+
+  it("is frozen into the timeline; fit v1, or a branding without one, leaves the default look", async () => {
+    const withLook = setup({}, [{ type: "studio_branding", name: "branding.json", json: branding(true) }]);
+    await runStage(withLook.stages["studio-cut-fit-v2"], withLook.run);
+    expect(TimelineV4Schema.parse(withLook.run.json("timeline.json")).text_style).toEqual(look);
+
+    const v1 = setup({}, [{ type: "studio_branding", name: "branding.json", json: branding(true) }]);
+    await runStage(v1.stages["studio-cut-fit"], v1.run);
+    expect(TimelineV4Schema.parse(v1.run.json("timeline.json")).text_style).toBeUndefined();
+
+    const plain = setup({}, [{ type: "studio_branding", name: "branding.json", json: branding(false) }]);
+    await runStage(plain.stages["studio-cut-fit-v2"], plain.run);
+    expect(TimelineV4Schema.parse(plain.run.json("timeline.json")).text_style).toBeUndefined();
   });
 });

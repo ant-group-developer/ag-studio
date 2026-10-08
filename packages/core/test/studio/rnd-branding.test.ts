@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { StudioBranding, StudioCatalog, StudioEpisode, StudioHints, StudioRnd, StudioSeed, YoutubeKit } from "@harness/contracts";
 import { effectiveBrief, type BriefBase } from "../../src/studio/brief.js";
 import { summarizeCatalog } from "../../src/studio/catalog.js";
-import { isFollowUpWarning, validateBranding, validateRnd, validateYoutubeKit } from "../../src/studio/validate.js";
+import { contrastRatio, isFollowUpWarning, validateBranding, validateRnd, validateYoutubeKit } from "../../src/studio/validate.js";
 
 const hints = (over: Partial<StudioHints> = {}): StudioHints => ({
   description: "", goal: "", audience: "", tone: "", notes: "", episode_target_seconds: null, max_episodes: null, ...over,
@@ -70,6 +70,18 @@ describe("validateRnd", () => {
 });
 
 describe("validateBranding", () => {
+  it("the text look must read on its box, or on its outline when it has no box", () => {
+    expect(contrastRatio("#FFFFFF", "#000000")).toBeCloseTo(21, 5);
+    const look = (text_color: string, outline_color: string, box_color: string | null) =>
+      branding({ on_screen_text: { ...branding().on_screen_text, look: { text_color, outline_color, box_color, size: "m" } } });
+    expect(validateBranding(look("#FFFFFF", "#000000", "#1D3557")).ok).toBe(true);
+    expect(validateBranding(look("#FFFFFF", "#000000", null)).ok).toBe(true);
+    const onBox = validateBranding(look("#FFFFFF", "#000000", "#F1FAEE"));
+    expect(onBox.problems).toEqual([expect.objectContaining({ code: "text_look_no_contrast", message: expect.stringContaining("hộp #F1FAEE") })]);
+    expect(validateBranding(look("#FFFF00", "#FFFFFF", null)).problems.map((p) => p.code)).toEqual(["text_look_no_contrast"]);
+    expect(validateBranding(look("#FFFFFF", "#000000", "#000")).problems[0]?.code).toBe("schema");
+  });
+
   it("refuses unreadable thumbnail colours and warns about examples off the rules", () => {
     const v = validateBranding(branding({
       titles: { formulas: ["x"], rules: [], examples: ["Một tiêu đề rất dài vượt quá bốn mươi ký tự cho phép", "Tin sốc về phở"], max_chars: 40 },

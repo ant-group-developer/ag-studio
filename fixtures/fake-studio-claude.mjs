@@ -236,7 +236,8 @@ function branding() {
       palette: { text: "#FFFFFF", outline: bad ? "#FFFFFF" : "#000000", accent: "#E63946" }, position: "bottom", emotion: "tò mò",
       do: ["Chữ to"], dont: ["Chữ nhỏ"],
     },
-    on_screen_text: { style: "Chữ trắng viền đen", max_chars: 40, rules: ["Tối đa 2 dòng"] },
+    on_screen_text: { style: "Chữ trắng viền đen", max_chars: 40, rules: ["Tối đa 2 dòng"],
+      look: { text_color: "#FFFFFF", outline_color: "#000000", box_color: "#1D3557", size: "m" } },
     music_mood: ["ấm áp"],
   };
 }

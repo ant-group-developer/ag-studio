@@ -158,6 +158,7 @@ export function timelineToComposition(t: AnyTimeline): Composition {
       transition_out: { kind: transitions[order]!.kind, seconds: transitions[order]!.seconds, tail_available: transitions[order]!.tail_available },
     })),
     text_events: textEvents,
+    ...(v4?.text_style ? { text_style: v4.text_style } : {}),
     captions,
     narration: spoken.narration.map((n) => ({ line_id: n.line_id, wav: n.wav, start: n.start, end: n.end })),
     music,

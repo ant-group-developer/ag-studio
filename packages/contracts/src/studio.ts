@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
+import { TextLookSchema } from "./composition.js";
 import { surveyIndexSchemaV2 } from "./library.js";
 
 /**
@@ -501,6 +502,8 @@ export const StudioBrandingSchema = z.object({
     style: z.string().max(500),
     max_chars: z.number().int().min(10).max(64),
     rules: textList(8, 300),
+    /** How the words look on the video (cut 1.1.0 renders it): colours, a box or none, a size. Absent = default look. */
+    look: TextLookSchema.optional(),
   }).strict(),
   music_mood: textList(5, 100),
 }).strict();
@@ -734,6 +737,8 @@ export const TimelineV4Schema = z.object({
   source_audio: z.object({ muted: z.boolean() }).strict(),
   assets: z.record(z.string(), EpisodeAssetSchema),
   alternates: z.array(reasonedAsset),
+  /** Cut 1.1.0: the branding's text look, frozen when the cut is fitted. Absent = the Studio default look. */
+  text_style: TextLookSchema.optional(),
 }).strict();
 export type TimelineV4 = z.infer<typeof TimelineV4Schema>;
 export type TimelineClipV4 = TimelineV4["clips"][number];
@@ -785,6 +790,7 @@ export function downgradeTimelineV4(t: TimelineV4): TimelineV3 {
   const n = t.narration;
   if (n.voice !== "none" || n.lines.length > 0 || n.lead_seconds !== DEFAULT_NARRATION_LEAD_SECONDS) lost.push("narration");
   if (t.captions.mode !== "none") lost.push("captions");
+  if (t.text_style) lost.push("text_style");
   if (lost.length > 0) throw new TimelineVersionError(`a v3 timeline cannot hold: ${lost.join(", ")}`);
   return {
     schema_version: "studio.timeline/v3",

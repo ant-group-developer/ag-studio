@@ -7,7 +7,7 @@
 import {
   DEFAULT_NARRATION_LEAD_SECONDS, EdlSchema, NarrationTimingSchema, TimelineV4Schema,
   type EditPlan, type EpisodeAsset, type FitReport, type NarrationTiming, type ShotsIndex, type StudioCanvas, type StudioMusic,
-  type StudioSurvey, type TimelineClipV4, type TimelineV4, type Transcript,
+  type StudioSurvey, type TextLook, type TimelineClipV4, type TimelineV4, type Transcript,
 } from "@harness/contracts";
 import { buildTimeline, fitEdl, narrationCps } from "@harness/core";
 
@@ -39,6 +39,8 @@ export interface FitCutInput {
    * the clips as they were (its timelines never carry the key).
    */
   clipAudio?: boolean;
+  /** Fit v2: the branding's text look, frozen into the timeline (the render draws the texts in it). */
+  textStyle?: TextLook | null;
 }
 
 /** A dissolve, when the plan asks for one: the harness brand default length. */
@@ -141,6 +143,7 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
     source_audio: { muted: false },
     assets: Object.fromEntries(Object.entries(p.assets).filter(([id]) => used.has(id))),
     alternates: [],
+    ...(p.textStyle ? { text_style: p.textStyle } : {}),
   });
   return { timeline, report: fitted.report };
 }

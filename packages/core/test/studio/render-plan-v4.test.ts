@@ -141,6 +141,29 @@ describe("timelineToComposition on v4", () => {
     expect(TimelineV4Schema.parse(t).clips[1]!.muted).toBe(true);
   });
 
+  it("cut 1.1.0: the timeline's text look reaches the composition and the burnt-in texts; without one, as before", () => {
+    const plain = timelineToComposition(cut());
+    expect("text_style" in plain).toBe(false);
+    const look = { text_color: "#FFD166", outline_color: "#000000", box_color: "#1D3557", size: "l" as const };
+    const c = CompositionSchema.parse(timelineToComposition({ ...cut(), text_style: look }));
+    expect(c.text_style).toEqual(look);
+    const ass = studioOverlayAss(c)!;
+    const style = (name: string) => ass.split("\n").find((l) => l.startsWith(`Style: ${name},`))!.split(",");
+    // Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, …, BorderStyle (15)
+    const title = style("Title");
+    expect(title[3]).toBe("&H0066D1FF");
+    expect(title[5]).toBe(title[6]); // the box is filled with the box colour, not the outline's black
+    expect(title[15]).toBe("3");
+    expect(Number(title[2])).toBe(Math.round(120 * 1.25));
+    expect(style("Callout")[15]).toBe("1");
+    // the default look is untouched: its box keeps the outline colour as before
+    const before = studioOverlayAss(CompositionSchema.parse(plain))!.split("\n").find((l) => l.startsWith("Style: Title,"))!.split(",");
+    expect(before[5]).toBe("&H00000000");
+    // no box colour: no text sits on a box
+    expect(studioOverlayAss(timelineToComposition({ ...cut(), text_style: { ...look, box_color: null } }))!.split("\n")
+      .filter((l) => l.startsWith("Style:")).every((l) => l.split(",")[15] === "1")).toBe(true);
+  });
+
   it("the footage's own speech (narration original) plays at its own level, not lowered as background", () => {
     const t = cut();
     t.narration = { voice: "original", lead_seconds: 0.3, lines: [] };
