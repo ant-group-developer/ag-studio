@@ -73,6 +73,8 @@ export interface ResolvedAssetItem {
 
 export interface ResolveAssetsResponse {
   items: ResolvedAssetItem[];
+  /** Asset ids ag-go could not serve to this user (no servable file, no access). */
+  missing?: string[];
 }
 
 export interface FolderItem {
@@ -132,39 +134,4 @@ export interface CatalogItem {
 export interface CatalogResponse {
   items: CatalogItem[];
   nextCursor: string | null;
-}
-
-export interface SegmentMediaResponse {
-  segmentId: string;
-  assetId: string;
-  startMs: number;
-  endMs: number;
-  durationMs: number;
-  keyframeUrls: string[];
-  /** Watermarked preview of the whole asset; play it from startMs to endMs. */
-  previewUrl: string | null;
-  previewWidth: number | null;
-}
-
-export interface ResolveSegmentsBody {
-  segmentIds: string[];
-  purpose: "preview" | "final";
-}
-
-export interface ResolvedSegmentItem {
-  segmentId: string;
-  assetId: string;
-  startMs: number;
-  endMs: number;
-  url: string;
-  sourceKind: "original" | "proxy" | "preview";
-  watermarked: boolean;
-  contentType: string;
-  sizeBytes: number | null;
-  cacheKey: string | null;
-  expiresAt: string;
-}
-
-export interface ResolveSegmentsResponse {
-  items: ResolvedSegmentItem[];
 }

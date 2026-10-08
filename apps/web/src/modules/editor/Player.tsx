@@ -5,7 +5,7 @@
  */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
-import type { TimelineV3 } from "@harness/contracts";
+import type { StoredTimeline } from "@harness/contracts";
 import type { LaidClip, LaidText, TimelineLayout } from "@studio/timeline";
 import type { AssetMedia, EditorJob } from "../../api/studio-client";
 import type { AssetMediaLookup, EditorClient } from "./types";
@@ -20,6 +20,11 @@ function fmt(t: number): string {
 }
 
 const otherSlot = (s: 0 | 1): 0 | 1 => (s === 0 ? 1 : 0);
+
+/** Where in its video a clip is at timeline time `t`: a shot-cut clip is a piece of it, from `in` (0 for a whole video). */
+export function sourceTimeAt(clip: Pick<LaidClip, "start" | "in">, t: number): number {
+  return Math.max(0, t - clip.start + clip.in);
+}
 
 const TEXT_POSITION_STYLE: Record<string, CSSProperties> = {
   top_left: { top: 12, left: 12 },
@@ -47,7 +52,7 @@ export interface PlayerProps {
   episodeId: string;
   client: EditorClient;
   media: AssetMediaLookup;
-  timeline: TimelineV3;
+  timeline: StoredTimeline;
   layout: TimelineLayout;
   playing: boolean;
   onPlayingChange: (playing: boolean) => void;
@@ -145,7 +150,7 @@ export function Player({
     }
     const el = slotRefs[slot].current;
     if (el && m?.previewUrl) {
-      el.currentTime = Math.max(0, t - clip.start);
+      el.currentTime = sourceTimeAt(clip, t);
       if (playing) void el.play().catch(() => {});
     }
     if (changed) {

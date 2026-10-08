@@ -5,9 +5,6 @@ import type {
   AssetMediaResponse,
   ResolveAssetsBody,
   ResolveAssetsResponse,
-  SegmentMediaResponse,
-  ResolveSegmentsBody,
-  ResolveSegmentsResponse,
 } from "./types.js";
 
 export interface AgGoClientOptions {
@@ -104,28 +101,8 @@ export class AgGoClient {
     );
   }
 
-  /** GĐ2 (v3): resolve asset IDs → signed download URLs (replaces resolveSegments for clip inputs). */
+  /** GĐ2 (v3): resolve asset IDs → signed download URLs. */
   resolveAssets(actAsUserId: string, body: ResolveAssetsBody): Promise<ResolveAssetsResponse> {
     return this.request<ResolveAssetsResponse>("POST", "/footage/assets/resolve", actAsUserId, body);
-  }
-
-  getSegmentMedia(actAsUserId: string, segmentId: string): Promise<SegmentMediaResponse> {
-    return this.request<SegmentMediaResponse>(
-      "GET",
-      `/footage/segments/${encodeURIComponent(segmentId)}/media`,
-      actAsUserId
-    );
-  }
-
-  resolveSegments(
-    actAsUserId: string,
-    body: ResolveSegmentsBody
-  ): Promise<ResolveSegmentsResponse> {
-    return this.request<ResolveSegmentsResponse>(
-      "POST",
-      "/footage/segments/resolve",
-      actAsUserId,
-      body
-    );
   }
 }

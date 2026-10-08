@@ -705,6 +705,26 @@ describe.skipIf(!isE2E)(
       return ok<RunView>("GET", `/productions/${prodId}/run`);
     }
 
+    /**
+     * Episodes 1.3.0 wait at approve-timeline and approve-youtube-kit (phase 2): approve whatever an episode waits at,
+     * through the chat, as a person does on the web. Returns how many it approved.
+     */
+    async function approveEpisodeGates(): Promise<number> {
+      const eps = await ok<PagedEpisodes>("GET", `/productions/${prodId}/episodes`);
+      let approved = 0;
+      for (const e of eps.items) {
+        const thread = await ok<{ scope: { scope: string; stageKey: string } | null; current: { turnId: string | null } | null }>(
+          "GET", `/productions/${prodId}/chat?episodeId=${e.id}`);
+        if (thread.scope?.scope !== "gate") continue;
+        const kit = thread.scope.stageKey === "approve-youtube-kit";
+        await ok("POST", `/productions/${prodId}/chat/approve`, {
+          stageKey: thread.scope.stageKey, episodeId: e.id, turnId: thread.current?.turnId ?? null, ...(kit ? { renderMachine: "any" } : {}),
+        });
+        approved += 1;
+      }
+      return approved;
+    }
+
     function waitGate(gate: string, ms = 300_000): Promise<RunView> {
       return waitFor(
         `gate ${gate}`,
@@ -776,6 +796,11 @@ describe.skipIf(!isE2E)(
     });
 
     it("approve-rnd and approve-branding: the R&D and branding fake Claude proposes are approved and become the production's", async () => {
+      // plan 3.x: the trend report is approved first
+      await waitGate("approve-trend-report");
+      const trend = await ok<{ schema_version: string }>("GET", `/productions/${prodId}/run/documents/trend-report/trend-report.json`);
+      expect((await ok<{ accepted: boolean }>("POST", `/productions/${prodId}/run/gates/approve-trend-report`, { document: trend })).accepted).toBe(true);
+
       await waitGate("approve-rnd");
       const rnd = await ok<{ schema_version: string; direction: { episode_target_seconds: number } }>(
         "GET",
@@ -847,11 +872,12 @@ describe.skipIf(!isE2E)(
       expect(prodAfter.episodeCounts.total).toBeGreaterThanOrEqual(1);
     });
 
-    it("all episodes render and export automatically (no gate); assert export files", async () => {
-      // Wait for all episodes to reach 'ready' status
+    it("all episodes render and export once their timeline and kit are approved; assert export files", async () => {
+      // Wait for all episodes to reach 'ready' status, approving each one's timeline and kit as it waits
       const readyEps = await waitFor(
         "all episodes ready",
         async () => {
+          await approveEpisodeGates();
           const eps = await ok<PagedEpisodes>("GET", `/productions/${prodId}/episodes`);
           if (eps.total === 0) return null;
           const anyFailed = eps.items.some((e) => e.status === "failed");
@@ -1020,10 +1046,11 @@ describe.skipIf(!isE2E)(
       // Trigger rerender
       await ok("POST", `/productions/${prodId}/episodes/${ep1.id}/rerender`);
 
-      // Wait for episode 1 to become ready again
+      // Wait for episode 1 to become ready again (an edited timeline is approved again, then its kit)
       await waitFor(
         "episode 1 ready after rerender",
         async () => {
+          await approveEpisodeGates();
           const d = await ok<EpisodeDetail>(
             "GET",
             `/productions/${prodId}/episodes/${ep1.id}`,

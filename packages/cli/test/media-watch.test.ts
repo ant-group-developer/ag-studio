@@ -8,7 +8,7 @@ import { newId, type ClaimResult, type StageInput, type StageResult, type WatchI
 import { HARNESS_ROOT, buildStageRequest, eventFor } from "@harness/core";
 import { buildContext, type AppContext } from "../src/composition.js";
 import { emptyWatchLabels } from "../src/commands/media.js";
-import { hasFfmpeg, makeVideo } from "../../../tests/media.js";
+import { hasFfmpegOnPath as hasFfmpeg, makeVideo } from "../../../tests/media.js";
 
 // Task 3: `harness media watch --mode samples|source|episode` (a built-in stage script, same shape as
 // `library stage`/`publish stage`). These tests drive it exactly the way publish-stage.test.ts drives its

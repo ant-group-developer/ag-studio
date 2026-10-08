@@ -14,8 +14,4 @@ export type {
   ResolveAssetsResponse,
   CatalogItem,
   CatalogResponse,
-  SegmentMediaResponse,
-  ResolveSegmentsBody,
-  ResolvedSegmentItem,
-  ResolveSegmentsResponse,
 } from "./types.js";

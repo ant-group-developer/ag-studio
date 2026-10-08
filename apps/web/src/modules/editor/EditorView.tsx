@@ -6,7 +6,7 @@
 import { useMemo, useState } from "react";
 import { Alert, Grid, Modal, Spin } from "antd";
 import { useTranslation } from "react-i18next";
-import { layoutTimeline, timelineIssues } from "@studio/timeline";
+import { isTimelineV4, layoutTimeline, timelineIssues } from "@studio/timeline";
 import { useEditor } from "./useEditor";
 import { Toolbar } from "./Toolbar";
 import { Player } from "./Player";
@@ -84,6 +84,7 @@ export function EditorView({ productionId, episodeId, client, media, onRerender 
           <TimelineView
             layout={layout}
             assets={state.timeline.assets}
+            narration={isTimelineV4(state.timeline) ? Object.fromEntries(state.timeline.narration.lines.map((l) => [l.line_id, l.text])) : undefined}
             selection={state.selection}
             dispatch={dispatch}
             playhead={playhead}

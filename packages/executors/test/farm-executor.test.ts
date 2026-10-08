@@ -13,17 +13,19 @@ const wall = { now: () => new Date().toISOString() };
 function fakes(outputs: Record<string, string>, manifest: string) {
   const bucket = new Map<string, string>();
   const read: string[] = [];
-  const submitted: { type: string; payload: unknown; correlation_id: string }[] = [];
+  const submitted: { type: string; payload: unknown; correlation_id: string; requirements?: Record<string, unknown> }[] = [];
   const acked: string[] = [];
+  /** Each cancelled job, with how many jobs had been submitted when it was cancelled. */
+  const cancelled: { id: string; submittedBefore: number }[] = [];
   const client = {
-    async submitJob(b: { type: string; payload: unknown; correlation_id: string }) {
+    async submitJob(b: { type: string; payload: unknown; correlation_id: string; requirements?: Record<string, unknown> }) {
       submitted.push(b);
       for (const [k, v] of Object.entries(outputs)) bucket.set(`productions/prod-9/jobs/tts/${b.correlation_id}/out/${k}`, v);
       return { job: { id: "job-1" }, created: true };
     },
     async getJob() { return { status: "completed", result: { manifest } }; },
     async ackJob(id: string) { acked.push(id); },
-    async cancelJob() {},
+    async cancelJob(id: string) { cancelled.push({ id, submittedBefore: submitted.length }); },
   };
   const storage: StudioStorage = {
     async upload(local, key) { bucket.set(key, readFileSync(local, "utf8")); return `stage:${key}`; },
@@ -36,7 +38,7 @@ function fakes(outputs: Record<string, string>, manifest: string) {
       writeFileSync(local, v);
     },
   };
-  return { client, storage, bucket, submitted, acked, read };
+  return { client, storage, bucket, submitted, acked, cancelled, read };
 }
 
 function request(stage_config: Record<string, unknown>, expected: StageRequest["expected_outputs"]): StageRequest {
@@ -117,5 +119,187 @@ describe("FarmExecutor with a payload builder (GĐ4)", () => {
       expect(res.errors[0]!.kind).toBe("contract");
     }
     expect(f.submitted).toHaveLength(0);
+  });
+});
+
+describe("FarmExecutor requirements (machine type, phase 3)", () => {
+  const tts = JSON.stringify({ schema: "ag.studio.tts/v1", production_id: "prod-9", language: "vi", lines: [], engine: { name: "fake", version: null } });
+  const builders = {
+    tts: async () => ({ productionId: "prod-9", payload: { production_id: "prod-9", language: "vi", voice: { reference: null, reference_text: null, speed: 1 }, lines: [{ line_id: "L001", text: "x", pause_seconds: null }], align_words: false } }),
+  };
+  async function run(cfg: Record<string, unknown>, requirementsFor?: (r: StageRequest) => Record<string, unknown> | undefined) {
+    const f = fakes({ "tts.json": tts }, "tts.json");
+    const recorded: (Record<string, unknown> | undefined)[] = [];
+    const seen: string[] = [];
+    const ex = new FarmExecutor({
+      client: f.client as never, storage: f.storage, pollIntervalMs: 1, payloadBuilders: builders,
+      onSubmitted: (info) => { recorded.push(info.requirements); },
+      ...(requirementsFor ? { requirementsFor: (r: StageRequest) => { seen.push(r.attempt_id); return requirementsFor(r); } } : {}),
+    });
+    const req = request({ __farm_job: "studio.tts", payload_builder: "tts", ...cfg }, [{ type: "tts_manifest", mime_type: "application/json", kind: "file", name: "tts.json" }]);
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.outcome, JSON.stringify(res.errors)).toBe("succeeded");
+    return { submitted: f.submitted[0]!.requirements, recorded: recorded[0], seen, req };
+  }
+
+  it("without a callback the job goes out as before: the stage config's requirements, else {}", async () => {
+    expect(await run({})).toMatchObject({ submitted: {}, recorded: {} });
+    expect(await run({ requirements: { gpu: true } })).toMatchObject({ submitted: { gpu: true }, recorded: { gpu: true } });
+  });
+
+  it("the callback's requirements win over the stage config, and reach the recorder", async () => {
+    const r = await run({ requirements: { gpu: true } }, () => ({ nvenc: true }));
+    expect(r.submitted).toEqual({ nvenc: true });
+    expect(r.recorded).toEqual({ nvenc: true });
+    expect(r.seen).toEqual([r.req.attempt_id]);
+  });
+
+  it("a callback with no answer for this stage leaves the stage config's value", async () => {
+    expect((await run({ requirements: { gpu: true } }, () => undefined)).submitted).toEqual({ gpu: true });
+    expect((await run({}, () => undefined)).submitted).toEqual({});
+  });
+});
+
+describe("FarmExecutor skip (phase 5): a builder with nothing to send", () => {
+  it("writes the builder's files as the outputs and never touches the farm", async () => {
+    const f = fakes({}, "tts.json");
+    const req = request({ __farm_job: "studio.tts", payload_builder: "nothing" }, [
+      { type: "tts_manifest", mime_type: "application/json", kind: "file", name: "tts.json" },
+      { type: "voice_set", mime_type: "application/x-directory", kind: "directory", name: "tts", optional: true },
+    ]);
+    const manifest = JSON.stringify({ schema: "ag.studio.tts/v1", production_id: "prod-9", language: "vi", lines: [], engine: { name: "cache", version: null } });
+    const ex = new FarmExecutor({
+      client: f.client as never, storage: f.storage, pollIntervalMs: 1,
+      payloadBuilders: { nothing: async () => ({ productionId: "prod-9", payload: null, skip: { files: { "tts.json": manifest } } }) },
+    });
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.outcome, JSON.stringify(res.errors)).toBe("succeeded");
+    expect(f.submitted).toEqual([]);
+    expect(f.bucket.size).toBe(0);
+    expect(res.outputs.map((o) => [o.path, o.type])).toEqual([["output/tts.json", "tts_manifest"]]);
+    expect(readFileSync(join(req.workspace_uri, "output", "tts.json"), "utf8")).toBe(manifest);
+  });
+
+  it("a skip that leaves out a required output is a contract failure", async () => {
+    const f = fakes({}, "tts.json");
+    const req = request({ __farm_job: "studio.tts", payload_builder: "nothing" }, [
+      { type: "tts_manifest", mime_type: "application/json", kind: "file", name: "tts.json" },
+    ]);
+    const ex = new FarmExecutor({
+      client: f.client as never, storage: f.storage, pollIntervalMs: 1,
+      payloadBuilders: { nothing: async () => ({ productionId: "prod-9", payload: null, skip: { files: {} } }) },
+    });
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.outcome).toBe("failed");
+    expect(res.errors[0]).toMatchObject({ kind: "contract" });
+    expect(f.submitted).toEqual([]);
+  });
+});
+
+describe("FarmExecutor studio.transcribe (phase 5)", () => {
+  const manifest = (sources: unknown[]) => JSON.stringify({ schema: "ag.studio.transcribe/v1", production_id: "prod-9", engine: { name: "whisperx:large-v3", version: null }, sources });
+  const payload = { production_id: "prod-9", model: "large-v3", sources: [{ source_id: "src_A", audio: "stage:audio/src_A.wav", language: null }], align_words: true };
+  const expected: StageRequest["expected_outputs"] = [{ type: "transcript", mime_type: "application/json", kind: "file", name: "transcribe.json" }];
+
+  it("checks the payload, submits it and keeps the checked manifest as the output", async () => {
+    const f = fakes({ "transcribe.json": manifest([{ source_id: "src_A", language: "vi", alignment: "word", segments: [] }]) }, "transcribe.json");
+    const req = request({ __farm_job: "studio.transcribe", payload_builder: "t" }, expected);
+    const ex = new FarmExecutor({ client: f.client as never, storage: f.storage, pollIntervalMs: 1, payloadBuilders: { t: async () => ({ productionId: "prod-9", payload }) } });
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.outcome, JSON.stringify(res.errors)).toBe("succeeded");
+    expect(f.submitted[0]).toMatchObject({ type: "studio.transcribe", payload });
+    expect(res.outputs.map((o) => o.type)).toEqual(["transcript"]);
+  });
+
+  it("a payload the farm would refuse is a contract failure before anything is sent", async () => {
+    const f = fakes({}, "transcribe.json");
+    const req = request({ __farm_job: "studio.transcribe", payload_builder: "t" }, expected);
+    const ex = new FarmExecutor({ client: f.client as never, storage: f.storage, pollIntervalMs: 1, payloadBuilders: { t: async () => ({ productionId: "prod-9", payload: { ...payload, sources: [] } }) } });
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.errors[0]).toMatchObject({ kind: "contract" });
+    expect(f.submitted).toEqual([]);
+  });
+
+  it("a manifest that is not a transcription is a contract failure", async () => {
+    const f = fakes({ "transcribe.json": JSON.stringify({ schema: "ag.studio.tts/v1" }) }, "transcribe.json");
+    const req = request({ __farm_job: "studio.transcribe", payload_builder: "t" }, expected);
+    const ex = new FarmExecutor({ client: f.client as never, storage: f.storage, pollIntervalMs: 1, payloadBuilders: { t: async () => ({ productionId: "prod-9", payload }) } });
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.outcome).toBe("failed");
+    expect(res.errors[0]).toMatchObject({ kind: "contract" });
+  });
+});
+
+describe("FarmExecutor: jobs of earlier attempts", () => {
+  const tts = JSON.stringify({ schema: "ag.studio.tts/v1", production_id: "prod-9", language: "vi", lines: [], engine: { name: "fake", version: null } });
+  const builders = {
+    tts: async () => ({ productionId: "prod-9", payload: { production_id: "prod-9", language: "vi", voice: { reference: null, reference_text: null, speed: 1 }, lines: [{ line_id: "L001", text: "x", pause_seconds: null }], align_words: false } }),
+    nothing: async () => ({ productionId: "prod-9", payload: null, skip: { files: { "tts.json": tts } } }),
+  };
+  const expected: StageRequest["expected_outputs"] = [{ type: "tts_manifest", mime_type: "application/json", kind: "file", name: "tts.json" }];
+
+  it("cancels the farm jobs an abandoned attempt left behind before submitting its own", async () => {
+    const f = fakes({ "tts.json": tts }, "tts.json");
+    const asked: [string, string, string][] = [];
+    const ex = new FarmExecutor({
+      client: f.client as never, storage: f.storage, pollIntervalMs: 1, payloadBuilders: builders,
+      earlierJobsFor: (r) => { asked.push([r.run_id, r.stage_key, r.attempt_id]); return ["old-1", "old-2"]; },
+    });
+    const req = request({ __farm_job: "studio.tts", payload_builder: "tts" }, expected);
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.outcome, JSON.stringify(res.errors)).toBe("succeeded");
+    expect(asked).toEqual([[req.run_id, "tts", req.attempt_id]]);
+    expect(f.cancelled).toEqual([{ id: "old-1", submittedBefore: 0 }, { id: "old-2", submittedBefore: 0 }]);
+    expect(f.submitted).toHaveLength(1);
+  });
+
+  it("a job no node takes within the queue timeout is cancelled; the stage fails for good, saying so", async () => {
+    const f = fakes({ "tts.json": tts }, "tts.json");
+    f.client.getJob = async () => ({ status: "queued", result: null }) as never;
+    const ex = new FarmExecutor({ client: f.client as never, storage: f.storage, pollIntervalMs: 5, payloadBuilders: builders, queueTimeoutMsFor: () => 30 });
+    const req = request({ __farm_job: "studio.tts", payload_builder: "tts" }, expected);
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.outcome).toBe("failed");
+    expect(res.errors[0]).toMatchObject({ kind: "contract", details: { job_id: "job-1", farm_status: "queued" } });
+    expect(res.errors[0]!.message).toMatch(/no farm node took the job/);
+    expect(f.cancelled.map((c) => c.id)).toEqual(["job-1"]);
+  });
+
+  it("a paused job, or one a node took, is not timed out while queued", async () => {
+    const f = fakes({ "tts.json": tts }, "tts.json");
+    let polls = 0;
+    f.client.getJob = async () => {
+      polls += 1;
+      if (polls < 4) return { status: "paused", result: null } as never;
+      if (polls < 8) return { status: "leased", result: null } as never;
+      return { status: "completed", result: { manifest: "tts.json" } } as never;
+    };
+    const ex = new FarmExecutor({ client: f.client as never, storage: f.storage, pollIntervalMs: 10, payloadBuilders: builders, queueTimeoutMsFor: () => 15 });
+    const req = request({ __farm_job: "studio.tts", payload_builder: "tts" }, expected);
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.outcome, JSON.stringify(res.errors)).toBe("succeeded");
+    expect(f.cancelled).toEqual([]);
+  });
+
+  it("cancels them too when this attempt has nothing to send", async () => {
+    const f = fakes({}, "tts.json");
+    const ex = new FarmExecutor({ client: f.client as never, storage: f.storage, pollIntervalMs: 1, payloadBuilders: builders, earlierJobsFor: () => ["old-1"] });
+    const req = request({ __farm_job: "studio.tts", payload_builder: "nothing" }, expected);
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+    expect(res.outcome, JSON.stringify(res.errors)).toBe("succeeded");
+    expect(f.cancelled.map((c) => c.id)).toEqual(["old-1"]);
+    expect(f.submitted).toEqual([]);
+  });
+
+  it("a cancel the farm refuses, or a lookup that throws, does not fail the stage", async () => {
+    for (const earlierJobsFor of [() => ["old-1"], () => { throw new Error("db locked"); }]) {
+      const f = fakes({ "tts.json": tts }, "tts.json");
+      f.client.cancelJob = async () => { throw new Error("farm down"); };
+      const ex = new FarmExecutor({ client: f.client as never, storage: f.storage, pollIntervalMs: 1, payloadBuilders: builders, earlierJobsFor });
+      const req = request({ __farm_job: "studio.tts", payload_builder: "tts" }, expected);
+      const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+      expect(res.outcome, JSON.stringify(res.errors)).toBe("succeeded");
+      expect(f.submitted).toHaveLength(1);
+    }
   });
 });

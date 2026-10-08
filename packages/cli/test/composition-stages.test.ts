@@ -15,7 +15,7 @@ import { buildContext, type AppContext } from "../src/composition.js";
 import {
   addTrack, cli, freshLibraryWorld, seedRequest, setBrand, type LibraryWorld,
 } from "../../../tests/integration/library-helpers.js";
-import { hasFfmpeg, makeVideo, systemFontPath } from "../../../tests/media.js";
+import { hasFfmpegOnPath as hasFfmpeg, makeVideo, systemFontPath } from "../../../tests/media.js";
 
 // Sub-project 5B Task 8: the two built-in composition stages (`media compose`, `media render`) -- driven
 // exactly the way

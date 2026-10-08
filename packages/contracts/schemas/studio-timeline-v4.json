@@ -1,0 +1,445 @@
+{
+  "$ref": "#/definitions/studio-timeline-v4",
+  "definitions": {
+    "studio-timeline-v4": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.timeline/v4"
+        },
+        "production_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "canvas": {
+          "type": "object",
+          "properties": {
+            "width": {
+              "type": "integer",
+              "minimum": 160,
+              "maximum": 7680
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 160,
+              "maximum": 7680
+            }
+          },
+          "required": [
+            "width",
+            "height"
+          ],
+          "additionalProperties": false
+        },
+        "fps": {
+          "type": "number",
+          "enum": [
+            25,
+            30
+          ]
+        },
+        "language": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 10
+        },
+        "edit_style": {
+          "type": "string",
+          "enum": [
+            "whole",
+            "cut"
+          ]
+        },
+        "clips": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "clip_id": {
+                "type": "string",
+                "pattern": "^C\\d{3,4}$"
+              },
+              "asset_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "section_title": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "in": {
+                "type": "number",
+                "minimum": 0
+              },
+              "out": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "shot_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^s\\d{3}-\\d{3}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "line_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^L\\d{3}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "transition_out": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "cut",
+                      "dissolve",
+                      "dip_black"
+                    ]
+                  },
+                  "seconds": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "required": [
+                  "kind",
+                  "seconds"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "clip_id",
+              "asset_id",
+              "section_title",
+              "in",
+              "out",
+              "shot_id",
+              "line_id",
+              "transition_out"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "texts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "text_id": {
+                "type": "string",
+                "pattern": "^T\\d{3}$"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "title",
+                  "callout",
+                  "lower_third"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "start": {
+                "type": "number",
+                "minimum": 0
+              },
+              "duration": {
+                "type": "number",
+                "minimum": 0.5,
+                "maximum": 20
+              },
+              "position": {
+                "type": "string",
+                "enum": [
+                  "top_left",
+                  "top_center",
+                  "top_right",
+                  "center",
+                  "bottom_left",
+                  "bottom_center",
+                  "bottom_right"
+                ]
+              }
+            },
+            "required": [
+              "text_id",
+              "kind",
+              "text",
+              "start",
+              "duration",
+              "position"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "narration": {
+          "type": "object",
+          "properties": {
+            "voice": {
+              "type": "string",
+              "enum": [
+                "none",
+                "tts",
+                "original"
+              ]
+            },
+            "lead_seconds": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
+            },
+            "lines": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "line_id": {
+                    "type": "string",
+                    "pattern": "^L\\d{3}$"
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1200
+                  },
+                  "audio": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "duration_s": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
+                          },
+                          "words": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "word": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "start": {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                "end": {
+                                  "type": "number",
+                                  "minimum": 0
+                                }
+                              },
+                              "required": [
+                                "word",
+                                "start",
+                                "end"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "duration_s",
+                          "words"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "line_id",
+                  "text",
+                  "audio"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "voice",
+            "lead_seconds",
+            "lines"
+          ],
+          "additionalProperties": false
+        },
+        "captions": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "none",
+                "burn-in",
+                "karaoke"
+              ]
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "additionalProperties": false
+        },
+        "music": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "track": {
+                  "type": "string",
+                  "pattern": "^library:[A-Za-z0-9._\\-/]+$"
+                },
+                "gain_db": {
+                  "type": "number",
+                  "minimum": -40,
+                  "maximum": 0
+                },
+                "ducking": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "track",
+                "gain_db",
+                "ducking"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_audio": {
+          "type": "object",
+          "properties": {
+            "muted": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "muted"
+          ],
+          "additionalProperties": false
+        },
+        "assets": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "summary_vi": {
+                "type": "string"
+              },
+              "duration_s": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "orientation": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "title",
+              "summary_vi",
+              "duration_s",
+              "orientation"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "alternates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "asset_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              }
+            },
+            "required": [
+              "asset_id",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "production_id",
+        "episode_id",
+        "canvas",
+        "fps",
+        "language",
+        "edit_style",
+        "clips",
+        "texts",
+        "narration",
+        "captions",
+        "music",
+        "source_audio",
+        "assets",
+        "alternates"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

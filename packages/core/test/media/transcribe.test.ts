@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { newId, type MediaEngine, type ShotsIndex } from "@harness/contracts";
 import { FakeMediaEngine } from "@harness/adapter-fake";
-import { hasFfmpeg, makeVideo } from "../../../../tests/media.js";
+import { hasFfmpegOnPath as hasFfmpeg, makeVideo } from "../../../../tests/media.js";
 import { transcribeSources } from "../../src/media/transcribe.js";
 
 function shotsIndexFixture(sources: { source_id: string; has_audio: boolean; error?: string; duration_seconds: number }[]): ShotsIndex {

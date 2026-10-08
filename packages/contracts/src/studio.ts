@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
+import { surveyIndexSchemaV2 } from "./library.js";
 
 /**
  * AG Studio production documents: a production is a SERIES of episodes cut from whole analysed videos.
@@ -20,6 +21,9 @@ export function studioVersion<N extends string, V extends number = 1>(name: N, v
 export const STUDIO_ASPECTS = ["16:9", "9:16"] as const;
 export type StudioAspect = (typeof STUDIO_ASPECTS)[number];
 
+export const NARRATION_VOICE_STATES = ["ready", "missing", "none"] as const;
+export type NarrationVoiceState = (typeof NARRATION_VOICE_STATES)[number];
+
 /** A logical input the render worker asks Studio's `/farm/sign` for, e.g. `library:music/calm.mp3`. */
 export const LibraryInputSchema = z.string().regex(/^library:[A-Za-z0-9._\-/]+$/, "expected library:<path>");
 /** A key relative to `productions/<id>/` in the Studio bucket, e.g. `exports/<run>/video.mp4`. */
@@ -39,6 +43,76 @@ export const StudioMusicSchema = z.object({
   ducking: z.boolean(),
 }).strict();
 export type StudioMusic = z.infer<typeof StudioMusicSchema>;
+
+// ---------------------------------------------------------------------------
+// Audio the person gives a production: a narration voice sample, background music (ADR-0001 items 167-168)
+// ---------------------------------------------------------------------------
+
+/**
+ * Where an audio file came from: a link, an upload, or a machine voice the farm designed from a description
+ * (`design`, OmniVoice `instruct`). ag-go holds footage only, never audio.
+ */
+export const AudioSourceSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("link"), url: z.string().url().max(2000) }).strict(),
+  z.object({ kind: z.literal("upload"), filename: z.string().min(1).max(255) }).strict(),
+  z.object({ kind: z.literal("design"), instruct: z.string().min(1).max(200) }).strict(),
+]);
+export type AudioSource = z.infer<typeof AudioSourceSchema>;
+
+/** Who may be heard in a voice sample (ADR-0001 item 105): a synthetic voice, the person's own, or one licensed to them. */
+export const VOICE_ORIGINS = ["synthetic", "own", "licensed"] as const;
+export type VoiceOrigin = (typeof VOICE_ORIGINS)[number];
+
+/**
+ * `productions.voice`. NULL (not this schema) = not asked yet: `STUDIO_DEFAULT_VOICE_REFERENCE` if set, else the
+ * episode stops at `tts` and asks. `none`: the person declined narration for the whole production. `designing`: the
+ * farm is reading a sample sentence in a voice designed from `instruct`; once read it becomes a `clone` of that sample
+ * (`voice-design.ts`), and until then episodes wait as for a missing voice. The last shape is the column as tests
+ * wrote it before (no mode), read as a clone.
+ */
+export const ProductionVoiceSchema = z.union([
+  z.object({ mode: z.literal("none"), decided_by: z.string().min(1), decided_at: z.string() }).strict(),
+  z.object({
+    mode: z.literal("designing"),
+    instruct: z.string().min(1).max(200),
+    /** The sentence read, in the production's language: it becomes the sample's `reference_text`. */
+    text: z.string().min(1).max(500),
+    /** The `studio.tts` job reading it; null when it could not be sent. */
+    farm_job_id: z.string().nullable(),
+    requested_by: z.string().min(1),
+    requested_at: z.string(),
+    /** Why the last try failed (the person may try again). */
+    error: z.string().max(2000).nullable(),
+  }).strict(),
+  z.object({
+    mode: z.literal("clone"),
+    reference: LibraryInputSchema,
+    /** What is said in the sample; null = the TTS engine transcribes it. */
+    reference_text: z.string().max(2000).nullable(),
+    speed: z.number().min(0.5).max(2),
+    origin: z.enum(VOICE_ORIGINS),
+    source: AudioSourceSchema,
+    sha256: z.string().min(1),
+    duration_s: z.number().positive(),
+    confirmed_by: z.string().min(1),
+    confirmed_at: z.string(),
+  }).strict(),
+  z.object({ reference: z.string().nullable(), reference_text: z.string().nullable(), speed: z.number() }).strict(),
+]);
+export type ProductionVoice = z.infer<typeof ProductionVoiceSchema>;
+
+/** `productions.music`: the music stages use, plus where the file came from (absent on tracks typed as `library:`). */
+export const ProductionMusicSchema = StudioMusicSchema.extend({
+  source: AudioSourceSchema.optional(),
+  sha256: z.string().min(1).optional(),
+  duration_s: z.number().positive().optional(),
+}).strict();
+export type ProductionMusic = z.infer<typeof ProductionMusicSchema>;
+
+/** The music a stage freezes into seed, brief and timeline: without where it came from. */
+export function studioMusicOf(m: ProductionMusic): StudioMusic {
+  return { track: m.track, gain_db: m.gain_db, ducking: m.ducking };
+}
 
 /** Soft target: an episode may differ from `episode_target_seconds` by this fraction (a warning, never a block). */
 export const EPISODE_DURATION_TOLERANCE = 0.2;
@@ -79,6 +153,11 @@ export const StudioBriefSchema = z.object({
   /** Competitor channels as the user typed them (links, @handles or channel ids). */
   youtube_channels: z.array(z.string().min(1).max(300)).max(MAX_RESEARCH_CHANNELS),
   keywords: z.array(z.string().min(1).max(100)).max(MAX_RESEARCH_KEYWORDS),
+  /**
+   * Whether narration can be read when the plan is made (ADR-0001 item 167): `ready` (a voice), `missing` (none yet,
+   * the episode asks before reading), `none` (declined: no episode is `tts`). Absent on briefs written before.
+   */
+  narration_voice: z.enum(NARRATION_VOICE_STATES).optional(),
 }).strict();
 export type StudioBrief = z.infer<typeof StudioBriefSchema>;
 
@@ -200,6 +279,16 @@ export type StudioCatalog = z.infer<typeof StudioCatalogSchema>;
 
 const reasonedAsset = z.object({ asset_id: z.string().min(1), reason: z.string().min(1).max(300) }).strict();
 
+/**
+ * How an episode is edited (spec local-chat §3.3): `whole` plays whole videos back to back (timeline v3), `cut`
+ * cuts it shot by shot from longer footage, with narration (`ag-studio-episode-cut`, timeline v4).
+ */
+export const EDIT_STYLES = ["whole", "cut"] as const;
+export type StudioEditStyle = (typeof EDIT_STYLES)[number];
+/** `tts`: lines read over the picture; `original`: the footage's own speech; `none`: picture, music, ambience. */
+export const NARRATION_VOICES = ["none", "tts", "original"] as const;
+export type NarrationVoice = (typeof NARRATION_VOICES)[number];
+
 export const TEXT_KINDS = ["title", "callout", "lower_third"] as const;
 export const TEXT_POSITIONS_V2 = ["top_left", "top_center", "top_right", "center", "bottom_left", "bottom_center", "bottom_right"] as const;
 export type TextKind = (typeof TEXT_KINDS)[number];
@@ -227,6 +316,13 @@ export const PlannedEpisodeSchema = z.object({
     text: z.string().min(1).max(64),
     at_item: z.number().int().min(0),
   }).strict()).max(10),
+  /**
+   * Absent = `whole` (plans written before shot-cut episodes existed). For `cut`, `items` are the videos the
+   * episode is cut from, in story order, not clips.
+   */
+  edit_style: z.enum(EDIT_STYLES).optional(),
+  /** Shot-cut episodes only; absent = `tts`. */
+  narration: z.enum(NARRATION_VOICES).optional(),
 }).strict();
 export type PlannedEpisode = z.infer<typeof PlannedEpisodeSchema>;
 
@@ -455,6 +551,20 @@ export type StudioThumbnails = z.infer<typeof StudioThumbnailsSchema>;
 // Episode run
 // ---------------------------------------------------------------------------
 
+/** What ag-go's AI description says about a whole video, kept as a hint (ag-go has nothing per shot). */
+export const AssetHintsSchema = z.object({
+  subjects: z.array(z.string()),
+  places: z.array(z.string()),
+  mood: z.string(),
+  setting: z.string(),
+  time_of_day: z.string(),
+  people_count: z.string(),
+  shot_variety: z.array(z.string()),
+  /** ag-go's speech hint (from the silence ratio, not a transcript); `null` when unknown. */
+  has_speech: z.boolean().nullable(),
+}).strict();
+export type AssetHints = z.infer<typeof AssetHintsSchema>;
+
 /** What an episode run knows about a video it may use (snapshot of the catalog entry). */
 export const EpisodeAssetSchema = z.object({
   title: z.string(),
@@ -471,8 +581,20 @@ export const StudioEpisodeSchema = PlannedEpisodeSchema.extend({
   episode_id: z.string().min(1),
   /** Every asset of `items` and `alternates`. */
   assets: z.record(z.string(), EpisodeAssetSchema),
+  /** Shot-cut episodes: ag-go's AI description of each video, a hint for scene selection (absent before phase 5). */
+  asset_hints: z.record(z.string(), AssetHintsSchema).optional(),
 }).strict();
 export type StudioEpisode = z.infer<typeof StudioEpisodeSchema>;
+
+/** One text on the picture (T). `start` is seconds from the start of the episode. Same in v3 and v4. */
+export const TimelineTextSchema = z.object({
+  text_id: z.string().regex(/^T\d{3}$/),
+  kind: z.enum(TEXT_KINDS),
+  text: z.string().min(1).max(64),
+  start: z.number().min(0),
+  duration: z.number().min(0.5).max(20),
+  position: z.enum(TEXT_POSITIONS_V2),
+}).strict();
 
 /**
  * `timeline.json` (Timeline v3): what the editor edits and the renderer plays. Clips play back to back in array
@@ -493,14 +615,7 @@ export const TimelineV3Schema = z.object({
     section_title: z.string().min(1).max(100).nullable(),
   }).strict()),
   /** T. `start` is seconds from the start of the episode. */
-  texts: z.array(z.object({
-    text_id: z.string().regex(/^T\d{3}$/),
-    kind: z.enum(TEXT_KINDS),
-    text: z.string().min(1).max(64),
-    start: z.number().min(0),
-    duration: z.number().min(0.5).max(20),
-    position: z.enum(TEXT_POSITIONS_V2),
-  }).strict()),
+  texts: z.array(TimelineTextSchema),
   /** A2. */
   music: StudioMusicSchema.nullable(),
   /** A1: the videos' own sound (on or off; the composition has no gain for it). */
@@ -513,6 +628,187 @@ export const TimelineV3Schema = z.object({
 export type TimelineV3 = z.infer<typeof TimelineV3Schema>;
 export type TimelineClip = TimelineV3["clips"][number];
 export type TimelineText = TimelineV3["texts"][number];
+
+/**
+ * `timeline.json` (Timeline v4, spec local-chat §3.3, ADR-0001 item 151): v3 plus what the shot-cut edit style
+ * needs. Both edit styles use it: `whole` (each clip plays its whole video, as v3) and `cut` (clips are shots
+ * trimmed out of longer footage, with narration).
+ *
+ * - A clip plays `[in, out)` seconds of its asset (`out: null` = to the end of the asset), so its length is
+ *   `(out ?? assets[asset_id].duration_s) - in`. Clips play back to back in array order.
+ * - `transition_out` never moves a clip: a dissolve takes a tail of `seconds` from the SAME asset after `out`
+ *   (ADR item 118). Without that tail, or when the next clip is shorter than `2 × seconds`, the composition
+ *   downgrades it to a cut and says so in `transitions.downgraded`. The last clip always cuts.
+ * - `line_id` marks the clip a narration line STARTS on; a line is anchored by at most one clip and plays from
+ *   `clip.start + narration.lead_seconds` for `audio.duration_s`. `audio.words[]` are seconds from the start
+ *   of the line. The WAV lives in the Studio voice store under `audio.key` (sha256 of what was read).
+ *
+ * Contract for the exports (phases 4 and 6): they read the `harness.composition/v1` that
+ * `timelineToComposition` (core) builds from this, where `segments[].in/out` are seconds in the SOURCE file,
+ * `transition_out` has `tail_available` resolved, `narration[].wav` is the input `stage:voice/<line_id>.wav`
+ * with `start/end` on the episode axis, and `captions.cues` / `text_events` carry absolute times.
+ *
+ * A v3 document reads as v4 through `upgradeTimelineV3` (`in: 0`, `out: null`, cuts, no narration, no captions);
+ * an episode whose timeline was v3 keeps being stored as v3 (`downgradeTimelineV4`), never rewritten.
+ */
+export const TIMELINE_TRANSITIONS = ["cut", "dissolve", "dip_black"] as const;
+export type TimelineTransitionKind = (typeof TIMELINE_TRANSITIONS)[number];
+export const CAPTION_MODES = ["none", "burn-in", "karaoke"] as const;
+export type CaptionMode = (typeof CAPTION_MODES)[number];
+/** Narration starts this long after the start of the clip it is anchored on (harness `fitEdl` lead-in). */
+export const DEFAULT_NARRATION_LEAD_SECONDS = 0.3;
+
+export const TimelineClipV4Schema = z.object({
+  clip_id: z.string().regex(/^C\d{3,4}$/),
+  asset_id: z.string().min(1),
+  section_title: z.string().min(1).max(100).nullable(),
+  /** Seconds into the asset. */
+  in: z.number().min(0),
+  /** Seconds into the asset; `null` = to the end of the asset. */
+  out: z.number().positive().nullable(),
+  /** The shot of the scene selection this clip was cut from (`s<source>-<shot>`). */
+  shot_id: z.string().regex(/^s\d{3}-\d{3}$/).nullable(),
+  /** The narration line that starts on this clip. */
+  line_id: z.string().regex(/^L\d{3}$/).nullable(),
+  transition_out: z.object({
+    kind: z.enum(TIMELINE_TRANSITIONS),
+    seconds: z.number().min(0).max(1),
+  }).strict(),
+}).strict().refine((c) => c.out === null || c.out > c.in, { message: "out must be after in", path: ["out"] });
+
+export const NarrationWordSchema = z.object({
+  word: z.string().min(1),
+  start: z.number().min(0),
+  end: z.number().min(0),
+}).strict();
+
+export const TimelineNarrationLineSchema = z.object({
+  line_id: z.string().regex(/^L\d{3}$/),
+  text: z.string().min(1).max(1200),
+  /** `null` until the line has been read (TTS). */
+  audio: z.object({
+    key: z.string().regex(/^[0-9a-f]{64}$/),
+    duration_s: z.number().positive(),
+    words: z.array(NarrationWordSchema),
+  }).strict().nullable(),
+}).strict();
+
+export const TimelineV4Schema = z.object({
+  schema_version: studioVersion("timeline", 4),
+  production_id: z.string().min(1),
+  episode_id: z.string().min(1),
+  canvas: StudioCanvasSchema,
+  fps: z.union([z.literal(25), z.literal(30)]),
+  language: z.string().min(2).max(10),
+  edit_style: z.enum(EDIT_STYLES),
+  /** V1, in play order. */
+  clips: z.array(TimelineClipV4Schema),
+  texts: z.array(TimelineTextSchema),
+  narration: z.object({
+    /** `tts`: read lines over the picture (source sound off); `original`: the footage's own speech; `none`. */
+    voice: z.enum(NARRATION_VOICES),
+    lead_seconds: z.number().min(0).max(2),
+    lines: z.array(TimelineNarrationLineSchema),
+  }).strict(),
+  /** Burnt-in subtitles from the narration's words. */
+  captions: z.object({ mode: z.enum(CAPTION_MODES) }).strict(),
+  music: StudioMusicSchema.nullable(),
+  source_audio: z.object({ muted: z.boolean() }).strict(),
+  assets: z.record(z.string(), EpisodeAssetSchema),
+  alternates: z.array(reasonedAsset),
+}).strict();
+export type TimelineV4 = z.infer<typeof TimelineV4Schema>;
+export type TimelineClipV4 = TimelineV4["clips"][number];
+export type TimelineNarrationLine = TimelineV4["narration"]["lines"][number];
+
+/** A v4 timeline asked to be written as v3 holds something v3 cannot (trim, transition, narration, captions). */
+export class TimelineVersionError extends Error {
+  readonly code = "not_v3" as const;
+  constructor(message: string) {
+    super(message);
+    this.name = "TimelineVersionError";
+  }
+}
+
+export function upgradeTimelineV3(t: TimelineV3): TimelineV4 {
+  return {
+    schema_version: "studio.timeline/v4",
+    production_id: t.production_id,
+    episode_id: t.episode_id,
+    canvas: t.canvas,
+    fps: t.fps,
+    language: t.language,
+    edit_style: "whole",
+    clips: t.clips.map((c) => ({
+      clip_id: c.clip_id, asset_id: c.asset_id, section_title: c.section_title,
+      in: 0, out: null, shot_id: null, line_id: null, transition_out: { kind: "cut", seconds: 0 },
+    })),
+    texts: t.texts,
+    narration: { voice: "none", lead_seconds: DEFAULT_NARRATION_LEAD_SECONDS, lines: [] },
+    captions: { mode: "none" },
+    music: t.music,
+    source_audio: t.source_audio,
+    assets: t.assets,
+    alternates: t.alternates,
+  };
+}
+
+/** The v3 document a v4 timeline stands for; throws `TimelineVersionError` when that would lose anything. */
+export function downgradeTimelineV4(t: TimelineV4): TimelineV3 {
+  const lost: string[] = [];
+  if (t.edit_style !== "whole") lost.push("edit_style");
+  for (const c of t.clips) {
+    if (c.in !== 0 || c.out !== null) lost.push(`${c.clip_id} trim`);
+    if (c.shot_id !== null) lost.push(`${c.clip_id} shot_id`);
+    if (c.line_id !== null) lost.push(`${c.clip_id} line_id`);
+    if (c.transition_out.kind !== "cut" || c.transition_out.seconds !== 0) lost.push(`${c.clip_id} transition`);
+  }
+  const n = t.narration;
+  if (n.voice !== "none" || n.lines.length > 0 || n.lead_seconds !== DEFAULT_NARRATION_LEAD_SECONDS) lost.push("narration");
+  if (t.captions.mode !== "none") lost.push("captions");
+  if (lost.length > 0) throw new TimelineVersionError(`a v3 timeline cannot hold: ${lost.join(", ")}`);
+  return {
+    schema_version: "studio.timeline/v3",
+    production_id: t.production_id,
+    episode_id: t.episode_id,
+    canvas: t.canvas,
+    fps: t.fps,
+    language: t.language,
+    clips: t.clips.map((c) => ({ clip_id: c.clip_id, asset_id: c.asset_id, section_title: c.section_title })),
+    texts: t.texts,
+    music: t.music,
+    source_audio: t.source_audio,
+    assets: t.assets,
+    alternates: t.alternates,
+  };
+}
+
+/** 3 or 4 by `schema_version`, `null` for anything else (no parsing). */
+export function timelineVersion(raw: unknown): 3 | 4 | null {
+  const v = raw && typeof raw === "object" ? (raw as { schema_version?: unknown }).schema_version : undefined;
+  return v === "studio.timeline/v3" ? 3 : v === "studio.timeline/v4" ? 4 : null;
+}
+
+/** A timeline as stored: either version, kept as it is (edits return the version they were given). */
+export const StoredTimelineSchema = z.union([TimelineV4Schema, TimelineV3Schema]);
+export type StoredTimeline = TimelineV3 | TimelineV4;
+
+/**
+ * `timeline` in the version `version` (the version an episode's timeline was first stored in): a v3 episode keeps
+ * v3 — a v4 document is written down to v3 when nothing is lost, else `TimelineVersionError`.
+ */
+export function timelineAsVersion(t: StoredTimeline, version: 3 | 4): StoredTimeline {
+  if (version === 4) return t.schema_version === "studio.timeline/v4" ? t : upgradeTimelineV3(t);
+  return t.schema_version === "studio.timeline/v3" ? t : downgradeTimelineV4(t);
+}
+
+/** Either version, read as v4. */
+export const AnyTimelineSchema = z.union([TimelineV4Schema, TimelineV3Schema.transform(upgradeTimelineV3)]);
+
+/** Parses a stored timeline of either version and returns it as v4 (throws the zod error otherwise). */
+export function readTimeline(raw: unknown): TimelineV4 {
+  return AnyTimelineSchema.parse(raw);
+}
 
 export const YOUTUBE_TITLE_MAX = 100;
 export const YOUTUBE_DESCRIPTION_MAX = 5000;
@@ -597,6 +893,58 @@ export const StudioExportSchema = z.object({
 }).strict();
 export type StudioExport = z.infer<typeof StudioExportSchema>;
 
+// ---------------------------------------------------------------------------
+// Shot-cut episodes (spec local-chat §3.3): the scene selection and the edit plan Claude writes
+// ---------------------------------------------------------------------------
+
+/**
+ * `survey.json` (`source-survey`, Claude looking at contact sheets; corrected and approved at `approve-survey`): the
+ * harness `harness.survey-index/v2`, exactly one row per shot of `shots.json`, scored 0–5 with a reason in `note`.
+ */
+export const StudioSurveySchema = surveyIndexSchemaV2;
+export type StudioSurvey = z.infer<typeof StudioSurveySchema>;
+
+/**
+ * `edit-plan.json` (`plan-edit`, Claude; corrected and approved at `approve-edit-plan`): the cut of a shot-cut
+ * episode before it is fitted to the narration. `shots` play in `order`; each is `[in, out)` of an approved usable
+ * shot (`source_id` + `shot_id`); `line_id` marks the shot a narration line starts on; texts are anchored on a shot
+ * (`at_order`, `offset_s` into it). The fit stage turns this into a timeline v4.
+ */
+export const EditPlanSchema = z.object({
+  schema_version: studioVersion("edit-plan"),
+  episode_id: z.string().min(1),
+  narration: z.enum(NARRATION_VOICES),
+  language: z.string().min(2).max(10),
+  target_seconds: z.number().min(10).max(3600),
+  shots: z.array(z.object({
+    order: z.number().int().min(1),
+    shot_id: z.string().regex(/^s\d{3}-\d{3}$/),
+    source_id: z.string().regex(/^src_[0-9A-HJKMNP-TV-Z]{26}$/),
+    in: z.number().min(0),
+    out: z.number().positive(),
+    line_id: z.string().regex(/^L\d{3}$/).nullable(),
+    transition: z.enum(["cut", "dissolve"]),
+    section_title: z.string().min(1).max(100).nullable(),
+    note: z.string().max(300),
+  }).strict()).min(1).max(400),
+  lines: z.array(z.object({
+    line_id: z.string().regex(/^L\d{3}$/),
+    text: z.string().min(1).max(1200),
+  }).strict()).max(300),
+  texts: z.array(z.object({
+    text_id: z.string().regex(/^T\d{3}$/),
+    kind: z.enum(TEXT_KINDS),
+    text: z.string().min(1).max(64),
+    at_order: z.number().int().min(1),
+    offset_s: z.number().min(0),
+    duration: z.number().min(0.5).max(20),
+    position: z.enum(TEXT_POSITIONS_V2),
+  }).strict()).max(30),
+  /** A mood for the music (the production's track is used; kept for later). */
+  music_mood: z.string().max(40).nullable(),
+}).strict();
+export type EditPlan = z.infer<typeof EditPlanSchema>;
+
 /** Output schema per Studio skill: what Claude must return, and what the stage writes to disk. */
 export const STUDIO_SKILL_OUTPUTS = {
   "studio-trend-report": TrendReportSchema,
@@ -604,7 +952,15 @@ export const STUDIO_SKILL_OUTPUTS = {
   "studio-branding": StudioBrandingSchema,
   "studio-plan-episodes": SeriesPlanSchema,
   "studio-youtube-kit": YoutubeKitSchema,
+  "studio-source-survey": StudioSurveySchema,
+  "studio-edit-plan": EditPlanSchema,
 } as const;
+
+/**
+ * Skills that run in files mode (`CliAgentRuntime` `files`): the agent opens pictures in its workspace and its session
+ * is kept so the repair round and the chat can resume it (ADR-0001 item 155). The others are structured, no tools.
+ */
+export const STUDIO_FILE_SKILLS: ReadonlySet<StudioSkill> = new Set<StudioSkill>(["studio-source-survey"]);
 export type StudioSkill = keyof typeof STUDIO_SKILL_OUTPUTS;
 
 // ---------------------------------------------------------------------------
@@ -612,7 +968,7 @@ export type StudioSkill = keyof typeof STUDIO_SKILL_OUTPUTS;
 // ---------------------------------------------------------------------------
 
 /** The AI steps a team skill can be limited to; a skill limited to none applies to every step. */
-export const TEAM_SKILL_STEPS = ["trend-report", "rnd", "branding", "plan-episodes", "youtube-kit"] as const;
+export const TEAM_SKILL_STEPS = ["intake", "trend-report", "rnd", "branding", "plan-episodes", "source-survey", "edit-plan", "timeline", "youtube-kit"] as const;
 export type TeamSkillStep = (typeof TEAM_SKILL_STEPS)[number];
 
 /** Lengths in characters. `enabledTotal` bounds every enabled skill of a team together (prompt cost). */
@@ -625,6 +981,8 @@ export const STUDIO_SKILL_STEP: Record<StudioSkill, TeamSkillStep> = {
   "studio-branding": "branding",
   "studio-plan-episodes": "plan-episodes",
   "studio-youtube-kit": "youtube-kit",
+  "studio-source-survey": "source-survey",
+  "studio-edit-plan": "edit-plan",
 };
 
 /** A team skill as it goes into a prompt. */
@@ -663,7 +1021,9 @@ function stripForClaude(node: unknown): unknown {
     // Structured outputs require every object closed; `z.record` has no fixed properties and is not used in
     // any Claude-facing schema, so closing is always right here.
     out.additionalProperties = false;
-    if (out.properties && !out.required) out.required = Object.keys(out.properties as object);
+    // Every property is required: a key optional on disk (absent in documents written before it existed, such as an
+    // episode's `edit_style`) is one Claude always answers.
+    if (out.properties) out.required = Object.keys(out.properties as object);
   }
   return out;
 }
@@ -674,6 +1034,29 @@ function stripForClaude(node: unknown): unknown {
  * checker (one repair round, see `StudioAgentExecutor`).
  */
 export function claudeOutputJsonSchema(skill: StudioSkill): Record<string, unknown> {
-  const raw = zodToJsonSchema(STUDIO_SKILL_OUTPUTS[skill], { $refStrategy: "none", target: "jsonSchema7" });
+  return claudeJsonSchemaFor(STUDIO_SKILL_OUTPUTS[skill]);
+}
+
+/** `claudeOutputJsonSchema` for any Zod schema (chat replies wrap a stage's schema). It must hold no `z.record`. */
+export function claudeJsonSchemaFor(schema: z.ZodTypeAny): Record<string, unknown> {
+  const raw = zodToJsonSchema(schema, { $refStrategy: "none", target: "jsonSchema7" });
   return stripForClaude(raw) as Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// Render machine (spec local-chat §3.4): which kind of farm machine renders a final cut, said with the job
+// `requirements` ag-farm already has. Studio stores the type, never raw requirements, so no caller can send the farm
+// a key it would refuse. Pinning one named machine would need a new ag-farm field: not done here.
+// ---------------------------------------------------------------------------
+export const RENDER_MACHINES = ["any", "nvenc", "gpu"] as const;
+export const RenderMachineSchema = z.enum(RENDER_MACHINES);
+export type RenderMachine = z.infer<typeof RenderMachineSchema>;
+
+/** ag-farm `requirements` of a machine type: `{}` matches any node. A fresh object every call. */
+export function renderRequirements(machine: RenderMachine): { nvenc?: boolean; gpu?: boolean } {
+  switch (machine) {
+    case "nvenc": return { nvenc: true };
+    case "gpu": return { gpu: true };
+    default: return {};
+  }
 }

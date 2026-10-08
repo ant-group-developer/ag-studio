@@ -40,3 +40,6 @@ body {
 .markdown-preview table { border-collapse: collapse; }
 .markdown-preview th,
 .markdown-preview td { border: 1px solid rgba(0, 0, 0, 0.12); padding: 4px 8px; }
+
+/* Timeline editor opened from the chat: the way back. */
+.editor-back-to-chat { padding: 6px 16px; font-size: 13px; border-bottom: 1px solid rgba(0, 0, 0, 0.06); }

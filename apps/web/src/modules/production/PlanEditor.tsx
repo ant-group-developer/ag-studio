@@ -423,9 +423,12 @@ interface PlanEditorProps {
   targetSeconds: number;
   readOnly?: boolean;
   onApproved?: () => void;
+  /** Draft mode (chat "Sửa tay"): the main button hands the plan back as a new version instead of approving it. */
+  onSave?: ((plan: SeriesPlan) => Promise<unknown>) | undefined;
+  saveLabel?: string | undefined;
 }
 
-export function PlanEditor({ productionId, plan: initialPlan, catalog, targetSeconds, readOnly, onApproved }: PlanEditorProps) {
+export function PlanEditor({ productionId, plan: initialPlan, catalog, targetSeconds, readOnly, onApproved, onSave, saveLabel }: PlanEditorProps) {
   const { t } = useTranslation();
   const client = useStudioClient();
   const qc = useQueryClient();
@@ -447,9 +450,10 @@ export function PlanEditor({ productionId, plan: initialPlan, catalog, targetSec
   const approveMutation = useMutation({
     mutationFn: async () => {
       if (!validate()) throw new Error("validation failed");
-      return client.submitApprovePlan(productionId, plan);
+      return onSave ? onSave(plan) : client.submitApprovePlan(productionId, plan);
     },
     onSuccess: () => {
+      if (onSave) return;
       void message.success(t("planEditor.approveSuccess"));
       void qc.invalidateQueries({ queryKey: ["production", productionId] });
       onApproved?.();
@@ -565,18 +569,24 @@ export function PlanEditor({ productionId, plan: initialPlan, catalog, targetSec
           >
             {t("planEditor.checkerTitle")}
           </Button>
-          <Popconfirm
-            title={t("planEditor.approveConfirm")}
-            onConfirm={() => void approveMutation.mutate()}
-          >
-            <Button
-              type="primary"
-              loading={approveMutation.isPending}
-              icon={<CheckCircle size={14} />}
-            >
-              {t("planEditor.approve")}
+          {onSave ? (
+            <Button type="primary" loading={approveMutation.isPending} onClick={() => approveMutation.mutate()}>
+              {saveLabel ?? t("planEditor.approve")}
             </Button>
-          </Popconfirm>
+          ) : (
+            <Popconfirm
+              title={t("planEditor.approveConfirm")}
+              onConfirm={() => void approveMutation.mutate()}
+            >
+              <Button
+                type="primary"
+                loading={approveMutation.isPending}
+                icon={<CheckCircle size={14} />}
+              >
+                {t("planEditor.approve")}
+              </Button>
+            </Popconfirm>
+          )}
         </Space>
       )}
     </Space>

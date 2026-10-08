@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isHarnessError, mediaConfigSchema, newId, type MediaEngine, type Narration, type VoiceProfile } from "@harness/contracts";
 import { FakeMediaEngine } from "@harness/adapter-fake";
-import { hasFfmpeg } from "../../../../tests/media.js";
+import { hasFfmpegOnPath as hasFfmpeg } from "../../../../tests/media.js";
 import { NarrationTimingSchema } from "@harness/contracts";
 import { splitSentences } from "../../src/media/sentences.js";
 import { ttsCacheKey, synthesizeNarration, type TtsDeps } from "../../src/media/tts.js";

@@ -1,3 +1,4 @@
+import { chatEn } from "./chat.en";
 import type { LocaleMessages } from "./vi";
 
 export const en: LocaleMessages = {
@@ -145,6 +146,7 @@ export const en: LocaleMessages = {
     columnEpisodes: "Episodes done / total",
     create: "Create new production",
     createTitle: "Create new production",
+    createFailed: "Could not create the production",
     fieldTitle: "Title",
     fieldTitleRequired: "Please enter a title",
     fieldBrief: "Description",
@@ -296,9 +298,11 @@ export const en: LocaleMessages = {
     catalogEmpty: "No videos found",
     episodeTitle: "Episode {{idx}}",
     approvedPlanNote: "Plan approved — use the \"Re-run\" dropdown to re-plan from this step.",
+    queued: "Waiting for a worker to pick up the episode plan…",
+    writing: "AI is writing the episode plan…",
   },
   episodes: {
-    status: { planned: "Planned", producing: "Producing", ready: "Ready", failed: "Failed", cancelled: "Cancelled" },
+    status: { planned: "Planned", producing: "Producing", waiting_approval: "Waiting for approval", ready: "Ready", failed: "Failed", cancelled: "Cancelled" },
     jobStatus: { queued: "Queued", running: "Running", completed: "Done", failed: "Failed" },
     youtubePack: "YouTube upload pack (zip)",
     premiereTitle: "Adobe Premiere project",
@@ -308,6 +312,7 @@ export const en: LocaleMessages = {
     premiereMediaOriginal: "Originals",
     premiereStarted: "Premiere project export started",
     premiereForbidden: "You may not download originals; export the 720p proxy instead",
+    premiereWarnings: "The export has warnings:",
     premiereNone: "No Premiere export yet",
     title: "Episodes",
     loadFailed: "Could not load the episode list",
@@ -487,6 +492,14 @@ export const en: LocaleMessages = {
     startSeconds: "Start (s)",
     durationSeconds: "Duration (s)",
     removeText: "Remove text",
+    inSeconds: "In (s)",
+    outSeconds: "Out (s)",
+    transition: "Into the next clip",
+    transitionSeconds: "Length (s)",
+    transitions: { cut: "Cut", dissolve: "Dissolve", dip_black: "Dip to black" },
+    narrationLine: "Narration line {{id}} starts on this clip (edit the words in the edit plan step)",
+    noNarrationLine: "No narration line starts on this clip",
+    captionModes: { none: "None", "burn-in": "Burnt in", karaoke: "Karaoke" },
     generalTitle: "General",
     sourceAudio: "Original audio",
     captions: "Captions",
@@ -518,7 +531,7 @@ export const en: LocaleMessages = {
   },
   llmLog: {
     title: "Log",
-    tabCalls: "Claude calls",
+    tabCalls: "{{ai}} calls",
     tabEdits: "Human edits",
     forbidden: "The log shows footage outside your ag-go scope.",
     empty: "No calls yet.",
@@ -538,7 +551,7 @@ export const en: LocaleMessages = {
     unchanged: "Kept as is",
     user: "User",
     view: "View",
-    callTitle: "Claude call",
+    callTitle: "{{ai}} call",
     tabPrompt: "Prompt",
     tabAnswer: "Answer",
     tabProblems: "Check problems",
@@ -668,11 +681,12 @@ export const en: LocaleMessages = {
     hashtagInvalid: "Hashtag must start with # and contain only letters, digits or underscores",
     preview: "Thumbnail preview",
   },
+  chat: chatEn,
   enums: {
     productionStatus: {
       draft: "Draft",
       planning: "Planning",
-      waiting_approval: "Waiting for plan approval",
+      waiting_approval: "Waiting for your approval",
       producing: "Producing",
       done: "Done",
       failed: "Failed",
@@ -756,10 +770,12 @@ export const en: LocaleMessages = {
       timeline: "Timeline",
     },
     teamSkillStep: {
+      intake: "New video questions",
       "trend-report": "Trend report",
       rnd: "R&D",
       branding: "Branding",
       "plan-episodes": "Episode plan",
+      timeline: "Timeline chat",
       "youtube-kit": "YouTube kit & thumbnails",
     },
     llmOutcome: {
@@ -769,6 +785,7 @@ export const en: LocaleMessages = {
       rate_limited: "Limit reached",
     },
     humanEdit: {
+      trend_report: "Trend report approved",
       series_plan: "Plan approved",
       youtube_kit: "YouTube kit saved",
       episode_rerender: "Episode re-rendered",
@@ -778,6 +795,8 @@ export const en: LocaleMessages = {
       rnd_edit: "R&D edited",
       branding_edit: "Branding edited",
       thumbnail: "Thumbnail picked",
+      survey: "Scene selection approved",
+      edit_plan: "Edit plan approved",
     },
   },
 };

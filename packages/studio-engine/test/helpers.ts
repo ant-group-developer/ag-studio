@@ -62,18 +62,37 @@ export function fakeFootage(count = 8, duration_s = 30): FootageCatalogSource & 
  * correlation_id = attempt_id; stage key for the only farm stage is "render-final".
  */
 export function fakeFarm(bucket: MemoryBucket) {
-  const jobs = new Map<string, { id: string; type: string; payload: Record<string, unknown>; status: string; result: unknown; error: unknown }>();
+  const jobs = new Map<string, { id: string; type: string; payload: Record<string, unknown>; requirements: Record<string, unknown>; status: string; result: unknown; error: unknown }>();
   let n = 0;
   return {
     jobs,
-    async submitJob(req: { type: string; payload: unknown; correlation_id: string }) {
+    async submitJob(req: { type: string; payload: unknown; correlation_id: string; requirements?: Record<string, unknown> }) {
       const id = `job-${++n}`;
       const p = req.payload as Record<string, unknown>;
       const prod = String(p.production_id ?? "");
       const attemptId = String(req.correlation_id ?? id);
       // FarmExecutor resolves output prefix as: productions/<productionId>/jobs/<stageKey>/<attemptId>/out/
-      const stageKey = "render-final";
+      const stageKey = req.type === "studio.tts" ? "tts" : req.type === "studio.transcribe" ? "transcribe" : "render-final";
       const out = `productions/${prod}/jobs/${stageKey}/${attemptId}/out/`;
+      // Shot-cut episodes (phase 5): narration read and footage listened to, as the render worker answers them
+      if (req.type === "studio.tts") {
+        const lines = (p.lines as { line_id: string; text: string }[]).map((l) => {
+          const words = l.text.split(/\s+/).filter(Boolean);
+          const duration = Math.round((l.text.length / 14 + 0.4) * 1000) / 1000;
+          bucket.objects.set(`${out}tts/${l.line_id}.wav`, Buffer.from(`RIFF-${l.line_id}`));
+          return { line_id: l.line_id, output: `tts/${l.line_id}.wav`, duration_s: duration,
+            words: words.map((w, i) => ({ word: w, start: Math.round((i * duration / words.length) * 1000) / 1000, end: Math.round(((i + 1) * duration / words.length) * 1000) / 1000 })) };
+        });
+        bucket.objects.set(`${out}tts.json`, Buffer.from(JSON.stringify({ schema: "ag.studio.tts/v1", production_id: prod, language: p.language, lines, engine: { name: "fake", version: null } })));
+        jobs.set(id, { id, type: req.type, payload: p, requirements: req.requirements ?? {}, status: "completed", result: { manifest: "tts.json" }, error: null });
+        return { job: { id }, created: true };
+      }
+      if (req.type === "studio.transcribe") {
+        const sources = (p.sources as { source_id: string }[]).map((s) => ({ source_id: s.source_id, language: "vi", alignment: "word", segments: [] }));
+        bucket.objects.set(`${out}transcribe.json`, Buffer.from(JSON.stringify({ schema: "ag.studio.transcribe/v1", production_id: prod, engine: { name: "fake", version: null }, sources })));
+        jobs.set(id, { id, type: req.type, payload: p, requirements: req.requirements ?? {}, status: "completed", result: { manifest: "transcribe.json" }, error: null });
+        return { job: { id }, created: true };
+      }
 
       const durationS = 60;
       const outputFile = String(p.output ?? "final.mp4");
@@ -102,7 +121,7 @@ export function fakeFarm(bucket: MemoryBucket) {
         duration_s: effectiveDuration, size_bytes: fakeMp4(id).length, watermarked: false, sources: [], warnings: [],
         thumbnails: thumbsPayload.map((th, i) => ({ output: `${thumbBase}.thumb-${i + 1}.jpg`, t_s: th.t_s, width: canvas.width, height: canvas.height })),
       })));
-      jobs.set(id, { id, type: req.type, payload: p, status: "completed", result: { manifest: "render.json" }, error: null });
+      jobs.set(id, { id, type: req.type, payload: p, requirements: req.requirements ?? {}, status: "completed", result: { manifest: "render.json" }, error: null });
       return { job: { id }, created: true };
     },
     async getJob(id: string) { const j = jobs.get(id)!; return { ...j, progress_percent: 100 }; },
@@ -123,11 +142,13 @@ export function world() {
 export function seedProduction(db: StudioDb, over: {
   title?: string; target?: number; aspect?: string;
   episode_target_seconds?: number; max_episodes?: number;
+  /** A second production in the same db needs its own id. */
+  id?: string;
 } = {}): string {
   const now = new Date().toISOString();
-  db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [now, now]);
-  db.run("INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES ('team-1', 'auth0|owner', 'owner', ?)", [now]);
-  const id = "11111111-1111-4111-8111-111111111111";
+  db.run("INSERT OR IGNORE INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [now, now]);
+  db.run("INSERT OR IGNORE INTO team_members (team_id, user_id, role, joined_at) VALUES ('team-1', 'auth0|owner', 'owner', ?)", [now]);
+  const id = over.id ?? "11111111-1111-4111-8111-111111111111";
   db.run(`INSERT INTO productions (id, team_id, title, status, brief, created_at, updated_at, owner_user_id, target_seconds, aspect, language,
             goal, audience, tone, episode_target_seconds, max_episodes)
           VALUES (?, 'team-1', ?, 'draft', 'Một bát phở buổi sáng', ?, ?, 'auth0|owner', ?, ?, 'vi',

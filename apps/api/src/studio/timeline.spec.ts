@@ -67,7 +67,7 @@ describe('Timeline revisions over HTTP semantics (autosave + 409)', () => {
       getJob: async () => ({ status: 'running', progress_percent: 42 }),
       ackJob: async () => ({}),
     };
-    const engine = { core, db, bucket, editor: { db, bucket, farm }, browserUrlTtl: 60 } as unknown as EngineService;
+    const engine = { core, db, bucket, editor: { db, bucket, farm, voiceDir: join(dir, 'voice') }, browserUrlTtl: 60 } as unknown as EngineService;
     const access = { coversProduction: async () => false } as unknown as FootageAccessService;
     profile = { userId: 'u1', userType: 'USER', permissions: [] };
     const account = { getUserProfile: async () => profile } as unknown as AccountApiService;
@@ -107,6 +107,57 @@ describe('Timeline revisions over HTTP semantics (autosave + 409)', () => {
     await expect(controller.save(PROD, unknownEp, { baseRevision: 0, data: { ...timeline(), episode_id: unknownEp } }, req('u1'))).rejects.toBeInstanceOf(NotFoundException);
   });
 
+  it('a whole-video (v3) episode keeps v3; a trim it cannot hold is 422 not_v3', async () => {
+    await controller.save(PROD, EP, { baseRevision: 0, data: timeline() }, req('u1'));
+    const v4 = {
+      ...timeline(), schema_version: 'studio.timeline/v4', edit_style: 'whole',
+      clips: [{ clip_id: 'C001', asset_id: 'asset-1', section_title: 'Phở bò', in: 0, out: null, shot_id: null, line_id: null, transition_out: { kind: 'cut', seconds: 0 } }],
+      narration: { voice: 'none', lead_seconds: 0.3, lines: [] }, captions: { mode: 'none' },
+    };
+    const same = await controller.save(PROD, EP, { baseRevision: 1, data: v4 }, req('u1'));
+    expect((await controller.revision(PROD, EP, same.revision)).data.schema_version).toBe('studio.timeline/v3');
+
+    const trimmed = { ...v4, clips: [{ ...v4.clips[0]!, in: 1, out: 4 }] };
+    const err = await controller.save(PROD, EP, { baseRevision: same.revision, data: trimmed }, req('u1')).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UnprocessableEntityException);
+    expect((err as UnprocessableEntityException).getResponse()).toMatchObject({ code: 'not_v3' });
+  });
+
+  it('a shot-cut timeline with trims and a dissolve exports to Premiere (phase 4)', async () => {
+    const now = new Date().toISOString();
+    db.run("INSERT INTO episodes (id, production_id, idx, title, hook, edit_style, created_at, updated_at) VALUES ('cut-ep', ?, 2, 'Ep 2', 'h', 'cut', ?, ?)", [PROD, now, now]);
+    const cut = {
+      ...timeline(), episode_id: 'cut-ep', schema_version: 'studio.timeline/v4', edit_style: 'cut',
+      clips: [
+        { clip_id: 'C001', asset_id: 'asset-1', section_title: null, in: 1, out: 3.5, shot_id: 's000-000', line_id: null, transition_out: { kind: 'dissolve', seconds: 0.5 } },
+        { clip_id: 'C002', asset_id: 'asset-1', section_title: null, in: 4, out: 7, shot_id: 's000-001', line_id: null, transition_out: { kind: 'cut', seconds: 0 } },
+      ],
+      narration: { voice: 'none', lead_seconds: 0.3, lines: [] }, captions: { mode: 'none' },
+    };
+    await controller.save(PROD, 'cut-ep', { baseRevision: 0, data: cut }, req('u1'));
+    expect((await controller.revision(PROD, 'cut-ep', 1)).data.schema_version).toBe('studio.timeline/v4');
+    const job = await controller.premiere(PROD, 'cut-ep', { media: 'proxy' }, req('u1'));
+    expect(job.status).toBe('running');
+    expect(submitted.map((s) => s.type)).toEqual(['studio.export_premiere']);
+    expect(submitted[0]!.payload).toMatchObject({ episode_id: 'cut-ep', composition: 'stage:composition.json', media: 'proxy', name: 'Ep 2' });
+  });
+
+  it('a narrated shot-cut timeline whose WAV is not in the voice store is 422 narration_missing, nothing sent', async () => {
+    const now = new Date().toISOString();
+    db.run("INSERT INTO episodes (id, production_id, idx, title, hook, edit_style, created_at, updated_at) VALUES ('cut-ep', ?, 2, 'Ep 2', 'h', 'cut', ?, ?)", [PROD, now, now]);
+    const cut = {
+      ...timeline(), episode_id: 'cut-ep', schema_version: 'studio.timeline/v4', edit_style: 'cut',
+      clips: [{ clip_id: 'C001', asset_id: 'asset-1', section_title: null, in: 1, out: 5, shot_id: null, line_id: 'L001', transition_out: { kind: 'cut', seconds: 0 } }],
+      narration: { voice: 'tts', lead_seconds: 0.3, lines: [{ line_id: 'L001', text: 'Phố cổ.', audio: { key: 'c'.repeat(64), duration_s: 1.2, words: [] } }] },
+      captions: { mode: 'none' },
+    };
+    await controller.save(PROD, 'cut-ep', { baseRevision: 0, data: cut }, req('u1'));
+    const err = await controller.premiere(PROD, 'cut-ep', { media: 'proxy' }, req('u1')).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UnprocessableEntityException);
+    expect((err as UnprocessableEntityException).getResponse()).toMatchObject({ code: 'narration_missing', line_id: 'L001' });
+    expect(submitted).toHaveLength(0);
+  });
+
   it('an episode of another production is 404 through this production (the role guard checked this one)', async () => {
     await expect(controller.latest(PROD, 'other-ep')).rejects.toBeInstanceOf(NotFoundException);
     await expect(controller.save(PROD, 'other-ep', { baseRevision: 0, data: timeline() }, req('u1'))).rejects.toBeInstanceOf(NotFoundException);
@@ -121,6 +172,8 @@ describe('Timeline revisions over HTTP semantics (autosave + 409)', () => {
     const job = await controller.premiere(PROD, EP, { media: 'proxy' }, req('u1'));
     expect(job).toMatchObject({ kind: 'export_premiere', status: 'running', request: { revision: 1, media: 'proxy' } });
     expect(submitted[0]).toMatchObject({ type: 'studio.export_premiere', payload: { production_id: PROD, episode_id: EP, media: 'proxy', composition: 'stage:composition.json', media_names: { 'asset:asset-1': 'Phở bò Hà Nội' } } });
+    // a whole-video episode is read by any worker: no edit_style
+    expect(submitted[0]!.payload).not.toHaveProperty('edit_style');
     expect([...bucket.objects.keys()].some((k) => k.endsWith(`/editor-premiere/${job.id}/in/composition.json`) || k.includes(job.id))).toBe(true);
     const sign = db.get<{ is_final_render: number; stage_key: string }>('SELECT is_final_render, stage_key FROM studio_farm_jobs WHERE attempt_id = ?', [job.id]);
     expect(sign).toEqual({ is_final_render: 0, stage_key: 'editor-premiere' });

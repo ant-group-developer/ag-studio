@@ -1,3 +1,5 @@
+import { chatVi } from "./chat.vi";
+
 export const vi = {
   common: {
     create: "Tạo",
@@ -143,6 +145,7 @@ export const vi = {
     columnEpisodes: "Tập hoàn tất / tổng",
     create: "Tạo production mới",
     createTitle: "Tạo production mới",
+    createFailed: "Không tạo được production",
     fieldTitle: "Tiêu đề",
     fieldTitleRequired: "Vui lòng nhập tiêu đề",
     fieldBrief: "Chủ đề / mô tả",
@@ -294,6 +297,8 @@ export const vi = {
     catalogEmpty: "Không tìm thấy video",
     episodeTitle: "Tập {{idx}}",
     approvedPlanNote: "Kế hoạch đã duyệt — dùng dropdown \"Chạy lại\" để lập lại từ bước này.",
+    queued: "Đang chờ worker nhận việc lập kế hoạch tập…",
+    writing: "AI đang lập kế hoạch tập…",
   },
   episodes: {
     title: "Các tập",
@@ -335,7 +340,7 @@ export const vi = {
     retryStageDone: "Đã chạy lại bước",
     noVideo: "Chưa có video",
     noThumbnail: "Chưa có ảnh",
-    status: { planned: "Chờ sản xuất", producing: "Đang sản xuất", ready: "Hoàn tất", failed: "Thất bại", cancelled: "Đã huỷ" },
+    status: { planned: "Chờ sản xuất", producing: "Đang sản xuất", waiting_approval: "Chờ duyệt", ready: "Hoàn tất", failed: "Thất bại", cancelled: "Đã huỷ" },
     jobStatus: { queued: "Đang chờ", running: "Đang chạy", completed: "Xong", failed: "Lỗi" },
     youtubePack: "Gói đăng YouTube (zip)",
     premiereTitle: "Project Adobe Premiere",
@@ -345,6 +350,7 @@ export const vi = {
     premiereMediaOriginal: "Bản gốc",
     premiereStarted: "Đã bắt đầu xuất project Premiere",
     premiereForbidden: "Bạn không có quyền tải bản gốc; hãy xuất bản proxy 720p",
+    premiereWarnings: "Bản xuất có cảnh báo:",
     premiereNone: "Chưa xuất project Premiere nào",
     statusDraft: "Nháp",
     statusProducing: "Đang sản xuất",
@@ -485,6 +491,14 @@ export const vi = {
     startSeconds: "Bắt đầu (s)",
     durationSeconds: "Thời lượng (s)",
     removeText: "Xoá chữ",
+    inSeconds: "Vào (s)",
+    outSeconds: "Ra (s)",
+    transition: "Chuyển sang clip sau",
+    transitionSeconds: "Dài (s)",
+    transitions: { cut: "Cắt thẳng", dissolve: "Chuyển mờ", dip_black: "Qua màn đen" },
+    narrationLine: "Lời dẫn {{id}} bắt đầu ở clip này (sửa lời ở bước Kế hoạch dựng)",
+    noNarrationLine: "Không có lời dẫn bắt đầu ở clip này",
+    captionModes: { none: "Không", "burn-in": "Chữ cố định", karaoke: "Karaoke" },
     generalTitle: "Chung",
     sourceAudio: "Tiếng gốc",
     captions: "Phụ đề",
@@ -516,7 +530,7 @@ export const vi = {
   },
   llmLog: {
     title: "Log",
-    tabCalls: "Lần gọi Claude",
+    tabCalls: "Lần gọi {{ai}}",
     tabEdits: "Người sửa",
     forbidden: "Log có nội dung footage ngoài phạm vi ag-go của bạn.",
     empty: "Chưa có lần gọi nào.",
@@ -536,7 +550,7 @@ export const vi = {
     unchanged: "Giữ nguyên",
     user: "Người",
     view: "Xem",
-    callTitle: "Lần gọi Claude",
+    callTitle: "Lần gọi {{ai}}",
     tabPrompt: "Prompt",
     tabAnswer: "Trả lời",
     tabProblems: "Lỗi kiểm tra",
@@ -667,11 +681,12 @@ export const vi = {
     preview: "Xem trước thumbnail",
   },
   // Readable names for codes the API returns; shown next to the code (see helpers/enum-label).
+  chat: chatVi,
   enums: {
     productionStatus: {
       draft: "Nháp",
       planning: "Đang lên kế hoạch",
-      waiting_approval: "Chờ duyệt kế hoạch",
+      waiting_approval: "Chờ bạn duyệt",
       producing: "Đang sản xuất",
       done: "Hoàn tất",
       failed: "Thất bại",
@@ -755,10 +770,12 @@ export const vi = {
       timeline: "Timeline",
     },
     teamSkillStep: {
+      intake: "Hỏi thông tin video mới",
       "trend-report": "Báo cáo xu hướng",
       rnd: "R&D",
       branding: "Branding",
       "plan-episodes": "Kế hoạch tập",
+      timeline: "Sửa timeline bằng chat",
       "youtube-kit": "Gói YouTube & thumbnail",
     },
     llmOutcome: {
@@ -768,6 +785,7 @@ export const vi = {
       rate_limited: "Chạm hạn mức",
     },
     humanEdit: {
+      trend_report: "Duyệt báo cáo xu hướng",
       series_plan: "Duyệt kế hoạch",
       youtube_kit: "Lưu YouTube Kit",
       episode_rerender: "Render lại tập",
@@ -777,6 +795,8 @@ export const vi = {
       rnd_edit: "Sửa R&D",
       branding_edit: "Sửa branding",
       thumbnail: "Chọn ảnh đại diện",
+      survey: "Duyệt chọn cảnh",
+      edit_plan: "Duyệt kế hoạch dựng",
     },
   },
 };

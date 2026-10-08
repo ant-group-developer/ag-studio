@@ -10,18 +10,21 @@ import { afterAll, describe, expect, it } from "vitest";
 import { STUDIO_SKILL_OUTPUTS } from "@harness/contracts";
 import { BUILTIN_CHECKERS, studioCheckers } from "@harness/core";
 import {
-  cancelLegacyRuns, MemoryBucket, STUDIO_GATES, STUDIO_WORKFLOWS, studioPayloadBuilders, studioStages, studioWorkflowRefs,
+  cancelLegacyRuns, cutPayloadBuilders, MemoryBucket, STUDIO_GATES, STUDIO_WORKFLOWS, studioInProcessStages, studioPayloadBuilders, studioWorkflowRefs,
 } from "../src/index.js";
 import { ROOT, world } from "./helpers.js";
 
 describe("Studio workflow releases", () => {
   const w = world();
   const refs = studioWorkflowRefs(ROOT);
-  const scripts = new Set(Object.keys(studioStages({
+  const scripts = new Set(Object.keys(studioInProcessStages({
     db: w.db, bucket: w.bucket, footage: { getCatalog: async () => ({ items: [], nextCursor: null }) },
     startEpisodeRun: async () => ({ runId: "run_x" }),
   })));
-  const builders = new Set(Object.keys(studioPayloadBuilders({ db: w.db, bucket: new MemoryBucket() })));
+  const builders = new Set([
+    ...Object.keys(studioPayloadBuilders({ db: w.db, bucket: new MemoryBucket() })),
+    ...Object.keys(cutPayloadBuilders({ db: w.db, bucket: new MemoryBucket() })),
+  ]);
   const checks = new Set([...BUILTIN_CHECKERS, ...studioCheckers()].map((c) => c.id));
   afterAll(() => w.core.close());
 

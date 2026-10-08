@@ -1,4 +1,4 @@
-import type { TimelineV3 } from "@harness/contracts";
+import { upgradeTimelineV3, type TimelineV3, type TimelineV4 } from "@harness/contracts";
 
 /** Three clips with section titles; two alternates. Used by editor tests and the playground. */
 export function sampleTimeline(): TimelineV3 {
@@ -28,5 +28,19 @@ export function sampleTimeline(): TimelineV3 {
     alternates: [
       { asset_id: "asset-4", reason: "góc nhìn khác" },
     ],
+  };
+}
+
+/** The sample as a shot-cut episode (v4): clips are pieces of their videos, the first dissolves into the second. */
+export function sampleCutTimeline(): TimelineV4 {
+  const v4 = upgradeTimelineV3(sampleTimeline());
+  return {
+    ...v4, edit_style: "cut",
+    clips: v4.clips.map((c, i) => ({
+      ...c, in: i === 0 ? 1 : 0, out: i === 0 ? 5 : 3, shot_id: `s00${i}-000`, line_id: i === 0 ? "L001" : null,
+      transition_out: i === 0 ? { kind: "dissolve" as const, seconds: 0.5 } : { kind: "cut" as const, seconds: 0 },
+    })),
+    narration: { voice: "tts", lead_seconds: 0.3, lines: [{ line_id: "L001", text: "Phố cổ buổi sáng, phở đã sôi.", audio: null }] },
+    captions: { mode: "none" },
   };
 }

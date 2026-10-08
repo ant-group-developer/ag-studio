@@ -3,7 +3,7 @@
  * and exercised without Auth0 or a running API. Mirrors the real API's contract closely enough to drive
  * `useEditor`/`Autosaver` through their normal paths (including a 409 conflict, on demand).
  */
-import type { TimelineV3 } from "@harness/contracts";
+import type { StoredTimeline } from "@harness/contracts";
 import { StudioHttpError, type EditorJob, type TimelineRevisionView } from "../api/studio-client";
 import type { EditorClient } from "../modules/editor/types";
 import { sampleTimeline } from "../modules/editor/state/fixtures";
@@ -16,7 +16,7 @@ export interface FakeEditorClientHandle {
 
 export function createFakeEditorClient(): FakeEditorClientHandle {
   let revision = 1;
-  let data: TimelineV3 = sampleTimeline();
+  let data: StoredTimeline = sampleTimeline();
   let conflictNext = false;
   const jobs = new Map<string, EditorJob>();
   let jobCounter = 0;

@@ -1,0 +1,110 @@
+{
+  "$ref": "#/definitions/studio-cut-watch",
+  "definitions": {
+    "studio-cut-watch": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.cut-watch/v1"
+        },
+        "frame_width": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "sheet_cols": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "source_id": {
+                "type": "string",
+                "pattern": "^src_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "shots": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "shot_id": {
+                      "type": "string",
+                      "pattern": "^s\\d{3}-\\d{3}$"
+                    },
+                    "t": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "frame": {
+                      "type": "string",
+                      "pattern": "^frames\\/s\\d{3}-\\d{3}\\.jpg$"
+                    },
+                    "bucket_key": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "shot_id",
+                    "t",
+                    "frame",
+                    "bucket_key"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "sheets": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "file": {
+                      "type": "string",
+                      "pattern": "^sheets\\/s\\d{3}-\\d{2}\\.jpg$"
+                    },
+                    "shots": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^s\\d{3}-\\d{3}$"
+                      },
+                      "minItems": 1,
+                      "maxItems": 16
+                    }
+                  },
+                  "required": [
+                    "file",
+                    "shots"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "source_id",
+              "index",
+              "shots",
+              "sheets"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "frame_width",
+        "sheet_cols",
+        "sources"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

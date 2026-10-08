@@ -7,8 +7,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import {
-  HarnessError, StudioBrandingSchema, StudioRndSchema, TimelineV3Schema,
-  type ChannelRef, type StudioBranding, type StudioHints, type StudioRnd, type TimelineV3,
+  HarnessError, ProductionMusicSchema, StoredTimelineSchema, StudioBrandingSchema, StudioRndSchema, studioMusicOf, timelineAsVersion, timelineVersion,
+  type ChannelRef, type StoredTimeline, type StudioBranding, type StudioHints, type StudioMusic, type StudioRnd,
 } from "@harness/contracts";
 
 type Param = string | number | null;
@@ -81,6 +81,11 @@ export function saveProductionDocument(db: StudioDb, productionId: string, kind:
     [JSON.stringify(doc), now, by, now, productionId]);
 }
 
+/** The music stages freeze (seed, brief, timeline): the production's, without where the file came from. */
+export function productionMusic(p: Pick<ProductionRecord, "music">): StudioMusic | null {
+  return p.music ? studioMusicOf(ProductionMusicSchema.parse(JSON.parse(p.music))) : null;
+}
+
 export function getProduction(db: StudioDb, id: string): ProductionRecord | null {
   return db.get<ProductionRecord>("SELECT * FROM productions WHERE id = ?", [id]) ?? null;
 }
@@ -107,6 +112,10 @@ export interface EpisodeRecord {
   /** The thumbnail the episode uses (migration 0017; `selected_thumbnail` is the index of the 3 older ones). */
   selected_thumbnail_id: string | null;
   youtube: string | null; selected_title: number | null; selected_thumbnail: number | null;
+  /** `whole` (whole videos, timeline v3) or `cut` (shot by shot, timeline v4); migration 0023. */
+  edit_style: "whole" | "cut";
+  /** `none`: narration declined for this episode alone (migration 0027); null: the production decides. */
+  narration_override?: "none" | null;
   created_at: string; updated_at: string;
 }
 
@@ -124,21 +133,29 @@ export function listEpisodes(db: StudioDb, productionId: string): EpisodeRecord[
  * Replace all episodes of a production with a fresh set made by plan run `planRunId` (studio-spawn-episodes; the
  * stage first checks that none of the old ones is still producing).
  */
-export function replaceEpisodes(db: StudioDb, productionId: string, rows: { id: string; idx: number; title: string; hook: string; plan: string }[], planRunId: string): void {
+export function replaceEpisodes(db: StudioDb, productionId: string, rows: { id: string; idx: number; title: string; hook: string; plan: string; edit_style?: "whole" | "cut" }[], planRunId: string): void {
   db.immediate(() => {
     db.run("DELETE FROM episode_revisions WHERE episode_id IN (SELECT id FROM episodes WHERE production_id = ?)", [productionId]);
     db.run("DELETE FROM episode_jobs WHERE episode_id IN (SELECT id FROM episodes WHERE production_id = ?)", [productionId]);
     db.run("DELETE FROM episodes WHERE production_id = ?", [productionId]);
     const now = new Date().toISOString();
     for (const r of rows) {
-      db.run("INSERT INTO episodes (id, production_id, idx, title, hook, plan, plan_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [r.id, productionId, r.idx, r.title, r.hook, r.plan, planRunId, now, now]);
+      db.run("INSERT INTO episodes (id, production_id, idx, title, hook, plan, plan_run_id, edit_style, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [r.id, productionId, r.idx, r.title, r.hook, r.plan, planRunId, r.edit_style ?? "whole", now, now]);
     }
   });
 }
 
 export function updateEpisodeRunId(db: StudioDb, episodeId: string, runId: string): void {
   db.run("UPDATE episodes SET run_id = ?, updated_at = ? WHERE id = ?", [runId, new Date().toISOString(), episodeId]);
+}
+
+/** Farm jobs submitted by the other attempts of a run's stage (`FarmExecutor.earlierJobsFor`). */
+export function earlierFarmJobs(db: StudioDb, p: { runId: string; stageKey: string; attemptId: string }): string[] {
+  return db.all<{ farm_job_id: string }>(
+    "SELECT farm_job_id FROM studio_farm_jobs WHERE run_id = ? AND stage_key = ? AND attempt_id <> ?",
+    [p.runId, p.stageKey, p.attemptId],
+  ).map((r) => r.farm_job_id);
 }
 
 export function saveTrendReport(db: StudioDb, productionId: string, report: unknown): void {
@@ -149,20 +166,30 @@ export function saveTrendReport(db: StudioDb, productionId: string, report: unkn
 // Episode revisions (per-episode timeline revisions)
 // ---------------------------------------------------------------------------
 
+/**
+ * `data` is the timeline as stored, in its own version (v3 for whole-video episodes made before timeline v4, v4 for
+ * shot-cut episodes): edits return the version they are given, and a save writes the episode's version (ADR item 151).
+ */
 export interface EpisodeRevision {
-  revision: number; base_revision: number; data: TimelineV3;
+  revision: number; base_revision: number; data: StoredTimeline;
   author_id: string; label: string | null; created_at: string;
 }
 
 export function latestEpisodeRevision(db: StudioDb, episodeId: string): EpisodeRevision | null {
   const row = db.get<{ revision: number; base_revision: number; data: string; author_id: string; label: string | null; created_at: string }>(
     "SELECT revision, base_revision, data, author_id, label, created_at FROM episode_revisions WHERE episode_id = ? ORDER BY revision DESC LIMIT 1", [episodeId]);
-  return row ? { ...row, data: TimelineV3Schema.parse(JSON.parse(row.data)) } : null;
+  return row ? { ...row, data: StoredTimelineSchema.parse(JSON.parse(row.data)) } : null;
 }
 export function getEpisodeRevision(db: StudioDb, episodeId: string, revision: number): EpisodeRevision | null {
   const row = db.get<{ revision: number; base_revision: number; data: string; author_id: string; label: string | null; created_at: string }>(
     "SELECT revision, base_revision, data, author_id, label, created_at FROM episode_revisions WHERE episode_id = ? AND revision = ?", [episodeId, revision]);
-  return row ? { ...row, data: TimelineV3Schema.parse(JSON.parse(row.data)) } : null;
+  return row ? { ...row, data: StoredTimelineSchema.parse(JSON.parse(row.data)) } : null;
+}
+
+/** The timeline version of an episode: that of its first revision, `null` before it has one. */
+export function episodeTimelineVersion(db: StudioDb, episodeId: string): 3 | 4 | null {
+  const row = db.get<{ data: string }>("SELECT data FROM episode_revisions WHERE episode_id = ? ORDER BY revision ASC LIMIT 1", [episodeId]);
+  return row ? timelineVersion(JSON.parse(row.data)) : null;
 }
 export function listEpisodeRevisions(db: StudioDb, episodeId: string): Omit<EpisodeRevision, "data">[] {
   return db.all("SELECT revision, base_revision, author_id, label, created_at FROM episode_revisions WHERE episode_id = ? ORDER BY revision DESC", [episodeId]);
@@ -176,9 +203,12 @@ export class RevisionConflictError extends Error {
   }
 }
 
-export function saveEpisodeRevision(db: StudioDb, episodeId: string, p: { baseRevision: number; data: TimelineV3; authorId: string; label?: string | null }): { revision: number } {
-  const data = TimelineV3Schema.parse(p.data);
-  if (data.episode_id !== episodeId) throw new HarnessError("SCHEMA_INVALID", `timeline belongs to episode ${data.episode_id}`, {});
+/** Throws `TimelineVersionError` when a v3 episode is sent a v4 timeline it cannot hold. */
+export function saveEpisodeRevision(db: StudioDb, episodeId: string, p: { baseRevision: number; data: StoredTimeline; authorId: string; label?: string | null }): { revision: number } {
+  const given = StoredTimelineSchema.parse(p.data);
+  if (given.episode_id !== episodeId) throw new HarnessError("SCHEMA_INVALID", `timeline belongs to episode ${given.episode_id}`, {});
+  const version = episodeTimelineVersion(db, episodeId);
+  const data = version ? timelineAsVersion(given, version) : given;
   return db.immediate(() => {
     const current = db.get<{ r: number | null }>("SELECT MAX(revision) AS r FROM episode_revisions WHERE episode_id = ?", [episodeId])?.r ?? 0;
     if (current !== p.baseRevision) throw new RevisionConflictError(current, p.baseRevision);

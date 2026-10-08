@@ -16,6 +16,8 @@ interface UserMenuOptions {
   canvaDisplayName?: string | null;
   onConnectCanva?: () => void;
   onDisconnectCanva?: () => void;
+  /** More entries before "log out" (the chat screens link the older screens from here). */
+  extraItems?: NonNullable<MenuProps["items"]>;
 }
 
 /** Menu avatar giống ag-go-web: thẻ người dùng, chọn ngôn ngữ, Canva, đăng xuất. */
@@ -30,6 +32,7 @@ export function useUserMenu({
   canvaDisplayName,
   onConnectCanva,
   onDisconnectCanva,
+  extraItems = [],
 }: UserMenuOptions): MenuProps {
   const { t } = useTranslation();
   const { token } = antdTheme.useToken();
@@ -90,6 +93,7 @@ export function useUserMenu({
                 },
           ]
         : []),
+      ...(extraItems.length ? [{ type: "divider" as const }, ...extraItems, { type: "divider" as const }] : []),
       {
         key: "logout",
         icon: <LogOut size={14} />,

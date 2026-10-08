@@ -3,7 +3,7 @@
  * one `Autosaver` running while the timeline is dirty. `EditorView` is pure UI on top of this.
  */
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import type { TimelineV3 } from "@harness/contracts";
+import type { StoredTimeline } from "@harness/contracts";
 import { editorReducer, initEditor, isDirty, type EditorAction, type EditorState } from "./state/editor-reducer";
 import { Autosaver, type AutosaveStatus, type SaveResult } from "./state/autosave";
 import { StudioHttpError } from "../../api/studio-client";
@@ -44,7 +44,7 @@ export function useEditor(productionId: string, episodeId: string, client: Edito
   const [conflict, setConflict] = useState<ConflictInfo | null>(null);
 
   const save = useCallback(
-    async (base: number, timeline: TimelineV3): Promise<SaveResult> => {
+    async (base: number, timeline: StoredTimeline): Promise<SaveResult> => {
       try {
         const r = await client.saveRevision(productionId, episodeId, base, timeline);
         return { ok: true, revision: r.revision };

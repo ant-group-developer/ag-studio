@@ -1,15 +1,15 @@
 /**
- * Autosave to `timeline_revisions` (plan 4.2): a change is saved `delayMs` after the last edit, on top of the
+ * Autosave to `episode_revisions` (plan 4.2): a change is saved `delayMs` after the last edit, on top of the
  * revision the editor holds. The server answers 409 when someone else saved first; autosave then stops and
  * the page asks the person to load the newer revision (or to overwrite it deliberately).
  */
-import type { TimelineV3 } from "@harness/contracts";
+import type { StoredTimeline } from "@harness/contracts";
 
 export type SaveResult = { ok: true; revision: number } | { ok: false; conflict: true; currentRevision: number } | { ok: false; conflict: false; error: string };
 
 export interface AutosaverOptions {
-  save(baseRevision: number, timeline: TimelineV3): Promise<SaveResult>;
-  onSaved(revision: number, timeline: TimelineV3): void;
+  save(baseRevision: number, timeline: StoredTimeline): Promise<SaveResult>;
+  onSaved(revision: number, timeline: StoredTimeline): void;
   onConflict(currentRevision: number): void;
   onError(message: string): void;
   /** Every status change (the page shows "Đang lưu…" / "Đã lưu" from it). */
@@ -24,7 +24,7 @@ export type AutosaveStatus = "idle" | "pending" | "saving" | "conflict" | "error
 export class Autosaver {
   private handle: unknown = null;
   private inFlight: Promise<void> | null = null;
-  private latest: { base: number; timeline: TimelineV3 } | null = null;
+  private latest: { base: number; timeline: StoredTimeline } | null = null;
   private _status: AutosaveStatus = "idle";
   private readonly timers: NonNullable<AutosaverOptions["timers"]>;
 
@@ -41,7 +41,7 @@ export class Autosaver {
   }
 
   /** Call on every edit with the timeline to save and the revision it is based on. */
-  schedule(baseRevision: number, timeline: TimelineV3): void {
+  schedule(baseRevision: number, timeline: StoredTimeline): void {
     if (this._status === "conflict") return; // nothing is saved until the conflict is resolved
     this.latest = { base: baseRevision, timeline };
     if (this.handle !== null) this.timers.clear(this.handle);

@@ -13,7 +13,7 @@ import {
 } from "@harness/core";
 import { buildContext, type AppContext } from "../src/composition.js";
 import { cli, freshLibraryWorld, setResourceCapacity, type LibraryWorld } from "../../../tests/integration/library-helpers.js";
-import { hasFfmpeg, makeVideo } from "../../../tests/media.js";
+import { hasFfmpegOnPath as hasFfmpeg, makeVideo } from "../../../tests/media.js";
 
 // Sub-project 5A Task 8: the four built-in `media index|transcribe|tts|fit-edl` stages, driven the same way
 // `learning-stages.test.ts`/`publish-stage.test.ts` drive SP3/SP3B's own built-in stages -- a real

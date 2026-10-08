@@ -95,14 +95,14 @@ when the plan run failed or an episode failed and none is producing; `done` when
 
 ## Plan run (`/productions/:id/run`)
 
-- `POST` (producer) -> `{runId}` starts the plan run (`ag-studio-series-plan@2.0.0`: research -> trend report ->
-  R&D -> approve-rnd -> branding -> approve-branding -> brief -> episode plan -> approve-plan -> episodes). Needs a
+- `POST` (producer) -> `{runId}` starts the plan run (`ag-studio-series-plan@3.0.0`: research -> trend report ->
+  approve-trend-report -> R&D -> approve-rnd -> branding -> approve-branding -> brief -> episode plan -> approve-plan -> episodes). Needs a
   footage folder and a channel or keyword. 409 `episode_producing` while an episode is producing (re-plan refused),
   409 when a plan run is active, 422 with a Vietnamese `message` when the production is incomplete.
 - `GET` -> `RunView` (404 `no_run` before the first run)
 - `GET documents/:stage/:name` -> the JSON document (e.g. `research/research.json`, `trend-report/trend-report.json`,
   `catalog/catalog.json`, `plan-episodes/series-plan.json`, `approve-plan/series-plan.json`)
-- `POST gates/approve-rnd` body `{document: StudioRnd}`, `POST gates/approve-branding` body `{document:
+- `POST gates/approve-trend-report` body `{document: TrendReport}` (plan 3.0.0), `POST gates/approve-rnd` body `{document: StudioRnd}`, `POST gates/approve-branding` body `{document:
   StudioBranding}`, `POST gates/approve-plan` body `{document: SeriesPlan}` (producer; admins too) ->
   `{accepted: true}`; refused -> 422 `{code: 'gate_rejected', failed: [{check_id, evidence: {problems: {code,
   message}[]}}]}`. What Claude proposed and what was approved go to the dataset (`human_edits` rnd / branding /
@@ -122,7 +122,9 @@ interface StageView { key: string; executor: string; state: string; attempts: nu
 ## Episodes (`/productions/:id/episodes`)
 
 ```ts
-type EpisodeStatus = 'planned' | 'producing' | 'ready' | 'failed' | 'cancelled';
+// waiting_approval: an episode 1.3.0 waits at approve-timeline or approve-youtube-kit (shot-cut 1.0.0: also
+// approve-survey, approve-edit-plan)
+type EpisodeStatus = 'planned' | 'producing' | 'waiting_approval' | 'ready' | 'failed' | 'cancelled';
 interface EpisodeSummary {
   id: string; idx: number; title: string; hook: string; status: EpisodeStatus;
   currentStage: string | null;       // key of the running/waiting/failed stage of its run
@@ -130,10 +132,12 @@ interface EpisodeSummary {
   durationSeconds: number | null;    // from the latest export, else the timeline length
   thumbnailUrl: string | null;       // signed, the picture the episode uses (null without the footage scope)
   updatedAt: string;
+  editStyle: 'whole' | 'cut';        // whole videos (timeline v3) or shot by shot (timeline v4, phase 5)
 }
 interface EpisodeDetail extends EpisodeSummary {
   plan: StudioEpisode;                    // episodes.plan
   run: RunView | null;
+  workflow: string | null;                // the run's workflow 'id@version' ('ag-studio-episode-cut@1.0.0'…); null before a run
   youtube: YoutubeKit | null;             // effective kit: episodes.youtube ?? the run's youtube-kit.json
   selectedTitle: number;
   selectedThumbnailId: string | null;     // see Thumbnails
@@ -142,18 +146,67 @@ interface EpisodeDetail extends EpisodeSummary {
     sizeBytes: number; name: string }[];   // 'pack' only for episodes exported before 1.2.0
   finalVideoUrl: string | null; finalVideoDownloadUrl: string | null;   // the download URL saves the file
   latestRevision: number | null;
+  render: EpisodeRender;
+}
+// The scene selection of a shot-cut episode (survey.json, harness.survey-index/v2), shot by shot
+interface EpisodeShots {
+  state: 'pending' | 'waiting' | 'approved';   // not made yet / at approve-survey (chat edits included) / as approved
+  turnId: string | null;                        // the chat turn of the version on show while waiting (for chat/approve)
+  shots: { sourceId: string; shotId: string;   // shotId 's000-002' = first video, third shot
+    in: number; out: number;                    // seconds in the video
+    score: number; tags: string[]; usable: boolean; note: string; speech: 'none' | 'talking' | 'ambient';
+    frameUrl: string | null;                    // signed middle frame of the shot (null before watch-source)
+    changed: boolean }[];                       // usable/score/note differs from Claude's selection
+}
+type RenderMachine = 'any' | 'nvenc' | 'gpu';   // ag-farm requirements {} | {nvenc: true} | {gpu: true}
+interface EpisodeRender {
+  machine: RenderMachine | null;          // chosen for the current run's final render (null: none, the job goes out as {})
+  defaultMachine: RenderMachine;          // what a picker starts on: machine ?? the production's latest choice ?? 'any'
+  // where Render lại starts now: 'start' (no run), 'render-final' (the approved timeline did not change),
+  // 'approve-timeline' (edited since approval), 'freeze-timeline' (episode 1.2.0, or a run parked there); null: producing
+  restartFrom: 'start' | 'render-final' | 'approve-timeline' | 'freeze-timeline' | null;
+  job: { farmJobId: string; runId: string; machine: RenderMachine | null; createdAt: string } | null;   // latest final render
+  farmStatus: { status: string; progress: number | null } | null;   // the farm's view of `job` while the run renders it
 }
 ```
 - `GET ?page&pageSize&sortBy(idx|title|status|updatedAt)&sortOrder` -> `Paged<EpisodeSummary>` (default idx asc)
 - `GET /:episodeId` -> EpisodeDetail
 - `PATCH /:episodeId` (editor) `{youtube?: YoutubeKit, selectedTitle?: 0..2, selectedThumbnail?: 0..2}` -> EpisodeDetail
   (the kit is validated with YoutubeKitSchema + validateYoutubeKit; 422 with problems)
-- `POST /:episodeId/rerender` (producer) -> `{runId}`; 409 `episode_running` while its run is active
+- `POST /:episodeId/rerender` (producer) `{renderMachine?: RenderMachine}` -> `{runId, reused, from}`; `from` as
+  `render.restartFrom`. The type is kept for that run's final render; without one the run's choice stays, or `{}`.
+  409 `episode_running` while its run is active
+- `POST /:episodeId/rerun-from` (producer) `{stage: 'approve-survey' | 'approve-edit-plan'}` -> `{runId, reused}`
+  (shot-cut episodes): a new run waiting at that gate again with Claude's document, the stages before it reused
+  (proxies, shots and frames are not made again). Only when the run has ended or waits at a later gate (that run is
+  cancelled); 409 `gate_not_passed`, 409 `episode_running`; 422 `not_cut` for a whole-video episode; any other
+  stage -> 400
+- `GET /:episodeId/shots` (viewer with the footage scope, else 403 `footage_hidden`) -> EpisodeShots; 422 `not_cut`
 - `POST /:episodeId/cancel` (producer); `POST /:episodeId/stages/:stage/retry` (producer)
 - `GET /:episodeId/documents/:stage/:name`
+  (shot-cut: `source-survey/survey.json`, `approve-survey/survey.json`, `plan-edit/edit-plan.json`,
+  `approve-edit-plan/edit-plan.json`, `fit-timeline/fit-report.json`, `media-index/shots.json`)
 - `POST /:episodeId/youtube-pack` (viewer with the footage scope) -> `{url, name, sizeBytes}`: the zip as the episode
   is now — the picked thumbnail, `youtube.json`, `title.txt`, `description.txt` (with the chapters), `tags.txt`; no
   video (download it on its own). Built on demand, stored once per content; the URL saves the file.
+
+## Step documents (`/productions/:id/steps/:kind`, `/productions/:id/episodes/:episodeId/steps/:kind`)
+
+A step's document read again after its approval and edited (plan 2026-10-07 step history). `kind`: series
+`trend_report | rnd | branding | series_plan`, episode `youtube_kit | survey | edit_plan` (the other side: 422
+`bad_kind`).
+- `GET` (viewer) -> `{kind, gate, state: 'not_yet' | 'waiting' | 'approved', document, inUse, edit: {inPlace,
+  inPlaceCode, reopen, reopenCode, replacesEpisodes, reruns: string[]}}`. `document` (approved only): the version in
+  use when one was edited (`productions.trend_report|rnd|branding`, `episodes.youtube`), else the gate's approved
+  output. `waiting`: edit through the chat's manual edit at that gate.
+- `PUT` body `{document, reopen?: boolean}` -> `{mode: 'saved' | 'reopened', runId?, warnings, view}`. `reopen`
+  false replaces the version in use (only trend report once the episodes exist, R&D, branding, YouTube kit; 409
+  `only_reopen` otherwise, `apply_pending`). `reopen` true starts the run again from the gate (a run parked at a later
+  gate with nothing working is cancelled first) and puts the edit on show there as a manual-edit turn: approving it
+  runs the steps after. 409 `running`, `episode_producing` (plan steps), `render_again` (the kit: save, then Render
+  lại), `at_gate`, `not_approved_yet`; 422 `{problems}` when the schema check fails (the gate's checks run when it is
+  approved again). Reopening a series step makes the episodes again after `approve-plan` (`replacesEpisodes`).
+  Series: producer. Episode: editor for the kit in place, producer otherwise.
 
 ## Thumbnails (`/productions/:id/episodes/:episodeId/thumbnails`)
 
@@ -207,11 +260,135 @@ interface ThumbnailList { items: ThumbnailView[]; selectedId: string | null; can
 
 ## Editor (`/productions/:id/episodes/:episodeId`)
 
-- `GET timeline` -> `{revision: number, data: TimelineV3, issues: TimelineIssue[], savedAt, authorId}` (404 before build-timeline)
+- `GET timeline` -> `{revision: number, data: TimelineV3 | TimelineV4, issues: TimelineIssue[], savedAt, authorId}` (404
+  before build-timeline / fit-timeline). An episode keeps the version of its first revision: whole-video episodes v3,
+  shot-cut episodes v4 (contract in `packages/contracts/src/studio.ts`, ADR-0001 item 151)
 - `GET timeline/revisions` -> `{revision, baseRevision, authorId, label, createdAt}[]`; `GET timeline/revisions/:rev`
-- `POST timeline/revisions` (editor) `{baseRevision, data: TimelineV3, label?}` -> `{revision, issues}`; 409
-  `revision_conflict` with `currentRevision`
+- `POST timeline/revisions` (editor) `{baseRevision, data: TimelineV3 | TimelineV4, label?}` -> `{revision, issues, approved}`; 409
+  `revision_conflict` with `currentRevision`. `approved`: the episode's timeline is already approved (episode 1.3.0),
+  so this revision is rendered only after Render lại (`rerender` resumes such a run from approve-timeline). A v4
+  timeline on a v3 episode is stored as v3; one v3 cannot hold (a trim, a transition, narration, captions) -> 422 `not_v3`.
 - `POST editor/previews` (editor) `{revision}` -> EditorJob; `GET editor/jobs/:jobId` -> EditorJob & `{url?}`
 - `EditorJob = {id, kind: 'render_preview' | 'export_premiere', status: 'queued'|'running'|'completed'|'failed',
   progress: number | null, request, result, error, createdAt}`
-- (GĐ6) `POST exports/premiere {media: 'proxy'|'original'}` -> EditorJob; `GET editor/jobs?kind=export_premiere`
+- (GĐ6) `POST exports/premiere {media: 'proxy'|'original'}` -> EditorJob; `GET editor/jobs?kind=export_premiere`.
+  A v4 timeline with trims, transitions or narration -> 422 `premiere_needs_phase_4`.
+
+## Call log (`/productions/:id`)
+
+- `GET llm-calls?episodeId&page&pageSize` (editor, footage scope) -> `Paged<LlmCallView>`: every Claude call of the
+  production, `source` `claude` (a stage) or `claude-chat` (a chat reply; `attemptId` is the reply's turn id)
+- `GET llm-calls/:callId` -> the call with its prompt and answer (from the bucket)
+- `GET human-edits?page&pageSize` (editor) -> what people approved or changed next to what Claude proposed
+
+## Chat (spec local-chat §3.1)
+
+One thread per production and one per episode. A message goes to the step the production (or episode) is at now —
+its **scope**: `intake` (no run yet), `gate` (a gate waiting: `approve-trend-report`, `approve-rnd`,
+`approve-branding`, `approve-plan`, `approve-timeline`, `approve-youtube-kit`; shot-cut episodes also `approve-survey`,
+`approve-edit-plan`), `failed` (a Claude stage that
+failed its check), `timeline` (an episode with no gate waiting). Claude's reply is written by the worker (it waits
+for a `claude` slot, ahead of the steps that run on their own); poll the thread. Nothing a reply proposes is applied
+until someone presses Áp dụng / Bắt đầu / Duyệt.
+
+```ts
+interface ChatTurn { id: string; production_id: string; episode_id: string | null; run_id: string | null;
+  scope: 'intake' | 'gate' | 'failed' | 'timeline'; stage_key: string; turn: number; role: 'user' | 'assistant' | 'system';
+  text: string; mentions: {kind: 'folder'; id: string; name: string}[]; context: unknown;
+  proposal: unknown | null;   // the stage's document; intake: IntakeDraft; timeline: {ops, base_revision, timeline};
+                              // approve-survey: {ops: SurveyOp[], survey} (SurveyOp: keep | reject | setScore | setNote)
+  action: 'answer' | 'revise' | 'suggest_approve' | 'render' | 'export' | 'retry' | null;
+  status: 'pending' | 'running' | 'done' | 'failed' | 'rate_limited'; not_before: string | null;
+  problems: {code: string; message: string}[];   // a proposal Claude could not make pass the check
+  llm_call_id: string | null; created_by: string | null; applied_at: string | null; created_at: string; updated_at: string }
+interface ChatThreadView { turns: ChatTurn[];
+  scope: {productionId; episodeId; runId; stageKey; scope} | null;
+  blocked: {code: 'busy' | 'nothing_to_chat' | 'needs_voice' | 'stage_failed'; stage: string | null;
+    problems?: {code, message}[]} | null;   // why no message can be sent now (see below)
+  current: {turnId: string | null; document: unknown; draft: unknown; pendingApply: boolean;
+    problems: {code, message}[]} | null;   // on show; problems: why a failed stage was refused
+  queueAhead: number }   // replies of other threads waiting for a Claude slot before this one
+```
+
+`blocked.code`: `busy` (Claude or a machine is working on the step), `nothing_to_chat` (the run is over),
+`needs_voice` (a narrated shot-cut episode stopped at `tts`: the production has no voice; give one or decline narration
+under "Audio" below), `stage_failed` (a machine step (farm, script, in-process) stopped; `problems` are the errors of
+its newest failed attempt; run it again with `POST .../stages/:stage/retry`). The intake draft may carry
+`audio_links: {voice, music}` (links the person pasted in the chat; nothing is fetched until they press it).
+
+- `POST /teams/:teamId/drafts` (producer) `{text}` -> `{productionId, user, assistant}`: a draft production (title
+  "Video mới") and its first intake message. `@[name](folder:<id>)` in the text names an ag-go folder; one the
+  person cannot see -> 422 `folder_not_accessible`.
+- `GET /productions/:id/chat?episodeId&after` (viewer) -> ChatThreadView (`after`: a turn number)
+- `POST /productions/:id/chat` (editor) `{text, episodeId?}` -> `{user, assistant}`; 409 `busy` while Claude or a
+  render works on the step, `nothing_to_chat` when the run is over. A message sent while a reply waits joins it.
+- `POST /productions/:id/chat/:turnId/apply` (intake: producer; timeline: editor) -> `{revision?}`: the intake draft
+  into the production, or timeline edits saved as a revision (409 `revision_conflict` when it changed since, 409
+  `superseded` / `already_applied`)
+- `POST /productions/:id/start` (producer) -> `{runId}`: the newest intake draft into the production, then the plan
+  run; 422 `intake_incomplete` with `missing: ('title'|'folder_ids'|'aspect'|'language'|'research')[]`
+- `POST /productions/:id/chat/approve` (producer) `{stageKey, episodeId?, turnId?, renderMachine?}` -> `{stageState,
+  runState, revision?}`: approves the document on show (`turnId` = `current.turnId`; 409 `stale_version` when a newer
+  one exists, `stale_step` when the gate is no longer waiting). `approve-timeline` submits the latest revision (409
+  `not_applied` when `turnId` is a timeline proposal not applied yet). Draft and approved version go to `human_edits`.
+  `renderMachine` only with `approve-youtube-kit` (it starts the final render; 422 `no_render_here` on another gate).
+- `POST /productions/:id/chat/retry` (producer) `{stageKey, episodeId?}` -> 202: runs the failed Claude stage again
+  with the chat's messages about it in its prompt; 409 `not_failed`
+- `POST /productions/:id/chat/manual` (producer) `{stageKey, episodeId?, document}` -> ChatTurn: a version written by
+  hand becomes the one on show (422 `rejected` with `failed` when it does not match the stage's schema)
+
+## Audio (`/productions/:id/audio`): voice sample and music, both optional (ADR-0001 items 167-168)
+
+```ts
+interface ProductionAudio {
+  voice: {mode: 'none'; decided_at: string}                                  // narration declined
+    | {mode: 'clone'; origin: 'synthetic' | 'own' | 'licensed' | null; source: AudioSource | null; duration_s: number | null;
+       reference_text: string | null; reference: string; listenUrl: string | null}   // source null: set before (SQL/env)
+    | null;                                                                   // not asked (Studio default if configured)
+  music: {track: string; gain_db: number; ducking: boolean; source: AudioSource | null; duration_s: number | null;
+    listenUrl: string | null} | null }
+type AudioSource = {kind: 'link'; url: string} | {kind: 'upload'; filename: string} | {kind: 'ag-go'; asset_id: string}
+```
+
+- `GET /productions/:id/audio` (viewer) -> ProductionAudio (`listenUrl`: signed, only for files a person gave)
+- `POST /productions/:id/audio/voice|music` (editor): multipart `file` **or** JSON `{url}`, plus for a voice
+  `origin` and `confirm: true` (the person vouches they may use it), `referenceText?` (what is said; empty = the TTS
+  engine listens); for music `gainDb?` (default -18), `ducking?` (default true) -> ProductionAudio &
+  `{resumedEpisodes: string[]}`. The server fetches a link itself (public addresses only unless
+  `STUDIO_AUDIO_ALLOW_PRIVATE_URLS`; Google Drive share links work), checks it with ffprobe, keeps a voice as 24 kHz mono
+  WAV (first 20 s) and music as AAC under `library/studio/<production>/...`. A voice runs on the episodes stopped at
+  `tts`. 400 `voice_consent` / `audio_missing` / `url_not_allowed` / `invalid`, 413 `audio_too_large` (voice 20 MB,
+  music 100 MB), 422 `audio_invalid` (no sound, voice < 3 s, music < 5 s), 502 `url_fetch_failed`, 503 `audio_disabled`
+  (no `STUDIO_FFMPEG_PATH`/`STUDIO_FFPROBE_PATH`).
+- `POST /productions/:id/audio/voice/none` (editor) -> ProductionAudio & `{resumedEpisodes}`: "Bỏ lời dẫn" for the whole
+  production; episodes waiting for a voice are cut without lines; the series plan no longer picks `tts`.
+- `DELETE /productions/:id/audio/voice|music` (editor) -> ProductionAudio: back to not asked / no music.
+
+Every change goes to `human_edits` (`kind: voice | music`).
+
+## Studio (`/studio`)
+
+- `GET overview` -> `{items: OverviewItem[]}`, most urgent first:
+  `{id, teamId, title, updatedAt, step: string | null, group: 'waiting_you' | 'needs_attention' | 'running' | 'done',
+  episodes: {id, idx, title, status: EpisodeStatus, step, group}[]}` — the productions of the caller's teams (an admin:
+  all), not archived
+- `GET claude` -> `{running, waiting, max, source: 'settings' | 'env', assistantName}`: Claude slots held (stages and
+  chat replies), replies in line, the cap; `assistantName` is what the web calls the AI (`"Claude"` until set)
+- `PUT settings` (Studio admin) `{claudeMaxConcurrent?: 1..100, assistantName?: string}` (at least one, else 400) -> the
+  same as `GET claude`; the worker applies the cap on its next claim. `assistantName` is display only (1–40 characters
+  on one line, 422 `invalid_setting` otherwise; blank goes back to `"Claude"`): the model, CLI and prompts stay as they
+  are. Both are saved in one transaction
+- `GET queue` -> the Queue screen, filtered like `overview` (others' items are only counted in `hidden*`):
+  ```ts
+  interface Where { productionId; productionTitle; episodeId: string | null; episodeIdx: number | null; episodeTitle: string | null }
+  {
+    claude: { running; waiting; max; hidden: number;
+      items: (Where & { source: 'chat' | 'stage'; waiting: boolean; step: string; since: string | null })[] };
+    renders: (Where & { farmJobId; kind: 'final' | 'preview' | 'export_premiere' | 'other'; machine: RenderMachine | null;
+      status: 'queued' | 'leased' | 'paused'; progress: number | null; progressStage: string | null; attempt: number;
+      createdAt: string; stuck: boolean })[];   // stuck: queued > 10 min — no node took it, maybe none fits
+    hiddenRenders: number;
+    farm: { ok: true } | { ok: false; error: string };   // the farm out of reach is not an error
+  }
+  ```
+  Jobs come from ag-farm's owner API (`listJobs`, cached 3 s); it names no machines, so there is no machine list.
