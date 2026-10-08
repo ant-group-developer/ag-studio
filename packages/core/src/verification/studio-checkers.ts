@@ -9,15 +9,17 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
-  StudioBrandingSchema, StudioBriefSchema, StudioCatalogSchema, StudioEpisodeSchema, StudioExportSchema, StudioSeedSchema, StudioThumbnailsSchema,
-  ShotsIndexSchema, StoredTimelineSchema, StudioSurveySchema,
+  StudioBrandingSchema, StudioBriefSchema, StudioCatalogSchema, StudioEpisodeSchema, StudioExportSchema, StudioResearchSchema, StudioSeedSchema, StudioThumbnailsSchema,
+  ShotsIndexSchema, StoredTimelineSchema, StudioStyleSchema, StudioSurveySchema, StyleWatchSchema, TimelineV4Schema,
   TrendReportSchema,
-  type CatalogAsset, type Checker, type CheckerInput, type ShotsIndex, type StudioBranding, type StudioBrief, type StudioCatalog, type StudioSeed,
-  type StudioSurvey,
+  type CatalogAsset, type Checker, type CheckerInput, type ShotsIndex, type StudioBranding, type StudioBrief, type StudioCatalog, type StudioResearch,
+  type StudioSeed, type StudioStyle, type StudioSurvey, type StyleWatch, type TimelineV4,
 } from "@harness/contracts";
 import { childEnvWithoutSecrets } from "../media/child-env.js";
 import { validateEditPlan, validateStudioSurvey } from "../studio/cut-validate.js";
 import { layoutTimeline, timelineIssues } from "../studio/layout.js";
+import { researchGaps, validateWebFinds, type ResearchGaps } from "../studio/research-web.js";
+import { validateStyle } from "../studio/style.js";
 import {
   validateBranding, validateRnd, validateSeriesPlan, validateTrendReport, validateYoutubeKit, type StudioValidation,
 } from "../studio/validate.js";
@@ -62,6 +64,13 @@ export const STUDIO_TYPES = {
   thumbnails: "studio_thumbnails",
   youtube: "studio_youtube",
   export: "studio_export",
+  /** Series plan 3.2.0: what the YouTube Data API returned (`research-api`), and the links Claude found on the web. */
+  researchApi: "studio_research_api",
+  webFinds: "studio_web_finds",
+  /** Series plan 3.2.0: the reference videos picked, what watching them found (a directory), the style learned. */
+  styleRefs: "style_refs",
+  styleWatch: "style_watch",
+  style: "studio_style",
 } as const;
 
 /** A timeline artifact of either version, in the order a stage or checker looks for them. */
@@ -100,6 +109,34 @@ export function loadOptionalBranding(i: Pick<CheckerInput, "request" | "workspac
   return p && existsSync(p) ? StudioBrandingSchema.parse(readJson(p)) : null;
 }
 
+/** The production's edit style when the stage has one (cut 1.1.0: the episode intake passes it on). */
+export function loadOptionalStyle(i: Pick<CheckerInput, "request" | "workspaceDir">): StudioStyle | null {
+  const p = inputPath(i, STUDIO_TYPES.style);
+  return p && existsSync(p) ? StudioStyleSchema.parse(readJson(p)) : null;
+}
+
+/** The approved timeline v4 when the stage has one (the YouTube kit of a shot-cut episode). */
+export function loadOptionalTimelineV4(i: Pick<CheckerInput, "request" | "workspaceDir">): TimelineV4 | null {
+  const p = inputPath(i, STUDIO_TYPES.timelineV4);
+  return p && existsSync(p) ? TimelineV4Schema.parse(readJson(p)) : null;
+}
+
+/** The `watch.json` of the `style_watch` directory input, when the stage or gate has it. */
+export function loadOptionalStyleWatch(i: Pick<CheckerInput, "request" | "workspaceDir">): StyleWatch | null {
+  const dir = inputPath(i, STUDIO_TYPES.styleWatch);
+  const p = dir ? join(dir, "watch.json") : null;
+  return p && existsSync(p) ? StyleWatchSchema.parse(readJson(p)) : null;
+}
+
+/** What research the YouTube Data API returned (`research-api` of plan 3.2.0). */
+export const loadResearchApi = (i: CheckerInput): StudioResearch => requireInput(i, STUDIO_TYPES.researchApi, (v) => StudioResearchSchema.parse(v));
+
+/** The channels and keywords the series asked research about (the seed), and what the API left empty. */
+export function researchGapsOf(i: CheckerInput): ResearchGaps {
+  const seed = loadSeed(i);
+  return researchGaps(loadResearchApi(i), { channels: seed.channels, keywords: seed.keywords });
+}
+
 type Verdict = Awaited<ReturnType<Checker["check"]>>;
 
 function fromValidation(v: StudioValidation<unknown>): Verdict {
@@ -131,7 +168,7 @@ export const studioSurveyValidChecker = documentChecker("studio-survey-valid", S
 
 /** Shot-cut edit plan against the approved selection (`survey_index` input) and the shots (`validateEditPlan`). */
 export const editPlanValidChecker = documentChecker("edit-plan-valid", STUDIO_TYPES.editPlan,
-  (raw, i) => fromValidation(validateEditPlan(raw, { survey: loadSurvey(i), shots: loadShots(i) })));
+  (raw, i) => fromValidation(validateEditPlan(raw, { survey: loadSurvey(i), shots: loadShots(i), style: loadOptionalStyle(i) })));
 
 export const trendReportValidChecker = documentChecker("trend-report-valid", STUDIO_TYPES.trendReport,
   (raw) => fromValidation(validateTrendReport(raw)));
@@ -146,7 +183,7 @@ export const seriesPlanValidChecker = documentChecker("series-plan-valid", STUDI
 export const youtubeKitValidChecker = documentChecker("youtube-kit-valid", STUDIO_TYPES.youtubeKit,
   (raw, i) => {
     const episode = requireInput(i, STUDIO_TYPES.episode, (v) => StudioEpisodeSchema.parse(v));
-    return fromValidation(validateYoutubeKit(raw, { episode, branding: loadOptionalBranding(i) }));
+    return fromValidation(validateYoutubeKit(raw, { episode, branding: loadOptionalBranding(i), timeline: loadOptionalTimelineV4(i) }));
   });
 
 export const rndValidChecker = documentChecker("rnd-valid", STUDIO_TYPES.rnd,
@@ -154,6 +191,14 @@ export const rndValidChecker = documentChecker("rnd-valid", STUDIO_TYPES.rnd,
 
 export const brandingValidChecker = documentChecker("branding-valid", STUDIO_TYPES.branding,
   (raw) => fromValidation(validateBranding(raw)));
+
+/** The style learned, against what watching the references found when the stage or gate has it (`validateStyle`). */
+export const styleValidChecker = documentChecker("style-valid", STUDIO_TYPES.style,
+  (raw, i) => fromValidation(validateStyle(raw, { watch: loadOptionalStyleWatch(i) })));
+
+/** Claude's web finds: only YouTube links, only for what the API left empty (`validateWebFinds`). */
+export const webFindsValidChecker = documentChecker("web-finds-valid", STUDIO_TYPES.webFinds,
+  (raw, i) => fromValidation(validateWebFinds(raw, { gaps: researchGapsOf(i) })));
 
 export const timelineSchemaValidChecker = documentChecker("timeline-schema-valid", STUDIO_TIMELINE_TYPES, (raw) => {
   const r = StoredTimelineSchema.safeParse(raw);
@@ -258,5 +303,7 @@ export function studioCheckers(opts: { ffmpeg?: string } = {}): Checker[] {
     thumbnailsValidChecker,
     studioSurveyValidChecker,
     editPlanValidChecker,
+    styleValidChecker,
+    webFindsValidChecker,
   ];
 }

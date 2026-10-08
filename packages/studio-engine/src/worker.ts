@@ -7,7 +7,7 @@ import { createLogger, Redactor, type HarnessLogger } from "@harness/core";
 import { ExecutorRegistry, FarmExecutor, GateExecutor, InProcessExecutor, makeStudioFarmRecorder, StudioAgentExecutor } from "@harness/executors";
 import { Worker } from "@harness/worker";
 import type { FarmOwnerClient } from "@ag-farm/owner-client";
-import { STUDIO_FILE_SKILLS, type AgentCallTrace, type ProjectConfig, type StudioSkill } from "@harness/contracts";
+import { STUDIO_FILE_SKILLS, STUDIO_WEB_SKILLS, type AgentCallTrace, type ProjectConfig, type StudioSkill } from "@harness/contracts";
 import { farmStorage, type StudioBucket } from "./bucket.js";
 import { modelFor } from "./models.js";
 import { saveAgentSession } from "./agent-sessions.js";
@@ -16,6 +16,10 @@ import { saveAgentSession } from "./agent-sessions.js";
 export const STUDIO_FILE_TOOLS = ["Read", "Write", "Glob", "Grep"] as const;
 /** Turns of a files-mode call: opening a few dozen contact sheets and frames, then writing the answer. */
 export const STUDIO_FILES_MAX_TURNS = 60;
+/** Tools of a web-mode call (ADR-0001 item 176): search and read pages, nothing else (no file, no shell). */
+export const STUDIO_WEB_TOOLS = ["WebSearch", "WebFetch"] as const;
+/** Turns of a web-mode call: a few searches and pages per channel and keyword, then the answer. */
+export const STUDIO_WEB_MAX_TURNS = 30;
 import { createChatRunner, type ChatRunner } from "./chat-runner.js";
 import { chatFeedback } from "./chat-db.js";
 import { recordLlmCall } from "./llm-log.js";
@@ -30,6 +34,7 @@ import { teamGuidesForRun } from "./team-skills.js";
 import { sweepStudioData, type RetentionConfig } from "./cleanup.js";
 import { earlierFarmJobs, type StudioDb } from "./studio-db.js";
 import type { ResearchSource } from "./youtube-research.js";
+import type { YtDlp } from "./yt-dlp.js";
 import type { ThumbnailRenderer } from "./thumbnail-render.js";
 
 export interface StudioClaudeOptions {
@@ -59,6 +64,10 @@ export interface StudioWorkerOptions {
   thumbnails?: ThumbnailRenderer;
   /** ffmpeg, ag-go resolve and downloads for the shot-cut stages; without it those stages park for a person. */
   media?: CutMediaDeps;
+  /** yt-dlp (web research numbers, reference videos); without it research keeps Claude's estimates and the style step is skipped. */
+  ytdlp?: YtDlp;
+  /** False: reference videos are never downloaded (`STUDIO_REFERENCE_DOWNLOADS=0`). */
+  referenceDownloads?: boolean;
   /** A farm job taken by no node this long is cancelled and its stage stops, saying so (none: wait to the deadline). */
   farmQueueTimeoutMs?: number;
   /** Claude calls run at once across this worker's loops; default `DEFAULT_CLAUDE_MAX_CONCURRENT` (20). */
@@ -82,14 +91,19 @@ function workerFactory(o: StudioWorkerOptions, single: boolean): { next: () => W
     ...(o.research ? { research: o.research } : {}),
     ...(o.thumbnails ? { thumbnails: o.thumbnails } : {}),
     ...(o.media ? { media: o.media } : {}),
+    ...(o.ytdlp ? { ytdlp: o.ytdlp } : {}),
+    ...(o.referenceDownloads !== undefined ? { referenceDownloads: o.referenceDownloads } : {}),
   })));
   executors.register("agent", new StudioAgentExecutor({
     runtimeFor: (jsonSchema: string, skill?: StudioSkill, onCall?: (trace: AgentCallTrace) => void, files?: { resume?: string }) => {
       const model = modelFor(skill ?? "studio-plan-episodes", o.claude.model);
-      // the scene selection looks at contact sheets: files mode, session kept (ADR item 155); every other skill: no tools
+      // skills that look at contact sheets: files mode, session kept (ADR item 155); the web research: structured with
+      // only WebSearch/WebFetch (ADR item 176); every other skill: no tools
       const mode = skill && STUDIO_FILE_SKILLS.has(skill)
         ? { files: { model, maxTurns: STUDIO_FILES_MAX_TURNS, tools: [...STUDIO_FILE_TOOLS], ...(files?.resume ? { resume: files.resume } : {}) } }
-        : { structured: { jsonSchema, model, maxTurns: o.claude.maxTurns ?? 3 } };
+        : skill && STUDIO_WEB_SKILLS.has(skill)
+          ? { structured: { jsonSchema, model, maxTurns: STUDIO_WEB_MAX_TURNS, tools: [...STUDIO_WEB_TOOLS] } }
+          : { structured: { jsonSchema, model, maxTurns: o.claude.maxTurns ?? 3 } };
       return new CliAgentRuntime({
         runtime: "claude", skillsDir: o.claude.skillsDir, ...mode,
         ...(o.claude.argv ? { argv: o.claude.argv } : {}),

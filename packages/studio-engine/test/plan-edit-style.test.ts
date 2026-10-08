@@ -1,7 +1,7 @@
 /** Plan 3.1.0: plan-episodes says how each episode is edited; spawn-episodes-v2 runs each on its workflow. */
 import { describe, expect, it } from "vitest";
 import { SeriesPlanSchema, StudioEpisodeSchema, type StudioCatalog } from "@harness/contracts";
-import { episodeWorkflowFor, EPISODE_CUT_WORKFLOW, listEpisodes, replaceEpisodes, startEpisodeRun, studioStages, STUDIO_WORKFLOWS } from "../src/index.js";
+import { episodeWorkflowFor, EPISODE_CUT_WORKFLOW, isCutRun, listEpisodes, replaceEpisodes, startEpisodeRun, studioStages, STUDIO_WORKFLOWS } from "../src/index.js";
 import { fakeFootage, seedProduction, world } from "./helpers.js";
 import { runStage, stageWorkspace } from "./stage-harness.js";
 
@@ -13,6 +13,16 @@ describe("episodeWorkflowFor", () => {
     expect(episodeWorkflowFor("3.1.0", undefined)).toBe(STUDIO_WORKFLOWS.episode.workflow);
     expect(episodeWorkflowFor("3.0.0", "cut")).toBe(STUDIO_WORKFLOWS.episode.workflow);
     expect(episodeWorkflowFor("2.0.0", "cut")).toBe("ag-studio-episode@1.2.0");
+  });
+});
+
+describe("isCutRun", () => {
+  const run = (id: string, version: string) => ({ workflow_release: { id, version, digest: "sha256:x" } });
+  it("any release of the shot-cut workflow is a shot-cut run, so older episodes stay open once a newer one is current", () => {
+    expect(isCutRun(run("ag-studio-episode-cut", "1.0.0"))).toBe(true);
+    expect(isCutRun(run("ag-studio-episode-cut", "1.1.0"))).toBe(true);
+    expect(isCutRun(run("ag-studio-episode", "1.3.0"))).toBe(false);
+    expect(isCutRun(undefined)).toBe(false);
   });
 });
 

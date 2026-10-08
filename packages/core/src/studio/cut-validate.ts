@@ -5,7 +5,7 @@
  */
 import {
   EditPlanSchema, EPISODE_DURATION_TOLERANCE, StudioSurveySchema,
-  type EditPlan, type ShotsIndex, type StudioSurvey, type SurveyOp,
+  type EditPlan, type ShotsIndex, type StudioStyle, type StudioSurvey, type SurveyOp,
 } from "@harness/contracts";
 import type { ZodError } from "zod";
 import { narrationCps, TimelineOpError } from "./layout.js";
@@ -19,6 +19,14 @@ const MIN_PIECE_SECONDS = 0.5;
 const TEXT_SPACING_SECONDS = 8;
 /** A line may run this much past the picture before the next line before it is called too long. */
 const LINE_OVERRUN = 1.1;
+/** The style's shot length is checked from this many shots on, and its range widened by these factors. */
+export const STYLE_SHOT_CHECK = { minShots: 5, below: 0.7, above: 1.3 } as const;
+
+function median(xs: readonly number[]): number {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
+}
 
 function zodProblems(e: ZodError): StudioProblem[] {
   return e.issues.map((i) => ({ code: "schema", message: `${i.path.join(".") || "(root)"}: ${i.message}` }));
@@ -58,7 +66,11 @@ export function validateStudioSurvey(raw: unknown, ctx: { shots: ShotsIndex }): 
  * every 8 s. Warns when a line is longer than the picture before the next line, and when the cut is off its target
  * by more than 20%.
  */
-export function validateEditPlan(raw: unknown, ctx: { survey: StudioSurvey; shots: ShotsIndex }): StudioValidation<EditPlan> {
+export function validateEditPlan(
+  raw: unknown,
+  /** `style`: the production's edit style (cut 1.1.0), when it has one; its shot length is a follow-up (`style_`). */
+  ctx: { survey: StudioSurvey; shots: ShotsIndex; style?: StudioStyle | null },
+): StudioValidation<EditPlan> {
   const parsed = EditPlanSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, value: null, problems: zodProblems(parsed.error), warnings: [] };
   const plan = parsed.data;
@@ -131,6 +143,20 @@ export function validateEditPlan(raw: unknown, ctx: { survey: StudioSurvey; shot
   const readingSeconds = plan.lines.reduce((sum, l) => sum + l.text.length, 0) / cps;
   const limit = Math.max(1, Math.floor(Math.max(pictureSeconds, readingSeconds) / TEXT_SPACING_SECONDS));
   if (plan.texts.length > limit) problems.push({ code: "too_many_texts", message: `${plan.texts.length} chữ trên hình cho ${pictureSeconds.toFixed(0)}s hình (tối đa ${limit}, một chữ mỗi ${TEXT_SPACING_SECONDS}s)` });
+
+  // The style's rhythm: the median piece within the style's shot length, widened (the cut follows the picture first)
+  const range = ctx.style && !ctx.style.skipped ? ctx.style.params?.shot_seconds : undefined;
+  if (range && plan.shots.length >= STYLE_SHOT_CHECK.minShots) {
+    const med = median(plan.shots.map((s) => s.out - s.in));
+    const lo = range.min * STYLE_SHOT_CHECK.below;
+    const hi = range.max * STYLE_SHOT_CHECK.above;
+    if (med < lo || med > hi) {
+      warnings.push({
+        code: "style_shot_length",
+        message: `shot dài trung vị ${med.toFixed(1)}s, phong cách "${ctx.style!.name}" giữ shot ${range.min}–${range.max}s: ${med < lo ? "cắt chậm lại (shot dài hơn)" : "cắt nhanh hơn (shot ngắn hơn)"}`,
+      });
+    }
+  }
 
   // Duration (soft ±20%): the picture, or the reading when that is longer (the fit appends picture to cover it)
   const seconds = Math.max(pictureSeconds, plan.narration === "tts" ? readingSeconds : 0);

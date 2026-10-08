@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  MemoryBucket, replaceEpisodes, startPlanRun, sweepAgentSessions, sweepProductionAudio, sweepShotFrames,
-  sweepVoiceStore, sweepWorkspaces, voicePath,
+  MemoryBucket, replaceEpisodes, saveProductionDocument, startPlanRun, sweepAgentSessions, sweepProductionAudio, sweepReferenceDownloads, sweepShotFrames,
+  sweepStyleFrames, sweepVoiceStore, sweepWorkspaces, styleFrameKey, voicePath,
 } from "../src/index.js";
 import { seedProduction, world } from "./helpers.js";
 
@@ -100,5 +100,38 @@ describe("the rest of the sweep", () => {
     }
     expect(await sweepShotFrames(s.db, bucket)).toBe(1);
     expect([...bucket.objects.keys()].sort()).toEqual([`productions/${prod}/episodes/ep-new/shots/s1.jpg`, `productions/${prod}/episodes/ep-old/renders/final.mp4`]);
+  });
+
+  it("keeps only the reference frames the production's style cites as evidence", async () => {
+    s = world();
+    const bucket = new MemoryBucket();
+    const prod = seedProduction(s.db);
+    const style = {
+      schema_version: "studio.style/v1", skipped: false, skipped_reason: null, name: "x", summary: "", references: [], measured: null, params: null,
+      do: [], dont: [], evidence: [{ param: "opening", video_id: "U_17EqTHUIo", t: 2.5, note: "" }],
+    };
+    saveProductionDocument(s.db, prod, "style", style as never, "gate:run_1");
+    const cited = styleFrameKey(prod, "U_17EqTHUIo", 2.5);
+    for (const k of [cited, styleFrameKey(prod, "U_17EqTHUIo", 10), styleFrameKey(prod, "Q5itZPTiZ9g", 0.5)]) await bucket.put(k, Buffer.from("x"));
+    expect(await sweepStyleFrames(s.core, s.db, bucket)).toBe(2);
+    expect([...bucket.objects.keys()]).toEqual([cited]);
+  });
+});
+
+describe("sweepReferenceDownloads", () => {
+  it("deletes reference video folders a crashed watch left; keeps recent ones", () => {
+    const root = mkdtempSync(join(tmpdir(), "ws-"));
+    const folder = (run: string, ageHours: number) => {
+      const dir = join(root, run, "watch-references", "attempt_1", "references");
+      mkdirSync(join(dir, "U_17EqTHUIo"), { recursive: true });
+      writeFileSync(join(dir, "U_17EqTHUIo", "U_17EqTHUIo.mp4"), "x");
+      const t = new Date(NOW.getTime() - ageHours * 3_600_000);
+      utimesSync(dir, t, t);
+      return dir;
+    };
+    const old = folder("run_a", 12);
+    const recent = folder("run_b", 1);
+    expect(sweepReferenceDownloads(root, NOW.getTime() - 6 * 3_600_000)).toBe(1);
+    expect([existsSync(old), existsSync(recent)]).toEqual([false, true]);
   });
 });

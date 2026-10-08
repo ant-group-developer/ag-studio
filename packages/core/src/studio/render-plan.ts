@@ -91,6 +91,8 @@ export function timelineToComposition(t: AnyTimeline): Composition {
   const hasAudio = !t.source_audio.muted;
   const v4 = isTimelineV4(t) ? t : null;
   const spoken = narrationTimeline(t, layout);
+  // the footage's own speech is the episode's voice: played as it is, not lowered like background sound
+  const voice = spoken.voice === "tts" ? "tts" : v4?.narration.voice === "original" ? "original" : "none";
   const transitions = resolveTransitions(layout);
   const warnings: string[] = [];
 
@@ -137,7 +139,7 @@ export function timelineToComposition(t: AnyTimeline): Composition {
   return {
     schema_version: "harness.composition/v1",
     output: { width: t.canvas.width, height: t.canvas.height, fps: t.fps, codec: "h264" },
-    voice: spoken.voice,
+    voice,
     language: t.language,
     total_seconds: layout.duration,
     request_id: `req_${stableUlid(`production:${t.production_id}`)}`,
@@ -151,10 +153,12 @@ export function timelineToComposition(t: AnyTimeline): Composition {
       start: c.start,
       end: c.end,
       fit: "scale_pad" as const,
-      has_audio: hasAudio,
+      // a clip muted on its own (cut 1.1.0) is silent; every render worker reads this per segment
+      has_audio: hasAudio && !c.muted,
       transition_out: { kind: transitions[order]!.kind, seconds: transitions[order]!.seconds, tail_available: transitions[order]!.tail_available },
     })),
     text_events: textEvents,
+    ...(v4?.text_style ? { text_style: v4.text_style } : {}),
     captions,
     narration: spoken.narration.map((n) => ({ line_id: n.line_id, wav: n.wav, start: n.start, end: n.end })),
     music,

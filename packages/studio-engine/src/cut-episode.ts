@@ -9,7 +9,7 @@ import { CutWatchSchema, StudioSurveySchema, type StudioSurvey } from "@harness/
 import type { StudioEngineCore } from "./core.js";
 import { currentProposal } from "./chat-db.js";
 import type { SurveyProposal } from "./chat-context.js";
-import { EPISODE_CUT_WORKFLOW, readStageDocument, resumeEpisodeRunFrom, stageArtifactPath, StudioRunError } from "./run-control.js";
+import { isCutRun, readStageDocument, resumeEpisodeRunFrom, stageArtifactPath, StudioRunError } from "./run-control.js";
 import { getEpisode, type EpisodeRecord, type StudioDb } from "./studio-db.js";
 
 /** The gates a shot-cut episode can be run again from ("Chạy lại từ chọn cảnh…", "… từ kế hoạch dựng…"). */
@@ -24,7 +24,7 @@ const IDLE: readonly string[] = ["SUCCEEDED", "PENDING", "WAITING_HUMAN", "FAILE
 
 function cutRun(core: StudioEngineCore, ep: EpisodeRecord) {
   const run = ep.run_id ? core.store.getRun(ep.run_id) : undefined;
-  if (!run || `${run.workflow_release.id}@${run.workflow_release.version}` !== EPISODE_CUT_WORKFLOW) {
+  if (!run || !isCutRun(run)) {
     throw new StudioRunError("invalid", "tập này không cắt theo shot", { code: "not_cut" });
   }
   return run;

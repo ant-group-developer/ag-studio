@@ -22,6 +22,7 @@ import { useTranslation } from "react-i18next";
 import { StudioBrandingSchema, THUMBNAIL_TEXT_POSITIONS } from "@harness/contracts";
 import type { StudioBranding } from "@harness/contracts";
 import { StringListField } from "./StringListField";
+import { TextLookInput } from "./TextLookInput";
 
 const { Text } = Typography;
 
@@ -367,6 +368,9 @@ export function BrandingEditor({
               <InputNumber min={10} max={64} style={{ width: 120 }} />
             </Form.Item>
             <StringListField name={["on_screen_text", "rules"]} label={t("brandingEditor.onScreenRules")} maxItems={8} maxChars={300} readOnly={readOnly} />
+            <Form.Item name={["on_screen_text", "look"]} label={t("brandingEditor.textLook")} extra={t("brandingEditor.textLookHint")}>
+              <TextLookInput disabled={readOnly} />
+            </Form.Item>
           </Space>
         ),
       }]} />

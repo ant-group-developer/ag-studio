@@ -11,7 +11,7 @@ import { join } from "node:path";
 import JSZip from "yazl";
 import {
   HarnessError, MAX_RESEARCH_CHANNELS, SeriesPlanSchema, SpawnedEpisodesSchema, StudioBrandingSchema, StudioBriefSchema, StudioCatalogSchema,
-  StudioEpisodeSchema, StudioExportSchema, StudioResearchSchema, StudioRndSchema, StudioSeedSchema, StudioYoutubeSchema, StoredTimelineSchema,
+  StudioEpisodeSchema, StudioExportSchema, StudioResearchSchema, StudioRndSchema, StudioSeedSchema, StudioWebFindsSchema, StudioYoutubeSchema, StoredTimelineSchema,
   TrendReportSchema, parseStoredYoutubeKit,
   type AssetHints, type ChannelRef, type ExecutorContext, type StageRequest, type StudioBrief, type StudioCatalog, type StudioExport,
   type StudioEpisode, type TrendReport, StudioThumbnailsSchema, THUMBNAIL_SIZES, type StudioThumbnails, type StoredTimeline,
@@ -24,13 +24,15 @@ import {
 import type { InProcessStage } from "@harness/executors";
 import { productionKey, type StudioBucket } from "./bucket.js";
 import { emptyResearch, type ResearchSource } from "./youtube-research.js";
+import type { YtDlp } from "./yt-dlp.js";
+import { mergeResearch } from "./research-merge.js";
 import { episodeWorkflowFor, episodeWorkflowForPlan } from "./run-control.js";
 import type { ThumbnailRenderer } from "./thumbnail-render.js";
 import type { CutMediaDeps } from "./cut-stages.js";
 import { insertThumbnail, listThumbnails, replaceRenderThumbnails } from "./thumbnails-db.js";
 import { productionVoice } from "./voice.js";
 import {
-  episodeForRun, getEpisode, getProduction, latestEpisodeRevision, listEpisodes, productionBranding, productionChannels, productionForRun,
+  activeProductionStyle, episodeForRun, getEpisode, getProduction, latestEpisodeRevision, listEpisodes, productionBranding, productionChannels, productionForRun,
   productionHints, productionMusic, productionOwner, productionRnd, productionSources, replaceEpisodes, saveEpisodeRevision, saveProductionDocument,
   saveTrendReport, updateEpisodeRunId, type ProductionRecord, type StudioDb,
 } from "./studio-db.js";
@@ -55,6 +57,13 @@ export interface StudioStageDeps {
   thumbnails?: ThumbnailRenderer;
   /** What the shot-cut stages need (ffmpeg, ag-go resolve, downloads); absent = this worker cannot run them. */
   media?: CutMediaDeps;
+  /**
+   * yt-dlp: the real numbers of the links the web research found, and the reference videos of the style step; absent
+   * = not installed (research keeps the numbers Claude read, the style step is skipped and says why).
+   */
+  ytdlp?: YtDlp;
+  /** False when downloading reference videos is switched off (`STUDIO_REFERENCE_DOWNLOADS=0`). Default on. */
+  referenceDownloads?: boolean;
 }
 
 export const DEFAULT_CANVAS = { "16:9": { width: 1920, height: 1080 }, "9:16": { width: 1080, height: 1920 } } as const;
@@ -106,6 +115,34 @@ function requirePlanProduction(d: StudioStageDeps, runId: string): ProductionRec
   const p = productionForRun(d.db, runId);
   if (!p) throw new HarnessError("NOT_FOUND", `no production is linked to run ${runId}`, { run_id: runId });
   return p;
+}
+
+/**
+ * The brief the planning reads: the seed's footage and frame, and the production's CURRENT R&D and branding (as
+ * approved, or as a person edited them since: running this stage again re-reads them); with `withStyle`, its current
+ * style too.
+ */
+async function finalizeBrief(d: StudioStageDeps, request: StageRequest, ctx: ExecutorContext, withStyle: boolean): Promise<void> {
+  const seed = readSeed(request, ctx.workspaceDir);
+  const p = requirePlanProduction(d, request.run_id);
+  const rnd = productionRnd(p);
+  const branding = productionBranding(p);
+  if (!rnd || !branding) {
+    throw new HarnessError("CONFIG_INVALID", "production chưa có R&D và branding đã duyệt", { production_id: p.id, rnd: !!rnd, branding: !!branding });
+  }
+  const brief = effectiveBrief({
+    production_id: p.id, run_id: request.run_id, owner_user_id: seed.owner_user_id, title: p.title, folder_ids: seed.folder_ids,
+    aspect: seed.aspect, canvas: seed.canvas, fps: seed.fps, language: seed.language, music: seed.music,
+    youtube_channels: seed.channels.filter((c) => c.role === "reference").map((c) => c.url), keywords: seed.keywords,
+  }, seed.hints, rnd);
+  // whether the plan may narrate: read now, not frozen in the seed (the person may have declined since)
+  const narration = productionVoice(p.voice).kind;
+  brief.narration_voice = narration === "clone" ? "ready" : narration;
+  writeOutput(ctx, "brief.json", toBuffer(StudioBriefSchema.parse(brief)));
+  writeOutput(ctx, "rnd.json", toBuffer(rnd));
+  writeOutput(ctx, "branding.json", toBuffer(branding));
+  const style = withStyle ? activeProductionStyle(p) : null;
+  if (style) writeOutput(ctx, "style.json", toBuffer(style));
 }
 
 export function writeOutput(ctx: ExecutorContext, name: string, body: string | Buffer): string {
@@ -300,6 +337,23 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       });
     },
 
+    // plan 3.2.0: the API's research, with what it could not answer filled from the web (links Claude found, yt-dlp's numbers)
+    "studio-research-merge": async (request, ctx) => {
+      const q = readPlanInputs(request, ctx.workspaceDir);
+      const api = readInput(request, ctx.workspaceDir, STUDIO_TYPES.researchApi, (v) => StudioResearchSchema.parse(v));
+      const finds = readInput(request, ctx.workspaceDir, STUDIO_TYPES.webFinds, (v) => StudioWebFindsSchema.parse(v));
+      const research = await mergeResearch({
+        api, finds, query: { channels: q.channels, keywords: q.keywords }, ytdlp: d.ytdlp ?? null, now: new Date(ctx.clock.now()),
+        ...(ctx.signal ? { signal: ctx.signal } : {}),
+      });
+      StudioResearchSchema.parse(research);
+      writeOutput(ctx, "research.json", toBuffer(research));
+      ctx.logger.info("research merged", {
+        source: research.source ?? "youtube_api", skipped: research.skipped_reason, ytdlp: !!d.ytdlp,
+        estimated: [...research.channels.flatMap((c) => c.videos), ...research.keywords.flatMap((k) => k.videos)].filter((v) => v.estimated).length,
+      });
+    },
+
     "studio-catalog": async (request, ctx) => {
       const brief = readPlanInputs(request, ctx.workspaceDir);
       const items: AgGoFootageVideo[] = [];
@@ -365,30 +419,10 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       ctx.logger.info("approved branding applied to the production", { production_id: p.id });
     },
 
-    /**
-     * The brief the planning reads: the seed's footage and frame, and the production's CURRENT R&D and branding (as
-     * approved, or as a person edited them since: running this stage again re-reads them).
-     */
-    "studio-finalize-brief": async (request, ctx) => {
-      const seed = readSeed(request, ctx.workspaceDir);
-      const p = requirePlanProduction(d, request.run_id);
-      const rnd = productionRnd(p);
-      const branding = productionBranding(p);
-      if (!rnd || !branding) {
-        throw new HarnessError("CONFIG_INVALID", "production chưa có R&D và branding đã duyệt", { production_id: p.id, rnd: !!rnd, branding: !!branding });
-      }
-      const brief = effectiveBrief({
-        production_id: p.id, run_id: request.run_id, owner_user_id: seed.owner_user_id, title: p.title, folder_ids: seed.folder_ids,
-        aspect: seed.aspect, canvas: seed.canvas, fps: seed.fps, language: seed.language, music: seed.music,
-        youtube_channels: seed.channels.filter((c) => c.role === "reference").map((c) => c.url), keywords: seed.keywords,
-      }, seed.hints, rnd);
-      // whether the plan may narrate: read now, not frozen in the seed (the person may have declined since)
-      const narration = productionVoice(p.voice).kind;
-      brief.narration_voice = narration === "clone" ? "ready" : narration;
-      writeOutput(ctx, "brief.json", toBuffer(StudioBriefSchema.parse(brief)));
-      writeOutput(ctx, "rnd.json", toBuffer(rnd));
-      writeOutput(ctx, "branding.json", toBuffer(branding));
-    },
+    /** The brief the planning reads (`finalizeBrief`). */
+    "studio-finalize-brief": async (request, ctx) => finalizeBrief(d, request, ctx, false),
+    /** Plan 3.2.0: also the production's current style (`style.json`), when it has one that was not skipped. */
+    "studio-finalize-brief-v2": async (request, ctx) => finalizeBrief(d, request, ctx, true),
 
     /** Plans 2.0.0 and 3.0.0: every episode whole videos on the plan's episode release. */
     "studio-spawn-episodes": async (request, ctx) => spawnEpisodes(d, request, ctx, false),

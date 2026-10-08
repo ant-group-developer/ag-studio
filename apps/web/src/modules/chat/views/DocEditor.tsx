@@ -1,6 +1,8 @@
 import { Input, InputNumber, Select } from "antd";
 import { Plus, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import type { TextLook } from "@harness/contracts";
+import { TextLookInput } from "../../production/TextLookInput";
 import { DOC_SPECS, valueAt, type DocKind, type FieldSpec } from "./doc-specs";
 
 /** `doc` with `value` at the dotted `path`, copied along the way (the rest is shared). */
@@ -29,6 +31,9 @@ function FieldInput({ field, value, onChange, label }: { field: FieldSpec; value
   switch (field.kind) {
     case "text":
       return <Input.TextArea aria-label={label} value={str(value)} autoSize={{ minRows: 1, maxRows: 14 }} onChange={(e) => onChange(e.target.value)} />;
+    case "choice":
+      return <Select aria-label={label} value={str(value) || undefined} style={{ width: "100%" }} onChange={(v: string) => onChange(v)}
+        options={(field.options ?? []).map((o) => ({ value: o, label: o }))} />;
     case "number":
       return <InputNumber aria-label={label} value={typeof value === "number" ? value : null} min={0} precision={0} onChange={(v) => onChange(v ?? null)} />;
     case "seconds":
@@ -80,6 +85,8 @@ function FieldInput({ field, value, onChange, label }: { field: FieldSpec; value
         </div>
       );
     }
+    case "look":
+      return <TextLookInput value={(value ?? null) as TextLook | null} onChange={(v) => onChange(v)} />;
     case "palette": {
       const pal = (value && typeof value === "object" ? value : {}) as Record<string, string>;
       return (

@@ -4,9 +4,9 @@
  * `useEditor`/`Autosaver` through their normal paths (including a 409 conflict, on demand).
  */
 import type { StoredTimeline } from "@harness/contracts";
-import { StudioHttpError, type EditorJob, type TimelineRevisionView } from "../api/studio-client";
+import { StudioHttpError, type EditorJob, type MusicTrackView, type TimelineRevisionView } from "../api/studio-client";
 import type { EditorClient } from "../modules/editor/types";
-import { sampleTimeline } from "../modules/editor/state/fixtures";
+import { sampleCutTimeline, sampleTimeline } from "../modules/editor/state/fixtures";
 
 export interface FakeEditorClientHandle {
   client: EditorClient;
@@ -14,9 +14,16 @@ export interface FakeEditorClientHandle {
   simulateConflictOnNextSave: () => void;
 }
 
-export function createFakeEditorClient(): FakeEditorClientHandle {
+/** `cut`: a shot-cut episode (cut 1.1.0) with the source sound on, a text look and a small music library. */
+export function createFakeEditorClient(o: { cut?: boolean } = {}): FakeEditorClientHandle {
   let revision = 1;
-  let data: StoredTimeline = sampleTimeline();
+  let data: StoredTimeline = o.cut
+    ? { ...sampleCutTimeline(), source_audio: { muted: false }, text_style: { text_color: "#FFD166", outline_color: "#000000", box_color: "#1D3557", size: "m" } }
+    : sampleTimeline();
+  const library: MusicTrackView[] = o.cut ? [
+    { trackId: "am-ap", displayName: "Sáng sớm", moods: ["ấm áp", "calm"], durationSeconds: 184, loopOk: true, origin: "own", originNote: "nhóm", active: true, track: "library:music/am-ap.m4a", listenUrl: "" },
+    { trackId: "cho-dem", displayName: "Chợ đêm", moods: ["upbeat"], durationSeconds: 151, loopOk: false, origin: "royalty_free", originNote: "Pixabay", active: true, track: "library:music/cho-dem.m4a", listenUrl: "" },
+  ] : [];
   let conflictNext = false;
   const jobs = new Map<string, EditorJob>();
   let jobCounter = 0;
@@ -78,6 +85,11 @@ export function createFakeEditorClient(): FakeEditorClientHandle {
       // Return null for all assets in the playground (no media server)
       void assetId;
       return null as unknown as import("../api/studio-client").AssetMedia;
+    },
+
+    async listMusic() {
+      // no library unless `?cut`: the music panel falls back to typing a track
+      return { tracks: library };
     },
 
     async getProductionCatalog() {

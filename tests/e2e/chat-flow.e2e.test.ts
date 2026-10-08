@@ -2,11 +2,13 @@
  * Phase 2 E2E (plan 2026-10-06-ag-studio-phase-2-chat, E1): the chat-first series through the real Studio API and
  * worker (dist), stopping before the render — so no farm, no render worker, no Docker.
  *
- *   POST drafts (one message) → Claude asks → answer → start → approve trend report → chat about the R&D → approve
- *   the new version → branding, plan approved → episode → chat about its timeline → apply → approve → the kit waits.
+ *   POST drafts (one message) → Claude asks → answer → start → approve trend report and style (series plan 3.2.0;
+ *   skipped here, no ffmpeg) → chat about the R&D → approve the new version → branding, plan approved → episode →
+ *   chat about its timeline → apply → approve → the kit waits.
  *
  * Real:  Studio API (dist), Studio worker (dist, stage loops + chat loop).
- * Fake:  Claude (fixtures/fake-studio-claude.mjs), ag-go + Account API + JWKS (one HTTP server), S3 (FakeS3Server).
+ * Fake:  Claude (fixtures/fake-studio-claude.mjs), yt-dlp (fixtures/fake-yt-dlp.mjs), ag-go + Account API + JWKS (one
+ *        HTTP server), S3 (FakeS3Server).
  *
  * Requires: E2E=1, built dists of ag-studio apps/api + apps/worker (`corepack pnpm -r run build`).
  * Run: E2E=1 corepack pnpm exec vitest run --config tests/e2e/vitest.config.ts tests/e2e/chat-flow.e2e.test.ts
@@ -87,6 +89,23 @@ async function approve(prod: string, stageKey: string, episodeId?: string): Prom
   const t = await atStep(prod, stageKey, episodeId);
   await ok("POST", `/productions/${prod}/chat/approve`, { stageKey, turnId: t.current?.turnId ?? undefined, ...(episodeId ? { episodeId } : {}) });
 }
+/**
+ * Approves as shown each plan gate the chat stops at until it stops at `until`: the style's gate (series plan 3.2.0)
+ * may come before the R&D's or after it, whichever stage finishes first.
+ */
+async function approveUntil(prod: string, until: string): Promise<string[]> {
+  const approved: string[] = [];
+  for (;;) {
+    const t = await waitFor(`a plan gate on the way to ${until}`, async () => {
+      const t = await thread(prod);
+      return t.scope?.scope === "gate" && !approved.includes(t.scope.stageKey) ? t : null;
+    });
+    if (t.scope!.stageKey === until) return approved;
+    if (approved.length >= 4) throw new Error(`never reached ${until} (approved ${approved.join(", ")})`);
+    await ok("POST", `/productions/${prod}/chat/approve`, { stageKey: t.scope!.stageKey, turnId: t.current?.turnId ?? undefined });
+    approved.push(t.scope!.stageKey);
+  }
+}
 
 function startFakeAgGo(): Promise<void> {
   agGo = http.createServer(async (req, res) => {
@@ -155,6 +174,9 @@ beforeAll(async () => {
   spawnProc(join(ROOT, "apps/worker/dist/main.js"), {
     ...env, WORKER_OWNER: "e2e-chat-worker",
     STUDIO_CLAUDE_ARGV: JSON.stringify([process.execPath, join(ROOT, "fixtures", "fake-studio-claude.mjs")]),
+    // no YouTube key, whatever the shell has: the research takes the web fallback; no ffmpeg, so the style is skipped
+    YOUTUBE_API_KEY: "",
+    STUDIO_YTDLP_ARGV: JSON.stringify([process.execPath, join(ROOT, "fixtures", "fake-yt-dlp.mjs")]),
   }, "studio-worker");
 }, 180_000);
 
@@ -179,9 +201,14 @@ describe.skipIf(!isE2E)("chat-first series through the real API and worker (fake
     await ok("POST", `/productions/${prod}/start`);
 
     await approve(prod, "approve-trend-report");
-    await atStep(prod, "approve-rnd");
+    const before = await approveUntil(prod, "approve-rnd");
     expect((await say(prod, "Gộp tập 3 và 4")).action).toBe("revise");
     await approve(prod, "approve-rnd");
+    const after = await approveUntil(prod, "approve-branding");
+    expect([...before, ...after]).toEqual(["approve-style"]);
+    // the style was skipped (no ffmpeg on this worker), saying why; approved, it is the production's
+    expect(await ok<{ document: { skipped: boolean; skipped_reason: string } }>("GET", `/productions/${prod}/style`))
+      .toMatchObject({ document: { skipped: true, skipped_reason: expect.stringMatching(/ffmpeg/) } });
     await approve(prod, "approve-branding");
     await approve(prod, "approve-plan");
 

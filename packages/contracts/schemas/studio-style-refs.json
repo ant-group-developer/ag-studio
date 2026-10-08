@@ -1,0 +1,100 @@
+{
+  "$ref": "#/definitions/studio-style-refs",
+  "definitions": {
+    "studio-style-refs": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.style-refs/v1"
+        },
+        "production_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target_seconds": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skipped_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "picks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "video_id": {
+                "type": "string",
+                "pattern": "^[\\w-]{11}$"
+              },
+              "url": {
+                "type": "string"
+              },
+              "channel_id": {
+                "type": "string"
+              },
+              "channel_title": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "duration_s": {
+                "type": "number",
+                "minimum": 0
+              },
+              "views": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "views_per_day": {
+                "type": "number",
+                "minimum": 0
+              },
+              "published_at": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "video_id",
+              "url",
+              "channel_id",
+              "channel_title",
+              "title",
+              "duration_s",
+              "views",
+              "views_per_day",
+              "published_at",
+              "reason"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 3
+        }
+      },
+      "required": [
+        "schema_version",
+        "production_id",
+        "target_seconds",
+        "skipped_reason",
+        "picks"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

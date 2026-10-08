@@ -8,8 +8,9 @@ Từ lúc tạo production tới khi có các tập đã render, kèm cách xử
 
 - Footage đã có trên ag-go và **đã quét** (có mô tả AI): chỉ video `usable` mới vào catalog của Claude.
 - Người tạo phải xem được các folder ag-go sẽ gắn, và phải có vai `producer` trở lên trong team.
-- Muốn có nghiên cứu thị trường: đặt `YOUTUBE_API_KEY`. Mỗi từ khoá tốn 100 đơn vị quota (`search.list`); kết quả
-  cache 24 giờ.
+- Nghiên cứu thị trường: nên đặt `YOUTUBE_API_KEY`. Mỗi từ khoá tốn 100 đơn vị quota (`search.list`); kết quả
+  cache 24 giờ. Không có khoá (hay API lỗi) thì plan 3.2.0 cho Claude tìm trên web, số liệu do yt-dlp đọc; cài yt-dlp
+  và học phong cách dựng từ video mẫu: `docs/runbooks/studio-local.md` mục 4b.
 - Claude giả hay thật: `docs/runbooks/studio-local.md` mục 4.
 
 ## 2. Luồng một production (giao diện chat)
@@ -17,8 +18,9 @@ Từ lúc tạo production tới khi có các tập đã render, kèm cách xử
 | Bước | Ai làm | Trên web | Ghi chú |
 |---|---|---|---|
 | Video mới | Người (producer) | Trang chủ: gõ một câu, gắn folder bằng `@` ("Làm series vlog Kyoto từ @Kyoto 2025, giống kênh Mei Time…") | Tạo production nháp; Claude (`studio-intake`) tóm yêu cầu ở cột phải và hỏi lại từng câu còn thiếu |
-| Bắt đầu | Người | Nút "Bắt đầu" (bật khi đủ: tên, folder, khung hình, ngôn ngữ, kênh hoặc từ khoá) | Ghi vào production rồi chạy `ag-studio-series-plan@3.1.0` |
-| Nghiên cứu thị trường | Tự động → **người duyệt** | Cột phải: báo cáo xu hướng; chat để sửa; "Duyệt" | Không có video nghiên cứu thì báo cáo trống, không gọi Claude |
+| Bắt đầu | Người | Nút "Bắt đầu" (bật khi đủ: tên, folder, khung hình, ngôn ngữ, kênh hoặc từ khoá) | Ghi vào production rồi chạy `ag-studio-series-plan@3.2.0` |
+| Nghiên cứu thị trường | Tự động → **người duyệt** | Cột phải: báo cáo xu hướng; chat để sửa; "Duyệt" | YouTube API trước; thiếu khoá hay API lỗi thì Claude tìm kênh/video trên web và yt-dlp đọc số thật (số Claude đọc được ghi "ước lượng"). Không có video nghiên cứu nào thì báo cáo trống, nói lý do, không gọi Claude |
+| Phong cách dựng | Tự động → **người duyệt** | Bước "Phong cách dựng": nhịp cắt, chữ, nhạc… kèm khung hình làm bằng chứng và link video mẫu; chat để sửa; "Duyệt" | Plan 3.2.0. Tải ≤3 video của kênh mẫu (≤480p), đo rồi xoá ngay. Thiếu yt-dlp/ffmpeg, tắt tải (`STUDIO_REFERENCE_DOWNLOADS=0`) hay không có kênh mẫu thì bước này ghi lý do bỏ qua; vẫn bấm Duyệt để đi tiếp. Branding và kế hoạch tập theo phong cách đã duyệt |
 | R&D | Claude (Opus) → **người duyệt** | Chat để sửa ("gộp tập 3 và 4"); cột phải hiện "Bản n · k thay đổi" | Duyệt nộp đúng bản đang hiện |
 | Branding | Claude → **người duyệt** | Như trên | |
 | Kế hoạch tập | Claude (Opus) → **người duyệt** | Như trên; sửa kéo thả ở `⋯ → Sửa tay` (PlanEditor) | Lệch thời lượng ±20% chỉ cảnh báo. Mỗi tập có kiểu dựng: ghép nguyên video, hoặc **cắt theo shot** (có thể có lời dẫn) — xem mục 2a |
@@ -53,6 +55,29 @@ kiểu đi bộ du lịch, có lời dẫn"). Đầu tập có dòng "cắt theo
   kế hoạch dựng bị bỏ; kế hoạch tập sau đó không chọn lời dẫn nữa. Nhạc đưa vào trước bước khớp hình thì tập dùng nhạc
   đó; tập đã có timeline thì sửa nhạc trong timeline.
 - Tập ghép nguyên video không có các ô cắt đầu/cuối, chuyển cảnh, phụ đề.
+
+**Tập cắt 1.1.0** (`ag-studio-episode-cut@1.1.0`, ADR-0001 mục 178; chỉ dùng sau khi chuyển bản, xem dưới):
+
+- Đầu bước footage có thêm **lọc lời nói**: câu Whisper bịa (điểm từ thấp, "đăng ký kênh"…) bị bỏ trước khi Claude chọn
+  cảnh; xem câu đã bỏ ở `clean-report.json` của bước `clean-transcript` (`⋯ → Nhật ký`).
+- Kế hoạch dựng theo **phong cách dựng** đã duyệt (nhịp cắt, độ dài shot, mở đầu, chuyển cảnh) và ghi shot nào **tắt
+  tiếng** (loa thông báo, nhạc quán, người lạ). Ở timeline, clip đã tắt tiếng có công tắc "Tiếng của clip" (editor),
+  hoặc chat "clip 3 có loa thông báo, tắt tiếng đi".
+- Chữ trên video theo **kiểu chữ của branding** (`Kiểu chữ trên video`: màu chữ, viền, hộp, cỡ) — sửa ở branding rồi
+  chạy lại từ kế hoạch dựng để tập đã có timeline nhận kiểu mới.
+- Tập không có nhạc riêng được **chọn một bài trong kho nhạc** theo mood (kế hoạch dựng → branding → phong cách); đổi bài
+  trong editor (ô "Lọc theo mood", "Bài nhạc").
+- YouTube kit đọc bản chọn cảnh: tiêu đề không nói điều hình không có; thumbnail chỉ lấy video còn trong timeline.
+
+**Chuyển tập cắt mới sang 1.1.0** (một lần, người vận hành): (1) cài ag-render-worker **0.8.0** lên **mọi** node farm
+(`release/ag-render-worker-0.8.0.zip`, `node scripts/release.mjs` trong repo đó); node cũ từ chối job có kiểu chữ và
+xuất Premiere có clip tắt tiếng (job hỏng có báo lỗi, không render sai). (2) Đổi `STUDIO_WORKFLOWS.episodeCut`
+(`packages/studio-engine/src/core.ts`) sang `ag-studio-episode-cut@1.1.0`, build, khởi động lại worker. Tập đang chạy
+trên 1.0.0 vẫn chạy và render như cũ.
+
+**Kho nhạc của nhóm** (`/music`, link ở trang Hàng đợi): mọi người nghe thử; Studio admin tải bài lên (tên, mood, nguồn
+gốc, có lặp liền mạch không), sửa mood, ngừng dùng hoặc dùng lại. Bài ngừng dùng không được chọn cho tập mới nhưng tập
+đã dùng vẫn render được. Chỉ tải bài nhóm có quyền dùng (tự làm, có giấy phép, miễn phí bản quyền) và ghi rõ nguồn.
 
 "Duyệt" luôn là nút; gõ "ok" trong chat chỉ làm Claude hiện thẻ xác nhận. Production bắt đầu trên màn cũ
 (`series-plan@1.0.0`/`@2.0.0`) vẫn sinh tập 1.2.0 không gate và chạy như trước.
@@ -93,6 +118,10 @@ kiểu đi bộ du lịch, có lời dẫn"). Đầu tập có dòng "cắt theo
 | Muốn làm lại từ R&D | | Màn cũ: "Chạy lại từ bước này" ở `rnd` hoặc `approve-rnd` (`resumeRunFrom`) |
 | Gate từ chối tài liệu | 422 kèm danh sách vấn đề | Sửa đúng các mục được liệt kê (chat hoặc Sửa tay) rồi duyệt lại |
 | Huỷ | | Nút huỷ run ở màn cũ; stage đang chạy đi qua `CANCEL_REQUESTED` rồi `CANCELLED` |
+| Render (tập 1.1.0) hỏng "Unrecognized key text_style" hoặc Premiere hỏng vì `audio` | Lỗi job farm ở `render-final` / xuất Premiere | Node farm còn chạy ag-render-worker cũ: cài 0.8.0 lên node đó rồi "Render lại" |
+| Branding bị trả lại `text_look_no_contrast` | 422 khi duyệt branding | Chữ quá giống màu hộp (hoặc viền): chọn màu tương phản hơn (≥ 3:1) |
+| Kế hoạch dựng hỏng `style_shot_length` | Bước `plan-edit` cần xử lý | Footage không cho độ dài shot của phong cách: sửa phong cách (bước Phong cách dựng, sửa tay) rồi chạy lại, hoặc chat cho Claude cách cắt |
+| Tập không có nhạc dù kho có bài | Timeline không có nhạc | Không bài nào trong kho có mood của kế hoạch dựng/branding/phong cách: thêm mood cho bài ở `/music`, hoặc chọn bài trong editor |
 
 Mọi lượt gọi Claude (của bước và của chat, `source = claude-chat`) và mọi lần người duyệt đều xem được ở
 `⋯ → Nhật ký Claude`.

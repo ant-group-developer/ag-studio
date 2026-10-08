@@ -1,0 +1,219 @@
+schema_version: harness.workflow/v1
+id: ag-studio-series-plan
+version: 3.2.0
+defaults: {}
+# AG Studio series-plan workflow, chat first (spec local-chat §3.1). One run per production.
+#   intake (seed) -> research-api -> research-web -> research, + catalog -> trend-report -> [approve-trend-report]
+#   -> rnd -> [approve-rnd] -> apply-rnd -> branding -> [approve-branding] -> apply-branding -> brief -> plan-episodes
+#   -> [approve-plan] -> spawn-episodes
+#   research -> pick-references -> watch-references -> analyze-style -> [approve-style] -> apply-style (-> branding, brief)
+# apply-* write what the person approved into the production; `brief` reads the production's CURRENT R&D, branding
+# and style, so running again from `brief` re-plans with the latest edits. A stage never lists two upstream stages that
+# produce the same type (`inputPath` reads the first).
+# 3.0.0: every Claude stage has a gate after it. 3.1.0: plan-episodes says how each episode is edited and
+# spawn-episodes-v2 starts each episode on the release of its edit style.
+# 3.2.0 (plan 2026-10-08 quality-fixes, ADR-0001 items 175–176):
+#   - research has a web fallback: research-api is the YouTube Data API (studio-research as before); research-web
+#     (Claude, WebSearch/WebFetch only) finds YouTube links for each channel and keyword the API left empty — and
+#     writes skipped finds without calling Claude when nothing is missing; research (studio-research-merge) reads the
+#     links' real numbers with yt-dlp and writes the same studio_research as before. The last stage keeps the key
+#     `research`, so everything that reads the research by stage key reads the merged one.
+#   - the edit style is learned from up to three videos of the reference channels: picked from the research,
+#     downloaded at ≤480p, measured and looked at (the video deleted in the same stage), written by Claude in files
+#     mode, approved by the person, kept on the production; branding and the brief (so plan-episodes and every
+#     episode) read it. The style chain runs beside the trend report: rnd does not wait for it.
+# Released: never edit this file; make a new version.
+stages:
+  - key: intake
+    executor: { type: script, script: studio-series-seed }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: studio_seed, mime_type: application/json, name: seed.json }
+
+  - key: research-api
+    executor: { type: script, script: studio-research }
+    depends_on: [intake]
+    retry: { max_attempts: 3, backoff_seconds: [30, 120], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: studio_research_api, mime_type: application/json, name: research.json }
+
+  - key: research-web
+    executor:
+      type: agent
+      skill: studio-web-research
+      brief: "Nghiên cứu YouTube còn thiếu (không có khoá API, hết hạn mức, hoặc API từ chối một kênh/từ khoá). Tìm trên web link YouTube cho đúng các kênh và từ khoá trong research_gaps (studio_web_finds); không bịa link."
+    depends_on: [research-api, intake]
+    requires_resources: [claude]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, web-finds-valid]
+    outputs:
+      - { type: studio_web_finds, mime_type: application/json, name: web-finds.json }
+
+  - key: research
+    executor: { type: script, script: studio-research-merge }
+    depends_on: [research-api, research-web, intake]
+    retry: { max_attempts: 3, backoff_seconds: [30, 120], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: studio_research, mime_type: application/json, name: research.json }
+
+  - key: catalog
+    executor: { type: script, script: studio-catalog }
+    depends_on: [intake]
+    retry: { max_attempts: 3, backoff_seconds: [30, 120], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: studio_catalog, mime_type: application/json, name: catalog.json }
+
+  - key: trend-report
+    executor:
+      type: agent
+      skill: studio-trend-report
+      brief: "Dựa trên nghiên cứu YouTube và đầu vào của người dùng, viết một báo cáo xu hướng ngắn gọn (studio_trend_report) giúp nhóm hiểu pattern nội dung nào đang hoạt động tốt."
+    depends_on: [research, intake]
+    requires_resources: [claude]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, trend-report-valid]
+    outputs:
+      - { type: trend_report, mime_type: application/json, name: trend-report.json }
+
+  - key: approve-trend-report
+    executor: { type: gate, brief: "Người dùng xem báo cáo xu hướng, góp ý qua chat, bấm Duyệt để nộp." }
+    depends_on: [trend-report]
+    required_checks: [schema-valid, output-exists, checksum-match, trend-report-valid]
+    outputs:
+      - { type: trend_report, mime_type: application/json, name: trend-report.json }
+
+  - key: pick-references
+    executor: { type: script, script: studio-pick-references }
+    depends_on: [research, intake]
+    retry: { max_attempts: 3, backoff_seconds: [10, 60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: style_refs, mime_type: application/json, name: references.json }
+
+  - key: watch-references
+    executor: { type: script, script: studio-watch-references }
+    depends_on: [pick-references]
+    requires_resources: [cpu]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: style_watch, mime_type: application/x-directory, kind: directory, name: style-watch }
+
+  - key: analyze-style
+    executor:
+      type: agent
+      skill: studio-style
+      brief: "Xem khung hình và số đo nhịp cắt của các video mẫu (style_watch), viết phong cách dựng của kênh tham khảo (studio_style) để branding, kế hoạch tập và từng tập làm theo."
+    depends_on: [watch-references, pick-references, intake]
+    requires_resources: [claude]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, style-valid]
+    outputs:
+      - { type: studio_style, mime_type: application/json, name: style.json }
+
+  - key: approve-style
+    executor: { type: gate, brief: "Người dùng xem phong cách dựng học từ video mẫu, góp ý qua chat, bấm Duyệt để nộp." }
+    depends_on: [analyze-style, watch-references]
+    required_checks: [schema-valid, output-exists, checksum-match, style-valid]
+    outputs:
+      - { type: studio_style, mime_type: application/json, name: style.json }
+
+  - key: apply-style
+    executor: { type: script, script: studio-apply-style }
+    depends_on: [approve-style]
+    retry: { max_attempts: 3, backoff_seconds: [10, 60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid]
+    outputs: []
+
+  - key: rnd
+    executor:
+      type: agent
+      skill: studio-rnd
+      brief: "Dựa trên đầu vào của người dùng, nghiên cứu YouTube, báo cáo xu hướng và tóm tắt kho footage, viết bản R&D (studio_rnd): thị trường, đánh giá kênh của nhóm, footage làm được gì và định hướng series."
+    depends_on: [approve-trend-report, research, catalog, intake]
+    requires_resources: [claude]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, rnd-valid]
+    outputs:
+      - { type: studio_rnd, mime_type: application/json, name: rnd.json }
+
+  - key: approve-rnd
+    executor: { type: gate, brief: "Người dùng xem và chỉnh sửa bản R&D, bấm Duyệt để nộp." }
+    depends_on: [rnd, intake]
+    required_checks: [schema-valid, output-exists, checksum-match, rnd-valid]
+    outputs:
+      - { type: studio_rnd, mime_type: application/json, name: rnd.json }
+
+  - key: apply-rnd
+    executor: { type: script, script: studio-apply-rnd }
+    depends_on: [approve-rnd]
+    retry: { max_attempts: 3, backoff_seconds: [10, 60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid]
+    outputs: []
+
+  - key: branding
+    executor:
+      type: agent
+      skill: studio-branding
+      brief: "Từ bản R&D người dùng đã duyệt, báo cáo xu hướng và phong cách dựng (nếu có), viết bộ nhận diện của series (studio_branding) để mọi bước AI sau làm theo."
+    depends_on: [approve-rnd, approve-trend-report, approve-style, intake]
+    requires_resources: [claude]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, branding-valid]
+    outputs:
+      - { type: studio_branding, mime_type: application/json, name: branding.json }
+
+  - key: approve-branding
+    executor: { type: gate, brief: "Người dùng xem và chỉnh sửa branding, bấm Duyệt để nộp." }
+    depends_on: [branding, intake]
+    required_checks: [schema-valid, output-exists, checksum-match, branding-valid]
+    outputs:
+      - { type: studio_branding, mime_type: application/json, name: branding.json }
+
+  - key: apply-branding
+    executor: { type: script, script: studio-apply-branding }
+    depends_on: [approve-branding]
+    retry: { max_attempts: 3, backoff_seconds: [10, 60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid]
+    outputs: []
+
+  - key: brief
+    executor: { type: script, script: studio-finalize-brief-v2 }
+    depends_on: [apply-rnd, apply-branding, apply-style, intake]
+    retry: { max_attempts: 3, backoff_seconds: [10, 60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: studio_brief, mime_type: application/json, name: brief.json }
+      - { type: studio_rnd, mime_type: application/json, name: rnd.json }
+      - { type: studio_branding, mime_type: application/json, name: branding.json }
+      - { type: studio_style, mime_type: application/json, name: style.json, optional: true }
+
+  - key: plan-episodes
+    executor:
+      type: agent
+      skill: studio-plan-episodes
+      brief: "Dựa trên brief, bản R&D, branding và phong cách dựng (nếu có) đã duyệt, báo cáo xu hướng và danh sách footage trong catalog, đề xuất kế hoạch các tập cho series (series_plan). Mỗi tập cần: tiêu đề theo branding, hook 5 giây đầu, logline, kiểu dựng (edit_style: ghép nguyên video hay cắt theo shot) và lời dẫn (narration), danh sách video theo thứ tự, phương án thay thế, các chữ hiển thị trên màn."
+    depends_on: [brief, approve-trend-report, catalog]
+    requires_resources: [claude]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, series-plan-valid]
+    outputs:
+      - { type: series_plan, mime_type: application/json, name: series-plan.json }
+
+  - key: approve-plan
+    executor: { type: gate, brief: "Người dùng xem và chỉnh sửa kế hoạch tập, bấm Duyệt để nộp." }
+    depends_on: [plan-episodes, catalog, brief]
+    required_checks: [schema-valid, output-exists, checksum-match, series-plan-valid]
+    outputs:
+      - { type: series_plan, mime_type: application/json, name: series-plan.json }
+
+  - key: spawn-episodes
+    executor: { type: script, script: studio-spawn-episodes-v2 }
+    depends_on: [approve-plan, approve-trend-report, catalog, brief]
+    retry: { max_attempts: 3, backoff_seconds: [30, 120], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: studio_episodes, mime_type: application/json, name: episodes.json }

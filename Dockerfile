@@ -35,9 +35,14 @@ FROM build AS app
 # ffmpeg: kiểm loudness bản render final, cắt khung và vẽ chữ thumbnail. fonts-liberation2: font của chữ thumbnail
 # (fontconfig đổi Arial sang Liberation Sans: cùng số đo, đủ dấu tiếng Việt). Claude Code CLI: các stage Claude chạy
 # `claude -p` bằng CLAUDE_CODE_OAUTH_TOKEN (gói subscription).
+# yt-dlp (series 3.2.0, ADR-0001 mục 175–176): số liệu thật của link research tìm trên web, và video mẫu ≤480p để học
+# phong cách dựng (xoá ngay sau khi trích khung). Ghim phiên bản; YouTube đổi thường xuyên nên cập nhật theo runbook.
+ARG YTDLP_VERSION=2025.09.26
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg fonts-liberation2 fontconfig ca-certificates \
+  && apt-get install -y --no-install-recommends ffmpeg fonts-liberation2 fontconfig ca-certificates python3 python3-pip \
   && rm -rf /var/lib/apt/lists/* \
+  && pip3 install --no-cache-dir --break-system-packages "yt-dlp==${YTDLP_VERSION}" \
+  && yt-dlp --version \
   && npm install -g @anthropic-ai/claude-code \
   && claude --version
 ENV NODE_ENV=production \
@@ -45,6 +50,7 @@ ENV NODE_ENV=production \
     STUDIO_DB_PATH=/data/studio.db \
     STUDIO_DATA_ROOT=/data/harness \
     STUDIO_FFMPEG_PATH=/usr/bin/ffmpeg \
+    YTDLP_PATH=/usr/local/bin/yt-dlp \
     PORT=3100
 VOLUME /data
 EXPOSE 3100

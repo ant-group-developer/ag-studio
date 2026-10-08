@@ -21,7 +21,8 @@
  *                       shot-cut stages (shots, audio for transcription, contact sheets); none = those stages park
  *   STUDIO_FFPROBE_PATH ffprobe for the shot-cut stages (default: ffprobe next to STUDIO_FFMPEG_PATH)
  *   STUDIO_FONTS_DIR    a folder with the thumbnail font (Arial); default: Windows fonts, else fontconfig (Liberation Sans)
- *   YOUTUBE_API_KEY     YouTube Data API v3 key for the market research of a series (none = research skipped)
+ *   YOUTUBE_API_KEY     YouTube Data API v3 key for the market research of a series (none: plan 3.2.0 on finds the
+ *                       channels and videos on the web, yt-dlp reads their numbers; older plans skip the research)
  *   HARNESS_ROOT        Studio install root (default: this checkout)
  *   STUDIO_FARM_QUEUE_TIMEOUT_MINUTES a farm job no node takes this long is cancelled and its step stops, saying so
  *                       (default 120; 0 = wait to the stage deadline, 4 h)
@@ -34,7 +35,7 @@ import { join } from "node:path";
 import { AgGoClient } from "@ag-studio/ag-go-client";
 import {
   claudeMaxConcurrent as studioClaudeMaxConcurrent, createStudioEngineCore, ffprobeBeside, httpDownload, type CutMediaDeps, createStudioWorkerPool, FarmOwnerClient, parseClaudeMaxConcurrent, ffmpegThumbnailRenderer, S3Bucket, StudioDb, studioLogger, studioResearchCache,
-  YoutubeResearchSource, DEFAULT_RETENTION,
+  YoutubeResearchSource, DEFAULT_RETENTION, ytDlp,
 } from "@ag-studio/engine";
 import { HARNESS_ROOT } from "@harness/core";
 
@@ -60,6 +61,11 @@ async function main(): Promise<void> {
   const argv = process.env.STUDIO_CLAUDE_ARGV ? (JSON.parse(process.env.STUDIO_CLAUDE_ARGV) as string[]) : undefined;
   const db = new StudioDb(dbPath);
   const youtubeKey = process.env.YOUTUBE_API_KEY?.trim();
+  // yt-dlp: STUDIO_YTDLP_ARGV (JSON array, tests) else YTDLP_PATH else `yt-dlp` on PATH; checked once, below
+  const ytdlpArgv = process.env.STUDIO_YTDLP_ARGV ? (JSON.parse(process.env.STUDIO_YTDLP_ARGV) as string[]) : [process.env.YTDLP_PATH?.trim() || "yt-dlp"];
+  const ytdlp = ytDlp({ argv: ytdlpArgv, ...(ffmpeg ? { ffmpeg } : {}) });
+  const ytdlpVersion = await ytdlp.version();
+  const referenceDownloads = process.env.STUDIO_REFERENCE_DOWNLOADS !== "0";
   const claudeMaxConcurrent = parseClaudeMaxConcurrent(process.env.STUDIO_CLAUDE_MAX_CONCURRENT);
   const agGo = new AgGoClient({ baseUrl: requireEnv("AG_GO_API_URL"), serviceKey: requireEnv("AG_GO_SERVICE_KEY") });
   const media: CutMediaDeps | null = ffmpeg ? {
@@ -93,6 +99,8 @@ async function main(): Promise<void> {
     farmPollMs: Number(process.env.FARM_POLL_MS ?? 5000),
     farmQueueTimeoutMs: numberEnv("STUDIO_FARM_QUEUE_TIMEOUT_MINUTES", 120) * 60_000,
     ...(youtubeKey ? { research: new YoutubeResearchSource({ apiKey: youtubeKey, cache: studioResearchCache(db) }) } : {}),
+    ...(ytdlpVersion ? { ytdlp } : {}),
+    referenceDownloads,
     ...(ffmpeg ? { thumbnails: ffmpegThumbnailRenderer({ ffmpeg }) } : {}),
     ...(media ? { media } : {}),
     cleanup: {
@@ -106,10 +114,16 @@ async function main(): Promise<void> {
   });
 
   const claudeCap = studioClaudeMaxConcurrent(db, claudeMaxConcurrent);
-  logger.info("Studio worker starting", { owner, harnessRoot, youtube_research: !!youtubeKey, claude_max_concurrent: claudeCap.value, claude_max_concurrent_from: claudeCap.source, loops: pool.workers.length });
+  logger.info("Studio worker starting", { owner, harnessRoot, youtube_research: !!youtubeKey, ytdlp: ytdlpVersion, reference_downloads: referenceDownloads, claude_max_concurrent: claudeCap.value, claude_max_concurrent_from: claudeCap.source, loops: pool.workers.length });
+  if (!ytdlpVersion) {
+    logger.warn(`yt-dlp cannot run (${ytdlpArgv[0]}): web research keeps the numbers Claude reads off pages, and the style step is skipped (set YTDLP_PATH)`);
+  }
+  if (!youtubeKey) {
+    logger.warn("YOUTUBE_API_KEY is not set for this worker: series research falls back to the web (Claude finds the links, yt-dlp reads the numbers); runs on plans before 3.2.0 skip it and the trend report says so (a direct run reads apps/api/.env)");
+  }
   const ac = new AbortController();
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
-    process.on(sig, () => { logger.warn(`received ${sig}, stopping after the current stage`); ac.abort(); });
+    process.on(sig, () => { logger.warn(`received ${sig}, stopping: running stages go back to the queue and their farm jobs stay for the next attempt`); ac.abort(); });
   }
   await pool.runForever(ac.signal);
   core.close();

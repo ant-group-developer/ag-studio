@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { listDiff } from "../diff-doc";
+import type { TextLook } from "@harness/contracts";
+import { TextLookSample } from "../../production/TextLookInput";
 import { DOC_SPECS, valueAt, type DocKind, type FieldSpec } from "./doc-specs";
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -33,7 +35,7 @@ function Field({ field, doc, prev, names }: { field: FieldSpec; doc: unknown; pr
   const p = prev === undefined ? v : valueAt(prev, field.path);
   const changed = prev !== undefined && !same(v, p);
   switch (field.kind) {
-    case "text": case "number": case "seconds": {
+    case "text": case "number": case "seconds": case "choice": {
       const now = scalar(field, v);
       if (!now && !changed) return null;
       return <div className="chat-doc__value">{changed ? <Changed before={scalar(field, p)} after={now} /> : now}</div>;
@@ -65,6 +67,21 @@ function Field({ field, doc, prev, names }: { field: FieldSpec; doc: unknown; pr
             return <li key={i}>{fresh ? <ins className="chat-doc__new">{body}</ins> : body}</li>;
           })}
         </ul>
+      );
+    }
+    case "look": {
+      if (!v) return null;
+      const look = v as TextLook;
+      const sample = <TextLookSample look={look} />;
+      return (
+        <div className="chat-doc__value">
+          {changed ? <ins className="chat-doc__new">{sample}</ins> : sample}
+          <span>{t("brandingEditor.textLookSummary", {
+            text: look.text_color, behind: look.box_color ?? look.outline_color,
+            on: look.box_color ? t("brandingEditor.textLookOnBox") : t("brandingEditor.textLookOnOutline"),
+            size: t(`brandingEditor.textLookSizes.${look.size}`),
+          })}</span>
+        </div>
       );
     }
     case "palette": {
@@ -103,14 +120,25 @@ function Field({ field, doc, prev, names }: { field: FieldSpec; doc: unknown; pr
   }
 }
 
+/** The summary of a skipped trend report that does not say why (written before the reason was kept). */
+const SKIPPED_WITHOUT_REASON = "Không có dữ liệu nghiên cứu.";
+
 /**
  * A step's document as people read it (spec local-chat §2.3), fields in the order of its spec; with `previous`, what
  * changed is highlighted — the new value marked, the old one struck through.
  */
 export function DocView({ kind, doc, previous, names = {} }: { kind: DocKind; doc: unknown; previous?: unknown; names?: Record<string, string> }) {
   const { t } = useTranslation();
-  if (kind === "trend_report" && (doc as { skipped?: boolean } | null)?.skipped) {
-    return <p className="chat-doc__note">{t("chat.fields.skippedResearch")}</p>;
+  const report = doc as { skipped?: boolean; summary?: string } | null;
+  if (kind === "trend_report" && report?.skipped) {
+    // older skipped reports carry only the generic sentence; newer ones say why the research found nothing
+    const why = report.summary && report.summary !== SKIPPED_WITHOUT_REASON ? report.summary : null;
+    return (
+      <>
+        <p className="chat-doc__note">{t("chat.fields.skippedResearch")}</p>
+        {why ? <p className="chat-doc__note">{why}</p> : null}
+      </>
+    );
   }
   return (
     <dl className="chat-doc">

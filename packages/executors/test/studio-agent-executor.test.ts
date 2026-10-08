@@ -205,6 +205,36 @@ describe("StudioAgentExecutor team guides", () => {
   });
 });
 
+describe("StudioAgentExecutor skipped trend report", () => {
+  const research = (over: Record<string, unknown>) => ({
+    schema_version: "studio.research/v1", production_id: "prod-1", fetched_at: null, quota_units: 0, skipped_reason: null,
+    channels: [], keywords: [], insights: { top_title_terms: [], top_tags: [], duration_buckets: [], frequent_channels: [] }, ...over,
+  });
+
+  it("says why the research was skipped, without calling Claude", async () => {
+    const calls: StudioLlmCall[] = [];
+    const s = stage("studio-trend-report", STUDIO_TYPES.trendReport, "trend-report.json",
+      { [STUDIO_TYPES.brief]: brief, [STUDIO_TYPES.research]: research({ skipped_reason: "Chưa cấu hình YOUTUBE_API_KEY cho Studio worker" }) },
+      "", async (c) => { calls.push(c); });
+    expect((await run(s)).outcome).toBe("succeeded");
+    expect(out(s, "trend-report.json")).toMatchObject({ skipped: true, summary: "Không có dữ liệu nghiên cứu: Chưa cấu hình YOUTUBE_API_KEY cho Studio worker" });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("lists the channels and keywords YouTube refused, when nothing was found", async () => {
+    const s = stage("studio-trend-report", STUDIO_TYPES.trendReport, "trend-report.json", {
+      [STUDIO_TYPES.brief]: brief,
+      [STUDIO_TYPES.research]: research({
+        fetched_at: "2026-10-08T00:00:00.000Z",
+        channels: [{ input: "@meitime", role: "reference", channel_id: null, title: null, subscribers: null, error: "quotaExceeded", videos: [], stats: null }],
+        keywords: [{ keyword: "phở", error: "quotaExceeded", videos: [] }],
+      }),
+    });
+    expect((await run(s)).outcome).toBe("succeeded");
+    expect(out(s, "trend-report.json").summary).toBe("Không có dữ liệu nghiên cứu: kênh @meitime: quotaExceeded; từ khoá \"phở\": quotaExceeded");
+  });
+});
+
 describe("compactResearch", () => {
   it("keeps each channel's and keyword's 15 videos with the most views per day, best first", () => {
     const videos = Array.from({ length: 20 }, (_, i) => ({ title: `v${i}`, views: i * 10, views_per_day: (i * 7) % 20, duration_s: 60, published_at: "2026-09-01", tags: [], outlier: false }));

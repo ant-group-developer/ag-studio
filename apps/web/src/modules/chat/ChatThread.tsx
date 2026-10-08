@@ -3,7 +3,7 @@ import { Sparkles } from "lucide-react";
 import type { ChatThreadView, ChatTurn, FarmNode, RenderMachine } from "../../api/studio-client";
 import { RenderMachinePicker } from "../render/RenderMachinePicker";
 import { messageParts } from "./mentions";
-import { episodeStepsFor, PLAN_STEPS, STEP_SHOWS, stepLabelKey, stepOf, stepPosition, type ChatStep } from "./steps";
+import { episodeStepsFor, planStepsFor, STEP_SHOWS, stepLabelKey, stepOf, stepPosition, type ChatStep } from "./steps";
 import { useAssistantName, useAiTranslation } from "../common/assistant-name";
 
 /** What a card under Claude's newest reply asks the person to confirm (spec local-chat §2.5). */
@@ -97,7 +97,7 @@ export function ChatThread({ thread, onCard, onQuickAnswer, busyCard, episode = 
   const at = thread.scope && thread.scope.scope !== "intake" ? thread.scope.stageKey : null;
   if (at && !all.some((sec) => stepOf(sec.stageKey, workflow) === stepOf(at, workflow))) all.push({ stageKey: at, turns: [] });
   const newestReply = [...thread.turns].reverse().find((x) => x.role === "assistant");
-  const row = episode ? episodeStepsFor(workflow) : PLAN_STEPS;
+  const row = episode ? episodeStepsFor(workflow) : planStepsFor(workflow);
 
   return (
     <div className="chat-thread" aria-live="polite">

@@ -205,8 +205,11 @@ export async function startPremiereExport(
   const id = randomUUID();
   insertEpisodeJob(d.db, { id, episodeId: p.episodeId, kind: "export_premiere", request: { revision: rev.revision, media: p.media }, userId: p.userId });
   try {
+    const composition = timelineToComposition(rev.data);
     await d.bucket.put(`${stageInputPrefix(p.productionId, EDITOR_PREMIERE_STAGE, id)}composition.json`,
-      Buffer.from(JSON.stringify(timelineToComposition(rev.data)), "utf8"), "application/json");
+      Buffer.from(JSON.stringify(composition), "utf8"), "application/json");
+    // a clip muted on its own: only a worker that lays sound clip by clip may export it (an older one refuses `audio`)
+    const perSegment = new Set(composition.segments.map((s) => s.has_audio)).size > 1;
     for (const up of voice) {
       await d.bucket.put(stageInputPrefix(p.productionId, EDITOR_PREMIERE_STAGE, id) + up.relPath, readFileSync(up.localPath));
     }
@@ -217,6 +220,7 @@ export async function startPremiereExport(
       // Files in the zip are named after the videos, not their ids.
       // A worker that cannot read a shot-cut episode (trims, transitions, narration) refuses `edit_style`.
       ...(isTimelineV4(rev.data) && rev.data.edit_style === "cut" ? { edit_style: "cut" as const } : {}),
+      ...(perSegment ? { audio: "per_segment" as const } : {}),
       media_names: Object.fromEntries(rev.data.clips.flatMap((c) => {
         const title = rev.data.assets[c.asset_id]?.title.trim().slice(0, 200);
         return title ? [[`asset:${c.asset_id}`, title]] : [];

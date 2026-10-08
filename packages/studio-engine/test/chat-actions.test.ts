@@ -7,10 +7,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { IntakeDraft, TrendReport } from "@harness/contracts";
 import {
   applyChatProposal, approveChatScope, chatThread, completeTurn, createDraftProduction, createStudioWorker, getProduction, latestEpisodeRevision,
-  listEpisodes, listHumanEdits, messageMentions, planRunView, productionSources, readStageDocument, saveEpisodeRevision, saveManualEdit,
-  sendChatMessage, startFromIntake, startPlanRun, StudioRunError, submitStudioGate, type TimelineProposal,
+  listEpisodes, listHumanEdits, messageMentions, productionSources, readStageDocument, saveEpisodeRevision, saveManualEdit,
+  sendChatMessage, startFromIntake, startPlanRun, StudioRunError, type TimelineProposal,
 } from "../src/index.js";
-import { FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, ROOT, seedProduction, world } from "./helpers.js";
+import { approvePlanGatesUntil, FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, ROOT, seedProduction, world } from "./helpers.js";
 
 function setup() {
   const w = world();
@@ -93,8 +93,7 @@ describe("chat actions at gates", () => {
     expect(readStageDocument(s.core, runId, "approve-trend-report", "trend-report.json")).toEqual(shorter);
     const [edit] = listHumanEdits(s.db, { productionId: id, page: 1, pageSize: 10 }).items;
     expect(edit).toMatchObject({ kind: "trend_report", changed: 1, user_id: "u" });
-    await drain(s);
-    expect(planRunView(s.core, s.db, id).waiting_gate).toBe("approve-rnd");
+    await approvePlanGatesUntil(s, id, () => drain(s), "approve-rnd");
   }, 60_000);
 
   it("Sửa tay adds a version (checked against the stage's schema) without asking Claude", async () => {
@@ -108,13 +107,7 @@ describe("chat actions at gates", () => {
 
   it("Áp dụng saves timeline edits as a revision, refused when the timeline changed since", async () => {
     const { id, runId } = await atTrend();
-    for (const [gate, stage, file] of [
-      ["approve-trend-report", "trend-report", "trend-report.json"], ["approve-rnd", "rnd", "rnd.json"],
-      ["approve-branding", "branding", "branding.json"], ["approve-plan", "plan-episodes", "series-plan.json"],
-    ] as const) {
-      if (gate !== "approve-trend-report") await drain(s);
-      await submitStudioGate(s.core, s.db, runId, gate, readStageDocument(s.core, runId, stage, file));
-    }
+    await approvePlanGatesUntil(s, id, () => drain(s), null);
     await drain(s);
     const ep = listEpisodes(s.db, id)[0]!;
     const base = latestEpisodeRevision(s.db, ep.id)!;

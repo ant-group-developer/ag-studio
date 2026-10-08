@@ -1112,3 +1112,58 @@ Các mục dưới đây ghi lại quyết định của nhánh AG Studio, viế
     clone file đó nên series giữ một giọng. Trong lúc farm đọc, `productions.voice` là `designing` (tập chờ như thiếu
     giọng); `GET …/audio` kiểm job và hoàn tất. Nguồn `ag-go` bị gỡ khỏi `AudioSourceSchema`: ag-go chỉ giữ footage.
     `tts.py` nghe câu nói của giọng mẫu một lần mỗi job khi không ai gõ (WhisperX `large-v3`).
+177. **Worker khởi động lại không làm mất job farm, không làm hỏng stage (2026-10-08).** Ngày 07/10, 6 tập chạy cùng lúc:
+    job `transcribe` xếp hàng farm khoảng 1,5 giờ, worker Studio khởi động lại hai lần, mỗi lần attempt mới huỷ job cũ
+    rồi gửi lại từ cuối hàng, và lần bỏ dở thứ hai làm stage `FAILED` (`max_attempts: 2`) — 4/6 tập hỏng. Đổi ba chỗ:
+    (1) mỗi job farm ghi dấu vân tay (`farmJobFingerprint`: loại job, requirements, payload với id attempt thay bằng chỗ
+    giữ, bytes của mọi file job đọc; `studio_farm_jobs.fingerprint`, migration `0028`); attempt sau dựng payload trước,
+    và nếu sẽ gửi lại đúng job mới nhất mà farm còn giữ (`queued|paused|leased|completed`) thì nhận job đó, đọc output
+    từ prefix của attempt cũ (đổi tên file render theo attempt mới); job farm mất, `failed`, `cancelled` thì gửi job
+    mới; mọi job cũ khác bị huỷ như trước. (2) `ExecutorContext.signal.reason` nói vì sao attempt dừng:
+    `STAGE_CANCELLED` khi run bị huỷ (heartbeat thấy stage `CANCEL_REQUESTED` thì abort executor — trước đây executor
+    chạy tiếp tới hết), `worker-stopping`/`lease-lost` khi stage sẽ chạy lại; executor farm chỉ huỷ job khi run bị huỷ.
+    (3) Attempt bị bỏ dở (`ABANDONED`) hay bị dừng vì worker tắt êm được trả lại lượt thử (`attempt_count − 1`);
+    `retry.max_attempts` chỉ tính lần stage tự hỏng, còn bỏ dở có trần riêng `MAX_ABANDONED_ATTEMPTS = 5` (đếm dòng
+    `attempt` ABANDONED) để một stage làm sập worker không lặp mãi. Huỷ run khi không worker nào đang giữ stage (worker
+    đã chết) thì job farm của nó không bị huỷ: chạy hết rồi không ai đọc.
+175. **Học phong cách dựng từ video của kênh tham khảo: tải video YouTube là quyết định của người dùng (2026-10-08).**
+    Phiên gốc (harness `style-study`) học nhịp cắt từ file video mẫu; Studio trước đây chỉ đọc số liệu YouTube của kênh
+    tham khảo. Người dùng chọn tải video mẫu từ YouTube và chấp nhận rủi ro điều khoản YouTube. Giới hạn cứng: chỉ kênh
+    người dùng nhập làm kênh **tham khảo**; ≤3 video (`pickReferenceVideos`: độ dài hợp khung hình, gần độ dài tập đích);
+    yt-dlp `--ignore-config`, không cookie, không đăng nhập, không lách chặn (video bị chặn, giới hạn tuổi, live thì bỏ
+    qua); ≤480p, ≤30 phút, ≤300 MB; URL luôn dựng lại từ id 11 ký tự đã kiểm; tải vào thư mục nháp **ngoài** `output/`,
+    đo cắt cảnh, giữ ≤48 khung ≤480 px, **xoá video trong cùng stage** (`finally`), không bao giờ là artifact; khung chỉ
+    người trong team xem (URL ký), dọn khi style không còn trích (`sweepStyleFrames`), thư mục tải sót sau crash dọn sau
+    6 giờ. Không phân tích tiếng (khung không có âm thanh: `voice`/`music` để `unknown`). Công tắc
+    `STUDIO_REFERENCE_DOWNLOADS=0`. Bước nằm trong series `ag-studio-series-plan@3.2.0`: `pick-references` →
+    `watch-references` → `analyze-style` (Claude files mode, skill `studio-style`, số đo chép từ `measured`, mỗi tham số
+    có khung bằng chứng; `style-valid` kiểm) → `approve-style` → `apply-style` (`productions.style`, migration `0029`).
+    Branding và brief (nên plan-episodes và từng tập) đọc style; `rnd` không chờ style. Không xem được video nào thì style
+    `skipped` nói lý do, không gọi Claude, các bước sau chạy như không có style.
+176. **Research dự phòng: Claude có web, nhưng chỉ trả link YouTube; số liệu do yt-dlp đọc (2026-10-08).** Thiếu
+    `YOUTUBE_API_KEY` hay API lỗi (hết quota, sai khoá, một kênh/từ khoá bị từ chối) trước đây làm báo cáo xu hướng trống
+    lặng lẽ. Series 3.2.0 tách research làm ba: `research-api` (API như cũ, kiểu `studio_research_api`), `research-web`
+    (skill `studio-web-research`, **web mode**: structured `--json-schema` với `--tools WebSearch,WebFetch --allowedTools
+    WebSearch,WebFetch`, ≤30 lượt, không session, không MCP, không file/shell — skill Studio đầu tiên ra mạng) chỉ được
+    hỏi đúng các chỗ trống (`researchGaps`; không có chỗ trống thì không gọi Claude), `research` (script
+    `studio-research-merge`, giữ khoá stage và kiểu `studio_research` cũ) đọc số liệu thật của link Claude tìm bằng
+    `yt-dlp --dump-json`, liệt kê 30 video mới nhất của kênh bằng `--flat-playlist`, chỉ giữ video đúng kênh, tính lại
+    stats/insights, ghi `source: web|mixed`. Không có yt-dlp thì giữ số Claude đọc trên trang, `estimated: true`, skill
+    báo cáo xu hướng được dặn không coi là số thật. Nội dung web là dữ liệu: đầu ra của Claude chỉ là link qua
+    `validateWebFinds` (chỉ link YouTube, chỉ chỗ được hỏi), không gì được thực thi. Báo cáo xu hướng bị bỏ qua giờ ghi lý
+    do (khoá thiếu hay lỗi từng kênh/từ khoá).
+178. **Tập cắt theo shot 1.1.0: nội dung đúng sự thật, tiếng từng clip, kiểu chữ của nhóm, nhạc theo mood (2026-10-08).**
+    Bản render "Ninh Bình Chậm #1" có tiêu đề sai (tranh lúa treo trong toa thành "ngắm lúa vàng"), loa thông báo tiếng
+    Anh trên tàu, câu Whisper bịa ("Hãy đăng ký kênh…", điểm từ ~0,01), chữ hộp đen đặc thay vì branding, không nhạc.
+    `ag-studio-episode-cut@1.1.0` giữ khoá stage/gate của 1.0.0 (mục 158) và thêm: `clean-transcript` bỏ segment có
+    điểm từ trung bình < 0,25 hoặc, khi không có điểm, câu outro YouTube quen của Whisper (bản farm vẫn là output của
+    `transcribe`); kit đọc bản chọn cảnh của các shot trong timeline (survey thắng tiêu đề AI của ag-go) và thumbnail
+    phải có clip trong timeline; kế hoạch dựng ghi `source_audio` từng shot, fit v2 đặt `muted` lên clip, composition
+    cho segment đó `has_audio: false` (render cũ vẫn đúng; Premiere cần worker ≥ 0.8.0, Studio gửi `audio:
+    per_segment` để worker cũ từ chối thay vì giữ tiếng); `branding.on_screen_text.look` (màu chữ/viền/hộp, cỡ; tương
+    phản ≥ 3:1) đóng băng vào timeline `text_style` và composition — libass tô hộp BorderStyle 3 bằng OutlineColour nên
+    hộp lấy màu hộp; composition có `text_style` chỉ worker mới nhận (schema strict là cổng phiên bản); kho nhạc chung
+    (`music_track`, file `library/music/`, admin tải lên, gắn mood) cho tập không có nhạc riêng: mood của kế hoạch dựng →
+    branding → style, so không phân biệt hoa thường và dấu. Phong cách dựng (mục 175) tới tập qua `studio-cut-intake-v2`;
+    lệch độ dài shot là follow-up `style_shot_length`. 1.1.0 chỉ thành bản đang dùng sau khi mọi node farm chạy
+    ag-render-worker ≥ 0.8.0.

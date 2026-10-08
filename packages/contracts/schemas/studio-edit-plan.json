@@ -88,6 +88,13 @@
               "note": {
                 "type": "string",
                 "maxLength": 300
+              },
+              "source_audio": {
+                "type": "string",
+                "enum": [
+                  "keep",
+                  "mute"
+                ]
               }
             },
             "required": [

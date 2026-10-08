@@ -61,3 +61,49 @@ describe('R&D and branding of a production (real studio.db)', () => {
     await expect(ctl.rnd('missing')).rejects.toBeInstanceOf(NotFoundException);
   });
 });
+
+const STYLE = {
+  schema_version: 'studio.style/v1', skipped: false, skipped_reason: null, name: 'Chậm', summary: 'Cảnh dài.',
+  references: [{ video_id: 'U_17EqTHUIo', title: 'Kyoto', channel_title: 'Mei Time', url: 'https://www.youtube.com/watch?v=U_17EqTHUIo', duration_s: 1299 }],
+  measured: { videos: 1, shots: 200, cuts_per_minute: 9, shot_seconds: { p25: 5, median: 6.5, p75: 8 }, first_shot_s: 2 },
+  params: {
+    cut_rhythm: 'slow', shot_seconds: { min: 5, max: 8 }, transitions: ['cut'], opening: { seconds: 16, structure: 'montage' },
+    text_overlay: { density: 'low', style: 'serif' }, subtitles: 'none', voice: 'unknown', music: { mood: '', ducking: null }, visual: '', pace_notes: '',
+  },
+  do: [], dont: [],
+  evidence: [1, 2.5, 4].map((t) => ({ param: 'opening', video_id: 'U_17EqTHUIo', t, note: '' })),
+};
+
+describe('the edit style of a production (series plan 3.2.0)', () => {
+  let s: RealStudio;
+  let ctl: ProductionDocsController;
+  beforeEach(async () => {
+    s = await realStudio();
+    insertTeam(s.db, 'team-1', 'auth0|owner');
+    const now = new Date().toISOString();
+    s.db.run(`INSERT INTO productions (id, team_id, title, status, created_at, updated_at, owner_user_id) VALUES (?, 'team-1', 'Phở', 'draft', ?, ?, 'auth0|owner')`, [PROD, now, now]);
+    Object.assign(s.engine, { bucket: { signedGetUrl: async (key: string) => `https://signed.example/${key}` }, browserUrlTtl: 60 });
+    ctl = new ProductionDocsController(s.engine as EngineService);
+  });
+  afterEach(() => s.close());
+
+  it('reads and edits the style like the R&D: checked, kept in the dataset as style_edit', async () => {
+    expect((await ctl.style(PROD)).document).toBeNull();
+    saveProductionDocument(s.engine.db, PROD, 'style', STYLE as never, 'gate:run_1');
+    const saved = await ctl.putStyle(PROD, { document: { ...STYLE, do: ['Mở bằng montage'] } }, req('auth0|owner'));
+    expect(saved).toMatchObject({ updatedBy: 'auth0|owner', document: { do: ['Mở bằng montage'] } });
+    expect(listHumanEdits(s.engine.db, { productionId: PROD, page: 1, pageSize: 20 }).items.map((e) => e.kind)).toEqual(['style_edit']);
+    const err = await ctl.putStyle(PROD, { document: { ...STYLE, evidence: [] } }, req('auth0|owner')).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it('signs the frames the style cites (YouTube frames, kept under the production), and refuses what is not one', async () => {
+    const r = await ctl.styleFrames(PROD, 'U_17EqTHUIo@2.5,U_17EqTHUIo@4');
+    expect(r.frames).toEqual([
+      { video_id: 'U_17EqTHUIo', t: 2.5, url: `https://signed.example/productions/${PROD}/style/U_17EqTHUIo/f-2.500.jpg` },
+      { video_id: 'U_17EqTHUIo', t: 4, url: `https://signed.example/productions/${PROD}/style/U_17EqTHUIo/f-4.000.jpg` },
+    ]);
+    await expect(ctl.styleFrames(PROD, '../../x@1')).rejects.toBeInstanceOf(UnprocessableEntityException);
+    await expect(ctl.styleFrames('missing', 'U_17EqTHUIo@1')).rejects.toBeInstanceOf(NotFoundException);
+  });
+});

@@ -13,16 +13,17 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  claudeOutputJsonSchema, STUDIO_FILE_SKILLS, STUDIO_SKILL_OUTPUTS, STUDIO_SKILL_STEP, teamGuidesForStep, TrendReportSchema,
+  claudeOutputJsonSchema, STUDIO_FILE_SKILLS, STUDIO_SKILL_OUTPUTS, STUDIO_SKILL_STEP, teamGuidesForStep, TrendReportSchema, StudioStyleSchema, StudioWebFindsSchema,
   type AgentCallTrace, type AgentRuntime, type CheckerInput, type StudioChatSkill, type Executor, type ExecutorContext, type StageRequest, type StageResult, type StudioSkill,
   type TeamGuide,
 } from "@harness/contracts";
 import {
-  isFollowUpWarning, loadBrief, loadCatalog, loadOptionalBranding, loadSeed, loadShots, loadSurvey, STUDIO_TYPES, summarizeCatalog, validateBranding,
-  validateEditPlan, validateRnd, validateSeriesPlan, validateStudioSurvey, validateTrendReport, validateYoutubeKit,
+  hasGaps, isFollowUpWarning, loadBrief, loadCatalog, loadOptionalBranding, loadOptionalStyle, loadOptionalStyleWatch, loadOptionalTimelineV4, loadSeed, loadShots, loadSurvey, researchGapsOf, STUDIO_TYPES,
+  summarizeCatalog, validateBranding, validateEditPlan, validateRnd, validateSeriesPlan, validateStudioSurvey, validateStyle, validateTrendReport,
+  validateWebFinds, validateYoutubeKit,
   type StudioProblem, type StudioValidation,
 } from "@harness/core";
-import { StudioCatalogSchema, StudioEpisodeSchema } from "@harness/contracts";
+import { StudioCatalogSchema, StudioEpisodeSchema, StudioSurveySchema, type StudioSurvey } from "@harness/contracts";
 
 /** One Claude call of a stage with what the deterministic check made of it (the call log / training dataset). */
 export interface StudioLlmCall {
@@ -84,14 +85,16 @@ const VALIDATORS: Record<StudioSkill, Validator> = {
     return validateSeriesPlan(raw, { brief, catalog: catalog.assets });
   },
   "studio-source-survey": (raw, i) => validateStudioSurvey(raw, { shots: loadShots(i) }),
-  "studio-edit-plan": (raw, i) => validateEditPlan(raw, { survey: loadSurvey(i), shots: loadShots(i) }),
+  "studio-edit-plan": (raw, i) => followUpsAsProblems(validateEditPlan(raw, { survey: loadSurvey(i), shots: loadShots(i), style: loadOptionalStyle(i) })),
   "studio-youtube-kit": (raw, i) => {
     const episodePath = i.request.inputs.find((x) => x.type === STUDIO_TYPES.episode);
     if (!episodePath) return { ok: false, value: undefined, problems: [{ code: "missing_input", message: "missing studio_episode input" }], warnings: [] };
     const episodeRaw = JSON.parse(readFileSync(join(i.workspaceDir, episodePath.path), "utf8"));
     const episode = StudioEpisodeSchema.parse(episodeRaw);
-    return followUpsAsProblems(validateYoutubeKit(raw, { episode, branding: loadOptionalBranding(i) }));
+    return followUpsAsProblems(validateYoutubeKit(raw, { episode, branding: loadOptionalBranding(i), timeline: loadOptionalTimelineV4(i) }));
   },
+  "studio-web-research": (raw, i) => validateWebFinds(raw, { gaps: researchGapsOf(i) }),
+  "studio-style": (raw, i) => followUpsAsProblems(validateStyle(raw, { watch: loadOptionalStyleWatch(i) })),
 };
 
 /**
@@ -102,6 +105,12 @@ export function studioValidator(skill: StudioSkill): (raw: unknown, request: Sta
   const v = VALIDATORS[skill];
   return (raw, request, workspaceDir) => v(raw, { request, workspaceDir } as CheckerInput);
 }
+
+/**
+ * Skills that read the production's edit style (series plan 3.2.0, cut 1.1.0). A stage of another skill may have it
+ * among its inputs (every stage after the episode intake does): its prompt leaves it out, as before the style.
+ */
+const STYLE_PROMPT_SKILLS = new Set<string>(["studio-branding", "studio-plan-episodes", "studio-edit-plan"]);
 
 /** Skills that get a summary of the footage instead of every asset (they decide a direction, not a cut). */
 const CATALOG_SUMMARY_SKILLS = new Set<string>(["studio-rnd", "studio-branding"]);
@@ -143,6 +152,18 @@ export function compactResearch(r: ResearchLike): { channels: Array<Record<strin
   };
 }
 
+/**
+ * The scene selection as the YouTube kit reads it (cut 1.1.0): what Claude saw in each shot the approved cut uses —
+ * truer than ag-go's AI titles in the episode. Every shot when there is no cut to go by.
+ */
+export function surveyForKit(survey: StudioSurvey, timeline: { clips: readonly { shot_id: string | null }[] } | null) {
+  const used = timeline ? new Set(timeline.clips.map((c) => c.shot_id).filter((x): x is string => !!x)) : null;
+  return {
+    shots: survey.shots.filter((s) => !used || used.has(s.shot_id))
+      .map((s) => ({ shot_id: s.shot_id, usable: s.usable, score: s.score, tags: s.tags, note: s.note })),
+  };
+}
+
 const attr = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/\s+/g, " ").trim();
 
 /**
@@ -179,6 +200,7 @@ export function studioPromptHead(request: StageRequest, workspaceDir: string, gu
   for (const input of request.inputs) {
     if (input.kind === "directory") continue;
     if (input.type === STUDIO_TYPES.seed && hasBrief) continue;
+    if (input.type === STUDIO_TYPES.style && !STYLE_PROMPT_SKILLS.has(skill)) continue;
     const path = join(workspaceDir, input.path);
     if (!existsSync(path)) continue;
     const text = readFileSync(path, "utf8");
@@ -199,6 +221,16 @@ export function studioPromptHead(request: StageRequest, workspaceDir: string, gu
     } else if (input.type === STUDIO_TYPES.research) {
       try {
         body = JSON.stringify(compactResearch(JSON.parse(text) as ResearchLike), null, 2);
+      } catch { /* leave as-is */ }
+    } else if (input.type === STUDIO_TYPES.surveyIndex && skill === "studio-youtube-kit") {
+      try {
+        body = JSON.stringify(surveyForKit(StudioSurveySchema.parse(JSON.parse(text)), loadOptionalTimelineV4({ request, workspaceDir })), null, 2);
+      } catch { /* leave as-is */ }
+    } else if (input.type === STUDIO_TYPES.researchApi && skill === "studio-web-research") {
+      // the web research is told only what is missing, not what the API already found
+      try {
+        body = JSON.stringify(researchGapsOf({ request, workspaceDir } as CheckerInput), null, 2);
+        heading = "research_gaps";
       } catch { /* leave as-is */ }
     }
     parts.push("", `## ${heading} (${input.path.split("/").pop()})`, "```json", body.trim(), "```");
@@ -273,17 +305,69 @@ export function studioFilesPrompt(
   return parts.join("\n\n");
 }
 
-/** Write a skipped TrendReport (no research videos -> Claude skipped). */
-function writeSkipped(outPath: string, skill: StudioSkill, workspaceDir: string, request: StageRequest): void {
-  void workspaceDir; void request;
-  if (skill !== "studio-trend-report") return;
-  mkdirSync(join(outPath, ".."), { recursive: true });
-  writeFileSync(outPath, JSON.stringify(TrendReportSchema.parse({
+type ResearchSeen = {
+  skipped_reason?: string | null;
+  channels?: Array<{ input?: string; error?: string | null; videos?: unknown[] }>;
+  keywords?: Array<{ keyword?: string; error?: string | null; videos?: unknown[] }>;
+};
+
+/**
+ * Why research found nothing, for the person reading the skipped trend report: the reason it was skipped, or what
+ * YouTube refused for each channel and keyword.
+ */
+export function researchSkipSummary(res: ResearchSeen): string {
+  const why = res.skipped_reason?.trim() || [
+    ...(res.channels ?? []).filter((c) => c.error).map((c) => `kênh ${c.input ?? "?"}: ${c.error}`),
+    ...(res.keywords ?? []).filter((k) => k.error).map((k) => `từ khoá "${k.keyword ?? "?"}": ${k.error}`),
+  ].join("; ");
+  return (why ? `Không có dữ liệu nghiên cứu: ${why}` : "Không có dữ liệu nghiên cứu.").slice(0, 3000);
+}
+
+/** A skipped trend report (no research videos), saying why. */
+function skippedTrendReport(summary: string): unknown {
+  return TrendReportSchema.parse({
     schema_version: "studio.trend-report/v1",
-    skipped: true, summary: "Không có dữ liệu nghiên cứu.",
+    skipped: true, summary,
     working_angles: [], title_patterns: [], hook_patterns: [], thumbnail_patterns: [],
     recommended_duration_s: null, posting_schedule: "", recommendations: [],
-  }), null, 2));
+  });
+}
+
+/**
+ * The document a stage writes WITHOUT calling Claude, when there is nothing for Claude to do: a trend report with no
+ * research videos, a web research with nothing missing. `null`: call Claude. An input it cannot read means Claude
+ * is called (and the validator says what is wrong).
+ */
+function skippedOutput(skill: StudioSkill, request: StageRequest, workspaceDir: string): { doc: unknown; why: string } | null {
+  try {
+    if (skill === "studio-trend-report") {
+      const resPath = request.inputs.find((x) => x.type === STUDIO_TYPES.research);
+      if (!resPath) return null;
+      const res = JSON.parse(readFileSync(join(workspaceDir, resPath.path), "utf8")) as ResearchSeen;
+      const totalVideos = (res.channels ?? []).reduce((n, ch) => n + (ch.videos?.length ?? 0), 0)
+        + (res.keywords ?? []).reduce((n, kw) => n + (kw.videos?.length ?? 0), 0);
+      if (totalVideos > 0) return null;
+      const summary = researchSkipSummary(res);
+      return { doc: skippedTrendReport(summary), why: summary };
+    }
+    if (skill === "studio-web-research") {
+      if (hasGaps(researchGapsOf({ request, workspaceDir } as CheckerInput))) return null;
+      return { doc: StudioWebFindsSchema.parse({ schema_version: "studio.web-finds/v1", skipped: true, channels: [], keywords: [], sources: [] }), why: "nothing missing from the YouTube research" };
+    }
+    if (skill === "studio-style") {
+      const watch = loadOptionalStyleWatch({ request, workspaceDir });
+      if (watch?.measured && watch.videos.some((v) => !v.error)) return null;
+      const why = watch?.skipped_reason ?? "Không xem được video mẫu nào";
+      return {
+        doc: StudioStyleSchema.parse({
+          schema_version: "studio.style/v1", skipped: true, skipped_reason: why.slice(0, 500), name: "", summary: "",
+          references: [], measured: null, params: null, do: [], dont: [], evidence: [],
+        }),
+        why,
+      };
+    }
+  } catch { /* unreadable input: let Claude answer, the validator will say what is wrong */ }
+  return null;
 }
 
 export class StudioAgentExecutor implements Executor {
@@ -306,33 +390,21 @@ export class StudioAgentExecutor implements Executor {
     if (!out?.name) return failed("contract", "a Studio agent stage needs one named output", { skill });
     const outPath = join(ctx.workspaceDir, "output", out.name);
 
-    // --- Skip rule for studio-trend-report: no research videos -> write skipped doc ---
-    if (skill === "studio-trend-report") {
-      const resPath = request.inputs.find((x) => x.type === STUDIO_TYPES.research);
-      if (resPath) {
-        try {
-          const res = JSON.parse(readFileSync(join(ctx.workspaceDir, resPath.path), "utf8")) as {
-            channels?: Array<{ videos?: unknown[] }>; keywords?: Array<{ videos?: unknown[] }>;
-          };
-          const totalVideos = (res.channels ?? []).reduce((n, ch) => n + (ch.videos?.length ?? 0), 0)
-            + (res.keywords ?? []).reduce((n, kw) => n + (kw.videos?.length ?? 0), 0);
-          if (totalVideos === 0) {
-            mkdirSync(join(ctx.workspaceDir, "output"), { recursive: true });
-            writeSkipped(outPath, skill, ctx.workspaceDir, request);
-            ctx.logger.info("studio-trend-report skipped (no research videos)");
-            // Register the written file as an output so the harness stages it and checks pass.
-            const bytes = readFileSync(outPath);
-            const checksum = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-            const rel = `output/${out.name}`;
-            return {
-              schema_version: "harness.stage-result/v1", attempt_id: request.attempt_id, outcome: "succeeded",
-              outputs: [{ path: rel, type: out.type, checksum, size_bytes: bytes.length, kind: "file" as const }],
-              checks: [], usage: { wall_seconds: (Date.now() - started) / 1000, cost_usd: 0 },
-              external_operations: [], errors: [],
-            };
-          }
-        } catch { /* if we can't read it, proceed to Claude */ }
-      }
+    // --- Nothing for Claude to do (a trend report without research videos, a web research with nothing missing) ---
+    const skipped = skippedOutput(skill, request, ctx.workspaceDir);
+    if (skipped) {
+      mkdirSync(join(ctx.workspaceDir, "output"), { recursive: true });
+      writeFileSync(outPath, JSON.stringify(skipped.doc, null, 2));
+      ctx.logger.warn(`${skill} skipped without calling Claude`, { why: skipped.why });
+      // Register the written file as an output so the harness stages it and checks pass.
+      const bytes = readFileSync(outPath);
+      const checksum = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+      return {
+        schema_version: "harness.stage-result/v1", attempt_id: request.attempt_id, outcome: "succeeded",
+        outputs: [{ path: `output/${out.name}`, type: out.type, checksum, size_bytes: bytes.length, kind: "file" as const }],
+        checks: [], usage: { wall_seconds: (Date.now() - started) / 1000, cost_usd: 0 },
+        external_operations: [], errors: [],
+      };
     }
 
     let guides: TeamGuide[] = [];

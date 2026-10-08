@@ -39,9 +39,9 @@ export function makeStudioFarmRecorder(
       db.prepare(
         `INSERT OR IGNORE INTO studio_farm_jobs
          (id, farm_job_id, run_id, stage_key, attempt_id, production_id,
-          episode_id, job_type, is_final_render, requirements, created_at)
+          episode_id, job_type, is_final_render, requirements, fingerprint, created_at)
          VALUES (?, ?, ?, ?, ?, ?,
-          (SELECT id FROM episodes WHERE run_id = ?), ?, ?, ?, ?)`,
+          (SELECT id FROM episodes WHERE run_id = ?), ?, ?, ?, ?, ?)`,
       ).run(
         randomUUID(),
         info.farmJobId,
@@ -53,6 +53,7 @@ export function makeStudioFarmRecorder(
         info.jobType,
         info.isFinalRender ? 1 : 0,
         info.requirements ? JSON.stringify(info.requirements) : null,
+        info.fingerprint ?? null,
         new Date().toISOString(),
       );
     } finally {

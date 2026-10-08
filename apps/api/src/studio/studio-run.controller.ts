@@ -40,6 +40,7 @@ const APPROVALS = {
   'approve-rnd': { stage: 'rnd', file: 'rnd.json', kind: 'rnd' },
   'approve-branding': { stage: 'branding', file: 'branding.json', kind: 'branding' },
   'approve-plan': { stage: 'plan-episodes', file: 'series-plan.json', kind: 'series_plan' },
+  'approve-style': { stage: 'analyze-style', file: 'style.json', kind: 'style' },
 } as const;
 
 /**
@@ -112,6 +113,14 @@ export class StudioRunController {
   @HttpCode(HttpStatus.OK)
   approveBranding(@Param('id') id: string, @Body() dto: SubmitGateDto, @Req() req: Request) {
     return this.approve(id, 'approve-branding', dto, req);
+  }
+
+  /** Submit the approve-style gate (plan 3.2.0): body `{document: StudioStyle}`. Same answers as approve-plan. */
+  @Post('gates/approve-style')
+  @Roles('producer')
+  @HttpCode(HttpStatus.OK)
+  approveStyle(@Param('id') id: string, @Body() dto: SubmitGateDto, @Req() req: Request) {
+    return this.approve(id, 'approve-style', dto, req);
   }
 
   private approve(id: string, gate: keyof typeof APPROVALS, dto: SubmitGateDto, req: Request) {

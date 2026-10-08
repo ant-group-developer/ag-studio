@@ -16,13 +16,16 @@ import {
   StudioTranscribePayloadSchema, StudioTtsPayloadSchema, TRANSCRIBE_MANIFEST_SCHEMA, TranscribeManifestSchema, TTS_MANIFEST_SCHEMA, TtsManifestSchema,
   type StudioTranscribePayload, type TranscribeManifest, type TtsManifest,
 } from "@ag-farm/protocol";
-import { buildShots, inputPath, shotId, STUDIO_TYPES, studioSourceId, timelineIssues } from "@harness/core";
+import { buildShots, inputPath, loadOptionalBranding, loadOptionalStyle, shotId, STUDIO_TYPES, studioSourceId, timelineIssues } from "@harness/core";
 import type { FarmPayloadBuild, FarmPayloadBuilder, InProcessStage } from "@harness/executors";
 import { productionKey } from "./bucket.js";
 import { detectCuts, extractAudio16k, grabFrame, probeMedia, tileSheet } from "./cut-ffmpeg.js";
 import { readInput, readTimelineInput, studioStages, toBuffer, writeEpisodeIntake, writeOutput, type StudioStageDeps } from "./stages.js";
+import { styleStages } from "./style-stages.js";
+import { cleanTranscribeManifest } from "./transcript-clean.js";
+import { listLibraryMusic, pickLibraryMusic } from "./music-library.js";
 import { prepareRender } from "./payloads.js";
-import { getEpisode, getProduction, latestEpisodeRevision, saveEpisodeRevision } from "./studio-db.js";
+import { activeProductionStyle, getEpisode, getProduction, latestEpisodeRevision, saveEpisodeRevision } from "./studio-db.js";
 import { fitCutTimeline, type ReadLine } from "./cut-fit.js";
 import { productionVoice, type StudioVoice } from "./voice.js";
 import { getVoiceLine, putVoiceLine, voiceKey } from "./voice-store.js";
@@ -106,6 +109,19 @@ export function cutStages(d: StudioStageDeps): Record<string, InProcessStage> {
     "studio-cut-intake": async (request: StageRequest, ctx: ExecutorContext) => {
       const { brief, episode } = writeEpisodeIntake(d, request, ctx);
       writeOutput(ctx, "sources.json", toBuffer(cutSources(episode, brief.language)));
+    },
+
+    /**
+     * Cut 1.1.0: the same, plus the production's edit style as it is now (`style.json`, when it has one that was not
+     * skipped) for the edit plan to follow. Read when the episode starts: a style edited later reaches the next episode.
+     */
+    "studio-cut-intake-v2": async (request: StageRequest, ctx: ExecutorContext) => {
+      const { brief, episode } = writeEpisodeIntake(d, request, ctx);
+      writeOutput(ctx, "sources.json", toBuffer(cutSources(episode, brief.language)));
+      const prod = getProduction(d.db, episode.production_id);
+      const style = prod ? activeProductionStyle(prod) : null;
+      if (style) writeOutput(ctx, "style.json", toBuffer(style));
+      ctx.logger.info("episode intake", { episode_id: episode.episode_id, style: style?.name ?? null });
     },
 
     /**
@@ -212,56 +228,100 @@ export function cutStages(d: StudioStageDeps): Record<string, InProcessStage> {
     },
 
     /**
-     * The approved edit plan fitted to its narration, as the episode's timeline v4 (`fitCutTimeline`). The lines the farm
-     * just read go into the voice store first; every line then comes from the store. The result is saved as a new
-     * revision of the episode (author `system`, label `fit`): running again from the edit plan replaces the cut.
+     * Cut 1.1.0: the farm's transcription without what nobody said (`cleanTranscribeManifest`: word scores near zero,
+     * Whisper's made-up outros), as `transcribe.json` again for the survey, the edit plan and the fit; what it dropped
+     * in `clean-report.json`. The farm's own stays the `transcribe` stage's output.
      */
-    "studio-cut-fit": async (request, ctx) => {
-      const media = requireMedia(d);
-      const ws = ctx.workspaceDir;
-      const approved = readInput(request, ws, STUDIO_TYPES.editPlan, (v) => EditPlanSchema.parse(v));
-      const shots = readInput(request, ws, STUDIO_TYPES.shots, (v) => ShotsIndexSchema.parse(v));
-      const survey = readInput(request, ws, STUDIO_TYPES.surveyIndex, (v) => StudioSurveySchema.parse(v));
-      const sources = readSources(request, ws);
-      const manifest = readInput(request, ws, STUDIO_TYPES.transcript, (v) => TranscribeManifestSchema.parse(v));
-      const episode = readInput(request, ws, STUDIO_TYPES.episode, (v) => z.object({ assets: z.record(z.string(), EpisodeAssetSchema) }).passthrough().parse(v));
-      const brief = readInput(request, ws, STUDIO_TYPES.brief, (v) => FitBriefSchema.parse(v));
-      const now = new Date().toISOString();
-
-      const voice = approved.narration === "tts" ? narrationVoice(d.db, brief.production_id, approved.episode_id) : null;
-      // narration declined after the plan was approved: its lines are not read, they stay as subtitles
-      const written = approved.narration === "tts" && !voice;
-      const plan = approved;
-      const textOf = new Map(plan.lines.map((l) => [l.line_id, l.text]));
-      const keyOf = (lineId: string) => voiceKey({ text: textOf.get(lineId)!, language: plan.language, voice: voice! });
-      if (voice) {
-        const tts = readInput(request, ws, STUDIO_TYPES.voiceManifest, (v) => TtsManifestSchema.parse(v));
-        const setDir = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.voiceSet);
-        for (const line of tts.lines) {
-          if (!textOf.has(line.line_id)) continue;
-          const wav = setDir ? join(setDir, basename(line.output)) : "";
-          if (!wav || !existsSync(wav)) throw new HarnessError("NOT_FOUND", `the farm read ${line.line_id} but its WAV is not here`, { line_id: line.line_id });
-          putVoiceLine(d.db, media.voiceDir, keyOf(line.line_id), wav, { duration_s: line.duration_s, words: line.words, language: tts.language }, now);
-        }
-      }
-      const read: Record<string, ReadLine> = {};
-      for (const l of voice && !written ? plan.lines : []) {
-        const v = getVoiceLine(d.db, media.voiceDir, keyOf(l.line_id), now);
-        if (!v) throw new HarnessError("CONFIG_INVALID", `lời dẫn ${l.line_id} chưa được đọc`, { line_id: l.line_id });
-        read[l.line_id] = { key: v.key, duration_s: v.duration_s, words: v.words };
-      }
-      const transcript = transcriptFromManifest(manifest, sources.sources.map((x) => x.source_id));
-      const { timeline, report } = fitCutTimeline({
-        productionId: brief.production_id, plan, shots, survey, transcript, voice: read, written,
-        sources: sources.sources, assets: episode.assets, canvas: brief.canvas, fps: brief.fps, music: currentMusic(d.db, brief.production_id, brief.music),
+    "studio-cut-clean-transcript": async (request, ctx) => {
+      const raw = readInput(request, ctx.workspaceDir, STUDIO_TYPES.transcript, (v) => TranscribeManifestSchema.parse(v));
+      const { manifest, report } = cleanTranscribeManifest(raw);
+      ctx.logger.info("transcript cleaned", {
+        kept: report.kept, dropped: report.dropped.length,
+        low_score: report.dropped.filter((x) => x.reason === "low_score").length,
+        phrases: report.dropped.filter((x) => x.reason === "hallucinated_phrase").length,
       });
-      const latest = latestEpisodeRevision(d.db, plan.episode_id);
-      const { revision } = saveEpisodeRevision(d.db, plan.episode_id, { baseRevision: latest?.revision ?? 0, data: timeline, authorId: "system", label: "fit" });
-      ctx.logger.info("shot-cut timeline fitted", { episode_id: plan.episode_id, revision, clips: timeline.clips.length, shortfalls: report.shortfalls.length });
-      writeOutput(ctx, "timeline.json", toBuffer(timeline));
-      writeOutput(ctx, "fit-report.json", toBuffer(report));
+      writeOutput(ctx, "transcribe.json", toBuffer(TranscribeManifestSchema.parse(manifest)));
+      writeOutput(ctx, "clean-report.json", toBuffer(report));
     },
+
+    /** The approved edit plan fitted to its narration (`fitCut`). */
+    "studio-cut-fit": (request, ctx) => fitCut(d, request, ctx, false),
+
+    /**
+     * Cut 1.1.0: the same fit; a shot the edit plan mutes (`source_audio: "mute"`) gives muted clips, the branding's
+     * text look (when it has one) is frozen into the timeline, and a production with no music of its own gets a track
+     * of the team's library picked by mood.
+     */
+    "studio-cut-fit-v2": (request, ctx) => fitCut(d, request, ctx, true),
   };
+}
+
+/**
+ * The approved edit plan fitted to its narration, as the episode's timeline v4 (`fitCutTimeline`). The lines the farm
+ * just read go into the voice store first; every line then comes from the store. The result is saved as a new
+ * revision of the episode (author `system`, label `fit`): running again from the edit plan replaces the cut.
+ * `v2` (cut 1.1.0): the clips carry the plan's per-shot sound, the timeline the branding's text look, and with no
+ * music of the production's own, the library track of the first mood that has one (edit plan, branding, style).
+ */
+async function fitCut(d: StudioStageDeps, request: StageRequest, ctx: ExecutorContext, v2: boolean): Promise<void> {
+  const media = requireMedia(d);
+  const ws = ctx.workspaceDir;
+  const approved = readInput(request, ws, STUDIO_TYPES.editPlan, (v) => EditPlanSchema.parse(v));
+  const shots = readInput(request, ws, STUDIO_TYPES.shots, (v) => ShotsIndexSchema.parse(v));
+  const survey = readInput(request, ws, STUDIO_TYPES.surveyIndex, (v) => StudioSurveySchema.parse(v));
+  const sources = readSources(request, ws);
+  const manifest = readInput(request, ws, STUDIO_TYPES.transcript, (v) => TranscribeManifestSchema.parse(v));
+  const episode = readInput(request, ws, STUDIO_TYPES.episode, (v) => z.object({ assets: z.record(z.string(), EpisodeAssetSchema) }).passthrough().parse(v));
+  const brief = readInput(request, ws, STUDIO_TYPES.brief, (v) => FitBriefSchema.parse(v));
+  const now = new Date().toISOString();
+
+  const voice = approved.narration === "tts" ? narrationVoice(d.db, brief.production_id, approved.episode_id) : null;
+  // narration declined after the plan was approved: its lines are not read, they stay as subtitles
+  const written = approved.narration === "tts" && !voice;
+  const plan = approved;
+  const textOf = new Map(plan.lines.map((l) => [l.line_id, l.text]));
+  const keyOf = (lineId: string) => voiceKey({ text: textOf.get(lineId)!, language: plan.language, voice: voice! });
+  if (voice) {
+    const tts = readInput(request, ws, STUDIO_TYPES.voiceManifest, (v) => TtsManifestSchema.parse(v));
+    const setDir = inputPath({ request, workspaceDir: ws }, STUDIO_TYPES.voiceSet);
+    for (const line of tts.lines) {
+      if (!textOf.has(line.line_id)) continue;
+      const wav = setDir ? join(setDir, basename(line.output)) : "";
+      if (!wav || !existsSync(wav)) throw new HarnessError("NOT_FOUND", `the farm read ${line.line_id} but its WAV is not here`, { line_id: line.line_id });
+      putVoiceLine(d.db, media.voiceDir, keyOf(line.line_id), wav, { duration_s: line.duration_s, words: line.words, language: tts.language }, now);
+    }
+  }
+  const read: Record<string, ReadLine> = {};
+  for (const l of voice && !written ? plan.lines : []) {
+    const v = getVoiceLine(d.db, media.voiceDir, keyOf(l.line_id), now);
+    if (!v) throw new HarnessError("CONFIG_INVALID", `lời dẫn ${l.line_id} chưa được đọc`, { line_id: l.line_id });
+    read[l.line_id] = { key: v.key, duration_s: v.duration_s, words: v.words };
+  }
+  const transcript = transcriptFromManifest(manifest, sources.sources.map((x) => x.source_id));
+  const branding = v2 ? loadOptionalBranding({ request, workspaceDir: ws }) : null;
+  let music = currentMusic(d.db, brief.production_id, brief.music);
+  const fromLibrary = v2 && !music
+    ? pickLibraryMusic(listLibraryMusic(d.db, { activeOnly: true }), [
+      plan.music_mood, ...(branding?.music_mood ?? []), loadOptionalStyle({ request, workspaceDir: ws })?.params?.music.mood,
+    ], { seed: plan.episode_id, seconds: plan.target_seconds })
+    : null;
+  if (fromLibrary) music = fromLibrary.music;
+  const { timeline, report } = fitCutTimeline({
+    productionId: brief.production_id, plan, shots, survey, transcript, voice: read, written,
+    sources: sources.sources, assets: episode.assets, canvas: brief.canvas, fps: brief.fps, music,
+    ...(v2 ? { clipAudio: true, textStyle: branding?.on_screen_text.look ?? null } : {}),
+  });
+  const latest = latestEpisodeRevision(d.db, plan.episode_id);
+  const { revision } = saveEpisodeRevision(d.db, plan.episode_id, { baseRevision: latest?.revision ?? 0, data: timeline, authorId: "system", label: "fit" });
+  ctx.logger.info("shot-cut timeline fitted", {
+    episode_id: plan.episode_id, revision, clips: timeline.clips.length, shortfalls: report.shortfalls.length,
+    ...(v2 ? {
+      muted_clips: timeline.clips.filter((c) => c.muted).length, text_style: !!timeline.text_style,
+      library_music: fromLibrary ? { track_id: fromLibrary.track.track_id, mood: fromLibrary.mood } : null,
+    } : {}),
+  });
+  writeOutput(ctx, "timeline.json", toBuffer(timeline));
+  writeOutput(ctx, "fit-report.json", toBuffer(report));
 }
 
 /** What the fit reads of the episode brief. */
@@ -337,17 +397,10 @@ export function cutPayloadBuilders(d: Pick<StudioStageDeps, "db" | "bucket" | "m
      * `studio.render_final` of a shot-cut episode: the approved timeline v4 (frozen), its narration from the voice store.
      * The video only; thumbnails are cut afterwards on this node (as `studio-episode-render-v2`).
      */
-    "studio-episode-render-v4": async (request, ctx): Promise<FarmPayloadBuild> => {
-      const media = requireMedia(d);
-      const { production_id: productionId } = readInput(request, ctx.workspaceDir, STUDIO_TYPES.brief, (v) => z.object({ production_id: z.string() }).passthrough().parse(v));
-      const timeline = readTimelineInput(request, ctx.workspaceDir);
-      const errors = timelineIssues(timeline).filter((i) => i.severity === "error");
-      if (errors.length) throw new HarnessError("SCHEMA_INVALID", `timeline still has errors: ${errors.map((e) => e.message).join("; ")}`, { problems: errors });
-      const revision = latestEpisodeRevision(d.db, timeline.episode_id)?.revision ?? 0;
-      const output = `episodes/${timeline.episode_id}/renders/final-${request.attempt_id}.mp4`;
-      const build = await prepareRender(ctx.workspaceDir, { timeline, revision, productionId, episodeId: timeline.episode_id, output, thumbnails: [], voiceDir: media.voiceDir });
-      return { ...build, rename: { [output]: "final.mp4" } };
-    },
+    "studio-episode-render-v4": (request, ctx) => renderCut(d, request, ctx, false),
+
+    /** Cut 1.1.0: the same, with the timeline's text look (only a render worker that draws it takes the job). */
+    "studio-episode-render-v5": (request, ctx) => renderCut(d, request, ctx, true),
 
     /**
      * `studio.tts`: the narration lines of the approved edit plan not yet in the voice store, in the production's voice,
@@ -411,7 +464,25 @@ export function cutPayloadBuilders(d: Pick<StudioStageDeps, "db" | "bucket" | "m
   };
 }
 
+/**
+ * The final render of a shot-cut episode: the approved timeline v4 (frozen), its narration from the voice store; the
+ * video only. `textStyle` false (render v4, cut 1.0.0): the composition leaves out the text look.
+ */
+async function renderCut(d: Pick<StudioStageDeps, "db" | "media">, request: StageRequest, ctx: ExecutorContext, textStyle: boolean): Promise<FarmPayloadBuild> {
+  const media = requireMedia(d);
+  const { production_id: productionId } = readInput(request, ctx.workspaceDir, STUDIO_TYPES.brief, (v) => z.object({ production_id: z.string() }).passthrough().parse(v));
+  const timeline = readTimelineInput(request, ctx.workspaceDir);
+  const errors = timelineIssues(timeline).filter((i) => i.severity === "error");
+  if (errors.length) throw new HarnessError("SCHEMA_INVALID", `timeline still has errors: ${errors.map((e) => e.message).join("; ")}`, { problems: errors });
+  const revision = latestEpisodeRevision(d.db, timeline.episode_id)?.revision ?? 0;
+  const output = `episodes/${timeline.episode_id}/renders/final-${request.attempt_id}.mp4`;
+  const build = await prepareRender(ctx.workspaceDir, {
+    timeline, revision, productionId, episodeId: timeline.episode_id, output, thumbnails: [], voiceDir: media.voiceDir, textStyle,
+  });
+  return { ...build, rename: { [output]: "final.mp4" } };
+}
+
 /** Every in-process stage the Studio worker runs: the series and whole-video episode stages plus the shot-cut ones. */
 export function studioInProcessStages(d: StudioStageDeps): Record<string, InProcessStage> {
-  return { ...studioStages(d), ...cutStages(d) };
+  return { ...studioStages(d), ...cutStages(d), ...styleStages(d) };
 }

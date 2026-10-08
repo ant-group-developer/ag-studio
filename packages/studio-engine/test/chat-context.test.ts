@@ -8,10 +8,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { TrendReportSchema, type TimelineChatProposal } from "@harness/contracts";
 import {
-  cancelPlan, chatContext, chatScopeFor, completeTurn, createStudioWorker, insertUserTurn, listEpisodes, listLlmCalls, planRunView, readLlmCallPayload,
+  cancelPlan, chatContext, chatScopeFor, completeTurn, createStudioWorker, insertUserTurn, listEpisodes, listLlmCalls, readLlmCallPayload,
   readStageDocument, resumePlanRunFrom, startPlanRun, StudioRunError, submitStudioGate, type TimelineProposal,
 } from "../src/index.js";
-import { FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, ROOT, seedProduction, world } from "./helpers.js";
+import { approvePlanGatesUntil, FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, ROOT, seedProduction, world } from "./helpers.js";
 
 function setup(mode = "") {
   const w = world();
@@ -77,7 +77,7 @@ describe("chat context", () => {
 
     // the R&D (a real Claude call here: the trend report was skipped, no research videos): the head is the stage's own
     await submitStudioGate(s.core, s.db, runId, "approve-trend-report", shorter);
-    await drain(s);
+    await approvePlanGatesUntil(s, id, () => drain(s), "approve-rnd");
     const rnd = chatContext(s.core, s.db, chatScopeFor(s.core, s.db, id));
     const { head } = await rnd.prepare(ws());
     const call = listLlmCalls(s.db, { productionId: id, page: 1, pageSize: 20 }).items.find((c) => c.stage_key === "rnd")!;
@@ -91,13 +91,11 @@ describe("chat context", () => {
     const { runId } = startPlanRun(s.core, s.db, id);
     await drain(s);
     await submitStudioGate(s.core, s.db, runId, "approve-trend-report", readStageDocument(s.core, runId, "trend-report", "trend-report.json"));
-    await drain(s);
-    expect(planRunView(s.core, s.db, id).waiting_gate).toBe("approve-rnd");
+    await approvePlanGatesUntil(s, id, () => drain(s), "approve-rnd");
     cancelPlan(s.core, s.db, id);
     await drain(s);
     const { runId: next } = resumePlanRunFrom(s.core, s.db, id, "approve-rnd");
-    await drain(s);
-    expect(planRunView(s.core, s.db, id).waiting_gate).toBe("approve-rnd");
+    await approvePlanGatesUntil(s, id, () => drain(s), "approve-rnd");
     const ctx = chatContext(s.core, s.db, chatScopeFor(s.core, s.db, id));
     expect(ctx.skill).toBe("studio-rnd");
     const { head, validate } = await ctx.prepare(ws());
@@ -123,13 +121,7 @@ describe("chat context", () => {
     s = setup();
     const id = prod(s);
     const { runId } = startPlanRun(s.core, s.db, id);
-    for (const [gate, stage, file] of [
-      ["approve-trend-report", "trend-report", "trend-report.json"], ["approve-rnd", "rnd", "rnd.json"],
-      ["approve-branding", "branding", "branding.json"], ["approve-plan", "plan-episodes", "series-plan.json"],
-    ] as const) {
-      await drain(s);
-      await submitStudioGate(s.core, s.db, runId, gate, readStageDocument(s.core, runId, stage, file));
-    }
+    await approvePlanGatesUntil(s, id, () => drain(s), null);
     await drain(s);
     const ep = listEpisodes(s.db, id)[0]!;
     const key = chatScopeFor(s.core, s.db, id, ep.id);

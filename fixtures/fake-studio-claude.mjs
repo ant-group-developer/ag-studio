@@ -9,6 +9,9 @@
 // FAKE_STUDIO_MODE, comma-separated:
 //   plan-bad-once     plan-episodes answers with an unknown asset_id the first time, valid on repair
 //   rate-limit-once   the first call in a workspace prints the subscription-limit message and exits 1
+//   web-research-bad-once  the web research first answers a link that is not YouTube, valid on repair
+//   style-bad-once    the style first misquotes the measured median, valid on repair (resumed session)
+//   edit-plan-ignore-style-once  the edit plan first cuts 4 s pieces whatever the style says, follows it on repair
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -233,7 +236,8 @@ function branding() {
       palette: { text: "#FFFFFF", outline: bad ? "#FFFFFF" : "#000000", accent: "#E63946" }, position: "bottom", emotion: "tò mò",
       do: ["Chữ to"], dont: ["Chữ nhỏ"],
     },
-    on_screen_text: { style: "Chữ trắng viền đen", max_chars: 40, rules: ["Tối đa 2 dòng"] },
+    on_screen_text: { style: "Chữ trắng viền đen", max_chars: 40, rules: ["Tối đa 2 dòng"],
+      look: { text_color: "#FFFFFF", outline_color: "#000000", box_color: "#1D3557", size: "m" } },
     music_mood: ["ấm áp"],
   };
 }
@@ -310,6 +314,10 @@ function timelineOps(msg, bad) {
   if (/ngắn lại/.test(low) && firstClip) ops.push({ op: "trimClip", clip_id: firstClip.clip_id, in: firstClip.in ?? 0, out: Math.round(((firstClip.in ?? 0) + 1.5) * 1000) / 1000 });
   if (/mờ dần/.test(low) && firstClip) ops.push({ op: "setTransition", clip_id: firstClip.clip_id, kind: "dissolve", seconds: 0.5 });
   if (/karaoke/.test(low)) ops.push({ op: "setCaptions", mode: "karaoke" });
+  // cut 1.1.0: "tắt tiếng clip 2" mutes the second clip's own sound
+  const mute = /tắt tiếng clip (d+)/.exec(low);
+  const muteClip = mute ? timeline.clips?.[Number(mute[1]) - 1] : undefined;
+  if (muteClip) ops.push({ op: "setClipMuted", clip_id: muteClip.clip_id, muted: true });
   const quoted = /"([^"]{1,64})"/.exec(msg)?.[1];
   if (quoted || /chữ/.test(low) || !ops.length) {
     const clip = timeline.clips?.[1] ?? timeline.clips?.[0];
@@ -400,9 +408,14 @@ function sourceSurvey(kept) {
   return { schema_version: "harness.survey-index/v2", shots: rows };
 }
 
-/** Usable shots in order, 2–4 s pieces from each shot's start until the target is reached; a line every 3 shots. */
+/**
+ * Usable shots in order, pieces from each shot's start until the target is reached (up to 4 s; with a style, the middle
+ * of its shot length); a line every 3 shots.
+ */
 function editPlan() {
   const survey = inputs.survey_index ?? { shots: [] };
+  const range = inputs.studio_style?.skipped === false ? inputs.studio_style.params?.shot_seconds : null;
+  const longest = range && !(modes.has("edit-plan-ignore-style-once") && !repairing) ? (range.min + range.max) / 2 : 4;
   const sources = inputs.cut_sources ?? { narration: "tts", language: "vi", episode_id: "e" };
   const episode = inputs.studio_episode ?? {};
   const target = episode.target_seconds ?? 60;
@@ -412,7 +425,7 @@ function editPlan() {
   let total = 0;
   for (const r of usable) {
     if (total >= target) break;
-    const length = Math.min(4, Math.max(0.5, r.out - r.in - 0.5));
+    const length = Math.min(longest, Math.max(0.5, r.out - r.in - 0.5));
     const order = shots.length + 1;
     shots.push({
       order, shot_id: r.shot_id, source_id: r.source_id, in: r.in, out: Math.round((r.in + length) * 1000) / 1000,
@@ -431,6 +444,65 @@ function editPlan() {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Series plan 3.2.0: the web research (web mode) answers each gap with two video links (fake ids); a channel gets its
+// page back. "web-research-bad-once": the first answer has a link that is not YouTube, the repair fixes it.
+// ---------------------------------------------------------------------------
+function webResearch() {
+  const gaps = inputs.research_gaps ?? { channels: [], keywords: [] };
+  const vid = (prefix, i) => ({ url: `https://www.youtube.com/watch?v=${`${prefix}${i}`.replace(/[^\w-]/g, "").padEnd(11, "x").slice(0, 11)}`, title: `${prefix} ${i}`, views: null, duration_s: null, published_at: null });
+  const bad = modes.has("web-research-bad-once") && !repairing;
+  return {
+    schema_version: "studio.web-finds/v1", skipped: false,
+    channels: gaps.channels.map((c, k) => ({
+      input: c.input, channel_url: c.input.startsWith("@") ? `https://www.youtube.com/${c.input}` : null, title: `Kênh ${c.input}`,
+      videos: bad && k === 0 ? [{ ...vid("ch", 1), url: "https://example.com/video.mp4" }] : [vid(`ch${k}v`, 1), vid(`ch${k}v`, 2)],
+      notes: "Kênh chính chủ (giả)",
+    })),
+    keywords: gaps.keywords.map((keyword, k) => ({ keyword, videos: [vid(`kw${k}v`, 1), vid(`kw${k}v`, 2)] })),
+    sources: ["https://www.youtube.com/results"],
+  };
+}
+
+// Series plan 3.2.0: the style step runs in files mode — it reads style_watch/watch.json (the directory named in the
+// prompt, remembered by the session for the repair round) and writes output/style.json. "style-bad-once": the first
+// answer misquotes the measured median, the repair copies it right.
+function styleFromWatch(kept) {
+  const watch = JSON.parse(readFileSync(join(cwd, kept.watchDir, "watch.json"), "utf8"));
+  const picks = kept.refs?.picks ?? [];
+  const watched = (watch.videos ?? []).filter((v) => !v.error);
+  const m = watch.measured;
+  const measured = modes.has("style-bad-once") && !stdin.includes("bị hệ thống kiểm tra từ chối") ? { ...m, shot_seconds: { ...m.shot_seconds, median: m.shot_seconds.median + 3 } } : m;
+  const med = m.shot_seconds.median;
+  const frames = watched.flatMap((v) => v.frames.map((f) => ({ video_id: v.video_id, t: f.t })));
+  return {
+    schema_version: "studio.style/v1", skipped: false, skipped_reason: null, name: "Phong cách giả", summary: `Cảnh trung bình ${med} giây.`,
+    references: watched.map((v) => {
+      const p = picks.find((x) => x.video_id === v.video_id) ?? {};
+      return { video_id: v.video_id, title: p.title ?? v.title, channel_title: p.channel_title ?? "", url: p.url ?? `https://www.youtube.com/watch?v=${v.video_id}`, duration_s: p.duration_s ?? v.duration_s ?? 0 };
+    }),
+    measured,
+    params: {
+      cut_rhythm: med < 2.5 ? "fast" : med > 5 ? "slow" : "medium",
+      shot_seconds: { min: Math.max(0.5, Math.min(m.shot_seconds.p25, med)), max: Math.max(m.shot_seconds.p75, med, 0.5) },
+      transitions: ["cut"], opening: { seconds: Math.min(60, Math.round(m.first_shot_s * 4)), structure: "montage ngắn" },
+      text_overlay: { density: "low", style: "chữ nhỏ góc dưới" }, subtitles: "none", voice: "unknown", music: { mood: "", ducking: null },
+      visual: "khung rộng", pace_notes: "",
+    },
+    do: ["Mở bằng montage ngắn"], dont: [],
+    evidence: frames.slice(0, 3).map((f, i) => ({ param: ["opening", "text_overlay", "visual"][i], video_id: f.video_id, t: f.t, note: "khung giả" })),
+  };
+}
+
+if (skill === "studio-style" && !stdin.includes("\n# Góp ý\n")) {
+  const dir = (/^- style_watch: (.+?)\/?$/m.exec(stdin) ?? [])[1];
+  const kept = resumed ? JSON.parse(readFileSync(join(cwd, "logs", `fake-session-${resumed}.json`), "utf8")) : { watchDir: dir, refs: inputs.style_refs };
+  mkdirSync(join(cwd, "output"), { recursive: true });
+  writeFileSync(join(cwd, "output", "style.json"), JSON.stringify(styleFromWatch(kept), null, 2));
+  process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "Đã ghi output/style.json", session_id: newSession(kept), total_cost_usd: 0, num_turns: 4 }) + "\n");
+  process.exit(0);
+}
+
 if (skill === "studio-source-survey" && !stdin.includes("\n# Góp ý\n")) {
   const kept = sessionInputs();
   mkdirSync(join(cwd, "output"), { recursive: true });
@@ -447,6 +519,7 @@ else if (skill === "studio-rnd") out = rnd();
 else if (skill === "studio-branding") out = branding();
 else if (skill === "studio-plan-episodes") out = planEpisodes();
 else if (skill === "studio-youtube-kit") out = youtubeKit();
+else if (skill === "studio-web-research") out = webResearch();
 else { process.stderr.write(`fake-studio-claude: unknown skill ${skill}\n`); process.exit(3); }
 
 // a resumed (forked) session answers with a new session id of its own, like the real CLI

@@ -2,7 +2,7 @@
  * Phase 5 acceptance in process (plan 2026-10-06-ag-studio-phase-5-cut, I1): a shot-cut episode from three videos, the
  * worker pool running in the background with the fake Claude and the fake farm, ffmpeg making the proxies' shots and
  * frames. The test acts like a person through the functions the API routes call:
- *   plan 3.1.0 (the episode cut shot by shot, with narration, 4K) → scene selection: chat "giữ lại s000-000", Duyệt →
+ *   plan 3.1.0 or later (the episode cut shot by shot, with narration, 4K) → scene selection: chat "giữ lại s000-000", Duyệt →
  *   edit plan: Duyệt → the farm reads every line → run again from the edit plan: chat "câu L002 ngắn lại", Duyệt →
  *   the farm reads only that line → timeline v4: chat trims a clip, Áp dụng, Duyệt → kit on a machine with NVENC →
  *   the final render's composition: 3840×2160, pieces with in > 0, a dissolve, the narration, caption cues.
@@ -15,10 +15,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CompositionSchema, EditPlanSchema, StudioSurveySchema, TimelineV4Schema } from "@harness/contracts";
 import {
   applyChatProposal, approveChatScope, chatScopeFor, createStudioWorkerPool, episodeRunView, episodeShots, episodeState, getTurn,
-  latestEpisodeRevision, listEpisodes, planRunView, readStageDocument, rerunEpisodeFrom, sendChatMessage, startPlanRun,
+  latestEpisodeRevision, listEpisodes, readStageDocument, rerunEpisodeFrom, sendChatMessage, startPlanRun,
   type CutMediaDeps, type StudioWorkerPool, type SurveyProposal, type TimelineProposal,
 } from "@ag-studio/engine";
-import { FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, ROOT, seedProduction, world } from "../../packages/studio-engine/test/helpers.js";
+import { approvePlanGatesLive, FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, ROOT, seedProduction, world } from "../../packages/studio-engine/test/helpers.js";
 import { hasFfmpeg, makeSceneClip } from "../media.js";
 
 const USER = "auth0|owner";
@@ -83,17 +83,14 @@ describe.skipIf(!hasFfmpeg())("a shot-cut episode, three videos, chat at every g
     if (prevMode === undefined) delete process.env.FAKE_STUDIO_MODE; else process.env.FAKE_STUDIO_MODE = prevMode;
   });
 
-  it("plan 3.1.0 cuts the episode shot by shot from three videos", async () => {
+  it("plan 3.1.0 or later cuts the episode shot by shot from three videos", async () => {
     prod = seedProduction(w.db, { episode_target_seconds: 40, max_episodes: 1 });
     w.db.run("UPDATE productions SET keywords = ?, canvas = ?, voice = ? WHERE id = ?", [
       JSON.stringify(["phố cổ"]), JSON.stringify({ width: 3840, height: 2160 }),
       JSON.stringify({ reference: "library:voices/mai.wav", reference_text: "Xin chào, tôi là Mai.", speed: 1 }), prod,
     ]);
     startPlanRun(w.core, w.db, prod);
-    for (const gate of ["approve-trend-report", "approve-rnd", "approve-branding", "approve-plan"]) {
-      await until(`the plan at ${gate}`, () => planRunView(w.core, w.db, prod).waiting_gate === gate);
-      await approveChatScope(w.core, w.db, { productionId: prod, stageKey: gate, turnId: null, userId: USER });
-    }
+    await approvePlanGatesLive(w, prod, USER, null);
     const ep = await until("the episode at approve-survey", () => {
       const e = listEpisodes(w.db, prod)[0];
       return e?.run_id && episodeRunView(w.core, w.db, e.id).waiting_gate === "approve-survey" ? e : undefined;

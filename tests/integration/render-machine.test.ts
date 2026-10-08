@@ -10,10 +10,10 @@
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  approveChatScope, createStudioWorkerPool, episodeRenderInfo, episodeRunView, episodeState, listEpisodes, planRunView, rerenderEpisode, startPlanRun, studioQueue,
+  approveChatScope, createStudioWorkerPool, episodeRenderInfo, episodeRunView, episodeState, listEpisodes, rerenderEpisode, startPlanRun, studioQueue,
   type StudioWorkerPool,
 } from "@ag-studio/engine";
-import { FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, ROOT, seedProduction, world } from "../../packages/studio-engine/test/helpers.js";
+import { approvePlanGatesLive, FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, ROOT, seedProduction, world } from "../../packages/studio-engine/test/helpers.js";
 
 const USER = "auth0|owner";
 /** The farm executor logs every upload; the test reads state, not logs. */
@@ -84,10 +84,7 @@ describe("one episode, two machine types", () => {
     prod = seedProduction(w.db, { episode_target_seconds: 60, max_episodes: 1 });
     w.db.run("UPDATE productions SET keywords = ? WHERE id = ?", [JSON.stringify(["phở sáng"]), prod]);
     startPlanRun(w.core, w.db, prod);
-    for (const gate of ["approve-trend-report", "approve-rnd", "approve-branding", "approve-plan"]) {
-      await until(`the plan at ${gate}`, () => planRunView(w.core, w.db, prod).waiting_gate === gate);
-      await approveChatScope(w.core, w.db, { productionId: prod, stageKey: gate, turnId: null, userId: USER });
-    }
+    await approvePlanGatesLive(w, prod, USER, null);
     const ep = await until("an episode at approve-timeline", () => {
       const e = listEpisodes(w.db, prod)[0];
       return e?.run_id && episodeRunView(w.core, w.db, e.id).waiting_gate === "approve-timeline" ? e : undefined;

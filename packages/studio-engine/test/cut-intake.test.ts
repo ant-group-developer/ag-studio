@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { CutSourcesSchema, StudioEpisodeSchema, type StudioEpisode } from "@harness/contracts";
 import { studioSourceId } from "@harness/core";
-import { cutStages, replaceEpisodes, updateEpisodeRunId } from "../src/index.js";
-import { fakeFootage, seedProduction, world } from "./helpers.js";
+import { cutStages, replaceEpisodes, saveProductionDocument, updateEpisodeRunId } from "../src/index.js";
+import { fakeFootage, seedProduction, STYLE, world } from "./helpers.js";
 import { runStage, stageWorkspace } from "./stage-harness.js";
 
 const hint = (has_speech: boolean | null) => ({
@@ -68,5 +68,29 @@ describe("studio-cut-intake", () => {
     const ep = episode("p");
     const { stages } = setup({ ...ep, assets: { "asset-a": ep.assets["asset-a"]! } });
     await expect(runStage(stages["studio-cut-intake"], stageWorkspace({ runId: "run-cut" }))).rejects.toMatchObject({ code: "CONFIG_INVALID" });
+  });
+});
+
+describe("studio-cut-intake-v2 (cut 1.1.0)", () => {
+  it("passes the production's edit style on to the episode, as it is when the episode starts", async () => {
+    const { db, prod, stages } = setup(episode("p"));
+    saveProductionDocument(db, prod, "style", STYLE, "u");
+    const run = stageWorkspace({ runId: "run-cut", stageKey: "episode-intake" });
+    await runStage(stages["studio-cut-intake-v2"], run);
+    expect(run.has("sources.json") && run.has("brief.json")).toBe(true);
+    expect(run.json("style.json")).toEqual(STYLE);
+    expect(run.logs.find((l) => l.msg === "episode intake")?.fields).toMatchObject({ style: "Chậm" });
+  });
+
+  it("no style, or a skipped one: no style.json", async () => {
+    const { db, prod, stages } = setup(episode("p"));
+    const none = stageWorkspace({ runId: "run-cut", stageKey: "episode-intake" });
+    await runStage(stages["studio-cut-intake-v2"], none);
+    expect(none.has("sources.json")).toBe(true);
+    expect(none.has("style.json")).toBe(false);
+    saveProductionDocument(db, prod, "style", { ...STYLE, skipped: true, skipped_reason: "không có kênh mẫu", params: null }, "u");
+    const skipped = stageWorkspace({ runId: "run-cut", stageKey: "episode-intake" });
+    await runStage(stages["studio-cut-intake-v2"], skipped);
+    expect(skipped.has("style.json")).toBe(false);
   });
 });

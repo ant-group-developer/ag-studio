@@ -9,6 +9,7 @@ export type EditorClient = Pick<
   | "getEditorJob"
   | "getAssetMedia"
   | "getProductionCatalog"
+  | "listMusic"
 >;
 
 /** Map asset_id -> media info (null when footage is not in scope or not ready). */

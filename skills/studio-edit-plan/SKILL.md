@@ -15,11 +15,16 @@ qua chat rồi bấm **Duyệt**; sau đó hệ thống đọc lời dẫn và k
 - `cut_sources`: tên và mô tả AI của từng video; `narration` (`tts`, `none`, `original`) và `language`.
 - `transcript`: lời nói có sẵn trong footage (tránh đặt lời dẫn đè lên người đang nói).
 - `studio_episode`: tiêu đề, hook, logline, `target_seconds` (thời lượng mục tiêu); `studio_brief`: giọng điệu, khán giả.
+- `studio_style` (nếu có): phong cách dựng của series, học từ video mẫu và đã được duyệt — `params.cut_rhythm`,
+  `params.shot_seconds` (độ dài shot), `params.transitions`, `params.opening`, `params.text_overlay`,
+  `params.music`, `do`/`dont`. **Làm theo nó** trừ khi footage không cho phép (shot quá ngắn để giữ lâu…).
 
 ## Cách làm
 
 1. Dựng mạch tập theo logline: **mở đầu nhanh** (3–6 shot ngắn 1,5–2,5 giây, cảnh đẹp nhất), rồi các đoạn theo địa
-   điểm/chủ đề, kết thúc bằng một cảnh rộng, chậm.
+   điểm/chủ đề, kết thúc bằng một cảnh rộng, chậm. Có `studio_style` thì mở đầu theo `params.opening`, độ dài các
+   đoạn quanh `params.shot_seconds` (trung vị của các đoạn phải nằm trong khoảng đó), chỉ dùng chuyển cảnh trong
+   `params.transitions`, mật độ chữ theo `params.text_overlay.density`, `music_mood` theo `params.music.mood`.
 2. `shots`: mỗi phần tử là **một đoạn của một shot** — `in`/`out` **nằm trong** `in`/`out` của shot đó, dài ít nhất
    0,5 giây, thường 2–5 giây. Có thể dùng hai đoạn **khác nhau** của cùng một shot dài. `order` là 1, 2, 3… đúng thứ tự.
    Chừa ít nhất 0,5 giây cuối shot khi muốn `transition: "dissolve"` (chuyển cảnh cần hình sau `out`); còn lại `"cut"`.
@@ -33,6 +38,10 @@ qua chat rồi bấm **Duyệt**; sau đó hệ thống đọc lời dẫn và k
    tiết đáng nhớ. `at_order` là shot chữ hiện, `offset_s` là giây tính từ đầu shot đó. Tối đa một tiêu đề mỗi shot,
    tối đa một chữ mỗi 8 giây hình. Chữ ≤ 64 ký tự.
 6. `music_mood`: một từ (`calm`, `upbeat`, `nostalgic`…).
+7. `source_audio` của từng shot: `"mute"` khi tiếng của shot đó không nên nghe — loa thông báo (nhà ga, sân bay, tàu),
+   nhạc của quán hay loa đường phố, người lạ nói chuyện, tiếng gió thổi vào micro; `"keep"` (hoặc bỏ trống) cho tiếng
+   môi trường đẹp và người trong tập nói. Dựa vào `transcript` (câu tiếng nước ngoài kiểu thông báo, câu không liên
+   quan) và `note`/`speech` của survey. Với `narration: "original"`, chỉ tắt tiếng shot thật sự làm phiền.
 
 ```json
 {
@@ -40,7 +49,7 @@ qua chat rồi bấm **Duyệt**; sau đó hệ thống đọc lời dẫn và k
   "episode_id": "…", "narration": "tts", "language": "vi", "target_seconds": 240,
   "shots": [
     { "order": 1, "shot_id": "s011-002", "source_id": "src_…", "in": 1.0, "out": 3.0, "line_id": "L001",
-      "transition": "cut", "section_title": null, "note": "Chùa Cầu mở đầu" }
+      "transition": "cut", "section_title": null, "note": "Chùa Cầu mở đầu", "source_audio": "keep" }
   ],
   "lines": [{ "line_id": "L001", "text": "Khi đèn lồng bắt đầu sáng, phố cổ như chậm lại." }],
   "texts": [{ "text_id": "T001", "kind": "title", "text": "Hội An", "at_order": 1, "offset_s": 0.5, "duration": 3,
@@ -54,6 +63,8 @@ qua chat rồi bấm **Duyệt**; sau đó hệ thống đọc lời dẫn và k
 - Shot phải `usable` trong bản chọn cảnh đã duyệt, `source_id` đúng, đoạn nằm trong shot, dài ≥ 0,5 giây, `order` 1..n.
 - `line_id` không trùng, mỗi câu neo tối đa một shot, chỉ neo câu có trong `lines`; tập không lời dẫn thì không có `lines`.
 - Chữ đặt ở shot có thật, tối đa một tiêu đề mỗi shot, tối đa một chữ mỗi 8 giây.
+- Có `studio_style` và từ 5 shot trở lên: trung vị `out − in` phải nằm trong `params.shot_seconds` nới rộng
+  (`min × 0,7` … `max × 1,3`), nếu không bị trả lại một lần để sửa (`style_shot_length`).
 - Cảnh báo (không chặn): câu dài hơn phần hình của nó; tổng thời lượng lệch mục tiêu quá 20%.
 
 ## Khi chat

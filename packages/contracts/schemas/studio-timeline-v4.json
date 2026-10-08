@@ -139,6 +139,9 @@
                   "seconds"
                 ],
                 "additionalProperties": false
+              },
+              "muted": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -419,6 +422,45 @@
             ],
             "additionalProperties": false
           }
+        },
+        "text_style": {
+          "type": "object",
+          "properties": {
+            "text_color": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "outline_color": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "box_color": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^#[0-9A-Fa-f]{6}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "size": {
+              "type": "string",
+              "enum": [
+                "s",
+                "m",
+                "l"
+              ]
+            }
+          },
+          "required": [
+            "text_color",
+            "outline_color",
+            "box_color",
+            "size"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

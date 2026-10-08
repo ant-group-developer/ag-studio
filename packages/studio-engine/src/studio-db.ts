@@ -7,9 +7,10 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import {
-  HarnessError, ProductionMusicSchema, StoredTimelineSchema, StudioBrandingSchema, StudioRndSchema, studioMusicOf, timelineAsVersion, timelineVersion,
-  type ChannelRef, type StoredTimeline, type StudioBranding, type StudioHints, type StudioMusic, type StudioRnd,
+  HarnessError, ProductionMusicSchema, StoredTimelineSchema, StudioBrandingSchema, StudioRndSchema, StudioStyleSchema, studioMusicOf, timelineAsVersion, timelineVersion,
+  type ChannelRef, type StoredTimeline, type StudioBranding, type StudioHints, type StudioMusic, type StudioRnd, type StudioStyle,
 } from "@harness/contracts";
+import type { EarlierFarmJob } from "@harness/executors";
 
 type Param = string | number | null;
 
@@ -46,6 +47,8 @@ export interface ProductionRecord {
   own_channels: string | null;
   rnd: string | null; rnd_updated_at: string | null; rnd_updated_by: string | null;
   branding: string | null; branding_updated_at: string | null; branding_updated_by: string | null;
+  /** Migration 0029: the edit style learned from reference videos (JSON `studio.style/v1`), in use. */
+  style?: string | null; style_updated_at?: string | null; style_updated_by?: string | null;
   created_at: string; updated_at: string;
 }
 
@@ -73,9 +76,18 @@ export function productionRnd(p: ProductionRecord): StudioRnd | null {
 export function productionBranding(p: ProductionRecord): StudioBranding | null {
   return p.branding ? StudioBrandingSchema.parse(JSON.parse(p.branding)) : null;
 }
+/** The production's style as kept, a skipped one included (what the style step shows). */
+export function productionStyle(p: ProductionRecord): StudioStyle | null {
+  return p.style ? StudioStyleSchema.parse(JSON.parse(p.style)) : null;
+}
+/** The style the planning and the episodes follow: none when there is none or the step was skipped. */
+export function activeProductionStyle(p: ProductionRecord): StudioStyle | null {
+  const s = productionStyle(p);
+  return s && !s.skipped ? s : null;
+}
 
-/** Keep `rnd` / `branding` as the production's current one (`by`: a user id, or `gate:<run_id>` for an approval). */
-export function saveProductionDocument(db: StudioDb, productionId: string, kind: "rnd" | "branding", doc: StudioRnd | StudioBranding, by: string): void {
+/** Keep `rnd` / `branding` / `style` as the production's current one (`by`: a user id, or `gate:<run_id>` for an approval). */
+export function saveProductionDocument(db: StudioDb, productionId: string, kind: "rnd" | "branding" | "style", doc: StudioRnd | StudioBranding | StudioStyle, by: string): void {
   const now = new Date().toISOString();
   db.run(`UPDATE productions SET ${kind} = ?, ${kind}_updated_at = ?, ${kind}_updated_by = ?, updated_at = ? WHERE id = ?`,
     [JSON.stringify(doc), now, by, now, productionId]);
@@ -150,12 +162,13 @@ export function updateEpisodeRunId(db: StudioDb, episodeId: string, runId: strin
   db.run("UPDATE episodes SET run_id = ?, updated_at = ? WHERE id = ?", [runId, new Date().toISOString(), episodeId]);
 }
 
-/** Farm jobs submitted by the other attempts of a run's stage (`FarmExecutor.earlierJobsFor`). */
-export function earlierFarmJobs(db: StudioDb, p: { runId: string; stageKey: string; attemptId: string }): string[] {
-  return db.all<{ farm_job_id: string }>(
-    "SELECT farm_job_id FROM studio_farm_jobs WHERE run_id = ? AND stage_key = ? AND attempt_id <> ?",
+/** Farm jobs submitted by the other attempts of a run's stage, newest first (`FarmExecutor.earlierJobsFor`). */
+export function earlierFarmJobs(db: StudioDb, p: { runId: string; stageKey: string; attemptId: string }): EarlierFarmJob[] {
+  return db.all<{ farm_job_id: string; attempt_id: string; fingerprint: string | null }>(
+    `SELECT farm_job_id, attempt_id, fingerprint FROM studio_farm_jobs
+     WHERE run_id = ? AND stage_key = ? AND attempt_id <> ? ORDER BY created_at DESC, rowid DESC`,
     [p.runId, p.stageKey, p.attemptId],
-  ).map((r) => r.farm_job_id);
+  ).map((r) => ({ farmJobId: r.farm_job_id, attemptId: r.attempt_id, fingerprint: r.fingerprint }));
 }
 
 export function saveTrendReport(db: StudioDb, productionId: string, report: unknown): void {

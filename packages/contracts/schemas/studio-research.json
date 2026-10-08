@@ -28,6 +28,14 @@
             "null"
           ]
         },
+        "source": {
+          "type": "string",
+          "enum": [
+            "youtube_api",
+            "web",
+            "mixed"
+          ]
+        },
         "channels": {
           "type": "array",
           "items": {
@@ -136,6 +144,9 @@
                       "minimum": 0
                     },
                     "outlier": {
+                      "type": "boolean"
+                    },
+                    "estimated": {
                       "type": "boolean"
                     }
                   },
@@ -282,6 +293,9 @@
                       "minimum": 0
                     },
                     "outlier": {
+                      "type": "boolean"
+                    },
+                    "estimated": {
                       "type": "boolean"
                     }
                   },

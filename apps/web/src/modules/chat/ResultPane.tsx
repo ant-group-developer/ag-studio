@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { Dropdown, Popover, type MenuProps } from "antd";
 import { MoreHorizontal } from "lucide-react";
-import type { StoredTimeline } from "@harness/contracts";
+import type { StoredTimeline, StudioStyle } from "@harness/contracts";
 import type { ChatThreadView, ChatTurn, FarmNode, RenderMachine, StepDocKind } from "../../api/studio-client";
 import { RenderMachinePicker } from "../render/RenderMachinePicker";
 import { KIT_GATE, type CardOptions } from "./ChatThread";
 import { diffDoc } from "./diff-doc";
 import { isCutWorkflow, stepLabelKey, stepOf } from "./steps";
 import { DocView } from "./views/DocView";
+import { StyleEvidence } from "./views/StyleEvidence";
 import { docKindOf } from "./views/doc-specs";
 import { EpisodeOutputs } from "./views/EpisodeOutputs";
 import { canEditDoc, StepDocBody, StepDocEditor } from "./views/StepBody";
@@ -209,6 +210,7 @@ export function ResultPane({ productionId, episodeId, thread, onPrimary, onMenu,
       <>
         {scope?.scope === "failed" ? <Problems problems={thread.current?.problems ?? []} /> : null}
         <DocView kind={kind} doc={doc} previous={previous} names={folderNames(thread)} />
+        {kind === "style" ? <StyleEvidence productionId={productionId} style={doc as StudioStyle} /> : null}
         {episodeId && scope?.stageKey === KIT_GATE ? (
           <KitThumbnails productionId={productionId} episodeId={episodeId} canEdit={canApprove}
             ideas={(doc as { thumbnails?: { asset_id: string; text: string }[] }).thumbnails ?? []} />

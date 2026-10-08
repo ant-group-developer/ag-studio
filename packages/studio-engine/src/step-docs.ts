@@ -6,7 +6,7 @@
  */
 import { isTerminal, validateYoutubeKit, type StudioProblem } from "@harness/core";
 import {
-  EditPlanSchema, SeriesPlanSchema, StudioBrandingSchema, StudioRndSchema, StudioSurveySchema, TrendReportSchema, YoutubeKitSchema,
+  EditPlanSchema, SeriesPlanSchema, StudioBrandingSchema, StudioRndSchema, StudioStyleSchema, StudioSurveySchema, TrendReportSchema, YoutubeKitSchema,
   type StudioSurvey,
 } from "@harness/contracts";
 import type { z } from "zod";
@@ -20,31 +20,31 @@ import {
   assertNoEpisodeProducing, readStageDocument, resumePlanRunFrom, stagesFrom, STUDIO_GATES, StudioRunError,
 } from "./run-control.js";
 import {
-  getEpisode, getProduction, listEpisodes, productionBranding, productionRnd, saveTrendReport, type EpisodeRecord, type ProductionRecord,
+  getEpisode, getProduction, listEpisodes, productionBranding, productionRnd, productionStyle, saveTrendReport, type EpisodeRecord, type ProductionRecord,
   type StudioDb,
 } from "./studio-db.js";
 
-export const STEP_DOC_KINDS = ["trend_report", "rnd", "branding", "series_plan", "youtube_kit", "survey", "edit_plan"] as const;
+export const STEP_DOC_KINDS = ["trend_report", "rnd", "branding", "series_plan", "youtube_kit", "survey", "edit_plan", "style"] as const;
 export type StepDocKind = (typeof STEP_DOC_KINDS)[number];
 
 /** The gate each document is approved at. */
 export const STEP_DOC_GATES: Record<StepDocKind, string> = {
   trend_report: "approve-trend-report", rnd: "approve-rnd", branding: "approve-branding", series_plan: "approve-plan",
-  youtube_kit: "approve-youtube-kit", survey: "approve-survey", edit_plan: "approve-edit-plan",
+  youtube_kit: "approve-youtube-kit", survey: "approve-survey", edit_plan: "approve-edit-plan", style: "approve-style",
 };
 
 const EPISODE_KINDS: ReadonlySet<StepDocKind> = new Set(["youtube_kit", "survey", "edit_plan"]);
 const SCHEMAS: Record<StepDocKind, z.ZodTypeAny> = {
   trend_report: TrendReportSchema, rnd: StudioRndSchema, branding: StudioBrandingSchema, series_plan: SeriesPlanSchema,
-  youtube_kit: YoutubeKitSchema, survey: StudioSurveySchema, edit_plan: EditPlanSchema,
+  youtube_kit: YoutubeKitSchema, survey: StudioSurveySchema, edit_plan: EditPlanSchema, style: StudioStyleSchema,
 };
 const LABELS: Record<StepDocKind, string> = {
   trend_report: "nghiên cứu thị trường", rnd: "R&D", branding: "branding", series_plan: "kế hoạch tập",
-  youtube_kit: "YouTube kit", survey: "chọn cảnh", edit_plan: "kế hoạch dựng",
+  youtube_kit: "YouTube kit", survey: "chọn cảnh", edit_plan: "kế hoạch dựng", style: "phong cách dựng",
 };
 const EDIT_KINDS: Record<StepDocKind, HumanEditKind> = {
   trend_report: "trend_report", rnd: "rnd_edit", branding: "branding_edit", series_plan: "series_plan",
-  youtube_kit: "youtube_kit", survey: "survey", edit_plan: "edit_plan",
+  youtube_kit: "youtube_kit", survey: "survey", edit_plan: "edit_plan", style: "style_edit",
 };
 /** Stages that do no work right now: a run made only of these can be cancelled and started again. */
 const IDLE: readonly string[] = ["SUCCEEDED", "PENDING", "WAITING_HUMAN", "FAILED", "CANCELLED"];
@@ -101,6 +101,7 @@ function inUseOf(w: Where, kind: StepDocKind): unknown {
   switch (kind) {
     case "rnd": return productionRnd(w.p);
     case "branding": return productionBranding(w.p);
+    case "style": return productionStyle(w.p);
     case "trend_report": return parsed(w.p.trend_report);
     case "youtube_kit": return parsed(w.ep?.youtube ?? null);
     default: return null;
@@ -123,7 +124,7 @@ function reopenBlock(core: StudioEngineCore, db: StudioDb, w: Where, kind: StepD
 
 function inPlaceBlock(core: StudioEngineCore, w: Where, kind: StepDocKind): string | null {
   switch (kind) {
-    case "rnd": case "branding": {
+    case "rnd": case "branding": case "style": {
       if (!inUseOf(w, kind)) return "apply_pending";
       // the moment between the approval and the step that writes it in: that step would overwrite the edit
       const apply = w.runId ? core.store.listStageRuns(w.runId).find((s) => s.stage_key === `apply-${kind}`) : undefined;
@@ -211,7 +212,7 @@ export function editStepDocument(core: StudioEngineCore, db: StudioDb, p: {
       throw new StudioRunError("conflict", `${LABELS[p.kind]} đã duyệt chỉ đổi được bằng cách mở lại bước này`, { code: view.edit.inPlaceCode ?? "only_reopen" });
     }
     let warnings: StudioProblem[] = [];
-    if (p.kind === "rnd" || p.kind === "branding") {
+    if (p.kind === "rnd" || p.kind === "branding" || p.kind === "style") {
       const r = editProductionDocument(core, db, p.productionId, p.kind, doc, p.userId);
       warnings = r.warnings;
     } else if (p.kind === "trend_report") {

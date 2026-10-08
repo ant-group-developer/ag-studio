@@ -10,13 +10,18 @@
  *   production, not any episode revision. Only past `audioGraceDays`, and never while the production has a run open
  *   (a brief may have frozen the old music).
  * - Shot frames (`productions/<p>/episodes/<e>/shots/…`) of episodes that no longer exist (a series plan replaced them).
+ * - Reference videos a crashed `watch-references` left in its scratch folder (the stage deletes them itself; ADR-0001
+ *   item 175), past `REFERENCE_DOWNLOAD_HOURS`.
+ * - Frames of reference videos (`productions/<p>/style/…`) the production's style does not cite as evidence, once no
+ *   run of the production is open (an open plan run may still show the style it proposes).
  */
 import { existsSync, readdirSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { isTerminal } from "@harness/core";
 import type { StudioBucket } from "./bucket.js";
 import type { StudioEngineCore } from "./core.js";
-import type { StudioDb } from "./studio-db.js";
+import { activeProductionStyle, getProduction, type StudioDb } from "./studio-db.js";
+import { styleFrameKey } from "./style-stages.js";
 import { voicePath } from "./voice-store.js";
 
 export interface RetentionConfig {
@@ -29,7 +34,10 @@ export interface RetentionConfig {
 }
 export const DEFAULT_RETENTION: RetentionConfig = { workspaceDays: 14, voiceDays: 90, audioGraceDays: 7 };
 
-export interface CleanupReport { workspaces: number; sessions: number; voiceLines: number; audioObjects: number; shotFrames: number }
+export interface CleanupReport { workspaces: number; sessions: number; voiceLines: number; audioObjects: number; shotFrames: number; referenceDownloads: number; styleFrames: number }
+
+/** A scratch folder of reference videos older than this was left by a crash: the stage deletes its own. */
+export const REFERENCE_DOWNLOAD_HOURS = 6;
 
 const DAY_MS = 86_400_000;
 const list = (dir: string): string[] => { try { return readdirSync(dir); } catch { return []; } };
@@ -123,6 +131,34 @@ export async function sweepShotFrames(db: StudioDb, bucket: StudioBucket): Promi
   return removed;
 }
 
+/** `<root>/<run>/watch-references/<attempt>/references` folders not changed since `cutoffMs` (a crash left them). */
+export function sweepReferenceDownloads(root: string, cutoffMs: number): number {
+  let removed = 0;
+  for (const run of list(root)) {
+    const stage = join(root, run, "watch-references");
+    for (const attempt of list(stage)) {
+      const dir = join(stage, attempt, "references");
+      if (!existsSync(dir) || statSync(dir).mtimeMs >= cutoffMs) continue;
+      rmSync(dir, { recursive: true, force: true });
+      removed++;
+    }
+  }
+  return removed;
+}
+
+/** Frames of reference videos the production's style does not cite; productions with a run open are skipped. */
+export async function sweepStyleFrames(core: StudioEngineCore, db: StudioDb, bucket: StudioBucket): Promise<number> {
+  let removed = 0;
+  for (const p of db.all<{ id: string; run_id: string | null }>("SELECT id, run_id FROM productions")) {
+    if (hasOpenRun(core, db, p.id, p.run_id)) continue;
+    const style = activeProductionStyle(getProduction(db, p.id)!);
+    const keep = new Set((style?.evidence ?? []).map((e) => styleFrameKey(p.id, e.video_id, e.t)));
+    const stale = (await bucket.list(`productions/${p.id}/style/`)).map((o) => o.key).filter((k) => !keep.has(k));
+    if (stale.length) { await bucket.deleteMany(stale); removed += stale.length; }
+  }
+  return removed;
+}
+
 /** One sweep of everything above. */
 export async function sweepStudioData(
   d: { core: StudioEngineCore; db: StudioDb; bucket: StudioBucket; voiceDir?: string | undefined },
@@ -137,5 +173,7 @@ export async function sweepStudioData(
     voiceLines: d.voiceDir ? sweepVoiceStore(d.db, d.voiceDir, new Date(at(r.voiceDays)).toISOString()) : 0,
     audioObjects: await sweepProductionAudio(d.core, d.db, d.bucket, new Date(at(r.audioGraceDays))),
     shotFrames: await sweepShotFrames(d.db, d.bucket),
+    referenceDownloads: sweepReferenceDownloads(join(d.core.dataRoot, "workspaces"), o.now.getTime() - REFERENCE_DOWNLOAD_HOURS * 3_600_000),
+    styleFrames: await sweepStyleFrames(d.core, d.db, d.bucket),
   };
 }

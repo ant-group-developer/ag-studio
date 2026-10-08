@@ -136,6 +136,8 @@ export function QueuePage() {
         {me?.isAdmin ? <><h2>{t("chat.assistant.title")}</h2><AssistantNameForm /></> : null}
         <h2>{t("chat.claude.title")}</h2>
         {usage ? <ClaudeSettingsForm usage={usage} isAdmin={me?.isAdmin ?? false} /> : null}
+        <h2>{t("chat.music.title")}</h2>
+        <Link to="/music">{t("chat.music.open")}</Link>
         <h2>{t("chat.queue.farmMachines")}</h2>
         {queue?.machines?.length ? (
           <ul className="chat-doc__list chat-queue__machines">

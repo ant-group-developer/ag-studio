@@ -26,6 +26,20 @@ export const OVERLAY_TEXT_MAX: Record<OverlayKind, number> = { title: 48, callou
 
 const hexColor = z.string().regex(/^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$/);
 
+export const TEXT_LOOK_SIZES = ["s", "m", "l"] as const;
+/**
+ * A team's look for the words on screen (Studio branding `on_screen_text.look`, frozen into a shot-cut timeline and
+ * its composition): text and outline colours, a box behind titles and lower thirds (`null` = none), a size step.
+ * A composition that carries one is refused by a render worker that does not know it (the schema is strict).
+ */
+export const TextLookSchema = z.object({
+  text_color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "#RRGGBB"),
+  outline_color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "#RRGGBB"),
+  box_color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "#RRGGBB").nullable(),
+  size: z.enum(TEXT_LOOK_SIZES),
+}).strict();
+export type TextLook = z.infer<typeof TextLookSchema>;
+
 const anchorSchema = z.union([
   z.object({ line_id: z.string().regex(/^L\d{3}$/), word_index: z.number().int().min(0).optional() }).strict(),
   z.object({ edl_order: z.number().int().min(0) }).strict(),
@@ -188,6 +202,8 @@ export const CompositionSchema = z.object({
     }).strict(),
   }).strict()),
   text_events: z.array(TextEventSchema),
+  /** The team's look for the texts and subtitles (cut 1.1.0); absent = the Studio default look. */
+  text_style: TextLookSchema.optional(),
   captions: z.object({
     mode: z.enum(SUBTITLE_MODES),
     cues: z.array(CaptionCueSchema),

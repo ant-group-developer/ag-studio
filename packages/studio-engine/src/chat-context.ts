@@ -48,6 +48,8 @@ export const GATE_SOURCES: Record<string, { stage: string; skill: StudioSkill | 
   // shot-cut episode: the scene selection is edited shot by shot (its stage looked at pictures); the edit plan as a document
   "approve-survey": { stage: "source-survey", skill: "studio-survey", file: "survey.json" },
   "approve-edit-plan": { stage: "plan-edit", skill: "studio-edit-plan", file: "edit-plan.json" },
+  // series plan 3.2.0: the style is talked about as a document (its stage looked at frames; the chat reads the words)
+  "approve-style": { stage: "analyze-style", skill: "studio-style", file: "style.json" },
 };
 
 /** A scene-selection proposal as kept in the chat: the edits and the selection they give. */
@@ -269,7 +271,7 @@ function timelineContext(core: StudioEngineCore, db: StudioDb, key: ChatScopeKey
       const cutStyle = shots !== null;
       const head = [
         `Tập ${ep.idx}: ${ep.title}. Timeline hiện tại là bản ${latest.revision}. ${cutStyle
-          ? "Tập cắt theo shot: mỗi clip lấy đoạn [in, out) giây của video (out null = tới hết video), nối tiếp nhau; lời dẫn đọc từ clip neo nó (line_id). Sửa đoạn bằng trimClip, chuyển cảnh bằng setTransition, phụ đề bằng setCaptions; lời dẫn không sửa ở đây."
+          ? "Tập cắt theo shot: mỗi clip lấy đoạn [in, out) giây của video (out null = tới hết video), nối tiếp nhau; lời dẫn đọc từ clip neo nó (line_id). Sửa đoạn bằng trimClip, chuyển cảnh bằng setTransition, phụ đề bằng setCaptions, tắt tiếng riêng một clip bằng setClipMuted (muted: true trong timeline); lời dẫn không sửa ở đây."
           : "Clip ghép nguyên video, nối tiếp nhau, không cắt."}`,
         ...(() => { const g = guidesFor(db, p.team_id, "studio-timeline"); return g.length ? ["", ...teamGuidesSection(g)] : []; })(),
         "", "# Dữ liệu vào",
@@ -278,7 +280,7 @@ function timelineContext(core: StudioEngineCore, db: StudioDb, key: ChatScopeKey
         JSON.stringify({
           clips: laid.clips.map((c, i) => ({
             index: i, clip_id: c.clip_id, asset_id: c.asset_id, start: c.start, end: c.end, section_title: c.section_title,
-            ...(cutStyle ? { in: c.in, out: c.out, shot_id: c.shot_id, line_id: c.line_id, transition_out: c.transition_out } : {}),
+            ...(cutStyle ? { in: c.in, out: c.out, shot_id: c.shot_id, line_id: c.line_id, transition_out: c.transition_out, ...(c.muted ? { muted: true } : {}) } : {}),
           })),
           texts: latest.data.texts, music: latest.data.music, source_audio: latest.data.source_audio, duration: laid.duration,
           ...(shots ? {

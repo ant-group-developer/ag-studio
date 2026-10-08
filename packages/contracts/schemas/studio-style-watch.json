@@ -1,0 +1,262 @@
+{
+  "$ref": "#/definitions/studio-style-watch",
+  "definitions": {
+    "studio-style-watch": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.style-watch/v1"
+        },
+        "production_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "skipped_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "measured": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "videos": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "shots": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "cuts_per_minute": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "shot_seconds": {
+                  "type": "object",
+                  "properties": {
+                    "p25": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "median": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "p75": {
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "p25",
+                    "median",
+                    "p75"
+                  ],
+                  "additionalProperties": false
+                },
+                "first_shot_s": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "videos",
+                "shots",
+                "cuts_per_minute",
+                "shot_seconds",
+                "first_shot_s"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "videos": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string",
+                "pattern": "^R\\d$"
+              },
+              "video_id": {
+                "type": "string",
+                "pattern": "^[\\w-]{11}$"
+              },
+              "title": {
+                "type": "string"
+              },
+              "duration_s": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "measured": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "videos": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "shots": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "cuts_per_minute": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "shot_seconds": {
+                        "type": "object",
+                        "properties": {
+                          "p25": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "median": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "p75": {
+                            "type": "number",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "p25",
+                          "median",
+                          "p75"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "first_shot_s": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "videos",
+                      "shots",
+                      "cuts_per_minute",
+                      "shot_seconds",
+                      "first_shot_s"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "cuts": {
+                "type": "array",
+                "items": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "frames": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "t": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "file": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "scene",
+                        "interval",
+                        "opening"
+                      ]
+                    },
+                    "key": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "t",
+                    "file",
+                    "kind",
+                    "key"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "sheets": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "file": {
+                      "type": "string"
+                    },
+                    "frames": {
+                      "type": "array",
+                      "items": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    }
+                  },
+                  "required": [
+                    "file",
+                    "frames"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "label",
+              "video_id",
+              "title",
+              "duration_s",
+              "error",
+              "measured",
+              "cuts",
+              "frames",
+              "sheets"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "production_id",
+        "skipped_reason",
+        "measured",
+        "videos"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
