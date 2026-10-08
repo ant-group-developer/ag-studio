@@ -1152,3 +1152,18 @@ Các mục dưới đây ghi lại quyết định của nhánh AG Studio, viế
     báo cáo xu hướng được dặn không coi là số thật. Nội dung web là dữ liệu: đầu ra của Claude chỉ là link qua
     `validateWebFinds` (chỉ link YouTube, chỉ chỗ được hỏi), không gì được thực thi. Báo cáo xu hướng bị bỏ qua giờ ghi lý
     do (khoá thiếu hay lỗi từng kênh/từ khoá).
+178. **Tập cắt theo shot 1.1.0: nội dung đúng sự thật, tiếng từng clip, kiểu chữ của nhóm, nhạc theo mood (2026-10-08).**
+    Bản render "Ninh Bình Chậm #1" có tiêu đề sai (tranh lúa treo trong toa thành "ngắm lúa vàng"), loa thông báo tiếng
+    Anh trên tàu, câu Whisper bịa ("Hãy đăng ký kênh…", điểm từ ~0,01), chữ hộp đen đặc thay vì branding, không nhạc.
+    `ag-studio-episode-cut@1.1.0` giữ khoá stage/gate của 1.0.0 (mục 158) và thêm: `clean-transcript` bỏ segment có
+    điểm từ trung bình < 0,25 hoặc, khi không có điểm, câu outro YouTube quen của Whisper (bản farm vẫn là output của
+    `transcribe`); kit đọc bản chọn cảnh của các shot trong timeline (survey thắng tiêu đề AI của ag-go) và thumbnail
+    phải có clip trong timeline; kế hoạch dựng ghi `source_audio` từng shot, fit v2 đặt `muted` lên clip, composition
+    cho segment đó `has_audio: false` (render cũ vẫn đúng; Premiere cần worker ≥ 0.8.0, Studio gửi `audio:
+    per_segment` để worker cũ từ chối thay vì giữ tiếng); `branding.on_screen_text.look` (màu chữ/viền/hộp, cỡ; tương
+    phản ≥ 3:1) đóng băng vào timeline `text_style` và composition — libass tô hộp BorderStyle 3 bằng OutlineColour nên
+    hộp lấy màu hộp; composition có `text_style` chỉ worker mới nhận (schema strict là cổng phiên bản); kho nhạc chung
+    (`music_track`, file `library/music/`, admin tải lên, gắn mood) cho tập không có nhạc riêng: mood của kế hoạch dựng →
+    branding → style, so không phân biệt hoa thường và dấu. Phong cách dựng (mục 175) tới tập qua `studio-cut-intake-v2`;
+    lệch độ dài shot là follow-up `style_shot_length`. 1.1.0 chỉ thành bản đang dùng sau khi mọi node farm chạy
+    ag-render-worker ≥ 0.8.0.

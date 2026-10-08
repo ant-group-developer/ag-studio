@@ -1,0 +1,204 @@
+schema_version: harness.workflow/v1
+id: ag-studio-episode-cut
+version: 1.1.0
+defaults: {}
+# AG Studio shot-cut episode (spec local-chat §3.3, plan phase 5). One run per episode the plan cuts shot by shot.
+#   episode-intake -> fetch-proxies -> media-index -> transcribe (farm) + watch-source -> source-survey (Claude, files)
+#   -> [approve-survey] -> plan-edit (Claude) -> [approve-edit-plan] -> tts (farm) -> fit-timeline
+#   -> [approve-timeline] -> youtube-kit -> [approve-youtube-kit] -> freeze-timeline -> render-final (farm)
+#   -> thumbnails -> export
+# The 720p proxies (ag-go resolve purpose=preview) are only looked at: shots, speech, contact sheets. The scene selection
+# opens the contact sheets (files mode, its session kept for the chat); the edit plan cuts approved usable shots; the
+# farm reads the narration lines not yet in the voice store; fit-timeline fits the picture to the voice and writes the
+# timeline v4 (a new revision). From approve-timeline on the keys and scripts are those of ag-studio-episode@1.3.0, so
+# the render machine, "Render lại" and the export work alike; the final render reads the original files.
+# Every stage reads each type from one upstream stage only (the approved survey, not the first one).
+# 1.1.0 (plan 2026-10-08 phase 4–5), the same keys and gates as 1.0.0 (ADR-0001 item 158):
+#   - episode-intake (studio-cut-intake-v2) passes the production's edit style on (style.json, when it has one);
+#     the edit plan follows it (style_shot_length), the fit reads its music mood;
+#   - clean-transcript drops what Whisper made up (low word scores, YouTube outros) before the survey, the edit plan
+#     and the fit read the transcription; the farm's own stays transcribe's output;
+#   - youtube-kit also reads the approved scene selection (what the cut's shots really show) and its thumbnails must
+#     have a clip in the approved timeline;
+#   - fit-timeline (studio-cut-fit-v2): the plan's muted shots become muted clips, the branding's text look is frozen
+#     into the timeline, an episode with no music of its own gets a library track by mood;
+#   - render-final (studio-episode-render-v5) carries the text look: only a render worker that draws it (0.8.0 on)
+#     takes the job.
+# Released: never edit this file; make a new version.
+stages:
+  - key: episode-intake
+    executor: { type: script, script: studio-cut-intake-v2 }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: studio_brief, mime_type: application/json, name: brief.json }
+      - { type: studio_episode, mime_type: application/json, name: episode.json }
+      - { type: studio_branding, mime_type: application/json, name: branding.json, optional: true }
+      - { type: trend_report, mime_type: application/json, name: trend-report.json }
+      - { type: cut_sources, mime_type: application/json, name: sources.json }
+      - { type: studio_style, mime_type: application/json, name: style.json, optional: true }
+
+  - key: fetch-proxies
+    executor: { type: script, script: studio-cut-proxies }
+    depends_on: [episode-intake]
+    requires_resources: [cpu]
+    retry: { max_attempts: 3, backoff_seconds: [30, 120], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: proxy_set, mime_type: application/x-directory, kind: directory, name: proxies }
+
+  - key: media-index
+    executor: { type: script, script: studio-media-index }
+    depends_on: [fetch-proxies, episode-intake]
+    requires_resources: [cpu]
+    retry: { max_attempts: 2, backoff_seconds: [30], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: shots, mime_type: application/json, name: shots.json }
+
+  - key: transcribe
+    executor: { type: farm, job: studio.transcribe }
+    config: { payload_builder: studio-cut-transcribe }
+    depends_on: [media-index, fetch-proxies, episode-intake]
+    requires_resources: [farm]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: transcript, mime_type: application/json, name: transcribe.json }
+
+  - key: clean-transcript
+    executor: { type: script, script: studio-cut-clean-transcript }
+    depends_on: [transcribe]
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: transcript, mime_type: application/json, name: transcribe.json }
+      - { type: transcript_clean_report, mime_type: application/json, name: clean-report.json }
+
+  - key: watch-source
+    executor: { type: script, script: studio-watch-source }
+    depends_on: [media-index, fetch-proxies, episode-intake]
+    requires_resources: [cpu]
+    retry: { max_attempts: 2, backoff_seconds: [30], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: watch, mime_type: application/x-directory, kind: directory, name: watch }
+
+  - key: source-survey
+    executor:
+      type: agent
+      skill: studio-source-survey
+      brief: "Xem contact sheet của mọi video trong thư mục watch, chấm điểm từng shot (0–5), đánh dấu dùng được hay bị loại kèm lý do, để bước kế hoạch dựng chỉ chọn shot tốt cho tập này."
+    depends_on: [watch-source, media-index, clean-transcript, episode-intake]
+    requires_resources: [claude]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, studio-survey-valid]
+    outputs:
+      - { type: survey_index, mime_type: application/json, name: survey.json }
+
+  - key: approve-survey
+    executor: { type: gate, brief: "Người dùng xem bản chọn cảnh, góp ý qua chat (giữ hay loại shot), bấm Duyệt để nộp." }
+    depends_on: [source-survey, media-index]
+    required_checks: [schema-valid, output-exists, checksum-match, studio-survey-valid]
+    outputs:
+      - { type: survey_index, mime_type: application/json, name: survey.json }
+
+  - key: plan-edit
+    executor:
+      type: agent
+      skill: studio-edit-plan
+      brief: "Từ bản chọn cảnh đã duyệt, viết kế hoạch dựng cho tập: các đoạn shot theo thứ tự, lời dẫn neo trên shot, chữ trên hình, đúng thời lượng mục tiêu."
+    depends_on: [approve-survey, media-index, clean-transcript, episode-intake]
+    requires_resources: [claude]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, edit-plan-valid]
+    outputs:
+      - { type: studio_edit_plan, mime_type: application/json, name: edit-plan.json }
+
+  - key: approve-edit-plan
+    executor: { type: gate, brief: "Người dùng xem kế hoạch dựng, góp ý qua chat, bấm Duyệt để đọc lời dẫn và tạo timeline." }
+    depends_on: [plan-edit, approve-survey, media-index]
+    required_checks: [schema-valid, output-exists, checksum-match, edit-plan-valid]
+    outputs:
+      - { type: studio_edit_plan, mime_type: application/json, name: edit-plan.json }
+
+  - key: tts
+    executor: { type: farm, job: studio.tts }
+    config: { payload_builder: studio-cut-tts }
+    depends_on: [approve-edit-plan, episode-intake]
+    requires_resources: [farm]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match]
+    outputs:
+      - { type: voice_manifest, mime_type: application/json, name: tts.json }
+      - { type: voice_set, mime_type: application/x-directory, kind: directory, name: tts, optional: true }
+
+  - key: fit-timeline
+    executor: { type: script, script: studio-cut-fit-v2 }
+    depends_on: [tts, approve-edit-plan, approve-survey, media-index, clean-transcript, episode-intake]
+    retry: { max_attempts: 2, backoff_seconds: [30], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, timeline-schema-valid]
+    outputs:
+      - { type: timeline_v4, mime_type: application/json, name: timeline.json }
+      - { type: fit_report, mime_type: application/json, name: fit-report.json }
+
+  - key: approve-timeline
+    executor: { type: gate, brief: "Người dùng xem timeline đã khớp lời dẫn (xem trước 720p), sửa qua chat hoặc editor, bấm Duyệt để nộp bản mới nhất." }
+    depends_on: [fit-timeline, episode-intake]
+    required_checks: [schema-valid, output-exists, checksum-match, timeline-valid]
+    outputs:
+      - { type: timeline_v4, mime_type: application/json, name: timeline.json }
+
+  - key: youtube-kit
+    executor:
+      type: agent
+      skill: studio-youtube-kit
+      brief: "Dựa trên brief, branding của series (nếu có), báo cáo xu hướng, episode, bản chọn cảnh và timeline đã duyệt, tạo youtube-kit gồm 3 tiêu đề, mô tả, tags, hashtags và 3 ý tưởng thumbnail — đúng với hình thật của tập (bản chọn cảnh), theo đúng branding."
+    depends_on: [approve-timeline, approve-survey, episode-intake]
+    requires_resources: [claude]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, youtube-kit-valid]
+    outputs:
+      - { type: youtube_kit, mime_type: application/json, name: youtube-kit.json }
+
+  - key: approve-youtube-kit
+    executor: { type: gate, brief: "Người dùng xem YouTube kit, góp ý qua chat, bấm Duyệt để nộp." }
+    depends_on: [youtube-kit, episode-intake]
+    required_checks: [schema-valid, output-exists, checksum-match, youtube-kit-valid]
+    outputs:
+      - { type: youtube_kit, mime_type: application/json, name: youtube-kit.json }
+
+  - key: freeze-timeline
+    executor: { type: script, script: studio-freeze-timeline-v2 }
+    depends_on: [approve-youtube-kit, approve-timeline, episode-intake]
+    required_checks: [schema-valid, output-exists, checksum-match, timeline-valid]
+    outputs:
+      - { type: timeline_v4, mime_type: application/json, name: timeline.json }
+
+  - key: render-final
+    executor: { type: farm, job: studio.render_final }
+    config: { payload_builder: studio-episode-render-v5 }
+    depends_on: [freeze-timeline, episode-intake, approve-youtube-kit]
+    requires_resources: [farm]
+    retry: { max_attempts: 2, backoff_seconds: [60], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, studio-render-valid]
+    outputs:
+      - { type: final_video, mime_type: video/mp4, name: final.mp4 }
+      - { type: render_manifest, mime_type: application/json, name: render.json }
+
+  - key: thumbnails
+    executor: { type: script, script: studio-episode-thumbnails }
+    depends_on: [render-final, freeze-timeline, approve-youtube-kit, episode-intake]
+    requires_resources: [cpu]
+    retry: { max_attempts: 2, backoff_seconds: [30], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, thumbnails-valid]
+    outputs:
+      - { type: thumbnail_set, mime_type: application/x-directory, kind: directory, name: thumbnails }
+      - { type: studio_thumbnails, mime_type: application/json, name: thumbnails.json }
+
+  - key: export
+    executor: { type: script, script: studio-episode-export-v2 }
+    depends_on: [thumbnails, render-final, freeze-timeline, approve-youtube-kit, episode-intake]
+    retry: { max_attempts: 3, backoff_seconds: [30, 120], retry_on: [transient, abandoned] }
+    required_checks: [schema-valid, output-exists, checksum-match, export-valid]
+    outputs:
+      - { type: studio_export, mime_type: application/json, name: export.json }
+      - { type: studio_youtube, mime_type: application/json, name: youtube.json }

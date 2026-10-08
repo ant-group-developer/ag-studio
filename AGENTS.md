@@ -116,6 +116,15 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
   `style.json` cho `plan-episodes`. `approve-style` có thể chờ cùng lúc với `approve-trend-report` hay
   `approve-rnd`: `waiting_gate` và chat lấy gate của stage đứng trước. Test đi qua gate của plan bằng
   `approvePlanGatesUntil`/`approvePlanGatesLive` (`packages/studio-engine/test/helpers.ts`), không viết cứng thứ tự.
+- **Tập cắt `ag-studio-episode-cut@1.1.0`** (đã có, **chưa phải bản đang dùng**; ADR-0001 mục 178): cùng khoá stage/gate
+  với 1.0.0, thêm `clean-transcript` (`studio-cut-clean-transcript`: bỏ câu Whisper bịa) giữa `transcribe` và các bước
+  đọc lời nói; `episode-intake` = `studio-cut-intake-v2` (chuyển `style.json` của production); `youtube-kit` đọc thêm
+  `approve-survey`; `fit-timeline` = `studio-cut-fit-v2` (clip `muted` theo `source_audio` của kế hoạch dựng,
+  `text_style` từ `branding.on_screen_text.look`, nhạc từ kho `/studio/music` theo mood khi production không có nhạc);
+  `render-final` = `studio-episode-render-v5` (composition mang `text_style`). **Chỉ chuyển
+  `STUDIO_WORKFLOWS.episodeCut` sang 1.1.0 sau khi mọi node farm chạy ag-render-worker ≥ 0.8.0** (worker cũ từ chối
+  composition có `text_style` và payload Premiere có `audio: per_segment`, có báo lỗi). Test chạy 1.1.0 bằng
+  `startEpisodeRun(…, { workflow })` (`episode-cut-v11.test.ts`).
 - Thư mục workflow đã phát hành **không bao giờ sửa**: làm phiên bản mới. Script/payload builder đổi đầu ra thì đặt
   **tên mới** (`studio-episode-export-v2`…) và giữ tên cũ cho run cũ; `workflow-wiring.test.ts` kiểm mọi phiên bản.
   Một stage chỉ nhận artifact của stage nó phụ thuộc **trực tiếp**, và mỗi kiểu chỉ đến từ một nguồn.
