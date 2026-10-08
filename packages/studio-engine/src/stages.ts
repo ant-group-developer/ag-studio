@@ -11,7 +11,7 @@ import { join } from "node:path";
 import JSZip from "yazl";
 import {
   HarnessError, MAX_RESEARCH_CHANNELS, SeriesPlanSchema, SpawnedEpisodesSchema, StudioBrandingSchema, StudioBriefSchema, StudioCatalogSchema,
-  StudioEpisodeSchema, StudioExportSchema, StudioResearchSchema, StudioRndSchema, StudioSeedSchema, StudioYoutubeSchema, StoredTimelineSchema,
+  StudioEpisodeSchema, StudioExportSchema, StudioResearchSchema, StudioRndSchema, StudioSeedSchema, StudioWebFindsSchema, StudioYoutubeSchema, StoredTimelineSchema,
   TrendReportSchema, parseStoredYoutubeKit,
   type AssetHints, type ChannelRef, type ExecutorContext, type StageRequest, type StudioBrief, type StudioCatalog, type StudioExport,
   type StudioEpisode, type TrendReport, StudioThumbnailsSchema, THUMBNAIL_SIZES, type StudioThumbnails, type StoredTimeline,
@@ -25,6 +25,7 @@ import type { InProcessStage } from "@harness/executors";
 import { productionKey, type StudioBucket } from "./bucket.js";
 import { emptyResearch, type ResearchSource } from "./youtube-research.js";
 import type { YtDlp } from "./yt-dlp.js";
+import { mergeResearch } from "./research-merge.js";
 import { episodeWorkflowFor, episodeWorkflowForPlan } from "./run-control.js";
 import type { ThumbnailRenderer } from "./thumbnail-render.js";
 import type { CutMediaDeps } from "./cut-stages.js";
@@ -305,6 +306,23 @@ export function studioStages(d: StudioStageDeps): Record<string, InProcessStage>
       ctx.logger.info("research done", {
         quota_units: research.quota_units, skipped: research.skipped_reason,
         channel_errors: research.channels.filter((c) => c.error).length, keyword_errors: research.keywords.filter((k) => k.error).length,
+      });
+    },
+
+    // plan 3.2.0: the API's research, with what it could not answer filled from the web (links Claude found, yt-dlp's numbers)
+    "studio-research-merge": async (request, ctx) => {
+      const q = readPlanInputs(request, ctx.workspaceDir);
+      const api = readInput(request, ctx.workspaceDir, STUDIO_TYPES.researchApi, (v) => StudioResearchSchema.parse(v));
+      const finds = readInput(request, ctx.workspaceDir, STUDIO_TYPES.webFinds, (v) => StudioWebFindsSchema.parse(v));
+      const research = await mergeResearch({
+        api, finds, query: { channels: q.channels, keywords: q.keywords }, ytdlp: d.ytdlp ?? null, now: new Date(ctx.clock.now()),
+        ...(ctx.signal ? { signal: ctx.signal } : {}),
+      });
+      StudioResearchSchema.parse(research);
+      writeOutput(ctx, "research.json", toBuffer(research));
+      ctx.logger.info("research merged", {
+        source: research.source ?? "youtube_api", skipped: research.skipped_reason, ytdlp: !!d.ytdlp,
+        estimated: [...research.channels.flatMap((c) => c.videos), ...research.keywords.flatMap((k) => k.videos)].filter((v) => v.estimated).length,
       });
     },
 
