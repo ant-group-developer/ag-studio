@@ -56,6 +56,29 @@ kiểu đi bộ du lịch, có lời dẫn"). Đầu tập có dòng "cắt theo
   đó; tập đã có timeline thì sửa nhạc trong timeline.
 - Tập ghép nguyên video không có các ô cắt đầu/cuối, chuyển cảnh, phụ đề.
 
+**Tập cắt 1.1.0** (`ag-studio-episode-cut@1.1.0`, ADR-0001 mục 178; chỉ dùng sau khi chuyển bản, xem dưới):
+
+- Đầu bước footage có thêm **lọc lời nói**: câu Whisper bịa (điểm từ thấp, "đăng ký kênh"…) bị bỏ trước khi Claude chọn
+  cảnh; xem câu đã bỏ ở `clean-report.json` của bước `clean-transcript` (`⋯ → Nhật ký`).
+- Kế hoạch dựng theo **phong cách dựng** đã duyệt (nhịp cắt, độ dài shot, mở đầu, chuyển cảnh) và ghi shot nào **tắt
+  tiếng** (loa thông báo, nhạc quán, người lạ). Ở timeline, clip đã tắt tiếng có công tắc "Tiếng của clip" (editor),
+  hoặc chat "clip 3 có loa thông báo, tắt tiếng đi".
+- Chữ trên video theo **kiểu chữ của branding** (`Kiểu chữ trên video`: màu chữ, viền, hộp, cỡ) — sửa ở branding rồi
+  chạy lại từ kế hoạch dựng để tập đã có timeline nhận kiểu mới.
+- Tập không có nhạc riêng được **chọn một bài trong kho nhạc** theo mood (kế hoạch dựng → branding → phong cách); đổi bài
+  trong editor (ô "Lọc theo mood", "Bài nhạc").
+- YouTube kit đọc bản chọn cảnh: tiêu đề không nói điều hình không có; thumbnail chỉ lấy video còn trong timeline.
+
+**Chuyển tập cắt mới sang 1.1.0** (một lần, người vận hành): (1) cài ag-render-worker **0.8.0** lên **mọi** node farm
+(`release/ag-render-worker-0.8.0.zip`, `node scripts/release.mjs` trong repo đó); node cũ từ chối job có kiểu chữ và
+xuất Premiere có clip tắt tiếng (job hỏng có báo lỗi, không render sai). (2) Đổi `STUDIO_WORKFLOWS.episodeCut`
+(`packages/studio-engine/src/core.ts`) sang `ag-studio-episode-cut@1.1.0`, build, khởi động lại worker. Tập đang chạy
+trên 1.0.0 vẫn chạy và render như cũ.
+
+**Kho nhạc của nhóm** (`/music`, link ở trang Hàng đợi): mọi người nghe thử; Studio admin tải bài lên (tên, mood, nguồn
+gốc, có lặp liền mạch không), sửa mood, ngừng dùng hoặc dùng lại. Bài ngừng dùng không được chọn cho tập mới nhưng tập
+đã dùng vẫn render được. Chỉ tải bài nhóm có quyền dùng (tự làm, có giấy phép, miễn phí bản quyền) và ghi rõ nguồn.
+
 "Duyệt" luôn là nút; gõ "ok" trong chat chỉ làm Claude hiện thẻ xác nhận. Production bắt đầu trên màn cũ
 (`series-plan@1.0.0`/`@2.0.0`) vẫn sinh tập 1.2.0 không gate và chạy như trước.
 
@@ -95,6 +118,10 @@ kiểu đi bộ du lịch, có lời dẫn"). Đầu tập có dòng "cắt theo
 | Muốn làm lại từ R&D | | Màn cũ: "Chạy lại từ bước này" ở `rnd` hoặc `approve-rnd` (`resumeRunFrom`) |
 | Gate từ chối tài liệu | 422 kèm danh sách vấn đề | Sửa đúng các mục được liệt kê (chat hoặc Sửa tay) rồi duyệt lại |
 | Huỷ | | Nút huỷ run ở màn cũ; stage đang chạy đi qua `CANCEL_REQUESTED` rồi `CANCELLED` |
+| Render (tập 1.1.0) hỏng "Unrecognized key text_style" hoặc Premiere hỏng vì `audio` | Lỗi job farm ở `render-final` / xuất Premiere | Node farm còn chạy ag-render-worker cũ: cài 0.8.0 lên node đó rồi "Render lại" |
+| Branding bị trả lại `text_look_no_contrast` | 422 khi duyệt branding | Chữ quá giống màu hộp (hoặc viền): chọn màu tương phản hơn (≥ 3:1) |
+| Kế hoạch dựng hỏng `style_shot_length` | Bước `plan-edit` cần xử lý | Footage không cho độ dài shot của phong cách: sửa phong cách (bước Phong cách dựng, sửa tay) rồi chạy lại, hoặc chat cho Claude cách cắt |
+| Tập không có nhạc dù kho có bài | Timeline không có nhạc | Không bài nào trong kho có mood của kế hoạch dựng/branding/phong cách: thêm mood cho bài ở `/music`, hoặc chọn bài trong editor |
 
 Mọi lượt gọi Claude (của bước và của chat, `source = claude-chat`) và mọi lần người duyệt đều xem được ở
 `⋯ → Nhật ký Claude`.
