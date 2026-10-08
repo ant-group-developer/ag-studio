@@ -156,6 +156,7 @@ Không chạy song song với chế độ trực tiếp: hai bên dùng chung c�
 | Hiện tượng | Nguyên nhân hay gặp | Cách xử lý |
 |---|---|---|
 | Studio API không khởi động, lỗi zod về biến môi trường | `.env` thiếu khoá (Auth0, Account, ag-go, farm, R2 đều bắt buộc) | So `apps/api/.env` với `.env.example` |
+| Báo cáo xu hướng ghi "Chưa cấu hình YOUTUBE_API_KEY cho Studio worker"; log worker `"youtube_research":false` | Khoá chỉ nằm ở `.env` gốc (bộ Docker); worker chạy trực tiếp đọc `apps/api/.env` | Thêm `YOUTUBE_API_KEY` vào `apps/api/.env`, bật lại worker, rồi chạy lại series từ bước `research` (kết quả "bỏ qua" cũ không tự làm lại) |
 | Worker thoát ngay với `STUDIO_CLAUDE_MAX_CONCURRENT must be…` | Giá trị không phải số nguyên 1–100 | Sửa hoặc bỏ khoá (mặc định 20) |
 | Đăng nhập Auth0 báo callback không hợp lệ | Web không chạy ở `localhost:3100` hoặc tenant chưa cho phép | Chạy web đúng cổng 3100 |
 | Cây folder trống, lỗi CORS khi web gọi ag-go | `CORS_EXTRA_ORIGINS` của ag-go thiếu `http://localhost:3100` | Sửa `ag-go-api/.env`, bật lại ag-go-api |
