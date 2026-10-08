@@ -91,6 +91,8 @@ export function timelineToComposition(t: AnyTimeline): Composition {
   const hasAudio = !t.source_audio.muted;
   const v4 = isTimelineV4(t) ? t : null;
   const spoken = narrationTimeline(t, layout);
+  // the footage's own speech is the episode's voice: played as it is, not lowered like background sound
+  const voice = spoken.voice === "tts" ? "tts" : v4?.narration.voice === "original" ? "original" : "none";
   const transitions = resolveTransitions(layout);
   const warnings: string[] = [];
 
@@ -137,7 +139,7 @@ export function timelineToComposition(t: AnyTimeline): Composition {
   return {
     schema_version: "harness.composition/v1",
     output: { width: t.canvas.width, height: t.canvas.height, fps: t.fps, codec: "h264" },
-    voice: spoken.voice,
+    voice,
     language: t.language,
     total_seconds: layout.duration,
     request_id: `req_${stableUlid(`production:${t.production_id}`)}`,

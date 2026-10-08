@@ -127,4 +127,15 @@ describe("timelineToComposition on v4", () => {
     expect(c.captions).toEqual({ mode: "none", cues: [] });
     expect(c.music?.duck.windows).toEqual([]);
   });
+
+  it("the footage's own speech (narration original) plays at its own level, not lowered as background", () => {
+    const t = cut();
+    t.narration = { voice: "original", lead_seconds: 0.3, lines: [] };
+    t.clips = t.clips.map((c) => ({ ...c, line_id: null }));
+    const c = timelineToComposition(t);
+    expect(c.voice).toBe("original");
+    expect(c.narration).toEqual([]);
+    expect(c.segments.every((s) => s.has_audio)).toBe(true);
+    expect(CompositionSchema.parse(c).voice).toBe("original");
+  });
 });
