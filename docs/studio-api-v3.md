@@ -26,7 +26,8 @@ enabled skills that apply to its step, read when the call is made (`teamGuidesFo
 section before `# Dữ liệu vào`, each one in `<team_guide name="…" purpose="…">…</team_guide>`.
 
 ```ts
-type TeamSkillStep = 'trend-report' | 'rnd' | 'branding' | 'plan-episodes' | 'youtube-kit';
+type TeamSkillStep = 'intake' | 'web-research' | 'trend-report' | 'style' | 'rnd' | 'branding' | 'plan-episodes'
+  | 'source-survey' | 'edit-plan' | 'timeline' | 'youtube-kit';
 interface TeamSkill {
   id: string; teamId: string; name: string; purpose: string;
   appliesTo: TeamSkillStep[];      // [] = every step
@@ -58,7 +59,9 @@ interface Production {
   keywords: string[];
   episodeTargetSeconds: number | null; maxEpisodes: number | null;   // null = the R&D proposes it
   hasRnd: boolean; hasBranding: boolean;   // an approved R&D / branding is in use
-  waitingGate: 'approve-rnd' | 'approve-branding' | 'approve-plan' | null;
+  hasStyle: boolean;              // plan 3.2.0: an edit style is kept (a skipped one counts)
+  planWorkflow: string | null;    // the plan run's release ('ag-studio-series-plan@3.2.0'…); 3.2.0 on has the style step
+  waitingGate: 'approve-trend-report' | 'approve-style' | 'approve-rnd' | 'approve-branding' | 'approve-plan' | null;
   aspect: '16:9' | '9:16'; language: string;
   music: { track: string; gainDb: number; ducking: boolean } | null;
   status: ProductionStatus;       // derived, see below
@@ -68,7 +71,7 @@ interface Production {
 }
 ```
 Status: `archived` if archived; `draft` without plan run; `planning` while the plan run is active and not waiting
-at a gate; `waiting_approval` when approve-rnd, approve-branding or approve-plan waits; `producing` when some episode is producing; `failed`
+at a gate; `waiting_approval` when approve-trend-report, approve-style, approve-rnd, approve-branding or approve-plan waits; `producing` when some episode is producing; `failed`
 when the plan run failed or an episode failed and none is producing; `done` when every episode is ready.
 
 - `GET /productions?page&pageSize&sortBy(title|updatedAt|createdAt|status)&sortOrder&q&teamId&status` -> `Paged<Production>`
@@ -88,6 +91,12 @@ when the plan run failed or an episode failed and none is producing; `done` when
   `warnings: {code, message}[]`: an edit after approval, used by the AI steps from then on ("Lập lại kế hoạch tập"
   takes it). 409 `not_approved_yet` before the first approval, `gate_waiting` while that gate waits, `apply_pending`
   while the approved one is being applied; 422 `{problems}` when the check fails
+- Plan 3.2.0: `GET /productions/:id/style` (viewer), `PUT /productions/:id/style` (producer) body `{document:
+  StudioStyle}` — the edit style learned from the reference videos, same answers as rnd/branding (the check does not
+  read the frames again). `GET /productions/:id/style/frames?at=<video id>@<seconds>,…` (viewer, at most 12) ->
+  `{frames: {video_id, t, url}[]}`: short-lived URLs of the frames the style cites as evidence (frames of the YouTube
+  reference videos, kept under the production on the bucket; the videos themselves are deleted when measured). 422
+  `bad_frame` for anything that is not `<11-char id>@<t>`.
 - `GET /productions/:id/access` (as today)
 - `GET /productions/:id/catalog` -> `StudioCatalog` of the plan run (404 before the catalog stage ran)
 - `GET /productions/:id/assets/:assetId/media` -> ag-go `FootageAssetMedia` for the caller:
@@ -95,14 +104,17 @@ when the plan run failed or an episode failed and none is producing; `done` when
 
 ## Plan run (`/productions/:id/run`)
 
-- `POST` (producer) -> `{runId}` starts the plan run (`ag-studio-series-plan@3.0.0`: research -> trend report ->
-  approve-trend-report -> R&D -> approve-rnd -> branding -> approve-branding -> brief -> episode plan -> approve-plan -> episodes). Needs a
-  footage folder and a channel or keyword. 409 `episode_producing` while an episode is producing (re-plan refused),
+- `POST` (producer) -> `{runId}` starts the plan run (`ag-studio-series-plan@3.2.0`: research (YouTube API, the
+  web for what it misses) -> trend report -> approve-trend-report -> R&D -> approve-rnd -> branding -> approve-branding
+  -> brief -> episode plan -> approve-plan -> episodes; beside them, from the research: reference videos -> style ->
+  approve-style, which branding and the brief wait for). Needs a footage folder and a channel or keyword. 409 `episode_producing` while an episode is producing (re-plan refused),
   409 when a plan run is active, 422 with a Vietnamese `message` when the production is incomplete.
 - `GET` -> `RunView` (404 `no_run` before the first run)
 - `GET documents/:stage/:name` -> the JSON document (e.g. `research/research.json`, `trend-report/trend-report.json`,
-  `catalog/catalog.json`, `plan-episodes/series-plan.json`, `approve-plan/series-plan.json`)
-- `POST gates/approve-trend-report` body `{document: TrendReport}` (plan 3.0.0), `POST gates/approve-rnd` body `{document: StudioRnd}`, `POST gates/approve-branding` body `{document:
+  `catalog/catalog.json`, `plan-episodes/series-plan.json`, `approve-plan/series-plan.json`; plan 3.2.0 also
+  `research-api/research.json`, `research-web/web-finds.json`, `pick-references/references.json`, `analyze-style/style.json`)
+- `POST gates/approve-trend-report` body `{document: TrendReport}` (plan 3.0.0), `POST gates/approve-style` body
+  `{document: StudioStyle}` (plan 3.2.0), `POST gates/approve-rnd` body `{document: StudioRnd}`, `POST gates/approve-branding` body `{document:
   StudioBranding}`, `POST gates/approve-plan` body `{document: SeriesPlan}` (producer; admins too) ->
   `{accepted: true}`; refused -> 422 `{code: 'gate_rejected', failed: [{check_id, evidence: {problems: {code,
   message}[]}}]}`. What Claude proposed and what was approved go to the dataset (`human_edits` rnd / branding /
@@ -193,7 +205,7 @@ interface EpisodeRender {
 ## Step documents (`/productions/:id/steps/:kind`, `/productions/:id/episodes/:episodeId/steps/:kind`)
 
 A step's document read again after its approval and edited (plan 2026-10-07 step history). `kind`: series
-`trend_report | rnd | branding | series_plan`, episode `youtube_kit | survey | edit_plan` (the other side: 422
+`trend_report | rnd | branding | series_plan | style` (plan 3.2.0), episode `youtube_kit | survey | edit_plan` (the other side: 422
 `bad_kind`).
 - `GET` (viewer) -> `{kind, gate, state: 'not_yet' | 'waiting' | 'approved', document, inUse, edit: {inPlace,
   inPlaceCode, reopen, reopenCode, replacesEpisodes, reruns: string[]}}`. `document` (approved only): the version in
@@ -284,7 +296,8 @@ interface ThumbnailList { items: ThumbnailView[]; selectedId: string | null; can
 ## Chat (spec local-chat §3.1)
 
 One thread per production and one per episode. A message goes to the step the production (or episode) is at now —
-its **scope**: `intake` (no run yet), `gate` (a gate waiting: `approve-trend-report`, `approve-rnd`,
+its **scope**: `intake` (no run yet), `gate` (a gate waiting: `approve-trend-report`, `approve-style` (plan 3.2.0; when
+two wait at once, the earlier stage's), `approve-rnd`,
 `approve-branding`, `approve-plan`, `approve-timeline`, `approve-youtube-kit`; shot-cut episodes also `approve-survey`,
 `approve-edit-plan`), `failed` (a Claude stage that
 failed its check), `timeline` (an episode with no gate waiting). Claude's reply is written by the worker (it waits

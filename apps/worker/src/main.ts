@@ -21,7 +21,8 @@
  *                       shot-cut stages (shots, audio for transcription, contact sheets); none = those stages park
  *   STUDIO_FFPROBE_PATH ffprobe for the shot-cut stages (default: ffprobe next to STUDIO_FFMPEG_PATH)
  *   STUDIO_FONTS_DIR    a folder with the thumbnail font (Arial); default: Windows fonts, else fontconfig (Liberation Sans)
- *   YOUTUBE_API_KEY     YouTube Data API v3 key for the market research of a series (none = research skipped)
+ *   YOUTUBE_API_KEY     YouTube Data API v3 key for the market research of a series (none: plan 3.2.0 on finds the
+ *                       channels and videos on the web, yt-dlp reads their numbers; older plans skip the research)
  *   HARNESS_ROOT        Studio install root (default: this checkout)
  *   STUDIO_FARM_QUEUE_TIMEOUT_MINUTES a farm job no node takes this long is cancelled and its step stops, saying so
  *                       (default 120; 0 = wait to the stage deadline, 4 h)
@@ -118,7 +119,7 @@ async function main(): Promise<void> {
     logger.warn(`yt-dlp cannot run (${ytdlpArgv[0]}): web research keeps the numbers Claude reads off pages, and the style step is skipped (set YTDLP_PATH)`);
   }
   if (!youtubeKey) {
-    logger.warn("YOUTUBE_API_KEY is not set for this worker: series research will be skipped and the trend report will say so (a direct run reads apps/api/.env)");
+    logger.warn("YOUTUBE_API_KEY is not set for this worker: series research falls back to the web (Claude finds the links, yt-dlp reads the numbers); runs on plans before 3.2.0 skip it and the trend report says so (a direct run reads apps/api/.env)");
   }
   const ac = new AbortController();
   for (const sig of ["SIGINT", "SIGTERM"] as const) {

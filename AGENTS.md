@@ -93,7 +93,7 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
   **`approve-timeline`** (nộp revision mới nhất) → `youtube-kit` → **`approve-youtube-kit`** → `freeze-timeline`
   (`studio-freeze-timeline-v2`: timeline **đã duyệt**) → `render-final` (farm) → `thumbnails` → `export`. Tập chờ
   gate có trạng thái `waiting_approval`. Plan 1.0.0/2.0.0 vẫn sinh tập 1.2.0 không gate (`episodeWorkflowForPlan`).
-- **Plan `ag-studio-series-plan@3.1.0`** (đang dùng) chỉ khác 3.0.0 ở `spawn-episodes` (`studio-spawn-episodes-v2`):
+- **Plan `ag-studio-series-plan@3.1.0`** chỉ khác 3.0.0 ở `spawn-episodes` (`studio-spawn-episodes-v2`):
   `plan-episodes` chọn kiểu dựng từng tập (`edit_style: whole|cut`, `narration: none|tts|original`), lưu ở
   `episodes.edit_style`; tập `cut` chạy **`ag-studio-episode-cut@1.0.0`** (`episodeWorkflowFor`): `episode-intake`
   → `fetch-proxies` (proxy 720p từ ag-go) → `media-index` (shot) → `transcribe` (farm `studio.transcribe`) →
@@ -104,6 +104,18 @@ cho Studio) và `docs/superpowers/specs/` trước khi đổi kiến trúc.
   `packages/studio-engine/src/cut-stages.ts`; chạy lại từ một gate: `rerunEpisodeFrom` (`cut-episode.ts`).
   Phiên bản đang dùng ở `STUDIO_WORKFLOWS` (`packages/studio-engine/src/core.ts`), gate ở `STUDIO_GATES`
   (`packages/studio-engine/src/run-control.ts`).
+- **Plan `ag-studio-series-plan@3.2.0`** (đang dùng; ADR-0001 mục 175–176) thêm vào 3.1.0 hai việc. (1) Research có
+  đường dự phòng: `research-api` (YouTube Data API như cũ) → `research-web` (skill `studio-web-research`, Claude chế
+  độ `web`: chỉ WebSearch/WebFetch, trả về link YouTube đã kiểm; chỉ gọi khi API thiếu khoá, lỗi, hay trống kênh/từ
+  khoá) → `research` (`studio-research-merge`: yt-dlp đọc số thật của link; không có yt-dlp thì số Claude đọc, đánh
+  dấu `estimated`). Stage cuối vẫn tên `research`. (2) Học phong cách dựng từ video mẫu: `pick-references` (≤3 video
+  của kênh `reference`) → `watch-references` (yt-dlp ≤480p, đo cut, trích khung lên `productions/<p>/style/`, xoá
+  video ngay) → `analyze-style` (skill `studio-style`, files mode) → **`approve-style`** → `apply-style` (ghi
+  `productions.style`). Thiếu yt-dlp/ffmpeg, `STUDIO_REFERENCE_DOWNLOADS=0`, hay không có kênh mẫu: style `skipped`
+  có lý do, gate vẫn chờ duyệt. `branding` chờ thêm `approve-style`; `brief` (`studio-finalize-brief-v2`) chuyển
+  `style.json` cho `plan-episodes`. `approve-style` có thể chờ cùng lúc với `approve-trend-report` hay
+  `approve-rnd`: `waiting_gate` và chat lấy gate của stage đứng trước. Test đi qua gate của plan bằng
+  `approvePlanGatesUntil`/`approvePlanGatesLive` (`packages/studio-engine/test/helpers.ts`), không viết cứng thứ tự.
 - Thư mục workflow đã phát hành **không bao giờ sửa**: làm phiên bản mới. Script/payload builder đổi đầu ra thì đặt
   **tên mới** (`studio-episode-export-v2`…) và giữ tên cũ cho run cũ; `workflow-wiring.test.ts` kiểm mọi phiên bản.
   Một stage chỉ nhận artifact của stage nó phụ thuộc **trực tiếp**, và mỗi kiểu chỉ đến từ một nguồn.

@@ -8,8 +8,9 @@ Từ lúc tạo production tới khi có các tập đã render, kèm cách xử
 
 - Footage đã có trên ag-go và **đã quét** (có mô tả AI): chỉ video `usable` mới vào catalog của Claude.
 - Người tạo phải xem được các folder ag-go sẽ gắn, và phải có vai `producer` trở lên trong team.
-- Muốn có nghiên cứu thị trường: đặt `YOUTUBE_API_KEY`. Mỗi từ khoá tốn 100 đơn vị quota (`search.list`); kết quả
-  cache 24 giờ.
+- Nghiên cứu thị trường: nên đặt `YOUTUBE_API_KEY`. Mỗi từ khoá tốn 100 đơn vị quota (`search.list`); kết quả
+  cache 24 giờ. Không có khoá (hay API lỗi) thì plan 3.2.0 cho Claude tìm trên web, số liệu do yt-dlp đọc; cài yt-dlp
+  và học phong cách dựng từ video mẫu: `docs/runbooks/studio-local.md` mục 4b.
 - Claude giả hay thật: `docs/runbooks/studio-local.md` mục 4.
 
 ## 2. Luồng một production (giao diện chat)
@@ -17,8 +18,9 @@ Từ lúc tạo production tới khi có các tập đã render, kèm cách xử
 | Bước | Ai làm | Trên web | Ghi chú |
 |---|---|---|---|
 | Video mới | Người (producer) | Trang chủ: gõ một câu, gắn folder bằng `@` ("Làm series vlog Kyoto từ @Kyoto 2025, giống kênh Mei Time…") | Tạo production nháp; Claude (`studio-intake`) tóm yêu cầu ở cột phải và hỏi lại từng câu còn thiếu |
-| Bắt đầu | Người | Nút "Bắt đầu" (bật khi đủ: tên, folder, khung hình, ngôn ngữ, kênh hoặc từ khoá) | Ghi vào production rồi chạy `ag-studio-series-plan@3.1.0` |
-| Nghiên cứu thị trường | Tự động → **người duyệt** | Cột phải: báo cáo xu hướng; chat để sửa; "Duyệt" | Không có video nghiên cứu thì báo cáo trống, không gọi Claude |
+| Bắt đầu | Người | Nút "Bắt đầu" (bật khi đủ: tên, folder, khung hình, ngôn ngữ, kênh hoặc từ khoá) | Ghi vào production rồi chạy `ag-studio-series-plan@3.2.0` |
+| Nghiên cứu thị trường | Tự động → **người duyệt** | Cột phải: báo cáo xu hướng; chat để sửa; "Duyệt" | YouTube API trước; thiếu khoá hay API lỗi thì Claude tìm kênh/video trên web và yt-dlp đọc số thật (số Claude đọc được ghi "ước lượng"). Không có video nghiên cứu nào thì báo cáo trống, nói lý do, không gọi Claude |
+| Phong cách dựng | Tự động → **người duyệt** | Bước "Phong cách dựng": nhịp cắt, chữ, nhạc… kèm khung hình làm bằng chứng và link video mẫu; chat để sửa; "Duyệt" | Plan 3.2.0. Tải ≤3 video của kênh mẫu (≤480p), đo rồi xoá ngay. Thiếu yt-dlp/ffmpeg, tắt tải (`STUDIO_REFERENCE_DOWNLOADS=0`) hay không có kênh mẫu thì bước này ghi lý do bỏ qua; vẫn bấm Duyệt để đi tiếp. Branding và kế hoạch tập theo phong cách đã duyệt |
 | R&D | Claude (Opus) → **người duyệt** | Chat để sửa ("gộp tập 3 và 4"); cột phải hiện "Bản n · k thay đổi" | Duyệt nộp đúng bản đang hiện |
 | Branding | Claude → **người duyệt** | Như trên | |
 | Kế hoạch tập | Claude (Opus) → **người duyệt** | Như trên; sửa kéo thả ở `⋯ → Sửa tay` (PlanEditor) | Lệch thời lượng ±20% chỉ cảnh báo. Mỗi tập có kiểu dựng: ghép nguyên video, hoặc **cắt theo shot** (có thể có lời dẫn) — xem mục 2a |
