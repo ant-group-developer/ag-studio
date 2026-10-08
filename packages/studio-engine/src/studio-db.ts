@@ -10,6 +10,7 @@ import {
   HarnessError, ProductionMusicSchema, StoredTimelineSchema, StudioBrandingSchema, StudioRndSchema, studioMusicOf, timelineAsVersion, timelineVersion,
   type ChannelRef, type StoredTimeline, type StudioBranding, type StudioHints, type StudioMusic, type StudioRnd,
 } from "@harness/contracts";
+import type { EarlierFarmJob } from "@harness/executors";
 
 type Param = string | number | null;
 
@@ -150,12 +151,13 @@ export function updateEpisodeRunId(db: StudioDb, episodeId: string, runId: strin
   db.run("UPDATE episodes SET run_id = ?, updated_at = ? WHERE id = ?", [runId, new Date().toISOString(), episodeId]);
 }
 
-/** Farm jobs submitted by the other attempts of a run's stage (`FarmExecutor.earlierJobsFor`). */
-export function earlierFarmJobs(db: StudioDb, p: { runId: string; stageKey: string; attemptId: string }): string[] {
-  return db.all<{ farm_job_id: string }>(
-    "SELECT farm_job_id FROM studio_farm_jobs WHERE run_id = ? AND stage_key = ? AND attempt_id <> ?",
+/** Farm jobs submitted by the other attempts of a run's stage, newest first (`FarmExecutor.earlierJobsFor`). */
+export function earlierFarmJobs(db: StudioDb, p: { runId: string; stageKey: string; attemptId: string }): EarlierFarmJob[] {
+  return db.all<{ farm_job_id: string; attempt_id: string; fingerprint: string | null }>(
+    `SELECT farm_job_id, attempt_id, fingerprint FROM studio_farm_jobs
+     WHERE run_id = ? AND stage_key = ? AND attempt_id <> ? ORDER BY created_at DESC, rowid DESC`,
     [p.runId, p.stageKey, p.attemptId],
-  ).map((r) => r.farm_job_id);
+  ).map((r) => ({ farmJobId: r.farm_job_id, attemptId: r.attempt_id, fingerprint: r.fingerprint }));
 }
 
 export function saveTrendReport(db: StudioDb, productionId: string, report: unknown): void {
