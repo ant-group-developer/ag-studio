@@ -106,18 +106,23 @@ describe("Worker", () => {
   });
   it("a stage whose run is cancelled while it runs is aborted, saying so; the run ends cancelled", async () => {
     let reason: unknown;
+    let started!: () => void;
+    const running = new Promise<void>((r) => (started = r));
     const hanging: Executor = {
       version: "hang@1",
-      execute: (r, ctx) => new Promise((res) => ctx.signal?.addEventListener("abort", () => {
-        reason = ctx.signal?.reason;
-        res({ schema_version: "harness.stage-result/v1", attempt_id: r.attempt_id, outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [{ kind: "transient", message: "aborted", details: {} }] });
-      })),
+      execute: (r, ctx) => new Promise((res) => {
+        ctx.signal?.addEventListener("abort", () => {
+          reason = ctx.signal?.reason;
+          res({ schema_version: "harness.stage-result/v1", attempt_id: r.attempt_id, outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0 }, external_operations: [], errors: [{ kind: "transient", message: "aborted", details: {} }] });
+        });
+        started();
+      }),
     };
     const w = makeWorld({ scriptExecutor: hanging });
     const run = planAndEnqueue(w);
     const worker = new Worker({ ...w.deps, harness: { ...w.deps.harness, heartbeat_seconds: 0.02 } });
     const pending = worker.runOnce();
-    await new Promise((r) => setTimeout(r, 50));
+    await running;
     w.planner.cancel(run.run_id);
     expect(await pending).toBe("done");
     expect(reason).toBe(STAGE_CANCELLED);
@@ -126,11 +131,19 @@ describe("Worker", () => {
   it("a worker stopping aborts its stage with a reason that is not a cancel: the stage will run again", async () => {
     const ac = new AbortController();
     let reason: unknown;
-    const hanging: Executor = { version: "hang@1", execute: (_r, ctx) => new Promise((_res, rej) => ctx.signal?.addEventListener("abort", () => { reason = ctx.signal?.reason; rej(new Error("aborted")); })) };
+    let started!: () => void;
+    const running = new Promise<void>((r) => (started = r));
+    const hanging: Executor = {
+      version: "hang@1",
+      execute: (_r, ctx) => new Promise((_res, rej) => {
+        ctx.signal?.addEventListener("abort", () => { reason = ctx.signal?.reason; rej(new Error("aborted")); });
+        started();
+      }),
+    };
     const w = makeWorld({ scriptExecutor: hanging });
     planAndEnqueue(w);
     const p = w.worker.runForever(ac.signal);
-    await new Promise((r) => setTimeout(r, 50));
+    await running;
     ac.abort();
     await p;
     expect(reason).not.toBe(STAGE_CANCELLED);
