@@ -72,4 +72,50 @@ describe("StudioAgentExecutor, files mode", () => {
     expect(calls[1]!.brief).toContain("[missing_shot]");
     expect(sessions).toEqual(["sess-1", "sess-2"]);
   });
+
+  it("a call that ends without writing the file (it tried a tool it does not have) resumes the session to write it", async () => {
+    const calls: { resume: string | undefined; brief: string }[] = [];
+    const req = request();
+    const ex = new StudioAgentExecutor({
+      runtimeFor: (_schema, _skill, onCall, files) => ({
+        name: "stub", version: "0",
+        async runTask(task) {
+          const n = calls.length;
+          calls.push({ resume: files?.resume, brief: task.brief });
+          onCall?.({ session_id: `sess-${n + 1}`, model: "m", prompt: task.brief, json_schema: null, response: "", structured_output: undefined, exit_code: 0, timed_out: false, rate_limited: false, wall_seconds: 0, cost_usd: 0.1, input_tokens: null, output_tokens: null } as AgentCallTrace);
+          if (n === 0) {
+            return { schema_version: "harness.stage-result/v1", attempt_id: req.attempt_id, outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0.1 }, external_operations: [], errors: [{ kind: "contract", message: "agent wrote no output/survey.json", details: { name: "survey.json", code: "NO_OUTPUT" } }] };
+          }
+          mkdirSync(join(task.workspaceDir, "output"), { recursive: true });
+          writeFileSync(join(task.workspaceDir, "output", "survey.json"), JSON.stringify(good));
+          return { schema_version: "harness.stage-result/v1", attempt_id: req.attempt_id, outcome: "succeeded", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0.1 }, external_operations: [], errors: [] };
+        },
+      }),
+    });
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+
+    expect(res.outcome, JSON.stringify(res.errors)).toBe("succeeded");
+    expect(res.usage.cost_usd).toBeCloseTo(0.2);
+    expect(calls.map((c) => c.resume)).toEqual([undefined, "sess-1"]);
+    expect(calls[0]!.brief).toContain("không có Bash");
+    expect(calls[1]!.brief).toContain("[no_output]");
+    expect(calls[1]!.brief).toContain("Write");
+  });
+
+  it("a call that writes nothing twice fails as a contract", async () => {
+    const req = request();
+    const ex = new StudioAgentExecutor({
+      runtimeFor: (_schema, _skill, onCall) => ({
+        name: "stub", version: "0",
+        async runTask(task) {
+          onCall?.({ session_id: "sess", model: "m", prompt: task.brief, json_schema: null, response: "", structured_output: undefined, exit_code: 0, timed_out: false, rate_limited: false, wall_seconds: 0, cost_usd: 0.1, input_tokens: null, output_tokens: null } as AgentCallTrace);
+          return { schema_version: "harness.stage-result/v1", attempt_id: req.attempt_id, outcome: "failed", outputs: [], checks: [], usage: { wall_seconds: 0, cost_usd: 0.1 }, external_operations: [], errors: [{ kind: "contract", message: "agent wrote no output/survey.json", details: { name: "survey.json", code: "NO_OUTPUT" } }] };
+        },
+      }),
+    });
+    const res = await ex.execute(req, { workspaceDir: req.workspace_uri, logger: silent, clock: wall });
+
+    expect(res.outcome).toBe("failed");
+    expect(res.errors[0]!.kind).toBe("contract");
+  });
 });

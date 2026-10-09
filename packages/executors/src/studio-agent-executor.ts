@@ -216,6 +216,7 @@ export function studioFilesPromptTail(outName: string): string {
   return [
     "# Đầu ra",
     `Ghi đúng một tệp \`output/${outName}\` (JSON đúng định dạng đầu ra của skill). Chỉ đọc tệp trong thư mục làm việc này, không dùng mạng.`,
+    "Bạn chỉ có Read, Write, Glob, Grep: không có Bash, không chạy được Python hay script nào. Tự viết toàn bộ JSON rồi ghi bằng **một** lệnh Write, kể cả khi tệp dài.",
     "Ghi xong thì trả lời một dòng ngắn nói đã ghi.",
   ].join("\n");
 }
@@ -389,6 +390,16 @@ export class StudioAgentExecutor implements Executor {
         catch (e) { ctx.logger.warn("could not keep the Claude session", { error: e instanceof Error ? e.message : String(e) }); }
       }
       const err = result.errors[0];
+      // a files-mode call that ended without the file (e.g. it reached for a Bash it does not have) already looked at
+      // every picture: the repair round resumes that session to write it, rather than paying for the look again
+      if (files && session && round === 0 && err?.details?.code === "NO_OUTPUT") {
+        await record(round, "rejected", [{ code: "no_output", message: err.message }]);
+        problems = [{ code: "no_output", message: `Chưa có tệp output/${out.name}. Không có Bash/Python: viết toàn bộ JSON rồi ghi bằng công cụ Write ngay.` }];
+        ctx.logger.warn("Studio agent wrote no output; resuming its session to write it", { skill });
+        runtime = this.opts.runtimeFor(schema, skill, onCall, { resume: session });
+        round++;
+        continue;
+      }
       if (result.outcome !== "succeeded") {
         if (err?.details?.code === "RATE_LIMITED") {
           await record(round, "rate_limited");

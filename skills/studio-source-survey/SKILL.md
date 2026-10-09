@@ -40,7 +40,8 @@ Trong `## Thư mục trong thư mục làm việc`, thư mục `watch`:
    - `speech`: `"talking"` khi transcript có lời nói trong khoảng `[in, out)` của shot và nghe là người nói, `"ambient"`
      khi chỉ có tiếng nền, `"none"` khi video không có tiếng.
    - `in`, `out`, `source_id`: chép đúng từ `shots.json`.
-4. Ghi tệp `output/survey.json`:
+4. Ghi tệp `output/survey.json` bằng công cụ **Write**: bạn không có Bash, không chạy được Python hay script, nên tự viết
+   toàn bộ JSON (chép `in`/`out`/`source_id` từ `shots.json`) rồi ghi một lần:
 
 ```json
 {

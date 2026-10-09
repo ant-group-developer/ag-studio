@@ -348,7 +348,7 @@ export class CliAgentRuntime implements AgentRuntime {
       // input of that type as "there is none" (`media-compose` composes without overlays).
       if (!existsSync(abs)) {
         if (eo.optional) continue;
-        return failed("contract", `agent wrote no output/${eo.name}`, { name: eo.name });
+        return failed("contract", `agent wrote no output/${eo.name}`, { name: eo.name, code: "NO_OUTPUT" });
       }
       if (eo.kind === "directory") {
         const { checksum, size_bytes } = directoryListing(abs);
