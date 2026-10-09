@@ -22,6 +22,18 @@ export interface BuildTimelineInput {
 
 type Position = (typeof TEXT_POSITIONS_V2)[number];
 
+/** The longest on-screen text (`TimelineTextSchema.text`); the plan's titles may be up to 100. */
+const MAX_TEXT_CHARS = 64;
+
+/** A title fitted to the screen: cut at the last word that fits, with an ellipsis. */
+function fitText(text: string): string {
+  const s = text.trim();
+  if (s.length <= MAX_TEXT_CHARS) return s;
+  const head = s.slice(0, MAX_TEXT_CHARS - 1);
+  const space = head.lastIndexOf(" ");
+  return `${(space > MAX_TEXT_CHARS / 2 ? head.slice(0, space) : head).trimEnd()}…`;
+}
+
 /**
  * Build the draft TimelineV3 from the episode plan. Returns a validated v3 timeline.
  *
@@ -74,7 +86,7 @@ export function buildEpisodeTimeline(input: BuildTimelineInput): TimelineV3 {
       texts.push({
         text_id: `T${String(++textNo).padStart(3, "0")}`,
         kind,
-        text,
+        text: fitText(text),
         start: Math.round(start * 1000) / 1000,
         duration,
         position,
