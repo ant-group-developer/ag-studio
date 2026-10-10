@@ -54,14 +54,26 @@ tạo video mới (luồng mới, tuỳ chọn học từ chat cũ), chuẩn b�
 6. `feat(engine): thread summaries and lessons`.
 7. `feat(api): playbook endpoints`; `feat(web): step rail, next-step chips, file issues, history`.
 
-## P4 — Đầu vào
+## P4 — Đầu vào (xong 2026-10-10)
 
-1. `feat(db): project jobs and farm jobs` — `0033`.
-2. `feat(ag-go-client): footage search by project ids`.
-3. `feat(api): sources and uploads`.
-4. `refactor(engine): lift shot-cut media steps into plain functions` — `workspace/prepare.ts`, `video-index.ts`.
-5. `feat(engine): project job runner, progress, ETA, cancel`.
-6. `feat(mcp): inputs and job tools`; `feat(web): Inputs tab, ag-go pickers, job cards`.
+- [x] `0033`: `project_jobs` (phase, progress, eta, máy, units, dừng, báo luồng), `project_farm_jobs` (stage_key,
+  attempt_id cho tiền tố farm), `prepared_assets`.
+- [x] `ag-go-client` (cả bản CJS của API): `searchFootage` (`GET /footage/search`), `resolveAssets.prefer`.
+- [x] Engine: `jobs-db`, `eta` (tiến độ → lịch sử theo đơn vị → mặc định; đang chờ máy farm thì không đoán),
+  `job-runner` (2 làn, nhịp 2 s, Dừng, worker tắt thì trả việc về hàng, báo luồng + tự chạy tiếp ≤3), `farm`
+  (gửi/theo dõi/huỷ, correlation id theo job, hết hạn chờ máy), `prepare` (ag-go → tải → dò cảnh → khung, tờ ghép →
+  lời thoại qua farm, lỗi lời thoại không làm hỏng bước), `video-index`, `sources-db`, `inputs`, `step-facts`
+  (bước `prepare` của playbook theo DB).
+- [x] `/farm/sign` tìm cả `project_farm_jobs`, chủ dự án từ `projects`, bản xem trước gửi `prefer` 480p sạch.
+- [x] Tool agent: `inputs_list`, `footage_search`, `inputs_add`, `inputs_prepare(wait_s≤60)`, `input_describe`,
+  `job_status`, `job_cancel`; hoạt động dự án gồm job.
+- [x] API `InputsController`: nguồn (kiểm chủ dự án dùng được, 422 `owner_cannot_access`), tải lên vào `context/`
+  theo loại (Word, video bị từ chối), tìm footage theo quyền người xem, chuẩn bị, job + Dừng.
+- [x] Web: tab Đầu vào (chọn project ag-go, chọn video theo thứ tự tick, tải file), thẻ job (ai xử lý, đang làm gì,
+  tiến độ, đã trôi, còn ≈, Dừng), job của luồng ngay trên ô chat, Dừng job từ "Việc đang chạy".
+- [x] Kiểm thật trên stack local: agent gọi `footage_search` → `inputs_add` → `inputs_prepare`; job tải proxy ag-go,
+  dò cảnh, khung hình, farm "local-render" đọc lời thoại; Studio báo vào luồng, agent tự làm tiếp và báo xong.
+- Còn lại: audio tải lên chưa được đọc thành chữ (job `transcribe_upload`) — ghi ở `deferred-items.md`.
 
 ## P5 — Nghiên cứu
 

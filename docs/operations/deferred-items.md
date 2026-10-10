@@ -1,5 +1,16 @@
 # Việc để lại (deferred items)
 
+## AG Studio — chat với agent trong dự án (nhánh `feat/agent-workspace`, 2026-10-10)
+
+- **Audio tải lên chưa được đọc thành chữ.** Tab Đầu vào nhận mp3/wav/m4a… vào `context/audio/` nhưng chưa có job
+  `transcribe_upload` (đã có trong `JOB_KINDS` và migration 0033). Agent mới chỉ thấy tên file. Làm cùng P6 (giọng,
+  nhạc của dự án qua `audio-import.ts`).
+- **Log của Studio API/worker không vào `E:/ag-local/dev-run/*.log` khi `scripts/local-stack.mjs` bật trên Windows.**
+  Tiến trình chạy dưới `cmd.exe` (`shell: true`) nên fd log không tới node. Kiểm tra trạng thái qua DB (bảng
+  `project_jobs`, `agent_messages`) hoặc chạy tay `node --env-file=apps/api/.env apps/worker/dist/main.js`.
+- **Ước tính còn lại sau khi chờ máy farm lâu bị cao.** `estimateSecondsLeft` lấy toàn bộ thời gian đã trôi (gồm lúc xếp
+  hàng) chia theo tiến độ; khi máy nhận việc, "còn ≈" có thể cao hơn thật tới lúc tiến độ nhích. Nên trừ thời gian chờ.
+
 ## AG Studio (cập nhật 2026-10-06)
 
 Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142). Mỗi dòng: hiện tượng · chỗ trong code · ghi chú.
