@@ -75,11 +75,19 @@ tạo video mới (luồng mới, tuỳ chọn học từ chat cũ), chuẩn b�
   dò cảnh, khung hình, farm "local-render" đọc lời thoại; Studio báo vào luồng, agent tự làm tiếp và báo xong.
 - Còn lại: audio tải lên chưa được đọc thành chữ (job `transcribe_upload`) — ghi ở `deferred-items.md`.
 
-## P5 — Nghiên cứu
+## P5 — Nghiên cứu (xong 2026-10-10)
 
-1. `feat(engine): YouTube trending, topic, top channels, channel top videos` (+ yt-dlp dự phòng).
-2. `feat(engine): research job` → `research/*.{md,json}`.
-3. `feat(mcp): research tools`; `feat(web): Research tab`.
+- [x] Contracts `studio-crawl.ts`: `CrawlRequestSchema` (trending, topic, top_channels, channel_top), `estimateCrawlUnits`,
+  `isLargeCrawl` (> 500 đơn vị hoặc > 100 video), `StudioCrawlSchema` (`schemas/studio-crawl.json`).
+- [x] Engine `workspace/youtube-crawl.ts`: Data API (mostPopular, search theo lượt xem trong N ngày, search kênh + 5 video
+  xem nhiều gần đây của mỗi kênh, search theo kênh) có cache theo ngày; không có key thì yt-dlp (`ytsearchN:`, 100 video
+  mới nhất của kênh) và ghi chú; xu hướng cần API.
+- [x] Job `research` → `research/<ngày>-<slug>.{json,md}` (bảng, ⭐ vượt trội, nhận xét nhanh), trùng ngày thì `-2`.
+- [x] Tool agent `youtube_trending`, `youtube_search`, `youtube_top_channels`, `youtube_channel_top_videos` (chờ ≤ 60 s,
+  tự làm tiếp khi xong; crawl lớn bị từ chối, người chạy ở tab Nghiên cứu).
+- [x] API `ResearchController` (ước lượng, chạy, danh sách tài liệu); web tab Nghiên cứu.
+- [x] Kiểm thật trên stack local (API key): xu hướng VN 10 video (1 đơn vị), "phố cổ Hội An" 365 ngày (102 đơn vị).
+- Thẻ xác nhận cho crawl lớn do agent đề xuất: ở P6 (`propose_action(crawl_large)`).
 
 ## P6 — Làm video
 
