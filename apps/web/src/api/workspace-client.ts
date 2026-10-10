@@ -316,6 +316,46 @@ export type AddSourceInput =
   | { kind: "ag_go_project"; ref: string; label: string }
   | { kind: "ag_go_asset"; ref: string; label: string; videoId?: string; meta?: { durationMs?: number; thumbnailUrl?: string; agGoProjectId?: string }; prepare?: boolean };
 
+// ---- A video's media and the project's audio ----
+export type RenderKind = "render_preview" | "render_final" | "export_premiere";
+export interface RenderView {
+  jobId: string;
+  kind: RenderKind;
+  revision: number;
+  durationS: number | null;
+  width: number | null;
+  height: number | null;
+  watermarked: boolean | null;
+  sizeBytes: number | null;
+  note: string;
+  finishedAt: string | null;
+  /** null when the person's own ag-go rights do not cover the footage in it. */
+  url: string | null;
+  urlHidden?: "footage_scope";
+}
+
+export interface TimelineClipRow {
+  clip_id: string; at: number; length: number; asset: string; asset_id: string; in: number; out: number | null; shot_id: string | null;
+  line_id: string | null; section_title: string | null; transition: "cut" | "dissolve"; muted?: boolean;
+}
+export interface TimelineSummary {
+  revision: number;
+  label: string | null;
+  approx_seconds: number;
+  clips: TimelineClipRow[];
+  texts: { text_id: string; kind: string; text: string; start: number; duration: number; position: string }[];
+  narration: { voice: string; lines: { line_id: string; text: string }[] };
+  music: { track: string; gain_db: number; ducking: boolean } | null;
+  issues: string[];
+}
+
+export interface ProjectAudioView {
+  voice: Record<string, unknown> | null;
+  music: Record<string, unknown> | null;
+  summary: { voice: string; music: string };
+}
+export type VoiceOrigin = "synthetic" | "own" | "licensed";
+
 // ---- Confirmation cards ----
 export type ActionKind = "render_final" | "export_premiere" | "delete_video" | "crawl_large" | "reference_download";
 export interface ActionView {
@@ -490,6 +530,34 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     },
     cancelJob(projectId: string, jobId: string): Promise<JobView> {
       return call("POST", `/api/projects/${enc(projectId)}/jobs/${enc(jobId)}/cancel`, {});
+    },
+
+    // ---- A video's media and the project's audio ----
+    listRenders(videoId: string): Promise<{ renders: RenderView[]; jobs: JobView[] }> {
+      return call("GET", `/api/videos/${enc(videoId)}/renders`);
+    },
+    /** 403 `role`: the final render and the Premiere export need a producer. */
+    startRender(videoId: string, input: { kind: RenderKind; nodeId?: string; media?: "proxy" | "original" }): Promise<JobView> {
+      return call("POST", `/api/videos/${enc(videoId)}/renders`, input);
+    },
+    getTimeline(videoId: string): Promise<{ latest: TimelineSummary | null; revisions: { revision: number; label: string | null; authorId: string; createdAt: string }[] }> {
+      return call("GET", `/api/videos/${enc(videoId)}/timeline`);
+    },
+    fitTimeline(videoId: string): Promise<JobView> {
+      return call("POST", `/api/videos/${enc(videoId)}/timeline/fit`, {});
+    },
+    getAudio(projectId: string): Promise<ProjectAudioView> {
+      return call("GET", `/api/projects/${enc(projectId)}/audio`);
+    },
+    /** A workspace audio file as the project's voice sample (producer, with its origin) or music. */
+    audioFromFile(projectId: string, kind: "voice" | "music", input: { path: string; origin?: VoiceOrigin; referenceText?: string | null }): Promise<ProjectAudioView> {
+      return call("POST", `/api/projects/${enc(projectId)}/audio/${kind}/from-file`, input);
+    },
+    declineVoice(projectId: string): Promise<ProjectAudioView> {
+      return call("POST", `/api/projects/${enc(projectId)}/audio/voice/decline`, {});
+    },
+    clearAudio(projectId: string, kind: "voice" | "music"): Promise<ProjectAudioView> {
+      return call("DELETE", `/api/projects/${enc(projectId)}/audio/${kind}`);
     },
 
     // ---- Confirmation cards ----

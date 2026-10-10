@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Result, Spin } from "antd";
 import { useQuery } from "@tanstack/react-query";
-import { Film, FolderOpen, Settings, TrendingUp } from "lucide-react";
+import { Clapperboard, Film, FolderOpen, Settings, TrendingUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { StudioHttpError } from "../api/http";
@@ -13,6 +13,7 @@ import { useProjectEvents, useThread } from "../modules/agent-chat/use-thread";
 import { FilesPanel } from "../modules/files/FilesPanel";
 import { InputsPanel } from "../modules/inputs/InputsPanel";
 import { ResearchPanel } from "../modules/research/ResearchPanel";
+import { VideoPanel } from "../modules/video/VideoPanel";
 import { StepRail } from "../modules/playbook/StepRail";
 import { ColumnResizer, useColumnWidths } from "../modules/workspace/ColumnResizer";
 import { ProjectNav, VideoStatusBadge } from "../modules/workspace/ProjectNav";
@@ -20,9 +21,10 @@ import { ProjectSettingsPanel } from "../modules/workspace/ProjectSettingsPanel"
 import { useTeamRole } from "../modules/workspace/use-team-role";
 import { WorkspaceShell } from "../modules/workspace/WorkspaceShell";
 
-type AsideTab = "files" | "inputs" | "research" | "settings";
-const TABS: { key: AsideTab; icon: typeof FolderOpen }[] = [
-  { key: "files", icon: FolderOpen }, { key: "inputs", icon: Film }, { key: "research", icon: TrendingUp }, { key: "settings", icon: Settings },
+type AsideTab = "preview" | "files" | "inputs" | "research" | "settings";
+const TABS: { key: AsideTab; icon: typeof FolderOpen; video?: boolean }[] = [
+  { key: "preview", icon: Clapperboard, video: true }, { key: "files", icon: FolderOpen }, { key: "inputs", icon: Film }, { key: "research", icon: TrendingUp },
+  { key: "settings", icon: Settings },
 ];
 
 /**
@@ -56,7 +58,8 @@ export function ProjectPage() {
   const [learningOpen, setLearningOpen] = useState(false);
   useEffect(() => { setLearningOpen(false); }, [threadId]);
 
-  const tab = (search.get("tab") as AsideTab | null) ?? "files";
+  const asked = search.get("tab") as AsideTab | null;
+  const tab: AsideTab = asked && (asked !== "preview" || videoId) ? asked : videoId ? "preview" : "files";
   const openFile = search.get("file");
   const setAside = (next: { tab?: AsideTab; file?: string | null }) => {
     const params = new URLSearchParams(search);
@@ -123,18 +126,20 @@ export function ProjectPage() {
         </main>
         <aside className="ws-aside" aria-label={t("ws.aside.label")}>
           <div className="ws-tabs" role="tablist">
-            {TABS.map(({ key: k, icon: Icon }) => (
+            {TABS.filter((x) => !x.video || videoId).map(({ key: k, icon: Icon }) => (
               <button key={k} type="button" role="tab" className="ws-tab" aria-selected={tab === k} onClick={() => setAside({ tab: k })}>
                 <Icon size={15} aria-hidden />{t(`ws.aside.${k}`)}
               </button>
             ))}
           </div>
           <div className="ws-tabpanel" role="tabpanel">
-            {tab === "files" ? (
+            {tab === "preview" && videoId ? (
+              <VideoPanel videoId={videoId} atLeast={atLeast} />
+            ) : tab === "files" ? (
               <FilesPanel projectId={project.id} canEdit={atLeast("editor")} openPath={openFile} onOpen={(file) => setAside({ file })}
                 onAttach={threadId && atLeast("editor") ? attach : undefined} />
             ) : tab === "inputs" ? (
-              <InputsPanel projectId={project.id} {...(videoId ? { videoId } : {})} canEdit={atLeast("editor")} onOpenFile={(file) => setAside({ tab: "files", file })} />
+              <InputsPanel projectId={project.id} {...(videoId ? { videoId } : {})} canEdit={atLeast("editor")} canProduce={atLeast("producer")} onOpenFile={(file) => setAside({ tab: "files", file })} />
             ) : tab === "research" ? (
               <ResearchPanel projectId={project.id} canRun={atLeast("editor")} onOpenFile={(file) => setAside({ tab: "files", file })} />
             ) : (

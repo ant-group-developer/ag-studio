@@ -1,0 +1,6 @@
+/* A video's Preview tab (spec 2026-10-10 agent-workspace §P6). */
+.ws-video__line { margin: 0; font-size: 13px; color: var(--ws-muted); }
+.ws-video__issues { margin: 6px 0 0; padding-left: 18px; font-size: 12px; }
+.ws-video__buttons { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.ws-video__player { width: 100%; max-height: 50vh; margin: 8px 0; border-radius: 8px; background: #000; }
+.ws-video__row--current { background: var(--ws-accent-soft); }

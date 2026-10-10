@@ -8,6 +8,7 @@ import { useWorkspaceClient, type JobView, type SourceItem } from "../../api/wor
 import { clock } from "../workspace/time";
 import { AgGoProjectPicker, FootagePicker } from "./AgGoPickers";
 import { JobCard } from "./JobCard";
+import { AudioSummary, UseAudioButtons } from "./AudioControls";
 import "./inputs.css";
 
 const UPLOAD_ACCEPT = ".md,.txt,.pdf,.csv,.json,.srt,.vtt,.jpg,.jpeg,.png,.webp,.gif,.mp3,.wav,.m4a,.aac,.ogg,.flac";
@@ -54,7 +55,9 @@ function AssetLine({ s, canEdit, onOpenFile, onPrepare, onRemove }: {
  * video (prepared once for the whole project), documents, images and audio uploaded into `context/`, and the jobs
  * running for them — who works on each, how far, time spent and left, Stop.
  */
-export function InputsPanel({ projectId, videoId, canEdit, onOpenFile }: { projectId: string; videoId?: string; canEdit: boolean; onOpenFile: (path: string) => void }) {
+export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, onOpenFile }: {
+  projectId: string; videoId?: string; canEdit: boolean; canProduce?: boolean; onOpenFile: (path: string) => void;
+}) {
   const { t } = useTranslation();
   const { message } = AntApp.useApp();
   const client = useWorkspaceClient();
@@ -172,6 +175,7 @@ export function InputsPanel({ projectId, videoId, canEdit, onOpenFile }: { proje
                 <li key={s.id} className="ws-inputs__row">
                   <Icon size={14} aria-hidden />
                   <button type="button" className="ws-link ws-inputs__name" onClick={() => onOpenFile(s.ref)}>{s.label}</button>
+                  {s.mediaType === "audio" ? <UseAudioButtons projectId={projectId} path={s.ref} canEdit={canEdit} canProduce={canProduce} /> : null}
                   {canEdit ? (
                     <Popconfirm title={t("ws.inputs.removeUploadConfirm", { name: s.label })} onConfirm={() => remove.mutate(s)} okText={t("ws.inputs.remove")} cancelText={t("common.cancel")}>
                       <button type="button" className="ws-icon-button" aria-label={t("ws.inputs.removeNamed", { name: s.label })}><Trash2 size={13} /></button>
@@ -183,6 +187,8 @@ export function InputsPanel({ projectId, videoId, canEdit, onOpenFile }: { proje
           </ul>
         ) : null}
       </section>
+
+      <AudioSummary projectId={projectId} canProduce={canProduce} />
 
       <AgGoProjectPicker projectId={projectId} picked={all} open={projectPicker} onClose={() => setProjectPicker(false)} />
       {videoId ? <FootagePicker projectId={projectId} videoId={videoId} sources={all} open={footagePicker} onClose={() => setFootagePicker(false)} /> : null}
