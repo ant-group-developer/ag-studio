@@ -133,3 +133,28 @@ describe("Inputs tab", { timeout: 20_000 }, () => {
     await waitFor(() => expect(ws.uploadSource).toHaveBeenCalledWith("p1", expect.any(File), undefined));
   });
 });
+
+describe("jobs of a chat", { timeout: 20_000 }, () => {
+  beforeAll(async () => { await i18n.changeLanguage("vi"); });
+  it("shows the jobs this chat started above the message box, and stops one", async () => {
+    const getActivity = vi.fn().mockResolvedValue({ activity: [
+      { id: "j9", kind: "job", status: "running", title: "Chuẩn bị Tam Cốc.mp4", phase: null, detail: "Đang dò cảnh (0:30 / 1:12)", startedAt: started, notBefore: null,
+        progress: 0.3, etaSeconds: 40, node: null, cancellable: true, parentId: null, threadId: "t1", threadTitle: "Tràng An", videoId: "v1", jobKind: "prepare_asset" },
+      { id: "j8", kind: "job", status: "running", title: "Việc của luồng khác", phase: null, detail: null, startedAt: started, notBefore: null,
+        progress: null, etaSeconds: null, node: null, cancellable: true, parentId: null, threadId: "t2", threadTitle: "Khác", videoId: null, jobKind: "prepare_asset" },
+    ] });
+    Object.assign(ws, { getActivity });
+    const { ThreadJobs } = await import("./ThreadJobs");
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <AntApp><ThreadJobs projectId="p1" threadId="t1" canStop /></AntApp>
+      </QueryClientProvider>,
+    );
+    const card = await screen.findByRole("group", { name: "Chuẩn bị Tam Cốc.mp4" });
+    expect(card).toHaveTextContent("Studio (ffmpeg trên máy chủ)");
+    expect(card).toHaveTextContent("Đang dò cảnh (0:30 / 1:12)");
+    expect(screen.queryByText("Việc của luồng khác")).toBeNull();
+    fireEvent.click(within(card).getByRole("button", { name: "Dừng" }));
+    await waitFor(() => expect(ws.cancelJob).toHaveBeenCalledWith("p1", "j9"));
+  });
+});

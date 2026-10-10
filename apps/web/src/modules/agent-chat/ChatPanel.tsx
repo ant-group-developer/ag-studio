@@ -7,6 +7,7 @@ import { useWorkspaceClient, type ChatMessage } from "../../api/workspace-client
 import { useAiTranslation } from "../common/assistant-name";
 import { useStickToBottom } from "../common/use-stick-to-bottom";
 import { LessonCards } from "../playbook/LessonCards";
+import { ThreadJobs } from "../inputs/ThreadJobs";
 import { Composer } from "./Composer";
 import { MessageItem } from "./MessageItem";
 import { useThread } from "./use-thread";
@@ -91,6 +92,7 @@ export function ChatPanel({ threadId, projectId, canWrite, onOpenFile, draft, on
       {!atBottom ? (
         <button type="button" className="ws-chat__latest" onClick={toBottom} aria-label={t("ws.chat.latest")}><ArrowDown size={16} /></button>
       ) : null}
+      <ThreadJobs projectId={projectId} threadId={threadId} canStop={canWrite} />
       <LessonCards projectId={projectId} threadId={threadId} canWrite={canWrite} />
       {canWrite ? (
         <div className="ws-chat__foot">
