@@ -8,6 +8,8 @@ import { useAiTranslation } from "../common/assistant-name";
 import { useStickToBottom } from "../common/use-stick-to-bottom";
 import { LessonCards } from "../playbook/LessonCards";
 import { ThreadJobs } from "../inputs/ThreadJobs";
+import { ActionCards } from "./ActionCards";
+import type { TeamRoleName } from "../../api/workspace-client";
 import { Composer } from "./Composer";
 import { MessageItem } from "./MessageItem";
 import { useThread } from "./use-thread";
@@ -26,10 +28,12 @@ export function suggestionsOf(messages: ChatMessage[]): string[] {
  * runs, quick replies the agent suggested, and the message box. The page owns the draft and the attachments so the
  * files panel can add to them.
  */
-export function ChatPanel({ threadId, projectId, canWrite, onOpenFile, draft, onDraftChange, attachments, onAttachmentsChange, onEditLearning, emptyHint, nextSteps = [] }: {
+export function ChatPanel({ threadId, projectId, canWrite, canDecide, onOpenFile, draft, onDraftChange, attachments, onAttachmentsChange, onEditLearning, emptyHint, nextSteps = [] }: {
   threadId: string;
   projectId: string;
   canWrite: boolean;
+  /** Whether the person has this team role (cards the agent proposes need one to confirm). */
+  canDecide?: (needs: TeamRoleName) => boolean;
   onOpenFile: (path: string) => void;
   draft: string;
   onDraftChange: (text: string) => void;
@@ -92,6 +96,7 @@ export function ChatPanel({ threadId, projectId, canWrite, onOpenFile, draft, on
       {!atBottom ? (
         <button type="button" className="ws-chat__latest" onClick={toBottom} aria-label={t("ws.chat.latest")}><ArrowDown size={16} /></button>
       ) : null}
+      <ActionCards projectId={projectId} threadId={threadId} canDecide={canDecide ?? (() => false)} />
       <ThreadJobs projectId={projectId} threadId={threadId} canStop={canWrite} />
       <LessonCards projectId={projectId} threadId={threadId} canWrite={canWrite} />
       {canWrite ? (

@@ -397,4 +397,22 @@ export const wsEn: Messages<typeof wsVi> = {
       c28: "Science & Technology",
     },
   },
+  actions: {
+    title: "Waiting for your confirmation",
+    confirm: "Confirm",
+    reject: "Reject",
+    needs: "needs {{role}}",
+    notAllowed: "The {{role}} role is needed to confirm",
+    revision: "timeline revision {{revision}}",
+    expires: "expires {{when}}",
+    expired: "The card has expired (the timeline changed or a day passed). Ask the agent to propose it again.",
+    failed: "Could not do it",
+    kind: {
+      render_final: "Final render",
+      export_premiere: "Premiere export",
+      delete_video: "Delete video",
+      crawl_large: "Large crawl",
+      reference_download: "Reference videos",
+    },
+  },
 };

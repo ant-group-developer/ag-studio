@@ -25,6 +25,8 @@ export function useThread(threadId: string | null) {
     if (e.event !== "messages") return;
     const { messages } = JSON.parse(e.data) as { messages: ChatMessage[] };
     qc.setQueryData<ThreadDetail>(key, (old) => (old ? { ...old, messages: mergeMessages(old.messages, messages) } : old));
+    // a turn may have proposed a card, a decision posts a line: the cards follow the messages
+    void qc.invalidateQueries({ queryKey: ["actions", threadId] });
   });
   const query = useQuery({
     queryKey: key,

@@ -112,7 +112,7 @@ export function ProjectPage() {
           ) : null}
           {threadId ? (
             <ChatPanel
-              threadId={threadId} projectId={project.id} canWrite={atLeast("editor")} nextSteps={nextSteps}
+              threadId={threadId} projectId={project.id} canWrite={atLeast("editor")} canDecide={atLeast} nextSteps={nextSteps}
               onOpenFile={(file) => setAside({ tab: "files", file })}
               draft={drafts[key] ?? ""} onDraftChange={setDraft}
               attachments={attached[key] ?? []} onAttachmentsChange={(paths) => setAttached((a) => ({ ...a, [key]: paths }))}

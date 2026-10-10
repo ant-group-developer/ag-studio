@@ -316,6 +316,30 @@ export type AddSourceInput =
   | { kind: "ag_go_project"; ref: string; label: string }
   | { kind: "ag_go_asset"; ref: string; label: string; videoId?: string; meta?: { durationMs?: number; thumbnailUrl?: string; agGoProjectId?: string }; prepare?: boolean };
 
+// ---- Confirmation cards ----
+export type ActionKind = "render_final" | "export_premiere" | "delete_video" | "crawl_large" | "reference_download";
+export interface ActionView {
+  id: string;
+  projectId: string;
+  videoId: string | null;
+  threadId: string;
+  messageId: string | null;
+  kind: ActionKind;
+  title: string;
+  summary: string;
+  params: Record<string, unknown>;
+  revision: number | null;
+  status: "proposed" | "confirmed" | "rejected" | "expired" | "failed";
+  /** The team role confirming it needs. */
+  needs: TeamRoleName;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  jobId: string | null;
+  error: string | null;
+  createdAt: string;
+  expiresAt: string;
+}
+
 // ---- Research ----
 export type CrawlInput =
   | { kind: "trending"; region?: string; category?: string; max?: number }
@@ -466,6 +490,18 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     },
     cancelJob(projectId: string, jobId: string): Promise<JobView> {
       return call("POST", `/api/projects/${enc(projectId)}/jobs/${enc(jobId)}/cancel`, {});
+    },
+
+    // ---- Confirmation cards ----
+    listActions(threadId: string): Promise<{ actions: ActionView[] }> {
+      return call("GET", `/api/threads/${enc(threadId)}/actions`);
+    },
+    /** 422 `role` (needs another role), `expired` (the timeline changed or a day passed); 409 `decided`. */
+    confirmAction(projectId: string, actionId: string): Promise<ActionView> {
+      return call("POST", `/api/projects/${enc(projectId)}/actions/${enc(actionId)}/confirm`, {});
+    },
+    rejectAction(projectId: string, actionId: string): Promise<ActionView> {
+      return call("POST", `/api/projects/${enc(projectId)}/actions/${enc(actionId)}/reject`, {});
     },
 
     // ---- Research ----

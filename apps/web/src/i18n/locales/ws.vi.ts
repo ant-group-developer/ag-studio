@@ -393,4 +393,22 @@ export const wsVi = {
       c28: "Khoa học & công nghệ",
     },
   },
+  actions: {
+    title: "Việc chờ bạn xác nhận",
+    confirm: "Xác nhận",
+    reject: "Từ chối",
+    needs: "cần {{role}}",
+    notAllowed: "Cần vai {{role}} để xác nhận",
+    revision: "timeline bản {{revision}}",
+    expires: "hết hạn {{when}}",
+    expired: "Thẻ đã hết hiệu lực (timeline đã đổi hoặc quá 24 giờ). Nhờ agent đề xuất lại.",
+    failed: "Không thực hiện được",
+    kind: {
+      render_final: "Render bản cuối",
+      export_premiere: "Xuất Premiere",
+      delete_video: "Xoá video",
+      crawl_large: "Crawl lớn",
+      reference_download: "Tải video mẫu",
+    },
+  },
 };
