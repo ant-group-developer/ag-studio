@@ -129,9 +129,9 @@ describe('FarmController /farm/sign', () => {
     expect(dbRun).not.toHaveBeenCalled();
   });
 
-  /** studio_farm_jobs lookup -> `job`; production owner lookup -> `owner`. */
+  /** project_farm_jobs lookup -> `job`; project owner lookup -> `owner`. */
   function routeDb(job: unknown, owner: string | null = 'auth0|owner') {
-    dbGet.mockImplementation((sql: string) => (sql.includes('studio_farm_jobs') ? job : { user_id: owner }));
+    dbGet.mockImplementation((sql: string) => (sql.includes('project_farm_jobs') ? job : { user_id: owner }));
   }
 
   it('uses purpose=preview when is_final_render=0', async () => {
@@ -160,10 +160,11 @@ describe('FarmController /farm/sign', () => {
     } as never;
     await controller.sign({ ops: [{ op: 'get', input: 'asset:asset-1' }] }, req);
 
-    // act-as the production owner, never the production id
+    // act-as the project owner, never the project id; a clean 480p rendition preferred
     expect(agGoResolveAssets).toHaveBeenCalledWith('auth0|owner', {
       assetIds: ['asset-1'],
       purpose: 'preview',
+      prefer: { short_edge: 480, clean: true },
     });
   });
 
@@ -222,7 +223,7 @@ describe('FarmController /farm/sign', () => {
     expect(agGoResolveAssets).not.toHaveBeenCalled();
   });
 
-  it('refuses to resolve footage when the production has no owner to act as', async () => {
+  it('refuses to resolve footage when the project has no owner to act as', async () => {
     routeDb(MOCK_JOB, null);
     const req = { ticketClaims: makeTicketClaims(MOCK_JOB.farm_job_id), ip: '127.0.0.1' } as never;
     await expect(controller.sign({ ops: [{ op: 'get', input: 'asset:asset-1' }] }, req)).rejects.toThrow(ForbiddenException);
@@ -239,7 +240,6 @@ describe('FarmController /farm/sign', () => {
       sqls.length = 0;
       dbGet.mockImplementation((sql: string) => {
         sqls.push(sql);
-        if (sql.includes('studio_farm_jobs')) return undefined;
         if (sql.includes('project_farm_jobs')) return job;
         return { user_id: owner };
       });

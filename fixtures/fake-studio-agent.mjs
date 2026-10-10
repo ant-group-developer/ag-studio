@@ -1,5 +1,5 @@
 // Fake `claude -p --output-format stream-json …` for the Studio agent workspace (spec 2026-10-10 agent-workspace).
-// Zero dependencies. fake-studio-claude.mjs hands over to this file when its argv has `stream-json`.
+// Zero dependencies.
 //
 // It behaves like the real CLI (shapes from fixtures/agent-stream): `system/init` (session, tools, MCP servers),
 // partial text deltas, one `assistant` event per content block, `user` tool results, `result` with cost — and keeps

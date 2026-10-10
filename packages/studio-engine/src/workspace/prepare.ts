@@ -17,7 +17,7 @@ import { CUT_FRAME_WIDTH, CUT_SHEET_COLS, CUT_SHEET_SHOTS } from "@harness/contr
 import { StudioTranscribePayloadSchema, TRANSCRIBE_MANIFEST_PATH, TranscribeManifestSchema, type TranscribeManifest } from "@ag-farm/protocol";
 import { buildShots, studioSourceId } from "@harness/core";
 import type { StudioBucket } from "../bucket.js";
-import { CUT_SCENE, CUT_TRANSCRIBE_MODEL, type ResolvedFootage } from "../cut-stages.js";
+import { CUT_SCENE, CUT_TRANSCRIBE_MODEL, type ResolvedFootage } from "../media-deps.js";
 import { detectCuts, extractAudio16k, grabFrame, probeMedia, tileSheet, type MediaFacts } from "../cut-ffmpeg.js";
 import { cleanTranscribeManifest } from "../transcript-clean.js";
 import type { StudioDb } from "../studio-db.js";

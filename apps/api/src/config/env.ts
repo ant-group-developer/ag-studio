@@ -28,7 +28,7 @@ export const envSchema = z.object({
   STUDIO_AGENT_TOKEN_SECRET: z.string().min(16).optional(),
   /** Only whether it is set: the Research tab says if crawls use the YouTube Data API (quota) or yt-dlp. The worker crawls. */
   YOUTUBE_API_KEY: z.string().optional(),
-  /** ffmpeg used to measure loudness when a gate or the worker verifies a render; unset = not measured. */
+  /** ffmpeg for audio people give (project voice and music, the music library); unset = no audio uploads. */
   STUDIO_FFMPEG_PATH: z.string().optional(),
   /** ffprobe beside it (not always in the same folder); with STUDIO_FFMPEG_PATH it lets people give audio. */
   STUDIO_FFPROBE_PATH: z.string().optional(),
@@ -36,15 +36,6 @@ export const envSchema = z.object({
   STUDIO_AUDIO_ALLOW_PRIVATE_URLS: z.enum(['true', 'false', '1', '0']).optional().transform((v) => v === 'true' || v === '1'),
   /** Lifetime of signed URLs handed to the browser (previews, exports, narration audio). */
   STUDIO_BROWSER_URL_TTL_SECONDS: z.coerce.number().default(3600),
-  /** Canva Connect (public integration); Canva is off unless all four are set. */
-  CANVA_CLIENT_ID: z.string().optional(),
-  CANVA_CLIENT_SECRET: z.string().optional(),
-  /** `https://<studio>/api/canva/oauth/callback`, as registered in the Canva Developer Portal. */
-  CANVA_REDIRECT_URI: z.string().url().optional(),
-  /** 32 bytes (64 hex characters or base64) encrypting the Canva tokens at rest. */
-  CANVA_TOKEN_KEY: z.string().optional(),
-  /** Origin of the web app the Canva callback sends the browser back to; empty = the API's own origin. */
-  STUDIO_WEB_URL: z.string().url().optional(),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

@@ -245,6 +245,21 @@ describe("project activity", () => {
     requestJobCancel(db, a.id, at(7));
     expect(agentActivity(db, project.id)[0]).toMatchObject({ cancellable: false });
   });
+
+  it("the Queue screen: what runs in the projects of the person's teams (an admin sees all), the rest only counted", async () => {
+    const { studioActivity } = await import("../src/index.js");
+    const { db, project } = setup();
+    db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-2', 'Khác', ?, ?)", [NOW, NOW]);
+    db.run("INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES ('team-1', 'auth0|u', 'editor', ?)", [NOW]);
+    const other = createProject(db, "team-2", { name: "Ẩm thực", description: "", language: "vi", aspect: "16:9" }, "auth0|x", at(1));
+    const mine = createJob(db, { projectId: project.id, kind: "research", title: "Crawl", request: {}, createdBy: "u" }, at(0));
+    createJob(db, { projectId: other.id, kind: "render_preview", title: "Xem trước", request: {}, createdBy: "x" }, at(1));
+    expect(studioActivity(db, { userId: "auth0|u", isAdmin: false })).toEqual({
+      items: [expect.objectContaining({ id: mine.id, projectId: project.id, projectName: "Du lịch chậm", teamId: "team-1", kind: "job" })],
+      hidden: 1,
+    });
+    expect(studioActivity(db, { userId: "auth0|admin", isAdmin: true }).items.map((i) => i.projectName)).toEqual(["Du lịch chậm", "Ẩm thực"]);
+  });
 });
 
 describe("waiting for a farm machine", () => {

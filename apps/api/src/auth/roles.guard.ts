@@ -21,7 +21,7 @@ interface TeamMemberRow {
   role: TeamRole;
 }
 
-interface ProductionRow {
+interface TeamOfRow {
   team_id: string;
 }
 
@@ -63,18 +63,7 @@ export class RolesGuard implements CanActivate {
     if (authCtx.isAdmin) return true;
 
     const params = request.params as Record<string, string>;
-    let teamId = params['teamId'] ?? this.teamOfWorkspaceParam(params);
-
-    if (!teamId && params['id']) {
-      // Try to look up from production
-      const prod = this.db.get<ProductionRow>(
-        'SELECT team_id FROM productions WHERE id = ?',
-        [params['id']],
-      );
-      if (prod) {
-        teamId = prod.team_id;
-      }
-    }
+    const teamId = params['teamId'] ?? this.teamOfWorkspaceParam(params);
 
     if (!teamId) {
       throw new ForbiddenException('Cannot determine team for authorization');
@@ -103,15 +92,15 @@ export class RolesGuard implements CanActivate {
   /** The team of a workspace route (`:projectId`, `:videoId`, `:threadId`); unknown ids leave it undetermined. */
   private teamOfWorkspaceParam(params: Record<string, string>): string | undefined {
     if (params['projectId']) {
-      return this.db.get<ProductionRow>('SELECT team_id FROM projects WHERE id = ?', [params['projectId']])?.team_id;
+      return this.db.get<TeamOfRow>('SELECT team_id FROM projects WHERE id = ?', [params['projectId']])?.team_id;
     }
     if (params['videoId']) {
-      return this.db.get<ProductionRow>(
+      return this.db.get<TeamOfRow>(
         'SELECT p.team_id FROM videos v JOIN projects p ON p.id = v.project_id WHERE v.id = ?', [params['videoId']],
       )?.team_id;
     }
     if (params['threadId']) {
-      return this.db.get<ProductionRow>(
+      return this.db.get<TeamOfRow>(
         'SELECT p.team_id FROM agent_threads t JOIN projects p ON p.id = t.project_id WHERE t.id = ?', [params['threadId']],
       )?.team_id;
     }

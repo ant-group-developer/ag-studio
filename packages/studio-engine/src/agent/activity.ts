@@ -77,6 +77,32 @@ export function agentActivity(db: StudioDb, projectId: string): Activity[] {
   return out;
 }
 
+export interface StudioActivityItem extends Activity { projectId: string; projectName: string; teamId: string }
+
+/**
+ * The Queue screen: what runs in every project the person can see (their teams' projects; a Studio admin sees all),
+ * oldest project activity first; what runs elsewhere is only counted.
+ */
+export function studioActivity(db: StudioDb, who: { userId: string; isAdmin: boolean }): { items: StudioActivityItem[]; hidden: number } {
+  const busy = db.all<{ id: string; name: string; team_id: string; mine: number }>(
+    `SELECT p.id, p.name, p.team_id, EXISTS (SELECT 1 FROM team_members tm WHERE tm.team_id = p.team_id AND tm.user_id = ?) AS mine
+       FROM projects p
+      WHERE EXISTS (SELECT 1 FROM project_jobs j WHERE j.project_id = p.id AND j.status IN ('queued', 'running'))
+         OR EXISTS (SELECT 1 FROM agent_messages m JOIN agent_threads t ON t.id = m.thread_id
+                     WHERE t.project_id = p.id AND m.role = 'assistant' AND m.status IN ('pending', 'running', 'rate_limited'))
+      ORDER BY p.created_at, p.id`,
+    [who.userId],
+  );
+  const items: StudioActivityItem[] = [];
+  let hidden = 0;
+  for (const p of busy) {
+    const activity = agentActivity(db, p.id);
+    if (!who.isAdmin && !p.mine) { hidden += activity.filter((a) => a.parentId === null).length; continue; }
+    for (const a of activity) items.push({ ...a, projectId: p.id, projectName: p.name, teamId: p.team_id });
+  }
+  return { items, hidden };
+}
+
 /**
  * Changes whenever a thread, a turn, a video, a source or a job of the project changes (the web refetches on it). A
  * running job's heartbeat does not count: only what it shows (phase, progress, machine) and its status.

@@ -1,27 +1,23 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { join } from 'node:path';
 import { ConfigService } from '@nestjs/config';
 import {
-  cachedQueueFarm,
   createStudioEngineCore,
   FarmOwnerClient,
-  ffmpegThumbnailRenderer,
   S3Bucket,
   StudioDb,
-  type EditorDeps,
-  type QueueFarm,
   type StudioBucket,
   type StudioEngineCore,
-  type ThumbnailRenderer, resolveRenderNode, type RenderNode,
 } from '@ag-studio/engine';
 import { StudioDbService } from '../db/studio-db.service';
 
-const QUEUE_FARM_TTL_MS = 3000;
+const FARM_NODES_TTL_MS = 3000;
+
+/** The farm's machines as the owner API lists them (`GET /v1/owner/nodes`). */
+export type FarmNodes = Awaited<ReturnType<FarmOwnerClient['listNodes']>>;
 
 /**
- * The Studio engine inside the API process (plan 3.1 "gọi core ngay trong process"): the same harness store,
- * workflow registry and checkers the worker uses, over the same `studio.db`, so a gate submitted from the web
- * is verified exactly like a worker would verify it.
+ * The Studio engine inside the API process: the same `studio.db` (through StudioDbService), bucket and clock the
+ * worker uses, and the farm's machine list for the Queue screen.
  */
 @Injectable()
 export class EngineService implements OnModuleInit, OnModuleDestroy {
@@ -29,8 +25,7 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
   private _db?: StudioDb;
   private _bucket?: StudioBucket;
   private _farm?: FarmOwnerClient;
-  private _queueFarm?: QueueFarm;
-  private _thumbnails: ThumbnailRenderer | null = null;
+  private nodes: { at: number; value: Promise<FarmNodes> } | null = null;
 
   constructor(
     private readonly config: ConfigService,
@@ -39,11 +34,9 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit(): void {
     // StudioDbService (a dependency, so initialised first) has already applied every migration.
-    const ffmpeg = this.config.get<string>('STUDIO_FFMPEG_PATH');
     this._core = createStudioEngineCore({
       dbPath: this.config.get<string>('STUDIO_DB_PATH', './data/studio.db'),
       dataRoot: this.config.get<string>('STUDIO_DATA_ROOT', './data/harness'),
-      ...(ffmpeg ? { ffmpeg } : {}),
     });
     this._db = new StudioDb(this.dbService.db);
     this._bucket = new S3Bucket({
@@ -52,13 +45,10 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
       accessKeyId: this.config.get<string>('STUDIO_R2_ACCESS_KEY_ID') as string,
       secretAccessKey: this.config.get<string>('STUDIO_R2_SECRET_ACCESS_KEY') as string,
     });
-    // Thumbnails a person makes (words, captures, uploads) are drawn here with the worker's ffmpeg and font.
-    if (ffmpeg) this._thumbnails = ffmpegThumbnailRenderer({ ffmpeg });
     this._farm = new FarmOwnerClient({
       baseUrl: this.config.get<string>('FARM_URL') as string,
       ownerKey: this.config.get<string>('FARM_OWNER_KEY') as string,
     });
-    this._queueFarm = cachedQueueFarm(this._farm, QUEUE_FARM_TTL_MS);
   }
 
   onModuleDestroy(): void {
@@ -68,16 +58,16 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
   get core(): StudioEngineCore { return this.must(this._core); }
   get db(): StudioDb { return this.must(this._db); }
   get bucket(): StudioBucket { return this.must(this._bucket); }
-  /** The voice store the worker fills (shot-cut narration), shared through STUDIO_DATA_ROOT. */
-  get voiceDir(): string { return join(this.config.get<string>('STUDIO_DATA_ROOT', './data/harness'), 'voice'); }
-  get editor(): EditorDeps { return { db: this.db, bucket: this.bucket, farm: this.must(this._farm), voiceDir: this.voiceDir }; }
-  /** A node picked for a final render, as the farm lists it now (422 `unknown_node` otherwise). */
-  renderNode(nodeId: string): Promise<RenderNode> { return resolveRenderNode(this.must(this._farm), nodeId); }
-  /** The farm's job list for the Queue screen, cached a few seconds (every open screen polls it). */
-  get queueFarm(): QueueFarm { return this.must(this._queueFarm); }
-  /** Null without STUDIO_FFMPEG_PATH: the thumbnail routes that draw answer 503 then. */
-  get thumbnails(): ThumbnailRenderer | null { return this._thumbnails; }
   get browserUrlTtl(): number { return this.config.get<number>('STUDIO_BROWSER_URL_TTL_SECONDS') ?? 3600; }
+
+  /** The farm's machines, cached a few seconds (every open Queue screen polls them); a failure is not cached. */
+  farmNodes(now = Date.now()): Promise<FarmNodes> {
+    if (this.nodes && now - this.nodes.at < FARM_NODES_TTL_MS) return this.nodes.value;
+    const value = this.must(this._farm).listNodes();
+    this.nodes = { at: now, value };
+    value.catch(() => { if (this.nodes?.value === value) this.nodes = null; });
+    return value;
+  }
 
   private must<T>(v: T | undefined): T {
     if (!v) throw new Error('EngineService used before module init');

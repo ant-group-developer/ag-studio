@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { TRANSCRIBE_MANIFEST_SCHEMA, TranscribeManifestSchema, type TranscribeManifest } from "@ag-farm/protocol";
-import { STUDIO_TYPES } from "@harness/core";
-import { cleanTranscribeManifest, cutStages, foldText, MIN_MEAN_WORD_SCORE, type TranscriptCleanReport } from "../src/index.js";
-import { fakeFootage, world } from "./helpers.js";
-import { runStage, stageWorkspace } from "./stage-harness.js";
+import { cleanTranscribeManifest, foldText, MIN_MEAN_WORD_SCORE } from "../src/index.js";
 
 const words = (text: string, score?: number) =>
   text.split(" ").map((word, i) => ({ word, start: i * 0.4, end: i * 0.4 + 0.3, ...(score === undefined ? {} : { score }) }));
@@ -82,19 +79,5 @@ describe("cleanTranscribeManifest", () => {
 
   it("folds case, Vietnamese marks and punctuation", () => {
     expect(foldText("  HÃY Đăng-ký   kênh!! ")).toBe("hay dang ky kenh");
-  });
-});
-
-describe("studio-cut-clean-transcript", () => {
-  it("writes the cleaned transcribe.json and what it dropped", async () => {
-    const { db, bucket } = world();
-    const stages = cutStages({ db, bucket, footage: fakeFootage(), startEpisodeRun: async () => ({ runId: "x" }) });
-    const run = stageWorkspace({ runId: "run-cut", stageKey: "clean-transcript", inputs: [{ type: STUDIO_TYPES.transcript, name: "transcribe.json", json: manifest() }] });
-    await runStage(stages["studio-cut-clean-transcript"], run);
-
-    const out = TranscribeManifestSchema.parse(run.json("transcribe.json"));
-    expect(out.sources.flatMap((s) => s.segments).map((x) => x.text)).not.toContain("Thanks for watching!");
-    expect(run.json<TranscriptCleanReport>("clean-report.json").dropped).toHaveLength(3);
-    expect(run.logs.find((l) => l.msg === "transcript cleaned")?.fields).toEqual({ kept: 4, dropped: 3, low_score: 1, phrases: 2 });
   });
 });

@@ -1,10 +1,10 @@
 /**
- * Teams GĐ3 against a real studio.db and engine core: rename, delete (409 while a production of the team has an
- * active plan or episode run), last-owner protection, paged lists.
+ * Teams against a real studio.db: rename, delete (409 while a job or an agent turn of one of the team's projects
+ * runs), last-owner protection, paged lists.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { cancelPlan, startEpisodeRun, startPlanRun } from '@ag-studio/engine';
+import { createJob, createProject, createThread, finishJob, postUserMessage } from '@ag-studio/engine';
 import { TeamsService } from './teams.service';
 import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
 
@@ -23,20 +23,14 @@ describe('TeamsService (real studio.db)', () => {
   let svc: TeamsService;
   beforeEach(async () => {
     s = await realStudio();
-    svc = new TeamsService(s.db, s.engine);
+    svc = new TeamsService(s.db);
     insertTeam(s.db, 'team-1', 'owner-1');
   });
   afterEach(() => s.close());
 
-  /** A production of team-1 that can start a plan run. */
-  function production(id: string): void {
-    const now = new Date().toISOString();
-    s.db.run(
-      `INSERT INTO productions (id, team_id, title, brief, created_at, updated_at, owner_user_id, episode_target_seconds, max_episodes, keywords)
-       VALUES (?, 'team-1', 'P', 'mô tả', ?, ?, 'owner-1', 300, 3, '["phở"]')`,
-      [id, now, now],
-    );
-    s.db.run('INSERT INTO production_sources (production_id, source_id, added_at) VALUES (?, ?, ?)', [id, 'folder-1', now]);
+  /** A project of team-1. */
+  function project(): string {
+    return createProject(s.engine.db, 'team-1', { name: 'Du lịch chậm', description: '', language: 'vi', aspect: '16:9' }, 'owner-1').id;
   }
 
   it('renames a team and 404s on a missing one', () => {
@@ -44,20 +38,17 @@ describe('TeamsService (real studio.db)', () => {
     expect(() => svc.updateTeam('missing', 'x')).toThrow(NotFoundException);
   });
 
-  it('refuses to delete a team while a plan run of its production is active, then deletes it', () => {
-    production('p1');
-    startPlanRun(s.engine.core, s.engine.db, 'p1');
+  it('refuses to delete a team while a job of its project runs, then deletes it', () => {
+    const job = createJob(s.engine.db, { projectId: project(), kind: 'research', title: 'Crawl', request: {}, createdBy: 'owner-1' });
     expect(conflictCode(() => svc.deleteTeam('team-1'))).toBe('team_has_active_runs');
-    cancelPlan(s.engine.core, s.engine.db, 'p1');
+    finishJob(s.engine.db, job.id, { status: 'cancelled' }, new Date().toISOString());
     svc.deleteTeam('team-1');
     expect(s.db.get('SELECT id FROM teams WHERE id = ?', ['team-1'])).toBeUndefined();
   });
 
-  it('counts an active episode run as well', () => {
-    production('p1');
-    const now = new Date().toISOString();
-    s.db.run("INSERT INTO episodes (id, production_id, idx, title, hook, plan, created_at, updated_at) VALUES ('e1', 'p1', 1, 'T', 'h', '{}', ?, ?)", [now, now]);
-    startEpisodeRun(s.engine.core, s.engine.db, 'e1');
+  it('counts an agent turn waiting or running as well', () => {
+    const thread = createThread(s.engine.db, { projectId: project(), kind: 'project', title: 'Kênh', createdBy: 'owner-1' });
+    postUserMessage(s.engine.db, { threadId: thread.id, text: 'chào', actor: { id: 'owner-1', role: 'owner' } });
     expect(conflictCode(() => svc.deleteTeam('team-1'))).toBe('team_has_active_runs');
   });
 
@@ -73,10 +64,10 @@ describe('TeamsService (real studio.db)', () => {
 
   it('pages teams: members see theirs with their role, admins see all', () => {
     insertTeam(s.db, 'team-2', 'someone-else');
-    production('p1');
+    project();
     const mine = svc.listTeamsPaged('owner-1', false, { page: 1, pageSize: 10 });
     expect(mine.total).toBe(1);
-    expect(mine.items[0]).toMatchObject({ id: 'team-1', role: 'owner', memberCount: 1, productionCount: 1 });
+    expect(mine.items[0]).toMatchObject({ id: 'team-1', role: 'owner', memberCount: 1, projectCount: 1 });
     const all = svc.listTeamsPaged('admin', true, { page: 1, pageSize: 10, sortBy: 'name', sortOrder: 'desc' });
     expect(all.total).toBe(2);
     expect(all.items.map((t) => t.id)).toEqual(['team-2', 'team-1']);
