@@ -17,6 +17,7 @@ import type { AgentTokenClaims } from "./token.js";
 import { threadMarkdown } from "./history.js";
 import { getThread, listThreads, videoThread, type ActorRole, type MessageRecord, type ThreadRecord } from "./threads-db.js";
 import { INPUT_TOOLS, type ProjectFootage } from "./input-tools.js";
+import { projectAudioSummary } from "../workspace/project-audio.js";
 import { RESEARCH_TOOLS } from "./research-tools.js";
 import { ACTION_TOOLS } from "./action-tools.js";
 
@@ -65,7 +66,7 @@ export const PROJECT_TOOLS: AgentTool[] = [
     input: z.object({}).strict(),
     run: (ctx) => ({
       text: json({
-        project: { ...projectView(ctx.project), workspace: "." },
+        project: { ...projectView(ctx.project), workspace: ".", audio: projectAudioSummary(ctx.db, ctx.project.id) },
         videos: listVideos(ctx.db, ctx.project.id).map((v) => ({ id: v.id, idx: v.idx, title: v.title, status: v.status, folder: `videos/${v.id}/` })),
         this_thread: { id: ctx.thread.id, kind: ctx.thread.kind, title: ctx.thread.title, video_id: ctx.thread.video_id },
       }),
