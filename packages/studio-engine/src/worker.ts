@@ -22,6 +22,10 @@ export const STUDIO_WEB_TOOLS = ["WebSearch", "WebFetch"] as const;
 export const STUDIO_WEB_MAX_TURNS = 30;
 import { createChatRunner, type ChatRunner } from "./chat-runner.js";
 import { createAgentRunner, type AgentRunner, type AgentRunnerOptions } from "./agent/runner.js";
+import { createJobRunner, type JobHandler, type JobRunner } from "./workspace/job-runner.js";
+import { PREVIEW_PREFER, prepareHandler } from "./workspace/prepare.js";
+import type { JobKind } from "./workspace/jobs-db.js";
+import { httpDownload } from "./cut-media.js";
 import { chatFeedback } from "./chat-db.js";
 import { recordLlmCall } from "./llm-log.js";
 import { cancelLegacyRuns, DEFAULT_CLAUDE_MAX_CONCURRENT, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, studioResources, studioWorkflowRefs, type StudioEngineCore } from "./core.js";
@@ -162,6 +166,8 @@ export interface StudioWorkerPool {
   readonly chat: ChatRunner;
   /** The agent loop (spec agent-workspace): turns of the project workspaces' chat threads; absent when not configured. */
   readonly agent: AgentRunner | null;
+  /** The loop of project jobs (preparing inputs, renders…); absent when not configured. */
+  readonly jobs: JobRunner | null;
   /** The loops in use now (loops let go after the cap dropped are no longer listed, though they may finish a stage). */
   readonly workers: Worker[];
   /** Matches the number of loops to the capacity now (`claude` from the web setting or env, + farm + cpu). */
@@ -186,6 +192,8 @@ export function createStudioWorkerPool(o: StudioWorkerOptions & {
   agent?: Omit<AgentRunnerOptions, "db" | "bucket" | "logger" | "cap">;
   /** The cleanup sweep (`cleanup.ts`) every `everyMs`, first a minute after start; absent or 0: never. */
   cleanup?: { everyMs: number; retention?: Partial<RetentionConfig> };
+  /** Project jobs (spec agent-workspace §5): where workspaces are, jobs at once; absent: none run in this worker. */
+  jobs?: { workspacesRoot: string; dataRoot: string; lanes?: number; pollMs?: number };
 }): StudioWorkerPool {
   const factory = workerFactory(o, false);
   const chat = createChatRunner({
@@ -195,6 +203,10 @@ export function createStudioWorkerPool(o: StudioWorkerOptions & {
   const agent = o.agent
     ? createAgentRunner({ ...o.agent, db: o.db, bucket: o.bucket, logger: o.logger ?? studioLogger({ owner: `${o.owner}#agent` }), cap: () => factory.capacity().claude })
     : null;
+  const jobs = o.jobs ? createJobRunner({
+    db: o.db, logger: o.logger ?? studioLogger({ owner: `${o.owner}#jobs` }), workspacesRoot: o.jobs.workspacesRoot, dataRoot: o.jobs.dataRoot,
+    handlers: projectJobHandlers(o), ...(o.jobs.lanes ? { lanes: o.jobs.lanes } : {}), ...(o.jobs.pollMs ? { pollMs: o.jobs.pollMs } : {}),
+  }) : null;
   const loops: { worker: Worker; drain: AbortController; done?: Promise<void> }[] = [];
   let signal: AbortSignal | undefined;
   const start = (l: (typeof loops)[number]) => { if (signal && !l.done) l.done = l.worker.runForever(signal, { drain: l.drain.signal }); };
@@ -210,6 +222,7 @@ export function createStudioWorkerPool(o: StudioWorkerOptions & {
     get workers() { return loops.map((l) => l.worker); },
     chat,
     agent,
+    jobs,
     resize,
     runForever: async (s) => {
       signal = s;
@@ -218,12 +231,28 @@ export function createStudioWorkerPool(o: StudioWorkerOptions & {
       const sweeps = startCleanup(o);
       const chatDone = chat.runForever(s);
       const agentDone = agent?.runForever(s);
+      const jobsDone = jobs?.runForever(s);
       await new Promise<void>((res) => { if (s.aborted) res(); else s.addEventListener("abort", () => res(), { once: true }); });
       clearInterval(timer);
       sweeps.stop();
-      await Promise.all([...loops.map((l) => l.done), ...retired, chatDone, agentDone]);
+      await Promise.all([...loops.map((l) => l.done), ...retired, chatDone, agentDone, jobsDone]);
     },
   };
+}
+
+/** What each kind of project job runs with on this worker: preparing needs ffmpeg and ag-go (`media`). */
+function projectJobHandlers(o: StudioWorkerOptions): Partial<Record<JobKind, JobHandler>> {
+  const handlers: Partial<Record<JobKind, JobHandler>> = {};
+  const media = o.media;
+  if (media) {
+    handlers.prepare_asset = prepareHandler({
+      db: o.db, ffmpeg: media.ffmpeg, ffprobe: media.ffprobe,
+      resolve: (actAs, ids) => media.resolveAssets(actAs, ids, "preview", PREVIEW_PREFER),
+      download: (url, dest, signal, onBytes) => httpDownload(url, dest, signal, onBytes),
+      farm: { client: o.farm, bucket: o.bucket, pollMs: o.farmPollMs ?? 3000 },
+    });
+  }
+  return handlers;
 }
 
 /** Runs the cleanup sweep on a timer, one at a time; a failed sweep is logged and tried again next time. */

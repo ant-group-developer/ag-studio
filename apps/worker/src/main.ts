@@ -40,6 +40,7 @@
  *   STUDIO_AGENT_TURN_MINUTES   a turn's deadline (default 20)
  *   STUDIO_AGENT_ARGV           JSON array replacing `claude` (tests: the fake agent CLI)
  *   STUDIO_MCP_ARGV             JSON array starting the Studio MCP server (default node packages/studio-mcp/server.mjs)
+ *   STUDIO_JOB_LANES            project jobs run at once (preparing inputs with ffmpeg, farm waits; default 2)
  */
 import { hostname } from "node:os";
 import { join, resolve } from "node:path";
@@ -82,8 +83,8 @@ async function main(): Promise<void> {
   const media: CutMediaDeps | null = ffmpeg ? {
     ffmpeg,
     ffprobe: process.env.STUDIO_FFPROBE_PATH ?? ffprobeBeside(ffmpeg),
-    resolveAssets: async (actAs, assetIds, purpose) => {
-      const r = await agGo.resolveAssets(actAs, { assetIds, purpose });
+    resolveAssets: async (actAs, assetIds, purpose, prefer) => {
+      const r = await agGo.resolveAssets(actAs, { assetIds, purpose, ...(prefer ? { prefer } : {}) });
       return { items: r.items, missing: r.missing ?? [] };
     },
     download: (url, dest) => httpDownload(url, dest),
@@ -124,6 +125,7 @@ async function main(): Promise<void> {
     logger,
     claudeMaxConcurrent,
     ...(agent ? { agent } : {}),
+    ...(agent ? { jobs: { workspacesRoot: agent.workspacesRoot, dataRoot, lanes: numberEnv("STUDIO_JOB_LANES", 2) } } : {}),
     farmPollMs: Number(process.env.FARM_POLL_MS ?? 5000),
     farmQueueTimeoutMs: numberEnv("STUDIO_FARM_QUEUE_TIMEOUT_MINUTES", 120) * 60_000,
     ...(youtubeKey ? { research: new YoutubeResearchSource({ apiKey: youtubeKey, cache: studioResearchCache(db) }) } : {}),

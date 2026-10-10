@@ -14,7 +14,7 @@ import { childEnvWithoutSecrets } from "@harness/core";
 export interface ToolResult { code: number | null; stdout: string; stderr: string; timedOut: boolean }
 
 /** Runs `bin args` without blocking; throws only when the program cannot be started. Output is kept whole. */
-export function runTool(bin: string, args: string[], o: { timeoutMs: number; signal?: AbortSignal }): Promise<ToolResult> {
+export function runTool(bin: string, args: string[], o: { timeoutMs: number; signal?: AbortSignal; onStdout?: (chunk: string) => void }): Promise<ToolResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"], env: childEnvWithoutSecrets(), windowsHide: true });
     let stdout = "";
@@ -23,7 +23,7 @@ export function runTool(bin: string, args: string[], o: { timeoutMs: number; sig
     const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, o.timeoutMs);
     const onAbort = () => child.kill("SIGKILL");
     o.signal?.addEventListener("abort", onAbort, { once: true });
-    child.stdout.on("data", (d: Buffer) => { stdout += d.toString("utf8"); });
+    child.stdout.on("data", (d: Buffer) => { const s = d.toString("utf8"); stdout += s; o.onStdout?.(s); });
     child.stderr.on("data", (d: Buffer) => { stderr += d.toString("utf8"); });
     child.on("error", (e) => {
       clearTimeout(timer);
@@ -81,9 +81,13 @@ export async function probeMedia(ffprobe: string, path: string): Promise<MediaFa
 }
 
 /** Scene-change times (seconds, ascending, 0.1 s grid) — the same filter and parse as harness `detectSceneChanges`. */
-export async function detectCuts(ffmpeg: string, path: string, threshold: number, signal?: AbortSignal): Promise<number[]> {
+export async function detectCuts(ffmpeg: string, path: string, threshold: number, signal?: AbortSignal, onTime?: (seconds: number) => void): Promise<number[]> {
   const vf = `select='gt(scene\\,${threshold})',showinfo`;
-  const r = await runTool(ffmpeg, ["-hide_banner", "-nostats", "-i", path, "-vf", vf, "-an", "-f", "null", "-"], { timeoutMs: DECODE_TIMEOUT_MS, ...(signal ? { signal } : {}) });
+  // `onTime`: how far the decode is (seconds of the video), from ffmpeg's `-progress`
+  const progress = onTime ? ["-progress", "pipe:1"] : [];
+  const r = await runTool(ffmpeg, ["-hide_banner", "-nostats", ...progress, "-i", path, "-vf", vf, "-an", "-f", "null", "-"], {
+    timeoutMs: DECODE_TIMEOUT_MS, ...(signal ? { signal } : {}), ...(onTime ? { onStdout: progressReader(onTime) } : {}),
+  });
   check(r, `scene detection of ${path}`);
   const times = new Set<number>();
   for (const m of r.stderr.matchAll(/pts_time:([0-9.]+)/g)) {
@@ -91,6 +95,19 @@ export async function detectCuts(ffmpeg: string, path: string, threshold: number
     if (Number.isFinite(t)) times.add(Math.round(t * 10) / 10);
   }
   return [...times].sort((a, b) => a - b);
+}
+
+/** Reads ffmpeg `-progress` lines (`out_time_us=…`, split anywhere across chunks) into seconds. */
+export function progressReader(onTime: (seconds: number) => void): (chunk: string) => void {
+  let rest = "";
+  return (chunk) => {
+    const lines = (rest + chunk).split(/\r?\n/);
+    rest = lines.pop() ?? "";
+    for (const line of lines) {
+      const m = /^out_time_(?:us|ms)=(\d+)$/.exec(line.trim());
+      if (m) onTime(Number(m[1]) / 1_000_000);
+    }
+  };
 }
 
 /** The sound of `src` as 16 kHz mono PCM WAV (what WhisperX reads); `false` when the file has no sound. */
