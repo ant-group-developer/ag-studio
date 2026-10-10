@@ -525,6 +525,9 @@ importers:
       pdf-lib:
         specifier: ^1.17.1
         version: 1.17.1
+      yaml:
+        specifier: ^2.6.0
+        version: 2.9.0
       yazl:
         specifier: ^2.5.1
         version: 2.5.1

@@ -73,3 +73,65 @@ export function toolInputJsonSchema(schema: z.ZodTypeAny): Record<string, unknow
   delete out.$schema;
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Playbook: suggested steps, never enforced (spec 2026-10-10 agent-workspace §6, ADR-0001 item 184)
+// ---------------------------------------------------------------------------
+
+/** Checks Studio runs on a step's file (`workspace/validators.ts`). */
+export const FILE_VALIDATORS = ["brief", "branding", "youtube_kit", "style", "survey", "edit_plan"] as const;
+export type FileValidatorId = (typeof FILE_VALIDATORS)[number];
+
+/** How a step counts as done: its document says `status: done` and checks out; its files exist and check out; Studio knows. */
+export const STEP_DONE_WHEN = ["doc_done", "files_valid", "studio"] as const;
+
+export const STEP_STATUSES = ["missing", "draft", "invalid", "done", "skipped", "stale", "running"] as const;
+export type StepStatus = (typeof STEP_STATUSES)[number];
+
+const stepKey = z.string().regex(/^[a-z][a-z0-9-]{1,40}$/, "chữ thường, số, gạch ngang");
+
+export const PlaybookOutputSchema = z.object({
+  /** Workspace path; `{video}` stands for the video's id. */
+  path: z.string().min(1).max(200),
+  /** `doc`: markdown a person reads (frontmatter `status`); `data`: a file Studio reads; `studio`: Studio writes it. */
+  role: z.enum(["doc", "data", "studio"]),
+  validator: z.enum(FILE_VALIDATORS).optional(),
+}).strict();
+
+export const PlaybookStepSchema = z.object({
+  key: stepKey,
+  scope: z.enum(["project", "video"]),
+  title: z.string().min(1).max(80),
+  description: z.string().max(600).default(""),
+  /** The skill the agent uses (`studio:<name>`), if any. */
+  skill: z.string().max(60).optional(),
+  /** Steps that should be done first (a suggestion: nothing blocks). A video step may require a project step. */
+  requires: z.array(stepKey).max(10).default([]),
+  optional: z.boolean().default(false),
+  outputs: z.array(PlaybookOutputSchema).min(1).max(6),
+  done_when: z.enum(STEP_DONE_WHEN).default("doc_done"),
+  /** What the composer is filled with: do the step, redo it, revise it after feedback (`{file}`, `{video}`). */
+  prompts: z.object({
+    do: z.string().min(1).max(1500),
+    redo: z.string().max(1500).optional(),
+    revise: z.string().max(1500).optional(),
+  }).strict(),
+}).strict();
+export type PlaybookStep = z.infer<typeof PlaybookStepSchema>;
+
+export const StudioPlaybookSchema = z.object({
+  schema_version: z.literal("studio.playbook/v1"),
+  steps: z.array(PlaybookStepSchema).min(1).max(40),
+}).strict().superRefine((p, ctx) => {
+  const keys = new Map<string, "project" | "video">();
+  p.steps.forEach((s, i) => {
+    if (keys.has(s.key)) ctx.addIssue({ code: "custom", path: ["steps", i, "key"], message: `bước "${s.key}" bị trùng` });
+    keys.set(s.key, s.scope);
+  });
+  p.steps.forEach((s, i) => s.requires.forEach((r, j) => {
+    const scope = keys.get(r);
+    if (!scope) ctx.addIssue({ code: "custom", path: ["steps", i, "requires", j], message: `không có bước "${r}"` });
+    else if (s.scope === "project" && scope === "video") ctx.addIssue({ code: "custom", path: ["steps", i, "requires", j], message: `bước dự án không thể cần bước video "${r}"` });
+  }));
+});
+export type StudioPlaybook = z.infer<typeof StudioPlaybookSchema>;

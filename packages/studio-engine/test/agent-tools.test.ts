@@ -28,7 +28,7 @@ function setup(role: AgentToolContext["role"] = "editor") {
 describe("agent tools", () => {
   it("lists each tool with an object JSON schema, and their MCP names", () => {
     const list = agentToolList(agentTools());
-    expect(list.map((t) => t.name)).toEqual(["project_info", "video_list", "video_create", "video_update", "suggest_replies", "thread_history"]);
+    expect(list.map((t) => t.name)).toEqual(["project_info", "video_list", "video_create", "video_update", "suggest_replies", "playbook_status", "validate_file", "thread_history"]);
     expect(list.find((t) => t.name === "video_create")!.inputSchema).toMatchObject({ type: "object", required: ["title"], additionalProperties: false });
     expect(list.every((t) => !("$schema" in t.inputSchema))).toBe(true);
     expect(mcpToolNames(agentTools())[0]).toBe("mcp__studio__project_info");

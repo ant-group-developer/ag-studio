@@ -68,6 +68,7 @@ async function setup(env: Record<string, string> = {}) {
     claudeCommand: [process.execPath, FAKE], mcpCommand: [process.execPath, MCP], configDir: join(root, "claude-config"),
     model: "sonnet", maxTurns: 20, deadlineMs: 60_000, mcpTools: () => mcpToolNames(agentTools()), cap: () => 4,
     baseEnv: { ...process.env, FAKE_AGENT_LOG_DIR: logs, ...env }, updateMs: 50,
+    skills: { builtinDir: join(ROOT, "agent-skills"), pluginsRoot: join(root, "plugins") },
   });
   const calls = () => readdirSync(join(logs, "calls")).sort().map((f) => JSON.parse(readFileSync(join(logs, "calls", f), "utf8")) as { argv: string[]; prompt: string; append: string });
   const say = (text: string) => postUserMessage(w.db, { threadId: thread.id, text, actor: { id: "auth0|u", role: "editor" } });
@@ -100,6 +101,26 @@ describe("agent runner (fake CLI, real MCP server)", { timeout: 60_000 }, () => 
     expect(first.append).toContain("Mở đầu dưới 5 giây.");
     expect(existsSync(join(dir, "..", "..", "data", "agent-runs", turn!.id))).toBe(false);
     expect(db.get<{ n: number }>("SELECT COUNT(*) AS n FROM lease WHERE owner LIKE 'agent%'")?.n).toBe(0);
+  });
+
+  it("loads the skills as a plugin, tells the agent the playbook, and asks it once to fix a file that does not check out", async () => {
+    const { runner, say, calls, thread, db, dir } = await setup();
+    say("@fake write channel/branding.md ---\\ntext_look: { text_color: '#FFFFFF', outline_color: '#FEFEFE', box_color: null, size: m }\\n---\\n# Branding");
+    await runner.tick();
+    await runner.idle();
+    const first = calls()[0]!;
+    const plugin = first.argv[first.argv.indexOf("--plugin-dir") + 1]!;
+    expect(existsSync(join(plugin, "skills", "branding", "SKILL.md"))).toBe(true);
+    expect(first.prompt).toContain("Tiến độ theo quy trình gợi ý");
+    expect(first.prompt).toContain("Bước gợi ý tiếp theo: Nghiên cứu thị trường (research/report.md)");
+    expect(JSON.parse(readFileSync(join(dir, ".studio", "status.json"), "utf8"))).toMatchObject({ next: [{ key: "research" }] });
+    const after = listMessages(db, thread.id).map((m) => [m.role, m.trigger, m.status]);
+    expect(after.slice(2)).toEqual([["system", "autofix", "done"], ["assistant", "autofix", "pending"]]);
+    expect(listMessages(db, thread.id)[2]!.text).toContain("channel/branding.md");
+    await runner.tick();
+    await runner.idle();
+    // the fix turn ran; a fix turn never asks for another one
+    expect(listMessages(db, thread.id).map((m) => m.role)).toEqual(["user", "assistant", "system", "assistant"]);
   });
 
   it("the next turn resumes the session; messages sent during a turn get the next one", async () => {

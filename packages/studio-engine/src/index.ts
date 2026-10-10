@@ -62,3 +62,8 @@ export * from "./agent/tools.js";
 export * from "./agent/prompt.js";
 export * from "./agent/runner.js";
 export * from "./agent/activity.js";
+export * from "./workspace/frontmatter.js";
+export * from "./workspace/validators.js";
+export * from "./workspace/playbook.js";
+export * from "./workspace/playbook-status.js";
+export * from "./agent/skills.js";

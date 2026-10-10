@@ -13,14 +13,18 @@ import type { HarnessLogger } from "@harness/core";
 import type { StudioBucket } from "../bucket.js";
 import { acquireClaudeSlot, CHAT_SLOT_LEASE_SECONDS, heartbeatClaudeSlot, idsHoldingSlots, releaseClaudeSlot } from "../claude-slots.js";
 import type { StudioDb } from "../studio-db.js";
+import { projectSettingsOf } from "@harness/contracts";
 import { projectDir, scanWorkspace } from "../workspace/files.js";
+import { playbookContextLines, playbookStatus, type StepFact } from "../workspace/playbook-status.js";
 import { getProject, getVideo } from "../workspace/project-db.js";
 import { seedWorkspace } from "../workspace/templates.js";
+import { hasErrors, validateWorkspaceFile } from "../workspace/validators.js";
+import { materializeSkillPlugin } from "./skills.js";
 import { threadMarkdown } from "./history.js";
 import { agentSystemPrompt, agentTurnPrompt } from "./prompt.js";
 import {
   cancelRequested, finishTurn, getMessage, getThread, listThreadRefs, markAgentTurnRunning, markSessionStarted, nextPendingAgentTurns,
-  orphanedAgentTurns, queueFollowUp, requeueAgentTurn, resetSession, turnInput, updateRunningTurn, type MessageRecord,
+  orphanedAgentTurns, postSystemMessage, queueFollowUp, requeueAgentTurn, resetSession, turnInput, updateRunningTurn, type MessageRecord,
 } from "./threads-db.js";
 import { signAgentToken } from "./token.js";
 
@@ -55,9 +59,11 @@ export interface AgentRunnerOptions {
   deadlineMs: number;
   /** `mcp__studio__<tool>` names the turn may call without asking. */
   mcpTools: () => string[];
-  /** Plugin folders with the project's skills (phase 3); none by default. */
-  pluginDirs?: (projectId: string) => string[];
-  /** More `<studio_context>` lines for a turn (playbook, jobs — later phases). */
+  /** Skills: Studio's own (`agent-skills/`) and where each turn's plugin folder is written. */
+  skills?: { builtinDir: string; pluginsRoot: string };
+  /** What Studio knows of the playbook's `studio` steps (inputs prepared, renders…); later phases. */
+  stepFacts?: (key: string, videoId: string | null) => StepFact | undefined;
+  /** More `<studio_context>` lines for a turn (jobs — later phases). */
   contextLines?: (projectId: string, videoId: string | null) => string[];
   cap: () => number;
   baseEnv?: Record<string, string | undefined>;
@@ -99,10 +105,14 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
       mcpServers: { studio: { type: "stdio", command: o.mcpCommand[0], args: o.mcpCommand.slice(1), env: { STUDIO_AGENT_API_URL: o.apiUrl, STUDIO_AGENT_TOKEN: token } } },
     }));
     writeFileSync(join(turnDir, "settings.json"), JSON.stringify(AGENT_TURN_SETTINGS));
+    const status = playbookStatus(db, dir, { projectId: project.id, videoId: video?.id ?? null, ...(o.stepFacts ? { facts: o.stepFacts } : {}), now: now() });
+    writeStudioFile(dir, "status.json", JSON.stringify({ updated_at: now(), video_id: video?.id ?? null, ...status }, null, 2));
     const prompt = agentTurnPrompt({
       project, thread, video, refs: listThreadRefs(db, thread.id), messages: turnInput(db, message),
-      resumed: message.attempts > 1, recap: opts.recap, extra: o.contextLines?.(project.id, video?.id ?? null) ?? [], now: now(),
+      resumed: message.attempts > 1, recap: opts.recap,
+      extra: [...playbookContextLines(status), ...(o.contextLines?.(project.id, video?.id ?? null) ?? [])], now: now(),
     });
+    const pluginDirs = o.skills ? [materializeSkillPlugin(db, { project, workspaceDir: dir, builtinDir: o.skills.builtinDir, pluginsRoot: o.skills.pluginsRoot })] : [];
     let lastWrite = 0;
     let pending: { state: AgentTurnState; text: string } | null = null;
     let sessionMarked = thread.session_started === 1;
@@ -119,7 +129,7 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
         sessionId: thread.claude_session_id, resume: thread.session_started === 1,
         tools: AGENT_BUILTIN_TOOLS, allowedTools: o.mcpTools(), appendSystemPrompt: agentSystemPrompt(dir, { useLessons: thread.use_lessons !== 0 }),
         settingsPath: join(turnDir, "settings.json"), mcpConfigPath: join(turnDir, "mcp.json"),
-        pluginDirs: o.pluginDirs?.(project.id) ?? [], maxTurns: o.maxTurns, baseEnv: o.baseEnv ?? process.env, configDir: o.configDir,
+        pluginDirs, maxTurns: o.maxTurns, baseEnv: o.baseEnv ?? process.env, configDir: o.configDir,
         deadlineMs: Math.max(1000, deadline - Date.now()), signal,
         onUpdate: (state, text) => {
           if (!sessionMarked && state.session_id) { markSessionStarted(db, thread.id, dir); sessionMarked = true; }
@@ -201,9 +211,11 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
         finishTurn(db, messageId, { ...base, status: "failed", error }, now());
       }
       if (out.status !== "rate_limited") {
-        scanWorkspace(db, { projectId: project.id, dir, author: { kind: "agent", id: message.created_by, messageId }, now: now() });
+        const { changed } = scanWorkspace(db, { projectId: project.id, dir, author: { kind: "agent", id: message.created_by, messageId }, now: now() });
         writeHistory(thread.id, dir);
-        queueFollowUp(db, thread.id, now());
+        const fixing = out.status === "done" && message.trigger !== "autofix" && projectSettingsOf(project.settings).auto_fix
+          ? askToFix(thread.id, dir, changed, message) : false;
+        if (!fixing) queueFollowUp(db, thread.id, now());
       }
     } catch (e) {
       logger.error("agent turn crashed", { message_id: messageId, error: e instanceof Error ? e.message : String(e) });
@@ -212,6 +224,26 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
       clearInterval(watch);
       signal?.removeEventListener("abort", onStop);
     }
+  }
+
+  /** After a turn: files it wrote that do not check out get one turn to fix them (said in the thread). */
+  function askToFix(threadId: string, dir: string, changed: string[], message: MessageRecord): boolean {
+    const broken = changed.map((path) => ({ path, issues: validateWorkspaceFile(dir, path).filter((i) => i.level === "error") }))
+      .filter((x) => hasErrors(x.issues));
+    if (!broken.length) return false;
+    const text = [
+      "Studio kiểm các file vừa ghi và thấy lỗi (Studio chưa dùng được các file này):",
+      ...broken.flatMap((b) => b.issues.slice(0, 5).map((i) => `- \`${b.path}\`: ${i.message}`)),
+      "Hãy sửa các lỗi trên.",
+    ].join("\n");
+    const actor = message.created_by && message.actor_role ? { id: message.created_by, role: message.actor_role } : null;
+    postSystemMessage(db, { threadId, text, trigger: "autofix", continueAgent: true, actor }, now());
+    return true;
+  }
+
+  function writeStudioFile(dir: string, name: string, text: string) {
+    mkdirSync(join(dir, ".studio"), { recursive: true });
+    writeFileSync(join(dir, ".studio", name), text);
   }
 
   function writeHistory(threadId: string, dir: string) {

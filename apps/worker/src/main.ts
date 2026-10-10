@@ -103,6 +103,7 @@ async function main(): Promise<void> {
     maxTurns: numberEnv("STUDIO_AGENT_MAX_TURNS", 40),
     deadlineMs: numberEnv("STUDIO_AGENT_TURN_MINUTES", 20) * 60_000,
     mcpTools: () => mcpToolNames(agentTools()),
+    skills: { builtinDir: join(harnessRoot, "agent-skills"), pluginsRoot: join(dataRoot, "agent-plugins") },
   } : undefined;
   const pool = createStudioWorkerPool({
     core,

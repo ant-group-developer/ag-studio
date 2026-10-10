@@ -10,7 +10,9 @@ import { toolInputJsonSchema, VIDEO_STATUSES } from "@harness/contracts";
 import { StudioRunError } from "../errors.js";
 import type { StudioDb } from "../studio-db.js";
 import { createVideo, listVideos, projectView, requireVideo, updateVideo, type ProjectRecord, type VideoRecord } from "../workspace/project-db.js";
-import { recordFileVersion } from "../workspace/files.js";
+import { normalizeRelPath, recordFileVersion } from "../workspace/files.js";
+import { playbookStatus, type StepFact } from "../workspace/playbook-status.js";
+import { validateWorkspaceFile, validatorFor } from "../workspace/validators.js";
 import type { AgentTokenClaims } from "./token.js";
 import { threadMarkdown } from "./history.js";
 import { getThread, listThreads, videoThread, type ActorRole, type MessageRecord, type ThreadRecord } from "./threads-db.js";
@@ -26,6 +28,8 @@ export interface AgentToolContext {
   workspaceDir: string;
   role: ActorRole;
   now: () => string;
+  /** What Studio knows of the playbook's `studio` steps (later phases). */
+  stepFacts?: (key: string, videoId: string | null) => StepFact | undefined;
 }
 
 export interface ToolAnswer {
@@ -115,6 +119,29 @@ export const PROJECT_TOOLS: AgentTool[] = [
     description: "Gợi ý 1–4 câu trả lời ngắn để người dùng bấm thay vì gõ (ví dụ các lựa chọn khi bạn hỏi lại). Gọi ở cuối lượt.",
     input: z.object({ options: z.array(z.string().trim().min(1).max(120)).min(1).max(4) }).strict(),
     run: (_ctx, a) => ({ text: `Đã hiện ${a.options.length} gợi ý cho người dùng.` }),
+  }),
+  tool({
+    name: "playbook_status",
+    description: "Tiến độ theo quy trình gợi ý của dự án (và video của luồng này): từng bước, trạng thái (missing, draft, invalid, done, skipped, stale, running), file của bước, lỗi, và các bước gợi ý tiếp theo. Chỉ là gợi ý: không bước nào bắt buộc.",
+    input: z.object({ video_id: z.string().min(1).optional() }).strict(),
+    run: (ctx, a) => {
+      const videoId = a.video_id ?? ctx.video?.id ?? null;
+      const st = playbookStatus(ctx.db, ctx.workspaceDir, { projectId: ctx.project.id, videoId, ...(ctx.stepFacts ? { facts: ctx.stepFacts } : {}), now: ctx.now() });
+      const slim = (x: typeof st.project) => x.map((t) => ({ key: t.key, title: t.title, status: t.status, file: t.primary, skill: t.skill, optional: t.optional, requires: t.requires, issues: t.issues.map((i) => `[${i.level}] ${i.message}`), stale_because: t.staleBecause, detail: t.detail }));
+      return { text: json({ custom_playbook: st.custom, playbook_issues: st.issues, project: slim(st.project), video: st.video ? slim(st.video) : null, next: st.next }) };
+    },
+  }),
+  tool({
+    name: "validate_file",
+    description: "Kiểm một file trong dự án theo những gì Studio đọc từ nó (frontmatter của brief, branding, gói YouTube; style.json; JSON; playbook). Gọi ngay sau khi ghi các file đó; sửa đến khi hết lỗi (error). Cảnh báo (warning) là lời khuyên.",
+    input: z.object({ path: z.string().min(1).max(300) }).strict(),
+    run: (ctx, a) => {
+      const path = normalizeRelPath(a.path);
+      const kind = validatorFor(path);
+      if (!kind) return { text: `Studio không đọc gì từ ${path}: không có gì để kiểm.` };
+      const issues = validateWorkspaceFile(ctx.workspaceDir, path);
+      return { text: issues.length ? json({ path, ok: !issues.some((i) => i.level === "error"), issues }) : `${path}: hợp lệ.` };
+    },
   }),
   tool({
     name: "thread_history",
