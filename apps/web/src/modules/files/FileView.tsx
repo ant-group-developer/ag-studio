@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { App as AntApp, Button, Modal, Spin, Tooltip } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Download, Eye, History, Lock, Paperclip, Pencil, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Download, Eye, History, Lock, Paperclip, Pencil, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { StudioHttpError } from "../../api/http";
 import { useWorkspaceClient, type FileAccess, type WorkspaceFile } from "../../api/workspace-client";
@@ -76,7 +76,9 @@ export function FileView({ projectId, path, access, canEdit, onBack, onDeleted, 
       void qc.invalidateQueries({ queryKey: ["file", projectId, path] });
       void qc.invalidateQueries({ queryKey: ["files", projectId] });
       void qc.invalidateQueries({ queryKey: ["file-versions", projectId, path] });
-      void message.success(t("ws.files.saved"));
+      void qc.invalidateQueries({ queryKey: ["playbook", projectId] });
+      if (saved.issues?.some((i) => i.level === "error")) void message.warning(t("ws.files.savedWithErrors"));
+      else void message.success(t("ws.files.saved"));
     },
     onError: (e) => {
       if (e instanceof StudioHttpError && e.code === "file_conflict") {
@@ -143,6 +145,11 @@ export function FileView({ projectId, path, access, canEdit, onBack, onDeleted, 
           <Button size="small" onClick={() => void reloadTheirs()}>{t("ws.files.reloadTheirs")}</Button>{" "}
           <Button size="small" danger onClick={() => save.mutate(true)}>{t("ws.files.overwrite")}</Button>
         </div>
+      ) : null}
+      {file?.issues?.length && mode !== "history" ? (
+        <ul className="ws-issues ws-issues--file" aria-label={t("ws.files.issues")}>
+          {file.issues.map((i, n) => <li key={n} className={`ws-issue ws-issue--${i.level}`}><AlertTriangle size={12} aria-hidden />{i.message}</li>)}
+        </ul>
       ) : null}
       {access === "read" && file ? <div className="ws-file__note"><Lock size={13} aria-hidden /> {t("ws.files.readOnly")}</div> : null}
 

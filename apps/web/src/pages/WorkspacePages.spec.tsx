@@ -15,7 +15,13 @@ const studio = {
   getMe: vi.fn().mockResolvedValue({ userId: "u", isAdmin: false }),
   getCanvaConnection: vi.fn().mockResolvedValue({ enabled: false, connected: false, displayName: null }),
   listTeams: vi.fn().mockResolvedValue({ items: [{ id: "team-1", name: "Du lịch", role: "producer" }], total: 1, page: 1, pageSize: 100 }),
+  listTeamSkills: vi.fn().mockResolvedValue([]),
 };
+const step = (key: string, title: string, status: string, over: Record<string, unknown> = {}) => ({
+  key, scope: "project", title, description: `Mô tả ${title}`, skill: null, optional: false, requires: [], status,
+  outputs: [{ path: `channel/${key}.md`, role: "doc", exists: status !== "missing", issues: [] }], issues: [], primary: `channel/${key}.md`,
+  prompts: { do: `Làm ${title}`, redo: `Làm lại ${title}`, revise: `Sửa ${title}: ` }, staleBecause: [], detail: null, ...over,
+});
 const project = {
   id: "p1", teamId: "team-1", name: "Du lịch chậm", channelUrl: "@dulichcham", description: "Đi bộ phố cổ", language: "vi", aspect: "16:9",
   settings: { auto_fix: true, auto_continue: true }, ownerUserId: "u", createdBy: "u", createdAt: "", updatedAt: "", archivedAt: null,
@@ -54,6 +60,18 @@ const ws = {
   openProjectEvents: vi.fn(() => new Promise(() => {})),
   setLearning: vi.fn(),
   createThread: vi.fn(),
+  getPlaybook: vi.fn().mockResolvedValue({
+    custom: false, issues: [], video: null, next: [{ scope: "project", key: "branding" }],
+    project: [
+      step("research", "Nghiên cứu thị trường", "done"),
+      step("branding", "Branding", "invalid", { issues: [{ level: "error", code: "text_look_no_contrast", message: "channel/branding.md: chữ khó đọc" }] }),
+    ],
+  }),
+  markStep: vi.fn().mockResolvedValue({}),
+  customizePlaybook: vi.fn(),
+  listLessons: vi.fn().mockResolvedValue({ lessons: [{ id: "l1", project_id: "p1", thread_id: "t-kenh", text: "Không dùng nhạc buồn.", status: "proposed", decided_by: null, decided_at: null, created_at: "" }] }),
+  acceptLesson: vi.fn().mockResolvedValue({}),
+  dismissLesson: vi.fn().mockResolvedValue(undefined),
 };
 const NOW = new Date().toISOString();
 const message = (over: Record<string, unknown>) => ({
@@ -158,6 +176,23 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     fireEvent.change(box, { target: { value: "Viết chiến lược kênh" } });
     fireEvent.keyDown(box, { key: "Enter" });
     await waitFor(() => expect(ws.sendMessage).toHaveBeenLastCalledWith("t-kenh", { text: "Viết chiến lược kênh" }));
+  });
+
+  it("suggests the steps: a step opens with its errors, and 'do this step' fills the message box", async () => {
+    mount("/p/p1");
+    const rail = await screen.findByRole("navigation", { name: "Các bước gợi ý" });
+    fireEvent.click(within(rail).getByRole("button", { name: /Branding/ }));
+    expect(await screen.findByText("channel/branding.md: chữ khó đọc")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Làm bước này" }));
+    expect(screen.getByLabelText("Tin nhắn cho Claude")).toHaveValue("Làm Branding");
+  });
+
+  it("offers this thread's proposed lessons to keep", async () => {
+    mount("/p/p1");
+    const lessons = await screen.findByRole("region", { name: "Bài học đề xuất từ chat này" });
+    expect(lessons).toHaveTextContent("Không dùng nhạc buồn.");
+    fireEvent.click(within(lessons).getByRole("button", { name: "Lưu vào bài học dự án" }));
+    await waitFor(() => expect(ws.acceptLesson).toHaveBeenCalledWith("p1", "l1"));
   });
 
   it("shows who works, on what and for how long while a turn runs, and stops it", async () => {

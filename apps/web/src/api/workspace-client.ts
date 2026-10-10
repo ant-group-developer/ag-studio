@@ -73,6 +73,13 @@ export interface WorkspaceEntry {
   access: FileAccess;
 }
 
+/** What Studio's checks say of a file: errors it cannot use as is, warnings. */
+export interface FileIssue {
+  level: "error" | "warning";
+  code: string;
+  message: string;
+}
+
 export interface WorkspaceFile {
   path: string;
   size: number;
@@ -81,6 +88,7 @@ export interface WorkspaceFile {
   mime: string;
   binary: boolean;
   text: string | null;
+  issues: FileIssue[];
 }
 
 export interface SavedFile {
@@ -88,6 +96,49 @@ export interface SavedFile {
   sha256: string;
   size: number;
   versionId: string;
+  issues?: FileIssue[];
+}
+
+// ---------------------------------------------------------------------------
+// Playbook (suggested steps) and lessons
+// ---------------------------------------------------------------------------
+
+export type StepStatus = "missing" | "draft" | "invalid" | "done" | "skipped" | "stale" | "running";
+
+export interface StepState {
+  key: string;
+  scope: "project" | "video";
+  title: string;
+  description: string;
+  skill: string | null;
+  optional: boolean;
+  requires: string[];
+  status: StepStatus;
+  outputs: { path: string; role: "doc" | "data" | "studio"; exists: boolean; issues: FileIssue[] }[];
+  issues: FileIssue[];
+  primary: string;
+  prompts: { do: string; redo: string | null; revise: string | null };
+  staleBecause: string[];
+  detail: string | null;
+}
+
+export interface PlaybookStatus {
+  custom: boolean;
+  issues: FileIssue[];
+  project: StepState[];
+  video: StepState[] | null;
+  next: { scope: "project" | "video"; key: string }[];
+}
+
+export interface LessonProposal {
+  id: string;
+  project_id: string;
+  thread_id: string | null;
+  text: string;
+  status: "proposed" | "accepted" | "dismissed";
+  decided_by: string | null;
+  decided_at: string | null;
+  created_at: string;
 }
 
 export interface FileVersion {
@@ -269,6 +320,26 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     /** Server-sent events of a project (`changed`). */
     async openProjectEvents(projectId: string, signal: AbortSignal): Promise<Response> {
       return fetch(`${STUDIO_API_URL}/api/projects/${enc(projectId)}/events`, { headers: { Authorization: `Bearer ${await getAccessToken()}` }, signal });
+    },
+
+    // ---- Playbook and lessons ----
+    getPlaybook(projectId: string, videoId?: string | null): Promise<PlaybookStatus> {
+      return call("GET", `/api/projects/${enc(projectId)}/playbook${buildQuery({ videoId: videoId ?? undefined })}`);
+    },
+    markStep(projectId: string, stepKey: string, input: { status: "done" | "skipped" | "draft"; videoId?: string }): Promise<SavedFile> {
+      return call("POST", `/api/projects/${enc(projectId)}/playbook/steps/${enc(stepKey)}/mark`, input);
+    },
+    customizePlaybook(projectId: string): Promise<{ path: string; created: boolean }> {
+      return call("POST", `/api/projects/${enc(projectId)}/playbook/customize`, {});
+    },
+    listLessons(projectId: string, opts: { status?: LessonProposal["status"]; threadId?: string } = {}): Promise<{ lessons: LessonProposal[] }> {
+      return call("GET", `/api/projects/${enc(projectId)}/lessons${buildQuery({ status: opts.status, threadId: opts.threadId })}`);
+    },
+    acceptLesson(projectId: string, lessonId: string, text?: string): Promise<LessonProposal> {
+      return call("POST", `/api/projects/${enc(projectId)}/lessons/${enc(lessonId)}/accept`, text ? { text } : {});
+    },
+    dismissLesson(projectId: string, lessonId: string): Promise<void> {
+      return call("POST", `/api/projects/${enc(projectId)}/lessons/${enc(lessonId)}/dismiss`, {});
     },
 
     // ---- Files ----

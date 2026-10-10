@@ -11,6 +11,7 @@ import { ChatPanel } from "../modules/agent-chat/ChatPanel";
 import { LearningModal } from "../modules/agent-chat/NewWorkModals";
 import { useProjectEvents, useThread } from "../modules/agent-chat/use-thread";
 import { FilesPanel } from "../modules/files/FilesPanel";
+import { StepRail } from "../modules/playbook/StepRail";
 import { ColumnResizer, useColumnWidths } from "../modules/workspace/ColumnResizer";
 import { ProjectNav, VideoStatusBadge } from "../modules/workspace/ProjectNav";
 import { ProjectSettingsPanel } from "../modules/workspace/ProjectSettingsPanel";
@@ -42,6 +43,9 @@ export function ProjectPage() {
   const channelThread = threads?.threads.find((x) => x.kind === "project" && x.title === "Kênh") ?? threads?.threads.find((x) => x.kind === "project");
   const threadId = videoId ? video?.threadId ?? null : routeThread ?? channelThread?.id ?? null;
   const { data: thread } = useThread(threadId);
+  const { data: playbook } = useQuery({
+    queryKey: ["playbook", projectId, videoId ?? null], queryFn: () => client.getPlaybook(projectId, videoId ?? null), enabled: !!projectId, refetchInterval: 15_000,
+  });
 
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [attached, setAttached] = useState<Record<string, string[]>>({});
@@ -79,6 +83,10 @@ export function ProjectPage() {
   ];
   const key = threadId ?? "";
   const attach = (path: string) => setAttached((a) => ({ ...a, [key]: [...new Set([...(a[key] ?? []), path])] }));
+  const setDraft = (text: string) => setDrafts((d) => ({ ...d, [key]: text }));
+  const allSteps = playbook ? [...playbook.project, ...(playbook.video ?? [])] : [];
+  const nextSteps = (playbook?.next ?? []).map((n) => allSteps.find((x) => x.key === n.key)!).filter(Boolean)
+    .map((x) => ({ key: x.key, title: x.title, prompt: x.prompts.do }));
   const learning: Learning = { useLessons: thread?.useLessons ?? true, threads: (thread?.refs ?? []).map((r) => ({ threadId: r.threadId, mode: r.mode })) };
 
   return (
@@ -94,11 +102,15 @@ export function ProjectPage() {
               <button type="button" className="ws-link" onClick={() => setAside({ tab: "files", file: null })}>{t("ws.video.openFolder")}</button>
             </div>
           ) : null}
+          {playbook ? (
+            <StepRail status={playbook} scope={videoId ? "video" : "project"} projectId={project.id} videoId={videoId ?? null}
+              canWrite={atLeast("editor")} onPrompt={setDraft} onOpenFile={(file) => setAside({ tab: "files", file })} />
+          ) : null}
           {threadId ? (
             <ChatPanel
-              threadId={threadId} canWrite={atLeast("editor")}
+              threadId={threadId} projectId={project.id} canWrite={atLeast("editor")} nextSteps={nextSteps}
               onOpenFile={(file) => setAside({ tab: "files", file })}
-              draft={drafts[key] ?? ""} onDraftChange={(text) => setDrafts((d) => ({ ...d, [key]: text }))}
+              draft={drafts[key] ?? ""} onDraftChange={setDraft}
               attachments={attached[key] ?? []} onAttachmentsChange={(paths) => setAttached((a) => ({ ...a, [key]: paths }))}
               onEditLearning={() => setLearningOpen(true)}
               emptyHint={currentVideo ? t("ws.chat.emptyVideo") : t("ws.chat.emptyProject")}
@@ -118,7 +130,7 @@ export function ProjectPage() {
               <FilesPanel projectId={project.id} canEdit={atLeast("editor")} openPath={openFile} onOpen={(file) => setAside({ file })}
                 onAttach={threadId && atLeast("editor") ? attach : undefined} />
             ) : (
-              <ProjectSettingsPanel project={project} canEdit={atLeast("producer")} canArchive={atLeast("owner")} />
+              <ProjectSettingsPanel project={project} canEdit={atLeast("producer")} canArchive={atLeast("owner")} onOpenFile={(file) => setAside({ tab: "files", file })} />
             )}
           </div>
         </aside>

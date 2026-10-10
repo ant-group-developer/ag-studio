@@ -1,6 +1,7 @@
 import { useEffect } from "react";
-import { App as AntApp, Button, Form, Input, InputNumber, Modal, Segmented, Select, Switch } from "antd";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { App as AntApp, Button, Checkbox, Form, Input, InputNumber, Modal, Segmented, Select, Switch } from "antd";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useStudioClient } from "../../api/studio-client";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { StudioHttpError } from "../../api/http";
@@ -21,7 +22,39 @@ interface Values {
 const MODELS = ["", "sonnet", "opus", "haiku"] as const;
 
 /** The project's own settings: name, channel, the usual video, how the agent works. */
-export function ProjectSettingsPanel({ project, canEdit, canArchive }: { project: Project; canEdit: boolean; canArchive: boolean }) {
+/** The team skills this project loads: all the team has enabled, or the ones picked here. */
+function TeamSkillsPicker({ project, canEdit }: { project: Project; canEdit: boolean }) {
+  const { t } = useTranslation();
+  const studio = useStudioClient();
+  const client = useWorkspaceClient();
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ["team-skills", project.teamId], queryFn: () => studio.listTeamSkills(project.teamId) });
+  const enabled = (data ?? []).filter((x) => x.enabled);
+  const picked = project.settings.team_skills;
+  const save = useMutation({
+    mutationFn: (ids: string[] | null) => {
+      const { team_skills: _all, ...rest } = project.settings;
+      return client.updateProject(project.id, { settings: ids ? { ...rest, team_skills: ids } : rest });
+    },
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["project", project.id] }),
+  });
+  if (!enabled.length) return <p className="ws-hint">{t("ws.settings.noTeamSkills")}</p>;
+  return (
+    <div className="ws-skill-picker">
+      <Checkbox checked={!picked} disabled={!canEdit} onChange={(e) => save.mutate(e.target.checked ? null : enabled.map((x) => x.id))}>
+        {t("ws.settings.allTeamSkills")}
+      </Checkbox>
+      {enabled.map((x) => (
+        <Checkbox key={x.id} disabled={!canEdit || !picked} checked={!picked || picked.includes(x.id)}
+          onChange={(e) => save.mutate(e.target.checked ? [...(picked ?? []), x.id] : (picked ?? []).filter((id) => id !== x.id))}>
+          <strong>{x.name}</strong>{x.purpose ? <span className="ws-hint"> — {x.purpose}</span> : null}
+        </Checkbox>
+      ))}
+    </div>
+  );
+}
+
+export function ProjectSettingsPanel({ project, canEdit, canArchive, onOpenFile }: { project: Project; canEdit: boolean; canArchive: boolean; onOpenFile: (path: string) => void }) {
   const { t } = useTranslation();
   const { message } = AntApp.useApp();
   const client = useWorkspaceClient();
@@ -59,6 +92,11 @@ export function ProjectSettingsPanel({ project, canEdit, canArchive }: { project
     },
     onError: (e) => void message.error(e instanceof StudioHttpError ? e.message : t("ws.settings.saveFailed")),
   });
+  const customize = useMutation({
+    mutationFn: () => client.customizePlaybook(project.id),
+    onSuccess: (r) => { void qc.invalidateQueries({ queryKey: ["files", project.id] }); onOpenFile(r.path); },
+    onError: (e) => void message.error(e instanceof StudioHttpError ? e.message : t("ws.settings.saveFailed")),
+  });
   const archive = useMutation({
     mutationFn: () => client.archiveProject(project.id),
     onSuccess: () => {
@@ -87,6 +125,12 @@ export function ProjectSettingsPanel({ project, canEdit, canArchive }: { project
         <Form.Item name="autoContinue" label={t("ws.settings.autoContinue")} valuePropName="checked" extra={t("ws.settings.autoContinueHint")}><Switch /></Form.Item>
         {canEdit ? <Button type="primary" htmlType="submit" loading={save.isPending}>{t("common.save")}</Button> : null}
       </Form>
+      <h4 className="ws-modal-h">{t("ws.settings.skills")}</h4>
+      <p className="ws-hint">{t("ws.settings.skillsHint")}</p>
+      <TeamSkillsPicker project={project} canEdit={canEdit} />
+      <h4 className="ws-modal-h">{t("ws.settings.playbook")}</h4>
+      <p className="ws-hint">{t("ws.settings.playbookHint")}</p>
+      <Button onClick={() => customize.mutate()} loading={customize.isPending} disabled={!canEdit}>{t("ws.settings.customizePlaybook")}</Button>
       {canArchive ? (
         <div style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid var(--ws-line)" }}>
           <Button danger onClick={() => Modal.confirm({

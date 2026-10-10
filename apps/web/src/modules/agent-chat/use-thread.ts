@@ -48,5 +48,7 @@ export function useProjectEvents(projectId: string | null): boolean {
     void qc.invalidateQueries({ queryKey: ["project", projectId] });
     void qc.invalidateQueries({ queryKey: ["threads", projectId] });
     void qc.invalidateQueries({ queryKey: ["activity", projectId] });
+    void qc.invalidateQueries({ queryKey: ["playbook", projectId] });
+    void qc.invalidateQueries({ queryKey: ["lessons", projectId] });
   });
 }

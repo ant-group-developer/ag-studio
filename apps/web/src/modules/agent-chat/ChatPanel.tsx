@@ -6,6 +6,7 @@ import { StudioHttpError } from "../../api/http";
 import { useWorkspaceClient, type ChatMessage } from "../../api/workspace-client";
 import { useAiTranslation } from "../common/assistant-name";
 import { useStickToBottom } from "../common/use-stick-to-bottom";
+import { LessonCards } from "../playbook/LessonCards";
 import { Composer } from "./Composer";
 import { MessageItem } from "./MessageItem";
 import { useThread } from "./use-thread";
@@ -24,8 +25,9 @@ export function suggestionsOf(messages: ChatMessage[]): string[] {
  * runs, quick replies the agent suggested, and the message box. The page owns the draft and the attachments so the
  * files panel can add to them.
  */
-export function ChatPanel({ threadId, canWrite, onOpenFile, draft, onDraftChange, attachments, onAttachmentsChange, onEditLearning, emptyHint }: {
+export function ChatPanel({ threadId, projectId, canWrite, onOpenFile, draft, onDraftChange, attachments, onAttachmentsChange, onEditLearning, emptyHint, nextSteps = [] }: {
   threadId: string;
+  projectId: string;
   canWrite: boolean;
   onOpenFile: (path: string) => void;
   draft: string;
@@ -34,6 +36,8 @@ export function ChatPanel({ threadId, canWrite, onOpenFile, draft, onDraftChange
   onAttachmentsChange: (paths: string[]) => void;
   onEditLearning?: (() => void) | undefined;
   emptyHint?: string | undefined;
+  /** Steps of the playbook to suggest (their "do" prompt fills the message box). */
+  nextSteps?: { key: string; title: string; prompt: string }[];
 }) {
   const { t } = useAiTranslation();
   const { message } = AntApp.useApp();
@@ -87,11 +91,17 @@ export function ChatPanel({ threadId, canWrite, onOpenFile, draft, onDraftChange
       {!atBottom ? (
         <button type="button" className="ws-chat__latest" onClick={toBottom} aria-label={t("ws.chat.latest")}><ArrowDown size={16} /></button>
       ) : null}
+      <LessonCards projectId={projectId} threadId={threadId} canWrite={canWrite} />
       {canWrite ? (
         <div className="ws-chat__foot">
           {suggestions.length && !active ? (
             <div className="ws-suggestions">
               {suggestions.map((s) => <button key={s} type="button" onClick={() => send.mutate(s)} disabled={send.isPending}>{s}</button>)}
+            </div>
+          ) : !active && nextSteps.length && !draft.trim() ? (
+            <div className="ws-suggestions ws-suggestions--steps">
+              <span>{t("ws.steps.next")}</span>
+              {nextSteps.map((n) => <button key={n.key} type="button" onClick={() => onDraftChange(n.prompt)}>{n.title}</button>)}
             </div>
           ) : null}
           <Composer
