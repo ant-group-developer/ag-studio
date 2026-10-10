@@ -249,7 +249,7 @@ function projectJobHandlers(o: StudioWorkerOptions): Partial<Record<JobKind, Job
       db: o.db, ffmpeg: media.ffmpeg, ffprobe: media.ffprobe,
       resolve: (actAs, ids) => media.resolveAssets(actAs, ids, "preview", PREVIEW_PREFER),
       download: (url, dest, signal, onBytes) => httpDownload(url, dest, signal, onBytes),
-      farm: { client: o.farm, bucket: o.bucket, pollMs: o.farmPollMs ?? 3000 },
+      farm: { client: o.farm, bucket: o.bucket, pollMs: o.farmPollMs ?? 3000, queueTimeoutMs: o.farmQueueTimeoutMs ?? 30 * 60_000 },
     });
   }
   return handlers;

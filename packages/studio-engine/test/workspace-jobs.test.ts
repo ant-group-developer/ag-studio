@@ -192,8 +192,8 @@ describe("farm step of a project job", () => {
       project_id: project.id, job_id: job.id, stage_key: "prepare", attempt_id: job.id, job_type: "studio.transcribe",
     });
     expect(updates).toEqual([
-      { phase: "Farm · đang chờ máy nhận", progress: null, node: null, farmJobId: "00000000-0000-4000-8000-00000000f001" },
-      { phase: "Farm · GPU-02 · whisper", progress: 0.4, node: "GPU-02", farmJobId: "00000000-0000-4000-8000-00000000f001" },
+      { phase: "Farm · đang chờ máy nhận", progress: null, node: null, farmJobId: "00000000-0000-4000-8000-00000000f001", waiting: true },
+      { phase: "Farm · GPU-02 · whisper", progress: 0.4, node: "GPU-02", farmJobId: "00000000-0000-4000-8000-00000000f001", waiting: false },
     ]);
     expect(r.outputPrefix).toBe(`productions/${project.id}/jobs/prepare/${job.id}/out/`);
     void dir;
@@ -244,5 +244,33 @@ describe("project activity", () => {
     expect(projectFingerprint(db, project.id)).not.toBe(before);
     requestJobCancel(db, a.id, at(7));
     expect(agentActivity(db, project.id)[0]).toMatchObject({ cancellable: false });
+  });
+});
+
+describe("waiting for a farm machine", () => {
+  it("says no time left while no machine took the job, and gives up after the queue timeout (cancelled on the farm)", async () => {
+    const { db, bucket, project } = setup();
+    const job = createJob(db, { projectId: project.id, kind: "prepare_asset", title: "A", request: {}, createdBy: "u" }, at(0));
+    const { farm, calls } = fakeFarm([{}, {}, {}, {}]);
+    const updates: { waiting: boolean }[] = [];
+    await expect(runFarmStep({ db, bucket, farm, pollMs: 5, queueTimeoutMs: 20 }, job, { type: "studio.transcribe", payload: {}, stageKey: "prepare", attemptId: job.id },
+      { onUpdate: (u) => updates.push(u), stopRequested: () => null })).rejects.toThrow("không máy farm nào nhận việc");
+    expect(updates.every((u) => u.waiting)).toBe(true);
+    expect(calls.cancel).toEqual(["00000000-0000-4000-8000-00000000f001"]);
+  });
+
+  it("a job waiting in line shows no time left", async () => {
+    const { db, project, workspacesRoot, dir } = setup();
+    let release!: () => void;
+    const job = createJob(db, { projectId: project.id, kind: "prepare_asset", title: "A", request: {}, units: 100, createdBy: "u" }, at(0));
+    const runner = createJobRunner({
+      db, logger: quiet, workspacesRoot, dataRoot: join(dir, "data"), tickMs: 10,
+      handlers: { prepare_asset: async (_j, ctx) => { ctx.report({ phase: "Farm · đang chờ máy nhận", progress: 0.68, waiting: true }); await new Promise<void>((r) => { release = r; }); return { result: null }; } },
+    });
+    runner.tick();
+    await new Promise((r) => setTimeout(r, 40));
+    expect(getJob(db, job.id)).toMatchObject({ phase: "Farm · đang chờ máy nhận", progress: 0.68, eta_seconds: null });
+    release();
+    await runner.idle();
   });
 });

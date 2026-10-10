@@ -39,7 +39,7 @@ export interface PrepareDeps {
   resolve(actAs: string, assetIds: string[]): Promise<{ items: ResolvedFootage[]; missing: string[] }>;
   download(url: string, dest: string, signal: AbortSignal, onBytes: (received: number, total: number | null) => void): Promise<void>;
   /** The farm reads what is said; without it there is no transcript (README says so). */
-  farm?: { client: ProjectFarm; bucket: StudioBucket; pollMs?: number };
+  farm?: { client: ProjectFarm; bucket: StudioBucket; pollMs?: number; queueTimeoutMs?: number };
 }
 
 /** `request` of a `prepare_asset` job. */
@@ -195,30 +195,25 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
         production_id: job.project_id, model: CUT_TRANSCRIBE_MODEL, align_words: true,
         sources: [{ source_id: sourceId, audio: `stage:audio/${sourceId}.wav`, language: null }],
       });
-      const { outputPrefix, farmJob } = await runFarmStep(
-        { db: d.db, bucket: d.farm.bucket, farm: d.farm.client, ...(d.farm.pollMs ? { pollMs: d.farm.pollMs } : {}), now: ctx.now },
-        job, { type: "studio.transcribe", payload, stageKey: "prepare", attemptId: job.id, uploads: [{ localPath: wav, relPath: `audio/${sourceId}.wav` }] },
-        {
-          onUpdate: (u) => ctx.report({ phase: `${u.phase} · đọc lời thoại`, progress: at("farm", u.progress ?? 0), node: u.node, farmJobId: u.farmJobId }),
-          stopRequested: ctx.stopRequested,
-        },
-      );
-      const manifest: TranscribeManifest = TranscribeManifestSchema.parse(JSON.parse((await d.farm.bucket.get(`${outputPrefix}${TRANSCRIBE_MANIFEST_PATH}`)).toString("utf8")));
-      await ackFarmJob(d.farm.client, farmJob.id);
-      const { manifest: clean, report } = cleanTranscribeManifest(manifest);
-      const src = clean.sources.find((s) => s.source_id === sourceId);
-      const said: InputTranscript = {
-        schema_version: "studio.input-transcript/v1", asset_id: assetId, language: src?.language ?? null, alignment: src?.alignment ?? "segment",
-        engine: clean.engine.name, segments: (src?.segments ?? []).map((g) => ({ start: g.start, end: g.end, text: g.text, words: g.words })),
-        dropped: report.dropped.length,
-      };
-      transcript = said;
-      transcriptNote = said.segments.length ? `${said.segments.length} câu, ngôn ngữ ${said.language ?? "?"}` : "không nghe thấy lời nói";
+      // what is said is a help, not a must: the shots stay usable when the farm cannot read it (README says why)
+      const said = await transcribeOnFarm(d.db, d.farm, job, ctx, sourceId, assetId, wav, payload).catch((e: unknown) => {
+        if (e instanceof JobStopped) throw e;
+        ctx.logger.warn("transcription failed", { error: e instanceof Error ? e.message : String(e) });
+        return { failed: e instanceof Error ? e.message : String(e) };
+      });
+      if ("failed" in said) {
+        transcriptNote = `chưa đọc được (${said.failed}); chuẩn bị lại để thử`;
+      } else {
+        transcript = said;
+        transcriptNote = said.segments.length ? `${said.segments.length} câu, ngôn ngữ ${said.language ?? "?"}` : "không nghe thấy lời nói";
+      }
     }
   }
 
   ctx.checkpoint();
-  ctx.report({ phase: "Đang ghi vào inputs/", progress: at("write", 0) });
+  ctx.report({ phase: "Đang ghi vào inputs/", progress: at("write", 0), waiting: false });
+
+
   const shotsFile: InputShots = {
     schema_version: "studio.input-shots/v1", asset_id: assetId, name, duration_s: duration, width: facts.width, height: facts.height, fps: facts.fps,
     has_audio: facts.has_audio, source: { kind: item.sourceKind, watermarked: item.watermarked }, scene: CUT_SCENE, shots, sheets,
@@ -246,6 +241,29 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
   return {
     result: { asset_id: assetId, name, shots: shots.length, duration_s: duration, transcript: transcriptNote, folder: `${inputDir(assetId)}/` },
     message: `Đã chuẩn bị **${name}** (${clock(duration)}): ${shots.length} cảnh, lời thoại: ${transcriptNote}. Xem \`${inputDir(assetId)}/README.md\`.`,
+  };
+}
+
+/** The farm's `studio.transcribe` of one sound file, cleaned of what nobody said. */
+async function transcribeOnFarm(
+  db: StudioDb, farm: NonNullable<PrepareDeps["farm"]>, job: JobRecord, ctx: JobContext, sourceId: string, assetId: string, wav: string, payload: unknown,
+): Promise<InputTranscript> {
+  const { outputPrefix, farmJob } = await runFarmStep(
+    { db, bucket: farm.bucket, farm: farm.client, ...(farm.pollMs ? { pollMs: farm.pollMs } : {}), ...(farm.queueTimeoutMs ? { queueTimeoutMs: farm.queueTimeoutMs } : {}), now: ctx.now },
+    job, { type: "studio.transcribe", payload, stageKey: "prepare", attemptId: job.id, uploads: [{ localPath: wav, relPath: `audio/${sourceId}.wav` }] },
+    {
+      onUpdate: (u) => ctx.report({ phase: `${u.phase} · đọc lời thoại`, progress: at("farm", u.progress ?? 0), node: u.node, farmJobId: u.farmJobId, waiting: u.waiting }),
+      stopRequested: ctx.stopRequested,
+    },
+  );
+  const manifest: TranscribeManifest = TranscribeManifestSchema.parse(JSON.parse((await farm.bucket.get(`${outputPrefix}${TRANSCRIBE_MANIFEST_PATH}`)).toString("utf8")));
+  await ackFarmJob(farm.client, farmJob.id);
+  const { manifest: clean, report } = cleanTranscribeManifest(manifest);
+  const src = clean.sources.find((s) => s.source_id === sourceId);
+  return {
+    schema_version: "studio.input-transcript/v1", asset_id: assetId, language: src?.language ?? null, alignment: src?.alignment ?? "segment",
+    engine: clean.engine.name, segments: (src?.segments ?? []).map((g) => ({ start: g.start, end: g.end, text: g.text, words: g.words })),
+    dropped: report.dropped.length,
   };
 }
 

@@ -27,8 +27,11 @@ export interface JobContext {
   stopRequested(): "cancelled" | "shutdown" | null;
   /** Throws `JobStopped` when it must stop: call between steps. */
   checkpoint(): void;
-  /** What it does now and how far it is (0–1); the time left is worked out here. */
-  report(p: { phase?: string; progress?: number | null; node?: string | null; farmJobId?: string | null }): void;
+  /**
+   * What it does now and how far it is (0–1); the time left is worked out here. `waiting`: in line for someone else
+   * (a farm machine) — no time left can be told until it is taken.
+   */
+  report(p: { phase?: string; progress?: number | null; node?: string | null; farmJobId?: string | null; waiting?: boolean }): void;
   /** The size of the job (seconds of video…), once known, for the estimate before progress comes. */
   setUnits(units: number): void;
   /** The project's workspace folder. */
@@ -87,12 +90,13 @@ export function createJobRunner(o: JobRunnerOptions): JobRunner {
     shutdown.signal.addEventListener("abort", onShutdown, { once: true });
     let stop: "cancelled" | "shutdown" | null = null;
     let progress: number | null = null;
+    let waiting = false;
     let units = job.units;
     const perUnit = secondsPerUnit(o.db, job.kind);
     const startedAt = Date.parse(job.started_at ?? now());
     const tempDir = join(o.dataRoot, "job-runs", job.id);
     mkdirSync(tempDir, { recursive: true });
-    const eta = () => estimateSecondsLeft({ kind: job.kind, elapsedSeconds: (Date.parse(now()) - startedAt) / 1000, progress, units, secondsPerUnit: perUnit });
+    const eta = () => waiting ? null : estimateSecondsLeft({ kind: job.kind, elapsedSeconds: (Date.parse(now()) - startedAt) / 1000, progress, units, secondsPerUnit: perUnit });
     const readStop = () => {
       if (!stop && jobCancelRequested(o.db, job.id)) stop = "cancelled";
       if (!stop && shuttingDown) stop = "shutdown";
@@ -112,6 +116,7 @@ export function createJobRunner(o: JobRunnerOptions): JobRunner {
       checkpoint: () => { const s = readStop(); if (s) throw new JobStopped(s); },
       report: (p) => {
         if (p.progress !== undefined) progress = p.progress;
+        if (p.waiting !== undefined) waiting = p.waiting;
         reportJob(o.db, job.id, {
           ...(p.phase !== undefined ? { phase: p.phase } : {}), ...(p.progress !== undefined ? { progress: p.progress } : {}),
           ...(p.node !== undefined ? { nodeId: p.node } : {}), ...(p.farmJobId !== undefined ? { farmJobId: p.farmJobId } : {}), etaSeconds: eta(),

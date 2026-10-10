@@ -121,3 +121,31 @@ describe.skipIf(!hasFfmpeg())("prepare an ag-go video (needs ffmpeg + ffprobe)",
     expect(listMessages(db, thread).at(-1)!.text).toContain("Đã chuẩn bị **Hoa Lư 03.mp4**");
   });
 });
+
+describe.skipIf(!hasFfmpeg())("prepare when the farm cannot read what is said (needs ffmpeg + ffprobe)", () => {
+  it("keeps the shots and frames, and says why there is no transcript", async () => {
+    const { db, bucket, project, workspacesRoot, ws, dir } = setup();
+    const clip = join(mkdtempSync(join(tmpdir(), "prepare-")), "clip.mp4");
+    makeSceneClip(clip, { seconds: 4, colors: ["red", "blue"], cuts: [2] });
+    const farm: ProjectFarm = {
+      submitJob: async () => ({ job: farmView({}), created: true }),
+      getJob: async () => farmView({ status: "failed", error: { code: "x", message: "hết VRAM", retryable: false } as never }),
+      cancelJob: async () => farmView({ status: "cancelled" }),
+      ackJob: async () => farmView({ status: "failed" }),
+    };
+    const deps: PrepareDeps = {
+      db, ffmpeg: FFMPEG, ffprobe: FFPROBE,
+      resolve: async () => ({ items: [{ assetId: ASSET, url: "https://ag-go.test/a.mp4", sourceKind: "preview", watermarked: false }], missing: [] }),
+      download: async (_url, dest) => { copyFileSync(clip, dest); },
+      farm: { client: farm, bucket, pollMs: 1 },
+    };
+    const job = createJob(db, { projectId: project.id, kind: "prepare_asset", title: "Chuẩn bị", request: { asset_id: ASSET, name: "A.mp4" }, createdBy: "u" }, NOW);
+    const runner = createJobRunner({ db, logger: studioLogger({ test: "prepare" }), workspacesRoot, dataRoot: join(dir, "data"), handlers: { prepare_asset: prepareHandler(deps) } });
+    runner.tick();
+    await runner.idle();
+    expect(getJob(db, job.id)).toMatchObject({ status: "done" });
+    expect(readdirSync(join(ws, "inputs", ASSET, "frames"))).toEqual(["001.jpg", "002.jpg"]);
+    expect(readFileSync(join(ws, "inputs", ASSET, "README.md"), "utf8")).toContain("chưa đọc được (farm báo lỗi: hết VRAM); chuẩn bị lại để thử");
+    expect(getPrepared(db, project.id, ASSET)).toMatchObject({ status: "ready", transcript: 0 });
+  });
+});

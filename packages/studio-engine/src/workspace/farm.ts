@@ -32,8 +32,8 @@ export interface FarmStep {
 }
 
 export interface FarmWatch {
-  /** What to show while it waits or runs. `progress` is the farm's 0–1, `node` the machine's name (or id). */
-  onUpdate(u: { phase: string; progress: number | null; node: string | null; farmJobId: string }): void;
+  /** What to show while it waits or runs. `progress` is the farm's 0–1, `node` the machine's name (or id); `waiting`: no machine took it yet. */
+  onUpdate(u: { phase: string; progress: number | null; node: string | null; farmJobId: string; waiting: boolean }): void;
   /** Read often: true stops the job (cancelled on the farm). */
   stopRequested(): "cancelled" | "shutdown" | null;
 }
@@ -59,7 +59,11 @@ function nodeNames(farm: ProjectFarm): (id: string | null) => Promise<string | n
  * farm job throws (with the farm's reason); a stop request cancels it on the farm and throws `JobStopped`.
  */
 export async function runFarmStep(
-  d: { db: StudioDb; bucket: StudioBucket; farm: ProjectFarm; pollMs?: number; now?: () => string },
+  d: {
+    db: StudioDb; bucket: StudioBucket; farm: ProjectFarm; pollMs?: number; now?: () => string;
+    /** No machine takes it this long: cancelled on the farm, and this throws saying so (default: wait forever). */
+    queueTimeoutMs?: number;
+  },
   job: { id: string; project_id: string; video_id: string | null },
   step: FarmStep,
   watch: FarmWatch,
@@ -82,6 +86,7 @@ export async function runFarmStep(
   const nameOf = nodeNames(d.farm);
   const pollMs = d.pollMs ?? 3000;
   let view = sent;
+  let waitingSince: number | null = null;
   for (;;) {
     const stop = watch.stopRequested();
     if (stop) {
@@ -98,7 +103,13 @@ export async function runFarmStep(
     const phase = view.status === "leased" || node
       ? `Farm · ${node ?? "máy farm"}${view.progress_stage ? ` · ${view.progress_stage}` : ""}`
       : view.status === "paused" ? "Farm · đang tạm dừng" : "Farm · đang chờ máy nhận";
-    watch.onUpdate({ phase, progress: view.progress_percent === null ? null : view.progress_percent / 100, node, farmJobId: sent.id });
+    const waiting = view.status === "queued" || view.status === "paused";
+    waitingSince = waiting ? waitingSince ?? Date.now() : null;
+    if (waiting && d.queueTimeoutMs && Date.now() - waitingSince! > d.queueTimeoutMs) {
+      await d.farm.cancelJob(sent.id).catch(() => undefined);
+      throw new Error(`không máy farm nào nhận việc sau ${Math.round(d.queueTimeoutMs / 60_000)} phút (máy có thể đang tắt)`);
+    }
+    watch.onUpdate({ phase, progress: view.progress_percent === null ? null : view.progress_percent / 100, node, farmJobId: sent.id, waiting });
     await sleep(pollMs);
     view = await d.farm.getJob(sent.id);
   }
