@@ -128,7 +128,7 @@ async function main(): Promise<void> {
     ...(agent ? { jobs: { workspacesRoot: agent.workspacesRoot, dataRoot, lanes: numberEnv("STUDIO_JOB_LANES", 2) } } : {}),
     farmPollMs: Number(process.env.FARM_POLL_MS ?? 5000),
     farmQueueTimeoutMs: numberEnv("STUDIO_FARM_QUEUE_TIMEOUT_MINUTES", 120) * 60_000,
-    ...(youtubeKey ? { research: new YoutubeResearchSource({ apiKey: youtubeKey, cache: studioResearchCache(db) }) } : {}),
+    ...(youtubeKey ? { research: new YoutubeResearchSource({ apiKey: youtubeKey, cache: studioResearchCache(db) }), youtubeApiKey: youtubeKey } : {}),
     ...(ytdlpVersion ? { ytdlp } : {}),
     referenceDownloads,
     ...(ffmpeg ? { thumbnails: ffmpegThumbnailRenderer({ ffmpeg }) } : {}),

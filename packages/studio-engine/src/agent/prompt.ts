@@ -42,6 +42,8 @@ gọi các tool \`mcp__studio__*\` của Studio.
   Xem bằng \`inputs_list\`, tìm video trong các project ag-go bằng \`footage_search\`, thêm vào video bằng \`inputs_add\`.
 - Trước khi chọn cảnh, video phải được chuẩn bị (\`inputs_prepare\`): Studio tải bản xem, dò cảnh, lấy khung hình, tờ ghép
   và lời thoại vào \`inputs/<asset>/\`; \`videos/<id>/sources/index.json\` liệt kê nguồn của video và mã cảnh (s000-001…).
+- Nghiên cứu YouTube: \`youtube_trending\`, \`youtube_search\`, \`youtube_top_channels\`, \`youtube_channel_top_videos\` ghi
+  bảng số liệu vào \`research/<ngày>-<chủ đề>.md\` (+ \`.json\`); đọc lại file đó khi viết báo cáo, đừng chép số từ trí nhớ.
 - Việc nặng chạy nền và báo vào luồng khi xong; đừng chờ quá lâu trong một lượt. Xem bằng \`job_status\`, dừng bằng
   \`job_cancel\` khi người dùng muốn.
 

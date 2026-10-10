@@ -154,7 +154,7 @@ export function keywordVideos(videos: ResearchVideo[]): ResearchVideo[] {
 export function researchInsights(channels: StudioResearch["channels"], keywords: StudioResearch["keywords"]): StudioResearch["insights"] {
   const all = [...channels.filter((c) => c.role === "reference").flatMap((c) => c.videos), ...keywords.flatMap((k) => k.videos)];
   const unique = [...new Map(all.map((v) => [v.video_id, v])).values()];
-  const buckets = new Map(BUCKETS.map((b) => [b, 0]));
+  const buckets = new Map(DURATION_BUCKETS.map((b) => [b, 0]));
   for (const v of unique) buckets.set(durationBucket(v.duration_s), (buckets.get(durationBucket(v.duration_s)) ?? 0) + 1);
   const inKeywords = new Map<string, { title: string; count: number }>();
   for (const v of keywords.flatMap((k) => k.videos)) {
@@ -166,7 +166,7 @@ export function researchInsights(channels: StudioResearch["channels"], keywords:
   return {
     top_title_terms: topCounts(perf.map((v) => titleTerms(v.title)), 30),
     top_tags: topCounts(perf.map((v) => v.tags.map((t) => t.toLocaleLowerCase("vi").trim()).filter(Boolean)), 30),
-    duration_buckets: BUCKETS.map((bucket) => ({ bucket, count: buckets.get(bucket) ?? 0 })),
+    duration_buckets: DURATION_BUCKETS.map((bucket) => ({ bucket, count: buckets.get(bucket) ?? 0 })),
     frequent_channels: [...inKeywords.entries()].filter(([, e]) => e.count >= 2).sort((a, b) => b[1].count - a[1].count).slice(0, 15)
       .map(([channel_id, e]) => ({ channel_id, title: e.title, count: e.count })),
   };
@@ -186,7 +186,7 @@ export function titleTerms(title: string): string[] {
   return out;
 }
 
-function topCounts(items: string[][], limit: number): { term: string; count: number }[] {
+export function topCounts(items: string[][], limit: number): { term: string; count: number }[] {
   const counts = new Map<string, number>();
   for (const terms of items) for (const t of new Set(terms)) counts.set(t, (counts.get(t) ?? 0) + 1);
   return [...counts.entries()].filter(([, c]) => c >= 2).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "vi")).slice(0, limit).map(([term, count]) => ({ term, count }));
@@ -200,7 +200,7 @@ export function durationBucket(seconds: number): string {
   return "20m+";
 }
 
-const BUCKETS = ["<1m", "1-5m", "5-10m", "10-20m", "20m+"];
+export const DURATION_BUCKETS = ["<1m", "1-5m", "5-10m", "10-20m", "20m+"];
 
 export function emptyResearch(productionId: string, reason: string): StudioResearch {
   return {

@@ -78,3 +78,6 @@ export * from "./workspace/video-index.js";
 export * from "./agent/input-tools.js";
 export * from "./workspace/step-facts.js";
 export * from "./workspace/inputs.js";
+export * from "./workspace/youtube-crawl.js";
+export * from "./workspace/research.js";
+export * from "./agent/research-tools.js";

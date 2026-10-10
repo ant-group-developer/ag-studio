@@ -24,6 +24,9 @@ import { createChatRunner, type ChatRunner } from "./chat-runner.js";
 import { createAgentRunner, type AgentRunner, type AgentRunnerOptions } from "./agent/runner.js";
 import { createJobRunner, type JobHandler, type JobRunner } from "./workspace/job-runner.js";
 import { PREVIEW_PREFER, prepareHandler } from "./workspace/prepare.js";
+import { researchHandler } from "./workspace/research.js";
+import { YoutubeCrawler } from "./workspace/youtube-crawl.js";
+import { studioResearchCache } from "./youtube-research.js";
 import type { JobKind } from "./workspace/jobs-db.js";
 import { httpDownload } from "./cut-media.js";
 import { chatFeedback } from "./chat-db.js";
@@ -77,6 +80,8 @@ export interface StudioWorkerOptions {
   farmQueueTimeoutMs?: number;
   /** Claude calls run at once across this worker's loops; default `DEFAULT_CLAUDE_MAX_CONCURRENT` (20). */
   claudeMaxConcurrent?: number;
+  /** YouTube Data API key for project research crawls (`research` jobs); without it they use yt-dlp when there is one. */
+  youtubeApiKey?: string;
 }
 
 export function studioLogger(bindings: Record<string, unknown> = {}): HarnessLogger {
@@ -252,6 +257,8 @@ function projectJobHandlers(o: StudioWorkerOptions): Partial<Record<JobKind, Job
       farm: { client: o.farm, bucket: o.bucket, pollMs: o.farmPollMs ?? 3000, queueTimeoutMs: o.farmQueueTimeoutMs ?? 30 * 60_000 },
     });
   }
+  const crawler = new YoutubeCrawler({ apiKey: o.youtubeApiKey ?? null, ytdlp: o.ytdlp ?? null, cache: studioResearchCache(o.db) });
+  if (crawler.source) handlers.research = researchHandler({ db: o.db, crawler });
   return handlers;
 }
 
