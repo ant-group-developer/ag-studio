@@ -8,8 +8,6 @@
 - **Log của Studio API/worker không vào `E:/ag-local/dev-run/*.log` khi `scripts/local-stack.mjs` bật trên Windows.**
   Tiến trình chạy dưới `cmd.exe` (`shell: true`) nên fd log không tới node. Kiểm tra trạng thái qua DB (bảng
   `project_jobs`, `agent_messages`) hoặc chạy tay `node --env-file=apps/api/.env apps/worker/dist/main.js`.
-- **Ước tính còn lại sau khi chờ máy farm lâu bị cao.** `estimateSecondsLeft` lấy toàn bộ thời gian đã trôi (gồm lúc xếp
-  hàng) chia theo tiến độ; khi máy nhận việc, "còn ≈" có thể cao hơn thật tới lúc tiến độ nhích. Nên trừ thời gian chờ.
 
 ## AG Studio (cập nhật 2026-10-06)
 

@@ -274,3 +274,32 @@ describe("waiting for a farm machine", () => {
     await runner.idle();
   });
 });
+
+describe("time left after waiting in line", () => {
+  it("does not count the time spent waiting for a farm machine", async () => {
+    const { db, project, workspacesRoot, dir } = setup();
+    let clockMs = Date.parse(at(0));
+    const now = () => new Date(clockMs).toISOString();
+    const job = createJob(db, { projectId: project.id, kind: "prepare_asset", title: "A", request: {}, createdBy: "u" }, now());
+    let step!: (n: number) => void;
+    const runner = createJobRunner({
+      db, logger: quiet, workspacesRoot, dataRoot: join(dir, "data"), tickMs: 60_000, now,
+      handlers: {
+        prepare_asset: async (_j, ctx) => {
+          ctx.report({ progress: 0.1, waiting: true });
+          clockMs += 600_000; // ten minutes in line
+          ctx.report({ progress: 0.5, waiting: false });
+          clockMs += 20_000; // twenty seconds of work
+          ctx.report({ progress: 0.5 });
+          await new Promise<void>((r) => { step = () => r(); });
+          return { result: null };
+        },
+      },
+    });
+    runner.tick();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(getJob(db, job.id)!.eta_seconds).toBe(20);
+    step(0);
+    await runner.idle();
+  });
+});
