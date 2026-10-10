@@ -1167,3 +1167,61 @@ Các mục dưới đây ghi lại quyết định của nhánh AG Studio, viế
     branding → style, so không phân biệt hoa thường và dấu. Phong cách dựng (mục 175) tới tập qua `studio-cut-intake-v2`;
     lệch độ dài shot là follow-up `style_shot_length`. 1.1.0 thành bản đang dùng sau khi mọi node farm render chạy
     ag-render-worker ≥ 0.8.0 (2026-10-08, node `local-render`).
+
+## AG Studio: làm việc như Claude Code trong một dự án (2026-10-10)
+
+Spec `docs/superpowers/specs/2026-10-10-ag-studio-agent-workspace-design.md`, plan
+`docs/superpowers/plans/2026-10-10-ag-studio-agent-workspace.md`.
+
+179. **Chat tự do thay workflow và gate; dự án là một kênh, video thêm dần (2026-10-10).** Người dùng bỏ luồng series
+    cố định (R&D → branding → kế hoạch tập → tập) và form từng ô. Mô hình mới: Team → Dự án (một kênh YouTube, nhiều
+    video mỗi ngày) → Video tạo bất cứ lúc nào theo prompt. Bước vẫn được **gợi ý** bằng một playbook mềm (mục 184)
+    nhưng không có gate; quay lại bước cũ chỉ là chat hoặc sửa file. Hợp đồng render/farm/xuất Premiere giữ nguyên.
+180. **Dữ liệu cũ bỏ hẳn (2026-10-10).** Không chuyển production/tập sang dự án/video. Bảng cũ (`productions`,
+    `episodes`, `stage_chat_turns`…) để nguyên trong `studio.db` nhưng không code nào đọc sau pha gỡ; bảng mới bắt đầu từ
+    migration `0030`. Workflow `ag-studio-*` và code gate bị gỡ ở pha cuối (ngoại lệ có chủ đích với mục 141: không còn
+    run cũ nào cần chạy tiếp).
+181. **Workspace dự án là "repo" của kênh.** `<STUDIO_WORKSPACES_ROOT>/<projectId>/` (ngoài mọi repo) chứa CLAUDE.md,
+    `memory/lessons.md`, `context/`, `research/`, `channel/`, `inputs/<asset>/`, `videos/<video>/`, `skills/`, `.studio/`.
+    DB là nguồn sự thật cho thực thể, file là nguồn sự thật cho tài liệu; mọi lần ghi file (người hay agent) có phiên bản
+    trong `project_file_versions`. API và worker phải thấy cùng thư mục (kiểm file đánh dấu lúc khởi động).
+182. **Cách gọi agent: `claude -p --restricted`, stream-json, session theo luồng.** Spike trên Claude Code 2.1.285 (spec
+    mục 9): `--restricted` là bắt buộc (không có nó, agent đọc được file ngoài và ghi `../`); dưới `--restricted` CLI không
+    tự nạp CLAUDE.md và `.claude/skills` → Studio chèn CLAUDE.md (mở `@import` trong workspace) vào
+    `--append-system-prompt` với `--system-prompt-snapshot off` (bản mặc định giữ system prompt của lượt đầu), phần động
+    (playbook, job, luồng tham chiếu) nằm trong khối `<studio_context>` đầu tin nhắn; skills nạp bằng `--plugin-dir`
+    (tên `studio:<slug>`, cần `Skill` trong `--tools`); `--settings` của lượt deny ghi `.studio/**`, `.claude/**` và tắt
+    skill đi kèm CLI (`disableBundledSkills` + `skillOverrides`). `CLAUDE_CONFIG_DIR` riêng cho agent. Resume chạy được từ
+    cwd khác và sau khi bị kill. Bộ tool: Read, Write, Edit, Glob, Grep, Skill + MCP Studio; không Bash, không web.
+183. **Tool Studio qua MCP stdio, gọi lại API bằng token theo lượt.** Gói `packages/studio-mcp` (JSON-RPC tự viết, không
+    SDK) do claude spawn theo `mcp.json` ở thư mục lượt ngoài workspace; env chỉ có URL API và token HMAC
+    (`STUDIO_AGENT_TOKEN_SECRET`) gắn message, luồng, dự án, video, người gửi, vai, hạn = deadline lượt. API
+    `/api/agent-tools/*` (`@Public()` + `AgentTokenGuard`) kiểm chữ ký, hạn, message còn `running`, phạm vi, rồi đọc lại
+    vai trong team. Chỉ API giữ secret R2/farm/ag-go; `CLAUDE_CODE_OAUTH_TOKEN` không tới server MCP (spike).
+184. **Playbook mềm và file có kiểm.** Bước (dự án: research → channel → style → branding; video: brief → prepare → scenes
+    → edit-plan → timeline → preview → youtube-kit → thumbnail → final) là gợi ý: trạng thái tính từ file + DB
+    (`missing|draft|invalid|done|skipped|stale|running`), tối đa 3 bước gợi ý, chỉ chặn khi thiếu thật về kỹ thuật. Kết quả
+    là markdown có frontmatter hoặc JSON cạnh nó, kiểm bằng validator sẵn có (`validateStudioSurvey`, `validateEditPlan`,
+    `validateYoutubeKit`, `validateStyle`, text look) khi người lưu, khi agent gọi `validate_file`, và sau mỗi lượt (tối đa
+    một lượt tự sửa). Ghi đè theo dự án bằng `.studio/playbook.yaml`.
+185. **Hành động có tác dụng thật qua thẻ xác nhận.** Render bản cuối, xuất Premiere, xoá video, crawl lớn, tải video
+    mẫu: agent gọi `propose_action` → thẻ trong chat → người bấm (producer cho render/xuất/xoá, editor cho crawl). Thẻ hết
+    hạn khi revision đổi hoặc sau 24 h. Render xem trước, dựng timeline, ghi tài liệu agent tự làm.
+186. **Nhiều luồng chat mỗi dự án, học từ chat cũ có chọn lựa.** Mỗi video một luồng chính (session riêng), dự án có thêm
+    luồng tự do. Studio xuất lịch sử `.studio/history/<thread>.md` sau mỗi lượt, tóm tắt `SUMMARY.md` khi luồng nghỉ; bài
+    học đề xuất chỉ vào `memory/lessons.md` khi người bấm. Luồng mới chọn `Không | Bài học chung | Chọn luồng cụ thể`
+    (`thread_refs`).
+187. **Việc đang chạy luôn hiện ai làm, bao lâu, và dừng được.** `ActivitySchema` chung cho lượt agent, tool call và job;
+    ETA từ progress, không có thì trung vị lịch sử cùng loại; lượt agent chỉ hiện thời gian đã trôi. Dừng lượt agent = kill
+    cả cây tiến trình (`taskkill /T /F` đã kiểm trong spike); dừng job farm = `cancelJob` của owner API.
+188. **Đầu vào: video/ảnh từ ag-go, tài liệu/audio tải lên Studio.** ag-go chỉ có ảnh và video; web chọn project ag-go
+    bằng bearer người dùng (`/projects`, `/projects/:id/media`), server kiểm chủ dự án thấy được qua `/footage/search`
+    (`projectIds`). Bỏ gán folder bằng `@`. Mỗi asset chuẩn bị một lần vào `inputs/<asset>/` (shot, khung, contact sheet,
+    transcript) cho mọi video của dự án.
+189. **Crawl YouTube là tool của agent và tab Nghiên cứu.** Thêm trending (`chart=mostPopular`), theo chủ đề (lượt xem,
+    khoảng thời gian), top kênh, video top của kênh (uploads + `videos.list`, sắp theo view); yt-dlp khi không có khoá;
+    kết quả thành file trong `research/`. Không chạy theo lịch.
+190. **Bản xem trước ưu tiên nguồn 480p không watermark.** Studio gửi `prefer: { short_edge: 480, clean: true }` cho job
+    không phải bản cuối; ag-go (nhánh riêng) chọn bản sạch nếu người dùng được xem, gần 480 nhất, và sửa `servablePreviews`
+    theo quyền người xem. Canvas đầu ra bản xem trước giữ như cũ vì chữ ASS dùng cỡ tuyệt đối theo canvas. Canva bị gỡ;
+    thumbnail thành tool của agent.
