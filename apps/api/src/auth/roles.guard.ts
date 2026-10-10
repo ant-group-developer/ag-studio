@@ -100,7 +100,7 @@ export class RolesGuard implements CanActivate {
     return true;
   }
 
-  /** The team of a workspace route (`:projectId`, `:videoId`); unknown ids leave it undetermined. */
+  /** The team of a workspace route (`:projectId`, `:videoId`, `:threadId`); unknown ids leave it undetermined. */
   private teamOfWorkspaceParam(params: Record<string, string>): string | undefined {
     if (params['projectId']) {
       return this.db.get<ProductionRow>('SELECT team_id FROM projects WHERE id = ?', [params['projectId']])?.team_id;
@@ -108,6 +108,11 @@ export class RolesGuard implements CanActivate {
     if (params['videoId']) {
       return this.db.get<ProductionRow>(
         'SELECT p.team_id FROM videos v JOIN projects p ON p.id = v.project_id WHERE v.id = ?', [params['videoId']],
+      )?.team_id;
+    }
+    if (params['threadId']) {
+      return this.db.get<ProductionRow>(
+        'SELECT p.team_id FROM agent_threads t JOIN projects p ON p.id = t.project_id WHERE t.id = ?', [params['threadId']],
       )?.team_id;
     }
     return undefined;

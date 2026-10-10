@@ -117,7 +117,7 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
       return await runAgentTurn({
         command: o.claudeCommand, cwd: dir, prompt, model: (JSON.parse(project.settings || "{}") as { model?: string }).model ?? o.model,
         sessionId: thread.claude_session_id, resume: thread.session_started === 1,
-        tools: AGENT_BUILTIN_TOOLS, allowedTools: o.mcpTools(), appendSystemPrompt: agentSystemPrompt(dir),
+        tools: AGENT_BUILTIN_TOOLS, allowedTools: o.mcpTools(), appendSystemPrompt: agentSystemPrompt(dir, { useLessons: thread.use_lessons !== 0 }),
         settingsPath: join(turnDir, "settings.json"), mcpConfigPath: join(turnDir, "mcp.json"),
         pluginDirs: o.pluginDirs?.(project.id) ?? [], maxTurns: o.maxTurns, baseEnv: o.baseEnv ?? process.env, configDir: o.configDir,
         deadlineMs: Math.max(1000, deadline - Date.now()), signal,

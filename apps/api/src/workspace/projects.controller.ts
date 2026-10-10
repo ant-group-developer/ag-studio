@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import {
-  archiveProject, createProject, CreateProjectSchema, listProjects, listVideos, projectView, requireProject, scanWorkspace, seedWorkspace,
+  archiveProject, createProject, CreateProjectSchema, createThread, listProjects, listVideos, projectView, requireProject, scanWorkspace, seedWorkspace,
   updateProject, UpdateProjectSchema, videoView, type ProjectView, type VideoView,
 } from '@ag-studio/engine';
 import { Roles } from '../auth/roles.decorator';
@@ -43,6 +43,7 @@ export class ProjectsController {
       const project = createProject(this.engine.db, teamId, body, req.authContext!.userId, now);
       const dir = seedWorkspace(this.workspace.root, project, now);
       scanWorkspace(this.engine.db, { projectId: project.id, dir, author: { kind: 'studio', id: null }, now });
+      createThread(this.engine.db, { projectId: project.id, kind: 'project', title: 'Kênh', createdBy: req.authContext!.userId }, now);
       return projectView(project);
     });
   }

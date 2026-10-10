@@ -42,25 +42,30 @@ bấm xác nhận trên giao diện. Việc nhẹ (đọc, ghi tài liệu, dự
 `;
 
 /** `@path` lines of CLAUDE.md replaced by the file they name (inside the workspace only, a few levels deep). */
-export function expandImports(text: string, dir: string, depth = 0, seen = new Set<string>()): string {
+export function expandImports(text: string, dir: string, depth = 0, seen = new Set<string>(), skip: ReadonlySet<string> = new Set()): string {
   return text.split(/\r?\n/).map((line) => {
     const m = /^\s*@(\S+)\s*$/.exec(line);
     if (!m || depth >= MAX_IMPORT_DEPTH) return line;
     let rel: string;
     try { rel = normalizeRelPath(m[1]!); } catch { return line; }
+    if (skip.has(rel)) return `(luồng này không dùng ${rel})`;
     if (/^\.(claude|git|trash)(\/|$)/.test(rel) || seen.has(rel)) return line;
     const abs = join(dir, ...rel.split("/"));
     if (!existsSync(abs) || !statSync(abs).isFile() || statSync(abs).size > MAX_CLAUDE_MD_CHARS) return line;
     seen.add(rel);
-    const body = expandImports(readFileSync(abs, "utf8"), dir, depth + 1, seen);
+    const body = expandImports(readFileSync(abs, "utf8"), dir, depth + 1, seen, skip);
     return `<!-- ${rel} -->\n${body.trim()}\n<!-- hết ${rel} -->`;
   }).join("\n");
 }
 
-/** The appended system prompt: Studio's rules, then the project's CLAUDE.md as it is now. */
-export function agentSystemPrompt(dir: string): string {
+/** The lessons file a thread may choose not to learn from. */
+export const LESSONS_PATH = "memory/lessons.md";
+
+/** The appended system prompt: Studio's rules, then the project's CLAUDE.md as it is now (lessons unless declined). */
+export function agentSystemPrompt(dir: string, opts: { useLessons?: boolean } = {}): string {
   const path = join(dir, "CLAUDE.md");
-  let claude = existsSync(path) ? expandImports(readFileSync(path, "utf8"), dir) : "(dự án chưa có CLAUDE.md)";
+  const skip = new Set(opts.useLessons === false ? [LESSONS_PATH] : []);
+  let claude = existsSync(path) ? expandImports(readFileSync(path, "utf8"), dir, 0, new Set(), skip) : "(dự án chưa có CLAUDE.md)";
   if (claude.length > MAX_CLAUDE_MD_CHARS) claude = `${claude.slice(0, MAX_CLAUDE_MD_CHARS)}\n…(CLAUDE.md dài quá, phần sau bị cắt; đọc file để xem đủ)`;
   return `${STUDIO_RULES}\n## Hướng dẫn của kênh (CLAUDE.md)\n\n<project_claude_md>\n${claude.trim()}\n</project_claude_md>\n`;
 }

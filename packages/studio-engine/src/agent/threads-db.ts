@@ -18,7 +18,7 @@ export interface TurnActor { id: string; role: ActorRole }
 
 export interface ThreadRecord {
   id: string; project_id: string; video_id: string | null; kind: ThreadKind; title: string;
-  claude_session_id: string; session_started: number; session_cwd: string | null;
+  claude_session_id: string; session_started: number; session_cwd: string | null; use_lessons: number;
   created_by: string; created_at: string; updated_at: string; archived_at: string | null;
 }
 
@@ -56,12 +56,12 @@ export function messageView(m: MessageRecord): MessageView {
 // Threads
 // ---------------------------------------------------------------------------
 
-export function createThread(db: StudioDb, p: { projectId: string; videoId?: string | null; kind: ThreadKind; title: string; createdBy: string }, now = new Date().toISOString()): ThreadRecord {
+export function createThread(db: StudioDb, p: { projectId: string; videoId?: string | null; kind: ThreadKind; title: string; createdBy: string; useLessons?: boolean }, now = new Date().toISOString()): ThreadRecord {
   const id = randomUUID();
   db.run(
-    `INSERT INTO agent_threads (id, project_id, video_id, kind, title, claude_session_id, created_by, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, p.projectId, p.videoId ?? null, p.kind, p.title, randomUUID(), p.createdBy, now, now],
+    `INSERT INTO agent_threads (id, project_id, video_id, kind, title, claude_session_id, use_lessons, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, p.projectId, p.videoId ?? null, p.kind, p.title, randomUUID(), p.useLessons === false ? 0 : 1, p.createdBy, now, now],
   );
   return getThread(db, id)!;
 }
@@ -147,6 +147,18 @@ export function setThreadRef(db: StudioDb, p: { threadId: string; refThreadId: s
 
 export function removeThreadRef(db: StudioDb, threadId: string, refThreadId: string): void {
   db.run("DELETE FROM thread_refs WHERE thread_id = ? AND ref_thread_id = ?", [threadId, refThreadId]);
+}
+
+/**
+ * What a thread learns from earlier chats (spec agent-workspace §4): the project's lessons or not, and the earlier
+ * threads it reads (each as a summary or the full history). Replaces what was set before.
+ */
+export function setThreadLearning(db: StudioDb, p: { threadId: string; useLessons: boolean; refs: { threadId: string; mode: "summary" | "full" }[]; addedBy: string }, now = new Date().toISOString()): void {
+  db.immediate(() => {
+    db.run("UPDATE agent_threads SET use_lessons = ?, updated_at = ? WHERE id = ?", [p.useLessons ? 1 : 0, now, p.threadId]);
+    db.run("DELETE FROM thread_refs WHERE thread_id = ?", [p.threadId]);
+    for (const r of p.refs) setThreadRef(db, { threadId: p.threadId, refThreadId: r.threadId, mode: r.mode, addedBy: p.addedBy }, now);
+  });
 }
 
 export function listThreadRefs(db: StudioDb, threadId: string): ThreadRef[] {

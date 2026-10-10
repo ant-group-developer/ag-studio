@@ -1,6 +1,7 @@
 -- Luồng chat với agent trong dự án (spec 2026-10-10 agent-workspace §3.2, §4, ADR-0001 mục 182, 186).
 --   kind 'video': luồng chính của một video (tạo cùng video); 'project': luồng tự do của dự án ("Kênh", "Chat mới"…)
 --   claude_session_id: session của CLI Studio chọn trước (UUID); session_started = 1 sau lượt đầu (lượt sau --resume)
+--   use_lessons: 0 = luồng này không nạp memory/lessons.md (người dùng chọn "không học từ chat cũ")
 CREATE TABLE agent_threads (
   id                 TEXT PRIMARY KEY,
   project_id         TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -10,6 +11,7 @@ CREATE TABLE agent_threads (
   claude_session_id  TEXT NOT NULL,
   session_started    INTEGER NOT NULL DEFAULT 0,
   session_cwd        TEXT,
+  use_lessons        INTEGER NOT NULL DEFAULT 1,
   created_by         TEXT NOT NULL,
   created_at         TEXT NOT NULL,
   updated_at         TEXT NOT NULL,

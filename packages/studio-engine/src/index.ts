@@ -61,3 +61,4 @@ export * from "./agent/history.js";
 export * from "./agent/tools.js";
 export * from "./agent/prompt.js";
 export * from "./agent/runner.js";
+export * from "./agent/activity.js";
