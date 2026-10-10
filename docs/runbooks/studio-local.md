@@ -133,6 +133,22 @@ node --require ts-node/register ../../node_modules/typeorm/cli.js migration:run 
 - Thumbnail và kiểm loudness dùng ffmpeg ở `STUDIO_FFMPEG_PATH` (máy dev trỏ tới `ffmpeg-static` của
   ag-render-worker vì ffmpeg không có trên PATH).
 
+## 4c. Dự án và agent (spec 2026-10-10 agent-workspace)
+
+- Bật agent: `STUDIO_AGENT_TOKEN_SECRET` (≥ 16 ký tự, `openssl rand -hex 32`) trong `apps/api/.env` — API và worker đọc chung
+  file này khi chạy trực tiếp. Không đặt thì worker ghi `warn` và không chạy lượt chat nào của dự án.
+- Worker gọi tool Studio qua API ở `STUDIO_API_INTERNAL_URL` (máy dev: `http://127.0.0.1:3101`, cổng của Studio API chạy
+  trực tiếp). CLI: `claude` trên PATH (hoặc `STUDIO_AGENT_ARGV`), đăng nhập bằng `CLAUDE_CODE_OAUTH_TOKEN` (`claude
+  setup-token`); cấu hình/session của agent ở `STUDIO_AGENT_CLAUDE_CONFIG_DIR` (mặc định `<STUDIO_DATA_ROOT>/agent-claude`),
+  tách khỏi `~/.claude` của người dùng máy.
+- Thư mục dự án: `STUDIO_WORKSPACES_ROOT` (mặc định `<STUDIO_DATA_ROOT>/workspaces`, máy dev
+  `E:\ag-local\studio-data\harness\workspaces`). Phải nằm ngoài mọi repo (CLAUDE.md của thư mục cha sẽ lọt vào agent).
+- Việc nền của dự án (chuẩn bị video, crawl, dựng timeline, render, thumbnail, học phong cách) chạy trong worker,
+  `STUDIO_JOB_LANES` việc cùng lúc (mặc định 2). Việc dùng farm (đọc lời thoại, lời dẫn, render) cần máy `local-render`
+  **online** ở web farm 3011: farm-api tắt lâu thì render worker không tự nối lại — tắt/bật lại `render-worker`.
+- Log Studio API/worker khi bật bằng `local-stack.mjs` không vào `E:/ag-local/dev-run/*.log` (chạy dưới `cmd.exe`); xem
+  trạng thái lượt chat và job trong `studio.db` (`agent_messages`, `project_jobs`) hoặc màn web.
+
 ## 5. Chạy bằng Docker (cách cũ)
 
 `E:\CODE\ag-studio\docker-compose.yml` + `deploy.sh` (api → worker → web, cổng 3100, cần `../ag-farm` cạnh repo),
