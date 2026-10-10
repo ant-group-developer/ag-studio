@@ -10,8 +10,11 @@
 import { newId } from "@harness/contracts";
 import type { StudioDb } from "./studio-db.js";
 
-const RUNNING = "chat:";
-const WAITING = "chat-wait:";
+/** Who holds a slot outside `claim()`: a chat reply (spec local-chat) or an agent turn (spec agent-workspace). */
+export type SlotKind = "chat" | "agent";
+const RUNNING: Record<SlotKind, string> = { chat: "chat:", agent: "agent:" };
+const WAITING: Record<SlotKind, string> = { chat: "chat-wait:", agent: "agent-wait:" };
+const isWaiting = (owner: string) => owner.startsWith(WAITING.chat) || owner.startsWith(WAITING.agent);
 /** Lease of a chat slot; the chat loop heartbeats well within it. */
 export const CHAT_SLOT_LEASE_SECONDS = 120;
 
@@ -35,7 +38,7 @@ export function claudeUsage(db: StudioDb, now?: string): { running: number; wait
   let running = 0; let waiting = 0;
   for (const r of rows) {
     if (!(JSON.parse(r.resources) as string[]).includes("claude")) continue;
-    if (r.owner.startsWith(WAITING)) waiting += 1; else running += 1;
+    if (isWaiting(r.owner)) waiting += 1; else running += 1;
   }
   return { running, waiting };
 }
@@ -44,31 +47,40 @@ export function claudeUsage(db: StudioDb, now?: string): { running: number; wait
  * Takes a slot for a reply if fewer than `cap` are running; otherwise records (or refreshes) that the reply waits,
  * and returns false — call again until it returns true.
  */
-export function acquireChatSlot(db: StudioDb, turnId: string, cap: number, now: string, leaseSeconds = CHAT_SLOT_LEASE_SECONDS): boolean {
+export function acquireClaudeSlot(db: StudioDb, kind: SlotKind, id: string, cap: number, now: string, leaseSeconds = CHAT_SLOT_LEASE_SECONDS): boolean {
   return db.immediate(() => {
-    db.run("DELETE FROM lease WHERE (owner LIKE 'chat:%' OR owner LIKE 'chat-wait:%') AND expires_at < ?", [now]);
-    const held = db.get("SELECT 1 FROM lease WHERE owner = ?", [RUNNING + turnId]) !== undefined;
+    db.run("DELETE FROM lease WHERE (owner LIKE 'chat:%' OR owner LIKE 'chat-wait:%' OR owner LIKE 'agent:%' OR owner LIKE 'agent-wait:%') AND expires_at < ?", [now]);
+    const held = db.get("SELECT 1 FROM lease WHERE owner = ?", [RUNNING[kind] + id]) !== undefined;
     const { running } = claudeUsage(db);
     if (held || running < cap) {
-      db.run("DELETE FROM lease WHERE owner = ?", [WAITING + turnId]);
-      putRow(db, RUNNING + turnId, plus(now, leaseSeconds));
+      db.run("DELETE FROM lease WHERE owner = ?", [WAITING[kind] + id]);
+      putRow(db, RUNNING[kind] + id, plus(now, leaseSeconds));
       return true;
     }
-    putRow(db, WAITING + turnId, plus(now, leaseSeconds));
+    putRow(db, WAITING[kind] + id, plus(now, leaseSeconds));
     return false;
   });
 }
 
-export function heartbeatChatSlot(db: StudioDb, turnId: string, now: string, leaseSeconds = CHAT_SLOT_LEASE_SECONDS): void {
-  db.run("UPDATE lease SET expires_at = ? WHERE owner = ?", [plus(now, leaseSeconds), RUNNING + turnId]);
+export function heartbeatClaudeSlot(db: StudioDb, kind: SlotKind, id: string, now: string, leaseSeconds = CHAT_SLOT_LEASE_SECONDS): void {
+  db.run("UPDATE lease SET expires_at = ? WHERE owner = ?", [plus(now, leaseSeconds), RUNNING[kind] + id]);
 }
 
+/** Gives back the slot (or the place in line). */
+export function releaseClaudeSlot(db: StudioDb, kind: SlotKind, id: string): void {
+  db.run("DELETE FROM lease WHERE owner IN (?, ?)", [RUNNING[kind] + id, WAITING[kind] + id]);
+}
+
+/** Ids holding a slot of this kind right now, to tell an orphaned `running` turn from a live one. */
+export function idsHoldingSlots(db: StudioDb, kind: SlotKind): string[] {
+  return db.all<{ owner: string }>("SELECT owner FROM lease WHERE owner LIKE ?", [`${RUNNING[kind]}%`]).map((r) => r.owner.slice(RUNNING[kind].length));
+}
+
+export const acquireChatSlot = (db: StudioDb, turnId: string, cap: number, now: string, leaseSeconds = CHAT_SLOT_LEASE_SECONDS): boolean =>
+  acquireClaudeSlot(db, "chat", turnId, cap, now, leaseSeconds);
+export const heartbeatChatSlot = (db: StudioDb, turnId: string, now: string, leaseSeconds = CHAT_SLOT_LEASE_SECONDS): void =>
+  heartbeatClaudeSlot(db, "chat", turnId, now, leaseSeconds);
 /** Gives back the slot (or the place in line) of a reply. */
-export function releaseChatSlot(db: StudioDb, turnId: string): void {
-  db.run("DELETE FROM lease WHERE owner IN (?, ?)", [RUNNING + turnId, WAITING + turnId]);
-}
-
-/** Replies holding a slot right now (by turn id), to tell an orphaned `running` turn from a live one. */
-export function chatTurnsHoldingSlots(db: StudioDb): string[] {
-  return db.all<{ owner: string }>("SELECT owner FROM lease WHERE owner LIKE 'chat:%'").map((r) => r.owner.slice(RUNNING.length));
-}
+export const releaseChatSlot = (db: StudioDb, turnId: string): void => releaseClaudeSlot(db, "chat", turnId);
+/** Replies holding a slot right now (by turn id). */
+export const chatTurnsHoldingSlots = (db: StudioDb): string[] => idsHoldingSlots(db, "chat");
