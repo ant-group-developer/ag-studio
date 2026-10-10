@@ -51,3 +51,7 @@ export * from "./errors.js";
 export * from "./workspace/project-db.js";
 export * from "./workspace/files.js";
 export * from "./workspace/templates.js";
+export {
+  CreateProjectSchema, UpdateProjectSchema, ProjectSettingsSchema, projectSettingsOf, VIDEO_STATUSES, PROJECT_ASPECTS,
+  type CreateProject, type UpdateProject, type ProjectSettings, type VideoStatus, type ProjectAspect,
+} from "@harness/contracts";

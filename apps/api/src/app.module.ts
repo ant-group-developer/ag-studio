@@ -10,6 +10,7 @@ import { ProductionsModule } from './productions/productions.module';
 import { FarmModule } from './farm/farm.module';
 import { HealthModule } from './health/health.module';
 import { StudioModule } from './studio/studio.module';
+import { WorkspaceModule } from './workspace/workspace.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 
 @Module({
@@ -25,6 +26,7 @@ import { RequestIdMiddleware } from './common/request-id.middleware';
     FarmModule,
     HealthModule,
     StudioModule,
+    WorkspaceModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: Auth0Guard },
