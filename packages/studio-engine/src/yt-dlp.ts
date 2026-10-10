@@ -18,7 +18,12 @@ const DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
 /** A reference video is at most this long and this big (yt-dlp skips the others). */
 export const REFERENCE_MAX_SECONDS = 1800;
 export const REFERENCE_MAX_BYTES = "300M";
-const COMMON = ["--ignore-config", "--no-cookies", "--no-warnings", "--no-progress"];
+/**
+ * Every call. YouTube needs a JavaScript runtime to give the formats (yt-dlp 2025.11 on; without one a download finds
+ * no ≤480p video): the worker's own Node is always there, so yt-dlp is pointed at it.
+ */
+export const YTDLP_COMMON_ARGS = ["--ignore-config", "--no-cookies", "--no-warnings", "--no-progress", "--js-runtimes", `node:${process.execPath}`];
+const COMMON = YTDLP_COMMON_ARGS;
 
 /** What yt-dlp says of one video, as research keeps it (views per day and outliers are computed by research). */
 export interface YtVideoMeta {
