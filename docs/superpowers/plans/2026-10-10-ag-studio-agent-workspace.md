@@ -108,10 +108,15 @@ tạo video mới (luồng mới, tuỳ chọn học từ chat cũ), chuẩn b�
   1920×1080), Studio báo vào luồng, agent làm tiếp.
 - Còn lại: editor timeline trực quan cho video (`modules/editor` vẫn gắn với tập cũ) — `deferred-items.md`.
 
-## P7 — Nguồn 480p sạch
+## P7 — Nguồn 480p sạch (xong 2026-10-10, chưa push ag-go)
 
-1. `feat: ask ag-go for 480p clean sources on previews` (Studio).
-2. ag-go-v2 `feat/resolve-prefer` (hỏi trước khi push; profile render là việc vận hành).
+- [x] Studio: `resolveAssets.prefer` trong cả hai client ag-go; `/farm/sign` gửi `{short_edge: 480, clean: true}` cho job xem
+  trước của dự án (bản cuối thì không); bước chuẩn bị đầu vào cũng xin bản đó. ag-go cũ bỏ qua trường lạ, vẫn chạy.
+- [x] ag-go-api nhánh `feat/resolve-prefer` (commit `b6dc043`, **chưa push**): `ResolveAssetsDto.prefer`, `pickRendition`
+  (sạch trước nếu người xem được phép, rồi cạnh ngắn bằng mục tiêu, không có thì nhỏ nhất lớn hơn, rồi lớn nhất nhỏ hơn;
+  cùng cỡ thì preview < proxy < gốc), trả `width`/`height`; test đơn vị.
+- Việc vận hành (hỏi người dùng trước): thêm `{resolution: 480, watermark: false}` vào profile render của ag-go và chạy lại
+  variant cho asset cũ. Chưa có bản 480 sạch thì người có quyền nhận proxy 720 sạch, người khác nhận bản watermark gần nhất.
 
 ## P8 — Gỡ hệ thống cũ, tài liệu
 
