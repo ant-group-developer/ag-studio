@@ -20,6 +20,12 @@ function Row({ a, projectId, now, onStop }: { a: Activity; projectId: string; no
       {a.status === "running" ? <Loader2 size={13} className="ws-spin" aria-hidden /> : <span className="ws-dot ws-dot--wait" aria-hidden />}
       <div className="ws-activity__text">
         <div><strong>{a.kind === "agent_turn" ? t("ws.chat.agentName") : a.kind === "tool_call" ? t("ws.activity.tool") : t("ws.activity.job")}</strong> · {what}</div>
+        {a.kind === "job" ? (
+          <div className="ws-activity__detail">
+            {a.status === "waiting" ? t("ws.activity.queued") : a.detail ?? t("ws.activity.starting")}
+            {a.progress !== null ? ` · ${Math.round(a.progress * 100)}%` : ""}
+          </div>
+        ) : null}
         {!a.parentId && a.threadTitle ? <Link to={where} className="ws-activity__where">{a.threadTitle}</Link> : null}
       </div>
       {elapsed ? <span className="ws-activity__time">{elapsed}{a.etaSeconds ? ` · ${t("ws.activity.eta", { eta: clock(a.etaSeconds) })}` : ""}</span> : null}
@@ -40,8 +46,11 @@ export function ActivityButton({ projectId }: { projectId: string }) {
   const top = list.filter((a) => !a.parentId);
   const now = useNow(1000, top.length > 0);
   const stop = useMutation({
-    mutationFn: (a: Activity) => client.cancelTurn(a.threadId!, a.id),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ["activity", projectId] }); },
+    mutationFn: async (a: Activity): Promise<void> => { if (a.kind === "job") await client.cancelJob(projectId, a.id); else await client.cancelTurn(a.threadId!, a.id); },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["activity", projectId] });
+      void qc.invalidateQueries({ queryKey: ["jobs", projectId] });
+    },
   });
   const content = top.length === 0 ? <p className="ws-activity__empty">{t("ws.activity.none")}</p> : (
     <ul className="ws-activity">

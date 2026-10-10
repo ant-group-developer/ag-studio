@@ -244,7 +244,77 @@ export interface Activity {
   threadId: string | null;
   threadTitle: string | null;
   videoId: string | null;
+  /** Jobs: their kind; otherwise null. */
+  jobKind: JobKind | null;
 }
+
+// ---- Inputs and jobs ----
+export type JobKind = "prepare_asset" | "transcribe_upload" | "tts" | "fit" | "render_preview" | "render_final" | "export_premiere" | "research" | "style_watch" | "thumbnail";
+export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
+
+export interface JobView {
+  id: string;
+  projectId: string;
+  videoId: string | null;
+  threadId: string | null;
+  kind: JobKind;
+  status: JobStatus;
+  title: string;
+  request: unknown;
+  result: unknown;
+  error: string | null;
+  /** What it does now, e.g. "Farm · GPU-02 · đọc lời thoại". */
+  phase: string | null;
+  progress: number | null;
+  etaSeconds: number | null;
+  /** The farm machine (its name when known). */
+  nodeId: string | null;
+  cancelRequested: boolean;
+  createdBy: string;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export type AssetState =
+  | { state: "queued" | "preparing"; job_id: string; phase: string | null; progress: number | null }
+  | { state: "ready"; folder: string; readme: string; shots: number | null; duration_s: number | null; transcript: boolean }
+  | { state: "failed"; error: string | null }
+  | { state: "not_prepared" }
+  | { state: "not_an_input" };
+
+export type SourceKind = "ag_go_project" | "ag_go_asset" | "upload";
+export interface SourceItem {
+  id: string;
+  projectId: string;
+  videoId: string | null;
+  kind: SourceKind;
+  ref: string;
+  mediaType: "video" | "image" | "audio" | "document" | "mixed";
+  label: string;
+  meta: Record<string, unknown>;
+  addedBy: string;
+  addedAt: string;
+  asset: AssetState | null;
+}
+
+export interface FootageItem {
+  assetId: string;
+  name: string;
+  durationMs: number;
+  width?: number | null;
+  height?: number | null;
+  hasAudio?: boolean | null;
+  hasSpeech?: boolean | null;
+  projectNames?: string[] | null;
+  summaryVi?: string | null;
+  thumbnailUrl?: string | null;
+  prepared: AssetState;
+}
+
+export type AddSourceInput =
+  | { kind: "ag_go_project"; ref: string; label: string }
+  | { kind: "ag_go_asset"; ref: string; label: string; videoId?: string; meta?: { durationMs?: number; thumbnailUrl?: string; agGoProjectId?: string }; prepare?: boolean };
 
 const enc = encodeURIComponent;
 
@@ -340,6 +410,38 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     },
     dismissLesson(projectId: string, lessonId: string): Promise<void> {
       return call("POST", `/api/projects/${enc(projectId)}/lessons/${enc(lessonId)}/dismiss`, {});
+    },
+
+    // ---- Inputs and jobs ----
+    listSources(projectId: string, videoId?: string): Promise<{ sources: SourceItem[] }> {
+      return call("GET", `/api/projects/${enc(projectId)}/sources${buildQuery({ videoId })}`);
+    },
+    /** 422 `owner_cannot_access` when the project's owner cannot use it on ag-go. */
+    addSource(projectId: string, input: AddSourceInput): Promise<{ source: SourceItem; prepare?: AssetState }> {
+      return call("POST", `/api/projects/${enc(projectId)}/sources`, input);
+    },
+    removeSource(projectId: string, sourceId: string): Promise<void> {
+      return call("DELETE", `/api/projects/${enc(projectId)}/sources/${enc(sourceId)}`);
+    },
+    /** A document, image or audio file into context/ (415 `docx_not_supported`, `video_from_ag_go`, `file_type`). */
+    uploadSource(projectId: string, file: File, videoId?: string): Promise<{ source: SourceItem; file: SavedFile }> {
+      const form = new FormData();
+      form.append("file", file);
+      if (videoId) form.append("videoId", videoId);
+      return call("POST", `/api/projects/${enc(projectId)}/sources/upload`, form);
+    },
+    /** Videos of the project's ag-go projects the person can see, with where each stands here. */
+    searchFootage(projectId: string, q: { agGoProjectId?: string; q?: string; cursor?: string; limit?: number } = {}): Promise<{ items: FootageItem[]; nextCursor: string | null; total: number }> {
+      return call("GET", `/api/projects/${enc(projectId)}/footage${buildQuery({ agGoProjectId: q.agGoProjectId, q: q.q, cursor: q.cursor, limit: q.limit ? String(q.limit) : undefined })}`);
+    },
+    prepareInputs(projectId: string, assetIds: string[], again?: boolean): Promise<{ assets: Record<string, AssetState> }> {
+      return call("POST", `/api/projects/${enc(projectId)}/prepare`, { assetIds, ...(again ? { again } : {}) });
+    },
+    listJobs(projectId: string, opts: { active?: boolean; videoId?: string } = {}): Promise<{ jobs: JobView[] }> {
+      return call("GET", `/api/projects/${enc(projectId)}/jobs${buildQuery({ active: opts.active ? "1" : undefined, videoId: opts.videoId })}`);
+    },
+    cancelJob(projectId: string, jobId: string): Promise<JobView> {
+      return call("POST", `/api/projects/${enc(projectId)}/jobs/${enc(jobId)}/cancel`, {});
     },
 
     // ---- Files ----

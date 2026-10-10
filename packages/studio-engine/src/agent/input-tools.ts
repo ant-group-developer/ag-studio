@@ -24,6 +24,7 @@ export interface FootageItem {
   hasSpeech?: boolean | null;
   projectNames?: string[] | null;
   summaryVi?: string | null;
+  thumbnailUrl?: string | null;
 }
 
 /** ag-go as the API reaches it (service key, acting as the project's owner); wired by the API. */

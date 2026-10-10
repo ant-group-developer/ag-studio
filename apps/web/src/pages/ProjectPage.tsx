@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Result, Spin } from "antd";
 import { useQuery } from "@tanstack/react-query";
-import { FolderOpen, Settings } from "lucide-react";
+import { Film, FolderOpen, Settings } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { StudioHttpError } from "../api/http";
@@ -11,6 +11,7 @@ import { ChatPanel } from "../modules/agent-chat/ChatPanel";
 import { LearningModal } from "../modules/agent-chat/NewWorkModals";
 import { useProjectEvents, useThread } from "../modules/agent-chat/use-thread";
 import { FilesPanel } from "../modules/files/FilesPanel";
+import { InputsPanel } from "../modules/inputs/InputsPanel";
 import { StepRail } from "../modules/playbook/StepRail";
 import { ColumnResizer, useColumnWidths } from "../modules/workspace/ColumnResizer";
 import { ProjectNav, VideoStatusBadge } from "../modules/workspace/ProjectNav";
@@ -18,8 +19,8 @@ import { ProjectSettingsPanel } from "../modules/workspace/ProjectSettingsPanel"
 import { useTeamRole } from "../modules/workspace/use-team-role";
 import { WorkspaceShell } from "../modules/workspace/WorkspaceShell";
 
-type AsideTab = "files" | "settings";
-const TABS: { key: AsideTab; icon: typeof FolderOpen }[] = [{ key: "files", icon: FolderOpen }, { key: "settings", icon: Settings }];
+type AsideTab = "files" | "inputs" | "settings";
+const TABS: { key: AsideTab; icon: typeof FolderOpen }[] = [{ key: "files", icon: FolderOpen }, { key: "inputs", icon: Film }, { key: "settings", icon: Settings }];
 
 /**
  * `/p/:projectId` (the channel's chat), `/p/:projectId/c/:threadId` (another chat of the project) and
@@ -129,6 +130,8 @@ export function ProjectPage() {
             {tab === "files" ? (
               <FilesPanel projectId={project.id} canEdit={atLeast("editor")} openPath={openFile} onOpen={(file) => setAside({ file })}
                 onAttach={threadId && atLeast("editor") ? attach : undefined} />
+            ) : tab === "inputs" ? (
+              <InputsPanel projectId={project.id} {...(videoId ? { videoId } : {})} canEdit={atLeast("editor")} onOpenFile={(file) => setAside({ tab: "files", file })} />
             ) : (
               <ProjectSettingsPanel project={project} canEdit={atLeast("producer")} canArchive={atLeast("owner")} onOpenFile={(file) => setAside({ tab: "files", file })} />
             )}

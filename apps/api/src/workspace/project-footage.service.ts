@@ -24,6 +24,7 @@ export class ProjectFootageService implements ProjectFootage {
     const items: FootageItem[] = r.items.map((i) => ({
       assetId: i.assetId, name: i.name, durationMs: i.durationMs, width: i.width ?? null, height: i.height ?? null,
       hasAudio: i.hasAudio ?? null, hasSpeech: i.hasSpeech ?? null, projectNames: i.projectNames ?? null, summaryVi: i.summaryVi ?? i.titleVi ?? null,
+      thumbnailUrl: i.thumbnailUrl ?? null,
     }));
     return { items, nextCursor: r.nextCursor, total: r.total };
   }
