@@ -3,3 +3,4 @@ export * from "./resolve-command.js";
 export * from "./stream-json.js";
 export * from "./kill-tree.js";
 export * from "./agent-session.js";
+export * from "./structured-call.js";

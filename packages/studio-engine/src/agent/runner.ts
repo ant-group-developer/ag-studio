@@ -5,10 +5,10 @@
  * CLI in the project folder and streams what it does into the message row. One turn per thread at a time.
  */
 import { randomUUID } from "node:crypto";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
-import { runAgentTurn, type AgentTurnOutcome, type AgentTurnState } from "@harness/adapter-agent-cli";
+import { runAgentTurn, runStructuredCall, type AgentTurnOutcome, type AgentTurnState } from "@harness/adapter-agent-cli";
 import type { HarnessLogger } from "@harness/core";
 import type { StudioBucket } from "../bucket.js";
 import { acquireClaudeSlot, CHAT_SLOT_LEASE_SECONDS, heartbeatClaudeSlot, idsHoldingSlots, releaseClaudeSlot } from "../claude-slots.js";
@@ -20,6 +20,8 @@ import { getProject, getVideo } from "../workspace/project-db.js";
 import { seedWorkspace } from "../workspace/templates.js";
 import { hasErrors, validateWorkspaceFile } from "../workspace/validators.js";
 import { materializeSkillPlugin } from "./skills.js";
+import { saveThreadSummary, summaryPrompt, THREAD_SUMMARY_JSON_SCHEMA, ThreadSummarySchema, threadsToSummarize } from "./summaries.js";
+import { LESSONS_PATH } from "./prompt.js";
 import { threadMarkdown } from "./history.js";
 import { agentSystemPrompt, agentTurnPrompt } from "./prompt.js";
 import {
@@ -65,6 +67,8 @@ export interface AgentRunnerOptions {
   stepFacts?: (key: string, videoId: string | null) => StepFact | undefined;
   /** More `<studio_context>` lines for a turn (jobs — later phases). */
   contextLines?: (projectId: string, videoId: string | null) => string[];
+  /** Summaries of quiet threads and the lessons they propose (`false`: off); the model of that small call. */
+  summaries?: false | { model?: string; idleMinutes?: number };
   cap: () => number;
   baseEnv?: Record<string, string | undefined>;
   now?: () => string;
@@ -88,6 +92,48 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
   const now = o.now ?? (() => new Date().toISOString());
   const inFlight = new Map<string, Promise<void>>();
   const waiting = new Set<string>();
+  /** Threads whose summary failed, and when to try again. */
+  const summaryRetryAt = new Map<string, number>();
+  let summarizing: Promise<void> | null = null;
+
+  async function summarize(threadId: string): Promise<void> {
+    const slot = `sum-${threadId}`;
+    try {
+      const thread = getThread(db, threadId);
+      const project = thread ? getProject(db, thread.project_id) : undefined;
+      if (!thread || !project) return;
+      const dir = seedWorkspace(o.workspacesRoot, project);
+      const lessonsFile = join(dir, ...LESSONS_PATH.split("/"));
+      const lessons = existsSync(lessonsFile) ? readFileSync(lessonsFile, "utf8") : "";
+      const out = await runStructuredCall({
+        command: o.claudeCommand, cwd: dir, prompt: summaryPrompt(db, thread, lessons), jsonSchema: THREAD_SUMMARY_JSON_SCHEMA,
+        model: (o.summaries && o.summaries.model) || "haiku", baseEnv: o.baseEnv ?? process.env, configDir: o.configDir, deadlineMs: 5 * 60_000,
+      });
+      const parsed = out.status === "done" ? ThreadSummarySchema.safeParse(out.output) : null;
+      if (!parsed?.success) {
+        summaryRetryAt.set(threadId, Date.now() + 30 * 60_000);
+        logger.warn("thread summary failed; tries again later", { thread_id: threadId, status: out.status, error: out.error });
+        return;
+      }
+      const saved = saveThreadSummary(db, { thread, dir, summary: parsed.data, now: now() });
+      logger.info("thread summarized", { thread_id: threadId, path: saved.path, lessons: saved.lessons });
+    } catch (e) {
+      summaryRetryAt.set(threadId, Date.now() + 30 * 60_000);
+      logger.warn("thread summary crashed", { thread_id: threadId, error: e instanceof Error ? e.message : String(e) });
+    } finally {
+      releaseClaudeSlot(db, "agent", slot);
+    }
+  }
+
+  /** One summary at a time, only with a free slot and nothing of the person waiting. */
+  function maybeSummarize(cap: number) {
+    if (o.summaries === false || summarizing) return;
+    const idle = (o.summaries && o.summaries.idleMinutes) ?? undefined;
+    const candidate = threadsToSummarize(db, now(), 5, idle).find((t) => (summaryRetryAt.get(t.id) ?? 0) <= Date.now());
+    if (!candidate) return;
+    if (!acquireClaudeSlot(db, "agent", `sum-${candidate.id}`, cap, now())) { releaseClaudeSlot(db, "agent", `sum-${candidate.id}`); return; }
+    summarizing = summarize(candidate.id).finally(() => { summarizing = null; });
+  }
 
   async function runOnce(message: MessageRecord, signal: AbortSignal, opts: { recap: boolean }): Promise<AgentTurnOutcome> {
     const thread = getThread(db, message.thread_id)!;
@@ -283,12 +329,13 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
       if (!markAgentTurnRunning(db, t.id, now())) { releaseClaudeSlot(db, "agent", t.id); continue; }
       start(t.id, signal);
     }
+    if (!ready.length && !waiting.size) maybeSummarize(cap);
   };
 
   return {
     tick,
     get running() { return inFlight.size; },
-    idle: async () => { while (inFlight.size) await Promise.all([...inFlight.values()]); },
+    idle: async () => { while (inFlight.size || summarizing) await Promise.all([...inFlight.values(), summarizing]); },
     runForever: async (signal) => {
       while (!signal.aborted) {
         try { await tick(signal); }
@@ -301,7 +348,7 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
       }
       for (const id of waiting) releaseClaudeSlot(db, "agent", id);
       waiting.clear();
-      while (inFlight.size) await Promise.all([...inFlight.values()]);
+      while (inFlight.size || summarizing) await Promise.all([...inFlight.values(), summarizing]);
     },
   };
 }

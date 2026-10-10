@@ -14,6 +14,7 @@
 //   @fake slow <ms>                  waits
 //   @fake hang                       writes its pid to $FAKE_AGENT_LOG_DIR/hang.pid and waits until killed
 //   @fake fail                       exits 1 without a result
+//   @fake lesson <text>              (structured mode, --output-format json) a lesson the thread summary proposes
 // FAKE_STUDIO_MODE: agent-rate-limit-once (first call per log dir prints the plan-limit message, exits 1),
 //                   agent-mcp-down (init reports the MCP server failed).
 import { spawn } from "node:child_process";
@@ -36,6 +37,18 @@ writeFileSync(join(logDir, "calls", `${String(n).padStart(3, "0")}.json`), JSON.
 }, null, 2));
 
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
+
+// Structured mode (--output-format json --json-schema): Studio's small jobs, e.g. summarizing a thread. Lessons are the
+// "@fake lesson <text>" lines found in the prompt (the thread's transcript).
+if (flag("--output-format") === "json") {
+  const schema = flag("--json-schema") ?? "{}";
+  const lessons = [...prompt.matchAll(/@fake lesson ([^\n]+)/g)].map((m) => m[1].trim());
+  const structured = schema.includes("lessons")
+    ? { summary_md: `## Mục tiêu\n\nTóm tắt giả của ${(prompt.match(/^### /gm) ?? []).length} tin.\n`, lessons }
+    : {};
+  out({ type: "result", subtype: "success", is_error: false, structured_output: structured, total_cost_usd: 0.0005, session_id: "structured" });
+  process.exit(0);
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 if (modes.has("agent-rate-limit-once") && !existsSync(join(logDir, ".rate-limited"))) {

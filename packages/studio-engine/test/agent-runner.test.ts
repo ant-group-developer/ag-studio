@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   agentToolList, agentTools, callAgentTool, createAgentRunner, createProject, createThread, getMessage, getProject, getThread, getVideo,
-  listFileVersions, listMessages, listVideos, MemoryBucket, mcpToolNames, postUserMessage, projectDir, requestCancel, seedWorkspace,
+  listFileVersions, listLessonProposals, listMessages, listVideos, MemoryBucket, mcpToolNames, postUserMessage, projectDir, requestCancel, seedWorkspace,
   verifyAgentToken, type StudioDb,
 } from "../src/index.js";
 import { world } from "./helpers.js";
@@ -49,7 +49,7 @@ async function toolsApi(db: StudioDb, workspacesRoot: string) {
 const closers: (() => unknown)[] = [];
 afterEach(async () => { for (const c of closers.splice(0)) await c(); });
 
-async function setup(env: Record<string, string> = {}) {
+async function setup(env: Record<string, string> = {}, extra: Partial<Parameters<typeof createAgentRunner>[0]> = {}) {
   const w = world();
   w.db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [new Date().toISOString(), new Date().toISOString()]);
   const root = mkdtempSync(join(tmpdir(), "agent-runner-"));
@@ -69,6 +69,7 @@ async function setup(env: Record<string, string> = {}) {
     model: "sonnet", maxTurns: 20, deadlineMs: 60_000, mcpTools: () => mcpToolNames(agentTools()), cap: () => 4,
     baseEnv: { ...process.env, FAKE_AGENT_LOG_DIR: logs, ...env }, updateMs: 50,
     skills: { builtinDir: join(ROOT, "agent-skills"), pluginsRoot: join(root, "plugins") },
+    ...extra,
   });
   const calls = () => readdirSync(join(logs, "calls")).sort().map((f) => JSON.parse(readFileSync(join(logs, "calls", f), "utf8")) as { argv: string[]; prompt: string; append: string });
   const say = (text: string) => postUserMessage(w.db, { threadId: thread.id, text, actor: { id: "auth0|u", role: "editor" } });
@@ -121,6 +122,20 @@ describe("agent runner (fake CLI, real MCP server)", { timeout: 60_000 }, () => 
     await runner.idle();
     // the fix turn ran; a fix turn never asks for another one
     expect(listMessages(db, thread.id).map((m) => m.role)).toEqual(["user", "assistant", "system", "assistant"]);
+  });
+
+  it("summarizes a quiet thread into SUMMARY.md and proposes its lessons", async () => {
+    const { runner, say, thread, db, dir, project } = await setup({}, { summaries: { idleMinutes: 0 } });
+    say("Nhớ nhé: @fake lesson Không dùng nhạc buồn cho kênh này.");
+    await runner.tick();
+    await runner.idle();
+    await runner.tick();
+    await runner.idle();
+    expect(readFileSync(join(dir, "threads", thread.id, "SUMMARY.md"), "utf8")).toContain("## Mục tiêu");
+    expect(listLessonProposals(db, project.id).map((l) => [l.text, l.status])).toEqual([["Không dùng nhạc buồn cho kênh này.", "proposed"]]);
+    await runner.tick();
+    await runner.idle();
+    expect(listLessonProposals(db, project.id)).toHaveLength(1);
   });
 
   it("the next turn resumes the session; messages sent during a turn get the next one", async () => {
