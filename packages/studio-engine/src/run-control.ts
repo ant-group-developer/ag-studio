@@ -14,13 +14,8 @@ import {
 } from "./studio-db.js";
 import { defaultRenderMachine, machineOfRequirements, renderChoiceFor, renderNodeFor, setRenderChoice, type RenderNode } from "./render-choice.js";
 
-export type StudioRunErrorCode = "not_found" | "conflict" | "invalid" | "rejected";
-export class StudioRunError extends Error {
-  constructor(readonly code: StudioRunErrorCode, message: string, readonly details: Record<string, unknown> = {}) {
-    super(message);
-    this.name = "StudioRunError";
-  }
-}
+import { StudioRunError } from "./errors.js";
+export { StudioRunError, type StudioRunErrorCode } from "./errors.js";
 
 /** Gates and the document each submits: the trend report (plan 3.0.0), the R&D, the branding, the episode plan, and
  *  for an episode (1.3.0) its timeline and YouTube kit. */

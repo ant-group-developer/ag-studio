@@ -47,3 +47,7 @@ export * from "./voice-design.js";
 export * from "./voice.js";
 export * from "./audio-import.js";
 export * from "./cut-fit.js";
+export * from "./errors.js";
+export * from "./workspace/project-db.js";
+export * from "./workspace/files.js";
+export * from "./workspace/templates.js";
