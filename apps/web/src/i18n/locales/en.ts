@@ -1,4 +1,5 @@
 import { chatEn } from "./chat.en";
+import { wsEn } from "./ws.en";
 import type { LocaleMessages } from "./vi";
 
 export const en: LocaleMessages = {
@@ -702,6 +703,7 @@ export const en: LocaleMessages = {
     preview: "Thumbnail preview",
   },
   chat: chatEn,
+  ws: wsEn,
   enums: {
     productionStatus: {
       draft: "Draft",

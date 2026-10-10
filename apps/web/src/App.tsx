@@ -21,6 +21,9 @@ const ProductionDetailPage = lazy(() => import("./pages/ProductionDetailPage").t
 const EditorPage = lazy(() => import("./modules/editor/EditorPage").then((m) => ({ default: m.EditorPage })));
 const QueuePage = lazy(() => import("./pages/QueuePage").then((m) => ({ default: m.QueuePage })));
 const MusicLibraryPage = lazy(() => import("./pages/MusicLibraryPage").then((m) => ({ default: m.MusicLibraryPage })));
+const HomePage = lazy(() => import("./pages/HomePage").then((m) => ({ default: m.HomePage })));
+const ProjectsPage = lazy(() => import("./pages/ProjectsPage").then((m) => ({ default: m.ProjectsPage })));
+const ProjectPage = lazy(() => import("./pages/ProjectPage").then((m) => ({ default: m.ProjectPage })));
 const ChatHomePage = lazy(() => import("./pages/ChatHomePage").then((m) => ({ default: m.ChatHomePage })));
 const ChatProductionPage = lazy(() => import("./pages/ChatProductionPage").then((m) => ({ default: m.ChatProductionPage })));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
@@ -100,7 +103,11 @@ export function App() {
               <NuqsAdapter>
                 <Suspense fallback={<div style={{ display: "flex", justifyContent: "center", padding: 48 }}><Spin /></div>}>
                   <Routes>
-                    <Route path="/" element={<ChatHomePage />} />
+                    <Route path="/" element={<HomePage />} />
+                    <Route path="/t/:teamId" element={<ProjectsPage />} />
+                    <Route path="/p/:projectId" element={<ProjectPage />} />
+                    <Route path="/p/:projectId/v/:videoId" element={<ProjectPage />} />
+                    <Route path="/chat" element={<ChatHomePage />} />
                     <Route path="/v/:productionId" element={<ChatProductionPage />} />
                     <Route path="/v/:productionId/e/:episodeId" element={<ChatProductionPage />} />
                     <Route path="/queue" element={<QueuePage />} />

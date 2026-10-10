@@ -1,4 +1,5 @@
 import { chatVi } from "./chat.vi";
+import { wsVi } from "./ws.vi";
 
 export const vi = {
   common: {
@@ -702,6 +703,7 @@ export const vi = {
   },
   // Readable names for codes the API returns; shown next to the code (see helpers/enum-label).
   chat: chatVi,
+  ws: wsVi,
   enums: {
     productionStatus: {
       draft: "Nháp",
