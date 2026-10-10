@@ -2,6 +2,12 @@
 
 ## AG Studio — chat với agent trong dự án (nhánh `feat/agent-workspace`, 2026-10-10)
 
+- **Editor timeline trực quan cho video của dự án.** `apps/web/src/modules/editor` vẫn đọc/ghi timeline của tập cũ
+  (`episode_revisions`); video của dự án sửa qua agent (`timeline_apply_ops`) và xem ở tab Xem trước. Cần một adapter
+  `EditorClient` theo video (`/api/videos/:id/timeline` + lưu theo `base_revision`) rồi gắn route `/p/:p/v/:v/editor`.
+- **Một lượt agent chờ job xong vẫn có thể kéo thêm một lượt tự chạy.** Job `continue_agent` báo vào luồng ngay khi xong;
+  nếu tool của lượt đang chạy đã chờ và thấy kết quả, lượt kế tiếp là thừa (tốn ít, không sai). Có thể bỏ khi lượt tạo job
+  còn đang chạy và đã đọc kết quả.
 - **Audio tải lên chưa được đọc thành chữ.** Tab Đầu vào nhận mp3/wav/m4a… vào `context/audio/` nhưng chưa có job
   `transcribe_upload` (đã có trong `JOB_KINDS` và migration 0033). Agent mới chỉ thấy tên file. Làm cùng P6 (giọng,
   nhạc của dự án qua `audio-import.ts`).

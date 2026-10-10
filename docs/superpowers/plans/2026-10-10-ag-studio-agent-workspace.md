@@ -89,15 +89,24 @@ tạo video mới (luồng mới, tuỳ chọn học từ chat cũ), chuẩn b�
 - [x] Kiểm thật trên stack local (API key): xu hướng VN 10 video (1 đơn vị), "phố cổ Hội An" 365 ngày (102 đơn vị).
 - Thẻ xác nhận cho crawl lớn do agent đề xuất: ở P6 (`propose_action(crawl_large)`).
 
-## P6 — Làm video
+## P6 — Làm video (xong 2026-10-10, trừ editor trực quan)
 
-1. `feat(engine): timeline from edit plan` — `workspace/fit.ts`.
-2. `feat(mcp): timeline tools`.
-3. `feat(engine): video renders and thumbnails` — `workspace/renders.ts`.
-4. `feat(api): sign project farm jobs`.
-5. `feat(db): agent actions` — `0034`; `propose_action`, xác nhận/từ chối.
-6. `feat(web): video page, action cards, editor adapter`.
-7. `feat(engine): style reference measurement` (sau thẻ `reference_download`).
+- [x] `0034` thẻ xác nhận (`agent_actions`): `propose_action` (render_final, export_premiere, delete_video, crawl_large,
+  reference_download), vai cần có, hết hạn 24 giờ hoặc khi timeline đổi; API xác nhận/từ chối; thẻ trong chat.
+- [x] `workspace/renders.ts`: job render_preview / render_final (máy farm chọn được) / export_premiere qua
+  `project_farm_jobs`, ghi chú `videos/<id>/renders/`, video "done" khi xong bản cuối.
+- [x] `0035` giọng đọc và nhạc của dự án (từ file audio tải lên, nguồn gốc giọng do người dùng nói).
+- [x] `workspace/fit.ts` (job `fit`): edit-plan.json + survey.json + sources/index.json → TTS trên farm (giọng dự án, kho giọng)
+  → `fitCutTimeline` → bản timeline mới + `videos/<id>/timeline.json`; chữ theo branding, nhạc dự án hoặc thư viện.
+- [x] Tool `timeline_from_edit_plan`, `timeline_get`, `timeline_apply_ops` (theo bản đã đọc), `render_preview`,
+  `thumbnail_make`, `music_list`; kiểm file survey/edit-plan theo mã cảnh của video; bước timeline/preview/final theo DB;
+  skill `scene-selection`, `edit-plan`.
+- [x] Thumbnail (job `thumbnail`) cắt khung từ bản render, chữ theo branding → `videos/<id>/thumbnails/`.
+- [x] Học phong cách (job `style_watch` sau thẻ `reference_download`): tải ≤480p, đo nhịp, tờ ghép, xoá video.
+- [x] API trang video (render + link theo quyền footage của người xem, timeline, dựng lại, giọng/nhạc); web tab Xem trước.
+- [x] Kiểm thật trên stack local: agent chọn cảnh → kế hoạch dựng → timeline bản 1 → render xem trước trên farm (11 s,
+  1920×1080), Studio báo vào luồng, agent làm tiếp.
+- Còn lại: editor timeline trực quan cho video (`modules/editor` vẫn gắn với tập cũ) — `deferred-items.md`.
 
 ## P7 — Nguồn 480p sạch
 
