@@ -6,7 +6,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { StudioPlaybookSchema, type PlaybookStep, type StudioPlaybook } from "@harness/contracts";
 import type { FileIssue } from "./validators.js";
 
@@ -146,3 +146,9 @@ export function loadPlaybook(dir: string): { playbook: StudioPlaybook; custom: b
 
 /** A step's output path for a video (`{video}` filled). */
 export const stepPath = (path: string, videoId: string | null): string => path.replace(/\{video\}/g, videoId ?? "{video}");
+
+/** The default playbook as YAML, to start a project's own `.studio/playbook.yaml` from. */
+export function defaultPlaybookYaml(): string {
+  return `# Quy trình gợi ý của dự án (sửa được). Sai cú pháp thì Studio báo lỗi và dùng quy trình mặc định.
+${stringifyYaml(DEFAULT_PLAYBOOK, { lineWidth: 0 })}`;
+}

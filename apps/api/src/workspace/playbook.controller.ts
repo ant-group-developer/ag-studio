@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { Request } from 'express';
 import { z } from 'zod';
 import {
-  acceptLesson, dismissLesson, listLessonProposals, loadPlaybook, playbookStatus, requireProject, requireVideo, stepPath, StudioRunError,
+  acceptLesson, defaultPlaybookYaml, dismissLesson, PLAYBOOK_PATH, listLessonProposals, loadPlaybook, playbookStatus, requireProject, requireVideo, stepPath, StudioRunError,
   writeFrontmatter, writeWorkspaceFile, type LessonProposal, type PlaybookStatus,
 } from '@ag-studio/engine';
 import { Roles } from '../auth/roles.decorator';
@@ -61,6 +61,20 @@ export class PlaybookController {
       return writeWorkspaceFile(this.engine.db, {
         projectId, dir, path, content: writeFrontmatter(current, { status: body.status }), author: { kind: 'user', id: req.authContext!.userId },
       });
+    });
+  }
+
+  /** Writes the default playbook to .studio/playbook.yaml (when the project has none) for people to edit. */
+  @Post('playbook/customize')
+  @Roles('producer')
+  @HttpCode(HttpStatus.OK)
+  customize(@Param('projectId') projectId: string, @Req() req: Request): Promise<{ path: string; created: boolean }> {
+    return mapErrors(() => {
+      const dir = this.workspace.dir(projectId);
+      if (existsSync(join(dir, ...PLAYBOOK_PATH.split('/')))) return { path: PLAYBOOK_PATH, created: false };
+      const text = defaultPlaybookYaml();
+      writeWorkspaceFile(this.engine.db, { projectId, dir, path: PLAYBOOK_PATH, content: text, baseSha256: null, author: { kind: 'user', id: req.authContext!.userId } });
+      return { path: PLAYBOOK_PATH, created: true };
     });
   }
 

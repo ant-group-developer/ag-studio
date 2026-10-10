@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  createProject, DEFAULT_PLAYBOOK, docStatus, loadPlaybook, playbookContextLines, playbookStatus, readFrontmatter, validateFileText,
+  createProject, DEFAULT_PLAYBOOK, defaultPlaybookYaml, docStatus, loadPlaybook, playbookContextLines, playbookStatus, readFrontmatter, validateFileText,
   validatorFor, writeFrontmatter,
 } from "../src/index.js";
 import { world } from "./helpers.js";
@@ -69,6 +69,9 @@ describe("playbook", () => {
     expect(bad.issues[0]?.message).toContain("không có bước \"nope\"");
     write(dir, ".studio/playbook.yaml", "schema_version: studio.playbook/v1\nsteps:\n  - key: brief\n    scope: video\n    title: Brief\n    outputs: [{ path: 'videos/{video}/brief.md', role: doc }]\n    prompts: { do: Viết brief }\n");
     expect(loadPlaybook(dir)).toMatchObject({ custom: true, playbook: { steps: [{ key: "brief" }] } });
+    write(dir, ".studio/playbook.yaml", defaultPlaybookYaml());
+    expect(loadPlaybook(dir)).toMatchObject({ custom: true, issues: [] });
+    expect(loadPlaybook(dir).playbook).toEqual(DEFAULT_PLAYBOOK);
     expect(DEFAULT_PLAYBOOK.steps.map((s) => s.key)).toEqual(["research", "channel", "style", "branding", "brief", "prepare", "scenes", "edit-plan", "timeline", "preview", "youtube-kit", "thumbnail", "final"]);
   });
 
