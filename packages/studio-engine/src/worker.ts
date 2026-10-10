@@ -21,6 +21,7 @@ export const STUDIO_WEB_TOOLS = ["WebSearch", "WebFetch"] as const;
 /** Turns of a web-mode call: a few searches and pages per channel and keyword, then the answer. */
 export const STUDIO_WEB_MAX_TURNS = 30;
 import { createChatRunner, type ChatRunner } from "./chat-runner.js";
+import { createAgentRunner, type AgentRunner, type AgentRunnerOptions } from "./agent/runner.js";
 import { chatFeedback } from "./chat-db.js";
 import { recordLlmCall } from "./llm-log.js";
 import { cancelLegacyRuns, DEFAULT_CLAUDE_MAX_CONCURRENT, STUDIO_PORTFOLIO_ID, STUDIO_PROJECT_ID, studioResources, studioWorkflowRefs, type StudioEngineCore } from "./core.js";
@@ -159,6 +160,8 @@ export function createStudioWorker(o: StudioWorkerOptions): Worker {
 export interface StudioWorkerPool {
   /** The chat loop running next to the stage loops (people's messages to Claude). */
   readonly chat: ChatRunner;
+  /** The agent loop (spec agent-workspace): turns of the project workspaces' chat threads; absent when not configured. */
+  readonly agent: AgentRunner | null;
   /** The loops in use now (loops let go after the cap dropped are no longer listed, though they may finish a stage). */
   readonly workers: Worker[];
   /** Matches the number of loops to the capacity now (`claude` from the web setting or env, + farm + cpu). */
@@ -179,6 +182,8 @@ export const STUDIO_POOL_RESIZE_MS = 10_000;
  */
 export function createStudioWorkerPool(o: StudioWorkerOptions & {
   resizeEveryMs?: number; chatPollMs?: number;
+  /** The agent loop's settings (workspaces, API, token secret, CLI); absent: no agent turns run in this worker. */
+  agent?: Omit<AgentRunnerOptions, "db" | "bucket" | "logger" | "cap">;
   /** The cleanup sweep (`cleanup.ts`) every `everyMs`, first a minute after start; absent or 0: never. */
   cleanup?: { everyMs: number; retention?: Partial<RetentionConfig> };
 }): StudioWorkerPool {
@@ -187,6 +192,9 @@ export function createStudioWorkerPool(o: StudioWorkerOptions & {
     core: o.core, db: o.db, bucket: o.bucket, claude: o.claude, logger: o.logger ?? studioLogger({ owner: `${o.owner}#chat` }),
     cap: () => factory.capacity().claude, ...(o.chatPollMs ? { pollMs: o.chatPollMs } : {}),
   });
+  const agent = o.agent
+    ? createAgentRunner({ ...o.agent, db: o.db, bucket: o.bucket, logger: o.logger ?? studioLogger({ owner: `${o.owner}#agent` }), cap: () => factory.capacity().claude })
+    : null;
   const loops: { worker: Worker; drain: AbortController; done?: Promise<void> }[] = [];
   let signal: AbortSignal | undefined;
   const start = (l: (typeof loops)[number]) => { if (signal && !l.done) l.done = l.worker.runForever(signal, { drain: l.drain.signal }); };
@@ -201,6 +209,7 @@ export function createStudioWorkerPool(o: StudioWorkerOptions & {
   return {
     get workers() { return loops.map((l) => l.worker); },
     chat,
+    agent,
     resize,
     runForever: async (s) => {
       signal = s;
@@ -208,10 +217,11 @@ export function createStudioWorkerPool(o: StudioWorkerOptions & {
       const timer = setInterval(resize, o.resizeEveryMs ?? STUDIO_POOL_RESIZE_MS);
       const sweeps = startCleanup(o);
       const chatDone = chat.runForever(s);
+      const agentDone = agent?.runForever(s);
       await new Promise<void>((res) => { if (s.aborted) res(); else s.addEventListener("abort", () => res(), { once: true }); });
       clearInterval(timer);
       sweeps.stop();
-      await Promise.all([...loops.map((l) => l.done), ...retired, chatDone]);
+      await Promise.all([...loops.map((l) => l.done), ...retired, chatDone, agentDone]);
     },
   };
 }

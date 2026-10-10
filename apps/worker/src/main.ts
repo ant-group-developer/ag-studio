@@ -29,13 +29,24 @@
  *   STUDIO_CLEANUP_HOURS how often the cleanup sweep runs (default 6; 0 = never): workspaces of ended runs, agent
  *                       sessions without a workspace, unused voice lines, production audio and shot frames nothing uses
  *   STUDIO_RETENTION_WORKSPACE_DAYS / _VOICE_DAYS / _AUDIO_DAYS  how old before the sweep removes them (14 / 90 / 7)
+ *
+ * Agent workspace (spec 2026-10-10 agent-workspace; agent turns run only with STUDIO_AGENT_TOKEN_SECRET):
+ *   STUDIO_AGENT_TOKEN_SECRET   signs each turn's token for /api/agent-tools (same value as the API)
+ *   STUDIO_API_INTERNAL_URL     where a turn's MCP server reaches the API (default http://127.0.0.1:3100)
+ *   STUDIO_WORKSPACES_ROOT      project workspaces (default <STUDIO_DATA_ROOT>/workspaces; the API must see the same)
+ *   STUDIO_AGENT_CLAUDE_CONFIG_DIR  CLAUDE_CONFIG_DIR of agent sessions (default <STUDIO_DATA_ROOT>/agent-claude)
+ *   STUDIO_AGENT_MODEL          model alias or name (default sonnet; a project's setting wins)
+ *   STUDIO_AGENT_MAX_TURNS      tool rounds a turn may take (default 40)
+ *   STUDIO_AGENT_TURN_MINUTES   a turn's deadline (default 20)
+ *   STUDIO_AGENT_ARGV           JSON array replacing `claude` (tests: the fake agent CLI)
+ *   STUDIO_MCP_ARGV             JSON array starting the Studio MCP server (default node packages/studio-mcp/server.mjs)
  */
 import { hostname } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { AgGoClient } from "@ag-studio/ag-go-client";
 import {
   claudeMaxConcurrent as studioClaudeMaxConcurrent, createStudioEngineCore, ffprobeBeside, httpDownload, type CutMediaDeps, createStudioWorkerPool, FarmOwnerClient, parseClaudeMaxConcurrent, ffmpegThumbnailRenderer, S3Bucket, StudioDb, studioLogger, studioResearchCache,
-  YoutubeResearchSource, DEFAULT_RETENTION, ytDlp,
+  YoutubeResearchSource, DEFAULT_RETENTION, ytDlp, agentTools, mcpToolNames,
 } from "@ag-studio/engine";
 import { HARNESS_ROOT } from "@harness/core";
 
@@ -78,6 +89,21 @@ async function main(): Promise<void> {
     download: (url, dest) => httpDownload(url, dest),
     voiceDir: join(requireEnv("STUDIO_DATA_ROOT"), "voice"),
   } : null;
+  const dataRoot = requireEnv("STUDIO_DATA_ROOT");
+  const agentSecret = process.env.STUDIO_AGENT_TOKEN_SECRET;
+  const agent = agentSecret ? {
+    workspacesRoot: resolve(process.env.STUDIO_WORKSPACES_ROOT ?? join(dataRoot, "workspaces")),
+    dataRoot,
+    apiUrl: process.env.STUDIO_API_INTERNAL_URL ?? "http://127.0.0.1:3100",
+    tokenSecret: agentSecret,
+    claudeCommand: process.env.STUDIO_AGENT_ARGV ? (JSON.parse(process.env.STUDIO_AGENT_ARGV) as string[]) : ["claude"],
+    mcpCommand: process.env.STUDIO_MCP_ARGV ? (JSON.parse(process.env.STUDIO_MCP_ARGV) as string[]) : [process.execPath, join(harnessRoot, "packages", "studio-mcp", "server.mjs")],
+    configDir: resolve(process.env.STUDIO_AGENT_CLAUDE_CONFIG_DIR ?? join(dataRoot, "agent-claude")),
+    model: process.env.STUDIO_AGENT_MODEL?.trim() || "sonnet",
+    maxTurns: numberEnv("STUDIO_AGENT_MAX_TURNS", 40),
+    deadlineMs: numberEnv("STUDIO_AGENT_TURN_MINUTES", 20) * 60_000,
+    mcpTools: () => mcpToolNames(agentTools()),
+  } : undefined;
   const pool = createStudioWorkerPool({
     core,
     db,
@@ -96,6 +122,7 @@ async function main(): Promise<void> {
     owner,
     logger,
     claudeMaxConcurrent,
+    ...(agent ? { agent } : {}),
     farmPollMs: Number(process.env.FARM_POLL_MS ?? 5000),
     farmQueueTimeoutMs: numberEnv("STUDIO_FARM_QUEUE_TIMEOUT_MINUTES", 120) * 60_000,
     ...(youtubeKey ? { research: new YoutubeResearchSource({ apiKey: youtubeKey, cache: studioResearchCache(db) }) } : {}),
@@ -115,6 +142,7 @@ async function main(): Promise<void> {
 
   const claudeCap = studioClaudeMaxConcurrent(db, claudeMaxConcurrent);
   logger.info("Studio worker starting", { owner, harnessRoot, youtube_research: !!youtubeKey, ytdlp: ytdlpVersion, reference_downloads: referenceDownloads, claude_max_concurrent: claudeCap.value, claude_max_concurrent_from: claudeCap.source, loops: pool.workers.length });
+  if (!agent) logger.warn("STUDIO_AGENT_TOKEN_SECRET is not set: chat turns of project workspaces do not run in this worker");
   if (!ytdlpVersion) {
     logger.warn(`yt-dlp cannot run (${ytdlpArgv[0]}): web research keeps the numbers Claude reads off pages, and the style step is skipped (set YTDLP_PATH)`);
   }
