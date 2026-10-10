@@ -20,6 +20,7 @@ import { INPUT_TOOLS, type ProjectFootage } from "./input-tools.js";
 import { projectAudioSummary } from "../workspace/project-audio.js";
 import { RESEARCH_TOOLS } from "./research-tools.js";
 import { ACTION_TOOLS } from "./action-tools.js";
+import { TIMELINE_TOOLS } from "./timeline-tools.js";
 
 /** What a tool call runs with: the turn, its project (and video), the workspace folder. */
 export interface AgentToolContext {
@@ -170,7 +171,7 @@ export const PROJECT_TOOLS: AgentTool[] = [
 
 /** Every tool a turn may call (later phases add theirs here). */
 export function agentTools(extra: AgentTool[] = []): AgentTool[] {
-  return [...PROJECT_TOOLS, ...INPUT_TOOLS, ...RESEARCH_TOOLS, ...ACTION_TOOLS, ...extra];
+  return [...PROJECT_TOOLS, ...INPUT_TOOLS, ...RESEARCH_TOOLS, ...TIMELINE_TOOLS, ...ACTION_TOOLS, ...extra];
 }
 
 /** The tools as MCP `tools/list` answers them. */

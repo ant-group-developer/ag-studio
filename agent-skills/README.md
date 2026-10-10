@@ -11,6 +11,8 @@ là `studio:<tên>`. Dưới `--restricted` CLI không đọc `.claude/skills` c
 | `channel-strategy` | `channel` | `channel/strategy.md` |
 | `branding` | `branding` | `channel/branding.md` (frontmatter `text_look`, `music_mood`…) |
 | `video-brief` | `brief` | `videos/<id>/brief.md` (frontmatter `title`, `target_seconds`, `narration`…) |
+| `scene-selection` | `scenes` | `videos/<id>/scenes.md`, `survey.json` (một dòng mỗi cảnh của `sources/index.json`) |
+| `edit-plan` | `edit-plan` | `videos/<id>/edit-plan.md`, `edit-plan.json` (shot, lời dẫn, chữ, nhạc) → `timeline_from_edit_plan` |
 | `youtube-kit` | `youtube-kit` | `videos/<id>/youtube-kit.md` (frontmatter `titles`, `tags`, `thumbnails`…) |
 
 Skill ở `skills/` (gốc repo) là của pipeline cũ (gate), sẽ gỡ cùng pipeline.

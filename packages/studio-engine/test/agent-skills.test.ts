@@ -36,7 +36,7 @@ describe("agent skills", () => {
     const { db, project, dir } = setup();
     const skills = projectSkills(db, { project, workspaceDir: dir, builtinDir: BUILTIN });
     expect(skills.map((s) => s.name)).toEqual([
-      "branding", "channel-strategy", "research-report", "video-brief", "youtube-kit",
+      "branding", "channel-strategy", "edit-plan", "research-report", "scene-selection", "video-brief", "youtube-kit",
       "team-quy-chuan-thumbnail", "team-giong-van", "project-kieu-mo-dau",
     ]);
     const team = skills.find((s) => s.name === "team-giong-van")!;

@@ -8,8 +8,8 @@ import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import {
-  HashtagSchema, PROJECT_ASPECTS, StudioPlaybookSchema, TextLookSchema, YOUTUBE_DESCRIPTION_BODY_MAX, YOUTUBE_TAGS_MAX_CHARS,
-  YOUTUBE_TITLE_MAX, type FileValidatorId,
+  EditPlanSchema, HashtagSchema, PROJECT_ASPECTS, StudioPlaybookSchema, StudioSurveySchema, TextLookSchema, YOUTUBE_DESCRIPTION_BODY_MAX,
+  YOUTUBE_TAGS_MAX_CHARS, YOUTUBE_TITLE_MAX, type FileValidatorId,
 } from "@harness/contracts";
 import { contrastRatio, TEXT_LOOK_MIN_CONTRAST, validateStyle } from "@harness/core";
 import { readFrontmatter } from "./frontmatter.js";
@@ -69,6 +69,8 @@ export function validatorFor(rel: string): FileValidatorId | "playbook" | "json"
   if (p === "channel/branding.md") return "branding";
   if (/^videos\/[^/]+\/youtube-kit\.md$/.test(p)) return "youtube_kit";
   if (p === "channel/style.json") return "style";
+  if (/^videos\/[^/]+\/survey\.json$/.test(p)) return "survey";
+  if (/^videos\/[^/]+\/edit-plan\.json$/.test(p)) return "edit_plan";
   if (/\.json$/i.test(p)) return "json";
   if (/\.(md|markdown)$/i.test(p)) return "markdown";
   return null;
@@ -129,6 +131,33 @@ export function validateFileText(rel: string, text: string): FileIssue[] {
         ...v.warnings.map((p) => ({ level: "warning" as const, code: p.code, message: p.message })),
       ];
     }
+    case "survey": {
+      let raw: unknown;
+      try { raw = JSON.parse(text); } catch (e) { return [{ level: "error", code: "json", message: `JSON sai: ${(e as Error).message}` }]; }
+      const parsed = StudioSurveySchema.safeParse(raw);
+      return parsed.success ? [] : zodIssues(parsed.error).slice(0, 20);
+    }
+    case "edit_plan": {
+      let raw: unknown;
+      try { raw = JSON.parse(text); } catch (e) { return [{ level: "error", code: "json", message: `JSON sai: ${(e as Error).message}` }]; }
+      // Studio sets the video's own id when it builds the timeline
+      const parsed = EditPlanSchema.safeParse({ episode_id: "video", ...(raw && typeof raw === "object" ? raw : {}) });
+      if (!parsed.success) return zodIssues(parsed.error).slice(0, 20);
+      const plan = parsed.data;
+      const issues: FileIssue[] = [];
+      const lines = new Set(plan.lines.map((l) => l.line_id));
+      const orders = plan.shots.map((x) => x.order);
+      if (new Set(orders).size !== orders.length) issues.push({ level: "error", code: "duplicate_order", message: "hai shot cùng `order`" });
+      for (const x of plan.shots) {
+        if (x.out <= x.in) issues.push({ level: "error", code: "empty_shot", message: `shot #${x.order}: out phải lớn hơn in` });
+        if (x.line_id && !lines.has(x.line_id)) issues.push({ level: "error", code: "unknown_line", message: `shot #${x.order}: không có lời ${x.line_id} trong lines` });
+      }
+      const anchored = new Set(plan.shots.map((x) => x.line_id).filter(Boolean));
+      for (const l of plan.lines) if (!anchored.has(l.line_id)) issues.push({ level: "warning", code: "line_unused", message: `lời ${l.line_id} không gắn với shot nào nên không được đọc` });
+      for (const t of plan.texts) if (!orders.includes(t.at_order)) issues.push({ level: "error", code: "text_anchor", message: `chữ ${t.text_id}: không có shot order ${t.at_order}` });
+      if (plan.narration === "tts" && !plan.lines.length) issues.push({ level: "warning", code: "no_lines", message: "narration tts nhưng chưa có lời dẫn nào" });
+      return issues;
+    }
     case "playbook": {
       let raw: unknown;
       try { raw = parseYaml(text); } catch (e) { return [{ level: "error", code: "yaml", message: `YAML sai: ${(e as Error).message.split("\n")[0]}` }]; }
@@ -150,8 +179,37 @@ export function validateFileText(rel: string, text: string): FileIssue[] {
 export function validateWorkspaceFile(dir: string, rel: string): FileIssue[] {
   const p = normalizeRelPath(rel);
   const abs = join(dir, ...p.split("/"));
-  if (!validatorFor(p) || !existsSync(abs) || statSync(abs).size > 2 * 1024 * 1024) return [];
-  return validateFileText(p, readFileSync(abs, "utf8"));
+  const kind = validatorFor(p);
+  if (!kind || !existsSync(abs) || statSync(abs).size > 2 * 1024 * 1024) return [];
+  const text = readFileSync(abs, "utf8");
+  const issues = validateFileText(p, text);
+  if ((kind === "survey" || kind === "edit_plan") && !hasErrors(issues)) issues.push(...againstVideoShots(dir, p, kind, text));
+  return issues;
+}
+
+/** Shots of a survey or an edit plan checked against the video's sources (`videos/<id>/sources/index.json`). */
+function againstVideoShots(dir: string, rel: string, kind: "survey" | "edit_plan", text: string): FileIssue[] {
+  const videoId = rel.split("/")[1]!;
+  const indexPath = join(dir, "videos", videoId, "sources", "index.json");
+  if (!existsSync(indexPath)) return [{ level: "warning", code: "no_sources", message: "video chưa có nguồn đã chuẩn bị (sources/index.json): chưa kiểm được mã cảnh" }];
+  let index: { sources: { source_id: string; shots: { shot_id: string; in: number; out: number }[] }[] };
+  try { index = JSON.parse(readFileSync(indexPath, "utf8")) as typeof index; } catch { return []; }
+  const known = new Map(index.sources.flatMap((s) => s.shots.map((x) => [x.shot_id, { ...x, source_id: s.source_id }] as const)));
+  const rows = (JSON.parse(text) as { shots: { shot_id: string; source_id: string; in: number; out: number; order?: number }[] }).shots;
+  const issues: FileIssue[] = [];
+  for (const r of rows) {
+    const k = known.get(r.shot_id);
+    const name = r.order !== undefined ? `shot #${r.order} ${r.shot_id}` : r.shot_id;
+    if (!k) issues.push({ level: "error", code: "unknown_shot", message: `${name}: không có trong sources/index.json` });
+    else if (k.source_id !== r.source_id) issues.push({ level: "error", code: "wrong_source", message: `${name}: source_id phải là ${k.source_id}` });
+    else if (r.in < k.in - 0.05 || r.out > k.out + 0.05) issues.push({ level: "error", code: "outside_shot", message: `${name}: [${r.in}, ${r.out}) ra ngoài cảnh [${k.in}, ${k.out})` });
+  }
+  if (kind === "survey") {
+    const seen = new Set(rows.map((r) => r.shot_id));
+    const unscored = [...known.keys()].filter((id) => !seen.has(id));
+    if (unscored.length) issues.push({ level: "warning", code: "unscored", message: `${unscored.length} cảnh chưa chấm (${unscored.slice(0, 5).join(", ")}${unscored.length > 5 ? "…" : ""})` });
+  }
+  return issues.slice(0, 30);
 }
 
 export const hasErrors = (issues: FileIssue[]) => issues.some((i) => i.level === "error");

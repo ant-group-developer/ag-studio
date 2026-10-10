@@ -75,7 +75,8 @@ export function transcriptOfIndex(dir: string, index: VideoIndex): Transcript {
   });
 }
 
-function assetsOfIndex(index: VideoIndex, dir: string): Record<string, EpisodeAsset> {
+/** The assets a video may use (its prepared sources), as a timeline records them. */
+export function videoAssets(index: VideoIndex, dir: string): Record<string, EpisodeAsset> {
   const out: Record<string, EpisodeAsset> = {};
   for (const s of index.sources) {
     if (s.status !== "ready") continue;
@@ -213,7 +214,7 @@ export function fitHandler(d: FitDeps): JobHandler {
     }
     const { timeline, report } = fitCutTimeline({
       productionId: project.id, plan, shots, survey: survey.data, transcript: transcriptOfIndex(ctx.workspaceDir, index), voice: read, written,
-      sources: index.sources.map((s) => ({ asset_id: s.asset_id, source_id: s.source_id })), assets: assetsOfIndex(index, ctx.workspaceDir),
+      sources: index.sources.map((s) => ({ asset_id: s.asset_id, source_id: s.source_id })), assets: videoAssets(index, ctx.workspaceDir),
       canvas: CANVAS[project.aspect], fps: 30, music, clipAudio: true, textStyle: branding.textLook,
     });
     const latest = latestVideoRevision(d.db, videoId);
