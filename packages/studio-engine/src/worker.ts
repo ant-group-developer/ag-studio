@@ -25,6 +25,7 @@ import { createAgentRunner, type AgentRunner, type AgentRunnerOptions } from "./
 import { createJobRunner, type JobHandler, type JobRunner } from "./workspace/job-runner.js";
 import { PREVIEW_PREFER, prepareHandler } from "./workspace/prepare.js";
 import { researchHandler } from "./workspace/research.js";
+import { RENDER_KINDS, renderHandler } from "./workspace/renders.js";
 import { YoutubeCrawler } from "./workspace/youtube-crawl.js";
 import { studioResearchCache } from "./youtube-research.js";
 import type { JobKind } from "./workspace/jobs-db.js";
@@ -256,6 +257,13 @@ function projectJobHandlers(o: StudioWorkerOptions): Partial<Record<JobKind, Job
       download: (url, dest, signal, onBytes) => httpDownload(url, dest, signal, onBytes),
       farm: { client: o.farm, bucket: o.bucket, pollMs: o.farmPollMs ?? 3000, queueTimeoutMs: o.farmQueueTimeoutMs ?? 30 * 60_000 },
     });
+    // renders of a project's videos: preview, final, Premiere (the narration comes from the voice store)
+    for (const kind of RENDER_KINDS) {
+      handlers[kind] = renderHandler(kind, {
+        db: o.db, bucket: o.bucket, farm: o.farm, voiceDir: media.voiceDir, pollMs: o.farmPollMs ?? 3000,
+        ...(o.farmQueueTimeoutMs ? { queueTimeoutMs: o.farmQueueTimeoutMs } : {}),
+      });
+    }
   }
   const crawler = new YoutubeCrawler({ apiKey: o.youtubeApiKey ?? null, ytdlp: o.ytdlp ?? null, cache: studioResearchCache(o.db) });
   if (crawler.source) handlers.research = researchHandler({ db: o.db, crawler });
