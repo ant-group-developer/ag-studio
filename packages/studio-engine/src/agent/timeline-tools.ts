@@ -13,6 +13,7 @@ import { getJob } from "../workspace/jobs-db.js";
 import { getVideoRevision, latestVideoRevision, requireVideo, saveVideoRevision } from "../workspace/project-db.js";
 import { RevisionConflictError } from "../studio-db.js";
 import { queueRender } from "../workspace/renders.js";
+import { queueThumbnails } from "../workspace/thumbnails.js";
 import { buildVideoIndex } from "../workspace/video-index.js";
 import type { AgentTool, AgentToolContext, ToolAnswer } from "./tools.js";
 
@@ -131,6 +132,25 @@ export const TIMELINE_TOOLS: AgentTool[] = [
       if (!latestVideoRevision(ctx.db, v.id)) return { text: "Video chưa có timeline: dựng bằng timeline_from_edit_plan trước.", isError: true };
       const job = queueRender(ctx.db, { projectId: ctx.project.id, videoId: v.id, kind: "render_preview", threadId: ctx.thread.id, continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role }, ctx.now());
       return waitFor(ctx, job.id, a.wait_s ?? 0);
+    },
+  }),
+  tool({
+    name: "thumbnail_make",
+    description: "Làm 1–3 thumbnail cho video: cắt khung từ bản render mới nhất (bản cuối nếu có, không thì bản xem trước) ở giây `at_seconds` và vẽ `text` theo branding (vị trí, chữ hoa, màu). Ghi videos/<id>/thumbnails/NN.jpg và README.md; mở ảnh bằng Read để xem lại. Lấy ý tưởng từ youtube-kit.md.",
+    input: z.object({
+      video_id: z.string().min(1).optional(),
+      items: z.array(z.object({ text: z.string().trim().min(1).max(60), at_seconds: z.number().min(0).optional() }).strict()).min(1).max(3),
+      position: z.enum(["top", "center", "bottom", "left", "right"]).optional(),
+      wait_s: waitS,
+    }).strict(),
+    role: "editor",
+    run: async (ctx, a) => {
+      const v = videoOf(ctx, a.video_id);
+      const job = queueThumbnails(ctx.db, {
+        projectId: ctx.project.id, videoId: v.id, items: a.items, ...(a.position ? { style: { position: a.position } } : {}),
+        threadId: ctx.thread.id, continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role,
+      }, ctx.now());
+      return waitFor(ctx, job.id, a.wait_s ?? 30);
     },
   }),
   tool({
