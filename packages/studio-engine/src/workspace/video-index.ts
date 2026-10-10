@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { shotId, studioSourceId } from "@harness/core";
 import type { StudioDb } from "../studio-db.js";
 import type { InputShots } from "./prepare.js";
-import { getPrepared, videoAssetIds } from "./sources-db.js";
+import { getPrepared, listSources, videoAssetIds } from "./sources-db.js";
 
 export const VIDEO_INDEX_SCHEMA = "studio.video-sources/v1";
 export const videoIndexPath = (videoId: string) => `videos/${videoId}/sources/index.json`;
@@ -42,12 +42,13 @@ function readShots(dir: string, assetId: string): InputShots | null {
 }
 
 export function buildVideoIndex(db: StudioDb, dir: string, projectId: string, videoId: string): VideoIndex {
+  const labels = new Map(listSources(db, projectId, { videoId }).filter((s) => s.kind === "ag_go_asset").map((s) => [s.ref, s.label]));
   const sources = videoAssetIds(db, projectId, videoId).map((assetId, index): VideoIndexSource => {
     const prepared = getPrepared(db, projectId, assetId);
     const shots = prepared?.status === "ready" ? readShots(dir, assetId) : null;
     const input = `inputs/${assetId}/`;
     return {
-      index, asset_id: assetId, source_id: studioSourceId(assetId), name: prepared?.name ?? shots?.name ?? assetId,
+      index, asset_id: assetId, source_id: studioSourceId(assetId), name: labels.get(assetId) ?? prepared?.name ?? shots?.name ?? assetId,
       status: shots ? "ready" : prepared?.status === "failed" ? "failed" : "missing", input,
       duration_s: prepared?.duration_s ?? null, has_audio: prepared?.has_audio === null || prepared?.has_audio === undefined ? null : prepared.has_audio === 1,
       transcript: shots && existsSync(join(dir, input, "transcript.md")) ? `${input}transcript.md` : null,

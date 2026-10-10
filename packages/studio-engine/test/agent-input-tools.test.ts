@@ -59,7 +59,7 @@ describe("input tools", () => {
     const s = setup();
     expect(await call(s, "inputs_add", { assets: [{ asset_id: A1 }, { asset_id: A2 }] })).toMatchObject({ isError: true, text: expect.stringContaining(A2) });
     const r = await call(s, "inputs_add", { assets: [{ asset_id: A1, name: "Hoa Lư 03.mp4" }] });
-    expect(r.json).toMatchObject({ video_id: s.video.id, sources: [{ index: 0, asset_id: A1, name: A1, status: "missing" }] });
+    expect(r.json).toMatchObject({ video_id: s.video.id, sources: [{ index: 0, asset_id: A1, name: "Hoa Lư 03.mp4", status: "missing" }] });
     expect(existsSync(join(s.dir, "videos", s.video.id, "sources", "index.json"))).toBe(true);
     const list = await call(s, "inputs_list", {});
     expect(list.json.video.sources).toEqual([expect.objectContaining({ kind: "ag_go_asset", ref: A1, label: "Hoa Lư 03.mp4", state: "not_prepared" })]);

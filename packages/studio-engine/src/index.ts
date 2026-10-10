@@ -77,3 +77,4 @@ export * from "./workspace/prepare.js";
 export * from "./workspace/video-index.js";
 export * from "./agent/input-tools.js";
 export * from "./workspace/step-facts.js";
+export * from "./workspace/inputs.js";

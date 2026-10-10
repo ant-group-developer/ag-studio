@@ -6,9 +6,10 @@
 import { z } from "zod";
 import { StudioRunError } from "../errors.js";
 import { requireVideo } from "../workspace/project-db.js";
-import { createJob, getJob, jobView, listJobs, requestJobCancel, type JobRecord } from "../workspace/jobs-db.js";
-import { ASSET_ID, inputDir, type PrepareRequest } from "../workspace/prepare.js";
-import { addSource, getPrepared, listSources, projectActAs, sourceView, type SourceRecord } from "../workspace/sources-db.js";
+import { getJob, jobView, listJobs, requestJobCancel, type JobRecord } from "../workspace/jobs-db.js";
+import { ASSET_ID } from "../workspace/prepare.js";
+import { assetState as stateOf, queuePrepare } from "../workspace/inputs.js";
+import { addSource, listSources, projectActAs, sourceView, type SourceRecord } from "../workspace/sources-db.js";
 import { writeVideoIndex, videoIndexPath } from "../workspace/video-index.js";
 import type { AgentTool, AgentToolContext } from "./tools.js";
 
@@ -51,20 +52,8 @@ function targetVideo(ctx: AgentToolContext, videoId: string | undefined): string
   return id;
 }
 
-/** The prepare job of an asset still queued or running, if any. */
-function activePrepare(ctx: AgentToolContext, assetId: string): JobRecord | undefined {
-  return listJobs(ctx.db, ctx.project.id, { active: true }).find((j) => j.kind === "prepare_asset" && (JSON.parse(j.request) as PrepareRequest).asset_id === assetId);
-}
-
 /** Where an ag-go video of the project stands: prepared, being prepared, failed, or not yet. */
-function assetState(ctx: AgentToolContext, assetId: string) {
-  const p = getPrepared(ctx.db, ctx.project.id, assetId);
-  const job = activePrepare(ctx, assetId);
-  if (job) return { state: job.status === "running" ? "preparing" : "queued", job_id: job.id, phase: job.phase, progress: job.progress };
-  if (p?.status === "ready") return { state: "ready", folder: `${inputDir(assetId)}/`, readme: `${inputDir(assetId)}/README.md`, shots: p.shots, duration_s: p.duration_s, transcript: p.transcript === 1 };
-  if (p?.status === "failed") return { state: "failed", error: p.error };
-  return { state: "not_prepared" };
-}
+const assetState = (ctx: AgentToolContext, assetId: string) => stateOf(ctx.db, ctx.project.id, assetId);
 
 const slimSource = (ctx: AgentToolContext, s: SourceRecord) => {
   const v = sourceView(s);
@@ -160,21 +149,15 @@ export const INPUT_TOOLS: AgentTool[] = [
     }).strict(),
     role: "editor",
     run: async (ctx, a) => {
-      const known = new Map(listSources(ctx.db, ctx.project.id).filter((s) => s.kind === "ag_go_asset").map((s) => [s.ref, s]));
+      const queued = queuePrepare(ctx.db, {
+        projectId: ctx.project.id, assetIds: a.asset_ids, threadId: ctx.thread.id, continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role,
+        ...(a.again ? { again: true } : {}),
+      }, ctx.now());
       const jobs: string[] = [];
       const answer: Record<string, unknown> = {};
-      for (const id of a.asset_ids) {
-        const src = known.get(id);
-        if (!src) { answer[id] = { state: "not_an_input", hint: "thêm vào video bằng inputs_add trước" }; continue; }
-        const st = assetState(ctx, id);
-        if (st.state === "queued" || st.state === "preparing" || (st.state === "ready" && !a.again)) { answer[id] = st; if ("job_id" in st) jobs.push(st.job_id); continue; }
-        const req: PrepareRequest = { asset_id: id, name: src.label };
-        const job = createJob(ctx.db, {
-          projectId: ctx.project.id, videoId: src.video_id, threadId: ctx.thread.id, kind: "prepare_asset", title: `Chuẩn bị ${src.label}`, request: req,
-          continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role,
-        }, ctx.now());
-        jobs.push(job.id);
-        answer[id] = { state: "queued", job_id: job.id };
+      for (const [id, st] of Object.entries(queued)) {
+        answer[id] = st.state === "not_an_input" ? { state: "not_an_input", hint: "thêm vào video bằng inputs_add trước" } : st;
+        if ("job_id" in st) jobs.push(st.job_id);
       }
       const until = Date.now() + (a.wait_s ?? 0) * 1000;
       while (jobs.length && Date.now() < until) {

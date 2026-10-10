@@ -224,3 +224,25 @@ describe("ffmpeg -progress", () => {
     expect(seen).toEqual([1.5, 3]);
   });
 });
+
+describe("project activity", () => {
+  it("lists jobs in line and running with what they do, how far, time left and the machine; the heartbeat alone changes nothing", async () => {
+    const { agentActivity, projectFingerprint, touchJob } = await import("../src/index.js");
+    const { db, project, thread } = setup();
+    const a = createJob(db, { projectId: project.id, threadId: thread.id, kind: "prepare_asset", title: "Chuẩn bị A", request: {}, createdBy: "u" }, at(0));
+    const b = createJob(db, { projectId: project.id, kind: "prepare_asset", title: "Chuẩn bị B", request: {}, createdBy: "u" }, at(1));
+    claimJob(db, ["prepare_asset"], at(2));
+    reportJob(db, a.id, { phase: "Farm · GPU-02 · đọc lời thoại", progress: 0.4, etaSeconds: 30, nodeId: "GPU-02" }, at(3));
+    expect(agentActivity(db, project.id)).toEqual([
+      expect.objectContaining({ id: a.id, kind: "job", status: "running", title: "Chuẩn bị A", detail: "Farm · GPU-02 · đọc lời thoại", progress: 0.4, etaSeconds: 30, node: "GPU-02", cancellable: true, threadTitle: "Kênh", jobKind: "prepare_asset" }),
+      expect.objectContaining({ id: b.id, kind: "job", status: "waiting", startedAt: null }),
+    ]);
+    const before = projectFingerprint(db, project.id);
+    touchJob(db, a.id, at(5));
+    expect(projectFingerprint(db, project.id)).toBe(before);
+    reportJob(db, a.id, { progress: 0.5 }, at(6));
+    expect(projectFingerprint(db, project.id)).not.toBe(before);
+    requestJobCancel(db, a.id, at(7));
+    expect(agentActivity(db, project.id)[0]).toMatchObject({ cancellable: false });
+  });
+});
