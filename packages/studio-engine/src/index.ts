@@ -85,3 +85,4 @@ export * from "./agent/actions.js";
 export * from "./agent/action-tools.js";
 export * from "./workspace/renders.js";
 export * from "./workspace/project-audio.js";
+export * from "./workspace/fit.js";
