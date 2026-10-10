@@ -28,6 +28,7 @@ import { researchHandler } from "./workspace/research.js";
 import { RENDER_KINDS, renderHandler } from "./workspace/renders.js";
 import { fitHandler } from "./workspace/fit.js";
 import { thumbnailHandler } from "./workspace/thumbnails.js";
+import { styleWatchHandler } from "./workspace/style-watch.js";
 import { YoutubeCrawler } from "./workspace/youtube-crawl.js";
 import { studioResearchCache } from "./youtube-research.js";
 import type { JobKind } from "./workspace/jobs-db.js";
@@ -273,6 +274,8 @@ function projectJobHandlers(o: StudioWorkerOptions): Partial<Record<JobKind, Job
     }
   }
   if (o.thumbnails) handlers.thumbnail = thumbnailHandler({ db: o.db, bucket: o.bucket, renderer: o.thumbnails });
+  // reference videos a person agreed to download (a reference_download card): watched, measured, deleted
+  if (o.ytdlp && media && o.referenceDownloads !== false) handlers.style_watch = styleWatchHandler({ db: o.db, ytdlp: o.ytdlp, ffmpeg: media.ffmpeg, ffprobe: media.ffprobe });
   const crawler = new YoutubeCrawler({ apiKey: o.youtubeApiKey ?? null, ytdlp: o.ytdlp ?? null, cache: studioResearchCache(o.db) });
   if (crawler.source) handlers.research = researchHandler({ db: o.db, crawler });
   return handlers;

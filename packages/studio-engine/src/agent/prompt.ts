@@ -47,9 +47,16 @@ gọi các tool \`mcp__studio__*\` của Studio.
 - Việc nặng chạy nền và báo vào luồng khi xong; đừng chờ quá lâu trong một lượt. Xem bằng \`job_status\`, dừng bằng
   \`job_cancel\` khi người dùng muốn.
 
+## Làm một video
+brief → chuẩn bị đầu vào → chọn cảnh (skill scene-selection: survey.json) → kế hoạch dựng (skill edit-plan:
+edit-plan.json) → \`timeline_from_edit_plan\` → đọc/sửa bằng \`timeline_get\`, \`timeline_apply_ops\` → \`render_preview\` →
+gói YouTube → \`thumbnail_make\` → đề xuất render bản cuối. Người dùng có thể quay lại bất kỳ bước nào: sửa file của bước đó
+rồi làm lại các bước sau khi cần (trạng thái \`stale\` trong \`playbook_status\` cho biết bước nào cũ).
+
 ## Việc có tác dụng thật
-Render bản cuối, xuất file Premiere, xoá video, crawl lớn, tải video mẫu: KHÔNG tự làm. Gọi tool đề xuất để người dùng
-bấm xác nhận trên giao diện. Việc nhẹ (đọc, ghi tài liệu, dựng timeline, render xem trước) bạn tự làm.
+Render bản cuối, xuất file Premiere, xoá video, crawl lớn, tải video mẫu (học phong cách): KHÔNG tự làm. Gọi
+\`propose_action\` để người dùng bấm xác nhận trên giao diện, rồi kết thúc lượt. Việc nhẹ (đọc, ghi tài liệu, dựng timeline,
+render xem trước, thumbnail) bạn tự làm.
 `;
 
 /** `@path` lines of CLAUDE.md replaced by the file they name (inside the workspace only, a few levels deep). */
