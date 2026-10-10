@@ -17,6 +17,7 @@ import * as S from "../src/studio.js";
 import * as SC from "../src/studio-chat.js";
 import * as SX from "../src/studio-cut.js";
 import * as SS from "../src/studio-style.js";
+import * as SW from "../src/studio-crawl.js";
 
 export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
   run: E.RunSchema, "stage-run": E.StageRunSchema, attempt: E.AttemptSchema, artifact: E.ArtifactSchema,
@@ -52,6 +53,7 @@ export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
   "studio-thumbnails": S.StudioThumbnailsSchema,
   "studio-web-finds": S.StudioWebFindsSchema, "studio-style": S.StudioStyleSchema, "studio-style-refs": SS.StyleRefsSchema, "studio-style-watch": SS.StyleWatchSchema,
   "studio-intake-draft": SC.IntakeDraftSchema, "studio-timeline-chat": SC.TimelineChatProposalSchema,
+  "studio-crawl": SW.StudioCrawlSchema,
 };
 
 export function toJsonSchema(name: string, schema: ZodTypeAny) {
