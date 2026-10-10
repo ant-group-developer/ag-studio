@@ -17,17 +17,17 @@ export function AssistantNameForm() {
     mutationFn: (name: string) => client.setAssistantName(name),
     onSuccess: (u) => {
       qc.setQueryData(["claude-usage"], u);
-      void message.success(t("chat.assistant.saved"));
+      void message.success(t("ws.admin.assistant.saved"));
     },
-    onError: () => void message.error(t("chat.assistant.saveFailed")),
+    onError: () => void message.error(t("ws.admin.assistant.saveFailed")),
   });
   const next = value.trim() || DEFAULT_ASSISTANT_NAME;
   return (
-    <form className="chat-claude chat-claude__form" onSubmit={(e) => { e.preventDefault(); save.mutate(value.trim()); }}>
-      <label htmlFor="assistant-name">{t("chat.assistant.label")}</label>
+    <form className="ws-admin__form" onSubmit={(e) => { e.preventDefault(); save.mutate(value.trim()); }}>
+      <label htmlFor="assistant-name">{t("ws.admin.assistant.label")}</label>
       <Input id="assistant-name" value={value} maxLength={40} placeholder={DEFAULT_ASSISTANT_NAME} onChange={(e) => setValue(e.target.value)} style={{ flex: 1, minWidth: 160 }} />
-      <button type="submit" className="chat-card__button" disabled={save.isPending || next === current}>{t("chat.assistant.save")}</button>
-      <p className="chat-doc__note">{t("chat.assistant.hint", { name: DEFAULT_ASSISTANT_NAME })}</p>
+      <button type="submit" className="ws-admin__button" disabled={save.isPending || next === current}>{t("ws.admin.assistant.save")}</button>
+      <p className="ws-admin__note">{t("ws.admin.assistant.hint", { name: DEFAULT_ASSISTANT_NAME })}</p>
     </form>
   );
 }

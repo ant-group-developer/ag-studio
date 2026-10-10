@@ -20,7 +20,7 @@ describe("ClaudeSettingsForm", () => {
       <ClaudeSettingsForm usage={{ running: 3, waiting: 2, max: 20, source: "env" }} isAdmin={false} />
     </AntApp></QueryClientProvider>);
     expect(screen.getByText("3 / 20 lượt đang chạy")).toBeInTheDocument();
-    expect(screen.getByText("2 tin nhắn đang chờ lượt")).toBeInTheDocument();
+    expect(screen.getByText("2 lượt đang chờ")).toBeInTheDocument();
     expect(screen.getByText(/STUDIO_CLAUDE_MAX_CONCURRENT/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Số lượt chạy cùng lúc")).toBeNull();
   });

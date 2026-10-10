@@ -3,51 +3,34 @@ import { ProLayout } from "@ant-design/pro-components";
 import { App as AntApp, ConfigProvider, Dropdown, Spin, theme as antdTheme } from "antd";
 import enUS from "antd/locale/en_US";
 import viVN from "antd/locale/vi_VN";
-import { Film, Users, LayoutList } from "lucide-react";
+import { Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { BrowserRouter, Routes, Route, Link, useLocation } from "react-router-dom";
 import { NuqsAdapter } from "nuqs/adapters/react-router";
 import { AuthGate } from "./auth/auth-provider";
 import { AssistantNameProvider } from "./modules/common/assistant-name";
 import { useAppUserMenu } from "./modules/common/use-app-user-menu";
-import { menuKeyFor } from "./helpers/menu";
 import type { AppLanguage } from "./i18n/language";
 
 const TeamsPage = lazy(() => import("./pages/TeamsPage").then((m) => ({ default: m.TeamsPage })));
 const TeamDetailPage = lazy(() => import("./pages/TeamDetailPage").then((m) => ({ default: m.TeamDetailPage })));
-const ProductionsPage = lazy(() => import("./pages/ProductionsPage").then((m) => ({ default: m.ProductionsPage })));
-const AllProductionsPage = lazy(() => import("./pages/AllProductionsPage").then((m) => ({ default: m.AllProductionsPage })));
-const ProductionDetailPage = lazy(() => import("./pages/ProductionDetailPage").then((m) => ({ default: m.ProductionDetailPage })));
-const EditorPage = lazy(() => import("./modules/editor/EditorPage").then((m) => ({ default: m.EditorPage })));
 const QueuePage = lazy(() => import("./pages/QueuePage").then((m) => ({ default: m.QueuePage })));
 const MusicLibraryPage = lazy(() => import("./pages/MusicLibraryPage").then((m) => ({ default: m.MusicLibraryPage })));
 const HomePage = lazy(() => import("./pages/HomePage").then((m) => ({ default: m.HomePage })));
 const ProjectsPage = lazy(() => import("./pages/ProjectsPage").then((m) => ({ default: m.ProjectsPage })));
 const ProjectPage = lazy(() => import("./pages/ProjectPage").then((m) => ({ default: m.ProjectPage })));
-const ChatHomePage = lazy(() => import("./pages/ChatHomePage").then((m) => ({ default: m.ChatHomePage })));
-const ChatProductionPage = lazy(() => import("./pages/ChatProductionPage").then((m) => ({ default: m.ChatProductionPage })));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
 
 const ANTD_LOCALES: Record<AppLanguage, typeof viVN> = { vi: viVN, en: enUS };
 
-function isEditorRoute(pathname: string): boolean {
-  return /^\/productions\/[^/]+\/episodes\/[^/]+\/editor$/.test(pathname);
-}
-
-function AppLayout() {
+/** The team screens (lists, members, skills) keep the admin layout; everything else is the workspace. */
+function TeamLayout() {
   const location = useLocation();
   const { t } = useTranslation();
   const { token } = antdTheme.useToken();
-  const editorRoute = isEditorRoute(location.pathname);
-  const { menu: avatarMenu, isAdmin, picture, initials: userInitials, nickname } = useAppUserMenu([
-    { key: "chat-home", label: <Link to="/">{t("chat.backToChat")}</Link> },
+  const { menu: avatarMenu, picture, initials: userInitials, nickname } = useAppUserMenu([
+    { key: "projects", label: <Link to="/">{t("menu.backToProjects")}</Link> },
   ]);
-
-  const sideRoutes = [
-    { path: "/productions", name: t("menu.productions"), icon: <Film size={16} /> },
-    ...(isAdmin ? [{ path: "/all-productions", name: t("menu.allProductions"), icon: <LayoutList size={16} /> }] : []),
-    { path: "/teams", name: t("menu.teams"), icon: <Users size={16} /> },
-  ];
 
   return (
     <ProLayout
@@ -56,12 +39,11 @@ function AppLayout() {
       layout="mix"
       fixSiderbar
       fixedHeader
-      location={{ pathname: editorRoute ? "/productions" : location.pathname }}
-      route={{ path: "/", routes: sideRoutes }}
-      selectedKeys={[menuKeyFor(location.pathname)]}
+      location={{ pathname: location.pathname }}
+      route={{ path: "/", routes: [{ path: "/teams", name: t("menu.teams"), icon: <Users size={16} /> }] }}
+      selectedKeys={["/teams"]}
       menuItemRender={(item, dom) => (item.path ? <Link to={item.path}>{dom}</Link> : dom)}
-      contentStyle={{ padding: editorRoute ? 0 : 24 }}
-      menuRender={editorRoute ? () => null : undefined}
+      contentStyle={{ padding: 24 }}
       avatarProps={{
         src: picture,
         size: "small",
@@ -77,13 +59,8 @@ function AppLayout() {
     >
       <Suspense fallback={<div style={{ display: "flex", justifyContent: "center", padding: 48 }}><Spin /></div>}>
         <Routes>
-          <Route path="/productions" element={<ProductionsPage />} />
-          <Route path="/all-productions" element={<AllProductionsPage />} />
           <Route path="/teams" element={<TeamsPage />} />
           <Route path="/teams/:teamId" element={<TeamDetailPage />} />
-          <Route path="/teams/:teamId/productions" element={<ProductionsPage />} />
-          <Route path="/productions/:productionId" element={<ProductionDetailPage />} />
-          <Route path="/productions/:productionId/episodes/:episodeId/editor" element={<EditorPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </Suspense>
@@ -108,12 +85,9 @@ export function App() {
                     <Route path="/p/:projectId" element={<ProjectPage />} />
                     <Route path="/p/:projectId/c/:threadId" element={<ProjectPage />} />
                     <Route path="/p/:projectId/v/:videoId" element={<ProjectPage />} />
-                    <Route path="/chat" element={<ChatHomePage />} />
-                    <Route path="/v/:productionId" element={<ChatProductionPage />} />
-                    <Route path="/v/:productionId/e/:episodeId" element={<ChatProductionPage />} />
                     <Route path="/queue" element={<QueuePage />} />
                     <Route path="/music" element={<MusicLibraryPage />} />
-                    <Route path="*" element={<AppLayout />} />
+                    <Route path="*" element={<TeamLayout />} />
                   </Routes>
                 </Suspense>
               </NuqsAdapter>

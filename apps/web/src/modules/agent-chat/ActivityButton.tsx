@@ -8,7 +8,11 @@ import { useNow } from "../common/sse";
 import { clock } from "../workspace/time";
 import { phaseLabel, toolLabel } from "./labels";
 
-function Row({ a, projectId, now, onStop }: { a: Activity; projectId: string; now: number; onStop: (a: Activity) => void }) {
+/** One thing running (a turn, a tool it calls, a job): who, what, since when, time left, Stop. `projectName`: shown
+ * on the Queue, where rows of many projects meet. */
+export function ActivityRow({ a, projectId, projectName, now, onStop }: {
+  a: Activity; projectId: string; projectName?: string; now: number; onStop: (a: Activity) => void;
+}) {
   const { t } = useAiTranslation();
   const elapsed = a.startedAt ? clock((now - Date.parse(a.startedAt)) / 1000) : null;
   const where = a.videoId ? `/p/${projectId}/v/${a.videoId}` : a.threadId ? `/p/${projectId}/c/${a.threadId}` : `/p/${projectId}`;
@@ -26,7 +30,9 @@ function Row({ a, projectId, now, onStop }: { a: Activity; projectId: string; no
             {a.progress !== null ? ` · ${Math.round(a.progress * 100)}%` : ""}
           </div>
         ) : null}
-        {!a.parentId && a.threadTitle ? <Link to={where} className="ws-activity__where">{a.threadTitle}</Link> : null}
+        {!a.parentId && (a.threadTitle || projectName) ? (
+          <Link to={where} className="ws-activity__where">{[projectName, a.threadTitle].filter(Boolean).join(" · ")}</Link>
+        ) : null}
       </div>
       {elapsed ? <span className="ws-activity__time">{elapsed}{a.etaSeconds ? ` · ${t("ws.activity.eta", { eta: clock(a.etaSeconds) })}` : ""}</span> : null}
       {a.cancellable ? (
@@ -54,7 +60,7 @@ export function ActivityButton({ projectId }: { projectId: string }) {
   });
   const content = top.length === 0 ? <p className="ws-activity__empty">{t("ws.activity.none")}</p> : (
     <ul className="ws-activity">
-      {list.map((a) => <Row key={a.id} a={a} projectId={projectId} now={now} onStop={(x) => stop.mutate(x)} />)}
+      {list.map((a) => <ActivityRow key={a.id} a={a} projectId={projectId} now={now} onStop={(x) => stop.mutate(x)} />)}
     </ul>
   );
   return (

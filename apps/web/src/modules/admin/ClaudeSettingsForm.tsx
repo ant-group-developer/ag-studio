@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useStudioClient, type ClaudeUsage } from "../../api/studio-client";
 import { useAiTranslation } from "../common/assistant-name";
 
-/** Claude calls at once (mockup 12, right column): what runs and waits; a Studio admin sets the cap. */
+/** Claude calls at once (Queue, right column): what runs and waits; a Studio admin sets the cap. */
 export function ClaudeSettingsForm({ usage, isAdmin }: { usage: ClaudeUsage; isAdmin: boolean }) {
   const { t } = useAiTranslation();
   const { message } = AntApp.useApp();
@@ -17,24 +17,24 @@ export function ClaudeSettingsForm({ usage, isAdmin }: { usage: ClaudeUsage; isA
     onSuccess: (u) => {
       qc.setQueryData(["claude-usage"], u);
       void qc.invalidateQueries({ queryKey: ["queue"] });
-      void message.success(t("chat.claude.saved"));
+      void message.success(t("ws.admin.claude.saved"));
     },
-    onError: () => void message.error(t("chat.claude.saveFailed")),
+    onError: () => void message.error(t("ws.admin.claude.saveFailed")),
   });
   return (
-    <div className="chat-claude">
-      <p>{t("chat.claude.now", { running: usage.running, max: usage.max })}</p>
-      <p>{usage.waiting ? t("chat.claude.waiting", { n: usage.waiting }) : t("chat.claude.noneWaiting")}</p>
-      <p className="chat-doc__note">{t("chat.claude.priority")}</p>
+    <div>
+      <p>{t("ws.admin.claude.now", { running: usage.running, max: usage.max })}</p>
+      <p>{usage.waiting ? t("ws.admin.claude.waiting", { n: usage.waiting }) : t("ws.admin.claude.noneWaiting")}</p>
+      <p className="ws-admin__note">{t("ws.admin.claude.priority")}</p>
       {isAdmin ? (
-        <form className="chat-claude__form" onSubmit={(e) => { e.preventDefault(); if (value) save.mutate(value); }}>
-          <label htmlFor="claude-max">{t("chat.claude.max")}</label>
+        <form className="ws-admin__form" onSubmit={(e) => { e.preventDefault(); if (value) save.mutate(value); }}>
+          <label htmlFor="claude-max">{t("ws.admin.claude.max")}</label>
           <InputNumber id="claude-max" min={1} max={100} precision={0} value={value} onChange={(v) => setValue(v)} />
-          <button type="submit" className="chat-card__button" disabled={!value || save.isPending || value === usage.max}>{t("chat.claude.save")}</button>
-          <p className="chat-doc__note">{t("chat.claude.quotaNote")}</p>
+          <button type="submit" className="ws-admin__button" disabled={!value || save.isPending || value === usage.max}>{t("ws.admin.claude.save")}</button>
+          <p className="ws-admin__note">{t("ws.admin.claude.quotaNote")}</p>
         </form>
       ) : (
-        <p className="chat-doc__note">{t(usage.source === "settings" ? "chat.claude.fromSettings" : "chat.claude.fromEnv")}</p>
+        <p className="ws-admin__note">{t(usage.source === "settings" ? "ws.admin.claude.fromSettings" : "ws.admin.claude.fromEnv")}</p>
       )}
     </div>
   );

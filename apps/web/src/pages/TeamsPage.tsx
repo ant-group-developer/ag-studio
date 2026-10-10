@@ -128,9 +128,9 @@ export function TeamsPage() {
       width: 100,
     },
     {
-      title: t("teams.columnProductions"),
-      dataIndex: "productionCount",
-      key: "productionCount",
+      title: t("teams.columnProjects"),
+      dataIndex: "projectCount",
+      key: "projectCount",
       width: 100,
     },
     {
@@ -150,12 +150,12 @@ export function TeamsPage() {
                 aria-label={t("teams.viewMembers")}
               />
             </Tooltip>
-            <Tooltip title={t("teams.viewProductions")}>
+            <Tooltip title={t("teams.viewProjects")}>
               <Button
                 size="small"
                 icon={<Film size={14} />}
-                onClick={() => navigate(`/teams/${record.id}/productions`)}
-                aria-label={t("teams.viewProductions")}
+                onClick={() => navigate(`/t/${record.id}`)}
+                aria-label={t("teams.viewProjects")}
               />
             </Tooltip>
             {canEdit && (

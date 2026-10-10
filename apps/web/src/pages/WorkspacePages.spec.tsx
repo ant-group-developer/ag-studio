@@ -132,7 +132,8 @@ describe("workspace pages", { timeout: 20_000 }, () => {
 
   it("opens on the channel's chat, with its chats, its videos and its files", async () => {
     mount("/p/p1");
-    expect(await screen.findByRole("heading", { name: "Kế hoạch" })).toBeInTheDocument();
+    // the first render of the whole page: slower when the repo's suites run side by side
+    expect(await screen.findByRole("heading", { name: "Kế hoạch" }, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByText("Nghiên cứu kênh giúp tôi")).toBeInTheDocument();
     expect(screen.getByText("đọc file")).toBeInTheDocument();
     expect(screen.getAllByText("Huế mưa").length).toBeGreaterThan(0);
