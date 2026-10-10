@@ -57,3 +57,5 @@ export {
 } from "@harness/contracts";
 export * from "./agent/threads-db.js";
 export * from "./agent/token.js";
+export * from "./agent/history.js";
+export * from "./agent/tools.js";

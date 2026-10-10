@@ -3,6 +3,7 @@
  * projects (one per YouTube channel), the videos added to them one at a time, and the per-project settings.
  */
 import { z } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
 
 export const PROJECT_ASPECTS = ["16:9", "9:16"] as const;
 export type ProjectAspect = (typeof PROJECT_ASPECTS)[number];
@@ -62,3 +63,13 @@ export const UpdateProjectSchema = z.object({
   settings: ProjectSettingsSchema.optional(),
 }).strict();
 export type UpdateProject = z.infer<typeof UpdateProjectSchema>;
+
+/**
+ * A tool's input as the JSON Schema an MCP `tools/list` answers (an object schema, no `$schema`, no `$ref`s), from
+ * the zod schema Studio checks the call with.
+ */
+export function toolInputJsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
+  const out = zodToJsonSchema(schema, { target: "jsonSchema7", $refStrategy: "none" }) as Record<string, unknown>;
+  delete out.$schema;
+  return out;
+}

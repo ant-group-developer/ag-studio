@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   automaticTurnsInARow, createProject, createThread, createVideo, finishTurn, listMessages, listThreadRefs, listThreads, markSessionStarted,
-  markTurnRunning, messageView, nextPendingTurns, orphanedRunningTurns, postSystemMessage, postUserMessage, queueFollowUp, requestCancel,
-  requeueTurn, resetSession, setThreadRef, StudioRunError, turnInput, updateRunningTurn, videoThread, getThread, archiveThread,
+  markAgentTurnRunning, messageView, nextPendingAgentTurns, orphanedAgentTurns, postSystemMessage, postUserMessage, queueFollowUp, requestCancel,
+  requeueAgentTurn, resetSession, setThreadRef, StudioRunError, turnInput, updateRunningTurn, videoThread, getThread, archiveThread,
 } from "../src/index.js";
 import { world } from "./helpers.js";
 
@@ -48,8 +48,8 @@ describe("threads", () => {
 describe("messages and turns", () => {
   it("a message queues a turn; messages before it starts join it; the turn reads them all", () => {
     const { db, thread } = setup();
-    const first = postUserMessage(db, { threadId: thread.id, text: "Nghiên cứu kênh", createdBy: "u" }, at(1));
-    const second = postUserMessage(db, { threadId: thread.id, text: "Và 30 video xu hướng", createdBy: "u" }, at(2));
+    const first = postUserMessage(db, { threadId: thread.id, text: "Nghiên cứu kênh", actor: { id: "u", role: "editor" } }, at(1));
+    const second = postUserMessage(db, { threadId: thread.id, text: "Và 30 video xu hướng", actor: { id: "u", role: "editor" } }, at(2));
     const msgs = listMessages(db, thread.id);
     expect(msgs.map((m) => [m.role, m.status])).toEqual([["user", "done"], ["user", "done"], ["assistant", "pending"]]);
     expect(first.turn).not.toBeNull();
@@ -59,12 +59,12 @@ describe("messages and turns", () => {
 
   it("one turn runs per thread; a message sent meanwhile gets the next turn", () => {
     const { db, thread } = setup();
-    const { turn } = postUserMessage(db, { threadId: thread.id, text: "một", createdBy: "u" }, at(1));
-    expect(nextPendingTurns(db, at(2), 10).map((m) => m.id)).toEqual([turn!.id]);
-    expect(markTurnRunning(db, turn!.id, at(2))).toBe(true);
-    expect(markTurnRunning(db, turn!.id, at(2))).toBe(false);
-    expect(postUserMessage(db, { threadId: thread.id, text: "hai", createdBy: "u" }, at(3)).turn).toBeNull();
-    expect(nextPendingTurns(db, at(3), 10)).toEqual([]);
+    const { turn } = postUserMessage(db, { threadId: thread.id, text: "một", actor: { id: "u", role: "editor" } }, at(1));
+    expect(nextPendingAgentTurns(db, at(2), 10).map((m) => m.id)).toEqual([turn!.id]);
+    expect(markAgentTurnRunning(db, turn!.id, at(2))).toBe(true);
+    expect(markAgentTurnRunning(db, turn!.id, at(2))).toBe(false);
+    expect(postUserMessage(db, { threadId: thread.id, text: "hai", actor: { id: "u", role: "editor" } }, at(3)).turn).toBeNull();
+    expect(nextPendingAgentTurns(db, at(3), 10)).toEqual([]);
     updateRunningTurn(db, turn!.id, { text: "Đang đọc…", parts: [{ kind: "text", text: "Đang đọc…" }], phase: { kind: "writing" } }, at(4));
     expect(messageView(listMessages(db, thread.id).find((m) => m.id === turn!.id)!)).toMatchObject({ status: "running", phase: { kind: "writing" }, parts: [{ kind: "text" }] });
     finishTurn(db, turn!.id, { status: "done", text: "Xong", parts: [{ kind: "text", text: "Xong" }], costUsd: 0.02 }, at(5));
@@ -75,27 +75,27 @@ describe("messages and turns", () => {
 
   it("a stopped worker's turn goes back in line; a stop cancels a waiting turn or asks a running one to end", () => {
     const { db, thread } = setup();
-    const { turn } = postUserMessage(db, { threadId: thread.id, text: "x", createdBy: "u" }, at(1));
-    markTurnRunning(db, turn!.id, at(2));
-    expect(orphanedRunningTurns(db, [])).toEqual([turn!.id]);
-    expect(orphanedRunningTurns(db, [turn!.id])).toEqual([]);
-    requeueTurn(db, turn!.id, at(3));
-    expect(nextPendingTurns(db, at(3), 10).map((m) => m.id)).toEqual([turn!.id]);
-    markTurnRunning(db, turn!.id, at(4));
+    const { turn } = postUserMessage(db, { threadId: thread.id, text: "x", actor: { id: "u", role: "editor" } }, at(1));
+    markAgentTurnRunning(db, turn!.id, at(2));
+    expect(orphanedAgentTurns(db, [])).toEqual([turn!.id]);
+    expect(orphanedAgentTurns(db, [turn!.id])).toEqual([]);
+    requeueAgentTurn(db, turn!.id, at(3));
+    expect(nextPendingAgentTurns(db, at(3), 10).map((m) => m.id)).toEqual([turn!.id]);
+    markAgentTurnRunning(db, turn!.id, at(4));
     expect(requestCancel(db, turn!.id, at(5))).toMatchObject({ status: "running", cancel_requested: 1 });
     const other = createThread(db, { projectId: thread.project_id, kind: "project", title: "B", createdBy: "u" }, T0);
-    const waiting = postUserMessage(db, { threadId: other.id, text: "y", createdBy: "u" }, at(6)).turn!;
+    const waiting = postUserMessage(db, { threadId: other.id, text: "y", actor: { id: "u", role: "editor" } }, at(6)).turn!;
     expect(requestCancel(db, waiting.id, at(7)).status).toBe("cancelled");
   });
 
   it("a rate-limited turn waits until its time; Studio notes may continue the agent; automatic turns are counted", () => {
     const { db, thread } = setup();
-    const { turn } = postUserMessage(db, { threadId: thread.id, text: "x", createdBy: "u" }, at(1));
-    markTurnRunning(db, turn!.id, at(2));
+    const { turn } = postUserMessage(db, { threadId: thread.id, text: "x", actor: { id: "u", role: "editor" } }, at(1));
+    markAgentTurnRunning(db, turn!.id, at(2));
     finishTurn(db, turn!.id, { status: "rate_limited", text: "", parts: [], notBefore: at(600) }, at(3));
-    expect(nextPendingTurns(db, at(100), 10)).toEqual([]);
-    expect(nextPendingTurns(db, at(601), 10).map((m) => m.id)).toEqual([turn!.id]);
-    markTurnRunning(db, turn!.id, at(602));
+    expect(nextPendingAgentTurns(db, at(100), 10)).toEqual([]);
+    expect(nextPendingAgentTurns(db, at(601), 10).map((m) => m.id)).toEqual([turn!.id]);
+    markAgentTurnRunning(db, turn!.id, at(602));
     finishTurn(db, turn!.id, { status: "done", text: "ok", parts: [] }, at(603));
     const note = postSystemMessage(db, { threadId: thread.id, text: "Render xem trước xong", trigger: "job", continueAgent: true }, at(700));
     expect(note.turn).toMatchObject({ trigger: "job", status: "pending" });
@@ -106,6 +106,6 @@ describe("messages and turns", () => {
   it("an archived thread takes no messages", () => {
     const { db, thread } = setup();
     archiveThread(db, thread.id, at(1));
-    expect(() => postUserMessage(db, { threadId: thread.id, text: "x", createdBy: "u" }, at(2))).toThrow(/lưu trữ/);
+    expect(() => postUserMessage(db, { threadId: thread.id, text: "x", actor: { id: "u", role: "editor" } }, at(2))).toThrow(/lưu trữ/);
   });
 });

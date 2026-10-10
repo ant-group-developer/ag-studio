@@ -12,6 +12,9 @@ export type ThreadKind = "project" | "video";
 export type MessageRole = "user" | "assistant" | "system";
 export type MessageStatus = "pending" | "running" | "done" | "failed" | "rate_limited" | "cancelled";
 export type MessageTrigger = "user" | "job" | "action" | "autofix" | "system";
+export type ActorRole = "viewer" | "editor" | "producer" | "owner";
+/** Who a turn acts for: the person and their role in the team when they asked (a Studio admin counts as owner). */
+export interface TurnActor { id: string; role: ActorRole }
 
 export interface ThreadRecord {
   id: string; project_id: string; video_id: string | null; kind: ThreadKind; title: string;
@@ -23,7 +26,7 @@ export interface MessageRecord {
   id: string; thread_id: string; seq: number; role: MessageRole; status: MessageStatus; text: string;
   parts: string | null; phase: string | null; attachments: string | null; trigger: MessageTrigger;
   not_before: string | null; error: string | null; cancel_requested: number; attempts: number;
-  llm_call_id: string | null; cost_usd: number | null; created_by: string | null;
+  llm_call_id: string | null; cost_usd: number | null; created_by: string | null; actor_role: ActorRole | null;
   started_at: string | null; finished_at: string | null; created_at: string; updated_at: string;
 }
 
@@ -32,7 +35,7 @@ export interface MessageView {
   id: string; threadId: string; seq: number; role: MessageRole; status: MessageStatus; text: string;
   parts: AgentPart[]; phase: AgentPhase | null; attachments: string[]; trigger: MessageTrigger;
   notBefore: string | null; error: string | null; cancelRequested: boolean; costUsd: number | null;
-  createdBy: string | null; startedAt: string | null; finishedAt: string | null; createdAt: string; updatedAt: string;
+  createdBy: string | null; actorRole: ActorRole | null; startedAt: string | null; finishedAt: string | null; createdAt: string; updatedAt: string;
 }
 
 const parse = <T>(raw: string | null, fallback: T): T => {
@@ -45,7 +48,7 @@ export function messageView(m: MessageRecord): MessageView {
     id: m.id, threadId: m.thread_id, seq: m.seq, role: m.role, status: m.status, text: m.text,
     parts: parse<AgentPart[]>(m.parts, []), phase: parse<AgentPhase | null>(m.phase, null), attachments: parse<string[]>(m.attachments, []),
     trigger: m.trigger, notBefore: m.not_before, error: m.error, cancelRequested: m.cancel_requested === 1, costUsd: m.cost_usd,
-    createdBy: m.created_by, startedAt: m.started_at, finishedAt: m.finished_at, createdAt: m.created_at, updatedAt: m.updated_at,
+    createdBy: m.created_by, actorRole: m.actor_role, startedAt: m.started_at, finishedAt: m.finished_at, createdAt: m.created_at, updatedAt: m.updated_at,
   };
 }
 
@@ -161,43 +164,46 @@ export function listThreadRefs(db: StudioDb, threadId: string): ThreadRef[] {
 const nextSeq = (db: StudioDb, threadId: string) => (db.get<{ n: number | null }>("SELECT MAX(seq) AS n FROM agent_messages WHERE thread_id = ?", [threadId])?.n ?? 0) + 1;
 
 function insertMessage(db: StudioDb, p: {
-  threadId: string; role: MessageRole; status: MessageStatus; text?: string; attachments?: string[]; trigger?: MessageTrigger; createdBy?: string | null; now: string;
+  threadId: string; role: MessageRole; status: MessageStatus; text?: string; attachments?: string[]; trigger?: MessageTrigger; actor?: TurnActor | null; now: string;
 }): MessageRecord {
   const id = randomUUID();
   db.run(
-    `INSERT INTO agent_messages (id, thread_id, seq, role, status, text, attachments, trigger, created_by, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO agent_messages (id, thread_id, seq, role, status, text, attachments, trigger, created_by, actor_role, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [id, p.threadId, nextSeq(db, p.threadId), p.role, p.status, p.text ?? "", p.attachments?.length ? JSON.stringify(p.attachments) : null,
-      p.trigger ?? "user", p.createdBy ?? null, p.now, p.now],
+      p.trigger ?? "user", p.actor?.id ?? null, p.actor?.role ?? null, p.now, p.now],
   );
   return db.get<MessageRecord>("SELECT * FROM agent_messages WHERE id = ?", [id])!;
 }
 
 /** A turn waiting to start is moved after `upTo` so it answers that message too. Answers the waiting turn, if any. */
-function queueTurn(db: StudioDb, threadId: string, trigger: MessageTrigger, createdBy: string | null, now: string): MessageRecord | null {
+function queueTurn(db: StudioDb, threadId: string, trigger: MessageTrigger, actor: TurnActor | null, now: string): MessageRecord | null {
   const running = db.get("SELECT 1 FROM agent_messages WHERE thread_id = ? AND role = 'assistant' AND status = 'running'", [threadId]);
   db.run("DELETE FROM agent_messages WHERE thread_id = ? AND role = 'assistant' AND status IN ('pending', 'rate_limited') AND started_at IS NULL", [threadId]);
   if (running) return null; // the follow-up turn is queued when the running one finishes
-  return insertMessage(db, { threadId, role: "assistant", status: "pending", trigger, createdBy, now });
+  return insertMessage(db, { threadId, role: "assistant", status: "pending", trigger, actor, now });
 }
 
 /** A person's message, and the turn that will answer it. 409 `thread_archived` on an archived thread. */
-export function postUserMessage(db: StudioDb, p: { threadId: string; text: string; attachments?: string[]; createdBy: string }, now = new Date().toISOString()): { user: MessageRecord; turn: MessageRecord | null } {
+export function postUserMessage(db: StudioDb, p: { threadId: string; text: string; attachments?: string[]; actor: TurnActor }, now = new Date().toISOString()): { user: MessageRecord; turn: MessageRecord | null } {
   return db.immediate(() => {
     const t = requireThread(db, p.threadId);
     if (t.archived_at) throw new StudioRunError("conflict", "luồng đã lưu trữ", { code: "thread_archived" });
-    const user = insertMessage(db, { threadId: p.threadId, role: "user", status: "done", text: p.text, attachments: p.attachments ?? [], createdBy: p.createdBy, now });
-    const turn = queueTurn(db, p.threadId, "user", p.createdBy, now);
+    const user = insertMessage(db, { threadId: p.threadId, role: "user", status: "done", text: p.text, attachments: p.attachments ?? [], actor: p.actor, now });
+    const turn = queueTurn(db, p.threadId, "user", p.actor, now);
     db.run("UPDATE agent_threads SET updated_at = ? WHERE id = ?", [now, p.threadId]);
     return { user, turn };
   });
 }
 
-/** A note from Studio (a job finished, an action ran); with `continueAgent` the agent gets a turn to act on it. */
-export function postSystemMessage(db: StudioDb, p: { threadId: string; text: string; trigger: MessageTrigger; continueAgent?: boolean }, now = new Date().toISOString()): { system: MessageRecord; turn: MessageRecord | null } {
+/**
+ * A note from Studio (a job finished, an action ran); with `continueAgent` the agent gets a turn to act on it, for
+ * `actor` (the person who started the job or confirmed the action).
+ */
+export function postSystemMessage(db: StudioDb, p: { threadId: string; text: string; trigger: MessageTrigger; continueAgent?: boolean; actor?: TurnActor | null }, now = new Date().toISOString()): { system: MessageRecord; turn: MessageRecord | null } {
   return db.immediate(() => {
     const system = insertMessage(db, { threadId: p.threadId, role: "system", status: "done", text: p.text, trigger: p.trigger, now });
-    const turn = p.continueAgent ? queueTurn(db, p.threadId, p.trigger, null, now) : null;
+    const turn = p.continueAgent ? queueTurn(db, p.threadId, p.trigger, p.actor ?? null, now) : null;
     return { system, turn };
   });
 }
@@ -226,7 +232,7 @@ export function turnInput(db: StudioDb, turn: MessageRecord): MessageRecord[] {
 }
 
 /** Turns ready to run: the oldest waiting one of each thread that has none running, past its `not_before`. */
-export function nextPendingTurns(db: StudioDb, now: string, limit: number): MessageRecord[] {
+export function nextPendingAgentTurns(db: StudioDb, now: string, limit: number): MessageRecord[] {
   return db.all<MessageRecord>(
     `SELECT m.* FROM agent_messages m
       WHERE m.role = 'assistant' AND m.status IN ('pending', 'rate_limited') AND (m.not_before IS NULL OR m.not_before <= ?)
@@ -238,7 +244,7 @@ export function nextPendingTurns(db: StudioDb, now: string, limit: number): Mess
 }
 
 /** Pending → running, unless another worker took it first. */
-export function markTurnRunning(db: StudioDb, id: string, now: string): boolean {
+export function markAgentTurnRunning(db: StudioDb, id: string, now: string): boolean {
   return db.run(
     "UPDATE agent_messages SET status = 'running', started_at = COALESCE(started_at, ?), attempts = attempts + 1, updated_at = ? WHERE id = ? AND status IN ('pending', 'rate_limited')",
     [now, now, id],
@@ -264,12 +270,12 @@ export function finishTurn(db: StudioDb, id: string, p: {
 }
 
 /** A turn a stopped worker left running goes back in line (it resumes its session, it does not start over). */
-export function requeueTurn(db: StudioDb, id: string, now: string): void {
+export function requeueAgentTurn(db: StudioDb, id: string, now: string): void {
   db.run("UPDATE agent_messages SET status = 'pending', phase = NULL, updated_at = ? WHERE id = ? AND status = 'running'", [now, id]);
 }
 
 /** Running turns that no live process holds a slot for (their worker stopped). */
-export function orphanedRunningTurns(db: StudioDb, live: string[]): string[] {
+export function orphanedAgentTurns(db: StudioDb, live: string[]): string[] {
   const rows = db.all<{ id: string }>("SELECT id FROM agent_messages WHERE role = 'assistant' AND status = 'running'");
   const alive = new Set(live);
   return rows.map((r) => r.id).filter((id) => !alive.has(id));
@@ -295,9 +301,11 @@ export function cancelRequested(db: StudioDb, id: string): boolean {
 export function queueFollowUp(db: StudioDb, threadId: string, now: string): MessageRecord | null {
   return db.immediate(() => {
     const lastTurn = db.get<{ seq: number }>("SELECT MAX(seq) AS seq FROM agent_messages WHERE thread_id = ? AND role = 'assistant'", [threadId])?.seq ?? 0;
-    const waiting = db.get("SELECT 1 FROM agent_messages WHERE thread_id = ? AND role = 'user' AND seq > ?", [threadId, lastTurn]);
+    const waiting = db.get<{ created_by: string | null; actor_role: ActorRole | null }>(
+      "SELECT created_by, actor_role FROM agent_messages WHERE thread_id = ? AND role = 'user' AND seq > ? ORDER BY seq DESC LIMIT 1", [threadId, lastTurn]);
     if (!waiting) return null;
-    return insertMessage(db, { threadId, role: "assistant", status: "pending", trigger: "user", now });
+    const actor = waiting.created_by && waiting.actor_role ? { id: waiting.created_by, role: waiting.actor_role } : null;
+    return insertMessage(db, { threadId, role: "assistant", status: "pending", trigger: "user", actor, now });
   });
 }
 

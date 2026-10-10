@@ -11,6 +11,7 @@ import { FarmModule } from './farm/farm.module';
 import { HealthModule } from './health/health.module';
 import { StudioModule } from './studio/studio.module';
 import { WorkspaceModule } from './workspace/workspace.module';
+import { AgentToolsModule } from './agent-tools/agent-tools.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 
 @Module({
@@ -27,6 +28,7 @@ import { RequestIdMiddleware } from './common/request-id.middleware';
     HealthModule,
     StudioModule,
     WorkspaceModule,
+    AgentToolsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: Auth0Guard },

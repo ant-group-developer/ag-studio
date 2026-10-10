@@ -31,6 +31,7 @@ CREATE TABLE thread_refs (
 -- Tin nhắn của luồng. Một tin assistant là một lượt agent: pending → running → done|failed|rate_limited|cancelled.
 --   parts: JSON AgentPart[] (chữ và tool call theo thứ tự); phase: JSON việc agent đang làm khi running
 --   trigger: ai kích lượt (user, job xong, thẻ xác nhận, tự sửa, hệ thống)
+--   actor_role: vai trong team của người gửi (tin user) / người lượt làm thay (tin assistant); admin Studio = owner
 CREATE TABLE agent_messages (
   id                TEXT PRIMARY KEY,
   thread_id         TEXT NOT NULL REFERENCES agent_threads(id) ON DELETE CASCADE,
@@ -49,6 +50,7 @@ CREATE TABLE agent_messages (
   llm_call_id       TEXT,
   cost_usd          REAL,
   created_by        TEXT,
+  actor_role        TEXT CHECK (actor_role IN ('viewer', 'editor', 'producer', 'owner')),
   started_at        TEXT,
   finished_at       TEXT,
   created_at        TEXT NOT NULL,

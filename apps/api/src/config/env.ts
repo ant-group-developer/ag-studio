@@ -24,6 +24,8 @@ export const envSchema = z.object({
   STUDIO_DATA_ROOT: z.string().default('./data/harness'),
   /** Project workspaces (the agent works in <root>/<project id>); default <STUDIO_DATA_ROOT>/workspaces. The worker must see the same folder. */
   STUDIO_WORKSPACES_ROOT: z.string().optional(),
+  /** Signs the token a running agent turn's MCP server calls /api/agent-tools with (the worker needs the same value). */
+  STUDIO_AGENT_TOKEN_SECRET: z.string().min(16).optional(),
   /** ffmpeg used to measure loudness when a gate or the worker verifies a render; unset = not measured. */
   STUDIO_FFMPEG_PATH: z.string().optional(),
   /** ffprobe beside it (not always in the same folder); with STUDIO_FFMPEG_PATH it lets people give audio. */
