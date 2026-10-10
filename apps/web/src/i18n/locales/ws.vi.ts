@@ -62,6 +62,7 @@ export const wsVi = {
     lines_one: "{{count}} câu lời dẫn",
     lines_other: "{{count}} câu lời dẫn",
     noTimeline: "Chưa có timeline. Viết kế hoạch dựng (edit-plan.json) rồi dựng.",
+    thumbnails: "Thumbnail",
     renders: "Bản render",
     renderPreview: "Render xem trước",
     renderFinal: "Render bản cuối",

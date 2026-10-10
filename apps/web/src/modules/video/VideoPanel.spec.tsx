@@ -40,11 +40,11 @@ describe("video preview tab", { timeout: 20_000 }, () => {
   beforeEach(() => {
     vi.clearAllMocks();
     ws.getTimeline.mockResolvedValue({ latest: { revision: 3, label: "fit", approx_seconds: 64.6, clips: [{}, {}], texts: [], narration: { voice: "tts", lines: [{ line_id: "L001", text: "x" }] }, music: null, issues: [] }, revisions: [] });
-    ws.listRenders.mockResolvedValue({ renders: [r({}), r({ jobId: "j2", kind: "export_premiere", durationS: null, url: null, urlHidden: "footage_scope" })], jobs: [] });
+    ws.listRenders.mockResolvedValue({ renders: [r({}), r({ jobId: "j2", kind: "export_premiere", durationS: null, url: null, urlHidden: "footage_scope" })], jobs: [], thumbnails: [] });
   });
 
   it("shows the timeline in short, plays the latest preview and lists renders (a hidden link says why)", async () => {
-    wrap(<VideoPanel videoId="v1" atLeast={(n) => ORDER.indexOf("editor") >= ORDER.indexOf(n)} />);
+    wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={(n) => ORDER.indexOf("editor") >= ORDER.indexOf(n)} />);
     expect(await screen.findByText("bản 3 · fit · 2 clip · ≈ 1:05 · 1 câu lời dẫn")).toBeInTheDocument();
     expect(screen.getByLabelText("Trình phát bản render")).toHaveAttribute("src", "https://r2.test/a.mp4");
     const list = screen.getByRole("region", { name: "Bản render" });
@@ -58,7 +58,7 @@ describe("video preview tab", { timeout: 20_000 }, () => {
   });
 
   it("a producer renders the final after confirming", async () => {
-    wrap(<VideoPanel videoId="v1" atLeast={(n) => ORDER.indexOf("producer") >= ORDER.indexOf(n)} />);
+    wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={(n) => ORDER.indexOf("producer") >= ORDER.indexOf(n)} />);
     fireEvent.click(await screen.findByRole("button", { name: /Render bản cuối/ }));
     const ok = await screen.findAllByRole("button", { name: "Render bản cuối" });
     fireEvent.click(ok[ok.length - 1]!);

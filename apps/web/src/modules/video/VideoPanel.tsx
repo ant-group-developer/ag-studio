@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { App as AntApp, Button, Empty, Popconfirm, Spin, Tag } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clapperboard, Download, Film, Hammer, Play } from "lucide-react";
@@ -16,7 +16,9 @@ import "./video.css";
  * producers), the jobs running for them, and the finished renders to watch or download — a link only for people whose
  * own ag-go rights cover the footage.
  */
-export function VideoPanel({ videoId, atLeast }: { videoId: string; atLeast: (role: TeamRoleName) => boolean }) {
+export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
+  projectId: string; videoId: string; atLeast: (role: TeamRoleName) => boolean; onOpenFile?: (path: string) => void;
+}) {
   const { t, i18n } = useTranslation();
   const { message } = AntApp.useApp();
   const client = useWorkspaceClient();
@@ -95,7 +97,34 @@ export function VideoPanel({ videoId, atLeast }: { videoId: string; atLeast: (ro
           </ul>
         ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("ws.video.noRenders")} />}
       </section>
+
+      {renders.data?.thumbnails.length ? (
+        <section aria-label={t("ws.video.thumbnails")}>
+          <h4 className="ws-inputs__h">{t("ws.video.thumbnails")}</h4>
+          <div className="ws-video__thumbs">
+            {renders.data.thumbnails.map((p) => <Thumb key={p} projectId={projectId} path={p} onOpen={onOpenFile} />)}
+          </div>
+        </section>
+      ) : null}
     </div>
+  );
+}
+
+/** One thumbnail of the video, read as a workspace file. */
+function Thumb({ projectId, path, onOpen }: { projectId: string; path: string; onOpen?: ((path: string) => void) | undefined }) {
+  const client = useWorkspaceClient();
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    let made: string | null = null;
+    void client.fileBlob(projectId, path).then((b) => { if (alive) { made = URL.createObjectURL(b); setUrl(made); } }).catch(() => undefined);
+    return () => { alive = false; if (made) URL.revokeObjectURL(made); };
+  }, [client, projectId, path]);
+  const name = path.split("/").pop()!;
+  return (
+    <button type="button" className="ws-video__thumb" onClick={() => onOpen?.(path)} aria-label={name} title={name}>
+      {url ? <img src={url} alt={name} /> : <span className="ws-hint">{name}</span>}
+    </button>
   );
 }
 

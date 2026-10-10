@@ -134,7 +134,7 @@ export function ProjectPage() {
           </div>
           <div className="ws-tabpanel" role="tabpanel">
             {tab === "preview" && videoId ? (
-              <VideoPanel videoId={videoId} atLeast={atLeast} />
+              <VideoPanel projectId={project.id} videoId={videoId} atLeast={atLeast} onOpenFile={(file) => setAside({ tab: "files", file })} />
             ) : tab === "files" ? (
               <FilesPanel projectId={project.id} canEdit={atLeast("editor")} openPath={openFile} onOpen={(file) => setAside({ file })}
                 onAttach={threadId && atLeast("editor") ? attach : undefined} />

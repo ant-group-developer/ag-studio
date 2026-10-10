@@ -3,7 +3,8 @@ import {
   ServiceUnavailableException, UnprocessableEntityException, UseGuards,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Request } from 'express';
 import { z } from 'zod';
 import {
@@ -69,7 +70,7 @@ export class VideoMediaController {
 
   @Get('videos/:videoId/renders')
   @Roles('viewer')
-  renders(@Param('videoId') videoId: string, @Req() req: Request): Promise<{ renders: RenderView[]; jobs: JobView[] }> {
+  renders(@Param('videoId') videoId: string, @Req() req: Request): Promise<{ renders: RenderView[]; jobs: JobView[]; thumbnails: string[] }> {
     return mapErrors(async () => {
       const v = requireVideo(this.engine.db, videoId);
       const userId = req.authContext!.userId;
@@ -83,8 +84,11 @@ export class VideoMediaController {
         });
       }
       const jobs = listJobs(this.engine.db, v.project_id, { videoId, limit: 30 })
-        .filter((j) => ['render_preview', 'render_final', 'export_premiere', 'fit'].includes(j.kind) && j.status !== 'done').map(jobView);
-      return { renders: out, jobs };
+        .filter((j) => ['render_preview', 'render_final', 'export_premiere', 'fit', 'thumbnail'].includes(j.kind) && j.status !== 'done').map(jobView);
+      // thumbnails made for it (workspace files the web reads like any other)
+      const tdir = join(this.workspace.dir(v.project_id), 'videos', v.id, 'thumbnails');
+      const thumbnails = existsSync(tdir) ? readdirSync(tdir).filter((f) => /\.(jpe?g|png)$/i.test(f)).sort().map((f) => `videos/${v.id}/thumbnails/${f}`) : [];
+      return { renders: out, jobs, thumbnails };
     });
   }
 

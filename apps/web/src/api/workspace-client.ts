@@ -533,7 +533,7 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     },
 
     // ---- A video's media and the project's audio ----
-    listRenders(videoId: string): Promise<{ renders: RenderView[]; jobs: JobView[] }> {
+    listRenders(videoId: string): Promise<{ renders: RenderView[]; jobs: JobView[]; thumbnails: string[] }> {
       return call("GET", `/api/videos/${enc(videoId)}/renders`);
     },
     /** 403 `role`: the final render and the Premiere export need a producer. */

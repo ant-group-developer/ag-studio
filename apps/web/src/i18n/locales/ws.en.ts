@@ -66,6 +66,7 @@ export const wsEn: Messages<typeof wsVi> = {
     lines_one: "{{count}} narration line",
     lines_other: "{{count}} narration lines",
     noTimeline: "No timeline yet. Write the edit plan (edit-plan.json), then build it.",
+    thumbnails: "Thumbnails",
     renders: "Renders",
     renderPreview: "Render a preview",
     renderFinal: "Render the final",
