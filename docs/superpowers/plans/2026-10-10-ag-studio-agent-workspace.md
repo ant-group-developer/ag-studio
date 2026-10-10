@@ -118,10 +118,16 @@ tạo video mới (luồng mới, tuỳ chọn học từ chat cũ), chuẩn b�
 - Việc vận hành (hỏi người dùng trước): thêm `{resolution: 480, watermark: false}` vào profile render của ag-go và chạy lại
   variant cho asset cũ. Chưa có bản 480 sạch thì người có quyền nhận proxy 720 sạch, người khác nhận bản watermark gần nhất.
 
-## P8 — Gỡ hệ thống cũ, tài liệu
+## P8 — Gỡ hệ thống cũ, tài liệu (xong 2026-10-10)
 
-1. `refactor!: remove series workflows and gates` (engine).
-2. `refactor!(api): remove production and episode controllers, Canva`.
-3. `refactor!(web): remove old pages and modules`.
-4. `docs:` AGENTS.md, runbook, `docs/studio-api-v4.md`, `agent-skills/README.md`, `deferred-items.md`, `.env.example`,
-   Dockerfile/compose.
+- [x] Engine, API, worker (`6b7466b`): gỡ run control, stage, chat theo bước, tài liệu bước, overview/queue cũ, editor,
+  thumbnail cũ, Canva, nhật ký LLM cũ, workflow `ag-studio-*`, skill `studio-*`, `StudioAgentExecutor`; core chỉ còn
+  migration/clock/dataRoot; pool = agent runner + job runner + quét dọn mới; `/farm/sign` chỉ còn job dự án; màn Hàng đợi
+  đọc activity của mọi dự án (`studioActivity`).
+- [x] Web (`1ef0fad`): gỡ chat/production/editor/render, trang production, playground, Canva; Hàng đợi và kho nhạc dùng
+  khung workspace; form admin (tên AI, cap Claude) ở `modules/admin`; i18n gọn về `ws.*`.
+- [x] Tài liệu: `AGENTS.md`, `README.md`, `docs/studio-api-v4.md` (gộp phần team/skill/Studio của v3; v3 đã xoá), runbook
+  local, `skills/README.md`, `agent-skills/README.md`, `deferred-items.md`, `.env.example`, Dockerfile; xoá runbook
+  production và Canva.
+- Còn lại (`deferred-items.md`): schema thời workflow trong contracts/core, chọn máy farm trên thẻ bản cuối, editor kéo-thả,
+  E2E đường dự án.

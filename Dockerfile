@@ -37,8 +37,8 @@ FROM build AS app
 # (`claude -p --output-format stream-json --restricted`; server MCP `packages/studio-mcp/server.mjs` chạy bằng chính Node
 # này, skill ở `agent-skills/`) bằng CLAUDE_CODE_OAUTH_TOKEN (gói subscription). Thư mục dự án mặc định
 # /data/harness/workspaces và cấu hình CLI của agent /data/harness/agent-claude nằm trong volume, ngoài repo.
-# yt-dlp (series 3.2.0, ADR-0001 mục 175–176): số liệu thật của link research tìm trên web, và video mẫu ≤480p để học
-# phong cách dựng (xoá ngay sau khi trích khung). Ghim phiên bản; YouTube đổi thường xuyên nên cập nhật theo runbook.
+# yt-dlp (ADR-0001 mục 175–176, 186): crawl YouTube khi không có YOUTUBE_API_KEY, và video mẫu ≤480p để học phong cách
+# dựng sau khi người dùng xác nhận (xoá ngay sau khi đo). Ghim phiên bản; YouTube đổi thường xuyên nên cập nhật theo runbook.
 # YouTube cần JS runtime: worker chỉ yt-dlp tới Node của chính nó (`--js-runtimes node:…`, có từ yt-dlp 2025.11).
 ARG YTDLP_VERSION=2026.8.19
 RUN apt-get update \

@@ -1,11 +1,76 @@
 # Studio API v4 (dự án và agent) — hợp đồng giữa apps/api, apps/web và server MCP của agent
 
 Spec: `docs/superpowers/specs/2026-10-10-ag-studio-agent-workspace-design.md`. Mọi route dưới `/api`, JSON, bọc trong
-envelope `{data, requestId, timestamp, success, error}` như v3. DTO của API là camelCase; tài liệu và kết quả của engine
+envelope `{data, requestId, timestamp, success, error}`. DTO của API là camelCase; tài liệu và kết quả của engine
 (`TimelineV4`, `StudioCrawl`, kết quả job…) giữ snake_case. Vai: `viewer < editor < producer < owner`; admin Studio qua
 mọi kiểm vai. Route có `:projectId`, `:videoId`, `:threadId` được `RolesGuard` tra về team của dự án.
 
-Me, team, thành viên, skill team, thư viện nhạc, hàng đợi farm, cài đặt: như v3 (`docs/studio-api-v3.md`, các mục đó).
+## Me, team, thành viên
+
+Danh sách phân trang: query `page` (từ 1), `pageSize` (mặc định 20, tối đa 100), `sortBy`, `sortOrder` (`asc|desc`), `q`
+tuỳ chọn; trả `Paged<T> = {items: T[], total, page, pageSize}`.
+
+- `GET /me` → `{userId, name, email, avatar, isAdmin}`
+- `GET /teams?page&pageSize&sortBy(name|createdAt)&sortOrder&q` → `Paged<Team & {role: TeamRole | null, memberCount, projectCount}>`
+  (admin thấy mọi team; `role` là vai của người gọi, null với admin không phải thành viên)
+- `POST /teams {name}` → Team; `PATCH /teams/:teamId {name}` (owner) → Team; `DELETE /teams/:teamId` (owner; 409
+  `team_has_active_runs` khi một job hay một lượt agent của dự án nào trong team còn chạy)
+- `GET /teams/:teamId` (viewer) → `{id, name, role: TeamRole | null, memberCount, projectCount, createdAt, updatedAt}`
+- `GET /teams/:teamId/members?page&pageSize&sortBy(role|joinedAt|name)&sortOrder&q` → `Paged<TeamMember>`;
+  `GET /teams/:teamId/member-candidates?keyword`, `POST /teams/:teamId/members {userId, role}`,
+  `PATCH /teams/:teamId/members/:userId {role}`, `DELETE /teams/:teamId/members/:userId`; bỏ hay hạ vai owner cuối cùng →
+  409 `last_owner`
+
+## Skill của team ("quy chuẩn & skill")
+
+Markdown team viết về cách làm video. Agent của dự án có các skill đang bật của team (`settings.team_skills` chọn một phần; không đặt = mọi skill đang bật)
+(`studio:team-<tên>`, xem `agent-skills/README.md`).
+
+```ts
+interface TeamSkill {
+  id: string; teamId: string; name: string; purpose: string;
+  appliesTo: TeamSkillStep[];      // ghi chú bước (thời pipeline cũ); agent không lọc theo trường này
+  content: string;                 // markdown
+  enabled: boolean; position: number;
+  createdBy: string; updatedBy: string; createdAt: string; updatedAt: string;
+}
+```
+- `GET /teams/:teamId/skills` (viewer) → `TeamSkill[]` theo `position`, rồi thứ tự tạo
+- `POST /teams/:teamId/skills` (producer) `{name, purpose?, appliesTo?, content, enabled?, position?}` → 201 TeamSkill
+- `PATCH /teams/:teamId/skills/:skillId` (producer) `Partial<…>` → TeamSkill; `DELETE …` (producer) → 204
+- Giới hạn: tên 1..100, purpose ≤ 500, content 1..20 000 ký tự; các skill đang bật của một team cộng lại ≤ 60 000
+  (422 `team_skills_too_long`); trùng tên trong team → 409 `team_skill_name_taken`; skill của team khác → 404.
+
+## Studio (`/studio`)
+
+- `GET claude` → `{running, waiting, max, source: 'settings' | 'env', assistantName}`: slot Claude đang giữ (lượt agent,
+  tóm tắt luồng), lượt đang chờ, cap; `assistantName` là tên web gọi AI (`"Claude"` tới khi admin đặt)
+- `PUT settings` (admin Studio) `{claudeMaxConcurrent?: 1..100, assistantName?: string}` (ít nhất một, không thì 400) → như
+  `GET claude`. `assistantName` chỉ để hiển thị (1–40 ký tự một dòng, sai → 422 `invalid_setting`; để trống → `"Claude"`).
+  Hai giá trị lưu trong một transaction
+- `GET queue` → màn Hàng đợi: việc đang chạy ở các dự án người gọi thấy (team của họ; admin: mọi dự án), việc của dự án
+  khác chỉ được đếm:
+  ```ts
+  {
+    claude: ClaudeUsage;                                    // như GET claude
+    items: (Activity & { projectId; projectName; teamId })[]; // Activity như GET /projects/:id/activity
+    hidden: number;
+    machines: OwnerNodeView[] | null;                       // máy của farm (owner API, cache 3 s); null khi không đọc được
+    farm: { ok: true } | { ok: false; error: string };      // farm không với tới không phải lỗi
+  }
+  ```
+- `GET farm/nodes` → `{nodes}`: máy nhận `studio.render_final` (ghim bản cuối qua `node_id` của thẻ `render_final`);
+  farm không với tới → `{nodes: []}`
+- Kho nhạc: bài nhạc nền gắn mood; video không có nhạc riêng được chọn một bài theo mood của branding (bài đủ dài hay
+  lặp được trước). Dòng `music_track`, file AAC ở `library/music/` (không bị quét: bài đã ngừng vẫn render được ở timeline
+  đang dùng nó).
+  - `GET music` → `{tracks: {trackId, displayName, moods: string[], durationSeconds, loopOk, origin: 'own' | 'licensed' |
+    'royalty_free', originNote, active, track: 'library:music/<sha>.m4a', listenUrl}[]}` — bài đang dùng; admin Studio thấy
+    cả bài đã ngừng
+  - `POST music` (admin Studio, multipart) `file` + `displayName`, `moods` (phân cách bằng dấu phẩy, 1–10), `origin`,
+    `originNote`, `loopOk?` → bài nhạc. Cùng file lần nữa là cùng bài (id theo nội dung), các trường được cập nhật. 400
+    `invalid` / `audio_missing`, 413 `audio_too_large`, 422 với file không phải audio, 503 `audio_disabled` khi thiếu ffmpeg
+  - `PATCH music/:trackId` (admin Studio) `{displayName?, moods?, active?}` → bài nhạc; 404 `not_found`
 
 ## Dự án và video
 

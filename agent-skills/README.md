@@ -15,4 +15,5 @@ là `studio:<tên>`. Dưới `--restricted` CLI không đọc `.claude/skills` c
 | `edit-plan` | `edit-plan` | `videos/<id>/edit-plan.md`, `edit-plan.json` (shot, lời dẫn, chữ, nhạc) → `timeline_from_edit_plan` |
 | `youtube-kit` | `youtube-kit` | `videos/<id>/youtube-kit.md` (frontmatter `titles`, `tags`, `thumbnails`…) |
 
-Skill ở `skills/` (gốc repo) là của pipeline cũ (gate), sẽ gỡ cùng pipeline.
+Skill ở `skills/` (gốc repo) là của các workflow harness (CLI `harness`), không phải của agent Studio; các skill
+`studio-*` của pipeline cũ đã gỡ ở P8.
