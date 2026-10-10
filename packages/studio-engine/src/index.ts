@@ -81,3 +81,5 @@ export * from "./workspace/inputs.js";
 export * from "./workspace/youtube-crawl.js";
 export * from "./workspace/research.js";
 export * from "./agent/research-tools.js";
+export * from "./agent/actions.js";
+export * from "./agent/action-tools.js";
