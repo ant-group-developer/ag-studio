@@ -76,6 +76,10 @@ describe("finalArgs", () => {
     const { argv } = finalArgs(baseInput({ composition, mezz }));
     const joined = argv.join(" ");
     expect(joined).toContain("xfade=transition=fade:duration=0.4:offset=5");
+    // both xfade inputs end in `fps`: ffmpeg 7.1 drops the frame rate through concat/setpts and xfade then
+    // refuses to configure (exit 234)
+    expect(joined).toMatch(/settb=AVTB,setpts=PTS-STARTPTS,fps=30\[xt1l\]/);
+    expect(joined).toMatch(/settb=AVTB,setpts=PTS-STARTPTS,fps=30\[xt1r\]/);
     expect(joined).toContain("concat=n=2:v=1:a=0");
     // dip_black at 1-2, s=0.4, segment 1 is 5s long: outgoing fade starts at len-s/2 = 4.8, lasts s/2 = 0.2;
     // incoming fade on segment 2 starts at 0, also lasts 0.2.
