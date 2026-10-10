@@ -26,6 +26,8 @@ export const envSchema = z.object({
   STUDIO_WORKSPACES_ROOT: z.string().optional(),
   /** Signs the token a running agent turn's MCP server calls /api/agent-tools with (the worker needs the same value). */
   STUDIO_AGENT_TOKEN_SECRET: z.string().min(16).optional(),
+  /** Only whether it is set: the Research tab says if crawls use the YouTube Data API (quota) or yt-dlp. The worker crawls. */
+  YOUTUBE_API_KEY: z.string().optional(),
   /** ffmpeg used to measure loudness when a gate or the worker verifies a render; unset = not measured. */
   STUDIO_FFMPEG_PATH: z.string().optional(),
   /** ffprobe beside it (not always in the same folder); with STUDIO_FFMPEG_PATH it lets people give audio. */

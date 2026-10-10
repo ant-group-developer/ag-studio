@@ -126,3 +126,6 @@ export function researchHandler(d: { db: StudioDb; crawler: YoutubeCrawler }): (
     };
   };
 }
+
+/** What the API needs of the crawl contracts (it does not depend on @harness/contracts itself). */
+export { CrawlRequestSchema, estimateCrawlUnits, isLargeCrawl, type CrawlRequest, type StudioCrawl } from "@harness/contracts";
