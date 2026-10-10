@@ -10,7 +10,7 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 import {
   deleteWorkspaceFile, getFileVersion, listFileVersions, listWorkspaceTree, normalizeRelPath, readWorkspaceBytes, readWorkspaceFile,
-  StudioRunError, writeWorkspaceFile, type FileVersionRow, type WorkspaceEntry, type WorkspaceFile,
+  StudioRunError, validateFileText, writeWorkspaceFile, type FileIssue, type FileVersionRow, type WorkspaceEntry, type WorkspaceFile,
 } from '@ag-studio/engine';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -70,10 +70,14 @@ export class FilesController {
     return mapErrors(() => ({ entries: listWorkspaceTree(this.workspace.dir(projectId), under ? { under } : {}) }));
   }
 
+  /** The file, and what Studio's checks say of it (`issues`: errors Studio cannot use as is, warnings). */
   @Get('content')
   @Roles('viewer')
-  content(@Param('projectId') projectId: string, @Query('path') path: string): Promise<WorkspaceFile> {
-    return mapErrors(() => readWorkspaceFile(this.workspace.dir(projectId), this.visible(path)));
+  content(@Param('projectId') projectId: string, @Query('path') path: string): Promise<WorkspaceFile & { issues: FileIssue[] }> {
+    return mapErrors(() => {
+      const file = readWorkspaceFile(this.workspace.dir(projectId), this.visible(path));
+      return { ...file, issues: file.text === null ? [] : validateFileText(file.path, file.text) };
+    });
   }
 
   /** The bytes as they are (images, PDFs, audio), for the web to show. */
@@ -93,11 +97,12 @@ export class FilesController {
   write(@Param('projectId') projectId: string, @Body() raw: unknown, @Req() req: Request) {
     return mapErrors(() => {
       const body = parseBody(WriteSchema, raw);
-      return writeWorkspaceFile(this.engine.db, {
+      const saved = writeWorkspaceFile(this.engine.db, {
         projectId, dir: this.workspace.dir(projectId), path: body.path, content: body.content,
         ...(body.baseSha256 !== undefined ? { baseSha256: body.baseSha256 } : {}),
         author: { kind: 'user', id: req.authContext!.userId },
       });
+      return { ...saved, issues: validateFileText(saved.path, body.content) };
     });
   }
 
