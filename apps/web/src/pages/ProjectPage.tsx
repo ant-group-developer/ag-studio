@@ -1,13 +1,16 @@
-import { useRef, type CSSProperties } from "react";
-import { Button, Result, Spin } from "antd";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { Result, Spin } from "antd";
 import { useQuery } from "@tanstack/react-query";
-import { FolderOpen, Pencil, Settings } from "lucide-react";
+import { FolderOpen, Settings } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { StudioHttpError } from "../api/http";
-import { useWorkspaceClient, type Project, type Video } from "../api/workspace-client";
+import { useWorkspaceClient, type Learning } from "../api/workspace-client";
+import { ActivityButton } from "../modules/agent-chat/ActivityButton";
+import { ChatPanel } from "../modules/agent-chat/ChatPanel";
+import { LearningModal } from "../modules/agent-chat/NewWorkModals";
+import { useProjectEvents, useThread } from "../modules/agent-chat/use-thread";
 import { FilesPanel } from "../modules/files/FilesPanel";
-import { Markdown } from "../modules/files/Markdown";
 import { ColumnResizer, useColumnWidths } from "../modules/workspace/ColumnResizer";
 import { ProjectNav, VideoStatusBadge } from "../modules/workspace/ProjectNav";
 import { ProjectSettingsPanel } from "../modules/workspace/ProjectSettingsPanel";
@@ -17,49 +20,33 @@ import { WorkspaceShell } from "../modules/workspace/WorkspaceShell";
 type AsideTab = "files" | "settings";
 const TABS: { key: AsideTab; icon: typeof FolderOpen }[] = [{ key: "files", icon: FolderOpen }, { key: "settings", icon: Settings }];
 
-/** The project's CLAUDE.md, read here; the pencil opens it in the files panel to edit. */
-function ProjectHome({ project, onOpenFile }: { project: Project; onOpenFile: (path: string) => void }) {
-  const { t } = useTranslation();
-  const client = useWorkspaceClient();
-  const { data: claude } = useQuery({ queryKey: ["file", project.id, "CLAUDE.md"], queryFn: () => client.readFile(project.id, "CLAUDE.md") });
-  return (
-    <div className="ws-overview">
-      <div className="ws-overview__inner">
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-          <span style={{ color: "var(--ws-faint)", fontSize: 13 }}>{t("ws.home.claudeMd")}</span>
-          <Button size="small" icon={<Pencil size={14} />} onClick={() => onOpenFile("CLAUDE.md")}>{t("ws.files.edit")}</Button>
-        </div>
-        {claude?.text ? <Markdown text={claude.text} /> : <Spin />}
-      </div>
-    </div>
-  );
-}
-
-/** A video before its chat exists: its title and number, and where its files live. */
-function VideoHome({ video, onOpenFolder }: { video: Video; onOpenFolder: () => void }) {
-  const { t } = useTranslation();
-  return (
-    <div className="ws-overview">
-      <div className="ws-overview__inner">
-        <p style={{ margin: 0, color: "var(--ws-faint)" }}>#{video.idx} <VideoStatusBadge status={video.status} /></p>
-        <h1>{video.title}</h1>
-        <p>{t("ws.video.lead")}</p>
-        <Button icon={<FolderOpen size={14} />} onClick={onOpenFolder}>{t("ws.video.openFolder")}</Button>
-      </div>
-    </div>
-  );
-}
-
-/** `/p/:projectId` and `/p/:projectId/v/:videoId`: the project's videos · the work · files and settings. */
+/**
+ * `/p/:projectId` (the channel's chat), `/p/:projectId/c/:threadId` (another chat of the project) and
+ * `/p/:projectId/v/:videoId` (a video's chat): the project's chats and videos · the chat with the agent · files and
+ * settings. Like a Claude project: every chat shares the project's knowledge, each has its own session.
+ */
 export function ProjectPage() {
   const { t } = useTranslation();
-  const { projectId = "", videoId } = useParams();
+  const { projectId = "", videoId, threadId: routeThread } = useParams();
   const [search, setSearch] = useSearchParams();
   const client = useWorkspaceClient();
   const body = useRef<HTMLDivElement>(null);
   const { widths, set } = useColumnWidths();
   const { data: project, error, isLoading } = useQuery({ queryKey: ["project", projectId], queryFn: () => client.getProject(projectId), enabled: !!projectId });
+  const { data: threads } = useQuery({ queryKey: ["threads", projectId], queryFn: () => client.listThreads(projectId), enabled: !!projectId });
+  const { data: video } = useQuery({ queryKey: ["video", videoId], queryFn: () => client.getVideo(videoId!), enabled: !!videoId });
   const { atLeast, teamName } = useTeamRole(project?.teamId);
+  useProjectEvents(projectId || null);
+
+  // the chat in the middle: the video's thread, the one in the URL, or the channel's first thread
+  const channelThread = threads?.threads.find((x) => x.kind === "project" && x.title === "Kênh") ?? threads?.threads.find((x) => x.kind === "project");
+  const threadId = videoId ? video?.threadId ?? null : routeThread ?? channelThread?.id ?? null;
+  const { data: thread } = useThread(threadId);
+
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [attached, setAttached] = useState<Record<string, string[]>>({});
+  const [learningOpen, setLearningOpen] = useState(false);
+  useEffect(() => { setLearningOpen(false); }, [threadId]);
 
   const tab = (search.get("tab") as AsideTab | null) ?? "files";
   const openFile = search.get("file");
@@ -80,7 +67,7 @@ export function ProjectPage() {
     );
   }
 
-  const video = project.videos.find((v) => v.id === videoId);
+  const currentVideo = project.videos.find((v) => v.id === videoId);
   const style = {
     ...(widths.nav ? { "--ws-nav-w": `${widths.nav}px` } : {}),
     ...(widths.aside ? { "--ws-aside-w": `${widths.aside}px` } : {}),
@@ -88,28 +75,48 @@ export function ProjectPage() {
   const crumbs = [
     ...(teamName ? [{ label: teamName, to: `/t/${project.teamId}` }] : []),
     { label: project.name, to: `/p/${project.id}` },
-    ...(video ? [{ label: video.title }] : []),
+    ...(currentVideo ? [{ label: currentVideo.title }] : thread && thread.kind === "project" ? [{ label: thread.title }] : []),
   ];
+  const key = threadId ?? "";
+  const attach = (path: string) => setAttached((a) => ({ ...a, [key]: [...new Set([...(a[key] ?? []), path])] }));
+  const learning: Learning = { useLessons: thread?.useLessons ?? true, threads: (thread?.refs ?? []).map((r) => ({ threadId: r.threadId, mode: r.mode })) };
 
   return (
-    <WorkspaceShell teamId={project.teamId} crumbs={crumbs}>
+    <WorkspaceShell teamId={project.teamId} crumbs={crumbs} actions={<ActivityButton projectId={project.id} />}>
       <div className="ws-body" ref={body} style={style}>
-        <ProjectNav project={project} videos={project.videos} videoId={videoId} canCreate={atLeast("editor")} />
+        <ProjectNav project={project} videos={project.videos} current={{ threadId: videoId ? undefined : threadId ?? undefined, videoId }} canCreate={atLeast("editor")} />
         <main className="ws-main">
-          {video ? <VideoHome video={video} onOpenFolder={() => setAside({ tab: "files", file: null })} />
-            : <ProjectHome project={project} onOpenFile={(file) => setAside({ tab: "files", file })} />}
+          {currentVideo ? (
+            <div className="ws-main__head">
+              <span className="ws-nav__num">#{currentVideo.idx}</span>
+              <h1>{currentVideo.title}</h1>
+              <VideoStatusBadge status={currentVideo.status} />
+              <button type="button" className="ws-link" onClick={() => setAside({ tab: "files", file: null })}>{t("ws.video.openFolder")}</button>
+            </div>
+          ) : null}
+          {threadId ? (
+            <ChatPanel
+              threadId={threadId} canWrite={atLeast("editor")}
+              onOpenFile={(file) => setAside({ tab: "files", file })}
+              draft={drafts[key] ?? ""} onDraftChange={(text) => setDrafts((d) => ({ ...d, [key]: text }))}
+              attachments={attached[key] ?? []} onAttachmentsChange={(paths) => setAttached((a) => ({ ...a, [key]: paths }))}
+              onEditLearning={() => setLearningOpen(true)}
+              emptyHint={currentVideo ? t("ws.chat.emptyVideo") : t("ws.chat.emptyProject")}
+            />
+          ) : <div className="ws-center"><Spin /></div>}
         </main>
         <aside className="ws-aside" aria-label={t("ws.aside.label")}>
           <div className="ws-tabs" role="tablist">
-            {TABS.map(({ key, icon: Icon }) => (
-              <button key={key} type="button" role="tab" className="ws-tab" aria-selected={tab === key} onClick={() => setAside({ tab: key })}>
-                <Icon size={15} aria-hidden />{t(`ws.aside.${key}`)}
+            {TABS.map(({ key: k, icon: Icon }) => (
+              <button key={k} type="button" role="tab" className="ws-tab" aria-selected={tab === k} onClick={() => setAside({ tab: k })}>
+                <Icon size={15} aria-hidden />{t(`ws.aside.${k}`)}
               </button>
             ))}
           </div>
           <div className="ws-tabpanel" role="tabpanel">
             {tab === "files" ? (
-              <FilesPanel projectId={project.id} canEdit={atLeast("editor")} openPath={openFile} onOpen={(file) => setAside({ file })} />
+              <FilesPanel projectId={project.id} canEdit={atLeast("editor")} openPath={openFile} onOpen={(file) => setAside({ file })}
+                onAttach={threadId && atLeast("editor") ? attach : undefined} />
             ) : (
               <ProjectSettingsPanel project={project} canEdit={atLeast("producer")} canArchive={atLeast("owner")} />
             )}
@@ -118,6 +125,7 @@ export function ProjectPage() {
         <ColumnResizer column="nav" body={() => body.current} onResize={(w, persist) => set("nav", w, persist)} />
         <ColumnResizer column="aside" body={() => body.current} onResize={(w, persist) => set("aside", w, persist)} />
       </div>
+      {threadId ? <LearningModal projectId={project.id} threadId={threadId} current={learning} open={learningOpen} onClose={() => setLearningOpen(false)} /> : null}
     </WorkspaceShell>
   );
 }

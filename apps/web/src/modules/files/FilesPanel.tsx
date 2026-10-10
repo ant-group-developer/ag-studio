@@ -45,11 +45,13 @@ function TreeRows({ nodes, open, toggle, selected, onPick }: {
  * The project's files (spec 2026-10-10 agent-workspace §3.1): the tree, a new file, uploads, and the open file.
  * `openPath`/`onOpen` let the page (and later the chat) open a file here.
  */
-export function FilesPanel({ projectId, canEdit, openPath, onOpen }: {
+export function FilesPanel({ projectId, canEdit, openPath, onOpen, onAttach }: {
   projectId: string;
   canEdit: boolean;
   openPath: string | null;
   onOpen: (path: string | null) => void;
+  /** Adds a file to the message being written in the chat (absent: no chat to add to). */
+  onAttach?: ((path: string) => void) | undefined;
 }) {
   const { t } = useTranslation();
   const { message } = AntApp.useApp();
@@ -102,7 +104,7 @@ export function FilesPanel({ projectId, canEdit, openPath, onOpen }: {
     return (
       <FileView
         projectId={projectId} path={openPath} access={openEntry?.access ?? "write"} canEdit={canEdit}
-        onBack={() => onOpen(null)} onDeleted={() => onOpen(null)}
+        onBack={() => onOpen(null)} onDeleted={() => onOpen(null)} onAttach={onAttach}
       />
     );
   }

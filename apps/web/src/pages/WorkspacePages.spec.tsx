@@ -41,7 +41,27 @@ const ws = {
   writeFile: vi.fn(),
   listFileVersions: vi.fn().mockResolvedValue({ versions: [] }),
   updateProject: vi.fn(),
+  listThreads: vi.fn().mockResolvedValue({ threads: [
+    { id: "t-kenh", projectId: "p1", videoId: null, kind: "project", title: "Kênh", useLessons: true, createdAt: "", updatedAt: "", archivedAt: null, messageCount: 2, busy: true },
+    { id: "t-v2", projectId: "p1", videoId: "v2", kind: "video", title: "Huế mưa", useLessons: true, createdAt: "", updatedAt: "", archivedAt: null, messageCount: 0 },
+  ] }),
+  getThread: vi.fn(),
+  sendMessage: vi.fn().mockResolvedValue({ message: {}, turn: null }),
+  cancelTurn: vi.fn().mockResolvedValue({}),
+  getActivity: vi.fn().mockResolvedValue({ activity: [] }),
+  getVideo: vi.fn().mockResolvedValue({ id: "v2", projectId: "p1", idx: 2, title: "Huế mưa", status: "in_progress", threadId: "t-v2" }),
+  openThreadEvents: vi.fn(() => new Promise(() => {})),
+  openProjectEvents: vi.fn(() => new Promise(() => {})),
+  setLearning: vi.fn(),
+  createThread: vi.fn(),
 };
+const NOW = new Date().toISOString();
+const message = (over: Record<string, unknown>) => ({
+  id: `m${Math.random()}`, threadId: "t-kenh", seq: 1, role: "assistant", status: "done", text: "", parts: [], phase: null, attachments: [],
+  trigger: "user", notBefore: null, error: null, cancelRequested: false, costUsd: null, createdBy: "u", actorRole: "editor",
+  startedAt: NOW, finishedAt: null, createdAt: NOW, updatedAt: NOW, ...over,
+});
+const thread = (messages: unknown[]) => ({ id: "t-kenh", projectId: "p1", videoId: null, kind: "project", title: "Kênh", useLessons: true, refs: [], messages, createdAt: "", updatedAt: "", archivedAt: null });
 vi.mock("../api/studio-client", async (orig) => ({ ...(await orig<object>()), useStudioClient: () => studio }));
 vi.mock("../api/workspace-client", async (orig) => ({ ...(await orig<object>()), useWorkspaceClient: () => ws }));
 vi.mock("@auth0/auth0-react", () => ({ useAuth0: () => ({ user: { email: "a@b.c", name: "An" }, logout: vi.fn() }) }));
@@ -57,6 +77,7 @@ function mount(path: string) {
           <Routes>
             <Route path="/t/:teamId" element={<ProjectsPage />} />
             <Route path="/p/:projectId" element={<ProjectPage />} />
+            <Route path="/p/:projectId/c/:threadId" element={<ProjectPage />} />
             <Route path="/p/:projectId/v/:videoId" element={<ProjectPage />} />
           </Routes>
         </MemoryRouter>
@@ -67,7 +88,17 @@ function mount(path: string) {
 
 describe("workspace pages", { timeout: 20_000 }, () => {
   beforeAll(async () => { await i18n.changeLanguage("vi"); });
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    ws.getThread.mockResolvedValue(thread([
+      message({ id: "u1", seq: 1, role: "user", text: "Nghiên cứu kênh giúp tôi" }),
+      message({ id: "a1", seq: 2, text: "## Kế hoạch\n\nTôi sẽ đọc tài liệu.", parts: [
+        { kind: "text", text: "## Kế hoạch\n\nTôi sẽ đọc tài liệu." },
+        { kind: "tool", id: "x1", name: "Read", input: { file_path: "context/notes.md" }, started_at: NOW, ended_at: NOW, is_error: false, result: "ok" },
+        { kind: "tool", id: "x2", name: "mcp__studio__suggest_replies", input: { options: ["Làm tiếp", "Dừng ở đây"] }, started_at: NOW, ended_at: NOW },
+      ] }),
+    ]));
+  });
 
   it("lists the team's projects and makes a new one for a channel", async () => {
     mount("/t/team-1");
@@ -81,10 +112,13 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     await waitFor(() => expect(ws.createProject).toHaveBeenCalledWith("team-1", { name: "Ẩm thực Huế", channelUrl: "@amthuchue", aspect: "16:9" }));
   });
 
-  it("shows the project's CLAUDE.md, its videos, and its files", async () => {
+  it("opens on the channel's chat, with its chats, its videos and its files", async () => {
     mount("/p/p1");
-    expect(await screen.findByRole("heading", { name: "Du lịch chậm" })).toBeInTheDocument();
-    expect(screen.getByText("Huế mưa")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Kế hoạch" })).toBeInTheDocument();
+    expect(screen.getByText("Nghiên cứu kênh giúp tôi")).toBeInTheDocument();
+    expect(screen.getByText("đọc file")).toBeInTheDocument();
+    expect(screen.getAllByText("Huế mưa").length).toBeGreaterThan(0);
+    expect(ws.getThread).toHaveBeenCalledWith("t-kenh");
     expect(await screen.findByText("notes.md")).toBeInTheDocument();
     fireEvent.click(screen.getByText("notes.md"));
     expect(await screen.findByRole("heading", { name: "Ghi chú" })).toBeInTheDocument();
@@ -106,9 +140,39 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     await waitFor(() => expect(ws.writeFile).toHaveBeenLastCalledWith("p1", { path: "context/notes.md", content: "# Ghi chú\n\nhai dòng", baseSha256: "b".repeat(64) }));
   });
 
-  it("adds a video from the project", async () => {
+  it("adds a video with what it is about and what it learns from", async () => {
     mount("/p/p1");
     fireEvent.click(await screen.findByRole("button", { name: /Video mới/ }));
-    await waitFor(() => expect(ws.createVideo).toHaveBeenCalledWith("p1"));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Video này về gì"), { target: { value: "Hội An lúc lên đèn" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Tạo video" }));
+    await waitFor(() => expect(ws.createVideo).toHaveBeenCalledWith("p1", { prompt: "Hội An lúc lên đèn", learning: { useLessons: true, threads: [] } }));
+  });
+
+  it("sends a message, offers the agent's suggested replies, and stops a running turn", async () => {
+    mount("/p/p1");
+    const reply = await screen.findByRole("button", { name: "Làm tiếp" });
+    fireEvent.click(reply);
+    await waitFor(() => expect(ws.sendMessage).toHaveBeenCalledWith("t-kenh", { text: "Làm tiếp" }));
+    const box = screen.getByLabelText("Tin nhắn cho Claude");
+    fireEvent.change(box, { target: { value: "Viết chiến lược kênh" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() => expect(ws.sendMessage).toHaveBeenLastCalledWith("t-kenh", { text: "Viết chiến lược kênh" }));
+  });
+
+  it("shows who works, on what and for how long while a turn runs, and stops it", async () => {
+    ws.getThread.mockResolvedValue(thread([
+      message({ id: "u1", seq: 1, role: "user", text: "Tạo 3 video" }),
+      message({ id: "run", seq: 2, status: "running", phase: { kind: "tool", tool: "mcp__studio__video_create", detail: null }, startedAt: new Date(Date.now() - 65_000).toISOString(), parts: [
+        { kind: "tool", id: "x1", name: "mcp__studio__video_create", input: { title: "Hội An đêm" }, started_at: new Date(Date.now() - 3000).toISOString() },
+      ] }),
+    ]));
+    mount("/p/p1");
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent("Claude");
+    expect(status).toHaveTextContent("đang tạo video · Hội An đêm");
+    expect(status).toHaveTextContent(/1:0\d · 1 công cụ/);
+    fireEvent.click(within(status).getByRole("button", { name: /Dừng/ }));
+    await waitFor(() => expect(ws.cancelTurn).toHaveBeenCalledWith("t-kenh", "run"));
   });
 });

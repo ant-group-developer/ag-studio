@@ -4,7 +4,7 @@
  */
 import { useMemo } from "react";
 import { useAuthToken } from "../auth/use-auth-token";
-import { buildQuery, request, requestBlob } from "./http";
+import { buildQuery, request, requestBlob, STUDIO_API_URL } from "./http";
 
 export type ProjectAspect = "16:9" | "9:16";
 export type VideoStatus = "draft" | "in_progress" | "rendering" | "done";
@@ -107,6 +107,94 @@ export interface FileVersionDetail extends FileVersion {
   issues: string | null;
 }
 
+// ---------------------------------------------------------------------------
+// Chat with the agent
+// ---------------------------------------------------------------------------
+
+export type AgentPart =
+  | { kind: "text"; text: string }
+  | { kind: "tool"; id: string; name: string; input: unknown; started_at: string; ended_at?: string; is_error?: boolean; result?: string };
+
+export type AgentPhase =
+  | { kind: "starting" }
+  | { kind: "thinking" }
+  | { kind: "writing" }
+  | { kind: "tool"; tool: string; detail: string | null }
+  | { kind: "done" };
+
+export type MessageStatus = "pending" | "running" | "done" | "failed" | "rate_limited" | "cancelled";
+export type TeamRoleName = "viewer" | "editor" | "producer" | "owner";
+
+export interface ChatMessage {
+  id: string;
+  threadId: string;
+  seq: number;
+  role: "user" | "assistant" | "system";
+  status: MessageStatus;
+  text: string;
+  parts: AgentPart[];
+  phase: AgentPhase | null;
+  attachments: string[];
+  trigger: "user" | "job" | "action" | "autofix" | "system";
+  notBefore: string | null;
+  error: string | null;
+  cancelRequested: boolean;
+  costUsd: number | null;
+  createdBy: string | null;
+  actorRole: TeamRoleName | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Thread {
+  id: string;
+  projectId: string;
+  videoId: string | null;
+  kind: "project" | "video";
+  title: string;
+  useLessons: boolean;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt: string | null;
+  messageCount?: number;
+  lastMessageAt?: string | null;
+  busy?: boolean;
+}
+
+export interface ThreadRefView { threadId: string; mode: "summary" | "full"; title: string }
+
+export interface ThreadDetail extends Thread {
+  refs: ThreadRefView[];
+  messages: ChatMessage[];
+}
+
+/** What a new thread (or video) learns from earlier chats of the project. */
+export interface Learning {
+  useLessons: boolean;
+  threads: { threadId: string; mode: "summary" | "full" }[];
+}
+
+export interface Activity {
+  id: string;
+  kind: "agent_turn" | "tool_call" | "job";
+  status: "waiting" | "running" | "rate_limited";
+  title: string;
+  phase: AgentPhase | null;
+  detail: string | null;
+  startedAt: string | null;
+  notBefore: string | null;
+  progress: number | null;
+  etaSeconds: number | null;
+  node: string | null;
+  cancellable: boolean;
+  parentId: string | null;
+  threadId: string | null;
+  threadTitle: string | null;
+  videoId: string | null;
+}
+
 const enc = encodeURIComponent;
 
 export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
@@ -133,10 +221,10 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     listVideos(projectId: string): Promise<{ videos: Video[] }> {
       return call("GET", `/api/projects/${enc(projectId)}/videos`);
     },
-    createVideo(projectId: string, input: { title?: string } = {}): Promise<Video> {
+    createVideo(projectId: string, input: { title?: string; prompt?: string; learning?: Learning } = {}): Promise<Video & { threadId: string }> {
       return call("POST", `/api/projects/${enc(projectId)}/videos`, input);
     },
-    getVideo(videoId: string): Promise<Video> {
+    getVideo(videoId: string): Promise<Video & { threadId: string }> {
       return call("GET", `/api/videos/${enc(videoId)}`);
     },
     updateVideo(videoId: string, patch: { title?: string; status?: VideoStatus }): Promise<Video> {
@@ -144,6 +232,43 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     },
     archiveVideo(videoId: string): Promise<void> {
       return call("DELETE", `/api/videos/${enc(videoId)}`);
+    },
+
+    // ---- Threads ----
+    listThreads(projectId: string, videoId?: string): Promise<{ threads: Thread[] }> {
+      return call("GET", `/api/projects/${enc(projectId)}/threads${buildQuery({ videoId })}`);
+    },
+    createThread(projectId: string, input: { title?: string; learning?: Learning } = {}): Promise<Thread> {
+      return call("POST", `/api/projects/${enc(projectId)}/threads`, input);
+    },
+    getThread(threadId: string): Promise<ThreadDetail> {
+      return call("GET", `/api/threads/${enc(threadId)}`);
+    },
+    sendMessage(threadId: string, input: { text: string; attachments?: string[] }): Promise<{ message: ChatMessage; turn: ChatMessage | null }> {
+      return call("POST", `/api/threads/${enc(threadId)}/messages`, input);
+    },
+    cancelTurn(threadId: string, messageId: string): Promise<ChatMessage> {
+      return call("POST", `/api/threads/${enc(threadId)}/messages/${enc(messageId)}/cancel`, {});
+    },
+    renameThread(threadId: string, title: string): Promise<Thread> {
+      return call("PATCH", `/api/threads/${enc(threadId)}`, { title });
+    },
+    setLearning(threadId: string, learning: Learning): Promise<Thread> {
+      return call("PUT", `/api/threads/${enc(threadId)}/learning`, learning);
+    },
+    archiveThread(threadId: string): Promise<void> {
+      return call("DELETE", `/api/threads/${enc(threadId)}`);
+    },
+    getActivity(projectId: string): Promise<{ activity: Activity[] }> {
+      return call("GET", `/api/projects/${enc(projectId)}/activity`);
+    },
+    /** Server-sent events of a thread (`messages`), read with fetch so the bearer token goes along. */
+    async openThreadEvents(threadId: string, signal: AbortSignal): Promise<Response> {
+      return fetch(`${STUDIO_API_URL}/api/threads/${enc(threadId)}/events`, { headers: { Authorization: `Bearer ${await getAccessToken()}` }, signal });
+    },
+    /** Server-sent events of a project (`changed`). */
+    async openProjectEvents(projectId: string, signal: AbortSignal): Promise<Response> {
+      return fetch(`${STUDIO_API_URL}/api/projects/${enc(projectId)}/events`, { headers: { Authorization: `Bearer ${await getAccessToken()}` }, signal });
     },
 
     // ---- Files ----

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { App as AntApp, Button, Modal, Spin, Tooltip } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Download, Eye, History, Lock, Pencil, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, Eye, History, Lock, Paperclip, Pencil, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { StudioHttpError } from "../../api/http";
 import { useWorkspaceClient, type FileAccess, type WorkspaceFile } from "../../api/workspace-client";
@@ -34,7 +34,7 @@ function useBlobUrl(projectId: string, path: string, file: WorkspaceFile | undef
  * One file of the workspace: read (markdown rendered), edit in place and save against the copy you opened (a newer
  * copy is never overwritten silently), its history, delete. Studio's own files are read-only.
  */
-export function FileView({ projectId, path, access, canEdit, onBack, onDeleted }: {
+export function FileView({ projectId, path, access, canEdit, onBack, onDeleted, onAttach }: {
   projectId: string;
   path: string;
   /** What the workspace lets a person do with this path (Studio's own files are read-only). */
@@ -42,6 +42,7 @@ export function FileView({ projectId, path, access, canEdit, onBack, onDeleted }
   canEdit: boolean;
   onBack: () => void;
   onDeleted: () => void;
+  onAttach?: ((path: string) => void) | undefined;
 }) {
   const { t, i18n } = useTranslation();
   const { message } = AntApp.useApp();
@@ -116,6 +117,11 @@ export function FileView({ projectId, path, access, canEdit, onBack, onDeleted }
         ) : null}
         {mode === "edit" ? (
           <Tooltip title={t("ws.files.preview")}><button type="button" className="ws-icon-button" onClick={() => setMode("view")} aria-label={t("ws.files.preview")} disabled={dirty}><Eye size={16} /></button></Tooltip>
+        ) : null}
+        {onAttach ? (
+          <Tooltip title={t("ws.files.attach")}>
+            <button type="button" className="ws-icon-button" aria-label={t("ws.files.attach")} onClick={() => { onAttach(path); void message.success(t("ws.files.attached")); }}><Paperclip size={16} /></button>
+          </Tooltip>
         ) : null}
         <Tooltip title={t("ws.files.history")}>
           <button type="button" className="ws-icon-button" aria-pressed={mode === "history"} onClick={() => setMode(mode === "history" ? "view" : "history")} aria-label={t("ws.files.history")} disabled={dirty}><History size={16} /></button>
