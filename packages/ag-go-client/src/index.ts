@@ -12,6 +12,8 @@ export type {
   ResolveAssetsBody,
   ResolvedAssetItem,
   ResolveAssetsResponse,
+  SearchFootageQuery,
+  SearchFootageResponse,
   CatalogItem,
   CatalogResponse,
 } from "./types.js";

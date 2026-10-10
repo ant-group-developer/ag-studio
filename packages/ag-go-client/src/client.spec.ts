@@ -141,3 +141,27 @@ describe("AgGoClient - getCatalog", () => {
     );
   });
 });
+
+describe("AgGoClient - searchFootage", () => {
+  it("GETs /footage/search with comma-joined project ids, acting as the user", async () => {
+    const payload = { items: [{ assetId: "a1", name: "Hoa Lư 03.mp4", durationMs: 61_000, score: 1 }], nextCursor: null, total: 1 };
+    const mockFetch = makeMockFetch(200, payload);
+    const client = makeClient(mockFetch);
+    const result = await client.searchFootage(ACT_AS_USER, { projectIds: ["p1", "p2"], q: "chùa", limit: 50 });
+    expect(result).toEqual(payload);
+    const [url, init] = (mockFetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/footage/search?projectIds=p1%2Cp2&q=ch%C3%B9a&limit=50`);
+    expect(init.method).toBe("GET");
+    expect((init.headers as Record<string, string>)["X-Act-As-User"]).toBe(ACT_AS_USER);
+  });
+});
+
+describe("AgGoClient - resolveAssets prefer", () => {
+  it("sends the preferred rendition with the body (older ag-go ignores it)", async () => {
+    const mockFetch = makeMockFetch(200, { items: [], missing: ["a1"] });
+    const client = makeClient(mockFetch);
+    await client.resolveAssets(ACT_AS_USER, { assetIds: ["a1"], purpose: "preview", prefer: { short_edge: 480, clean: true } });
+    const [, init] = (mockFetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ assetIds: ["a1"], purpose: "preview", prefer: { short_edge: 480, clean: true } });
+  });
+});
