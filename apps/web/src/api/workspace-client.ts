@@ -316,6 +316,30 @@ export type AddSourceInput =
   | { kind: "ag_go_project"; ref: string; label: string }
   | { kind: "ag_go_asset"; ref: string; label: string; videoId?: string; meta?: { durationMs?: number; thumbnailUrl?: string; agGoProjectId?: string }; prepare?: boolean };
 
+// ---- Research ----
+export type CrawlInput =
+  | { kind: "trending"; region?: string; category?: string; max?: number }
+  | { kind: "topic"; q: string; region?: string; days?: number; order?: "viewCount" | "relevance" | "date"; max?: number }
+  | { kind: "top_channels"; q: string; region?: string; max?: number }
+  | { kind: "channel_top"; channel: string; max?: number };
+
+export interface CrawlEstimate {
+  request: CrawlInput;
+  title: string;
+  /** YouTube Data API units at most (0 with yt-dlp). */
+  units: number;
+  large: boolean;
+  source: "youtube_api" | "yt-dlp";
+}
+
+export interface ResearchFile {
+  path: string;
+  title: string;
+  modifiedAt: string;
+  size: number;
+  crawl: { kind: CrawlInput["kind"]; fetchedAt: string; source: string; videos: number; channels: number; quotaUnits: number } | null;
+}
+
 const enc = encodeURIComponent;
 
 export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
@@ -442,6 +466,17 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     },
     cancelJob(projectId: string, jobId: string): Promise<JobView> {
       return call("POST", `/api/projects/${enc(projectId)}/jobs/${enc(jobId)}/cancel`, {});
+    },
+
+    // ---- Research ----
+    estimateResearch(projectId: string, crawl: CrawlInput): Promise<CrawlEstimate> {
+      return call("POST", `/api/projects/${enc(projectId)}/research/estimate`, crawl);
+    },
+    runResearch(projectId: string, crawl: CrawlInput, threadId?: string): Promise<JobView> {
+      return call("POST", `/api/projects/${enc(projectId)}/research`, { crawl, ...(threadId ? { threadId } : {}) });
+    },
+    listResearch(projectId: string): Promise<{ files: ResearchFile[] }> {
+      return call("GET", `/api/projects/${enc(projectId)}/research`);
     },
 
     // ---- Files ----

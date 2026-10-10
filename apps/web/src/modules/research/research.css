@@ -1,0 +1,5 @@
+/* The Research tab (spec 2026-10-10 agent-workspace §P5). */
+.ws-research__form { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.ws-research__row { display: flex; flex-wrap: wrap; gap: 10px 14px; }
+.ws-research__row label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ws-faint); }
+.ws-research__form .ant-btn-primary { align-self: flex-start; }
