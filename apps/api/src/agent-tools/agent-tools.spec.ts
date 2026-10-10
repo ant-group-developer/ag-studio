@@ -18,6 +18,8 @@ import { WorkspaceService } from '../workspace/workspace.service';
 import { AgentTokenGuard } from './agent-token.guard';
 import { AgentToolsController } from './agent-tools.controller';
 import { AgentToolsService } from './agent-tools.service';
+import type { ProjectFootageService } from '../workspace/project-footage.service';
+import { addSource } from '@ag-studio/engine';
 
 const SECRET = 'x'.repeat(32);
 
@@ -25,6 +27,7 @@ describe('agent tools API (real studio.db)', () => {
   let s: RealStudio;
   let guard: AgentTokenGuard;
   let controller: AgentToolsController;
+  const searched: unknown[] = [];
   const config = (env: Record<string, string>) => ({ get: (k: string, d?: unknown) => env[k] ?? d }) as unknown as ConfigService;
 
   beforeEach(async () => {
@@ -32,7 +35,12 @@ describe('agent tools API (real studio.db)', () => {
     const engine = s.engine as unknown as EngineService;
     const ws = new WorkspaceService(config({ STUDIO_WORKSPACES_ROOT: mkdtempSync(join(tmpdir(), 'agent-api-')) }), engine);
     guard = new AgentTokenGuard(config({ STUDIO_AGENT_TOKEN_SECRET: SECRET }), engine);
-    controller = new AgentToolsController(engine, ws, new AgentToolsService());
+    searched.length = 0;
+    const footage = {
+      search: async (actAs: string, q: unknown) => { searched.push([actAs, q]); return { items: [], nextCursor: null, total: 0 }; },
+      check: async (_actAs: string, ids: string[]) => ({ ok: ids, missing: [] }),
+    } as unknown as ProjectFootageService;
+    controller = new AgentToolsController(engine, ws, new AgentToolsService(), footage);
     insertTeam(s.db, 'team-1', 'auth0|owner');
   });
   afterEach(() => s.close());
@@ -51,6 +59,14 @@ describe('agent tools API (real studio.db)', () => {
     try { fn(); } catch (e) { return ((e as { getResponse?: () => { code?: string } }).getResponse?.() ?? {}).code ?? String(e); }
     return null;
   };
+
+  it("searches the project's ag-go projects as the project's owner", async () => {
+    const { project, token } = turn('viewer');
+    addSource(s.engine.db, { projectId: project.id, kind: 'ag_go_project', ref: 'agp-1', mediaType: 'mixed', label: 'Ninh Bình', addedBy: 'auth0|owner' });
+    const out = await controller.call({ name: 'footage_search', arguments: { q: 'thuyền' } }, (() => { const r = req(token); guard.canActivate(ctx(r)); return r; })());
+    expect(out.isError).toBeUndefined();
+    expect(searched).toEqual([['auth0|owner', { projectIds: ['agp-1'], q: 'thuyền', limit: 30 }]]);
+  });
 
   it('lets a running turn in and runs a tool with the role of the person who asked', async () => {
     const { project, token } = turn('editor');

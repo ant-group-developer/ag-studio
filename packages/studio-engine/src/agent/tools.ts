@@ -16,6 +16,7 @@ import { validateWorkspaceFile, validatorFor } from "../workspace/validators.js"
 import type { AgentTokenClaims } from "./token.js";
 import { threadMarkdown } from "./history.js";
 import { getThread, listThreads, videoThread, type ActorRole, type MessageRecord, type ThreadRecord } from "./threads-db.js";
+import { INPUT_TOOLS, type ProjectFootage } from "./input-tools.js";
 
 /** What a tool call runs with: the turn, its project (and video), the workspace folder. */
 export interface AgentToolContext {
@@ -30,6 +31,8 @@ export interface AgentToolContext {
   now: () => string;
   /** What Studio knows of the playbook's `studio` steps (later phases). */
   stepFacts?: (key: string, videoId: string | null) => StepFact | undefined;
+  /** ag-go as the API reaches it (search the project's ag-go projects, check a video is usable); absent: no ag-go. */
+  footage?: ProjectFootage;
 }
 
 export interface ToolAnswer {
@@ -164,7 +167,7 @@ export const PROJECT_TOOLS: AgentTool[] = [
 
 /** Every tool a turn may call (later phases add theirs here). */
 export function agentTools(extra: AgentTool[] = []): AgentTool[] {
-  return [...PROJECT_TOOLS, ...extra];
+  return [...PROJECT_TOOLS, ...INPUT_TOOLS, ...extra];
 }
 
 /** The tools as MCP `tools/list` answers them. */

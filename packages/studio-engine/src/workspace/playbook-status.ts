@@ -11,6 +11,7 @@ import type { StudioDb } from "../studio-db.js";
 import { docStatus } from "./frontmatter.js";
 import { loadPlaybook, stepPath } from "./playbook.js";
 import { hasErrors, validateWorkspaceFile, type FileIssue } from "./validators.js";
+import { studioStepFacts } from "./step-facts.js";
 
 /** What Studio knows of a `studio` step (inputs prepared, timeline built, render done…). */
 export interface StepFact { status: "done" | "running" | "missing"; detail?: string }
@@ -133,8 +134,10 @@ export function playbookStatus(db: StudioDb | null, dir: string, o: {
   const { playbook, custom, issues } = loadPlaybook(dir);
   const now = o.now ?? new Date().toISOString();
   const digests = new Map<string, string>();
-  const project = scopeStates(db, dir, playbook, "project", { projectId: o.projectId, videoId: null, facts: o.facts, upstreamDigests: digests, now });
-  const video = o.videoId ? scopeStates(db, dir, playbook, "video", { projectId: o.projectId, videoId: o.videoId, facts: o.facts, upstreamDigests: digests, now }) : null;
+  // Studio's own steps (preparing inputs…) from the database, unless the caller says otherwise
+  const facts = o.facts ?? (db ? studioStepFacts(db, o.projectId) : undefined);
+  const project = scopeStates(db, dir, playbook, "project", { projectId: o.projectId, videoId: null, facts, upstreamDigests: digests, now });
+  const video = o.videoId ? scopeStates(db, dir, playbook, "video", { projectId: o.projectId, videoId: o.videoId, facts, upstreamDigests: digests, now }) : null;
   const byKey = new Map([...project, ...(video ?? [])].map((s) => [s.key, s]));
   const next: PlaybookStatus["next"] = [];
   for (const s of [...project, ...(video ?? [])]) {

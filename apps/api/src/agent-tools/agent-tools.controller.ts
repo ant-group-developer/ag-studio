@@ -5,6 +5,7 @@ import { agentToolList, callAgentTool, type ToolAnswer } from '@ag-studio/engine
 import { Public } from '../auth/public.decorator';
 import { EngineService } from '../studio/engine.service';
 import { WorkspaceService } from '../workspace/workspace.service';
+import { ProjectFootageService } from '../workspace/project-footage.service';
 import { parseBody } from '../workspace/zod-body';
 import { AgentTokenGuard } from './agent-token.guard';
 import { AgentToolsService } from './agent-tools.service';
@@ -23,6 +24,7 @@ export class AgentToolsController {
     private readonly engine: EngineService,
     private readonly workspace: WorkspaceService,
     private readonly tools: AgentToolsService,
+    private readonly footage: ProjectFootageService,
   ) {}
 
   @Get('tools')
@@ -38,7 +40,7 @@ export class AgentToolsController {
     const call = req.agentCall!;
     return callAgentTool(this.tools.all, {
       db: this.engine.db, claims: call.claims, message: call.message, thread: call.thread, project: call.project, video: call.video,
-      workspaceDir: this.workspace.dir(call.project.id), role: call.role, now: () => new Date().toISOString(),
+      workspaceDir: this.workspace.dir(call.project.id), role: call.role, now: () => new Date().toISOString(), footage: this.footage,
     }, body.name, body.arguments ?? {});
   }
 }

@@ -6,12 +6,13 @@ import { ProjectsController } from './projects.controller';
 import { ThreadsController } from './threads.controller';
 import { VideosController } from './videos.controller';
 import { WorkspaceService } from './workspace.service';
+import { ProjectFootageService } from './project-footage.service';
 
 /** Projects, videos and their workspace files (spec 2026-10-10 agent-workspace). */
 @Module({
   imports: [StudioModule],
   controllers: [ProjectsController, VideosController, FilesController, ThreadsController, PlaybookController],
-  providers: [WorkspaceService],
-  exports: [WorkspaceService],
+  providers: [WorkspaceService, ProjectFootageService],
+  exports: [WorkspaceService, ProjectFootageService],
 })
 export class WorkspaceModule {}

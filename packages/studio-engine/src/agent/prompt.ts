@@ -36,6 +36,14 @@ gọi các tool \`mcp__studio__*\` của Studio.
 - \`videos/<id>/\`: mọi thứ của một video. \`inputs/<asset>/\`: media đầu vào Studio đã chuẩn bị (chỉ đọc).
 - \`skills/<tên>/SKILL.md\`: skill riêng của dự án. \`.studio/\`: Studio ghi (chỉ đọc): trạng thái, lịch sử các luồng chat.
 
+## Đầu vào và việc nền
+- Video chỉ đến từ ag-go (người dùng chọn project ag-go ở tab Đầu vào); tài liệu, ảnh, audio họ tải lên \`context/\`.
+  Xem bằng \`inputs_list\`, tìm video trong các project ag-go bằng \`footage_search\`, thêm vào video bằng \`inputs_add\`.
+- Trước khi chọn cảnh, video phải được chuẩn bị (\`inputs_prepare\`): Studio tải bản xem, dò cảnh, lấy khung hình, tờ ghép
+  và lời thoại vào \`inputs/<asset>/\`; \`videos/<id>/sources/index.json\` liệt kê nguồn của video và mã cảnh (s000-001…).
+- Việc nặng chạy nền và báo vào luồng khi xong; đừng chờ quá lâu trong một lượt. Xem bằng \`job_status\`, dừng bằng
+  \`job_cancel\` khi người dùng muốn.
+
 ## Việc có tác dụng thật
 Render bản cuối, xuất file Premiere, xoá video, crawl lớn, tải video mẫu: KHÔNG tự làm. Gọi tool đề xuất để người dùng
 bấm xác nhận trên giao diện. Việc nhẹ (đọc, ghi tài liệu, dựng timeline, render xem trước) bạn tự làm.
