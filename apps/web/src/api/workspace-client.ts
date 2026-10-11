@@ -309,7 +309,72 @@ export interface FootageItem {
   projectNames?: string[] | null;
   summaryVi?: string | null;
   thumbnailUrl?: string | null;
+  titleVi?: string | null;
+  orientation?: string | null;
+  projectIds?: string[];
+  analyzedAt?: string | null;
+  quality?: number | null;
+  genre?: string | null;
+  timeOfDay?: string | null;
+  tags?: string[];
+  usable?: boolean | null;
   prepared: AssetState;
+}
+
+export const FOOTAGE_SORTS = ["relevance", "analyzedAt", "quality", "duration", "resolution", "name", "project"] as const;
+export type FootageSort = (typeof FOOTAGE_SORTS)[number];
+export const FOOTAGE_RESOLUTIONS = ["4k", "2k", "1080p", "720p", "sd"] as const;
+export const FOOTAGE_ORIENTATIONS = ["landscape", "portrait", "square"] as const;
+export const FOOTAGE_TIMES_OF_DAY = ["day", "night", "golden_hour", "indoor", "mixed", "unknown"] as const;
+export type FootageUsability = "usable" | "unusable" | "all";
+
+/** The video picker's filters (ag-go's footage filters, within the ag-go projects picked for the project). */
+export interface FootageFilters {
+  agGoProjectIds?: string[];
+  q?: string;
+  categoryIds?: string[];
+  ownerUserIds?: string[];
+  provinceIds?: string[];
+  resolutions?: string[];
+  tags?: string[];
+  genres?: string[];
+  timesOfDay?: string[];
+  orientations?: string[];
+  minDurationMs?: number;
+  maxDurationMs?: number;
+  usability?: FootageUsability;
+}
+
+export interface FootageQuery extends FootageFilters {
+  page?: number;
+  cursor?: string;
+  limit?: number;
+  sortBy?: FootageSort;
+  sortOrder?: "asc" | "desc";
+}
+
+/** How many videos have a value under the other filters (`null`: ag-go did not count it). */
+export interface FacetValue { value: string; label?: string; count: number | null }
+export interface FootageFacets {
+  projects: FacetValue[];
+  categories: FacetValue[];
+  provinces: FacetValue[];
+  authors: FacetValue[];
+  resolutions: FacetValue[];
+  orientations: FacetValue[];
+  timesOfDay: FacetValue[];
+  genres: FacetValue[];
+  tags: FacetValue[];
+}
+
+/** A footage query as the API reads it: lists comma-joined, empty ones left out. */
+export function footageQueryString(q: FootageQuery): string {
+  const flat: Record<string, string | number | undefined> = {};
+  for (const [k, v] of Object.entries(q)) {
+    if (v === undefined || v === null || v === "") continue;
+    if (Array.isArray(v)) { if (v.length) flat[k] = v.join(","); } else flat[k] = v as string | number;
+  }
+  return buildQuery(flat);
 }
 
 export type AddSourceInput =
@@ -519,8 +584,11 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
       return call("POST", `/api/projects/${enc(projectId)}/sources/upload`, form);
     },
     /** Videos of the project's ag-go projects the person can see, with where each stands here. */
-    searchFootage(projectId: string, q: { agGoProjectId?: string; q?: string; cursor?: string; limit?: number } = {}): Promise<{ items: FootageItem[]; nextCursor: string | null; total: number }> {
-      return call("GET", `/api/projects/${enc(projectId)}/footage${buildQuery({ agGoProjectId: q.agGoProjectId, q: q.q, cursor: q.cursor, limit: q.limit ? String(q.limit) : undefined })}`);
+    searchFootage(projectId: string, q: FootageQuery = {}): Promise<{ items: FootageItem[]; nextCursor: string | null; total: number }> {
+      return call("GET", `/api/projects/${enc(projectId)}/footage${footageQueryString(q)}`);
+    },
+    getFootageFacets(projectId: string, f: FootageFilters = {}): Promise<FootageFacets> {
+      return call("GET", `/api/projects/${enc(projectId)}/footage/facets${footageQueryString(f)}`);
     },
     prepareInputs(projectId: string, assetIds: string[], again?: boolean): Promise<{ assets: Record<string, AssetState> }> {
       return call("POST", `/api/projects/${enc(projectId)}/prepare`, { assetIds, ...(again ? { again } : {}) });

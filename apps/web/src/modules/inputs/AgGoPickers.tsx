@@ -107,7 +107,7 @@ export function FootagePicker({ projectId, videoId, sources, open, onClose }: {
   useEffect(() => { if (open) { setTicked([]); setText(""); setAgGoProjectId(undefined); } }, [open]);
   const pages = useInfiniteQuery({
     queryKey: ["footage", projectId, agGoProjectId ?? "", q],
-    queryFn: ({ pageParam }) => client.searchFootage(projectId, { agGoProjectId, q: q || undefined, cursor: pageParam || undefined, limit: 40 }),
+    queryFn: ({ pageParam }) => client.searchFootage(projectId, { agGoProjectIds: agGoProjectId ? [agGoProjectId] : undefined, q: q || undefined, cursor: pageParam || undefined, limit: 40 }),
     initialPageParam: "",
     getNextPageParam: (last) => last.nextCursor ?? undefined,
     enabled: open && projects.length > 0,

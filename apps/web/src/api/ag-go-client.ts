@@ -40,8 +40,39 @@ export interface AgGoProject {
   videoCount: number;
   imageCount: number;
   mediaCount: number;
-  ownerUser?: { id: string; name?: string } | null;
+  ownerUser?: { id: string; name?: string; email?: string; avatar?: string } | null;
+  categoryName?: string | null;
+  countryName?: string | null;
+  provinceName?: string | null;
+  tags?: string[];
+  createdAt?: string;
+  updatedAt?: string;
 }
+
+export const AG_GO_PROJECT_SORTS = ["updatedAt", "createdAt", "name", "folder"] as const;
+export type AgGoProjectSort = (typeof AG_GO_PROJECT_SORTS)[number];
+
+/** The filters and paging of ag-go `GET /projects` the picker uses. */
+export interface AgGoProjectQuery {
+  keyword?: string;
+  page?: number;
+  pageSize?: number;
+  sortBy?: AgGoProjectSort;
+  sortOrder?: "asc" | "desc";
+  folderIds?: string[];
+  categoryIds?: string[];
+  tagIds?: string[];
+  ownerUserIds?: string[];
+  countryId?: string;
+  provinceId?: string;
+}
+
+/** A named thing of ag-go's catalog (category, tag, country). */
+export interface AgGoNamed { id: string; name: string }
+/** A folder of ag-go's tree as the person reaches it, with its full path. */
+export interface AgGoFolder { id: string; parentId: string | null; name: string; pathText: string; depth: number }
+export interface AgGoProvince { id: string; countryId: string; name: string }
+export interface AgGoProjectOwner { id: string; projectCount: number; user: { id: string; name?: string; email?: string; avatar?: string } | null }
 
 export interface AgGoProjectPage {
   items: AgGoProject[];
@@ -83,14 +114,33 @@ export async function getAgGoPublicSettings(): Promise<{ siteName?: string | nul
   return unwrapAgGoResponse<{ siteName?: string | null }>(await res.json());
 }
 
-/** The ag-go projects the person can see, by name (`keyword`), a page at a time. */
-export function getAgGoProjects(accessToken: string, q: { keyword?: string; page?: number; pageSize?: number } = {}): Promise<AgGoProjectPage> {
+/** The ag-go projects the person can see, filtered and sorted as ag-go's Projects page does, a page at a time. */
+export function getAgGoProjects(accessToken: string, q: AgGoProjectQuery = {}): Promise<AgGoProjectPage> {
   const query = new URLSearchParams();
   if (q.keyword) query.set("keyword", q.keyword);
   query.set("page", String(q.page ?? 1));
   query.set("pageSize", String(q.pageSize ?? 20));
+  if (q.sortBy) query.set("sortBy", q.sortBy);
+  if (q.sortOrder) query.set("sortOrder", q.sortOrder);
+  for (const key of ["folderIds", "categoryIds", "tagIds", "ownerUserIds"] as const) {
+    const list = q[key];
+    if (list?.length) query.set(key, list.join(","));
+  }
+  if (q.countryId) query.set("countryId", q.countryId);
+  if (q.provinceId) query.set("provinceId", q.provinceId);
   return agGoGet(accessToken, `/projects?${query.toString()}`);
 }
+
+/** The lists the project filters offer: categories, tags, the person's folders, countries, provinces, owners. */
+export const agGoLookups = {
+  categories: (token: string) => agGoGet<AgGoNamed[]>(token, "/categories"),
+  tags: (token: string) => agGoGet<AgGoNamed[]>(token, "/tags"),
+  folders: (token: string) => agGoGet<AgGoFolder[]>(token, "/folders/tree"),
+  countries: (token: string) => agGoGet<AgGoNamed[]>(token, "/countries"),
+  provinces: async (token: string, countryId: string) =>
+    (await agGoGet<{ items: AgGoProvince[] }>(token, `/provinces?page=1&pageSize=100&countryId=${encodeURIComponent(countryId)}`)).items,
+  owners: (token: string) => agGoGet<AgGoProjectOwner[]>(token, "/projects/owners"),
+};
 
 /** The media of one ag-go project, a page at a time (`limit` ≤ 100). */
 export function getAgGoProjectMedia(accessToken: string, projectId: string, q: { cursor?: string; limit?: number } = {}): Promise<AgGoProjectMediaPage> {
@@ -121,7 +171,13 @@ export function createAgGoWebClient(getAccessToken: () => Promise<string>) {
       const token = await getAccessToken();
       return getFolders(token);
     },
-    getProjects: async (q: { keyword?: string; page?: number; pageSize?: number } = {}): Promise<AgGoProjectPage> => getAgGoProjects(await getAccessToken(), q),
+    getProjects: async (q: AgGoProjectQuery = {}): Promise<AgGoProjectPage> => getAgGoProjects(await getAccessToken(), q),
+    getCategories: async () => agGoLookups.categories(await getAccessToken()),
+    getTags: async () => agGoLookups.tags(await getAccessToken()),
+    getFolderTree: async () => agGoLookups.folders(await getAccessToken()),
+    getCountries: async () => agGoLookups.countries(await getAccessToken()),
+    getProvinces: async (countryId: string) => agGoLookups.provinces(await getAccessToken(), countryId),
+    getProjectOwners: async () => agGoLookups.owners(await getAccessToken()),
     getProjectMedia: async (projectId: string, q: { cursor?: string; limit?: number } = {}): Promise<AgGoProjectMediaPage> =>
       getAgGoProjectMedia(await getAccessToken(), projectId, q),
   };
