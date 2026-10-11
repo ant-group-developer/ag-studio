@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { App as AntApp, Input, Modal, Spin, Tooltip } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, FilePlus, FileText, Folder, Image as ImageIcon, Lock, RefreshCw, Upload } from "lucide-react";
@@ -10,6 +10,28 @@ import { FileView } from "./FileView";
 
 const IMAGE = /\.(jpe?g|png|webp|gif)$/i;
 const DEFAULT_OPEN = new Set(["context", "research", "channel", "memory"]);
+/** Below this width the tree beside an open file lays over it instead of squeezing it. */
+const SPLIT_MIN = 440;
+const TREE_KEY = "studio.files.tree";
+
+/** Whether the element is narrower than `min` (wide when the browser cannot tell). */
+function useNarrow(ref: RefObject<HTMLElement>, min: number): boolean {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([e]) => setNarrow((e?.contentRect.width ?? min) < min));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, min]);
+  return narrow;
+}
+
+/** The tree beside an open file: shown unless hidden once (kept in this browser). */
+function useTreeShown(): [boolean, (v: boolean) => void] {
+  const [shown, setShown] = useState(() => { try { return localStorage.getItem(TREE_KEY) !== "hidden"; } catch { return true; } });
+  return [shown, (v) => { setShown(v); try { localStorage.setItem(TREE_KEY, v ? "shown" : "hidden"); } catch { /* this visit only */ } }];
+}
 
 function TreeRows({ nodes, open, toggle, selected, onPick }: {
   nodes: TreeNode[];
@@ -29,7 +51,7 @@ function TreeRows({ nodes, open, toggle, selected, onPick }: {
           >
             {n.kind === "dir" ? (open.has(n.path) ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : <span style={{ width: 14 }} />}
             {n.kind === "dir" ? <Folder size={15} /> : IMAGE.test(n.name) ? <ImageIcon size={15} /> : <FileText size={15} />}
-            <span className="ws-tree__name">{n.name}</span>
+            <span className="ws-tree__name" title={n.path}>{n.name}</span>
             {n.access === "read" ? <Lock size={12} aria-hidden /> : null}
           </button>
           {n.kind === "dir" && open.has(n.path) && n.children.length ? (
@@ -42,8 +64,8 @@ function TreeRows({ nodes, open, toggle, selected, onPick }: {
 }
 
 /**
- * The project's files (spec 2026-10-10 agent-workspace §3.1): the tree, a new file, uploads, and the open file.
- * `openPath`/`onOpen` let the page (and later the chat) open a file here.
+ * The project's files (spec 2026-10-10 agent-workspace §3.1): the tree, a new file, uploads, and the open file with the
+ * tree beside it (laid over it when the panel is narrow). `openPath`/`onOpen` let the page and the chat open a file here.
  */
 export function FilesPanel({ projectId, canEdit, openPath, onOpen, onAttach }: {
   projectId: string;
@@ -64,6 +86,11 @@ export function FilesPanel({ projectId, canEdit, openPath, onOpen, onAttach }: {
   const [creating, setCreating] = useState(false);
   const [newPath, setNewPath] = useState("");
   const uploadInput = useRef<HTMLInputElement>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const narrow = useNarrow(box, SPLIT_MIN);
+  const [treeShown, setTreeShown] = useTreeShown();
+  const [overlay, setOverlay] = useState(false);
+  const besideShown = narrow ? overlay : treeShown;
 
   const writableFolder = (path: string) => (data?.entries.find((e) => e.path === path)?.access ?? "none") === "write";
 
@@ -77,8 +104,10 @@ export function FilesPanel({ projectId, canEdit, openPath, onOpen, onAttach }: {
   };
   const pick = (n: TreeNode) => {
     setOpen((o) => new Set([...o, ...ancestors(n.path)]));
+    setOverlay(false);
     onOpen(n.path);
   };
+  useEffect(() => { if (openPath) setOpen((o) => new Set([...o, ...ancestors(openPath)])); }, [openPath]);
 
   const create = useMutation({
     mutationFn: (path: string) => client.writeFile(projectId, { path, content: "", baseSha256: null }),
@@ -100,17 +129,32 @@ export function FilesPanel({ projectId, canEdit, openPath, onOpen, onAttach }: {
   });
   const openEntry = data?.entries.find((e) => e.path === openPath);
 
+  const treeList = isLoading ? <div className="ws-center"><Spin /></div> : (
+    <ul className="ws-tree" aria-label={t("ws.files.tree")}>
+      <TreeRows nodes={tree} open={open} toggle={toggle} selected={openPath} onPick={pick} />
+    </ul>
+  );
+
   if (openPath) {
     return (
-      <FileView
-        projectId={projectId} path={openPath} access={openEntry?.access ?? "write"} canEdit={canEdit}
-        onBack={() => onOpen(null)} onDeleted={() => onOpen(null)} onAttach={onAttach}
-      />
+      <div ref={box} className={`ws-files ws-files--split${narrow ? " ws-files--narrow" : ""}`}>
+        {besideShown ? (
+          <>
+            {narrow ? <div className="ws-files__scrim" aria-hidden onClick={() => setOverlay(false)} /> : null}
+            <div className="ws-files__side" onKeyDown={(e) => { if (e.key === "Escape") setOverlay(false); }}>{treeList}</div>
+          </>
+        ) : null}
+        <FileView
+          projectId={projectId} path={openPath} access={openEntry?.access ?? "write"} canEdit={canEdit}
+          onBack={() => onOpen(null)} onDeleted={() => onOpen(null)} onAttach={onAttach}
+          tree={{ shown: besideShown, toggle: () => (narrow ? setOverlay(!overlay) : setTreeShown(!treeShown)) }}
+        />
+      </div>
     );
   }
 
   return (
-    <div className="ws-files">
+    <div ref={box} className="ws-files">
       <div className="ws-files__bar">
         <span className="ws-files__bar-title">{folder ?? t("ws.files.root")}</span>
         {canEdit ? (
@@ -137,11 +181,7 @@ export function FilesPanel({ projectId, canEdit, openPath, onOpen, onAttach }: {
           <button type="button" className="ws-icon-button" aria-label={t("common.refresh")} onClick={() => void refetch()} disabled={isFetching}><RefreshCw size={15} /></button>
         </Tooltip>
       </div>
-      {isLoading ? <div className="ws-center"><Spin /></div> : (
-        <ul className="ws-tree" aria-label={t("ws.files.tree")}>
-          <TreeRows nodes={tree} open={open} toggle={toggle} selected={openPath} onPick={pick} />
-        </ul>
-      )}
+      {treeList}
       <Modal
         open={creating} title={t("ws.files.newFile")} okText={t("common.create")} cancelText={t("common.cancel")}
         onCancel={() => setCreating(false)} onOk={() => create.mutate(newPath.trim())} confirmLoading={create.isPending} destroyOnHidden

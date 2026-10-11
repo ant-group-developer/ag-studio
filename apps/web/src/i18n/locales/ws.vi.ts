@@ -129,6 +129,8 @@ export const wsVi = {
     tree: "Tệp của dự án",
     root: "Tất cả tệp",
     back: "Quay lại danh sách tệp",
+    showTree: "Hiện cây thư mục",
+    hideTree: "Ẩn cây thư mục",
     edit: "Sửa",
     preview: "Xem",
     history: "Lịch sử",

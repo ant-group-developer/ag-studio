@@ -201,6 +201,22 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     await waitFor(() => expect(ws.writeFile).toHaveBeenLastCalledWith("p1", { path: "context/notes.md", content: "# Ghi chú\n\nhai dòng", baseSha256: "b".repeat(64) }));
   });
 
+  it("keeps the folder tree beside an open file: the file is marked, another opens from it, the tree hides", async () => {
+    localStorage.removeItem("studio.files.tree");
+    mount("/p/p1?tab=files&file=context%2Fnotes.md");
+    expect(await screen.findByRole("heading", { name: "Ghi chú" })).toBeInTheDocument();
+    const aside = screen.getByRole("complementary", { name: "Tệp và cài đặt" });
+    const tree = await within(aside).findByRole("list", { name: "Tệp của dự án" });
+    expect(within(tree).getByRole("button", { name: "notes.md" })).toHaveAttribute("aria-current", "true");
+    fireEvent.click(within(tree).getByRole("button", { name: "CLAUDE.md" }));
+    expect(await screen.findByRole("heading", { name: "Du lịch chậm" })).toBeInTheDocument();
+    fireEvent.click(within(aside).getByRole("button", { name: "Ẩn cây thư mục" }));
+    expect(within(aside).queryByRole("list", { name: "Tệp của dự án" })).toBeNull();
+    expect(localStorage.getItem("studio.files.tree")).toBe("hidden");
+    fireEvent.click(within(aside).getByRole("button", { name: "Hiện cây thư mục" }));
+    expect(within(aside).getByRole("list", { name: "Tệp của dự án" })).toBeInTheDocument();
+  });
+
   it("adds a video with what it is about and what it learns from", async () => {
     mount("/p/p1");
     fireEvent.click(await screen.findByRole("button", { name: /Video mới/ }));

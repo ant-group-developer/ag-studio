@@ -176,6 +176,13 @@
 /* Files */
 .ws-files { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .ws-files__bar { flex-shrink: 0; display: flex; align-items: center; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--ws-line); }
+/* an open file with the tree beside it; a narrow panel lays the tree over the file */
+.ws-files--split { position: relative; flex-direction: row; }
+.ws-files--split > .ws-file { min-width: 0; }
+.ws-files__side { flex-shrink: 0; width: clamp(160px, 30%, 260px); display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--ws-line); background: var(--ws-nav-bg); }
+.ws-files__side .ws-tree { padding-top: 8px; }
+.ws-files--narrow .ws-files__side { position: absolute; z-index: 3; inset: 0 auto 0 0; width: min(300px, 86%); box-shadow: var(--ws-shadow-lg); }
+.ws-files__scrim { position: absolute; z-index: 2; inset: 0; background: rgba(16, 24, 40, 0.18); }
 .ws-files__bar-title { flex: 1; min-width: 0; font-size: 13px; color: var(--ws-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-tree { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 6px 16px; list-style: none; margin: 0; }
 .ws-tree ul { list-style: none; margin: 0; padding: 0 0 0 14px; }

@@ -133,6 +133,8 @@ export const wsEn: Messages<typeof wsVi> = {
     tree: "Project files",
     root: "All files",
     back: "Back to the files",
+    showTree: "Show the folder tree",
+    hideTree: "Hide the folder tree",
     edit: "Edit",
     preview: "View",
     history: "History",
