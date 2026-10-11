@@ -16,7 +16,9 @@ const studio = {
   getCanvaConnection: vi.fn().mockResolvedValue({ enabled: false, connected: false, displayName: null }),
   listTeams: vi.fn().mockResolvedValue({ items: [{ id: "team-1", name: "Du lịch", role: "producer" }], total: 1, page: 1, pageSize: 100 }),
   listTeamSkills: vi.fn().mockResolvedValue([]),
+  createTeam: vi.fn().mockResolvedValue({ id: "team-new", name: "Ẩm thực", role: "owner", memberCount: 1, projectCount: 0, createdAt: "" }),
 };
+const ONE_TEAM = { items: [{ id: "team-1", name: "Du lịch", role: "producer" }], total: 1, page: 1, pageSize: 100 };
 const step = (key: string, title: string, status: string, over: Record<string, unknown> = {}) => ({
   key, scope: "project", title, description: `Mô tả ${title}`, skill: null, optional: false, requires: [], status,
   outputs: [{ path: `channel/${key}.md`, role: "doc", exists: status !== "missing", issues: [] }], issues: [], primary: `channel/${key}.md`,
@@ -85,6 +87,7 @@ vi.mock("../api/workspace-client", async (orig) => ({ ...(await orig<object>()),
 vi.mock("@auth0/auth0-react", () => ({ useAuth0: () => ({ user: { email: "a@b.c", name: "An" }, logout: vi.fn() }) }));
 
 const { ProjectsPage } = await import("./ProjectsPage");
+const { HomePage } = await import("./HomePage");
 const { ProjectPage } = await import("./ProjectPage");
 
 function mount(path: string) {
@@ -93,6 +96,8 @@ function mount(path: string) {
       <AntApp>
         <MemoryRouter initialEntries={[path]}>
           <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/teams" element={<p>trang nhóm</p>} />
             <Route path="/t/:teamId" element={<ProjectsPage />} />
             <Route path="/p/:projectId" element={<ProjectPage />} />
             <Route path="/p/:projectId/c/:threadId" element={<ProjectPage />} />
@@ -108,6 +113,7 @@ describe("workspace pages", { timeout: 20_000 }, () => {
   beforeAll(async () => { await i18n.changeLanguage("vi"); });
   beforeEach(() => {
     vi.clearAllMocks();
+    studio.listTeams.mockResolvedValue(ONE_TEAM);
     ws.getThread.mockResolvedValue(thread([
       message({ id: "u1", seq: 1, role: "user", text: "Nghiên cứu kênh giúp tôi" }),
       message({ id: "a1", seq: 2, text: "## Kế hoạch\n\nTôi sẽ đọc tài liệu.", parts: [
@@ -128,6 +134,35 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     fireEvent.change(within(dialog).getByLabelText("Kênh YouTube"), { target: { value: "@amthuchue" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Tạo dự án" }));
     await waitFor(() => expect(ws.createProject).toHaveBeenCalledWith("team-1", { name: "Ẩm thực Huế", channelUrl: "@amthuchue", aspect: "16:9" }));
+  });
+
+  it("the team picker makes a new team and leads to the teams page", async () => {
+    mount("/t/team-1");
+    expect(await screen.findByText("Du lịch chậm")).toBeInTheDocument();
+    const picker = screen.getByRole("combobox", { name: "Nhóm" });
+    fireEvent.mouseDown(picker);
+    fireEvent.click(await screen.findByRole("button", { name: "Tạo nhóm mới" }));
+    const dialog = await screen.findByRole("dialog", { name: "Nhóm mới" });
+    fireEvent.change(within(dialog).getByLabelText("Tên nhóm"), { target: { value: "  Ẩm thực " } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Tạo nhóm" }));
+    await waitFor(() => expect(studio.createTeam).toHaveBeenCalledWith("Ẩm thực"));
+    await waitFor(() => expect(ws.listProjects).toHaveBeenCalledWith("team-new"));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Nhóm" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Quản lý nhóm" }));
+    expect(await screen.findByText("trang nhóm")).toBeInTheDocument();
+  });
+
+  it("someone in no team yet makes one from the home page", async () => {
+    studio.listTeams.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 100 });
+    mount("/");
+    expect(await screen.findByRole("heading", { name: "Bạn chưa ở nhóm nào" })).toBeInTheDocument();
+    studio.listTeams.mockResolvedValue({ items: [{ id: "team-new", name: "Ẩm thực", role: "owner" }], total: 1, page: 1, pageSize: 100 });
+    fireEvent.click(screen.getByRole("button", { name: "Tạo nhóm" }));
+    const dialog = await screen.findByRole("dialog", { name: "Nhóm mới" });
+    fireEvent.change(within(dialog).getByLabelText("Tên nhóm"), { target: { value: "Ẩm thực" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Tạo nhóm" }));
+    await waitFor(() => expect(studio.createTeam).toHaveBeenCalledWith("Ẩm thực"));
+    await waitFor(() => expect(ws.listProjects).toHaveBeenCalledWith("team-new"));
   });
 
   it("opens on the channel's chat, with its chats, its videos and its files", async () => {

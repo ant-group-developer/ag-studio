@@ -1,9 +1,11 @@
 /** Chuỗi của giao diện làm việc theo dự án (spec 2026-10-10 agent-workspace), gộp vào `vi.ws`. */
 export const wsVi = {
   shell: {
-    team: "Team",
-    pickTeam: "Chọn team",
-    teamSettings: "Thành viên và skill của team",
+    team: "Nhóm",
+    pickTeam: "Chọn nhóm",
+    teamSettings: "Thành viên và skill của nhóm",
+    newTeam: "Tạo nhóm mới",
+    manageTeams: "Quản lý nhóm",
     breadcrumbs: "Vị trí",
     queue: "Hàng đợi",
     music: "Kho nhạc",
@@ -15,9 +17,18 @@ export const wsVi = {
     hint: "Kéo để đổi độ rộng · bấm đúp để về mặc định",
   },
   home: {
-    noTeamTitle: "Bạn chưa ở team nào",
-    noTeamLead: "Nhờ quản trị Studio hoặc chủ một team thêm bạn vào team để bắt đầu.",
+    noTeamTitle: "Bạn chưa ở nhóm nào",
+    noTeamLead: "Tạo một nhóm để bắt đầu (bạn là chủ nhóm, mời thêm người sau), hoặc nhờ chủ một nhóm thêm bạn vào.",
     claudeMd: "CLAUDE.md — agent đọc file này ở mọi lượt chat",
+  },
+  teams: {
+    newTitle: "Nhóm mới",
+    newLead: "Nhóm là những người làm chung: thành viên, vai và quy chuẩn & skill dùng cho mọi dự án (kênh) của nhóm. Bạn là chủ nhóm; mời thêm người ở trang quản lý nhóm.",
+    name: "Tên nhóm",
+    namePlaceholder: "Ví dụ: Nhóm du lịch",
+    nameRequired: "Nhập tên nhóm",
+    create: "Tạo nhóm",
+    createFailed: "Không tạo được nhóm",
   },
   projects: {
     title: "Dự án",
@@ -43,7 +54,7 @@ export const wsVi = {
     videoCount_other: "{{count}} video",
     emptyTitle: "Chưa có dự án nào",
     emptyLead: "Tạo dự án cho một kênh YouTube, rồi thêm video bất cứ lúc nào.",
-    emptyViewer: "Team chưa có dự án nào. Người có vai producer trở lên tạo được dự án.",
+    emptyViewer: "Nhóm chưa có dự án nào. Người có vai producer trở lên tạo được dự án.",
   },
   project: {
     notFound: "Không tìm thấy dự án",
@@ -151,9 +162,9 @@ export const wsVi = {
   },
   settings: {
     skills: "Skill",
-    skillsHint: "Agent dùng skill của Studio, các skill team đang bật và skill riêng của dự án (thư mục skills/<tên>/SKILL.md trong Tệp).",
-    noTeamSkills: "Team chưa bật skill nào (thêm ở trang team).",
-    allTeamSkills: "Dùng mọi skill team đang bật",
+    skillsHint: "Agent dùng skill của Studio, các skill của nhóm đang bật và skill riêng của dự án (thư mục skills/<tên>/SKILL.md trong Tệp).",
+    noTeamSkills: "Nhóm chưa bật skill nào (thêm ở trang nhóm).",
+    allTeamSkills: "Dùng mọi skill nhóm đang bật",
     playbook: "Quy trình gợi ý",
     playbookHint: "Các bước Studio gợi ý cho kênh và mỗi video. Chỉ là gợi ý; tuỳ chỉnh bằng file .studio/playbook.yaml.",
     customizePlaybook: "Tuỳ chỉnh quy trình",
@@ -170,7 +181,7 @@ export const wsVi = {
     autoContinueHint: "Khi một việc nặng (chuẩn bị video, render) xong, agent được báo và làm tiếp.",
     archive: "Lưu trữ dự án",
     archiveTitle: "Lưu trữ dự án này?",
-    archiveBody: "Dự án rời khỏi danh sách của team; video và tệp vẫn được giữ.",
+    archiveBody: "Dự án rời khỏi danh sách của nhóm; video và tệp vẫn được giữ.",
   },
   chat: {
     new: "Chat mới",

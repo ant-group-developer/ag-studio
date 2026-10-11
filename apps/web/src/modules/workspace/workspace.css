@@ -61,6 +61,10 @@
 .ws-icon-button:hover { background: var(--ws-chip); color: var(--ws-text); }
 .ws-icon-button:disabled { opacity: 0.5; cursor: default; }
 .ws-icon-button--outline { border-color: var(--ws-line); background: var(--ws-surface); }
+/* Under the team picker's list: make a team, manage the teams (the popup sits outside .ws-app, so no --ws-* tokens). */
+.ws-team-actions { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; padding-top: 4px; border-top: 1px solid #e3e5e8; }
+.ws-team-actions .ws-icon-button { justify-content: flex-start; color: #4a505a; }
+.ws-team-actions .ws-icon-button:hover { background: #eef1f5; color: #16181d; }
 
 /* Body: nav · main · aside */
 .ws-body { flex: 1; display: flex; align-items: stretch; min-height: 0; }

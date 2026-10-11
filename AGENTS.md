@@ -152,7 +152,9 @@ nhưng không code nào đọc.
 - `/` trang chủ, `/t/:teamId` danh sách dự án, `/p/:projectId` (luồng Kênh), `/p/:projectId/c/:threadId`, `/p/:projectId/v/:videoId`.
   Cột phải: Xem trước (trang video), Tệp, Đầu vào, Nghiên cứu, Cài đặt. Việc đang chạy: nút "Đang chạy" ở đầu trang (agent,
   tool, job; Dừng). `/queue` (việc đang chạy của mọi dự án người xem thấy, slot Claude, máy farm; admin đặt cap và tên AI),
-  `/music` (kho nhạc), `/teams`, `/teams/:teamId` (thành viên, skill; layout quản trị).
+  `/music` (kho nhạc), `/teams`, `/teams/:teamId` (thành viên, skill; layout quản trị). Ô chọn nhóm trên thanh trên có
+  "Tạo nhóm mới" và "Quản lý nhóm"; ai chưa ở nhóm nào thì trang chủ cho tạo nhóm (người tạo là owner). Tiếng Việt gọi là
+  **nhóm** (không viết "team" trong chuỗi giao diện).
 - Khung trình duyệt nhúng của app desktop báo trang luôn ẩn nên react-query không polling: kiểm bằng khung đó thì tải lại trang.
 
 ## Pipeline media của harness

@@ -8,6 +8,8 @@ export const wsEn: Messages<typeof wsVi> = {
     team: "Team",
     pickTeam: "Pick a team",
     teamSettings: "Team members and skills",
+    newTeam: "New team",
+    manageTeams: "Manage teams",
     breadcrumbs: "Location",
     queue: "Queue",
     music: "Music library",
@@ -20,8 +22,17 @@ export const wsEn: Messages<typeof wsVi> = {
   },
   home: {
     noTeamTitle: "You are not in a team yet",
-    noTeamLead: "Ask a Studio admin or a team owner to add you to a team.",
+    noTeamLead: "Make a team to start (you own it and invite people later), or ask a team owner to add you.",
     claudeMd: "CLAUDE.md — the agent reads it on every chat turn",
+  },
+  teams: {
+    newTitle: "New team",
+    newLead: "A team is the people who work together: members, roles and the standards & skills every project (channel) of the team uses. You own it; invite people on the teams page.",
+    name: "Team name",
+    namePlaceholder: "E.g. Travel team",
+    nameRequired: "Enter a team name",
+    create: "Create team",
+    createFailed: "Could not create the team",
   },
   projects: {
     title: "Projects",
