@@ -6,7 +6,6 @@ import { createReadStream, mkdirSync, readFileSync, statSync, writeFileSync } fr
 import { dirname } from "node:path";
 import { DeleteObjectsCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import type { StudioStorage } from "@harness/executors";
 
 export interface StudioBucket {
   put(key: string, body: Buffer, contentType?: string): Promise<void>;
@@ -122,25 +121,4 @@ export class MemoryBucket implements StudioBucket {
   async signedGetUrl(key: string, _ttlSeconds?: number, opts: SignedUrlOptions = {}): Promise<string> {
     return opts.downloadName ? `memory://${key}?download=${opts.downloadName}` : `memory://${key}`;
   }
-}
-
-/** The farm executor's view of the bucket. */
-export function farmStorage(bucket: StudioBucket): StudioStorage {
-  return {
-    async upload(localPath, objectKey) {
-      await bucket.put(objectKey, readFileSync(localPath));
-      return `stage:${objectKey}`;
-    },
-    async download(url, localPath) {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`download failed: ${res.status} ${url}`);
-      mkdirSync(dirname(localPath), { recursive: true });
-      writeFileSync(localPath, Buffer.from(await res.arrayBuffer()));
-    },
-    async downloadOutput(outputPrefix, relPath, localPath) {
-      const body = await bucket.get(`${outputPrefix}${relPath}`);
-      mkdirSync(dirname(localPath), { recursive: true });
-      writeFileSync(localPath, body);
-    },
-  };
 }

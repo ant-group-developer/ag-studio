@@ -1,0 +1,109 @@
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import type { TimelineV4 } from "@harness/contracts";
+import {
+  addSource, agentTools, callAgentTool, createProject, createThread, createVideo, latestVideoRevision, listJobs, markAgentTurnRunning,
+  postUserMessage, savePrepared, saveVideoRevision, seedWorkspace, type AgentToolContext,
+} from "../src/index.js";
+import { world } from "./helpers.js";
+
+const NOW = "2026-10-10T08:00:00.000Z";
+const A2 = "1c8b6d45-6e2f-4e5d-8b62-4e3b2f1d8e22";
+
+function timeline(videoId: string): TimelineV4 {
+  return {
+    schema_version: "studio.timeline/v4", production_id: "p", episode_id: videoId, canvas: { width: 1920, height: 1080 }, fps: 30,
+    language: "vi", edit_style: "cut",
+    clips: [
+      { clip_id: "C001", asset_id: "a1", section_title: "Mở đầu", in: 0, out: 4, shot_id: null, line_id: null, transition_out: { kind: "dissolve", seconds: 0.4 } },
+      { clip_id: "C002", asset_id: "a1", section_title: null, in: 5, out: 9, shot_id: null, line_id: null, transition_out: { kind: "cut", seconds: 0 } },
+    ],
+    texts: [{ text_id: "T001", kind: "title", text: "Tràng An", start: 0, duration: 2, position: "top_left" }],
+    narration: { voice: "none", lead_seconds: 0.3, lines: [] }, captions: { mode: "none" }, music: null, source_audio: { muted: false },
+    assets: { a1: { title: "Thuyền", summary_vi: "…", duration_s: 10, orientation: "landscape" } }, alternates: [],
+  };
+}
+
+function setup() {
+  const w = world();
+  w.db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [NOW, NOW]);
+  const project = createProject(w.db, "team-1", { name: "Du lịch chậm", description: "", language: "vi", aspect: "16:9" }, "u", NOW);
+  const dir = seedWorkspace(mkdtempSync(join(tmpdir(), "timeline-tools-")), project, NOW);
+  const video = createVideo(w.db, project.id, { title: "Tràng An", createdBy: "u" }, NOW);
+  const thread = createThread(w.db, { projectId: project.id, videoId: video.id, kind: "video", title: "Tràng An", createdBy: "u" }, NOW);
+  const { turn } = postUserMessage(w.db, { threadId: thread.id, text: "Sửa timeline", actor: { id: "u", role: "editor" } }, NOW);
+  markAgentTurnRunning(w.db, turn!.id, NOW);
+  const ctx: AgentToolContext = {
+    db: w.db, claims: { msg: turn!.id, thread: thread.id, project: project.id, video: video.id, sub: "u", exp: 9e9 },
+    message: turn!, thread, project, video, workspaceDir: dir, role: "editor", now: () => NOW,
+  };
+  return { ...w, project, video, dir, thread, ctx, tools: agentTools() };
+}
+
+const call = async (s: ReturnType<typeof setup>, name: string, args: unknown) => {
+  const r = await callAgentTool(s.tools, s.ctx, name, args);
+  let json: any = null; // eslint-disable-line @typescript-eslint/no-explicit-any
+  try { json = r.isError ? null : JSON.parse(r.text); } catch { /* a sentence */ }
+  return { ...r, json };
+};
+
+describe("timeline tools", () => {
+  it("timeline_get reads the clips where they play in the video, and the problems", async () => {
+    const s = setup();
+    expect(await call(s, "timeline_get", {})).toMatchObject({ isError: true, text: expect.stringContaining("chưa có timeline") });
+    saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u", label: "fit" });
+    const r = await call(s, "timeline_get", {});
+    expect(r.json).toMatchObject({ revision: 1, label: "fit", approx_seconds: 7.6 });
+    expect(r.json.clips.map((c: { clip_id: string; at: number; asset: string }) => [c.clip_id, c.at, c.asset])).toEqual([["C001", 0, "Thuyền"], ["C002", 3.6, "Thuyền"]]);
+  });
+
+  it("timeline_apply_ops saves a new revision on the one read, refuses a stale base and an asset the video does not have", async () => {
+    const s = setup();
+    saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
+    const ok = await call(s, "timeline_apply_ops", { base_revision: 1, ops: [{ op: "trimClip", clip_id: "C002", in: 5, out: 7 }, { op: "setClipMuted", clip_id: "C001", muted: true }] });
+    expect(ok.json).toMatchObject({ revision: 2, saved: `videos/${s.video.id}/timeline.json` });
+    const rev = latestVideoRevision(s.db, s.video.id)!;
+    expect(rev).toMatchObject({ revision: 2, label: "agent" });
+    expect(rev.data.clips[1]).toMatchObject({ in: 5, out: 7 });
+    expect(JSON.parse(readFileSync(join(s.dir, "videos", s.video.id, "timeline.json"), "utf8")).revision).toBe(2);
+    expect(await call(s, "timeline_apply_ops", { base_revision: 1, ops: [{ op: "removeText", text_id: "T001" }] })).toMatchObject({ isError: true, text: expect.stringContaining("bản mới hơn (2)") });
+    expect((await call(s, "timeline_apply_ops", { base_revision: 2, ops: [{ op: "addClip", asset_id: A2, index: 0 }] })).isError).toBe(true);
+    // a prepared source of the video may be added
+    addSource(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "ag_go_asset", ref: A2, mediaType: "video", label: "Hang.mp4", addedBy: "u" }, NOW);
+    mkdirSync(join(s.dir, "inputs", A2), { recursive: true });
+    writeFileSync(join(s.dir, "inputs", A2, "shots.json"), JSON.stringify({ name: "Hang.mp4", width: 1920, height: 1080, shots: [{ n: 1, in: 0, out: 6, frame: "frames/001.jpg" }] }));
+    savePrepared(s.db, { project_id: s.project.id, asset_id: A2, status: "ready", name: "Hang.mp4", duration_s: 6, width: 1920, height: 1080, has_audio: 1, shots: 1, transcript: 0, source_kind: "preview", watermarked: 0, error: null }, NOW);
+    expect((await call(s, "timeline_apply_ops", { base_revision: 2, ops: [{ op: "addClip", asset_id: A2, index: 0 }] })).json).toMatchObject({ revision: 3 });
+    expect(latestVideoRevision(s.db, s.video.id)!.data.assets[A2]).toMatchObject({ title: "Hang.mp4", orientation: "landscape" });
+  });
+
+  it("render_preview and timeline_from_edit_plan queue jobs for the thread (the agent goes on when they end)", async () => {
+    const s = setup();
+    expect((await call(s, "render_preview", {})).isError).toBe(true);
+    saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
+    expect((await call(s, "render_preview", {})).json).toMatchObject({ status: "queued" });
+    expect((await call(s, "timeline_from_edit_plan", { wait_s: 0 })).json).toMatchObject({ status: "queued" });
+    expect(listJobs(s.db, s.project.id).map((j) => [j.kind, j.thread_id, j.continue_agent])).toEqual([["fit", s.thread.id, 1], ["render_preview", s.thread.id, 1]]);
+  });
+});
+
+describe("studio steps of a video", () => {
+  it("timeline and preview follow the revisions and renders", async () => {
+    const { claimJob, finishJob, queueRender } = await import("../src/index.js");
+    const s = setup();
+    const step = async (key: string) => (await call(s, "playbook_status", {})).json.video.find((x: { key: string }) => x.key === key);
+    expect(await step("timeline")).toMatchObject({ status: "missing", detail: "chưa có timeline" });
+    saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
+    expect(await step("timeline")).toMatchObject({ status: "done", detail: "bản 1, 2 clip" });
+    expect(await step("preview")).toMatchObject({ status: "missing", detail: "chưa render bản xem trước" });
+    const j = queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", createdBy: "u" }, NOW);
+    expect(await step("preview")).toMatchObject({ status: "running" });
+    claimJob(s.db, ["render_preview"], NOW);
+    finishJob(s.db, j.id, { status: "done", result: { kind: "render_preview", revision: 1 } }, NOW);
+    expect(await step("preview")).toMatchObject({ status: "done", detail: "timeline bản 1" });
+    saveVideoRevision(s.db, s.video.id, { baseRevision: 1, data: timeline(s.video.id), authorId: "u" });
+    expect(await step("preview")).toMatchObject({ status: "missing", detail: "bản đã render là của timeline bản 1, timeline đang ở bản 2" });
+  });
+});

@@ -18,9 +18,8 @@ const track = (trackId: string, displayName: string, moods: string[], active = t
 
 const client = {
   getMe: vi.fn(),
-  getOverview: vi.fn().mockResolvedValue({ items: [] }),
+  listTeams: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 100 }),
   getClaudeUsage: vi.fn().mockResolvedValue({ running: 0, waiting: 0, max: 20, source: "env" }),
-  getQueue: vi.fn().mockResolvedValue({ claude: { running: 0, waiting: 0, max: 20, hidden: 0, items: [] }, renders: [], hiddenRenders: 0, farm: { ok: true } }),
   listMusic: vi.fn(),
   addMusic: vi.fn(),
   updateMusic: vi.fn(),

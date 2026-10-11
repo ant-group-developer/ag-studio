@@ -1,8 +1,34 @@
 # Việc để lại (deferred items)
 
-## AG Studio (cập nhật 2026-10-06)
+## AG Studio — chat với agent trong dự án (nhánh `feat/agent-workspace`, 2026-10-10)
 
-Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142). Mỗi dòng: hiện tượng · chỗ trong code · ghi chú.
+- **Editor timeline trực quan cho video của dự án.** Editor cũ (`apps/web/src/modules/editor`, đọc/ghi `episode_revisions`)
+  đã gỡ ở P8 (lấy lại từ git trước commit `1ef0fad`). Video của dự án sửa qua agent (`timeline_apply_ops`) và xem ở tab
+  Xem trước. Muốn editor kéo-thả: dựng lại editor trên `/api/videos/:id/timeline` + lưu theo `base_revision`, route
+  `/p/:p/v/:v/editor`.
+- **Chọn máy farm cho bản cuối trên web.** Thẻ `render_final` nhận `node_id` (agent điền được) nhưng thẻ chưa có ô chọn
+  máy như `RenderMachinePicker` cũ; `GET /api/studio/farm/nodes` vẫn trả máy nhận `studio.render_final`.
+- **Contracts/core còn schema thời workflow.** `packages/contracts/src/studio.ts`, `studio-chat.ts` (intake, chat reply,
+  skill chat), `studio-cut.ts` và `packages/core/src/verification/studio-checkers.ts` mang hợp đồng của pipeline cũ (brief,
+  series plan, R&D, branding, gate). Validator trong `packages/core/src/studio/*` vẫn được `workspace/validators.ts` dùng,
+  nên chưa cắt; profile `production-profiles/studio-production` không còn workflow nào. Dọn khi đụng tới.
+- **E2E cho đường dự án.** `tests/e2e/farm-render.e2e.test.ts` ghi job farm như job dự án (`project_farm_jobs`) và render
+  qua farm thật; các E2E chat/series cũ đã gỡ. Chưa có E2E "tạo dự án → chuẩn bị → agent giả → fit → render xem trước";
+  chuỗi này đã kiểm tay trên stack local (P4–P6).
+- **Một lượt agent chờ job xong vẫn có thể kéo thêm một lượt tự chạy.** Job `continue_agent` báo vào luồng ngay khi xong;
+  nếu tool của lượt đang chạy đã chờ và thấy kết quả, lượt kế tiếp là thừa (tốn ít, không sai). Có thể bỏ khi lượt tạo job
+  còn đang chạy và đã đọc kết quả.
+- **Audio tải lên chưa được đọc thành chữ.** Tab Đầu vào nhận mp3/wav/m4a… vào `context/audio/` nhưng chưa có job
+  `transcribe_upload` (đã có trong `JOB_KINDS` và migration 0033). Agent mới chỉ thấy tên file; file đó dùng được làm
+  giọng/nhạc của dự án (`workspace/project-audio.ts`).
+- **Log của Studio API/worker không vào `E:/ag-local/dev-run/*.log` khi `scripts/local-stack.mjs` bật trên Windows.**
+  Tiến trình chạy dưới `cmd.exe` (`shell: true`) nên fd log không tới node. Kiểm tra trạng thái qua DB (bảng
+  `project_jobs`, `agent_messages`) hoặc chạy tay `node --env-file=apps/api/.env apps/worker/dist/main.js`.
+
+## AG Studio (cập nhật 2026-10-06) — pipeline cũ, đã gỡ ở P8 (2026-10-10)
+
+Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142). Phần lớn nói về production/tập/gate đã gỡ; giữ để tra lịch
+sử. Mỗi dòng: hiện tượng · chỗ trong code · ghi chú.
 
 ### Lỗi đã biết
 

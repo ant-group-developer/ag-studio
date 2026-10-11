@@ -1,18 +1,15 @@
 import { useAuthToken } from "../auth/use-auth-token";
-import type { StoredTimeline, TimelineV3, YoutubeKit, SeriesPlan, StudioCatalog, StudioResearch, TrendReport, StudioRnd, StudioBranding, StudioBrief, ThumbnailStyle } from "@harness/contracts";
-import type { TimelineIssue } from "@studio/timeline";
+import type { Activity } from "./workspace-client";
 
-const STUDIO_API_URL =
-  (import.meta.env.VITE_STUDIO_API_URL as string | undefined) ??
-  "http://localhost:3100";
+import { buildQuery, request, StudioHttpError } from "./http";
+
+export { StudioHttpError };
 
 // ---------------------------------------------------------------------------
 // Common types
 // ---------------------------------------------------------------------------
 
-export type ProductionStatus = "draft" | "planning" | "waiting_approval" | "producing" | "done" | "failed" | "archived";
 export type TeamRole = "owner" | "producer" | "editor" | "viewer";
-export type EpisodeStatus = "planned" | "producing" | "waiting_approval" | "ready" | "failed" | "cancelled";
 
 export interface Paged<T> {
   items: T[];
@@ -34,7 +31,7 @@ export interface Team {
   name: string;
   role: TeamRole | null;
   memberCount: number;
-  productionCount: number;
+  projectCount: number;
   createdAt: string;
 }
 
@@ -57,15 +54,15 @@ export interface TeamDetail {
   name: string;
   role: TeamRole | null;
   memberCount: number;
-  productionCount: number;
+  projectCount: number;
   createdAt: string;
   updatedAt: string;
 }
 
-/** The AI steps a team skill can apply to (an empty list = every step). */
+/** The steps a team skill was written for (kept on the skill; the agent reads every skill a project turns on). */
 export type TeamSkillStep = "intake" | "web-research" | "trend-report" | "style" | "rnd" | "branding" | "plan-episodes" | "source-survey" | "edit-plan" | "timeline" | "youtube-kit";
 
-/** "Quy chuẩn & skill" of a team: markdown its Claude calls follow. */
+/** "Quy chuẩn & skill" of a team: markdown the agent follows in the projects that turn it on. */
 export interface TeamSkill {
   id: string;
   teamId: string;
@@ -90,354 +87,7 @@ export interface TeamSkillInput {
   position?: number;
 }
 
-export interface Production {
-  id: string;
-  teamId: string;
-  teamName: string;
-  title: string;
-  description: string;
-  goal: string;
-  audience: string;
-  tone: string;
-  notes: string;
-  sources: string[];
-  youtubeChannels: string[];
-  ownChannels: string[];
-  hasRnd: boolean;
-  hasBranding: boolean;
-  /** Series plan 3.2.0: the production has an edit style (a skipped one counts). */
-  hasStyle?: boolean;
-  /** The release of the plan run (`ag-studio-series-plan@3.2.0`…); null before the first run. */
-  planWorkflow?: string | null;
-  waitingGate: "approve-trend-report" | "approve-rnd" | "approve-branding" | "approve-plan" | "approve-style" | null;
-  keywords: string[];
-  episodeTargetSeconds: number | null;
-  maxEpisodes: number | null;
-  aspect: "16:9" | "9:16";
-  language: string;
-  music: { track: string; gainDb: number; ducking: boolean } | null;
-  status: ProductionStatus;
-  runId: string | null;
-  episodeCounts: { total: number; ready: number; producing: number; waitingApproval: number; failed: number };
-  ownerUserId: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ProductionInput {
-  title: string;
-  description?: string;
-  goal?: string;
-  audience?: string;
-  tone?: string;
-  notes?: string;
-  sources: string[];
-  youtubeChannels?: string[];
-  ownChannels?: string[];
-  keywords?: string[];
-  episodeTargetSeconds?: number | null;
-  maxEpisodes?: number | null;
-  aspect?: "16:9" | "9:16";
-  language?: string;
-  music?: { track: string; gainDb: number; ducking: boolean } | null;
-}
-
-export interface ProductionAccess {
-  hasAccess: boolean;
-}
-
-export interface EpisodeSummary {
-  id: string;
-  idx: number;
-  title: string;
-  hook: string;
-  status: EpisodeStatus;
-  currentStage: string | null;
-  progress: number | null;
-  durationSeconds: number | null;
-  thumbnailUrl: string | null;
-  updatedAt: string;
-  /** `whole` (whole videos) or `cut` (shot by shot, phase 5). */
-  editStyle?: "whole" | "cut";
-}
-
-export interface EpisodeDetail extends EpisodeSummary {
-  /** Narration declined for this episode alone (a shot-cut episode). */
-  narrationDeclined?: boolean;
-  plan: unknown; // StudioEpisode
-  run: RunView | null;
-  /** The caller's ag-go scope does not cover the production: no footage, frames or video URLs. */
-  footageHidden?: boolean;
-  /** The run's workflow, `id@version` (`ag-studio-episode-cut@1.0.0`…); null before a run. */
-  workflow?: string | null;
-  youtube: YoutubeKit | null;
-  selectedTitle: number;
-  /** The picture the episode uses (new thumbnails API — see `listThumbnails`/`selectThumbnail`). */
-  selectedThumbnailId: string | null;
-  /** @deprecated superseded by `selectedThumbnailId` + the thumbnails routes; kept only for episodes exported
-   *  before 1.2.0. Not used by the UI any more. */
-  selectedThumbnail: number;
-  /** @deprecated see `selectedThumbnail`. */
-  thumbnails: { url: string; index: number }[];
-  /** `url` shows the file; `downloadUrl` makes the browser save it (Content-Disposition: attachment). */
-  exportFiles: { kind: "mp4" | "thumbnail" | "youtube" | "timeline" | "pack"; url: string; downloadUrl: string; sizeBytes: number; name: string }[];
-  finalVideoUrl: string | null;
-  finalVideoDownloadUrl: string | null;
-  latestRevision: number | null;
-  render: EpisodeRender;
-}
-
-/** The scene selection of a shot-cut episode (`GET …/shots`, viewer with the footage scope). */
-export interface EpisodeShot {
-  sourceId: string;
-  /** `s000-002` = first video, third shot. */
-  shotId: string;
-  /** Seconds in the video. */
-  in: number;
-  out: number;
-  score: number;
-  tags: string[];
-  usable: boolean;
-  note: string;
-  speech: "none" | "talking" | "ambient";
-  /** Signed middle frame (null before the frames are made). */
-  frameUrl: string | null;
-  /** Differs from Claude's selection. */
-  changed: boolean;
-}
-export interface EpisodeShots {
-  state: "pending" | "waiting" | "approved";
-  turnId: string | null;
-  shots: EpisodeShot[];
-}
-export type EpisodeRerunGate = "approve-survey" | "approve-edit-plan";
-
-/** The final render of an episode (phase 3). */
-export interface EpisodeRender {
-  /** Chosen for the current run's render; null: none, the farm job goes out as any machine. */
-  machine: RenderMachine | null;
-  /** What a picker starts on. */
-  defaultMachine: RenderMachine;
-  /** Where Render lại starts: no run yet, only the render, the timeline approved again first, freeze; null: producing. */
-  restartFrom: "start" | "render-final" | "approve-timeline" | "freeze-timeline" | null;
-  /** The farm node the current run's render is pinned to. */
-  node?: RenderNode | null;
-  job: { farmJobId: string; runId: string; machine: RenderMachine | null; node?: RenderNode | null; createdAt: string } | null;
-  /** The farm's view of `job` while the run renders it. */
-  farmStatus: { status: string; progress: number | null } | null;
-}
-
-export interface EpisodePatch {
-  youtube?: YoutubeKit;
-  selectedTitle?: 0 | 1 | 2;
-}
-
-/** A non-2xx answer. `body` is normalised as `{ code, message, ...details }` from the envelope error
- *  (flat, so `body.currentRevision`, `body.missing`, `body.failed` etc. work as before), or the raw
- *  JSON body when the server answers without the envelope. */
-export class StudioHttpError extends Error {
-  constructor(readonly status: number, readonly body: Record<string, unknown> | null) {
-    super(typeof body?.message === "string" ? body.message : `HTTP ${status}`);
-    this.name = "StudioHttpError";
-  }
-}
-
-/** True when `v` looks like `{ data, success, error, requestId, timestamp }`. */
-function isEnvelope(v: unknown): v is { success: boolean; data: unknown; error: unknown; requestId: string; timestamp: string } {
-  if (!v || typeof v !== "object" || Array.isArray(v)) return false;
-  const r = v as Record<string, unknown>;
-  return typeof r.success === "boolean" && "data" in r && "error" in r && typeof r.requestId === "string";
-}
-
-/** Flatten envelope error `{ code, message, details, fieldErrors }` into `{ code, message, ...details, fieldErrors? }`. */
-function flattenEnvelopeError(err: unknown): Record<string, unknown> {
-  if (!err || typeof err !== "object" || Array.isArray(err)) return {};
-  const e = err as Record<string, unknown>;
-  const { code, message, details, fieldErrors } = e;
-  return {
-    ...(code !== undefined ? { code } : {}),
-    ...(message !== undefined ? { message } : {}),
-    ...(details && typeof details === "object" && !Array.isArray(details)
-      ? (details as Record<string, unknown>)
-      : details !== undefined
-        ? { details }
-        : {}),
-    ...(fieldErrors !== undefined ? { fieldErrors } : {}),
-  };
-}
-
-async function request<T>(
-  getAccessToken: () => Promise<string>,
-  method: string,
-  path: string,
-  body?: unknown
-): Promise<T> {
-  const token = await getAccessToken();
-  // FormData (file uploads) must keep the browser's own multipart Content-Type (with its boundary);
-  // everything else goes as JSON.
-  const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
-  const res = await fetch(`${STUDIO_API_URL}${path}`, {
-    method,
-    headers: {
-      ...(isFormData ? {} : { "Content-Type": "application/json" }),
-      Authorization: `Bearer ${token}`,
-    },
-    body: isFormData ? (body as FormData) : body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    let parsed: Record<string, unknown> | null = null;
-    try { parsed = (await res.json()) as Record<string, unknown>; } catch { /* not JSON */ }
-    const normalised = isEnvelope(parsed) && parsed.error
-      ? flattenEnvelopeError(parsed.error)
-      : parsed;
-    throw new StudioHttpError(res.status, normalised);
-  }
-  if (res.status === 204) return undefined as T;
-  const json = await res.json() as unknown;
-  return (isEnvelope(json) ? json.data : json) as T;
-}
-
 // ---------------------------------------------------------------------------
-// Run/Stage views (same shape as GĐ2 for the episode editor)
-// ---------------------------------------------------------------------------
-
-export interface StageView {
-  key: string;
-  executor: string;
-  state: string;
-  attempts: number;
-  is_gate: boolean;
-  reused: boolean;
-  error: string | null;
-  failed_checks: { check_id: string; evidence: Record<string, unknown> }[];
-  outputs: { name: string; type: string; size_bytes: number }[];
-}
-
-export interface RunView {
-  run_id: string;
-  state: string;
-  created_at: string;
-  updated_at: string;
-  cost_usd: number;
-  waiting_gate: string | null;
-  stages: StageView[];
-  latest_revision: number | null;
-}
-
-// ---------------------------------------------------------------------------
-// Editor (timeline)
-// ---------------------------------------------------------------------------
-
-export interface TimelineRevisionView {
-  revision: number;
-  /** v3 for a whole-video episode, v4 for a shot-cut one (an episode keeps the version of its first revision). */
-  data: StoredTimeline;
-  issues: TimelineIssue[];
-  savedAt: string;
-  authorId: string;
-}
-
-export interface RevisionSummary {
-  revision: number;
-  baseRevision: number;
-  authorId: string;
-  label: string | null;
-  createdAt: string;
-}
-
-/** Media a Premiere project is packed with: the 720p analysis proxy, or the originals (download right needed). */
-export type PremiereMedia = "proxy" | "original";
-
-export interface EditorJob {
-  id: string;
-  kind: "render_preview" | "export_premiere";
-  status: "queued" | "running" | "completed" | "failed";
-  progress: number | null;
-  request: Record<string, unknown>;
-  result: Record<string, unknown> | null;
-  error: string | null;
-  createdAt: string;
-  url?: string;
-  urlHidden?: "footage_scope";
-}
-
-// ---------------------------------------------------------------------------
-// Asset media
-// ---------------------------------------------------------------------------
-
-export interface AssetMedia {
-  assetId: string;
-  previewUrl: string | null;
-  previewWidth: number | null;
-  previewHeight: number | null;
-  watermarked: boolean;
-  posterUrl: string | null;
-  keyframes: { url: string; tMs: number }[];
-  contactSheetUrl: string | null;
-  durationMs: number;
-  expiresAt: string;
-}
-
-// ---------------------------------------------------------------------------
-// Thumbnails (ag-studio-episode@1.2.0): clean frames + words drawn by Studio, plus Canva
-// ---------------------------------------------------------------------------
-
-export type ThumbnailKind = "frame" | "suggestion" | "composed" | "upload" | "canva" | "ai";
-
-export interface ThumbnailView {
-  id: string;
-  kind: ThumbnailKind;
-  tS: number | null;
-  assetId: string | null;
-  parentId: string | null;
-  text: string | null;
-  style: ThumbnailStyle | null;
-  width: number;
-  height: number;
-  sizeBytes: number;
-  /** "system" for a render's own frames/suggestions; a user id otherwise. */
-  createdBy: string;
-  createdAt: string;
-  url: string;
-  /** Sets the file to be saved (Content-Disposition: attachment). */
-  downloadUrl: string;
-  /** A person made it: can be deleted. */
-  deletable: boolean;
-  /** Words can be drawn on its clean picture. */
-  drawable: boolean;
-  /** The caller opened a Canva design for this picture. */
-  inCanva: boolean;
-}
-
-export interface ThumbnailList {
-  items: ThumbnailView[];
-  selectedId: string | null;
-  canDraw: boolean;
-  canCutFrames: boolean;
-  framesPending: boolean;
-  framesError: string | null;
-  footageHidden: boolean;
-}
-
-/** `GET /api/canva/connection`: enabled=false hides every Canva control in the UI. */
-export interface CanvaConnection {
-  enabled: boolean;
-  connected: boolean;
-  displayName: string | null;
-}
-
-// ---------------------------------------------------------------------------
-// Client factory
-// ---------------------------------------------------------------------------
-
-function buildQuery(params: Record<string, string | number | undefined | null>): string {
-  const q = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== null) q.set(k, String(v));
-  }
-  const s = q.toString();
-  return s ? `?${s}` : "";
-}
 
 export function createStudioClient(getAccessToken: () => Promise<string>) {
   return {
@@ -495,342 +145,14 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
       return request<TeamMember>(getAccessToken, "PATCH", `/api/teams/${teamId}/members/${userId}`, { role });
     },
 
-    // ---- Productions ----
-    listProductions(params?: { page?: number; pageSize?: number; sortBy?: string; sortOrder?: string; q?: string; teamId?: string; status?: string }): Promise<Paged<Production>> {
-      return request<Paged<Production>>(getAccessToken, "GET", `/api/productions${buildQuery(params ?? {})}`);
-    },
-    listTeamProductions(teamId: string, params?: { page?: number; pageSize?: number; sortBy?: string; sortOrder?: string; q?: string; status?: string }): Promise<Paged<Production>> {
-      return request<Paged<Production>>(getAccessToken, "GET", `/api/teams/${teamId}/productions${buildQuery(params ?? {})}`);
-    },
-    createProduction(teamId: string, data: ProductionInput): Promise<Production> {
-      return request<Production>(getAccessToken, "POST", `/api/teams/${teamId}/productions`, data);
-    },
-    getProduction(id: string): Promise<Production> {
-      return request<Production>(getAccessToken, "GET", `/api/productions/${id}`);
-    },
-    updateProduction(id: string, data: Partial<ProductionInput>): Promise<Production> {
-      return request<Production>(getAccessToken, "PATCH", `/api/productions/${id}`, data);
-    },
-    deleteProduction(id: string): Promise<void> {
-      return request<void>(getAccessToken, "DELETE", `/api/productions/${id}`);
-    },
-    checkProductionAccess(id: string): Promise<ProductionAccess> {
-      return request<ProductionAccess>(getAccessToken, "GET", `/api/productions/${id}/access`);
-    },
-    getProductionCatalog(id: string): Promise<StudioCatalog> {
-      return request<StudioCatalog>(getAccessToken, "GET", `/api/productions/${id}/catalog`);
-    },
-    getAssetMedia(productionId: string, assetId: string): Promise<AssetMedia> {
-      return request<AssetMedia>(getAccessToken, "GET", `/api/productions/${productionId}/assets/${assetId}/media`);
-    },
-
-    // ---- Plan run ----
-    startRun(id: string): Promise<{ runId: string }> {
-      return request(getAccessToken, "POST", `/api/productions/${id}/run`);
-    },
-    getRun(id: string): Promise<RunView> {
-      return request(getAccessToken, "GET", `/api/productions/${id}/run`);
-    },
-    getRunDocument<T = unknown>(id: string, stage: string, name: string): Promise<T> {
-      return request(getAccessToken, "GET", `/api/productions/${id}/run/documents/${stage}/${name}`);
-    },
-    getResearch(id: string): Promise<StudioResearch> {
-      return this.getRunDocument<StudioResearch>(id, "research", "research.json");
-    },
-    getTrendReport(id: string): Promise<TrendReport> {
-      return this.getRunDocument<TrendReport>(id, "trend-report", "trend-report.json");
-    },
-    getSeriesPlan(id: string, stage: "plan-episodes" | "approve-plan" = "plan-episodes"): Promise<SeriesPlan> {
-      return this.getRunDocument<SeriesPlan>(id, stage, "series-plan.json");
-    },
-    submitApprovePlan(id: string, document: SeriesPlan): Promise<{ accepted: true }> {
-      return request(getAccessToken, "POST", `/api/productions/${id}/run/gates/approve-plan`, { document });
-    },
-    getRndDraft(id: string): Promise<StudioRnd | null> {
-      return this.getRunDocument<StudioRnd>(id, "rnd", "rnd.json").catch((e: unknown) => {
-        if (e instanceof StudioHttpError && e.status === 404) return null;
-        throw e;
-      });
-    },
-    getBrandingDraft(id: string): Promise<StudioBranding | null> {
-      return this.getRunDocument<StudioBranding>(id, "branding", "branding.json").catch((e: unknown) => {
-        if (e instanceof StudioHttpError && e.status === 404) return null;
-        throw e;
-      });
-    },
-    getBriefDoc(id: string): Promise<StudioBrief | null> {
-      return this.getRunDocument<StudioBrief>(id, "brief", "brief.json").catch((e: unknown) => {
-        if (e instanceof StudioHttpError && e.status === 404) return null;
-        throw e;
-      });
-    },
-    getProductionRnd(id: string): Promise<{ document: StudioRnd | null; updatedAt: string; updatedBy: string }> {
-      return request(getAccessToken, "GET", `/api/productions/${id}/rnd`);
-    },
-    putProductionRnd(id: string, document: StudioRnd): Promise<{ document: StudioRnd; updatedAt: string; updatedBy: string; warnings: { code: string; message: string }[] }> {
-      return request(getAccessToken, "PUT", `/api/productions/${id}/rnd`, { document });
-    },
-    getProductionBranding(id: string): Promise<{ document: StudioBranding | null; updatedAt: string; updatedBy: string }> {
-      return request(getAccessToken, "GET", `/api/productions/${id}/branding`);
-    },
-    putProductionBranding(id: string, document: StudioBranding): Promise<{ document: StudioBranding; updatedAt: string; updatedBy: string; warnings: { code: string; message: string }[] }> {
-      return request(getAccessToken, "PUT", `/api/productions/${id}/branding`, { document });
-    },
-    submitApproveRnd(id: string, document: StudioRnd): Promise<{ accepted: true }> {
-      return request(getAccessToken, "POST", `/api/productions/${id}/run/gates/approve-rnd`, { document });
-    },
-    submitApproveBranding(id: string, document: StudioBranding): Promise<{ accepted: true }> {
-      return request(getAccessToken, "POST", `/api/productions/${id}/run/gates/approve-branding`, { document });
-    },
-    retryStage(id: string, stage: string): Promise<{ ok: true }> {
-      return request(getAccessToken, "POST", `/api/productions/${id}/run/stages/${stage}/retry`);
-    },
-    resumeStage(id: string, stage: string): Promise<{ runId: string; reused: string[] }> {
-      return request(getAccessToken, "POST", `/api/productions/${id}/run/stages/${stage}/resume`);
-    },
-    /** ⋯ → Chạy lại từ bước…: an episode's ended run again from `stage`. */
-    resumeEpisodeStage(productionId: string, episodeId: string, stage: string): Promise<{ runId: string; reused: string[] }> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/stages/${stage}/resume`);
-    },
-    cancelRun(id: string): Promise<{ ok: true }> {
-      return request(getAccessToken, "POST", `/api/productions/${id}/run/cancel`);
-    },
-
-    // ---- Episodes ----
-    listEpisodes(productionId: string, params?: { page?: number; pageSize?: number; sortBy?: string; sortOrder?: string }): Promise<Paged<EpisodeSummary>> {
-      return request<Paged<EpisodeSummary>>(getAccessToken, "GET", `/api/productions/${productionId}/episodes${buildQuery(params ?? {})}`);
-    },
-    getEpisode(productionId: string, episodeId: string): Promise<EpisodeDetail> {
-      return request<EpisodeDetail>(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}`);
-    },
-    patchEpisode(productionId: string, episodeId: string, data: EpisodePatch): Promise<EpisodeDetail> {
-      return request<EpisodeDetail>(getAccessToken, "PATCH", `/api/productions/${productionId}/episodes/${episodeId}`, data);
-    },
-    /** Render lại; `renderMachine` is the farm machine type of the final render (none: the run's, or any). */
-    rerenderEpisode(productionId: string, episodeId: string, renderMachine?: RenderMachine, renderNodeId?: string | null): Promise<{ runId: string; from: NonNullable<EpisodeRender["restartFrom"]> }> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/rerender`,
-        renderMachine ? { renderMachine, ...(renderNodeId ? { renderNodeId } : {}) } : undefined);
-    },
-    /** 403 `footage_hidden`, 422 `not_cut` for a whole-video episode. */
-    getEpisodeShots(productionId: string, episodeId: string): Promise<EpisodeShots> {
-      return request<EpisodeShots>(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/shots`);
-    },
-    /** A shot-cut episode again from its scene selection or edit plan gate; 409 `gate_not_passed` / `episode_running`. */
-    rerunEpisodeFrom(productionId: string, episodeId: string, stage: EpisodeRerunGate): Promise<{ runId: string; reused: string[] }> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/rerun-from`, { stage });
-    },
-    cancelEpisode(productionId: string, episodeId: string): Promise<void> {
-      return request<void>(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/cancel`);
-    },
-    retryEpisodeStage(productionId: string, episodeId: string, stage: string): Promise<{ ok: true }> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/stages/${stage}/retry`);
-    },
-    getEpisodeDocument<T = unknown>(productionId: string, episodeId: string, stage: string, name: string): Promise<T> {
-      return request<T>(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/documents/${stage}/${name}`);
-    },
-    /** 403 `footage_hidden`, built on demand, stored once per content; the URL saves the zip (no video). */
-    youtubePack(productionId: string, episodeId: string): Promise<{ url: string; name: string; sizeBytes: number }> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/youtube-pack`);
-    },
-
-    // ---- Thumbnails (403 `footage_hidden` outside the caller's footage scope, 503 `thumbnails_unavailable`
-    // without ffmpeg on the API box) ----
-    listThumbnails(productionId: string, episodeId: string): Promise<ThumbnailList> {
-      return request(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails`);
-    },
-    /** Before the render (kit gate): a keyframe of one of the episode's videos, with the idea's words, as the pick. */
-    pickFootageThumbnail(productionId: string, episodeId: string, p: { assetId: string; keyframe: number; text: string }): Promise<ThumbnailView> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/footage`, p);
-    },
-    selectThumbnail(productionId: string, episodeId: string, thumbnailId: string): Promise<ThumbnailList> {
-      return request(getAccessToken, "PUT", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/selected`, { thumbnailId });
-    },
-    /** Half-size JPEG data URL, not kept. */
-    previewThumbnail(productionId: string, episodeId: string, baseId: string, text: string, style: ThumbnailStyle): Promise<{ dataUrl: string }> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/preview`, { baseId, text, style });
-    },
-    composeThumbnail(productionId: string, episodeId: string, baseId: string, text: string, style: ThumbnailStyle): Promise<ThumbnailView> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/compose`, { baseId, text, style });
-    },
-    /** A clean `frame` of the final video at `tS` seconds. */
-    captureThumbnail(productionId: string, episodeId: string, tS: number): Promise<ThumbnailView> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/capture`, { tS });
-    },
-    /** JPEG/PNG/WebP ≤ 10 MB. */
-    uploadThumbnail(productionId: string, episodeId: string, file: File): Promise<ThumbnailView> {
-      const form = new FormData();
-      form.append("file", file);
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/upload`, form);
-    },
-    /** 202 `{started, pending}`: cuts the clean frames of an episode rendered before 1.2.0 in the background. */
-    startCutFrames(productionId: string, episodeId: string): Promise<{ started: boolean; pending: boolean }> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/frames`);
-    },
-    /** Only pictures a person made (422 `not_user_made` otherwise). */
-    deleteThumbnail(productionId: string, episodeId: string, thumbnailId: string): Promise<ThumbnailList> {
-      return request(getAccessToken, "DELETE", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/${thumbnailId}`);
-    },
-
-    // ---- Canva ----
-    getCanvaConnection(): Promise<CanvaConnection> {
-      return request(getAccessToken, "GET", "/api/canva/connection");
-    },
-    /** `returnTo` is a path in the web app; the caller sets `window.location.href = authorizeUrl` next. */
-    authorizeCanva(returnTo: string): Promise<{ authorizeUrl: string }> {
-      return request(getAccessToken, "POST", "/api/canva/authorize", { returnTo });
-    },
-    disconnectCanva(): Promise<{ ok: true }> {
-      return request(getAccessToken, "DELETE", "/api/canva/connection");
-    },
-    /** 409 `canva_not_connected`/`canva_reconnect`, 503 `canva_disabled`, 502 `canva_failed`, 429 `canva_busy`. */
-    openThumbnailInCanva(productionId: string, episodeId: string, thumbnailId: string): Promise<{ designId: string; editUrl: string }> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/${thumbnailId}/canva`);
-    },
-    /** A new `canva` picture, `parentId` = `thumbnailId`. 404 `no_canva_design` if it was never opened. */
-    pullCanvaThumbnail(productionId: string, episodeId: string, thumbnailId: string): Promise<ThumbnailView> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/thumbnails/${thumbnailId}/canva/pull`);
-    },
-
-    // ---- Editor (timeline revisions, preview) ----
-    getTimeline(productionId: string, episodeId: string): Promise<TimelineRevisionView> {
-      return request(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/timeline`);
-    },
-    listRevisions(productionId: string, episodeId: string): Promise<RevisionSummary[]> {
-      return request(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/timeline/revisions`);
-    },
-    /** 409 (`StudioHttpError`, body `{ code: "revision_conflict", currentRevision }`) when `baseRevision` is stale. */
-    saveRevision(productionId: string, episodeId: string, baseRevision: number, data: StoredTimeline, label?: string): Promise<{ revision: number; issues: TimelineIssue[]; approved?: boolean }> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/timeline/revisions`, { baseRevision, data, ...(label ? { label } : {}) });
-    },
-    renderPreview(productionId: string, episodeId: string, revision: number): Promise<EditorJob> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/editor/previews`, { revision });
-    },
-    getEditorJob(productionId: string, episodeId: string, jobId: string): Promise<EditorJob> {
-      return request(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/editor/jobs/${jobId}`);
-    },
-    /** Latest first. */
-    listEditorJobs(productionId: string, episodeId: string, kind: EditorJob["kind"]): Promise<EditorJob[]> {
-      return request(getAccessToken, "GET", `/api/productions/${productionId}/episodes/${episodeId}/editor/jobs?kind=${kind}`);
-    },
-    /** 403 when `original` is asked for by someone who may not download originals. */
-    exportPremiere(productionId: string, episodeId: string, media: PremiereMedia): Promise<EditorJob> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/exports/premiere`, { media });
-    },
-
-    // ---- Call log (403 `footage_scope` outside the caller's ag-go scope) ----
-    listLlmCalls(productionId: string, params?: { episodeId?: string; page?: number; pageSize?: number }): Promise<Paged<LlmCallSummary>> {
-      return request(getAccessToken, "GET", `/api/productions/${productionId}/llm-calls${buildQuery(params ?? {})}`);
-    },
-    getLlmCall(productionId: string, callId: string): Promise<LlmCallDetail> {
-      return request(getAccessToken, "GET", `/api/productions/${productionId}/llm-calls/${callId}`);
-    },
-    listHumanEdits(productionId: string, params?: { page?: number; pageSize?: number }): Promise<Paged<HumanEditView>> {
-      return request(getAccessToken, "GET", `/api/productions/${productionId}/human-edits${buildQuery(params ?? {})}`);
-    },
-
-    // ---- Chat (spec local-chat §3.1) ----
-    createDraft(teamId: string, text: string): Promise<{ productionId: string; user: ChatTurn; assistant: ChatTurn | null }> {
-      return request(getAccessToken, "POST", `/api/teams/${teamId}/drafts`, { text });
-    },
-    getChatThread(productionId: string, episodeId?: string | null): Promise<ChatThreadView> {
-      return request(getAccessToken, "GET", `/api/productions/${productionId}/chat${buildQuery({ episodeId: episodeId ?? undefined })}`);
-    },
-    sendChat(productionId: string, text: string, episodeId?: string | null): Promise<{ user: ChatTurn; assistant: ChatTurn | null }> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/chat`, { text, ...(episodeId ? { episodeId } : {}) });
-    },
-    applyChatProposal(productionId: string, turnId: string): Promise<{ revision?: number }> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/chat/${turnId}/apply`);
-    },
-    startProduction(productionId: string): Promise<{ runId: string }> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/start`);
-    },
-    approveChat(productionId: string, input: { stageKey: string; episodeId?: string | null; turnId?: string | null; renderMachine?: RenderMachine; renderNodeId?: string | null }): Promise<{ stageState: string; runState: string; revision?: number }> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/chat/approve`, {
-        stageKey: input.stageKey, ...(input.episodeId ? { episodeId: input.episodeId } : {}), ...(input.turnId ? { turnId: input.turnId } : {}),
-        ...(input.renderMachine ? { renderMachine: input.renderMachine, ...(input.renderNodeId ? { renderNodeId: input.renderNodeId } : {}) } : {}),
-      });
-    },
-    /** The production's voice sample (or narration declined) and background music (plan optional-audio). */
-    getProductionAudio(productionId: string): Promise<ProductionAudio> {
-      return request(getAccessToken, "GET", `/api/productions/${productionId}/audio`);
-    },
-    /**
-     * A voice sample or music from a link or a file. A voice needs its origin and `confirm` (ADR-0001 item 105).
-     * Errors: 400 `voice_consent` / `url_not_allowed` / `audio_missing`, 413 `audio_too_large`, 422 `audio_invalid`,
-     * 502 `url_fetch_failed`, 503 `audio_disabled`.
-     */
-    giveProductionAudio(productionId: string, kind: AudioKind, input: AudioInput): Promise<ProductionAudio & { resumedEpisodes: string[] }> {
-      const fields: Record<string, string> = {};
-      if (input.origin) fields.origin = input.origin;
-      if (input.confirm !== undefined) fields.confirm = String(input.confirm);
-      if (input.referenceText) fields.referenceText = input.referenceText;
-      if (input.gainDb !== undefined) fields.gainDb = String(input.gainDb);
-      if (input.ducking !== undefined) fields.ducking = String(input.ducking);
-      const path = `/api/productions/${productionId}/audio/${kind}`;
-      if (input.file) {
-        const form = new FormData();
-        for (const [k, v] of Object.entries(fields)) form.append(k, v);
-        form.append("file", input.file);
-        return request(getAccessToken, "POST", path, form);
-      }
-      return request(getAccessToken, "POST", path, { ...fields, url: input.url });
-    },
-    /** "Bỏ lời dẫn": no narration for the production; episodes waiting for a voice run on without lines. */
-    /** A machine voice: the farm reads a sample sentence in a voice designed from the description. */
-    designVoice(productionId: string, design: VoiceDesign): Promise<ProductionAudio> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/audio/voice/design`, design);
-    },
-    declineNarration(productionId: string): Promise<ProductionAudio & { resumedEpisodes: string[] }> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/audio/voice/none`);
-    },
-    /** Narration of one shot-cut episode declined (cut without lines, at once if it waits for a voice), or wanted again. */
-    setEpisodeNarration(productionId: string, episodeId: string, declined: boolean): Promise<{ resumed: boolean }> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/episodes/${episodeId}/narration`, { declined });
-    },
-    removeProductionAudio(productionId: string, kind: AudioKind): Promise<ProductionAudio> {
-      return request(getAccessToken, "DELETE", `/api/productions/${productionId}/audio/${kind}`);
-    },
-    retryChatStep(productionId: string, stageKey: string, episodeId?: string | null): Promise<{ ok: true }> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/chat/retry`, { stageKey, ...(episodeId ? { episodeId } : {}) });
-    },
-    /** A step's document after its approval, and what editing it would do (plan 2026-10-07 step history). */
-    getStepDocument(productionId: string, kind: StepDocKind, episodeId?: string | null): Promise<StepDocView> {
-      const base = `/api/productions/${productionId}${episodeId ? `/episodes/${episodeId}` : ""}`;
-      return request(getAccessToken, "GET", `${base}/steps/${kind}`);
-    },
-    /** Short-lived URLs of frames of the reference videos a style cites (at most 12). */
-    getStyleFrames(productionId: string, frames: { video_id: string; t: number }[]): Promise<{ frames: { video_id: string; t: number; url: string }[] }> {
-      const at = frames.slice(0, 12).map((f) => `${f.video_id}@${f.t}`).join(",");
-      return request(getAccessToken, "GET", `/api/productions/${productionId}/style/frames?at=${encodeURIComponent(at)}`);
-    },
-    /** `reopen` false replaces the version in use; true opens the step again with this version on show. */
-    editStepDocument(productionId: string, kind: StepDocKind, input: { document: unknown; reopen: boolean; episodeId?: string | null }): Promise<StepEditResult> {
-      const base = `/api/productions/${productionId}${input.episodeId ? `/episodes/${input.episodeId}` : ""}`;
-      return request(getAccessToken, "PUT", `${base}/steps/${kind}`, { document: input.document, reopen: input.reopen });
-    },
-    saveManualEdit(productionId: string, input: { stageKey: string; episodeId?: string | null; document: unknown }): Promise<ChatTurn> {
-      return request(getAccessToken, "POST", `/api/productions/${productionId}/chat/manual`, {
-        stageKey: input.stageKey, document: input.document, ...(input.episodeId ? { episodeId: input.episodeId } : {}),
-      });
-    },
-    getOverview(): Promise<{ items: OverviewItem[] }> {
-      return request(getAccessToken, "GET", "/api/studio/overview");
-    },
-    /** The Queue screen: Claude calls and farm jobs of the videos the caller can see. */
+    // ---- Studio-wide ----
+    /** The Queue screen: what runs in the projects the caller can see, Claude slots, the farm's machines. */
     getQueue(): Promise<StudioQueueView> {
       return request(getAccessToken, "GET", "/api/studio/queue");
     },
     /** Farm machines a final render may be pinned to (empty: none listed). */
     listFarmNodes(): Promise<{ nodes: FarmNode[] }> {
       return request(getAccessToken, "GET", "/api/studio/farm/nodes");
-    },
-    /** The chat's event stream (server-sent events), read with fetch so the bearer token goes with it. */
-    async openChatEvents(productionId: string, episodeId: string | undefined, signal: AbortSignal): Promise<Response> {
-      const token = await getAccessToken();
-      const qs = episodeId ? `?episodeId=${encodeURIComponent(episodeId)}` : "";
-      return fetch(`${STUDIO_API_URL}/api/productions/${productionId}/chat/events${qs}`, {
-        headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream" }, signal,
-      });
     },
     getClaudeUsage(): Promise<ClaudeUsage> {
       return request(getAccessToken, "GET", "/api/studio/claude");
@@ -864,25 +186,6 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Chat
-// ---------------------------------------------------------------------------
-
-export type ChatScopeName = "intake" | "gate" | "failed" | "timeline";
-export type ChatAction = "answer" | "revise" | "suggest_approve" | "render" | "export" | "retry";
-
-export interface ChatTurn {
-  id: string; production_id: string; episode_id: string | null; run_id: string | null;
-  scope: ChatScopeName; stage_key: string; turn: number; role: "user" | "assistant" | "system";
-  text: string; mentions: { kind: "folder"; id: string; name: string }[]; context: unknown;
-  proposal: unknown; action: ChatAction | null;
-  status: "pending" | "running" | "done" | "failed" | "rate_limited"; not_before: string | null;
-  problems: { code: string; message: string }[];
-  llm_call_id: string | null; created_by: string | null; applied_at: string | null; created_at: string; updated_at: string;
-}
-
-export interface ChatScopeKey { productionId: string; episodeId: string | null; runId: string | null; stageKey: string; scope: ChatScopeName }
-
 /** Plan 2026-10-08 task 29: a track of the team's music library. */
 export const MUSIC_ORIGINS = ["own", "licensed", "royalty_free"] as const;
 export type MusicOrigin = (typeof MUSIC_ORIGINS)[number];
@@ -908,144 +211,25 @@ export interface MusicTrackInput {
   loopOk: boolean;
 }
 
-export type AudioKind = "voice" | "music";
-export type VoiceOrigin = "synthetic" | "own" | "licensed";
-export type AudioSource = { kind: "link"; url: string } | { kind: "upload"; filename: string } | { kind: "design"; instruct: string };
-/** A machine voice described in OmniVoice's own words. */
-export interface VoiceDesign {
-  gender: "female" | "male";
-  age: "young adult" | "middle-aged" | "elderly";
-  pitch: "low pitch" | "moderate pitch" | "high pitch";
-}
-export interface AudioInput {
-  file?: File; url?: string;
-  origin?: VoiceOrigin; confirm?: boolean; referenceText?: string;
-  gainDb?: number; ducking?: boolean;
-}
-export interface ProductionAudio {
-  voice:
-    | { mode: "none"; decided_at: string }
-    /** The farm is making a machine voice from a description; `error`: it could not. */
-    | { mode: "designing"; instruct: string; requested_at: string; error: string | null }
-    | { mode: "clone"; origin: VoiceOrigin | null; source: AudioSource | null; duration_s: number | null; reference_text: string | null; reference: string; listenUrl: string | null }
-    | null;
-  music: { track: string; gain_db: number; ducking: boolean; source: AudioSource | null; duration_s: number | null; listenUrl: string | null } | null;
-}
-
-export interface ChatThreadView {
-  turns: ChatTurn[];
-  scope: ChatScopeKey | null;
-  /**
-   * Why no message can be sent: `busy`, `nothing_to_chat`, `needs_voice` (a narrated episode waits for a voice sample),
-   * `stage_failed` (a machine step stopped; `problems` say why).
-   */
-  blocked: { code: "busy" | "nothing_to_chat" | "needs_voice" | "stage_failed" | string; stage: string | null; problems?: { code: string; message: string }[] } | null;
-  current: { turnId: string | null; document: unknown; draft: unknown; pendingApply: boolean; problems: { code: string; message: string }[] } | null;
-  /** An episode whose run ended on a failed machine step (its final render): which step and why. The chat goes on. */
-  stopped?: { stage: string; problems: { code: string; message: string }[] } | null;
-  queueAhead: number;
-}
-
-export type StepDocKind = "trend_report" | "rnd" | "branding" | "series_plan" | "youtube_kit" | "survey" | "edit_plan" | "style";
-export interface StepDocView {
-  kind: StepDocKind;
-  gate: string;
-  state: "not_yet" | "waiting" | "approved";
-  document: unknown;
-  /** The document is a version edited after the approval. */
-  inUse: boolean;
-  edit: { inPlace: boolean; inPlaceCode: string | null; reopen: boolean; reopenCode: string | null; replacesEpisodes: boolean; reruns: string[] };
-}
-export interface StepEditResult {
-  mode: "saved" | "reopened";
-  runId?: string;
-  warnings: { code: string; message: string }[];
-  view: StepDocView;
-}
-
-export type OverviewGroup = "waiting_you" | "needs_attention" | "running" | "done";
-export interface OverviewEpisode { id: string; idx: number; title: string; status: EpisodeStatus; step: string | null; group: OverviewGroup }
-export interface OverviewItem { id: string; teamId: string; title: string; updatedAt: string; step: string | null; group: OverviewGroup; episodes: OverviewEpisode[] }
-
 /** `assistantName`: what the web calls the AI ("Claude" until a Studio admin names it). */
 export interface ClaudeUsage { running: number; waiting: number; max: number; source: "settings" | "env"; assistantName?: string }
 
-interface QueueWhere { productionId: string; productionTitle: string; episodeId: string | null; episodeIdx: number | null; episodeTitle: string | null }
-export interface QueueClaudeItem extends QueueWhere { source: "chat" | "stage"; waiting: boolean; step: string; since: string | null }
-export interface QueueRender extends QueueWhere {
-  farmJobId: string; kind: "final" | "preview" | "export_premiere" | "other"; machine: RenderMachine | null;
-  status: "queued" | "leased" | "paused" | string; progress: number | null; progressStage: string | null; attempt: number; createdAt: string;
-  /** Queued for more than 10 minutes: no node took it, maybe none fits. */
-  stuck: boolean;
-  /** The node running it, and the one it was pinned to (`name` null: the farm did not list it). */
-  node?: { id: string; name: string | null } | null;
-  pinned?: { id: string; name: string | null } | null;
-}
+/** Something running in a project, with the project it belongs to (the Queue lists many projects). */
+export interface QueueItem extends Activity { projectId: string; projectName: string; teamId: string }
 export interface StudioQueueView {
-  claude: { running: number; waiting: number; max: number; hidden: number; items: QueueClaudeItem[] };
-  renders: QueueRender[];
-  hiddenRenders: number;
-  /** The farm's machines; null when the hub does not list them. */
-  machines?: FarmNode[] | null;
+  claude: ClaudeUsage;
+  items: QueueItem[];
+  /** Things running in projects the caller cannot see. */
+  hidden: number;
+  /** The farm's machines; null when the farm could not be read. */
+  machines: FarmNode[] | null;
   farm: { ok: true } | { ok: false; error: string };
 }
 
-/** A farm node a final render may be pinned to. */
-export interface RenderNode { id: string; name: string }
 /** A machine of the farm (ag-farm `GET /v1/owner/nodes`). */
 export interface FarmNode {
   id: string; name: string; online: boolean; kinds: string[];
   gpus: { name: string; vram_mb: number; nvenc: boolean }[]; running_jobs: number; last_seen_at: string | null;
-}
-
-/** Kind of farm machine for a final render: ag-farm requirements `{}`, `{nvenc: true}`, `{gpu: true}`. */
-export const RENDER_MACHINES = ["any", "nvenc", "gpu"] as const;
-export type RenderMachine = (typeof RENDER_MACHINES)[number];
-
-// ---------------------------------------------------------------------------
-// Call log
-// ---------------------------------------------------------------------------
-
-export type LlmCallOutcome = "accepted" | "rejected" | "failed" | "rate_limited";
-
-export interface LlmCallSummary {
-  id: string;
-  createdAt: string;
-  episodeId: string | null;
-  episodeIdx: number | null;
-  stageKey: string;
-  skill: string;
-  model: string;
-  round: number;
-  outcome: LlmCallOutcome;
-  problems: { code: string; message: string }[];
-  inputTokens: number | null;
-  outputTokens: number | null;
-  costUsd: number;
-  wallSeconds: number;
-  hasPayload: boolean;
-}
-
-export interface LlmCallDetail extends LlmCallSummary {
-  prompt: string | null;
-  response: string | null;
-  structuredOutput: unknown;
-  warnings: { code: string; message: string }[];
-}
-
-export type HumanEditKind = "trend_report" | "series_plan" | "youtube_kit" | "episode_rerender" | "episode_cancel" | "rnd" | "branding" | "rnd_edit" | "branding_edit" | "thumbnail" | "survey" | "edit_plan";
-
-export interface HumanEditView {
-  id: string;
-  createdAt: string;
-  userId: string;
-  episodeId: string | null;
-  episodeIdx: number | null;
-  kind: HumanEditKind;
-  llmCallId: string | null;
-  changed: boolean;
-  before: unknown;
-  after: unknown;
 }
 
 export type StudioClient = ReturnType<typeof createStudioClient>;

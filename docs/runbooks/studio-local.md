@@ -78,9 +78,8 @@ cd E:/CODE/ag-studio/apps/web; corepack pnpm exec vite --port 3100 --strictPort
 ```
 
 **Kiểm nhanh:** `http://localhost:3738/api/health`, `http://localhost:3010/health`, `http://localhost:3101/api/health`
-trả `ok`; web farm (3011) thấy `local-render`, `local-scan` Online; mở `http://localhost:3100` (giao diện chat), đăng
-nhập Auth0, gõ một câu và `@` trong ô chat: danh sách folder ag-go phải hiện các folder đã quét. Màn cũ ở
-`http://localhost:3100/productions`.
+trả `ok`; web farm (3011) thấy `local-render`, `local-scan` Online; mở `http://localhost:3100`, đăng nhập Auth0,
+mở một dự án, tab Đầu vào → "Thêm project ag-go": danh sách project ag-go phải hiện.
 
 ## 3. Build lại khi code đổi
 
@@ -110,28 +109,40 @@ node --require ts-node/register ../../node_modules/typeorm/cli.js migration:run 
 - Các file `.env` cho chạy trực tiếp đã có sẵn trên máy dev (bảng mục 1); chúng trỏ `localhost`, khác bộ `.env` cho
   Docker (`E:\CODE\ag-studio\.env`, `E:\CODE\ag-farm\.env`, trỏ `host.docker.internal`) do
   `E:\ag-local\setup\config-local.cjs` sinh. Dữ liệu Studio: `E:\ag-local\studio-data` (`studio.db`, `harness/`).
-- **Claude giả hay thật:** `STUDIO_CLAUDE_ARGV` trong `apps/api/.env` trỏ `fixtures/fake-studio-claude.mjs` (không tốn
-  hạn mức). Bỏ dòng đó để dùng `claude` thật bằng `CLAUDE_CODE_OAUTH_TOKEN` (hoặc đăng nhập `claude` → `/login`).
-  Trên Windows, `claude.cmd` của npm được tự dò ra `claude.exe` (`resolveCommand`).
-- **Dọn dữ liệu cũ:** worker tự dọn mỗi `STUDIO_CLEANUP_HOURS` giờ (mặc định 6; `0` = tắt), lần đầu sau 1 phút:
-  workspace của run đã kết thúc (`STUDIO_RETENTION_WORKSPACE_DAYS`, 14), kho giọng (`_VOICE_DAYS`, 90), audio
-  production không còn dùng (`_AUDIO_DAYS`, 7). Log `cleanup swept` ghi số đã xoá từng loại.
-- **Số lượt Claude cùng lúc:** admin Studio chỉnh trên web (màn Hàng đợi, cột phải; lưu vào
-  `studio_settings`, worker áp dụng ngay). Chưa ai lưu thì dùng `STUDIO_CLAUDE_MAX_CONCURRENT` (1–100, mặc định 20).
-  Worker chạy số vòng bằng `claude + 8 (farm) + 2 (cpu)` và tự thêm/bớt khi số này đổi; tin nhắn chat dùng chung số
-  lượt đó và được xếp trước các bước tự chạy. Nhiều lượt hơn thì hạn mức gói hết nhanh hơn, mỗi lượt một tiến trình
-  `claude`.
-- **Kiểu máy render bản cuối:** chọn trên thẻ duyệt YouTube kit hoặc ⋯ → Render bản cuối…: bất kỳ máy nào, máy có
-  NVENC, máy có GPU (requirements của ag-farm). Xem máy `local-render` khai gì (số GPU, `nvenc`) ở web farm 3011 trước khi
-  chọn: không máy nào khớp thì job nằm chờ mãi. `nvenc` của node chỉ nói ffmpeg của nó có encoder NVENC; máy dev
-  (driver < 610) vẫn có thể nhận job "máy có NVENC" rồi render bằng CPU.
-- **Màn Hàng đợi** (`http://localhost:3100/queue`, hoặc bấm chip "Claude"/"Render" ở header): lượt Claude, job farm
-  chưa xong kèm kiểu máy, việc chờ duyệt; admin chỉnh số lượt Claude ở cột phải. Không có danh sách máy (owner API của
-  farm không trả node).
+- **Claude giả hay thật:** `STUDIO_AGENT_ARGV` trong `apps/api/.env` (mảng JSON, ví dụ
+  `["node","E:/CODE/ag-studio/fixtures/fake-studio-agent.mjs"]`) cho agent giả, không tốn hạn mức. Bỏ dòng đó để dùng
+  `claude` thật bằng `CLAUDE_CODE_OAUTH_TOKEN` (hoặc đăng nhập `claude` → `/login`). Trên Windows, `claude.cmd` của npm
+  được tự dò ra `claude.exe` (`resolveCommand`). (`STUDIO_CLAUDE_ARGV` của pipeline cũ không còn ai đọc.)
+- **Dọn dữ liệu cũ:** worker tự dọn mỗi `STUDIO_CLEANUP_HOURS` giờ (mặc định 6; `0` = tắt), lần đầu sau 1 phút: kho giọng
+  lâu không đọc (`STUDIO_RETENTION_VOICE_DAYS`, 90), audio dự án không còn ai trỏ tới (`_AUDIO_DAYS`, 7), thư mục tạm của
+  job/lượt bị bỏ dở (sau 6 giờ), `.trash` của dự án (`_WORKSPACE_DAYS`, 14). Log `cleanup swept` ghi số đã xoá từng loại.
+- **Số lượt Claude cùng lúc:** admin Studio chỉnh trên web (màn Hàng đợi, cột phải; lưu vào `studio_settings`, áp dụng
+  ngay). Chưa ai lưu thì dùng `STUDIO_CLAUDE_MAX_CONCURRENT` (1–100, mặc định 20). Lượt agent và tóm tắt luồng dùng chung số
+  này trên mọi worker; nhiều lượt hơn thì hạn mức gói hết nhanh hơn, mỗi lượt một tiến trình `claude`.
+- **Máy render bản cuối:** thẻ xác nhận `render_final` gửi job với `requirements` mặc định (máy nào cũng được), hoặc ghim
+  `node_id` khi agent điền. Xem máy `local-render` khai gì (GPU, `nvenc`) ở web farm 3011: không máy nào khớp thì job chờ.
+- **Màn Hàng đợi** (`http://localhost:3100/queue`): việc đang chạy của mọi dự án bạn thấy (lượt agent, tool, job kèm máy
+  farm; Dừng), máy của farm; admin chỉnh số lượt Claude và tên AI ở cột phải.
 - Auth0: client SPA phải cho phép `http://localhost:3100` (callback, logout, web origin); client id nằm trong
   `AUTH0_ALLOWED_CLIENT_IDS` của Studio, ag-go và farm.
-- Thumbnail và kiểm loudness dùng ffmpeg ở `STUDIO_FFMPEG_PATH` (máy dev trỏ tới `ffmpeg-static` của
-  ag-render-worker vì ffmpeg không có trên PATH).
+- Chuẩn bị video, timeline, thumbnail và audio người dùng đưa dùng ffmpeg ở `STUDIO_FFMPEG_PATH` (máy dev trỏ tới
+  `ffmpeg-static` của ag-render-worker vì ffmpeg không có trên PATH).
+
+## 4c. Dự án và agent (spec 2026-10-10 agent-workspace)
+
+- Bật agent: `STUDIO_AGENT_TOKEN_SECRET` (≥ 16 ký tự, `openssl rand -hex 32`) trong `apps/api/.env` — API và worker đọc chung
+  file này khi chạy trực tiếp. Không đặt thì worker ghi `warn` và không chạy lượt chat nào của dự án.
+- Worker gọi tool Studio qua API ở `STUDIO_API_INTERNAL_URL` (máy dev: `http://127.0.0.1:3101`, cổng của Studio API chạy
+  trực tiếp). CLI: `claude` trên PATH (hoặc `STUDIO_AGENT_ARGV`), đăng nhập bằng `CLAUDE_CODE_OAUTH_TOKEN` (`claude
+  setup-token`); cấu hình/session của agent ở `STUDIO_AGENT_CLAUDE_CONFIG_DIR` (mặc định `<STUDIO_DATA_ROOT>/agent-claude`),
+  tách khỏi `~/.claude` của người dùng máy.
+- Thư mục dự án: `STUDIO_WORKSPACES_ROOT` (mặc định `<STUDIO_DATA_ROOT>/workspaces`, máy dev
+  `E:\ag-local\studio-data\harness\workspaces`). Phải nằm ngoài mọi repo (CLAUDE.md của thư mục cha sẽ lọt vào agent).
+- Việc nền của dự án (chuẩn bị video, crawl, dựng timeline, render, thumbnail, học phong cách) chạy trong worker,
+  `STUDIO_JOB_LANES` việc cùng lúc (mặc định 2). Việc dùng farm (đọc lời thoại, lời dẫn, render) cần máy `local-render`
+  **online** ở web farm 3011: farm-api tắt lâu thì render worker không tự nối lại — tắt/bật lại `render-worker`.
+- Log Studio API/worker khi bật bằng `local-stack.mjs` không vào `E:/ag-local/dev-run/*.log` (chạy dưới `cmd.exe`); xem
+  trạng thái lượt chat và job trong `studio.db` (`agent_messages`, `project_jobs`) hoặc màn web.
 
 ## 5. Chạy bằng Docker (cách cũ)
 
@@ -140,27 +151,27 @@ ag-go và ag-farm có `docker-compose.yml` riêng; cấu hình sinh bằng `node
 farm|go|studio`, đổi Claude giả/thật bằng `config-local.cjs claude fake|real` rồi tạo lại container api và worker.
 Không chạy song song với chế độ trực tiếp: hai bên dùng chung cổng.
 
-## 4a. Lời dẫn và nhận dạng lời nói trên farm local (tập cắt theo shot)
+## 4a. Lời dẫn và nhận dạng lời nói trên farm local
 
 - `local-render` nhận `studio.tts` và `studio.transcribe` khi `E:\ag-local\dev-run\render.yaml` có hai kind đó và
   `extra.python_bin: 'E:/ag-local/venv/Scripts/python.exe'` (venv có OmniVoice + WhisperX, `engines/python/README.md`),
   và render worker từ 0.6.0 (có handler transcribe; worker-sdk dò Python theo `python_bin`). Kiểm ở web farm 3011: node
   khai `python` và hai kind mới. DB farm cần migration `1600000000000-studio-transcribe` (mục 3: chạy migration hub).
 - **Kho giọng:** `E:\ag-local\studio-data\voice\<sha256>.wav` + bảng `studio_voice_lines`; một câu (cùng chữ, giọng,
-  tốc độ) chỉ đọc một lần cho mọi tập. Không có gì dọn kho này (deferred).
+  tốc độ) chỉ đọc một lần cho mọi video; worker dọn câu lâu không đọc (mục 4).
 - **Contact sheet thiếu nhãn:** khung vẫn được cắt; nhãn `s000-001` trên ảnh cần font (`STUDIO_FONTS_DIR`).
 - Thời gian từng bước đo trên máy dev ghi ở ADR-0001 mục 160 (lần kiểm tay I3 của pha 5).
 
-## 4b. yt-dlp: research dự phòng và học phong cách dựng (series 3.2.0)
+## 4b. yt-dlp: crawl không cần API key, học phong cách dựng
 
-Series `ag-studio-series-plan@3.2.0` dùng yt-dlp cho hai việc (ADR-0001 mục 175–176):
+Worker dùng yt-dlp cho hai việc (ADR-0001 mục 175–176, 186):
 
-- **Research dự phòng:** API YouTube không có khoá hay từ chối một kênh/từ khoá thì Claude (chỉ WebSearch/WebFetch) tìm
-  link YouTube, worker đọc số liệu thật bằng `yt-dlp --dump-json`. Không có yt-dlp: giữ số Claude đọc được, đánh dấu
-  `estimated`.
-- **Học phong cách:** tải ≤3 video của kênh tham khảo ở ≤480p (≤30 phút, ≤300 MB, không live), đo nhịp cắt, giữ ≤48 khung
-  ≤480 px mỗi video, **xoá video ngay trong stage**. Không cookie, không đăng nhập: video YouTube chặn thì bỏ qua và ghi
-  lỗi. Đây là quyết định của người dùng, chấp nhận rủi ro điều khoản YouTube; tắt hẳn bằng `STUDIO_REFERENCE_DOWNLOADS=0`.
+- **Crawl:** tab Nghiên cứu và tool của agent tìm video xu hướng, video top của kênh. Không có `YOUTUBE_API_KEY` thì worker
+  tìm bằng `yt-dlp ytsearchN:` và kênh `/videos` (không tốn hạn mức, ít số liệu hơn). Không có cả hai thì job `research`
+  chờ một worker có.
+- **Học phong cách:** chỉ khi người bấm xác nhận thẻ `reference_download`: tải video mẫu ở ≤480p, đo nhịp cắt, giữ khung và
+  tờ ghép, **xoá video ngay**. Không cookie, không đăng nhập: video YouTube chặn thì bỏ qua và ghi lỗi. Đây là quyết định
+  của người dùng, chấp nhận rủi ro điều khoản YouTube; tắt hẳn bằng `STUDIO_REFERENCE_DOWNLOADS=0`.
 
 Cài trên máy dev Windows (một lần), rồi khai trong `apps/api/.env` (worker chạy trực tiếp đọc file này):
 
@@ -178,26 +189,25 @@ thể cần thêm một JS runtime (Deno) cho YouTube: làm theo thông báo l�
 | Hiện tượng | Nguyên nhân hay gặp | Cách xử lý |
 |---|---|---|
 | Studio API không khởi động, lỗi zod về biến môi trường | `.env` thiếu khoá (Auth0, Account, ag-go, farm, R2 đều bắt buộc) | So `apps/api/.env` với `.env.example` |
-| Báo cáo xu hướng bị bỏ qua, ghi "Không có dữ liệu nghiên cứu: Chưa cấu hình YOUTUBE_API_KEY cho Studio worker" (báo cáo cũ hơn chỉ ghi "Không có dữ liệu nghiên cứu YouTube…"); worker log `warn` "YOUTUBE_API_KEY is not set" lúc khởi động | Khoá chỉ nằm ở `.env` gốc (bộ Docker); worker chạy trực tiếp đọc `apps/api/.env` | Thêm `YOUTUBE_API_KEY` vào `apps/api/.env`, bật lại worker, rồi chạy lại series từ bước `research` (kết quả "bỏ qua" cũ không tự làm lại) |
+| Crawl dùng yt-dlp dù đã có khoá; log khởi động worker `"youtube_api":false` | Khoá chỉ nằm ở `.env` gốc (bộ Docker); worker chạy trực tiếp đọc `apps/api/.env` | Thêm `YOUTUBE_API_KEY` vào `apps/api/.env`, bật lại worker |
 | Worker thoát ngay với `STUDIO_CLAUDE_MAX_CONCURRENT must be…` | Giá trị không phải số nguyên 1–100 | Sửa hoặc bỏ khoá (mặc định 20) |
 | Đăng nhập Auth0 báo callback không hợp lệ | Web không chạy ở `localhost:3100` hoặc tenant chưa cho phép | Chạy web đúng cổng 3100 |
 | Cây folder trống, lỗi CORS khi web gọi ag-go | `CORS_EXTRA_ORIGINS` của ag-go thiếu `http://localhost:3100` | Sửa `ag-go-api/.env`, bật lại ag-go-api |
 | Account API không với tới | Container account dừng | Vẫn vào được, nhưng không ai là admin và tên hiện thiếu |
-| `render-final` treo tới hết deadline | Farm hub hoặc `local-render` không chạy | `local-stack.mjs status`, web farm 3011 |
-| Tập cắt dừng ở lời dẫn, "cần giọng đọc" | Production chưa có giọng mẫu, không có `STUDIO_DEFAULT_VOICE_REFERENCE` | Đưa giọng ở cột phải (link/tải lên) hoặc Bỏ lời dẫn. Link tới máy local (`http://localhost…`) cần `STUDIO_AUDIO_ALLOW_PRIVATE_URLS=true` trong `apps/api/.env` |
+| Job render "Đang chờ máy farm" mãi | Farm hub hoặc `local-render` không chạy, hoặc không máy nào khớp yêu cầu | `local-stack.mjs status`, web farm 3011; quá `STUDIO_FARM_QUEUE_TIMEOUT_MINUTES` thì job tự huỷ và báo vào luồng |
+| Dựng timeline báo thiếu giọng đọc | Dự án chưa chọn giọng (hay chưa chọn "không lời dẫn") | Tab Đầu vào → Giọng và nhạc: chọn một file audio đã tải lên làm giọng (vai producer, khai nguồn gốc), hoặc không lời dẫn |
 | Đưa audio báo 503 `audio_disabled` | API thiếu `STUDIO_FFMPEG_PATH` hoặc `STUDIO_FFPROBE_PATH` | Đặt cả hai trong `apps/api/.env` (máy dev: ffmpeg-static/ffprobe-static của ag-render-worker) rồi bật lại API |
-| Stage Claude chờ lâu, log có `RATE_LIMITED` | Hết hạn mức gói | Đợi; tự thử lại 5→60 phút, không tính là lỗi |
-| Stage Claude lỗi `agent CLI failed to start` | Không tìm thấy `claude` / `claude.exe` | Cài Claude Code, hoặc đặt lại `STUDIO_CLAUDE_ARGV` về Claude giả |
+| Lượt agent chờ lâu, "chờ hạn mức" | Hết hạn mức gói | Đợi; tự thử lại 5→60 phút, không tính là lỗi |
+| Lượt agent lỗi `agent CLI failed to start` | Không tìm thấy `claude` / `claude.exe` | Cài Claude Code, hoặc đặt `STUDIO_AGENT_ARGV` về agent giả |
 | `up` báo "chưa lên sau 180 s" | Dịch vụ lỗi khi khởi động | Xem `E:\ag-local\dev-run\<tên>.log` |
-| Chat hiện "Claude đang trả lời…" mãi | Worker không chạy (vòng chat nằm trong worker) | `local-stack.mjs status`, log `studio-worker` |
-| Chat hiện "Đang chờ lượt" lâu | Đủ số lượt Claude cùng lúc | Chờ, hoặc admin tăng số lượt ở màn Hàng đợi |
-| Render bản cuối "Đang chờ máy phù hợp" mãi | Không node nào khớp kiểu máy đã chọn (vd chọn GPU, máy không có) | Web farm 3011 xem khả năng node; huỷ tập rồi Render lại với "Bất kỳ máy nào" |
-| `render-final` hỏng, job farm `failed` ở `download_composition` với `fetch failed` | `sign_url` của chủ job `studio` trong DB farm trỏ sai: IP máy đã đổi (DHCP), hoặc còn cổng 3100 (chế độ Docker; chạy trực tiếp thì 3100 là web, API ở 3101). `node scripts/local-stack.mjs status` báo khi lệch, `up` tự sửa theo IP LAN hiện tại | `docker exec postgres16 psql -U postgres -d ag_farm -c "UPDATE farm_owners SET sign_url = 'http://<IP máy>:3101/api/farm/sign' WHERE id = 'studio'"`; chuyển lại Docker thì đặt về `:3100` |
+| Chat hiện agent đang làm mãi, không có chữ nào | Worker không chạy, hoặc thiếu `STUDIO_AGENT_TOKEN_SECRET` | `local-stack.mjs status`; log khởi động worker `"agent_turns":true` |
+| Chat hiện "chờ lượt" lâu | Đủ số lượt Claude cùng lúc | Chờ, hoặc admin tăng số lượt ở màn Hàng đợi |
+| Render hỏng, job farm `failed` ở `download_composition` với `fetch failed` | `sign_url` của chủ job `studio` trong DB farm trỏ sai: IP máy đã đổi (DHCP), hoặc còn cổng 3100 (chế độ Docker; chạy trực tiếp thì 3100 là web, API ở 3101). `node scripts/local-stack.mjs status` báo khi lệch, `up` tự sửa theo IP LAN hiện tại | `docker exec postgres16 psql -U postgres -d ag_farm -c "UPDATE farm_owners SET sign_url = 'http://<IP máy>:3101/api/farm/sign' WHERE id = 'studio'"`; chuyển lại Docker thì đặt về `:3100` |
 | Quét video trên ag-go hỏng hàng loạt, job farm `scan.extract` `failed` ở `download` với `fetch failed` | `sign_url` của chủ job `ag-go` trong DB farm còn trỏ cổng 3737 (chế độ Docker); chạy trực tiếp thì ag-go-api ở 3738 | `docker exec postgres16 psql -U postgres -d ag_farm -c "UPDATE farm_owners SET sign_url = 'http://<IP máy>:3738/api/analysis/farm/sign' WHERE id = 'ag-go'"`, rồi quét lại các video hỏng (backfill "Chỉ chưa phân tích") |
-| Màn Hàng đợi "Không đọc được hàng đợi farm" | Farm hub không chạy, hoặc `FARM_OWNER_KEY` sai | `local-stack.mjs status`; log `studio-api` |
+| Màn Hàng đợi "Không đọc được danh sách máy farm" | Farm hub không chạy, hoặc `FARM_OWNER_KEY` sai | `local-stack.mjs status`; log `studio-api` |
 | Kiểm trong khung trình duyệt của app desktop, số liệu không tự cập nhật | Khung đó báo trang luôn ẩn nên không polling | Tải lại trang sau mỗi bước |
-| Tập cắt theo shot treo ở `tts` hoặc `transcribe` | `local-render` không khai `python` hoặc thiếu kind `studio.tts`/`studio.transcribe` | Mục 4a; web farm 3011 xem khả năng node |
+| Chuẩn bị video hay dựng timeline treo ở "đọc lời thoại"/"đọc lời dẫn" | `local-render` không khai `python` hoặc thiếu kind `studio.tts`/`studio.transcribe` | Mục 4a; web farm 3011 xem khả năng node |
 | Job `studio.transcribe` bị hub từ chối "not allowed for owner studio" | DB farm chưa chạy migration `studio-transcribe` | Chạy migration hub (mục 3) |
-| Bước "Phong cách dựng" ghi "Máy chạy Studio không có yt-dlp để tải video mẫu" | Worker không chạy được yt-dlp | Mục 4b; bật lại worker; chạy lại series từ bước Phong cách (⋯ → Chạy lại từ bước…) |
-| Bước "Phong cách dựng" ghi "Không xem được video mẫu nào: … Sign in to confirm you're not a bot" | YouTube chặn IP máy chạy worker | Cập nhật yt-dlp; thử máy/mạng khác. Studio không lách chặn (không cookie) |
-| Báo cáo xu hướng ghi số liệu "ước lượng từ web" | Không có khoá API, và worker không có yt-dlp nên giữ số Claude đọc | Đặt `YOUTUBE_API_KEY` hoặc cài yt-dlp (mục 4b), chạy lại từ Nghiên cứu |
+| Job học phong cách (`style_watch`) chờ mãi | Không worker nào chạy được yt-dlp (hay `STUDIO_REFERENCE_DOWNLOADS=0`) | Mục 4b; bật lại worker |
+| Học phong cách báo "Không xem được video mẫu nào: … Sign in to confirm you're not a bot" | YouTube chặn IP máy chạy worker | Cập nhật yt-dlp; thử máy/mạng khác. Studio không lách chặn (không cookie) |
+| Crawl ở tab Nghiên cứu chờ mãi | Worker không có `YOUTUBE_API_KEY` lẫn yt-dlp | Đặt `YOUTUBE_API_KEY` hoặc cài yt-dlp (mục 4b), bật lại worker |

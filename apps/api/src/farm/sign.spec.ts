@@ -129,9 +129,9 @@ describe('FarmController /farm/sign', () => {
     expect(dbRun).not.toHaveBeenCalled();
   });
 
-  /** studio_farm_jobs lookup -> `job`; production owner lookup -> `owner`. */
+  /** project_farm_jobs lookup -> `job`; project owner lookup -> `owner`. */
   function routeDb(job: unknown, owner: string | null = 'auth0|owner') {
-    dbGet.mockImplementation((sql: string) => (sql.includes('studio_farm_jobs') ? job : { user_id: owner }));
+    dbGet.mockImplementation((sql: string) => (sql.includes('project_farm_jobs') ? job : { user_id: owner }));
   }
 
   it('uses purpose=preview when is_final_render=0', async () => {
@@ -160,10 +160,11 @@ describe('FarmController /farm/sign', () => {
     } as never;
     await controller.sign({ ops: [{ op: 'get', input: 'asset:asset-1' }] }, req);
 
-    // act-as the production owner, never the production id
+    // act-as the project owner, never the project id; a clean 480p rendition preferred
     expect(agGoResolveAssets).toHaveBeenCalledWith('auth0|owner', {
       assetIds: ['asset-1'],
       purpose: 'preview',
+      prefer: { short_edge: 480, clean: true },
     });
   });
 
@@ -222,11 +223,48 @@ describe('FarmController /farm/sign', () => {
     expect(agGoResolveAssets).not.toHaveBeenCalled();
   });
 
-  it('refuses to resolve footage when the production has no owner to act as', async () => {
+  it('refuses to resolve footage when the project has no owner to act as', async () => {
     routeDb(MOCK_JOB, null);
     const req = { ticketClaims: makeTicketClaims(MOCK_JOB.farm_job_id), ip: '127.0.0.1' } as never;
     await expect(controller.sign({ ops: [{ op: 'get', input: 'asset:asset-1' }] }, req)).rejects.toThrow(ForbiddenException);
     expect(agGoResolveAssets).not.toHaveBeenCalled();
+  });
+
+  describe('a project job (agent workspace)', () => {
+    const PROJECT_JOB = {
+      farm_job_id: 'farm-job-p1', production_id: 'proj-1', stage_key: 'prepare', attempt_id: 'job-1',
+      job_type: 'studio.transcribe', is_final_render: 0,
+    };
+    const sqls: string[] = [];
+    function routeProject(job: unknown, owner: string | null = 'auth0|owner') {
+      sqls.length = 0;
+      dbGet.mockImplementation((sql: string) => {
+        sqls.push(sql);
+        if (sql.includes('project_farm_jobs')) return job;
+        return { user_id: owner };
+      });
+    }
+    const item = { assetId: 'asset-1', url: 'https://cdn.example.com/a.mp4', sourceKind: 'preview', watermarked: false, contentType: 'video/mp4', sizeBytes: 1, cacheKey: null, expiresAt: new Date(Date.now() + 3600000).toISOString() };
+
+    it('is found in project_farm_jobs: its own prefixes, the project owner, a clean 480p rendition preferred', async () => {
+      routeProject(PROJECT_JOB);
+      agGoResolveAssets.mockResolvedValue({ items: [item], missing: [] });
+      const req = { ticketClaims: makeTicketClaims(PROJECT_JOB.farm_job_id), ip: '127.0.0.1' } as never;
+      const res = await controller.sign({ ops: [{ op: 'get', input: 'asset:asset-1' }] }, req);
+      expect(agGoResolveAssets).toHaveBeenCalledWith('auth0|owner', { assetIds: ['asset-1'], purpose: 'preview', prefer: { short_edge: 480, clean: true } });
+      expect(sqls.some((s) => s.includes('FROM projects p'))).toBe(true);
+      expect(res.results).toHaveLength(1);
+      // audited under the project, as the farm's "production"
+      expect(dbRun.mock.calls.at(-1)![1].slice(1, 3)).toEqual(['farm-job-p1', 'proj-1']);
+    });
+
+    it('a final render of a project asks for the original, without a preference', async () => {
+      routeProject({ ...PROJECT_JOB, is_final_render: 1 });
+      agGoResolveAssets.mockResolvedValue({ items: [{ ...item, sourceKind: 'original' }], missing: [] });
+      const req = { ticketClaims: makeTicketClaims(PROJECT_JOB.farm_job_id), ip: '127.0.0.1' } as never;
+      await controller.sign({ ops: [{ op: 'get', input: 'asset:asset-1' }] }, req);
+      expect(agGoResolveAssets).toHaveBeenCalledWith('auth0|owner', { assetIds: ['asset-1'], purpose: 'final' });
+    });
   });
 });
 

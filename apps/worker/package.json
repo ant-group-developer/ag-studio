@@ -12,14 +12,10 @@
   "dependencies": {
     "@harness/contracts": "workspace:*",
     "@harness/core": "workspace:*",
-    "@harness/executors": "workspace:*",
-    "@harness/worker": "workspace:*",
     "@ag-farm/owner-client": "link:../../../ag-farm/packages/owner-client",
-    "@ag-farm/protocol": "link:../../../ag-farm/packages/protocol",
     "@aws-sdk/client-s3": "^3.0.0",
     "@aws-sdk/s3-request-presigner": "^3.0.0",
     "@ag-studio/ag-go-client": "workspace:*",
-    "@harness/adapter-agent-cli": "workspace:*",
     "@ag-studio/engine": "workspace:*"
   },
   "devDependencies": {

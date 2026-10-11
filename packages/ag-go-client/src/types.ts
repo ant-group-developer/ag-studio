@@ -58,6 +58,27 @@ export interface AssetMediaResponse {
 export interface ResolveAssetsBody {
   assetIds: string[];
   purpose: "preview" | "final";
+  /**
+   * The rendition wanted when several are servable (spec agent-workspace §P7): a clean one first, then the short edge
+   * nearest `short_edge`. An ag-go without the field ignores it (its `ValidationPipe` only strips unknown fields).
+   */
+  prefer?: { short_edge?: number; clean?: boolean };
+}
+
+/** Query of ag-go `GET /footage/search` (service key + `X-Act-As-User`): the analysed videos the user can reach. */
+export interface SearchFootageQuery {
+  projectIds?: string[];
+  folderIds?: string[];
+  q?: string;
+  /** 1–100, ag-go default 40. */
+  limit?: number;
+  cursor?: string;
+}
+
+export interface SearchFootageResponse {
+  items: (FootageVideo & { score?: number; width?: number | null; height?: number | null; hasAudio?: boolean | null; thumbnailUrl?: string | null })[];
+  nextCursor: string | null;
+  total: number;
 }
 
 export interface ResolvedAssetItem {

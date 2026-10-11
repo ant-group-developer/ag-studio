@@ -16,16 +16,7 @@
     "types": [
       "vite/client",
       "node"
-    ],
-    "baseUrl": ".",
-    "paths": {
-      "@studio/timeline": [
-        "../../packages/core/src/studio/layout.ts"
-      ],
-      "@harness/contracts": [
-        "../../packages/contracts/src/index.ts"
-      ]
-    }
+    ]
   },
   "include": [
     "src"

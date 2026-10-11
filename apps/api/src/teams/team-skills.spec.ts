@@ -67,8 +67,8 @@ describe('team skills routes (real studio.db)', () => {
   });
 
   it('shows one team with the caller role; an admin who is not a member gets role null', () => {
-    const teams = new TeamsService(s.db, s.engine);
-    expect(teams.getTeam('team-1', 'auth0|owner')).toMatchObject({ id: 'team-1', name: 'Team team-1', role: 'owner', memberCount: 1, productionCount: 0 });
+    const teams = new TeamsService(s.db);
+    expect(teams.getTeam('team-1', 'auth0|owner')).toMatchObject({ id: 'team-1', name: 'Team team-1', role: 'owner', memberCount: 1, projectCount: 0 });
     expect(teams.getTeam('team-1', 'auth0|admin').role).toBeNull();
     expect(() => teams.getTeam('missing', 'auth0|owner')).toThrow(NotFoundException);
   });

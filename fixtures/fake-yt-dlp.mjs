@@ -3,6 +3,7 @@
 //   --version                      prints a version
 //   --dump-json … -- <urls>        one JSON line per video; an id starting with "ERR" is refused (on stderr)
 //   --flat-playlist -J … -- <url>  a channel page: its first `--playlist-end` uploads (fake0000001…)
+//   --flat-playlist -J -- ytsearchN:<q>  N (≤ 50) results srch0000001…: odd ones on channel A, even on B, views n×1000
 //   (otherwise) download           writes <dir>/<id>.mp4 with ffmpeg (`--ffmpeg-location`): 2 s black/white scenes, so
 //                                  scene detection finds a cut every 2 s; without ffmpeg, a small dummy file
 // FAKE_YTDLP_DURATION (seconds, default 600) is the duration every video reports.
@@ -26,12 +27,22 @@ if (args.includes("--dump-json")) {
     const id = idOf(url);
     if (id.startsWith("ERR")) { process.stderr.write(`ERROR: [youtube] ${id}: Video unavailable\n`); continue; }
     ok++;
-    process.stdout.write(`${JSON.stringify({
+    const n = /^srch\d{7}$/.test(id) ? Number(id.slice(4)) : 0;
+    process.stdout.write(`${JSON.stringify(n ? {
+      id, title: `Phố cổ ${n}`, channel_id: n % 2 ? "UCsearchchannelA00000000" : "UCsearchchannelB00000000", channel: n % 2 ? "Kênh A" : "Kênh B",
+      upload_date: "20261001", duration: 300 + n, view_count: n * 1000, like_count: n, comment_count: 1, tags: ["phố cổ"],
+    } : {
       id, title: `Fake video ${id}`, channel_id: "UCfakechannel000000000000".slice(0, 24), channel: "Fake Channel",
       upload_date: "20260601", duration, view_count: 12345, like_count: 100, comment_count: 10, tags: ["fake", "travel"],
     })}\n`);
   }
   process.exit(ok ? 0 : 1);
+}
+
+if (args.includes("--flat-playlist") && /^ytsearch(date)?\d+:/.test(urls[0] ?? "")) {
+  const n = Math.min(Number(/^ytsearch(?:date)?(\d+):/.exec(urls[0])[1]), 50);
+  process.stdout.write(JSON.stringify({ id: urls[0], title: urls[0], entries: Array.from({ length: n }, (_, i) => ({ id: `srch${String(i + 1).padStart(7, "0")}` })) }));
+  process.exit(0);
 }
 
 if (args.includes("--flat-playlist")) {

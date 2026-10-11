@@ -1,0 +1,53 @@
+# Runbook: vận hành một dự án trên AG Studio
+
+Một dự án là một kênh YouTube; mỗi video của kênh là một luồng chat với agent. Agent làm việc trong thư mục của dự án
+như trong một repo: đọc, viết tài liệu, gọi tool của Studio. Quy trình chỉ là gợi ý — người dùng chat để làm bước nào,
+quay lại bước nào cũng được; mọi kết quả là file sửa được trực tiếp (tab Tệp) hoặc nhờ agent sửa.
+
+## 1. Tạo dự án
+
+- Trang team → **Dự án mới**: tên, link kênh (nếu có), ngôn ngữ, khung hình (16:9 / 9:16). Cần vai producer.
+- Studio tạo thư mục dự án (`CLAUDE.md`, `context/`, `research/`, `channel/`, `videos/`, `memory/lessons.md`) và luồng
+  **Kênh**. Sửa `CLAUDE.md` (tab Tệp) để nói về kênh, khán giả, giọng văn, điều cấm: mọi luồng chat đều đọc nó.
+- Cài đặt (cột phải): model, skill team dùng cho dự án, tự sửa lỗi file, tự làm tiếp khi việc nền xong, quy trình riêng.
+
+## 2. Đầu vào
+
+- Tab **Đầu vào** → **Thêm project** ag-go: chỉ project mà **chủ dự án** thấy video bên trong (agent và render dùng quyền
+  của chủ dự án). Agent tìm video trong đó bằng `footage_search`.
+- Tài liệu (PDF, markdown, CSV…), ảnh, audio: **Tải lên** → `context/…`. File Word: lưu thành PDF trước.
+- Giọng đọc lời dẫn: tải file giọng mẫu (3–20 giây), bấm **Giọng đọc** ở file đó và khai nguồn gốc (giọng máy / của tôi / có
+  bản quyền) — cần producer. Nhạc nền: bấm **Nhạc nền** ở file nhạc. Không chọn nhạc thì Studio lấy nhạc thư viện theo tâm
+  trạng trong kế hoạch dựng hoặc branding. Không muốn lời dẫn: **Không lời dẫn** (lời thành phụ đề).
+
+## 3. Kênh: nghiên cứu, chiến lược, branding
+
+- Tab **Nghiên cứu**: crawl YouTube (xu hướng, theo chủ đề, kênh top, video top của một kênh). Ước lượng hạn mức API hiện
+  trước khi chạy; kết quả ở `research/<ngày>-<chủ đề>.md`. Agent cũng crawl được (crawl lớn cần người xác nhận thẻ).
+- Chat ở luồng Kênh theo các bước gợi ý (thanh bước trên chat): báo cáo thị trường, chiến lược kênh, phong cách dựng
+  (tuỳ chọn; học từ video mẫu cần bấm xác nhận thẻ tải video), branding (`channel/branding.md`: kiểu chữ trên video, tâm
+  trạng nhạc, kiểu thumbnail). Lỗi file (ví dụ chữ khó đọc) hiện ở bước và ở tab Tệp.
+
+## 4. Một video
+
+1. **Video mới** (thanh trái): nói video về gì; chọn có học từ chat cũ không (bài học chung, hoặc vài luồng cụ thể).
+2. Agent viết brief, tìm và thêm video ag-go, **chuẩn bị** chúng (việc nền: tải bản xem, dò cảnh, khung hình, lời thoại
+   trên farm — thẻ việc hiện máy, tiến độ, đã trôi, còn ≈, Dừng).
+3. Chọn cảnh (`survey.json`), kế hoạch dựng (`edit-plan.json`), dựng timeline, render xem trước. Xem ở tab **Xem trước**.
+   Muốn sửa: nói với agent ("bỏ cảnh 3", "chữ to hơn", "mở đầu nhanh hơn") hoặc sửa file rồi bảo dựng lại.
+4. Gói YouTube (`youtube-kit.md`), thumbnail (`thumbnails/`).
+5. **Bản cuối**: agent đề xuất thẻ "Render bản cuối"; producer bấm Xác nhận (hoặc tự bấm ở tab Xem trước). Xuất Premiere tương tự.
+
+## 5. Khi có sự cố
+
+- Việc nền đứng ở "Farm · đang chờ máy nhận": máy farm offline (xem web farm), hoặc không máy nào nhận loại việc đó. Sau
+  `STUDIO_FARM_QUEUE_TIMEOUT_MINUTES` việc tự dừng và báo vào chat; bước chuẩn bị vẫn giữ cảnh và khung hình, chỉ thiếu lời thoại.
+- Lượt agent chờ hạn mức gói: tin nhắn hiện "chờ hạn mức" tới giờ thử lại. Dừng lượt bằng nút Dừng (thay nút Gửi).
+- Thẻ xác nhận "hết hiệu lực": timeline đã đổi hoặc quá 24 giờ — nhờ agent đề xuất lại.
+- Link xem bản render bị ẩn: quyền ag-go của chính bạn không phủ footage trong bản đó (chia sẻ dự án không mở rộng quyền footage).
+
+## 6. Chi phí và hạn mức
+
+- Mỗi lượt chat là một lượt Claude Code (ghi `llm_calls`, nguồn `claude-agent`); cap chung với số lượt Claude của Studio
+  (màn Hàng đợi). Tự làm tiếp sau việc nền tối đa 3 lượt liên tiếp không có tin người dùng.
+- YouTube Data API: 10 000 đơn vị/ngày; một tìm theo chủ đề ≈ 101 đơn vị mỗi 50 video. Không có khoá thì dùng yt-dlp.

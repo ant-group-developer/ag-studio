@@ -33,7 +33,7 @@ vi.mock("../api/studio-client", async (orig) => ({ ...(await orig<object>()), us
 const { TeamDetailPage } = await import("./TeamDetailPage");
 
 function team(role: TeamDetail["role"]): TeamDetail {
-  return { id: "team-1", name: "Đội Ẩm Thực", role, memberCount: 2, productionCount: 1, createdAt: "2026-09-30T00:00:00Z", updatedAt: "2026-09-30T00:00:00Z" };
+  return { id: "team-1", name: "Đội Ẩm Thực", role, memberCount: 2, projectCount: 1, createdAt: "2026-09-30T00:00:00Z", updatedAt: "2026-09-30T00:00:00Z" };
 }
 
 function skill(over: Partial<TeamSkill> = {}): TeamSkill {

@@ -1,7 +1,5 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
-import { isRunActive } from '@ag-studio/engine';
 import { StudioDbService } from '../db/studio-db.service';
-import { EngineService } from '../studio/engine.service';
 import { TeamRole } from '../auth/roles.decorator';
 
 interface TeamRow {
@@ -27,10 +25,7 @@ export interface Paged<T> {
 
 @Injectable()
 export class TeamsService {
-  constructor(
-    private readonly db: StudioDbService,
-    private readonly engine: EngineService,
-  ) {}
+  constructor(private readonly db: StudioDbService) {}
 
   createTeam(name: string, ownerId: string): { id: string; name: string; createdAt: string; members: { userId: string; role: TeamRole }[] } {
     const id = crypto.randomUUID();
@@ -43,13 +38,13 @@ export class TeamsService {
   }
 
   /** One team with the caller's role (null for an admin who is not a member) and its counts. */
-  getTeam(teamId: string, userId: string): { id: string; name: string; createdAt: string; updatedAt: string; role: TeamRole | null; memberCount: number; productionCount: number } {
+  getTeam(teamId: string, userId: string): { id: string; name: string; createdAt: string; updatedAt: string; role: TeamRole | null; memberCount: number; projectCount: number } {
     const team = this.db.get<TeamRow>('SELECT * FROM teams WHERE id = ?', [teamId]);
     if (!team) throw new NotFoundException(`Team ${teamId} not found`);
     const role = this.db.get<{ role: TeamRole }>('SELECT role FROM team_members WHERE team_id = ? AND user_id = ?', [teamId, userId])?.role ?? null;
     const memberCount = this.db.get<{ n: number }>('SELECT COUNT(*) as n FROM team_members WHERE team_id = ?', [teamId])?.n ?? 0;
-    const productionCount = this.db.get<{ n: number }>("SELECT COUNT(*) as n FROM productions WHERE team_id = ? AND status != 'archived'", [teamId])?.n ?? 0;
-    return { id: team.id, name: team.name, createdAt: team.created_at, updatedAt: team.updated_at, role, memberCount, productionCount };
+    const projectCount = this.db.get<{ n: number }>('SELECT COUNT(*) as n FROM projects WHERE team_id = ? AND archived_at IS NULL', [teamId])?.n ?? 0;
+    return { id: team.id, name: team.name, createdAt: team.created_at, updatedAt: team.updated_at, role, memberCount, projectCount };
   }
 
   updateTeam(teamId: string, name: string): { id: string; name: string; createdAt: string; updatedAt: string } {
@@ -64,15 +59,15 @@ export class TeamsService {
     const existing = this.db.get<TeamRow>('SELECT id FROM teams WHERE id = ?', [teamId]);
     if (!existing) throw new NotFoundException(`Team ${teamId} not found`);
 
-    // 409 team_has_active_runs: a plan run or an episode run of one of its productions is still going
-    const runIds = this.db.all<{ run_id: string }>(
-      `SELECT p.run_id FROM productions p WHERE p.team_id = ? AND p.run_id IS NOT NULL
-       UNION ALL
-       SELECT e.run_id FROM episodes e JOIN productions p ON p.id = e.production_id WHERE p.team_id = ? AND e.run_id IS NOT NULL`,
+    // 409 team_has_active_runs: a job or an agent turn of one of its projects is still going
+    const busy = this.db.get<{ n: number }>(
+      `SELECT (SELECT COUNT(*) FROM project_jobs j JOIN projects p ON p.id = j.project_id WHERE p.team_id = ? AND j.status IN ('queued', 'running'))
+            + (SELECT COUNT(*) FROM agent_messages m JOIN agent_threads t ON t.id = m.thread_id JOIN projects p ON p.id = t.project_id
+                WHERE p.team_id = ? AND m.status IN ('pending', 'running')) AS n`,
       [teamId, teamId],
-    );
-    if (runIds.some(({ run_id }) => isRunActive(this.engine.core, run_id))) {
-      throw new ConflictException({ code: 'team_has_active_runs', message: 'Team has productions with active runs' });
+    )?.n ?? 0;
+    if (busy > 0) {
+      throw new ConflictException({ code: 'team_has_active_runs', message: 'Team has projects with work running' });
     }
 
     this.db.run('DELETE FROM teams WHERE id = ?', [teamId]);
@@ -93,7 +88,7 @@ export class TeamsService {
     userId: string,
     isAdmin: boolean,
     opts: { page?: number; pageSize?: number; sortBy?: string; sortOrder?: 'asc' | 'desc'; q?: string },
-  ): Paged<{ id: string; name: string; createdAt: string; role: TeamRole | null; memberCount: number; productionCount: number }> {
+  ): Paged<{ id: string; name: string; createdAt: string; role: TeamRole | null; memberCount: number; projectCount: number }> {
     const page = Math.max(1, opts.page ?? 1);
     const pageSize = Math.min(100, Math.max(1, opts.pageSize ?? 20));
     const offset = (page - 1) * pageSize;
@@ -130,8 +125,8 @@ export class TeamsService {
         'SELECT COUNT(*) as n FROM team_members WHERE team_id = ?',
         [r.id],
       )?.n ?? 0;
-      const productionCount = this.db.get<{ n: number }>(
-        "SELECT COUNT(*) as n FROM productions WHERE team_id = ? AND status != 'archived'",
+      const projectCount = this.db.get<{ n: number }>(
+        'SELECT COUNT(*) as n FROM projects WHERE team_id = ? AND archived_at IS NULL',
         [r.id],
       )?.n ?? 0;
 
@@ -141,7 +136,7 @@ export class TeamsService {
         createdAt: r.created_at,
         role: member?.role ?? null,
         memberCount,
-        productionCount,
+        projectCount,
       };
     });
 

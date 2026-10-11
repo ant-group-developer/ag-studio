@@ -25,6 +25,39 @@ export interface GetFoldersResponse {
 export interface ResolveAssetsBody {
   assetIds: string[];
   purpose: 'preview' | 'final';
+  /** Mirror of `@ag-studio/ag-go-client`: a clean rendition first, then the short edge nearest; older ag-go ignores it. */
+  prefer?: { short_edge?: number; clean?: boolean };
+}
+
+/** Query of ag-go `GET /footage/search` (mirror of `@ag-studio/ag-go-client`). */
+export interface SearchFootageQuery {
+  projectIds?: string[];
+  folderIds?: string[];
+  q?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface FootageSearchItem {
+  assetId: string;
+  name: string;
+  projectIds?: string[] | null;
+  projectNames?: string[] | null;
+  durationMs: number;
+  width?: number | null;
+  height?: number | null;
+  orientation?: string | null;
+  hasAudio?: boolean | null;
+  hasSpeech?: boolean | null;
+  thumbnailUrl?: string | null;
+  titleVi?: string | null;
+  summaryVi?: string | null;
+}
+
+export interface SearchFootageResponse {
+  items: FootageSearchItem[];
+  nextCursor: string | null;
+  total: number;
 }
 
 export interface ResolvedAssetItem {
@@ -40,6 +73,8 @@ export interface ResolvedAssetItem {
 
 export interface ResolveAssetsResponse {
   items: ResolvedAssetItem[];
+  /** Asset ids ag-go could not serve to this user. */
+  missing?: string[];
 }
 
 export interface AssetMediaResponse {
@@ -128,6 +163,18 @@ export class AgGoClient {
 
   getFolders(actAsUserId: string): Promise<GetFoldersResponse> {
     return this.request<GetFoldersResponse>('GET', '/footage/folders', actAsUserId);
+  }
+
+  /** The analysed videos of ag-go projects (or folders) the user can reach. */
+  searchFootage(actAsUserId: string, query: SearchFootageQuery): Promise<SearchFootageResponse> {
+    const params = new URLSearchParams();
+    if (query.projectIds?.length) params.set('projectIds', query.projectIds.join(','));
+    if (query.folderIds?.length) params.set('folderIds', query.folderIds.join(','));
+    if (query.q) params.set('q', query.q);
+    if (query.limit !== undefined) params.set('limit', String(query.limit));
+    if (query.cursor) params.set('cursor', query.cursor);
+    const qs = params.toString();
+    return this.request<SearchFootageResponse>('GET', `/footage/search${qs ? `?${qs}` : ''}`, actAsUserId);
   }
 
   /** GĐ2 (v3): resolve whole-asset IDs → signed download URLs. */

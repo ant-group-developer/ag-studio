@@ -15,9 +15,9 @@ function makeRun(): Run {
 }
 
 describe("SqliteStateStore", () => {
-  it("migrates once and creates 44 tables", () => {
+  it("migrates once and creates 60 tables", () => {
     const { store, dir } = openTempStore();
-    expect(store.tableNames().sort()).toEqual(["artifact", "attempt", "brand_profile", "canva_connections", "canva_oauth_states", "channel_learned", "channel_package", "channel_sequence", "check_result", "content_item", "content_request", "content_variant", "edit_style", "episode_jobs", "episode_revisions", "episode_thumbnails", "episodes", "event", "external_operation", "human_edits", "lease", "library_item", "llm_calls", "music_track", "production_sources", "productions", "publication_job", "run", "schema_migrations", "sign_audit_log", "source_item", "stage_chat_turns", "stage_run", "studio_agent_sessions", "studio_farm_jobs", "studio_render_choices", "studio_settings", "studio_voice_lines", "team_members", "team_skills", "teams", "thumbnail_canva_designs", "video_metrics", "voice_profile", "youtube_cache"]);
+    expect(store.tableNames().sort()).toEqual(["agent_actions", "agent_messages", "agent_threads", "artifact", "attempt", "brand_profile", "canva_connections", "canva_oauth_states", "channel_learned", "channel_package", "channel_sequence", "check_result", "content_item", "content_request", "content_variant", "edit_style", "episode_jobs", "episode_revisions", "episode_thumbnails", "episodes", "event", "external_operation", "human_edits", "lease", "lesson_proposals", "library_item", "llm_calls", "music_track", "prepared_assets", "production_sources", "productions", "project_farm_jobs", "project_file_versions", "project_jobs", "project_sources", "projects", "publication_job", "run", "schema_migrations", "sign_audit_log", "source_item", "stage_chat_turns", "stage_run", "step_marks", "studio_agent_sessions", "studio_farm_jobs", "studio_render_choices", "studio_settings", "studio_voice_lines", "team_members", "team_skills", "teams", "thread_refs", "thread_summaries", "thumbnail_canva_designs", "video_metrics", "video_revisions", "videos", "voice_profile", "youtube_cache"]);
     expect(store.migrate(MIGRATIONS_DIR)).toEqual([]);
     const again = new SqliteStateStore(join(dir, "state.db"));
     expect(again.migrate(MIGRATIONS_DIR)).toEqual([]);
