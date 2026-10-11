@@ -5,7 +5,7 @@ import { ChevronRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate } from "react-router-dom";
 import { useStudioClient } from "../../api/studio-client";
-import { rememberTeam } from "../../helpers/last-team";
+import { rememberedTeam, rememberTeam } from "../../helpers/last-team";
 import { useAppUserMenu } from "../common/use-app-user-menu";
 import "./workspace.css";
 
@@ -34,13 +34,15 @@ export function WorkspaceShell({ teamId, crumbs = [], actions, children }: {
     ...(teamId ? [{ key: "team-settings", label: <Link to={`/teams/${teamId}`}>{t("ws.shell.teamSettings")}</Link> }] : []),
   ]);
   const items = teams?.items ?? [];
+  // Studio-wide screens (Queue, music) have no team of their own: show the one worked in last
+  const shown = teamId ?? items.find((x) => x.id === rememberedTeam())?.id ?? null;
   return (
     <div className="ws-app">
       <header className="ws-header">
         <Link to="/" className="ws-header__brand"><img src="/favicon.png" alt="" />{t("app.title")}</Link>
         {items.length > 0 ? (
           <Select
-            size="small" variant="borderless" value={teamId ?? null} placeholder={t("ws.shell.pickTeam")} style={{ minWidth: 160 }}
+            size="small" variant="borderless" value={shown} placeholder={t("ws.shell.pickTeam")} style={{ minWidth: 160 }}
             options={items.map((x) => ({ value: x.id, label: x.name }))}
             onChange={(id: string) => { rememberTeam(id); navigate(`/t/${id}`); }}
             aria-label={t("ws.shell.team")}
