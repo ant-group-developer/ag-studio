@@ -1,6 +1,7 @@
 /* AG Studio as an agent workspace (spec 2026-10-10 agent-workspace): header, then
    project nav · chat · side panel (files, inputs, research, settings). Each column scrolls on its own. */
-.ws-app {
+/* the tokens live on the root so drawers, modals and popovers (portals outside .ws-app) read them too */
+:root {
   --ws-bg: #f4f5f7;
   --ws-surface: #ffffff;
   --ws-nav-bg: #f9fafb;
@@ -26,6 +27,8 @@
   --ws-header-h: 56px;
   --ws-nav-w: clamp(240px, 20vw, 300px);
   --ws-aside-w: clamp(360px, 32vw, 560px);
+}
+.ws-app {
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
