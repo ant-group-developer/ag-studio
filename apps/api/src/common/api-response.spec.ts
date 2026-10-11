@@ -167,7 +167,9 @@ describe('ApiExceptionFilter', () => {
     const body = runFilter(upstream);
     expect(statusOf(upstream)).toBe(502);
     expect(body.error.code).toBe('AG_GO_ERROR');
-    expect(body.error.message).toBe('ag-go: Account API request failed');
+    expect(body.error.message).toBe('AG Go: Account API request failed');
+    filter = new ApiExceptionFilter(() => 'Kho Footage');
+    expect(runFilter(upstream).error.message).toBe('Kho Footage: Account API request failed');
     expect(body.error.details).toMatchObject({ upstreamStatus: 503, upstreamCode: 'HTTP_503' });
   });
 

@@ -16,6 +16,7 @@ import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
 import type { EngineService } from '../studio/engine.service';
 import { WorkspaceService } from '../workspace/workspace.service';
 import { AgentTokenGuard } from './agent-token.guard';
+import type { SiteNameService } from '../ag-go/site-name.service';
 import { AgentToolsController } from './agent-tools.controller';
 import { AgentToolsService } from './agent-tools.service';
 import type { ProjectFootageService } from '../workspace/project-footage.service';
@@ -40,7 +41,7 @@ describe('agent tools API (real studio.db)', () => {
       search: async (actAs: string, q: unknown) => { searched.push([actAs, q]); return { items: [], nextCursor: null, total: 0 }; },
       check: async (_actAs: string, ids: string[]) => ({ ok: ids, missing: [] }),
     } as unknown as ProjectFootageService;
-    controller = new AgentToolsController(engine, ws, new AgentToolsService(), footage);
+    controller = new AgentToolsController(engine, ws, new AgentToolsService(), footage, ({ current: () => 'Kho Footage' }) as unknown as SiteNameService);
     insertTeam(s.db, 'team-1', 'auth0|owner');
   });
   afterEach(() => s.close());
@@ -59,6 +60,13 @@ describe('agent tools API (real studio.db)', () => {
     try { fn(); } catch (e) { return ((e as { getResponse?: () => { code?: string } }).getResponse?.() ?? {}).code ?? String(e); }
     return null;
   };
+
+  it("describes the tools and answers with ag-go's own name", async () => {
+    const { token } = turn('viewer');
+    expect(controller.list().tools.find((t) => t.name === 'footage_search')!.description).toContain('các project Kho Footage');
+    const out = await controller.call({ name: 'footage_search', arguments: {} }, (() => { const r = req(token); guard.canActivate(ctx(r)); return r; })());
+    expect(out).toMatchObject({ isError: true, text: expect.stringContaining('chưa có project Kho Footage') });
+  });
 
   it("searches the project's ag-go projects as the project's owner", async () => {
     const { project, token } = turn('viewer');

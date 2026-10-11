@@ -19,6 +19,7 @@ import { EngineService } from '../studio/engine.service';
 import { mapErrors } from '../studio/http-errors';
 import { safeFileName, WORKSPACE_UPLOAD_MAX_BYTES } from './files.controller';
 import { ProjectFootageService } from './project-footage.service';
+import { SiteNameService } from '../ag-go/site-name.service';
 import { WorkspaceService } from './workspace.service';
 import { parseBody } from './zod-body';
 
@@ -63,6 +64,7 @@ export class InputsController {
     private readonly engine: EngineService,
     private readonly workspace: WorkspaceService,
     private readonly footage: ProjectFootageService,
+    private readonly siteName: SiteNameService,
   ) {}
 
   @Get('sources')
@@ -87,12 +89,12 @@ export class InputsController {
       const body = parseBody(AddSchema, raw);
       const project = requireProject(this.engine.db, projectId);
       const owner = projectActAs(this.engine.db, projectId);
-      if (!owner) throw new StudioRunError('invalid', 'dự án chưa có chủ để hỏi ag-go', { code: 'no_owner' });
+      if (!owner) throw new StudioRunError('invalid', `dự án chưa có chủ để hỏi ${this.siteName.current()}`, { code: 'no_owner' });
       const userId = req.authContext!.userId;
       if (body.kind === 'ag_go_project') {
         const seen = await this.footage.search(owner, { projectIds: [body.ref], limit: 1 });
         if (seen.total === 0 && seen.items.length === 0) {
-          throw new StudioRunError('invalid', 'Chủ dự án không thấy video đã phân tích nào trong project ag-go này', { code: 'owner_cannot_access' });
+          throw new StudioRunError('invalid', `Chủ dự án không thấy video đã phân tích nào trong project ${this.siteName.current()} này`, { code: 'owner_cannot_access' });
         }
         const s = addSource(this.engine.db, { projectId, kind: 'ag_go_project', ref: body.ref, mediaType: 'mixed', label: body.label, meta: { videos: seen.total }, addedBy: userId });
         return { source: this.item(projectId, s.id) };
@@ -103,7 +105,7 @@ export class InputsController {
       }
       const { missing } = await this.footage.check(owner, [body.ref]);
       if (missing.length) {
-        throw new StudioRunError('invalid', 'Chủ dự án không dùng được video này trên ag-go (không có quyền hoặc chưa có bản xem)', { code: 'owner_cannot_access' });
+        throw new StudioRunError('invalid', `Chủ dự án không dùng được video này trên ${this.siteName.current()} (không có quyền hoặc chưa có bản xem)`, { code: 'owner_cannot_access' });
       }
       const s = addSource(this.engine.db, {
         projectId, videoId: body.videoId ?? null, kind: 'ag_go_asset', ref: body.ref, mediaType: 'video', label: body.label, meta: body.meta ?? {}, addedBy: userId,
@@ -149,7 +151,7 @@ export class InputsController {
       const ext = extname(name).toLowerCase();
       if (ext === '.docx' || ext === '.doc') throw new UnsupportedMediaTypeException({ code: 'docx_not_supported', message: 'Chưa đọc được file Word: lưu thành PDF rồi tải lên' });
       if (['.mp4', '.mov', '.mkv', '.avi', '.webm'].includes(ext)) {
-        throw new UnsupportedMediaTypeException({ code: 'video_from_ag_go', message: 'Video lấy từ ag-go: tải lên ag-go rồi chọn ở đây' });
+        throw new UnsupportedMediaTypeException({ code: 'video_from_ag_go', message: `Video lấy từ ${this.siteName.current()}: tải lên ${this.siteName.current()} rồi chọn ở đây` });
       }
       const kind = UPLOAD_KINDS.find((k) => k.exts.includes(ext));
       if (!kind) throw new UnsupportedMediaTypeException({ code: 'file_type', message: `Chưa nhận loại file ${ext || '(không đuôi)'}` });
@@ -184,7 +186,7 @@ export class InputsController {
     return mapErrors(async () => {
       requireProject(this.engine.db, projectId);
       const picked = listSources(this.engine.db, projectId).filter((s) => s.kind === 'ag_go_project').map((s) => s.ref);
-      if (agGoProjectId && !picked.includes(agGoProjectId)) throw new StudioRunError('invalid', 'project ag-go này chưa thuộc đầu vào của dự án', { code: 'not_an_input' });
+      if (agGoProjectId && !picked.includes(agGoProjectId)) throw new StudioRunError('invalid', `project ${this.siteName.current()} này chưa thuộc đầu vào của dự án`, { code: 'not_an_input' });
       if (!picked.length) return { items: [], nextCursor: null, total: 0 };
       const n = Math.min(Math.max(Number(limit) || 40, 1), 100);
       const r = await this.footage.search(req.authContext!.userId, {

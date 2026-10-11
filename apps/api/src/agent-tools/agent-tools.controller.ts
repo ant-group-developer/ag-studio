@@ -6,6 +6,7 @@ import { Public } from '../auth/public.decorator';
 import { EngineService } from '../studio/engine.service';
 import { WorkspaceService } from '../workspace/workspace.service';
 import { ProjectFootageService } from '../workspace/project-footage.service';
+import { SiteNameService } from '../ag-go/site-name.service';
 import { parseBody } from '../workspace/zod-body';
 import { AgentTokenGuard } from './agent-token.guard';
 import { AgentToolsService } from './agent-tools.service';
@@ -25,11 +26,12 @@ export class AgentToolsController {
     private readonly workspace: WorkspaceService,
     private readonly tools: AgentToolsService,
     private readonly footage: ProjectFootageService,
+    private readonly siteName: SiteNameService,
   ) {}
 
   @Get('tools')
   list() {
-    return { tools: agentToolList(this.tools.all) };
+    return { tools: agentToolList(this.tools.all, { siteName: this.siteName.current() }) };
   }
 
   /** Body `{name, arguments}`; always 200 with `{text, isError}` — a refusal is something the agent reads. */
@@ -41,6 +43,7 @@ export class AgentToolsController {
     return callAgentTool(this.tools.all, {
       db: this.engine.db, claims: call.claims, message: call.message, thread: call.thread, project: call.project, video: call.video,
       workspaceDir: this.workspace.dir(call.project.id), role: call.role, now: () => new Date().toISOString(), footage: this.footage,
+      siteName: this.siteName.current(),
     }, body.name, body.arguments ?? {});
   }
 }

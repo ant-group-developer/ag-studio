@@ -12,6 +12,7 @@ import type { Request } from 'express';
 import { claimJob, getJob, listMessages } from '@ag-studio/engine';
 import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
 import type { EngineService } from '../studio/engine.service';
+import type { SiteNameService } from '../ag-go/site-name.service';
 import { InputsController } from './inputs.controller';
 import type { ProjectFootageService } from './project-footage.service';
 import { ProjectsController } from './projects.controller';
@@ -49,7 +50,7 @@ describe('inputs (real studio.db)', () => {
     } as unknown as ProjectFootageService;
     projects = new ProjectsController(engine, ws);
     videos = new VideosController(engine, ws);
-    inputs = new InputsController(engine, ws, footage);
+    inputs = new InputsController(engine, ws, footage, ({ current: () => 'Kho Footage' }) as unknown as SiteNameService);
     insertTeam(s.db, 'team-1', OWNER);
     s.engine.db.run("INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES ('team-1', ?, 'editor', ?)", [EDITOR, new Date().toISOString()]);
   });

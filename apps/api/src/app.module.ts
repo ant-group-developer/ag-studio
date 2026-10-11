@@ -12,6 +12,7 @@ import { StudioModule } from './studio/studio.module';
 import { WorkspaceModule } from './workspace/workspace.module';
 import { AgentToolsModule } from './agent-tools/agent-tools.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
+import { SiteNameModule } from './ag-go/site-name.service';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { RequestIdMiddleware } from './common/request-id.middleware';
     }),
     DbModule,
     AuthModule,
+    SiteNameModule,
     TeamsModule,
     FarmModule,
     HealthModule,
