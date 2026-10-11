@@ -11,6 +11,7 @@ import {
   verifyAgentToken, type StudioDb,
 } from "../src/index.js";
 import { world } from "./helpers.js";
+import { listAudit } from "../src/index.js";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const FAKE = join(ROOT, "fixtures", "fake-studio-agent.mjs");
@@ -102,6 +103,13 @@ describe("agent runner (fake CLI, real MCP server)", { timeout: 60_000 }, () => 
     expect(first.append).toContain("Mở đầu dưới 5 giây.");
     expect(existsSync(join(dir, "..", "..", "data", "agent-runs", turn!.id))).toBe(false);
     expect(db.get<{ n: number }>("SELECT COUNT(*) AS n FROM lease WHERE owner LIKE 'agent%'")?.n).toBe(0);
+    // the activity log: the turn, and Claude's own Write (the Studio tool is logged by the API as it is called)
+    const log = listAudit(db, { threadId: thread.id }).items;
+    expect(log.map((r) => [r.kind, r.action, r.outcome])).toEqual([["turn", "turn", "ok"], ["tool", "Write", "ok"]]);
+    expect(log[0]).toMatchObject({ actorKind: "agent", messageId: turn!.id, team: { id: "team-1" }, project: { id: project.id } });
+    expect(log[0]!.details).toMatchObject({ status: "done", changed: expect.arrayContaining(["channel/notes.md"]) });
+    expect(log[1]).toMatchObject({ target: "channel/notes.md" });
+    expect(JSON.stringify(log[1]!.details)).not.toContain("ghi chú");
   });
 
   it("loads the skills as a plugin, tells the agent the playbook, and asks it once to fix a file that does not check out", async () => {

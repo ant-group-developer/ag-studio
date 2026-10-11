@@ -25,7 +25,7 @@
  *   STUDIO_FARM_QUEUE_TIMEOUT_MINUTES a farm job no node takes this long is cancelled and its job says so (default 120)
  *   STUDIO_CLEANUP_HOURS how often the cleanup sweep runs (default 6; 0 = never): unused voice lines, project audio
  *                       nothing points at, scratch folders a crash left, files deleted from projects
- *   STUDIO_RETENTION_WORKSPACE_DAYS / _VOICE_DAYS / _AUDIO_DAYS  how old before the sweep removes them (14 / 90 / 7)
+ *   STUDIO_RETENTION_WORKSPACE_DAYS / _VOICE_DAYS / _AUDIO_DAYS / _AUDIT_DAYS  how old before the sweep removes them (14 / 90 / 7 / 90)
  *   STUDIO_WORKSPACES_ROOT      project workspaces (default <STUDIO_DATA_ROOT>/workspaces; the API must see the same)
  *   STUDIO_JOB_LANES            project jobs run at once (default 2)
  *
@@ -134,6 +134,7 @@ async function main(): Promise<void> {
         workspaceDays: numberEnv("STUDIO_RETENTION_WORKSPACE_DAYS", DEFAULT_RETENTION.workspaceDays),
         voiceDays: numberEnv("STUDIO_RETENTION_VOICE_DAYS", DEFAULT_RETENTION.voiceDays),
         audioGraceDays: numberEnv("STUDIO_RETENTION_AUDIO_DAYS", DEFAULT_RETENTION.audioGraceDays),
+        auditDays: numberEnv("STUDIO_RETENTION_AUDIT_DAYS", DEFAULT_RETENTION.auditDays),
       },
     },
   });

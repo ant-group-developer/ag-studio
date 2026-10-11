@@ -10,6 +10,7 @@ import {
   createJob, createProject, createThread, createVideo, postUserMessage, sweepProjectAudio, sweepScratch, sweepStudioData, sweepTrash, sweepVoiceStore, voicePath,
 } from "../src/index.js";
 import { world } from "./helpers.js";
+import { listAudit, logAudit } from "../src/index.js";
 
 const NOW = new Date("2026-10-07T12:00:00.000Z");
 const DAYS = (n: number) => new Date(NOW.getTime() - n * 86_400_000);
@@ -93,6 +94,9 @@ describe("the cleanup sweep", () => {
     const dir = join(dataRoot, "job-runs", "gone");
     mkdirSync(dir, { recursive: true });
     aged(dir, DAYS(1));
-    expect(await sweepStudioData({ db: s.db, bucket: s.bucket, dataRoot }, { now: NOW })).toEqual({ voiceLines: 0, audioObjects: 0, scratch: 1, trash: 0 });
+    logAudit(s.db, { at: DAYS(91).toISOString(), actorKind: "user", kind: "http", action: "old", outcome: "ok" });
+    logAudit(s.db, { at: DAYS(89).toISOString(), actorKind: "user", kind: "http", action: "kept", outcome: "ok" });
+    expect(await sweepStudioData({ db: s.db, bucket: s.bucket, dataRoot }, { now: NOW })).toEqual({ voiceLines: 0, audioObjects: 0, scratch: 1, trash: 0, auditRows: 1 });
+    expect(listAudit(s.db, {}).items.map((r) => r.action)).toEqual(["kept"]);
   });
 });

@@ -13,6 +13,7 @@ import type { HarnessLogger } from "@harness/core";
 import type { StudioBucket } from "../bucket.js";
 import { acquireClaudeSlot, CHAT_SLOT_LEASE_SECONDS, heartbeatClaudeSlot, idsHoldingSlots, releaseClaudeSlot } from "../claude-slots.js";
 import type { StudioDb } from "../studio-db.js";
+import { logAudit } from "../audit-log.js";
 import { projectSettingsOf } from "@harness/contracts";
 import { projectDir, scanWorkspace } from "../workspace/files.js";
 import { playbookContextLines, playbookStatus, type StepFact } from "../workspace/playbook-status.js";
@@ -258,19 +259,50 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
         logger.warn("agent turn failed", { message_id: messageId, status: out.status, error, stderr: out.stderr.slice(-500) });
         finishTurn(db, messageId, { ...base, status: "failed", error }, now());
       }
+      let changed: string[] = [];
       if (out.status !== "rate_limited") {
-        const { changed } = scanWorkspace(db, { projectId: project.id, dir, author: { kind: "agent", id: message.created_by, messageId }, now: now() });
+        ({ changed } = scanWorkspace(db, { projectId: project.id, dir, author: { kind: "agent", id: message.created_by, messageId }, now: now() }));
         writeHistory(thread.id, dir);
         const fixing = out.status === "done" && message.trigger !== "autofix" && projectSettingsOf(project.settings).auto_fix
           ? askToFix(thread.id, dir, changed, message) : false;
         if (!fixing) queueFollowUp(db, thread.id, now());
       }
+      auditTurn(message, thread.video_id, project, out, Date.now() - started, changed);
     } catch (e) {
       logger.error("agent turn crashed", { message_id: messageId, error: e instanceof Error ? e.message : String(e) });
       finishTurn(db, messageId, { status: "failed", text: getMessage(db, messageId)?.text ?? "", parts: [], error: "Studio gặp lỗi khi chạy lượt này" }, now());
     } finally {
       clearInterval(watch);
       signal?.removeEventListener("abort", onStop);
+    }
+  }
+
+  /**
+   * The turn in the activity log, and each of Claude's own tools it used (Read, Write, Edit, Glob, Grep, Skill; the
+   * Studio tools are logged by the API as they are called): who it acted for, how it ended, time, cost, files changed.
+   */
+  function auditTurn(message: MessageRecord, videoId: string | null, project: { id: string; team_id: string }, out: AgentTurnOutcome, ms: number, changed: string[]) {
+    const where = { teamId: project.team_id, projectId: project.id, videoId, threadId: message.thread_id, messageId: message.id };
+    const r = out.state.result;
+    logAudit(db, {
+      ...where, actorKind: "agent", actorId: message.created_by, kind: "turn", action: "turn", at: now(), durationMs: ms,
+      outcome: out.status === "done" || out.status === "max_turns" || out.status === "cancelled" ? "ok" : "error",
+      summary: out.error ?? (out.status === "done" ? null : out.status), costUsd: r?.cost_usd ?? null,
+      details: {
+        status: out.status, trigger: message.trigger, model: out.state.model ?? null, inputTokens: r?.input_tokens ?? null, outputTokens: r?.output_tokens ?? null,
+        numTurns: r?.num_turns ?? null, changed,
+      },
+    }, (e) => logger.warn("turn not in the activity log", { error: String(e) }));
+    for (const p of out.state.parts) {
+      if (p.kind !== "tool" || p.name.startsWith("mcp__")) continue;
+      const input = (p.input ?? {}) as Record<string, unknown>;
+      const target = ["file_path", "path", "pattern", "skill", "notebook_path"].map((k) => input[k]).find((v) => typeof v === "string") as string | undefined;
+      logAudit(db, {
+        ...where, actorKind: "agent", actorId: message.created_by, kind: "tool", action: p.name, outcome: p.is_error ? "error" : "ok", at: p.started_at,
+        durationMs: p.ended_at ? Date.parse(p.ended_at) - Date.parse(p.started_at) : null, target: target ?? null,
+        summary: p.is_error ? (p.result ?? "").slice(0, 300) : null,
+        details: { input: Object.fromEntries(Object.entries(input).filter(([k]) => !["content", "new_string", "old_string", "edits"].includes(k))) },
+      }, (e) => logger.warn("tool call not in the activity log", { error: String(e) }));
     }
   }
 
