@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { toolInputJsonSchema, VIDEO_STATUSES } from "@harness/contracts";
 import { StudioRunError } from "../errors.js";
+import { DEFAULT_SITE_NAME, withSiteName } from "../site-name.js";
 import type { StudioDb } from "../studio-db.js";
 import { createVideo, listVideos, projectView, requireVideo, updateVideo, type ProjectRecord, type VideoRecord } from "../workspace/project-db.js";
 import { normalizeRelPath, recordFileVersion } from "../workspace/files.js";
@@ -37,6 +38,8 @@ export interface AgentToolContext {
   stepFacts?: (key: string, videoId: string | null) => StepFact | undefined;
   /** ag-go as the API reaches it (search the project's ag-go projects, check a video is usable); absent: no ag-go. */
   footage?: ProjectFootage;
+  /** What people call the footage library (ag-go's `siteName`); default "AG Go". */
+  siteName?: string;
 }
 
 export interface ToolAnswer {
@@ -175,8 +178,12 @@ export function agentTools(extra: AgentTool[] = []): AgentTool[] {
 }
 
 /** The tools as MCP `tools/list` answers them. */
-export function agentToolList(tools: AgentTool[]): { name: string; description: string; inputSchema: Record<string, unknown> }[] {
-  return tools.map((t) => ({ name: t.name, description: t.description, inputSchema: toolInputJsonSchema(t.input) }));
+/** The tools as MCP lists them; `{{site}}` in a description becomes the footage library's name. */
+export function agentToolList(
+  tools: AgentTool[], opts: { siteName?: string } = {},
+): { name: string; description: string; inputSchema: Record<string, unknown> }[] {
+  const site = opts.siteName ?? DEFAULT_SITE_NAME;
+  return tools.map((t) => ({ name: t.name, description: withSiteName(t.description, site), inputSchema: toolInputJsonSchema(t.input) }));
 }
 
 /** `mcp__studio__<name>` for each tool: what `--allowedTools` lists. */

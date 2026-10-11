@@ -43,7 +43,7 @@ import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 import { AgGoClient } from "@ag-studio/ag-go-client";
 import {
-  agentTools, claudeCap, createStudioEngineCore, createStudioWorkerPool, DEFAULT_RETENTION, FarmOwnerClient, ffmpegThumbnailRenderer, ffprobeBeside,
+  agentTools, claudeCap, createSiteNameCache, createStudioEngineCore, createStudioWorkerPool, DEFAULT_RETENTION, fetchAgGoSiteName, FarmOwnerClient, ffmpegThumbnailRenderer, ffprobeBeside,
   httpDownload, mcpToolNames, parseClaudeMaxConcurrent, S3Bucket, StudioDb, studioLogger, ytDlp, type CutMediaDeps,
 } from "@ag-studio/engine";
 import { HARNESS_ROOT } from "@harness/core";
@@ -78,6 +78,9 @@ async function main(): Promise<void> {
   const referenceDownloads = process.env.STUDIO_REFERENCE_DOWNLOADS !== "0";
   const claudeMaxConcurrent = parseClaudeMaxConcurrent(process.env.STUDIO_CLAUDE_MAX_CONCURRENT);
   const agGo = new AgGoClient({ baseUrl: requireEnv("AG_GO_API_URL"), serviceKey: requireEnv("AG_GO_SERVICE_KEY") });
+  // ag-go's own name for itself (its public settings), for job text and the agent's prompt
+  const siteName = createSiteNameCache({ load: () => fetchAgGoSiteName(requireEnv("AG_GO_API_URL")) });
+  void siteName.refresh();
   const media: CutMediaDeps | null = ffmpeg ? {
     ffmpeg,
     ffprobe: process.env.STUDIO_FFPROBE_PATH ?? ffprobeBeside(ffmpeg),
@@ -115,6 +118,7 @@ async function main(): Promise<void> {
     logger,
     dataRoot,
     claudeMaxConcurrent,
+    siteName: () => siteName.current(),
     ...(agent ? { agent } : {}),
     jobs: { workspacesRoot, lanes: numberEnv("STUDIO_JOB_LANES", 2) },
     farmPollMs: Number(process.env.FARM_POLL_MS ?? 5000),

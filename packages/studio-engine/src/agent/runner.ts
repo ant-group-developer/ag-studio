@@ -70,6 +70,8 @@ export interface AgentRunnerOptions {
   /** Summaries of quiet threads and the lessons they propose (`false`: off); the model of that small call. */
   summaries?: false | { model?: string; idleMinutes?: number };
   cap: () => number;
+  /** What people call the footage library (ag-go's `siteName`), told to the agent; default "AG Go". */
+  siteName?: () => string;
   baseEnv?: Record<string, string | undefined>;
   now?: () => string;
   pollMs?: number;
@@ -173,7 +175,7 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
       return await runAgentTurn({
         command: o.claudeCommand, cwd: dir, prompt, model: (JSON.parse(project.settings || "{}") as { model?: string }).model ?? o.model,
         sessionId: thread.claude_session_id, resume: thread.session_started === 1,
-        tools: AGENT_BUILTIN_TOOLS, allowedTools: o.mcpTools(), appendSystemPrompt: agentSystemPrompt(dir, { useLessons: thread.use_lessons !== 0 }),
+        tools: AGENT_BUILTIN_TOOLS, allowedTools: o.mcpTools(), appendSystemPrompt: agentSystemPrompt(dir, { useLessons: thread.use_lessons !== 0, ...(o.siteName ? { siteName: o.siteName() } : {}) }),
         settingsPath: join(turnDir, "settings.json"), mcpConfigPath: join(turnDir, "mcp.json"),
         pluginDirs, maxTurns: o.maxTurns, baseEnv: o.baseEnv ?? process.env, configDir: o.configDir,
         deadlineMs: Math.max(1000, deadline - Date.now()), signal,

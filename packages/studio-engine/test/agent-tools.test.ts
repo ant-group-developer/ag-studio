@@ -39,6 +39,13 @@ describe("agent tools", () => {
     expect(mcpToolNames(agentTools())[0]).toBe("mcp__studio__project_info");
   });
 
+  it("names the footage library as ag-go calls itself in every description, AG Go by default", () => {
+    const named = agentToolList(agentTools(), { siteName: "Kho Footage" });
+    expect(named.filter((t) => /ag-go|\{\{site\}\}/i.test(t.description)).map((t) => t.name)).toEqual([]);
+    expect(named.find((t) => t.name === "footage_search")!.description).toContain("các project Kho Footage của dự án");
+    expect(agentToolList(agentTools()).find((t) => t.name === "inputs_add")!.description).toContain("Thêm video AG Go");
+  });
+
   it("project_info tells the agent about the channel and its videos", async () => {
     const { ctx, tools } = setup();
     const out = JSON.parse((await callAgentTool(tools, ctx, "project_info", {})).text) as { project: { name: string; channelUrl: string }; videos: unknown[] };

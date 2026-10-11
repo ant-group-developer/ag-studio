@@ -6,6 +6,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { normalizeRelPath } from "../workspace/files.js";
+import { DEFAULT_SITE_NAME } from "../site-name.js";
 import type { ProjectRecord, VideoRecord } from "../workspace/project-db.js";
 import type { MessageRecord, ThreadRecord, ThreadRef } from "./threads-db.js";
 
@@ -13,7 +14,9 @@ import type { MessageRecord, ThreadRecord, ThreadRef } from "./threads-db.js";
 export const MAX_CLAUDE_MD_CHARS = 40_000;
 const MAX_IMPORT_DEPTH = 3;
 
-export const STUDIO_RULES = `# Bạn là agent của AG Studio
+/** Studio's rules; `siteName` is what people call the footage library (ag-go's own setting). */
+export function studioRules(siteName: string = DEFAULT_SITE_NAME): string {
+  return `# Bạn là agent của AG Studio
 
 Bạn làm việc trong thư mục dự án của một kênh YouTube (thư mục hiện tại), cùng đội sản xuất video của kênh. Bạn giúp họ
 nghiên cứu, lên ý tưởng, viết tài liệu, chọn cảnh, dựng và hoàn thiện video — bằng cách đọc và ghi file trong dự án và
@@ -38,8 +41,9 @@ gọi các tool \`mcp__studio__*\` của Studio.
 - \`skills/<tên>/SKILL.md\`: skill riêng của dự án. \`.studio/\`: Studio ghi (chỉ đọc): trạng thái, lịch sử các luồng chat.
 
 ## Đầu vào và việc nền
-- Video chỉ đến từ ag-go (người dùng chọn project ag-go ở tab Đầu vào); tài liệu, ảnh, audio họ tải lên \`context/\`.
-  Xem bằng \`inputs_list\`, tìm video trong các project ag-go bằng \`footage_search\`, thêm vào video bằng \`inputs_add\`.
+- Video chỉ đến từ kho video của công ty, tên là "${siteName}" (gọi đúng tên này khi nói với người dùng; họ chọn
+  project ${siteName} ở tab Đầu vào); tài liệu, ảnh, audio họ tải lên \`context/\`. Xem bằng \`inputs_list\`, tìm video
+  trong các project ${siteName} bằng \`footage_search\`, thêm vào video bằng \`inputs_add\`.
 - Trước khi chọn cảnh, video phải được chuẩn bị (\`inputs_prepare\`): Studio tải bản xem, dò cảnh, lấy khung hình, tờ ghép
   và lời thoại vào \`inputs/<asset>/\`; \`videos/<id>/sources/index.json\` liệt kê nguồn của video và mã cảnh (s000-001…).
 - Nghiên cứu YouTube: \`youtube_trending\`, \`youtube_search\`, \`youtube_top_channels\`, \`youtube_channel_top_videos\` ghi
@@ -58,6 +62,9 @@ Render bản cuối, xuất file Premiere, xoá video, crawl lớn, tải video 
 \`propose_action\` để người dùng bấm xác nhận trên giao diện, rồi kết thúc lượt. Việc nhẹ (đọc, ghi tài liệu, dựng timeline,
 render xem trước, thumbnail) bạn tự làm.
 `;
+}
+
+export const STUDIO_RULES = studioRules();
 
 /** `@path` lines of CLAUDE.md replaced by the file they name (inside the workspace only, a few levels deep). */
 export function expandImports(text: string, dir: string, depth = 0, seen = new Set<string>(), skip: ReadonlySet<string> = new Set()): string {
@@ -80,12 +87,12 @@ export function expandImports(text: string, dir: string, depth = 0, seen = new S
 export const LESSONS_PATH = "memory/lessons.md";
 
 /** The appended system prompt: Studio's rules, then the project's CLAUDE.md as it is now (lessons unless declined). */
-export function agentSystemPrompt(dir: string, opts: { useLessons?: boolean } = {}): string {
+export function agentSystemPrompt(dir: string, opts: { useLessons?: boolean; siteName?: string } = {}): string {
   const path = join(dir, "CLAUDE.md");
   const skip = new Set(opts.useLessons === false ? [LESSONS_PATH] : []);
   let claude = existsSync(path) ? expandImports(readFileSync(path, "utf8"), dir, 0, new Set(), skip) : "(dự án chưa có CLAUDE.md)";
   if (claude.length > MAX_CLAUDE_MD_CHARS) claude = `${claude.slice(0, MAX_CLAUDE_MD_CHARS)}\n…(CLAUDE.md dài quá, phần sau bị cắt; đọc file để xem đủ)`;
-  return `${STUDIO_RULES}\n## Hướng dẫn của kênh (CLAUDE.md)\n\n<project_claude_md>\n${claude.trim()}\n</project_claude_md>\n`;
+  return `${studioRules(opts.siteName)}\n## Hướng dẫn của kênh (CLAUDE.md)\n\n<project_claude_md>\n${claude.trim()}\n</project_claude_md>\n`;
 }
 
 export interface TurnPromptInput {

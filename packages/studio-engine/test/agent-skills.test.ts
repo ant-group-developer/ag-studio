@@ -26,6 +26,13 @@ function setup() {
 }
 
 describe("agent skills", () => {
+  it("Studio's own skills do not name the footage library (the prompt does, by ag-go's own name)", () => {
+    for (const name of ["scene-selection", "video-brief", "edit-plan"]) {
+      const file = join(BUILTIN, name, "SKILL.md");
+      if (existsSync(file)) expect(readFileSync(file, "utf8")).not.toMatch(/ag-go/i);
+    }
+  });
+
   it("slugs names for folders", () => {
     expect(skillSlug("Quy chuẩn Thumbnail!")).toBe("quy-chuan-thumbnail");
     expect(skillSlug("Đường phố")).toBe("duong-pho");

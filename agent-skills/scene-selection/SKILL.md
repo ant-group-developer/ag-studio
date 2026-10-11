@@ -1,6 +1,6 @@
 ---
 name: scene-selection
-description: Chọn cảnh cho một video — xem tờ ghép và khung hình của các video ag-go đã chuẩn bị, chấm điểm từng cảnh, ghi videos/<id>/scenes.md và survey.json. Dùng sau khi đầu vào của video đã chuẩn bị xong, trước kế hoạch dựng.
+description: Chọn cảnh cho một video — xem tờ ghép và khung hình của các video nguồn đã chuẩn bị, chấm điểm từng cảnh, ghi videos/<id>/scenes.md và survey.json. Dùng sau khi đầu vào của video đã chuẩn bị xong, trước kế hoạch dựng.
 ---
 
 # Chọn cảnh → `videos/<id>/scenes.md` + `videos/<id>/survey.json`
