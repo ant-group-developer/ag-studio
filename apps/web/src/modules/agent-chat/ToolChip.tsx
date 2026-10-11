@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { AgentPart } from "../../api/workspace-client";
 import { useNow } from "../common/sse";
 import { clock } from "../workspace/time";
-import { toolLabel, toolTarget } from "./labels";
+import { toolKey, toolLabel, toolTarget } from "./labels";
 
 type ToolPart = Extract<AgentPart, { kind: "tool" }>;
 
@@ -20,7 +20,7 @@ export function ToolChip({ part, onOpenFile }: { part: ToolPart; onOpenFile?: ((
   const running = !part.ended_at;
   const now = useNow(1000, running);
   const seconds = ((part.ended_at ? Date.parse(part.ended_at) : now) - Date.parse(part.started_at)) / 1000;
-  const target = toolTarget(part);
+  const target = toolTarget(part, t);
   const icon = running ? <Loader2 size={13} className="ws-spin" aria-hidden /> : part.is_error ? <X size={13} aria-hidden /> : <Check size={13} aria-hidden />;
   const fileTarget = FILE_TOOLS.has(part.name) && target && !part.is_error ? target : null;
   return (
@@ -29,7 +29,7 @@ export function ToolChip({ part, onOpenFile }: { part: ToolPart; onOpenFile?: ((
         <ChevronRight size={13} className="ws-tool__caret" aria-hidden />
         {icon}
         {FILE_TOOLS.has(part.name) ? <FileText size={13} aria-hidden /> : <Wrench size={13} aria-hidden />}
-        <span className="ws-tool__name">{toolLabel(t, part.name)}</span>
+        <span className="ws-tool__name" title={toolKey(part.name)}>{toolLabel(t, part.name)}</span>
         {target ? <span className="ws-tool__target" title={target}>{target}</span> : null}
         <span className="ws-tool__time">{Number.isFinite(seconds) ? clock(seconds) : ""}</span>
       </button>
