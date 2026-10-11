@@ -31,6 +31,7 @@ const ws = {
   removeSource: vi.fn().mockResolvedValue(undefined),
   uploadSource: vi.fn(),
   searchFootage: vi.fn(),
+  getFootageFacets: vi.fn(),
   prepareInputs: vi.fn().mockResolvedValue({ assets: {} }),
   cancelJob: vi.fn().mockResolvedValue(job({ cancelRequested: true })),
 };
@@ -38,6 +39,16 @@ const agGo = {
   getProjects: vi.fn().mockResolvedValue({ items: [{ id: "agp-2", name: "Ninh Bình mùa lúa", folderPath: "Miền Bắc/Ninh Bình", videoCount: 12, imageCount: 3, mediaCount: 15 }], page: 1, pageSize: 30, total: 1, totalPages: 1 }),
   getProjectMedia: vi.fn(),
   getFolders: vi.fn(),
+  getCategories: vi.fn().mockResolvedValue([{ id: "cat-1", name: "Du lịch" }, { id: "cat-2", name: "Ẩm thực" }]),
+  getTags: vi.fn().mockResolvedValue([{ id: "tag-1", name: "lúa" }]),
+  getFolderTree: vi.fn().mockResolvedValue([{ id: "f-1", parentId: null, name: "Ninh Bình", pathText: "Miền Bắc/Ninh Bình", depth: 1 }]),
+  getCountries: vi.fn().mockResolvedValue([{ id: "vn", name: "Việt Nam" }]),
+  getProvinces: vi.fn().mockResolvedValue([{ id: "nb", countryId: "vn", name: "Ninh Bình" }]),
+  getProjectOwners: vi.fn().mockResolvedValue([{ id: "u-1", projectCount: 4, user: { id: "u-1", name: "Lan" } }]),
+};
+const facets = {
+  projects: [{ value: "agp-1", label: "Ninh Bình", count: 2 }], categories: [], provinces: [], authors: [], resolutions: [{ value: "4k", count: 1 }],
+  orientations: [{ value: "landscape", count: 2 }], timesOfDay: [], genres: [], tags: [{ value: "sông", count: 2 }, { value: "chùa", count: 1 }],
 };
 vi.mock("../../api/workspace-client", async (orig) => ({ ...(await orig<object>()), useWorkspaceClient: () => ws }));
 vi.mock("../../api/ag-go-client", async (orig) => ({ ...(await orig<object>()), useAgGoClient: () => agGo }));
@@ -55,10 +66,12 @@ function mount(videoId?: string, onOpenFile = vi.fn()) {
   return onOpenFile;
 }
 
-describe("Inputs tab", { timeout: 20_000 }, () => {
+describe("Inputs tab", { timeout: 40_000 }, () => {
   beforeAll(async () => { await i18n.changeLanguage("vi"); });
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
+    ws.getFootageFacets.mockResolvedValue(facets);
     ws.listSources.mockResolvedValue({ sources: [
       src({ kind: "ag_go_project", ref: "agp-1", mediaType: "mixed", label: "Ninh Bình", meta: { videos: 42 } }),
       src({ kind: "ag_go_asset", ref: A1, videoId: "v1", mediaType: "video", label: "Hoa Lư 03.mp4", meta: { durationMs: 72_400 },
@@ -82,7 +95,7 @@ describe("Inputs tab", { timeout: 20_000 }, () => {
 
   it("lists the ag-go projects, this video's ag-go videos with their preparation, and uploads", async () => {
     const open = mount("v1");
-    const footage = await screen.findByRole("region", { name: "Video ag-go của video này" });
+    const footage = await screen.findByRole("region", { name: "Video AG Go của video này" });
     expect(footage).toHaveTextContent("Hoa Lư 03.mp4");
     expect(footage).toHaveTextContent("1:12 · 12 cảnh · có lời thoại");
     fireEvent.click(within(footage).getByRole("button", { name: "Mở" }));
@@ -90,7 +103,7 @@ describe("Inputs tab", { timeout: 20_000 }, () => {
     expect(footage).toHaveTextContent("ag-go không trả được video");
     fireEvent.click(within(footage).getByRole("button", { name: "Thử lại" }));
     await waitFor(() => expect(ws.prepareInputs).toHaveBeenCalledWith("p1", [A2], false));
-    expect(screen.getByRole("region", { name: "Project ag-go" })).toHaveTextContent("Ninh Bình42 video");
+    expect(screen.getByRole("region", { name: "Project AG Go" })).toHaveTextContent("Ninh Bình42 video");
     fireEvent.click(within(screen.getByRole("region", { name: "Tài liệu, ảnh, audio" })).getByRole("button", { name: "Ghi chú.md" }));
     expect(open).toHaveBeenCalledWith("context/uploads/Ghi chú.md");
   });
@@ -99,12 +112,53 @@ describe("Inputs tab", { timeout: 20_000 }, () => {
     ws.addSource.mockRejectedValueOnce(new StudioHttpError(422, { message: "x", code: "owner_cannot_access" }));
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "Thêm project" }));
-    const dialog = await screen.findByRole("dialog", { name: "Chọn project ag-go" });
+    const dialog = await screen.findByRole("dialog", { name: "Chọn project AG Go" });
     expect(await within(dialog).findByText("Ninh Bình mùa lúa")).toBeInTheDocument();
-    expect(dialog).toHaveTextContent("Miền Bắc/Ninh Bình · 12 video · 3 ảnh");
+    expect(dialog).toHaveTextContent("Miền Bắc/Ninh Bình");
+    expect(dialog).toHaveTextContent("12 video · 3 ảnh");
     fireEvent.click(within(dialog).getByRole("button", { name: "Thêm" }));
     await waitFor(() => expect(ws.addSource).toHaveBeenCalledWith("p1", { kind: "ag_go_project", ref: "agp-2", label: "Ninh Bình mùa lúa" }));
-    expect(await screen.findByText("Chủ dự án không thấy video nào trong project ag-go này")).toBeInTheDocument();
+    expect(await screen.findByText("Chủ dự án không thấy video nào trong project AG Go này")).toBeInTheDocument();
+  });
+
+  it("filters, sorts and pages ag-go projects as ag-go does; a grid shows the same projects", async () => {
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Thêm project" }));
+    const dialog = await screen.findByRole("dialog", { name: "Chọn project AG Go" });
+    await within(dialog).findByText("Ninh Bình mùa lúa");
+    expect(agGo.getProjects).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, pageSize: 20, sortBy: "updatedAt", sortOrder: "desc" }));
+    fireEvent.click(await within(dialog).findByText("Du lịch"));
+    await waitFor(() => expect(agGo.getProjects).toHaveBeenLastCalledWith(expect.objectContaining({ categoryIds: ["cat-1"], page: 1 })));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Giảm dần" }));
+    await waitFor(() => expect(agGo.getProjects).toHaveBeenLastCalledWith(expect.objectContaining({ sortOrder: "asc" })));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Xoá lọc" }));
+    await waitFor(() => expect(agGo.getProjects).toHaveBeenLastCalledWith(expect.objectContaining({ categoryIds: [] })));
+    fireEvent.click(within(dialog).getByText("Lưới"));
+    expect(within(dialog).queryByRole("table")).toBeNull();
+    expect(within(dialog).getByText("Ninh Bình mùa lúa")).toBeInTheDocument();
+    expect(localStorage.getItem("studio.picker.projects.viewMode")).toBe("grid");
+  });
+
+  it("filters the video picker with ag-go's facets and keeps the tick order across the table and the grid", async () => {
+    ws.searchFootage.mockResolvedValue({ total: 2, nextCursor: null, items: [
+      { assetId: "a-3", name: "Bái Đính.mp4", durationMs: 30_000, prepared: { state: "not_prepared" } },
+      { assetId: "a-4", name: "Tam Cốc.mp4", durationMs: 45_000, prepared: { state: "not_prepared" } },
+    ] });
+    mount("v1");
+    fireEvent.click(await screen.findByRole("button", { name: "Chọn video" }));
+    const dialog = await screen.findByRole("dialog", { name: "Chọn video AG Go cho video này" });
+    await waitFor(() => expect(ws.searchFootage).toHaveBeenLastCalledWith("p1", { usability: "usable", sortBy: "relevance", sortOrder: "desc", page: 1, limit: 40 }));
+    expect(ws.getFootageFacets).toHaveBeenLastCalledWith("p1", { usability: "usable" });
+    fireEvent.click(await within(dialog).findByLabelText("Tam Cốc.mp4"));
+    fireEvent.click(within(dialog).getByText("Lưới"));
+    fireEvent.click(within(dialog).getByLabelText("Bái Đính.mp4"));
+    expect(dialog).toHaveTextContent("Thứ tự dùng: Tam Cốc.mp4, Bái Đính.mp4");
+    fireEvent.click(within(dialog).getByText("Tag"));
+    const tags = await within(dialog).findByRole("group", { name: "Tag" });
+    expect(tags).toHaveTextContent("sông2");
+    fireEvent.click(within(tags).getByText("sông"));
+    await waitFor(() => expect(ws.searchFootage).toHaveBeenLastCalledWith("p1", expect.objectContaining({ tags: ["sông"], page: 1 })));
+    expect(ws.getFootageFacets).toHaveBeenLastCalledWith("p1", { usability: "usable", tags: ["sông"] });
   });
 
   it("picks ag-go videos for the video in the order ticked, adds and prepares them", async () => {
@@ -115,9 +169,9 @@ describe("Inputs tab", { timeout: 20_000 }, () => {
     ws.addSource.mockResolvedValue({ source: src({}) });
     mount("v1");
     fireEvent.click(await screen.findByRole("button", { name: "Chọn video" }));
-    const dialog = await screen.findByRole("dialog", { name: "Chọn video ag-go cho video này" });
-    fireEvent.click(await within(dialog).findByRole("checkbox", { name: "Tam Cốc.mp4" }));
-    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Bái Đính.mp4" }));
+    const dialog = await screen.findByRole("dialog", { name: "Chọn video AG Go cho video này" });
+    fireEvent.click(await within(dialog).findByLabelText("Tam Cốc.mp4"));
+    fireEvent.click(within(dialog).getByLabelText("Bái Đính.mp4"));
     expect(dialog).toHaveTextContent("Thứ tự dùng: Tam Cốc.mp4, Bái Đính.mp4");
     fireEvent.click(within(dialog).getByRole("button", { name: "Thêm và chuẩn bị 2 video" }));
     await waitFor(() => expect(ws.addSource).toHaveBeenCalledTimes(2));

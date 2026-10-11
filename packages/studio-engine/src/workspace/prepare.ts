@@ -21,6 +21,7 @@ import { CUT_SCENE, CUT_TRANSCRIBE_MODEL, type ResolvedFootage } from "../media-
 import { detectCuts, extractAudio16k, grabFrame, probeMedia, tileSheet, type MediaFacts } from "../cut-ffmpeg.js";
 import { cleanTranscribeManifest } from "../transcript-clean.js";
 import type { StudioDb } from "../studio-db.js";
+import { DEFAULT_SITE_NAME } from "../site-name.js";
 import { ackFarmJob, JobStopped, runFarmStep, type ProjectFarm } from "./farm.js";
 import type { JobContext, JobOutcome } from "./job-runner.js";
 import type { JobRecord } from "./jobs-db.js";
@@ -40,6 +41,8 @@ export interface PrepareDeps {
   download(url: string, dest: string, signal: AbortSignal, onBytes: (received: number, total: number | null) => void): Promise<void>;
   /** The farm reads what is said; without it there is no transcript (README says so). */
   farm?: { client: ProjectFarm; bucket: StudioBucket; pollMs?: number; queueTimeoutMs?: number };
+  /** What people call the footage library (ag-go's `siteName`), for job text and README; default "AG Go". */
+  siteName?: () => string;
 }
 
 /** `request` of a `prepare_asset` job. */
@@ -117,15 +120,16 @@ export function prepareHandler(d: PrepareDeps): (job: JobRecord, ctx: JobContext
 export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobContext): Promise<JobOutcome> {
   const req = JSON.parse(job.request) as PrepareRequest;
   const assetId = req.asset_id;
-  if (!ASSET_ID.test(assetId)) throw new Error(`id video ag-go không hợp lệ: ${assetId}`);
+  const site = d.siteName?.() ?? DEFAULT_SITE_NAME;
+  if (!ASSET_ID.test(assetId)) throw new Error(`id video ${site} không hợp lệ: ${assetId}`);
   const actAs = projectActAs(d.db, job.project_id);
-  if (!actAs) throw new Error("dự án chưa có chủ để hỏi ag-go");
+  if (!actAs) throw new Error(`dự án chưa có chủ để hỏi ${site}`);
   if (req.duration_s) ctx.setUnits(req.duration_s);
 
-  ctx.report({ phase: "Lấy link video từ ag-go", progress: at("resolve", 0) });
+  ctx.report({ phase: `Lấy link video từ ${site}`, progress: at("resolve", 0) });
   const resolved = await d.resolve(actAs, [assetId]);
   const item = resolved.items.find((i) => i.assetId === assetId);
-  if (!item || resolved.missing.includes(assetId)) throw new Error("ag-go không trả được video này cho chủ dự án (không có quyền hoặc chưa có bản xem)");
+  if (!item || resolved.missing.includes(assetId)) throw new Error(`${site} không trả được video này cho chủ dự án (không có quyền hoặc chưa có bản xem)`);
   ctx.checkpoint();
 
   const proxy = join(ctx.tempDir, "video.mp4");
@@ -181,7 +185,7 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
   let transcript: InputTranscript | null = null;
   let transcriptNote: string;
   if (!facts.has_audio) transcriptNote = "video không có tiếng";
-  else if (req.has_speech === false) transcriptNote = "ag-go cho biết video không có lời nói";
+  else if (req.has_speech === false) transcriptNote = `${site} cho biết video không có lời nói`;
   else if (!d.farm) transcriptNote = "worker này không nối farm nên chưa đọc lời thoại";
   else {
     ctx.report({ phase: "Đang tách tiếng", progress: at("audio", 0) });
@@ -224,7 +228,7 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
     writeFileSync(join(out, "transcript.md"), transcriptMarkdown(name, transcript));
   }
   const bytes = statSync(proxy).size;
-  writeFileSync(join(out, "README.md"), inputReadme(shotsFile, transcript, transcriptNote, ctx.now(), bytes));
+  writeFileSync(join(out, "README.md"), inputReadme(shotsFile, transcript, transcriptNote, ctx.now(), bytes, site));
   rmSync(proxy, { force: true });
 
   const dest = join(ctx.workspaceDir, inputDir(assetId));
@@ -274,13 +278,13 @@ export function transcriptMarkdown(name: string, t: InputTranscript): string {
   return lines.join("\n") + "\n";
 }
 
-export function inputReadme(s: InputShots, t: InputTranscript | null, transcriptNote: string, now: string, bytes: number): string {
+export function inputReadme(s: InputShots, t: InputTranscript | null, transcriptNote: string, now: string, bytes: number, siteName: string = DEFAULT_SITE_NAME): string {
   const size = s.width && s.height ? `${s.width}×${s.height}` : "?";
   const source = s.source.kind === "original" ? "bản gốc" : s.source.kind === "proxy" ? "bản proxy" : "bản xem trước";
   const lines = [
     `# ${s.name}`,
     "",
-    `Video ag-go \`${s.asset_id}\`, Studio chuẩn bị ${now.slice(0, 16).replace("T", " ")} UTC. Thư mục này chỉ đọc; chuẩn bị lại để cập nhật.`,
+    `Video ${siteName} \`${s.asset_id}\`, Studio chuẩn bị ${now.slice(0, 16).replace("T", " ")} UTC. Thư mục này chỉ đọc; chuẩn bị lại để cập nhật.`,
     "",
     `- Dài ${clock(s.duration_s)} · ${size}${s.fps ? ` · ${s.fps} fps` : ""} · ${s.has_audio ? "có tiếng" : "không tiếng"}`,
     `- Xem từ ${source} ${size}${s.source.watermarked ? " (có watermark)" : ""}, ${(bytes / 1_048_576).toFixed(1)} MB — chỉ để chọn cảnh; bản cuối render từ bản gốc.`,

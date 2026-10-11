@@ -34,8 +34,14 @@ export interface AgentResult {
   text: string;
   cost_usd: number;
   num_turns: number;
+  /** Every input token: fresh, written to the cache, read from it. */
   input_tokens: number;
+  /** Of `input_tokens`: written to the prompt cache, and read from it. */
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
   output_tokens: number;
+  /** The CLI's own time for the turn (0 when it does not say). */
+  duration_ms: number;
   errors: string[];
 }
 
@@ -306,7 +312,10 @@ export class StreamJsonReader {
       cost_usd: num(ev.total_cost_usd),
       num_turns: num(ev.num_turns),
       input_tokens: num(u.input_tokens) + num(u.cache_creation_input_tokens) + num(u.cache_read_input_tokens),
+      cache_creation_tokens: num(u.cache_creation_input_tokens),
+      cache_read_tokens: num(u.cache_read_input_tokens),
       output_tokens: num(u.output_tokens),
+      duration_ms: num(ev.duration_ms),
       errors: Array.isArray(ev.errors) ? ev.errors.filter((x): x is string => typeof x === "string") : [],
     };
     // Without partial messages there may be no text part: the result carries the answer.

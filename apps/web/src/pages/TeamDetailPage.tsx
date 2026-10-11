@@ -17,7 +17,7 @@ import {
   Tabs,
 } from "antd";
 import { Plus, Trash2, Search } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { useAiTranslation } from "../modules/common/assistant-name";
 import { useQueryState, parseAsString, parseAsInteger, parseAsStringLiteral } from "nuqs";
 import { useStudioClient } from "../api/studio-client";
 import type { TeamMember } from "../api/studio-client";
@@ -28,6 +28,8 @@ import { SortDropdown } from "../helpers/sort-dropdown";
 import { TableRefreshButton } from "../helpers/table-refresh-button";
 import { useDebouncedValue } from "../helpers/use-debounced-value";
 import { TeamSkillsTab } from "../modules/team/TeamSkillsTab";
+import { AuditTable } from "../modules/audit/AuditTable";
+import { ClaudeStatsView } from "../modules/stats/ClaudeStatsView";
 import type { SortDirection } from "../helpers/compare-sort-values";
 
 const { Title } = Typography;
@@ -50,13 +52,13 @@ const ROLE_COLORS: Record<string, string> = {
 };
 
 export function TeamDetailPage() {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const { teamId } = useParams<{ teamId: string }>();
   const client = useStudioClient();
   const queryClient = useQueryClient();
 
   // URL state
-  const [tab, setTab] = useQueryState("tab", parseAsStringLiteral(["members", "skills"] as const).withDefault("members"));
+  const [tab, setTab] = useQueryState("tab", parseAsStringLiteral(["members", "skills", "stats", "audit"] as const).withDefault("members"));
   const [page, setPage] = useQueryState("m_page", parseAsInteger.withDefault(1));
   const [sortBy, setSortBy] = useQueryState("m_sortBy", parseAsString.withDefault("name"));
   const [sortOrder, setSortOrder] = useQueryState(
@@ -95,6 +97,8 @@ export function TeamDetailPage() {
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => client.getMe(), staleTime: 5 * 60_000 });
   // Team rules: owners and producers write them (admins too); everyone else reads.
   const canEditSkills = !!me?.isAdmin || team?.role === "owner" || team?.role === "producer";
+  // the activity log and the Claude stats of the team: its owners and Studio admins
+  const canReview = !!me?.isAdmin || team?.role === "owner";
 
   const queryKey = ["members", teamId, { page, sortBy, sortOrder, q: debouncedQ }] as const;
 
@@ -285,10 +289,14 @@ export function TeamDetailPage() {
       </Title>
       <Tabs
         activeKey={tab}
-        onChange={(k) => void setTab(k as "members" | "skills")}
+        onChange={(k) => void setTab(k as "members" | "skills" | "stats" | "audit")}
         items={[
           { key: "members", label: t("teamSkills.tabMembers"), children: membersTab },
           { key: "skills", label: t("teamSkills.tabSkills"), children: teamId ? <TeamSkillsTab teamId={teamId} canEdit={canEditSkills} /> : null },
+          ...(canReview && teamId ? [
+            { key: "stats", label: t("ws.stats.title"), children: <ClaudeStatsView teamId={teamId} /> },
+            { key: "audit", label: t("ws.audit.title"), children: <AuditTable teamId={teamId} /> },
+          ] : []),
         ]}
       />
 

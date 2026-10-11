@@ -50,6 +50,8 @@ export interface StudioWorkerOptions {
   claudeMaxConcurrent?: number;
   /** YouTube Data API key for crawls (`research` jobs); without it they use yt-dlp when there is one. */
   youtubeApiKey?: string;
+  /** What people call the footage library (ag-go's `siteName`): job text and the agent's prompt; default "AG Go". */
+  siteName?: () => string;
 }
 
 export function studioLogger(bindings: Record<string, unknown> = {}): HarnessLogger {
@@ -78,7 +80,7 @@ export function createStudioWorkerPool(o: StudioWorkerOptions & {
   cleanup?: { everyMs: number; retention?: Partial<RetentionConfig> };
 }): StudioWorkerPool {
   const agent = o.agent
-    ? createAgentRunner({ ...o.agent, db: o.db, bucket: o.bucket, logger: o.logger ?? studioLogger({ owner: `${o.owner}#agent` }), cap: () => claudeCap(o) })
+    ? createAgentRunner({ ...o.agent, db: o.db, bucket: o.bucket, logger: o.logger ?? studioLogger({ owner: `${o.owner}#agent` }), cap: () => claudeCap(o), ...(o.siteName ? { siteName: o.siteName } : {}) })
     : null;
   const jobs = o.jobs ? createJobRunner({
     db: o.db, logger: o.logger ?? studioLogger({ owner: `${o.owner}#jobs` }), workspacesRoot: o.jobs.workspacesRoot, dataRoot: o.dataRoot,
@@ -108,6 +110,7 @@ export function projectJobHandlers(o: StudioWorkerOptions): Partial<Record<JobKi
       resolve: (actAs, ids) => media.resolveAssets(actAs, ids, "preview", PREVIEW_PREFER),
       download: (url, dest, signal, onBytes) => httpDownload(url, dest, signal, onBytes),
       farm: { client: o.farm, bucket: o.bucket, pollMs: farmWait.pollMs, queueTimeoutMs: o.farmQueueTimeoutMs ?? 30 * 60_000 },
+      ...(o.siteName ? { siteName: o.siteName } : {}),
     });
     // a video's timeline from its edit plan (narration read on the farm into the voice store)
     handlers.fit = fitHandler({ db: o.db, bucket: o.bucket, farm: o.farm, voiceDir: media.voiceDir, ...farmWait });

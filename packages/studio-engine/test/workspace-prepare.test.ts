@@ -149,3 +149,20 @@ describe.skipIf(!hasFfmpeg())("prepare when the farm cannot read what is said (n
     expect(getPrepared(db, project.id, ASSET)).toMatchObject({ status: "ready", transcript: 0 });
   });
 });
+
+describe("prepare when the footage library does not serve the video", () => {
+  it("fails before any media work, naming the library as ag-go calls itself", async () => {
+    const { db, bucket, project, workspacesRoot, dir } = setup();
+    const job = createJob(db, { projectId: project.id, kind: "prepare_asset", title: "Chuẩn bị", request: { asset_id: ASSET }, createdBy: "u" }, NOW);
+    const deps: PrepareDeps = {
+      db, ffmpeg: "no-ffmpeg", ffprobe: "no-ffprobe", siteName: () => "Kho Footage",
+      resolve: async () => ({ items: [], missing: [ASSET] }),
+      download: async () => { throw new Error("not reached"); },
+      farm: { client: {} as ProjectFarm, bucket },
+    };
+    const runner = createJobRunner({ db, logger: studioLogger({ test: "prepare" }), workspacesRoot, dataRoot: join(dir, "data"), handlers: { prepare_asset: prepareHandler(deps) } });
+    runner.tick();
+    await runner.idle();
+    expect(getJob(db, job.id)).toMatchObject({ status: "failed", error: expect.stringContaining("Kho Footage không trả được video này") });
+  });
+});

@@ -9,6 +9,7 @@ import {
   type JobView,
 } from '@ag-studio/engine';
 import { Roles } from '../auth/roles.decorator';
+import { NoAudit } from '../audit/audit.interceptor';
 import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from '../studio/engine.service';
 import { mapErrors } from '../studio/http-errors';
@@ -50,6 +51,7 @@ export class ResearchController {
   ) {}
 
   @Post('estimate')
+  @NoAudit()
   @Roles('viewer')
   @HttpCode(HttpStatus.OK)
   estimate(@Param('projectId') projectId: string, @Body() raw: unknown): Promise<CrawlEstimate> {

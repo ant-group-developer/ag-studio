@@ -79,9 +79,10 @@ nhưng không code nào đọc.
   `.studio/` (Studio ghi; chỉ `playbook.yaml` người sửa được). Đường bảo vệ và quyền ghi: `accessFor` (`workspace/files.ts`).
 - DB là nguồn sự thật cho team/dự án/video/nguồn/luồng chat/tin nhắn/job/revision timeline/thẻ xác nhận; file là nguồn sự
   thật cho tài liệu. Mỗi lần file đổi ghi `project_file_versions` (người, agent, Studio).
-- Bảng (migration `0030`–`0035`): `projects` (+`voice`, `music`), `videos`, `project_sources`, `video_revisions` (chỉ timeline
+- Bảng (migration `0030`–`0037`): `projects` (+`voice`, `music`), `videos`, `project_sources`, `video_revisions` (chỉ timeline
   v4), `project_file_versions`, `agent_threads`, `thread_refs`, `agent_messages`, `step_marks`, `thread_summaries`,
-  `lesson_proposals`, `project_jobs`, `project_farm_jobs`, `prepared_assets`, `agent_actions`. Dùng chung từ trước: `teams`,
+  `lesson_proposals`, `project_jobs`, `project_farm_jobs`, `prepared_assets`, `agent_actions`, `audit_log` (nhật ký hoạt động,
+  0036). Dùng chung từ trước: `teams`,
   `team_members`, `team_skills`, `sign_audit_log`, `youtube_cache`, `llm_calls`, `studio_settings`, `studio_voice_lines`,
   `music_track` (kho nhạc), `lease` (slot Claude).
 - File hướng ra trình duyệt nằm trên R2 (`S3Bucket`, `packages/studio-engine/src/bucket.ts`), URL ký có hạn.
@@ -116,7 +117,13 @@ nhưng không code nào đọc.
   `STUDIO_CLAUDE_MAX_CONCURRENT` (1–100, mặc định 20). Hết hạn mức gói: `rate_limited`, chờ 5→60 phút rồi chạy lại.
 - **Tên AI trên web** (`studio_settings.assistant.name`): admin đặt ở màn Hàng đợi, mặc định `Claude`; chỉ là tên hiển thị.
   Chuỗi i18n nhắc AI dùng `{{ai}}` và component gọi `useAiTranslation()` (`apps/web/src/modules/common/assistant-name.tsx`).
-- Mọi lượt ghi `llm_calls` (`source = 'claude-agent'`, payload gzip trên bucket). Test luôn dùng CLI giả
+- **Tên kho footage** là `siteName` của chính ag-go (`GET /settings/public`, không cần đăng nhập; mặc định `AG Go`), không
+  viết cứng "ag-go" ở chữ người dùng hay agent đọc: web `{{site}}` qua `useAiTranslation()` (`SiteNameProvider` nằm ngoài
+  `AuthGate`; `keys.spec.ts` cấm "ag-go" trong locale), API `SiteNameService`, worker/engine `createSiteNameCache`
+  (`site-name.ts`, nạp lại 10 phút) cho lỗi, chữ job, system prompt và mô tả tool (`{{site}}` trong `description`). Tên
+  tool, kind nguồn (`ag_go_*`) và mã lỗi giữ nguyên.
+- Mọi lượt ghi `llm_calls` (`source = 'claude-agent'`, payload gzip trên bucket; từ 0037 thêm `user_id` = người lượt làm thay,
+  `team_id`, `cache_read_tokens`, `cache_creation_tokens`, `num_turns` cho thống kê `claude-stats.ts`). Test luôn dùng CLI giả
   `fixtures/fake-studio-agent.mjs` (directive `@fake …`) và `fixtures/fake-mcp-server.mjs`; **không gọi Claude thật trong
   test** (probe thật chỉ khi `HARNESS_REAL_CLAUDE_TEST=1`). Trên Windows `resolveCommand` dò shim `claude.cmd` ra `claude.exe`.
 
@@ -146,13 +153,21 @@ nhưng không code nào đọc.
   hệ thống qua `STUDIO_FONTS_DIR`, không ship font). Quy chuẩn & skill của nhóm (`team_skills`) thành skill của agent khi dự
   án bật.
 - Quét dọn (`cleanup.ts`, mỗi `STUDIO_CLEANUP_HOURS`): dòng kho giọng lâu không đọc, audio dự án không còn ai trỏ tới, thư mục
-  tạm của job/lượt bị bỏ dở, `.trash` của dự án.
+  tạm của job/lượt bị bỏ dở, `.trash` của dự án, dòng `audit_log` cũ hơn `STUDIO_RETENTION_AUDIT_DAYS` (90).
+- **Nhật ký hoạt động** (`audit-log.ts`, `apps/api/src/audit/`): `AuditInterceptor` (APP_INTERCEPTOR) ghi mọi POST/PUT/PATCH/DELETE
+  của người đã đăng nhập (route `@NoAudit()` thì bỏ; request bị guard chặn không vào); `/agent-tools/call` ghi mọi tool Studio
+  agent gọi; runner ghi mỗi lượt (`turn`) và mỗi tool có sẵn của Claude; job runner ghi mỗi việc nền xong. `logAudit` không bao
+  giờ ném lỗi; `details` qua `redactDetails` (bỏ khoá giống bí mật, cắt ≤ 4 KB) và **không bao giờ chứa nội dung chat hay nội
+  dung file** (chỉ kích thước). Xem: admin Studio mọi dòng, owner nhóm mình (`StudioAdminService.viewScope`).
 
 ### Web
 - `/` trang chủ, `/t/:teamId` danh sách dự án, `/p/:projectId` (luồng Kênh), `/p/:projectId/c/:threadId`, `/p/:projectId/v/:videoId`.
   Cột phải: Xem trước (trang video), Tệp, Đầu vào, Nghiên cứu, Cài đặt. Việc đang chạy: nút "Đang chạy" ở đầu trang (agent,
   tool, job; Dừng). `/queue` (việc đang chạy của mọi dự án người xem thấy, slot Claude, máy farm; admin đặt cap và tên AI),
-  `/music` (kho nhạc), `/teams`, `/teams/:teamId` (thành viên, skill; layout quản trị). Ô chọn nhóm trên thanh trên có
+  `/audit` (nhật ký hoạt động), `/stats` (thống kê chat Claude theo nhóm/dự án/video/người; hai màn này cho admin và owner
+  nhóm), `/music` (kho nhạc), `/teams`, `/teams/:teamId` (thành viên, skill, thống kê và nhật ký của nhóm; layout quản trị).
+  Hai picker ở tab Đầu vào lọc/sắp xếp/phân trang như ag-go (project: `/projects` của ag-go gọi thẳng; video: `GET footage` +
+  `footage/facets` qua API, chỉ trong các project đã gắn), xem dạng bảng hoặc lưới (nhớ ở localStorage). Ô chọn nhóm trên thanh trên có
   "Tạo nhóm mới" và "Quản lý nhóm"; ai chưa ở nhóm nào thì trang chủ cho tạo nhóm (người tạo là owner). Tiếng Việt gọi là
   **nhóm** (không viết "team" trong chuỗi giao diện).
 - Khung trình duyệt nhúng của app desktop báo trang luôn ẩn nên react-query không polling: kiểm bằng khung đó thì tải lại trang.

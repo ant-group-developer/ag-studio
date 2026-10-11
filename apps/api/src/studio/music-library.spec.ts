@@ -12,6 +12,7 @@ import type { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import { listLibraryMusic, MemoryBucket, saveLibraryMusic } from '@ag-studio/engine';
 import type { AccountApiService } from '../auth/account-api.service';
+import { StudioAdminService } from '../auth/studio-admin.service';
 import { realStudio, type RealStudio } from '../test/real-studio';
 import type { EngineService } from './engine.service';
 import { MusicLibraryController } from './music-library.controller';
@@ -34,7 +35,7 @@ describe('MusicLibraryController (real studio.db)', () => {
   let bucket: MemoryBucket;
   const controller = (env: Record<string, unknown> = {}) => {
     const engine = Object.assign(s.engine, { bucket, browserUrlTtl: 60 });
-    return new MusicLibraryController(engine as unknown as EngineService, accounts, { get: (k: string) => env[k] } as unknown as ConfigService);
+    return new MusicLibraryController(engine as unknown as EngineService, new StudioAdminService(accounts, s.db), { get: (k: string) => env[k] } as unknown as ConfigService);
   };
   const failure = async (p: Promise<unknown>) => {
     try { await p; } catch (e) { return { type: (e as Error).constructor.name, code: ((e as { getResponse?: () => { code?: string } }).getResponse?.() ?? {}).code }; }

@@ -16,10 +16,11 @@ import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
 import type { EngineService } from '../studio/engine.service';
 import { WorkspaceService } from '../workspace/workspace.service';
 import { AgentTokenGuard } from './agent-token.guard';
+import type { SiteNameService } from '../ag-go/site-name.service';
 import { AgentToolsController } from './agent-tools.controller';
 import { AgentToolsService } from './agent-tools.service';
 import type { ProjectFootageService } from '../workspace/project-footage.service';
-import { addSource } from '@ag-studio/engine';
+import { addSource, listAudit } from '@ag-studio/engine';
 
 const SECRET = 'x'.repeat(32);
 
@@ -40,7 +41,7 @@ describe('agent tools API (real studio.db)', () => {
       search: async (actAs: string, q: unknown) => { searched.push([actAs, q]); return { items: [], nextCursor: null, total: 0 }; },
       check: async (_actAs: string, ids: string[]) => ({ ok: ids, missing: [] }),
     } as unknown as ProjectFootageService;
-    controller = new AgentToolsController(engine, ws, new AgentToolsService(), footage);
+    controller = new AgentToolsController(engine, ws, new AgentToolsService(), footage, ({ current: () => 'Kho Footage' }) as unknown as SiteNameService);
     insertTeam(s.db, 'team-1', 'auth0|owner');
   });
   afterEach(() => s.close());
@@ -60,6 +61,13 @@ describe('agent tools API (real studio.db)', () => {
     return null;
   };
 
+  it("describes the tools and answers with ag-go's own name", async () => {
+    const { token } = turn('viewer');
+    expect(controller.list().tools.find((t) => t.name === 'footage_search')!.description).toContain('các project Kho Footage');
+    const out = await controller.call({ name: 'footage_search', arguments: {} }, (() => { const r = req(token); guard.canActivate(ctx(r)); return r; })());
+    expect(out).toMatchObject({ isError: true, text: expect.stringContaining('chưa có project Kho Footage') });
+  });
+
   it("searches the project's ag-go projects as the project's owner", async () => {
     const { project, token } = turn('viewer');
     addSource(s.engine.db, { projectId: project.id, kind: 'ag_go_project', ref: 'agp-1', mediaType: 'mixed', label: 'Ninh Bình', addedBy: 'auth0|owner' });
@@ -76,6 +84,13 @@ describe('agent tools API (real studio.db)', () => {
     const out = await controller.call({ name: 'video_create', arguments: { title: 'Hội An' } }, r);
     expect(out.isError).toBeUndefined();
     expect(listVideos(s.engine.db, project.id).map((v) => v.title)).toEqual(['Hội An']);
+    const [row] = listAudit(s.engine.db, {}).items;
+    expect(row).toMatchObject({
+      actorKind: 'agent', actorId: 'auth0|u', kind: 'tool', action: 'video_create', outcome: 'ok', team: { id: 'team-1' }, project: { id: project.id },
+      details: { args: { title: 'Hội An' } },
+    });
+    expect(row!.threadId).toBeTruthy();
+    expect(row!.durationMs).toBeGreaterThanOrEqual(0);
   });
 
   it('a viewer’s turn cannot create videos; a finished turn’s token is refused; a bad token too', async () => {
@@ -83,6 +98,7 @@ describe('agent tools API (real studio.db)', () => {
     const r = req(viewer.token);
     guard.canActivate(ctx(r));
     expect(await controller.call({ name: 'video_create', arguments: { title: 'x' } }, r)).toMatchObject({ isError: true });
+    expect(listAudit(s.engine.db, { kind: 'tool' }).items[0]).toMatchObject({ action: 'video_create', outcome: 'error', summary: expect.stringContaining('cần vai editor') });
     finishTurn(s.engine.db, viewer.turn.id, { status: 'done', text: '', parts: [] }, new Date().toISOString());
     expect(refusal(() => guard.canActivate(ctx(req(viewer.token))))).toBe('turn_not_running');
     expect(refusal(() => guard.canActivate(ctx(req('nope'))))).toBe('bad_agent_token');

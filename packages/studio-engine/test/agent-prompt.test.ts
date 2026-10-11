@@ -34,6 +34,14 @@ describe("agent system prompt", () => {
     expect(without).toContain("(luồng này không dùng memory/lessons.md)");
     expect(without).toContain("Không dùng chữ đỏ.");
   });
+
+  it("calls the footage library by ag-go's own name, AG Go by default", () => {
+    const dir = workspace();
+    const named = agentSystemPrompt(dir, { siteName: "Kho Footage" });
+    expect(named).toContain('kho video của công ty, tên là "Kho Footage"');
+    expect(named).not.toMatch(/ag-go/i);
+    expect(agentSystemPrompt(dir)).toContain('tên là "AG Go"');
+  });
 });
 
 describe("turn prompt", () => {
