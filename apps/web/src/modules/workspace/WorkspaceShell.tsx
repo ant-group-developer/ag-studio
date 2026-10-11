@@ -35,6 +35,8 @@ export function WorkspaceShell({ teamId, crumbs = [], actions, children }: {
     ...(teamId ? [{ key: "team-settings", label: <Link to={`/teams/${teamId}`}>{t("ws.shell.teamSettings")}</Link> }] : []),
   ]);
   const items = teams?.items ?? [];
+  // the activity log and the Claude stats: Studio admins and team owners
+  const canReview = isAdmin || items.some((x) => x.role === "owner");
   // Studio-wide screens (Queue, music) have no team of their own: show the one worked in last
   const shown = teamId ?? items.find((x) => x.id === rememberedTeam())?.id ?? null;
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -81,6 +83,7 @@ export function WorkspaceShell({ teamId, crumbs = [], actions, children }: {
         ) : null}
         <div className="ws-header__right">
           {actions}
+          {canReview ? <Link to="/audit" className="ws-icon-button">{t("ws.shell.audit")}</Link> : null}
           {isAdmin ? <Link to="/queue" className="ws-icon-button">{t("ws.shell.queue")}</Link> : null}
           <Dropdown menu={menu} trigger={["click"]} placement="bottomRight">
             <button type="button" className="ws-icon-button" aria-label={nickname}>

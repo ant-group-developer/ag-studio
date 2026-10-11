@@ -43,6 +43,54 @@ export interface UserSummary {
   avatar: string | null;
 }
 
+export type AuditKind = "http" | "tool" | "turn" | "job";
+export type AuditActorKind = "user" | "agent" | "studio";
+
+/** One row of the activity log. */
+export interface AuditItem {
+  id: string;
+  at: string;
+  actorKind: AuditActorKind;
+  actorId: string | null;
+  actor: UserSummary | null;
+  kind: AuditKind;
+  action: string;
+  outcome: "ok" | "error";
+  method: string | null;
+  route: string | null;
+  statusCode: number | null;
+  durationMs: number | null;
+  team: { id: string; name: string | null } | null;
+  project: { id: string; name: string | null } | null;
+  video: { id: string; title: string | null } | null;
+  threadId: string | null;
+  messageId: string | null;
+  jobId: string | null;
+  target: string | null;
+  summary: string | null;
+  details: unknown;
+  costUsd: number | null;
+}
+
+export interface AuditQuery {
+  teamId?: string;
+  projectId?: string;
+  videoId?: string;
+  threadId?: string;
+  actorId?: string;
+  actorKind?: AuditActorKind;
+  kind?: AuditKind;
+  outcome?: "ok" | "error";
+  from?: string;
+  to?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface AuditPage { items: AuditItem[]; total: number; page: number; pageSize: number }
+/** The teams the log (and the Claude stats) can show this person; `all`: a Studio admin, Studio-wide rows too. */
+export interface AuditScope { all: boolean; teams: { id: string; name: string }[] }
+
 export interface TeamMember extends UserSummary {
   role: TeamRole;
   joinedAt: string;
@@ -143,6 +191,17 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     },
     updateMemberRole(teamId: string, userId: string, role: string): Promise<TeamMember> {
       return request<TeamMember>(getAccessToken, "PATCH", `/api/teams/${teamId}/members/${userId}`, { role });
+    },
+
+    // ---- Activity log (Studio admin: everything; team owner: their teams) ----
+    getAuditScope(): Promise<AuditScope> {
+      return request(getAccessToken, "GET", "/api/audit/scope");
+    },
+    listAudit(q: AuditQuery = {}): Promise<AuditPage> {
+      return request(getAccessToken, "GET", `/api/audit${buildQuery({ ...q })}`);
+    },
+    listAuditActors(teamId?: string): Promise<{ actors: UserSummary[] }> {
+      return request(getAccessToken, "GET", `/api/audit/actors${buildQuery({ teamId })}`);
     },
 
     // ---- Studio-wide ----

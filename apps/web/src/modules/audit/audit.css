@@ -1,0 +1,13 @@
+/* the activity log (/audit and a team's Activity tab) */
+.ws-audit { display: flex; flex-direction: column; gap: 12px; }
+.ws-audit__filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ws-audit__what { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ws-audit__what code { font-size: 12px; overflow-wrap: anywhere; }
+.ws-audit__where { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.ws-audit__details { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.ws-audit__details p { margin: 0; }
+.ws-audit__details pre { margin: 0; max-height: 320px; overflow: auto; padding: 8px 10px; border-radius: 6px; background: var(--ws-chip); font-size: 12px; }
+.ws-audit__links { display: flex; gap: 12px; }
+@media (max-width: 640px) {
+  .ws-audit__filters > * { flex: 1 1 100%; }
+}
