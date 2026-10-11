@@ -13,6 +13,7 @@ import { WorkspaceModule } from './workspace/workspace.module';
 import { AgentToolsModule } from './agent-tools/agent-tools.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { SiteNameModule } from './ag-go/site-name.service';
+import { AuditModule } from './audit/audit.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { SiteNameModule } from './ag-go/site-name.service';
     StudioModule,
     WorkspaceModule,
     AgentToolsModule,
+    AuditModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: Auth0Guard },
