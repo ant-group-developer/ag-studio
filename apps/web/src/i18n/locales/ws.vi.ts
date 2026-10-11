@@ -499,6 +499,7 @@ export const wsVi = {
     withTranscript: "có lời thoại",
     open: "Mở",
     prepare: "Chuẩn bị",
+    unnamedVideo: "video chưa có tên",
     retry: "Thử lại",
     prepareAgain: "Chuẩn bị lại",
     prepareFailed: "Không chuẩn bị được",

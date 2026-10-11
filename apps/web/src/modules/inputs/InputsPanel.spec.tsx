@@ -93,6 +93,15 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     await waitFor(() => expect(ws.cancelJob).toHaveBeenCalledWith("p1", "j1"));
   });
 
+  it("never shows an asset id where a video's name should be", async () => {
+    ws.listSources.mockResolvedValue({ sources: [src({ kind: "ag_go_asset", ref: A2, videoId: "v1", mediaType: "video", label: A2 })] });
+    ws.listJobs.mockResolvedValue({ jobs: [job({ title: `Chuẩn bị ${A2}` })] });
+    mount("v1");
+    expect(await screen.findByRole("group", { name: "Chuẩn bị video chưa có tên" })).toBeInTheDocument();
+    expect(screen.getAllByText("video chưa có tên").length).toBeGreaterThan(0);
+    expect(document.body).not.toHaveTextContent(A2);
+  });
+
   it("lists the ag-go projects, this video's ag-go videos with their preparation, and uploads", async () => {
     const open = mount("v1");
     const footage = await screen.findByRole("region", { name: "Video AG Go của video này" });

@@ -503,6 +503,7 @@ export const wsEn: Messages<typeof wsVi> = {
     withTranscript: "with transcript",
     open: "Open",
     prepare: "Prepare",
+    unnamedVideo: "unnamed video",
     retry: "Retry",
     prepareAgain: "Prepare again",
     prepareFailed: "Could not prepare",

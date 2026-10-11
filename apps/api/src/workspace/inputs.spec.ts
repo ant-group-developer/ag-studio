@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
-import { claimJob, getJob, listMessages } from '@ag-studio/engine';
+import { addSource, claimJob, getJob, listMessages } from '@ag-studio/engine';
 import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
 import type { EngineService } from '../studio/engine.service';
 import type { SiteNameService } from '../ag-go/site-name.service';
@@ -121,6 +121,19 @@ describe('inputs (real studio.db)', () => {
     expect(listMessages(s.engine.db, v.threadId)).toEqual([]);
     await inputs.remove(p.id, added.source.id);
     expect(JSON.parse(readFileSync(join(root, p.id, 'videos', v.id, 'sources', 'index.json'), 'utf8')).sources).toEqual([]);
+  });
+
+  it('names videos the agent added without a name, from the picked ag-go projects, when the sources are listed', async () => {
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    await inputs.add(p.id, { kind: 'ag_go_project', ref: 'agp-1', label: 'Ninh Bình' }, req(EDITOR));
+    addSource(s.engine.db, { projectId: p.id, kind: 'ag_go_asset', ref: A1, mediaType: 'video', label: A1, addedBy: OWNER });
+    expect((await inputs.sources(p.id)).sources.find((x) => x.ref === A1)?.label).toBe(A1);
+    await inputs.naming;
+    expect(calls.at(-1)).toEqual(['search', OWNER, { projectIds: ['agp-1'], limit: 100 }]);
+    expect((await inputs.sources(p.id)).sources.find((x) => x.ref === A1)?.label).toBe('Hoa Lư 03.mp4');
+    const searches = calls.length;
+    await inputs.sources(p.id);
+    expect(calls).toHaveLength(searches);
   });
 
   it('uploads documents, images and audio into context/ by kind; refuses Word and video files', async () => {
