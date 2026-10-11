@@ -2,7 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { App as AntApp } from "antd";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n/config";
-import { jsonErrorAt, jsonPath, JsonView, parseJson } from "./JsonView";
+import { jsonErrorAt, jsonErrorOffset, jsonPath, JsonView, parseJson } from "./JsonView";
 
 window.matchMedia ??= ((query: string) => ({
   matches: false, media: query, onchange: null,
@@ -23,6 +23,11 @@ describe("JSON viewer", () => {
   it("says where a file breaks, by position or by line and column", () => {
     expect(jsonErrorAt('{\n  "a": 1,\n}', "Unexpected token } in JSON at position 12")).toEqual({ line: 3, column: 1 });
     expect(jsonErrorAt("", "Expected ',' (line 4 column 7)")).toEqual({ line: 4, column: 7 });
+    // Chrome only quotes the text around the error: Studio finds the place itself
+    expect(jsonErrorAt('{\n  "clips": [1, 2,\n  oops\n}', `Unexpected token 'o', ..."[1, 2,\n  oops\n}" is not valid JSON`)).toEqual({ line: 3, column: 3 });
+    expect(jsonErrorOffset('{"a": [1, {"b": "c\\u00e9"}], "d": -1.5e3, "e": null}')).toBe(-1);
+    expect(jsonErrorOffset('{"a": 1,}')).toBe(8);
+    expect(jsonErrorOffset('{"a": 1} x')).toBe(9);
     expect(parseJson('{"a":1}\n\n{"b":2}\n', true)).toEqual({ ok: true, values: [{ line: 1, value: { a: 1 } }, { line: 3, value: { b: 2 } }] });
     expect(parseJson('{"a":1}\n{oops}', true)).toMatchObject({ ok: false, at: { line: 2 } });
   });

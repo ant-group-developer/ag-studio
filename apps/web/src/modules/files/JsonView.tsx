@@ -17,14 +17,71 @@ export function jsonPath(parent: string, key: string | number): string {
   return /^[A-Za-z_$][\w$]*$/.test(key) ? `${parent}.${key}` : `${parent}[${JSON.stringify(key)}]`;
 }
 
-/** Where `JSON.parse` stopped, as a line and column (V8 says "at position N" or "(line L column C)"). */
+/**
+ * Where JSON text stops being JSON (an offset), for browsers whose `JSON.parse` message does not say: a small
+ * recursive-descent scan of the grammar. -1 when the text is valid.
+ */
+export function jsonErrorOffset(text: string): number {
+  let i = 0;
+  const ws = () => { while (i < text.length && " \t\n\r".includes(text[i]!)) i++; };
+  const fail = (): never => { throw i; };
+  const lit = (word: string) => { if (text.startsWith(word, i)) i += word.length; else fail(); };
+  const str = () => {
+    i++;
+    while (i < text.length && text[i] !== '"') {
+      if (text[i] === "\\") { i++; if (text[i] === "u") { if (!/^[0-9a-fA-F]{4}$/.test(text.slice(i + 1, i + 5))) fail(); i += 4; } else if (!'"\\/bfnrt'.includes(text[i] ?? "")) fail(); }
+      else if (text.charCodeAt(i) < 0x20) fail();
+      i++;
+    }
+    if (text[i] !== '"') fail();
+    i++;
+  };
+  const num = () => {
+    const m = /^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?/.exec(text.slice(i));
+    if (!m) fail();
+    i += m![0].length;
+  };
+  const value = (): void => {
+    ws();
+    const c = text[i];
+    if (c === "{") {
+      i++; ws();
+      if (text[i] === "}") { i++; return; }
+      for (;;) {
+        ws(); if (text[i] !== '"') fail(); str(); ws();
+        if (text[i] !== ":") fail(); i++; value(); ws();
+        if (text[i] === ",") { i++; continue; }
+        if (text[i] === "}") { i++; return; }
+        fail();
+      }
+    }
+    if (c === "[") {
+      i++; ws();
+      if (text[i] === "]") { i++; return; }
+      for (;;) {
+        value(); ws();
+        if (text[i] === ",") { i++; continue; }
+        if (text[i] === "]") { i++; return; }
+        fail();
+      }
+    }
+    if (c === '"') return str();
+    if (c === "t") return lit("true");
+    if (c === "f") return lit("false");
+    if (c === "n") return lit("null");
+    return num();
+  };
+  try { value(); ws(); return i < text.length ? i : -1; } catch (at) { return typeof at === "number" ? at : -1; }
+}
+
+/** Where `JSON.parse` stopped, as a line and column: from its message ("at position N", "(line L column C)"), else found. */
 export function jsonErrorAt(text: string, message: string): { line: number; column: number } | null {
   const lc = /line (\d+) column (\d+)/.exec(message);
   if (lc) return { line: Number(lc[1]), column: Number(lc[2]) };
   const pos = /position (\d+)/.exec(message);
-  if (!pos) return null;
-  const before = text.slice(0, Number(pos[1]));
-  const lines = before.split("\n");
+  const offset = pos ? Number(pos[1]) : jsonErrorOffset(text);
+  if (offset < 0) return null;
+  const lines = text.slice(0, offset).split("\n");
   return { line: lines.length, column: lines.at(-1)!.length + 1 };
 }
 

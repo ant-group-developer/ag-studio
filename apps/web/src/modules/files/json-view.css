@@ -3,10 +3,10 @@
 .ws-json__bar { position: sticky; top: -16px; z-index: 1; display: flex; align-items: center; gap: 6px; margin: -16px -16px 0; padding: 8px 16px; background: var(--ws-surface); border-bottom: 1px solid var(--ws-line); }
 .ws-json__bar .ws-spacer { flex: 1; }
 .ws-json__tree, .ws-json__raw { font: 12.5px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; }
-.ws-json__row { position: relative; display: flex; align-items: baseline; min-height: 21px; padding-right: 56px; border-radius: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ws-json__row { position: relative; display: block; min-height: 21px; padding-right: 56px; border-radius: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ws-json__row:hover { background: var(--ws-chip); }
 .ws-json__toggle {
-  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; align-self: center; padding: 0; border: 0;
+  display: inline-flex; vertical-align: -3px; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; border: 0;
   background: none; color: var(--ws-faint); cursor: pointer; border-radius: 4px;
 }
 .ws-json__toggle svg { transition: transform 0.12s; }
