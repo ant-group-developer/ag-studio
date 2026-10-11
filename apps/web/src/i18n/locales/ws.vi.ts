@@ -597,6 +597,12 @@ export const wsVi = {
     done: "Xong sau {{time}}",
     cancelled: "Đã dừng",
     failed: "Lỗi: {{error}}",
+    summary_one: "{{count}} việc nền",
+    summary_other: "{{count}} việc nền",
+    running: "{{count}} đang chạy",
+    queued: "{{count}} đang chờ",
+    showAll: "Xem tất cả",
+    showLess: "Thu gọn",
   },
   research: {
     newTitle: "Crawl YouTube",

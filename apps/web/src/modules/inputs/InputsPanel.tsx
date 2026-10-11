@@ -8,7 +8,7 @@ import { useWorkspaceClient, type JobView, type SourceItem } from "../../api/wor
 import { withoutIds } from "../common/no-ids";
 import { clock } from "../workspace/time";
 import { AgGoProjectPicker, FootagePicker } from "./AgGoPickers";
-import { JobCard } from "./JobCard";
+import { JobList } from "./JobList";
 import { AudioSummary, UseAudioButtons } from "./AudioControls";
 import "./inputs.css";
 
@@ -102,10 +102,7 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
       {active.length || recent.length ? (
         <section aria-label={t("ws.jobs.title")}>
           <h4 className="ws-inputs__h">{t("ws.jobs.title")}</h4>
-          <div className="ws-inputs__jobs">
-            {active.map((j) => <JobCard key={j.id} job={j} onStop={canEdit ? (x) => stop.mutate(x) : undefined} stopping={stop.isPending && stop.variables?.id === j.id} />)}
-            {recent.map((j) => <JobCard key={j.id} job={j} />)}
-          </div>
+          <JobList jobs={[...active, ...recent]} onStop={canEdit ? (x) => stop.mutate(x) : undefined} stopping={stop.isPending ? stop.variables?.id ?? null : null} />
         </section>
       ) : null}
 

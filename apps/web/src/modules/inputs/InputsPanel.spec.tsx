@@ -220,4 +220,25 @@ describe("jobs of a chat", { timeout: 20_000 }, () => {
     fireEvent.click(within(card).getByRole("button", { name: "Dừng" }));
     await waitFor(() => expect(ws.cancelJob).toHaveBeenCalledWith("p1", "j9"));
   });
+
+  it("folds many jobs into a summary that shows the running ones first and unfolds the rest", async () => {
+    const row = (i: number, status: "running" | "waiting") => ({
+      id: `j${i}`, kind: "job", status, title: `Chuẩn bị clip ${i}.mp4`, phase: null, detail: null, startedAt: started, notBefore: null, progress: null,
+      etaSeconds: null, node: null, cancellable: true, parentId: null, threadId: "t1", threadTitle: "Tràng An", videoId: "v1", jobKind: "prepare_asset",
+    });
+    Object.assign(ws, { getActivity: vi.fn().mockResolvedValue({ activity: [row(1, "waiting"), row(2, "running"), row(3, "waiting"), row(4, "waiting")] }) });
+    const { ThreadJobs } = await import("./ThreadJobs");
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <AntApp><ThreadJobs projectId="p1" threadId="t1" canStop /></AntApp>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("4 việc nền")).toBeInTheDocument();
+    expect(screen.getByText("1 đang chạy · 3 đang chờ")).toBeInTheDocument();
+    expect(screen.getAllByRole("group").map((g) => g.getAttribute("aria-label"))).toEqual(["Chuẩn bị clip 2.mp4", "Chuẩn bị clip 1.mp4"]);
+    fireEvent.click(screen.getByRole("button", { name: /Xem tất cả/ }));
+    expect(screen.getAllByRole("group")).toHaveLength(4);
+    fireEvent.click(screen.getByRole("button", { name: /Thu gọn/ }));
+    expect(screen.getAllByRole("group")).toHaveLength(2);
+  });
 });

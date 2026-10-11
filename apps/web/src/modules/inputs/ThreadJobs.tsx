@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useWorkspaceClient, type Activity, type JobView } from "../../api/workspace-client";
-import { JobCard } from "./JobCard";
+import { JobList } from "./JobList";
 import "./inputs.css";
 
 /** An activity row of a job as the card shows it. */
@@ -15,7 +15,8 @@ function asJob(a: Activity, projectId: string): JobView {
 
 /**
  * The background jobs this chat started (the agent asked to prepare videos, render…), above the message box while
- * they run: who works on each, how far, time spent and left, Stop. When one ends, Studio writes it in the chat.
+ * they run: who works on each, how far, time spent and left, Stop; many of them fold into a summary. When one ends,
+ * Studio writes it in the chat.
  */
 export function ThreadJobs({ projectId, threadId, canStop }: { projectId: string; threadId: string; canStop: boolean }) {
   const { t } = useTranslation();
@@ -33,7 +34,7 @@ export function ThreadJobs({ projectId, threadId, canStop }: { projectId: string
   if (!jobs.length) return null;
   return (
     <section className="ws-chat__jobs" aria-label={t("ws.jobs.title")}>
-      {jobs.map((j) => <JobCard key={j.id} job={j} onStop={canStop ? (x) => stop.mutate(x) : undefined} stopping={stop.isPending && stop.variables?.id === j.id} />)}
+      <JobList jobs={jobs} onStop={canStop ? (x) => stop.mutate(x) : undefined} stopping={stop.isPending ? stop.variables?.id ?? null : null} />
     </section>
   );
 }

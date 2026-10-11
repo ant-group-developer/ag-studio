@@ -601,6 +601,12 @@ export const wsEn: Messages<typeof wsVi> = {
     done: "Done in {{time}}",
     cancelled: "Stopped",
     failed: "Failed: {{error}}",
+    summary_one: "{{count}} background job",
+    summary_other: "{{count}} background jobs",
+    running: "{{count}} running",
+    queued: "{{count}} waiting",
+    showAll: "Show all",
+    showLess: "Show less",
   },
   research: {
     newTitle: "Crawl YouTube",
