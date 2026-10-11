@@ -61,6 +61,12 @@ export const wsEn: Messages<typeof wsVi> = {
     emptyTitle: "No projects yet",
     emptyLead: "Create a project for a YouTube channel, then add videos whenever you like.",
     emptyViewer: "This team has no projects yet. Producers and owners can create one.",
+    search: "Find a project by name, channel or description",
+    count_one: "{{count}} project",
+    count_other: "{{count}} projects",
+    noMatch: "No project matches.",
+    sort: { lastActivityAt: "Last activity", name: "Name", videoCount: "Videos", createdAt: "Created" },
+    column: { name: "Project", description: "Description", videos: "Videos", lastActivity: "Last activity", created: "Created" },
   },
   project: {
     notFound: "Project not found",

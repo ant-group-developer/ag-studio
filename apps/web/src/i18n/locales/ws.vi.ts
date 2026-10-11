@@ -57,6 +57,12 @@ export const wsVi = {
     emptyTitle: "Chưa có dự án nào",
     emptyLead: "Tạo dự án cho một kênh YouTube, rồi thêm video bất cứ lúc nào.",
     emptyViewer: "Nhóm chưa có dự án nào. Người có vai producer trở lên tạo được dự án.",
+    search: "Tìm dự án theo tên, kênh, mô tả",
+    count_one: "{{count}} dự án",
+    count_other: "{{count}} dự án",
+    noMatch: "Không có dự án nào khớp.",
+    sort: { lastActivityAt: "Hoạt động gần nhất", name: "Tên", videoCount: "Số video", createdAt: "Ngày tạo" },
+    column: { name: "Dự án", description: "Mô tả", videos: "Video", lastActivity: "Hoạt động gần nhất", created: "Ngày tạo" },
   },
   project: {
     notFound: "Không tìm thấy dự án",

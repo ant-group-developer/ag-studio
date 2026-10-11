@@ -129,6 +129,11 @@
 .ws-page__title { margin: 0; font-size: 22px; font-weight: 600; }
 .ws-page__lead { margin: 4px 0 0; color: var(--ws-muted); }
 .ws-page__actions { margin-left: auto; display: flex; gap: 8px; }
+.ws-projects__bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 14px; }
+.ws-projects__bar .ws-spacer { flex: 1; }
+.ws-projects__name { display: flex; flex-direction: column; min-width: 0; }
+.ws-projects__name a { font-weight: 600; }
+.ws-projects__name .ws-hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .ws-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
 .ws-card {
   display: flex; flex-direction: column; gap: 8px; min-height: 148px; box-sizing: border-box; padding: 16px; border-radius: 12px;

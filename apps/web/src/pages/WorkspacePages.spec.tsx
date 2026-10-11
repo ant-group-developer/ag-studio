@@ -152,6 +152,25 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     expect(await screen.findByText("trang nhóm")).toBeInTheDocument();
   });
 
+  it("lists a team's projects as cards or a table, found by name and sorted", async () => {
+    localStorage.removeItem("studio.projects.viewMode");
+    ws.listProjects.mockResolvedValueOnce({ projects: [
+      { ...project, videoCount: 2, lastActivityAt: "2026-10-10T08:00:00.000Z", createdAt: "2026-09-01T00:00:00.000Z" },
+      { ...project, id: "p2", name: "Ẩm thực Huế", channelUrl: null, description: "", videoCount: 9, lastActivityAt: "2026-10-11T08:00:00.000Z", createdAt: "2026-09-05T00:00:00.000Z" },
+    ] });
+    mount("/t/team-1");
+    expect(await screen.findByText("Du lịch chậm")).toBeInTheDocument();
+    expect([...document.querySelectorAll(".ws-card__title")].map((e) => e.textContent)).toEqual(["Ẩm thực Huế", "Du lịch chậm"]);
+    fireEvent.change(screen.getByLabelText("Tìm dự án theo tên, kênh, mô tả"), { target: { value: "phố cổ" } });
+    expect([...document.querySelectorAll(".ws-card__title")].map((e) => e.textContent)).toEqual(["Du lịch chậm"]);
+    fireEvent.change(screen.getByLabelText("Tìm dự án theo tên, kênh, mô tả"), { target: { value: "" } });
+    fireEvent.click(screen.getByTitle("Bảng"));
+    const table = await screen.findByRole("table");
+    expect(within(table).getByRole("link", { name: "Ẩm thực Huế" })).toHaveAttribute("href", "/p/p2");
+    expect(within(table).getByText("@dulichcham")).toBeInTheDocument();
+    expect(localStorage.getItem("studio.projects.viewMode")).toBe("table");
+  });
+
   it("someone in no team yet makes one from the home page", async () => {
     studio.listTeams.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 100 });
     mount("/");
