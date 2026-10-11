@@ -3,12 +3,20 @@ import { describe, expect, it } from "vitest";
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { detectCuts, ytDlp, ytVideoMeta } from "../src/index.js";
+import { detectCuts, YTDLP_COMMON_ARGS, ytDlp, ytVideoMeta } from "../src/index.js";
 import { hasFfmpeg } from "../../../tests/media.js";
 import { ROOT } from "./helpers.js";
 
 const FFMPEG = process.env.FFMPEG_PATH ?? "ffmpeg";
 const FAKE = [process.execPath, join(ROOT, "fixtures", "fake-yt-dlp.mjs")];
+
+describe("yt-dlp's arguments", () => {
+  it("YouTube gets the worker's own Node as its JavaScript runtime; no config file, no cookies", () => {
+    const at = YTDLP_COMMON_ARGS.indexOf("--js-runtimes");
+    expect(YTDLP_COMMON_ARGS[at + 1]).toBe(`node:${process.execPath}`);
+    expect(YTDLP_COMMON_ARGS).toEqual(expect.arrayContaining(["--ignore-config", "--no-cookies"]));
+  });
+});
 
 describe("ytDlp (fake)", () => {
   const yt = ytDlp({ argv: FAKE });

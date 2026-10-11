@@ -2,7 +2,6 @@ import {
   BadRequestException,
   Body,
   Controller,
-  ForbiddenException,
   Get,
   HttpException,
   NotFoundException,
@@ -31,7 +30,7 @@ import {
   listLibraryMusic,
   saveLibraryMusic,
 } from '@ag-studio/engine';
-import { AccountApiService } from '../auth/account-api.service';
+import { StudioAdminService } from '../auth/studio-admin.service';
 import { EngineService } from './engine.service';
 import { mapErrors } from './http-errors';
 
@@ -66,14 +65,14 @@ const PatchSchema = z.object({
 export class MusicLibraryController {
   constructor(
     private readonly engine: EngineService,
-    private readonly accountApi: AccountApiService,
+    private readonly admin: StudioAdminService,
     private readonly config: ConfigService,
   ) {}
 
   /** `{tracks: [{trackId, displayName, moods, durationSeconds, loopOk, origin, originNote, active, track, listenUrl}]}` */
   @Get()
   async list(@Req() req: Request) {
-    const isAdmin = await this.isAdmin(req);
+    const isAdmin = await this.admin.isAdmin(req);
     const tracks = listLibraryMusic(this.engine.db, { activeOnly: !isAdmin });
     return { tracks: await Promise.all(tracks.map((t) => this.view(t))) };
   }
@@ -83,7 +82,7 @@ export class MusicLibraryController {
   @UseInterceptors(FileInterceptor('file', { dest: tmpdir(), limits: { fileSize: AUDIO_MAX_BYTES.music, files: 1 } }))
   async add(@Body() raw: Record<string, unknown>, @UploadedFile() file: UploadedAudio | undefined, @Req() req: Request) {
     try {
-      await this.requireAdmin(req);
+      await this.admin.requireAdmin(req);
       const body = this.parse(UploadSchema, raw);
       if (!file) throw new BadRequestException({ code: 'audio_missing', message: 'Chọn file nhạc' });
       if (file.size > AUDIO_MAX_BYTES.music) {
@@ -106,7 +105,7 @@ export class MusicLibraryController {
   /** Rename, retag, retire (`active: false`) or bring back a track. Admin only. */
   @Patch(':trackId')
   async update(@Param('trackId') trackId: string, @Body() raw: Record<string, unknown>, @Req() req: Request) {
-    await this.requireAdmin(req);
+    await this.admin.requireAdmin(req);
     const body = this.parse(PatchSchema, raw);
     const t = getLibraryMusic(this.engine.db, trackId);
     if (!t) throw new NotFoundException({ code: 'not_found', message: `no music track ${trackId}` });
@@ -146,18 +145,6 @@ export class MusicLibraryController {
     return { ffmpeg, ffprobe };
   }
 
-  private async requireAdmin(req: Request): Promise<void> {
-    if (!(await this.isAdmin(req))) throw new ForbiddenException('Requires a Studio admin');
-  }
-
-  private async isAdmin(req: Request): Promise<boolean> {
-    const ctx = req.authContext!;
-    if (ctx.isAdmin === undefined) {
-      try { ctx.isAdmin = (await this.accountApi.getUserProfile(ctx.accessToken, ctx.userId)).userType === 'ADMIN'; }
-      catch { ctx.isAdmin = false; }
-    }
-    return ctx.isAdmin;
-  }
 }
 
 /** Engine refusals of a music file -> HTTP. */

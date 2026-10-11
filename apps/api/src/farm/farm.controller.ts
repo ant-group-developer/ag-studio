@@ -34,16 +34,16 @@ import {
 } from './sign-schemas';
 
 interface FarmJobRow {
-  id: string;
   farm_job_id: string;
-  run_id: string;
   stage_key: string;
   attempt_id: string;
   production_id: string;
   job_type: string;
   is_final_render: number;
-  created_at: string;
 }
+
+/** What a project's preview asks ag-go for: mirror of `PREVIEW_PREFER` in @ag-studio/engine `workspace/prepare.ts`. */
+const PREVIEW_PREFER = { short_edge: 480, clean: true } as const;
 
 declare module 'express' {
   interface Request {
@@ -81,6 +81,15 @@ export class FarmController {
     });
   }
 
+  /** A project's farm job (migration 0033); the project plays the farm's "production". */
+  private lookupJob(farmJobId: string): FarmJobRow | null {
+    return this.db.get<FarmJobRow>(
+      `SELECT farm_job_id, stage_key, attempt_id, project_id AS production_id, job_type, is_final_render
+         FROM project_farm_jobs WHERE farm_job_id = ?`,
+      [farmJobId],
+    ) ?? null;
+  }
+
   @Post('sign')
   @Public()
   @UseGuards(TicketGuard)
@@ -94,25 +103,23 @@ export class FarmController {
     }
     const { ops } = parsed.data;
 
-    // 2. Look up farm job
-    const job = this.db.get<FarmJobRow>(
-      'SELECT * FROM studio_farm_jobs WHERE farm_job_id = ?',
-      [ticketClaims.job_id],
-    );
+    // 2. Look up the farm job. A project plays the production in the farm's key layout:
+    // productions/<project>/jobs/<stage>/<attempt>/…
+    const job = this.lookupJob(ticketClaims.job_id);
     if (!job) {
       throw new ForbiddenException(`Unknown farm job: ${ticketClaims.job_id}`);
     }
 
     const prodId = job.production_id;
     const isFinalRender = job.is_final_render === 1;
-    // ag-go is asked on behalf of the production's owner (plan 3.1), never of the production itself:
+    // ag-go is asked on behalf of the project's owner (plan 3.1), never of the project itself:
     // `X-Act-As-User` must be a user id or ag-go cannot apply that user's folder scope and rights.
     const owner = this.db.get<{ user_id: string | null }>(
       `SELECT COALESCE(p.owner_user_id,
                 (SELECT tm.user_id FROM team_members tm
                   WHERE tm.team_id = p.team_id AND tm.role = 'owner'
                   ORDER BY tm.joined_at LIMIT 1)) AS user_id
-         FROM productions p WHERE p.id = ?`,
+         FROM projects p WHERE p.id = ?`,
       [prodId],
     );
     const actAsUserId = owner?.user_id ?? null;
@@ -172,11 +179,13 @@ export class FarmController {
         // GĐ2 asset resolve via ag-go POST /footage/assets/resolve
         const purpose = isFinalRender ? 'final' : 'preview';
         if (!actAsUserId) {
-          throw new ForbiddenException(`Production ${prodId} has no owner to resolve footage as`);
+          throw new ForbiddenException(`Project ${prodId} has no owner to resolve footage as`);
         }
+        // a preview reads a clean 480p rendition when ag-go has one (P7); older ag-go ignores `prefer`
         const resolveResp = await this.agGoClient.resolveAssets(actAsUserId, {
           assetIds: [auth.assetId],
           purpose,
+          ...(!isFinalRender ? { prefer: PREVIEW_PREFER } : {}),
         });
         const item = resolveResp.items[0];
         if (!item) {

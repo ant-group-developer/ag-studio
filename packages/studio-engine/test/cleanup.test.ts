@@ -1,55 +1,31 @@
 /**
- * The cleanup sweep: what it removes, and above all what it keeps (open runs, things still pointed at, recent files).
+ * The cleanup sweep: what it removes, and above all what it keeps (running jobs and turns, things still pointed at,
+ * recent files).
  */
 import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  MemoryBucket, replaceEpisodes, saveProductionDocument, startPlanRun, sweepAgentSessions, sweepProductionAudio, sweepReferenceDownloads, sweepShotFrames,
-  sweepStyleFrames, sweepVoiceStore, sweepWorkspaces, styleFrameKey, voicePath,
+  createJob, createProject, createThread, createVideo, postUserMessage, sweepProjectAudio, sweepScratch, sweepStudioData, sweepTrash, sweepVoiceStore, voicePath,
 } from "../src/index.js";
-import { seedProduction, world } from "./helpers.js";
+import { world } from "./helpers.js";
+import { listAudit, logAudit } from "../src/index.js";
 
 const NOW = new Date("2026-10-07T12:00:00.000Z");
 const DAYS = (n: number) => new Date(NOW.getTime() - n * 86_400_000);
+const HOURS = (n: number) => new Date(NOW.getTime() - n * 3_600_000);
 
-describe("sweepWorkspaces", () => {
-  function workspace(root: string, run: string, ageDays: number) {
-    const dir = join(root, run, "stage", "attempt");
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "proxy.mp4"), "x");
-    const t = DAYS(ageDays);
-    for (const d of [dir, join(root, run, "stage"), join(root, run)]) utimesSync(d, t, t);
-  }
+function aged(path: string, at: Date) { utimesSync(path, at, at); }
 
-  it("removes old workspaces of ended runs; keeps open runs, recent ones and unknown runs", () => {
-    const root = mkdtempSync(join(tmpdir(), "ws-"));
-    workspace(root, "run_done_old", 30);
-    workspace(root, "run_failed_old", 30);
-    workspace(root, "run_open_old", 30);
-    workspace(root, "run_done_new", 2);
-    workspace(root, "run_unknown", 30);
-    const states: Record<string, string> = { run_done_old: "SUCCEEDED", run_failed_old: "FAILED", run_open_old: "WAITING", run_done_new: "SUCCEEDED" };
-    expect(sweepWorkspaces(root, DAYS(14).getTime(), (id) => states[id] ?? null)).toBe(2);
-    expect(["run_done_old", "run_failed_old", "run_open_old", "run_done_new", "run_unknown"].map((r) => existsSync(join(root, r))))
-      .toEqual([false, false, true, true, true]);
-  });
-});
-
-describe("the rest of the sweep", () => {
+describe("the cleanup sweep", () => {
   let s: ReturnType<typeof world>;
-  afterEach(() => s?.core.close());
+  afterEach(() => { s?.core.close(); s = undefined as never; });
 
-  it("forgets agent sessions whose workspace is gone", () => {
-    s = world();
-    const kept = mkdtempSync(join(tmpdir(), "session-"));
-    for (const [run, cwd] of [["r1", kept], ["r2", join(kept, "gone")]] as const) {
-      s.db.run("INSERT INTO studio_agent_sessions (run_id, stage_key, attempt_id, session_id, cwd, created_at) VALUES (?, 'source-survey', 'a', 's', ?, ?)", [run, cwd, NOW.toISOString()]);
-    }
-    expect(sweepAgentSessions(s.db)).toBe(1);
-    expect(s.db.all("SELECT run_id FROM studio_agent_sessions")).toEqual([{ run_id: "r1" }]);
-  });
+  function project() {
+    s.db.run("INSERT OR IGNORE INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [NOW.toISOString(), NOW.toISOString()]);
+    return createProject(s.db, "team-1", { name: "Du lịch chậm", description: "", language: "vi", aspect: "16:9" }, "u", NOW.toISOString());
+  }
 
   it("drops voice lines not read for a long time, their WAV with them", () => {
     s = world();
@@ -64,74 +40,63 @@ describe("the rest of the sweep", () => {
     expect(s.db.all("SELECT key FROM studio_voice_lines")).toEqual([{ key: "b".repeat(64) }]);
   });
 
-  it("deletes old production audio nothing points at; keeps what the production or a timeline uses, recent files, and productions with a run open", async () => {
+  it("deletes old project audio nothing points at; keeps the project's voice and music, what a timeline uses, and recent files", async () => {
     s = world();
-    const bucket = new MemoryBucket();
-    const prod = seedProduction(s.db);
-    const key = (rel: string) => `library/studio/${prod}/${rel}`;
-    const put = async (rel: string, ageDays: number) => { await bucket.put(key(rel), Buffer.from("x")); bucket.modified.set(key(rel), DAYS(ageDays)); };
-    await put("voice/current.wav", 30);
-    await put("music/in-timeline.m4a", 30);
-    await put("voice/replaced.wav", 30);
-    await put("music/just-replaced.m4a", 1);
-    s.db.run("UPDATE productions SET voice = ? WHERE id = ?", [JSON.stringify({ mode: "clone", reference: `library:studio/${prod}/voice/current.wav` }), prod]);
-    replaceEpisodes(s.db, prod, [{ id: "ep-1", idx: 1, title: "T", hook: "h", plan: "{}" }], "plan-run");
-    s.db.run("INSERT INTO episode_revisions (id, episode_id, revision, base_revision, data, author_id, created_at) VALUES ('rev-1', 'ep-1', 1, 0, ?, 'system', ?)",
-      [JSON.stringify({ music: { track: `library:studio/${prod}/music/in-timeline.m4a`, gain_db: -18 } }), NOW.toISOString()]);
-
-    expect(await sweepProductionAudio(s.core, s.db, bucket, DAYS(7))).toBe(1);
-    expect([...bucket.objects.keys()].sort()).toEqual([key("music/in-timeline.m4a"), key("music/just-replaced.m4a"), key("voice/current.wav")]);
-
-    // a run open: nothing of this production is touched
-    await put("voice/replaced-again.wav", 30);
-    s.db.run("UPDATE productions SET keywords = ? WHERE id = ?", [JSON.stringify(["phở sáng"]), prod]);
-    startPlanRun(s.core, s.db, prod);
-    expect(await sweepProductionAudio(s.core, s.db, bucket, DAYS(7))).toBe(0);
-    expect(bucket.objects.has(key("voice/replaced-again.wav"))).toBe(true);
+    const p = project();
+    const video = createVideo(s.db, p.id, { title: "Tập 1", createdBy: "u" }, NOW.toISOString());
+    const key = (name: string) => `library/studio/projects/${p.id}/${name}`;
+    s.db.run("UPDATE projects SET voice = ?, music = ? WHERE id = ?", [
+      JSON.stringify({ kind: "sample", audio: `library:studio/projects/${p.id}/voice/v1.wav` }),
+      JSON.stringify({ audio: `library:studio/projects/${p.id}/music/m1.m4a` }), p.id,
+    ]);
+    s.db.run("INSERT INTO video_revisions (id, video_id, revision, base_revision, data, author_id, created_at) VALUES ('r1', ?, 1, 0, ?, 'u', ?)",
+      [video.id, JSON.stringify({ music: { src: `library:studio/projects/${p.id}/music/m0.m4a` } }), NOW.toISOString()]);
+    for (const k of ["voice/v1.wav", "music/m1.m4a", "music/m0.m4a", "voice/old.wav", "music/new.m4a"]) await s.bucket.put(key(k), Buffer.from("x"));
+    for (const k of ["voice/v1.wav", "music/m1.m4a", "music/m0.m4a", "voice/old.wav"]) s.bucket.modified.set(key(k), DAYS(30));
+    expect(await sweepProjectAudio(s.db, s.bucket, DAYS(7))).toBe(1);
+    expect([...s.bucket.objects.keys()].sort()).toEqual(["music/m0.m4a", "music/m1.m4a", "music/new.m4a", "voice/v1.wav"].map(key));
   });
 
-  it("deletes the shot frames of episodes a new series plan replaced", async () => {
+  it("removes scratch folders of jobs and turns no longer running; keeps running ones and recent ones", () => {
     s = world();
-    const bucket = new MemoryBucket();
-    const prod = seedProduction(s.db);
-    replaceEpisodes(s.db, prod, [{ id: "ep-new", idx: 1, title: "T", hook: "h", plan: "{}" }], "plan-run");
-    for (const k of [`productions/${prod}/episodes/ep-new/shots/s1.jpg`, `productions/${prod}/episodes/ep-old/shots/s1.jpg`, `productions/${prod}/episodes/ep-old/renders/final.mp4`]) {
-      await bucket.put(k, Buffer.from("x"));
-    }
-    expect(await sweepShotFrames(s.db, bucket)).toBe(1);
-    expect([...bucket.objects.keys()].sort()).toEqual([`productions/${prod}/episodes/ep-new/shots/s1.jpg`, `productions/${prod}/episodes/ep-old/renders/final.mp4`]);
-  });
-
-  it("keeps only the reference frames the production's style cites as evidence", async () => {
-    s = world();
-    const bucket = new MemoryBucket();
-    const prod = seedProduction(s.db);
-    const style = {
-      schema_version: "studio.style/v1", skipped: false, skipped_reason: null, name: "x", summary: "", references: [], measured: null, params: null,
-      do: [], dont: [], evidence: [{ param: "opening", video_id: "U_17EqTHUIo", t: 2.5, note: "" }],
+    const p = project();
+    const dataRoot = mkdtempSync(join(tmpdir(), "data-"));
+    const running = createJob(s.db, { projectId: p.id, kind: "research", title: "Crawl", request: {}, createdBy: "u" }, NOW.toISOString());
+    const thread = createThread(s.db, { projectId: p.id, kind: "project", title: "Kênh", createdBy: "u" }, NOW.toISOString());
+    const { turn } = postUserMessage(s.db, { threadId: thread.id, text: "chào", actor: { id: "u", role: "owner" } }, NOW.toISOString());
+    const folders = {
+      [join(dataRoot, "job-runs", running.id)]: DAYS(2),
+      [join(dataRoot, "job-runs", "gone-old")]: DAYS(2),
+      [join(dataRoot, "job-runs", "gone-new")]: HOURS(1),
+      [join(dataRoot, "agent-runs", turn!.id)]: DAYS(2),
+      [join(dataRoot, "agent-runs", "ended-old")]: DAYS(2),
     };
-    saveProductionDocument(s.db, prod, "style", style as never, "gate:run_1");
-    const cited = styleFrameKey(prod, "U_17EqTHUIo", 2.5);
-    for (const k of [cited, styleFrameKey(prod, "U_17EqTHUIo", 10), styleFrameKey(prod, "Q5itZPTiZ9g", 0.5)]) await bucket.put(k, Buffer.from("x"));
-    expect(await sweepStyleFrames(s.core, s.db, bucket)).toBe(2);
-    expect([...bucket.objects.keys()]).toEqual([cited]);
+    for (const [dir, at] of Object.entries(folders)) { mkdirSync(dir, { recursive: true }); aged(dir, at); }
+    expect(sweepScratch(s.db, dataRoot, HOURS(6).getTime())).toBe(2);
+    expect(Object.keys(folders).map((d) => existsSync(d))).toEqual([true, false, true, true, false]);
   });
-});
 
-describe("sweepReferenceDownloads", () => {
-  it("deletes reference video folders a crashed watch left; keeps recent ones", () => {
+  it("empties each project's .trash of what was deleted long enough ago", () => {
     const root = mkdtempSync(join(tmpdir(), "ws-"));
-    const folder = (run: string, ageHours: number) => {
-      const dir = join(root, run, "watch-references", "attempt_1", "references");
-      mkdirSync(join(dir, "U_17EqTHUIo"), { recursive: true });
-      writeFileSync(join(dir, "U_17EqTHUIo", "U_17EqTHUIo.mp4"), "x");
-      const t = new Date(NOW.getTime() - ageHours * 3_600_000);
-      utimesSync(dir, t, t);
-      return dir;
-    };
-    const old = folder("run_a", 12);
-    const recent = folder("run_b", 1);
-    expect(sweepReferenceDownloads(root, NOW.getTime() - 6 * 3_600_000)).toBe(1);
-    expect([existsSync(old), existsSync(recent)]).toEqual([false, true]);
+    const trash = join(root, "p1", ".trash");
+    mkdirSync(join(trash, "old"), { recursive: true });
+    writeFileSync(join(trash, "new.md"), "x");
+    aged(join(trash, "old"), DAYS(30));
+    aged(join(trash, "new.md"), DAYS(1));
+    mkdirSync(join(root, "p2"));
+    expect(sweepTrash(root, DAYS(14).getTime())).toBe(1);
+    expect([existsSync(join(trash, "old")), existsSync(join(trash, "new.md"))]).toEqual([false, true]);
+  });
+
+  it("one sweep reports each kind; without a voice store or workspaces those parts are skipped", async () => {
+    s = world();
+    const dataRoot = mkdtempSync(join(tmpdir(), "data-"));
+    const dir = join(dataRoot, "job-runs", "gone");
+    mkdirSync(dir, { recursive: true });
+    aged(dir, DAYS(1));
+    logAudit(s.db, { at: DAYS(91).toISOString(), actorKind: "user", kind: "http", action: "old", outcome: "ok" });
+    logAudit(s.db, { at: DAYS(89).toISOString(), actorKind: "user", kind: "http", action: "kept", outcome: "ok" });
+    expect(await sweepStudioData({ db: s.db, bucket: s.bucket, dataRoot }, { now: NOW })).toEqual({ voiceLines: 0, audioObjects: 0, scratch: 1, trash: 0, auditRows: 1 });
+    expect(listAudit(s.db, {}).items.map((r) => r.action)).toEqual(["kept"]);
   });
 });

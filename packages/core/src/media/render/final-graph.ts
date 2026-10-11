@@ -188,8 +188,13 @@ export function finalArgs(p: FinalGraphInput): { argv: string[]; inputs: { kind:
     const s = boundarySeg.transition_out.seconds;
     const leftTb = `xt${j}l`;
     const rightTb = `xt${j}r`;
-    videoParts.push(`[${accLabel}]settb=AVTB,setpts=PTS-STARTPTS[${leftTb}]`);
-    videoParts.push(`[${blockLabel[j]!}]settb=AVTB,setpts=PTS-STARTPTS[${rightTb}]`);
+    // `fps` last: xfade refuses a link with no constant frame rate, and on ffmpeg 7.1 (the render worker's
+    // Debian build) both `concat` and `setpts` leave the rate unknown (1/0) even though every mezzanine is CFR
+    // -- "The inputs needs to be a constant frame rate", exit 234 on any episode with a dissolve. ffmpeg 8+
+    // keeps the rate, which is why it never showed up locally.
+    const cfr = `settb=AVTB,setpts=PTS-STARTPTS,fps=${composition.output.fps}`;
+    videoParts.push(`[${accLabel}]${cfr}[${leftTb}]`);
+    videoParts.push(`[${blockLabel[j]!}]${cfr}[${rightTb}]`);
     const out = `xf${j}`;
     videoParts.push(`[${leftTb}][${rightTb}]xfade=transition=fade:duration=${fmt(s)}:offset=${fmt(accLen)}[${out}]`);
     accLabel = out;

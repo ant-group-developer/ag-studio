@@ -15,9 +15,9 @@
  *   - fake ag-go server at localhost:4099
  *   - ag-render-worker process
  *
- * onSubmitted uses makeStudioFarmRecorder — the same function apps/worker uses in
- * production to insert studio_farm_jobs rows so the sign endpoint can authorize
- * render-worker presigned URL requests.
+ * onSubmitted records each farm job as a project's (project_jobs + project_farm_jobs), as the Studio worker's
+ * project jobs do (packages/studio-engine/src/workspace/farm.ts), so the sign endpoint can authorize the
+ * render worker's presigned URL requests.
  */
 
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
@@ -44,7 +44,6 @@ import http from "node:http";
 import { FakeS3Server } from "./fake-s3.js";
 import {
   FarmExecutor,
-  makeStudioFarmRecorder,
   stageInputPrefix,
   type SubmittedInfo,
   type StudioStorage,
@@ -368,6 +367,32 @@ async function s3Put(
 }
 
 // ------------------------------------------------------------------
+// A farm job recorded as a project's, the way /farm/sign looks it up (migration 0033): one project job per farm job.
+function recordProjectFarmJob(dbPath: string): (info: SubmittedInfo) => Promise<void> {
+  return async (info) => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { DatabaseSync } = require("node:sqlite") as typeof import("node:sqlite");
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.exec("PRAGMA busy_timeout = 5000");
+      const now = new Date().toISOString();
+      const kind = info.jobType === "studio.render_final" ? "render_final" : info.jobType === "studio.export_premiere" ? "export_premiere"
+        : info.jobType === "studio.tts" ? "tts" : "render_preview";
+      db.prepare(
+        `INSERT OR IGNORE INTO project_jobs (id, project_id, kind, status, title, request, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, 'running', ?, '{}', 'auth0|e2e-owner', ?, ?)`,
+      ).run(info.attemptId, info.productionId, kind, info.stageKey, now, now);
+      db.prepare(
+        `INSERT OR IGNORE INTO project_farm_jobs (farm_job_id, job_id, project_id, stage_key, attempt_id, job_type, is_final_render, requirements, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(info.farmJobId, info.attemptId, info.productionId, info.stageKey, info.attemptId, info.jobType, info.isFinalRender ? 1 : 0,
+        JSON.stringify(info.requirements ?? {}), now);
+    } finally {
+      db.close();
+    }
+  };
+}
+
 // beforeAll: boot all infrastructure
 // ------------------------------------------------------------------
 
@@ -776,7 +801,7 @@ describe.skipIf(!isE2E)("farm E2E: studio.render_preview", () => {
     }
     if (!dbReady) throw new Error("Studio DB not created by API startup");
 
-    // Insert team + production rows so the sign endpoint can authorize requests
+    // Insert team + project rows so the sign endpoint can authorize requests
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { DatabaseSync } = require("node:sqlite") as typeof import("node:sqlite");
     {
@@ -785,30 +810,23 @@ describe.skipIf(!isE2E)("farm E2E: studio.render_preview", () => {
       const db = new DatabaseSync(studioDbPath, { enableForeignKeyConstraints: false });
       try {
         db.exec("PRAGMA busy_timeout = 5000");
-        // teams.id is a FK for productions.team_id
+        // teams.id is a FK for projects.team_id
         db.prepare(
           `INSERT OR IGNORE INTO teams (id, name, created_at, updated_at)
            VALUES (?, ?, datetime('now'), datetime('now'))`,
         ).run("team-e2e", "E2E Team");
-        // /farm/sign resolves footage acting as the production's owner (the team owner here), never as the
-        // production itself, and refuses when there is nobody to act as.
+        // /farm/sign resolves footage acting as the project's owner, never as the project itself.
         db.prepare(
           `INSERT OR IGNORE INTO team_members (team_id, user_id, role, joined_at)
            VALUES (?, ?, 'owner', datetime('now'))`,
         ).run("team-e2e", "auth0|e2e-owner");
-        // productions table: id, team_id, title, status, canvas, brief, run_id, created_at, updated_at
+        // the farm's "production" is the project (its id names the key prefix productions/<project>/jobs/…)
         db.prepare(
-          `INSERT OR IGNORE INTO productions
-             (id, team_id, title, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))`,
-        ).run(productionId, "team-e2e", "E2E Test Production", "in_progress");
-        // Verify rows were inserted
-        const teamRow = db.prepare("SELECT id FROM teams WHERE id = ?").get("team-e2e");
-        const prodRow = db.prepare("SELECT id FROM productions WHERE id = ?").get(productionId);
-        process.stderr.write(
-          `[e2e] DB setup: team=${JSON.stringify(teamRow)} prod=${JSON.stringify(prodRow)}\n`,
-        );
-        if (!prodRow) throw new Error(`production row not found after INSERT for id=${productionId}`);
+          `INSERT OR IGNORE INTO projects (id, team_id, name, owner_user_id, created_by, created_at, updated_at)
+           VALUES (?, ?, ?, 'auth0|e2e-owner', 'auth0|e2e-owner', datetime('now'), datetime('now'))`,
+        ).run(productionId, "team-e2e", "E2E Test Project");
+        const projectRow = db.prepare("SELECT id FROM projects WHERE id = ?").get(productionId);
+        if (!projectRow) throw new Error(`project row not found after INSERT for id=${productionId}`);
       } finally {
         db.close();
       }
@@ -844,13 +862,13 @@ describe.skipIf(!isE2E)("farm E2E: studio.render_preview", () => {
       },
     };
 
-    // onSubmitted — uses makeStudioFarmRecorder, the same function apps/worker uses
+    // onSubmitted — records the farm job as the project's, as the Studio worker does
     let recordedFarmJobId = "";
     const onSubmitted = async (info: SubmittedInfo): Promise<void> => {
       recordedFarmJobId = info.farmJobId;
-      await makeStudioFarmRecorder(studioDbPath)(info);
+      await recordProjectFarmJob(studioDbPath)(info);
       process.stderr.write(
-        `[e2e] studio_farm_jobs row inserted farm_job_id=${info.farmJobId}\n`,
+        `[e2e] project_farm_jobs row inserted farm_job_id=${info.farmJobId}\n`,
       );
     };
 
@@ -949,16 +967,16 @@ describe.skipIf(!isE2E)("farm E2E: studio.render_preview", () => {
     expect(renderResult?.stageResult?.outcome).toBe("succeeded");
   });
 
-  it("studio_farm_jobs row inserted by makeStudioFarmRecorder", () => {
+  it("project_farm_jobs row inserted when the job was submitted", () => {
     expect(renderResult?.farmJobId, "farmJobId set by onSubmitted").toBeTruthy();
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { DatabaseSync } = require("node:sqlite") as typeof import("node:sqlite");
     const db = new DatabaseSync(join(testDir, "studio.db"));
     try {
       const row = db
-        .prepare("SELECT * FROM studio_farm_jobs WHERE farm_job_id = ?")
+        .prepare("SELECT * FROM project_farm_jobs WHERE farm_job_id = ?")
         .get(renderResult.farmJobId);
-      expect(row, "studio_farm_jobs row should exist").toBeTruthy();
+      expect(row, "project_farm_jobs row should exist").toBeTruthy();
     } finally {
       db.close();
     }
@@ -1085,9 +1103,9 @@ describe.skipIf(!isE2E)("farm E2E: studio.tts", () => {
     };
 
     const onSubmitted = async (info: SubmittedInfo): Promise<void> => {
-      await makeStudioFarmRecorder(studioDbPath)(info);
+      await recordProjectFarmJob(studioDbPath)(info);
       process.stderr.write(
-        `[e2e] TTS studio_farm_jobs row inserted farm_job_id=${info.farmJobId}\n`,
+        `[e2e] TTS project_farm_jobs row inserted farm_job_id=${info.farmJobId}\n`,
       );
     };
 
@@ -1236,113 +1254,6 @@ describe.skipIf(!isE2E)("farm E2E: render machine types", () => {
 // so no worker takes them, then cancelled.
 // ------------------------------------------------------------------
 describe.skipIf(!isE2E)("farm E2E: shot-cut job types", () => {
-  it("the hub takes studio.tts and studio.transcribe from the Studio's payload builders", async () => {
-    const { studioSourceId } = await import("@harness/core");
-    const { cutPayloadBuilders, cutStages } = await import("@ag-studio/engine");
-    const { seedProduction, world } = await import("../../packages/studio-engine/test/helpers.js");
-    const { runStage, stageWorkspace } = await import("../../packages/studio-engine/test/stage-harness.js");
-    const w = world();
-    const prod = seedProduction(w.db);
-    w.db.run("UPDATE productions SET voice = ? WHERE id = ?", [JSON.stringify({ reference: "library:voices/mai.wav", reference_text: "Xin chào.", speed: 1 }), prod]);
-    const media = {
-      ffmpeg: FFMPEG_PATH, ffprobe: FFPROBE_PATH, voiceDir: join(testDir, "voice-cut"),
-      resolveAssets: async () => ({ items: [], missing: [] }), download: async () => {},
-    };
-    const builders = cutPayloadBuilders({ db: w.db, bucket: w.bucket, media });
-
-    // TTS: the lines of an edit plan, none read yet
-    const plan = {
-      schema_version: "studio.edit-plan/v1", episode_id: "ep-1", narration: "tts", language: "vi", target_seconds: 30,
-      shots: [{ order: 1, shot_id: "s000-000", source_id: studioSourceId("a"), in: 0, out: 3, line_id: "L001", transition: "cut", section_title: null, note: "" }],
-      lines: [{ line_id: "L001", text: "Phố cổ Hoa Lư lúc chiều." }, { line_id: "L002", text: "Đền vua Đinh." }],
-      texts: [], music_mood: null,
-    };
-    const ttsRun = stageWorkspace({ runId: "r", stageKey: "tts", inputs: [
-      { type: "studio_edit_plan", name: "edit-plan.json", json: plan },
-      { type: "studio_brief", name: "brief.json", json: { production_id: prod, language: "vi" } },
-    ] });
-    const tts = await builders["studio-cut-tts"]!(ttsRun.request, ttsRun.ctx);
-
-    // Transcribe: one proxy with sound, its shots found by the real stage
-    const dir = join(testDir, "cut-proxies", "proxies");
-    mkdirSync(dir, { recursive: true });
-    const file = `${studioSourceId("a")}.mp4`;
-    await createLavfiVideo(join(dir, file), 4, CANVAS.width, CANVAS.height);
-    writeFileSync(join(dir, "proxies.json"), JSON.stringify({ schema_version: "studio.cut-proxies/v1", proxies: [
-      { index: 0, asset_id: "a", source_id: studioSourceId("a"), file, source_kind: "proxy", watermarked: false, bytes: 1 },
-    ] }));
-    const sources = {
-      schema_version: "studio.cut-sources/v1", production_id: prod, episode_id: "ep-1", language: "vi", narration: "tts",
-      sources: [{ index: 0, asset_id: "a", source_id: studioSourceId("a"), title: "a", duration_s: 4, has_speech: null, hints: null }],
-    };
-    const index = stageWorkspace({ runId: "r", inputs: [{ type: "cut_sources", name: "sources.json", json: sources }, { type: "proxy_set", name: "proxies", dir }] });
-    await runStage(cutStages({ db: w.db, bucket: w.bucket, footage: { getCatalog: async () => ({ items: [], nextCursor: null }) }, startEpisodeRun: async () => ({ runId: "x" }), media } as never)["studio-media-index"], index);
-    const trRun = stageWorkspace({ runId: "r", inputs: [
-      { type: "cut_sources", name: "sources.json", json: sources }, { type: "proxy_set", name: "proxies", dir },
-      { type: "shots", name: "shots.json", json: index.json("shots.json") },
-    ] });
-    const transcribe = await builders["studio-cut-transcribe"]!(trRun.request, trRun.ctx);
-    expect(tts.payload).toBeTruthy();
-    expect(transcribe.payload).toBeTruthy();
-
-    const ownerClient = new FarmOwnerClient({ baseUrl: `http://127.0.0.1:${FARM_HUB_PORT}`, ownerKey, timeoutMs: 15_000 });
-    const later = new Date(Date.now() + 24 * 3600_000).toISOString();
-    const ids: string[] = [];
-    for (const [type, payload] of [["studio.tts", tts.payload], ["studio.transcribe", transcribe.payload]] as const) {
-      const resp = await ownerClient.submitJob({ type, correlation_id: `cut-${type}-${randomUUID()}`, affinity_key: prod, not_before: later, requirements: {}, payload: payload as never });
-      expect(resp.created, `${type} taken by the hub`).toBe(true);
-      ids.push(resp.job.id);
-    }
-    const queued = await ownerClient.listJobs({ status: "queued", limit: 500 });
-    expect(queued.jobs.map((j) => j.id)).toEqual(expect.arrayContaining(ids));
-    for (const id of ids) expect((await ownerClient.cancelJob(id)).status).toBe("cancelled");
-    w.core.close();
-  }, 120_000);
-});
-
-/** The entries of a zip (yazl writes zip64): name → reader. */
-function zipEntries(buf: Buffer): Map<string, () => Buffer> {
-  const MAX = 0xffffffff;
-  const eocd = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
-  let count = buf.readUInt16LE(eocd + 10);
-  let at = buf.readUInt32LE(eocd + 16);
-  if (at === MAX || count === 0xffff) {
-    const z64 = Number(buf.readBigUInt64LE(eocd - 20 + 8)); // zip64 end of central directory, from its locator
-    count = Number(buf.readBigUInt64LE(z64 + 32));
-    at = Number(buf.readBigUInt64LE(z64 + 48));
-  }
-  const out = new Map<string, () => Buffer>();
-  for (let i = 0; i < count; i++) {
-    const method = buf.readUInt16LE(at + 10);
-    let size = buf.readUInt32LE(at + 20);
-    const usize = buf.readUInt32LE(at + 24);
-    const nameLen = buf.readUInt16LE(at + 28);
-    const extraLen = buf.readUInt16LE(at + 30);
-    let local = buf.readUInt32LE(at + 42);
-    const name = buf.subarray(at + 46, at + 46 + nameLen).toString("utf8");
-    // zip64 extended information (0x0001): the 8-byte values whose 4-byte fields are 0xffffffff, in this order
-    for (let e = at + 46 + nameLen; e < at + 46 + nameLen + extraLen; e += 4 + buf.readUInt16LE(e + 2)) {
-      if (buf.readUInt16LE(e) !== 0x0001) continue;
-      let f = e + 4;
-      if (usize === MAX) f += 8;
-      if (size === MAX) { size = Number(buf.readBigUInt64LE(f)); f += 8; }
-      if (local === MAX) local = Number(buf.readBigUInt64LE(f));
-    }
-    out.set(name, () => {
-      const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
-      const data = buf.subarray(start, start + size);
-      return method === 8 ? inflateRawSync(data) : Buffer.from(data);
-    });
-    at += 46 + nameLen + extraLen + buf.readUInt16LE(at + 32);
-  }
-  return out;
-}
-
-// ------------------------------------------------------------------
-// Phase 5: the real render worker renders a small composition made from a timeline v4 (timelineToComposition):
-// three trimmed pieces, a dissolve, a narration line from a synthetic WAV; the file is as long as the composition.
-// ------------------------------------------------------------------
-describe.skipIf(!isE2E)("farm E2E: a shot-cut (v4) composition", () => {
   it("renders three trimmed pieces with a dissolve and narration, to the composition's length", async () => {
     const { timelineToComposition } = await import("@harness/core");
     const s3 = makeS3Client();
@@ -1401,7 +1312,7 @@ describe.skipIf(!isE2E)("farm E2E: a shot-cut (v4) composition", () => {
     };
     const executor = new FarmExecutor({
       client: new FarmOwnerClient({ baseUrl: `http://127.0.0.1:${FARM_HUB_PORT}`, ownerKey, timeoutMs: 15_000 }),
-      storage, onSubmitted: async (info: SubmittedInfo) => { await makeStudioFarmRecorder(studioDbPath)(info); }, pollIntervalMs: 2000,
+      storage, onSubmitted: async (info: SubmittedInfo) => { await recordProjectFarmJob(studioDbPath)(info); }, pollIntervalMs: 2000,
     });
     const { SystemClock } = await import("@harness/core");
     const log = (msg: string) => process.stderr.write(`[executor:cut] ${msg}\n`);
@@ -1443,7 +1354,7 @@ describe.skipIf(!isE2E)("farm E2E: a shot-cut (v4) composition", () => {
     };
     const premiereExecutor = new FarmExecutor({
       client: new FarmOwnerClient({ baseUrl: `http://127.0.0.1:${FARM_HUB_PORT}`, ownerKey, timeoutMs: 15_000 }),
-      storage: premiereStorage, onSubmitted: async (info: SubmittedInfo) => { await makeStudioFarmRecorder(studioDbPath)(info); }, pollIntervalMs: 2000,
+      storage: premiereStorage, onSubmitted: async (info: SubmittedInfo) => { await recordProjectFarmJob(studioDbPath)(info); }, pollIntervalMs: 2000,
     });
     const exported = await premiereExecutor.execute({
       schema_version: "harness.stage-request/v1", run_id: `run_cutp_${randomUUID().replace(/-/g, "").slice(0, 16)}`, stage_key: "editor-premiere",

@@ -107,33 +107,28 @@ describe("createStudioClient", () => {
     });
   });
 
-  describe("saveRevision", () => {
-    it("unwraps 409 conflict details into body so useEditor can read currentRevision", async () => {
+  describe("error details", () => {
+    it("spreads a 409's details into body so callers read them as fields", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 409,
-        json: () => Promise.resolve(errorEnvelope(409, "revision_conflict", "stale", { currentRevision: 5, baseRevision: 3 })),
+        json: () => Promise.resolve(errorEnvelope(409, "team_skill_name_taken", "taken", { name: "Quy chuẩn" })),
       });
 
-      const err = await client.saveRevision("prod-1", "ep-1", 3, {} as never).catch((e) => e);
+      const err = await client.createTeamSkill("t1", { name: "Quy chuẩn", content: "x" }).catch((e) => e);
       expect(err).toBeInstanceOf(StudioHttpError);
       expect((err as StudioHttpError).status).toBe(409);
-      expect((err as StudioHttpError).body?.code).toBe("revision_conflict");
-      // details are spread into body so existing .currentRevision access works
-      expect((err as StudioHttpError).body?.currentRevision).toBe(5);
+      expect((err as StudioHttpError).body?.code).toBe("team_skill_name_taken");
+      expect((err as StudioHttpError).body?.name).toBe("Quy chuẩn");
     });
-  });
 
-  describe("submitApprovePlan", () => {
-    it("flattens 422 rejection details into body so callers can read fieldErrors", async () => {
-      const errBody = errorEnvelope(422, "validation_failed", "Plan invalid", {
-        fieldErrors: [{ field: "episodes[0].title", message: "required" }],
-      });
+    it("keeps a 422's code and details", async () => {
+      const errBody = errorEnvelope(422, "invalid_setting", "bad cap", { fieldErrors: [{ field: "claudeMaxConcurrent", message: "1-100" }] });
       mockFetch.mockResolvedValueOnce({ ok: false, status: 422, json: () => Promise.resolve(errBody) });
 
-      const err = await client.submitApprovePlan("prod-1", {} as never).catch((e) => e);
+      const err = await client.setClaudeMaxConcurrent(500).catch((e) => e);
       expect(err).toBeInstanceOf(StudioHttpError);
-      expect((err as StudioHttpError).body?.code).toBe("validation_failed");
+      expect((err as StudioHttpError).body?.code).toBe("invalid_setting");
       expect((err as StudioHttpError).body?.fieldErrors).toBeDefined();
     });
   });

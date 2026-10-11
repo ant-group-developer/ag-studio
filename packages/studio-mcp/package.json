@@ -1,0 +1,14 @@
+{
+  "name": "@ag-studio/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The Studio MCP server an agent turn's claude CLI starts: lists and calls the Studio tools through the Studio API with the turn's token.",
+  "bin": { "studio-mcp": "./server.mjs" },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.0"
+  }
+}

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { CompositionSchema, newId, type Composition, type MediaProbe, type MediaProber } from "@harness/contracts";
-import { probeNvenc, renderComposition, type RenderDeps, type RenderInput, type SpawnFn } from "../../../src/media/render/run.js";
+import { probeNvenc, renderComposition, stderrSummary, type RenderDeps, type RenderInput, type SpawnFn } from "../../../src/media/render/run.js";
 import { hasFfmpeg } from "../../../../../tests/media.js";
 
 const SRC_A = "src_01JAAAAAAAAAAAAAAAAAAAAAAA";
@@ -183,6 +183,28 @@ const LOUDNORM_STDERR = [
 const loudnormStderr = (normalizationType: string): string =>
   LOUDNORM_STDERR.replace('"normalization_type" : "linear"', `"normalization_type" : "${normalizationType}"`);
 
+/** The tail of the real ffmpeg 7.1.5 final encode that failed with exit 234 on a dissolve (2026-10-08). */
+const XFADE_EINVAL_STDERR = [
+  "  Stream #93:0 (pcm_s16le) -> adelay:default",
+  "  format:default -> Stream #0:0 (libx264)",
+  "  loudnorm:default -> Stream #0:1 (aac)",
+  "Press [q] to stop, [?] for help",
+  "[Parsed_ass_36 @ 0x75e424ba1580] libass API version: 0x1703000",
+  "[Parsed_ass_36 @ 0x75e424ba1580] Added subtitle file: '/work/j/overlay.ass' (6 styles, 37 events)",
+  "[Parsed_xfade_15 @ 0x75e424b89c00] The inputs needs to be a constant frame rate; current rate of 1/0 is invalid",
+  "[Parsed_xfade_15 @ 0x75e424b89c00] Failed to configure output pad on Parsed_xfade_15",
+  "[fc#0 @ 0x5c39baae9940] Error reinitializing filters!",
+  "[fc#0 @ 0x5c39baae9940] Task finished with error code: -22 (Invalid argument)",
+  "[fc#0 @ 0x5c39baae9940] Terminating thread with return code -22 (Invalid argument)",
+  "[aost#0:1/aac @ 0x5c39bab56000] Could not open encoder before EOF",
+  "[aost#0:1/aac @ 0x5c39bab56000] Task finished with error code: -22 (Invalid argument)",
+  "[vost#0:0/libx264 @ 0x5c39bab86740] Could not open encoder before EOF",
+  "[out#0/mp4 @ 0x5c39bab5d9c0] Nothing was written into output file, because at least one of its streams received no packets.",
+  "frame=    0 fps=0.0 q=0.0 Lsize=       0KiB time=N/A bitrate=N/A speed=N/A    ",
+  "Conversion failed!",
+  "",
+].join("\n");
+
 interface FakePlan {
   /** Exit code the child reports; `null` stands for "killed by a signal". Defaults to 0. */
   exit?: number | null;
@@ -288,6 +310,25 @@ function fakeWorld(o: { spawn: SpawnFn; nvenc: boolean }): { d: RenderDeps; outD
 }
 
 const CHECKSUMS = new Map([[SRC_A, "sha256:" + "f".repeat(64)]]);
+
+describe("stderrSummary", () => {
+  it("picks the cause, not ffmpeg's -22 cascade after it, and drops the per-run filter addresses", () => {
+    expect(stderrSummary(XFADE_EINVAL_STDERR)).toBe(
+      "[Parsed_xfade_15] The inputs needs to be a constant frame rate; current rate of 1/0 is invalid | [Parsed_xfade_15] Failed to configure output pad on Parsed_xfade_15",
+    );
+  });
+
+  it("falls back to the last meaningful line when nothing looks like an error", () => {
+    expect(stderrSummary("Input #0, mov,mp4\n  Duration: 00:00:02.00\nsomething odd happened\nConversion failed!\n")).toBe("something odd happened");
+  });
+
+  it("is empty for an empty stderr and capped for a huge line", () => {
+    expect(stderrSummary("")).toBe("");
+    const s = stderrSummary(`error: ${"x".repeat(5000)}`);
+    expect(s.length).toBe(600);
+    expect(s.endsWith("...")).toBe(true);
+  });
+});
 
 describe("probeNvenc", () => {
   it("answers false (never throws) for a binary that cannot run at all", async () => {
@@ -435,6 +476,18 @@ describe("renderComposition (fake ffmpeg)", () => {
       if (previous.lower === undefined) delete process.env.harness_secret_a_b;
       else process.env.harness_secret_a_b = previous.lower;
     }
+  });
+
+  it("a failing ffmpeg's cause reaches the error message; the full tail stays in the details", async () => {
+    const { spawn } = fakeSpawn((_argv, i) => (i === 0 ? { exit: 234, stderr: XFADE_EINVAL_STDERR } : {}));
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+
+    const err = await renderComposition(d, input({ composition: fakeComposition(), outDir, encoderCfg: "cpu", sourceChecksums: CHECKSUMS })).catch((e: unknown) => e);
+    expect(err).toMatchObject({
+      code: "IO_ERROR",
+      message: "mezzanine 0: ffmpeg exited 234: [Parsed_xfade_15] The inputs needs to be a constant frame rate; current rate of 1/0 is invalid | [Parsed_xfade_15] Failed to configure output pad on Parsed_xfade_15",
+      details: { exit_code: 234, stderr_tail: XFADE_EINVAL_STDERR },
+    });
   });
 
   it("an ffmpeg killed by a signal (exit code null) is an IO_ERROR", async () => {

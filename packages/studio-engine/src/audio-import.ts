@@ -1,8 +1,7 @@
 /**
- * Audio a person gives a production: a voice sample to read the narration in, background music (ADR-0001 item 168).
- * It comes as a link (fetched here) or an uploaded file, is checked and normalised by ffmpeg, and kept in the Studio
- * bucket by content under `library/studio/<production>/<voice|music>/<sha256>.<ext>`: a `library:` input the render
- * worker already signs. Then the production row points at it, and episodes waiting for a voice run on.
+ * Audio a person gives a project: a voice sample to read the narration in, background music. It is checked and
+ * normalised by ffmpeg (`prepareVoice`, `prepareMusic`) and kept in the Studio bucket by content: a `library:` input the
+ * render worker already signs (`workspace/project-audio.ts`). A pasted link is fetched by `fetchAudioUrl`.
  */
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream, mkdtempSync, rmSync } from "node:fs";
@@ -12,15 +11,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import {
-  ProductionMusicSchema, ProductionVoiceSchema, type AudioSource, type ProductionMusic, type ProductionVoice, type VoiceOrigin,
-} from "@harness/contracts";
-import { isTerminal } from "@harness/core";
 import type { StudioBucket } from "./bucket.js";
-import type { StudioEngineCore } from "./core.js";
 import { probeMedia, runTool } from "./cut-ffmpeg.js";
-import { retryStage, StudioRunError } from "./run-control.js";
-import { getEpisode, listEpisodes, type ProductionRecord, type StudioDb } from "./studio-db.js";
+import type { StudioDb } from "./studio-db.js";
 
 export { VOICE_ORIGINS, type AudioSource, type VoiceOrigin } from "@harness/contracts";
 
@@ -177,113 +170,3 @@ export async function sha256Of(path: string): Promise<string> {
 }
 
 export interface AudioImportDeps extends AudioTools { db: StudioDb; bucket: StudioBucket }
-
-/**
- * Checks and normalises `file`, keeps it in the bucket by content and points the production at it. A voice needs its
- * origin (ADR-0001 item 105: synthetic, the person's own, or licensed): a claim the person makes, not verified.
- */
-export async function importProductionAudio(d: AudioImportDeps, o: {
-  productionId: string; kind: AudioKind; file: string; source: AudioSource; userId: string;
-  origin?: VoiceOrigin; referenceText?: string | null; gainDb?: number; ducking?: boolean;
-}): Promise<ProductionVoice | ProductionMusic> {
-  const work = mkdtempSync(join(tmpdir(), "studio-audio-"));
-  try {
-    const now = new Date().toISOString();
-    if (o.kind === "voice") {
-      if (!o.origin) throw new AudioImportError("audio_invalid", "chọn nguồn gốc của giọng");
-      const out = join(work, "voice.wav");
-      const { duration_s } = await prepareVoice(d, o.file, out);
-      const sha = await sha256Of(out);
-      const key = `library/studio/${o.productionId}/voice/${sha}.wav`;
-      await d.bucket.putFile(key, out, "audio/wav");
-      const voice = ProductionVoiceSchema.parse({
-        mode: "clone", reference: `library:${key.slice("library/".length)}`, reference_text: o.referenceText?.trim() || null, speed: 1,
-        origin: o.origin, source: o.source, sha256: sha, duration_s, confirmed_by: o.userId, confirmed_at: now,
-      });
-      d.db.run("UPDATE productions SET voice = ?, updated_at = ? WHERE id = ?", [JSON.stringify(voice), now, o.productionId]);
-      return voice;
-    }
-    const out = join(work, "music.m4a");
-    const { duration_s } = await prepareMusic(d, o.file, out);
-    const sha = await sha256Of(out);
-    const key = `library/studio/${o.productionId}/music/${sha}.m4a`;
-    await d.bucket.putFile(key, out, "audio/mp4");
-    const music = ProductionMusicSchema.parse({
-      track: `library:${key.slice("library/".length)}`, gain_db: o.gainDb ?? MUSIC_DEFAULTS.gain_db, ducking: o.ducking ?? MUSIC_DEFAULTS.ducking,
-      source: o.source, sha256: sha, duration_s,
-    });
-    d.db.run("UPDATE productions SET music = ?, updated_at = ? WHERE id = ?", [JSON.stringify(music), now, o.productionId]);
-    return music;
-  } finally {
-    rmSync(work, { recursive: true, force: true });
-  }
-}
-
-/** The person declined narration for the whole production: narrated episodes are cut without lines. */
-export function declineNarration(db: StudioDb, productionId: string, userId: string): ProductionVoice {
-  const now = new Date().toISOString();
-  const voice = ProductionVoiceSchema.parse({ mode: "none", decided_by: userId, decided_at: now });
-  db.run("UPDATE productions SET voice = ?, updated_at = ? WHERE id = ?", [JSON.stringify(voice), now, productionId]);
-  return voice;
-}
-
-/**
- * Narration declined (`none`) or wanted again (null) for one episode, whatever the production has; an episode waiting
- * for a voice runs on at once (its `tts` again). Returns whether it was resumed.
- */
-export function setEpisodeNarration(core: StudioEngineCore, db: StudioDb, episodeId: string, o: { declined: boolean }): { resumed: boolean } {
-  const ep = getEpisode(db, episodeId);
-  if (!ep) throw new StudioRunError("not_found", `episode ${episodeId} not found`);
-  if (ep.edit_style !== "cut") throw new StudioRunError("invalid", "chỉ tập cắt theo shot có lời dẫn", { code: "no_narration_here" });
-  db.run("UPDATE episodes SET narration_override = ?, updated_at = ? WHERE id = ?", [o.declined ? "none" : null, new Date().toISOString(), episodeId]);
-  return { resumed: o.declined && resumeEpisodeTts(core, ep.run_id) };
-}
-
-/** Back to "not asked": a voice the person removed. */
-export function clearProductionAudio(db: StudioDb, productionId: string, kind: AudioKind): void {
-  db.run(`UPDATE productions SET ${kind === "voice" ? "voice" : "music"} = NULL, updated_at = ? WHERE id = ?`, [new Date().toISOString(), productionId]);
-}
-
-/** Runs `tts` again in every episode of the production stopped there (waiting for a voice); returns those episodes. */
-export function resumeVoiceWaiting(core: StudioEngineCore, db: StudioDb, productionId: string): string[] {
-  return listEpisodes(db, productionId).filter((ep) => resumeEpisodeTts(core, ep.run_id)).map((ep) => ep.id);
-}
-
-/** `tts` again in a run stopped there; false when the run is not stopped at `tts`. */
-function resumeEpisodeTts(core: StudioEngineCore, runId: string | null): boolean {
-  if (!runId) return false;
-  const run = core.store.getRun(runId);
-  if (!run || isTerminal("run", run.state) || run.state === "CANCEL_REQUESTED") return false;
-  const tts = core.store.listStageRuns(runId)
-    .find((s) => s.executor.type === "farm" && s.executor.job === "studio.tts" && (s.state === "WAITING_HUMAN" || s.state === "FAILED"));
-  if (!tts) return false;
-  retryStage(core, runId, tts.stage_key);
-  return true;
-}
-
-/** What a production has, for a screen: its voice (or narration declined) and its music, with the inputs to listen to. */
-export interface ProductionAudioView {
-  voice:
-    | { mode: "none"; decided_at: string }
-    | { mode: "designing"; instruct: string; requested_at: string; error: string | null }
-    | { mode: "clone"; origin: VoiceOrigin | null; source: AudioSource | null; duration_s: number | null; reference_text: string | null; reference: string }
-    | null;
-  music: { track: string; gain_db: number; ducking: boolean; source: AudioSource | null; duration_s: number | null } | null;
-}
-
-export function productionAudio(p: Pick<ProductionRecord, "voice" | "music">): ProductionAudioView {
-  let voice: ProductionAudioView["voice"] = null;
-  if (p.voice) {
-    const v = ProductionVoiceSchema.parse(JSON.parse(p.voice));
-    if ("mode" in v && v.mode === "none") voice = { mode: "none", decided_at: v.decided_at };
-    else if ("mode" in v && v.mode === "designing") voice = { mode: "designing", instruct: v.instruct, requested_at: v.requested_at, error: v.error };
-    else if ("mode" in v) voice = { mode: "clone", origin: v.origin, source: v.source, duration_s: v.duration_s, reference_text: v.reference_text, reference: v.reference };
-    else if (v.reference) voice = { mode: "clone", origin: null, source: null, duration_s: null, reference_text: v.reference_text, reference: v.reference };
-  }
-  let music: ProductionAudioView["music"] = null;
-  if (p.music) {
-    const m = ProductionMusicSchema.parse(JSON.parse(p.music));
-    music = { track: m.track, gain_db: m.gain_db, ducking: m.ducking, source: m.source ?? null, duration_s: m.duration_s ?? null };
-  }
-  return { voice, music };
-}

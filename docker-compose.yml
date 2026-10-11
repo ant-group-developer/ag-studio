@@ -33,7 +33,8 @@ services:
       retries: 6
       start_period: 20s
 
-  # Worker migrate cùng studio.db với api: chỉ khởi động khi api đã chạy xong migration và healthy.
+  # Worker migrate cùng studio.db với api: chỉ khởi động khi api đã chạy xong migration và healthy. Lượt agent gọi tool
+  # Studio qua api (STUDIO_API_INTERNAL_URL=http://api:3100) và đọc/ghi thư mục dự án trong cùng volume với api.
   worker:
     <<: *app
     pull_policy: never

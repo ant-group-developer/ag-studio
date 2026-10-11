@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { TRANSCRIBE_MANIFEST_SCHEMA, TranscribeManifestSchema, type TranscribeManifest } from "@ag-farm/protocol";
-import { STUDIO_TYPES } from "@harness/core";
-import { cleanTranscribeManifest, cutStages, foldText, MIN_MEAN_WORD_SCORE, type TranscriptCleanReport } from "../src/index.js";
-import { fakeFootage, world } from "./helpers.js";
-import { runStage, stageWorkspace } from "./stage-harness.js";
+import { cleanTranscribeManifest, foldText, MIN_MEAN_WORD_SCORE } from "../src/index.js";
 
 const words = (text: string, score?: number) =>
   text.split(" ").map((word, i) => ({ word, start: i * 0.4, end: i * 0.4 + 0.3, ...(score === undefined ? {} : { score }) }));
@@ -56,21 +53,31 @@ describe("cleanTranscribeManifest", () => {
     expect(cleanTranscribeManifest({ ...m, sources: [] }).report).toMatchObject({ kept: 0, dropped: [] });
   });
 
+  it("unaligned (no scores): outros in other languages and scripts, and a few characters stretched over a long stretch", () => {
+    // what Whisper wrote over the Hoa Lư footage on 2026-10-08, sources it took for Javanese and could not align
+    const m = TranscribeManifestSchema.parse({
+      schema: TRANSCRIBE_MANIFEST_SCHEMA, production_id: "p1", engine: { name: "whisperx", version: "3.1" },
+      sources: [
+        { source_id: "src-j", language: "jw", alignment: "segment", segments: [
+          { start: 10.5, end: 31.9, text: " Terima kasih telah menonton", words: [] },
+          { start: 0, end: 20.7, text: " 1,2,3,4", words: [] },
+        ] },
+        { source_id: "src-z", language: "zh", alignment: "segment", segments: [{ start: 6.6, end: 9, text: "感谢观看", words: [] }] },
+        { source_id: "src-v", language: "vi", alignment: "segment", segments: [
+          { start: 0, end: 6, text: "Đây là cổng Thổ Cổ, mùa này hoa giấy nở kín lối vào phố cổ.", words: [] },
+          { start: 10, end: 13, text: "Ừ.", words: [] },
+        ] },
+      ],
+    });
+    const { manifest: out, report } = cleanTranscribeManifest(m);
+    expect(report.dropped.map((d) => [d.source_id, d.reason])).toEqual([
+      ["src-j", "hallucinated_phrase"], ["src-j", "sparse_text"], ["src-z", "hallucinated_phrase"],
+    ]);
+    // real speech fills its time; a short reply shorter than the sparse window stays
+    expect(out.sources[2]!.segments.map((x) => x.start)).toEqual([0, 10]);
+  });
+
   it("folds case, Vietnamese marks and punctuation", () => {
     expect(foldText("  HÃY Đăng-ký   kênh!! ")).toBe("hay dang ky kenh");
-  });
-});
-
-describe("studio-cut-clean-transcript", () => {
-  it("writes the cleaned transcribe.json and what it dropped", async () => {
-    const { db, bucket } = world();
-    const stages = cutStages({ db, bucket, footage: fakeFootage(), startEpisodeRun: async () => ({ runId: "x" }) });
-    const run = stageWorkspace({ runId: "run-cut", stageKey: "clean-transcript", inputs: [{ type: STUDIO_TYPES.transcript, name: "transcribe.json", json: manifest() }] });
-    await runStage(stages["studio-cut-clean-transcript"], run);
-
-    const out = TranscribeManifestSchema.parse(run.json("transcribe.json"));
-    expect(out.sources.flatMap((s) => s.segments).map((x) => x.text)).not.toContain("Thanks for watching!");
-    expect(run.json<TranscriptCleanReport>("clean-report.json").dropped).toHaveLength(3);
-    expect(run.logs.find((l) => l.msg === "transcript cleaned")?.fields).toEqual({ kept: 4, dropped: 3, low_score: 1, phrases: 2 });
   });
 });

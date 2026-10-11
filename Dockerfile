@@ -33,11 +33,14 @@ RUN corepack pnpm --filter "@ag-studio/api..." --filter "@ag-studio/worker..." r
 # ---- api + worker ----
 FROM build AS app
 # ffmpeg: kiểm loudness bản render final, cắt khung và vẽ chữ thumbnail. fonts-liberation2: font của chữ thumbnail
-# (fontconfig đổi Arial sang Liberation Sans: cùng số đo, đủ dấu tiếng Việt). Claude Code CLI: các stage Claude chạy
-# `claude -p` bằng CLAUDE_CODE_OAUTH_TOKEN (gói subscription).
-# yt-dlp (series 3.2.0, ADR-0001 mục 175–176): số liệu thật của link research tìm trên web, và video mẫu ≤480p để học
-# phong cách dựng (xoá ngay sau khi trích khung). Ghim phiên bản; YouTube đổi thường xuyên nên cập nhật theo runbook.
-ARG YTDLP_VERSION=2025.09.26
+# (fontconfig đổi Arial sang Liberation Sans: cùng số đo, đủ dấu tiếng Việt). Claude Code CLI: lượt agent của dự án
+# (`claude -p --output-format stream-json --restricted`; server MCP `packages/studio-mcp/server.mjs` chạy bằng chính Node
+# này, skill ở `agent-skills/`) bằng CLAUDE_CODE_OAUTH_TOKEN (gói subscription). Thư mục dự án mặc định
+# /data/harness/workspaces và cấu hình CLI của agent /data/harness/agent-claude nằm trong volume, ngoài repo.
+# yt-dlp (ADR-0001 mục 175–176, 186): crawl YouTube khi không có YOUTUBE_API_KEY, và video mẫu ≤480p để học phong cách
+# dựng sau khi người dùng xác nhận (xoá ngay sau khi đo). Ghim phiên bản; YouTube đổi thường xuyên nên cập nhật theo runbook.
+# YouTube cần JS runtime: worker chỉ yt-dlp tới Node của chính nó (`--js-runtimes node:…`, có từ yt-dlp 2025.11).
+ARG YTDLP_VERSION=2026.8.19
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg fonts-liberation2 fontconfig ca-certificates python3 python3-pip \
   && rm -rf /var/lib/apt/lists/* \
@@ -50,6 +53,7 @@ ENV NODE_ENV=production \
     STUDIO_DB_PATH=/data/studio.db \
     STUDIO_DATA_ROOT=/data/harness \
     STUDIO_FFMPEG_PATH=/usr/bin/ffmpeg \
+    STUDIO_FFPROBE_PATH=/usr/bin/ffprobe \
     YTDLP_PATH=/usr/local/bin/yt-dlp \
     PORT=3100
 VOLUME /data

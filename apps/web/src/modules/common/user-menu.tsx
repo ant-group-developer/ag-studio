@@ -1,5 +1,5 @@
-import { Avatar, Flex, Popconfirm, Typography, theme as antdTheme } from "antd";
-import { Globe, LogOut, Palette } from "lucide-react";
+import { Avatar, Flex, Typography, theme as antdTheme } from "antd";
+import { Globe, LogOut } from "lucide-react";
 import type { MenuProps } from "antd";
 import { useTranslation } from "react-i18next";
 import { APP_LANGUAGES, changeLanguage, currentLanguage, LANGUAGE_NAMES } from "../../i18n/language";
@@ -10,28 +10,17 @@ interface UserMenuOptions {
   avatarUrl?: string;
   initials: string;
   onLogout: () => void;
-  /** Canva connection (hidden entirely when the integration is off). */
-  canvaEnabled?: boolean;
-  canvaConnected?: boolean;
-  canvaDisplayName?: string | null;
-  onConnectCanva?: () => void;
-  onDisconnectCanva?: () => void;
-  /** More entries before "log out" (the chat screens link the older screens from here). */
+  /** More entries before "log out" (the team screens link back to the projects from here). */
   extraItems?: NonNullable<MenuProps["items"]>;
 }
 
-/** Menu avatar giống ag-go-web: thẻ người dùng, chọn ngôn ngữ, Canva, đăng xuất. */
+/** Menu avatar giống ag-go-web: thẻ người dùng, chọn ngôn ngữ, đăng xuất. */
 export function useUserMenu({
   nickname,
   email,
   avatarUrl,
   initials,
   onLogout,
-  canvaEnabled,
-  canvaConnected,
-  canvaDisplayName,
-  onConnectCanva,
-  onDisconnectCanva,
   extraItems = [],
 }: UserMenuOptions): MenuProps {
   const { t } = useTranslation();
@@ -73,26 +62,6 @@ export function useUserMenu({
           onClick: () => void changeLanguage(key),
         })),
       },
-      ...(canvaEnabled
-        ? [
-            canvaConnected
-              ? {
-                  key: "canva",
-                  icon: <Palette size={14} />,
-                  label: (
-                    <Popconfirm title={t("canva.disconnectConfirm")} onConfirm={onDisconnectCanva}>
-                      <span>{t("canva.menuDisconnect", { name: canvaDisplayName ?? "" })}</span>
-                    </Popconfirm>
-                  ),
-                }
-              : {
-                  key: "canva",
-                  icon: <Palette size={14} />,
-                  label: t("canva.menuConnect"),
-                  onClick: onConnectCanva,
-                },
-          ]
-        : []),
       ...(extraItems.length ? [{ type: "divider" as const }, ...extraItems, { type: "divider" as const }] : []),
       {
         key: "logout",

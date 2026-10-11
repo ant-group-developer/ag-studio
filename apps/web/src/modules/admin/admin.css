@@ -1,0 +1,36 @@
+/* Studio-wide screens inside the workspace shell: the Queue and the music library. */
+.ws-admin { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; align-items: start; }
+.ws-admin__main { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.ws-admin__aside { display: flex; flex-direction: column; gap: 10px; }
+.ws-admin__aside h2, .ws-admin__section h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.ws-admin__aside h2:not(:first-child) { margin-top: 14px; }
+.ws-admin__section {
+  display: flex; flex-direction: column; gap: 10px; padding: 16px; border-radius: 12px;
+  border: 1px solid var(--ws-line); background: var(--ws-surface); box-shadow: var(--ws-shadow);
+}
+.ws-admin__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; }
+.ws-admin__head span { color: var(--ws-muted); font-size: 13px; }
+.ws-admin__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.ws-admin__list > li { padding: 10px 0; border-top: 1px solid var(--ws-line); }
+.ws-admin__list > li:first-child { border-top: 0; }
+.ws-admin__note { margin: 0; color: var(--ws-faint); font-size: 12px; }
+.ws-admin__bad { color: var(--ws-bad-fg); }
+.ws-admin__form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ws-admin__form label { font-size: 13px; color: var(--ws-muted); }
+.ws-admin__form .ws-admin__note { flex-basis: 100%; }
+.ws-admin__button {
+  border: 1px solid var(--ws-accent); background: var(--ws-accent); color: #fff; border-radius: 8px; padding: 4px 12px;
+  font: inherit; font-size: 13px; cursor: pointer;
+}
+.ws-admin__button:disabled { opacity: 0.5; cursor: default; }
+.ws-admin__chips { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.ws-admin__chips li { padding: 1px 8px; border-radius: 999px; background: var(--ws-chip); font-size: 12px; }
+.ws-admin__track { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.ws-admin__track > div:first-child { flex: 1; min-width: 220px; }
+.ws-admin__project { font-size: 12px; color: var(--ws-faint); }
+.ws-admin__progress { height: 4px; border-radius: 999px; background: var(--ws-chip); overflow: hidden; margin-top: 6px; }
+.ws-admin__progress > span { display: block; height: 100%; background: var(--ws-accent); }
+
+@media (max-width: 900px) {
+  .ws-admin { grid-template-columns: minmax(0, 1fr); }
+}

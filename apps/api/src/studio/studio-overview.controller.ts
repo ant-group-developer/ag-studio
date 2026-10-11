@@ -1,12 +1,11 @@
-import { BadRequestException, Body, Controller, ForbiddenException, Get, Put, Req, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Put, Req, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Request } from 'express';
 import {
-  assistantName, claudeMaxConcurrent, claudeUsage, parseClaudeMaxConcurrent, setAssistantName, setClaudeMaxConcurrent, studioOverview,
-  studioQueue,
+  assistantName, claudeMaxConcurrent, claudeUsage, parseClaudeMaxConcurrent, setAssistantName, setClaudeMaxConcurrent, studioActivity,
 } from '@ag-studio/engine';
-import { AccountApiService } from '../auth/account-api.service';
+import { StudioAdminService } from '../auth/studio-admin.service';
 import { EngineService } from './engine.service';
 import { mapErrors } from './http-errors';
 
@@ -18,27 +17,20 @@ export class StudioSettingsDto {
 }
 
 /**
- * Studio-wide reads for the chat UI: the videos a person can see (left column, home page), Claude calls in use (the
- * header chip), the Queue screen, and the settings only a Studio admin may change. No team in the path, so no
- * `@Roles`: lists are filtered by team membership here.
+ * Studio-wide reads: Claude calls in use (the header chip), the Queue screen, the farm's machines, and the settings
+ * only a Studio admin may change. No team in the path, so no `@Roles`: the Queue is filtered by team membership here.
  */
 @Controller('studio')
 export class StudioOverviewController {
   constructor(
     private readonly engine: EngineService,
-    private readonly accountApi: AccountApiService,
+    private readonly admin: StudioAdminService,
     private readonly config: ConfigService,
   ) {}
 
-  @Get('overview')
-  async overview(@Req() req: Request) {
-    const isAdmin = await this.isAdmin(req);
-    return { items: studioOverview(this.engine.core, this.engine.db, { userId: req.authContext!.userId, isAdmin }) };
-  }
-
   /**
-   * `running` counts stages and chat replies holding a slot; `waiting` the replies in line for one; `assistantName` is
-   * what the web calls the AI.
+   * `running` counts agent turns and thread summaries holding a slot; `waiting` the turns in line for one;
+   * `assistantName` is what the web calls the AI.
    */
   @Get('claude')
   claude() {
@@ -49,28 +41,24 @@ export class StudioOverviewController {
   }
 
   /**
-   * The Queue screen: Claude calls running and waiting, the farm jobs not done and the farm's machines (ag-farm's
-   * owner API). The farm out of reach is `farm.ok = false`, not an error.
+   * The Queue screen: what runs in the projects a person can see (agent turns, their tools, jobs with their farm
+   * machine), Claude slots, and the farm's machines. The farm out of reach is `farm.ok = false`, not an error.
    */
   @Get('queue')
   async queue(@Req() req: Request) {
-    const isAdmin = await this.isAdmin(req);
-    const cap = claudeMaxConcurrent(this.engine.db, this.envCap());
-    return studioQueue(this.engine.core, this.engine.db, this.engine.queueFarm, {
-      userId: req.authContext!.userId, isAdmin, now: this.engine.core.clock.now(), claudeMax: cap.value,
-    });
+    const isAdmin = await this.admin.isAdmin(req);
+    const { items, hidden } = studioActivity(this.engine.db, { userId: req.authContext!.userId, isAdmin });
+    let machines = null;
+    let farm: { ok: true } | { ok: false; error: string } = { ok: true };
+    try { machines = (await this.engine.farmNodes()).nodes; } catch (e) { farm = { ok: false, error: e instanceof Error ? e.message : String(e) }; }
+    return { claude: this.claude(), items, hidden, machines, farm };
   }
 
-  /**
-   * The farm machines a final render may be pinned to (the render pickers): those taking `studio.render_final`.
-   * A hub without `GET /v1/owner/nodes`, or one out of reach, gives none.
-   */
+  /** The farm machines a final render may be pinned to: those taking `studio.render_final`; none when out of reach. */
   @Get('farm/nodes')
   async farmNodes() {
-    const farm = this.engine.queueFarm;
-    if (!farm.listNodes) return { nodes: [] };
     try {
-      const { nodes } = await farm.listNodes();
+      const { nodes } = await this.engine.farmNodes();
       return { nodes: nodes.filter((n) => n.kinds.includes('studio.render_final')) };
     } catch {
       return { nodes: [] };
@@ -79,7 +67,7 @@ export class StudioOverviewController {
 
   @Put('settings')
   async settings(@Body() dto: StudioSettingsDto, @Req() req: Request) {
-    if (!(await this.isAdmin(req))) throw new ForbiddenException('Requires a Studio admin');
+    await this.admin.requireAdmin(req);
     if (dto.claudeMaxConcurrent === undefined && dto.assistantName === undefined) {
       throw new BadRequestException('Send claudeMaxConcurrent or assistantName');
     }
@@ -105,14 +93,5 @@ export class StudioOverviewController {
   /** The worker's env default; the API does not need the key, so a missing or bad one reads as the default. */
   private envCap(): number {
     try { return parseClaudeMaxConcurrent(this.config.get<string>('STUDIO_CLAUDE_MAX_CONCURRENT')); } catch { return parseClaudeMaxConcurrent(undefined); }
-  }
-
-  private async isAdmin(req: Request): Promise<boolean> {
-    const ctx = req.authContext!;
-    if (ctx.isAdmin === undefined) {
-      try { ctx.isAdmin = (await this.accountApi.getUserProfile(ctx.accessToken, ctx.userId)).userType === 'ADMIN'; }
-      catch { ctx.isAdmin = false; }
-    }
-    return ctx.isAdmin;
   }
 }

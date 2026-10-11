@@ -1,82 +1,40 @@
 /**
- * The Studio's own garbage (deferred-items, "Kho giọng và file theo run không dọn", "Session Claude không dọn"): what
- * runs, chats and audio changes leave behind, swept by the worker every few hours (`createStudioWorkerPool`).
+ * The Studio's own garbage, swept by the worker every few hours (`createStudioWorkerPool`):
  *
- * - Workspaces of ended runs (720p proxies, frames, contact sheets, a Claude session's files), past
- *   `workspaceDays`. A run still open keeps its workspaces, so its gates still chat with the stage that wrote them.
- * - `studio_agent_sessions` rows whose workspace is gone (the chat already falls back to structured then).
  * - Voice store lines not read for `voiceDays` (a line read again is only one farm job away).
- * - Production audio on the bucket (`library/studio/<production>/voice|music/…`) nothing points at any more: not the
- *   production, not any episode revision. Only past `audioGraceDays`, and never while the production has a run open
- *   (a brief may have frozen the old music).
- * - Shot frames (`productions/<p>/episodes/<e>/shots/…`) of episodes that no longer exist (a series plan replaced them).
- * - Reference videos a crashed `watch-references` left in its scratch folder (the stage deletes them itself; ADR-0001
- *   item 175), past `REFERENCE_DOWNLOAD_HOURS`.
- * - Frames of reference videos (`productions/<p>/style/…`) the production's style does not cite as evidence, once no
- *   run of the production is open (an open plan run may still show the style it proposes).
+ * - Project audio on the bucket (`library/studio/projects/<id>/voice|music/…`) nothing points at any more: not the
+ *   project, not any video revision. Only past `audioGraceDays`.
+ * - Scratch folders a crashed worker left: `<dataRoot>/job-runs/<job>` of jobs no longer running and
+ *   `<dataRoot>/agent-runs/<message>` of turns no longer running, past `SCRATCH_HOURS`.
+ * - Files people deleted from a project (`<workspace>/.trash/…`), past `workspaceDays`.
  */
 import { existsSync, readdirSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { isTerminal } from "@harness/core";
 import type { StudioBucket } from "./bucket.js";
-import type { StudioEngineCore } from "./core.js";
-import { activeProductionStyle, getProduction, type StudioDb } from "./studio-db.js";
-import { styleFrameKey } from "./style-stages.js";
+import type { StudioDb } from "./studio-db.js";
 import { voicePath } from "./voice-store.js";
+import { sweepAuditLog } from "./audit-log.js";
 
 export interface RetentionConfig {
-  /** Workspaces of ended runs, by their last change. */
+  /** Files deleted from a project (its `.trash`), by when they were deleted. */
   workspaceDays: number;
   /** Voice store lines, by their last read. */
   voiceDays: number;
-  /** Production audio nothing points at, by when it was written. */
+  /** Project audio nothing points at, by when it was written. */
   audioGraceDays: number;
+  /** Rows of the activity log, by when they happened. */
+  auditDays: number;
 }
-export const DEFAULT_RETENTION: RetentionConfig = { workspaceDays: 14, voiceDays: 90, audioGraceDays: 7 };
+export const DEFAULT_RETENTION: RetentionConfig = { workspaceDays: 14, voiceDays: 90, audioGraceDays: 7, auditDays: 90 };
 
-export interface CleanupReport { workspaces: number; sessions: number; voiceLines: number; audioObjects: number; shotFrames: number; referenceDownloads: number; styleFrames: number }
+export interface CleanupReport { voiceLines: number; audioObjects: number; scratch: number; trash: number; auditRows: number }
 
-/** A scratch folder of reference videos older than this was left by a crash: the stage deletes its own. */
-export const REFERENCE_DOWNLOAD_HOURS = 6;
+/** A scratch folder older than this whose job or turn is not running was left by a crash. */
+export const SCRATCH_HOURS = 6;
 
 const DAY_MS = 86_400_000;
 const list = (dir: string): string[] => { try { return readdirSync(dir); } catch { return []; } };
-
-/**
- * Removes `<root>/<run>/…` of every run that ended (`stateOf` is a terminal state) and has not changed since
- * `cutoffMs`. A directory whose run is unknown is left alone.
- */
-export function sweepWorkspaces(root: string, cutoffMs: number, stateOf: (runId: string) => string | null): number {
-  let removed = 0;
-  for (const run of list(root)) {
-    const state = stateOf(run);
-    if (!state || !isTerminal("run", state)) continue;
-    const dir = join(root, run);
-    if (newestChange(dir) >= cutoffMs) continue;
-    rmSync(dir, { recursive: true, force: true });
-    removed++;
-  }
-  return removed;
-}
-
-/** The latest mtime of a run directory and its stage and attempt directories (a resumed run adds attempts). */
-function newestChange(dir: string): number {
-  let t = statSync(dir).mtimeMs;
-  for (const stage of list(dir)) {
-    const s = join(dir, stage);
-    t = Math.max(t, statSync(s).mtimeMs);
-    for (const attempt of list(s)) t = Math.max(t, statSync(join(s, attempt)).mtimeMs);
-  }
-  return t;
-}
-
-/** Agent sessions whose workspace is gone: nothing can resume them. */
-export function sweepAgentSessions(db: StudioDb): number {
-  const gone = db.all<{ run_id: string; stage_key: string; cwd: string }>("SELECT run_id, stage_key, cwd FROM studio_agent_sessions")
-    .filter((r) => !existsSync(r.cwd));
-  for (const r of gone) db.run("DELETE FROM studio_agent_sessions WHERE run_id = ? AND stage_key = ?", [r.run_id, r.stage_key]);
-  return gone.length;
-}
+const mtime = (p: string): number => { try { return statSync(p).mtimeMs; } catch { return Number.POSITIVE_INFINITY; } };
 
 /** Voice store lines last read before `cutoffIso`: the WAV and the row. */
 export function sweepVoiceStore(db: StudioDb, voiceDir: string, cutoffIso: string): number {
@@ -93,87 +51,65 @@ function libraryKeys(text: string | null | undefined): string[] {
   return [...(text ?? "").matchAll(/library:(studio\/[^"\\\s]+)/g)].map((m) => `library/${m[1]}`);
 }
 
-/** Production audio nothing points at, written before `cutoff`; productions with a run open are skipped. */
-export async function sweepProductionAudio(core: StudioEngineCore, db: StudioDb, bucket: StudioBucket, cutoff: Date): Promise<number> {
+/** Project audio nothing points at (the project's voice and music, any video revision), written before `cutoff`. */
+export async function sweepProjectAudio(db: StudioDb, bucket: StudioBucket, cutoff: Date): Promise<number> {
   const keep = new Set<string>();
-  for (const r of db.all<{ voice: string | null; music: string | null }>("SELECT voice, music FROM productions")) {
+  for (const r of db.all<{ voice: string | null; music: string | null }>("SELECT voice, music FROM projects")) {
     for (const k of [...libraryKeys(r.voice), ...libraryKeys(r.music)]) keep.add(k);
   }
-  for (const r of db.all<{ data: string }>("SELECT data FROM episode_revisions WHERE data LIKE '%library:studio/%'")) {
+  for (const r of db.all<{ data: string }>("SELECT data FROM video_revisions WHERE data LIKE '%library:studio/%'")) {
     for (const k of libraryKeys(r.data)) keep.add(k);
   }
+  const stale = (await bucket.list("library/studio/projects/"))
+    .filter((o) => !keep.has(o.key) && o.lastModified.getTime() < cutoff.getTime()).map((o) => o.key);
+  if (stale.length) await bucket.deleteMany(stale);
+  return stale.length;
+}
+
+/** Scratch folders of jobs and turns that are not running any more, untouched since `cutoffMs`. */
+export function sweepScratch(db: StudioDb, dataRoot: string, cutoffMs: number): number {
   let removed = 0;
-  for (const p of db.all<{ id: string; run_id: string | null }>("SELECT id, run_id FROM productions")) {
-    if (hasOpenRun(core, db, p.id, p.run_id)) continue;
-    const stale = (await bucket.list(`library/studio/${p.id}/`))
-      .filter((o) => !keep.has(o.key) && o.lastModified.getTime() < cutoff.getTime()).map((o) => o.key);
-    if (stale.length) { await bucket.deleteMany(stale); removed += stale.length; }
-  }
+  const sweep = (dir: string, running: (id: string) => boolean) => {
+    for (const id of list(dir)) {
+      const path = join(dir, id);
+      if (running(id) || mtime(path) >= cutoffMs) continue;
+      rmSync(path, { recursive: true, force: true });
+      removed++;
+    }
+  };
+  sweep(join(dataRoot, "job-runs"), (id) => !!db.get("SELECT 1 AS x FROM project_jobs WHERE id = ? AND status IN ('queued', 'running')", [id]));
+  sweep(join(dataRoot, "agent-runs"), (id) => !!db.get("SELECT 1 AS x FROM agent_messages WHERE id = ? AND status IN ('pending', 'running')", [id]));
   return removed;
 }
 
-function hasOpenRun(core: StudioEngineCore, db: StudioDb, productionId: string, planRun: string | null): boolean {
-  const runs = [planRun, ...db.all<{ run_id: string | null }>("SELECT run_id FROM episodes WHERE production_id = ?", [productionId]).map((e) => e.run_id)];
-  return runs.some((id) => { const run = id ? core.store.getRun(id) : undefined; return !!run && !isTerminal("run", run.state); });
-}
-
-/** Shot frames of episodes that no longer exist. */
-export async function sweepShotFrames(db: StudioDb, bucket: StudioBucket): Promise<number> {
-  const episodes = new Set(db.all<{ id: string }>("SELECT id FROM episodes").map((e) => e.id));
+/** Entries of every project's `.trash` deleted before `cutoffMs`. */
+export function sweepTrash(workspacesRoot: string, cutoffMs: number): number {
   let removed = 0;
-  for (const p of db.all<{ id: string }>("SELECT id FROM productions")) {
-    const stale = (await bucket.list(`productions/${p.id}/episodes/`)).map((o) => o.key).filter((k) => {
-      const m = /^productions\/[^/]+\/episodes\/([^/]+)\/shots\//.exec(k);
-      return !!m && !episodes.has(m[1]!);
-    });
-    if (stale.length) { await bucket.deleteMany(stale); removed += stale.length; }
-  }
-  return removed;
-}
-
-/** `<root>/<run>/watch-references/<attempt>/references` folders not changed since `cutoffMs` (a crash left them). */
-export function sweepReferenceDownloads(root: string, cutoffMs: number): number {
-  let removed = 0;
-  for (const run of list(root)) {
-    const stage = join(root, run, "watch-references");
-    for (const attempt of list(stage)) {
-      const dir = join(stage, attempt, "references");
-      if (!existsSync(dir) || statSync(dir).mtimeMs >= cutoffMs) continue;
-      rmSync(dir, { recursive: true, force: true });
+  for (const project of list(workspacesRoot)) {
+    const trash = join(workspacesRoot, project, ".trash");
+    if (!existsSync(trash)) continue;
+    for (const entry of list(trash)) {
+      const path = join(trash, entry);
+      if (mtime(path) >= cutoffMs) continue;
+      rmSync(path, { recursive: true, force: true });
       removed++;
     }
   }
   return removed;
 }
 
-/** Frames of reference videos the production's style does not cite; productions with a run open are skipped. */
-export async function sweepStyleFrames(core: StudioEngineCore, db: StudioDb, bucket: StudioBucket): Promise<number> {
-  let removed = 0;
-  for (const p of db.all<{ id: string; run_id: string | null }>("SELECT id, run_id FROM productions")) {
-    if (hasOpenRun(core, db, p.id, p.run_id)) continue;
-    const style = activeProductionStyle(getProduction(db, p.id)!);
-    const keep = new Set((style?.evidence ?? []).map((e) => styleFrameKey(p.id, e.video_id, e.t)));
-    const stale = (await bucket.list(`productions/${p.id}/style/`)).map((o) => o.key).filter((k) => !keep.has(k));
-    if (stale.length) { await bucket.deleteMany(stale); removed += stale.length; }
-  }
-  return removed;
-}
-
 /** One sweep of everything above. */
 export async function sweepStudioData(
-  d: { core: StudioEngineCore; db: StudioDb; bucket: StudioBucket; voiceDir?: string | undefined },
+  d: { db: StudioDb; bucket: StudioBucket; dataRoot: string; workspacesRoot?: string | undefined; voiceDir?: string | undefined },
   o: { now: Date; retention?: Partial<RetentionConfig> },
 ): Promise<CleanupReport> {
   const r = { ...DEFAULT_RETENTION, ...o.retention };
   const at = (days: number) => o.now.getTime() - days * DAY_MS;
-  const workspaces = sweepWorkspaces(join(d.core.dataRoot, "workspaces"), at(r.workspaceDays), (id) => d.core.store.getRun(id)?.state ?? null);
   return {
-    workspaces,
-    sessions: sweepAgentSessions(d.db),
     voiceLines: d.voiceDir ? sweepVoiceStore(d.db, d.voiceDir, new Date(at(r.voiceDays)).toISOString()) : 0,
-    audioObjects: await sweepProductionAudio(d.core, d.db, d.bucket, new Date(at(r.audioGraceDays))),
-    shotFrames: await sweepShotFrames(d.db, d.bucket),
-    referenceDownloads: sweepReferenceDownloads(join(d.core.dataRoot, "workspaces"), o.now.getTime() - REFERENCE_DOWNLOAD_HOURS * 3_600_000),
-    styleFrames: await sweepStyleFrames(d.core, d.db, d.bucket),
+    audioObjects: await sweepProjectAudio(d.db, d.bucket, new Date(at(r.audioGraceDays))),
+    scratch: sweepScratch(d.db, d.dataRoot, o.now.getTime() - SCRATCH_HOURS * 3_600_000),
+    trash: d.workspacesRoot ? sweepTrash(d.workspacesRoot, at(r.workspaceDays)) : 0,
+    auditRows: sweepAuditLog(d.db, new Date(at(r.auditDays)).toISOString()),
   };
 }

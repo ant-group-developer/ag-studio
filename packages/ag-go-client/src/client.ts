@@ -5,6 +5,8 @@ import type {
   AssetMediaResponse,
   ResolveAssetsBody,
   ResolveAssetsResponse,
+  SearchFootageQuery,
+  SearchFootageResponse,
 } from "./types.js";
 
 export interface AgGoClientOptions {
@@ -99,6 +101,18 @@ export class AgGoClient {
       `/footage/assets/${encodeURIComponent(assetId)}/media`,
       actAsUserId,
     );
+  }
+
+  /** The analysed videos of ag-go projects (or folders) the user can reach, for a project's inputs. */
+  searchFootage(actAsUserId: string, query: SearchFootageQuery): Promise<SearchFootageResponse> {
+    const params = new URLSearchParams();
+    if (query.projectIds?.length) params.set("projectIds", query.projectIds.join(","));
+    if (query.folderIds?.length) params.set("folderIds", query.folderIds.join(","));
+    if (query.q) params.set("q", query.q);
+    if (query.limit !== undefined) params.set("limit", String(query.limit));
+    if (query.cursor) params.set("cursor", query.cursor);
+    const qs = params.toString();
+    return this.request<SearchFootageResponse>("GET", `/footage/search${qs ? `?${qs}` : ""}`, actAsUserId);
   }
 
   /** GĐ2 (v3): resolve asset IDs → signed download URLs. */

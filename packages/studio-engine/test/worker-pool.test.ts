@@ -1,34 +1,26 @@
 /**
- * Claude concurrency: `STUDIO_CLAUDE_MAX_CONCURRENT` and the worker pool. Two productions planned together must have
- * their Claude calls (plan-episodes) running at the same time when the cap allows it, and one after the other when
- * the cap is 1. A barrier wrapper around the fake Claude records how many calls had arrived when each one started.
+ * The Studio worker: `STUDIO_CLAUDE_MAX_CONCURRENT` and the web setting over it, what kinds of project jobs a worker
+ * takes with the tools it has, and a pool that stops when asked.
  */
-import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  createStudioWorkerPool, DEFAULT_CLAUDE_MAX_CONCURRENT, parseClaudeMaxConcurrent, planRunView, setClaudeMaxConcurrent, startPlanRun, studioResources,
+  claudeCap, createStudioWorkerPool, DEFAULT_CLAUDE_MAX_CONCURRENT, parseClaudeMaxConcurrent, projectJobHandlers, setClaudeMaxConcurrent,
+  type CutMediaDeps, type YtDlp,
 } from "../src/index.js";
-import { FAKE_CLAUDE, fakeFarm, fakeFootage, fakeThumbnails, ROOT, seedProduction, world } from "./helpers.js";
+import { fakeFarm, fakeThumbnails, world } from "./helpers.js";
 
-const BARRIER = fileURLToPath(new URL("./fixtures/barrier-claude.mjs", import.meta.url));
-const PLAN_V1 = "ag-studio-series-plan@1.0.0";
-
-describe("parseClaudeMaxConcurrent / studioResources", () => {
+describe("parseClaudeMaxConcurrent", () => {
   it("defaults to 20 when unset or blank", () => {
     expect(DEFAULT_CLAUDE_MAX_CONCURRENT).toBe(20);
     expect(parseClaudeMaxConcurrent(undefined)).toBe(20);
     expect(parseClaudeMaxConcurrent("  ")).toBe(20);
-    expect(studioResources()).toEqual({ claude: 20, farm: 8, cpu: 2 });
   });
 
   it("accepts a whole number from 1 to 100", () => {
     expect(parseClaudeMaxConcurrent("1")).toBe(1);
     expect(parseClaudeMaxConcurrent(" 7 ")).toBe(7);
     expect(parseClaudeMaxConcurrent("100")).toBe(100);
-    expect(studioResources(7)).toEqual({ claude: 7, farm: 8, cpu: 2 });
   });
 
   it("refuses anything else instead of falling back silently", () => {
@@ -38,85 +30,45 @@ describe("parseClaudeMaxConcurrent / studioResources", () => {
   });
 });
 
-describe("createStudioWorkerPool", () => {
-  let cleanup: (() => void) | undefined;
-  afterEach(() => cleanup?.());
+describe("the worker pool", () => {
+  let w: ReturnType<typeof world>;
+  afterEach(() => w?.core.close());
+  const base = () => ({ db: w.db, bucket: w.bucket, farm: fakeFarm(w.bucket) as never, owner: "w", dataRoot: join(w.dir, "data") });
+  const media: CutMediaDeps = {
+    ffmpeg: "ffmpeg", ffprobe: "ffprobe", voiceDir: "voice",
+    resolveAssets: async () => ({ items: [], missing: [] }), download: async () => {},
+  };
 
-  async function planTwo(claudeMaxConcurrent: number, barrierTimeoutMs: number): Promise<number[]> {
-    const w = world();
-    cleanup = () => w.core.close();
-    const barrierDir = mkdtempSync(join(tmpdir(), "claude-barrier-"));
-    const pool = createStudioWorkerPool({
-      core: w.core, db: w.db, dbPath: w.dbPath, bucket: w.bucket, footage: fakeFootage(8, 30), farm: fakeFarm(w.bucket) as never,
-      claude: { skillsDir: join(ROOT, "skills"), argv: ["node", BARRIER, barrierDir, "2", String(barrierTimeoutMs), FAKE_CLAUDE], model: "fake", maxTurns: 3 },
-      owner: "auth0|owner", thumbnails: fakeThumbnails(), claudeMaxConcurrent,
-    });
-    expect(pool.workers).toHaveLength(claudeMaxConcurrent + 8 + 2);
+  it("caps Claude calls at the env value until someone saves one on the web", () => {
+    w = world();
+    expect(claudeCap({ db: w.db })).toBe(20);
+    expect(claudeCap({ db: w.db, claudeMaxConcurrent: 3 })).toBe(3);
+    setClaudeMaxConcurrent(w.db, 5, "auth0|admin", new Date().toISOString());
+    expect(claudeCap({ db: w.db, claudeMaxConcurrent: 3 })).toBe(5);
+  });
 
-    const prods = ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"]
-      .map((id) => seedProduction(w.db, { id, episode_target_seconds: 120, max_episodes: 2 }));
-    for (const p of prods) startPlanRun(w.core, w.db, p, { workflow: PLAN_V1 });
+  it("takes only the kinds of jobs it has the tools for", () => {
+    w = world();
+    expect(Object.keys(projectJobHandlers(base()))).toEqual([]);
+    expect(Object.keys(projectJobHandlers({ ...base(), youtubeApiKey: "k" }))).toEqual(["research"]);
+    expect(Object.keys(projectJobHandlers({ ...base(), media, thumbnails: fakeThumbnails() })).sort())
+      .toEqual(["export_premiere", "fit", "prepare_asset", "render_final", "render_preview", "thumbnail"]);
+    const ytdlp = {} as YtDlp;
+    expect(Object.keys(projectJobHandlers({ ...base(), media, ytdlp })).sort())
+      .toEqual(["export_premiere", "fit", "prepare_asset", "render_final", "render_preview", "research", "style_watch"]);
+    expect(Object.keys(projectJobHandlers({ ...base(), media, ytdlp, referenceDownloads: false }))).not.toContain("style_watch");
+  });
 
+  it("runs only the loops it was given and stops when asked", async () => {
+    w = world();
+    const idle = createStudioWorkerPool(base());
+    expect([idle.agent, idle.jobs]).toEqual([null, null]);
+    const pool = createStudioWorkerPool({ ...base(), jobs: { workspacesRoot: join(w.dir, "workspaces"), pollMs: 20 }, cleanup: { everyMs: 0 } });
+    expect(pool.jobs).not.toBeNull();
     const ac = new AbortController();
     const running = pool.runForever(ac.signal);
-    const deadline = Date.now() + 45_000;
-    while (Date.now() < deadline && !prods.every((p) => planRunView(w.core, w.db, p).waiting_gate === "approve-plan")) {
-      await new Promise((r) => setTimeout(r, 100));
-    }
+    await new Promise((r) => setTimeout(r, 60));
     ac.abort();
-    await running;
-    for (const p of prods) expect(planRunView(w.core, w.db, p).waiting_gate).toBe("approve-plan");
-    return readFileSync(join(barrierDir, "seen.log"), "utf8").trim().split(/\r?\n/).map(Number);
-  }
-
-  it("runs the two productions' Claude calls together when the cap allows it", async () => {
-    const seen = await planTwo(2, 20_000);
-    expect(seen).toEqual([2, 2]);
-  }, 60_000);
-
-  it("runs them one after the other when the cap is 1", async () => {
-    const seen = await planTwo(1, 1_500);
-    expect(seen[0]).toBe(1);
-  }, 60_000);
-
-  it("follows the cap saved on the web over the env value, and shrinks without cutting a running stage", async () => {
-    const w = world();
-    cleanup = () => w.core.close();
-    setClaudeMaxConcurrent(w.db, 2, "auth0|admin", new Date().toISOString());
-    const barrierDir = mkdtempSync(join(tmpdir(), "claude-barrier-"));
-    const pool = createStudioWorkerPool({
-      core: w.core, db: w.db, dbPath: w.dbPath, bucket: w.bucket, footage: fakeFootage(8, 30), farm: fakeFarm(w.bucket) as never,
-      claude: { skillsDir: join(ROOT, "skills"), argv: ["node", BARRIER, barrierDir, "2", "20000", FAKE_CLAUDE], model: "fake", maxTurns: 3 },
-      owner: "auth0|owner", thumbnails: fakeThumbnails(), claudeMaxConcurrent: 1,
-    });
-    expect(pool.workers).toHaveLength(2 + 8 + 2);
-
-    const prods = ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"]
-      .map((id) => seedProduction(w.db, { id, episode_target_seconds: 120, max_episodes: 2 }));
-    for (const p of prods) startPlanRun(w.core, w.db, p, { workflow: PLAN_V1 });
-    const ac = new AbortController();
-    const running = pool.runForever(ac.signal);
-
-    // both Claude calls are in flight (the barrier holds them until two arrived): lower the cap now
-    const arrived = () => (existsSync(barrierDir) ? readdirSync(barrierDir).filter((f) => f.startsWith("arrived-")).length : 0);
-    const until = Date.now() + 20_000;
-    while (Date.now() < until && arrived() < 2) await new Promise((r) => setTimeout(r, 50));
-    setClaudeMaxConcurrent(w.db, 1, "auth0|admin", new Date().toISOString());
-    pool.resize();
-    expect(pool.workers).toHaveLength(1 + 8 + 2);
-
-    const deadline = Date.now() + 45_000;
-    while (Date.now() < deadline && !prods.every((p) => planRunView(w.core, w.db, p).waiting_gate === "approve-plan")) {
-      await new Promise((r) => setTimeout(r, 100));
-    }
-    ac.abort();
-    await running;
-    // the loops let go after the cap dropped still finished their stage
-    for (const p of prods) expect(planRunView(w.core, w.db, p).waiting_gate).toBe("approve-plan");
-    expect(readFileSync(join(barrierDir, "seen.log"), "utf8").trim().split(/\r?\n/).map(Number)).toEqual([2, 2]);
-
-    setClaudeMaxConcurrent(w.db, 4, "auth0|admin", new Date().toISOString());
-    pool.resize();
-    expect(pool.workers).toHaveLength(4 + 8 + 2);
-  }, 60_000);
+    await expect(running).resolves.toBeUndefined();
+  });
 });

@@ -1,6 +1,6 @@
 /**
- * Audio a person gives a production (ADR-0001 item 168): a link fetched by the server without reaching inside the
- * network, a file checked and normalised by ffmpeg, kept in the Studio bucket under `library/studio/<production>/`.
+ * Audio a person gives a project (ADR-0001 item 168): a link fetched by the server without reaching inside the
+ * network, a file checked and normalised by ffmpeg (keeping it on the project: workspace-project-audio.test.ts).
  */
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -8,11 +8,9 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ProductionMusicSchema, ProductionVoiceSchema } from "@harness/contracts";
 import {
-  AudioImportError, declineNarration, downloadUrlFor, fetchAudioUrl, getProduction, importProductionAudio, isPrivateAddress, prepareVoice,
+  AudioImportError, downloadUrlFor, fetchAudioUrl, isPrivateAddress, prepareVoice,
 } from "../src/index.js";
-import { seedProduction, world } from "./helpers.js";
 import { ffprobeDuration, hasFfmpeg, makeVideo, makeWav } from "../../../tests/media.js";
 
 const TOOLS = { ffmpeg: process.env.FFMPEG_PATH ?? "ffmpeg", ffprobe: process.env.FFPROBE_PATH ?? "ffprobe" };
@@ -98,43 +96,5 @@ describe.skipIf(!hasFfmpeg())("audio files (needs ffmpeg + ffprobe)", () => {
     expect(await codeOf(prepareVoice(TOOLS, join(dir, "short.wav"), join(dir, "v.wav")))).toBe("audio_invalid");
     writeFileSync(join(dir, "junk.mp3"), "not audio");
     expect(await codeOf(prepareVoice(TOOLS, join(dir, "junk.mp3"), join(dir, "v.wav")))).toBe("audio_invalid");
-  });
-
-  it("keeps the voice in the bucket by content and on the production, with who vouched for it", async () => {
-    const { db, bucket } = world();
-    const prod = seedProduction(db);
-    const dir = tmp();
-    makeWav(join(dir, "giong.wav"), 8);
-    const v = await importProductionAudio({ db, bucket, ...TOOLS }, {
-      productionId: prod, kind: "voice", file: join(dir, "giong.wav"), source: { kind: "upload", filename: "giong.wav" },
-      origin: "own", referenceText: "Xin chào các bạn.", userId: "auth0|u1",
-    });
-    const saved = ProductionVoiceSchema.parse(JSON.parse(getProduction(db, prod)!.voice!));
-    expect(saved).toMatchObject({ mode: "clone", origin: "own", reference_text: "Xin chào các bạn.", confirmed_by: "auth0|u1", source: { kind: "upload" } });
-    expect(v).toEqual(saved);
-    const key = (saved as { reference: string }).reference.replace(/^library:/, "library/");
-    expect(key).toMatch(new RegExp(`^library/studio/${prod}/voice/[0-9a-f]{64}\\.wav$`));
-    expect(bucket.objects.has(key)).toBe(true);
-  });
-
-  it("music: kept as AAC with its gain and ducking; stages see only the track", async () => {
-    const { db, bucket } = world();
-    const prod = seedProduction(db);
-    const dir = tmp();
-    makeWav(join(dir, "nhac.wav"), 12);
-    await importProductionAudio({ db, bucket, ...TOOLS }, {
-      productionId: prod, kind: "music", file: join(dir, "nhac.wav"), source: { kind: "link", url: "https://a.b/nhac.wav" }, userId: "auth0|u1",
-    });
-    const m = ProductionMusicSchema.parse(JSON.parse(getProduction(db, prod)!.music!));
-    expect(m).toMatchObject({ gain_db: -18, ducking: true, source: { kind: "link" } });
-    expect(m.track).toMatch(new RegExp(`^library:studio/${prod}/music/[0-9a-f]{64}\\.m4a$`));
-    expect(bucket.objects.has(m.track.replace(/^library:/, "library/"))).toBe(true);
-  });
-
-  it("declining narration is remembered on the production", () => {
-    const { db } = world();
-    const prod = seedProduction(db);
-    declineNarration(db, prod, "auth0|u1");
-    expect(ProductionVoiceSchema.parse(JSON.parse(getProduction(db, prod)!.voice!))).toMatchObject({ mode: "none", decided_by: "auth0|u1" });
   });
 });

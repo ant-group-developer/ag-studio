@@ -4,9 +4,9 @@
  * call is made (so always the latest; the call log keeps the exact text that was sent).
  */
 import { randomUUID } from "node:crypto";
-import { TEAM_SKILL_LIMITS, TEAM_SKILL_STEPS, type TeamGuide, type TeamSkillStep } from "@harness/contracts";
-import { StudioRunError } from "./run-control.js";
-import { episodeForRun, getProduction, productionForRun, type StudioDb } from "./studio-db.js";
+import { TEAM_SKILL_LIMITS, TEAM_SKILL_STEPS, type TeamSkillStep } from "@harness/contracts";
+import { StudioRunError } from "./errors.js";
+import type { StudioDb } from "./studio-db.js";
 
 export interface TeamSkill {
   id: string; team_id: string; name: string; purpose: string;
@@ -138,25 +138,4 @@ export function updateTeamSkill(db: StudioDb, teamId: string, id: string, patch:
 export function deleteTeamSkill(db: StudioDb, teamId: string, id: string): void {
   const res = db.run("DELETE FROM team_skills WHERE id = ? AND team_id = ?", [id, teamId]);
   if (res.changes === 0) throw new StudioRunError("not_found", `quy chuẩn ${id} không có trong nhóm`, { code: "not_found" });
-}
-
-/** The enabled skills of a team as prompt guides, in order. */
-export function teamGuides(db: StudioDb, teamId: string): TeamGuide[] {
-  return listTeamSkills(db, teamId)
-    .filter((s) => s.enabled)
-    .map((s) => ({ name: s.name, purpose: s.purpose, applies_to: s.applies_to, content: s.content }));
-}
-
-/** The team a run works for: the production of a plan run, or the production of an episode run's episode. */
-export function teamIdForRun(db: StudioDb, runId: string): string | null {
-  const plan = productionForRun(db, runId);
-  if (plan) return plan.team_id;
-  const ep = episodeForRun(db, runId);
-  return ep ? getProduction(db, ep.production_id)?.team_id ?? null : null;
-}
-
-/** The guides every Claude stage of `runId` gets (before picking the ones of its step); [] for an unknown run. */
-export function teamGuidesForRun(db: StudioDb, runId: string): TeamGuide[] {
-  const teamId = teamIdForRun(db, runId);
-  return teamId ? teamGuides(db, teamId) : [];
 }

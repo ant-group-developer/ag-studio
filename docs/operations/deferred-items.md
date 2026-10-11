@@ -1,8 +1,34 @@
 # Việc để lại (deferred items)
 
-## AG Studio (cập nhật 2026-10-06)
+## AG Studio — chat với agent trong dự án (nhánh `feat/agent-workspace`, 2026-10-10)
 
-Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142). Mỗi dòng: hiện tượng · chỗ trong code · ghi chú.
+- **Editor timeline trực quan cho video của dự án.** Editor cũ (`apps/web/src/modules/editor`, đọc/ghi `episode_revisions`)
+  đã gỡ ở P8 (lấy lại từ git trước commit `1ef0fad`). Video của dự án sửa qua agent (`timeline_apply_ops`) và xem ở tab
+  Xem trước. Muốn editor kéo-thả: dựng lại editor trên `/api/videos/:id/timeline` + lưu theo `base_revision`, route
+  `/p/:p/v/:v/editor`.
+- **Chọn máy farm cho bản cuối trên web.** Thẻ `render_final` nhận `node_id` (agent điền được) nhưng thẻ chưa có ô chọn
+  máy như `RenderMachinePicker` cũ; `GET /api/studio/farm/nodes` vẫn trả máy nhận `studio.render_final`.
+- **Contracts/core còn schema thời workflow.** `packages/contracts/src/studio.ts`, `studio-chat.ts` (intake, chat reply,
+  skill chat), `studio-cut.ts` và `packages/core/src/verification/studio-checkers.ts` mang hợp đồng của pipeline cũ (brief,
+  series plan, R&D, branding, gate). Validator trong `packages/core/src/studio/*` vẫn được `workspace/validators.ts` dùng,
+  nên chưa cắt; profile `production-profiles/studio-production` không còn workflow nào. Dọn khi đụng tới.
+- **E2E cho đường dự án.** `tests/e2e/farm-render.e2e.test.ts` ghi job farm như job dự án (`project_farm_jobs`) và render
+  qua farm thật; các E2E chat/series cũ đã gỡ. Chưa có E2E "tạo dự án → chuẩn bị → agent giả → fit → render xem trước";
+  chuỗi này đã kiểm tay trên stack local (P4–P6).
+- **Một lượt agent chờ job xong vẫn có thể kéo thêm một lượt tự chạy.** Job `continue_agent` báo vào luồng ngay khi xong;
+  nếu tool của lượt đang chạy đã chờ và thấy kết quả, lượt kế tiếp là thừa (tốn ít, không sai). Có thể bỏ khi lượt tạo job
+  còn đang chạy và đã đọc kết quả.
+- **Audio tải lên chưa được đọc thành chữ.** Tab Đầu vào nhận mp3/wav/m4a… vào `context/audio/` nhưng chưa có job
+  `transcribe_upload` (đã có trong `JOB_KINDS` và migration 0033). Agent mới chỉ thấy tên file; file đó dùng được làm
+  giọng/nhạc của dự án (`workspace/project-audio.ts`).
+- **Log của Studio API/worker không vào `E:/ag-local/dev-run/*.log` khi `scripts/local-stack.mjs` bật trên Windows.**
+  Tiến trình chạy dưới `cmd.exe` (`shell: true`) nên fd log không tới node. Kiểm tra trạng thái qua DB (bảng
+  `project_jobs`, `agent_messages`) hoặc chạy tay `node --env-file=apps/api/.env apps/worker/dist/main.js`.
+
+## AG Studio (cập nhật 2026-10-06) — pipeline cũ, đã gỡ ở P8 (2026-10-10)
+
+Rút từ lúc rà soát để viết bù tài liệu (ADR-0001 mục 127–142). Phần lớn nói về production/tập/gate đã gỡ; giữ để tra lịch
+sử. Mỗi dòng: hiện tượng · chỗ trong code · ghi chú.
 
 ### Lỗi đã biết
 
@@ -109,8 +135,8 @@ Plan: `docs/superpowers/plans/2026-10-06-ag-studio-phase-3-render.md`. Cố ý c
 - Cuối pha 3: `corepack pnpm -r run build` và `pnpm -r typecheck` sạch; `vitest run` 1532 pass, 170 skip, 0 fail.
 - `chat.test.ts` › "the subscription limit leaves the reply waiting, then it runs" chập chờn khi chạy cả bộ
   `packages/studio-engine` (máy tải nặng); chạy riêng thì pass. Nguyên nhân (2026-10-08): test so
-  `notBefore − updated_at` **đúng bằng** 60 000 ms, hai mốc lấy từ hai lần gọi đồng hồ nên có thể lệch 1 ms khi máy bận;
-  nên so trong khoảng hoặc lấy cùng một mốc.
+  `notBefore − updated_at` **đúng bằng** 60 000 ms, hai mốc lấy từ hai lần gọi đồng hồ nên có thể lệch 1 ms khi máy bận.
+  ✅ 2026-10-08: `runChatTurn` đọc đồng hồ một lần cho cả hai mốc.
 
 ### Sau pha 5 — kiểu dựng "cắt theo shot" (2026-10-06)
 
@@ -160,15 +186,15 @@ render "Ninh Bình Chậm #1" ngày 08/10):
 - ✅ Worker khởi động lại làm mất job farm (huỷ và gửi lại cuối hàng đợi; lần bỏ dở tính vào `max_attempts`): nhận lại
   job theo fingerprint, abort không huỷ job, lần bỏ dở trả lượt (trần riêng 5; ADR 177).
 - ✅ Tiêu đề sai sự thật, thông báo trên tàu lọt vào video, câu Whisper bịa, branding không vào render (hộp chữ đen
-  đặc), không nhạc: tập cắt 1.1.0 (ADR 178) — **có sẵn nhưng chưa là bản đang dùng**, xem dưới.
+  đặc), không nhạc: tập cắt 1.1.0 (ADR 178), đang dùng từ 2026-10-08 (node `local-render` lên ag-render-worker 0.8.0
+  trước).
 
 Còn để lại:
 
-- **Chuyển `STUDIO_WORKFLOWS.episodeCut` sang 1.1.0** sau khi mọi node farm chạy ag-render-worker 0.8.0
-  (`studio-production.md` mục 2a). Sau khi chuyển: chạy E2E `farm-render` và một tập thật trên stack local (plan, mục
-  Kiểm chứng 4: loa thông báo im trong `final.mp4`, chữ đúng màu và hộp, nhạc đúng mood, A1 trống ở clip đã tắt trong
-  Premiere).
-- **Nhánh ở repo khác chưa gộp:** ag-farm `fix/studio-premiere-per-clip-audio` (trường `audio` của
+- ✅ 2026-10-08 — `STUDIO_WORKFLOWS.episodeCut` là 1.1.0; node render duy nhất (`local-render`, máy dev) chạy
+  ag-render-worker 0.8.0. **Còn:** một tập thật trên stack local (plan, mục Kiểm chứng 4: loa thông báo im trong
+  `final.mp4`, chữ đúng màu và hộp, nhạc đúng mood, A1 trống ở clip đã tắt trong Premiere).
+- ✅ 2026-10-08 — đã gộp vào `dev`: ag-farm `fix/studio-premiere-per-clip-audio` (trường `audio` của
   `studio.export_premiere`), ag-render-worker `fix/premiere-per-clip-audio-text-style` (0.8.0). Studio dùng protocol qua
   `link:` nên build Studio cần checkout ag-farm có commit đó.
 - **yt-dlp chưa cài trên máy dev** (không cài khi chưa hỏi): ở stack local, bước phong cách dựng bị bỏ qua và số liệu

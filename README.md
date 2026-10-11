@@ -1,9 +1,10 @@
 # ag-studio
 
-Engine dựng video nội bộ của nhóm, fork từ **YouTube Operations Harness** (ADR-0001 mục 127). Người dùng tạo một
-*production* (series nhiều tập) từ footage đã quét trên **ag-go**; Claude nghiên cứu thị trường rồi đề xuất R&D,
-branding, kế hoạch tập; người duyệt từng bước; mỗi tập tự dựng timeline, render qua **ag-farm**, có thumbnail, gói
-YouTube và xuất được project Premiere.
+Công cụ dựng video nội bộ của nhóm, fork từ **YouTube Operations Harness** (ADR-0001 mục 127). Mỗi *dự án* là một
+kênh YouTube: người dùng chat tự do với agent (Claude Code làm việc trong thư mục dự án như một repo) để nghiên cứu, lên
+chiến lược, branding, rồi làm từng *video* từ footage trên **ag-go** — chọn cảnh, kế hoạch dựng, timeline, render qua
+**ag-farm**, thumbnail, gói YouTube, xuất project Premiere. Kết quả là file sửa được; việc nặng hiện ai làm, bao lâu,
+dừng được.
 
 ```
 Trình duyệt ──► apps/web ──► apps/api ─┬─► studio.db (SQLite) ◄── apps/worker
@@ -18,11 +19,11 @@ Trình duyệt ──► apps/web ──► apps/api ─┬─► studio.db (SQL
 | Bạn cần | Đọc |
 |---|---|
 | Chạy trên một máy (dịch vụ, cổng, cấu hình, bật hằng ngày) | `docs/runbooks/studio-local.md` |
-| Tạo và vận hành một production, xử lý lỗi | `docs/runbooks/studio-production.md` |
+| Làm một dự án tới bản cuối, xử lý lỗi | `docs/runbooks/studio-project.md` |
 | Quy tắc cho agent làm việc trong repo | `AGENTS.md` |
 | Vì sao thiết kế như vậy | `docs/adr/0001-control-plane-baseline.md` (mục 127 trở đi cho Studio) |
-| Hợp đồng API giữa web và api | `docs/studio-api-v3.md` |
-| Skill nào chạy ở bước nào | `skills/README.md` |
+| Hợp đồng API giữa web, api và agent | `docs/studio-api-v4.md` |
+| Skill của agent | `agent-skills/README.md` |
 | Việc đang làm, việc còn nợ | `docs/superpowers/specs/`, `docs/superpowers/plans/`, `docs/operations/deferred-items.md` |
 
 Yêu cầu: Node ≥ 22.13, pnpm 12 qua `corepack` (`pnpm` không có trên PATH thì gõ `corepack pnpm …`), ffmpeg/ffprobe
@@ -40,19 +41,21 @@ corepack pnpm test
 
 | Thư mục | Package | Vai trò |
 |---|---|---|
-| `apps/api` | `@ag-studio/api` | NestJS: Auth0, teams/vai, productions, run/gate, editor, thumbnail, Canva, `/farm/sign` |
-| `apps/web` | `@ag-studio/web` | React + Ant Design: danh sách production, các bước duyệt, editor timeline theo tập |
-| `apps/worker` | `@ag-studio/worker` | Chạy engine: claim stage, gọi Claude, gửi job farm |
-| `packages/studio-engine` | `@ag-studio/engine` | Stage in-process, run-control (gate, retry, resume), editor, thumbnail, nhật ký LLM, nghiên cứu YouTube |
+| `apps/api` | `@ag-studio/api` | NestJS: Auth0, teams/vai, dự án, video, tệp, luồng chat, đầu vào, nghiên cứu, thẻ xác nhận, tool của agent, `/farm/sign` |
+| `apps/web` | `@ag-studio/web` | React + Ant Design: dự án, chat với agent, tệp, đầu vào, nghiên cứu, xem trước, Hàng đợi |
+| `apps/worker` | `@ag-studio/worker` | Lượt agent (`claude -p` stream-json), job của dự án (ffmpeg, farm, crawl), quét dọn |
+| `packages/studio-engine` | `@ag-studio/engine` | Workspace dự án, agent runner và tool, playbook, job runner, chuẩn bị media, render, crawl YouTube |
+| `packages/studio-mcp` | | Server MCP stdio: tool Studio của agent → `/api/agent-tools` |
 | `packages/ag-go-client` | `@ag-studio/ag-go-client` | Client footage của ag-go (service key + act-as) |
 | `packages/render` | `@ag-studio/render` | Re-export `renderComposition` cho ag-render-worker |
 | `packages/contracts` | `@harness/contracts` | Zod schema; tài liệu Studio ở `src/studio.ts` |
 | `packages/core` | `@harness/core` | Control plane harness (state machine, planner, controller, artifact) + `src/studio/*` + pipeline media |
-| `packages/executors` | `@harness/executors` | Executor script/agent/gate/**farm**, `StudioAgentExecutor` |
-| `packages/adapters/agent-cli` | `@harness/adapter-agent-cli` | Gọi `claude -p` (file mode và structured mode) |
+| `packages/executors` | `@harness/executors` | Executor script/agent/gate/**farm** của harness |
+| `packages/adapters/agent-cli` | `@harness/adapter-agent-cli` | Gọi `claude -p` (stream-json cho agent Studio; file/structured cho harness) |
 | `packages/cli`, `packages/worker` | `@harness/cli`, `@harness/worker` | CLI `harness` và vòng worker của harness |
-| `workflows/`, `skills/`, `production-profiles/` | | Định nghĩa run, đề bài cho Claude, profile |
-| `migrations/` | | SQL `0001`–`0007` (harness), `0008`–`0018` (Studio); API tự migrate khi khởi động |
+| `agent-skills/` | | Skill của agent Studio |
+| `workflows/`, `skills/`, `production-profiles/` | | Workflow, skill, profile của harness CLI |
+| `migrations/` | | SQL `0001`–`0007` (harness), `0008`–`0029` (Studio cũ), `0030`–`0035` (dự án, agent); API tự migrate khi khởi động |
 
 ## Phụ thuộc ngoài
 
@@ -62,9 +65,8 @@ corepack pnpm test
 | **Account API** | Quyền admin, tên/email người dùng | `ACCOUNT_API_KEY`; không với tới thì không ai là admin, còn lại vẫn chạy |
 | **ag-go-api** | Footage đã quét, URL ký tới file gốc/proxy | Service key scope `footage:read,footage:resolve`; origin của web trong `CORS_EXTRA_ORIGINS` |
 | **ag-farm** + **ag-render-worker** | Render preview/final, xuất Premiere | Owner `studio` (xem dưới) |
-| **R2** | Input/output render, thumbnail, export, payload nhật ký LLM | Bucket và khoá ghi |
-| **YouTube Data API** | Nghiên cứu thị trường (tuỳ chọn) | `YOUTUBE_API_KEY` |
-| **Canva** | Sửa thumbnail (tuỳ chọn) | App Canva Connect, `CANVA_*` |
+| **R2** | Input/output render, thumbnail, export, audio dự án, payload nhật ký LLM | Bucket và khoá ghi |
+| **YouTube Data API** | Crawl xu hướng, kênh top (tuỳ chọn; không có thì yt-dlp) | `YOUTUBE_API_KEY` |
 
 Tên mọi biến môi trường: `.env.example`. Không commit `.env`.
 
@@ -73,8 +75,8 @@ Tên mọi biến môi trường: `.env.example`. Không commit `.env`.
 Trên ag-farm-web (vai ADMIN), tạo owner:
 - **ID:** `studio`
 - **sign_url:** `https://<studio-api-host>/api/farm/sign`
-- **Loại job:** `studio.render_preview`, `studio.render_final`, `studio.export_premiere` (`studio.tts` chỉ còn cho
-  luồng cũ)
+- **Loại job:** `studio.render_preview`, `studio.render_final`, `studio.export_premiere`, `studio.tts`,
+  `studio.transcribe`
 - **Lane mặc định:** `interactive`
 
 Rồi đặt khoá owner (`FARM_OWNER_KEY`) và khoá công khai Ed25519 (`FARM_TICKET_PUBLIC_KEY`) vào `.env`.

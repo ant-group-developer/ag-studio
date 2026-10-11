@@ -18,7 +18,12 @@ const DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
 /** A reference video is at most this long and this big (yt-dlp skips the others). */
 export const REFERENCE_MAX_SECONDS = 1800;
 export const REFERENCE_MAX_BYTES = "300M";
-const COMMON = ["--ignore-config", "--no-cookies", "--no-warnings", "--no-progress"];
+/**
+ * Every call. YouTube needs a JavaScript runtime to give the formats (yt-dlp 2025.11 on; without one a download finds
+ * no ≤480p video): the worker's own Node is always there, so yt-dlp is pointed at it.
+ */
+export const YTDLP_COMMON_ARGS = ["--ignore-config", "--no-cookies", "--no-warnings", "--no-progress", "--js-runtimes", `node:${process.execPath}`];
+const COMMON = YTDLP_COMMON_ARGS;
 
 /** What yt-dlp says of one video, as research keeps it (views per day and outliers are computed by research). */
 export interface YtVideoMeta {
@@ -43,6 +48,8 @@ export interface YtDlp {
   metadata(ids: readonly string[], signal?: AbortSignal): Promise<Map<string, YtVideoMeta>>;
   /** A channel's newest uploads (ids only; `metadata` reads their numbers). */
   listChannel(ref: ChannelRef, limit: number, signal?: AbortSignal): Promise<YtChannelList>;
+  /** YouTube's search for videos (`ytsearchN:`, `ytsearchdateN:` newest first): ids only, in YouTube's order. */
+  search(query: string, limit: number, order: "relevance" | "date", signal?: AbortSignal): Promise<string[]>;
   /** One video at ≤480p into `dir`, as `<id>.<ext>`; throws with yt-dlp's last words when it cannot. */
   download(videoId: string, dir: string, signal?: AbortSignal): Promise<string>;
 }
@@ -130,6 +137,17 @@ export function ytDlp(o: YtDlpOptions): YtDlp {
         title: j.channel ?? j.uploader ?? j.title ?? null,
         video_ids: (j.entries ?? []).map((e) => e.id ?? "").filter((id) => VIDEO_ID.test(id)).slice(0, limit),
       };
+    },
+
+    async search(query, limit, order, signal) {
+      const q = query.replace(/\s+/g, " ").trim();
+      if (!q) return [];
+      const n = Math.max(1, Math.min(200, Math.round(limit)));
+      const r = await run([...COMMON, "--flat-playlist", "-J", "--", `${order === "date" ? "ytsearchdate" : "ytsearch"}${n}:${q}`], META_TIMEOUT_MS, signal);
+      if (r.timedOut) throw new Error("yt-dlp: hết giờ khi tìm video");
+      if (r.code !== 0) throw new Error(`yt-dlp không tìm được: ${lastWords(r.stderr)}`);
+      const j = JSON.parse(r.stdout) as { entries?: { id?: string }[] };
+      return [...new Set((j.entries ?? []).map((e) => e.id ?? "").filter((id) => VIDEO_ID.test(id)))].slice(0, n);
     },
 
     async download(videoId, dir, signal) {

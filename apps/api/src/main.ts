@@ -4,6 +4,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { ApiResponseInterceptor } from './common/api-response.interceptor';
 import { ApiExceptionFilter } from './common/api-exception.filter';
+import { SiteNameService } from './ag-go/site-name.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -17,7 +18,8 @@ async function bootstrap() {
     }),
   );
   app.useGlobalInterceptors(new ApiResponseInterceptor(app.get(Reflector)));
-  app.useGlobalFilters(new ApiExceptionFilter());
+  const siteName = app.get(SiteNameService);
+  app.useGlobalFilters(new ApiExceptionFilter(() => siteName.current()));
   const port = process.env['PORT'] ?? 3100;
   await app.listen(port);
   console.log(`AG Studio API listening on port ${port}`);
