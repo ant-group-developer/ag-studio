@@ -1,7 +1,7 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { z } from 'zod';
-import { agentToolList, callAgentTool, type ToolAnswer } from '@ag-studio/engine';
+import { agentToolList, callAgentTool, logAudit, type ToolAnswer } from '@ag-studio/engine';
 import { Public } from '../auth/public.decorator';
 import { EngineService } from '../studio/engine.service';
 import { WorkspaceService } from '../workspace/workspace.service';
@@ -37,13 +37,27 @@ export class AgentToolsController {
   /** Body `{name, arguments}`; always 200 with `{text, isError}` — a refusal is something the agent reads. */
   @Post('call')
   @HttpCode(HttpStatus.OK)
-  call(@Body() raw: unknown, @Req() req: Request): Promise<ToolAnswer> {
+  async call(@Body() raw: unknown, @Req() req: Request): Promise<ToolAnswer> {
     const body = parseBody(CallSchema, raw);
     const call = req.agentCall!;
-    return callAgentTool(this.tools.all, {
-      db: this.engine.db, claims: call.claims, message: call.message, thread: call.thread, project: call.project, video: call.video,
-      workspaceDir: this.workspace.dir(call.project.id), role: call.role, now: () => new Date().toISOString(), footage: this.footage,
-      siteName: this.siteName.current(),
-    }, body.name, body.arguments ?? {});
+    const started = Date.now();
+    // every call goes to the activity log, as the person the turn acts for
+    const record = (outcome: 'ok' | 'error', text: string) => logAudit(this.engine.db, {
+      actorKind: 'agent', actorId: call.message.created_by, kind: 'tool', action: body.name, outcome, durationMs: Date.now() - started,
+      teamId: call.project.team_id, projectId: call.project.id, videoId: call.video?.id ?? null, threadId: call.thread.id, messageId: call.message.id,
+      summary: outcome === 'error' ? text.slice(0, 300) : null, details: { args: body.arguments ?? {}, result: text.slice(0, 300) },
+    });
+    try {
+      const answer = await callAgentTool(this.tools.all, {
+        db: this.engine.db, claims: call.claims, message: call.message, thread: call.thread, project: call.project, video: call.video,
+        workspaceDir: this.workspace.dir(call.project.id), role: call.role, now: () => new Date().toISOString(), footage: this.footage,
+        siteName: this.siteName.current(),
+      }, body.name, body.arguments ?? {});
+      record(answer.isError ? 'error' : 'ok', answer.text);
+      return answer;
+    } catch (e) {
+      record('error', e instanceof Error ? e.message : String(e));
+      throw e;
+    }
   }
 }
