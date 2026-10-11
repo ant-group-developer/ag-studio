@@ -210,7 +210,8 @@ export function listAudit(db: StudioDb, f: AuditFilter, page = 1, pageSize = 50)
 
 /** The people who appear in the log under a filter (for the "who" filter). */
 export function auditActors(db: StudioDb, f: AuditFilter): string[] {
-  const w = where({ ...f, actorId: undefined });
+  const { actorId: _who, ...rest } = f;
+  const w = where(rest);
   return db.all<{ actor_id: string }>(`SELECT DISTINCT a.actor_id FROM audit_log a ${w.sql}${w.sql ? " AND" : " WHERE"} a.actor_id IS NOT NULL ORDER BY a.actor_id LIMIT 500`, w.params)
     .map((r) => r.actor_id);
 }
