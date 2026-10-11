@@ -117,7 +117,12 @@ interface TeamSkill {
   meta?, prepare?}` — chủ dự án không dùng được trên ag-go → 422 `owner_cannot_access`; `DELETE sources/:sourceId`
 - `POST sources/upload` multipart `file` + `videoId?` (editor): tài liệu → `context/uploads/`, ảnh → `context/images/`,
   audio → `context/audio/`; Word → 415 `docx_not_supported`, video → 415 `video_from_ag_go`
-- `GET footage?agGoProjectId&q&cursor&limit` → video trong các project ag-go của dự án, theo quyền ag-go của người hỏi
+- `GET footage?agGoProjectIds&q&categoryIds&ownerUserIds&provinceIds&resolutions&tags&genres&timesOfDay&orientations&minDurationMs&maxDurationMs&usability&sortBy&sortOrder&page|cursor&limit`
+  → video trong các project ag-go của dự án (chỉ những project đã gắn; `agGoProjectId` cũ vẫn nhận), theo quyền ag-go của
+  người hỏi; danh sách là chuỗi cách bằng dấu phẩy, enum như ag-go `/footage/search`; khoá lạ → 400 `invalid`, project
+  chưa gắn → `not_an_input`. Mỗi item thêm `prepared`.
+- `GET footage/facets?<cùng bộ lọc>` → `{tags, genres, timesOfDay, orientations, resolutions, categories, provinces, authors,
+  projects}` (mỗi mục `[{value, label?, count}]`); `projects` là các project đã gắn, `count` của ag-go hoặc `null`
 - `POST prepare {assetIds, again?}` (editor) → job `prepare_asset` cho mỗi video chưa chuẩn bị
 - `GET jobs?active&videoId` → `{jobs: JobView[]}`; `POST jobs/:jobId/cancel` (editor) → Dừng
   (`JobView`: `kind, status, title, phase, progress, etaSeconds, nodeId, cancelRequested, startedAt, finishedAt, result, error`)
