@@ -276,8 +276,14 @@ body.ws-resizing iframe, body.ws-resizing video { pointer-events: none; }
 .ws-tool { border: 1px solid var(--ws-line); border-radius: 8px; background: var(--ws-surface); font-size: 13px; }
 .ws-tool--running { border-color: var(--ws-accent-line); }
 .ws-tool--error .ws-tool__name { color: var(--ws-bad-fg); }
+.ws-tool__row { display: flex; align-items: center; }
+.ws-tool__open {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px; margin-right: 6px; padding: 1px 8px; border: 1px solid var(--ws-line);
+  border-radius: 999px; background: var(--ws-surface); font: inherit; font-size: 12px; color: var(--ws-accent); cursor: pointer;
+}
+.ws-tool__open:hover { border-color: var(--ws-accent-line); background: var(--ws-chip); }
 .ws-tool__head {
-  width: 100%; display: flex; align-items: center; gap: 6px; padding: 5px 8px; border: 0; background: none; font: inherit; color: var(--ws-muted);
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 5px 8px; border: 0; background: none; font: inherit; color: var(--ws-muted);
   cursor: pointer; text-align: left;
 }
 .ws-tool__head:hover { color: var(--ws-text); }
