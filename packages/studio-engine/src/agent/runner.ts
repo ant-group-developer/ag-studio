@@ -206,12 +206,16 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
         model: out.state.model, text: out.text, parts: out.state.parts, error: out.error, result: out.state.result,
       }), "utf8")), "application/gzip");
     } catch { key = null; }
+    const r = out.state.result;
+    // who and which team, kept on the row for the Claude stats (the project may be deleted later)
+    const teamId = getProject(db, thread.project_id)?.team_id ?? null;
     db.run(
       `INSERT INTO llm_calls (id, created_at, source, production_id, episode_id, run_id, stage_key, attempt_id, skill, model, round, outcome,
-         problems, input_tokens, output_tokens, cost_usd, wall_seconds, payload_key)
-       VALUES (?, ?, 'claude-agent', ?, ?, ?, 'agent', ?, 'agent', ?, ?, ?, '[]', ?, ?, ?, ?, ?)`,
+         problems, input_tokens, output_tokens, cost_usd, wall_seconds, payload_key, cache_read_tokens, cache_creation_tokens, num_turns, user_id, team_id)
+       VALUES (?, ?, 'claude-agent', ?, ?, ?, 'agent', ?, 'agent', ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, at, thread.project_id, thread.video_id, thread.id, message.id, out.state.model ?? "", message.attempts, outcome,
-        out.state.result?.input_tokens ?? null, out.state.result?.output_tokens ?? null, out.state.result?.cost_usd ?? 0, wallSeconds, key],
+        r?.input_tokens ?? null, r?.output_tokens ?? null, r?.cost_usd ?? 0, wallSeconds, key,
+        r?.cache_read_tokens ?? null, r?.cache_creation_tokens ?? null, r?.num_turns ?? null, message.created_by ?? null, teamId],
     );
     return id;
   }

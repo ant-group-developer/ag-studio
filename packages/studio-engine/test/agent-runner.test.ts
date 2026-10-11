@@ -92,6 +92,9 @@ describe("agent runner (fake CLI, real MCP server)", { timeout: 60_000 }, () => 
     expect(listFileVersions(db, project.id, "channel/notes.md")[0]).toMatchObject({ author_kind: "agent", message_id: turn!.id });
     expect(readFileSync(join(dir, ".studio", "history", `${thread.id}.md`), "utf8")).toContain("Mình tạo video nhé");
     expect(db.get<{ n: number }>("SELECT COUNT(*) AS n FROM llm_calls WHERE source = 'claude-agent' AND attempt_id = ?", [turn!.id])?.n).toBe(1);
+    // for the Claude stats: who it was for, which team, the cache split, the steps
+    expect(db.get("SELECT user_id, team_id, input_tokens, cache_read_tokens, cache_creation_tokens, num_turns FROM llm_calls WHERE attempt_id = ?", [turn!.id]))
+      .toEqual({ user_id: "auth0|u", team_id: "team-1", input_tokens: 110, cache_read_tokens: 100, cache_creation_tokens: 0, num_turns: 5 });
     expect(getThread(db, thread.id)?.session_started).toBe(1);
     const first = calls()[0]!;
     expect(first.argv).toContain("--restricted");
