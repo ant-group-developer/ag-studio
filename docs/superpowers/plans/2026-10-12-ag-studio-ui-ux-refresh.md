@@ -37,3 +37,9 @@ thống kê xem được từng lượt; không còn uuid thay tên video; các 
 1. `feat(engine): claude turns list and detail` — `llm_calls` ⋈ `agent_messages` (+ audit `changed`).
 2. `feat(api): GET studio/stats/claude/turns[/:id]` — cùng `viewScope`; `docs/studio-api-v4.md`.
 3. `feat(web): per-turn table and detail drawer` — lọc theo dòng gộp, drawer chi tiết, mở lại chat.
+
+## Trạng thái (2026-10-12)
+
+Xong P1–P4 trên `feat/ui-ux-refresh`, chưa push. `corepack pnpm -r run build`, `pnpm -r typecheck`, `pnpm test` sạch.
+Kiểm giao diện bằng trang thử cục bộ với dữ liệu giả (chip, việc nền, JSON, cây + file, drawer ag-go, thống kê từng lượt);
+chưa kiểm trên stack thật có đăng nhập. Ngoài plan: biến màu `--ws-*` chuyển lên `:root` để drawer/modal (portal) nhận màu.
