@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { Request } from 'express';
 import { createProject, createThread } from '@ag-studio/engine';
 import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
@@ -52,5 +52,17 @@ describe('StatsController (real studio.db)', () => {
     await expect(ctl.claude({ teamId: 'team-2' }, req('auth0|owner'))).rejects.toBeInstanceOf(ForbiddenException);
     await expect(ctl.claude({}, req('auth0|nobody'))).rejects.toBeInstanceOf(ForbiddenException);
     await expect(ctl.claude({ groupBy: 'month' }, req('auth0|owner'))).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('lists the turns one by one in the same scope, people named; a turn opens in full only within it', async () => {
+    const all = await ctl.turns({}, req('auth0|admin'));
+    expect(all.total).toBe(2);
+    const mine = await ctl.turns({ sortBy: 'cost' }, req('auth0|owner'));
+    expect(mine.items).toEqual([expect.objectContaining({ teamId: 'team-1', costUsd: 0.5, projectName: 'Kênh team-1', user: expect.objectContaining({ name: 'Lan' }) })]);
+    const turn = await ctl.turn(mine.items[0]!.id, req('auth0|owner'));
+    expect(turn).toMatchObject({ id: mine.items[0]!.id, tools: [], changed: [], user: expect.objectContaining({ name: 'Lan' }) });
+    const theirs = all.items.find((r) => r.teamId === 'team-2')!;
+    await expect(ctl.turn(theirs.id, req('auth0|owner'))).rejects.toBeInstanceOf(NotFoundException);
+    await expect(ctl.turns({ outcome: 'great' }, req('auth0|owner'))).rejects.toMatchObject({ status: 400 });
   });
 });

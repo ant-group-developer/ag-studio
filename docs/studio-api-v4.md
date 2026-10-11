@@ -73,6 +73,17 @@ interface TeamSkill {
   ```
   Nguồn: `llm_calls` (`source = 'claude-agent'`, cột `user_id`, `team_id`, cache từ migration 0037) và tin nhắn người gửi
   (`agent_messages`). `groupBy=video` có một dòng `key: null` cho các luồng của dự án. Tóm tắt luồng không tính.
+- `GET stats/claude/turns?from&to&teamId&projectId&videoId&userId&threadId&outcome=accepted|failed|rate_limited&sortBy=at|cost|wall|tokens&sortOrder&page&pageSize`
+  (cùng phạm vi và khoảng mặc định như trên; `videoId=` rỗng = luồng của dự án; `pageSize` ≤ 200, mặc định 50) → từng lượt:
+  ```ts
+  { from; to; total; page; pageSize; items: Turn[] } // mới nhất trước
+  // Turn: id (llm_calls.id), at, teamId, projectId, projectName, videoId, videoTitle, threadId, threadTitle, messageId, userId,
+  //       user: UserSummary | null, model, outcome, status (của tin), trigger, inputTokens, outputTokens, cacheReadTokens,
+  //       cacheCreationTokens, costUsd, wallSeconds, numTurns, toolCount, prompt (160 ký tự đầu của tin đã kích lượt)
+  ```
+- `GET stats/claude/turns/:turnId` → một lượt đầy đủ: `Turn` + `promptText`, `promptBy`, `promptUser`, `text` (câu trả lời),
+  `error`, `attempts`, `startedAt`, `finishedAt`, `tools: { id; name; input; result; isError; startedAt; endedAt }[]` (chuỗi
+  dài cắt ở 4000 ký tự), `changed` (file đã đổi, từ nhật ký khi còn giữ). Lượt ngoài phạm vi người xem → 404.
 - `GET farm/nodes` → `{nodes}`: máy nhận `studio.render_final` (ghim bản cuối qua `node_id` của thẻ `render_final`);
   farm không với tới → `{nodes: []}`
 - Kho nhạc: bài nhạc nền gắn mood; video không có nhạc riêng được chọn một bài theo mood của branding (bài đủ dài hay
