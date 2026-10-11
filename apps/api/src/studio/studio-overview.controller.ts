@@ -1,11 +1,11 @@
-import { BadRequestException, Body, Controller, ForbiddenException, Get, Put, Req, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Put, Req, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Request } from 'express';
 import {
   assistantName, claudeMaxConcurrent, claudeUsage, parseClaudeMaxConcurrent, setAssistantName, setClaudeMaxConcurrent, studioActivity,
 } from '@ag-studio/engine';
-import { AccountApiService } from '../auth/account-api.service';
+import { StudioAdminService } from '../auth/studio-admin.service';
 import { EngineService } from './engine.service';
 import { mapErrors } from './http-errors';
 
@@ -24,7 +24,7 @@ export class StudioSettingsDto {
 export class StudioOverviewController {
   constructor(
     private readonly engine: EngineService,
-    private readonly accountApi: AccountApiService,
+    private readonly admin: StudioAdminService,
     private readonly config: ConfigService,
   ) {}
 
@@ -46,7 +46,7 @@ export class StudioOverviewController {
    */
   @Get('queue')
   async queue(@Req() req: Request) {
-    const isAdmin = await this.isAdmin(req);
+    const isAdmin = await this.admin.isAdmin(req);
     const { items, hidden } = studioActivity(this.engine.db, { userId: req.authContext!.userId, isAdmin });
     let machines = null;
     let farm: { ok: true } | { ok: false; error: string } = { ok: true };
@@ -67,7 +67,7 @@ export class StudioOverviewController {
 
   @Put('settings')
   async settings(@Body() dto: StudioSettingsDto, @Req() req: Request) {
-    if (!(await this.isAdmin(req))) throw new ForbiddenException('Requires a Studio admin');
+    await this.admin.requireAdmin(req);
     if (dto.claudeMaxConcurrent === undefined && dto.assistantName === undefined) {
       throw new BadRequestException('Send claudeMaxConcurrent or assistantName');
     }
@@ -93,14 +93,5 @@ export class StudioOverviewController {
   /** The worker's env default; the API does not need the key, so a missing or bad one reads as the default. */
   private envCap(): number {
     try { return parseClaudeMaxConcurrent(this.config.get<string>('STUDIO_CLAUDE_MAX_CONCURRENT')); } catch { return parseClaudeMaxConcurrent(undefined); }
-  }
-
-  private async isAdmin(req: Request): Promise<boolean> {
-    const ctx = req.authContext!;
-    if (ctx.isAdmin === undefined) {
-      try { ctx.isAdmin = (await this.accountApi.getUserProfile(ctx.accessToken, ctx.userId)).userType === 'ADMIN'; }
-      catch { ctx.isAdmin = false; }
-    }
-    return ctx.isAdmin;
   }
 }
