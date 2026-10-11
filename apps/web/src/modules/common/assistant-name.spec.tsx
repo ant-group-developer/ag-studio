@@ -10,7 +10,9 @@ const client = {
   setAssistantName: vi.fn().mockResolvedValue({ ...usage, assistantName: "Trợ lý" }),
 };
 vi.mock("../../api/studio-client", async (orig) => ({ ...(await orig<object>()), useStudioClient: () => client }));
-const { AssistantNameProvider, useAiTranslation } = await import("./assistant-name");
+const publicSettings = vi.fn();
+vi.mock("../../api/ag-go-client", async (orig) => ({ ...(await orig<object>()), getAgGoPublicSettings: () => publicSettings() }));
+const { AssistantNameProvider, SiteNameProvider, useAiTranslation } = await import("./assistant-name");
 const { AssistantNameForm } = await import("../admin/AssistantNameForm");
 
 /** What the chat composer says, with the AI's name in it. */
@@ -43,5 +45,37 @@ describe("the AI's name", () => {
     fireEvent.click(screen.getByRole("button", { name: "Lưu tên" }));
     await waitFor(() => expect(client.setAssistantName).toHaveBeenCalledWith("Trợ lý"));
     await waitFor(() => expect(screen.getByTestId("placeholder")).toHaveTextContent("Tin nhắn cho Trợ lý"));
+  });
+});
+
+/** A message naming the footage library. */
+function PickTitle() {
+  const { t } = useAiTranslation();
+  return <p data-testid="pick">{t("ws.inputs.pickProjectTitle")}</p>;
+}
+
+function mountSite() {
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <SiteNameProvider><PickTitle /></SiteNameProvider>
+    </QueryClientProvider>,
+  );
+}
+
+describe("the footage library's name", () => {
+  beforeAll(async () => { await i18n.changeLanguage("vi"); });
+
+  it("is ag-go's own siteName", async () => {
+    publicSettings.mockResolvedValueOnce({ siteName: " Kho Footage " });
+    mountSite();
+    await waitFor(() => expect(screen.getByTestId("pick")).toHaveTextContent("Chọn project Kho Footage"));
+  });
+
+  it("is AG Go while ag-go is out of reach or gives no usable name", async () => {
+    publicSettings.mockRejectedValueOnce(new Error("down"));
+    mountSite();
+    expect(screen.getByTestId("pick")).toHaveTextContent("Chọn project AG Go");
+    await waitFor(() => expect(publicSettings).toHaveBeenCalled());
+    expect(screen.getByTestId("pick")).toHaveTextContent("Chọn project AG Go");
   });
 });

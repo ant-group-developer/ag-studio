@@ -49,7 +49,7 @@ describe("video preview tab", { timeout: 20_000 }, () => {
     expect(screen.getByLabelText("Trình phát bản render")).toHaveAttribute("src", "https://r2.test/a.mp4");
     const list = screen.getByRole("region", { name: "Bản render" });
     expect(list).toHaveTextContent("bản 3 · 1:05 · 12.0 MB · có watermark");
-    expect(list).toHaveTextContent("bạn chưa có quyền xem footage này trên ag-go");
+    expect(list).toHaveTextContent("bạn chưa có quyền xem footage này trên AG Go");
     expect(within(list).queryByRole("button", { name: /Render bản cuối/ })).toBeNull();
     fireEvent.click(within(list).getByRole("button", { name: /Render xem trước/ }));
     await waitFor(() => expect(ws.startRender).toHaveBeenCalledWith("v1", { kind: "render_preview" }));

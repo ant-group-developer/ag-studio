@@ -116,6 +116,11 @@ nhưng không code nào đọc.
   `STUDIO_CLAUDE_MAX_CONCURRENT` (1–100, mặc định 20). Hết hạn mức gói: `rate_limited`, chờ 5→60 phút rồi chạy lại.
 - **Tên AI trên web** (`studio_settings.assistant.name`): admin đặt ở màn Hàng đợi, mặc định `Claude`; chỉ là tên hiển thị.
   Chuỗi i18n nhắc AI dùng `{{ai}}` và component gọi `useAiTranslation()` (`apps/web/src/modules/common/assistant-name.tsx`).
+- **Tên kho footage** là `siteName` của chính ag-go (`GET /settings/public`, không cần đăng nhập; mặc định `AG Go`), không
+  viết cứng "ag-go" ở chữ người dùng hay agent đọc: web `{{site}}` qua `useAiTranslation()` (`SiteNameProvider` nằm ngoài
+  `AuthGate`; `keys.spec.ts` cấm "ag-go" trong locale), API `SiteNameService`, worker/engine `createSiteNameCache`
+  (`site-name.ts`, nạp lại 10 phút) cho lỗi, chữ job, system prompt và mô tả tool (`{{site}}` trong `description`). Tên
+  tool, kind nguồn (`ag_go_*`) và mã lỗi giữ nguyên.
 - Mọi lượt ghi `llm_calls` (`source = 'claude-agent'`, payload gzip trên bucket). Test luôn dùng CLI giả
   `fixtures/fake-studio-agent.mjs` (directive `@fake …`) và `fixtures/fake-mcp-server.mjs`; **không gọi Claude thật trong
   test** (probe thật chỉ khi `HARNESS_REAL_CLAUDE_TEST=1`). Trên Windows `resolveCommand` dò shim `claude.cmd` ra `claude.exe`.

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { App as AntApp, Button, Checkbox, Empty, Input, Modal, Select, Spin, Tag } from "antd";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Mic, MicOff } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { useAiTranslation } from "../common/assistant-name";
 import { useAgGoClient, type AgGoProject } from "../../api/ag-go-client";
 import { StudioHttpError } from "../../api/http";
 import { useWorkspaceClient, type FootageItem, type SourceItem } from "../../api/workspace-client";
@@ -22,7 +22,7 @@ const errorText = (e: unknown, fallback: string) => (e instanceof StudioHttpErro
  * them to them. Studio then checks the project's owner sees videos in it (the agent and renders act as the owner).
  */
 export function AgGoProjectPicker({ projectId, picked, open, onClose }: { projectId: string; picked: SourceItem[]; open: boolean; onClose: () => void }) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const { message } = AntApp.useApp();
   const agGo = useAgGoClient();
   const client = useWorkspaceClient();
@@ -68,7 +68,7 @@ export function AgGoProjectPicker({ projectId, picked, open, onClose }: { projec
 }
 
 function FootageRow({ item, checked, onToggle, disabled }: { item: FootageItem; checked: boolean; onToggle: () => void; disabled: boolean }) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const prepared = item.prepared.state;
   return (
     <li className="ws-picker__row">
@@ -94,7 +94,7 @@ function FootageRow({ item, checked, onToggle, disabled }: { item: FootageItem; 
 export function FootagePicker({ projectId, videoId, sources, open, onClose }: {
   projectId: string; videoId: string; sources: SourceItem[]; open: boolean; onClose: () => void;
 }) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const { message } = AntApp.useApp();
   const client = useWorkspaceClient();
   const qc = useQueryClient();

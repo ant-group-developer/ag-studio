@@ -75,6 +75,14 @@ async function agGoGet<T>(accessToken: string, path: string): Promise<T> {
   return unwrapAgGoResponse<T>(await res.json());
 }
 
+/** ag-go's public web settings (`GET /settings/public`, no sign-in): its own name among them. */
+export async function getAgGoPublicSettings(): Promise<{ siteName?: string | null }> {
+  if (!AG_GO_API_URL) throw new Error("VITE_AG_GO_API_URL is not configured");
+  const res = await fetch(`${AG_GO_API_URL}/settings/public`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+  return unwrapAgGoResponse<{ siteName?: string | null }>(await res.json());
+}
+
 /** The ag-go projects the person can see, by name (`keyword`), a page at a time. */
 export function getAgGoProjects(accessToken: string, q: { keyword?: string; page?: number; pageSize?: number } = {}): Promise<AgGoProjectPage> {
   const query = new URLSearchParams();

@@ -82,7 +82,7 @@ describe("Inputs tab", { timeout: 20_000 }, () => {
 
   it("lists the ag-go projects, this video's ag-go videos with their preparation, and uploads", async () => {
     const open = mount("v1");
-    const footage = await screen.findByRole("region", { name: "Video ag-go của video này" });
+    const footage = await screen.findByRole("region", { name: "Video AG Go của video này" });
     expect(footage).toHaveTextContent("Hoa Lư 03.mp4");
     expect(footage).toHaveTextContent("1:12 · 12 cảnh · có lời thoại");
     fireEvent.click(within(footage).getByRole("button", { name: "Mở" }));
@@ -90,7 +90,7 @@ describe("Inputs tab", { timeout: 20_000 }, () => {
     expect(footage).toHaveTextContent("ag-go không trả được video");
     fireEvent.click(within(footage).getByRole("button", { name: "Thử lại" }));
     await waitFor(() => expect(ws.prepareInputs).toHaveBeenCalledWith("p1", [A2], false));
-    expect(screen.getByRole("region", { name: "Project ag-go" })).toHaveTextContent("Ninh Bình42 video");
+    expect(screen.getByRole("region", { name: "Project AG Go" })).toHaveTextContent("Ninh Bình42 video");
     fireEvent.click(within(screen.getByRole("region", { name: "Tài liệu, ảnh, audio" })).getByRole("button", { name: "Ghi chú.md" }));
     expect(open).toHaveBeenCalledWith("context/uploads/Ghi chú.md");
   });
@@ -99,12 +99,12 @@ describe("Inputs tab", { timeout: 20_000 }, () => {
     ws.addSource.mockRejectedValueOnce(new StudioHttpError(422, { message: "x", code: "owner_cannot_access" }));
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "Thêm project" }));
-    const dialog = await screen.findByRole("dialog", { name: "Chọn project ag-go" });
+    const dialog = await screen.findByRole("dialog", { name: "Chọn project AG Go" });
     expect(await within(dialog).findByText("Ninh Bình mùa lúa")).toBeInTheDocument();
     expect(dialog).toHaveTextContent("Miền Bắc/Ninh Bình · 12 video · 3 ảnh");
     fireEvent.click(within(dialog).getByRole("button", { name: "Thêm" }));
     await waitFor(() => expect(ws.addSource).toHaveBeenCalledWith("p1", { kind: "ag_go_project", ref: "agp-2", label: "Ninh Bình mùa lúa" }));
-    expect(await screen.findByText("Chủ dự án không thấy video nào trong project ag-go này")).toBeInTheDocument();
+    expect(await screen.findByText("Chủ dự án không thấy video nào trong project AG Go này")).toBeInTheDocument();
   });
 
   it("picks ag-go videos for the video in the order ticked, adds and prepares them", async () => {
@@ -115,7 +115,7 @@ describe("Inputs tab", { timeout: 20_000 }, () => {
     ws.addSource.mockResolvedValue({ source: src({}) });
     mount("v1");
     fireEvent.click(await screen.findByRole("button", { name: "Chọn video" }));
-    const dialog = await screen.findByRole("dialog", { name: "Chọn video ag-go cho video này" });
+    const dialog = await screen.findByRole("dialog", { name: "Chọn video AG Go cho video này" });
     fireEvent.click(await within(dialog).findByRole("checkbox", { name: "Tam Cốc.mp4" }));
     fireEvent.click(within(dialog).getByRole("checkbox", { name: "Bái Đính.mp4" }));
     expect(dialog).toHaveTextContent("Thứ tự dùng: Tam Cốc.mp4, Bái Đính.mp4");

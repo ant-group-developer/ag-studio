@@ -8,7 +8,7 @@ import { useTranslation } from "react-i18next";
 import { BrowserRouter, Routes, Route, Link, useLocation } from "react-router-dom";
 import { NuqsAdapter } from "nuqs/adapters/react-router";
 import { AuthGate } from "./auth/auth-provider";
-import { AssistantNameProvider } from "./modules/common/assistant-name";
+import { AssistantNameProvider, SiteNameProvider } from "./modules/common/assistant-name";
 import { useAppUserMenu } from "./modules/common/use-app-user-menu";
 import type { AppLanguage } from "./i18n/language";
 
@@ -74,6 +74,7 @@ export function App() {
   return (
     <ConfigProvider locale={locale}>
       <AntApp>
+        <SiteNameProvider>
         <AuthGate>
           <AssistantNameProvider>
             <BrowserRouter>
@@ -94,6 +95,7 @@ export function App() {
             </BrowserRouter>
           </AssistantNameProvider>
         </AuthGate>
+        </SiteNameProvider>
       </AntApp>
     </ConfigProvider>
   );

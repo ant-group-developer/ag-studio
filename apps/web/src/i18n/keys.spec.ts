@@ -1,7 +1,8 @@
 /**
  * Every literal `t("…")` key the web uses exists in both locales: a missing key renders as the raw key
  * (`footage.selectClipFirst`, `player.pause` reached the editor that way). A message naming the AI (`{{ai}}`) is only
- * read through `useAiTranslation`: plain `useTranslation` shows "{{ai}}" as is (the new video's chat did).
+ * read through `useAiTranslation`: plain `useTranslation` shows "{{ai}}" as is (the new video's chat did). Same for
+ * the footage library (`{{site}}`, ag-go's own name): no message writes "ag-go" itself.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -52,9 +53,16 @@ describe("i18n keys", () => {
     expect(missing).toEqual([]);
   });
 
-  it("messages that name the AI are read with useAiTranslation", () => {
-    const names = (key: string) => [vi, en].some((m) => /\{\{ai\}\}/.test(lookup(m, key) ?? lookup(m, `${key}_other`) ?? ""));
+  it("messages that name the AI or the footage library are read with useAiTranslation", () => {
+    const names = (key: string) => [vi, en].some((m) => /\{\{(ai|site)\}\}/.test(lookup(m, key) ?? lookup(m, `${key}_other`) ?? ""));
     const wrong = files.filter((f) => !f.ai).flatMap((f) => f.keys.filter(names).map((k) => `${k} (${f.file})`));
     expect(wrong).toEqual([]);
+  });
+
+  it.each([["vi", vi], ["en", en]] as const)("no %s message names ag-go itself (it is {{site}})", (_lang, messages) => {
+    const strings = (node: unknown, path: string): [string, string][] =>
+      typeof node === "string" ? [[path, node]] : typeof node === "object" && node !== null
+        ? Object.entries(node).flatMap(([k, v]) => strings(v, path ? `${path}.${k}` : k)) : [];
+    expect(strings(messages, "").filter(([, s]) => /ag-go|AG Go/i.test(s)).map(([p]) => p)).toEqual([]);
   });
 });
