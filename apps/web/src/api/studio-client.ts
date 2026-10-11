@@ -88,6 +88,38 @@ export interface AuditQuery {
 }
 
 export interface AuditPage { items: AuditItem[]; total: number; page: number; pageSize: number }
+
+export type ClaudeStatsGroup = "team" | "project" | "video" | "user";
+export interface ClaudeStatsQuery { from?: string; to?: string; groupBy?: ClaudeStatsGroup; teamId?: string; projectId?: string; tz?: number }
+export interface ClaudeStatsMetrics {
+  turns: number;
+  threads: number;
+  userMessages: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  costUsd: number;
+  wallSeconds: number;
+  failed: number;
+  rateLimited: number;
+}
+export interface ClaudeStatsRow extends ClaudeStatsMetrics {
+  /** `null` in a by-video view: the project's own chats. */
+  key: string | null;
+  label: string | null;
+  teamId: string | null;
+  projectId: string | null;
+  user?: UserSummary | null;
+}
+export interface ClaudeStats {
+  from: string;
+  to: string;
+  groupBy: ClaudeStatsGroup;
+  totals: ClaudeStatsMetrics;
+  rows: ClaudeStatsRow[];
+  daily: { day: string; turns: number; costUsd: number; inputTokens: number; outputTokens: number }[];
+}
 /** The teams the log (and the Claude stats) can show this person; `all`: a Studio admin, Studio-wide rows too. */
 export interface AuditScope { all: boolean; teams: { id: string; name: string }[] }
 
@@ -202,6 +234,11 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     },
     listAuditActors(teamId?: string): Promise<{ actors: UserSummary[] }> {
       return request(getAccessToken, "GET", `/api/audit/actors${buildQuery({ teamId })}`);
+    },
+
+    /** Claude chat statistics over a period, grouped by team, project, video or person (same viewers as the log). */
+    getClaudeStats(q: ClaudeStatsQuery): Promise<ClaudeStats> {
+      return request(getAccessToken, "GET", `/api/studio/stats/claude${buildQuery({ ...q })}`);
     },
 
     // ---- Studio-wide ----

@@ -83,6 +83,7 @@ export function WorkspaceShell({ teamId, crumbs = [], actions, children }: {
         ) : null}
         <div className="ws-header__right">
           {actions}
+          {canReview ? <Link to="/stats" className="ws-icon-button">{t("ws.shell.stats")}</Link> : null}
           {canReview ? <Link to="/audit" className="ws-icon-button">{t("ws.shell.audit")}</Link> : null}
           {isAdmin ? <Link to="/queue" className="ws-icon-button">{t("ws.shell.queue")}</Link> : null}
           <Dropdown menu={menu} trigger={["click"]} placement="bottomRight">

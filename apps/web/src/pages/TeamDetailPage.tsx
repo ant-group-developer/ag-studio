@@ -17,7 +17,7 @@ import {
   Tabs,
 } from "antd";
 import { Plus, Trash2, Search } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { useAiTranslation } from "../modules/common/assistant-name";
 import { useQueryState, parseAsString, parseAsInteger, parseAsStringLiteral } from "nuqs";
 import { useStudioClient } from "../api/studio-client";
 import type { TeamMember } from "../api/studio-client";
@@ -29,6 +29,7 @@ import { TableRefreshButton } from "../helpers/table-refresh-button";
 import { useDebouncedValue } from "../helpers/use-debounced-value";
 import { TeamSkillsTab } from "../modules/team/TeamSkillsTab";
 import { AuditTable } from "../modules/audit/AuditTable";
+import { ClaudeStatsView } from "../modules/stats/ClaudeStatsView";
 import type { SortDirection } from "../helpers/compare-sort-values";
 
 const { Title } = Typography;
@@ -51,13 +52,13 @@ const ROLE_COLORS: Record<string, string> = {
 };
 
 export function TeamDetailPage() {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const { teamId } = useParams<{ teamId: string }>();
   const client = useStudioClient();
   const queryClient = useQueryClient();
 
   // URL state
-  const [tab, setTab] = useQueryState("tab", parseAsStringLiteral(["members", "skills", "audit"] as const).withDefault("members"));
+  const [tab, setTab] = useQueryState("tab", parseAsStringLiteral(["members", "skills", "stats", "audit"] as const).withDefault("members"));
   const [page, setPage] = useQueryState("m_page", parseAsInteger.withDefault(1));
   const [sortBy, setSortBy] = useQueryState("m_sortBy", parseAsString.withDefault("name"));
   const [sortOrder, setSortOrder] = useQueryState(
@@ -288,11 +289,14 @@ export function TeamDetailPage() {
       </Title>
       <Tabs
         activeKey={tab}
-        onChange={(k) => void setTab(k as "members" | "skills" | "audit")}
+        onChange={(k) => void setTab(k as "members" | "skills" | "stats" | "audit")}
         items={[
           { key: "members", label: t("teamSkills.tabMembers"), children: membersTab },
           { key: "skills", label: t("teamSkills.tabSkills"), children: teamId ? <TeamSkillsTab teamId={teamId} canEdit={canEditSkills} /> : null },
-          ...(canReview && teamId ? [{ key: "audit", label: t("ws.audit.title"), children: <AuditTable teamId={teamId} /> }] : []),
+          ...(canReview && teamId ? [
+            { key: "stats", label: t("ws.stats.title"), children: <ClaudeStatsView teamId={teamId} /> },
+            { key: "audit", label: t("ws.audit.title"), children: <AuditTable teamId={teamId} /> },
+          ] : []),
         ]}
       />
 

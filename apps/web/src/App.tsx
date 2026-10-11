@@ -16,6 +16,7 @@ const TeamsPage = lazy(() => import("./pages/TeamsPage").then((m) => ({ default:
 const TeamDetailPage = lazy(() => import("./pages/TeamDetailPage").then((m) => ({ default: m.TeamDetailPage })));
 const QueuePage = lazy(() => import("./pages/QueuePage").then((m) => ({ default: m.QueuePage })));
 const AuditPage = lazy(() => import("./pages/AuditPage").then((m) => ({ default: m.AuditPage })));
+const StatsPage = lazy(() => import("./pages/StatsPage").then((m) => ({ default: m.StatsPage })));
 const MusicLibraryPage = lazy(() => import("./pages/MusicLibraryPage").then((m) => ({ default: m.MusicLibraryPage })));
 const HomePage = lazy(() => import("./pages/HomePage").then((m) => ({ default: m.HomePage })));
 const ProjectsPage = lazy(() => import("./pages/ProjectsPage").then((m) => ({ default: m.ProjectsPage })));
@@ -89,6 +90,7 @@ export function App() {
                     <Route path="/p/:projectId/v/:videoId" element={<ProjectPage />} />
                     <Route path="/queue" element={<QueuePage />} />
                     <Route path="/audit" element={<AuditPage />} />
+                    <Route path="/stats" element={<StatsPage />} />
                     <Route path="/music" element={<MusicLibraryPage />} />
                     <Route path="*" element={<TeamLayout />} />
                   </Routes>
