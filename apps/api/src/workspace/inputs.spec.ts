@@ -12,6 +12,7 @@ import type { Request } from 'express';
 import { claimJob, getJob, listMessages } from '@ag-studio/engine';
 import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
 import type { EngineService } from '../studio/engine.service';
+import type { SiteNameService } from '../ag-go/site-name.service';
 import { InputsController } from './inputs.controller';
 import type { ProjectFootageService } from './project-footage.service';
 import { ProjectsController } from './projects.controller';
@@ -46,10 +47,21 @@ describe('inputs (real studio.db)', () => {
         return { items: [{ assetId: A1, name: 'Hoa Lư 03.mp4', durationMs: 72_400 }], nextCursor: null, total: 1 };
       },
       check: async (actAs: string, ids: string[]) => { calls.push(['check', actAs, ids]); return { ok: ids.filter((i) => i !== A2), missing: ids.filter((i) => i === A2) }; },
+      searchForPicker: async (actAs: string, q: unknown) => {
+        calls.push(['picker', actAs, q]);
+        return { items: [{ assetId: A1, name: 'Hoa Lư 03.mp4', durationMs: 72_400, tags: ['sông'] }], nextCursor: null, total: 1 };
+      },
+      facets: async (actAs: string, f: unknown) => {
+        calls.push(['facets', actAs, f]);
+        return {
+          tags: [{ value: 'sông', count: 3 }], genres: [], timesOfDay: [], orientations: [], resolutions: [], categories: [], provinces: [], authors: [],
+          projects: [{ value: 'agp-1', label: 'Ninh Bình', count: 3 }, { value: 'agp-other', label: 'Không gắn', count: 9 }],
+        };
+      },
     } as unknown as ProjectFootageService;
     projects = new ProjectsController(engine, ws);
     videos = new VideosController(engine, ws);
-    inputs = new InputsController(engine, ws, footage);
+    inputs = new InputsController(engine, ws, footage, ({ current: () => 'Kho Footage' }) as unknown as SiteNameService);
     insertTeam(s.db, 'team-1', OWNER);
     s.engine.db.run("INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES ('team-1', ?, 'editor', ?)", [EDITOR, new Date().toISOString()]);
   });
@@ -61,10 +73,34 @@ describe('inputs (real studio.db)', () => {
     const { source } = await inputs.add(p.id, { kind: 'ag_go_project', ref: 'agp-1', label: 'Ninh Bình' }, req(EDITOR));
     expect(source).toMatchObject({ kind: 'ag_go_project', ref: 'agp-1', label: 'Ninh Bình', meta: { videos: 1 }, asset: null });
     expect(calls.at(-1)).toEqual(['search', OWNER, { projectIds: ['agp-1'], limit: 1 }]);
-    const found = await inputs.footageSearch(p.id, req(EDITOR), undefined, 'thuyền');
-    expect(calls.at(-1)).toEqual(['search', EDITOR, { projectIds: ['agp-1'], q: 'thuyền', limit: 40 }]);
+    const found = await inputs.footageSearch(p.id, { q: 'thuyền' }, req(EDITOR));
+    expect(calls.at(-1)).toEqual(['picker', EDITOR, { projectIds: ['agp-1'], q: 'thuyền', limit: 40 }]);
     expect(found.items[0]).toMatchObject({ assetId: A1, prepared: { state: 'not_prepared' } });
-    expect(await inputs.footageSearch(p.id, req(EDITOR), 'agp-x').catch(code)).toBe('not_an_input');
+    expect(await inputs.footageSearch(p.id, { agGoProjectId: 'agp-x' }, req(EDITOR)).catch(code)).toBe('not_an_input');
+  });
+
+  it("filters, sorts and pages the picker within the project's ag-go projects; facets list only those projects", async () => {
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    expect(await inputs.footageSearch(p.id, {}, req(EDITOR))).toEqual({ items: [], nextCursor: null, total: 0 });
+    expect((await inputs.footageFacets(p.id, {}, req(EDITOR))).projects).toEqual([]);
+    await inputs.add(p.id, { kind: 'ag_go_project', ref: 'agp-1', label: 'Ninh Bình' }, req(EDITOR));
+    await inputs.add(p.id, { kind: 'ag_go_project', ref: 'agp-2', label: 'Hà Giang' }, req(EDITOR));
+    await inputs.footageSearch(p.id, {
+      agGoProjectIds: 'agp-2', tags: 'sông,núi', resolutions: '4k', orientations: 'landscape', minDurationMs: '5000', usability: 'all',
+      sortBy: 'duration', sortOrder: 'asc', page: '2', limit: '20',
+    }, req(EDITOR));
+    expect(calls.at(-1)).toEqual(['picker', EDITOR, {
+      projectIds: ['agp-2'], tags: ['sông', 'núi'], resolutions: ['4k'], orientations: ['landscape'], minDurationMs: 5000, usability: 'all',
+      sortBy: 'duration', sortOrder: 'asc', page: 2, limit: 20,
+    }]);
+    expect(await inputs.footageSearch(p.id, { agGoProjectIds: 'agp-1,agp-x' }, req(EDITOR)).catch(code)).toBe('not_an_input');
+    expect(await inputs.footageSearch(p.id, { resolutions: '8k' }, req(EDITOR)).catch(code)).toBe('invalid');
+    expect(await inputs.footageSearch(p.id, { folderIds: 'f1' }, req(EDITOR)).catch(code)).toBe('invalid');
+
+    const facets = await inputs.footageFacets(p.id, { tags: 'sông', page: '3', sortBy: 'name' }, req(EDITOR));
+    expect(calls.at(-1)).toEqual(['facets', EDITOR, { projectIds: ['agp-1', 'agp-2'], tags: ['sông'] }]);
+    expect(facets.tags).toEqual([{ value: 'sông', count: 3 }]);
+    expect(facets.projects).toEqual([{ value: 'agp-1', label: 'Ninh Bình', count: 3 }, { value: 'agp-2', label: 'Hà Giang', count: null }]);
   });
 
   it("adds an ag-go video to a video (its index follows), prepares it, lists and stops the job; the video's thread hears of it", async () => {

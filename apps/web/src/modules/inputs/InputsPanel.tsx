@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { App as AntApp, Button, Popconfirm, Spin, Tag, Tooltip } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, Film, FolderKanban, Image as ImageIcon, Music, Plus, RotateCcw, Trash2, Upload } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { useAiTranslation } from "../common/assistant-name";
 import { StudioHttpError } from "../../api/http";
 import { useWorkspaceClient, type JobView, type SourceItem } from "../../api/workspace-client";
 import { clock } from "../workspace/time";
@@ -17,7 +17,7 @@ const KIND_ICON = { document: FileText, image: ImageIcon, audio: Music, video: F
 function AssetLine({ s, canEdit, onOpenFile, onPrepare, onRemove }: {
   s: SourceItem; canEdit: boolean; onOpenFile: (path: string) => void; onPrepare: (assetId: string, again: boolean) => void; onRemove: (s: SourceItem) => void;
 }) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const a = s.asset;
   const duration = typeof s.meta.durationMs === "number" ? clock((s.meta.durationMs as number) / 1000) : null;
   return (
@@ -58,7 +58,7 @@ function AssetLine({ s, canEdit, onOpenFile, onPrepare, onRemove }: {
 export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, onOpenFile }: {
   projectId: string; videoId?: string; canEdit: boolean; canProduce?: boolean; onOpenFile: (path: string) => void;
 }) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const { message } = AntApp.useApp();
   const client = useWorkspaceClient();
   const qc = useQueryClient();

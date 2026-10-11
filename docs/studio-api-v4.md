@@ -59,6 +59,20 @@ interface TeamSkill {
     farm: { ok: true } | { ok: false; error: string };      // farm không với tới không phải lỗi
   }
   ```
+- `GET stats/claude?from&to&groupBy=team|project|video|user&teamId&projectId&tz` (admin Studio: mọi nhóm; owner: nhóm
+  mình; người khác 403) → thống kê chat Claude (mặc định 30 ngày gần nhất, `tz` = phút lệch UTC cho chuỗi theo ngày):
+  ```ts
+  {
+    from; to; groupBy;
+    totals: Metrics;
+    rows: (Metrics & { key: string | null; label: string | null; teamId; projectId; user?: UserSummary | null })[]; // tốn nhất trước
+    daily: { day: 'YYYY-MM-DD'; turns; costUsd; inputTokens; outputTokens }[];
+  }
+  // Metrics: turns (lượt agent, lượt chạy lại sau hạn mức tính riêng), threads, userMessages, inputTokens (tổng),
+  //          cacheReadTokens, cacheCreationTokens, outputTokens, costUsd, wallSeconds, failed, rateLimited
+  ```
+  Nguồn: `llm_calls` (`source = 'claude-agent'`, cột `user_id`, `team_id`, cache từ migration 0037) và tin nhắn người gửi
+  (`agent_messages`). `groupBy=video` có một dòng `key: null` cho các luồng của dự án. Tóm tắt luồng không tính.
 - `GET farm/nodes` → `{nodes}`: máy nhận `studio.render_final` (ghim bản cuối qua `node_id` của thẻ `render_final`);
   farm không với tới → `{nodes: []}`
 - Kho nhạc: bài nhạc nền gắn mood; video không có nhạc riêng được chọn một bài theo mood của branding (bài đủ dài hay
@@ -71,6 +85,20 @@ interface TeamSkill {
     `originNote`, `loopOk?` → bài nhạc. Cùng file lần nữa là cùng bài (id theo nội dung), các trường được cập nhật. 400
     `invalid` / `audio_missing`, 413 `audio_too_large`, 422 với file không phải audio, 503 `audio_disabled` khi thiếu ffmpeg
   - `PATCH music/:trackId` (admin Studio) `{displayName?, moods?, active?}` → bài nhạc; 404 `not_found`
+
+## Nhật ký hoạt động (`/audit`)
+
+Bảng `audit_log` (migration 0036): mọi request POST/PUT/PATCH/DELETE của người đã đăng nhập (`AuditInterceptor`; route
+`@NoAudit()` như ước lượng crawl không ghi; request bị guard chặn không vào), mọi tool Studio agent gọi (`/agent-tools/call`),
+mỗi lượt chat và mỗi tool có sẵn của Claude (worker), mỗi việc nền xong. Không ghi nội dung chat, nội dung file, giá trị bí
+mật: `details` chỉ có id, field ngắn trong allowlist, kích thước. Admin Studio xem hết (cả dòng không thuộc nhóm nào), owner
+xem nhóm mình; người khác 403.
+- `GET audit/scope` → `{all: boolean, teams: {id, name}[]}`: các nhóm người gọi xem được
+- `GET audit?teamId&projectId&videoId&threadId&actorId&actorKind&kind&outcome&from&to&page&pageSize` → `{items, total, page,
+  pageSize}`, mới trước; item: `{id, at, actorKind: 'user'|'agent'|'studio', actorId, actor: UserSummary | null, kind:
+  'http'|'tool'|'turn'|'job', action, outcome: 'ok'|'error', method, route, statusCode, durationMs, team, project, video,
+  threadId, messageId, jobId, target, summary, details, costUsd}`; `teamId` không phải của mình → 403
+- `GET audit/actors?teamId` → `{actors: UserSummary[]}`: những người có trong nhật ký
 
 ## Dự án và video
 
@@ -117,7 +145,12 @@ interface TeamSkill {
   meta?, prepare?}` — chủ dự án không dùng được trên ag-go → 422 `owner_cannot_access`; `DELETE sources/:sourceId`
 - `POST sources/upload` multipart `file` + `videoId?` (editor): tài liệu → `context/uploads/`, ảnh → `context/images/`,
   audio → `context/audio/`; Word → 415 `docx_not_supported`, video → 415 `video_from_ag_go`
-- `GET footage?agGoProjectId&q&cursor&limit` → video trong các project ag-go của dự án, theo quyền ag-go của người hỏi
+- `GET footage?agGoProjectIds&q&categoryIds&ownerUserIds&provinceIds&resolutions&tags&genres&timesOfDay&orientations&minDurationMs&maxDurationMs&usability&sortBy&sortOrder&page|cursor&limit`
+  → video trong các project ag-go của dự án (chỉ những project đã gắn; `agGoProjectId` cũ vẫn nhận), theo quyền ag-go của
+  người hỏi; danh sách là chuỗi cách bằng dấu phẩy, enum như ag-go `/footage/search`; khoá lạ → 400 `invalid`, project
+  chưa gắn → `not_an_input`. Mỗi item thêm `prepared`.
+- `GET footage/facets?<cùng bộ lọc>` → `{tags, genres, timesOfDay, orientations, resolutions, categories, provinces, authors,
+  projects}` (mỗi mục `[{value, label?, count}]`); `projects` là các project đã gắn, `count` của ag-go hoặc `null`
 - `POST prepare {assetIds, again?}` (editor) → job `prepare_asset` cho mỗi video chưa chuẩn bị
 - `GET jobs?active&videoId` → `{jobs: JobView[]}`; `POST jobs/:jobId/cancel` (editor) → Dừng
   (`JobView`: `kind, status, title, phase, progress, etaSeconds, nodeId, cancelRequested, startedAt, finishedAt, result, error`)

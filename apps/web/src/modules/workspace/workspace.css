@@ -369,3 +369,4 @@ button.ws-step:hover { border-color: var(--ws-accent-line); color: var(--ws-text
 .ws-hint { color: var(--ws-faint); font-size: 12px; }
 .ws-skill-picker { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
 .ws-skill-picker .ant-checkbox-wrapper { margin-inline-start: 0; }
+.ws-page__inner--wide { max-width: 1400px; }

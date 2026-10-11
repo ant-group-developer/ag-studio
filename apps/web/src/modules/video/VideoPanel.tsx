@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { App as AntApp, Button, Empty, Popconfirm, Spin, Tag } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clapperboard, Download, Film, Hammer, Play } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { useAiTranslation } from "../common/assistant-name";
 import { StudioHttpError } from "../../api/http";
 import { useWorkspaceClient, type JobView, type RenderKind, type RenderView, type TeamRoleName } from "../../api/workspace-client";
 import { JobCard } from "../inputs/JobCard";
@@ -19,7 +19,7 @@ import "./video.css";
 export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
   projectId: string; videoId: string; atLeast: (role: TeamRoleName) => boolean; onOpenFile?: (path: string) => void;
 }) {
-  const { t, i18n } = useTranslation();
+  const { t, i18n } = useAiTranslation();
   const { message } = AntApp.useApp();
   const client = useWorkspaceClient();
   const qc = useQueryClient();
@@ -129,7 +129,7 @@ function Thumb({ projectId, path, onOpen }: { projectId: string; path: string; o
 }
 
 function RenderRow({ r, lang, current, onPlay }: { r: RenderView; lang: string; current: boolean; onPlay: () => void }) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   return (
     <li className={`ws-inputs__row${current ? " ws-video__row--current" : ""}`}>
       <Tag color={r.kind === "render_final" ? "green" : r.kind === "export_premiere" ? "purple" : "blue"}>{t(`ws.video.kind.${r.kind}`)}</Tag>

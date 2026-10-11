@@ -45,9 +45,16 @@ const call = async (s: ReturnType<typeof setup>, name: string, args: unknown, ct
 };
 
 describe("input tools", () => {
+  it("answers in the footage library's own name", async () => {
+    const s = setup();
+    const named = { ...s.ctx, siteName: "Kho Footage" };
+    expect(await call(s, "footage_search", {}, named)).toMatchObject({ isError: true, text: expect.stringContaining("chưa có project Kho Footage") });
+    expect(await call(s, "footage_search", {}, { ...named, footage: undefined })).toMatchObject({ isError: true, text: expect.stringContaining("chưa nối Kho Footage") });
+  });
+
   it("footage_search looks only in the project's ag-go projects, as the owner, with each video's preparation", async () => {
     const s = setup();
-    expect(await call(s, "footage_search", {})).toMatchObject({ isError: true, text: expect.stringContaining("chưa có project ag-go") });
+    expect(await call(s, "footage_search", {})).toMatchObject({ isError: true, text: expect.stringContaining("chưa có project AG Go") });
     addSource(s.db, { projectId: s.project.id, kind: "ag_go_project", ref: "agp-1", mediaType: "mixed", label: "Ninh Bình", addedBy: "u" }, NOW);
     const r = await call(s, "footage_search", { q: "thuyền" });
     expect(s.searches).toEqual([["auth0|owner", { projectIds: ["agp-1"], q: "thuyền", limit: 30 }]]);
@@ -113,7 +120,7 @@ describe("the prepare step of the playbook", () => {
   it("follows the video's ag-go videos: none picked, being prepared, all ready", async () => {
     const s = setup();
     const prepare = async () => (await call(s, "playbook_status", {})).json.video.find((x: { key: string }) => x.key === "prepare");
-    expect(await prepare()).toMatchObject({ status: "missing", detail: "chưa chọn video ag-go nào cho video này" });
+    expect(await prepare()).toMatchObject({ status: "missing", detail: "chưa chọn video nguồn nào cho video này" });
     await call(s, "inputs_add", { assets: [{ asset_id: A1, name: "Hoa Lư 03.mp4" }] });
     const jobId = (await call(s, "inputs_prepare", { asset_ids: [A1] })).json.assets[A1].job_id as string;
     expect(await prepare()).toMatchObject({ status: "running", detail: "đang chuẩn bị (0/1 xong)" });

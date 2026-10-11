@@ -1,0 +1,23 @@
+/* Claude chat statistics (/stats and a team's Stats tab) */
+.ws-stats { display: flex; flex-direction: column; gap: 16px; }
+.ws-stats__controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ws-stats__tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin: 0; }
+.ws-stats__tile { border: 1px solid var(--ws-line); border-radius: 10px; background: var(--ws-surface); padding: 10px 12px; }
+.ws-stats__tile dt { color: var(--ws-muted); font-size: 12px; }
+.ws-stats__tile dd { margin: 2px 0 0; font-size: 20px; font-weight: 600; color: var(--ws-text); font-variant-numeric: tabular-nums; }
+.ws-stats__tile dd.ws-hint { font-size: 12px; font-weight: 400; }
+.ws-stats__chart { border: 1px solid var(--ws-line); border-radius: 10px; background: var(--ws-surface); padding: 12px; }
+.ws-stats__charthead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.ws-stats__charthead h2 { margin: 0; font-size: 14px; font-weight: 600; }
+
+.ws-bars { position: relative; width: 100%; overflow: hidden; }
+.ws-bars svg { display: block; }
+.ws-bars__grid { stroke: var(--ws-line); stroke-width: 1; shape-rendering: crispEdges; }
+.ws-bars__axis { fill: var(--ws-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.ws-bars__bar { fill: var(--ws-accent); }
+.ws-bars__bar--on { fill: var(--ws-run-fg); }
+.ws-bars rect:focus { outline: none; }
+.ws-bars rect:focus-visible { outline: 2px solid var(--ws-accent-line); }
+.ws-bars__tip { position: absolute; pointer-events: none; display: flex; flex-direction: column; min-width: 120px; padding: 6px 8px; border-radius: 6px;
+  background: var(--ws-surface); border: 1px solid var(--ws-line); box-shadow: var(--ws-shadow-lg); font-size: 12px; color: var(--ws-muted); }
+.ws-bars__tip strong { color: var(--ws-text); font-size: 13px; font-variant-numeric: tabular-nums; }

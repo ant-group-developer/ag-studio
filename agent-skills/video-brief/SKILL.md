@@ -25,7 +25,7 @@ aspect: "16:9"           # nếu khác dự án
 1. **Một câu**: video này cho người xem điều gì.
 2. **Khán giả và cảm xúc** muốn để lại.
 3. **Cấu trúc**: mở đầu (≤ 5 giây đầu giữ người xem thế nào) → các phần → kết.
-4. **Footage**: nguồn nào (project ag-go, asset), cảnh bắt buộc có, cảnh tránh.
+4. **Footage**: nguồn nào (project trong kho video, asset), cảnh bắt buộc có, cảnh tránh.
 5. **Chữ, lời dẫn, nhạc**: theo branding/style; ghi điều riêng của video này.
 6. **Tiêu đề tạm** (2–3 ý, theo công thức branding).
 

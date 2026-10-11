@@ -47,6 +47,8 @@ describe("StreamJsonReader on a real turn (fixtures/agent-stream/turn-tools)", (
     expect(r.state.result).toMatchObject({ subtype: "success", is_error: false, num_turns: expect.any(Number) });
     expect(r.state.result!.cost_usd).toBeGreaterThan(0);
     expect(r.state.result!.input_tokens).toBeGreaterThan(0);
+    // the cache split and the time are kept for the Claude stats; input_tokens stays the sum
+    expect(r.state.result).toMatchObject({ input_tokens: 6 + 11616 + 19365, cache_creation_tokens: 11616, cache_read_tokens: 19365, output_tokens: 2848, num_turns: 13, duration_ms: 19248 });
     expect(r.state.phase).toEqual({ kind: "done" });
   });
 

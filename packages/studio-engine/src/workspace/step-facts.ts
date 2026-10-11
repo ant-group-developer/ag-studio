@@ -16,7 +16,7 @@ const resultRevision = (j: JobRecord) => { try { return (JSON.parse(j.result ?? 
 
 function prepareFact(db: StudioDb, projectId: string, videoId: string): StepFact {
   const assets = videoAssetIds(db, projectId, videoId);
-  if (!assets.length) return { status: "missing", detail: "chưa chọn video ag-go nào cho video này" };
+  if (!assets.length) return { status: "missing", detail: "chưa chọn video nguồn nào cho video này" };
   const preparing = new Set(listJobs(db, projectId, { active: true }).filter((j) => j.kind === "prepare_asset")
     .map((j) => (JSON.parse(j.request) as PrepareRequest).asset_id));
   const states = assets.map((a) => (preparing.has(a) ? "running" : getPrepared(db, projectId, a)?.status ?? "missing"));

@@ -8,13 +8,15 @@ import { useTranslation } from "react-i18next";
 import { BrowserRouter, Routes, Route, Link, useLocation } from "react-router-dom";
 import { NuqsAdapter } from "nuqs/adapters/react-router";
 import { AuthGate } from "./auth/auth-provider";
-import { AssistantNameProvider } from "./modules/common/assistant-name";
+import { AssistantNameProvider, SiteNameProvider } from "./modules/common/assistant-name";
 import { useAppUserMenu } from "./modules/common/use-app-user-menu";
 import type { AppLanguage } from "./i18n/language";
 
 const TeamsPage = lazy(() => import("./pages/TeamsPage").then((m) => ({ default: m.TeamsPage })));
 const TeamDetailPage = lazy(() => import("./pages/TeamDetailPage").then((m) => ({ default: m.TeamDetailPage })));
 const QueuePage = lazy(() => import("./pages/QueuePage").then((m) => ({ default: m.QueuePage })));
+const AuditPage = lazy(() => import("./pages/AuditPage").then((m) => ({ default: m.AuditPage })));
+const StatsPage = lazy(() => import("./pages/StatsPage").then((m) => ({ default: m.StatsPage })));
 const MusicLibraryPage = lazy(() => import("./pages/MusicLibraryPage").then((m) => ({ default: m.MusicLibraryPage })));
 const HomePage = lazy(() => import("./pages/HomePage").then((m) => ({ default: m.HomePage })));
 const ProjectsPage = lazy(() => import("./pages/ProjectsPage").then((m) => ({ default: m.ProjectsPage })));
@@ -74,6 +76,7 @@ export function App() {
   return (
     <ConfigProvider locale={locale}>
       <AntApp>
+        <SiteNameProvider>
         <AuthGate>
           <AssistantNameProvider>
             <BrowserRouter>
@@ -86,6 +89,8 @@ export function App() {
                     <Route path="/p/:projectId/c/:threadId" element={<ProjectPage />} />
                     <Route path="/p/:projectId/v/:videoId" element={<ProjectPage />} />
                     <Route path="/queue" element={<QueuePage />} />
+                    <Route path="/audit" element={<AuditPage />} />
+                    <Route path="/stats" element={<StatsPage />} />
                     <Route path="/music" element={<MusicLibraryPage />} />
                     <Route path="*" element={<TeamLayout />} />
                   </Routes>
@@ -94,6 +99,7 @@ export function App() {
             </BrowserRouter>
           </AssistantNameProvider>
         </AuthGate>
+        </SiteNameProvider>
       </AntApp>
     </ConfigProvider>
   );

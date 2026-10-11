@@ -19,6 +19,8 @@ import { EngineService } from '../studio/engine.service';
 import { mapErrors } from '../studio/http-errors';
 import { safeFileName, WORKSPACE_UPLOAD_MAX_BYTES } from './files.controller';
 import { ProjectFootageService } from './project-footage.service';
+import { SiteNameService } from '../ag-go/site-name.service';
+import { FOOTAGE_RESOLUTIONS, FOOTAGE_SORT_FIELDS, FOOTAGE_USABILITIES } from '../ag-go/client';
 import { WorkspaceService } from './workspace.service';
 import { parseBody } from './zod-body';
 
@@ -35,6 +37,36 @@ const AddSchema = z.discriminatedUnion('kind', [
 ]);
 const PrepareSchema = z.object({ assetIds: z.array(z.string().regex(ASSET_OR_PROJECT_ID)).min(1).max(40), again: z.boolean().optional() }).strict();
 const UploadFormSchema = z.object({ videoId: z.string().min(1).optional() });
+
+/** A comma-separated list in a query string (or the same key repeated). */
+const csv = <T extends z.ZodTypeAny>(item: T) => z.union([z.string(), z.array(z.string())])
+  .transform((v) => (Array.isArray(v) ? v : v.split(',')).map((x) => x.trim()).filter(Boolean))
+  .pipe(z.array(item).max(50));
+const id = z.string().regex(ASSET_OR_PROJECT_ID);
+const label = z.string().min(1).max(100);
+const int = z.coerce.number().int().min(0);
+/** The video picker's query: ag-go's footage filters, sort and paging, plus which picked ag-go projects to look in. */
+const FootageQuerySchema = z.object({
+  agGoProjectId: id.optional(),
+  agGoProjectIds: csv(id).optional(),
+  q: z.string().trim().max(200).optional().transform((v) => v || undefined),
+  categoryIds: csv(id).optional(),
+  ownerUserIds: csv(label).optional(),
+  provinceIds: csv(id).optional(),
+  resolutions: csv(z.enum(FOOTAGE_RESOLUTIONS)).optional(),
+  tags: csv(label).optional(),
+  genres: csv(label).optional(),
+  timesOfDay: csv(label).optional(),
+  orientations: csv(label).optional(),
+  minDurationMs: int.optional(),
+  maxDurationMs: int.optional(),
+  usability: z.enum(FOOTAGE_USABILITIES).optional(),
+  page: z.coerce.number().int().min(1).max(10_000).optional(),
+  cursor: z.string().min(1).max(500).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  sortBy: z.enum(FOOTAGE_SORT_FIELDS).optional(),
+  sortOrder: z.enum(['asc', 'desc']).optional(),
+}).strict();
 
 /** What an uploaded file is, by its extension, and the folder it goes to. */
 const UPLOAD_KINDS: { exts: string[]; mediaType: SourceMediaType; dir: string }[] = [
@@ -63,6 +95,7 @@ export class InputsController {
     private readonly engine: EngineService,
     private readonly workspace: WorkspaceService,
     private readonly footage: ProjectFootageService,
+    private readonly siteName: SiteNameService,
   ) {}
 
   @Get('sources')
@@ -87,12 +120,12 @@ export class InputsController {
       const body = parseBody(AddSchema, raw);
       const project = requireProject(this.engine.db, projectId);
       const owner = projectActAs(this.engine.db, projectId);
-      if (!owner) throw new StudioRunError('invalid', 'dự án chưa có chủ để hỏi ag-go', { code: 'no_owner' });
+      if (!owner) throw new StudioRunError('invalid', `dự án chưa có chủ để hỏi ${this.siteName.current()}`, { code: 'no_owner' });
       const userId = req.authContext!.userId;
       if (body.kind === 'ag_go_project') {
         const seen = await this.footage.search(owner, { projectIds: [body.ref], limit: 1 });
         if (seen.total === 0 && seen.items.length === 0) {
-          throw new StudioRunError('invalid', 'Chủ dự án không thấy video đã phân tích nào trong project ag-go này', { code: 'owner_cannot_access' });
+          throw new StudioRunError('invalid', `Chủ dự án không thấy video đã phân tích nào trong project ${this.siteName.current()} này`, { code: 'owner_cannot_access' });
         }
         const s = addSource(this.engine.db, { projectId, kind: 'ag_go_project', ref: body.ref, mediaType: 'mixed', label: body.label, meta: { videos: seen.total }, addedBy: userId });
         return { source: this.item(projectId, s.id) };
@@ -103,7 +136,7 @@ export class InputsController {
       }
       const { missing } = await this.footage.check(owner, [body.ref]);
       if (missing.length) {
-        throw new StudioRunError('invalid', 'Chủ dự án không dùng được video này trên ag-go (không có quyền hoặc chưa có bản xem)', { code: 'owner_cannot_access' });
+        throw new StudioRunError('invalid', `Chủ dự án không dùng được video này trên ${this.siteName.current()} (không có quyền hoặc chưa có bản xem)`, { code: 'owner_cannot_access' });
       }
       const s = addSource(this.engine.db, {
         projectId, videoId: body.videoId ?? null, kind: 'ag_go_asset', ref: body.ref, mediaType: 'video', label: body.label, meta: body.meta ?? {}, addedBy: userId,
@@ -149,7 +182,7 @@ export class InputsController {
       const ext = extname(name).toLowerCase();
       if (ext === '.docx' || ext === '.doc') throw new UnsupportedMediaTypeException({ code: 'docx_not_supported', message: 'Chưa đọc được file Word: lưu thành PDF rồi tải lên' });
       if (['.mp4', '.mov', '.mkv', '.avi', '.webm'].includes(ext)) {
-        throw new UnsupportedMediaTypeException({ code: 'video_from_ag_go', message: 'Video lấy từ ag-go: tải lên ag-go rồi chọn ở đây' });
+        throw new UnsupportedMediaTypeException({ code: 'video_from_ag_go', message: `Video lấy từ ${this.siteName.current()}: tải lên ${this.siteName.current()} rồi chọn ở đây` });
       }
       const kind = UPLOAD_KINDS.find((k) => k.exts.includes(ext));
       if (!kind) throw new UnsupportedMediaTypeException({ code: 'file_type', message: `Chưa nhận loại file ${ext || '(không đuôi)'}` });
@@ -174,24 +207,52 @@ export class InputsController {
     }
   }
 
-  /** Videos of the project's ag-go projects the person can see (their own ag-go scope), with where each stands here. */
+  /**
+   * Videos of the project's ag-go projects the person can see (their own ag-go scope), with where each stands here:
+   * the filters, sort and paging of ag-go's footage search, always within the projects picked for this project.
+   */
   @Get('footage')
   @Roles('viewer')
-  footageSearch(
-    @Param('projectId') projectId: string, @Req() req: Request,
-    @Query('agGoProjectId') agGoProjectId?: string, @Query('q') q?: string, @Query('cursor') cursor?: string, @Query('limit') limit?: string,
-  ) {
+  footageSearch(@Param('projectId') projectId: string, @Query() raw: unknown, @Req() req: Request) {
     return mapErrors(async () => {
-      requireProject(this.engine.db, projectId);
-      const picked = listSources(this.engine.db, projectId).filter((s) => s.kind === 'ag_go_project').map((s) => s.ref);
-      if (agGoProjectId && !picked.includes(agGoProjectId)) throw new StudioRunError('invalid', 'project ag-go này chưa thuộc đầu vào của dự án', { code: 'not_an_input' });
-      if (!picked.length) return { items: [], nextCursor: null, total: 0 };
-      const n = Math.min(Math.max(Number(limit) || 40, 1), 100);
-      const r = await this.footage.search(req.authContext!.userId, {
-        projectIds: agGoProjectId ? [agGoProjectId] : picked, ...(q?.trim() ? { q: q.trim() } : {}), limit: n, ...(cursor ? { cursor } : {}),
-      });
+      const q = parseBody(FootageQuerySchema, raw);
+      const projectIds = this.footageScope(projectId, q);
+      if (!projectIds.length) return { items: [], nextCursor: null, total: 0 };
+      const { agGoProjectId: _one, agGoProjectIds: _many, ...filters } = q;
+      const r = await this.footage.searchForPicker(req.authContext!.userId, { ...filters, projectIds, limit: q.limit ?? 40 });
       return { ...r, items: r.items.map((i) => ({ ...i, prepared: assetState(this.engine.db, projectId, i.assetId) })) };
     });
+  }
+
+  /**
+   * How many videos have each value of each filter under the others (ag-go's facets). The project facet lists the
+   * projects picked for this project (ag-go's own leaves its filter out and stops at 30), with ag-go's count when it
+   * gave one.
+   */
+  @Get('footage/facets')
+  @Roles('viewer')
+  footageFacets(@Param('projectId') projectId: string, @Query() raw: unknown, @Req() req: Request) {
+    return mapErrors(async () => {
+      const q = parseBody(FootageQuerySchema, raw);
+      const projectIds = this.footageScope(projectId, q);
+      const picked = listSources(this.engine.db, projectId).filter((s) => s.kind === 'ag_go_project');
+      const empty = { tags: [], genres: [], timesOfDay: [], orientations: [], resolutions: [], categories: [], provinces: [], authors: [] };
+      if (!projectIds.length) return { ...empty, projects: [] };
+      const { agGoProjectId: _one, agGoProjectIds: _many, page: _p, cursor: _c, limit: _l, sortBy: _s, sortOrder: _o, ...filters } = q;
+      const f = await this.footage.facets(req.authContext!.userId, { ...filters, projectIds });
+      const counts = new Map(f.projects.map((p) => [p.value, p.count]));
+      return { ...f, projects: picked.map((s) => ({ value: s.ref, label: s.label, count: counts.get(s.ref) ?? null })) };
+    });
+  }
+
+  /** The ag-go projects a footage query looks in: those asked for (each must be picked here), else every picked one. */
+  private footageScope(projectId: string, q: { agGoProjectId?: string | undefined; agGoProjectIds?: string[] | undefined }): string[] {
+    requireProject(this.engine.db, projectId);
+    const picked = listSources(this.engine.db, projectId).filter((s) => s.kind === 'ag_go_project').map((s) => s.ref);
+    const asked = [...new Set([...(q.agGoProjectIds ?? []), ...(q.agGoProjectId ? [q.agGoProjectId] : [])])];
+    const stray = asked.filter((id) => !picked.includes(id));
+    if (stray.length) throw new StudioRunError('invalid', `project ${this.siteName.current()} này chưa thuộc đầu vào của dự án`, { code: 'not_an_input', ids: stray });
+    return asked.length ? asked : picked;
   }
 
   /** Prepares ag-go videos of the project (background jobs; the video's thread is told when each ends). */

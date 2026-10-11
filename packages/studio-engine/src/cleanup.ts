@@ -13,6 +13,7 @@ import { join } from "node:path";
 import type { StudioBucket } from "./bucket.js";
 import type { StudioDb } from "./studio-db.js";
 import { voicePath } from "./voice-store.js";
+import { sweepAuditLog } from "./audit-log.js";
 
 export interface RetentionConfig {
   /** Files deleted from a project (its `.trash`), by when they were deleted. */
@@ -21,10 +22,12 @@ export interface RetentionConfig {
   voiceDays: number;
   /** Project audio nothing points at, by when it was written. */
   audioGraceDays: number;
+  /** Rows of the activity log, by when they happened. */
+  auditDays: number;
 }
-export const DEFAULT_RETENTION: RetentionConfig = { workspaceDays: 14, voiceDays: 90, audioGraceDays: 7 };
+export const DEFAULT_RETENTION: RetentionConfig = { workspaceDays: 14, voiceDays: 90, audioGraceDays: 7, auditDays: 90 };
 
-export interface CleanupReport { voiceLines: number; audioObjects: number; scratch: number; trash: number }
+export interface CleanupReport { voiceLines: number; audioObjects: number; scratch: number; trash: number; auditRows: number }
 
 /** A scratch folder older than this whose job or turn is not running was left by a crash. */
 export const SCRATCH_HOURS = 6;
@@ -107,5 +110,6 @@ export async function sweepStudioData(
     audioObjects: await sweepProjectAudio(d.db, d.bucket, new Date(at(r.audioGraceDays))),
     scratch: sweepScratch(d.db, d.dataRoot, o.now.getTime() - SCRATCH_HOURS * 3_600_000),
     trash: d.workspacesRoot ? sweepTrash(d.workspacesRoot, at(r.workspaceDays)) : 0,
+    auditRows: sweepAuditLog(d.db, new Date(at(r.auditDays)).toISOString()),
   };
 }

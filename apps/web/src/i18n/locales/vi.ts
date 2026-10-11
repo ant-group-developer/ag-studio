@@ -37,7 +37,7 @@ export const vi = {
   },
   auth: {
     authenticating: "Đang xác thực...",
-    tagline: "Làm series video từ kho video của AG Go: nghiên cứu xu hướng, lập kế hoạch tập, dựng và xuất bản lên YouTube.",
+    tagline: "Làm series video từ kho video {{site}}: nghiên cứu xu hướng, lập kế hoạch tập, dựng và xuất bản lên YouTube.",
     pointSecure: "Xác thực bảo mật qua Auth0",
     pointInternal: "Dành cho thành viên các nhóm sản xuất",
     welcome: "Chào mừng trở lại",

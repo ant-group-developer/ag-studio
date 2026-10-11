@@ -1,13 +1,13 @@
 import { Button, Typography } from "antd";
 import { ArrowRight, ShieldCheck, Users } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { useAiTranslation } from "../modules/common/assistant-name";
 import { LanguageSwitch } from "../modules/common/LanguageSwitch";
 
 const { Title, Text } = Typography;
 
 /** Màn chào trước khi đăng nhập, cùng bố cục với ag-go-web. */
 export function LoginScreen({ onLogin }: { onLogin: () => void }) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const siteName = t("app.title");
 
   return (

@@ -4,6 +4,7 @@ import type { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import { acquireClaudeSlot, createJob, createProject } from '@ag-studio/engine';
 import type { AccountApiService } from '../auth/account-api.service';
+import { StudioAdminService } from '../auth/studio-admin.service';
 import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
 import type { EngineService } from './engine.service';
 import { StudioOverviewController } from './studio-overview.controller';
@@ -25,7 +26,7 @@ describe('StudioOverviewController (real studio.db)', () => {
   it('the Queue: what runs in the projects of the teams a person is in, the farm machines; an admin sees every project', async () => {
     let farmUp = true;
     const engine = { ...s.engine, db: s.engine.db, core: s.engine.core, farmNodes: async () => { if (!farmUp) throw new Error('farm down'); return { nodes: [node] }; } };
-    const ctl = new StudioOverviewController(engine as unknown as EngineService, accounts, config());
+    const ctl = new StudioOverviewController(engine as unknown as EngineService, new StudioAdminService(accounts, s.db), config());
     const mine = createProject(s.engine.db, 'team-1', { name: 'Du lịch chậm', description: '', language: 'vi', aspect: '16:9' }, 'auth0|owner', '2026-10-10T08:00:00.000Z');
     const theirs = createProject(s.engine.db, 'team-2', { name: 'Ẩm thực', description: '', language: 'vi', aspect: '16:9' }, 'auth0|other', '2026-10-10T09:00:00.000Z');
     createJob(s.engine.db, { projectId: mine.id, kind: 'research', title: 'Crawl', request: {}, createdBy: 'auth0|owner' });
@@ -41,7 +42,7 @@ describe('StudioOverviewController (real studio.db)', () => {
   });
 
   it('reports Claude slots against the cap: the env value until an admin saves one', async () => {
-    const ctl = new StudioOverviewController(s.engine as EngineService, accounts, config('5'));
+    const ctl = new StudioOverviewController(s.engine as EngineService, new StudioAdminService(accounts, s.db), config('5'));
     const now = new Date().toISOString();
     acquireClaudeSlot(s.engine.db, 'agent', 'turn-1', 1, now);
     acquireClaudeSlot(s.engine.db, 'agent', 'turn-2', 1, now);
@@ -51,7 +52,7 @@ describe('StudioOverviewController (real studio.db)', () => {
   });
 
   it('names the AI: Claude until an admin saves a name, a blank one goes back to Claude', async () => {
-    const ctl = new StudioOverviewController(s.engine as EngineService, accounts, config('5'));
+    const ctl = new StudioOverviewController(s.engine as EngineService, new StudioAdminService(accounts, s.db), config('5'));
     await expect(ctl.settings({ assistantName: 'AG AI' }, req('auth0|owner'))).rejects.toBeInstanceOf(ForbiddenException);
     expect(await ctl.settings({ assistantName: 'AG AI' }, req('auth0|admin'))).toMatchObject({ assistantName: 'AG AI', max: 5 });
     expect(ctl.claude().assistantName).toBe('AG AI');

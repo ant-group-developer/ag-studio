@@ -38,7 +38,7 @@ export const en: LocaleMessages = {
   },
   auth: {
     authenticating: "Authenticating...",
-    tagline: "Make video series from the AG Go library: trend research, episode planning, editing and YouTube publishing.",
+    tagline: "Make video series from the {{site}} library: trend research, episode planning, editing and YouTube publishing.",
     pointSecure: "Secure sign-in with Auth0",
     pointInternal: "For members of the production teams",
     welcome: "Welcome back",

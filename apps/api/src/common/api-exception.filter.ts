@@ -10,6 +10,7 @@ import type { Request, Response } from 'express';
 import { ApiErrorDto } from './dto/api-error.dto';
 import { ApiResponseDto } from './dto/api-response.dto';
 import { AgGoClientError } from '../ag-go/client';
+import { DEFAULT_SITE_NAME } from '@ag-studio/engine';
 
 type ErrorPayload = Record<string, unknown>;
 
@@ -19,6 +20,9 @@ const META_FIELDS = new Set(['message', 'code', 'error', 'statusCode', 'fieldErr
 @Catch()
 export class ApiExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(ApiExceptionFilter.name);
+
+  /** `siteName`: what people call ag-go (its own setting), the prefix of its errors. */
+  constructor(private readonly siteName: () => string = () => DEFAULT_SITE_NAME) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const http = host.switchToHttp();
@@ -56,7 +60,7 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const body = this.isRecord(exception.body) ? exception.body : {};
     const inner = this.isRecord(body.error) ? body.error : body;
     const message = typeof inner.message === 'string' ? inner.message : `HTTP ${exception.status}`;
-    return new ApiErrorDto('AG_GO_ERROR', `ag-go: ${message}`, {
+    return new ApiErrorDto('AG_GO_ERROR', `${this.siteName()}: ${message}`, {
       details: { upstreamStatus: exception.status, upstreamCode: typeof inner.code === 'string' ? inner.code : undefined },
     });
   }

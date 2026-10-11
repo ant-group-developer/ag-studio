@@ -9,6 +9,7 @@ import {
   type JobHandler, type ProjectFarm,
 } from "../src/index.js";
 import { world } from "./helpers.js";
+import { listAudit } from "../src/index.js";
 
 const NOW = "2026-10-10T08:00:00.000Z";
 const at = (s: number) => new Date(Date.parse(NOW) + s * 1000).toISOString();
@@ -134,6 +135,10 @@ describe("job runner", () => {
     await runner.idle();
     expect(getJob(db, job.id)).toMatchObject({ status: "failed", error: "ag-go không trả được video" });
     expect(listMessages(db, thread.id).at(-1)!.text).toBe("Không làm xong: Chuẩn bị A — ag-go không trả được video");
+    expect(listAudit(db, { kind: "job" }).items[0]).toMatchObject({
+      actorKind: "studio", actorId: "u", action: "job.prepare_asset", outcome: "error", jobId: job.id, project: { id: project.id }, target: "Chuẩn bị A",
+      summary: "ag-go không trả được video",
+    });
   });
 
   it("shutting down puts a running job back in line instead of failing it", async () => {

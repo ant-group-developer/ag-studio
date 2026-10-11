@@ -10,6 +10,7 @@ import { join } from "node:path";
 import type { HarnessLogger } from "@harness/core";
 import { projectSettingsOf } from "@harness/contracts";
 import type { StudioDb } from "../studio-db.js";
+import { logAudit } from "../audit-log.js";
 import { automaticTurnsInARow, getThread, postSystemMessage, type ActorRole } from "../agent/threads-db.js";
 import { getProject } from "./project-db.js";
 import { projectDir } from "./files.js";
@@ -165,7 +166,15 @@ export function createJobRunner(o: JobRunnerOptions): JobRunner {
     if (!outcome) return;
     finishJob(o.db, job.id, { status: outcome.status, result: outcome.result, error: outcome.error ?? null }, now());
     log.info("job finished", { status: outcome.status });
-    tellThread(o.db, getJob(o.db, job.id)!, outcome.status, outcome.message ?? null, now());
+    const done = getJob(o.db, job.id)!;
+    // the activity log: the job as Studio ran it for the person who asked
+    logAudit(o.db, {
+      actorKind: "studio", actorId: done.created_by, kind: "job", action: `job.${done.kind}`, outcome: done.status === "failed" ? "error" : "ok", at: now(),
+      durationMs: done.started_at && done.finished_at ? Date.parse(done.finished_at) - Date.parse(done.started_at) : null,
+      projectId: done.project_id, videoId: done.video_id, threadId: done.thread_id, jobId: done.id, target: done.title, summary: done.error?.slice(0, 300) ?? null,
+      details: { status: done.status, node: done.node_id, units: done.units, farmJobId: done.farm_job_id, attempts: done.attempts },
+    }, (e) => log.warn("job not in the activity log", { error: String(e) }));
+    tellThread(o.db, done, outcome.status, outcome.message ?? null, now());
   };
 
   const tick = (): string[] => {
