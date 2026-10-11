@@ -10,6 +10,32 @@
 .ws-stats__charthead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .ws-stats__charthead h2 { margin: 0; font-size: 14px; font-weight: 600; }
 
+/* the turns one by one, and one turn in full */
+.ws-turns { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--ws-line); padding-top: 16px; }
+.ws-turns .ws-stats__charthead h2 { font-size: 15px; }
+.ws-turns .ws-spacer { flex: 1; }
+.ws-turns__row { cursor: pointer; }
+.ws-turns__row--on > td { background: var(--ws-accent-soft) !important; }
+.ws-turns__where { display: flex; flex-direction: column; min-width: 0; }
+.ws-turns__where > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-turn { display: flex; flex-direction: column; gap: 16px; }
+.ws-turn h3 { margin: 0 0 6px; font-size: 14px; font-weight: 600; }
+.ws-turn__msg { padding: 10px 12px; border: 1px solid var(--ws-line); border-radius: 8px; background: var(--ws-nav-bg); max-height: 320px; overflow: auto; }
+.ws-turn__error { display: flex; gap: 6px; align-items: flex-start; margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--ws-bad-bg); color: var(--ws-bad-fg); }
+.ws-turn__steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.ws-turn__step { border: 1px solid var(--ws-line); border-radius: 8px; font-size: 13px; }
+.ws-turn__step--error { border-color: var(--ws-bad-bg); }
+.ws-turn__step--error .ws-turn__stepname { color: var(--ws-bad-fg); }
+.ws-turn__stephead { width: 100%; display: flex; align-items: center; gap: 6px; padding: 5px 8px; border: 0; background: none; font: inherit; color: var(--ws-muted); cursor: pointer; text-align: left; }
+.ws-turn__stephead[aria-expanded="true"] .ws-tool__caret { transform: rotate(90deg); }
+.ws-turn__stepname { font-weight: 500; color: var(--ws-text); white-space: nowrap; }
+.ws-turn__steptarget { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+.ws-turn__steptime { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--ws-faint); font-size: 12px; }
+.ws-turn__stepbody { padding: 0 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+.ws-turn__stepbody pre { margin: 0; max-height: 240px; overflow: auto; padding: 8px; border-radius: 6px; background: var(--ws-nav-bg); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ws-turn__bad { color: var(--ws-bad-fg); }
+.ws-turn__files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+
 .ws-bars { position: relative; width: 100%; overflow: hidden; }
 .ws-bars svg { display: block; }
 .ws-bars__grid { stroke: var(--ws-line); stroke-width: 1; shape-rendering: crispEdges; }

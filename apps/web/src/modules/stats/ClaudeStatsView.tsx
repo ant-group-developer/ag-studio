@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { DatePicker, Segmented, Select, Table, type TableColumnsType } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -6,6 +6,7 @@ import { useStudioClient, type ClaudeStatsGroup, type ClaudeStatsRow } from "../
 import { useAiTranslation } from "../common/assistant-name";
 import { UserCell } from "../common/UserCell";
 import { clock } from "../workspace/time";
+import { ClaudeTurns, type TurnScope } from "./ClaudeTurns";
 import { DailyBars } from "./DailyBars";
 import "./stats.css";
 
@@ -25,7 +26,7 @@ function periodOf(preset: Preset, custom: { from: Date; to: Date } | null): { fr
 
 /**
  * Claude chat statistics: a period, a grouping (team, project, video, person), the totals as tiles, one measure by
- * day, and a sortable table. `teamId` fixes the team (a team's own Stats tab); otherwise the viewer picks among the
+ * day, a sortable table, and the turns one by one (a row of the table narrows them; a turn opens in full). `teamId` fixes the team (a team's own Stats tab); otherwise the viewer picks among the
  * teams they may see.
  */
 export function ClaudeStatsView({ teamId: fixedTeam }: { teamId?: string }) {
@@ -38,6 +39,8 @@ export function ClaudeStatsView({ teamId: fixedTeam }: { teamId?: string }) {
   const [metric, setMetric] = useState<Metric>("cost");
   const { from, to } = periodOf(preset, custom);
   const team = fixedTeam ?? teamId;
+  const [turnScope, setTurnScope] = useState<TurnScope | null>(null);
+  useEffect(() => setTurnScope(null), [groupBy, team]);
 
   const scope = useQuery({ queryKey: ["audit", "scope"], queryFn: () => client.getAuditScope(), staleTime: 60_000, enabled: !fixedTeam });
   const query = { from: from.toISOString(), to: to.toISOString(), groupBy, tz: -new Date().getTimezoneOffset(), ...(team ? { teamId: team } : {}) };
@@ -71,6 +74,13 @@ export function ClaudeStatsView({ teamId: fixedTeam }: { teamId?: string }) {
     if (groupBy === "project" && r.key && r.label) return <Link to={`/p/${r.key}`}>{text}</Link>;
     if (groupBy === "video" && r.key && r.projectId && r.label) return <Link to={`/p/${r.projectId}/v/${r.key}`}>{text}</Link>;
     return <span>{text}</span>;
+  };
+  const scopeOf = (r: ClaudeStatsRow): TurnScope => {
+    const label = `${groups[groupBy]}: ${groupBy === "video" && !r.key ? t("ws.stats.projectChats") : r.user?.name ?? r.label ?? r.key ?? "—"}`;
+    if (groupBy === "team") return { label, teamId: r.key ?? undefined };
+    if (groupBy === "project") return { label, projectId: r.key ?? undefined };
+    if (groupBy === "video") return { label, videoId: r.key ?? "" };
+    return { label, userId: r.key ?? undefined };
   };
   const columns: TableColumnsType<ClaudeStatsRow> = [
     { key: "name", title: groups[groupBy], render: (_, r) => name(r) },
@@ -137,8 +147,11 @@ export function ClaudeStatsView({ teamId: fixedTeam }: { teamId?: string }) {
       </section>
 
       <Table<ClaudeStatsRow> rowKey={(r) => r.key ?? "_none"} size="small" columns={columns} dataSource={stats.data?.rows ?? []} loading={stats.isLoading}
-        pagination={{ pageSize: 50, hideOnSinglePage: true }} scroll={{ x: 1000 }} locale={{ emptyText: t("ws.stats.none") }} />
+        pagination={{ pageSize: 50, hideOnSinglePage: true }} scroll={{ x: 1000 }} locale={{ emptyText: t("ws.stats.none") }}
+        rowClassName={(r) => `ws-turns__row${turnScope && turnScope.label === scopeOf(r).label ? " ws-turns__row--on" : ""}`}
+        onRow={(r) => ({ onClick: (e) => { if (!(e.target as HTMLElement).closest("a")) setTurnScope(scopeOf(r)); }, title: t("ws.stats.turn.rowHint") })} />
       <p className="ws-hint">{t("ws.stats.note")}</p>
+      <ClaudeTurns period={{ from: from.toISOString(), to: to.toISOString() }} teamId={team} scope={turnScope} onClearScope={() => setTurnScope(null)} />
     </div>
   );
 }
