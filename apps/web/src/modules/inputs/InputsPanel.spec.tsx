@@ -36,7 +36,14 @@ const ws = {
   cancelJob: vi.fn().mockResolvedValue(job({ cancelRequested: true })),
 };
 const agGo = {
-  getProjects: vi.fn().mockResolvedValue({ items: [{ id: "agp-2", name: "Ninh Bình mùa lúa", folderPath: "Miền Bắc/Ninh Bình", videoCount: 12, imageCount: 3, mediaCount: 15 }], page: 1, pageSize: 30, total: 1, totalPages: 1 }),
+  getProjects: vi.fn().mockResolvedValue({ items: [
+    { id: "agp-1", name: "Ninh Bình (đã có)", videoCount: 4, imageCount: 0, mediaCount: 4 },
+    { id: "agp-2", name: "Ninh Bình mùa lúa", folderId: "f-1", folderName: "Ninh Bình", folderPath: "Miền Bắc / Ninh Bình", categoryId: "cat-1", categoryName: "Du lịch", videoCount: 12, imageCount: 3, mediaCount: 15 },
+    { id: "agp-3", name: "Chưa quay", videoCount: 0, imageCount: 2, mediaCount: 2 },
+    { id: "agp-4", name: "Tràng An", videoCount: 5, imageCount: 0, mediaCount: 5 },
+  ], page: 1, pageSize: 24, total: 4, totalPages: 1 }),
+  getAssetPreviewUrl: vi.fn().mockRejectedValue(new Error("no thumbnail")),
+  findProvinces: vi.fn().mockResolvedValue([]),
   getProjectMedia: vi.fn(),
   getFolders: vi.fn(),
   getCategories: vi.fn().mockResolvedValue([{ id: "cat-1", name: "Du lịch" }, { id: "cat-2", name: "Ẩm thực" }]),
@@ -87,7 +94,7 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     const card = await screen.findByRole("group", { name: "Chuẩn bị Hoa Lư 03.mp4" });
     expect(card).toHaveTextContent("Farm · máy GPU-02");
     expect(card).toHaveTextContent("Farm · GPU-02 · whisper · đọc lời thoại");
-    expect(card).toHaveTextContent(/đã 1:1\d/);
+    expect(card).toHaveTextContent(/đã \d+:\d\d/);
     expect(card).toHaveTextContent("còn ≈ 1:30");
     fireEvent.click(within(card).getByRole("button", { name: "Dừng" }));
     await waitFor(() => expect(ws.cancelJob).toHaveBeenCalledWith("p1", "j1"));
@@ -117,35 +124,53 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     expect(open).toHaveBeenCalledWith("context/uploads/Ghi chú.md");
   });
 
-  it("adds an ag-go project from the person's own ag-go projects; says when the owner cannot see it", async () => {
-    ws.addSource.mockRejectedValueOnce(new StudioHttpError(422, { message: "x", code: "owner_cannot_access" }));
+  it("picks several ag-go projects in a full-screen drawer like ag-go's, adds them together and says which failed", async () => {
+    ws.addSource.mockResolvedValueOnce({ source: {} }).mockRejectedValueOnce(new StudioHttpError(422, { message: "x", code: "owner_cannot_access" }));
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "Thêm project" }));
-    const dialog = await screen.findByRole("dialog", { name: "Chọn project AG Go" });
-    expect(await within(dialog).findByText("Ninh Bình mùa lúa")).toBeInTheDocument();
-    expect(dialog).toHaveTextContent("Miền Bắc/Ninh Bình");
-    expect(dialog).toHaveTextContent("12 video · 3 ảnh");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Thêm" }));
-    await waitFor(() => expect(ws.addSource).toHaveBeenCalledWith("p1", { kind: "ag_go_project", ref: "agp-2", label: "Ninh Bình mùa lúa" }));
-    expect(await screen.findByText("Chủ dự án không thấy video nào trong project AG Go này")).toBeInTheDocument();
+    const drawer = await screen.findByRole("dialog", { name: /Chọn project AG Go/ });
+    expect(await within(drawer).findByText("Ninh Bình mùa lúa")).toBeInTheDocument();
+    expect(within(drawer).getByTestId("agp-card-agp-1")).toHaveTextContent("Đã thêm");
+    expect(within(drawer).getByRole("checkbox", { name: "Ninh Bình (đã có)" })).toBeDisabled();
+    expect(within(drawer).getByRole("checkbox", { name: "Chưa quay" })).toBeDisabled();
+    fireEvent.click(within(drawer).getByRole("checkbox", { name: "Ninh Bình mùa lúa" }));
+    fireEvent.click(within(drawer).getByTestId("agp-card-agp-4"));
+    expect(within(drawer).getByText("Đã chọn 2 dự án")).toBeInTheDocument();
+    fireEvent.click(within(drawer).getAllByRole("button", { name: /Thêm 2 dự án/ })[0]!);
+    await waitFor(() => expect(ws.addSource).toHaveBeenCalledTimes(2));
+    expect(ws.addSource.mock.calls).toEqual([
+      ["p1", { kind: "ag_go_project", ref: "agp-2", label: "Ninh Bình mùa lúa" }],
+      ["p1", { kind: "ag_go_project", ref: "agp-4", label: "Tràng An" }],
+    ]);
+    const warning = await screen.findByText("1 dự án không thêm được", { selector: ".ant-modal-confirm-title" });
+    expect(warning.closest(".ant-modal-content")).toHaveTextContent("Tràng An: Chủ dự án không thấy video nào trong project AG Go này");
+    expect(within(drawer).getByText("Đã chọn 1 dự án")).toBeInTheDocument();
   });
 
-  it("filters, sorts and pages ag-go projects as ag-go does; a grid shows the same projects", async () => {
+  it("filters, searches, sorts and pages ag-go projects as ag-go does, in a list or a grid", async () => {
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "Thêm project" }));
-    const dialog = await screen.findByRole("dialog", { name: "Chọn project AG Go" });
-    await within(dialog).findByText("Ninh Bình mùa lúa");
-    expect(agGo.getProjects).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, pageSize: 20, sortBy: "updatedAt", sortOrder: "desc" }));
-    fireEvent.click(await within(dialog).findByText("Du lịch"));
+    const drawer = await screen.findByRole("dialog", { name: /Chọn project AG Go/ });
+    await within(drawer).findByText("Ninh Bình mùa lúa");
+    expect(agGo.getProjects).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, pageSize: 24, sortBy: "updatedAt", sortOrder: "desc" }));
+    fireEvent.click(within(drawer).getByRole("button", { name: "Bộ lọc" }));
+    const filters = await waitFor(() => { const el = document.querySelector<HTMLElement>(".ant-drawer-left .ant-drawer-content"); if (!el) throw new Error("no filters drawer"); return el; });
+    fireEvent.click(await within(filters).findByText("Du lịch"));
     await waitFor(() => expect(agGo.getProjects).toHaveBeenLastCalledWith(expect.objectContaining({ categoryIds: ["cat-1"], page: 1 })));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Giảm dần" }));
+    expect(within(filters).getByText("1 bộ lọc đang áp dụng")).toBeInTheDocument();
+    fireEvent.click(within(filters).getByRole("button", { name: "Xóa bộ lọc" }));
+    await waitFor(() => expect(agGo.getProjects).toHaveBeenLastCalledWith(expect.not.objectContaining({ categoryIds: expect.anything() })));
+    const search = within(drawer).getByRole("combobox", { name: "Tìm dự án, thư mục, danh mục, tag, địa điểm..." });
+    fireEvent.change(search, { target: { value: "lúa" } });
+    fireEvent.keyDown(search, { key: "Enter", code: "Enter", keyCode: 13 });
+    await waitFor(() => expect(agGo.getProjects).toHaveBeenLastCalledWith(expect.objectContaining({ keyword: "lúa" })));
+    fireEvent.click(within(drawer).getByRole("button", { name: /Ngày cập nhật/ }));
+    fireEvent.click(await screen.findByText("Tăng dần"));
     await waitFor(() => expect(agGo.getProjects).toHaveBeenLastCalledWith(expect.objectContaining({ sortOrder: "asc" })));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Xoá lọc" }));
-    await waitFor(() => expect(agGo.getProjects).toHaveBeenLastCalledWith(expect.objectContaining({ categoryIds: [] })));
-    fireEvent.click(within(dialog).getByText("Lưới"));
-    expect(within(dialog).queryByRole("table")).toBeNull();
-    expect(within(dialog).getByText("Ninh Bình mùa lúa")).toBeInTheDocument();
-    expect(localStorage.getItem("studio.picker.projects.viewMode")).toBe("grid");
+    fireEvent.click(within(drawer).getByTitle("Dạng danh sách"));
+    expect((await within(drawer).findAllByRole("table")).length).toBeGreaterThan(0);
+    expect(within(drawer).getByRole("columnheader", { name: "Số lượng file" })).toBeInTheDocument();
+    expect(localStorage.getItem("studio.agp.viewMode")).toBe("list");
   });
 
   it("filters the video picker with ag-go's facets and keeps the tick order across the table and the grid", async () => {

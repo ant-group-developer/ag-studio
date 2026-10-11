@@ -7,7 +7,8 @@ import { StudioHttpError } from "../../api/http";
 import { useWorkspaceClient, type JobView, type SourceItem } from "../../api/workspace-client";
 import { withoutIds } from "../common/no-ids";
 import { clock } from "../workspace/time";
-import { AgGoProjectPicker, FootagePicker } from "./AgGoPickers";
+import { FootagePicker } from "./AgGoPickers";
+import { AgGoProjectDrawer } from "./ag-go-projects/AgGoProjectDrawer";
 import { JobList } from "./JobList";
 import { AudioSummary, UseAudioButtons } from "./AudioControls";
 import "./inputs.css";
@@ -189,7 +190,7 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
 
       <AudioSummary projectId={projectId} canProduce={canProduce} />
 
-      <AgGoProjectPicker projectId={projectId} picked={all} open={projectPicker} onClose={() => setProjectPicker(false)} />
+      <AgGoProjectDrawer projectId={projectId} picked={all} open={projectPicker} onClose={() => setProjectPicker(false)} />
       {videoId ? <FootagePicker projectId={projectId} videoId={videoId} sources={all} open={footagePicker} onClose={() => setFootagePicker(false)} /> : null}
     </div>
   );

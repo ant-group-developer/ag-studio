@@ -51,7 +51,7 @@ describe("the AI's name", () => {
 /** A message naming the footage library. */
 function PickTitle() {
   const { t } = useAiTranslation();
-  return <p data-testid="pick">{t("ws.inputs.pickProjectTitle")}</p>;
+  return <p data-testid="pick">{t("ws.agp.title")}</p>;
 }
 
 function mountSite() {
