@@ -72,6 +72,20 @@ interface TeamSkill {
     `invalid` / `audio_missing`, 413 `audio_too_large`, 422 với file không phải audio, 503 `audio_disabled` khi thiếu ffmpeg
   - `PATCH music/:trackId` (admin Studio) `{displayName?, moods?, active?}` → bài nhạc; 404 `not_found`
 
+## Nhật ký hoạt động (`/audit`)
+
+Bảng `audit_log` (migration 0036): mọi request POST/PUT/PATCH/DELETE của người đã đăng nhập (`AuditInterceptor`; route
+`@NoAudit()` như ước lượng crawl không ghi; request bị guard chặn không vào), mọi tool Studio agent gọi (`/agent-tools/call`),
+mỗi lượt chat và mỗi tool có sẵn của Claude (worker), mỗi việc nền xong. Không ghi nội dung chat, nội dung file, giá trị bí
+mật: `details` chỉ có id, field ngắn trong allowlist, kích thước. Admin Studio xem hết (cả dòng không thuộc nhóm nào), owner
+xem nhóm mình; người khác 403.
+- `GET audit/scope` → `{all: boolean, teams: {id, name}[]}`: các nhóm người gọi xem được
+- `GET audit?teamId&projectId&videoId&threadId&actorId&actorKind&kind&outcome&from&to&page&pageSize` → `{items, total, page,
+  pageSize}`, mới trước; item: `{id, at, actorKind: 'user'|'agent'|'studio', actorId, actor: UserSummary | null, kind:
+  'http'|'tool'|'turn'|'job', action, outcome: 'ok'|'error', method, route, statusCode, durationMs, team, project, video,
+  threadId, messageId, jobId, target, summary, details, costUsd}`; `teamId` không phải của mình → 403
+- `GET audit/actors?teamId` → `{actors: UserSummary[]}`: những người có trong nhật ký
+
 ## Dự án và video
 
 - `GET /teams/:teamId/projects?archived` (viewer) → `{projects: (Project & {videoCount, lastActivityAt})[]}`
