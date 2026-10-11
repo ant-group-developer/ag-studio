@@ -178,6 +178,13 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     expect(await screen.findByRole("heading", { name: "Ghi chú" })).toBeInTheDocument();
   });
 
+  it("a new video's empty chat tells what to say, naming the AI", async () => {
+    ws.getThread.mockResolvedValue({ ...thread([]), id: "t-v2", videoId: "v2", kind: "video", title: "Huế mưa" });
+    mount("/p/p1/v/v2");
+    expect(await screen.findByText("Bắt đầu video này: kể Claude nghe video về gì, dùng footage nào, dài bao lâu.", {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.queryByText(/\{\{ai\}\}/)).toBeNull();
+  });
+
   it("edits a file and says when someone changed it first", async () => {
     ws.writeFile.mockRejectedValueOnce(new StudioHttpError(409, { code: "file_conflict", message: "x", currentSha256: "b".repeat(64) }));
     mount("/p/p1?tab=files&file=context%2Fnotes.md");

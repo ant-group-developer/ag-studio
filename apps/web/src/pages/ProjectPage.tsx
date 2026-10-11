@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Result, Spin } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { Clapperboard, Film, FolderOpen, Settings, TrendingUp } from "lucide-react";
-import { useTranslation } from "react-i18next";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { StudioHttpError } from "../api/http";
 import { useWorkspaceClient, type Learning } from "../api/workspace-client";
@@ -10,6 +9,7 @@ import { ActivityButton } from "../modules/agent-chat/ActivityButton";
 import { ChatPanel } from "../modules/agent-chat/ChatPanel";
 import { LearningModal } from "../modules/agent-chat/NewWorkModals";
 import { useProjectEvents, useThread } from "../modules/agent-chat/use-thread";
+import { useAiTranslation } from "../modules/common/assistant-name";
 import { FilesPanel } from "../modules/files/FilesPanel";
 import { InputsPanel } from "../modules/inputs/InputsPanel";
 import { ResearchPanel } from "../modules/research/ResearchPanel";
@@ -33,7 +33,7 @@ const TABS: { key: AsideTab; icon: typeof FolderOpen; video?: boolean }[] = [
  * settings. Like a Claude project: every chat shares the project's knowledge, each has its own session.
  */
 export function ProjectPage() {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const { projectId = "", videoId, threadId: routeThread } = useParams();
   const [search, setSearch] = useSearchParams();
   const client = useWorkspaceClient();
