@@ -14,6 +14,7 @@ export * from "./thumbnail-render.js";
 export * from "./settings.js";
 export * from "./site-name.js";
 export * from "./audit-log.js";
+export * from "./claude-stats.js";
 export * from "./claude-slots.js";
 export * from "./media-deps.js";
 export * from "./cut-media.js";

@@ -59,6 +59,20 @@ interface TeamSkill {
     farm: { ok: true } | { ok: false; error: string };      // farm không với tới không phải lỗi
   }
   ```
+- `GET stats/claude?from&to&groupBy=team|project|video|user&teamId&projectId&tz` (admin Studio: mọi nhóm; owner: nhóm
+  mình; người khác 403) → thống kê chat Claude (mặc định 30 ngày gần nhất, `tz` = phút lệch UTC cho chuỗi theo ngày):
+  ```ts
+  {
+    from; to; groupBy;
+    totals: Metrics;
+    rows: (Metrics & { key: string | null; label: string | null; teamId; projectId; user?: UserSummary | null })[]; // tốn nhất trước
+    daily: { day: 'YYYY-MM-DD'; turns; costUsd; inputTokens; outputTokens }[];
+  }
+  // Metrics: turns (lượt agent, lượt chạy lại sau hạn mức tính riêng), threads, userMessages, inputTokens (tổng),
+  //          cacheReadTokens, cacheCreationTokens, outputTokens, costUsd, wallSeconds, failed, rateLimited
+  ```
+  Nguồn: `llm_calls` (`source = 'claude-agent'`, cột `user_id`, `team_id`, cache từ migration 0037) và tin nhắn người gửi
+  (`agent_messages`). `groupBy=video` có một dòng `key: null` cho các luồng của dự án. Tóm tắt luồng không tính.
 - `GET farm/nodes` → `{nodes}`: máy nhận `studio.render_final` (ghim bản cuối qua `node_id` của thẻ `render_final`);
   farm không với tới → `{nodes: []}`
 - Kho nhạc: bài nhạc nền gắn mood; video không có nhạc riêng được chọn một bài theo mood của branding (bài đủ dài hay
