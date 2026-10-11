@@ -6,8 +6,9 @@ import { useTranslation } from "react-i18next";
 import { StudioHttpError } from "../../api/http";
 import { useWorkspaceClient, type FileAccess, type WorkspaceFile } from "../../api/workspace-client";
 import { fileSize, relativeTime } from "../workspace/time";
-import { isMarkdown } from "./file-tree";
+import { isJson, isJsonLines, isMarkdown } from "./file-tree";
 import { FileHistory } from "./FileHistory";
+import { JsonView } from "./JsonView";
 import { frontmatterOf, Markdown } from "./Markdown";
 
 const isImage = (mime: string) => mime.startsWith("image/");
@@ -179,6 +180,8 @@ export function FileView({ projectId, path, access, canEdit, onBack, onDeleted, 
               {front ? <pre className="ws-file__pre" style={{ marginBottom: 12, padding: 10, background: "var(--ws-chip)", borderRadius: 8 }}>{front}</pre> : null}
               {file.text ? <Markdown text={file.text} /> : <p style={{ color: "var(--ws-faint)" }}>{t("ws.files.empty")}</p>}
             </>
+          ) : isJson(path) && file.text?.trim() ? (
+            <JsonView text={file.text} lines={isJsonLines(path)} />
           ) : (
             <pre className="ws-file__pre">{file.text}</pre>
           )}

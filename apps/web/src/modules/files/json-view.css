@@ -1,0 +1,38 @@
+/* JSON files read as a tree (or pretty text): each kind of value in its colour */
+.ws-json { --json-key: #8b3fc9; --json-str: #16794a; --json-num: #1f4fd1; --json-bool: #b45309; --json-null: #6b7280; display: flex; flex-direction: column; gap: 8px; }
+.ws-json__bar { position: sticky; top: -16px; z-index: 1; display: flex; align-items: center; gap: 6px; margin: -16px -16px 0; padding: 8px 16px; background: var(--ws-surface); border-bottom: 1px solid var(--ws-line); }
+.ws-json__bar .ws-spacer { flex: 1; }
+.ws-json__tree, .ws-json__raw { font: 12.5px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.ws-json__row { position: relative; display: flex; align-items: baseline; min-height: 21px; padding-right: 56px; border-radius: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ws-json__row:hover { background: var(--ws-chip); }
+.ws-json__toggle {
+  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; align-self: center; padding: 0; border: 0;
+  background: none; color: var(--ws-faint); cursor: pointer; border-radius: 4px;
+}
+.ws-json__toggle svg { transition: transform 0.12s; }
+.ws-json__toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
+.ws-json__toggle:hover { color: var(--ws-text); background: var(--ws-line); }
+.ws-json__summary { margin: 0 4px; padding: 0 6px; border: 0; border-radius: 999px; background: var(--ws-chip); font: inherit; font-size: 11px; color: var(--ws-faint); cursor: pointer; }
+.ws-json__row:hover .ws-json__summary { background: var(--ws-surface); }
+.ws-json__key { color: var(--json-key); }
+.ws-json__str { color: var(--json-str); }
+.ws-json__num { color: var(--json-num); }
+.ws-json__bool { color: var(--json-bool); font-weight: 500; }
+.ws-json__null { color: var(--json-null); font-style: italic; }
+.ws-json__punct { color: var(--ws-faint); }
+.ws-json__tools { position: absolute; right: 4px; top: 1px; display: none; gap: 2px; }
+.ws-json__row:hover .ws-json__tools, .ws-json__row:focus-within .ws-json__tools { display: inline-flex; }
+.ws-json__tool {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 19px; padding: 0 4px; border: 1px solid var(--ws-line);
+  border-radius: 4px; background: var(--ws-surface); font: inherit; font-size: 11px; color: var(--ws-muted); cursor: pointer;
+}
+.ws-json__tool:hover { color: var(--ws-accent); border-color: var(--ws-accent-line); }
+.ws-json__record { padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px dashed var(--ws-line); }
+.ws-json__record-head { font-size: 11px; color: var(--ws-faint); }
+.ws-json__raw { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ws-json__line { display: flex; }
+.ws-json__line--bad { background: var(--ws-bad-bg); }
+.ws-json__ln { flex-shrink: 0; width: 3.5em; padding-right: 12px; text-align: right; color: var(--ws-line-strong); user-select: none; }
+.ws-json__error { display: flex; align-items: flex-start; gap: 6px; padding: 8px 10px; border-radius: 8px; background: var(--ws-bad-bg); color: var(--ws-bad-fg); font-size: 13px; }
+.ws-json__error svg { flex-shrink: 0; margin-top: 2px; }
+.ws-json__error code { font-size: 12px; opacity: 0.85; }

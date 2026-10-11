@@ -52,3 +52,6 @@ export function ancestors(path: string): string[] {
 }
 
 export const isMarkdown = (path: string) => /\.(md|markdown)$/i.test(path);
+/** `.json` files (and JSON Lines: `.jsonl`, `.ndjson`, one value per line) read as a tree. */
+export const isJson = (path: string) => /\.(json|jsonl|ndjson)$/i.test(path);
+export const isJsonLines = (path: string) => /\.(jsonl|ndjson)$/i.test(path);
