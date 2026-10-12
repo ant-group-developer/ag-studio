@@ -11,11 +11,12 @@ Danh sách phân trang: query `page` (từ 1), `pageSize` (mặc định 20, t�
 tuỳ chọn; trả `Paged<T> = {items: T[], total, page, pageSize}`.
 
 - `GET /me` → `{userId, name, email, avatar, isAdmin}`
-- `GET /teams?page&pageSize&sortBy(name|createdAt)&sortOrder&q` → `Paged<Team & {role: TeamRole | null, memberCount, projectCount}>`
-  (admin thấy mọi team; `role` là vai của người gọi, null với admin không phải thành viên)
+- `GET /teams?page&pageSize&sortBy(name|createdAt)&sortOrder&q` → `Paged<Team & {role: TeamRole | null, isMember, memberCount, projectCount}>`
+  (admin Studio thấy mọi nhóm — controller tự hỏi `StudioAdminService.isAdmin` vì route không có `@Roles`; `role` là vai
+  của người gọi, null và `isMember: false` với admin không phải thành viên; `q` tìm theo tên)
 - `POST /teams {name}` → Team; `PATCH /teams/:teamId {name}` (owner) → Team; `DELETE /teams/:teamId` (owner; 409
   `team_has_active_runs` khi một job hay một lượt agent của dự án nào trong team còn chạy)
-- `GET /teams/:teamId` (viewer) → `{id, name, role: TeamRole | null, memberCount, projectCount, createdAt, updatedAt}`
+- `GET /teams/:teamId` (viewer) → `{id, name, role: TeamRole | null, isMember, memberCount, projectCount, createdAt, updatedAt}`
 - `GET /teams/:teamId/members?page&pageSize&sortBy(role|joinedAt|name)&sortOrder&q` → `Paged<TeamMember>`;
   `GET /teams/:teamId/member-candidates?keyword`, `POST /teams/:teamId/members {userId, role}`,
   `PATCH /teams/:teamId/members/:userId {role}`, `DELETE /teams/:teamId/members/:userId`; bỏ hay hạ vai owner cuối cùng →
