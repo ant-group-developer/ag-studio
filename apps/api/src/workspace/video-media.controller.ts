@@ -12,11 +12,11 @@ import {
   listJobs, listVideoRevisions, projectAudio, projectAudioSummary, queueFit, queueRender, readWorkspaceBytes, requireProject, requireVideo,
   resolveInside, StudioRunError, timelineSummary, videoRender, videoRenders, VOICE_ORIGINS, type ActorRole, type JobView, type RenderKind,
 } from '@ag-studio/engine';
-import { AgGoClientError } from '../ag-go/client';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from '../studio/engine.service';
 import { mapErrors } from '../studio/http-errors';
+import { FootageRights, type FootageVerdict } from './footage-rights';
 import { ProjectFootageService } from './project-footage.service';
 import { WorkspaceService } from './workspace.service';
 import { parseBody } from './zod-body';
@@ -57,8 +57,6 @@ export interface RenderLink {
   urlHidden?: FootageVerdict;
 }
 
-type FootageVerdict = 'footage_scope' | 'footage_check_failed';
-
 /**
  * A video's media (spec 2026-10-10 agent-workspace §P6): its renders (with a link only for people whose own ag-go
  * rights cover its footage — sharing a project never widens anyone's footage), starting a render (a preview: editor;
@@ -69,16 +67,16 @@ type FootageVerdict = 'footage_scope' | 'footage_check_failed';
 @UseGuards(RolesGuard)
 export class VideoMediaController {
   private readonly logger = new Logger(VideoMediaController.name);
-  private readonly scope = new Map<string, { at: number; hidden: FootageVerdict | null }>();
-  /** Checks under way, so the panel's polling joins one instead of asking ag-go again. */
-  private readonly asking = new Map<string, Promise<FootageVerdict | null>>();
+  private readonly rights: FootageRights;
 
   constructor(
     private readonly engine: EngineService,
     private readonly workspace: WorkspaceService,
-    private readonly footage: ProjectFootageService,
+    footage: ProjectFootageService,
     private readonly config: ConfigService,
-  ) {}
+  ) {
+    this.rights = new FootageRights(footage, this.logger);
+  }
 
   /** What the Preview tab lists, from the database alone (no ag-go, no signing): each render's link is asked for apart. */
   @Get('videos/:videoId/renders')
@@ -237,49 +235,11 @@ export class VideoMediaController {
   }
 
   /**
-   * Why ag-go does not serve every video of that timeline revision to this person, or null when it does. A definite
-   * answer is kept ten minutes (a long timeline takes ag-go seconds); ag-go not answering (down, timing out, an error)
-   * is said as such, logged and asked again.
+   * Why ag-go does not serve every video of that timeline revision to this person, or null when it does: answered from
+   * what is known per ag-go video (`FootageRights`), asking ag-go only about the videos not known yet.
    */
   private footageVerdict(userId: string, videoId: string, revision: number): Promise<FootageVerdict | null> {
-    const key = `${userId}:${videoId}:${revision}`;
-    const hit = this.scope.get(key);
-    if (hit && Date.now() - hit.at < 10 * 60_000) return Promise.resolve(hit.hidden);
-    const pending = this.asking.get(key);
-    if (pending) return pending;
-    const asked = this.askFootage(key, userId, videoId, revision).finally(() => this.asking.delete(key));
-    this.asking.set(key, asked);
-    return asked;
-  }
-
-  private async askFootage(key: string, userId: string, videoId: string, revision: number): Promise<FootageVerdict | null> {
     const rev = getVideoRevision(this.engine.db, videoId, revision);
-    const assets = rev ? [...new Set(rev.data.clips.map((c) => c.asset_id))] : [];
-    let hidden: FootageVerdict | null;
-    if (assets.length === 0) hidden = 'footage_scope';
-    else {
-      try {
-        const { missing } = await this.footage.check(userId, assets);
-        hidden = missing.length ? 'footage_scope' : null;
-        if (missing.length) this.logger.warn(`ag-go does not serve ${missing.length}/${assets.length} videos of video ${videoId} r${revision} to user ${userId}: ${missing.join(', ')}`);
-      } catch (e) {
-        // ag-go answers 404 naming the first video out of this person's scope; anything else is not about rights
-        const scope = e instanceof AgGoClientError && e.status === 404;
-        this.logger.warn(`ag-go footage check for video ${videoId} r${revision}, user ${userId} (${assets.length} videos): ${agGoFailure(e)}`);
-        if (!scope) return 'footage_check_failed';
-        hidden = 'footage_scope';
-      }
-    }
-    this.scope.set(key, { at: Date.now(), hidden });
-    return hidden;
+    return this.rights.verdict(userId, rev ? rev.data.clips.map((c) => c.asset_id) : [], `video ${videoId} r${revision}`);
   }
-}
-
-function agGoFailure(e: unknown): string {
-  if (e instanceof AgGoClientError) {
-    const b = e.body as { message?: unknown; error?: { message?: unknown } } | string | null;
-    const msg = typeof b === 'string' ? b : b?.error?.message ?? b?.message;
-    return `HTTP ${e.status}${msg ? ` ${String(msg).slice(0, 300)}` : ''}`;
-  }
-  return e instanceof Error ? `${e.name}: ${e.message}` : String(e);
 }

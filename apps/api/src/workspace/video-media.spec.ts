@@ -51,14 +51,14 @@ describe('video media (real studio.db)', () => {
     const ws = new WorkspaceService({ get: (k: string, d?: unknown) => (k === 'STUDIO_WORKSPACES_ROOT' ? root : d) } as unknown as ConfigService, engine);
     seen.length = 0;
     const footage = {
-      check: async (userId: string, ids: string[]) => {
+      checkLots: async (userId: string, ids: string[]) => {
         seen.push([userId, ...ids]);
-        if (userId === DOWN) throw new AgGoClientError(502, 'Bad Gateway');
-        if (userId === GONE) throw new AgGoClientError(404, { message: `Video not found or not in scope: ${ids[0]}` });
-        return userId === OWNER ? { ok: ids, missing: [] } : { ok: [], missing: ids };
+        if (userId === DOWN) return [{ assetIds: ids, error: new AgGoClientError(502, 'Bad Gateway') }];
+        if (userId === GONE) return [{ assetIds: ids, error: new AgGoClientError(404, { message: `Video not found or not in scope: ${ids[0]}` }) }];
+        return [userId === OWNER ? { assetIds: ids, served: ids, missing: [] } : { assetIds: ids, served: [], missing: ids }];
       },
     } as unknown as ProjectFootageService;
-    Object.assign(engine, { bucket: { signedGetUrl: async (key: string) => `https://r2.test/${key}` }, browserUrlTtl: 600 });
+    Object.assign(engine, { bucket: { signedGetUrl: async (key: string, _ttl: number, o: { downloadName?: string } = {}) => `https://r2.test/${key}${o.downloadName ? `?name=${o.downloadName}` : ''}` }, browserUrlTtl: 600 });
     projects = new ProjectsController(engine, ws);
     videos = new VideosController(engine, ws);
     media = new VideoMediaController(engine, ws, footage, { get: () => undefined } as unknown as ConfigService);
@@ -89,6 +89,7 @@ describe('video media (real studio.db)', () => {
     // ag-go not answering is not a lack of rights; its 404 (a video out of scope) is
     seen.length = 0;
     expect(await media.link(v.id, job.id, req(DOWN))).toMatchObject({ url: null, urlHidden: 'footage_check_failed' });
+    expect(await media.link(v.id, job.id, req(DOWN))).toMatchObject({ urlHidden: 'footage_check_failed' }); // kept 30 s, not asked again
     expect(await media.link(v.id, job.id, req(GONE))).toMatchObject({ url: null, urlHidden: 'footage_scope' });
     expect(await media.link(v.id, job.id, req(GONE))).toMatchObject({ urlHidden: 'footage_scope' });
     expect(seen).toEqual([[DOWN, 'a1'], [GONE, 'a1']]);
@@ -97,7 +98,15 @@ describe('video media (real studio.db)', () => {
     const both = await Promise.all([media.link(v.id, job.id, req('auth0|poll')), media.link(v.id, job.id, req('auth0|poll'))]);
     expect(both.map((x) => x.urlHidden)).toEqual(['footage_scope', 'footage_scope']);
     expect(seen).toEqual([['auth0|poll', 'a1']]);
-    expect((await media.timeline(v.id)).latest).toMatchObject({ revision: 1, clips: [expect.objectContaining({ clip_id: 'C001' })] });
+    // a new revision with the same footage is answered from what is known
+    saveVideoRevision(s.engine.db, v.id, { baseRevision: 1, data: { ...timeline(v.id), texts: [] }, authorId: 'u' });
+    const job2 = await media.render(v.id, { kind: 'export_premiere' }, req(OWNER));
+    claimJob(s.engine.db, ['export_premiere'], new Date().toISOString());
+    finishJob(s.engine.db, job2.id, { status: 'done', result: { kind: 'export_premiere', revision: 2, key: 'productions/x/out/b.zip', duration_s: null, width: null, height: null, watermarked: null, size_bytes: 20, note: '' } }, new Date().toISOString());
+    seen.length = 0;
+    expect(await media.link(v.id, job2.id, req(OWNER))).toEqual({ jobId: job2.id, url: 'https://r2.test/productions/x/out/b.zip?name=Huế.zip' });
+    expect(seen).toEqual([]);
+    expect((await media.timeline(v.id)).latest).toMatchObject({ revision: 2, clips: [expect.objectContaining({ clip_id: 'C001' })] });
   });
 
   it('picks the voice from a workspace file only for a producer, saying where it comes from', async () => {

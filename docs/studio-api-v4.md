@@ -191,8 +191,10 @@ xem nhóm mình; người khác 403.
 - `GET /videos/:videoId/renders/:jobId/link` (viewer) → `{jobId, url: string | null, urlHidden?}` cho đúng một bản render;
   `url` chỉ có khi quyền ag-go của người xem phủ mọi video trong revision của bản đó (không thì `urlHidden: footage_scope`;
   ag-go không trả lời được — lỗi mạng, 5xx… — thì `urlHidden: footage_check_failed`, API ghi log lý do); link Premiere đặt
-  sẵn tên file `.zip`; `jobId` không phải bản render xong của video → 404. API hỏi ag-go từng lô 10 video, 4 lô song song;
-  câu trả lời chắc chắn giữ 10 phút
+  sẵn tên file `.zip`; `jobId` không phải bản render xong của video → 404. API nhớ quyền theo (người, video ag-go) 10 phút
+  và chỉ hỏi ag-go những video chưa biết (từng lô 10, 4 lô song song), nên revision mới cùng footage trả lời ngay; ag-go
+  không trả lời được nhớ 30 s (poll không dồn); 404 của ag-go nêu tên video thì video đó ngoài phạm vi, không nêu thì mọi
+  timeline dùng đủ tập video đã hỏi bị ẩn; một lần kiểm > 2 s ghi log
 - `POST /videos/:videoId/renders {kind: render_preview|render_final|export_premiere, nodeId?, media?}` — xem trước: editor;
   bản cuối, Premiere: producer (403 `role`)
 - `GET /projects/:projectId/audio` → `{voice, music, summary}`; `POST audio/:kind/from-file {path, origin?, referenceText?}`
