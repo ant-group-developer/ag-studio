@@ -116,6 +116,9 @@ describe('inputs (real studio.db)', () => {
     expect((await inputs.prepare(p.id, { assetIds: [A1, A2] }, req(EDITOR))).assets).toEqual({ [A1]: expect.objectContaining({ state: 'queued', job_id: jobId }), [A2]: { state: 'not_an_input' } });
     expect((await inputs.jobs(p.id, '1')).jobs.map((j) => j.id)).toEqual([jobId]);
     claimJob(s.engine.db, ['prepare_asset'], new Date().toISOString());
+    // the list says how many videos stand where (each once), alongside the rows as before
+    expect((await inputs.sources(p.id)).counts).toEqual({ videos: 1, ready: 0, preparing: 1, failed: 0, notPrepared: 0 });
+    expect((await inputs.sources(p.id, v.id)).sources.map((x) => x.asset?.state)).toEqual(['preparing']);
     expect(await inputs.cancel(p.id, jobId)).toMatchObject({ status: 'running', cancelRequested: true });
     expect(await inputs.cancel('other', jobId).catch(code)).toBe('not_found');
     expect(listMessages(s.engine.db, v.threadId)).toEqual([]);

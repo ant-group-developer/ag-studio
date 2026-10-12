@@ -9,9 +9,9 @@ import { extname, join } from 'node:path';
 import type { Request } from 'express';
 import { z } from 'zod';
 import {
-  addSource, assetState, AUDIO_FILE_EXTS, getSource, jobView, listJobs, listSources, nameUnnamedAssets, projectActAs, queuePrepare, removeSource, requestJobCancel, requireJob,
+  addSource, assetCounts, assetStates, AUDIO_FILE_EXTS, getSource, jobView, listJobs, listSources, nameUnnamedAssets, projectActAs, queuePrepare, removeSource, requestJobCancel, requireJob,
   PROJECT_AUDIO_DIR, REFERENCE_UPLOAD_DIR, REFERENCE_UPLOAD_MAX_BYTES, REFERENCE_VIDEO_EXTS, requireProject, requireVideo, sourceItems, StudioRunError, writeVideoIndex,
-  writeWorkspaceFile, type ActorRole, type JobView, type SourceItem, type SourceMediaType, unnamedAssetIds,
+  writeWorkspaceFile, type ActorRole, type AssetCounts, type JobView, type SourceItem, type SourceMediaType, unnamedAssetIds,
 } from '@ag-studio/engine';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -105,13 +105,18 @@ export class InputsController {
   /** When names were last looked up for a project's unnamed videos: once every 10 minutes at most. */
   private readonly namedAt = new Map<string, number>();
 
+  /**
+   * The sources (with `videoId`: the project's own and that video's) with where each ag-go video stands, in one pass,
+   * and how many distinct ag-go videos are ready, being prepared, failed or not prepared yet.
+   */
   @Get('sources')
   @Roles('viewer')
-  sources(@Param('projectId') projectId: string, @Query('videoId') videoId?: string): Promise<{ sources: SourceItem[] }> {
+  sources(@Param('projectId') projectId: string, @Query('videoId') videoId?: string): Promise<{ sources: SourceItem[]; counts: AssetCounts }> {
     return mapErrors(() => {
       requireProject(this.engine.db, projectId);
       this.nameUnnamed(projectId);
-      return { sources: sourceItems(this.engine.db, projectId, videoId ? { videoId } : {}) };
+      const sources = sourceItems(this.engine.db, projectId, videoId ? { videoId } : {});
+      return { sources, counts: assetCounts(sources) };
     });
   }
 
@@ -266,7 +271,8 @@ export class InputsController {
       if (!projectIds.length) return { items: [], nextCursor: null, total: 0 };
       const { agGoProjectId: _one, agGoProjectIds: _many, ...filters } = q;
       const r = await this.footage.searchForPicker(req.authContext!.userId, { ...filters, projectIds, limit: q.limit ?? 40 });
-      return { ...r, items: r.items.map((i) => ({ ...i, prepared: assetState(this.engine.db, projectId, i.assetId) })) };
+      const state = assetStates(this.engine.db, projectId);
+      return { ...r, items: r.items.map((i) => ({ ...i, prepared: state(i.assetId) })) };
     });
   }
 

@@ -164,8 +164,9 @@ xem nhóm mình; người khác 403.
 
 ## Đầu vào và việc nền
 
-- `GET /projects/:projectId/sources?videoId` → `{sources: SourceItem[]}` (project ag-go, video ag-go kèm trạng thái chuẩn bị,
-  file tải lên); `POST sources` (editor) `{kind: ag_go_project, ref, label}` | `{kind: ag_go_asset, ref, label, videoId?,
+- `GET /projects/:projectId/sources?videoId` → `{sources: SourceItem[], counts}` (project ag-go, video ag-go kèm trạng thái chuẩn bị,
+  file tải lên; trạng thái tính trong một lượt đọc DB dù bao nhiêu video/job; `counts = {videos, ready, preparing, failed,
+  notPrepared}` đếm mỗi video ag-go một lần, `preparing` gồm cả đang chờ); `POST sources` (editor) `{kind: ag_go_project, ref, label}` | `{kind: ag_go_asset, ref, label, videoId?,
   meta?, prepare?}` — chủ dự án không dùng được trên ag-go → 422 `owner_cannot_access`; `DELETE sources/:sourceId`
 - `POST sources/upload` multipart `file` + `videoId?` + `reference?` (editor): tài liệu → `context/uploads/`, ảnh →
   `context/images/`, audio → `context/audio/` (audio ≤ 100 MB, file khác ≤ 50 MB); Word → 415 `docx_not_supported`, video → 415 `video_from_ag_go`.
