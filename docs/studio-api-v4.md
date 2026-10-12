@@ -158,8 +158,11 @@ xem nhóm mình; người khác 403.
 - `GET /projects/:projectId/sources?videoId` → `{sources: SourceItem[]}` (project ag-go, video ag-go kèm trạng thái chuẩn bị,
   file tải lên); `POST sources` (editor) `{kind: ag_go_project, ref, label}` | `{kind: ag_go_asset, ref, label, videoId?,
   meta?, prepare?}` — chủ dự án không dùng được trên ag-go → 422 `owner_cannot_access`; `DELETE sources/:sourceId`
-- `POST sources/upload` multipart `file` + `videoId?` (editor): tài liệu → `context/uploads/`, ảnh → `context/images/`,
-  audio → `context/audio/`; Word → 415 `docx_not_supported`, video → 415 `video_from_ag_go`
+- `POST sources/upload` multipart `file` + `videoId?` + `reference?` (editor): tài liệu → `context/uploads/`, ảnh →
+  `context/images/`, audio → `context/audio/` (≤ 50 MB); Word → 415 `docx_not_supported`, video → 415 `video_from_ag_go`.
+  `reference=1`: video mẫu để học phong cách dựng (mp4, mov, m4v, mkv, webm, avi; ≤ 300 MB) → `context/references/`,
+  nguồn `mediaType: video`, `meta.reference: true` (không phải footage); file khác → 415 `not_video`. Agent học bằng tool
+  `style_from_files {paths, purpose}` (job `style_watch` với `files`, không cần thẻ, không đổi hay xoá file)
 - `GET footage?agGoProjectIds&q&categoryIds&ownerUserIds&provinceIds&resolutions&tags&genres&timesOfDay&orientations&minDurationMs&maxDurationMs&usability&sortBy&sortOrder&page|cursor&limit`
   → video trong các project ag-go của dự án (chỉ những project đã gắn; `agGoProjectId` cũ vẫn nhận), theo quyền ag-go của
   người hỏi; danh sách là chuỗi cách bằng dấu phẩy, enum như ag-go `/footage/search`; khoá lạ → 400 `invalid`, project
@@ -208,7 +211,7 @@ arguments}` với `Authorization: Bearer <token lượt>` (HMAC `STUDIO_AGENT_TO
 tin nhắn còn `running`). Luôn 200 `{text, isError?}`. Tool (`packages/studio-engine/src/agent/*-tools.ts`):
 `project_info, video_list, video_create, video_update, suggest_replies, playbook_status, validate_file, thread_history,
 inputs_list, footage_search, inputs_add, inputs_prepare, input_describe, job_status, job_cancel, youtube_trending,
-youtube_search, youtube_top_channels, youtube_channel_top_videos, timeline_from_edit_plan, timeline_get, timeline_apply_ops,
+youtube_search, youtube_top_channels, youtube_channel_top_videos, style_from_files, timeline_from_edit_plan, timeline_get, timeline_apply_ops,
 render_preview, thumbnail_make, music_list, propose_action`.
 
 ## Farm

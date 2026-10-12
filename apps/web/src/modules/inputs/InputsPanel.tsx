@@ -14,6 +14,7 @@ import { AudioSummary, UseAudioButtons } from "./AudioControls";
 import "./inputs.css";
 
 const UPLOAD_ACCEPT = ".md,.txt,.pdf,.csv,.json,.srt,.vtt,.jpg,.jpeg,.png,.webp,.gif,.mp3,.wav,.m4a,.aac,.ogg,.flac";
+const REFERENCE_ACCEPT = ".mp4,.mov,.m4v,.mkv,.webm,.avi";
 const KIND_ICON = { document: FileText, image: ImageIcon, audio: Music, video: Film, mixed: FolderKanban } as const;
 
 function AssetLine({ s, canEdit, onOpenFile, onPrepare, onRemove }: {
@@ -55,8 +56,9 @@ function AssetLine({ s, canEdit, onOpenFile, onPrepare, onRemove }: {
 
 /**
  * The Inputs tab (spec 2026-10-10 agent-workspace §4): the ag-go projects the agent searches, the ag-go videos of this
- * video (prepared once for the whole project), documents, images and audio uploaded into `context/`, and the jobs
- * running for them — who works on each, how far, time spent and left, Stop.
+ * video (prepared once for the whole project), documents, images and audio uploaded into `context/`, reference videos
+ * to learn an edit style from (`context/references/`, never footage), and the jobs running for them — who works on
+ * each, how far, time spent and left, Stop.
  */
 export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, onOpenFile }: {
   projectId: string; videoId?: string; canEdit: boolean; canProduce?: boolean; onOpenFile: (path: string) => void;
@@ -66,6 +68,7 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
   const client = useWorkspaceClient();
   const qc = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
+  const referenceInput = useRef<HTMLInputElement>(null);
   const [projectPicker, setProjectPicker] = useState(false);
   const [footagePicker, setFootagePicker] = useState(false);
   const sources = useQuery({
@@ -88,12 +91,18 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
     onSuccess: (r) => { refresh(); void qc.invalidateQueries({ queryKey: ["files", projectId] }); void message.success(t("ws.inputs.uploaded", { count: r.length })); },
     onError: fail(t("ws.inputs.uploadFailed")),
   });
+  const uploadReference = useMutation({
+    mutationFn: (files: File[]) => Promise.all(files.map((f) => client.uploadSource(projectId, f, undefined, { reference: true }))),
+    onSuccess: (r) => { refresh(); void qc.invalidateQueries({ queryKey: ["files", projectId] }); void message.success(t("ws.inputs.uploaded", { count: r.length })); },
+    onError: fail(t("ws.inputs.uploadFailed")),
+  });
 
   if (sources.isLoading) return <div className="ws-center"><Spin /></div>;
   const all = sources.data?.sources ?? [];
   const agGoProjects = all.filter((s) => s.kind === "ag_go_project");
   const videoAssets = all.filter((s) => s.kind === "ag_go_asset" && (videoId ? s.videoId === videoId : true));
-  const uploads = all.filter((s) => s.kind === "upload");
+  const uploads = all.filter((s) => s.kind === "upload" && !s.meta.reference);
+  const references = all.filter((s) => s.kind === "upload" && s.meta.reference === true);
   const jobList = jobs.data?.jobs ?? [];
   const active = jobList.filter((j) => j.status === "queued" || j.status === "running");
   const recent = jobList.filter((j) => j.status !== "queued" && j.status !== "running").slice(0, 3);
@@ -184,6 +193,35 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
                 </li>
               );
             })}
+          </ul>
+        ) : null}
+      </section>
+
+      <section aria-label={t("ws.inputs.references")}>
+        <div className="ws-inputs__head">
+          <h4 className="ws-inputs__h">{t("ws.inputs.references")}</h4>
+          {canEdit ? (
+            <>
+              <Button size="small" icon={<Upload size={13} />} loading={uploadReference.isPending} onClick={() => referenceInput.current?.click()}>{t("ws.inputs.uploadReference")}</Button>
+              <input ref={referenceInput} type="file" multiple hidden accept={REFERENCE_ACCEPT} aria-label={t("ws.inputs.uploadReference")}
+                onChange={(e) => { const files = [...(e.target.files ?? [])]; e.target.value = ""; if (files.length) uploadReference.mutate(files); }} />
+            </>
+          ) : null}
+        </div>
+        <p className="ws-hint">{t("ws.inputs.referencesHint")}</p>
+        {references.length ? (
+          <ul className="ws-inputs__list">
+            {references.map((s) => (
+              <li key={s.id} className="ws-inputs__row">
+                <Film size={14} aria-hidden />
+                <button type="button" className="ws-link ws-inputs__name" onClick={() => onOpenFile(s.ref)}>{s.label}</button>
+                {canEdit ? (
+                  <Popconfirm title={t("ws.inputs.removeUploadConfirm", { name: s.label })} onConfirm={() => remove.mutate(s)} okText={t("ws.inputs.remove")} cancelText={t("common.cancel")}>
+                    <button type="button" className="ws-icon-button" aria-label={t("ws.inputs.removeNamed", { name: s.label })}><Trash2 size={13} /></button>
+                  </Popconfirm>
+                ) : null}
+              </li>
+            ))}
           </ul>
         ) : null}
       </section>

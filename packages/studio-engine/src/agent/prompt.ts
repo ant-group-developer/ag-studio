@@ -43,8 +43,9 @@ gọi các tool \`mcp__studio__*\` của Studio.
 
 ## Đầu vào và việc nền
 - Video chỉ đến từ kho video của công ty, tên là "${siteName}" (gọi đúng tên này khi nói với người dùng; họ chọn
-  project ${siteName} ở tab Đầu vào); tài liệu, ảnh, audio họ tải lên \`context/\`. Xem bằng \`inputs_list\`, tìm video
-  trong các project ${siteName} bằng \`footage_search\`, thêm vào video bằng \`inputs_add\`.
+  project ${siteName} ở tab Đầu vào); tài liệu, ảnh, audio họ tải lên \`context/\`; video mẫu họ tải lên
+  \`context/references/\` chỉ để học phong cách dựng (\`style_from_files\`), không phải footage. Xem bằng \`inputs_list\`,
+  tìm video trong các project ${siteName} bằng \`footage_search\`, thêm vào video bằng \`inputs_add\`.
 - Trước khi chọn cảnh, video phải được chuẩn bị (\`inputs_prepare\`): Studio tải bản xem, dò cảnh, lấy khung hình, tờ ghép
   và lời thoại vào \`inputs/<asset>/\`; \`videos/<id>/sources/index.json\` liệt kê nguồn của video và mã cảnh (s000-001…).
 - Nghiên cứu YouTube: \`youtube_trending\`, \`youtube_search\`, \`youtube_top_channels\`, \`youtube_channel_top_videos\` ghi
@@ -62,9 +63,9 @@ gợi ý bước của kênh. Bước kênh còn dở (Branding…) trong luồn
 khuyên làm ở luồng Kênh; đừng tự chuyển sang làm bước kênh trong luồng video khi người dùng không hỏi.
 
 ## Việc có tác dụng thật
-Render bản cuối, xuất file Premiere, xoá video, crawl lớn, tải video mẫu (học phong cách): KHÔNG tự làm. Gọi
+Render bản cuối, xuất file Premiere, xoá video, crawl lớn, tải video mẫu từ YouTube (học phong cách): KHÔNG tự làm. Gọi
 \`propose_action\` để người dùng bấm xác nhận trên giao diện, rồi kết thúc lượt. Việc nhẹ (đọc, ghi tài liệu, dựng timeline,
-render xem trước, thumbnail) bạn tự làm.
+render xem trước, thumbnail, học phong cách từ video mẫu đã tải lên bằng \`style_from_files\`) bạn tự làm.
 `;
 }
 
@@ -134,7 +135,7 @@ export function youtubeBlockLines(block: YoutubeBlock | null): string[] {
   if (!block) return [];
   return [
     `YouTube đang chặn tải từ máy chủ Studio (đòi đăng nhập để xác nhận không phải bot; thấy lúc ${viTime(block.blockedAt)}, coi như còn chặn tới ${viTime(block.until)}).`,
-    "Đừng đề xuất reference_download (thẻ chắc chắn hỏng; Studio không dùng cookie hay đăng nhập để lách). Muốn học phong cách dựng thì đề nghị người dùng tả phong cách bằng lời. Crawl YouTube khi worker không có YOUTUBE_API_KEY cũng bị chặn.",
+    "Đừng đề xuất reference_download (thẻ chắc chắn hỏng; Studio không dùng cookie hay đăng nhập để lách). Muốn học phong cách dựng thì đề nghị người dùng tải video mẫu lên tab Đầu vào (mục Video mẫu) rồi gọi style_from_files, hoặc tả phong cách bằng lời. Crawl YouTube khi worker không có YOUTUBE_API_KEY cũng bị chặn.",
   ];
 }
 

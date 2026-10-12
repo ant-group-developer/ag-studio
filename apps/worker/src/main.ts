@@ -20,7 +20,7 @@
  *   STUDIO_FONTS_DIR    a folder with the thumbnail font (Arial); default: Windows fonts, else fontconfig (Liberation Sans)
  *   YOUTUBE_API_KEY     YouTube Data API v3 key for crawls (none: yt-dlp searches YouTube)
  *   YTDLP_PATH / STUDIO_YTDLP_ARGV  yt-dlp (default `yt-dlp` on PATH): crawls without a key, reference videos
- *   STUDIO_REFERENCE_DOWNLOADS=0    never download reference videos
+ *   STUDIO_REFERENCE_DOWNLOADS=0    never download reference videos from YouTube (uploaded ones are still watched)
  *   HARNESS_ROOT        Studio install root (default: this checkout)
  *   STUDIO_FARM_QUEUE_TIMEOUT_MINUTES a farm job no node takes this long is cancelled and its job says so (default 120)
  *   STUDIO_CLEANUP_HOURS how often the cleanup sweep runs (default 6; 0 = never): unused voice lines, project audio

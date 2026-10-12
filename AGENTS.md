@@ -73,7 +73,7 @@ nhưng không code nào đọc.
 - Team → **dự án** (một kênh YouTube, bảng `projects`) → **video** (`videos`), thêm dần theo lời người dùng. Mỗi dự án là một
   thư mục làm việc như một repo: `<STUDIO_WORKSPACES_ROOT>/<projectId>/` (mặc định `<STUDIO_DATA_ROOT>/workspaces`, phải nằm
   **ngoài mọi repo** để CLAUDE.md của thư mục cha không lọt vào; API và worker phải thấy cùng thư mục): `CLAUDE.md` (kênh,
-  khán giả, quy tắc; import `@memory/lessons.md`), `context/` (tài liệu, ảnh, audio tải lên), `research/`, `channel/`
+  khán giả, quy tắc; import `@memory/lessons.md`), `context/` (tài liệu, ảnh, audio tải lên; video mẫu học phong cách ở `context/references/`), `research/`, `channel/`
   (strategy, style, branding), `inputs/<asset>/` (video ag-go đã chuẩn bị, chỉ đọc), `videos/<id>/` (brief, scenes,
   survey.json, edit-plan, timeline.json bản soi, youtube-kit, thumbnails, renders, `sources/index.json`), `skills/`, `memory/`,
   `.studio/` (Studio ghi; chỉ `playbook.yaml` người sửa được). Đường bảo vệ và quyền ghi: `accessFor` (`workspace/files.ts`).
@@ -141,6 +141,10 @@ nhưng không code nào đọc.
   đăng nhập (ADR-0001 mục 175, 191). Bị chặn thì Studio nhớ 6 giờ (`studio_settings.youtube.blocked_until`,
   `noteYoutubeBlocked`/`youtubeBlock`, tải hay đọc được thì xoá): `<studio_context>` báo agent, `propose_action
   reference_download` từ chối, thẻ đang chờ và màn Hàng đợi (admin) hiện cảnh báo.
+- `style_watch` nhận cả `files` (video người dùng tải ở mục Video mẫu của tab Đầu vào, `context/references/`, ≤ 300 MB):
+  đo y như video YouTube, **không bao giờ** đổi hay xoá file người dùng; tool agent `style_from_files` xếp job ngay (không
+  thẻ, không ra mạng); skill `edit-style` (bước `style`). Worker có ffmpeg là nhận `style_watch`; thiếu yt-dlp hoặc
+  `STUDIO_REFERENCE_DOWNLOADS=0` thì video YouTube trong job báo `no_ytdlp`. Tải qua máy farm khi YouTube chặn: P9.
 - Job farm của dự án ghi `project_farm_jobs`; `/api/farm/sign` tra ở đó, hỏi ag-go bằng quyền **chủ dự án**; bản xem trước xin
   `prefer: {short_edge: 480, clean: true}` (ag-go cũ bỏ qua). Khoá bucket giữ quy ước farm:
   `productions/<projectId>/jobs/<stage>/<jobId>/{in,out}/` (dự án đóng vai "production" trong payload `@ag-farm/protocol`,

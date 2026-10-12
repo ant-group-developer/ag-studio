@@ -138,8 +138,12 @@ export function projectJobHandlers(o: StudioWorkerOptions): Partial<Record<JobKi
     for (const kind of RENDER_KINDS) handlers[kind] = renderHandler(kind, { db: o.db, bucket: o.bucket, farm: o.farm, voiceDir: media.voiceDir, ...farmWait });
   }
   if (o.thumbnails) handlers.thumbnail = thumbnailHandler({ db: o.db, bucket: o.bucket, renderer: o.thumbnails });
-  // reference videos a person agreed to download (a reference_download card): watched, measured, deleted
-  if (o.ytdlp && media && o.referenceDownloads !== false) handlers.style_watch = styleWatchHandler({ db: o.db, ytdlp: o.ytdlp, ffmpeg: media.ffmpeg, ffprobe: media.ffprobe });
+  // reference videos: uploaded ones (style_from_files), and YouTube ones a person agreed to download (a
+  // reference_download card: watched, measured, deleted) when this worker has yt-dlp and downloads are not turned off
+  if (media) {
+    const ytdlp = o.referenceDownloads !== false ? o.ytdlp ?? null : null;
+    handlers.style_watch = styleWatchHandler({ db: o.db, ytdlp, ffmpeg: media.ffmpeg, ffprobe: media.ffprobe });
+  }
   const crawler = new YoutubeCrawler({ apiKey: o.youtubeApiKey ?? null, ytdlp: o.ytdlp ?? null, cache: studioResearchCache(o.db) });
   if (crawler.source) handlers.research = researchHandler({ db: o.db, crawler });
   return handlers;

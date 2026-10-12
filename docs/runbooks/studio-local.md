@@ -173,7 +173,9 @@ Worker dùng yt-dlp cho hai việc (ADR-0001 mục 175–176, 186):
   chờ một worker có.
 - **Học phong cách:** chỉ khi người bấm xác nhận thẻ `reference_download`: tải video mẫu ở ≤480p, đo nhịp cắt, giữ khung và
   tờ ghép, **xoá video ngay**. Không cookie, không đăng nhập: video YouTube chặn thì bỏ qua và ghi lỗi. Đây là quyết định
-  của người dùng, chấp nhận rủi ro điều khoản YouTube; tắt hẳn bằng `STUDIO_REFERENCE_DOWNLOADS=0`.
+  của người dùng, chấp nhận rủi ro điều khoản YouTube; tắt hẳn bằng `STUDIO_REFERENCE_DOWNLOADS=0`. Video mẫu người dùng
+  tải lên tab Đầu vào (mục Video mẫu, `context/references/`, ≤ 300 MB) thì agent học bằng `style_from_files`: không thẻ,
+  không mạng, chỉ cần ffmpeg, không xoá file của họ.
 
 Cài trên máy dev Windows (một lần), rồi khai trong `apps/api/.env` (worker chạy trực tiếp đọc file này):
 
@@ -210,6 +212,7 @@ thể cần thêm một JS runtime (Deno) cho YouTube: làm theo thông báo l�
 | Kiểm trong khung trình duyệt của app desktop, số liệu không tự cập nhật | Khung đó báo trang luôn ẩn nên không polling | Tải lại trang sau mỗi bước |
 | Chuẩn bị video hay dựng timeline treo ở "đọc lời thoại"/"đọc lời dẫn" | `local-render` không khai `python` hoặc thiếu kind `studio.tts`/`studio.transcribe` | Mục 4a; web farm 3011 xem khả năng node |
 | Job `studio.transcribe` bị hub từ chối "not allowed for owner studio" | DB farm chưa chạy migration `studio-transcribe` | Chạy migration hub (mục 3) |
-| Job học phong cách (`style_watch`) chờ mãi | Không worker nào chạy được yt-dlp (hay `STUDIO_REFERENCE_DOWNLOADS=0`) | Mục 4b; bật lại worker |
-| Học phong cách báo "Không xem được video mẫu nào: … Sign in to confirm you're not a bot" | YouTube chặn IP máy chạy worker | Cập nhật yt-dlp; thử máy/mạng khác. Studio không lách chặn (không cookie) |
+| Job học phong cách (`style_watch`) chờ mãi | Không worker nào có ffmpeg (`media`) | Mục 4a/4b; bật lại worker |
+| Video YouTube trong job học phong cách báo `no_ytdlp` | Worker không có yt-dlp hay `STUDIO_REFERENCE_DOWNLOADS=0` | Mục 4b; hoặc tải video mẫu lên tab Đầu vào |
+| Học phong cách báo "YouTube đang chặn tải từ máy chủ Studio…" (mã `youtube_blocked`; Hàng đợi hiện cảnh báo cho admin) | YouTube đòi xác nhận không phải bot với IP máy chạy worker | Tải video mẫu lên tab Đầu vào, hoặc tả phong cách bằng lời; research đặt `YOUTUBE_API_KEY`. Studio nhớ 6 giờ, tải được thì tự xoá. Không lách chặn (không cookie) |
 | Crawl ở tab Nghiên cứu chờ mãi | Worker không có `YOUTUBE_API_KEY` lẫn yt-dlp | Đặt `YOUTUBE_API_KEY` hoặc cài yt-dlp (mục 4b), bật lại worker |

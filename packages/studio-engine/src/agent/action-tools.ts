@@ -34,7 +34,8 @@ export const ACTION_TOOLS: AgentTool[] = [
       if (blocked) {
         throw new StudioRunError("rejected", [
           "Chưa tạo thẻ: YouTube đang chặn tải từ máy chủ Studio (đòi đăng nhập để xác nhận không phải bot), nên tải video mẫu chắc chắn hỏng.",
-          "Studio không dùng cookie hay đăng nhập để lách. Hãy nói rõ với người dùng và đề nghị: tả phong cách dựng bằng lời.",
+          "Studio không dùng cookie hay đăng nhập để lách. Hãy nói rõ với người dùng và đề nghị: tải video mẫu lên tab Đầu vào",
+          "(mục Video mẫu) rồi học bằng style_from_files, hoặc tả phong cách dựng bằng lời.",
         ].join(" "), { code: "youtube_blocked", until: blocked.until });
       }
       const params = { ...a.params };

@@ -467,6 +467,7 @@ export const wsVi = {
     youtube_search: "tìm video YouTube",
     youtube_top_channels: "tìm kênh YouTube hàng đầu",
     youtube_channel_top_videos: "xem video nổi bật của kênh",
+    style_from_files: "học phong cách dựng từ video mẫu đã tải lên",
     timeline_from_edit_plan: "dựng timeline từ kế hoạch dựng",
     timeline_get: "đọc timeline",
     timeline_apply_ops: "sửa timeline",
@@ -577,6 +578,9 @@ export const wsVi = {
     uploaded_one: "Đã tải lên {{count}} file",
     uploaded_other: "Đã tải lên {{count}} file",
     uploadFailed: "Không tải lên được",
+    references: "Video mẫu (học phong cách dựng)",
+    referencesHint: "Video của kênh tham khảo để {{ai}} đo nhịp dựng (≤ 300 MB, nên ≤ 480p). Chỉ để học phong cách, không dùng làm footage; dùng được cả khi YouTube chặn tải từ máy chủ Studio.",
+    uploadReference: "Tải video mẫu",
     picker: {
       viewLabel: "Kiểu xem",
       table: "Bảng",
@@ -818,7 +822,7 @@ export const wsVi = {
     expires: "hết hạn {{when}}",
     expired: "Thẻ đã hết hiệu lực (timeline đã đổi hoặc quá 24 giờ). Nhờ agent đề xuất lại.",
     failed: "Không thực hiện được",
-    youtubeBlocked: "YouTube đang chặn tải từ máy chủ Studio (từ {{since}}): xác nhận lúc này nhiều khả năng sẽ lỗi. Có thể tả phong cách dựng bằng lời trong chat.",
+    youtubeBlocked: "YouTube đang chặn tải từ máy chủ Studio (từ {{since}}): xác nhận lúc này nhiều khả năng sẽ lỗi. Cách khác: tải video mẫu lên tab Đầu vào (mục Video mẫu), hoặc tả phong cách dựng bằng lời trong chat.",
     kind: {
       render_final: "Render bản cuối",
       export_premiere: "Xuất Premiere",

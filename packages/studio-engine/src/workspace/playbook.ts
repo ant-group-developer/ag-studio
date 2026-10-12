@@ -40,11 +40,11 @@ export const DEFAULT_PLAYBOOK: StudioPlaybook = {
       },
     }),
     step({
-      key: "style", scope: "project", title: "Phong cách dựng", optional: true, requires: ["channel"],
+      key: "style", scope: "project", title: "Phong cách dựng", skill: "studio:edit-style", optional: true, requires: ["channel"],
       description: "Nhịp cắt, chuyển cảnh, chữ, nhạc — học từ video mẫu hoặc theo mô tả.",
       outputs: [{ path: "channel/style.md", role: "doc" }],
       prompts: {
-        do: "Viết phong cách dựng của kênh vào channel/style.md: nhịp cắt (độ dài shot), chuyển cảnh, chữ trên hình, nhạc, điều nên và không nên.",
+        do: "Viết phong cách dựng của kênh vào channel/style.md theo skill edit-style: nhịp cắt (độ dài shot), mở đầu, chuyển cảnh, chữ trên hình, điều nên và không nên — từ video mẫu (tải lên hoặc YouTube) hay lời tôi tả.",
         revise: "Sửa channel/style.md theo góp ý: ",
       },
     }),

@@ -471,6 +471,7 @@ export const wsEn: Messages<typeof wsVi> = {
     youtube_search: "searching YouTube",
     youtube_top_channels: "finding top YouTube channels",
     youtube_channel_top_videos: "reading a channel's top videos",
+    style_from_files: "learning the edit style from uploaded reference videos",
     timeline_from_edit_plan: "building the timeline from the edit plan",
     timeline_get: "reading the timeline",
     timeline_apply_ops: "editing the timeline",
@@ -580,6 +581,9 @@ export const wsEn: Messages<typeof wsVi> = {
     uploaded_one: "Uploaded {{count}} file",
     uploaded_other: "Uploaded {{count}} files",
     uploadFailed: "Could not upload",
+    references: "Reference videos (to learn an edit style)",
+    referencesHint: "Videos of a channel you admire, for {{ai}} to measure the editing pace (≤ 300 MB, ≤ 480p is plenty). Only to learn the style, never used as footage; works even when YouTube blocks downloads from the Studio server.",
+    uploadReference: "Upload reference video",
     picker: {
       viewLabel: "View",
       table: "Table",
@@ -821,7 +825,7 @@ export const wsEn: Messages<typeof wsVi> = {
     expires: "expires {{when}}",
     expired: "The card has expired (the timeline changed or a day passed). Ask the agent to propose it again.",
     failed: "Could not do it",
-    youtubeBlocked: "YouTube is blocking downloads from the Studio server (since {{since}}): confirming now will most likely fail. You can describe the edit style in words in the chat instead.",
+    youtubeBlocked: "YouTube is blocking downloads from the Studio server (since {{since}}): confirming now will most likely fail. Instead, upload reference videos in the Inputs tab (Reference videos), or describe the edit style in words in the chat.",
     kind: {
       render_final: "Final render",
       export_premiere: "Premiere export",

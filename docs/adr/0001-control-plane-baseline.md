@@ -1234,3 +1234,9 @@ Spec `docs/superpowers/specs/2026-10-10-ag-studio-agent-workspace-design.md`, pl
     Bị chặn thì Studio nhớ 6 giờ (`studio_settings` khoá `youtube.blocked_until`; tải/đọc được thì xoá): agent được báo
     trong `<studio_context>` và không tạo được thẻ `reference_download` (thẻ chắc chắn hỏng), thẻ đang chờ và màn Hàng
     đợi (admin) hiện cảnh báo.
+192. **Học phong cách từ video người dùng tải lên (2026-10-12).** Khi YouTube chặn máy chủ (mục 191), người dùng tải video
+    mẫu ở tab Đầu vào (mục Video mẫu, `context/references/`, ≤ 300 MB; nginx `client_max_body_size 300m`; chỉ để học
+    phong cách, không là footage — footage vẫn chỉ từ ag-go, mục 188). Job `style_watch` nhận `files` (≤ 5, phải nằm dưới
+    `context/`, đuôi video), đo y như video YouTube và **không đổi, không xoá** file người dùng. Tool agent
+    `style_from_files` xếp job thẳng, không thẻ xác nhận vì không ra mạng (khác `reference_download`, mục 175/185). Skill
+    `edit-style` cho bước `style`: video tải lên, video YouTube (khi không bị chặn), hoặc lời người dùng tả.

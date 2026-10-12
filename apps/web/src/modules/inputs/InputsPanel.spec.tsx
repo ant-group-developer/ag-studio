@@ -220,6 +220,23 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     fireEvent.change(input, { target: { files: [new File(["# x"], "brief.md", { type: "text/markdown" })] } });
     await waitFor(() => expect(ws.uploadSource).toHaveBeenCalledWith("p1", expect.any(File), undefined));
   });
+
+  it("uploads reference videos apart from the documents, to learn an edit style from", async () => {
+    ws.listSources.mockResolvedValue({ sources: [
+      src({ kind: "upload", ref: "context/uploads/Ghi chú.md", mediaType: "document", label: "Ghi chú.md" }),
+      src({ kind: "upload", ref: "context/references/Kênh mẫu.mp4", mediaType: "video", label: "Kênh mẫu.mp4", meta: { reference: true } }),
+    ] });
+    ws.uploadSource.mockResolvedValue({ source: src({}), file: {} });
+    mount();
+    const refs = await screen.findByRole("region", { name: "Video mẫu (học phong cách dựng)" });
+    expect(await within(refs).findByText("Kênh mẫu.mp4")).toBeInTheDocument();
+    expect(within(refs).queryByText("Ghi chú.md")).toBeNull();
+    expect(screen.getByRole("region", { name: "Tài liệu, ảnh, audio" })).not.toHaveTextContent("Kênh mẫu.mp4");
+    const input = within(refs).getByLabelText("Tải video mẫu", { selector: "input" });
+    expect(input).toHaveAttribute("accept", expect.stringContaining(".mp4"));
+    fireEvent.change(input, { target: { files: [new File(["v"], "mau.mp4", { type: "video/mp4" })] } });
+    await waitFor(() => expect(ws.uploadSource).toHaveBeenCalledWith("p1", expect.any(File), undefined, { reference: true }));
+  });
 });
 
 describe("jobs of a chat", { timeout: 20_000 }, () => {

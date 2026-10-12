@@ -150,4 +150,17 @@ describe('inputs (real studio.db)', () => {
     expect(await inputs.upload(p.id, {}, tmp('a.mp4', 'x'), req(EDITOR)).catch(code)).toBe('video_from_ag_go');
     expect((await inputs.sources(p.id)).sources.map((x) => x.ref)).toEqual(['context/uploads/Ghi chú.md', 'context/images/logo.PNG', 'context/uploads/Ghi chú (2).md']);
   });
+
+  it('a reference video (to learn an edit style from) goes to context/references/, up to 300 MB; only videos', async () => {
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    const tmp = (name: string, body: string, size = body.length) => { const path = join(mkdtempSync(join(tmpdir(), 'up-')), name); writeFileSync(path, body); return { path, originalname: name, size }; };
+    const ref = await inputs.upload(p.id, { reference: '1' }, tmp('Kênh mẫu.mp4', 'video'), req(EDITOR));
+    expect(ref.source).toMatchObject({ kind: 'upload', ref: 'context/references/Kênh mẫu.mp4', mediaType: 'video', meta: { reference: true } });
+    expect(existsSync(join(root, p.id, 'context', 'references', 'Kênh mẫu.mp4'))).toBe(true);
+    // 80 MB: too big for a document, fine for a reference video
+    expect((await inputs.upload(p.id, { reference: 'true' }, tmp('b.mov', 'x', 80 * 1024 * 1024), req(EDITOR))).source.ref).toBe('context/references/b.mov');
+    expect(await inputs.upload(p.id, {}, tmp('big.pdf', 'x', 80 * 1024 * 1024), req(EDITOR)).catch(code)).toBe('file_too_large');
+    expect(await inputs.upload(p.id, { reference: '1' }, tmp('huge.mp4', 'x', 301 * 1024 * 1024), req(EDITOR)).catch(code)).toBe('file_too_large');
+    expect(await inputs.upload(p.id, { reference: '1' }, tmp('notes.md', 'x'), req(EDITOR)).catch(code)).toBe('not_video');
+  });
 });

@@ -585,10 +585,12 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
       return call("DELETE", `/api/projects/${enc(projectId)}/sources/${enc(sourceId)}`);
     },
     /** A document, image or audio file into context/ (415 `docx_not_supported`, `video_from_ag_go`, `file_type`). */
-    uploadSource(projectId: string, file: File, videoId?: string): Promise<{ source: SourceItem; file: SavedFile }> {
+    /** `reference`: a video to learn an edit style from (not footage), into context/references/, up to 300 MB. */
+    uploadSource(projectId: string, file: File, videoId?: string, opts: { reference?: boolean } = {}): Promise<{ source: SourceItem; file: SavedFile }> {
       const form = new FormData();
       form.append("file", file);
       if (videoId) form.append("videoId", videoId);
+      if (opts.reference) form.append("reference", "1");
       return call("POST", `/api/projects/${enc(projectId)}/sources/upload`, form);
     },
     /** Videos of the project's ag-go projects the person can see, with where each stands here. */

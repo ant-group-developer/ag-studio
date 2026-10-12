@@ -1,13 +1,15 @@
 /**
  * The agent's YouTube research tools (spec 2026-10-10 agent-workspace §P5): each queues a `research` job (a crawl
  * written to `research/<date>-<slug>.{md,json}`) and may wait for it up to a minute. Large crawls (> 500 API units or
- * > 100 videos) are not run by the agent: a person starts them from the Research tab.
+ * > 100 videos) are not run by the agent: a person starts them from the Research tab. `style_from_files` learns an edit
+ * style from videos people uploaded (job `style_watch`): nothing leaves Studio, so no confirmation card.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { CrawlRequestSchema, estimateCrawlUnits, isLargeCrawl, type CrawlRequestInput, type StudioCrawl } from "@harness/contracts";
-import { getJob } from "../workspace/jobs-db.js";
+import { createJob, getJob } from "../workspace/jobs-db.js";
+import { referenceFile, STYLE_WATCH_MAX } from "../workspace/style-watch.js";
 import { queueResearch } from "../workspace/research.js";
 import type { AgentTool, AgentToolContext, ToolAnswer } from "./tools.js";
 
@@ -93,5 +95,28 @@ export const RESEARCH_TOOLS: AgentTool[] = [
     input: z.object({ channel: z.string().trim().min(2).max(300), max: z.number().int().min(1).max(100).optional(), wait_s: waitS }).strict(),
     role: "editor",
     run: (ctx, a) => crawl(ctx, { kind: "channel_top", channel: a.channel, ...(a.max ? { max: a.max } : {}) }, a.wait_s),
+  }),
+  tool({
+    name: "style_from_files",
+    description: [
+      "Học phong cách dựng từ video mẫu người dùng đã tải lên dự án (file video trong context/, thường context/references/; tối đa 5):",
+      "Studio đo nhịp cắt (độ dài shot, số lần cắt/phút, mở đầu) và ghép khung hình thành tờ ghép trong research/style-<ngày>-<n>/",
+      "(README.md, watch.json, *-sheet-*.jpg), không đổi hay xoá file của người dùng. Chạy nền, không cần thẻ xác nhận;",
+      "Studio báo vào luồng khi xong, rồi bạn đọc README và tờ ghép để viết channel/style.md.",
+      "Dùng khi người dùng có video mẫu, nhất là khi YouTube đang chặn tải từ máy chủ Studio. Xem file đã tải lên bằng inputs_list.",
+    ].join(" "),
+    input: z.object({
+      paths: z.array(z.string().min(1).max(300)).min(1).max(STYLE_WATCH_MAX),
+      purpose: z.string().trim().min(1).max(300).describe("Học gì từ các video này (nhịp dựng, mở đầu, chuyển cảnh…)"),
+    }).strict(),
+    role: "editor",
+    run: (ctx, a) => {
+      const files = [...new Set(a.paths.map((p) => referenceFile(ctx.workspaceDir, p).path))];
+      const job = createJob(ctx.db, {
+        projectId: ctx.project.id, threadId: ctx.thread.id, kind: "style_watch", title: `Học phong cách từ ${files.length} video tải lên`,
+        request: { files, purpose: a.purpose }, continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role,
+      }, ctx.now());
+      return { text: json({ job_id: job.id, status: job.status, files, note: "Đang chạy nền: Studio báo vào luồng khi xong. Kết thúc lượt." }) };
+    },
   }),
 ];
