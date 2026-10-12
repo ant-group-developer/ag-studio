@@ -213,3 +213,10 @@ P6 chỉ cần hub + web farm (migration chạy qua `deploy.sh`), không cần p
 - ag-go: endpoint chỉ kiểm quyền (không ký URL, không HEAD R2) để lần kiểm đầu của tab Xem trước nhẹ hơn.
 - Dán link audio làm giọng/nhạc (engine đã có `fetchAudioUrl`), giọng thiết kế (`design`) cho dự án.
 - Trang "Tất cả dự án" cho admin (đã chốt: chưa cần).
+
+## Trạng thái (2026-10-13)
+
+Xong P1–P9 trên `dev-duc` của ag-studio (21 commit), ag-farm (15), ag-render-worker (8, bản 0.9.0), ag-scan-worker (6,
+bản 0.4.0); chưa push. Build, typecheck, test của cả bốn repo xanh. Tổng hợp để review và thứ tự triển khai:
+`docs/superpowers/plans/2026-10-13-feedback-round-review.md`. Chưa kiểm trên web có đăng nhập; cài/cập nhật worker chưa
+chạy trên máy Windows sạch.
