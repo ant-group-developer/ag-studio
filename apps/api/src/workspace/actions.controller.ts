@@ -1,6 +1,8 @@
 import { Controller, Get, HttpCode, HttpStatus, Param, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
-import { actionView, decideAction, getAction, listActions, requireProject, requireThread, StudioRunError, type ActionView, type ActorRole } from '@ag-studio/engine';
+import {
+  actionView, decideAction, getAction, listActions, requireProject, requireThread, StudioRunError, youtubeBlock, type ActionView, type ActorRole, type YoutubeBlock,
+} from '@ag-studio/engine';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from '../studio/engine.service';
@@ -16,12 +18,13 @@ import { mapErrors } from '../studio/http-errors';
 export class ActionsController {
   constructor(private readonly engine: EngineService) {}
 
+  /** `youtubeBlocked`: YouTube refusing the Studio server now (pending reference downloads would fail), else null. */
   @Get('threads/:threadId/actions')
   @Roles('viewer')
-  list(@Param('threadId') threadId: string): Promise<{ actions: ActionView[] }> {
+  list(@Param('threadId') threadId: string): Promise<{ actions: ActionView[]; youtubeBlocked: YoutubeBlock | null }> {
     return mapErrors(() => {
       requireThread(this.engine.db, threadId);
-      return { actions: listActions(this.engine.db, { threadId }).map(actionView) };
+      return { actions: listActions(this.engine.db, { threadId }).map(actionView), youtubeBlocked: youtubeBlock(this.engine.db, this.engine.core.clock.now()) };
     });
   }
 

@@ -7,7 +7,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { CrawlRequestSchema, StudioCrawlSchema } from "@harness/contracts";
 import {
-  createJob, createJobRunner, createProject, crawlSlug, getJob, researchHandler, seedWorkspace, slugify, studioLogger, YoutubeCrawler, ytDlp,
+  createJob, createJobRunner, createProject, crawlSlug, getJob, researchHandler, seedWorkspace, slugify, studioLogger, youtubeBlock, YoutubeCrawler, ytDlp,
   type ResearchCache,
 } from "../src/index.js";
 import { world } from "./helpers.js";
@@ -192,5 +192,6 @@ describe("research job", () => {
     expect(failed.error).toContain("YOUTUBE_API_KEY");
     expect(failed.error).not.toContain("cookies");
     expect(JSON.parse(failed.result!)).toEqual({ error_code: "youtube_blocked" });
+    expect(youtubeBlock(w.db, new Date().toISOString())).toMatchObject({ where: "studio" });
   });
 });

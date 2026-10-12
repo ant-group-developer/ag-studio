@@ -428,6 +428,8 @@ export interface ProjectAudioView {
 export type VoiceOrigin = "synthetic" | "own" | "licensed";
 
 // ---- Confirmation cards ----
+/** YouTube refusing to let the Studio server download (ISO times); Studio forgets it at `until` or after a download. */
+export interface YoutubeBlock { blockedAt: string; until: string; where: "studio" }
 export type ActionKind = "render_final" | "export_premiere" | "delete_video" | "crawl_large" | "reference_download";
 export interface ActionView {
   id: string;
@@ -635,7 +637,8 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     },
 
     // ---- Confirmation cards ----
-    listActions(threadId: string): Promise<{ actions: ActionView[] }> {
+    /** `youtubeBlocked`: YouTube blocks the Studio server now (a pending reference download would fail). */
+    listActions(threadId: string): Promise<{ actions: ActionView[]; youtubeBlocked?: YoutubeBlock | null }> {
       return call("GET", `/api/threads/${enc(threadId)}/actions`);
     },
     /** 422 `role` (needs another role), `expired` (the timeline changed or a day passed); 409 `decided`. */

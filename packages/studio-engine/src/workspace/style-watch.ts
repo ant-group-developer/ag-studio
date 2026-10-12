@@ -6,12 +6,14 @@
  * sheets and writes `channel/style.md` (+ `style.json`).
  *
  * A video that cannot be had says why with a code (`yt-dlp.ts`, `YtFailureCode`). YouTube refusing the server itself
- * (`youtube_blocked`, the bot check) stops at once: the other videos would fail the same way, so they are skipped.
+ * (`youtube_blocked`, the bot check) stops at once: the other videos would fail the same way, so they are skipped; Studio
+ * remembers it for a while (`studio_settings`, `noteYoutubeBlocked`) and forgets it when a download goes through.
  */
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { measureShots, mergeCuts, pickFrameTimes } from "@harness/core";
 import { detectCuts, grabFrame, probeMedia, tileSheet } from "../cut-ffmpeg.js";
+import { clearYoutubeBlocked, noteYoutubeBlocked } from "../settings.js";
 import type { StudioDb } from "../studio-db.js";
 import { YT_FAILURE_REASON, ytFailureOf, type YtDlp, type YtFailure, type YtFailureCode } from "../yt-dlp.js";
 import { writeWorkspaceFile } from "./files.js";
@@ -116,6 +118,7 @@ export function styleWatchHandler(d: { db: StudioDb; ytdlp: YtDlp; ffmpeg: strin
       try {
         ctx.report({ phase: `Đang tải video mẫu ${i + 1}/${ids.length} (≤480p)`, progress: 0.05 + 0.9 * base });
         const path = await d.ytdlp.download(id, scratch, ctx.signal);
+        clearYoutubeBlocked(d.db);
         await measureVideo(d, job.project_id, ctx, { path, folder, row, all, n: `${i + 1}/${ids.length}`, progress: (part) => 0.05 + 0.9 * (base + part / ids.length) });
       } catch (e) {
         if (ctx.stopRequested()) throw e;
@@ -128,6 +131,7 @@ export function styleWatchHandler(d: { db: StudioDb; ytdlp: YtDlp; ffmpeg: strin
       }
     }
     const wasBlocked = (blocked as YtFailure | null) !== null;
+    if (wasBlocked) noteYoutubeBlocked(d.db, ctx.now());
     const measured = measureShots(all);
     const lines = [
       `# Phong cách dựng từ video mẫu (${day})`,

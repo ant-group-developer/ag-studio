@@ -58,6 +58,7 @@ interface TeamSkill {
     hidden: number;
     machines: OwnerNodeView[] | null;                       // máy của farm (owner API, cache 3 s); null khi không đọc được
     farm: { ok: true } | { ok: false; error: string };      // farm không với tới không phải lỗi
+    youtube: { blockedAt; until; where: 'studio' } | null;  // YouTube đang chặn tải từ máy chủ Studio (web: chỉ admin thấy)
   }
   ```
 - `GET stats/claude?from&to&groupBy=team|project|video|user&teamId&projectId&tz` (admin Studio: mọi nhóm; owner: nhóm
@@ -193,8 +194,10 @@ xem nhóm mình; người khác 403.
 
 ## Thẻ xác nhận
 
-- `GET /threads/:threadId/actions` → `{actions: ActionView[]}` (`kind: render_final|export_premiere|delete_video|crawl_large|
-  reference_download`, `needs` = vai cần có, `revision`, `expiresAt`)
+- `GET /threads/:threadId/actions` → `{actions: ActionView[], youtubeBlocked}` (`kind: render_final|export_premiere|delete_video|crawl_large|
+  reference_download`, `needs` = vai cần có, `revision`, `expiresAt`; `youtubeBlocked` như `youtube` của `GET studio/queue`:
+  thẻ `reference_download` đang chờ hiện cảnh báo). Khi YouTube đang chặn, tool `propose_action reference_download` của
+  agent từ chối (`youtube_blocked`) thay vì tạo thẻ
 - `POST /projects/:projectId/actions/:actionId/confirm|reject` — vai thiếu → 422 `role`; đã quyết → 409 `decided`;
   timeline đổi hoặc quá 24 giờ → 422 `expired`
 

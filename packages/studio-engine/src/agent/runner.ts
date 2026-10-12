@@ -24,7 +24,8 @@ import { materializeSkillPlugin } from "./skills.js";
 import { saveThreadSummary, summaryPrompt, THREAD_SUMMARY_JSON_SCHEMA, ThreadSummarySchema, threadsToSummarize } from "./summaries.js";
 import { LESSONS_PATH } from "./prompt.js";
 import { threadMarkdown } from "./history.js";
-import { agentSystemPrompt, agentTurnPrompt } from "./prompt.js";
+import { agentSystemPrompt, agentTurnPrompt, youtubeBlockLines } from "./prompt.js";
+import { youtubeBlock } from "../settings.js";
 import {
   cancelRequested, finishTurn, getMessage, getThread, listThreadRefs, markAgentTurnRunning, markSessionStarted, nextPendingAgentTurns,
   orphanedAgentTurns, postSystemMessage, queueFollowUp, requeueAgentTurn, resetSession, turnInput, updateRunningTurn, type MessageRecord,
@@ -159,7 +160,7 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
     const prompt = agentTurnPrompt({
       project, thread, video, refs: listThreadRefs(db, thread.id), messages: turnInput(db, message),
       resumed: message.attempts > 1, recap: opts.recap,
-      extra: [...playbookContextLines(status), ...(o.contextLines?.(project.id, video?.id ?? null) ?? [])], now: now(),
+      extra: [...playbookContextLines(status), ...youtubeBlockLines(youtubeBlock(db, now())), ...(o.contextLines?.(project.id, video?.id ?? null) ?? [])], now: now(),
     });
     const pluginDirs = o.skills ? [materializeSkillPlugin(db, { project, workspaceDir: dir, builtinDir: o.skills.builtinDir, pluginsRoot: o.skills.pluginsRoot })] : [];
     let lastWrite = 0;

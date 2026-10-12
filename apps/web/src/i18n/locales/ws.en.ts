@@ -330,6 +330,8 @@ export const wsEn: Messages<typeof wsVi> = {
     online: "on",
     offline: "off",
     stopFailed: "Could not stop it.",
+    youtubeBlocked: "YouTube has been blocking downloads from the Studio server since {{since}} (Studio assumes it still is until {{until}}): reference video downloads will fail, and so will YouTube research through yt-dlp.",
+    youtubeBlockedHint: "Give the worker a YOUTUBE_API_KEY and research goes through the YouTube Data API, which is not blocked this way. Studio does not use cookies or a login to get around it.",
   },
   audit: {
     title: "Activity log",
@@ -819,6 +821,7 @@ export const wsEn: Messages<typeof wsVi> = {
     expires: "expires {{when}}",
     expired: "The card has expired (the timeline changed or a day passed). Ask the agent to propose it again.",
     failed: "Could not do it",
+    youtubeBlocked: "YouTube is blocking downloads from the Studio server (since {{since}}): confirming now will most likely fail. You can describe the edit style in words in the chat instead.",
     kind: {
       render_final: "Final render",
       export_premiere: "Premiere export",

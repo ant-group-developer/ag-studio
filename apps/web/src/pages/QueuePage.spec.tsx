@@ -98,4 +98,21 @@ describe("QueuePage", () => {
     expect(screen.getByText("Không có việc nào đang chạy trong các dự án bạn thấy.")).toBeInTheDocument();
     expect(screen.getByText("Không đọc được danh sách máy farm: ECONNREFUSED")).toBeInTheDocument();
   });
+
+  it("only an admin sees that YouTube blocks the Studio server", async () => {
+    const youtube = { blockedAt: "2026-10-06T09:00:00.000Z", until: "2026-10-06T15:00:00.000Z", where: "studio" as const };
+    client.getQueue.mockResolvedValue({ ...queue, youtube });
+    mount();
+    await screen.findByRole("region", { name: "Đang chạy" });
+    expect(screen.queryByText(/YouTube đang chặn tải từ máy chủ Studio/)).toBeNull();
+  });
+
+  it("an admin is told when YouTube blocks the Studio server, with the API key hint", async () => {
+    client.getMe.mockResolvedValue({ userId: "u", isAdmin: true });
+    client.getQueue.mockResolvedValue({ ...queue, youtube: { blockedAt: "2026-10-06T09:00:00.000Z", until: "2026-10-06T15:00:00.000Z", where: "studio" } });
+    mount();
+    const alert = await screen.findByText(/^YouTube đang chặn tải từ máy chủ Studio từ/);
+    expect(alert.textContent).toMatch(/tải video mẫu sẽ lỗi/);
+    expect(screen.getByText(/Đặt YOUTUBE_API_KEY cho worker/)).toBeInTheDocument();
+  });
 });

@@ -64,3 +64,42 @@ export function claudeMaxConcurrent(db: StudioDb, fallback: number): { value: nu
   const saved = getStudioSetting(db, CLAUDE_MAX_CONCURRENT_KEY)?.value;
   return isClaudeMax(saved) ? { value: saved, source: "settings" } : { value: fallback, source: "env" };
 }
+
+/**
+ * YouTube refusing to let this server download (the bot check, ADR-0001 item 191): remembered for a while so the agent
+ * stops proposing reference downloads that would surely fail, pending cards and the Queue warn, and research says why.
+ * Written when a yt-dlp call is refused this way, cleared when one succeeds; past `until` it is forgotten.
+ */
+export const YOUTUBE_BLOCK_KEY = "youtube.blocked_until";
+export const YOUTUBE_BLOCK_MS = 6 * 3600_000;
+
+export interface YoutubeBlock {
+  /** When it was last seen blocked. */
+  blockedAt: string;
+  /** Until when Studio assumes it still is. */
+  until: string;
+  /** Which machine YouTube refused: the Studio server (the farm's machines come with P9). */
+  where: "studio";
+}
+
+export function noteYoutubeBlocked(db: StudioDb, now: string, where: YoutubeBlock["where"] = "studio"): YoutubeBlock {
+  const block: YoutubeBlock = { blockedAt: now, until: new Date(Date.parse(now) + YOUTUBE_BLOCK_MS).toISOString(), where };
+  db.run(
+    `INSERT INTO studio_settings (key, value, updated_at, updated_by) VALUES (?, ?, ?, 'studio')
+     ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+    [YOUTUBE_BLOCK_KEY, JSON.stringify(block), now],
+  );
+  return block;
+}
+
+/** A download (or read) went through: YouTube is not blocking any more. */
+export function clearYoutubeBlocked(db: StudioDb): void {
+  db.run("DELETE FROM studio_settings WHERE key = ?", [YOUTUBE_BLOCK_KEY]);
+}
+
+/** YouTube's block as remembered now; null when none, or past its time. */
+export function youtubeBlock(db: StudioDb, now: string): YoutubeBlock | null {
+  const v = getStudioSetting(db, YOUTUBE_BLOCK_KEY)?.value as Partial<YoutubeBlock> | undefined;
+  if (!v || typeof v.until !== "string" || typeof v.blockedAt !== "string") return null;
+  return Date.parse(v.until) > Date.parse(now) ? { blockedAt: v.blockedAt, until: v.until, where: "studio" } : null;
+}

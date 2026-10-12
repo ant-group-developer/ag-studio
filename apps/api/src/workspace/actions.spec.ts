@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
-import { getJob, proposeAction, saveVideoRevision } from '@ag-studio/engine';
+import { getJob, noteYoutubeBlocked, proposeAction, saveVideoRevision } from '@ag-studio/engine';
 import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
 import type { EngineService } from '../studio/engine.service';
 import { ActionsController } from './actions.controller';
@@ -57,5 +57,14 @@ describe('actions (real studio.db)', () => {
     expect(done).toMatchObject({ status: 'confirmed', decidedBy: OWNER });
     expect(getJob(s.engine.db, done.jobId!)).toMatchObject({ kind: 'render_final', status: 'queued' });
     expect(await actions.reject(p.id, a.id, req(OWNER)).catch(code)).toBe('decided');
+  });
+
+  it('cards come with whether YouTube blocks the Studio server now (a pending reference download would fail)', async () => {
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    const thread = s.engine.db.get<{ id: string }>('SELECT id FROM agent_threads WHERE project_id = ? LIMIT 1', [p.id])!;
+    proposeAction(s.engine.db, { projectId: p.id, threadId: thread.id, messageId: null, kind: 'reference_download', title: 'Tải video mẫu', summary: 'nhịp', params: { video_ids: ['U_17EqTHUIo'], purpose: 'nhịp' }, createdBy: 'agent' });
+    expect(await actions.list(thread.id)).toMatchObject({ youtubeBlocked: null });
+    noteYoutubeBlocked(s.engine.db, new Date().toISOString());
+    expect((await actions.list(thread.id)).youtubeBlocked).toMatchObject({ where: 'studio' });
   });
 });

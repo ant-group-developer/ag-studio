@@ -1231,3 +1231,6 @@ Spec `docs/superpowers/specs/2026-10-10-ag-studio-agent-workspace-design.md`, pl
     `network`, `timeout`, `other` (giữ **đầu** dòng `ERROR`). `style_watch` gặp `youtube_blocked` thì dừng ngay, các video
     còn lại ghi `skipped`; không xem được video nào thì job lỗi với `result.error_code` (`JobError`). Research qua yt-dlp
     cũng báo mã này và gợi ý `YOUTUBE_API_KEY`. Mục 175 giữ nguyên: không cookie, không đăng nhập, không lách chặn.
+    Bị chặn thì Studio nhớ 6 giờ (`studio_settings` khoá `youtube.blocked_until`; tải/đọc được thì xoá): agent được báo
+    trong `<studio_context>` và không tạo được thẻ `reference_download` (thẻ chắc chắn hỏng), thẻ đang chờ và màn Hàng
+    đợi (admin) hiện cảnh báo.

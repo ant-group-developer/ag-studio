@@ -3,6 +3,8 @@
  * proposes it as a card a person confirms in the chat.
  */
 import { z } from "zod";
+import { StudioRunError } from "../errors.js";
+import { youtubeBlock } from "../settings.js";
 import { ACTION_KINDS, ACTION_ROLE, proposeAction } from "./actions.js";
 import type { AgentTool } from "./tools.js";
 
@@ -17,7 +19,7 @@ export const ACTION_TOOLS: AgentTool[] = [
       "render_final {video_id?, node_id?} render bản cuối của video từ timeline hiện tại (cần producer);",
       "export_premiere {video_id?} xuất file dựng Premiere (cần producer); delete_video {video_id} lưu trữ một video (cần producer);",
       "crawl_large {crawl: {kind, …}} một crawl YouTube lớn (> 500 đơn vị hoặc > 100 video);",
-      "reference_download {video_ids: [id YouTube 11 ký tự, tối đa 5], purpose} tải video mẫu ≤480p để đo phong cách dựng.",
+      "reference_download {video_ids: [id YouTube 11 ký tự, tối đa 5], purpose} tải video mẫu ≤480p để đo phong cách dựng (không được khi YouTube đang chặn máy chủ Studio).",
       "video_id bỏ trống = video của luồng này. `title` là câu ngắn trên thẻ, `why` giải thích ngắn vì sao.",
       "Sau khi đề xuất, kết thúc lượt: Studio báo vào luồng khi người dùng quyết.",
     ].join(" "),
@@ -28,6 +30,13 @@ export const ACTION_TOOLS: AgentTool[] = [
       params: z.record(z.string(), z.unknown()).default({}),
     }).strict(),
     run: (ctx, a) => {
+      const blocked = a.kind === "reference_download" ? youtubeBlock(ctx.db, ctx.now()) : null;
+      if (blocked) {
+        throw new StudioRunError("rejected", [
+          "Chưa tạo thẻ: YouTube đang chặn tải từ máy chủ Studio (đòi đăng nhập để xác nhận không phải bot), nên tải video mẫu chắc chắn hỏng.",
+          "Studio không dùng cookie hay đăng nhập để lách. Hãy nói rõ với người dùng và đề nghị: tả phong cách dựng bằng lời.",
+        ].join(" "), { code: "youtube_blocked", until: blocked.until });
+      }
       const params = { ...a.params };
       if (VIDEO_KINDS.has(a.kind) && params.video_id === undefined && ctx.video) params.video_id = ctx.video.id;
       const action = proposeAction(ctx.db, {

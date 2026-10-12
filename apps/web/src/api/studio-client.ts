@@ -1,5 +1,5 @@
 import { useAuthToken } from "../auth/use-auth-token";
-import type { Activity } from "./workspace-client";
+import type { Activity, YoutubeBlock } from "./workspace-client";
 
 import { buildQuery, request, StudioHttpError } from "./http";
 
@@ -352,6 +352,8 @@ export interface StudioQueueView {
   /** The farm's machines; null when the farm could not be read. */
   machines: FarmNode[] | null;
   farm: { ok: true } | { ok: false; error: string };
+  /** YouTube refusing to let the Studio server download now; null when not (older APIs: absent). */
+  youtube?: YoutubeBlock | null;
 }
 
 /** A machine of the farm (ag-farm `GET /v1/owner/nodes`). */

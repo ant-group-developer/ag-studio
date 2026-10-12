@@ -7,7 +7,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  createJob, createJobRunner, createProject, getJob, seedWorkspace, studioLogger, styleWatchHandler, ytDlp,
+  createJob, createJobRunner, createProject, getJob, noteYoutubeBlocked, seedWorkspace, studioLogger, styleWatchHandler, youtubeBlock, ytDlp,
 } from "../src/index.js";
 import { hasFfmpeg } from "../../../tests/media.js";
 import { world } from "./helpers.js";
@@ -47,6 +47,8 @@ describe("reference videos YouTube will not give (no ffmpeg needed)", () => {
     expect(watch.youtube_blocked).toBe(true);
     expect(watch.videos.map((v: { code: string; skipped: boolean }) => [v.code, v.skipped])).toEqual([["youtube_blocked", true], ["youtube_blocked", true], ["youtube_blocked", true]]);
     expect(readFileSync(join(s.folder(), "README.md"), "utf8")).toContain("lỗi `youtube_blocked`");
+    // Studio remembers it: the agent, the cards and the Queue are told
+    expect(youtubeBlock(s.db, new Date().toISOString())).toMatchObject({ where: "studio" });
   });
 
   it("each video that cannot be had says why in a word; nothing watched is a failure naming each", async () => {
@@ -71,9 +73,11 @@ describe.skipIf(!hasFfmpeg())("style from reference videos (needs ffmpeg + ffpro
     const ytdlp = ytDlp({ argv: [process.execPath, join(ROOT, "fixtures", "fake-yt-dlp.mjs")], ffmpeg: FFMPEG });
     const job = createJob(w.db, { projectId: project.id, kind: "style_watch", title: "Học phong cách", request: { video_ids: ["U_17EqTHUIo", "ERRxxxxxxxx"], purpose: "nhịp dựng" }, createdBy: "u" });
     const runner = createJobRunner({ db: w.db, logger: studioLogger({ test: "style" }), workspacesRoot: root, dataRoot: join(w.dir, "data"), handlers: { style_watch: styleWatchHandler({ db: w.db, ytdlp, ffmpeg: FFMPEG, ffprobe: FFPROBE }) } });
+    noteYoutubeBlocked(w.db, new Date().toISOString());
     runner.tick();
     await runner.idle();
     expect(getJob(w.db, job.id)).toMatchObject({ status: "done", error: null });
+    expect(youtubeBlock(w.db, new Date().toISOString())).toBeNull(); // a download went through: not blocked any more
     const day = new Date().toISOString().slice(0, 10);
     const folder = join(dir, "research", `style-${day}-1`);
     const files = readdirSync(folder);
@@ -96,5 +100,6 @@ describe.skipIf(!hasFfmpeg())("style from reference videos (needs ffmpeg + ffpro
     const watch = JSON.parse(readFileSync(join(s.folder(), "watch.json"), "utf8"));
     expect(watch.videos.map((v: { code: string | null; skipped: boolean }) => [v.code, v.skipped])).toEqual([[null, false], ["youtube_blocked", false], ["youtube_blocked", true]]);
     expect(readdirSync(s.folder()).some((f) => f.startsWith("R3-"))).toBe(false);
+    expect(youtubeBlock(s.db, new Date().toISOString())).not.toBeNull();
   }, 120_000);
 });

@@ -58,6 +58,7 @@ ol.ws-inputs__list { counter-reset: src; }
 .ws-action__why { color: var(--ws-muted); }
 .ws-action__why p { margin: 0; }
 .ws-action__meta { color: var(--ws-faint); font-size: 12px; }
+.ws-action__warn { padding: 4px 8px; font-size: 12px; }
 .ws-action__buttons { display: flex; gap: 8px; }
 
 /* the pickers' filter column, table/grid and pages (after ag-go's Projects and Footage pages) */

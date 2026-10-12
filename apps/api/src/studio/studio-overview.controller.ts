@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Request } from 'express';
 import {
-  assistantName, claudeMaxConcurrent, claudeUsage, parseClaudeMaxConcurrent, setAssistantName, setClaudeMaxConcurrent, studioActivity,
+  assistantName, claudeMaxConcurrent, claudeUsage, parseClaudeMaxConcurrent, setAssistantName, setClaudeMaxConcurrent, studioActivity, youtubeBlock,
 } from '@ag-studio/engine';
 import { StudioAdminService } from '../auth/studio-admin.service';
 import { EngineService } from './engine.service';
@@ -43,6 +43,7 @@ export class StudioOverviewController {
   /**
    * The Queue screen: what runs in the projects a person can see (agent turns, their tools, jobs with their farm
    * machine), Claude slots, and the farm's machines. The farm out of reach is `farm.ok = false`, not an error.
+   * `youtube`: YouTube refusing to let the Studio server download (since when, until when Studio assumes so), else null.
    */
   @Get('queue')
   async queue(@Req() req: Request) {
@@ -51,7 +52,7 @@ export class StudioOverviewController {
     let machines = null;
     let farm: { ok: true } | { ok: false; error: string } = { ok: true };
     try { machines = (await this.engine.farmNodes()).nodes; } catch (e) { farm = { ok: false, error: e instanceof Error ? e.message : String(e) }; }
-    return { claude: this.claude(), items, hidden, machines, farm };
+    return { claude: this.claude(), items, hidden, machines, farm, youtube: youtubeBlock(this.engine.db, this.engine.core.clock.now()) };
   }
 
   /** The farm machines a final render may be pinned to: those taking `studio.render_final`; none when out of reach. */

@@ -138,7 +138,9 @@ nhưng không code nào đọc.
   `settings.auto_continue`). Worker thiếu công cụ thì job loại đó chờ worker khác (`projectJobHandlers`).
 - Lỗi yt-dlp có mã (`classifyYtDlp`, `YtDlpError`): `youtube_blocked` (YouTube chặn máy chủ: bot check, 429) làm
   `style_watch` dừng ngay, không thử video còn lại; job lỗi có mã ghi `result.error_code` (`JobError`). Không cookie, không
-  đăng nhập (ADR-0001 mục 175, 191).
+  đăng nhập (ADR-0001 mục 175, 191). Bị chặn thì Studio nhớ 6 giờ (`studio_settings.youtube.blocked_until`,
+  `noteYoutubeBlocked`/`youtubeBlock`, tải hay đọc được thì xoá): `<studio_context>` báo agent, `propose_action
+  reference_download` từ chối, thẻ đang chờ và màn Hàng đợi (admin) hiện cảnh báo.
 - Job farm của dự án ghi `project_farm_jobs`; `/api/farm/sign` tra ở đó, hỏi ag-go bằng quyền **chủ dự án**; bản xem trước xin
   `prefer: {short_edge: 480, clean: true}` (ag-go cũ bỏ qua). Khoá bucket giữ quy ước farm:
   `productions/<projectId>/jobs/<stage>/<jobId>/{in,out}/` (dự án đóng vai "production" trong payload `@ag-farm/protocol`,

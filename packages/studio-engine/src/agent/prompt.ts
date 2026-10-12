@@ -7,6 +7,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { normalizeRelPath } from "../workspace/files.js";
 import { DEFAULT_SITE_NAME } from "../site-name.js";
+import type { YoutubeBlock } from "../settings.js";
 import type { ProjectRecord, VideoRecord } from "../workspace/project-db.js";
 import type { MessageRecord, ThreadRecord, ThreadRef } from "./threads-db.js";
 
@@ -124,6 +125,17 @@ function refLine(r: ThreadRef): string {
 function attachments(m: MessageRecord): string {
   const list = m.attachments ? (JSON.parse(m.attachments) as string[]) : [];
   return list.length ? `\n\nĐính kèm: ${list.map((p) => `\`${p}\``).join(", ")}` : "";
+}
+
+const viTime = (iso: string) => new Date(iso).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" });
+
+/** `<studio_context>` lines while YouTube blocks the server (`youtubeBlock`): no reference download card, what to offer instead. */
+export function youtubeBlockLines(block: YoutubeBlock | null): string[] {
+  if (!block) return [];
+  return [
+    `YouTube đang chặn tải từ máy chủ Studio (đòi đăng nhập để xác nhận không phải bot; thấy lúc ${viTime(block.blockedAt)}, coi như còn chặn tới ${viTime(block.until)}).`,
+    "Đừng đề xuất reference_download (thẻ chắc chắn hỏng; Studio không dùng cookie hay đăng nhập để lách). Muốn học phong cách dựng thì đề nghị người dùng tả phong cách bằng lời. Crawl YouTube khi worker không có YOUTUBE_API_KEY cũng bị chặn.",
+  ];
 }
 
 /** The turn's message: `<studio_context>`, then what the people (and Studio) said since the last turn. */

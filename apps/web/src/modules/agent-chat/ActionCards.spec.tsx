@@ -64,4 +64,16 @@ describe("confirmation cards", { timeout: 20_000 }, () => {
     fireEvent.click(within(await screen.findByRole("group", { name: "Render bản cuối 1080p" })).getByRole("button", { name: "Xác nhận" }));
     expect(await screen.findByText(/Thẻ đã hết hiệu lực/)).toBeInTheDocument();
   });
+
+  it("a reference download card warns while YouTube blocks the Studio server; other cards do not", async () => {
+    ws.listActions.mockResolvedValue({
+      actions: [card({}), card({ id: "a2", kind: "reference_download", title: "Tải 3 video mẫu", needs: "editor", revision: null, videoId: null, params: { video_ids: ["U_17EqTHUIo"], purpose: "nhịp" } })],
+      youtubeBlocked: { blockedAt: new Date().toISOString(), until: new Date(Date.now() + 3_600_000).toISOString(), where: "studio" },
+    });
+    mount("editor");
+    const ref = await screen.findByRole("group", { name: "Tải 3 video mẫu" });
+    expect(ref).toHaveTextContent(/YouTube đang chặn tải từ máy chủ Studio/);
+    expect(within(ref).getByRole("button", { name: "Xác nhận" })).toBeEnabled();
+    expect(screen.getByRole("group", { name: "Render bản cuối 1080p" })).not.toHaveTextContent(/YouTube/);
+  });
 });
