@@ -12,6 +12,12 @@ export const wsVi = {
     stats: "Thống kê",
     music: "Kho nhạc",
     projects: "Các dự án",
+    myTeams: "Nhóm của tôi",
+    otherTeams: "Nhóm khác",
+    noTeamFound: "Không có nhóm nào khớp",
+    searchMore: "Gõ tên để tìm trong cả {{total}} nhóm",
+    notMember: "Không là thành viên",
+    adminView: "Bạn đang xem với quyền admin (bạn không ở nhóm này).",
   },
   resize: {
     nav: "Đổi độ rộng cột video",

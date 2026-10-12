@@ -16,6 +16,12 @@ export const wsEn: Messages<typeof wsVi> = {
     stats: "Stats",
     music: "Music library",
     projects: "Projects",
+    myTeams: "My teams",
+    otherTeams: "Other teams",
+    noTeamFound: "No team matches",
+    searchMore: "Type a name to search all {{total}} teams",
+    notMember: "Not a member",
+    adminView: "You are viewing as an admin (you are not in this team).",
   },
   resize: {
     nav: "Resize the video column",

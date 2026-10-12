@@ -30,6 +30,8 @@ export interface Team {
   id: string;
   name: string;
   role: TeamRole | null;
+  /** Whether the caller is in the team (false only for a Studio admin, who sees every team). */
+  isMember: boolean;
   memberCount: number;
   projectCount: number;
   createdAt: string;
@@ -156,6 +158,7 @@ export interface TeamDetail {
   id: string;
   name: string;
   role: TeamRole | null;
+  isMember: boolean;
   memberCount: number;
   projectCount: number;
   createdAt: string;

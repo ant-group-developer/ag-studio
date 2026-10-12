@@ -10,10 +10,10 @@ import { sortRows, type SortDirection } from "../helpers/compare-sort-values";
 import { SortDropdown } from "../helpers/sort-dropdown";
 import { useViewMode, ViewModeToggle } from "../modules/inputs/picker/PickerParts";
 import { NewProjectModal } from "../modules/workspace/NewProjectModal";
-import { useTeams, WorkspaceShell } from "../modules/workspace/WorkspaceShell";
+import { useTeamRole } from "../modules/workspace/use-team-role";
+import { WorkspaceShell } from "../modules/workspace/WorkspaceShell";
 import { relativeTime } from "../modules/workspace/time";
 
-const CAN_CREATE = new Set(["producer", "owner"]);
 type SortField = "lastActivityAt" | "name" | "videoCount" | "createdAt";
 const SORT_VALUE: Record<SortField, (p: ProjectListItem) => string | number> = {
   lastActivityAt: (p) => Date.parse(p.lastActivityAt),
@@ -43,14 +43,14 @@ export function ProjectsPage() {
   const { teamId = "" } = useParams();
   const navigate = useNavigate();
   const client = useWorkspaceClient();
-  const { data: teams } = useTeams();
+  const { atLeast, ready, teamName } = useTeamRole(teamId || undefined);
   const [creating, setCreating] = useState(false);
   const [find, setFind] = useState("");
   const [sort, setSort] = useState<{ sortBy: SortField; sortOrder: SortDirection }>({ sortBy: "lastActivityAt", sortOrder: "desc" });
   const [view, setView] = useViewMode("studio.projects.viewMode", "grid");
   const { data, isLoading } = useQuery({ queryKey: ["projects", teamId], queryFn: () => client.listProjects(teamId), enabled: !!teamId });
-  const team = teams?.items.find((x) => x.id === teamId);
-  const canCreate = !!team?.role && CAN_CREATE.has(team.role);
+  // producers and owners make projects; a Studio admin counts as owner
+  const canCreate = atLeast("producer");
   useEffect(() => { if (teamId) rememberTeam(teamId); }, [teamId]);
 
   const projects = data?.projects ?? [];
@@ -86,7 +86,7 @@ export function ProjectsPage() {
   ];
 
   return (
-    <WorkspaceShell teamId={teamId} crumbs={team ? [{ label: team.name }] : []}>
+    <WorkspaceShell teamId={teamId} crumbs={teamName ? [{ label: teamName }] : []}>
       <main className="ws-page">
         <div className="ws-page__inner">
           <div className="ws-page__head">
@@ -100,7 +100,7 @@ export function ProjectsPage() {
               </div>
             ) : null}
           </div>
-          {isLoading ? <div className="ws-center"><Spin /></div> : projects.length === 0 ? (
+          {isLoading || !ready ? <div className="ws-center"><Spin /></div> : projects.length === 0 ? (
             <div className="ws-empty">
               <h2>{t("ws.projects.emptyTitle")}</h2>
               <p>{t(canCreate ? "ws.projects.emptyLead" : "ws.projects.emptyViewer")}</p>

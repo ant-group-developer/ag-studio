@@ -42,7 +42,7 @@ export function ProjectPage() {
   const { data: project, error, isLoading } = useQuery({ queryKey: ["project", projectId], queryFn: () => client.getProject(projectId), enabled: !!projectId });
   const { data: threads } = useQuery({ queryKey: ["threads", projectId], queryFn: () => client.listThreads(projectId), enabled: !!projectId });
   const { data: video } = useQuery({ queryKey: ["video", videoId], queryFn: () => client.getVideo(videoId!), enabled: !!videoId });
-  const { atLeast, teamName } = useTeamRole(project?.teamId);
+  const { atLeast, ready: roleReady, teamName } = useTeamRole(project?.teamId);
   useProjectEvents(projectId || null);
 
   // the chat in the middle: the video's thread, the one in the URL, or the channel's first thread
@@ -68,7 +68,8 @@ export function ProjectPage() {
     setSearch(params, { replace: true });
   };
 
-  if (isLoading) return <WorkspaceShell><div className="ws-center"><Spin /></div></WorkspaceShell>;
+  // wait for the person's role too, so the page does not show read-only first (an admin, while /me loads)
+  if (isLoading || (project && !roleReady)) return <WorkspaceShell teamId={project?.teamId}><div className="ws-center"><Spin /></div></WorkspaceShell>;
   if (!project) {
     return (
       <WorkspaceShell>

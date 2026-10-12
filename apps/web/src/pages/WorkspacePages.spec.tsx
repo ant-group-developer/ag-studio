@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../i18n/config";
 import { StudioHttpError } from "../api/http";
+import type { TeamDetail } from "../api/studio-client";
 
 window.matchMedia ??= ((query: string) => ({
   matches: false, media: query, onchange: null,
@@ -14,11 +15,13 @@ window.matchMedia ??= ((query: string) => ({
 const studio = {
   getMe: vi.fn().mockResolvedValue({ userId: "u", isAdmin: false }),
   getCanvaConnection: vi.fn().mockResolvedValue({ enabled: false, connected: false, displayName: null }),
-  listTeams: vi.fn().mockResolvedValue({ items: [{ id: "team-1", name: "Du lịch", role: "producer" }], total: 1, page: 1, pageSize: 100 }),
+  listTeams: vi.fn().mockResolvedValue({ items: [{ id: "team-1", name: "Du lịch", role: "producer", isMember: true }], total: 1, page: 1, pageSize: 100 }),
+  getTeam: vi.fn(async (id: string): Promise<TeamDetail> => ({ id, name: "Du lịch", role: "producer", isMember: true, memberCount: 1, projectCount: 1, createdAt: "", updatedAt: "" })),
   listTeamSkills: vi.fn().mockResolvedValue([]),
   createTeam: vi.fn().mockResolvedValue({ id: "team-new", name: "Ẩm thực", role: "owner", memberCount: 1, projectCount: 0, createdAt: "" }),
 };
-const ONE_TEAM = { items: [{ id: "team-1", name: "Du lịch", role: "producer" }], total: 1, page: 1, pageSize: 100 };
+const ONE_TEAM = { items: [{ id: "team-1", name: "Du lịch", role: "producer", isMember: true }], total: 1, page: 1, pageSize: 100 };
+const TEAM_1: TeamDetail = { id: "team-1", name: "Du lịch", role: "producer", isMember: true, memberCount: 1, projectCount: 1, createdAt: "", updatedAt: "" };
 const step = (key: string, title: string, status: string, over: Record<string, unknown> = {}) => ({
   key, scope: "project", title, description: `Mô tả ${title}`, skill: null, optional: false, requires: [], status,
   outputs: [{ path: `channel/${key}.md`, role: "doc", exists: status !== "missing", issues: [] }], issues: [], primary: `channel/${key}.md`,
@@ -114,6 +117,8 @@ describe("workspace pages", { timeout: 20_000 }, () => {
   beforeEach(() => {
     vi.clearAllMocks();
     studio.listTeams.mockResolvedValue(ONE_TEAM);
+    studio.getMe.mockResolvedValue({ userId: "u", isAdmin: false });
+    studio.getTeam.mockImplementation(async (id: string) => ({ ...TEAM_1, id }));
     ws.getThread.mockResolvedValue(thread([
       message({ id: "u1", seq: 1, role: "user", text: "Nghiên cứu kênh giúp tôi" }),
       message({ id: "a1", seq: 2, text: "## Kế hoạch\n\nTôi sẽ đọc tài liệu.", parts: [
@@ -150,6 +155,52 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "Nhóm" }));
     fireEvent.click(await screen.findByRole("button", { name: "Quản lý nhóm" }));
     expect(await screen.findByText("trang nhóm")).toBeInTheDocument();
+  });
+
+  it("an admin sees every team in the picker, works in a team they are not in, and is told so", async () => {
+    studio.getMe.mockResolvedValue({ userId: "admin", isAdmin: true });
+    studio.listTeams.mockResolvedValue({ items: [
+      { id: "team-1", name: "Du lịch", role: "producer", isMember: true },
+      { id: "team-2", name: "Ẩm thực", role: null, isMember: false },
+    ], total: 2, page: 1, pageSize: 100 });
+    studio.getTeam.mockImplementation(async (id: string) => (id === "team-2" ? { ...TEAM_1, id, name: "Ẩm thực", role: null, isMember: false } : { ...TEAM_1, id }));
+    mount("/t/team-2");
+    expect(await screen.findByText("Du lịch chậm")).toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent("Bạn đang xem với quyền admin");
+    expect(within(screen.getByRole("navigation", { name: "Vị trí" })).getByText("Ẩm thực")).toBeInTheDocument();
+    // an admin makes projects in any team
+    expect(screen.getAllByRole("button", { name: /Dự án mới/ }).length).toBeGreaterThan(0);
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Nhóm" }));
+    expect(await screen.findByText("Nhóm của tôi")).toBeInTheDocument();
+    expect(screen.getByText("Nhóm khác")).toBeInTheDocument();
+  });
+
+  it("a member sees no admin note and no 'other teams'", async () => {
+    mount("/t/team-1");
+    expect(await screen.findByText("Du lịch chậm")).toBeInTheDocument();
+    expect(screen.queryByRole("note")).toBeNull();
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Nhóm" }));
+    expect(await screen.findByRole("button", { name: "Quản lý nhóm" })).toBeInTheDocument();
+    expect(screen.queryByText("Nhóm khác")).toBeNull();
+  });
+
+  it("the team picker searches every team through the API, past the first page, and names a team it has not listed", async () => {
+    studio.getMe.mockResolvedValue({ userId: "admin", isAdmin: true });
+    studio.listTeams.mockImplementation(async (params?: { q?: string }) => (params?.q
+      ? { items: [{ id: "team-205", name: "Huế xưa", role: null, isMember: false }], total: 1, page: 1, pageSize: 50 }
+      : { items: [{ id: "team-1", name: "Du lịch", role: "producer", isMember: true }], total: 240, page: 1, pageSize: 100 }));
+    studio.getTeam.mockImplementation(async (id: string) => (id === "team-300" ? { ...TEAM_1, id, name: "Miền Tây", role: null, isMember: false } : { ...TEAM_1, id }));
+    mount("/t/team-300");
+    expect(await screen.findByText("Du lịch chậm")).toBeInTheDocument();
+    // a team beyond the first page: its name comes from GET /teams/:id
+    expect(within(screen.getByRole("navigation", { name: "Vị trí" })).getByText("Miền Tây")).toBeInTheDocument();
+    const picker = screen.getByRole("combobox", { name: "Nhóm" });
+    fireEvent.mouseDown(picker);
+    expect(await screen.findByText("Gõ tên để tìm trong cả 240 nhóm")).toBeInTheDocument();
+    fireEvent.change(picker, { target: { value: "Huế" } });
+    await waitFor(() => expect(studio.listTeams).toHaveBeenCalledWith({ q: "Huế", page: 1, pageSize: 50 }));
+    fireEvent.click(await screen.findByText("Huế xưa"));
+    await waitFor(() => expect(ws.listProjects).toHaveBeenCalledWith("team-205"));
   });
 
   it("lists a team's projects as cards or a table, found by name and sorted", async () => {

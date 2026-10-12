@@ -395,3 +395,11 @@ button.ws-step:hover { border-color: var(--ws-accent-line); color: var(--ws-text
 .ws-skill-picker { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
 .ws-skill-picker .ant-checkbox-wrapper { margin-inline-start: 0; }
 .ws-page__inner--wide { max-width: 1400px; }
+
+/* A Studio admin inside a team they are not in: they act with admin rights (logged as admin). */
+.ws-admin-banner {
+  flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 4px 16px; font-size: 12px;
+  background: var(--ws-wait-bg); color: var(--ws-wait-fg); border-bottom: 1px solid var(--ws-line);
+}
+/* Under the team picker's list when there are more teams than the first page: type to search them. */
+.ws-team-more { padding: 4px 12px 0; font-size: 12px; color: #5b616b; }

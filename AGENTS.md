@@ -175,8 +175,11 @@ nhưng không code nào đọc.
   Tên tool trong chat/nhật ký: `ws.tool.<tên>` ở `ws.vi.ts`/`ws.en.ts` — thêm tool cho agent thì thêm nhãn cả hai ngôn ngữ
   (`agent-chat/labels.spec.ts` đọc tên tool từ engine và báo thiếu). Không bao giờ hiện uuid thay tên video: `inputs_add` bắt
   buộc `name`; nguồn cũ thiếu tên được API đặt lại khi liệt kê nguồn. Biến màu `--ws-*` ở `:root` (drawer/modal là portal).
-  Ô chọn nhóm trên thanh trên có
-  "Tạo nhóm mới" và "Quản lý nhóm"; ai chưa ở nhóm nào thì trang chủ cho tạo nhóm (người tạo là owner). Tiếng Việt gọi là
+  Ô chọn nhóm trên thanh trên (`TeamPicker`) có
+  "Tạo nhóm mới" và "Quản lý nhóm", gõ để tìm qua `GET /teams?q` (không cắt ở trang đầu); admin Studio thấy thêm "Nhóm
+  khác" (nhóm không là thành viên, `isMember: false`), vẫn sửa được như owner, và có dải "Bạn đang xem với quyền admin" ở
+  những nhóm đó. Tên nhóm trên breadcrumb và vai lấy từ `GET /teams/:id` (`useTeam`, `useTeamRole` có `ready` để trang
+  không nháy chỉ-đọc lúc `/me` chưa về); ai chưa ở nhóm nào thì trang chủ cho tạo nhóm (người tạo là owner). Tiếng Việt gọi là
   **nhóm** (không viết "team" trong chuỗi giao diện).
 - Khung trình duyệt nhúng của app desktop báo trang luôn ẩn nên react-query không polling: kiểm bằng khung đó thì tải lại trang.
 
