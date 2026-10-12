@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  agentToolList, agentTools, callAgentTool, createAgentRunner, createProject, createThread, getMessage, getProject, getThread, getVideo,
+  agentToolList, agentTools, callAgentTool, createAgentRunner, createProject, createThread, createVideo, getMessage, getProject, getThread, getVideo,
   listFileVersions, listLessonProposals, listMessages, listVideos, MemoryBucket, mcpToolNames, postUserMessage, projectDir, requestCancel, seedWorkspace,
   verifyAgentToken, type StudioDb,
 } from "../src/index.js";
@@ -133,6 +133,19 @@ describe("agent runner (fake CLI, real MCP server)", { timeout: 60_000 }, () => 
     await runner.idle();
     // the fix turn ran; a fix turn never asks for another one
     expect(listMessages(db, thread.id).map((m) => m.role)).toEqual(["user", "assistant", "system", "assistant"]);
+  });
+
+  it("in a video's chat, suggests the video's next steps; the channel's open steps are only context", async () => {
+    const { runner, calls, db, project } = await setup();
+    const video = createVideo(db, project.id, { title: "Huế mưa", createdBy: "auth0|u" });
+    const thread = createThread(db, { projectId: project.id, videoId: video.id, kind: "video", title: "Huế mưa", createdBy: "auth0|u" });
+    postUserMessage(db, { threadId: thread.id, text: "@fake say Chào", actor: { id: "auth0|u", role: "editor" } });
+    await runner.tick();
+    await runner.idle();
+    const prompt = calls()[0]!.prompt;
+    expect(prompt).toContain(`Bước gợi ý tiếp theo (của video này): Ý tưởng & brief (videos/${video.id}/brief.md)`);
+    expect(prompt).not.toContain("Nghiên cứu thị trường (research/report.md)");
+    expect(prompt).toContain("Kênh còn 3 bước chưa xong");
   });
 
   it("summarizes a quiet thread into SUMMARY.md and proposes its lessons", async () => {

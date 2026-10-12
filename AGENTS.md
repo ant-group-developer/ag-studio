@@ -110,7 +110,8 @@ nhưng không code nào đọc.
 - Việc có tác dụng thật (render bản cuối, xuất Premiere, xoá video, crawl lớn, tải video mẫu) **không bao giờ** do agent
   tự làm: `propose_action` → thẻ trong chat → người có vai bấm (`agent/actions.ts`, hết hạn 24 giờ hoặc khi timeline đổi).
 - Playbook mềm (`workspace/playbook.ts`, ghi đè bằng `.studio/playbook.yaml`): gợi ý bước, không chặn; trạng thái tính từ file
-  + DB (`playbook-status.ts`, `step-facts.ts`); kiểm file ở `workspace/validators.ts` (dùng lại validator của
+  + DB (`playbook-status.ts`, `step-facts.ts`); gợi ý theo phạm vi luồng (`scope`): luồng video chỉ gợi ý bước video, luồng
+  kênh/chat tự do chỉ bước kênh; bước dựa vào bước chưa xong của phạm vi kia vẫn được gợi ý, kèm `outsideRequires`; kiểm file ở `workspace/validators.ts` (dùng lại validator của
   `packages/core/src/studio/*`). Bài học chung ở `memory/lessons.md` (thẻ "Lưu vào bài học dự án?").
 - Slot Claude (`claude-slots.ts`): mỗi lượt giữ dòng `lease` `agent:<id>` (chờ: `agent-wait:<id>`, cũng tính vào cap), nên mọi
   worker dùng chung một cap: `studio_settings.claude.max_concurrent` (admin sửa ở màn Hàng đợi) thắng

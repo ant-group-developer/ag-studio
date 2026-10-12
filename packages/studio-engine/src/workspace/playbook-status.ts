@@ -2,6 +2,10 @@
  * Where a project and a video stand on the playbook (spec 2026-10-10 agent-workspace §6): each step `missing`,
  * `draft`, `invalid`, `done`, `skipped`, `stale` (done, but a step it builds on changed since) or `running`, from the
  * files and what Studio knows — and the next steps to suggest. Nothing here blocks anything.
+ *
+ * The suggestions follow where the chat is: a video's chat suggests that video's steps only, the channel's chat (or a
+ * free chat of the project) the channel's steps only. A step that builds on an unfinished step of the other scope (the
+ * YouTube kit on the channel's branding) is still suggested; `outsideRequires` names what it waits for.
  */
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -34,16 +38,28 @@ export interface StepState {
   prompts: { do: string; redo: string | null; revise: string | null };
   /** For a stale step: the steps it builds on that changed after it was done. */
   staleBecause: string[];
+  /**
+   * Steps of the other scope this one builds on that are not done (or skipped) yet — the channel's Branding for a
+   * video's YouTube kit. A note for the person and the agent; it never holds back a suggestion in this scope.
+   */
+  outsideRequires: string[];
   detail: string | null;
 }
+
+/** Where the suggestions are for: a video's chat ("video") or the channel's / a free chat of the project ("project"). */
+export type PlaybookScope = "project" | "video";
 
 export interface PlaybookStatus {
   custom: boolean;
   issues: FileIssue[];
+  /** The scope `next` suggests steps of. */
+  scope: PlaybookScope;
   project: StepState[];
   video: StepState[] | null;
-  /** Up to three steps to suggest next (project steps first). */
-  next: { scope: "project" | "video"; key: string }[];
+  /** Up to three steps of `scope` to suggest next. */
+  next: { scope: PlaybookScope; key: string }[];
+  /** The channel's steps still open (in a video's chat they are context, not suggestions). */
+  projectOpen: number;
 }
 
 const fill = (s: string | undefined, videoId: string | null, file: string) => (s ? stepPath(s, videoId).replace(/\{file\}/g, file) : null);
@@ -118,7 +134,7 @@ function scopeStates(db: StudioDb | null, dir: string, playbook: StudioPlaybook,
       key: s.key, scope, title: s.title, description: s.description, skill: s.skill ?? null, optional: s.optional, requires: s.requires,
       status, outputs, issues: outputs.flatMap((x) => x.issues.map((i) => ({ ...i, message: `${x.path}: ${i.message}` }))), primary,
       prompts: { do: fill(s.prompts.do, o.videoId, primary)!, redo: fill(s.prompts.redo, o.videoId, primary), revise: fill(s.prompts.revise, o.videoId, primary) },
-      staleBecause, detail,
+      staleBecause, outsideRequires: [], detail,
     });
   }
   return states;
@@ -127,9 +143,12 @@ function scopeStates(db: StudioDb | null, dir: string, playbook: StudioPlaybook,
 const OPEN: StepStatus[] = ["missing", "draft", "invalid", "stale"];
 const FINE: StepStatus[] = ["done", "skipped"];
 
-/** The playbook's state for the project (and one video). `db` keeps the stale marks; without it nothing is stale. */
+/**
+ * The playbook's state for the project (and one video). `db` keeps the stale marks; without it nothing is stale.
+ * `scope` (default: "video" when a video is given, else "project") picks whose steps `next` suggests.
+ */
 export function playbookStatus(db: StudioDb | null, dir: string, o: {
-  projectId: string; videoId?: string | null; facts?: (key: string, videoId: string | null) => StepFact | undefined; now?: string;
+  projectId: string; videoId?: string | null; scope?: PlaybookScope; facts?: (key: string, videoId: string | null) => StepFact | undefined; now?: string;
 }): PlaybookStatus {
   const { playbook, custom, issues } = loadPlaybook(dir);
   const now = o.now ?? new Date().toISOString();
@@ -139,13 +158,20 @@ export function playbookStatus(db: StudioDb | null, dir: string, o: {
   const project = scopeStates(db, dir, playbook, "project", { projectId: o.projectId, videoId: null, facts, upstreamDigests: digests, now });
   const video = o.videoId ? scopeStates(db, dir, playbook, "video", { projectId: o.projectId, videoId: o.videoId, facts, upstreamDigests: digests, now }) : null;
   const byKey = new Map([...project, ...(video ?? [])].map((s) => [s.key, s]));
-  const next: PlaybookStatus["next"] = [];
+  const fine = (key: string) => FINE.includes(byKey.get(key)?.status ?? "missing");
   for (const s of [...project, ...(video ?? [])]) {
-    if (next.length >= 3) break;
-    if (!OPEN.includes(s.status) || (s.optional && s.status === "missing")) continue;
-    if (s.requires.every((r) => FINE.includes(byKey.get(r)?.status ?? "missing"))) next.push({ scope: s.scope, key: s.key });
+    s.outsideRequires = s.requires.filter((r) => byKey.get(r) && byKey.get(r)!.scope !== s.scope && !fine(r));
   }
-  return { custom, issues, project, video, next };
+  const scope: PlaybookScope = o.scope ?? (video ? "video" : "project");
+  const open = (s: StepState) => OPEN.includes(s.status) && !(s.optional && s.status === "missing");
+  const next: PlaybookStatus["next"] = [];
+  for (const s of scope === "video" ? video ?? [] : project) {
+    if (next.length >= 3) break;
+    if (!open(s)) continue;
+    // only this scope's requirements hold a step back; the other scope's are a note (`outsideRequires`)
+    if (s.requires.every((r) => byKey.get(r)?.scope !== s.scope || fine(r))) next.push({ scope: s.scope, key: s.key });
+  }
+  return { custom, issues, scope, project, video, next, projectOpen: project.filter(open).length };
 }
 
 const ICON: Record<StepStatus, string> = { done: "✓", skipped: "–", draft: "✎", invalid: "✗", stale: "↻", missing: "·", running: "…" };
@@ -156,8 +182,16 @@ export function playbookContextLines(st: PlaybookStatus): string[] {
   const lines = ["Tiến độ theo quy trình gợi ý (✓ xong, ✎ nháp, ✗ lỗi, ↻ cũ, · chưa có, – bỏ qua; chỉ là gợi ý, không bắt buộc):", `- Kênh: ${line(st.project)}`];
   if (st.video) lines.push(`- Video này: ${line(st.video)}`);
   const all = [...st.project, ...(st.video ?? [])];
+  const title = (key: string) => all.find((x) => x.key === key)?.title ?? key;
   if (st.next.length) {
-    lines.push(`Bước gợi ý tiếp theo: ${st.next.map((n) => { const s = all.find((x) => x.key === n.key)!; return `${s.title} (${s.primary})`; }).join("; ")}`);
+    lines.push(`Bước gợi ý tiếp theo${st.scope === "video" ? " (của video này)" : ""}: ${st.next.map((n) => {
+      const s = all.find((x) => x.key === n.key)!;
+      const wait = s.outsideRequires.length ? `; kênh chưa xong: ${s.outsideRequires.map(title).join(", ")}` : "";
+      return `${s.title} (${s.primary}${wait})`;
+    }).join("; ")}`);
+  }
+  if (st.scope === "video" && st.projectOpen > 0) {
+    lines.push(`Kênh còn ${st.projectOpen} bước chưa xong: chỉ là bối cảnh, đừng tự gợi ý bước của kênh trong luồng video này trừ khi người dùng hỏi.`);
   }
   const errors = all.flatMap((s) => s.issues.filter((i) => i.level === "error")).slice(0, 5);
   if (errors.length) lines.push("File đang lỗi (Studio không dùng được tới khi sửa):", ...errors.map((e) => `- ${e.message}`));

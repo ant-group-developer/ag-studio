@@ -146,7 +146,9 @@ xem nhóm mình; người khác 403.
 ## Quy trình gợi ý, bài học
 
 - `GET /projects/:projectId/playbook?videoId` → `PlaybookStatus` (bước dự án/video: `missing|draft|invalid|done|skipped|stale|running`,
-  file, lỗi, gợi ý tiếp theo); `POST playbook/steps/:stepKey/mark {status: done|skipped|draft, videoId?}` (editor);
+  file, lỗi, gợi ý tiếp theo). `scope` = `video` khi có `videoId`, không thì `project`; `next` (≤ 3) chỉ gồm bước của
+  `scope` (luồng video không gợi ý bước kênh); `projectOpen` = số bước kênh còn mở; mỗi bước có `outsideRequires` — bước
+  của phạm vi kia nó dựa vào mà chưa xong (Gói YouTube cần Branding kênh): chỉ là ghi chú, không chặn gợi ý; `POST playbook/steps/:stepKey/mark {status: done|skipped|draft, videoId?}` (editor);
   `POST playbook/customize` (producer) → tạo `.studio/playbook.yaml`
 - `GET /projects/:projectId/lessons?status&threadId`; `POST lessons/:id/accept {text?}`, `POST lessons/:id/dismiss` (editor)
 
