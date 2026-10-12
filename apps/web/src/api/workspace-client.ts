@@ -394,9 +394,9 @@ export interface RenderView {
   sizeBytes: number | null;
   note: string;
   finishedAt: string | null;
-  /** null when the person's own ag-go rights do not cover the footage in it. */
+  /** null when the person's own ag-go rights do not cover the footage in it, or ag-go could not say (`footage_check_failed`). */
   url: string | null;
-  urlHidden?: "footage_scope";
+  urlHidden?: "footage_scope" | "footage_check_failed";
 }
 
 export interface TimelineClipRow {

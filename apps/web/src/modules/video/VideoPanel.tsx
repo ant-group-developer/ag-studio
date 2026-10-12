@@ -138,7 +138,7 @@ function RenderRow({ r, lang, current, onPlay }: { r: RenderView; lang: string; 
           {t("ws.video.revision", { revision: r.revision })}{r.durationS !== null ? ` · ${clock(r.durationS)}` : ""}{r.sizeBytes ? ` · ${fileSize(r.sizeBytes)}` : ""}
           {r.watermarked ? ` · ${t("ws.video.watermarked")}` : ""}
         </span>
-        <span className="ws-hint">{r.finishedAt ? relativeTime(r.finishedAt, lang) : ""}{r.urlHidden ? ` · ${t("ws.video.hidden")}` : ""}{r.note ? ` · ${r.note}` : ""}</span>
+        <span className="ws-hint">{r.finishedAt ? relativeTime(r.finishedAt, lang) : ""}{r.urlHidden ? ` · ${t(r.urlHidden === "footage_check_failed" ? "ws.video.checkFailed" : "ws.video.hidden")}` : ""}{r.note ? ` · ${r.note}` : ""}</span>
       </div>
       {r.url && r.kind !== "export_premiere" ? <button type="button" className="ws-link" onClick={onPlay}>{t("ws.video.watch")}</button> : null}
       {r.url ? <a className="ws-icon-button" href={r.url} target="_blank" rel="noreferrer" aria-label={t("ws.video.download")} title={t("ws.video.download")}><Download size={13} /></a> : null}
