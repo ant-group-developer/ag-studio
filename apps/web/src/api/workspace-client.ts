@@ -444,10 +444,17 @@ export interface TimelineSummary {
   issues: string[];
 }
 
+/** An audio file of the project to use as the voice sample or the music (`sourceId` null: put in context/audio via the Files tab). */
+export interface ProjectAudioFile { path: string; name: string; bytes: number; sourceId: string | null; addedAt: string }
 export interface ProjectAudioView {
   voice: Record<string, unknown> | null;
   music: Record<string, unknown> | null;
   summary: { voice: string; music: string };
+  /** The music library track the music is, when it is one. */
+  libraryTrack: { trackId: string; displayName: string; moods: string[]; durationSeconds: number } | null;
+  /** The Studio server has ffmpeg: audio files can be used (a library track needs none). */
+  enabled: boolean;
+  files: ProjectAudioFile[];
 }
 export type VoiceOrigin = "synthetic" | "own" | "licensed";
 
@@ -658,6 +665,10 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     /** A workspace audio file as the project's voice sample (producer, with its origin) or music. */
     audioFromFile(projectId: string, kind: "voice" | "music", input: { path: string; origin?: VoiceOrigin; referenceText?: string | null }): Promise<ProjectAudioView> {
       return call("POST", `/api/projects/${enc(projectId)}/audio/${kind}/from-file`, input);
+    },
+    /** A track of the music library as the project's music (editor; 404 `not_found`, 422 `audio_invalid` when retired). */
+    musicFromLibrary(projectId: string, trackId: string): Promise<ProjectAudioView> {
+      return call("POST", `/api/projects/${enc(projectId)}/audio/music/from-library`, { trackId });
     },
     declineVoice(projectId: string): Promise<ProjectAudioView> {
       return call("POST", `/api/projects/${enc(projectId)}/audio/voice/decline`, {});

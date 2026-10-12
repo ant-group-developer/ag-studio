@@ -10,7 +10,7 @@ import { clock } from "../workspace/time";
 import { FootagePicker } from "./AgGoPickers";
 import { AgGoProjectDrawer } from "./ag-go-projects/AgGoProjectDrawer";
 import { JobList } from "./JobList";
-import { AudioSummary, UseAudioButtons } from "./AudioControls";
+import { AudioCard, UseAudioButtons } from "./AudioControls";
 import "./inputs.css";
 
 const UPLOAD_ACCEPT = ".md,.txt,.pdf,.csv,.json,.srt,.vtt,.jpg,.jpeg,.png,.webp,.gif,.mp3,.wav,.m4a,.aac,.ogg,.flac";
@@ -109,6 +109,8 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
 
   return (
     <div className="ws-inputs">
+      <AudioCard projectId={projectId} canEdit={canEdit} canProduce={canProduce} />
+
       {active.length || recent.length ? (
         <section aria-label={t("ws.jobs.title")}>
           <h4 className="ws-inputs__h">{t("ws.jobs.title")}</h4>
@@ -225,8 +227,6 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
           </ul>
         ) : null}
       </section>
-
-      <AudioSummary projectId={projectId} canProduce={canProduce} />
 
       <AgGoProjectDrawer projectId={projectId} picked={all} open={projectPicker} onClose={() => setProjectPicker(false)} />
       {videoId ? <FootagePicker projectId={projectId} videoId={videoId} sources={all} open={footagePicker} onClose={() => setFootagePicker(false)} /> : null}

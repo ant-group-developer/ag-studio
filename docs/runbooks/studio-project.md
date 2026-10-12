@@ -16,9 +16,12 @@ quay lại bước nào cũng được; mọi kết quả là file sửa đượ
 - Tab **Đầu vào** → **Thêm project** ag-go: chỉ project mà **chủ dự án** thấy video bên trong (agent và render dùng quyền
   của chủ dự án). Agent tìm video trong đó bằng `footage_search`.
 - Tài liệu (PDF, markdown, CSV…), ảnh, audio: **Tải lên** → `context/…`. File Word: lưu thành PDF trước.
-- Giọng đọc lời dẫn: tải file giọng mẫu (3–20 giây), bấm **Giọng đọc** ở file đó và khai nguồn gốc (giọng máy / của tôi / có
-  bản quyền) — cần producer. Nhạc nền: bấm **Nhạc nền** ở file nhạc. Không chọn nhạc thì Studio lấy nhạc thư viện theo tâm
-  trạng trong kế hoạch dựng hoặc branding. Không muốn lời dẫn: **Không lời dẫn** (lời thành phụ đề).
+- Giọng đọc và nhạc nền: thẻ đầu tiên của tab **Đầu vào**. **Giọng đọc** (cần producer): **Tải giọng mẫu** (3–20 giây) hoặc
+  **Chọn file đã tải**, rồi khai nguồn gốc (giọng máy / của tôi / có bản quyền); **Không lời dẫn** (lời thành phụ đề); **Bỏ
+  chọn**. **Nhạc nền** (cần editor): **Tải nhạc** (≤ 100 MB, dùng ngay), **Chọn từ kho nhạc** (nghe thử rồi chọn), **Chọn file
+  đã tải** (cả file audio bỏ vào `context/audio/` qua tab Tệp), **Tự chọn theo mood** (bỏ nhạc riêng: khi dựng timeline Studio
+  lấy bài trong kho nhạc theo mood của kế hoạch dựng, rồi branding). Nút không dùng được thì mờ và nói lý do (thiếu vai, máy
+  Studio chưa có ffmpeg). Giọng và nhạc không bao giờ lấy từ ag-go.
 
 ## 3. Kênh: nghiên cứu, chiến lược, branding
 

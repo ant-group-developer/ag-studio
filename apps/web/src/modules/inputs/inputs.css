@@ -112,3 +112,26 @@ ol.ws-inputs__list { counter-reset: src; }
   .ws-picker2 { grid-template-columns: minmax(0, 1fr); }
   .ws-filter { border-right: 0; border-bottom: 1px solid var(--ws-line); max-height: 40vh; padding: 0 0 8px; }
 }
+
+/* the project's voice and music, first in the Inputs tab: two compact rows, status then actions */
+.ws-audio { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--ws-line); border-radius: 10px; background: var(--ws-surface); }
+.ws-audio__row { display: flex; align-items: flex-start; gap: 10px; }
+.ws-audio__row + .ws-audio__row { padding-top: 8px; border-top: 1px solid var(--ws-line); }
+.ws-audio__icon { flex-shrink: 0; margin-top: 3px; color: var(--ws-muted); }
+.ws-audio__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.ws-audio__line { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.ws-audio__line strong { font-weight: 600; color: var(--ws-text); }
+.ws-audio__status { color: var(--ws-muted); min-width: 0; overflow-wrap: anywhere; }
+.ws-audio__actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.ws-audio__disabled { display: inline-flex; }
+.ws-audio__note { margin: 0; }
+.ws-audio__warn { margin: 0; display: flex; align-items: flex-start; gap: 6px; padding: 6px 8px; border-radius: 6px; font-size: 12px;
+  background: var(--ws-wait-bg); color: var(--ws-wait-fg); }
+.ws-audio__warn svg, .ws-audio__error svg { flex-shrink: 0; margin-top: 2px; }
+.ws-audio__error { margin: 0 0 4px; display: flex; align-items: flex-start; gap: 6px; font-size: 13px; }
+.ws-audio__files { max-height: 50vh; overflow: auto; }
+.ws-audio__library { max-height: 60vh; overflow: auto; margin-top: 10px; gap: 8px; }
+.ws-audio__track { display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid var(--ws-line); border-radius: 8px; }
+.ws-audio__trackhead { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.ws-audio__moods { display: flex; flex-wrap: wrap; gap: 2px; }
+.ws-audio__track audio { width: 100%; height: 32px; }

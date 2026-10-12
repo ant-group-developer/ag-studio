@@ -23,14 +23,9 @@ const ws = {
   startRender: vi.fn().mockResolvedValue({}),
   fitTimeline: vi.fn().mockResolvedValue({}),
   cancelJob: vi.fn(),
-  getAudio: vi.fn(),
-  audioFromFile: vi.fn(),
-  declineVoice: vi.fn(),
-  clearAudio: vi.fn(),
 };
 vi.mock("../../api/workspace-client", async (orig) => ({ ...(await orig<object>()), useWorkspaceClient: () => ws }));
 const { VideoPanel } = await import("./VideoPanel");
-const { AudioSummary, UseAudioButtons } = await import("../inputs/AudioControls");
 
 const ORDER: TeamRoleName[] = ["viewer", "editor", "producer", "owner"];
 const wrap = (node: React.ReactNode) => render(
@@ -153,28 +148,5 @@ describe("video preview tab", { timeout: 20_000 }, () => {
     await waitFor(() => expect(ws.listRenders.mock.calls.length).toBeGreaterThanOrEqual(3));
     expect(saved).toEqual([zip]);
     click.mockRestore();
-  });
-});
-
-describe("project audio", { timeout: 20_000 }, () => {
-  beforeAll(async () => { await i18n.changeLanguage("vi"); });
-  it("a producer picks an uploaded file as the voice, saying where it comes from", async () => {
-    ws.audioFromFile.mockResolvedValue({});
-    wrap(<UseAudioButtons projectId="p1" path="context/audio/giong.wav" canEdit canProduce />);
-    fireEvent.click(screen.getByRole("button", { name: /Giọng đọc/ }));
-    const dialog = await screen.findByRole("dialog", { name: "Dùng file này làm giọng đọc" });
-    fireEvent.click(within(dialog).getByLabelText("Giọng của tôi"));
-    fireEvent.change(within(dialog).getByLabelText(/Lời trong file mẫu/), { target: { value: "Xin chào" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Giọng đọc" }));
-    await waitFor(() => expect(ws.audioFromFile).toHaveBeenCalledWith("p1", "voice", { path: "context/audio/giong.wav", origin: "own", referenceText: "Xin chào" }));
-  });
-
-  it("shows what is chosen and declines narration", async () => {
-    ws.getAudio.mockResolvedValue({ voice: null, music: null, summary: { voice: "chưa chọn", music: "chưa chọn nhạc" } });
-    ws.declineVoice.mockResolvedValue({});
-    wrap(<AudioSummary projectId="p1" canProduce />);
-    expect(await screen.findByText("chưa chọn nhạc")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Không lời dẫn" }));
-    await waitFor(() => expect(ws.declineVoice).toHaveBeenCalledWith("p1"));
   });
 });

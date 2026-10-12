@@ -34,6 +34,11 @@ const ws = {
   getFootageFacets: vi.fn(),
   prepareInputs: vi.fn().mockResolvedValue({ assets: {} }),
   cancelJob: vi.fn().mockResolvedValue(job({ cancelRequested: true })),
+  getAudio: vi.fn(),
+  audioFromFile: vi.fn(),
+  musicFromLibrary: vi.fn(),
+  declineVoice: vi.fn(),
+  clearAudio: vi.fn(),
 };
 const agGo = {
   getProjects: vi.fn().mockResolvedValue({ items: [
@@ -86,6 +91,7 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
       src({ kind: "ag_go_asset", ref: A2, videoId: "v1", mediaType: "video", label: "Tràng An 01.mp4", asset: { state: "failed", error: "ag-go không trả được video" } }),
       src({ kind: "upload", ref: "context/uploads/Ghi chú.md", mediaType: "document", label: "Ghi chú.md" }),
     ] });
+    ws.getAudio.mockResolvedValue({ voice: null, music: null, summary: { voice: "", music: "" }, libraryTrack: null, enabled: true, files: [] });
     ws.listJobs.mockResolvedValue({ jobs: [job({})] });
   });
 
@@ -98,6 +104,14 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     expect(card).toHaveTextContent("còn ≈ 1:30");
     fireEvent.click(within(card).getByRole("button", { name: "Dừng" }));
     await waitFor(() => expect(ws.cancelJob).toHaveBeenCalledWith("p1", "j1"));
+  });
+
+  it("puts the project's voice and music first, above the jobs and the lists", async () => {
+    mount("v1");
+    const audio = await screen.findByRole("region", { name: "Giọng đọc và nhạc nền" });
+    await screen.findByRole("group", { name: "Giọng đọc" });
+    expect(screen.getAllByRole("region")[0]).toBe(audio);
+    expect(ws.getAudio).toHaveBeenCalledWith("p1");
   });
 
   it("never shows an asset id where a video's name should be", async () => {
