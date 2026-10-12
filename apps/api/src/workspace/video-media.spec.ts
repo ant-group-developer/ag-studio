@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import { claimJob, finishJob, getJob, saveVideoRevision } from '@ag-studio/engine';
+import { AgGoClientError } from '../ag-go/client';
 
 type TimelineV4 = Parameters<typeof saveVideoRevision>[2]['data'];
 import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
@@ -22,6 +23,8 @@ import { WorkspaceService } from './workspace.service';
 const req = (userId: string) => ({ authContext: { userId, accessToken: 't' } }) as unknown as Request;
 const OWNER = 'auth0|owner';
 const EDITOR = 'auth0|editor';
+const DOWN = 'auth0|down';
+const GONE = 'auth0|gone';
 const code = (e: unknown) => (e as { getResponse?: () => { code?: string } }).getResponse?.().code ?? String(e);
 
 function timeline(videoId: string): TimelineV4 {
@@ -47,7 +50,14 @@ describe('video media (real studio.db)', () => {
     root = mkdtempSync(join(tmpdir(), 'video-media-'));
     const ws = new WorkspaceService({ get: (k: string, d?: unknown) => (k === 'STUDIO_WORKSPACES_ROOT' ? root : d) } as unknown as ConfigService, engine);
     seen.length = 0;
-    const footage = { check: async (userId: string, ids: string[]) => { seen.push([userId, ...ids]); return userId === OWNER ? { ok: ids, missing: [] } : { ok: [], missing: ids }; } } as unknown as ProjectFootageService;
+    const footage = {
+      check: async (userId: string, ids: string[]) => {
+        seen.push([userId, ...ids]);
+        if (userId === DOWN) throw new AgGoClientError(502, 'Bad Gateway');
+        if (userId === GONE) throw new AgGoClientError(404, { message: `Video not found or not in scope: ${ids[0]}` });
+        return userId === OWNER ? { ok: ids, missing: [] } : { ok: [], missing: ids };
+      },
+    } as unknown as ProjectFootageService;
     Object.assign(engine, { bucket: { signedGetUrl: async (key: string) => `https://r2.test/${key}` }, browserUrlTtl: 600 });
     projects = new ProjectsController(engine, ws);
     videos = new VideosController(engine, ws);
@@ -70,6 +80,13 @@ describe('video media (real studio.db)', () => {
     expect((await media.renders(v.id, req(OWNER))).renders[0]).toMatchObject({ kind: 'render_preview', revision: 1, url: 'https://r2.test/productions/x/out/a.mp4' });
     expect((await media.renders(v.id, req(EDITOR))).renders[0]).toMatchObject({ url: null, urlHidden: 'footage_scope' });
     expect(seen).toEqual([[OWNER, 'a1'], [EDITOR, 'a1']]);
+    // ag-go not answering is not a lack of rights, and is asked again; its 404 (a video out of scope) is
+    seen.length = 0;
+    expect((await media.renders(v.id, req(DOWN))).renders[0]).toMatchObject({ url: null, urlHidden: 'footage_check_failed' });
+    expect((await media.renders(v.id, req(DOWN))).renders[0]).toMatchObject({ urlHidden: 'footage_check_failed' });
+    expect((await media.renders(v.id, req(GONE))).renders[0]).toMatchObject({ url: null, urlHidden: 'footage_scope' });
+    expect((await media.renders(v.id, req(GONE))).renders[0]).toMatchObject({ urlHidden: 'footage_scope' });
+    expect(seen).toEqual([[DOWN, 'a1'], [DOWN, 'a1'], [GONE, 'a1']]);
     expect((await media.timeline(v.id)).latest).toMatchObject({ revision: 1, clips: [expect.objectContaining({ clip_id: 'C001' })] });
   });
 

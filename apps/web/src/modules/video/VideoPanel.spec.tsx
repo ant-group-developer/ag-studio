@@ -40,7 +40,7 @@ describe("video preview tab", { timeout: 20_000 }, () => {
   beforeEach(() => {
     vi.clearAllMocks();
     ws.getTimeline.mockResolvedValue({ latest: { revision: 3, label: "fit", approx_seconds: 64.6, clips: [{}, {}], texts: [], narration: { voice: "tts", lines: [{ line_id: "L001", text: "x" }] }, music: null, issues: [] }, revisions: [] });
-    ws.listRenders.mockResolvedValue({ renders: [r({}), r({ jobId: "j2", kind: "export_premiere", durationS: null, url: null, urlHidden: "footage_scope" })], jobs: [], thumbnails: [] });
+    ws.listRenders.mockResolvedValue({ renders: [r({}), r({ jobId: "j2", kind: "export_premiere", durationS: null, url: null, urlHidden: "footage_scope" }), r({ jobId: "j3", revision: 2, url: null, urlHidden: "footage_check_failed" })], jobs: [], thumbnails: [] });
   });
 
   it("shows the timeline in short, plays the latest preview and lists renders (a hidden link says why)", async () => {
@@ -50,6 +50,7 @@ describe("video preview tab", { timeout: 20_000 }, () => {
     const list = screen.getByRole("region", { name: "Bản render" });
     expect(list).toHaveTextContent("bản 3 · 1:05 · 12.0 MB · có watermark");
     expect(list).toHaveTextContent("bạn chưa có quyền xem footage này trên AG Go");
+    expect(list).toHaveTextContent("chưa kiểm được quyền xem footage trên AG Go, tải lại sau ít phút");
     expect(within(list).queryByRole("button", { name: /Render bản cuối/ })).toBeNull();
     fireEvent.click(within(list).getByRole("button", { name: /Render xem trước/ }));
     await waitFor(() => expect(ws.startRender).toHaveBeenCalledWith("v1", { kind: "render_preview" }));

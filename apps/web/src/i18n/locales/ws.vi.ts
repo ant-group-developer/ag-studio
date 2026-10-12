@@ -96,6 +96,7 @@ export const wsVi = {
     download: "Tải về",
     watermarked: "có watermark",
     hidden: "bạn chưa có quyền xem footage này trên {{site}}",
+    checkFailed: "chưa kiểm được quyền xem footage trên {{site}}, tải lại sau ít phút",
     kind: {
       render_preview: "Xem trước",
       render_final: "Bản cuối",
