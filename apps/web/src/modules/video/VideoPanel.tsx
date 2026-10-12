@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { App as AntApp, Button, Empty, Popconfirm, Spin, Tag } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clapperboard, Download, Film, Hammer, Play } from "lucide-react";
@@ -24,6 +24,8 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
   const client = useWorkspaceClient();
   const qc = useQueryClient();
   const [playing, setPlaying] = useState<string | null>(null);
+  // each poll of the renders signs their links anew: the player keeps the link it has (they live an hour) or it reloads
+  const playerUrls = useRef(new Map<string, { url: string; at: number }>());
   const timeline = useQuery({ queryKey: ["timeline", videoId], queryFn: () => client.getTimeline(videoId) });
   const renders = useQuery({
     queryKey: ["renders", videoId], queryFn: () => client.listRenders(videoId),
@@ -42,6 +44,7 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
   const list = renders.data?.renders ?? [];
   const jobs = (renders.data?.jobs ?? []).filter((j) => j.status === "queued" || j.status === "running" || j.status === "failed").slice(0, 4);
   const shown = list.find((r) => r.jobId === playing) ?? list.find((r) => r.kind !== "export_premiere" && r.url);
+  const playerUrl = shown?.url ? keptUrl(playerUrls.current, shown.jobId, shown.url) : null;
   const errors = latest?.issues.filter((i) => i.startsWith("[error]")) ?? [];
 
   return (
@@ -88,8 +91,8 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
             {jobs.map((j) => <JobCard key={j.id} job={j} onStop={atLeast("editor") ? (x) => stop.mutate(x) : undefined} stopping={stop.isPending && stop.variables?.id === j.id} />)}
           </div>
         ) : null}
-        {shown?.url ? (
-          <video key={shown.jobId} className="ws-video__player" src={shown.url} controls preload="metadata" aria-label={t("ws.video.player")} />
+        {shown && playerUrl ? (
+          <video key={shown.jobId} className="ws-video__player" src={playerUrl} controls preload="metadata" aria-label={t("ws.video.player")} />
         ) : null}
         {list.length ? (
           <ul className="ws-inputs__list">
@@ -144,4 +147,12 @@ function RenderRow({ r, lang, current, onPlay }: { r: RenderView; lang: string; 
       {r.url ? <a className="ws-icon-button" href={r.url} target="_blank" rel="noreferrer" aria-label={t("ws.video.download")} title={t("ws.video.download")}><Download size={13} /></a> : null}
     </li>
   );
+}
+
+/** The link a render was first played with, while it is younger than half an hour; then the newer one. */
+function keptUrl(kept: Map<string, { url: string; at: number }>, jobId: string, url: string): string {
+  const k = kept.get(jobId);
+  if (k && Date.now() - k.at < 30 * 60_000) return k.url;
+  kept.set(jobId, { url, at: Date.now() });
+  return url;
 }
