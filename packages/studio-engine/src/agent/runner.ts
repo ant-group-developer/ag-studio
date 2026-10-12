@@ -70,6 +70,8 @@ export interface AgentRunnerOptions {
   stepFacts?: (key: string, videoId: string | null) => StepFact | undefined;
   /** More `<studio_context>` lines for a turn (jobs — later phases). */
   contextLines?: (projectId: string, videoId: string | null) => string[];
+  /** Farm machines that fetch reference videos now (`referenceFetchers`): while YouTube blocks the server, the agent is told they can. */
+  referenceFetchers?: () => Promise<string[]>;
   /** Summaries of quiet threads and the lessons they propose (`false`: off); the model of that small call. */
   summaries?: false | { model?: string; idleMinutes?: number };
   cap: () => number;
@@ -161,10 +163,13 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
     writeFileSync(join(turnDir, "settings.json"), JSON.stringify(AGENT_TURN_SETTINGS));
     const status = playbookStatus(db, dir, { projectId: project.id, videoId: video?.id ?? null, ...(o.stepFacts ? { facts: o.stepFacts } : {}), now: now() });
     writeStudioFile(dir, "status.json", JSON.stringify({ updated_at: now(), video_id: video?.id ?? null, ...status }, null, 2));
+    const studioBlock = youtubeBlock(db, now());
+    const fetchers = studioBlock && o.referenceFetchers ? await o.referenceFetchers().catch(() => [] as string[]) : [];
+    const blockLines = youtubeBlockLines(studioBlock, { farm: youtubeBlock(db, now(), "farm"), fetchers });
     const prompt = agentTurnPrompt({
       project, thread, video, refs: listThreadRefs(db, thread.id), messages: turnInput(db, message),
       resumed: message.attempts > 1, recap: opts.recap,
-      extra: [...playbookContextLines(status), ...youtubeBlockLines(youtubeBlock(db, now())), ...(o.contextLines?.(project.id, video?.id ?? null) ?? [])], now: now(),
+      extra: [...playbookContextLines(status), ...blockLines,...(o.contextLines?.(project.id, video?.id ?? null) ?? [])], now: now(),
     });
     const pluginDirs = o.skills ? [materializeSkillPlugin(db, { project, workspaceDir: dir, builtinDir: o.skills.builtinDir, pluginsRoot: o.skills.pluginsRoot })] : [];
     let lastWrite = 0;

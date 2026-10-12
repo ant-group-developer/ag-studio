@@ -67,4 +67,18 @@ describe('actions (real studio.db)', () => {
     noteYoutubeBlocked(s.engine.db, new Date().toISOString());
     expect((await actions.list(thread.id)).youtubeBlocked).toMatchObject({ where: 'studio' });
   });
+
+  it('a farm machine that fetches reference videos lifts the warning (the card goes through the farm), unless the farm is blocked too', async () => {
+    const node = { id: '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b', name: 'PC-01', online: true, kinds: ['studio.reference_fetch'], gpus: [], running_jobs: 0, last_seen_at: null };
+    const engine = { ...s.engine, db: s.engine.db, core: s.engine.core, farmNodes: async () => ({ nodes: [node] }) } as unknown as EngineService;
+    const viaFarm = new ActionsController(engine);
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    const thread = s.engine.db.get<{ id: string }>('SELECT id FROM agent_threads WHERE project_id = ? LIMIT 1', [p.id])!;
+    const now = new Date().toISOString();
+    noteYoutubeBlocked(s.engine.db, now);
+    expect((await viaFarm.list(thread.id)).youtubeBlocked).toBeNull();
+    expect((await actions.list(thread.id)).youtubeBlocked).toMatchObject({ where: 'studio' }); // no farm machines reachable here
+    noteYoutubeBlocked(s.engine.db, now, 'farm');
+    expect((await viaFarm.list(thread.id)).youtubeBlocked).toMatchObject({ where: 'farm' });
+  });
 });

@@ -115,4 +115,23 @@ describe("QueuePage", () => {
     expect(alert.textContent).toMatch(/tải video mẫu sẽ lỗi/);
     expect(screen.getByText(/Đặt YOUTUBE_API_KEY cho worker/)).toBeInTheDocument();
   });
+
+  it("blocked but farm machines fetch reference videos: the admin is told they go through the farm; the farm blocked too is said apart", async () => {
+    client.getMe.mockResolvedValue({ userId: "u", isAdmin: true });
+    const block = { blockedAt: "2026-10-06T09:00:00.000Z", until: "2026-10-06T15:00:00.000Z" };
+    client.getQueue.mockResolvedValue({ ...queue, youtube: { ...block, where: "studio" }, youtubeFarm: null, referenceFetchers: ["PC-01", "PC-02"] });
+    mount();
+    const alert = await screen.findByText(/^YouTube đang chặn tải từ máy chủ Studio từ/);
+    expect(alert.textContent).toMatch(/Video mẫu được tải qua máy farm thay \(PC-01, PC-02\)/);
+    expect(alert.textContent).not.toMatch(/tải video mẫu sẽ lỗi/);
+  });
+
+  it("the farm machines blocked too: the server warning comes back and the farm's block is said", async () => {
+    client.getMe.mockResolvedValue({ userId: "u", isAdmin: true });
+    const block = { blockedAt: "2026-10-06T09:00:00.000Z", until: "2026-10-06T15:00:00.000Z" };
+    client.getQueue.mockResolvedValue({ ...queue, youtube: { ...block, where: "studio" }, youtubeFarm: { ...block, where: "farm" }, referenceFetchers: ["PC-01"] });
+    mount();
+    expect((await screen.findByText(/^YouTube đang chặn tải từ máy chủ Studio từ/)).textContent).toMatch(/tải video mẫu sẽ lỗi/);
+    expect(screen.getByText(/^YouTube cũng đang chặn tải từ các máy farm/)).toBeInTheDocument();
+  });
 });

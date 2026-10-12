@@ -46,7 +46,7 @@ export function ActionCards({ projectId, threadId, canDecide }: { projectId: str
             <div className="ws-action__why"><Markdown text={a.summary} /></div>
             {a.kind === "reference_download" && blocked ? (
               <Alert type="warning" showIcon className="ws-action__warn"
-                message={t("ws.actions.youtubeBlocked", { since: new Date(blocked.blockedAt).toLocaleString(i18n.language, { dateStyle: "short", timeStyle: "short" }) })} />
+                message={t(blocked.where === "farm" ? "ws.actions.youtubeBlockedFarm" : "ws.actions.youtubeBlocked", { since: new Date(blocked.blockedAt).toLocaleString(i18n.language, { dateStyle: "short", timeStyle: "short" }) })} />
             ) : null}
             <div className="ws-action__meta">
               {a.revision !== null ? `${t("ws.actions.revision", { revision: a.revision })} · ` : ""}

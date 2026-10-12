@@ -23,6 +23,7 @@ import type { ProjectFarm } from "./workspace/farm.js";
 import { farmLanes, limiter } from "./workspace/lanes.js";
 import { PREVIEW_PREFER, prepareHandler } from "./workspace/prepare.js";
 import { RENDER_KINDS, renderHandler } from "./workspace/renders.js";
+import { referenceFetchers } from "./workspace/reference-fetch.js";
 import { researchHandler } from "./workspace/research.js";
 import { styleWatchHandler } from "./workspace/style-watch.js";
 import { thumbnailHandler } from "./workspace/thumbnails.js";
@@ -46,7 +47,7 @@ export interface StudioWorkerOptions {
   thumbnails?: ThumbnailRenderer;
   /** yt-dlp: crawls without an API key, reference videos. */
   ytdlp?: YtDlp;
-  /** False: reference videos are never downloaded (`STUDIO_REFERENCE_DOWNLOADS=0`). */
+  /** False: reference videos are never downloaded, neither here nor by the farm's machines (`STUDIO_REFERENCE_DOWNLOADS=0`). */
   referenceDownloads?: boolean;
   /** Claude calls at once (the web setting wins); default `DEFAULT_CLAUDE_MAX_CONCURRENT` (20). */
   claudeMaxConcurrent?: number;
@@ -87,7 +88,12 @@ export function createStudioWorkerPool(o: StudioWorkerOptions & {
   cleanup?: { everyMs: number; retention?: Partial<RetentionConfig> };
 }): StudioWorkerPool {
   const agent = o.agent
-    ? createAgentRunner({ ...o.agent, db: o.db, bucket: o.bucket, logger: o.logger ?? studioLogger({ owner: `${o.owner}#agent` }), cap: () => claudeCap(o), ...(o.siteName ? { siteName: o.siteName } : {}) })
+    ? createAgentRunner({
+      ...o.agent, db: o.db, bucket: o.bucket, logger: o.logger ?? studioLogger({ owner: `${o.owner}#agent` }), cap: () => claudeCap(o),
+      ...(o.siteName ? { siteName: o.siteName } : {}),
+      // while YouTube blocks the server the agent is told whether farm machines fetch reference videos instead
+      ...(o.referenceDownloads !== false && !o.agent.referenceFetchers ? { referenceFetchers: referenceFetchers(o.farm) } : {}),
+    })
     : null;
   const jobsLog = o.logger ?? studioLogger({ owner: `${o.owner}#jobs` });
   const lanes = o.jobs ? jobLanes(o.farm, o.jobs, jobsLog) : undefined;
@@ -139,10 +145,14 @@ export function projectJobHandlers(o: StudioWorkerOptions): Partial<Record<JobKi
   }
   if (o.thumbnails) handlers.thumbnail = thumbnailHandler({ db: o.db, bucket: o.bucket, renderer: o.thumbnails });
   // reference videos: uploaded ones (style_from_files), and YouTube ones a person agreed to download (a
-  // reference_download card: watched, measured, deleted) when this worker has yt-dlp and downloads are not turned off
+  // reference_download card: watched, measured, deleted) unless downloads are turned off: fetched by a farm machine
+  // taking studio.reference_fetch when one is online (YouTube blocks the server, not the office), else this worker's yt-dlp
   if (media) {
-    const ytdlp = o.referenceDownloads !== false ? o.ytdlp ?? null : null;
-    handlers.style_watch = styleWatchHandler({ db: o.db, ytdlp, ffmpeg: media.ffmpeg, ffprobe: media.ffprobe });
+    const downloads = o.referenceDownloads !== false;
+    handlers.style_watch = styleWatchHandler({
+      db: o.db, ytdlp: downloads ? o.ytdlp ?? null : null, ffmpeg: media.ffmpeg, ffprobe: media.ffprobe,
+      farm: downloads ? { client: o.farm, bucket: o.bucket, fetchers: referenceFetchers(o.farm), pollMs: farmWait.pollMs, queueTimeoutMs: o.farmQueueTimeoutMs ?? 30 * 60_000 } : null,
+    });
   }
   const crawler = new YoutubeCrawler({ apiKey: o.youtubeApiKey ?? null, ytdlp: o.ytdlp ?? null, cache: studioResearchCache(o.db) });
   if (crawler.source) handlers.research = researchHandler({ db: o.db, crawler });

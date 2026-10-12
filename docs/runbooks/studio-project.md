@@ -31,7 +31,8 @@ quay lại bước nào cũng được; mọi kết quả là file sửa đượ
 - Tab **Nghiên cứu**: crawl YouTube (xu hướng, theo chủ đề, kênh top, video top của một kênh). Ước lượng hạn mức API hiện
   trước khi chạy; kết quả ở `research/<ngày>-<chủ đề>.md`. Agent cũng crawl được (crawl lớn cần người xác nhận thẻ).
 - Chat ở luồng Kênh theo các bước gợi ý (thanh bước trên chat): báo cáo thị trường, chiến lược kênh, phong cách dựng
-  (tuỳ chọn; học từ video mẫu cần bấm xác nhận thẻ tải video), branding (`channel/branding.md`: kiểu chữ trên video, tâm
+  (tuỳ chọn; học từ video mẫu cần bấm xác nhận thẻ tải video — YouTube chặn máy chủ Studio thì máy farm có yt-dlp tải
+  thay, đo xong xoá ngay; hoặc tải video mẫu lên tab Đầu vào), branding (`channel/branding.md`: kiểu chữ trên video, tâm
   trạng nhạc, kiểu thumbnail). Lỗi file (ví dụ chữ khó đọc) hiện ở bước và ở tab Tệp.
 
 ## 4. Một video

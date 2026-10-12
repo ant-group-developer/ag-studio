@@ -354,6 +354,10 @@ export interface StudioQueueView {
   farm: { ok: true } | { ok: false; error: string };
   /** YouTube refusing to let the Studio server download now; null when not (older APIs: absent). */
   youtube?: YoutubeBlock | null;
+  /** The same for the farm's machines that fetch reference videos. */
+  youtubeFarm?: YoutubeBlock | null;
+  /** Machines online that fetch reference videos (`studio.reference_fetch`); null when the farm could not be read. */
+  referenceFetchers?: string[] | null;
 }
 
 /** A machine of the farm (ag-farm `GET /v1/owner/nodes`). */

@@ -73,3 +73,4 @@ export * from "./workspace/fit.js";
 export * from "./agent/timeline-tools.js";
 export * from "./workspace/thumbnails.js";
 export * from "./workspace/style-watch.js";
+export * from "./workspace/reference-fetch.js";

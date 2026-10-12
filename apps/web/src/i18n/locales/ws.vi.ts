@@ -338,7 +338,9 @@ export const wsVi = {
     online: "đang bật",
     offline: "đang tắt",
     stopFailed: "Không dừng được.",
-    youtubeBlocked: "YouTube đang chặn tải từ máy chủ Studio từ {{since}} (Studio coi như còn chặn tới {{until}}): tải video mẫu sẽ lỗi, nghiên cứu YouTube qua yt-dlp cũng vậy.",
+    youtubeBlocked: "YouTube đang chặn tải từ máy chủ Studio từ {{since}} (Studio coi như còn chặn tới {{until}}) và không máy farm nào tải thay được: tải video mẫu sẽ lỗi, nghiên cứu YouTube qua yt-dlp cũng vậy.",
+    youtubeBlockedViaFarm: "YouTube đang chặn tải từ máy chủ Studio từ {{since}} (Studio coi như còn chặn tới {{until}}). Video mẫu được tải qua máy farm thay ({{machines}}), đo xong xoá ngay; nghiên cứu YouTube qua yt-dlp vẫn bị chặn.",
+    youtubeFarmBlocked: "YouTube cũng đang chặn tải từ các máy farm từ {{since}} (Studio coi như còn chặn tới {{until}}): tải video mẫu qua farm sẽ lỗi.",
     youtubeBlockedHint: "Đặt YOUTUBE_API_KEY cho worker thì nghiên cứu đi qua YouTube Data API, không bị chặn kiểu này. Studio không dùng cookie hay đăng nhập để lách.",
   },
   audit: {
@@ -901,7 +903,8 @@ export const wsVi = {
     expires: "hết hạn {{when}}",
     expired: "Thẻ đã hết hiệu lực (timeline đã đổi hoặc quá 24 giờ). Nhờ agent đề xuất lại.",
     failed: "Không thực hiện được",
-    youtubeBlocked: "YouTube đang chặn tải từ máy chủ Studio (từ {{since}}): xác nhận lúc này nhiều khả năng sẽ lỗi. Cách khác: tải video mẫu lên tab Đầu vào (mục Video mẫu), hoặc tả phong cách dựng bằng lời trong chat.",
+    youtubeBlocked: "YouTube đang chặn tải từ máy chủ Studio (từ {{since}}) và không máy farm nào tải thay được: xác nhận lúc này nhiều khả năng sẽ lỗi. Cách khác: tải video mẫu lên tab Đầu vào (mục Video mẫu), hoặc tả phong cách dựng bằng lời trong chat.",
+    youtubeBlockedFarm: "YouTube đang chặn tải từ máy chủ Studio lẫn các máy farm (từ {{since}}): xác nhận lúc này nhiều khả năng sẽ lỗi. Cách khác: tải video mẫu lên tab Đầu vào (mục Video mẫu), hoặc tả phong cách dựng bằng lời trong chat.",
     kind: {
       render_final: "Render bản cuối",
       export_premiere: "Xuất Premiere",

@@ -140,13 +140,20 @@ nhưng không code nào đọc.
   `settings.auto_continue`). Worker thiếu công cụ thì job loại đó chờ worker khác (`projectJobHandlers`).
 - Lỗi yt-dlp có mã (`classifyYtDlp`, `YtDlpError`): `youtube_blocked` (YouTube chặn máy chủ: bot check, 429) làm
   `style_watch` dừng ngay, không thử video còn lại; job lỗi có mã ghi `result.error_code` (`JobError`). Không cookie, không
-  đăng nhập (ADR-0001 mục 175, 191). Bị chặn thì Studio nhớ 6 giờ (`studio_settings.youtube.blocked_until`,
-  `noteYoutubeBlocked`/`youtubeBlock`, tải hay đọc được thì xoá): `<studio_context>` báo agent, `propose_action
-  reference_download` từ chối, thẻ đang chờ và màn Hàng đợi (admin) hiện cảnh báo.
+  đăng nhập (ADR-0001 mục 175, 191). Bị chặn thì Studio nhớ 6 giờ, **riêng từng nơi** (`studio_settings`:
+  `youtube.blocked_until` máy chủ, `youtube.farm_blocked_until` máy farm; `noteYoutubeBlocked`/`youtubeBlock` với `where`,
+  tải hay đọc được ở đâu thì xoá cờ nơi đó): `<studio_context>` báo agent, `propose_action reference_download` chỉ từ chối
+  khi `referenceDownloadBlock` (đường sẽ đi đang bị chặn), thẻ đang chờ và màn Hàng đợi (admin) hiện cảnh báo.
 - `style_watch` nhận cả `files` (video người dùng tải ở mục Video mẫu của tab Đầu vào, `context/references/`, ≤ 300 MB):
   đo y như video YouTube, **không bao giờ** đổi hay xoá file người dùng; tool agent `style_from_files` xếp job ngay (không
   thẻ, không ra mạng); skill `edit-style` (bước `style`). Worker có ffmpeg là nhận `style_watch`; thiếu yt-dlp hoặc
-  `STUDIO_REFERENCE_DOWNLOADS=0` thì video YouTube trong job báo `no_ytdlp`. Tải qua máy farm khi YouTube chặn: P9.
+  `STUDIO_REFERENCE_DOWNLOADS=0` (tắt cả đường farm) thì video YouTube trong job báo `no_ytdlp`.
+- Video mẫu YouTube đi qua **máy farm** khi có máy online nhận `studio.reference_fetch` (`workspace/reference-fetch.ts`,
+  `referenceRoute`; ADR-0001 mục 193): mỗi id một job farm (`requirements {ytdlp: true}`, khoá
+  `productions/<project>/jobs/reference_fetch/<jobId>-r<n>/out/`, ghi `project_farm_jobs`), Studio kéo về thư mục nháp
+  (`bucket.getFile`), đo, rồi trong `finally` xoá object trên bucket lẫn file nháp. Lỗi farm (`FarmJobFailed.code`) đổi
+  về mã `YtFailureCode`; `youtube_blocked` từ máy farm dừng các video còn lại và ghi cờ `where: farm`. Không có máy nào
+  (hoặc chỉ farm bị chặn mà worker có yt-dlp) thì yt-dlp của worker như cũ.
 - Job farm của dự án ghi `project_farm_jobs`; `/api/farm/sign` tra ở đó, hỏi ag-go bằng quyền **chủ dự án**; bản xem trước xin
   `prefer: {short_edge: 480, clean: true}` (ag-go cũ bỏ qua). Khoá bucket giữ quy ước farm:
   `productions/<projectId>/jobs/<stage>/<jobId>/{in,out}/` (dự án đóng vai "production" trong payload `@ag-farm/protocol`,

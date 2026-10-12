@@ -116,4 +116,24 @@ describe("actions a person confirms", () => {
     expect((await callAgentTool(agentTools(), s.ctx, "propose_action", ask)).isError).toBeFalsy();
     expect(listActions(s.db, { threadId: s.thread.id })).toHaveLength(1);
   });
+
+  it("YouTube blocking the server but a farm machine can fetch: the card is allowed again (through the farm); not when the farm is blocked too", async () => {
+    const s = setup();
+    let fetchers: string[] = [];
+    s.ctx.referenceFetchers = async () => fetchers;
+    const ask = { kind: "reference_download", title: "Tải video mẫu", why: "đo nhịp dựng", params: { video_ids: ["U_17EqTHUIo"], purpose: "nhịp dựng" } };
+    noteYoutubeBlocked(s.db, NOW);
+    const refused = await callAgentTool(agentTools(), s.ctx, "propose_action", ask);
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain("không máy farm nào tải thay được");
+    fetchers = ["PC-01"];
+    const ok = await callAgentTool(agentTools(), s.ctx, "propose_action", ask);
+    expect(ok.isError).toBeFalsy();
+    expect(ok.text).toContain("Video mẫu sẽ tải qua máy farm (PC-01)");
+    expect(listActions(s.db, { threadId: s.thread.id })).toHaveLength(1);
+    noteYoutubeBlocked(s.db, NOW, "farm");
+    const both = await callAgentTool(agentTools(), s.ctx, "propose_action", ask);
+    expect(both.isError).toBe(true);
+    expect(both.text).toContain("và cả các máy farm");
+  });
 });

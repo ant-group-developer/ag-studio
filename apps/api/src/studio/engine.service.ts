@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import {
   createStudioEngineCore,
   FarmOwnerClient,
+  referenceFetchNodes,
   S3Bucket,
   StudioDb,
   type StudioBucket,
@@ -14,6 +15,18 @@ const FARM_NODES_TTL_MS = 3000;
 
 /** The farm's machines as the owner API lists them (`GET /v1/owner/nodes`). */
 export type FarmNodes = Awaited<ReturnType<FarmOwnerClient['listNodes']>>;
+
+/**
+ * Names of the farm machines online now that fetch reference videos (`studio.reference_fetch`): while YouTube blocks
+ * the Studio server, a reference download goes through them. A farm out of reach counts none.
+ */
+export async function referenceFetcherNames(engine: Pick<EngineService, 'farmNodes'>): Promise<string[]> {
+  try {
+    return referenceFetchNodes((await engine.farmNodes()).nodes).map((n) => n.name);
+  } catch {
+    return [];
+  }
+}
 
 /**
  * The Studio engine inside the API process: the same `studio.db` (through StudioDbService), bucket and clock the

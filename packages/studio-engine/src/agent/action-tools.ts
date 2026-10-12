@@ -4,7 +4,7 @@
  */
 import { z } from "zod";
 import { StudioRunError } from "../errors.js";
-import { youtubeBlock } from "../settings.js";
+import { referenceDownloadBlock, youtubeBlock } from "../settings.js";
 import { ACTION_KINDS, ACTION_ROLE, proposeAction } from "./actions.js";
 import type { AgentTool } from "./tools.js";
 
@@ -19,7 +19,7 @@ export const ACTION_TOOLS: AgentTool[] = [
       "render_final {video_id?, node_id?} render bản cuối của video từ timeline hiện tại (cần producer);",
       "export_premiere {video_id?} xuất file dựng Premiere (cần producer); delete_video {video_id} lưu trữ một video (cần producer);",
       "crawl_large {crawl: {kind, …}} một crawl YouTube lớn (> 500 đơn vị hoặc > 100 video);",
-      "reference_download {video_ids: [id YouTube 11 ký tự, tối đa 5], purpose} tải video mẫu ≤480p để đo phong cách dựng (không được khi YouTube đang chặn máy chủ Studio).",
+      "reference_download {video_ids: [id YouTube 11 ký tự, tối đa 5], purpose} tải video mẫu ≤480p để đo phong cách dựng (tải qua máy farm khi có; không được khi YouTube chặn máy chủ Studio mà không máy farm nào tải thay).",
       "video_id bỏ trống = video của luồng này. `title` là câu ngắn trên thẻ, `why` giải thích ngắn vì sao.",
       "Sau khi đề xuất, kết thúc lượt: Studio báo vào luồng khi người dùng quyết.",
     ].join(" "),
@@ -29,15 +29,22 @@ export const ACTION_TOOLS: AgentTool[] = [
       why: z.string().trim().min(1).max(2000),
       params: z.record(z.string(), z.unknown()).default({}),
     }).strict(),
-    run: (ctx, a) => {
-      const blocked = a.kind === "reference_download" ? youtubeBlock(ctx.db, ctx.now()) : null;
+    run: async (ctx, a) => {
+      // YouTube blocking the Studio server refuses the card only when no farm machine can fetch instead (or the farm
+      // is blocked too): through the farm it would work (`referenceDownloadBlock`)
+      const studioBlock = a.kind === "reference_download" ? youtubeBlock(ctx.db, ctx.now()) : null;
+      const fetchers = studioBlock && ctx.referenceFetchers ? await ctx.referenceFetchers().catch(() => [] as string[]) : [];
+      const blocked = studioBlock ? referenceDownloadBlock(ctx.db, ctx.now(), fetchers.length) : null;
       if (blocked) {
         throw new StudioRunError("rejected", [
-          "Chưa tạo thẻ: YouTube đang chặn tải từ máy chủ Studio (đòi đăng nhập để xác nhận không phải bot), nên tải video mẫu chắc chắn hỏng.",
+          blocked.where === "farm"
+            ? "Chưa tạo thẻ: YouTube đang chặn tải từ máy chủ Studio và cả các máy farm (đòi đăng nhập để xác nhận không phải bot), nên tải video mẫu chắc chắn hỏng."
+            : "Chưa tạo thẻ: YouTube đang chặn tải từ máy chủ Studio (đòi đăng nhập để xác nhận không phải bot) và không máy farm nào tải thay được, nên tải video mẫu chắc chắn hỏng.",
           "Studio không dùng cookie hay đăng nhập để lách. Hãy nói rõ với người dùng và đề nghị: tải video mẫu lên tab Đầu vào",
           "(mục Video mẫu) rồi học bằng style_from_files, hoặc tả phong cách dựng bằng lời.",
-        ].join(" "), { code: "youtube_blocked", until: blocked.until });
+        ].join(" "), { code: "youtube_blocked", where: blocked.where, until: blocked.until });
       }
+      const viaFarm = studioBlock && fetchers.length ? ` Video mẫu sẽ tải qua máy farm (${fetchers.join(", ")}) vì YouTube đang chặn máy chủ Studio.` : "";
       const params = { ...a.params };
       if (VIDEO_KINDS.has(a.kind) && params.video_id === undefined && ctx.video) params.video_id = ctx.video.id;
       const action = proposeAction(ctx.db, {
@@ -45,7 +52,7 @@ export const ACTION_TOOLS: AgentTool[] = [
         createdBy: ctx.claims.sub,
       }, ctx.now());
       return {
-        text: `Đã hiện thẻ "${action.title}" cho người dùng (cần vai ${ACTION_ROLE[action.kind]} để xác nhận, hết hạn sau 24 giờ${action.revision ? `, gắn với timeline bản ${action.revision}` : ""}). Kết thúc lượt; Studio báo vào luồng khi họ quyết.`,
+        text: `Đã hiện thẻ "${action.title}" cho người dùng (cần vai ${ACTION_ROLE[action.kind]} để xác nhận, hết hạn sau 24 giờ${action.revision ? `, gắn với timeline bản ${action.revision}` : ""}).${viaFarm} Kết thúc lượt; Studio báo vào luồng khi họ quyết.`,
       };
     },
   }),

@@ -2,8 +2,10 @@
  * The Studio bucket (plan 3.1: only Studio holds its R2 keys). Keys are full object keys, e.g.
  * `productions/<id>/audio/<sha>.wav`. `MemoryBucket` backs unit tests; `S3Bucket` is R2/MinIO/the E2E fake S3.
  */
-import { createReadStream, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { createReadStream, createWriteStream, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import type { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { DeleteObjectsCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -12,6 +14,8 @@ export interface StudioBucket {
   /** Streams a local file up without reading it into memory (an episode video can be gigabytes). */
   putFile(key: string, path: string, contentType?: string): Promise<void>;
   get(key: string): Promise<Buffer>;
+  /** Streams an object down into a local file (its folder made) without holding it in memory; answers its size. */
+  getFile(key: string, path: string): Promise<number>;
   exists(key: string): Promise<{ size: number } | null>;
   /** Short-lived GET URL for a browser (preview renders, exports); with `downloadName` the browser saves the file. */
   signedGetUrl(key: string, ttlSeconds: number, opts?: SignedUrlOptions): Promise<string>;
@@ -65,6 +69,13 @@ export class S3Bucket implements StudioBucket {
     if (!r.Body) throw new Error(`no body for ${key}`);
     return Buffer.from(await r.Body.transformToByteArray());
   }
+  async getFile(key: string, path: string): Promise<number> {
+    const r = await this.s3.send(new GetObjectCommand({ Bucket: this.opts.bucket, Key: key }));
+    if (!r.Body) throw new Error(`no body for ${key}`);
+    mkdirSync(dirname(path), { recursive: true });
+    await pipeline(r.Body as Readable, createWriteStream(path));
+    return statSync(path).size;
+  }
   async exists(key: string): Promise<{ size: number } | null> {
     try {
       const r = await this.s3.send(new HeadObjectCommand({ Bucket: this.opts.bucket, Key: key }));
@@ -113,6 +124,12 @@ export class MemoryBucket implements StudioBucket {
     const b = this.objects.get(key);
     if (!b) throw new Error(`no object ${key}`);
     return b;
+  }
+  async getFile(key: string, path: string): Promise<number> {
+    const b = await this.get(key);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, b);
+    return b.length;
   }
   async exists(key: string): Promise<{ size: number } | null> {
     const b = this.objects.get(key);

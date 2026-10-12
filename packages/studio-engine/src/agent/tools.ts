@@ -40,6 +40,8 @@ export interface AgentToolContext {
   footage?: ProjectFootage;
   /** What people call the footage library (ag-go's `siteName`); default "AG Go". */
   siteName?: string;
+  /** Farm machines online that fetch reference videos (`studio.reference_fetch`); absent: none. */
+  referenceFetchers?: () => Promise<string[]>;
 }
 
 export interface ToolAnswer {

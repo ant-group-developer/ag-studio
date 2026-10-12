@@ -1,11 +1,12 @@
 import { Controller, Get, HttpCode, HttpStatus, Param, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import {
-  actionView, decideAction, getAction, listActions, requireProject, requireThread, StudioRunError, youtubeBlock, type ActionView, type ActorRole, type YoutubeBlock,
+  actionView, decideAction, getAction, listActions, referenceDownloadBlock, requireProject, requireThread, StudioRunError, type ActionView, type ActorRole,
+  type YoutubeBlock,
 } from '@ag-studio/engine';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
-import { EngineService } from '../studio/engine.service';
+import { EngineService, referenceFetcherNames } from '../studio/engine.service';
 import { mapErrors } from '../studio/http-errors';
 
 /**
@@ -18,13 +19,21 @@ import { mapErrors } from '../studio/http-errors';
 export class ActionsController {
   constructor(private readonly engine: EngineService) {}
 
-  /** `youtubeBlocked`: YouTube refusing the Studio server now (pending reference downloads would fail), else null. */
+  /**
+   * `youtubeBlocked`: a pending reference download would fail now (`referenceDownloadBlock`), else null: YouTube blocks
+   * the Studio server and no farm machine can fetch instead (`where: 'studio'`), or the farm's machines are blocked too
+   * (`where: 'farm'`). Blocked server but a machine able to fetch: null, the card goes through the farm.
+   */
   @Get('threads/:threadId/actions')
   @Roles('viewer')
-  list(@Param('threadId') threadId: string): Promise<{ actions: ActionView[]; youtubeBlocked: YoutubeBlock | null }> {
+  async list(@Param('threadId') threadId: string): Promise<{ actions: ActionView[]; youtubeBlocked: YoutubeBlock | null }> {
+    const fetchers = await referenceFetcherNames(this.engine);
     return mapErrors(() => {
       requireThread(this.engine.db, threadId);
-      return { actions: listActions(this.engine.db, { threadId }).map(actionView), youtubeBlocked: youtubeBlock(this.engine.db, this.engine.core.clock.now()) };
+      return {
+        actions: listActions(this.engine.db, { threadId }).map(actionView),
+        youtubeBlocked: referenceDownloadBlock(this.engine.db, this.engine.core.clock.now(), fetchers.length),
+      };
     });
   }
 

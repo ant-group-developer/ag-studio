@@ -39,9 +39,20 @@ export function QueuePage() {
         <div className="ws-page__inner">
           <div className="ws-page__head"><h1 className="ws-page__title">{t("ws.queue.title")}</h1></div>
           {me?.isAdmin && queue?.youtube ? (
+            // the farm's machines fetch reference videos while the server is blocked, unless they are blocked too
+            queue.referenceFetchers?.length && !queue.youtubeFarm ? (
+              <Alert type="info" showIcon className="ws-queue__youtube"
+                message={t("ws.queue.youtubeBlockedViaFarm", { since: when(queue.youtube.blockedAt), until: when(queue.youtube.until), machines: queue.referenceFetchers.join(", ") })}
+                description={t("ws.queue.youtubeBlockedHint")} />
+            ) : (
+              <Alert type="warning" showIcon className="ws-queue__youtube"
+                message={t("ws.queue.youtubeBlocked", { since: when(queue.youtube.blockedAt), until: when(queue.youtube.until) })}
+                description={t("ws.queue.youtubeBlockedHint")} />
+            )
+          ) : null}
+          {me?.isAdmin && queue?.youtubeFarm ? (
             <Alert type="warning" showIcon className="ws-queue__youtube"
-              message={t("ws.queue.youtubeBlocked", { since: when(queue.youtube.blockedAt), until: when(queue.youtube.until) })}
-              description={t("ws.queue.youtubeBlockedHint")} />
+              message={t("ws.queue.youtubeFarmBlocked", { since: when(queue.youtubeFarm.blockedAt), until: when(queue.youtubeFarm.until) })} />
           ) : null}
           <div className="ws-admin">
             <div className="ws-admin__main">

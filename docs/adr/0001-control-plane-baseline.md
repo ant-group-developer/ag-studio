@@ -1240,3 +1240,17 @@ Spec `docs/superpowers/specs/2026-10-10-ag-studio-agent-workspace-design.md`, pl
     `context/`, đuôi video), đo y như video YouTube và **không đổi, không xoá** file người dùng. Tool agent
     `style_from_files` xếp job thẳng, không thẻ xác nhận vì không ra mạng (khác `reference_download`, mục 175/185). Skill
     `edit-style` cho bước `style`: video tải lên, video YouTube (khi không bị chặn), hoặc lời người dùng tả.
+193. **Video mẫu do máy farm tải, đi qua bucket tạm, xoá trong cùng job (2026-10-13).** YouTube chặn IP máy chủ Studio
+    (mục 191) chứ không chặn máy farm ở văn phòng. Job `style_watch` hỏi farm (`GET owner/nodes`, nhớ 30 giây): có máy
+    online nhận `studio.reference_fetch` (chỉ máy có yt-dlp báo loại này) thì mỗi id YouTube thành một job farm (lane
+    `interactive`, slot cpu, `requirements {ytdlp: true}`, ghi `project_farm_jobs` nên `/farm/sign` cho máy đẩy lên
+    `productions/<project>/jobs/reference_fetch/<jobId>-r<n>/out/`, job hiện máy đang tải); Studio kéo object về thư mục
+    nháp của job, đo y như trước, rồi trong `finally` xoá **cả** mọi object dưới tiền tố đó **lẫn** file nháp — video
+    không bao giờ được giữ, trên bucket cũng như trên máy. Không có máy nào thì yt-dlp trên máy chủ như cũ. Máy farm chạy
+    yt-dlp với đúng cờ của Studio: vẫn không cookie, không đăng nhập, không lách chặn (mục 175); lỗi báo cùng mã với mục
+    191 (`youtube_blocked` từ máy farm cũng dừng các video còn lại). Bị chặn được nhớ **riêng từng nơi**
+    (`youtube.blocked_until` cho máy chủ, `youtube.farm_blocked_until` cho máy farm, đều 6 giờ): máy farm tải được không xoá
+    cờ của máy chủ (máy chủ vẫn bị chặn với research qua yt-dlp), máy farm bị chặn không ghi vào cờ của máy chủ. Thẻ
+    `reference_download` chỉ bị từ chối khi đường nó sẽ đi (`referenceRoute`) đang bị chặn: máy chủ bị chặn mà có máy
+    farm tải được thì thẻ dùng được lại; màn Hàng đợi (admin) nói video mẫu đang đi qua máy nào. `STUDIO_REFERENCE_DOWNLOADS=0`
+    tắt cả hai đường.

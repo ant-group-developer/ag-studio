@@ -9,18 +9,25 @@
  * A YouTube video that cannot be had says why with a code (`yt-dlp.ts`, `YtFailureCode`). YouTube refusing the server
  * itself (`youtube_blocked`, the bot check) stops at once: the other videos would fail the same way, so they are
  * skipped; Studio remembers it for a while (`studio_settings`, `noteYoutubeBlocked`) and forgets it when a download goes
- * through. Downloading through the farm's machines (P9) would go in `downloadReference`.
+ * through.
+ *
+ * Where a YouTube video is downloaded (`referenceRoute`, ADR-0001 item 193): when a farm machine takes
+ * `studio.reference_fetch` it fetches the video (YouTube blocks the Studio server, not the office machines), Studio
+ * streams it from the bucket into the job's scratch folder and deletes both the object and the file once measured
+ * (`reference-fetch.ts`); with no such machine, the Studio server's own yt-dlp as before. Each place's block is
+ * remembered apart (`where`: studio / farm): a farm fetch neither clears nor sets the server's.
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
 import { measureShots, mergeCuts, pickFrameTimes } from "@harness/core";
 import { detectCuts, grabFrame, probeMedia, tileSheet } from "../cut-ffmpeg.js";
 import { StudioRunError } from "../errors.js";
-import { clearYoutubeBlocked, noteYoutubeBlocked } from "../settings.js";
+import { clearYoutubeBlocked, noteYoutubeBlocked, referenceRoute, type YoutubeBlockWhere } from "../settings.js";
 import type { StudioDb } from "../studio-db.js";
 import { YT_FAILURE_REASON, ytFailureOf, type YtDlp, type YtFailure } from "../yt-dlp.js";
 import { normalizeRelPath, resolveInside, writeWorkspaceFile } from "./files.js";
 import { JobError, type JobContext, type JobHandler } from "./job-runner.js";
+import { dropReferenceObjects, farmBlockedReason, fetchReferenceOnFarm, type ReferenceFarm } from "./reference-fetch.js";
 
 export interface StyleWatchRequest {
   /** YouTube ids (a confirmed `reference_download` card). */
@@ -56,6 +63,10 @@ export const STYLE_INSTEAD = "Cách khác: tải video mẫu lên tab Đầu và
 export const YOUTUBE_BLOCKED_MESSAGE = `${YT_FAILURE_REASON.youtube_blocked}, nên chưa tải được video mẫu nào. `
   + `Studio không dùng cookie hay đăng nhập để lách. ${STYLE_INSTEAD}`;
 
+/** The same when the farm's machines were refused (they fetch while YouTube blocks the server). */
+export const FARM_BLOCKED_MESSAGE = `YouTube đang chặn tải từ các máy farm (đòi đăng nhập để xác nhận không phải bot), nên chưa tải được video mẫu nào. `
+  + `Studio không dùng cookie hay đăng nhập để lách. ${STYLE_INSTEAD}`;
+
 /**
  * A reference video uploaded to the project: a file under `context/` with a video extension. Throws a
  * `StudioRunError` (`code` in details: `not_context`, `not_video`, `no_file`) saying what is wrong.
@@ -84,6 +95,8 @@ interface WatchRow {
   code: string | null; error: string | null;
   /** Not tried (YouTube blocked the server on an earlier one). */
   skipped: boolean;
+  /** Where a YouTube video was downloaded (`farm`: on the machine `node`); null for an uploaded one. */
+  via: YoutubeBlockWhere | null; node: string | null;
   measured: Measured; sheets: string[];
 }
 
@@ -128,6 +141,8 @@ export interface StyleWatchDeps {
   ffprobe: string;
   /** yt-dlp for YouTube videos; absent (no yt-dlp, or `STUDIO_REFERENCE_DOWNLOADS=0`): only uploaded videos are watched. */
   ytdlp?: YtDlp | null;
+  /** The farm's machines that fetch YouTube videos (`studio.reference_fetch`); absent: only Studio's own yt-dlp. */
+  farm?: ReferenceFarm | null;
 }
 
 export function styleWatchHandler(d: StyleWatchDeps): JobHandler {
@@ -144,7 +159,7 @@ export function styleWatchHandler(d: StyleWatchDeps): JobHandler {
     const rows: WatchRow[] = [];
     const all: { cuts: number[]; duration: number }[] = [];
     const row = (r: Partial<WatchRow> & { label: string; title: string }): WatchRow => {
-      const out: WatchRow = { id: null, file: null, channel: "", duration: null, code: null, error: null, skipped: false, measured: null, sheets: [], ...r };
+      const out: WatchRow = { id: null, file: null, channel: "", duration: null, code: null, error: null, skipped: false, via: null, node: null, measured: null, sheets: [], ...r };
       rows.push(out);
       return out;
     };
@@ -167,11 +182,18 @@ export function styleWatchHandler(d: StyleWatchDeps): JobHandler {
     }
 
     let blocked: YtFailure | null = null;
+    let blockedWhere: YoutubeBlockWhere = "studio";
+    const fetchedOn = new Set<string>();
     if (ids.length) {
       const yt = d.ytdlp ?? null;
-      ctx.report({ phase: "Đang đọc thông tin video mẫu trên YouTube", progress: step(files.length).progress(0) });
-      const meta = yt ? await yt.metadata(ids, ctx.signal).catch((e: unknown) => {
-        // the numbers are a nicety, but a bot check here is the server blocked: nothing would download
+      // a farm machine when one can take it (unless only the farm is remembered blocked and Studio has its own yt-dlp)
+      const fetchers = d.farm ? await d.farm.fetchers().catch(() => [] as string[]) : [];
+      const farm = fetchers.length && (!yt || referenceRoute(d.db, ctx.now(), fetchers.length) === "farm") ? d.farm ?? null : null;
+      const via: YoutubeBlockWhere = farm ? "farm" : "studio";
+      // the numbers are a nicety read by Studio's yt-dlp; through the farm they come with each video
+      if (!farm) ctx.report({ phase: "Đang đọc thông tin video mẫu trên YouTube", progress: step(files.length).progress(0) });
+      const meta = !farm && yt ? await yt.metadata(ids, ctx.signal).catch((e: unknown) => {
+        // a bot check here is the server blocked: nothing would download
         const f = ytFailureOf(e);
         if (f?.code === "youtube_blocked") blocked = f;
         return new Map<string, { title: string; channel_title: string; duration_s: number; views: number }>();
@@ -179,10 +201,10 @@ export function styleWatchHandler(d: StyleWatchDeps): JobHandler {
       for (const [i, id] of ids.entries()) {
         ctx.checkpoint();
         const m = meta.get(id);
-        const r = row({ label: `R${i + 1}`, id, title: m?.title ?? id, channel: m?.channel_title ?? "" });
+        const r = row({ label: `R${i + 1}`, id, title: m?.title ?? id, channel: m?.channel_title ?? "", via });
         const stop = blocked as YtFailure | null;
-        if (!yt) {
-          Object.assign(r, { code: "no_ytdlp", error: "máy chủ Studio không tải video YouTube (không có yt-dlp hoặc đã tắt tải video mẫu)" });
+        if (!yt && !farm) {
+          Object.assign(r, { code: "no_ytdlp", error: "máy chủ Studio không tải video YouTube (không có yt-dlp hoặc đã tắt tải video mẫu) và không máy farm nào tải được" });
           continue;
         }
         if (stop) {
@@ -193,24 +215,50 @@ export function styleWatchHandler(d: StyleWatchDeps): JobHandler {
         const scratch = join(ctx.tempDir, id);
         mkdirSync(scratch, { recursive: true });
         try {
-          ctx.report({ phase: `Đang tải video mẫu ${k + 1}/${total} (≤480p)`, progress: step(k).progress(0) });
-          const path = await yt.download(id, scratch, ctx.signal);
-          clearYoutubeBlocked(d.db);
+          let path: string;
+          if (farm) {
+            const n = `${k + 1}/${total}`;
+            ctx.report({ phase: `Đang gửi video mẫu ${n} cho máy farm tải (≤480p)`, progress: step(k).progress(0), waiting: true });
+            const got = await fetchReferenceOnFarm({ db: d.db, farm, now: ctx.now }, job, { videoId: id, n: i + 1, dir: scratch }, {
+              stopRequested: ctx.stopRequested,
+              onUpdate: (u) => ctx.report({
+                phase: u.waiting ? `Đang chờ máy farm tải video mẫu ${n}` : `Đang tải video mẫu ${n} trên máy ${u.node ?? "farm"}`,
+                progress: step(k).progress(0.3 * (u.progress ?? 0)), node: u.node, farmJobId: u.farmJobId, waiting: u.waiting,
+              }),
+            });
+            ctx.report({ waiting: false });
+            path = got.path;
+            r.node = got.node;
+            if (got.node) fetchedOn.add(got.node);
+            Object.assign(r, { title: got.result.title || id, channel: got.result.channel });
+            clearYoutubeBlocked(d.db, "farm");
+          } else {
+            ctx.report({ phase: `Đang tải video mẫu ${k + 1}/${total} (≤480p)`, progress: step(k).progress(0) });
+            path = await yt!.download(id, scratch, ctx.signal);
+            clearYoutubeBlocked(d.db, "studio");
+          }
           await measureVideo(d, job.project_id, ctx, { path, folder, row: r, all, ...step(k) });
         } catch (e) {
           if (ctx.stopRequested()) throw e;
           const f = ytFailureOf(e);
           r.code = f?.code ?? "other";
           r.error = f?.reason ?? otherReason(e);
-          if (f?.code === "youtube_blocked") blocked = f;
+          if (f?.code === "youtube_blocked") { blocked = f; blockedWhere = via; }
         } finally {
-          rmSync(scratch, { recursive: true, force: true }); // a downloaded video is never kept
+          // a downloaded video is never kept: the scratch file, and through the farm the bucket object too
+          rmSync(scratch, { recursive: true, force: true });
+          if (farm) {
+            await dropReferenceObjects(farm.bucket, job.project_id, job.id, i + 1).catch((e: unknown) => {
+              ctx.logger.warn("reference video left on the bucket", { job_id: job.id, video_id: id, error: e instanceof Error ? e.message : String(e) });
+            });
+          }
         }
       }
     }
 
     const wasBlocked = (blocked as YtFailure | null) !== null;
-    if (wasBlocked) noteYoutubeBlocked(d.db, ctx.now());
+    if (wasBlocked) noteYoutubeBlocked(d.db, ctx.now(), blockedWhere);
+    const blockedReason = blockedWhere === "farm" ? farmBlockedReason(null) : YT_FAILURE_REASON.youtube_blocked;
     const measured = measureShots(all);
     const source = (r: WatchRow) => (r.id ? `[${cell(r.title)}](https://www.youtube.com/watch?v=${r.id})` : `\`${cell(r.file ?? r.title)}\` (tải lên)`);
     const lines = [
@@ -218,8 +266,10 @@ export function styleWatchHandler(d: StyleWatchDeps): JobHandler {
       "",
       `Mục đích: ${req.purpose}`,
       "",
-      ...(wasBlocked ? [`**${YT_FAILURE_REASON.youtube_blocked}**: dừng ở video bị chặn, các video YouTube sau không thử. Studio không dùng cookie hay đăng nhập để lách.`, ""] : []),
-      ...(ids.length ? ["Video YouTube đã tải ≤480p để đo rồi xoá."] : []),
+      ...(wasBlocked ? [`**${blockedReason}**: dừng ở video bị chặn, các video YouTube sau không thử. Studio không dùng cookie hay đăng nhập để lách.`, ""] : []),
+      ...(ids.length ? [fetchedOn.size
+        ? `Video YouTube do máy farm tải ≤480p (${[...fetchedOn].join(", ")}), Studio đo rồi xoá cả bản trên bucket lẫn bản tạm.`
+        : "Video YouTube đã tải ≤480p để đo rồi xoá."] : []),
       ...(files.length ? ["Video tải lên được đo tại chỗ, không đổi, không xoá."] : []),
       "Chỉ giữ tờ ghép khung hình (mở bằng Read). Khung đầu tiên mỗi tờ theo thứ tự thời gian:",
       "15 giây mở đầu (mỗi 1,5 giây), rồi các chỗ đổi cảnh và mỗi 10 giây.",
@@ -239,9 +289,10 @@ export function styleWatchHandler(d: StyleWatchDeps): JobHandler {
     writeWorkspaceFile(d.db, {
       projectId: job.project_id, dir: ctx.workspaceDir, path: `${folder}/watch.json`, baseSha256: null, author: { kind: "studio", id: null }, now: ctx.now(),
       content: `${JSON.stringify({
-        purpose: req.purpose, measured, youtube_blocked: wasBlocked,
+        purpose: req.purpose, measured, youtube_blocked: wasBlocked, ...(wasBlocked ? { blocked_where: blockedWhere } : {}),
         videos: rows.map((r) => ({
           label: r.label, video_id: r.id, file: r.file, title: r.title, channel: r.channel, duration_s: r.duration, code: r.code, error: r.error, skipped: r.skipped,
+          via: r.via, node: r.node,
           measured: r.measured, sheets: r.sheets,
         })),
       }, null, 2)}\n`,
@@ -249,7 +300,7 @@ export function styleWatchHandler(d: StyleWatchDeps): JobHandler {
     const ok = rows.filter((r) => !r.error).length;
     const name = (r: WatchRow) => r.id ?? r.file ?? r.title;
     if (!ok) {
-      if (wasBlocked && !files.length) throw new JobError("youtube_blocked", YOUTUBE_BLOCKED_MESSAGE);
+      if (wasBlocked && !files.length) throw new JobError("youtube_blocked", blockedWhere === "farm" ? FARM_BLOCKED_MESSAGE : YOUTUBE_BLOCKED_MESSAGE);
       const codes = new Set(rows.map((r) => r.code));
       throw new JobError(codes.size === 1 ? rows[0]!.code ?? "other" : "reference_failed", `không xem được video mẫu nào: ${rows.map((r) => `${name(r)}: ${r.error}`).join("; ")}`);
     }

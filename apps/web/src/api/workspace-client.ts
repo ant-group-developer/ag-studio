@@ -462,8 +462,11 @@ export interface ProjectAudioView {
 export type VoiceOrigin = "synthetic" | "own" | "licensed";
 
 // ---- Confirmation cards ----
-/** YouTube refusing to let the Studio server download (ISO times); Studio forgets it at `until` or after a download. */
-export interface YoutubeBlock { blockedAt: string; until: string; where: "studio" }
+/**
+ * YouTube refusing to let a place download (ISO times): the Studio server, or the farm's machines that fetch reference
+ * videos. Studio forgets it at `until` or after a download there.
+ */
+export interface YoutubeBlock { blockedAt: string; until: string; where: "studio" | "farm" }
 export type ActionKind = "render_final" | "export_premiere" | "delete_video" | "crawl_large" | "reference_download";
 export interface ActionView {
   id: string;
@@ -682,7 +685,10 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     },
 
     // ---- Confirmation cards ----
-    /** `youtubeBlocked`: YouTube blocks the Studio server now (a pending reference download would fail). */
+    /**
+     * `youtubeBlocked`: a pending reference download would fail now: YouTube blocks the Studio server and no farm
+     * machine fetches instead (`where: "studio"`), or the farm's machines are blocked too (`where: "farm"`).
+     */
     listActions(threadId: string): Promise<{ actions: ActionView[]; youtubeBlocked?: YoutubeBlock | null }> {
       return call("GET", `/api/threads/${enc(threadId)}/actions`);
     },
