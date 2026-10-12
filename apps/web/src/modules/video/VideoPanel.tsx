@@ -35,9 +35,26 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
     for (const k of [["renders", videoId], ["timeline", videoId], ["activity"], ["jobs"], ["playbook"]]) void qc.invalidateQueries({ queryKey: k });
   };
   const fail = (fallback: string) => (e: unknown) => void message.error(e instanceof StudioHttpError ? e.message : fallback);
-  const start = useMutation({ mutationFn: (kind: RenderKind) => client.startRender(videoId, { kind }), onSuccess: refresh, onError: fail(t("ws.video.renderFailed")) });
+  const start = useMutation({
+    mutationFn: (kind: RenderKind) => client.startRender(videoId, { kind }),
+    onSuccess: (job, kind) => { if (kind === "export_premiere") savingExports.add(job.id); refresh(); },
+    onError: fail(t("ws.video.renderFailed")),
+  });
   const fit = useMutation({ mutationFn: () => client.fitTimeline(videoId), onSuccess: refresh, onError: fail(t("ws.video.fitFailed")) });
   const stop = useMutation({ mutationFn: (j: JobView) => client.cancelJob(j.projectId, j.id), onSuccess: refresh });
+  // a Premiere export started from this tab is saved as soon as it is done (its link names the .zip to save)
+  useEffect(() => {
+    const data = renders.data;
+    if (!data) return;
+    for (const id of [...savingExports]) {
+      const done = data.renders.find((x) => x.jobId === id);
+      const job = data.jobs.find((x) => x.id === id);
+      if (done) {
+        savingExports.delete(id);
+        if (done.url) { saveFile(done.url); void message.success(t("ws.video.exportSaving")); }
+      } else if (job && (job.status === "failed" || job.status === "cancelled")) savingExports.delete(id);
+    }
+  }, [renders.data, message, t]);
 
   if (timeline.isLoading || renders.isLoading) return <div className="ws-center"><Spin /></div>;
   const latest = timeline.data?.latest ?? null;
@@ -147,6 +164,19 @@ function RenderRow({ r, lang, current, onPlay }: { r: RenderView; lang: string; 
       {r.url ? <a className="ws-icon-button" href={r.url} target="_blank" rel="noreferrer" aria-label={t("ws.video.download")} title={t("ws.video.download")}><Download size={13} /></a> : null}
     </li>
   );
+}
+
+/** Premiere exports started from this tab and not saved yet; kept while the panel is closed so a later visit saves them. */
+const savingExports = new Set<string>();
+
+/** Has the browser save a file from a link that answers with `Content-Disposition: attachment`; the page stays. */
+function saveFile(url: string): void {
+  const a = document.createElement("a");
+  a.href = url;
+  a.rel = "noreferrer";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 /** The link a render was first played with, while it is younger than half an hour; then the newer one. */
