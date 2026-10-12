@@ -65,6 +65,8 @@ type FootageVerdict = 'footage_scope' | 'footage_check_failed';
 export class VideoMediaController {
   private readonly logger = new Logger(VideoMediaController.name);
   private readonly scope = new Map<string, { at: number; hidden: FootageVerdict | null }>();
+  /** Checks under way, so the panel's polling joins one instead of asking ag-go again. */
+  private readonly asking = new Map<string, Promise<FootageVerdict | null>>();
 
   constructor(
     private readonly engine: EngineService,
@@ -218,12 +220,21 @@ export class VideoMediaController {
 
   /**
    * Why ag-go does not serve every video of that timeline revision to this person, or null when it does. A definite
-   * answer is kept a minute; ag-go not answering (down, timing out, an error) is said as such, logged and asked again.
+   * answer is kept ten minutes (a long timeline takes ag-go seconds); ag-go not answering (down, timing out, an error)
+   * is said as such, logged and asked again.
    */
-  private async footageVerdict(userId: string, videoId: string, revision: number): Promise<FootageVerdict | null> {
+  private footageVerdict(userId: string, videoId: string, revision: number): Promise<FootageVerdict | null> {
     const key = `${userId}:${videoId}:${revision}`;
     const hit = this.scope.get(key);
-    if (hit && Date.now() - hit.at < 60_000) return hit.hidden;
+    if (hit && Date.now() - hit.at < 10 * 60_000) return Promise.resolve(hit.hidden);
+    const pending = this.asking.get(key);
+    if (pending) return pending;
+    const asked = this.askFootage(key, userId, videoId, revision).finally(() => this.asking.delete(key));
+    this.asking.set(key, asked);
+    return asked;
+  }
+
+  private async askFootage(key: string, userId: string, videoId: string, revision: number): Promise<FootageVerdict | null> {
     const rev = getVideoRevision(this.engine.db, videoId, revision);
     const assets = rev ? [...new Set(rev.data.clips.map((c) => c.asset_id))] : [];
     let hidden: FootageVerdict | null;
