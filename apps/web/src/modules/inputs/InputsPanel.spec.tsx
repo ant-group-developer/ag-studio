@@ -241,7 +241,7 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
 
 describe("jobs of a chat", { timeout: 20_000 }, () => {
   beforeAll(async () => { await i18n.changeLanguage("vi"); });
-  it("shows the jobs this chat started above the message box, and stops one", async () => {
+  it("shows the jobs this chat started above the message box in one line that unfolds, and stops one", async () => {
     const getActivity = vi.fn().mockResolvedValue({ activity: [
       { id: "j9", kind: "job", status: "running", title: "Chuẩn bị Tam Cốc.mp4", phase: null, detail: "Đang dò cảnh (0:30 / 1:12)", startedAt: started, notBefore: null,
         progress: 0.3, etaSeconds: 40, node: null, cancellable: true, parentId: null, threadId: "t1", threadTitle: "Tràng An", videoId: "v1", jobKind: "prepare_asset" },
@@ -255,6 +255,12 @@ describe("jobs of a chat", { timeout: 20_000 }, () => {
         <AntApp><ThreadJobs projectId="p1" threadId="t1" canStop /></AntApp>
       </QueryClientProvider>,
     );
+    const line = await screen.findByRole("button", { name: /1 việc nền/ });
+    expect(line).toHaveAttribute("aria-expanded", "false");
+    expect(line).toHaveTextContent("1 đang chạy · 0 đang chờ");
+    expect(line).toHaveTextContent("30% xong · còn ≈ 0:40");
+    expect(screen.queryByRole("group")).toBeNull();
+    fireEvent.click(line);
     const card = await screen.findByRole("group", { name: "Chuẩn bị Tam Cốc.mp4" });
     expect(card).toHaveTextContent("Studio (ffmpeg trên máy chủ)");
     expect(card).toHaveTextContent("Đang dò cảnh (0:30 / 1:12)");
@@ -263,7 +269,7 @@ describe("jobs of a chat", { timeout: 20_000 }, () => {
     await waitFor(() => expect(ws.cancelJob).toHaveBeenCalledWith("p1", "j9"));
   });
 
-  it("folds many jobs into a summary that shows the running ones first and unfolds the rest", async () => {
+  it("many jobs: one summary line; unfolded, every card with the running ones first", async () => {
     const row = (i: number, status: "running" | "waiting") => ({
       id: `j${i}`, kind: "job", status, title: `Chuẩn bị clip ${i}.mp4`, phase: null, detail: null, startedAt: started, notBefore: null, progress: null,
       etaSeconds: null, node: null, cancellable: true, parentId: null, threadId: "t1", threadTitle: "Tràng An", videoId: "v1", jobKind: "prepare_asset",
@@ -277,10 +283,12 @@ describe("jobs of a chat", { timeout: 20_000 }, () => {
     );
     expect(await screen.findByText("4 việc nền")).toBeInTheDocument();
     expect(screen.getByText("1 đang chạy · 3 đang chờ")).toBeInTheDocument();
-    expect(screen.getAllByRole("group").map((g) => g.getAttribute("aria-label"))).toEqual(["Chuẩn bị clip 2.mp4", "Chuẩn bị clip 1.mp4"]);
-    fireEvent.click(screen.getByRole("button", { name: /Xem tất cả/ }));
-    expect(screen.getAllByRole("group")).toHaveLength(4);
-    fireEvent.click(screen.getByRole("button", { name: /Thu gọn/ }));
-    expect(screen.getAllByRole("group")).toHaveLength(2);
+    expect(screen.getByText("0% xong")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /4 việc nền/ }));
+    expect(screen.getAllByRole("group").map((g) => g.getAttribute("aria-label")))
+      .toEqual(["Chuẩn bị clip 2.mp4", "Chuẩn bị clip 1.mp4", "Chuẩn bị clip 3.mp4", "Chuẩn bị clip 4.mp4"]);
+    expect(screen.queryByRole("button", { name: /Xem tất cả/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /4 việc nền/ }));
+    expect(screen.queryByRole("group")).toBeNull();
   });
 });

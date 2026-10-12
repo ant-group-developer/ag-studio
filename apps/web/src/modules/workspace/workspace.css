@@ -285,6 +285,16 @@ body.ws-resizing iframe, body.ws-resizing video { pointer-events: none; }
 .ws-turn-status__who { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; color: var(--ws-text); }
 .ws-turn-status__what { flex: 1; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-turn-status__time { font-variant-numeric: tabular-nums; color: var(--ws-faint); }
+/* A turn's work folded into one line (steps and time) over its final answer. */
+.ws-turn-fold {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 10px; border: 1px solid var(--ws-line);
+  border-radius: 8px; background: var(--ws-nav-bg); font: inherit; font-size: 13px; color: var(--ws-muted); cursor: pointer;
+}
+.ws-turn-fold:hover { color: var(--ws-text); border-color: var(--ws-accent-line); }
+.ws-turn-fold__chevron, .ws-turn-fold__caret svg { transition: transform 0.15s; flex-shrink: 0; }
+.ws-turn-fold[aria-expanded="true"] .ws-turn-fold__chevron, .ws-turn-fold__caret[aria-expanded="true"] svg { transform: rotate(90deg); }
+.ws-turn-fold__caret { display: inline-flex; padding: 0; border: 0; background: none; color: inherit; cursor: pointer; }
+.ws-turn-work { display: flex; flex-direction: column; gap: 8px; padding-left: 12px; border-left: 2px solid var(--ws-line); }
 .ws-dot { width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0; }
 .ws-dot--run { background: var(--ws-accent); animation: ws-pulse 1.2s ease-in-out infinite; }
 .ws-dot--wait { background: #d8a106; }

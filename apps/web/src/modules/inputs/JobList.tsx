@@ -11,13 +11,19 @@ const SHOWN = 2;
  * Background jobs as cards. Past a couple, a summary line (how many run, how many wait) shows the running ones first
  * and unfolds the rest in a box of its own height, so the panel around it stays usable however many there are.
  */
-export function JobList({ jobs, onStop, stopping }: { jobs: JobView[]; onStop?: ((job: JobView) => void) | undefined; stopping?: string | null }) {
+export function JobList({ jobs, onStop, stopping, fold = true }: {
+  jobs: JobView[];
+  onStop?: ((job: JobView) => void) | undefined;
+  stopping?: string | null;
+  /** false: every card, no summary (the caller already shows one). */
+  fold?: boolean;
+}) {
   const { t } = useTranslation();
   const [all, setAll] = useState(false);
   const live = (j: JobView) => j.status === "queued" || j.status === "running";
   const running = jobs.filter((j) => j.status === "running");
   const waiting = jobs.filter((j) => j.status === "queued");
-  const folds = jobs.length > SHOWN;
+  const folds = fold && jobs.length > SHOWN;
   const ordered = [...running, ...waiting, ...jobs.filter((j) => !live(j))];
   const shown = !folds || all ? ordered : ordered.slice(0, SHOWN);
   return (

@@ -133,9 +133,10 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     ws.getPlaybook.mockResolvedValue(PLAYBOOK);
     ws.getThread.mockResolvedValue(thread([
       message({ id: "u1", seq: 1, role: "user", text: "Nghiên cứu kênh giúp tôi" }),
-      message({ id: "a1", seq: 2, text: "## Kế hoạch\n\nTôi sẽ đọc tài liệu.", parts: [
-        { kind: "text", text: "## Kế hoạch\n\nTôi sẽ đọc tài liệu." },
+      message({ id: "a1", seq: 2, text: "Tôi sẽ đọc tài liệu.\n\n## Kế hoạch\n\nĐi bộ phố cổ.", finishedAt: new Date(Date.parse(NOW) + 80_000).toISOString(), parts: [
+        { kind: "text", text: "Tôi sẽ đọc tài liệu." },
         { kind: "tool", id: "x1", name: "Read", input: { file_path: "context/notes.md" }, started_at: NOW, ended_at: NOW, is_error: false, result: "ok" },
+        { kind: "text", text: "## Kế hoạch\n\nĐi bộ phố cổ." },
         { kind: "tool", id: "x2", name: "mcp__studio__suggest_replies", input: { options: ["Làm tiếp", "Dừng ở đây"] }, started_at: NOW, ended_at: NOW },
       ] }),
     ]));
@@ -252,7 +253,14 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     // the first render of the whole page: slower when the repo's suites run side by side
     expect(await screen.findByRole("heading", { name: "Kế hoạch" }, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByText("Nghiên cứu kênh giúp tôi")).toBeInTheDocument();
+    // the turn's work folds into one line over its answer; it unfolds to the steps
+    expect(screen.queryByText("đọc file")).toBeNull();
+    expect(screen.queryByText("Tôi sẽ đọc tài liệu.")).toBeNull();
+    const work = screen.getByRole("button", { name: "Đã làm 1 bước · 1 phút 20 giây" });
+    expect(work).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(work);
     expect(screen.getByText("đọc file")).toBeInTheDocument();
+    expect(screen.getByText("Tôi sẽ đọc tài liệu.")).toBeInTheDocument();
     expect(screen.getAllByText("Huế mưa").length).toBeGreaterThan(0);
     expect(ws.getThread).toHaveBeenCalledWith("t-kenh");
     expect(await screen.findByText("notes.md")).toBeInTheDocument();
