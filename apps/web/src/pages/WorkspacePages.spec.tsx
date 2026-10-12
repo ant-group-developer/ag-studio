@@ -55,6 +55,7 @@ const ws = {
   listThreads: vi.fn().mockResolvedValue({ threads: [
     { id: "t-kenh", projectId: "p1", videoId: null, kind: "project", title: "Kênh", useLessons: true, createdAt: "", updatedAt: "", archivedAt: null, messageCount: 2, busy: true },
     { id: "t-v2", projectId: "p1", videoId: "v2", kind: "video", title: "Huế mưa", useLessons: true, createdAt: "", updatedAt: "", archivedAt: null, messageCount: 0 },
+    { id: "t-free", projectId: "p1", videoId: null, kind: "project", title: "Ý tưởng tháng 11", useLessons: true, createdAt: "", updatedAt: "", archivedAt: null, messageCount: 0 },
   ] }),
   getThread: vi.fn(),
   sendMessage: vi.fn().mockResolvedValue({ message: {}, turn: null }),
@@ -65,19 +66,29 @@ const ws = {
   openProjectEvents: vi.fn(() => new Promise(() => {})),
   setLearning: vi.fn(),
   createThread: vi.fn(),
-  getPlaybook: vi.fn().mockResolvedValue({
-    custom: false, issues: [], video: null, next: [{ scope: "project", key: "branding" }],
-    project: [
-      step("research", "Nghiên cứu thị trường", "done"),
-      step("branding", "Branding", "invalid", { issues: [{ level: "error", code: "text_look_no_contrast", message: "channel/branding.md: chữ khó đọc" }] }),
-    ],
-  }),
+  getPlaybook: vi.fn(),
   markStep: vi.fn().mockResolvedValue({}),
   customizePlaybook: vi.fn(),
   listLessons: vi.fn().mockResolvedValue({ lessons: [{ id: "l1", project_id: "p1", thread_id: "t-kenh", text: "Không dùng nhạc buồn.", status: "proposed", decided_by: null, decided_at: null, created_at: "" }] }),
   acceptLesson: vi.fn().mockResolvedValue({}),
   dismissLesson: vi.fn().mockResolvedValue(undefined),
 };
+const PLAYBOOK = {
+  custom: false, issues: [], video: null, next: [{ scope: "project", key: "branding" }],
+  project: [
+    step("research", "Nghiên cứu thị trường", "done"),
+    step("branding", "Branding", "invalid", { issues: [{ level: "error", code: "text_look_no_contrast", message: "channel/branding.md: chữ khó đọc" }] }),
+  ],
+};
+const vstep = (key: string, title: string, status: string, over: Record<string, unknown> = {}) =>
+  step(key, title, status, { scope: "video", primary: `videos/v2/${key}.md`, outputs: [{ path: `videos/v2/${key}.md`, role: "doc", exists: status !== "missing", issues: [] }], ...over });
+const CHANNEL_NEW = [step("research", "Nghiên cứu thị trường", "missing"), step("channel", "Chiến lược kênh", "missing"), step("branding", "Branding", "missing")];
+const CHANNEL_RESEARCHED = [step("research", "Nghiên cứu thị trường", "done"), step("channel", "Chiến lược kênh", "missing"), step("branding", "Branding", "missing")];
+/** The video's steps, with the given statuses (the rest missing). */
+const videoSteps = (statuses: Record<string, string>, over: Record<string, Record<string, unknown>> = {}) => [
+  ["brief", "Ý tưởng & brief"], ["prepare", "Chuẩn bị đầu vào"], ["scenes", "Chọn cảnh"], ["timeline", "Timeline"], ["preview", "Xem trước"],
+  ["youtube-kit", "Gói YouTube"], ["final", "Bản cuối"],
+].map(([key, title]) => vstep(key!, title!, statuses[key!] ?? "missing", over[key!]));
 const NOW = new Date().toISOString();
 const message = (over: Record<string, unknown>) => ({
   id: `m${Math.random()}`, threadId: "t-kenh", seq: 1, role: "assistant", status: "done", text: "", parts: [], phase: null, attachments: [],
@@ -119,6 +130,7 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     studio.listTeams.mockResolvedValue(ONE_TEAM);
     studio.getMe.mockResolvedValue({ userId: "u", isAdmin: false });
     studio.getTeam.mockImplementation(async (id: string) => ({ ...TEAM_1, id }));
+    ws.getPlaybook.mockResolvedValue(PLAYBOOK);
     ws.getThread.mockResolvedValue(thread([
       message({ id: "u1", seq: 1, role: "user", text: "Nghiên cứu kênh giúp tôi" }),
       message({ id: "a1", seq: 2, text: "## Kế hoạch\n\nTôi sẽ đọc tài liệu.", parts: [
@@ -338,5 +350,95 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     expect(status).toHaveTextContent(/1:0\d · 1 công cụ/);
     fireEvent.click(within(status).getByRole("button", { name: /Dừng/ }));
     await waitFor(() => expect(ws.cancelTurn).toHaveBeenCalledWith("t-kenh", "run"));
+  });
+  describe("suggestions fit the page", () => {
+    const chips = () => [...document.querySelectorAll(".ws-suggestions--steps button")].map((b) => b.textContent);
+    const VIDEO_THREAD = { ...thread([]), id: "t-v2", videoId: "v2", kind: "video", title: "Huế mưa" };
+    const FREE_THREAD = { ...thread([]), id: "t-free", title: "Ý tưởng tháng 11" };
+    const cases: { name: string; path: string; thread: unknown; playbook: unknown; chips: string[]; hint: RegExp }[] = [
+      {
+        name: "a new channel: research", path: "/p/p1", thread: thread([]),
+        playbook: { custom: false, issues: [], scope: "project", project: CHANNEL_NEW, video: null, next: [{ scope: "project", key: "research" }], projectOpen: 3 },
+        chips: ["Nghiên cứu thị trường"], hint: /^Chat với Claude về kênh/,
+      },
+      {
+        name: "a channel with its research: the strategy", path: "/p/p1", thread: thread([]),
+        playbook: { custom: false, issues: [], scope: "project", project: CHANNEL_RESEARCHED, video: null, next: [{ scope: "project", key: "channel" }], projectOpen: 2 },
+        chips: ["Chiến lược kênh"], hint: /^Chat với Claude về kênh/,
+      },
+      {
+        name: "a free chat of the project: the channel's steps", path: "/p/p1/c/t-free", thread: FREE_THREAD,
+        playbook: { custom: false, issues: [], scope: "project", project: CHANNEL_RESEARCHED, video: null, next: [{ scope: "project", key: "channel" }], projectOpen: 2 },
+        chips: ["Chiến lược kênh"], hint: /^Chat tự do với Claude trong dự án/,
+      },
+      {
+        name: "a new video: its brief, not the channel's research", path: "/p/p1/v/v2", thread: VIDEO_THREAD,
+        playbook: { custom: false, issues: [], scope: "video", project: CHANNEL_NEW, video: videoSteps({}), next: [{ scope: "video", key: "brief" }], projectOpen: 3 },
+        chips: ["Ý tưởng & brief"], hint: /^Bắt đầu video này/,
+      },
+      {
+        name: "a video, from an older API that mixed the channel's steps in: the video's only", path: "/p/p1/v/v2", thread: VIDEO_THREAD,
+        playbook: { custom: false, issues: [], project: CHANNEL_NEW, video: videoSteps({}), next: [{ scope: "project", key: "research" }, { scope: "video", key: "brief" }] },
+        chips: ["Ý tưởng & brief"], hint: /^Bắt đầu video này/,
+      },
+      {
+        name: "a prepared video: pick the scenes", path: "/p/p1/v/v2", thread: VIDEO_THREAD,
+        playbook: { custom: false, issues: [], scope: "video", project: CHANNEL_RESEARCHED, video: videoSteps({ brief: "done", prepare: "done" }), next: [{ scope: "video", key: "scenes" }], projectOpen: 2 },
+        chips: ["Chọn cảnh"], hint: /^Video đã có brief/,
+      },
+      {
+        name: "a video with its timeline: preview and the YouTube kit, which waits on the channel's branding", path: "/p/p1/v/v2", thread: VIDEO_THREAD,
+        playbook: {
+          custom: false, issues: [], scope: "video", project: CHANNEL_RESEARCHED,
+          video: videoSteps({ brief: "done", prepare: "done", scenes: "done", timeline: "done" }, { "youtube-kit": { outsideRequires: ["branding"] } }),
+          next: [{ scope: "video", key: "preview" }, { scope: "video", key: "youtube-kit" }], projectOpen: 2,
+        },
+        chips: ["Xem trước", "Gói YouTube · kênh chưa có Branding"], hint: /^Video đã có brief/,
+      },
+      {
+        name: "a finished video: nothing to suggest", path: "/p/p1/v/v2", thread: VIDEO_THREAD,
+        playbook: {
+          custom: false, issues: [], scope: "video", project: CHANNEL_RESEARCHED,
+          video: videoSteps({ brief: "done", prepare: "done", scenes: "done", timeline: "done", preview: "done", "youtube-kit": "done", final: "done" }), next: [], projectOpen: 2,
+        },
+        chips: [], hint: /^Video đã có bản cuối/,
+      },
+    ];
+
+    it.each(cases)("$name", async (c) => {
+      ws.getThread.mockResolvedValue(c.thread);
+      ws.getPlaybook.mockResolvedValue(c.playbook);
+      mount(c.path);
+      expect(await screen.findByText(c.hint, {}, { timeout: 5000 })).toBeInTheDocument();
+      await waitFor(() => expect(ws.getPlaybook).toHaveBeenCalled());
+      await waitFor(() => expect(chips()).toEqual(c.chips));
+    });
+
+    it("a step waiting on the channel says so when opened; a video's rail counts the channel's open steps", async () => {
+      ws.getThread.mockResolvedValue(VIDEO_THREAD);
+      ws.getPlaybook.mockResolvedValue(cases[6]!.playbook);
+      mount("/p/p1/v/v2");
+      const rail = await screen.findByRole("navigation", { name: "Các bước gợi ý" }, { timeout: 5000 });
+      expect(rail).toHaveTextContent("Kênh còn 2 bước chưa xong");
+      fireEvent.click(within(rail).getByRole("button", { name: /Gói YouTube/ }));
+      expect(await screen.findByText(/^Kênh chưa xong: Branding/)).toBeInTheDocument();
+    });
+
+    it("names the default steps in the UI language; a step the project wrote itself keeps its words", async () => {
+      await i18n.changeLanguage("en");
+      try {
+        ws.getThread.mockResolvedValue(VIDEO_THREAD);
+        const own = videoSteps({ brief: "done", prepare: "done", scenes: "done", timeline: "done" }, {
+          "youtube-kit": { outsideRequires: ["branding"] }, preview: { title: "Duyệt bản nháp" },
+        });
+        ws.getPlaybook.mockResolvedValue({ custom: true, issues: [], scope: "video", project: CHANNEL_RESEARCHED, video: own, next: [{ scope: "video", key: "preview" }, { scope: "video", key: "youtube-kit" }], projectOpen: 2 });
+        mount("/p/p1/v/v2");
+        const rail = await screen.findByRole("navigation", { name: "Suggested steps" }, { timeout: 5000 });
+        expect(within(rail).getByRole("button", { name: /Idea & brief/ })).toBeInTheDocument();
+        await waitFor(() => expect(chips()).toEqual(["Duyệt bản nháp", "YouTube kit · channel has no Branding yet"]));
+      } finally {
+        await i18n.changeLanguage("vi");
+      }
+    });
   });
 });

@@ -375,6 +375,7 @@ button.ws-step:hover { border-color: var(--ws-accent-line); color: var(--ws-text
 .ws-step-card p { margin: 0; }
 .ws-step-card__desc { color: var(--ws-muted); }
 .ws-step-card__status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--ws-faint); }
+.ws-step-card__note { padding: 4px 8px; border-radius: 6px; font-size: 12px; background: var(--ws-wait-bg); color: var(--ws-wait-fg); }
 .ws-step-card__file { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--ws-faint); }
 .ws-step-card__actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .ws-issues { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -385,6 +386,7 @@ button.ws-step:hover { border-color: var(--ws-accent-line); color: var(--ws-text
 .ws-issue--warning { background: var(--ws-wait-bg); color: var(--ws-wait-fg); }
 .ws-suggestions--steps { align-items: center; }
 .ws-suggestions--steps span { font-size: 12px; color: var(--ws-faint); }
+.ws-suggestions--steps button .ws-suggestions__note { font-size: 11px; color: var(--ws-wait-fg); }
 .ws-suggestions--steps button { border-style: dashed; }
 .ws-lessons { flex-shrink: 0; max-width: 820px; width: 100%; box-sizing: border-box; margin: 0 auto 8px; padding: 0 20px; }
 .ws-lessons__head { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--ws-wait-fg); margin-bottom: 4px; }

@@ -56,6 +56,9 @@ brief → chuẩn bị đầu vào → chọn cảnh (skill scene-selection: sur
 edit-plan.json) → \`timeline_from_edit_plan\` → đọc/sửa bằng \`timeline_get\`, \`timeline_apply_ops\` → \`render_preview\` →
 gói YouTube → \`thumbnail_make\` → đề xuất render bản cuối. Người dùng có thể quay lại bất kỳ bước nào: sửa file của bước đó
 rồi làm lại các bước sau khi cần (trạng thái \`stale\` trong \`playbook_status\` cho biết bước nào cũ).
+Gợi ý bước tiếp theo theo luồng đang chat: luồng của một video chỉ gợi ý bước của video đó; luồng Kênh hay chat tự do chỉ
+gợi ý bước của kênh. Bước kênh còn dở (Branding…) trong luồng video chỉ nhắc khi bước đang làm cần nó (gói YouTube), và
+khuyên làm ở luồng Kênh; đừng tự chuyển sang làm bước kênh trong luồng video khi người dùng không hỏi.
 
 ## Việc có tác dụng thật
 Render bản cuối, xuất file Premiere, xoá video, crawl lớn, tải video mẫu (học phong cách): KHÔNG tự làm. Gọi

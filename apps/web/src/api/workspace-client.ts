@@ -119,15 +119,21 @@ export interface StepState {
   primary: string;
   prompts: { do: string; redo: string | null; revise: string | null };
   staleBecause: string[];
+  /** Steps of the other scope this one builds on that are not done yet (a note; absent from an older API). */
+  outsideRequires?: string[];
   detail: string | null;
 }
 
 export interface PlaybookStatus {
   custom: boolean;
   issues: FileIssue[];
+  /** Whose steps `next` suggests: the video's (a video's chat) or the channel's. */
+  scope?: "project" | "video";
   project: StepState[];
   video: StepState[] | null;
   next: { scope: "project" | "video"; key: string }[];
+  /** The channel's steps still open. */
+  projectOpen?: number;
 }
 
 export interface LessonProposal {
