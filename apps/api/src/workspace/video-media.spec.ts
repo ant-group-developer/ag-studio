@@ -67,7 +67,7 @@ describe('video media (real studio.db)', () => {
   });
   afterEach(() => s.close());
 
-  it('starts renders by role and lists finished ones with a link only for those whose footage rights cover them', async () => {
+  it('starts renders by role, lists finished ones from the database and links one only for those whose footage rights cover it', async () => {
     const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
     const v = await videos.create(p.id, { title: 'Huế' }, req(OWNER));
     expect(await media.render(v.id, { kind: 'render_preview' }, req(EDITOR)).catch(code)).toBe('no_timeline');
@@ -77,20 +77,25 @@ describe('video media (real studio.db)', () => {
     expect(getJob(s.engine.db, job.id)).toMatchObject({ kind: 'render_preview', actor_role: 'editor' });
     claimJob(s.engine.db, ['render_preview'], new Date().toISOString());
     finishJob(s.engine.db, job.id, { status: 'done', result: { kind: 'render_preview', revision: 1, key: 'productions/x/out/a.mp4', duration_s: 4, width: 1920, height: 1080, watermarked: true, size_bytes: 10, note: '' } }, new Date().toISOString());
-    expect((await media.renders(v.id, req(OWNER))).renders[0]).toMatchObject({ kind: 'render_preview', revision: 1, url: 'https://r2.test/productions/x/out/a.mp4' });
-    expect((await media.renders(v.id, req(EDITOR))).renders[0]).toMatchObject({ url: null, urlHidden: 'footage_scope' });
+    // the list is the database alone: no ag-go, no signing
+    const listed = await media.renders(v.id);
+    expect(listed.renders[0]).toEqual({ jobId: job.id, kind: 'render_preview', revision: 1, durationS: 4, width: 1920, height: 1080, watermarked: true, sizeBytes: 10, note: '', finishedAt: expect.any(String) });
+    expect(seen).toEqual([]);
+    // a link is asked for one render
+    expect(await media.link(v.id, job.id, req(OWNER))).toEqual({ jobId: job.id, url: 'https://r2.test/productions/x/out/a.mp4' });
+    expect(await media.link(v.id, job.id, req(EDITOR))).toEqual({ jobId: job.id, url: null, urlHidden: 'footage_scope' });
     expect(seen).toEqual([[OWNER, 'a1'], [EDITOR, 'a1']]);
-    // ag-go not answering is not a lack of rights, and is asked again; its 404 (a video out of scope) is
+    expect(await media.link(v.id, 'not-a-job', req(OWNER)).catch((e: { getStatus?: () => number }) => e.getStatus?.())).toBe(404);
+    // ag-go not answering is not a lack of rights; its 404 (a video out of scope) is
     seen.length = 0;
-    expect((await media.renders(v.id, req(DOWN))).renders[0]).toMatchObject({ url: null, urlHidden: 'footage_check_failed' });
-    expect((await media.renders(v.id, req(DOWN))).renders[0]).toMatchObject({ urlHidden: 'footage_check_failed' });
-    expect((await media.renders(v.id, req(GONE))).renders[0]).toMatchObject({ url: null, urlHidden: 'footage_scope' });
-    expect((await media.renders(v.id, req(GONE))).renders[0]).toMatchObject({ urlHidden: 'footage_scope' });
-    expect(seen).toEqual([[DOWN, 'a1'], [DOWN, 'a1'], [GONE, 'a1']]);
-    // the panel polling while ag-go is still answering joins the check under way
+    expect(await media.link(v.id, job.id, req(DOWN))).toMatchObject({ url: null, urlHidden: 'footage_check_failed' });
+    expect(await media.link(v.id, job.id, req(GONE))).toMatchObject({ url: null, urlHidden: 'footage_scope' });
+    expect(await media.link(v.id, job.id, req(GONE))).toMatchObject({ urlHidden: 'footage_scope' });
+    expect(seen).toEqual([[DOWN, 'a1'], [GONE, 'a1']]);
+    // links asked at once join the check under way
     seen.length = 0;
-    const both = await Promise.all([media.renders(v.id, req('auth0|poll')), media.renders(v.id, req('auth0|poll'))]);
-    expect(both.map((x) => x.renders[0]!.urlHidden)).toEqual(['footage_scope', 'footage_scope']);
+    const both = await Promise.all([media.link(v.id, job.id, req('auth0|poll')), media.link(v.id, job.id, req('auth0|poll'))]);
+    expect(both.map((x) => x.urlHidden)).toEqual(['footage_scope', 'footage_scope']);
     expect(seen).toEqual([['auth0|poll', 'a1']]);
     expect((await media.timeline(v.id)).latest).toMatchObject({ revision: 1, clips: [expect.objectContaining({ clip_id: 'C001' })] });
   });

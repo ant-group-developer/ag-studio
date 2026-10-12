@@ -10,7 +10,7 @@ import { z } from 'zod';
 import {
   AUDIO_MAX_BYTES, AudioImportError, clearProjectAudio, declineProjectNarration, getVideoRevision, importProjectAudio, jobView, latestVideoRevision,
   listJobs, listVideoRevisions, projectAudio, projectAudioSummary, queueFit, queueRender, readWorkspaceBytes, requireProject, requireVideo,
-  resolveInside, StudioRunError, timelineSummary, videoRenders, VOICE_ORIGINS, type ActorRole, type JobView, type RenderKind,
+  resolveInside, StudioRunError, timelineSummary, videoRender, videoRenders, VOICE_ORIGINS, type ActorRole, type JobView, type RenderKind,
 } from '@ag-studio/engine';
 import { AgGoClientError } from '../ag-go/client';
 import { Roles } from '../auth/roles.decorator';
@@ -46,6 +46,11 @@ export interface RenderView {
   sizeBytes: number | null;
   note: string;
   finishedAt: string | null;
+}
+
+/** A render's link, asked for one render at a time (`GET videos/:videoId/renders/:jobId/link`). */
+export interface RenderLink {
+  jobId: string;
   /** A short-lived link; null when the person's own ag-go rights do not cover every video in it, or ag-go could not say. */
   url: string | null;
   /** `footage_scope`: ag-go does not serve every video of it to this person; `footage_check_failed`: ag-go did not answer. */
@@ -75,27 +80,40 @@ export class VideoMediaController {
     private readonly config: ConfigService,
   ) {}
 
+  /** What the Preview tab lists, from the database alone (no ag-go, no signing): each render's link is asked for apart. */
   @Get('videos/:videoId/renders')
   @Roles('viewer')
-  renders(@Param('videoId') videoId: string, @Req() req: Request): Promise<{ renders: RenderView[]; jobs: JobView[]; thumbnails: string[] }> {
+  renders(@Param('videoId') videoId: string): Promise<{ renders: RenderView[]; jobs: JobView[]; thumbnails: string[] }> {
     return mapErrors(async () => {
       const v = requireVideo(this.engine.db, videoId);
-      const userId = req.authContext!.userId;
-      const out: RenderView[] = [];
-      for (const r of videoRenders(this.engine.db, v.project_id, v.id)) {
-        const hidden = await this.footageVerdict(userId, v.id, r.revision);
-        const url = !hidden ? await this.engine.bucket.signedGetUrl(r.key, this.engine.browserUrlTtl, r.kind === 'export_premiere' ? { downloadName: `${v.title.slice(0, 80)}.zip` } : {}) : null;
-        out.push({
-          jobId: r.jobId, kind: r.kind, revision: r.revision, durationS: r.duration_s, width: r.width, height: r.height, watermarked: r.watermarked,
-          sizeBytes: r.size_bytes, note: r.note, finishedAt: r.finishedAt, url, ...(hidden ? { urlHidden: hidden } : {}),
-        });
-      }
+      const out: RenderView[] = videoRenders(this.engine.db, v.project_id, v.id).map((r) => ({
+        jobId: r.jobId, kind: r.kind, revision: r.revision, durationS: r.duration_s, width: r.width, height: r.height, watermarked: r.watermarked,
+        sizeBytes: r.size_bytes, note: r.note, finishedAt: r.finishedAt,
+      }));
       const jobs = listJobs(this.engine.db, v.project_id, { videoId, limit: 30 })
         .filter((j) => ['render_preview', 'render_final', 'export_premiere', 'fit', 'thumbnail'].includes(j.kind) && j.status !== 'done').map(jobView);
       // thumbnails made for it (workspace files the web reads like any other)
       const tdir = join(this.workspace.dir(v.project_id), 'videos', v.id, 'thumbnails');
       const thumbnails = existsSync(tdir) ? readdirSync(tdir).filter((f) => /\.(jpe?g|png)$/i.test(f)).sort().map((f) => `videos/${v.id}/thumbnails/${f}`) : [];
       return { renders: out, jobs, thumbnails };
+    });
+  }
+
+  /**
+   * One render's link, only for a person whose own ag-go rights cover every video of its timeline revision (sharing a
+   * project never widens anyone's footage); a Premiere export's link names the .zip to save.
+   */
+  @Get('videos/:videoId/renders/:jobId/link')
+  @Roles('viewer')
+  link(@Param('videoId') videoId: string, @Param('jobId') jobId: string, @Req() req: Request): Promise<RenderLink> {
+    return mapErrors(async () => {
+      const v = requireVideo(this.engine.db, videoId);
+      const r = videoRender(this.engine.db, v.id, jobId);
+      if (!r) throw new StudioRunError('not_found', `video không có bản render ${jobId}`);
+      const hidden = await this.footageVerdict(req.authContext!.userId, v.id, r.revision);
+      if (hidden) return { jobId: r.jobId, url: null, urlHidden: hidden };
+      const url = await this.engine.bucket.signedGetUrl(r.key, this.engine.browserUrlTtl, r.kind === 'export_premiere' ? { downloadName: `${v.title.slice(0, 80)}.zip` } : {});
+      return { jobId: r.jobId, url };
     });
   }
 
