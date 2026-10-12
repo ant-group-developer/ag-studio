@@ -167,7 +167,8 @@ xem nhóm mình; người khác 403.
   projects}` (mỗi mục `[{value, label?, count}]`); `projects` là các project đã gắn, `count` của ag-go hoặc `null`
 - `POST prepare {assetIds, again?}` (editor) → job `prepare_asset` cho mỗi video chưa chuẩn bị
 - `GET jobs?active&videoId` → `{jobs: JobView[]}`; `POST jobs/:jobId/cancel` (editor) → Dừng
-  (`JobView`: `kind, status, title, phase, progress, etaSeconds, nodeId, cancelRequested, startedAt, finishedAt, result, error`)
+  (`JobView`: `kind, status, title, phase, progress, etaSeconds, nodeId, cancelRequested, startedAt, finishedAt, result, error`;
+  job lỗi có mã thì `result = {error_code}`, ví dụ `youtube_blocked` khi YouTube chặn tải từ máy chủ Studio)
 
 ## Nghiên cứu YouTube (`projects/:projectId/research`)
 

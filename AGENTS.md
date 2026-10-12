@@ -136,6 +136,9 @@ nhưng không code nào đọc.
   `phase`, `progress`, `eta_seconds` (`eta.ts`, không đoán khi đang chờ máy farm), máy farm; Dừng = `cancel_requested` (kill
   ffmpeg / huỷ job farm). Xong thì đăng tin hệ thống vào luồng và cho agent làm tiếp (≤ 3 lượt tự chạy liên tiếp, tắt bằng
   `settings.auto_continue`). Worker thiếu công cụ thì job loại đó chờ worker khác (`projectJobHandlers`).
+- Lỗi yt-dlp có mã (`classifyYtDlp`, `YtDlpError`): `youtube_blocked` (YouTube chặn máy chủ: bot check, 429) làm
+  `style_watch` dừng ngay, không thử video còn lại; job lỗi có mã ghi `result.error_code` (`JobError`). Không cookie, không
+  đăng nhập (ADR-0001 mục 175, 191).
 - Job farm của dự án ghi `project_farm_jobs`; `/api/farm/sign` tra ở đó, hỏi ag-go bằng quyền **chủ dự án**; bản xem trước xin
   `prefer: {short_edge: 480, clean: true}` (ag-go cũ bỏ qua). Khoá bucket giữ quy ước farm:
   `productions/<projectId>/jobs/<stage>/<jobId>/{in,out}/` (dự án đóng vai "production" trong payload `@ag-farm/protocol`,

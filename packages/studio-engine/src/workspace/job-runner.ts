@@ -73,7 +73,18 @@ export interface JobRunner {
   runForever(signal: AbortSignal): Promise<void>;
 }
 
+/** A job that failed for a reason with a name (`youtube_blocked`…): the row keeps it as `result.error_code`. */
+export class JobError extends Error {
+  constructor(readonly code: string, message: string) { super(message); this.name = "JobError"; }
+}
+
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+/** The code a failure carries (`JobError`, `YtDlpError`), recorded with it; null for others. */
+function errCode(e: unknown): string | null {
+  if (!(e instanceof Error) || (e.name !== "JobError" && e.name !== "YtDlpError")) return null;
+  const code = (e as Error & { code?: unknown }).code;
+  return typeof code === "string" ? code : null;
+}
 const AUTO_TURNS_IN_A_ROW = 3;
 
 export function createJobRunner(o: JobRunnerOptions): JobRunner {
@@ -157,7 +168,11 @@ export function createJobRunner(o: JobRunnerOptions): JobRunner {
         outcome = { status: "cancelled", error: null, message: `Đã dừng: ${job.title}.` };
       } else {
         log.warn("job failed", { error: errText(e) });
-        outcome = { status: "failed", error: errText(e).slice(0, 2000), message: `Không làm xong: ${job.title} — ${errText(e).slice(0, 500)}` };
+        const code = errCode(e);
+        outcome = {
+          status: "failed", error: errText(e).slice(0, 2000), message: `Không làm xong: ${job.title} — ${errText(e).slice(0, 500)}`,
+          ...(code ? { result: { error_code: code } } : {}),
+        };
       }
     } finally {
       clearInterval(ticker);

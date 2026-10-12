@@ -1225,3 +1225,9 @@ Spec `docs/superpowers/specs/2026-10-10-ag-studio-agent-workspace-design.md`, pl
     không phải bản cuối; ag-go (nhánh riêng) chọn bản sạch nếu người dùng được xem, gần 480 nhất, và sửa `servablePreviews`
     theo quyền người xem. Canvas đầu ra bản xem trước giữ như cũ vì chữ ASS dùng cỡ tuyệt đối theo canvas. Canva bị gỡ;
     thumbnail thành tool của agent.
+191. **Video mẫu không tải được thì nói rõ vì sao, bằng mã (2026-10-12).** Lỗi yt-dlp được phân loại (`classifyYtDlp`,
+    `yt-dlp.ts`): `youtube_blocked` (YouTube đòi đăng nhập xác nhận không phải bot, HTTP 429 — chặn **máy chủ**, không
+    phải video), `private`, `unavailable`, `age_restricted`, `members_only`, `live`, `too_long`, `too_big`, `no_480p`,
+    `network`, `timeout`, `other` (giữ **đầu** dòng `ERROR`). `style_watch` gặp `youtube_blocked` thì dừng ngay, các video
+    còn lại ghi `skipped`; không xem được video nào thì job lỗi với `result.error_code` (`JobError`). Research qua yt-dlp
+    cũng báo mã này và gợi ý `YOUTUBE_API_KEY`. Mục 175 giữ nguyên: không cookie, không đăng nhập, không lách chặn.
