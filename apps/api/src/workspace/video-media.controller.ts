@@ -1,5 +1,5 @@
 import {
-  BadRequestException, Body, Controller, Delete, ForbiddenException, Get, HttpCode, HttpStatus, Param, PayloadTooLargeException, Post, Req,
+  BadRequestException, Body, Controller, Delete, ForbiddenException, Get, HttpCode, HttpStatus, Logger, Param, PayloadTooLargeException, Post, Req,
   ServiceUnavailableException, UnprocessableEntityException, UseGuards,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -12,6 +12,7 @@ import {
   listJobs, listVideoRevisions, projectAudio, projectAudioSummary, queueFit, queueRender, readWorkspaceBytes, requireProject, requireVideo,
   resolveInside, StudioRunError, timelineSummary, videoRenders, VOICE_ORIGINS, type ActorRole, type JobView, type RenderKind,
 } from '@ag-studio/engine';
+import { AgGoClientError } from '../ag-go/client';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from '../studio/engine.service';
@@ -45,10 +46,13 @@ export interface RenderView {
   sizeBytes: number | null;
   note: string;
   finishedAt: string | null;
-  /** A short-lived link; null when the person's own ag-go rights do not cover every video in it. */
+  /** A short-lived link; null when the person's own ag-go rights do not cover every video in it, or ag-go could not say. */
   url: string | null;
-  urlHidden?: 'footage_scope';
+  /** `footage_scope`: ag-go does not serve every video of it to this person; `footage_check_failed`: ag-go did not answer. */
+  urlHidden?: FootageVerdict;
 }
+
+type FootageVerdict = 'footage_scope' | 'footage_check_failed';
 
 /**
  * A video's media (spec 2026-10-10 agent-workspace §P6): its renders (with a link only for people whose own ag-go
@@ -59,7 +63,8 @@ export interface RenderView {
 @Controller()
 @UseGuards(RolesGuard)
 export class VideoMediaController {
-  private readonly scope = new Map<string, { at: number; ok: boolean }>();
+  private readonly logger = new Logger(VideoMediaController.name);
+  private readonly scope = new Map<string, { at: number; hidden: FootageVerdict | null }>();
 
   constructor(
     private readonly engine: EngineService,
@@ -76,11 +81,11 @@ export class VideoMediaController {
       const userId = req.authContext!.userId;
       const out: RenderView[] = [];
       for (const r of videoRenders(this.engine.db, v.project_id, v.id)) {
-        const allowed = await this.coversFootage(userId, v.id, r.revision);
-        const url = allowed ? await this.engine.bucket.signedGetUrl(r.key, this.engine.browserUrlTtl, r.kind === 'export_premiere' ? { downloadName: `${v.title.slice(0, 80)}.zip` } : {}) : null;
+        const hidden = await this.footageVerdict(userId, v.id, r.revision);
+        const url = !hidden ? await this.engine.bucket.signedGetUrl(r.key, this.engine.browserUrlTtl, r.kind === 'export_premiere' ? { downloadName: `${v.title.slice(0, 80)}.zip` } : {}) : null;
         out.push({
           jobId: r.jobId, kind: r.kind, revision: r.revision, durationS: r.duration_s, width: r.width, height: r.height, watermarked: r.watermarked,
-          sizeBytes: r.size_bytes, note: r.note, finishedAt: r.finishedAt, url, ...(allowed ? {} : { urlHidden: 'footage_scope' as const }),
+          sizeBytes: r.size_bytes, note: r.note, finishedAt: r.finishedAt, url, ...(hidden ? { urlHidden: hidden } : {}),
         });
       }
       const jobs = listJobs(this.engine.db, v.project_id, { videoId, limit: 30 })
@@ -211,16 +216,41 @@ export class VideoMediaController {
     return this.engine.db.get<{ role: ActorRole }>('SELECT role FROM team_members WHERE team_id = ? AND user_id = ?', [teamId, req.authContext!.userId])?.role ?? 'viewer';
   }
 
-  /** Whether ag-go serves every video of that timeline revision to this person (asked at most once a minute). */
-  private async coversFootage(userId: string, videoId: string, revision: number): Promise<boolean> {
+  /**
+   * Why ag-go does not serve every video of that timeline revision to this person, or null when it does. A definite
+   * answer is kept a minute; ag-go not answering (down, timing out, an error) is said as such, logged and asked again.
+   */
+  private async footageVerdict(userId: string, videoId: string, revision: number): Promise<FootageVerdict | null> {
     const key = `${userId}:${videoId}:${revision}`;
     const hit = this.scope.get(key);
-    if (hit && Date.now() - hit.at < 60_000) return hit.ok;
+    if (hit && Date.now() - hit.at < 60_000) return hit.hidden;
     const rev = getVideoRevision(this.engine.db, videoId, revision);
     const assets = rev ? [...new Set(rev.data.clips.map((c) => c.asset_id))] : [];
-    let ok = false;
-    try { ok = assets.length > 0 && (await this.footage.check(userId, assets)).missing.length === 0; } catch { ok = false; }
-    this.scope.set(key, { at: Date.now(), ok });
-    return ok;
+    let hidden: FootageVerdict | null;
+    if (assets.length === 0) hidden = 'footage_scope';
+    else {
+      try {
+        const { missing } = await this.footage.check(userId, assets);
+        hidden = missing.length ? 'footage_scope' : null;
+        if (missing.length) this.logger.warn(`ag-go does not serve ${missing.length}/${assets.length} videos of video ${videoId} r${revision} to user ${userId}: ${missing.join(', ')}`);
+      } catch (e) {
+        // ag-go answers 404 naming the first video out of this person's scope; anything else is not about rights
+        const scope = e instanceof AgGoClientError && e.status === 404;
+        this.logger.warn(`ag-go footage check for video ${videoId} r${revision}, user ${userId} (${assets.length} videos): ${agGoFailure(e)}`);
+        if (!scope) return 'footage_check_failed';
+        hidden = 'footage_scope';
+      }
+    }
+    this.scope.set(key, { at: Date.now(), hidden });
+    return hidden;
   }
+}
+
+function agGoFailure(e: unknown): string {
+  if (e instanceof AgGoClientError) {
+    const b = e.body as { message?: unknown; error?: { message?: unknown } } | string | null;
+    const msg = typeof b === 'string' ? b : b?.error?.message ?? b?.message;
+    return `HTTP ${e.status}${msg ? ` ${String(msg).slice(0, 300)}` : ''}`;
+  }
+  return e instanceof Error ? `${e.name}: ${e.message}` : String(e);
 }
