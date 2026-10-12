@@ -324,6 +324,9 @@ export interface SourceItem {
   asset: AssetState | null;
 }
 
+/** How many distinct ag-go videos are ready, being prepared (queued or running), failed, not prepared yet. */
+export interface SourceCounts { videos: number; ready: number; preparing: number; failed: number; notPrepared: number }
+
 export interface FootageItem {
   assetId: string;
   name: string;
@@ -605,7 +608,8 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     },
 
     // ---- Inputs and jobs ----
-    listSources(projectId: string, videoId?: string): Promise<{ sources: SourceItem[] }> {
+    /** `counts`: distinct ag-go videos by where they stand (older APIs leave it out). */
+    listSources(projectId: string, videoId?: string): Promise<{ sources: SourceItem[]; counts?: SourceCounts }> {
       return call("GET", `/api/projects/${enc(projectId)}/sources${buildQuery({ videoId })}`);
     },
     /** 422 `owner_cannot_access` when the project's owner cannot use it on ag-go. */

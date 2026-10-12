@@ -135,3 +135,35 @@ ol.ws-inputs__list { counter-reset: src; }
 .ws-audio__trackhead { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .ws-audio__moods { display: flex; flex-wrap: wrap; gap: 2px; }
 .ws-audio__track audio { width: 100%; height: 32px; }
+
+/* many projects and videos: a summary line, the jobs in one line, two sub-sections, compact rows, groups */
+.ws-inputs__overview { display: flex; flex-direction: column; gap: 6px; }
+.ws-inputs__summary { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; font-size: 13px; color: var(--ws-muted); }
+.ws-inputs__statwrap { display: inline-flex; align-items: baseline; white-space: pre; }
+.ws-inputs__stat { border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+.ws-inputs__stat:hover { text-decoration: underline; }
+.ws-inputs__stat strong { color: var(--ws-text); font-weight: 600; }
+.ws-inputs__stat--ok { color: var(--ws-ok-fg); }
+.ws-inputs__stat--run { color: var(--ws-run-fg); }
+.ws-inputs__stat--bad { color: var(--ws-bad-fg); }
+.ws-inputs__jobs { display: flex; flex-direction: column; gap: 6px; }
+.ws-inputs__list--compact { gap: 0; }
+.ws-inputs__row--compact { padding: 3px 4px; }
+.ws-inputs__row--compact .ws-inputs__name { flex: 1; min-width: 0; }
+.ws-inputs__search { margin: 4px 0; }
+.ws-inputs__more { display: inline-block; margin-top: 4px; font-size: 12px; }
+.ws-inputs__toolbar { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+.ws-inputs__toolbar .ws-inputs__search { flex: 1; min-width: 0; margin: 0; }
+.ws-inputs__filter { min-width: 128px; }
+.ws-inputs__bulk { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 4px; }
+.ws-inputs__groups { gap: 4px; }
+.ws-inputs__group { border: 1px solid var(--ws-line); border-radius: 8px; background: var(--ws-surface); }
+.ws-inputs__grouphead { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; background: none; font: inherit;
+  font-size: 13px; color: var(--ws-text); text-align: left; cursor: pointer; border-radius: 8px; }
+.ws-inputs__grouphead:hover { background: var(--ws-chip); }
+.ws-inputs__grouphead .ws-inputs__name { flex: 1; min-width: 0; font-weight: 500; }
+.ws-inputs__chevron { flex-shrink: 0; transition: transform 0.15s; color: var(--ws-faint); }
+.ws-inputs__grouphead[aria-expanded="true"] .ws-inputs__chevron { transform: rotate(90deg); }
+.ws-inputs__grouptag { margin-inline-end: 0; }
+.ws-inputs__grouplist { margin: 0; padding: 0 6px 6px; }
+.ws-inputs .ws-inputs__group > .ws-inputs__more { margin: 0 0 6px 12px; }

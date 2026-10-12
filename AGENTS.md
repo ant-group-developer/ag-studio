@@ -187,7 +187,11 @@ nhưng không code nào đọc.
   sidebar lọc, ô tìm có gợi ý, sort, list/grid, thẻ và CSS chép từ `project-grid-view` của ag-go; `/projects`, lookup và
   `/assets/:id/preview-url` của ag-go gọi thẳng); tick nhiều project qua các trang rồi thêm lần lượt, cái bị từ chối giữ tick và
   báo lý do. Đổi giao diện này thì so với nguồn ag-go-web (`E:\CODE\ag-go-v2\ag-go-web`), đừng tự chế. Picker video: `GET footage`
-  + `footage/facets` qua API, chỉ trong các project đã gắn, bảng hoặc lưới (nhớ ở localStorage). `/stats` có thêm bảng **từng
+  + `footage/facets` qua API, chỉ trong các project đã gắn, bảng hoặc lưới (nhớ ở localStorage). Tab Đầu vào (`InputsPanel`):
+  thẻ giọng & nhạc, dòng tóm tắt "N video · sẵn sàng · đang chuẩn bị · lỗi" (bấm để lọc; `counts` của `GET sources`), việc nền
+  một dòng (`JobsLine`), hai mục con Footage | Tài liệu, ảnh, audio (+ Video mẫu) nhớ ở localStorage `studio.inputs.section`;
+  `FootageAssets.tsx`: project ag-go gọn (tìm khi > 5, hiện 5), video có ô tìm, lọc trạng thái, 30 dòng + "Xem thêm", trang dự án
+  gom theo video Studio (bỏ trùng), làm hàng loạt "Chuẩn bị các video chưa chuẩn bị"/"Thử lại các video lỗi" (lô 40). `/stats` có thêm bảng **từng
   lượt** (`GET studio/stats/claude/turns[/:id]`; bấm dòng của bảng gộp để lọc, bấm lượt mở drawer chi tiết).
   Chat: mỗi lượt agent thu thành một dòng "Đã làm N bước · thời gian" (`MessageItem`, `splitTurn`; chữ sau bước cuối
   luôn hiện, `suggest_replies` không tính là bước), đang chạy thì dòng đó là trạng thái sống có Dừng; dưới câu trả lời là

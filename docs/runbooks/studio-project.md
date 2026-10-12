@@ -15,6 +15,9 @@ quay lại bước nào cũng được; mọi kết quả là file sửa đượ
 
 - Tab **Đầu vào** → **Thêm project** ag-go: chỉ project mà **chủ dự án** thấy video bên trong (agent và render dùng quyền
   của chủ dự án). Agent tìm video trong đó bằng `footage_search`.
+- Nhiều project/video: dòng tóm tắt đầu tab ("78 video · 70 sẵn sàng · 5 đang chuẩn bị · 3 lỗi", bấm một phần để lọc), mục
+  **Footage** có ô tìm, lọc trạng thái, gom theo video ở trang dự án, nút **Chuẩn bị các video chưa chuẩn bị** và **Thử lại
+  các video lỗi** (editor). Tài liệu, ảnh, audio và video mẫu ở mục **Tài liệu, ảnh, audio**.
 - Tài liệu (PDF, markdown, CSV…), ảnh, audio: **Tải lên** → `context/…`. File Word: lưu thành PDF trước.
 - Giọng đọc và nhạc nền: thẻ đầu tiên của tab **Đầu vào**. **Giọng đọc** (cần producer): **Tải giọng mẫu** (3–20 giây) hoặc
   **Chọn file đã tải**, rồi khai nguồn gốc (giọng máy / của tôi / có bản quyền); **Không lời dẫn** (lời thành phụ đề); **Bỏ
