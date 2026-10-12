@@ -104,6 +104,10 @@
 .ws-nav__title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .ws-nav__foot { flex-shrink: 0; padding: 8px; border-top: 1px solid var(--ws-line); display: flex; flex-direction: column; gap: 2px; }
 
+/* the chat and the side panel share what the project nav leaves, half and half, until someone drags the edge (an inline
+   --ws-aside-w); declared here so it follows this body's own --ws-nav-w */
+.ws-body { --ws-aside-w: calc((100vw - var(--ws-nav-w)) / 2); }
+.ws-body:not(:has(> .ws-nav)) { --ws-aside-w: 50vw; }
 .ws-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--ws-surface); }
 .ws-aside {
   flex: 0 0 var(--ws-aside-w); width: var(--ws-aside-w); min-height: 0; box-sizing: border-box; display: flex; flex-direction: column;
