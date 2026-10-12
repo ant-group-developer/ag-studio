@@ -130,7 +130,7 @@ xem nhóm mình; người khác 403.
 - `GET content?path` → `WorkspaceFile & {issues: FileIssue[]}`; `GET raw?path` → byte (ảnh, PDF)
 - `PUT content {path, content, baseSha256?}` (editor) → `SavedFile & {issues}`; `baseSha256` khác bản trên đĩa → 409
   `file_conflict`; đường chỉ đọc (`inputs/**`, `videos/*/sources/**`, `.studio/**` trừ `playbook.yaml`) → 422 `read_only`
-- `DELETE ?path&baseSha256` (editor); `POST upload` multipart `file` + `dir?` (editor, ≤ 50 MB)
+- `DELETE ?path&baseSha256` (editor); `POST upload` multipart `file` + `dir?` (editor, ≤ 50 MB; audio ≤ 100 MB)
 - `GET versions?path`, `GET versions/:versionId`, `POST versions/:versionId/restore {baseSha256?}` (editor)
 - `GET versions/:versionId/diff?base` (viewer) → bản đó đổi gì so với `base` (một bản khác của cùng file, vd. bản trước
   lượt agent; `none` = file rỗng, cho file lượt đó tạo; khác file → 422 `bad_base`) hoặc mặc định bản ngay trước (chưa có = file rỗng; bản xoá = rỗng):
@@ -168,7 +168,7 @@ xem nhóm mình; người khác 403.
   file tải lên); `POST sources` (editor) `{kind: ag_go_project, ref, label}` | `{kind: ag_go_asset, ref, label, videoId?,
   meta?, prepare?}` — chủ dự án không dùng được trên ag-go → 422 `owner_cannot_access`; `DELETE sources/:sourceId`
 - `POST sources/upload` multipart `file` + `videoId?` + `reference?` (editor): tài liệu → `context/uploads/`, ảnh →
-  `context/images/`, audio → `context/audio/` (≤ 50 MB); Word → 415 `docx_not_supported`, video → 415 `video_from_ag_go`.
+  `context/images/`, audio → `context/audio/` (audio ≤ 100 MB, file khác ≤ 50 MB); Word → 415 `docx_not_supported`, video → 415 `video_from_ag_go`.
   `reference=1`: video mẫu để học phong cách dựng (mp4, mov, m4v, mkv, webm, avi; ≤ 300 MB) → `context/references/`,
   nguồn `mediaType: video`, `meta.reference: true` (không phải footage); file khác → 415 `not_video`. Agent học bằng tool
   `style_from_files {paths, purpose}` (job `style_watch` với `files`, không cần thẻ, không đổi hay xoá file)
@@ -206,8 +206,17 @@ xem nhóm mình; người khác 403.
   timeline dùng đủ tập video đã hỏi bị ẩn; một lần kiểm > 2 s ghi log
 - `POST /videos/:videoId/renders {kind: render_preview|render_final|export_premiere, nodeId?, media?}` — xem trước: editor;
   bản cuối, Premiere: producer (403 `role`)
-- `GET /projects/:projectId/audio` → `{voice, music, summary}`; `POST audio/:kind/from-file {path, origin?, referenceText?}`
-  (giọng: producer, phải có `origin` synthetic|own|licensed; nhạc: editor); `POST audio/voice/decline`, `DELETE audio/:kind` (producer)
+- `GET /projects/:projectId/audio` (viewer) → `{voice, music, summary, libraryTrack, enabled, files}`: `enabled` = API có
+  ffmpeg (`STUDIO_FFMPEG_PATH`; ffprobe là `STUDIO_FFPROBE_PATH` hoặc ffprobe cạnh ffmpeg như worker) để nhận file audio;
+  `files` = file audio dùng được `[{path, name, bytes, sourceId, addedAt}]`, mới nhất trước: audio đã tải ở tab Đầu vào
+  (còn file) và mọi file audio dưới `context/audio/` (cả file tải qua tab Tệp, `sourceId: null`), không dò thời lượng;
+  `libraryTrack` = `{trackId, displayName, moods, durationSeconds}` khi nhạc là một bài của kho nhạc
+- `POST audio/:kind/from-file {path, origin?, referenceText?, gainDb?, ducking?}` (giọng: producer, phải có `origin`
+  synthetic|own|licensed; nhạc: editor); thiếu ffmpeg → 503 `audio_disabled`
+- `POST audio/music/from-library {trackId, gainDb?, ducking?}` (editor): nhạc của dự án là bài đó của kho nhạc
+  (`track: library:music/…`, không chép file, không cần ffmpeg); bài không có → 404 `not_found`, bài đã gỡ → 422 `audio_invalid`
+- `POST audio/voice/decline` (producer); `DELETE audio/voice` (producer), `DELETE audio/music` (editor, như chọn nhạc).
+  Bỏ chọn nhạc = Studio tự chọn bài trong kho nhạc theo mood (kế hoạch dựng, rồi branding) khi dựng timeline
 
 ## Thẻ xác nhận
 

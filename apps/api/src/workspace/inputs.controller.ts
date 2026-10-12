@@ -9,15 +9,15 @@ import { extname, join } from 'node:path';
 import type { Request } from 'express';
 import { z } from 'zod';
 import {
-  addSource, assetState, getSource, jobView, listJobs, listSources, nameUnnamedAssets, projectActAs, queuePrepare, removeSource, requestJobCancel, requireJob,
-  REFERENCE_UPLOAD_DIR, REFERENCE_UPLOAD_MAX_BYTES, REFERENCE_VIDEO_EXTS, requireProject, requireVideo, sourceItems, StudioRunError, writeVideoIndex,
+  addSource, assetState, AUDIO_FILE_EXTS, getSource, jobView, listJobs, listSources, nameUnnamedAssets, projectActAs, queuePrepare, removeSource, requestJobCancel, requireJob,
+  PROJECT_AUDIO_DIR, REFERENCE_UPLOAD_DIR, REFERENCE_UPLOAD_MAX_BYTES, REFERENCE_VIDEO_EXTS, requireProject, requireVideo, sourceItems, StudioRunError, writeVideoIndex,
   writeWorkspaceFile, type ActorRole, type JobView, type SourceItem, type SourceMediaType, unnamedAssetIds,
 } from '@ag-studio/engine';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from '../studio/engine.service';
 import { mapErrors } from '../studio/http-errors';
-import { safeFileName, WORKSPACE_UPLOAD_MAX_BYTES } from './files.controller';
+import { safeFileName, uploadMaxBytes, WORKSPACE_UPLOAD_MAX_BYTES } from './files.controller';
 import { ProjectFootageService } from './project-footage.service';
 import { SiteNameService } from '../ag-go/site-name.service';
 import { FOOTAGE_RESOLUTIONS, FOOTAGE_SORT_FIELDS, FOOTAGE_USABILITIES } from '../ag-go/client';
@@ -76,7 +76,7 @@ const FootageQuerySchema = z.object({
 const UPLOAD_KINDS: { exts: string[]; mediaType: SourceMediaType; dir: string }[] = [
   { exts: ['.md', '.txt', '.pdf', '.csv', '.json', '.srt', '.vtt'], mediaType: 'document', dir: 'context/uploads' },
   { exts: ['.jpg', '.jpeg', '.png', '.webp', '.gif'], mediaType: 'image', dir: 'context/images' },
-  { exts: ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac'], mediaType: 'audio', dir: 'context/audio' },
+  { exts: [...AUDIO_FILE_EXTS], mediaType: 'audio', dir: PROJECT_AUDIO_DIR },
 ];
 
 interface UploadedTmp { path: string; originalname: string; size: number }
@@ -202,7 +202,7 @@ export class InputsController {
   /**
    * A document, image or audio file into `context/` (videos come from ag-go), or, with `reference`, a reference video
    * to learn an edit style from (`context/references/`, never footage): saved under its own name and listed as a
-   * source. Word files are refused (save them as PDF).
+   * source. Word files are refused (save them as PDF). Audio up to 100 MB (a whole music track), other files 50 MB.
    */
   @Post('sources/upload')
   @Roles('editor')
@@ -215,7 +215,7 @@ export class InputsController {
       const name = safeFileName(file.originalname);
       const ext = extname(name).toLowerCase();
       const isVideo = (REFERENCE_VIDEO_EXTS as readonly string[]).includes(ext);
-      const max = form.reference ? REFERENCE_UPLOAD_MAX_BYTES : WORKSPACE_UPLOAD_MAX_BYTES;
+      const max = form.reference ? REFERENCE_UPLOAD_MAX_BYTES : uploadMaxBytes(name);
       if (file.size > max) {
         throw new PayloadTooLargeException({ code: 'file_too_large', message: `File lớn hơn ${max / 1024 / 1024} MB` });
       }

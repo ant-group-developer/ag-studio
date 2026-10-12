@@ -159,8 +159,10 @@ nhưng không code nào đọc.
   thuần ở `packages/core/src/studio/layout.ts` (`applyTimelineOps`, `timelineIssues`); composition suy từ revision
   (`timelineToComposition`). Revision ở `video_revisions` (`saveVideoRevision`, xung đột → `RevisionConflictError`).
 - Giọng đọc/nhạc của dự án: chọn từ file audio đã tải lên (`workspace/project-audio.ts`; giọng cần vai producer và khai nguồn
-  gốc); không có nhạc riêng thì lấy kho nhạc theo mood của branding (`music-library.ts`). API cần `STUDIO_FFMPEG_PATH` và
-  `STUDIO_FFPROBE_PATH` để nhận audio.
+  gốc; `projectAudioFiles` = audio có dòng nguồn + mọi file dưới `context/audio/`, cả file tải qua tab Tệp), hoặc nhạc là một
+  bài của kho nhạc (`setProjectLibraryMusic`, `track: library:music/…`, không chép file, không cần ffmpeg); bỏ chọn nhạc
+  (editor) thì lấy kho nhạc theo mood của kế hoạch dựng/branding (`music-library.ts`). API cần `STUDIO_FFMPEG_PATH` để nhận
+  file audio (ffprobe mặc định cạnh ffmpeg như worker; `GET audio` trả `enabled`). Audio tải lên ≤ 100 MB, file khác ≤ 50 MB.
 - Thumbnail (`workspace/thumbnails.ts`) cắt khung từ bản render và vẽ chữ trên máy Studio (ffmpeg bất đồng bộ, font Arial của
   hệ thống qua `STUDIO_FONTS_DIR`, không ship font). Quy chuẩn & skill của nhóm (`team_skills`) thành skill của agent khi dự
   án bật.

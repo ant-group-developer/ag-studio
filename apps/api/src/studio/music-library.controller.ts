@@ -10,7 +10,6 @@ import {
   PayloadTooLargeException,
   Post,
   Req,
-  ServiceUnavailableException,
   UnprocessableEntityException,
   UploadedFile,
   UseInterceptors,
@@ -33,6 +32,7 @@ import {
 import { StudioAdminService } from '../auth/studio-admin.service';
 import { EngineService } from './engine.service';
 import { mapErrors } from './http-errors';
+import { requireAudioTools } from './audio-tools';
 
 /** What multer leaves on disk for an upload. */
 interface UploadedAudio { path: string; originalname: string; size: number }
@@ -137,12 +137,7 @@ export class MusicLibraryController {
   }
 
   private tools() {
-    const ffmpeg = this.config.get<string>('STUDIO_FFMPEG_PATH');
-    const ffprobe = this.config.get<string>('STUDIO_FFPROBE_PATH');
-    if (!ffmpeg || !ffprobe) {
-      throw new ServiceUnavailableException({ code: 'audio_disabled', message: 'Máy Studio chưa cấu hình ffmpeg/ffprobe (STUDIO_FFMPEG_PATH, STUDIO_FFPROBE_PATH)' });
-    }
-    return { ffmpeg, ffprobe };
+    return requireAudioTools(this.config);
   }
 
 }

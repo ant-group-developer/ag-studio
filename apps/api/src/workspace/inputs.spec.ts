@@ -163,4 +163,13 @@ describe('inputs (real studio.db)', () => {
     expect(await inputs.upload(p.id, { reference: '1' }, tmp('huge.mp4', 'x', 301 * 1024 * 1024), req(EDITOR)).catch(code)).toBe('file_too_large');
     expect(await inputs.upload(p.id, { reference: '1' }, tmp('notes.md', 'x'), req(EDITOR)).catch(code)).toBe('not_video');
   });
+
+  it('audio uploads go up to 100 MB (a whole music track); other files stay at 50 MB', async () => {
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    const tmp = (name: string, size: number) => { const path = join(mkdtempSync(join(tmpdir(), 'up-')), name); writeFileSync(path, 'x'); return { path, originalname: name, size }; };
+    const music = await inputs.upload(p.id, {}, tmp('Nhạc nền.MP3', 80 * 1024 * 1024), req(EDITOR));
+    expect(music.source).toMatchObject({ ref: 'context/audio/Nhạc nền.MP3', mediaType: 'audio' });
+    expect(await inputs.upload(p.id, {}, tmp('dai.wav', 101 * 1024 * 1024), req(EDITOR)).catch(code)).toBe('file_too_large');
+    expect(await inputs.upload(p.id, {}, tmp('anh.png', 60 * 1024 * 1024), req(EDITOR)).catch(code)).toBe('file_too_large');
+  });
 });

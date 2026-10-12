@@ -8,7 +8,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
-import { claimJob, finishJob, getJob, saveVideoRevision } from '@ag-studio/engine';
+import { claimJob, finishJob, getJob, saveLibraryMusic, saveVideoRevision } from '@ag-studio/engine';
+import { audioTools } from '../studio/audio-tools';
 import { AgGoClientError } from '../ag-go/client';
 
 type TimelineV4 = Parameters<typeof saveVideoRevision>[2]['data'];
@@ -117,5 +118,63 @@ describe('video media (real studio.db)', () => {
     expect(await media.fromFile(p.id, 'voice', { path: 'context/audio/giong.wav' }, req(OWNER)).catch(code)).toBe('origin');
     expect(await media.fromFile(p.id, 'music', { path: 'context/audio/giong.wav' }, req(EDITOR)).catch(code)).toBe('audio_disabled');
     expect((await media.decline(p.id, req(OWNER))).summary.voice).toBe('không lời dẫn (lời thành phụ đề)');
+    // clearing the voice stays with producers; the music, with editors (as picking it)
+    expect(await media.clear(p.id, 'voice', req(EDITOR)).catch(code)).toBe('role');
+    expect((await media.clear(p.id, 'voice', req(OWNER))).voice).toBeNull();
+  });
+
+  it('says whether audio can be taken in and lists the audio files to pick from, also those put in context/audio through the Files tab', async () => {
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    const audioDir = join(root, p.id, 'context', 'audio');
+    mkdirSync(join(audioDir, 'cu'), { recursive: true });
+    writeFileSync(join(audioDir, 'giong.wav'), 'RIFF....');
+    writeFileSync(join(audioDir, 'cu', 'nhac.mp3'), 'ID3');
+    writeFileSync(join(audioDir, 'ghi-chu.txt'), 'not audio');
+    const row = (id: string, ref: string, label: string) => s.engine.db.run(
+      "INSERT INTO project_sources (id, project_id, video_id, kind, ref, media_type, label, meta, added_by, added_at) VALUES (?, ?, NULL, 'upload', ?, 'audio', ?, '{}', ?, ?)",
+      [id, p.id, ref, label, EDITOR, '2020-01-01T00:00:00.000Z'],
+    );
+    row('src-1', 'context/audio/giong.wav', 'Giọng mẫu.wav');
+    row('src-2', 'context/audio/mat.wav', 'mat.wav'); // its file is gone
+    const a = await media.audio(p.id);
+    expect(a.enabled).toBe(false);
+    expect(a.libraryTrack).toBeNull();
+    expect(a.files.map((f) => [f.path, f.name, f.bytes, f.sourceId])).toEqual([
+      ['context/audio/cu/nhac.mp3', 'nhac.mp3', 3, null],
+      ['context/audio/giong.wav', 'Giọng mẫu.wav', 8, 'src-1'],
+    ]);
+    const engine = s.engine as unknown as EngineService;
+    const ws = new WorkspaceService({ get: (k: string, d?: unknown) => (k === 'STUDIO_WORKSPACES_ROOT' ? root : d) } as unknown as ConfigService, engine);
+    const withFfmpeg = new VideoMediaController(engine, ws, {} as ProjectFootageService, { get: (k: string) => (k === 'STUDIO_FFMPEG_PATH' ? '/opt/ff/ffmpeg' : undefined) } as unknown as ConfigService);
+    expect((await withFfmpeg.audio(p.id)).enabled).toBe(true);
+  });
+
+  it('ffprobe defaults to the one next to ffmpeg, as on the worker', () => {
+    const cfg = (v: Record<string, string>) => ({ get: (k: string) => v[k] }) as unknown as ConfigService;
+    expect(audioTools(cfg({}))).toBeNull();
+    expect(audioTools(cfg({ STUDIO_FFMPEG_PATH: 'C:/ff/bin/ffmpeg.exe' }))).toEqual({ ffmpeg: 'C:/ff/bin/ffmpeg.exe', ffprobe: 'C:/ff/bin/ffprobe.exe' });
+    expect(audioTools(cfg({ STUDIO_FFMPEG_PATH: '/usr/bin/ffmpeg', STUDIO_FFPROBE_PATH: '/opt/ffprobe' }))).toEqual({ ffmpeg: '/usr/bin/ffmpeg', ffprobe: '/opt/ffprobe' });
+  });
+
+  it('picks a music library track for the project without ffmpeg; a retired or unknown track is refused; editors clear the music', async () => {
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    const now = '2026-10-01T00:00:00.000Z';
+    const track = (id: string, name: string, active: boolean) => ({
+      schema_version: 'harness.music-track/v1' as const, track_id: id, display_name: name, file: 'library:music/' + id + '.m4a',
+      mood: ['ấm áp'], duration_seconds: 95, loop_ok: true, origin: 'royalty_free' as const, origin_note: 'kho miễn phí',
+      checksum: 'sha256:' + 'a'.repeat(64), active, created_at: now, updated_at: now,
+    });
+    saveLibraryMusic(s.engine.db, track('m-sang', 'Sáng sớm', true));
+    saveLibraryMusic(s.engine.db, track('m-cu', 'Bài cũ', false));
+    const a = await media.fromLibrary(p.id, { trackId: 'm-sang', gainDb: -20 });
+    expect(a.music).toEqual({ track: 'library:music/m-sang.m4a', gain_db: -20, ducking: true, sha256: 'a'.repeat(64), duration_s: 95 });
+    expect(a.libraryTrack).toEqual({ trackId: 'm-sang', displayName: 'Sáng sớm', moods: ['ấm áp'], durationSeconds: 95 });
+    expect(a.summary.music).toBe('bài "Sáng sớm" trong kho nhạc (95 s), -20 dB, nhỏ lại khi có lời');
+    expect(await media.fromLibrary(p.id, { trackId: 'm-cu' }).catch(code)).toBe('audio_invalid');
+    expect(await media.fromLibrary(p.id, { trackId: 'm-khong' }).catch(code)).toBe('not_found');
+    expect(await media.fromLibrary(p.id, { trackId: 'm-sang', extra: 1 }).catch(code)).toBe('invalid');
+    const cleared = await media.clear(p.id, 'music', req(EDITOR));
+    expect(cleared.music).toBeNull();
+    expect(cleared.summary.music).toContain('chưa chọn');
   });
 });

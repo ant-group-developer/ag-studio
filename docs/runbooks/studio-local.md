@@ -200,7 +200,7 @@ thể cần thêm một JS runtime (Deno) cho YouTube: làm theo thông báo l�
 | Account API không với tới | Container account dừng | Vẫn vào được, nhưng không ai là admin và tên hiện thiếu |
 | Job render "Đang chờ máy farm" mãi | Farm hub hoặc `local-render` không chạy, hoặc không máy nào khớp yêu cầu | `local-stack.mjs status`, web farm 3011; quá `STUDIO_FARM_QUEUE_TIMEOUT_MINUTES` thì job tự huỷ và báo vào luồng |
 | Dựng timeline báo thiếu giọng đọc | Dự án chưa chọn giọng (hay chưa chọn "không lời dẫn") | Tab Đầu vào → Giọng và nhạc: chọn một file audio đã tải lên làm giọng (vai producer, khai nguồn gốc), hoặc không lời dẫn |
-| Đưa audio báo 503 `audio_disabled` | API thiếu `STUDIO_FFMPEG_PATH` hoặc `STUDIO_FFPROBE_PATH` | Đặt cả hai trong `apps/api/.env` (máy dev: ffmpeg-static/ffprobe-static của ag-render-worker) rồi bật lại API |
+| Đưa audio báo 503 `audio_disabled` (tab Đầu vào báo "máy Studio chưa có ffmpeg") | API thiếu `STUDIO_FFMPEG_PATH` (ffprobe mặc định nằm cạnh; khác chỗ thì đặt `STUDIO_FFPROBE_PATH`) | Đặt trong `apps/api/.env` (máy dev: ffmpeg-static/ffprobe-static của ag-render-worker) rồi bật lại API |
 | Lượt agent chờ lâu, "chờ hạn mức" | Hết hạn mức gói | Đợi; tự thử lại 5→60 phút, không tính là lỗi |
 | Lượt agent lỗi `agent CLI failed to start` | Không tìm thấy `claude` / `claude.exe` | Cài Claude Code, hoặc đặt `STUDIO_AGENT_ARGV` về agent giả |
 | `up` báo "chưa lên sau 180 s" | Dịch vụ lỗi khi khởi động | Xem `E:\ag-local\dev-run\<tên>.log` |

@@ -1,6 +1,6 @@
 import {
-  BadRequestException, Body, Controller, Delete, ForbiddenException, Get, HttpCode, HttpStatus, Logger, Param, PayloadTooLargeException, Post, Req,
-  ServiceUnavailableException, UnprocessableEntityException, UseGuards,
+  BadRequestException, Body, Controller, Delete, ForbiddenException, Get, HttpCode, HttpStatus, Logger, NotFoundException, Param, PayloadTooLargeException,
+  Post, Req, UnprocessableEntityException, UseGuards,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { existsSync, readdirSync, statSync } from 'node:fs';
@@ -8,11 +8,13 @@ import { join } from 'node:path';
 import type { Request } from 'express';
 import { z } from 'zod';
 import {
-  AUDIO_MAX_BYTES, AudioImportError, clearProjectAudio, declineProjectNarration, getVideoRevision, importProjectAudio, jobView, latestVideoRevision,
-  listJobs, listVideoRevisions, projectAudio, projectAudioSummary, queueFit, queueRender, readWorkspaceBytes, requireProject, requireVideo,
-  resolveInside, StudioRunError, timelineSummary, videoRender, videoRenders, VOICE_ORIGINS, type ActorRole, type JobView, type RenderKind,
+  AUDIO_MAX_BYTES, AudioImportError, clearProjectAudio, declineProjectNarration, getLibraryMusic, getVideoRevision, importProjectAudio, jobView,
+  latestVideoRevision, listJobs, listVideoRevisions, projectAudio, projectAudioFiles, projectAudioSummary, projectLibraryTrack, queueFit, queueRender,
+  readWorkspaceBytes, requireProject, requireVideo, resolveInside, setProjectLibraryMusic, StudioRunError, timelineSummary, videoRender, videoRenders,
+  VOICE_ORIGINS, type ActorRole, type JobView, type ProjectAudioFile, type RenderKind,
 } from '@ag-studio/engine';
 import { Roles } from '../auth/roles.decorator';
+import { audioTools, requireAudioTools } from '../studio/audio-tools';
 import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from '../studio/engine.service';
 import { mapErrors } from '../studio/http-errors';
@@ -34,6 +36,23 @@ const FromFileSchema = z.object({
   gainDb: z.number().min(-40).max(0).optional(),
   ducking: z.boolean().optional(),
 }).strict();
+const FromLibrarySchema = z.object({
+  trackId: z.string().min(1).max(80),
+  gainDb: z.number().min(-40).max(0).optional(),
+  ducking: z.boolean().optional(),
+}).strict();
+
+/** `GET projects/:id/audio`: what is chosen, whether this Studio can take audio in, and the audio files to pick from. */
+export interface ProjectAudioResponse {
+  voice: unknown;
+  music: unknown;
+  summary: { voice: string; music: string };
+  /** The library track the music is, when it is one. */
+  libraryTrack: { trackId: string; displayName: string; moods: string[]; durationSeconds: number } | null;
+  /** ffmpeg (and ffprobe) are configured: files can be used as the voice sample or the music. A library track needs neither. */
+  enabled: boolean;
+  files: ProjectAudioFile[];
+}
 
 export interface RenderView {
   jobId: string;
@@ -61,7 +80,8 @@ export interface RenderLink {
  * A video's media (spec 2026-10-10 agent-workspace §P6): its renders (with a link only for people whose own ag-go
  * rights cover its footage — sharing a project never widens anyone's footage), starting a render (a preview: editor;
  * the final render and the Premiere export: producer), its timeline, building it from the edit plan; and the project's
- * narration voice and music, picked from audio files uploaded to the Inputs tab.
+ * narration voice and music, picked from audio files uploaded to the Inputs tab (or put in `context/audio/`), the music
+ * also from the music library.
  */
 @Controller()
 @UseGuards(RolesGuard)
@@ -161,11 +181,39 @@ export class VideoMediaController {
 
   @Get('projects/:projectId/audio')
   @Roles('viewer')
-  audio(@Param('projectId') projectId: string) {
+  audio(@Param('projectId') projectId: string): Promise<ProjectAudioResponse> {
     return mapErrors(() => {
       requireProject(this.engine.db, projectId);
       const a = projectAudio(this.engine.db, projectId);
-      return { voice: a.voice, music: a.music, summary: projectAudioSummary(this.engine.db, projectId) };
+      const lib = projectLibraryTrack(this.engine.db, projectId);
+      return {
+        voice: a.voice, music: a.music, summary: projectAudioSummary(this.engine.db, projectId),
+        libraryTrack: lib ? { trackId: lib.track_id, displayName: lib.display_name, moods: lib.mood, durationSeconds: lib.duration_seconds } : null,
+        enabled: audioTools(this.config) !== null,
+        files: projectAudioFiles(this.engine.db, this.workspace.dir(projectId), projectId),
+      };
+    });
+  }
+
+  /** A track of the music library as the project's music (editor): nothing to convert, so it works without ffmpeg. */
+  @Post('projects/:projectId/audio/music/from-library')
+  @Roles('editor')
+  @HttpCode(HttpStatus.OK)
+  fromLibrary(@Param('projectId') projectId: string, @Body() raw: unknown) {
+    return mapErrors(async () => {
+      const body = parseBody(FromLibrarySchema, raw);
+      requireProject(this.engine.db, projectId);
+      const track = getLibraryMusic(this.engine.db, body.trackId);
+      if (!track) throw new NotFoundException({ code: 'not_found', message: `Không có bài ${body.trackId} trong kho nhạc` });
+      try {
+        setProjectLibraryMusic(this.engine.db, projectId, track, {
+          ...(body.gainDb !== undefined ? { gainDb: body.gainDb } : {}), ...(body.ducking !== undefined ? { ducking: body.ducking } : {}),
+        });
+      } catch (e) {
+        if (e instanceof AudioImportError) throw new UnprocessableEntityException({ code: e.code, message: e.message });
+        throw e;
+      }
+      return this.audio(projectId);
     });
   }
 
@@ -187,7 +235,7 @@ export class VideoMediaController {
       readWorkspaceBytes(dir, body.path); // exists and readable
       if (statSync(abs).size > AUDIO_MAX_BYTES[kind]) throw new PayloadTooLargeException({ code: 'audio_too_large', message: `File lớn hơn ${AUDIO_MAX_BYTES[kind] / 1024 / 1024} MB` });
       try {
-        await importProjectAudio({ db: this.engine.db, bucket: this.engine.bucket, ...this.tools() }, {
+        await importProjectAudio({ db: this.engine.db, bucket: this.engine.bucket, ...requireAudioTools(this.config) }, {
           projectId, kind, file: abs, source: { kind: 'upload', filename: body.path.split('/').pop()!.slice(0, 255) }, userId: req.authContext!.userId,
           ...(body.origin ? { origin: body.origin } : {}), ...(body.referenceText !== undefined ? { referenceText: body.referenceText } : {}),
           ...(body.gainDb !== undefined ? { gainDb: body.gainDb } : {}), ...(body.ducking !== undefined ? { ducking: body.ducking } : {}),
@@ -211,22 +259,19 @@ export class VideoMediaController {
     });
   }
 
+  /** Clearing the music: editor (as picking it); clearing the voice: producer. */
   @Delete('projects/:projectId/audio/:kind')
-  @Roles('producer')
-  clear(@Param('projectId') projectId: string, @Param('kind') kind: string) {
+  @Roles('editor')
+  clear(@Param('projectId') projectId: string, @Param('kind') kind: string, @Req() req: Request) {
     return mapErrors(async () => {
       if (kind !== 'voice' && kind !== 'music') throw new BadRequestException({ code: 'kind', message: 'voice hoặc music' });
-      requireProject(this.engine.db, projectId);
+      const project = requireProject(this.engine.db, projectId);
+      if (kind === 'voice' && ORDER.indexOf(this.roleOf(req, project.team_id)) < ORDER.indexOf('producer')) {
+        throw new ForbiddenException({ code: 'role', message: 'Bỏ chọn giọng đọc cần vai producer' });
+      }
       clearProjectAudio(this.engine.db, projectId, kind);
       return this.audio(projectId);
     });
-  }
-
-  private tools(): { ffmpeg: string; ffprobe: string } {
-    const ffmpeg = this.config.get<string>('STUDIO_FFMPEG_PATH');
-    const ffprobe = this.config.get<string>('STUDIO_FFPROBE_PATH');
-    if (!ffmpeg || !ffprobe) throw new ServiceUnavailableException({ code: 'audio_disabled', message: 'Máy Studio chưa cấu hình ffmpeg/ffprobe (STUDIO_FFMPEG_PATH, STUDIO_FFPROBE_PATH)' });
-    return { ffmpeg, ffprobe };
   }
 
   private roleOf(req: Request, teamId: string): ActorRole {
