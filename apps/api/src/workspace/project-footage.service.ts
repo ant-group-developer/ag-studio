@@ -5,7 +5,9 @@ import { AgGoClient, AgGoClientError, type FootageFacets, type FootageFilters, t
 
 /**
  * ag-go signs a URL (and asks R2 for the proxy) video by video, so a long timeline asked at once outlasts the client's
- * timeout: it is asked in lots of this many, a few lots at a time.
+ * timeout: it is asked in lots of this many, a few lots at a time. ag-go asks the Account API for the acted-as user's
+ * rights on each request (kept a minute, but not shared by requests under way): the first lot goes alone so the others
+ * find them kept, and a lot ag-go answers 502/503 (the Account API not answering in time) is asked once more.
  */
 const CHECK_LOT = 10;
 const CHECK_PARALLEL = 4;
@@ -89,16 +91,19 @@ export class ProjectFootageService implements ProjectFootage {
     const lots: string[][] = [];
     for (let i = 0; i < assetIds.length; i += CHECK_LOT) lots.push(assetIds.slice(i, i + CHECK_LOT));
     const settled: PromiseSettledResult<{ served: string[]; missing: string[] }>[] = new Array(lots.length);
-    let next = 0;
-    const lane = async () => {
-      for (let i = next++; i < lots.length; i = next++) {
-        settled[i] = await this.agGo.resolveAssets(actAs, { assetIds: lots[i]!, purpose: 'preview' }).then(
+    const ask = (assetIds: string[]) => this.agGo.resolveAssets(actAs, { assetIds, purpose: 'preview' });
+    const answer = async (i: number) => {
+      settled[i] = await ask(lots[i]!)
+        .catch((e: unknown) => (e instanceof AgGoClientError && (e.status === 502 || e.status === 503) ? ask(lots[i]!) : Promise.reject(e)))
+        .then(
           (r) => ({ status: 'fulfilled' as const, value: { served: r.items.map((x) => x.assetId), missing: r.missing ?? [] } }),
           (reason: unknown) => ({ status: 'rejected' as const, reason }),
         );
-      }
     };
-    await Promise.all(Array.from({ length: Math.min(CHECK_PARALLEL, lots.length) }, lane));
+    await answer(0);
+    let next = 1;
+    const lane = async () => { for (let i = next++; i < lots.length; i = next++) await answer(i); };
+    await Promise.all(Array.from({ length: Math.min(CHECK_PARALLEL, lots.length - 1) }, lane));
     const failed = settled.filter((s): s is PromiseRejectedResult => s.status === 'rejected').map((s) => s.reason);
     if (failed.length) throw failed.find((e) => !(e instanceof AgGoClientError && e.status === 404)) ?? failed[0];
     const served = new Set(settled.flatMap((s) => (s.status === 'fulfilled' ? s.value.served : [])));
