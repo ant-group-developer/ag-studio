@@ -35,15 +35,23 @@ export async function getFolders(
 export interface AgGoProject {
   id: string;
   name: string;
+  folderId?: string;
   folderPath?: string;
   folderName?: string;
   videoCount: number;
   imageCount: number;
   mediaCount: number;
+  ownerUserId?: string;
   ownerUser?: { id: string; name?: string; email?: string; avatar?: string } | null;
+  categoryId?: string | null;
   categoryName?: string | null;
+  countryId?: string | null;
   countryName?: string | null;
+  countryFlagUrl?: string | null;
+  provinceId?: string | null;
   provinceName?: string | null;
+  /** The asset whose thumbnail stands for the project (`GET /assets/:id/preview-url`). */
+  thumbnailAssetId?: string | null;
   tags?: string[];
   createdAt?: string;
   updatedAt?: string;
@@ -67,11 +75,11 @@ export interface AgGoProjectQuery {
   provinceId?: string;
 }
 
-/** A named thing of ag-go's catalog (category, tag, country). */
-export interface AgGoNamed { id: string; name: string }
+/** A named thing of ag-go's catalog (category, tag, country: a country has its code and flag too). */
+export interface AgGoNamed { id: string; name: string; code?: string; flagUrl?: string | null }
 /** A folder of ag-go's tree as the person reaches it, with its full path. */
 export interface AgGoFolder { id: string; parentId: string | null; name: string; pathText: string; depth: number }
-export interface AgGoProvince { id: string; countryId: string; name: string }
+export interface AgGoProvince { id: string; countryId: string; name: string; country?: { id: string; name: string } | null }
 export interface AgGoProjectOwner { id: string; projectCount: number; user: { id: string; name?: string; email?: string; avatar?: string } | null }
 
 export interface AgGoProjectPage {
@@ -140,7 +148,17 @@ export const agGoLookups = {
   provinces: async (token: string, countryId: string) =>
     (await agGoGet<{ items: AgGoProvince[] }>(token, `/provinces?page=1&pageSize=100&countryId=${encodeURIComponent(countryId)}`)).items,
   owners: (token: string) => agGoGet<AgGoProjectOwner[]>(token, "/projects/owners"),
+  /** Provinces of every country matching a keyword (too many to load at once), a few at a time. */
+  provincesFound: async (token: string, keyword: string, pageSize = 5) =>
+    (await agGoGet<{ items: AgGoProvince[] }>(token, `/provinces?page=1&pageSize=${pageSize}&keyword=${encodeURIComponent(keyword)}`)).items,
 };
+
+/** A presigned URL of an asset's variant (the project thumbnail): short-lived, so fetched again after a few minutes. */
+export async function getAgGoAssetPreviewUrl(accessToken: string, assetId: string, variantCode = "thumbnail", width?: number): Promise<string> {
+  const query = new URLSearchParams({ variantCode });
+  if (width) query.set("width", String(Math.round(width)));
+  return (await agGoGet<{ url: string }>(accessToken, `/assets/${encodeURIComponent(assetId)}/preview-url?${query.toString()}`)).url;
+}
 
 /** The media of one ag-go project, a page at a time (`limit` ≤ 100). */
 export function getAgGoProjectMedia(accessToken: string, projectId: string, q: { cursor?: string; limit?: number } = {}): Promise<AgGoProjectMediaPage> {
@@ -178,6 +196,8 @@ export function createAgGoWebClient(getAccessToken: () => Promise<string>) {
     getCountries: async () => agGoLookups.countries(await getAccessToken()),
     getProvinces: async (countryId: string) => agGoLookups.provinces(await getAccessToken(), countryId),
     getProjectOwners: async () => agGoLookups.owners(await getAccessToken()),
+    findProvinces: async (keyword: string) => agGoLookups.provincesFound(await getAccessToken(), keyword),
+    getAssetPreviewUrl: async (assetId: string, variantCode?: string, width?: number) => getAgGoAssetPreviewUrl(await getAccessToken(), assetId, variantCode, width),
     getProjectMedia: async (projectId: string, q: { cursor?: string; limit?: number } = {}): Promise<AgGoProjectMediaPage> =>
       getAgGoProjectMedia(await getAccessToken(), projectId, q),
   };

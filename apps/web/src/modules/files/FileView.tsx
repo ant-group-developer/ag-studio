@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { App as AntApp, Button, Modal, Spin, Tooltip } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, Download, Eye, History, Lock, Paperclip, Pencil, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Download, Eye, History, Lock, PanelLeftClose, PanelLeftOpen, Paperclip, Pencil, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { StudioHttpError } from "../../api/http";
 import { useWorkspaceClient, type FileAccess, type WorkspaceFile } from "../../api/workspace-client";
 import { fileSize, relativeTime } from "../workspace/time";
-import { isMarkdown } from "./file-tree";
+import { isJson, isJsonLines, isMarkdown } from "./file-tree";
 import { FileHistory } from "./FileHistory";
+import { JsonView } from "./JsonView";
 import { frontmatterOf, Markdown } from "./Markdown";
 
 const isImage = (mime: string) => mime.startsWith("image/");
@@ -32,9 +33,10 @@ function useBlobUrl(projectId: string, path: string, file: WorkspaceFile | undef
 
 /**
  * One file of the workspace: read (markdown rendered), edit in place and save against the copy you opened (a newer
- * copy is never overwritten silently), its history, delete. Studio's own files are read-only.
+ * copy is never overwritten silently), its history, delete. Studio's own files are read-only. `tree`: the folder tree
+ * beside it, shown or hidden from here.
  */
-export function FileView({ projectId, path, access, canEdit, onBack, onDeleted, onAttach }: {
+export function FileView({ projectId, path, access, canEdit, onBack, onDeleted, onAttach, tree }: {
   projectId: string;
   path: string;
   /** What the workspace lets a person do with this path (Studio's own files are read-only). */
@@ -43,6 +45,7 @@ export function FileView({ projectId, path, access, canEdit, onBack, onDeleted, 
   onBack: () => void;
   onDeleted: () => void;
   onAttach?: ((path: string) => void) | undefined;
+  tree?: { shown: boolean; toggle: () => void } | undefined;
 }) {
   const { t, i18n } = useTranslation();
   const { message } = AntApp.useApp();
@@ -112,6 +115,13 @@ export function FileView({ projectId, path, access, canEdit, onBack, onDeleted, 
   return (
     <div className="ws-file">
       <div className="ws-file__head">
+        {tree ? (
+          <Tooltip title={tree.shown ? t("ws.files.hideTree") : t("ws.files.showTree")}>
+            <button type="button" className="ws-icon-button" aria-pressed={tree.shown} aria-label={tree.shown ? t("ws.files.hideTree") : t("ws.files.showTree")} onClick={tree.toggle}>
+              {tree.shown ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+            </button>
+          </Tooltip>
+        ) : null}
         <Tooltip title={t("ws.files.back")}><button type="button" className="ws-icon-button" onClick={onBack} aria-label={t("ws.files.back")}><ArrowLeft size={16} /></button></Tooltip>
         <span className="ws-file__path" title={path}>{path}</span>
         {file && !file.binary && mode !== "edit" && writable ? (
@@ -179,6 +189,8 @@ export function FileView({ projectId, path, access, canEdit, onBack, onDeleted, 
               {front ? <pre className="ws-file__pre" style={{ marginBottom: 12, padding: 10, background: "var(--ws-chip)", borderRadius: 8 }}>{front}</pre> : null}
               {file.text ? <Markdown text={file.text} /> : <p style={{ color: "var(--ws-faint)" }}>{t("ws.files.empty")}</p>}
             </>
+          ) : isJson(path) && file.text?.trim() ? (
+            <JsonView text={file.text} lines={isJsonLines(path)} />
           ) : (
             <pre className="ws-file__pre">{file.text}</pre>
           )}

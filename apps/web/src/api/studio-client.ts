@@ -120,6 +120,29 @@ export interface ClaudeStats {
   rows: ClaudeStatsRow[];
   daily: { day: string; turns: number; costUsd: number; inputTokens: number; outputTokens: number }[];
 }
+export type ClaudeTurnOutcome = "accepted" | "failed" | "rate_limited";
+export type ClaudeTurnSort = "at" | "cost" | "wall" | "tokens";
+export interface ClaudeTurnsQuery {
+  from?: string; to?: string; teamId?: string; projectId?: string;
+  /** A video's turns; "": the project's own chats. */
+  videoId?: string;
+  userId?: string; threadId?: string; outcome?: ClaudeTurnOutcome; sortBy?: ClaudeTurnSort; sortOrder?: "asc" | "desc"; page?: number; pageSize?: number;
+}
+/** One agent turn behind the Claude stats (`GET /api/studio/stats/claude/turns`). */
+export interface ClaudeTurn {
+  id: string; at: string; teamId: string | null; projectId: string | null; projectName: string | null; videoId: string | null; videoTitle: string | null;
+  threadId: string; threadTitle: string | null; messageId: string; userId: string | null; user: UserSummary | null; model: string; outcome: string;
+  status: string | null; trigger: string | null; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number;
+  costUsd: number; wallSeconds: number; numTurns: number | null; toolCount: number; prompt: string | null;
+}
+export interface ClaudeTurnPage { from: string; to: string; total: number; page: number; pageSize: number; items: ClaudeTurn[] }
+/** One turn in full: what asked, the answer, each tool call, the files changed. */
+export interface ClaudeTurnDetail extends ClaudeTurn {
+  promptText: string | null; promptBy: string | null; promptUser: UserSummary | null; text: string | null; error: string | null; attempts: number | null;
+  startedAt: string | null; finishedAt: string | null;
+  tools: { id: string; name: string; input: unknown; result: string | null; isError: boolean; startedAt: string; endedAt: string | null }[];
+  changed: string[];
+}
 /** The teams the log (and the Claude stats) can show this person; `all`: a Studio admin, Studio-wide rows too. */
 export interface AuditScope { all: boolean; teams: { id: string; name: string }[] }
 
@@ -239,6 +262,12 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     /** Claude chat statistics over a period, grouped by team, project, video or person (same viewers as the log). */
     getClaudeStats(q: ClaudeStatsQuery): Promise<ClaudeStats> {
       return request(getAccessToken, "GET", `/api/studio/stats/claude${buildQuery({ ...q })}`);
+    },
+    listClaudeTurns(q: ClaudeTurnsQuery): Promise<ClaudeTurnPage> {
+      return request(getAccessToken, "GET", `/api/studio/stats/claude/turns${buildQuery({ ...q })}`);
+    },
+    getClaudeTurn(turnId: string): Promise<ClaudeTurnDetail> {
+      return request(getAccessToken, "GET", `/api/studio/stats/claude/turns/${encodeURIComponent(turnId)}`);
     },
 
     // ---- Studio-wide ----

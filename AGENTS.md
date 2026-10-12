@@ -166,8 +166,16 @@ nhưng không code nào đọc.
   tool, job; Dừng). `/queue` (việc đang chạy của mọi dự án người xem thấy, slot Claude, máy farm; admin đặt cap và tên AI),
   `/audit` (nhật ký hoạt động), `/stats` (thống kê chat Claude theo nhóm/dự án/video/người; hai màn này cho admin và owner
   nhóm), `/music` (kho nhạc), `/teams`, `/teams/:teamId` (thành viên, skill, thống kê và nhật ký của nhóm; layout quản trị).
-  Hai picker ở tab Đầu vào lọc/sắp xếp/phân trang như ag-go (project: `/projects` của ag-go gọi thẳng; video: `GET footage` +
-  `footage/facets` qua API, chỉ trong các project đã gắn), xem dạng bảng hoặc lưới (nhớ ở localStorage). Ô chọn nhóm trên thanh trên có
+  Chọn project ag-go: drawer toàn màn hình dựng lại **y như trang Projects của ag-go-web** (`modules/inputs/ag-go-projects/`:
+  sidebar lọc, ô tìm có gợi ý, sort, list/grid, thẻ và CSS chép từ `project-grid-view` của ag-go; `/projects`, lookup và
+  `/assets/:id/preview-url` của ag-go gọi thẳng); tick nhiều project qua các trang rồi thêm lần lượt, cái bị từ chối giữ tick và
+  báo lý do. Đổi giao diện này thì so với nguồn ag-go-web (`E:\CODE\ag-go-v2\ag-go-web`), đừng tự chế. Picker video: `GET footage`
+  + `footage/facets` qua API, chỉ trong các project đã gắn, bảng hoặc lưới (nhớ ở localStorage). `/stats` có thêm bảng **từng
+  lượt** (`GET studio/stats/claude/turns[/:id]`; bấm dòng của bảng gộp để lọc, bấm lượt mở drawer chi tiết).
+  Tên tool trong chat/nhật ký: `ws.tool.<tên>` ở `ws.vi.ts`/`ws.en.ts` — thêm tool cho agent thì thêm nhãn cả hai ngôn ngữ
+  (`agent-chat/labels.spec.ts` đọc tên tool từ engine và báo thiếu). Không bao giờ hiện uuid thay tên video: `inputs_add` bắt
+  buộc `name`; nguồn cũ thiếu tên được API đặt lại khi liệt kê nguồn. Biến màu `--ws-*` ở `:root` (drawer/modal là portal).
+  Ô chọn nhóm trên thanh trên có
   "Tạo nhóm mới" và "Quản lý nhóm"; ai chưa ở nhóm nào thì trang chủ cho tạo nhóm (người tạo là owner). Tiếng Việt gọi là
   **nhóm** (không viết "team" trong chuỗi giao diện).
 - Khung trình duyệt nhúng của app desktop báo trang luôn ẩn nên react-query không polling: kiểm bằng khung đó thì tải lại trang.

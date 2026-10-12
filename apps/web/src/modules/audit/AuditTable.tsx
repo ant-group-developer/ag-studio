@@ -7,6 +7,7 @@ import { useStudioClient, type AuditItem, type AuditKind, type AuditQuery } from
 import { useWorkspaceClient } from "../../api/workspace-client";
 import { useAiTranslation } from "../common/assistant-name";
 import { UserCell } from "../common/UserCell";
+import { toolLabel } from "../agent-chat/labels";
 import "./audit.css";
 
 const PAGE = 50;
@@ -52,7 +53,7 @@ export function AuditTable({ teamId: fixedTeam }: { teamId?: string }) {
     return r.actor ? <UserCell user={r.actor} size={24} /> : <span>{name}</span>;
   };
   const what = (r: AuditItem) => {
-    const head = r.kind === "http" ? `${r.method ?? ""} ${r.route ?? ""}`.trim() : r.kind === "job" ? r.action.replace(/^job\./, "") : r.kind === "turn" ? kinds.turn : r.action;
+    const head = r.kind === "http" ? `${r.method ?? ""} ${r.route ?? ""}`.trim() : r.kind === "job" ? r.action.replace(/^job\./, "") : r.kind === "turn" ? kinds.turn : r.kind === "tool" ? toolLabel(t, r.action) : r.action;
     return (
       <div className="ws-audit__what">
         <Tooltip title={r.action}><code>{head}</code></Tooltip>

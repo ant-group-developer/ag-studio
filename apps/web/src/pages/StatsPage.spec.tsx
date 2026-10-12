@@ -1,10 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App as AntApp } from "antd";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../i18n/config";
-import type { ClaudeStats } from "../api/studio-client";
+import type { ClaudeStats, ClaudeTurn, ClaudeTurnDetail } from "../api/studio-client";
 
 window.matchMedia ??= ((query: string) => ({
   matches: false, media: query, onchange: null,
@@ -26,7 +26,24 @@ const stats = (groupBy: ClaudeStats["groupBy"]): ClaudeStats => ({
   daily: [{ day: ymd, turns: 12, costUsd: 3.456, inputTokens: 200_000, outputTokens: 8_000 }],
 });
 
+const turn: ClaudeTurn = {
+  id: "c1", at: "2026-10-10T02:00:00.000Z", teamId: "t1", projectId: "p1", projectName: "Du lịch chậm", videoId: "v1", videoTitle: "Tràng An", threadId: "th1",
+  threadTitle: "Tràng An", messageId: "m1", userId: "auth0|lan", user: { userId: "auth0|lan", name: "Lan", email: "lan@x", avatar: null }, model: "claude-sonnet",
+  outcome: "failed", status: "failed", trigger: "user", inputTokens: 12_000, outputTokens: 800, cacheReadTokens: 9_000, cacheCreationTokens: 200, costUsd: 0.31,
+  wallSeconds: 42, numTurns: 4, toolCount: 2, prompt: "Chọn cảnh thuyền trên sông",
+};
+const detail: ClaudeTurnDetail = {
+  ...turn, promptText: "Chọn cảnh thuyền trên sông cho đoạn mở đầu", promptBy: "auth0|lan", promptUser: turn.user, text: "Đã chọn 3 cảnh.", error: "hết thời gian",
+  attempts: 1, startedAt: null, finishedAt: null, changed: ["videos/v1/edit-plan.json"],
+  tools: [
+    { id: "x1", name: "mcp__studio__footage_search", input: { q: "thuyền" }, result: "3 kết quả", isError: false, startedAt: "2026-10-10T02:00:01.000Z", endedAt: "2026-10-10T02:00:03.000Z" },
+    { id: "x2", name: "Write", input: { file_path: "videos/v1/edit-plan.json" }, result: "lỗi ghi", isError: true, startedAt: "2026-10-10T02:00:04.000Z", endedAt: "2026-10-10T02:00:05.000Z" },
+  ],
+};
+
 const client = {
+  listClaudeTurns: vi.fn(),
+  getClaudeTurn: vi.fn(),
   getMe: vi.fn().mockResolvedValue({ isAdmin: true }),
   listTeams: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 100 }),
   getClaudeUsage: vi.fn().mockResolvedValue({ running: 0, waiting: 0, max: 20, source: "env", assistantName: "Claude" }),
@@ -54,6 +71,8 @@ describe("Claude stats page", { timeout: 30_000 }, () => {
   beforeEach(() => {
     vi.clearAllMocks();
     client.getClaudeStats.mockImplementation(async (q: { groupBy: ClaudeStats["groupBy"] }) => stats(q.groupBy));
+    client.listClaudeTurns.mockResolvedValue({ from: "", to: "", total: 1, page: 1, pageSize: 50, items: [turn] });
+    client.getClaudeTurn.mockResolvedValue(detail);
   });
 
   it("shows the totals, a bar a day, and a row per team, over the last 30 days", async () => {
@@ -83,5 +102,25 @@ describe("Claude stats page", { timeout: 30_000 }, () => {
       const q = client.getClaudeStats.mock.lastCall![0] as { from: string; to: string };
       expect(Math.round((Date.parse(q.to) - Date.parse(q.from)) / 86_400_000)).toBe(7);
     });
+  });
+
+  it("lists the turns one by one, narrowed by a row of the table, and opens one in full", async () => {
+    mount();
+    const list = await screen.findByRole("region", { name: "Từng lượt" });
+    expect(await within(list).findByText("Chọn cảnh thuyền trên sông")).toBeInTheDocument();
+    expect(client.listClaudeTurns).toHaveBeenLastCalledWith(expect.objectContaining({ sortBy: "at", page: 1, pageSize: 50 }));
+    fireEvent.click(screen.getByText("Nhóm B"));
+    await waitFor(() => expect(client.listClaudeTurns).toHaveBeenLastCalledWith(expect.objectContaining({ teamId: "t2" })));
+    expect(within(list).getByText("Nhóm: Nhóm B")).toBeInTheDocument();
+    fireEvent.click(within(list).getByText("Chọn cảnh thuyền trên sông"));
+    const drawer = await screen.findByRole("dialog");
+    expect(await within(drawer).findByText("Chọn cảnh thuyền trên sông cho đoạn mở đầu")).toBeInTheDocument();
+    expect(within(drawer).getByText("Đã chọn 3 cảnh.")).toBeInTheDocument();
+    expect(within(drawer).getByText("tìm cảnh trong footage")).toBeInTheDocument();
+    expect(within(drawer).getByText("ghi file")).toBeInTheDocument();
+    expect(within(drawer).getByRole("alert")).toHaveTextContent("hết thời gian");
+    expect(within(drawer).getByText("videos/v1/edit-plan.json", { selector: "code" })).toBeInTheDocument();
+    expect(within(drawer).getByRole("link", { name: /Mở cuộc chat/ })).toHaveAttribute("href", "/p/p1/v/v1");
+    expect(client.getClaudeTurn).toHaveBeenCalledWith("c1");
   });
 });

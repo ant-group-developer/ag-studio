@@ -59,7 +59,7 @@ describe("activity log page", { timeout: 30_000 }, () => {
     mount();
     expect(await screen.findByText("POST /api/projects/:projectId/videos")).toBeInTheDocument();
     expect(screen.getAllByText("Claude (cho Lan)")).toHaveLength(2);
-    expect(screen.getByText("footage_search")).toBeInTheDocument();
+    expect(screen.getByText("tìm cảnh trong footage")).toBeInTheDocument();
     expect(screen.getByText("Lỗi")).toBeInTheDocument();
     expect(screen.getByText("Xong 201")).toBeInTheDocument();
     expect(screen.getByText("$0.12")).toBeInTheDocument();
@@ -71,7 +71,7 @@ describe("activity log page", { timeout: 30_000 }, () => {
 
   it("filters by kind", async () => {
     mount();
-    await screen.findByText("footage_search");
+    await screen.findByText("tìm cảnh trong footage");
     expect(client.listAudit).toHaveBeenLastCalledWith({ page: 1, pageSize: 50 });
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "Loại" }));
     fireEvent.click(await screen.findByTitle("Tool"));

@@ -9,9 +9,9 @@ import { extname, join } from 'node:path';
 import type { Request } from 'express';
 import { z } from 'zod';
 import {
-  addSource, assetState, getSource, jobView, listJobs, listSources, projectActAs, queuePrepare, removeSource, requestJobCancel, requireJob,
+  addSource, assetState, getSource, jobView, listJobs, listSources, nameUnnamedAssets, projectActAs, queuePrepare, removeSource, requestJobCancel, requireJob,
   requireProject, requireVideo, sourceItems, StudioRunError, writeVideoIndex, writeWorkspaceFile, type ActorRole, type JobView, type SourceItem,
-  type SourceMediaType,
+  type SourceMediaType, unnamedAssetIds,
 } from '@ag-studio/engine';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -98,14 +98,46 @@ export class InputsController {
     private readonly siteName: SiteNameService,
   ) {}
 
+  /** When names were last looked up for a project's unnamed videos: once every 10 minutes at most. */
+  private readonly namedAt = new Map<string, number>();
+
   @Get('sources')
   @Roles('viewer')
   sources(@Param('projectId') projectId: string, @Query('videoId') videoId?: string): Promise<{ sources: SourceItem[] }> {
     return mapErrors(() => {
       requireProject(this.engine.db, projectId);
+      this.nameUnnamed(projectId);
       return { sources: sourceItems(this.engine.db, projectId, videoId ? { videoId } : {}) };
     });
   }
+
+  /**
+   * ag-go videos added without a name (the agent left it out, so people saw the asset id) get their names from the
+   * picked ag-go projects, as the owner: in the background, best effort, so the next load shows them.
+   */
+  private nameUnnamed(projectId: string): void {
+    const db = this.engine.db;
+    const missing = new Set(unnamedAssetIds(db, projectId));
+    if (!missing.size || Date.now() - (this.namedAt.get(projectId) ?? 0) < 10 * 60_000) return;
+    this.namedAt.set(projectId, Date.now());
+    const owner = projectActAs(db, projectId);
+    const projectIds = listSources(db, projectId).filter((s) => s.kind === 'ag_go_project').map((s) => s.ref);
+    if (!owner || !projectIds.length) return;
+    this.naming = (async () => {
+      const names = new Map<string, string>();
+      let cursor: string | undefined;
+      for (let page = 0; page < 20 && names.size < missing.size; page++) {
+        const r = await this.footage.search(owner, { projectIds, limit: 100, ...(cursor ? { cursor } : {}) });
+        for (const i of r.items) if (missing.has(i.assetId) && i.name) names.set(i.assetId, i.name);
+        if (!r.nextCursor) break;
+        cursor = r.nextCursor;
+      }
+      if (names.size) nameUnnamedAssets(db, this.workspace.dir(projectId), projectId, names);
+    })().catch(() => { /* looked up again in 10 minutes */ });
+  }
+
+  /** The last lookup of names (tests wait for it). */
+  naming: Promise<void> = Promise.resolve();
 
   /**
    * Adds an ag-go project (its videos become searchable for the agent) or an ag-go video (to the project, or to one

@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  addSource, agentTools, callAgentTool, claimJob, createProject, createThread, createVideo, finishJob, getJob, listJobs, markAgentTurnRunning,
+  addSource, agentTools, callAgentTool, claimJob, createProject, createThread, createVideo, finishJob, getJob, getPrepared, listJobs, listSources, markAgentTurnRunning,
+  nameUnnamedAssets, queuePrepare, unnamedAssetIds,
   postUserMessage, savePrepared, seedWorkspace, type AgentToolContext, type ProjectFootage,
 } from "../src/index.js";
 import { world } from "./helpers.js";
@@ -64,14 +65,37 @@ describe("input tools", () => {
 
   it("inputs_add adds usable videos to this thread's video in order and writes its index; refuses what the owner cannot use", async () => {
     const s = setup();
-    expect(await call(s, "inputs_add", { assets: [{ asset_id: A1 }, { asset_id: A2 }] })).toMatchObject({ isError: true, text: expect.stringContaining(A2) });
+    expect(await call(s, "inputs_add", { assets: [{ asset_id: A1, name: "Hoa Lư 03.mp4" }, { asset_id: A2, name: "Tam Cốc.mp4" }] })).toMatchObject({ isError: true, text: expect.stringContaining(A2) });
     const r = await call(s, "inputs_add", { assets: [{ asset_id: A1, name: "Hoa Lư 03.mp4" }] });
     expect(r.json).toMatchObject({ video_id: s.video.id, sources: [{ index: 0, asset_id: A1, name: "Hoa Lư 03.mp4", status: "missing" }] });
     expect(existsSync(join(s.dir, "videos", s.video.id, "sources", "index.json"))).toBe(true);
     const list = await call(s, "inputs_list", {});
     expect(list.json.video.sources).toEqual([expect.objectContaining({ kind: "ag_go_asset", ref: A1, label: "Hoa Lư 03.mp4", state: "not_prepared" })]);
     const viewer = setup("viewer");
-    expect(await call(viewer, "inputs_add", { assets: [{ asset_id: A1 }] })).toMatchObject({ isError: true, text: expect.stringContaining("cần vai editor") });
+    expect(await call(viewer, "inputs_add", { assets: [{ asset_id: A1, name: "Hoa Lư 03.mp4" }] })).toMatchObject({ isError: true, text: expect.stringContaining("cần vai editor") });
+  });
+
+  it("inputs_add needs each video's name: people read it, not the asset id", async () => {
+    const s = setup();
+    expect(await call(s, "inputs_add", { assets: [{ asset_id: A1 }] })).toMatchObject({ isError: true, text: expect.stringContaining("name") });
+    expect(listSources(s.db, s.project.id)).toEqual([]);
+  });
+
+  it("names videos added without a name: their sources, prepare jobs, prepared row and video index", () => {
+    const s = setup();
+    addSource(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "ag_go_asset", ref: A1, mediaType: "video", label: A1, addedBy: "u" }, NOW);
+    addSource(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "ag_go_asset", ref: A2, mediaType: "video", label: "Tam Cốc.mp4", addedBy: "u" }, NOW);
+    queuePrepare(s.db, { projectId: s.project.id, assetIds: [A1], createdBy: "u" }, NOW);
+    savePrepared(s.db, { project_id: s.project.id, asset_id: A1, status: "failed", name: A1, duration_s: null, width: null, height: null, has_audio: null, shots: null, transcript: 0, source_kind: null, watermarked: null, error: "x" }, NOW);
+    expect(unnamedAssetIds(s.db, s.project.id)).toEqual([A1]);
+    expect(listJobs(s.db, s.project.id)[0]!.title).toBe(`Chuẩn bị ${A1}`);
+    expect(nameUnnamedAssets(s.db, s.dir, s.project.id, new Map([[A1, "Hoa Lư 03.mp4"], [A2, "khác"]]))).toEqual([A1]);
+    expect(listSources(s.db, s.project.id).map((x) => x.label).sort()).toEqual(["Hoa Lư 03.mp4", "Tam Cốc.mp4"]);
+    const job = listJobs(s.db, s.project.id)[0]!;
+    expect([job.title, JSON.parse(job.request).name]).toEqual(["Chuẩn bị Hoa Lư 03.mp4", "Hoa Lư 03.mp4"]);
+    expect(getPrepared(s.db, s.project.id, A1)?.name).toBe("Hoa Lư 03.mp4");
+    expect(readFileSync(join(s.dir, "videos", s.video.id, "sources", "index.json"), "utf8")).toContain("Hoa Lư 03.mp4");
+    expect(unnamedAssetIds(s.db, s.project.id)).toEqual([]);
   });
 
   it("inputs_prepare queues one job per video not yet prepared (the agent goes on when it ends), reuses running and ready ones", async () => {
@@ -106,10 +130,10 @@ describe("input tools", () => {
 
   it("job_status shows running and recent jobs; job_cancel stops one of the project's", async () => {
     const s = setup();
-    await call(s, "inputs_add", { assets: [{ asset_id: A1 }] });
+    await call(s, "inputs_add", { assets: [{ asset_id: A1, name: "Hoa Lư 03.mp4" }] });
     const id = (await call(s, "inputs_prepare", { asset_ids: [A1] })).json.assets[A1].job_id as string;
     expect((await call(s, "job_status", {})).json.active).toEqual([expect.objectContaining({ id, kind: "prepare_asset", status: "queued" })]);
-    expect(await call(s, "job_cancel", { job_id: id })).toMatchObject({ text: `Đã huỷ: Chuẩn bị ${A1}.` });
+    expect(await call(s, "job_cancel", { job_id: id })).toMatchObject({ text: `Đã huỷ: Chuẩn bị Hoa Lư 03.mp4.` });
     expect((await call(s, "job_status", { job_id: id })).json).toMatchObject({ status: "cancelled" });
     expect(await call(s, "job_cancel", { job_id: "nope" })).toMatchObject({ isError: true });
     void readFileSync;

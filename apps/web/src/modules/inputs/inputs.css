@@ -9,7 +9,6 @@ ol.ws-inputs__list { counter-reset: src; }
 .ws-inputs__row:hover { background: var(--ws-chip); }
 .ws-inputs__text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .ws-inputs__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
-.ws-inputs__jobs { display: flex; flex-direction: column; gap: 8px; }
 .ws-error { color: var(--ws-bad-fg); }
 
 .ws-job { border: 1px solid var(--ws-line); border-radius: 8px; padding: 8px 10px; background: var(--ws-surface); font-size: 13px; display: flex; flex-direction: column; gap: 2px; }
@@ -41,10 +40,18 @@ ol.ws-inputs__list { counter-reset: src; }
 }
 
 /* jobs a chat started, above its message box */
-.ws-chat__jobs { flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; padding: 6px 16px 0; max-width: 860px; width: 100%; margin: 0 auto; }
+.ws-chat__jobs { flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; padding: 6px 16px 0; max-width: 860px; width: 100%; margin: 0 auto; box-sizing: border-box; }
+/* a list of jobs: however many, the message box / the sources below stay on screen */
+.ws-jobs { display: flex; flex-direction: column; gap: 6px; }
+.ws-jobs__head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.ws-jobs__head .ws-link { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; }
+.ws-jobs__list { display: flex; flex-direction: column; gap: 6px; max-height: min(40vh, 360px); overflow-y: auto; }
 
 /* cards of work the agent proposed, waiting for a person (spec agent-workspace §3.5) */
-.ws-chat__actions { flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; padding: 6px 16px 0; max-width: 860px; width: 100%; margin: 0 auto; }
+.ws-chat__actions {
+  flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; padding: 6px 16px 0; max-width: 860px; width: 100%; margin: 0 auto; box-sizing: border-box;
+  max-height: min(40vh, 420px); overflow-y: auto;
+}
 .ws-action { border: 1px solid var(--ws-accent-line); background: var(--ws-accent-soft); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .ws-action__head { display: flex; align-items: center; gap: 8px; }
 .ws-action__head strong { flex: 1; min-width: 0; }
