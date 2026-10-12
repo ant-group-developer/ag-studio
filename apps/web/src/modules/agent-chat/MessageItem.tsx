@@ -7,6 +7,7 @@ import { useNow } from "../common/sse";
 import { Markdown } from "../files/Markdown";
 import { clock } from "../workspace/time";
 import { phaseLabel, type Translate } from "./labels";
+import { ChangedFiles } from "./ChangedFiles";
 import { ToolChip } from "./ToolChip";
 
 /** Not a step of the work: the reply chips the agent offers at the end. */
@@ -78,8 +79,10 @@ export function TurnStatus({ message, onStop, open, onToggle }: {
 }
 
 /** One message of a thread: a person's bubble, Studio's note, or the agent's answer (text and tool calls in order). */
-export function MessageItem({ message, onStop, onOpenFile }: {
+export function MessageItem({ message, projectId, onStop, onOpenFile }: {
   message: ChatMessage;
+  /** The project, for the drawer that shows what a changed file changed. */
+  projectId?: string | undefined;
   onStop?: (() => void) | undefined;
   onOpenFile?: ((path: string) => void) | undefined;
 }) {
@@ -103,15 +106,16 @@ export function MessageItem({ message, onStop, onOpenFile }: {
   if (message.role === "system") {
     return <div className="ws-msg ws-msg--system"><Markdown text={message.text} /></div>;
   }
-  return <AgentMessage message={message} onStop={onStop} onOpenFile={onOpenFile} />;
+  return <AgentMessage message={message} projectId={projectId} onStop={onStop} onOpenFile={onOpenFile} />;
 }
 
 /**
  * The agent's answer as one folded line of work ("Đã làm 5 bước · 1 phút 20 giây", or the live status while it runs)
  * over the final answer. Unfolded, the steps show in order with what was said between them.
  */
-function AgentMessage({ message, onStop, onOpenFile }: {
+function AgentMessage({ message, projectId, onStop, onOpenFile }: {
   message: ChatMessage;
+  projectId?: string | undefined;
   onStop?: (() => void) | undefined;
   onOpenFile?: ((path: string) => void) | undefined;
 }) {
@@ -139,6 +143,8 @@ function AgentMessage({ message, onStop, onOpenFile }: {
       {(folds ? answer : visible).map(renderPart)}
       {!visible.length && message.text ? <Markdown text={message.text} /> : null}
       {running ? null : <TurnStatus message={message} onStop={onStop} />}
+      {projectId && !running && message.changedFiles?.length
+        ? <ChangedFiles projectId={projectId} files={message.changedFiles} onOpenFile={onOpenFile} /> : null}
       {message.status === "failed" ? <div className="ws-msg__error">{t("ws.chat.failed", { error: errorText(t, message.error) })}</div> : null}
       {message.status === "cancelled" ? <div className="ws-msg__note">{t("ws.chat.cancelled")}</div> : null}
       {message.status === "done" && message.error === "max_turns" ? <div className="ws-msg__note">{t("ws.chat.maxTurns")}</div> : null}

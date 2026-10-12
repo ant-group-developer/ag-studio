@@ -164,6 +164,14 @@ export interface FileVersionDetail extends FileVersion {
   issues: string | null;
 }
 
+export interface DiffLine { kind: "context" | "add" | "del"; text: string }
+export interface DiffHunk { old_start: number; old_lines: number; new_start: number; new_lines: number; lines: DiffLine[] }
+/** What a version changed (`GET files/versions/:id/diff`): hunks with 3 lines of context, or why it cannot be shown. */
+export type VersionDiff = { path: string; version_id: string; before_version_id: string | null } & (
+  | { hunks: DiffHunk[]; added: number; removed: number; unavailable?: undefined }
+  | { unavailable: "binary" | "too_large" }
+);
+
 // ---------------------------------------------------------------------------
 // Chat with the agent
 // ---------------------------------------------------------------------------
@@ -180,6 +188,16 @@ export type AgentPhase =
   | { kind: "done" };
 
 export type MessageStatus = "pending" | "running" | "done" | "failed" | "rate_limited" | "cancelled";
+
+/** A file a turn changed: its last version against the one before the turn; line counts when both are text ≤ 1 MB. */
+export interface ChangedFile {
+  path: string;
+  change: "added" | "modified" | "deleted";
+  version_id: string;
+  before_version_id: string | null;
+  added?: number;
+  removed?: number;
+}
 export type TeamRoleName = "viewer" | "editor" | "producer" | "owner";
 
 export interface ChatMessage {
@@ -203,6 +221,8 @@ export interface ChatMessage {
   finishedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** What the turn changed; null for older turns or while it runs (older APIs leave it out). */
+  changedFiles?: ChangedFile[] | null;
 }
 
 export interface Thread {
@@ -698,6 +718,10 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     },
     getFileVersion(projectId: string, versionId: string): Promise<FileVersionDetail> {
       return call("GET", `/api/projects/${enc(projectId)}/files/versions/${enc(versionId)}`);
+    },
+    /** What `versionId` changed against `base` (another version of the file; "none" = an empty file) or the version before it. */
+    fileVersionDiff(projectId: string, versionId: string, base?: string | null): Promise<VersionDiff> {
+      return call("GET", `/api/projects/${enc(projectId)}/files/versions/${enc(versionId)}/diff${buildQuery({ base: base ?? undefined })}`);
     },
     restoreFileVersion(projectId: string, versionId: string, baseSha256?: string | null): Promise<SavedFile> {
       return call("POST", `/api/projects/${enc(projectId)}/files/versions/${enc(versionId)}/restore`, baseSha256 === undefined ? {} : { baseSha256 });

@@ -184,6 +184,10 @@ nhưng không code nào đọc.
   báo lý do. Đổi giao diện này thì so với nguồn ag-go-web (`E:\CODE\ag-go-v2\ag-go-web`), đừng tự chế. Picker video: `GET footage`
   + `footage/facets` qua API, chỉ trong các project đã gắn, bảng hoặc lưới (nhớ ở localStorage). `/stats` có thêm bảng **từng
   lượt** (`GET studio/stats/claude/turns[/:id]`; bấm dòng của bảng gộp để lọc, bấm lượt mở drawer chi tiết).
+  Chat: mỗi lượt agent thu thành một dòng "Đã làm N bước · thời gian" (`MessageItem`, `splitTurn`; chữ sau bước cuối
+  luôn hiện, `suggest_replies` không tính là bước), đang chạy thì dòng đó là trạng thái sống có Dừng; dưới câu trả lời là
+  thẻ file đã đổi (`ChangedFiles`: Mở, Xem thay đổi → `files/DiffView.tsx`, dùng chung với "So với bản trước" ở lịch sử
+  file). Việc nền của luồng (`ThreadJobs`) và bài học đề xuất (`LessonCards`, hiện 1) cũng thu gọn sẵn.
   Tên tool trong chat/nhật ký: `ws.tool.<tên>` ở `ws.vi.ts`/`ws.en.ts` — thêm tool cho agent thì thêm nhãn cả hai ngôn ngữ
   (`agent-chat/labels.spec.ts` đọc tên tool từ engine và báo thiếu). Không bao giờ hiện uuid thay tên video: `inputs_add` bắt
   buộc `name`; nguồn cũ thiếu tên được API đặt lại khi liệt kê nguồn. Biến màu `--ws-*` ở `:root` (drawer/modal là portal).

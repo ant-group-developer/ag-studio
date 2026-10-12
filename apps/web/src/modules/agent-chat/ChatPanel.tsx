@@ -87,7 +87,7 @@ export function ChatPanel({ threadId, projectId, canWrite, canDecide, onOpenFile
             <div className="ws-chat__empty">{emptyHint ?? t("ws.chat.empty")}</div>
           ) : messages.map((m) => (
             <MessageItem
-              key={m.id} message={m} onOpenFile={onOpenFile}
+              key={m.id} message={m} projectId={projectId} onOpenFile={onOpenFile}
               onStop={canWrite && m.role === "assistant" && (m.status === "running" || m.status === "pending") ? () => stop.mutate(m.id) : undefined}
             />
           ))}

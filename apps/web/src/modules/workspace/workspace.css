@@ -228,6 +228,40 @@
 .ws-versions button:hover, .ws-versions button[aria-current="true"] { border-color: var(--ws-accent-line); }
 .ws-versions small { color: var(--ws-faint); }
 
+.ws-version-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+
+/* The files a turn changed, under its answer. */
+.ws-changes { border: 1px solid var(--ws-line); border-radius: 8px; background: var(--ws-surface); font-size: 13px; overflow: hidden; }
+.ws-changes__head { padding: 6px 10px; font-weight: 600; color: var(--ws-text); border-bottom: 1px solid var(--ws-line); background: var(--ws-nav-bg); }
+.ws-changes__list { list-style: none; margin: 0; padding: 0; }
+.ws-changes__row { display: flex; align-items: center; gap: 8px; padding: 5px 10px; flex-wrap: wrap; }
+.ws-changes__row + .ws-changes__row { border-top: 1px solid var(--ws-line); }
+.ws-changes__icon { flex-shrink: 0; color: var(--ws-muted); }
+.ws-changes__icon--added { color: var(--ws-ok-fg); }
+.ws-changes__icon--deleted { color: var(--ws-bad-fg); }
+.ws-changes__path { flex: 1; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--ws-text); }
+.ws-changes__badge { padding: 0 6px; border-radius: 999px; font-size: 11px; background: var(--ws-chip); color: var(--ws-muted); }
+.ws-changes__badge--added { background: var(--ws-ok-bg); color: var(--ws-ok-fg); }
+.ws-changes__badge--deleted { background: var(--ws-bad-bg); color: var(--ws-bad-fg); }
+.ws-changes__lines { font-variant-numeric: tabular-nums; font-size: 12px; }
+.ws-changes__actions { display: inline-flex; gap: 0; }
+.ws-changes__actions .ws-tool__open { margin-right: 0; margin-left: 4px; }
+
+/* A unified diff: added lines green, removed red, both line numbers, unchanged stretches folded. */
+.ws-diff__add { color: var(--ws-ok-fg); }
+.ws-diff__del { color: var(--ws-bad-fg); }
+.ws-diff__stats { margin-bottom: 8px; font-variant-numeric: tabular-nums; font-size: 13px; }
+.ws-diff__note { color: var(--ws-muted); }
+.ws-diff__table { width: 100%; border-collapse: collapse; table-layout: fixed; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; border: 1px solid var(--ws-line); }
+.ws-diff__num { width: 44px; padding: 0 6px; text-align: right; color: var(--ws-faint); user-select: none; vertical-align: top; font-variant-numeric: tabular-nums; }
+.ws-diff__sign { width: 14px; text-align: center; user-select: none; vertical-align: top; }
+.ws-diff__text { padding: 0 8px 0 2px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ws-text); }
+.ws-diff__row--add { background: var(--ws-ok-bg); }
+.ws-diff__row--add .ws-diff__sign { color: var(--ws-ok-fg); }
+.ws-diff__row--del { background: var(--ws-bad-bg); }
+.ws-diff__row--del .ws-diff__sign { color: var(--ws-bad-fg); }
+.ws-diff__gap td { padding: 2px 10px; background: var(--ws-nav-bg); color: var(--ws-faint); font-family: inherit; font-size: 12px; border-top: 1px solid var(--ws-line); border-bottom: 1px solid var(--ws-line); }
+
 .ws-form { padding: 16px; overflow-y: auto; }
 .ws-center { display: flex; justify-content: center; padding: 48px; }
 

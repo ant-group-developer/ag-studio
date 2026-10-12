@@ -51,6 +51,16 @@ describe("a turn's work", () => {
     expect(screen.getByRole("button", { name: /Đã làm 2 bước/ })).toHaveAttribute("aria-expanded", "true");
   });
 
+  it("the files a finished turn changed show under its answer; an older turn or a running one shows none", () => {
+    const changedFiles = [{ path: "channel/plan.md", change: "modified" as const, version_id: "v2", before_version_id: "v1", added: 3, removed: 1 }];
+    const { rerender } = render(<MessageItem projectId="p1" message={msg({ parts: [text("Xong.")], changedFiles })} onOpenFile={vi.fn()} />);
+    expect(screen.getByRole("region", { name: "1 file đã thay đổi" })).toHaveTextContent("channel/plan.md");
+    rerender(<MessageItem projectId="p1" message={msg({ parts: [text("Xong.")], changedFiles: null })} />);
+    expect(screen.queryByRole("region", { name: /file đã thay đổi/ })).toBeNull();
+    rerender(<MessageItem projectId="p1" message={msg({ status: "running", parts: [text("Đang làm.")], changedFiles })} />);
+    expect(screen.queryByRole("region", { name: /file đã thay đổi/ })).toBeNull();
+  });
+
   it("an answer without steps shows as it is, with no fold", () => {
     render(<MessageItem message={msg({ parts: [text("Chào bạn.")] })} />);
     expect(screen.getByText("Chào bạn.")).toBeInTheDocument();
