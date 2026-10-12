@@ -251,6 +251,17 @@ describe("project activity", () => {
     expect(agentActivity(db, project.id)[0]).toMatchObject({ cancellable: false });
   });
 
+  it("a suggested lesson changes the project fingerprint when it is proposed and when someone decides on it", async () => {
+    const { projectFingerprint, dismissLesson } = await import("../src/index.js");
+    const { db, project, thread } = setup();
+    const empty = projectFingerprint(db, project.id);
+    db.run("INSERT INTO lesson_proposals (id, project_id, thread_id, text, status, created_at) VALUES ('l1', ?, ?, 'Nhạc nhẹ', 'proposed', ?)", [project.id, thread.id, at(1)]);
+    const proposed = projectFingerprint(db, project.id);
+    expect(proposed).not.toBe(empty);
+    dismissLesson(db, { projectId: project.id, lessonId: "l1", userId: "auth0|u", now: at(2) });
+    expect(projectFingerprint(db, project.id)).not.toBe(proposed);
+  });
+
   it("the Queue screen: what runs in the projects of the person's teams (an admin sees all), the rest only counted", async () => {
     const { studioActivity } = await import("../src/index.js");
     const { db, project } = setup();

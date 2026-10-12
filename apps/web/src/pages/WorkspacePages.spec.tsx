@@ -336,6 +336,22 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     await waitFor(() => expect(ws.acceptLesson).toHaveBeenCalledWith("p1", "l1"));
   });
 
+  it("shows one proposed lesson and the rest on demand", async () => {
+    const lesson = (id: string, text: string) => ({ id, project_id: "p1", thread_id: "t-kenh", text, status: "proposed", decided_by: null, decided_at: null, created_at: "" });
+    ws.listLessons.mockResolvedValueOnce({ lessons: [lesson("l1", "Không dùng nhạc buồn."), lesson("l2", "Chữ to hơn."), lesson("l3", "Mở đầu bằng cảnh rộng.")] });
+    mount("/p/p1");
+    const lessons = await screen.findByRole("region", { name: "Bài học đề xuất từ chat này" });
+    expect(await within(lessons).findByText("Không dùng nhạc buồn.")).toBeInTheDocument();
+    expect(within(lessons).queryByText("Chữ to hơn.")).toBeNull();
+    const more = within(lessons).getByRole("button", { name: "Xem tất cả (3)" });
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(more);
+    expect(within(lessons).getByText("Chữ to hơn.")).toBeInTheDocument();
+    expect(within(lessons).getByText("Mở đầu bằng cảnh rộng.")).toBeInTheDocument();
+    fireEvent.click(within(lessons).getByRole("button", { name: "Thu gọn" }));
+    expect(within(lessons).queryByText("Mở đầu bằng cảnh rộng.")).toBeNull();
+  });
+
   it("shows who works, on what and for how long while a turn runs, and stops it", async () => {
     ws.getThread.mockResolvedValue(thread([
       message({ id: "u1", seq: 1, role: "user", text: "Tạo 3 video" }),

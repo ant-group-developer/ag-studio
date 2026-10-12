@@ -536,6 +536,8 @@ export const wsEn: Messages<typeof wsVi> = {
     drop: "Dismiss",
     saved: "Saved to memory/lessons.md",
     failed: "Could not save the lesson",
+    showAll: "Show all ({{count}})",
+    showLess: "Show less",
   },
   inputs: {
     agGoProjects: "{{site}} projects",

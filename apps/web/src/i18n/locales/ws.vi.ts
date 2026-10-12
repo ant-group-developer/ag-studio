@@ -533,6 +533,8 @@ export const wsVi = {
     drop: "Bỏ qua",
     saved: "Đã lưu vào memory/lessons.md",
     failed: "Không lưu được bài học",
+    showAll: "Xem tất cả ({{count}})",
+    showLess: "Thu gọn",
   },
   inputs: {
     agGoProjects: "Project {{site}}",
