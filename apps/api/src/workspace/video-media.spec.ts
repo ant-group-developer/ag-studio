@@ -87,6 +87,11 @@ describe('video media (real studio.db)', () => {
     expect((await media.renders(v.id, req(GONE))).renders[0]).toMatchObject({ url: null, urlHidden: 'footage_scope' });
     expect((await media.renders(v.id, req(GONE))).renders[0]).toMatchObject({ urlHidden: 'footage_scope' });
     expect(seen).toEqual([[DOWN, 'a1'], [DOWN, 'a1'], [GONE, 'a1']]);
+    // the panel polling while ag-go is still answering joins the check under way
+    seen.length = 0;
+    const both = await Promise.all([media.renders(v.id, req('auth0|poll')), media.renders(v.id, req('auth0|poll'))]);
+    expect(both.map((x) => x.renders[0]!.urlHidden)).toEqual(['footage_scope', 'footage_scope']);
+    expect(seen).toEqual([['auth0|poll', 'a1']]);
     expect((await media.timeline(v.id)).latest).toMatchObject({ revision: 1, clips: [expect.objectContaining({ clip_id: 'C001' })] });
   });
 

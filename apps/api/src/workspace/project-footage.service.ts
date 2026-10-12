@@ -1,7 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { FootageItem, ProjectFootage } from '@ag-studio/engine';
-import { AgGoClient, type FootageFacets, type FootageFilters, type SearchFootageQuery } from '../ag-go/client';
+import { AgGoClient, AgGoClientError, type FootageFacets, type FootageFilters, type SearchFootageQuery } from '../ag-go/client';
+
+/**
+ * ag-go signs a URL (and asks R2 for the proxy) video by video, so a long timeline asked at once outlasts the client's
+ * timeout: it is asked in lots of this many, a few lots at a time.
+ */
+const CHECK_LOT = 10;
+const CHECK_PARALLEL = 4;
 
 /** A video as the Inputs tab's picker shows it. */
 export interface PickerFootageItem {
@@ -74,11 +81,29 @@ export class ProjectFootageService implements ProjectFootage {
     return this.agGo.getFootageFacets(actAs, filters);
   }
 
-  /** Asks ag-go to resolve the videos for a preview as the user: what it cannot serve is `missing`. */
+  /**
+   * Asks ag-go to resolve the videos for a preview as the user: what it cannot serve is `missing`. A lot ag-go could not
+   * answer fails the whole check, before one it answered 404 (a video out of the user's scope).
+   */
   async check(actAs: string, assetIds: string[]) {
-    const r = await this.agGo.resolveAssets(actAs, { assetIds, purpose: 'preview' });
-    const served = new Set(r.items.map((i) => i.assetId));
-    const missing = assetIds.filter((id) => !served.has(id) || (r.missing ?? []).includes(id));
+    const lots: string[][] = [];
+    for (let i = 0; i < assetIds.length; i += CHECK_LOT) lots.push(assetIds.slice(i, i + CHECK_LOT));
+    const settled: PromiseSettledResult<{ served: string[]; missing: string[] }>[] = new Array(lots.length);
+    let next = 0;
+    const lane = async () => {
+      for (let i = next++; i < lots.length; i = next++) {
+        settled[i] = await this.agGo.resolveAssets(actAs, { assetIds: lots[i]!, purpose: 'preview' }).then(
+          (r) => ({ status: 'fulfilled' as const, value: { served: r.items.map((x) => x.assetId), missing: r.missing ?? [] } }),
+          (reason: unknown) => ({ status: 'rejected' as const, reason }),
+        );
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CHECK_PARALLEL, lots.length) }, lane));
+    const failed = settled.filter((s): s is PromiseRejectedResult => s.status === 'rejected').map((s) => s.reason);
+    if (failed.length) throw failed.find((e) => !(e instanceof AgGoClientError && e.status === 404)) ?? failed[0];
+    const served = new Set(settled.flatMap((s) => (s.status === 'fulfilled' ? s.value.served : [])));
+    const flagged = new Set(settled.flatMap((s) => (s.status === 'fulfilled' ? s.value.missing : [])));
+    const missing = assetIds.filter((id) => !served.has(id) || flagged.has(id));
     return { ok: assetIds.filter((id) => !missing.includes(id)), missing };
   }
 }

@@ -180,7 +180,8 @@ xem nhóm mình; người khác 403.
   (dựng từ `videos/<id>/edit-plan.json`)
 - `GET /videos/:videoId/renders` → `{renders: RenderView[], jobs, thumbnails: path[]}`; `url` chỉ có khi quyền ag-go của
   người xem phủ mọi video trong bản đó (không thì `urlHidden: footage_scope`; ag-go không trả lời được — lỗi mạng, 5xx…
-  — thì `urlHidden: footage_check_failed`, API ghi log lý do và hỏi lại lần sau)
+  — thì `urlHidden: footage_check_failed`, API ghi log lý do và hỏi lại lần sau). API hỏi ag-go từng lô 10 video, 4 lô
+  song song; câu trả lời chắc chắn giữ 10 phút
 - `POST /videos/:videoId/renders {kind: render_preview|render_final|export_premiere, nodeId?, media?}` — xem trước: editor;
   bản cuối, Premiere: producer (403 `role`)
 - `GET /projects/:projectId/audio` → `{voice, music, summary}`; `POST audio/:kind/from-file {path, origin?, referenceText?}`
