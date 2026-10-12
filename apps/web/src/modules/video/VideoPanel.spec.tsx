@@ -58,6 +58,18 @@ describe("video preview tab", { timeout: 20_000 }, () => {
     await waitFor(() => expect(ws.fitTimeline).toHaveBeenCalledWith("v1"));
   });
 
+  it("keeps the player on the link it has when the renders come back signed anew", async () => {
+    ws.listRenders.mockReset();
+    ws.listRenders.mockResolvedValueOnce({ renders: [r({ url: "https://r2.test/a.mp4?sig=1" })], jobs: [], thumbnails: [] })
+      .mockResolvedValue({ renders: [r({ url: "https://r2.test/a.mp4?sig=2" })], jobs: [], thumbnails: [] });
+    wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={(n) => ORDER.indexOf("editor") >= ORDER.indexOf(n)} />);
+    expect(await screen.findByLabelText("Trình phát bản render")).toHaveAttribute("src", "https://r2.test/a.mp4?sig=1");
+    fireEvent.click(screen.getByRole("button", { name: /Dựng lại từ kế hoạch/ }));
+    await waitFor(() => expect(ws.listRenders).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("link", { name: "Tải về" })).toHaveAttribute("href", "https://r2.test/a.mp4?sig=2"));
+    expect(screen.getByLabelText("Trình phát bản render")).toHaveAttribute("src", "https://r2.test/a.mp4?sig=1");
+  });
+
   it("a producer renders the final after confirming", async () => {
     wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={(n) => ORDER.indexOf("producer") >= ORDER.indexOf(n)} />);
     fireEvent.click(await screen.findByRole("button", { name: /Render bản cuối/ }));
