@@ -132,6 +132,12 @@ xem nhóm mình; người khác 403.
   `file_conflict`; đường chỉ đọc (`inputs/**`, `videos/*/sources/**`, `.studio/**` trừ `playbook.yaml`) → 422 `read_only`
 - `DELETE ?path&baseSha256` (editor); `POST upload` multipart `file` + `dir?` (editor, ≤ 50 MB)
 - `GET versions?path`, `GET versions/:versionId`, `POST versions/:versionId/restore {baseSha256?}` (editor)
+- `GET versions/:versionId/diff?base` (viewer) → bản đó đổi gì so với `base` (một bản khác của cùng file, vd. bản trước
+  lượt agent; `none` = file rỗng, cho file lượt đó tạo; khác file → 422 `bad_base`) hoặc mặc định bản ngay trước (chưa có = file rỗng; bản xoá = rỗng):
+  `{path, version_id, before_version_id, hunks: {old_start, old_lines, new_start, new_lines, lines: {kind:
+  'context'|'add'|'del', text}[]}[], added, removed}`, 3 dòng ngữ cảnh; file nhị phân hay không giữ nội dung (> 1 MB) hoặc
+  quá nhiều dòng để so (> 50 000) → `{path, version_id, before_version_id, unavailable: 'binary'|'too_large'}`. Diff dòng
+  Myers trong engine (`workspace/line-diff.ts`), quá nhiều khác biệt thì phần giữa hiện là bớt rồi thêm (vẫn đúng).
 
 ## Luồng chat với agent
 

@@ -10,7 +10,8 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 import {
   deleteWorkspaceFile, getFileVersion, listFileVersions, listWorkspaceTree, normalizeRelPath, readWorkspaceBytes, readWorkspaceFile,
-  StudioRunError, validateFileText, writeWorkspaceFile, type FileIssue, type FileVersionRow, type WorkspaceEntry, type WorkspaceFile,
+  StudioRunError, validateFileText, versionDiff, writeWorkspaceFile, type FileIssue, type FileVersionRow, type VersionDiff, type WorkspaceEntry,
+  type WorkspaceFile,
 } from '@ag-studio/engine';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -153,6 +154,20 @@ export class FilesController {
       if (!v) throw new StudioRunError('not_found', `không có phiên bản ${versionId}`);
       this.visible(v.path);
       return v;
+    });
+  }
+
+  /**
+   * What a version changed: against `base` (another version of the same file, e.g. the one before a turn; `none` = an
+   * empty file) or the version just before it. Hunks with 3 lines of context, or `unavailable: binary | too_large`.
+   */
+  @Get('versions/:versionId/diff')
+  @Roles('viewer')
+  diff(@Param('projectId') projectId: string, @Param('versionId') versionId: string, @Query('base') base?: string): Promise<VersionDiff> {
+    return mapErrors(() => {
+      const d = versionDiff(this.engine.db, projectId, versionId, base === 'none' ? { base: null } : base ? { base } : {});
+      this.visible(d.path);
+      return d;
     });
   }
 

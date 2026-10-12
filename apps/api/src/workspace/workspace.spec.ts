@@ -90,6 +90,21 @@ describe('workspace routes (real studio.db and folder)', () => {
     expect(restored.sha256).toBe(current.sha256);
   });
 
+  it('shows what a version changed against the one before it or a chosen base', async () => {
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    const current = await files.content(p.id, 'CLAUDE.md');
+    const saved = await files.write(p.id, { path: 'CLAUDE.md', content: `${current.text}\n- Không dùng nhạc buồn.\n`, baseSha256: current.sha256 }, req(OWNER));
+    const d = await files.diff(p.id, saved.versionId);
+    expect(d).toMatchObject({ path: 'CLAUDE.md', version_id: saved.versionId, added: 2, removed: 0 });
+    expect('hunks' in d && d.hunks.flatMap((h) => h.lines).filter((l) => l.kind === 'add').map((l) => l.text)).toEqual(['', '- Không dùng nhạc buồn.']);
+    const { versions } = await files.versions(p.id, 'CLAUDE.md');
+    expect(await files.diff(p.id, saved.versionId, versions[1]!.id)).toMatchObject({ before_version_id: versions[1]!.id });
+    expect(await files.diff(p.id, saved.versionId, 'none')).toMatchObject({ before_version_id: null, removed: 0 });
+    const upload = await files.write(p.id, { path: 'context/a.md', content: 'x\n' }, req(OWNER));
+    expect(await failure(files.diff(p.id, saved.versionId, upload.versionId))).toBe('UnprocessableEntityException:bad_base');
+    expect(await failure(files.diff(p.id, 'nope'))).toBe('NotFoundException:not_found');
+  });
+
   it('lists the tree without hidden folders and refuses to read them', async () => {
     const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
     mkdirSync(join(root, p.id, '.claude'), { recursive: true });

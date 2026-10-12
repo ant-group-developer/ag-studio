@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   accessFor, createProject, deleteWorkspaceFile, getFileVersion, listFileVersions, listWorkspaceTree, normalizeRelPath, projectDir,
-  readWorkspaceFile, scanWorkspace, seedWorkspace, StudioRunError, turnChangedFiles, writeWorkspaceFile,
+  readWorkspaceFile, scanWorkspace, seedWorkspace, StudioRunError, turnChangedFiles, versionDiff, writeWorkspaceFile,
 } from "../src/index.js";
 import { world } from "./helpers.js";
 
@@ -171,6 +171,36 @@ describe("scanning the workspace after an agent turn", () => {
       { path: "context/notes.md", change: "modified", version_id: listFileVersions(db, project.id, "context/notes.md")[0]!.id, before_version_id: before("context/notes.md"), added: 2, removed: 1 },
     ]);
     expect(turnChangedFiles(db, project.id, "other")).toEqual([]);
+  });
+
+  it("what a version changed: against the one before it, or a chosen base; binary or too big cannot be shown", () => {
+    const { db, project, dir } = setup();
+    const author = { kind: "user" as const, id: "u" };
+    const first = writeWorkspaceFile(db, { projectId: project.id, dir, path: "context/a.md", content: "một\nhai\nba\n", author });
+    expect(versionDiff(db, project.id, first.versionId)).toMatchObject({
+      path: "context/a.md", before_version_id: null, added: 3, removed: 0,
+      hunks: [{ old_start: 0, old_lines: 0, new_start: 1, new_lines: 3 }],
+    });
+    const second = writeWorkspaceFile(db, { projectId: project.id, dir, path: "context/a.md", content: "một\nHAI\nba\n", author });
+    const third = writeWorkspaceFile(db, { projectId: project.id, dir, path: "context/a.md", content: "một\nHAI\nba\nbốn\n", author });
+    expect(versionDiff(db, project.id, third.versionId)).toEqual({
+      path: "context/a.md", version_id: third.versionId, before_version_id: second.versionId, added: 1, removed: 0,
+      hunks: [{ old_start: 1, old_lines: 3, new_start: 1, new_lines: 4, lines: [
+        { kind: "context", text: "một" }, { kind: "context", text: "HAI" }, { kind: "context", text: "ba" }, { kind: "add", text: "bốn" },
+      ] }],
+    });
+    expect(versionDiff(db, project.id, third.versionId, { base: first.versionId })).toMatchObject({ before_version_id: first.versionId, added: 2, removed: 1 });
+    // a file a turn made (and then edited): against nothing
+    expect(versionDiff(db, project.id, third.versionId, { base: null })).toMatchObject({ before_version_id: null, added: 4, removed: 0 });
+    deleteWorkspaceFile(db, { projectId: project.id, dir, path: "context/a.md", author });
+    expect(versionDiff(db, project.id, listFileVersions(db, project.id, "context/a.md")[0]!.id)).toMatchObject({ added: 0, removed: 4 });
+    const other = writeWorkspaceFile(db, { projectId: project.id, dir, path: "context/b.md", content: "x\n", author });
+    expect(failure(() => versionDiff(db, project.id, third.versionId, { base: other.versionId }))).toBe("invalid:bad_base");
+    expect(failure(() => versionDiff(db, project.id, "nope"))).toBe("not_found:");
+    const big = writeWorkspaceFile(db, { projectId: project.id, dir, path: "context/big.md", content: "a\n".repeat(600_000), author });
+    expect(versionDiff(db, project.id, big.versionId)).toEqual({ path: "context/big.md", version_id: big.versionId, before_version_id: null, unavailable: "too_large" });
+    const png = writeWorkspaceFile(db, { projectId: project.id, dir, path: "context/logo.png", content: Buffer.from([0x89, 0x50, 0, 1]), author });
+    expect(versionDiff(db, project.id, png.versionId)).toMatchObject({ unavailable: "binary" });
   });
 
   it("a turn's changed file too big to keep as text has no line counts", () => {

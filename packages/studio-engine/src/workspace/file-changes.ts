@@ -2,8 +2,10 @@
  * What an agent turn changed in the workspace (migration 0038): every file version the turn wrote — found by
  * `scanWorkspace` after it, or written by a Studio tool during it — compared with the version just before the turn.
  */
+import { StudioRunError } from "../errors.js";
 import type { StudioDb } from "../studio-db.js";
-import { lineDiff } from "./line-diff.js";
+import { isTextPath, MAX_VERSIONED_TEXT_BYTES } from "./files.js";
+import { lineDiff, type DiffHunk } from "./line-diff.js";
 
 export type FileChangeKind = "added" | "modified" | "deleted";
 
@@ -52,4 +54,49 @@ export function turnChangedFiles(db: StudioDb, projectId: string, messageId: str
     out.push(row);
   }
   return out;
+}
+
+/** What a version changed, as unified-diff hunks; or why it cannot be shown (not text, or too big to keep or compare). */
+export type VersionDiff = { path: string; version_id: string; before_version_id: string | null } & (
+  | { hunks: DiffHunk[]; added: number; removed: number }
+  | { unavailable: "binary" | "too_large" }
+);
+
+interface VersionRow { rowid: number; id: string; path: string; sha256: string; size: number; content: string | null }
+
+/** A version's text ("" for a deletion), or why there is none. */
+function versionText(path: string, v: VersionRow | undefined): string | { unavailable: "binary" | "too_large" } {
+  if (!v || v.sha256 === "") return "";
+  if (v.content !== null) return v.content;
+  return isTextPath(path) && v.size > MAX_VERSIONED_TEXT_BYTES ? { unavailable: "too_large" } : { unavailable: "binary" };
+}
+
+/**
+ * Compares version `versionId` with `base` (another version of the same file, e.g. the one before a turn; `null` = an
+ * empty file, for a file a turn made) or, by default, with the version just before it (nothing before = an empty file).
+ * 3 lines of context around each change.
+ */
+export function versionDiff(db: StudioDb, projectId: string, versionId: string, opts: { base?: string | null } = {}): VersionDiff {
+  const cols = "rowid, id, path, sha256, size, content";
+  const v = db.get<VersionRow>(`SELECT ${cols} FROM project_file_versions WHERE project_id = ? AND id = ?`, [projectId, versionId]);
+  if (!v) throw new StudioRunError("not_found", `không có phiên bản ${versionId}`);
+  let before: VersionRow | undefined;
+  if (opts.base === null) {
+    before = undefined;
+  } else if (opts.base) {
+    before = db.get<VersionRow>(`SELECT ${cols} FROM project_file_versions WHERE project_id = ? AND id = ?`, [projectId, opts.base]);
+    if (!before || before.path !== v.path) throw new StudioRunError("invalid", "bản so sánh phải là một phiên bản của cùng file", { code: "bad_base" });
+  } else {
+    before = db.get<VersionRow>(
+      `SELECT ${cols} FROM project_file_versions WHERE project_id = ? AND path = ? AND rowid < ? ORDER BY rowid DESC LIMIT 1`,
+      [projectId, v.path, v.rowid],
+    );
+  }
+  const head = { path: v.path, version_id: v.id, before_version_id: before?.id ?? null };
+  const oldText = versionText(v.path, before);
+  const newText = versionText(v.path, v);
+  if (typeof newText !== "string") return { ...head, ...newText };
+  if (typeof oldText !== "string") return { ...head, ...oldText };
+  const d = lineDiff(oldText, newText, { context: 3 });
+  return d ? { ...head, ...d } : { ...head, unavailable: "too_large" };
 }
