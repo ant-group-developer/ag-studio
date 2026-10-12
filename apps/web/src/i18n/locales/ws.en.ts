@@ -108,6 +108,8 @@ export const wsEn: Messages<typeof wsVi> = {
     watermarked: "watermarked",
     hidden: "your {{site}} rights do not cover this footage",
     checkFailed: "could not check your {{site}} rights to this footage, reload in a few minutes",
+    linkLoading: "Getting the link…",
+    linkFailed: "Could not get the render's link, try again later",
     kind: {
       render_preview: "Preview",
       render_final: "Final",

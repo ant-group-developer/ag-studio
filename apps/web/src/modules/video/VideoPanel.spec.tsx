@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App as AntApp } from "antd";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n/config";
-import type { RenderView, TeamRoleName } from "../../api/workspace-client";
+import type { RenderLink, RenderView, TeamRoleName } from "../../api/workspace-client";
 
 window.matchMedia ??= ((query: string) => ({
   matches: false, media: query, onchange: null,
@@ -13,11 +13,13 @@ window.matchMedia ??= ((query: string) => ({
 const done = new Date().toISOString();
 const r = (over: Partial<RenderView>): RenderView => ({
   jobId: "j1", kind: "render_preview", revision: 3, durationS: 65, width: 1920, height: 1080, watermarked: true, sizeBytes: 12_582_912, note: "",
-  finishedAt: done, url: "https://r2.test/a.mp4", ...over,
+  finishedAt: done, ...over,
 });
+const never = () => new Promise<never>(() => {});
 const ws = {
   getTimeline: vi.fn(),
   listRenders: vi.fn(),
+  renderLink: vi.fn(),
   startRender: vi.fn().mockResolvedValue({}),
   fitTimeline: vi.fn().mockResolvedValue({}),
   cancelJob: vi.fn(),
@@ -34,45 +36,99 @@ const ORDER: TeamRoleName[] = ["viewer", "editor", "producer", "owner"];
 const wrap = (node: React.ReactNode) => render(
   <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><AntApp>{node}</AntApp></QueryClientProvider>,
 );
+const editor = (n: TeamRoleName) => ORDER.indexOf("editor") >= ORDER.indexOf(n);
+const producer = (n: TeamRoleName) => ORDER.indexOf("producer") >= ORDER.indexOf(n);
+const links = (byJob: Record<string, Omit<RenderLink, "jobId">>) => (_v: string, jobId: string) => Promise.resolve({ jobId, ...(byJob[jobId] ?? { url: `https://r2.test/${jobId}.mp4` }) });
 
 describe("video preview tab", { timeout: 20_000 }, () => {
   beforeAll(async () => { await i18n.changeLanguage("vi"); });
   beforeEach(() => {
     vi.clearAllMocks();
     ws.getTimeline.mockResolvedValue({ latest: { revision: 3, label: "fit", approx_seconds: 64.6, clips: [{}, {}], texts: [], narration: { voice: "tts", lines: [{ line_id: "L001", text: "x" }] }, music: null, issues: [] }, revisions: [] });
-    ws.listRenders.mockResolvedValue({ renders: [r({}), r({ jobId: "j2", kind: "export_premiere", durationS: null, url: null, urlHidden: "footage_scope" }), r({ jobId: "j3", revision: 2, url: null, urlHidden: "footage_check_failed" })], jobs: [], thumbnails: [] });
+    ws.listRenders.mockResolvedValue({ renders: [r({}), r({ jobId: "j2", kind: "export_premiere", durationS: null }), r({ jobId: "j3", revision: 2 })], jobs: [], thumbnails: [] });
+    ws.renderLink.mockImplementation(links({}));
   });
 
-  it("shows the timeline in short, plays the latest preview and lists renders (a hidden link says why)", async () => {
-    wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={(n) => ORDER.indexOf("editor") >= ORDER.indexOf(n)} />);
+  it("shows the timeline and the renders at once, each when it arrives, while the player waits for its link", async () => {
+    ws.listRenders.mockImplementation(never);
+    ws.renderLink.mockImplementation(never);
+    const first = wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={editor} />);
     expect(await screen.findByText("bản 3 · fit · 2 clip · ≈ 1:05 · 1 câu lời dẫn")).toBeInTheDocument();
-    expect(screen.getByLabelText("Trình phát bản render")).toHaveAttribute("src", "https://r2.test/a.mp4");
+    first.unmount();
+    ws.getTimeline.mockImplementation(never);
+    ws.listRenders.mockResolvedValue({ renders: [r({}), r({ jobId: "j3", revision: 2 })], jobs: [], thumbnails: [] });
+    wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={editor} />);
+    const list = await screen.findByRole("region", { name: "Bản render" });
+    await waitFor(() => expect(list).toHaveTextContent("bản 3 · 1:05 · 12.0 MB · có watermark"));
+    expect(screen.getByRole("status", { name: "Trình phát bản render" })).toHaveTextContent("Đang lấy link xem…");
+    expect(ws.renderLink).toHaveBeenCalledTimes(1);
+    expect(ws.renderLink).toHaveBeenCalledWith("v1", "j1");
+  });
+
+  it("plays the latest preview once its link comes, and starts renders and the fit", async () => {
+    wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={editor} />);
+    await waitFor(() => expect(screen.getByLabelText("Trình phát bản render")).toHaveAttribute("src", "https://r2.test/j1.mp4"));
+    await screen.findByText("bản 3 · fit · 2 clip · ≈ 1:05 · 1 câu lời dẫn");
     const list = screen.getByRole("region", { name: "Bản render" });
-    expect(list).toHaveTextContent("bản 3 · 1:05 · 12.0 MB · có watermark");
-    expect(list).toHaveTextContent("bạn chưa có quyền xem footage này trên AG Go");
-    expect(list).toHaveTextContent("chưa kiểm được quyền xem footage trên AG Go, tải lại sau ít phút");
     expect(within(list).queryByRole("button", { name: /Render bản cuối/ })).toBeNull();
     fireEvent.click(within(list).getByRole("button", { name: /Render xem trước/ }));
     await waitFor(() => expect(ws.startRender).toHaveBeenCalledWith("v1", { kind: "render_preview" }));
     fireEvent.click(screen.getByRole("button", { name: /Dựng lại từ kế hoạch/ }));
     await waitFor(() => expect(ws.fitTimeline).toHaveBeenCalledWith("v1"));
+    // another render plays when picked
+    fireEvent.click(within(list).getAllByRole("button", { name: "Xem" })[1]!);
+    await waitFor(() => expect(screen.getByLabelText("Trình phát bản render")).toHaveAttribute("src", "https://r2.test/j3.mp4"));
   });
 
-  it("keeps the player on the link it has when the renders come back signed anew", async () => {
-    ws.listRenders.mockReset();
-    ws.listRenders.mockResolvedValueOnce({ renders: [r({ url: "https://r2.test/a.mp4?sig=1" })], jobs: [], thumbnails: [] })
-      .mockResolvedValue({ renders: [r({ url: "https://r2.test/a.mp4?sig=2" })], jobs: [], thumbnails: [] });
-    wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={(n) => ORDER.indexOf("editor") >= ORDER.indexOf(n)} />);
-    expect(await screen.findByLabelText("Trình phát bản render")).toHaveAttribute("src", "https://r2.test/a.mp4?sig=1");
+  it("says why a render has no link, in the player and on its row", async () => {
+    ws.renderLink.mockImplementation(links({ j1: { url: null, urlHidden: "footage_scope" }, j3: { url: null, urlHidden: "footage_check_failed" } }));
+    wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={editor} />);
+    const player = await screen.findByRole("status", { name: "Trình phát bản render" });
+    await waitFor(() => expect(player).toHaveTextContent("bạn chưa có quyền xem footage này trên AG Go"));
+    const list = screen.getByRole("region", { name: "Bản render" });
+    const rows = within(list).getAllByRole("listitem");
+    expect(rows[0]).toHaveTextContent("bạn chưa có quyền xem footage này trên AG Go");
+    expect(within(rows[0]!).queryByRole("button", { name: "Tải về" })).toBeNull();
+    fireEvent.click(within(rows[2]!).getByRole("button", { name: "Xem" }));
+    await waitFor(() => expect(player).toHaveTextContent("chưa kiểm được quyền xem footage trên AG Go, tải lại sau ít phút"));
+    expect(rows[2]).toHaveTextContent("chưa kiểm được quyền xem footage trên AG Go");
+  });
+
+  it("keeps the player on the link it has while the renders are polled", async () => {
+    wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={editor} />);
+    await waitFor(() => expect(screen.getByLabelText("Trình phát bản render")).toHaveAttribute("src", "https://r2.test/j1.mp4"));
+    ws.renderLink.mockImplementation(links({ j1: { url: "https://r2.test/j1.mp4?sig=2" } }));
     fireEvent.click(screen.getByRole("button", { name: /Dựng lại từ kế hoạch/ }));
     await waitFor(() => expect(ws.listRenders).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.getByRole("link", { name: "Tải về" })).toHaveAttribute("href", "https://r2.test/a.mp4?sig=2"));
-    expect(screen.getByLabelText("Trình phát bản render")).toHaveAttribute("src", "https://r2.test/a.mp4?sig=1");
+    expect(ws.renderLink).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("Trình phát bản render")).toHaveAttribute("src", "https://r2.test/j1.mp4");
+  });
+
+  it("asks for a link when a download is clicked: a render opens in a new tab, a Premiere export is saved", async () => {
+    const saved: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { saved.push(this.href); });
+    const tab = { opener: {} as unknown, location: { href: "" }, close: vi.fn() };
+    const open = vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
+    ws.renderLink.mockImplementation(links({ j2: { url: "https://r2.test/xuat.zip?sig=1" } }));
+    wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={editor} />);
+    const list = await screen.findByRole("region", { name: "Bản render" });
+    await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(3));
+    const rows = within(list).getAllByRole("listitem");
+    fireEvent.click(within(rows[2]!).getByRole("button", { name: "Tải về" }));
+    await waitFor(() => expect(tab.location.href).toBe("https://r2.test/j3.mp4"));
+    expect(tab.opener).toBeNull();
+    expect(ws.renderLink).toHaveBeenCalledWith("v1", "j3");
+    fireEvent.click(within(rows[1]!).getByRole("button", { name: "Tải về" }));
+    await waitFor(() => expect(saved).toEqual(["https://r2.test/xuat.zip?sig=1"]));
+    expect(open).toHaveBeenCalledTimes(1);
+    open.mockRestore();
+    click.mockRestore();
   });
 
   it("a producer renders the final after confirming", async () => {
-    wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={(n) => ORDER.indexOf("producer") >= ORDER.indexOf(n)} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Render bản cuối/ }));
+    wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={producer} />);
+    await screen.findByText("bản 3 · fit · 2 clip · ≈ 1:05 · 1 câu lời dẫn"); // the render buttons wait for the timeline
+    fireEvent.click(screen.getByRole("button", { name: /Render bản cuối/ }));
     const ok = await screen.findAllByRole("button", { name: "Render bản cuối" });
     fireEvent.click(ok[ok.length - 1]!);
     await waitFor(() => expect(ws.startRender).toHaveBeenCalledWith("v1", { kind: "render_final" }));
@@ -83,13 +139,16 @@ describe("video preview tab", { timeout: 20_000 }, () => {
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { saved.push(this.href); });
     const zip = "https://r2.test/xuat.zip?sig=1";
     ws.startRender.mockResolvedValueOnce({ id: "j9", kind: "export_premiere", status: "queued" });
+    ws.renderLink.mockImplementation(links({ j9: { url: zip }, j2: { url: "https://r2.test/cu.zip" } }));
     ws.listRenders.mockReset();
-    ws.listRenders.mockResolvedValueOnce({ renders: [r({ jobId: "j2", kind: "export_premiere", url: "https://r2.test/cu.zip" })], jobs: [], thumbnails: [] })
-      .mockResolvedValue({ renders: [r({ jobId: "j9", kind: "export_premiere", url: zip }), r({ jobId: "j2", kind: "export_premiere", url: "https://r2.test/cu.zip" })], jobs: [], thumbnails: [] });
-    wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={(n) => ORDER.indexOf("producer") >= ORDER.indexOf(n)} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Xuất Premiere/ }));
+    ws.listRenders.mockResolvedValueOnce({ renders: [r({ jobId: "j2", kind: "export_premiere" })], jobs: [], thumbnails: [] })
+      .mockResolvedValue({ renders: [r({ jobId: "j9", kind: "export_premiere" }), r({ jobId: "j2", kind: "export_premiere" })], jobs: [], thumbnails: [] });
+    wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={producer} />);
+    await screen.findByText("bản 3 · fit · 2 clip · ≈ 1:05 · 1 câu lời dẫn");
+    fireEvent.click(screen.getByRole("button", { name: /Xuất Premiere/ }));
     await waitFor(() => expect(ws.startRender).toHaveBeenCalledWith("v1", { kind: "export_premiere" }));
     await waitFor(() => expect(saved).toEqual([zip]));
+    expect(ws.renderLink.mock.calls).toEqual([["v1", "j9"]]);
     fireEvent.click(screen.getByRole("button", { name: /Dựng lại từ kế hoạch/ }));
     await waitFor(() => expect(ws.listRenders.mock.calls.length).toBeGreaterThanOrEqual(3));
     expect(saved).toEqual([zip]);

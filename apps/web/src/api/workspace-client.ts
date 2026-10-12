@@ -400,6 +400,10 @@ export interface RenderView {
   sizeBytes: number | null;
   note: string;
   finishedAt: string | null;
+}
+/** A render's link, asked for one render at a time. */
+export interface RenderLink {
+  jobId: string;
   /** null when the person's own ag-go rights do not cover the footage in it, or ag-go could not say (`footage_check_failed`). */
   url: string | null;
   urlHidden?: "footage_scope" | "footage_check_failed";
@@ -613,6 +617,10 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     // ---- A video's media and the project's audio ----
     listRenders(videoId: string): Promise<{ renders: RenderView[]; jobs: JobView[]; thumbnails: string[] }> {
       return call("GET", `/api/videos/${enc(videoId)}/renders`);
+    },
+    /** One render's link (asks ag-go about its footage the first time); 404 when the job is not a finished render of the video. */
+    renderLink(videoId: string, jobId: string): Promise<RenderLink> {
+      return call("GET", `/api/videos/${enc(videoId)}/renders/${enc(jobId)}/link`);
     },
     /** 403 `role`: the final render and the Premiere export need a producer. */
     startRender(videoId: string, input: { kind: RenderKind; nodeId?: string; media?: "proxy" | "original" }): Promise<JobView> {
