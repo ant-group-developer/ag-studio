@@ -2,6 +2,7 @@ import { Progress } from "antd";
 import { Cpu, Loader2, Server, Square } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { JobView } from "../../api/workspace-client";
+import { withoutIds } from "../common/no-ids";
 import { useNow } from "../common/sse";
 import { clock } from "../workspace/time";
 
@@ -19,15 +20,16 @@ export function jobWorker(job: Pick<JobView, "phase" | "nodeId" | "status">, t: 
 export function JobCard({ job, onStop, stopping }: { job: JobView; onStop?: (job: JobView) => void; stopping?: boolean }) {
   const { t } = useTranslation();
   const active = job.status === "queued" || job.status === "running";
+  const title = withoutIds(job.title, t("ws.inputs.unnamedVideo"));
   const now = useNow(1000, active);
   const elapsed = job.startedAt ? ((job.finishedAt ? Date.parse(job.finishedAt) : now) - Date.parse(job.startedAt)) / 1000 : null;
   const worker = jobWorker(job, t);
   const WorkerIcon = worker.farm ? Server : Cpu;
   return (
-    <div className={`ws-job ws-job--${job.status}`} role="group" aria-label={job.title}>
+    <div className={`ws-job ws-job--${job.status}`} role="group" aria-label={title}>
       <div className="ws-job__head">
         {job.status === "running" ? <Loader2 size={14} className="ws-spin" aria-hidden /> : <span className={`ws-dot ws-dot--${active ? "wait" : job.status}`} aria-hidden />}
-        <strong className="ws-job__title">{job.title}</strong>
+        <strong className="ws-job__title" title={title}>{title}</strong>
         {active && onStop ? (
           <button type="button" className="ws-icon-button" aria-label={t("ws.jobs.stop")} title={t("ws.jobs.stop")} disabled={stopping || job.cancelRequested}
             onClick={() => onStop(job)}>

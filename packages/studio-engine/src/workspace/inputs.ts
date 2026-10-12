@@ -7,6 +7,7 @@ import type { StudioDb } from "../studio-db.js";
 import type { ActorRole } from "../agent/threads-db.js";
 import { createJob, listJobs, type JobRecord } from "./jobs-db.js";
 import { inputDir, type PrepareRequest } from "./prepare.js";
+import { writeVideoIndexesFor } from "./video-index.js";
 import { getPrepared, listSources, sourceView, type SourceRecord, type SourceView } from "./sources-db.js";
 
 export type AssetState =
@@ -61,4 +62,36 @@ export function queuePrepare(db: StudioDb, p: {
     out[id] = { state: "queued", job_id: job.id, phase: null, progress: null };
   }
   return out;
+}
+
+/** ag-go videos of the project added without a name (their label is the asset id: the agent left `name` out). */
+export function unnamedAssetIds(db: StudioDb, projectId: string): string[] {
+  return db.all<{ ref: string }>(
+    "SELECT DISTINCT ref FROM project_sources WHERE project_id = ? AND kind = 'ag_go_asset' AND label = ref", [projectId],
+  ).map((r) => r.ref);
+}
+
+/**
+ * Gives unnamed ag-go videos their names (from ag-go): the sources, their prepare jobs (title and request), the
+ * prepared row and the index of every video cut from them. Returns the asset ids renamed.
+ */
+export function nameUnnamedAssets(db: StudioDb, dir: string, projectId: string, names: ReadonlyMap<string, string>): string[] {
+  const renamed: string[] = [];
+  for (const id of unnamedAssetIds(db, projectId)) {
+    const name = names.get(id)?.trim();
+    if (!name || name === id) continue;
+    db.immediate(() => {
+      db.run("UPDATE project_sources SET label = ? WHERE project_id = ? AND kind = 'ag_go_asset' AND ref = ? AND label = ref", [name, projectId, id]);
+      db.run("UPDATE prepared_assets SET name = ? WHERE project_id = ? AND asset_id = ? AND (name IS NULL OR name = asset_id)", [name, projectId, id]);
+      for (const j of listJobs(db, projectId).filter((x) => x.kind === "prepare_asset" && (JSON.parse(x.request) as PrepareRequest).asset_id === id)) {
+        const req = JSON.parse(j.request) as PrepareRequest;
+        db.run("UPDATE project_jobs SET title = ?, request = ? WHERE id = ?", [
+          j.title.split(id).join(name), JSON.stringify({ ...req, ...(!req.name || req.name === id ? { name } : {}) }), j.id,
+        ]);
+      }
+    });
+    writeVideoIndexesFor(db, dir, projectId, id);
+    renamed.push(id);
+  }
+  return renamed;
 }

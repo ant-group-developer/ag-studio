@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { App as AntApp, Button, Checkbox, Empty, Input, Modal, Pagination, Radio, Select, Spin, Table, Tag, type TableColumnsType } from "antd";
+import { App as AntApp, Button, Checkbox, Empty, Input, Modal, Pagination, Radio, Spin, Table, Tag, type TableColumnsType } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Film, Filter, FolderKanban, Mic, MicOff } from "lucide-react";
+import { Film, Filter, Mic, MicOff } from "lucide-react";
 import { useAiTranslation } from "../common/assistant-name";
-import { AG_GO_PROJECT_SORTS, useAgGoClient, type AgGoProject, type AgGoProjectQuery, type AgGoProjectSort } from "../../api/ag-go-client";
+import type { AgGoProjectSort } from "../../api/ag-go-client";
 import { StudioHttpError } from "../../api/http";
 import {
   FOOTAGE_ORIENTATIONS, FOOTAGE_RESOLUTIONS, FOOTAGE_SORTS, FOOTAGE_TIMES_OF_DAY, useWorkspaceClient, type FacetValue, type FootageFilters,
@@ -13,9 +13,7 @@ import { clock } from "../workspace/time";
 import { CheckList, FilterPanel, SortControl, useDebounced, useViewMode, ViewModeToggle, type FilterSection, type Option } from "./picker/PickerParts";
 
 const errorText = (e: unknown, fallback: string) => (e instanceof StudioHttpError ? e.message : fallback);
-const PROJECT_PAGE = 20;
 const FOOTAGE_PAGE = 40;
-const LOOKUP = { staleTime: 300_000, retry: false } as const;
 /** A modal as wide as ag-go's own pages allow on this screen. */
 const WIDE = "min(1200px, 96vw)";
 
@@ -35,154 +33,6 @@ function FilterToggle({ open, onToggle, active }: { open: boolean; onToggle: () 
     <Button icon={<Filter size={14} />} type={open ? "default" : active ? "primary" : "default"} aria-pressed={open} onClick={onToggle}>
       {t("ws.inputs.picker.filters")}{active ? ` (${active})` : ""}
     </Button>
-  );
-}
-
-// ---------------------------------------------------------------- projects
-
-interface ProjectFilters {
-  categoryIds: string[];
-  tagIds: string[];
-  folderIds: string[];
-  ownerUserIds: string[];
-  countryId?: string;
-  provinceId?: string;
-}
-const NO_PROJECT_FILTERS: ProjectFilters = { categoryIds: [], tagIds: [], folderIds: [], ownerUserIds: [] };
-
-/**
- * Picks ag-go projects for the project (no more `@folder`): the person's own ag-go projects, filtered, sorted and
- * paged as ag-go's Projects page does, in a table or a grid. Studio then checks the project's owner sees videos in it
- * (the agent and renders act as the owner).
- */
-export function AgGoProjectPicker({ projectId, picked, open, onClose }: { projectId: string; picked: SourceItem[]; open: boolean; onClose: () => void }) {
-  const { t } = useAiTranslation();
-  const { message } = AntApp.useApp();
-  const agGo = useAgGoClient();
-  const client = useWorkspaceClient();
-  const qc = useQueryClient();
-  const sortLabels = useSortLabels();
-  const [view, setView] = useViewMode("studio.picker.projects.viewMode");
-  const [filtersOpen, setFiltersOpen] = useState(true);
-  const [keyword, setKeyword] = useState("");
-  const q = useDebounced(keyword.trim());
-  const [filters, setFilters] = useState<ProjectFilters>(NO_PROJECT_FILTERS);
-  const [sort, setSort] = useState<{ by: AgGoProjectSort; order: "asc" | "desc" }>({ by: "updatedAt", order: "desc" });
-  const [page, setPage] = useState(1);
-  useEffect(() => { if (open) { setKeyword(""); setFilters(NO_PROJECT_FILTERS); setPage(1); } }, [open]);
-  useEffect(() => setPage(1), [q, filters, sort]);
-
-  const params: AgGoProjectQuery = {
-    page, pageSize: PROJECT_PAGE, sortBy: sort.by, sortOrder: sort.order, ...(q ? { keyword: q } : {}),
-    categoryIds: filters.categoryIds, tagIds: filters.tagIds, folderIds: filters.folderIds, ownerUserIds: filters.ownerUserIds,
-    ...(filters.countryId ? { countryId: filters.countryId } : {}), ...(filters.provinceId ? { provinceId: filters.provinceId } : {}),
-  };
-  const list = useQuery({ queryKey: ["agGoProjects", params], queryFn: () => agGo.getProjects(params), enabled: open, placeholderData: (prev) => prev });
-  const categories = useQuery({ queryKey: ["agGo", "categories"], queryFn: () => agGo.getCategories(), enabled: open, ...LOOKUP });
-  const tags = useQuery({ queryKey: ["agGo", "tags"], queryFn: () => agGo.getTags(), enabled: open, ...LOOKUP });
-  const folders = useQuery({ queryKey: ["agGo", "folders"], queryFn: () => agGo.getFolderTree(), enabled: open, ...LOOKUP });
-  const owners = useQuery({ queryKey: ["agGo", "owners"], queryFn: () => agGo.getProjectOwners(), enabled: open, ...LOOKUP });
-  const countries = useQuery({ queryKey: ["agGo", "countries"], queryFn: () => agGo.getCountries(), enabled: open, ...LOOKUP });
-  const provinces = useQuery({
-    queryKey: ["agGo", "provinces", filters.countryId], queryFn: () => agGo.getProvinces(filters.countryId!), enabled: open && Boolean(filters.countryId), ...LOOKUP,
-  });
-
-  const already = new Set(picked.filter((s) => s.kind === "ag_go_project").map((s) => s.ref));
-  const add = useMutation({
-    mutationFn: (p: AgGoProject) => client.addSource(projectId, { kind: "ag_go_project", ref: p.id, label: p.name }),
-    onSuccess: (_r, p) => {
-      void qc.invalidateQueries({ queryKey: ["sources", projectId] });
-      void message.success(t("ws.inputs.projectAdded", { name: p.name }));
-    },
-    onError: (e) => void message.error(e instanceof StudioHttpError && e.code === "owner_cannot_access" ? t("ws.inputs.ownerCannotSeeProject") : errorText(e, t("ws.inputs.addFailed"))),
-  });
-
-  const set = (patch: Partial<ProjectFilters>) => setFilters((f) => ({ ...f, ...patch }));
-  const named = (xs: { id: string; name: string }[] | undefined): Option[] => (xs ?? []).map((x) => ({ value: x.id, label: x.name }));
-  const location = (filters.countryId ? 1 : 0) + (filters.provinceId ? 1 : 0);
-  const sections: FilterSection[] = [
-    { key: "category", title: t("ws.inputs.picker.section.category"), active: filters.categoryIds.length,
-      body: <CheckList label={t("ws.inputs.picker.section.category")} options={named(categories.data)} value={filters.categoryIds} onChange={(v) => set({ categoryIds: v })} /> },
-    { key: "location", title: t("ws.inputs.picker.section.location"), active: location, body: (
-      <div className="ws-filter__list">
-        <Select allowClear showSearch optionFilterProp="label" placeholder={t("ws.inputs.picker.section.country")} aria-label={t("ws.inputs.picker.section.country")}
-          value={filters.countryId} options={named(countries.data)} onChange={(v?: string) => set({ countryId: v, provinceId: undefined })} />
-        <Select allowClear showSearch optionFilterProp="label" placeholder={t("ws.inputs.picker.section.province")} aria-label={t("ws.inputs.picker.section.province")}
-          value={filters.provinceId} disabled={!filters.countryId} options={named(provinces.data)} onChange={(v?: string) => set({ provinceId: v })} />
-      </div>
-    ) },
-    { key: "tags", title: t("ws.inputs.picker.section.tags"), active: filters.tagIds.length,
-      body: <CheckList label={t("ws.inputs.picker.section.tags")} options={named(tags.data)} value={filters.tagIds} onChange={(v) => set({ tagIds: v })} /> },
-    { key: "folder", title: t("ws.inputs.picker.section.folder"), active: filters.folderIds.length,
-      body: <CheckList label={t("ws.inputs.picker.section.folder")} options={(folders.data ?? []).map((f) => ({ value: f.id, label: f.pathText || f.name }))}
-        value={filters.folderIds} onChange={(v) => set({ folderIds: v })} /> },
-    { key: "author", title: t("ws.inputs.picker.section.author"), active: filters.ownerUserIds.length,
-      body: <CheckList label={t("ws.inputs.picker.section.author")} value={filters.ownerUserIds} onChange={(v) => set({ ownerUserIds: v })}
-        options={(owners.data ?? []).map((o) => ({ value: o.id, label: o.user?.name || o.user?.email || o.id, count: o.projectCount }))} /> },
-  ];
-  const activeFilters = sections.filter((s) => s.active).length;
-
-  const action = (p: AgGoProject) => (already.has(p.id) ? <Tag>{t("ws.inputs.added")}</Tag> : (
-    <Button size="small" onClick={() => add.mutate(p)} loading={add.isPending && add.variables?.id === p.id} disabled={!p.videoCount}>{t("ws.inputs.add")}</Button>
-  ));
-  const counts = (p: AgGoProject) => t("ws.inputs.projectCounts", { videos: p.videoCount, images: p.imageCount });
-  const place = (p: AgGoProject) => [p.provinceName, p.countryName].filter(Boolean).join(", ");
-  const columns: TableColumnsType<AgGoProject> = [
-    { key: "name", title: t("ws.inputs.picker.column.name"), render: (_, p) => (
-      <div className="ws-picker__text">
-        <strong>{p.name}</strong>
-        {p.tags?.length ? <span className="ws-picker__tags">{p.tags.slice(0, 4).map((x) => <Tag key={x} bordered={false}>{x}</Tag>)}</span> : null}
-      </div>
-    ) },
-    { key: "folder", title: t("ws.inputs.picker.column.folder"), render: (_, p) => <span className="ws-hint">{p.folderPath ?? p.folderName}</span> },
-    { key: "category", title: t("ws.inputs.picker.column.category"), render: (_, p) => p.categoryName ?? "—" },
-    { key: "location", title: t("ws.inputs.picker.column.location"), render: (_, p) => place(p) || "—" },
-    { key: "media", title: t("ws.inputs.picker.column.media"), render: (_, p) => <span className="ws-nowrap">{counts(p)}</span> },
-    { key: "owner", title: t("ws.inputs.picker.column.owner"), render: (_, p) => p.ownerUser?.name ?? "—" },
-    { key: "updated", title: t("ws.inputs.picker.column.updated"), render: (_, p) => (p.updatedAt ? new Date(p.updatedAt).toLocaleDateString() : "—") },
-    { key: "action", title: "", align: "right", render: (_, p) => action(p) },
-  ];
-
-  const items = list.data?.items ?? [];
-  return (
-    <Modal open={open} title={t("ws.inputs.pickProjectTitle")} onCancel={onClose} footer={<Button onClick={onClose}>{t("common.close")}</Button>} destroyOnHidden width={WIDE}>
-      <p className="ws-hint" style={{ marginTop: 0 }}>{t("ws.inputs.pickProjectLead")}</p>
-      <div className={`ws-picker2${filtersOpen ? "" : " ws-picker2--nofilters"}`}>
-        {filtersOpen ? <FilterPanel sections={sections} onClear={() => setFilters(NO_PROJECT_FILTERS)} /> : null}
-        <section className="ws-picker2__main">
-          <div className="ws-picker__bar">
-            <Input.Search autoFocus allowClear value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder={t("ws.inputs.searchProjects")}
-              aria-label={t("ws.inputs.searchProjects")} />
-            <SortControl options={AG_GO_PROJECT_SORTS.map((s) => ({ value: s, label: sortLabels[s] }))} value={sort.by} order={sort.order}
-              onChange={(by, order) => setSort({ by, order })} />
-            <FilterToggle open={filtersOpen} active={activeFilters} onToggle={() => setFiltersOpen((o) => !o)} />
-            <ViewModeToggle value={view} onChange={setView} />
-          </div>
-          <div className="ws-picker" aria-busy={list.isFetching}>
-            {list.isLoading ? <div className="ws-center"><Spin /></div> : list.error ? <p className="ws-error">{t("ws.inputs.agGoUnavailable")}</p>
-              : !items.length ? <Empty description={t("ws.inputs.noProjects")} />
-              : view === "table" ? <Table<AgGoProject> rowKey="id" size="small" columns={columns} dataSource={items} pagination={false} scroll={{ x: 900 }} />
-              : (
-                <ul className="ws-picker__grid">
-                  {items.map((p) => (
-                    <li key={p.id} className="ws-picker__card">
-                      <span className="ws-picker__cover" aria-hidden><FolderKanban size={28} /></span>
-                      <strong className="ws-picker__cardtitle">{p.name}</strong>
-                      <span className="ws-hint">{p.folderPath ?? p.folderName}</span>
-                      <span className="ws-hint">{[counts(p), p.categoryName, place(p)].filter(Boolean).join(" · ")}</span>
-                      <span className="ws-picker__cardaction">{action(p)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-          </div>
-          {list.data && list.data.total > PROJECT_PAGE ? (
-            <Pagination className="ws-picker__pages" size="small" current={page} pageSize={PROJECT_PAGE} total={list.data.total} showSizeChanger={false}
-              showTotal={(n) => t("ws.inputs.picker.total", { count: n })} onChange={setPage} />
-          ) : null}
-        </section>
-      </div>
-    </Modal>
   );
 }
 

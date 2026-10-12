@@ -1,0 +1,53 @@
+/* ag-go's project cards (`project-grid-view.module.css`), as Studio's project drawer shows them */
+.agp-card { position: relative; aspect-ratio: 1 / 1; overflow: hidden; border-radius: 16px !important; border: 1px solid #f4f4f5; box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06); transition: all 0.3s ease; cursor: pointer; background: #fff; }
+.agp-card--disabled { cursor: default; }
+.agp-image { position: absolute; inset: 0; height: 100%; width: 100%; object-fit: cover; transition: transform 0.5s ease-out; }
+.agp-gradient { pointer-events: none; position: absolute; left: 0; right: 0; bottom: 0; height: 66.666667%; background: linear-gradient(to top, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0.4), transparent); }
+.agp-category { position: absolute; left: 12px; top: 12px; right: 72px; z-index: 10; display: flex; }
+.agp-category > div { max-width: 100%; }
+.agp-category-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agp-select { position: absolute; left: 12px; top: 12px; z-index: 40; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px; background: rgba(255, 255, 255, 0.95); box-shadow: 0 2px 6px rgba(16, 24, 40, 0.18); }
+.agp-counts { position: absolute; right: 12px; top: 12px; z-index: 10; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.agp-badge { display: flex; align-items: center; gap: 4px; border-radius: 9999px; background: rgba(255, 255, 255, 0.95); padding: 4px 10px; font-size: 12px; font-weight: 500; color: #27272a; box-shadow: 0 2px 6px rgba(16, 24, 40, 0.18); backdrop-filter: blur(4px); }
+.agp-badge--added { background: #f6ffed; color: #389e0d; }
+.agp-badge--muted { color: #71717a; }
+.agp-title { position: absolute; left: 0; right: 0; bottom: 0; z-index: 10; display: flex; flex-direction: column; gap: 4px; padding: 12px; }
+.agp-hover { pointer-events: none; position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; border-radius: 16px; background: rgba(255, 255, 255, 0.1); padding: 0 16px; backdrop-filter: blur(4px); opacity: 0; transition: all 0.3s ease; }
+.agp-card:hover .agp-hover, .agp-card:focus-within .agp-hover { pointer-events: auto; opacity: 1; }
+.agp-info { width: 100%; max-width: 260px; border-radius: 12px; border: 1px solid rgba(228, 228, 231, 0.8); background: rgba(255, 255, 255, 0.95); padding: 12px; box-shadow: 0 4px 16px rgba(16, 24, 40, 0.12); }
+.agp-info-row { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f4f4f5; padding-bottom: 8px; }
+.agp-info-row:not(:first-child) { padding-top: 8px; }
+.agp-info-row:last-child { border-bottom: none; padding-bottom: 0; }
+.agp-icon-box { display: flex; width: 32px; height: 32px; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 8px; background: #f4f4f5; color: #52525b; }
+.agp-info-content { min-width: 0; }
+.agp-info-label { font-size: 11px; font-weight: 500; color: #a1a1aa; line-height: 1.2; }
+.agp-info-value { font-size: 12px; font-weight: 600; color: #27272a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.4; }
+.agp-info-link { display: block; max-width: 100%; font: inherit; padding: 0; border: none; background: none; color: inherit; text-align: left; cursor: pointer; }
+.agp-info-link.agp-inline { display: inline; }
+.agp-info-link:hover { text-decoration: underline; }
+.agp-actions { display: flex; align-items: center; gap: 8px; }
+.agp-action:disabled { background: rgba(255, 255, 255, 0.6) !important; border-color: transparent !important; color: rgba(0, 0, 0, 0.3) !important; }
+.agp-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #f4f4f5; color: #a1a1aa; transition: transform 0.5s ease-out; }
+.agp-card:hover .agp-placeholder { transform: scale(1.06); }
+.agp-skeleton { width: 100%; aspect-ratio: 1 / 1; border-radius: 16px; background-color: #f0f2f5; background-image: linear-gradient(90deg, rgba(255, 255, 255, 0) 0, rgba(255, 255, 255, 0.4) 20%, rgba(255, 255, 255, 0) 40%, rgba(255, 255, 255, 0)); background-size: 200px 100%; background-repeat: no-repeat; animation: agp-skeleton 1.5s ease-in-out infinite; border: 1px solid #f4f4f5; }
+@keyframes agp-skeleton { 0% { background-position: -200px 0; } 100% { background-position: calc(200px + 100%) 0; } }
+@media (prefers-reduced-motion: reduce) { .agp-skeleton { animation: none; } }
+
+/* the table's thumbnail cell */
+.agp-thumb { flex: 0 0 auto; width: 96px; height: 72px; border-radius: 6px; overflow: hidden; background: #f4f4f5; color: #a1a1aa; display: flex; align-items: center; justify-content: center; }
+.agp-thumb img { width: 96px; height: 72px; object-fit: cover; }
+
+/* ag-go's global helpers the sidebar and table use */
+.agp-drawer .ant-radio-button-wrapper.agp-icon-radio { display: inline-flex; align-items: center; justify-content: center; }
+.agp-drawer .ant-radio-button-wrapper.agp-icon-radio > span:last-child { display: inline-flex; }
+.agp-drawer .ant-typography.agp-filter-link, .agp-drawer .ant-typography.agp-filter-link:hover { color: inherit; }
+.agp-drawer .ant-typography.agp-filter-link:hover { text-decoration: underline; }
+.agp-filter-sidebar .ant-checkbox-wrapper { width: 100%; min-width: 0; }
+.agp-filter-sidebar .ant-checkbox-wrapper > .ant-checkbox + span { flex: 1; min-width: 0; }
+.agp-filter-sidebar .ant-tree-node-content-wrapper { min-width: 0; }
+.agp-filter-sidebar .ant-tree-title { display: block; }
+.agp-filter-option { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.agp-filter-option-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agp-filter-option-count { flex-shrink: 0; color: rgba(0, 0, 0, 0.45); font-size: 12px; font-variant-numeric: tabular-nums; }
+.agp-thin-scrollbar { scrollbar-width: thin; scrollbar-color: rgba(0, 0, 0, 0.18) transparent; }
+.agp-drawer { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }

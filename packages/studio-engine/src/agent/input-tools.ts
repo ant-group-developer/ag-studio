@@ -122,9 +122,9 @@ export const INPUT_TOOLS: AgentTool[] = [
   }),
   tool({
     name: "inputs_add",
-    description: "Thêm video {{site}} vào video của luồng này (hoặc `video_id`), theo thứ tự dùng. Lấy asset_id và tên từ footage_search. Studio kiểm chủ dự án dùng được video đó. Sau đó gọi inputs_prepare cho video chưa chuẩn bị.",
+    description: "Thêm video {{site}} vào video của luồng này (hoặc `video_id`), theo thứ tự dùng. Lấy asset_id và `name` (bắt buộc, người dùng đọc tên này) từ footage_search. Studio kiểm chủ dự án dùng được video đó. Sau đó gọi inputs_prepare cho video chưa chuẩn bị.",
     input: z.object({
-      assets: z.array(z.object({ asset_id: z.string().regex(ASSET_ID), name: z.string().trim().min(1).max(200).optional() }).strict()).min(1).max(40),
+      assets: z.array(z.object({ asset_id: z.string().regex(ASSET_ID), name: z.string().trim().min(1).max(200) }).strict()).min(1).max(40),
       video_id: z.string().min(1).optional(),
     }).strict(),
     role: "editor",
@@ -136,7 +136,7 @@ export const INPUT_TOOLS: AgentTool[] = [
         return { text: `${siteOf(ctx)} không cho chủ dự án dùng các video: ${missing.join(", ")} (không có quyền hoặc chưa có bản xem). Không thêm gì.`, isError: true };
       }
       for (const x of a.assets) {
-        addSource(ctx.db, { projectId: ctx.project.id, videoId, kind: "ag_go_asset", ref: x.asset_id, mediaType: "video", label: x.name ?? x.asset_id, addedBy: ctx.claims.sub }, ctx.now());
+        addSource(ctx.db, { projectId: ctx.project.id, videoId, kind: "ag_go_asset", ref: x.asset_id, mediaType: "video", label: x.name, addedBy: ctx.claims.sub }, ctx.now());
       }
       const index = writeVideoIndex(ctx.db, ctx.workspaceDir, ctx.project.id, videoId);
       return { text: json({ video_id: videoId, index: videoIndexPath(videoId), sources: index.sources.map((s) => ({ index: s.index, asset_id: s.asset_id, name: s.name, status: s.status })) }) };

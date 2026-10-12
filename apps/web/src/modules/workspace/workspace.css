@@ -1,6 +1,7 @@
 /* AG Studio as an agent workspace (spec 2026-10-10 agent-workspace): header, then
    project nav · chat · side panel (files, inputs, research, settings). Each column scrolls on its own. */
-.ws-app {
+/* the tokens live on the root so drawers, modals and popovers (portals outside .ws-app) read them too */
+:root {
   --ws-bg: #f4f5f7;
   --ws-surface: #ffffff;
   --ws-nav-bg: #f9fafb;
@@ -26,6 +27,8 @@
   --ws-header-h: 56px;
   --ws-nav-w: clamp(240px, 20vw, 300px);
   --ws-aside-w: clamp(360px, 32vw, 560px);
+}
+.ws-app {
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
@@ -129,6 +132,11 @@
 .ws-page__title { margin: 0; font-size: 22px; font-weight: 600; }
 .ws-page__lead { margin: 4px 0 0; color: var(--ws-muted); }
 .ws-page__actions { margin-left: auto; display: flex; gap: 8px; }
+.ws-projects__bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 14px; }
+.ws-projects__bar .ws-spacer { flex: 1; }
+.ws-projects__name { display: flex; flex-direction: column; min-width: 0; }
+.ws-projects__name a { font-weight: 600; }
+.ws-projects__name .ws-hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .ws-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
 .ws-card {
   display: flex; flex-direction: column; gap: 8px; min-height: 148px; box-sizing: border-box; padding: 16px; border-radius: 12px;
@@ -176,6 +184,13 @@
 /* Files */
 .ws-files { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .ws-files__bar { flex-shrink: 0; display: flex; align-items: center; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--ws-line); }
+/* an open file with the tree beside it; a narrow panel lays the tree over the file */
+.ws-files--split { position: relative; flex-direction: row; }
+.ws-files--split > .ws-file { min-width: 0; }
+.ws-files__side { flex-shrink: 0; width: clamp(160px, 30%, 260px); display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--ws-line); background: var(--ws-nav-bg); }
+.ws-files__side .ws-tree { padding-top: 8px; }
+.ws-files--narrow .ws-files__side { position: absolute; z-index: 3; inset: 0 auto 0 0; width: min(300px, 86%); box-shadow: var(--ws-shadow-lg); }
+.ws-files__scrim { position: absolute; z-index: 2; inset: 0; background: rgba(16, 24, 40, 0.18); }
 .ws-files__bar-title { flex: 1; min-width: 0; font-size: 13px; color: var(--ws-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-tree { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 6px 16px; list-style: none; margin: 0; }
 .ws-tree ul { list-style: none; margin: 0; padding: 0 0 0 14px; }
@@ -276,8 +291,14 @@ body.ws-resizing iframe, body.ws-resizing video { pointer-events: none; }
 .ws-tool { border: 1px solid var(--ws-line); border-radius: 8px; background: var(--ws-surface); font-size: 13px; }
 .ws-tool--running { border-color: var(--ws-accent-line); }
 .ws-tool--error .ws-tool__name { color: var(--ws-bad-fg); }
+.ws-tool__row { display: flex; align-items: center; }
+.ws-tool__open {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px; margin-right: 6px; padding: 1px 8px; border: 1px solid var(--ws-line);
+  border-radius: 999px; background: var(--ws-surface); font: inherit; font-size: 12px; color: var(--ws-accent); cursor: pointer;
+}
+.ws-tool__open:hover { border-color: var(--ws-accent-line); background: var(--ws-chip); }
 .ws-tool__head {
-  width: 100%; display: flex; align-items: center; gap: 6px; padding: 5px 8px; border: 0; background: none; font: inherit; color: var(--ws-muted);
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 5px 8px; border: 0; background: none; font: inherit; color: var(--ws-muted);
   cursor: pointer; text-align: left;
 }
 .ws-tool__head:hover { color: var(--ws-text); }

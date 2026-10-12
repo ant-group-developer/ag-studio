@@ -4,6 +4,7 @@ import { Activity as ActivityIcon, Loader2, Square } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useWorkspaceClient, type Activity } from "../../api/workspace-client";
 import { useAiTranslation } from "../common/assistant-name";
+import { withoutIds } from "../common/no-ids";
 import { useNow } from "../common/sse";
 import { clock } from "../workspace/time";
 import { phaseLabel, toolLabel } from "./labels";
@@ -18,7 +19,7 @@ export function ActivityRow({ a, projectId, projectName, now, onStop }: {
   const where = a.videoId ? `/p/${projectId}/v/${a.videoId}` : a.threadId ? `/p/${projectId}/c/${a.threadId}` : `/p/${projectId}`;
   const what = a.kind === "agent_turn"
     ? (a.status === "waiting" ? t("ws.activity.waiting") : a.status === "rate_limited" ? t("ws.activity.rateLimited") : phaseLabel(t, a.phase, []))
-    : a.kind === "tool_call" ? toolLabel(t, a.title) : a.title;
+    : a.kind === "tool_call" ? toolLabel(t, a.title) : withoutIds(a.title, t("ws.inputs.unnamedVideo"));
   return (
     <li className={`ws-activity__row${a.parentId ? " ws-activity__row--child" : ""}`}>
       {a.status === "running" ? <Loader2 size={13} className="ws-spin" aria-hidden /> : <span className="ws-dot ws-dot--wait" aria-hidden />}

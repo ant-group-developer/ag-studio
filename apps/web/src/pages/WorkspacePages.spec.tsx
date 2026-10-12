@@ -152,6 +152,25 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     expect(await screen.findByText("trang nhóm")).toBeInTheDocument();
   });
 
+  it("lists a team's projects as cards or a table, found by name and sorted", async () => {
+    localStorage.removeItem("studio.projects.viewMode");
+    ws.listProjects.mockResolvedValueOnce({ projects: [
+      { ...project, videoCount: 2, lastActivityAt: "2026-10-10T08:00:00.000Z", createdAt: "2026-09-01T00:00:00.000Z" },
+      { ...project, id: "p2", name: "Ẩm thực Huế", channelUrl: null, description: "", videoCount: 9, lastActivityAt: "2026-10-11T08:00:00.000Z", createdAt: "2026-09-05T00:00:00.000Z" },
+    ] });
+    mount("/t/team-1");
+    expect(await screen.findByText("Du lịch chậm")).toBeInTheDocument();
+    expect([...document.querySelectorAll(".ws-card__title")].map((e) => e.textContent)).toEqual(["Ẩm thực Huế", "Du lịch chậm"]);
+    fireEvent.change(screen.getByLabelText("Tìm dự án theo tên, kênh, mô tả"), { target: { value: "phố cổ" } });
+    expect([...document.querySelectorAll(".ws-card__title")].map((e) => e.textContent)).toEqual(["Du lịch chậm"]);
+    fireEvent.change(screen.getByLabelText("Tìm dự án theo tên, kênh, mô tả"), { target: { value: "" } });
+    fireEvent.click(screen.getByTitle("Bảng"));
+    const table = await screen.findByRole("table");
+    expect(within(table).getByRole("link", { name: "Ẩm thực Huế" })).toHaveAttribute("href", "/p/p2");
+    expect(within(table).getByText("@dulichcham")).toBeInTheDocument();
+    expect(localStorage.getItem("studio.projects.viewMode")).toBe("table");
+  });
+
   it("someone in no team yet makes one from the home page", async () => {
     studio.listTeams.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 100 });
     mount("/");
@@ -199,6 +218,22 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     ws.writeFile.mockResolvedValueOnce({ path: "context/notes.md", sha256: "c".repeat(64), size: 1, versionId: "v" });
     fireEvent.click(screen.getByRole("button", { name: "Ghi đè bằng bản của tôi" }));
     await waitFor(() => expect(ws.writeFile).toHaveBeenLastCalledWith("p1", { path: "context/notes.md", content: "# Ghi chú\n\nhai dòng", baseSha256: "b".repeat(64) }));
+  });
+
+  it("keeps the folder tree beside an open file: the file is marked, another opens from it, the tree hides", async () => {
+    localStorage.removeItem("studio.files.tree");
+    mount("/p/p1?tab=files&file=context%2Fnotes.md");
+    expect(await screen.findByRole("heading", { name: "Ghi chú" })).toBeInTheDocument();
+    const aside = screen.getByRole("complementary", { name: "Tệp và cài đặt" });
+    const tree = await within(aside).findByRole("list", { name: "Tệp của dự án" });
+    expect(within(tree).getByRole("button", { name: "notes.md" })).toHaveAttribute("aria-current", "true");
+    fireEvent.click(within(tree).getByRole("button", { name: "CLAUDE.md" }));
+    expect(await screen.findByRole("heading", { name: "Du lịch chậm" })).toBeInTheDocument();
+    fireEvent.click(within(aside).getByRole("button", { name: "Ẩn cây thư mục" }));
+    expect(within(aside).queryByRole("list", { name: "Tệp của dự án" })).toBeNull();
+    expect(localStorage.getItem("studio.files.tree")).toBe("hidden");
+    fireEvent.click(within(aside).getByRole("button", { name: "Hiện cây thư mục" }));
+    expect(within(aside).getByRole("list", { name: "Tệp của dự án" })).toBeInTheDocument();
   });
 
   it("adds a video with what it is about and what it learns from", async () => {

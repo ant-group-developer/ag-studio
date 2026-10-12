@@ -5,9 +5,11 @@ import { FileText, Film, FolderKanban, Image as ImageIcon, Music, Plus, RotateCc
 import { useAiTranslation } from "../common/assistant-name";
 import { StudioHttpError } from "../../api/http";
 import { useWorkspaceClient, type JobView, type SourceItem } from "../../api/workspace-client";
+import { withoutIds } from "../common/no-ids";
 import { clock } from "../workspace/time";
-import { AgGoProjectPicker, FootagePicker } from "./AgGoPickers";
-import { JobCard } from "./JobCard";
+import { FootagePicker } from "./AgGoPickers";
+import { AgGoProjectDrawer } from "./ag-go-projects/AgGoProjectDrawer";
+import { JobList } from "./JobList";
 import { AudioSummary, UseAudioButtons } from "./AudioControls";
 import "./inputs.css";
 
@@ -19,12 +21,13 @@ function AssetLine({ s, canEdit, onOpenFile, onPrepare, onRemove }: {
 }) {
   const { t } = useAiTranslation();
   const a = s.asset;
+  const name = withoutIds(s.label, t("ws.inputs.unnamedVideo"));
   const duration = typeof s.meta.durationMs === "number" ? clock((s.meta.durationMs as number) / 1000) : null;
   return (
     <li className="ws-inputs__row">
       <Film size={14} aria-hidden />
       <div className="ws-inputs__text">
-        <span className="ws-inputs__name">{s.label}</span>
+        <span className="ws-inputs__name" title={name}>{name}</span>
         <span className="ws-hint">
           {duration}
           {a?.state === "ready" ? <> · {t("ws.inputs.shots", { count: a.shots ?? 0 })}{a.transcript ? ` · ${t("ws.inputs.withTranscript")}` : ""}</> : null}
@@ -42,8 +45,8 @@ function AssetLine({ s, canEdit, onOpenFile, onPrepare, onRemove }: {
         <Tooltip title={t("ws.inputs.prepareAgain")}><button type="button" className="ws-icon-button" aria-label={t("ws.inputs.prepareAgain")} onClick={() => onPrepare(s.ref, true)}><RotateCcw size={13} /></button></Tooltip>
       ) : null}
       {canEdit ? (
-        <Popconfirm title={t("ws.inputs.removeConfirm", { name: s.label })} onConfirm={() => onRemove(s)} okText={t("ws.inputs.remove")} cancelText={t("common.cancel")}>
-          <button type="button" className="ws-icon-button" aria-label={t("ws.inputs.removeNamed", { name: s.label })}><Trash2 size={13} /></button>
+        <Popconfirm title={t("ws.inputs.removeConfirm", { name })} onConfirm={() => onRemove(s)} okText={t("ws.inputs.remove")} cancelText={t("common.cancel")}>
+          <button type="button" className="ws-icon-button" aria-label={t("ws.inputs.removeNamed", { name })}><Trash2 size={13} /></button>
         </Popconfirm>
       ) : null}
     </li>
@@ -100,10 +103,7 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
       {active.length || recent.length ? (
         <section aria-label={t("ws.jobs.title")}>
           <h4 className="ws-inputs__h">{t("ws.jobs.title")}</h4>
-          <div className="ws-inputs__jobs">
-            {active.map((j) => <JobCard key={j.id} job={j} onStop={canEdit ? (x) => stop.mutate(x) : undefined} stopping={stop.isPending && stop.variables?.id === j.id} />)}
-            {recent.map((j) => <JobCard key={j.id} job={j} />)}
-          </div>
+          <JobList jobs={[...active, ...recent]} onStop={canEdit ? (x) => stop.mutate(x) : undefined} stopping={stop.isPending ? stop.variables?.id ?? null : null} />
         </section>
       ) : null}
 
@@ -190,7 +190,7 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
 
       <AudioSummary projectId={projectId} canProduce={canProduce} />
 
-      <AgGoProjectPicker projectId={projectId} picked={all} open={projectPicker} onClose={() => setProjectPicker(false)} />
+      <AgGoProjectDrawer projectId={projectId} picked={all} open={projectPicker} onClose={() => setProjectPicker(false)} />
       {videoId ? <FootagePicker projectId={projectId} videoId={videoId} sources={all} open={footagePicker} onClose={() => setFootagePicker(false)} /> : null}
     </div>
   );
