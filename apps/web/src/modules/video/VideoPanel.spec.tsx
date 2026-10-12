@@ -77,6 +77,24 @@ describe("video preview tab", { timeout: 20_000 }, () => {
     fireEvent.click(ok[ok.length - 1]!);
     await waitFor(() => expect(ws.startRender).toHaveBeenCalledWith("v1", { kind: "render_final" }));
   });
+
+  it("saves a Premiere export started here once it is done, and not the older ones", async () => {
+    const saved: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { saved.push(this.href); });
+    const zip = "https://r2.test/xuat.zip?sig=1";
+    ws.startRender.mockResolvedValueOnce({ id: "j9", kind: "export_premiere", status: "queued" });
+    ws.listRenders.mockReset();
+    ws.listRenders.mockResolvedValueOnce({ renders: [r({ jobId: "j2", kind: "export_premiere", url: "https://r2.test/cu.zip" })], jobs: [], thumbnails: [] })
+      .mockResolvedValue({ renders: [r({ jobId: "j9", kind: "export_premiere", url: zip }), r({ jobId: "j2", kind: "export_premiere", url: "https://r2.test/cu.zip" })], jobs: [], thumbnails: [] });
+    wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={(n) => ORDER.indexOf("producer") >= ORDER.indexOf(n)} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Xuất Premiere/ }));
+    await waitFor(() => expect(ws.startRender).toHaveBeenCalledWith("v1", { kind: "export_premiere" }));
+    await waitFor(() => expect(saved).toEqual([zip]));
+    fireEvent.click(screen.getByRole("button", { name: /Dựng lại từ kế hoạch/ }));
+    await waitFor(() => expect(ws.listRenders.mock.calls.length).toBeGreaterThanOrEqual(3));
+    expect(saved).toEqual([zip]);
+    click.mockRestore();
+  });
 });
 
 describe("project audio", { timeout: 20_000 }, () => {

@@ -93,6 +93,7 @@ export const wsEn: Messages<typeof wsVi> = {
     renderFinal: "Render the final",
     finalConfirm: "Render the final video from timeline revision {{revision}} on the farm?",
     exportPremiere: "Export to Premiere",
+    exportSaving: "The Premiere export is done, downloading it",
     renderFailed: "Could not start the render",
     noRenders: "No render yet",
     player: "Render player",
