@@ -136,7 +136,10 @@ xem nhóm mình; người khác 403.
 ## Luồng chat với agent
 
 - `GET /projects/:projectId/threads` (viewer); `POST {title?, learning?}` (editor) → Thread
-- `GET /threads/:threadId` → `ThreadDetail` (tin nhắn, `refs`, `useLessons`); `GET /threads/:threadId/messages?afterSeq`
+- `GET /threads/:threadId` → `ThreadDetail` (tin nhắn, `refs`, `useLessons`); `GET /threads/:threadId/messages?afterSeq`.
+  Tin của agent có `changedFiles: {path, change: 'added'|'modified'|'deleted', version_id, before_version_id, added?,
+  removed?}[] | null` (từ 0038): file lượt đó đổi, mỗi đường dẫn một dòng, bản cuối của lượt so với bản ngay trước lượt;
+  `added`/`removed` là số dòng (chỉ khi cả hai bản là chữ ≤ 1 MB); `null` = lượt cũ hoặc chưa xong.
 - `POST /threads/:threadId/messages {text, attachments?: path[]}` (editor) → `{message, turn}`; lượt agent chạy trong worker
 - `POST /threads/:threadId/messages/:messageId/cancel` (editor) → Dừng lượt (kill cả cây tiến trình, giữ phần đã viết)
 - `PATCH /threads/:threadId {title}`, `PUT /threads/:threadId/learning {useLessons, threads}`, `DELETE` (editor)

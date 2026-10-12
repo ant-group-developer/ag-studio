@@ -11,7 +11,7 @@ import {
   verifyAgentToken, type StudioDb,
 } from "../src/index.js";
 import { world } from "./helpers.js";
-import { listAudit } from "../src/index.js";
+import { listAudit, messageView } from "../src/index.js";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const FAKE = join(ROOT, "fixtures", "fake-studio-agent.mjs");
@@ -90,6 +90,12 @@ describe("agent runner (fake CLI, real MCP server)", { timeout: 60_000 }, () => 
       .toEqual([["mcp__studio__video_create", false], ["Write", false]]);
     expect(listVideos(db, project.id).map((v) => v.title)).toEqual(["Hội An đêm"]);
     expect(listFileVersions(db, project.id, "channel/notes.md")[0]).toMatchObject({ author_kind: "agent", message_id: turn!.id });
+    // the turn remembers what it changed: the file it wrote and the brief its Studio tool wrote
+    const video = listVideos(db, project.id)[0]!;
+    expect(messageView(done).changedFiles).toEqual([
+      { path: "channel/notes.md", change: "added", version_id: listFileVersions(db, project.id, "channel/notes.md")[0]!.id, before_version_id: null, added: 1, removed: 0 },
+      expect.objectContaining({ path: `videos/${video.id}/brief.md`, change: "added", before_version_id: null, removed: 0 }),
+    ]);
     expect(readFileSync(join(dir, ".studio", "history", `${thread.id}.md`), "utf8")).toContain("Mình tạo video nhé");
     expect(db.get<{ n: number }>("SELECT COUNT(*) AS n FROM llm_calls WHERE source = 'claude-agent' AND attempt_id = ?", [turn!.id])?.n).toBe(1);
     // for the Claude stats: who it was for, which team, the cache split, the steps

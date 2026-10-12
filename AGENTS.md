@@ -79,8 +79,10 @@ nhưng không code nào đọc.
   `.studio/` (Studio ghi; chỉ `playbook.yaml` người sửa được). Đường bảo vệ và quyền ghi: `accessFor` (`workspace/files.ts`).
 - DB là nguồn sự thật cho team/dự án/video/nguồn/luồng chat/tin nhắn/job/revision timeline/thẻ xác nhận; file là nguồn sự
   thật cho tài liệu. Mỗi lần file đổi ghi `project_file_versions` (người, agent, Studio).
-- Bảng (migration `0030`–`0037`): `projects` (+`voice`, `music`), `videos`, `project_sources`, `video_revisions` (chỉ timeline
-  v4), `project_file_versions`, `agent_threads`, `thread_refs`, `agent_messages`, `step_marks`, `thread_summaries`,
+- Bảng (migration `0030`–`0038`): `projects` (+`voice`, `music`), `videos`, `project_sources`, `video_revisions` (chỉ timeline
+  v4), `project_file_versions`, `agent_threads`, `thread_refs`, `agent_messages` (+`changed_files` 0038: file lượt đó đổi,
+  `turnChangedFiles` trong `workspace/file-changes.ts`; runner quét thư mục với tác giả Studio trước lượt để file job/seed
+  không tính cho lượt), `step_marks`, `thread_summaries`,
   `lesson_proposals`, `project_jobs`, `project_farm_jobs`, `prepared_assets`, `agent_actions`, `audit_log` (nhật ký hoạt động,
   0036). Dùng chung từ trước: `teams`,
   `team_members`, `team_skills`, `sign_audit_log`, `youtube_cache`, `llm_calls`, `studio_settings`, `studio_voice_lines`,

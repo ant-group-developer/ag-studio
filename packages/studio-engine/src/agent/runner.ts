@@ -15,6 +15,7 @@ import { acquireClaudeSlot, CHAT_SLOT_LEASE_SECONDS, heartbeatClaudeSlot, idsHol
 import type { StudioDb } from "../studio-db.js";
 import { logAudit } from "../audit-log.js";
 import { projectSettingsOf } from "@harness/contracts";
+import { turnChangedFiles } from "../workspace/file-changes.js";
 import { projectDir, scanWorkspace } from "../workspace/files.js";
 import { playbookContextLines, playbookStatus, type StepFact } from "../workspace/playbook-status.js";
 import { getProject, getVideo } from "../workspace/project-db.js";
@@ -28,7 +29,7 @@ import { agentSystemPrompt, agentTurnPrompt, youtubeBlockLines } from "./prompt.
 import { youtubeBlock } from "../settings.js";
 import {
   cancelRequested, finishTurn, getMessage, getThread, listThreadRefs, markAgentTurnRunning, markSessionStarted, nextPendingAgentTurns,
-  orphanedAgentTurns, postSystemMessage, queueFollowUp, requeueAgentTurn, resetSession, turnInput, updateRunningTurn, type MessageRecord,
+  orphanedAgentTurns, postSystemMessage, queueFollowUp, requeueAgentTurn, resetSession, setTurnChangedFiles, turnInput, updateRunningTurn, type MessageRecord,
 } from "./threads-db.js";
 import { signAgentToken } from "./token.js";
 
@@ -144,6 +145,9 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
     const project = getProject(db, thread.project_id)!;
     const video = thread.video_id ? getVideo(db, thread.video_id) ?? null : null;
     const dir = seedWorkspace(o.workspacesRoot, project);
+    // what changed since the last version (seeded files, files a job wrote) is Studio's, not this turn's
+    try { if (!opts.recap) scanWorkspace(db, { projectId: project.id, dir, author: { kind: "studio", id: null }, now: now() }); }
+    catch (e) { logger.warn("workspace not scanned before the turn", { message_id: message.id, error: String(e) }); }
     const turnDir = join(o.dataRoot, "agent-runs", message.id);
     mkdirSync(turnDir, { recursive: true });
     const deadline = Date.now() + o.deadlineMs;
@@ -267,6 +271,8 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
       let changed: string[] = [];
       if (out.status !== "rate_limited") {
         ({ changed } = scanWorkspace(db, { projectId: project.id, dir, author: { kind: "agent", id: message.created_by, messageId }, now: now() }));
+        try { setTurnChangedFiles(db, messageId, turnChangedFiles(db, project.id, messageId), now()); }
+        catch (e) { logger.warn("turn's changed files not kept", { message_id: messageId, error: String(e) }); }
         writeHistory(thread.id, dir);
         const fixing = out.status === "done" && message.trigger !== "autofix" && projectSettingsOf(project.settings).auto_fix
           ? askToFix(thread.id, dir, changed, message) : false;
