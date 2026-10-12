@@ -139,7 +139,9 @@ node --require ts-node/register ../../node_modules/typeorm/cli.js migration:run 
 - Thư mục dự án: `STUDIO_WORKSPACES_ROOT` (mặc định `<STUDIO_DATA_ROOT>/workspaces`, máy dev
   `E:\ag-local\studio-data\harness\workspaces`). Phải nằm ngoài mọi repo (CLAUDE.md của thư mục cha sẽ lọt vào agent).
 - Việc nền của dự án (chuẩn bị video, crawl, dựng timeline, render, thumbnail, học phong cách) chạy trong worker,
-  `STUDIO_JOB_LANES` việc cùng lúc (mặc định 2). Việc dùng farm (đọc lời thoại, lời dẫn, render) cần máy `local-render`
+  `STUDIO_JOB_LANES` việc cùng lúc (mặc định 2), thêm một việc cho mỗi máy farm đang rảnh tới `STUDIO_JOB_LANES_MAX`
+  (mặc định 8); chuẩn bị video giải mã hình trên worker tối đa `STUDIO_DECODE_LANES` cái cùng lúc (mặc định bằng
+  `STUDIO_JOB_LANES`), lời thoại gửi farm ngay khi tải xong nên đọc song song với dò cảnh. Việc dùng farm (đọc lời thoại, lời dẫn, render) cần máy `local-render`
   **online** ở web farm 3011: farm-api tắt lâu thì render worker không tự nối lại — tắt/bật lại `render-worker`.
 - Log Studio API/worker khi bật bằng `local-stack.mjs` không vào `E:/ag-local/dev-run/*.log` (chạy dưới `cmd.exe`); xem
   trạng thái lượt chat và job trong `studio.db` (`agent_messages`, `project_jobs`) hoặc màn web.

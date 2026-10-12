@@ -54,6 +54,7 @@ export * from "./workspace/eta.js";
 export * from "./workspace/sources-db.js";
 export * from "./workspace/farm.js";
 export * from "./workspace/job-runner.js";
+export * from "./workspace/lanes.js";
 export * from "./workspace/prepare.js";
 export * from "./workspace/video-index.js";
 export * from "./agent/input-tools.js";
