@@ -16,6 +16,7 @@ import { ResearchPanel } from "../modules/research/ResearchPanel";
 import { VideoPanel } from "../modules/video/VideoPanel";
 import { StepRail } from "../modules/playbook/StepRail";
 import { useStepText } from "../modules/playbook/step-text";
+import { ProductTour } from "../modules/onboarding/ProductTour";
 import { ColumnResizer, useColumnWidths } from "../modules/workspace/ColumnResizer";
 import { ProjectNav, VideoStatusBadge } from "../modules/workspace/ProjectNav";
 import { ProjectSettingsPanel } from "../modules/workspace/ProjectSettingsPanel";
@@ -139,7 +140,7 @@ export function ProjectPage() {
         <aside className="ws-aside" aria-label={t("ws.aside.label")}>
           <div className="ws-tabs" role="tablist">
             {TABS.filter((x) => !x.video || videoId).map(({ key: k, icon: Icon }) => (
-              <button key={k} type="button" role="tab" className="ws-tab" aria-selected={tab === k} onClick={() => setAside({ tab: k })}>
+              <button key={k} type="button" role="tab" className="ws-tab" data-tour={`tab-${k}`} aria-selected={tab === k} onClick={() => setAside({ tab: k })}>
                 <Icon size={15} aria-hidden />{t(`ws.aside.${k}`)}
               </button>
             ))}
@@ -163,6 +164,7 @@ export function ProjectPage() {
         <ColumnResizer column="aside" body={() => body.current} onResize={(w, persist) => set("aside", w, persist)} />
       </div>
       {threadId ? <LearningModal projectId={project.id} threadId={threadId} current={learning} open={learningOpen} onClose={() => setLearningOpen(false)} /> : null}
+      <ProductTour kind="project" ready={!!playbook && !!thread} />
     </WorkspaceShell>
   );
 }

@@ -42,6 +42,23 @@ export const wsVi = {
       final: { title: "Render bản cuối", hint: "Xác nhận thẻ \"Render bản cuối\" trong chat hoặc bấm ở tab Xem trước (vai producer)." },
     },
   },
+  tour: {
+    replay: "Xem lại hướng dẫn nhanh",
+    projects: {
+      team: { title: "Nhóm của bạn", description: "Dự án nằm trong nhóm. Bấm vào đây để đổi nhóm, tạo nhóm mới hoặc quản lý thành viên." },
+      "new-project": { title: "Tạo dự án", description: "Mỗi dự án là một kênh YouTube. Trong dự án bạn thêm footage, tạo video và chat với {{ai}}." },
+      start: { title: "Danh sách Bắt đầu", description: "Bảy việc để có video đầu tiên, tự đánh dấu khi bạn làm xong. Mỗi việc có nút Đi tới và Xem cách làm." },
+      guide: { title: "Hướng dẫn", description: "Cách làm từng việc, giọng và nhạc nền, lỗi thường gặp. Mở lúc nào cũng được." },
+    },
+    project: {
+      "new-video": { title: "Video mới", description: "Mỗi video có chat riêng với {{ai}}. Bấm đây, nói video kể gì là bắt đầu." },
+      steps: { title: "Các bước gợi ý", description: "Thanh bước cho biết việc nào xong, việc nào nên làm tiếp. Bấm một bước để xem file và nhờ {{ai}} làm." },
+      composer: { title: "Chat với {{ai}}", description: "Nói điều bạn muốn: viết brief, chọn cảnh, sửa timeline, render. {{ai}} làm trong thư mục của dự án và báo lại." },
+      "tab-inputs": { title: "Đầu vào", description: "Thêm footage từ {{site}}, tài liệu, ảnh, giọng đọc và nhạc nền cho dự án hay cho video này." },
+      "tab-preview": { title: "Xem trước", description: "Bản xem trước và bản cuối của video, file Premiere. Muốn sửa thì nói với {{ai}}." },
+      "tab-files": { title: "Tệp", description: "Mọi thứ {{ai}} viết là file trong dự án: mở, sửa trực tiếp, xem lịch sử thay đổi." },
+    },
+  },
   resize: {
     nav: "Đổi độ rộng cột video",
     aside: "Đổi độ rộng cột bên phải",

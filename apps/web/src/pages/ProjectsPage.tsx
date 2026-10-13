@@ -11,6 +11,7 @@ import { sortRows, type SortDirection } from "../helpers/compare-sort-values";
 import { SortDropdown } from "../helpers/sort-dropdown";
 import { PAGE_TABLE_STICKY } from "../helpers/sticky-table-header";
 import { useViewMode, ViewModeToggle } from "../modules/inputs/picker/PickerParts";
+import { ProductTour } from "../modules/onboarding/ProductTour";
 import { NewProjectModal } from "../modules/workspace/NewProjectModal";
 import { useTeamRole } from "../modules/workspace/use-team-role";
 import { WorkspaceShell } from "../modules/workspace/WorkspaceShell";
@@ -119,7 +120,7 @@ export function ProjectsPage() {
             </div>
             {canCreate ? (
               <div className="ws-page__actions">
-                <Button type="primary" icon={<Plus size={16} />} onClick={() => setCreating(true)}>{t("ws.projects.new")}</Button>
+                <Button type="primary" icon={<Plus size={16} />} onClick={() => setCreating(true)} data-tour="new-project">{t("ws.projects.new")}</Button>
               </div>
             ) : null}
           </div>
@@ -158,6 +159,7 @@ export function ProjectsPage() {
         </div>
       </main>
       {teamId ? <NewProjectModal teamId={teamId} open={creating} onClose={() => setCreating(false)} /> : null}
+      <ProductTour kind="projects" ready={!isLoading && ready && !creating} />
     </WorkspaceShell>
   );
 }

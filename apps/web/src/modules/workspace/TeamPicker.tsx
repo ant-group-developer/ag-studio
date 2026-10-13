@@ -51,7 +51,7 @@ export function TeamPicker({ value, teams, current, isAdmin, onNewTeam }: {
 
   return (
     <Select
-      className="ws-crumbs__select" size="small" variant="borderless" value={value} placeholder={t("ws.shell.pickTeam")} popupMatchSelectWidth={280}
+      className="ws-crumbs__select" data-tour="team" size="small" variant="borderless" value={value} placeholder={t("ws.shell.pickTeam")} popupMatchSelectWidth={280}
       showSearch filterOption={false} searchValue={search} onSearch={setSearch}
       notFoundContent={searching && (isFetching || q !== search.trim()) ? <Spin size="small" /> : t("ws.shell.noTeamFound")}
       options={options}

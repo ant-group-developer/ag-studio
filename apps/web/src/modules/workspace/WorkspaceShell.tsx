@@ -1,12 +1,13 @@
 import { Fragment, useState, type ReactNode } from "react";
 import { Avatar, Dropdown } from "antd";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, Plus, ShieldCheck } from "lucide-react";
+import { ChevronRight, Compass, Plus, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { useStudioClient } from "../../api/studio-client";
 import { rememberedTeam } from "../../helpers/last-team";
 import { useAppUserMenu } from "../common/use-app-user-menu";
+import { useReplayTour } from "../onboarding/ProductTour";
 import { StartChecklist } from "../onboarding/StartChecklist";
 import { NewTeamModal } from "./NewTeamModal";
 import { ProjectPicker } from "./ProjectPicker";
@@ -48,10 +49,12 @@ export function WorkspaceShell({ teamId, teamCrumb = true, project, crumbs = [],
   const { t } = useTranslation();
   const { data: teams } = useTeams();
   const { data: current } = useTeam(teamId);
+  const items = teams?.items ?? [];
+  const replayTour = useReplayTour(items);
   const { menu, picture, initials, nickname, isAdmin } = useAppUserMenu([
     ...(teamId ? [{ key: "team-settings", label: <Link to={`/teams/${teamId}`}>{t("ws.shell.teamSettings")}</Link> }] : []),
+    { key: "tour", icon: <Compass size={14} />, label: t("ws.tour.replay"), onClick: replayTour },
   ]);
-  const items = teams?.items ?? [];
   // the activity log and the Claude stats: Studio admins and team owners
   const canReview = isAdmin || items.some((x) => x.role === "owner");
   // Studio-wide screens (Queue, music) have no team of their own: show the one worked in last
@@ -67,7 +70,7 @@ export function WorkspaceShell({ teamId, teamCrumb = true, project, crumbs = [],
             {!teamCrumb ? null : teams && items.length > 0 ? (
               <TeamPicker value={shown} teams={teams} current={current} isAdmin={isAdmin} onNewTeam={() => setNewTeam(true)} />
             ) : teams ? (
-              <button type="button" className="ws-icon-button ws-icon-button--outline" onClick={() => setNewTeam(true)}>
+              <button type="button" className="ws-icon-button ws-icon-button--outline" data-tour="team" onClick={() => setNewTeam(true)}>
                 <Plus size={14} aria-hidden />{t("ws.shell.newTeam")}
               </button>
             ) : null}

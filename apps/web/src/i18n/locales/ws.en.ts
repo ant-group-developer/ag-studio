@@ -46,6 +46,23 @@ export const wsEn: Messages<typeof wsVi> = {
       final: { title: "Render the final cut", hint: "Confirm the \"Final render\" card in the chat, or press it in the Preview tab (producer role)." },
     },
   },
+  tour: {
+    replay: "Replay the quick tour",
+    projects: {
+      team: { title: "Your team", description: "Projects live in a team. Click here to switch teams, make a new one or manage its people." },
+      "new-project": { title: "Make a project", description: "A project is one YouTube channel. In it you add footage, make videos and chat with {{ai}}." },
+      start: { title: "Getting started", description: "Seven steps to a first video, ticked as you do them. Each has Go there and How to." },
+      guide: { title: "Guide", description: "How to do each step, voice and music, common problems. Open it any time." },
+    },
+    project: {
+      "new-video": { title: "New video", description: "Each video has its own chat with {{ai}}. Click here and say what the video is about to start." },
+      steps: { title: "Suggested steps", description: "The steps show what is done and what to do next. Click a step to see its files and ask {{ai}} to do it." },
+      composer: { title: "Chat with {{ai}}", description: "Say what you want: a brief, scene picks, timeline edits, a render. {{ai}} works in the project's folder and reports back." },
+      "tab-inputs": { title: "Inputs", description: "Add footage from {{site}}, documents, images, the voice and the background music, for the project or this video." },
+      "tab-preview": { title: "Preview", description: "The video's preview and final cut, and the Premiere file. To change something, tell {{ai}}." },
+      "tab-files": { title: "Files", description: "Everything {{ai}} writes is a file in the project: open it, edit it yourself, see its history." },
+    },
+  },
   resize: {
     nav: "Resize the video column",
     aside: "Resize the right column",
