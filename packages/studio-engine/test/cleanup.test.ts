@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  createJob, createProject, createThread, createVideo, postUserMessage, sweepProjectAudio, sweepScratch, sweepStudioData, sweepTrash, sweepVoiceStore, voicePath,
+  createJob, createProject, createThread, createVideo, postUserMessage, sweepProjectAudio, sweepRawUploads, sweepScratch, sweepStudioData, sweepTrash, sweepVoiceStore, voicePath,
 } from "../src/index.js";
 import { world } from "./helpers.js";
 import { listAudit, logAudit } from "../src/index.js";
@@ -88,6 +88,14 @@ describe("the cleanup sweep", () => {
     expect([existsSync(join(trash, "old")), existsSync(join(trash, "new.md"))]).toEqual([false, true]);
   });
 
+  it("files a browser put on the bucket and nobody took go after a day; other objects stay", async () => {
+    s = world();
+    for (const k of ["uploads/p1/old", "uploads/library/old", "uploads/p1/new", "library/music/a.m4a"]) await s.bucket.put(k, Buffer.from("x"));
+    for (const k of ["uploads/p1/old", "uploads/library/old", "library/music/a.m4a"]) s.bucket.modified.set(k, DAYS(2));
+    expect(await sweepRawUploads(s.bucket, DAYS(1))).toBe(2);
+    expect([...s.bucket.objects.keys()].sort()).toEqual(["library/music/a.m4a", "uploads/p1/new"]);
+  });
+
   it("one sweep reports each kind; without a voice store or workspaces those parts are skipped", async () => {
     s = world();
     const dataRoot = mkdtempSync(join(tmpdir(), "data-"));
@@ -96,7 +104,7 @@ describe("the cleanup sweep", () => {
     aged(dir, DAYS(1));
     logAudit(s.db, { at: DAYS(91).toISOString(), actorKind: "user", kind: "http", action: "old", outcome: "ok" });
     logAudit(s.db, { at: DAYS(89).toISOString(), actorKind: "user", kind: "http", action: "kept", outcome: "ok" });
-    expect(await sweepStudioData({ db: s.db, bucket: s.bucket, dataRoot }, { now: NOW })).toEqual({ voiceLines: 0, audioObjects: 0, scratch: 1, trash: 0, auditRows: 1 });
+    expect(await sweepStudioData({ db: s.db, bucket: s.bucket, dataRoot }, { now: NOW })).toEqual({ voiceLines: 0, audioObjects: 0, rawUploads: 0, scratch: 1, trash: 0, auditRows: 1 });
     expect(listAudit(s.db, {}).items.map((r) => r.action)).toEqual(["kept"]);
   });
 });

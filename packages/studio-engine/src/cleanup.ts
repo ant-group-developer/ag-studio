@@ -4,13 +4,14 @@
  * - Voice store lines not read for `voiceDays` (a line read again is only one farm job away).
  * - Project audio on the bucket (`library/studio/projects/<id>/voice|music/…`) nothing points at any more: not the
  *   project, not any video revision. Only past `audioGraceDays`.
+ * - Files a browser uploaded to the bucket (`uploads/…`) Studio never took, past `RAW_UPLOAD_HOURS`.
  * - Scratch folders a crashed worker left: `<dataRoot>/job-runs/<job>` of jobs no longer running and
  *   `<dataRoot>/agent-runs/<message>` of turns no longer running, past `SCRATCH_HOURS`.
  * - Files people deleted from a project (`<workspace>/.trash/…`), past `workspaceDays`.
  */
 import { existsSync, readdirSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import type { StudioBucket } from "./bucket.js";
+import { RAW_UPLOADS_PREFIX, type StudioBucket } from "./bucket.js";
 import type { StudioDb } from "./studio-db.js";
 import { voicePath } from "./voice-store.js";
 import { sweepAuditLog } from "./audit-log.js";
@@ -27,10 +28,12 @@ export interface RetentionConfig {
 }
 export const DEFAULT_RETENTION: RetentionConfig = { workspaceDays: 14, voiceDays: 90, audioGraceDays: 7, auditDays: 90 };
 
-export interface CleanupReport { voiceLines: number; audioObjects: number; scratch: number; trash: number; auditRows: number }
+export interface CleanupReport { voiceLines: number; audioObjects: number; rawUploads: number; scratch: number; trash: number; auditRows: number }
 
 /** A scratch folder older than this whose job or turn is not running was left by a crash. */
 export const SCRATCH_HOURS = 6;
+/** A browser's upload Studio has not taken within this was abandoned (a signed PUT link lives an hour). */
+export const RAW_UPLOAD_HOURS = 24;
 
 const DAY_MS = 86_400_000;
 const list = (dir: string): string[] => { try { return readdirSync(dir); } catch { return []; } };
@@ -62,6 +65,13 @@ export async function sweepProjectAudio(db: StudioDb, bucket: StudioBucket, cuto
   }
   const stale = (await bucket.list("library/studio/projects/"))
     .filter((o) => !keep.has(o.key) && o.lastModified.getTime() < cutoff.getTime()).map((o) => o.key);
+  if (stale.length) await bucket.deleteMany(stale);
+  return stale.length;
+}
+
+/** Files a browser put on the bucket that Studio never took (the upload was not finished), written before `cutoff`. */
+export async function sweepRawUploads(bucket: StudioBucket, cutoff: Date): Promise<number> {
+  const stale = (await bucket.list(RAW_UPLOADS_PREFIX)).filter((o) => o.lastModified.getTime() < cutoff.getTime()).map((o) => o.key);
   if (stale.length) await bucket.deleteMany(stale);
   return stale.length;
 }
@@ -108,6 +118,7 @@ export async function sweepStudioData(
   return {
     voiceLines: d.voiceDir ? sweepVoiceStore(d.db, d.voiceDir, new Date(at(r.voiceDays)).toISOString()) : 0,
     audioObjects: await sweepProjectAudio(d.db, d.bucket, new Date(at(r.audioGraceDays))),
+    rawUploads: await sweepRawUploads(d.bucket, new Date(o.now.getTime() - RAW_UPLOAD_HOURS * 3_600_000)),
     scratch: sweepScratch(d.db, d.dataRoot, o.now.getTime() - SCRATCH_HOURS * 3_600_000),
     trash: d.workspacesRoot ? sweepTrash(d.workspacesRoot, at(r.workspaceDays)) : 0,
     auditRows: sweepAuditLog(d.db, new Date(at(r.auditDays)).toISOString()),
