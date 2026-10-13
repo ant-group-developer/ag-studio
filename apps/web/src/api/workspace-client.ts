@@ -451,7 +451,11 @@ export interface TimelineSummary {
 }
 
 /** An audio file of the project to use as the voice sample or the music (`sourceId` null: put in context/audio via the Files tab). */
-export interface ProjectAudioFile { path: string; name: string; bytes: number; sourceId: string | null; addedAt: string }
+export interface ProjectAudioFile {
+  path: string; name: string; bytes: number; sourceId: string | null; addedAt: string;
+  /** A link to listen to it for 15 minutes, under the API (`/api/projects/:id/files/stream?…`): no login needed. */
+  listenUrl: string;
+}
 export interface ProjectAudioView {
   voice: Record<string, unknown> | null;
   music: Record<string, unknown> | null;

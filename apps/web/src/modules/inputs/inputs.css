@@ -167,11 +167,47 @@ ol.ws-inputs__list { counter-reset: src; }
 .ws-inputs__grouptag { margin-inline-end: 0; }
 .ws-inputs__grouplist { margin: 0; padding: 0 6px 6px; }
 .ws-inputs .ws-inputs__group > .ws-inputs__more { margin: 0 0 6px 12px; }
-/* Music from several files: tick them, put them in order, say the crossfade. */
-.ws-audio__mix .ws-audio__files { max-height: 36vh; }
-.ws-audio__h { margin: 12px 0 6px; font-size: 13px; font-weight: 600; }
-.ws-audio__order { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 2px; }
-.ws-audio__order li { display: flex; align-items: center; gap: 4px; }
-.ws-audio__ordername { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ws-audio__fade { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; font-size: 13px; }
-.ws-audio__mixfoot { display: flex; justify-content: flex-end; margin-top: 14px; }
+/* The music picker: the project's audio files (find, tick, listen) | the play order (drag, total, crossfade). Side by side,
+   one above the other on a narrow screen. In a modal (a portal): the --ws-* tokens live on :root. */
+.ws-mpick { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; font-size: 13px; }
+.ws-mpick__col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ws-mpick__col--order { padding-left: 16px; border-left: 1px solid var(--ws-line); }
+.ws-mpick__files { list-style: none; margin: 0; padding: 0; max-height: 52vh; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+.ws-mpick__row { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 6px; }
+.ws-mpick__row:hover { background: var(--ws-chip); }
+.ws-mpick__row--on { background: var(--ws-accent-soft); }
+.ws-mpick__none { padding: 8px 6px; }
+.ws-mpick__play {
+  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 999px;
+  border: 1px solid var(--ws-line); background: var(--ws-surface); color: var(--ws-muted); cursor: pointer;
+}
+.ws-mpick__play:hover, .ws-mpick__play[aria-pressed="true"] { border-color: var(--ws-accent-line); color: var(--ws-accent); }
+.ws-mpick__time { flex-shrink: 0; min-width: 38px; text-align: right; font-variant-numeric: tabular-nums; color: var(--ws-faint); }
+.ws-mpick__more { align-self: flex-start; }
+.ws-mpick__head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-height: 24px; }
+.ws-mpick__head strong { font-weight: 600; }
+.ws-mpick__order { list-style: none; margin: 0; padding: 0; max-height: 40vh; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
+.ws-mpick__item {
+  display: flex; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid var(--ws-line); border-radius: 8px;
+  background: var(--ws-surface); position: relative;
+}
+.ws-mpick__item--drag { z-index: 1; box-shadow: var(--ws-shadow-lg); border-color: var(--ws-accent-line); }
+.ws-mpick__handle {
+  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 26px; padding: 0; border: 0;
+  border-radius: 4px; background: none; color: var(--ws-faint); cursor: grab; touch-action: none;
+}
+.ws-mpick__handle:hover { background: var(--ws-chip); color: var(--ws-text); }
+.ws-mpick__handle:focus-visible { outline: 2px solid var(--ws-accent); outline-offset: 1px; }
+.ws-mpick__item--drag .ws-mpick__handle { cursor: grabbing; }
+.ws-mpick__num { flex-shrink: 0; min-width: 18px; text-align: right; color: var(--ws-faint); font-variant-numeric: tabular-nums; }
+.ws-mpick__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-mpick__remove { min-height: 26px; padding: 0 6px; }
+.ws-mpick__empty { margin: 0; padding: 16px 12px; border: 1px dashed var(--ws-line-strong); border-radius: 8px; text-align: center; }
+.ws-mpick__fade { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding-top: 10px; border-top: 1px solid var(--ws-line); }
+.ws-mpick__slider { flex: 1; min-width: 120px; margin: 6px 4px; }
+.ws-audio__mixfoot { display: flex; justify-content: flex-end; margin-top: 4px; }
+@media (max-width: 720px) {
+  .ws-mpick { grid-template-columns: minmax(0, 1fr); }
+  .ws-mpick__col--order { padding-left: 0; padding-top: 12px; border-left: 0; border-top: 1px solid var(--ws-line); }
+  .ws-mpick__files { max-height: 34vh; }
+}
