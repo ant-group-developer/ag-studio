@@ -18,7 +18,7 @@ import type { AgentTokenClaims } from "./token.js";
 import { threadMarkdown } from "./history.js";
 import { getThread, listThreads, videoThread, type ActorRole, type MessageRecord, type ThreadRecord } from "./threads-db.js";
 import { INPUT_TOOLS, type ProjectFootage } from "./input-tools.js";
-import { projectAudioSummary } from "../workspace/project-audio.js";
+import { projectAudioSummary, videoMusicSummary } from "../workspace/project-audio.js";
 import { RESEARCH_TOOLS } from "./research-tools.js";
 import { ACTION_TOOLS } from "./action-tools.js";
 import { TIMELINE_TOOLS } from "./timeline-tools.js";
@@ -68,13 +68,16 @@ const videoBrief = (title: string, brief: string, now: string) =>
 export const PROJECT_TOOLS: AgentTool[] = [
   tool({
     name: "project_info",
-    description: "Thông tin dự án (kênh) đang làm: tên, kênh YouTube, mô tả, ngôn ngữ, khung hình, cài đặt, danh sách video (id, số, tên, trạng thái), và video của luồng này nếu có.",
+    description: "Thông tin dự án (kênh) đang làm: tên, kênh YouTube, mô tả, ngôn ngữ, khung hình, cài đặt, giọng đọc và nhạc nền, danh sách video (id, số, tên, trạng thái), và video của luồng này nếu có (kèm nhạc của video: nhạc riêng do người dùng chọn ở tab Đầu vào của video, không có thì nhạc dự án).",
     input: z.object({}).strict(),
     run: (ctx) => ({
       text: json({
         project: { ...projectView(ctx.project), workspace: ".", audio: projectAudioSummary(ctx.db, ctx.project.id) },
         videos: listVideos(ctx.db, ctx.project.id).map((v) => ({ id: v.id, idx: v.idx, title: v.title, status: v.status, folder: `videos/${v.id}/` })),
-        this_thread: { id: ctx.thread.id, kind: ctx.thread.kind, title: ctx.thread.title, video_id: ctx.thread.video_id },
+        this_thread: {
+          id: ctx.thread.id, kind: ctx.thread.kind, title: ctx.thread.title, video_id: ctx.thread.video_id,
+          ...(ctx.thread.video_id ? { video_music: videoMusicSummary(ctx.db, ctx.project.id, ctx.thread.video_id) } : {}),
+        },
       }),
     }),
   }),

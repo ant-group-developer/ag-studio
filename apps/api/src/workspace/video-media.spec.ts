@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
-import { claimJob, finishJob, getJob, saveLibraryMusic, saveVideoRevision } from '@ag-studio/engine';
+import { claimJob, finishJob, getJob, latestVideoRevision, saveLibraryMusic, saveVideoRevision } from '@ag-studio/engine';
 import { audioTools } from '../studio/audio-tools';
 import { AgGoClientError } from '../ag-go/client';
 
@@ -176,5 +176,44 @@ describe('video media (real studio.db)', () => {
     const cleared = await media.clear(p.id, 'music', req(EDITOR));
     expect(cleared.music).toBeNull();
     expect(cleared.summary.music).toContain('chưa chọn');
+  });
+
+  it("a video's own music overrides the project's and its latest timeline takes it; cleared, it takes the project's again", async () => {
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    const v = await videos.create(p.id, { title: 'Huế' }, req(OWNER));
+    const now = '2026-10-01T00:00:00.000Z';
+    const track = (id: string) => ({
+      schema_version: 'harness.music-track/v1' as const, track_id: id, display_name: id, file: 'library:music/' + id + '.m4a',
+      mood: ['ấm áp'], duration_seconds: 95, loop_ok: true, origin: 'royalty_free' as const, origin_note: 'kho miễn phí',
+      checksum: 'sha256:' + 'a'.repeat(64), active: true, created_at: now, updated_at: now,
+    });
+    saveLibraryMusic(s.engine.db, track('du-an'));
+    saveLibraryMusic(s.engine.db, track('rieng'));
+    expect(await media.videoAudio(v.id)).toMatchObject({ music: null, uses: 'mood', revision: null });
+    await media.fromLibrary(p.id, { trackId: 'du-an' });
+    expect(await media.videoAudio(v.id)).toMatchObject({ music: null, uses: 'project', summary: expect.stringContaining('nhạc của dự án: bài "du-an"') });
+
+    saveVideoRevision(s.engine.db, v.id, { baseRevision: 0, data: timeline(v.id), authorId: OWNER, label: 'fit' });
+    const own = await media.videoFromLibrary(v.id, { trackId: 'rieng', gainDb: -22 }, req(EDITOR));
+    expect(own).toMatchObject({ uses: 'video', music: { track: 'library:music/rieng.m4a', gain_db: -22 }, libraryTrack: { trackId: 'rieng' }, revision: 2 });
+    expect(latestVideoRevision(s.engine.db, v.id)?.data.music).toEqual({ track: 'library:music/rieng.m4a', gain_db: -22, ducking: true });
+    expect((await media.audio(p.id)).music).toMatchObject({ track: 'library:music/du-an.m4a' });
+
+    const back = await media.clearVideo(v.id, req(EDITOR));
+    expect(back).toMatchObject({ music: null, uses: 'project', revision: 3 });
+    expect(latestVideoRevision(s.engine.db, v.id)?.data.music).toMatchObject({ track: 'library:music/du-an.m4a' });
+  });
+
+  it('joining files for the project or a video needs ffmpeg; each file must be in the workspace; at most 20', async () => {
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    const v = await videos.create(p.id, { title: 'Huế' }, req(OWNER));
+    mkdirSync(join(root, p.id, 'context', 'audio'), { recursive: true });
+    for (const n of ['a.mp3', 'b.mp3']) writeFileSync(join(root, p.id, 'context', 'audio', n), 'ID3');
+    const paths = ['context/audio/a.mp3', 'context/audio/b.mp3'];
+    expect(await media.fromFiles(p.id, { paths, crossfadeS: 2 }).catch(code)).toBe('audio_disabled');
+    expect(await media.videoFromFiles(v.id, { paths }, req(EDITOR)).catch(code)).toBe('audio_disabled');
+    expect(await media.fromFiles(p.id, { paths: ['context/audio/a.mp3', 'context/audio/khong.mp3'] }).catch(code)).not.toBe('audio_disabled');
+    expect(await media.fromFiles(p.id, { paths: Array.from({ length: 21 }, () => paths[0]) }).catch(code)).toBe('invalid');
+    expect(await media.fromFiles(p.id, { paths, crossfadeS: 11 }).catch(code)).toBe('invalid');
   });
 });

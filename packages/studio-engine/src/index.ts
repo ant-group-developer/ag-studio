@@ -70,6 +70,7 @@ export * from "./agent/action-tools.js";
 export * from "./workspace/renders.js";
 export * from "./workspace/project-audio.js";
 export * from "./workspace/fit.js";
+export * from "./workspace/video-music.js";
 export * from "./agent/timeline-tools.js";
 export * from "./workspace/thumbnails.js";
 export * from "./workspace/style-watch.js";

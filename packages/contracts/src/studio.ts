@@ -107,6 +107,10 @@ export const ProductionMusicSchema = StudioMusicSchema.extend({
   source: AudioSourceSchema.optional(),
   sha256: z.string().min(1).optional(),
   duration_s: z.number().positive().optional(),
+  /** The files joined into this one track, in order (a track made of several files). */
+  parts: z.array(z.object({ filename: z.string().min(1).max(255), duration_s: z.number().positive() }).strict()).min(2).max(20).optional(),
+  /** Seconds each joined file fades into the next (0: one right after the other). */
+  crossfade_s: z.number().min(0).max(10).optional(),
 }).strict();
 export type ProductionMusic = z.infer<typeof ProductionMusicSchema>;
 

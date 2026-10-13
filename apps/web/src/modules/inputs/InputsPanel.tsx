@@ -8,7 +8,8 @@ import { useWorkspaceClient, type JobView, type SourceItem } from "../../api/wor
 import { FootagePicker } from "./AgGoPickers";
 import { AgGoProjectDrawer } from "./ag-go-projects/AgGoProjectDrawer";
 import { JobList, JobsLine } from "./JobList";
-import { AudioCard, UseAudioButtons } from "./AudioControls";
+import { AudioCard, UseAudioButtons, VideoMusicCard } from "./AudioControls";
+import { useUploadProgress } from "../common/upload-progress";
 import { AgGoProjectList, countAssets, FootageAssets, SummaryBar, type StateFilter } from "./FootageAssets";
 import "./inputs.css";
 
@@ -71,8 +72,13 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
   });
   const remove = useMutation({ mutationFn: (s: SourceItem) => client.removeSource(projectId, s.id), onSuccess: refresh, onError: fail(t("ws.inputs.removeFailed")) });
   const stop = useMutation({ mutationFn: (j: JobView) => client.cancelJob(projectId, j.id), onSuccess: refresh, onError: fail(t("ws.jobs.stopFailed")) });
+  const uploading = useUploadProgress();
   const upload = useMutation({
-    mutationFn: (files: File[]) => Promise.all(files.map((f) => client.uploadSource(projectId, f, videoId))),
+    mutationFn: (files: File[]) => {
+      const progress = uploading.start(files);
+      return Promise.all(files.map((f, i) => client.uploadSource(projectId, f, videoId, { onProgress: progress[i] })));
+    },
+    onSettled: uploading.done,
     onSuccess: (r) => {
       refresh();
       for (const k of ["files", "audio"]) void qc.invalidateQueries({ queryKey: [k, projectId] });
@@ -80,8 +86,13 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
     },
     onError: fail(t("ws.inputs.uploadFailed")),
   });
+  const uploadingReference = useUploadProgress();
   const uploadReference = useMutation({
-    mutationFn: (files: File[]) => Promise.all(files.map((f) => client.uploadSource(projectId, f, undefined, { reference: true }))),
+    mutationFn: (files: File[]) => {
+      const progress = uploadingReference.start(files);
+      return Promise.all(files.map((f, i) => client.uploadSource(projectId, f, undefined, { reference: true, onProgress: progress[i] })));
+    },
+    onSettled: uploadingReference.done,
     onSuccess: (r) => { refresh(); void qc.invalidateQueries({ queryKey: ["files", projectId] }); void message.success(t("ws.inputs.uploaded", { count: r.length })); },
     onError: fail(t("ws.inputs.uploadFailed")),
   });
@@ -105,6 +116,7 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
   return (
     <div className="ws-inputs">
       <AudioCard projectId={projectId} canEdit={canEdit} canProduce={canProduce} />
+      {videoId ? <VideoMusicCard projectId={projectId} videoId={videoId} canEdit={canEdit} /> : null}
 
       {sources.isLoading ? <div className="ws-center"><Spin /></div> : (
         <>
@@ -160,7 +172,9 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
                   <h4 className="ws-inputs__h">{t("ws.inputs.files")}</h4>
                   {canEdit ? (
                     <>
-                      <Button size="small" icon={<Upload size={13} />} loading={upload.isPending} onClick={() => fileInput.current?.click()}>{t("ws.inputs.upload")}</Button>
+                      <Button size="small" icon={<Upload size={13} />} loading={upload.isPending} onClick={() => fileInput.current?.click()}>
+                        {uploading.percent !== null ? t("common.uploading", { pct: uploading.percent }) : t("ws.inputs.upload")}
+                      </Button>
                       <input ref={fileInput} type="file" multiple hidden accept={UPLOAD_ACCEPT} aria-label={t("ws.inputs.upload")}
                         onChange={(e) => { const files = [...(e.target.files ?? [])]; e.target.value = ""; if (files.length) upload.mutate(files); }} />
                     </>
@@ -189,7 +203,9 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
                   <h4 className="ws-inputs__h">{t("ws.inputs.references")}</h4>
                   {canEdit ? (
                     <>
-                      <Button size="small" icon={<Upload size={13} />} loading={uploadReference.isPending} onClick={() => referenceInput.current?.click()}>{t("ws.inputs.uploadReference")}</Button>
+                      <Button size="small" icon={<Upload size={13} />} loading={uploadReference.isPending} onClick={() => referenceInput.current?.click()}>
+                        {uploadingReference.percent !== null ? t("common.uploading", { pct: uploadingReference.percent }) : t("ws.inputs.uploadReference")}
+                      </Button>
                       <input ref={referenceInput} type="file" multiple hidden accept={REFERENCE_ACCEPT} aria-label={t("ws.inputs.uploadReference")}
                         onChange={(e) => { const files = [...(e.target.files ?? [])]; e.target.value = ""; if (files.length) uploadReference.mutate(files); }} />
                     </>

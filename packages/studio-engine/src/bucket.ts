@@ -3,6 +3,7 @@
  * `productions/<id>/audio/<sha>.wav`. `MemoryBucket` backs unit tests; `S3Bucket` is R2/MinIO/the E2E fake S3.
  */
 import { createReadStream, createWriteStream, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import type { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -19,6 +20,8 @@ export interface StudioBucket {
   exists(key: string): Promise<{ size: number } | null>;
   /** Short-lived GET URL for a browser (preview renders, exports); with `downloadName` the browser saves the file. */
   signedGetUrl(key: string, ttlSeconds: number, opts?: SignedUrlOptions): Promise<string>;
+  /** Short-lived PUT URL a browser uploads one file to; it must send this `Content-Type` (signed with the URL). */
+  signedPutUrl(key: string, ttlSeconds: number, opts: { contentType: string }): Promise<string>;
   /** Every object under `prefix` (the cleanup sweep, `cleanup.ts`). */
   list(prefix: string): Promise<BucketObject[]>;
   /** Removes the objects; a missing key is not an error. */
@@ -41,6 +44,17 @@ export function attachmentDisposition(name: string): string {
 }
 
 export const productionKey = (productionId: string, rel: string) => `productions/${productionId}/${rel}`;
+
+/**
+ * Where a browser puts a file before Studio takes it (a project's, or `library` for the team music library):
+ * `uploads/<scope>/<uuid>`. The name travels apart; Studio removes the object once it has the file, and the sweep
+ * removes what was never finished (`sweepRawUploads`).
+ */
+export const RAW_UPLOADS_PREFIX = "uploads/";
+export const rawUploadKey = (scope: string) => `${RAW_UPLOADS_PREFIX}${scope}/${randomUUID()}`;
+/** Whether `key` is a raw upload of `scope` (a key from a browser is checked before Studio reads it). */
+export const isRawUploadKey = (key: string, scope: string) =>
+  key.startsWith(`${RAW_UPLOADS_PREFIX}${scope}/`) && /^[0-9a-f-]{36}$/.test(key.slice(RAW_UPLOADS_PREFIX.length + scope.length + 1));
 
 export class S3Bucket implements StudioBucket {
   private readonly s3: S3Client;
@@ -108,6 +122,12 @@ export class S3Bucket implements StudioBucket {
       ...(opts.downloadName ? { ResponseContentDisposition: attachmentDisposition(opts.downloadName) } : {}),
     }), { expiresIn: ttlSeconds });
   }
+  signedPutUrl(key: string, ttlSeconds: number, opts: { contentType: string }): Promise<string> {
+    // the header stays a header (not hoisted into the query), so the object is stored with the type Studio checked
+    return getSignedUrl(this.s3, new PutObjectCommand({ Bucket: this.opts.bucket, Key: key, ContentType: opts.contentType }), {
+      expiresIn: ttlSeconds, signableHeaders: new Set(["content-type"]), unhoistableHeaders: new Set(["content-type"]),
+    });
+  }
 }
 
 export class MemoryBucket implements StudioBucket {
@@ -137,5 +157,8 @@ export class MemoryBucket implements StudioBucket {
   }
   async signedGetUrl(key: string, _ttlSeconds?: number, opts: SignedUrlOptions = {}): Promise<string> {
     return opts.downloadName ? `memory://${key}?download=${opts.downloadName}` : `memory://${key}`;
+  }
+  async signedPutUrl(key: string, _ttlSeconds: number, opts: { contentType: string }): Promise<string> {
+    return `memory://${key}?put=${encodeURIComponent(opts.contentType)}`;
   }
 }

@@ -36,7 +36,8 @@ description: Viết kế hoạch dựng của một video — thứ tự shot, �
   người lạ nói).
 - `texts`: `kind` title | callout | lower_third; tối đa 64 ký tự; `at_order` là shot neo, `offset_s` tính từ đầu shot đó,
   `duration` 0.5–20 giây; `position` top_left | top_center | top_right | center | bottom_left | bottom_center | bottom_right.
-- `music_mood`: tâm trạng nhạc khi dự án chưa có nhạc riêng (xem `music_list`).
+- `music_mood`: tâm trạng nhạc khi video và dự án chưa có nhạc riêng (xem `music_list`). Nhạc riêng do người dùng chọn ở
+  tab Đầu vào (của dự án, hoặc của riêng video; có thể ghép nhiều bài) — `project_info` cho biết `video_music`.
 - `target_seconds` theo brief (10–3600).
 
 ## `edit-plan.md` — cho người đọc

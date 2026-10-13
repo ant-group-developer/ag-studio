@@ -8,10 +8,11 @@ import { join } from 'node:path';
 import type { Request } from 'express';
 import { z } from 'zod';
 import {
-  AUDIO_MAX_BYTES, AudioImportError, clearProjectAudio, declineProjectNarration, getLibraryMusic, getVideoRevision, importProjectAudio, jobView,
-  latestVideoRevision, listJobs, listVideoRevisions, projectAudio, projectAudioFiles, projectAudioSummary, projectLibraryTrack, queueFit, queueRender,
-  readWorkspaceBytes, requireProject, requireVideo, resolveInside, setProjectLibraryMusic, StudioRunError, timelineSummary, videoRender, videoRenders,
-  VOICE_ORIGINS, type ActorRole, type JobView, type ProjectAudioFile, type RenderKind,
+  AUDIO_MAX_BYTES, AudioImportError, clearProjectAudio, clearVideoMusic, declineProjectNarration, getLibraryMusic, getVideoRevision, importProjectAudio,
+  importProjectMusic, importVideoMusic, jobView, latestVideoRevision, listJobs, listVideoRevisions, musicForVideo, MUSIC_CROSSFADE_MAX_SECONDS,
+  MUSIC_MIX_MAX_PARTS, projectAudio, projectAudioFiles, projectAudioSummary, projectLibraryTrack, queueFit, queueRender, readWorkspaceBytes, requireProject,
+  requireVideo, resolveInside, setProjectLibraryMusic, setVideoLibraryMusic, StudioRunError, timelineSummary, videoLibraryTrack, videoMusicSummary,
+  videoMusicToTimeline, videoOwnMusic, videoRender, videoRenders, VOICE_ORIGINS, type ActorRole, type JobView, type ProjectAudioFile, type RenderKind,
 } from '@ag-studio/engine';
 import { Roles } from '../auth/roles.decorator';
 import { audioTools, requireAudioTools } from '../studio/audio-tools';
@@ -41,6 +42,33 @@ const FromLibrarySchema = z.object({
   gainDb: z.number().min(-40).max(0).optional(),
   ducking: z.boolean().optional(),
 }).strict();
+
+const FromFilesSchema = z.object({
+  /** In the order they play. */
+  paths: z.array(z.string().min(1).max(300)).min(1).max(MUSIC_MIX_MAX_PARTS),
+  crossfadeS: z.number().min(0).max(MUSIC_CROSSFADE_MAX_SECONDS).optional(),
+  gainDb: z.number().min(-40).max(0).optional(),
+  ducking: z.boolean().optional(),
+}).strict();
+
+const musicOptions = (b: { crossfadeS?: number | undefined; gainDb?: number | undefined; ducking?: boolean | undefined }) => ({
+  ...(b.crossfadeS !== undefined ? { crossfadeS: b.crossfadeS } : {}),
+  ...(b.gainDb !== undefined ? { gainDb: b.gainDb } : {}),
+  ...(b.ducking !== undefined ? { ducking: b.ducking } : {}),
+});
+
+/** `GET videos/:id/audio`: the video's own music, which music it takes, and the project's audio files to pick from. */
+export interface VideoAudioResponse {
+  /** The video's own music; null when it takes the project's (or Studio's pick by mood). */
+  music: unknown;
+  uses: 'video' | 'project' | 'mood';
+  summary: string;
+  libraryTrack: ProjectAudioResponse['libraryTrack'];
+  enabled: boolean;
+  files: ProjectAudioFile[];
+  /** The timeline revision a change just wrote (its latest timeline took the music), or null. */
+  revision: number | null;
+}
 
 /** `GET projects/:id/audio`: what is chosen, whether this Studio can take audio in, and the audio files to pick from. */
 export interface ProjectAudioResponse {
@@ -272,6 +300,117 @@ export class VideoMediaController {
       clearProjectAudio(this.engine.db, projectId, kind);
       return this.audio(projectId);
     });
+  }
+
+  /**
+   * Several files of the workspace joined in order into the project's music (editor), one right after the other or each
+   * fading into the next over `crossfadeS`; one file is used as is.
+   */
+  @Post('projects/:projectId/audio/music/from-files')
+  @Roles('editor')
+  @HttpCode(HttpStatus.OK)
+  fromFiles(@Param('projectId') projectId: string, @Body() raw: unknown) {
+    return mapErrors(async () => {
+      const body = parseBody(FromFilesSchema, raw);
+      requireProject(this.engine.db, projectId);
+      const files = this.musicFiles(projectId, body.paths);
+      await this.importing(() => importProjectMusic({ db: this.engine.db, bucket: this.engine.bucket, ...requireAudioTools(this.config) }, {
+        projectId, files, ...musicOptions(body),
+      }));
+      return this.audio(projectId);
+    });
+  }
+
+  /** A video's music: its own (overriding the project's), or which it uses instead, and the audio files to pick from. */
+  @Get('videos/:videoId/audio')
+  @Roles('viewer')
+  videoAudio(@Param('videoId') videoId: string): Promise<VideoAudioResponse> {
+    return mapErrors(() => this.videoAudioOf(videoId, null));
+  }
+
+  /** One file or several joined in order become the video's own music (editor); its latest timeline takes it. */
+  @Post('videos/:videoId/audio/music/from-files')
+  @Roles('editor')
+  @HttpCode(HttpStatus.OK)
+  videoFromFiles(@Param('videoId') videoId: string, @Body() raw: unknown, @Req() req: Request) {
+    return mapErrors(async () => {
+      const body = parseBody(FromFilesSchema, raw);
+      const v = requireVideo(this.engine.db, videoId);
+      const files = this.musicFiles(v.project_id, body.paths);
+      await this.importing(() => importVideoMusic({ db: this.engine.db, bucket: this.engine.bucket, ...requireAudioTools(this.config) }, {
+        videoId, files, ...musicOptions(body),
+      }));
+      return this.videoAudioOf(videoId, this.follow(v.project_id, videoId, req));
+    });
+  }
+
+  /** A track of the music library as the video's own music (editor); its latest timeline takes it. */
+  @Post('videos/:videoId/audio/music/from-library')
+  @Roles('editor')
+  @HttpCode(HttpStatus.OK)
+  videoFromLibrary(@Param('videoId') videoId: string, @Body() raw: unknown, @Req() req: Request) {
+    return mapErrors(async () => {
+      const body = parseBody(FromLibrarySchema, raw);
+      const v = requireVideo(this.engine.db, videoId);
+      const track = getLibraryMusic(this.engine.db, body.trackId);
+      if (!track) throw new NotFoundException({ code: 'not_found', message: `Không có bài ${body.trackId} trong kho nhạc` });
+      await this.importing(async () => setVideoLibraryMusic(this.engine.db, videoId, track, musicOptions(body)));
+      return this.videoAudioOf(videoId, this.follow(v.project_id, videoId, req));
+    });
+  }
+
+  /** The video takes the project's music again (editor); its latest timeline follows when the project has music. */
+  @Delete('videos/:videoId/audio/music')
+  @Roles('editor')
+  clearVideo(@Param('videoId') videoId: string, @Req() req: Request) {
+    return mapErrors(async () => {
+      const v = requireVideo(this.engine.db, videoId);
+      clearVideoMusic(this.engine.db, videoId);
+      return this.videoAudioOf(videoId, this.follow(v.project_id, videoId, req));
+    });
+  }
+
+  private videoAudioOf(videoId: string, revision: number | null): VideoAudioResponse {
+    const v = requireVideo(this.engine.db, videoId);
+    const own = videoOwnMusic(this.engine.db, videoId);
+    const lib = videoLibraryTrack(this.engine.db, videoId);
+    const uses = musicForVideo(this.engine.db, v.project_id, videoId)?.from ?? 'mood';
+    return {
+      music: own, uses, summary: videoMusicSummary(this.engine.db, v.project_id, videoId),
+      libraryTrack: lib ? { trackId: lib.track_id, displayName: lib.display_name, moods: lib.mood, durationSeconds: lib.duration_seconds } : null,
+      enabled: audioTools(this.config) !== null,
+      files: projectAudioFiles(this.engine.db, this.workspace.dir(v.project_id), v.project_id),
+      revision,
+    };
+  }
+
+  /** The video's latest timeline takes its music now (a new revision), or null when nothing changed. */
+  private follow(projectId: string, videoId: string, req: Request): number | null {
+    return videoMusicToTimeline(this.engine.db, { workspaceDir: this.workspace.dir(projectId), projectId, videoId, authorId: req.authContext!.userId });
+  }
+
+  /** Workspace audio files to make music of, each there and not larger than a music track may be. */
+  private musicFiles(projectId: string, paths: string[]): { path: string; filename: string }[] {
+    const dir = this.workspace.dir(projectId);
+    return paths.map((p) => {
+      const { abs } = resolveInside(dir, p);
+      readWorkspaceBytes(dir, p); // exists and readable
+      const name = p.split('/').pop()!;
+      if (statSync(abs).size > AUDIO_MAX_BYTES.music) {
+        throw new PayloadTooLargeException({ code: 'audio_too_large', message: `${name}: lớn hơn ${AUDIO_MAX_BYTES.music / 1024 / 1024} MB` });
+      }
+      return { path: abs, filename: name };
+    });
+  }
+
+  /** An audio file ffmpeg could not use (too short, no sound, a fade too long…) is a 422 saying why. */
+  private async importing<T>(run: () => Promise<T>): Promise<T> {
+    try {
+      return await run();
+    } catch (e) {
+      if (e instanceof AudioImportError) throw new UnprocessableEntityException({ code: e.code, message: e.message });
+      throw e;
+    }
   }
 
   private roleOf(req: Request, teamId: string): ActorRole {

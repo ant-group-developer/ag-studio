@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
+import { MemoryBucket } from '@ag-studio/engine';
 import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
 import type { EngineService } from '../studio/engine.service';
 import { FilesController, safeFileName } from './files.controller';
@@ -129,6 +130,20 @@ describe('workspace routes (real studio.db and folder)', () => {
     expect(await failure(files.upload(p.id, {}, undefined, req(OWNER)))).toBe('BadRequestException:file_missing');
     const res = { setHeader: () => undefined } as unknown as Response;
     expect((await files.raw(p.id, 'context/uploads/Kịch bản.md', res)).getStream()).toBeDefined();
+  });
+
+  it('takes a file the browser put on the bucket by its key, then removes it there', async () => {
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    const bucket = new MemoryBucket();
+    Object.assign(s.engine, { bucket });
+    const key = `uploads/${p.id}/0b9a7c34-5f1e-4d4c-9a51-3f2a1e0c7d11`;
+    await bucket.put(key, Buffer.from('# Ghi chú'));
+    const saved = await files.upload(p.id, { uploadKey: key, name: 'Ghi chú.md', dir: 'context/notes' }, undefined, req(OWNER));
+    expect(saved.path).toBe('context/notes/Ghi chú.md');
+    expect(readFileSync(join(root, p.id, 'context', 'notes', 'Ghi chú.md'), 'utf8')).toBe('# Ghi chú');
+    expect(bucket.objects.has(key)).toBe(false);
+    expect(await failure(files.upload(p.id, { uploadKey: 'uploads/library/0b9a7c34-5f1e-4d4c-9a51-3f2a1e0c7d11', name: 'a.md' }, undefined, req(OWNER))))
+      .toBe('BadRequestException:upload_key');
   });
 
   it('makes an uploaded name safe', () => {

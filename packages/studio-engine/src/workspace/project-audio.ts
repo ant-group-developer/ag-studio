@@ -11,11 +11,11 @@ import {
   ProductionMusicSchema, ProductionVoiceSchema, studioMusicOf, type AudioSource, type MusicTrack, type ProductionMusic, type ProductionVoice,
   type StudioMusic, type VoiceOrigin,
 } from "@harness/contracts";
-import { AudioImportError, MUSIC_DEFAULTS, prepareMusic, prepareVoice, sha256Of, type AudioImportDeps, type AudioKind } from "../audio-import.js";
+import { AudioImportError, MUSIC_DEFAULTS, prepareMusic, prepareMusicMix, prepareVoice, sha256Of, type AudioImportDeps, type AudioKind } from "../audio-import.js";
 import { listLibraryMusic } from "../music-library.js";
 import type { StudioDb } from "../studio-db.js";
 import { productionVoice, type NarrationVoice } from "../voice.js";
-import { requireProject } from "./project-db.js";
+import { requireProject, requireVideo } from "./project-db.js";
 import { listSources } from "./sources-db.js";
 
 /** Audio files a person uploads (Inputs tab or Files tab), by extension. */
@@ -67,9 +67,7 @@ export function projectAudioFiles(db: StudioDb, dir: string, projectId: string):
 
 /** The library track the project's music is, if it is one (`library:music/…`). */
 export function projectLibraryTrack(db: StudioDb, projectId: string): MusicTrack | null {
-  const m = projectAudio(db, projectId).music;
-  if (!m || !m.track.startsWith("library:music/")) return null;
-  return listLibraryMusic(db).find((t) => t.file === m.track) ?? null;
+  return libraryTrackOf(db, projectAudio(db, projectId).music);
 }
 
 /**
@@ -78,14 +76,79 @@ export function projectLibraryTrack(db: StudioDb, projectId: string): MusicTrack
  */
 export function setProjectLibraryMusic(db: StudioDb, projectId: string, track: MusicTrack, o: { gainDb?: number; ducking?: boolean } = {}): ProductionMusic {
   requireProject(db, projectId);
+  const music = libraryMusic(track, o);
+  db.run("UPDATE projects SET music = ?, updated_at = ? WHERE id = ?", [JSON.stringify(music), new Date().toISOString(), projectId]);
+  return music;
+}
+
+/** A library track as music (a retired one cannot be picked). */
+function libraryMusic(track: MusicTrack, o: { gainDb?: number; ducking?: boolean }): ProductionMusic {
   if (!track.active) throw new AudioImportError("audio_invalid", "bài này đã bị gỡ khỏi kho nhạc");
   const sha = track.checksum.startsWith("sha256:") ? track.checksum.slice("sha256:".length) : track.checksum;
-  const music = ProductionMusicSchema.parse({
+  return ProductionMusicSchema.parse({
     track: track.file, gain_db: o.gainDb ?? MUSIC_DEFAULTS.gain_db, ducking: o.ducking ?? MUSIC_DEFAULTS.ducking,
     ...(sha ? { sha256: sha } : {}), ...(track.duration_seconds > 0 ? { duration_s: track.duration_seconds } : {}),
   });
-  db.run("UPDATE projects SET music = ?, updated_at = ? WHERE id = ?", [JSON.stringify(music), new Date().toISOString(), projectId]);
+}
+
+const libraryTrackOf = (db: StudioDb, m: ProductionMusic | null): MusicTrack | null =>
+  (m && m.track.startsWith("library:music/") ? listLibraryMusic(db).find((t) => t.file === m.track) ?? null : null);
+
+// ---------------------------------------------------------------------------
+// A video's own music: overrides the project's (video → project → Studio's pick by mood when the timeline is built)
+// ---------------------------------------------------------------------------
+
+/** A video's own music, or null (it takes the project's). */
+export function videoOwnMusic(db: StudioDb, videoId: string): ProductionMusic | null {
+  return parse(db.get<{ music: string | null }>("SELECT music FROM videos WHERE id = ?", [videoId])?.music ?? null, ProductionMusicSchema);
+}
+
+/** The library track a video's own music is, if it is one. */
+export function videoLibraryTrack(db: StudioDb, videoId: string): MusicTrack | null {
+  return libraryTrackOf(db, videoOwnMusic(db, videoId));
+}
+
+/** The music a video's timeline takes, and whose: its own, else the project's; null when Studio picks by mood. */
+export function musicForVideo(db: StudioDb, projectId: string, videoId: string): { music: StudioMusic; from: "video" | "project" } | null {
+  const own = videoOwnMusic(db, videoId);
+  if (own) return { music: studioMusicOf(own), from: "video" };
+  const project = projectMusic(db, projectId);
+  return project ? { music: project, from: "project" } : null;
+}
+
+function setVideoMusic(db: StudioDb, videoId: string, music: ProductionMusic | null): void {
+  db.run("UPDATE videos SET music = ?, updated_at = ? WHERE id = ?", [music ? JSON.stringify(music) : null, new Date().toISOString(), videoId]);
+}
+
+/** One file or several joined (`importMusic`) become a video's own music. */
+export async function importVideoMusic(d: AudioImportDeps, o: MusicFiles & { videoId: string }): Promise<ProductionMusic> {
+  const v = requireVideo(d.db, o.videoId);
+  const music = await importMusic(d, v.project_id, o);
+  setVideoMusic(d.db, v.id, music);
   return music;
+}
+
+/** A library track becomes a video's own music. */
+export function setVideoLibraryMusic(db: StudioDb, videoId: string, track: MusicTrack, o: { gainDb?: number; ducking?: boolean } = {}): ProductionMusic {
+  requireVideo(db, videoId);
+  const music = libraryMusic(track, o);
+  setVideoMusic(db, videoId, music);
+  return music;
+}
+
+/** The video takes the project's music again. */
+export function clearVideoMusic(db: StudioDb, videoId: string): void {
+  requireVideo(db, videoId);
+  setVideoMusic(db, videoId, null);
+}
+
+/** What the agent and the web are told of a video's music. */
+export function videoMusicSummary(db: StudioDb, projectId: string, videoId: string): string {
+  const own = videoOwnMusic(db, videoId);
+  if (!own) return `nhạc của dự án: ${projectAudioSummary(db, projectId).music}`;
+  const lib = libraryTrackOf(db, own);
+  return lib ? `nhạc riêng của video: bài "${lib.display_name}" trong kho nhạc, ${own.gain_db} dB${own.ducking ? ", nhỏ lại khi có lời" : ""}`
+    : ownMusicWords(own, "của video");
 }
 
 export interface ProjectAudio { voice: ProductionVoice | null; music: ProductionMusic | null }
@@ -119,37 +182,79 @@ export async function importProjectAudio(d: AudioImportDeps, o: {
   origin?: VoiceOrigin; referenceText?: string | null; gainDb?: number; ducking?: boolean;
 }): Promise<ProductionVoice | ProductionMusic> {
   requireProject(d.db, o.projectId);
+  if (o.kind === "music") {
+    return importProjectMusic(d, {
+      projectId: o.projectId, files: [{ path: o.file, filename: o.source.kind === "upload" ? o.source.filename : "music" }], source: o.source,
+      ...(o.gainDb !== undefined ? { gainDb: o.gainDb } : {}), ...(o.ducking !== undefined ? { ducking: o.ducking } : {}),
+    });
+  }
+  if (!o.origin) throw new AudioImportError("audio_invalid", "chọn nguồn gốc của giọng");
   const work = mkdtempSync(join(tmpdir(), "studio-project-audio-"));
   try {
     const now = new Date().toISOString();
-    if (o.kind === "voice") {
-      if (!o.origin) throw new AudioImportError("audio_invalid", "chọn nguồn gốc của giọng");
-      const out = join(work, "voice.wav");
-      const { duration_s } = await prepareVoice(d, o.file, out);
-      const sha = await sha256Of(out);
-      const key = `library/studio/projects/${o.projectId}/voice/${sha}.wav`;
-      await d.bucket.putFile(key, out, "audio/wav");
-      const voice = ProductionVoiceSchema.parse({
-        mode: "clone", reference: `library:${key.slice("library/".length)}`, reference_text: o.referenceText?.trim() || null, speed: 1,
-        origin: o.origin, source: o.source, sha256: sha, duration_s, confirmed_by: o.userId, confirmed_at: now,
-      });
-      d.db.run("UPDATE projects SET voice = ?, updated_at = ? WHERE id = ?", [JSON.stringify(voice), now, o.projectId]);
-      return voice;
-    }
-    const out = join(work, "music.m4a");
-    const { duration_s } = await prepareMusic(d, o.file, out);
+    const out = join(work, "voice.wav");
+    const { duration_s } = await prepareVoice(d, o.file, out);
     const sha = await sha256Of(out);
-    const key = `library/studio/projects/${o.projectId}/music/${sha}.m4a`;
-    await d.bucket.putFile(key, out, "audio/mp4");
-    const music = ProductionMusicSchema.parse({
-      track: `library:${key.slice("library/".length)}`, gain_db: o.gainDb ?? MUSIC_DEFAULTS.gain_db, ducking: o.ducking ?? MUSIC_DEFAULTS.ducking,
-      source: o.source, sha256: sha, duration_s,
+    const key = `library/studio/projects/${o.projectId}/voice/${sha}.wav`;
+    await d.bucket.putFile(key, out, "audio/wav");
+    const voice = ProductionVoiceSchema.parse({
+      mode: "clone", reference: `library:${key.slice("library/".length)}`, reference_text: o.referenceText?.trim() || null, speed: 1,
+      origin: o.origin, source: o.source, sha256: sha, duration_s, confirmed_by: o.userId, confirmed_at: now,
     });
-    d.db.run("UPDATE projects SET music = ?, updated_at = ? WHERE id = ?", [JSON.stringify(music), now, o.projectId]);
-    return music;
+    d.db.run("UPDATE projects SET voice = ?, updated_at = ? WHERE id = ?", [JSON.stringify(voice), now, o.projectId]);
+    return voice;
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
+}
+
+/** Files to make one background track of, in order. */
+export interface MusicFiles {
+  files: { path: string; filename: string }[];
+  /** Seconds each file fades into the next when there are several (default 0: one right after the other). */
+  crossfadeS?: number;
+  gainDb?: number;
+  ducking?: boolean;
+  /** Where a single file came from (default: an upload under its name). */
+  source?: AudioSource;
+}
+
+/**
+ * Background music made of one file or several joined in order (`prepareMusicMix`), kept in the bucket by content
+ * under the project (`library:studio/projects/<id>/music/<sha>.m4a`, which the cleanup sweep keeps while anything
+ * points at it). Nothing is set: the caller says whose music it is.
+ */
+export async function importMusic(d: AudioImportDeps, projectId: string, o: MusicFiles): Promise<ProductionMusic> {
+  if (!o.files.length) throw new AudioImportError("audio_invalid", "chọn ít nhất một file nhạc");
+  const work = mkdtempSync(join(tmpdir(), "studio-project-music-"));
+  try {
+    const out = join(work, "music.m4a");
+    const several = o.files.length > 1;
+    const crossfade = o.crossfadeS ?? 0;
+    const made: { duration_s: number; parts?: number[] } = several
+      ? await prepareMusicMix(d, o.files, out, { crossfadeS: crossfade })
+      : await prepareMusic(d, o.files[0]!.path, out);
+    const sha = await sha256Of(out);
+    const key = `library/studio/projects/${projectId}/music/${sha}.m4a`;
+    await d.bucket.putFile(key, out, "audio/mp4");
+    return ProductionMusicSchema.parse({
+      track: `library:${key.slice("library/".length)}`, gain_db: o.gainDb ?? MUSIC_DEFAULTS.gain_db, ducking: o.ducking ?? MUSIC_DEFAULTS.ducking,
+      sha256: sha, duration_s: made.duration_s,
+      ...(made.parts
+        ? { parts: o.files.map((f, i) => ({ filename: f.filename.slice(0, 255), duration_s: made.parts![i]! })), crossfade_s: crossfade }
+        : { source: o.source ?? { kind: "upload", filename: o.files[0]!.filename.slice(0, 255) } }),
+    });
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
+/** One file or several joined (`importMusic`) become the project's music. */
+export async function importProjectMusic(d: AudioImportDeps, o: MusicFiles & { projectId: string }): Promise<ProductionMusic> {
+  requireProject(d.db, o.projectId);
+  const music = await importMusic(d, o.projectId, o);
+  d.db.run("UPDATE projects SET music = ?, updated_at = ? WHERE id = ?", [JSON.stringify(music), new Date().toISOString(), o.projectId]);
+  return music;
 }
 
 /** No narration for the project's videos: their lines become subtitles. */
@@ -162,6 +267,14 @@ export function declineProjectNarration(db: StudioDb, projectId: string, userId:
 
 export function clearProjectAudio(db: StudioDb, projectId: string, kind: AudioKind): void {
   db.run(`UPDATE projects SET ${kind === "voice" ? "voice" : "music"} = NULL, updated_at = ? WHERE id = ?`, [new Date().toISOString(), projectId]);
+}
+
+/** Own music in words: "nhạc riêng của dự án (3 bài ghép, chuyển mờ 2 s; 412 s), -18 dB, nhỏ lại khi có lời". */
+export function ownMusicWords(m: ProductionMusic, whose: string): string {
+  const made = m.parts ? `${m.parts.length} bài ghép, ${m.crossfade_s ? `chuyển mờ ${m.crossfade_s} s` : "nối thẳng"}` : null;
+  const length = m.duration_s ? `${Math.round(m.duration_s)} s` : null;
+  const detail = [made, length].filter(Boolean).join("; ");
+  return `nhạc riêng ${whose}${detail ? ` (${detail})` : ""}, ${m.gain_db} dB${m.ducking ? ", nhỏ lại khi có lời" : ""}`;
 }
 
 /** What the agent and the web are told of the project's audio (no bucket keys). */
@@ -177,7 +290,7 @@ export function projectAudioSummary(db: StudioDb, projectId: string): { voice: s
   const m = a.music;
   const lib = m ? projectLibraryTrack(db, projectId) : null;
   const music = lib ? `bài "${lib.display_name}" trong kho nhạc${lib.duration_seconds ? ` (${Math.round(lib.duration_seconds)} s)` : ""}, ${m!.gain_db} dB${m!.ducking ? ", nhỏ lại khi có lời" : ""}`
-    : m ? `nhạc riêng của dự án${m.duration_s ? ` (${Math.round(m.duration_s)} s)` : ""}, ${m.gain_db} dB${m.ducking ? ", nhỏ lại khi có lời" : ""}`
+    : m ? ownMusicWords(m, "của dự án")
     : "chưa chọn (Studio chọn nhạc trong thư viện theo tâm trạng trong kế hoạch dựng hoặc branding)";
   return { voice, music };
 }

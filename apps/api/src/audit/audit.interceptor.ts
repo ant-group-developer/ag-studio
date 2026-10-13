@@ -15,7 +15,7 @@ const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const KEEP = new Set([
   'kind', 'ref', 'label', 'name', 'title', 'role', 'userId', 'videoId', 'threadId', 'nodeId', 'media', 'path', 'status', 'decision', 'again', 'prepare',
   'active', 'displayName', 'moods', 'origin', 'assistantName', 'claudeMaxConcurrent', 'learning', 'gainDb', 'ducking', 'stepKey', 'mode', 'language',
-  'aspect', 'channelUrl', 'crawl', 'loopOk', 'assetIds', 'archived', 'useLessons', 'revision',
+  'aspect', 'channelUrl', 'crawl', 'loopOk', 'assetIds', 'archived', 'useLessons', 'revision', 'purpose', 'size', 'contentType',
 ]);
 /** Body fields kept only as their size: what people wrote is not the log's to keep. */
 const SIZE_ONLY = new Set(['text', 'content', 'prompt', 'referenceText', 'originNote', 'description', 'attachments', 'summary']);

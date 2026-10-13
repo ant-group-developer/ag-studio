@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
-import { addSource, claimJob, getJob, listMessages } from '@ag-studio/engine';
+import { addSource, claimJob, getJob, listMessages, MemoryBucket } from '@ag-studio/engine';
 import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
 import type { EngineService } from '../studio/engine.service';
 import type { SiteNameService } from '../ag-go/site-name.service';
@@ -174,5 +174,43 @@ describe('inputs (real studio.db)', () => {
     expect(music.source).toMatchObject({ ref: 'context/audio/Nhạc nền.MP3', mediaType: 'audio' });
     expect(await inputs.upload(p.id, {}, tmp('dai.wav', 101 * 1024 * 1024), req(EDITOR)).catch(code)).toBe('file_too_large');
     expect(await inputs.upload(p.id, {}, tmp('anh.png', 60 * 1024 * 1024), req(EDITOR)).catch(code)).toBe('file_too_large');
+  });
+
+  it('a file put straight on the bucket: checked before the link is signed, taken by its key, then removed there', async () => {
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    const bucket = new MemoryBucket();
+    Object.assign(s.engine, { bucket });
+    expect(await inputs.signUpload(p.id, { purpose: 'source', name: 'a.docx', size: 10 }).catch(code)).toBe('docx_not_supported');
+    expect(await inputs.signUpload(p.id, { purpose: 'source', name: 'dai.wav', size: 101 * 1024 * 1024 }).catch(code)).toBe('file_too_large');
+    expect(await inputs.signUpload(p.id, { purpose: 'reference', name: 'notes.md', size: 10 }).catch(code)).toBe('not_video');
+    const link = await inputs.signUpload(p.id, { purpose: 'source', name: 'Nhạc nền.mp3', size: 3, contentType: 'audio/mpeg' });
+    expect(link).toMatchObject({ contentType: 'audio/mpeg', url: `memory://${link.key}?put=audio%2Fmpeg` });
+    expect(link.key.startsWith(`uploads/${p.id}/`)).toBe(true);
+    await bucket.put(link.key, Buffer.from('mp3'));
+    const up = await inputs.upload(p.id, { uploadKey: link.key, name: 'Nhạc nền.mp3', videoId: undefined }, undefined, req(EDITOR));
+    expect(up.source).toMatchObject({ ref: 'context/audio/Nhạc nền.mp3', mediaType: 'audio', meta: { bytes: 3 } });
+    expect(readFileSync(join(root, p.id, 'context', 'audio', 'Nhạc nền.mp3'), 'utf8')).toBe('mp3');
+    expect(bucket.objects.has(link.key)).toBe(false);
+
+    // a reference video, by JSON
+    const ref = await inputs.signUpload(p.id, { purpose: 'reference', name: 'Mẫu.mp4', size: 5 });
+    await bucket.put(ref.key, Buffer.from('video'));
+    expect((await inputs.upload(p.id, { uploadKey: ref.key, name: 'Mẫu.mp4', reference: true }, undefined, req(EDITOR))).source.ref).toBe('context/references/Mẫu.mp4');
+
+    // another project's key, a key that is not an upload, a missing object, a name left out
+    const other = 'uploads/other-project/0b9a7c34-5f1e-4d4c-9a51-3f2a1e0c7d11';
+    await bucket.put(other, Buffer.from('x'));
+    expect(await inputs.upload(p.id, { uploadKey: other, name: 'a.md' }, undefined, req(EDITOR)).catch(code)).toBe('upload_key');
+    expect(bucket.objects.has(other)).toBe(true);
+    expect(await inputs.upload(p.id, { uploadKey: 'library/music/a.m4a', name: 'a.md' }, undefined, req(EDITOR)).catch(code)).toBe('upload_key');
+    const gone = await inputs.signUpload(p.id, { purpose: 'source', name: 'a.md', size: 1 });
+    expect(await inputs.upload(p.id, { uploadKey: gone.key, name: 'a.md' }, undefined, req(EDITOR)).catch(code)).toBe('upload_missing');
+    expect(await inputs.upload(p.id, { uploadKey: gone.key }, undefined, req(EDITOR)).catch(code)).toBe('name_missing');
+
+    // larger on the bucket than the browser said: refused by its real size, and dropped
+    const liar = await inputs.signUpload(p.id, { purpose: 'source', name: 'b.pdf', size: 1 });
+    await bucket.put(liar.key, Buffer.alloc(51 * 1024 * 1024));
+    expect(await inputs.upload(p.id, { uploadKey: liar.key, name: 'b.pdf' }, undefined, req(EDITOR)).catch(code)).toBe('file_too_large');
+    expect(bucket.objects.has(liar.key)).toBe(false);
   });
 });
