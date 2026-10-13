@@ -72,6 +72,17 @@ describe('MusicLibraryController (real studio.db)', () => {
     expect(listLibraryMusic(s.engine.db, { activeOnly: true })).toEqual([]);
   });
 
+  it('only an admin gets a link to put a track on the bucket; a track too large or not uploaded is refused', async () => {
+    expect(await failure(controller().signUpload({ name: 'a.mp3', size: 10 }, req('auth0|editor')))).toEqual({ type: 'ForbiddenException', code: undefined });
+    expect(await failure(controller().signUpload({ name: 'a.mp3', size: 101 * 1024 * 1024 }, req(ADMIN)))).toEqual({ type: 'PayloadTooLargeException', code: 'audio_too_large' });
+    const link = await controller().signUpload({ name: 'a.mp3', size: 10, contentType: 'audio/mpeg' }, req(ADMIN));
+    expect(link.key).toMatch(/^uploads\/library\//);
+    const form = { displayName: 'Sáng', moods: 'calm', origin: 'own', originNote: 'nhóm', uploadKey: link.key, name: 'a.mp3' };
+    expect(await failure(controller().add(form, undefined, req(ADMIN)))).toEqual({ type: 'NotFoundException', code: 'upload_missing' });
+    expect(await failure(controller().add({ ...form, uploadKey: 'uploads/p1/0b9a7c34-5f1e-4d4c-9a51-3f2a1e0c7d11' }, undefined, req(ADMIN))))
+      .toEqual({ type: 'BadRequestException', code: 'upload_key' });
+  });
+
   it.skipIf(!hasTools)('an admin uploads a file: made AAC, kept under library/music/, listed', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'music-up-'));
     const wav = join(dir, 'tone.wav');

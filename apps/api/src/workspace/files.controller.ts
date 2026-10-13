@@ -17,6 +17,7 @@ import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from '../studio/engine.service';
 import { mapErrors } from '../studio/http-errors';
+import { dropRawUpload, RawUploadFields, takeRawUpload, type UploadedTmp } from './raw-uploads';
 import { WorkspaceService } from './workspace.service';
 import { parseBody } from './zod-body';
 
@@ -40,9 +41,13 @@ const WriteSchema = z.object({
   baseSha256: z.string().regex(/^[0-9a-f]{64}$/).nullable().optional(),
 }).strict();
 const RestoreSchema = z.object({ baseSha256: z.string().regex(/^[0-9a-f]{64}$/).nullable().optional() }).strict();
-const UploadFormSchema = z.object({ dir: z.string().max(200).optional() });
+const UploadFormSchema = z.object({ dir: z.string().max(200).optional(), ...RawUploadFields });
 
-interface UploadedTmp { path: string; originalname: string; size: number }
+/** A file for the Files tab is refused only when too large (413). */
+export function checkFileUpload(name: string, size: number): void {
+  const max = uploadMaxBytes(name);
+  if (size > max) throw new PayloadTooLargeException({ code: 'file_too_large', message: `File lớn hơn ${max / 1024 / 1024} MB` });
+}
 
 /** Multipart parsers may hand a UTF-8 file name over as Latin-1 ("Ghi chÃº"): read those bytes as UTF-8 again. */
 function utf8Name(name: string): string {
@@ -125,27 +130,36 @@ export class FilesController {
     }));
   }
 
-  /** Multipart `file` (+ `dir`, default `context/uploads`): saved under its own name, ` (2)`… when taken. Audio ≤ 100 MB, else ≤ 50 MB. */
+  /**
+   * Multipart `file`, or `{uploadKey, name}` once the browser put the file on the bucket (`POST projects/:id/uploads`
+   * with `purpose: "file"`); `dir` defaults to `context/uploads`. Saved under its own name, ` (2)`… when taken. Audio
+   * ≤ 100 MB, else ≤ 50 MB.
+   */
   @Post('upload')
   @Roles('editor')
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(FileInterceptor('file', { dest: tmpdir(), limits: { fileSize: Math.max(WORKSPACE_UPLOAD_MAX_BYTES, AUDIO_UPLOAD_MAX_BYTES), files: 1 } }))
-  async upload(@Param('projectId') projectId: string, @Body() raw: unknown, @UploadedFile() file: UploadedTmp | undefined, @Req() req: Request) {
+  async upload(@Param('projectId') projectId: string, @Body() raw: unknown, @UploadedFile() sent: UploadedTmp | undefined, @Req() req: Request) {
+    let file = sent;
+    let form: z.infer<typeof UploadFormSchema> | null = null;
     try {
-      const form = parseBody(UploadFormSchema, raw);
-      if (!file) throw new BadRequestException({ code: 'file_missing', message: 'Chọn file' });
-      const max = uploadMaxBytes(file.originalname);
-      if (file.size > max) {
-        throw new PayloadTooLargeException({ code: 'file_too_large', message: `File lớn hơn ${max / 1024 / 1024} MB` });
+      form = parseBody(UploadFormSchema, raw);
+      if (!file && form.uploadKey) {
+        if (!form.name) throw new BadRequestException({ code: 'name_missing', message: 'Thiếu tên file' });
+        file = await takeRawUpload(this.engine.bucket, projectId, form.uploadKey, form.name, uploadMaxBytes);
       }
+      if (!file) throw new BadRequestException({ code: 'file_missing', message: 'Chọn file' });
+      checkFileUpload(file.originalname, file.size);
       const dir = this.workspace.dir(projectId);
       const folder = normalizeRelPath(form.dir ?? 'context/uploads');
       const path = this.freePath(dir, folder, safeFileName(file.originalname));
+      const at = file;
       return await mapErrors(() => writeWorkspaceFile(this.engine.db, {
-        projectId, dir, path, content: readFileSync(file.path), baseSha256: null, author: { kind: 'user', id: req.authContext!.userId },
+        projectId, dir, path, content: readFileSync(at.path), baseSha256: null, author: { kind: 'user', id: req.authContext!.userId },
       }));
     } finally {
       if (file) rmSync(file.path, { force: true });
+      await dropRawUpload(this.engine.bucket, projectId, form?.uploadKey);
     }
   }
 
