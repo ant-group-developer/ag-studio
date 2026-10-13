@@ -192,7 +192,9 @@ nhưng không code nào đọc.
   nhóm), `/music` (kho nhạc), `/teams`, `/teams/:teamId` (thành viên, skill, thống kê và nhật ký của nhóm; layout quản trị).
   Chọn project ag-go: drawer toàn màn hình dựng lại **y như trang Projects của ag-go-web** (`modules/inputs/ag-go-projects/`:
   sidebar lọc, ô tìm có gợi ý, sort, list/grid, thẻ và CSS chép từ `project-grid-view` của ag-go; `/projects`, lookup và
-  `/assets/:id/preview-url` của ag-go gọi thẳng); tick nhiều project qua các trang rồi thêm lần lượt, cái bị từ chối giữ tick và
+  `/assets/:id/preview-url` của ag-go gọi thẳng). Chỉ liệt kê project của **menu "Dự án"** của ag-go
+  (`scope=evaluated`, `evaluationStatuses=completed,partially_completed`; danh mục `?granted=true`, thư mục
+  `/folders/options`, tác giả `/projects/owners?scope=evaluated`), không phải "Tất cả dự án" hay "Dự án của tôi"; tick nhiều project qua các trang rồi thêm lần lượt, cái bị từ chối giữ tick và
   báo lý do. Đổi giao diện này thì so với nguồn ag-go-web (`E:\CODE\ag-go-v2\ag-go-web`), đừng tự chế. Picker video: `GET footage`
   + `footage/facets` qua API, chỉ trong các project đã gắn, bảng hoặc lưới (nhớ ở localStorage). Tab Đầu vào (`InputsPanel`):
   thẻ giọng & nhạc, dòng tóm tắt "N video · sẵn sàng · đang chuẩn bị · lỗi" (bấm để lọc; `counts` của `GET sources`), việc nền
