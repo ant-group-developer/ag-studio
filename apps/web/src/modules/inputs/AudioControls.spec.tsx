@@ -4,15 +4,21 @@ import { App as AntApp } from "antd";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n/config";
 import { StudioHttpError } from "../../api/http";
-import type { ProjectAudioView } from "../../api/workspace-client";
+import type { ProjectAudioView, VideoAudioView } from "../../api/workspace-client";
 
 window.matchMedia ??= ((query: string) => ({
   matches: false, media: query, onchange: null,
   addListener: () => {}, removeListener: () => {}, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
 })) as unknown as typeof window.matchMedia;
 
+const MB = (n: number) => n * 1024 * 1024;
 const ws = {
   getAudio: vi.fn(),
+  musicFromFiles: vi.fn(),
+  getVideoAudio: vi.fn(),
+  videoMusicFromFiles: vi.fn(),
+  videoMusicFromLibrary: vi.fn(),
+  clearVideoMusic: vi.fn(),
   audioFromFile: vi.fn(),
   musicFromLibrary: vi.fn(),
   declineVoice: vi.fn(),
@@ -22,7 +28,7 @@ const ws = {
 const studio = { listMusic: vi.fn() };
 vi.mock("../../api/workspace-client", async (orig) => ({ ...(await orig<object>()), useWorkspaceClient: () => ws }));
 vi.mock("../../api/studio-client", async (orig) => ({ ...(await orig<object>()), useStudioClient: () => studio }));
-const { AudioCard, UseAudioButtons } = await import("./AudioControls");
+const { AudioCard, UseAudioButtons, VideoMusicCard } = await import("./AudioControls");
 
 const audio = (over: Partial<ProjectAudioView> = {}): ProjectAudioView => ({
   voice: null, music: null, summary: { voice: "", music: "" }, libraryTrack: null, enabled: true,
@@ -123,8 +129,26 @@ describe("voice and music card", { timeout: 20_000 }, () => {
     fireEvent.click(within(screen.getByRole("group", { name: "Nhạc nền" })).getByRole("button", { name: /Chọn file đã tải/ }));
     const dialog = await screen.findByRole("dialog", { name: "Chọn file làm nhạc nền" });
     expect(dialog).toHaveTextContent("2.0 MB · context/audio/giong.wav");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Chọn giong.wav" }));
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Chọn giong.wav" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Dùng làm nhạc nền" }));
     await waitFor(() => expect(ws.audioFromFile).toHaveBeenLastCalledWith("p1", "music", { path: "context/audio/giong.wav" }));
+  });
+
+  it("joins several uploaded files into the music, in the order put, with the crossfade said", async () => {
+    const files = ["mot.mp3", "hai.mp3", "ba.mp3"].map((name, i) => ({ path: `context/audio/${name}`, name, bytes: MB(1), sourceId: `s${i}`, addedAt: "2026-10-12T00:00:00.000Z" }));
+    ws.getAudio.mockResolvedValue(audio({ files }));
+    ws.musicFromFiles.mockResolvedValue(audio({ music: { track: "library:studio/projects/p1/music/x.m4a", gain_db: -18, ducking: true, duration_s: 412, parts: [{}, {}, {}], crossfade_s: 2 } }));
+    card();
+    fireEvent.click(within(await screen.findByRole("group", { name: "Nhạc nền" })).getByRole("button", { name: /Chọn file đã tải/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Chọn file làm nhạc nền" });
+    for (const n of ["mot.mp3", "hai.mp3", "ba.mp3"]) fireEvent.click(within(dialog).getByRole("checkbox", { name: `Chọn ${n}` }));
+    const order = within(dialog).getByRole("list", { name: "Thứ tự phát" });
+    expect(within(order).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["mot.mp3", "hai.mp3", "ba.mp3"]);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Đưa ba.mp3 lên" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Bỏ mot.mp3" }));
+    fireEvent.change(within(dialog).getByRole("spinbutton", { name: "Chuyển mờ giữa các bài (giây)" }), { target: { value: "3" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Ghép 2 bài làm nhạc nền" }));
+    await waitFor(() => expect(ws.musicFromFiles).toHaveBeenCalledWith("p1", { paths: ["context/audio/ba.mp3", "context/audio/hai.mp3"], crossfadeS: 3 }));
   });
 
   it("uploads several files one by one, says which did not go and why, then asks which to use", async () => {
@@ -187,5 +211,37 @@ describe("buttons on an uploaded audio file", { timeout: 20_000 }, () => {
     ws.getAudio.mockResolvedValue(audio({ enabled: false }));
     wrap(<UseAudioButtons projectId="p1" path="context/audio/giong.wav" canEdit canProduce />);
     await waitFor(() => expect(screen.getByRole("button", { name: /Nhạc nền/ })).toBeDisabled());
+  });
+});
+
+describe("a video's own music", { timeout: 20_000 }, () => {
+  beforeAll(async () => { await i18n.changeLanguage("vi"); });
+  const view = (over: Partial<VideoAudioView> = {}): VideoAudioView => ({
+    music: null, uses: "project", summary: "", libraryTrack: null, enabled: true, files: audio().files, revision: null, ...over,
+  });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    ws.getAudio.mockResolvedValue(audio({ music: { track: "library:music/sang.m4a", gain_db: -18, ducking: true }, libraryTrack: { trackId: "m-sang", displayName: "Sáng sớm", moods: [], durationSeconds: 95 } }));
+  });
+
+  it("says it plays the project's music; its own joined files replace it and the timeline follows; back to the project's", async () => {
+    ws.getVideoAudio.mockResolvedValue(view());
+    ws.videoMusicFromFiles.mockResolvedValue(view({ uses: "video", revision: 4 }));
+    ws.clearVideoMusic.mockResolvedValue(view({ revision: 5 }));
+    wrap(<VideoMusicCard projectId="p1" videoId="v1" canEdit />);
+    const card = await screen.findByRole("group", { name: "Nhạc của video này" });
+    await waitFor(() => expect(card).toHaveTextContent("Dùng nhạc dự án · Kho nhạc: Sáng sớm"));
+    expect(within(card).queryByRole("button", { name: /Dùng nhạc dự án/ })).toBeNull();
+    fireEvent.click(within(card).getByRole("button", { name: /Chọn file đã tải/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Chọn file làm nhạc nền" });
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Chọn giong.wav" }));
+    ws.getVideoAudio.mockResolvedValue(view({ uses: "video", music: { track: "library:studio/projects/p1/music/x.m4a", gain_db: -18, ducking: true, duration_s: 200, parts: [{}, {}], crossfade_s: 0 } }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Dùng làm nhạc nền" }));
+    await waitFor(() => expect(ws.videoMusicFromFiles).toHaveBeenCalledWith("v1", { paths: ["context/audio/giong.wav"] }));
+    expect(await screen.findByText("Đã đặt nhạc cho video, timeline lên bản 4")).toBeInTheDocument();
+    expect(ws.audioFromFile).not.toHaveBeenCalled();
+    await waitFor(() => expect(card).toHaveTextContent("Nhạc riêng · Ghép 2 bài · 3:20 · nối thẳng"));
+    fireEvent.click(within(card).getByRole("button", { name: /Dùng nhạc dự án/ }));
+    await waitFor(() => expect(ws.clearVideoMusic).toHaveBeenCalledWith("v1"));
   });
 });

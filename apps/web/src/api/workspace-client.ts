@@ -460,6 +460,20 @@ export interface ProjectAudioView {
   files: ProjectAudioFile[];
 }
 export type VoiceOrigin = "synthetic" | "own" | "licensed";
+/** A video's music: its own (overriding the project's), which music it takes, and the project's audio files to pick from. */
+export interface VideoAudioView {
+  /** Its own music; null when it takes the project's (`uses: "project"`) or Studio's pick by mood (`"mood"`). */
+  music: Record<string, unknown> | null;
+  uses: "video" | "project" | "mood";
+  summary: string;
+  libraryTrack: ProjectAudioView["libraryTrack"];
+  enabled: boolean;
+  files: ProjectAudioFile[];
+  /** The timeline revision a change just wrote (its latest timeline took the music), or null. */
+  revision: number | null;
+}
+/** Files to join in order into one music track, each fading into the next over `crossfadeS` seconds (0: end to end). */
+export interface MusicFilesInput { paths: string[]; crossfadeS?: number }
 
 // ---- Confirmation cards ----
 /**
@@ -679,6 +693,24 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
       return call("POST", `/api/projects/${enc(projectId)}/audio/${kind}/from-file`, input);
     },
     /** A track of the music library as the project's music (editor; 404 `not_found`, 422 `audio_invalid` when retired). */
+    /** One file, or several joined in order, as the project's music. */
+    musicFromFiles(projectId: string, input: MusicFilesInput): Promise<ProjectAudioView> {
+      return call("POST", `/api/projects/${enc(projectId)}/audio/music/from-files`, input);
+    },
+    getVideoAudio(videoId: string): Promise<VideoAudioView> {
+      return call("GET", `/api/videos/${enc(videoId)}/audio`);
+    },
+    /** One file, or several joined in order, as a video's own music (its latest timeline takes it). */
+    videoMusicFromFiles(videoId: string, input: MusicFilesInput): Promise<VideoAudioView> {
+      return call("POST", `/api/videos/${enc(videoId)}/audio/music/from-files`, input);
+    },
+    videoMusicFromLibrary(videoId: string, trackId: string): Promise<VideoAudioView> {
+      return call("POST", `/api/videos/${enc(videoId)}/audio/music/from-library`, { trackId });
+    },
+    /** The video takes the project's music again. */
+    clearVideoMusic(videoId: string): Promise<VideoAudioView> {
+      return call("DELETE", `/api/videos/${enc(videoId)}/audio/music`);
+    },
     musicFromLibrary(projectId: string, trackId: string): Promise<ProjectAudioView> {
       return call("POST", `/api/projects/${enc(projectId)}/audio/music/from-library`, { trackId });
     },

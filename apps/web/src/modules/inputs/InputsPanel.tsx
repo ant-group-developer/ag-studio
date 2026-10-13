@@ -8,7 +8,7 @@ import { useWorkspaceClient, type JobView, type SourceItem } from "../../api/wor
 import { FootagePicker } from "./AgGoPickers";
 import { AgGoProjectDrawer } from "./ag-go-projects/AgGoProjectDrawer";
 import { JobList, JobsLine } from "./JobList";
-import { AudioCard, UseAudioButtons } from "./AudioControls";
+import { AudioCard, UseAudioButtons, VideoMusicCard } from "./AudioControls";
 import { useUploadProgress } from "../common/upload-progress";
 import { AgGoProjectList, countAssets, FootageAssets, SummaryBar, type StateFilter } from "./FootageAssets";
 import "./inputs.css";
@@ -116,6 +116,7 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
   return (
     <div className="ws-inputs">
       <AudioCard projectId={projectId} canEdit={canEdit} canProduce={canProduce} />
+      {videoId ? <VideoMusicCard projectId={projectId} videoId={videoId} canEdit={canEdit} /> : null}
 
       {sources.isLoading ? <div className="ws-center"><Spin /></div> : (
         <>
