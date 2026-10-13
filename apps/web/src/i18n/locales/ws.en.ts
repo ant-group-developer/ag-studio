@@ -977,5 +977,9 @@ export const wsEn: Messages<typeof wsVi> = {
     voiceSet: "The project's narration voice is set",
     musicSet: "The project's music is set",
     failed: "Could not do it",
+    uploaded_one: "Uploaded {{count}} file; pick the one to use",
+    uploaded_other: "Uploaded {{count}} files; pick the one to use",
+    tooLarge: "{{name}}: larger than {{mb}} MB, not uploaded",
+    proxyTooLarge: "{{name}} ({{mb}} MB): the server refused it as too large. Ask an admin to raise nginx's upload limit (client_max_body_size).",
   },
 };

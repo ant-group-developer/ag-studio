@@ -974,5 +974,9 @@ export const wsVi = {
     voiceSet: "Đã đặt giọng đọc cho dự án",
     musicSet: "Đã đặt nhạc nền cho dự án",
     failed: "Không làm được",
+    uploaded_one: "Đã tải {{count}} file, chọn file dùng",
+    uploaded_other: "Đã tải {{count}} file, chọn file dùng",
+    tooLarge: "{{name}}: lớn hơn {{mb}} MB, không tải được",
+    proxyTooLarge: "{{name}} ({{mb}} MB): máy chủ từ chối vì file quá lớn. Báo quản trị nâng giới hạn tải lên của nginx (client_max_body_size).",
   },
 };

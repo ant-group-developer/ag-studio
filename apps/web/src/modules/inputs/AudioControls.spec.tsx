@@ -127,6 +127,25 @@ describe("voice and music card", { timeout: 20_000 }, () => {
     await waitFor(() => expect(ws.audioFromFile).toHaveBeenLastCalledWith("p1", "music", { path: "context/audio/giong.wav" }));
   });
 
+  it("uploads several files one by one, says which did not go and why, then asks which to use", async () => {
+    ws.uploadSource.mockReset()
+      .mockResolvedValueOnce({ source: { ref: "context/audio/a.mp3" }, file: {} })
+      .mockRejectedValueOnce(new StudioHttpError(413, null))
+      .mockResolvedValueOnce({ source: { ref: "context/audio/c.mp3" }, file: {} });
+    card();
+    await screen.findByRole("group", { name: "Nhạc nền" });
+    const big = new File(["x"], "to.mp3", { type: "audio/mpeg" });
+    Object.defineProperty(big, "size", { value: 101 * 1024 * 1024 });
+    const files = ["a.mp3", "b.mp3", "c.mp3"].map((n) => new File(["x"], n, { type: "audio/mpeg" }));
+    fireEvent.change(screen.getByLabelText("Tải nhạc", { selector: "input" }), { target: { files: [files[0], big, files[1], files[2]] } });
+    expect(await screen.findByRole("dialog", { name: "Chọn file làm nhạc nền" })).toBeInTheDocument();
+    expect(ws.uploadSource).toHaveBeenCalledTimes(3);
+    expect(ws.audioFromFile).not.toHaveBeenCalled();
+    expect(await screen.findByText("to.mp3: lớn hơn 100 MB, không tải được")).toBeInTheDocument();
+    expect(screen.getByText(/b\.mp3 \(0\.0 MB\): máy chủ từ chối vì file quá lớn/)).toBeInTheDocument();
+    expect(screen.getByText("Đã tải 2 file, chọn file dùng")).toBeInTheDocument();
+  });
+
   it("picks a library track after listening, and goes back to picking by mood", async () => {
     ws.getAudio.mockResolvedValue(audio({ music: { track: "library:studio/projects/p1/music/x.m4a", gain_db: -18, ducking: true, duration_s: 61, source: { kind: "upload", filename: "rieng.mp3" } } }));
     studio.listMusic.mockResolvedValue({ tracks: [

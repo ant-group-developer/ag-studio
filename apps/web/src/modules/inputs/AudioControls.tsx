@@ -11,6 +11,17 @@ import { clock } from "../workspace/time";
 
 const AUDIO_ACCEPT = ".mp3,.wav,.m4a,.aac,.ogg,.flac";
 const MB = 1024 * 1024;
+/** The largest audio file the API takes (`AUDIO_UPLOAD_MAX_BYTES`, a whole music track). */
+const AUDIO_MAX_MB = 100;
+
+/**
+ * Why a file did not upload, naming it. A 413 without Studio's own answer comes from a proxy in front of the API
+ * (its body limit is lower than Studio's), which only an admin can raise.
+ */
+function uploadError(t: TFunction, f: File, e: unknown): string {
+  if (e instanceof StudioHttpError && e.status === 413 && !e.code) return t("ws.audio.proxyTooLarge", { name: f.name, mb: (f.size / MB).toFixed(1) });
+  return `${f.name}: ${e instanceof StudioHttpError ? e.message : t("ws.audio.failed")}`;
+}
 
 /** The project's audio as the Inputs tab reads it (one query for the card and the buttons on audio rows). */
 function useProjectAudio(projectId: string) {
@@ -184,17 +195,30 @@ export function AudioCard({ projectId, canEdit, canProduce }: { projectId: strin
   const [picking, setPicking] = useState<"voice" | "music" | null>(null);
   const [library, setLibrary] = useState(false);
 
-  const uploadVoice = useMutation({
-    mutationFn: (f: File) => client.uploadSource(projectId, f),
-    onSuccess: (r) => { done(); setVoicePath(r.source.ref); },
-    onError: fail,
-  });
-  const uploadMusic = useMutation({
-    mutationFn: async (f: File) => {
-      const r = await client.uploadSource(projectId, f);
-      return client.audioFromFile(projectId, "music", { path: r.source.ref });
+  // one file is used at once (the voice asks where it comes from); several are uploaded one by one, then one is picked
+  const upload = useMutation({
+    mutationFn: async ({ kind, files }: { kind: "voice" | "music"; files: File[] }) => {
+      const paths: string[] = [];
+      const failed: string[] = [];
+      for (const f of files) {
+        if (f.size > AUDIO_MAX_MB * MB) { failed.push(t("ws.audio.tooLarge", { name: f.name, mb: AUDIO_MAX_MB })); continue; }
+        try {
+          paths.push((await client.uploadSource(projectId, f)).source.ref);
+        } catch (e) {
+          failed.push(uploadError(t, f, e));
+        }
+      }
+      if (kind === "music" && files.length === 1 && paths.length === 1) await client.audioFromFile(projectId, "music", { path: paths[0]! });
+      return { kind, paths, failed, several: files.length > 1 };
     },
-    onSuccess: () => { done(); void message.success(t("ws.audio.musicSet")); },
+    onSuccess: ({ kind, paths, failed, several }) => {
+      done();
+      for (const f of failed) void message.error(f);
+      if (!paths.length) return;
+      if (several) { void message.success(t("ws.audio.uploaded", { count: paths.length })); setPicking(kind); }
+      else if (kind === "voice") setVoicePath(paths[0]!);
+      else void message.success(t("ws.audio.musicSet"));
+    },
     onError: (e) => { done(); fail(e); },
   });
   const musicFromFile = useMutation({
@@ -226,11 +250,12 @@ export function AudioCard({ projectId, canEdit, canProduce }: { projectId: strin
   const voiceRole = canProduce ? null : t("ws.audio.whyProducer");
   const musicRole = canEdit ? null : t("ws.audio.whyEditor");
   const pickFile = (input: RefObject<HTMLInputElement | null>) => () => input.current?.click();
-  const onFile = (m: { mutate: (f: File) => void }) => (e: ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
+  const onFiles = (kind: "voice" | "music") => (e: ChangeEvent<HTMLInputElement>) => {
+    const files = [...(e.target.files ?? [])];
     e.target.value = "";
-    if (f) m.mutate(f);
+    if (files.length) upload.mutate({ kind, files });
   };
+  const uploading = (kind: "voice" | "music") => upload.isPending && upload.variables?.kind === kind;
 
   return (
     <section className="ws-audio" aria-label={t("ws.audio.title")}>
@@ -242,7 +267,7 @@ export function AudioCard({ projectId, canEdit, canProduce }: { projectId: strin
         <div className="ws-audio__body">
           <div className="ws-audio__line"><strong>{t("ws.audio.voice")}</strong><span className="ws-audio__status">{voiceStatus(t, a.voice)}</span></div>
           <div className="ws-audio__actions">
-            <AudioButton why={voiceRole ?? noFfmpeg} icon={<Upload size={12} />} loading={uploadVoice.isPending} onClick={pickFile(voiceInput)}>{t("ws.audio.uploadVoice")}</AudioButton>
+            <AudioButton why={voiceRole ?? noFfmpeg} icon={<Upload size={12} />} loading={uploading("voice")} onClick={pickFile(voiceInput)}>{t("ws.audio.uploadVoice")}</AudioButton>
             <AudioButton why={voiceRole ?? noFfmpeg ?? noFiles} icon={<ListMusic size={12} />} onClick={() => setPicking("voice")}>{t("ws.audio.pickUploaded")}</AudioButton>
             {voiceMode !== "none" ? (
               <AudioButton why={voiceRole} icon={<VolumeX size={12} />} loading={decline.isPending} onClick={() => decline.mutate()}>{t("ws.audio.noNarration")}</AudioButton>
@@ -258,7 +283,7 @@ export function AudioCard({ projectId, canEdit, canProduce }: { projectId: strin
         <div className="ws-audio__body">
           <div className="ws-audio__line"><strong>{t("ws.audio.music")}</strong><span className="ws-audio__status">{musicStatus(t, a)}</span></div>
           <div className="ws-audio__actions">
-            <AudioButton why={musicRole ?? noFfmpeg} icon={<Upload size={12} />} loading={uploadMusic.isPending} onClick={pickFile(musicInput)}>{t("ws.audio.uploadMusic")}</AudioButton>
+            <AudioButton why={musicRole ?? noFfmpeg} icon={<Upload size={12} />} loading={uploading("music")} onClick={pickFile(musicInput)}>{t("ws.audio.uploadMusic")}</AudioButton>
             <AudioButton why={musicRole} icon={<Library size={12} />} onClick={() => setLibrary(true)}>{t("ws.audio.fromLibrary")}</AudioButton>
             <AudioButton why={musicRole ?? noFfmpeg ?? noFiles} icon={<ListMusic size={12} />} onClick={() => setPicking("music")}>{t("ws.audio.pickUploaded")}</AudioButton>
             {a.music ? (
@@ -274,8 +299,8 @@ export function AudioCard({ projectId, canEdit, canProduce }: { projectId: strin
           {!a.music ? <p className="ws-hint ws-audio__note">{t("ws.audio.autoHint")}</p> : null}
         </div>
       </div>
-      <input ref={voiceInput} type="file" hidden accept={AUDIO_ACCEPT} aria-label={t("ws.audio.uploadVoice")} onChange={onFile(uploadVoice)} />
-      <input ref={musicInput} type="file" hidden accept={AUDIO_ACCEPT} aria-label={t("ws.audio.uploadMusic")} onChange={onFile(uploadMusic)} />
+      <input ref={voiceInput} type="file" multiple hidden accept={AUDIO_ACCEPT} aria-label={t("ws.audio.uploadVoice")} onChange={onFiles("voice")} />
+      <input ref={musicInput} type="file" multiple hidden accept={AUDIO_ACCEPT} aria-label={t("ws.audio.uploadMusic")} onChange={onFiles("music")} />
       <AudioFileModal open={picking !== null} files={a.files} onClose={() => setPicking(null)}
         title={picking === "voice" ? t("ws.audio.pickVoiceTitle") : t("ws.audio.pickMusicTitle")}
         busy={musicFromFile.isPending ? musicFromFile.variables ?? null : null}
