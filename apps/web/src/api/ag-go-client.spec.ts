@@ -24,8 +24,29 @@ describe("ag-go project filters", () => {
     const u = new URL(urls[0]!);
     expect(u.origin + u.pathname).toBe("https://go.test/api/projects");
     expect(Object.fromEntries(u.searchParams)).toEqual({
+      scope: "evaluated", evaluationStatuses: "completed,partially_completed",
       keyword: "hoa lư", page: "2", pageSize: "20", sortBy: "name", sortOrder: "asc", folderIds: "f1,f2", categoryIds: "c1", ownerUserIds: "u1", countryId: "vn", provinceId: "nb",
     });
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it("offers only what ag-go's \"Projects\" menu offers: evaluated projects, granted categories, every folder, their authors", async () => {
+    vi.resetModules();
+    vi.stubEnv("VITE_AG_GO_API_URL", "https://go.test/api");
+    const { getAgGoProjects, agGoLookups } = await import("./ag-go-client");
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => { urls.push(url); return new Response(JSON.stringify({ items: [], page: 1, pageSize: 24, total: 0, totalPages: 0 })); });
+    await getAgGoProjects("t");
+    await agGoLookups.categories("t");
+    await agGoLookups.folders("t");
+    await agGoLookups.owners("t");
+    const [list, ...lookups] = urls.map((x) => new URL(x));
+    expect(list!.searchParams.get("scope")).toBe("evaluated");
+    expect(list!.searchParams.get("evaluationStatuses")).toBe("completed,partially_completed");
+    expect(lookups.map((x) => x.pathname + x.search)).toEqual([
+      "/api/categories?granted=true", "/api/folders/options", "/api/projects/owners?scope=evaluated",
+    ]);
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
   });

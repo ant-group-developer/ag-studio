@@ -122,9 +122,18 @@ export async function getAgGoPublicSettings(): Promise<{ siteName?: string | nul
   return unwrapAgGoResponse<{ siteName?: string | null }>(await res.json());
 }
 
-/** The ag-go projects the person can see, filtered and sorted as ag-go's Projects page does, a page at a time. */
+/**
+ * The list of ag-go's "Projects" menu (`/projects` of ag-go-web, `scope=evaluated`): evaluated projects (completed or
+ * partially completed) of the categories or folders the person is granted — not "All projects" nor "My projects".
+ */
+export const AG_GO_PROJECT_SCOPE = "evaluated";
+export const AG_GO_PROJECT_STATUSES = ["completed", "partially_completed"] as const;
+
+/** The ag-go projects of ag-go's "Projects" menu, filtered and sorted as that page does, a page at a time. */
 export function getAgGoProjects(accessToken: string, q: AgGoProjectQuery = {}): Promise<AgGoProjectPage> {
   const query = new URLSearchParams();
+  query.set("scope", AG_GO_PROJECT_SCOPE);
+  query.set("evaluationStatuses", AG_GO_PROJECT_STATUSES.join(","));
   if (q.keyword) query.set("keyword", q.keyword);
   query.set("page", String(q.page ?? 1));
   query.set("pageSize", String(q.pageSize ?? 20));
@@ -139,15 +148,18 @@ export function getAgGoProjects(accessToken: string, q: AgGoProjectQuery = {}): 
   return agGoGet(accessToken, `/projects?${query.toString()}`);
 }
 
-/** The lists the project filters offer: categories, tags, the person's folders, countries, provinces, owners. */
+/**
+ * The lists the project filters offer, as on ag-go's "Projects" menu: the categories the person is granted, every
+ * active folder (that menu does not go by folder access), tags, countries, provinces, the authors of that menu.
+ */
 export const agGoLookups = {
-  categories: (token: string) => agGoGet<AgGoNamed[]>(token, "/categories"),
+  categories: (token: string) => agGoGet<AgGoNamed[]>(token, "/categories?granted=true"),
   tags: (token: string) => agGoGet<AgGoNamed[]>(token, "/tags"),
-  folders: (token: string) => agGoGet<AgGoFolder[]>(token, "/folders/tree"),
+  folders: (token: string) => agGoGet<AgGoFolder[]>(token, "/folders/options"),
   countries: (token: string) => agGoGet<AgGoNamed[]>(token, "/countries"),
   provinces: async (token: string, countryId: string) =>
     (await agGoGet<{ items: AgGoProvince[] }>(token, `/provinces?page=1&pageSize=100&countryId=${encodeURIComponent(countryId)}`)).items,
-  owners: (token: string) => agGoGet<AgGoProjectOwner[]>(token, "/projects/owners"),
+  owners: (token: string) => agGoGet<AgGoProjectOwner[]>(token, `/projects/owners?scope=${AG_GO_PROJECT_SCOPE}`),
   /** Provinces of every country matching a keyword (too many to load at once), a few at a time. */
   provincesFound: async (token: string, keyword: string, pageSize = 5) =>
     (await agGoGet<{ items: AgGoProvince[] }>(token, `/provinces?page=1&pageSize=${pageSize}&keyword=${encodeURIComponent(keyword)}`)).items,
