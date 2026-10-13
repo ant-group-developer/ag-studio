@@ -1262,3 +1262,16 @@ Spec `docs/superpowers/specs/2026-10-10-ag-studio-agent-workspace-design.md`, pl
     đủ dù quyền ag-go riêng của họ không phủ footage đó — đã chốt với người dùng. File Premiere (.zip đóng gói chính các file
     footage, bản xem hoặc bản gốc) vẫn chỉ có link cho người mà quyền ag-go của chính họ phủ mọi video trong đó, xin lúc
     bấm lưu (`GET renders/:jobId/link`, `urlHidden: footage_scope | footage_check_failed` như trước).
+195. **Đầu vào chuẩn bị một lần ở ag-go, Studio chỉ chép về (2026-10-13, plan 2026-10-13 P3).** Trước đây mỗi dự án tự
+    tải bản xem 480p, dò cảnh, cắt khung, ghép tờ bằng ffmpeg trên worker và gửi farm đọc lời thoại; cùng footage ở dự án
+    khác làm lại từ đầu. Nay ag-go chuẩn bị mỗi footage một lần khi nó vào (luồng riêng `asset_preps`, farm `scan.prep`
+    theo đúng luật `buildShots` từ bản sạch nhỏ nhất ≥ 480, rồi `studio.transcribe` do ag-go gửi; chạy bù cho footage cũ
+    ở lane batch) và lưu trong DB của nó. Job `prepare_asset` hỏi `POST /footage/assets/prep` (như chủ dự án); có sẵn
+    thì tải khung và tờ ghép (8 luồng, URL ký) và ghi `shots.json`, `transcript.json/.md`, `README.md` **đúng định dạng
+    cũ** (video-index, fit và skill chọn cảnh đọc không đổi; `source.kind`/`watermarked` là của bản ag-go đã cắt), lọc
+    câu nghe nhầm bằng `transcript-clean.ts` lúc chép; chưa có hoặc lỗi thì xin `.../prep/run` một lần (ag-go chạy ở lane
+    interactive, nâng job đang chờ trong lô chạy bù) rồi hỏi lại mỗi 5 s, tối đa 60 phút, hiện "Đang chờ máy / Đang cắt
+    cảnh / Đang đọc lời thoại". Lời thoại lỗi ở ag-go không làm hỏng việc chuẩn bị (README nói lời thoại là phần thêm).
+    Job không còn `units` khi xếp hàng (bản có sẵn xong trong vài giây); chỉ đặt theo thời lượng khi phải chờ ag-go chạy.
+    Worker không cần ffmpeg để chuẩn bị nữa; `STUDIO_DECODE_LANES` bị bỏ. Dự án đã chuẩn bị giữ file cũ cho tới khi bấm
+    "Chuẩn bị lại" (`again` chép lại từ ag-go, không bắt ag-go chạy lại), để mã cảnh trong `survey.json` không lệch.

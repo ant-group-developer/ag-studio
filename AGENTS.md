@@ -136,7 +136,8 @@ nhưng không code nào đọc.
 
 ### Việc nền (job), farm, render
 - `project_jobs` (`workspace/jobs-db.ts`) chạy bởi `workspace/job-runner.ts` trong worker (`STUDIO_JOB_LANES`, mặc định 2):
-  `prepare_asset` (ag-go → tải bản xem → dò cảnh → khung, tờ ghép → lời thoại `studio.transcribe` trên farm), `research`
+  `prepare_asset` (hỏi ag-go bản chuẩn bị sẵn: cảnh, khung, tờ ghép, lời thoại; chưa có thì xin ag-go chạy và chờ; tải
+  khung và tờ về `inputs/<asset>/`, ADR mục 195), `research`
   (crawl YouTube: Data API nếu có `YOUTUBE_API_KEY`, không thì yt-dlp), `fit` (timeline v4 từ edit-plan, lời dẫn `studio.tts`
   vào kho giọng `voice-store.ts`), `render_preview|render_final|export_premiere`, `thumbnail`, `style_watch`. Mỗi job báo
   `phase`, `progress`, `eta_seconds` (`eta.ts`, không đoán khi đang chờ máy farm), máy farm; Dừng = `cancel_requested` (kill

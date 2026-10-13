@@ -38,8 +38,9 @@ quay lại bước nào cũng được; mọi kết quả là file sửa đượ
 ## 4. Một video
 
 1. **Video mới** (thanh trái): nói video về gì; chọn có học từ chat cũ không (bài học chung, hoặc vài luồng cụ thể).
-2. Agent viết brief, tìm và thêm video ag-go, **chuẩn bị** chúng (việc nền: tải bản xem, dò cảnh, khung hình, lời thoại
-   trên farm — thẻ việc hiện máy, tiến độ, đã trôi, còn ≈, Dừng).
+2. Agent viết brief, tìm và thêm video ag-go, **chuẩn bị** chúng (việc nền: chép cảnh, khung hình, tờ ghép và lời thoại
+   ag-go đã chuẩn bị sẵn — vài giây; video ag-go chưa chuẩn bị thì Studio xin ag-go chạy ngay và chờ, thẻ việc hiện
+   "Đang chờ máy / Đang cắt cảnh / Đang đọc lời thoại", tiến độ, Dừng).
 3. Chọn cảnh (`survey.json`), kế hoạch dựng (`edit-plan.json`), dựng timeline, render xem trước. Xem ở tab **Xem trước**.
    Muốn sửa: nói với agent ("bỏ cảnh 3", "chữ to hơn", "mở đầu nhanh hơn") hoặc sửa file rồi bảo dựng lại.
 4. Gói YouTube (`youtube-kit.md`), thumbnail (`thumbnails/`).
