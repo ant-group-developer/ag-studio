@@ -144,8 +144,8 @@ async function probeAudio(ffprobe: string, src: string, minSeconds: number): Pro
   return facts.duration_s;
 }
 
-async function transcode(ffmpeg: string, args: string[], what: string): Promise<void> {
-  const r = await runTool(ffmpeg, ["-y", "-hide_banner", "-nostats", ...args], { timeoutMs: TRANSCODE_TIMEOUT_MS });
+async function transcode(ffmpeg: string, args: string[], what: string, timeoutMs = TRANSCODE_TIMEOUT_MS): Promise<void> {
+  const r = await runTool(ffmpeg, ["-y", "-hide_banner", "-nostats", ...args], { timeoutMs });
   if (r.timedOut || r.code !== 0) throw new AudioImportError("audio_invalid", `không chuyển được ${what}: ${r.stderr.slice(-200)}`);
 }
 
@@ -161,6 +161,46 @@ export async function prepareMusic(t: AudioTools, src: string, dest: string): Pr
   const duration = await probeAudio(t.ffprobe, src, MUSIC_MIN_SECONDS);
   await transcode(t.ffmpeg, ["-i", src, "-vn", "-map", "0:a:0", "-ac", "2", "-ar", "48000", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", dest], "nhạc nền");
   return { duration_s: duration };
+}
+
+/** At most this many files are joined into one track. */
+export const MUSIC_MIX_MAX_PARTS = 20;
+/** The longest fade from one joined file into the next. */
+export const MUSIC_CROSSFADE_MAX_SECONDS = 10;
+/** The longest track joined files make. */
+export const MUSIC_MIX_MAX_SECONDS = 3 * 3600;
+
+/**
+ * Several files as one background track, in their order: each made 48 kHz stereo, then joined one right after the
+ * other (`crossfadeS` 0) or each fading into the next over `crossfadeS` seconds. The fade must be shorter than half of
+ * the shortest file. Answers the track's length and each file's.
+ */
+export async function prepareMusicMix(t: AudioTools, srcs: { path: string; filename: string }[], dest: string, o: { crossfadeS: number }): Promise<{ duration_s: number; parts: number[] }> {
+  if (srcs.length < 2 || srcs.length > MUSIC_MIX_MAX_PARTS) throw new AudioImportError("audio_invalid", `ghép từ 2 đến ${MUSIC_MIX_MAX_PARTS} file`);
+  const x = o.crossfadeS;
+  if (!(x >= 0 && x <= MUSIC_CROSSFADE_MAX_SECONDS)) throw new AudioImportError("audio_invalid", `chuyển mờ từ 0 đến ${MUSIC_CROSSFADE_MAX_SECONDS} giây`);
+  const parts: number[] = [];
+  for (const s of srcs) {
+    try {
+      parts.push(await probeAudio(t.ffprobe, s.path, MUSIC_MIN_SECONDS));
+    } catch (e) {
+      if (e instanceof AudioImportError) throw new AudioImportError(e.code, `${s.filename}: ${e.message}`);
+      throw e;
+    }
+  }
+  const shortest = Math.min(...parts);
+  if (x > 0 && x * 2 >= shortest) throw new AudioImportError("audio_invalid", `chuyển mờ phải ngắn hơn nửa bài ngắn nhất (${Math.round(shortest)} giây)`);
+  const duration = parts.reduce((a, b) => a + b, 0) - (srcs.length - 1) * x;
+  if (duration > MUSIC_MIX_MAX_SECONDS) throw new AudioImportError("audio_invalid", `ghép lại dài hơn ${MUSIC_MIX_MAX_SECONDS / 3600} giờ`);
+  const each = srcs.map((_, i) => `[${i}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}]`);
+  const link = x === 0
+    ? [`${srcs.map((_, i) => `[a${i}]`).join("")}concat=n=${srcs.length}:v=0:a=1[out]`]
+    : srcs.slice(1).map((_, k) => `${k === 0 ? "[a0]" : `[x${k}]`}[a${k + 1}]acrossfade=d=${x}:c1=tri:c2=tri${k === srcs.length - 2 ? "[out]" : `[x${k + 1}]`}`);
+  await transcode(t.ffmpeg, [
+    ...srcs.flatMap((s) => ["-i", s.path]), "-filter_complex", [...each, ...link].join(";"), "-map", "[out]", "-vn",
+    "-ac", "2", "-ar", "48000", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", dest,
+  ], "nhạc ghép", TRANSCODE_TIMEOUT_MS + srcs.length * 60_000);
+  return { duration_s: duration, parts };
 }
 
 export async function sha256Of(path: string): Promise<string> {

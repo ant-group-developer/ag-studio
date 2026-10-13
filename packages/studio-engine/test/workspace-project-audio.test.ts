@@ -3,10 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  clearProjectAudio, createProject, declineProjectNarration, importProjectAudio, projectAudio, projectAudioSummary, projectLibraryTrack, projectMusic,
+  clearProjectAudio, createProject, declineProjectNarration, importProjectAudio, importProjectMusic, projectAudio, projectAudioSummary, projectLibraryTrack, projectMusic,
   projectNarrationVoice, saveLibraryMusic, setProjectLibraryMusic,
 } from "../src/index.js";
-import { hasFfmpeg, makeWav } from "../../../tests/media.js";
+import { ffprobeDuration, hasFfmpeg, makeWav } from "../../../tests/media.js";
 import { world } from "./helpers.js";
 
 const NOW = "2026-10-10T08:00:00.000Z";
@@ -67,5 +67,41 @@ describe.skipIf(!hasFfmpeg())("project audio import (needs ffmpeg + ffprobe)", (
     });
     expect(projectMusic(s.db, s.project.id)).toMatchObject({ track: expect.stringMatching(/^library:studio\/projects\/.+\/music\/[0-9a-f]{64}\.m4a$/), gain_db: -18, ducking: true });
     expect(projectAudioSummary(s.db, s.project.id).voice).toBe("giọng mẫu 6 s (giọng của người dùng)");
+  });
+
+  it("several files join in order into one track: end to end, or each fading into the next", async () => {
+    const s = setup();
+    const dir = mkdtempSync(join(tmpdir(), "project-music-"));
+    const files = [["mot.wav", 6, 220], ["hai.wav", 7, 330], ["ba.wav", 8, 440]].map(([name, seconds, frequency]) => {
+      const path = join(dir, name as string);
+      makeWav(path, seconds as number, { frequency: frequency as number });
+      return { path, filename: name as string };
+    });
+    const d = { db: s.db, bucket: s.bucket, ffmpeg: FFMPEG, ffprobe: FFPROBE };
+    const faded = await importProjectMusic(d, { projectId: s.project.id, files, crossfadeS: 2 });
+    expect(faded).toMatchObject({
+      track: expect.stringMatching(/^library:studio\/projects\/.+\/music\/[0-9a-f]{64}\.m4a$/), crossfade_s: 2,
+      parts: [{ filename: "mot.wav", duration_s: expect.closeTo(6, 0) }, { filename: "hai.wav" }, { filename: "ba.wav" }],
+    });
+    expect(faded.duration_s).toBeCloseTo(21 - 4, 0);
+    expect(faded).not.toHaveProperty("source");
+    const key = faded.track.replace(/^library:/, "library/");
+    const out = join(dir, "out.m4a");
+    await s.bucket.getFile(key, out);
+    expect(ffprobeDuration(out)).toBeCloseTo(17, 0);
+    expect(projectMusic(s.db, s.project.id)?.track).toBe(faded.track);
+    expect(projectAudioSummary(s.db, s.project.id).music).toBe("nhạc riêng của dự án (3 bài ghép, chuyển mờ 2 s; 17 s), -18 dB, nhỏ lại khi có lời");
+
+    const butt = await importProjectMusic(d, { projectId: s.project.id, files: files.slice(0, 2), crossfadeS: 0 });
+    expect(butt.duration_s).toBeCloseTo(13, 0);
+    expect(projectAudioSummary(s.db, s.project.id).music).toContain("2 bài ghép, nối thẳng");
+
+    // a fade as long as half the shortest file, a file under 5 s (named), no file
+    await expect(importProjectMusic(d, { projectId: s.project.id, files, crossfadeS: 3 })).rejects.toThrow(/nửa bài ngắn nhất/);
+    const short = join(dir, "ngan.wav");
+    makeWav(short, 2);
+    await expect(importProjectMusic(d, { projectId: s.project.id, files: [...files, { path: short, filename: "ngan.wav" }] })).rejects.toThrow(/^ngan\.wav: file ngắn hơn 5 giây/);
+    await expect(importProjectMusic(d, { projectId: s.project.id, files: [] })).rejects.toThrow(/ít nhất một file/);
+    expect(projectMusic(s.db, s.project.id)?.track).toBe(butt.track);
   });
 });
