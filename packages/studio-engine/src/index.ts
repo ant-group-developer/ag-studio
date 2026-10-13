@@ -60,6 +60,7 @@ export * from "./workspace/job-runner.js";
 export * from "./workspace/lanes.js";
 export * from "./workspace/prepare.js";
 export * from "./workspace/usage-outbox.js";
+export * from "./workspace/usage-send.js";
 export * from "./workspace/video-index.js";
 export * from "./agent/input-tools.js";
 export * from "./workspace/step-facts.js";

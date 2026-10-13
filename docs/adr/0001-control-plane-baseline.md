@@ -1275,3 +1275,11 @@ Spec `docs/superpowers/specs/2026-10-10-ag-studio-agent-workspace-design.md`, pl
     Job không còn `units` khi xếp hàng (bản có sẵn xong trong vài giây); chỉ đặt theo thời lượng khi phải chờ ag-go chạy.
     Worker không cần ffmpeg để chuẩn bị nữa; `STUDIO_DECODE_LANES` bị bỏ. Dự án đã chuẩn bị giữ file cũ cho tới khi bấm
     "Chuẩn bị lại" (`again` chép lại từ ag-go, không bắt ag-go chạy lại), để mã cảnh trong `survey.json` không lệch.
+196. **Studio báo ag-go cách footage được dùng, qua hộp thư đi (2026-10-13, plan 2026-10-13 P4).** Thống kê xem ở ag-go
+    nên Studio gửi sự kiện (hợp đồng H3): thêm/bỏ project hay video ag-go (`addSource` chỉ khi thật sự thêm dòng,
+    `removeSource`, mọi đường kể cả tool agent) và mỗi video ag-go của bản cuối / file Premiere đã xong (`renders.ts` sau
+    khi farm xong). Sự kiện ghi vào `ag_go_usage_outbox` (migration 0040, chạy bù từ `project_sources` và job đã xong theo
+    `clips[].asset_id` của đúng bản timeline) với `event_key` duy nhất (`src:<id>:added|removed`, `job:<jobId>:<assetId>`),
+    nên ghi lại hay gửi lại không đếm trùng. Worker gửi mỗi 30 s lô 200 (`usage-send.ts`, chỉ service key, scope
+    `usage:write`); lỗi (ag-go tắt, 401/403 khi khoá thiếu scope) giữ lại và lùi dần 30 s → tối đa 1 giờ, có log; sự kiện
+    ag-go không bao giờ nhận (id không phải UUID) để riêng, không chặn các sự kiện khác. Bản xem trước không tính.

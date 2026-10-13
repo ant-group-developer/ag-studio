@@ -1,13 +1,15 @@
 /**
  * AG Studio worker (spec 2026-10-10 agent-workspace): runs the projects' agent turns (`claude -p` stream-json in the
  * project folder, Studio tools over MCP), their jobs (preparing inputs, crawls, timelines, renders on ag-farm,
- * thumbnails, style) and the cleanup sweep, against the same `studio.db` and workspaces as apps/api.
+ * thumbnails, style), the cleanup sweep and sends footage usage to ag-go, against the same `studio.db` and workspaces as
+ * apps/api.
  *
  * Required environment variables:
  *   STUDIO_DB_PATH      studio.db shared with apps/api
  *   STUDIO_DATA_ROOT    scratch folders of jobs and turns, the voice store
  *   FARM_URL, FARM_OWNER_KEY
- *   AG_GO_API_URL, AG_GO_SERVICE_KEY           (footage and its preps, acting as the project owner)
+ *   AG_GO_API_URL, AG_GO_SERVICE_KEY           (footage and its preps, acting as the project owner; usage events:
+ *                                              the key needs scopes footage:read, footage:resolve, usage:write)
  *   STUDIO_R2_ENDPOINT, STUDIO_R2_BUCKET, STUDIO_R2_ACCESS_KEY_ID, STUDIO_R2_SECRET_ACCESS_KEY
  *   CLAUDE_CODE_OAUTH_TOKEN                    (subscription; passed through to `claude` only)
  *
@@ -136,6 +138,8 @@ async function main(): Promise<void> {
     ...(ffmpeg ? { thumbnails: ffmpegThumbnailRenderer({ ffmpeg }) } : {}),
     ...(media ? { media } : {}),
     preps,
+    // footage usage (sources added/removed, final renders, Premiere exports) sent to ag-go every 30 s from the outbox
+    usage: { sink: { send: (events) => agGo.sendUsageEvents(events) } },
     cleanup: {
       everyMs: numberEnv("STUDIO_CLEANUP_HOURS", 6) * 3_600_000,
       retention: {

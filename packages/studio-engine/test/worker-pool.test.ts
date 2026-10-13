@@ -75,4 +75,20 @@ describe("the worker pool", () => {
     ac.abort();
     await expect(running).resolves.toBeUndefined();
   });
+
+  it("sends the usage outbox to ag-go on its timer while it runs", async () => {
+    w = world();
+    w.db.run("INSERT INTO ag_go_usage_outbox (event_key, payload, created_at, next_at) VALUES ('src:s1:added', ?, '2026-10-13T00:00:00.000Z', '2026-10-13T00:00:00.000Z')", [JSON.stringify({
+      eventKey: "src:s1:added", kind: "source_added", occurredAt: "2026-10-13T00:00:00.000Z", assetId: "00000000-0000-4000-8000-000000000001", agGoProjectId: null,
+      studioProjectId: "p1", studioProjectName: "A", studioVideoId: null, studioVideoTitle: null, studioUserId: "auth0|u",
+    })]);
+    const sent: string[] = [];
+    const pool = createStudioWorkerPool({ ...base(), usage: { sink: { send: async (events) => { sent.push(...events.map((e) => e.eventKey)); return { accepted: events.length, duplicates: 0 }; } }, everyMs: 20 } });
+    const ac = new AbortController();
+    const running = pool.runForever(ac.signal);
+    await new Promise((r) => setTimeout(r, 120));
+    ac.abort();
+    await running;
+    expect(sent).toEqual(["src:s1:added"]);
+  });
 });
