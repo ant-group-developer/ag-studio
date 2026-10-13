@@ -114,4 +114,31 @@ describe("video renders", () => {
     expect(s.submitted).toEqual([]);
     expect(existsSync(join(s.dir, "videos", s.video.id, "renders"))).toBe(false);
   });
+
+  it("tells ag-go each video of a final render or Premiere export once (usage outbox), not of a preview", async () => {
+    const s = setup();
+    const clip = (id: string, asset: string) => ({ clip_id: id, asset_id: asset, section_title: null, in: 0, out: 2, shot_id: null, line_id: null, transition_out: { kind: "cut" as const, seconds: 0 } });
+    saveVideoRevision(s.db, s.video.id, {
+      baseRevision: 0, authorId: "u",
+      data: timeline(s.video.id, {
+        clips: [clip("C001", "a1"), clip("C002", "a2"), clip("C003", "a1")],
+        assets: { a1: { title: "Thuyền", summary_vi: "…", duration_s: 10, orientation: "landscape" }, a2: { title: "Núi", summary_vi: "…", duration_s: 10, orientation: "landscape" } },
+      }),
+    });
+    queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", createdBy: "auth0|p" }, NOW);
+    await s.run();
+    expect(s.db.all("SELECT * FROM ag_go_usage_outbox")).toEqual([]);
+    const final = queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_final", createdBy: "auth0|f" }, NOW);
+    const premiere = queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "export_premiere", createdBy: "auth0|f" }, NOW);
+    await s.run();
+    await s.run();
+    const rows = s.db.all<{ event_key: string; payload: string; sent_at: string | null }>("SELECT event_key, payload, sent_at FROM ag_go_usage_outbox ORDER BY event_key");
+    expect(rows.map((r) => r.event_key).sort()).toEqual([`job:${final.id}:a1`, `job:${final.id}:a2`, `job:${premiere.id}:a1`, `job:${premiere.id}:a2`].sort());
+    expect(JSON.parse(rows.find((r) => r.event_key === `job:${final.id}:a2`)!.payload)).toEqual({
+      eventKey: `job:${final.id}:a2`, kind: "final_render", occurredAt: expect.any(String), assetId: "a2", agGoProjectId: null,
+      studioProjectId: s.project.id, studioProjectName: "Du lịch chậm", studioVideoId: s.video.id, studioVideoTitle: "Tràng An", studioUserId: "auth0|f",
+    });
+    expect(JSON.parse(rows.find((r) => r.event_key === `job:${premiere.id}:a1`)!.payload)).toMatchObject({ kind: "premiere_export" });
+    expect(rows.every((r) => r.sent_at === null)).toBe(true);
+  });
 });

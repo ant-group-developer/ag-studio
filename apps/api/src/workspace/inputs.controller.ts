@@ -196,11 +196,11 @@ export class InputsController {
   @Delete('sources/:sourceId')
   @Roles('editor')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async remove(@Param('projectId') projectId: string, @Param('sourceId') sourceId: string): Promise<void> {
+  async remove(@Param('projectId') projectId: string, @Param('sourceId') sourceId: string, @Req() req: Request): Promise<void> {
     await mapErrors(() => {
       const s = getSource(this.engine.db, sourceId);
       if (!s || s.project_id !== projectId) throw new StudioRunError('not_found', `không có nguồn ${sourceId}`);
-      removeSource(this.engine.db, sourceId);
+      removeSource(this.engine.db, sourceId, req.authContext!.userId);
       if (s.kind === 'ag_go_asset' && s.video_id) writeVideoIndex(this.engine.db, this.workspace.dir(projectId), projectId, s.video_id);
     });
   }

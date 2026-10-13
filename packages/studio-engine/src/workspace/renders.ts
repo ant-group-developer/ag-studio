@@ -18,6 +18,7 @@ import { ackFarmJob, runFarmStep, type ProjectFarm } from "./farm.js";
 import type { JobContext, JobHandler } from "./job-runner.js";
 import { createJob, getJob, listJobs, type JobKind, type JobRecord } from "./jobs-db.js";
 import { getVideoRevision, latestVideoRevision, requireVideo, updateVideo } from "./project-db.js";
+import { enqueueUsage, renderUsageEvents } from "./usage-outbox.js";
 
 export const RENDER_KINDS = ["render_preview", "render_final", "export_premiere"] as const satisfies readonly JobKind[];
 export type RenderKind = (typeof RENDER_KINDS)[number];
@@ -178,6 +179,8 @@ export function renderHandler(kind: RenderKind, d: RenderDeps): JobHandler {
       };
     }
     await ackFarmJob(d.farm, farmJob.id);
+    // the footage of a final render or a Premiere export is told to ag-go (usage outbox; keyed by job, so once)
+    if (kind !== "render_preview") enqueueUsage(d.db, renderUsageEvents(d.db, job, kind, video.id, rev.data.clips.map((c) => c.asset_id), ctx.now()), ctx.now());
     if (kind === "render_final") updateVideo(d.db, video.id, { status: "done" }, ctx.now());
     writeRenderNote(d.db, ctx, job, video.id, result);
     const what = `${LABEL[kind]} của **${video.title}** (timeline bản ${rev.revision}${result.duration_s !== null ? `, ${clockOf(result.duration_s)}` : ""}${result.watermarked ? ", có watermark" : ""})`;

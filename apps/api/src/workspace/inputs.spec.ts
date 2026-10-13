@@ -122,7 +122,7 @@ describe('inputs (real studio.db)', () => {
     expect(await inputs.cancel(p.id, jobId)).toMatchObject({ status: 'running', cancelRequested: true });
     expect(await inputs.cancel('other', jobId).catch(code)).toBe('not_found');
     expect(listMessages(s.engine.db, v.threadId)).toEqual([]);
-    await inputs.remove(p.id, added.source.id);
+    await inputs.remove(p.id, added.source.id, req(EDITOR));
     expect(JSON.parse(readFileSync(join(root, p.id, 'videos', v.id, 'sources', 'index.json'), 'utf8')).sources).toEqual([]);
   });
 
