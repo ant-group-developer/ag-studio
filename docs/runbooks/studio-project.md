@@ -15,17 +15,24 @@ quay lại bước nào cũng được; mọi kết quả là file sửa đượ
 
 - Tab **Đầu vào** → **Thêm project** ag-go: chỉ project mà **chủ dự án** thấy video bên trong (agent và render dùng quyền
   của chủ dự án). Agent tìm video trong đó bằng `footage_search`.
+- Nhiều project/video: dòng tóm tắt đầu tab ("78 video · 70 sẵn sàng · 5 đang chuẩn bị · 3 lỗi", bấm một phần để lọc), mục
+  **Footage** có ô tìm, lọc trạng thái, gom theo video ở trang dự án, nút **Chuẩn bị các video chưa chuẩn bị** và **Thử lại
+  các video lỗi** (editor). Tài liệu, ảnh, audio và video mẫu ở mục **Tài liệu, ảnh, audio**.
 - Tài liệu (PDF, markdown, CSV…), ảnh, audio: **Tải lên** → `context/…`. File Word: lưu thành PDF trước.
-- Giọng đọc lời dẫn: tải file giọng mẫu (3–20 giây), bấm **Giọng đọc** ở file đó và khai nguồn gốc (giọng máy / của tôi / có
-  bản quyền) — cần producer. Nhạc nền: bấm **Nhạc nền** ở file nhạc. Không chọn nhạc thì Studio lấy nhạc thư viện theo tâm
-  trạng trong kế hoạch dựng hoặc branding. Không muốn lời dẫn: **Không lời dẫn** (lời thành phụ đề).
+- Giọng đọc và nhạc nền: thẻ đầu tiên của tab **Đầu vào**. **Giọng đọc** (cần producer): **Tải giọng mẫu** (3–20 giây) hoặc
+  **Chọn file đã tải**, rồi khai nguồn gốc (giọng máy / của tôi / có bản quyền); **Không lời dẫn** (lời thành phụ đề); **Bỏ
+  chọn**. **Nhạc nền** (cần editor): **Tải nhạc** (≤ 100 MB, dùng ngay), **Chọn từ kho nhạc** (nghe thử rồi chọn), **Chọn file
+  đã tải** (cả file audio bỏ vào `context/audio/` qua tab Tệp), **Tự chọn theo mood** (bỏ nhạc riêng: khi dựng timeline Studio
+  lấy bài trong kho nhạc theo mood của kế hoạch dựng, rồi branding). Nút không dùng được thì mờ và nói lý do (thiếu vai, máy
+  Studio chưa có ffmpeg). Giọng và nhạc không bao giờ lấy từ ag-go.
 
 ## 3. Kênh: nghiên cứu, chiến lược, branding
 
 - Tab **Nghiên cứu**: crawl YouTube (xu hướng, theo chủ đề, kênh top, video top của một kênh). Ước lượng hạn mức API hiện
   trước khi chạy; kết quả ở `research/<ngày>-<chủ đề>.md`. Agent cũng crawl được (crawl lớn cần người xác nhận thẻ).
 - Chat ở luồng Kênh theo các bước gợi ý (thanh bước trên chat): báo cáo thị trường, chiến lược kênh, phong cách dựng
-  (tuỳ chọn; học từ video mẫu cần bấm xác nhận thẻ tải video), branding (`channel/branding.md`: kiểu chữ trên video, tâm
+  (tuỳ chọn; học từ video mẫu cần bấm xác nhận thẻ tải video — YouTube chặn máy chủ Studio thì máy farm có yt-dlp tải
+  thay, đo xong xoá ngay; hoặc tải video mẫu lên tab Đầu vào), branding (`channel/branding.md`: kiểu chữ trên video, tâm
   trạng nhạc, kiểu thumbnail). Lỗi file (ví dụ chữ khó đọc) hiện ở bước và ở tab Tệp.
 
 ## 4. Một video

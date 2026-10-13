@@ -5,6 +5,7 @@ import { AlertTriangle, Check, Circle, Loader2, Minus, PenLine, RefreshCw, X } f
 import { useTranslation } from "react-i18next";
 import { StudioHttpError } from "../../api/http";
 import { useWorkspaceClient, type PlaybookStatus, type StepState, type StepStatus } from "../../api/workspace-client";
+import { useStepText } from "./step-text";
 
 const ICONS: Record<StepStatus, typeof Check> = {
   done: Check, skipped: Minus, draft: PenLine, invalid: X, stale: RefreshCw, missing: Circle, running: Loader2,
@@ -16,11 +17,13 @@ export function StepIcon({ status }: { status: StepStatus }) {
 }
 
 /** One step: what it is, where it stands, its file, its errors; do it, redo it, revise it; mark it done or skipped. */
-function StepCard({ step, projectId, videoId, canWrite, onPrompt, onOpenFile, onDone }: {
-  step: StepState; projectId: string; videoId: string | null; canWrite: boolean;
+function StepCard({ step, titleOf, projectId, videoId, canWrite, onPrompt, onOpenFile, onDone }: {
+  step: StepState; titleOf: (key: string) => string; projectId: string; videoId: string | null; canWrite: boolean;
   onPrompt: (text: string) => void; onOpenFile: (path: string) => void; onDone: () => void;
 }) {
   const { t } = useTranslation();
+  const text = useStepText();
+  const outside = (step.outsideRequires ?? []).map(titleOf).join(", ");
   const { message } = AntApp.useApp();
   const client = useWorkspaceClient();
   const qc = useQueryClient();
@@ -33,12 +36,13 @@ function StepCard({ step, projectId, videoId, canWrite, onPrompt, onOpenFile, on
   const exists = step.outputs[0]?.exists ?? false;
   return (
     <div className="ws-step-card">
-      <p className="ws-step-card__desc">{step.description}</p>
+      <p className="ws-step-card__desc">{text(step).description}</p>
       <p className="ws-step-card__status">
         <span className={`ws-step ws-step--${step.status}`}><StepIcon status={step.status} />{t(`ws.steps.status.${step.status}`)}</span>
-        {step.status === "stale" ? <span>{t("ws.steps.staleBecause", { steps: step.staleBecause.join(", ") })}</span> : null}
+        {step.status === "stale" ? <span>{t("ws.steps.staleBecause", { steps: step.staleBecause.map(titleOf).join(", ") })}</span> : null}
         {step.detail ? <span>{step.detail}</span> : null}
       </p>
+      {outside ? <p className="ws-step-card__note">{t(step.scope === "video" ? "ws.steps.outsideChannel" : "ws.steps.outsideVideo", { steps: outside })}</p> : null}
       {exists || step.outputs.some((o) => o.exists) ? (
         <button type="button" className="ws-link" onClick={() => { onOpenFile(step.primary); onDone(); }}>{t("ws.steps.openFile", { file: step.primary })}</button>
       ) : <p className="ws-step-card__file">{step.primary}</p>}
@@ -73,18 +77,24 @@ export function StepRail({ status, scope, projectId, videoId, canWrite, onPrompt
   onOpenFile: (path: string) => void;
 }) {
   const { t } = useTranslation();
+  const text = useStepText();
   const [openKey, setOpenKey] = useState<string | null>(null);
   const steps = scope === "video" ? status.video ?? [] : status.project;
-  const next = new Set(status.next.map((n) => n.key));
-  const projectOpen = scope === "video" ? status.project.filter((s) => !s.optional && s.status !== "done" && s.status !== "skipped").length : 0;
+  const all = [...status.project, ...(status.video ?? [])];
+  const titleOf = (key: string) => { const s = all.find((x) => x.key === key); return s ? text(s).title : key; };
+  // only this rail's steps are suggested here (an older API mixed the channel's into a video's)
+  const next = new Set(status.next.filter((n) => n.scope === scope).map((n) => n.key));
+  const projectOpen = scope === "video"
+    ? status.projectOpen ?? status.project.filter((s) => !s.optional && s.status !== "done" && s.status !== "skipped").length
+    : 0;
   return (
     <nav className="ws-steps" aria-label={t("ws.steps.label")}>
       {steps.map((s) => (
-        <Popover key={s.key} trigger="click" placement="bottomLeft" title={s.title} destroyOnHidden
+        <Popover key={s.key} trigger="click" placement="bottomLeft" title={text(s).title} destroyOnHidden
           open={openKey === s.key} onOpenChange={(o) => setOpenKey(o ? s.key : null)}
-          content={<StepCard step={s} projectId={projectId} videoId={videoId} canWrite={canWrite} onPrompt={onPrompt} onOpenFile={onOpenFile} onDone={() => setOpenKey(null)} />}>
+          content={<StepCard step={s} titleOf={titleOf} projectId={projectId} videoId={videoId} canWrite={canWrite} onPrompt={onPrompt} onOpenFile={onOpenFile} onDone={() => setOpenKey(null)} />}>
           <button type="button" className={`ws-step ws-step--${s.status}${next.has(s.key) ? " ws-step--next" : ""}`} title={t(`ws.steps.status.${s.status}`)}>
-            <StepIcon status={s.status} />{s.title}
+            <StepIcon status={s.status} />{text(s).title}
           </button>
         </Popover>
       ))}

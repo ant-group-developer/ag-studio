@@ -43,6 +43,18 @@ ol.ws-inputs__list { counter-reset: src; }
 .ws-chat__jobs { flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; padding: 6px 16px 0; max-width: 860px; width: 100%; margin: 0 auto; box-sizing: border-box; }
 /* a list of jobs: however many, the message box / the sources below stay on screen */
 .ws-jobs { display: flex; flex-direction: column; gap: 6px; }
+/* A chat's background jobs in one line: count, how far together, time left; unfolds to the cards. */
+.ws-thread-jobs {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; width: 100%; padding: 6px 10px; border: 1px solid var(--ws-line); border-radius: 8px;
+  background: var(--ws-nav-bg); font: inherit; font-size: 13px; color: var(--ws-muted); text-align: left; cursor: pointer;
+}
+.ws-thread-jobs:hover { border-color: var(--ws-accent-line); }
+.ws-thread-jobs strong { color: var(--ws-text); font-weight: 600; }
+.ws-thread-jobs__chevron { transition: transform 0.15s; flex-shrink: 0; }
+.ws-thread-jobs[aria-expanded="true"] .ws-thread-jobs__chevron { transform: rotate(90deg); }
+.ws-thread-jobs__bar { flex: 1; min-width: 60px; height: 4px; border-radius: 999px; background: var(--ws-line); overflow: hidden; }
+.ws-thread-jobs__bar > span { display: block; height: 100%; background: var(--ws-accent); }
+.ws-thread-jobs__num { font-variant-numeric: tabular-nums; color: var(--ws-faint); font-size: 12px; }
 .ws-jobs__head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .ws-jobs__head .ws-link { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; }
 .ws-jobs__list { display: flex; flex-direction: column; gap: 6px; max-height: min(40vh, 360px); overflow-y: auto; }
@@ -58,6 +70,7 @@ ol.ws-inputs__list { counter-reset: src; }
 .ws-action__why { color: var(--ws-muted); }
 .ws-action__why p { margin: 0; }
 .ws-action__meta { color: var(--ws-faint); font-size: 12px; }
+.ws-action__warn { padding: 4px 8px; font-size: 12px; }
 .ws-action__buttons { display: flex; gap: 8px; }
 
 /* the pickers' filter column, table/grid and pages (after ag-go's Projects and Footage pages) */
@@ -99,3 +112,58 @@ ol.ws-inputs__list { counter-reset: src; }
   .ws-picker2 { grid-template-columns: minmax(0, 1fr); }
   .ws-filter { border-right: 0; border-bottom: 1px solid var(--ws-line); max-height: 40vh; padding: 0 0 8px; }
 }
+
+/* the project's voice and music, first in the Inputs tab: two compact rows, status then actions */
+.ws-audio { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--ws-line); border-radius: 10px; background: var(--ws-surface); }
+.ws-audio__row { display: flex; align-items: flex-start; gap: 10px; }
+.ws-audio__row + .ws-audio__row { padding-top: 8px; border-top: 1px solid var(--ws-line); }
+.ws-audio__icon { flex-shrink: 0; margin-top: 3px; color: var(--ws-muted); }
+.ws-audio__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.ws-audio__line { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.ws-audio__line strong { font-weight: 600; color: var(--ws-text); }
+.ws-audio__status { color: var(--ws-muted); min-width: 0; overflow-wrap: anywhere; }
+.ws-audio__actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.ws-audio__disabled { display: inline-flex; }
+.ws-audio__note { margin: 0; }
+.ws-audio__warn { margin: 0; display: flex; align-items: flex-start; gap: 6px; padding: 6px 8px; border-radius: 6px; font-size: 12px;
+  background: var(--ws-wait-bg); color: var(--ws-wait-fg); }
+.ws-audio__warn svg, .ws-audio__error svg { flex-shrink: 0; margin-top: 2px; }
+.ws-audio__error { margin: 0 0 4px; display: flex; align-items: flex-start; gap: 6px; font-size: 13px; }
+.ws-audio__files { max-height: 50vh; overflow: auto; }
+.ws-audio__library { max-height: 60vh; overflow: auto; margin-top: 10px; gap: 8px; }
+.ws-audio__track { display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid var(--ws-line); border-radius: 8px; }
+.ws-audio__trackhead { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.ws-audio__moods { display: flex; flex-wrap: wrap; gap: 2px; }
+.ws-audio__track audio { width: 100%; height: 32px; }
+
+/* many projects and videos: a summary line, the jobs in one line, two sub-sections, compact rows, groups */
+.ws-inputs__overview { display: flex; flex-direction: column; gap: 6px; }
+.ws-inputs__summary { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; font-size: 13px; color: var(--ws-muted); }
+.ws-inputs__statwrap { display: inline-flex; align-items: baseline; white-space: pre; }
+.ws-inputs__stat { border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+.ws-inputs__stat:hover { text-decoration: underline; }
+.ws-inputs__stat strong { color: var(--ws-text); font-weight: 600; }
+.ws-inputs__stat--ok { color: var(--ws-ok-fg); }
+.ws-inputs__stat--run { color: var(--ws-run-fg); }
+.ws-inputs__stat--bad { color: var(--ws-bad-fg); }
+.ws-inputs__jobs { display: flex; flex-direction: column; gap: 6px; }
+.ws-inputs__list--compact { gap: 0; }
+.ws-inputs__row--compact { padding: 3px 4px; }
+.ws-inputs__row--compact .ws-inputs__name { flex: 1; min-width: 0; }
+.ws-inputs__search { margin: 4px 0; }
+.ws-inputs__more { display: inline-block; margin-top: 4px; font-size: 12px; }
+.ws-inputs__toolbar { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+.ws-inputs__toolbar .ws-inputs__search { flex: 1; min-width: 0; margin: 0; }
+.ws-inputs__filter { min-width: 128px; }
+.ws-inputs__bulk { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 4px; }
+.ws-inputs__groups { gap: 4px; }
+.ws-inputs__group { border: 1px solid var(--ws-line); border-radius: 8px; background: var(--ws-surface); }
+.ws-inputs__grouphead { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; background: none; font: inherit;
+  font-size: 13px; color: var(--ws-text); text-align: left; cursor: pointer; border-radius: 8px; }
+.ws-inputs__grouphead:hover { background: var(--ws-chip); }
+.ws-inputs__grouphead .ws-inputs__name { flex: 1; min-width: 0; font-weight: 500; }
+.ws-inputs__chevron { flex-shrink: 0; transition: transform 0.15s; color: var(--ws-faint); }
+.ws-inputs__grouphead[aria-expanded="true"] .ws-inputs__chevron { transform: rotate(90deg); }
+.ws-inputs__grouptag { margin-inline-end: 0; }
+.ws-inputs__grouplist { margin: 0; padding: 0 6px 6px; }
+.ws-inputs .ws-inputs__group > .ws-inputs__more { margin: 0 0 6px 12px; }

@@ -8,7 +8,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
-import { claimJob, finishJob, getJob, saveVideoRevision } from '@ag-studio/engine';
+import { claimJob, finishJob, getJob, saveLibraryMusic, saveVideoRevision } from '@ag-studio/engine';
+import { audioTools } from '../studio/audio-tools';
 import { AgGoClientError } from '../ag-go/client';
 
 type TimelineV4 = Parameters<typeof saveVideoRevision>[2]['data'];
@@ -51,14 +52,14 @@ describe('video media (real studio.db)', () => {
     const ws = new WorkspaceService({ get: (k: string, d?: unknown) => (k === 'STUDIO_WORKSPACES_ROOT' ? root : d) } as unknown as ConfigService, engine);
     seen.length = 0;
     const footage = {
-      check: async (userId: string, ids: string[]) => {
+      checkLots: async (userId: string, ids: string[]) => {
         seen.push([userId, ...ids]);
-        if (userId === DOWN) throw new AgGoClientError(502, 'Bad Gateway');
-        if (userId === GONE) throw new AgGoClientError(404, { message: `Video not found or not in scope: ${ids[0]}` });
-        return userId === OWNER ? { ok: ids, missing: [] } : { ok: [], missing: ids };
+        if (userId === DOWN) return [{ assetIds: ids, error: new AgGoClientError(502, 'Bad Gateway') }];
+        if (userId === GONE) return [{ assetIds: ids, error: new AgGoClientError(404, { message: `Video not found or not in scope: ${ids[0]}` }) }];
+        return [userId === OWNER ? { assetIds: ids, served: ids, missing: [] } : { assetIds: ids, served: [], missing: ids }];
       },
     } as unknown as ProjectFootageService;
-    Object.assign(engine, { bucket: { signedGetUrl: async (key: string) => `https://r2.test/${key}` }, browserUrlTtl: 600 });
+    Object.assign(engine, { bucket: { signedGetUrl: async (key: string, _ttl: number, o: { downloadName?: string } = {}) => `https://r2.test/${key}${o.downloadName ? `?name=${o.downloadName}` : ''}` }, browserUrlTtl: 600 });
     projects = new ProjectsController(engine, ws);
     videos = new VideosController(engine, ws);
     media = new VideoMediaController(engine, ws, footage, { get: () => undefined } as unknown as ConfigService);
@@ -67,7 +68,7 @@ describe('video media (real studio.db)', () => {
   });
   afterEach(() => s.close());
 
-  it('starts renders by role and lists finished ones with a link only for those whose footage rights cover them', async () => {
+  it('starts renders by role, lists finished ones from the database and links one only for those whose footage rights cover it', async () => {
     const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
     const v = await videos.create(p.id, { title: 'Huế' }, req(OWNER));
     expect(await media.render(v.id, { kind: 'render_preview' }, req(EDITOR)).catch(code)).toBe('no_timeline');
@@ -77,22 +78,36 @@ describe('video media (real studio.db)', () => {
     expect(getJob(s.engine.db, job.id)).toMatchObject({ kind: 'render_preview', actor_role: 'editor' });
     claimJob(s.engine.db, ['render_preview'], new Date().toISOString());
     finishJob(s.engine.db, job.id, { status: 'done', result: { kind: 'render_preview', revision: 1, key: 'productions/x/out/a.mp4', duration_s: 4, width: 1920, height: 1080, watermarked: true, size_bytes: 10, note: '' } }, new Date().toISOString());
-    expect((await media.renders(v.id, req(OWNER))).renders[0]).toMatchObject({ kind: 'render_preview', revision: 1, url: 'https://r2.test/productions/x/out/a.mp4' });
-    expect((await media.renders(v.id, req(EDITOR))).renders[0]).toMatchObject({ url: null, urlHidden: 'footage_scope' });
+    // the list is the database alone: no ag-go, no signing
+    const listed = await media.renders(v.id);
+    expect(listed.renders[0]).toEqual({ jobId: job.id, kind: 'render_preview', revision: 1, durationS: 4, width: 1920, height: 1080, watermarked: true, sizeBytes: 10, note: '', finishedAt: expect.any(String) });
+    expect(seen).toEqual([]);
+    // a link is asked for one render
+    expect(await media.link(v.id, job.id, req(OWNER))).toEqual({ jobId: job.id, url: 'https://r2.test/productions/x/out/a.mp4' });
+    expect(await media.link(v.id, job.id, req(EDITOR))).toEqual({ jobId: job.id, url: null, urlHidden: 'footage_scope' });
     expect(seen).toEqual([[OWNER, 'a1'], [EDITOR, 'a1']]);
-    // ag-go not answering is not a lack of rights, and is asked again; its 404 (a video out of scope) is
+    expect(await media.link(v.id, 'not-a-job', req(OWNER)).catch((e: { getStatus?: () => number }) => e.getStatus?.())).toBe(404);
+    // ag-go not answering is not a lack of rights; its 404 (a video out of scope) is
     seen.length = 0;
-    expect((await media.renders(v.id, req(DOWN))).renders[0]).toMatchObject({ url: null, urlHidden: 'footage_check_failed' });
-    expect((await media.renders(v.id, req(DOWN))).renders[0]).toMatchObject({ urlHidden: 'footage_check_failed' });
-    expect((await media.renders(v.id, req(GONE))).renders[0]).toMatchObject({ url: null, urlHidden: 'footage_scope' });
-    expect((await media.renders(v.id, req(GONE))).renders[0]).toMatchObject({ urlHidden: 'footage_scope' });
-    expect(seen).toEqual([[DOWN, 'a1'], [DOWN, 'a1'], [GONE, 'a1']]);
-    // the panel polling while ag-go is still answering joins the check under way
+    expect(await media.link(v.id, job.id, req(DOWN))).toMatchObject({ url: null, urlHidden: 'footage_check_failed' });
+    expect(await media.link(v.id, job.id, req(DOWN))).toMatchObject({ urlHidden: 'footage_check_failed' }); // kept 30 s, not asked again
+    expect(await media.link(v.id, job.id, req(GONE))).toMatchObject({ url: null, urlHidden: 'footage_scope' });
+    expect(await media.link(v.id, job.id, req(GONE))).toMatchObject({ urlHidden: 'footage_scope' });
+    expect(seen).toEqual([[DOWN, 'a1'], [GONE, 'a1']]);
+    // links asked at once join the check under way
     seen.length = 0;
-    const both = await Promise.all([media.renders(v.id, req('auth0|poll')), media.renders(v.id, req('auth0|poll'))]);
-    expect(both.map((x) => x.renders[0]!.urlHidden)).toEqual(['footage_scope', 'footage_scope']);
+    const both = await Promise.all([media.link(v.id, job.id, req('auth0|poll')), media.link(v.id, job.id, req('auth0|poll'))]);
+    expect(both.map((x) => x.urlHidden)).toEqual(['footage_scope', 'footage_scope']);
     expect(seen).toEqual([['auth0|poll', 'a1']]);
-    expect((await media.timeline(v.id)).latest).toMatchObject({ revision: 1, clips: [expect.objectContaining({ clip_id: 'C001' })] });
+    // a new revision with the same footage is answered from what is known
+    saveVideoRevision(s.engine.db, v.id, { baseRevision: 1, data: { ...timeline(v.id), texts: [] }, authorId: 'u' });
+    const job2 = await media.render(v.id, { kind: 'export_premiere' }, req(OWNER));
+    claimJob(s.engine.db, ['export_premiere'], new Date().toISOString());
+    finishJob(s.engine.db, job2.id, { status: 'done', result: { kind: 'export_premiere', revision: 2, key: 'productions/x/out/b.zip', duration_s: null, width: null, height: null, watermarked: null, size_bytes: 20, note: '' } }, new Date().toISOString());
+    seen.length = 0;
+    expect(await media.link(v.id, job2.id, req(OWNER))).toEqual({ jobId: job2.id, url: 'https://r2.test/productions/x/out/b.zip?name=Huế.zip' });
+    expect(seen).toEqual([]);
+    expect((await media.timeline(v.id)).latest).toMatchObject({ revision: 2, clips: [expect.objectContaining({ clip_id: 'C001' })] });
   });
 
   it('picks the voice from a workspace file only for a producer, saying where it comes from', async () => {
@@ -103,5 +118,63 @@ describe('video media (real studio.db)', () => {
     expect(await media.fromFile(p.id, 'voice', { path: 'context/audio/giong.wav' }, req(OWNER)).catch(code)).toBe('origin');
     expect(await media.fromFile(p.id, 'music', { path: 'context/audio/giong.wav' }, req(EDITOR)).catch(code)).toBe('audio_disabled');
     expect((await media.decline(p.id, req(OWNER))).summary.voice).toBe('không lời dẫn (lời thành phụ đề)');
+    // clearing the voice stays with producers; the music, with editors (as picking it)
+    expect(await media.clear(p.id, 'voice', req(EDITOR)).catch(code)).toBe('role');
+    expect((await media.clear(p.id, 'voice', req(OWNER))).voice).toBeNull();
+  });
+
+  it('says whether audio can be taken in and lists the audio files to pick from, also those put in context/audio through the Files tab', async () => {
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    const audioDir = join(root, p.id, 'context', 'audio');
+    mkdirSync(join(audioDir, 'cu'), { recursive: true });
+    writeFileSync(join(audioDir, 'giong.wav'), 'RIFF....');
+    writeFileSync(join(audioDir, 'cu', 'nhac.mp3'), 'ID3');
+    writeFileSync(join(audioDir, 'ghi-chu.txt'), 'not audio');
+    const row = (id: string, ref: string, label: string) => s.engine.db.run(
+      "INSERT INTO project_sources (id, project_id, video_id, kind, ref, media_type, label, meta, added_by, added_at) VALUES (?, ?, NULL, 'upload', ?, 'audio', ?, '{}', ?, ?)",
+      [id, p.id, ref, label, EDITOR, '2020-01-01T00:00:00.000Z'],
+    );
+    row('src-1', 'context/audio/giong.wav', 'Giọng mẫu.wav');
+    row('src-2', 'context/audio/mat.wav', 'mat.wav'); // its file is gone
+    const a = await media.audio(p.id);
+    expect(a.enabled).toBe(false);
+    expect(a.libraryTrack).toBeNull();
+    expect(a.files.map((f) => [f.path, f.name, f.bytes, f.sourceId])).toEqual([
+      ['context/audio/cu/nhac.mp3', 'nhac.mp3', 3, null],
+      ['context/audio/giong.wav', 'Giọng mẫu.wav', 8, 'src-1'],
+    ]);
+    const engine = s.engine as unknown as EngineService;
+    const ws = new WorkspaceService({ get: (k: string, d?: unknown) => (k === 'STUDIO_WORKSPACES_ROOT' ? root : d) } as unknown as ConfigService, engine);
+    const withFfmpeg = new VideoMediaController(engine, ws, {} as ProjectFootageService, { get: (k: string) => (k === 'STUDIO_FFMPEG_PATH' ? '/opt/ff/ffmpeg' : undefined) } as unknown as ConfigService);
+    expect((await withFfmpeg.audio(p.id)).enabled).toBe(true);
+  });
+
+  it('ffprobe defaults to the one next to ffmpeg, as on the worker', () => {
+    const cfg = (v: Record<string, string>) => ({ get: (k: string) => v[k] }) as unknown as ConfigService;
+    expect(audioTools(cfg({}))).toBeNull();
+    expect(audioTools(cfg({ STUDIO_FFMPEG_PATH: 'C:/ff/bin/ffmpeg.exe' }))).toEqual({ ffmpeg: 'C:/ff/bin/ffmpeg.exe', ffprobe: 'C:/ff/bin/ffprobe.exe' });
+    expect(audioTools(cfg({ STUDIO_FFMPEG_PATH: '/usr/bin/ffmpeg', STUDIO_FFPROBE_PATH: '/opt/ffprobe' }))).toEqual({ ffmpeg: '/usr/bin/ffmpeg', ffprobe: '/opt/ffprobe' });
+  });
+
+  it('picks a music library track for the project without ffmpeg; a retired or unknown track is refused; editors clear the music', async () => {
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    const now = '2026-10-01T00:00:00.000Z';
+    const track = (id: string, name: string, active: boolean) => ({
+      schema_version: 'harness.music-track/v1' as const, track_id: id, display_name: name, file: 'library:music/' + id + '.m4a',
+      mood: ['ấm áp'], duration_seconds: 95, loop_ok: true, origin: 'royalty_free' as const, origin_note: 'kho miễn phí',
+      checksum: 'sha256:' + 'a'.repeat(64), active, created_at: now, updated_at: now,
+    });
+    saveLibraryMusic(s.engine.db, track('m-sang', 'Sáng sớm', true));
+    saveLibraryMusic(s.engine.db, track('m-cu', 'Bài cũ', false));
+    const a = await media.fromLibrary(p.id, { trackId: 'm-sang', gainDb: -20 });
+    expect(a.music).toEqual({ track: 'library:music/m-sang.m4a', gain_db: -20, ducking: true, sha256: 'a'.repeat(64), duration_s: 95 });
+    expect(a.libraryTrack).toEqual({ trackId: 'm-sang', displayName: 'Sáng sớm', moods: ['ấm áp'], durationSeconds: 95 });
+    expect(a.summary.music).toBe('bài "Sáng sớm" trong kho nhạc (95 s), -20 dB, nhỏ lại khi có lời');
+    expect(await media.fromLibrary(p.id, { trackId: 'm-cu' }).catch(code)).toBe('audio_invalid');
+    expect(await media.fromLibrary(p.id, { trackId: 'm-khong' }).catch(code)).toBe('not_found');
+    expect(await media.fromLibrary(p.id, { trackId: 'm-sang', extra: 1 }).catch(code)).toBe('invalid');
+    const cleared = await media.clear(p.id, 'music', req(EDITOR));
+    expect(cleared.music).toBeNull();
+    expect(cleared.summary.music).toContain('chưa chọn');
   });
 });

@@ -166,3 +166,35 @@ describe("prepare when the footage library does not serve the video", () => {
     expect(getJob(db, job.id)).toMatchObject({ status: "failed", error: expect.stringContaining("Kho Footage không trả được video này") });
   });
 });
+
+describe.skipIf(!hasFfmpeg())("prepare reads what is said while the shots are found (needs ffmpeg + ffprobe)", () => {
+  it("sends the sound to the farm before decoding; shots that fail cancel it on the farm and fail the job", async () => {
+    const { db, bucket, project, workspacesRoot, dir } = setup();
+    const clip = join(mkdtempSync(join(tmpdir(), "prepare-")), "clip.mp4");
+    makeSceneClip(clip, { seconds: 4, colors: ["red", "blue"], cuts: [2] });
+    let submitted!: () => void;
+    const sent = new Promise<void>((r) => { submitted = r; });
+    const cancelled: string[] = [];
+    const farm: ProjectFarm = {
+      submitJob: async () => { submitted(); return { job: farmView({}), created: true }; },
+      getJob: async () => farmView({ status: "leased", node_id: null, progress_percent: 10 }),
+      cancelJob: async (id) => { cancelled.push(id); return farmView({ status: "cancelled" }); },
+      ackJob: async () => farmView({ status: "cancelled" }),
+    };
+    const deps: PrepareDeps = {
+      db, ffmpeg: FFMPEG, ffprobe: FFPROBE,
+      resolve: async () => ({ items: [{ assetId: ASSET, url: "https://ag-go.test/a.mp4", sourceKind: "preview", watermarked: false }], missing: [] }),
+      download: async (_url, dest) => { copyFileSync(clip, dest); },
+      farm: { client: farm, bucket, pollMs: 1 },
+      // the decode turn comes only once the farm has the sound: it would wait forever if the two ran one after the other
+      decodeSlot: async () => { await sent; throw new Error("dò cảnh hỏng"); },
+    };
+    const job = createJob(db, { projectId: project.id, kind: "prepare_asset", title: "Chuẩn bị", request: { asset_id: ASSET, name: "A.mp4" }, createdBy: "u" }, NOW);
+    const runner = createJobRunner({ db, logger: studioLogger({ test: "prepare" }), workspacesRoot, dataRoot: join(dir, "data"), handlers: { prepare_asset: prepareHandler(deps) } });
+    runner.tick();
+    await runner.idle();
+    expect(getJob(db, job.id)).toMatchObject({ status: "failed", error: "dò cảnh hỏng" });
+    expect(cancelled).toEqual([farmView({}).id]);
+    expect(getPrepared(db, project.id, ASSET)).toMatchObject({ status: "failed", error: "dò cảnh hỏng" });
+  });
+});

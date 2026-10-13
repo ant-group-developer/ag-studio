@@ -1,4 +1,4 @@
-import { App as AntApp, Button, Tag, Tooltip } from "antd";
+import { Alert, App as AntApp, Button, Tag, Tooltip } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -10,7 +10,8 @@ import { relativeTime } from "../workspace/time";
 /**
  * Work with a real effect the agent proposed in this chat (render the final video, export for Premiere, delete a
  * video, a large crawl, download reference videos), waiting for a person: what and why, the role it needs, Confirm or
- * Reject. Decided cards leave the list; the chat says who decided.
+ * Reject. Decided cards leave the list; the chat says who decided. While YouTube blocks the Studio server, a reference
+ * download card says it would most likely fail.
  */
 export function ActionCards({ projectId, threadId, canDecide }: { projectId: string; threadId: string; canDecide: (needs: TeamRoleName) => boolean }) {
   const { t, i18n } = useTranslation();
@@ -28,6 +29,7 @@ export function ActionCards({ projectId, threadId, canDecide }: { projectId: str
     ),
   });
   const open = (data?.actions ?? []).filter((a) => a.status === "proposed");
+  const blocked = data?.youtubeBlocked ?? null;
   if (!open.length) return null;
   return (
     <section className="ws-chat__actions" aria-label={t("ws.actions.title")}>
@@ -42,6 +44,10 @@ export function ActionCards({ projectId, threadId, canDecide }: { projectId: str
               <Tag>{t(`ws.actions.kind.${a.kind}`)}</Tag>
             </div>
             <div className="ws-action__why"><Markdown text={a.summary} /></div>
+            {a.kind === "reference_download" && blocked ? (
+              <Alert type="warning" showIcon className="ws-action__warn"
+                message={t(blocked.where === "farm" ? "ws.actions.youtubeBlockedFarm" : "ws.actions.youtubeBlocked", { since: new Date(blocked.blockedAt).toLocaleString(i18n.language, { dateStyle: "short", timeStyle: "short" }) })} />
+            ) : null}
             <div className="ws-action__meta">
               {a.revision !== null ? `${t("ws.actions.revision", { revision: a.revision })} · ` : ""}
               {t("ws.actions.needs", { role: t(`roles.${a.needs}`) })} · {t("ws.actions.expires", { when: relativeTime(a.expiresAt, i18n.language) })}

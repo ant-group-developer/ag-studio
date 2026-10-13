@@ -3,7 +3,7 @@ import type { Request } from 'express';
 import { z } from 'zod';
 import { agentToolList, callAgentTool, logAudit, type ToolAnswer } from '@ag-studio/engine';
 import { Public } from '../auth/public.decorator';
-import { EngineService } from '../studio/engine.service';
+import { EngineService, referenceFetcherNames } from '../studio/engine.service';
 import { WorkspaceService } from '../workspace/workspace.service';
 import { ProjectFootageService } from '../workspace/project-footage.service';
 import { SiteNameService } from '../ag-go/site-name.service';
@@ -51,7 +51,7 @@ export class AgentToolsController {
       const answer = await callAgentTool(this.tools.all, {
         db: this.engine.db, claims: call.claims, message: call.message, thread: call.thread, project: call.project, video: call.video,
         workspaceDir: this.workspace.dir(call.project.id), role: call.role, now: () => new Date().toISOString(), footage: this.footage,
-        siteName: this.siteName.current(),
+        siteName: this.siteName.current(), referenceFetchers: () => referenceFetcherNames(this.engine),
       }, body.name, body.arguments ?? {});
       record(answer.isError ? 'error' : 'ok', answer.text);
       return answer;

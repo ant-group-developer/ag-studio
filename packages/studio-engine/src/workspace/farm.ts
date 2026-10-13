@@ -17,6 +17,24 @@ export class JobStopped extends Error {
   constructor(readonly reason: "cancelled" | "shutdown") { super(reason === "cancelled" ? "đã dừng" : "worker đang tắt"); this.name = "JobStopped"; }
 }
 
+/**
+ * A farm job that failed: `message` as before ("farm báo lỗi: …"), with the farm's own error (`code`, its words,
+ * whether it was worth retrying) and the machine that ran it, so a step can tell its failures apart.
+ */
+export class FarmJobFailed extends Error {
+  constructor(
+    readonly farmJobId: string,
+    readonly code: string | null,
+    readonly farmMessage: string,
+    readonly retryable: boolean,
+    /** The machine's name (or id), when one took it. */
+    readonly node: string | null,
+  ) {
+    super(`farm báo lỗi: ${farmMessage}`);
+    this.name = "FarmJobFailed";
+  }
+}
+
 export interface FarmStep {
   /** Farm job type, e.g. `studio.transcribe`. */
   type: string;
@@ -95,9 +113,10 @@ export async function runFarmStep(
     }
     if (view.status === "completed") break;
     if (view.status === "failed" || view.status === "cancelled") {
-      const reason = (view.error as { message?: string } | null)?.message ?? view.status;
+      const err = view.error as { code?: string; message?: string; retryable?: boolean } | null;
       await d.farm.ackJob(sent.id).catch(() => undefined);
-      throw new Error(view.status === "cancelled" ? "việc trên farm đã bị huỷ" : `farm báo lỗi: ${reason}`);
+      if (view.status === "cancelled") throw new Error("việc trên farm đã bị huỷ");
+      throw new FarmJobFailed(sent.id, err?.code ?? null, err?.message ?? view.status, err?.retryable === true, await nameOf(view.node_id));
     }
     const node = await nameOf(view.node_id);
     const phase = view.status === "leased" || node

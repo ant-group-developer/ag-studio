@@ -73,14 +73,16 @@ nhưng không code nào đọc.
 - Team → **dự án** (một kênh YouTube, bảng `projects`) → **video** (`videos`), thêm dần theo lời người dùng. Mỗi dự án là một
   thư mục làm việc như một repo: `<STUDIO_WORKSPACES_ROOT>/<projectId>/` (mặc định `<STUDIO_DATA_ROOT>/workspaces`, phải nằm
   **ngoài mọi repo** để CLAUDE.md của thư mục cha không lọt vào; API và worker phải thấy cùng thư mục): `CLAUDE.md` (kênh,
-  khán giả, quy tắc; import `@memory/lessons.md`), `context/` (tài liệu, ảnh, audio tải lên), `research/`, `channel/`
+  khán giả, quy tắc; import `@memory/lessons.md`), `context/` (tài liệu, ảnh, audio tải lên; video mẫu học phong cách ở `context/references/`), `research/`, `channel/`
   (strategy, style, branding), `inputs/<asset>/` (video ag-go đã chuẩn bị, chỉ đọc), `videos/<id>/` (brief, scenes,
   survey.json, edit-plan, timeline.json bản soi, youtube-kit, thumbnails, renders, `sources/index.json`), `skills/`, `memory/`,
   `.studio/` (Studio ghi; chỉ `playbook.yaml` người sửa được). Đường bảo vệ và quyền ghi: `accessFor` (`workspace/files.ts`).
 - DB là nguồn sự thật cho team/dự án/video/nguồn/luồng chat/tin nhắn/job/revision timeline/thẻ xác nhận; file là nguồn sự
   thật cho tài liệu. Mỗi lần file đổi ghi `project_file_versions` (người, agent, Studio).
-- Bảng (migration `0030`–`0037`): `projects` (+`voice`, `music`), `videos`, `project_sources`, `video_revisions` (chỉ timeline
-  v4), `project_file_versions`, `agent_threads`, `thread_refs`, `agent_messages`, `step_marks`, `thread_summaries`,
+- Bảng (migration `0030`–`0038`): `projects` (+`voice`, `music`), `videos`, `project_sources`, `video_revisions` (chỉ timeline
+  v4), `project_file_versions`, `agent_threads`, `thread_refs`, `agent_messages` (+`changed_files` 0038: file lượt đó đổi,
+  `turnChangedFiles` trong `workspace/file-changes.ts`; runner quét thư mục với tác giả Studio trước lượt để file job/seed
+  không tính cho lượt), `step_marks`, `thread_summaries`,
   `lesson_proposals`, `project_jobs`, `project_farm_jobs`, `prepared_assets`, `agent_actions`, `audit_log` (nhật ký hoạt động,
   0036). Dùng chung từ trước: `teams`,
   `team_members`, `team_skills`, `sign_audit_log`, `youtube_cache`, `llm_calls`, `studio_settings`, `studio_voice_lines`,
@@ -110,7 +112,8 @@ nhưng không code nào đọc.
 - Việc có tác dụng thật (render bản cuối, xuất Premiere, xoá video, crawl lớn, tải video mẫu) **không bao giờ** do agent
   tự làm: `propose_action` → thẻ trong chat → người có vai bấm (`agent/actions.ts`, hết hạn 24 giờ hoặc khi timeline đổi).
 - Playbook mềm (`workspace/playbook.ts`, ghi đè bằng `.studio/playbook.yaml`): gợi ý bước, không chặn; trạng thái tính từ file
-  + DB (`playbook-status.ts`, `step-facts.ts`); kiểm file ở `workspace/validators.ts` (dùng lại validator của
+  + DB (`playbook-status.ts`, `step-facts.ts`); gợi ý theo phạm vi luồng (`scope`): luồng video chỉ gợi ý bước video, luồng
+  kênh/chat tự do chỉ bước kênh; bước dựa vào bước chưa xong của phạm vi kia vẫn được gợi ý, kèm `outsideRequires`; kiểm file ở `workspace/validators.ts` (dùng lại validator của
   `packages/core/src/studio/*`). Bài học chung ở `memory/lessons.md` (thẻ "Lưu vào bài học dự án?").
 - Slot Claude (`claude-slots.ts`): mỗi lượt giữ dòng `lease` `agent:<id>` (chờ: `agent-wait:<id>`, cũng tính vào cap), nên mọi
   worker dùng chung một cap: `studio_settings.claude.max_concurrent` (admin sửa ở màn Hàng đợi) thắng
@@ -135,6 +138,22 @@ nhưng không code nào đọc.
   `phase`, `progress`, `eta_seconds` (`eta.ts`, không đoán khi đang chờ máy farm), máy farm; Dừng = `cancel_requested` (kill
   ffmpeg / huỷ job farm). Xong thì đăng tin hệ thống vào luồng và cho agent làm tiếp (≤ 3 lượt tự chạy liên tiếp, tắt bằng
   `settings.auto_continue`). Worker thiếu công cụ thì job loại đó chờ worker khác (`projectJobHandlers`).
+- Lỗi yt-dlp có mã (`classifyYtDlp`, `YtDlpError`): `youtube_blocked` (YouTube chặn máy chủ: bot check, 429) làm
+  `style_watch` dừng ngay, không thử video còn lại; job lỗi có mã ghi `result.error_code` (`JobError`). Không cookie, không
+  đăng nhập (ADR-0001 mục 175, 191). Bị chặn thì Studio nhớ 6 giờ, **riêng từng nơi** (`studio_settings`:
+  `youtube.blocked_until` máy chủ, `youtube.farm_blocked_until` máy farm; `noteYoutubeBlocked`/`youtubeBlock` với `where`,
+  tải hay đọc được ở đâu thì xoá cờ nơi đó): `<studio_context>` báo agent, `propose_action reference_download` chỉ từ chối
+  khi `referenceDownloadBlock` (đường sẽ đi đang bị chặn), thẻ đang chờ và màn Hàng đợi (admin) hiện cảnh báo.
+- `style_watch` nhận cả `files` (video người dùng tải ở mục Video mẫu của tab Đầu vào, `context/references/`, ≤ 300 MB):
+  đo y như video YouTube, **không bao giờ** đổi hay xoá file người dùng; tool agent `style_from_files` xếp job ngay (không
+  thẻ, không ra mạng); skill `edit-style` (bước `style`). Worker có ffmpeg là nhận `style_watch`; thiếu yt-dlp hoặc
+  `STUDIO_REFERENCE_DOWNLOADS=0` (tắt cả đường farm) thì video YouTube trong job báo `no_ytdlp`.
+- Video mẫu YouTube đi qua **máy farm** khi có máy online nhận `studio.reference_fetch` (`workspace/reference-fetch.ts`,
+  `referenceRoute`; ADR-0001 mục 193): mỗi id một job farm (`requirements {ytdlp: true}`, khoá
+  `productions/<project>/jobs/reference_fetch/<jobId>-r<n>/out/`, ghi `project_farm_jobs`), Studio kéo về thư mục nháp
+  (`bucket.getFile`), đo, rồi trong `finally` xoá object trên bucket lẫn file nháp. Lỗi farm (`FarmJobFailed.code`) đổi
+  về mã `YtFailureCode`; `youtube_blocked` từ máy farm dừng các video còn lại và ghi cờ `where: farm`. Không có máy nào
+  (hoặc chỉ farm bị chặn mà worker có yt-dlp) thì yt-dlp của worker như cũ.
 - Job farm của dự án ghi `project_farm_jobs`; `/api/farm/sign` tra ở đó, hỏi ag-go bằng quyền **chủ dự án**; bản xem trước xin
   `prefer: {short_edge: 480, clean: true}` (ag-go cũ bỏ qua). Khoá bucket giữ quy ước farm:
   `productions/<projectId>/jobs/<stage>/<jobId>/{in,out}/` (dự án đóng vai "production" trong payload `@ag-farm/protocol`,
@@ -147,8 +166,13 @@ nhưng không code nào đọc.
   thuần ở `packages/core/src/studio/layout.ts` (`applyTimelineOps`, `timelineIssues`); composition suy từ revision
   (`timelineToComposition`). Revision ở `video_revisions` (`saveVideoRevision`, xung đột → `RevisionConflictError`).
 - Giọng đọc/nhạc của dự án: chọn từ file audio đã tải lên (`workspace/project-audio.ts`; giọng cần vai producer và khai nguồn
-  gốc); không có nhạc riêng thì lấy kho nhạc theo mood của branding (`music-library.ts`). API cần `STUDIO_FFMPEG_PATH` và
-  `STUDIO_FFPROBE_PATH` để nhận audio.
+  gốc; `projectAudioFiles` = audio có dòng nguồn + mọi file dưới `context/audio/`, cả file tải qua tab Tệp), hoặc nhạc là một
+  bài của kho nhạc (`setProjectLibraryMusic`, `track: library:music/…`, không chép file, không cần ffmpeg); bỏ chọn nhạc
+  (editor) thì lấy kho nhạc theo mood của kế hoạch dựng/branding (`music-library.ts`). API cần `STUDIO_FFMPEG_PATH` để nhận
+  file audio (ffprobe mặc định cạnh ffmpeg như worker; `GET audio` trả `enabled`). Audio tải lên ≤ 100 MB, file khác ≤ 50 MB.
+  Web: thẻ "Giọng đọc và nhạc nền" ở đầu tab Đầu vào (`inputs/AudioControls.tsx`, `AudioCard`): tải lên rồi dùng ngay, chọn
+  file đã tải, kho nhạc (nghe thử), không lời dẫn, tự chọn theo mood; nút thiếu vai/thiếu ffmpeg mờ kèm lý do, lỗi tải hiện
+  lỗi + Thử lại (không biến mất).
 - Thumbnail (`workspace/thumbnails.ts`) cắt khung từ bản render và vẽ chữ trên máy Studio (ffmpeg bất đồng bộ, font Arial của
   hệ thống qua `STUDIO_FONTS_DIR`, không ship font). Quy chuẩn & skill của nhóm (`team_skills`) thành skill của agent khi dự
   án bật.
@@ -168,15 +192,28 @@ nhưng không code nào đọc.
   nhóm), `/music` (kho nhạc), `/teams`, `/teams/:teamId` (thành viên, skill, thống kê và nhật ký của nhóm; layout quản trị).
   Chọn project ag-go: drawer toàn màn hình dựng lại **y như trang Projects của ag-go-web** (`modules/inputs/ag-go-projects/`:
   sidebar lọc, ô tìm có gợi ý, sort, list/grid, thẻ và CSS chép từ `project-grid-view` của ag-go; `/projects`, lookup và
-  `/assets/:id/preview-url` của ag-go gọi thẳng); tick nhiều project qua các trang rồi thêm lần lượt, cái bị từ chối giữ tick và
+  `/assets/:id/preview-url` của ag-go gọi thẳng). Chỉ liệt kê project của **menu "Dự án"** của ag-go
+  (`scope=evaluated`, `evaluationStatuses=completed,partially_completed`; danh mục `?granted=true`, thư mục
+  `/folders/options`, tác giả `/projects/owners?scope=evaluated`), không phải "Tất cả dự án" hay "Dự án của tôi"; tick nhiều project qua các trang rồi thêm lần lượt, cái bị từ chối giữ tick và
   báo lý do. Đổi giao diện này thì so với nguồn ag-go-web (`E:\CODE\ag-go-v2\ag-go-web`), đừng tự chế. Picker video: `GET footage`
-  + `footage/facets` qua API, chỉ trong các project đã gắn, bảng hoặc lưới (nhớ ở localStorage). `/stats` có thêm bảng **từng
+  + `footage/facets` qua API, chỉ trong các project đã gắn, bảng hoặc lưới (nhớ ở localStorage). Tab Đầu vào (`InputsPanel`):
+  thẻ giọng & nhạc, dòng tóm tắt "N video · sẵn sàng · đang chuẩn bị · lỗi" (bấm để lọc; `counts` của `GET sources`), việc nền
+  một dòng (`JobsLine`), hai mục con Footage | Tài liệu, ảnh, audio (+ Video mẫu) nhớ ở localStorage `studio.inputs.section`;
+  `FootageAssets.tsx`: project ag-go gọn (tìm khi > 5, hiện 5), video có ô tìm, lọc trạng thái, 30 dòng + "Xem thêm", trang dự án
+  gom theo video Studio (bỏ trùng), làm hàng loạt "Chuẩn bị các video chưa chuẩn bị"/"Thử lại các video lỗi" (lô 40). `/stats` có thêm bảng **từng
   lượt** (`GET studio/stats/claude/turns[/:id]`; bấm dòng của bảng gộp để lọc, bấm lượt mở drawer chi tiết).
+  Chat: mỗi lượt agent thu thành một dòng "Đã làm N bước · thời gian" (`MessageItem`, `splitTurn`; chữ sau bước cuối
+  luôn hiện, `suggest_replies` không tính là bước), đang chạy thì dòng đó là trạng thái sống có Dừng; dưới câu trả lời là
+  thẻ file đã đổi (`ChangedFiles`: Mở, Xem thay đổi → `files/DiffView.tsx`, dùng chung với "So với bản trước" ở lịch sử
+  file). Việc nền của luồng (`ThreadJobs`) và bài học đề xuất (`LessonCards`, hiện 1) cũng thu gọn sẵn.
   Tên tool trong chat/nhật ký: `ws.tool.<tên>` ở `ws.vi.ts`/`ws.en.ts` — thêm tool cho agent thì thêm nhãn cả hai ngôn ngữ
   (`agent-chat/labels.spec.ts` đọc tên tool từ engine và báo thiếu). Không bao giờ hiện uuid thay tên video: `inputs_add` bắt
   buộc `name`; nguồn cũ thiếu tên được API đặt lại khi liệt kê nguồn. Biến màu `--ws-*` ở `:root` (drawer/modal là portal).
-  Ô chọn nhóm trên thanh trên có
-  "Tạo nhóm mới" và "Quản lý nhóm"; ai chưa ở nhóm nào thì trang chủ cho tạo nhóm (người tạo là owner). Tiếng Việt gọi là
+  Ô chọn nhóm trên thanh trên (`TeamPicker`) có
+  "Tạo nhóm mới" và "Quản lý nhóm", gõ để tìm qua `GET /teams?q` (không cắt ở trang đầu); admin Studio thấy thêm "Nhóm
+  khác" (nhóm không là thành viên, `isMember: false`), vẫn sửa được như owner, và có dải "Bạn đang xem với quyền admin" ở
+  những nhóm đó. Tên nhóm trên breadcrumb và vai lấy từ `GET /teams/:id` (`useTeam`, `useTeamRole` có `ready` để trang
+  không nháy chỉ-đọc lúc `/me` chưa về); ai chưa ở nhóm nào thì trang chủ cho tạo nhóm (người tạo là owner). Tiếng Việt gọi là
   **nhóm** (không viết "team" trong chuỗi giao diện).
 - Khung trình duyệt nhúng của app desktop báo trang luôn ẩn nên react-query không polling: kiểm bằng khung đó thì tải lại trang.
 

@@ -33,7 +33,7 @@ vi.mock("../api/studio-client", async (orig) => ({ ...(await orig<object>()), us
 const { TeamDetailPage } = await import("./TeamDetailPage");
 
 function team(role: TeamDetail["role"]): TeamDetail {
-  return { id: "team-1", name: "Đội Ẩm Thực", role, memberCount: 2, projectCount: 1, createdAt: "2026-09-30T00:00:00Z", updatedAt: "2026-09-30T00:00:00Z" };
+  return { id: "team-1", name: "Đội Ẩm Thực", role, isMember: role !== null, memberCount: 2, projectCount: 1, createdAt: "2026-09-30T00:00:00Z", updatedAt: "2026-09-30T00:00:00Z" };
 }
 
 function skill(over: Partial<TeamSkill> = {}): TeamSkill {
@@ -46,7 +46,7 @@ function skill(over: Partial<TeamSkill> = {}): TeamSkill {
 
 function page(search = "", opts: { role?: TeamDetail["role"]; skills?: TeamSkill[] } = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  client.getTeam.mockResolvedValue(team(opts.role ?? "owner"));
+  client.getTeam.mockResolvedValue(team(opts.role === undefined ? "owner" : opts.role));
   client.listTeamSkills.mockResolvedValue(opts.skills ?? []);
   return render(
     <AntApp>
@@ -137,6 +137,14 @@ describe("TeamDetailPage — quy chuẩn & skill", () => {
     await waitFor(() => expect(client.createTeamSkill).toHaveBeenCalledWith("team-1", {
       name: "Nhạc nền", purpose: "Chọn nhạc", appliesTo: ["youtube-kit"], content: "Nhạc không lời", position: 0,
     }));
+  });
+
+  it("admin không ở nhóm: có dải báo đang xem với quyền admin, vẫn sửa được quy chuẩn", async () => {
+    client.listMembers.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 });
+    client.getMe.mockResolvedValueOnce({ userId: "auth0|admin", name: "Admin", email: "admin@ant-group.net", avatar: null, isAdmin: true });
+    page("?tab=skills", { role: null, skills: [skill()] });
+    expect(await screen.findByText("Bạn đang xem với quyền admin (bạn không ở nhóm này).")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /Thêm quy chuẩn/ })).toBeTruthy();
   });
 
   it("người xem chỉ đọc: không có nút thêm, có ghi chú quyền", async () => {

@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  clearProjectAudio, createProject, declineProjectNarration, importProjectAudio, projectAudio, projectAudioSummary, projectMusic, projectNarrationVoice,
+  clearProjectAudio, createProject, declineProjectNarration, importProjectAudio, projectAudio, projectAudioSummary, projectLibraryTrack, projectMusic,
+  projectNarrationVoice, saveLibraryMusic, setProjectLibraryMusic,
 } from "../src/index.js";
 import { hasFfmpeg, makeWav } from "../../../tests/media.js";
 import { world } from "./helpers.js";
@@ -29,6 +30,21 @@ describe("project audio", () => {
     expect(projectAudioSummary(s.db, s.project.id).voice).toBe("không lời dẫn (lời thành phụ đề)");
     clearProjectAudio(s.db, s.project.id, "voice");
     expect(projectAudio(s.db, s.project.id).voice).toBeNull();
+  });
+
+  it("a music library track becomes the project's music as is (no copy, no schema change)", () => {
+    const s = setup();
+    const track = {
+      schema_version: "harness.music-track/v1" as const, track_id: "m-sang", display_name: "Sáng sớm", file: "library:music/abc.m4a", mood: ["calm"],
+      duration_seconds: 120, loop_ok: false, origin: "licensed" as const, origin_note: "x", checksum: `sha256:${"b".repeat(64)}`, active: true,
+      created_at: NOW, updated_at: NOW,
+    };
+    saveLibraryMusic(s.db, track);
+    setProjectLibraryMusic(s.db, s.project.id, track);
+    expect(projectMusic(s.db, s.project.id)).toEqual({ track: "library:music/abc.m4a", gain_db: -18, ducking: true });
+    expect(projectLibraryTrack(s.db, s.project.id)?.track_id).toBe("m-sang");
+    expect(projectAudioSummary(s.db, s.project.id).music).toBe('bài "Sáng sớm" trong kho nhạc (120 s), -18 dB, nhỏ lại khi có lời');
+    expect(() => setProjectLibraryMusic(s.db, s.project.id, { ...track, active: false })).toThrow(/gỡ/);
   });
 });
 

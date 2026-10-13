@@ -27,7 +27,7 @@ function service(answer: (lot: string[]) => Promise<{ items: { assetId: string }
   return { s, lots, order, most: () => most };
 }
 
-describe('ProjectFootageService.check', () => {
+describe('ProjectFootageService.check and checkLots', () => {
   it('asks a long timeline in lots of ten, the first alone then four at a time, and merges what ag-go cannot serve', async () => {
     const { s, lots, order, most } = service(async (lot) => ({ items: lot.filter((id) => id !== 'a5').map((assetId) => ({ assetId })), missing: lot.includes('a70') ? ['a70'] : [] }));
     const r = await s.check('u1', ids);
@@ -50,6 +50,19 @@ describe('ProjectFootageService.check', () => {
     const down = service(async (lot) => { if (lot.includes('a30')) throw new AgGoClientError(503, 'down'); return { items: lot.map((assetId) => ({ assetId })) }; });
     await expect(down.s.check('u1', ids)).rejects.toMatchObject({ status: 503 });
     expect(down.lots.filter((l) => l.includes('a30'))).toHaveLength(2);
+  });
+
+  it('answers lot by lot: what ag-go serves in the lots it answered, and the error of each lot it did not', async () => {
+    const { s } = service(async (lot) => {
+      if (lot.includes('a0')) throw new AgGoClientError(404, 'not in scope: a3');
+      if (lot.includes('a40')) throw new AgGoClientError(500, 'boom');
+      return { items: lot.filter((id) => id !== 'a12').map((assetId) => ({ assetId })) };
+    });
+    const answers = await s.checkLots('u1', ids);
+    expect(answers.map((a) => a.assetIds[0])).toEqual(['a0', 'a10', 'a20', 'a30', 'a40', 'a50', 'a60', 'a70']);
+    expect(answers[0]).toMatchObject({ error: { status: 404 } });
+    expect(answers[4]).toMatchObject({ error: { status: 500 } });
+    expect(answers[1]).toEqual({ assetIds: ids.slice(10, 20), served: ids.slice(10, 20).filter((id) => id !== 'a12'), missing: ['a12'] });
   });
 
   it('a lot ag-go could not answer fails the check before one it answered 404', async () => {

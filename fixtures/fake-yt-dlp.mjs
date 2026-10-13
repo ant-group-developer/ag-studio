@@ -7,6 +7,9 @@
 //   (otherwise) download           writes <dir>/<id>.mp4 with ffmpeg (`--ffmpeg-location`): 2 s black/white scenes, so
 //                                  scene detection finds a cut every 2 s; without ffmpeg, a small dummy file
 // FAKE_YTDLP_DURATION (seconds, default 600) is the duration every video reports.
+// Ids by their start: "ERR" removed, "BOT" YouTube's bot check (the server is blocked), "PRIV" private, "AGE" age
+// restricted, "LONG" skipped by the duration filter (said on stdout, exit 0). `--fake-blocked` (in argv right after this
+// script): YouTube blocks everything but --version, as it does a server's IP.
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 
@@ -21,11 +24,22 @@ if (args.includes("--version")) {
   process.exit(0);
 }
 
+const bot = (id) => `ERROR: [youtube] ${id}: Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for the authentication. See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp  for how to manually pass cookies. Also see  https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies  for tips on effectively exporting YouTube cookies\n`;
+/** What YouTube refuses for this id (a stderr line), or null. */
+const refusal = (id) => {
+  if (args.includes("--fake-blocked") || id.startsWith("BOT")) return bot(id);
+  if (id.startsWith("ERR")) return `ERROR: [youtube] ${id}: Video unavailable\n`;
+  if (id.startsWith("PRIV")) return `ERROR: [youtube] ${id}: Private video. Sign in if you've been granted access to this video\n`;
+  if (id.startsWith("AGE")) return `ERROR: [youtube] ${id}: Sign in to confirm your age. This video may be inappropriate for some users. Use --cookies-from-browser or --cookies for the authentication.\n`;
+  return null;
+};
+
 if (args.includes("--dump-json")) {
   let ok = 0;
   for (const url of urls) {
     const id = idOf(url);
-    if (id.startsWith("ERR")) { process.stderr.write(`ERROR: [youtube] ${id}: Video unavailable\n`); continue; }
+    const no = refusal(id);
+    if (no) { process.stderr.write(no); continue; }
     ok++;
     const n = /^srch\d{7}$/.test(id) ? Number(id.slice(4)) : 0;
     process.stdout.write(`${JSON.stringify(n ? {
@@ -38,6 +52,8 @@ if (args.includes("--dump-json")) {
   }
   process.exit(ok ? 0 : 1);
 }
+
+if (args.includes("--flat-playlist") && args.includes("--fake-blocked")) { process.stderr.write(bot("list")); process.exit(1); }
 
 if (args.includes("--flat-playlist") && /^ytsearch(date)?\d+:/.test(urls[0] ?? "")) {
   const n = Math.min(Number(/^ytsearch(?:date)?(\d+):/.exec(urls[0])[1]), 50);
@@ -58,7 +74,9 @@ if (args.includes("--flat-playlist")) {
 
 // download
 const id = idOf(urls[0] ?? "");
-if (id.startsWith("ERR")) { process.stderr.write(`ERROR: [youtube] ${id}: Video unavailable\n`); process.exit(1); }
+const no = refusal(id);
+if (no) { process.stderr.write(no); process.exit(1); }
+if (id.startsWith("LONG")) { process.stdout.write(`[download] Fake video ${id} does not pass filter (duration<=1800 & !is_live), skipping ..\n`); process.exit(0); }
 const out = (after("-o") ?? `${id}.%(ext)s`).replace("%(ext)s", "mp4");
 const ffmpeg = after("--ffmpeg-location");
 if (!ffmpeg) { writeFileSync(out, "fake-video"); process.exit(0); }

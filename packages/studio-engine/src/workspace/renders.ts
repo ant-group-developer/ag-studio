@@ -16,7 +16,7 @@ import type { StudioDb } from "../studio-db.js";
 import { writeWorkspaceFile } from "./files.js";
 import { ackFarmJob, runFarmStep, type ProjectFarm } from "./farm.js";
 import type { JobContext, JobHandler } from "./job-runner.js";
-import { createJob, listJobs, type JobKind, type JobRecord } from "./jobs-db.js";
+import { createJob, getJob, listJobs, type JobKind, type JobRecord } from "./jobs-db.js";
 import { getVideoRevision, latestVideoRevision, requireVideo, updateVideo } from "./project-db.js";
 
 export const RENDER_KINDS = ["render_preview", "render_final", "export_premiere"] as const satisfies readonly JobKind[];
@@ -89,6 +89,13 @@ export function videoRenders(db: StudioDb, projectId: string, videoId: string, l
     .filter((j) => (RENDER_KINDS as readonly string[]).includes(j.kind) && j.status === "done" && j.result)
     .slice(0, limit)
     .map((j) => ({ ...(JSON.parse(j.result!) as RenderResult), jobId: j.id, finishedAt: j.finished_at }));
+}
+
+/** One finished render of a video, by its job; undefined when that job is not a finished render of this video. */
+export function videoRender(db: StudioDb, videoId: string, jobId: string): (RenderResult & { jobId: string; finishedAt: string | null }) | undefined {
+  const j = getJob(db, jobId);
+  if (!j || j.video_id !== videoId || !(RENDER_KINDS as readonly string[]).includes(j.kind) || j.status !== "done" || !j.result) return undefined;
+  return { ...(JSON.parse(j.result) as RenderResult), jobId: j.id, finishedAt: j.finished_at };
 }
 
 export function renderHandler(kind: RenderKind, d: RenderDeps): JobHandler {

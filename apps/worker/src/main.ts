@@ -20,14 +20,16 @@
  *   STUDIO_FONTS_DIR    a folder with the thumbnail font (Arial); default: Windows fonts, else fontconfig (Liberation Sans)
  *   YOUTUBE_API_KEY     YouTube Data API v3 key for crawls (none: yt-dlp searches YouTube)
  *   YTDLP_PATH / STUDIO_YTDLP_ARGV  yt-dlp (default `yt-dlp` on PATH): crawls without a key, reference videos
- *   STUDIO_REFERENCE_DOWNLOADS=0    never download reference videos
+ *   STUDIO_REFERENCE_DOWNLOADS=0    never download reference videos from YouTube (uploaded ones are still watched)
  *   HARNESS_ROOT        Studio install root (default: this checkout)
  *   STUDIO_FARM_QUEUE_TIMEOUT_MINUTES a farm job no node takes this long is cancelled and its job says so (default 120)
  *   STUDIO_CLEANUP_HOURS how often the cleanup sweep runs (default 6; 0 = never): unused voice lines, project audio
  *                       nothing points at, scratch folders a crash left, files deleted from projects
  *   STUDIO_RETENTION_WORKSPACE_DAYS / _VOICE_DAYS / _AUDIO_DAYS / _AUDIT_DAYS  how old before the sweep removes them (14 / 90 / 7 / 90)
  *   STUDIO_WORKSPACES_ROOT      project workspaces (default <STUDIO_DATA_ROOT>/workspaces; the API must see the same)
- *   STUDIO_JOB_LANES            project jobs run at once (default 2)
+ *   STUDIO_JOB_LANES            project jobs run at once with no idle farm machine (default 2)
+ *   STUDIO_JOB_LANES_MAX        project jobs at most: one more per idle farm machine up to this (default 8; ≤ STUDIO_JOB_LANES = fixed)
+ *   STUDIO_DECODE_LANES         prepare jobs decoding video on this worker at once (default STUDIO_JOB_LANES; 0 = no limit)
  *
  * Agent turns (run only with STUDIO_AGENT_TOKEN_SECRET):
  *   STUDIO_AGENT_TOKEN_SECRET   signs each turn's token for /api/agent-tools (same value as the API)
@@ -107,6 +109,7 @@ async function main(): Promise<void> {
     mcpTools: () => mcpToolNames(agentTools()),
     skills: { builtinDir: join(harnessRoot, "agent-skills"), pluginsRoot: join(dataRoot, "agent-plugins") },
   } : undefined;
+  const jobLanes = Math.max(1, numberEnv("STUDIO_JOB_LANES", 2));
   const pool = createStudioWorkerPool({
     db,
     bucket: new S3Bucket({
@@ -120,7 +123,8 @@ async function main(): Promise<void> {
     claudeMaxConcurrent,
     siteName: () => siteName.current(),
     ...(agent ? { agent } : {}),
-    jobs: { workspacesRoot, lanes: numberEnv("STUDIO_JOB_LANES", 2) },
+    jobs: { workspacesRoot, lanes: jobLanes, maxLanes: numberEnv("STUDIO_JOB_LANES_MAX", 8) },
+    decodeLanes: numberEnv("STUDIO_DECODE_LANES", jobLanes),
     farmPollMs: Number(process.env.FARM_POLL_MS ?? 5000),
     farmQueueTimeoutMs: numberEnv("STUDIO_FARM_QUEUE_TIMEOUT_MINUTES", 120) * 60_000,
     ...(youtubeKey ? { youtubeApiKey: youtubeKey } : {}),

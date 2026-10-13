@@ -52,11 +52,12 @@ describe("the worker pool", () => {
     expect(Object.keys(projectJobHandlers(base()))).toEqual([]);
     expect(Object.keys(projectJobHandlers({ ...base(), youtubeApiKey: "k" }))).toEqual(["research"]);
     expect(Object.keys(projectJobHandlers({ ...base(), media, thumbnails: fakeThumbnails() })).sort())
-      .toEqual(["export_premiere", "fit", "prepare_asset", "render_final", "render_preview", "thumbnail"]);
+      .toEqual(["export_premiere", "fit", "prepare_asset", "render_final", "render_preview", "style_watch", "thumbnail"]); // uploaded reference videos need only ffmpeg
     const ytdlp = {} as YtDlp;
     expect(Object.keys(projectJobHandlers({ ...base(), media, ytdlp })).sort())
       .toEqual(["export_premiere", "fit", "prepare_asset", "render_final", "render_preview", "research", "style_watch"]);
-    expect(Object.keys(projectJobHandlers({ ...base(), media, ytdlp, referenceDownloads: false }))).not.toContain("style_watch");
+    // reference downloads turned off: uploaded reference videos are still watched (YouTube ones say why not)
+    expect(Object.keys(projectJobHandlers({ ...base(), media, ytdlp, referenceDownloads: false }))).toContain("style_watch");
   });
 
   it("runs only the loops it was given and stops when asked", async () => {

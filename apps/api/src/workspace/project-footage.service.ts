@@ -88,27 +88,45 @@ export class ProjectFootageService implements ProjectFootage {
    * answer fails the whole check, before one it answered 404 (a video out of the user's scope).
    */
   async check(actAs: string, assetIds: string[]) {
+    const answers = await this.checkLots(actAs, assetIds);
+    const failed = answers.flatMap((a) => ('error' in a ? [a.error] : []));
+    if (failed.length) throw failed.find((e) => !(e instanceof AgGoClientError && e.status === 404)) ?? failed[0];
+    const missing = answers.flatMap((a) => ('missing' in a ? a.missing : []));
+    return { ok: assetIds.filter((id) => !missing.includes(id)), missing };
+  }
+
+  /**
+   * The same asking as `check`, answered lot by lot: what ag-go serves and does not serve in each lot it answered, and
+   * the error of each lot it did not (its 404 names the first video out of the user's scope).
+   */
+  async checkLots(actAs: string, assetIds: string[]): Promise<FootageLotAnswer[]> {
     const lots: string[][] = [];
     for (let i = 0; i < assetIds.length; i += CHECK_LOT) lots.push(assetIds.slice(i, i + CHECK_LOT));
-    const settled: PromiseSettledResult<{ served: string[]; missing: string[] }>[] = new Array(lots.length);
+    const answers: FootageLotAnswer[] = new Array(lots.length);
     const ask = (assetIds: string[]) => this.agGo.resolveAssets(actAs, { assetIds, purpose: 'preview' });
     const answer = async (i: number) => {
-      settled[i] = await ask(lots[i]!)
-        .catch((e: unknown) => (e instanceof AgGoClientError && (e.status === 502 || e.status === 503) ? ask(lots[i]!) : Promise.reject(e)))
+      const lot = lots[i]!;
+      answers[i] = await ask(lot)
+        .catch((e: unknown) => (e instanceof AgGoClientError && (e.status === 502 || e.status === 503) ? ask(lot) : Promise.reject(e)))
         .then(
-          (r) => ({ status: 'fulfilled' as const, value: { served: r.items.map((x) => x.assetId), missing: r.missing ?? [] } }),
-          (reason: unknown) => ({ status: 'rejected' as const, reason }),
+          (r): FootageLotAnswer => {
+            const served = new Set(r.items.map((x) => x.assetId));
+            const flagged = new Set(r.missing ?? []);
+            const missing = lot.filter((id) => !served.has(id) || flagged.has(id));
+            return { assetIds: lot, served: lot.filter((id) => !missing.includes(id)), missing };
+          },
+          (error: unknown): FootageLotAnswer => ({ assetIds: lot, error }),
         );
     };
     await answer(0);
     let next = 1;
     const lane = async () => { for (let i = next++; i < lots.length; i = next++) await answer(i); };
     await Promise.all(Array.from({ length: Math.min(CHECK_PARALLEL, lots.length - 1) }, lane));
-    const failed = settled.filter((s): s is PromiseRejectedResult => s.status === 'rejected').map((s) => s.reason);
-    if (failed.length) throw failed.find((e) => !(e instanceof AgGoClientError && e.status === 404)) ?? failed[0];
-    const served = new Set(settled.flatMap((s) => (s.status === 'fulfilled' ? s.value.served : [])));
-    const flagged = new Set(settled.flatMap((s) => (s.status === 'fulfilled' ? s.value.missing : [])));
-    const missing = assetIds.filter((id) => !served.has(id) || flagged.has(id));
-    return { ok: assetIds.filter((id) => !missing.includes(id)), missing };
+    return answers;
   }
 }
+
+/** One lot of a footage check: ag-go's answer, or the error it gave instead. */
+export type FootageLotAnswer =
+  | { assetIds: string[]; served: string[]; missing: string[] }
+  | { assetIds: string[]; error: unknown };

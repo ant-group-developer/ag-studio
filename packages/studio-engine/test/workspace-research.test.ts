@@ -7,7 +7,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { CrawlRequestSchema, StudioCrawlSchema } from "@harness/contracts";
 import {
-  createJob, createJobRunner, createProject, crawlSlug, getJob, researchHandler, seedWorkspace, slugify, studioLogger, YoutubeCrawler, ytDlp,
+  createJob, createJobRunner, createProject, crawlSlug, getJob, researchHandler, seedWorkspace, slugify, studioLogger, youtubeBlock, YoutubeCrawler, ytDlp,
   type ResearchCache,
 } from "../src/index.js";
 import { world } from "./helpers.js";
@@ -173,5 +173,25 @@ describe("research job", () => {
     runner.tick();
     await runner.idle();
     expect(existsSync(join(dir, `${base}-2.md`))).toBe(true);
+  });
+
+  it("YouTube blocking the server: the job says so plainly, with its code and the way that is not blocked", async () => {
+    const w = world();
+    w.db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [NOW.toISOString(), NOW.toISOString()]);
+    const project = createProject(w.db, "team-1", { name: "Du lịch chậm", description: "", language: "vi", aspect: "16:9" }, "u");
+    const root = join(w.dir, "workspaces");
+    seedWorkspace(root, project);
+    const crawler = new YoutubeCrawler({ ytdlp: ytDlp({ argv: [process.execPath, join(ROOT, "fixtures", "fake-yt-dlp.mjs"), "--fake-blocked"] }) });
+    const job = createJob(w.db, { projectId: project.id, kind: "research", title: "Chủ đề phố cổ", request: { crawl: { kind: "topic", q: "phố cổ", max: 5, days: 3650 } }, createdBy: "u" });
+    const runner = createJobRunner({ db: w.db, logger: studioLogger({ test: "research" }), workspacesRoot: root, dataRoot: join(w.dir, "data"), handlers: { research: researchHandler({ db: w.db, crawler }) } });
+    runner.tick();
+    await runner.idle();
+    const failed = getJob(w.db, job.id)!;
+    expect(failed.status).toBe("failed");
+    expect(failed.error).toMatch(/^yt-dlp không tìm được: YouTube đang chặn tải từ máy chủ Studio/);
+    expect(failed.error).toContain("YOUTUBE_API_KEY");
+    expect(failed.error).not.toContain("cookies");
+    expect(JSON.parse(failed.result!)).toEqual({ error_code: "youtube_blocked" });
+    expect(youtubeBlock(w.db, new Date().toISOString())).toMatchObject({ where: "studio" });
   });
 });

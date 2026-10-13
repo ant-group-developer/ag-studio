@@ -6,12 +6,12 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  agentToolList, agentTools, callAgentTool, createAgentRunner, createProject, createThread, getMessage, getProject, getThread, getVideo,
+  agentToolList, agentTools, callAgentTool, createAgentRunner, createProject, createThread, createVideo, getMessage, getProject, getThread, getVideo,
   listFileVersions, listLessonProposals, listMessages, listVideos, MemoryBucket, mcpToolNames, postUserMessage, projectDir, requestCancel, seedWorkspace,
   verifyAgentToken, type StudioDb,
 } from "../src/index.js";
 import { world } from "./helpers.js";
-import { listAudit } from "../src/index.js";
+import { listAudit, messageView } from "../src/index.js";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const FAKE = join(ROOT, "fixtures", "fake-studio-agent.mjs");
@@ -90,6 +90,12 @@ describe("agent runner (fake CLI, real MCP server)", { timeout: 60_000 }, () => 
       .toEqual([["mcp__studio__video_create", false], ["Write", false]]);
     expect(listVideos(db, project.id).map((v) => v.title)).toEqual(["Hội An đêm"]);
     expect(listFileVersions(db, project.id, "channel/notes.md")[0]).toMatchObject({ author_kind: "agent", message_id: turn!.id });
+    // the turn remembers what it changed: the file it wrote and the brief its Studio tool wrote
+    const video = listVideos(db, project.id)[0]!;
+    expect(messageView(done).changedFiles).toEqual([
+      { path: "channel/notes.md", change: "added", version_id: listFileVersions(db, project.id, "channel/notes.md")[0]!.id, before_version_id: null, added: 1, removed: 0 },
+      expect.objectContaining({ path: `videos/${video.id}/brief.md`, change: "added", before_version_id: null, removed: 0 }),
+    ]);
     expect(readFileSync(join(dir, ".studio", "history", `${thread.id}.md`), "utf8")).toContain("Mình tạo video nhé");
     expect(db.get<{ n: number }>("SELECT COUNT(*) AS n FROM llm_calls WHERE source = 'claude-agent' AND attempt_id = ?", [turn!.id])?.n).toBe(1);
     // for the Claude stats: who it was for, which team, the cache split, the steps
@@ -133,6 +139,19 @@ describe("agent runner (fake CLI, real MCP server)", { timeout: 60_000 }, () => 
     await runner.idle();
     // the fix turn ran; a fix turn never asks for another one
     expect(listMessages(db, thread.id).map((m) => m.role)).toEqual(["user", "assistant", "system", "assistant"]);
+  });
+
+  it("in a video's chat, suggests the video's next steps; the channel's open steps are only context", async () => {
+    const { runner, calls, db, project } = await setup();
+    const video = createVideo(db, project.id, { title: "Huế mưa", createdBy: "auth0|u" });
+    const thread = createThread(db, { projectId: project.id, videoId: video.id, kind: "video", title: "Huế mưa", createdBy: "auth0|u" });
+    postUserMessage(db, { threadId: thread.id, text: "@fake say Chào", actor: { id: "auth0|u", role: "editor" } });
+    await runner.tick();
+    await runner.idle();
+    const prompt = calls()[0]!.prompt;
+    expect(prompt).toContain(`Bước gợi ý tiếp theo (của video này): Ý tưởng & brief (videos/${video.id}/brief.md)`);
+    expect(prompt).not.toContain("Nghiên cứu thị trường (research/report.md)");
+    expect(prompt).toContain("Kênh còn 3 bước chưa xong");
   });
 
   it("summarizes a quiet thread into SUMMARY.md and proposes its lessons", async () => {

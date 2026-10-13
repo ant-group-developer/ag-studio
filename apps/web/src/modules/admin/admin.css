@@ -14,6 +14,7 @@
 .ws-admin__list > li { padding: 10px 0; border-top: 1px solid var(--ws-line); }
 .ws-admin__list > li:first-child { border-top: 0; }
 .ws-admin__note { margin: 0; color: var(--ws-faint); font-size: 12px; }
+.ws-queue__youtube { margin-bottom: 16px; }
 .ws-admin__bad { color: var(--ws-bad-fg); }
 .ws-admin__form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .ws-admin__form label { font-size: 13px; color: var(--ws-muted); }

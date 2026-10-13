@@ -31,7 +31,7 @@ describe("agent tools", () => {
     expect(list.map((t) => t.name)).toEqual([
       "project_info", "video_list", "video_create", "video_update", "suggest_replies", "playbook_status", "validate_file", "thread_history",
       "inputs_list", "footage_search", "inputs_add", "inputs_prepare", "input_describe", "job_status", "job_cancel",
-      "youtube_trending", "youtube_search", "youtube_top_channels", "youtube_channel_top_videos",
+      "youtube_trending", "youtube_search", "youtube_top_channels", "youtube_channel_top_videos", "style_from_files",
       "timeline_from_edit_plan", "timeline_get", "timeline_apply_ops", "render_preview", "thumbnail_make", "music_list", "propose_action",
     ]);
     expect(list.find((t) => t.name === "video_create")!.inputSchema).toMatchObject({ type: "object", required: ["title"], additionalProperties: false });

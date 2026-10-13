@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  Alert,
   Table,
   Button,
   Modal,
@@ -287,6 +288,7 @@ export function TeamDetailPage() {
       <Title level={3} style={{ margin: "0 0 8px" }}>
         {team?.name ?? t("teams.detailTitle")}
       </Title>
+      {me?.isAdmin && team && !team.isMember ? <Alert type="warning" showIcon banner message={t("ws.shell.adminView")} style={{ marginBottom: 8 }} /> : null}
       <Tabs
         activeKey={tab}
         onChange={(k) => void setTab(k as "members" | "skills" | "stats" | "audit")}

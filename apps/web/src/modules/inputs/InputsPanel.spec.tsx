@@ -34,6 +34,12 @@ const ws = {
   getFootageFacets: vi.fn(),
   prepareInputs: vi.fn().mockResolvedValue({ assets: {} }),
   cancelJob: vi.fn().mockResolvedValue(job({ cancelRequested: true })),
+  listVideos: vi.fn(),
+  getAudio: vi.fn(),
+  audioFromFile: vi.fn(),
+  musicFromLibrary: vi.fn(),
+  declineVoice: vi.fn(),
+  clearAudio: vi.fn(),
 };
 const agGo = {
   getProjects: vi.fn().mockResolvedValue({ items: [
@@ -62,15 +68,20 @@ vi.mock("../../api/ag-go-client", async (orig) => ({ ...(await orig<object>()), 
 
 const { InputsPanel } = await import("./InputsPanel");
 
-function mount(videoId?: string, onOpenFile = vi.fn()) {
-  render(
+function mount(videoId?: string, onOpenFile = vi.fn(), canEdit = true) {
+  const r = render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <AntApp>
-        <InputsPanel projectId="p1" {...(videoId ? { videoId } : {})} canEdit onOpenFile={onOpenFile} />
+        <InputsPanel projectId="p1" {...(videoId ? { videoId } : {})} canEdit={canEdit} onOpenFile={onOpenFile} />
       </AntApp>
     </QueryClientProvider>,
   );
+  Object.assign(onOpenFile, { unmount: r.unmount });
   return onOpenFile;
+}
+/** Switches the Inputs tab to its "Documents, images, audio" sub-section. */
+async function toFiles() {
+  fireEvent.click(await screen.findByText(/^Tài liệu, ảnh, audio ·/));
 }
 
 describe("Inputs tab", { timeout: 40_000 }, () => {
@@ -86,11 +97,19 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
       src({ kind: "ag_go_asset", ref: A2, videoId: "v1", mediaType: "video", label: "Tràng An 01.mp4", asset: { state: "failed", error: "ag-go không trả được video" } }),
       src({ kind: "upload", ref: "context/uploads/Ghi chú.md", mediaType: "document", label: "Ghi chú.md" }),
     ] });
+    ws.getAudio.mockResolvedValue({ voice: null, music: null, summary: { voice: "", music: "" }, libraryTrack: null, enabled: true, files: [] });
     ws.listJobs.mockResolvedValue({ jobs: [job({})] });
+    ws.listVideos.mockResolvedValue({ videos: [] });
   });
 
-  it("shows who runs each job, what it does, how far, time spent and left, and stops it", async () => {
+  it("shows the jobs in one line that unfolds to who runs each job, what it does, how far, time spent and left, and stops it", async () => {
     mount("v1");
+    const line = await screen.findByRole("button", { name: /1 việc nền/ });
+    expect(line).toHaveAttribute("aria-expanded", "false");
+    expect(line).toHaveTextContent("1 đang chạy · 0 đang chờ");
+    expect(line).toHaveTextContent("40% xong · còn ≈ 1:30");
+    expect(screen.queryByRole("group", { name: "Chuẩn bị Hoa Lư 03.mp4" })).toBeNull();
+    fireEvent.click(line);
     const card = await screen.findByRole("group", { name: "Chuẩn bị Hoa Lư 03.mp4" });
     expect(card).toHaveTextContent("Farm · máy GPU-02");
     expect(card).toHaveTextContent("Farm · GPU-02 · whisper · đọc lời thoại");
@@ -100,10 +119,19 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     await waitFor(() => expect(ws.cancelJob).toHaveBeenCalledWith("p1", "j1"));
   });
 
+  it("puts the project's voice and music first, above the jobs and the lists", async () => {
+    mount("v1");
+    const audio = await screen.findByRole("region", { name: "Giọng đọc và nhạc nền" });
+    await screen.findByRole("group", { name: "Giọng đọc" });
+    expect(screen.getAllByRole("region")[0]).toBe(audio);
+    expect(ws.getAudio).toHaveBeenCalledWith("p1");
+  });
+
   it("never shows an asset id where a video's name should be", async () => {
     ws.listSources.mockResolvedValue({ sources: [src({ kind: "ag_go_asset", ref: A2, videoId: "v1", mediaType: "video", label: A2 })] });
     ws.listJobs.mockResolvedValue({ jobs: [job({ title: `Chuẩn bị ${A2}` })] });
     mount("v1");
+    fireEvent.click(await screen.findByRole("button", { name: /1 việc nền/ }));
     expect(await screen.findByRole("group", { name: "Chuẩn bị video chưa có tên" })).toBeInTheDocument();
     expect(screen.getAllByText("video chưa có tên").length).toBeGreaterThan(0);
     expect(document.body).not.toHaveTextContent(A2);
@@ -120,6 +148,8 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     fireEvent.click(within(footage).getByRole("button", { name: "Thử lại" }));
     await waitFor(() => expect(ws.prepareInputs).toHaveBeenCalledWith("p1", [A2], false));
     expect(screen.getByRole("region", { name: "Project AG Go" })).toHaveTextContent("Ninh Bình42 video");
+    expect(screen.queryByRole("region", { name: "Tài liệu, ảnh, audio" })).toBeNull();
+    await toFiles();
     fireEvent.click(within(screen.getByRole("region", { name: "Tài liệu, ảnh, audio" })).getByRole("button", { name: "Ghi chú.md" }));
     expect(open).toHaveBeenCalledWith("context/uploads/Ghi chú.md");
   });
@@ -216,15 +246,114 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
   it("uploads files into the project", async () => {
     ws.uploadSource.mockResolvedValue({ source: src({}), file: {} });
     mount();
+    await toFiles();
     const input = await screen.findByLabelText("Tải lên", { selector: "input" });
     fireEvent.change(input, { target: { files: [new File(["# x"], "brief.md", { type: "text/markdown" })] } });
     await waitFor(() => expect(ws.uploadSource).toHaveBeenCalledWith("p1", expect.any(File), undefined));
+  });
+
+  it("uploads reference videos apart from the documents, to learn an edit style from", async () => {
+    ws.listSources.mockResolvedValue({ sources: [
+      src({ kind: "upload", ref: "context/uploads/Ghi chú.md", mediaType: "document", label: "Ghi chú.md" }),
+      src({ kind: "upload", ref: "context/references/Kênh mẫu.mp4", mediaType: "video", label: "Kênh mẫu.mp4", meta: { reference: true } }),
+    ] });
+    ws.uploadSource.mockResolvedValue({ source: src({}), file: {} });
+    mount();
+    await toFiles();
+    const refs = await screen.findByRole("region", { name: "Video mẫu (học phong cách dựng)" });
+    expect(await within(refs).findByText("Kênh mẫu.mp4")).toBeInTheDocument();
+    expect(within(refs).queryByText("Ghi chú.md")).toBeNull();
+    expect(screen.getByRole("region", { name: "Tài liệu, ảnh, audio" })).not.toHaveTextContent("Kênh mẫu.mp4");
+    const input = within(refs).getByLabelText("Tải video mẫu", { selector: "input" });
+    expect(input).toHaveAttribute("accept", expect.stringContaining(".mp4"));
+    fireEvent.change(input, { target: { files: [new File(["v"], "mau.mp4", { type: "video/mp4" })] } });
+    await waitFor(() => expect(ws.uploadSource).toHaveBeenCalledWith("p1", expect.any(File), undefined, { reference: true }));
+  });
+
+  it("remembers the sub-section shown, with a count on each", async () => {
+    const first = mount();
+    expect(await screen.findByText("Footage · 2")).toBeInTheDocument();
+    expect(screen.getByText("Tài liệu, ảnh, audio · 1")).toBeInTheDocument();
+    await toFiles();
+    expect(localStorage.getItem("studio.inputs.section")).toBe("files");
+    (first as unknown as { unmount: () => void }).unmount();
+    mount();
+    expect(await screen.findByRole("region", { name: "Tài liệu, ảnh, audio" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Project AG Go" })).toBeNull();
+  });
+
+  it("with many projects: a search box, five shown and the rest on demand", async () => {
+    const names = ["Hà Giang", "Sa Pa", "Mộc Châu", "Hạ Long", "Cát Bà", "Tam Cốc", "Bái Đính"];
+    ws.listSources.mockResolvedValue({ sources: names.map((n, i) => src({ kind: "ag_go_project", ref: `agp-${i}`, mediaType: "mixed", label: n, meta: { videos: i } })) });
+    mount();
+    const region = await screen.findByRole("region", { name: "Project AG Go" });
+    expect(within(region).getAllByRole("listitem")).toHaveLength(5);
+    fireEvent.click(within(region).getByRole("button", { name: "Xem tất cả (7)" }));
+    expect(within(region).getAllByRole("listitem")).toHaveLength(7);
+    fireEvent.change(within(region).getByRole("searchbox", { name: "Tìm project" }), { target: { value: "tam" } });
+    expect(within(region).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Tam Cốc5 video"]);
+  });
+
+  it("on the project page: a summary, videos grouped by Studio video (each once), search, a state filter and bulk prepare/retry", async () => {
+    const asset = (ref: string, label: string, videoId: string | null, asset: SourceItem["asset"]) => src({ kind: "ag_go_asset", ref, label, videoId, mediaType: "video", asset });
+    const ready = { state: "ready" as const, folder: "", readme: "inputs/r/README.md", shots: 3, duration_s: 10, transcript: false };
+    ws.listVideos.mockResolvedValue({ videos: [
+      { id: "v2", projectId: "p1", idx: 2, title: "Tràng An", status: "draft", createdBy: "u", createdAt: "", updatedAt: "", archivedAt: null },
+      { id: "v1", projectId: "p1", idx: 1, title: "Hoa Lư", status: "draft", createdBy: "u", createdAt: "", updatedAt: "", archivedAt: null },
+    ] });
+    ws.listSources.mockResolvedValue({
+      sources: [
+        asset("a1", "Hoa Lư 01.mp4", "v1", ready),
+        asset("a2", "Hoa Lư 02.mp4", "v1", { state: "failed", error: "hỏng" }),
+        asset("a2", "Hoa Lư 02.mp4", "v1", { state: "failed", error: "hỏng" }),
+        asset("a3", "Tràng An 01.mp4", "v2", { state: "not_prepared" }),
+        asset("a1", "Hoa Lư 01.mp4", "v2", ready),
+        asset("a4", "Bến thuyền.mp4", "v2", { state: "queued", job_id: "j", phase: null, progress: null }),
+      ],
+      counts: { videos: 4, ready: 1, preparing: 1, failed: 1, notPrepared: 1 },
+    });
+    mount();
+    expect(await screen.findByLabelText("Tình trạng video AG Go")).toHaveTextContent("4 video · 1 sẵn sàng · 1 đang chuẩn bị · 1 lỗi · 1 chưa chuẩn bị");
+    const region = screen.getByRole("region", { name: "Video AG Go của dự án" });
+    const heads = await within(region).findAllByRole("button", { expanded: false });
+    expect(heads.map((h) => h.textContent)).toEqual(["1. Hoa Lư2 videoLỗi", "2. Tràng An3 videoĐang chuẩn bị"]);
+    expect(within(region).queryByText("Hoa Lư 02.mp4")).toBeNull();
+    fireEvent.click(heads[0]!);
+    expect(within(region).getAllByText("Hoa Lư 02.mp4")).toHaveLength(1);
+    fireEvent.change(within(region).getByRole("searchbox", { name: "Tìm video theo tên" }), { target: { value: "bến" } });
+    expect(within(region).getByText("Bến thuyền.mp4")).toBeInTheDocument();
+    expect(within(region).queryByText("Hoa Lư 02.mp4")).toBeNull();
+    fireEvent.change(within(region).getByRole("searchbox", { name: "Tìm video theo tên" }), { target: { value: "" } });
+    // the summary filters the list to the failed ones
+    fireEvent.click(screen.getByRole("button", { name: "1 lỗi" }));
+    await waitFor(() => expect(within(region).getAllByRole("button", { expanded: true })).toHaveLength(1));
+    expect(within(region).getByText("Hoa Lư 02.mp4")).toBeInTheDocument();
+    expect(within(region).queryByText("Tràng An 01.mp4")).toBeNull();
+    fireEvent.click(within(region).getByRole("button", { name: "Chuẩn bị các video chưa chuẩn bị (1)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Chuẩn bị" }, { timeout: 3000 }));
+    await waitFor(() => expect(ws.prepareInputs).toHaveBeenCalledWith("p1", ["a3"]));
+    fireEvent.click(within(region).getByRole("button", { name: /Thử lại các video lỗi \(1\)/ }));
+    const retry = await screen.findAllByRole("button", { name: "Thử lại" });
+    fireEvent.click(retry[retry.length - 1]!);
+    await waitFor(() => expect(ws.prepareInputs).toHaveBeenCalledWith("p1", ["a2"]));
+  });
+
+  it("shows 30 videos at a time and no bulk buttons to a viewer", async () => {
+    ws.listSources.mockResolvedValue({ sources: Array.from({ length: 35 }, (_, i) => src({
+      kind: "ag_go_asset", ref: `a${i}`, label: `Clip ${i}.mp4`, videoId: "v1", mediaType: "video", asset: { state: "not_prepared" },
+    })) });
+    mount("v1", vi.fn(), false);
+    const region = await screen.findByRole("region", { name: "Video AG Go của video này" });
+    expect(within(region).getAllByRole("listitem")).toHaveLength(30);
+    expect(within(region).queryByRole("button", { name: /Chuẩn bị các video/ })).toBeNull();
+    fireEvent.click(within(region).getByRole("button", { name: "Xem thêm (5)" }));
+    expect(within(region).getAllByRole("listitem")).toHaveLength(35);
   });
 });
 
 describe("jobs of a chat", { timeout: 20_000 }, () => {
   beforeAll(async () => { await i18n.changeLanguage("vi"); });
-  it("shows the jobs this chat started above the message box, and stops one", async () => {
+  it("shows the jobs this chat started above the message box in one line that unfolds, and stops one", async () => {
     const getActivity = vi.fn().mockResolvedValue({ activity: [
       { id: "j9", kind: "job", status: "running", title: "Chuẩn bị Tam Cốc.mp4", phase: null, detail: "Đang dò cảnh (0:30 / 1:12)", startedAt: started, notBefore: null,
         progress: 0.3, etaSeconds: 40, node: null, cancellable: true, parentId: null, threadId: "t1", threadTitle: "Tràng An", videoId: "v1", jobKind: "prepare_asset" },
@@ -238,6 +367,12 @@ describe("jobs of a chat", { timeout: 20_000 }, () => {
         <AntApp><ThreadJobs projectId="p1" threadId="t1" canStop /></AntApp>
       </QueryClientProvider>,
     );
+    const line = await screen.findByRole("button", { name: /1 việc nền/ });
+    expect(line).toHaveAttribute("aria-expanded", "false");
+    expect(line).toHaveTextContent("1 đang chạy · 0 đang chờ");
+    expect(line).toHaveTextContent("30% xong · còn ≈ 0:40");
+    expect(screen.queryByRole("group")).toBeNull();
+    fireEvent.click(line);
     const card = await screen.findByRole("group", { name: "Chuẩn bị Tam Cốc.mp4" });
     expect(card).toHaveTextContent("Studio (ffmpeg trên máy chủ)");
     expect(card).toHaveTextContent("Đang dò cảnh (0:30 / 1:12)");
@@ -246,7 +381,7 @@ describe("jobs of a chat", { timeout: 20_000 }, () => {
     await waitFor(() => expect(ws.cancelJob).toHaveBeenCalledWith("p1", "j9"));
   });
 
-  it("folds many jobs into a summary that shows the running ones first and unfolds the rest", async () => {
+  it("many jobs: one summary line; unfolded, every card with the running ones first", async () => {
     const row = (i: number, status: "running" | "waiting") => ({
       id: `j${i}`, kind: "job", status, title: `Chuẩn bị clip ${i}.mp4`, phase: null, detail: null, startedAt: started, notBefore: null, progress: null,
       etaSeconds: null, node: null, cancellable: true, parentId: null, threadId: "t1", threadTitle: "Tràng An", videoId: "v1", jobKind: "prepare_asset",
@@ -260,10 +395,12 @@ describe("jobs of a chat", { timeout: 20_000 }, () => {
     );
     expect(await screen.findByText("4 việc nền")).toBeInTheDocument();
     expect(screen.getByText("1 đang chạy · 3 đang chờ")).toBeInTheDocument();
-    expect(screen.getAllByRole("group").map((g) => g.getAttribute("aria-label"))).toEqual(["Chuẩn bị clip 2.mp4", "Chuẩn bị clip 1.mp4"]);
-    fireEvent.click(screen.getByRole("button", { name: /Xem tất cả/ }));
-    expect(screen.getAllByRole("group")).toHaveLength(4);
-    fireEvent.click(screen.getByRole("button", { name: /Thu gọn/ }));
-    expect(screen.getAllByRole("group")).toHaveLength(2);
+    expect(screen.getByText("0% xong")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /4 việc nền/ }));
+    expect(screen.getAllByRole("group").map((g) => g.getAttribute("aria-label")))
+      .toEqual(["Chuẩn bị clip 2.mp4", "Chuẩn bị clip 1.mp4", "Chuẩn bị clip 3.mp4", "Chuẩn bị clip 4.mp4"]);
+    expect(screen.queryByRole("button", { name: /Xem tất cả/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /4 việc nền/ }));
+    expect(screen.queryByRole("group")).toBeNull();
   });
 });

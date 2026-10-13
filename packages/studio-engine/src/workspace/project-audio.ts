@@ -4,17 +4,89 @@
  * or as the music; Studio normalises it and keeps it in the bucket by content (`library:studio/projects/<id>/…`),
  * where the farm reads it. The same JSON as a production's (`ProductionVoiceSchema`, `ProductionMusicSchema`).
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  ProductionMusicSchema, ProductionVoiceSchema, studioMusicOf, type AudioSource, type ProductionMusic, type ProductionVoice, type StudioMusic,
-  type VoiceOrigin,
+  ProductionMusicSchema, ProductionVoiceSchema, studioMusicOf, type AudioSource, type MusicTrack, type ProductionMusic, type ProductionVoice,
+  type StudioMusic, type VoiceOrigin,
 } from "@harness/contracts";
 import { AudioImportError, MUSIC_DEFAULTS, prepareMusic, prepareVoice, sha256Of, type AudioImportDeps, type AudioKind } from "../audio-import.js";
+import { listLibraryMusic } from "../music-library.js";
 import type { StudioDb } from "../studio-db.js";
 import { productionVoice, type NarrationVoice } from "../voice.js";
 import { requireProject } from "./project-db.js";
+import { listSources } from "./sources-db.js";
+
+/** Audio files a person uploads (Inputs tab or Files tab), by extension. */
+export const AUDIO_FILE_EXTS = [".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"] as const;
+/** Where uploaded audio goes. */
+export const PROJECT_AUDIO_DIR = "context/audio";
+
+/** An audio file of the workspace a person may use as the voice sample or the music. */
+export interface ProjectAudioFile {
+  path: string;
+  name: string;
+  bytes: number;
+  /** The Inputs tab's row for it; null for a file put in `context/audio/` through the Files tab. */
+  sourceId: string | null;
+  addedAt: string;
+}
+
+const isAudioName = (name: string) => (AUDIO_FILE_EXTS as readonly string[]).some((ext) => name.toLowerCase().endsWith(ext));
+
+/**
+ * Audio files usable as the voice sample or the music: uploaded audio listed in the Inputs tab whose file is still
+ * there, and any audio file under `context/audio/` (also those put there through the Files tab, which have no row).
+ * Newest first. Only names and sizes: nothing is probed.
+ */
+export function projectAudioFiles(db: StudioDb, dir: string, projectId: string): ProjectAudioFile[] {
+  const out = new Map<string, ProjectAudioFile>();
+  for (const s of listSources(db, projectId)) {
+    if (s.kind !== "upload" || s.media_type !== "audio" || out.has(s.ref)) continue;
+    const abs = join(dir, ...s.ref.split("/"));
+    if (!existsSync(abs)) continue;
+    out.set(s.ref, { path: s.ref, name: s.label, bytes: statSync(abs).size, sourceId: s.id, addedAt: s.added_at });
+  }
+  const walk = (rel: string, depth: number) => {
+    let names: string[];
+    try { names = readdirSync(join(dir, ...rel.split("/"))); } catch { return; }
+    for (const name of names) {
+      if (name.startsWith(".")) continue;
+      const childRel = `${rel}/${name}`;
+      let st;
+      try { st = statSync(join(dir, ...childRel.split("/"))); } catch { continue; }
+      if (st.isDirectory()) { if (depth < 3) walk(childRel, depth + 1); continue; }
+      if (!st.isFile() || !isAudioName(name) || out.has(childRel)) continue;
+      out.set(childRel, { path: childRel, name, bytes: st.size, sourceId: null, addedAt: st.mtime.toISOString() });
+    }
+  };
+  walk(PROJECT_AUDIO_DIR, 0);
+  return [...out.values()].sort((a, b) => b.addedAt.localeCompare(a.addedAt) || a.path.localeCompare(b.path));
+}
+
+/** The library track the project's music is, if it is one (`library:music/…`). */
+export function projectLibraryTrack(db: StudioDb, projectId: string): MusicTrack | null {
+  const m = projectAudio(db, projectId).music;
+  if (!m || !m.track.startsWith("library:music/")) return null;
+  return listLibraryMusic(db).find((t) => t.file === m.track) ?? null;
+}
+
+/**
+ * Points the project at a track of the music library (no file is copied: the track stays where the library keeps it,
+ * and the cleanup sweep never removes library tracks). A retired track cannot be picked.
+ */
+export function setProjectLibraryMusic(db: StudioDb, projectId: string, track: MusicTrack, o: { gainDb?: number; ducking?: boolean } = {}): ProductionMusic {
+  requireProject(db, projectId);
+  if (!track.active) throw new AudioImportError("audio_invalid", "bài này đã bị gỡ khỏi kho nhạc");
+  const sha = track.checksum.startsWith("sha256:") ? track.checksum.slice("sha256:".length) : track.checksum;
+  const music = ProductionMusicSchema.parse({
+    track: track.file, gain_db: o.gainDb ?? MUSIC_DEFAULTS.gain_db, ducking: o.ducking ?? MUSIC_DEFAULTS.ducking,
+    ...(sha ? { sha256: sha } : {}), ...(track.duration_seconds > 0 ? { duration_s: track.duration_seconds } : {}),
+  });
+  db.run("UPDATE projects SET music = ?, updated_at = ? WHERE id = ?", [JSON.stringify(music), new Date().toISOString(), projectId]);
+  return music;
+}
 
 export interface ProjectAudio { voice: ProductionVoice | null; music: ProductionMusic | null }
 
@@ -103,7 +175,9 @@ export function projectAudioSummary(db: StudioDb, projectId: string): { voice: s
       : mode === "clone" ? `giọng mẫu${clone?.duration_s ? ` ${Math.round(clone.duration_s)} s` : ""}${clone ? ` (${clone.origin === "synthetic" ? "giọng máy" : clone.origin === "own" ? "giọng của người dùng" : "có bản quyền"})` : ""}`
         : "đang tạo giọng";
   const m = a.music;
-  const music = m ? `nhạc riêng của dự án${m.duration_s ? ` (${Math.round(m.duration_s)} s)` : ""}, ${m.gain_db} dB${m.ducking ? ", nhỏ lại khi có lời" : ""}`
+  const lib = m ? projectLibraryTrack(db, projectId) : null;
+  const music = lib ? `bài "${lib.display_name}" trong kho nhạc${lib.duration_seconds ? ` (${Math.round(lib.duration_seconds)} s)` : ""}, ${m!.gain_db} dB${m!.ducking ? ", nhỏ lại khi có lời" : ""}`
+    : m ? `nhạc riêng của dự án${m.duration_s ? ` (${Math.round(m.duration_s)} s)` : ""}, ${m.gain_db} dB${m.ducking ? ", nhỏ lại khi có lời" : ""}`
     : "chưa chọn (Studio chọn nhạc trong thư viện theo tâm trạng trong kế hoạch dựng hoặc branding)";
   return { voice, music };
 }

@@ -119,15 +119,21 @@ export interface StepState {
   primary: string;
   prompts: { do: string; redo: string | null; revise: string | null };
   staleBecause: string[];
+  /** Steps of the other scope this one builds on that are not done yet (a note; absent from an older API). */
+  outsideRequires?: string[];
   detail: string | null;
 }
 
 export interface PlaybookStatus {
   custom: boolean;
   issues: FileIssue[];
+  /** Whose steps `next` suggests: the video's (a video's chat) or the channel's. */
+  scope?: "project" | "video";
   project: StepState[];
   video: StepState[] | null;
   next: { scope: "project" | "video"; key: string }[];
+  /** The channel's steps still open. */
+  projectOpen?: number;
 }
 
 export interface LessonProposal {
@@ -158,6 +164,14 @@ export interface FileVersionDetail extends FileVersion {
   issues: string | null;
 }
 
+export interface DiffLine { kind: "context" | "add" | "del"; text: string }
+export interface DiffHunk { old_start: number; old_lines: number; new_start: number; new_lines: number; lines: DiffLine[] }
+/** What a version changed (`GET files/versions/:id/diff`): hunks with 3 lines of context, or why it cannot be shown. */
+export type VersionDiff = { path: string; version_id: string; before_version_id: string | null } & (
+  | { hunks: DiffHunk[]; added: number; removed: number; unavailable?: undefined }
+  | { unavailable: "binary" | "too_large" }
+);
+
 // ---------------------------------------------------------------------------
 // Chat with the agent
 // ---------------------------------------------------------------------------
@@ -174,6 +188,16 @@ export type AgentPhase =
   | { kind: "done" };
 
 export type MessageStatus = "pending" | "running" | "done" | "failed" | "rate_limited" | "cancelled";
+
+/** A file a turn changed: its last version against the one before the turn; line counts when both are text ≤ 1 MB. */
+export interface ChangedFile {
+  path: string;
+  change: "added" | "modified" | "deleted";
+  version_id: string;
+  before_version_id: string | null;
+  added?: number;
+  removed?: number;
+}
 export type TeamRoleName = "viewer" | "editor" | "producer" | "owner";
 
 export interface ChatMessage {
@@ -197,6 +221,8 @@ export interface ChatMessage {
   finishedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** What the turn changed; null for older turns or while it runs (older APIs leave it out). */
+  changedFiles?: ChangedFile[] | null;
 }
 
 export interface Thread {
@@ -298,6 +324,9 @@ export interface SourceItem {
   asset: AssetState | null;
 }
 
+/** How many distinct ag-go videos are ready, being prepared (queued or running), failed, not prepared yet. */
+export interface SourceCounts { videos: number; ready: number; preparing: number; failed: number; notPrepared: number }
+
 export interface FootageItem {
   assetId: string;
   name: string;
@@ -394,6 +423,10 @@ export interface RenderView {
   sizeBytes: number | null;
   note: string;
   finishedAt: string | null;
+}
+/** A render's link, asked for one render at a time. */
+export interface RenderLink {
+  jobId: string;
   /** null when the person's own ag-go rights do not cover the footage in it, or ag-go could not say (`footage_check_failed`). */
   url: string | null;
   urlHidden?: "footage_scope" | "footage_check_failed";
@@ -414,14 +447,26 @@ export interface TimelineSummary {
   issues: string[];
 }
 
+/** An audio file of the project to use as the voice sample or the music (`sourceId` null: put in context/audio via the Files tab). */
+export interface ProjectAudioFile { path: string; name: string; bytes: number; sourceId: string | null; addedAt: string }
 export interface ProjectAudioView {
   voice: Record<string, unknown> | null;
   music: Record<string, unknown> | null;
   summary: { voice: string; music: string };
+  /** The music library track the music is, when it is one. */
+  libraryTrack: { trackId: string; displayName: string; moods: string[]; durationSeconds: number } | null;
+  /** The Studio server has ffmpeg: audio files can be used (a library track needs none). */
+  enabled: boolean;
+  files: ProjectAudioFile[];
 }
 export type VoiceOrigin = "synthetic" | "own" | "licensed";
 
 // ---- Confirmation cards ----
+/**
+ * YouTube refusing to let a place download (ISO times): the Studio server, or the farm's machines that fetch reference
+ * videos. Studio forgets it at `until` or after a download there.
+ */
+export interface YoutubeBlock { blockedAt: string; until: string; where: "studio" | "farm" }
 export type ActionKind = "render_final" | "export_premiere" | "delete_video" | "crawl_large" | "reference_download";
 export interface ActionView {
   id: string;
@@ -566,7 +611,8 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     },
 
     // ---- Inputs and jobs ----
-    listSources(projectId: string, videoId?: string): Promise<{ sources: SourceItem[] }> {
+    /** `counts`: distinct ag-go videos by where they stand (older APIs leave it out). */
+    listSources(projectId: string, videoId?: string): Promise<{ sources: SourceItem[]; counts?: SourceCounts }> {
       return call("GET", `/api/projects/${enc(projectId)}/sources${buildQuery({ videoId })}`);
     },
     /** 422 `owner_cannot_access` when the project's owner cannot use it on ag-go. */
@@ -577,10 +623,12 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
       return call("DELETE", `/api/projects/${enc(projectId)}/sources/${enc(sourceId)}`);
     },
     /** A document, image or audio file into context/ (415 `docx_not_supported`, `video_from_ag_go`, `file_type`). */
-    uploadSource(projectId: string, file: File, videoId?: string): Promise<{ source: SourceItem; file: SavedFile }> {
+    /** `reference`: a video to learn an edit style from (not footage), into context/references/, up to 300 MB. */
+    uploadSource(projectId: string, file: File, videoId?: string, opts: { reference?: boolean } = {}): Promise<{ source: SourceItem; file: SavedFile }> {
       const form = new FormData();
       form.append("file", file);
       if (videoId) form.append("videoId", videoId);
+      if (opts.reference) form.append("reference", "1");
       return call("POST", `/api/projects/${enc(projectId)}/sources/upload`, form);
     },
     /** Videos of the project's ag-go projects the person can see, with where each stands here. */
@@ -604,6 +652,10 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     listRenders(videoId: string): Promise<{ renders: RenderView[]; jobs: JobView[]; thumbnails: string[] }> {
       return call("GET", `/api/videos/${enc(videoId)}/renders`);
     },
+    /** One render's link (asks ag-go about its footage the first time); 404 when the job is not a finished render of the video. */
+    renderLink(videoId: string, jobId: string): Promise<RenderLink> {
+      return call("GET", `/api/videos/${enc(videoId)}/renders/${enc(jobId)}/link`);
+    },
     /** 403 `role`: the final render and the Premiere export need a producer. */
     startRender(videoId: string, input: { kind: RenderKind; nodeId?: string; media?: "proxy" | "original" }): Promise<JobView> {
       return call("POST", `/api/videos/${enc(videoId)}/renders`, input);
@@ -621,6 +673,10 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     audioFromFile(projectId: string, kind: "voice" | "music", input: { path: string; origin?: VoiceOrigin; referenceText?: string | null }): Promise<ProjectAudioView> {
       return call("POST", `/api/projects/${enc(projectId)}/audio/${kind}/from-file`, input);
     },
+    /** A track of the music library as the project's music (editor; 404 `not_found`, 422 `audio_invalid` when retired). */
+    musicFromLibrary(projectId: string, trackId: string): Promise<ProjectAudioView> {
+      return call("POST", `/api/projects/${enc(projectId)}/audio/music/from-library`, { trackId });
+    },
     declineVoice(projectId: string): Promise<ProjectAudioView> {
       return call("POST", `/api/projects/${enc(projectId)}/audio/voice/decline`, {});
     },
@@ -629,7 +685,11 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     },
 
     // ---- Confirmation cards ----
-    listActions(threadId: string): Promise<{ actions: ActionView[] }> {
+    /**
+     * `youtubeBlocked`: a pending reference download would fail now: YouTube blocks the Studio server and no farm
+     * machine fetches instead (`where: "studio"`), or the farm's machines are blocked too (`where: "farm"`).
+     */
+    listActions(threadId: string): Promise<{ actions: ActionView[]; youtubeBlocked?: YoutubeBlock | null }> {
       return call("GET", `/api/threads/${enc(threadId)}/actions`);
     },
     /** 422 `role` (needs another role), `expired` (the timeline changed or a day passed); 409 `decided`. */
@@ -679,6 +739,10 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     },
     getFileVersion(projectId: string, versionId: string): Promise<FileVersionDetail> {
       return call("GET", `/api/projects/${enc(projectId)}/files/versions/${enc(versionId)}`);
+    },
+    /** What `versionId` changed against `base` (another version of the file; "none" = an empty file) or the version before it. */
+    fileVersionDiff(projectId: string, versionId: string, base?: string | null): Promise<VersionDiff> {
+      return call("GET", `/api/projects/${enc(projectId)}/files/versions/${enc(versionId)}/diff${buildQuery({ base: base ?? undefined })}`);
     },
     restoreFileVersion(projectId: string, versionId: string, baseSha256?: string | null): Promise<SavedFile> {
       return call("POST", `/api/projects/${enc(projectId)}/files/versions/${enc(versionId)}/restore`, baseSha256 === undefined ? {} : { baseSha256 });

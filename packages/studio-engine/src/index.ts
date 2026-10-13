@@ -31,6 +31,8 @@ export * from "./cut-fit.js";
 export * from "./errors.js";
 export * from "./workspace/project-db.js";
 export * from "./workspace/files.js";
+export * from "./workspace/line-diff.js";
+export * from "./workspace/file-changes.js";
 export * from "./workspace/templates.js";
 export {
   CreateProjectSchema, UpdateProjectSchema, ProjectSettingsSchema, projectSettingsOf, VIDEO_STATUSES, PROJECT_ASPECTS,
@@ -54,6 +56,7 @@ export * from "./workspace/eta.js";
 export * from "./workspace/sources-db.js";
 export * from "./workspace/farm.js";
 export * from "./workspace/job-runner.js";
+export * from "./workspace/lanes.js";
 export * from "./workspace/prepare.js";
 export * from "./workspace/video-index.js";
 export * from "./agent/input-tools.js";
@@ -70,3 +73,4 @@ export * from "./workspace/fit.js";
 export * from "./agent/timeline-tools.js";
 export * from "./workspace/thumbnails.js";
 export * from "./workspace/style-watch.js";
+export * from "./workspace/reference-fetch.js";

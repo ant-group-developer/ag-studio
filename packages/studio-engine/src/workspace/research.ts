@@ -6,9 +6,11 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { CrawlRequestSchema, type CrawlRequest, type ResearchVideo, type StudioCrawl } from "@harness/contracts";
+import { clearYoutubeBlocked, noteYoutubeBlocked } from "../settings.js";
 import type { StudioDb } from "../studio-db.js";
 import { writeWorkspaceFile } from "./files.js";
-import type { JobContext, JobOutcome } from "./job-runner.js";
+import { JobError, type JobContext, type JobOutcome } from "./job-runner.js";
+import { ytFailureOf } from "../yt-dlp.js";
 import { createJob, type JobRecord } from "./jobs-db.js";
 import type { ActorRole } from "../agent/threads-db.js";
 import type { YoutubeCrawler } from "./youtube-crawl.js";
@@ -112,7 +114,15 @@ export function researchHandler(d: { db: StudioDb; crawler: YoutubeCrawler }): (
   return async (job, ctx) => {
     const req = CrawlRequestSchema.parse((JSON.parse(job.request) as ResearchJobRequest).crawl);
     ctx.setUnits(req.kind === "top_channels" ? req.max * 5 : req.max);
-    const doc = await d.crawler.crawl(req, (phase, progress) => ctx.report({ phase, progress }), ctx.signal);
+    const doc = await d.crawler.crawl(req, (phase, progress) => ctx.report({ phase, progress }), ctx.signal).catch((e: unknown) => {
+      // the server blocked by YouTube: say so, and the way that is not blocked (the Data API)
+      if (ytFailureOf(e)?.code === "youtube_blocked") {
+        noteYoutubeBlocked(d.db, ctx.now());
+        throw new JobError("youtube_blocked", `${(e as Error).message}. Đặt YOUTUBE_API_KEY cho worker thì nghiên cứu đi qua YouTube Data API, không bị chặn kiểu này.`);
+      }
+      throw e;
+    });
+    if (doc.source === "yt-dlp") clearYoutubeBlocked(d.db); // yt-dlp read YouTube: it is not blocking
     ctx.checkpoint();
     ctx.report({ phase: "Đang ghi vào research/", progress: 0.98 });
     const base = researchBase(ctx.workspaceDir, req, ctx.now());

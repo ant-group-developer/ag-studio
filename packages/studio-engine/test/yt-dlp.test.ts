@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { detectCuts, YTDLP_COMMON_ARGS, ytDlp, ytVideoMeta } from "../src/index.js";
+import { classifyYtDlp, detectCuts, YtDlpError, YTDLP_COMMON_ARGS, ytDlp, ytVideoMeta } from "../src/index.js";
 import { hasFfmpeg } from "../../../tests/media.js";
 import { ROOT } from "./helpers.js";
 
@@ -36,12 +36,29 @@ describe("ytDlp (fake)", () => {
     const list = await yt.listChannel({ kind: "handle", value: "@meitime" }, 3);
     expect(list.video_ids).toEqual(["fake0000001", "fake0000002", "fake0000003"]);
     expect(list.title).toBe("Fake Channel");
-    await expect(yt.listChannel({ kind: "handle", value: "@missing" }, 3)).rejects.toThrow(/does not exist/);
+    await expect(yt.listChannel({ kind: "handle", value: "@missing" }, 3)).rejects.toMatchObject({ code: "unavailable", detail: "This channel does not exist" });
   });
 
-  it("a refused download says why", async () => {
-    await expect(yt.download("ERRgone0000", mkdtempSync(join(tmpdir(), "ytdl-")))).rejects.toThrow(/Video unavailable/);
-    await expect(yt.download("../../etc/x", mkdtempSync(join(tmpdir(), "ytdl-")))).rejects.toThrow(/không phải id/);
+  it("a refused download says why, in a word and a code", async () => {
+    const dir = () => mkdtempSync(join(tmpdir(), "ytdl-"));
+    await expect(yt.download("ERRgone0000", dir())).rejects.toMatchObject({ name: "YtDlpError", code: "unavailable", detail: "Video unavailable" });
+    await expect(yt.download("PRIVate0000", dir())).rejects.toMatchObject({ code: "private", message: "video riêng tư" });
+    await expect(yt.download("AGEcheck000", dir())).rejects.toMatchObject({ code: "age_restricted" });
+    await expect(yt.download("LONGvideo00", dir())).rejects.toMatchObject({ code: "too_long" });
+    await expect(yt.download("BOTblocked1", dir())).rejects.toMatchObject({ code: "youtube_blocked", message: expect.stringMatching(/^YouTube đang chặn tải từ máy chủ Studio/) });
+    await expect(yt.download("../../etc/x", dir())).rejects.toThrow(/không phải id/);
+  });
+
+  it("a server YouTube blocks: every read says youtube_blocked, the start of the message kept", async () => {
+    const blocked = ytDlp({ argv: [...FAKE, "--fake-blocked"] });
+    expect(await blocked.version()).toBe("2026.09.01-fake");
+    const err = await blocked.metadata(["U_17EqTHUIo"]).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(YtDlpError);
+    expect(err).toMatchObject({ code: "youtube_blocked", message: expect.stringMatching(/^yt-dlp không đọc được video nào: YouTube đang chặn/) });
+    expect((err as YtDlpError).detail).toMatch(/^Sign in to confirm you.re not a bot/);
+    await expect(blocked.search("phố cổ", 5, "relevance")).rejects.toMatchObject({ code: "youtube_blocked" });
+    await expect(blocked.listChannel({ kind: "handle", value: "@meitime" }, 3)).rejects.toMatchObject({ code: "youtube_blocked" });
+    await expect(blocked.download("U_17EqTHUIo", mkdtempSync(join(tmpdir(), "ytdl-")))).rejects.toMatchObject({ code: "youtube_blocked" });
   });
 
   it.skipIf(!hasFfmpeg())("downloads a video yt-dlp merges with this ffmpeg, scenes and all", async () => {
@@ -60,5 +77,31 @@ describe("ytVideoMeta", () => {
     });
     expect(ytVideoMeta("not json")).toBeNull();
     expect(ytVideoMeta(JSON.stringify({ id: "playlist-of-things", channel_id: "UC1", upload_date: "20260101" }))).toBeNull();
+  });
+});
+
+describe("classifyYtDlp", () => {
+  const c = (text: string) => classifyYtDlp(text).code;
+  it("names each way YouTube says no", () => {
+    expect(c("ERROR: [youtube] U_17EqTHUIo: Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for the authentication.")).toBe("youtube_blocked");
+    expect(c("ERROR: Unable to download webpage: HTTP Error 429: Too Many Requests")).toBe("youtube_blocked");
+    expect(c("ERROR: [youtube] abcdefghijk: Sign in to confirm your age. This video may be inappropriate for some users. Use --cookies")).toBe("age_restricted");
+    expect(c("ERROR: [youtube] abcdefghijk: Join this channel to get access to members-only content like this video")).toBe("members_only");
+    expect(c("ERROR: [youtube] abcdefghijk: Private video. Sign in if you've been granted access")).toBe("private");
+    expect(c("ERROR: [youtube] abcdefghijk: This live event will begin in 3 hours.")).toBe("live");
+    expect(c("[download] Kyoto does not pass filter (duration<=1800 & !is_live), skipping ..")).toBe("too_long");
+    expect(c("[download] File is larger than max-filesize (400000000 bytes > 300M). Aborting.")).toBe("too_big");
+    expect(c("ERROR: [youtube] abcdefghijk: Requested format is not available. Use --list-formats")).toBe("no_480p");
+    expect(c("ERROR: [youtube] abcdefghijk: Unable to download API page: <urlopen error [Errno -3] Temporary failure in name resolution>")).toBe("network");
+  });
+
+  it("a bot check on any line wins; something else keeps the START of its ERROR line", () => {
+    expect(c("ERROR: [youtube] aaaaaaaaaaa: Video unavailable\nERROR: [youtube] bbbbbbbbbbb: Sign in to confirm you're not a bot")).toBe("youtube_blocked");
+    const long = `ERROR: [youtube] abcdefghijk: Something new went wrong ${"x".repeat(400)} the end`;
+    const f = classifyYtDlp(`WARNING: noise\n${long}\nsome trailing line`);
+    expect(f.code).toBe("other");
+    expect(f.reason.startsWith("yt-dlp: Something new went wrong")).toBe(true);
+    expect(f.reason.length).toBeLessThanOrEqual(210);
+    expect(f.reason).not.toContain("the end");
   });
 });
