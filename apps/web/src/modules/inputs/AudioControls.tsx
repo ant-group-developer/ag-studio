@@ -30,11 +30,11 @@ function useProjectAudio(projectId: string) {
   return useQuery({ queryKey: ["audio", projectId], queryFn: () => client.getAudio(projectId) });
 }
 
-/** After a change: the card, the uploads list, the Files tab and the playbook (its audio step) follow. */
+/** After a change: the card, the uploads list, the Files tab and the playbook (its audio step) follow (resolved once read again). */
 function useAudioDone(projectId: string) {
   const qc = useQueryClient();
-  return () => {
-    for (const k of ["audio", "sources", "files", "playbook"]) void qc.invalidateQueries({ queryKey: [k, projectId] });
+  return async (): Promise<void> => {
+    await Promise.all(["audio", "sources", "files", "playbook"].map((k) => qc.invalidateQueries({ queryKey: [k, projectId] })));
   };
 }
 
@@ -61,7 +61,7 @@ function VoiceOriginModal({ projectId, path, onClose }: { projectId: string; pat
   const [text, setText] = useState("");
   const use = useMutation({
     mutationFn: () => client.audioFromFile(projectId, "voice", { path: path!, origin: origin!, referenceText: text.trim() || null }),
-    onSuccess: () => { done(); void message.success(t("ws.audio.voiceSet")); close(); },
+    onSuccess: () => { void done(); void message.success(t("ws.audio.voiceSet")); close(); },
     onError: fail,
   });
   const close = () => { setOrigin(null); setText(""); onClose(); };
@@ -285,16 +285,17 @@ function MusicActions({ projectId, target, files, enabled, canEdit, current, ext
     mutationFn: async (list: File[]) => {
       const r = await audioUpload.run(list);
       const used = list.length === 1 && r.paths.length === 1 ? await target.fromFiles({ paths: r.paths }) : null;
+      // the files just uploaded are listed before the picker opens on them
+      await done();
       return { ...r, used, several: list.length > 1 };
     },
     onSuccess: (r) => {
-      done();
       for (const f of r.failed) void message.error(f);
       if (!r.paths.length) return;
       if (r.several) { void message.success(t("ws.audio.uploaded", { count: r.paths.length })); setPicking(r.paths); }
       else target.changed(r.used);
     },
-    onError: (e) => { done(); fail(e); },
+    onError: (e) => { void done(); fail(e); },
   });
   const role = canEdit ? null : t("ws.audio.whyEditor");
   const noFfmpeg = enabled ? null : t("ws.audio.whyNoFfmpeg");
@@ -362,22 +363,25 @@ export function AudioCard({ projectId, canEdit, canProduce }: { projectId: strin
   // one sample is used at once (it asks where the voice comes from); several are uploaded one by one, then one is picked
   const voiceUpload = useAudioUpload(projectId);
   const uploadVoice = useMutation({
-    mutationFn: voiceUpload.run,
+    mutationFn: async (files: File[]) => {
+      const r = await voiceUpload.run(files);
+      await done(); // listed before the picker opens on them
+      return r;
+    },
     onSuccess: ({ paths, failed }, files) => {
-      done();
       for (const f of failed) void message.error(f);
       if (!paths.length) return;
       if (files.length > 1) { void message.success(t("ws.audio.uploaded", { count: paths.length })); setPickingVoice(true); }
       else setVoicePath(paths[0]!);
     },
-    onError: (e) => { done(); fail(e); },
+    onError: (e) => { void done(); fail(e); },
   });
   const decline = useMutation({ mutationFn: () => client.declineVoice(projectId), onSuccess: done, onError: fail });
   const clear = useMutation({ mutationFn: (kind: "voice" | "music") => client.clearAudio(projectId, kind), onSuccess: done, onError: fail });
   const music: MusicTarget = {
     fromFiles: (i) => (i.paths.length === 1 ? client.audioFromFile(projectId, "music", { path: i.paths[0]! }) : client.musicFromFiles(projectId, i)),
     fromLibrary: (trackId) => client.musicFromLibrary(projectId, trackId),
-    changed: () => { done(); void message.success(t("ws.audio.musicSet")); },
+    changed: () => { void done(); void message.success(t("ws.audio.musicSet")); },
   };
 
   if (audio.isLoading) {
@@ -498,7 +502,7 @@ export function VideoMusicCard({ projectId, videoId, canEdit }: { projectId: str
         <Music size={15} aria-hidden className="ws-audio__icon" />
         <div className="ws-audio__body">
           <div className="ws-audio__line"><strong>{t("ws.audio.videoMusic")}</strong><span className="ws-audio__status">{status}</span></div>
-          <MusicActions projectId={projectId} target={target} files={v.files} enabled={v.enabled} canEdit={canEdit}
+          <MusicActions projectId={projectId} target={target} files={p?.files ?? v.files} enabled={v.enabled} canEdit={canEdit}
             current={v.uses === "video" && typeof v.music?.track === "string" ? v.music.track : null}
             extra={v.uses === "video" ? (
               <AudioButton why={canEdit ? null : t("ws.audio.whyEditor")} icon={<RotateCcw size={12} />} loading={back.isPending} onClick={() => back.mutate()}>
@@ -523,7 +527,7 @@ export function UseAudioButtons({ projectId, path, canEdit, canProduce }: { proj
   const [voicePath, setVoicePath] = useState<string | null>(null);
   const music = useMutation({
     mutationFn: () => client.audioFromFile(projectId, "music", { path }),
-    onSuccess: () => { done(); void message.success(t("ws.audio.musicSet")); },
+    onSuccess: () => { void done(); void message.success(t("ws.audio.musicSet")); },
     onError: fail,
   });
   const noFfmpeg = audio.data && !audio.data.enabled ? t("ws.audio.whyNoFfmpeg") : null;
