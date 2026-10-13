@@ -14,7 +14,11 @@ export const TOUR_STOPS: Record<TourKind, string[]> = {
   project: ["new-video", "steps", "composer", "tab-inputs", "tab-preview", "tab-files"],
 };
 
-const target = (place: string) => document.querySelector<HTMLElement>(`[data-tour="${place}"]`);
+/** The element of a place, when it is on the page and shown (a narrow screen hides the side columns). */
+function target(place: string): HTMLElement | null {
+  const el = document.querySelector<HTMLElement>(`[data-tour="${place}"]`);
+  return el && (typeof el.checkVisibility !== "function" || el.checkVisibility()) ? el : null;
+}
 
 /**
  * A short tour of the page the first time the person opens it (projects list, project): it points at what is on the

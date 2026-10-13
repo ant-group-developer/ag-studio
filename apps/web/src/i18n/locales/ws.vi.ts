@@ -43,7 +43,7 @@ export const wsVi = {
       video: { title: "Tạo video", hint: "Nút Video mới ở cột trái của dự án: nói video kể gì." },
       chat: { title: "Chat với {{ai}}", hint: "Gửi một yêu cầu trong chat của video, ví dụ: viết brief cho video này." },
       preview: { title: "Render bản xem trước", hint: "Nhờ {{ai}} dựng timeline và render bản xem trước, rồi xem ở tab Xem trước." },
-      final: { title: "Render bản cuối", hint: "Xác nhận thẻ \"Render bản cuối\" trong chat hoặc bấm ở tab Xem trước (vai producer)." },
+      final: { title: "Render bản cuối", hint: "Xác nhận thẻ \"Render bản cuối\" trong chat hoặc bấm ở tab Xem trước (vai nhà sản xuất)." },
     },
   },
   tour: {

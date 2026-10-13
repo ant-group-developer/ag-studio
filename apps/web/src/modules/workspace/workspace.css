@@ -64,6 +64,7 @@
 .ws-crumbs__select .ant-select-selection-item { color: var(--ws-muted); font-size: 13px; font-weight: 500; }
 .ws-crumbs__select:last-child .ant-select-selection-item { color: var(--ws-text); }
 .ws-header__right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.ws-header__right > .ws-icon-button { white-space: nowrap; }
 .ws-icon-button {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 0 10px; border-radius: 8px;
   border: 1px solid transparent; background: none; color: var(--ws-muted); font: inherit; font-size: 13px; cursor: pointer;
