@@ -1,3 +1,5 @@
+import { guideVi } from "./guide.vi";
+
 /** Chuỗi của giao diện làm việc theo dự án (spec 2026-10-10 agent-workspace), gộp vào `vi.ws`. */
 export const wsVi = {
   shell: {
@@ -21,7 +23,9 @@ export const wsVi = {
     project: "Dự án",
     allProjects: "Mọi dự án của nhóm",
     noProjectFound: "Không có dự án nào khớp",
+    guide: "Hướng dẫn",
   },
+  guide: guideVi,
   start: {
     button: "Bắt đầu {{done}}/{{total}}",
     title: "Bắt đầu",

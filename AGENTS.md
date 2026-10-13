@@ -84,7 +84,7 @@ nhưng không code nào đọc.
   `turnChangedFiles` trong `workspace/file-changes.ts`; runner quét thư mục với tác giả Studio trước lượt để file job/seed
   không tính cho lượt), `step_marks`, `thread_summaries`,
   `lesson_proposals`, `project_jobs`, `project_farm_jobs`, `prepared_assets`, `agent_actions`, `audit_log` (nhật ký hoạt động,
-  0036). Dùng chung từ trước: `teams`,
+  0036), `user_prefs` (tuỳ chọn riêng từng người: tour đã xem, checklist đã ẩn; 0041). Dùng chung từ trước: `teams`,
   `team_members`, `team_skills`, `sign_audit_log`, `youtube_cache`, `llm_calls`, `studio_settings`, `studio_voice_lines`,
   `music_track` (kho nhạc), `lease` (slot Claude).
 - File hướng ra trình duyệt nằm trên R2 (`S3Bucket`, `packages/studio-engine/src/bucket.ts`), URL ký có hạn. File tải
@@ -202,6 +202,11 @@ nhưng không code nào đọc.
   workspace cuộn trong `.ws-page` nên `PAGE_TABLE_STICKY`, bảng trong hộp cuộn khác dùng `stickyIn`); spec
   `sticky-table-header.spec.ts` quét mã nguồn và báo bảng thiếu. Danh sách dự án có người tạo (`creator` từ Account API, lọc
   "Do tôi tạo").
+  Người mới (`modules/onboarding/`): nút "Bắt đầu n/7" trên thanh trên (`StartChecklist`, `GET /me/onboarding` đếm trong
+  các nhóm của người đó; "Đi tới" theo `links`, "Xem cách làm" → `/guide#<mục>`; ẩn khi xong hết hoặc bấm Ẩn), tour antd
+  lần đầu vào trang dự án/danh sách dự án (`ProductTour`, chỉ trỏ vào `data-tour` đang có trên trang, bỏ qua nút vai
+  không có; "Xem lại hướng dẫn nhanh" ở menu avatar và trang hướng dẫn), trang `/guide` (nội dung `locales/guide.{vi,en}.ts`,
+  mỗi mục có anchor). Trạng thái đã xem/đã ẩn ở `GET/PUT /me/prefs`, không ở localStorage.
   Chọn project ag-go: drawer toàn màn hình dựng lại **y như trang Projects của ag-go-web** (`modules/inputs/ag-go-projects/`:
   sidebar lọc, ô tìm có gợi ý, sort, list/grid, thẻ và CSS chép từ `project-grid-view` của ag-go; `/projects`, lookup và
   `/assets/:id/preview-url` của ag-go gọi thẳng). Chỉ liệt kê project của **menu "Dự án"** của ag-go

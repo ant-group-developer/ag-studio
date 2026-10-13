@@ -1,7 +1,7 @@
 import { Fragment, useState, type ReactNode } from "react";
 import { Avatar, Dropdown } from "antd";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, Compass, Plus, ShieldCheck } from "lucide-react";
+import { BookOpen, ChevronRight, Compass, Plus, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { useStudioClient } from "../../api/studio-client";
@@ -91,6 +91,7 @@ export function WorkspaceShell({ teamId, teamCrumb = true, project, crumbs = [],
         <div className="ws-header__right">
           {actions}
           <StartChecklist />
+          <Link to="/guide" className="ws-icon-button" data-tour="guide"><BookOpen size={14} aria-hidden />{t("ws.shell.guide")}</Link>
           {canReview ? <Link to="/stats" className="ws-icon-button">{t("ws.shell.stats")}</Link> : null}
           {canReview ? <Link to="/audit" className="ws-icon-button">{t("ws.shell.audit")}</Link> : null}
           {isAdmin ? <Link to="/queue" className="ws-icon-button">{t("ws.shell.queue")}</Link> : null}

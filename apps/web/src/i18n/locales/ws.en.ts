@@ -1,3 +1,4 @@
+import { guideEn } from "./guide.en";
 import type { wsVi } from "./ws.vi";
 
 type Messages<T> = { [K in keyof T]: T[K] extends string ? string : Messages<T[K]> };
@@ -25,7 +26,9 @@ export const wsEn: Messages<typeof wsVi> = {
     project: "Project",
     allProjects: "All the team's projects",
     noProjectFound: "No project matches",
+    guide: "Guide",
   },
+  guide: guideEn,
   start: {
     button: "Getting started {{done}}/{{total}}",
     title: "Getting started",

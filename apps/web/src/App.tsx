@@ -18,6 +18,7 @@ const MusicLibraryPage = lazy(() => import("./pages/MusicLibraryPage").then((m) 
 const HomePage = lazy(() => import("./pages/HomePage").then((m) => ({ default: m.HomePage })));
 const ProjectsPage = lazy(() => import("./pages/ProjectsPage").then((m) => ({ default: m.ProjectsPage })));
 const ProjectPage = lazy(() => import("./pages/ProjectPage").then((m) => ({ default: m.ProjectPage })));
+const GuidePage = lazy(() => import("./pages/GuidePage").then((m) => ({ default: m.GuidePage })));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
 
 const ANTD_LOCALES: Record<AppLanguage, typeof viVN> = { vi: viVN, en: enUS };
@@ -46,6 +47,7 @@ export function App() {
                     <Route path="/music" element={<MusicLibraryPage />} />
                     <Route path="/teams" element={<TeamsPage />} />
                     <Route path="/teams/:teamId" element={<TeamDetailPage />} />
+                    <Route path="/guide" element={<GuidePage />} />
                     <Route path="*" element={<NotFoundPage />} />
                   </Routes>
                 </Suspense>
