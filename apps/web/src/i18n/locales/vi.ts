@@ -48,10 +48,6 @@ export const vi = {
     missingConfig: "Thiếu cấu hình Auth0",
     missingConfigDesc: "Kiểm tra các biến môi trường VITE_AUTH0_DOMAIN, VITE_AUTH0_CLIENT_ID, VITE_AUTH0_AUDIENCE.",
   },
-  menu: {
-    teams: "Nhóm",
-    backToProjects: "← Về các dự án",
-  },
   roles: {
     owner: "Chủ sở hữu",
     producer: "Nhà sản xuất",

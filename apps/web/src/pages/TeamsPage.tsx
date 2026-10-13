@@ -7,7 +7,6 @@ import {
   Form,
   Input,
   Space,
-  Typography,
   Tooltip,
   Popconfirm,
   Tag,
@@ -24,8 +23,7 @@ import { SortDropdown } from "../helpers/sort-dropdown";
 import { TableRefreshButton } from "../helpers/table-refresh-button";
 import { useDebouncedValue } from "../helpers/use-debounced-value";
 import type { SortDirection } from "../helpers/compare-sort-values";
-
-const { Title } = Typography;
+import { WorkspaceShell } from "../modules/workspace/WorkspaceShell";
 
 const PAGE_SIZE = 20;
 
@@ -36,6 +34,7 @@ const SORT_FIELDS = [
 
 type TeamSortField = (typeof SORT_FIELDS)[number]["value"];
 
+/** Every team the person is in (a Studio admin: every team): find, sort, make, rename, delete; members and projects. */
 export function TeamsPage() {
   const { t } = useTranslation();
   const client = useStudioClient();
@@ -199,133 +198,122 @@ export function TeamsPage() {
   ];
 
   return (
-    <div>
-      {/* Header row */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: 16,
-        }}
-      >
-        <Title level={3} style={{ margin: 0 }}>
-          {t("teams.title")}
-        </Title>
-        <Tooltip title={t("teams.create")}>
-          <Button
-            type="primary"
-            icon={<Plus size={16} />}
-            onClick={() => setCreateOpen(true)}
-            aria-label={t("teams.create")}
+    <WorkspaceShell teamCrumb={false} crumbs={[{ label: t("ws.shell.manageTeams") }]}>
+      <main className="ws-page">
+        <div className="ws-page__inner">
+          <div className="ws-page__head">
+            <h1 className="ws-page__title">{t("teams.title")}</h1>
+            <div className="ws-page__actions">
+              <Button type="primary" icon={<Plus size={16} />} onClick={() => setCreateOpen(true)}>
+                {t("teams.create")}
+              </Button>
+            </div>
+          </div>
+
+          {/* Toolbar */}
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              marginBottom: 12,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
           >
-            {t("teams.create")}
-          </Button>
-        </Tooltip>
-      </div>
+            <Input
+              placeholder={t("teams.searchPlaceholder")}
+              allowClear
+              value={q}
+              onChange={(e) => {
+                void setQ(e.target.value);
+                void setPage(1);
+              }}
+              style={{ width: 220 }}
+              prefix={<Search size={14} />}
+              aria-label={t("common.search")}
+            />
+            <SortDropdown
+              fields={SORT_FIELDS}
+              sortBy={sortBy as TeamSortField}
+              sortOrder={sortOrder as SortDirection}
+              onChange={handleSortChange}
+            />
+            <TableRefreshButton onRefresh={() => void refetch()} refreshing={isFetching} />
+          </div>
 
-      {/* Toolbar */}
-      <div
-        style={{
-          display: "flex",
-          gap: 8,
-          marginBottom: 12,
-          flexWrap: "wrap",
-          alignItems: "center",
-        }}
-      >
-        <Input
-          placeholder={t("teams.searchPlaceholder")}
-          allowClear
-          value={q}
-          onChange={(e) => {
-            void setQ(e.target.value);
-            void setPage(1);
-          }}
-          style={{ width: 220 }}
-          prefix={<Search size={14} />}
-          aria-label={t("common.search")}
-        />
-        <SortDropdown
-          fields={SORT_FIELDS}
-          sortBy={sortBy as TeamSortField}
-          sortOrder={sortOrder as SortDirection}
-          onChange={handleSortChange}
-        />
-        <TableRefreshButton onRefresh={() => void refetch()} refreshing={isFetching} />
-      </div>
+          <Table
+            columns={columns}
+            dataSource={teams}
+            rowKey="id"
+            loading={isLoading}
+            sticky={PAGE_TABLE_STICKY}
+            scroll={{ x: "max-content" }}
+            pagination={{
+              current: page,
+              pageSize: PAGE_SIZE,
+              total,
+              showSizeChanger: false,
+              onChange: (p) => void setPage(p),
+            }}
+          />
 
-      <Table
-        columns={columns}
-        dataSource={teams}
-        rowKey="id"
-        loading={isLoading}
-        sticky={PAGE_TABLE_STICKY}
-        scroll={{ x: "max-content" }}
-        pagination={{
-          current: page,
-          pageSize: PAGE_SIZE,
-          total,
-          showSizeChanger: false,
-          onChange: (p) => void setPage(p),
-        }}
-      />
-
-      {/* Create Modal */}
-      <Modal
-        title={t("teams.createTitle")}
-        open={createOpen}
-        onOk={() => {
-          createForm
-            .validateFields()
-            .then((values) => createMutation.mutate(values.name))
-            .catch(() => undefined);
-        }}
-        onCancel={() => {
-          setCreateOpen(false);
-          createForm.resetFields();
-        }}
-        confirmLoading={createMutation.isPending}
-      >
-        <Form form={createForm} layout="vertical">
-          <Form.Item
-            name="name"
-            label={t("teams.nameLabel")}
-            rules={[{ required: true, message: t("teams.nameRequired") }]}
+          {/* Create Modal */}
+          <Modal
+            title={t("teams.createTitle")}
+            open={createOpen}
+            onOk={() => {
+              createForm
+                .validateFields()
+                .then((values) => createMutation.mutate(values.name))
+                .catch(() => undefined);
+            }}
+            onCancel={() => {
+              setCreateOpen(false);
+              createForm.resetFields();
+            }}
+            confirmLoading={createMutation.isPending}
           >
-            <Input />
-          </Form.Item>
-        </Form>
-      </Modal>
+            <Form form={createForm} layout="vertical">
+              <Form.Item
+                name="name"
+                label={t("teams.nameLabel")}
+                rules={[{ required: true, message: t("teams.nameRequired") }]}
+              >
+                <Input />
+              </Form.Item>
+            </Form>
+          </Modal>
 
-      {/* Edit Modal */}
-      <Modal
-        title={t("teams.editTeam")}
-        open={!!editTeam}
-        onOk={() => {
-          editForm
-            .validateFields()
-            .then((values) => {
-              if (editTeam) updateMutation.mutate({ id: editTeam.id, name: values.name });
-            })
-            .catch(() => undefined);
-        }}
-        onCancel={() => {
-          setEditTeam(null);
-          editForm.resetFields();
-        }}
-        confirmLoading={updateMutation.isPending}
-      >
-        <Form form={editForm} layout="vertical">
-          <Form.Item
-            name="name"
-            label={t("teams.nameLabel")}
-            rules={[{ required: true, message: t("teams.nameRequired") }]}
+          {/* Edit Modal */}
+          <Modal
+            title={t("teams.editTeam")}
+            open={!!editTeam}
+            onOk={() => {
+              editForm
+                .validateFields()
+                .then((values) => {
+                  if (editTeam) updateMutation.mutate({ id: editTeam.id, name: values.name });
+                })
+                .catch(() => undefined);
+            }}
+            onCancel={() => {
+              setEditTeam(null);
+              editForm.resetFields();
+            }}
+            confirmLoading={updateMutation.isPending}
           >
-            <Input />
-          </Form.Item>
-        </Form>
-      </Modal>
-    </div>
+            <Form form={editForm} layout="vertical">
+              <Form.Item
+                name="name"
+                label={t("teams.nameLabel")}
+                rules={[{ required: true, message: t("teams.nameRequired") }]}
+              >
+                <Input />
+              </Form.Item>
+            </Form>
+          </Modal>
+        </div>
+      </main>
+    </WorkspaceShell>
   );
 }

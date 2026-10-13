@@ -1,15 +1,12 @@
 import { lazy, Suspense } from "react";
-import { ProLayout } from "@ant-design/pro-components";
-import { App as AntApp, ConfigProvider, Dropdown, Spin, theme as antdTheme } from "antd";
+import { App as AntApp, ConfigProvider, Spin } from "antd";
 import enUS from "antd/locale/en_US";
 import viVN from "antd/locale/vi_VN";
-import { Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { BrowserRouter, Routes, Route, Link, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { NuqsAdapter } from "nuqs/adapters/react-router";
 import { AuthGate } from "./auth/auth-provider";
 import { AssistantNameProvider, SiteNameProvider } from "./modules/common/assistant-name";
-import { useAppUserMenu } from "./modules/common/use-app-user-menu";
 import type { AppLanguage } from "./i18n/language";
 
 const TeamsPage = lazy(() => import("./pages/TeamsPage").then((m) => ({ default: m.TeamsPage })));
@@ -24,51 +21,6 @@ const ProjectPage = lazy(() => import("./pages/ProjectPage").then((m) => ({ defa
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
 
 const ANTD_LOCALES: Record<AppLanguage, typeof viVN> = { vi: viVN, en: enUS };
-
-/** The team screens (lists, members, skills) keep the admin layout; everything else is the workspace. */
-function TeamLayout() {
-  const location = useLocation();
-  const { t } = useTranslation();
-  const { token } = antdTheme.useToken();
-  const { menu: avatarMenu, picture, initials: userInitials, nickname } = useAppUserMenu([
-    { key: "projects", label: <Link to="/">{t("menu.backToProjects")}</Link> },
-  ]);
-
-  return (
-    <ProLayout
-      title={t("app.title")}
-      logo="/favicon.png"
-      layout="mix"
-      fixSiderbar
-      fixedHeader
-      location={{ pathname: location.pathname }}
-      route={{ path: "/", routes: [{ path: "/teams", name: t("menu.teams"), icon: <Users size={16} /> }] }}
-      selectedKeys={["/teams"]}
-      menuItemRender={(item, dom) => (item.path ? <Link to={item.path}>{dom}</Link> : dom)}
-      contentStyle={{ padding: 24 }}
-      avatarProps={{
-        src: picture,
-        size: "small",
-        style: { backgroundColor: token.colorPrimary },
-        children: !picture ? userInitials : undefined,
-        title: <span style={{ fontSize: 14, fontWeight: 500 }}>{nickname}</span>,
-        render: (_props, dom) => (
-          <Dropdown menu={avatarMenu} trigger={["click"]} placement="bottomRight" className="user-dropdown">
-            <span style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>{dom}</span>
-          </Dropdown>
-        ),
-      }}
-    >
-      <Suspense fallback={<div style={{ display: "flex", justifyContent: "center", padding: 48 }}><Spin /></div>}>
-        <Routes>
-          <Route path="/teams" element={<TeamsPage />} />
-          <Route path="/teams/:teamId" element={<TeamDetailPage />} />
-          <Route path="*" element={<NotFoundPage />} />
-        </Routes>
-      </Suspense>
-    </ProLayout>
-  );
-}
 
 export function App() {
   const { i18n } = useTranslation();
@@ -92,7 +44,9 @@ export function App() {
                     <Route path="/audit" element={<AuditPage />} />
                     <Route path="/stats" element={<StatsPage />} />
                     <Route path="/music" element={<MusicLibraryPage />} />
-                    <Route path="*" element={<TeamLayout />} />
+                    <Route path="/teams" element={<TeamsPage />} />
+                    <Route path="/teams/:teamId" element={<TeamDetailPage />} />
+                    <Route path="*" element={<NotFoundPage />} />
                   </Routes>
                 </Suspense>
               </NuqsAdapter>

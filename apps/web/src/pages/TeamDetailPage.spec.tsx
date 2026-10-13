@@ -22,6 +22,7 @@ const client = {
   removeMember: vi.fn(),
   updateMemberRole: vi.fn(),
   getTeam: vi.fn<(teamId: string) => Promise<TeamDetail>>(),
+  listTeams: vi.fn(async () => ({ items: [{ id: "team-1", name: "Đội Ẩm Thực", role: "owner", isMember: true }], total: 1, page: 1, pageSize: 100 })),
   getMe: vi.fn(async () => ({ userId: "auth0|me", name: "Tôi", email: "me@ant-group.net", avatar: null, isAdmin: false })),
   listTeamSkills: vi.fn<(teamId: string) => Promise<TeamSkill[]>>(),
   createTeamSkill: vi.fn(),
@@ -29,6 +30,7 @@ const client = {
   deleteTeamSkill: vi.fn(),
 };
 vi.mock("../api/studio-client", async (orig) => ({ ...(await orig<object>()), useStudioClient: () => client }));
+vi.mock("@auth0/auth0-react", () => ({ useAuth0: () => ({ user: { email: "me@ant-group.net", name: "Tôi" }, logout: vi.fn() }) }));
 
 const { TeamDetailPage } = await import("./TeamDetailPage");
 
@@ -83,6 +85,18 @@ describe("TeamDetailPage", () => {
     expect(screen.queryByText("auth0|u-1")).toBeNull();
   });
 
+  it("sits in the workspace header: Manage teams › the team, and the members' header stays in view", async () => {
+    client.listMembers.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 });
+    page();
+    const crumbs = await screen.findByRole("navigation", { name: "Vị trí" });
+    expect(within(crumbs).getByRole("link", { name: "Quản lý nhóm" })).toHaveAttribute("href", "/teams");
+    expect(await within(crumbs).findByText("Đội Ẩm Thực")).toBeTruthy();
+    // no team switch here: the crumbs name the team already
+    expect(within(crumbs).queryByRole("combobox")).toBeNull();
+    expect(screen.getByRole("heading", { level: 1, name: "Đội Ẩm Thực" })).toBeTruthy();
+    expect(document.querySelector(".ws-page .ant-table-sticky-holder")).not.toBeNull();
+  });
+
   it("thêm thành viên: tìm theo tên/email, danh sách có tên và email, gửi đúng user id", async () => {
     client.listMembers.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 });
     client.searchMemberCandidates.mockResolvedValue([
@@ -112,7 +126,7 @@ describe("TeamDetailPage — quy chuẩn & skill", () => {
     client.listMembers.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 });
     client.createTeamSkill.mockResolvedValue(skill({ id: "s3" }));
     page("?tab=skills", { role: "producer", skills: [skill(), skill({ id: "s2", name: "Chỉ cho R&D", appliesTo: ["rnd"], enabled: false })] });
-    expect(await screen.findByText("Đội Ẩm Thực")).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Đội Ẩm Thực" })).toBeTruthy();
     expect(await screen.findByText("Quy chuẩn tiêu đề")).toBeTruthy();
     expect(screen.getByText("Mọi bước")).toBeTruthy();
     expect(screen.getByText("R&D")).toBeTruthy();

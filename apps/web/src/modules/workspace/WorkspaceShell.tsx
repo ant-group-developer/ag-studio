@@ -33,8 +33,10 @@ export function useTeam(teamId: string | undefined) {
  * Header of the workspace screens: brand, then where you are as one breadcrumb — the team (switch, make one, manage
  * them), the project (switch within the team), then the page's own crumbs — and the person's menu.
  */
-export function WorkspaceShell({ teamId, project, crumbs = [], actions, children }: {
+export function WorkspaceShell({ teamId, teamCrumb = true, project, crumbs = [], actions, children }: {
   teamId?: string | undefined;
+  /** False on the team management pages: their crumbs name the teams themselves. */
+  teamCrumb?: boolean;
   /** The page's project: the crumb after the team, a switch to the team's other projects. */
   project?: { id: string; name: string } | undefined;
   /** What follows the team (and the project): a video, a chat, the page's title. */
@@ -58,10 +60,10 @@ export function WorkspaceShell({ teamId, project, crumbs = [], actions, children
     <div className="ws-app">
       <header className="ws-header">
         <Link to="/" className="ws-header__brand"><img src="/favicon.png" alt="" />{t("app.title")}</Link>
-        {teams || crumbs.length > 0 ? (
+        {(teamCrumb && teams) || crumbs.length > 0 ? (
           <nav className="ws-crumbs" aria-label={t("ws.shell.breadcrumbs")}>
-            {teams ? <ChevronRight size={14} aria-hidden /> : null}
-            {teams && items.length > 0 ? (
+            {teamCrumb && teams ? <ChevronRight size={14} aria-hidden /> : null}
+            {!teamCrumb ? null : teams && items.length > 0 ? (
               <TeamPicker value={shown} teams={teams} current={current} isAdmin={isAdmin} onNewTeam={() => setNewTeam(true)} />
             ) : teams ? (
               <button type="button" className="ws-icon-button ws-icon-button--outline" onClick={() => setNewTeam(true)}>
