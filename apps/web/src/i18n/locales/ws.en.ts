@@ -576,7 +576,7 @@ export const wsEn: Messages<typeof wsVi> = {
       style: { title: "Editing style", description: "Cut rhythm, transitions, text, music — learned from reference videos or from a description." },
       branding: { title: "Branding", description: "Voice, title formula, thumbnails, on-screen text style, music mood." },
       brief: { title: "Idea & brief", description: "What this video tells, for whom, how long, which footage, with or without narration." },
-      prepare: { title: "Prepare inputs", description: "Studio fetches the chosen footage, finds the scenes, extracts frames and speech so the agent can see them." },
+      prepare: { title: "Prepare inputs", description: "Studio copies the shots, frames, contact sheets and speech already prepared for the chosen footage so the agent can see them." },
       scenes: { title: "Pick scenes", description: "Look at the contact sheets, score and pick the usable scenes." },
       "edit-plan": { title: "Edit plan", description: "Shot order, takes, narration, on-screen text, original sound." },
       timeline: { title: "Timeline", description: "Studio builds the timeline from the edit plan (reads the narration, fits the shots)." },

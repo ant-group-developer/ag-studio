@@ -574,7 +574,7 @@ export const wsVi = {
       style: { title: "Phong cách dựng", description: "Nhịp cắt, chuyển cảnh, chữ, nhạc — học từ video mẫu hoặc theo mô tả." },
       branding: { title: "Branding", description: "Giọng văn, công thức tiêu đề, thumbnail, kiểu chữ trên video, mood nhạc." },
       brief: { title: "Ý tưởng & brief", description: "Video này kể gì, cho ai, dài bao lâu, dùng footage nào, có lời dẫn không." },
-      prepare: { title: "Chuẩn bị đầu vào", description: "Studio tải footage đã chọn, dò cảnh, trích khung hình và lời nói để agent xem được." },
+      prepare: { title: "Chuẩn bị đầu vào", description: "Studio chép cảnh, khung hình, tờ ghép và lời thoại đã chuẩn bị sẵn của footage đã chọn để agent xem được." },
       scenes: { title: "Chọn cảnh", description: "Xem contact sheet, chấm điểm và chọn các cảnh dùng được." },
       "edit-plan": { title: "Kế hoạch dựng", description: "Thứ tự shot, đoạn lấy, lời dẫn, chữ trên hình, tiếng gốc." },
       timeline: { title: "Timeline", description: "Studio dựng timeline từ kế hoạch dựng (đọc lời dẫn, khớp hình)." },
