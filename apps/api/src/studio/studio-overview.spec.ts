@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ForbiddenException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
-import { acquireClaudeSlot, createJob, createProject } from '@ag-studio/engine';
+import { acquireClaudeSlot, clearYoutubeBlocked, createJob, createProject, noteYoutubeBlocked } from '@ag-studio/engine';
 import type { AccountApiService } from '../auth/account-api.service';
 import { StudioAdminService } from '../auth/studio-admin.service';
 import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
@@ -39,6 +39,31 @@ describe('StudioOverviewController (real studio.db)', () => {
     farmUp = false;
     expect(await ctl.queue(req('auth0|owner'))).toMatchObject({ machines: null, farm: { ok: false, error: 'farm down' } });
     expect(await ctl.farmNodes()).toEqual({ nodes: [] });
+  });
+
+  it('the Queue says when YouTube blocks the Studio server, and stops saying it once a download went through', async () => {
+    const engine = { ...s.engine, db: s.engine.db, core: s.engine.core, farmNodes: async () => ({ nodes: [] }) };
+    const ctl = new StudioOverviewController(engine as unknown as EngineService, new StudioAdminService(accounts, s.db), config());
+    expect((await ctl.queue(req('auth0|admin'))).youtube).toBeNull();
+    const now = new Date().toISOString();
+    noteYoutubeBlocked(s.engine.db, now);
+    expect((await ctl.queue(req('auth0|admin'))).youtube).toEqual({ blockedAt: now, until: new Date(Date.parse(now) + 6 * 3600_000).toISOString(), where: 'studio' });
+    clearYoutubeBlocked(s.engine.db);
+    expect((await ctl.queue(req('auth0|admin'))).youtube).toBeNull();
+  });
+
+  it('the Queue names the farm machines that fetch reference videos, and says when YouTube blocks them too', async () => {
+    const fetcher = { ...node, id: '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4c', name: 'PC-01', kinds: ['studio.reference_fetch'] };
+    let farmUp = true;
+    const engine = { ...s.engine, db: s.engine.db, core: s.engine.core, farmNodes: async () => { if (!farmUp) throw new Error('down'); return { nodes: [node, fetcher, { ...fetcher, name: 'PC-02', online: false }] }; } };
+    const ctl = new StudioOverviewController(engine as unknown as EngineService, new StudioAdminService(accounts, s.db), config());
+    const now = new Date().toISOString();
+    noteYoutubeBlocked(s.engine.db, now);
+    expect(await ctl.queue(req('auth0|admin'))).toMatchObject({ youtube: { where: 'studio' }, youtubeFarm: null, referenceFetchers: ['PC-01'] });
+    noteYoutubeBlocked(s.engine.db, now, 'farm');
+    expect((await ctl.queue(req('auth0|admin'))).youtubeFarm).toMatchObject({ where: 'farm' });
+    farmUp = false;
+    expect((await ctl.queue(req('auth0|admin'))).referenceFetchers).toBeNull();
   });
 
   it('reports Claude slots against the cap: the env value until an admin saves one', async () => {

@@ -11,11 +11,12 @@ Danh sách phân trang: query `page` (từ 1), `pageSize` (mặc định 20, t�
 tuỳ chọn; trả `Paged<T> = {items: T[], total, page, pageSize}`.
 
 - `GET /me` → `{userId, name, email, avatar, isAdmin}`
-- `GET /teams?page&pageSize&sortBy(name|createdAt)&sortOrder&q` → `Paged<Team & {role: TeamRole | null, memberCount, projectCount}>`
-  (admin thấy mọi team; `role` là vai của người gọi, null với admin không phải thành viên)
+- `GET /teams?page&pageSize&sortBy(name|createdAt)&sortOrder&q` → `Paged<Team & {role: TeamRole | null, isMember, memberCount, projectCount}>`
+  (admin Studio thấy mọi nhóm — controller tự hỏi `StudioAdminService.isAdmin` vì route không có `@Roles`; `role` là vai
+  của người gọi, null và `isMember: false` với admin không phải thành viên; `q` tìm theo tên)
 - `POST /teams {name}` → Team; `PATCH /teams/:teamId {name}` (owner) → Team; `DELETE /teams/:teamId` (owner; 409
   `team_has_active_runs` khi một job hay một lượt agent của dự án nào trong team còn chạy)
-- `GET /teams/:teamId` (viewer) → `{id, name, role: TeamRole | null, memberCount, projectCount, createdAt, updatedAt}`
+- `GET /teams/:teamId` (viewer) → `{id, name, role: TeamRole | null, isMember, memberCount, projectCount, createdAt, updatedAt}`
 - `GET /teams/:teamId/members?page&pageSize&sortBy(role|joinedAt|name)&sortOrder&q` → `Paged<TeamMember>`;
   `GET /teams/:teamId/member-candidates?keyword`, `POST /teams/:teamId/members {userId, role}`,
   `PATCH /teams/:teamId/members/:userId {role}`, `DELETE /teams/:teamId/members/:userId`; bỏ hay hạ vai owner cuối cùng →
@@ -57,6 +58,7 @@ interface TeamSkill {
     hidden: number;
     machines: OwnerNodeView[] | null;                       // máy của farm (owner API, cache 3 s); null khi không đọc được
     farm: { ok: true } | { ok: false; error: string };      // farm không với tới không phải lỗi
+    youtube: { blockedAt; until; where: 'studio' } | null;  // YouTube đang chặn tải từ máy chủ Studio (web: chỉ admin thấy)
   }
   ```
 - `GET stats/claude?from&to&groupBy=team|project|video|user&teamId&projectId&tz` (admin Studio: mọi nhóm; owner: nhóm
@@ -128,13 +130,22 @@ xem nhóm mình; người khác 403.
 - `GET content?path` → `WorkspaceFile & {issues: FileIssue[]}`; `GET raw?path` → byte (ảnh, PDF)
 - `PUT content {path, content, baseSha256?}` (editor) → `SavedFile & {issues}`; `baseSha256` khác bản trên đĩa → 409
   `file_conflict`; đường chỉ đọc (`inputs/**`, `videos/*/sources/**`, `.studio/**` trừ `playbook.yaml`) → 422 `read_only`
-- `DELETE ?path&baseSha256` (editor); `POST upload` multipart `file` + `dir?` (editor, ≤ 50 MB)
+- `DELETE ?path&baseSha256` (editor); `POST upload` multipart `file` + `dir?` (editor, ≤ 50 MB; audio ≤ 100 MB)
 - `GET versions?path`, `GET versions/:versionId`, `POST versions/:versionId/restore {baseSha256?}` (editor)
+- `GET versions/:versionId/diff?base` (viewer) → bản đó đổi gì so với `base` (một bản khác của cùng file, vd. bản trước
+  lượt agent; `none` = file rỗng, cho file lượt đó tạo; khác file → 422 `bad_base`) hoặc mặc định bản ngay trước (chưa có = file rỗng; bản xoá = rỗng):
+  `{path, version_id, before_version_id, hunks: {old_start, old_lines, new_start, new_lines, lines: {kind:
+  'context'|'add'|'del', text}[]}[], added, removed}`, 3 dòng ngữ cảnh; file nhị phân hay không giữ nội dung (> 1 MB) hoặc
+  quá nhiều dòng để so (> 50 000) → `{path, version_id, before_version_id, unavailable: 'binary'|'too_large'}`. Diff dòng
+  Myers trong engine (`workspace/line-diff.ts`), quá nhiều khác biệt thì phần giữa hiện là bớt rồi thêm (vẫn đúng).
 
 ## Luồng chat với agent
 
 - `GET /projects/:projectId/threads` (viewer); `POST {title?, learning?}` (editor) → Thread
-- `GET /threads/:threadId` → `ThreadDetail` (tin nhắn, `refs`, `useLessons`); `GET /threads/:threadId/messages?afterSeq`
+- `GET /threads/:threadId` → `ThreadDetail` (tin nhắn, `refs`, `useLessons`); `GET /threads/:threadId/messages?afterSeq`.
+  Tin của agent có `changedFiles: {path, change: 'added'|'modified'|'deleted', version_id, before_version_id, added?,
+  removed?}[] | null` (từ 0038): file lượt đó đổi, mỗi đường dẫn một dòng, bản cuối của lượt so với bản ngay trước lượt;
+  `added`/`removed` là số dòng (chỉ khi cả hai bản là chữ ≤ 1 MB); `null` = lượt cũ hoặc chưa xong.
 - `POST /threads/:threadId/messages {text, attachments?: path[]}` (editor) → `{message, turn}`; lượt agent chạy trong worker
 - `POST /threads/:threadId/messages/:messageId/cancel` (editor) → Dừng lượt (kill cả cây tiến trình, giữ phần đã viết)
 - `PATCH /threads/:threadId {title}`, `PUT /threads/:threadId/learning {useLessons, threads}`, `DELETE` (editor)
@@ -145,17 +156,23 @@ xem nhóm mình; người khác 403.
 ## Quy trình gợi ý, bài học
 
 - `GET /projects/:projectId/playbook?videoId` → `PlaybookStatus` (bước dự án/video: `missing|draft|invalid|done|skipped|stale|running`,
-  file, lỗi, gợi ý tiếp theo); `POST playbook/steps/:stepKey/mark {status: done|skipped|draft, videoId?}` (editor);
+  file, lỗi, gợi ý tiếp theo). `scope` = `video` khi có `videoId`, không thì `project`; `next` (≤ 3) chỉ gồm bước của
+  `scope` (luồng video không gợi ý bước kênh); `projectOpen` = số bước kênh còn mở; mỗi bước có `outsideRequires` — bước
+  của phạm vi kia nó dựa vào mà chưa xong (Gói YouTube cần Branding kênh): chỉ là ghi chú, không chặn gợi ý; `POST playbook/steps/:stepKey/mark {status: done|skipped|draft, videoId?}` (editor);
   `POST playbook/customize` (producer) → tạo `.studio/playbook.yaml`
 - `GET /projects/:projectId/lessons?status&threadId`; `POST lessons/:id/accept {text?}`, `POST lessons/:id/dismiss` (editor)
 
 ## Đầu vào và việc nền
 
-- `GET /projects/:projectId/sources?videoId` → `{sources: SourceItem[]}` (project ag-go, video ag-go kèm trạng thái chuẩn bị,
-  file tải lên); `POST sources` (editor) `{kind: ag_go_project, ref, label}` | `{kind: ag_go_asset, ref, label, videoId?,
+- `GET /projects/:projectId/sources?videoId` → `{sources: SourceItem[], counts}` (project ag-go, video ag-go kèm trạng thái chuẩn bị,
+  file tải lên; trạng thái tính trong một lượt đọc DB dù bao nhiêu video/job; `counts = {videos, ready, preparing, failed,
+  notPrepared}` đếm mỗi video ag-go một lần, `preparing` gồm cả đang chờ); `POST sources` (editor) `{kind: ag_go_project, ref, label}` | `{kind: ag_go_asset, ref, label, videoId?,
   meta?, prepare?}` — chủ dự án không dùng được trên ag-go → 422 `owner_cannot_access`; `DELETE sources/:sourceId`
-- `POST sources/upload` multipart `file` + `videoId?` (editor): tài liệu → `context/uploads/`, ảnh → `context/images/`,
-  audio → `context/audio/`; Word → 415 `docx_not_supported`, video → 415 `video_from_ag_go`
+- `POST sources/upload` multipart `file` + `videoId?` + `reference?` (editor): tài liệu → `context/uploads/`, ảnh →
+  `context/images/`, audio → `context/audio/` (audio ≤ 100 MB, file khác ≤ 50 MB); Word → 415 `docx_not_supported`, video → 415 `video_from_ag_go`.
+  `reference=1`: video mẫu để học phong cách dựng (mp4, mov, m4v, mkv, webm, avi; ≤ 300 MB) → `context/references/`,
+  nguồn `mediaType: video`, `meta.reference: true` (không phải footage); file khác → 415 `not_video`. Agent học bằng tool
+  `style_from_files {paths, purpose}` (job `style_watch` với `files`, không cần thẻ, không đổi hay xoá file)
 - `GET footage?agGoProjectIds&q&categoryIds&ownerUserIds&provinceIds&resolutions&tags&genres&timesOfDay&orientations&minDurationMs&maxDurationMs&usability&sortBy&sortOrder&page|cursor&limit`
   → video trong các project ag-go của dự án (chỉ những project đã gắn; `agGoProjectId` cũ vẫn nhận), theo quyền ag-go của
   người hỏi; danh sách là chuỗi cách bằng dấu phẩy, enum như ag-go `/footage/search`; khoá lạ → 400 `invalid`, project
@@ -164,7 +181,8 @@ xem nhóm mình; người khác 403.
   projects}` (mỗi mục `[{value, label?, count}]`); `projects` là các project đã gắn, `count` của ag-go hoặc `null`
 - `POST prepare {assetIds, again?}` (editor) → job `prepare_asset` cho mỗi video chưa chuẩn bị
 - `GET jobs?active&videoId` → `{jobs: JobView[]}`; `POST jobs/:jobId/cancel` (editor) → Dừng
-  (`JobView`: `kind, status, title, phase, progress, etaSeconds, nodeId, cancelRequested, startedAt, finishedAt, result, error`)
+  (`JobView`: `kind, status, title, phase, progress, etaSeconds, nodeId, cancelRequested, startedAt, finishedAt, result, error`;
+  job lỗi có mã thì `result = {error_code}`, ví dụ `youtube_blocked` khi YouTube chặn tải từ máy chủ Studio)
 
 ## Nghiên cứu YouTube (`projects/:projectId/research`)
 
@@ -178,19 +196,35 @@ xem nhóm mình; người khác 403.
 
 - `GET /videos/:videoId/timeline` → `{latest: TimelineSummary | null, revisions}`; `POST timeline/fit` (editor) → job `fit`
   (dựng từ `videos/<id>/edit-plan.json`)
-- `GET /videos/:videoId/renders` → `{renders: RenderView[], jobs, thumbnails: path[]}`; `url` chỉ có khi quyền ag-go của
-  người xem phủ mọi video trong bản đó (không thì `urlHidden: footage_scope`; ag-go không trả lời được — lỗi mạng, 5xx…
-  — thì `urlHidden: footage_check_failed`, API ghi log lý do và hỏi lại lần sau). API hỏi ag-go từng lô 10 video, 4 lô
-  song song; câu trả lời chắc chắn giữ 10 phút
+- `GET /videos/:videoId/renders` → `{renders: RenderView[], jobs, thumbnails: path[]}` — chỉ đọc DB (không hỏi ag-go, không
+  ký URL) nên tab Xem trước hiện ngay; `RenderView` không có link
+- `GET /videos/:videoId/renders/:jobId/link` (viewer) → `{jobId, url: string | null, urlHidden?}` cho đúng một bản render;
+  `url` chỉ có khi quyền ag-go của người xem phủ mọi video trong revision của bản đó (không thì `urlHidden: footage_scope`;
+  ag-go không trả lời được — lỗi mạng, 5xx… — thì `urlHidden: footage_check_failed`, API ghi log lý do); link Premiere đặt
+  sẵn tên file `.zip`; `jobId` không phải bản render xong của video → 404. API nhớ quyền theo (người, video ag-go) 10 phút
+  và chỉ hỏi ag-go những video chưa biết (từng lô 10, 4 lô song song), nên revision mới cùng footage trả lời ngay; ag-go
+  không trả lời được nhớ 30 s (poll không dồn); 404 của ag-go nêu tên video thì video đó ngoài phạm vi, không nêu thì mọi
+  timeline dùng đủ tập video đã hỏi bị ẩn; một lần kiểm > 2 s ghi log
 - `POST /videos/:videoId/renders {kind: render_preview|render_final|export_premiere, nodeId?, media?}` — xem trước: editor;
   bản cuối, Premiere: producer (403 `role`)
-- `GET /projects/:projectId/audio` → `{voice, music, summary}`; `POST audio/:kind/from-file {path, origin?, referenceText?}`
-  (giọng: producer, phải có `origin` synthetic|own|licensed; nhạc: editor); `POST audio/voice/decline`, `DELETE audio/:kind` (producer)
+- `GET /projects/:projectId/audio` (viewer) → `{voice, music, summary, libraryTrack, enabled, files}`: `enabled` = API có
+  ffmpeg (`STUDIO_FFMPEG_PATH`; ffprobe là `STUDIO_FFPROBE_PATH` hoặc ffprobe cạnh ffmpeg như worker) để nhận file audio;
+  `files` = file audio dùng được `[{path, name, bytes, sourceId, addedAt}]`, mới nhất trước: audio đã tải ở tab Đầu vào
+  (còn file) và mọi file audio dưới `context/audio/` (cả file tải qua tab Tệp, `sourceId: null`), không dò thời lượng;
+  `libraryTrack` = `{trackId, displayName, moods, durationSeconds}` khi nhạc là một bài của kho nhạc
+- `POST audio/:kind/from-file {path, origin?, referenceText?, gainDb?, ducking?}` (giọng: producer, phải có `origin`
+  synthetic|own|licensed; nhạc: editor); thiếu ffmpeg → 503 `audio_disabled`
+- `POST audio/music/from-library {trackId, gainDb?, ducking?}` (editor): nhạc của dự án là bài đó của kho nhạc
+  (`track: library:music/…`, không chép file, không cần ffmpeg); bài không có → 404 `not_found`, bài đã gỡ → 422 `audio_invalid`
+- `POST audio/voice/decline` (producer); `DELETE audio/voice` (producer), `DELETE audio/music` (editor, như chọn nhạc).
+  Bỏ chọn nhạc = Studio tự chọn bài trong kho nhạc theo mood (kế hoạch dựng, rồi branding) khi dựng timeline
 
 ## Thẻ xác nhận
 
-- `GET /threads/:threadId/actions` → `{actions: ActionView[]}` (`kind: render_final|export_premiere|delete_video|crawl_large|
-  reference_download`, `needs` = vai cần có, `revision`, `expiresAt`)
+- `GET /threads/:threadId/actions` → `{actions: ActionView[], youtubeBlocked}` (`kind: render_final|export_premiere|delete_video|crawl_large|
+  reference_download`, `needs` = vai cần có, `revision`, `expiresAt`; `youtubeBlocked` như `youtube` của `GET studio/queue`:
+  thẻ `reference_download` đang chờ hiện cảnh báo). Khi YouTube đang chặn, tool `propose_action reference_download` của
+  agent từ chối (`youtube_blocked`) thay vì tạo thẻ
 - `POST /projects/:projectId/actions/:actionId/confirm|reject` — vai thiếu → 422 `role`; đã quyết → 409 `decided`;
   timeline đổi hoặc quá 24 giờ → 422 `expired`
 
@@ -201,7 +235,7 @@ arguments}` với `Authorization: Bearer <token lượt>` (HMAC `STUDIO_AGENT_TO
 tin nhắn còn `running`). Luôn 200 `{text, isError?}`. Tool (`packages/studio-engine/src/agent/*-tools.ts`):
 `project_info, video_list, video_create, video_update, suggest_replies, playbook_status, validate_file, thread_history,
 inputs_list, footage_search, inputs_add, inputs_prepare, input_describe, job_status, job_cancel, youtube_trending,
-youtube_search, youtube_top_channels, youtube_channel_top_videos, timeline_from_edit_plan, timeline_get, timeline_apply_ops,
+youtube_search, youtube_top_channels, youtube_channel_top_videos, style_from_files, timeline_from_edit_plan, timeline_get, timeline_apply_ops,
 render_preview, thumbnail_make, music_list, propose_action`.
 
 ## Farm

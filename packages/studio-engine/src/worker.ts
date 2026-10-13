@@ -19,8 +19,11 @@ import { createAgentRunner, type AgentRunner, type AgentRunnerOptions } from "./
 import { fitHandler } from "./workspace/fit.js";
 import { createJobRunner, type JobHandler, type JobRunner } from "./workspace/job-runner.js";
 import type { JobKind } from "./workspace/jobs-db.js";
+import type { ProjectFarm } from "./workspace/farm.js";
+import { farmLanes, limiter } from "./workspace/lanes.js";
 import { PREVIEW_PREFER, prepareHandler } from "./workspace/prepare.js";
 import { RENDER_KINDS, renderHandler } from "./workspace/renders.js";
+import { referenceFetchers } from "./workspace/reference-fetch.js";
 import { researchHandler } from "./workspace/research.js";
 import { styleWatchHandler } from "./workspace/style-watch.js";
 import { thumbnailHandler } from "./workspace/thumbnails.js";
@@ -44,7 +47,7 @@ export interface StudioWorkerOptions {
   thumbnails?: ThumbnailRenderer;
   /** yt-dlp: crawls without an API key, reference videos. */
   ytdlp?: YtDlp;
-  /** False: reference videos are never downloaded (`STUDIO_REFERENCE_DOWNLOADS=0`). */
+  /** False: reference videos are never downloaded, neither here nor by the farm's machines (`STUDIO_REFERENCE_DOWNLOADS=0`). */
   referenceDownloads?: boolean;
   /** Claude calls at once (the web setting wins); default `DEFAULT_CLAUDE_MAX_CONCURRENT` (20). */
   claudeMaxConcurrent?: number;
@@ -52,6 +55,8 @@ export interface StudioWorkerOptions {
   youtubeApiKey?: string;
   /** What people call the footage library (ag-go's `siteName`): job text and the agent's prompt; default "AG Go". */
   siteName?: () => string;
+  /** Prepare jobs decoding video here at once (scenes, frames), however many jobs run; default: no limit. */
+  decodeLanes?: number;
 }
 
 export function studioLogger(bindings: Record<string, unknown> = {}): HarnessLogger {
@@ -74,17 +79,27 @@ export function claudeCap(o: Pick<StudioWorkerOptions, "db" | "claudeMaxConcurre
 export function createStudioWorkerPool(o: StudioWorkerOptions & {
   /** The agent loop's settings (workspaces, API, token secret, CLI); absent: no agent turns run in this worker. */
   agent?: Omit<AgentRunnerOptions, "db" | "bucket" | "logger" | "cap">;
-  /** Project jobs: where workspaces are, jobs at once; absent: none run in this worker. */
-  jobs?: { workspacesRoot: string; lanes?: number; pollMs?: number };
+  /**
+   * Project jobs: where workspaces are, jobs at once (`lanes`, plus one per idle farm machine up to `maxLanes` when
+   * that is above `lanes`); absent: none run in this worker.
+   */
+  jobs?: { workspacesRoot: string; lanes?: number; maxLanes?: number; pollMs?: number };
   /** The cleanup sweep every `everyMs`, first a minute after start; absent or 0: never. */
   cleanup?: { everyMs: number; retention?: Partial<RetentionConfig> };
 }): StudioWorkerPool {
   const agent = o.agent
-    ? createAgentRunner({ ...o.agent, db: o.db, bucket: o.bucket, logger: o.logger ?? studioLogger({ owner: `${o.owner}#agent` }), cap: () => claudeCap(o), ...(o.siteName ? { siteName: o.siteName } : {}) })
+    ? createAgentRunner({
+      ...o.agent, db: o.db, bucket: o.bucket, logger: o.logger ?? studioLogger({ owner: `${o.owner}#agent` }), cap: () => claudeCap(o),
+      ...(o.siteName ? { siteName: o.siteName } : {}),
+      // while YouTube blocks the server the agent is told whether farm machines fetch reference videos instead
+      ...(o.referenceDownloads !== false && !o.agent.referenceFetchers ? { referenceFetchers: referenceFetchers(o.farm) } : {}),
+    })
     : null;
+  const jobsLog = o.logger ?? studioLogger({ owner: `${o.owner}#jobs` });
+  const lanes = o.jobs ? jobLanes(o.farm, o.jobs, jobsLog) : undefined;
   const jobs = o.jobs ? createJobRunner({
-    db: o.db, logger: o.logger ?? studioLogger({ owner: `${o.owner}#jobs` }), workspacesRoot: o.jobs.workspacesRoot, dataRoot: o.dataRoot,
-    handlers: projectJobHandlers(o), ...(o.jobs.lanes ? { lanes: o.jobs.lanes } : {}), ...(o.jobs.pollMs ? { pollMs: o.jobs.pollMs } : {}),
+    db: o.db, logger: jobsLog, workspacesRoot: o.jobs.workspacesRoot, dataRoot: o.dataRoot,
+    handlers: projectJobHandlers(o), ...(lanes ? { lanes } : {}), ...(o.jobs.pollMs ? { pollMs: o.jobs.pollMs } : {}),
   }) : null;
   return {
     agent,
@@ -99,6 +114,16 @@ export function createStudioWorkerPool(o: StudioWorkerOptions & {
   };
 }
 
+/** The job runner's lanes: fixed, or growing with the farm's idle machines when `maxLanes` is above `lanes`. */
+function jobLanes(farm: ProjectFarm, j: { lanes?: number; maxLanes?: number }, log: HarnessLogger): number | (() => number) | undefined {
+  if (!j.maxLanes || j.maxLanes <= (j.lanes ?? 2)) return j.lanes;
+  let warned = false;
+  return farmLanes({
+    farm, base: j.lanes ?? 2, max: j.maxLanes,
+    onError: (e) => { if (!warned) { warned = true; log.warn("farm machines not read: jobs keep the worker's own lanes", { error: e instanceof Error ? e.message : String(e) }); } },
+  });
+}
+
 /** What each kind of project job runs with on this worker: preparing and rendering need ffmpeg and ag-go (`media`). */
 export function projectJobHandlers(o: StudioWorkerOptions): Partial<Record<JobKind, JobHandler>> {
   const handlers: Partial<Record<JobKind, JobHandler>> = {};
@@ -111,6 +136,7 @@ export function projectJobHandlers(o: StudioWorkerOptions): Partial<Record<JobKi
       download: (url, dest, signal, onBytes) => httpDownload(url, dest, signal, onBytes),
       farm: { client: o.farm, bucket: o.bucket, pollMs: farmWait.pollMs, queueTimeoutMs: o.farmQueueTimeoutMs ?? 30 * 60_000 },
       ...(o.siteName ? { siteName: o.siteName } : {}),
+      ...(o.decodeLanes && o.decodeLanes > 0 ? { decodeSlot: limiter(o.decodeLanes) } : {}),
     });
     // a video's timeline from its edit plan (narration read on the farm into the voice store)
     handlers.fit = fitHandler({ db: o.db, bucket: o.bucket, farm: o.farm, voiceDir: media.voiceDir, ...farmWait });
@@ -118,8 +144,16 @@ export function projectJobHandlers(o: StudioWorkerOptions): Partial<Record<JobKi
     for (const kind of RENDER_KINDS) handlers[kind] = renderHandler(kind, { db: o.db, bucket: o.bucket, farm: o.farm, voiceDir: media.voiceDir, ...farmWait });
   }
   if (o.thumbnails) handlers.thumbnail = thumbnailHandler({ db: o.db, bucket: o.bucket, renderer: o.thumbnails });
-  // reference videos a person agreed to download (a reference_download card): watched, measured, deleted
-  if (o.ytdlp && media && o.referenceDownloads !== false) handlers.style_watch = styleWatchHandler({ db: o.db, ytdlp: o.ytdlp, ffmpeg: media.ffmpeg, ffprobe: media.ffprobe });
+  // reference videos: uploaded ones (style_from_files), and YouTube ones a person agreed to download (a
+  // reference_download card: watched, measured, deleted) unless downloads are turned off: fetched by a farm machine
+  // taking studio.reference_fetch when one is online (YouTube blocks the server, not the office), else this worker's yt-dlp
+  if (media) {
+    const downloads = o.referenceDownloads !== false;
+    handlers.style_watch = styleWatchHandler({
+      db: o.db, ytdlp: downloads ? o.ytdlp ?? null : null, ffmpeg: media.ffmpeg, ffprobe: media.ffprobe,
+      farm: downloads ? { client: o.farm, bucket: o.bucket, fetchers: referenceFetchers(o.farm), pollMs: farmWait.pollMs, queueTimeoutMs: o.farmQueueTimeoutMs ?? 30 * 60_000 } : null,
+    });
+  }
   const crawler = new YoutubeCrawler({ apiKey: o.youtubeApiKey ?? null, ytdlp: o.ytdlp ?? null, cache: studioResearchCache(o.db) });
   if (crawler.source) handlers.research = researchHandler({ db: o.db, crawler });
   return handlers;

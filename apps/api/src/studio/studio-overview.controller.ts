@@ -3,7 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Request } from 'express';
 import {
-  assistantName, claudeMaxConcurrent, claudeUsage, parseClaudeMaxConcurrent, setAssistantName, setClaudeMaxConcurrent, studioActivity,
+  assistantName, claudeMaxConcurrent, claudeUsage, parseClaudeMaxConcurrent, referenceFetchNodes, setAssistantName, setClaudeMaxConcurrent, studioActivity,
+  youtubeBlock,
 } from '@ag-studio/engine';
 import { StudioAdminService } from '../auth/studio-admin.service';
 import { EngineService } from './engine.service';
@@ -43,6 +44,9 @@ export class StudioOverviewController {
   /**
    * The Queue screen: what runs in the projects a person can see (agent turns, their tools, jobs with their farm
    * machine), Claude slots, and the farm's machines. The farm out of reach is `farm.ok = false`, not an error.
+   * `youtube`: YouTube refusing to let the Studio server download (since when, until when Studio assumes so), else null;
+   * `youtubeFarm`: the same for the farm's machines; `referenceFetchers`: names of the machines online that fetch
+   * reference videos instead (`studio.reference_fetch`), null when the farm is out of reach.
    */
   @Get('queue')
   async queue(@Req() req: Request) {
@@ -51,7 +55,12 @@ export class StudioOverviewController {
     let machines = null;
     let farm: { ok: true } | { ok: false; error: string } = { ok: true };
     try { machines = (await this.engine.farmNodes()).nodes; } catch (e) { farm = { ok: false, error: e instanceof Error ? e.message : String(e) }; }
-    return { claude: this.claude(), items, hidden, machines, farm };
+    const now = this.engine.core.clock.now();
+    return {
+      claude: this.claude(), items, hidden, machines, farm,
+      youtube: youtubeBlock(this.engine.db, now), youtubeFarm: youtubeBlock(this.engine.db, now, 'farm'),
+      referenceFetchers: machines ? referenceFetchNodes(machines).map((n) => n.name) : null,
+    };
   }
 
   /** The farm machines a final render may be pinned to: those taking `studio.render_final`; none when out of reach. */

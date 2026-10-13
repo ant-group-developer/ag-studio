@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { TimelineV4 } from "@harness/contracts";
 import {
   actionView, agentTools, callAgentTool, createProject, createThread, createVideo, decideAction, getAction, getJob, getVideo, listActions, listJobs,
-  listMessages, markAgentTurnRunning, postUserMessage, proposeAction, saveVideoRevision, seedWorkspace, StudioRunError, type AgentToolContext,
+  listMessages, markAgentTurnRunning, noteYoutubeBlocked, postUserMessage, proposeAction, saveVideoRevision, seedWorkspace, StudioRunError, type AgentToolContext,
 } from "../src/index.js";
 import { world } from "./helpers.js";
 
@@ -100,5 +100,40 @@ describe("actions a person confirms", () => {
     const r = await callAgentTool(agentTools(), s.ctx, "propose_action", { kind: "render_final", title: "Render bản cuối 1080p", why: "Bản xem trước đã ổn" });
     expect(r.text).toContain("cần vai producer");
     expect(listActions(s.db, { threadId: s.thread.id })[0]).toMatchObject({ kind: "render_final", video_id: s.video.id, message_id: s.turn.id, revision: 1 });
+  });
+
+  it("propose_action: no reference download card while YouTube blocks the server; it says what to offer instead", async () => {
+    const s = setup();
+    const ask = { kind: "reference_download", title: "Tải 2 video mẫu", why: "đo nhịp dựng", params: { video_ids: ["U_17EqTHUIo", "U_17EqTHUIp"], purpose: "nhịp dựng" } };
+    noteYoutubeBlocked(s.db, NOW);
+    const r = await callAgentTool(agentTools(), s.ctx, "propose_action", ask);
+    expect(r.isError).toBe(true);
+    expect(r.text).toMatch(/^Chưa tạo thẻ: YouTube đang chặn tải từ máy chủ Studio/);
+    expect(r.text).toContain("tả phong cách dựng bằng lời");
+    expect(listActions(s.db, { threadId: s.thread.id })).toHaveLength(0);
+    // other cards are not affected; past its 6 hours the block is forgotten
+    s.ctx.now = () => "2026-10-10T14:00:01.000Z";
+    expect((await callAgentTool(agentTools(), s.ctx, "propose_action", ask)).isError).toBeFalsy();
+    expect(listActions(s.db, { threadId: s.thread.id })).toHaveLength(1);
+  });
+
+  it("YouTube blocking the server but a farm machine can fetch: the card is allowed again (through the farm); not when the farm is blocked too", async () => {
+    const s = setup();
+    let fetchers: string[] = [];
+    s.ctx.referenceFetchers = async () => fetchers;
+    const ask = { kind: "reference_download", title: "Tải video mẫu", why: "đo nhịp dựng", params: { video_ids: ["U_17EqTHUIo"], purpose: "nhịp dựng" } };
+    noteYoutubeBlocked(s.db, NOW);
+    const refused = await callAgentTool(agentTools(), s.ctx, "propose_action", ask);
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain("không máy farm nào tải thay được");
+    fetchers = ["PC-01"];
+    const ok = await callAgentTool(agentTools(), s.ctx, "propose_action", ask);
+    expect(ok.isError).toBeFalsy();
+    expect(ok.text).toContain("Video mẫu sẽ tải qua máy farm (PC-01)");
+    expect(listActions(s.db, { threadId: s.thread.id })).toHaveLength(1);
+    noteYoutubeBlocked(s.db, NOW, "farm");
+    const both = await callAgentTool(agentTools(), s.ctx, "propose_action", ask);
+    expect(both.isError).toBe(true);
+    expect(both.text).toContain("và cả các máy farm");
   });
 });

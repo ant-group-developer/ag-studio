@@ -75,14 +75,17 @@ describe("playbook", () => {
     expect(DEFAULT_PLAYBOOK.steps.map((s) => s.key)).toEqual(["research", "channel", "style", "branding", "brief", "prepare", "scenes", "edit-plan", "timeline", "preview", "youtube-kit", "thumbnail", "final"]);
   });
 
-  it("says where each step stands and suggests the next ones", () => {
+  it("says where each step stands and suggests the next ones of where the chat is", () => {
     const { db } = world();
     db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'T', ?, ?)", [NOW, NOW]);
     const p = createProject(db, "team-1", { name: "A", description: "", language: "vi", aspect: "16:9" }, "u", NOW);
     const dir = ws();
     const st0 = playbookStatus(db, dir, { projectId: p.id, videoId: "v1" });
     expect(st0.project.map((s) => s.status)).toEqual(["missing", "missing", "missing", "missing"]);
-    expect(st0.next).toEqual([{ scope: "project", key: "research" }, { scope: "video", key: "brief" }]);
+    // a video's chat suggests the video's steps only; the channel's chat the channel's
+    expect(st0).toMatchObject({ scope: "video", next: [{ scope: "video", key: "brief" }], projectOpen: 3 });
+    expect(playbookStatus(db, dir, { projectId: p.id })).toMatchObject({ scope: "project", video: null, next: [{ scope: "project", key: "research" }] });
+    expect(playbookStatus(db, dir, { projectId: p.id, videoId: "v1", scope: "project" }).next).toEqual([{ scope: "project", key: "research" }]);
 
     write(dir, "research/report.md", "---\nstatus: done\n---\n# Báo cáo\n");
     write(dir, "channel/strategy.md", "---\nstatus: done\n---\n# Chiến lược\n");
@@ -94,7 +97,8 @@ describe("playbook", () => {
       research: "done", channel: "done", style: "skipped", branding: "invalid", brief: "draft", prepare: "running", scenes: "missing",
     });
     expect(st1.project.find((s) => s.key === "branding")!.issues[0]!.message).toContain("channel/branding.md: text_look");
-    expect(st1.next).toEqual([{ scope: "project", key: "branding" }, { scope: "video", key: "brief" }]);
+    expect(st1.next).toEqual([{ scope: "video", key: "brief" }]);
+    expect(playbookStatus(db, dir, { projectId: p.id }).next).toEqual([{ scope: "project", key: "branding" }]);
     expect(st1.video!.find((s) => s.key === "brief")!.prompts.do).toContain("videos/v1/brief.md");
 
     // the research changes after the strategy was done: the strategy is stale
@@ -107,6 +111,27 @@ describe("playbook", () => {
 
     const lines = playbookContextLines(st1);
     expect(lines[1]).toBe("- Kênh: research ✓ · channel ✓ · style – · branding ✗");
-    expect(lines.some((l) => l.startsWith("Bước gợi ý tiếp theo: Branding (channel/branding.md)"))).toBe(true);
+    expect(lines).toContain("Bước gợi ý tiếp theo (của video này): Ý tưởng & brief (videos/v1/brief.md)");
+    expect(lines.some((l) => l.startsWith("Kênh còn 1 bước chưa xong: chỉ là bối cảnh"))).toBe(true);
+    const channelLines = playbookContextLines(playbookStatus(db, dir, { projectId: p.id }));
+    expect(channelLines.some((l) => l.startsWith("Bước gợi ý tiếp theo: Branding (channel/branding.md)"))).toBe(true);
+    expect(channelLines.some((l) => l.startsWith("Kênh còn"))).toBe(false);
+  });
+
+  it("in a video's chat, a step waiting on the channel is still suggested, with a note", () => {
+    const { db } = world();
+    db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'T', ?, ?)", [NOW, NOW]);
+    const p = createProject(db, "team-1", { name: "A", description: "", language: "vi", aspect: "16:9" }, "u", NOW);
+    const dir = ws();
+    write(dir, "videos/v1/brief.md", "---\nstatus: done\ntitle: Huế\n---\n");
+    // Studio built the timeline and the preview; the channel has no branding yet
+    const facts = (key: string) => (["prepare", "timeline", "preview"].includes(key) ? { status: "done" as const } : undefined);
+    const st = playbookStatus(db, dir, { projectId: p.id, videoId: "v1", facts });
+    expect(st.next).toEqual([{ scope: "video", key: "scenes" }, { scope: "video", key: "youtube-kit" }]);
+    expect(st.video!.find((s) => s.key === "youtube-kit")!.outsideRequires).toEqual(["branding"]);
+    expect(st.video!.find((s) => s.key === "scenes")!.outsideRequires).toEqual([]);
+    expect(playbookContextLines(st)).toContain(
+      "Bước gợi ý tiếp theo (của video này): Chọn cảnh (videos/v1/scenes.md); Gói YouTube (videos/v1/youtube-kit.md; kênh chưa xong: Branding)",
+    );
   });
 });

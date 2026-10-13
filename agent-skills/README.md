@@ -9,6 +9,7 @@ là `studio:<tên>`. Dưới `--restricted` CLI không đọc `.claude/skills` c
 |---|---|---|
 | `research-report` | `research` | `research/report.md` |
 | `channel-strategy` | `channel` | `channel/strategy.md` |
+| `edit-style` | `style` | `channel/style.md` (số đo từ `style_from_files` / `reference_download`, hay lời người dùng tả) |
 | `branding` | `branding` | `channel/branding.md` (frontmatter `text_look`, `music_mood`…) |
 | `video-brief` | `brief` | `videos/<id>/brief.md` (frontmatter `title`, `target_seconds`, `narration`…) |
 | `scene-selection` | `scenes` | `videos/<id>/scenes.md`, `survey.json` (một dòng mỗi cảnh của `sources/index.json`) |

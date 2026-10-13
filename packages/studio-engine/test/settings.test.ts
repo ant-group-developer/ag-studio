@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assistantName, claudeMaxConcurrent, getStudioSetting, setAssistantName, setClaudeMaxConcurrent } from "../src/index.js";
+import { assistantName, claudeMaxConcurrent, clearYoutubeBlocked, getStudioSetting, noteYoutubeBlocked, setAssistantName, setClaudeMaxConcurrent, youtubeBlock } from "../src/index.js";
 import { world } from "./helpers.js";
 
 const NOW = "2026-10-06T10:00:00.000Z";
@@ -51,5 +51,19 @@ describe("assistant name setting", () => {
     const { db } = world();
     db.run("INSERT INTO studio_settings (key, value, updated_at, updated_by) VALUES ('assistant.name', '42', ?, 'u')", [NOW]);
     expect(assistantName(db)).toBe("Claude");
+  });
+});
+
+describe("YouTube blocking the Studio server", () => {
+  it("is remembered 6 hours from the last time it was seen, forgotten after, cleared by a download that went through", () => {
+    const { db } = world();
+    expect(youtubeBlock(db, NOW)).toBeNull();
+    noteYoutubeBlocked(db, NOW);
+    expect(getStudioSetting(db, "youtube.blocked_until")).toMatchObject({ updated_by: "studio" });
+    expect(youtubeBlock(db, "2026-10-06T15:59:00.000Z")).toEqual({ blockedAt: NOW, until: "2026-10-06T16:00:00.000Z", where: "studio" });
+    expect(youtubeBlock(db, "2026-10-06T16:00:01.000Z")).toBeNull();
+    noteYoutubeBlocked(db, NOW);
+    clearYoutubeBlocked(db);
+    expect(youtubeBlock(db, NOW)).toBeNull();
   });
 });

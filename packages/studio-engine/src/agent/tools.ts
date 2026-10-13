@@ -40,6 +40,8 @@ export interface AgentToolContext {
   footage?: ProjectFootage;
   /** What people call the footage library (ag-go's `siteName`); default "AG Go". */
   siteName?: string;
+  /** Farm machines online that fetch reference videos (`studio.reference_fetch`); absent: none. */
+  referenceFetchers?: () => Promise<string[]>;
 }
 
 export interface ToolAnswer {
@@ -132,13 +134,13 @@ export const PROJECT_TOOLS: AgentTool[] = [
   }),
   tool({
     name: "playbook_status",
-    description: "Tiến độ theo quy trình gợi ý của dự án (và video của luồng này): từng bước, trạng thái (missing, draft, invalid, done, skipped, stale, running), file của bước, lỗi, và các bước gợi ý tiếp theo. Chỉ là gợi ý: không bước nào bắt buộc.",
+    description: "Tiến độ theo quy trình gợi ý của dự án (và video của luồng này): từng bước, trạng thái (missing, draft, invalid, done, skipped, stale, running), file của bước, lỗi, và các bước gợi ý tiếp theo (next) theo phạm vi: luồng video chỉ gợi ý bước của video, luồng kênh chỉ gợi ý bước của kênh; outside_requires là bước của phạm vi kia mà bước này dựa vào nhưng chưa xong (chỉ là ghi chú). Chỉ là gợi ý: không bước nào bắt buộc.",
     input: z.object({ video_id: z.string().min(1).optional() }).strict(),
     run: (ctx, a) => {
       const videoId = a.video_id ?? ctx.video?.id ?? null;
       const st = playbookStatus(ctx.db, ctx.workspaceDir, { projectId: ctx.project.id, videoId, ...(ctx.stepFacts ? { facts: ctx.stepFacts } : {}), now: ctx.now() });
-      const slim = (x: typeof st.project) => x.map((t) => ({ key: t.key, title: t.title, status: t.status, file: t.primary, skill: t.skill, optional: t.optional, requires: t.requires, issues: t.issues.map((i) => `[${i.level}] ${i.message}`), stale_because: t.staleBecause, detail: t.detail }));
-      return { text: json({ custom_playbook: st.custom, playbook_issues: st.issues, project: slim(st.project), video: st.video ? slim(st.video) : null, next: st.next }) };
+      const slim = (x: typeof st.project) => x.map((t) => ({ key: t.key, title: t.title, status: t.status, file: t.primary, skill: t.skill, optional: t.optional, requires: t.requires, issues: t.issues.map((i) => `[${i.level}] ${i.message}`), stale_because: t.staleBecause, outside_requires: t.outsideRequires, detail: t.detail }));
+      return { text: json({ custom_playbook: st.custom, playbook_issues: st.issues, scope: st.scope, project: slim(st.project), video: st.video ? slim(st.video) : null, next: st.next, project_open: st.projectOpen }) };
     },
   }),
   tool({

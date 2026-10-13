@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
-import { getJob, proposeAction, saveVideoRevision } from '@ag-studio/engine';
+import { getJob, noteYoutubeBlocked, proposeAction, saveVideoRevision } from '@ag-studio/engine';
 import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
 import type { EngineService } from '../studio/engine.service';
 import { ActionsController } from './actions.controller';
@@ -57,5 +57,28 @@ describe('actions (real studio.db)', () => {
     expect(done).toMatchObject({ status: 'confirmed', decidedBy: OWNER });
     expect(getJob(s.engine.db, done.jobId!)).toMatchObject({ kind: 'render_final', status: 'queued' });
     expect(await actions.reject(p.id, a.id, req(OWNER)).catch(code)).toBe('decided');
+  });
+
+  it('cards come with whether YouTube blocks the Studio server now (a pending reference download would fail)', async () => {
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    const thread = s.engine.db.get<{ id: string }>('SELECT id FROM agent_threads WHERE project_id = ? LIMIT 1', [p.id])!;
+    proposeAction(s.engine.db, { projectId: p.id, threadId: thread.id, messageId: null, kind: 'reference_download', title: 'Tải video mẫu', summary: 'nhịp', params: { video_ids: ['U_17EqTHUIo'], purpose: 'nhịp' }, createdBy: 'agent' });
+    expect(await actions.list(thread.id)).toMatchObject({ youtubeBlocked: null });
+    noteYoutubeBlocked(s.engine.db, new Date().toISOString());
+    expect((await actions.list(thread.id)).youtubeBlocked).toMatchObject({ where: 'studio' });
+  });
+
+  it('a farm machine that fetches reference videos lifts the warning (the card goes through the farm), unless the farm is blocked too', async () => {
+    const node = { id: '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b', name: 'PC-01', online: true, kinds: ['studio.reference_fetch'], gpus: [], running_jobs: 0, last_seen_at: null };
+    const engine = { ...s.engine, db: s.engine.db, core: s.engine.core, farmNodes: async () => ({ nodes: [node] }) } as unknown as EngineService;
+    const viaFarm = new ActionsController(engine);
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    const thread = s.engine.db.get<{ id: string }>('SELECT id FROM agent_threads WHERE project_id = ? LIMIT 1', [p.id])!;
+    const now = new Date().toISOString();
+    noteYoutubeBlocked(s.engine.db, now);
+    expect((await viaFarm.list(thread.id)).youtubeBlocked).toBeNull();
+    expect((await actions.list(thread.id)).youtubeBlocked).toMatchObject({ where: 'studio' }); // no farm machines reachable here
+    noteYoutubeBlocked(s.engine.db, now, 'farm');
+    expect((await viaFarm.list(thread.id)).youtubeBlocked).toMatchObject({ where: 'farm' });
   });
 });

@@ -15,6 +15,7 @@ import { acquireClaudeSlot, CHAT_SLOT_LEASE_SECONDS, heartbeatClaudeSlot, idsHol
 import type { StudioDb } from "../studio-db.js";
 import { logAudit } from "../audit-log.js";
 import { projectSettingsOf } from "@harness/contracts";
+import { turnChangedFiles } from "../workspace/file-changes.js";
 import { projectDir, scanWorkspace } from "../workspace/files.js";
 import { playbookContextLines, playbookStatus, type StepFact } from "../workspace/playbook-status.js";
 import { getProject, getVideo } from "../workspace/project-db.js";
@@ -24,10 +25,11 @@ import { materializeSkillPlugin } from "./skills.js";
 import { saveThreadSummary, summaryPrompt, THREAD_SUMMARY_JSON_SCHEMA, ThreadSummarySchema, threadsToSummarize } from "./summaries.js";
 import { LESSONS_PATH } from "./prompt.js";
 import { threadMarkdown } from "./history.js";
-import { agentSystemPrompt, agentTurnPrompt } from "./prompt.js";
+import { agentSystemPrompt, agentTurnPrompt, youtubeBlockLines } from "./prompt.js";
+import { youtubeBlock } from "../settings.js";
 import {
   cancelRequested, finishTurn, getMessage, getThread, listThreadRefs, markAgentTurnRunning, markSessionStarted, nextPendingAgentTurns,
-  orphanedAgentTurns, postSystemMessage, queueFollowUp, requeueAgentTurn, resetSession, turnInput, updateRunningTurn, type MessageRecord,
+  orphanedAgentTurns, postSystemMessage, queueFollowUp, requeueAgentTurn, resetSession, setTurnChangedFiles, turnInput, updateRunningTurn, type MessageRecord,
 } from "./threads-db.js";
 import { signAgentToken } from "./token.js";
 
@@ -68,6 +70,8 @@ export interface AgentRunnerOptions {
   stepFacts?: (key: string, videoId: string | null) => StepFact | undefined;
   /** More `<studio_context>` lines for a turn (jobs — later phases). */
   contextLines?: (projectId: string, videoId: string | null) => string[];
+  /** Farm machines that fetch reference videos now (`referenceFetchers`): while YouTube blocks the server, the agent is told they can. */
+  referenceFetchers?: () => Promise<string[]>;
   /** Summaries of quiet threads and the lessons they propose (`false`: off); the model of that small call. */
   summaries?: false | { model?: string; idleMinutes?: number };
   cap: () => number;
@@ -143,6 +147,9 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
     const project = getProject(db, thread.project_id)!;
     const video = thread.video_id ? getVideo(db, thread.video_id) ?? null : null;
     const dir = seedWorkspace(o.workspacesRoot, project);
+    // what changed since the last version (seeded files, files a job wrote) is Studio's, not this turn's
+    try { if (!opts.recap) scanWorkspace(db, { projectId: project.id, dir, author: { kind: "studio", id: null }, now: now() }); }
+    catch (e) { logger.warn("workspace not scanned before the turn", { message_id: message.id, error: String(e) }); }
     const turnDir = join(o.dataRoot, "agent-runs", message.id);
     mkdirSync(turnDir, { recursive: true });
     const deadline = Date.now() + o.deadlineMs;
@@ -156,10 +163,13 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
     writeFileSync(join(turnDir, "settings.json"), JSON.stringify(AGENT_TURN_SETTINGS));
     const status = playbookStatus(db, dir, { projectId: project.id, videoId: video?.id ?? null, ...(o.stepFacts ? { facts: o.stepFacts } : {}), now: now() });
     writeStudioFile(dir, "status.json", JSON.stringify({ updated_at: now(), video_id: video?.id ?? null, ...status }, null, 2));
+    const studioBlock = youtubeBlock(db, now());
+    const fetchers = studioBlock && o.referenceFetchers ? await o.referenceFetchers().catch(() => [] as string[]) : [];
+    const blockLines = youtubeBlockLines(studioBlock, { farm: youtubeBlock(db, now(), "farm"), fetchers });
     const prompt = agentTurnPrompt({
       project, thread, video, refs: listThreadRefs(db, thread.id), messages: turnInput(db, message),
       resumed: message.attempts > 1, recap: opts.recap,
-      extra: [...playbookContextLines(status), ...(o.contextLines?.(project.id, video?.id ?? null) ?? [])], now: now(),
+      extra: [...playbookContextLines(status), ...blockLines,...(o.contextLines?.(project.id, video?.id ?? null) ?? [])], now: now(),
     });
     const pluginDirs = o.skills ? [materializeSkillPlugin(db, { project, workspaceDir: dir, builtinDir: o.skills.builtinDir, pluginsRoot: o.skills.pluginsRoot })] : [];
     let lastWrite = 0;
@@ -266,6 +276,8 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
       let changed: string[] = [];
       if (out.status !== "rate_limited") {
         ({ changed } = scanWorkspace(db, { projectId: project.id, dir, author: { kind: "agent", id: message.created_by, messageId }, now: now() }));
+        try { setTurnChangedFiles(db, messageId, turnChangedFiles(db, project.id, messageId), now()); }
+        catch (e) { logger.warn("turn's changed files not kept", { message_id: messageId, error: String(e) }); }
         writeHistory(thread.id, dir);
         const fixing = out.status === "done" && message.trigger !== "autofix" && projectSettingsOf(project.settings).auto_fix
           ? askToFix(thread.id, dir, changed, message) : false;

@@ -116,6 +116,9 @@ describe('inputs (real studio.db)', () => {
     expect((await inputs.prepare(p.id, { assetIds: [A1, A2] }, req(EDITOR))).assets).toEqual({ [A1]: expect.objectContaining({ state: 'queued', job_id: jobId }), [A2]: { state: 'not_an_input' } });
     expect((await inputs.jobs(p.id, '1')).jobs.map((j) => j.id)).toEqual([jobId]);
     claimJob(s.engine.db, ['prepare_asset'], new Date().toISOString());
+    // the list says how many videos stand where (each once), alongside the rows as before
+    expect((await inputs.sources(p.id)).counts).toEqual({ videos: 1, ready: 0, preparing: 1, failed: 0, notPrepared: 0 });
+    expect((await inputs.sources(p.id, v.id)).sources.map((x) => x.asset?.state)).toEqual(['preparing']);
     expect(await inputs.cancel(p.id, jobId)).toMatchObject({ status: 'running', cancelRequested: true });
     expect(await inputs.cancel('other', jobId).catch(code)).toBe('not_found');
     expect(listMessages(s.engine.db, v.threadId)).toEqual([]);
@@ -149,5 +152,27 @@ describe('inputs (real studio.db)', () => {
     expect(await inputs.upload(p.id, {}, tmp('a.docx', 'x'), req(EDITOR)).catch(code)).toBe('docx_not_supported');
     expect(await inputs.upload(p.id, {}, tmp('a.mp4', 'x'), req(EDITOR)).catch(code)).toBe('video_from_ag_go');
     expect((await inputs.sources(p.id)).sources.map((x) => x.ref)).toEqual(['context/uploads/Ghi chú.md', 'context/images/logo.PNG', 'context/uploads/Ghi chú (2).md']);
+  });
+
+  it('a reference video (to learn an edit style from) goes to context/references/, up to 300 MB; only videos', async () => {
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    const tmp = (name: string, body: string, size = body.length) => { const path = join(mkdtempSync(join(tmpdir(), 'up-')), name); writeFileSync(path, body); return { path, originalname: name, size }; };
+    const ref = await inputs.upload(p.id, { reference: '1' }, tmp('Kênh mẫu.mp4', 'video'), req(EDITOR));
+    expect(ref.source).toMatchObject({ kind: 'upload', ref: 'context/references/Kênh mẫu.mp4', mediaType: 'video', meta: { reference: true } });
+    expect(existsSync(join(root, p.id, 'context', 'references', 'Kênh mẫu.mp4'))).toBe(true);
+    // 80 MB: too big for a document, fine for a reference video
+    expect((await inputs.upload(p.id, { reference: 'true' }, tmp('b.mov', 'x', 80 * 1024 * 1024), req(EDITOR))).source.ref).toBe('context/references/b.mov');
+    expect(await inputs.upload(p.id, {}, tmp('big.pdf', 'x', 80 * 1024 * 1024), req(EDITOR)).catch(code)).toBe('file_too_large');
+    expect(await inputs.upload(p.id, { reference: '1' }, tmp('huge.mp4', 'x', 301 * 1024 * 1024), req(EDITOR)).catch(code)).toBe('file_too_large');
+    expect(await inputs.upload(p.id, { reference: '1' }, tmp('notes.md', 'x'), req(EDITOR)).catch(code)).toBe('not_video');
+  });
+
+  it('audio uploads go up to 100 MB (a whole music track); other files stay at 50 MB', async () => {
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    const tmp = (name: string, size: number) => { const path = join(mkdtempSync(join(tmpdir(), 'up-')), name); writeFileSync(path, 'x'); return { path, originalname: name, size }; };
+    const music = await inputs.upload(p.id, {}, tmp('Nhạc nền.MP3', 80 * 1024 * 1024), req(EDITOR));
+    expect(music.source).toMatchObject({ ref: 'context/audio/Nhạc nền.MP3', mediaType: 'audio' });
+    expect(await inputs.upload(p.id, {}, tmp('dai.wav', 101 * 1024 * 1024), req(EDITOR)).catch(code)).toBe('file_too_large');
+    expect(await inputs.upload(p.id, {}, tmp('anh.png', 60 * 1024 * 1024), req(EDITOR)).catch(code)).toBe('file_too_large');
   });
 });

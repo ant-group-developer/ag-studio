@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -58,5 +58,24 @@ describe("research tools", () => {
     expect(out).toMatchObject({ status: "done", source: "yt-dlp", file: expect.stringMatching(/^research\/\d{4}-\d{2}-\d{2}-kenh-kenhpho\.md$/) });
     expect(out.videos).toHaveLength(3);
     expect(getJob(s.db, out.job_id)!.status).toBe("done");
+  });
+
+  it("style_from_files: queues style_watch on the uploaded videos at once (no card), refuses what is not an uploaded video", async () => {
+    const s = setup();
+    mkdirSync(join(s.dir, "context", "references"), { recursive: true });
+    writeFileSync(join(s.dir, "context", "references", "Kênh mẫu.mp4"), "video");
+    writeFileSync(join(s.dir, "context", "notes.md"), "# x");
+    const r = await callAgentTool(s.tools, s.ctx, "style_from_files", { paths: ["context/references/Kênh mẫu.mp4", "context/references/Kênh mẫu.mp4"], purpose: "nhịp dựng" });
+    expect(r.isError).toBeFalsy();
+    expect(JSON.parse(r.text)).toMatchObject({ status: "queued", files: ["context/references/Kênh mẫu.mp4"] });
+    const job = listJobs(s.db, s.project.id)[0]!;
+    expect(job).toMatchObject({ kind: "style_watch", thread_id: s.thread.id, continue_agent: 1, title: "Học phong cách từ 1 video tải lên" });
+    expect(JSON.parse(job.request)).toEqual({ files: ["context/references/Kênh mẫu.mp4"], purpose: "nhịp dựng" });
+    for (const [path, why] of [["context/notes.md", "không phải video"], ["inputs/a/clip.mp4", "context/"], ["context/references/none.mp4", "không có file"], ["../x.mp4", ".."]] as const) {
+      expect(await callAgentTool(s.tools, s.ctx, "style_from_files", { paths: [path], purpose: "x" })).toMatchObject({ isError: true, text: expect.stringContaining(why) });
+    }
+    expect(listJobs(s.db, s.project.id)).toHaveLength(1);
+    expect(await callAgentTool(s.tools, { ...s.ctx, role: "viewer" }, "style_from_files", { paths: ["context/references/Kênh mẫu.mp4"], purpose: "x" }))
+      .toMatchObject({ isError: true, text: expect.stringContaining("cần vai editor") });
   });
 });

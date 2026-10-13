@@ -3,6 +3,10 @@
 .ws-video__issues { margin: 6px 0 0; padding-left: 18px; font-size: 12px; }
 .ws-video__buttons { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
 .ws-video__player { width: 100%; max-height: 50vh; margin: 8px 0; border-radius: 8px; background: #000; }
+.ws-video__player--wait {
+  aspect-ratio: 16 / 9; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 12px; color: #d9d9d9; font-size: 13px; text-align: center;
+}
 .ws-video__row--current { background: var(--ws-accent-soft); }
 .ws-video__thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
 .ws-video__thumb { border: 1px solid var(--ws-line); border-radius: 6px; padding: 0; background: var(--ws-chip); cursor: pointer; aspect-ratio: 16 / 9; overflow: hidden; }

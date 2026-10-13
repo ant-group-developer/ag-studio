@@ -22,6 +22,7 @@ import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { AccountDirectoryService } from '../auth/account-directory.service';
+import { StudioAdminService } from '../auth/studio-admin.service';
 
 class ListTeamsQueryDto {
   @IsOptional()
@@ -91,6 +92,7 @@ export class TeamsController {
   constructor(
     private readonly teamsService: TeamsService,
     private readonly directory: AccountDirectoryService,
+    private readonly admins: StudioAdminService,
   ) {}
 
   @Post()
@@ -99,14 +101,17 @@ export class TeamsController {
     return this.teamsService.createTeam(dto.name, userId);
   }
 
-  /** Paged list of teams visible to the caller (admins see all). */
+  /**
+   * Paged list of teams visible to the caller (a Studio admin sees all, each with `isMember`). The route has no
+   * `@Roles`, so `RolesGuard` never learns whether the caller is an admin: ask here.
+   */
   @Get()
-  listTeams(@Query() query: ListTeamsQueryDto, @Req() req: Request) {
-    const { userId, isAdmin } = req.authContext!;
-    return this.teamsService.listTeamsPaged(userId, isAdmin ?? false, query);
+  async listTeams(@Query() query: ListTeamsQueryDto, @Req() req: Request) {
+    const isAdmin = await this.admins.isAdmin(req);
+    return this.teamsService.listTeamsPaged(req.authContext!.userId, isAdmin, query);
   }
 
-  /** One team: name, the caller's role and counts (the team page header). */
+  /** One team: name, the caller's role (null and `isMember: false` for an admin outside it) and counts. */
   @Get(':teamId')
   @Roles('viewer')
   getTeam(@Param('teamId') teamId: string, @Req() req: Request) {

@@ -41,8 +41,8 @@ export function ChatPanel({ threadId, projectId, canWrite, canDecide, onOpenFile
   onAttachmentsChange: (paths: string[]) => void;
   onEditLearning?: (() => void) | undefined;
   emptyHint?: string | undefined;
-  /** Steps of the playbook to suggest (their "do" prompt fills the message box). */
-  nextSteps?: { key: string; title: string; prompt: string }[];
+  /** Steps of the playbook to suggest (their "do" prompt fills the message box); `note`: what it waits for elsewhere. */
+  nextSteps?: { key: string; title: string; prompt: string; note?: string | undefined }[];
 }) {
   const { t } = useAiTranslation();
   const { message } = AntApp.useApp();
@@ -87,7 +87,7 @@ export function ChatPanel({ threadId, projectId, canWrite, canDecide, onOpenFile
             <div className="ws-chat__empty">{emptyHint ?? t("ws.chat.empty")}</div>
           ) : messages.map((m) => (
             <MessageItem
-              key={m.id} message={m} onOpenFile={onOpenFile}
+              key={m.id} message={m} projectId={projectId} onOpenFile={onOpenFile}
               onStop={canWrite && m.role === "assistant" && (m.status === "running" || m.status === "pending") ? () => stop.mutate(m.id) : undefined}
             />
           ))}
@@ -108,7 +108,11 @@ export function ChatPanel({ threadId, projectId, canWrite, canDecide, onOpenFile
           ) : !active && nextSteps.length && !draft.trim() ? (
             <div className="ws-suggestions ws-suggestions--steps">
               <span>{t("ws.steps.next")}</span>
-              {nextSteps.map((n) => <button key={n.key} type="button" onClick={() => onDraftChange(n.prompt)}>{n.title}</button>)}
+              {nextSteps.map((n) => (
+                <button key={n.key} type="button" title={n.note} onClick={() => onDraftChange(n.prompt)}>
+                  {n.title}{n.note ? <span className="ws-suggestions__note"> · {n.note}</span> : null}
+                </button>
+              ))}
             </div>
           ) : null}
           <Composer

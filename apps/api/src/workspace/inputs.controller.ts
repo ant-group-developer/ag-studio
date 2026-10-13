@@ -9,15 +9,15 @@ import { extname, join } from 'node:path';
 import type { Request } from 'express';
 import { z } from 'zod';
 import {
-  addSource, assetState, getSource, jobView, listJobs, listSources, nameUnnamedAssets, projectActAs, queuePrepare, removeSource, requestJobCancel, requireJob,
-  requireProject, requireVideo, sourceItems, StudioRunError, writeVideoIndex, writeWorkspaceFile, type ActorRole, type JobView, type SourceItem,
-  type SourceMediaType, unnamedAssetIds,
+  addSource, assetCounts, assetStates, AUDIO_FILE_EXTS, getSource, jobView, listJobs, listSources, nameUnnamedAssets, projectActAs, queuePrepare, removeSource, requestJobCancel, requireJob,
+  PROJECT_AUDIO_DIR, REFERENCE_UPLOAD_DIR, REFERENCE_UPLOAD_MAX_BYTES, REFERENCE_VIDEO_EXTS, requireProject, requireVideo, sourceItems, StudioRunError, writeVideoIndex,
+  writeWorkspaceFile, type ActorRole, type AssetCounts, type JobView, type SourceItem, type SourceMediaType, unnamedAssetIds,
 } from '@ag-studio/engine';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from '../studio/engine.service';
 import { mapErrors } from '../studio/http-errors';
-import { safeFileName, WORKSPACE_UPLOAD_MAX_BYTES } from './files.controller';
+import { safeFileName, uploadMaxBytes, WORKSPACE_UPLOAD_MAX_BYTES } from './files.controller';
 import { ProjectFootageService } from './project-footage.service';
 import { SiteNameService } from '../ag-go/site-name.service';
 import { FOOTAGE_RESOLUTIONS, FOOTAGE_SORT_FIELDS, FOOTAGE_USABILITIES } from '../ag-go/client';
@@ -36,7 +36,11 @@ const AddSchema = z.discriminatedUnion('kind', [
   }).strict(),
 ]);
 const PrepareSchema = z.object({ assetIds: z.array(z.string().regex(ASSET_OR_PROJECT_ID)).min(1).max(40), again: z.boolean().optional() }).strict();
-const UploadFormSchema = z.object({ videoId: z.string().min(1).optional() });
+const UploadFormSchema = z.object({
+  videoId: z.string().min(1).optional(),
+  /** A reference video to learn an edit style from (not footage): saved under `context/references/`, up to 300 MB. */
+  reference: z.enum(['1', 'true']).optional(),
+});
 
 /** A comma-separated list in a query string (or the same key repeated). */
 const csv = <T extends z.ZodTypeAny>(item: T) => z.union([z.string(), z.array(z.string())])
@@ -72,7 +76,7 @@ const FootageQuerySchema = z.object({
 const UPLOAD_KINDS: { exts: string[]; mediaType: SourceMediaType; dir: string }[] = [
   { exts: ['.md', '.txt', '.pdf', '.csv', '.json', '.srt', '.vtt'], mediaType: 'document', dir: 'context/uploads' },
   { exts: ['.jpg', '.jpeg', '.png', '.webp', '.gif'], mediaType: 'image', dir: 'context/images' },
-  { exts: ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac'], mediaType: 'audio', dir: 'context/audio' },
+  { exts: [...AUDIO_FILE_EXTS], mediaType: 'audio', dir: PROJECT_AUDIO_DIR },
 ];
 
 interface UploadedTmp { path: string; originalname: string; size: number }
@@ -101,13 +105,18 @@ export class InputsController {
   /** When names were last looked up for a project's unnamed videos: once every 10 minutes at most. */
   private readonly namedAt = new Map<string, number>();
 
+  /**
+   * The sources (with `videoId`: the project's own and that video's) with where each ag-go video stands, in one pass,
+   * and how many distinct ag-go videos are ready, being prepared, failed or not prepared yet.
+   */
   @Get('sources')
   @Roles('viewer')
-  sources(@Param('projectId') projectId: string, @Query('videoId') videoId?: string): Promise<{ sources: SourceItem[] }> {
+  sources(@Param('projectId') projectId: string, @Query('videoId') videoId?: string): Promise<{ sources: SourceItem[]; counts: AssetCounts }> {
     return mapErrors(() => {
       requireProject(this.engine.db, projectId);
       this.nameUnnamed(projectId);
-      return { sources: sourceItems(this.engine.db, projectId, videoId ? { videoId } : {}) };
+      const sources = sourceItems(this.engine.db, projectId, videoId ? { videoId } : {});
+      return { sources, counts: assetCounts(sources) };
     });
   }
 
@@ -196,27 +205,36 @@ export class InputsController {
   }
 
   /**
-   * A document, image or audio file into `context/` (videos come from ag-go): saved under its own name and listed as
-   * a source. Word files are refused (save them as PDF).
+   * A document, image or audio file into `context/` (videos come from ag-go), or, with `reference`, a reference video
+   * to learn an edit style from (`context/references/`, never footage): saved under its own name and listed as a
+   * source. Word files are refused (save them as PDF). Audio up to 100 MB (a whole music track), other files 50 MB.
    */
   @Post('sources/upload')
   @Roles('editor')
   @HttpCode(HttpStatus.CREATED)
-  @UseInterceptors(FileInterceptor('file', { dest: tmpdir(), limits: { fileSize: WORKSPACE_UPLOAD_MAX_BYTES, files: 1 } }))
+  @UseInterceptors(FileInterceptor('file', { dest: tmpdir(), limits: { fileSize: Math.max(WORKSPACE_UPLOAD_MAX_BYTES, REFERENCE_UPLOAD_MAX_BYTES), files: 1 } }))
   async upload(@Param('projectId') projectId: string, @Body() raw: unknown, @UploadedFile() file: UploadedTmp | undefined, @Req() req: Request) {
     try {
       const form = parseBody(UploadFormSchema, raw);
       if (!file) throw new BadRequestException({ code: 'file_missing', message: 'Chọn file' });
-      if (file.size > WORKSPACE_UPLOAD_MAX_BYTES) {
-        throw new PayloadTooLargeException({ code: 'file_too_large', message: `File lớn hơn ${WORKSPACE_UPLOAD_MAX_BYTES / 1024 / 1024} MB` });
-      }
       const name = safeFileName(file.originalname);
       const ext = extname(name).toLowerCase();
-      if (ext === '.docx' || ext === '.doc') throw new UnsupportedMediaTypeException({ code: 'docx_not_supported', message: 'Chưa đọc được file Word: lưu thành PDF rồi tải lên' });
-      if (['.mp4', '.mov', '.mkv', '.avi', '.webm'].includes(ext)) {
-        throw new UnsupportedMediaTypeException({ code: 'video_from_ag_go', message: `Video lấy từ ${this.siteName.current()}: tải lên ${this.siteName.current()} rồi chọn ở đây` });
+      const isVideo = (REFERENCE_VIDEO_EXTS as readonly string[]).includes(ext);
+      const max = form.reference ? REFERENCE_UPLOAD_MAX_BYTES : uploadMaxBytes(name);
+      if (file.size > max) {
+        throw new PayloadTooLargeException({ code: 'file_too_large', message: `File lớn hơn ${max / 1024 / 1024} MB` });
       }
-      const kind = UPLOAD_KINDS.find((k) => k.exts.includes(ext));
+      if (ext === '.docx' || ext === '.doc') throw new UnsupportedMediaTypeException({ code: 'docx_not_supported', message: 'Chưa đọc được file Word: lưu thành PDF rồi tải lên' });
+      if (form.reference && !isVideo) {
+        throw new UnsupportedMediaTypeException({ code: 'not_video', message: `Video mẫu phải là file video (${REFERENCE_VIDEO_EXTS.join(', ')})` });
+      }
+      if (isVideo && !form.reference) {
+        throw new UnsupportedMediaTypeException({
+          code: 'video_from_ag_go',
+          message: `Video lấy từ ${this.siteName.current()}: tải lên ${this.siteName.current()} rồi chọn ở đây. Video mẫu để học phong cách dựng thì tải ở mục Video mẫu`,
+        });
+      }
+      const kind = form.reference ? { mediaType: 'video' as const, dir: REFERENCE_UPLOAD_DIR } : UPLOAD_KINDS.find((k) => k.exts.includes(ext));
       if (!kind) throw new UnsupportedMediaTypeException({ code: 'file_type', message: `Chưa nhận loại file ${ext || '(không đuôi)'}` });
       return await mapErrors(() => {
         requireProject(this.engine.db, projectId);
@@ -230,7 +248,8 @@ export class InputsController {
           projectId, dir, path, content: readFileSync(file.path), baseSha256: null, author: { kind: 'user', id: req.authContext!.userId },
         });
         const s = addSource(this.engine.db, {
-          projectId, videoId: form.videoId ?? null, kind: 'upload', ref: saved.path, mediaType: kind.mediaType, label: name, meta: { bytes: file.size }, addedBy: req.authContext!.userId,
+          projectId, videoId: form.videoId ?? null, kind: 'upload', ref: saved.path, mediaType: kind.mediaType, label: name,
+          meta: { bytes: file.size, ...(form.reference ? { reference: true } : {}) }, addedBy: req.authContext!.userId,
         });
         return { source: this.item(projectId, s.id), file: saved };
       });
@@ -252,7 +271,8 @@ export class InputsController {
       if (!projectIds.length) return { items: [], nextCursor: null, total: 0 };
       const { agGoProjectId: _one, agGoProjectIds: _many, ...filters } = q;
       const r = await this.footage.searchForPicker(req.authContext!.userId, { ...filters, projectIds, limit: q.limit ?? 40 });
-      return { ...r, items: r.items.map((i) => ({ ...i, prepared: assetState(this.engine.db, projectId, i.assetId) })) };
+      const state = assetStates(this.engine.db, projectId);
+      return { ...r, items: r.items.map((i) => ({ ...i, prepared: state(i.assetId) })) };
     });
   }
 

@@ -9,8 +9,9 @@ import { join } from 'node:path';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import {
-  deleteWorkspaceFile, getFileVersion, listFileVersions, listWorkspaceTree, normalizeRelPath, readWorkspaceBytes, readWorkspaceFile,
-  StudioRunError, validateFileText, writeWorkspaceFile, type FileIssue, type FileVersionRow, type WorkspaceEntry, type WorkspaceFile,
+  AUDIO_FILE_EXTS, AUDIO_MAX_BYTES, deleteWorkspaceFile, getFileVersion, listFileVersions, listWorkspaceTree, normalizeRelPath, readWorkspaceBytes, readWorkspaceFile,
+  StudioRunError, validateFileText, versionDiff, writeWorkspaceFile, type FileIssue, type FileVersionRow, type VersionDiff, type WorkspaceEntry,
+  type WorkspaceFile,
 } from '@ag-studio/engine';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -21,6 +22,14 @@ import { parseBody } from './zod-body';
 
 /** Largest file a person uploads into the workspace. */
 export const WORKSPACE_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
+/** Largest audio file a person uploads: as long as the music a project takes (a whole track). */
+export const AUDIO_UPLOAD_MAX_BYTES = AUDIO_MAX_BYTES.music;
+
+/** The size limit of an upload by its name: audio up to 100 MB, anything else 50 MB. */
+export function uploadMaxBytes(name: string): number {
+  const lower = name.toLowerCase();
+  return (AUDIO_FILE_EXTS as readonly string[]).some((ext) => lower.endsWith(ext)) ? AUDIO_UPLOAD_MAX_BYTES : WORKSPACE_UPLOAD_MAX_BYTES;
+}
 /** Largest text a person saves from the editor. */
 const MAX_TEXT_CHARS = 2 * 1024 * 1024;
 
@@ -116,17 +125,18 @@ export class FilesController {
     }));
   }
 
-  /** Multipart `file` (+ `dir`, default `context/uploads`): saved under its own name, ` (2)`… when taken. */
+  /** Multipart `file` (+ `dir`, default `context/uploads`): saved under its own name, ` (2)`… when taken. Audio ≤ 100 MB, else ≤ 50 MB. */
   @Post('upload')
   @Roles('editor')
   @HttpCode(HttpStatus.CREATED)
-  @UseInterceptors(FileInterceptor('file', { dest: tmpdir(), limits: { fileSize: WORKSPACE_UPLOAD_MAX_BYTES, files: 1 } }))
+  @UseInterceptors(FileInterceptor('file', { dest: tmpdir(), limits: { fileSize: Math.max(WORKSPACE_UPLOAD_MAX_BYTES, AUDIO_UPLOAD_MAX_BYTES), files: 1 } }))
   async upload(@Param('projectId') projectId: string, @Body() raw: unknown, @UploadedFile() file: UploadedTmp | undefined, @Req() req: Request) {
     try {
       const form = parseBody(UploadFormSchema, raw);
       if (!file) throw new BadRequestException({ code: 'file_missing', message: 'Chọn file' });
-      if (file.size > WORKSPACE_UPLOAD_MAX_BYTES) {
-        throw new PayloadTooLargeException({ code: 'file_too_large', message: `File lớn hơn ${WORKSPACE_UPLOAD_MAX_BYTES / 1024 / 1024} MB` });
+      const max = uploadMaxBytes(file.originalname);
+      if (file.size > max) {
+        throw new PayloadTooLargeException({ code: 'file_too_large', message: `File lớn hơn ${max / 1024 / 1024} MB` });
       }
       const dir = this.workspace.dir(projectId);
       const folder = normalizeRelPath(form.dir ?? 'context/uploads');
@@ -153,6 +163,20 @@ export class FilesController {
       if (!v) throw new StudioRunError('not_found', `không có phiên bản ${versionId}`);
       this.visible(v.path);
       return v;
+    });
+  }
+
+  /**
+   * What a version changed: against `base` (another version of the same file, e.g. the one before a turn; `none` = an
+   * empty file) or the version just before it. Hunks with 3 lines of context, or `unavailable: binary | too_large`.
+   */
+  @Get('versions/:versionId/diff')
+  @Roles('viewer')
+  diff(@Param('projectId') projectId: string, @Param('versionId') versionId: string, @Query('base') base?: string): Promise<VersionDiff> {
+    return mapErrors(() => {
+      const d = versionDiff(this.engine.db, projectId, versionId, base === 'none' ? { base: null } : base ? { base } : {});
+      this.visible(d.path);
+      return d;
     });
   }
 

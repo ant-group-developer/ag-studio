@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { agentSystemPrompt, agentTurnPrompt, expandImports, type MessageRecord, type ProjectRecord, type ThreadRecord } from "../src/index.js";
+import { agentSystemPrompt, agentTurnPrompt, expandImports, youtubeBlockLines, type MessageRecord, type ProjectRecord, type ThreadRecord } from "../src/index.js";
 
 function workspace() {
   const dir = mkdtempSync(join(tmpdir(), "prompt-"));
@@ -64,5 +64,16 @@ describe("turn prompt", () => {
     expect(out).toContain("phiên mới của một luồng đã có");
     expect(out).toContain("Lượt trước bị ngắt");
     expect(out).toContain("Viết brief\n\nĐính kèm: `context/notes.md`\n\n---\n\n[Studio] Render xem trước xong");
+  });
+});
+
+describe("YouTube blocking the server, in the turn's context", () => {
+  it("says so, with the times, and that a reference download card would fail; nothing when not blocked", () => {
+    expect(youtubeBlockLines(null)).toEqual([]);
+    const lines = youtubeBlockLines({ blockedAt: "2026-10-10T08:00:00.000Z", until: "2026-10-10T14:00:00.000Z", where: "studio" }).join(" ");
+    expect(lines).toContain("YouTube đang chặn tải từ máy chủ Studio");
+    expect(lines).toContain("15:00");
+    expect(lines).toContain("21:00");
+    expect(lines).toContain("Đừng đề xuất reference_download");
   });
 });

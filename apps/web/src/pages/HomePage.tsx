@@ -12,7 +12,8 @@ export function HomePage() {
   const { data: teams, isLoading } = useTeams();
   const items = teams?.items ?? [];
   const remembered = rememberedTeam();
-  const team = items.find((x) => x.id === remembered) ?? items[0];
+  // a Studio admin lists every team: start in one of their own before any other
+  const team = items.find((x) => x.id === remembered) ?? items.find((x) => x.isMember) ?? items[0];
   const [newTeam, setNewTeam] = useState(false);
   if (team) return <Navigate to={`/t/${team.id}`} replace />;
   return (

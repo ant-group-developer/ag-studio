@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentPart, AgentPhase } from "@harness/adapter-agent-cli";
 import { StudioRunError } from "../errors.js";
 import type { StudioDb } from "../studio-db.js";
+import type { ChangedFile } from "../workspace/file-changes.js";
 
 export type ThreadKind = "project" | "video";
 export type MessageRole = "user" | "assistant" | "system";
@@ -28,6 +29,8 @@ export interface MessageRecord {
   not_before: string | null; error: string | null; cancel_requested: number; attempts: number;
   llm_call_id: string | null; cost_usd: number | null; created_by: string | null; actor_role: ActorRole | null;
   started_at: string | null; finished_at: string | null; created_at: string; updated_at: string;
+  /** JSON `ChangedFile[]` written after the turn (migration 0038); null before it or for turns that changed nothing yet. */
+  changed_files?: string | null;
 }
 
 /** A message as the API answers it (JSON columns parsed). */
@@ -36,6 +39,8 @@ export interface MessageView {
   parts: AgentPart[]; phase: AgentPhase | null; attachments: string[]; trigger: MessageTrigger;
   notBefore: string | null; error: string | null; cancelRequested: boolean; costUsd: number | null;
   createdBy: string | null; actorRole: ActorRole | null; startedAt: string | null; finishedAt: string | null; createdAt: string; updatedAt: string;
+  /** The files the turn changed; null when unknown (turns before migration 0038, or not finished). */
+  changedFiles: ChangedFile[] | null;
 }
 
 const parse = <T>(raw: string | null, fallback: T): T => {
@@ -49,6 +54,7 @@ export function messageView(m: MessageRecord): MessageView {
     parts: parse<AgentPart[]>(m.parts, []), phase: parse<AgentPhase | null>(m.phase, null), attachments: parse<string[]>(m.attachments, []),
     trigger: m.trigger, notBefore: m.not_before, error: m.error, cancelRequested: m.cancel_requested === 1, costUsd: m.cost_usd,
     createdBy: m.created_by, actorRole: m.actor_role, startedAt: m.started_at, finishedAt: m.finished_at, createdAt: m.created_at, updatedAt: m.updated_at,
+    changedFiles: parse<ChangedFile[] | null>(m.changed_files ?? null, null),
   };
 }
 
@@ -279,6 +285,11 @@ export function finishTurn(db: StudioDb, id: string, p: {
     [p.status, p.text, JSON.stringify(p.parts), p.error ?? null, p.costUsd ?? null, p.llmCallId ?? null, p.notBefore ?? null,
       p.status === "rate_limited" ? null : now, now, id],
   );
+}
+
+/** After a turn: the files it changed (`turnChangedFiles`), shown under its answer. */
+export function setTurnChangedFiles(db: StudioDb, id: string, files: ChangedFile[], now: string): void {
+  db.run("UPDATE agent_messages SET changed_files = ?, updated_at = ? WHERE id = ?", [JSON.stringify(files), now, id]);
 }
 
 /** A turn a stopped worker left running goes back in line (it resumes its session, it does not start over). */

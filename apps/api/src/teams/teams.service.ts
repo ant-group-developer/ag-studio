@@ -38,13 +38,13 @@ export class TeamsService {
   }
 
   /** One team with the caller's role (null for an admin who is not a member) and its counts. */
-  getTeam(teamId: string, userId: string): { id: string; name: string; createdAt: string; updatedAt: string; role: TeamRole | null; memberCount: number; projectCount: number } {
+  getTeam(teamId: string, userId: string): { id: string; name: string; createdAt: string; updatedAt: string; role: TeamRole | null; isMember: boolean; memberCount: number; projectCount: number } {
     const team = this.db.get<TeamRow>('SELECT * FROM teams WHERE id = ?', [teamId]);
     if (!team) throw new NotFoundException(`Team ${teamId} not found`);
     const role = this.db.get<{ role: TeamRole }>('SELECT role FROM team_members WHERE team_id = ? AND user_id = ?', [teamId, userId])?.role ?? null;
     const memberCount = this.db.get<{ n: number }>('SELECT COUNT(*) as n FROM team_members WHERE team_id = ?', [teamId])?.n ?? 0;
     const projectCount = this.db.get<{ n: number }>('SELECT COUNT(*) as n FROM projects WHERE team_id = ? AND archived_at IS NULL', [teamId])?.n ?? 0;
-    return { id: team.id, name: team.name, createdAt: team.created_at, updatedAt: team.updated_at, role, memberCount, projectCount };
+    return { id: team.id, name: team.name, createdAt: team.created_at, updatedAt: team.updated_at, role, isMember: role !== null, memberCount, projectCount };
   }
 
   updateTeam(teamId: string, name: string): { id: string; name: string; createdAt: string; updatedAt: string } {
@@ -83,12 +83,12 @@ export class TeamsService {
     return rows.map((r) => ({ id: r.id, name: r.name, createdAt: r.created_at, role: r.role }));
   }
 
-  /** Paged teams list for the caller. Admins get all teams. */
+  /** Paged teams list for the caller. Admins get all teams; `isMember` says which ones the caller is in. */
   listTeamsPaged(
     userId: string,
     isAdmin: boolean,
     opts: { page?: number; pageSize?: number; sortBy?: string; sortOrder?: 'asc' | 'desc'; q?: string },
-  ): Paged<{ id: string; name: string; createdAt: string; role: TeamRole | null; memberCount: number; projectCount: number }> {
+  ): Paged<{ id: string; name: string; createdAt: string; role: TeamRole | null; isMember: boolean; memberCount: number; projectCount: number }> {
     const page = Math.max(1, opts.page ?? 1);
     const pageSize = Math.min(100, Math.max(1, opts.pageSize ?? 20));
     const offset = (page - 1) * pageSize;
@@ -135,6 +135,7 @@ export class TeamsService {
         name: r.name,
         createdAt: r.created_at,
         role: member?.role ?? null,
+        isMember: member !== undefined,
         memberCount,
         projectCount,
       };

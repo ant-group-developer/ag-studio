@@ -10,6 +10,7 @@ import {
   Typography,
   Tooltip,
   Popconfirm,
+  Tag,
 } from "antd";
 import { Plus, Users, Film, Pencil, Trash2, Search } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -116,9 +117,13 @@ export function TeamsPage() {
       width: 260,
       ellipsis: { showTitle: false },
       render: (name: string, record: Team) => (
-        <Tooltip title={name}>
-          <a onClick={() => navigate(`/teams/${record.id}`)}>{name}</a>
-        </Tooltip>
+        <Space size={6}>
+          <Tooltip title={name}>
+            <a onClick={() => navigate(`/teams/${record.id}`)}>{name}</a>
+          </Tooltip>
+          {/* a Studio admin sees every team: mark the ones they are not in */}
+          {record.isMember ? null : <Tag bordered={false}>{t("ws.shell.notMember")}</Tag>}
+        </Space>
       ),
     },
     {

@@ -62,7 +62,7 @@ const slimSource = (ctx: AgentToolContext, s: SourceRecord) => {
   const v = sourceView(s);
   return {
     id: v.id, kind: v.kind, ref: v.ref, media_type: v.mediaType, label: v.label, video_id: v.videoId,
-    ...(v.kind === "upload" ? { path: v.ref } : {}),
+    ...(v.kind === "upload" ? { path: v.ref, ...(v.meta.reference ? { reference_video: true } : {}) } : {}),
     ...(v.kind === "ag_go_asset" ? assetState(ctx, v.ref) : {}),
   };
 };
@@ -78,7 +78,7 @@ const jobLine = (j: JobRecord) => {
 export const INPUT_TOOLS: AgentTool[] = [
   tool({
     name: "inputs_list",
-    description: "Đầu vào người dùng đã chọn cho dự án (project {{site}}, video {{site}}, file tải lên trong context/) và cho video của luồng này (hoặc `video_id`): mỗi video {{site}} kèm trạng thái chuẩn bị (ready: đọc inputs/<asset>/README.md; not_prepared: gọi inputs_prepare).",
+    description: "Đầu vào người dùng đã chọn cho dự án (project {{site}}, video {{site}}, file tải lên trong context/) và cho video của luồng này (hoặc `video_id`): mỗi video {{site}} kèm trạng thái chuẩn bị (ready: đọc inputs/<asset>/README.md; not_prepared: gọi inputs_prepare). File có reference_video là video mẫu để học phong cách dựng (style_from_files), không phải footage.",
     input: z.object({ video_id: z.string().min(1).optional() }).strict(),
     run: (ctx, a) => {
       const videoId = a.video_id ?? ctx.video?.id;

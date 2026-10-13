@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   accessFor, createProject, deleteWorkspaceFile, getFileVersion, listFileVersions, listWorkspaceTree, normalizeRelPath, projectDir,
-  readWorkspaceFile, scanWorkspace, seedWorkspace, StudioRunError, writeWorkspaceFile,
+  readWorkspaceFile, scanWorkspace, seedWorkspace, StudioRunError, turnChangedFiles, versionDiff, writeWorkspaceFile,
 } from "../src/index.js";
 import { world } from "./helpers.js";
 
@@ -142,5 +142,73 @@ describe("scanning the workspace after an agent turn", () => {
     expect(scanWorkspace(db, { projectId: project.id, dir, author: { kind: "agent", id: "agent" }, now: NOW }).changed).toEqual([]);
     rmSync(join(dir, "channel", "branding.md"));
     expect(scanWorkspace(db, { projectId: project.id, dir, author: { kind: "agent", id: "agent" }, now: NOW }).deleted).toEqual(["channel/branding.md"]);
+  });
+
+  it("a turn's changed files: each path once against the version before the turn, with lines added and removed", () => {
+    const { db, project, dir } = setup();
+    writeFileSync(join(dir, "context", "notes.md"), "một\nhai\nba\n");
+    writeFileSync(join(dir, "context", "gone.md"), "x\ny\n");
+    writeFileSync(join(dir, "context", "same.md"), "giữ\n");
+    scanWorkspace(db, { projectId: project.id, dir, author: { kind: "user", id: "u" }, now: NOW });
+    const agent = { kind: "agent" as const, id: "u", messageId: "m1" };
+    // edited twice in the turn: compared with the version before the turn
+    writeFileSync(join(dir, "context", "notes.md"), "một\nHAI\nba\n");
+    scanWorkspace(db, { projectId: project.id, dir, author: agent, now: NOW });
+    writeFileSync(join(dir, "context", "notes.md"), "một\nHAI\nba\nbốn\n");
+    writeFileSync(join(dir, "context", "new.md"), "mới\n");
+    writeFileSync(join(dir, "context", "tmp.md"), "tạm\n");
+    writeFileSync(join(dir, "context", "same.md"), "đổi\n");
+    rmSync(join(dir, "context", "gone.md"));
+    scanWorkspace(db, { projectId: project.id, dir, author: agent, now: NOW });
+    // made then removed, or put back as it was: not listed
+    rmSync(join(dir, "context", "tmp.md"));
+    writeFileSync(join(dir, "context", "same.md"), "giữ\n");
+    scanWorkspace(db, { projectId: project.id, dir, author: agent, now: NOW });
+    const before = (p: string) => listFileVersions(db, project.id, p).find((v) => v.message_id !== "m1")!.id;
+    expect(turnChangedFiles(db, project.id, "m1")).toEqual([
+      { path: "context/gone.md", change: "deleted", version_id: listFileVersions(db, project.id, "context/gone.md")[0]!.id, before_version_id: before("context/gone.md"), added: 0, removed: 2 },
+      { path: "context/new.md", change: "added", version_id: listFileVersions(db, project.id, "context/new.md")[0]!.id, before_version_id: null, added: 1, removed: 0 },
+      { path: "context/notes.md", change: "modified", version_id: listFileVersions(db, project.id, "context/notes.md")[0]!.id, before_version_id: before("context/notes.md"), added: 2, removed: 1 },
+    ]);
+    expect(turnChangedFiles(db, project.id, "other")).toEqual([]);
+  });
+
+  it("what a version changed: against the one before it, or a chosen base; binary or too big cannot be shown", () => {
+    const { db, project, dir } = setup();
+    const author = { kind: "user" as const, id: "u" };
+    const first = writeWorkspaceFile(db, { projectId: project.id, dir, path: "context/a.md", content: "một\nhai\nba\n", author });
+    expect(versionDiff(db, project.id, first.versionId)).toMatchObject({
+      path: "context/a.md", before_version_id: null, added: 3, removed: 0,
+      hunks: [{ old_start: 0, old_lines: 0, new_start: 1, new_lines: 3 }],
+    });
+    const second = writeWorkspaceFile(db, { projectId: project.id, dir, path: "context/a.md", content: "một\nHAI\nba\n", author });
+    const third = writeWorkspaceFile(db, { projectId: project.id, dir, path: "context/a.md", content: "một\nHAI\nba\nbốn\n", author });
+    expect(versionDiff(db, project.id, third.versionId)).toEqual({
+      path: "context/a.md", version_id: third.versionId, before_version_id: second.versionId, added: 1, removed: 0,
+      hunks: [{ old_start: 1, old_lines: 3, new_start: 1, new_lines: 4, lines: [
+        { kind: "context", text: "một" }, { kind: "context", text: "HAI" }, { kind: "context", text: "ba" }, { kind: "add", text: "bốn" },
+      ] }],
+    });
+    expect(versionDiff(db, project.id, third.versionId, { base: first.versionId })).toMatchObject({ before_version_id: first.versionId, added: 2, removed: 1 });
+    // a file a turn made (and then edited): against nothing
+    expect(versionDiff(db, project.id, third.versionId, { base: null })).toMatchObject({ before_version_id: null, added: 4, removed: 0 });
+    deleteWorkspaceFile(db, { projectId: project.id, dir, path: "context/a.md", author });
+    expect(versionDiff(db, project.id, listFileVersions(db, project.id, "context/a.md")[0]!.id)).toMatchObject({ added: 0, removed: 4 });
+    const other = writeWorkspaceFile(db, { projectId: project.id, dir, path: "context/b.md", content: "x\n", author });
+    expect(failure(() => versionDiff(db, project.id, third.versionId, { base: other.versionId }))).toBe("invalid:bad_base");
+    expect(failure(() => versionDiff(db, project.id, "nope"))).toBe("not_found:");
+    const big = writeWorkspaceFile(db, { projectId: project.id, dir, path: "context/big.md", content: "a\n".repeat(600_000), author });
+    expect(versionDiff(db, project.id, big.versionId)).toEqual({ path: "context/big.md", version_id: big.versionId, before_version_id: null, unavailable: "too_large" });
+    const png = writeWorkspaceFile(db, { projectId: project.id, dir, path: "context/logo.png", content: Buffer.from([0x89, 0x50, 0, 1]), author });
+    expect(versionDiff(db, project.id, png.versionId)).toMatchObject({ unavailable: "binary" });
+  });
+
+  it("a turn's changed file too big to keep as text has no line counts", () => {
+    const { db, project, dir } = setup();
+    scanWorkspace(db, { projectId: project.id, dir, author: { kind: "studio", id: null }, now: NOW });
+    writeFileSync(join(dir, "context", "big.md"), "a\n".repeat(600_000));
+    scanWorkspace(db, { projectId: project.id, dir, author: { kind: "agent", id: "u", messageId: "m2" }, now: NOW });
+    expect(turnChangedFiles(db, project.id, "m2")).toEqual([expect.objectContaining({ path: "context/big.md", change: "added" })]);
+    expect(turnChangedFiles(db, project.id, "m2")[0]).not.toHaveProperty("added");
   });
 });

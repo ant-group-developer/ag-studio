@@ -15,6 +15,7 @@ import { InputsPanel } from "../modules/inputs/InputsPanel";
 import { ResearchPanel } from "../modules/research/ResearchPanel";
 import { VideoPanel } from "../modules/video/VideoPanel";
 import { StepRail } from "../modules/playbook/StepRail";
+import { useStepText } from "../modules/playbook/step-text";
 import { ColumnResizer, useColumnWidths } from "../modules/workspace/ColumnResizer";
 import { ProjectNav, VideoStatusBadge } from "../modules/workspace/ProjectNav";
 import { ProjectSettingsPanel } from "../modules/workspace/ProjectSettingsPanel";
@@ -34,6 +35,7 @@ const TABS: { key: AsideTab; icon: typeof FolderOpen; video?: boolean }[] = [
  */
 export function ProjectPage() {
   const { t } = useAiTranslation();
+  const stepText = useStepText();
   const { projectId = "", videoId, threadId: routeThread } = useParams();
   const [search, setSearch] = useSearchParams();
   const client = useWorkspaceClient();
@@ -42,7 +44,7 @@ export function ProjectPage() {
   const { data: project, error, isLoading } = useQuery({ queryKey: ["project", projectId], queryFn: () => client.getProject(projectId), enabled: !!projectId });
   const { data: threads } = useQuery({ queryKey: ["threads", projectId], queryFn: () => client.listThreads(projectId), enabled: !!projectId });
   const { data: video } = useQuery({ queryKey: ["video", videoId], queryFn: () => client.getVideo(videoId!), enabled: !!videoId });
-  const { atLeast, teamName } = useTeamRole(project?.teamId);
+  const { atLeast, ready: roleReady, teamName } = useTeamRole(project?.teamId);
   useProjectEvents(projectId || null);
 
   // the chat in the middle: the video's thread, the one in the URL, or the channel's first thread
@@ -68,7 +70,8 @@ export function ProjectPage() {
     setSearch(params, { replace: true });
   };
 
-  if (isLoading) return <WorkspaceShell><div className="ws-center"><Spin /></div></WorkspaceShell>;
+  // wait for the person's role too, so the page does not show read-only first (an admin, while /me loads)
+  if (isLoading || (project && !roleReady)) return <WorkspaceShell teamId={project?.teamId}><div className="ws-center"><Spin /></div></WorkspaceShell>;
   if (!project) {
     return (
       <WorkspaceShell>
@@ -91,9 +94,19 @@ export function ProjectPage() {
   const key = threadId ?? "";
   const attach = (path: string) => setAttached((a) => ({ ...a, [key]: [...new Set([...(a[key] ?? []), path])] }));
   const setDraft = (text: string) => setDrafts((d) => ({ ...d, [key]: text }));
+  // the chips suggest the steps of where the chat is: the video's in a video's chat, the channel's elsewhere
+  const scope = videoId ? "video" : "project";
   const allSteps = playbook ? [...playbook.project, ...(playbook.video ?? [])] : [];
-  const nextSteps = (playbook?.next ?? []).map((n) => allSteps.find((x) => x.key === n.key)!).filter(Boolean)
-    .map((x) => ({ key: x.key, title: x.title, prompt: x.prompts.do }));
+  const titleOf = (key: string) => { const s = allSteps.find((x) => x.key === key); return s ? stepText(s).title : key; };
+  const nextSteps = (playbook?.next ?? []).filter((n) => n.scope === scope).map((n) => allSteps.find((x) => x.key === n.key)!).filter(Boolean)
+    .map((x) => ({
+      key: x.key, title: stepText(x).title, prompt: x.prompts.do,
+      note: x.outsideRequires?.length ? t("ws.steps.chipWaits", { steps: x.outsideRequires.map(titleOf).join(", ") }) : undefined,
+    }));
+  const videoStep = (key: string) => playbook?.video?.find((x) => x.key === key)?.status;
+  const emptyHint = currentVideo
+    ? videoStep("final") === "done" ? t("ws.chat.emptyVideoDone") : videoStep("brief") && videoStep("brief") !== "missing" ? t("ws.chat.emptyVideoNext") : t("ws.chat.emptyVideo")
+    : threadId && channelThread && threadId !== channelThread.id ? t("ws.chat.emptyFree") : t("ws.chat.emptyProject");
   const learning: Learning = { useLessons: thread?.useLessons ?? true, threads: (thread?.refs ?? []).map((r) => ({ threadId: r.threadId, mode: r.mode })) };
 
   return (
@@ -120,7 +133,7 @@ export function ProjectPage() {
               draft={drafts[key] ?? ""} onDraftChange={setDraft}
               attachments={attached[key] ?? []} onAttachmentsChange={(paths) => setAttached((a) => ({ ...a, [key]: paths }))}
               onEditLearning={() => setLearningOpen(true)}
-              emptyHint={currentVideo ? t("ws.chat.emptyVideo") : t("ws.chat.emptyProject")}
+              emptyHint={emptyHint}
             />
           ) : <div className="ws-center"><Spin /></div>}
         </main>

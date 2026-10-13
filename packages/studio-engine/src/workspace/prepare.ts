@@ -9,7 +9,8 @@
  *   transcript.json  what is said (farm `studio.transcribe`, cleaned), transcript.md the same to read
  *
  * The video is fetched as ag-go serves it for previews (a clean 480p rendition preferred, else the nearest), looked at
- * here with ffmpeg and deleted: the final render reads the original through `/farm/sign`.
+ * here with ffmpeg and deleted: the final render reads the original through `/farm/sign`. Its sound goes to the farm
+ * as soon as it is downloaded, so what is said is read while the shots are found here.
  */
 import { cpSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -22,7 +23,7 @@ import { detectCuts, extractAudio16k, grabFrame, probeMedia, tileSheet, type Med
 import { cleanTranscribeManifest } from "../transcript-clean.js";
 import type { StudioDb } from "../studio-db.js";
 import { DEFAULT_SITE_NAME } from "../site-name.js";
-import { ackFarmJob, JobStopped, runFarmStep, type ProjectFarm } from "./farm.js";
+import { ackFarmJob, JobStopped, runFarmStep, type FarmWatch, type ProjectFarm } from "./farm.js";
 import type { JobContext, JobOutcome } from "./job-runner.js";
 import type { JobRecord } from "./jobs-db.js";
 import { projectActAs, savePrepared } from "./sources-db.js";
@@ -43,6 +44,11 @@ export interface PrepareDeps {
   farm?: { client: ProjectFarm; bucket: StudioBucket; pollMs?: number; queueTimeoutMs?: number };
   /** What people call the footage library (ag-go's `siteName`), for job text and README; default "AG Go". */
   siteName?: () => string;
+  /**
+   * A turn at decoding the video here (scenes, frames, sheets), shared by the worker's prepare jobs so more jobs at
+   * once (idle farm machines) do not crowd its CPU; default: no limit.
+   */
+  decodeSlot?: <T>(task: () => Promise<T>) => Promise<T>;
 }
 
 /** `request` of a `prepare_asset` job. */
@@ -94,9 +100,19 @@ export function clock(s: number): string {
 const pad3 = (n: number) => String(n).padStart(3, "0");
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
-/** Progress of the steps, so a job without a transcription still ends at 1. */
-const SPAN = { resolve: [0, 0.02], download: [0.02, 0.15], scenes: [0.15, 0.4], frames: [0.4, 0.6], sheets: [0.6, 0.65], audio: [0.65, 0.68], farm: [0.68, 0.97], write: [0.97, 1] } as const;
-const at = (step: keyof typeof SPAN, f: number) => SPAN[step][0] + (SPAN[step][1] - SPAN[step][0]) * Math.max(0, Math.min(1, f));
+/**
+ * Progress of the steps. `work` is the shots found here and what is said read on the farm, side by side: the shots
+ * weigh `LOCAL_SHARE` of it when there is a transcription, all of it when there is none (so the job still ends at 1).
+ */
+const SPAN = { resolve: [0, 0.02], download: [0.02, 0.15], audio: [0.15, 0.17], work: [0.17, 0.97], write: [0.97, 1] } as const;
+const LOCAL = { scenes: [0, 0.6], frames: [0.6, 0.93], sheets: [0.93, 1] } as const;
+const LOCAL_SHARE = 0.6;
+const clamp01 = (f: number) => Math.max(0, Math.min(1, f));
+const at = (step: keyof typeof SPAN, f: number) => SPAN[step][0] + (SPAN[step][1] - SPAN[step][0]) * clamp01(f);
+const local = (step: keyof typeof LOCAL, f: number) => LOCAL[step][0] + (LOCAL[step][1] - LOCAL[step][0]) * clamp01(f);
+
+/** Frames grabbed at once inside one job (each a short seek and decode). */
+const FRAME_LANES = 4;
 
 /** The `prepare_asset` handler: a failure (not a stop) is recorded for the asset, so its videos' index says why. */
 export function prepareHandler(d: PrepareDeps): (job: JobRecord, ctx: JobContext) => Promise<JobOutcome> {
@@ -149,41 +165,24 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
   ctx.setUnits(duration);
   const name = req.name?.trim() || assetId;
 
-  ctx.report({ phase: "Đang dò cảnh", progress: at("scenes", 0) });
-  const cuts = await detectCuts(d.ffmpeg, proxy, CUT_SCENE.threshold, ctx.signal, (t) => {
-    if (Date.now() - lastShown < 500) return;
-    lastShown = Date.now();
-    ctx.report({ phase: `Đang dò cảnh (${clock(Math.min(t, duration))} / ${clock(duration)})`, progress: at("scenes", t / duration) });
+  // what the job shows: the shots found here and what is said read on the farm, both at once
+  const view = {
+    local: { state: "queued" as "queued" | "working" | "done", phase: null as string | null, f: 0 },
+    farm: { state: "off" as "off" | "waiting" | "working" | "done", phase: null as string | null, f: 0, node: undefined as string | null | undefined, farmJobId: undefined as string | undefined },
+  };
+  const show = () => ctx.report({
+    phase: [view.local.state === "done" ? null : view.local.phase, view.farm.phase].filter(Boolean).join(" · ") || "Đang chuẩn bị",
+    progress: at("work", view.farm.state === "off" ? view.local.f : LOCAL_SHARE * view.local.f + (1 - LOCAL_SHARE) * view.farm.f),
+    ...(view.farm.node !== undefined ? { node: view.farm.node } : {}), ...(view.farm.farmJobId ? { farmJobId: view.farm.farmJobId } : {}),
+    // the time left is told only while something works: not while both wait for a turn
+    waiting: view.local.state !== "working" && view.farm.state !== "working",
   });
-  ctx.checkpoint();
-  const found = buildShots(cuts, duration, CUT_SCENE);
 
-  const out = join(ctx.tempDir, "out");
-  mkdirSync(join(out, "frames"), { recursive: true });
-  const shots: InputShot[] = [];
-  for (const [i, s] of found.entries()) {
-    ctx.checkpoint();
-    const n = i + 1;
-    const frame = `frames/${pad3(n)}.jpg`;
-    const t = Math.round(((s.in + s.out) / 2) * 1000) / 1000;
-    await grabFrame(d.ffmpeg, proxy, t, join(out, frame), CUT_FRAME_WIDTH);
-    shots.push({ n, in: s.in, out: s.out, frame });
-    if (n % 5 === 0 || n === found.length) ctx.report({ phase: `Đang lấy khung hình (cảnh ${n}/${found.length})`, progress: at("frames", n / found.length) });
-  }
-
-  const sheets: InputShots["sheets"] = [];
-  for (let k = 0; k < shots.length; k += CUT_SHEET_SHOTS) {
-    ctx.checkpoint();
-    const group = shots.slice(k, k + CUT_SHEET_SHOTS);
-    const file = `sheets/${pad2(sheets.length + 1)}.jpg`;
-    await tileSheet(d.ffmpeg, group.map((s) => join(out, s.frame)), CUT_SHEET_COLS, join(out, file));
-    sheets.push({ file, shots: group.map((s) => s.n) });
-    ctx.report({ phase: `Đang ghép tờ cảnh ${sheets.length}/${Math.ceil(shots.length / CUT_SHEET_SHOTS)}`, progress: at("sheets", (k + group.length) / shots.length) });
-  }
-
-  // what is said: only when it has sound, ag-go does not say nobody speaks, and the worker has a farm
-  let transcript: InputTranscript | null = null;
-  let transcriptNote: string;
+  // what is said goes to the farm first (only when it has sound, ag-go does not say nobody speaks, and the worker has
+  // a farm), so it is read while the shots are found here
+  let transcriptNote: string | null = null;
+  let hearing: Promise<{ said: InputTranscript } | { failed: string } | { stopped: unknown }> | null = null;
+  let localFailed = false;
   if (!facts.has_audio) transcriptNote = "video không có tiếng";
   else if (req.has_speech === false) transcriptNote = `${site} cho biết video không có lời nói`;
   else if (!d.farm) transcriptNote = "worker này không nối farm nên chưa đọc lời thoại";
@@ -199,20 +198,58 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
         production_id: job.project_id, model: CUT_TRANSCRIBE_MODEL, align_words: true,
         sources: [{ source_id: sourceId, audio: `stage:audio/${sourceId}.wav`, language: null }],
       });
-      // what is said is a help, not a must: the shots stay usable when the farm cannot read it (README says why)
-      const said = await transcribeOnFarm(d.db, d.farm, job, ctx, sourceId, assetId, wav, payload).catch((e: unknown) => {
-        if (e instanceof JobStopped) throw e;
-        ctx.logger.warn("transcription failed", { error: e instanceof Error ? e.message : String(e) });
-        return { failed: e instanceof Error ? e.message : String(e) };
+      view.farm.state = "waiting";
+      // what is said is a help, not a must: the shots stay usable when the farm cannot read it (README says why);
+      // settled here so a stop or failure while the shots are found is never an unhandled rejection
+      hearing = transcribeOnFarm(d.db, d.farm, job, ctx.now, sourceId, assetId, wav, payload, {
+        onUpdate: (u) => {
+          view.farm = { ...view.farm, state: u.waiting ? "waiting" : "working", phase: `${u.phase} · đọc lời thoại`, f: u.progress ?? view.farm.f, node: u.node, farmJobId: u.farmJobId };
+          show();
+        },
+        // shots that cannot be found end the job: what the farm reads is then cancelled too
+        stopRequested: () => ctx.stopRequested() ?? (localFailed ? "cancelled" : null),
+      }).then(
+        (said) => ({ said }),
+        (e: unknown) => {
+          if (e instanceof JobStopped) return { stopped: e };
+          ctx.logger.warn("transcription failed", { error: e instanceof Error ? e.message : String(e) });
+          return { failed: e instanceof Error ? e.message : String(e) };
+        },
+      ).finally(() => {
+        view.farm = { ...view.farm, state: "done", phase: view.local.state === "done" ? null : "đã đọc lời thoại", f: 1 };
       });
-      if ("failed" in said) {
-        transcriptNote = `chưa đọc được (${said.failed}); chuẩn bị lại để thử`;
-      } else {
-        transcript = said;
-        transcriptNote = said.segments.length ? `${said.segments.length} câu, ngôn ngữ ${said.language ?? "?"}` : "không nghe thấy lời nói";
-      }
     }
   }
+
+  const out = join(ctx.tempDir, "out");
+  let found: { shots: InputShot[]; sheets: InputShots["sheets"] };
+  try {
+    found = await findShots(d, proxy, duration, out, ctx, (state, phase, f, force) => {
+      view.local = { state, phase, f };
+      if (!force && Date.now() - lastShown < 500) return;
+      lastShown = Date.now();
+      show();
+    });
+  } catch (e) {
+    localFailed = true;
+    await hearing;
+    throw e;
+  }
+  const { shots, sheets } = found;
+
+  let transcript: InputTranscript | null = null;
+  if (hearing) {
+    if (view.farm.state !== "done") show();
+    const heard = await hearing;
+    if ("stopped" in heard) throw heard.stopped;
+    if ("failed" in heard) {
+      transcriptNote = `chưa đọc được (${heard.failed}); chuẩn bị lại để thử`;
+    } else {
+      transcript = heard.said;
+      transcriptNote = heard.said.segments.length ? `${heard.said.segments.length} câu, ngôn ngữ ${heard.said.language ?? "?"}` : "không nghe thấy lời nói";
+    }
+  }
+  const note = transcriptNote ?? "không nghe thấy lời nói";
 
   ctx.checkpoint();
   ctx.report({ phase: "Đang ghi vào inputs/", progress: at("write", 0), waiting: false });
@@ -228,7 +265,7 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
     writeFileSync(join(out, "transcript.md"), transcriptMarkdown(name, transcript));
   }
   const bytes = statSync(proxy).size;
-  writeFileSync(join(out, "README.md"), inputReadme(shotsFile, transcript, transcriptNote, ctx.now(), bytes, site));
+  writeFileSync(join(out, "README.md"), inputReadme(shotsFile, transcript, note, ctx.now(), bytes, site));
   rmSync(proxy, { force: true });
 
   const dest = join(ctx.workspaceDir, inputDir(assetId));
@@ -243,22 +280,75 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
   writeVideoIndexesFor(d.db, ctx.workspaceDir, job.project_id, assetId);
   ctx.report({ progress: 1 });
   return {
-    result: { asset_id: assetId, name, shots: shots.length, duration_s: duration, transcript: transcriptNote, folder: `${inputDir(assetId)}/` },
-    message: `Đã chuẩn bị **${name}** (${clock(duration)}): ${shots.length} cảnh, lời thoại: ${transcriptNote}. Xem \`${inputDir(assetId)}/README.md\`.`,
+    result: { asset_id: assetId, name, shots: shots.length, duration_s: duration, transcript: note, folder: `${inputDir(assetId)}/` },
+    message: `Đã chuẩn bị **${name}** (${clock(duration)}): ${shots.length} cảnh, lời thoại: ${note}. Xem \`${inputDir(assetId)}/README.md\`.`,
   };
+}
+
+/**
+ * Scenes, the middle frame of each shot (`FRAME_LANES` at once) and the contact sheets, decoded here in one turn of
+ * `decodeSlot`. `onStep` tells where it is (`force`: show it now, not throttled).
+ */
+async function findShots(
+  d: PrepareDeps, proxy: string, duration: number, out: string, ctx: JobContext,
+  onStep: (state: "queued" | "working" | "done", phase: string | null, f: number, force?: boolean) => void,
+): Promise<{ shots: InputShot[]; sheets: InputShots["sheets"] }> {
+  const slot = d.decodeSlot ?? (<T>(task: () => Promise<T>) => task());
+  onStep("queued", "Chờ lượt dò cảnh trên worker", 0, true);
+  const result = await slot(async () => {
+    ctx.checkpoint();
+    onStep("working", "Đang dò cảnh", local("scenes", 0), true);
+    const cuts = await detectCuts(d.ffmpeg, proxy, CUT_SCENE.threshold, ctx.signal, (t) => {
+      onStep("working", `Đang dò cảnh (${clock(Math.min(t, duration))} / ${clock(duration)})`, local("scenes", t / duration));
+    });
+    ctx.checkpoint();
+    const shots: InputShot[] = buildShots(cuts, duration, CUT_SCENE).map((s, i) => ({ n: i + 1, in: s.in, out: s.out, frame: `frames/${pad3(i + 1)}.jpg` }));
+
+    mkdirSync(join(out, "frames"), { recursive: true });
+    let next = 0;
+    let grabbed = 0;
+    let broken = false;
+    const lanes = await Promise.allSettled(Array.from({ length: Math.min(FRAME_LANES, shots.length) }, async () => {
+      while (!broken && next < shots.length) {
+        const s = shots[next++]!;
+        try {
+          ctx.checkpoint();
+          await grabFrame(d.ffmpeg, proxy, Math.round(((s.in + s.out) / 2) * 1000) / 1000, join(out, s.frame), CUT_FRAME_WIDTH);
+        } catch (e) {
+          broken = true;
+          throw e;
+        }
+        grabbed++;
+        if (grabbed % 5 === 0 || grabbed === shots.length) onStep("working", `Đang lấy khung hình (cảnh ${grabbed}/${shots.length})`, local("frames", grabbed / shots.length));
+      }
+    }));
+    const failed = lanes.find((r): r is PromiseRejectedResult => r.status === "rejected");
+    if (failed) throw failed.reason;
+
+    const sheets: InputShots["sheets"] = [];
+    for (let k = 0; k < shots.length; k += CUT_SHEET_SHOTS) {
+      ctx.checkpoint();
+      const group = shots.slice(k, k + CUT_SHEET_SHOTS);
+      const file = `sheets/${pad2(sheets.length + 1)}.jpg`;
+      await tileSheet(d.ffmpeg, group.map((s) => join(out, s.frame)), CUT_SHEET_COLS, join(out, file));
+      sheets.push({ file, shots: group.map((s) => s.n) });
+      onStep("working", `Đang ghép tờ cảnh ${sheets.length}/${Math.ceil(shots.length / CUT_SHEET_SHOTS)}`, local("sheets", (k + group.length) / shots.length), true);
+    }
+    return { shots, sheets };
+  });
+  onStep("done", null, 1, true);
+  return result;
 }
 
 /** The farm's `studio.transcribe` of one sound file, cleaned of what nobody said. */
 async function transcribeOnFarm(
-  db: StudioDb, farm: NonNullable<PrepareDeps["farm"]>, job: JobRecord, ctx: JobContext, sourceId: string, assetId: string, wav: string, payload: unknown,
+  db: StudioDb, farm: NonNullable<PrepareDeps["farm"]>, job: JobRecord, now: () => string, sourceId: string, assetId: string, wav: string, payload: unknown,
+  watch: FarmWatch,
 ): Promise<InputTranscript> {
   const { outputPrefix, farmJob } = await runFarmStep(
-    { db, bucket: farm.bucket, farm: farm.client, ...(farm.pollMs ? { pollMs: farm.pollMs } : {}), ...(farm.queueTimeoutMs ? { queueTimeoutMs: farm.queueTimeoutMs } : {}), now: ctx.now },
+    { db, bucket: farm.bucket, farm: farm.client, ...(farm.pollMs ? { pollMs: farm.pollMs } : {}), ...(farm.queueTimeoutMs ? { queueTimeoutMs: farm.queueTimeoutMs } : {}), now },
     job, { type: "studio.transcribe", payload, stageKey: "prepare", attemptId: job.id, uploads: [{ localPath: wav, relPath: `audio/${sourceId}.wav` }] },
-    {
-      onUpdate: (u) => ctx.report({ phase: `${u.phase} · đọc lời thoại`, progress: at("farm", u.progress ?? 0), node: u.node, farmJobId: u.farmJobId, waiting: u.waiting }),
-      stopRequested: ctx.stopRequested,
-    },
+    watch,
   );
   const manifest: TranscribeManifest = TranscribeManifestSchema.parse(JSON.parse((await farm.bucket.get(`${outputPrefix}${TRANSCRIBE_MANIFEST_PATH}`)).toString("utf8")));
   await ackFarmJob(farm.client, farmJob.id);

@@ -8,7 +8,7 @@ import type { ActorRole } from "../agent/threads-db.js";
 import { createJob, listJobs, type JobRecord } from "./jobs-db.js";
 import { inputDir, type PrepareRequest } from "./prepare.js";
 import { writeVideoIndexesFor } from "./video-index.js";
-import { getPrepared, listSources, sourceView, type SourceRecord, type SourceView } from "./sources-db.js";
+import { getPrepared, listPrepared, listSources, sourceView, type PreparedAsset, type SourceRecord, type SourceView } from "./sources-db.js";
 
 export type AssetState =
   | { state: "queued" | "preparing"; job_id: string; phase: string | null; progress: number | null }
@@ -16,15 +16,27 @@ export type AssetState =
   | { state: "failed"; error: string | null }
   | { state: "not_prepared" };
 
-/** The prepare job of an asset still queued or running, if any. */
-export function activePrepare(db: StudioDb, projectId: string, assetId: string): JobRecord | undefined {
-  return listJobs(db, projectId, { active: true }).find((j) => j.kind === "prepare_asset" && (JSON.parse(j.request) as PrepareRequest).asset_id === assetId);
+/** Every prepare job of the project still queued or running, by the asset it prepares (the newest when two are). */
+function activePrepares(db: StudioDb, projectId: string): Map<string, JobRecord> {
+  const out = new Map<string, JobRecord>();
+  const jobs = db.all<JobRecord>(
+    "SELECT * FROM project_jobs WHERE project_id = ? AND kind = 'prepare_asset' AND status IN ('queued', 'running') ORDER BY created_at DESC", [projectId],
+  );
+  for (const j of jobs) {
+    let id: string | undefined;
+    try { id = (JSON.parse(j.request) as PrepareRequest).asset_id; } catch { continue; }
+    if (id && !out.has(id)) out.set(id, j);
+  }
+  return out;
 }
 
-export function assetState(db: StudioDb, projectId: string, assetId: string): AssetState {
-  const job = activePrepare(db, projectId, assetId);
+/** The prepare job of an asset still queued or running, if any. */
+export function activePrepare(db: StudioDb, projectId: string, assetId: string): JobRecord | undefined {
+  return activePrepares(db, projectId).get(assetId);
+}
+
+function stateOf(assetId: string, job: JobRecord | undefined, p: PreparedAsset | undefined): AssetState {
   if (job) return { state: job.status === "running" ? "preparing" : "queued", job_id: job.id, phase: job.phase, progress: job.progress };
-  const p = getPrepared(db, projectId, assetId);
   if (p?.status === "ready") {
     return { state: "ready", folder: `${inputDir(assetId)}/`, readme: `${inputDir(assetId)}/README.md`, shots: p.shots, duration_s: p.duration_s, transcript: p.transcript === 1 };
   }
@@ -32,11 +44,42 @@ export function assetState(db: StudioDb, projectId: string, assetId: string): As
   return { state: "not_prepared" };
 }
 
+export function assetState(db: StudioDb, projectId: string, assetId: string): AssetState {
+  return stateOf(assetId, activePrepare(db, projectId, assetId), getPrepared(db, projectId, assetId));
+}
+
+/**
+ * Where any ag-go video of the project stands, for many at once: the active prepare jobs and the prepared rows are read
+ * a single time (not once per video), so listing hundreds of videos stays one pass.
+ */
+export function assetStates(db: StudioDb, projectId: string): (assetId: string) => AssetState {
+  const jobs = activePrepares(db, projectId);
+  const prepared = new Map(listPrepared(db, projectId).map((p) => [p.asset_id, p]));
+  return (assetId) => stateOf(assetId, jobs.get(assetId), prepared.get(assetId));
+}
+
 export type SourceItem = SourceView & { asset: AssetState | null };
 
-/** Sources with where each ag-go video stands (`listSources` options). */
+/** Sources with where each ag-go video stands (`listSources` options), in one pass. */
 export function sourceItems(db: StudioDb, projectId: string, opts: { videoId?: string; projectOnly?: boolean } = {}): SourceItem[] {
-  return listSources(db, projectId, opts).map((s) => ({ ...sourceView(s), asset: s.kind === "ag_go_asset" ? assetState(db, projectId, s.ref) : null }));
+  const state = assetStates(db, projectId);
+  return listSources(db, projectId, opts).map((s) => ({ ...sourceView(s), asset: s.kind === "ag_go_asset" ? state(s.ref) : null }));
+}
+
+/** How many distinct ag-go videos the sources hold, by where they stand (queued and running count as preparing). */
+export interface AssetCounts { videos: number; ready: number; preparing: number; failed: number; notPrepared: number }
+
+export function assetCounts(items: readonly SourceItem[]): AssetCounts {
+  const seen = new Map<string, AssetState>();
+  for (const s of items) if (s.kind === "ag_go_asset" && s.asset && !seen.has(s.ref)) seen.set(s.ref, s.asset);
+  const c: AssetCounts = { videos: seen.size, ready: 0, preparing: 0, failed: 0, notPrepared: 0 };
+  for (const a of seen.values()) {
+    if (a.state === "ready") c.ready += 1;
+    else if (a.state === "queued" || a.state === "preparing") c.preparing += 1;
+    else if (a.state === "failed") c.failed += 1;
+    else c.notPrepared += 1;
+  }
+  return c;
 }
 
 /**
@@ -49,10 +92,12 @@ export function queuePrepare(db: StudioDb, p: {
   const known = new Map<string, SourceRecord>();
   for (const s of listSources(db, p.projectId)) if (s.kind === "ag_go_asset" && !known.has(s.ref)) known.set(s.ref, s);
   const out: Record<string, AssetState | { state: "not_an_input" }> = {};
+  const state = assetStates(db, p.projectId);
   for (const id of p.assetIds) {
     const src = known.get(id);
+    if (out[id]) continue; // the same id twice in one call: queued once
     if (!src) { out[id] = { state: "not_an_input" }; continue; }
-    const st = assetState(db, p.projectId, id);
+    const st = state(id);
     if (st.state === "queued" || st.state === "preparing" || (st.state === "ready" && !p.again)) { out[id] = st; continue; }
     const req: PrepareRequest = { asset_id: id, name: src.label, ...(typeof sourceView(src).meta.durationMs === "number" ? { duration_s: (sourceView(src).meta.durationMs as number) / 1000 } : {}) };
     const job = createJob(db, {

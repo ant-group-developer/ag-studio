@@ -104,18 +104,20 @@ export function studioActivity(db: StudioDb, who: { userId: string; isAdmin: boo
 }
 
 /**
- * Changes whenever a thread, a turn, a video, a source or a job of the project changes (the web refetches on it). A
+ * Changes whenever a thread, a turn, a video, a source, a job or a suggested lesson of the project changes (the web refetches on it). A
  * running job's heartbeat does not count: only what it shows (phase, progress, machine) and its status.
  */
 export function projectFingerprint(db: StudioDb, projectId: string): string {
-  const jobs = db.get<{ a: string | null; f: string | null; s: number }>(
+  const jobs = db.get<{ a: string | null; f: string | null; s: number; l: string | null }>(
     `SELECT (SELECT group_concat(id || status || COALESCE(phase, '') || COALESCE(CAST(progress * 100 AS INTEGER), '') || COALESCE(node_id, '') || cancel_requested, ',')
                FROM project_jobs WHERE project_id = ? AND status IN ('queued', 'running')) AS a,
             (SELECT MAX(finished_at) FROM project_jobs WHERE project_id = ?) AS f,
-            (SELECT COUNT(*) FROM project_sources WHERE project_id = ?) AS s`,
-    [projectId, projectId, projectId],
+            (SELECT COUNT(*) FROM project_sources WHERE project_id = ?) AS s,
+            (SELECT COUNT(*) || ':' || COALESCE(SUM(status = 'proposed'), 0) || ':' || COALESCE(MAX(created_at), '') || ':' || COALESCE(MAX(decided_at), '')
+               FROM lesson_proposals WHERE project_id = ?) AS l`,
+    [projectId, projectId, projectId, projectId],
   );
-  return `${projectRowsFingerprint(db, projectId)}|${jobs?.a ?? ""}|${jobs?.f ?? ""}|${jobs?.s ?? 0}`;
+  return `${projectRowsFingerprint(db, projectId)}|${jobs?.a ?? ""}|${jobs?.f ?? ""}|${jobs?.s ?? 0}|${jobs?.l ?? ""}`;
 }
 
 function projectRowsFingerprint(db: StudioDb, projectId: string): string {

@@ -1,5 +1,5 @@
 import { useAuthToken } from "../auth/use-auth-token";
-import type { Activity } from "./workspace-client";
+import type { Activity, YoutubeBlock } from "./workspace-client";
 
 import { buildQuery, request, StudioHttpError } from "./http";
 
@@ -30,6 +30,8 @@ export interface Team {
   id: string;
   name: string;
   role: TeamRole | null;
+  /** Whether the caller is in the team (false only for a Studio admin, who sees every team). */
+  isMember: boolean;
   memberCount: number;
   projectCount: number;
   createdAt: string;
@@ -156,6 +158,7 @@ export interface TeamDetail {
   id: string;
   name: string;
   role: TeamRole | null;
+  isMember: boolean;
   memberCount: number;
   projectCount: number;
   createdAt: string;
@@ -349,6 +352,12 @@ export interface StudioQueueView {
   /** The farm's machines; null when the farm could not be read. */
   machines: FarmNode[] | null;
   farm: { ok: true } | { ok: false; error: string };
+  /** YouTube refusing to let the Studio server download now; null when not (older APIs: absent). */
+  youtube?: YoutubeBlock | null;
+  /** The same for the farm's machines that fetch reference videos. */
+  youtubeFarm?: YoutubeBlock | null;
+  /** Machines online that fetch reference videos (`studio.reference_fetch`); null when the farm could not be read. */
+  referenceFetchers?: string[] | null;
 }
 
 /** A machine of the farm (ag-farm `GET /v1/owner/nodes`). */

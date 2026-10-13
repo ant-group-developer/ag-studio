@@ -1,4 +1,4 @@
-import { App as AntApp } from "antd";
+import { Alert, App as AntApp } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { useStudioClient, type QueueItem } from "../api/studio-client";
@@ -14,10 +14,10 @@ import "../modules/admin/admin.css";
 /**
  * The Queue: everything running in the projects a person can see (agent turns, the tools they call, jobs with their
  * farm machine), with Stop; Claude calls against the cap; the farm's machines. A Studio admin also names the AI and
- * sets the cap here.
+ * sets the cap here, and is told when YouTube blocks downloads from the Studio server.
  */
 export function QueuePage() {
-  const { t } = useAiTranslation();
+  const { t, i18n } = useAiTranslation();
   const { message } = AntApp.useApp();
   const client = useStudioClient();
   const ws = useWorkspaceClient();
@@ -26,6 +26,7 @@ export function QueuePage() {
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => client.getMe(), staleTime: 5 * 60_000 });
   const items = queue?.items ?? [];
   const now = useNow(1000, items.length > 0);
+  const when = (iso: string) => new Date(iso).toLocaleString(i18n.language, { dateStyle: "short", timeStyle: "short" });
   const stop = useMutation({
     mutationFn: async (a: QueueItem): Promise<void> => { if (a.kind === "job") await ws.cancelJob(a.projectId, a.id); else await ws.cancelTurn(a.threadId!, a.id); },
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["queue"] }),
@@ -37,6 +38,22 @@ export function QueuePage() {
       <main className="ws-page">
         <div className="ws-page__inner">
           <div className="ws-page__head"><h1 className="ws-page__title">{t("ws.queue.title")}</h1></div>
+          {me?.isAdmin && queue?.youtube ? (
+            // the farm's machines fetch reference videos while the server is blocked, unless they are blocked too
+            queue.referenceFetchers?.length && !queue.youtubeFarm ? (
+              <Alert type="info" showIcon className="ws-queue__youtube"
+                message={t("ws.queue.youtubeBlockedViaFarm", { since: when(queue.youtube.blockedAt), until: when(queue.youtube.until), machines: queue.referenceFetchers.join(", ") })}
+                description={t("ws.queue.youtubeBlockedHint")} />
+            ) : (
+              <Alert type="warning" showIcon className="ws-queue__youtube"
+                message={t("ws.queue.youtubeBlocked", { since: when(queue.youtube.blockedAt), until: when(queue.youtube.until) })}
+                description={t("ws.queue.youtubeBlockedHint")} />
+            )
+          ) : null}
+          {me?.isAdmin && queue?.youtubeFarm ? (
+            <Alert type="warning" showIcon className="ws-queue__youtube"
+              message={t("ws.queue.youtubeFarmBlocked", { since: when(queue.youtubeFarm.blockedAt), until: when(queue.youtubeFarm.until) })} />
+          ) : null}
           <div className="ws-admin">
             <div className="ws-admin__main">
               <section className="ws-admin__section" aria-label={t("ws.queue.running")}>

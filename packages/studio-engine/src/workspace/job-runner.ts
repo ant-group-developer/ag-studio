@@ -1,5 +1,6 @@
 /**
- * The worker loop of project jobs (spec 2026-10-10 agent-workspace §5): takes queued jobs (at most `lanes` at once),
+ * The worker loop of project jobs (spec 2026-10-10 agent-workspace §5): takes queued jobs (at most `lanes` at once,
+ * read again each tick: it grows with the idle farm machines, `lanes.ts`),
  * runs each kind's handler, keeps the row saying what it does, how far it is and how long is left (`eta.ts`), and
  * stops it when a person asks (the handler's ffmpeg is killed, its farm job cancelled). When a job ends, its chat
  * thread is told, and the agent goes on when the job asked for it and the project lets it (≤ 3 turns in a row
@@ -54,8 +55,8 @@ export interface JobRunnerOptions {
   workspacesRoot: string;
   dataRoot: string;
   handlers: Partial<Record<JobKind, JobHandler>>;
-  /** Jobs run at once (ffmpeg on this machine, farm waits); default 2. */
-  lanes?: number;
+  /** Jobs run at once (ffmpeg on this machine, farm waits), or how many now (read each tick); default 2. */
+  lanes?: number | (() => number);
   pollMs?: number;
   /** How often the row is refreshed (heartbeat, time left, stop requests); default 2 s. */
   tickMs?: number;
@@ -72,12 +73,23 @@ export interface JobRunner {
   runForever(signal: AbortSignal): Promise<void>;
 }
 
+/** A job that failed for a reason with a name (`youtube_blocked`…): the row keeps it as `result.error_code`. */
+export class JobError extends Error {
+  constructor(readonly code: string, message: string) { super(message); this.name = "JobError"; }
+}
+
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+/** The code a failure carries (`JobError`, `YtDlpError`), recorded with it; null for others. */
+function errCode(e: unknown): string | null {
+  if (!(e instanceof Error) || (e.name !== "JobError" && e.name !== "YtDlpError")) return null;
+  const code = (e as Error & { code?: unknown }).code;
+  return typeof code === "string" ? code : null;
+}
 const AUTO_TURNS_IN_A_ROW = 3;
 
 export function createJobRunner(o: JobRunnerOptions): JobRunner {
   const now = o.now ?? (() => new Date().toISOString());
-  const lanes = o.lanes ?? 2;
+  const lanesNow = typeof o.lanes === "function" ? o.lanes : () => (o.lanes as number | undefined) ?? 2;
   const kinds = Object.keys(o.handlers) as JobKind[];
   const live = new Map<string, Promise<void>>();
   let shuttingDown = false;
@@ -156,7 +168,11 @@ export function createJobRunner(o: JobRunnerOptions): JobRunner {
         outcome = { status: "cancelled", error: null, message: `Đã dừng: ${job.title}.` };
       } else {
         log.warn("job failed", { error: errText(e) });
-        outcome = { status: "failed", error: errText(e).slice(0, 2000), message: `Không làm xong: ${job.title} — ${errText(e).slice(0, 500)}` };
+        const code = errCode(e);
+        outcome = {
+          status: "failed", error: errText(e).slice(0, 2000), message: `Không làm xong: ${job.title} — ${errText(e).slice(0, 500)}`,
+          ...(code ? { result: { error_code: code } } : {}),
+        };
       }
     } finally {
       clearInterval(ticker);
@@ -184,6 +200,7 @@ export function createJobRunner(o: JobRunnerOptions): JobRunner {
       if (requeued.length || failed.length) o.logger.warn("jobs left by a stopped worker", { requeued, failed });
     } catch (e) { o.logger.warn("requeue of stale jobs failed", { error: errText(e) }); }
     const started: string[] = [];
+    const lanes = lanesNow();
     while (live.size < lanes) {
       const job = claimJob(o.db, kinds, now());
       if (!job) break;

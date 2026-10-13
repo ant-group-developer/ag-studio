@@ -30,7 +30,7 @@ export const envSchema = z.object({
   YOUTUBE_API_KEY: z.string().optional(),
   /** ffmpeg for audio people give (project voice and music, the music library); unset = no audio uploads. */
   STUDIO_FFMPEG_PATH: z.string().optional(),
-  /** ffprobe beside it (not always in the same folder); with STUDIO_FFMPEG_PATH it lets people give audio. */
+  /** ffprobe (default: the one next to STUDIO_FFMPEG_PATH, as on the worker). */
   STUDIO_FFPROBE_PATH: z.string().optional(),
   /** Let audio links reach private addresses (the local stack, where ag-go is on localhost). Never on a deployed box. */
   STUDIO_AUDIO_ALLOW_PRIVATE_URLS: z.enum(['true', 'false', '1', '0']).optional().transform((v) => v === 'true' || v === '1'),

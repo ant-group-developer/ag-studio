@@ -1,13 +1,14 @@
 import { Fragment, useState, type ReactNode } from "react";
-import { Avatar, Dropdown, Select } from "antd";
+import { Avatar, Dropdown } from "antd";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, Plus, Users } from "lucide-react";
+import { ChevronRight, Plus, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useStudioClient } from "../../api/studio-client";
-import { rememberedTeam, rememberTeam } from "../../helpers/last-team";
+import { rememberedTeam } from "../../helpers/last-team";
 import { useAppUserMenu } from "../common/use-app-user-menu";
 import { NewTeamModal } from "./NewTeamModal";
+import { TeamPicker } from "./TeamPicker";
 import "./workspace.css";
 
 export interface Crumb {
@@ -15,10 +16,16 @@ export interface Crumb {
   to?: string;
 }
 
-/** Every team the person belongs to (or every team, for a Studio admin). */
+/** The first page of teams the person belongs to (or of every team, for a Studio admin); the picker searches the rest. */
 export function useTeams() {
   const client = useStudioClient();
   return useQuery({ queryKey: ["teams", "all"], queryFn: () => client.listTeams({ page: 1, pageSize: 100 }), staleTime: 60_000 });
+}
+
+/** One team as `GET /teams/:id` knows it: its name (breadcrumbs), the caller's role, whether they are in it. */
+export function useTeam(teamId: string | undefined) {
+  const client = useStudioClient();
+  return useQuery({ queryKey: ["team", teamId], queryFn: () => client.getTeam(teamId!), enabled: !!teamId, staleTime: 60_000 });
 }
 
 /** Header of the workspace screens: brand, the team (switch, make one, manage them), where you are, the person's menu. */
@@ -29,8 +36,8 @@ export function WorkspaceShell({ teamId, crumbs = [], actions, children }: {
   children: ReactNode;
 }) {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const { data: teams } = useTeams();
+  const { data: current } = useTeam(teamId);
   const { menu, picture, initials, nickname, isAdmin } = useAppUserMenu([
     ...(teamId ? [{ key: "team-settings", label: <Link to={`/teams/${teamId}`}>{t("ws.shell.teamSettings")}</Link> }] : []),
   ]);
@@ -39,33 +46,13 @@ export function WorkspaceShell({ teamId, crumbs = [], actions, children }: {
   const canReview = isAdmin || items.some((x) => x.role === "owner");
   // Studio-wide screens (Queue, music) have no team of their own: show the one worked in last
   const shown = teamId ?? items.find((x) => x.id === rememberedTeam())?.id ?? null;
-  const [pickerOpen, setPickerOpen] = useState(false);
   const [newTeam, setNewTeam] = useState(false);
   return (
     <div className="ws-app">
       <header className="ws-header">
         <Link to="/" className="ws-header__brand"><img src="/favicon.png" alt="" />{t("app.title")}</Link>
-        {items.length > 0 ? (
-          <Select
-            size="small" variant="borderless" value={shown} placeholder={t("ws.shell.pickTeam")} style={{ minWidth: 160 }}
-            options={items.map((x) => ({ value: x.id, label: x.name }))}
-            onChange={(id: string) => { rememberTeam(id); navigate(`/t/${id}`); }}
-            open={pickerOpen} onOpenChange={setPickerOpen}
-            popupRender={(menu) => (
-              <>
-                {menu}
-                <div className="ws-team-actions">
-                  <button type="button" className="ws-icon-button" onClick={() => { setPickerOpen(false); setNewTeam(true); }}>
-                    <Plus size={14} aria-hidden />{t("ws.shell.newTeam")}
-                  </button>
-                  <button type="button" className="ws-icon-button" onClick={() => { setPickerOpen(false); navigate("/teams"); }}>
-                    <Users size={14} aria-hidden />{t("ws.shell.manageTeams")}
-                  </button>
-                </div>
-              </>
-            )}
-            aria-label={t("ws.shell.team")}
-          />
+        {teams && items.length > 0 ? (
+          <TeamPicker value={shown} teams={teams} current={current} isAdmin={isAdmin} onNewTeam={() => setNewTeam(true)} />
         ) : teams ? (
           <button type="button" className="ws-icon-button ws-icon-button--outline" onClick={() => setNewTeam(true)}>
             <Plus size={14} aria-hidden />{t("ws.shell.newTeam")}
@@ -93,6 +80,9 @@ export function WorkspaceShell({ teamId, crumbs = [], actions, children }: {
           </Dropdown>
         </div>
       </header>
+      {isAdmin && current && !current.isMember ? (
+        <div className="ws-admin-banner" role="note"><ShieldCheck size={14} aria-hidden />{t("ws.shell.adminView")}</div>
+      ) : null}
       {children}
       <NewTeamModal open={newTeam} onClose={() => setNewTeam(false)} />
     </div>

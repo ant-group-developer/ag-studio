@@ -1,7 +1,8 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useWorkspaceClient, type Activity, type JobView } from "../../api/workspace-client";
-import { JobList } from "./JobList";
+import { JobList, JobsLine } from "./JobList";
 import "./inputs.css";
 
 /** An activity row of a job as the card shows it. */
@@ -15,11 +16,12 @@ function asJob(a: Activity, projectId: string): JobView {
 
 /**
  * The background jobs this chat started (the agent asked to prepare videos, render…), above the message box while
- * they run: who works on each, how far, time spent and left, Stop; many of them fold into a summary. When one ends,
- * Studio writes it in the chat.
+ * they run, as one line: how many, how far together, time left; it unfolds to each job (who works on it, how far, time
+ * spent and left, Stop). When one ends, Studio writes it in the chat.
  */
 export function ThreadJobs({ projectId, threadId, canStop }: { projectId: string; threadId: string; canStop: boolean }) {
   const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
   const client = useWorkspaceClient();
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ["activity", projectId], queryFn: () => client.getActivity(projectId), refetchInterval: 5000 });
@@ -34,7 +36,10 @@ export function ThreadJobs({ projectId, threadId, canStop }: { projectId: string
   if (!jobs.length) return null;
   return (
     <section className="ws-chat__jobs" aria-label={t("ws.jobs.title")}>
-      <JobList jobs={jobs} onStop={canStop ? (x) => stop.mutate(x) : undefined} stopping={stop.isPending ? stop.variables?.id ?? null : null} />
+      <JobsLine jobs={jobs} open={open} onToggle={() => setOpen(!open)} />
+      {open ? (
+        <JobList jobs={jobs} fold={false} onStop={canStop ? (x) => stop.mutate(x) : undefined} stopping={stop.isPending ? stop.variables?.id ?? null : null} />
+      ) : null}
     </section>
   );
 }

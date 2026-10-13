@@ -27,7 +27,7 @@ function setup() {
 
 describe("agent skills", () => {
   it("Studio's own skills do not name the footage library (the prompt does, by ag-go's own name)", () => {
-    for (const name of ["scene-selection", "video-brief", "edit-plan"]) {
+    for (const name of ["scene-selection", "video-brief", "edit-plan", "edit-style"]) {
       const file = join(BUILTIN, name, "SKILL.md");
       if (existsSync(file)) expect(readFileSync(file, "utf8")).not.toMatch(/ag-go/i);
     }
@@ -43,7 +43,7 @@ describe("agent skills", () => {
     const { db, project, dir } = setup();
     const skills = projectSkills(db, { project, workspaceDir: dir, builtinDir: BUILTIN });
     expect(skills.map((s) => s.name)).toEqual([
-      "branding", "channel-strategy", "edit-plan", "research-report", "scene-selection", "video-brief", "youtube-kit",
+      "branding", "channel-strategy", "edit-plan", "edit-style", "research-report", "scene-selection", "video-brief", "youtube-kit",
       "team-quy-chuan-thumbnail", "team-giong-van", "project-kieu-mo-dau",
     ]);
     const team = skills.find((s) => s.name === "team-giong-van")!;

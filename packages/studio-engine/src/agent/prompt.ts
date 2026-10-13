@@ -7,6 +7,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { normalizeRelPath } from "../workspace/files.js";
 import { DEFAULT_SITE_NAME } from "../site-name.js";
+import type { YoutubeBlock } from "../settings.js";
 import type { ProjectRecord, VideoRecord } from "../workspace/project-db.js";
 import type { MessageRecord, ThreadRecord, ThreadRef } from "./threads-db.js";
 
@@ -42,8 +43,9 @@ gọi các tool \`mcp__studio__*\` của Studio.
 
 ## Đầu vào và việc nền
 - Video chỉ đến từ kho video của công ty, tên là "${siteName}" (gọi đúng tên này khi nói với người dùng; họ chọn
-  project ${siteName} ở tab Đầu vào); tài liệu, ảnh, audio họ tải lên \`context/\`. Xem bằng \`inputs_list\`, tìm video
-  trong các project ${siteName} bằng \`footage_search\`, thêm vào video bằng \`inputs_add\`.
+  project ${siteName} ở tab Đầu vào); tài liệu, ảnh, audio họ tải lên \`context/\`; video mẫu họ tải lên
+  \`context/references/\` chỉ để học phong cách dựng (\`style_from_files\`), không phải footage. Xem bằng \`inputs_list\`,
+  tìm video trong các project ${siteName} bằng \`footage_search\`, thêm vào video bằng \`inputs_add\`.
 - Trước khi chọn cảnh, video phải được chuẩn bị (\`inputs_prepare\`): Studio tải bản xem, dò cảnh, lấy khung hình, tờ ghép
   và lời thoại vào \`inputs/<asset>/\`; \`videos/<id>/sources/index.json\` liệt kê nguồn của video và mã cảnh (s000-001…).
 - Nghiên cứu YouTube: \`youtube_trending\`, \`youtube_search\`, \`youtube_top_channels\`, \`youtube_channel_top_videos\` ghi
@@ -56,11 +58,14 @@ brief → chuẩn bị đầu vào → chọn cảnh (skill scene-selection: sur
 edit-plan.json) → \`timeline_from_edit_plan\` → đọc/sửa bằng \`timeline_get\`, \`timeline_apply_ops\` → \`render_preview\` →
 gói YouTube → \`thumbnail_make\` → đề xuất render bản cuối. Người dùng có thể quay lại bất kỳ bước nào: sửa file của bước đó
 rồi làm lại các bước sau khi cần (trạng thái \`stale\` trong \`playbook_status\` cho biết bước nào cũ).
+Gợi ý bước tiếp theo theo luồng đang chat: luồng của một video chỉ gợi ý bước của video đó; luồng Kênh hay chat tự do chỉ
+gợi ý bước của kênh. Bước kênh còn dở (Branding…) trong luồng video chỉ nhắc khi bước đang làm cần nó (gói YouTube), và
+khuyên làm ở luồng Kênh; đừng tự chuyển sang làm bước kênh trong luồng video khi người dùng không hỏi.
 
 ## Việc có tác dụng thật
-Render bản cuối, xuất file Premiere, xoá video, crawl lớn, tải video mẫu (học phong cách): KHÔNG tự làm. Gọi
+Render bản cuối, xuất file Premiere, xoá video, crawl lớn, tải video mẫu từ YouTube (học phong cách): KHÔNG tự làm. Gọi
 \`propose_action\` để người dùng bấm xác nhận trên giao diện, rồi kết thúc lượt. Việc nhẹ (đọc, ghi tài liệu, dựng timeline,
-render xem trước, thumbnail) bạn tự làm.
+render xem trước, thumbnail, học phong cách từ video mẫu đã tải lên bằng \`style_from_files\`) bạn tự làm.
 `;
 }
 
@@ -121,6 +126,31 @@ function refLine(r: ThreadRef): string {
 function attachments(m: MessageRecord): string {
   const list = m.attachments ? (JSON.parse(m.attachments) as string[]) : [];
   return list.length ? `\n\nĐính kèm: ${list.map((p) => `\`${p}\``).join(", ")}` : "";
+}
+
+const viTime = (iso: string) => new Date(iso).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" });
+
+/**
+ * `<studio_context>` lines while YouTube blocks the server (`youtubeBlock`). With farm machines that fetch reference
+ * videos (`fetchers`, `studio.reference_fetch`) and the farm not blocked too, a reference download card is fine: it
+ * goes through the farm. Otherwise: no reference download card, what to offer instead.
+ */
+export function youtubeBlockLines(block: YoutubeBlock | null, o: { farm?: YoutubeBlock | null; fetchers?: readonly string[] } = {}): string[] {
+  if (!block) return [];
+  const fetchers = o.fetchers ?? [];
+  const seen = `đòi đăng nhập để xác nhận không phải bot; thấy lúc ${viTime(block.blockedAt)}, coi như còn chặn tới ${viTime(block.until)}`;
+  if (fetchers.length && !o.farm) {
+    return [
+      `YouTube đang chặn tải từ máy chủ Studio (${seen}), nhưng máy farm (${fetchers.join(", ")}) vẫn tải được video mẫu.`,
+      "reference_download dùng được như thường: video mẫu tải qua máy farm, đo xong xoá ngay. Crawl YouTube khi worker không có YOUTUBE_API_KEY vẫn bị chặn.",
+    ];
+  }
+  return [
+    o.farm && fetchers.length
+      ? `YouTube đang chặn tải từ máy chủ Studio (${seen}) và cả các máy farm (thấy lúc ${viTime(o.farm.blockedAt)}, coi như còn chặn tới ${viTime(o.farm.until)}).`
+      : `YouTube đang chặn tải từ máy chủ Studio (${seen}); không máy farm nào tải video mẫu thay được lúc này.`,
+    "Đừng đề xuất reference_download (thẻ chắc chắn hỏng; Studio không dùng cookie hay đăng nhập để lách). Muốn học phong cách dựng thì đề nghị người dùng tải video mẫu lên tab Đầu vào (mục Video mẫu) rồi gọi style_from_files, hoặc tả phong cách bằng lời. Crawl YouTube khi worker không có YOUTUBE_API_KEY cũng bị chặn.",
+  ];
 }
 
 /** The turn's message: `<studio_context>`, then what the people (and Studio) said since the last turn. */
