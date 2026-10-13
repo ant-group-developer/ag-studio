@@ -125,6 +125,27 @@ node --require ts-node/register ../../node_modules/typeorm/cli.js migration:run 
   farm; Dừng), máy của farm; admin chỉnh số lượt Claude và tên AI ở cột phải.
 - Auth0: client SPA phải cho phép `http://localhost:3100` (callback, logout, web origin); client id nằm trong
   `AUTH0_ALLOWED_CLIENT_IDS` của Studio, ag-go và farm.
+- **Tải file lên đi thẳng R2**, không qua nginx và API. Studio kiểm tên, loại và dung lượng rồi ký link PUT
+  (`POST /api/projects/:id/uploads`, kho nhạc `POST /api/studio/music/uploads`). Trình duyệt PUT file lên
+  `uploads/<dự án|library>/<uuid>`, có % tiến độ. Sau đó route tải lên cũ được gọi với `{uploadKey, name}`: API kéo file
+  từ R2 về, xử lý như trước rồi xoá bản trên R2. Bản bỏ dở bị worker dọn sau 24 giờ. Bucket **phải bật CORS** cho
+  origin của web, không thì mọi lần tải lên báo "Không tải được lên kho lưu trữ (R2)". Cloudflare → R2 → bucket →
+  Settings → CORS policy:
+
+  ```json
+  [
+    {
+      "AllowedOrigins": ["https://studio.ant-group.net", "http://localhost:3100"],
+      "AllowedMethods": ["GET", "PUT"],
+      "AllowedHeaders": ["Content-Type"],
+      "ExposeHeaders": ["ETag"],
+      "MaxAgeSeconds": 3600
+    }
+  ]
+  ```
+
+  Bucket prod và bucket dev mỗi cái một policy, ghi origin của web dùng bucket đó (thêm domain dev nếu có).
+  `GET` để trình duyệt phát lời dẫn và render. Multipart cũ vẫn nhận (CLI, test).
 - Chuẩn bị video, timeline, thumbnail và audio người dùng đưa dùng ffmpeg ở `STUDIO_FFMPEG_PATH` (máy dev trỏ tới
   `ffmpeg-static` của ag-render-worker vì ffmpeg không có trên PATH).
 
@@ -205,6 +226,8 @@ thể cần thêm một JS runtime (Deno) cho YouTube: làm theo thông báo l�
 | Job render "Đang chờ máy farm" mãi | Farm hub hoặc `local-render` không chạy, hoặc không máy nào khớp yêu cầu | `local-stack.mjs status`, web farm 3011; quá `STUDIO_FARM_QUEUE_TIMEOUT_MINUTES` thì job tự huỷ và báo vào luồng |
 | Dựng timeline báo thiếu giọng đọc | Dự án chưa chọn giọng (hay chưa chọn "không lời dẫn") | Tab Đầu vào → Giọng và nhạc: chọn một file audio đã tải lên làm giọng (vai producer, khai nguồn gốc), hoặc không lời dẫn |
 | Đưa audio báo 503 `audio_disabled` (tab Đầu vào báo "máy Studio chưa có ffmpeg") | API thiếu `STUDIO_FFMPEG_PATH` (ffprobe mặc định nằm cạnh; khác chỗ thì đặt `STUDIO_FFPROBE_PATH`) | Đặt trong `apps/api/.env` (máy dev: ffmpeg-static/ffprobe-static của ag-render-worker) rồi bật lại API |
+| Tải file lên báo "Không tải được lên kho lưu trữ (R2)" | Bucket R2 chưa bật CORS cho origin của web (DevTools: request `OPTIONS`/`PUT` tới `*.r2.cloudflarestorage.com` bị chặn) | Thêm CORS policy ở mục 4 cho bucket đó |
+| Tải file lên báo `upload_missing` | Link PUT hết hạn (1 giờ) hoặc PUT chưa xong | Tải lại |
 | Lượt agent chờ lâu, "chờ hạn mức" | Hết hạn mức gói | Đợi; tự thử lại 5→60 phút, không tính là lỗi |
 | Lượt agent lỗi `agent CLI failed to start` | Không tìm thấy `claude` / `claude.exe` | Cài Claude Code, hoặc đặt `STUDIO_AGENT_ARGV` về agent giả |
 | `up` báo "chưa lên sau 180 s" | Dịch vụ lỗi khi khởi động | Xem `E:\ag-local\dev-run\<tên>.log` |

@@ -87,7 +87,9 @@ nhưng không code nào đọc.
   0036). Dùng chung từ trước: `teams`,
   `team_members`, `team_skills`, `sign_audit_log`, `youtube_cache`, `llm_calls`, `studio_settings`, `studio_voice_lines`,
   `music_track` (kho nhạc), `lease` (slot Claude).
-- File hướng ra trình duyệt nằm trên R2 (`S3Bucket`, `packages/studio-engine/src/bucket.ts`), URL ký có hạn.
+- File hướng ra trình duyệt nằm trên R2 (`S3Bucket`, `packages/studio-engine/src/bucket.ts`), URL ký có hạn. File tải
+  lên cũng đi thẳng R2: `POST …/uploads` ký link PUT (`apps/api/src/workspace/raw-uploads.ts`), trình duyệt PUT, rồi route
+  tải lên cũ nhận `{uploadKey, name}` và kéo file về. Bucket cần CORS cho origin của web (runbook studio-local mục 4).
 - Biến môi trường: `.env.example`. API kiểm bằng zod ở `apps/api/src/config/env.ts`; worker đọc ở `apps/worker/src/main.ts`.
   **Không bao giờ in hay commit giá trị** — chỉ nhắc tên khoá.
 
