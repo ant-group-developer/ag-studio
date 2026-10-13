@@ -96,7 +96,10 @@ interface TeamSkill {
     cả bài đã ngừng
   - `POST music` (admin Studio, multipart) `file` + `displayName`, `moods` (phân cách bằng dấu phẩy, 1–10), `origin`,
     `originNote`, `loopOk?` → bài nhạc. Cùng file lần nữa là cùng bài (id theo nội dung), các trường được cập nhật. 400
-    `invalid` / `audio_missing`, 413 `audio_too_large`, 422 với file không phải audio, 503 `audio_disabled` khi thiếu ffmpeg
+    `invalid` / `audio_missing`, 413 `audio_too_large`, 422 với file không phải audio, 503 `audio_disabled` khi thiếu ffmpeg.
+    Thay cho `file`: `uploadKey` + `name` sau khi trình duyệt PUT file lên R2 (`POST music/uploads`)
+  - `POST music/uploads` (admin Studio) `{name, size, contentType?}` → `{key, url, contentType, expiresAt}`: link PUT lên R2
+    (`uploads/library/<uuid>`, 1 giờ); > 100 MB → 413 `audio_too_large`
   - `PATCH music/:trackId` (admin Studio) `{displayName?, moods?, active?}` → bài nhạc; 404 `not_found`
 
 ## Nhật ký hoạt động (`/audit`)
@@ -130,7 +133,8 @@ xem nhóm mình; người khác 403.
 - `GET content?path` → `WorkspaceFile & {issues: FileIssue[]}`; `GET raw?path` → byte (ảnh, PDF)
 - `PUT content {path, content, baseSha256?}` (editor) → `SavedFile & {issues}`; `baseSha256` khác bản trên đĩa → 409
   `file_conflict`; đường chỉ đọc (`inputs/**`, `videos/*/sources/**`, `.studio/**` trừ `playbook.yaml`) → 422 `read_only`
-- `DELETE ?path&baseSha256` (editor); `POST upload` multipart `file` + `dir?` (editor, ≤ 50 MB; audio ≤ 100 MB)
+- `DELETE ?path&baseSha256` (editor); `POST upload` multipart `file` + `dir?` (editor, ≤ 50 MB; audio ≤ 100 MB), hoặc JSON
+  `{uploadKey, name, dir?}` sau khi trình duyệt PUT file lên R2 (`POST /projects/:id/uploads` với `purpose: "file"`)
 - `GET versions?path`, `GET versions/:versionId`, `POST versions/:versionId/restore {baseSha256?}` (editor)
 - `GET versions/:versionId/diff?base` (viewer) → bản đó đổi gì so với `base` (một bản khác của cùng file, vd. bản trước
   lượt agent; `none` = file rỗng, cho file lượt đó tạo; khác file → 422 `bad_base`) hoặc mặc định bản ngay trước (chưa có = file rỗng; bản xoá = rỗng):
@@ -168,7 +172,12 @@ xem nhóm mình; người khác 403.
   file tải lên; trạng thái tính trong một lượt đọc DB dù bao nhiêu video/job; `counts = {videos, ready, preparing, failed,
   notPrepared}` đếm mỗi video ag-go một lần, `preparing` gồm cả đang chờ); `POST sources` (editor) `{kind: ag_go_project, ref, label}` | `{kind: ag_go_asset, ref, label, videoId?,
   meta?, prepare?}` — chủ dự án không dùng được trên ag-go → 422 `owner_cannot_access`; `DELETE sources/:sourceId`
-- `POST sources/upload` multipart `file` + `videoId?` + `reference?` (editor): tài liệu → `context/uploads/`, ảnh →
+- `POST uploads {purpose: source|reference|file, name, size, contentType?}` (editor) → `{key, url, contentType, expiresAt}`:
+  kiểm tên, loại, dung lượng như lúc tải (cùng mã lỗi 413/415) rồi ký link PUT lên R2 (`uploads/<projectId>/<uuid>`, 1 giờ).
+  Trình duyệt PUT file kèm đúng `Content-Type` đó, rồi gọi `sources/upload` hoặc `files/upload` với `{uploadKey: key, name}`:
+  API kiểm key thuộc dự án (400 `upload_key`), lấy cỡ thật trên R2 (quá thì 413 và xoá), kéo file về, xử lý như file
+  multipart rồi xoá bản trên R2 (không thấy → 404 `upload_missing`). Bucket cần CORS cho origin của web.
+- `POST sources/upload` multipart `file` (hoặc JSON `uploadKey` + `name`) + `videoId?` + `reference?` (editor): tài liệu → `context/uploads/`, ảnh →
   `context/images/`, audio → `context/audio/` (audio ≤ 100 MB, file khác ≤ 50 MB); Word → 415 `docx_not_supported`, video → 415 `video_from_ag_go`.
   `reference=1`: video mẫu để học phong cách dựng (mp4, mov, m4v, mkv, webm, avi; ≤ 300 MB) → `context/references/`,
   nguồn `mediaType: video`, `meta.reference: true` (không phải footage); file khác → 415 `not_video`. Agent học bằng tool
@@ -218,6 +227,15 @@ xem nhóm mình; người khác 403.
   (`track: library:music/…`, không chép file, không cần ffmpeg); bài không có → 404 `not_found`, bài đã gỡ → 422 `audio_invalid`
 - `POST audio/voice/decline` (producer); `DELETE audio/voice` (producer), `DELETE audio/music` (editor, như chọn nhạc).
   Bỏ chọn nhạc = Studio tự chọn bài trong kho nhạc theo mood (kế hoạch dựng, rồi branding) khi dựng timeline
+- `POST audio/music/from-files {paths, crossfadeS?, gainDb?, ducking?}` (editor): 1–20 file audio của workspace (mỗi file
+  ≤ 100 MB, ≥ 5 giây) ghép theo thứ tự thành một bài nhạc nền (AAC); `crossfadeS` 0–10 (mặc định 0 = nối thẳng), phải ngắn
+  hơn nửa bài ngắn nhất; tổng ≤ 3 giờ. `music` có thêm `parts [{filename, duration_s}]` và `crossfade_s`. Lỗi ffmpeg → 422
+  `audio_invalid` nêu tên file; thiếu ffmpeg → 503 `audio_disabled`
+- `GET /videos/:videoId/audio` (viewer) → `{music, uses: video|project|mood, summary, libraryTrack, enabled, files, revision}`:
+  nhạc riêng của video (cột `videos.music`, migration 0039; null = dùng nhạc dự án, không có thì Studio chọn theo mood).
+  `POST /videos/:videoId/audio/music/from-files` (như của dự án), `POST …/from-library {trackId, gainDb?, ducking?}`,
+  `DELETE /videos/:videoId/audio/music` (quay về nhạc dự án), đều editor. Video đã có timeline thì bản mới nhất được ghi
+  một revision mới (`label: music`) với nhạc đó, `revision` trả số bản; dựng timeline (`fit`) chọn nhạc video → dự án → mood
 
 ## Thẻ xác nhận
 
