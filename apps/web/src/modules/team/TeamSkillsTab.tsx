@@ -10,6 +10,7 @@ import { Download, Eye, FilePlus2, Pencil, Plus, Trash2, Upload } from "lucide-r
 import { useTranslation } from "react-i18next";
 import { useStudioClient, type TeamSkill } from "../../api/studio-client";
 import { useEnumLabel } from "../../helpers/enum-label";
+import { PAGE_TABLE_STICKY } from "../../helpers/sticky-table-header";
 import { errorMessage, TeamSkillDrawer } from "./TeamSkillDrawer";
 import { parseSkillMarkdown, SKILL_LIMITS, skillFileName, STARTER_TEMPLATES, toSkillMarkdown, type SkillFile } from "./skill-md";
 
@@ -175,6 +176,7 @@ export function TeamSkillsTab({ teamId, canEdit }: Props) {
         rowKey="id"
         loading={isLoading}
         scroll={{ x: "max-content" }}
+        sticky={PAGE_TABLE_STICKY}
         pagination={false}
         locale={{ emptyText: t("teamSkills.empty") }}
       />

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { App as AntApp, Button, Checkbox, Empty, Input, Modal, Pagination, Radio, Spin, Table, Tag, type TableColumnsType } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Film, Filter, Mic, MicOff } from "lucide-react";
@@ -9,6 +9,7 @@ import {
   FOOTAGE_ORIENTATIONS, FOOTAGE_RESOLUTIONS, FOOTAGE_SORTS, FOOTAGE_TIMES_OF_DAY, useWorkspaceClient, type FacetValue, type FootageFilters,
   type FootageItem, type FootageSort, type FootageUsability, type SourceItem,
 } from "../../api/workspace-client";
+import { stickyIn } from "../../helpers/sticky-table-header";
 import { clock } from "../workspace/time";
 import { CheckList, FilterPanel, SortControl, useDebounced, useViewMode, ViewModeToggle, type FilterSection, type Option } from "./picker/PickerParts";
 
@@ -87,6 +88,9 @@ export function FootagePicker({ projectId, videoId, sources, open, onClose }: {
   const qc = useQueryClient();
   const sortLabels = useSortLabels();
   const [view, setView] = useViewMode("studio.picker.footage.viewMode");
+  // the table scrolls inside the picker box: its header sticks to the box
+  const box = useRef<HTMLDivElement>(null);
+  const sticky = useMemo(() => stickyIn(box), []);
   const [filtersOpen, setFiltersOpen] = useState(true);
   const projects = sources.filter((s) => s.kind === "ag_go_project");
   const pickedProjects = new Set(projects.map((p) => p.ref));
@@ -229,10 +233,10 @@ export function FootagePicker({ projectId, videoId, sources, open, onClose }: {
               <FilterToggle open={filtersOpen} active={activeFilters} onToggle={() => setFiltersOpen((o) => !o)} />
               <ViewModeToggle value={view} onChange={setView} />
             </div>
-            <div className="ws-picker" aria-busy={found.isFetching}>
+            <div className="ws-picker" aria-busy={found.isFetching} ref={box}>
               {found.isLoading ? <div className="ws-center"><Spin /></div> : found.error ? <p className="ws-error">{errorText(found.error, t("ws.inputs.agGoUnavailable"))}</p>
                 : !items.length ? <Empty description={t("ws.inputs.noVideos")} />
-                : view === "table" ? <Table<FootageItem> rowKey="assetId" size="small" columns={columns} dataSource={items} pagination={false} scroll={{ x: 800 }} />
+                : view === "table" ? <Table<FootageItem> rowKey="assetId" size="small" columns={columns} dataSource={items} pagination={false} scroll={{ x: 800 }} sticky={sticky} />
                 : (
                   <ul className="ws-picker__grid">
                     {items.map((it) => (

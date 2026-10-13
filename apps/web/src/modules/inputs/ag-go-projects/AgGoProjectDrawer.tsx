@@ -7,6 +7,7 @@ import { useAgGoClient, type AgGoProject, type AgGoProjectQuery, type AgGoProjec
 import { StudioHttpError } from "../../../api/http";
 import { useWorkspaceClient, type SourceItem } from "../../../api/workspace-client";
 import { SortDropdown } from "../../../helpers/sort-dropdown";
+import { stickyIn } from "../../../helpers/sticky-table-header";
 import { useAiTranslation } from "../../common/assistant-name";
 import { FilterSidebarLayout, FilterToggleButton, useFilterSidebar } from "./filter-sidebar";
 import { countActiveFilters, ProjectFilterSidebar, type ProjectFilterValues } from "./ProjectFilterSidebar";
@@ -19,6 +20,8 @@ const PAGE_SIZE_OPTIONS = [12, 24, 48, 96];
 const DEFAULT_PAGE_SIZE = 24;
 const SORT_FIELDS: AgGoProjectSort[] = ["name", "folder", "createdAt", "updatedAt"];
 const VIEW_KEY = "studio.agp.viewMode";
+/** The list scrolls inside the drawer's body: the header and the sideways scroll bar stick to it. */
+const DRAWER_TABLE_STICKY = stickyIn(".agp-drawer .ant-drawer-body");
 type ViewMode = "list" | "grid";
 
 function readView(): ViewMode {
@@ -237,7 +240,7 @@ export function AgGoProjectDrawer({ projectId, picked, open, onClose }: { projec
           }}
           tableAlertRender={false}
           locale={{ emptyText: <Empty description={<Typography.Text type="secondary">{emptyText}</Typography.Text>} /> }}
-          scroll={{ x: 1400 }} sticky={{ offsetHeader: 0 }}
+          scroll={{ x: 1400 }} sticky={DRAWER_TABLE_STICKY}
           tableRender={(_props, _dom, domList) => (
             <>
               {domList.toolbar}

@@ -236,7 +236,9 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     expect([...document.querySelectorAll(".ws-card__title")].map((e) => e.textContent)).toEqual(["Du lịch chậm"]);
     fireEvent.change(screen.getByLabelText("Tìm dự án theo tên, kênh, mô tả"), { target: { value: "" } });
     fireEvent.click(screen.getByTitle("Bảng"));
-    const table = await screen.findByRole("table");
+    // a sticky header is a table of its own above the rows
+    await screen.findAllByRole("table");
+    const table = document.querySelector<HTMLElement>(".ws-page .ant-table-sticky-holder")!.closest<HTMLElement>(".ant-table")!;
     expect(within(table).getByRole("link", { name: "Ẩm thực Huế" })).toHaveAttribute("href", "/p/p2");
     expect(within(table).getByText("@dulichcham")).toBeInTheDocument();
     expect(within(table).getByRole("columnheader", { name: "Người tạo" })).toBeInTheDocument();

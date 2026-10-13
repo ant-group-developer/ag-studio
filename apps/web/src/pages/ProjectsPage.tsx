@@ -9,6 +9,7 @@ import { useWorkspaceClient, type ProjectListItem } from "../api/workspace-clien
 import { rememberTeam } from "../helpers/last-team";
 import { sortRows, type SortDirection } from "../helpers/compare-sort-values";
 import { SortDropdown } from "../helpers/sort-dropdown";
+import { PAGE_TABLE_STICKY } from "../helpers/sticky-table-header";
 import { useViewMode, ViewModeToggle } from "../modules/inputs/picker/PickerParts";
 import { NewProjectModal } from "../modules/workspace/NewProjectModal";
 import { useTeamRole } from "../modules/workspace/use-team-role";
@@ -149,7 +150,7 @@ export function ProjectsPage() {
               ) : (
                 <Table<ProjectListItem>
                   rowKey="id" size="middle" columns={columns} dataSource={shown} pagination={shown.length > 50 ? { pageSize: 50, showSizeChanger: false } : false}
-                  scroll={{ x: 1000 }} onRow={(p) => ({ onDoubleClick: () => navigate(`/p/${p.id}`) })}
+                  scroll={{ x: 1000 }} sticky={PAGE_TABLE_STICKY} onRow={(p) => ({ onDoubleClick: () => navigate(`/p/${p.id}`) })}
                 />
               )}
             </>
