@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { StudioHttpError } from "../../api/http";
 import { useStudioClient } from "../../api/studio-client";
 import { useWorkspaceClient, type ProjectAudioFile, type ProjectAudioView, type VoiceOrigin } from "../../api/workspace-client";
+import { useUploadProgress } from "../common/upload-progress";
 import { clock } from "../workspace/time";
 
 const AUDIO_ACCEPT = ".mp3,.wav,.m4a,.aac,.ogg,.flac";
@@ -196,14 +197,17 @@ export function AudioCard({ projectId, canEdit, canProduce }: { projectId: strin
   const [library, setLibrary] = useState(false);
 
   // one file is used at once (the voice asks where it comes from); several are uploaded one by one, then one is picked
+  const uploading = useUploadProgress();
   const upload = useMutation({
     mutationFn: async ({ kind, files }: { kind: "voice" | "music"; files: File[] }) => {
       const paths: string[] = [];
       const failed: string[] = [];
+      const fits = files.filter((f) => f.size <= AUDIO_MAX_MB * MB);
+      const progress = uploading.start(fits);
       for (const f of files) {
         if (f.size > AUDIO_MAX_MB * MB) { failed.push(t("ws.audio.tooLarge", { name: f.name, mb: AUDIO_MAX_MB })); continue; }
         try {
-          paths.push((await client.uploadSource(projectId, f)).source.ref);
+          paths.push((await client.uploadSource(projectId, f, undefined, { onProgress: progress[fits.indexOf(f)] })).source.ref);
         } catch (e) {
           failed.push(uploadError(t, f, e));
         }
@@ -220,6 +224,7 @@ export function AudioCard({ projectId, canEdit, canProduce }: { projectId: strin
       else void message.success(t("ws.audio.musicSet"));
     },
     onError: (e) => { done(); fail(e); },
+    onSettled: uploading.done,
   });
   const musicFromFile = useMutation({
     mutationFn: (path: string) => client.audioFromFile(projectId, "music", { path }),
@@ -255,7 +260,9 @@ export function AudioCard({ projectId, canEdit, canProduce }: { projectId: strin
     e.target.value = "";
     if (files.length) upload.mutate({ kind, files });
   };
-  const uploading = (kind: "voice" | "music") => upload.isPending && upload.variables?.kind === kind;
+  const isUploading = (kind: "voice" | "music") => upload.isPending && upload.variables?.kind === kind;
+  /** A button's label, or how far its upload is. */
+  const uploadLabel = (kind: "voice" | "music", label: string) => (isUploading(kind) && uploading.percent !== null ? t("common.uploading", { pct: uploading.percent }) : label);
 
   return (
     <section className="ws-audio" aria-label={t("ws.audio.title")}>
@@ -267,7 +274,7 @@ export function AudioCard({ projectId, canEdit, canProduce }: { projectId: strin
         <div className="ws-audio__body">
           <div className="ws-audio__line"><strong>{t("ws.audio.voice")}</strong><span className="ws-audio__status">{voiceStatus(t, a.voice)}</span></div>
           <div className="ws-audio__actions">
-            <AudioButton why={voiceRole ?? noFfmpeg} icon={<Upload size={12} />} loading={uploading("voice")} onClick={pickFile(voiceInput)}>{t("ws.audio.uploadVoice")}</AudioButton>
+            <AudioButton why={voiceRole ?? noFfmpeg} icon={<Upload size={12} />} loading={isUploading("voice")} onClick={pickFile(voiceInput)}>{uploadLabel("voice", t("ws.audio.uploadVoice"))}</AudioButton>
             <AudioButton why={voiceRole ?? noFfmpeg ?? noFiles} icon={<ListMusic size={12} />} onClick={() => setPicking("voice")}>{t("ws.audio.pickUploaded")}</AudioButton>
             {voiceMode !== "none" ? (
               <AudioButton why={voiceRole} icon={<VolumeX size={12} />} loading={decline.isPending} onClick={() => decline.mutate()}>{t("ws.audio.noNarration")}</AudioButton>
@@ -283,7 +290,7 @@ export function AudioCard({ projectId, canEdit, canProduce }: { projectId: strin
         <div className="ws-audio__body">
           <div className="ws-audio__line"><strong>{t("ws.audio.music")}</strong><span className="ws-audio__status">{musicStatus(t, a)}</span></div>
           <div className="ws-audio__actions">
-            <AudioButton why={musicRole ?? noFfmpeg} icon={<Upload size={12} />} loading={uploading("music")} onClick={pickFile(musicInput)}>{t("ws.audio.uploadMusic")}</AudioButton>
+            <AudioButton why={musicRole ?? noFfmpeg} icon={<Upload size={12} />} loading={isUploading("music")} onClick={pickFile(musicInput)}>{uploadLabel("music", t("ws.audio.uploadMusic"))}</AudioButton>
             <AudioButton why={musicRole} icon={<Library size={12} />} onClick={() => setLibrary(true)}>{t("ws.audio.fromLibrary")}</AudioButton>
             <AudioButton why={musicRole ?? noFfmpeg ?? noFiles} icon={<ListMusic size={12} />} onClick={() => setPicking("music")}>{t("ws.audio.pickUploaded")}</AudioButton>
             {a.music ? (

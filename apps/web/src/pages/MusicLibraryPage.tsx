@@ -9,6 +9,7 @@ import { App as AntApp, Button, Checkbox, Input, Select } from "antd";
 import { useTranslation } from "react-i18next";
 import { MUSIC_ORIGINS, StudioHttpError, useStudioClient, type MusicOrigin, type MusicTrackView } from "../api/studio-client";
 import { WorkspaceShell } from "../modules/workspace/WorkspaceShell";
+import { useUploadProgress } from "../modules/common/upload-progress";
 import "../modules/admin/admin.css";
 
 const LIBRARY_KEY = ["music-library"];
@@ -97,8 +98,13 @@ function UploadForm() {
   const [originNote, setOriginNote] = useState("");
   const [loopOk, setLoopOk] = useState(false);
   const ready = !!file && displayName.trim() && moods.length > 0 && originNote.trim();
+  const uploading = useUploadProgress();
   const add = useMutation({
-    mutationFn: () => client.addMusic({ file: file!, displayName: displayName.trim(), moods, origin, originNote: originNote.trim(), loopOk }),
+    mutationFn: () => {
+      const [progress] = uploading.start([file!]);
+      return client.addMusic({ file: file!, displayName: displayName.trim(), moods, origin, originNote: originNote.trim(), loopOk }, progress);
+    },
+    onSettled: uploading.done,
     onSuccess: (track) => {
       void qc.invalidateQueries({ queryKey: LIBRARY_KEY });
       void message.success(t("ws.music.added", { name: track.displayName }));
@@ -106,7 +112,8 @@ function UploadForm() {
     },
     onError: (e) => {
       const code = e instanceof StudioHttpError ? (e.body as { code?: string } | null)?.code : undefined;
-      void message.error(code ? t(`ws.music.errors.${code}`, { defaultValue: t("ws.music.addFailed") }) : t("ws.music.addFailed"));
+      const fallback = e instanceof StudioHttpError && e.body?.message ? e.message : t("ws.music.addFailed");
+      void message.error(code ? t(`ws.music.errors.${code}`, { defaultValue: fallback }) : fallback);
     },
   });
   return (
@@ -122,7 +129,9 @@ function UploadForm() {
         <Input aria-label={t("ws.music.originNote")} placeholder={t("ws.music.originNoteHint")} value={originNote} maxLength={500}
           onChange={(e) => setOriginNote(e.target.value)} />
         <Checkbox checked={loopOk} onChange={(e) => setLoopOk(e.target.checked)}>{t("ws.music.loopOk")}</Checkbox>
-        <Button type="primary" htmlType="submit" disabled={!ready} loading={add.isPending}>{t("ws.music.upload")}</Button>
+        <Button type="primary" htmlType="submit" disabled={!ready} loading={add.isPending}>
+          {uploading.percent !== null ? t("common.uploading", { pct: uploading.percent }) : t("ws.music.upload")}
+        </Button>
       </form>
     </section>
   );

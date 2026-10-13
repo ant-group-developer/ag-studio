@@ -454,3 +454,4 @@ button.ws-step:hover { border-color: var(--ws-accent-line); color: var(--ws-text
 }
 /* Under the team picker's list when there are more teams than the first page: type to search them. */
 .ws-team-more { padding: 4px 12px 0; font-size: 12px; color: #5b616b; }
+.ws-upload-pct { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--ws-muted); }

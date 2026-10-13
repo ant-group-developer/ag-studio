@@ -83,6 +83,6 @@ describe("MusicLibraryPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Tải lên" }));
     await waitFor(() => expect(client.addMusic).toHaveBeenCalledWith({
       file, displayName: "Chợ đêm", moods: ["upbeat"], origin: "royalty_free", originNote: "Pixabay", loopOk: true,
-    }));
+    }, expect.any(Function)));
   }, 30_000);
 });

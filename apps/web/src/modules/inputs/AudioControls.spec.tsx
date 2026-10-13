@@ -107,7 +107,7 @@ describe("voice and music card", { timeout: 20_000 }, () => {
     await screen.findByRole("group", { name: "Giọng đọc" });
     fireEvent.change(screen.getByLabelText("Tải giọng mẫu", { selector: "input" }), { target: { files: [new File(["x"], "mau.wav", { type: "audio/wav" })] } });
     const dialog = await screen.findByRole("dialog", { name: "Dùng file này làm giọng đọc" });
-    expect(ws.uploadSource).toHaveBeenCalledWith("p1", expect.any(File));
+    expect(ws.uploadSource).toHaveBeenCalledWith("p1", expect.any(File), undefined, { onProgress: expect.any(Function) });
     expect(within(dialog).getByRole("button", { name: "Giọng đọc" })).toBeDisabled();
     fireEvent.click(within(dialog).getByLabelText("Giọng máy"));
     fireEvent.click(within(dialog).getByRole("button", { name: "Giọng đọc" }));

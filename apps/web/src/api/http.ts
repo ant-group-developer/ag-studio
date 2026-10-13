@@ -74,6 +74,38 @@ export async function request<T>(
   return (isEnvelope(json) ? json.data : json) as T;
 }
 
+/** Where to put one file on the bucket (a signed PUT link from Studio) and the `Content-Type` it was signed for. */
+export interface UploadLink { key: string; url: string; contentType: string; expiresAt: string }
+
+/** How far an upload is, from 0 to 1. */
+export type OnProgress = (fraction: number) => void;
+
+/** A file's type as Studio signs it (left out when the browser does not know it or names it oddly). */
+export const uploadType = (file: File): { contentType?: string } =>
+  (/^[\w.+-]+\/[\w.+-]+$/.test(file.type) && file.type.length <= 100 ? { contentType: file.type } : {});
+
+/**
+ * Puts a file straight on the bucket through a signed link (not through Studio's API), saying how far it is. A
+ * bucket that cannot be reached is most often one whose CORS does not let this site PUT (`bucket_unreachable`).
+ */
+export function putToBucket(link: UploadLink, file: Blob, onProgress?: OnProgress): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", link.url);
+    xhr.setRequestHeader("Content-Type", link.contentType);
+    if (onProgress) xhr.upload.onprogress = (e) => { if (e.lengthComputable && e.total) onProgress(e.loaded / e.total); };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) { onProgress?.(1); resolve(); return; }
+      reject(new StudioHttpError(xhr.status, { code: "bucket_refused", message: `Kho lưu trữ từ chối file (HTTP ${xhr.status}): tải lại` }));
+    };
+    xhr.onerror = () => reject(new StudioHttpError(0, {
+      code: "bucket_unreachable",
+      message: "Không tải được lên kho lưu trữ (R2): kiểm tra mạng, hoặc báo quản trị bật CORS cho phép PUT từ trang này",
+    }));
+    xhr.send(file);
+  });
+}
+
 /** The bytes of an answer that is not JSON (an image, a PDF, a sound), as a Blob. */
 export async function requestBlob(getAccessToken: () => Promise<string>, path: string): Promise<Blob> {
   const token = await getAccessToken();

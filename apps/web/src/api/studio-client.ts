@@ -1,7 +1,7 @@
 import { useAuthToken } from "../auth/use-auth-token";
 import type { Activity, YoutubeBlock } from "./workspace-client";
 
-import { buildQuery, request, StudioHttpError } from "./http";
+import { buildQuery, putToBucket, request, StudioHttpError, uploadType, type OnProgress, type UploadLink } from "./http";
 
 export { StudioHttpError };
 
@@ -296,16 +296,15 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     listMusic(): Promise<{ tracks: MusicTrackView[] }> {
       return request(getAccessToken, "GET", "/api/studio/music");
     },
-    /** Studio admin: upload a track to the library (the same file again updates it). */
-    addMusic(input: MusicTrackInput): Promise<MusicTrackView> {
-      const form = new FormData();
-      form.append("displayName", input.displayName);
-      form.append("moods", input.moods.join(","));
-      form.append("origin", input.origin);
-      form.append("originNote", input.originNote);
-      form.append("loopOk", String(input.loopOk));
-      form.append("file", input.file);
-      return request(getAccessToken, "POST", "/api/studio/music", form);
+    /** Studio admin: upload a track to the library (the same file again updates it), straight to the bucket first. */
+    async addMusic(input: MusicTrackInput, onProgress?: OnProgress): Promise<MusicTrackView> {
+      const f = input.file;
+      const link = await request<UploadLink>(getAccessToken, "POST", "/api/studio/music/uploads", { name: f.name, size: f.size, ...uploadType(f) });
+      await putToBucket(link, f, onProgress);
+      return request(getAccessToken, "POST", "/api/studio/music", {
+        displayName: input.displayName, moods: input.moods, origin: input.origin, originNote: input.originNote, loopOk: input.loopOk,
+        uploadKey: link.key, name: f.name,
+      });
     },
     /** Studio admin: rename, retag, retire or bring back a track. */
     updateMusic(trackId: string, patch: { displayName?: string; moods?: string[]; active?: boolean }): Promise<MusicTrackView> {

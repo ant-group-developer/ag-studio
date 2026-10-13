@@ -4,7 +4,7 @@
  */
 import { useMemo } from "react";
 import { useAuthToken } from "../auth/use-auth-token";
-import { buildQuery, request, requestBlob, STUDIO_API_URL } from "./http";
+import { buildQuery, putToBucket, request, requestBlob, STUDIO_API_URL, uploadType, type OnProgress, type UploadLink } from "./http";
 
 export type ProjectAspect = "16:9" | "9:16";
 export type VideoStatus = "draft" | "in_progress" | "rendering" | "done";
@@ -622,14 +622,19 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     removeSource(projectId: string, sourceId: string): Promise<void> {
       return call("DELETE", `/api/projects/${enc(projectId)}/sources/${enc(sourceId)}`);
     },
-    /** A document, image or audio file into context/ (415 `docx_not_supported`, `video_from_ag_go`, `file_type`). */
-    /** `reference`: a video to learn an edit style from (not footage), into context/references/, up to 300 MB. */
-    uploadSource(projectId: string, file: File, videoId?: string, opts: { reference?: boolean } = {}): Promise<{ source: SourceItem; file: SavedFile }> {
-      const form = new FormData();
-      form.append("file", file);
-      if (videoId) form.append("videoId", videoId);
-      if (opts.reference) form.append("reference", "1");
-      return call("POST", `/api/projects/${enc(projectId)}/sources/upload`, form);
+    /**
+     * A document, image or audio file into context/ (415 `docx_not_supported`, `video_from_ag_go`, `file_type`), checked
+     * by Studio, put straight on the bucket (R2), then taken by Studio. `reference`: a video to learn an edit style from
+     * (not footage), into context/references/, up to 300 MB.
+     */
+    async uploadSource(projectId: string, file: File, videoId?: string, opts: { reference?: boolean; onProgress?: OnProgress } = {}): Promise<{ source: SourceItem; file: SavedFile }> {
+      const link = await call<UploadLink>("POST", `/api/projects/${enc(projectId)}/uploads`, {
+        purpose: opts.reference ? "reference" : "source", name: file.name, size: file.size, ...uploadType(file),
+      });
+      await putToBucket(link, file, opts.onProgress);
+      return call("POST", `/api/projects/${enc(projectId)}/sources/upload`, {
+        uploadKey: link.key, name: file.name, ...(videoId ? { videoId } : {}), ...(opts.reference ? { reference: true } : {}),
+      });
     },
     /** Videos of the project's ag-go projects the person can see, with where each stands here. */
     searchFootage(projectId: string, q: FootageQuery = {}): Promise<{ items: FootageItem[]; nextCursor: string | null; total: number }> {
@@ -728,11 +733,11 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     deleteFile(projectId: string, path: string, baseSha256?: string): Promise<void> {
       return call("DELETE", `/api/projects/${enc(projectId)}/files${buildQuery({ path, baseSha256 })}`);
     },
-    uploadFile(projectId: string, file: File, dir?: string): Promise<SavedFile> {
-      const form = new FormData();
-      form.append("file", file);
-      if (dir) form.append("dir", dir);
-      return call("POST", `/api/projects/${enc(projectId)}/files/upload`, form);
+    /** Into the Files tab (`dir`, default `context/uploads`), straight to the bucket first. */
+    async uploadFile(projectId: string, file: File, dir?: string, onProgress?: OnProgress): Promise<SavedFile> {
+      const link = await call<UploadLink>("POST", `/api/projects/${enc(projectId)}/uploads`, { purpose: "file", name: file.name, size: file.size, ...uploadType(file) });
+      await putToBucket(link, file, onProgress);
+      return call("POST", `/api/projects/${enc(projectId)}/files/upload`, { uploadKey: link.key, name: file.name, ...(dir ? { dir } : {}) });
     },
     listFileVersions(projectId: string, path: string): Promise<{ versions: FileVersion[] }> {
       return call("GET", `/api/projects/${enc(projectId)}/files/versions${buildQuery({ path })}`);

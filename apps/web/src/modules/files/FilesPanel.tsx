@@ -7,6 +7,7 @@ import { StudioHttpError } from "../../api/http";
 import { useWorkspaceClient } from "../../api/workspace-client";
 import { ancestors, buildTree, type TreeNode } from "./file-tree";
 import { FileView } from "./FileView";
+import { useUploadProgress } from "../common/upload-progress";
 
 const IMAGE = /\.(jpe?g|png|webp|gif)$/i;
 const DEFAULT_OPEN = new Set(["context", "research", "channel", "memory"]);
@@ -118,8 +119,13 @@ export function FilesPanel({ projectId, canEdit, openPath, onOpen, onAttach }: {
     },
     onError: (e) => void message.error(e instanceof StudioHttpError && e.code === "file_conflict" ? t("ws.files.exists") : e instanceof StudioHttpError ? e.message : t("ws.files.saveFailed")),
   });
+  const uploading = useUploadProgress();
   const upload = useMutation({
-    mutationFn: (files: File[]) => Promise.all(files.map((f) => client.uploadFile(projectId, f, folder && writableFolder(folder) ? folder : undefined))),
+    mutationFn: (files: File[]) => {
+      const progress = uploading.start(files);
+      return Promise.all(files.map((f, i) => client.uploadFile(projectId, f, folder && writableFolder(folder) ? folder : undefined, progress[i])));
+    },
+    onSettled: uploading.done,
     onSuccess: (saved) => {
       void qc.invalidateQueries({ queryKey: ["files", projectId] });
       void message.success(t("ws.files.uploaded", { count: saved.length }));
@@ -168,7 +174,7 @@ export function FilesPanel({ projectId, canEdit, openPath, onOpen, onAttach }: {
             </Tooltip>
             <Tooltip title={t("ws.files.upload")}>
               <button type="button" className="ws-icon-button" aria-label={t("ws.files.upload")} disabled={upload.isPending} onClick={() => uploadInput.current?.click()}>
-                {upload.isPending ? <Spin size="small" /> : <Upload size={16} />}
+                {upload.isPending ? (uploading.percent !== null ? <span className="ws-upload-pct" title={t("common.uploading", { pct: uploading.percent })}>{uploading.percent}%</span> : <Spin size="small" />) : <Upload size={16} />}
               </button>
             </Tooltip>
             <input
