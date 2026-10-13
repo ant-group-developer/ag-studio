@@ -426,11 +426,13 @@ export interface RenderView {
   sizeBytes: number | null;
   note: string;
   finishedAt: string | null;
+  /** A short-lived link to watch a preview or the final render, signed with the list; absent for a Premiere export (asked for apart). */
+  url?: string;
 }
-/** A render's link, asked for one render at a time. */
+/** A render's link, asked for one render at a time (a Premiere export, when it is saved). */
 export interface RenderLink {
   jobId: string;
-  /** null when the person's own ag-go rights do not cover the footage in it, or ag-go could not say (`footage_check_failed`). */
+  /** For a Premiere export, null when the person's own ag-go rights do not cover the footage in it, or ag-go could not say (`footage_check_failed`). */
   url: string | null;
   urlHidden?: "footage_scope" | "footage_check_failed";
 }

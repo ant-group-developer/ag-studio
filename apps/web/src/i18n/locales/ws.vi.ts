@@ -110,7 +110,6 @@ export const wsVi = {
     watermarked: "có watermark",
     hidden: "bạn chưa có quyền xem footage này trên {{site}}",
     checkFailed: "chưa kiểm được quyền xem footage trên {{site}}, tải lại sau ít phút",
-    linkLoading: "Đang lấy link xem…",
     linkFailed: "Không lấy được link của bản render, thử lại sau",
     kind: {
       render_preview: "Xem trước",

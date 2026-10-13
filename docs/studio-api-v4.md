@@ -209,10 +209,13 @@ xem nhóm mình; người khác 403.
 
 - `GET /videos/:videoId/timeline` → `{latest: TimelineSummary | null, revisions}`; `POST timeline/fit` (editor) → job `fit`
   (dựng từ `videos/<id>/edit-plan.json`)
-- `GET /videos/:videoId/renders` → `{renders: RenderView[], jobs, thumbnails: path[]}` — chỉ đọc DB (không hỏi ag-go, không
-  ký URL) nên tab Xem trước hiện ngay; `RenderView` không có link
+- `GET /videos/:videoId/renders` → `{renders: RenderView[], jobs, thumbnails: path[]}` — đọc DB, không hỏi ag-go, nên tab Xem
+  trước hiện ngay; bản xem trước và bản cuối (mp4) có sẵn `url` (ký tại chỗ, sống `STUDIO_BROWSER_URL_TTL_SECONDS`) để player chạy
+  không cần request thứ hai; dòng Premiere không có `url` (xin bằng route dưới lúc lưu)
 - `GET /videos/:videoId/renders/:jobId/link` (viewer) → `{jobId, url: string | null, urlHidden?}` cho đúng một bản render;
-  `url` chỉ có khi quyền ag-go của người xem phủ mọi video trong revision của bản đó (không thì `urlHidden: footage_scope`;
+  bản mp4 luôn có `url` (không kiểm quyền footage: bản cuối dựng từ bản gốc của chủ dự án, người trong dự án xem được);
+  file Premiere (.zip đóng gói chính các file footage) chỉ có `url` khi quyền ag-go của người xem phủ mọi video trong
+  revision của bản đó (không thì `urlHidden: footage_scope`;
   ag-go không trả lời được — lỗi mạng, 5xx… — thì `urlHidden: footage_check_failed`, API ghi log lý do); link Premiere đặt
   sẵn tên file `.zip`; `jobId` không phải bản render xong của video → 404. API nhớ quyền theo (người, video ag-go) 10 phút
   và chỉ hỏi ag-go những video chưa biết (từng lô 10, 4 lô song song), nên revision mới cùng footage trả lời ngay; ag-go

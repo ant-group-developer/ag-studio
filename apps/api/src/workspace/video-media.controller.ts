@@ -97,19 +97,25 @@ export interface RenderView {
   sizeBytes: number | null;
   note: string;
   finishedAt: string | null;
+  /**
+   * A short-lived link to watch a preview or the final render, signed with the list (no ag-go footage check: an mp4 does
+   * not hand the footage out); absent for a Premiere export, whose link is asked for apart when it is saved.
+   */
+  url?: string;
 }
 
 /** A render's link, asked for one render at a time (`GET videos/:videoId/renders/:jobId/link`). */
 export interface RenderLink {
   jobId: string;
-  /** A short-lived link; null when the person's own ag-go rights do not cover every video in it, or ag-go could not say. */
+  /** A short-lived link; for a Premiere export, null when the person's own ag-go rights do not cover every video in it, or ag-go could not say. */
   url: string | null;
   /** `footage_scope`: ag-go does not serve every video of it to this person; `footage_check_failed`: ag-go did not answer. */
   urlHidden?: FootageVerdict;
 }
 
 /**
- * A video's media (spec 2026-10-10 agent-workspace §P6): its renders (with a link only for people whose own ag-go
+ * A video's media (spec 2026-10-10 agent-workspace §P6): its renders (a preview or the final render plays for anyone
+ * of the project; a Premiere export, which packs the footage files themselves, links only for people whose own ag-go
  * rights cover its footage — sharing a project never widens anyone's footage), starting a render (a preview: editor;
  * the final render and the Premiere export: producer), its timeline, building it from the edit plan; and the project's
  * narration voice and music, picked from audio files uploaded to the Inputs tab (or put in `context/audio/`), the music
@@ -131,16 +137,20 @@ export class VideoMediaController {
     this.rights = new FootageRights(footage, this.logger);
   }
 
-  /** What the Preview tab lists, from the database alone (no ag-go, no signing): each render's link is asked for apart. */
+  /**
+   * What the Preview tab lists, from the database alone (no ag-go), a preview or final render with its link signed here
+   * (a local computation) so the player needs no second request; a Premiere export's link is asked for apart.
+   */
   @Get('videos/:videoId/renders')
   @Roles('viewer')
   renders(@Param('videoId') videoId: string): Promise<{ renders: RenderView[]; jobs: JobView[]; thumbnails: string[] }> {
     return mapErrors(async () => {
       const v = requireVideo(this.engine.db, videoId);
-      const out: RenderView[] = videoRenders(this.engine.db, v.project_id, v.id).map((r) => ({
+      const out: RenderView[] = await Promise.all(videoRenders(this.engine.db, v.project_id, v.id).map(async (r) => ({
         jobId: r.jobId, kind: r.kind, revision: r.revision, durationS: r.duration_s, width: r.width, height: r.height, watermarked: r.watermarked,
         sizeBytes: r.size_bytes, note: r.note, finishedAt: r.finishedAt,
-      }));
+        ...(r.kind === 'export_premiere' ? {} : { url: await this.engine.bucket.signedGetUrl(r.key, this.engine.browserUrlTtl) }),
+      })));
       const jobs = listJobs(this.engine.db, v.project_id, { videoId, limit: 30 })
         .filter((j) => ['render_preview', 'render_final', 'export_premiere', 'fit', 'thumbnail'].includes(j.kind) && j.status !== 'done').map(jobView);
       // thumbnails made for it (workspace files the web reads like any other)
@@ -151,8 +161,10 @@ export class VideoMediaController {
   }
 
   /**
-   * One render's link, only for a person whose own ag-go rights cover every video of its timeline revision (sharing a
-   * project never widens anyone's footage); a Premiere export's link names the .zip to save.
+   * One render's link. A preview or the final render links for anyone of the project (the final is built from the
+   * owner's originals, so members watch it at full quality whatever their own ag-go rights); a Premiere export packs the
+   * footage files themselves, so it links only for a person whose own ag-go rights cover every video of its timeline
+   * revision (sharing a project never widens anyone's footage), and its link names the .zip to save.
    */
   @Get('videos/:videoId/renders/:jobId/link')
   @Roles('viewer')
@@ -161,7 +173,7 @@ export class VideoMediaController {
       const v = requireVideo(this.engine.db, videoId);
       const r = videoRender(this.engine.db, v.id, jobId);
       if (!r) throw new StudioRunError('not_found', `video không có bản render ${jobId}`);
-      const hidden = await this.footageVerdict(req.authContext!.userId, v.id, r.revision);
+      const hidden = r.kind === 'export_premiere' ? await this.footageVerdict(req.authContext!.userId, v.id, r.revision) : null;
       if (hidden) return { jobId: r.jobId, url: null, urlHidden: hidden };
       const url = await this.engine.bucket.signedGetUrl(r.key, this.engine.browserUrlTtl, r.kind === 'export_premiere' ? { downloadName: `${v.title.slice(0, 80)}.zip` } : {});
       return { jobId: r.jobId, url };

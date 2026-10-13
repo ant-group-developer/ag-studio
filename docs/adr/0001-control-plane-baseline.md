@@ -1254,3 +1254,11 @@ Spec `docs/superpowers/specs/2026-10-10-ag-studio-agent-workspace-design.md`, pl
     `reference_download` chỉ bị từ chối khi đường nó sẽ đi (`referenceRoute`) đang bị chặn: máy chủ bị chặn mà có máy
     farm tải được thì thẻ dùng được lại; màn Hàng đợi (admin) nói video mẫu đang đi qua máy nào. `STUDIO_REFERENCE_DOWNLOADS=0`
     tắt cả hai đường.
+194. **Link bản render mp4 không kiểm quyền footage, chỉ file Premiere kiểm (2026-10-13).** Trước đây mọi link bản
+    render hỏi ag-go xem quyền của chính người xem có phủ mọi video trong revision đó không (`FootageRights`), làm tab Xem
+    trước chờ thêm một vòng `/renders` → `/link` → ag-go. Nay bản xem trước và bản cuối (mp4) không hỏi ag-go: mp4 là
+    video đã dựng, không trao file footage; `GET videos/:id/renders` ký luôn `url` cho chúng (phép tính tại chỗ) nên player
+    chạy với một request. **Bản cuối dựng từ bản gốc của chủ dự án**, nên người trong dự án xem được bản cuối chất lượng đầy
+    đủ dù quyền ag-go riêng của họ không phủ footage đó — đã chốt với người dùng. File Premiere (.zip đóng gói chính các file
+    footage, bản xem hoặc bản gốc) vẫn chỉ có link cho người mà quyền ag-go của chính họ phủ mọi video trong đó, xin lúc
+    bấm lưu (`GET renders/:jobId/link`, `urlHidden: footage_scope | footage_check_failed` như trước).

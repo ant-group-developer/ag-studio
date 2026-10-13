@@ -99,7 +99,7 @@ nhưng không code nào đọc.
   `teamId|projectId|videoId|threadId` ra team); admin Studio là `user_type = ADMIN` từ Account API và qua mọi phép kiểm vai.
 - Footage: video chỉ đến từ ag-go (chọn project/video ag-go ở tab Đầu vào; không còn `@folder`); web gọi thẳng ag-go bằng
   bearer người dùng (`/projects`, `/projects/:id/media`), API và worker gọi bằng `AG_GO_SERVICE_KEY` + `X-Act-As-User` = chủ
-  dự án. Link render chỉ trả cho người mà quyền ag-go của chính họ phủ mọi video trong bản đó. Tài liệu/ảnh/audio tải lên
+  dự án. Bản xem trước và bản cuối (mp4) ai trong dự án cũng xem được (link có sẵn trong `GET renders`); file Premiere chỉ trả link cho người mà quyền ag-go của chính họ phủ mọi video trong bản đó (ADR mục 194). Tài liệu/ảnh/audio tải lên
   Studio. **Không bao giờ lấy giọng hay nhạc từ ag-go.**
 
 ### Agent

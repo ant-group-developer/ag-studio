@@ -51,7 +51,8 @@ quay lại bước nào cũng được; mọi kết quả là file sửa đượ
   `STUDIO_FARM_QUEUE_TIMEOUT_MINUTES` việc tự dừng và báo vào chat; bước chuẩn bị vẫn giữ cảnh và khung hình, chỉ thiếu lời thoại.
 - Lượt agent chờ hạn mức gói: tin nhắn hiện "chờ hạn mức" tới giờ thử lại. Dừng lượt bằng nút Dừng (thay nút Gửi).
 - Thẻ xác nhận "hết hiệu lực": timeline đã đổi hoặc quá 24 giờ — nhờ agent đề xuất lại.
-- Link xem bản render bị ẩn: quyền ag-go của chính bạn không phủ footage trong bản đó (chia sẻ dự án không mở rộng quyền footage).
+- File Premiere không tải được ("chưa có quyền xem footage"): quyền ag-go của chính bạn không phủ footage đóng gói trong
+  file đó (chia sẻ dự án không mở rộng quyền footage). Bản xem trước và bản cuối (mp4) thì ai trong dự án cũng xem và tải được.
 
 ## 6. Chi phí và hạn mức
 

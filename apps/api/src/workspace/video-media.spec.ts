@@ -1,6 +1,6 @@
 /**
- * A video's media over a real studio.db: renders listed with a link only for people whose ag-go rights cover the
- * footage, starting renders by role, the timeline, and the project's audio picked from a workspace file.
+ * A video's media over a real studio.db: renders listed with their link (a Premiere export's only for people whose ag-go
+ * rights cover the footage), starting renders by role, the timeline, and the project's audio picked from a workspace file.
  */
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -70,7 +70,7 @@ describe('video media (real studio.db)', () => {
   });
   afterEach(() => s.close());
 
-  it('starts renders by role, lists finished ones from the database and links one only for those whose footage rights cover it', async () => {
+  it('starts renders by role, lists finished ones with their link and links a Premiere export only for those whose footage rights cover it', async () => {
     const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
     const v = await videos.create(p.id, { title: 'Huế' }, req(OWNER));
     expect(await media.render(v.id, { kind: 'render_preview' }, req(EDITOR)).catch(code)).toBe('no_timeline');
@@ -80,25 +80,33 @@ describe('video media (real studio.db)', () => {
     expect(getJob(s.engine.db, job.id)).toMatchObject({ kind: 'render_preview', actor_role: 'editor' });
     claimJob(s.engine.db, ['render_preview'], new Date().toISOString());
     finishJob(s.engine.db, job.id, { status: 'done', result: { kind: 'render_preview', revision: 1, key: 'productions/x/out/a.mp4', duration_s: 4, width: 1920, height: 1080, watermarked: true, size_bytes: 10, note: '' } }, new Date().toISOString());
-    // the list is the database alone: no ag-go, no signing
+    // the list is the database alone (no ag-go), a preview with its link signed along
     const listed = await media.renders(v.id);
-    expect(listed.renders[0]).toEqual({ jobId: job.id, kind: 'render_preview', revision: 1, durationS: 4, width: 1920, height: 1080, watermarked: true, sizeBytes: 10, note: '', finishedAt: expect.any(String) });
-    expect(seen).toEqual([]);
-    // a link is asked for one render
+    expect(listed.renders[0]).toEqual({ jobId: job.id, kind: 'render_preview', revision: 1, durationS: 4, width: 1920, height: 1080, watermarked: true, sizeBytes: 10, note: '', finishedAt: expect.any(String), url: 'https://r2.test/productions/x/out/a.mp4' });
+    // a preview or final render links for anyone of the project: no footage check
     expect(await media.link(v.id, job.id, req(OWNER))).toEqual({ jobId: job.id, url: 'https://r2.test/productions/x/out/a.mp4' });
-    expect(await media.link(v.id, job.id, req(EDITOR))).toEqual({ jobId: job.id, url: null, urlHidden: 'footage_scope' });
-    expect(seen).toEqual([[OWNER, 'a1'], [EDITOR, 'a1']]);
+    expect(await media.link(v.id, job.id, req(EDITOR))).toEqual({ jobId: job.id, url: 'https://r2.test/productions/x/out/a.mp4' });
+    expect(seen).toEqual([]);
     expect(await media.link(v.id, 'not-a-job', req(OWNER)).catch((e: { getStatus?: () => number }) => e.getStatus?.())).toBe(404);
+    // a Premiere export packs the footage itself: listed without a link, linked only for those whose rights cover it
+    const zip = await media.render(v.id, { kind: 'export_premiere' }, req(OWNER));
+    claimJob(s.engine.db, ['export_premiere'], new Date().toISOString());
+    finishJob(s.engine.db, zip.id, { status: 'done', result: { kind: 'export_premiere', revision: 1, key: 'productions/x/out/a.zip', duration_s: null, width: null, height: null, watermarked: null, size_bytes: 20, note: '' } }, new Date().toISOString());
+    expect((await media.renders(v.id)).renders.find((x) => x.jobId === zip.id)).not.toHaveProperty('url');
+    expect(seen).toEqual([]);
+    expect(await media.link(v.id, zip.id, req(OWNER))).toEqual({ jobId: zip.id, url: 'https://r2.test/productions/x/out/a.zip?name=Huế.zip' });
+    expect(await media.link(v.id, zip.id, req(EDITOR))).toEqual({ jobId: zip.id, url: null, urlHidden: 'footage_scope' });
+    expect(seen).toEqual([[OWNER, 'a1'], [EDITOR, 'a1']]);
     // ag-go not answering is not a lack of rights; its 404 (a video out of scope) is
     seen.length = 0;
-    expect(await media.link(v.id, job.id, req(DOWN))).toMatchObject({ url: null, urlHidden: 'footage_check_failed' });
-    expect(await media.link(v.id, job.id, req(DOWN))).toMatchObject({ urlHidden: 'footage_check_failed' }); // kept 30 s, not asked again
-    expect(await media.link(v.id, job.id, req(GONE))).toMatchObject({ url: null, urlHidden: 'footage_scope' });
-    expect(await media.link(v.id, job.id, req(GONE))).toMatchObject({ urlHidden: 'footage_scope' });
+    expect(await media.link(v.id, zip.id, req(DOWN))).toMatchObject({ url: null, urlHidden: 'footage_check_failed' });
+    expect(await media.link(v.id, zip.id, req(DOWN))).toMatchObject({ urlHidden: 'footage_check_failed' }); // kept 30 s, not asked again
+    expect(await media.link(v.id, zip.id, req(GONE))).toMatchObject({ url: null, urlHidden: 'footage_scope' });
+    expect(await media.link(v.id, zip.id, req(GONE))).toMatchObject({ urlHidden: 'footage_scope' });
     expect(seen).toEqual([[DOWN, 'a1'], [GONE, 'a1']]);
     // links asked at once join the check under way
     seen.length = 0;
-    const both = await Promise.all([media.link(v.id, job.id, req('auth0|poll')), media.link(v.id, job.id, req('auth0|poll'))]);
+    const both = await Promise.all([media.link(v.id, zip.id, req('auth0|poll')), media.link(v.id, zip.id, req('auth0|poll'))]);
     expect(both.map((x) => x.urlHidden)).toEqual(['footage_scope', 'footage_scope']);
     expect(seen).toEqual([['auth0|poll', 'a1']]);
     // a new revision with the same footage is answered from what is known
