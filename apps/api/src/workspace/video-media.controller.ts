@@ -19,6 +19,7 @@ import { audioTools, requireAudioTools } from '../studio/audio-tools';
 import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from '../studio/engine.service';
 import { mapErrors } from '../studio/http-errors';
+import { FileLinkService } from './file-links';
 import { FootageRights, type FootageVerdict } from './footage-rights';
 import { ProjectFootageService } from './project-footage.service';
 import { WorkspaceService } from './workspace.service';
@@ -57,6 +58,9 @@ const musicOptions = (b: { crossfadeS?: number | undefined; gainDb?: number | un
   ...(b.ducking !== undefined ? { ducking: b.ducking } : {}),
 });
 
+/** An audio file to pick, with a short link to listen to it (`GET projects/:id/files/stream`, 15 minutes). */
+export type ListenableAudioFile = ProjectAudioFile & { listenUrl: string };
+
 /** `GET videos/:id/audio`: the video's own music, which music it takes, and the project's audio files to pick from. */
 export interface VideoAudioResponse {
   /** The video's own music; null when it takes the project's (or Studio's pick by mood). */
@@ -65,7 +69,7 @@ export interface VideoAudioResponse {
   summary: string;
   libraryTrack: ProjectAudioResponse['libraryTrack'];
   enabled: boolean;
-  files: ProjectAudioFile[];
+  files: ListenableAudioFile[];
   /** The timeline revision a change just wrote (its latest timeline took the music), or null. */
   revision: number | null;
 }
@@ -79,7 +83,7 @@ export interface ProjectAudioResponse {
   libraryTrack: { trackId: string; displayName: string; moods: string[]; durationSeconds: number } | null;
   /** ffmpeg (and ffprobe) are configured: files can be used as the voice sample or the music. A library track needs neither. */
   enabled: boolean;
-  files: ProjectAudioFile[];
+  files: ListenableAudioFile[];
 }
 
 export interface RenderView {
@@ -122,6 +126,7 @@ export class VideoMediaController {
     private readonly workspace: WorkspaceService,
     footage: ProjectFootageService,
     private readonly config: ConfigService,
+    private readonly links: FileLinkService,
   ) {
     this.rights = new FootageRights(footage, this.logger);
   }
@@ -209,7 +214,7 @@ export class VideoMediaController {
 
   @Get('projects/:projectId/audio')
   @Roles('viewer')
-  audio(@Param('projectId') projectId: string): Promise<ProjectAudioResponse> {
+  audio(@Param('projectId') projectId: string, @Req() req: Request): Promise<ProjectAudioResponse> {
     return mapErrors(() => {
       requireProject(this.engine.db, projectId);
       const a = projectAudio(this.engine.db, projectId);
@@ -218,7 +223,7 @@ export class VideoMediaController {
         voice: a.voice, music: a.music, summary: projectAudioSummary(this.engine.db, projectId),
         libraryTrack: lib ? { trackId: lib.track_id, displayName: lib.display_name, moods: lib.mood, durationSeconds: lib.duration_seconds } : null,
         enabled: audioTools(this.config) !== null,
-        files: projectAudioFiles(this.engine.db, this.workspace.dir(projectId), projectId),
+        files: this.links.withListenUrls(projectId, projectAudioFiles(this.engine.db, this.workspace.dir(projectId), projectId), req.authContext!.userId),
       };
     });
   }
@@ -227,7 +232,7 @@ export class VideoMediaController {
   @Post('projects/:projectId/audio/music/from-library')
   @Roles('editor')
   @HttpCode(HttpStatus.OK)
-  fromLibrary(@Param('projectId') projectId: string, @Body() raw: unknown) {
+  fromLibrary(@Param('projectId') projectId: string, @Body() raw: unknown, @Req() req: Request) {
     return mapErrors(async () => {
       const body = parseBody(FromLibrarySchema, raw);
       requireProject(this.engine.db, projectId);
@@ -241,7 +246,7 @@ export class VideoMediaController {
         if (e instanceof AudioImportError) throw new UnprocessableEntityException({ code: e.code, message: e.message });
         throw e;
       }
-      return this.audio(projectId);
+      return this.audio(projectId, req);
     });
   }
 
@@ -272,7 +277,7 @@ export class VideoMediaController {
         if (e instanceof AudioImportError) throw new UnprocessableEntityException({ code: e.code, message: e.message });
         throw e;
       }
-      return this.audio(projectId);
+      return this.audio(projectId, req);
     });
   }
 
@@ -283,7 +288,7 @@ export class VideoMediaController {
     return mapErrors(async () => {
       requireProject(this.engine.db, projectId);
       declineProjectNarration(this.engine.db, projectId, req.authContext!.userId);
-      return this.audio(projectId);
+      return this.audio(projectId, req);
     });
   }
 
@@ -298,7 +303,7 @@ export class VideoMediaController {
         throw new ForbiddenException({ code: 'role', message: 'Bỏ chọn giọng đọc cần vai producer' });
       }
       clearProjectAudio(this.engine.db, projectId, kind);
-      return this.audio(projectId);
+      return this.audio(projectId, req);
     });
   }
 
@@ -309,7 +314,7 @@ export class VideoMediaController {
   @Post('projects/:projectId/audio/music/from-files')
   @Roles('editor')
   @HttpCode(HttpStatus.OK)
-  fromFiles(@Param('projectId') projectId: string, @Body() raw: unknown) {
+  fromFiles(@Param('projectId') projectId: string, @Body() raw: unknown, @Req() req: Request) {
     return mapErrors(async () => {
       const body = parseBody(FromFilesSchema, raw);
       requireProject(this.engine.db, projectId);
@@ -317,15 +322,15 @@ export class VideoMediaController {
       await this.importing(() => importProjectMusic({ db: this.engine.db, bucket: this.engine.bucket, ...requireAudioTools(this.config) }, {
         projectId, files, ...musicOptions(body),
       }));
-      return this.audio(projectId);
+      return this.audio(projectId, req);
     });
   }
 
   /** A video's music: its own (overriding the project's), or which it uses instead, and the audio files to pick from. */
   @Get('videos/:videoId/audio')
   @Roles('viewer')
-  videoAudio(@Param('videoId') videoId: string): Promise<VideoAudioResponse> {
-    return mapErrors(() => this.videoAudioOf(videoId, null));
+  videoAudio(@Param('videoId') videoId: string, @Req() req: Request): Promise<VideoAudioResponse> {
+    return mapErrors(() => this.videoAudioOf(videoId, null, req));
   }
 
   /** One file or several joined in order become the video's own music (editor); its latest timeline takes it. */
@@ -340,7 +345,7 @@ export class VideoMediaController {
       await this.importing(() => importVideoMusic({ db: this.engine.db, bucket: this.engine.bucket, ...requireAudioTools(this.config) }, {
         videoId, files, ...musicOptions(body),
       }));
-      return this.videoAudioOf(videoId, this.follow(v.project_id, videoId, req));
+      return this.videoAudioOf(videoId, this.follow(v.project_id, videoId, req), req);
     });
   }
 
@@ -355,7 +360,7 @@ export class VideoMediaController {
       const track = getLibraryMusic(this.engine.db, body.trackId);
       if (!track) throw new NotFoundException({ code: 'not_found', message: `Không có bài ${body.trackId} trong kho nhạc` });
       await this.importing(async () => setVideoLibraryMusic(this.engine.db, videoId, track, musicOptions(body)));
-      return this.videoAudioOf(videoId, this.follow(v.project_id, videoId, req));
+      return this.videoAudioOf(videoId, this.follow(v.project_id, videoId, req), req);
     });
   }
 
@@ -366,11 +371,11 @@ export class VideoMediaController {
     return mapErrors(async () => {
       const v = requireVideo(this.engine.db, videoId);
       clearVideoMusic(this.engine.db, videoId);
-      return this.videoAudioOf(videoId, this.follow(v.project_id, videoId, req));
+      return this.videoAudioOf(videoId, this.follow(v.project_id, videoId, req), req);
     });
   }
 
-  private videoAudioOf(videoId: string, revision: number | null): VideoAudioResponse {
+  private videoAudioOf(videoId: string, revision: number | null, req: Request): VideoAudioResponse {
     const v = requireVideo(this.engine.db, videoId);
     const own = videoOwnMusic(this.engine.db, videoId);
     const lib = videoLibraryTrack(this.engine.db, videoId);
@@ -379,7 +384,7 @@ export class VideoMediaController {
       music: own, uses, summary: videoMusicSummary(this.engine.db, v.project_id, videoId),
       libraryTrack: lib ? { trackId: lib.track_id, displayName: lib.display_name, moods: lib.mood, durationSeconds: lib.duration_seconds } : null,
       enabled: audioTools(this.config) !== null,
-      files: projectAudioFiles(this.engine.db, this.workspace.dir(v.project_id), v.project_id),
+      files: this.links.withListenUrls(v.project_id, projectAudioFiles(this.engine.db, this.workspace.dir(v.project_id), v.project_id), req.authContext!.userId),
       revision,
     };
   }

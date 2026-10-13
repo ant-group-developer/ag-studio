@@ -31,6 +31,7 @@ export * from "./cut-fit.js";
 export * from "./errors.js";
 export * from "./workspace/project-db.js";
 export * from "./workspace/files.js";
+export * from "./workspace/file-link.js";
 export * from "./workspace/line-diff.js";
 export * from "./workspace/file-changes.js";
 export * from "./workspace/templates.js";

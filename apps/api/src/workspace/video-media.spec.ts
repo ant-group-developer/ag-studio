@@ -17,12 +17,14 @@ import { insertTeam, NO_DIRECTORY, realStudio, type RealStudio } from '../test/r
 import type { EngineService } from '../studio/engine.service';
 import type { ProjectFootageService } from './project-footage.service';
 import { ProjectsController } from './projects.controller';
+import { FileLinkService } from './file-links';
 import { VideoMediaController } from './video-media.controller';
 import { VideosController } from './videos.controller';
 import { WorkspaceService } from './workspace.service';
 
 const req = (userId: string) => ({ authContext: { userId, accessToken: 't' } }) as unknown as Request;
 const OWNER = 'auth0|owner';
+const LINKS = new FileLinkService({ get: () => 's'.repeat(32) } as unknown as ConfigService);
 const EDITOR = 'auth0|editor';
 const DOWN = 'auth0|down';
 const GONE = 'auth0|gone';
@@ -62,7 +64,7 @@ describe('video media (real studio.db)', () => {
     Object.assign(engine, { bucket: { signedGetUrl: async (key: string, _ttl: number, o: { downloadName?: string } = {}) => `https://r2.test/${key}${o.downloadName ? `?name=${o.downloadName}` : ''}` }, browserUrlTtl: 600 });
     projects = new ProjectsController(engine, ws, NO_DIRECTORY);
     videos = new VideosController(engine, ws);
-    media = new VideoMediaController(engine, ws, footage, { get: () => undefined } as unknown as ConfigService);
+    media = new VideoMediaController(engine, ws, footage, { get: () => undefined } as unknown as ConfigService, LINKS);
     insertTeam(s.db, 'team-1', OWNER);
     s.engine.db.run("INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES ('team-1', ?, 'editor', ?)", [EDITOR, new Date().toISOString()]);
   });
@@ -136,17 +138,22 @@ describe('video media (real studio.db)', () => {
     );
     row('src-1', 'context/audio/giong.wav', 'Giọng mẫu.wav');
     row('src-2', 'context/audio/mat.wav', 'mat.wav'); // its file is gone
-    const a = await media.audio(p.id);
+    const a = await media.audio(p.id, req(OWNER));
     expect(a.enabled).toBe(false);
     expect(a.libraryTrack).toBeNull();
     expect(a.files.map((f) => [f.path, f.name, f.bytes, f.sourceId])).toEqual([
       ['context/audio/cu/nhac.mp3', 'nhac.mp3', 3, null],
       ['context/audio/giong.wav', 'Giọng mẫu.wav', 8, 'src-1'],
     ]);
+    // each with a short link to listen to it, made for the person who asked
+    const link = new URL(a.files[0]!.listenUrl, 'http://studio.test');
+    expect(link.pathname).toBe(`/api/projects/${p.id}/files/stream`);
+    expect(link.searchParams.get('path')).toBe('context/audio/cu/nhac.mp3');
+    expect(LINKS.verify(link.searchParams.get('t')!)).toMatchObject({ project: p.id, path: 'context/audio/cu/nhac.mp3', sub: OWNER });
     const engine = s.engine as unknown as EngineService;
     const ws = new WorkspaceService({ get: (k: string, d?: unknown) => (k === 'STUDIO_WORKSPACES_ROOT' ? root : d) } as unknown as ConfigService, engine);
-    const withFfmpeg = new VideoMediaController(engine, ws, {} as ProjectFootageService, { get: (k: string) => (k === 'STUDIO_FFMPEG_PATH' ? '/opt/ff/ffmpeg' : undefined) } as unknown as ConfigService);
-    expect((await withFfmpeg.audio(p.id)).enabled).toBe(true);
+    const withFfmpeg = new VideoMediaController(engine, ws, {} as ProjectFootageService, { get: (k: string) => (k === 'STUDIO_FFMPEG_PATH' ? '/opt/ff/ffmpeg' : undefined) } as unknown as ConfigService, LINKS);
+    expect((await withFfmpeg.audio(p.id, req(OWNER))).enabled).toBe(true);
   });
 
   it('ffprobe defaults to the one next to ffmpeg, as on the worker', () => {
@@ -166,13 +173,13 @@ describe('video media (real studio.db)', () => {
     });
     saveLibraryMusic(s.engine.db, track('m-sang', 'Sáng sớm', true));
     saveLibraryMusic(s.engine.db, track('m-cu', 'Bài cũ', false));
-    const a = await media.fromLibrary(p.id, { trackId: 'm-sang', gainDb: -20 });
+    const a = await media.fromLibrary(p.id, { trackId: 'm-sang', gainDb: -20 }, req(EDITOR));
     expect(a.music).toEqual({ track: 'library:music/m-sang.m4a', gain_db: -20, ducking: true, sha256: 'a'.repeat(64), duration_s: 95 });
     expect(a.libraryTrack).toEqual({ trackId: 'm-sang', displayName: 'Sáng sớm', moods: ['ấm áp'], durationSeconds: 95 });
     expect(a.summary.music).toBe('bài "Sáng sớm" trong kho nhạc (95 s), -20 dB, nhỏ lại khi có lời');
-    expect(await media.fromLibrary(p.id, { trackId: 'm-cu' }).catch(code)).toBe('audio_invalid');
-    expect(await media.fromLibrary(p.id, { trackId: 'm-khong' }).catch(code)).toBe('not_found');
-    expect(await media.fromLibrary(p.id, { trackId: 'm-sang', extra: 1 }).catch(code)).toBe('invalid');
+    expect(await media.fromLibrary(p.id, { trackId: 'm-cu' }, req(EDITOR)).catch(code)).toBe('audio_invalid');
+    expect(await media.fromLibrary(p.id, { trackId: 'm-khong' }, req(EDITOR)).catch(code)).toBe('not_found');
+    expect(await media.fromLibrary(p.id, { trackId: 'm-sang', extra: 1 }, req(EDITOR)).catch(code)).toBe('invalid');
     const cleared = await media.clear(p.id, 'music', req(EDITOR));
     expect(cleared.music).toBeNull();
     expect(cleared.summary.music).toContain('chưa chọn');
@@ -189,15 +196,15 @@ describe('video media (real studio.db)', () => {
     });
     saveLibraryMusic(s.engine.db, track('du-an'));
     saveLibraryMusic(s.engine.db, track('rieng'));
-    expect(await media.videoAudio(v.id)).toMatchObject({ music: null, uses: 'mood', revision: null });
-    await media.fromLibrary(p.id, { trackId: 'du-an' });
-    expect(await media.videoAudio(v.id)).toMatchObject({ music: null, uses: 'project', summary: expect.stringContaining('nhạc của dự án: bài "du-an"') });
+    expect(await media.videoAudio(v.id, req(OWNER))).toMatchObject({ music: null, uses: 'mood', revision: null });
+    await media.fromLibrary(p.id, { trackId: 'du-an' }, req(EDITOR));
+    expect(await media.videoAudio(v.id, req(OWNER))).toMatchObject({ music: null, uses: 'project', summary: expect.stringContaining('nhạc của dự án: bài "du-an"') });
 
     saveVideoRevision(s.engine.db, v.id, { baseRevision: 0, data: timeline(v.id), authorId: OWNER, label: 'fit' });
     const own = await media.videoFromLibrary(v.id, { trackId: 'rieng', gainDb: -22 }, req(EDITOR));
     expect(own).toMatchObject({ uses: 'video', music: { track: 'library:music/rieng.m4a', gain_db: -22 }, libraryTrack: { trackId: 'rieng' }, revision: 2 });
     expect(latestVideoRevision(s.engine.db, v.id)?.data.music).toEqual({ track: 'library:music/rieng.m4a', gain_db: -22, ducking: true });
-    expect((await media.audio(p.id)).music).toMatchObject({ track: 'library:music/du-an.m4a' });
+    expect((await media.audio(p.id, req(OWNER))).music).toMatchObject({ track: 'library:music/du-an.m4a' });
 
     const back = await media.clearVideo(v.id, req(EDITOR));
     expect(back).toMatchObject({ music: null, uses: 'project', revision: 3 });
@@ -210,10 +217,10 @@ describe('video media (real studio.db)', () => {
     mkdirSync(join(root, p.id, 'context', 'audio'), { recursive: true });
     for (const n of ['a.mp3', 'b.mp3']) writeFileSync(join(root, p.id, 'context', 'audio', n), 'ID3');
     const paths = ['context/audio/a.mp3', 'context/audio/b.mp3'];
-    expect(await media.fromFiles(p.id, { paths, crossfadeS: 2 }).catch(code)).toBe('audio_disabled');
+    expect(await media.fromFiles(p.id, { paths, crossfadeS: 2 }, req(EDITOR)).catch(code)).toBe('audio_disabled');
     expect(await media.videoFromFiles(v.id, { paths }, req(EDITOR)).catch(code)).toBe('audio_disabled');
-    expect(await media.fromFiles(p.id, { paths: ['context/audio/a.mp3', 'context/audio/khong.mp3'] }).catch(code)).not.toBe('audio_disabled');
-    expect(await media.fromFiles(p.id, { paths: Array.from({ length: 21 }, () => paths[0]) }).catch(code)).toBe('invalid');
-    expect(await media.fromFiles(p.id, { paths, crossfadeS: 11 }).catch(code)).toBe('invalid');
+    expect(await media.fromFiles(p.id, { paths: ['context/audio/a.mp3', 'context/audio/khong.mp3'] }, req(EDITOR)).catch(code)).not.toBe('audio_disabled');
+    expect(await media.fromFiles(p.id, { paths: Array.from({ length: 21 }, () => paths[0]) }, req(EDITOR)).catch(code)).toBe('invalid');
+    expect(await media.fromFiles(p.id, { paths, crossfadeS: 11 }, req(EDITOR)).catch(code)).toBe('invalid');
   });
 });

@@ -131,6 +131,10 @@ xem nhóm mình; người khác 403.
 
 - `GET ?under` (viewer) → `{entries: WorkspaceEntry[]}` (đường dẫn, loại, cỡ, quyền `write|read`)
 - `GET content?path` → `WorkspaceFile & {issues: FileIssue[]}`; `GET raw?path` → byte (ảnh, PDF)
+- `GET stream?path&t` (**không cần đăng nhập**, `@Public()`): phát một file cho `<audio>`/`<video>` (không gửi được bearer). `t` là
+  link ký HMAC (`workspace/file-link.ts`: dự án, đường dẫn, người, hết hạn 15 phút; khoá dẫn từ `STUDIO_AGENT_TOKEN_SECRET`, không
+  đặt thì khoá riêng của tiến trình API). Sai/hết hạn → 401 `bad_file_link`, file khác → 403, thư mục ẩn/không có/dự án đã lưu
+  trữ → 404. Phục vụ từ đĩa có Range (206). API trả sẵn link này ở `listenUrl` (đường dẫn dưới `/api`).
 - `PUT content {path, content, baseSha256?}` (editor) → `SavedFile & {issues}`; `baseSha256` khác bản trên đĩa → 409
   `file_conflict`; đường chỉ đọc (`inputs/**`, `videos/*/sources/**`, `.studio/**` trừ `playbook.yaml`) → 422 `read_only`
 - `DELETE ?path&baseSha256` (editor); `POST upload` multipart `file` + `dir?` (editor, ≤ 50 MB; audio ≤ 100 MB), hoặc JSON
@@ -218,7 +222,7 @@ xem nhóm mình; người khác 403.
   bản cuối, Premiere: producer (403 `role`)
 - `GET /projects/:projectId/audio` (viewer) → `{voice, music, summary, libraryTrack, enabled, files}`: `enabled` = API có
   ffmpeg (`STUDIO_FFMPEG_PATH`; ffprobe là `STUDIO_FFPROBE_PATH` hoặc ffprobe cạnh ffmpeg như worker) để nhận file audio;
-  `files` = file audio dùng được `[{path, name, bytes, sourceId, addedAt}]`, mới nhất trước: audio đã tải ở tab Đầu vào
+  `files` = file audio dùng được `[{path, name, bytes, sourceId, addedAt, listenUrl}]` (`listenUrl`: `GET files/stream`, 15 phút), mới nhất trước: audio đã tải ở tab Đầu vào
   (còn file) và mọi file audio dưới `context/audio/` (cả file tải qua tab Tệp, `sourceId: null`), không dò thời lượng;
   `libraryTrack` = `{trackId, displayName, moods, durationSeconds}` khi nhạc là một bài của kho nhạc
 - `POST audio/:kind/from-file {path, origin?, referenceText?, gainDb?, ducking?}` (giọng: producer, phải có `origin`
