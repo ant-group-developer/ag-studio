@@ -7,6 +7,7 @@ import { Link } from "react-router-dom";
 import { useStudioClient } from "../../api/studio-client";
 import { rememberedTeam } from "../../helpers/last-team";
 import { useAppUserMenu } from "../common/use-app-user-menu";
+import { StartChecklist } from "../onboarding/StartChecklist";
 import { NewTeamModal } from "./NewTeamModal";
 import { ProjectPicker } from "./ProjectPicker";
 import { TeamPicker } from "./TeamPicker";
@@ -86,6 +87,7 @@ export function WorkspaceShell({ teamId, teamCrumb = true, project, crumbs = [],
         ) : null}
         <div className="ws-header__right">
           {actions}
+          <StartChecklist />
           {canReview ? <Link to="/stats" className="ws-icon-button">{t("ws.shell.stats")}</Link> : null}
           {canReview ? <Link to="/audit" className="ws-icon-button">{t("ws.shell.audit")}</Link> : null}
           {isAdmin ? <Link to="/queue" className="ws-icon-button">{t("ws.shell.queue")}</Link> : null}

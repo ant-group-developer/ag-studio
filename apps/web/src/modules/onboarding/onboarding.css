@@ -1,0 +1,18 @@
+/* Getting started: the header's checklist (a popover, outside .ws-app: tokens come from :root). */
+.ws-start-button { color: var(--ws-accent); border-color: var(--ws-accent-line); background: var(--ws-accent-soft); font-weight: 500; }
+.ws-start-button:hover { background: var(--ws-accent-soft); color: var(--ws-accent); border-color: var(--ws-accent); }
+.ws-start { width: min(380px, calc(100vw - 48px)); font-size: 13px; color: var(--ws-text); }
+.ws-start__lead { margin: 0 0 6px; color: var(--ws-muted); }
+.ws-start__list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; }
+.ws-start__step { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid var(--ws-line); }
+.ws-start__step:first-child { border-top: 0; }
+.ws-start__tick { flex-shrink: 0; margin-top: 1px; color: var(--ws-line-strong); }
+.ws-start__step--done .ws-start__tick { color: var(--ws-ok-fg); }
+.ws-start__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ws-start__title { font-weight: 500; }
+.ws-start__step--done .ws-start__title { color: var(--ws-muted); text-decoration: line-through; text-decoration-color: var(--ws-line-strong); }
+.ws-start__hint { color: var(--ws-muted); }
+.ws-start__links { display: flex; gap: 14px; }
+.ws-start__links a { color: var(--ws-accent); }
+.ws-start__links a:hover { text-decoration: underline; }
+.ws-start__foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--ws-line); }
