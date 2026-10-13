@@ -18,13 +18,18 @@ export function resolveEncoder(cfg: "auto" | "nvenc" | "cpu", nvencAvailable: bo
   return nvencAvailable ? "nvenc" : "cpu";
 }
 
+/** How a final-render pass encodes: `final` for the delivered episode, `preview` for a lighter file to watch. */
+export type OutputTier = "preview" | "final";
+
 /**
  * Video encoder args for one mezzanine or final-render pass (spec §5.1/§5.4). `tier: "mezz"` favors speed
  * (NVENC `p4`/`cq 18`, CPU `veryfast`/low crf); `tier: "final"` favors quality (NVENC `p6 tune hq`/`cq 19`
- * with a bitrate cap, CPU `slow`/higher crf). `hevc` swaps the codec name and, for NVENC final, adds the
- * `hvc1` tag Apple/QuickTime need to read an HEVC `.mp4` at all.
+ * with a bitrate cap, CPU `slow`/higher crf); `tier: "preview"` is a final-render pass made to be watched in a
+ * browser, at the same frame size: fast and light (NVENC `p4`/`cq 25`, CPU `veryfast`/`crf 24`, both capped
+ * at 6 Mbit/s). `hevc` swaps the codec name and, for NVENC final and preview, adds the `hvc1` tag
+ * Apple/QuickTime need to read an HEVC `.mp4` at all.
  */
-export function videoEncoderArgs(p: { choice: EncoderChoice; codec: "h264" | "hevc"; tier: "mezz" | "final"; fps: number }): string[] {
+export function videoEncoderArgs(p: { choice: EncoderChoice; codec: "h264" | "hevc"; tier: "mezz" | OutputTier; fps: number }): string[] {
   const { choice, codec, tier, fps } = p;
   let args: string[];
 
@@ -32,6 +37,9 @@ export function videoEncoderArgs(p: { choice: EncoderChoice; codec: "h264" | "he
     const enc = codec === "hevc" ? "hevc_nvenc" : "h264_nvenc";
     if (tier === "mezz") {
       args = ["-c:v", enc, "-preset", "p4", "-rc", "vbr", "-cq", "18", "-b:v", "0"];
+    } else if (tier === "preview") {
+      args = ["-c:v", enc, "-preset", "p4", "-rc", "vbr", "-cq", "25", "-b:v", "0", "-maxrate", "6M", "-bufsize", "12M", "-profile:v", codec === "hevc" ? "main" : "high"];
+      if (codec === "hevc") args.push("-tag:v", "hvc1");
     } else {
       args = ["-c:v", enc, "-preset", "p6", "-tune", "hq", "-rc", "vbr", "-cq", "19", "-b:v", "0", "-maxrate", "60M", "-bufsize", "120M", "-profile:v", codec === "hevc" ? "main" : "high"];
       if (codec === "hevc") args.push("-tag:v", "hvc1");
@@ -40,6 +48,9 @@ export function videoEncoderArgs(p: { choice: EncoderChoice; codec: "h264" | "he
     const enc = codec === "hevc" ? "libx265" : "libx264";
     if (tier === "mezz") {
       args = ["-c:v", enc, "-preset", "veryfast", "-crf", codec === "hevc" ? "18" : "16"];
+    } else if (tier === "preview") {
+      args = ["-c:v", enc, "-preset", "veryfast", "-crf", codec === "hevc" ? "26" : "24", "-maxrate", "6M", "-bufsize", "12M"];
+      if (codec !== "hevc") args.push("-profile:v", "high");
     } else {
       args = ["-c:v", enc, "-preset", "slow", "-crf", codec === "hevc" ? "20" : "18"];
       if (codec !== "hevc") args.push("-profile:v", "high");

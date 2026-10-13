@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CompositionSchema, isHarnessError, newId, type Composition } from "@harness/contracts";
 import { escapeFilterPath, finalArgs, type FinalGraphInput } from "../../../src/media/render/final-graph.js";
+import { videoEncoderArgs } from "../../../src/media/render/encoder.js";
 
 const SRC_A = "src_01JAAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -85,6 +86,22 @@ describe("finalArgs", () => {
     // incoming fade on segment 2 starts at 0, also lasts 0.2.
     expect(joined).toContain("fade=t=out:st=4.8:d=0.2");
     expect(joined).toContain("fade=t=in:st=0:d=0.2");
+  });
+
+  it("encodes the video as the final tier by default and lighter for a preview, the audio alike", () => {
+    const composition = baseComposition({ segments: [segment(0, 0, 5), segment(1, 5, 10)] });
+    const mezz = [
+      { order: 0, body: "/cache/mezz/b0.mp4", tail: null },
+      { order: 1, body: "/cache/mezz/b1.mp4", tail: null },
+    ];
+    const encoderPart = (argv: string[]) => argv.slice(argv.indexOf("-c:v"), argv.indexOf("-c:a"));
+    const final = finalArgs(baseInput({ composition, mezz })).argv;
+    expect(encoderPart(final)).toEqual(videoEncoderArgs({ choice: "cpu", codec: "h264", tier: "final", fps: 30 }));
+    expect(encoderPart(finalArgs(baseInput({ composition, mezz, tier: "final" })).argv)).toEqual(encoderPart(final));
+    const preview = finalArgs(baseInput({ composition, mezz, tier: "preview" })).argv;
+    expect(encoderPart(preview)).toEqual(videoEncoderArgs({ choice: "cpu", codec: "h264", tier: "preview", fps: 30 }));
+    expect(preview.slice(preview.indexOf("-c:a"))).toEqual(final.slice(final.indexOf("-c:a")));
+    expect(preview.slice(0, preview.indexOf("-c:v"))).toEqual(final.slice(0, final.indexOf("-c:v")));
   });
 
   it("ass + Windows fontsDir escapes the way escapeFilterPath does", () => {
