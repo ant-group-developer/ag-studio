@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { App as AntApp, Button, Modal, Spin, Tooltip } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, Download, Eye, History, Lock, PanelLeftClose, PanelLeftOpen, Paperclip, Pencil, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { StudioHttpError } from "../../api/http";
+import { STUDIO_API_URL, StudioHttpError } from "../../api/http";
 import { useWorkspaceClient, type FileAccess, type WorkspaceFile } from "../../api/workspace-client";
 import { fileSize, relativeTime } from "../workspace/time";
 import { isJson, isJsonLines, isMarkdown } from "./file-tree";
@@ -16,19 +16,25 @@ const isAudio = (mime: string) => mime.startsWith("audio/");
 const isVideo = (mime: string) => mime.startsWith("video/");
 const isPdf = (mime: string) => mime === "application/pdf";
 
-/** The bytes of a binary file as an object URL (freed when the file changes or the view closes). */
-function useBlobUrl(projectId: string, path: string, file: WorkspaceFile | undefined) {
-  const client = useWorkspaceClient();
-  const wanted = !!file?.binary && (isImage(file.mime) || isAudio(file.mime) || isVideo(file.mime) || isPdf(file.mime));
-  const { data: blob } = useQuery({
-    queryKey: ["file-blob", projectId, path, file?.sha256],
-    queryFn: () => client.fileBlob(projectId, path),
-    enabled: wanted,
-    staleTime: Infinity,
-  });
-  const url = useMemo(() => (blob ? URL.createObjectURL(blob) : null), [blob]);
-  useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
-  return url;
+/**
+ * A file that is not text, played, shown or saved straight from its short link (`streamUrl`, with ranges): a video
+ * starts at once and seeks without being downloaded first. The first link is kept while the file is the same (a newer
+ * one would reload the player); an element that fails on it (the link ran out) is handed a fresh one, once.
+ */
+function useStreamUrl(file: WorkspaceFile | undefined, refetch: () => Promise<{ data?: WorkspaceFile | undefined }>) {
+  const version = file ? `${file.path}|${file.mtime}|${file.size}` : "";
+  const [kept, setKept] = useState<{ version: string; url: string; renewed: boolean } | null>(null);
+  const current = kept?.version === version ? kept : null;
+  useEffect(() => {
+    if (file?.streamUrl && !current) setKept({ version, url: file.streamUrl, renewed: false });
+  }, [file?.streamUrl, version, current]);
+  const url = current?.url ?? file?.streamUrl ?? null;
+  const renew = () => {
+    if (!current || current.renewed) return;
+    setKept({ ...current, renewed: true });
+    void refetch().then((r) => { if (r.data?.streamUrl) setKept({ version, url: r.data.streamUrl, renewed: true }); });
+  };
+  return { url: url ? `${STUDIO_API_URL}${url}` : null, renew };
 }
 
 /**
@@ -51,13 +57,13 @@ export function FileView({ projectId, path, access, canEdit, onBack, onDeleted, 
   const { message } = AntApp.useApp();
   const client = useWorkspaceClient();
   const qc = useQueryClient();
-  const { data: file, isLoading, error } = useQuery({ queryKey: ["file", projectId, path], queryFn: () => client.readFile(projectId, path) });
+  const { data: file, isLoading, error, refetch } = useQuery({ queryKey: ["file", projectId, path], queryFn: () => client.readFile(projectId, path) });
   const [mode, setMode] = useState<"view" | "edit" | "history">("view");
   const [draft, setDraft] = useState("");
   const [base, setBase] = useState<string | null>(null);
   /** A save refused because the file moved on: the checksum of the copy now on disk (null = it is gone). */
   const [conflict, setConflict] = useState<{ theirs: string | null } | null>(null);
-  const blobUrl = useBlobUrl(projectId, path, file);
+  const stream = useStreamUrl(file, refetch);
   const writable = canEdit && access === "write";
 
   useEffect(() => { setMode("view"); setConflict(null); }, [path]);
@@ -93,7 +99,7 @@ export function FileView({ projectId, path, access, canEdit, onBack, onDeleted, 
   });
 
   const remove = useMutation({
-    mutationFn: () => client.deleteFile(projectId, path, file?.sha256),
+    mutationFn: () => client.deleteFile(projectId, path, file?.sha256 ?? undefined),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["files", projectId] });
       onDeleted();
@@ -138,7 +144,7 @@ export function FileView({ projectId, path, access, canEdit, onBack, onDeleted, 
         <Tooltip title={t("ws.files.history")}>
           <button type="button" className="ws-icon-button" aria-pressed={mode === "history"} onClick={() => setMode(mode === "history" ? "view" : "history")} aria-label={t("ws.files.history")} disabled={dirty}><History size={16} /></button>
         </Tooltip>
-        {blobUrl ? <Tooltip title={t("common.download")}><a className="ws-icon-button" href={blobUrl} download={path.split("/").pop()} aria-label={t("common.download")}><Download size={16} /></a></Tooltip> : null}
+        {stream.url ? <Tooltip title={t("common.download")}><a className="ws-icon-button" href={`${stream.url}&download=1`} download={path.split("/").pop()} aria-label={t("common.download")}><Download size={16} /></a></Tooltip> : null}
         {writable && file ? (
           <Tooltip title={t("common.delete")}>
             <button type="button" className="ws-icon-button" aria-label={t("common.delete")} onClick={() => Modal.confirm({
@@ -179,10 +185,10 @@ export function FileView({ projectId, path, access, canEdit, onBack, onDeleted, 
       ) : (
         <div className="ws-file__body">
           {file.binary ? (
-            isImage(file.mime) && blobUrl ? <img className="ws-file__img" src={blobUrl} alt={path} />
-              : isAudio(file.mime) && blobUrl ? <audio controls src={blobUrl} style={{ width: "100%" }} />
-                : isVideo(file.mime) && blobUrl ? <video controls src={blobUrl} style={{ width: "100%" }} />
-                  : isPdf(file.mime) && blobUrl ? <iframe title={path} src={blobUrl} style={{ width: "100%", height: "70vh", border: 0 }} />
+            isImage(file.mime) && stream.url ? <img className="ws-file__img" src={stream.url} alt={path} onError={stream.renew} />
+              : isAudio(file.mime) && stream.url ? <audio controls preload="metadata" src={stream.url} aria-label={path} onError={stream.renew} style={{ width: "100%" }} />
+                : isVideo(file.mime) && stream.url ? <video controls preload="metadata" src={stream.url} aria-label={path} onError={stream.renew} style={{ width: "100%" }} />
+                  : isPdf(file.mime) && stream.url ? <iframe title={path} src={stream.url} style={{ width: "100%", height: "70vh", border: 0 }} />
                     : <p>{t("ws.files.binary", { size: fileSize(file.size) })}</p>
           ) : isMarkdown(path) ? (
             <>

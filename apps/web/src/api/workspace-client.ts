@@ -86,12 +86,15 @@ export interface FileIssue {
 export interface WorkspaceFile {
   path: string;
   size: number;
-  sha256: string;
+  /** The checksum to save or delete against; null for a file that is not text (told from its size alone). */
+  sha256: string | null;
   mtime: string;
   mime: string;
   binary: boolean;
   text: string | null;
   issues: FileIssue[];
+  /** A file that is not text: a short link (under the API, 15 minutes, ranges) to play, show or save it; `&download=1` saves it. */
+  streamUrl?: string | null;
 }
 
 export interface SavedFile {

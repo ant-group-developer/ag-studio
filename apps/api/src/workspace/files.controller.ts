@@ -3,20 +3,21 @@ import {
   Res, StreamableFile, UploadedFile, UseGuards, UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import {
-  AUDIO_FILE_EXTS, AUDIO_MAX_BYTES, deleteWorkspaceFile, getFileVersion, listFileVersions, listWorkspaceTree, normalizeRelPath, readWorkspaceBytes, readWorkspaceFile,
-  StudioRunError, validateFileText, versionDiff, writeWorkspaceFile, type FileIssue, type FileVersionRow, type VersionDiff, type WorkspaceEntry,
+  AUDIO_FILE_EXTS, AUDIO_MAX_BYTES, deleteWorkspaceFile, getFileVersion, listFileVersions, listWorkspaceTree, normalizeRelPath, readWorkspaceFile,
+  statWorkspaceFile, StudioRunError, validateFileText, versionDiff, writeWorkspaceFile, type FileIssue, type FileVersionRow, type VersionDiff, type WorkspaceEntry,
   type WorkspaceFile,
 } from '@ag-studio/engine';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from '../studio/engine.service';
 import { mapErrors } from '../studio/http-errors';
+import { FileLinkService } from './file-links';
 import { dropRawUpload, RawUploadFields, takeRawUpload, type UploadedTmp } from './raw-uploads';
 import { WorkspaceService } from './workspace.service';
 import { parseBody } from './zod-body';
@@ -76,6 +77,7 @@ export class FilesController {
   constructor(
     private readonly engine: EngineService,
     private readonly workspace: WorkspaceService,
+    private readonly links: FileLinkService,
   ) {}
 
   @Get()
@@ -84,25 +86,33 @@ export class FilesController {
     return mapErrors(() => ({ entries: listWorkspaceTree(this.workspace.dir(projectId), under ? { under } : {}) }));
   }
 
-  /** The file, and what Studio's checks say of it (`issues`: errors Studio cannot use as is, warnings). */
+  /**
+   * The file, and what Studio's checks say of it (`issues`: errors Studio cannot use as is, warnings). A file that is
+   * not text is told from its size alone (never read nor hashed: `sha256` null) and comes with `streamUrl`, a short
+   * link (`GET files/stream`, 15 minutes, ranges) the browser plays, shows or saves it from.
+   */
   @Get('content')
   @Roles('viewer')
-  content(@Param('projectId') projectId: string, @Query('path') path: string): Promise<WorkspaceFile & { issues: FileIssue[] }> {
+  content(@Param('projectId') projectId: string, @Query('path') path: string, @Req() req: Request): Promise<WorkspaceFile & { issues: FileIssue[]; streamUrl: string | null }> {
     return mapErrors(() => {
       const file = readWorkspaceFile(this.workspace.dir(projectId), this.visible(path));
-      return { ...file, issues: file.text === null ? [] : validateFileText(file.path, file.text) };
+      return {
+        ...file, issues: file.text === null ? [] : validateFileText(file.path, file.text),
+        streamUrl: file.binary ? this.links.url(projectId, file.path, req.authContext!.userId) : null,
+      };
     });
   }
 
-  /** The bytes as they are (images, PDFs, audio), for the web to show. */
+  /** The bytes as they are (images, PDFs, audio), for the web to show: streamed from disk, never held whole. */
   @Get('raw')
   @Roles('viewer')
   async raw(@Param('projectId') projectId: string, @Query('path') path: string, @Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
-    const file = await mapErrors(() => readWorkspaceBytes(this.workspace.dir(projectId), this.visible(path)));
+    const file = await mapErrors(() => statWorkspaceFile(this.workspace.dir(projectId), this.visible(path)));
     res.setHeader('Content-Type', file.mime);
+    res.setHeader('Content-Length', String(file.size));
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    return new StreamableFile(file.bytes);
+    return new StreamableFile(createReadStream(file.abs));
   }
 
   /** Body `{path, content, baseSha256?}`. 409 `file_conflict` (with `currentSha256`), 422 `read_only`. */

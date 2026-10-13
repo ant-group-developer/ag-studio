@@ -11,6 +11,7 @@ import type { Request } from 'express';
 import { listLessonProposals, saveThreadSummary, getThread } from '@ag-studio/engine';
 import { insertTeam, NO_DIRECTORY, realStudio, type RealStudio } from '../test/real-studio';
 import type { EngineService } from '../studio/engine.service';
+import { FileLinkService } from './file-links';
 import { FilesController } from './files.controller';
 import { PlaybookController } from './playbook.controller';
 import { ProjectsController } from './projects.controller';
@@ -37,7 +38,7 @@ describe('playbook and lessons (real studio.db)', () => {
     const ws = new WorkspaceService({ get: (k: string, d?: unknown) => (k === 'STUDIO_WORKSPACES_ROOT' ? root : d) } as unknown as ConfigService, engine);
     projects = new ProjectsController(engine, ws, NO_DIRECTORY);
     videos = new VideosController(engine, ws);
-    files = new FilesController(engine, ws);
+    files = new FilesController(engine, ws, new FileLinkService({ get: () => 's'.repeat(32) } as unknown as ConfigService));
     playbook = new PlaybookController(engine, ws);
     threads = new ThreadsController(engine);
     insertTeam(s.db, 'team-1', OWNER);
@@ -63,8 +64,8 @@ describe('playbook and lessons (real studio.db)', () => {
     const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
     const saved = await files.write(p.id, { path: 'channel/branding.md', content: "---\ntext_look: { text_color: '#FFFFFF', outline_color: '#FDFDFD', box_color: null, size: m }\n---\n", baseSha256: null }, req(OWNER));
     expect(saved.issues.map((i) => i.code)).toEqual(['text_look_no_contrast']);
-    expect((await files.content(p.id, 'channel/branding.md')).issues.map((i) => i.code)).toEqual(['text_look_no_contrast']);
-    expect((await files.content(p.id, 'CLAUDE.md')).issues).toEqual([]);
+    expect((await files.content(p.id, 'channel/branding.md', req(OWNER))).issues.map((i) => i.code)).toEqual(['text_look_no_contrast']);
+    expect((await files.content(p.id, 'CLAUDE.md', req(OWNER))).issues).toEqual([]);
   });
 
   it('a proposed lesson goes into memory/lessons.md when accepted', async () => {

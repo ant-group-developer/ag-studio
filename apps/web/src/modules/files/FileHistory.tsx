@@ -18,7 +18,8 @@ const AUTHOR_KEYS: Record<FileVersion["author_kind"], string> = { user: "ws.file
 export function FileHistory({ projectId, path, currentSha, canRestore, onRestored }: {
   projectId: string;
   path: string;
-  currentSha: string;
+  /** null: the file as it is now has no checksum (not text), so no version is marked as it. */
+  currentSha: string | null;
   canRestore: boolean;
   onRestored: () => void;
 }) {
@@ -35,7 +36,7 @@ export function FileHistory({ projectId, path, currentSha, canRestore, onRestore
     enabled: !!open,
   });
   const restore = useMutation({
-    mutationFn: (id: string) => client.restoreFileVersion(projectId, id, currentSha),
+    mutationFn: (id: string) => client.restoreFileVersion(projectId, id, currentSha ?? undefined),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["file", projectId, path] });
       void qc.invalidateQueries({ queryKey: ["file-versions", projectId, path] });

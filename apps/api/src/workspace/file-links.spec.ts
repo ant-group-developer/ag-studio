@@ -80,6 +80,12 @@ describe('workspace file links (real studio.db and folder)', () => {
     expect(part.status).toBe(206);
     expect(part.headers.get('content-range')).toBe('bytes 4-7/14');
     expect(await part.text()).toBe('0123');
+    // saved under its name when asked
+    const saved = await get(`${url}&download=1`);
+    expect(saved.status).toBe(200);
+    expect(saved.headers.get('content-type')).toContain('audio/mpeg');
+    expect(saved.headers.get('content-disposition')).toMatch(/^attachment; filename=.*nh.*1\.mp3/);
+    expect(whole.headers.get('content-disposition')).toBeNull();
   });
 
   it('refuses another file, another project, an altered or expired link, hidden folders, missing files and archived projects', async () => {

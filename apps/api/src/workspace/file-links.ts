@@ -23,7 +23,10 @@ export class FileLinkService {
     this.secret = config.get<string>('STUDIO_AGENT_TOKEN_SECRET') || randomBytes(32).toString('hex');
   }
 
-  /** The path (under the API's `/api`) that plays `path` of the project for 15 minutes, made for `userId`. */
+  /**
+   * The path (under the API's `/api`) that plays `path` of the project for 15 minutes, made for `userId`; with
+   * `&download=1` added, the browser saves the file under its name instead.
+   */
   url(projectId: string, path: string, userId: string, nowMs = Date.now()): string {
     const t = signFileLink({ project: projectId, path, sub: userId, exp: Math.floor(nowMs / 1000) + FILE_LINK_TTL_SECONDS }, this.secret);
     return `/api/projects/${encodeURIComponent(projectId)}/files/stream?path=${encodeURIComponent(path)}&t=${encodeURIComponent(t)}`;
@@ -41,9 +44,9 @@ export class FileLinkService {
 }
 
 /**
- * Plays a workspace file to a browser element that cannot send a bearer token (`<audio>`, `<video>`): no login, the
- * signed link instead, for the one file of the one project it names. Served from disk with ranges (206), so a player
- * seeks without reading the whole file.
+ * Plays a workspace file to a browser element that cannot send a bearer token (`<audio>`, `<video>`, `<img>`, a PDF
+ * frame, a download link): no login, the signed link instead, for the one file of the one project it names. Served
+ * from disk with ranges (206), so a player seeks without reading the whole file; `download=1` saves it under its name.
  */
 @Controller('projects/:projectId/files')
 export class FileStreamController {
@@ -55,7 +58,10 @@ export class FileStreamController {
 
   @Get('stream')
   @Public()
-  stream(@Param('projectId') projectId: string, @Query('path') path: string, @Query('t') token: string, @Res() res: Response): void {
+  stream(
+    @Param('projectId') projectId: string, @Query('path') path: string, @Query('t') token: string, @Res() res: Response,
+    @Query('download') download?: string,
+  ): void {
     let claims: FileLinkClaims;
     try {
       claims = this.links.verify(token);
@@ -79,6 +85,7 @@ export class FileStreamController {
       throw new NotFoundException({ code: 'not_found', message: `không có file ${rel}` });
     }
     if (!existsSync(abs) || !statSync(abs).isFile()) throw new NotFoundException({ code: 'not_found', message: `không có file ${rel}` });
+    if (download === '1') res.attachment(rel.split('/').pop()!);
     res.sendFile(abs, {
       dotfiles: 'allow', cacheControl: false, lastModified: true,
       headers: { 'Content-Type': mimeOf(rel), 'Cache-Control': `private, max-age=${FILE_LINK_TTL_SECONDS}`, 'X-Content-Type-Options': 'nosniff' },
