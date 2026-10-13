@@ -150,6 +150,49 @@ export interface AssetMediaResponse {
   expiresAt: string;
 }
 
+/** Where the prep of one footage stands at ag-go (mirror of `@ag-studio/ag-go-client`, contract H2 of plan 2026-10-13). */
+export type AssetPrepState = 'ready' | 'running' | 'missing' | 'failed';
+export type AssetPrepPhase = 'queued' | 'cutting' | 'transcribing';
+export type AssetPrepTranscriptStatus = 'none' | 'skipped' | 'done' | 'failed';
+
+export interface AssetPrepTranscript {
+  language: string | null;
+  alignment: 'word' | 'segment';
+  engine: string;
+  segments: { start: number; end: number; text: string; words: { word: string; start: number; end: number; score?: number }[] }[];
+}
+
+/** A ready prep: shots, a 480 px frame per shot and contact sheets (signed GET urls), the raw transcript. */
+export interface AssetPrep {
+  prepId: string;
+  preparedAt: string;
+  durationS: number;
+  width: number;
+  height: number;
+  fps: number | null;
+  hasAudio: boolean;
+  sourceKind: string;
+  watermarked: boolean;
+  scene: { threshold: number; minShotS: number; maxShotS: number };
+  shots: { n: number; in: number; out: number; frame: string; url: string }[];
+  sheets: { file: string; shots: number[]; url: string }[];
+  transcriptStatus: AssetPrepTranscriptStatus;
+  transcript: AssetPrepTranscript | null;
+}
+
+export interface AssetPrepItem {
+  assetId: string;
+  state: AssetPrepState;
+  phase: AssetPrepPhase | null;
+  progress: number | null;
+  error: string | null;
+  prep: AssetPrep | null;
+}
+
+export interface AssetPrepsResponse {
+  items: AssetPrepItem[];
+}
+
 export class AgGoClientError extends Error {
   constructor(
     public readonly status: number,
@@ -245,6 +288,16 @@ export class AgGoClient {
   /** GĐ2 (v3): get media URLs for one asset. */
   getAssetMedia(actAsUserId: string, assetId: string): Promise<AssetMediaResponse> {
     return this.request<AssetMediaResponse>('GET', `/footage/assets/${encodeURIComponent(assetId)}/media`, actAsUserId);
+  }
+
+  /** The prep of each footage (shots, frames, sheets, transcript when ready; else how far it is). */
+  getAssetPreps(actAsUserId: string, assetIds: string[]): Promise<AssetPrepsResponse> {
+    return this.request<AssetPrepsResponse>('POST', '/footage/assets/prep', actAsUserId, { assetIds });
+  }
+
+  /** Asks ag-go to prep missing or failed footage now (or to raise one waiting in a backfill); answers like `getAssetPreps`. */
+  runAssetPreps(actAsUserId: string, assetIds: string[]): Promise<AssetPrepsResponse> {
+    return this.request<AssetPrepsResponse>('POST', '/footage/assets/prep/run', actAsUserId, { assetIds });
   }
 }
 
