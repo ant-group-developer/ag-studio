@@ -11,6 +11,12 @@ Danh sách phân trang: query `page` (từ 1), `pageSize` (mặc định 20, t�
 tuỳ chọn; trả `Paged<T> = {items: T[], total, page, pageSize}`.
 
 - `GET /me` → `{userId, name, email, avatar, isAdmin}`
+- `GET /me/onboarding` → `{steps: {key, done, count}[], done, total: 7, links: {teamId, projectId, video: {projectId,
+  videoId} | null}}` — checklist "Bắt đầu", đếm trong các nhóm người gọi là thành viên (`key`: `team`, `project`,
+  `footage` = project/video ag-go đã thêm, `video`, `chat` = tin nhắn của chính người gọi, `preview`, `final` = job
+  render xong); `links` là nhóm/dự án làm gần nhất và video sửa gần nhất (cho nút "Đi tới").
+- `GET /me/prefs` → `{tourSeen: {projects, project}, checklistHidden}`; `PUT /me/prefs` (chỉ đổi trường gửi lên, không ghi
+  nhật ký hoạt động) → prefs đầy đủ. Lưu ở `user_prefs` (0041).
 - `GET /teams?page&pageSize&sortBy(name|createdAt)&sortOrder&q` → `Paged<Team & {role: TeamRole | null, isMember, memberCount, projectCount}>`
   (admin Studio thấy mọi nhóm — controller tự hỏi `StudioAdminService.isAdmin` vì route không có `@Roles`; `role` là vai
   của người gọi, null và `isMember: false` với admin không phải thành viên; `q` tìm theo tên)
