@@ -110,16 +110,6 @@ export function progressReader(onTime: (seconds: number) => void): (chunk: strin
   };
 }
 
-/** The sound of `src` as 16 kHz mono PCM WAV (what WhisperX reads); `false` when the file has no sound. */
-export async function extractAudio16k(ffmpeg: string, src: string, dest: string, signal?: AbortSignal): Promise<boolean> {
-  mkdirSync(dirname(dest), { recursive: true });
-  const r = await runTool(ffmpeg, ["-y", "-hide_banner", "-nostats", "-i", src, "-vn", "-map", "0:a:0?", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", dest],
-    { timeoutMs: DECODE_TIMEOUT_MS, ...(signal ? { signal } : {}) });
-  if (r.code !== 0 && /does not contain any stream|Output file .* does not contain|matches no streams/i.test(r.stderr)) return false;
-  check(r, `audio of ${src}`);
-  return true;
-}
-
 /** One frame at `t` seconds, `width` pixels wide (height kept in proportion, even), PNG or JPEG by extension. */
 export async function grabFrame(ffmpeg: string, src: string, t: number, dest: string, width: number): Promise<void> {
   mkdirSync(dirname(dest), { recursive: true });

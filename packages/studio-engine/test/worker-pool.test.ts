@@ -38,6 +38,7 @@ describe("the worker pool", () => {
     ffmpeg: "ffmpeg", ffprobe: "ffprobe", voiceDir: "voice",
     resolveAssets: async () => ({ items: [], missing: [] }), download: async () => {},
   };
+  const preps = { read: async () => ({ items: [] }), run: async () => ({ items: [] }) };
 
   it("caps Claude calls at the env value until someone saves one on the web", () => {
     w = world();
@@ -51,10 +52,12 @@ describe("the worker pool", () => {
     w = world();
     expect(Object.keys(projectJobHandlers(base()))).toEqual([]);
     expect(Object.keys(projectJobHandlers({ ...base(), youtubeApiKey: "k" }))).toEqual(["research"]);
+    // inputs come prepared from ag-go: no ffmpeg needed
+    expect(Object.keys(projectJobHandlers({ ...base(), preps }))).toEqual(["prepare_asset"]);
     expect(Object.keys(projectJobHandlers({ ...base(), media, thumbnails: fakeThumbnails() })).sort())
-      .toEqual(["export_premiere", "fit", "prepare_asset", "render_final", "render_preview", "style_watch", "thumbnail"]); // uploaded reference videos need only ffmpeg
+      .toEqual(["export_premiere", "fit", "render_final", "render_preview", "style_watch", "thumbnail"]); // uploaded reference videos need only ffmpeg
     const ytdlp = {} as YtDlp;
-    expect(Object.keys(projectJobHandlers({ ...base(), media, ytdlp })).sort())
+    expect(Object.keys(projectJobHandlers({ ...base(), media, preps, ytdlp })).sort())
       .toEqual(["export_premiere", "fit", "prepare_asset", "render_final", "render_preview", "research", "style_watch"]);
     // reference downloads turned off: uploaded reference videos are still watched (YouTube ones say why not)
     expect(Object.keys(projectJobHandlers({ ...base(), media, ytdlp, referenceDownloads: false }))).toContain("style_watch");

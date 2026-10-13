@@ -50,19 +50,3 @@ export function farmLanes(o: FarmLanesOptions): () => number {
     return Math.min(max, base + idle);
   };
 }
-
-/** At most `n` at once; the rest wait in order. */
-export function limiter(n: number): <T>(task: () => Promise<T>) => Promise<T> {
-  let active = 0;
-  const waiting: (() => void)[] = [];
-  return async (task) => {
-    if (active >= n) await new Promise<void>((res) => waiting.push(res));
-    else active++;
-    try {
-      return await task();
-    } finally {
-      const next = waiting.shift();
-      if (next) next(); else active--;
-    }
-  };
-}
