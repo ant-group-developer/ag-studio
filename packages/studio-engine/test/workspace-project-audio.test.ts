@@ -2,7 +2,10 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import type { TimelineV4 } from "@harness/contracts";
 import {
+  clearVideoMusic, createVideo, importVideoMusic, latestVideoRevision, musicForVideo, saveVideoRevision, setVideoLibraryMusic, videoLibraryTrack,
+  videoMusicSummary, videoMusicToTimeline, videoOwnMusic,
   clearProjectAudio, createProject, declineProjectNarration, importProjectAudio, importProjectMusic, projectAudio, projectAudioSummary, projectLibraryTrack, projectMusic,
   projectNarrationVoice, saveLibraryMusic, setProjectLibraryMusic,
 } from "../src/index.js";
@@ -45,6 +48,59 @@ describe("project audio", () => {
     expect(projectLibraryTrack(s.db, s.project.id)?.track_id).toBe("m-sang");
     expect(projectAudioSummary(s.db, s.project.id).music).toBe('bài "Sáng sớm" trong kho nhạc (120 s), -18 dB, nhỏ lại khi có lời');
     expect(() => setProjectLibraryMusic(s.db, s.project.id, { ...track, active: false })).toThrow(/gỡ/);
+  });
+});
+
+describe("a video's own music", () => {
+  const timeline = (videoId: string): TimelineV4 => ({
+    schema_version: "studio.timeline/v4", production_id: "p", episode_id: videoId, canvas: { width: 1920, height: 1080 }, fps: 30,
+    language: "vi", edit_style: "cut",
+    clips: [{ clip_id: "C001", asset_id: "a1", section_title: null, in: 0, out: 4, shot_id: null, line_id: null, transition_out: { kind: "cut", seconds: 0 } }],
+    texts: [], narration: { voice: "none", lead_seconds: 0.3, lines: [] }, captions: { mode: "none" },
+    music: { track: "library:music/mood.m4a", gain_db: -18, ducking: true }, source_audio: { muted: false },
+    assets: { a1: { title: "Phố", summary_vi: "…", duration_s: 10, orientation: "landscape" } }, alternates: [],
+  });
+  const track = (id: string) => ({
+    schema_version: "harness.music-track/v1" as const, track_id: id, display_name: id, file: `library:music/${id}.m4a`, mood: ["calm"],
+    duration_seconds: 90, loop_ok: true, origin: "own" as const, origin_note: "x", checksum: `sha256:${"c".repeat(64)}`, active: true,
+    created_at: NOW, updated_at: NOW,
+  });
+
+  it("overrides the project's; cleared, the video takes the project's again; nothing chosen, Studio picks by mood", () => {
+    const s = setup();
+    const v = createVideo(s.db, s.project.id, { title: "Tập 1", createdBy: "u" }, NOW);
+    expect(musicForVideo(s.db, s.project.id, v.id)).toBeNull();
+    expect(videoMusicSummary(s.db, s.project.id, v.id)).toMatch(/^nhạc của dự án: chưa chọn/);
+    saveLibraryMusic(s.db, track("du-an"));
+    saveLibraryMusic(s.db, track("rieng"));
+    setProjectLibraryMusic(s.db, s.project.id, track("du-an"));
+    expect(musicForVideo(s.db, s.project.id, v.id)).toEqual({ music: { track: "library:music/du-an.m4a", gain_db: -18, ducking: true }, from: "project" });
+    setVideoLibraryMusic(s.db, v.id, track("rieng"), { gainDb: -20 });
+    expect(musicForVideo(s.db, s.project.id, v.id)).toEqual({ music: { track: "library:music/rieng.m4a", gain_db: -20, ducking: true }, from: "video" });
+    expect(videoLibraryTrack(s.db, v.id)?.track_id).toBe("rieng");
+    expect(videoMusicSummary(s.db, s.project.id, v.id)).toBe('nhạc riêng của video: bài "rieng" trong kho nhạc, -20 dB, nhỏ lại khi có lời');
+    expect(projectMusic(s.db, s.project.id)?.track).toBe("library:music/du-an.m4a");
+    clearVideoMusic(s.db, v.id);
+    expect(videoOwnMusic(s.db, v.id)).toBeNull();
+    expect(musicForVideo(s.db, s.project.id, v.id)?.from).toBe("project");
+  });
+
+  it("the latest timeline takes the video's music as a new revision; nothing is written without a timeline or a change", () => {
+    const s = setup();
+    const dir = mkdtempSync(join(tmpdir(), "video-music-"));
+    const v = createVideo(s.db, s.project.id, { title: "Tập 1", createdBy: "u" }, NOW);
+    const follow = () => videoMusicToTimeline(s.db, { workspaceDir: dir, projectId: s.project.id, videoId: v.id, authorId: "u" });
+    saveLibraryMusic(s.db, track("rieng"));
+    setVideoLibraryMusic(s.db, v.id, track("rieng"));
+    expect(follow()).toBeNull();
+    saveVideoRevision(s.db, v.id, { baseRevision: 0, data: timeline(v.id), authorId: "agent", label: "fit" });
+    expect(follow()).toBe(2);
+    expect(latestVideoRevision(s.db, v.id)).toMatchObject({ revision: 2, label: "music", data: { music: { track: "library:music/rieng.m4a" }, clips: [{ clip_id: "C001" }] } });
+    expect(follow()).toBeNull();
+    // back to nothing chosen anywhere: the timeline keeps what it has (Studio's pick by mood)
+    clearVideoMusic(s.db, v.id);
+    expect(follow()).toBeNull();
+    expect(latestVideoRevision(s.db, v.id)?.revision).toBe(2);
   });
 });
 
@@ -103,5 +159,13 @@ describe.skipIf(!hasFfmpeg())("project audio import (needs ffmpeg + ffprobe)", (
     await expect(importProjectMusic(d, { projectId: s.project.id, files: [...files, { path: short, filename: "ngan.wav" }] })).rejects.toThrow(/^ngan\.wav: file ngắn hơn 5 giây/);
     await expect(importProjectMusic(d, { projectId: s.project.id, files: [] })).rejects.toThrow(/ít nhất một file/);
     expect(projectMusic(s.db, s.project.id)?.track).toBe(butt.track);
+
+    // a video's own, joined the same way and kept under the project
+    const v = createVideo(s.db, s.project.id, { title: "Tập 1", createdBy: "u" }, NOW);
+    const own = await importVideoMusic(d, { videoId: v.id, files: files.slice(1), crossfadeS: 1 });
+    expect(own).toMatchObject({ track: expect.stringContaining(`library:studio/projects/${s.project.id}/music/`), crossfade_s: 1, parts: [{ filename: "hai.wav" }, { filename: "ba.wav" }] });
+    expect(videoOwnMusic(s.db, v.id)?.track).toBe(own.track);
+    expect(projectMusic(s.db, s.project.id)?.track).toBe(butt.track);
+    expect(videoMusicSummary(s.db, s.project.id, v.id)).toBe("nhạc riêng của video (2 bài ghép, chuyển mờ 1 s; 14 s), -18 dB, nhỏ lại khi có lời");
   });
 });

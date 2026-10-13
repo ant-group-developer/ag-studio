@@ -3,7 +3,7 @@
  *
  * - Voice store lines not read for `voiceDays` (a line read again is only one farm job away).
  * - Project audio on the bucket (`library/studio/projects/<id>/voice|music/…`) nothing points at any more: not the
- *   project, not any video revision. Only past `audioGraceDays`.
+ *   project, not a video's own music, not any video revision. Only past `audioGraceDays`.
  * - Files a browser uploaded to the bucket (`uploads/…`) Studio never took, past `RAW_UPLOAD_HOURS`.
  * - Scratch folders a crashed worker left: `<dataRoot>/job-runs/<job>` of jobs no longer running and
  *   `<dataRoot>/agent-runs/<message>` of turns no longer running, past `SCRATCH_HOURS`.
@@ -54,7 +54,7 @@ function libraryKeys(text: string | null | undefined): string[] {
   return [...(text ?? "").matchAll(/library:(studio\/[^"\\\s]+)/g)].map((m) => `library/${m[1]}`);
 }
 
-/** Project audio nothing points at (the project's voice and music, any video revision), written before `cutoff`. */
+/** Project audio nothing points at (the project's voice and music, a video's music, any video revision), written before `cutoff`. */
 export async function sweepProjectAudio(db: StudioDb, bucket: StudioBucket, cutoff: Date): Promise<number> {
   const keep = new Set<string>();
   for (const r of db.all<{ voice: string | null; music: string | null }>("SELECT voice, music FROM projects")) {
@@ -62,6 +62,9 @@ export async function sweepProjectAudio(db: StudioDb, bucket: StudioBucket, cuto
   }
   for (const r of db.all<{ data: string }>("SELECT data FROM video_revisions WHERE data LIKE '%library:studio/%'")) {
     for (const k of libraryKeys(r.data)) keep.add(k);
+  }
+  for (const r of db.all<{ music: string }>("SELECT music FROM videos WHERE music IS NOT NULL")) {
+    for (const k of libraryKeys(r.music)) keep.add(k);
   }
   const stale = (await bucket.list("library/studio/projects/"))
     .filter((o) => !keep.has(o.key) && o.lastModified.getTime() < cutoff.getTime()).map((o) => o.key);

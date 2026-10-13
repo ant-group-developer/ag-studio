@@ -15,7 +15,7 @@ import { AudioImportError, MUSIC_DEFAULTS, prepareMusic, prepareMusicMix, prepar
 import { listLibraryMusic } from "../music-library.js";
 import type { StudioDb } from "../studio-db.js";
 import { productionVoice, type NarrationVoice } from "../voice.js";
-import { requireProject } from "./project-db.js";
+import { requireProject, requireVideo } from "./project-db.js";
 import { listSources } from "./sources-db.js";
 
 /** Audio files a person uploads (Inputs tab or Files tab), by extension. */
@@ -67,9 +67,7 @@ export function projectAudioFiles(db: StudioDb, dir: string, projectId: string):
 
 /** The library track the project's music is, if it is one (`library:music/…`). */
 export function projectLibraryTrack(db: StudioDb, projectId: string): MusicTrack | null {
-  const m = projectAudio(db, projectId).music;
-  if (!m || !m.track.startsWith("library:music/")) return null;
-  return listLibraryMusic(db).find((t) => t.file === m.track) ?? null;
+  return libraryTrackOf(db, projectAudio(db, projectId).music);
 }
 
 /**
@@ -78,14 +76,79 @@ export function projectLibraryTrack(db: StudioDb, projectId: string): MusicTrack
  */
 export function setProjectLibraryMusic(db: StudioDb, projectId: string, track: MusicTrack, o: { gainDb?: number; ducking?: boolean } = {}): ProductionMusic {
   requireProject(db, projectId);
+  const music = libraryMusic(track, o);
+  db.run("UPDATE projects SET music = ?, updated_at = ? WHERE id = ?", [JSON.stringify(music), new Date().toISOString(), projectId]);
+  return music;
+}
+
+/** A library track as music (a retired one cannot be picked). */
+function libraryMusic(track: MusicTrack, o: { gainDb?: number; ducking?: boolean }): ProductionMusic {
   if (!track.active) throw new AudioImportError("audio_invalid", "bài này đã bị gỡ khỏi kho nhạc");
   const sha = track.checksum.startsWith("sha256:") ? track.checksum.slice("sha256:".length) : track.checksum;
-  const music = ProductionMusicSchema.parse({
+  return ProductionMusicSchema.parse({
     track: track.file, gain_db: o.gainDb ?? MUSIC_DEFAULTS.gain_db, ducking: o.ducking ?? MUSIC_DEFAULTS.ducking,
     ...(sha ? { sha256: sha } : {}), ...(track.duration_seconds > 0 ? { duration_s: track.duration_seconds } : {}),
   });
-  db.run("UPDATE projects SET music = ?, updated_at = ? WHERE id = ?", [JSON.stringify(music), new Date().toISOString(), projectId]);
+}
+
+const libraryTrackOf = (db: StudioDb, m: ProductionMusic | null): MusicTrack | null =>
+  (m && m.track.startsWith("library:music/") ? listLibraryMusic(db).find((t) => t.file === m.track) ?? null : null);
+
+// ---------------------------------------------------------------------------
+// A video's own music: overrides the project's (video → project → Studio's pick by mood when the timeline is built)
+// ---------------------------------------------------------------------------
+
+/** A video's own music, or null (it takes the project's). */
+export function videoOwnMusic(db: StudioDb, videoId: string): ProductionMusic | null {
+  return parse(db.get<{ music: string | null }>("SELECT music FROM videos WHERE id = ?", [videoId])?.music ?? null, ProductionMusicSchema);
+}
+
+/** The library track a video's own music is, if it is one. */
+export function videoLibraryTrack(db: StudioDb, videoId: string): MusicTrack | null {
+  return libraryTrackOf(db, videoOwnMusic(db, videoId));
+}
+
+/** The music a video's timeline takes, and whose: its own, else the project's; null when Studio picks by mood. */
+export function musicForVideo(db: StudioDb, projectId: string, videoId: string): { music: StudioMusic; from: "video" | "project" } | null {
+  const own = videoOwnMusic(db, videoId);
+  if (own) return { music: studioMusicOf(own), from: "video" };
+  const project = projectMusic(db, projectId);
+  return project ? { music: project, from: "project" } : null;
+}
+
+function setVideoMusic(db: StudioDb, videoId: string, music: ProductionMusic | null): void {
+  db.run("UPDATE videos SET music = ?, updated_at = ? WHERE id = ?", [music ? JSON.stringify(music) : null, new Date().toISOString(), videoId]);
+}
+
+/** One file or several joined (`importMusic`) become a video's own music. */
+export async function importVideoMusic(d: AudioImportDeps, o: MusicFiles & { videoId: string }): Promise<ProductionMusic> {
+  const v = requireVideo(d.db, o.videoId);
+  const music = await importMusic(d, v.project_id, o);
+  setVideoMusic(d.db, v.id, music);
   return music;
+}
+
+/** A library track becomes a video's own music. */
+export function setVideoLibraryMusic(db: StudioDb, videoId: string, track: MusicTrack, o: { gainDb?: number; ducking?: boolean } = {}): ProductionMusic {
+  requireVideo(db, videoId);
+  const music = libraryMusic(track, o);
+  setVideoMusic(db, videoId, music);
+  return music;
+}
+
+/** The video takes the project's music again. */
+export function clearVideoMusic(db: StudioDb, videoId: string): void {
+  requireVideo(db, videoId);
+  setVideoMusic(db, videoId, null);
+}
+
+/** What the agent and the web are told of a video's music. */
+export function videoMusicSummary(db: StudioDb, projectId: string, videoId: string): string {
+  const own = videoOwnMusic(db, videoId);
+  if (!own) return `nhạc của dự án: ${projectAudioSummary(db, projectId).music}`;
+  const lib = libraryTrackOf(db, own);
+  return lib ? `nhạc riêng của video: bài "${lib.display_name}" trong kho nhạc, ${own.gain_db} dB${own.ducking ? ", nhỏ lại khi có lời" : ""}`
+    : ownMusicWords(own, "của video");
 }
 
 export interface ProjectAudio { voice: ProductionVoice | null; music: ProductionMusic | null }
