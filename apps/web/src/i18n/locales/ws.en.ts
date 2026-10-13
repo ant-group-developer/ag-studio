@@ -22,6 +22,9 @@ export const wsEn: Messages<typeof wsVi> = {
     searchMore: "Type a name to search all {{total}} teams",
     notMember: "Not a member",
     adminView: "You are viewing as an admin (you are not in this team).",
+    project: "Project",
+    allProjects: "All the team's projects",
+    noProjectFound: "No project matches",
   },
   resize: {
     nav: "Resize the video column",

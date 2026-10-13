@@ -44,7 +44,7 @@ export function ProjectPage() {
   const { data: project, error, isLoading } = useQuery({ queryKey: ["project", projectId], queryFn: () => client.getProject(projectId), enabled: !!projectId });
   const { data: threads } = useQuery({ queryKey: ["threads", projectId], queryFn: () => client.listThreads(projectId), enabled: !!projectId });
   const { data: video } = useQuery({ queryKey: ["video", videoId], queryFn: () => client.getVideo(videoId!), enabled: !!videoId });
-  const { atLeast, ready: roleReady, teamName } = useTeamRole(project?.teamId);
+  const { atLeast, ready: roleReady } = useTeamRole(project?.teamId);
   useProjectEvents(projectId || null);
 
   // the chat in the middle: the video's thread, the one in the URL, or the channel's first thread
@@ -86,9 +86,8 @@ export function ProjectPage() {
     ...(widths.nav ? { "--ws-nav-w": `${widths.nav}px` } : {}),
     ...(widths.aside ? { "--ws-aside-w": `${widths.aside}px` } : {}),
   } as CSSProperties;
+  // the team and the project are the header's switches; then the video or the chat
   const crumbs = [
-    ...(teamName ? [{ label: teamName, to: `/t/${project.teamId}` }] : []),
-    { label: project.name, to: `/p/${project.id}` },
     ...(currentVideo ? [{ label: currentVideo.title }] : thread && thread.kind === "project" ? [{ label: thread.title }] : []),
   ];
   const key = threadId ?? "";
@@ -110,7 +109,7 @@ export function ProjectPage() {
   const learning: Learning = { useLessons: thread?.useLessons ?? true, threads: (thread?.refs ?? []).map((r) => ({ threadId: r.threadId, mode: r.mode })) };
 
   return (
-    <WorkspaceShell teamId={project.teamId} crumbs={crumbs} actions={<ActivityButton projectId={project.id} />}>
+    <WorkspaceShell teamId={project.teamId} project={project} crumbs={crumbs} actions={<ActivityButton projectId={project.id} />}>
       <div className="ws-body" ref={body} style={style}>
         <ProjectNav project={project} videos={project.videos} current={{ threadId: videoId ? undefined : threadId ?? undefined, videoId }} canCreate={atLeast("editor")} />
         <main className="ws-main">

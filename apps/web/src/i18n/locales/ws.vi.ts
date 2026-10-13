@@ -18,6 +18,9 @@ export const wsVi = {
     searchMore: "Gõ tên để tìm trong cả {{total}} nhóm",
     notMember: "Không là thành viên",
     adminView: "Bạn đang xem với quyền admin (bạn không ở nhóm này).",
+    project: "Dự án",
+    allProjects: "Mọi dự án của nhóm",
+    noProjectFound: "Không có dự án nào khớp",
   },
   resize: {
     nav: "Đổi độ rộng cột video",

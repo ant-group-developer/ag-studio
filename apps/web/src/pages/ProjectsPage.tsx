@@ -43,7 +43,7 @@ export function ProjectsPage() {
   const { teamId = "" } = useParams();
   const navigate = useNavigate();
   const client = useWorkspaceClient();
-  const { atLeast, ready, teamName } = useTeamRole(teamId || undefined);
+  const { atLeast, ready } = useTeamRole(teamId || undefined);
   const [creating, setCreating] = useState(false);
   const [find, setFind] = useState("");
   const [sort, setSort] = useState<{ sortBy: SortField; sortOrder: SortDirection }>({ sortBy: "lastActivityAt", sortOrder: "desc" });
@@ -86,7 +86,7 @@ export function ProjectsPage() {
   ];
 
   return (
-    <WorkspaceShell teamId={teamId} crumbs={teamName ? [{ label: teamName }] : []}>
+    <WorkspaceShell teamId={teamId}>
       <main className="ws-page">
         <div className="ws-page__inner">
           <div className="ws-page__head">

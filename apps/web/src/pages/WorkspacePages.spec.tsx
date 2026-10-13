@@ -268,6 +268,29 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     expect(await screen.findByRole("heading", { name: "Ghi chú" })).toBeInTheDocument();
   });
 
+  it("the breadcrumb is the team, then the project (each a switch), then the video; the team's name shows once", async () => {
+    ws.getThread.mockResolvedValue({ ...thread([]), id: "t-v2", videoId: "v2", kind: "video", title: "Huế mưa" });
+    ws.listProjects.mockResolvedValue({ projects: [
+      { ...project, videoCount: 2, lastActivityAt: NOW },
+      { ...project, id: "p2", name: "Ẩm thực Huế", videoCount: 0, lastActivityAt: NOW },
+    ] });
+    mount("/p/p1/v/v2");
+    const crumbs = await screen.findByRole("navigation", { name: "Vị trí" });
+    await waitFor(() => expect(within(crumbs).getByText("Du lịch chậm")).toBeInTheDocument());
+    expect(within(crumbs).getAllByText("Du lịch")).toHaveLength(1);
+    expect(within(crumbs).getByText("Huế mưa")).toBeInTheDocument();
+    expect(within(crumbs).getByRole("combobox", { name: "Nhóm" })).toBeInTheDocument();
+    const picker = within(crumbs).getByRole("combobox", { name: "Dự án" });
+    fireEvent.mouseDown(picker);
+    fireEvent.change(picker, { target: { value: "ẩm" } });
+    fireEvent.click(await screen.findByText("Ẩm thực Huế", { selector: ".ant-select-item-option-content" }));
+    await waitFor(() => expect(ws.getProject).toHaveBeenCalledWith("p2"));
+    // back to the team's list from the project switch
+    fireEvent.mouseDown(await screen.findByRole("combobox", { name: "Dự án" }, { timeout: 5000 }));
+    fireEvent.click(await screen.findByRole("button", { name: "Mọi dự án của nhóm" }));
+    expect(await screen.findByRole("heading", { name: "Dự án" })).toBeInTheDocument();
+  });
+
   it("a new video's empty chat tells what to say, naming the AI", async () => {
     ws.getThread.mockResolvedValue({ ...thread([]), id: "t-v2", videoId: "v2", kind: "video", title: "Huế mưa" });
     mount("/p/p1/v/v2");

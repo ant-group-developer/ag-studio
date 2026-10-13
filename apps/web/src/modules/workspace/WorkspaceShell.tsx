@@ -8,6 +8,7 @@ import { useStudioClient } from "../../api/studio-client";
 import { rememberedTeam } from "../../helpers/last-team";
 import { useAppUserMenu } from "../common/use-app-user-menu";
 import { NewTeamModal } from "./NewTeamModal";
+import { ProjectPicker } from "./ProjectPicker";
 import { TeamPicker } from "./TeamPicker";
 import "./workspace.css";
 
@@ -28,9 +29,15 @@ export function useTeam(teamId: string | undefined) {
   return useQuery({ queryKey: ["team", teamId], queryFn: () => client.getTeam(teamId!), enabled: !!teamId, staleTime: 60_000 });
 }
 
-/** Header of the workspace screens: brand, the team (switch, make one, manage them), where you are, the person's menu. */
-export function WorkspaceShell({ teamId, crumbs = [], actions, children }: {
+/**
+ * Header of the workspace screens: brand, then where you are as one breadcrumb — the team (switch, make one, manage
+ * them), the project (switch within the team), then the page's own crumbs — and the person's menu.
+ */
+export function WorkspaceShell({ teamId, project, crumbs = [], actions, children }: {
   teamId?: string | undefined;
+  /** The page's project: the crumb after the team, a switch to the team's other projects. */
+  project?: { id: string; name: string } | undefined;
+  /** What follows the team (and the project): a video, a chat, the page's title. */
   crumbs?: Crumb[];
   actions?: ReactNode;
   children: ReactNode;
@@ -51,15 +58,22 @@ export function WorkspaceShell({ teamId, crumbs = [], actions, children }: {
     <div className="ws-app">
       <header className="ws-header">
         <Link to="/" className="ws-header__brand"><img src="/favicon.png" alt="" />{t("app.title")}</Link>
-        {teams && items.length > 0 ? (
-          <TeamPicker value={shown} teams={teams} current={current} isAdmin={isAdmin} onNewTeam={() => setNewTeam(true)} />
-        ) : teams ? (
-          <button type="button" className="ws-icon-button ws-icon-button--outline" onClick={() => setNewTeam(true)}>
-            <Plus size={14} aria-hidden />{t("ws.shell.newTeam")}
-          </button>
-        ) : null}
-        {crumbs.length > 0 ? (
+        {teams || crumbs.length > 0 ? (
           <nav className="ws-crumbs" aria-label={t("ws.shell.breadcrumbs")}>
+            {teams ? <ChevronRight size={14} aria-hidden /> : null}
+            {teams && items.length > 0 ? (
+              <TeamPicker value={shown} teams={teams} current={current} isAdmin={isAdmin} onNewTeam={() => setNewTeam(true)} />
+            ) : teams ? (
+              <button type="button" className="ws-icon-button ws-icon-button--outline" onClick={() => setNewTeam(true)}>
+                <Plus size={14} aria-hidden />{t("ws.shell.newTeam")}
+              </button>
+            ) : null}
+            {teamId && project ? (
+              <>
+                <ChevronRight size={14} aria-hidden />
+                <ProjectPicker teamId={teamId} project={project} />
+              </>
+            ) : null}
             {crumbs.map((c, i) => (
               <Fragment key={`${i}-${c.label}`}>
                 <ChevronRight size={14} aria-hidden />
