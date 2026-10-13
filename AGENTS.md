@@ -173,7 +173,10 @@ nhưng không code nào đọc.
   (editor) thì lấy kho nhạc theo mood của kế hoạch dựng/branding (`music-library.ts`). API cần `STUDIO_FFMPEG_PATH` để nhận
   file audio (ffprobe mặc định cạnh ffmpeg như worker; `GET audio` trả `enabled`). Audio tải lên ≤ 100 MB, file khác ≤ 50 MB.
   Web: thẻ "Giọng đọc và nhạc nền" ở đầu tab Đầu vào (`inputs/AudioControls.tsx`, `AudioCard`): tải lên rồi dùng ngay, chọn
-  file đã tải, kho nhạc (nghe thử), không lời dẫn, tự chọn theo mood; nút thiếu vai/thiếu ffmpeg mờ kèm lý do, lỗi tải hiện
+  file đã tải (hộp hai cột `inputs/MusicPicker.tsx`: tìm, tích, nghe thử từng bài, thời lượng đọc từ metadata của `<audio>`
+  | thứ tự phát kéo thả bằng `@dnd-kit` (chuột và bàn phím), tổng thời lượng trừ chuyển mờ; file nghe qua `listenUrl` =
+  `GET projects/:id/files/stream?path&t`, link ký 15 phút `workspace/file-link.ts`, route `@Public()` có Range), kho nhạc
+  (nghe thử), không lời dẫn, tự chọn theo mood; nút thiếu vai/thiếu ffmpeg mờ kèm lý do, lỗi tải hiện
   lỗi + Thử lại (không biến mất).
 - Thumbnail (`workspace/thumbnails.ts`) cắt khung từ bản render và vẽ chữ trên máy Studio (ffmpeg bất đồng bộ, font Arial của
   hệ thống qua `STUDIO_FONTS_DIR`, không ship font). Quy chuẩn & skill của nhóm (`team_skills`) thành skill của agent khi dự
@@ -191,7 +194,11 @@ nhưng không code nào đọc.
   Cột phải: Xem trước (trang video), Tệp, Đầu vào, Nghiên cứu, Cài đặt. Việc đang chạy: nút "Đang chạy" ở đầu trang (agent,
   tool, job; Dừng). `/queue` (việc đang chạy của mọi dự án người xem thấy, slot Claude, máy farm; admin đặt cap và tên AI),
   `/audit` (nhật ký hoạt động), `/stats` (thống kê chat Claude theo nhóm/dự án/video/người; hai màn này cho admin và owner
-  nhóm), `/music` (kho nhạc), `/teams`, `/teams/:teamId` (thành viên, skill, thống kê và nhật ký của nhóm; layout quản trị).
+  nhóm), `/music` (kho nhạc), `/teams`, `/teams/:teamId` (thành viên, skill, thống kê và nhật ký của nhóm; cùng `WorkspaceShell`,
+  breadcrumb "Quản lý nhóm › tên nhóm"). Mọi `<Table>`/`<ProTable>` có `sticky` (`helpers/sticky-table-header.ts`: trang
+  workspace cuộn trong `.ws-page` nên `PAGE_TABLE_STICKY`, bảng trong hộp cuộn khác dùng `stickyIn`); spec
+  `sticky-table-header.spec.ts` quét mã nguồn và báo bảng thiếu. Danh sách dự án có người tạo (`creator` từ Account API, lọc
+  "Do tôi tạo").
   Chọn project ag-go: drawer toàn màn hình dựng lại **y như trang Projects của ag-go-web** (`modules/inputs/ag-go-projects/`:
   sidebar lọc, ô tìm có gợi ý, sort, list/grid, thẻ và CSS chép từ `project-grid-view` của ag-go; `/projects`, lookup và
   `/assets/:id/preview-url` của ag-go gọi thẳng). Chỉ liệt kê project của **menu "Dự án"** của ag-go
@@ -211,7 +218,7 @@ nhưng không code nào đọc.
   Tên tool trong chat/nhật ký: `ws.tool.<tên>` ở `ws.vi.ts`/`ws.en.ts` — thêm tool cho agent thì thêm nhãn cả hai ngôn ngữ
   (`agent-chat/labels.spec.ts` đọc tên tool từ engine và báo thiếu). Không bao giờ hiện uuid thay tên video: `inputs_add` bắt
   buộc `name`; nguồn cũ thiếu tên được API đặt lại khi liệt kê nguồn. Biến màu `--ws-*` ở `:root` (drawer/modal là portal).
-  Ô chọn nhóm trên thanh trên (`TeamPicker`) có
+  Breadcrumb trên thanh trên là chỗ đổi nhóm và dự án: `AG Studio › [nhóm ▾] › [dự án ▾] › video/luồng`. Ô nhóm (`TeamPicker`) có
   "Tạo nhóm mới" và "Quản lý nhóm", gõ để tìm qua `GET /teams?q` (không cắt ở trang đầu); admin Studio thấy thêm "Nhóm
   khác" (nhóm không là thành viên, `isMember: false`), vẫn sửa được như owner, và có dải "Bạn đang xem với quyền admin" ở
   những nhóm đó. Tên nhóm trên breadcrumb và vai lấy từ `GET /teams/:id` (`useTeam`, `useTeamRole` có `ready` để trang
