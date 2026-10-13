@@ -3,7 +3,7 @@
  * browser save the file (Content-Disposition: attachment) instead of opening it.
  */
 import { describe, expect, it } from "vitest";
-import { attachmentDisposition, MemoryBucket, S3Bucket } from "../src/index.js";
+import { attachmentDisposition, isRawUploadKey, MemoryBucket, rawUploadKey, S3Bucket } from "../src/index.js";
 
 const bucket = new S3Bucket({ endpoint: "https://r2.example.com", bucket: "studio", accessKeyId: "AKID", secretAccessKey: "secret" });
 
@@ -23,6 +23,23 @@ describe("signed GET URLs", () => {
     expect(attachmentDisposition("Phở sáng \"Hà Nội\".mp4")).toBe(
       "attachment; filename=\"Pho sang _Ha Noi_.mp4\"; filename*=UTF-8''Ph%E1%BB%9F%20s%C3%A1ng%20%22H%C3%A0%20N%E1%BB%99i%22.mp4",
     );
+  });
+
+  it("a PUT link signs the content type the browser must send", async () => {
+    const url = new URL(await bucket.signedPutUrl("uploads/p1/x", 900, { contentType: "audio/mpeg" }));
+    expect(url.pathname).toBe("/studio/uploads/p1/x");
+    expect(url.searchParams.get("X-Amz-Expires")).toBe("900");
+    expect(url.searchParams.get("X-Amz-SignedHeaders")).toBe("content-type;host");
+    expect(url.searchParams.get("content-type")).toBeNull();
+  });
+
+  it("a raw upload key is the scope's and nothing else", () => {
+    const key = rawUploadKey("p1");
+    expect(key).toMatch(/^uploads\/p1\/[0-9a-f-]{36}$/);
+    expect(isRawUploadKey(key, "p1")).toBe(true);
+    expect(isRawUploadKey(key, "p2")).toBe(false);
+    expect(isRawUploadKey("uploads/p1/../../library/music/a.m4a", "p1")).toBe(false);
+    expect(isRawUploadKey("library/studio/projects/p1/music/a.m4a", "p1")).toBe(false);
   });
 
   it("the memory bucket notes the download name", async () => {

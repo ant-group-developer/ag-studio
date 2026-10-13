@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App as AntApp } from "antd";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n/config";
-import type { RenderLink, RenderView, TeamRoleName } from "../../api/workspace-client";
+import type { JobView, RenderLink, RenderView, TeamRoleName } from "../../api/workspace-client";
 
 window.matchMedia ??= ((query: string) => ({
   matches: false, media: query, onchange: null,
@@ -25,7 +25,7 @@ const ws = {
   cancelJob: vi.fn(),
 };
 vi.mock("../../api/workspace-client", async (orig) => ({ ...(await orig<object>()), useWorkspaceClient: () => ws }));
-const { VideoPanel } = await import("./VideoPanel");
+const { VideoPanel, jobsToShow } = await import("./VideoPanel");
 
 const ORDER: TeamRoleName[] = ["viewer", "editor", "producer", "owner"];
 const wrap = (node: React.ReactNode) => render(
@@ -148,5 +148,25 @@ describe("video preview tab", { timeout: 20_000 }, () => {
     await waitFor(() => expect(ws.listRenders.mock.calls.length).toBeGreaterThanOrEqual(3));
     expect(saved).toEqual([zip]);
     click.mockRestore();
+  });
+});
+
+describe("jobs over the player", () => {
+  const at = (m: number) => new Date(Date.parse("2026-10-13T00:00:00Z") + m * 60_000).toISOString();
+  const job = (id: string, over: Partial<JobView>): JobView => ({
+    id, projectId: "p", videoId: "v", threadId: null, kind: "render_preview", status: "failed", title: id, request: null, result: null, error: "farm",
+    phase: null, progress: null, etaSeconds: null, nodeId: null, cancelRequested: false, createdBy: "u", createdAt: at(0), startedAt: at(0), finishedAt: at(1), ...over,
+  });
+
+  it("a failed render shows until a render of its kind works again or is tried again", () => {
+    const failed = job("f", {});
+    expect(jobsToShow([failed], []).map((j) => j.id)).toEqual(["f"]);
+    expect(jobsToShow([failed], [r({ jobId: "ok", finishedAt: at(5) })])).toEqual([]);
+    expect(jobsToShow([failed], [r({ jobId: "old", finishedAt: at(-5) })]).map((j) => j.id)).toEqual(["f"]);
+    expect(jobsToShow([failed], [r({ jobId: "fin", kind: "render_final", finishedAt: at(5) })]).map((j) => j.id)).toEqual(["f"]);
+    const retry = job("again", { status: "running", createdAt: at(3), finishedAt: null });
+    expect(jobsToShow([retry, failed], []).map((j) => j.id)).toEqual(["again"]);
+    const otherKind = job("fit", { kind: "fit", createdAt: at(3), finishedAt: at(4) });
+    expect(jobsToShow([otherKind, failed], []).map((j) => j.id)).toEqual(["fit", "f"]);
   });
 });

@@ -2,7 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n/config";
 import type { AgentPart, ChatMessage } from "../../api/workspace-client";
-import { MessageItem, splitTurn, spokenDuration } from "./MessageItem";
+import { chatRows, JobNotes, MessageItem, splitTurn, spokenDuration } from "./MessageItem";
 
 const T0 = Date.parse("2026-10-12T00:00:00Z");
 const iso = (s: number) => new Date(T0 + s * 1000).toISOString();
@@ -84,5 +84,29 @@ describe("a turn's work", () => {
     expect(screen.getByText("tạo video")).toBeInTheDocument();
     fireEvent.click(within(status).getByRole("button", { name: /Dừng/ }));
     expect(onStop).toHaveBeenCalled();
+  });
+});
+
+describe("notes of finished jobs", () => {
+  beforeAll(async () => { await i18n.changeLanguage("vi"); });
+  const note = (text: string) => msg({ role: "system", trigger: "job", text });
+
+  it("two or more in a row fold into one row; one alone, or notes split by a message, stay as they are", () => {
+    const a = note("Đã chuẩn bị **A.MOV** (0:10): 1 cảnh."), b = note("Đã chuẩn bị **B.MOV** (0:12): 2 cảnh."), c = note("Không làm xong: Chuẩn bị C — hỏng");
+    const turn = msg({ text: "Còn chờ." }), lone = note("Đã chuẩn bị **D.MOV**.");
+    const other = msg({ role: "system", trigger: "action", text: "Đã xác nhận." });
+    const rows = chatRows([a, b, c, turn, lone, other]);
+    expect(rows.map((r) => r.kind)).toEqual(["jobNotes", "message", "message", "message"]);
+    expect(rows[0]).toEqual({ kind: "jobNotes", messages: [a, b, c] });
+  });
+
+  it("says what they were in one line and unfolds to each note", () => {
+    render(<JobNotes messages={[note("Đã chuẩn bị **A.MOV**."), note("Đã chuẩn bị **B.MOV**."), note("Không làm xong: Chuẩn bị C — hỏng"), note("Đã dừng: Chuẩn bị E.")]} />);
+    const line = screen.getByRole("button", { name: "Đã chuẩn bị 2 video · 1 việc không xong · 1 việc nền khác" });
+    expect(screen.queryByText("A.MOV")).toBeNull();
+    fireEvent.click(line);
+    expect(line).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("A.MOV")).toBeInTheDocument();
+    expect(screen.getByText(/Không làm xong: Chuẩn bị C/)).toBeInTheDocument();
   });
 });

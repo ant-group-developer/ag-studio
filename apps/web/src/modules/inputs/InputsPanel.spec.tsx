@@ -249,7 +249,7 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     await toFiles();
     const input = await screen.findByLabelText("Tải lên", { selector: "input" });
     fireEvent.change(input, { target: { files: [new File(["# x"], "brief.md", { type: "text/markdown" })] } });
-    await waitFor(() => expect(ws.uploadSource).toHaveBeenCalledWith("p1", expect.any(File), undefined));
+    await waitFor(() => expect(ws.uploadSource).toHaveBeenCalledWith("p1", expect.any(File), undefined, { onProgress: expect.any(Function) }));
   });
 
   it("uploads reference videos apart from the documents, to learn an edit style from", async () => {
@@ -267,7 +267,7 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     const input = within(refs).getByLabelText("Tải video mẫu", { selector: "input" });
     expect(input).toHaveAttribute("accept", expect.stringContaining(".mp4"));
     fireEvent.change(input, { target: { files: [new File(["v"], "mau.mp4", { type: "video/mp4" })] } });
-    await waitFor(() => expect(ws.uploadSource).toHaveBeenCalledWith("p1", expect.any(File), undefined, { reference: true }));
+    await waitFor(() => expect(ws.uploadSource).toHaveBeenCalledWith("p1", expect.any(File), undefined, { reference: true, onProgress: expect.any(Function) }));
   });
 
   it("remembers the sub-section shown, with a count on each", async () => {

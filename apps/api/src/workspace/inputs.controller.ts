@@ -17,7 +17,8 @@ import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from '../studio/engine.service';
 import { mapErrors } from '../studio/http-errors';
-import { safeFileName, uploadMaxBytes, WORKSPACE_UPLOAD_MAX_BYTES } from './files.controller';
+import { checkFileUpload, safeFileName, uploadMaxBytes, WORKSPACE_UPLOAD_MAX_BYTES } from './files.controller';
+import { dropRawUpload, RawUploadFields, signRawUpload, SignUploadFields, takeRawUpload, type UploadedTmp } from './raw-uploads';
 import { ProjectFootageService } from './project-footage.service';
 import { SiteNameService } from '../ag-go/site-name.service';
 import { FOOTAGE_RESOLUTIONS, FOOTAGE_SORT_FIELDS, FOOTAGE_USABILITIES } from '../ag-go/client';
@@ -39,8 +40,10 @@ const PrepareSchema = z.object({ assetIds: z.array(z.string().regex(ASSET_OR_PRO
 const UploadFormSchema = z.object({
   videoId: z.string().min(1).optional(),
   /** A reference video to learn an edit style from (not footage): saved under `context/references/`, up to 300 MB. */
-  reference: z.enum(['1', 'true']).optional(),
+  reference: z.union([z.enum(['1', 'true']), z.literal(true)]).optional(),
+  ...RawUploadFields,
 });
+const SignUploadSchema = z.object({ purpose: z.enum(['source', 'reference', 'file']), ...SignUploadFields }).strict();
 
 /** A comma-separated list in a query string (or the same key repeated). */
 const csv = <T extends z.ZodTypeAny>(item: T) => z.union([z.string(), z.array(z.string())])
@@ -78,8 +81,6 @@ const UPLOAD_KINDS: { exts: string[]; mediaType: SourceMediaType; dir: string }[
   { exts: ['.jpg', '.jpeg', '.png', '.webp', '.gif'], mediaType: 'image', dir: 'context/images' },
   { exts: [...AUDIO_FILE_EXTS], mediaType: 'audio', dir: PROJECT_AUDIO_DIR },
 ];
-
-interface UploadedTmp { path: string; originalname: string; size: number }
 
 /** The person's role in the team as a job records it (a Studio admin acts as owner). */
 function roleOf(engine: EngineService, req: Request, teamId: string): ActorRole {
@@ -205,57 +206,93 @@ export class InputsController {
   }
 
   /**
+   * A link to put one file straight on the bucket, checked first as its upload will be (`source`, `reference`: the
+   * Inputs tab; `file`: the Files tab): `{key, url, contentType, expiresAt}`. The browser PUTs the file there with that
+   * `Content-Type`, then calls `sources/upload` or `files/upload` with `{uploadKey: key, name}`.
+   */
+  @Post('uploads')
+  @Roles('editor')
+  @HttpCode(HttpStatus.CREATED)
+  async signUpload(@Param('projectId') projectId: string, @Body() raw: unknown) {
+    const body = parseBody(SignUploadSchema, raw);
+    if (body.purpose === 'file') checkFileUpload(body.name, body.size);
+    else this.checkSource(body.name, body.size, body.purpose === 'reference');
+    await mapErrors(() => requireProject(this.engine.db, projectId));
+    return signRawUpload(this.engine.bucket, projectId, body.contentType);
+  }
+
+  /**
    * A document, image or audio file into `context/` (videos come from ag-go), or, with `reference`, a reference video
    * to learn an edit style from (`context/references/`, never footage): saved under its own name and listed as a
    * source. Word files are refused (save them as PDF). Audio up to 100 MB (a whole music track), other files 50 MB.
+   * Multipart `file`, or `{uploadKey, name}` once the browser put the file on the bucket (`uploads`).
    */
   @Post('sources/upload')
   @Roles('editor')
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(FileInterceptor('file', { dest: tmpdir(), limits: { fileSize: Math.max(WORKSPACE_UPLOAD_MAX_BYTES, REFERENCE_UPLOAD_MAX_BYTES), files: 1 } }))
-  async upload(@Param('projectId') projectId: string, @Body() raw: unknown, @UploadedFile() file: UploadedTmp | undefined, @Req() req: Request) {
+  async upload(@Param('projectId') projectId: string, @Body() raw: unknown, @UploadedFile() sent: UploadedTmp | undefined, @Req() req: Request) {
+    let file = sent;
+    let form: z.infer<typeof UploadFormSchema> | null = null;
     try {
-      const form = parseBody(UploadFormSchema, raw);
+      form = parseBody(UploadFormSchema, raw);
+      const reference = !!form.reference;
+      if (!file && form.uploadKey) {
+        if (!form.name) throw new BadRequestException({ code: 'name_missing', message: 'Thiếu tên file' });
+        file = await takeRawUpload(this.engine.bucket, projectId, form.uploadKey, form.name, (n) => (reference ? REFERENCE_UPLOAD_MAX_BYTES : uploadMaxBytes(n)));
+      }
       if (!file) throw new BadRequestException({ code: 'file_missing', message: 'Chọn file' });
-      const name = safeFileName(file.originalname);
-      const ext = extname(name).toLowerCase();
-      const isVideo = (REFERENCE_VIDEO_EXTS as readonly string[]).includes(ext);
-      const max = form.reference ? REFERENCE_UPLOAD_MAX_BYTES : uploadMaxBytes(name);
-      if (file.size > max) {
-        throw new PayloadTooLargeException({ code: 'file_too_large', message: `File lớn hơn ${max / 1024 / 1024} MB` });
-      }
-      if (ext === '.docx' || ext === '.doc') throw new UnsupportedMediaTypeException({ code: 'docx_not_supported', message: 'Chưa đọc được file Word: lưu thành PDF rồi tải lên' });
-      if (form.reference && !isVideo) {
-        throw new UnsupportedMediaTypeException({ code: 'not_video', message: `Video mẫu phải là file video (${REFERENCE_VIDEO_EXTS.join(', ')})` });
-      }
-      if (isVideo && !form.reference) {
-        throw new UnsupportedMediaTypeException({
-          code: 'video_from_ag_go',
-          message: `Video lấy từ ${this.siteName.current()}: tải lên ${this.siteName.current()} rồi chọn ở đây. Video mẫu để học phong cách dựng thì tải ở mục Video mẫu`,
-        });
-      }
-      const kind = form.reference ? { mediaType: 'video' as const, dir: REFERENCE_UPLOAD_DIR } : UPLOAD_KINDS.find((k) => k.exts.includes(ext));
-      if (!kind) throw new UnsupportedMediaTypeException({ code: 'file_type', message: `Chưa nhận loại file ${ext || '(không đuôi)'}` });
+      const { name, kind } = this.checkSource(file.originalname, file.size, reference);
+      const at = file;
+      const f = form;
       return await mapErrors(() => {
         requireProject(this.engine.db, projectId);
-        if (form.videoId) {
-          const v = requireVideo(this.engine.db, form.videoId);
+        if (f.videoId) {
+          const v = requireVideo(this.engine.db, f.videoId);
           if (v.project_id !== projectId) throw new StudioRunError('invalid', 'video thuộc dự án khác', { code: 'other_project' });
         }
         const dir = this.workspace.dir(projectId);
         const path = this.freePath(dir, kind.dir, name);
         const saved = writeWorkspaceFile(this.engine.db, {
-          projectId, dir, path, content: readFileSync(file.path), baseSha256: null, author: { kind: 'user', id: req.authContext!.userId },
+          projectId, dir, path, content: readFileSync(at.path), baseSha256: null, author: { kind: 'user', id: req.authContext!.userId },
         });
         const s = addSource(this.engine.db, {
-          projectId, videoId: form.videoId ?? null, kind: 'upload', ref: saved.path, mediaType: kind.mediaType, label: name,
-          meta: { bytes: file.size, ...(form.reference ? { reference: true } : {}) }, addedBy: req.authContext!.userId,
+          projectId, videoId: f.videoId ?? null, kind: 'upload', ref: saved.path, mediaType: kind.mediaType, label: name,
+          meta: { bytes: at.size, ...(reference ? { reference: true } : {}) }, addedBy: req.authContext!.userId,
         });
         return { source: this.item(projectId, s.id), file: saved };
       });
     } finally {
       if (file) rmSync(file.path, { force: true });
+      await dropRawUpload(this.engine.bucket, projectId, form?.uploadKey);
     }
+  }
+
+  /**
+   * The name an upload is saved under and where it goes, or why it is refused (by its name, size and whether it is a
+   * reference video): too large (413), Word, a video that is not a reference (it comes from ag-go), an unknown type.
+   */
+  private checkSource(rawName: string, size: number, reference: boolean): { name: string; kind: { mediaType: SourceMediaType; dir: string } } {
+    const name = safeFileName(rawName);
+    const ext = extname(name).toLowerCase();
+    const isVideo = (REFERENCE_VIDEO_EXTS as readonly string[]).includes(ext);
+    const max = reference ? REFERENCE_UPLOAD_MAX_BYTES : uploadMaxBytes(name);
+    if (size > max) {
+      throw new PayloadTooLargeException({ code: 'file_too_large', message: `File lớn hơn ${max / 1024 / 1024} MB` });
+    }
+    if (ext === '.docx' || ext === '.doc') throw new UnsupportedMediaTypeException({ code: 'docx_not_supported', message: 'Chưa đọc được file Word: lưu thành PDF rồi tải lên' });
+    if (reference && !isVideo) {
+      throw new UnsupportedMediaTypeException({ code: 'not_video', message: `Video mẫu phải là file video (${REFERENCE_VIDEO_EXTS.join(', ')})` });
+    }
+    if (isVideo && !reference) {
+      throw new UnsupportedMediaTypeException({
+        code: 'video_from_ag_go',
+        message: `Video lấy từ ${this.siteName.current()}: tải lên ${this.siteName.current()} rồi chọn ở đây. Video mẫu để học phong cách dựng thì tải ở mục Video mẫu`,
+      });
+    }
+    const kind = reference ? { mediaType: 'video' as const, dir: REFERENCE_UPLOAD_DIR } : UPLOAD_KINDS.find((k) => k.exts.includes(ext));
+    if (!kind) throw new UnsupportedMediaTypeException({ code: 'file_type', message: `Chưa nhận loại file ${ext || '(không đuôi)'}` });
+    return { name, kind };
   }
 
   /**

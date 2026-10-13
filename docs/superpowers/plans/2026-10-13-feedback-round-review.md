@@ -42,8 +42,8 @@ không nói "ghi là admin".
 **Kiểm trên web:** tab Đầu vào → Tài liệu → mục "Video mẫu (học phong cách dựng)" → tải một mp4 → bảo agent học phong
 cách từ video đó: job chạy ngay, tờ ghép ở `research/style-…/`, file gốc vẫn còn.
 
-**Lưu ý triển khai:** `apps/web/nginx.conf` đã lên `client_max_body_size 300m`; nginx của aaPanel trước container cũng
-phải cho ≥ 300 MB, không thì tải video mẫu lớn bị cắt.
+**Lưu ý triển khai:** từ đợt tải thẳng R2 (2026-10-13), file tải lên không còn qua nginx nên không cần nâng
+`client_max_body_size` nữa. Thay vào đó bucket R2 phải bật CORS (runbook studio-local mục 4).
 
 ## P3 — Tab Xem trước nhanh (ag-studio)
 

@@ -79,7 +79,7 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
   };
 
   const latest = timeline.data?.latest ?? null;
-  const jobs = (renders.data?.jobs ?? []).filter((j) => j.status === "queued" || j.status === "running" || j.status === "failed").slice(0, 4);
+  const jobs = jobsToShow(renders.data?.jobs ?? [], list);
   const playerUrl = shown && link.data?.jobId === shown.jobId && link.data.url ? keptUrl(playerUrls.current, shown.jobId, link.data.url) : null;
   const errors = latest?.issues.filter((i) => i.startsWith("[error]")) ?? [];
 
@@ -199,6 +199,20 @@ function RenderRow({ r, videoId, lang, current, onPlay, onDownload }: {
       ) : null}
     </li>
   );
+}
+
+/**
+ * The jobs over the player, at most 4: those queued or running, and a failure only while nothing of its kind came
+ * after it (a newer try, or a render of that kind finished later). `jobs` come newest first.
+ */
+export function jobsToShow(jobs: JobView[], renders: RenderView[]): JobView[] {
+  return jobs.filter((j, i) => {
+    if (j.status === "queued" || j.status === "running") return true;
+    if (j.status !== "failed") return false;
+    const at = j.finishedAt ?? j.createdAt;
+    return !jobs.slice(0, i).some((x) => x.kind === j.kind)
+      && !renders.some((r) => r.kind === j.kind && r.finishedAt !== null && r.finishedAt > at);
+  }).slice(0, 4);
 }
 
 /** A link is kept 25 minutes (it lives an hour); ag-go not answering only 30 s, so a click asks again. */

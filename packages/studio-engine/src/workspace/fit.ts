@@ -26,7 +26,7 @@ import type { JobContext, JobHandler } from "./job-runner.js";
 import { createJob, type JobRecord } from "./jobs-db.js";
 import type { InputTranscript } from "./prepare.js";
 import { latestVideoRevision, requireProject, requireVideo, saveVideoRevision } from "./project-db.js";
-import { projectMusic, projectNarrationVoice } from "./project-audio.js";
+import { musicForVideo, projectNarrationVoice } from "./project-audio.js";
 import { buildVideoIndex, type VideoIndex } from "./video-index.js";
 
 export interface FitDeps {
@@ -206,8 +206,10 @@ export function fitHandler(d: FitDeps): JobHandler {
 
     ctx.report({ phase: "Đang khớp hình với lời", progress: 0.88 });
     const branding = brandingOf(ctx.workspaceDir);
-    let music: StudioMusic | null = projectMusic(d.db, project.id);
-    let musicNote = music ? "nhạc của dự án" : "không nhạc";
+    // the video's own music, else the project's, else a library track by the plan's mood, then the branding's
+    const chosen = musicForVideo(d.db, project.id, videoId);
+    let music: StudioMusic | null = chosen?.music ?? null;
+    let musicNote = chosen ? (chosen.from === "video" ? "nhạc riêng của video" : "nhạc của dự án") : "không nhạc";
     if (!music) {
       const picked = pickLibraryMusic(listLibraryMusic(d.db, { activeOnly: true }), [plan.music_mood, ...branding.musicMoods], { seed: videoId, seconds: plan.target_seconds });
       if (picked) { music = picked.music; musicNote = `nhạc thư viện "${picked.track.display_name}" (tâm trạng ${picked.mood})`; }

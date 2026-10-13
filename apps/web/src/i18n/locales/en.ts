@@ -11,6 +11,7 @@ export const en: LocaleMessages = {
     actions: "Actions",
     status: "Status",
     loading: "Loading...",
+    uploading: "Uploading {{pct}}%",
     notFoundTitle: "Page not found",
     backHome: "Back home",
     language: "Language",

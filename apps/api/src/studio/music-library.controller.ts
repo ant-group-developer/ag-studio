@@ -33,6 +33,7 @@ import { StudioAdminService } from '../auth/studio-admin.service';
 import { EngineService } from './engine.service';
 import { mapErrors } from './http-errors';
 import { requireAudioTools } from './audio-tools';
+import { dropRawUpload, RawUploadFields, signRawUpload, SignUploadFields, takeRawUpload } from '../workspace/raw-uploads';
 
 /** What multer leaves on disk for an upload. */
 interface UploadedAudio { path: string; originalname: string; size: number }
@@ -49,7 +50,11 @@ const UploadSchema = z.object({
   origin: z.enum(LIBRARY_MUSIC_ORIGINS),
   originNote: z.string().trim().min(1).max(500),
   loopOk: bool.optional(),
+  ...RawUploadFields,
 });
+const SignSchema = z.object(SignUploadFields).strict();
+/** Where a browser puts a track before the library takes it (`uploads/library/<uuid>`). */
+const LIBRARY_UPLOADS = 'library';
 const PatchSchema = z.object({
   displayName: z.string().trim().min(1).max(120).optional(),
   moods: moods.optional(),
@@ -77,19 +82,37 @@ export class MusicLibraryController {
     return { tracks: await Promise.all(tracks.map((t) => this.view(t))) };
   }
 
-  /** Multipart: `file` and `displayName`, `moods` (comma-separated), `origin`, `originNote`, `loopOk`. Admin only. */
+  /** A link to put a track straight on the bucket (`{key, url, contentType, expiresAt}`), then `POST` with `uploadKey`. Admin only. */
+  @Post('uploads')
+  async signUpload(@Body() raw: Record<string, unknown>, @Req() req: Request) {
+    await this.admin.requireAdmin(req);
+    const body = this.parse(SignSchema, raw);
+    if (body.size > AUDIO_MAX_BYTES.music) {
+      throw new PayloadTooLargeException({ code: 'audio_too_large', message: `File lớn hơn ${AUDIO_MAX_BYTES.music / 1024 / 1024} MB` });
+    }
+    return signRawUpload(this.engine.bucket, LIBRARY_UPLOADS, body.contentType);
+  }
+
+  /**
+   * Multipart `file`, or `uploadKey` (+ `name`) once the browser put it on the bucket (`uploads`); and `displayName`,
+   * `moods` (comma-separated or a list), `origin`, `originNote`, `loopOk`. Admin only.
+   */
   @Post()
   @UseInterceptors(FileInterceptor('file', { dest: tmpdir(), limits: { fileSize: AUDIO_MAX_BYTES.music, files: 1 } }))
-  async add(@Body() raw: Record<string, unknown>, @UploadedFile() file: UploadedAudio | undefined, @Req() req: Request) {
+  async add(@Body() raw: Record<string, unknown>, @UploadedFile() sent: UploadedAudio | undefined, @Req() req: Request) {
+    let file = sent;
+    const uploadKey = typeof raw?.uploadKey === 'string' ? raw.uploadKey : undefined;
     try {
       await this.admin.requireAdmin(req);
       const body = this.parse(UploadSchema, raw);
+      if (!file && body.uploadKey) file = await takeRawUpload(this.engine.bucket, LIBRARY_UPLOADS, body.uploadKey, body.name ?? body.displayName, () => AUDIO_MAX_BYTES.music);
       if (!file) throw new BadRequestException({ code: 'audio_missing', message: 'Chọn file nhạc' });
       if (file.size > AUDIO_MAX_BYTES.music) {
         throw new PayloadTooLargeException({ code: 'audio_too_large', message: `File lớn hơn ${AUDIO_MAX_BYTES.music / 1024 / 1024} MB` });
       }
+      const at = file;
       const track = await importLibraryMusic({ db: this.engine.db, bucket: this.engine.bucket, ...this.tools() }, {
-        file: file.path, displayName: body.displayName, moods: body.moods, origin: body.origin, originNote: body.originNote,
+        file: at.path, displayName: body.displayName, moods: body.moods, origin: body.origin, originNote: body.originNote,
         loopOk: body.loopOk ?? false, now: this.engine.core.clock.now(),
       });
       return this.view(track);
@@ -99,6 +122,7 @@ export class MusicLibraryController {
       return mapErrors(() => { throw e; });
     } finally {
       if (file) rmSync(file.path, { force: true });
+      if (await this.admin.isAdmin(req)) await dropRawUpload(this.engine.bucket, LIBRARY_UPLOADS, uploadKey);
     }
   }
 

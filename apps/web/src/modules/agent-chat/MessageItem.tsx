@@ -109,6 +109,51 @@ export function MessageItem({ message, projectId, onStop, onOpenFile }: {
   return <AgentMessage message={message} projectId={projectId} onStop={onStop} onOpenFile={onOpenFile} />;
 }
 
+/** One row of the chat: a message, or notes of finished background jobs that came in a row. */
+export type ChatRow = { kind: "message"; message: ChatMessage } | { kind: "jobNotes"; messages: ChatMessage[] };
+
+/** Two or more Studio notes from finished jobs in a row (e.g. each video prepared) fold into one row. */
+export function chatRows(messages: ChatMessage[]): ChatRow[] {
+  const rows: ChatRow[] = [];
+  const isNote = (m: ChatMessage) => m.role === "system" && m.trigger === "job";
+  for (let i = 0; i < messages.length;) {
+    let j = i;
+    while (j < messages.length && isNote(messages[j]!)) j++;
+    if (j - i >= 2) { rows.push({ kind: "jobNotes", messages: messages.slice(i, j) }); i = j; } else { rows.push({ kind: "message", message: messages[i]! }); i++; }
+  }
+  return rows;
+}
+
+// the openings of the notes Studio writes (packages/studio-engine: workspace/prepare.ts, workspace/job-runner.ts)
+const PREPARED = /^Đã chuẩn bị /;
+const NOT_DONE = /^Không làm xong:/;
+
+/** Notes of finished jobs as one folded line ("Đã chuẩn bị 7 video · 1 việc không xong"); unfolded, each note. */
+export function JobNotes({ messages }: { messages: ChatMessage[] }) {
+  const { t } = useTranslation();
+  const key = `notes:${messages[0]!.id}`;
+  const [open, setOpenState] = useState(() => unfolded.get(key) ?? false);
+  const setOpen = (v: boolean) => { unfolded.set(key, v); setOpenState(v); };
+  const prepared = messages.filter((m) => PREPARED.test(m.text)).length;
+  const failed = messages.filter((m) => NOT_DONE.test(m.text)).length;
+  const other = messages.length - prepared - failed;
+  const summary = [
+    prepared ? t("ws.chat.jobNotes.prepared", { count: prepared }) : null,
+    failed ? t("ws.chat.jobNotes.failed", { count: failed }) : null,
+    other ? t("ws.chat.jobNotes.other", { count: other }) : null,
+  ].filter(Boolean).join(" · ");
+  return (
+    <div className="ws-msg ws-msg--notes">
+      <button type="button" className="ws-turn-fold" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <ChevronRight size={13} className="ws-turn-fold__chevron" aria-hidden />
+        <ListChecks size={13} aria-hidden />
+        <span>{summary}</span>
+      </button>
+      {open ? <div className="ws-turn-work">{messages.map((m) => <MessageItem key={m.id} message={m} />)}</div> : null}
+    </div>
+  );
+}
+
 /**
  * The agent's answer as one folded line of work ("Đã làm 5 bước · 1 phút 20 giây", or the live status while it runs)
  * over the final answer. Unfolded, the steps show in order with what was said between them.

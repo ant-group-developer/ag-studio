@@ -10,6 +10,7 @@ export const vi = {
     actions: "Thao tác",
     status: "Trạng thái",
     loading: "Đang tải...",
+    uploading: "Đang tải lên {{pct}}%",
     notFoundTitle: "Không tìm thấy trang",
     backHome: "Về trang chủ",
     language: "Ngôn ngữ",
