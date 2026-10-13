@@ -5,6 +5,7 @@
 import { useMemo } from "react";
 import { useAuthToken } from "../auth/use-auth-token";
 import { buildQuery, putToBucket, request, requestBlob, STUDIO_API_URL, uploadType, type OnProgress, type UploadLink } from "./http";
+import type { UserSummary } from "./studio-client";
 
 export type ProjectAspect = "16:9" | "9:16";
 export type VideoStatus = "draft" | "in_progress" | "rendering" | "done";
@@ -36,6 +37,8 @@ export interface Project {
 export interface ProjectListItem extends Project {
   videoCount: number;
   lastActivityAt: string;
+  /** Who made it (`createdBy`), as the Account API knows them. */
+  creator: UserSummary;
 }
 
 export interface Video {

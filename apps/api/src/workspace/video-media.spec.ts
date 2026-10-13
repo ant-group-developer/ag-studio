@@ -13,7 +13,7 @@ import { audioTools } from '../studio/audio-tools';
 import { AgGoClientError } from '../ag-go/client';
 
 type TimelineV4 = Parameters<typeof saveVideoRevision>[2]['data'];
-import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
+import { insertTeam, NO_DIRECTORY, realStudio, type RealStudio } from '../test/real-studio';
 import type { EngineService } from '../studio/engine.service';
 import type { ProjectFootageService } from './project-footage.service';
 import { ProjectsController } from './projects.controller';
@@ -60,7 +60,7 @@ describe('video media (real studio.db)', () => {
       },
     } as unknown as ProjectFootageService;
     Object.assign(engine, { bucket: { signedGetUrl: async (key: string, _ttl: number, o: { downloadName?: string } = {}) => `https://r2.test/${key}${o.downloadName ? `?name=${o.downloadName}` : ''}` }, browserUrlTtl: 600 });
-    projects = new ProjectsController(engine, ws);
+    projects = new ProjectsController(engine, ws, NO_DIRECTORY);
     videos = new VideosController(engine, ws);
     media = new VideoMediaController(engine, ws, footage, { get: () => undefined } as unknown as ConfigService);
     insertTeam(s.db, 'team-1', OWNER);

@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import { addSource, claimJob, getJob, listMessages, MemoryBucket } from '@ag-studio/engine';
-import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
+import { insertTeam, NO_DIRECTORY, realStudio, type RealStudio } from '../test/real-studio';
 import type { EngineService } from '../studio/engine.service';
 import type { SiteNameService } from '../ag-go/site-name.service';
 import { InputsController } from './inputs.controller';
@@ -59,7 +59,7 @@ describe('inputs (real studio.db)', () => {
         };
       },
     } as unknown as ProjectFootageService;
-    projects = new ProjectsController(engine, ws);
+    projects = new ProjectsController(engine, ws, NO_DIRECTORY);
     videos = new VideosController(engine, ws);
     inputs = new InputsController(engine, ws, footage, ({ current: () => 'Kho Footage' }) as unknown as SiteNameService);
     insertTeam(s.db, 'team-1', OWNER);

@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import { listLessonProposals, saveThreadSummary, getThread } from '@ag-studio/engine';
-import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
+import { insertTeam, NO_DIRECTORY, realStudio, type RealStudio } from '../test/real-studio';
 import type { EngineService } from '../studio/engine.service';
 import { FilesController } from './files.controller';
 import { PlaybookController } from './playbook.controller';
@@ -35,7 +35,7 @@ describe('playbook and lessons (real studio.db)', () => {
     root = mkdtempSync(join(tmpdir(), 'pb-api-'));
     const engine = s.engine as unknown as EngineService;
     const ws = new WorkspaceService({ get: (k: string, d?: unknown) => (k === 'STUDIO_WORKSPACES_ROOT' ? root : d) } as unknown as ConfigService, engine);
-    projects = new ProjectsController(engine, ws);
+    projects = new ProjectsController(engine, ws, NO_DIRECTORY);
     videos = new VideosController(engine, ws);
     files = new FilesController(engine, ws);
     playbook = new PlaybookController(engine, ws);

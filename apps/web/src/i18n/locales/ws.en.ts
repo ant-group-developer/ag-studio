@@ -74,8 +74,11 @@ export const wsEn: Messages<typeof wsVi> = {
     count_one: "{{count}} project",
     count_other: "{{count}} projects",
     noMatch: "No project matches.",
-    sort: { lastActivityAt: "Last activity", name: "Name", videoCount: "Videos", createdAt: "Created" },
-    column: { name: "Project", description: "Description", videos: "Videos", lastActivity: "Last activity", created: "Created" },
+    sort: { lastActivityAt: "Last activity", name: "Name", videoCount: "Videos", createdAt: "Created", creator: "Made by" },
+    column: { name: "Project", description: "Description", videos: "Videos", lastActivity: "Last activity", created: "Created", creator: "Made by" },
+    whose: "Whose projects",
+    all: "All",
+    mine: "Made by me",
   },
   project: {
     notFound: "Project not found",

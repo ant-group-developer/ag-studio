@@ -70,8 +70,11 @@ export const wsVi = {
     count_one: "{{count}} dự án",
     count_other: "{{count}} dự án",
     noMatch: "Không có dự án nào khớp.",
-    sort: { lastActivityAt: "Hoạt động gần nhất", name: "Tên", videoCount: "Số video", createdAt: "Ngày tạo" },
-    column: { name: "Dự án", description: "Mô tả", videos: "Video", lastActivity: "Hoạt động gần nhất", created: "Ngày tạo" },
+    sort: { lastActivityAt: "Hoạt động gần nhất", name: "Tên", videoCount: "Số video", createdAt: "Ngày tạo", creator: "Người tạo" },
+    column: { name: "Dự án", description: "Mô tả", videos: "Video", lastActivity: "Hoạt động gần nhất", created: "Ngày tạo", creator: "Người tạo" },
+    whose: "Dự án của ai",
+    all: "Tất cả",
+    mine: "Do tôi tạo",
   },
   project: {
     notFound: "Không tìm thấy dự án",

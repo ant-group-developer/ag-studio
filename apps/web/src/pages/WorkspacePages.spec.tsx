@@ -30,7 +30,9 @@ const step = (key: string, title: string, status: string, over: Record<string, u
 const project = {
   id: "p1", teamId: "team-1", name: "Du lịch chậm", channelUrl: "@dulichcham", description: "Đi bộ phố cổ", language: "vi", aspect: "16:9",
   settings: { auto_fix: true, auto_continue: true }, ownerUserId: "u", createdBy: "u", createdAt: "", updatedAt: "", archivedAt: null,
+  creator: { userId: "u", name: "An Nguyễn", email: "a@b.c", avatar: null },
 };
+const BINH = { userId: "auth0|binh", name: null, email: "binh@ant-group.net", avatar: null };
 const ws = {
   listProjects: vi.fn().mockResolvedValue({ projects: [{ ...project, videoCount: 2, lastActivityAt: new Date().toISOString() }] }),
   createProject: vi.fn().mockResolvedValue({ ...project, id: "p-new" }),
@@ -145,7 +147,7 @@ describe("workspace pages", { timeout: 20_000 }, () => {
   it("lists the team's projects and makes a new one for a channel", async () => {
     mount("/t/team-1");
     expect(await screen.findByText("Du lịch chậm")).toBeInTheDocument();
-    expect(screen.getByText("2 video")).toBeInTheDocument();
+    expect(screen.getByText(/^2 video ·/)).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: /Dự án mới/ })[0]!);
     const dialog = await screen.findByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText("Tên dự án"), { target: { value: "Ẩm thực Huế" } });
@@ -220,11 +222,16 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     localStorage.removeItem("studio.projects.viewMode");
     ws.listProjects.mockResolvedValueOnce({ projects: [
       { ...project, videoCount: 2, lastActivityAt: "2026-10-10T08:00:00.000Z", createdAt: "2026-09-01T00:00:00.000Z" },
-      { ...project, id: "p2", name: "Ẩm thực Huế", channelUrl: null, description: "", videoCount: 9, lastActivityAt: "2026-10-11T08:00:00.000Z", createdAt: "2026-09-05T00:00:00.000Z" },
+      { ...project, id: "p2", name: "Ẩm thực Huế", channelUrl: null, description: "", videoCount: 9, lastActivityAt: "2026-10-11T08:00:00.000Z", createdAt: "2026-09-05T00:00:00.000Z", createdBy: BINH.userId, creator: BINH },
     ] });
     mount("/t/team-1");
     expect(await screen.findByText("Du lịch chậm")).toBeInTheDocument();
     expect([...document.querySelectorAll(".ws-card__title")].map((e) => e.textContent)).toEqual(["Ẩm thực Huế", "Du lịch chậm"]);
+    // who made each: the name, else the email
+    expect([...document.querySelectorAll(".ws-card .ws-creator__name")].map((e) => e.textContent)).toEqual(["binh@ant-group.net", "An Nguyễn"]);
+    fireEvent.click(screen.getByText("Do tôi tạo"));
+    await waitFor(() => expect([...document.querySelectorAll(".ws-card__title")].map((e) => e.textContent)).toEqual(["Du lịch chậm"]));
+    fireEvent.click(screen.getByText("Tất cả"));
     fireEvent.change(screen.getByLabelText("Tìm dự án theo tên, kênh, mô tả"), { target: { value: "phố cổ" } });
     expect([...document.querySelectorAll(".ws-card__title")].map((e) => e.textContent)).toEqual(["Du lịch chậm"]);
     fireEvent.change(screen.getByLabelText("Tìm dự án theo tên, kênh, mô tả"), { target: { value: "" } });
@@ -232,6 +239,8 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     const table = await screen.findByRole("table");
     expect(within(table).getByRole("link", { name: "Ẩm thực Huế" })).toHaveAttribute("href", "/p/p2");
     expect(within(table).getByText("@dulichcham")).toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: "Người tạo" })).toBeInTheDocument();
+    expect(within(table).getByText("An Nguyễn")).toBeInTheDocument();
     expect(localStorage.getItem("studio.projects.viewMode")).toBe("table");
   });
 

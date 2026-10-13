@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import { getJob } from '@ag-studio/engine';
-import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
+import { insertTeam, NO_DIRECTORY, realStudio, type RealStudio } from '../test/real-studio';
 import type { EngineService } from '../studio/engine.service';
 import { ProjectsController } from './projects.controller';
 import { ResearchController } from './research.controller';
@@ -29,7 +29,7 @@ describe('research (real studio.db)', () => {
   beforeEach(async () => {
     s = await realStudio();
     root = mkdtempSync(join(tmpdir(), 'research-api-'));
-    projects = new ProjectsController(s.engine as unknown as EngineService, ws());
+    projects = new ProjectsController(s.engine as unknown as EngineService, ws(), NO_DIRECTORY);
     insertTeam(s.db, 'team-1', OWNER);
   });
   afterEach(() => s.close());

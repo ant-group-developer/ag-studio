@@ -118,7 +118,7 @@ xem nhóm mình; người khác 403.
 
 ## Dự án và video
 
-- `GET /teams/:teamId/projects?archived` (viewer) → `{projects: (Project & {videoCount, lastActivityAt})[]}`
+- `GET /teams/:teamId/projects?archived` (viewer) → `{projects: (Project & {videoCount, lastActivityAt, creator: UserSummary})[]}` (người tạo: tên, email, avatar từ Account API; không tra được thì chỉ có `userId`)
 - `POST /teams/:teamId/projects` (producer) `{name, channelUrl?, description?, language?, aspect?, settings?}` → Project;
   tạo thư mục dự án (`CLAUDE.md`, `memory/lessons.md`, `context/`, `research/`, `channel/`, `videos/`…) và luồng "Kênh"
 - `GET /projects/:projectId` (viewer) → `Project & {videos: Video[]}`; `PATCH` (producer); `DELETE` (owner, lưu trữ)

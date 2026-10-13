@@ -10,7 +10,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 import { MemoryBucket } from '@ag-studio/engine';
-import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
+import { insertTeam, NO_DIRECTORY, realStudio, type RealStudio } from '../test/real-studio';
+import type { AccountDirectoryService } from '../auth/account-directory.service';
 import type { EngineService } from '../studio/engine.service';
 import { FilesController, safeFileName } from './files.controller';
 import { ProjectsController } from './projects.controller';
@@ -40,7 +41,7 @@ describe('workspace routes (real studio.db and folder)', () => {
     root = mkdtempSync(join(tmpdir(), 'ws-api-'));
     const engine = s.engine as unknown as EngineService;
     const ws = new WorkspaceService({ get: (k: string, d?: unknown) => (k === 'STUDIO_WORKSPACES_ROOT' ? root : d) } as unknown as ConfigService, engine);
-    projects = new ProjectsController(engine, ws);
+    projects = new ProjectsController(engine, ws, NO_DIRECTORY);
     videos = new VideosController(engine, ws);
     files = new FilesController(engine, ws);
     insertTeam(s.db, 'team-1', OWNER);
@@ -55,13 +56,28 @@ describe('workspace routes (real studio.db and folder)', () => {
     const claudeVersions = await files.versions(p.id, 'CLAUDE.md');
     expect(claudeVersions.versions.map((v) => v.author_kind)).toEqual(['studio']);
 
-    expect(projects.list('team-1').projects.map((x) => [x.name, x.videoCount])).toEqual([['Du lịch Việt', 0]]);
+    expect((await projects.list('team-1')).projects.map((x) => [x.name, x.videoCount])).toEqual([['Du lịch Việt', 0]]);
     const edited = await projects.update(p.id, { description: 'Kênh du lịch chậm', settings: { model: 'sonnet' } });
     expect(edited).toMatchObject({ description: 'Kênh du lịch chậm', settings: { model: 'sonnet', auto_fix: true } });
     expect(await failure(projects.update(p.id, { colour: 'red' }))).toBe('BadRequestException:invalid');
     await projects.archive(p.id);
-    expect(projects.list('team-1').projects).toEqual([]);
+    expect((await projects.list('team-1')).projects).toEqual([]);
     expect(await failure(projects.get('nope'))).toBe('NotFoundException:not_found');
+  });
+
+  it('lists each project with who made it: name and avatar from the Account API, or only the id when it does not know them', async () => {
+    const people = new Map([[OWNER, { userId: OWNER, name: 'Chủ nhóm', email: 'owner@ant-group.net', avatar: 'https://a/x.png' }]]);
+    const asked: string[][] = [];
+    const named = new ProjectsController(s.engine as unknown as EngineService, new WorkspaceService({ get: (k: string, d?: unknown) => (k === 'STUDIO_WORKSPACES_ROOT' ? root : d) } as unknown as ConfigService, s.engine as unknown as EngineService),
+      { summaries: async (ids: string[]) => { asked.push(ids); return people; } } as unknown as AccountDirectoryService);
+    await named.create('team-1', { name: 'A' }, req(OWNER));
+    await named.create('team-1', { name: 'B' }, req('auth0|gone'));
+    const listed = (await named.list('team-1')).projects;
+    expect(Object.fromEntries(listed.map((p) => [p.name, p.creator]))).toEqual({
+      A: { userId: OWNER, name: 'Chủ nhóm', email: 'owner@ant-group.net', avatar: 'https://a/x.png' },
+      B: { userId: 'auth0|gone', name: null, email: null, avatar: null },
+    });
+    expect(asked).toHaveLength(1);
   });
 
   it('adds videos one at a time, each with its folder and a number', async () => {
