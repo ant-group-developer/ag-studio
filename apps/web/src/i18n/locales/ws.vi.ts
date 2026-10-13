@@ -235,6 +235,14 @@ export const wsVi = {
     workSummary_other: "Đã làm {{count}} bước",
     showSteps: "Xem các bước",
     hideSteps: "Ẩn các bước",
+    jobNotes: {
+      prepared_one: "Đã chuẩn bị {{count}} video",
+      prepared_other: "Đã chuẩn bị {{count}} video",
+      failed_one: "{{count}} việc không xong",
+      failed_other: "{{count}} việc không xong",
+      other_one: "{{count}} việc nền khác",
+      other_other: "{{count}} việc nền khác",
+    },
     duration: {
       seconds: "{{s}} giây",
       minutes: "{{m}} phút",

@@ -11,7 +11,7 @@ import { ThreadJobs } from "../inputs/ThreadJobs";
 import { ActionCards } from "./ActionCards";
 import type { TeamRoleName } from "../../api/workspace-client";
 import { Composer } from "./Composer";
-import { MessageItem } from "./MessageItem";
+import { chatRows, JobNotes, MessageItem } from "./MessageItem";
 import { useThread } from "./use-thread";
 
 /** The options of the agent's last `suggest_replies` call in the newest answer, to send with one click. */
@@ -55,6 +55,7 @@ export function ChatPanel({ threadId, projectId, canWrite, canDecide, onOpenFile
   const { ref, onScroll, atBottom, toBottom } = useStickToBottom(threadId, signal);
   const active = useMemo(() => [...messages].reverse().find((m) => m.role === "assistant" && (m.status === "running" || m.status === "pending")), [messages]);
   const suggestions = useMemo(() => suggestionsOf(messages), [messages]);
+  const rows = useMemo(() => chatRows(messages), [messages]);
 
   const send = useMutation({
     mutationFn: (text: string) => client.sendMessage(threadId, { text, ...(attachments.length ? { attachments } : {}) }),
@@ -85,12 +86,16 @@ export function ChatPanel({ threadId, projectId, canWrite, canDecide, onOpenFile
         <div className="ws-chat__inner">
           {isLoading ? <div className="ws-center"><Spin /></div> : messages.length === 0 ? (
             <div className="ws-chat__empty">{emptyHint ?? t("ws.chat.empty")}</div>
-          ) : messages.map((m) => (
-            <MessageItem
-              key={m.id} message={m} projectId={projectId} onOpenFile={onOpenFile}
-              onStop={canWrite && m.role === "assistant" && (m.status === "running" || m.status === "pending") ? () => stop.mutate(m.id) : undefined}
-            />
-          ))}
+          ) : rows.map((row) => {
+            if (row.kind === "jobNotes") return <JobNotes key={row.messages[0]!.id} messages={row.messages} />;
+            const m = row.message;
+            return (
+              <MessageItem
+                key={m.id} message={m} projectId={projectId} onOpenFile={onOpenFile}
+                onStop={canWrite && m.role === "assistant" && (m.status === "running" || m.status === "pending") ? () => stop.mutate(m.id) : undefined}
+              />
+            );
+          })}
         </div>
       </div>
       {!atBottom ? (

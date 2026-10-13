@@ -239,6 +239,14 @@ export const wsEn: Messages<typeof wsVi> = {
     workSummary_other: "Did {{count}} steps",
     showSteps: "Show the steps",
     hideSteps: "Hide the steps",
+    jobNotes: {
+      prepared_one: "Prepared {{count}} video",
+      prepared_other: "Prepared {{count}} videos",
+      failed_one: "{{count}} job not done",
+      failed_other: "{{count}} jobs not done",
+      other_one: "{{count}} other background job",
+      other_other: "{{count}} other background jobs",
+    },
     duration: {
       seconds: "{{s}} s",
       minutes: "{{m}} min",
