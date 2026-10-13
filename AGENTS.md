@@ -96,7 +96,9 @@ nhưng không code nào đọc.
 ### Đăng nhập, quyền
 - Web đăng nhập Auth0 (`VITE_AUTH0_*`); API kiểm JWT bằng `Auth0Guard` toàn cục (issuer, audience, `azp` thuộc
   `AUTH0_ALLOWED_CLIENT_IDS`). Vai trong team: `viewer < editor < producer < owner` (`RolesGuard` tra
-  `teamId|projectId|videoId|threadId` ra team); admin Studio là `user_type = ADMIN` từ Account API và qua mọi phép kiểm vai.
+  `teamId|projectId|videoId|threadId` ra team); admin Studio là `user_type = ADMIN` từ Account API và qua mọi phép kiểm vai
+  (`AccountApiService`: nhớ 5 phút, các request cùng người dùng chung một lần hỏi, chờ tối đa 5 s, lỗi thì dùng hồ sơ cũ ≤ 1 giờ;
+  JWKS cũng chờ tối đa 5 s và chung một lần tải). CORS mọi origin, preflight nhớ 2 giờ (`common/cors.ts`).
 - Footage: video chỉ đến từ ag-go (chọn project/video ag-go ở tab Đầu vào; không còn `@folder`); web gọi thẳng ag-go bằng
   bearer người dùng (`/projects`, `/projects/:id/media`), API và worker gọi bằng `AG_GO_SERVICE_KEY` + `X-Act-As-User` = chủ
   dự án. Bản xem trước và bản cuối (mp4) ai trong dự án cũng xem được (link có sẵn trong `GET renders`); file Premiere chỉ trả link cho người mà quyền ag-go của chính họ phủ mọi video trong bản đó (ADR mục 194). Tài liệu/ảnh/audio tải lên

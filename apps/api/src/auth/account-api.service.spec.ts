@@ -41,6 +41,56 @@ describe('AccountApiService.getUserProfile', () => {
     await svc.getUserProfile('t', 'u3');
     expect(calls).toHaveLength(1);
   });
+
+  it('asks once for the requests of one person that come together', async () => {
+    let calls = 0;
+    let answer!: () => void;
+    vi.stubGlobal('fetch', () => {
+      calls++;
+      return new Promise<Response>((resolve) => { answer = () => resolve(new Response(JSON.stringify({ data: { user_type: 'ADMIN', permissions: [] } }), { status: 200 })); });
+    });
+    const svc = new AccountApiService(config());
+    const asked = [svc.getUserProfile('t', 'u4'), svc.getUserProfile('t', 'u4'), svc.getUserProfile('t', 'u4')];
+    await Promise.resolve();
+    answer();
+    expect((await Promise.all(asked)).map((p) => p.userType)).toEqual(['ADMIN', 'ADMIN', 'ADMIN']);
+    expect(calls).toBe(1);
+    // another person is asked apart
+    const other = svc.getUserProfile('t', 'u5');
+    await Promise.resolve();
+    answer();
+    await other;
+    expect(calls).toBe(2);
+  });
+
+  it('gives Account API 5 s, then serves the profile known from the last hour, else a plain user', async () => {
+    const signals: (AbortSignal | undefined)[] = [];
+    let fail = false;
+    vi.stubGlobal('fetch', async (_url: URL, init?: RequestInit) => {
+      signals.push(init?.signal ?? undefined);
+      if (fail) throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+      return new Response(JSON.stringify({ data: { user_type: 'ADMIN', permissions: ['go.project.evaluate'] } }), { status: 200 });
+    });
+    const now = vi.spyOn(Date, 'now');
+    const t0 = 1_800_000_000_000;
+    now.mockReturnValue(t0);
+    const svc = new AccountApiService(config());
+    expect((await svc.getUserProfile('t', 'u6')).userType).toBe('ADMIN');
+    expect(signals[0]).toBeInstanceOf(AbortSignal);
+    // the profile is 10 minutes old and Account API does not answer: the known one serves, and the next request asks again
+    fail = true;
+    now.mockReturnValue(t0 + 10 * 60_000);
+    expect(await svc.getUserProfile('t', 'u6')).toEqual({ userId: 'u6', userType: 'ADMIN', permissions: ['go.project.evaluate'] });
+    expect(await svc.getUserProfile('t', 'u6')).toMatchObject({ userType: 'ADMIN' });
+    expect(signals).toHaveLength(3);
+    // an error status is a failure as well
+    vi.stubGlobal('fetch', async () => new Response('{}', { status: 503 }));
+    expect((await svc.getUserProfile('t', 'u6')).userType).toBe('ADMIN');
+    // older than an hour: not trusted any more
+    now.mockReturnValue(t0 + 61 * 60_000);
+    expect(await svc.getUserProfile('t', 'u6')).toEqual({ userId: 'u6', userType: 'USER', permissions: [] });
+    now.mockRestore();
+  });
 });
 
 describe('mayDownloadOriginals', () => {
