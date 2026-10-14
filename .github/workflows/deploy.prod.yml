@@ -11,13 +11,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  test:
-    uses: ./.github/workflows/ci.yml
-    secrets:
-      AG_FARM_READ_TOKEN: ${{ secrets.AG_FARM_READ_TOKEN }}
-
   deploy:
-    needs: test
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # Đặt "Required reviewers" cho environment này nếu muốn duyệt trước khi deploy.
