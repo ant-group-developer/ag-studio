@@ -2,13 +2,11 @@ import { Controller, Get, Query, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import { z } from 'zod';
 import { auditActors, listAudit, type AuditFilter } from '@ag-studio/engine';
-import { AccountDirectoryService, type UserSummary } from '../auth/account-directory.service';
+import { AccountDirectoryService, unknownPerson } from '../auth/account-directory.service';
 import { StudioAdminService, type ViewScope } from '../auth/studio-admin.service';
 import { EngineService } from '../studio/engine.service';
 import { parseBody } from '../workspace/zod-body';
 
-/** Someone the Account API does not (or no longer) know. */
-const unknownPerson = (userId: string): UserSummary => ({ userId, name: null, email: null, avatar: null });
 const iso = z.string().datetime({ offset: true });
 const id = z.string().min(1).max(200);
 const AuditQuerySchema = z.object({

@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import { markAgentTurnRunning, updateRunningTurn } from '@ag-studio/engine';
-import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
+import { insertTeam, NO_DIRECTORY, realStudio, type RealStudio } from '../test/real-studio';
 import type { EngineService } from '../studio/engine.service';
 import { ProjectsController } from './projects.controller';
 import { ThreadsController } from './threads.controller';
@@ -31,7 +31,7 @@ describe('threads (real studio.db)', () => {
     s = await realStudio();
     const engine = s.engine as unknown as EngineService;
     const ws = new WorkspaceService({ get: (k: string, d?: unknown) => (k === 'STUDIO_WORKSPACES_ROOT' ? mkdtempSync(join(tmpdir(), 'thr-')) : d) } as unknown as ConfigService, engine);
-    projects = new ProjectsController(engine, ws);
+    projects = new ProjectsController(engine, ws, NO_DIRECTORY);
     videos = new VideosController(engine, ws);
     threads = new ThreadsController(engine);
     insertTeam(s.db, 'team-1', OWNER);

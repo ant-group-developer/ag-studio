@@ -2,14 +2,12 @@ import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Alert,
   Table,
   Button,
   Modal,
   Form,
   Select,
   Spin,
-  Typography,
   Popconfirm,
   Tooltip,
   Input,
@@ -32,8 +30,7 @@ import { TeamSkillsTab } from "../modules/team/TeamSkillsTab";
 import { AuditTable } from "../modules/audit/AuditTable";
 import { ClaudeStatsView } from "../modules/stats/ClaudeStatsView";
 import type { SortDirection } from "../helpers/compare-sort-values";
-
-const { Title } = Typography;
+import { WorkspaceShell } from "../modules/workspace/WorkspaceShell";
 
 const PAGE_SIZE = 20;
 
@@ -52,6 +49,7 @@ const ROLE_COLORS: Record<string, string> = {
   viewer: "default",
 };
 
+/** One team: its members and roles, its rules and skills, and for its owners its Claude stats and activity log. */
 export function TeamDetailPage() {
   const { t } = useAiTranslation();
   const { teamId } = useParams<{ teamId: string }>();
@@ -283,78 +281,82 @@ export function TeamDetailPage() {
     </div>
   );
 
+  // a Studio admin in a team they are not in is told so by the shell's banner
   return (
-    <div>
-      <Title level={3} style={{ margin: "0 0 8px" }}>
-        {team?.name ?? t("teams.detailTitle")}
-      </Title>
-      {me?.isAdmin && team && !team.isMember ? <Alert type="warning" showIcon banner message={t("ws.shell.adminView")} style={{ marginBottom: 8 }} /> : null}
-      <Tabs
-        activeKey={tab}
-        onChange={(k) => void setTab(k as "members" | "skills" | "stats" | "audit")}
-        items={[
-          { key: "members", label: t("teamSkills.tabMembers"), children: membersTab },
-          { key: "skills", label: t("teamSkills.tabSkills"), children: teamId ? <TeamSkillsTab teamId={teamId} canEdit={canEditSkills} /> : null },
-          ...(canReview && teamId ? [
-            { key: "stats", label: t("ws.stats.title"), children: <ClaudeStatsView teamId={teamId} /> },
-            { key: "audit", label: t("ws.audit.title"), children: <AuditTable teamId={teamId} /> },
-          ] : []),
-        ]}
-      />
+    <WorkspaceShell teamId={teamId} teamCrumb={false} crumbs={[{ label: t("ws.shell.manageTeams"), to: "/teams" }, { label: team?.name ?? t("teams.detailTitle") }]}>
+      <main className="ws-page">
+        <div className="ws-page__inner ws-page__inner--wide">
+          <div className="ws-page__head">
+            <h1 className="ws-page__title">{team?.name ?? t("teams.detailTitle")}</h1>
+          </div>
+          <Tabs
+            activeKey={tab}
+            onChange={(k) => void setTab(k as "members" | "skills" | "stats" | "audit")}
+            items={[
+              { key: "members", label: t("teamSkills.tabMembers"), children: membersTab },
+              { key: "skills", label: t("teamSkills.tabSkills"), children: teamId ? <TeamSkillsTab teamId={teamId} canEdit={canEditSkills} /> : null },
+              ...(canReview && teamId ? [
+                { key: "stats", label: t("ws.stats.title"), children: <ClaudeStatsView teamId={teamId} /> },
+                { key: "audit", label: t("ws.audit.title"), children: <AuditTable teamId={teamId} /> },
+              ] : []),
+            ]}
+          />
 
-      <Modal
-        title={t("teams.addMemberTitle")}
-        open={open}
-        onOk={() => {
-          form
-            .validateFields()
-            .then((values) => addMutation.mutate(values))
-            .catch(() => undefined);
-        }}
-        onCancel={() => {
-          setOpen(false);
-          setKeyword("");
-          setDebounced("");
-        }}
-        confirmLoading={addMutation.isPending}
-      >
-        <Form form={form} layout="vertical">
-          <Form.Item
-            name="userId"
-            label={t("teams.userLabel")}
-            rules={[{ required: true, message: t("teams.userRequired") }]}
+          <Modal
+            title={t("teams.addMemberTitle")}
+            open={open}
+            onOk={() => {
+              form
+                .validateFields()
+                .then((values) => addMutation.mutate(values))
+                .catch(() => undefined);
+            }}
+            onCancel={() => {
+              setOpen(false);
+              setKeyword("");
+              setDebounced("");
+            }}
+            confirmLoading={addMutation.isPending}
           >
-            <Select
-              showSearch
-              filterOption={false}
-              onSearch={handleKeywordChange}
-              placeholder={t("teams.userSearchPlaceholder")}
-              notFoundContent={
-                searching ? <Spin size="small" /> : t("teams.userSearchEmpty")
-              }
-              optionLabelProp="label"
-              options={candidates.map((u) => ({
-                value: u.userId,
-                label: u.name || u.email || u.userId,
-                user: u,
-              }))}
-              optionRender={(option) => (
-                <UserCell
-                  user={(option.data as unknown as { user: TeamMember }).user}
-                  size={28}
+            <Form form={form} layout="vertical">
+              <Form.Item
+                name="userId"
+                label={t("teams.userLabel")}
+                rules={[{ required: true, message: t("teams.userRequired") }]}
+              >
+                <Select
+                  showSearch
+                  filterOption={false}
+                  onSearch={handleKeywordChange}
+                  placeholder={t("teams.userSearchPlaceholder")}
+                  notFoundContent={
+                    searching ? <Spin size="small" /> : t("teams.userSearchEmpty")
+                  }
+                  optionLabelProp="label"
+                  options={candidates.map((u) => ({
+                    value: u.userId,
+                    label: u.name || u.email || u.userId,
+                    user: u,
+                  }))}
+                  optionRender={(option) => (
+                    <UserCell
+                      user={(option.data as unknown as { user: TeamMember }).user}
+                      size={28}
+                    />
+                  )}
                 />
-              )}
-            />
-          </Form.Item>
-          <Form.Item
-            name="role"
-            label={t("teams.roleLabel")}
-            rules={[{ required: true, message: t("teams.roleRequired") }]}
-          >
-            <Select options={ROLES} />
-          </Form.Item>
-        </Form>
-      </Modal>
-    </div>
+              </Form.Item>
+              <Form.Item
+                name="role"
+                label={t("teams.roleLabel")}
+                rules={[{ required: true, message: t("teams.roleRequired") }]}
+              >
+                <Select options={ROLES} />
+              </Form.Item>
+            </Form>
+          </Modal>
+        </div>
+      </main>
+    </WorkspaceShell>
   );
 }

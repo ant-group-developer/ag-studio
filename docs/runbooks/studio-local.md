@@ -161,8 +161,9 @@ node --require ts-node/register ../../node_modules/typeorm/cli.js migration:run 
   `E:\ag-local\studio-data\harness\workspaces`). Phải nằm ngoài mọi repo (CLAUDE.md của thư mục cha sẽ lọt vào agent).
 - Việc nền của dự án (chuẩn bị video, crawl, dựng timeline, render, thumbnail, học phong cách) chạy trong worker,
   `STUDIO_JOB_LANES` việc cùng lúc (mặc định 2), thêm một việc cho mỗi máy farm đang rảnh tới `STUDIO_JOB_LANES_MAX`
-  (mặc định 8); chuẩn bị video giải mã hình trên worker tối đa `STUDIO_DECODE_LANES` cái cùng lúc (mặc định bằng
-  `STUDIO_JOB_LANES`), lời thoại gửi farm ngay khi tải xong nên đọc song song với dò cảnh. Việc dùng farm (đọc lời thoại, lời dẫn, render) cần máy `local-render`
+  (mặc định 8). Chuẩn bị video không giải mã gì trên worker: ag-go-api (3738) chuẩn bị sẵn (farm `scan.prep` trên
+  `local-scan`, lời thoại `studio.transcribe` trên `local-render`), Studio chép khung, tờ ghép, lời thoại về; ag-go-api
+  tắt thì việc chuẩn bị lỗi "fetch failed". Việc dùng farm (lời dẫn, render) cần máy `local-render`
   **online** ở web farm 3011: farm-api tắt lâu thì render worker không tự nối lại — tắt/bật lại `render-worker`.
 - Log Studio API/worker khi bật bằng `local-stack.mjs` không vào `E:/ag-local/dev-run/*.log` (chạy dưới `cmd.exe`); xem
   trạng thái lượt chat và job trong `studio.db` (`agent_messages`, `project_jobs`) hoặc màn web.
@@ -237,7 +238,10 @@ thể cần thêm một JS runtime (Deno) cho YouTube: làm theo thông báo l�
 | Quét video trên ag-go hỏng hàng loạt, job farm `scan.extract` `failed` ở `download` với `fetch failed` | `sign_url` của chủ job `ag-go` trong DB farm còn trỏ cổng 3737 (chế độ Docker); chạy trực tiếp thì ag-go-api ở 3738 | `docker exec postgres16 psql -U postgres -d ag_farm -c "UPDATE farm_owners SET sign_url = 'http://<IP máy>:3738/api/analysis/farm/sign' WHERE id = 'ag-go'"`, rồi quét lại các video hỏng (backfill "Chỉ chưa phân tích") |
 | Màn Hàng đợi "Không đọc được danh sách máy farm" | Farm hub không chạy, hoặc `FARM_OWNER_KEY` sai | `local-stack.mjs status`; log `studio-api` |
 | Kiểm trong khung trình duyệt của app desktop, số liệu không tự cập nhật | Khung đó báo trang luôn ẩn nên không polling | Tải lại trang sau mỗi bước |
-| Chuẩn bị video hay dựng timeline treo ở "đọc lời thoại"/"đọc lời dẫn" | `local-render` không khai `python` hoặc thiếu kind `studio.tts`/`studio.transcribe` | Mục 4a; web farm 3011 xem khả năng node |
+| Chuẩn bị video treo ở "Đang chờ máy" / "Đang đọc lời thoại" | ag-go chạy `scan.prep` trên `local-scan` (cần bản có `scan.prep`), lời thoại `studio.transcribe` trên `local-render`: máy offline hoặc thiếu kind | Web farm 3011 xem node và job của chủ `ag-go`; trang phân tích ag-go (admin) xem số prep đang chạy |
+| Chuẩn bị video lỗi ngay ("fetch failed", 401/403) | ag-go-api 3738 không chạy, hoặc khoá Studio thiếu scope `footage:read`/`footage:resolve` trong `SERVICE_KEYS` của ag-go | `local-stack.mjs status`; sửa `SERVICE_KEYS` rồi bật lại ag-go-api |
+| Log worker `usage events not sent to ag-go` (HTTP 403) | Khoá Studio trong `SERVICE_KEYS` của ag-go thiếu scope `usage:write` | Thêm scope rồi bật lại ag-go-api; sự kiện nằm trong `ag_go_usage_outbox` và tự gửi lại (chậm nhất 1 giờ) |
+| Dựng timeline treo ở "đọc lời dẫn" | `local-render` không khai `python` hoặc thiếu kind `studio.tts` | Mục 4a; web farm 3011 xem khả năng node |
 | Job `studio.transcribe` bị hub từ chối "not allowed for owner studio" | DB farm chưa chạy migration `studio-transcribe` | Chạy migration hub (mục 3) |
 | Job học phong cách (`style_watch`) chờ mãi | Không worker nào có ffmpeg (`media`) | Mục 4a/4b; bật lại worker |
 | Video YouTube trong job học phong cách báo `no_ytdlp` | Worker không có yt-dlp hay `STUDIO_REFERENCE_DOWNLOADS=0` | Mục 4b; hoặc tải video mẫu lên tab Đầu vào |

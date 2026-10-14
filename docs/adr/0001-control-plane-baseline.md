@@ -1254,3 +1254,32 @@ Spec `docs/superpowers/specs/2026-10-10-ag-studio-agent-workspace-design.md`, pl
     `reference_download` chỉ bị từ chối khi đường nó sẽ đi (`referenceRoute`) đang bị chặn: máy chủ bị chặn mà có máy
     farm tải được thì thẻ dùng được lại; màn Hàng đợi (admin) nói video mẫu đang đi qua máy nào. `STUDIO_REFERENCE_DOWNLOADS=0`
     tắt cả hai đường.
+194. **Link bản render mp4 không kiểm quyền footage, chỉ file Premiere kiểm (2026-10-13).** Trước đây mọi link bản
+    render hỏi ag-go xem quyền của chính người xem có phủ mọi video trong revision đó không (`FootageRights`), làm tab Xem
+    trước chờ thêm một vòng `/renders` → `/link` → ag-go. Nay bản xem trước và bản cuối (mp4) không hỏi ag-go: mp4 là
+    video đã dựng, không trao file footage; `GET videos/:id/renders` ký luôn `url` cho chúng (phép tính tại chỗ) nên player
+    chạy với một request. **Bản cuối dựng từ bản gốc của chủ dự án**, nên người trong dự án xem được bản cuối chất lượng đầy
+    đủ dù quyền ag-go riêng của họ không phủ footage đó — đã chốt với người dùng. File Premiere (.zip đóng gói chính các file
+    footage, bản xem hoặc bản gốc) vẫn chỉ có link cho người mà quyền ag-go của chính họ phủ mọi video trong đó, xin lúc
+    bấm lưu (`GET renders/:jobId/link`, `urlHidden: footage_scope | footage_check_failed` như trước).
+195. **Đầu vào chuẩn bị một lần ở ag-go, Studio chỉ chép về (2026-10-13, plan 2026-10-13 P3).** Trước đây mỗi dự án tự
+    tải bản xem 480p, dò cảnh, cắt khung, ghép tờ bằng ffmpeg trên worker và gửi farm đọc lời thoại; cùng footage ở dự án
+    khác làm lại từ đầu. Nay ag-go chuẩn bị mỗi footage một lần khi nó vào (luồng riêng `asset_preps`, farm `scan.prep`
+    theo đúng luật `buildShots` từ bản sạch nhỏ nhất ≥ 480, rồi `studio.transcribe` do ag-go gửi; chạy bù cho footage cũ
+    ở lane batch) và lưu trong DB của nó. Job `prepare_asset` hỏi `POST /footage/assets/prep` (như chủ dự án); có sẵn
+    thì tải khung và tờ ghép (8 luồng, URL ký) và ghi `shots.json`, `transcript.json/.md`, `README.md` **đúng định dạng
+    cũ** (video-index, fit và skill chọn cảnh đọc không đổi; `source.kind`/`watermarked` là của bản ag-go đã cắt), lọc
+    câu nghe nhầm bằng `transcript-clean.ts` lúc chép; chưa có hoặc lỗi thì xin `.../prep/run` một lần (ag-go chạy ở lane
+    interactive, nâng job đang chờ trong lô chạy bù) rồi hỏi lại mỗi 5 s, tối đa 60 phút, hiện "Đang chờ máy / Đang cắt
+    cảnh / Đang đọc lời thoại". Lời thoại lỗi ở ag-go không làm hỏng việc chuẩn bị (README nói lời thoại là phần thêm).
+    Job không còn `units` khi xếp hàng (bản có sẵn xong trong vài giây); chỉ đặt theo thời lượng khi phải chờ ag-go chạy.
+    Worker không cần ffmpeg để chuẩn bị nữa; `STUDIO_DECODE_LANES` bị bỏ. Dự án đã chuẩn bị giữ file cũ cho tới khi bấm
+    "Chuẩn bị lại" (`again` chép lại từ ag-go, không bắt ag-go chạy lại), để mã cảnh trong `survey.json` không lệch.
+196. **Studio báo ag-go cách footage được dùng, qua hộp thư đi (2026-10-13, plan 2026-10-13 P4).** Thống kê xem ở ag-go
+    nên Studio gửi sự kiện (hợp đồng H3): thêm/bỏ project hay video ag-go (`addSource` chỉ khi thật sự thêm dòng,
+    `removeSource`, mọi đường kể cả tool agent) và mỗi video ag-go của bản cuối / file Premiere đã xong (`renders.ts` sau
+    khi farm xong). Sự kiện ghi vào `ag_go_usage_outbox` (migration 0040, chạy bù từ `project_sources` và job đã xong theo
+    `clips[].asset_id` của đúng bản timeline) với `event_key` duy nhất (`src:<id>:added|removed`, `job:<jobId>:<assetId>`),
+    nên ghi lại hay gửi lại không đếm trùng. Worker gửi mỗi 30 s lô 200 (`usage-send.ts`, chỉ service key, scope
+    `usage:write`); lỗi (ag-go tắt, 401/403 khi khoá thiếu scope) giữ lại và lùi dần 30 s → tối đa 1 giờ, có log; sự kiện
+    ag-go không bao giờ nhận (id không phải UUID) để riêng, không chặn các sự kiện khác. Bản xem trước không tính.

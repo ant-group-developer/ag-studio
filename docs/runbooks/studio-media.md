@@ -17,7 +17,9 @@ driver 581.29, Python 3.11.15), không phải ước lượng. Mục 9 chốt Do
 > **AG Studio (pha 5) dùng một phần của pipeline này** cho tập cắt theo shot, qua
 > `packages/studio-engine/src/cut-stages.ts`: `buildShots`/`shotId` (dò shot), `fitEdl`/`buildTimeline` (khớp hình
 > theo lời dẫn) là hàm thuần; ffmpeg chạy bằng bản bất đồng bộ `cut-ffmpeg.ts`. WhisperX và OmniVoice không chạy trên
-> máy Studio mà trên render worker của farm (job `studio.transcribe`, `studio.tts`, cùng hai script Python).
+> máy Studio mà trên render worker của farm (job `studio.transcribe`, `studio.tts`, cùng hai script Python). Từ
+> 2026-10-13 Studio không tự dò cảnh hay gửi lời thoại của footage nữa: ag-go chuẩn bị mỗi video một lần (farm
+> `scan.prep` theo đúng luật `buildShots`, rồi `studio.transcribe` do ag-go gửi), Studio chỉ chép về (ADR mục 195).
 
 Đọc kèm: `engines/python/README.md` (giao thức job/result của hai script), `studio-autopilot.md` (vòng tự
 nhận request), `content-library.md` (kho), `go-live.md` §4 (dựng máy studio thật).

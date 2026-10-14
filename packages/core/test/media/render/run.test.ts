@@ -437,6 +437,25 @@ describe("renderComposition (fake ffmpeg)", () => {
     expect(report.warnings).not.toContain("loudnorm_not_linear");
   });
 
+  it("a preview tier lightens only the final encode: the mezzanines (and their cache) are those of a final render", async () => {
+    const runOnce = async (tier?: "preview" | "final") => {
+      const { spawn, calls } = fakeSpawn();
+      const { d, outDir } = fakeWorld({ spawn, nvenc: true });
+      await renderComposition(d, input({ composition: fakeComposition(), outDir, encoderCfg: "auto", sourceChecksums: CHECKSUMS, ...(tier ? { tier } : {}) }));
+      const finals = calls.filter((c) => c.includes("[vout]"));
+      expect(finals).toHaveLength(1);
+      // drop the per-run temp paths: what is compared is how each pass encodes
+      return { mezz: calls.filter((c) => !c.includes("[vout]") && c.includes("-c:v")).map((c) => c.slice(c.indexOf("-c:v"), -1)), final: finals[0]! };
+    };
+    const final = await runOnce();
+    const preview = await runOnce("preview");
+    expect(final.final.join(" ")).toContain("-preset p6 -tune hq -rc vbr -cq 19");
+    expect(preview.final.join(" ")).toContain("-preset p4 -rc vbr -cq 25 -b:v 0 -maxrate 6M -bufsize 12M");
+    expect(preview.final).not.toContain("p6");
+    expect(preview.mezz).toHaveLength(2);
+    expect(preview.mezz).toEqual(final.mezz);
+  });
+
   it('encoderCfg "nvenc" on a machine without NVENC warns and never emits an nvenc argv', async () => {
     const { spawn, calls } = fakeSpawn();
     const { d, outDir } = fakeWorld({ spawn, nvenc: false });

@@ -88,7 +88,7 @@ export function StepRail({ status, scope, projectId, videoId, canWrite, onPrompt
     ? status.projectOpen ?? status.project.filter((s) => !s.optional && s.status !== "done" && s.status !== "skipped").length
     : 0;
   return (
-    <nav className="ws-steps" aria-label={t("ws.steps.label")}>
+    <nav className="ws-steps" data-tour="steps" aria-label={t("ws.steps.label")}>
       {steps.map((s) => (
         <Popover key={s.key} trigger="click" placement="bottomLeft" title={text(s).title} destroyOnHidden
           open={openKey === s.key} onOpenChange={(o) => setOpenKey(o ? s.key : null)}

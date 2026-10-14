@@ -84,7 +84,7 @@ nhưng không code nào đọc.
   `turnChangedFiles` trong `workspace/file-changes.ts`; runner quét thư mục với tác giả Studio trước lượt để file job/seed
   không tính cho lượt), `step_marks`, `thread_summaries`,
   `lesson_proposals`, `project_jobs`, `project_farm_jobs`, `prepared_assets`, `agent_actions`, `audit_log` (nhật ký hoạt động,
-  0036). Dùng chung từ trước: `teams`,
+  0036), `user_prefs` (tuỳ chọn riêng từng người: tour đã xem, checklist đã ẩn; 0041). Dùng chung từ trước: `teams`,
   `team_members`, `team_skills`, `sign_audit_log`, `youtube_cache`, `llm_calls`, `studio_settings`, `studio_voice_lines`,
   `music_track` (kho nhạc), `lease` (slot Claude).
 - File hướng ra trình duyệt nằm trên R2 (`S3Bucket`, `packages/studio-engine/src/bucket.ts`), URL ký có hạn. File tải
@@ -96,10 +96,12 @@ nhưng không code nào đọc.
 ### Đăng nhập, quyền
 - Web đăng nhập Auth0 (`VITE_AUTH0_*`); API kiểm JWT bằng `Auth0Guard` toàn cục (issuer, audience, `azp` thuộc
   `AUTH0_ALLOWED_CLIENT_IDS`). Vai trong team: `viewer < editor < producer < owner` (`RolesGuard` tra
-  `teamId|projectId|videoId|threadId` ra team); admin Studio là `user_type = ADMIN` từ Account API và qua mọi phép kiểm vai.
+  `teamId|projectId|videoId|threadId` ra team); admin Studio là `user_type = ADMIN` từ Account API và qua mọi phép kiểm vai
+  (`AccountApiService`: nhớ 5 phút, các request cùng người dùng chung một lần hỏi, chờ tối đa 5 s, lỗi thì dùng hồ sơ cũ ≤ 1 giờ;
+  JWKS cũng chờ tối đa 5 s và chung một lần tải). CORS mọi origin, preflight nhớ 2 giờ (`common/cors.ts`).
 - Footage: video chỉ đến từ ag-go (chọn project/video ag-go ở tab Đầu vào; không còn `@folder`); web gọi thẳng ag-go bằng
   bearer người dùng (`/projects`, `/projects/:id/media`), API và worker gọi bằng `AG_GO_SERVICE_KEY` + `X-Act-As-User` = chủ
-  dự án. Link render chỉ trả cho người mà quyền ag-go của chính họ phủ mọi video trong bản đó. Tài liệu/ảnh/audio tải lên
+  dự án. Bản xem trước và bản cuối (mp4) ai trong dự án cũng xem được (link có sẵn trong `GET renders`); file Premiere chỉ trả link cho người mà quyền ag-go của chính họ phủ mọi video trong bản đó (ADR mục 194). Tài liệu/ảnh/audio tải lên
   Studio. **Không bao giờ lấy giọng hay nhạc từ ag-go.**
 
 ### Agent
@@ -134,7 +136,8 @@ nhưng không code nào đọc.
 
 ### Việc nền (job), farm, render
 - `project_jobs` (`workspace/jobs-db.ts`) chạy bởi `workspace/job-runner.ts` trong worker (`STUDIO_JOB_LANES`, mặc định 2):
-  `prepare_asset` (ag-go → tải bản xem → dò cảnh → khung, tờ ghép → lời thoại `studio.transcribe` trên farm), `research`
+  `prepare_asset` (hỏi ag-go bản chuẩn bị sẵn: cảnh, khung, tờ ghép, lời thoại; chưa có thì xin ag-go chạy và chờ; tải
+  khung và tờ về `inputs/<asset>/`, ADR mục 195), `research`
   (crawl YouTube: Data API nếu có `YOUTUBE_API_KEY`, không thì yt-dlp), `fit` (timeline v4 từ edit-plan, lời dẫn `studio.tts`
   vào kho giọng `voice-store.ts`), `render_preview|render_final|export_premiere`, `thumbnail`, `style_watch`. Mỗi job báo
   `phase`, `progress`, `eta_seconds` (`eta.ts`, không đoán khi đang chờ máy farm), máy farm; Dừng = `cancel_requested` (kill
@@ -173,7 +176,10 @@ nhưng không code nào đọc.
   (editor) thì lấy kho nhạc theo mood của kế hoạch dựng/branding (`music-library.ts`). API cần `STUDIO_FFMPEG_PATH` để nhận
   file audio (ffprobe mặc định cạnh ffmpeg như worker; `GET audio` trả `enabled`). Audio tải lên ≤ 100 MB, file khác ≤ 50 MB.
   Web: thẻ "Giọng đọc và nhạc nền" ở đầu tab Đầu vào (`inputs/AudioControls.tsx`, `AudioCard`): tải lên rồi dùng ngay, chọn
-  file đã tải, kho nhạc (nghe thử), không lời dẫn, tự chọn theo mood; nút thiếu vai/thiếu ffmpeg mờ kèm lý do, lỗi tải hiện
+  file đã tải (hộp hai cột `inputs/MusicPicker.tsx`: tìm, tích, nghe thử từng bài, thời lượng đọc từ metadata của `<audio>`
+  | thứ tự phát kéo thả bằng `@dnd-kit` (chuột và bàn phím), tổng thời lượng trừ chuyển mờ; file nghe qua `listenUrl` =
+  `GET projects/:id/files/stream?path&t`, link ký 15 phút `workspace/file-link.ts`, route `@Public()` có Range), kho nhạc
+  (nghe thử), không lời dẫn, tự chọn theo mood; nút thiếu vai/thiếu ffmpeg mờ kèm lý do, lỗi tải hiện
   lỗi + Thử lại (không biến mất).
 - Thumbnail (`workspace/thumbnails.ts`) cắt khung từ bản render và vẽ chữ trên máy Studio (ffmpeg bất đồng bộ, font Arial của
   hệ thống qua `STUDIO_FONTS_DIR`, không ship font). Quy chuẩn & skill của nhóm (`team_skills`) thành skill của agent khi dự
@@ -191,7 +197,16 @@ nhưng không code nào đọc.
   Cột phải: Xem trước (trang video), Tệp, Đầu vào, Nghiên cứu, Cài đặt. Việc đang chạy: nút "Đang chạy" ở đầu trang (agent,
   tool, job; Dừng). `/queue` (việc đang chạy của mọi dự án người xem thấy, slot Claude, máy farm; admin đặt cap và tên AI),
   `/audit` (nhật ký hoạt động), `/stats` (thống kê chat Claude theo nhóm/dự án/video/người; hai màn này cho admin và owner
-  nhóm), `/music` (kho nhạc), `/teams`, `/teams/:teamId` (thành viên, skill, thống kê và nhật ký của nhóm; layout quản trị).
+  nhóm), `/music` (kho nhạc), `/teams`, `/teams/:teamId` (thành viên, skill, thống kê và nhật ký của nhóm; cùng `WorkspaceShell`,
+  breadcrumb "Quản lý nhóm › tên nhóm"). Mọi `<Table>`/`<ProTable>` có `sticky` (`helpers/sticky-table-header.ts`: trang
+  workspace cuộn trong `.ws-page` nên `PAGE_TABLE_STICKY`, bảng trong hộp cuộn khác dùng `stickyIn`); spec
+  `sticky-table-header.spec.ts` quét mã nguồn và báo bảng thiếu. Danh sách dự án có người tạo (`creator` từ Account API, lọc
+  "Do tôi tạo").
+  Người mới (`modules/onboarding/`): nút "Bắt đầu n/7" trên thanh trên (`StartChecklist`, `GET /me/onboarding` đếm trong
+  các nhóm của người đó; "Đi tới" theo `links`, "Xem cách làm" → `/guide#<mục>`; ẩn khi xong hết hoặc bấm Ẩn), tour antd
+  lần đầu vào trang dự án/danh sách dự án (`ProductTour`, chỉ trỏ vào `data-tour` đang có trên trang, bỏ qua nút vai
+  không có; "Xem lại hướng dẫn nhanh" ở menu avatar và trang hướng dẫn), trang `/guide` (nội dung `locales/guide.{vi,en}.ts`,
+  mỗi mục có anchor). Trạng thái đã xem/đã ẩn ở `GET/PUT /me/prefs`, không ở localStorage.
   Chọn project ag-go: drawer toàn màn hình dựng lại **y như trang Projects của ag-go-web** (`modules/inputs/ag-go-projects/`:
   sidebar lọc, ô tìm có gợi ý, sort, list/grid, thẻ và CSS chép từ `project-grid-view` của ag-go; `/projects`, lookup và
   `/assets/:id/preview-url` của ag-go gọi thẳng). Chỉ liệt kê project của **menu "Dự án"** của ag-go
@@ -211,7 +226,7 @@ nhưng không code nào đọc.
   Tên tool trong chat/nhật ký: `ws.tool.<tên>` ở `ws.vi.ts`/`ws.en.ts` — thêm tool cho agent thì thêm nhãn cả hai ngôn ngữ
   (`agent-chat/labels.spec.ts` đọc tên tool từ engine và báo thiếu). Không bao giờ hiện uuid thay tên video: `inputs_add` bắt
   buộc `name`; nguồn cũ thiếu tên được API đặt lại khi liệt kê nguồn. Biến màu `--ws-*` ở `:root` (drawer/modal là portal).
-  Ô chọn nhóm trên thanh trên (`TeamPicker`) có
+  Breadcrumb trên thanh trên là chỗ đổi nhóm và dự án: `AG Studio › [nhóm ▾] › [dự án ▾] › video/luồng`. Ô nhóm (`TeamPicker`) có
   "Tạo nhóm mới" và "Quản lý nhóm", gõ để tìm qua `GET /teams?q` (không cắt ở trang đầu); admin Studio thấy thêm "Nhóm
   khác" (nhóm không là thành viên, `isMember: false`), vẫn sửa được như owner, và có dải "Bạn đang xem với quyền admin" ở
   những nhóm đó. Tên nhóm trên breadcrumb và vai lấy từ `GET /teams/:id` (`useTeam`, `useTeamRole` có `ready` để trang

@@ -7,6 +7,7 @@ import { useStudioClient, type ClaudeTurn, type ClaudeTurnDetail, type ClaudeTur
 import type { AgentPart } from "../../api/workspace-client";
 import { toolLabel, toolTarget } from "../agent-chat/labels";
 import { useAiTranslation } from "../common/assistant-name";
+import { PAGE_TABLE_STICKY } from "../../helpers/sticky-table-header";
 import { UserCell } from "../common/UserCell";
 import { Markdown } from "../files/Markdown";
 import { clock } from "../workspace/time";
@@ -161,7 +162,7 @@ export function ClaudeTurns({ period, teamId, scope, onClearScope }: {
         ]} />
       </div>
       <Table<ClaudeTurn>
-        rowKey="id" size="small" columns={columns} dataSource={list.data?.items ?? []} loading={list.isFetching} scroll={{ x: 1100 }}
+        rowKey="id" size="small" columns={columns} dataSource={list.data?.items ?? []} loading={list.isFetching} scroll={{ x: 1100 }} sticky={PAGE_TABLE_STICKY}
         locale={{ emptyText: t("ws.stats.none") }} rowClassName={() => "ws-turns__row"}
         onRow={(r) => ({ onClick: () => setOpen(r.id), onKeyDown: (e) => { if (e.key === "Enter") setOpen(r.id); }, tabIndex: 0, "aria-label": t("ws.stats.turn.openOne") })}
         pagination={{ current: page, pageSize: PAGE, total: list.data?.total ?? 0, showSizeChanger: false, hideOnSinglePage: true, onChange: setPage }}

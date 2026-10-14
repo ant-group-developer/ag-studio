@@ -11,7 +11,7 @@ import { useDebouncedValue } from "../../helpers/use-debounced-value";
 type TeamLike = Pick<Team, "id" | "name" | "isMember">;
 
 /**
- * The team switch of the header. Everyone sees their teams; a Studio admin also sees "Other teams" (the ones they are
+ * The team switch of the header, its first crumb: picking a team (the current one too) opens its projects. Everyone sees their teams; a Studio admin also sees "Other teams" (the ones they are
  * not in). Typing searches every team the person may see through the API (`q`), so nothing is cut at the first page.
  */
 export function TeamPicker({ value, teams, current, isAdmin, onNewTeam }: {
@@ -51,11 +51,11 @@ export function TeamPicker({ value, teams, current, isAdmin, onNewTeam }: {
 
   return (
     <Select
-      size="small" variant="borderless" value={value} placeholder={t("ws.shell.pickTeam")} style={{ minWidth: 180 }}
+      className="ws-crumbs__select" data-tour="team" suffixIcon={null} size="small" variant="borderless" value={value} placeholder={t("ws.shell.pickTeam")} popupMatchSelectWidth={280}
       showSearch filterOption={false} searchValue={search} onSearch={setSearch}
       notFoundContent={searching && (isFetching || q !== search.trim()) ? <Spin size="small" /> : t("ws.shell.noTeamFound")}
       options={options}
-      onChange={(id: string) => { rememberTeam(id); close(); navigate(`/t/${id}`); }}
+      onSelect={(id: string) => { rememberTeam(id); close(); navigate(`/t/${id}`); }}
       open={open} onOpenChange={(o) => { if (o) setOpen(true); else close(); }}
       popupRender={(menu) => (
         <>

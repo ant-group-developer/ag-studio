@@ -9,6 +9,9 @@ export interface UserSummary {
   avatar: string | null;
 }
 
+/** Someone the Account API does not (or no longer) know: only their id. */
+export const unknownPerson = (userId: string): UserSummary => ({ userId, name: null, email: null, avatar: null });
+
 interface AccountUser {
   id: string;
   name?: unknown;

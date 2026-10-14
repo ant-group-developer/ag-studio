@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { ConfigService } from '@nestjs/config';
 import { createStudioEngineCore, StudioDb } from '@ag-studio/engine';
 import { StudioDbService } from '../db/studio-db.service';
+import type { AccountDirectoryService } from '../auth/account-directory.service';
 import type { EngineService } from '../studio/engine.service';
 
 export interface RealStudio {
@@ -40,3 +41,6 @@ export function insertTeam(db: StudioDbService, id: string, ownerId: string): vo
   db.run('INSERT INTO teams (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)', [id, `Team ${id}`, now, now]);
   db.run('INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)', [id, ownerId, 'owner', now]);
 }
+
+/** An Account API that knows nobody (tests never call the network): every person shows as their id. */
+export const NO_DIRECTORY = { summaries: async () => new Map() } as unknown as AccountDirectoryService;

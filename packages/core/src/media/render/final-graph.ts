@@ -5,7 +5,7 @@
 import { HarnessError, type Composition } from "@harness/contracts";
 import { round3 } from "../time.js";
 import { audioGraph, type LoudnormMeasured } from "./audio-graph.js";
-import { videoEncoderArgs, type EncoderChoice } from "./encoder.js";
+import { videoEncoderArgs, type EncoderChoice, type OutputTier } from "./encoder.js";
 
 export interface FinalGraphInput {
   ffmpeg: string;
@@ -16,6 +16,8 @@ export interface FinalGraphInput {
   assPath: string | null;
   fontsDir: string | null;
   encoder: EncoderChoice;
+  /** How the video is encoded (`videoEncoderArgs`); default `final`. */
+  tier?: OutputTier;
   loudnorm: LoudnormMeasured | null;
   out_path: string;
   /** `true` for the loudnorm measurement pass: same inputs, audio-only filtergraph, `-f null -`. */
@@ -223,7 +225,7 @@ export function finalArgs(p: FinalGraphInput): { argv: string[]; inputs: { kind:
 
   const filterComplex = `${videoParts.join(";")};${audio.filter}`;
   argv.push("-filter_complex", filterComplex, "-map", "[vout]", "-map", audio.out);
-  argv.push(...videoEncoderArgs({ choice: encoder, codec: composition.output.codec, tier: "final", fps: composition.output.fps }));
+  argv.push(...videoEncoderArgs({ choice: encoder, codec: composition.output.codec, tier: p.tier ?? "final", fps: composition.output.fps }));
   argv.push("-c:a", "aac", "-b:a", "256k", "-ar", "48000", "-ac", "2", "-movflags", "+faststart", out_path);
 
   return { argv, inputs };

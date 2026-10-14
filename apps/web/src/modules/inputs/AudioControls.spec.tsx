@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App as AntApp } from "antd";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,23 @@ window.matchMedia ??= ((query: string) => ({
 })) as unknown as typeof window.matchMedia;
 
 const MB = (n: number) => n * 1024 * 1024;
+const listen = (path: string) => `/api/projects/p1/files/stream?path=${encodeURIComponent(path)}&t=tok`;
+// jsdom plays nothing: playing and pausing only say so
+HTMLMediaElement.prototype.play = vi.fn(function play(this: HTMLMediaElement) {
+  Object.defineProperty(this, "paused", { value: false, configurable: true });
+  this.dispatchEvent(new Event("play"));
+  return Promise.resolve();
+});
+HTMLMediaElement.prototype.pause = vi.fn(function pause(this: HTMLMediaElement) {
+  Object.defineProperty(this, "paused", { value: true, configurable: true });
+  this.dispatchEvent(new Event("pause"));
+});
+/** The browser read a file's length from its metadata. */
+function loaded(dialog: HTMLElement, path: string, seconds: number) {
+  const el = [...dialog.querySelectorAll("audio")].find((a) => a.getAttribute("src")?.endsWith(listen(path)))!;
+  Object.defineProperty(el, "duration", { value: seconds, configurable: true });
+  fireEvent.loadedMetadata(el);
+}
 const ws = {
   getAudio: vi.fn(),
   musicFromFiles: vi.fn(),
@@ -32,7 +49,7 @@ const { AudioCard, UseAudioButtons, VideoMusicCard } = await import("./AudioCont
 
 const audio = (over: Partial<ProjectAudioView> = {}): ProjectAudioView => ({
   voice: null, music: null, summary: { voice: "", music: "" }, libraryTrack: null, enabled: true,
-  files: [{ path: "context/audio/giong.wav", name: "giong.wav", bytes: 2 * 1024 * 1024, sourceId: "s1", addedAt: "2026-10-12T00:00:00.000Z" }],
+  files: [{ path: "context/audio/giong.wav", name: "giong.wav", bytes: 2 * 1024 * 1024, sourceId: "s1", addedAt: "2026-10-12T00:00:00.000Z", listenUrl: listen("context/audio/giong.wav") }],
   ...over,
 });
 const wrap = (node: React.ReactNode) => render(
@@ -134,21 +151,97 @@ describe("voice and music card", { timeout: 20_000 }, () => {
     await waitFor(() => expect(ws.audioFromFile).toHaveBeenLastCalledWith("p1", "music", { path: "context/audio/giong.wav" }));
   });
 
-  it("joins several uploaded files into the music, in the order put, with the crossfade said", async () => {
-    const files = ["mot.mp3", "hai.mp3", "ba.mp3"].map((name, i) => ({ path: `context/audio/${name}`, name, bytes: MB(1), sourceId: `s${i}`, addedAt: "2026-10-12T00:00:00.000Z" }));
+  it("joins several uploaded files into the music: ticked in order, dragged into place with the keyboard, the total less the crossfades", async () => {
+    const files = ["mot.mp3", "hai.mp3", "ba.mp3"].map((name, i) => ({
+      path: `context/audio/${name}`, name, bytes: MB(1), sourceId: `s${i}`, addedAt: "2026-10-12T00:00:00.000Z", listenUrl: listen(`context/audio/${name}`),
+    }));
     ws.getAudio.mockResolvedValue(audio({ files }));
     ws.musicFromFiles.mockResolvedValue(audio({ music: { track: "library:studio/projects/p1/music/x.m4a", gain_db: -18, ducking: true, duration_s: 412, parts: [{}, {}, {}], crossfade_s: 2 } }));
     card();
     fireEvent.click(within(await screen.findByRole("group", { name: "Nhạc nền" })).getByRole("button", { name: /Chọn file đã tải/ }));
     const dialog = await screen.findByRole("dialog", { name: "Chọn file làm nhạc nền" });
+    expect(within(dialog).getByText(/Tích file bên trái/)).toBeInTheDocument();
     for (const n of ["mot.mp3", "hai.mp3", "ba.mp3"]) fireEvent.click(within(dialog).getByRole("checkbox", { name: `Chọn ${n}` }));
     const order = within(dialog).getByRole("list", { name: "Thứ tự phát" });
-    expect(within(order).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["mot.mp3", "hai.mp3", "ba.mp3"]);
-    fireEvent.click(within(dialog).getByRole("button", { name: "Đưa ba.mp3 lên" }));
+    const names = () => [...order.querySelectorAll(".ws-mpick__name")].map((e) => e.textContent);
+    expect(names()).toEqual(["mot.mp3", "hai.mp3", "ba.mp3"]);
+    // lengths come from each file's metadata; the total takes 2 s off for each of the two crossfades
+    expect(within(dialog).getByText("3 bài · –:––")).toBeInTheDocument();
+    loaded(dialog, "context/audio/mot.mp3", 151);
+    loaded(dialog, "context/audio/hai.mp3", 185);
+    loaded(dialog, "context/audio/ba.mp3", 160);
+    expect(within(dialog).getByText("3 bài · 8:12")).toBeInTheDocument();
+    expect(within(order).getAllByText("2:31")).toHaveLength(1);
+
+    // the rows stand one under the other, 40 px apart, as a browser lays them out
+    const rect = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      const item = this.closest(".ws-mpick__item");
+      const i = item ? [...item.parentElement!.children].indexOf(item) : 0;
+      return { x: 0, y: i * 40, top: i * 40, bottom: i * 40 + 36, left: 0, right: 300, width: 300, height: 36, toJSON: () => ({}) } as DOMRect;
+    });
+    const handle = within(order).getByRole("button", { name: "Kéo để đổi thứ tự: ba.mp3" });
+    handle.focus();
+    // dnd-kit listens for the moves from the next tick on: Space picks it up, two arrows up, Space drops it
+    const press = async (target: Element | Document, code: string) => {
+      fireEvent.keyDown(target, { key: code === "Space" ? " " : code, code });
+      await act(() => new Promise((r) => setTimeout(r, 0)));
+    };
+    await press(handle, "Space");
+    await press(document, "ArrowUp");
+    await press(document, "ArrowUp");
+    await press(document, "Space");
+    await waitFor(() => expect(names()).toEqual(["ba.mp3", "mot.mp3", "hai.mp3"]));
+    rect.mockRestore();
+
     fireEvent.click(within(dialog).getByRole("button", { name: "Bỏ mot.mp3" }));
+    expect(names()).toEqual(["ba.mp3", "hai.mp3"]);
     fireEvent.change(within(dialog).getByRole("spinbutton", { name: "Chuyển mờ giữa các bài (giây)" }), { target: { value: "3" } });
+    expect(within(dialog).getByText("2 bài · 5:42")).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Ghép 2 bài làm nhạc nền" }));
     await waitFor(() => expect(ws.musicFromFiles).toHaveBeenCalledWith("p1", { paths: ["context/audio/ba.mp3", "context/audio/hai.mp3"], crossfadeS: 3 }));
+  });
+
+  it("listens to one file at a time, and finds files by name", async () => {
+    const files = ["mot.mp3", "hai.mp3"].map((name, i) => ({
+      path: `context/audio/${name}`, name, bytes: MB(1), sourceId: `s${i}`, addedAt: "2026-10-12T00:00:00.000Z", listenUrl: listen(`context/audio/${name}`),
+    }));
+    ws.getAudio.mockResolvedValue(audio({ files }));
+    card();
+    fireEvent.click(within(await screen.findByRole("group", { name: "Nhạc nền" })).getByRole("button", { name: /Chọn file đã tải/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Chọn file làm nhạc nền" });
+    // played from the API's short link, nothing loaded but the length
+    const players = [...dialog.querySelectorAll("audio")];
+    expect(players.map((a) => [a.getAttribute("src")?.endsWith(listen(`context/audio/${a === players[0] ? "mot" : "hai"}.mp3`)), a.getAttribute("preload")]))
+      .toEqual([[true, "metadata"], [true, "metadata"]]);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Nghe thử mot.mp3" }));
+    expect(await within(dialog).findByRole("button", { name: "Dừng mot.mp3" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Nghe thử hai.mp3" }));
+    expect(await within(dialog).findByRole("button", { name: "Dừng hai.mp3" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Nghe thử mot.mp3" })).toHaveAttribute("aria-pressed", "false");
+    expect(players[0]!.paused).toBe(true);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Dừng hai.mp3" }));
+    expect(await within(dialog).findByRole("button", { name: "Nghe thử hai.mp3" })).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Tìm file…" }), { target: { value: "hai" } });
+    expect(within(dialog).queryByRole("checkbox", { name: "Chọn mot.mp3" })).toBeNull();
+    expect(within(dialog).getByRole("checkbox", { name: "Chọn hai.mp3" })).toBeInTheDocument();
+  });
+
+  it("uploads more files from the open picker and ticks them after the others, without using any yet", async () => {
+    ws.uploadSource.mockReset().mockResolvedValueOnce({ source: { ref: "context/audio/moi.mp3" }, file: {} });
+    card();
+    fireEvent.click(within(await screen.findByRole("group", { name: "Nhạc nền" })).getByRole("button", { name: /Chọn file đã tải/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Chọn file làm nhạc nền" });
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Chọn giong.wav" }));
+    ws.getAudio.mockResolvedValue(audio({ files: [
+      { path: "context/audio/moi.mp3", name: "moi.mp3", bytes: MB(1), sourceId: "s2", addedAt: "2026-10-13T00:00:00.000Z", listenUrl: listen("context/audio/moi.mp3") },
+      ...audio().files,
+    ] }));
+    expect(within(dialog).getByRole("button", { name: /Tải thêm file/ })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Tải nhạc", { selector: "input" }), { target: { files: [new File(["x"], "moi.mp3", { type: "audio/mpeg" })] } });
+    const order = within(dialog).getByRole("list", { name: "Thứ tự phát" });
+    await waitFor(() => expect([...order.querySelectorAll(".ws-mpick__name")].map((e) => e.textContent)).toEqual(["giong.wav", "moi.mp3"]));
+    expect(ws.audioFromFile).not.toHaveBeenCalled();
+    expect(within(dialog).getByRole("checkbox", { name: "Chọn moi.mp3" })).toBeChecked();
   });
 
   it("uploads several files one by one, says which did not go and why, then asks which to use", async () => {

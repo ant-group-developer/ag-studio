@@ -5,7 +5,7 @@
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
-  createJob, createJobRunner, createProject, farmLanes, idleFarmNodes, limiter, seedWorkspace, studioLogger, type JobHandler, type ProjectFarm,
+  createJob, createJobRunner, createProject, farmLanes, idleFarmNodes, seedWorkspace, studioLogger, type JobHandler, type ProjectFarm,
 } from "../src/index.js";
 import { world } from "./helpers.js";
 
@@ -58,32 +58,6 @@ describe("job lanes from the farm", () => {
     expect(lanes()).toBe(2);
     lanes();
     expect(reads).toBe(1);
-  });
-});
-
-describe("limiter", () => {
-  it("runs at most n at once, the rest in order", async () => {
-    const limit = limiter(2);
-    let active = 0;
-    let most = 0;
-    const order: number[] = [];
-    const gates: (() => void)[] = [];
-    const tasks = [0, 1, 2, 3].map((i) => limit(async () => {
-      active++;
-      most = Math.max(most, active);
-      order.push(i);
-      await new Promise<void>((r) => gates.push(r));
-      active--;
-    }));
-    await flush();
-    expect(order).toEqual([0, 1]);
-    gates.shift()!();
-    await flush();
-    expect(order).toEqual([0, 1, 2]);
-    while (gates.length || order.length < 4) { gates.shift()?.(); await flush(); }
-    await Promise.all(tasks);
-    expect(most).toBe(2);
-    expect(order).toEqual([0, 1, 2, 3]);
   });
 });
 

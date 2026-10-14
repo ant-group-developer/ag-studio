@@ -42,7 +42,7 @@ interface FarmJobRow {
   is_final_render: number;
 }
 
-/** What a project's preview asks ag-go for: mirror of `PREVIEW_PREFER` in @ag-studio/engine `workspace/prepare.ts`. */
+/** What a project's preview asks ag-go for: a clean rendition, the short edge nearest 480. */
 const PREVIEW_PREFER = { short_edge: 480, clean: true } as const;
 
 declare module 'express' {

@@ -4,11 +4,12 @@ import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { ApiResponseInterceptor } from './common/api-response.interceptor';
 import { ApiExceptionFilter } from './common/api-exception.filter';
+import { CORS_OPTIONS } from './common/cors';
 import { SiteNameService } from './ag-go/site-name.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.enableCors();
+  app.enableCors(CORS_OPTIONS);
   app.setGlobalPrefix('api');
   app.useGlobalPipes(
     new ValidationPipe({

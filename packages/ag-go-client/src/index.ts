@@ -16,4 +16,13 @@ export type {
   SearchFootageResponse,
   CatalogItem,
   CatalogResponse,
+  AssetPrep,
+  AssetPrepItem,
+  AssetPrepPhase,
+  AssetPrepState,
+  AssetPrepsResponse,
+  AssetPrepTranscript,
+  AssetPrepTranscriptStatus,
+  StudioUsageEvent,
+  StudioUsageEventsResponse,
 } from "./types.js";
