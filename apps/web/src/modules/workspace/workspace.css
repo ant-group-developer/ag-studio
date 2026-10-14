@@ -58,8 +58,8 @@
 .ws-crumbs__current { color: var(--ws-text); font-weight: 500; }
 .ws-crumbs > svg { flex-shrink: 0; }
 /* the team and the project crumbs are switches: borderless selects that read as crumbs until hovered */
-.ws-crumbs__select { min-width: 110px; max-width: 240px; flex-shrink: 1; }
-.ws-crumbs__select.ant-select .ant-select-selector { padding-inline: 6px 22px; border-radius: 6px; }
+.ws-crumbs__select { max-width: 240px; flex-shrink: 1; }
+.ws-crumbs__select.ant-select .ant-select-selector { padding-inline: 6px; border-radius: 6px; }
 .ws-crumbs__select.ant-select:hover .ant-select-selector { background: var(--ws-chip); }
 .ws-crumbs__select .ant-select-selection-item { color: var(--ws-muted); font-size: 13px; font-weight: 500; }
 .ws-crumbs__select:last-child .ant-select-selection-item { color: var(--ws-text); }

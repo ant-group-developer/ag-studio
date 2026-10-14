@@ -27,7 +27,7 @@ export function ProjectPicker({ teamId, project }: {
   ];
   return (
     <Select
-      className="ws-crumbs__select" size="small" variant="borderless" value={project.id} popupMatchSelectWidth={260}
+      className="ws-crumbs__select" suffixIcon={null} size="small" variant="borderless" value={project.id} popupMatchSelectWidth={260}
       showSearch optionFilterProp="label" options={options} open={open} onOpenChange={setOpen}
       notFoundContent={t("ws.shell.noProjectFound")}
       onSelect={(id: string) => { setOpen(false); navigate(`/p/${id}`); }}
