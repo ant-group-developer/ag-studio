@@ -1,0 +1,43 @@
+/* Getting started: the header's checklist (a popover, outside .ws-app: tokens come from :root). */
+.ws-start-button { white-space: nowrap; color: var(--ws-accent); border-color: var(--ws-accent-line); background: var(--ws-accent-soft); font-weight: 500; }
+.ws-start-button:hover { background: var(--ws-accent-soft); color: var(--ws-accent); border-color: var(--ws-accent); }
+.ws-start { width: min(380px, calc(100vw - 48px)); max-height: calc(100vh - 140px); overflow-y: auto; font-size: 13px; color: var(--ws-text); }
+.ws-start__lead { margin: 0 0 6px; color: var(--ws-muted); }
+.ws-start__list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; }
+.ws-start__step { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid var(--ws-line); }
+.ws-start__step:first-child { border-top: 0; }
+.ws-start__tick { flex-shrink: 0; margin-top: 1px; color: var(--ws-line-strong); }
+.ws-start__step--done .ws-start__tick { color: var(--ws-ok-fg); }
+.ws-start__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ws-start__title { font-weight: 500; }
+.ws-start__step--done .ws-start__title { color: var(--ws-muted); text-decoration: line-through; text-decoration-color: var(--ws-line-strong); }
+.ws-start__hint { color: var(--ws-muted); }
+.ws-start__links { display: flex; gap: 14px; }
+.ws-start__links a { color: var(--ws-accent); }
+.ws-start__links a:hover { text-decoration: underline; }
+.ws-start__foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--ws-line); }
+
+/* The guide page: the sections' list stays at the left on wide screens, above the text on narrow ones. */
+.ws-guide__layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 32px; align-items: start; }
+.ws-guide__toc { position: sticky; top: 0; padding-top: 4px; font-size: 13px; }
+.ws-guide__toc-title { display: block; margin-bottom: 8px; color: var(--ws-faint); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.ws-guide__toc ol { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--ws-line); }
+.ws-guide__toc a { display: block; padding: 5px 12px; margin-left: -1px; border-left: 2px solid transparent; color: var(--ws-muted); }
+.ws-guide__toc a:hover { color: var(--ws-accent); }
+.ws-guide__toc a[aria-current="location"] { color: var(--ws-accent); border-left-color: var(--ws-accent); font-weight: 500; }
+.ws-guide__body { max-width: 760px; }
+.ws-guide__section {
+  scroll-margin-top: 16px; padding: 20px 24px; margin-bottom: 16px; background: var(--ws-surface);
+  border: 1px solid var(--ws-line); border-radius: 12px; box-shadow: var(--ws-shadow); line-height: 1.65;
+}
+.ws-guide__section h2 { margin: 0 0 10px; font-size: 17px; font-weight: 600; }
+.ws-guide__section p { margin: 0 0 10px; }
+.ws-guide__section ul, .ws-guide__section ol { margin: 0 0 10px; padding-left: 22px; }
+.ws-guide__section li { margin-bottom: 4px; }
+.ws-guide__section > :last-child { margin-bottom: 0; }
+@media (max-width: 900px) {
+  .ws-guide__layout { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .ws-guide__toc { position: static; }
+  .ws-guide__toc ol { display: flex; flex-wrap: wrap; gap: 4px 8px; border-left: 0; }
+  .ws-guide__toc a { padding: 2px 0; margin-left: 0; border-left: 0; }
+}

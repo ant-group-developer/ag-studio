@@ -1,7 +1,7 @@
 /**
  * The Studio worker (spec 2026-10-10 agent-workspace): one process running, side by side, the agent loop (turns of the
- * projects' chat threads), the loop of project jobs (preparing inputs, crawls, timelines, renders, thumbnails, style)
- * and the cleanup sweep, against the same `studio.db` as apps/api.
+ * projects' chat threads), the loop of project jobs (preparing inputs, crawls, timelines, renders, thumbnails, style),
+ * the cleanup sweep and the footage usage sent to ag-go, against the same `studio.db` as apps/api.
  */
 import { createLogger, Redactor, type HarnessLogger } from "@harness/core";
 import type { FarmOwnerClient } from "@ag-farm/owner-client";
@@ -20,12 +20,13 @@ import { fitHandler } from "./workspace/fit.js";
 import { createJobRunner, type JobHandler, type JobRunner } from "./workspace/job-runner.js";
 import type { JobKind } from "./workspace/jobs-db.js";
 import type { ProjectFarm } from "./workspace/farm.js";
-import { farmLanes, limiter } from "./workspace/lanes.js";
-import { PREVIEW_PREFER, prepareHandler } from "./workspace/prepare.js";
+import { farmLanes } from "./workspace/lanes.js";
+import { prepareHandler, type AgGoPreps } from "./workspace/prepare.js";
 import { RENDER_KINDS, renderHandler } from "./workspace/renders.js";
 import { referenceFetchers } from "./workspace/reference-fetch.js";
 import { researchHandler } from "./workspace/research.js";
 import { styleWatchHandler } from "./workspace/style-watch.js";
+import { startUsageSender, type UsageSink } from "./workspace/usage-send.js";
 import { thumbnailHandler } from "./workspace/thumbnails.js";
 import { YoutubeCrawler } from "./workspace/youtube-crawl.js";
 
@@ -41,8 +42,12 @@ export interface StudioWorkerOptions {
   farmPollMs?: number;
   /** A farm job taken by no node this long is cancelled and its job says so (default: half an hour). */
   farmQueueTimeoutMs?: number;
-  /** ffmpeg, ag-go resolve, downloads, the voice store; without it inputs are not prepared nor videos rendered. */
+  /** ffmpeg, ag-go resolve, downloads, the voice store; without it videos are not rendered. */
   media?: CutMediaDeps;
+  /** ag-go's preps of footage (shots, frames, transcript); without it inputs are not prepared. */
+  preps?: AgGoPreps;
+  /** ag-go's usage events: the outbox is sent every `everyMs` (default 30 s); without it events wait in the outbox. */
+  usage?: { sink: UsageSink; everyMs?: number };
   /** Cuts and draws thumbnails; without it the `thumbnail` jobs wait. */
   thumbnails?: ThumbnailRenderer;
   /** yt-dlp: crawls without an API key, reference videos. */
@@ -55,8 +60,6 @@ export interface StudioWorkerOptions {
   youtubeApiKey?: string;
   /** What people call the footage library (ag-go's `siteName`): job text and the agent's prompt; default "AG Go". */
   siteName?: () => string;
-  /** Prepare jobs decoding video here at once (scenes, frames), however many jobs run; default: no limit. */
-  decodeLanes?: number;
 }
 
 export function studioLogger(bindings: Record<string, unknown> = {}): HarnessLogger {
@@ -106,9 +109,11 @@ export function createStudioWorkerPool(o: StudioWorkerOptions & {
     jobs,
     runForever: async (s) => {
       const sweeps = startCleanup(o);
+      const usage = o.usage ? startUsageSender({ db: o.db, sink: o.usage.sink, log: o.logger ?? studioLogger({ owner: `${o.owner}#usage` }), ...(o.usage.everyMs ? { everyMs: o.usage.everyMs } : {}) }) : null;
       const done = [agent?.runForever(s), jobs?.runForever(s)];
       await new Promise<void>((res) => { if (s.aborted) res(); else s.addEventListener("abort", () => res(), { once: true }); });
       sweeps.stop();
+      usage?.stop();
       await Promise.all(done);
     },
   };
@@ -124,20 +129,18 @@ function jobLanes(farm: ProjectFarm, j: { lanes?: number; maxLanes?: number }, l
   });
 }
 
-/** What each kind of project job runs with on this worker: preparing and rendering need ffmpeg and ag-go (`media`). */
+/** What each kind of project job runs with on this worker: preparing needs ag-go's preps, rendering ffmpeg and ag-go (`media`). */
 export function projectJobHandlers(o: StudioWorkerOptions): Partial<Record<JobKind, JobHandler>> {
   const handlers: Partial<Record<JobKind, JobHandler>> = {};
   const media = o.media;
   const farmWait = { pollMs: o.farmPollMs ?? 3000, ...(o.farmQueueTimeoutMs ? { queueTimeoutMs: o.farmQueueTimeoutMs } : {}) };
-  if (media) {
+  // ag-go prepares each video once; the job copies its shots, frames and transcript into the project
+  if (o.preps) {
     handlers.prepare_asset = prepareHandler({
-      db: o.db, ffmpeg: media.ffmpeg, ffprobe: media.ffprobe,
-      resolve: (actAs, ids) => media.resolveAssets(actAs, ids, "preview", PREVIEW_PREFER),
-      download: (url, dest, signal, onBytes) => httpDownload(url, dest, signal, onBytes),
-      farm: { client: o.farm, bucket: o.bucket, pollMs: farmWait.pollMs, queueTimeoutMs: o.farmQueueTimeoutMs ?? 30 * 60_000 },
-      ...(o.siteName ? { siteName: o.siteName } : {}),
-      ...(o.decodeLanes && o.decodeLanes > 0 ? { decodeSlot: limiter(o.decodeLanes) } : {}),
+      db: o.db, preps: o.preps, download: (url, dest, signal) => httpDownload(url, dest, signal), ...(o.siteName ? { siteName: o.siteName } : {}),
     });
+  }
+  if (media) {
     // a video's timeline from its edit plan (narration read on the farm into the voice store)
     handlers.fit = fitHandler({ db: o.db, bucket: o.bucket, farm: o.farm, voiceDir: media.voiceDir, ...farmWait });
     // renders of a project's videos: preview, final, Premiere (the narration comes from the voice store)

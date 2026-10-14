@@ -6,6 +6,7 @@ import { Link } from "react-router-dom";
 import { useStudioClient, type AuditItem, type AuditKind, type AuditQuery } from "../../api/studio-client";
 import { useWorkspaceClient } from "../../api/workspace-client";
 import { useAiTranslation } from "../common/assistant-name";
+import { PAGE_TABLE_STICKY } from "../../helpers/sticky-table-header";
 import { UserCell } from "../common/UserCell";
 import { toolLabel } from "../agent-chat/labels";
 import "./audit.css";
@@ -105,7 +106,7 @@ export function AuditTable({ teamId: fixedTeam }: { teamId?: string }) {
         <Button icon={<RefreshCw size={14} />} onClick={() => void list.refetch()} loading={list.isFetching} aria-label={t("ws.audit.refresh")} />
       </div>
       <Table<AuditItem>
-        rowKey="id" size="small" columns={columns} dataSource={list.data?.items ?? []} loading={list.isLoading} scroll={{ x: 1100 }}
+        rowKey="id" size="small" columns={columns} dataSource={list.data?.items ?? []} loading={list.isLoading} scroll={{ x: 1100 }} sticky={PAGE_TABLE_STICKY}
         locale={{ emptyText: t("ws.audit.none") }}
         pagination={{ current: page, pageSize: PAGE, total: list.data?.total ?? 0, showSizeChanger: false, onChange: setPage }}
         expandable={{

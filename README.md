@@ -83,8 +83,8 @@ Rồi đặt khoá owner (`FARM_OWNER_KEY`) và khoá công khai Ed25519 (`FARM_
 
 ## Triển khai
 
-`docker-compose.yml` (api → worker → web, cổng `STUDIO_PORT`, mặc định 3100) và `deploy.sh`; CI và deploy ở
-`.github/workflows/` (`ci.yml`, `deploy.dev.yml` cho nhánh `dev`, `deploy.prod.yml` cho `main`, chạy tay).
+`docker-compose.yml` (api → worker → web, cổng `STUDIO_PORT`, mặc định 3100) và `deploy.sh`; deploy ở
+`.github/workflows/` (`deploy.dev.yml` cho nhánh `dev`, `deploy.prod.yml` cho `main`, chạy tay; không có CI).
 
 ## Nguồn gốc
 

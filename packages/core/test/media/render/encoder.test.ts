@@ -4,7 +4,7 @@ import { resolveEncoder, videoEncoderArgs, type EncoderChoice } from "../../../s
 describe("videoEncoderArgs", () => {
   const CHOICES: EncoderChoice[] = ["nvenc", "cpu"];
   const CODECS: ("h264" | "hevc")[] = ["h264", "hevc"];
-  const TIERS: ("mezz" | "final")[] = ["mezz", "final"];
+  const TIERS: ("mezz" | "final" | "preview")[] = ["mezz", "final", "preview"];
 
   for (const choice of CHOICES) {
     for (const codec of CODECS) {
@@ -22,6 +22,11 @@ describe("videoEncoderArgs", () => {
             expect(args).toContain(codec === "hevc" ? "hevc_nvenc" : "h264_nvenc");
             if (tier === "mezz") {
               expect(args).toEqual(["-c:v", codec === "hevc" ? "hevc_nvenc" : "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "18", "-b:v", "0", "-pix_fmt", "yuv420p", "-r", "30", "-g", "30"]);
+            } else if (tier === "preview") {
+              const profile = codec === "hevc" ? "main" : "high";
+              const base = ["-c:v", codec === "hevc" ? "hevc_nvenc" : "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "25", "-b:v", "0", "-maxrate", "6M", "-bufsize", "12M", "-profile:v", profile];
+              const tag = codec === "hevc" ? ["-tag:v", "hvc1"] : [];
+              expect(args).toEqual([...base, ...tag, "-pix_fmt", "yuv420p", "-r", "30", "-g", "60"]);
             } else {
               const profile = codec === "hevc" ? "main" : "high";
               const base = ["-c:v", codec === "hevc" ? "hevc_nvenc" : "h264_nvenc", "-preset", "p6", "-tune", "hq", "-rc", "vbr", "-cq", "19", "-b:v", "0", "-maxrate", "60M", "-bufsize", "120M", "-profile:v", profile];
@@ -32,6 +37,9 @@ describe("videoEncoderArgs", () => {
             expect(args).toContain(codec === "hevc" ? "libx265" : "libx264");
             if (tier === "mezz") {
               expect(args).toEqual(["-c:v", codec === "hevc" ? "libx265" : "libx264", "-preset", "veryfast", "-crf", codec === "hevc" ? "18" : "16", "-pix_fmt", "yuv420p", "-r", "30", "-g", "30"]);
+            } else if (tier === "preview") {
+              const profile = codec === "hevc" ? [] : ["-profile:v", "high"];
+              expect(args).toEqual(["-c:v", codec === "hevc" ? "libx265" : "libx264", "-preset", "veryfast", "-crf", codec === "hevc" ? "26" : "24", "-maxrate", "6M", "-bufsize", "12M", ...profile, "-pix_fmt", "yuv420p", "-r", "30", "-g", "60"]);
             } else {
               const profile = codec === "hevc" ? [] : ["-profile:v", "high"];
               expect(args).toEqual(["-c:v", codec === "hevc" ? "libx265" : "libx264", "-preset", "slow", "-crf", codec === "hevc" ? "20" : "18", ...profile, "-pix_fmt", "yuv420p", "-r", "30", "-g", "60"]);

@@ -165,3 +165,52 @@ describe("AgGoClient - resolveAssets prefer", () => {
     expect(JSON.parse(init.body as string)).toEqual({ assetIds: ["a1"], purpose: "preview", prefer: { short_edge: 480, clean: true } });
   });
 });
+
+describe("AgGoClient - preps", () => {
+  const item = {
+    assetId: "a1", state: "running", phase: "transcribing", progress: 0.4, error: null, prep: null,
+  };
+
+  it("reads the preps of footage as the user", async () => {
+    const mockFetch = makeMockFetch(200, { success: true, requestId: "r", data: { items: [item] }, error: null, timestamp: "t" });
+    const client = makeClient(mockFetch);
+    await expect(client.getAssetPreps(ACT_AS_USER, ["a1"])).resolves.toEqual({ items: [item] });
+    const [url, init] = (mockFetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/footage/assets/prep`);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ assetIds: ["a1"] });
+    expect((init.headers as Record<string, string>)["X-Act-As-User"]).toBe(ACT_AS_USER);
+  });
+
+  it("asks ag-go to run them", async () => {
+    const mockFetch = makeMockFetch(200, { items: [item] });
+    const client = makeClient(mockFetch);
+    await client.runAssetPreps(ACT_AS_USER, ["a1", "a2"]);
+    const [url, init] = (mockFetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/footage/assets/prep/run`);
+    expect(JSON.parse(init.body as string)).toEqual({ assetIds: ["a1", "a2"] });
+  });
+});
+
+describe("AgGoClient - sendUsageEvents", () => {
+  it("POSTs the events with the service key alone (no act-as user)", async () => {
+    const mockFetch = makeMockFetch(200, { success: true, requestId: "r", data: { accepted: 1, duplicates: 0 }, error: null, timestamp: "t" });
+    const client = makeClient(mockFetch);
+    const event = {
+      eventKey: "src:s1:added", kind: "source_added" as const, occurredAt: "2026-10-13T00:00:00.000Z", assetId: "a1", agGoProjectId: null,
+      studioProjectId: "p1", studioProjectName: "Du lịch", studioVideoId: null, studioVideoTitle: null, studioUserId: "auth0|u",
+    };
+    await expect(client.sendUsageEvents([event])).resolves.toEqual({ accepted: 1, duplicates: 0 });
+    const [url, init] = (mockFetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/usage/studio-events`);
+    expect(JSON.parse(init.body as string)).toEqual({ events: [event] });
+    const headers = init.headers as Record<string, string>;
+    expect(headers["X-Service-Key"]).toBe(SERVICE_KEY);
+    expect(headers).not.toHaveProperty("X-Act-As-User");
+  });
+
+  it("throws the status ag-go answered (a key without usage:write)", async () => {
+    const client = makeClient(makeMockFetch(403, { message: "Forbidden" }));
+    await expect(client.sendUsageEvents([])).rejects.toMatchObject({ status: 403 });
+  });
+});

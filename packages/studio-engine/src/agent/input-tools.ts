@@ -144,7 +144,7 @@ export const INPUT_TOOLS: AgentTool[] = [
   }),
   tool({
     name: "inputs_prepare",
-    description: "Chuẩn bị video {{site}} để chọn cảnh (việc nền: tải bản xem 480p, dò cảnh, khung hình, tờ ghép, lời thoại qua farm) vào inputs/<asset>/. Mỗi video chỉ chuẩn bị một lần cho cả dự án. `wait_s` (≤ 60) chờ xong trong lượt này; chưa xong thì Studio báo vào luồng khi xong và bạn làm tiếp.",
+    description: "Chuẩn bị video {{site}} để chọn cảnh (việc nền: chép cảnh, khung hình, tờ ghép, lời thoại {{site}} đã chuẩn bị sẵn vào inputs/<asset>/; video {{site}} chưa chuẩn bị thì chờ {{site}} làm, có thể vài phút). Mỗi video chỉ chuẩn bị một lần cho cả dự án; `again` chép lại bản mới nhất của {{site}}. `wait_s` (≤ 60) chờ xong trong lượt này; chưa xong thì Studio báo vào luồng khi xong và bạn làm tiếp.",
     input: z.object({
       asset_ids: z.array(z.string().regex(ASSET_ID)).min(1).max(40),
       wait_s: z.number().int().min(0).max(60).optional(),

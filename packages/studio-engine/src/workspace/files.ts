@@ -124,15 +124,31 @@ function asText(path: string, bytes: Buffer): string | null {
 }
 
 export interface WorkspaceFile {
-  path: string; size: number; sha256: string; mtime: string; mime: string; binary: boolean; text: string | null;
+  path: string; size: number;
+  /** The checksum to save or delete against; null for a file told from its size alone (not text, or too large to show). */
+  sha256: string | null;
+  mtime: string; mime: string; binary: boolean; text: string | null;
 }
 
-export function readWorkspaceFile(dir: string, rel: string, opts: { maxTextBytes?: number } = {}): WorkspaceFile {
+/** Where a workspace file is and what `stat` says of it, without reading it; `not_found` when it is not a file. */
+export function statWorkspaceFile(dir: string, rel: string): { path: string; abs: string; size: number; mtime: string; mime: string } {
   const { rel: path, abs } = resolveInside(dir, rel);
-  if (!existsSync(abs) || !statSync(abs).isFile()) throw new StudioRunError("not_found", `không có file ${path}`);
+  const st = existsSync(abs) ? statSync(abs) : null;
+  if (!st?.isFile()) throw new StudioRunError("not_found", `không có file ${path}`);
+  return { path, abs, size: st.size, mtime: st.mtime.toISOString(), mime: mimeOf(path) };
+}
+
+/**
+ * A workspace file to show. A text file (a text extension, not larger than `maxTextBytes`) is read whole, with its
+ * checksum; any other file — a 300 MB video too — is told from `stat` alone, never read nor hashed, so opening it
+ * does not hold up the process.
+ */
+export function readWorkspaceFile(dir: string, rel: string, opts: { maxTextBytes?: number } = {}): WorkspaceFile {
+  const { abs, ...meta } = statWorkspaceFile(dir, rel);
+  if (!isTextPath(meta.path) || meta.size > (opts.maxTextBytes ?? MAX_READ_TEXT_BYTES)) return { ...meta, sha256: null, binary: true, text: null };
   const bytes = readFileSync(abs);
-  const text = bytes.length <= (opts.maxTextBytes ?? MAX_READ_TEXT_BYTES) ? asText(path, bytes) : null;
-  return { path, size: bytes.length, sha256: sha256(bytes), mtime: statSync(abs).mtime.toISOString(), mime: mimeOf(path), binary: text === null, text };
+  const text = asText(meta.path, bytes);
+  return { ...meta, size: bytes.length, sha256: sha256(bytes), binary: text === null, text };
 }
 
 /** The bytes of a file (for images, PDFs, audio the web shows). */

@@ -52,10 +52,15 @@ declare module 'express' {
   }
 }
 
+/** How long the JWKS endpoint may take to answer before a request is refused. */
+export const JWKS_TIMEOUT_MS = 5000;
+
 @Injectable()
 export class Auth0Guard implements CanActivate {
   private jwksCache: Map<string, { key: crypto.KeyObject; cachedAt: number }> = new Map();
   private readonly jwksCacheTtlMs = 5 * 60 * 1000; // 5 min
+  /** The JWKS fetch under way: every request needing a key meanwhile waits for it instead of fetching again. */
+  private jwksFetch: Promise<JwksResponse> | null = null;
 
   constructor(
     private readonly reflector: Reflector,
@@ -167,13 +172,7 @@ export class Auth0Guard implements CanActivate {
       return cached.key;
     }
 
-    const jwksUri = this.config.get<string>('AUTH0_JWKS_URI') as string;
-    const response = await fetch(jwksUri);
-    if (!response.ok) {
-      throw new UnauthorizedException('Failed to fetch JWKS');
-    }
-
-    const jwks = (await response.json()) as JwksResponse;
+    const jwks = await (this.jwksFetch ??= this.fetchJwks().finally(() => { this.jwksFetch = null; }));
     const jwk = jwks.keys.find((k) => k.kid === kid);
     if (!jwk) {
       throw new UnauthorizedException(`No JWKS key found for kid: ${kid}`);
@@ -182,5 +181,20 @@ export class Auth0Guard implements CanActivate {
     const keyObject = crypto.createPublicKey({ key: jwk as unknown as crypto.JsonWebKey, format: 'jwk' });
     this.jwksCache.set(kid, { key: keyObject, cachedAt: Date.now() });
     return keyObject;
+  }
+
+  /** The JWKS, given 5 s; any failure (an error status, no answer in time, the network) refuses the request (401). */
+  private async fetchJwks(): Promise<JwksResponse> {
+    const jwksUri = this.config.get<string>('AUTH0_JWKS_URI') as string;
+    let response: Response;
+    try {
+      response = await fetch(jwksUri, { signal: AbortSignal.timeout(JWKS_TIMEOUT_MS) });
+    } catch {
+      throw new UnauthorizedException('Failed to fetch JWKS');
+    }
+    if (!response.ok) {
+      throw new UnauthorizedException('Failed to fetch JWKS');
+    }
+    return (await response.json()) as JwksResponse;
   }
 }

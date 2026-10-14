@@ -5,6 +5,7 @@
 import { useMemo } from "react";
 import { useAuthToken } from "../auth/use-auth-token";
 import { buildQuery, putToBucket, request, requestBlob, STUDIO_API_URL, uploadType, type OnProgress, type UploadLink } from "./http";
+import type { UserSummary } from "./studio-client";
 
 export type ProjectAspect = "16:9" | "9:16";
 export type VideoStatus = "draft" | "in_progress" | "rendering" | "done";
@@ -36,6 +37,8 @@ export interface Project {
 export interface ProjectListItem extends Project {
   videoCount: number;
   lastActivityAt: string;
+  /** Who made it (`createdBy`), as the Account API knows them. */
+  creator: UserSummary;
 }
 
 export interface Video {
@@ -83,12 +86,15 @@ export interface FileIssue {
 export interface WorkspaceFile {
   path: string;
   size: number;
-  sha256: string;
+  /** The checksum to save or delete against; null for a file that is not text (told from its size alone). */
+  sha256: string | null;
   mtime: string;
   mime: string;
   binary: boolean;
   text: string | null;
   issues: FileIssue[];
+  /** A file that is not text: a short link (under the API, 15 minutes, ranges) to play, show or save it; `&download=1` saves it. */
+  streamUrl?: string | null;
 }
 
 export interface SavedFile {
@@ -423,11 +429,13 @@ export interface RenderView {
   sizeBytes: number | null;
   note: string;
   finishedAt: string | null;
+  /** A short-lived link to watch a preview or the final render, signed with the list; absent for a Premiere export (asked for apart). */
+  url?: string;
 }
-/** A render's link, asked for one render at a time. */
+/** A render's link, asked for one render at a time (a Premiere export, when it is saved). */
 export interface RenderLink {
   jobId: string;
-  /** null when the person's own ag-go rights do not cover the footage in it, or ag-go could not say (`footage_check_failed`). */
+  /** For a Premiere export, null when the person's own ag-go rights do not cover the footage in it, or ag-go could not say (`footage_check_failed`). */
   url: string | null;
   urlHidden?: "footage_scope" | "footage_check_failed";
 }
@@ -448,7 +456,11 @@ export interface TimelineSummary {
 }
 
 /** An audio file of the project to use as the voice sample or the music (`sourceId` null: put in context/audio via the Files tab). */
-export interface ProjectAudioFile { path: string; name: string; bytes: number; sourceId: string | null; addedAt: string }
+export interface ProjectAudioFile {
+  path: string; name: string; bytes: number; sourceId: string | null; addedAt: string;
+  /** A link to listen to it for 15 minutes, under the API (`/api/projects/:id/files/stream?…`): no login needed. */
+  listenUrl: string;
+}
 export interface ProjectAudioView {
   voice: Record<string, unknown> | null;
   music: Record<string, unknown> | null;

@@ -70,7 +70,7 @@ export const DEFAULT_PLAYBOOK: StudioPlaybook = {
     }),
     step({
       key: "prepare", scope: "video", title: "Chuẩn bị đầu vào", requires: ["brief"], done_when: "studio",
-      description: "Studio tải footage đã chọn, dò cảnh, trích khung hình và lời nói để agent xem được.",
+      description: "Studio chép cảnh, khung hình, tờ ghép và lời thoại đã chuẩn bị sẵn của footage đã chọn để agent xem được.",
       outputs: [{ path: "videos/{video}/sources/index.json", role: "studio" }],
       prompts: { do: "Chuẩn bị đầu vào cho video này: liệt kê footage đã chọn rồi gọi inputs_prepare." },
     }),

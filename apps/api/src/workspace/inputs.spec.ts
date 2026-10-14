@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import { addSource, claimJob, getJob, listMessages, MemoryBucket } from '@ag-studio/engine';
-import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
+import { insertTeam, NO_DIRECTORY, realStudio, type RealStudio } from '../test/real-studio';
 import type { EngineService } from '../studio/engine.service';
 import type { SiteNameService } from '../ag-go/site-name.service';
 import { InputsController } from './inputs.controller';
@@ -59,7 +59,7 @@ describe('inputs (real studio.db)', () => {
         };
       },
     } as unknown as ProjectFootageService;
-    projects = new ProjectsController(engine, ws);
+    projects = new ProjectsController(engine, ws, NO_DIRECTORY);
     videos = new VideosController(engine, ws);
     inputs = new InputsController(engine, ws, footage, ({ current: () => 'Kho Footage' }) as unknown as SiteNameService);
     insertTeam(s.db, 'team-1', OWNER);
@@ -110,7 +110,7 @@ describe('inputs (real studio.db)', () => {
     const added = await inputs.add(p.id, { kind: 'ag_go_asset', ref: A1, label: 'Hoa Lư 03.mp4', videoId: v.id, meta: { durationMs: 72_400 }, prepare: true }, req(EDITOR));
     expect(added.source).toMatchObject({ kind: 'ag_go_asset', videoId: v.id, asset: { state: 'queued' } });
     const jobId = (added.prepare as { job_id: string }).job_id;
-    expect(getJob(s.engine.db, jobId)).toMatchObject({ kind: 'prepare_asset', thread_id: v.threadId, units: 72.4, continue_agent: 0, actor_role: 'editor' });
+    expect(getJob(s.engine.db, jobId)).toMatchObject({ kind: 'prepare_asset', thread_id: v.threadId, units: null, continue_agent: 0, actor_role: 'editor' });
     const index = JSON.parse(readFileSync(join(root, p.id, 'videos', v.id, 'sources', 'index.json'), 'utf8'));
     expect(index.sources).toEqual([expect.objectContaining({ asset_id: A1, name: 'Hoa Lư 03.mp4', status: 'missing' })]);
     expect((await inputs.prepare(p.id, { assetIds: [A1, A2] }, req(EDITOR))).assets).toEqual({ [A1]: expect.objectContaining({ state: 'queued', job_id: jobId }), [A2]: { state: 'not_an_input' } });
@@ -122,7 +122,7 @@ describe('inputs (real studio.db)', () => {
     expect(await inputs.cancel(p.id, jobId)).toMatchObject({ status: 'running', cancelRequested: true });
     expect(await inputs.cancel('other', jobId).catch(code)).toBe('not_found');
     expect(listMessages(s.engine.db, v.threadId)).toEqual([]);
-    await inputs.remove(p.id, added.source.id);
+    await inputs.remove(p.id, added.source.id, req(EDITOR));
     expect(JSON.parse(readFileSync(join(root, p.id, 'videos', v.id, 'sources', 'index.json'), 'utf8')).sources).toEqual([]);
   });
 

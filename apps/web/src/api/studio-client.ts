@@ -26,6 +26,28 @@ export interface MeProfile {
   isAdmin: boolean;
 }
 
+/** A step of the getting started checklist, in the order the API gives them. */
+export type OnboardingStepKey = "team" | "project" | "footage" | "video" | "chat" | "preview" | "final";
+
+/** `GET /me/onboarding`: what the person has done in their teams, and where each step leads. */
+export interface OnboardingProgress {
+  steps: { key: OnboardingStepKey; done: boolean; count: number }[];
+  done: number;
+  total: number;
+  links: { teamId: string | null; projectId: string | null; video: { projectId: string; videoId: string } | null };
+}
+
+/** The person's own UI prefs (`GET/PUT /me/prefs`). */
+export interface UserPrefs {
+  tourSeen: { projects: boolean; project: boolean };
+  checklistHidden: boolean;
+}
+
+export interface UserPrefsPatch {
+  tourSeen?: Partial<UserPrefs["tourSeen"]>;
+  checklistHidden?: boolean;
+}
+
 export interface Team {
   id: string;
   name: string;
@@ -200,6 +222,15 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     // ---- Me ----
     getMe(): Promise<MeProfile> {
       return request<MeProfile>(getAccessToken, "GET", "/api/me");
+    },
+    getOnboarding(): Promise<OnboardingProgress> {
+      return request<OnboardingProgress>(getAccessToken, "GET", "/api/me/onboarding");
+    },
+    getPrefs(): Promise<UserPrefs> {
+      return request<UserPrefs>(getAccessToken, "GET", "/api/me/prefs");
+    },
+    updatePrefs(patch: UserPrefsPatch): Promise<UserPrefs> {
+      return request<UserPrefs>(getAccessToken, "PUT", "/api/me/prefs", patch);
     },
 
     // ---- Teams ----

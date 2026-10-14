@@ -13,9 +13,9 @@ import "./video.css";
 /**
  * A video's "Preview" tab (spec 2026-10-10 agent-workspace §P6): its timeline in short (revision, clips, length,
  * problems), building it again from the edit plan, renders (a preview; the final render and the Premiere export for
- * producers), the jobs running for them, and the finished renders to watch or download — a link only for people whose
- * own ag-go rights cover the footage. The timeline and the list show as soon as each arrives (the database alone); a
- * render's link is asked for apart (ag-go is asked about its footage), for the one in the player or on a click.
+ * producers), the jobs running for them, and the finished renders to watch or download. The timeline and the list show
+ * as soon as each arrives; a preview or final render comes with its link (the player needs nothing more), a Premiere
+ * export's link is asked for apart when it is saved — only for people whose own ag-go rights cover the footage it packs.
  */
 export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
   projectId: string; videoId: string; atLeast: (role: TeamRoleName) => boolean; onOpenFile?: (path: string) => void;
@@ -25,7 +25,7 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
   const client = useWorkspaceClient();
   const qc = useQueryClient();
   const [playing, setPlaying] = useState<string | null>(null);
-  // a link asked again (it went stale) is a new signature: the player keeps the link it has (they live an hour) or it reloads
+  // the list polled again signs anew: the player keeps the link it has (they live an hour) or it reloads
   const playerUrls = useRef(new Map<string, { url: string; at: number }>());
   const timeline = useQuery({ queryKey: ["timeline", videoId], queryFn: () => client.getTimeline(videoId) });
   const renders = useQuery({
@@ -34,11 +34,6 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
   });
   const list = renders.data?.renders ?? [];
   const shown = list.find((r) => r.jobId === playing) ?? list.find((r) => r.kind !== "export_premiere");
-  const link = useQuery({
-    ...linkQuery(client, videoId, shown?.jobId ?? ""), enabled: !!shown,
-    // ag-go not answering is asked again in a while, so the player comes back by itself
-    refetchInterval: (q) => (q.state.data?.urlHidden === "footage_check_failed" ? 30_000 : false),
-  });
   const refresh = () => {
     for (const k of [["renders", videoId], ["timeline", videoId], ["activity"], ["jobs"], ["playbook"]]) void qc.invalidateQueries({ queryKey: k });
   };
@@ -66,21 +61,22 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
     }
   }, [renders.data, message, t, qc, client, videoId]);
 
-  /** A render opens in a new tab (opened within the click so the browser allows it, then pointed at the link); a Premiere .zip is saved. */
+  /** A render opens in a new tab with the link it came with; a Premiere .zip is saved once its link is given. */
   const download = (r: RenderView) => {
-    const tab = r.kind === "export_premiere" ? null : window.open("", "_blank");
-    if (tab) tab.opener = null;
+    if (r.kind !== "export_premiere") {
+      if (r.url) window.open(r.url, "_blank", "noreferrer");
+      else void message.error(t("ws.video.linkFailed"));
+      return;
+    }
     void qc.fetchQuery(linkQuery(client, videoId, r.jobId)).then((l) => {
-      if (!l.url) { tab?.close(); void message.warning(t(hiddenKey(l))); return; }
-      if (r.kind === "export_premiere") saveFile(l.url);
-      else if (tab) tab.location.href = l.url;
-      else window.open(l.url, "_blank", "noreferrer");
-    }, () => { tab?.close(); void message.error(t("ws.video.linkFailed")); });
+      if (l.url) saveFile(l.url);
+      else void message.warning(t(hiddenKey(l)));
+    }, () => void message.error(t("ws.video.linkFailed")));
   };
 
   const latest = timeline.data?.latest ?? null;
   const jobs = jobsToShow(renders.data?.jobs ?? [], list);
-  const playerUrl = shown && link.data?.jobId === shown.jobId && link.data.url ? keptUrl(playerUrls.current, shown.jobId, link.data.url) : null;
+  const playerUrl = shown?.url ? keptUrl(playerUrls.current, shown.jobId, shown.url) : null;
   const errors = latest?.issues.filter((i) => i.startsWith("[error]")) ?? [];
 
   return (
@@ -132,7 +128,7 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
             <video key={shown.jobId} className="ws-video__player" src={playerUrl} controls preload="metadata" aria-label={t("ws.video.player")} />
           ) : (
             <div className="ws-video__player ws-video__player--wait" role="status" aria-label={t("ws.video.player")}>
-              {link.isError ? t("ws.video.linkFailed") : link.data?.urlHidden ? t(hiddenKey(link.data)) : <><Spin size="small" /> {t("ws.video.linkLoading")}</>}
+              {t("ws.video.linkFailed")}
             </div>
           )
         ) : null}
@@ -180,9 +176,9 @@ function RenderRow({ r, videoId, lang, current, onPlay, onDownload }: {
 }) {
   const { t } = useAiTranslation();
   const client = useWorkspaceClient();
-  // what is known of its link (asked for by the player or a click), never asked from here
+  // what is known of a Premiere export's link (asked for on a click or when it is saved), never asked from here
   const link = useQuery({ ...linkQuery(client, videoId, r.jobId), enabled: false });
-  const hidden = link.data?.urlHidden;
+  const hidden = r.kind === "export_premiere" ? link.data?.urlHidden : undefined;
   return (
     <li className={`ws-inputs__row${current ? " ws-video__row--current" : ""}`}>
       <Tag color={r.kind === "render_final" ? "green" : r.kind === "export_premiere" ? "purple" : "blue"}>{t(`ws.video.kind.${r.kind}`)}</Tag>
@@ -215,7 +211,7 @@ export function jobsToShow(jobs: JobView[], renders: RenderView[]): JobView[] {
   }).slice(0, 4);
 }
 
-/** A link is kept 25 minutes (it lives an hour); ag-go not answering only 30 s, so a click asks again. */
+/** A Premiere export's link is kept 25 minutes (it lives an hour); ag-go not answering only 30 s, so a click asks again. */
 function linkQuery(client: WorkspaceClient, videoId: string, jobId: string) {
   return {
     queryKey: ["renderLink", videoId, jobId] as const,

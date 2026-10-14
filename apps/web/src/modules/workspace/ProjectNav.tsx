@@ -41,7 +41,7 @@ export function ProjectNav({ project, videos, current, canCreate }: {
           {project.channelUrl ? <span className="ws-nav__channel" title={project.channelUrl}>{project.channelUrl}</span> : null}
         </div>
         {canCreate ? (
-          <button type="button" className="ws-nav__new" onClick={() => setNewVideo(true)}>
+          <button type="button" className="ws-nav__new" data-tour="new-video" onClick={() => setNewVideo(true)}>
             <Plus size={16} aria-hidden />{t("ws.video.new")}
           </button>
         ) : null}

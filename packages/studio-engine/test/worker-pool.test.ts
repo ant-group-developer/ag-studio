@@ -38,6 +38,7 @@ describe("the worker pool", () => {
     ffmpeg: "ffmpeg", ffprobe: "ffprobe", voiceDir: "voice",
     resolveAssets: async () => ({ items: [], missing: [] }), download: async () => {},
   };
+  const preps = { read: async () => ({ items: [] }), run: async () => ({ items: [] }) };
 
   it("caps Claude calls at the env value until someone saves one on the web", () => {
     w = world();
@@ -51,10 +52,12 @@ describe("the worker pool", () => {
     w = world();
     expect(Object.keys(projectJobHandlers(base()))).toEqual([]);
     expect(Object.keys(projectJobHandlers({ ...base(), youtubeApiKey: "k" }))).toEqual(["research"]);
+    // inputs come prepared from ag-go: no ffmpeg needed
+    expect(Object.keys(projectJobHandlers({ ...base(), preps }))).toEqual(["prepare_asset"]);
     expect(Object.keys(projectJobHandlers({ ...base(), media, thumbnails: fakeThumbnails() })).sort())
-      .toEqual(["export_premiere", "fit", "prepare_asset", "render_final", "render_preview", "style_watch", "thumbnail"]); // uploaded reference videos need only ffmpeg
+      .toEqual(["export_premiere", "fit", "render_final", "render_preview", "style_watch", "thumbnail"]); // uploaded reference videos need only ffmpeg
     const ytdlp = {} as YtDlp;
-    expect(Object.keys(projectJobHandlers({ ...base(), media, ytdlp })).sort())
+    expect(Object.keys(projectJobHandlers({ ...base(), media, preps, ytdlp })).sort())
       .toEqual(["export_premiere", "fit", "prepare_asset", "render_final", "render_preview", "research", "style_watch"]);
     // reference downloads turned off: uploaded reference videos are still watched (YouTube ones say why not)
     expect(Object.keys(projectJobHandlers({ ...base(), media, ytdlp, referenceDownloads: false }))).toContain("style_watch");
@@ -71,5 +74,21 @@ describe("the worker pool", () => {
     await new Promise((r) => setTimeout(r, 60));
     ac.abort();
     await expect(running).resolves.toBeUndefined();
+  });
+
+  it("sends the usage outbox to ag-go on its timer while it runs", async () => {
+    w = world();
+    w.db.run("INSERT INTO ag_go_usage_outbox (event_key, payload, created_at, next_at) VALUES ('src:s1:added', ?, '2026-10-13T00:00:00.000Z', '2026-10-13T00:00:00.000Z')", [JSON.stringify({
+      eventKey: "src:s1:added", kind: "source_added", occurredAt: "2026-10-13T00:00:00.000Z", assetId: "00000000-0000-4000-8000-000000000001", agGoProjectId: null,
+      studioProjectId: "p1", studioProjectName: "A", studioVideoId: null, studioVideoTitle: null, studioUserId: "auth0|u",
+    })]);
+    const sent: string[] = [];
+    const pool = createStudioWorkerPool({ ...base(), usage: { sink: { send: async (events) => { sent.push(...events.map((e) => e.eventKey)); return { accepted: events.length, duplicates: 0 }; } }, everyMs: 20 } });
+    const ac = new AbortController();
+    const running = pool.runForever(ac.signal);
+    await new Promise((r) => setTimeout(r, 120));
+    ac.abort();
+    await running;
+    expect(sent).toEqual(["src:s1:added"]);
   });
 });

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   accessFor, createProject, deleteWorkspaceFile, getFileVersion, listFileVersions, listWorkspaceTree, normalizeRelPath, projectDir,
-  readWorkspaceFile, scanWorkspace, seedWorkspace, StudioRunError, turnChangedFiles, versionDiff, writeWorkspaceFile,
+  readWorkspaceFile, scanWorkspace, statWorkspaceFile, seedWorkspace, StudioRunError, turnChangedFiles, versionDiff, writeWorkspaceFile,
 } from "../src/index.js";
 import { world } from "./helpers.js";
 
@@ -111,11 +111,19 @@ describe("reading and writing files", () => {
     }
   });
 
-  it("reads a binary file as such, and a missing one as not found", () => {
+  it("reads a binary file as such from its size alone (no read, no checksum), and a missing one as not found", () => {
     const { dir } = setup();
     writeFileSync(join(dir, "context", "pic.jpg"), Buffer.from([0xff, 0xd8, 0xff, 0x00, 0x01]));
-    expect(readWorkspaceFile(dir, "context/pic.jpg")).toMatchObject({ binary: true, text: null, mime: "image/jpeg", size: 5 });
+    expect(readWorkspaceFile(dir, "context/pic.jpg")).toMatchObject({ binary: true, text: null, mime: "image/jpeg", size: 5, sha256: null });
+    expect(statWorkspaceFile(dir, "context/pic.jpg")).toMatchObject({ path: "context/pic.jpg", abs: join(dir, "context", "pic.jpg"), size: 5, mime: "image/jpeg" });
     expect(failure(() => readWorkspaceFile(dir, "context/nope.md"))).toBe("not_found:");
+    expect(failure(() => statWorkspaceFile(dir, "context"))).toBe("not_found:");
+    // a text file too large to show is told the same way; one that only looks like text keeps its checksum
+    writeFileSync(join(dir, "context", "big.md"), "x".repeat(64));
+    expect(readWorkspaceFile(dir, "context/big.md", { maxTextBytes: 32 })).toMatchObject({ binary: true, text: null, size: 64, sha256: null });
+    expect(readWorkspaceFile(dir, "context/big.md")).toMatchObject({ binary: false, text: "x".repeat(64), sha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    writeFileSync(join(dir, "context", "nul.md"), Buffer.from([0x61, 0x00]));
+    expect(readWorkspaceFile(dir, "context/nul.md")).toMatchObject({ binary: true, text: null, sha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
   });
 
   it("deletes a file with a version that says so", () => {

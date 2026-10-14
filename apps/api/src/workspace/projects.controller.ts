@@ -4,6 +4,7 @@ import {
   archiveProject, createProject, CreateProjectSchema, createThread, listProjects, listVideos, projectView, requireProject, scanWorkspace, seedWorkspace,
   updateProject, UpdateProjectSchema, videoView, type ProjectView, type VideoView,
 } from '@ag-studio/engine';
+import { AccountDirectoryService, unknownPerson, type UserSummary } from '../auth/account-directory.service';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from '../studio/engine.service';
@@ -11,7 +12,8 @@ import { mapErrors } from '../studio/http-errors';
 import { WorkspaceService } from './workspace.service';
 import { parseBody } from './zod-body';
 
-type ProjectListItem = ProjectView & { videoCount: number; lastActivityAt: string };
+/** A project as the team's list shows it: who made it (name and avatar from the Account API), its videos, when touched. */
+type ProjectListItem = ProjectView & { videoCount: number; lastActivityAt: string; creator: UserSummary };
 
 /**
  * A team's projects — one YouTube channel each (spec 2026-10-10 agent-workspace). Creating one also makes its
@@ -23,13 +25,19 @@ export class ProjectsController {
   constructor(
     private readonly engine: EngineService,
     private readonly workspace: WorkspaceService,
+    private readonly directory: AccountDirectoryService,
   ) {}
 
   @Get('teams/:teamId/projects')
   @Roles('viewer')
-  list(@Param('teamId') teamId: string, @Query('archived') archived?: string): { projects: ProjectListItem[] } {
+  async list(@Param('teamId') teamId: string, @Query('archived') archived?: string): Promise<{ projects: ProjectListItem[] }> {
     const rows = listProjects(this.engine.db, teamId, { archived: archived === 'true' || archived === '1' });
-    return { projects: rows.map((r) => ({ ...projectView(r), videoCount: r.video_count, lastActivityAt: r.last_activity_at })) };
+    const people = await this.directory.summaries(rows.map((r) => r.created_by));
+    return {
+      projects: rows.map((r) => ({
+        ...projectView(r), videoCount: r.video_count, lastActivityAt: r.last_activity_at, creator: people.get(r.created_by) ?? unknownPerson(r.created_by),
+      })),
+    };
   }
 
   /** Body: `{name, channelUrl?, description?, language?, aspect?}`. */

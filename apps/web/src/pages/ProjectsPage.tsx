@@ -1,26 +1,44 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button, Input, Spin, Table, Tag, Tooltip, type TableColumnsType } from "antd";
+import { Avatar, Button, Input, Segmented, Spin, Table, Tag, Tooltip, type TableColumnsType } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { Plus, Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { useStudioClient, type UserSummary } from "../api/studio-client";
 import { useWorkspaceClient, type ProjectListItem } from "../api/workspace-client";
 import { rememberTeam } from "../helpers/last-team";
 import { sortRows, type SortDirection } from "../helpers/compare-sort-values";
 import { SortDropdown } from "../helpers/sort-dropdown";
+import { PAGE_TABLE_STICKY } from "../helpers/sticky-table-header";
 import { useViewMode, ViewModeToggle } from "../modules/inputs/picker/PickerParts";
+import { ProductTour } from "../modules/onboarding/ProductTour";
 import { NewProjectModal } from "../modules/workspace/NewProjectModal";
 import { useTeamRole } from "../modules/workspace/use-team-role";
 import { WorkspaceShell } from "../modules/workspace/WorkspaceShell";
 import { relativeTime } from "../modules/workspace/time";
 
-type SortField = "lastActivityAt" | "name" | "videoCount" | "createdAt";
+/** A person's name as the list shows it: their name, else their email, else the id Studio keeps. */
+const personName = (u: UserSummary) => u.name || u.email || u.userId;
+
+type SortField = "lastActivityAt" | "name" | "videoCount" | "createdAt" | "creator";
 const SORT_VALUE: Record<SortField, (p: ProjectListItem) => string | number> = {
   lastActivityAt: (p) => Date.parse(p.lastActivityAt),
   name: (p) => p.name,
   videoCount: (p) => p.videoCount,
   createdAt: (p) => Date.parse(p.createdAt),
+  creator: (p) => personName(p.creator),
 };
+
+/** Who made a project: their avatar (or initial) and name. */
+function Creator({ user }: { user: UserSummary }) {
+  const name = personName(user);
+  return (
+    <span className="ws-creator" title={user.email ?? name}>
+      <Avatar size={20} src={user.avatar || undefined}>{name.charAt(0).toUpperCase()}</Avatar>
+      <span className="ws-creator__name">{name}</span>
+    </span>
+  );
+}
 
 function ProjectCard({ p }: { p: ProjectListItem }) {
   const { t, i18n } = useTranslation();
@@ -30,8 +48,8 @@ function ProjectCard({ p }: { p: ProjectListItem }) {
       {p.channelUrl ? <span className="ws-card__channel">{p.channelUrl}</span> : null}
       <p className="ws-card__desc">{p.description || t("ws.projects.noDescription")}</p>
       <span className="ws-card__meta">
-        <span>{t("ws.projects.videoCount", { count: p.videoCount })}</span>
-        <span>{relativeTime(p.lastActivityAt, i18n.language)}</span>
+        <Creator user={p.creator} />
+        <span>{t("ws.projects.videoCount", { count: p.videoCount })} · {relativeTime(p.lastActivityAt, i18n.language)}</span>
       </span>
     </Link>
   );
@@ -43,9 +61,12 @@ export function ProjectsPage() {
   const { teamId = "" } = useParams();
   const navigate = useNavigate();
   const client = useWorkspaceClient();
-  const { atLeast, ready, teamName } = useTeamRole(teamId || undefined);
+  const studio = useStudioClient();
+  const { atLeast, ready } = useTeamRole(teamId || undefined);
+  const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => studio.getMe(), staleTime: 5 * 60_000 });
   const [creating, setCreating] = useState(false);
   const [find, setFind] = useState("");
+  const [mine, setMine] = useState(false);
   const [sort, setSort] = useState<{ sortBy: SortField; sortOrder: SortDirection }>({ sortBy: "lastActivityAt", sortOrder: "desc" });
   const [view, setView] = useViewMode("studio.projects.viewMode", "grid");
   const { data, isLoading } = useQuery({ queryKey: ["projects", teamId], queryFn: () => client.listProjects(teamId), enabled: !!teamId });
@@ -56,14 +77,16 @@ export function ProjectsPage() {
   const projects = data?.projects ?? [];
   const shown = useMemo(() => {
     const q = find.trim().toLocaleLowerCase("vi");
-    const found = q ? projects.filter((p) => [p.name, p.channelUrl ?? "", p.description].some((s) => s.toLocaleLowerCase("vi").includes(q))) : projects;
+    const ours = mine ? projects.filter((p) => p.createdBy === me?.userId) : projects;
+    const found = q ? ours.filter((p) => [p.name, p.channelUrl ?? "", p.description].some((s) => s.toLocaleLowerCase("vi").includes(q))) : ours;
     return sortRows(found, SORT_VALUE[sort.sortBy], sort.sortOrder);
-  }, [projects, find, sort]);
+  }, [projects, find, sort, mine, me?.userId]);
   const sortFields: { value: SortField; label: string }[] = [
     { value: "lastActivityAt", label: t("ws.projects.sort.lastActivityAt") },
     { value: "name", label: t("ws.projects.sort.name") },
     { value: "videoCount", label: t("ws.projects.sort.videoCount") },
     { value: "createdAt", label: t("ws.projects.sort.createdAt") },
+    { value: "creator", label: t("ws.projects.sort.creator") },
   ];
   const columns: TableColumnsType<ProjectListItem> = [
     {
@@ -79,6 +102,7 @@ export function ProjectsPage() {
         p.description ? <Tooltip title={p.description} placement="topLeft"><span>{p.description}</span></Tooltip> : <span className="ws-hint">{t("ws.projects.noDescription")}</span>
       ),
     },
+    { key: "creator", title: t("ws.projects.column.creator"), width: 190, render: (_, p) => <Creator user={p.creator} /> },
     { key: "aspect", title: t("ws.projects.aspect"), width: 120, render: (_, p) => <Tag bordered={false}>{p.aspect === "9:16" ? t("ws.projects.portrait") : t("ws.projects.landscape")}</Tag> },
     { key: "videos", title: t("ws.projects.column.videos"), width: 90, align: "right", render: (_, p) => p.videoCount },
     { key: "activity", title: t("ws.projects.column.lastActivity"), width: 160, render: (_, p) => <span title={new Date(p.lastActivityAt).toLocaleString(i18n.language)}>{relativeTime(p.lastActivityAt, i18n.language)}</span> },
@@ -86,7 +110,7 @@ export function ProjectsPage() {
   ];
 
   return (
-    <WorkspaceShell teamId={teamId} crumbs={teamName ? [{ label: teamName }] : []}>
+    <WorkspaceShell teamId={teamId}>
       <main className="ws-page">
         <div className="ws-page__inner">
           <div className="ws-page__head">
@@ -96,7 +120,7 @@ export function ProjectsPage() {
             </div>
             {canCreate ? (
               <div className="ws-page__actions">
-                <Button type="primary" icon={<Plus size={16} />} onClick={() => setCreating(true)}>{t("ws.projects.new")}</Button>
+                <Button type="primary" icon={<Plus size={16} />} onClick={() => setCreating(true)} data-tour="new-project">{t("ws.projects.new")}</Button>
               </div>
             ) : null}
           </div>
@@ -113,6 +137,10 @@ export function ProjectsPage() {
                   allowClear value={find} onChange={(e) => setFind(e.target.value)} prefix={<Search size={15} aria-hidden />}
                   placeholder={t("ws.projects.search")} aria-label={t("ws.projects.search")} style={{ width: "clamp(200px, 32vw, 340px)" }}
                 />
+                <Segmented<"all" | "mine">
+                  size="small" value={mine ? "mine" : "all"} onChange={(v) => setMine(v === "mine")} aria-label={t("ws.projects.whose")}
+                  options={[{ value: "all", label: t("ws.projects.all") }, { value: "mine", label: t("ws.projects.mine") }]}
+                />
                 <span className="ws-hint">{t("ws.projects.count", { count: shown.length })}</span>
                 <span className="ws-spacer" />
                 <SortDropdown fields={sortFields} sortBy={sort.sortBy} sortOrder={sort.sortOrder} onChange={(c) => setSort((s) => ({ ...s, ...c }))} />
@@ -123,7 +151,7 @@ export function ProjectsPage() {
               ) : (
                 <Table<ProjectListItem>
                   rowKey="id" size="middle" columns={columns} dataSource={shown} pagination={shown.length > 50 ? { pageSize: 50, showSizeChanger: false } : false}
-                  scroll={{ x: 820 }} onRow={(p) => ({ onDoubleClick: () => navigate(`/p/${p.id}`) })}
+                  scroll={{ x: 1000 }} sticky={PAGE_TABLE_STICKY} onRow={(p) => ({ onDoubleClick: () => navigate(`/p/${p.id}`) })}
                 />
               )}
             </>
@@ -131,6 +159,7 @@ export function ProjectsPage() {
         </div>
       </main>
       {teamId ? <NewProjectModal teamId={teamId} open={creating} onClose={() => setCreating(false)} /> : null}
+      <ProductTour kind="projects" ready={!isLoading && ready && !creating} />
     </WorkspaceShell>
   );
 }

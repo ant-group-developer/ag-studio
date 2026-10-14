@@ -1,13 +1,14 @@
 import { useRef, useState, type ComponentProps, type ReactNode } from "react";
 import type { TFunction } from "i18next";
-import { App as AntApp, Button, Checkbox, Empty, Input, InputNumber, Modal, Radio, Spin, Tag, Tooltip } from "antd";
+import { App as AntApp, Button, Empty, Input, Modal, Radio, Spin, Tag, Tooltip } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, ArrowUp, Library, ListMusic, Mic, Music, RotateCcw, Sparkles, Upload, VolumeX, X } from "lucide-react";
+import { AlertTriangle, Library, ListMusic, Mic, Music, RotateCcw, Sparkles, Upload, VolumeX, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { StudioHttpError } from "../../api/http";
 import { useStudioClient } from "../../api/studio-client";
 import { useWorkspaceClient, type MusicFilesInput, type ProjectAudioFile, type ProjectAudioView, type VideoAudioView, type VoiceOrigin } from "../../api/workspace-client";
 import { useUploadProgress } from "../common/upload-progress";
+import { MusicFilesModal } from "./MusicPicker";
 import { clock } from "../workspace/time";
 
 const AUDIO_ACCEPT = ".mp3,.wav,.m4a,.aac,.ogg,.flac";
@@ -148,84 +149,6 @@ function MusicLibraryModal({ open, current, onPick, onClose }: {
   );
 }
 
-/** At most this many files are joined into one track (the API's `MUSIC_MIX_MAX_PARTS`). */
-const MUSIC_MAX_PARTS = 20;
-
-/**
- * Audio files to make the music of: tick one or several, put them in the order they play, and say how many seconds
- * each fades into the next (0: one right after the other). `initial`: ticked when it opens (files just uploaded).
- */
-function MusicFilesModal({ open, files, initial, busy, onUse, onClose }: {
-  open: boolean; files: ProjectAudioFile[]; initial: string[]; busy: boolean;
-  onUse: (input: MusicFilesInput) => void; onClose: () => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <Modal open={open} title={t("ws.audio.pickMusicTitle")} footer={null} onCancel={onClose} width={640} destroyOnHidden>
-      {files.length ? <MusicFilesForm files={files} initial={initial} busy={busy} onUse={onUse} /> : <Empty description={t("ws.audio.noFiles")} />}
-    </Modal>
-  );
-}
-
-function MusicFilesForm({ files, initial, busy, onUse }: { files: ProjectAudioFile[]; initial: string[]; busy: boolean; onUse: (input: MusicFilesInput) => void }) {
-  const { t } = useTranslation();
-  const [chosen, setChosen] = useState<string[]>(initial.slice(0, MUSIC_MAX_PARTS));
-  const [fade, setFade] = useState(2);
-  const nameOf = (path: string) => files.find((f) => f.path === path)?.name ?? path.split("/").pop() ?? path;
-  const toggle = (path: string, on: boolean) => setChosen((c) => (on ? [...c, path] : c.filter((p) => p !== path)));
-  const move = (i: number, by: -1 | 1) => setChosen((c) => {
-    const next = [...c];
-    [next[i], next[i + by]] = [next[i + by]!, next[i]!];
-    return next;
-  });
-  const several = chosen.length > 1;
-  return (
-    <div className="ws-audio__mix">
-      <p className="ws-hint" style={{ marginTop: 0 }}>{t("ws.audio.pickHint", { max: MUSIC_MAX_PARTS })}</p>
-      <ul className="ws-inputs__list ws-audio__files" aria-label={t("ws.audio.pickMusicTitle")}>
-        {files.map((f) => {
-          const on = chosen.includes(f.path);
-          return (
-            <li key={f.path} className="ws-inputs__row">
-              <Checkbox checked={on} disabled={!on && chosen.length >= MUSIC_MAX_PARTS} onChange={(e) => toggle(f.path, e.target.checked)}
-                aria-label={t("ws.audio.pickNamed", { name: f.name })} />
-              <div className="ws-inputs__text">
-                <span className="ws-inputs__name" title={f.path}>{f.name}</span>
-                <span className="ws-hint">{(f.bytes / MB).toFixed(1)} MB · {f.path}</span>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
-      {several ? (
-        <>
-          <h5 className="ws-audio__h">{t("ws.audio.order")}</h5>
-          <ol className="ws-audio__order" aria-label={t("ws.audio.order")}>
-            {chosen.map((p, i) => (
-              <li key={p}>
-                <span className="ws-audio__ordername">{nameOf(p)}</span>
-                <button type="button" className="ws-icon-button" disabled={i === 0} onClick={() => move(i, -1)} aria-label={t("ws.audio.moveUp", { name: nameOf(p) })}><ArrowUp size={13} /></button>
-                <button type="button" className="ws-icon-button" disabled={i === chosen.length - 1} onClick={() => move(i, 1)} aria-label={t("ws.audio.moveDown", { name: nameOf(p) })}><ArrowDown size={13} /></button>
-                <button type="button" className="ws-icon-button" onClick={() => toggle(p, false)} aria-label={t("ws.audio.removeNamed", { name: nameOf(p) })}><X size={13} /></button>
-              </li>
-            ))}
-          </ol>
-          <label className="ws-audio__fade">
-            {t("ws.audio.crossfade")}
-            <InputNumber size="small" min={0} max={10} step={0.5} value={fade} onChange={(v) => setFade(typeof v === "number" ? v : 0)} aria-label={t("ws.audio.crossfade")} />
-            <span className="ws-hint">{t("ws.audio.crossfadeHint")}</span>
-          </label>
-        </>
-      ) : null}
-      <div className="ws-audio__mixfoot">
-        <Button type="primary" disabled={!chosen.length} loading={busy} onClick={() => onUse({ paths: chosen, ...(several ? { crossfadeS: fade } : {}) })}>
-          {several ? t("ws.audio.joinMusic", { count: chosen.length }) : t("ws.audio.useOneAsMusic")}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 /** Uploads audio files one by one into the project (none over 100 MB), saying how far it is; answers what went and why the rest did not. */
 function useAudioUpload(projectId: string) {
   const { t } = useTranslation();
@@ -252,6 +175,8 @@ function useAudioUpload(projectId: string) {
   };
   return { run, percent: uploading.percent };
 }
+
+const NO_PATHS: string[] = [];
 
 /** Where music goes: the project's or a video's. */
 interface MusicTarget {
@@ -281,36 +206,40 @@ function MusicActions({ projectId, target, files, enabled, canEdit, current, ext
     onSuccess: (r) => { setPicking(null); target.changed(r); },
     onError: fail,
   });
+  // one file is the music at once; several, or any uploaded from the open picker, are ticked in the picker
   const upload = useMutation({
-    mutationFn: async (list: File[]) => {
+    mutationFn: async ({ list, intoPicker }: { list: File[]; intoPicker: boolean }) => {
       const r = await audioUpload.run(list);
-      const used = list.length === 1 && r.paths.length === 1 ? await target.fromFiles({ paths: r.paths }) : null;
+      const toPicker = intoPicker || list.length > 1;
+      const used = !toPicker && r.paths.length === 1 ? await target.fromFiles({ paths: r.paths }) : null;
       // the files just uploaded are listed before the picker opens on them
       await done();
-      return { ...r, used, several: list.length > 1 };
+      return { ...r, used, toPicker };
     },
     onSuccess: (r) => {
       for (const f of r.failed) void message.error(f);
       if (!r.paths.length) return;
-      if (r.several) { void message.success(t("ws.audio.uploaded", { count: r.paths.length })); setPicking(r.paths); }
+      if (r.toPicker) { void message.success(t("ws.audio.uploaded", { count: r.paths.length })); setPicking((p) => [...(p ?? []), ...r.paths]); }
       else target.changed(r.used);
     },
     onError: (e) => { void done(); fail(e); },
   });
+  const uploadingLabel = upload.isPending && audioUpload.percent !== null ? t("common.uploading", { pct: audioUpload.percent }) : null;
   const role = canEdit ? null : t("ws.audio.whyEditor");
   const noFfmpeg = enabled ? null : t("ws.audio.whyNoFfmpeg");
   const noFiles = files.length ? null : t("ws.audio.whyNoFiles");
   return (
     <div className="ws-audio__actions">
       <AudioButton why={role ?? noFfmpeg} icon={<Upload size={12} />} loading={upload.isPending} onClick={() => input.current?.click()}>
-        {upload.isPending && audioUpload.percent !== null ? t("common.uploading", { pct: audioUpload.percent }) : t("ws.audio.uploadMusic")}
+        {uploadingLabel ?? t("ws.audio.uploadMusic")}
       </AudioButton>
       <AudioButton why={role} icon={<Library size={12} />} onClick={() => setLibrary(true)}>{t("ws.audio.fromLibrary")}</AudioButton>
       <AudioButton why={role ?? noFfmpeg ?? noFiles} icon={<ListMusic size={12} />} onClick={() => setPicking([])}>{t("ws.audio.pickUploaded")}</AudioButton>
       {extra}
       <input ref={input} type="file" multiple hidden accept={AUDIO_ACCEPT} aria-label={t("ws.audio.uploadMusic")}
-        onChange={(e) => { const list = [...(e.target.files ?? [])]; e.target.value = ""; if (list.length) upload.mutate(list); }} />
-      <MusicFilesModal open={picking !== null} files={files} initial={picking ?? []} busy={use.isPending} onUse={(i) => use.mutate(i)} onClose={() => setPicking(null)} />
+        onChange={(e) => { const list = [...(e.target.files ?? [])]; e.target.value = ""; if (list.length) upload.mutate({ list, intoPicker: picking !== null }); }} />
+      <MusicFilesModal open={picking !== null} files={files} initial={picking ?? NO_PATHS} busy={use.isPending} onUse={(i) => use.mutate(i)} onClose={() => setPicking(null)}
+        onUploadMore={(role ?? noFfmpeg) ? undefined : () => input.current?.click()} uploading={upload.isPending ? uploadingLabel ?? t("ws.audio.uploadMore") : null} />
       <MusicLibraryModal open={library} current={current} onClose={() => setLibrary(false)}
         onPick={async (trackId) => target.changed(await target.fromLibrary(trackId))} />
     </div>

@@ -1,13 +1,15 @@
 /**
  * AG Studio worker (spec 2026-10-10 agent-workspace): runs the projects' agent turns (`claude -p` stream-json in the
  * project folder, Studio tools over MCP), their jobs (preparing inputs, crawls, timelines, renders on ag-farm,
- * thumbnails, style) and the cleanup sweep, against the same `studio.db` and workspaces as apps/api.
+ * thumbnails, style), the cleanup sweep and sends footage usage to ag-go, against the same `studio.db` and workspaces as
+ * apps/api.
  *
  * Required environment variables:
  *   STUDIO_DB_PATH      studio.db shared with apps/api
  *   STUDIO_DATA_ROOT    scratch folders of jobs and turns, the voice store
  *   FARM_URL, FARM_OWNER_KEY
- *   AG_GO_API_URL, AG_GO_SERVICE_KEY           (resolving footage, acting as the project owner)
+ *   AG_GO_API_URL, AG_GO_SERVICE_KEY           (footage and its preps, acting as the project owner; usage events:
+ *                                              the key needs scopes footage:read, footage:resolve, usage:write)
  *   STUDIO_R2_ENDPOINT, STUDIO_R2_BUCKET, STUDIO_R2_ACCESS_KEY_ID, STUDIO_R2_SECRET_ACCESS_KEY
  *   CLAUDE_CODE_OAUTH_TOKEN                    (subscription; passed through to `claude` only)
  *
@@ -15,7 +17,7 @@
  *   WORKER_OWNER        this worker's name in logs (default: hostname-pid)
  *   FARM_POLL_MS        farm job polling interval (default 5000)
  *   STUDIO_CLAUDE_MAX_CONCURRENT  Claude calls at once across workers, 1-100 (default 20; the web setting wins)
- *   STUDIO_FFMPEG_PATH  ffmpeg for preparing inputs, timelines, renders and thumbnails; none = those jobs wait
+ *   STUDIO_FFMPEG_PATH  ffmpeg for timelines, renders and thumbnails; none = those jobs wait
  *   STUDIO_FFPROBE_PATH ffprobe (default: ffprobe next to STUDIO_FFMPEG_PATH)
  *   STUDIO_FONTS_DIR    a folder with the thumbnail font (Arial); default: Windows fonts, else fontconfig (Liberation Sans)
  *   YOUTUBE_API_KEY     YouTube Data API v3 key for crawls (none: yt-dlp searches YouTube)
@@ -29,7 +31,6 @@
  *   STUDIO_WORKSPACES_ROOT      project workspaces (default <STUDIO_DATA_ROOT>/workspaces; the API must see the same)
  *   STUDIO_JOB_LANES            project jobs run at once with no idle farm machine (default 2)
  *   STUDIO_JOB_LANES_MAX        project jobs at most: one more per idle farm machine up to this (default 8; ≤ STUDIO_JOB_LANES = fixed)
- *   STUDIO_DECODE_LANES         prepare jobs decoding video on this worker at once (default STUDIO_JOB_LANES; 0 = no limit)
  *
  * Agent turns (run only with STUDIO_AGENT_TOKEN_SECRET):
  *   STUDIO_AGENT_TOKEN_SECRET   signs each turn's token for /api/agent-tools (same value as the API)
@@ -93,6 +94,11 @@ async function main(): Promise<void> {
     download: (url, dest) => httpDownload(url, dest),
     voiceDir: join(dataRoot, "voice"),
   } : null;
+  // inputs come prepared from ag-go (shots, frames, sheets, transcript), asked as the project's owner
+  const preps = {
+    read: (actAs: string, assetIds: string[]) => agGo.getAssetPreps(actAs, assetIds),
+    run: (actAs: string, assetIds: string[]) => agGo.runAssetPreps(actAs, assetIds),
+  };
   const workspacesRoot = resolve(process.env.STUDIO_WORKSPACES_ROOT ?? join(dataRoot, "workspaces"));
   const agentSecret = process.env.STUDIO_AGENT_TOKEN_SECRET;
   const agent = agentSecret ? {
@@ -124,7 +130,6 @@ async function main(): Promise<void> {
     siteName: () => siteName.current(),
     ...(agent ? { agent } : {}),
     jobs: { workspacesRoot, lanes: jobLanes, maxLanes: numberEnv("STUDIO_JOB_LANES_MAX", 8) },
-    decodeLanes: numberEnv("STUDIO_DECODE_LANES", jobLanes),
     farmPollMs: Number(process.env.FARM_POLL_MS ?? 5000),
     farmQueueTimeoutMs: numberEnv("STUDIO_FARM_QUEUE_TIMEOUT_MINUTES", 120) * 60_000,
     ...(youtubeKey ? { youtubeApiKey: youtubeKey } : {}),
@@ -132,6 +137,9 @@ async function main(): Promise<void> {
     referenceDownloads,
     ...(ffmpeg ? { thumbnails: ffmpegThumbnailRenderer({ ffmpeg }) } : {}),
     ...(media ? { media } : {}),
+    preps,
+    // footage usage (sources added/removed, final renders, Premiere exports) sent to ag-go every 30 s from the outbox
+    usage: { sink: { send: (events) => agGo.sendUsageEvents(events) } },
     cleanup: {
       everyMs: numberEnv("STUDIO_CLEANUP_HOURS", 6) * 3_600_000,
       retention: {
@@ -148,7 +156,7 @@ async function main(): Promise<void> {
     reference_downloads: referenceDownloads, claude_max_concurrent: claudeCap({ db, claudeMaxConcurrent }),
   });
   if (!agent) logger.warn("STUDIO_AGENT_TOKEN_SECRET is not set: agent turns do not run in this worker (jobs still do)");
-  if (!ffmpeg) logger.warn("STUDIO_FFMPEG_PATH is not set: preparing inputs, timelines, renders and thumbnails wait for a worker that has it");
+  if (!ffmpeg) logger.warn("STUDIO_FFMPEG_PATH is not set: timelines, renders and thumbnails wait for a worker that has it");
   if (!youtubeKey && !ytdlpVersion) logger.warn(`neither YOUTUBE_API_KEY nor yt-dlp (${ytdlpArgv[0]}): crawls wait for a worker that has one`);
   const ac = new AbortController();
   for (const sig of ["SIGINT", "SIGTERM"] as const) {

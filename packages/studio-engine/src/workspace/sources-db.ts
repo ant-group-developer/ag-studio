@@ -6,6 +6,7 @@
 import { randomUUID } from "node:crypto";
 import { StudioRunError } from "../errors.js";
 import type { StudioDb } from "../studio-db.js";
+import { enqueueUsage, sourceUsageEvent } from "./usage-outbox.js";
 
 export type SourceKind = "ag_go_project" | "ag_go_asset" | "upload";
 export type SourceMediaType = "video" | "image" | "audio" | "document" | "mixed";
@@ -29,21 +30,29 @@ export function sourceView(s: SourceRecord): SourceView {
   };
 }
 
-/** Adds a source; the same ag-go project / video / file added again to the same place is the one already there. */
+/**
+ * Adds a source; the same ag-go project / video / file added again to the same place is the one already there. An ag-go
+ * one actually added is told to ag-go (usage outbox).
+ */
 export function addSource(db: StudioDb, p: {
   projectId: string; videoId?: string | null; kind: SourceKind; ref: string; mediaType: SourceMediaType; label: string; meta?: Record<string, unknown>; addedBy: string;
 }, now = new Date().toISOString()): SourceRecord {
   const ref = p.ref.trim();
   if (!ref) throw new StudioRunError("invalid", "nguồn thiếu ref");
-  db.run(
+  const { changes } = db.run(
     `INSERT OR IGNORE INTO project_sources (id, project_id, video_id, kind, ref, media_type, label, meta, added_by, added_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [randomUUID(), p.projectId, p.videoId ?? null, p.kind, ref, p.mediaType, p.label.trim() || ref, JSON.stringify(p.meta ?? {}), p.addedBy, now],
   );
-  return db.get<SourceRecord>(
+  const s = db.get<SourceRecord>(
     "SELECT * FROM project_sources WHERE project_id = ? AND COALESCE(video_id, '') = ? AND kind = ? AND ref = ?",
     [p.projectId, p.videoId ?? "", p.kind, ref],
   )!;
+  if (changes > 0) {
+    const e = sourceUsageEvent(db, s, "source_added", s.added_at, s.added_by);
+    if (e) enqueueUsage(db, [e], now);
+  }
+  return s;
 }
 
 export function getSource(db: StudioDb, id: string): SourceRecord | undefined {
@@ -62,8 +71,13 @@ export function listSources(db: StudioDb, projectId: string, opts: { videoId?: s
   return db.all<SourceRecord>("SELECT * FROM project_sources WHERE project_id = ? ORDER BY added_at, id", [projectId]);
 }
 
-export function removeSource(db: StudioDb, id: string): void {
+/** Removes a source; an ag-go one is told to ag-go (usage outbox), `by` being who removed it. */
+export function removeSource(db: StudioDb, id: string, by: string | null = null, now = new Date().toISOString()): void {
+  const s = getSource(db, id);
+  if (!s) return;
+  const e = sourceUsageEvent(db, s, "source_removed", now, by);
   db.run("DELETE FROM project_sources WHERE id = ?", [id]);
+  if (e) enqueueUsage(db, [e], now);
 }
 
 /** ag-go video ids a video is made from: picked for it alone, in the order they were added. */

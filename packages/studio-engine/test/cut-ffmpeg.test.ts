@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
-import { detectCuts, extractAudio16k, grabFrame, probeMedia, runTool, tileSheet } from "../src/index.js";
+import { detectCuts, grabFrame, probeMedia, runTool, tileSheet } from "../src/index.js";
 import { hasFfmpeg, makeSceneClip } from "../../../tests/media.js";
 
 const FFMPEG = process.env.FFMPEG_PATH ?? "ffmpeg";
@@ -48,13 +48,6 @@ describe.skipIf(!hasFfmpeg())("shot-cut ffmpeg helpers (needs ffmpeg + ffprobe)"
     expect(cuts).toHaveLength(2);
     expect(cuts[0]).toBeCloseTo(3, 0);
     expect(cuts[1]).toBeCloseTo(6, 0);
-  });
-
-  it("extracts 16 kHz mono audio, and says when a file has none", async () => {
-    const wav = join(dir, "three.wav");
-    expect(await extractAudio16k(FFMPEG, clip, wav)).toBe(true);
-    expect((await probeMedia(FFPROBE, wav))?.duration_s).toBeCloseTo(9, 0);
-    expect(await extractAudio16k(FFMPEG, silent, join(dir, "silent.wav"))).toBe(false);
   });
 
   it("grabs a frame at a time and tiles frames into one sheet", async () => {

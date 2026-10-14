@@ -52,11 +52,19 @@
 .ws-header__brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; color: var(--ws-text); white-space: nowrap; }
 .ws-header__brand img { width: 28px; height: 28px; border-radius: 8px; }
 .ws-crumbs { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--ws-faint); font-size: 13px; }
-.ws-crumbs a, .ws-crumbs span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
-.ws-crumbs a { color: var(--ws-muted); }
-.ws-crumbs a:hover { color: var(--ws-accent); }
+.ws-crumbs > a, .ws-crumbs > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+.ws-crumbs > a { color: var(--ws-muted); }
+.ws-crumbs > a:hover { color: var(--ws-accent); }
 .ws-crumbs__current { color: var(--ws-text); font-weight: 500; }
+.ws-crumbs > svg { flex-shrink: 0; }
+/* the team and the project crumbs are switches: borderless selects that read as crumbs until hovered */
+.ws-crumbs__select { max-width: 240px; flex-shrink: 1; }
+.ws-crumbs__select.ant-select .ant-select-selector { padding-inline: 6px; border-radius: 6px; }
+.ws-crumbs__select.ant-select:hover .ant-select-selector { background: var(--ws-chip); }
+.ws-crumbs__select .ant-select-selection-item { color: var(--ws-muted); font-size: 13px; font-weight: 500; }
+.ws-crumbs__select:last-child .ant-select-selection-item { color: var(--ws-text); }
 .ws-header__right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.ws-header__right > .ws-icon-button { white-space: nowrap; }
 .ws-icon-button {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 0 10px; border-radius: 8px;
   border: 1px solid transparent; background: none; color: var(--ws-muted); font: inherit; font-size: 13px; cursor: pointer;
@@ -153,7 +161,11 @@
 .ws-card__desc {
   flex: 1; margin: 0; color: var(--ws-muted); font-size: 13px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
-.ws-card__meta { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--ws-faint); }
+.ws-card__meta { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; color: var(--ws-faint); }
+.ws-card__meta > span:last-child { flex-shrink: 0; }
+/* who made a project: a small avatar and the name, on cards and in the table */
+.ws-creator { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.ws-creator__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-empty {
   display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 48px 24px; border: 1px dashed var(--ws-line-strong);
   border-radius: 14px; text-align: center; color: var(--ws-muted);

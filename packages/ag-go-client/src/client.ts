@@ -1,5 +1,6 @@
 import { AgGoClientError, unwrapAgGoResponse } from "./error.js";
 import type {
+  AssetPrepsResponse,
   GetFoldersResponse,
   FootageVideoResponse,
   AssetMediaResponse,
@@ -7,6 +8,8 @@ import type {
   ResolveAssetsResponse,
   SearchFootageQuery,
   SearchFootageResponse,
+  StudioUsageEvent,
+  StudioUsageEventsResponse,
 } from "./types.js";
 
 export interface AgGoClientOptions {
@@ -29,18 +32,19 @@ export class AgGoClient {
     this.fetchFn = opts.fetch ?? globalThis.fetch;
   }
 
-  private buildHeaders(actAsUserId: string): Record<string, string> {
+  /** `actAsUserId` null: a service-only route (no `X-Act-As-User`). */
+  private buildHeaders(actAsUserId: string | null): Record<string, string> {
     return {
       "Content-Type": "application/json",
       "X-Service-Key": this.serviceKey,
-      "X-Act-As-User": actAsUserId,
+      ...(actAsUserId !== null ? { "X-Act-As-User": actAsUserId } : {}),
     };
   }
 
   private async request<T>(
     method: string,
     path: string,
-    actAsUserId: string,
+    actAsUserId: string | null,
     body?: unknown
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
@@ -118,5 +122,20 @@ export class AgGoClient {
   /** GĐ2 (v3): resolve asset IDs → signed download URLs. */
   resolveAssets(actAsUserId: string, body: ResolveAssetsBody): Promise<ResolveAssetsResponse> {
     return this.request<ResolveAssetsResponse>("POST", "/footage/assets/resolve", actAsUserId, body);
+  }
+
+  /** The prep of each footage (shots, frames, sheets, transcript when ready; else how far it is), acting as the user. */
+  getAssetPreps(actAsUserId: string, assetIds: string[]): Promise<AssetPrepsResponse> {
+    return this.request<AssetPrepsResponse>("POST", "/footage/assets/prep", actAsUserId, { assetIds });
+  }
+
+  /** Asks ag-go to prep missing or failed footage now (or to raise one waiting in a backfill); answers like `getAssetPreps`. */
+  runAssetPreps(actAsUserId: string, assetIds: string[]): Promise<AssetPrepsResponse> {
+    return this.request<AssetPrepsResponse>("POST", "/footage/assets/prep/run", actAsUserId, { assetIds });
+  }
+
+  /** Footage usage events (1–500), with the service key alone (scope `usage:write`); a resent `eventKey` counts once. */
+  sendUsageEvents(events: StudioUsageEvent[]): Promise<StudioUsageEventsResponse> {
+    return this.request<StudioUsageEventsResponse>("POST", "/usage/studio-events", null, { events });
   }
 }

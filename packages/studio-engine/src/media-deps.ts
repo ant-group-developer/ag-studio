@@ -1,12 +1,4 @@
-/**
- * The media tools a Studio worker has (ffmpeg, ag-go resolve, downloads, the voice store), wired by `apps/worker`,
- * and the shot detection settings the inputs of a project are prepared with (`workspace/prepare.ts`).
- */
-
-/** Shot detection on a video: the harness `media.scene` defaults (ADR-0001 item 113 measured them). */
-export const CUT_SCENE = { threshold: 0.3, min_shot_seconds: 1, max_shot_seconds: 20 } as const;
-/** faster-whisper model for `studio.transcribe`. */
-export const CUT_TRANSCRIBE_MODEL = "large-v3";
+/** The media tools a Studio worker has (ffmpeg, ag-go resolve, downloads, the voice store), wired by `apps/worker`. */
 
 /** One video ag-go resolved to a short-lived URL. */
 export interface ResolvedFootage {

@@ -11,6 +11,12 @@ Danh sách phân trang: query `page` (từ 1), `pageSize` (mặc định 20, t�
 tuỳ chọn; trả `Paged<T> = {items: T[], total, page, pageSize}`.
 
 - `GET /me` → `{userId, name, email, avatar, isAdmin}`
+- `GET /me/onboarding` → `{steps: {key, done, count}[], done, total: 7, links: {teamId, projectId, video: {projectId,
+  videoId} | null}}` — checklist "Bắt đầu", đếm trong các nhóm người gọi là thành viên (`key`: `team`, `project`,
+  `footage` = project/video ag-go đã thêm, `video`, `chat` = tin nhắn của chính người gọi, `preview`, `final` = job
+  render xong); `links` là nhóm/dự án làm gần nhất và video sửa gần nhất (cho nút "Đi tới").
+- `GET /me/prefs` → `{tourSeen: {projects, project}, checklistHidden}`; `PUT /me/prefs` (chỉ đổi trường gửi lên, không ghi
+  nhật ký hoạt động) → prefs đầy đủ. Lưu ở `user_prefs` (0041).
 - `GET /teams?page&pageSize&sortBy(name|createdAt)&sortOrder&q` → `Paged<Team & {role: TeamRole | null, isMember, memberCount, projectCount}>`
   (admin Studio thấy mọi nhóm — controller tự hỏi `StudioAdminService.isAdmin` vì route không có `@Roles`; `role` là vai
   của người gọi, null và `isMember: false` với admin không phải thành viên; `q` tìm theo tên)
@@ -118,7 +124,7 @@ xem nhóm mình; người khác 403.
 
 ## Dự án và video
 
-- `GET /teams/:teamId/projects?archived` (viewer) → `{projects: (Project & {videoCount, lastActivityAt})[]}`
+- `GET /teams/:teamId/projects?archived` (viewer) → `{projects: (Project & {videoCount, lastActivityAt, creator: UserSummary})[]}` (người tạo: tên, email, avatar từ Account API; không tra được thì chỉ có `userId`)
 - `POST /teams/:teamId/projects` (producer) `{name, channelUrl?, description?, language?, aspect?, settings?}` → Project;
   tạo thư mục dự án (`CLAUDE.md`, `memory/lessons.md`, `context/`, `research/`, `channel/`, `videos/`…) và luồng "Kênh"
 - `GET /projects/:projectId` (viewer) → `Project & {videos: Video[]}`; `PATCH` (producer); `DELETE` (owner, lưu trữ)
@@ -130,7 +136,15 @@ xem nhóm mình; người khác 403.
 ## Tệp của dự án (`projects/:projectId/files`)
 
 - `GET ?under` (viewer) → `{entries: WorkspaceEntry[]}` (đường dẫn, loại, cỡ, quyền `write|read`)
-- `GET content?path` → `WorkspaceFile & {issues: FileIssue[]}`; `GET raw?path` → byte (ảnh, PDF)
+- `GET content?path` → `WorkspaceFile & {issues: FileIssue[], streamUrl: string | null}`: file văn bản (đuôi văn bản, ≤ 2 MB) đọc
+  cả file kèm `sha256` như cũ; file khác (video, ảnh, PDF, file văn bản quá lớn) chỉ `stat` — không đọc, không hash (`sha256:
+  null`, `binary: true`) — và có `streamUrl` (link `GET stream` bên dưới) để web phát/xem/tải thẳng; `GET raw?path` → byte (ảnh,
+  PDF), đọc dần từ đĩa
+- `GET stream?path&t` (**không cần đăng nhập**, `@Public()`): phát một file cho `<audio>`/`<video>` (không gửi được bearer). `t` là
+  link ký HMAC (`workspace/file-link.ts`: dự án, đường dẫn, người, hết hạn 15 phút; khoá dẫn từ `STUDIO_AGENT_TOKEN_SECRET`, không
+  đặt thì khoá riêng của tiến trình API). Sai/hết hạn → 401 `bad_file_link`, file khác → 403, thư mục ẩn/không có/dự án đã lưu
+  trữ → 404. Phục vụ từ đĩa có Range (206). API trả sẵn link này ở `listenUrl` và `streamUrl` (đường dẫn dưới `/api`); thêm
+  `&download=1` thì trả `Content-Disposition: attachment` (lưu file theo tên).
 - `PUT content {path, content, baseSha256?}` (editor) → `SavedFile & {issues}`; `baseSha256` khác bản trên đĩa → 409
   `file_conflict`; đường chỉ đọc (`inputs/**`, `videos/*/sources/**`, `.studio/**` trừ `playbook.yaml`) → 422 `read_only`
 - `DELETE ?path&baseSha256` (editor); `POST upload` multipart `file` + `dir?` (editor, ≤ 50 MB; audio ≤ 100 MB), hoặc JSON
@@ -205,10 +219,13 @@ xem nhóm mình; người khác 403.
 
 - `GET /videos/:videoId/timeline` → `{latest: TimelineSummary | null, revisions}`; `POST timeline/fit` (editor) → job `fit`
   (dựng từ `videos/<id>/edit-plan.json`)
-- `GET /videos/:videoId/renders` → `{renders: RenderView[], jobs, thumbnails: path[]}` — chỉ đọc DB (không hỏi ag-go, không
-  ký URL) nên tab Xem trước hiện ngay; `RenderView` không có link
+- `GET /videos/:videoId/renders` → `{renders: RenderView[], jobs, thumbnails: path[]}` — đọc DB, không hỏi ag-go, nên tab Xem
+  trước hiện ngay; bản xem trước và bản cuối (mp4) có sẵn `url` (ký tại chỗ, sống `STUDIO_BROWSER_URL_TTL_SECONDS`) để player chạy
+  không cần request thứ hai; dòng Premiere không có `url` (xin bằng route dưới lúc lưu)
 - `GET /videos/:videoId/renders/:jobId/link` (viewer) → `{jobId, url: string | null, urlHidden?}` cho đúng một bản render;
-  `url` chỉ có khi quyền ag-go của người xem phủ mọi video trong revision của bản đó (không thì `urlHidden: footage_scope`;
+  bản mp4 luôn có `url` (không kiểm quyền footage: bản cuối dựng từ bản gốc của chủ dự án, người trong dự án xem được);
+  file Premiere (.zip đóng gói chính các file footage) chỉ có `url` khi quyền ag-go của người xem phủ mọi video trong
+  revision của bản đó (không thì `urlHidden: footage_scope`;
   ag-go không trả lời được — lỗi mạng, 5xx… — thì `urlHidden: footage_check_failed`, API ghi log lý do); link Premiere đặt
   sẵn tên file `.zip`; `jobId` không phải bản render xong của video → 404. API nhớ quyền theo (người, video ag-go) 10 phút
   và chỉ hỏi ag-go những video chưa biết (từng lô 10, 4 lô song song), nên revision mới cùng footage trả lời ngay; ag-go
@@ -218,7 +235,7 @@ xem nhóm mình; người khác 403.
   bản cuối, Premiere: producer (403 `role`)
 - `GET /projects/:projectId/audio` (viewer) → `{voice, music, summary, libraryTrack, enabled, files}`: `enabled` = API có
   ffmpeg (`STUDIO_FFMPEG_PATH`; ffprobe là `STUDIO_FFPROBE_PATH` hoặc ffprobe cạnh ffmpeg như worker) để nhận file audio;
-  `files` = file audio dùng được `[{path, name, bytes, sourceId, addedAt}]`, mới nhất trước: audio đã tải ở tab Đầu vào
+  `files` = file audio dùng được `[{path, name, bytes, sourceId, addedAt, listenUrl}]` (`listenUrl`: `GET files/stream`, 15 phút), mới nhất trước: audio đã tải ở tab Đầu vào
   (còn file) và mọi file audio dưới `context/audio/` (cả file tải qua tab Tệp, `sourceId: null`), không dò thời lượng;
   `libraryTrack` = `{trackId, displayName, moods, durationSeconds}` khi nhạc là một bài của kho nhạc
 - `POST audio/:kind/from-file {path, origin?, referenceText?, gainDb?, ducking?}` (giọng: producer, phải có `origin`

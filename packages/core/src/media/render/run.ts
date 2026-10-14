@@ -23,7 +23,7 @@ import { HarnessError, isHarnessError, RenderReportSchema, type Clock, type Comp
 import { childEnvWithoutSecrets } from "../child-env.js";
 import { round3 } from "../time.js";
 import { cacheCommit, cacheEvict, cacheLookup, type MezzCache } from "./cache.js";
-import { NVENC_PROBE_ARGS, resolveEncoder, type EncoderChoice } from "./encoder.js";
+import { NVENC_PROBE_ARGS, resolveEncoder, type EncoderChoice, type OutputTier } from "./encoder.js";
 import { finalArgs } from "./final-graph.js";
 import { parseLoudnorm } from "./loudnorm.js";
 import { mezzArgs, mezzCacheKey } from "./mezzanine.js";
@@ -50,6 +50,9 @@ export interface RenderInput {
   /** Everything this render writes lands here: `full-episode.mp4`, `cuts/`, `render-report.json`, `tmp/`. */
   outDir: string;
   encoderCfg: "auto" | "nvenc" | "cpu";
+  /** How the episode is encoded: `final` (default) for delivery, `preview` for a lighter file to watch, same
+   * frame size. Only the final encode changes: mezzanines (and their cache keys) are the same for both. */
+  tier?: OutputTier;
   /** Wall-clock budget for the whole render; each ffmpeg call gets whatever is left of it. */
   timeoutSeconds: number;
   /** `source_id` -> checksum, folded into every mezzanine cache key (spec §5.1). */
@@ -454,7 +457,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
   const finalInput = {
     ffmpeg: d.ffmpeg, composition, mezz, assPath: p.assPath,
     fontsDir: p.fontsDir !== undefined ? p.fontsDir : (composition.brand?.fonts_dir ?? null),
-    out_path: episodePath,
+    out_path: episodePath, tier: p.tier ?? "final",
     ...(p.safe_margin_px !== undefined ? { safe_margin_px: p.safe_margin_px } : {}),
   };
 

@@ -6,6 +6,7 @@ import { useStudioClient, type ClaudeStatsGroup, type ClaudeStatsRow } from "../
 import { useAiTranslation } from "../common/assistant-name";
 import { UserCell } from "../common/UserCell";
 import { clock } from "../workspace/time";
+import { PAGE_TABLE_STICKY } from "../../helpers/sticky-table-header";
 import { ClaudeTurns, type TurnScope } from "./ClaudeTurns";
 import { DailyBars } from "./DailyBars";
 import "./stats.css";
@@ -147,7 +148,7 @@ export function ClaudeStatsView({ teamId: fixedTeam }: { teamId?: string }) {
       </section>
 
       <Table<ClaudeStatsRow> rowKey={(r) => r.key ?? "_none"} size="small" columns={columns} dataSource={stats.data?.rows ?? []} loading={stats.isLoading}
-        pagination={{ pageSize: 50, hideOnSinglePage: true }} scroll={{ x: 1000 }} locale={{ emptyText: t("ws.stats.none") }}
+        pagination={{ pageSize: 50, hideOnSinglePage: true }} scroll={{ x: 1000 }} sticky={PAGE_TABLE_STICKY} locale={{ emptyText: t("ws.stats.none") }}
         rowClassName={(r) => `ws-turns__row${turnScope && turnScope.label === scopeOf(r).label ? " ws-turns__row--on" : ""}`}
         onRow={(r) => ({ onClick: (e) => { if (!(e.target as HTMLElement).closest("a")) setTurnScope(scopeOf(r)); }, title: t("ws.stats.turn.rowHint") })} />
       <p className="ws-hint">{t("ws.stats.note")}</p>

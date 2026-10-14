@@ -156,3 +156,72 @@ export interface CatalogResponse {
   items: CatalogItem[];
   nextCursor: string | null;
 }
+
+/** Where the prep of one footage stands at ag-go (`POST /footage/assets/prep`, contract H2 of plan 2026-10-13). */
+export type AssetPrepState = "ready" | "running" | "missing" | "failed";
+/** What a running prep does: waits for a farm machine, cuts shots, or reads what is said. */
+export type AssetPrepPhase = "queued" | "cutting" | "transcribing";
+/** `none`: no sound; `skipped`: the scan said nobody speaks; `failed`: the transcription failed (the shots stand). */
+export type AssetPrepTranscriptStatus = "none" | "skipped" | "done" | "failed";
+
+/** The raw WhisperX transcript ag-go keeps (Studio cleans it when it writes `transcript.json`). */
+export interface AssetPrepTranscript {
+  language: string | null;
+  alignment: "word" | "segment";
+  engine: string;
+  segments: { start: number; end: number; text: string; words: { word: string; start: number; end: number; score?: number }[] }[];
+}
+
+/** A ready prep: shots by Studio's rules, a 480 px frame per shot and contact sheets (signed GET urls), the transcript. */
+export interface AssetPrep {
+  prepId: string;
+  preparedAt: string;
+  durationS: number;
+  width: number;
+  height: number;
+  fps: number | null;
+  hasAudio: boolean;
+  sourceKind: string;
+  watermarked: boolean;
+  scene: { threshold: number; minShotS: number; maxShotS: number };
+  shots: { n: number; in: number; out: number; frame: string; url: string }[];
+  sheets: { file: string; shots: number[]; url: string }[];
+  transcriptStatus: AssetPrepTranscriptStatus;
+  transcript: AssetPrepTranscript | null;
+}
+
+export interface AssetPrepItem {
+  assetId: string;
+  state: AssetPrepState;
+  /** While running. */
+  phase: AssetPrepPhase | null;
+  /** 0..1 while running, when the farm tells it. */
+  progress: number | null;
+  /** When failed. */
+  error: string | null;
+  /** When ready. */
+  prep: AssetPrep | null;
+}
+
+export interface AssetPrepsResponse {
+  items: AssetPrepItem[];
+}
+
+/** One use of footage in Studio (`POST /usage/studio-events`, contract H3); `eventKey` makes a resend count once. */
+export interface StudioUsageEvent {
+  eventKey: string;
+  kind: "source_added" | "source_removed" | "final_render" | "premiere_export";
+  occurredAt: string;
+  assetId: string | null;
+  agGoProjectId: string | null;
+  studioProjectId: string;
+  studioProjectName: string;
+  studioVideoId: string | null;
+  studioVideoTitle: string | null;
+  studioUserId: string | null;
+}
+
+export interface StudioUsageEventsResponse {
+  accepted: number;
+  duplicates: number;
+}

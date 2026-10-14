@@ -38,4 +38,18 @@ describe('AgGoClient footage', () => {
     expect(await c.getFootageFacets('auth0|u', { projectIds: ['p1'], usability: 'usable' })).toEqual(facets);
     expect(urls).toEqual(['https://go.test/api/footage/facets?projectIds=p1&usability=usable']);
   });
+
+  it('reads and runs the preps of footage as the user', async () => {
+    const seen: { url: string; init: RequestInit }[] = [];
+    const items = [{ assetId: 'a1', state: 'missing', phase: null, progress: null, error: null, prep: null }];
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => { seen.push({ url, init }); return envelope({ items }); });
+    const c = new AgGoClient({ baseUrl: 'https://go.test/api', serviceKey: 'k' });
+    expect(await c.getAssetPreps('auth0|u', ['a1'])).toEqual({ items });
+    await c.runAssetPreps('auth0|u', ['a1']);
+    expect(seen.map((s) => [s.url, s.init.method, JSON.parse(s.init.body as string)])).toEqual([
+      ['https://go.test/api/footage/assets/prep', 'POST', { assetIds: ['a1'] }],
+      ['https://go.test/api/footage/assets/prep/run', 'POST', { assetIds: ['a1'] }],
+    ]);
+    expect(seen[0]!.init.headers).toMatchObject({ 'X-Service-Key': 'k', 'X-Act-As-User': 'auth0|u' });
+  });
 });

@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import { getJob, noteYoutubeBlocked, proposeAction, saveVideoRevision } from '@ag-studio/engine';
-import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
+import { insertTeam, NO_DIRECTORY, realStudio, type RealStudio } from '../test/real-studio';
 import type { EngineService } from '../studio/engine.service';
 import { ActionsController } from './actions.controller';
 import { ProjectsController } from './projects.controller';
@@ -32,7 +32,7 @@ describe('actions (real studio.db)', () => {
     const engine = s.engine as unknown as EngineService;
     const root = mkdtempSync(join(tmpdir(), 'actions-api-'));
     const ws = new WorkspaceService({ get: (k: string, d?: unknown) => (k === 'STUDIO_WORKSPACES_ROOT' ? root : d) } as unknown as ConfigService, engine);
-    projects = new ProjectsController(engine, ws);
+    projects = new ProjectsController(engine, ws, NO_DIRECTORY);
     videos = new VideosController(engine, ws);
     actions = new ActionsController(engine);
     insertTeam(s.db, 'team-1', OWNER);

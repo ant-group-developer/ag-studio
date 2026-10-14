@@ -48,7 +48,7 @@ export function Composer({ onSend, onStop, running, disabled, attachments, onRem
   };
 
   return (
-    <div className="ws-composer">
+    <div className="ws-composer" data-tour="composer">
       {attachments.length ? (
         <div className="ws-attachments">
           {attachments.map((a) => (

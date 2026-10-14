@@ -49,10 +49,6 @@ export const en: LocaleMessages = {
     missingConfig: "Auth0 is not configured",
     missingConfigDesc: "Check the VITE_AUTH0_DOMAIN, VITE_AUTH0_CLIENT_ID and VITE_AUTH0_AUDIENCE environment variables.",
   },
-  menu: {
-    teams: "Teams",
-    backToProjects: "← Back to the projects",
-  },
   roles: {
     owner: "Owner",
     producer: "Producer",
