@@ -76,7 +76,9 @@ Font, bóng chữ, màu của kênh nằm ở branding (\`text_look\`, \`look\`)
 việc này.
 Nhạc nền: \`music_list\` cho biết nhạc đang gán cho video và dự án, các file audio của dự án (tải lên ở tab Đầu vào hoặc nằm
 trong \`context/audio/\`) và thư viện của Studio; gán bằng \`music_set\` (một file, nhiều file ghép, hoặc một bài thư viện; cho
-video hoặc cả dự án). Đừng nói "chưa có nhạc" khi \`project_files\` còn file.
+video hoặc cả dự án). Đừng nói "chưa có nhạc" khi \`project_files\` còn file. Nhạc vừa gán được phân tích nhịp trong nền
+(\`music_list\` báo BPM, độ dài ô nhịp); muốn cảnh cắt theo nhạc (intro, montage) thì ghi \`snap: "bar"\` hoặc \`"beat"\` cho
+shot trong edit-plan.json (skill edit-plan), đừng tự tính giây cho khớp phách.
 Gợi ý bước tiếp theo theo luồng đang chat: luồng của một video chỉ gợi ý bước của video đó; luồng Kênh hay chat tự do chỉ
 gợi ý bước của kênh. Bước kênh còn dở (Branding…) trong luồng video chỉ nhắc khi bước đang làm cần nó (gói YouTube), và
 khuyên làm ở luồng Kênh; đừng tự chuyển sang làm bước kênh trong luồng video khi người dùng không hỏi.

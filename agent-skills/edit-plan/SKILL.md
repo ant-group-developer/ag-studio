@@ -1,6 +1,6 @@
 ---
 name: edit-plan
-description: Viết kế hoạch dựng của một video — thứ tự shot, đoạn lấy trong mỗi shot, lời dẫn, chữ trên hình, chuyển cảnh, tắt tiếng gốc — vào videos/<id>/edit-plan.md và edit-plan.json, rồi dựng timeline. Dùng sau khi đã chọn cảnh (survey.json).
+description: Viết kế hoạch dựng của một video — thứ tự shot, đoạn lấy trong mỗi shot, lời dẫn, chữ trên hình, chuyển cảnh, tắt tiếng gốc, cắt theo nhịp nhạc — vào videos/<id>/edit-plan.md và edit-plan.json, rồi dựng timeline. Dùng sau khi đã chọn cảnh (survey.json).
 ---
 
 # Kế hoạch dựng → `videos/<id>/edit-plan.md` + `videos/<id>/edit-plan.json`
@@ -18,7 +18,7 @@ description: Viết kế hoạch dựng của một video — thứ tự shot, �
   "target_seconds": 90,
   "shots": [
     { "order": 1, "shot_id": "s000-003", "source_id": "src_…", "in": 31.0, "out": 36.5, "line_id": "L001",
-      "transition": "cut", "section_title": "Mở đầu", "note": "thuyền vào hang", "source_audio": "keep" },
+      "transition": "cut", "section_title": "Mở đầu", "note": "thuyền vào hang", "source_audio": "keep", "snap": "bar" },
     { "order": 2, "shot_id": "s001-000", "source_id": "src_…", "in": 0.5, "out": 6.0, "line_id": null,
       "transition": "dissolve", "section_title": null, "note": "", "source_audio": "mute" }
   ],
@@ -51,6 +51,12 @@ description: Viết kế hoạch dựng của một video — thứ tự shot, �
   tab Đầu vào, hoặc bạn đặt bằng `music_set` (file trong `context/audio/`, ghép nhiều bài) — `music_list` cho biết nhạc
   đang gán. `music` (tuỳ chọn): `{ "gain_db": -24, "ducking": false }` = nhạc đó phát ở mức này, có/không nhỏ lại khi có
   lời; `"music": null` = video không có nhạc.
+- Cắt theo nhịp nhạc (tuỳ chọn): `snap: "bar"` (đầu ô nhịp) hoặc `"beat"` (phách) trên shot — Studio dời điểm cắt **cuối**
+  shot đó về phách/đầu ô nhịp gần nhất của nhạc video đang phát khi dựng (không ngắn hơn 0,5 s, không vượt quá cảnh
+  gốc, không làm lời dẫn đè nhau; chỗ không dời được thì giữ và báo trong kết quả dựng). Hợp với intro, montage, đoạn
+  không lời; đoạn có lời dẫn dài thì để trống. `music_list` cho biết BPM và độ dài ô nhịp (ví dụ 120 BPM: ô nhịp 2 s,
+  nên shot dài khoảng bội số của 2 s); nhạc chưa phân tích thì Studio tự phân tích lúc dựng. Đừng tự chỉnh `out` cho
+  khớp giây của phách.
 - `look` (tuỳ chọn): màu hình của video này thay cho `look` của branding — none | natural | vivid | warm | cinematic.
 - `text_look` (tuỳ chọn): kiểu chữ riêng của video thay cho `text_look` của branding (cùng các khoá: màu, `size`,
   `shadow`, `font`).

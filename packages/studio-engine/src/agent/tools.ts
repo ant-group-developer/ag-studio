@@ -10,6 +10,7 @@ import { toolInputJsonSchema, VIDEO_STATUSES } from "@harness/contracts";
 import { StudioRunError } from "../errors.js";
 import { DEFAULT_SITE_NAME, withSiteName } from "../site-name.js";
 import type { AudioImportDeps } from "../audio-import.js";
+import type { StudioBucket } from "../bucket.js";
 import type { StudioDb } from "../studio-db.js";
 import { createVideo, listVideos, projectView, requireVideo, updateVideo, type ProjectRecord, type VideoRecord } from "../workspace/project-db.js";
 import { normalizeRelPath, recordFileVersion } from "../workspace/files.js";
@@ -45,6 +46,8 @@ export interface AgentToolContext {
   referenceFetchers?: () => Promise<string[]>;
   /** ffmpeg and the bucket, to make music of the project's audio files (`music_set`); absent: this server has no ffmpeg. */
   audio?: AudioImportDeps;
+  /** Studio's bucket, where the beats of a track sit beside it (`music_list`); absent: the tempo is not read. */
+  bucket?: StudioBucket;
 }
 
 export interface ToolAnswer {

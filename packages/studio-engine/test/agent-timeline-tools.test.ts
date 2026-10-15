@@ -159,6 +159,24 @@ describe("timeline tools", () => {
     expect(await call(s, "music_set", { files: ["library:music/nope.m4a"] })).toMatchObject({ isError: true });
   });
 
+  it("feedback-vps §4.7: the music set is analysed for its beats in the background, and music_list tells its tempo", async () => {
+    const s = await setup();
+    s.ctx.bucket = s.bucket;
+    await saveLibraryMusic(s.db, {
+      schema_version: "harness.music-track/v1", track_id: "calm-a", display_name: "Calm A", file: "library:music/calm-a.m4a", mood: ["calm"], duration_seconds: 300,
+      loop_ok: true, origin: "royalty_free", origin_note: "x", checksum: `sha256:${"a".repeat(64)}`, active: true, created_at: NOW, updated_at: NOW,
+    });
+    await call(s, "music_set", { files: ["library:music/calm-a.m4a"] });
+    const jobs = (await listJobs(s.db, s.project.id)).filter((j) => j.kind === "music_beats");
+    expect(jobs.map((j) => [j.request, j.thread_id, j.continue_agent])).toEqual([[{ track: "library:music/calm-a.m4a", sha256: "a".repeat(64), parts: [] }, s.thread.id, false]]);
+    expect((await call(s, "music_list", {})).json.video_music_beats).toBe("đang phân tích nhịp (job music_beats)");
+    await s.bucket.put("library/music/calm-a.m4a.beats.json", Buffer.from(JSON.stringify({
+      schema_version: "studio.music-beats/v1", track: "library:music/calm-a.m4a", sha256: "a".repeat(64), duration_s: 300, bpm: 96, beats_per_bar: 4,
+      beats: [0.3, 0.925], downbeats: [0.3], sections: [{ start: 0, end: 300, bpm: 96 }], engine: "librosa:0.11.0", analysed_at: NOW,
+    })));
+    expect((await call(s, "music_list", {})).json.video_music_beats).toBe("≈ 96 BPM, 4 phách một ô nhịp (ô nhịp 2,5 s)");
+  });
+
   it.skipIf(!hasFfmpeg())("feedback-vps §4.5: music_set joins the project's audio files into the project's music", async () => {
     const s = await setup();
     const ctx = { ...s.ctx, audio: { db: s.db, bucket: s.bucket, ffmpeg: process.env.FFMPEG_PATH ?? "ffmpeg", ffprobe: process.env.FFPROBE_PATH ?? "ffprobe" } };

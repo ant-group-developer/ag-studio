@@ -15,11 +15,11 @@ import { getJob } from "../workspace/jobs-db.js";
 import { getVideoRevision, latestVideoRevision, requireVideo, saveVideoRevision } from "../workspace/project-db.js";
 import { RevisionConflictError } from "../studio-db.js";
 import {
-  importProjectMusic, importVideoMusic, keepVideoMusicLevels, projectAudioFiles, projectAudioSummary, setProjectLibraryMusic, setVideoLibraryMusic,
-  videoMusicSummary,
+  importProjectMusic, importVideoMusic, keepVideoMusicLevels, musicForVideo, projectAudio, projectAudioFiles, projectAudioSummary, setProjectLibraryMusic,
+  setVideoLibraryMusic, videoMusicSummary,
 } from "../workspace/project-audio.js";
 import { videoMusicToTimeline } from "../workspace/video-music.js";
-import { queueMusicBeats } from "../workspace/music-beats.js";
+import { musicBeatsStatus, queueMusicBeats } from "../workspace/music-beats.js";
 import { queueRender } from "../workspace/renders.js";
 import { MAX_RENDER_FRAMES, queueRenderFrames, queueThumbnails } from "../workspace/thumbnails.js";
 import { buildVideoIndex } from "../workspace/video-index.js";
@@ -273,6 +273,8 @@ export const TIMELINE_TOOLS: AgentTool[] = [
       "Mọi nhạc dùng được cho video: nhạc đang gán cho video và cho dự án (`video_music`, `project_music`), file audio của dự án",
       "(`project_files`: tải lên ở tab Đầu vào hoặc nằm trong context/audio/; gán bằng music_set) và nhạc trong thư viện của Studio",
       "(`library`, lọc theo tâm trạng `mood`; dùng `track` của bài cho music_set hoặc setMusic, hoặc ghi `music_mood` trong edit-plan.json).",
+      "Nhịp của nhạc đang gán (`video_music_beats`, `project_music_beats`: BPM, số phách một ô nhịp, độ dài ô nhịp) để cắt cảnh theo nhịp",
+      "(`shots[].snap` trong edit-plan.json).",
     ].join(" "),
     input: z.object({ video_id: z.string().min(1).optional(), mood: z.string().trim().min(1).max(40).optional() }).strict(),
     run: async (ctx, a) => {
@@ -281,10 +283,16 @@ export const TIMELINE_TOOLS: AgentTool[] = [
       const videoId = a.video_id ?? ctx.video?.id;
       const video = videoId ? await videoOf(ctx, videoId) : null;
       const files = await projectAudioFiles(ctx.db, ctx.workspaceDir, ctx.project.id);
+      // the tempo of the music each plays (found by job music_beats when it was set)
+      const beats = { db: ctx.db, ...(ctx.bucket ?? ctx.audio?.bucket ? { bucket: (ctx.bucket ?? ctx.audio?.bucket)! } : {}) };
+      const videoTrack = video ? (await musicForVideo(ctx.db, ctx.project.id, video.id))?.music.track ?? null : null;
+      const projectTrack = (await projectAudio(ctx.db, ctx.project.id)).music?.track ?? null;
       return {
         text: json({
           ...(video ? { video_music: await videoMusicSummary(ctx.db, ctx.project.id, video.id) } : {}),
+          ...(videoTrack ? { video_music_beats: await musicBeatsStatus(beats, ctx.project.id, videoTrack) } : {}),
           project_music: (await projectAudioSummary(ctx.db, ctx.project.id)).music,
+          ...(projectTrack && projectTrack !== videoTrack ? { project_music_beats: await musicBeatsStatus(beats, ctx.project.id, projectTrack) } : {}),
           project_files: files.slice(0, 100).map((f) => ({ path: f.path, name: f.name, mb: Math.round(f.bytes / 1024 / 102.4) / 10 })),
           library: tracks.slice(0, 60).map((t) => ({ name: t.display_name, mood: t.mood, seconds: Math.round(t.duration_seconds), loop_ok: t.loop_ok, track: t.file })),
           ...(ctx.audio ? {} : { note: "Máy chủ này chưa bật xử lý audio (ffmpeg): music_set chỉ dùng được bài trong thư viện." }),
@@ -299,6 +307,7 @@ export const TIMELINE_TOOLS: AgentTool[] = [
       "file ghép theo thứ tự (`crossfade_s` giây chuyển mờ giữa các bài, 0 = nối thẳng), hoặc một bài thư viện (`files: [\"library:music/…\"]`).",
       "`files` lấy từ music_list (project_files.path / library.track). `gain_db` (-40..0, mặc định -18), `ducking` (nhạc nhỏ lại khi có lời,",
       "mặc định có). Timeline mới nhất của video phát nhạc mới ngay (bản timeline mới, giữ đường âm lượng nhạc); dựng lại từ kế hoạch cũng dùng nó.",
+      "Studio phân tích nhịp của nhạc mới trong nền (job music_beats, vài phút; music_list báo BPM khi xong).",
     ].join(" "),
     input: z.object({
       video_id: z.string().min(1).optional(),
@@ -342,7 +351,7 @@ export const TIMELINE_TOOLS: AgentTool[] = [
         throw e;
       }
       // its beats, for shots of the edit plan that cut on them (feedback-vps §4.7): found on the farm in the background
-      await queueMusicBeats({ db: ctx.db, ...(ctx.audio ? { bucket: ctx.audio.bucket } : {}) }, {
+      await queueMusicBeats({ db: ctx.db, ...(ctx.bucket ?? ctx.audio?.bucket ? { bucket: (ctx.bucket ?? ctx.audio?.bucket)! } : {}) }, {
         projectId: ctx.project.id, videoId: scope === "video" ? video!.id : null, threadId: ctx.thread.id, createdBy: ctx.claims.sub, actorRole: ctx.role,
       }, ctx.now());
       // the video's latest timeline plays it now (a video with its own music keeps it when only the project's changed)
