@@ -126,7 +126,10 @@ export async function runFarmStep(
     waitingSince = waiting ? waitingSince ?? Date.now() : null;
     if (waiting && d.queueTimeoutMs && Date.now() - waitingSince! > d.queueTimeoutMs) {
       await d.farm.cancelJob(sent.id).catch(() => undefined);
-      throw new Error(`không máy farm nào nhận việc sau ${Math.round(d.queueTimeoutMs / 60_000)} phút (máy có thể đang tắt)`);
+      // a render needs a machine of its render level: one still on an older render worker never takes it
+      const level = (step.requirements as { studio_render_min?: unknown } | undefined)?.studio_render_min;
+      const why = typeof level === "number" ? `máy có thể đang tắt, hoặc chưa máy nào lên bản render worker đạt mức render ≥ ${level}` : "máy có thể đang tắt";
+      throw new Error(`không máy farm nào nhận việc sau ${Math.round(d.queueTimeoutMs / 60_000)} phút (${why})`);
     }
     await watch.onUpdate({ phase, progress: view.progress_percent === null ? null : view.progress_percent / 100, node, farmJobId: sent.id, waiting });
     await sleep(pollMs);

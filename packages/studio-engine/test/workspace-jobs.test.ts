@@ -405,6 +405,15 @@ describe("waiting for a farm machine", () => {
     expect(calls.cancel).toEqual(["00000000-0000-4000-8000-00000000f001"]);
   });
 
+  it("a render that waited for a machine of its render level says which level", async () => {
+    const { db, bucket, project } = await setup();
+    const job = await createJob(db, { projectId: project.id, kind: "render_preview", title: "R", request: {}, createdBy: "u" }, at(0));
+    const { farm } = fakeFarm([{}, {}, {}, {}]);
+    await expect(runFarmStep({ db, bucket, farm, pollMs: 5, queueTimeoutMs: 20 }, job,
+      { type: "studio.render_preview", payload: {}, stageKey: "render", attemptId: job.id, requirements: { studio_render_min: 6 } },
+      { onUpdate: () => undefined, stopRequested: async () => null })).rejects.toThrow("mức render ≥ 6");
+  });
+
   it("a job waiting in line shows no time left", async () => {
     const { db, project, workspacesRoot, dir } = await setup();
     let release!: () => void;
