@@ -84,6 +84,8 @@ export interface PrepareRequest {
   /** ag-go's name of the video, when known. */
   name?: string | null;
   duration_s?: number | null;
+  /** Jobs queued together (`queuePrepare` of several videos): the thread hears once, when the last one ends. */
+  batch_id?: string;
 }
 
 export const ASSET_ID = /^[A-Za-z0-9_-]{1,80}$/;

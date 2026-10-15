@@ -60,6 +60,19 @@ describe("the sources list for many videos", () => {
     const r = await queuePrepare(s.db, { projectId: pid, assetIds: ["a1", "a1", "zz"], createdBy: "u" }, NOW);
     expect(r).toEqual({ a1: expect.objectContaining({ state: "queued" }), zz: { state: "not_an_input" } });
     expect(await s.db.all("SELECT id FROM project_jobs WHERE project_id = ?", [pid])).toHaveLength(1);
+    // one video alone is no batch: its own message, as before
+    expect((await getJob(s.db, (r.a1 as { job_id: string }).job_id))!.request).not.toHaveProperty("batch_id");
+  });
+
+  it("videos queued together share a batch, so their thread hears once", async () => {
+    const s = await setup();
+    const pid = s.project.id;
+    for (const id of ["a1", "a2", "a3"]) await addSource(s.db, { projectId: pid, kind: "ag_go_asset", ref: id, mediaType: "video", label: `clip ${id}`, addedBy: "u" }, NOW);
+    await queuePrepare(s.db, { projectId: pid, assetIds: ["a1", "a2", "a3"], createdBy: "u" }, NOW);
+    const batches = (await s.db.all<{ request: { batch_id?: string } }>("SELECT request FROM project_jobs WHERE project_id = ?", [pid])).map((j) => j.request.batch_id);
+    expect(batches).toHaveLength(3);
+    expect(new Set(batches).size).toBe(1);
+    expect(batches[0]).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it("queues a video once when two calls ask at the same time", async () => {

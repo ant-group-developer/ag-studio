@@ -118,6 +118,31 @@ describe("job runner", () => {
     expect(msgs.at(-2)!.text).toBe("Đã chuẩn bị **A**.");
   });
 
+  it("jobs queued together tell their thread once, when the last ends, and only that one wakes the agent", async () => {
+    const { db, project, thread, workspacesRoot, dir } = await setup();
+    await postUserMessage(db, { threadId: thread.id, text: "Chuẩn bị 3 video", actor: { id: "auth0|u", role: "editor" } }, at(0));
+    await db.run("UPDATE agent_messages SET status = 'done' WHERE thread_id = ?", [thread.id]);
+    const before = (await listMessages(db, thread.id)).length;
+    const handler: JobHandler = async (job) => {
+      if ((job.request as { name: string }).name === "B") throw new Error("ag-go trả 503");
+      return { result: { ok: true }, message: `Đã chuẩn bị **${(job.request as { name: string }).name}**.` };
+    };
+    for (const name of ["A", "B", "C"]) {
+      await createJob(db, {
+        projectId: project.id, threadId: thread.id, kind: "prepare_asset", title: `Chuẩn bị ${name}`, request: { asset_id: name, name, batch_id: "b-1" },
+        continueAgent: true, createdBy: "auth0|u", actorRole: "editor",
+      }, at(1));
+    }
+    const runner = createJobRunner({ db, logger: quiet, workspacesRoot, dataRoot: join(dir, "data"), handlers: { prepare_asset: handler }, lanes: 3 });
+    await runner.tick();
+    await runner.idle();
+    await runner.tick();
+    await runner.idle();
+    const msgs = (await listMessages(db, thread.id)).slice(before);
+    expect(msgs.map((m) => [m.role, m.trigger, m.status])).toEqual([["system", "job", "done"], ["assistant", "job", "pending"]]);
+    expect(msgs[0]!.text).toBe("Đã chuẩn bị 2/3 · 1 lỗi: **B** — ag-go trả 503.");
+  });
+
   it("stops a running job when a person asks: the handler's signal aborts, the job is cancelled, the agent waits", async () => {
     const { db, project, thread, workspacesRoot, dir } = await setup();
     const handler: JobHandler = async (_job, ctx) => {

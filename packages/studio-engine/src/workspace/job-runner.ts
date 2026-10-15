@@ -242,18 +242,60 @@ export function createJobRunner(o: JobRunnerOptions): JobRunner {
   };
 }
 
+/** What a batch of jobs of a kind did, for its one summary line. */
+const BATCH_VERB: Partial<Record<JobKind, string>> = { prepare_asset: "Đã chuẩn bị" };
+/** Failures a batch summary names; the rest are counted. */
+const BATCH_FAILURES_NAMED = 8;
+
+function batchOf(job: JobRecord): string | null {
+  const id = (job.request as { batch_id?: unknown } | null)?.batch_id;
+  return typeof id === "string" && id ? id : null;
+}
+
+/** "Đã chuẩn bị 12/14 · 2 lỗi: **A** — lý do; **B** — lý do · 1 đã dừng." */
+export function batchSummary(jobs: readonly JobRecord[]): string {
+  const name = (j: JobRecord) => {
+    const n = (j.request as { name?: unknown } | null)?.name;
+    return typeof n === "string" && n ? n : j.title;
+  };
+  const done = jobs.filter((j) => j.status === "done").length;
+  const failed = jobs.filter((j) => j.status === "failed");
+  const cancelled = jobs.filter((j) => j.status === "cancelled").length;
+  const named = failed.slice(0, BATCH_FAILURES_NAMED).map((j) => `**${name(j)}** — ${(j.error ?? "lỗi").slice(0, 200)}`);
+  const more = failed.length > BATCH_FAILURES_NAMED ? ` và ${failed.length - BATCH_FAILURES_NAMED} lỗi khác` : "";
+  return `${BATCH_VERB[jobs[0]!.kind] ?? "Đã xong"} ${done}/${jobs.length}`
+    + `${failed.length ? ` · ${failed.length} lỗi: ${named.join("; ")}${more}` : ""}${cancelled ? ` · ${cancelled} đã dừng` : ""}.`;
+}
+
 /**
  * A finished job's line in its thread, and the agent's next turn when the job asked for one, the project lets the
- * agent go on by itself, and it has not already gone on 3 times without a person's message.
+ * agent go on by itself, and it has not already gone on 3 times without a person's message. Jobs queued together
+ * (`request.batch_id`) say nothing until the last of them ends, which posts one summary (`batchSummary`) and is the
+ * only one to wake the agent: 160 prepare messages, each waking the agent, flooded a thread on prod.
  */
 async function tellThread(db: StudioDb, job: JobRecord, status: "done" | "failed" | "cancelled", message: string | null, now: string): Promise<void> {
-  if (!job.thread_id || !message) return;
+  if (!job.thread_id) return;
+  let text = message;
+  let wake = job.continue_agent && status !== "cancelled";
+  const batchId = batchOf(job);
+  if (batchId !== null) {
+    // one transaction (one write lock): of two jobs ending at once, exactly one sees the batch over and tells it
+    const told = await db.tx(async () => {
+      const jobs = await db.all<JobRecord>("SELECT * FROM project_jobs WHERE project_id = ? AND request->>'batch_id' = ? ORDER BY created_at, id", [job.project_id, batchId]);
+      if (jobs.some((j) => j.status === "queued" || j.status === "running")) return null;
+      if (jobs.some((j) => (j.result as { batch_told?: unknown } | null)?.batch_told === true)) return null;
+      await db.run("UPDATE project_jobs SET result = COALESCE(result, '{}'::jsonb) || ?::jsonb WHERE id = ?", [JSON.stringify({ batch_told: true }), job.id]);
+      return { text: batchSummary(jobs), wake: jobs.some((j) => j.continue_agent && j.status !== "cancelled") };
+    });
+    if (told === null) return;
+    ({ text, wake } = told);
+  }
+  if (!text) return;
   const thread = await getThread(db, job.thread_id);
   if (!thread || thread.archived_at) return;
   const project = await getProject(db, job.project_id);
   const settings = projectSettingsOf(project ? JSON.stringify(project.settings) : null);
-  const goOn = job.continue_agent && status !== "cancelled" && settings.auto_continue
-    && await automaticTurnsInARow(db, thread.id) < AUTO_TURNS_IN_A_ROW;
+  const goOn = wake && settings.auto_continue && await automaticTurnsInARow(db, thread.id) < AUTO_TURNS_IN_A_ROW;
   const actor = job.actor_role ? { id: job.created_by, role: job.actor_role as ActorRole } : null;
-  await postSystemMessage(db, { threadId: thread.id, text: message, trigger: "job", continueAgent: goOn, actor }, now);
+  await postSystemMessage(db, { threadId: thread.id, text, trigger: "job", continueAgent: goOn, actor }, now);
 }

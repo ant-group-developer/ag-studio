@@ -3,6 +3,7 @@
  * stands (prepared, being prepared, failed, not yet), and queueing its preparation — shared by the agent's tools and
  * the web's Inputs tab.
  */
+import { randomUUID } from "node:crypto";
 import type { StudioDb } from "../studio-db.js";
 import type { ActorRole } from "../agent/threads-db.js";
 import { createJob, listJobs, type JobRecord } from "./jobs-db.js";
@@ -90,7 +91,8 @@ export function assetCounts(items: readonly SourceItem[]): AssetCounts {
 /**
  * Queues preparing these ag-go videos of the project, skipping those prepared (unless `again`: copied again from ag-go,
  * whose own prep is not run again) or already in line. An id that is no ag-go video source of the project is answered
- * `not_an_input`. One transaction: two calls at once queue a video once.
+ * `not_an_input`. One transaction: two calls at once queue a video once. Several videos queued at once share a
+ * `batch_id`: their thread hears one summary when the last of them ends, not a message (and an agent turn) each.
  */
 export async function queuePrepare(db: StudioDb, p: {
   projectId: string; assetIds: string[]; threadId?: string | null; continueAgent?: boolean; createdBy: string; actorRole?: ActorRole | null; again?: boolean;
@@ -100,6 +102,7 @@ export async function queuePrepare(db: StudioDb, p: {
     for (const s of await listSources(db, p.projectId)) if (s.kind === "ag_go_asset" && !known.has(s.ref)) known.set(s.ref, s);
     const out: Record<string, AssetState | { state: "not_an_input" }> = {};
     const state = await assetStates(db, p.projectId);
+    const toQueue: { id: string; src: SourceRecord; req: PrepareRequest }[] = [];
     for (const id of p.assetIds) {
       const src = known.get(id);
       if (out[id]) continue; // the same id twice in one call: queued once
@@ -108,9 +111,14 @@ export async function queuePrepare(db: StudioDb, p: {
       if (st.state === "queued" || st.state === "preparing" || (st.state === "ready" && !p.again)) { out[id] = st; continue; }
       const meta = sourceView(src).meta;
       const req: PrepareRequest = { asset_id: id, name: src.label, ...(typeof meta.durationMs === "number" ? { duration_s: meta.durationMs / 1000 } : {}) };
+      toQueue.push({ id, src, req });
+      out[id] = { state: "queued", job_id: "", phase: null, progress: null };
+    }
+    const batch = toQueue.length > 1 ? { batch_id: randomUUID() } : {};
+    for (const { id, src, req } of toQueue) {
       // no units: a video ag-go has prepared takes seconds whatever its length; the job sets them when it must wait for a run
       const job = await createJob(db, {
-        projectId: p.projectId, videoId: src.video_id, threadId: p.threadId ?? null, kind: "prepare_asset", title: `Chuẩn bị ${src.label}`, request: req,
+        projectId: p.projectId, videoId: src.video_id, threadId: p.threadId ?? null, kind: "prepare_asset", title: `Chuẩn bị ${src.label}`, request: { ...req, ...batch },
         continueAgent: p.continueAgent ?? false, createdBy: p.createdBy, actorRole: p.actorRole ?? null,
       }, now);
       out[id] = { state: "queued", job_id: job.id, phase: null, progress: null };
