@@ -11,8 +11,10 @@ x-app: &app
   image: ag-studio-app:${TAG:-latest}
   env_file:
     - .env
+  # STUDIO_DATA_VOLUME trong .env là đường dẫn tuyệt đối trên VPS thì /data là bind mount (xem bằng file manager);
+  # để trống thì vẫn là named volume studio-data như cũ.
   volumes:
-    - studio-data:/data
+    - ${STUDIO_DATA_VOLUME:-studio-data}:/data
   extra_hosts:
     - 'host.docker.internal:host-gateway'
   logging: *logging
