@@ -185,6 +185,11 @@ describe('video media (real database)', () => {
     expect(a.music).toEqual({ track: 'library:music/m-sang.m4a', gain_db: -20, ducking: true, sha256: 'a'.repeat(64), duration_s: 95 });
     expect(a.libraryTrack).toEqual({ trackId: 'm-sang', displayName: 'Sáng sớm', moods: ['ấm áp'], durationSeconds: 95 });
     expect(a.summary.music).toBe('bài "Sáng sớm" trong kho nhạc (95 s), -20 dB, nhỏ lại khi có lời');
+    // its beats are found in the background (feedback-vps §4.7), once
+    const beatsJobs = () => s.engine.db.all<{ request: unknown }>("SELECT request FROM project_jobs WHERE project_id = ? AND kind = 'music_beats'", [p.id]);
+    expect(await beatsJobs()).toEqual([{ request: { track: 'library:music/m-sang.m4a', sha256: 'a'.repeat(64), parts: [] } }]);
+    await media.fromLibrary(p.id, { trackId: 'm-sang', gainDb: -24 }, req(EDITOR));
+    expect(await beatsJobs()).toHaveLength(1);
     expect(await media.fromLibrary(p.id, { trackId: 'm-cu' }, req(EDITOR)).catch(code)).toBe('audio_invalid');
     expect(await media.fromLibrary(p.id, { trackId: 'm-khong' }, req(EDITOR)).catch(code)).toBe('not_found');
     expect(await media.fromLibrary(p.id, { trackId: 'm-sang', extra: 1 }, req(EDITOR)).catch(code)).toBe('invalid');

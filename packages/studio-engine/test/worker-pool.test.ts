@@ -55,10 +55,10 @@ describe("the worker pool", () => {
     // inputs come prepared from ag-go: no ffmpeg needed
     expect(Object.keys(projectJobHandlers({ ...base(), preps }))).toEqual(["prepare_asset"]);
     expect(Object.keys(projectJobHandlers({ ...base(), media, thumbnails: fakeThumbnails() })).sort())
-      .toEqual(["export_premiere", "fit", "render_final", "render_preview", "style_watch", "thumbnail"]); // uploaded reference videos need only ffmpeg
+      .toEqual(["export_premiere", "fit", "music_beats", "render_final", "render_preview", "style_watch", "thumbnail"]); // uploaded reference videos need only ffmpeg
     const ytdlp = {} as YtDlp;
     expect(Object.keys(projectJobHandlers({ ...base(), media, preps, ytdlp })).sort())
-      .toEqual(["export_premiere", "fit", "prepare_asset", "render_final", "render_preview", "research", "style_watch"]);
+      .toEqual(["export_premiere", "fit", "music_beats", "prepare_asset", "render_final", "render_preview", "research", "style_watch"]);
     // reference downloads turned off: uploaded reference videos are still watched (YouTube ones say why not)
     expect(Object.keys(projectJobHandlers({ ...base(), media, ytdlp, referenceDownloads: false }))).toContain("style_watch");
   });

@@ -50,7 +50,7 @@ export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
   "studio-episode": S.StudioEpisodeSchema, "studio-timeline-v3": S.TimelineV3Schema, "studio-timeline-v4": S.TimelineV4Schema, "studio-cut-sources": SX.CutSourcesSchema, "studio-cut-proxies": SX.CutProxySetSchema, "studio-cut-watch": SX.CutWatchSchema, "studio-edit-plan": S.EditPlanSchema, "studio-youtube-kit": S.YoutubeKitSchema,
   "studio-youtube": S.StudioYoutubeSchema, "studio-export": S.StudioExportSchema,
   "studio-seed": S.StudioSeedSchema, "studio-rnd": S.StudioRndSchema, "studio-branding": S.StudioBrandingSchema,
-  "studio-thumbnails": S.StudioThumbnailsSchema,
+  "studio-thumbnails": S.StudioThumbnailsSchema, "studio-music-beats": S.MusicBeatsSchema,
   "studio-web-finds": S.StudioWebFindsSchema, "studio-style": S.StudioStyleSchema, "studio-style-refs": SS.StyleRefsSchema, "studio-style-watch": SS.StyleWatchSchema,
   "studio-intake-draft": SC.IntakeDraftSchema, "studio-timeline-chat": SC.TimelineChatProposalSchema,
   "studio-crawl": SW.StudioCrawlSchema,

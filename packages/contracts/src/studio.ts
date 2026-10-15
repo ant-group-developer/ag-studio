@@ -140,6 +140,33 @@ export function studioMusicOf(m: ProductionMusic): StudioMusic {
   return { track: m.track, gain_db: m.gain_db, ducking: m.ducking };
 }
 
+/** Beats of a track at most (3 hours at 300 BPM is 54 000), as the farm's `studio.beats`. */
+export const MUSIC_BEATS_MAX = 60_000;
+const BeatTimesSchema = z.array(z.number().min(0)).max(MUSIC_BEATS_MAX);
+
+/**
+ * The beats of a background track (feedback-vps §4.7), found by the farm (`studio.beats`, librosa) when the music is
+ * imported and kept beside the track in the bucket (`<track key>.beats.json`): every beat, the first beat of each bar,
+ * the tempo, and each joined song's own tempo. A shot of the edit plan with `snap` cuts on them. Times are seconds of the
+ * track, which plays from the start of the video (and again from its start when it loops).
+ */
+export const MusicBeatsSchema = z.object({
+  schema_version: studioVersion("music-beats"),
+  track: LibraryInputSchema,
+  /** The track's content when it was analysed (a library track replaced under the same name is analysed again). */
+  sha256: z.string().min(1).nullable(),
+  duration_s: z.number().positive(),
+  /** The tempo heard longest; null when no beat could be heard. */
+  bpm: z.number().positive().nullable(),
+  beats_per_bar: z.number().int().min(2).max(12),
+  beats: BeatTimesSchema,
+  downbeats: BeatTimesSchema,
+  sections: z.array(z.object({ start: z.number().min(0), end: z.number().positive(), bpm: z.number().positive().nullable() }).strict()).min(1).max(20),
+  engine: z.string().max(100),
+  analysed_at: z.string(),
+}).strict();
+export type MusicBeats = z.infer<typeof MusicBeatsSchema>;
+
 /** Soft target: an episode may differ from `episode_target_seconds` by this fraction (a warning, never a block). */
 export const EPISODE_DURATION_TOLERANCE = 0.2;
 export const MAX_EPISODES_LIMIT = 30;

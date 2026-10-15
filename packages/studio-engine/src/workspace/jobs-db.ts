@@ -8,7 +8,7 @@ import { StudioRunError } from "../errors.js";
 import type { StudioDb } from "../studio-db.js";
 import type { ActorRole } from "../agent/threads-db.js";
 
-export const JOB_KINDS = ["prepare_asset", "transcribe_upload", "tts", "fit", "render_preview", "render_final", "export_premiere", "research", "style_watch", "thumbnail"] as const;
+export const JOB_KINDS = ["prepare_asset", "transcribe_upload", "tts", "fit", "render_preview", "render_final", "export_premiere", "research", "style_watch", "thumbnail", "music_beats"] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 

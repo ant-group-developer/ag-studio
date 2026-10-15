@@ -40,7 +40,7 @@ describe("the cleanup sweep", () => {
     expect(await s.db.all("SELECT key FROM studio_voice_lines")).toEqual([{ key: "b".repeat(64) }]);
   });
 
-  it("deletes old project audio nothing points at; keeps the project's voice and music, a video's own music, what a timeline uses, and recent files", async () => {
+  it("deletes old project audio nothing points at; keeps the project's voice and music, a video's own music, what a timeline uses, the beats of what it keeps, and recent files", async () => {
     s = await world();
     const p = await project();
     const video = await createVideo(s.db, p.id, { title: "Tập 1", createdBy: "u" }, NOW.toISOString());
@@ -52,10 +52,11 @@ describe("the cleanup sweep", () => {
     await s.db.run("INSERT INTO video_revisions (id, video_id, revision, base_revision, data, author_id, created_at) VALUES ('r1', ?, 1, 0, ?, 'u', ?)",
       [video.id, JSON.stringify({ music: { src: `library:studio/projects/${p.id}/music/m0.m4a` } }), NOW.toISOString()]);
     await s.db.run("UPDATE videos SET music = ? WHERE id = ?", [JSON.stringify({ track: `library:studio/projects/${p.id}/music/m2.m4a` }), video.id]);
-    for (const k of ["voice/v1.wav", "music/m1.m4a", "music/m0.m4a", "music/m2.m4a", "voice/old.wav", "music/new.m4a"]) await s.bucket.put(key(k), Buffer.from("x"));
-    for (const k of ["voice/v1.wav", "music/m1.m4a", "music/m0.m4a", "music/m2.m4a", "voice/old.wav"]) s.bucket.modified.set(key(k), DAYS(30));
-    expect(await sweepProjectAudio(s.db, s.bucket, DAYS(7))).toBe(1);
-    expect([...s.bucket.objects.keys()].sort()).toEqual(["music/m0.m4a", "music/m1.m4a", "music/m2.m4a", "music/new.m4a", "voice/v1.wav"].map(key));
+    const old = ["voice/v1.wav", "music/m1.m4a", "music/m1.m4a.beats.json", "music/m0.m4a", "music/m2.m4a", "voice/old.wav", "music/gone.m4a.beats.json"];
+    for (const k of [...old, "music/new.m4a"]) await s.bucket.put(key(k), Buffer.from("x"));
+    for (const k of old) s.bucket.modified.set(key(k), DAYS(30));
+    expect(await sweepProjectAudio(s.db, s.bucket, DAYS(7))).toBe(2);
+    expect([...s.bucket.objects.keys()].sort()).toEqual(["music/m0.m4a", "music/m1.m4a", "music/m1.m4a.beats.json", "music/m2.m4a", "music/new.m4a", "voice/v1.wav"].map(key));
   });
 
   it("removes scratch folders of jobs and turns no longer running; keeps running ones and recent ones", async () => {

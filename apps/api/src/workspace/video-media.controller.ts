@@ -10,7 +10,7 @@ import { z } from 'zod';
 import {
   AUDIO_MAX_BYTES, AudioImportError, clearProjectAudio, clearVideoMusic, declineProjectNarration, getLibraryMusic, getVideoRevision, importProjectAudio,
   importProjectMusic, importVideoMusic, jobView, latestVideoRevision, listJobs, listVideoRevisions, musicForVideo, MUSIC_CROSSFADE_MAX_SECONDS,
-  MUSIC_MIX_MAX_PARTS, projectAudio, projectAudioFiles, projectAudioSummary, projectLibraryTrack, queueFit, queueRender, readWorkspaceBytes, requireProject,
+  MUSIC_MIX_MAX_PARTS, projectAudio, projectAudioFiles, projectAudioSummary, projectLibraryTrack, queueFit, queueMusicBeats, queueRender, readWorkspaceBytes, requireProject,
   requireVideo, resolveInside, setProjectLibraryMusic, setVideoLibraryMusic, StudioRunError, timelineSummary, videoLibraryTrack, videoMusicSummary,
   videoMusicToTimeline, videoOwnMusic, videoRender, videoRenders, VOICE_ORIGINS, type ActorRole, type JobView, type ProjectAudioFile, type RenderKind,
 } from '@ag-studio/engine';
@@ -262,6 +262,7 @@ export class VideoMediaController {
         if (e instanceof AudioImportError) throw new UnprocessableEntityException({ code: e.code, message: e.message });
         throw e;
       }
+      await this.beats(projectId, null, req);
       return this.audio(projectId, req);
     });
   }
@@ -293,6 +294,7 @@ export class VideoMediaController {
         if (e instanceof AudioImportError) throw new UnprocessableEntityException({ code: e.code, message: e.message });
         throw e;
       }
+      if (kind === 'music') await this.beats(projectId, null, req);
       return this.audio(projectId, req);
     });
   }
@@ -338,6 +340,7 @@ export class VideoMediaController {
       await this.importing(() => importProjectMusic({ db: this.engine.db, bucket: this.engine.bucket, ...requireAudioTools(this.config) }, {
         projectId, files, ...musicOptions(body),
       }));
+      await this.beats(projectId, null, req);
       return this.audio(projectId, req);
     });
   }
@@ -361,6 +364,7 @@ export class VideoMediaController {
       await this.importing(() => importVideoMusic({ db: this.engine.db, bucket: this.engine.bucket, ...requireAudioTools(this.config) }, {
         videoId, files, ...musicOptions(body),
       }));
+      await this.beats(v.project_id, videoId, req);
       return this.videoAudioOf(videoId, await this.follow(v.project_id, videoId, req), req);
     });
   }
@@ -376,6 +380,7 @@ export class VideoMediaController {
       const track = await getLibraryMusic(this.engine.db, body.trackId);
       if (!track) throw new NotFoundException({ code: 'not_found', message: `Không có bài ${body.trackId} trong kho nhạc` });
       await this.importing(async () => setVideoLibraryMusic(this.engine.db, videoId, track, musicOptions(body)));
+      await this.beats(v.project_id, videoId, req);
       return this.videoAudioOf(videoId, await this.follow(v.project_id, videoId, req), req);
     });
   }
@@ -408,6 +413,18 @@ export class VideoMediaController {
   /** The video's latest timeline takes its music now (a new revision), or null when nothing changed. */
   private async follow(projectId: string, videoId: string, req: Request): Promise<number | null> {
     return videoMusicToTimeline(this.engine.db, { workspaceDir: await this.workspace.dir(projectId), projectId, videoId, authorId: req.authContext!.userId });
+  }
+
+  /**
+   * The beats of the music just set, found on the farm in the background (job `music_beats`) so the edit plan can cut on
+   * them (feedback-vps §4.7). Nothing when they are known; a failure to queue never fails picking the music.
+   */
+  private async beats(projectId: string, videoId: string | null, req: Request): Promise<void> {
+    try {
+      await queueMusicBeats({ db: this.engine.db, bucket: this.engine.bucket }, { projectId, videoId, createdBy: req.authContext!.userId });
+    } catch {
+      /* the fit finds them when a shot needs them */
+    }
   }
 
   /** Workspace audio files to make music of, each there and not larger than a music track may be. */

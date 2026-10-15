@@ -28,6 +28,7 @@ import { researchHandler } from "./workspace/research.js";
 import { styleWatchHandler } from "./workspace/style-watch.js";
 import { startUsageSender, type UsageSink } from "./workspace/usage-send.js";
 import { thumbnailHandler } from "./workspace/thumbnails.js";
+import { musicBeatsHandler } from "./workspace/music-beats.js";
 import { YoutubeCrawler } from "./workspace/youtube-crawl.js";
 
 export interface StudioWorkerOptions {
@@ -146,6 +147,8 @@ export function projectJobHandlers(o: StudioWorkerOptions): Partial<Record<JobKi
     handlers.fit = fitHandler({ db: o.db, bucket: o.bucket, farm: o.farm, voiceDir: media.voiceDir, ...farmWait });
     // renders of a project's videos: preview, final, Premiere (the narration comes from the voice store)
     for (const kind of RENDER_KINDS) handlers[kind] = renderHandler(kind, { db: o.db, bucket: o.bucket, farm: o.farm, voiceDir: media.voiceDir, ...farmWait });
+    // the beats of imported music, found by a farm machine with Python and kept beside the track (the fit's, for snap)
+    handlers.music_beats = musicBeatsHandler({ db: o.db, bucket: o.bucket, farm: o.farm, ...farmWait });
   }
   if (o.thumbnails) handlers.thumbnail = thumbnailHandler({ db: o.db, bucket: o.bucket, renderer: o.thumbnails });
   // reference videos: uploaded ones (style_from_files), and YouTube ones a person agreed to download (a

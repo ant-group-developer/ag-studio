@@ -281,7 +281,7 @@ export interface Activity {
 }
 
 // ---- Inputs and jobs ----
-export type JobKind = "prepare_asset" | "transcribe_upload" | "tts" | "fit" | "render_preview" | "render_final" | "export_premiere" | "research" | "style_watch" | "thumbnail";
+export type JobKind = "prepare_asset" | "transcribe_upload" | "tts" | "fit" | "render_preview" | "render_final" | "export_premiere" | "research" | "style_watch" | "thumbnail" | "music_beats";
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
 export interface JobView {

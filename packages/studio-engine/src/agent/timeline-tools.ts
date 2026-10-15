@@ -19,6 +19,7 @@ import {
   videoMusicSummary,
 } from "../workspace/project-audio.js";
 import { videoMusicToTimeline } from "../workspace/video-music.js";
+import { queueMusicBeats } from "../workspace/music-beats.js";
 import { queueRender } from "../workspace/renders.js";
 import { MAX_RENDER_FRAMES, queueRenderFrames, queueThumbnails } from "../workspace/thumbnails.js";
 import { buildVideoIndex } from "../workspace/video-index.js";
@@ -340,6 +341,10 @@ export const TIMELINE_TOOLS: AgentTool[] = [
         if (e instanceof AudioImportError) return { text: e.message, isError: true };
         throw e;
       }
+      // its beats, for shots of the edit plan that cut on them (feedback-vps §4.7): found on the farm in the background
+      await queueMusicBeats({ db: ctx.db, ...(ctx.audio ? { bucket: ctx.audio.bucket } : {}) }, {
+        projectId: ctx.project.id, videoId: scope === "video" ? video!.id : null, threadId: ctx.thread.id, createdBy: ctx.claims.sub, actorRole: ctx.role,
+      }, ctx.now());
       // the video's latest timeline plays it now (a video with its own music keeps it when only the project's changed)
       const revision = video ? await videoMusicToTimeline(ctx.db, { workspaceDir: ctx.workspaceDir, projectId: ctx.project.id, videoId: video.id, authorId: ctx.claims.sub, now: ctx.now() }) : null;
       return {

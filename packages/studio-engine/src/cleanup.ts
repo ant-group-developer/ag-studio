@@ -3,7 +3,7 @@
  *
  * - Voice store lines not read for `voiceDays` (a line read again is only one farm job away).
  * - Project audio on the bucket (`library/studio/projects/<id>/voice|music/…`) nothing points at any more: not the
- *   project, not a video's own music, not any video revision. Only past `audioGraceDays`.
+ *   project, not a video's own music, not any video revision (a track's beats go with it). Only past `audioGraceDays`.
  * - Files a browser uploaded to the bucket (`uploads/…`) Studio never took, past `RAW_UPLOAD_HOURS`.
  * - Scratch folders a crashed worker left: `<dataRoot>/job-runs/<job>` of jobs no longer running and
  *   `<dataRoot>/agent-runs/<message>` of turns no longer running, past `SCRATCH_HOURS`.
@@ -15,6 +15,7 @@ import { RAW_UPLOADS_PREFIX, type StudioBucket } from "./bucket.js";
 import type { StudioDb } from "./studio-db.js";
 import { voicePath } from "./voice-store.js";
 import { sweepAuditLog } from "./audit-log.js";
+import { BEATS_SUFFIX } from "./workspace/music-beats.js";
 
 export interface RetentionConfig {
   /** Files deleted from a project (its `.trash`), by when they were deleted. */
@@ -66,8 +67,10 @@ export async function sweepProjectAudio(db: StudioDb, bucket: StudioBucket, cuto
   for (const r of await db.all<{ music: string }>("SELECT music::text AS music FROM videos WHERE music IS NOT NULL")) {
     for (const k of libraryKeys(r.music)) keep.add(k);
   }
+  // a track's beats (`<key>.beats.json`) go with it
+  const kept = (key: string) => keep.has(key) || (key.endsWith(BEATS_SUFFIX) && keep.has(key.slice(0, -BEATS_SUFFIX.length)));
   const stale = (await bucket.list("library/studio/projects/"))
-    .filter((o) => !keep.has(o.key) && o.lastModified.getTime() < cutoff.getTime()).map((o) => o.key);
+    .filter((o) => !kept(o.key) && o.lastModified.getTime() < cutoff.getTime()).map((o) => o.key);
   if (stale.length) await bucket.deleteMany(stale);
   return stale.length;
 }
