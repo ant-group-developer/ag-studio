@@ -172,12 +172,12 @@ function checkBase(path: string, abs: string, baseSha256: string | null | undefi
   }
 }
 
-export function recordFileVersion(db: StudioDb, p: {
+export async function recordFileVersion(db: StudioDb, p: {
   projectId: string; path: string; bytes: Buffer | null; author: FileAuthor; now: string; issues?: unknown;
-}): string {
+}): Promise<string> {
   const id = randomUUID();
   const text = p.bytes && p.bytes.length <= MAX_VERSIONED_TEXT_BYTES ? asText(p.path, p.bytes) : null;
-  db.run(
+  await db.run(
     `INSERT INTO project_file_versions (id, project_id, path, sha256, size, content, author_kind, author_id, message_id, issues, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [id, p.projectId, p.path, p.bytes ? sha256(p.bytes) : "", p.bytes?.length ?? 0, text, p.author.kind, p.author.id, p.author.messageId ?? null,
@@ -190,9 +190,9 @@ export function recordFileVersion(db: StudioDb, p: {
  * Writes `content` to `path` (folders made as needed) through a temporary file and a rename. `baseSha256`: the
  * checksum of the copy the writer edited (`null` = the file must not exist yet; absent = no check).
  */
-export function writeWorkspaceFile(db: StudioDb, p: {
+export async function writeWorkspaceFile(db: StudioDb, p: {
   projectId: string; dir: string; path: string; content: string | Buffer; baseSha256?: string | null; author: FileAuthor; now?: string;
-}): { path: string; sha256: string; size: number; versionId: string } {
+}): Promise<{ path: string; sha256: string; size: number; versionId: string }> {
   const { rel, abs } = resolveInside(p.dir, p.path);
   const actor = p.author.kind === "studio" ? null : p.author.kind;
   if (actor && accessFor(rel, actor) !== "write") throw new StudioRunError("rejected", `${rel} chỉ đọc`, { code: "read_only" });
@@ -202,37 +202,38 @@ export function writeWorkspaceFile(db: StudioDb, p: {
   const tmp = `${abs}.tmp-${randomUUID().slice(0, 8)}`;
   writeFileSync(tmp, bytes);
   renameSync(tmp, abs);
-  const versionId = recordFileVersion(db, { projectId: p.projectId, path: rel, bytes, author: p.author, now: p.now ?? new Date().toISOString() });
+  const versionId = await recordFileVersion(db, { projectId: p.projectId, path: rel, bytes, author: p.author, now: p.now ?? new Date().toISOString() });
   return { path: rel, sha256: sha256(bytes), size: bytes.length, versionId };
 }
 
-export function deleteWorkspaceFile(db: StudioDb, p: {
+export async function deleteWorkspaceFile(db: StudioDb, p: {
   projectId: string; dir: string; path: string; baseSha256?: string; author: FileAuthor; now?: string;
-}): void {
+}): Promise<void> {
   const { rel, abs } = resolveInside(p.dir, p.path);
   const actor = p.author.kind === "studio" ? null : p.author.kind;
   if (actor && accessFor(rel, actor) !== "write") throw new StudioRunError("rejected", `${rel} chỉ đọc`, { code: "read_only" });
   if (!existsSync(abs) || !statSync(abs).isFile()) throw new StudioRunError("not_found", `không có file ${rel}`);
   checkBase(rel, abs, p.baseSha256);
   rmSync(abs);
-  recordFileVersion(db, { projectId: p.projectId, path: rel, bytes: null, author: p.author, now: p.now ?? new Date().toISOString() });
+  await recordFileVersion(db, { projectId: p.projectId, path: rel, bytes: null, author: p.author, now: p.now ?? new Date().toISOString() });
 }
 
 export interface FileVersionRow {
   id: string; path: string; sha256: string; size: number; author_kind: FileAuthor["kind"]; author_id: string | null;
-  message_id: string | null; created_at: string; has_content: number;
+  message_id: string | null; created_at: string; has_content: boolean;
 }
 
-export function listFileVersions(db: StudioDb, projectId: string, rel: string, limit = 100): FileVersionRow[] {
+export async function listFileVersions(db: StudioDb, projectId: string, rel: string, limit = 100): Promise<FileVersionRow[]> {
   const path = normalizeRelPath(rel);
   return db.all<FileVersionRow>(
     `SELECT id, path, sha256, size, author_kind, author_id, message_id, created_at, content IS NOT NULL AS has_content
-       FROM project_file_versions WHERE project_id = ? AND path = ? ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+       FROM project_file_versions WHERE project_id = ? AND path = ? ORDER BY created_at DESC, seq DESC LIMIT ?`,
     [projectId, path, limit],
   );
 }
 
-export function getFileVersion(db: StudioDb, projectId: string, id: string): (FileVersionRow & { content: string | null; issues: string | null }) | undefined {
+/** One version with its text and the issues found in it (jsonb, parsed). */
+export async function getFileVersion(db: StudioDb, projectId: string, id: string): Promise<(FileVersionRow & { content: string | null; issues: unknown }) | undefined> {
   return db.get(
     `SELECT id, path, sha256, size, author_kind, author_id, message_id, created_at, content IS NOT NULL AS has_content, content, issues
        FROM project_file_versions WHERE project_id = ? AND id = ?`,
@@ -249,31 +250,39 @@ function versioned(rel: string): boolean {
  * After an agent turn (or at any time): the versioned files that differ from their latest version get a new one
  * by `author`; files that disappeared get a deletion. Answers what changed.
  */
-export function scanWorkspace(db: StudioDb, p: { projectId: string; dir: string; author: FileAuthor; now?: string }): { changed: string[]; deleted: string[] } {
+export async function scanWorkspace(db: StudioDb, p: { projectId: string; dir: string; author: FileAuthor; now?: string }): Promise<{ changed: string[]; deleted: string[] }> {
   const now = p.now ?? new Date().toISOString();
-  const latest = new Map(
-    db.all<{ path: string; sha256: string }>(
-      `SELECT v.path, v.sha256 FROM project_file_versions v
-        WHERE v.project_id = ? AND v.rowid = (SELECT MAX(w.rowid) FROM project_file_versions w WHERE w.project_id = v.project_id AND w.path = v.path)`,
-      [p.projectId],
-    ).map((r) => [r.path, r.sha256]),
+  const latestVersions = async () => new Map(
+    (await db.all<{ path: string; sha256: string }>(
+      "SELECT DISTINCT ON (path) path, sha256 FROM project_file_versions WHERE project_id = ? ORDER BY path, seq DESC", [p.projectId],
+    )).map((r) => [r.path, r.sha256]),
   );
-  const changed: string[] = [];
+  // files read before the transaction (it must not wait on the disk); checked again against the versions inside it
+  const before = await latestVersions();
+  const found: { path: string; bytes: Buffer; sha: string }[] = [];
   const seen = new Set<string>();
   for (const e of listWorkspaceTree(p.dir)) {
     if (e.kind !== "file" || !versioned(e.path)) continue;
     seen.add(e.path);
     const bytes = readFileSync(join(p.dir, ...e.path.split("/")));
-    if (latest.get(e.path) === sha256(bytes)) continue;
-    recordFileVersion(db, { projectId: p.projectId, path: e.path, bytes, author: p.author, now });
-    changed.push(e.path);
+    const sha = sha256(bytes);
+    if (before.get(e.path) !== sha) found.push({ path: e.path, bytes, sha });
   }
-  const deleted: string[] = [];
-  for (const [path, sha] of latest) {
-    if (sha === "" || seen.has(path) || !versioned(path)) continue;
-    recordFileVersion(db, { projectId: p.projectId, path, bytes: null, author: p.author, now });
-    deleted.push(path);
-  }
-  return { changed, deleted };
+  return db.tx(async () => {
+    const latest = await latestVersions();
+    const changed: string[] = [];
+    for (const f of found) {
+      if (latest.get(f.path) === f.sha) continue;
+      await recordFileVersion(db, { projectId: p.projectId, path: f.path, bytes: f.bytes, author: p.author, now });
+      changed.push(f.path);
+    }
+    const deleted: string[] = [];
+    for (const [path, sha] of latest) {
+      if (sha === "" || seen.has(path) || !versioned(path)) continue;
+      await recordFileVersion(db, { projectId: p.projectId, path, bytes: null, author: p.author, now });
+      deleted.push(path);
+    }
+    return { changed, deleted };
+  });
 }
 

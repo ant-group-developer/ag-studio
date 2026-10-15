@@ -7,7 +7,7 @@ import { StudioAdminService } from './studio-admin.service';
 
 const req = (userId: string) => ({ authContext: { userId, accessToken: 't' } }) as unknown as Request;
 
-describe('StudioAdminService (real studio.db)', () => {
+describe('StudioAdminService (real database)', () => {
   let s: RealStudio;
   let asked = 0;
   let svc: StudioAdminService;
@@ -18,9 +18,9 @@ describe('StudioAdminService (real studio.db)', () => {
       getUserProfile: async (_t: string, id: string) => { asked++; return { userType: id === 'auth0|admin' ? 'ADMIN' : 'USER' }; },
     } as unknown as AccountApiService;
     svc = new StudioAdminService(accounts, s.db);
-    insertTeam(s.db, 'team-1', 'auth0|owner');
-    insertTeam(s.db, 'team-2', 'auth0|other');
-    s.db.run("INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES ('team-2', 'auth0|owner', 'editor', ?)", [new Date().toISOString()]);
+    await insertTeam(s.db, 'team-1', 'auth0|owner');
+    await insertTeam(s.db, 'team-2', 'auth0|other');
+    await s.db.run("INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES ('team-2', 'auth0|owner', 'editor', ?)", [new Date().toISOString()]);
   });
   afterEach(() => s.close());
 
@@ -38,7 +38,7 @@ describe('StudioAdminService (real studio.db)', () => {
   });
 
   it('owners see the teams they own; an admin sees all; others are refused', async () => {
-    expect(svc.ownedTeamIds('auth0|owner')).toEqual(['team-1']);
+    expect(await svc.ownedTeamIds('auth0|owner')).toEqual(['team-1']);
     expect(await svc.viewScope(req('auth0|admin'))).toEqual({ all: true });
     expect(await svc.viewScope(req('auth0|admin'), 'team-2')).toEqual({ all: false, teamIds: ['team-2'] });
     expect(await svc.viewScope(req('auth0|owner'))).toEqual({ all: false, teamIds: ['team-1'] });

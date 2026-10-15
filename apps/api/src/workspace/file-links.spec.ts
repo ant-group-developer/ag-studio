@@ -27,7 +27,7 @@ const config = (values: Record<string, string>) => ({ get: (k: string, d?: unkno
 /** Like the API's global Auth0Guard for a request without a token: only `@Public()` routes let it in. */
 const publicOnly = { canActivate: (ctx: ExecutionContext) => new Reflector().get(IS_PUBLIC_KEY, ctx.getHandler()) === true };
 
-describe('workspace file links (real studio.db and folder)', () => {
+describe('workspace file links (real database and folder)', () => {
   let s: RealStudio;
   let root: string;
   let links: FileLinkService;
@@ -42,7 +42,7 @@ describe('workspace file links (real studio.db and folder)', () => {
     const engine = s.engine as unknown as EngineService;
     const ws = new WorkspaceService(config({ STUDIO_WORKSPACES_ROOT: root }), engine);
     links = new FileLinkService(config({ STUDIO_AGENT_TOKEN_SECRET: SECRET }));
-    insertTeam(s.db, 'team-1', OWNER);
+    await insertTeam(s.db, 'team-1', OWNER);
     projectId = (await new ProjectsController(engine, ws, NO_DIRECTORY).create('team-1', { name: 'A' }, req(OWNER))).id;
     mkdirSync(join(root, projectId, 'context', 'audio'), { recursive: true });
     writeFileSync(join(root, projectId, 'context', 'audio', 'nhạc 1.mp3'), Buffer.from('ID3-0123456789'));
@@ -65,7 +65,7 @@ describe('workspace file links (real studio.db and folder)', () => {
   });
   afterEach(async () => {
     await app.close();
-    s.close();
+    await s.close();
   });
 
   it('plays the file it was made for, whole or a range of it', async () => {
@@ -104,7 +104,7 @@ describe('workspace file links (real studio.db and folder)', () => {
     expect((await get(links.url(projectId, '.trash/cu.mp3', OWNER))).status).toBe(404);
     expect((await get(links.url(projectId, 'context/audio/khong.mp3', OWNER))).status).toBe(404);
     expect((await get(links.url(projectId, '../ngoai.mp3', OWNER))).status).toBe(403);
-    s.engine.db.run('UPDATE projects SET archived_at = ? WHERE id = ?', [new Date().toISOString(), projectId]);
+    await s.engine.db.run('UPDATE projects SET archived_at = ? WHERE id = ?', [new Date().toISOString(), projectId]);
     expect((await get(url)).status).toBe(404);
   });
 });

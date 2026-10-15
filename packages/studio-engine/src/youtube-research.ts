@@ -16,15 +16,15 @@ export interface ResearchCache {
   set(key: string, body: string, fetchedAt: string): Promise<void>;
 }
 
-/** The cache in `studio.db`, shared by the worker's crawls. */
+/** The cache in Studio's database, shared by the worker's crawls; the body is JSON (a `jsonb` column). */
 export function studioResearchCache(db: StudioDb): ResearchCache {
   return {
     async get(key) {
-      const row = db.get<{ body: string; fetched_at: string }>("SELECT body, fetched_at FROM youtube_cache WHERE key = ?", [key]);
+      const row = await db.get<{ body: string; fetched_at: string }>("SELECT body::text AS body, fetched_at FROM youtube_cache WHERE key = ?", [key]);
       return row ? { body: row.body, fetchedAt: row.fetched_at } : null;
     },
     async set(key, body, fetchedAt) {
-      db.run("INSERT INTO youtube_cache (key, body, fetched_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET body = excluded.body, fetched_at = excluded.fetched_at", [key, body, fetchedAt]);
+      await db.run("INSERT INTO youtube_cache (key, body, fetched_at) VALUES (?, ?::jsonb, ?) ON CONFLICT(key) DO UPDATE SET body = excluded.body, fetched_at = excluded.fetched_at", [key, body, fetchedAt]);
     },
   };
 }

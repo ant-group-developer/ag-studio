@@ -1,5 +1,5 @@
 /**
- * A video's media over a real studio.db: renders listed with their link (a Premiere export's only for people whose ag-go
+ * A video's media over a real database: renders listed with their link (a Premiere export's only for people whose ag-go
  * rights cover the footage), starting renders by role, the timeline, and the project's audio picked from a workspace file.
  */
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
@@ -39,7 +39,7 @@ function timeline(videoId: string): TimelineV4 {
   } as TimelineV4;
 }
 
-describe('video media (real studio.db)', () => {
+describe('video media (real database)', () => {
   let s: RealStudio;
   let root: string;
   let projects: ProjectsController;
@@ -65,21 +65,21 @@ describe('video media (real studio.db)', () => {
     projects = new ProjectsController(engine, ws, NO_DIRECTORY);
     videos = new VideosController(engine, ws);
     media = new VideoMediaController(engine, ws, footage, { get: () => undefined } as unknown as ConfigService, LINKS);
-    insertTeam(s.db, 'team-1', OWNER);
-    s.engine.db.run("INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES ('team-1', ?, 'editor', ?)", [EDITOR, new Date().toISOString()]);
+    await insertTeam(s.db, 'team-1', OWNER);
+    await s.engine.db.run("INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES ('team-1', ?, 'editor', ?)", [EDITOR, new Date().toISOString()]);
   });
-  afterEach(() => s.close());
+  afterEach(async () => { await s.close(); });
 
   it('starts renders by role, lists finished ones with their link and links a Premiere export only for those whose footage rights cover it', async () => {
     const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
     const v = await videos.create(p.id, { title: 'Huế' }, req(OWNER));
     expect(await media.render(v.id, { kind: 'render_preview' }, req(EDITOR)).catch(code)).toBe('no_timeline');
-    saveVideoRevision(s.engine.db, v.id, { baseRevision: 0, data: timeline(v.id), authorId: 'u' });
+    await saveVideoRevision(s.engine.db, v.id, { baseRevision: 0, data: timeline(v.id), authorId: 'u' });
     expect(await media.render(v.id, { kind: 'render_final' }, req(EDITOR)).catch(code)).toBe('role');
     const job = await media.render(v.id, { kind: 'render_preview' }, req(EDITOR));
-    expect(getJob(s.engine.db, job.id)).toMatchObject({ kind: 'render_preview', actor_role: 'editor' });
-    claimJob(s.engine.db, ['render_preview'], new Date().toISOString());
-    finishJob(s.engine.db, job.id, { status: 'done', result: { kind: 'render_preview', revision: 1, key: 'productions/x/out/a.mp4', duration_s: 4, width: 1920, height: 1080, watermarked: true, size_bytes: 10, note: '' } }, new Date().toISOString());
+    expect(await getJob(s.engine.db, job.id)).toMatchObject({ kind: 'render_preview', actor_role: 'editor' });
+    await claimJob(s.engine.db, ['render_preview'], new Date().toISOString());
+    await finishJob(s.engine.db, job.id, { status: 'done', result: { kind: 'render_preview', revision: 1, key: 'productions/x/out/a.mp4', duration_s: 4, width: 1920, height: 1080, watermarked: true, size_bytes: 10, note: '' } }, new Date().toISOString());
     // the list is the database alone (no ag-go), a preview with its link signed along
     const listed = await media.renders(v.id);
     expect(listed.renders[0]).toEqual({ jobId: job.id, kind: 'render_preview', revision: 1, durationS: 4, width: 1920, height: 1080, watermarked: true, sizeBytes: 10, note: '', finishedAt: expect.any(String), url: 'https://r2.test/productions/x/out/a.mp4' });
@@ -90,8 +90,8 @@ describe('video media (real studio.db)', () => {
     expect(await media.link(v.id, 'not-a-job', req(OWNER)).catch((e: { getStatus?: () => number }) => e.getStatus?.())).toBe(404);
     // a Premiere export packs the footage itself: listed without a link, linked only for those whose rights cover it
     const zip = await media.render(v.id, { kind: 'export_premiere' }, req(OWNER));
-    claimJob(s.engine.db, ['export_premiere'], new Date().toISOString());
-    finishJob(s.engine.db, zip.id, { status: 'done', result: { kind: 'export_premiere', revision: 1, key: 'productions/x/out/a.zip', duration_s: null, width: null, height: null, watermarked: null, size_bytes: 20, note: '' } }, new Date().toISOString());
+    await claimJob(s.engine.db, ['export_premiere'], new Date().toISOString());
+    await finishJob(s.engine.db, zip.id, { status: 'done', result: { kind: 'export_premiere', revision: 1, key: 'productions/x/out/a.zip', duration_s: null, width: null, height: null, watermarked: null, size_bytes: 20, note: '' } }, new Date().toISOString());
     expect((await media.renders(v.id)).renders.find((x) => x.jobId === zip.id)).not.toHaveProperty('url');
     expect(seen).toEqual([]);
     expect(await media.link(v.id, zip.id, req(OWNER))).toEqual({ jobId: zip.id, url: 'https://r2.test/productions/x/out/a.zip?name=Huế.zip' });
@@ -110,10 +110,10 @@ describe('video media (real studio.db)', () => {
     expect(both.map((x) => x.urlHidden)).toEqual(['footage_scope', 'footage_scope']);
     expect(seen).toEqual([['auth0|poll', 'a1']]);
     // a new revision with the same footage is answered from what is known
-    saveVideoRevision(s.engine.db, v.id, { baseRevision: 1, data: { ...timeline(v.id), texts: [] }, authorId: 'u' });
+    await saveVideoRevision(s.engine.db, v.id, { baseRevision: 1, data: { ...timeline(v.id), texts: [] }, authorId: 'u' });
     const job2 = await media.render(v.id, { kind: 'export_premiere' }, req(OWNER));
-    claimJob(s.engine.db, ['export_premiere'], new Date().toISOString());
-    finishJob(s.engine.db, job2.id, { status: 'done', result: { kind: 'export_premiere', revision: 2, key: 'productions/x/out/b.zip', duration_s: null, width: null, height: null, watermarked: null, size_bytes: 20, note: '' } }, new Date().toISOString());
+    await claimJob(s.engine.db, ['export_premiere'], new Date().toISOString());
+    await finishJob(s.engine.db, job2.id, { status: 'done', result: { kind: 'export_premiere', revision: 2, key: 'productions/x/out/b.zip', duration_s: null, width: null, height: null, watermarked: null, size_bytes: 20, note: '' } }, new Date().toISOString());
     seen.length = 0;
     expect(await media.link(v.id, job2.id, req(OWNER))).toEqual({ jobId: job2.id, url: 'https://r2.test/productions/x/out/b.zip?name=Huế.zip' });
     expect(seen).toEqual([]);
@@ -144,8 +144,8 @@ describe('video media (real studio.db)', () => {
       "INSERT INTO project_sources (id, project_id, video_id, kind, ref, media_type, label, meta, added_by, added_at) VALUES (?, ?, NULL, 'upload', ?, 'audio', ?, '{}', ?, ?)",
       [id, p.id, ref, label, EDITOR, '2020-01-01T00:00:00.000Z'],
     );
-    row('src-1', 'context/audio/giong.wav', 'Giọng mẫu.wav');
-    row('src-2', 'context/audio/mat.wav', 'mat.wav'); // its file is gone
+    await row('src-1', 'context/audio/giong.wav', 'Giọng mẫu.wav');
+    await row('src-2', 'context/audio/mat.wav', 'mat.wav'); // its file is gone
     const a = await media.audio(p.id, req(OWNER));
     expect(a.enabled).toBe(false);
     expect(a.libraryTrack).toBeNull();
@@ -179,8 +179,8 @@ describe('video media (real studio.db)', () => {
       mood: ['ấm áp'], duration_seconds: 95, loop_ok: true, origin: 'royalty_free' as const, origin_note: 'kho miễn phí',
       checksum: 'sha256:' + 'a'.repeat(64), active, created_at: now, updated_at: now,
     });
-    saveLibraryMusic(s.engine.db, track('m-sang', 'Sáng sớm', true));
-    saveLibraryMusic(s.engine.db, track('m-cu', 'Bài cũ', false));
+    await saveLibraryMusic(s.engine.db, track('m-sang', 'Sáng sớm', true));
+    await saveLibraryMusic(s.engine.db, track('m-cu', 'Bài cũ', false));
     const a = await media.fromLibrary(p.id, { trackId: 'm-sang', gainDb: -20 }, req(EDITOR));
     expect(a.music).toEqual({ track: 'library:music/m-sang.m4a', gain_db: -20, ducking: true, sha256: 'a'.repeat(64), duration_s: 95 });
     expect(a.libraryTrack).toEqual({ trackId: 'm-sang', displayName: 'Sáng sớm', moods: ['ấm áp'], durationSeconds: 95 });
@@ -202,21 +202,21 @@ describe('video media (real studio.db)', () => {
       mood: ['ấm áp'], duration_seconds: 95, loop_ok: true, origin: 'royalty_free' as const, origin_note: 'kho miễn phí',
       checksum: 'sha256:' + 'a'.repeat(64), active: true, created_at: now, updated_at: now,
     });
-    saveLibraryMusic(s.engine.db, track('du-an'));
-    saveLibraryMusic(s.engine.db, track('rieng'));
+    await saveLibraryMusic(s.engine.db, track('du-an'));
+    await saveLibraryMusic(s.engine.db, track('rieng'));
     expect(await media.videoAudio(v.id, req(OWNER))).toMatchObject({ music: null, uses: 'mood', revision: null });
     await media.fromLibrary(p.id, { trackId: 'du-an' }, req(EDITOR));
     expect(await media.videoAudio(v.id, req(OWNER))).toMatchObject({ music: null, uses: 'project', summary: expect.stringContaining('nhạc của dự án: bài "du-an"') });
 
-    saveVideoRevision(s.engine.db, v.id, { baseRevision: 0, data: timeline(v.id), authorId: OWNER, label: 'fit' });
+    await saveVideoRevision(s.engine.db, v.id, { baseRevision: 0, data: timeline(v.id), authorId: OWNER, label: 'fit' });
     const own = await media.videoFromLibrary(v.id, { trackId: 'rieng', gainDb: -22 }, req(EDITOR));
     expect(own).toMatchObject({ uses: 'video', music: { track: 'library:music/rieng.m4a', gain_db: -22 }, libraryTrack: { trackId: 'rieng' }, revision: 2 });
-    expect(latestVideoRevision(s.engine.db, v.id)?.data.music).toEqual({ track: 'library:music/rieng.m4a', gain_db: -22, ducking: true });
+    expect((await latestVideoRevision(s.engine.db, v.id))?.data.music).toEqual({ track: 'library:music/rieng.m4a', gain_db: -22, ducking: true });
     expect((await media.audio(p.id, req(OWNER))).music).toMatchObject({ track: 'library:music/du-an.m4a' });
 
     const back = await media.clearVideo(v.id, req(EDITOR));
     expect(back).toMatchObject({ music: null, uses: 'project', revision: 3 });
-    expect(latestVideoRevision(s.engine.db, v.id)?.data.music).toMatchObject({ track: 'library:music/du-an.m4a' });
+    expect((await latestVideoRevision(s.engine.db, v.id))?.data.music).toMatchObject({ track: 'library:music/du-an.m4a' });
   });
 
   it('joining files for the project or a video needs ffmpeg; each file must be in the workspace; at most 20', async () => {

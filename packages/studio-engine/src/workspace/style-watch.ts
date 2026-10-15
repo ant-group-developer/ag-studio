@@ -114,7 +114,7 @@ async function measureVideo(
   const facts = await probeMedia(d.ffprobe, p.path);
   if (!facts?.duration_s) throw new Error("không đọc được video");
   p.row.duration = facts.duration_s;
-  ctx.report({ phase: `Đang đo nhịp dựng video mẫu ${p.n}`, progress: p.progress(0.4) });
+  await ctx.report({ phase: `Đang đo nhịp dựng video mẫu ${p.n}`, progress: p.progress(0.4) });
   const cuts = mergeCuts(await detectCuts(d.ffmpeg, p.path, SCENE_THRESHOLD, ctx.signal), facts.duration_s);
   p.row.measured = measureShots([{ cuts, duration: facts.duration_s }]);
   p.all.push({ cuts, duration: facts.duration_s });
@@ -130,7 +130,7 @@ async function measureVideo(
     const name = `${p.row.label}-sheet-${String(s + 1).padStart(2, "0")}.jpg`;
     const local = join(ctx.tempDir, name);
     await tileSheet(d.ffmpeg, frames.slice(s * SHEET_FRAMES, (s + 1) * SHEET_FRAMES), SHEET_COLS, local);
-    writeWorkspaceFile(d.db, { projectId, dir: ctx.workspaceDir, path: `${p.folder}/${name}`, content: readFileSync(local), baseSha256: null, author: { kind: "studio", id: null }, now: ctx.now() });
+    await writeWorkspaceFile(d.db, { projectId, dir: ctx.workspaceDir, path: `${p.folder}/${name}`, content: readFileSync(local), baseSha256: null, author: { kind: "studio", id: null }, now: ctx.now() });
     p.row.sheets.push(name);
   }
 }
@@ -147,7 +147,7 @@ export interface StyleWatchDeps {
 
 export function styleWatchHandler(d: StyleWatchDeps): JobHandler {
   return async (job, ctx) => {
-    const req = JSON.parse(job.request) as StyleWatchRequest;
+    const req = job.request as StyleWatchRequest;
     const ids = (req.video_ids ?? []).filter((id) => YOUTUBE_ID.test(id)).slice(0, STYLE_WATCH_MAX);
     const files = (req.files ?? []).slice(0, STYLE_WATCH_MAX);
     if (!ids.length && !files.length) throw new Error("không có video mẫu nào: cần id video YouTube hợp lệ hoặc file video đã tải lên");
@@ -167,15 +167,15 @@ export function styleWatchHandler(d: StyleWatchDeps): JobHandler {
 
     // the project's own videos first: no network, never deleted
     for (const [i, raw] of files.entries()) {
-      ctx.checkpoint();
+      await ctx.checkpoint();
       const r = row({ label: `F${i + 1}`, file: raw, title: raw.split("/").pop() ?? raw });
       try {
         const f = referenceFile(ctx.workspaceDir, raw);
         r.file = f.path;
-        ctx.report({ phase: `Đang đọc video mẫu ${i + 1}/${total} (tải lên)`, progress: step(i).progress(0) });
+        await ctx.report({ phase: `Đang đọc video mẫu ${i + 1}/${total} (tải lên)`, progress: step(i).progress(0) });
         await measureVideo(d, job.project_id, ctx, { path: f.abs, folder, row: r, all, ...step(i) });
       } catch (e) {
-        if (ctx.stopRequested()) throw e;
+        if (await ctx.stopRequested()) throw e;
         r.code = e instanceof StudioRunError ? String(e.details.code ?? "other") : "other";
         r.error = otherReason(e);
       }
@@ -188,10 +188,10 @@ export function styleWatchHandler(d: StyleWatchDeps): JobHandler {
       const yt = d.ytdlp ?? null;
       // a farm machine when one can take it (unless only the farm is remembered blocked and Studio has its own yt-dlp)
       const fetchers = d.farm ? await d.farm.fetchers().catch(() => [] as string[]) : [];
-      const farm = fetchers.length && (!yt || referenceRoute(d.db, ctx.now(), fetchers.length) === "farm") ? d.farm ?? null : null;
+      const farm = fetchers.length && (!yt || await referenceRoute(d.db, ctx.now(), fetchers.length) === "farm") ? d.farm ?? null : null;
       const via: YoutubeBlockWhere = farm ? "farm" : "studio";
       // the numbers are a nicety read by Studio's yt-dlp; through the farm they come with each video
-      if (!farm) ctx.report({ phase: "Đang đọc thông tin video mẫu trên YouTube", progress: step(files.length).progress(0) });
+      if (!farm) await ctx.report({ phase: "Đang đọc thông tin video mẫu trên YouTube", progress: step(files.length).progress(0) });
       const meta = !farm && yt ? await yt.metadata(ids, ctx.signal).catch((e: unknown) => {
         // a bot check here is the server blocked: nothing would download
         const f = ytFailureOf(e);
@@ -199,7 +199,7 @@ export function styleWatchHandler(d: StyleWatchDeps): JobHandler {
         return new Map<string, { title: string; channel_title: string; duration_s: number; views: number }>();
       }) : new Map<string, { title: string; channel_title: string }>();
       for (const [i, id] of ids.entries()) {
-        ctx.checkpoint();
+        await ctx.checkpoint();
         const m = meta.get(id);
         const r = row({ label: `R${i + 1}`, id, title: m?.title ?? id, channel: m?.channel_title ?? "", via });
         const stop = blocked as YtFailure | null;
@@ -218,7 +218,7 @@ export function styleWatchHandler(d: StyleWatchDeps): JobHandler {
           let path: string;
           if (farm) {
             const n = `${k + 1}/${total}`;
-            ctx.report({ phase: `Đang gửi video mẫu ${n} cho máy farm tải (≤480p)`, progress: step(k).progress(0), waiting: true });
+            await ctx.report({ phase: `Đang gửi video mẫu ${n} cho máy farm tải (≤480p)`, progress: step(k).progress(0), waiting: true });
             const got = await fetchReferenceOnFarm({ db: d.db, farm, now: ctx.now }, job, { videoId: id, n: i + 1, dir: scratch }, {
               stopRequested: ctx.stopRequested,
               onUpdate: (u) => ctx.report({
@@ -226,20 +226,20 @@ export function styleWatchHandler(d: StyleWatchDeps): JobHandler {
                 progress: step(k).progress(0.3 * (u.progress ?? 0)), node: u.node, farmJobId: u.farmJobId, waiting: u.waiting,
               }),
             });
-            ctx.report({ waiting: false });
+            await ctx.report({ waiting: false });
             path = got.path;
             r.node = got.node;
             if (got.node) fetchedOn.add(got.node);
             Object.assign(r, { title: got.result.title || id, channel: got.result.channel });
-            clearYoutubeBlocked(d.db, "farm");
+            await clearYoutubeBlocked(d.db, "farm");
           } else {
-            ctx.report({ phase: `Đang tải video mẫu ${k + 1}/${total} (≤480p)`, progress: step(k).progress(0) });
+            await ctx.report({ phase: `Đang tải video mẫu ${k + 1}/${total} (≤480p)`, progress: step(k).progress(0) });
             path = await yt!.download(id, scratch, ctx.signal);
-            clearYoutubeBlocked(d.db, "studio");
+            await clearYoutubeBlocked(d.db, "studio");
           }
           await measureVideo(d, job.project_id, ctx, { path, folder, row: r, all, ...step(k) });
         } catch (e) {
-          if (ctx.stopRequested()) throw e;
+          if (await ctx.stopRequested()) throw e;
           const f = ytFailureOf(e);
           r.code = f?.code ?? "other";
           r.error = f?.reason ?? otherReason(e);
@@ -257,7 +257,7 @@ export function styleWatchHandler(d: StyleWatchDeps): JobHandler {
     }
 
     const wasBlocked = (blocked as YtFailure | null) !== null;
-    if (wasBlocked) noteYoutubeBlocked(d.db, ctx.now(), blockedWhere);
+    if (wasBlocked) await noteYoutubeBlocked(d.db, ctx.now(), blockedWhere);
     const blockedReason = blockedWhere === "farm" ? farmBlockedReason(null) : YT_FAILURE_REASON.youtube_blocked;
     const measured = measureShots(all);
     const source = (r: WatchRow) => (r.id ? `[${cell(r.title)}](https://www.youtube.com/watch?v=${r.id})` : `\`${cell(r.file ?? r.title)}\` (tải lên)`);
@@ -285,8 +285,8 @@ export function styleWatchHandler(d: StyleWatchDeps): JobHandler {
       "Bước tiếp: viết `channel/style.md` (và `channel/style.json` nếu dùng) từ những gì thấy: nhịp, độ dài shot, mở đầu, chữ, chuyển cảnh, màu.",
       "",
     ];
-    writeWorkspaceFile(d.db, { projectId: job.project_id, dir: ctx.workspaceDir, path: `${folder}/README.md`, content: lines.join("\n"), baseSha256: null, author: { kind: "studio", id: null }, now: ctx.now() });
-    writeWorkspaceFile(d.db, {
+    await writeWorkspaceFile(d.db, { projectId: job.project_id, dir: ctx.workspaceDir, path: `${folder}/README.md`, content: lines.join("\n"), baseSha256: null, author: { kind: "studio", id: null }, now: ctx.now() });
+    await writeWorkspaceFile(d.db, {
       projectId: job.project_id, dir: ctx.workspaceDir, path: `${folder}/watch.json`, baseSha256: null, author: { kind: "studio", id: null }, now: ctx.now(),
       content: `${JSON.stringify({
         purpose: req.purpose, measured, youtube_blocked: wasBlocked, ...(wasBlocked ? { blocked_where: blockedWhere } : {}),

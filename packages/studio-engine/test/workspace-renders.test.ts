@@ -5,11 +5,11 @@
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { TimelineV4 } from "@harness/contracts";
 import type { JobView as FarmJobView } from "@ag-farm/protocol";
 import {
-  createJobRunner, createProject, createVideo, getJob, getVideo, queueRender, renderHandler, RENDER_KINDS, saveVideoRevision, seedWorkspace,
+  createJobRunner, createProject, createVideo, getJob, getVideo, latestVideoRevision, queueRender, renderHandler, RENDER_KINDS, RevisionConflictError, saveVideoRevision, seedWorkspace,
   studioLogger, videoRenders, type JobHandler, type JobKind, type ProjectFarm,
 } from "../src/index.js";
 import { world } from "./helpers.js";
@@ -33,13 +33,16 @@ const view = (over: Partial<FarmJobView>): FarmJobView => ({
   progress_stage: null, result: null, error: null, created_at: NOW, updated_at: NOW, finished_at: null, acked_at: null, ...over,
 } as FarmJobView);
 
-function setup() {
-  const w = world();
-  w.db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [NOW, NOW]);
-  const project = createProject(w.db, "team-1", { name: "Du lịch chậm", description: "", language: "vi", aspect: "16:9" }, "u", NOW);
+let opened: Awaited<ReturnType<typeof world>> | undefined;
+afterEach(async () => { await opened?.db.close(); opened = undefined; });
+
+async function setup() {
+  const w = opened = await world();
+  await w.db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [NOW, NOW]);
+  const project = await createProject(w.db, "team-1", { name: "Du lịch chậm", description: "", language: "vi", aspect: "16:9" }, "u", NOW);
   const root = join(w.dir, "workspaces");
   const dir = seedWorkspace(root, project, NOW);
-  const video = createVideo(w.db, project.id, { title: "Tràng An", createdBy: "u" }, NOW);
+  const video = await createVideo(w.db, project.id, { title: "Tràng An", createdBy: "u" }, NOW);
   const submitted: { type: string; payload: Record<string, unknown>; requirements?: unknown }[] = [];
   const farm: ProjectFarm = {
     submitJob: async (req) => {
@@ -60,23 +63,23 @@ function setup() {
   };
   const handlers = Object.fromEntries(RENDER_KINDS.map((k) => [k, renderHandler(k, { db: w.db, bucket: w.bucket, farm, voiceDir: join(w.dir, "voice"), pollMs: 1 })])) as Partial<Record<JobKind, JobHandler>>;
   const runner = createJobRunner({ db: w.db, logger: studioLogger({ test: "renders" }), workspacesRoot: root, dataRoot: join(w.dir, "data"), handlers });
-  const run = async () => { runner.tick(); await runner.idle(); };
+  const run = async () => { await runner.tick(); await runner.idle(); };
   return { ...w, project, video, dir, submitted, run };
 }
 
 describe("video renders", () => {
   it("a preview: composition uploaded under the project, preview job, result and a note to read", async () => {
-    const s = setup();
-    saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
-    const job = queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", createdBy: "u" }, NOW);
+    const s = await setup();
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
+    const job = await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", createdBy: "u" }, NOW);
     expect(job).toMatchObject({ title: "Render bản xem trước: Tràng An (bản 1)" });
     await s.run();
-    const done = getJob(s.db, job.id)!;
+    const done = (await getJob(s.db, job.id))!;
     expect(done).toMatchObject({ status: "done", error: null });
     expect(s.submitted[0]).toMatchObject({ type: "studio.render_preview", payload: { production_id: s.project.id, revision: 1, composition: "stage:composition.json", output: `videos/${s.video.id}/previews/${job.id}.mp4` } });
     expect(s.bucket.objects.has(`productions/${s.project.id}/jobs/render-preview/${job.id}/in/composition.json`)).toBe(true);
-    expect(s.db.get("SELECT job_type, is_final_render, stage_key FROM project_farm_jobs")).toEqual({ job_type: "studio.render_preview", is_final_render: 0, stage_key: "render-preview" });
-    expect(videoRenders(s.db, s.project.id, s.video.id)[0]).toMatchObject({
+    expect(await s.db.get("SELECT job_type, is_final_render, stage_key FROM project_farm_jobs")).toEqual({ job_type: "studio.render_preview", is_final_render: false, stage_key: "render-preview" });
+    expect((await videoRenders(s.db, s.project.id, s.video.id))[0]).toMatchObject({
       kind: "render_preview", revision: 1, key: `productions/${s.project.id}/jobs/render-preview/${job.id}/out/videos/${s.video.id}/previews/${job.id}.mp4`,
       duration_s: 64.5, watermarked: true,
     });
@@ -86,59 +89,69 @@ describe("video renders", () => {
   });
 
   it("the final render is a final-media farm job on the chosen machine, and the video is done", async () => {
-    const s = setup();
-    saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
+    const s = await setup();
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
     const node = "11111111-2222-4333-8444-555555555555";
-    queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_final", request: { node_id: node }, createdBy: "u" }, NOW);
+    await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_final", request: { node_id: node }, createdBy: "u" }, NOW);
     await s.run();
     expect(s.submitted[0]).toMatchObject({ type: "studio.render_final", requirements: { node_id: node } });
-    expect(s.db.get<{ f: number }>("SELECT is_final_render AS f FROM project_farm_jobs")!.f).toBe(1);
-    expect(getVideo(s.db, s.video.id)!.status).toBe("done");
+    expect((await s.db.get<{ f: boolean }>("SELECT is_final_render AS f FROM project_farm_jobs"))!.f).toBe(true);
+    expect((await getVideo(s.db, s.video.id))!.status).toBe("done");
   });
 
   it("a Premiere export names the files after the videos and keeps the zip's key", async () => {
-    const s = setup();
-    saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
-    const job = queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "export_premiere", createdBy: "u" }, NOW);
+    const s = await setup();
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
+    const job = await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "export_premiere", createdBy: "u" }, NOW);
     await s.run();
     expect(s.submitted[0]).toMatchObject({ type: "studio.export_premiere", payload: { episode_id: s.video.id, media: "proxy", name: "Tràng An", edit_style: "cut", media_names: { "asset:a1": "Thuyền" } } });
-    expect(JSON.parse(getJob(s.db, job.id)!.result!)).toMatchObject({ kind: "export_premiere", size_bytes: 2_097_152, note: "1 font thay thế" });
+    expect((await getJob(s.db, job.id))!.result).toMatchObject({ kind: "export_premiere", size_bytes: 2_097_152, note: "1 font thay thế" });
   });
 
   it("a timeline with errors is not sent", async () => {
-    const s = setup();
-    saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id, { assets: {} }), authorId: "u" });
-    const job = queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", createdBy: "u" }, NOW);
+    const s = await setup();
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id, { assets: {} }), authorId: "u" });
+    const job = await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", createdBy: "u" }, NOW);
     await s.run();
-    expect(getJob(s.db, job.id)).toMatchObject({ status: "failed", error: expect.stringContaining("timeline bản 1 còn lỗi") });
+    expect(await getJob(s.db, job.id)).toMatchObject({ status: "failed", error: expect.stringContaining("timeline bản 1 còn lỗi") });
     expect(s.submitted).toEqual([]);
     expect(existsSync(join(s.dir, "videos", s.video.id, "renders"))).toBe(false);
   });
 
   it("tells ag-go each video of a final render or Premiere export once (usage outbox), not of a preview", async () => {
-    const s = setup();
+    const s = await setup();
     const clip = (id: string, asset: string) => ({ clip_id: id, asset_id: asset, section_title: null, in: 0, out: 2, shot_id: null, line_id: null, transition_out: { kind: "cut" as const, seconds: 0 } });
-    saveVideoRevision(s.db, s.video.id, {
+    await saveVideoRevision(s.db, s.video.id, {
       baseRevision: 0, authorId: "u",
       data: timeline(s.video.id, {
         clips: [clip("C001", "a1"), clip("C002", "a2"), clip("C003", "a1")],
         assets: { a1: { title: "Thuyền", summary_vi: "…", duration_s: 10, orientation: "landscape" }, a2: { title: "Núi", summary_vi: "…", duration_s: 10, orientation: "landscape" } },
       }),
     });
-    queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", createdBy: "auth0|p" }, NOW);
+    await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", createdBy: "auth0|p" }, NOW);
     await s.run();
-    expect(s.db.all("SELECT * FROM ag_go_usage_outbox")).toEqual([]);
-    const final = queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_final", createdBy: "auth0|f" }, NOW);
-    const premiere = queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "export_premiere", createdBy: "auth0|f" }, NOW);
+    expect(await s.db.all("SELECT * FROM ag_go_usage_outbox")).toEqual([]);
+    const final = await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_final", createdBy: "auth0|f" }, NOW);
+    const premiere = await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "export_premiere", createdBy: "auth0|f" }, NOW);
     await s.run();
     await s.run();
-    const rows = s.db.all<{ event_key: string; payload: string; sent_at: string | null }>("SELECT event_key, payload, sent_at FROM ag_go_usage_outbox ORDER BY event_key");
+    const rows = await s.db.all<{ event_key: string; payload: unknown; sent_at: string | null }>("SELECT event_key, payload, sent_at FROM ag_go_usage_outbox ORDER BY event_key");
     expect(rows.map((r) => r.event_key).sort()).toEqual([`job:${final.id}:a1`, `job:${final.id}:a2`, `job:${premiere.id}:a1`, `job:${premiere.id}:a2`].sort());
-    expect(JSON.parse(rows.find((r) => r.event_key === `job:${final.id}:a2`)!.payload)).toEqual({
+    expect(rows.find((r) => r.event_key === `job:${final.id}:a2`)!.payload).toEqual({
       eventKey: `job:${final.id}:a2`, kind: "final_render", occurredAt: expect.any(String), assetId: "a2", agGoProjectId: null,
       studioProjectId: s.project.id, studioProjectName: "Du lịch chậm", studioVideoId: s.video.id, studioVideoTitle: "Tràng An", studioUserId: "auth0|f",
     });
-    expect(JSON.parse(rows.find((r) => r.event_key === `job:${premiere.id}:a1`)!.payload)).toMatchObject({ kind: "premiere_export" });
+    expect(rows.find((r) => r.event_key === `job:${premiere.id}:a1`)!.payload).toMatchObject({ kind: "premiere_export" });
     expect(rows.every((r) => r.sent_at === null)).toBe(true);
+  });
+
+  it("two saves at once on the same revision: one lands, the other is a conflict", async () => {
+    const s = await setup();
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
+    const saves = await Promise.allSettled([1, 2].map((i) => saveVideoRevision(s.db, s.video.id, { baseRevision: 1, data: timeline(s.video.id), authorId: `u${i}` })));
+    expect(saves.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect((saves.find((r) => r.status === "rejected") as PromiseRejectedResult).reason).toBeInstanceOf(RevisionConflictError);
+    expect((saves.find((r) => r.status === "fulfilled") as PromiseFulfilledResult<{ revision: number }>).value).toEqual({ revision: 2 });
+    expect((await latestVideoRevision(s.db, s.video.id))!.revision).toBe(2);
   });
 });

@@ -78,7 +78,7 @@ export class MusicLibraryController {
   @Get()
   async list(@Req() req: Request) {
     const isAdmin = await this.admin.isAdmin(req);
-    const tracks = listLibraryMusic(this.engine.db, { activeOnly: !isAdmin });
+    const tracks = await listLibraryMusic(this.engine.db, { activeOnly: !isAdmin });
     return { tracks: await Promise.all(tracks.map((t) => this.view(t))) };
   }
 
@@ -131,7 +131,7 @@ export class MusicLibraryController {
   async update(@Param('trackId') trackId: string, @Body() raw: Record<string, unknown>, @Req() req: Request) {
     await this.admin.requireAdmin(req);
     const body = this.parse(PatchSchema, raw);
-    const t = getLibraryMusic(this.engine.db, trackId);
+    const t = await getLibraryMusic(this.engine.db, trackId);
     if (!t) throw new NotFoundException({ code: 'not_found', message: `no music track ${trackId}` });
     const next = {
       ...t,
@@ -140,11 +140,11 @@ export class MusicLibraryController {
       ...(body.active !== undefined ? { active: body.active } : {}),
       updated_at: this.engine.core.clock.now(),
     };
-    saveLibraryMusic(this.engine.db, next);
+    await saveLibraryMusic(this.engine.db, next);
     return this.view(next);
   }
 
-  private async view(t: ReturnType<typeof listLibraryMusic>[number]) {
+  private async view(t: Awaited<ReturnType<typeof listLibraryMusic>>[number]) {
     return {
       trackId: t.track_id, displayName: t.display_name, moods: t.mood, durationSeconds: t.duration_seconds, loopOk: t.loop_ok,
       origin: t.origin, originNote: t.origin_note, active: t.active, track: t.file,

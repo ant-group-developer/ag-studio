@@ -31,8 +31,8 @@ describe("parseClaudeMaxConcurrent", () => {
 });
 
 describe("the worker pool", () => {
-  let w: ReturnType<typeof world>;
-  afterEach(() => w?.core.close());
+  let w: Awaited<ReturnType<typeof world>>;
+  afterEach(async () => { await w?.db.close(); w = undefined as never; });
   const base = () => ({ db: w.db, bucket: w.bucket, farm: fakeFarm(w.bucket) as never, owner: "w", dataRoot: join(w.dir, "data") });
   const media: CutMediaDeps = {
     ffmpeg: "ffmpeg", ffprobe: "ffprobe", voiceDir: "voice",
@@ -40,16 +40,16 @@ describe("the worker pool", () => {
   };
   const preps = { read: async () => ({ items: [] }), run: async () => ({ items: [] }) };
 
-  it("caps Claude calls at the env value until someone saves one on the web", () => {
-    w = world();
-    expect(claudeCap({ db: w.db })).toBe(20);
-    expect(claudeCap({ db: w.db, claudeMaxConcurrent: 3 })).toBe(3);
-    setClaudeMaxConcurrent(w.db, 5, "auth0|admin", new Date().toISOString());
-    expect(claudeCap({ db: w.db, claudeMaxConcurrent: 3 })).toBe(5);
+  it("caps Claude calls at the env value until someone saves one on the web", async () => {
+    w = await world();
+    expect(await claudeCap({ db: w.db })).toBe(20);
+    expect(await claudeCap({ db: w.db, claudeMaxConcurrent: 3 })).toBe(3);
+    await setClaudeMaxConcurrent(w.db, 5, "auth0|admin", new Date().toISOString());
+    expect(await claudeCap({ db: w.db, claudeMaxConcurrent: 3 })).toBe(5);
   });
 
-  it("takes only the kinds of jobs it has the tools for", () => {
-    w = world();
+  it("takes only the kinds of jobs it has the tools for", async () => {
+    w = await world();
     expect(Object.keys(projectJobHandlers(base()))).toEqual([]);
     expect(Object.keys(projectJobHandlers({ ...base(), youtubeApiKey: "k" }))).toEqual(["research"]);
     // inputs come prepared from ag-go: no ffmpeg needed
@@ -64,7 +64,7 @@ describe("the worker pool", () => {
   });
 
   it("runs only the loops it was given and stops when asked", async () => {
-    w = world();
+    w = await world();
     const idle = createStudioWorkerPool(base());
     expect([idle.agent, idle.jobs]).toEqual([null, null]);
     const pool = createStudioWorkerPool({ ...base(), jobs: { workspacesRoot: join(w.dir, "workspaces"), pollMs: 20 }, cleanup: { everyMs: 0 } });
@@ -77,8 +77,8 @@ describe("the worker pool", () => {
   });
 
   it("sends the usage outbox to ag-go on its timer while it runs", async () => {
-    w = world();
-    w.db.run("INSERT INTO ag_go_usage_outbox (event_key, payload, created_at, next_at) VALUES ('src:s1:added', ?, '2026-10-13T00:00:00.000Z', '2026-10-13T00:00:00.000Z')", [JSON.stringify({
+    w = await world();
+    await w.db.run("INSERT INTO ag_go_usage_outbox (event_key, payload, created_at, next_at) VALUES ('src:s1:added', ?, '2026-10-13T00:00:00.000Z', '2026-10-13T00:00:00.000Z')", [JSON.stringify({
       eventKey: "src:s1:added", kind: "source_added", occurredAt: "2026-10-13T00:00:00.000Z", assetId: "00000000-0000-4000-8000-000000000001", agGoProjectId: null,
       studioProjectId: "p1", studioProjectName: "A", studioVideoId: null, studioVideoTitle: null, studioUserId: "auth0|u",
     })]);
@@ -86,7 +86,7 @@ describe("the worker pool", () => {
     const pool = createStudioWorkerPool({ ...base(), usage: { sink: { send: async (events) => { sent.push(...events.map((e) => e.eventKey)); return { accepted: events.length, duplicates: 0 }; } }, everyMs: 20 } });
     const ac = new AbortController();
     const running = pool.runForever(ac.signal);
-    await new Promise((r) => setTimeout(r, 120));
+    await new Promise((r) => setTimeout(r, 300));
     ac.abort();
     await running;
     expect(sent).toEqual(["src:s1:added"]);

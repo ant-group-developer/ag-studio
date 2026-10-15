@@ -27,14 +27,8 @@ export const UserPrefsPatchSchema = z.object({
 export type UserPrefsPatch = z.infer<typeof UserPrefsPatchSchema>;
 
 /** Prefs as stored, read leniently: an unknown or broken value falls back to the default. */
-function readPrefs(raw: string | undefined): UserPrefs {
-  let v: Record<string, unknown> = {};
-  try {
-    const parsed: unknown = raw ? JSON.parse(raw) : {};
-    if (parsed && typeof parsed === 'object') v = parsed as Record<string, unknown>;
-  } catch {
-    // a broken row reads as no prefs
-  }
+function readPrefs(raw: unknown): UserPrefs {
+  const v = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const seen = (v.tourSeen && typeof v.tourSeen === 'object' ? v.tourSeen : {}) as Record<string, unknown>;
   return {
     tourSeen: { projects: seen.projects === true, project: seen.project === true },
@@ -50,31 +44,32 @@ function readPrefs(raw: string | undefined): UserPrefs {
 export class OnboardingService {
   constructor(private readonly db: StudioDbService) {}
 
-  progress(userId: string): OnboardingProgress {
-    const projectsOfMine = `SELECT p.id FROM projects p JOIN team_members tm ON tm.team_id = p.team_id
-                             WHERE tm.user_id = :user AND p.archived_at IS NULL`;
-    const row = this.db.db.prepare(
-      `SELECT
-         (SELECT COUNT(*) FROM team_members WHERE user_id = :user) AS team,
-         (SELECT COUNT(*) FROM (${projectsOfMine})) AS project,
-         (SELECT COUNT(*) FROM project_sources WHERE project_id IN (${projectsOfMine}) AND kind IN ('ag_go_project', 'ag_go_asset')) AS footage,
-         (SELECT COUNT(*) FROM videos WHERE project_id IN (${projectsOfMine}) AND archived_at IS NULL) AS video,
+  async progress(userId: string): Promise<OnboardingProgress> {
+    const row = await this.db.get<Record<OnboardingStepKey, number>>(
+      `WITH mine AS (SELECT p.id FROM projects p JOIN team_members tm ON tm.team_id = p.team_id
+                      WHERE tm.user_id = ? AND p.archived_at IS NULL)
+       SELECT
+         (SELECT COUNT(*) FROM team_members WHERE user_id = ?) AS team,
+         (SELECT COUNT(*) FROM mine) AS project,
+         (SELECT COUNT(*) FROM project_sources WHERE project_id IN (SELECT id FROM mine) AND kind IN ('ag_go_project', 'ag_go_asset')) AS footage,
+         (SELECT COUNT(*) FROM videos WHERE project_id IN (SELECT id FROM mine) AND archived_at IS NULL) AS video,
          (SELECT COUNT(*) FROM agent_messages m JOIN agent_threads t ON t.id = m.thread_id
-           WHERE t.project_id IN (${projectsOfMine}) AND m.role = 'user' AND m.created_by = :user) AS chat,
-         (SELECT COUNT(*) FROM project_jobs WHERE project_id IN (${projectsOfMine}) AND kind = 'render_preview' AND status = 'done') AS preview,
-         (SELECT COUNT(*) FROM project_jobs WHERE project_id IN (${projectsOfMine}) AND kind = 'render_final' AND status = 'done') AS final`,
-    ).get({ user: userId }) as Record<OnboardingStepKey, number>;
+           WHERE t.project_id IN (SELECT id FROM mine) AND m.role = 'user' AND m.created_by = ?) AS chat,
+         (SELECT COUNT(*) FROM project_jobs WHERE project_id IN (SELECT id FROM mine) AND kind = 'render_preview' AND status = 'done') AS preview,
+         (SELECT COUNT(*) FROM project_jobs WHERE project_id IN (SELECT id FROM mine) AND kind = 'render_final' AND status = 'done') AS final`,
+      [userId, userId, userId],
+    ) ?? ({} as Record<OnboardingStepKey, number>);
     const steps = ONBOARDING_STEPS.map((key) => ({ key, count: Number(row[key] ?? 0), done: Number(row[key] ?? 0) > 0 }));
 
-    const project = this.db.get<{ id: string; team_id: string }>(
+    const project = await this.db.get<{ id: string; team_id: string }>(
       `SELECT p.id, p.team_id FROM projects p JOIN team_members tm ON tm.team_id = p.team_id
         WHERE tm.user_id = ? AND p.archived_at IS NULL ORDER BY p.updated_at DESC, p.id LIMIT 1`,
       [userId],
     );
     const team = project?.team_id
-      ?? this.db.get<{ team_id: string }>('SELECT team_id FROM team_members WHERE user_id = ? ORDER BY joined_at DESC LIMIT 1', [userId])?.team_id
+      ?? (await this.db.get<{ team_id: string }>('SELECT team_id FROM team_members WHERE user_id = ? ORDER BY joined_at DESC LIMIT 1', [userId]))?.team_id
       ?? null;
-    const video = this.db.get<{ id: string; project_id: string }>(
+    const video = await this.db.get<{ id: string; project_id: string }>(
       `SELECT v.id, v.project_id FROM videos v JOIN projects p ON p.id = v.project_id JOIN team_members tm ON tm.team_id = p.team_id
         WHERE tm.user_id = ? AND p.archived_at IS NULL AND v.archived_at IS NULL ORDER BY v.updated_at DESC, v.id LIMIT 1`,
       [userId],
@@ -87,18 +82,18 @@ export class OnboardingService {
     };
   }
 
-  prefs(userId: string): UserPrefs {
-    return readPrefs(this.db.get<{ prefs: string }>('SELECT prefs FROM user_prefs WHERE user_id = ?', [userId])?.prefs);
+  async prefs(userId: string): Promise<UserPrefs> {
+    return readPrefs((await this.db.get<{ prefs: unknown }>('SELECT prefs FROM user_prefs WHERE user_id = ?', [userId]))?.prefs);
   }
 
-  updatePrefs(userId: string, patch: UserPrefsPatch): UserPrefs {
-    return this.db.transaction(() => {
-      const current = this.prefs(userId);
+  updatePrefs(userId: string, patch: UserPrefsPatch): Promise<UserPrefs> {
+    return this.db.tx(async () => {
+      const current = await this.prefs(userId);
       const next: UserPrefs = {
         tourSeen: { ...current.tourSeen, ...(patch.tourSeen ?? {}) },
         checklistHidden: patch.checklistHidden ?? current.checklistHidden,
       };
-      this.db.run(
+      await this.db.run(
         `INSERT INTO user_prefs (user_id, prefs, updated_at) VALUES (?, ?, ?)
          ON CONFLICT(user_id) DO UPDATE SET prefs = excluded.prefs, updated_at = excluded.updated_at`,
         [userId, JSON.stringify(next), new Date().toISOString()],

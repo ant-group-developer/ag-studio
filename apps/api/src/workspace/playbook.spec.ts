@@ -1,5 +1,5 @@
 /**
- * Playbook and lessons routes over a real studio.db and folder: a person marks a step's document done (its frontmatter),
+ * Playbook and lessons routes over a real database and folder: a person marks a step's document done (its frontmatter),
  * a file's checks come back when it is read or saved, and a proposed lesson goes into memory/lessons.md on accept.
  */
 import { mkdtempSync, readFileSync } from 'node:fs';
@@ -22,7 +22,7 @@ import { WorkspaceService } from './workspace.service';
 const req = (userId: string) => ({ authContext: { userId, accessToken: 't' } }) as unknown as Request;
 const OWNER = 'auth0|owner';
 
-describe('playbook and lessons (real studio.db)', () => {
+describe('playbook and lessons (real database)', () => {
   let s: RealStudio;
   let root: string;
   let projects: ProjectsController;
@@ -41,9 +41,9 @@ describe('playbook and lessons (real studio.db)', () => {
     files = new FilesController(engine, ws, new FileLinkService({ get: () => 's'.repeat(32) } as unknown as ConfigService));
     playbook = new PlaybookController(engine, ws);
     threads = new ThreadsController(engine);
-    insertTeam(s.db, 'team-1', OWNER);
+    await insertTeam(s.db, 'team-1', OWNER);
   });
-  afterEach(() => s.close());
+  afterEach(async () => { await s.close(); });
 
   it('says where steps stand; marking a step writes its document status', async () => {
     const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
@@ -71,14 +71,14 @@ describe('playbook and lessons (real studio.db)', () => {
   it('a proposed lesson goes into memory/lessons.md when accepted', async () => {
     const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
     const [kenh] = (await threads.list(p.id)).threads;
-    saveThreadSummary(s.engine.db, {
-      thread: getThread(s.engine.db, kenh!.id)!, dir: join(root, p.id), now: new Date().toISOString(),
+    await saveThreadSummary(s.engine.db, {
+      thread: (await getThread(s.engine.db, kenh!.id))!, dir: join(root, p.id), now: new Date().toISOString(),
       summary: { summary_md: 's', lessons: ['Không dùng nhạc buồn.', 'Chữ địa danh viết hoa.'] },
     });
     const [a, b] = (await playbook.lessons(p.id, 'proposed')).lessons;
     await playbook.accept(p.id, a!.id, { text: 'Không bao giờ dùng nhạc buồn.' }, req(OWNER));
     await playbook.dismiss(p.id, b!.id, req(OWNER));
     expect(readFileSync(join(root, p.id, 'memory', 'lessons.md'), 'utf8')).toContain('- Không bao giờ dùng nhạc buồn.');
-    expect(listLessonProposals(s.engine.db, p.id).map((l) => l.status)).toEqual(['accepted', 'dismissed']);
+    expect((await listLessonProposals(s.engine.db, p.id)).map((l) => l.status)).toEqual(['accepted', 'dismissed']);
   });
 });

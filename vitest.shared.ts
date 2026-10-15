@@ -29,6 +29,7 @@ export const workspaceAliases: Record<string, string> = {
   "@harness/worker": `${ROOT}packages/worker/src/index.ts`,
   "@harness/dashboard": `${ROOT}packages/dashboard/src/index.ts`,
   "@harness/script-sdk": `${ROOT}packages/script-sdk/src/index.js`,
+  "@ag-studio/engine/testing": `${ROOT}packages/studio-engine/src/testing.ts`,
   "@ag-studio/engine": `${ROOT}packages/studio-engine/src/index.ts`,
   "@ag-studio/ag-go-client": `${ROOT}packages/ag-go-client/src/index.ts`,
 };

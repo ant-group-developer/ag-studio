@@ -58,10 +58,10 @@ export class FileStreamController {
 
   @Get('stream')
   @Public()
-  stream(
+  async stream(
     @Param('projectId') projectId: string, @Query('path') path: string, @Query('t') token: string, @Res() res: Response,
     @Query('download') download?: string,
-  ): void {
+  ): Promise<void> {
     let claims: FileLinkClaims;
     try {
       claims = this.links.verify(token);
@@ -76,11 +76,12 @@ export class FileStreamController {
       throw new ForbiddenException({ code: 'bad_scope', message: 'link không dành cho file này' });
     }
     if (claims.project !== projectId || claims.path !== rel) throw new ForbiddenException({ code: 'bad_scope', message: 'link không dành cho file này' });
-    const project = getProject(this.engine.db, projectId);
+    const project = await getProject(this.engine.db, projectId);
     if (!project || project.archived_at || /^(\.claude|\.git|\.trash)(\/|$)/.test(rel)) throw new NotFoundException({ code: 'not_found', message: `không có file ${rel}` });
+    const dir = await this.workspace.dir(projectId);
     let abs: string;
     try {
-      abs = resolveInside(this.workspace.dir(projectId), rel).abs;
+      abs = resolveInside(dir, rel).abs;
     } catch {
       throw new NotFoundException({ code: 'not_found', message: `không có file ${rel}` });
     }

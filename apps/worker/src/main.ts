@@ -1,11 +1,11 @@
 /**
  * AG Studio worker (spec 2026-10-10 agent-workspace): runs the projects' agent turns (`claude -p` stream-json in the
  * project folder, Studio tools over MCP), their jobs (preparing inputs, crawls, timelines, renders on ag-farm,
- * thumbnails, style), the cleanup sweep and sends footage usage to ag-go, against the same `studio.db` and workspaces as
- * apps/api.
+ * thumbnails, style), the cleanup sweep and sends footage usage to ag-go, against the same Postgres database and workspaces
+ * as apps/api.
  *
  * Required environment variables:
- *   STUDIO_DB_PATH      studio.db shared with apps/api
+ *   DATABASE_URL        Studio's Postgres database, shared with apps/api (postgresql://user:password@host:5432/ag_studio)
  *   STUDIO_DATA_ROOT    scratch folders of jobs and turns, the voice store
  *   FARM_URL, FARM_OWNER_KEY
  *   AG_GO_API_URL, AG_GO_SERVICE_KEY           (footage and its preps, acting as the project owner; usage events:
@@ -15,6 +15,8 @@
  *
  * Optional:
  *   WORKER_OWNER        this worker's name in logs (default: hostname-pid)
+ *   DATABASE_SCHEMA     Postgres schema of Studio's tables, the same as apps/api (default public)
+ *   STUDIO_DB_POOL_MAX  Postgres connections this worker opens at most (default 10)
  *   FARM_POLL_MS        farm job polling interval (default 5000)
  *   STUDIO_CLAUDE_MAX_CONCURRENT  Claude calls at once across workers, 1-100 (default 20; the web setting wins)
  *   STUDIO_FFMPEG_PATH  ffmpeg for timelines, renders and thumbnails; none = those jobs wait
@@ -47,7 +49,7 @@ import { join, resolve } from "node:path";
 import { AgGoClient } from "@ag-studio/ag-go-client";
 import {
   agentTools, claudeCap, createSiteNameCache, createStudioEngineCore, createStudioWorkerPool, DEFAULT_RETENTION, fetchAgGoSiteName, FarmOwnerClient, ffmpegThumbnailRenderer, ffprobeBeside,
-  httpDownload, mcpToolNames, parseClaudeMaxConcurrent, S3Bucket, StudioDb, studioLogger, ytDlp, type CutMediaDeps,
+  httpDownload, mcpToolNames, migrateStudioDb, parseClaudeMaxConcurrent, S3Bucket, studioDbFromEnv, studioLogger, ytDlp, type CutMediaDeps,
 } from "@ag-studio/engine";
 import { HARNESS_ROOT } from "@harness/core";
 
@@ -64,15 +66,15 @@ function requireEnv(name: string): string {
 }
 
 async function main(): Promise<void> {
-  const dbPath = requireEnv("STUDIO_DB_PATH");
   const dataRoot = requireEnv("STUDIO_DATA_ROOT");
   const harnessRoot = process.env.HARNESS_ROOT ?? HARNESS_ROOT;
   const owner = process.env.WORKER_OWNER ?? `${hostname()}-${process.pid}`;
   const ffmpeg = process.env.STUDIO_FFMPEG_PATH;
-  // migrations of studio.db, the same the API runs
-  const core = createStudioEngineCore({ dbPath, dataRoot, harnessRoot });
+  createStudioEngineCore({ dataRoot, harnessRoot });
   const logger = studioLogger({ owner });
-  const db = new StudioDb(dbPath);
+  const db = studioDbFromEnv(process.env, (e) => logger.warn(`Postgres pool: ${e.message}`));
+  // the same migrations the API runs; whichever starts first applies them
+  for (const name of await migrateStudioDb(db)) logger.info("applied migration", { name });
   const youtubeKey = process.env.YOUTUBE_API_KEY?.trim();
   // yt-dlp: STUDIO_YTDLP_ARGV (JSON array, tests) else YTDLP_PATH else `yt-dlp` on PATH; checked once, below
   const ytdlpArgv = process.env.STUDIO_YTDLP_ARGV ? (JSON.parse(process.env.STUDIO_YTDLP_ARGV) as string[]) : [process.env.YTDLP_PATH?.trim() || "yt-dlp"];
@@ -153,7 +155,7 @@ async function main(): Promise<void> {
 
   logger.info("Studio worker starting", {
     owner, harnessRoot, workspacesRoot, agent_turns: !!agent, youtube_api: !!youtubeKey, ytdlp: ytdlpVersion, ffmpeg: !!ffmpeg,
-    reference_downloads: referenceDownloads, claude_max_concurrent: claudeCap({ db, claudeMaxConcurrent }),
+    reference_downloads: referenceDownloads, claude_max_concurrent: await claudeCap({ db, claudeMaxConcurrent }),
   });
   if (!agent) logger.warn("STUDIO_AGENT_TOKEN_SECRET is not set: agent turns do not run in this worker (jobs still do)");
   if (!ffmpeg) logger.warn("STUDIO_FFMPEG_PATH is not set: timelines, renders and thumbnails wait for a worker that has it");
@@ -163,7 +165,7 @@ async function main(): Promise<void> {
     process.on(sig, () => { logger.warn(`received ${sig}, stopping: running jobs go back to the queue, a running turn resumes on the next start`); ac.abort(); });
   }
   await pool.runForever(ac.signal);
-  core.close();
+  await db.close();
 }
 
 main().catch((e) => {

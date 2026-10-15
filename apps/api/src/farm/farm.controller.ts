@@ -39,7 +39,7 @@ interface FarmJobRow {
   attempt_id: string;
   production_id: string;
   job_type: string;
-  is_final_render: number;
+  is_final_render: boolean;
 }
 
 /** What a project's preview asks ag-go for: a clean rendition, the short edge nearest 480. */
@@ -82,12 +82,12 @@ export class FarmController {
   }
 
   /** A project's farm job (migration 0033); the project plays the farm's "production". */
-  private lookupJob(farmJobId: string): FarmJobRow | null {
-    return this.db.get<FarmJobRow>(
+  private async lookupJob(farmJobId: string): Promise<FarmJobRow | null> {
+    return (await this.db.get<FarmJobRow>(
       `SELECT farm_job_id, stage_key, attempt_id, project_id AS production_id, job_type, is_final_render
          FROM project_farm_jobs WHERE farm_job_id = ?`,
       [farmJobId],
-    ) ?? null;
+    )) ?? null;
   }
 
   @Post('sign')
@@ -105,16 +105,16 @@ export class FarmController {
 
     // 2. Look up the farm job. A project plays the production in the farm's key layout:
     // productions/<project>/jobs/<stage>/<attempt>/…
-    const job = this.lookupJob(ticketClaims.job_id);
+    const job = await this.lookupJob(ticketClaims.job_id);
     if (!job) {
       throw new ForbiddenException(`Unknown farm job: ${ticketClaims.job_id}`);
     }
 
     const prodId = job.production_id;
-    const isFinalRender = job.is_final_render === 1;
+    const isFinalRender = job.is_final_render;
     // ag-go is asked on behalf of the project's owner (plan 3.1), never of the project itself:
     // `X-Act-As-User` must be a user id or ag-go cannot apply that user's folder scope and rights.
-    const owner = this.db.get<{ user_id: string | null }>(
+    const owner = await this.db.get<{ user_id: string | null }>(
       `SELECT COALESCE(p.owner_user_id,
                 (SELECT tm.user_id FROM team_members tm
                   WHERE tm.team_id = p.team_id AND tm.role = 'owner'
@@ -307,7 +307,7 @@ export class FarmController {
       results.push(result);
 
       // 5. Audit log
-      this.db.run(
+      await this.db.run(
         'INSERT INTO sign_audit_log (id, farm_job_id, production_id, op, result_url, actor_node_id, ip, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         [
           crypto.randomUUID(),

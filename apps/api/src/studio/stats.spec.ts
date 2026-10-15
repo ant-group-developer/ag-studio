@@ -16,19 +16,19 @@ const directory = {
   summaries: async (ids: string[]) => new Map(ids.filter((i) => i === 'auth0|owner').map((i) => [i, { userId: i, name: 'Lan', email: 'lan@x', avatar: null }])),
 } as unknown as AccountDirectoryService;
 
-describe('StatsController (real studio.db)', () => {
+describe('StatsController (real database)', () => {
   let s: RealStudio;
   let ctl: StatsController;
   const recent = new Date(Date.now() - 3_600_000).toISOString();
   beforeEach(async () => {
     s = await realStudio();
-    insertTeam(s.db, 'team-1', 'auth0|owner');
-    insertTeam(s.db, 'team-2', 'auth0|other');
+    await insertTeam(s.db, 'team-1', 'auth0|owner');
+    await insertTeam(s.db, 'team-2', 'auth0|other');
     ctl = new StatsController(s.engine as EngineService, new StudioAdminService(accounts, s.db), directory);
     for (const [team, user, cost] of [['team-1', 'auth0|owner', 0.5], ['team-2', 'auth0|other', 2]] as const) {
-      const p = createProject(s.engine.db, team, { name: `Kênh ${team}`, description: '', language: 'vi', aspect: '16:9' }, user);
-      const t = createThread(s.engine.db, { projectId: p.id, kind: 'project', title: 'Kênh', createdBy: user });
-      s.engine.db.run(
+      const p = await createProject(s.engine.db, team, { name: `Kênh ${team}`, description: '', language: 'vi', aspect: '16:9' }, user);
+      const t = await createThread(s.engine.db, { projectId: p.id, kind: 'project', title: 'Kênh', createdBy: user });
+      await s.engine.db.run(
         `INSERT INTO llm_calls (id, created_at, source, production_id, run_id, stage_key, attempt_id, skill, model, round, outcome, problems, input_tokens,
            output_tokens, cost_usd, wall_seconds, user_id, team_id) VALUES (?, ?, 'claude-agent', ?, ?, 'agent', ?, 'agent', 'sonnet', 1, 'accepted', '[]', 100, 10, ?, 5, ?, ?)`,
         [randomUUID(), recent, p.id, t.id, randomUUID(), cost, user, team],

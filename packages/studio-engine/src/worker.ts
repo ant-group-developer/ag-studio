@@ -1,7 +1,7 @@
 /**
  * The Studio worker (spec 2026-10-10 agent-workspace): one process running, side by side, the agent loop (turns of the
  * projects' chat threads), the loop of project jobs (preparing inputs, crawls, timelines, renders, thumbnails, style),
- * the cleanup sweep and the footage usage sent to ag-go, against the same `studio.db` as apps/api.
+ * the cleanup sweep and the footage usage sent to ag-go, against the same database as apps/api.
  */
 import { createLogger, Redactor, type HarnessLogger } from "@harness/core";
 import type { FarmOwnerClient } from "@ag-farm/owner-client";
@@ -75,8 +75,8 @@ export interface StudioWorkerPool {
 }
 
 /** The Claude calls this worker may run at once now (the web setting, else the env). */
-export function claudeCap(o: Pick<StudioWorkerOptions, "db" | "claudeMaxConcurrent">): number {
-  return claudeMaxConcurrent(o.db, o.claudeMaxConcurrent ?? DEFAULT_CLAUDE_MAX_CONCURRENT).value;
+export async function claudeCap(o: Pick<StudioWorkerOptions, "db" | "claudeMaxConcurrent">): Promise<number> {
+  return (await claudeMaxConcurrent(o.db, o.claudeMaxConcurrent ?? DEFAULT_CLAUDE_MAX_CONCURRENT)).value;
 }
 
 export function createStudioWorkerPool(o: StudioWorkerOptions & {

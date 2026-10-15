@@ -25,17 +25,15 @@ export interface TeamSkillInput {
   position?: number;
 }
 
-interface TeamSkillRow extends Omit<TeamSkill, "applies_to" | "enabled"> { applies_to: string; enabled: number }
+interface TeamSkillRow extends Omit<TeamSkill, "applies_to"> { applies_to: unknown }
 
 const STEPS = new Set<string>(TEAM_SKILL_STEPS);
 
 function fromRow(r: TeamSkillRow): TeamSkill {
-  let steps: unknown = [];
-  try { steps = JSON.parse(r.applies_to); } catch { steps = []; }
+  const steps = r.applies_to;
   return {
     ...r,
     applies_to: Array.isArray(steps) ? steps.filter((s): s is TeamSkillStep => typeof s === "string" && STEPS.has(s)) : [],
-    enabled: r.enabled === 1,
   };
 }
 
@@ -60,10 +58,10 @@ function checkLengths(skill: { name: string; purpose: string; content: string })
 }
 
 /** Enabled content of the team except `exceptId`, plus `adding`, must stay within the team total. */
-function checkTeamTotal(db: StudioDb, teamId: string, exceptId: string | null, adding: number): void {
-  const used = db.get<{ n: number | null }>(
-    "SELECT SUM(LENGTH(content)) AS n FROM team_skills WHERE team_id = ? AND enabled = 1 AND id != ?", [teamId, exceptId ?? ""],
-  )?.n ?? 0;
+async function checkTeamTotal(db: StudioDb, teamId: string, exceptId: string | null, adding: number): Promise<void> {
+  const used = (await db.get<{ n: number | null }>(
+    "SELECT SUM(LENGTH(content)) AS n FROM team_skills WHERE team_id = ? AND enabled AND id != ?", [teamId, exceptId ?? ""],
+  ))?.n ?? 0;
   if (used + adding > TEAM_SKILL_LIMITS.enabledTotal) {
     throw new StudioRunError("invalid", `các quy chuẩn đang bật của nhóm vượt ${TEAM_SKILL_LIMITS.enabledTotal} ký tự; tắt bớt hoặc rút gọn`, {
       code: "team_skills_too_long", used, adding, limit: TEAM_SKILL_LIMITS.enabledTotal,
@@ -71,49 +69,49 @@ function checkTeamTotal(db: StudioDb, teamId: string, exceptId: string | null, a
   }
 }
 
-function checkNameFree(db: StudioDb, teamId: string, name: string, exceptId: string | null): void {
-  const taken = db.get<{ id: string }>("SELECT id FROM team_skills WHERE team_id = ? AND name = ? AND id != ?", [teamId, name, exceptId ?? ""]);
+async function checkNameFree(db: StudioDb, teamId: string, name: string, exceptId: string | null): Promise<void> {
+  const taken = await db.get<{ id: string }>("SELECT id FROM team_skills WHERE team_id = ? AND name = ? AND id != ?", [teamId, name, exceptId ?? ""]);
   if (taken) throw new StudioRunError("conflict", `nhóm đã có quy chuẩn tên "${name}"`, { code: "team_skill_name_taken" });
 }
 
-export function listTeamSkills(db: StudioDb, teamId: string): TeamSkill[] {
-  return db.all<TeamSkillRow>("SELECT * FROM team_skills WHERE team_id = ? ORDER BY position, created_at, name", [teamId]).map(fromRow);
+export async function listTeamSkills(db: StudioDb, teamId: string): Promise<TeamSkill[]> {
+  return (await db.all<TeamSkillRow>("SELECT * FROM team_skills WHERE team_id = ? ORDER BY position, created_at, name", [teamId])).map(fromRow);
 }
 
-export function getTeamSkill(db: StudioDb, teamId: string, id: string): TeamSkill | null {
-  const row = db.get<TeamSkillRow>("SELECT * FROM team_skills WHERE id = ? AND team_id = ?", [id, teamId]);
+export async function getTeamSkill(db: StudioDb, teamId: string, id: string): Promise<TeamSkill | null> {
+  const row = await db.get<TeamSkillRow>("SELECT * FROM team_skills WHERE id = ? AND team_id = ?", [id, teamId]);
   return row ? fromRow(row) : null;
 }
 
-function requireSkill(db: StudioDb, teamId: string, id: string): TeamSkill {
-  const skill = getTeamSkill(db, teamId, id);
+async function requireSkill(db: StudioDb, teamId: string, id: string): Promise<TeamSkill> {
+  const skill = await getTeamSkill(db, teamId, id);
   if (!skill) throw new StudioRunError("not_found", `quy chuẩn ${id} không có trong nhóm`, { code: "not_found" });
   return skill;
 }
 
-export function createTeamSkill(db: StudioDb, teamId: string, input: TeamSkillInput, userId: string): TeamSkill {
+export async function createTeamSkill(db: StudioDb, teamId: string, input: TeamSkillInput, userId: string): Promise<TeamSkill> {
   const name = input.name.trim();
   const skill = { name, purpose: (input.purpose ?? "").trim(), content: input.content };
   checkLengths(skill);
   const steps = normalizeSteps(input.appliesTo);
   const enabled = input.enabled ?? true;
   const id = randomUUID();
-  return db.immediate(() => {
-    checkNameFree(db, teamId, name, null);
-    if (enabled) checkTeamTotal(db, teamId, null, skill.content.length);
+  return db.tx(async () => {
+    await checkNameFree(db, teamId, name, null);
+    if (enabled) await checkTeamTotal(db, teamId, null, skill.content.length);
     const now = new Date().toISOString();
-    db.run(
+    await db.run(
       `INSERT INTO team_skills (id, team_id, name, purpose, applies_to, content, enabled, position, created_by, updated_by, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, teamId, name, skill.purpose, JSON.stringify(steps), skill.content, enabled ? 1 : 0, input.position ?? 0, userId, userId, now, now],
+      [id, teamId, name, skill.purpose, JSON.stringify(steps), skill.content, enabled, input.position ?? 0, userId, userId, now, now],
     );
     return requireSkill(db, teamId, id);
   });
 }
 
-export function updateTeamSkill(db: StudioDb, teamId: string, id: string, patch: Partial<TeamSkillInput>, userId: string): TeamSkill {
-  return db.immediate(() => {
-    const current = requireSkill(db, teamId, id);
+export async function updateTeamSkill(db: StudioDb, teamId: string, id: string, patch: Partial<TeamSkillInput>, userId: string): Promise<TeamSkill> {
+  return db.tx(async () => {
+    const current = await requireSkill(db, teamId, id);
     const next = {
       name: patch.name !== undefined ? patch.name.trim() : current.name,
       purpose: patch.purpose !== undefined ? patch.purpose.trim() : current.purpose,
@@ -123,19 +121,19 @@ export function updateTeamSkill(db: StudioDb, teamId: string, id: string, patch:
       position: patch.position ?? current.position,
     };
     checkLengths(next);
-    if (next.name !== current.name) checkNameFree(db, teamId, next.name, id);
-    if (next.enabled) checkTeamTotal(db, teamId, id, next.content.length);
-    db.run(
+    if (next.name !== current.name) await checkNameFree(db, teamId, next.name, id);
+    if (next.enabled) await checkTeamTotal(db, teamId, id, next.content.length);
+    await db.run(
       `UPDATE team_skills SET name = ?, purpose = ?, applies_to = ?, content = ?, enabled = ?, position = ?, updated_by = ?, updated_at = ?
        WHERE id = ? AND team_id = ?`,
-      [next.name, next.purpose, JSON.stringify(next.applies_to), next.content, next.enabled ? 1 : 0, next.position, userId,
+      [next.name, next.purpose, JSON.stringify(next.applies_to), next.content, next.enabled, next.position, userId,
         new Date().toISOString(), id, teamId],
     );
     return requireSkill(db, teamId, id);
   });
 }
 
-export function deleteTeamSkill(db: StudioDb, teamId: string, id: string): void {
-  const res = db.run("DELETE FROM team_skills WHERE id = ? AND team_id = ?", [id, teamId]);
+export async function deleteTeamSkill(db: StudioDb, teamId: string, id: string): Promise<void> {
+  const res = await db.run("DELETE FROM team_skills WHERE id = ? AND team_id = ?", [id, teamId]);
   if (res.changes === 0) throw new StudioRunError("not_found", `quy chuẩn ${id} không có trong nhóm`, { code: "not_found" });
 }

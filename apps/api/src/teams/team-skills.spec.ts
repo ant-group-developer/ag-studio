@@ -1,5 +1,5 @@
 /**
- * Team skills routes over a real studio.db: list/create/update/delete with the engine's limits mapped to HTTP, the
+ * Team skills routes over a real database: list/create/update/delete with the engine's limits mapped to HTTP, the
  * body DTOs, and the single-team route the team page reads its name and the caller's role from.
  */
 import 'reflect-metadata';
@@ -21,12 +21,12 @@ async function problems<T extends object>(cls: new () => T, body: unknown): Prom
   return errors.map((e) => e.property);
 }
 
-describe('team skills routes (real studio.db)', () => {
+describe('team skills routes (real database)', () => {
   let s: RealStudio;
   let ctl: TeamSkillsController;
   beforeEach(async () => {
     s = await realStudio();
-    insertTeam(s.db, 'team-1', 'auth0|owner');
+    await insertTeam(s.db, 'team-1', 'auth0|owner');
     ctl = new TeamSkillsController(s.engine as EngineService);
   });
   afterEach(() => s.close());
@@ -51,7 +51,7 @@ describe('team skills routes (real studio.db)', () => {
     await ctl.create('team-1', { name: 'B', content: big }, req('u'));
     await ctl.create('team-1', { name: 'C', content: big }, req('u'));
     await expect(ctl.create('team-1', { name: 'D', content: big }, req('u'))).rejects.toBeInstanceOf(UnprocessableEntityException);
-    insertTeam(s.db, 'team-2', 'auth0|other');
+    await insertTeam(s.db, 'team-2', 'auth0|other');
     const other = await ctl.create('team-2', { name: 'X', content: 'x' }, req('u'));
     await expect(ctl.update('team-1', other.id, { name: 'Y' }, req('u'))).rejects.toBeInstanceOf(NotFoundException);
     await expect(ctl.list('missing')).rejects.toBeInstanceOf(NotFoundException);
@@ -66,10 +66,10 @@ describe('team skills routes (real studio.db)', () => {
     expect(await problems(UpdateTeamSkillDto, { teamId: 'team-2' })).toEqual(['teamId']);
   });
 
-  it('shows one team with the caller role; an admin who is not a member gets role null', () => {
+  it('shows one team with the caller role; an admin who is not a member gets role null', async () => {
     const teams = new TeamsService(s.db);
-    expect(teams.getTeam('team-1', 'auth0|owner')).toMatchObject({ id: 'team-1', name: 'Team team-1', role: 'owner', memberCount: 1, projectCount: 0 });
-    expect(teams.getTeam('team-1', 'auth0|admin').role).toBeNull();
-    expect(() => teams.getTeam('missing', 'auth0|owner')).toThrow(NotFoundException);
+    expect(await teams.getTeam('team-1', 'auth0|owner')).toMatchObject({ id: 'team-1', name: 'Team team-1', role: 'owner', memberCount: 1, projectCount: 0 });
+    expect((await teams.getTeam('team-1', 'auth0|admin')).role).toBeNull();
+    await expect(teams.getTeam('missing', 'auth0|owner')).rejects.toThrow(NotFoundException);
   });
 });

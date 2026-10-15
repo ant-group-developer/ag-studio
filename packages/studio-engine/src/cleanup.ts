@@ -40,16 +40,16 @@ const list = (dir: string): string[] => { try { return readdirSync(dir); } catch
 const mtime = (p: string): number => { try { return statSync(p).mtimeMs; } catch { return Number.POSITIVE_INFINITY; } };
 
 /** Voice store lines last read before `cutoffIso`: the WAV and the row. */
-export function sweepVoiceStore(db: StudioDb, voiceDir: string, cutoffIso: string): number {
-  const old = db.all<{ key: string }>("SELECT key FROM studio_voice_lines WHERE last_used_at < ?", [cutoffIso]);
+export async function sweepVoiceStore(db: StudioDb, voiceDir: string, cutoffIso: string): Promise<number> {
+  // the rows go first, only those still unread since the cutoff (a line read meanwhile stays)
+  const old = await db.all<{ key: string }>("DELETE FROM studio_voice_lines WHERE last_used_at < ? RETURNING key", [cutoffIso]);
   for (const { key } of old) {
     try { unlinkSync(voicePath(voiceDir, key)); } catch { /* already gone */ }
-    db.run("DELETE FROM studio_voice_lines WHERE key = ?", [key]);
   }
   return old.length;
 }
 
-/** `library:studio/…` references in a JSON text, as bucket keys (`library/studio/…`). */
+/** `library:studio/…` references in a JSON text (jsonb read as text), as bucket keys (`library/studio/…`). */
 function libraryKeys(text: string | null | undefined): string[] {
   return [...(text ?? "").matchAll(/library:(studio\/[^"\\\s]+)/g)].map((m) => `library/${m[1]}`);
 }
@@ -57,13 +57,13 @@ function libraryKeys(text: string | null | undefined): string[] {
 /** Project audio nothing points at (the project's voice and music, a video's music, any video revision), written before `cutoff`. */
 export async function sweepProjectAudio(db: StudioDb, bucket: StudioBucket, cutoff: Date): Promise<number> {
   const keep = new Set<string>();
-  for (const r of db.all<{ voice: string | null; music: string | null }>("SELECT voice, music FROM projects")) {
+  for (const r of await db.all<{ voice: string | null; music: string | null }>("SELECT voice::text AS voice, music::text AS music FROM projects")) {
     for (const k of [...libraryKeys(r.voice), ...libraryKeys(r.music)]) keep.add(k);
   }
-  for (const r of db.all<{ data: string }>("SELECT data FROM video_revisions WHERE data LIKE '%library:studio/%'")) {
+  for (const r of await db.all<{ data: string }>("SELECT data::text AS data FROM video_revisions WHERE data::text LIKE '%library:studio/%'")) {
     for (const k of libraryKeys(r.data)) keep.add(k);
   }
-  for (const r of db.all<{ music: string }>("SELECT music FROM videos WHERE music IS NOT NULL")) {
+  for (const r of await db.all<{ music: string }>("SELECT music::text AS music FROM videos WHERE music IS NOT NULL")) {
     for (const k of libraryKeys(r.music)) keep.add(k);
   }
   const stale = (await bucket.list("library/studio/projects/"))
@@ -80,18 +80,18 @@ export async function sweepRawUploads(bucket: StudioBucket, cutoff: Date): Promi
 }
 
 /** Scratch folders of jobs and turns that are not running any more, untouched since `cutoffMs`. */
-export function sweepScratch(db: StudioDb, dataRoot: string, cutoffMs: number): number {
+export async function sweepScratch(db: StudioDb, dataRoot: string, cutoffMs: number): Promise<number> {
   let removed = 0;
-  const sweep = (dir: string, running: (id: string) => boolean) => {
+  const sweep = async (dir: string, running: (id: string) => Promise<boolean>) => {
     for (const id of list(dir)) {
       const path = join(dir, id);
-      if (running(id) || mtime(path) >= cutoffMs) continue;
+      if (mtime(path) >= cutoffMs || await running(id)) continue;
       rmSync(path, { recursive: true, force: true });
       removed++;
     }
   };
-  sweep(join(dataRoot, "job-runs"), (id) => !!db.get("SELECT 1 AS x FROM project_jobs WHERE id = ? AND status IN ('queued', 'running')", [id]));
-  sweep(join(dataRoot, "agent-runs"), (id) => !!db.get("SELECT 1 AS x FROM agent_messages WHERE id = ? AND status IN ('pending', 'running')", [id]));
+  await sweep(join(dataRoot, "job-runs"), async (id) => !!await db.get("SELECT 1 AS x FROM project_jobs WHERE id = ? AND status IN ('queued', 'running')", [id]));
+  await sweep(join(dataRoot, "agent-runs"), async (id) => !!await db.get("SELECT 1 AS x FROM agent_messages WHERE id = ? AND status IN ('pending', 'running')", [id]));
   return removed;
 }
 
@@ -119,11 +119,11 @@ export async function sweepStudioData(
   const r = { ...DEFAULT_RETENTION, ...o.retention };
   const at = (days: number) => o.now.getTime() - days * DAY_MS;
   return {
-    voiceLines: d.voiceDir ? sweepVoiceStore(d.db, d.voiceDir, new Date(at(r.voiceDays)).toISOString()) : 0,
+    voiceLines: d.voiceDir ? await sweepVoiceStore(d.db, d.voiceDir, new Date(at(r.voiceDays)).toISOString()) : 0,
     audioObjects: await sweepProjectAudio(d.db, d.bucket, new Date(at(r.audioGraceDays))),
     rawUploads: await sweepRawUploads(d.bucket, new Date(o.now.getTime() - RAW_UPLOAD_HOURS * 3_600_000)),
-    scratch: sweepScratch(d.db, d.dataRoot, o.now.getTime() - SCRATCH_HOURS * 3_600_000),
+    scratch: await sweepScratch(d.db, d.dataRoot, o.now.getTime() - SCRATCH_HOURS * 3_600_000),
     trash: d.workspacesRoot ? sweepTrash(d.workspacesRoot, at(r.workspaceDays)) : 0,
-    auditRows: sweepAuditLog(d.db, new Date(at(r.auditDays)).toISOString()),
+    auditRows: await sweepAuditLog(d.db, new Date(at(r.auditDays)).toISOString()),
   };
 }

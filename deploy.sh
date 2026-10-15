@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy AG Studio trên node trung tâm: build image, thay api (tự migrate studio.db khi khởi động),
+# Deploy AG Studio trên node trung tâm: build image, thay api (tự migrate Postgres DATABASE_URL khi khởi động),
 # rồi worker (chỉ sau khi api healthy), rồi web. Cần ../ag-farm (AG_FARM_DIR) đã checkout.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -19,7 +19,7 @@ fi
 log 'Build image'
 docker compose build api web
 
-log 'Thay api (migrate studio.db) va cho healthy'
+log 'Thay api (migrate Postgres) va cho healthy'
 docker compose up -d --no-deps --wait api
 
 log 'Thay worker (chay xong stage dang do truoc khi dung ban cu)'

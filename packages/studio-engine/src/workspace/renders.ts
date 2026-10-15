@@ -70,12 +70,12 @@ function clockOf(s: number | null): string {
 }
 
 /** Queues a render of a video (the latest revision unless one is given). */
-export function queueRender(db: StudioDb, p: {
+export async function queueRender(db: StudioDb, p: {
   projectId: string; videoId: string; kind: RenderKind; request?: Omit<RenderJobRequest, "video_id">; threadId?: string | null; continueAgent?: boolean;
   createdBy: string; actorRole?: JobRecord["actor_role"]; title?: string;
-}, now = new Date().toISOString()): JobRecord {
-  const v = requireVideo(db, p.videoId);
-  const rev = p.request?.revision ?? latestVideoRevision(db, p.videoId)?.revision;
+}, now = new Date().toISOString()): Promise<JobRecord> {
+  const v = await requireVideo(db, p.videoId);
+  const rev = p.request?.revision ?? (await latestVideoRevision(db, p.videoId))?.revision;
   if (!rev) throw new HarnessError("CONFIG_INVALID", "video chưa có timeline để render", { code: "no_timeline" });
   return createJob(db, {
     projectId: p.projectId, videoId: p.videoId, threadId: p.threadId ?? null, kind: p.kind,
@@ -85,33 +85,33 @@ export function queueRender(db: StudioDb, p: {
 }
 
 /** Finished renders of a video, newest first (the job results). */
-export function videoRenders(db: StudioDb, projectId: string, videoId: string, limit = 20): (RenderResult & { jobId: string; finishedAt: string | null })[] {
-  return listJobs(db, projectId, { videoId, limit: 200 })
+export async function videoRenders(db: StudioDb, projectId: string, videoId: string, limit = 20): Promise<(RenderResult & { jobId: string; finishedAt: string | null })[]> {
+  return (await listJobs(db, projectId, { videoId, limit: 200 }))
     .filter((j) => (RENDER_KINDS as readonly string[]).includes(j.kind) && j.status === "done" && j.result)
     .slice(0, limit)
-    .map((j) => ({ ...(JSON.parse(j.result!) as RenderResult), jobId: j.id, finishedAt: j.finished_at }));
+    .map((j) => ({ ...(j.result as RenderResult), jobId: j.id, finishedAt: j.finished_at }));
 }
 
 /** One finished render of a video, by its job; undefined when that job is not a finished render of this video. */
-export function videoRender(db: StudioDb, videoId: string, jobId: string): (RenderResult & { jobId: string; finishedAt: string | null }) | undefined {
-  const j = getJob(db, jobId);
+export async function videoRender(db: StudioDb, videoId: string, jobId: string): Promise<(RenderResult & { jobId: string; finishedAt: string | null }) | undefined> {
+  const j = await getJob(db, jobId);
   if (!j || j.video_id !== videoId || !(RENDER_KINDS as readonly string[]).includes(j.kind) || j.status !== "done" || !j.result) return undefined;
-  return { ...(JSON.parse(j.result) as RenderResult), jobId: j.id, finishedAt: j.finished_at };
+  return { ...(j.result as RenderResult), jobId: j.id, finishedAt: j.finished_at };
 }
 
 export function renderHandler(kind: RenderKind, d: RenderDeps): JobHandler {
   return async (job, ctx) => {
-    const req = JSON.parse(job.request) as RenderJobRequest;
-    const video = requireVideo(d.db, req.video_id);
+    const req = job.request as RenderJobRequest;
+    const video = await requireVideo(d.db, req.video_id);
     if (video.project_id !== job.project_id) throw new Error("video thuộc dự án khác");
-    const rev = req.revision ? getVideoRevision(d.db, video.id, req.revision) : latestVideoRevision(d.db, video.id);
+    const rev = req.revision ? await getVideoRevision(d.db, video.id, req.revision) : await latestVideoRevision(d.db, video.id);
     if (!rev) throw new Error(req.revision ? `không có timeline bản ${req.revision}` : "video chưa có timeline");
     const errors = timelineIssues(rev.data).filter((i) => i.severity === "error");
     if (errors.length) throw new Error(`timeline bản ${rev.revision} còn lỗi: ${errors.map((e) => e.message).join("; ")}`);
-    ctx.setUnits(rev.data.clips.reduce((n, c) => n + Math.max(0, (c.out ?? c.in) - c.in), 0));
-    if (kind === "render_final") updateVideo(d.db, video.id, { status: "rendering" }, ctx.now());
+    await ctx.setUnits(rev.data.clips.reduce((n, c) => n + Math.max(0, (c.out ?? c.in) - c.in), 0));
+    if (kind === "render_final") await updateVideo(d.db, video.id, { status: "rendering" }, ctx.now());
 
-    ctx.report({ phase: "Đang dựng composition", progress: 0.02 });
+    await ctx.report({ phase: "Đang dựng composition", progress: 0.02 });
     const stageKey = STAGE[kind];
     let type: string;
     let payload: unknown;
@@ -149,7 +149,7 @@ export function renderHandler(kind: RenderKind, d: RenderDeps): JobHandler {
       if (e instanceof HarnessError) throw new Error(e.message);
       throw e;
     }
-    ctx.checkpoint();
+    await ctx.checkpoint();
     const { outputPrefix, farmJob } = await runFarmStep(
       { db: d.db, bucket: d.bucket, farm: d.farm, ...(d.pollMs ? { pollMs: d.pollMs } : {}), ...(d.queueTimeoutMs ? { queueTimeoutMs: d.queueTimeoutMs } : {}), now: ctx.now },
       job,
@@ -163,7 +163,7 @@ export function renderHandler(kind: RenderKind, d: RenderDeps): JobHandler {
         stopRequested: ctx.stopRequested,
       },
     );
-    ctx.report({ phase: "Đang đọc kết quả", progress: 0.97, waiting: false });
+    await ctx.report({ phase: "Đang đọc kết quả", progress: 0.97, waiting: false });
     let result: RenderResult;
     if (kind === "export_premiere") {
       const m = PremiereManifestSchema.parse(JSON.parse((await d.bucket.get(`${outputPrefix}${PREMIERE_MANIFEST_PATH}`)).toString("utf8")));
@@ -180,16 +180,16 @@ export function renderHandler(kind: RenderKind, d: RenderDeps): JobHandler {
     }
     await ackFarmJob(d.farm, farmJob.id);
     // the footage of a final render or a Premiere export is told to ag-go (usage outbox; keyed by job, so once)
-    if (kind !== "render_preview") enqueueUsage(d.db, renderUsageEvents(d.db, job, kind, video.id, rev.data.clips.map((c) => c.asset_id), ctx.now()), ctx.now());
-    if (kind === "render_final") updateVideo(d.db, video.id, { status: "done" }, ctx.now());
-    writeRenderNote(d.db, ctx, job, video.id, result);
+    if (kind !== "render_preview") await enqueueUsage(d.db, await renderUsageEvents(d.db, job, kind, video.id, rev.data.clips.map((c) => c.asset_id), ctx.now()), ctx.now());
+    if (kind === "render_final") await updateVideo(d.db, video.id, { status: "done" }, ctx.now());
+    await writeRenderNote(d.db, ctx, job, video.id, result);
     const what = `${LABEL[kind]} của **${video.title}** (timeline bản ${rev.revision}${result.duration_s !== null ? `, ${clockOf(result.duration_s)}` : ""}${result.watermarked ? ", có watermark" : ""})`;
     return { result, message: `Đã xong ${what}: xem ở trang video, tab Xem trước.${result.note ? ` Lưu ý: ${result.note}` : ""}` };
   };
 }
 
 /** `videos/<id>/renders/<date>-<kind>-r<rev>.md`: what was rendered, for the agent and people reading the files. */
-function writeRenderNote(db: StudioDb, ctx: JobContext, job: JobRecord, videoId: string, r: RenderResult): void {
+async function writeRenderNote(db: StudioDb, ctx: JobContext, job: JobRecord, videoId: string, r: RenderResult): Promise<void> {
   const name = `videos/${videoId}/renders/${ctx.now().slice(0, 10)}-${STAGE[r.kind]}-r${r.revision}-${job.id.slice(0, 8)}.md`;
   const lines = [
     `# ${LABEL[r.kind][0]!.toUpperCase()}${LABEL[r.kind].slice(1)} · timeline bản ${r.revision}`,
@@ -202,5 +202,5 @@ function writeRenderNote(db: StudioDb, ctx: JobContext, job: JobRecord, videoId:
     "",
   ];
   mkdirSync(join(ctx.workspaceDir, "videos", videoId, "renders"), { recursive: true });
-  writeWorkspaceFile(db, { projectId: job.project_id, dir: ctx.workspaceDir, path: name, content: lines.join("\n"), baseSha256: null, author: { kind: "studio", id: null }, now: ctx.now() });
+  await writeWorkspaceFile(db, { projectId: job.project_id, dir: ctx.workspaceDir, path: name, content: lines.join("\n"), baseSha256: null, author: { kind: "studio", id: null }, now: ctx.now() });
 }

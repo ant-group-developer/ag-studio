@@ -1,5 +1,5 @@
 /**
- * The team's music library over a real studio.db with an in-memory bucket: everyone lists the active tracks with a
+ * The team's music library over a real database with an in-memory bucket: everyone lists the active tracks with a
  * URL to listen to, only a Studio admin adds, retags or retires one, and a bad form is refused before ffmpeg runs. The
  * upload itself (a real file made AAC) needs FFMPEG_PATH/FFPROBE_PATH.
  */
@@ -30,7 +30,7 @@ const track = (id: string, mood: string[], active = true) => ({
   created_at: '2026-10-08T00:00:00.000Z', updated_at: '2026-10-08T00:00:00.000Z',
 });
 
-describe('MusicLibraryController (real studio.db)', () => {
+describe('MusicLibraryController (real database)', () => {
   let s: RealStudio;
   let bucket: MemoryBucket;
   const controller = (env: Record<string, unknown> = {}) => {
@@ -49,8 +49,8 @@ describe('MusicLibraryController (real studio.db)', () => {
   afterEach(() => s.close());
 
   it('everyone lists the active tracks with a URL to listen to; an admin sees the retired ones too', async () => {
-    saveLibraryMusic(s.engine.db, track('calm', ['calm']));
-    saveLibraryMusic(s.engine.db, track('old', ['sad'], false));
+    await saveLibraryMusic(s.engine.db, track('calm', ['calm']));
+    await saveLibraryMusic(s.engine.db, track('old', ['sad'], false));
     const mine = await controller().list(req('auth0|editor'));
     expect(mine.tracks.map((t) => [t.trackId, t.moods, t.track])).toEqual([['calm', ['calm'], 'library:music/calm.m4a']]);
     expect(mine.tracks[0]!.listenUrl).toContain('library/music/calm.m4a');
@@ -64,12 +64,12 @@ describe('MusicLibraryController (real studio.db)', () => {
     expect(await failure(controller().add({ ...form, moods: ' , ' }, undefined, req(ADMIN)))).toEqual({ type: 'BadRequestException', code: 'invalid' });
     expect(await failure(controller().add(form, undefined, req(ADMIN)))).toEqual({ type: 'BadRequestException', code: 'audio_missing' });
 
-    saveLibraryMusic(s.engine.db, track('calm', ['calm']));
+    await saveLibraryMusic(s.engine.db, track('calm', ['calm']));
     expect(await failure(controller().update('calm', { active: false }, req('auth0|editor')))).toEqual({ type: 'ForbiddenException', code: undefined });
     expect(await failure(controller().update('nope', { active: false }, req(ADMIN)))).toEqual({ type: 'NotFoundException', code: 'not_found' });
     const retired = await controller().update('calm', { active: false, moods: ['calm', 'morning'] }, req(ADMIN));
     expect(retired).toMatchObject({ trackId: 'calm', active: false, moods: ['calm', 'morning'] });
-    expect(listLibraryMusic(s.engine.db, { activeOnly: true })).toEqual([]);
+    expect(await listLibraryMusic(s.engine.db, { activeOnly: true })).toEqual([]);
   });
 
   it('only an admin gets a link to put a track on the bucket; a track too large or not uploaded is refused', async () => {

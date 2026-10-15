@@ -1,4 +1,5 @@
-# AG Studio trên node trung tâm (VPS Linux): api + worker (cùng studio.db trong volume) + web.
+# AG Studio trên node trung tâm (VPS Linux): api + worker (cùng database Postgres DATABASE_URL, cùng /data) + web.
+# Postgres là server có sẵn trên VPS, không chạy trong compose này.
 # Cần checkout ag-farm nằm cạnh (../ag-farm): image build các package @ag-farm/* từ đó.
 # Chạy: cp .env.example .env && sửa .env && bash deploy.sh
 x-logging: &logging
@@ -35,7 +36,7 @@ services:
       retries: 6
       start_period: 20s
 
-  # Worker migrate cùng studio.db với api: chỉ khởi động khi api đã chạy xong migration và healthy. Lượt agent gọi tool
+  # Worker dùng cùng database với api: chỉ khởi động khi api đã chạy xong migration và healthy. Lượt agent gọi tool
   # Studio qua api (STUDIO_API_INTERNAL_URL=http://api:3100) và đọc/ghi thư mục dự án trong cùng volume với api.
   worker:
     <<: *app

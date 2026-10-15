@@ -28,7 +28,7 @@ ADR-0001 (mục 127 trở đi cho Studio, 179–190 cho workspace agent) và `do
 - E2E (vitest, không phải Playwright): `E2E=1 pnpm vitest run tests/e2e` — dựng ag-farm hub (Docker Postgres),
   API Studio và ag-render-worker thật, ag-go/S3 giả; job farm ghi như job của dự án.
 - `pnpm typecheck` cần chạy sau `pnpm build`: typecheck từng package dùng `tsc --noEmit` và cần `dist/*.d.ts` của các package phụ thuộc; test (`vitest`) thì không cần build vì `vitest.shared.ts` ở root đã cấu hình alias `@harness/*` trỏ thẳng vào `src`.
-- `node:sqlite` in ra `ExperimentalWarning` trên Node 22 — đây là bình thường, không phải lỗi; có thể tắt bằng `NODE_OPTIONS=--no-warnings` khi chạy test nếu muốn output sạch.
+- Test của Studio (engine, API) chạy trên Postgres thật trong PGlite (`testStudioDb()` ở `@ag-studio/engine/testing`), không cần server. Harness CLI cũ (`packages/core`, `cli`, `dashboard`, `migrations/` ở root) vẫn dùng `node:sqlite` và in `ExperimentalWarning` trên Node 22 — bình thường.
 - Sau khi sửa bất kỳ schema Zod nào trong `packages/contracts/src/` (entity, config, execution): chạy `pnpm gen:schemas` rồi commit các file JSON Schema sinh ra cùng lúc — `test/json-schema.test.ts` kiểm tra chúng khớp.
 
 ## Lệnh 2B (script, gate, media, doctor)
@@ -67,9 +67,12 @@ Hệ thống cũ (production, run workflow `ag-studio-*`, gate, chat theo bướ
 nhưng không code nào đọc.
 
 ### Tiến trình và dữ liệu
-- Ba tiến trình dùng chung **một** `studio.db` (`STUDIO_DB_PATH`) và một `STUDIO_DATA_ROOT`: `apps/api` (NestJS, cổng
-  `PORT`), `apps/worker` (`createStudioWorkerPool`: vòng agent + vòng job dự án + quét dọn), `apps/web` (Vite/React). API
-  migrate lúc khởi động; chạy worker **sau** khi API healthy. Không có Postgres. API ghi `studio.db` bằng `BEGIN IMMEDIATE`.
+- API và worker dùng chung **một** database Postgres (`DATABASE_URL`, schema `DATABASE_SCHEMA` — mặc định public, đặt
+  làm search_path nên SQL không ghi tên schema; server có sẵn, không nằm trong docker compose) và
+  một `STUDIO_DATA_ROOT`: `apps/api` (NestJS, cổng `PORT`), `apps/worker` (`createStudioWorkerPool`: vòng agent + vòng job
+  dự án + quét dọn), `apps/web` (Vite/React). Schema ở `packages/studio-engine/migrations/` (thêm bảng/cột: file
+  `000N_*.sql` mới, kiểu Postgres thật: timestamptz, jsonb, boolean); API và worker migrate lúc khởi động. Lớp DB
+  `StudioDb` (`studio-db.ts`) async; ghi nhiều câu hay đọc-rồi-ghi phải nằm trong `db.tx()` (một khoá ghi chung).
 - Team → **dự án** (một kênh YouTube, bảng `projects`) → **video** (`videos`), thêm dần theo lời người dùng. Mỗi dự án là một
   thư mục làm việc như một repo: `<STUDIO_WORKSPACES_ROOT>/<projectId>/` (mặc định `<STUDIO_DATA_ROOT>/workspaces`, phải nằm
   **ngoài mọi repo** để CLAUDE.md của thư mục cha không lọt vào; API và worker phải thấy cùng thư mục): `CLAUDE.md` (kênh,

@@ -81,9 +81,9 @@ describe("what a file changed", () => {
 
   it("file history: a version compares with the one before it", async () => {
     ws.listFileVersions.mockResolvedValue({ versions: [
-      { id: "v2", path: "channel/plan.md", sha256: "b", size: 10, author_kind: "agent", author_id: null, message_id: "m", created_at: new Date().toISOString(), has_content: 1 },
+      { id: "v2", path: "channel/plan.md", sha256: "b", size: 10, author_kind: "agent", author_id: null, message_id: "m", created_at: new Date().toISOString(), has_content: true },
     ] });
-    ws.getFileVersion.mockResolvedValue({ id: "v2", path: "channel/plan.md", sha256: "b", size: 10, author_kind: "agent", author_id: null, message_id: "m", created_at: "", has_content: 1, content: "x", issues: null });
+    ws.getFileVersion.mockResolvedValue({ id: "v2", path: "channel/plan.md", sha256: "b", size: 10, author_kind: "agent", author_id: null, message_id: "m", created_at: "", has_content: true, content: "x", issues: null });
     ws.fileVersionDiff.mockResolvedValue(DIFF);
     wrap(<FileHistory projectId="p1" path="channel/plan.md" currentSha="b" canRestore onRestored={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: /Agent|agent/ }));

@@ -8,6 +8,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "default": "./dist/testing.js"
     }
   },
   "scripts": {
@@ -24,11 +28,21 @@
     "@harness/contracts": "workspace:*",
     "@harness/core": "workspace:*",
     "@harness/executors": "workspace:*",
+    "pg": "^8.23.0",
     "yaml": "^2.6.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.9",
     "@types/node": "^22.10.0",
+    "@types/pg": "^8.23.1",
     "vitest": "^2.1.0"
+  },
+  "typesVersions": {
+    "*": {
+      "testing": [
+        "dist/testing.d.ts"
+      ]
+    }
   }
 }

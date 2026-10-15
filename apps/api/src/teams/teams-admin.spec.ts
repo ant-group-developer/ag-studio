@@ -30,15 +30,15 @@ function context(request: Request, handler: (...args: never[]) => unknown): Exec
   } as unknown as ExecutionContext;
 }
 
-describe('GET /teams (guard + controller, real studio.db)', () => {
+describe('GET /teams (guard + controller, real database)', () => {
   let s: RealStudio;
   let guard: RolesGuard;
   let ctl: TeamsController;
   beforeEach(async () => {
     s = await realStudio();
-    insertTeam(s.db, 'team-1', 'auth0|owner');
-    insertTeam(s.db, 'team-2', 'auth0|other');
-    insertTeam(s.db, 'team-3', 'auth0|admin');
+    await insertTeam(s.db, 'team-1', 'auth0|owner');
+    await insertTeam(s.db, 'team-2', 'auth0|other');
+    await insertTeam(s.db, 'team-3', 'auth0|admin');
     guard = new RolesGuard(new Reflector(), s.db, accounts);
     ctl = new TeamsController(new TeamsService(s.db), {} as AccountDirectoryService, new StudioAdminService(accounts, s.db));
   });
@@ -66,7 +66,7 @@ describe('GET /teams (guard + controller, real studio.db)', () => {
   });
 
   it('an admin searches every team by name', async () => {
-    s.db.run('UPDATE teams SET name = ? WHERE id = ?', ['Du lịch chậm', 'team-2']);
+    await s.db.run('UPDATE teams SET name = ? WHERE id = ?', ['Du lịch chậm', 'team-2']);
     const page = await list('auth0|admin', { q: 'lịch' });
     expect(page.items.map((t) => t.id)).toEqual(['team-2']);
   });
@@ -74,6 +74,6 @@ describe('GET /teams (guard + controller, real studio.db)', () => {
   it('an admin opens a team they are not in: the guard lets them through, the team says they are not a member', async () => {
     const r = req('auth0|admin', { teamId: 'team-2' });
     expect(await guard.canActivate(context(r, TeamsController.prototype.getTeam))).toBe(true);
-    expect(ctl.getTeam('team-2', r)).toMatchObject({ id: 'team-2', name: 'Team team-2', role: null, isMember: false });
+    expect(await ctl.getTeam('team-2', r)).toMatchObject({ id: 'team-2', name: 'Team team-2', role: null, isMember: false });
   });
 });

@@ -47,7 +47,7 @@ describe("agent system prompt", () => {
 describe("turn prompt", () => {
   const project = { name: "Du lịch chậm", channel_url: "@dlc", language: "vi", aspect: "16:9" } as ProjectRecord;
   const thread = { id: "t1", kind: "video", title: "Hội An" } as ThreadRecord;
-  const msg = (role: "user" | "system", text: string, attachments?: string[]) => ({ role, text, attachments: attachments ? JSON.stringify(attachments) : null }) as MessageRecord;
+  const msg = (role: "user" | "system", text: string, attachments?: string[]) => ({ role, text, attachments: attachments ?? null }) as MessageRecord;
 
   it("leads with the context, then what was said since the last turn", () => {
     const out = agentTurnPrompt({

@@ -23,10 +23,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const waitS = z.number().int().min(0).max(60).optional();
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
-function videoOf(ctx: AgentToolContext, id: string | undefined) {
+async function videoOf(ctx: AgentToolContext, id: string | undefined) {
   const videoId = id ?? ctx.video?.id;
   if (!videoId) throw new StudioRunError("invalid", "luồng này không gắn với video nào: cho biết video_id", { code: "no_video" });
-  const v = requireVideo(ctx.db, videoId);
+  const v = await requireVideo(ctx.db, videoId);
   if (v.project_id !== ctx.project.id) throw new StudioRunError("invalid", "video thuộc dự án khác", { code: "other_project" });
   return v;
 }
@@ -54,8 +54,8 @@ export function timelineSummary(t: TimelineV4, revision: number, label: string |
 async function waitFor(ctx: AgentToolContext, jobId: string, seconds: number): Promise<ToolAnswer> {
   const until = Date.now() + seconds * 1000;
   for (;;) {
-    const j = getJob(ctx.db, jobId)!;
-    if (j.status === "done") return { text: json({ job_id: j.id, status: "done", result: JSON.parse(j.result ?? "null") as unknown }) };
+    const j = (await getJob(ctx.db, jobId))!;
+    if (j.status === "done") return { text: json({ job_id: j.id, status: "done", result: j.result ?? null }) };
     if (j.status === "failed" || j.status === "cancelled") return { text: `Không xong: ${j.error ?? j.status}`, isError: true };
     if (Date.now() >= until) return { text: json({ job_id: j.id, status: j.status, phase: j.phase, note: "Đang chạy nền: Studio báo vào luồng khi xong, bạn sẽ làm tiếp." }) };
     await sleep(1000);
@@ -69,8 +69,8 @@ export const TIMELINE_TOOLS: AgentTool[] = [
     input: z.object({ video_id: z.string().min(1).optional(), wait_s: waitS }).strict(),
     role: "editor",
     run: async (ctx, a) => {
-      const v = videoOf(ctx, a.video_id);
-      const job = queueFit(ctx.db, { projectId: ctx.project.id, videoId: v.id, threadId: ctx.thread.id, continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role }, ctx.now());
+      const v = await videoOf(ctx, a.video_id);
+      const job = await queueFit(ctx.db, { projectId: ctx.project.id, videoId: v.id, threadId: ctx.thread.id, continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role }, ctx.now());
       return waitFor(ctx, job.id, a.wait_s ?? 45);
     },
   }),
@@ -78,9 +78,9 @@ export const TIMELINE_TOOLS: AgentTool[] = [
     name: "timeline_get",
     description: "Đọc timeline của video (bản mới nhất, hoặc `revision`): từng clip (vị trí trong video, đoạn lấy, shot, câu lời dẫn, chuyển cảnh, tắt tiếng), chữ trên hình, lời dẫn, nhạc, phụ đề, và lỗi/cảnh báo. Dùng số `revision` này làm base_revision khi sửa.",
     input: z.object({ video_id: z.string().min(1).optional(), revision: z.number().int().min(1).optional() }).strict(),
-    run: (ctx, a) => {
-      const v = videoOf(ctx, a.video_id);
-      const rev = a.revision ? getVideoRevision(ctx.db, v.id, a.revision) : latestVideoRevision(ctx.db, v.id);
+    run: async (ctx, a) => {
+      const v = await videoOf(ctx, a.video_id);
+      const rev = a.revision ? await getVideoRevision(ctx.db, v.id, a.revision) : await latestVideoRevision(ctx.db, v.id);
       if (!rev) return { text: "Video chưa có timeline: dựng bằng timeline_from_edit_plan sau khi có edit-plan.json.", isError: true };
       return { text: json(timelineSummary(rev.data, rev.revision, rev.label)) };
     },
@@ -100,11 +100,11 @@ export const TIMELINE_TOOLS: AgentTool[] = [
       ops: z.array(TimelineOpSchema).min(1).max(50),
     }).strict(),
     role: "editor",
-    run: (ctx, a) => {
-      const v = videoOf(ctx, a.video_id);
-      const base = getVideoRevision(ctx.db, v.id, a.base_revision);
+    run: async (ctx, a) => {
+      const v = await videoOf(ctx, a.video_id);
+      const base = await getVideoRevision(ctx.db, v.id, a.base_revision);
       if (!base) return { text: `Không có timeline bản ${a.base_revision}.`, isError: true };
-      const allowed = videoAssets(buildVideoIndex(ctx.db, ctx.workspaceDir, ctx.project.id, v.id), ctx.workspaceDir);
+      const allowed = videoAssets(await buildVideoIndex(ctx.db, ctx.workspaceDir, ctx.project.id, v.id), ctx.workspaceDir);
       let next: TimelineV4;
       try {
         next = applyTimelineOps(base.data, a.ops, { ...base.data.assets, ...allowed });
@@ -112,8 +112,8 @@ export const TIMELINE_TOOLS: AgentTool[] = [
         return { text: e instanceof Error ? e.message : String(e), isError: true };
       }
       try {
-        const { revision } = saveVideoRevision(ctx.db, v.id, { baseRevision: a.base_revision, data: next, authorId: ctx.claims.sub, label: "agent" });
-        writeTimelineSnapshot(ctx.db, ctx.workspaceDir, ctx.project.id, v.id, ctx.now());
+        const { revision } = await saveVideoRevision(ctx.db, v.id, { baseRevision: a.base_revision, data: next, authorId: ctx.claims.sub, label: "agent" });
+        await writeTimelineSnapshot(ctx.db, ctx.workspaceDir, ctx.project.id, v.id, ctx.now());
         const issues = timelineIssues(next);
         return { text: json({ revision, saved: timelineSnapshotPath(v.id), issues: issues.map((i) => `[${i.severity}] ${i.message}`) }) };
       } catch (e) {
@@ -128,9 +128,9 @@ export const TIMELINE_TOOLS: AgentTool[] = [
     input: z.object({ video_id: z.string().min(1).optional(), wait_s: waitS }).strict(),
     role: "editor",
     run: async (ctx, a) => {
-      const v = videoOf(ctx, a.video_id);
-      if (!latestVideoRevision(ctx.db, v.id)) return { text: "Video chưa có timeline: dựng bằng timeline_from_edit_plan trước.", isError: true };
-      const job = queueRender(ctx.db, { projectId: ctx.project.id, videoId: v.id, kind: "render_preview", threadId: ctx.thread.id, continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role }, ctx.now());
+      const v = await videoOf(ctx, a.video_id);
+      if (!(await latestVideoRevision(ctx.db, v.id))) return { text: "Video chưa có timeline: dựng bằng timeline_from_edit_plan trước.", isError: true };
+      const job = await queueRender(ctx.db, { projectId: ctx.project.id, videoId: v.id, kind: "render_preview", threadId: ctx.thread.id, continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role }, ctx.now());
       return waitFor(ctx, job.id, a.wait_s ?? 0);
     },
   }),
@@ -145,8 +145,8 @@ export const TIMELINE_TOOLS: AgentTool[] = [
     }).strict(),
     role: "editor",
     run: async (ctx, a) => {
-      const v = videoOf(ctx, a.video_id);
-      const job = queueThumbnails(ctx.db, {
+      const v = await videoOf(ctx, a.video_id);
+      const job = await queueThumbnails(ctx.db, {
         projectId: ctx.project.id, videoId: v.id, items: a.items, ...(a.position ? { style: { position: a.position } } : {}),
         threadId: ctx.thread.id, continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role,
       }, ctx.now());
@@ -157,9 +157,9 @@ export const TIMELINE_TOOLS: AgentTool[] = [
     name: "music_list",
     description: "Nhạc trong thư viện của Studio (đang dùng được), lọc theo tâm trạng (`mood`). Đặt nhạc cho timeline bằng setMusic với `track` của bài; hoặc ghi `music_mood` trong edit-plan.json để Studio chọn khi dựng.",
     input: z.object({ mood: z.string().trim().min(1).max(40).optional() }).strict(),
-    run: (ctx, a) => {
+    run: async (ctx, a) => {
       const fold = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/gi, "d").toLowerCase().trim();
-      const tracks = listLibraryMusic(ctx.db, { activeOnly: true }).filter((t) => !a.mood || t.mood.some((m) => fold(m) === fold(a.mood!)));
+      const tracks = (await listLibraryMusic(ctx.db, { activeOnly: true })).filter((t) => !a.mood || t.mood.some((m) => fold(m) === fold(a.mood!)));
       return { text: json(tracks.slice(0, 60).map((t) => ({ name: t.display_name, mood: t.mood, seconds: Math.round(t.duration_seconds), loop_ok: t.loop_ok, track: t.file }))) };
     },
   }),

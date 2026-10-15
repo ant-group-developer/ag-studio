@@ -125,7 +125,7 @@ function refLine(r: ThreadRef): string {
 }
 
 function attachments(m: MessageRecord): string {
-  const list = m.attachments ? (JSON.parse(m.attachments) as string[]) : [];
+  const list = m.attachments ?? [];
   return list.length ? `\n\nĐính kèm: ${list.map((p) => `\`${p}\``).join(", ")}` : "";
 }
 

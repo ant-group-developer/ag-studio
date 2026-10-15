@@ -26,31 +26,31 @@ function toDto(s: TeamSkill): TeamSkillDto {
 export class TeamSkillsController {
   constructor(private readonly engine: EngineService) {}
 
-  private requireTeam(teamId: string): void {
-    if (!this.engine.db.get('SELECT id FROM teams WHERE id = ?', [teamId])) throw new NotFoundException(`Team ${teamId} not found`);
+  private async requireTeam(teamId: string): Promise<void> {
+    if (!(await this.engine.db.get('SELECT id FROM teams WHERE id = ?', [teamId]))) throw new NotFoundException(`Team ${teamId} not found`);
   }
 
   @Get()
   @Roles('viewer')
   async list(@Param('teamId') teamId: string): Promise<TeamSkillDto[]> {
-    this.requireTeam(teamId);
-    return listTeamSkills(this.engine.db, teamId).map(toDto);
+    await this.requireTeam(teamId);
+    return (await listTeamSkills(this.engine.db, teamId)).map(toDto);
   }
 
   @Post()
   @Roles('producer')
   @HttpCode(HttpStatus.CREATED)
   create(@Param('teamId') teamId: string, @Body() dto: CreateTeamSkillDto, @Req() req: Request): Promise<TeamSkillDto> {
-    return mapErrors(() => {
-      this.requireTeam(teamId);
-      return toDto(createTeamSkill(this.engine.db, teamId, dto, req.authContext!.userId));
+    return mapErrors(async () => {
+      await this.requireTeam(teamId);
+      return toDto(await createTeamSkill(this.engine.db, teamId, dto, req.authContext!.userId));
     });
   }
 
   @Patch(':skillId')
   @Roles('producer')
   update(@Param('teamId') teamId: string, @Param('skillId') skillId: string, @Body() dto: UpdateTeamSkillDto, @Req() req: Request): Promise<TeamSkillDto> {
-    return mapErrors(() => toDto(updateTeamSkill(this.engine.db, teamId, skillId, dto, req.authContext!.userId)));
+    return mapErrors(async () => toDto(await updateTeamSkill(this.engine.db, teamId, skillId, dto, req.authContext!.userId)));
   }
 
   @Delete(':skillId')

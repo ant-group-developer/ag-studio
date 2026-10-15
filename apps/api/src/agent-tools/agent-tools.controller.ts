@@ -50,13 +50,13 @@ export class AgentToolsController {
     try {
       const answer = await callAgentTool(this.tools.all, {
         db: this.engine.db, claims: call.claims, message: call.message, thread: call.thread, project: call.project, video: call.video,
-        workspaceDir: this.workspace.dir(call.project.id), role: call.role, now: () => new Date().toISOString(), footage: this.footage,
+        workspaceDir: await this.workspace.dir(call.project.id), role: call.role, now: () => new Date().toISOString(), footage: this.footage,
         siteName: this.siteName.current(), referenceFetchers: () => referenceFetcherNames(this.engine),
       }, body.name, body.arguments ?? {});
-      record(answer.isError ? 'error' : 'ok', answer.text);
+      await record(answer.isError ? 'error' : 'ok', answer.text);
       return answer;
     } catch (e) {
-      record('error', e instanceof Error ? e.message : String(e));
+      await record('error', e instanceof Error ? e.message : String(e));
       throw e;
     }
   }

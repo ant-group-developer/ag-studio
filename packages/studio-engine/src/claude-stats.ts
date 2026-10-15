@@ -63,7 +63,7 @@ function scope(q: ClaudeStatsQuery, team: string, project: string): { sql: strin
   const c: string[] = [];
   const p: string[] = [];
   if (q.teamIds) {
-    if (!q.teamIds.length) return { sql: " AND 0", params: [] };
+    if (!q.teamIds.length) return { sql: " AND false", params: [] };
     c.push(`${team} IN (${q.teamIds.map(() => "?").join(", ")})`);
     p.push(...q.teamIds);
   }
@@ -71,21 +71,21 @@ function scope(q: ClaudeStatsQuery, team: string, project: string): { sql: strin
   return { sql: c.map((x) => ` AND ${x}`).join(""), params: p };
 }
 
-export function claudeStats(db: StudioDb, q: ClaudeStatsQuery): ClaudeStats {
+export async function claudeStats(db: StudioDb, q: ClaudeStatsQuery): Promise<ClaudeStats> {
   const calls = scope(q, "c.team_id", "c.production_id");
   const range = [q.from, q.to];
   const sums = `COUNT(*) AS turns, COUNT(DISTINCT c.run_id) AS threads, SUM(c.input_tokens) AS input, SUM(c.output_tokens) AS output,
     SUM(c.cache_read_tokens) AS cache_read, SUM(c.cache_creation_tokens) AS cache_creation, SUM(c.cost_usd) AS cost, SUM(c.wall_seconds) AS wall,
-    SUM(c.outcome = 'failed') AS failed, SUM(c.outcome = 'rate_limited') AS rate_limited`;
+    COUNT(*) FILTER (WHERE c.outcome = 'failed') AS failed, COUNT(*) FILTER (WHERE c.outcome = 'rate_limited') AS rate_limited`;
   const base = `FROM llm_calls c WHERE c.source = 'claude-agent' AND c.created_at >= ? AND c.created_at < ?${calls.sql}`;
-  const grouped = db.all<CallRow>(`SELECT ${CALL_KEY[q.groupBy]} AS key, ${sums} ${base} GROUP BY ${CALL_KEY[q.groupBy]}`, [...range, ...calls.params]);
-  const total = db.get<CallRow>(`SELECT NULL AS key, ${sums} ${base}`, [...range, ...calls.params]);
+  const grouped = await db.all<CallRow>(`SELECT ${CALL_KEY[q.groupBy]} AS key, ${sums} ${base} GROUP BY ${CALL_KEY[q.groupBy]}`, [...range, ...calls.params]);
+  const total = await db.get<CallRow>(`SELECT NULL AS key, ${sums} ${base}`, [...range, ...calls.params]);
 
   const msgs = scope(q, "p.team_id", "t.project_id");
   const msgBase = `FROM agent_messages m JOIN agent_threads t ON t.id = m.thread_id JOIN projects p ON p.id = t.project_id
     WHERE m.role = 'user' AND m.created_at >= ? AND m.created_at < ?${msgs.sql}`;
-  const said = db.all<{ key: string | null; n: number }>(`SELECT ${MESSAGE_KEY[q.groupBy]} AS key, COUNT(*) AS n ${msgBase} GROUP BY ${MESSAGE_KEY[q.groupBy]}`, [...range, ...msgs.params]);
-  const saidTotal = db.get<{ n: number }>(`SELECT COUNT(*) AS n ${msgBase}`, [...range, ...msgs.params])?.n ?? 0;
+  const said = await db.all<{ key: string | null; n: number }>(`SELECT ${MESSAGE_KEY[q.groupBy]} AS key, COUNT(*) AS n ${msgBase} GROUP BY ${MESSAGE_KEY[q.groupBy]}`, [...range, ...msgs.params]);
+  const saidTotal = (await db.get<{ n: number }>(`SELECT COUNT(*) AS n ${msgBase}`, [...range, ...msgs.params]))?.n ?? 0;
 
   const metrics = (r: CallRow | undefined, userMessages: number): ClaudeStatsMetrics => ({
     turns: r?.turns ?? 0, threads: r?.threads ?? 0, userMessages, inputTokens: r?.input ?? 0, outputTokens: r?.output ?? 0, cacheReadTokens: r?.cache_read ?? 0,
@@ -100,33 +100,32 @@ export function claudeStats(db: StudioDb, q: ClaudeStatsQuery): ClaudeStats {
     byKey.set(s.key, row);
   }
   const rows = [...byKey.values()];
-  for (const row of rows) label(db, q.groupBy, row);
+  for (const row of rows) await label(db, q.groupBy, row);
   rows.sort((a, b) => b.costUsd - a.costUsd || b.turns - a.turns || b.userMessages - a.userMessages);
 
   const offset = Math.trunc(q.tzOffsetMinutes ?? 0);
-  const shift = `${offset >= 0 ? "+" : "-"}${Math.abs(offset)} minutes`;
-  const daily = db.all<{ day: string; turns: number; cost: number | null; input: number | null; output: number | null }>(
-    `SELECT date(c.created_at, ?) AS day, COUNT(*) AS turns, SUM(c.cost_usd) AS cost, SUM(c.input_tokens) AS input, SUM(c.output_tokens) AS output
+  const daily = (await db.all<{ day: string; turns: number; cost: number | null; input: number | null; output: number | null }>(
+    `SELECT to_char(c.created_at AT TIME ZONE 'UTC' + ?::int * interval '1 minute', 'YYYY-MM-DD') AS day, COUNT(*) AS turns, SUM(c.cost_usd) AS cost, SUM(c.input_tokens) AS input, SUM(c.output_tokens) AS output
        ${base} GROUP BY day ORDER BY day`,
-    [shift, ...range, ...calls.params],
-  ).map((d) => ({ day: d.day, turns: d.turns, costUsd: Math.round((d.cost ?? 0) * 1e6) / 1e6, inputTokens: d.input ?? 0, outputTokens: d.output ?? 0 }));
+    [offset, ...range, ...calls.params],
+  )).map((d) => ({ day: d.day, turns: d.turns, costUsd: Math.round((d.cost ?? 0) * 1e6) / 1e6, inputTokens: d.input ?? 0, outputTokens: d.output ?? 0 }));
 
   return { totals: metrics(total, saidTotal), rows, daily };
 }
 
 /** Names a row's team, project or video (people are named by the API from the Account API). */
-function label(db: StudioDb, by: ClaudeStatsGroup, row: ClaudeStatsRow): void {
+async function label(db: StudioDb, by: ClaudeStatsGroup, row: ClaudeStatsRow): Promise<void> {
   if (!row.key) return;
   if (by === "team") {
     row.teamId = row.key;
-    row.label = db.get<{ name: string }>("SELECT name FROM teams WHERE id = ?", [row.key])?.name ?? null;
+    row.label = (await db.get<{ name: string }>("SELECT name FROM teams WHERE id = ?", [row.key]))?.name ?? null;
   } else if (by === "project") {
-    const p = db.get<{ name: string; team_id: string }>("SELECT name, team_id FROM projects WHERE id = ?", [row.key]);
+    const p = await db.get<{ name: string; team_id: string }>("SELECT name, team_id FROM projects WHERE id = ?", [row.key]);
     row.projectId = row.key;
     row.label = p?.name ?? null;
     row.teamId = p?.team_id ?? null;
   } else if (by === "video") {
-    const v = db.get<{ title: string; project_id: string; project_name: string; team_id: string }>(
+    const v = await db.get<{ title: string; project_id: string; project_name: string; team_id: string }>(
       "SELECT v.title, v.project_id, p.name AS project_name, p.team_id FROM videos v JOIN projects p ON p.id = v.project_id WHERE v.id = ?", [row.key],
     );
     row.label = v ? `${v.project_name} · ${v.title}` : null;

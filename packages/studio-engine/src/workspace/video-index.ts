@@ -41,26 +41,28 @@ function readShots(dir: string, assetId: string): InputShots | null {
   try { return JSON.parse(readFileSync(p, "utf8")) as InputShots; } catch { return null; }
 }
 
-export function buildVideoIndex(db: StudioDb, dir: string, projectId: string, videoId: string): VideoIndex {
-  const labels = new Map(listSources(db, projectId, { videoId }).filter((s) => s.kind === "ag_go_asset").map((s) => [s.ref, s.label]));
-  const sources = videoAssetIds(db, projectId, videoId).map((assetId, index): VideoIndexSource => {
-    const prepared = getPrepared(db, projectId, assetId);
-    const shots = prepared?.status === "ready" ? readShots(dir, assetId) : null;
+export async function buildVideoIndex(db: StudioDb, dir: string, projectId: string, videoId: string): Promise<VideoIndex> {
+  const labels = new Map((await listSources(db, projectId, { videoId })).filter((s) => s.kind === "ag_go_asset").map((s) => [s.ref, s.label]));
+  const assetIds = await videoAssetIds(db, projectId, videoId);
+  const prepared = await Promise.all(assetIds.map((assetId) => getPrepared(db, projectId, assetId)));
+  const sources = assetIds.map((assetId, index): VideoIndexSource => {
+    const p = prepared[index];
+    const shots = p?.status === "ready" ? readShots(dir, assetId) : null;
     const input = `inputs/${assetId}/`;
     return {
-      index, asset_id: assetId, source_id: studioSourceId(assetId), name: labels.get(assetId) ?? prepared?.name ?? shots?.name ?? assetId,
-      status: shots ? "ready" : prepared?.status === "failed" ? "failed" : "missing", input,
-      duration_s: prepared?.duration_s ?? null, has_audio: prepared?.has_audio === null || prepared?.has_audio === undefined ? null : prepared.has_audio === 1,
+      index, asset_id: assetId, source_id: studioSourceId(assetId), name: labels.get(assetId) ?? p?.name ?? shots?.name ?? assetId,
+      status: shots ? "ready" : p?.status === "failed" ? "failed" : "missing", input,
+      duration_s: p?.duration_s ?? null, has_audio: p?.has_audio ?? null,
       transcript: shots && existsSync(join(dir, input, "transcript.md")) ? `${input}transcript.md` : null,
-      error: prepared?.status === "failed" ? prepared.error : null,
+      error: p?.status === "failed" ? p.error : null,
       shots: (shots?.shots ?? []).map((s) => ({ shot_id: shotId(index, s.n - 1), n: s.n, in: s.in, out: s.out, frame: `${input}${s.frame}` })),
     };
   });
   return { schema_version: VIDEO_INDEX_SCHEMA, video_id: videoId, sources };
 }
 
-export function writeVideoIndex(db: StudioDb, dir: string, projectId: string, videoId: string): VideoIndex {
-  const index = buildVideoIndex(db, dir, projectId, videoId);
+export async function writeVideoIndex(db: StudioDb, dir: string, projectId: string, videoId: string): Promise<VideoIndex> {
+  const index = await buildVideoIndex(db, dir, projectId, videoId);
   const path = join(dir, videoIndexPath(videoId));
   mkdirSync(join(path, ".."), { recursive: true });
   writeFileSync(`${path}.tmp`, JSON.stringify(index, null, 2));
@@ -69,10 +71,10 @@ export function writeVideoIndex(db: StudioDb, dir: string, projectId: string, vi
 }
 
 /** Every video of the project cut from `assetId` gets its index written again (after the asset was prepared). */
-export function writeVideoIndexesFor(db: StudioDb, dir: string, projectId: string, assetId: string): string[] {
-  const videos = db.all<{ video_id: string }>(
+export async function writeVideoIndexesFor(db: StudioDb, dir: string, projectId: string, assetId: string): Promise<string[]> {
+  const videos = (await db.all<{ video_id: string }>(
     "SELECT DISTINCT video_id FROM project_sources WHERE project_id = ? AND kind = 'ag_go_asset' AND ref = ? AND video_id IS NOT NULL", [projectId, assetId],
-  ).map((r) => r.video_id);
-  for (const v of videos) writeVideoIndex(db, dir, projectId, v);
+  )).map((r) => r.video_id);
+  for (const v of videos) await writeVideoIndex(db, dir, projectId, v);
   return videos;
 }

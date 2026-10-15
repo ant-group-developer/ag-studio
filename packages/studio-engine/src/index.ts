@@ -1,6 +1,7 @@
 export * from "./bucket.js";
 export * from "./core.js";
 export * from "./studio-db.js";
+export * from "./migrate.js";
 export * from "./payloads.js";
 export * from "./worker.js";
 export { FarmOwnerClient } from "@ag-farm/owner-client";

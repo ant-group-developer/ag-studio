@@ -162,12 +162,12 @@ export interface FileVersion {
   author_id: string | null;
   message_id: string | null;
   created_at: string;
-  has_content: number;
+  has_content: boolean;
 }
 
 export interface FileVersionDetail extends FileVersion {
   content: string | null;
-  issues: string | null;
+  issues: unknown;
 }
 
 export interface DiffLine { kind: "context" | "add" | "del"; text: string }

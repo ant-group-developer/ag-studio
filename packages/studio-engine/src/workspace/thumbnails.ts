@@ -38,11 +38,11 @@ export function thumbnailStyleOf(dir: string, over: Partial<ThumbnailStyle> = {}
   return parsed.success ? parsed.data : ThumbnailStyleSchema.parse(base);
 }
 
-export function queueThumbnails(db: StudioDb, p: {
+export async function queueThumbnails(db: StudioDb, p: {
   projectId: string; videoId: string; items: ThumbnailItem[]; style?: Partial<ThumbnailStyle>; threadId?: string | null; continueAgent?: boolean;
   createdBy: string; actorRole?: JobRecord["actor_role"];
-}, now = new Date().toISOString()): JobRecord {
-  const v = requireVideo(db, p.videoId);
+}, now = new Date().toISOString()): Promise<JobRecord> {
+  const v = await requireVideo(db, p.videoId);
   const request: ThumbnailJobRequest = { video_id: v.id, items: p.items.slice(0, 3), ...(p.style ? { style: p.style } : {}) };
   return createJob(db, {
     projectId: p.projectId, videoId: v.id, threadId: p.threadId ?? null, kind: "thumbnail", title: `Thumbnail: ${v.title}`, request,
@@ -52,13 +52,13 @@ export function queueThumbnails(db: StudioDb, p: {
 
 export function thumbnailHandler(d: { db: StudioDb; bucket: StudioBucket; renderer: ThumbnailRenderer }): JobHandler {
   return async (job, ctx) => {
-    const req = JSON.parse(job.request) as ThumbnailJobRequest;
-    const video = requireVideo(d.db, req.video_id);
-    const project = requireProject(d.db, job.project_id);
-    const renders = videoRenders(d.db, project.id, video.id).filter((r) => r.kind !== "export_premiere");
+    const req = job.request as ThumbnailJobRequest;
+    const video = await requireVideo(d.db, req.video_id);
+    const project = await requireProject(d.db, job.project_id);
+    const renders = (await videoRenders(d.db, project.id, video.id)).filter((r) => r.kind !== "export_premiere");
     const source = renders.find((r) => r.kind === "render_final") ?? renders[0];
     if (!source) throw new Error("cần một bản render (xem trước hoặc bản cuối) để cắt khung: render_preview trước");
-    ctx.report({ phase: "Đang lấy bản render", progress: 0.1 });
+    await ctx.report({ phase: "Đang lấy bản render", progress: 0.1 });
     const mp4 = join(ctx.tempDir, "video.mp4");
     writeFileSync(mp4, await d.bucket.get(source.key));
     const size = THUMBNAIL_SIZES[project.aspect];
@@ -68,8 +68,8 @@ export function thumbnailHandler(d: { db: StudioDb; bucket: StudioBucket; render
     const taken = new Set(readdirSync(outDir));
     const made: { file: string; text: string; at: number }[] = [];
     for (const [i, item] of req.items.entries()) {
-      ctx.checkpoint();
-      ctx.report({ phase: `Đang làm thumbnail ${i + 1}/${req.items.length}`, progress: 0.2 + 0.7 * (i / req.items.length) });
+      await ctx.checkpoint();
+      await ctx.report({ phase: `Đang làm thumbnail ${i + 1}/${req.items.length}`, progress: 0.2 + 0.7 * (i / req.items.length) });
       const at = Math.max(0, Math.min(item.at_seconds ?? (source.duration_s ?? 10) * (0.25 + 0.25 * i), Math.max(0, (source.duration_s ?? 1) - 0.1)));
       const frame = join(ctx.tempDir, `frame-${i}.jpg`);
       await d.renderer.extractFrame(mp4, at, frame, size);
@@ -79,13 +79,13 @@ export function thumbnailHandler(d: { db: StudioDb; bucket: StudioBucket; render
       taken.add(name);
       const out = join(ctx.tempDir, name);
       await d.renderer.compose(frame, out, { lines: thumbnailTextLines(item.text, { ...size, style }), style, size });
-      writeWorkspaceFile(d.db, { projectId: project.id, dir: ctx.workspaceDir, path: `${thumbnailsDir(video.id)}/${name}`, content: readFileSync(out), baseSha256: null, author: { kind: "studio", id: null }, now: ctx.now() });
+      await writeWorkspaceFile(d.db, { projectId: project.id, dir: ctx.workspaceDir, path: `${thumbnailsDir(video.id)}/${name}`, content: readFileSync(out), baseSha256: null, author: { kind: "studio", id: null }, now: ctx.now() });
       made.push({ file: name, text: item.text, at });
     }
     const readmePath = `${thumbnailsDir(video.id)}/README.md`;
     const old = existsSync(join(ctx.workspaceDir, readmePath)) ? readFileSync(join(ctx.workspaceDir, readmePath), "utf8").replace(/\s+$/, "") : `# Thumbnail · ${video.title}\n\nẢnh ${size.width}×${size.height}, chữ theo branding. Mở ảnh để xem; nhờ agent làm lại với chữ hoặc khung khác.\n`;
     const rows = made.map((m) => `- \`${m.file}\`: "${m.text}" · khung ở giây ${m.at.toFixed(1)} của ${source.kind === "render_final" ? "bản cuối" : "bản xem trước"} (timeline bản ${source.revision})`);
-    writeWorkspaceFile(d.db, { projectId: project.id, dir: ctx.workspaceDir, path: readmePath, content: `${old}\n${rows.join("\n")}\n`, author: { kind: "studio", id: null }, now: ctx.now() });
+    await writeWorkspaceFile(d.db, { projectId: project.id, dir: ctx.workspaceDir, path: readmePath, content: `${old}\n${rows.join("\n")}\n`, author: { kind: "studio", id: null }, now: ctx.now() });
     return {
       result: { files: made.map((m) => `${thumbnailsDir(video.id)}/${m.file}`), from: source.kind, revision: source.revision },
       message: `Đã làm ${made.length} thumbnail cho **${video.title}**: ${made.map((m) => `\`${thumbnailsDir(video.id)}/${m.file}\``).join(", ")}.`,
