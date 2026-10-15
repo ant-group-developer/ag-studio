@@ -51,6 +51,68 @@ export function timelineSummary(t: TimelineV4, revision: number, label: string |
   };
 }
 
+export const TIMELINE_VIEWS = ["overview", "clips", "texts", "full"] as const;
+export type TimelineView = (typeof TIMELINE_VIEWS)[number];
+/** At most this many clips or texts in one `clips`/`texts` read; the rest is read from `next_from_s`. */
+const VIEW_ROWS = 120;
+
+/**
+ * What `timeline_get` answers (plan 2026-10-15 feedback-vps §3.2): a 145-clip timeline read whole was tens of thousands
+ * of tokens every time. `overview` (the default): length, counts, the sections with their clip ranges and times, music,
+ * source audio, problems. `clips` / `texts`: the rows that play within `[from_s, to_s)`, a page at a time. `full`: all
+ * of it (`timelineSummary`).
+ */
+export function timelineView(t: TimelineV4, revision: number, label: string | null, view: TimelineView = "overview", range: { from_s?: number; to_s?: number } = {}) {
+  const full = timelineSummary(t, revision, label);
+  if (view === "full") return { view, ...full };
+  const head = { revision, label, view, approx_seconds: full.approx_seconds };
+  const from = range.from_s ?? 0;
+  const to = range.to_s ?? Number.POSITIVE_INFINITY;
+  const page = <R>(rows: R[], startOf: (r: R) => number) => {
+    const shown = rows.slice(0, VIEW_ROWS);
+    return {
+      shown,
+      more: rows.length > VIEW_ROWS ? { truncated: true, next_from_s: r2(startOf(rows[VIEW_ROWS]!)), left: rows.length - VIEW_ROWS } : {},
+    };
+  };
+  if (view === "clips") {
+    const rows = full.clips.filter((c) => c.at < to && c.at + c.length > from);
+    const { shown, more } = page(rows, (c) => c.at);
+    const lineIds = new Set(shown.map((c) => c.line_id).filter((id): id is string => id !== null));
+    return {
+      ...head, from_s: from, ...(Number.isFinite(to) ? { to_s: to } : {}), clips_total: full.clips.length, clips: shown, ...more,
+      narration: full.narration.lines.filter((l) => lineIds.has(l.line_id)),
+    };
+  }
+  if (view === "texts") {
+    const rows = full.texts.filter((x) => x.start < to && x.start + x.duration > from);
+    const { shown, more } = page(rows, (x) => x.start);
+    return { ...head, from_s: from, ...(Number.isFinite(to) ? { to_s: to } : {}), texts_total: full.texts.length, texts: shown, ...more };
+  }
+  // overview: a section starts at a clip with a section title (clips before the first one make an untitled section)
+  const sections: { title: string | null; clips: string; at: number; end: number; count: number }[] = [];
+  for (const c of full.clips) {
+    const last = sections.at(-1);
+    if (!last || c.section_title !== null) {
+      sections.push({ title: c.section_title, clips: c.clip_id, at: c.at, end: r2(c.at + c.length), count: 1 });
+      continue;
+    }
+    last.clips = `${last.clips.split("–")[0]}–${c.clip_id}`;
+    last.end = r2(c.at + c.length);
+    last.count += 1;
+  }
+  return {
+    ...head, canvas: t.canvas, fps: t.fps, edit_style: t.edit_style,
+    counts: {
+      clips: t.clips.length, videos: new Set(t.clips.map((c) => c.asset_id)).size, texts: t.texts.length, narration_lines: t.narration.lines.length,
+      muted_clips: t.clips.filter((c) => c.muted).length, dissolves: t.clips.filter((c) => c.transition_out.kind === "dissolve").length,
+    },
+    sections, music: t.music, narration_voice: t.narration.voice, captions: t.captions.mode, source_muted: t.source_audio.muted,
+    issues: full.issues,
+    read_more: "Đọc từng khúc: view \"clips\" hoặc \"texts\" với from_s/to_s (giây trong video); view \"full\" khi thật cần cả timeline.",
+  };
+}
+
 async function waitFor(ctx: AgentToolContext, jobId: string, seconds: number): Promise<ToolAnswer> {
   const until = Date.now() + seconds * 1000;
   for (;;) {
@@ -76,13 +138,26 @@ export const TIMELINE_TOOLS: AgentTool[] = [
   }),
   tool({
     name: "timeline_get",
-    description: "Đọc timeline của video (bản mới nhất, hoặc `revision`): từng clip (vị trí trong video, đoạn lấy, shot, câu lời dẫn, chuyển cảnh, tắt tiếng), chữ trên hình, lời dẫn, nhạc, phụ đề, và lỗi/cảnh báo. Dùng số `revision` này làm base_revision khi sửa.",
-    input: z.object({ video_id: z.string().min(1).optional(), revision: z.number().int().min(1).optional() }).strict(),
+    description: [
+      "Đọc timeline của video (bản mới nhất, hoặc `revision`). Dùng số `revision` trả về làm base_revision khi sửa.",
+      "`view`: overview (mặc định: độ dài, số clip/chữ/câu lời dẫn, các phần với khoảng clip và mốc giờ, nhạc, tiếng gốc, lỗi/cảnh báo);",
+      "clips (từng clip: vị trí trong video, đoạn lấy, shot, câu lời dẫn, chuyển cảnh, tắt tiếng) và texts (chữ trên hình) đọc theo khúc `from_s`–`to_s` (giây trong video);",
+      "full (tất cả, rất dài với timeline nhiều clip: chỉ dùng khi thật cần).",
+    ].join(" "),
+    input: z.object({
+      video_id: z.string().min(1).optional(),
+      revision: z.number().int().min(1).optional(),
+      view: z.enum(TIMELINE_VIEWS).optional(),
+      from_s: z.number().min(0).optional(),
+      to_s: z.number().positive().optional(),
+    }).strict(),
     run: async (ctx, a) => {
       const v = await videoOf(ctx, a.video_id);
       const rev = a.revision ? await getVideoRevision(ctx.db, v.id, a.revision) : await latestVideoRevision(ctx.db, v.id);
       if (!rev) return { text: "Video chưa có timeline: dựng bằng timeline_from_edit_plan sau khi có edit-plan.json.", isError: true };
-      return { text: json(timelineSummary(rev.data, rev.revision, rev.label)) };
+      if (a.from_s !== undefined && a.to_s !== undefined && a.to_s <= a.from_s) return { text: "to_s phải lớn hơn from_s.", isError: true };
+      const range = { ...(a.from_s !== undefined ? { from_s: a.from_s } : {}), ...(a.to_s !== undefined ? { to_s: a.to_s } : {}) };
+      return { text: json(timelineView(rev.data, rev.revision, rev.label, a.view ?? "overview", range)) };
     },
   }),
   tool({

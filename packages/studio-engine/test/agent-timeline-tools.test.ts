@@ -58,9 +58,37 @@ describe("timeline tools", () => {
     const s = await setup();
     expect(await call(s, "timeline_get", {})).toMatchObject({ isError: true, text: expect.stringContaining("chưa có timeline") });
     await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u", label: "fit" });
-    const r = await call(s, "timeline_get", {});
-    expect(r.json).toMatchObject({ revision: 1, label: "fit", approx_seconds: 7.6 });
+    const r = await call(s, "timeline_get", { view: "clips" });
+    expect(r.json).toMatchObject({ revision: 1, label: "fit", view: "clips", approx_seconds: 7.6, clips_total: 2 });
     expect(r.json.clips.map((c: { clip_id: string; at: number; asset: string }) => [c.clip_id, c.at, c.asset])).toEqual([["C001", 0, "Thuyền"], ["C002", 3.6, "Thuyền"]]);
+    expect((await call(s, "timeline_get", { view: "full" })).json).toMatchObject({ view: "full", texts: [{ text_id: "T001" }], clips: [{ clip_id: "C001" }, { clip_id: "C002" }] });
+  });
+
+  it("timeline_get answers an overview by default, and clips or texts a stretch at a time", async () => {
+    const s = await setup();
+    const clip = (n: number, section: string | null) => ({
+      clip_id: `C${String(n).padStart(3, "0")}`, asset_id: "a1", section_title: section, in: 0, out: 2, shot_id: null, line_id: null, transition_out: { kind: "cut" as const, seconds: 0 },
+    });
+    const clips = Array.from({ length: 150 }, (_, i) => clip(i + 1, i === 0 ? "Mở đầu" : i === 100 ? "Kết" : null));
+    const texts = Array.from({ length: 10 }, (_, i) => ({ text_id: `T${String(i + 1).padStart(3, "0")}`, kind: "callout" as const, text: `chữ ${i}`, start: i * 30, duration: 3, position: "bottom_left" as const }));
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: { ...timeline(s.video.id), clips, texts }, authorId: "u" });
+
+    const o = (await call(s, "timeline_get", {})).json;
+    expect(o).toMatchObject({ view: "overview", approx_seconds: 300, counts: { clips: 150, videos: 1, texts: 10, narration_lines: 0, muted_clips: 0, dissolves: 0 }, source_muted: false, music: null });
+    expect(o.sections).toEqual([
+      { title: "Mở đầu", clips: "C001–C100", at: 0, end: 200, count: 100 },
+      { title: "Kết", clips: "C101–C150", at: 200, end: 300, count: 50 },
+    ]);
+    expect(o.clips).toBeUndefined();
+    expect(o.texts).toBeUndefined();
+
+    const part = (await call(s, "timeline_get", { view: "clips", from_s: 61, to_s: 66 })).json;
+    expect(part.clips.map((c: { clip_id: string }) => c.clip_id)).toEqual(["C031", "C032", "C033"]);
+    const first = (await call(s, "timeline_get", { view: "clips" })).json;
+    expect(first).toMatchObject({ truncated: true, next_from_s: 240, left: 30 });
+    expect(first.clips).toHaveLength(120);
+    expect((await call(s, "timeline_get", { view: "texts", from_s: 100, to_s: 200 })).json.texts.map((x: { text_id: string }) => x.text_id)).toEqual(["T005", "T006", "T007"]);
+    expect(await call(s, "timeline_get", { view: "clips", from_s: 10, to_s: 5 })).toMatchObject({ isError: true });
   });
 
   it("timeline_apply_ops saves a new revision on the one read, refuses a stale base and an asset the video does not have", async () => {

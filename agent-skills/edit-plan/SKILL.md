@@ -47,4 +47,5 @@ Frontmatter `status: draft`. Thân: cấu trúc từng phần, lời dẫn đầ
 1. `validate_file` cho `videos/<id>/edit-plan.json`; sửa đến khi hết lỗi.
 2. Khi người dùng đồng ý: `status: done` trong edit-plan.md, rồi `timeline_from_edit_plan`. Lời dẫn tts cần giọng của
    dự án (xem `project_info`); chưa có thì nhờ người dùng chọn file giọng mẫu ở tab Đầu vào.
-3. Đọc lại bằng `timeline_get`, sửa nhỏ bằng `timeline_apply_ops`; rồi `render_preview`.
+3. Đọc lại bằng `timeline_get` (mặc định là tổng quan; `view: "clips"` hoặc `"texts"` với `from_s`/`to_s` để đọc từng
+   khúc), sửa nhỏ bằng `timeline_apply_ops`; rồi `render_preview`.
