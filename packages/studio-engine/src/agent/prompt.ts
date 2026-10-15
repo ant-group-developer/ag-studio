@@ -72,6 +72,14 @@ Gợi ý bước tiếp theo theo luồng đang chat: luồng của một video 
 gợi ý bước của kênh. Bước kênh còn dở (Branding…) trong luồng video chỉ nhắc khi bước đang làm cần nó (gói YouTube), và
 khuyên làm ở luồng Kênh; đừng tự chuyển sang làm bước kênh trong luồng video khi người dùng không hỏi.
 
+## Nói với người dùng về bản render
+- Bản xem trước và bản cuối xem ở trang video, cột bên phải, tab "Xem trước". Khi báo render xong, đưa link markdown
+  \`[Mở bản xem trước](/p/<id dự án>/v/<id video>?tab=preview)\` (đường dẫn đúng có trong \`<studio_context>\`); bấm là mở.
+- Nhạc ngắn hơn video thì tự lặp lại tới hết video (mờ dần ở đầu và cuối): đừng bảo người dùng nghe xem cuối video có bị
+  im không. Chỗ im thật thì phần "Tự kiểm" của ghi chú render đã nói.
+- Không giải thích cảnh báo kỹ thuật của máy render (loudnorm, nvenc, các mã như \`duration_mismatch\`, \`inspect_failed\`):
+  nói điều đó nghĩa là gì cho video ("bản render ngắn hơn timeline, cần render lại"), hoặc bỏ qua khi nó không ảnh hưởng gì.
+
 ## Việc có tác dụng thật
 Render bản cuối, xuất file Premiere, xoá video, crawl lớn, tải video mẫu từ YouTube (học phong cách): KHÔNG tự làm. Gọi
 \`propose_action\` để người dùng bấm xác nhận trên giao diện, rồi kết thúc lượt. Việc nhẹ (đọc, ghi tài liệu, dựng timeline,
@@ -163,13 +171,21 @@ export function youtubeBlockLines(block: YoutubeBlock | null, o: { farm?: Youtub
   ];
 }
 
+/** The web page of a video with its Xem trước tab open, as a link inside Studio's web (`ProjectPage`). */
+export function previewLink(projectId: string, videoId: string): string {
+  return `/p/${projectId}/v/${videoId}?tab=preview`;
+}
+
 /** The turn's message: `<studio_context>`, then what the people (and Studio) said since the last turn. */
 export function agentTurnPrompt(i: TurnPromptInput): string {
   const lines = [
     `Dự án: ${i.project.name}${i.project.channel_url ? ` (${i.project.channel_url})` : ""} · ngôn ngữ ${i.project.language} · khung ${i.project.aspect}`,
     `Luồng chat: ${i.thread.kind === "video" ? "luồng của video" : "luồng của dự án"} "${i.thread.title}"`,
   ];
-  if (i.video) lines.push(`Video của luồng: #${i.video.idx} "${i.video.title}" (id ${i.video.id}) — thư mục videos/${i.video.id}/, trạng thái ${i.video.status}`);
+  if (i.video) {
+    lines.push(`Video của luồng: #${i.video.idx} "${i.video.title}" (id ${i.video.id}) — thư mục videos/${i.video.id}/, trạng thái ${i.video.status}`);
+    lines.push(`Link bản xem trước của video (tab Xem trước): ${previewLink(i.project.id, i.video.id)}`);
+  }
   if (i.refs.length) lines.push("Người dùng muốn bạn học từ các luồng chat cũ này (đọc khi cần):", ...i.refs.map(refLine));
   lines.push(...(i.extra ?? []));
   lines.push(`Bây giờ: ${new Date(i.now).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}`);
