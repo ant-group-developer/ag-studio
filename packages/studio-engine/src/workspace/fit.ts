@@ -38,7 +38,13 @@ export interface FitDeps {
   voiceDir: string;
   pollMs?: number;
   queueTimeoutMs?: number;
+  /** How long the fit waits for a farm machine to find the music's beats (default `FIT_BEATS_QUEUE_TIMEOUT_MS`). */
+  beatsQueueTimeoutMs?: number;
 }
+
+/** The beats are a nicety of the fit (`snap`): without a machine to find them soon, the cuts stay where the plan put
+ * them instead of holding a lane for the hours a render may wait. */
+export const FIT_BEATS_QUEUE_TIMEOUT_MS = 5 * 60_000;
 
 /** `request` of a `fit` job. */
 export interface FitJobRequest { video_id: string }
@@ -259,7 +265,8 @@ export function fitHandler(d: FitDeps): JobHandler {
         if (!b) {
           try {
             await ctx.report({ phase: "Đang tìm nhịp của nhạc nền", progress: 0.88 });
-            b = await analyseMusicBeats(d, ctx, job, req, [0.88, 0.92]);
+            const wait = Math.min(d.queueTimeoutMs ?? Infinity, d.beatsQueueTimeoutMs ?? FIT_BEATS_QUEUE_TIMEOUT_MS);
+            b = await analyseMusicBeats({ ...d, queueTimeoutMs: wait }, ctx, job, req, [0.88, 0.92]);
           } catch (e) {
             if (e instanceof JobStopped) throw e;
             beatsNote = `chưa có nhịp của nhạc (${e instanceof Error ? e.message : String(e)}) nên điểm cắt giữ nguyên`;

@@ -29,7 +29,7 @@ const view = (over: Partial<FarmJobView>): FarmJobView => ({
 let opened: Awaited<ReturnType<typeof world>> | undefined;
 afterEach(async () => { await opened?.db.close(); opened = undefined; });
 
-async function setup() {
+async function setup(o: { farmIdle?: boolean } = {}) {
   const w = opened = await world();
   await w.db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [NOW, NOW]);
   const project = await createProject(w.db, "team-1", { name: "Du lịch chậm", description: "", language: "vi", aspect: "16:9" }, "u", NOW);
@@ -48,14 +48,14 @@ async function setup() {
       })));
       return { job: view({}), created: true };
     },
-    getJob: async () => view({ status: "completed" }),
+    getJob: async () => view({ status: o.farmIdle ? "queued" : "completed" }),
     cancelJob: async () => view({ status: "cancelled" }),
     ackJob: async () => view({ status: "completed" }),
   };
   const deps = { db: w.db, bucket: w.bucket, farm, pollMs: 1 };
   const runner = createJobRunner({
     db: w.db, logger: studioLogger({ test: "beats" }), workspacesRoot: root, dataRoot: join(w.dir, "data"),
-    handlers: { music_beats: musicBeatsHandler(deps), fit: fitHandler({ ...deps, voiceDir: join(w.dir, "voice") }) },
+    handlers: { music_beats: musicBeatsHandler(deps), fit: fitHandler({ ...deps, voiceDir: join(w.dir, "voice"), queueTimeoutMs: 3_600_000, beatsQueueTimeoutMs: 30 }) },
   });
   const run = async () => { await runner.tick(); await runner.idle(); };
   return { ...w, project, video, dir, track, submitted, run };
@@ -152,6 +152,17 @@ describe("fit with snap", () => {
     await s.run();
     expect(s.submitted).toHaveLength(1);
     expect(layoutTimeline((await latestVideoRevision(s.db, s.video.id))!.data).clips.map((c) => c.end)).toEqual(cuts);
+  });
+
+  it("no farm machine to find the beats: the fit waits a little, not the hours a render may, and keeps the cuts", async () => {
+    const s = await setup({ farmIdle: true });
+    await planned(s);
+    const job = await queueFit(s.db, { projectId: s.project.id, videoId: s.video.id, createdBy: "u" }, NOW);
+    await s.run();
+    const done = (await getJob(s.db, job.id))!;
+    expect(done.status).toBe("done");
+    expect(layoutTimeline((await latestVideoRevision(s.db, s.video.id))!.data).clips.map((c) => c.end)).toEqual([7.1, 12.7, 16, 25.4]);
+    expect(done.result).toMatchObject({ snap: { moved: [], music: expect.stringContaining("chưa có nhịp của nhạc") } });
   });
 
   it("without music the cuts stay where the plan put them, and the job says why", async () => {
