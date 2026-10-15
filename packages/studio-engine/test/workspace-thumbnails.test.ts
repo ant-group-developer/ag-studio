@@ -85,4 +85,18 @@ describe("thumbnails", () => {
     expect(readFileSync(join(fdir, "r3-0801.0s.jpg"), "utf8")).toBe("jpg-frame");
     expect(finished.result).toMatchObject({ from: "render_preview", revision: 3, files: expect.arrayContaining([`videos/${s.video.id}/renders/frames/r3-0803.2s.jpg`]) });
   });
+
+  it("render_frames cuts the same second again, and two seconds past the end once", async () => {
+    const s = await setup();
+    const r = await createJob(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", title: "r", request: {}, createdBy: "u" }, NOW);
+    await claimJob(s.db, ["render_preview"], NOW);
+    await finishJob(s.db, r.id, { status: "done", result: { kind: "render_preview", revision: 2, key: "k/preview.mp4", duration_s: 60, width: 1920, height: 1080, watermarked: false, size_bytes: 1, note: "" } }, NOW);
+    await s.bucket.put("k/preview.mp4", Buffer.from("mp4"));
+    const first = await queueRenderFrames(s.db, { projectId: s.project.id, videoId: s.video.id, atSeconds: [10, 90, 100], createdBy: "u" }, NOW);
+    await s.run();
+    expect(await getJob(s.db, first.id)).toMatchObject({ status: "done", result: { files: [`videos/${s.video.id}/renders/frames/r2-0010.0s.jpg`, `videos/${s.video.id}/renders/frames/r2-0059.9s.jpg`] } });
+    const again = await queueRenderFrames(s.db, { projectId: s.project.id, videoId: s.video.id, atSeconds: [10], createdBy: "u" }, NOW);
+    await s.run();
+    expect(await getJob(s.db, again.id)).toMatchObject({ status: "done", result: { files: [`videos/${s.video.id}/renders/frames/r2-0010.0s.jpg`] } });
+  });
 });

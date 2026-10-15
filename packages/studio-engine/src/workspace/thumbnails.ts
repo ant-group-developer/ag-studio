@@ -6,7 +6,7 @@
  * The same job also cuts plain frames for the agent to look at (`render_frames`, plan 2026-10-15 feedback-vps §2.3):
  * no words, the render's own aspect, into `videos/<id>/renders/frames/`.
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { THUMBNAIL_SIZES, ThumbnailStyleSchema, type ThumbnailStyle } from "@harness/contracts";
 import { thumbnailTextLines } from "@harness/core";
@@ -95,21 +95,24 @@ export function thumbnailHandler(d: { db: StudioDb; bucket: StudioBucket; render
     if (!source) throw new Error("cần một bản render (xem trước hoặc bản cuối) để cắt khung: render_preview trước");
     await ctx.report({ phase: "Đang lấy bản render", progress: 0.1 });
     const mp4 = join(ctx.tempDir, "video.mp4");
-    writeFileSync(mp4, await d.bucket.get(source.key));
+    // streamed to disk: a final render may be gigabytes
+    await d.bucket.getFile(source.key, mp4);
     const from = source.kind === "render_final" ? "bản cuối" : "bản xem trước";
     if (req.frames) {
       const size = frameSize(source, THUMBNAIL_SIZES[project.aspect]);
       const dir = renderFramesDir(video.id);
       mkdirSync(join(ctx.workspaceDir, dir), { recursive: true });
       const cut: { path: string; at: number }[] = [];
-      for (const [i, wanted] of req.frames.entries()) {
+      // seconds past the end all land on the last frame: cut it once
+      const ats = [...new Set(req.frames.map((wanted) => Math.round(10 * Math.min(wanted, Math.max(0, (source.duration_s ?? wanted + 0.1) - 0.1))) / 10))];
+      for (const [i, at] of ats.entries()) {
         await ctx.checkpoint();
-        await ctx.report({ phase: `Đang cắt khung ${i + 1}/${req.frames.length}`, progress: 0.2 + 0.75 * (i / req.frames.length) });
-        const at = Math.round(10 * Math.min(wanted, Math.max(0, (source.duration_s ?? wanted + 0.1) - 0.1))) / 10;
+        await ctx.report({ phase: `Đang cắt khung ${i + 1}/${ats.length}`, progress: 0.2 + 0.75 * (i / ats.length) });
         const name = `r${source.revision}-${at.toFixed(1).padStart(6, "0")}s.jpg`;
         const out = join(ctx.tempDir, name);
         await d.renderer.extractFrame(mp4, at, out, size);
-        await writeWorkspaceFile(d.db, { projectId: project.id, dir: ctx.workspaceDir, path: `${dir}/${name}`, content: readFileSync(out), baseSha256: null, author: { kind: "studio", id: null }, now: ctx.now() });
+        // the same second of the same timeline revision again (from a newer render of it) replaces the older frame
+        await writeWorkspaceFile(d.db, { projectId: project.id, dir: ctx.workspaceDir, path: `${dir}/${name}`, content: readFileSync(out), author: { kind: "studio", id: null }, now: ctx.now() });
         cut.push({ path: `${dir}/${name}`, at });
       }
       return {
