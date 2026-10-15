@@ -645,6 +645,16 @@
         "source_even": {
           "type": "boolean"
         },
+        "look": {
+          "type": "string",
+          "enum": [
+            "none",
+            "natural",
+            "vivid",
+            "warm",
+            "cinematic"
+          ]
+        },
         "warnings": {
           "type": "array",
           "items": {

@@ -11,7 +11,7 @@
  */
 import {
   upgradeTimelineV3,
-  type CaptionMode, type EpisodeAsset, type MusicEnvelopePoint, type StudioMusic, type TimelineClipV4, type TimelineOp, type TimelineText,
+  type CaptionMode, type EpisodeAsset, type MusicEnvelopePoint, type VideoLook, type StudioMusic, type TimelineClipV4, type TimelineOp, type TimelineText,
   type StoredTimeline, type TimelineTransitionKind, type TimelineV4,
 } from "@harness/contracts";
 
@@ -473,6 +473,12 @@ export function setMusicEnvelope(t: TimelineV4, points: readonly MusicEnvelopePo
   return { ...v4, music: envelope.length ? { ...music, envelope } : music };
 }
 
+/** The colour of the picture (`none` removes the key: as filmed). Timeline v4 only. */
+export function setLook(t: TimelineV4, look: VideoLook): TimelineV4 {
+  const { look: _was, ...rest } = requireV4(t, "Màu");
+  return look === "none" ? rest : { ...rest, look };
+}
+
 /** Burnt-in subtitles from the narration. Timeline v4 only. */
 export function setCaptions(t: TimelineV4, mode: CaptionMode): TimelineV4 {
   return { ...requireV4(t, "Phụ đề"), captions: { mode } };
@@ -545,6 +551,7 @@ function applyOne<T extends AnyTimeline>(t: T, op: TimelineOp, allowed: Record<s
     case "setClipGain": return setClipGain(requireV4(t, "Âm lượng clip"), op.clip_id, op.gain_db) as T;
     case "setSourceEven": return setSourceEven(requireV4(t, "Đều tiếng gốc"), op.even) as T;
     case "setMusicEnvelope": return setMusicEnvelope(requireV4(t, "Đường âm lượng nhạc"), op.points) as T;
+    case "setLook": return setLook(requireV4(t, "Màu"), op.look) as T;
   }
 }
 

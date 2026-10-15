@@ -46,6 +46,11 @@ describe("compositionFeatureLevel", () => {
     expect(compositionFeatureLevel(timelineToComposition({ ...t, music: { ...t.music!, envelope: [{ at: 0, gain_db: -30 }] } }))).toBe(5);
   });
 
+  it("is 6 for a colour look", () => {
+    expect(compositionFeatureLevel(timelineToComposition({ ...timeline(null), look: "cinematic" }))).toBe(6);
+    expect(compositionFeatureLevel(timelineToComposition({ ...timeline(null), look: "none" }))).toBe(0);
+  });
+
   it("never asks for more than this build renders", () => {
     expect(compositionFeatureLevel(timelineToComposition(timeline({ track: "library:m.mp3", gain_db: -30, ducking: false })))).toBeLessThanOrEqual(RENDER_FEATURE_LEVEL);
   });

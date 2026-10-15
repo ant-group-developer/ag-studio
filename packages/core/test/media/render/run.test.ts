@@ -799,6 +799,29 @@ describe.skipIf(!hasFfmpeg())("renderComposition (needs ffmpeg)", () => {
     expect(maxVolumeDb(res.episodePath, 4, 1)! - maxVolumeDb(res.episodePath, 1, 1)!).toBeGreaterThan(25);
   }, 240_000);
 
+  it("feedback-vps §4.6: every look renders with this ffmpeg and changes the picture", async () => {
+    const srcDir = tempDir("render-src-look-");
+    const a = join(srcDir, "a.mp4");
+    makeClip(a, 4, true);
+    const frameMean = (file: string) => {
+      const r = spawnSync(ffmpegPath(), ["-v", "error", "-ss", "1.5", "-i", file, "-frames:v", "1", "-vf", "scale=1:1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]);
+      expect(r.stdout).toHaveLength(3);
+      return [...r.stdout].join(",");
+    };
+    const cacheDir = join(tempDir("render-cache-look-"), "mezz");
+    const colours = new Set<string>();
+    for (const look of [undefined, "natural", "vivid", "warm", "cinematic"] as const) {
+      const comp = composition({
+        output: { width: 320, height: 180, fps: 25, codec: "h264" }, total_seconds: 3,
+        segments: [segment({ order: 0, source_id: SRC_A, source_path: a, in: 0, out: 3, start: 0, end: 3, has_audio: true })],
+        ...(look ? { look } : {}),
+      });
+      const res = await renderComposition(deps(cacheDir), input({ composition: comp, outDir: join(tempDir("render-out-look-"), "out"), sourceChecksums: new Map([[SRC_A, "sha256:" + "4".repeat(64)]]) }));
+      colours.add(frameMean(res.episodePath));
+    }
+    expect(colours.size).toBe(5);
+  }, 240_000);
+
   it("a segment whose source_id has no checksum is a CONFIG_INVALID, before any ffmpeg runs", async () => {
     const srcDir = tempDir("render-src-e-");
     const a = join(srcDir, "a.mp4");

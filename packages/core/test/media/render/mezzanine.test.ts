@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { canonicalJson } from "../../../src/artifacts/checksum.js";
-import { MEZZ_VERSION, mezzArgs, mezzCacheKey, scaleFilter } from "../../../src/media/render/mezzanine.js";
+import { lookFilter, MEZZ_VERSION, mezzArgs, mezzCacheKey, scaleFilter } from "../../../src/media/render/mezzanine.js";
 
 const BASE_KEY = {
   source_checksum: "sha256:aaaa",
@@ -40,6 +40,24 @@ describe("mezzCacheKey", () => {
   });
   it("changes when tail_seconds is present vs absent", () => {
     expect(mezzCacheKey(BASE_KEY)).not.toBe(mezzCacheKey({ ...BASE_KEY, tail_seconds: 0.4 }));
+  });
+});
+
+describe("look (feedback-vps §4.6)", () => {
+  it("a look is part of the cache key; none keeps the key every older entry has", () => {
+    expect(mezzCacheKey({ ...BASE_KEY, look: "none" })).toBe(mezzCacheKey(BASE_KEY));
+    expect(mezzCacheKey({ ...BASE_KEY, look: "warm" })).not.toBe(mezzCacheKey(BASE_KEY));
+    expect(mezzCacheKey({ ...BASE_KEY, look: "warm" })).not.toBe(mezzCacheKey({ ...BASE_KEY, look: "vivid" }));
+  });
+
+  it("grades the scaled picture before the frame rate, and only when asked", () => {
+    expect(lookFilter("none")).toBeNull();
+    expect(lookFilter(undefined)).toBeNull();
+    for (const look of ["natural", "vivid", "warm", "cinematic"] as const) expect(lookFilter(look)).toMatch(/^(eq|colorbalance|curves)=/);
+    const args = (look?: "warm") => mezzArgs({ ffmpeg: "ffmpeg", source: "a.mp4", in: 0, out: 2, fit: "scale_pad", w: 640, h: 360, fps: 25, has_audio: true, encoder: "cpu", codec: "h264", out_path: "o.mp4", ...(look ? { look } : {}) });
+    const graph = (a: string[]) => a[a.indexOf("-filter_complex") + 1]!;
+    expect(graph(args("warm"))).toContain(`setsar=1,${lookFilter("warm")},fps=25`);
+    expect(graph(args())).toContain("setsar=1,fps=25");
   });
 });
 

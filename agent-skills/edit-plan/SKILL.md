@@ -51,6 +51,7 @@ description: Viết kế hoạch dựng của một video — thứ tự shot, �
   tab Đầu vào, hoặc bạn đặt bằng `music_set` (file trong `context/audio/`, ghép nhiều bài) — `music_list` cho biết nhạc
   đang gán. `music` (tuỳ chọn): `{ "gain_db": -24, "ducking": false }` = nhạc đó phát ở mức này, có/không nhỏ lại khi có
   lời; `"music": null` = video không có nhạc.
+- `look` (tuỳ chọn): màu hình của video này thay cho `look` của branding — none | natural | vivid | warm | cinematic.
 - `text_look` (tuỳ chọn): kiểu chữ riêng của video thay cho `text_look` của branding (cùng các khoá: màu, `size`,
   `shadow`, `font`).
 - `target_seconds` theo brief (10–3600).

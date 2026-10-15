@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { TEXT_LOOK_SIZES, TextLookSchema } from "./composition.js";
+import { TEXT_LOOK_SIZES, TextLookSchema, VIDEO_LOOKS } from "./composition.js";
 import { surveyIndexSchemaV2 } from "./library.js";
 
 /**
@@ -784,6 +784,8 @@ export const TimelineV4Schema = z.object({
   alternates: z.array(reasonedAsset),
   /** Cut 1.1.0: the branding's text look, frozen when the cut is fitted. Absent = the Studio default look. */
   text_style: TextLookSchema.optional(),
+  /** Feedback-vps §4.6: the colour of the picture (`VIDEO_LOOKS`). Absent = `none`, as filmed. */
+  look: z.enum(VIDEO_LOOKS).optional(),
 }).strict();
 export type TimelineV4 = z.infer<typeof TimelineV4Schema>;
 export type TimelineClipV4 = TimelineV4["clips"][number];
@@ -839,6 +841,7 @@ export function downgradeTimelineV4(t: TimelineV4): TimelineV3 {
   if (n.voice !== "none" || n.lines.length > 0 || n.lead_seconds !== DEFAULT_NARRATION_LEAD_SECONDS) lost.push("narration");
   if (t.captions.mode !== "none") lost.push("captions");
   if (t.text_style) lost.push("text_style");
+  if (t.look !== undefined) lost.push("look");
   if (lost.length > 0) throw new TimelineVersionError(`a v3 timeline cannot hold: ${lost.join(", ")}`);
   return {
     schema_version: "studio.timeline/v3",
@@ -1046,6 +1049,8 @@ export const EditPlanSchema = z.object({
   source_muted: z.boolean().optional(),
   /** Feedback-vps §4.4: this video's text look instead of the branding's (font, size, colours, shadow). */
   text_look: TextLookSchema.optional(),
+  /** Feedback-vps §4.6: the colour of the picture instead of the branding's `look`. */
+  look: z.enum(VIDEO_LOOKS).optional(),
 }).strict();
 export type EditPlan = z.infer<typeof EditPlanSchema>;
 

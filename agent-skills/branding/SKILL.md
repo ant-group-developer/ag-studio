@@ -17,6 +17,7 @@ title_max_chars: 60            # 20–100; tiêu đề dài hơn bị cảnh bá
 hashtags: ["#DiBoCham"]        # 1–5, chỉ chữ/số/_ sau dấu #
 banned_words: ["sốc", "không thể tin nổi"]
 music_mood: [calm, warm]       # 1–5 mood; Studio chọn nhạc trong kho theo mood
+look: natural                  # màu hình của mọi video: none | natural | vivid | warm | cinematic (tuỳ chọn)
 text_look:                     # chữ trên video vẽ đúng như vậy
   text_color: "#FFFFFF"
   outline_color: "#1A1A1A"     # viền chữ
@@ -40,6 +41,10 @@ Font chữ trên video (`text_look.font`) chỉ chọn trong danh sách máy ren
 - `Playfair Display`: có chân, tương phản cao, hợp tiêu đề sang trọng (du lịch, ẩm thực cao cấp).
 Chữ Nhật và chữ Hàn luôn được vẽ bằng Noto Sans JP / KR dù font của kênh là gì, nên chữ song ngữ không bị ô vuông.
 Font khác (không có trong danh sách) không dùng được.
+
+Màu hình (`look`) áp cho mọi clip khi render: `none` giữ nguyên như quay; `natural` tăng nhẹ tương phản và màu (an toàn cho
+mọi kênh); `vivid` màu rực (ẩm thực, lễ hội); `warm` ấm, vàng nhẹ (du lịch chậm, hoàng hôn); `cinematic` tương phản mềm,
+bóng xanh, sáng ấm (phim tài liệu, cảm xúc). Một video có thể đổi riêng bằng `look` trong kế hoạch dựng.
 
 ## Thân file
 - **Giọng văn**: 2–6 tính từ; nên/không nên viết thế nào (xưng hô, độ dài câu); câu cửa miệng.

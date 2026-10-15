@@ -561,6 +561,30 @@
                   "points"
                 ],
                 "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "setLook"
+                  },
+                  "look": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "natural",
+                      "vivid",
+                      "warm",
+                      "cinematic"
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "look"
+                ],
+                "additionalProperties": false
               }
             ]
           },

@@ -117,7 +117,7 @@ export function timelineView(t: TimelineV4, revision: number, label: string | nu
       gain_clips: t.clips.filter((c) => c.gain_db).length,
     },
     sections, music: t.music, narration_voice: t.narration.voice, captions: t.captions.mode, source_muted: t.source_audio.muted,
-    ...(t.source_audio.even ? { source_even: true } : {}),
+    ...(t.source_audio.even ? { source_even: true } : {}), look: t.look ?? "none",
     issues: full.issues,
     read_more: "Đọc từng khúc: view \"clips\" hoặc \"texts\" với from_s/to_s (giây trong video); view \"full\" khi thật cần cả timeline.",
   };
@@ -178,7 +178,8 @@ export const TIMELINE_TOOLS: AgentTool[] = [
       "setTransition {clip_id, kind: cut|dissolve|dip_black, seconds}, setClipMuted {clip_id, muted}, setClipGain {clip_id, gain_db (-30..20; 0 = như gốc)}, setSectionTitle {clip_id, title|null},",
       "addText {kind, text (≤ 120 ký tự), start, duration (≤ 600 s), position, size?: s|m|l}, updateText {text_id, kind|null, text|null, start|null, duration|null, position|null, size?}, removeText {text_id} (chữ cùng vị trí cùng lúc tự xếp chồng),",
       "setMusic {music: {track: 'library:…', gain_db, ducking} | null} (giữ đường âm lượng nhạc), setMusicEnvelope {points: [{at (giây trong video), gain_db (-60..0)}] — nhạc theo đường thẳng nối các điểm; [] = bỏ},",
-      "setSourceMuted {muted}, setSourceEven {even: tiếng gốc các clip về cùng một mức, máy render đo và bù tối đa ±12 dB}, setCaptions {mode}. asset_id phải là video đã chuẩn bị của video này.",
+      "setSourceMuted {muted}, setSourceEven {even: tiếng gốc các clip về cùng một mức, máy render đo và bù tối đa ±12 dB}, setCaptions {mode},",
+      "setLook {look: none|natural|vivid|warm|cinematic — màu của hình}. asset_id phải là video đã chuẩn bị của video này.",
     ].join(" "),
     input: z.object({
       video_id: z.string().min(1).optional(),

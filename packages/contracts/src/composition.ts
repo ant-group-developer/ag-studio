@@ -34,6 +34,14 @@ const hexColor = z.string().regex(/^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$/);
 export const TEXT_FONTS = ["Arial", "Be Vietnam Pro", "Noto Sans JP", "Noto Sans KR", "Noto Serif", "Playfair Display"] as const;
 export type TextFont = (typeof TEXT_FONTS)[number];
 
+/**
+ * The colour of a video's picture (feedback-vps §4.6): a fixed grade applied to every clip when its mezzanine is made.
+ * `none` = as filmed; `natural` a little contrast and colour; `vivid` strong colour; `warm` golden; `cinematic` soft
+ * contrast, teal shadows, warm highlights.
+ */
+export const VIDEO_LOOKS = ["none", "natural", "vivid", "warm", "cinematic"] as const;
+export type VideoLook = (typeof VIDEO_LOOKS)[number];
+
 export const TEXT_LOOK_SIZES = ["s", "m", "l"] as const;
 export type TextLookSize = (typeof TEXT_LOOK_SIZES)[number];
 /**
@@ -273,6 +281,8 @@ export const CompositionSchema = z.object({
    * brings it to the median of them, by at most ±12 dB, before `gain_db`. Absent = as recorded. Needs render level 5.
    */
   source_even: z.boolean().optional(),
+  /** Feedback-vps §4.6: the colour grade of every segment (`VIDEO_LOOKS`, never `none`). Absent = as filmed. Level 6. */
+  look: z.enum(VIDEO_LOOKS).optional(),
   warnings: z.array(z.string()),
 }).strict();
 

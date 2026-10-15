@@ -13,12 +13,16 @@ import type { Composition, TextEvent } from "@harness/contracts";
  * - 3: `text_events[].size`, `text_style.shadow`, and texts at one position that overlap in time, which this build
  *   stacks (`buildAss`) where an older one drew them on top of each other;
  * - 4: `text_style.font` (a font the render worker ships, `TEXT_FONTS`);
- * - 5: `segments[].gain_db`, `source_even`, `music.envelope` (feedback-vps §4.3).
+ * - 5: `segments[].gain_db`, `source_even`, `music.envelope` (feedback-vps §4.3);
+ * - 6: `look`, the colour grade of the picture (feedback-vps §4.6).
  */
-export const RENDER_FEATURE_LEVEL = 5;
+export const RENDER_FEATURE_LEVEL = 6;
 
 /** The level that reads a segment's gain, evens the source sound and draws the music's volume line. */
 export const RENDER_AUDIO_LEVEL = 5;
+
+/** The level that grades the picture (`look`). */
+export const RENDER_LOOK_LEVEL = 6;
 
 /** The level that stacks texts and reads a text's size and the text look's shadow. */
 export const RENDER_TEXT_LEVEL = 3;
@@ -37,6 +41,7 @@ export function compositionFeatureLevel(c: Composition): number {
     c.text_events.some((t) => t.size !== undefined) || c.text_style?.shadow !== undefined || textsOverlap(c.text_events) ? RENDER_TEXT_LEVEL : 0,
     c.text_style?.font !== undefined ? RENDER_FONT_LEVEL : 0,
     c.segments.some((s) => s.gain_db !== undefined) || c.source_even !== undefined || c.music?.envelope !== undefined ? RENDER_AUDIO_LEVEL : 0,
+    c.look !== undefined ? RENDER_LOOK_LEVEL : 0,
   ];
   return Math.max(...needs);
 }

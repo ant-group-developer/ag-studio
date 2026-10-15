@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { TEXT_LOOK_SIZES } from "./composition.js";
+import { TEXT_LOOK_SIZES, VIDEO_LOOKS } from "./composition.js";
 import {
   CAPTION_MODES, ChannelRefSchema, CLIP_GAIN_MAX_DB, CLIP_GAIN_MIN_DB, MUSIC_ENVELOPE_MAX_POINTS, MusicEnvelopePointSchema, TIMELINE_TEXT_MAX, TIMELINE_TEXT_MAX_SECONDS, MAX_RESEARCH_CHANNELS, MAX_RESEARCH_KEYWORDS, STUDIO_ASPECTS, StudioHintsSchema, StudioMusicSchema,
   studioVersion, TEXT_KINDS, TEXT_POSITIONS_V2, TIMELINE_TRANSITIONS, type TeamSkillStep,
@@ -148,6 +148,8 @@ export const TimelineOpSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("setSourceEven"), even: z.boolean() }).strict(),
   /** Timeline v4 only: the music's volume line, points in seconds of the video ([] = none: the music's own gain). */
   z.object({ op: z.literal("setMusicEnvelope"), points: z.array(MusicEnvelopePointSchema).max(MUSIC_ENVELOPE_MAX_POINTS) }).strict(),
+  /** Timeline v4 only: the colour of the picture (`none` = as filmed). */
+  z.object({ op: z.literal("setLook"), look: z.enum(VIDEO_LOOKS) }).strict(),
 ]);
 export type TimelineOp = z.infer<typeof TimelineOpSchema>;
 

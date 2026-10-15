@@ -232,6 +232,16 @@ describe("timelineToComposition on v4", () => {
     expect(() => downgradeTimelineV4({ ...t, edit_style: "whole" })).toThrow(/gain|envelope|even/);
   });
 
+  it("feedback-vps §4.6: the timeline's look reaches the composition; none is as filmed", () => {
+    const warm = applyTimelineOps(cut(), [{ op: "setLook", look: "warm" }], {});
+    expect(warm.look).toBe("warm");
+    expect(timelineToComposition(warm).look).toBe("warm");
+    const none = applyTimelineOps(warm, [{ op: "setLook", look: "none" }], {});
+    expect("look" in none).toBe(false);
+    expect("look" in timelineToComposition(none)).toBe(false);
+    expect(() => downgradeTimelineV4({ ...warm, edit_style: "whole" })).toThrow(/look/);
+  });
+
   it("the footage's own speech (narration original) plays at its own level, not lowered as background", () => {
     const t = cut();
     t.narration = { voice: "original", lead_seconds: 0.3, lines: [] };

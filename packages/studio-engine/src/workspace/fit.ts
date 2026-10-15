@@ -8,8 +8,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  EditPlanSchema, ShotsIndexSchema, StudioSurveySchema, TextLookSchema, TranscriptSchema,
-  type EditPlan, type EpisodeAsset, type ShotsIndex, type StudioMusic, type TextLook, type TimelineV4, type Transcript,
+  EditPlanSchema, ShotsIndexSchema, StudioSurveySchema, TextLookSchema, TranscriptSchema, VIDEO_LOOKS,
+  type EditPlan, type EpisodeAsset, type ShotsIndex, type StudioMusic, type TextLook, type TimelineV4, type Transcript, type VideoLook,
 } from "@harness/contracts";
 import { clampClipOuts, timelineIssues } from "@harness/core";
 import { StudioTtsPayloadSchema, TTS_MANIFEST_PATH, TtsManifestSchema } from "@ag-farm/protocol";
@@ -90,14 +90,15 @@ export function videoAssets(index: VideoIndex, dir: string): Record<string, Epis
   return out;
 }
 
-/** The branding's text look and music moods (`channel/branding.md` frontmatter), when it has them. */
-export function brandingOf(dir: string): { textLook: TextLook | null; musicMoods: string[] } {
+/** The branding's text look, colour look and music moods (`channel/branding.md` frontmatter), when it has them. */
+export function brandingOf(dir: string): { textLook: TextLook | null; look: VideoLook | null; musicMoods: string[] } {
   const path = join(dir, "channel", "branding.md");
-  if (!existsSync(path)) return { textLook: null, musicMoods: [] };
+  if (!existsSync(path)) return { textLook: null, look: null, musicMoods: [] };
   const fm = readFrontmatter(readFileSync(path, "utf8")).data as Record<string, unknown> | null;
   const look = fm?.text_look ? TextLookSchema.safeParse(fm.text_look) : null;
   const moods = Array.isArray(fm?.music_mood) ? (fm!.music_mood as unknown[]).filter((m): m is string => typeof m === "string") : [];
-  return { textLook: look?.success ? look.data : null, musicMoods: moods };
+  const colour = typeof fm?.look === "string" && (VIDEO_LOOKS as readonly string[]).includes(fm.look) ? (fm.look as VideoLook) : null;
+  return { textLook: look?.success ? look.data : null, look: colour, musicMoods: moods };
 }
 
 /** The plan as the video's: its own id, checked against the schema and the video's shots. */
@@ -239,6 +240,7 @@ export function fitHandler(d: FitDeps): JobHandler {
       productionId: project.id, plan, shots, survey: survey.data, transcript: transcriptOfIndex(ctx.workspaceDir, index), voice: read, written,
       sources: index.sources.map((s) => ({ asset_id: s.asset_id, source_id: s.source_id })), assets: videoAssets(index, ctx.workspaceDir),
       canvas: CANVAS[project.aspect], fps: 30, music, clipAudio: true, textStyle: plan.text_look ?? branding.textLook,
+      look: plan.look ?? branding.look,
     });
     const report = fitted.report;
     // a shot that runs past the end of its prepared video plays to that end, never more than the file holds

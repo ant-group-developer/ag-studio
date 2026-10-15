@@ -122,6 +122,7 @@ describe("timeline from the edit plan", () => {
     plan.music = { gain_db: -30, ducking: false };
     plan.source_muted = true;
     plan.text_look = { text_color: "#FFFFFF", outline_color: "#000000", box_color: null, size: "s", font: "Noto Serif", shadow: true };
+    plan.look = "cinematic";
     writeFileSync(join(s.vdir, "edit-plan.json"), JSON.stringify(plan));
     const job = await queueFit(s.db, { projectId: s.project.id, videoId: s.video.id, createdBy: "u" }, NOW);
     await s.run();
@@ -131,6 +132,7 @@ describe("timeline from the edit plan", () => {
     expect(t.music).toMatchObject({ gain_db: -30, ducking: false });
     expect(t.source_audio.muted).toBe(true);
     expect(t.text_style).toEqual(plan.text_look);
+    expect(t.look).toBe("cinematic");
     // no music at all
     writeFileSync(join(s.vdir, "edit-plan.json"), JSON.stringify({ ...plan, music: null }));
     await queueFit(s.db, { projectId: s.project.id, videoId: s.video.id, createdBy: "u" }, NOW);

@@ -426,7 +426,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
       const tmpPath = join(tmpDir, `${k}.mp4`);
       const args = mezzArgs({
         ffmpeg: d.ffmpeg, source: o.source, in: o.in, out: o.out, fit: o.fit, w: width, h: height, fps,
-        has_audio: o.has_audio, encoder: choice, codec, out_path: tmpPath,
+        has_audio: o.has_audio, encoder: choice, codec, out_path: tmpPath, ...(composition.look ? { look: composition.look } : {}),
       });
       const prog = withProgress(args, expected, o.onFraction ?? null);
       await runProcess(spawnFn, prog.argv, remaining(), label, false, { signal, onStdoutLine: prog.onStdoutLine });
@@ -476,7 +476,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     if (checksum === undefined) {
       throw new HarnessError("CONFIG_INVALID", `no source checksum for segment ${seg.order} (source ${seg.source_id})`, { order: seg.order, source_id: seg.source_id });
     }
-    const common = { source_checksum: checksum, fit: seg.fit, w: width, h: height, fps, has_audio: seg.has_audio, codec };
+    const common = { source_checksum: checksum, fit: seg.fit, w: width, h: height, fps, has_audio: seg.has_audio, codec, ...(composition.look ? { look: composition.look } : {}) };
 
     const bodyStart = mezzSeconds;
     const body = await renderMezz({

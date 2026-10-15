@@ -515,6 +515,16 @@
             "size"
           ],
           "additionalProperties": false
+        },
+        "look": {
+          "type": "string",
+          "enum": [
+            "none",
+            "natural",
+            "vivid",
+            "warm",
+            "cinematic"
+          ]
         }
       },
       "required": [
