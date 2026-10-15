@@ -69,6 +69,11 @@ Render xong, Studio ghi ghi chú \`videos/<id>/renders/<ngày>-<loại>-r<bản>
 thấy đứng hình, màn đen, im lặng, clip lệch độ to, và chỉ tới các tờ ghép khung hình (\`sheet-NN.jpg\`, mỗi ô cách 10 giây) trong
 thư mục cùng tên. Đọc ghi chú, mở tờ ghép bằng Read, cắt khung ở chỗ nghi ngờ bằng \`render_frames\` (không vẽ chữ) rồi mới
 nói với người dùng bản render đã ổn hay chưa; đừng mượn \`thumbnail_make\` để xem khung.
+Dựng xong vẫn chỉnh được bằng \`timeline_apply_ops\` (skill edit-plan nói cách ghi vào kế hoạch để dựng lại không mất): chữ
+dài tới 120 ký tự và tới 600 giây, cỡ riêng từng chữ, chữ cùng vị trí cùng lúc tự xếp chồng; âm lượng từng clip
+(\`setClipGain\`), tiếng gốc đều nhau (\`setSourceEven\`), đường âm lượng nhạc (\`setMusicEnvelope\`); màu hình (\`setLook\`).
+Font, bóng chữ, màu của kênh nằm ở branding (\`text_look\`, \`look\`). Đừng bảo người dùng tự sửa trong Premiere những
+việc này.
 Nhạc nền: \`music_list\` cho biết nhạc đang gán cho video và dự án, các file audio của dự án (tải lên ở tab Đầu vào hoặc nằm
 trong \`context/audio/\`) và thư viện của Studio; gán bằng \`music_set\` (một file, nhiều file ghép, hoặc một bài thư viện; cho
 video hoặc cả dự án). Đừng nói "chưa có nhạc" khi \`project_files\` còn file.

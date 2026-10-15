@@ -168,11 +168,17 @@ nhưng không code nào đọc.
   video đóng vai "episode"). **Không đổi hợp đồng ag-farm khi chưa hỏi.** Build cần checkout `../ag-farm`.
 - Render worker (`E:\CODE\ag-render-worker`) chạy `renderComposition` của `@harness/core`; **mọi node farm render phải chạy
   ag-render-worker ≥ 0.8.0** (composition có `text_style`, Premiere `audio: per_segment`) và khai `python` (`extra.python_bin`)
-  để nhận `studio.tts`/`studio.transcribe`. Bản cuối: `requirements` theo máy chọn (`renderRequirements`; ghim `node_id` qua
+  để nhận `studio.tts`/`studio.transcribe`; máy tự kiểm khi khởi động (thiếu engine Python thì không khai Python, thiếu font
+  đóng kèm thì hạ mức render; runbook kiểm các máy sau phát hành ở README của ag-render-worker). Bản cuối: `requirements` theo máy chọn (`renderRequirements`; ghim `node_id` qua
   thẻ xác nhận). Composition thêm trường mới thì tăng `RENDER_FEATURE_LEVEL` và `compositionFeatureLevel`
   (`packages/core/src/media/render/features.ts`): worker khai mức của mình (`engines.studio_render`), Studio đòi
-  `requirements.studio_render_min` khi composition dùng trường đó, nên máy render bản cũ không nhận job nó không đọc được. Xuất Premiere: FCP7 XML zip kèm WAV lời dẫn từ kho giọng.
-- Timeline v4 (`TimelineV4Schema`): clip là đoạn `[in, out)` của video, có `shot_id`, `line_id`, `transition_out`; thao tác
+  `requirements.studio_render_min` khi composition dùng trường đó, nên máy render bản cũ không nhận job nó không đọc được
+  (mức 3 chữ: cỡ riêng, bóng, xếp chồng; 4 font; 5 âm thanh: `gain_db` từng đoạn, `source_even`, `music.envelope`; 6 màu
+  `look`). Font: Arial của máy cộng font OFL đóng kèm bản phát hành (`TEXT_FONTS`; `fonts/fonts.json` của ag-render-worker,
+  tải bằng `scripts/fetch-fonts.mjs`); chữ Nhật/Hàn luôn vẽ bằng Noto Sans JP/KR. Xuất Premiere: FCP7 XML zip kèm WAV lời dẫn từ kho giọng.
+- Timeline v4 (`TimelineV4Schema`): clip là đoạn `[in, out)` của video, có `shot_id`, `line_id`, `transition_out`, `muted`,
+  `gain_db`; timeline có `source_audio.even`, `music.envelope`, `text_style` (font, bóng), `look` (màu). Kế hoạch dựng
+  (`EditPlanSchema`) giữ được mọi thứ đó để `fit` dựng lại không mất; `setMusic` nhớ mức nhạc vào nhạc của video; thao tác
   thuần ở `packages/core/src/studio/layout.ts` (`applyTimelineOps`, `timelineIssues`); composition suy từ revision
   (`timelineToComposition`). Revision ở `video_revisions` (`saveVideoRevision`, xung đột → `RevisionConflictError`).
 - Giọng đọc/nhạc của dự án: chọn từ file audio đã tải lên (`workspace/project-audio.ts`; giọng cần vai producer và khai nguồn
