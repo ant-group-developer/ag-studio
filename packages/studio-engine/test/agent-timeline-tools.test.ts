@@ -173,6 +173,8 @@ describe("timeline tools", () => {
     });
     const r = await call(s, "music_set", { files: ["library:music/calm-a.m4a"], gain_db: -26, ducking: false });
     expect(r.json).toMatchObject({ scope: "video", music: expect.stringContaining("Calm A"), timeline_revision: 2 });
+    // the volume line sets the level: gain_db alone changes nothing that is heard, and the agent is told so
+    expect(r.json.warning).toContain("setMusicEnvelope");
     expect((await latestVideoRevision(s.db, s.video.id))!.data.music).toEqual({ track: "library:music/calm-a.m4a", gain_db: -26, ducking: false, envelope: [{ at: 0, gain_db: -30 }] });
     expect(await call(s, "music_set", { files: ["context/audio/none.mp3"] })).toMatchObject({ isError: true, text: expect.stringContaining("ffmpeg") });
     expect(await call(s, "music_set", { files: ["library:music/nope.m4a"] })).toMatchObject({ isError: true });

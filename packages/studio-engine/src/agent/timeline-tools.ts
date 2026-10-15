@@ -308,7 +308,7 @@ export const TIMELINE_TOOLS: AgentTool[] = [
       "Gán nhạc nền cho video (`scope: video`, mặc định) hoặc cho cả dự án (`scope: project`): một file audio của dự án, hoặc nhiều",
       "file ghép theo thứ tự (`crossfade_s` giây chuyển mờ giữa các bài, 0 = nối thẳng), hoặc một bài thư viện (`files: [\"library:music/…\"]`).",
       "`files` lấy từ music_list (project_files.path / library.track). `gain_db` (-40..0, mặc định -18), `ducking` (nhạc nhỏ lại khi có lời,",
-      "mặc định có). Timeline mới nhất của video phát nhạc mới ngay (bản timeline mới, giữ đường âm lượng nhạc); dựng lại từ kế hoạch cũng dùng nó.",
+      "mặc định có). Timeline mới nhất của video phát nhạc mới ngay (bản timeline mới, giữ đường âm lượng nhạc: có đường đó thì mức nhạc theo đường, không theo gain_db); dựng lại từ kế hoạch cũng dùng nó.",
       "Studio phân tích nhịp của nhạc mới trong nền (job music_beats, vài phút; music_list báo BPM khi xong).",
     ].join(" "),
     input: z.object({
@@ -358,8 +358,11 @@ export const TIMELINE_TOOLS: AgentTool[] = [
       }, ctx.now());
       // the video's latest timeline plays it now (a video with its own music keeps it when only the project's changed)
       const revision = video ? await videoMusicToTimeline(ctx.db, { workspaceDir: ctx.workspaceDir, projectId: ctx.project.id, videoId: video.id, authorId: ctx.claims.sub, now: ctx.now() }) : null;
+      // a volume line (music.envelope) sets the music's level at every moment: the render leaves gain_db aside
+      const envelope = video && a.gain_db !== undefined ? (await latestVideoRevision(ctx.db, video.id))?.data.music?.envelope : undefined;
       return {
         text: json({
+          ...(envelope?.length ? { warning: "Timeline có đường âm lượng nhạc (music.envelope) nên gain_db không đổi mức nhạc nghe được: đổi mức bằng timeline_apply_ops setMusicEnvelope." } : {}),
           scope,
           music: scope === "video" ? await videoMusicSummary(ctx.db, ctx.project.id, video!.id) : (await projectAudioSummary(ctx.db, ctx.project.id)).music,
           timeline_revision: revision,
