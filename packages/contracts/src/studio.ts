@@ -167,6 +167,10 @@ export const MusicBeatsSchema = z.object({
 }).strict();
 export type MusicBeats = z.infer<typeof MusicBeatsSchema>;
 
+/** Where a shot of the edit plan may cut: on the nearest beat of the music, or on the nearest first beat of a bar. */
+export const SNAP_KINDS = ["beat", "bar"] as const;
+export type SnapKind = (typeof SNAP_KINDS)[number];
+
 /** Soft target: an episode may differ from `episode_target_seconds` by this fraction (a warning, never a block). */
 export const EPISODE_DURATION_TOLERANCE = 0.2;
 export const MAX_EPISODES_LIMIT = 30;
@@ -1036,6 +1040,11 @@ export const EditPlanSchema = z.object({
     source_audio: z.enum(["keep", "mute"]).optional(),
     /** Feedback-vps §4.3: this shot's own sound louder or quieter, dB; every clip cut from it takes it. */
     gain_db: z.number().min(CLIP_GAIN_MIN_DB).max(CLIP_GAIN_MAX_DB).optional(),
+    /**
+     * Feedback-vps §4.7: the cut out of this shot moves to the music's nearest beat (`beat`) or first beat of a bar
+     * (`bar`), within what the shot holds and never below the shortest clip; the music's beats must be known.
+     */
+    snap: z.enum(SNAP_KINDS).optional(),
   }).strict()).min(1).max(400),
   lines: z.array(z.object({
     line_id: z.string().regex(/^L\d{3}$/),

@@ -3,7 +3,8 @@
  * `videos/<id>/edit-plan.json` (shots of the video's sources, narration lines, texts) after `survey.json`; this job
  * reads the narration lines on the farm (`studio.tts`, the project's voice; lines already read come from the voice
  * store), fits the picture to them (`fitCutTimeline`, as the shot-cut episodes did) and saves a new timeline revision
- * (label `fit`). The branding's text look and the project's music (else a library track by mood) go into it.
+ * (label `fit`). The branding's text look and the project's music (else a library track by mood) go into it. Shots with
+ * `snap` cut on the music's beats (kept beside the track by job `music_beats`, else found here on the farm).
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -11,7 +12,7 @@ import {
   EditPlanSchema, ShotsIndexSchema, StudioSurveySchema, TextLookSchema, TranscriptSchema, VIDEO_LOOKS,
   type EditPlan, type EpisodeAsset, type ShotsIndex, type StudioMusic, type TextLook, type TimelineV4, type Transcript, type VideoLook,
 } from "@harness/contracts";
-import { clampClipOuts, timelineIssues } from "@harness/core";
+import { clampClipOuts, timelineIssues, type BeatGrid } from "@harness/core";
 import { StudioTtsPayloadSchema, TTS_MANIFEST_PATH, TtsManifestSchema } from "@ag-farm/protocol";
 import type { StudioBucket } from "../bucket.js";
 import { fitCutTimeline, type ReadLine } from "../cut-fit.js";
@@ -19,7 +20,7 @@ import { listLibraryMusic, pickLibraryMusic } from "../music-library.js";
 import type { StudioDb } from "../studio-db.js";
 import type { StudioVoice } from "../voice.js";
 import { getVoiceLine, putVoiceLine, voiceKey } from "../voice-store.js";
-import { ackFarmJob, runFarmStep, type ProjectFarm } from "./farm.js";
+import { ackFarmJob, JobStopped, runFarmStep, type ProjectFarm } from "./farm.js";
 import { writeWorkspaceFile } from "./files.js";
 import { readFrontmatter } from "./frontmatter.js";
 import type { JobContext, JobHandler } from "./job-runner.js";
@@ -27,6 +28,7 @@ import { createJob, type JobRecord } from "./jobs-db.js";
 import type { InputTranscript } from "./prepare.js";
 import { latestVideoRevision, requireProject, requireVideo, saveVideoRevision } from "./project-db.js";
 import { musicForVideo, projectNarrationVoice } from "./project-audio.js";
+import { analyseMusicBeats, beatsRequestFor, beatsWords, readMusicBeats } from "./music-beats.js";
 import { buildVideoIndex, type VideoIndex } from "./video-index.js";
 
 export interface FitDeps {
@@ -194,6 +196,16 @@ export function lengthOffTarget(seconds: number, target: number): string | null 
   return `timeline dài ${clockOf(seconds)}, ${off < 0 ? "ngắn" : "dài"} hơn mục tiêu ${clockOf(target)} của kế hoạch dựng ${Math.round(Math.abs(off) * 100)}%`;
 }
 
+/** What `snap` did, in a sentence for the job's message (empty when the plan has none). */
+function snapWords(s: { moves: { clip_id: string }[]; skipped: { clip_id: string; reason: string }[] }, music: string | null): string {
+  if (!music && !s.moves.length && !s.skipped.length) return "";
+  const moved = s.moves.length ? `${s.moves.length} điểm cắt dời về phách/ô nhịp` : "không điểm cắt nào phải dời";
+  const kept = s.skipped.length
+    ? `; ${s.skipped.length} chỗ giữ nguyên (${s.skipped.map((x) => `${x.clip_id}: ${x.reason === "narration" ? "dời sẽ đè lời dẫn" : "không có phách trong tầm"}`).join(", ")})`
+    : "";
+  return ` Cắt theo nhịp: ${music ?? ""}${music ? "; " : ""}${moved}${kept}.`;
+}
+
 export function fitHandler(d: FitDeps): JobHandler {
   return async (job, ctx) => {
     const { video_id: videoId } = job.request as FitJobRequest;
@@ -236,11 +248,32 @@ export function fitHandler(d: FitDeps): JobHandler {
       music = { ...music, ...(plan.music.gain_db !== undefined ? { gain_db: plan.music.gain_db } : {}), ...(plan.music.ducking !== undefined ? { ducking: plan.music.ducking } : {}) };
       musicNote = `${musicNote}, ${music.gain_db} dB${music.ducking ? "" : ", không nhỏ lại khi có lời"}`;
     }
+    // cuts on the music's beat (feedback-vps §4.7): its beats from beside the track, else found now on the farm
+    let beats: BeatGrid | null = null;
+    let beatsNote: string | null = null;
+    if (plan.shots.some((s) => s.snap)) {
+      if (!music) beatsNote = "kế hoạch có snap nhưng video không có nhạc nên điểm cắt giữ nguyên";
+      else {
+        const req = await beatsRequestFor(d.db, { projectId: project.id, videoId, track: music.track });
+        let b = await readMusicBeats(d.bucket, music.track, req.sha256);
+        if (!b) {
+          try {
+            await ctx.report({ phase: "Đang tìm nhịp của nhạc nền", progress: 0.88 });
+            b = await analyseMusicBeats(d, ctx, job, req, [0.88, 0.92]);
+          } catch (e) {
+            if (e instanceof JobStopped) throw e;
+            beatsNote = `chưa có nhịp của nhạc (${e instanceof Error ? e.message : String(e)}) nên điểm cắt giữ nguyên`;
+          }
+        }
+        if (b) beatsNote = `nhạc ${beatsWords(b)}`;
+        if (b?.bpm) beats = { beats: b.beats, downbeats: b.downbeats, duration_s: b.duration_s };
+      }
+    }
     const fitted = fitCutTimeline({
       productionId: project.id, plan, shots, survey: survey.data, transcript: transcriptOfIndex(ctx.workspaceDir, index), voice: read, written,
       sources: index.sources.map((s) => ({ asset_id: s.asset_id, source_id: s.source_id })), assets: videoAssets(index, ctx.workspaceDir),
       canvas: CANVAS[project.aspect], fps: 30, music, clipAudio: true, textStyle: plan.text_look ?? branding.textLook,
-      look: plan.look ?? branding.look,
+      look: plan.look ?? branding.look, beats,
     });
     const report = fitted.report;
     // a shot that runs past the end of its prepared video plays to that end, never more than the file holds
@@ -259,11 +292,15 @@ export function fitHandler(d: FitDeps): JobHandler {
       result: {
         revision, clips: timeline.clips.length, seconds, target_seconds: plan.target_seconds, off_target: offTarget !== null, music: musicNote, shortfalls,
         errors: issues.length, clamped: clamped.map((i) => i.clip_id),
+        ...(beatsNote || fitted.snap.moves.length || fitted.snap.skipped.length
+          ? { snap: { moved: fitted.snap.moves.map((m) => ({ clip_id: m.clip_id, kind: m.snap, from: m.from, to: m.to })), not_moved: fitted.snap.skipped.map((s) => ({ clip_id: s.clip_id, reason: s.reason })), music: beatsNote } }
+          : {}),
       },
       message: `Đã dựng timeline bản ${revision} cho **${video.title}**: ${timeline.clips.length} clip, ≈ ${clockOf(seconds)}, ${musicNote}${written ? ", lời dẫn thành phụ đề" : ""}.`
         + `${offTarget ? ` Lưu ý: ${offTarget}; nói với người dùng và hỏi họ muốn thêm cảnh, thêm lời hay giữ độ dài này.` : ""}`
         + `${shortfalls ? ` ${shortfalls} chỗ thiếu hình cho lời dẫn (xem videos/${videoId}/timeline.json).` : ""}${issues.length ? ` Còn ${issues.length} lỗi timeline.` : ""}`
-        + `${clamped.length ? ` ${clamped.length} clip dài quá video nguồn, đã cắt ở cuối video (${clamped.map((i) => i.clip_id).join(", ")}).` : ""}`,
+        + `${clamped.length ? ` ${clamped.length} clip dài quá video nguồn, đã cắt ở cuối video (${clamped.map((i) => i.clip_id).join(", ")}).` : ""}`
+        + snapWords(fitted.snap, beatsNote),
     };
   };
 }

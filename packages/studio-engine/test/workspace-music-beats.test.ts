@@ -1,17 +1,21 @@
 /**
  * The beats of a background track (feedback-vps §4.7): job `music_beats` asks the farm (`studio.beats`) and keeps them
- * beside the track.
+ * beside the track; the fit cuts a shot with `snap` on them, finding them itself when the job has not.
  */
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { JobView as FarmJobView } from "@ag-farm/protocol";
+import { layoutTimeline, studioSourceId } from "@harness/core";
 import {
-  beatsKey, beatsWords, createJobRunner, createProject, createVideo, getJob, musicBeatsHandler, partStarts, queueMusicBeats, readMusicBeats, seedWorkspace,
-  studioLogger, type ProjectFarm,
+  addSource, beatsKey, beatsWords, createJobRunner, createProject, createVideo, fitHandler, getJob, latestVideoRevision, musicBeatsHandler, partStarts, queueFit,
+  queueMusicBeats, readMusicBeats, savePrepared, seedWorkspace, studioLogger, type ProjectFarm,
 } from "../src/index.js";
 import { world } from "./helpers.js";
 
 const NOW = "2026-10-15T08:00:00.000Z";
+const ASSET = "0b9a7c34-5f1e-4d4c-9a51-3f2a1e0c7d11";
+const SRC = studioSourceId(ASSET);
 // 120 BPM from 0.25 s: a beat every 0.5 s, a bar every 2 s, over a 60 s track
 const BEATS = Array.from({ length: 120 }, (_, k) => Math.round((0.25 + k * 0.5) * 1000) / 1000);
 const DOWNBEATS = BEATS.filter((_, k) => k % 4 === 0);
@@ -51,10 +55,10 @@ async function setup() {
   const deps = { db: w.db, bucket: w.bucket, farm, pollMs: 1 };
   const runner = createJobRunner({
     db: w.db, logger: studioLogger({ test: "beats" }), workspacesRoot: root, dataRoot: join(w.dir, "data"),
-    handlers: { music_beats: musicBeatsHandler(deps) },
+    handlers: { music_beats: musicBeatsHandler(deps), fit: fitHandler({ ...deps, voiceDir: join(w.dir, "voice") }) },
   });
   const run = async () => { await runner.tick(); await runner.idle(); };
-  return { ...w, project, video, track, submitted, run };
+  return { ...w, project, video, dir, track, submitted, run };
 }
 
 describe("music beats", () => {
@@ -91,3 +95,78 @@ describe("music beats", () => {
   });
 });
 
+describe("fit with snap", () => {
+  async function planned(s: Awaited<ReturnType<typeof setup>>) {
+    await addSource(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "ag_go_asset", ref: ASSET, mediaType: "video", label: "Phố.mp4", addedBy: "u" }, NOW);
+    const input = join(s.dir, "inputs", ASSET);
+    mkdirSync(input, { recursive: true });
+    writeFileSync(join(input, "shots.json"), JSON.stringify({
+      schema_version: "studio.input-shots/v1", asset_id: ASSET, name: "Phố.mp4", duration_s: 40, width: 1920, height: 1080, fps: 30, has_audio: true,
+      source: { kind: "preview", watermarked: false }, scene: {}, shots: [1, 2, 3, 4].map((n) => ({ n, in: (n - 1) * 10, out: n * 10, frame: `frames/00${n}.jpg` })), sheets: [],
+    }));
+    await savePrepared(s.db, { project_id: s.project.id, asset_id: ASSET, status: "ready", name: "Phố.mp4", duration_s: 40, width: 1920, height: 1080, has_audio: true, shots: 4, transcript: false, source_kind: "preview", watermarked: false, error: null }, NOW);
+    const vdir = join(s.dir, "videos", s.video.id);
+    mkdirSync(vdir, { recursive: true });
+    writeFileSync(join(vdir, "survey.json"), JSON.stringify({
+      schema_version: "harness.survey-index/v2",
+      shots: [0, 1, 2, 3].map((i) => ({ source_id: SRC, shot_id: `s000-00${i}`, in: i * 10, out: (i + 1) * 10, score: 4, tags: [], usable: true, note: "đẹp", speech: "none" })),
+    }));
+    writeFileSync(join(vdir, "edit-plan.json"), JSON.stringify({
+      schema_version: "studio.edit-plan/v1", episode_id: "x", narration: "none", language: "vi", target_seconds: 30,
+      shots: [
+        { order: 1, shot_id: "s000-000", source_id: SRC, in: 0, out: 7.1, line_id: null, transition: "cut", section_title: "Mở", note: "", snap: "bar" },
+        { order: 2, shot_id: "s000-001", source_id: SRC, in: 10, out: 15.6, line_id: null, transition: "cut", section_title: null, note: "", snap: "bar" },
+        { order: 3, shot_id: "s000-002", source_id: SRC, in: 20, out: 23.3, line_id: null, transition: "cut", section_title: null, note: "" },
+        { order: 4, shot_id: "s000-003", source_id: SRC, in: 30, out: 39.4, line_id: null, transition: "cut", section_title: null, note: "", snap: "beat" },
+      ],
+      lines: [], texts: [{ text_id: "T001", kind: "title", text: "Phố cổ", at_order: 2, offset_s: 0.5, duration: 2, position: "top_left" }], music_mood: null,
+    }));
+    await s.db.run("UPDATE projects SET music = ? WHERE id = ?", [JSON.stringify({ track: s.track, gain_db: -18, ducking: false, sha256: "abc", duration_s: 60 }), s.project.id]);
+  }
+
+  it("moves the cut out of each shot with snap onto the nearest bar or beat, finding the beats on the farm when none are kept", async () => {
+    const s = await setup();
+    await planned(s);
+    const job = await queueFit(s.db, { projectId: s.project.id, videoId: s.video.id, createdBy: "u" }, NOW);
+    await s.run();
+    const done = (await getJob(s.db, job.id))!;
+    expect(done).toMatchObject({ status: "done", error: null });
+    // the beats were not kept yet: the fit asked the farm itself, and kept them
+    expect(s.submitted.map((x) => x.type)).toEqual(["studio.beats"]);
+    expect(await readMusicBeats(s.bucket, s.track)).not.toBeNull();
+    const t = (await latestVideoRevision(s.db, s.video.id))!.data;
+    const laid = layoutTimeline(t);
+    const cuts = laid.clips.map((c) => c.end);
+    // 7.1 → bar 6.25; then 6.25 + 5.6 = 11.85 → bar 12.25; 3.3 s stays (15.55); 15.55 + 9.4 = 24.95 → beat 24.75
+    expect(cuts).toEqual([6.25, 12.25, 15.55, 24.75]);
+    expect(DOWNBEATS).toContain(cuts[0]);
+    expect(DOWNBEATS).toContain(cuts[1]);
+    expect(BEATS).toContain(cuts[3]);
+    // the text anchored on shot 2 moved with it
+    expect(t.texts[0]).toMatchObject({ text_id: "T001", start: 6.75 });
+    expect(done.result).toMatchObject({ snap: { moved: [
+      { clip_id: "C001", kind: "bar", from: 7.1, to: 6.25 }, { clip_id: "C002", kind: "bar", from: 11.85, to: 12.25 }, { clip_id: "C004", kind: "beat", from: 24.95, to: 24.75 },
+    ], not_moved: [], music: "nhạc ≈ 120 BPM, 4 phách một ô nhịp (ô nhịp 2 s)" } });
+    // built again: the kept beats are read, the farm is not asked again
+    await queueFit(s.db, { projectId: s.project.id, videoId: s.video.id, createdBy: "u" }, NOW);
+    await s.run();
+    expect(s.submitted).toHaveLength(1);
+    expect(layoutTimeline((await latestVideoRevision(s.db, s.video.id))!.data).clips.map((c) => c.end)).toEqual(cuts);
+  });
+
+  it("without music the cuts stay where the plan put them, and the job says why", async () => {
+    const s = await setup();
+    await planned(s);
+    await s.db.run("UPDATE projects SET music = NULL WHERE id = ?", [s.project.id]);
+    const vdir = join(s.dir, "videos", s.video.id);
+    const plan = JSON.parse((await import("node:fs")).readFileSync(join(vdir, "edit-plan.json"), "utf8"));
+    writeFileSync(join(vdir, "edit-plan.json"), JSON.stringify({ ...plan, music: null }));
+    const job = await queueFit(s.db, { projectId: s.project.id, videoId: s.video.id, createdBy: "u" }, NOW);
+    await s.run();
+    const done = (await getJob(s.db, job.id))!;
+    expect(done.status).toBe("done");
+    expect(layoutTimeline((await latestVideoRevision(s.db, s.video.id))!.data).clips.map((c) => c.end)).toEqual([7.1, 12.7, 16, 25.4]);
+    expect(done.result).toMatchObject({ snap: { moved: [], music: "kế hoạch có snap nhưng video không có nhạc nên điểm cắt giữ nguyên" } });
+    expect(s.submitted).toEqual([]);
+  });
+});

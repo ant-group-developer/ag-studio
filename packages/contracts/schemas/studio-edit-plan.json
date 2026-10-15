@@ -106,6 +106,13 @@
                 "type": "number",
                 "minimum": -30,
                 "maximum": 20
+              },
+              "snap": {
+                "type": "string",
+                "enum": [
+                  "beat",
+                  "bar"
+                ]
               }
             },
             "required": [

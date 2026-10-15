@@ -2,14 +2,15 @@
  * From the approved edit plan of a shot-cut episode to its first timeline v4 (spec local-chat §3.3, plan phase 5 D2):
  * the plan becomes a harness EDL and narration, the read lines its narration timing, harness `fitEdl` reshapes the
  * picture so every line has enough of it ("picture follows voice", ADR-0001 item 106), `buildTimeline` lays it out,
- * and the result is written as a timeline v4. Pure: no I/O.
+ * and the result is written as a timeline v4. A shot with `snap` then has its cut moved onto the music's beat or bar
+ * (`snapCuts`, feedback-vps §4.7). Pure: no I/O.
  */
 import {
   DEFAULT_NARRATION_LEAD_SECONDS, EdlSchema, NarrationTimingSchema, TimelineV4Schema,
   type EditPlan, type EpisodeAsset, type FitReport, type NarrationTiming, type ShotsIndex, type StudioCanvas, type StudioMusic,
   type StudioSurvey, type TextLook, type TimelineClipV4, type TimelineV4, type Transcript, type VideoLook,
 } from "@harness/contracts";
-import { buildTimeline, fitEdl, narrationCps } from "@harness/core";
+import { buildTimeline, fitEdl, narrationCps, snapCuts, type BeatGrid, type SnapMove, type SnapSkip } from "@harness/core";
 
 /** The read audio of a narration line (voice store). */
 export interface ReadLine { key: string; duration_s: number; words: { word: string; start: number; end: number }[] }
@@ -43,6 +44,14 @@ export interface FitCutInput {
   textStyle?: TextLook | null;
   /** Feedback-vps §4.6: the colour of the picture (the plan's, else the branding's). */
   look?: VideoLook | null;
+  /** Feedback-vps §4.7: the music's beats, for the plan's shots with `snap`; null: none known (those cuts stay). */
+  beats?: BeatGrid | null;
+}
+
+/** What `snap` did: cuts moved onto the music's beats (clip ids), and shots whose cut could not move. */
+export interface FitSnapReport {
+  moves: (SnapMove & { clip_id: string })[];
+  skipped: (SnapSkip & { clip_id: string })[];
 }
 
 /** A transition's length when the plan gives none: a dissolve the harness brand default, a dip to black a little longer. */
@@ -56,7 +65,7 @@ function shotAt(shots: ShotsIndex, sourceId: string, inS: number, out: number): 
   return s?.shot_id ?? null;
 }
 
-export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: FitReport } {
+export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: FitReport; snap: FitSnapReport } {
   const { plan } = p;
   const narrated = plan.narration === "tts";
   const anchors = new Map(plan.shots.filter((s) => s.line_id).map((s) => [s.line_id!, s.order]));
@@ -103,6 +112,29 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
     return [clip?.order ?? -1, n.line_id] as const;
   }));
   const video = [...laid.video].sort((a, b) => a.order - b.order);
+
+  // cuts on the music's beat: the last piece of a shot with `snap` ends on the nearest beat or bar it can
+  const snap: FitSnapReport = { moves: [], skipped: [] };
+  const snapped = video.some((v) => { const o = fromPlan.get(v.order); return o?.last && o.shot.snap; });
+  if (snapped && p.beats) {
+    // seconds of narration each anchoring piece (by fitted order) starts
+    const lines = new Map([...lineAt].filter(([, id]) => voiceOf[id]).map(([order, id]) => [order, voiceOf[id]!.duration_s]));
+    const r = snapCuts(video.map((v) => {
+      const o = fromPlan.get(v.order);
+      const mid = (v.in + v.out) / 2;
+      const shot = p.shots.sources.find((x) => x.source_id === v.source_id)?.shots.find((x) => x.in <= mid && mid < x.out);
+      const line = lines.get(v.order);
+      return {
+        duration: r3(v.out - v.in), snap: o?.last ? o.shot.snap ?? null : null, room: shot ? Math.max(0, r3(shot.out - v.out)) : 0,
+        ...(line !== undefined ? { line: { lead: DEFAULT_NARRATION_LEAD_SECONDS, length: line } } : {}),
+      };
+    }), p.beats);
+    let at = 0;
+    video.forEach((v, i) => { v.out = r3(v.in + r.durations[i]!); v.start = r3(at); at += r.durations[i]!; v.end = r3(at); });
+    const idOf = (i: number) => `C${String(i + 1).padStart(3, "0")}`;
+    snap.moves = r.moves.map((m) => ({ ...m, clip_id: idOf(m.index) }));
+    snap.skipped = r.skipped.map((s) => ({ ...s, clip_id: idOf(s.index) }));
+  }
   const clips: TimelineClipV4[] = video.map((v, i) => {
     const origin = fromPlan.get(v.order);
     const kind = origin?.shot.transition;
@@ -158,5 +190,5 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
     ...(p.textStyle ? { text_style: p.textStyle } : {}),
     ...(p.look && p.look !== "none" ? { look: p.look } : {}),
   });
-  return { timeline, report: fitted.report };
+  return { timeline, report: fitted.report, snap };
 }
