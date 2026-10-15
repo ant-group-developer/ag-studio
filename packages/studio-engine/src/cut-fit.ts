@@ -43,8 +43,8 @@ export interface FitCutInput {
   textStyle?: TextLook | null;
 }
 
-/** A dissolve, when the plan asks for one: the harness brand default length. */
-const DISSOLVE_SECONDS = 0.4;
+/** A transition's length when the plan gives none: a dissolve the harness brand default, a dip to black a little longer. */
+const TRANSITION_SECONDS = { dissolve: 0.4, dip_black: 0.6 } as const;
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
 /** The shot of `source_id` holding the middle of `[in, out)` (an appended piece is not one of the plan's shots). */
@@ -103,8 +103,9 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
   const video = [...laid.video].sort((a, b) => a.order - b.order);
   const clips: TimelineClipV4[] = video.map((v, i) => {
     const origin = fromPlan.get(v.order);
-    const transition = origin?.last && origin.shot.transition === "dissolve" && i < video.length - 1
-      ? { kind: "dissolve" as const, seconds: DISSOLVE_SECONDS } : { kind: "cut" as const, seconds: 0 };
+    const kind = origin?.shot.transition;
+    const transition = origin?.last && kind && kind !== "cut" && i < video.length - 1
+      ? { kind, seconds: origin.shot.transition_s ?? TRANSITION_SECONDS[kind] } : { kind: "cut" as const, seconds: 0 };
     const assetId = assetOf.get(v.source_id);
     if (!assetId) throw new Error(`fitted entry ${v.order} is on an unknown source ${v.source_id}`);
     return {
@@ -149,7 +150,7 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
     },
     captions: { mode: narrated ? "burn-in" : "none" },
     music,
-    source_audio: { muted: false, ...(plan.source_even ? { even: true } : {}) },
+    source_audio: { muted: plan.source_muted ?? false, ...(plan.source_even ? { even: true } : {}) },
     assets: Object.fromEntries(Object.entries(p.assets).filter(([id]) => used.has(id))),
     alternates: [],
     ...(p.textStyle ? { text_style: p.textStyle } : {}),

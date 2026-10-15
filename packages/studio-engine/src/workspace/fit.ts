@@ -229,10 +229,16 @@ export function fitHandler(d: FitDeps): JobHandler {
       const picked = pickLibraryMusic(await listLibraryMusic(d.db, { activeOnly: true }), [plan.music_mood, ...branding.musicMoods], { seed: videoId, seconds: plan.target_seconds });
       if (picked) { music = picked.music; musicNote = `nhạc thư viện "${picked.track.display_name}" (tâm trạng ${picked.mood})`; }
     }
+    // the plan's own say on the music (feedback-vps §4.4): none at all, or its gain and ducking over whichever track
+    if (plan.music === null) { music = null; musicNote = "không nhạc (theo kế hoạch dựng)"; }
+    else if (music && plan.music) {
+      music = { ...music, ...(plan.music.gain_db !== undefined ? { gain_db: plan.music.gain_db } : {}), ...(plan.music.ducking !== undefined ? { ducking: plan.music.ducking } : {}) };
+      musicNote = `${musicNote}, ${music.gain_db} dB${music.ducking ? "" : ", không nhỏ lại khi có lời"}`;
+    }
     const fitted = fitCutTimeline({
       productionId: project.id, plan, shots, survey: survey.data, transcript: transcriptOfIndex(ctx.workspaceDir, index), voice: read, written,
       sources: index.sources.map((s) => ({ asset_id: s.asset_id, source_id: s.source_id })), assets: videoAssets(index, ctx.workspaceDir),
-      canvas: CANVAS[project.aspect], fps: 30, music, clipAudio: true, textStyle: branding.textLook,
+      canvas: CANVAS[project.aspect], fps: 30, music, clipAudio: true, textStyle: plan.text_look ?? branding.textLook,
     });
     const report = fitted.report;
     // a shot that runs past the end of its prepared video plays to that end, never more than the file holds

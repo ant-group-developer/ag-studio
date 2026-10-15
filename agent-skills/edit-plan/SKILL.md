@@ -32,8 +32,9 @@ description: Viết kế hoạch dựng của một video — thứ tự shot, �
 - `narration`: `tts` (Studio đọc `lines` bằng giọng của dự án), `original` (giữ tiếng nói gốc), `none`.
   Mỗi câu `L001`, `L002`… gắn vào shot nó bắt đầu (`line_id`); câu không gắn shot thì không được đọc. Studio kéo dài hình
   cho vừa lời ("hình theo lời"), nên đừng cố khớp giây.
-- `transition`: `cut` hoặc `dissolve` (sang shot sau). `source_audio: "mute"` khi tiếng gốc làm phiền (thông báo, nhạc,
-  người lạ nói).
+- `transition`: `cut`, `dissolve` hoặc `dip_black` (tối dần rồi sáng lại) sang shot sau; `transition_s` (0.2–1, tuỳ chọn;
+  mặc định dissolve 0.4, dip_black 0.6). `source_audio: "mute"` khi tiếng gốc làm phiền (thông báo, nhạc, người lạ nói);
+  `source_muted: true` (cấp kế hoạch) tắt tiếng gốc của mọi clip.
 - Âm lượng (tuỳ chọn): `gain_db` của shot (-30..20 dB) cho tiếng gốc to/nhỏ hơn (người nói nhỏ: +6; phố ồn: -8);
   `source_even: true` để máy render đo tiếng gốc từng clip và kéo về cùng một mức (bù tối đa ±12 dB, trước `gain_db`);
   `music_envelope`: đường âm lượng nhạc, mỗi điểm `{ "at_order", "offset_s", "gain_db" (-60..0) }` neo vào shot như chữ —
@@ -46,8 +47,12 @@ description: Viết kế hoạch dựng của một video — thứ tự shot, �
   (tuỳ chọn, cỡ riêng của chữ đó so với cỡ của loại chữ). Hai chữ cùng vị trí, cùng lúc (song ngữ Anh–Nhật, tên địa danh
   và chú thích) **tự xếp chồng**, không đè nhau: chữ bắt đầu trước nằm sát mép, chữ sau đẩy lên (vị trí dưới) hoặc đẩy
   xuống (vị trí trên, giữa). Muốn hai dòng của một chữ thì viết `\n` trong `text`.
-- `music_mood`: tâm trạng nhạc khi video và dự án chưa có nhạc riêng (xem `music_list`). Nhạc riêng do người dùng chọn ở
-  tab Đầu vào (của dự án, hoặc của riêng video; có thể ghép nhiều bài) — `project_info` cho biết `video_music`.
+- `music_mood`: tâm trạng nhạc khi video và dự án chưa có nhạc riêng (xem `music_list`). Nhạc riêng: người dùng chọn ở
+  tab Đầu vào, hoặc bạn đặt bằng `music_set` (file trong `context/audio/`, ghép nhiều bài) — `music_list` cho biết nhạc
+  đang gán. `music` (tuỳ chọn): `{ "gain_db": -24, "ducking": false }` = nhạc đó phát ở mức này, có/không nhỏ lại khi có
+  lời; `"music": null` = video không có nhạc.
+- `text_look` (tuỳ chọn): kiểu chữ riêng của video thay cho `text_look` của branding (cùng các khoá: màu, `size`,
+  `shadow`, `font`).
 - `target_seconds` theo brief (10–3600).
 
 ## `edit-plan.md` — cho người đọc
@@ -57,5 +62,8 @@ Frontmatter `status: draft`. Thân: cấu trúc từng phần, lời dẫn đầ
 1. `validate_file` cho `videos/<id>/edit-plan.json`; sửa đến khi hết lỗi.
 2. Khi người dùng đồng ý: `status: done` trong edit-plan.md, rồi `timeline_from_edit_plan`. Lời dẫn tts cần giọng của
    dự án (xem `project_info`); chưa có thì nhờ người dùng chọn file giọng mẫu ở tab Đầu vào.
-3. Đọc lại bằng `timeline_get` (mặc định là tổng quan; `view: "clips"` hoặc `"texts"` với `from_s`/`to_s` để đọc từng
+3. **Dựng lại từ kế hoạch thay toàn bộ timeline.** Mỗi lần sửa timeline bằng `timeline_apply_ops` mà muốn giữ khi dựng lại
+   (chuyển cảnh, âm lượng clip, đường âm lượng nhạc, tắt tiếng, chữ, cỡ chữ, màu), ghi luôn thay đổi đó vào
+   `edit-plan.json`. Riêng mức nhạc của `setMusic` Studio tự nhớ vào nhạc của video.
+4. Đọc lại bằng `timeline_get` (mặc định là tổng quan; `view: "clips"` hoặc `"texts"` với `from_s`/`to_s` để đọc từng
    khúc), sửa nhỏ bằng `timeline_apply_ops`; rồi `render_preview`.

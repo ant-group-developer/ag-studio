@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { TimelineV4 } from "@harness/contracts";
 import {
   addSource, agentTools, callAgentTool, createProject, createThread, createVideo, latestVideoRevision, listJobs, markAgentTurnRunning,
-  postUserMessage, savePrepared, saveVideoRevision, seedWorkspace, type AgentToolContext, type StudioDb,
+  postUserMessage, savePrepared, saveVideoRevision, seedWorkspace, videoOwnMusic, type AgentToolContext, type StudioDb,
 } from "../src/index.js";
 import { world } from "./helpers.js";
 
@@ -109,6 +109,20 @@ describe("timeline tools", () => {
     await savePrepared(s.db, { project_id: s.project.id, asset_id: A2, status: "ready", name: "Hang.mp4", duration_s: 6, width: 1920, height: 1080, has_audio: true, shots: 1, transcript: false, source_kind: "preview", watermarked: false, error: null }, NOW);
     expect((await call(s, "timeline_apply_ops", { base_revision: 2, ops: [{ op: "addClip", asset_id: A2, index: 0 }] })).json).toMatchObject({ revision: 3 });
     expect((await latestVideoRevision(s.db, s.video.id))!.data.assets[A2]).toMatchObject({ title: "Hang.mp4", orientation: "landscape" });
+  });
+
+  it("feedback-vps §4.4: setMusic keeps its gain and ducking as the video's music, so the next fit plays it the same", async () => {
+    const s = await setup();
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
+    const track = `library:studio/projects/${s.project.id}/music/abc.m4a`;
+    await s.db.run("UPDATE projects SET music = ? WHERE id = ?", [JSON.stringify({ track, gain_db: -18, ducking: true, sha256: "abc", duration_s: 120 }), s.project.id]);
+    const r = await call(s, "timeline_apply_ops", { base_revision: 1, ops: [{ op: "setMusic", music: { track, gain_db: -30, ducking: false } }] });
+    expect(r.json).toMatchObject({ revision: 2, video_music: expect.stringContaining("-30 dB") });
+    expect(await videoOwnMusic(s.db, s.video.id)).toEqual({ track, gain_db: -30, ducking: false, sha256: "abc", duration_s: 120 });
+    // the same level again changes nothing; another level updates the video's own music
+    expect((await call(s, "timeline_apply_ops", { base_revision: 2, ops: [{ op: "setMusic", music: { track, gain_db: -30, ducking: false } }] })).json.video_music).toBeUndefined();
+    await call(s, "timeline_apply_ops", { base_revision: 3, ops: [{ op: "setMusic", music: { track, gain_db: -24, ducking: true } }] });
+    expect(await videoOwnMusic(s.db, s.video.id)).toMatchObject({ track, gain_db: -24, ducking: true });
   });
 
   it("render_preview and timeline_from_edit_plan queue jobs for the thread (the agent goes on when they end)", async () => {

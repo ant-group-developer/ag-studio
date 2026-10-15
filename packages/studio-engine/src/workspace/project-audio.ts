@@ -136,6 +136,30 @@ export async function setVideoLibraryMusic(db: StudioDb, videoId: string, track:
   return music;
 }
 
+/**
+ * The gain and ducking a timeline edit gave the music (feedback-vps §4.4: op setMusic), kept as the video's own music so
+ * the next fit plays it the same way instead of at the -18 dB default: the video's own music when it is that track, else a
+ * copy of the project's when it is that track, else the track itself (a library track with its details). Returns what
+ * was kept, or null when nothing changed.
+ */
+export async function keepVideoMusicLevels(db: StudioDb, projectId: string, videoId: string, m: StudioMusic): Promise<ProductionMusic | null> {
+  const own = await videoOwnMusic(db, videoId);
+  const level = { gain_db: m.gain_db, ducking: m.ducking };
+  let next: ProductionMusic;
+  if (own && own.track === m.track) {
+    if (own.gain_db === m.gain_db && own.ducking === m.ducking) return null;
+    next = { ...own, ...level };
+  } else {
+    const project = (await projectAudio(db, projectId)).music;
+    const lib = m.track.startsWith("library:music/") ? (await listLibraryMusic(db)).find((t) => t.file === m.track && t.active) ?? null : null;
+    next = project && project.track === m.track ? { ...project, ...level }
+      : lib ? libraryMusic(lib, { gainDb: m.gain_db, ducking: m.ducking })
+        : ProductionMusicSchema.parse({ track: m.track, ...level });
+  }
+  await setVideoMusic(db, videoId, next);
+  return next;
+}
+
 /** The video takes the project's music again. */
 export async function clearVideoMusic(db: StudioDb, videoId: string): Promise<void> {
   await requireVideo(db, videoId);

@@ -996,7 +996,10 @@ export const EditPlanSchema = z.object({
     in: z.number().min(0),
     out: z.number().positive(),
     line_id: z.string().regex(/^L\d{3}$/).nullable(),
-    transition: z.enum(["cut", "dissolve"]),
+    /** Into the next shot. Feedback-vps §4.4: also `dip_black`, the same as the timeline's. */
+    transition: z.enum(TIMELINE_TRANSITIONS),
+    /** Seconds of the transition (default: dissolve 0.4, dip to black 0.6). */
+    transition_s: z.number().min(0.2).max(1).optional(),
     section_title: z.string().min(1).max(100).nullable(),
     note: z.string().max(300),
     /** Cut 1.1.0: `mute` = this shot's own sound is not heard (announcements, music, strangers). Absent = `keep`. */
@@ -1031,6 +1034,18 @@ export const EditPlanSchema = z.object({
   }).strict()).min(1).max(MUSIC_ENVELOPE_MAX_POINTS).optional(),
   /** Feedback-vps §4.3: the clips' own sound brought to one level (`source_audio.even`). */
   source_even: z.boolean().optional(),
+  /**
+   * Feedback-vps §4.4: how the music plays, on top of the music the video takes (its own, the project's, or the library's by
+   * mood): its gain and whether it ducks under the voice. `null` = no music at all. Absent = as that music is set.
+   */
+  music: z.object({
+    gain_db: z.number().min(-40).max(0).optional(),
+    ducking: z.boolean().optional(),
+  }).strict().nullable().optional(),
+  /** Feedback-vps §4.4: every clip's own sound off (`source_audio.muted`). */
+  source_muted: z.boolean().optional(),
+  /** Feedback-vps §4.4: this video's text look instead of the branding's (font, size, colours, shadow). */
+  text_look: TextLookSchema.optional(),
 }).strict();
 export type EditPlan = z.infer<typeof EditPlanSchema>;
 

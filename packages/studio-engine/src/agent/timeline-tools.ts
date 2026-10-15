@@ -12,6 +12,7 @@ import { queueFit, timelineSnapshotPath, videoAssets, writeTimelineSnapshot } fr
 import { getJob } from "../workspace/jobs-db.js";
 import { getVideoRevision, latestVideoRevision, requireVideo, saveVideoRevision } from "../workspace/project-db.js";
 import { RevisionConflictError } from "../studio-db.js";
+import { keepVideoMusicLevels } from "../workspace/project-audio.js";
 import { queueRender } from "../workspace/renders.js";
 import { MAX_RENDER_FRAMES, queueRenderFrames, queueThumbnails } from "../workspace/thumbnails.js";
 import { buildVideoIndex } from "../workspace/video-index.js";
@@ -168,7 +169,7 @@ export const TIMELINE_TOOLS: AgentTool[] = [
     description: [
       "Sửa timeline bằng các thao tác (tối đa 50), lưu thành bản mới. `base_revision` là bản bạn đã đọc (timeline_get); bản mới hơn đã có thì bị từ chối: đọc lại rồi sửa.",
       "Thao tác: addClip {asset_id, index}, removeClip {clip_id}, moveClip {from, to}, replaceClipAsset {clip_id, asset_id}, trimClip {clip_id, in, out|null},",
-      "setTransition {clip_id, kind: cut|dissolve, seconds}, setClipMuted {clip_id, muted}, setClipGain {clip_id, gain_db (-30..20; 0 = như gốc)}, setSectionTitle {clip_id, title|null},",
+      "setTransition {clip_id, kind: cut|dissolve|dip_black, seconds}, setClipMuted {clip_id, muted}, setClipGain {clip_id, gain_db (-30..20; 0 = như gốc)}, setSectionTitle {clip_id, title|null},",
       "addText {kind, text (≤ 120 ký tự), start, duration (≤ 600 s), position, size?: s|m|l}, updateText {text_id, kind|null, text|null, start|null, duration|null, position|null, size?}, removeText {text_id} (chữ cùng vị trí cùng lúc tự xếp chồng),",
       "setMusic {music: {track: 'library:…', gain_db, ducking} | null} (giữ đường âm lượng nhạc), setMusicEnvelope {points: [{at (giây trong video), gain_db (-60..0)}] — nhạc theo đường thẳng nối các điểm; [] = bỏ},",
       "setSourceMuted {muted}, setSourceEven {even: tiếng gốc các clip về cùng một mức, máy render đo và bù tối đa ±12 dB}, setCaptions {mode}. asset_id phải là video đã chuẩn bị của video này.",
@@ -194,8 +195,16 @@ export const TIMELINE_TOOLS: AgentTool[] = [
       try {
         const { revision } = await saveVideoRevision(ctx.db, v.id, { baseRevision: a.base_revision, data: next, authorId: ctx.claims.sub, label: "agent" });
         await writeTimelineSnapshot(ctx.db, ctx.workspaceDir, ctx.project.id, v.id, ctx.now());
+        // the music's gain and ducking stay with the video, so building the timeline again plays it the same way
+        const music = [...a.ops].reverse().find((o) => o.op === "setMusic");
+        const kept = music?.op === "setMusic" && music.music ? await keepVideoMusicLevels(ctx.db, ctx.project.id, v.id, music.music) : null;
         const issues = [...clamped, ...timelineIssues(next)];
-        return { text: json({ revision, saved: timelineSnapshotPath(v.id), issues: issues.map((i) => `[${i.severity}] ${i.message}`) }) };
+        return {
+          text: json({
+            revision, saved: timelineSnapshotPath(v.id), issues: issues.map((i) => `[${i.severity}] ${i.message}`),
+            ...(kept ? { video_music: `nhạc riêng của video giữ ${kept.gain_db} dB${kept.ducking ? ", nhỏ lại khi có lời" : ""} cho lần dựng sau` } : {}),
+          }),
+        };
       } catch (e) {
         if (e instanceof RevisionConflictError) return { text: `Timeline đã có bản mới hơn (${e.current}): đọc lại bằng timeline_get rồi sửa trên bản đó.`, isError: true };
         throw e;

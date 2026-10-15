@@ -113,6 +113,31 @@ describe("timeline from the edit plan", () => {
     expect((await latestVideoRevision(s.db, s.video.id))!.revision).toBe(2);
   });
 
+  it("feedback-vps §4.4: the plan keeps what a timeline holds: dip to black and its length, music level, muted sound, text look", async () => {
+    const s = await setup();
+    await s.db.run("UPDATE projects SET music = ? WHERE id = ?", [JSON.stringify({ track: `library:studio/projects/${s.project.id}/music/abc.m4a`, gain_db: -18, ducking: true }), s.project.id]);
+    s.writePlan("none");
+    const plan = JSON.parse(readFileSync(join(s.vdir, "edit-plan.json"), "utf8"));
+    plan.shots[0] = { ...plan.shots[0], transition: "dip_black", transition_s: 0.8 };
+    plan.music = { gain_db: -30, ducking: false };
+    plan.source_muted = true;
+    plan.text_look = { text_color: "#FFFFFF", outline_color: "#000000", box_color: null, size: "s", font: "Noto Serif", shadow: true };
+    writeFileSync(join(s.vdir, "edit-plan.json"), JSON.stringify(plan));
+    const job = await queueFit(s.db, { projectId: s.project.id, videoId: s.video.id, createdBy: "u" }, NOW);
+    await s.run();
+    expect(await getJob(s.db, job.id)).toMatchObject({ status: "done" });
+    const t = (await latestVideoRevision(s.db, s.video.id))!.data;
+    expect(t.clips[0]!.transition_out).toEqual({ kind: "dip_black", seconds: 0.8 });
+    expect(t.music).toMatchObject({ gain_db: -30, ducking: false });
+    expect(t.source_audio.muted).toBe(true);
+    expect(t.text_style).toEqual(plan.text_look);
+    // no music at all
+    writeFileSync(join(s.vdir, "edit-plan.json"), JSON.stringify({ ...plan, music: null }));
+    await queueFit(s.db, { projectId: s.project.id, videoId: s.video.id, createdBy: "u" }, NOW);
+    await s.run();
+    expect((await latestVideoRevision(s.db, s.video.id))!.data.music).toBeNull();
+  });
+
   it("two fits of a video at once both land, one revision on top of the other", async () => {
     const s = await setup();
     s.writePlan("none");
