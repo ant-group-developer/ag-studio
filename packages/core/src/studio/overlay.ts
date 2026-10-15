@@ -8,10 +8,25 @@
  * canvas, so the default brand scales them by the canvas' short edge: a 1080p or 9:16 render gets half. A callout is
  * drawn smaller than the harness's 160 px (`STUDIO_CALLOUT_PX`): at 80 px on 1080p it covered the picture.
  */
-import { BrandProfileSchema, type BrandProfile, type Composition, type TextLook } from "@harness/contracts";
+import { BrandProfileSchema, type BrandProfile, type Composition, type TextFont, type TextLook } from "@harness/contracts";
 import { buildAss } from "../media/ass.js";
 
 export const STUDIO_DEFAULT_FONT = "Arial";
+
+/** Hangul (syllables, jamo). */
+const HANGUL = /[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]/;
+/** Kana, CJK ideographs, CJK punctuation and full-width forms. */
+const JAPANESE = /[\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]/;
+
+/**
+ * The shipped font a text or subtitle is drawn in when it is Korean or Japanese (Arial and the Latin fonts have no such
+ * glyphs: libass drew empty boxes), or null to keep the style's font. Korean wins over the CJK ranges it shares. A text
+ * already set in that font keeps its style.
+ */
+export function studioScriptFont(text: string, lookFont: TextFont = STUDIO_DEFAULT_FONT): TextFont | null {
+  const want: TextFont | null = HANGUL.test(text) ? "Noto Sans KR" : JAPANESE.test(text) ? "Noto Sans JP" : null;
+  return want === lookFont ? null : want;
+}
 
 /** A callout's size on the design canvas (the harness default is 160 px). */
 export const STUDIO_CALLOUT_PX = 104;
@@ -62,6 +77,8 @@ export function studioLookBrand(canvas: { width: number; height: number }, look:
   const boxed = look.box_color !== null;
   return BrandProfileSchema.parse({
     ...base,
+    // `buildAss` names a font after its file's base name, so the family name stands in for the file
+    ...(look.font ? { fonts: { ...base.fonts, regular: `${look.font}.ttf`, bold: `${look.font}.ttf`, origin: "licensed", origin_note: "font OFL đóng kèm ag-render-worker" } } : {}),
     colors: { primary: look.text_color, text: look.text_color, text_outline: look.outline_color, box: `${look.box_color ?? "#000000"}${LOOK_BOX_ALPHA}` },
     text: {
       title: { ...base.text.title, size_px: px(base.text.title.size_px), box: boxed },
@@ -75,8 +92,10 @@ export function studioLookBrand(canvas: { width: number; height: number }, look:
 /**
  * The `overlay.ass` a Studio composition burns in, or `null` when it has no subtitle cue and no text. A composition
  * with a text look (cut 1.1.0) is drawn in it, its boxes in the box colour; one without, exactly as before.
+ * `scriptFonts`: the render machine has the shipped fonts (`studioFontFamilies`), so Japanese and Korean words are
+ * drawn in Noto Sans JP / KR.
  */
-export function studioOverlayAss(c: Composition): string | null {
+export function studioOverlayAss(c: Composition, o: { scriptFonts?: boolean } = {}): string | null {
   const cues = c.captions.mode === "none" ? [] : c.captions.cues;
   if (cues.length === 0 && c.text_events.length === 0) return null;
   const canvas = { width: c.output.width, height: c.output.height };
@@ -89,5 +108,17 @@ export function studioOverlayAss(c: Composition): string | null {
     canvas,
     ...(c.text_style ? { boxColorInOutline: true } : {}),
     ...(c.text_style?.shadow ? { shadow: true } : {}),
+    ...(o.scriptFonts ? { scriptFont: (text: string) => studioScriptFont(text, c.text_style?.font) } : {}),
   });
+}
+
+/**
+ * The font families a composition's texts and subtitles are drawn in: the look's font (Arial when none) and the
+ * script fonts its words need. The render worker hands libass exactly these (`fontsdir`).
+ */
+export function studioFontFamilies(c: Composition): TextFont[] {
+  const look = c.text_style?.font ?? STUDIO_DEFAULT_FONT;
+  const words = [...c.text_events.map((t) => t.text), ...(c.captions.mode === "none" ? [] : c.captions.cues.flatMap((q) => q.lines))];
+  const script = words.map((w) => studioScriptFont(w, look)).filter((f): f is TextFont => f !== null);
+  return [...new Set<TextFont>([look, ...script])];
 }

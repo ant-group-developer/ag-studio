@@ -23,6 +23,7 @@ text_look:                     # chữ trên video vẽ đúng như vậy
   box_color: null              # hộp sau tiêu đề/địa danh; null = không hộp
   size: m                      # s | m | l
   shadow: true                 # bóng mờ dưới chữ và phụ đề (tuỳ chọn), dễ đọc trên nền sáng
+  font: "Be Vietnam Pro"       # tuỳ chọn, một trong danh sách dưới; không ghi = Arial
 thumbnail:
   max_words: 3                 # 1–8
   text_case: upper             # upper | sentence
@@ -30,6 +31,15 @@ thumbnail:
 ---
 ```
 Độ tương phản chữ/hộp (hoặc chữ/viền khi không có hộp) phải ≥ 3:1, nếu không Studio báo `text_look_no_contrast`.
+
+Font chữ trên video (`text_look.font`) chỉ chọn trong danh sách máy render có sẵn — viết đúng tên:
+- `Arial` (mặc định): trung tính, dễ đọc.
+- `Be Vietnam Pro`: sans hiện đại, dấu tiếng Việt đẹp — hợp kênh tiếng Việt.
+- `Noto Sans JP`, `Noto Sans KR`: sans cho kênh tiếng Nhật / Hàn.
+- `Noto Serif`: có chân, trang trọng, đủ dấu tiếng Việt.
+- `Playfair Display`: có chân, tương phản cao, hợp tiêu đề sang trọng (du lịch, ẩm thực cao cấp).
+Chữ Nhật và chữ Hàn luôn được vẽ bằng Noto Sans JP / KR dù font của kênh là gì, nên chữ song ngữ không bị ô vuông.
+Font khác (không có trong danh sách) không dùng được.
 
 ## Thân file
 - **Giọng văn**: 2–6 tính từ; nên/không nên viết thế nào (xưng hô, độ dài câu); câu cửa miệng.

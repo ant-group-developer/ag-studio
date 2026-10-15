@@ -11,12 +11,17 @@ import type { Composition, TextEvent } from "@harness/contracts";
  * - 2: `inspect` in the render payload (the worker checks the file it rendered and names `inspect.json` and the
  *   contact sheets in its manifest, `inspect.ts`);
  * - 3: `text_events[].size`, `text_style.shadow`, and texts at one position that overlap in time, which this build
- *   stacks (`buildAss`) where an older one drew them on top of each other.
+ *   stacks (`buildAss`) where an older one drew them on top of each other;
+ * - 4: `text_style.font` (a font the render worker ships, `TEXT_FONTS`).
  */
-export const RENDER_FEATURE_LEVEL = 3;
+export const RENDER_FEATURE_LEVEL = 4;
 
 /** The level that stacks texts and reads a text's size and the text look's shadow. */
 export const RENDER_TEXT_LEVEL = 3;
+
+/** The level that ships the fonts of `TEXT_FONTS` and reads `text_style.font`. A render worker missing a shipped font
+ * reports the level below (its self-check), so a composition set in one never goes to it. */
+export const RENDER_FONT_LEVEL = 4;
 
 /** The level a render payload with `inspect: true` needs: an older worker refuses the key. */
 export const RENDER_INSPECT_LEVEL = 2;
@@ -26,6 +31,7 @@ export function compositionFeatureLevel(c: Composition): number {
   const needs = [
     c.music?.duck.enabled !== undefined ? 1 : 0,
     c.text_events.some((t) => t.size !== undefined) || c.text_style?.shadow !== undefined || textsOverlap(c.text_events) ? RENDER_TEXT_LEVEL : 0,
+    c.text_style?.font !== undefined ? RENDER_FONT_LEVEL : 0,
   ];
   return Math.max(...needs);
 }

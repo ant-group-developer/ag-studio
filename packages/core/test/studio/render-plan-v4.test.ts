@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CompositionSchema, TimelineV4Schema, upgradeTimelineV3, type TimelineV3, type TimelineV4 } from "@harness/contracts";
 import { applyTimelineOps, setCaptions, setClipMuted, setTransition, TimelineOpError, trimClip } from "../../src/studio/layout.js";
-import { studioOverlayAss } from "../../src/studio/overlay.js";
+import { studioFontFamilies, studioOverlayAss, studioScriptFont } from "../../src/studio/overlay.js";
 import { timelineToComposition } from "../../src/studio/render-plan.js";
 
 const asset = (d: number) => ({ title: "Video", summary_vi: "Clip", duration_s: d, orientation: "landscape" as const });
@@ -181,6 +181,28 @@ describe("timelineToComposition on v4", () => {
     expect("size" in c.text_events.at(-1)!).toBe(false);
     const callout = studioOverlayAss(c)!.split("\n").find((l) => l.startsWith("Style: Callout,"))!.split(",");
     expect(Number(callout[2])).toBe(104);
+  });
+
+  it("feedback-vps §4.2: the look's font names every style; Japanese and Korean words get Noto Sans JP / KR on a machine that ships them", () => {
+    const look = { text_color: "#FFFFFF", outline_color: "#000000", box_color: null, size: "m" as const, font: "Playfair Display" as const };
+    const t = applyTimelineOps({ ...cut(), text_style: look }, [
+      { op: "addText", kind: "title", text: "Kiyomizu-dera", start: 1, duration: 5, position: "top_left" },
+      { op: "addText", kind: "title", text: "清水寺", start: 1, duration: 5, position: "top_left" },
+      { op: "addText", kind: "lower_third", text: "경복궁", start: 8, duration: 2, position: "bottom_left" },
+    ], {});
+    const c = CompositionSchema.parse(timelineToComposition(t));
+    const styles = studioOverlayAss(c)!.split("\n").filter((l) => l.startsWith("Style:")).map((l) => l.split(",")[1]);
+    expect(new Set(styles)).toEqual(new Set(["Playfair Display"]));
+    // an older worker's way: no script font asked for
+    expect(studioOverlayAss(c)).not.toContain("\\fn");
+    const ass = studioOverlayAss(c, { scriptFonts: true })!;
+    expect(ass.split("\n").find((l) => l.endsWith("清水寺"))).toContain("\\fnNoto Sans JP");
+    expect(ass.split("\n").find((l) => l.endsWith("경복궁"))).toContain("\\fnNoto Sans KR");
+    expect(ass.split("\n").find((l) => l.endsWith("Kiyomizu-dera"))).not.toContain("\\fn");
+    expect(studioFontFamilies(c)).toEqual(["Playfair Display", "Noto Sans JP", "Noto Sans KR"]);
+    expect(studioFontFamilies(timelineToComposition(cut()))).toEqual(["Arial"]);
+    expect(studioScriptFont("ありがとう", "Noto Sans JP")).toBeNull();
+    expect(studioScriptFont("Hà Nội")).toBeNull();
   });
 
   it("the footage's own speech (narration original) plays at its own level, not lowered as background", () => {

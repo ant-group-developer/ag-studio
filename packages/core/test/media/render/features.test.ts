@@ -33,6 +33,12 @@ describe("compositionFeatureLevel", () => {
     expect(compositionFeatureLevel(timelineToComposition({ ...timeline(null), text_style: { ...look, shadow: true } }))).toBe(3);
   });
 
+  it("is 4 for a text look that names a font", () => {
+    const look = { text_color: "#FFFFFF", outline_color: "#000000", box_color: null, size: "m" as const };
+    expect(compositionFeatureLevel(timelineToComposition({ ...timeline(null), text_style: { ...look, font: "Be Vietnam Pro" } }))).toBe(4);
+    expect(compositionFeatureLevel(timelineToComposition({ ...timeline(null), text_style: { ...look, font: "Arial", shadow: true } }))).toBe(4);
+  });
+
   it("never asks for more than this build renders", () => {
     expect(compositionFeatureLevel(timelineToComposition(timeline({ track: "library:m.mp3", gain_db: -30, ducking: false })))).toBeLessThanOrEqual(RENDER_FEATURE_LEVEL);
   });

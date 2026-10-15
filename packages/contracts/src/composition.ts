@@ -26,6 +26,14 @@ export const OVERLAY_TEXT_MAX: Record<OverlayKind, number> = { title: 48, callou
 
 const hexColor = z.string().regex(/^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$/);
 
+/**
+ * The fonts a text look may name (feedback-vps §4.2): Arial, which every render machine has installed, and fonts under
+ * the SIL Open Font License that the render worker ships in its release (`fonts/` of ag-render-worker). Noto Sans JP
+ * and KR also draw Japanese and Korean words whatever the look's font is.
+ */
+export const TEXT_FONTS = ["Arial", "Be Vietnam Pro", "Noto Sans JP", "Noto Sans KR", "Noto Serif", "Playfair Display"] as const;
+export type TextFont = (typeof TEXT_FONTS)[number];
+
 export const TEXT_LOOK_SIZES = ["s", "m", "l"] as const;
 export type TextLookSize = (typeof TEXT_LOOK_SIZES)[number];
 /**
@@ -40,6 +48,8 @@ export const TextLookSchema = z.object({
   size: z.enum(TEXT_LOOK_SIZES),
   /** A soft shadow under texts and subtitles (feedback-vps §4.1). Absent = none. Needs render level 3. */
   shadow: z.boolean().optional(),
+  /** One of `TEXT_FONTS` (feedback-vps §4.2). Absent = Arial. Needs render level 4. */
+  font: z.enum(TEXT_FONTS).optional(),
 }).strict();
 export type TextLook = z.infer<typeof TextLookSchema>;
 
