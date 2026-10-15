@@ -16,8 +16,8 @@ import { world } from "./helpers.js";
 const NOW = "2026-10-15T08:00:00.000Z";
 const ASSET = "0b9a7c34-5f1e-4d4c-9a51-3f2a1e0c7d11";
 const SRC = studioSourceId(ASSET);
-// 120 BPM from 0.25 s: a beat every 0.5 s, a bar every 2 s, over a 60 s track
-const BEATS = Array.from({ length: 120 }, (_, k) => Math.round((0.25 + k * 0.5) * 1000) / 1000);
+// 120 BPM from 0.2 s (on the 30 fps frame grid): a beat every 0.5 s, a bar every 2 s, over a 60 s track
+const BEATS = Array.from({ length: 120 }, (_, k) => Math.round((0.2 + k * 0.5) * 1000) / 1000);
 const DOWNBEATS = BEATS.filter((_, k) => k % 4 === 0);
 
 const view = (over: Partial<FarmJobView>): FarmJobView => ({
@@ -137,15 +137,15 @@ describe("fit with snap", () => {
     const t = (await latestVideoRevision(s.db, s.video.id))!.data;
     const laid = layoutTimeline(t);
     const cuts = laid.clips.map((c) => c.end);
-    // 7.1 → bar 6.25; then 6.25 + 5.6 = 11.85 → bar 12.25; 3.3 s stays (15.55); 15.55 + 9.4 = 24.95 → beat 24.75
-    expect(cuts).toEqual([6.25, 12.25, 15.55, 24.75]);
+    // 7.1 → bar 6.2; then 6.2 + 5.6 = 11.8 → bar 12.2; 3.3 s stays (15.5); 15.5 + 9.4 = 24.9 → beat 24.7
+    expect(cuts).toEqual([6.2, 12.2, 15.5, 24.7]);
     expect(DOWNBEATS).toContain(cuts[0]);
     expect(DOWNBEATS).toContain(cuts[1]);
     expect(BEATS).toContain(cuts[3]);
     // the text anchored on shot 2 moved with it
-    expect(t.texts[0]).toMatchObject({ text_id: "T001", start: 6.75 });
+    expect(t.texts[0]).toMatchObject({ text_id: "T001", start: 6.7 });
     expect(done.result).toMatchObject({ snap: { moved: [
-      { clip_id: "C001", kind: "bar", from: 7.1, to: 6.25 }, { clip_id: "C002", kind: "bar", from: 11.85, to: 12.25 }, { clip_id: "C004", kind: "beat", from: 24.95, to: 24.75 },
+      { clip_id: "C001", kind: "bar", from: 7.1, to: 6.2 }, { clip_id: "C002", kind: "bar", from: 11.8, to: 12.2 }, { clip_id: "C004", kind: "beat", from: 24.9, to: 24.7 },
     ], not_moved: [], music: "nhạc ≈ 120 BPM, 4 phách một ô nhịp (ô nhịp 2 s)" } });
     // built again: the kept beats are read, the farm is not asked again
     await queueFit(s.db, { projectId: s.project.id, videoId: s.video.id, createdBy: "u" }, NOW);

@@ -10,6 +10,10 @@
  * - from making narration overlap: no line may end later past the start of the next one than it did before (each line
  *   starts `lead` seconds into the clip that anchors it).
  * A clip whose cut cannot move is left as it is and said so. Later clips move with the cuts before them.
+ *
+ * With `fps`, each grid point is put on the nearest frame and every clip is made a whole number of frames, its length
+ * rounded down to the millisecond (`wholeFrames`): a render plays whole frames, and ffmpeg keeps every frame before a
+ * clip's length, so a 4.334 s clip at 30 fps plays 131 frames (4.367 s) and every cut after it comes a frame late.
  */
 import type { SnapKind } from "@harness/contracts";
 import { MIN_CLIP_SECONDS } from "./layout.js";
@@ -51,8 +55,8 @@ export interface SnapSkip {
   reason: "no_point" | "narration";
 }
 
-/** Grid points of `kind` in `[0, until]`, the track repeated when `loop`. */
-export function gridPoints(grid: BeatGrid, kind: SnapKind, until: number, loop = true): number[] {
+/** Grid points of `kind` in `[0, until]`, the track repeated when `loop`, on the nearest frame when `fps` is given. */
+export function gridPoints(grid: BeatGrid, kind: SnapKind, until: number, loop = true, fps?: number): number[] {
   const base = kind === "bar" ? grid.downbeats : grid.beats;
   if (!base.length) return [];
   const out: number[] = [];
@@ -61,7 +65,7 @@ export function gridPoints(grid: BeatGrid, kind: SnapKind, until: number, loop =
     const offset = k * period;
     if (offset > until || (k > 0 && (!loop || period <= 0))) break;
     for (const p of base) {
-      const t = p + offset;
+      const t = fps ? Math.round((p + offset) * fps) / fps : p + offset;
       if (t <= until + EPS) out.push(r3(t));
     }
   }
@@ -84,7 +88,7 @@ function overruns(durations: readonly number[], clips: readonly SnapClip[]): num
  * The clips' new lengths with their `snap` cuts on the grid, and what moved or could not. `minSeconds` defaults to the
  * shortest clip a timeline may hold.
  */
-export function snapCuts(clips: readonly SnapClip[], grid: BeatGrid, o: { minSeconds?: number; loop?: boolean } = {}): {
+export function snapCuts(clips: readonly SnapClip[], grid: BeatGrid, o: { minSeconds?: number; loop?: boolean; fps?: number } = {}): {
   durations: number[]; moves: SnapMove[]; skipped: SnapSkip[];
 } {
   const min = o.minSeconds ?? MIN_CLIP_SECONDS;
@@ -99,7 +103,7 @@ export function snapCuts(clips: readonly SnapClip[], grid: BeatGrid, o: { minSec
   let start = 0;
   clips.forEach((c, i) => {
     if (c.snap) {
-      const grid1 = (points[c.snap] ??= gridPoints(grid, c.snap, until, o.loop ?? true));
+      const grid1 = (points[c.snap] ??= gridPoints(grid, c.snap, until, o.loop ?? true, o.fps));
       const cut = start + durations[i]!;
       const lo = start + Math.min(min, durations[i]!) - EPS;
       const hi = cut + Math.max(0, c.room) + EPS;
@@ -119,5 +123,22 @@ export function snapCuts(clips: readonly SnapClip[], grid: BeatGrid, o: { minSec
     }
     start += durations[i]!;
   });
-  return { durations, moves, skipped };
+  return { durations: o.fps ? wholeFrames(durations, o.fps) : durations, moves, skipped };
+}
+
+/**
+ * Each clip's length as a whole number of frames, each cut on the frame nearest to it: `k` frames are written as
+ * `k / fps` rounded down to three decimals (the render reads three), never more than `k / fps` (that would play one
+ * frame more) and never as little as `k - 1` frames; exactly `k / fps` when three decimals hold it (6.2 s = 186).
+ */
+export function wholeFrames(durations: readonly number[], fps: number): number[] {
+  let at = 0;
+  let prev = 0;
+  return durations.map((d) => {
+    at += d;
+    const frame = Math.round(at * fps);
+    const k = frame - prev;
+    prev = frame;
+    return Math.floor((k / fps) * 1000 + 1e-6) / 1000;
+  });
 }

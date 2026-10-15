@@ -128,7 +128,7 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
         duration: r3(v.out - v.in), snap: o?.last ? o.shot.snap ?? null : null, room: shot ? Math.max(0, r3(shot.out - v.out)) : 0,
         ...(line !== undefined ? { line: { lead: DEFAULT_NARRATION_LEAD_SECONDS, length: line } } : {}),
       };
-    }), p.beats);
+    }), p.beats, { fps: p.fps });
     let at = 0;
     video.forEach((v, i) => { v.out = r3(v.in + r.durations[i]!); v.start = r3(at); at += r.durations[i]!; v.end = r3(at); });
     const idOf = (i: number) => `C${String(i + 1).padStart(3, "0")}`;

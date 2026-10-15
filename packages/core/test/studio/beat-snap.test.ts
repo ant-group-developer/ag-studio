@@ -1,6 +1,6 @@
 /** Cuts on the music's beat (feedback-vps §4.7): `snapCuts` moves a shot's cut to the nearest beat or first beat of a bar. */
 import { describe, expect, it } from "vitest";
-import { gridPoints, snapCuts, type BeatGrid, type SnapClip } from "../../src/studio/beat-snap.js";
+import { gridPoints, snapCuts, wholeFrames, type BeatGrid, type SnapClip } from "../../src/studio/beat-snap.js";
 
 // 120 BPM from 0.25 s: a beat every 0.5 s, a bar every 2 s, a 30 s track
 const beats = Array.from({ length: 60 }, (_, k) => 0.25 + k * 0.5);
@@ -53,6 +53,34 @@ describe("snapCuts", () => {
     expect(gridPoints(short, "bar", 9)).toEqual([0.1, 4.1, 8.1]);
     expect(gridPoints(short, "bar", 9, false)).toEqual([0.1]);
     expect(cuts(snapCuts([clip(7.5, { snap: "bar" })], short).durations)).toEqual([8.1]);
+  });
+
+  it("with fps, a cut sits on the frame nearest to the bar and every clip is whole frames, so a render does not drift", () => {
+    const odd: BeatGrid = { beats: [1.625, 3.785, 5.898, 8.01], downbeats: [1.625, 3.785, 5.898, 8.01], duration_s: 30 };
+    expect(gridPoints(odd, "bar", 10, true, 30)).toEqual([1.633, 3.8, 5.9, 8]);
+    // 114 + 63 frames, a clip without snap (1.31 s) rounded to 39 frames, then 63 more to the bar at 8.0
+    const r = snapCuts([clip(3.6, { snap: "bar" }), clip(2, { snap: "bar" }), clip(1.31), clip(0.9, { snap: "bar" })], odd, { fps: 30 });
+    expect(r.durations).toEqual([3.8, 2.1, 1.3, 0.8]);
+    expect(r.durations.map((d) => Math.ceil(d * 30 - 1e-9))).toEqual([114, 63, 39, 24]);
+    // 131 frames are 4.3666… s: written 4.366, not 4.367 (which would play a 132nd)
+    expect(wholeFrames([4.3667], 30)).toEqual([4.366]);
+    expect(r.moves.map((m) => m.to)).toEqual([3.8, 5.9, 8]);
+  });
+
+  it("whole frames: never one frame more (ffmpeg keeps frames before the length), never one less", () => {
+    for (const fps of [25, 30]) {
+      const lengths = Array.from({ length: 200 }, (_, i) => 0.5 + ((i * 7919) % 1000) / 137);
+      const out = wholeFrames(lengths, fps);
+      let at = 0;
+      let frames = 0;
+      out.forEach((d, i) => {
+        const k = Math.ceil(d * fps - 1e-9);
+        expect(d).toBeGreaterThan((k - 1) / fps);
+        frames += k;
+        at += lengths[i]!;
+        expect(Math.abs(frames - at * fps)).toBeLessThanOrEqual(0.5 + 1e-9);
+      });
+    }
   });
 
   it("music without beats leaves every cut", () => {
