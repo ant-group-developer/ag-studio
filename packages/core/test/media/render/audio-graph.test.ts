@@ -96,6 +96,19 @@ describe("audioGraph", () => {
     expect(filter).toContain("[5:a]atrim=0:15,afade=t=in:d=1,afade=t=out:st=12:d=3,volume=-18dB[music]");
   });
 
+  it("duck.enabled: false -> the music is mixed at its own gain, no sidechaincompress", () => {
+    const segments = [segment(0, 0, 5), segment(1, 5, 10)];
+    const music = musicFixture({ cues: [{ start: 0, end: 10, gain_db: -30 }] });
+    const off = run({ composition: baseComposition({ voice: "original", segments, music: { ...music, duck: { ...music.duck, enabled: false } } }), musicIndex: 2 });
+    expect(off.filter).not.toContain("sidechaincompress");
+    expect(off.filter).not.toContain("asplit");
+    expect(off.filter).toContain("volume=-30dB[music]");
+    expect(off.filter).toContain("[voice][music]amix=inputs=2:normalize=0:duration=first[mix]");
+    // absent (every composition written before the key) still ducks
+    const on = run({ composition: baseComposition({ voice: "original", segments, music }), musicIndex: 2 });
+    expect(on.filter).toContain("sidechaincompress");
+  });
+
   it("voice: original -> concat=n=3:v=0:a=1 with afade edges, voice padded to total_seconds", () => {
     const composition = baseComposition({
       voice: "original",

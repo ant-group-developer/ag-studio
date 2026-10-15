@@ -217,6 +217,10 @@ export const CompositionSchema = z.object({
     fade_out: z.number(),
     cues: z.array(z.object({ start: z.number(), end: z.number(), gain_db: z.number() }).strict()),
     duck: z.object({
+      /** `false`: the music plays at its own gain, never pushed down under the voice. Absent = `true` (every
+       * composition before it had this key ducked); Studio writes the key only when ducking is off, so a render
+       * worker that predates it still takes every ducked composition (`RENDER_FEATURE_LEVEL`). */
+      enabled: z.boolean().optional(),
       windows: z.array(z.object({ start: z.number(), end: z.number() }).strict()),
       gain_db: z.number(),
       attack_ms: z.number(),

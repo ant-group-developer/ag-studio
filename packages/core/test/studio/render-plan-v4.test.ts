@@ -92,9 +92,12 @@ describe("timelineToComposition on v4", () => {
   it("ducks the music under the narration when the timeline asks for it", () => {
     const c = timelineToComposition(cut());
     expect(c.music?.duck.windows).toEqual([{ start: 0.3, end: 2.7 }, { start: 7.3, end: 8.8 }]);
+    // ducking on: no `enabled` key, so a render worker older than it still takes the composition
+    expect(c.music?.duck).not.toHaveProperty("enabled");
     const flat = cut();
     flat.music = { ...flat.music!, ducking: false };
     expect(timelineToComposition(flat).music?.duck.windows).toEqual([]);
+    expect(timelineToComposition(flat).music?.duck.enabled).toBe(false);
   });
 
   it("lines written but not read (narration declined) become subtitles only: no WAV, no ducking, timed by length", () => {

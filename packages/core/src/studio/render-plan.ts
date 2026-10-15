@@ -125,6 +125,8 @@ export function timelineToComposition(t: AnyTimeline): Composition {
         fade_out: 2.0,
         cues: [{ start: 0, end: layout.duration, gain_db: t.music.gain_db }],
         duck: {
+          // the key only when ducking is off: a composition that ducks stays readable by every render worker
+          ...(t.music.ducking ? {} : { enabled: false }),
           windows: t.music.ducking ? duckWindows(spoken) : [],
           gain_db: -8,
           attack_ms: 200,

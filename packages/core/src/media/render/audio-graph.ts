@@ -115,7 +115,9 @@ export function audioGraph(p: AudioGraphInput): { filter: string; out: string } 
     parts.push(
       `[${musicIndex}:a]${loopPrefix}atrim=0:${fmt(composition.total_seconds)},afade=t=in:d=${fmt(music.fade_in)},afade=t=out:st=${fadeOutStart}:d=${fmt(music.fade_out)},volume=${fmt(gainDb)}dB[music]`,
     );
-    if (composition.voice !== "none") {
+    // `duck.enabled: false` (the timeline's `music.ducking` off): the music keeps its gain over the voice. Ducked
+    // under the footage's own sound, a quiet track (-30 dB) all but vanished on every noisy street shot.
+    if (composition.voice !== "none" && music.duck.enabled !== false) {
       parts.push("[voice]asplit=2[voice_mix][voice_sc]");
       parts.push(`[music][voice_sc]sidechaincompress=threshold=${DUCK_THRESHOLD}:ratio=${DUCK_RATIO}:attack=${music.duck.attack_ms}:release=${music.duck.release_ms}:makeup=1[music_d]`);
       parts.push("[voice_mix][music_d]amix=inputs=2:normalize=0:duration=first[mix]");
