@@ -9,7 +9,8 @@ import { pipeline } from "node:stream/promises";
  */
 export async function httpDownload(url: string, dest: string, signal?: AbortSignal, onBytes?: (received: number, total: number | null) => void): Promise<void> {
   const res = await fetch(url, signal ? { signal } : {});
-  if (!res.ok || !res.body) throw new Error(`download failed: HTTP ${res.status}`);
+  // the status rides on the error: a caller retries ag-go's 503 but not a 403
+  if (!res.ok || !res.body) throw Object.assign(new Error(`download failed: HTTP ${res.status}`), { status: res.status });
   const total = Number(res.headers.get("content-length")) || null;
   let received = 0;
   const body = Readable.fromWeb(res.body as never);

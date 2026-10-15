@@ -86,7 +86,7 @@ export function createStudioWorkerPool(o: StudioWorkerOptions & {
    * Project jobs: where workspaces are, jobs at once (`lanes`, plus one per idle farm machine up to `maxLanes` when
    * that is above `lanes`); absent: none run in this worker.
    */
-  jobs?: { workspacesRoot: string; lanes?: number; maxLanes?: number; pollMs?: number };
+  jobs?: { workspacesRoot: string; lanes?: number; maxLanes?: number; pollMs?: number; /** `prepare_asset` jobs at once (default 3). */ prepareLanes?: number };
   /** The cleanup sweep every `everyMs`, first a minute after start; absent or 0: never. */
   cleanup?: { everyMs: number; retention?: Partial<RetentionConfig> };
 }): StudioWorkerPool {
@@ -103,6 +103,7 @@ export function createStudioWorkerPool(o: StudioWorkerOptions & {
   const jobs = o.jobs ? createJobRunner({
     db: o.db, logger: jobsLog, workspacesRoot: o.jobs.workspacesRoot, dataRoot: o.dataRoot,
     handlers: projectJobHandlers(o), ...(lanes ? { lanes } : {}), ...(o.jobs.pollMs ? { pollMs: o.jobs.pollMs } : {}),
+    kindLimits: { prepare_asset: Math.max(1, o.jobs.prepareLanes ?? 3) },
   }) : null;
   return {
     agent,

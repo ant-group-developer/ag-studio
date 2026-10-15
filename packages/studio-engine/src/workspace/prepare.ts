@@ -76,6 +76,8 @@ export interface PrepareDeps {
   pollMs?: number;
   /** How long a prep is waited for at most (default 60 min). */
   maxWaitMs?: number;
+  /** Waits before each new try of an ag-go call that answered 429/502/503/504 (default 2, 5 and 15 s). */
+  retryDelaysMs?: readonly number[];
 }
 
 /** `request` of a `prepare_asset` job. */
@@ -127,6 +129,9 @@ export function clock(s: number): string {
 
 /** Images downloaded at once. */
 const DOWNLOAD_LANES = 8;
+/** ag-go's answers that mean "busy, try again", not "no". */
+const RETRY_STATUS = new Set([429, 502, 503, 504]);
+const RETRY_DELAYS_MS = [2000, 5000, 15_000];
 const POLL_MS = 5000;
 const MAX_WAIT_MS = 60 * 60_000;
 /** A frame or sheet path as ag-go names them (`frames/001.jpg`, `sheets/01.jpg`): nothing else is written. */
@@ -234,7 +239,7 @@ async function readyPrep(
   };
   const ask = async (how: "read" | "run"): Promise<AgGoPrepItem> => {
     try {
-      return pick(await d.preps[how](actAs, [assetId]));
+      return pick(await retryBusy(() => d.preps[how](actAs, [assetId]), ctx.signal, d.retryDelaysMs));
     } catch (e) {
       if ((e as { status?: number }).status === 404) throw new Error(`${site} không cho chủ dự án dùng video này (không có quyền hoặc video không còn)`);
       throw e;
@@ -267,6 +272,24 @@ async function readyPrep(
   }
 }
 
+/**
+ * `fn`, tried again after each of `delays` while it fails with an HTTP status ag-go answers when it is busy (the
+ * error's `status`: 429, 502, 503, 504). Any other failure, a stopped job, or the last try's failure is thrown. On
+ * prod several prepares at once, eight image downloads each, drew 503s that failed the whole prepare.
+ */
+export async function retryBusy<T>(fn: () => Promise<T>, signal: AbortSignal, delays: readonly number[] = RETRY_DELAYS_MS): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const status = (e as { status?: unknown } | null)?.status;
+      if (typeof status !== "number" || !RETRY_STATUS.has(status) || attempt >= delays.length || signal.aborted) throw e;
+      await pause(delays[attempt]!, signal);
+      if (signal.aborted) throw e;
+    }
+  }
+}
+
 /** Waits `ms`, less when the job is stopped. */
 function pause(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((res) => {
@@ -295,7 +318,7 @@ async function downloadImages(d: PrepareDeps, ctx: JobContext, prep: NonNullable
         await ctx.checkpoint();
         const dest = join(out, img.path);
         mkdirSync(dirname(dest), { recursive: true });
-        await d.download(img.url, dest, ctx.signal);
+        await retryBusy(() => d.download(img.url, dest, ctx.signal), ctx.signal, d.retryDelaysMs);
       } catch (e) {
         broken = true;
         throw e;

@@ -33,6 +33,7 @@
  *   STUDIO_WORKSPACES_ROOT      project workspaces (default <STUDIO_DATA_ROOT>/workspaces; the API must see the same)
  *   STUDIO_JOB_LANES            project jobs run at once with no idle farm machine (default 2)
  *   STUDIO_JOB_LANES_MAX        project jobs at most: one more per idle farm machine up to this (default 8; ≤ STUDIO_JOB_LANES = fixed)
+ *   STUDIO_PREPARE_LANES        prepare_asset jobs at once, within those lanes (default 3: more drew 503s from ag-go)
  *
  * Agent turns (run only with STUDIO_AGENT_TOKEN_SECRET):
  *   STUDIO_AGENT_TOKEN_SECRET   signs each turn's token for /api/agent-tools (same value as the API)
@@ -131,7 +132,7 @@ async function main(): Promise<void> {
     claudeMaxConcurrent,
     siteName: () => siteName.current(),
     ...(agent ? { agent } : {}),
-    jobs: { workspacesRoot, lanes: jobLanes, maxLanes: numberEnv("STUDIO_JOB_LANES_MAX", 8) },
+    jobs: { workspacesRoot, lanes: jobLanes, maxLanes: numberEnv("STUDIO_JOB_LANES_MAX", 8), prepareLanes: Math.max(1, numberEnv("STUDIO_PREPARE_LANES", 3)) },
     farmPollMs: Number(process.env.FARM_POLL_MS ?? 5000),
     farmQueueTimeoutMs: numberEnv("STUDIO_FARM_QUEUE_TIMEOUT_MINUTES", 120) * 60_000,
     ...(youtubeKey ? { youtubeApiKey: youtubeKey } : {}),

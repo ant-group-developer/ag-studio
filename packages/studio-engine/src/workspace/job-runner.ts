@@ -57,6 +57,9 @@ export interface JobRunnerOptions {
   handlers: Partial<Record<JobKind, JobHandler>>;
   /** Jobs run at once (ffmpeg on this machine, farm waits), or how many now (read each tick); default 2. */
   lanes?: number | (() => number);
+  /** At most this many jobs of a kind at once, within `lanes` (`prepare_asset`: ag-go answered 503 when every idle
+   * farm machine added a prepare lane, each downloading eight images at once). */
+  kindLimits?: Partial<Record<JobKind, number>>;
   pollMs?: number;
   /** How often the row is refreshed (heartbeat, time left, stop requests); default 2 s. */
   tickMs?: number;
@@ -92,6 +95,8 @@ export function createJobRunner(o: JobRunnerOptions): JobRunner {
   const lanesNow = typeof o.lanes === "function" ? o.lanes : () => (o.lanes as number | undefined) ?? 2;
   const kinds = Object.keys(o.handlers) as JobKind[];
   const live = new Map<string, Promise<void>>();
+  const liveKind = new Map<string, JobKind>();
+  const running = (kind: JobKind) => [...liveKind.values()].filter((k) => k === kind).length;
   let shuttingDown = false;
   const shutdown = new AbortController();
 
@@ -206,10 +211,16 @@ export function createJobRunner(o: JobRunnerOptions): JobRunner {
     const started: string[] = [];
     const lanes = lanesNow();
     while (live.size < lanes) {
-      const job = await claimJob(o.db, kinds, now());
+      const open = kinds.filter((k) => running(k) < (o.kindLimits?.[k] ?? Infinity));
+      if (open.length === 0) break;
+      const job = await claimJob(o.db, open, now());
       if (!job) break;
       started.push(job.id);
-      const p = run(job).catch((e) => o.logger.error("job runner crashed", { job_id: job.id, error: errText(e) })).finally(() => live.delete(job.id));
+      liveKind.set(job.id, job.kind);
+      const p = run(job).catch((e) => o.logger.error("job runner crashed", { job_id: job.id, error: errText(e) })).finally(() => {
+        live.delete(job.id);
+        liveKind.delete(job.id);
+      });
       live.set(job.id, p);
     }
     return started;

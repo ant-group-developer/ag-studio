@@ -195,6 +195,33 @@ describe("job runner", () => {
     expect(await getJob(db, job.id)).toMatchObject({ status: "queued" });
   });
 
+  it("runs at most its limit of a kind at once, the other kinds in the lanes left", async () => {
+    const { db, project, workspacesRoot, dir } = await setup();
+    const releases: (() => void)[] = [];
+    let open = false;
+    const hold: JobHandler = async () => { if (!open) await new Promise<void>((r) => { releases.push(r); }); return { result: null }; };
+    for (let i = 0; i < 5; i++) await createJob(db, { projectId: project.id, kind: "prepare_asset", title: `Chuẩn bị ${i}`, request: {}, createdBy: "u" }, at(i));
+    await createJob(db, { projectId: project.id, kind: "thumbnail", title: "Thumbnail", request: {}, createdBy: "u" }, at(10));
+    const runner = createJobRunner({
+      db, logger: quiet, workspacesRoot, dataRoot: join(dir, "data"), handlers: { prepare_asset: hold, thumbnail: hold }, lanes: 6, kindLimits: { prepare_asset: 3 },
+    });
+    await runner.tick();
+    await runner.tick();
+    const kindsRunning = async () => (await db.all<{ kind: string }>("SELECT kind FROM project_jobs WHERE status = 'running' ORDER BY kind")).map((j) => j.kind);
+    expect(await kindsRunning()).toEqual(["prepare_asset", "prepare_asset", "prepare_asset", "thumbnail"]);
+    // one ends: the next prepare takes its place
+    releases.shift()!();
+    await new Promise((r) => setTimeout(r, 50));
+    await runner.tick();
+    expect((await kindsRunning()).filter((k) => k === "prepare_asset")).toHaveLength(3);
+    open = true;
+    while (releases.length) releases.shift()!();
+    await runner.idle();
+    await runner.tick();
+    await runner.idle();
+    expect((await db.all("SELECT id FROM project_jobs WHERE status <> 'done'"))).toEqual([]);
+  });
+
   it("runs at most its lanes at once, each job once, however often it ticks", async () => {
     const { db, project, workspacesRoot, dir } = await setup();
     for (let i = 0; i < 4; i++) await createJob(db, { projectId: project.id, kind: "prepare_asset", title: `J${i}`, request: {}, createdBy: "u" }, at(i));

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   addSource, buildVideoIndex, createJob, createJobRunner, createProject, createThread, createVideo, getJob, getPrepared, inputReadme, JobStopped, listMessages,
-  prepareAsset, prepareHandler, savePrepared, seedWorkspace, studioLogger, transcriptMarkdown, videoIndexPath, writeVideoIndex,
+  prepareAsset, prepareHandler, retryBusy, savePrepared, seedWorkspace, studioLogger, transcriptMarkdown, videoIndexPath, writeVideoIndex,
   type AgGoPrepItem, type JobContext, type JobRecord, type PrepareDeps,
 } from "../src/index.js";
 import { world } from "./helpers.js";
@@ -216,6 +216,34 @@ describe("prepare a video ag-go has not prepared yet", () => {
     expect(preps.calls.slice(0, 2)).toEqual([`read auth0|owner ${ASSET}`, `run auth0|owner ${ASSET}`]);
     expect(await getJob(s.db, j.id)).toMatchObject({ status: "failed", error: "AG Go không chuẩn bị được video này: scan.prep: không đọc được video" });
     expect(await getPrepared(s.db, s.project.id, ASSET)).toMatchObject({ status: "failed", error: "AG Go không chuẩn bị được video này: scan.prep: không đọc được video" });
+  });
+
+  it("tries ag-go again when it is busy (429/502/503/504), for the prep and every image", async () => {
+    const s = await setup();
+    const busy = (status: number) => Object.assign(new Error(`ag-go-api error: HTTP ${status}`), { status });
+    const inner = fakePreps([item("ready", { prep: readyPrep() })]);
+    let reads = 0;
+    const preps = { ...inner, read: async (actAs: string, ids: string[]) => { if (reads++ < 2) throw busy(reads === 1 ? 503 : 429); return inner.read(actAs, ids); } };
+    const tries = new Map<string, number>();
+    const flaky: PrepareDeps["download"] = async (url, dest, signal) => {
+      tries.set(url, (tries.get(url) ?? 0) + 1);
+      if (url.includes("002") && tries.get(url)! < 3) throw busy(502);
+      await download(url, dest, signal);
+    };
+    const out = await prepareAsset({ db: s.db, preps, download: flaky, pollMs: 1, retryDelaysMs: [1, 1, 1] }, await job(s), fakeCtx(s.ws).ctx);
+    expect(out.message).toContain("3 cảnh");
+    expect(reads).toBe(3);
+    expect(tries.get("https://r2.test/frames/002.jpg?sig")).toBe(3);
+  });
+
+  it("does not try again on a refusal, nor more than three times", async () => {
+    const signal = new AbortController().signal;
+    let calls = 0;
+    await expect(retryBusy(async () => { calls++; throw Object.assign(new Error("HTTP 403"), { status: 403 }); }, signal, [1, 1, 1])).rejects.toThrow("HTTP 403");
+    expect(calls).toBe(1);
+    calls = 0;
+    await expect(retryBusy(async () => { calls++; throw Object.assign(new Error("HTTP 503"), { status: 503 }); }, signal, [1, 1, 1])).rejects.toThrow("HTTP 503");
+    expect(calls).toBe(4);
   });
 
   it("gives up after the longest wait", async () => {
