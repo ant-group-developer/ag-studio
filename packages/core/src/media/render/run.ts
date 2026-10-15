@@ -17,8 +17,8 @@
  * `CONFIG_INVALID`, which maps to `contract` and does not retry.
  */
 import { spawn as nodeSpawn } from "node:child_process";
-import { copyFileSync, existsSync, linkSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { copyFileSync, existsSync, linkSync, mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { HarnessError, isHarnessError, RenderReportSchema, type Clock, type Composition, type MediaProber, type RenderReport } from "@harness/contracts";
 import { childEnvWithoutSecrets } from "../child-env.js";
 import { round3 } from "../time.js";
@@ -145,6 +145,8 @@ interface RunOptions {
   signal?: AbortSignal | undefined;
   /** Every complete stdout line (used for `-progress pipe:1`); implies piping stdout. */
   onStdoutLine?: ((line: string) => void) | undefined;
+  /** Working directory of the child (the final passes name their mezzanines relative to it). */
+  cwd?: string | undefined;
 }
 
 function runProcess(spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, label: string, captureStdout: boolean, opts: RunOptions = {}): Promise<ProcResult> {
@@ -155,7 +157,7 @@ function runProcess(spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, la
   return new Promise<ProcResult>((resolve, reject) => {
     const pipeStdout = captureStdout || opts.onStdoutLine !== undefined;
     // `env`: ffmpeg never needs a secret, and the repo rule is absolute -- see `childEnvWithoutSecrets`.
-    const child = spawnFn(bin, args, { windowsHide: true, env: childEnvWithoutSecrets(), stdio: ["ignore", pipeStdout ? "pipe" : "ignore", "pipe"] });
+    const child = spawnFn(bin, args, { windowsHide: true, env: childEnvWithoutSecrets(), stdio: ["ignore", pipeStdout ? "pipe" : "ignore", "pipe"], ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}) });
     let stderr = "";
     let stdout = "";
     let lineBuf = "";
@@ -251,6 +253,55 @@ async function ffmpegVersion(spawnFn: SpawnFn, ffmpeg: string): Promise<string> 
   } catch {
     return "unknown";
   }
+}
+
+/**
+ * The option that reads a filtergraph from a file, for an ffmpeg of this version (`ffmpegVersion`): ffmpeg 8 dropped
+ * `-filter_complex_script` for the generic `-/filter_complex <file>` (7.x has both). A git build ("N-…") or an
+ * unknown version is taken as current.
+ */
+export function filterGraphFileOption(version: string): "-/filter_complex" | "-filter_complex_script" {
+  const m = /^n?(\d+)\./.exec(version);
+  return m !== null && Number(m[1]) < 8 ? "-filter_complex_script" : "-/filter_complex";
+}
+
+/**
+ * The final passes' mezzanines under short names (`0.mp4`, `1.mp4`, …) in `dir`, which becomes ffmpeg's working
+ * directory: hard links (the cache usually sits on the same volume), else symlinks, else the full path. With the
+ * filtergraph in a file, that keeps the command line of a 400-segment episode to a few thousand characters --
+ * hundreds of `-i <cache>/<64 hex>.mp4` plus the graph overran Windows' 32,767 (`spawn ENAMETOOLONG` at 73 clips).
+ */
+function shortMezzNames(mezz: readonly MezzRef[], dir: string): MezzRef[] {
+  mkdirSync(dir, { recursive: true });
+  let n = 0;
+  const short = (path: string): string => {
+    const target = resolve(path);
+    const name = `${n++}.mp4`;
+    const at = join(dir, name);
+    try {
+      linkSync(target, at);
+      return name;
+    } catch {
+      // another volume or no hard links here: a symlink, or the full path
+    }
+    try {
+      symlinkSync(target, at);
+      return name;
+    } catch {
+      return target;
+    }
+  };
+  return mezz.map((m) => ({ order: m.order, body: short(m.body), tail: m.tail === null ? null : short(m.tail) }));
+}
+
+/** The composition with every file it names made absolute, for an ffmpeg running in another directory. */
+function absolutePaths(c: Composition): Composition {
+  return {
+    ...c,
+    narration: c.narration.map((n) => ({ ...n, wav: resolve(n.wav) })),
+    music: c.music !== null ? { ...c.music, path: resolve(c.music.path) } : null,
+    logo: c.logo !== null ? { ...c.logo, path: resolve(c.logo.path) } : null,
+  };
 }
 
 function secondsBetween(clock: Clock, startedAt: string): number {
@@ -454,19 +505,32 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
   writeFileSync(join(clipSetDir, "manifest.json"), JSON.stringify(manifest, null, 2));
 
   // ---- 4) loudnorm measurement pass ----
+  // Both final passes run in `tmp/in`, where the mezzanines have short names, and read their filtergraph from a
+  // file: the command line stays short however many segments the episode has.
+  const version = await ffmpegVersion(spawnFn, d.ffmpeg);
+  const inputsDir = resolve(tmpDir, "in");
   const episodePath = join(outDir, "full-episode.mp4");
+  const fontsDir = p.fontsDir !== undefined ? p.fontsDir : (composition.brand?.fonts_dir ?? null);
   const finalInput = {
-    ffmpeg: d.ffmpeg, composition, mezz, assPath: p.assPath,
-    fontsDir: p.fontsDir !== undefined ? p.fontsDir : (composition.brand?.fonts_dir ?? null),
-    out_path: episodePath, tier: p.tier ?? "final",
+    ffmpeg: d.ffmpeg, composition: absolutePaths(composition), mezz: shortMezzNames(mezz, inputsDir),
+    assPath: p.assPath !== null ? resolve(p.assPath) : null, fontsDir: fontsDir !== null ? resolve(fontsDir) : null,
+    out_path: resolve(episodePath), tier: p.tier ?? "final",
     ...(p.safe_margin_px !== undefined ? { safe_margin_px: p.safe_margin_px } : {}),
+  };
+  let graphs = 0;
+  const graphFromFile = (argv: string[]): string[] => {
+    const at = argv.indexOf("-filter_complex");
+    if (at < 0) return argv;
+    const file = join(inputsDir, `graph-${graphs++}.txt`);
+    writeFileSync(file, argv[at + 1]!);
+    return [...argv.slice(0, at), filterGraphFileOption(version), file, ...argv.slice(at + 2)];
   };
 
   // The measurement pass is audio-only (`-vn -f null -`), so `encoder` never reaches its argv; it is passed
   // for the shape of `FinalGraphInput` alone.
   reportProgress(MEASURE_AT, "loudnorm");
   const measurePass = async (limit: number | null, label: string) => {
-    const pass = await runProcess(spawnFn, finalArgs({ ...finalInput, encoder, loudnorm: null, limit, measureOnly: true }).argv, remaining(), label, false, { signal });
+    const pass = await runProcess(spawnFn, graphFromFile(finalArgs({ ...finalInput, encoder, loudnorm: null, limit, measureOnly: true }).argv), remaining(), label, false, { signal, cwd: inputsDir });
     const parsed = parseLoudnorm(pass.stderr);
     if (parsed === null) {
       throw new HarnessError("IO_ERROR", `${label} failed: ffmpeg printed no parsable loudnorm json`, { stderr_tail: pass.stderr });
@@ -490,8 +554,8 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
   const episodeSeconds = segs.reduce((end, s) => Math.max(end, s.end), 0);
   const finalEncode = (choice: EncoderChoice, label: string): Promise<ProcResult> => {
     reportProgress(FINAL_FROM, "final_encode");
-    const prog = withProgress(finalArgs({ ...finalInput, encoder: choice, loudnorm: measured.measured, limit, measureOnly: false }).argv, episodeSeconds, (f) => reportProgress(FINAL_FROM + (100 - FINAL_FROM) * f, "final_encode"));
-    return runProcess(spawnFn, prog.argv, remaining(), label, false, { signal, onStdoutLine: prog.onStdoutLine });
+    const prog = withProgress(graphFromFile(finalArgs({ ...finalInput, encoder: choice, loudnorm: measured.measured, limit, measureOnly: false }).argv), episodeSeconds, (f) => reportProgress(FINAL_FROM + (100 - FINAL_FROM) * f, "final_encode"));
+    return runProcess(spawnFn, prog.argv, remaining(), label, false, { signal, onStdoutLine: prog.onStdoutLine, cwd: inputsDir });
   };
   try {
     render = await finalEncode(finalEncoder, "final encode");
@@ -564,7 +628,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     brand: composition.brand !== null ? "present" : "absent",
     warnings,
     render_seconds: secondsBetween(d.clock, startedAt),
-    ffmpeg_version: await ffmpegVersion(spawnFn, d.ffmpeg),
+    ffmpeg_version: version,
   });
 
   writeFileSync(join(outDir, "render-report.json"), JSON.stringify(report, null, 2));

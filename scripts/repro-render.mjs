@@ -7,13 +7,12 @@
  *
  * `<video dir>` holds `timeline.json` (a saved revision `{revision, timeline}` or a bare timeline) and
  * `sources/index.json`. Every asset becomes a `testsrc2` + `sine` file at `--src-fps` (default 30; cameras often
- * record 30000/1001) exactly `duration_s` long (minus
- * `--shorten` seconds, to play a source file shorter than ag-go said); `--clamp` then applies the render worker's
- * clamp of `segment.out` to the probed file length before rendering. The composition comes from
- * `timelineToComposition` and is rendered by `renderComposition` at 640x360 (preview tier, cpu), text off.
- * Prints the length of the video and audio streams (and how far the mezzanines' own video streams fall short of
- * their segments) and exits 1 when either stream is more than 0.1 s off `total_seconds`. Windows: keep `--out`
- * short (`E:\rr\x`) while ffmpeg's argv still carries every path.
+ * record 30000/1001) exactly `duration_s` long (minus `--shorten` seconds, to play a source file shorter than
+ * ag-go said); `--clamp` then applies the render worker's clamp of `segment.out` to the probed file length before
+ * rendering. The composition comes from `timelineToComposition` and is rendered by `renderComposition` at 640x360
+ * (preview tier, cpu), text off. Prints the length of the video and audio streams (and how far the mezzanines' own
+ * video streams fall short of their segments) and exits 1 when either stream is more than 0.1 s off
+ * `total_seconds`. Synthetic tones have no loudness range, so `loudnorm_not_linear` is expected here.
  *
  * Needs ffmpeg/ffprobe (`FFMPEG_PATH`/`FFPROBE_PATH` or on PATH) and built packages (`pnpm build`).
  */

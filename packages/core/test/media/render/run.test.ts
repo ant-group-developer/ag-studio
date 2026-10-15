@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { CompositionSchema, newId, type Composition, type MediaProbe, type MediaProber } from "@harness/contracts";
-import { probeNvenc, renderComposition, stderrSummary, type RenderDeps, type RenderInput, type SpawnFn } from "../../../src/media/render/run.js";
+import { filterGraphFileOption, probeNvenc, renderComposition, stderrSummary, type RenderDeps, type RenderInput, type SpawnFn } from "../../../src/media/render/run.js";
 import { hasFfmpeg } from "../../../../../tests/media.js";
 
 const SRC_A = "src_01JAAAAAAAAAAAAAAAAAAAAAAA";
@@ -222,9 +222,11 @@ interface FakePlan {
  * to that path so the runner's `statSync`/link/commit steps have a file to work with. `plan` decides per
  * call what happens, by argv and by call index.
  */
-function fakeSpawn(plan: (argv: string[], index: number) => FakePlan = () => ({})): { spawn: SpawnFn; calls: string[][]; options: Record<string, unknown>[]; kills: () => number } {
+function fakeSpawn(plan: (argv: string[], index: number) => FakePlan = () => ({})): { spawn: SpawnFn; calls: string[][]; options: Record<string, unknown>[]; graphs: (string | null)[]; kills: () => number } {
   const calls: string[][] = [];
   const options: Record<string, unknown>[] = [];
+  /** Per call, the filtergraph it read from a file (the file is gone once the render is over). */
+  const graphs: (string | null)[] = [];
   let kills = 0;
 
   const spawn = ((bin: string, args: readonly string[], opts: Record<string, unknown>) => {
@@ -232,6 +234,8 @@ function fakeSpawn(plan: (argv: string[], index: number) => FakePlan = () => ({}
     const index = calls.length;
     calls.push(argv);
     options.push(opts);
+    const at = argv.findIndex((a) => a === "-/filter_complex" || a === "-filter_complex_script");
+    graphs.push(at >= 0 ? readFileSync(argv[at + 1]!, "utf8") : null);
     const p = plan(argv, index);
     const exit = p.exit === undefined ? 0 : p.exit;
 
@@ -268,7 +272,7 @@ function fakeSpawn(plan: (argv: string[], index: number) => FakePlan = () => ({}
     return child as unknown as ReturnType<SpawnFn>;
   }) as unknown as SpawnFn;
 
-  return { spawn, calls, options, kills: () => kills };
+  return { spawn, calls, options, graphs, kills: () => kills };
 }
 
 /** Answers every probe with the same 2-second 4K/48 kHz stereo shape the fake compositions below expect. */
@@ -430,16 +434,44 @@ describe("renderComposition (fake ffmpeg)", () => {
 
   it("a peak over the linear budget: measured again through an alimiter, and the final pass limits the same way", async () => {
     // the canned block measures -23.47 LUFS / -4.61 dBTP: +9.5 dB of gain would put the peak at +4.9 dBTP
-    const { spawn, calls } = fakeSpawn();
+    const { spawn, calls, graphs } = fakeSpawn();
     const { d, outDir } = fakeWorld({ spawn, nvenc: false });
     await renderComposition(d, input({ composition: fakeComposition(), outDir, encoderCfg: "cpu", sourceChecksums: CHECKSUMS }));
-    const graph = (argv: string[]) => argv[argv.indexOf("-filter_complex") + 1] ?? "";
+    const graph = (argv: string[]) => graphs[calls.indexOf(argv)] ?? "";
     const measures = calls.filter((c) => c.includes("-vn"));
     expect(measures).toHaveLength(2);
     expect(graph(measures[0]!)).not.toContain("alimiter");
     // ceiling -23.47 + 13 - 1 = -11.47 dBFS
     expect(graph(measures[1]!)).toContain("alimiter=limit=0.267:attack=5:release=50:level=false[limited];[limited]loudnorm=I=-14:TP=-1:LRA=11:print_format=json");
     expect(graph(calls.find((c) => c.includes("[vout]"))!)).toContain("alimiter=limit=0.267:");
+  });
+
+  // 73 clips overran Windows' 32,767-character command line (`spawn ENAMETOOLONG`): every `-i <cache>/<64 hex>.mp4`
+  // plus the whole filtergraph went on it.
+  it("a 400-segment episode: the final passes' command lines stay under 8,000 characters", async () => {
+    const { spawn, calls, options, graphs } = fakeSpawn();
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+    const segments = Array.from({ length: 400 }, (_, k) => segment({ order: k, source_id: SRC_A, source_path: "/abs/a.mp4", in: 0, out: 2, start: 2 * k, end: 2 * k + 2, has_audio: true }));
+    await renderComposition(d, input({ composition: composition({ total_seconds: 800, segments }), outDir, encoderCfg: "cpu", sourceChecksums: CHECKSUMS }));
+    const passes = calls.map((c, i) => ({ c, i })).filter(({ c }) => c.includes("-vn") || c.includes("[vout]"));
+    expect(passes.length).toBeGreaterThanOrEqual(2);
+    for (const { c, i } of passes) {
+      expect(c.join(" ").length).toBeLessThan(8000);
+      expect(c).not.toContain("-filter_complex");
+      expect(graphs[i]).toContain("concat=n=");
+      // the mezzanines by short names, in the directory the pass runs in
+      expect(c[c.indexOf("-i") + 1]).toBe("0.mp4");
+      expect(existsSync(String(options[i]!.cwd))).toBe(false); // tmp/ is swept once the render is over
+    }
+  });
+
+  it("the filtergraph file option follows the ffmpeg version", () => {
+    expect(filterGraphFileOption("7.1.2-0+deb13u1")).toBe("-filter_complex_script");
+    expect(filterGraphFileOption("n7.0.2")).toBe("-filter_complex_script");
+    expect(filterGraphFileOption("8.1")).toBe("-/filter_complex");
+    expect(filterGraphFileOption("9.0.1-essentials_build-www.gyan.dev")).toBe("-/filter_complex");
+    expect(filterGraphFileOption("N-118912-g2c4f3e1d2b")).toBe("-/filter_complex");
+    expect(filterGraphFileOption("unknown")).toBe("-/filter_complex");
   });
 
   it("does not warn loudnorm_not_linear when the final pass really normalized linearly", async () => {
