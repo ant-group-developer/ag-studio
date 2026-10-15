@@ -9,6 +9,7 @@ import { z } from "zod";
 import { toolInputJsonSchema, VIDEO_STATUSES } from "@harness/contracts";
 import { StudioRunError } from "../errors.js";
 import { DEFAULT_SITE_NAME, withSiteName } from "../site-name.js";
+import type { AudioImportDeps } from "../audio-import.js";
 import type { StudioDb } from "../studio-db.js";
 import { createVideo, listVideos, projectView, requireVideo, updateVideo, type ProjectRecord, type VideoRecord } from "../workspace/project-db.js";
 import { normalizeRelPath, recordFileVersion } from "../workspace/files.js";
@@ -42,6 +43,8 @@ export interface AgentToolContext {
   siteName?: string;
   /** Farm machines online that fetch reference videos (`studio.reference_fetch`); absent: none. */
   referenceFetchers?: () => Promise<string[]>;
+  /** ffmpeg and the bucket, to make music of the project's audio files (`music_set`); absent: this server has no ffmpeg. */
+  audio?: AudioImportDeps;
 }
 
 export interface ToolAnswer {

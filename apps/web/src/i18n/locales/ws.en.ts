@@ -556,7 +556,8 @@ export const wsEn: Messages<typeof wsVi> = {
     render_preview: "rendering a preview",
     thumbnail_make: "making thumbnails",
     render_frames: "looking at frames of the render",
-    music_list: "browsing the music library",
+    music_list: "looking at the music",
+    music_set: "setting the background music",
     propose_action: "proposing an action",
   },
   toolTarget: {

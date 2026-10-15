@@ -8,6 +8,8 @@ import {
   postUserMessage, savePrepared, saveVideoRevision, seedWorkspace, videoOwnMusic, type AgentToolContext, type StudioDb,
 } from "../src/index.js";
 import { world } from "./helpers.js";
+import { hasFfmpeg, makeWav } from "../../../tests/media.js";
+import { saveLibraryMusic } from "../src/index.js";
 
 const NOW = "2026-10-10T08:00:00.000Z";
 const A2 = "1c8b6d45-6e2f-4e5d-8b62-4e3b2f1d8e22";
@@ -123,6 +125,51 @@ describe("timeline tools", () => {
     expect((await call(s, "timeline_apply_ops", { base_revision: 2, ops: [{ op: "setMusic", music: { track, gain_db: -30, ducking: false } }] })).json.video_music).toBeUndefined();
     await call(s, "timeline_apply_ops", { base_revision: 3, ops: [{ op: "setMusic", music: { track, gain_db: -24, ducking: true } }] });
     expect(await videoOwnMusic(s.db, s.video.id)).toMatchObject({ track, gain_db: -24, ducking: true });
+  });
+
+  it("feedback-vps §4.5: music_list names the video's and project's music, the project's audio files and the library", async () => {
+    const s = await setup();
+    mkdirSync(join(s.dir, "context", "audio", "nhac"), { recursive: true });
+    writeFileSync(join(s.dir, "context", "audio", "nhac", "Biển sáng.mp3"), "x".repeat(2048));
+    await saveLibraryMusic(s.db, {
+      schema_version: "harness.music-track/v1", track_id: "calm-a", display_name: "Calm A", file: "library:music/calm-a.m4a", mood: ["calm"], duration_seconds: 300,
+      loop_ok: true, origin: "royalty_free", origin_note: "x", checksum: `sha256:${"a".repeat(64)}`, active: true, created_at: NOW, updated_at: NOW,
+    });
+    const r = await call(s, "music_list", {});
+    expect(r.json).toMatchObject({
+      video_music: expect.stringContaining("nhạc của dự án"), project_music: expect.stringContaining("chưa chọn"),
+      project_files: [{ path: "context/audio/nhac/Biển sáng.mp3", name: "Biển sáng.mp3" }],
+      library: [{ name: "Calm A", track: "library:music/calm-a.m4a" }],
+      note: expect.stringContaining("ffmpeg"),
+    });
+    expect((await call(s, "music_list", { mood: "sad" })).json.library).toEqual([]);
+  });
+
+  it("feedback-vps §4.5: music_set gives the video a library track and its timeline plays it; files need this server's ffmpeg", async () => {
+    const s = await setup();
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: { ...timeline(s.video.id), music: { track: "library:music/old.m4a", gain_db: -18, ducking: true, envelope: [{ at: 0, gain_db: -30 }] } }, authorId: "u" });
+    await saveLibraryMusic(s.db, {
+      schema_version: "harness.music-track/v1", track_id: "calm-a", display_name: "Calm A", file: "library:music/calm-a.m4a", mood: ["calm"], duration_seconds: 300,
+      loop_ok: true, origin: "royalty_free", origin_note: "x", checksum: `sha256:${"a".repeat(64)}`, active: true, created_at: NOW, updated_at: NOW,
+    });
+    const r = await call(s, "music_set", { files: ["library:music/calm-a.m4a"], gain_db: -26, ducking: false });
+    expect(r.json).toMatchObject({ scope: "video", music: expect.stringContaining("Calm A"), timeline_revision: 2 });
+    expect((await latestVideoRevision(s.db, s.video.id))!.data.music).toEqual({ track: "library:music/calm-a.m4a", gain_db: -26, ducking: false, envelope: [{ at: 0, gain_db: -30 }] });
+    expect(await call(s, "music_set", { files: ["context/audio/none.mp3"] })).toMatchObject({ isError: true, text: expect.stringContaining("ffmpeg") });
+    expect(await call(s, "music_set", { files: ["library:music/nope.m4a"] })).toMatchObject({ isError: true });
+  });
+
+  it.skipIf(!hasFfmpeg())("feedback-vps §4.5: music_set joins the project's audio files into the project's music", async () => {
+    const s = await setup();
+    const ctx = { ...s.ctx, audio: { db: s.db, bucket: s.bucket, ffmpeg: process.env.FFMPEG_PATH ?? "ffmpeg", ffprobe: process.env.FFPROBE_PATH ?? "ffprobe" } };
+    mkdirSync(join(s.dir, "context", "audio"), { recursive: true });
+    makeWav(join(s.dir, "context", "audio", "a.wav"), 8, { frequency: 330 });
+    makeWav(join(s.dir, "context", "audio", "b.wav"), 8, { frequency: 440 });
+    const outside = await callAgentTool(s.tools, ctx, "music_set", { files: ["CLAUDE.md"], scope: "project" });
+    expect(outside).toMatchObject({ isError: true, text: expect.stringContaining("không phải file audio") });
+    const r = await callAgentTool(s.tools, ctx, "music_set", { files: ["context/audio/a.wav", "context/audio/b.wav"], crossfade_s: 2, scope: "project" });
+    expect(r.isError).toBeFalsy();
+    expect(JSON.parse(r.text)).toMatchObject({ scope: "project", music: expect.stringContaining("2 bài ghép, chuyển mờ 2 s") });
   });
 
   it("render_preview and timeline_from_edit_plan queue jobs for the thread (the agent goes on when they end)", async () => {

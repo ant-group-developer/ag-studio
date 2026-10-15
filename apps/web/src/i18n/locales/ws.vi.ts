@@ -553,7 +553,8 @@ export const wsVi = {
     render_preview: "render bản xem thử",
     thumbnail_make: "làm thumbnail",
     render_frames: "xem khung hình bản render",
-    music_list: "xem thư viện nhạc",
+    music_list: "xem nhạc dùng được",
+    music_set: "gán nhạc nền",
     propose_action: "đề xuất thao tác",
   },
   toolTarget: {

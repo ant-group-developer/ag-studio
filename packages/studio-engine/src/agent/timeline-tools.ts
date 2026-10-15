@@ -3,16 +3,22 @@
  * background job), read it, change it with edit operations (on the revision it read: a newer one is a conflict),
  * render a preview, and the music library to choose from. Final renders and exports go through `propose_action`.
  */
+import { join } from "node:path";
 import { z } from "zod";
 import { TimelineOpSchema, type TimelineV4 } from "@harness/contracts";
 import { applyTimelineOps, timelineIssues, type TimelineIssue } from "@harness/core";
 import { StudioRunError } from "../errors.js";
+import { AUDIO_MAX_BYTES, AudioImportError, MUSIC_CROSSFADE_MAX_SECONDS, MUSIC_MIX_MAX_PARTS } from "../audio-import.js";
 import { listLibraryMusic } from "../music-library.js";
 import { queueFit, timelineSnapshotPath, videoAssets, writeTimelineSnapshot } from "../workspace/fit.js";
 import { getJob } from "../workspace/jobs-db.js";
 import { getVideoRevision, latestVideoRevision, requireVideo, saveVideoRevision } from "../workspace/project-db.js";
 import { RevisionConflictError } from "../studio-db.js";
-import { keepVideoMusicLevels } from "../workspace/project-audio.js";
+import {
+  importProjectMusic, importVideoMusic, keepVideoMusicLevels, projectAudioFiles, projectAudioSummary, setProjectLibraryMusic, setVideoLibraryMusic,
+  videoMusicSummary,
+} from "../workspace/project-audio.js";
+import { videoMusicToTimeline } from "../workspace/video-music.js";
 import { queueRender } from "../workspace/renders.js";
 import { MAX_RENDER_FRAMES, queueRenderFrames, queueThumbnails } from "../workspace/thumbnails.js";
 import { buildVideoIndex } from "../workspace/video-index.js";
@@ -261,12 +267,88 @@ export const TIMELINE_TOOLS: AgentTool[] = [
   }),
   tool({
     name: "music_list",
-    description: "Nhạc trong thư viện của Studio (đang dùng được), lọc theo tâm trạng (`mood`). Đặt nhạc cho timeline bằng setMusic với `track` của bài; hoặc ghi `music_mood` trong edit-plan.json để Studio chọn khi dựng.",
-    input: z.object({ mood: z.string().trim().min(1).max(40).optional() }).strict(),
+    description: [
+      "Mọi nhạc dùng được cho video: nhạc đang gán cho video và cho dự án (`video_music`, `project_music`), file audio của dự án",
+      "(`project_files`: tải lên ở tab Đầu vào hoặc nằm trong context/audio/; gán bằng music_set) và nhạc trong thư viện của Studio",
+      "(`library`, lọc theo tâm trạng `mood`; dùng `track` của bài cho music_set hoặc setMusic, hoặc ghi `music_mood` trong edit-plan.json).",
+    ].join(" "),
+    input: z.object({ video_id: z.string().min(1).optional(), mood: z.string().trim().min(1).max(40).optional() }).strict(),
     run: async (ctx, a) => {
       const fold = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/gi, "d").toLowerCase().trim();
       const tracks = (await listLibraryMusic(ctx.db, { activeOnly: true })).filter((t) => !a.mood || t.mood.some((m) => fold(m) === fold(a.mood!)));
-      return { text: json(tracks.slice(0, 60).map((t) => ({ name: t.display_name, mood: t.mood, seconds: Math.round(t.duration_seconds), loop_ok: t.loop_ok, track: t.file }))) };
+      const videoId = a.video_id ?? ctx.video?.id;
+      const video = videoId ? await videoOf(ctx, videoId) : null;
+      const files = await projectAudioFiles(ctx.db, ctx.workspaceDir, ctx.project.id);
+      return {
+        text: json({
+          ...(video ? { video_music: await videoMusicSummary(ctx.db, ctx.project.id, video.id) } : {}),
+          project_music: (await projectAudioSummary(ctx.db, ctx.project.id)).music,
+          project_files: files.slice(0, 100).map((f) => ({ path: f.path, name: f.name, mb: Math.round(f.bytes / 1024 / 102.4) / 10 })),
+          library: tracks.slice(0, 60).map((t) => ({ name: t.display_name, mood: t.mood, seconds: Math.round(t.duration_seconds), loop_ok: t.loop_ok, track: t.file })),
+          ...(ctx.audio ? {} : { note: "Máy chủ này chưa bật xử lý audio (ffmpeg): music_set chỉ dùng được bài trong thư viện." }),
+        }),
+      };
+    },
+  }),
+  tool({
+    name: "music_set",
+    description: [
+      "Gán nhạc nền cho video (`scope: video`, mặc định) hoặc cho cả dự án (`scope: project`): một file audio của dự án, hoặc nhiều",
+      "file ghép theo thứ tự (`crossfade_s` giây chuyển mờ giữa các bài, 0 = nối thẳng), hoặc một bài thư viện (`files: [\"library:music/…\"]`).",
+      "`files` lấy từ music_list (project_files.path / library.track). `gain_db` (-40..0, mặc định -18), `ducking` (nhạc nhỏ lại khi có lời,",
+      "mặc định có). Timeline mới nhất của video phát nhạc mới ngay (bản timeline mới, giữ đường âm lượng nhạc); dựng lại từ kế hoạch cũng dùng nó.",
+    ].join(" "),
+    input: z.object({
+      video_id: z.string().min(1).optional(),
+      files: z.array(z.string().trim().min(1).max(500)).min(1).max(MUSIC_MIX_MAX_PARTS),
+      crossfade_s: z.number().min(0).max(MUSIC_CROSSFADE_MAX_SECONDS).optional(),
+      gain_db: z.number().min(-40).max(0).optional(),
+      ducking: z.boolean().optional(),
+      scope: z.enum(["video", "project"]).optional(),
+    }).strict(),
+    role: "editor",
+    run: async (ctx, a) => {
+      const scope = a.scope ?? "video";
+      const videoId = a.video_id ?? ctx.video?.id;
+      const video = videoId ? await videoOf(ctx, videoId) : null;
+      if (scope === "video" && !video) return { text: "Luồng này không gắn với video nào: cho biết video_id, hoặc scope: project.", isError: true };
+      const level = { ...(a.gain_db !== undefined ? { gainDb: a.gain_db } : {}), ...(a.ducking !== undefined ? { ducking: a.ducking } : {}) };
+      try {
+        const library = a.files.filter((f) => f.startsWith("library:"));
+        if (library.length > 0) {
+          if (a.files.length > 1) return { text: "Bài thư viện không ghép với file khác được: gán một bài thư viện, hoặc chỉ các file của dự án.", isError: true };
+          const track = (await listLibraryMusic(ctx.db, { activeOnly: true })).find((t) => t.file === library[0]);
+          if (!track) return { text: `Không có bài ${library[0]} trong thư viện (xem music_list).`, isError: true };
+          if (scope === "video") await setVideoLibraryMusic(ctx.db, video!.id, track, level);
+          else await setProjectLibraryMusic(ctx.db, ctx.project.id, track, level);
+        } else {
+          if (!ctx.audio) return { text: "Máy chủ chưa bật xử lý audio (ffmpeg) nên chưa ghép được file nhạc: dùng bài trong thư viện, hoặc nhờ người dùng chọn nhạc ở tab Đầu vào.", isError: true };
+          const known = new Map((await projectAudioFiles(ctx.db, ctx.workspaceDir, ctx.project.id)).map((f) => [f.path, f]));
+          const files: { path: string; filename: string }[] = [];
+          for (const path of a.files) {
+            const f = known.get(path.replace(/\\/g, "/").replace(/^\.\//, ""));
+            if (!f) return { text: `${path} không phải file audio của dự án (xem project_files của music_list).`, isError: true };
+            if (f.bytes > AUDIO_MAX_BYTES.music) return { text: `${f.name} lớn hơn ${AUDIO_MAX_BYTES.music / 1024 / 1024} MB.`, isError: true };
+            files.push({ path: join(ctx.workspaceDir, ...f.path.split("/")), filename: f.name });
+          }
+          const options = { files, ...(a.crossfade_s !== undefined ? { crossfadeS: a.crossfade_s } : {}), ...level };
+          if (scope === "video") await importVideoMusic(ctx.audio, { videoId: video!.id, ...options });
+          else await importProjectMusic(ctx.audio, { projectId: ctx.project.id, ...options });
+        }
+      } catch (e) {
+        if (e instanceof AudioImportError) return { text: e.message, isError: true };
+        throw e;
+      }
+      // the video's latest timeline plays it now (a video with its own music keeps it when only the project's changed)
+      const revision = video ? await videoMusicToTimeline(ctx.db, { workspaceDir: ctx.workspaceDir, projectId: ctx.project.id, videoId: video.id, authorId: ctx.claims.sub, now: ctx.now() }) : null;
+      return {
+        text: json({
+          scope,
+          music: scope === "video" ? await videoMusicSummary(ctx.db, ctx.project.id, video!.id) : (await projectAudioSummary(ctx.db, ctx.project.id)).music,
+          timeline_revision: revision,
+          note: revision ? `Timeline bản ${revision} phát nhạc này; render_preview để nghe.` : "Timeline chưa có hoặc đã phát nhạc này: lần dựng sau dùng nó.",
+        }),
+      };
     },
   }),
 ];

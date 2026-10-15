@@ -41,7 +41,7 @@ describe('agent tools API (real database)', () => {
       search: async (actAs: string, q: unknown) => { searched.push([actAs, q]); return { items: [], nextCursor: null, total: 0 }; },
       check: async (_actAs: string, ids: string[]) => ({ ok: ids, missing: [] }),
     } as unknown as ProjectFootageService;
-    controller = new AgentToolsController(engine, ws, new AgentToolsService(), footage, ({ current: () => 'Kho Footage' }) as unknown as SiteNameService);
+    controller = new AgentToolsController(engine, ws, new AgentToolsService(), footage, ({ current: () => 'Kho Footage' }) as unknown as SiteNameService, ({ get: () => undefined }) as unknown as ConfigService);
     await insertTeam(s.db, 'team-1', 'auth0|owner');
   });
   afterEach(() => s.close());
