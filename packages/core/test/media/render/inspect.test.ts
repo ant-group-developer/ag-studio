@@ -147,4 +147,20 @@ describe.skipIf(!hasFfmpeg())("inspectRender (real ffmpeg)", () => {
     expect(inspection.segments[0]!.lufs).toBeNull();
     expect(inspection.issues).toEqual([]);
   });
+
+  it("makes one sheet per 20 frames of a long file, not a copy of the last sheet for every frame in between", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "inspect-long-"));
+    tempDirs.push(dir);
+    const ffmpeg = process.env.FFMPEG_PATH ?? "ffmpeg";
+    const file = join(dir, "long.mp4");
+    // 450 s: frames at 0, 10, … 440 s = 45 frames, 3 sheets
+    expect(spawnSync(ffmpeg, ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=5:d=450", "-c:v", "libx264", "-preset", "ultrafast", file]).status).toBe(0);
+    const composition = { total_seconds: 450, segments: [{ order: 0, start: 0, end: 450 }] } as unknown as Composition;
+    const { inspection, sheets } = await inspectRender(
+      { ffmpeg, clock: { now: () => new Date().toISOString() } },
+      { episodePath: file, composition, outDir: join(dir, "inspect"), hasAudio: false, videoSeconds: 450, audioSeconds: null, timeoutSeconds: 120 },
+    );
+    expect(sheets).toHaveLength(3);
+    expect(inspection.sheets.map((s) => [s.from_s, s.frames])).toEqual([[0, 20], [200, 20], [400, 5]]);
+  });
 });

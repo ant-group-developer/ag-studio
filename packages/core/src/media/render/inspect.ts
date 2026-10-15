@@ -65,7 +65,9 @@ export function inspectArgs(p: { ffmpeg: string; input: string; hasAudio: boolea
   return [
     p.ffmpeg, "-hide_banner", "-nostats", "-y", "-i", p.input,
     "-filter_complex", [...video, ...audio].join(";"),
-    "-map", "[sheet]", "-q:v", "4", "sheet-%02d.jpg",
+    // passthrough: a sheet is one frame every 200 s; at a constant rate the image muxer repeats it for every frame
+    // in between (599 sheets for an 18-minute video)
+    "-map", "[sheet]", "-fps_mode", "passthrough", "-q:v", "4", "sheet-%02d.jpg",
     ...(p.hasAudio ? ["-map", "[aout]", "-f", "null", "-"] : []),
   ];
 }
