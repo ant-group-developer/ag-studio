@@ -93,6 +93,25 @@ describe("timeline tools", () => {
     expect(await call(s, "timeline_get", { view: "clips", from_s: 10, to_s: 5 })).toMatchObject({ isError: true });
   });
 
+  it("timeline_get pages texts by where they play, whatever order they were added in", async () => {
+    const s = await setup();
+    // T121 was added last but plays first (addText appends; updateText moves a text)
+    const texts = Array.from({ length: 130 }, (_, i) => ({
+      text_id: `T${String(i + 1).padStart(3, "0")}`, kind: "callout" as const, text: `chữ ${i}`, start: i === 120 ? 5 : 100 + i, duration: 2, position: "bottom_left" as const,
+    }));
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: { ...timeline(s.video.id), texts }, authorId: "u" });
+    const seen = new Set<string>();
+    let from: number | undefined;
+    for (let page = 0; page < 5; page++) {
+      const r = (await call(s, "timeline_get", { view: "texts", ...(from !== undefined ? { from_s: from } : {}) })).json;
+      for (const x of r.texts as { text_id: string }[]) seen.add(x.text_id);
+      if (r.next_from_s === undefined) break;
+      expect(r.next_from_s).toBeGreaterThan(from ?? -1);
+      from = r.next_from_s;
+    }
+    expect(seen.size).toBe(130);
+  });
+
   it("timeline_apply_ops saves a new revision on the one read, refuses a stale base and an asset the video does not have", async () => {
     const s = await setup();
     await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });

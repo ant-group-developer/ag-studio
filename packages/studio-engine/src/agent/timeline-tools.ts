@@ -94,7 +94,9 @@ export function timelineView(t: TimelineV4, revision: number, label: string | nu
     };
   }
   if (view === "texts") {
-    const rows = full.texts.filter((x) => x.start < to && x.start + x.duration > from);
+    // by where they play: `texts` keeps the order they were added in (addText appends, updateText moves one), and a
+    // page ends where the next one starts
+    const rows = full.texts.filter((x) => x.start < to && x.start + x.duration > from).sort((a, b) => a.start - b.start);
     const { shown, more } = page(rows, (x) => x.start);
     return { ...head, from_s: from, ...(Number.isFinite(to) ? { to_s: to } : {}), texts_total: full.texts.length, texts: shown, ...more };
   }
