@@ -142,7 +142,8 @@ nhưng không code nào đọc.
   `prepare_asset` (hỏi ag-go bản chuẩn bị sẵn: cảnh, khung, tờ ghép, lời thoại; chưa có thì xin ag-go chạy và chờ; tải
   khung và tờ về `inputs/<asset>/`, ADR mục 195), `research`
   (crawl YouTube: Data API nếu có `YOUTUBE_API_KEY`, không thì yt-dlp), `fit` (timeline v4 từ edit-plan, lời dẫn `studio.tts`
-  vào kho giọng `voice-store.ts`), `render_preview|render_final|export_premiere`, `thumbnail`, `style_watch`. Mỗi job báo
+  vào kho giọng `voice-store.ts`), `render_preview|render_final|export_premiere`, `thumbnail`, `style_watch`, `music_beats`
+  (nhịp của nhạc vừa nhập hoặc vừa chọn, migration `0002`; xem mục nhạc bên dưới). Mỗi job báo
   `phase`, `progress`, `eta_seconds` (`eta.ts`, không đoán khi đang chờ máy farm), máy farm; Dừng = `cancel_requested` (kill
   ffmpeg / huỷ job farm). Xong thì đăng tin hệ thống vào luồng và cho agent làm tiếp (≤ 3 lượt tự chạy liên tiếp, tắt bằng
   `settings.auto_continue`). Worker thiếu công cụ thì job loại đó chờ worker khác (`projectJobHandlers`).
@@ -175,12 +176,20 @@ nhưng không code nào đọc.
   `requirements.studio_render_min` khi composition dùng trường đó, nên máy render bản cũ không nhận job nó không đọc được
   (mức 3 chữ: cỡ riêng, bóng, xếp chồng; 4 font; 5 âm thanh: `gain_db` từng đoạn, `source_even`, `music.envelope`; 6 màu
   `look`). Font: Arial của máy cộng font OFL đóng kèm bản phát hành (`TEXT_FONTS`; `fonts/fonts.json` của ag-render-worker,
-  tải bằng `scripts/fetch-fonts.mjs`); chữ Nhật/Hàn luôn vẽ bằng Noto Sans JP/KR. Xuất Premiere: FCP7 XML zip kèm WAV lời dẫn từ kho giọng.
+  tải bằng `scripts/fetch-fonts.mjs`; Noto Sans JP/KR là bản tĩnh của notofonts/noto-cjk vì libass không chọn được bản
+  biến thiên mặc định Thin); chữ Nhật/Hàn luôn vẽ bằng Noto Sans JP/KR. Xuất Premiere: FCP7 XML zip kèm WAV lời dẫn từ kho giọng.
 - Timeline v4 (`TimelineV4Schema`): clip là đoạn `[in, out)` của video, có `shot_id`, `line_id`, `transition_out`, `muted`,
   `gain_db`; timeline có `source_audio.even`, `music.envelope`, `text_style` (font, bóng), `look` (màu). Kế hoạch dựng
   (`EditPlanSchema`) giữ được mọi thứ đó để `fit` dựng lại không mất; `setMusic` nhớ mức nhạc vào nhạc của video; thao tác
-  thuần ở `packages/core/src/studio/layout.ts` (`applyTimelineOps`, `timelineIssues`); composition suy từ revision
+  thuần ở `packages/core/src/studio/layout.ts` (`applyTimelineOps`, `timelineIssues`); shot của kế hoạch có `snap: "beat" | "bar"`
+  thì `fit` dời điểm cắt cuối shot về phách/đầu ô nhịp gần nhất của nhạc (`snapCuts` ở `core/src/studio/beat-snap.ts`: không
+  ngắn hơn `MIN_CLIP_SECONDS`, không vượt cảnh gốc, không làm lời dẫn đè nhau, điểm cắt và độ dài clip theo nguyên khung);
+  composition suy từ revision
   (`timelineToComposition`). Revision ở `video_revisions` (`saveVideoRevision`, xung đột → `RevisionConflictError`).
+- Nhịp nhạc (kế hoạch feedback-vps §4.7, `workspace/music-beats.ts`): nhạc của dự án/video vừa nhập hoặc chọn (API tab Đầu
+  vào, tool `music_set`) xếp job `music_beats` → job farm `studio.beats` (máy render có Python, librosa, `engines/python/beats.py`;
+  bài ghép phân tích từng bài) → `MusicBeatsSchema` cất cạnh track trên bucket (`<khoá track>.beats.json`, quét dọn giữ theo
+  track). `fit` đọc ở đó, chưa có thì tự gửi `studio.beats`; `music_list` báo BPM cho agent. Không có trường composition mới.
 - Giọng đọc/nhạc của dự án: chọn từ file audio đã tải lên (`workspace/project-audio.ts`; giọng cần vai producer và khai nguồn
   gốc; `projectAudioFiles` = audio có dòng nguồn + mọi file dưới `context/audio/`, cả file tải qua tab Tệp), hoặc nhạc là một
   bài của kho nhạc (`setProjectLibraryMusic`, `track: library:music/…`, không chép file, không cần ffmpeg); bỏ chọn nhạc
