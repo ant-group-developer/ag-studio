@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { JobView as FarmJobView } from "@ag-farm/protocol";
 import { studioSourceId } from "@harness/core";
 import {
-  addSource, createJobRunner, createProject, createVideo, declineProjectNarration, fitHandler, getJob, latestVideoRevision, queueFit, savePrepared,
+  addSource, createJobRunner, createProject, createVideo, declineProjectNarration, fitHandler, getJob, latestVideoRevision, lengthOffTarget, queueFit, savePrepared,
   seedWorkspace, studioLogger, type ProjectFarm,
 } from "../src/index.js";
 import { world } from "./helpers.js";
@@ -105,7 +105,7 @@ describe("timeline from the edit plan", () => {
     expect(rev.data.clips.some((c) => c.muted)).toBe(true);
     const snap = JSON.parse(readFileSync(join(s.vdir, "timeline.json"), "utf8"));
     expect(snap).toMatchObject({ revision: 1, label: "fit", timeline: { episode_id: s.video.id } });
-    expect((await getJob(s.db, job.id))!.result).toMatchObject({ revision: 1, clips: rev.data.clips.length });
+    expect((await getJob(s.db, job.id))!.result).toMatchObject({ revision: 1, clips: rev.data.clips.length, target_seconds: 20, off_target: expect.any(Boolean) });
     // the same lines again are not read again
     await queueFit(s.db, { projectId: s.project.id, videoId: s.video.id, createdBy: "u" }, NOW);
     await s.run();
@@ -147,5 +147,15 @@ describe("timeline from the edit plan", () => {
     await s.run();
     expect((await getJob(s.db, b.id))!.error).toContain("#1 s000-009");
     expect(existsSync(join(s.vdir, "timeline.json"))).toBe(false);
+  });
+});
+
+describe("lengthOffTarget", () => {
+  it("is quiet within 20% of the plan's target and says how far off it is beyond", () => {
+    expect(lengthOffTarget(300, 360)).toBeNull();
+    expect(lengthOffTarget(432, 360)).toBeNull();
+    expect(lengthOffTarget(250, 360)).toBe("timeline dài 4:10, ngắn hơn mục tiêu 6:00 của kế hoạch dựng 31%");
+    expect(lengthOffTarget(1050, 600)).toBe("timeline dài 17:30, dài hơn mục tiêu 10:00 của kế hoạch dựng 75%");
+    expect(lengthOffTarget(100, 0)).toBeNull();
   });
 });

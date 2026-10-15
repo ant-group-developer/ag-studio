@@ -179,6 +179,20 @@ async function readLines(d: FitDeps, ctx: JobContext, job: JobRecord, plan: Edit
   return read;
 }
 
+/** How far a fitted timeline may sit from the edit plan's `target_seconds` before the job says so (plan 2026-10-15 §3.3). */
+export const TARGET_TOLERANCE = 0.2;
+
+const clockOf = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+
+/** "timeline dài 4:10, ngắn hơn mục tiêu 6:00 của kế hoạch dựng 31%" when the timeline is off target by more than
+ * `TARGET_TOLERANCE`; null when it is close enough or there is no target. */
+export function lengthOffTarget(seconds: number, target: number): string | null {
+  if (!(target > 0)) return null;
+  const off = (seconds - target) / target;
+  if (Math.abs(off) <= TARGET_TOLERANCE) return null;
+  return `timeline dài ${clockOf(seconds)}, ${off < 0 ? "ngắn" : "dài"} hơn mục tiêu ${clockOf(target)} của kế hoạch dựng ${Math.round(Math.abs(off) * 100)}%`;
+}
+
 export function fitHandler(d: FitDeps): JobHandler {
   return async (job, ctx) => {
     const { video_id: videoId } = job.request as FitJobRequest;
@@ -232,9 +246,14 @@ export function fitHandler(d: FitDeps): JobHandler {
     const seconds = r3(timeline.clips.reduce((n, c) => n + ((c.out ?? c.in) - c.in), 0));
     const issues = timelineIssues(timeline).filter((i) => i.severity === "error");
     const shortfalls = report.shortfalls.length;
+    const offTarget = lengthOffTarget(seconds, plan.target_seconds);
     return {
-      result: { revision, clips: timeline.clips.length, seconds, music: musicNote, shortfalls, errors: issues.length, clamped: clamped.map((i) => i.clip_id) },
-      message: `Đã dựng timeline bản ${revision} cho **${video.title}**: ${timeline.clips.length} clip, ≈ ${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}, ${musicNote}${written ? ", lời dẫn thành phụ đề" : ""}.`
+      result: {
+        revision, clips: timeline.clips.length, seconds, target_seconds: plan.target_seconds, off_target: offTarget !== null, music: musicNote, shortfalls,
+        errors: issues.length, clamped: clamped.map((i) => i.clip_id),
+      },
+      message: `Đã dựng timeline bản ${revision} cho **${video.title}**: ${timeline.clips.length} clip, ≈ ${clockOf(seconds)}, ${musicNote}${written ? ", lời dẫn thành phụ đề" : ""}.`
+        + `${offTarget ? ` Lưu ý: ${offTarget}; nói với người dùng và hỏi họ muốn thêm cảnh, thêm lời hay giữ độ dài này.` : ""}`
         + `${shortfalls ? ` ${shortfalls} chỗ thiếu hình cho lời dẫn (xem videos/${videoId}/timeline.json).` : ""}${issues.length ? ` Còn ${issues.length} lỗi timeline.` : ""}`
         + `${clamped.length ? ` ${clamped.length} clip dài quá video nguồn, đã cắt ở cuối video (${clamped.map((i) => i.clip_id).join(", ")}).` : ""}`,
     };

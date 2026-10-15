@@ -8,13 +8,15 @@ description: Viết brief của một video videos/<id>/brief.md — video kể 
 Video của luồng chat được ghi trong `<studio_context>` (id và thư mục). Căn cứ: lời người dùng, `CLAUDE.md`,
 `channel/strategy.md`, `channel/branding.md`, `channel/style.md`, đầu vào đã gắn cho video/dự án (tool `inputs_list` nếu có).
 Thiếu điều quan trọng (video về gì, dùng footage nào) thì hỏi lại — một câu mỗi lần, kèm `suggest_replies`.
+**Độ dài:** người dùng chưa nói video dài bao lâu thì hỏi trước khi viết brief (gợi ý vài mức bằng `suggest_replies`,
+ví dụ theo video cùng loại trong `research/` hay `channel/strategy.md`); đừng tự chọn. `target_seconds` là đúng độ dài họ nói.
 
 ## Frontmatter — Studio đọc trực tiếp
 ```yaml
 ---
 status: draft            # done khi người dùng đồng ý brief
 title: "Hội An lúc lên đèn"   # bắt buộc, ≤ 120 ký tự; Studio dùng làm tên video
-target_seconds: 360      # độ dài mục tiêu
+target_seconds: 360      # độ dài mục tiêu, theo lời người dùng (chưa nói thì hỏi)
 narration: none          # tts (đọc lời dẫn bằng giọng máy) | original (giữ tiếng gốc có lời nói) | none
 edit_style: cut          # cut (cắt theo shot) | whole (ghép nguyên clip)
 aspect: "16:9"           # nếu khác dự án

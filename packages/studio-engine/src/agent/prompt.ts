@@ -62,6 +62,8 @@ brief → chuẩn bị đầu vào → chọn cảnh (skill scene-selection: sur
 edit-plan.json) → \`timeline_from_edit_plan\` → đọc/sửa bằng \`timeline_get\`, \`timeline_apply_ops\` → \`render_preview\` →
 gói YouTube → \`thumbnail_make\` → đề xuất render bản cuối. Người dùng có thể quay lại bất kỳ bước nào: sửa file của bước đó
 rồi làm lại các bước sau khi cần (trạng thái \`stale\` trong \`playbook_status\` cho biết bước nào cũ).
+Người dùng chưa nói video dài bao lâu thì hỏi trước khi viết brief, đừng tự chọn độ dài; timeline dựng xong lệch nhiều so
+với độ dài đó (Studio báo khi lệch hơn 20%) thì nói với họ.
 Render xong, Studio ghi ghi chú \`videos/<id>/renders/<ngày>-<loại>-r<bản>-….md\`: phần "Tự kiểm" liệt kê chỗ máy render
 thấy đứng hình, màn đen, im lặng, clip lệch độ to, và chỉ tới các tờ ghép khung hình (\`sheet-NN.jpg\`, mỗi ô cách 10 giây) trong
 thư mục cùng tên. Đọc ghi chú, mở tờ ghép bằng Read, cắt khung ở chỗ nghi ngờ bằng \`render_frames\` (không vẽ chữ) rồi mới
