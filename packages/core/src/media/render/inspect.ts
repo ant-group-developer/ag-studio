@@ -147,8 +147,22 @@ function median(xs: readonly number[]): number | null {
 
 type InspectionFacts = Pick<RenderInspection, "expected_seconds" | "video_seconds" | "audio_seconds" | "freezes" | "blacks" | "silences" | "segments" | "loudness_median_lufs">;
 
-/** What is wrong with a render, from its measurements, earliest first (a `duration` issue leads). */
-export function inspectionIssues(f: InspectionFacts): RenderInspectIssue[] {
+/** What the composition asked of a segment's own sound: none (`has_audio: false`, a muted clip), or turned by `gain_db`. */
+export type SegmentSoundIntent = { order: number; has_audio?: boolean; gain_db?: number | undefined };
+
+/** The segments whose loudness says how the render sounds as a whole: they play their own sound as it is. */
+function asIs(intent: ReadonlyMap<number, SegmentSoundIntent>, order: number): boolean {
+  const i = intent.get(order);
+  return i?.has_audio !== false && !i?.gain_db;
+}
+
+/**
+ * What is wrong with a render, from its measurements, earliest first (a `duration` issue leads). `intent` (the
+ * composition's segments): a clip the timeline muted is not compared, one it turned up or down is compared with where
+ * its gain puts it.
+ */
+export function inspectionIssues(f: InspectionFacts, intent: readonly SegmentSoundIntent[] = []): RenderInspectIssue[] {
+  const intentOf = new Map(intent.map((i) => [i.order, i]));
   const issues: RenderInspectIssue[] = [];
   const measured = [f.video_seconds, f.audio_seconds].filter((s): s is number => s !== null);
   if (measured.length > 0) {
@@ -183,10 +197,10 @@ export function inspectionIssues(f: InspectionFacts): RenderInspectIssue[] {
     }
   }
   const med = f.loudness_median_lufs;
-  if (med !== null && f.segments.filter((s) => s.lufs !== null && s.end - s.start >= CLIP_LOUDNESS_MIN_S).length >= 3) {
-    for (const s of f.segments) {
-      if (s.lufs === null || s.end - s.start < CLIP_LOUDNESS_MIN_S) continue;
-      const delta = Math.round((s.lufs - med) * 10) / 10;
+  const compared = f.segments.filter((s) => s.lufs !== null && s.end - s.start >= CLIP_LOUDNESS_MIN_S && intentOf.get(s.order)?.has_audio !== false);
+  if (med !== null && compared.length >= 3) {
+    for (const s of compared) {
+      const delta = Math.round((s.lufs! - med - (intentOf.get(s.order)?.gain_db ?? 0)) * 10) / 10;
       if (Math.abs(delta) >= CLIP_LOUDNESS_DB) timed.push({ code: "clip_loudness", severity: "warning", start: s.start, end: s.end, order: s.order, delta_db: delta });
     }
   }
@@ -255,14 +269,19 @@ export async function inspectRender(d: InspectDeps, p: InspectInput): Promise<{ 
   const points = existsSync(loudnessPath) ? parseMomentary(readFileSync(loudnessPath, "utf8")) : [];
   rmSync(loudnessPath, { force: true });
   const segments = segmentLoudness(points, [...p.composition.segments].sort((a, b) => a.order - b.order));
+  const intent: SegmentSoundIntent[] = p.composition.segments.map((s) => ({ order: s.order, has_audio: s.has_audio, gain_db: s.gain_db }));
+  const intentOf = new Map(intent.map((i) => [i.order, i]));
+  // the median of the clips as they are: muted clips (music only) and turned ones would pull it away
+  const plain = segments.filter((s) => asIs(intentOf, s.order));
   const facts: InspectionFacts = {
     expected_seconds: round3(p.composition.total_seconds), video_seconds: p.videoSeconds === null ? null : round3(p.videoSeconds),
-    audio_seconds: p.audioSeconds === null ? null : round3(p.audioSeconds), ...detections, segments, loudness_median_lufs: medianSegmentLoudness(segments),
+    audio_seconds: p.audioSeconds === null ? null : round3(p.audioSeconds), ...detections, segments,
+    loudness_median_lufs: medianSegmentLoudness(plain) ?? medianSegmentLoudness(segments),
   };
   const sheets = sheetsIn(outDir, end);
   const finishedAt = Date.parse(d.clock.now());
   const inspection = RenderInspectionSchema.parse({
-    schema_version: "harness.render-inspect/v1", ...facts, sheets, issues: inspectionIssues(facts),
+    schema_version: "harness.render-inspect/v1", ...facts, sheets, issues: inspectionIssues(facts, intent),
     inspect_seconds: Number.isFinite(startedAt) && Number.isFinite(finishedAt) ? round3(Math.max(0, (finishedAt - startedAt) / 1000)) : 0,
   });
   const path = join(outDir, INSPECT_FILE);

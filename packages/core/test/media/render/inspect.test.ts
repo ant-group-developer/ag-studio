@@ -91,6 +91,15 @@ describe("inspectionIssues", () => {
     const issues = inspectionIssues(facts({ segments: [seg(0, 0, 20), seg(1, 20, 40, -30), seg(2, 40, 60), seg(3, 60, 61, -50)] }));
     expect(issues).toEqual([{ code: "clip_loudness", severity: "warning", start: 20, end: 40, order: 1, delta_db: -10 }]);
   });
+
+  it("leaves alone a clip the timeline silenced or turned down, and names one quieter than it asked", () => {
+    const segments = [seg(0, 0, 20), seg(1, 20, 40, -50), seg(2, 40, 60, -30), seg(3, 60, 80), seg(4, 80, 100, -38)];
+    const intent = [{ order: 0, has_audio: true }, { order: 1, has_audio: false }, { order: 2, has_audio: true, gain_db: -10 }, { order: 3, has_audio: true }, { order: 4, has_audio: true, gain_db: -10 }];
+    // the median is of the clips that play their own sound as they are (-20); C2 is where -10 dB puts it; C4 is 8 dB under that
+    expect(inspectionIssues(facts({ segments, loudness_median_lufs: -20 }), intent)).toEqual([
+      { code: "clip_loudness", severity: "warning", start: 80, end: 100, order: 4, delta_db: -8 },
+    ]);
+  });
 });
 
 const tempDirs: string[] = [];
