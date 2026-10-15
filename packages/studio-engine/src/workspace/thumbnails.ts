@@ -2,6 +2,9 @@
  * Thumbnails of a project's video (spec 2026-10-10 agent-workspace §P6, job `thumbnail`): a frame cut from the video's
  * latest render (the final one when there is one, else the preview) with words drawn on it in the branding's look,
  * written to `videos/<id>/thumbnails/NN.jpg` with a README the agent and people read (and may ask to redo).
+ *
+ * The same job also cuts plain frames for the agent to look at (`render_frames`, plan 2026-10-15 feedback-vps §2.3):
+ * no words, the render's own aspect, into `videos/<id>/renders/frames/`.
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -9,19 +12,29 @@ import { THUMBNAIL_SIZES, ThumbnailStyleSchema, type ThumbnailStyle } from "@har
 import { thumbnailTextLines } from "@harness/core";
 import type { StudioBucket } from "../bucket.js";
 import type { StudioDb } from "../studio-db.js";
-import type { ThumbnailRenderer } from "../thumbnail-render.js";
+import type { ThumbnailRenderer, ThumbnailSize } from "../thumbnail-render.js";
 import { writeWorkspaceFile } from "./files.js";
 import { readFrontmatter } from "./frontmatter.js";
 import type { JobHandler } from "./job-runner.js";
 import { createJob, type JobRecord } from "./jobs-db.js";
 import { requireProject, requireVideo } from "./project-db.js";
-import { videoRenders } from "./renders.js";
+import { videoRenders, type RenderResult } from "./renders.js";
 
 export interface ThumbnailItem { text: string; at_seconds?: number | undefined }
-/** `request` of a `thumbnail` job. */
-export interface ThumbnailJobRequest { video_id: string; items: ThumbnailItem[]; style?: Partial<ThumbnailStyle> }
+/** `request` of a `thumbnail` job; with `frames` it cuts plain frames at those seconds instead (`queueRenderFrames`). */
+export interface ThumbnailJobRequest { video_id: string; items: ThumbnailItem[]; style?: Partial<ThumbnailStyle>; frames?: number[] }
 
 export const thumbnailsDir = (videoId: string) => `videos/${videoId}/thumbnails`;
+/** Where `render_frames` puts the frames it cuts from a render. */
+export const renderFramesDir = (videoId: string) => `videos/${videoId}/renders/frames`;
+/** At most this many frames per `render_frames` call. */
+export const MAX_RENDER_FRAMES = 12;
+/** Width of a frame cut to look at; the height keeps the render's aspect. */
+const FRAME_WIDTH = 960;
+
+function clockOf(s: number): string {
+  return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+}
 
 /** How the words look, from the branding (`thumbnail` and `text_look` in `channel/branding.md`), with what was asked on top. */
 export function thumbnailStyleOf(dir: string, over: Partial<ThumbnailStyle> = {}): ThumbnailStyle {
@@ -50,17 +63,60 @@ export async function queueThumbnails(db: StudioDb, p: {
   }, now);
 }
 
+/** Queues plain frames of the video's newest render at `atSeconds` (at most `MAX_RENDER_FRAMES`), for the agent to open. */
+export async function queueRenderFrames(db: StudioDb, p: {
+  projectId: string; videoId: string; atSeconds: number[]; threadId?: string | null; continueAgent?: boolean;
+  createdBy: string; actorRole?: JobRecord["actor_role"];
+}, now = new Date().toISOString()): Promise<JobRecord> {
+  const v = await requireVideo(db, p.videoId);
+  const frames = [...new Set(p.atSeconds.map((t) => Math.round(Math.max(0, t) * 10) / 10))].slice(0, MAX_RENDER_FRAMES);
+  const request: ThumbnailJobRequest = { video_id: v.id, items: [], frames };
+  return createJob(db, {
+    projectId: p.projectId, videoId: v.id, threadId: p.threadId ?? null, kind: "thumbnail", title: `Khung hình bản render: ${v.title}`, request,
+    continueAgent: p.continueAgent ?? false, createdBy: p.createdBy, actorRole: p.actorRole ?? null,
+  }, now);
+}
+
+/** The size of a frame to look at: `FRAME_WIDTH` wide, the render's aspect (else the project's). */
+function frameSize(r: RenderResult, fallback: ThumbnailSize): ThumbnailSize {
+  const w = r.width && r.width > 0 ? r.width : fallback.width;
+  const h = r.height && r.height > 0 ? r.height : fallback.height;
+  return { width: FRAME_WIDTH, height: Math.max(2, 2 * Math.round((FRAME_WIDTH * h) / w / 2)) };
+}
+
 export function thumbnailHandler(d: { db: StudioDb; bucket: StudioBucket; renderer: ThumbnailRenderer }): JobHandler {
   return async (job, ctx) => {
     const req = job.request as ThumbnailJobRequest;
     const video = await requireVideo(d.db, req.video_id);
     const project = await requireProject(d.db, job.project_id);
     const renders = (await videoRenders(d.db, project.id, video.id)).filter((r) => r.kind !== "export_premiere");
-    const source = renders.find((r) => r.kind === "render_final") ?? renders[0];
+    // frames to look at come from the newest render (what was just made); a thumbnail from the final one when there is one
+    const source = req.frames ? renders[0] : renders.find((r) => r.kind === "render_final") ?? renders[0];
     if (!source) throw new Error("cần một bản render (xem trước hoặc bản cuối) để cắt khung: render_preview trước");
     await ctx.report({ phase: "Đang lấy bản render", progress: 0.1 });
     const mp4 = join(ctx.tempDir, "video.mp4");
     writeFileSync(mp4, await d.bucket.get(source.key));
+    const from = source.kind === "render_final" ? "bản cuối" : "bản xem trước";
+    if (req.frames) {
+      const size = frameSize(source, THUMBNAIL_SIZES[project.aspect]);
+      const dir = renderFramesDir(video.id);
+      mkdirSync(join(ctx.workspaceDir, dir), { recursive: true });
+      const cut: { path: string; at: number }[] = [];
+      for (const [i, wanted] of req.frames.entries()) {
+        await ctx.checkpoint();
+        await ctx.report({ phase: `Đang cắt khung ${i + 1}/${req.frames.length}`, progress: 0.2 + 0.75 * (i / req.frames.length) });
+        const at = Math.round(10 * Math.min(wanted, Math.max(0, (source.duration_s ?? wanted + 0.1) - 0.1))) / 10;
+        const name = `r${source.revision}-${at.toFixed(1).padStart(6, "0")}s.jpg`;
+        const out = join(ctx.tempDir, name);
+        await d.renderer.extractFrame(mp4, at, out, size);
+        await writeWorkspaceFile(d.db, { projectId: project.id, dir: ctx.workspaceDir, path: `${dir}/${name}`, content: readFileSync(out), baseSha256: null, author: { kind: "studio", id: null }, now: ctx.now() });
+        cut.push({ path: `${dir}/${name}`, at });
+      }
+      return {
+        result: { files: cut.map((c) => c.path), from: source.kind, revision: source.revision },
+        message: `Đã cắt ${cut.length} khung từ ${from} (timeline bản ${source.revision}) của **${video.title}**, mở bằng Read để xem: ${cut.map((c) => `\`${c.path}\` (${clockOf(c.at)})`).join(", ")}.`,
+      };
+    }
     const size = THUMBNAIL_SIZES[project.aspect];
     const style = thumbnailStyleOf(ctx.workspaceDir, req.style);
     const outDir = join(ctx.workspaceDir, thumbnailsDir(video.id));

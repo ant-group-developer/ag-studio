@@ -187,7 +187,12 @@ nhưng không code nào đọc.
   (nghe thử), không lời dẫn, tự chọn theo mood; nút thiếu vai/thiếu ffmpeg mờ kèm lý do, lỗi tải hiện
   lỗi + Thử lại (không biến mất).
 - Thumbnail (`workspace/thumbnails.ts`) cắt khung từ bản render và vẽ chữ trên máy Studio (ffmpeg bất đồng bộ, font Arial của
-  hệ thống qua `STUDIO_FONTS_DIR`, không ship font). Quy chuẩn & skill của nhóm (`team_skills`) thành skill của agent khi dự
+  hệ thống qua `STUDIO_FONTS_DIR`, không ship font). Cùng job đó cắt khung không chữ cho agent xem (tool `render_frames`,
+  ≤ 12 khung từ bản render mới nhất, `videos/<id>/renders/frames/r<bản>-<giây>s.jpg`).
+- Bản xem trước và bản cuối được máy render tự kiểm (`inspectRender`, `packages/core/src/media/render/inspect.ts`; payload
+  `inspect: true`, cần `studio_render_min` 2): đứng hình, màn đen, im lặng, độ to từng đoạn và tờ ghép khung hình (1 khung/10 s,
+  lưới 5×4). Studio chép `inspect.json` + `sheet-NN.jpg` vào `videos/<id>/renders/<tên ghi chú>/`, ghi chú render và tin báo
+  xong liệt kê vấn đề bằng lời (`inspectionLines`). `scripts/repro-render.mjs` chạy cùng lượt kiểm này. Quy chuẩn & skill của nhóm (`team_skills`) thành skill của agent khi dự
   án bật.
 - Quét dọn (`cleanup.ts`, mỗi `STUDIO_CLEANUP_HOURS`): dòng kho giọng lâu không đọc, audio dự án không còn ai trỏ tới, thư mục
   tạm của job/lượt bị bỏ dở, `.trash` của dự án, dòng `audit_log` cũ hơn `STUDIO_RETENTION_AUDIT_DAYS` (90).

@@ -13,7 +13,7 @@ import { getJob } from "../workspace/jobs-db.js";
 import { getVideoRevision, latestVideoRevision, requireVideo, saveVideoRevision } from "../workspace/project-db.js";
 import { RevisionConflictError } from "../studio-db.js";
 import { queueRender } from "../workspace/renders.js";
-import { queueThumbnails } from "../workspace/thumbnails.js";
+import { MAX_RENDER_FRAMES, queueRenderFrames, queueThumbnails } from "../workspace/thumbnails.js";
 import { buildVideoIndex } from "../workspace/video-index.js";
 import type { AgentTool, AgentToolContext, ToolAnswer } from "./tools.js";
 
@@ -152,6 +152,23 @@ export const TIMELINE_TOOLS: AgentTool[] = [
         threadId: ctx.thread.id, continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role,
       }, ctx.now());
       return waitFor(ctx, job.id, a.wait_s ?? 30);
+    },
+  }),
+  tool({
+    name: "render_frames",
+    description: "Cắt khung hình (không vẽ chữ) từ bản render mới nhất của video ở các giây `at_seconds` (tối đa 12) để tự xem bản render: kiểm chỗ máy render báo đứng hình, màn đen, chữ đè nhau, cảnh sai. Ghi videos/<id>/renders/frames/r<bản>-<giây>s.jpg; mở bằng Read. Muốn nhìn cả video thì xem trước tờ ghép khung hình trong thư mục của bản render (ghi chú videos/<id>/renders/*.md).",
+    input: z.object({
+      video_id: z.string().min(1).optional(),
+      at_seconds: z.array(z.number().min(0)).min(1).max(MAX_RENDER_FRAMES),
+      wait_s: waitS,
+    }).strict(),
+    role: "editor",
+    run: async (ctx, a) => {
+      const v = await videoOf(ctx, a.video_id);
+      const job = await queueRenderFrames(ctx.db, {
+        projectId: ctx.project.id, videoId: v.id, atSeconds: a.at_seconds, threadId: ctx.thread.id, continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role,
+      }, ctx.now());
+      return waitFor(ctx, job.id, a.wait_s ?? 60);
     },
   }),
   tool({

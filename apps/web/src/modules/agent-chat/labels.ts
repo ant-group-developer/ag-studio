@@ -49,6 +49,10 @@ export function toolTarget(p: Extract<AgentPart, { kind: "tool" }>, t?: Translat
     const texts = (list("items") ?? []).map((i) => (i && typeof i === "object" ? (i as { text?: unknown }).text : null)).filter((x): x is string => typeof x === "string");
     return texts.length ? short(texts.map((x) => `“${x}”`).join(", ")) : null;
   }
+  if (key === "render_frames") {
+    const at = (list("at_seconds") ?? []).filter((x): x is number => typeof x === "number");
+    return at.length ? short(at.map((s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`).join(", ")) : null;
+  }
   const other = pick("pattern") ?? pick("skill") ?? pick("title") ?? pick("query") ?? pick("q") ?? pick("channel") ?? pick("topic") ?? pick("mood")
     ?? pick("description") ?? pick("url") ?? pick("command");
   return other ? short(other) : null;

@@ -2,7 +2,7 @@ import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  claimJob, createJob, createJobRunner, createProject, createVideo, finishJob, getJob, queueThumbnails, seedWorkspace, studioLogger, thumbnailHandler,
+  claimJob, createJob, createJobRunner, createProject, createVideo, finishJob, getJob, queueRenderFrames, queueThumbnails, seedWorkspace, studioLogger, thumbnailHandler,
   thumbnailStyleOf, type ThumbnailRenderer,
 } from "../src/index.js";
 import { world } from "./helpers.js";
@@ -59,5 +59,30 @@ describe("thumbnails", () => {
     await queueThumbnails(s.db, { projectId: s.project.id, videoId: s.video.id, items: [{ text: "Lần 2" }], createdBy: "u" }, NOW);
     await s.run();
     expect(readFileSync(join(tdir, "README.md"), "utf8")).toContain("`03.jpg`");
+  });
+
+  it("render_frames cuts plain frames of the newest render at its own aspect into renders/frames", async () => {
+    const s = await setup();
+    const done = async (kind: "render_preview" | "render_final", revision: number, key: string, at: string) => {
+      const r = await createJob(s.db, { projectId: s.project.id, videoId: s.video.id, kind, title: "r", request: {}, createdBy: "u" }, at);
+      await claimJob(s.db, [kind], at);
+      await finishJob(s.db, r.id, { status: "done", result: { kind, revision, key, duration_s: 803.3, width: 1080, height: 1920, watermarked: false, size_bytes: 1, note: "" } }, at);
+      await s.bucket.put(key, Buffer.from("mp4"));
+    };
+    await done("render_final", 2, "k/final.mp4", "2026-10-10T08:00:00.000Z");
+    await done("render_preview", 3, "k/preview.mp4", "2026-10-10T09:00:00.000Z");
+    const many = Array.from({ length: 14 }, (_, i) => i * 60);
+    const job = await queueRenderFrames(s.db, { projectId: s.project.id, videoId: s.video.id, atSeconds: [801.04, 801.0, 900, ...many], createdBy: "u" }, NOW);
+    expect((job.request as { frames: number[] }).frames).toHaveLength(12);
+    await s.run();
+    const finished = (await getJob(s.db, job.id))!;
+    expect(finished.status).toBe("done");
+    const frames = s.calls.filter((c) => (c as unknown[])[0] === "frame");
+    // no words drawn; the newest render (the preview), 960 wide at its 9:16 aspect; past the end is the last frame
+    expect(s.calls.some((c) => (c as unknown[])[0] === "compose")).toBe(false);
+    expect(frames.slice(0, 2)).toEqual([["frame", 801, { width: 960, height: 1706 }], ["frame", 803.2, { width: 960, height: 1706 }]]);
+    const fdir = join(s.dir, "videos", s.video.id, "renders", "frames");
+    expect(readFileSync(join(fdir, "r3-0801.0s.jpg"), "utf8")).toBe("jpg-frame");
+    expect(finished.result).toMatchObject({ from: "render_preview", revision: 3, files: expect.arrayContaining([`videos/${s.video.id}/renders/frames/r3-0803.2s.jpg`]) });
   });
 });
