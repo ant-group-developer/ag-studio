@@ -166,7 +166,7 @@ export const TIMELINE_TOOLS: AgentTool[] = [
       "Sửa timeline bằng các thao tác (tối đa 50), lưu thành bản mới. `base_revision` là bản bạn đã đọc (timeline_get); bản mới hơn đã có thì bị từ chối: đọc lại rồi sửa.",
       "Thao tác: addClip {asset_id, index}, removeClip {clip_id}, moveClip {from, to}, replaceClipAsset {clip_id, asset_id}, trimClip {clip_id, in, out|null},",
       "setTransition {clip_id, kind: cut|dissolve, seconds}, setClipMuted {clip_id, muted}, setSectionTitle {clip_id, title|null},",
-      "addText {kind, text, start, duration, position}, updateText {text_id, kind|null, text|null, start|null, duration|null, position|null}, removeText {text_id},",
+      "addText {kind, text (≤ 120 ký tự), start, duration (≤ 600 s), position, size?: s|m|l}, updateText {text_id, kind|null, text|null, start|null, duration|null, position|null, size?}, removeText {text_id} (chữ cùng vị trí cùng lúc tự xếp chồng),",
       "setMusic {music: {track: 'library:…', gain_db, ducking} | null}, setSourceMuted {muted}, setCaptions {mode}. asset_id phải là video đã chuẩn bị của video này.",
     ].join(" "),
     input: z.object({

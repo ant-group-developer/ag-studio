@@ -34,8 +34,12 @@ description: Viết kế hoạch dựng của một video — thứ tự shot, �
   cho vừa lời ("hình theo lời"), nên đừng cố khớp giây.
 - `transition`: `cut` hoặc `dissolve` (sang shot sau). `source_audio: "mute"` khi tiếng gốc làm phiền (thông báo, nhạc,
   người lạ nói).
-- `texts`: `kind` title | callout | lower_third; tối đa 64 ký tự; `at_order` là shot neo, `offset_s` tính từ đầu shot đó,
-  `duration` 0.5–20 giây; `position` top_left | top_center | top_right | center | bottom_left | bottom_center | bottom_right.
+- `texts` (tối đa 200): `kind` title | callout | lower_third; tối đa 120 ký tự (dài quá chiều ngang thì tự xuống dòng);
+  `at_order` là shot neo, `offset_s` tính từ đầu shot đó, `duration` 0.5–600 giây (chữ có thể nằm suốt một đoạn dài);
+  `position` top_left | top_center | top_right | center | bottom_left | bottom_center | bottom_right; `size` s | m | l
+  (tuỳ chọn, cỡ riêng của chữ đó so với cỡ của loại chữ). Hai chữ cùng vị trí, cùng lúc (song ngữ Anh–Nhật, tên địa danh
+  và chú thích) **tự xếp chồng**, không đè nhau: chữ bắt đầu trước nằm sát mép, chữ sau đẩy lên (vị trí dưới) hoặc đẩy
+  xuống (vị trí trên, giữa). Muốn hai dòng của một chữ thì viết `\n` trong `text`.
 - `music_mood`: tâm trạng nhạc khi video và dự án chưa có nhạc riêng (xem `music_list`). Nhạc riêng do người dùng chọn ở
   tab Đầu vào (của dự án, hoặc của riêng video; có thể ghép nhiều bài) — `project_info` cho biết `video_music`.
 - `target_seconds` theo brief (10–3600).

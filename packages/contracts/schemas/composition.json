@@ -223,6 +223,14 @@
                   "slide_up",
                   "pop"
                 ]
+              },
+              "size": {
+                "type": "string",
+                "enum": [
+                  "s",
+                  "m",
+                  "l"
+                ]
               }
             },
             "required": [
@@ -266,6 +274,9 @@
                 "m",
                 "l"
               ]
+            },
+            "shadow": {
+              "type": "boolean"
             }
           },
           "required": [

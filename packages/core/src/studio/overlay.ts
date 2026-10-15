@@ -5,12 +5,16 @@
  * `fontsdir`.
  *
  * `buildAss` sizes everything in canvas pixels and the harness brand defaults were tuned on a 3840x2160
- * canvas, so the default brand scales them by the canvas' short edge: a 1080p or 9:16 render gets half.
+ * canvas, so the default brand scales them by the canvas' short edge: a 1080p or 9:16 render gets half. A callout is
+ * drawn smaller than the harness's 160 px (`STUDIO_CALLOUT_PX`): at 80 px on 1080p it covered the picture.
  */
 import { BrandProfileSchema, type BrandProfile, type Composition, type TextLook } from "@harness/contracts";
 import { buildAss } from "../media/ass.js";
 
 export const STUDIO_DEFAULT_FONT = "Arial";
+
+/** A callout's size on the design canvas (the harness default is 160 px). */
+export const STUDIO_CALLOUT_PX = 104;
 
 /** The canvas the harness brand defaults were designed for (short edge). */
 const DESIGN_SHORT_EDGE = 2160;
@@ -35,7 +39,7 @@ export function studioDefaultBrand(canvas: { width: number; height: number }): B
     safe_margin_px: Math.round(120 * k),
     text: {
       title: { size_px: px(120) },
-      callout: { size_px: px(160) },
+      callout: { size_px: px(STUDIO_CALLOUT_PX) },
       lower_third: { size_px: px(72) },
     },
     subtitles: { size_px: px(88) },
@@ -84,5 +88,6 @@ export function studioOverlayAss(c: Composition): string | null {
     logo: null,
     canvas,
     ...(c.text_style ? { boxColorInOutline: true } : {}),
+    ...(c.text_style?.shadow ? { shadow: true } : {}),
   });
 }

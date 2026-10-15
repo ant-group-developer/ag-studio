@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { TextLookSchema } from "./composition.js";
+import { TEXT_LOOK_SIZES, TextLookSchema } from "./composition.js";
 import { surveyIndexSchemaV2 } from "./library.js";
 
 /**
@@ -308,6 +308,11 @@ export const NARRATION_VOICES = ["none", "tts", "original"] as const;
 export type NarrationVoice = (typeof NARRATION_VOICES)[number];
 
 export const TEXT_KINDS = ["title", "callout", "lower_third"] as const;
+/** Characters of one text on the picture, and how long it may stay on (feedback-vps §4.1: was 64 and 20 s). */
+export const TIMELINE_TEXT_MAX = 120;
+export const TIMELINE_TEXT_MAX_SECONDS = 600;
+/** Texts an edit plan may carry (was 30). */
+export const EDIT_PLAN_TEXTS_MAX = 200;
 export const TEXT_POSITIONS_V2 = ["top_left", "top_center", "top_right", "center", "bottom_left", "bottom_center", "bottom_right"] as const;
 export type TextKind = (typeof TEXT_KINDS)[number];
 export type StudioTextPosition = (typeof TEXT_POSITIONS_V2)[number];
@@ -331,7 +336,7 @@ export const PlannedEpisodeSchema = z.object({
   /** On-screen texts; `at_item` is the index in `items` whose start the text appears at. */
   texts_suggested: z.array(z.object({
     kind: z.enum(TEXT_KINDS),
-    text: z.string().min(1).max(64),
+    text: z.string().min(1).max(TIMELINE_TEXT_MAX),
     at_item: z.number().int().min(0),
   }).strict()).max(10),
   /**
@@ -606,14 +611,20 @@ export const StudioEpisodeSchema = PlannedEpisodeSchema.extend({
 }).strict();
 export type StudioEpisode = z.infer<typeof StudioEpisodeSchema>;
 
-/** One text on the picture (T). `start` is seconds from the start of the episode. Same in v3 and v4. */
+/**
+ * One text on the picture (T). `start` is seconds from the start of the episode. Same in v3 and v4. A text may stay
+ * on for a whole stretch (a place name, a bilingual caption: up to `TIMELINE_TEXT_MAX_SECONDS`); texts at one position
+ * that overlap in time stack instead of covering each other (`buildAss`).
+ */
 export const TimelineTextSchema = z.object({
   text_id: z.string().regex(/^T\d{3}$/),
   kind: z.enum(TEXT_KINDS),
-  text: z.string().min(1).max(64),
+  text: z.string().min(1).max(TIMELINE_TEXT_MAX),
   start: z.number().min(0),
-  duration: z.number().min(0.5).max(20),
+  duration: z.number().min(0.5).max(TIMELINE_TEXT_MAX_SECONDS),
   position: z.enum(TEXT_POSITIONS_V2),
+  /** Size step against the kind's own size (s 0.8×, m, l 1.25×). Absent = `m`. */
+  size: z.enum(TEXT_LOOK_SIZES).optional(),
 }).strict();
 
 /**
@@ -965,12 +976,13 @@ export const EditPlanSchema = z.object({
   texts: z.array(z.object({
     text_id: z.string().regex(/^T\d{3}$/),
     kind: z.enum(TEXT_KINDS),
-    text: z.string().min(1).max(64),
+    text: z.string().min(1).max(TIMELINE_TEXT_MAX),
     at_order: z.number().int().min(1),
     offset_s: z.number().min(0),
-    duration: z.number().min(0.5).max(20),
+    duration: z.number().min(0.5).max(TIMELINE_TEXT_MAX_SECONDS),
     position: z.enum(TEXT_POSITIONS_V2),
-  }).strict()).max(30),
+    size: z.enum(TEXT_LOOK_SIZES).optional(),
+  }).strict()).max(EDIT_PLAN_TEXTS_MAX),
   /** A mood for the music (the production's track is used; kept for later). */
   music_mood: z.string().max(40).nullable(),
 }).strict();

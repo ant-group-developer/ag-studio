@@ -167,6 +167,22 @@ describe("timelineToComposition on v4", () => {
       .filter((l) => l.startsWith("Style:")).every((l) => l.split(",")[15] === "1")).toBe(true);
   });
 
+  it("feedback-vps §4.1: a text's size goes from the edit op to the composition; a callout is drawn smaller than before", () => {
+    const t = applyTimelineOps(cut(), [
+      { op: "addText", kind: "callout", text: "清水寺 · Kiyomizu-dera, the temple of pure water above Kyoto", start: 1, duration: 300, position: "center", size: "l" },
+      { op: "addText", kind: "callout", text: "Wow", start: 1, duration: 2, position: "bottom_center" },
+    ], {});
+    const added = t.texts.slice(-2);
+    expect(added[0]!.size).toBe("l");
+    expect("size" in added[1]!).toBe(false);
+    expect(applyTimelineOps(t, [{ op: "updateText", text_id: added[1]!.text_id, kind: null, text: null, start: null, duration: null, position: null, size: "s" }], {}).texts.at(-1)!.size).toBe("s");
+    const c = CompositionSchema.parse(timelineToComposition(t));
+    expect(c.text_events.at(-2)!.size).toBe("l");
+    expect("size" in c.text_events.at(-1)!).toBe(false);
+    const callout = studioOverlayAss(c)!.split("\n").find((l) => l.startsWith("Style: Callout,"))!.split(",");
+    expect(Number(callout[2])).toBe(104);
+  });
+
   it("the footage's own speech (narration original) plays at its own level, not lowered as background", () => {
     const t = cut();
     t.narration = { voice: "original", lead_seconds: 0.3, lines: [] };

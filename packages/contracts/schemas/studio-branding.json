@@ -300,6 +300,9 @@
                     "m",
                     "l"
                   ]
+                },
+                "shadow": {
+                  "type": "boolean"
                 }
               },
               "required": [

@@ -177,7 +177,7 @@
               "text": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 64
+                "maxLength": 120
               },
               "start": {
                 "type": "number",
@@ -186,7 +186,7 @@
               "duration": {
                 "type": "number",
                 "minimum": 0.5,
-                "maximum": 20
+                "maximum": 600
               },
               "position": {
                 "type": "string",
@@ -198,6 +198,14 @@
                   "bottom_left",
                   "bottom_center",
                   "bottom_right"
+                ]
+              },
+              "size": {
+                "type": "string",
+                "enum": [
+                  "s",
+                  "m",
+                  "l"
                 ]
               }
             },
@@ -452,6 +460,9 @@
                 "m",
                 "l"
               ]
+            },
+            "shadow": {
+              "type": "boolean"
             }
           },
           "required": [

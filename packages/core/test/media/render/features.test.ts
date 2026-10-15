@@ -20,6 +20,19 @@ describe("compositionFeatureLevel", () => {
     expect(compositionFeatureLevel(timelineToComposition(timeline({ track: "library:m.mp3", gain_db: -30, ducking: false })))).toBe(1);
   });
 
+  it("is 3 for a text's own size, a text shadow, or texts at one position at the same time", () => {
+    const texts = (...t: TimelineV4["texts"]) => ({ ...timeline(null), texts: t });
+    const text = (text_id: string, start: number, position: TimelineV4["texts"][number]["position"] = "bottom_left") =>
+      ({ text_id, kind: "lower_third" as const, text: text_id, start, duration: 2, position });
+    expect(compositionFeatureLevel(timelineToComposition(texts(text("T001", 0), text("T002", 2))))).toBe(0);
+    expect(compositionFeatureLevel(timelineToComposition(texts(text("T001", 0), text("T002", 1, "top_left"))))).toBe(0);
+    expect(compositionFeatureLevel(timelineToComposition(texts(text("T001", 0), text("T002", 1))))).toBe(3);
+    expect(compositionFeatureLevel(timelineToComposition(texts({ ...text("T001", 0), size: "s" })))).toBe(3);
+    const look = { text_color: "#FFFFFF", outline_color: "#000000", box_color: null, size: "m" as const };
+    expect(compositionFeatureLevel(timelineToComposition({ ...timeline(null), text_style: look }))).toBe(0);
+    expect(compositionFeatureLevel(timelineToComposition({ ...timeline(null), text_style: { ...look, shadow: true } }))).toBe(3);
+  });
+
   it("never asks for more than this build renders", () => {
     expect(compositionFeatureLevel(timelineToComposition(timeline({ track: "library:m.mp3", gain_db: -30, ducking: false })))).toBeLessThanOrEqual(RENDER_FEATURE_LEVEL);
   });

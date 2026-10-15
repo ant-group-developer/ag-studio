@@ -104,6 +104,7 @@ export function timelineToComposition(t: AnyTimeline): Composition {
     end: r3(x.start + x.duration),
     position: x.position,
     animation: "fade" as const,
+    ...(x.size ? { size: x.size } : {}),
   }));
 
   const captionMode = v4?.captions.mode ?? "none";

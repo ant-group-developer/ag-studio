@@ -488,7 +488,7 @@ function applyOne<T extends AnyTimeline>(t: T, op: TimelineOp, allowed: Record<s
     case "moveClip": return moveClip(t, op.from, op.to);
     case "replaceClipAsset": return replaceClipAsset(withAsset(t, op.asset_id), op.clip_id, op.asset_id);
     case "setSectionTitle": return setSectionTitle(t, op.clip_id, op.title);
-    case "addText": return addText(t, { kind: op.kind, text: op.text, start: op.start, duration: op.duration, position: op.position });
+    case "addText": return addText(t, { kind: op.kind, text: op.text, start: op.start, duration: op.duration, position: op.position, ...(op.size ? { size: op.size } : {}) });
     case "updateText": {
       const patch: Partial<Omit<TimelineText, "text_id">> = {};
       if (op.kind !== null) patch.kind = op.kind;
@@ -496,6 +496,7 @@ function applyOne<T extends AnyTimeline>(t: T, op: TimelineOp, allowed: Record<s
       if (op.start !== null) patch.start = op.start;
       if (op.duration !== null) patch.duration = op.duration;
       if (op.position !== null) patch.position = op.position;
+      if (op.size !== null && op.size !== undefined) patch.size = op.size;
       return updateText(t, op.text_id, patch);
     }
     case "removeText":

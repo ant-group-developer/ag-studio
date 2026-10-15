@@ -22,6 +22,7 @@ text_look:                     # chữ trên video vẽ đúng như vậy
   outline_color: "#1A1A1A"     # viền chữ
   box_color: null              # hộp sau tiêu đề/địa danh; null = không hộp
   size: m                      # s | m | l
+  shadow: true                 # bóng mờ dưới chữ và phụ đề (tuỳ chọn), dễ đọc trên nền sáng
 thumbnail:
   max_words: 3                 # 1–8
   text_case: upper             # upper | sentence

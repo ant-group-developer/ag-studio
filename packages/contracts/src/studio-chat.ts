@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { TEXT_LOOK_SIZES } from "./composition.js";
 import {
-  CAPTION_MODES, ChannelRefSchema, MAX_RESEARCH_CHANNELS, MAX_RESEARCH_KEYWORDS, STUDIO_ASPECTS, StudioHintsSchema, StudioMusicSchema,
+  CAPTION_MODES, ChannelRefSchema, TIMELINE_TEXT_MAX, TIMELINE_TEXT_MAX_SECONDS, MAX_RESEARCH_CHANNELS, MAX_RESEARCH_KEYWORDS, STUDIO_ASPECTS, StudioHintsSchema, StudioMusicSchema,
   studioVersion, TEXT_KINDS, TEXT_POSITIONS_V2, TIMELINE_TRANSITIONS, type TeamSkillStep,
 } from "./studio.js";
 
@@ -108,11 +109,12 @@ const textId = z.string().regex(/^T\d{3}$/);
 const index = z.number().int().min(0);
 const textFields = {
   kind: z.enum(TEXT_KINDS),
-  text: z.string().min(1).max(64),
+  text: z.string().min(1).max(TIMELINE_TEXT_MAX),
   start: z.number().min(0),
-  duration: z.number().min(0.5).max(20),
+  duration: z.number().min(0.5).max(TIMELINE_TEXT_MAX_SECONDS),
   position: z.enum(TEXT_POSITIONS_V2),
 };
+const textSize = z.enum(TEXT_LOOK_SIZES);
 
 /** One edit, named after the operation in `core/src/studio/layout.ts` it runs. */
 export const TimelineOpSchema = z.discriminatedUnion("op", [
@@ -121,12 +123,15 @@ export const TimelineOpSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("moveClip"), from: index, to: index }).strict(),
   z.object({ op: z.literal("replaceClipAsset"), clip_id: clipId, asset_id: z.string().min(1) }).strict(),
   z.object({ op: z.literal("setSectionTitle"), clip_id: clipId, title: z.string().min(1).max(100).nullable() }).strict(),
-  z.object({ op: z.literal("addText"), ...textFields }).strict(),
+  /** `size`: s|m|l against the kind's size (absent = m). */
+  z.object({ op: z.literal("addText"), ...textFields, size: textSize.optional() }).strict(),
   /** null = keep the current value. */
   z.object({
     op: z.literal("updateText"), text_id: textId,
     kind: textFields.kind.nullable(), text: textFields.text.nullable(), start: textFields.start.nullable(),
     duration: textFields.duration.nullable(), position: textFields.position.nullable(),
+    /** null or absent = keep. */
+    size: textSize.nullable().optional(),
   }).strict(),
   z.object({ op: z.literal("removeText"), text_id: textId }).strict(),
   z.object({ op: z.literal("setMusic"), music: StudioMusicSchema.nullable() }).strict(),

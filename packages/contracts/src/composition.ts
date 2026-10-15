@@ -27,6 +27,7 @@ export const OVERLAY_TEXT_MAX: Record<OverlayKind, number> = { title: 48, callou
 const hexColor = z.string().regex(/^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$/);
 
 export const TEXT_LOOK_SIZES = ["s", "m", "l"] as const;
+export type TextLookSize = (typeof TEXT_LOOK_SIZES)[number];
 /**
  * A team's look for the words on screen (Studio branding `on_screen_text.look`, frozen into a shot-cut timeline and
  * its composition): text and outline colours, a box behind titles and lower thirds (`null` = none), a size step.
@@ -37,6 +38,8 @@ export const TextLookSchema = z.object({
   outline_color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "#RRGGBB"),
   box_color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "#RRGGBB").nullable(),
   size: z.enum(TEXT_LOOK_SIZES),
+  /** A soft shadow under texts and subtitles (feedback-vps §4.1). Absent = none. Needs render level 3. */
+  shadow: z.boolean().optional(),
 }).strict();
 export type TextLook = z.infer<typeof TextLookSchema>;
 
@@ -162,6 +165,8 @@ export const TextEventSchema = z.object({
   end: z.number().min(0),
   position: z.enum(TEXT_POSITIONS),
   animation: z.enum(TEXT_ANIMATIONS),
+  /** This text's own size step against its kind's (feedback-vps §4.1). Absent = `m`. Needs render level 3. */
+  size: z.enum(TEXT_LOOK_SIZES).optional(),
 }).strict();
 
 /** `composition.json`: the fully-resolved render plan -- picture segments (mirroring `timeline.json.video`
