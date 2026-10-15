@@ -162,6 +162,11 @@ const MESSAGE_ISSUES = 6;
 const STAGE: Record<RenderKind, string> ={ render_preview: "render-preview", render_final: "render-final", export_premiere: "premiere" };
 const LABEL: Record<RenderKind, string> = { render_preview: "bản xem trước", render_final: "bản cuối", export_premiere: "file dựng Premiere" };
 
+/** The web page of a video with its Xem trước tab open, as a link inside Studio's web (`ProjectPage`). */
+export function previewLink(projectId: string, videoId: string): string {
+  return `/p/${projectId}/v/${videoId}?tab=preview`;
+}
+
 function clockOf(s: number | null): string {
   if (s === null) return "?";
   const m = Math.floor(s / 60);
@@ -299,8 +304,10 @@ export function renderHandler(kind: RenderKind, d: RenderDeps): JobHandler {
     const checked = found.length > 0
       ? ` Máy render tự kiểm thấy: ${found.slice(0, MESSAGE_ISSUES).join("; ")}${found.length > MESSAGE_ISSUES ? `; và ${found.length - MESSAGE_ISSUES} điều khác (xem \`${noteBase}.md\`)` : ""}.`
       : "";
-    if (result.problem) return { result, message: `Đã xong ${what} nhưng có lỗi: ${result.problem}.${checked}${result.note ? ` Lưu ý khác: ${result.note}` : ""}` };
-    return { result, message: `Đã xong ${what}: xem ở trang video, tab Xem trước.${checked}${result.note ? ` Lưu ý: ${result.note}` : ""}` };
+    const open = `[Mở ở tab Xem trước](${previewLink(job.project_id, video.id)})`;
+    if (kind === "export_premiere") return { result, message: `Đã xong ${what}: tải ở tab Xem trước của trang video. ${open}${result.note ? ` Lưu ý: ${result.note}` : ""}` };
+    if (result.problem) return { result, message: `Đã xong ${what} nhưng có lỗi: ${result.problem}.${checked} ${open}${result.note ? ` Lưu ý khác: ${result.note}` : ""}` };
+    return { result, message: `Đã xong ${what}.${checked} ${open}${result.note ? ` Lưu ý: ${result.note}` : ""}` };
   };
 }
 

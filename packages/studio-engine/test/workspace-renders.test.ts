@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { TimelineV4 } from "@harness/contracts";
 import type { JobView as FarmJobView } from "@ag-farm/protocol";
 import {
-  createJobRunner, createProject, createVideo, getJob, getVideo, latestVideoRevision, queueRender, renderHandler, RENDER_KINDS, RevisionConflictError, saveVideoRevision, seedWorkspace,
+  createJobRunner, createProject, createThread, createVideo, getJob, getVideo, latestVideoRevision, queueRender, renderHandler, RENDER_KINDS, RevisionConflictError, saveVideoRevision, seedWorkspace,
   studioLogger, videoRenders, type JobHandler, type JobKind, type ProjectFarm,
 } from "../src/index.js";
 import { world } from "./helpers.js";
@@ -160,7 +160,8 @@ describe("video renders", () => {
       { code: "sparkle", severity: "warning" },
     ]));
     await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
-    const job = await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", createdBy: "u", threadId: null }, NOW);
+    const thread = await createThread(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "video", title: "Tràng An", createdBy: "u" }, NOW);
+    const job = await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", createdBy: "u", threadId: thread.id }, NOW);
     await s.run();
     const r = (await videoRenders(s.db, s.project.id, s.video.id))[0]!;
     const name = readdirSync(join(s.dir, "videos", s.video.id, "renders")).find((f) => f.endsWith(".md"))!.replace(/\.md$/, "");
@@ -178,6 +179,9 @@ describe("video renders", () => {
     expect(note).toContain(["- ", "`", base, "/sheet-01.jpg", "`", ": 0:00–1:00"].join(""));
     const done = (await getJob(s.db, job.id))!;
     expect(done.status).toBe("done");
+    const told = await s.db.get<{ text: string }>("SELECT text FROM agent_messages WHERE thread_id = ? AND role = 'system'", [thread.id]);
+    expect(told!.text).toContain("Máy render tự kiểm thấy: đứng hình từ 0:50 tới hết video (qua cả điểm cắt); im lặng 0:12–0:40; clip C001 · Thuyền nhỏ hơn trung bình 9 dB.");
+    expect(told!.text).toContain(`[Mở ở tab Xem trước](/p/${s.project.id}/v/${s.video.id}?tab=preview)`);
   });
 
   it("a render the worker did not inspect says so in the note", async () => {

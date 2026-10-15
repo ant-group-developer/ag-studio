@@ -6,6 +6,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { normalizeRelPath } from "../workspace/files.js";
+import { previewLink } from "../workspace/renders.js";
 import { DEFAULT_SITE_NAME } from "../site-name.js";
 import type { YoutubeBlock } from "../settings.js";
 import type { ProjectRecord, VideoRecord } from "../workspace/project-db.js";
@@ -169,11 +170,6 @@ export function youtubeBlockLines(block: YoutubeBlock | null, o: { farm?: Youtub
       : `YouTube đang chặn tải từ máy chủ Studio (${seen}); không máy farm nào tải video mẫu thay được lúc này.`,
     "Đừng đề xuất reference_download (thẻ chắc chắn hỏng; Studio không dùng cookie hay đăng nhập để lách). Muốn học phong cách dựng thì đề nghị người dùng tải video mẫu lên tab Đầu vào (mục Video mẫu) rồi gọi style_from_files, hoặc tả phong cách bằng lời. Crawl YouTube khi worker không có YOUTUBE_API_KEY cũng bị chặn.",
   ];
-}
-
-/** The web page of a video with its Xem trước tab open, as a link inside Studio's web (`ProjectPage`). */
-export function previewLink(projectId: string, videoId: string): string {
-  return `/p/${projectId}/v/${videoId}?tab=preview`;
 }
 
 /** The turn's message: `<studio_context>`, then what the people (and Studio) said since the last turn. */

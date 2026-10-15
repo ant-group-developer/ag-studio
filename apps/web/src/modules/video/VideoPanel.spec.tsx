@@ -29,7 +29,7 @@ const ws = {
   cancelJob: vi.fn(),
 };
 vi.mock("../../api/workspace-client", async (orig) => ({ ...(await orig<object>()), useWorkspaceClient: () => ws }));
-const { VideoPanel, jobsToShow } = await import("./VideoPanel");
+const { VideoPanel, jobsToShow, renderStatus } = await import("./VideoPanel");
 
 const ORDER: TeamRoleName[] = ["viewer", "editor", "producer", "owner"];
 const wrap = (node: React.ReactNode) => render(
@@ -172,5 +172,43 @@ describe("jobs over the player", () => {
     expect(jobsToShow([retry, failed], []).map((j) => j.id)).toEqual(["again"]);
     const otherKind = job("fit", { kind: "fit", createdAt: at(3), finishedAt: at(4) });
     expect(jobsToShow([otherKind, failed], []).map((j) => j.id)).toEqual(["fit", "f"]);
+  });
+});
+
+describe("render status over the player", () => {
+  const at = (m: number) => new Date(Date.parse("2026-10-13T00:00:00Z") + m * 60_000).toISOString();
+  const job = (id: string, over: Partial<JobView>): JobView => ({
+    id, projectId: "p", videoId: "v", threadId: null, kind: "render_preview", status: "running", title: id, request: { video_id: "v", revision: 5 }, result: null,
+    error: null, phase: "Đang dựng · bản xem trước", progress: 0.4, etaSeconds: 60, nodeId: null, cancelRequested: false, createdBy: "u", createdAt: at(0),
+    startedAt: at(0), finishedAt: null, ...over,
+  });
+
+  it("names a render in line or running, a failed one until a render of its kind finished after it, never a Premiere export", () => {
+    expect(renderStatus([], [r({})])).toBeNull();
+    expect(renderStatus([job("q", { status: "queued" })], [])).toMatchObject({ state: "queued", kind: "render_preview", revision: 5 });
+    expect(renderStatus([job("x", { kind: "export_premiere" })], [])).toBeNull();
+    const failed = job("f", { status: "failed", error: "farm: máy render lỗi", finishedAt: at(2) });
+    expect(renderStatus([failed], [r({ finishedAt: at(1) })])).toMatchObject({ state: "failed", job: { id: "f" } });
+    expect(renderStatus([failed], [r({ finishedAt: at(3) })])).toBeNull();
+  });
+
+  it("tells the tab a render runs while the player still shows the older one, and what the last render's check found", async () => {
+    ws.listRenders.mockResolvedValue({
+      renders: [r({ problem: null, issues: ["đứng hình từ 13:21 tới hết video (qua cả điểm cắt)", "im lặng 12:00–12:40"] })],
+      jobs: [job("run", {})], thumbnails: [],
+    });
+    wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={editor} />);
+    expect(await screen.findByText("Đang render bản xem trước (timeline bản 5)")).toBeInTheDocument();
+    expect(screen.getByText(/Trình phát bên dưới đang mở bản trước đó \(timeline bản 3\)/)).toBeInTheDocument();
+    const found = screen.getByRole("note");
+    expect(found).toHaveTextContent("Máy render tự kiểm thấy");
+    expect(within(found).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["đứng hình từ 13:21 tới hết video (qua cả điểm cắt)", "im lặng 12:00–12:40"]);
+  });
+
+  it("says a render failed, with its error, when nothing finished after it", async () => {
+    ws.listRenders.mockResolvedValue({ renders: [], jobs: [job("f", { status: "failed", error: "farm: hết giờ chờ máy", finishedAt: at(2) })], thumbnails: [] });
+    wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={editor} />);
+    expect(await screen.findByText("Lần render bản xem trước gần nhất (timeline bản 5) bị lỗi")).toBeInTheDocument();
+    expect(screen.getByText(/farm: hết giờ chờ máy\. Bấm render lại, hoặc nhờ Claude xem lỗi trong chat\./)).toBeInTheDocument();
   });
 });

@@ -428,6 +428,10 @@ export interface RenderView {
   watermarked: boolean | null;
   sizeBytes: number | null;
   note: string;
+  /** What makes the file wrong (it is shorter than its timeline…), in words; null or absent: nothing. */
+  problem?: string | null;
+  /** What the render machine's inspection of the file found, in words; absent: an older Studio. */
+  issues?: string[];
   finishedAt: string | null;
   /** A short-lived link to watch a preview or the final render, signed with the list; absent for a Premiere export (asked for apart). */
   url?: string;

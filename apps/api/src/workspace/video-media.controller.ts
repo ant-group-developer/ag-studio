@@ -96,6 +96,10 @@ export interface RenderView {
   watermarked: boolean | null;
   sizeBytes: number | null;
   note: string;
+  /** What makes the file wrong (it is shorter than its timeline…), in words; null: nothing. */
+  problem: string | null;
+  /** What the render machine's inspection of the file found, in words (frozen from 13:21, silent 12:00–12:40…). */
+  issues: string[];
   finishedAt: string | null;
   /**
    * A short-lived link to watch a preview or the final render, signed with the list (no ag-go footage check: an mp4 does
@@ -148,7 +152,7 @@ export class VideoMediaController {
       const v = await requireVideo(this.engine.db, videoId);
       const out: RenderView[] = await Promise.all((await videoRenders(this.engine.db, v.project_id, v.id)).map(async (r) => ({
         jobId: r.jobId, kind: r.kind, revision: r.revision, durationS: r.duration_s, width: r.width, height: r.height, watermarked: r.watermarked,
-        sizeBytes: r.size_bytes, note: r.note, finishedAt: r.finishedAt,
+        sizeBytes: r.size_bytes, note: r.note, problem: r.problem ?? null, issues: r.inspect?.issues ?? [], finishedAt: r.finishedAt,
         ...(r.kind === 'export_premiere' ? {} : { url: await this.engine.bucket.signedGetUrl(r.key, this.engine.browserUrlTtl) }),
       })));
       const jobs = (await listJobs(this.engine.db, v.project_id, { videoId, limit: 30 }))

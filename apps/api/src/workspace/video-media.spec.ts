@@ -82,7 +82,7 @@ describe('video media (real database)', () => {
     await finishJob(s.engine.db, job.id, { status: 'done', result: { kind: 'render_preview', revision: 1, key: 'productions/x/out/a.mp4', duration_s: 4, width: 1920, height: 1080, watermarked: true, size_bytes: 10, note: '' } }, new Date().toISOString());
     // the list is the database alone (no ag-go), a preview with its link signed along
     const listed = await media.renders(v.id);
-    expect(listed.renders[0]).toEqual({ jobId: job.id, kind: 'render_preview', revision: 1, durationS: 4, width: 1920, height: 1080, watermarked: true, sizeBytes: 10, note: '', finishedAt: expect.any(String), url: 'https://r2.test/productions/x/out/a.mp4' });
+    expect(listed.renders[0]).toEqual({ jobId: job.id, kind: 'render_preview', revision: 1, durationS: 4, width: 1920, height: 1080, watermarked: true, sizeBytes: 10, note: '', problem: null, issues: [], finishedAt: expect.any(String), url: 'https://r2.test/productions/x/out/a.mp4' });
     // a preview or final render links for anyone of the project: no footage check
     expect(await media.link(v.id, job.id, req(OWNER))).toEqual({ jobId: job.id, url: 'https://r2.test/productions/x/out/a.mp4' });
     expect(await media.link(v.id, job.id, req(EDITOR))).toEqual({ jobId: job.id, url: 'https://r2.test/productions/x/out/a.mp4' });
