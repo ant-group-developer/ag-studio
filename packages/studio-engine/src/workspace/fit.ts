@@ -11,7 +11,7 @@ import {
   EditPlanSchema, ShotsIndexSchema, StudioSurveySchema, TextLookSchema, TranscriptSchema,
   type EditPlan, type EpisodeAsset, type ShotsIndex, type StudioMusic, type TextLook, type TimelineV4, type Transcript,
 } from "@harness/contracts";
-import { timelineIssues } from "@harness/core";
+import { clampClipOuts, timelineIssues } from "@harness/core";
 import { StudioTtsPayloadSchema, TTS_MANIFEST_PATH, TtsManifestSchema } from "@ag-farm/protocol";
 import type { StudioBucket } from "../bucket.js";
 import { fitCutTimeline, type ReadLine } from "../cut-fit.js";
@@ -215,11 +215,14 @@ export function fitHandler(d: FitDeps): JobHandler {
       const picked = pickLibraryMusic(await listLibraryMusic(d.db, { activeOnly: true }), [plan.music_mood, ...branding.musicMoods], { seed: videoId, seconds: plan.target_seconds });
       if (picked) { music = picked.music; musicNote = `nhạc thư viện "${picked.track.display_name}" (tâm trạng ${picked.mood})`; }
     }
-    const { timeline, report } = fitCutTimeline({
+    const fitted = fitCutTimeline({
       productionId: project.id, plan, shots, survey: survey.data, transcript: transcriptOfIndex(ctx.workspaceDir, index), voice: read, written,
       sources: index.sources.map((s) => ({ asset_id: s.asset_id, source_id: s.source_id })), assets: videoAssets(index, ctx.workspaceDir),
       canvas: CANVAS[project.aspect], fps: 30, music, clipAudio: true, textStyle: branding.textLook,
     });
+    const report = fitted.report;
+    // a shot that runs past the end of its prepared video plays to that end, never more than the file holds
+    const { timeline, issues: clamped } = clampClipOuts(fitted.timeline);
     // on top of whatever is the latest when it is saved (a person's save meanwhile is kept, not a conflict)
     const { revision } = await d.db.tx(async () => {
       const latest = await latestVideoRevision(d.db, videoId);
@@ -230,9 +233,10 @@ export function fitHandler(d: FitDeps): JobHandler {
     const issues = timelineIssues(timeline).filter((i) => i.severity === "error");
     const shortfalls = report.shortfalls.length;
     return {
-      result: { revision, clips: timeline.clips.length, seconds, music: musicNote, shortfalls, errors: issues.length },
+      result: { revision, clips: timeline.clips.length, seconds, music: musicNote, shortfalls, errors: issues.length, clamped: clamped.map((i) => i.clip_id) },
       message: `Đã dựng timeline bản ${revision} cho **${video.title}**: ${timeline.clips.length} clip, ≈ ${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}, ${musicNote}${written ? ", lời dẫn thành phụ đề" : ""}.`
-        + `${shortfalls ? ` ${shortfalls} chỗ thiếu hình cho lời dẫn (xem videos/${videoId}/timeline.json).` : ""}${issues.length ? ` Còn ${issues.length} lỗi timeline.` : ""}`,
+        + `${shortfalls ? ` ${shortfalls} chỗ thiếu hình cho lời dẫn (xem videos/${videoId}/timeline.json).` : ""}${issues.length ? ` Còn ${issues.length} lỗi timeline.` : ""}`
+        + `${clamped.length ? ` ${clamped.length} clip dài quá video nguồn, đã cắt ở cuối video (${clamped.map((i) => i.clip_id).join(", ")}).` : ""}`,
     };
   };
 }

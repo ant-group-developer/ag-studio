@@ -90,8 +90,8 @@ function buildVoiceGraph(composition: Composition, mezzIndex: (order: number) =>
     return { parts, label: "voice" };
   }
 
-  // "original" or "none": every segment's own audio, trimmed to its body length (no tail), 20ms edge fades,
-  // concatenated in segment order. Mezzanine audio is trimmed exactly to `end - start` per segment, so the
+  // "original" or "none": every segment's own audio, trimmed (or padded with silence, when its source ran
+  // short) to its body length (no tail), 20ms edge fades, concatenated in segment order. Mezzanine audio is trimmed exactly to `end - start` per segment, so the
   // concat's total should already equal `total_seconds`; `apad,atrim` here is defensive (same reasoning as
   // the `tts` branch above) against per-segment rounding drift accumulating over many segments.
   const segs = [...composition.segments].sort((a, b) => a.order - b.order);
@@ -100,7 +100,7 @@ function buildVoiceGraph(composition: Composition, mezzIndex: (order: number) =>
     const i = mezzIndex(seg.order);
     const len = seg.end - seg.start;
     const label = `s_${idx}`;
-    parts.push(`[${i}:a]atrim=0:${fmt(len)},afade=t=in:d=0.02,afade=t=out:st=${fmt(len - 0.02)}:d=0.02[${label}]`);
+    parts.push(`[${i}:a]atrim=0:${fmt(len)},apad=whole_dur=${fmt(len)},afade=t=in:d=0.02,afade=t=out:st=${fmt(len - 0.02)}:d=0.02[${label}]`);
     labels.push(`[${label}]`);
   });
   parts.push(`${labels.join("")}concat=n=${labels.length}:v=0:a=1[voice_concat]`);

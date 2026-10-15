@@ -5,7 +5,7 @@
  */
 import { z } from "zod";
 import { TimelineOpSchema, type TimelineV4 } from "@harness/contracts";
-import { applyTimelineOps, timelineIssues } from "@harness/core";
+import { applyTimelineOps, timelineIssues, type TimelineIssue } from "@harness/core";
 import { StudioRunError } from "../errors.js";
 import { listLibraryMusic } from "../music-library.js";
 import { queueFit, timelineSnapshotPath, videoAssets, writeTimelineSnapshot } from "../workspace/fit.js";
@@ -106,15 +106,16 @@ export const TIMELINE_TOOLS: AgentTool[] = [
       if (!base) return { text: `Không có timeline bản ${a.base_revision}.`, isError: true };
       const allowed = videoAssets(await buildVideoIndex(ctx.db, ctx.workspaceDir, ctx.project.id, v.id), ctx.workspaceDir);
       let next: TimelineV4;
+      const clamped: TimelineIssue[] = [];
       try {
-        next = applyTimelineOps(base.data, a.ops, { ...base.data.assets, ...allowed });
+        next = applyTimelineOps(base.data, a.ops, { ...base.data.assets, ...allowed }, clamped);
       } catch (e) {
         return { text: e instanceof Error ? e.message : String(e), isError: true };
       }
       try {
         const { revision } = await saveVideoRevision(ctx.db, v.id, { baseRevision: a.base_revision, data: next, authorId: ctx.claims.sub, label: "agent" });
         await writeTimelineSnapshot(ctx.db, ctx.workspaceDir, ctx.project.id, v.id, ctx.now());
-        const issues = timelineIssues(next);
+        const issues = [...clamped, ...timelineIssues(next)];
         return { text: json({ revision, saved: timelineSnapshotPath(v.id), issues: issues.map((i) => `[${i.severity}] ${i.message}`) }) };
       } catch (e) {
         if (e instanceof RevisionConflictError) return { text: `Timeline đã có bản mới hơn (${e.current}): đọc lại bằng timeline_get rồi sửa trên bản đó.`, isError: true };

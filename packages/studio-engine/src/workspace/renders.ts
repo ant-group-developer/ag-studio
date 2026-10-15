@@ -51,6 +51,8 @@ export interface RenderResult {
   note: string;
   /** Every warning of the worker's manifest, as it wrote them. */
   warnings?: string[];
+  /** What makes this file wrong (`renderProblem`), said in the note and the chat; null: nothing. */
+  problem?: string | null;
 }
 
 export interface RenderDeps {
@@ -66,9 +68,25 @@ export interface RenderDeps {
 /** Warnings that stay in the job's result but say nothing a person or the agent can act on. */
 const QUIET_WARNINGS = new Set(["loudnorm_not_linear"]);
 
-/** The note of a render: its worker's warnings minus the quiet ones. */
+/** `duration_mismatch:<expected>:<actual>` (seconds): the render worker's file is not as long as the timeline. */
+const DURATION_MISMATCH = /^duration_mismatch:([\d.]+):([\d.]+)$/;
+
+/** The note of a render: its worker's warnings minus the quiet ones and those `renderProblem` says. */
 export function noteOf(warnings: readonly string[]): string {
-  return warnings.filter((w) => !QUIET_WARNINGS.has(w)).join("; ");
+  return warnings.filter((w) => !QUIET_WARNINGS.has(w) && !DURATION_MISMATCH.test(w)).join("; ");
+}
+
+/** A warning that makes the file itself wrong, in words; null when there is none. */
+export function renderProblem(warnings: readonly string[]): string | null {
+  for (const w of warnings) {
+    const m = DURATION_MISMATCH.exec(w);
+    if (m) {
+      const expected = Number(m[1]);
+      const actual = Number(m[2]);
+      return `bản render dài ${clockOf(actual)} nhưng timeline dài ${clockOf(expected)} (${actual < expected ? "thiếu" : "thừa"} ${Math.abs(Math.round(expected - actual))} giây): file này không đúng timeline, đừng dùng; render lại, nếu vẫn lệch thì báo người quản trị Studio`;
+    }
+  }
+  return null;
 }
 
 const STAGE: Record<RenderKind, string> = { render_preview: "render-preview", render_final: "render-final", export_premiere: "premiere" };
@@ -180,13 +198,13 @@ export function renderHandler(kind: RenderKind, d: RenderDeps): JobHandler {
       const m = PremiereManifestSchema.parse(JSON.parse((await d.bucket.get(`${outputPrefix}${PREMIERE_MANIFEST_PATH}`)).toString("utf8")));
       result = {
         kind, revision: rev.revision, key: `${outputPrefix}${m.output}`, duration_s: null, width: null, height: null, watermarked: null,
-        size_bytes: m.size_bytes ?? null, note: noteOf(m.warnings ?? []), warnings: m.warnings ?? [],
+        size_bytes: m.size_bytes ?? null, note: noteOf(m.warnings ?? []), warnings: m.warnings ?? [], problem: renderProblem(m.warnings ?? []),
       };
     } else {
       const m = RenderManifestSchema.parse(JSON.parse((await d.bucket.get(`${outputPrefix}${RENDER_MANIFEST_PATH}`)).toString("utf8")));
       result = {
         kind, revision: rev.revision, key: `${outputPrefix}${m.output}`, duration_s: m.duration_s, width: m.width, height: m.height,
-        watermarked: m.watermarked, size_bytes: m.size_bytes, note: noteOf(m.warnings ?? []), warnings: m.warnings ?? [],
+        watermarked: m.watermarked, size_bytes: m.size_bytes, note: noteOf(m.warnings ?? []), warnings: m.warnings ?? [], problem: renderProblem(m.warnings ?? []),
       };
     }
     await ackFarmJob(d.farm, farmJob.id);
@@ -195,6 +213,7 @@ export function renderHandler(kind: RenderKind, d: RenderDeps): JobHandler {
     if (kind === "render_final") await updateVideo(d.db, video.id, { status: "done" }, ctx.now());
     await writeRenderNote(d.db, ctx, job, video.id, result);
     const what = `${LABEL[kind]} của **${video.title}** (timeline bản ${rev.revision}${result.duration_s !== null ? `, ${clockOf(result.duration_s)}` : ""}${result.watermarked ? ", có watermark" : ""})`;
+    if (result.problem) return { result, message: `Đã xong ${what} nhưng có lỗi: ${result.problem}.${result.note ? ` Lưu ý khác: ${result.note}` : ""}` };
     return { result, message: `Đã xong ${what}: xem ở trang video, tab Xem trước.${result.note ? ` Lưu ý: ${result.note}` : ""}` };
   };
 }
@@ -205,6 +224,7 @@ async function writeRenderNote(db: StudioDb, ctx: JobContext, job: JobRecord, vi
   const lines = [
     `# ${LABEL[r.kind][0]!.toUpperCase()}${LABEL[r.kind].slice(1)} · timeline bản ${r.revision}`,
     "",
+    ...(r.problem ? [`**Lỗi:** ${r.problem}.`, ""] : []),
     `- Xong lúc ${ctx.now().slice(0, 16).replace("T", " ")} UTC (việc ${job.id}).`,
     ...(r.duration_s !== null ? [`- Dài ${clockOf(r.duration_s)}${r.width && r.height ? ` · ${r.width}×${r.height}` : ""}${r.watermarked ? " · có watermark (nguồn xem trước)" : ""}.`] : []),
     ...(r.size_bytes ? [`- ${(r.size_bytes / 1_048_576).toFixed(1)} MB.`] : []),

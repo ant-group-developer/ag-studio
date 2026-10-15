@@ -102,6 +102,18 @@ describe("video renders", () => {
     expect(text).not.toContain("loudnorm");
   });
 
+  it("a file shorter than the timeline (duration_mismatch) is said as an error in the note and the result", async () => {
+    const s = await setup(["duration_mismatch:1049.98:803.27"]);
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
+    await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", createdBy: "u" }, NOW);
+    await s.run();
+    const r = (await videoRenders(s.db, s.project.id, s.video.id))[0]!;
+    expect(r.note).toBe("");
+    expect(r.problem).toMatch(/^bản render dài 13:23 nhưng timeline dài 17:30 \(thiếu 247 giây\)/);
+    const notes = readdirSync(join(s.dir, "videos", s.video.id, "renders"));
+    expect(readFileSync(join(s.dir, "videos", s.video.id, "renders", notes[0]!), "utf8")).toContain("**Lỗi:** bản render dài 13:23");
+  });
+
   it("the final render is a final-media farm job on the chosen machine, and the video is done", async () => {
     const s = await setup();
     await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });

@@ -642,6 +642,37 @@ describe.skipIf(!hasFfmpeg())("renderComposition (needs ffmpeg)", () => {
     expect(Math.abs(((await d.prober.probe(join(res.clipSetDir, "000.mp4")))?.duration_seconds ?? 0) - 2)).toBeLessThanOrEqual(0.05);
   }, 240_000);
 
+  // The Kiyomizu preview (17:30) ended at 13:23, on its last dissolve: the render worker clamps `segment.out` to a
+  // source file shorter than the timeline's asset but keeps `start`/`end`, so the body came out shorter than its
+  // segment and the xfade offset (a sum of segment lengths) passed the end of the left stream.
+  it("a body shorter than its segment (clamped out) still lands every stream on total_seconds across a dissolve", async () => {
+    const srcDir = tempDir("render-src-c-");
+    const a = join(srcDir, "a.mp4");
+    const b = join(srcDir, "b.mp4");
+    makeClip(a, 3, true);
+    makeClip(b, 3, true);
+
+    const comp = composition({
+      output: { width: 640, height: 360, fps: 25, codec: "h264" },
+      total_seconds: 4,
+      segments: [
+        // the segment is 2 s long, its body only 1.5 s
+        segment({ order: 0, source_id: SRC_A, source_path: a, in: 0, out: 1.5, start: 0, end: 2, has_audio: true, transition_out: { kind: "dissolve", seconds: 0.4, tail_available: true } }),
+        segment({ order: 1, source_id: SRC_B, source_path: b, in: 0, out: 2, start: 2, end: 4, has_audio: true }),
+      ],
+      transitions: { requested: 1, applied: 1, downgraded: [] },
+    });
+    const checksums = new Map([[SRC_A, "sha256:" + "e".repeat(64)], [SRC_B, "sha256:" + "f".repeat(64)]]);
+    const d = deps(join(tempDir("render-cache-c-"), "mezz"));
+    const res = await renderComposition(d, input({ composition: comp, outDir: join(tempDir("render-out-c-"), "out"), sourceChecksums: checksums }));
+
+    const streams = spawnSync(ffprobePath(), ["-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "json", res.episodePath], { encoding: "utf8" });
+    const parsed = JSON.parse(streams.stdout) as { streams: { codec_type: string; duration: string }[] };
+    const seconds = (type: string) => Number(parsed.streams.find((s) => s.codec_type === type)?.duration);
+    expect(Math.abs(seconds("video") - 4)).toBeLessThanOrEqual(0.1);
+    expect(Math.abs(seconds("audio") - 4)).toBeLessThanOrEqual(0.1);
+  }, 240_000);
+
   it("tts narration and looped music both reach the mix", async () => {
     const srcDir = tempDir("render-src-m-");
     const a = join(srcDir, "a.mp4");

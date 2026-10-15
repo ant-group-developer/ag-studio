@@ -119,6 +119,8 @@ describe("audioGraph", () => {
     const { filter } = run({ composition, mezzIndex: (order) => mezzIdx.get(order)! });
     expect(filter).toContain("concat=n=3:v=0:a=1");
     expect(filter).toContain("afade");
+    // a segment whose source ran short is padded with silence to its length, so the next one does not slide early
+    expect(filter).toMatch(/atrim=0:5,apad=whole_dur=5,afade=t=in:d=0.02/);
     expect(filter).toContain("apad,atrim=0:15[voice]");
   });
 
