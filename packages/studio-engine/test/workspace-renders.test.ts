@@ -88,6 +88,25 @@ describe("video renders", () => {
     expect(readFileSync(join(s.dir, "videos", s.video.id, "renders", notes[0]!), "utf8")).toContain("Dài 1:05 · 1920×1080 · có watermark");
   });
 
+  it("a composition with a newer field asks the farm for a render machine at that level", async () => {
+    const s = await setup();
+    const music = { track: "library:music/calm.mp3", gain_db: -30, ducking: false };
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id, { music }), authorId: "u" });
+    await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", createdBy: "u" }, NOW);
+    await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "export_premiere", createdBy: "u" }, NOW);
+    await s.run();
+    await s.run();
+    expect(s.submitted.map((j) => [j.type, j.requirements])).toEqual([
+      ["studio.render_preview", { studio_render_min: 1 }],
+      ["studio.export_premiere", { studio_render_min: 1 }],
+    ]);
+    // music that ducks: any render machine
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 1, data: timeline(s.video.id, { music: { ...music, ducking: true } }), authorId: "u" });
+    await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", createdBy: "u" }, NOW);
+    await s.run();
+    expect(s.submitted[2]!.requirements).toBeUndefined();
+  });
+
   it("keeps every worker warning in the result but leaves loudnorm_not_linear out of the note", async () => {
     const s = await setup(["loudnorm_not_linear", "nvenc_final_fallback"]);
     await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });

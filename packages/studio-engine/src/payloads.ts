@@ -5,7 +5,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { HarnessError, type StoredTimeline } from "@harness/contracts";
-import { isTimelineV4, layoutTimeline, timelineToComposition } from "@harness/core";
+import { compositionFeatureLevel, isTimelineV4, layoutTimeline, timelineToComposition } from "@harness/core";
 import type { StudioRenderPayload } from "@ag-farm/protocol";
 import { voicePath } from "./voice-store.js";
 
@@ -38,7 +38,7 @@ export async function prepareRender(
     /** false: the composition leaves out the timeline's text look. Default: kept. */
     textStyle?: boolean;
   },
-): Promise<{ productionId: string; payload: StudioRenderPayload; extraUploads: { localPath: string; relPath: string }[] }> {
+): Promise<{ productionId: string; payload: StudioRenderPayload; extraUploads: { localPath: string; relPath: string }[]; renderLevel: number }> {
   const voice = narrationUploads(p.timeline, p.voiceDir);
   const composition = timelineToComposition(p.timeline);
   if (p.textStyle === false) delete composition.text_style;
@@ -52,5 +52,6 @@ export async function prepareRender(
       handle_seconds: 0, output: p.output, thumbnails: p.thumbnails,
     },
     extraUploads: [{ localPath: compPath, relPath: "composition.json" }, ...voice],
+    renderLevel: compositionFeatureLevel(composition),
   };
 }

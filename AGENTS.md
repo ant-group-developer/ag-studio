@@ -169,7 +169,9 @@ nhưng không code nào đọc.
 - Render worker (`E:\CODE\ag-render-worker`) chạy `renderComposition` của `@harness/core`; **mọi node farm render phải chạy
   ag-render-worker ≥ 0.8.0** (composition có `text_style`, Premiere `audio: per_segment`) và khai `python` (`extra.python_bin`)
   để nhận `studio.tts`/`studio.transcribe`. Bản cuối: `requirements` theo máy chọn (`renderRequirements`; ghim `node_id` qua
-  thẻ xác nhận). Xuất Premiere: FCP7 XML zip kèm WAV lời dẫn từ kho giọng.
+  thẻ xác nhận). Composition thêm trường mới thì tăng `RENDER_FEATURE_LEVEL` và `compositionFeatureLevel`
+  (`packages/core/src/media/render/features.ts`): worker khai mức của mình (`engines.studio_render`), Studio đòi
+  `requirements.studio_render_min` khi composition dùng trường đó, nên máy render bản cũ không nhận job nó không đọc được. Xuất Premiere: FCP7 XML zip kèm WAV lời dẫn từ kho giọng.
 - Timeline v4 (`TimelineV4Schema`): clip là đoạn `[in, out)` của video, có `shot_id`, `line_id`, `transition_out`; thao tác
   thuần ở `packages/core/src/studio/layout.ts` (`applyTimelineOps`, `timelineIssues`); composition suy từ revision
   (`timelineToComposition`). Revision ở `video_revisions` (`saveVideoRevision`, xung đột → `RevisionConflictError`).

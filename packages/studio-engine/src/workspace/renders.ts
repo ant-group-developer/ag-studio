@@ -8,7 +8,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { HarnessError } from "@harness/contracts";
-import { isTimelineV4, layoutTimeline, timelineIssues, timelineToComposition, youtubeChapters } from "@harness/core";
+import { compositionFeatureLevel, isTimelineV4, layoutTimeline, timelineIssues, timelineToComposition, youtubeChapters } from "@harness/core";
 import { PREMIERE_MANIFEST_PATH, PremiereManifestSchema, RENDER_MANIFEST_PATH, RenderManifestSchema, type StudioExportPremierePayload } from "@ag-farm/protocol";
 import type { StudioBucket } from "../bucket.js";
 import { narrationUploads, prepareRender } from "../payloads.js";
@@ -145,12 +145,15 @@ export function renderHandler(kind: RenderKind, d: RenderDeps): JobHandler {
     let type: string;
     let payload: unknown;
     let uploads: { localPath: string; relPath: string }[];
+    /** The render level the composition needs (`compositionFeatureLevel`): an older render worker rejects it. */
+    let renderLevel: number;
     try {
       if (kind === "export_premiere") {
         const composition = timelineToComposition(rev.data);
         const compPath = join(ctx.tempDir, "composition.json");
         writeFileSync(compPath, JSON.stringify(composition));
         uploads = [{ localPath: compPath, relPath: "composition.json" }, ...narrationUploads(rev.data, d.voiceDir)];
+        renderLevel = compositionFeatureLevel(composition);
         const perSegment = new Set(composition.segments.map((s) => s.has_audio)).size > 1;
         type = "studio.export_premiere";
         payload = {
@@ -172,6 +175,7 @@ export function renderHandler(kind: RenderKind, d: RenderDeps): JobHandler {
         type = kind === "render_final" ? "studio.render_final" : "studio.render_preview";
         payload = build.payload;
         uploads = build.extraUploads ?? [];
+        renderLevel = build.renderLevel;
       }
     } catch (e) {
       // a narration line not in the voice store, a timeline the composition cannot take: said in the chat
@@ -179,13 +183,17 @@ export function renderHandler(kind: RenderKind, d: RenderDeps): JobHandler {
       throw e;
     }
     await ctx.checkpoint();
+    const requirements = {
+      ...(kind === "render_final" && req.node_id ? { node_id: req.node_id } : {}),
+      ...(renderLevel > 0 ? { studio_render_min: renderLevel } : {}),
+    };
     const { outputPrefix, farmJob } = await runFarmStep(
       { db: d.db, bucket: d.bucket, farm: d.farm, ...(d.pollMs ? { pollMs: d.pollMs } : {}), ...(d.queueTimeoutMs ? { queueTimeoutMs: d.queueTimeoutMs } : {}), now: ctx.now },
       job,
       {
         type, payload, stageKey, attemptId: job.id, uploads,
         isFinalRender: kind === "render_final" || (kind === "export_premiere" && req.media === "original"),
-        ...(kind === "render_final" && req.node_id ? { requirements: { node_id: req.node_id } } : {}),
+        ...(Object.keys(requirements).length ? { requirements } : {}),
       },
       {
         onUpdate: (u) => ctx.report({ phase: `${u.phase} · ${LABEL[kind]}`, progress: 0.05 + 0.9 * (u.progress ?? 0), node: u.node, farmJobId: u.farmJobId, waiting: u.waiting }),

@@ -8,7 +8,7 @@
  * Also re-exports CompositionSchema and Composition type from @harness/contracts
  * so ag-render-worker can validate compositions without a separate contracts dep.
  */
-export { renderComposition, probeNvenc } from "@harness/core";
+export { renderComposition, probeNvenc, RENDER_FEATURE_LEVEL, compositionFeatureLevel } from "@harness/core";
 export type { OutputTier, RenderDeps, RenderInput, SpawnFn } from "@harness/core";
 export { studioOverlayAss, studioDefaultBrand, STUDIO_DEFAULT_FONT } from "@harness/core";
 export { CompositionSchema } from "@harness/contracts";
