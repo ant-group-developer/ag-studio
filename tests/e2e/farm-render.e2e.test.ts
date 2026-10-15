@@ -398,6 +398,44 @@ function recordProjectFarmJob(): (info: SubmittedInfo) => Promise<void> {
 // beforeAll: boot all infrastructure
 // ------------------------------------------------------------------
 
+/** The entries of a zip (yazl writes zip64): name → reader. */
+function zipEntries(buf: Buffer): Map<string, () => Buffer> {
+  const MAX = 0xffffffff;
+  const eocd = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  let count = buf.readUInt16LE(eocd + 10);
+  let at = buf.readUInt32LE(eocd + 16);
+  if (at === MAX || count === 0xffff) {
+    const z64 = Number(buf.readBigUInt64LE(eocd - 20 + 8)); // zip64 end of central directory, from its locator
+    count = Number(buf.readBigUInt64LE(z64 + 32));
+    at = Number(buf.readBigUInt64LE(z64 + 48));
+  }
+  const out = new Map<string, () => Buffer>();
+  for (let i = 0; i < count; i++) {
+    const method = buf.readUInt16LE(at + 10);
+    let size = buf.readUInt32LE(at + 20);
+    const usize = buf.readUInt32LE(at + 24);
+    const nameLen = buf.readUInt16LE(at + 28);
+    const extraLen = buf.readUInt16LE(at + 30);
+    let local = buf.readUInt32LE(at + 42);
+    const name = buf.subarray(at + 46, at + 46 + nameLen).toString("utf8");
+    // zip64 extended information (0x0001): the 8-byte values whose 4-byte fields are 0xffffffff, in this order
+    for (let e = at + 46 + nameLen; e < at + 46 + nameLen + extraLen; e += 4 + buf.readUInt16LE(e + 2)) {
+      if (buf.readUInt16LE(e) !== 0x0001) continue;
+      let f = e + 4;
+      if (usize === MAX) f += 8;
+      if (size === MAX) { size = Number(buf.readBigUInt64LE(f)); f += 8; }
+      if (local === MAX) local = Number(buf.readBigUInt64LE(f));
+    }
+    out.set(name, () => {
+      const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+      const data = buf.subarray(start, start + size);
+      return method === 8 ? inflateRawSync(data) : Buffer.from(data);
+    });
+    at += 46 + nameLen + extraLen + buf.readUInt16LE(at + 32);
+  }
+  return out;
+}
+
 beforeAll(async () => {
   if (!isE2E) return;
 
