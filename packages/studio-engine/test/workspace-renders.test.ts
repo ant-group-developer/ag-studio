@@ -36,7 +36,7 @@ const view = (over: Partial<FarmJobView>): FarmJobView => ({
 let opened: Awaited<ReturnType<typeof world>> | undefined;
 afterEach(async () => { await opened?.db.close(); opened = undefined; });
 
-async function setup() {
+async function setup(renderWarnings: string[] = []) {
   const w = opened = await world();
   await w.db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [NOW, NOW]);
   const project = await createProject(w.db, "team-1", { name: "Du lịch chậm", description: "", language: "vi", aspect: "16:9" }, "u", NOW);
@@ -53,7 +53,7 @@ async function setup() {
       const out = `productions/${project.id}/jobs/${stage}/${jobId}/out/`;
       const manifest = req.type === "studio.export_premiere"
         ? { schema: "ag.studio.premiere/v1", output: payload.output, size_bytes: 2_097_152, media: "proxy", files: [], warnings: ["1 font thay thế"] }
-        : { schema: "ag.studio.render/v1", production_id: project.id, revision: 1, output: payload.output, width: 1920, height: 1080, duration_s: 64.5, size_bytes: 1000, watermarked: true, sources: [], warnings: [] };
+        : { schema: "ag.studio.render/v1", production_id: project.id, revision: 1, output: payload.output, width: 1920, height: 1080, duration_s: 64.5, size_bytes: 1000, watermarked: true, sources: [], warnings: renderWarnings };
       await w.bucket.put(`${out}${req.type === "studio.export_premiere" ? "premiere.json" : "render.json"}`, Buffer.from(JSON.stringify(manifest)));
       return { job: view({ type: req.type as never }), created: true };
     },
@@ -86,6 +86,20 @@ describe("video renders", () => {
     const notes = readdirSync(join(s.dir, "videos", s.video.id, "renders"));
     expect(notes).toHaveLength(1);
     expect(readFileSync(join(s.dir, "videos", s.video.id, "renders", notes[0]!), "utf8")).toContain("Dài 1:05 · 1920×1080 · có watermark");
+  });
+
+  it("keeps every worker warning in the result but leaves loudnorm_not_linear out of the note", async () => {
+    const s = await setup(["loudnorm_not_linear", "nvenc_final_fallback"]);
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
+    await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", createdBy: "u" }, NOW);
+    await s.run();
+    expect((await videoRenders(s.db, s.project.id, s.video.id))[0]).toMatchObject({
+      note: "nvenc_final_fallback", warnings: ["loudnorm_not_linear", "nvenc_final_fallback"],
+    });
+    const notes = readdirSync(join(s.dir, "videos", s.video.id, "renders"));
+    const text = readFileSync(join(s.dir, "videos", s.video.id, "renders", notes[0]!), "utf8");
+    expect(text).toContain("Lưu ý của máy render: nvenc_final_fallback");
+    expect(text).not.toContain("loudnorm");
   });
 
   it("the final render is a final-media farm job on the chosen machine, and the video is done", async () => {

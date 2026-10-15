@@ -428,6 +428,20 @@ describe("renderComposition (fake ffmpeg)", () => {
     expect(report.loudness).toMatchObject({ integrated_lufs: -14.03, true_peak_dbtp: -1.49 });
   });
 
+  it("a peak over the linear budget: measured again through an alimiter, and the final pass limits the same way", async () => {
+    // the canned block measures -23.47 LUFS / -4.61 dBTP: +9.5 dB of gain would put the peak at +4.9 dBTP
+    const { spawn, calls } = fakeSpawn();
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+    await renderComposition(d, input({ composition: fakeComposition(), outDir, encoderCfg: "cpu", sourceChecksums: CHECKSUMS }));
+    const graph = (argv: string[]) => argv[argv.indexOf("-filter_complex") + 1] ?? "";
+    const measures = calls.filter((c) => c.includes("-vn"));
+    expect(measures).toHaveLength(2);
+    expect(graph(measures[0]!)).not.toContain("alimiter");
+    // ceiling -23.47 + 13 - 1 = -11.47 dBFS
+    expect(graph(measures[1]!)).toContain("alimiter=limit=0.267:attack=5:release=50:level=false[limited];[limited]loudnorm=I=-14:TP=-1:LRA=11:print_format=json");
+    expect(graph(calls.find((c) => c.includes("[vout]"))!)).toContain("alimiter=limit=0.267:");
+  });
+
   it("does not warn loudnorm_not_linear when the final pass really normalized linearly", async () => {
     const { spawn } = fakeSpawn();
     const { d, outDir } = fakeWorld({ spawn, nvenc: false });

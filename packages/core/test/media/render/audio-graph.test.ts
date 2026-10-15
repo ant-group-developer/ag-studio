@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CompositionSchema, newId, type Composition } from "@harness/contracts";
-import { audioGraph, type AudioGraphInput, type LoudnormMeasured } from "../../../src/media/render/audio-graph.js";
+import { audioGraph, peakLimit, type AudioGraphInput, type LoudnormMeasured } from "../../../src/media/render/audio-graph.js";
 
 const SRC_A = "src_01JAAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -138,6 +138,22 @@ describe("audioGraph", () => {
     expect(filter).toContain(
       "loudnorm=I=-14:TP=-1:LRA=11:measured_I=-23.1:measured_TP=-3.2:measured_LRA=7.4:measured_thresh=-33.1:offset=0.5:linear=true:print_format=json[aout]",
     );
+  });
+
+  it("peakLimit: a ceiling only when the linear gain would push the peak past -1 dBTP", () => {
+    // -24 LUFS needs +10 dB: a -2 dBTP peak would land at +8, so it is held at -24 + 13 - 1 = -12 dBFS
+    expect(peakLimit({ input_i: -24, input_tp: -2, input_lra: 9, input_thresh: -34, target_offset: 0.3 })).toBe(0.251);
+    expect(peakLimit({ input_i: -24, input_tp: -13, input_lra: 9, input_thresh: -34, target_offset: 0.3 })).toBeNull();
+    // never under alimiter's own floor
+    expect(peakLimit({ input_i: -60, input_tp: -20, input_lra: 9, input_thresh: -70, target_offset: 0 })).toBe(0.063);
+  });
+
+  it("limit -> alimiter between the mix and loudnorm, on both passes", () => {
+    const composition = baseComposition({ voice: "tts", narration: [] });
+    const measured: LoudnormMeasured = { input_i: -24.5, input_tp: -11.9, input_lra: 9, input_thresh: -34.5, target_offset: 0.3 };
+    expect(run({ composition, limit: 0.251 }).filter).toContain("[mix]alimiter=limit=0.251:attack=5:release=50:level=false[limited];[limited]loudnorm=I=-14:TP=-1:LRA=11:print_format=json[aout]");
+    expect(run({ composition, limit: 0.251, loudnorm: measured }).filter).toContain("[limited]loudnorm=I=-14:TP=-1:LRA=11:measured_I=-24.5:measured_TP=-11.9:");
+    expect(run({ composition, loudnorm: measured }).filter).not.toContain("alimiter");
   });
 
   it("voice: tts, 0 narration lines -> anullsrc", () => {

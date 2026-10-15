@@ -24,6 +24,7 @@ import { childEnvWithoutSecrets } from "../child-env.js";
 import { round3 } from "../time.js";
 import { cacheCommit, cacheEvict, cacheLookup, type MezzCache } from "./cache.js";
 import { NVENC_PROBE_ARGS, resolveEncoder, type EncoderChoice, type OutputTier } from "./encoder.js";
+import { peakLimit } from "./audio-graph.js";
 import { finalArgs } from "./final-graph.js";
 import { parseLoudnorm } from "./loudnorm.js";
 import { mezzArgs, mezzCacheKey } from "./mezzanine.js";
@@ -464,10 +465,21 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
   // The measurement pass is audio-only (`-vn -f null -`), so `encoder` never reaches its argv; it is passed
   // for the shape of `FinalGraphInput` alone.
   reportProgress(MEASURE_AT, "loudnorm");
-  const measure = await runProcess(spawnFn, finalArgs({ ...finalInput, encoder, loudnorm: null, measureOnly: true }).argv, remaining(), "loudnorm measure", false, { signal });
-  const measured = parseLoudnorm(measure.stderr);
-  if (measured === null) {
-    throw new HarnessError("IO_ERROR", "loudnorm measure failed: ffmpeg printed no parsable loudnorm json", { stderr_tail: measure.stderr });
+  const measurePass = async (limit: number | null, label: string) => {
+    const pass = await runProcess(spawnFn, finalArgs({ ...finalInput, encoder, loudnorm: null, limit, measureOnly: true }).argv, remaining(), label, false, { signal });
+    const parsed = parseLoudnorm(pass.stderr);
+    if (parsed === null) {
+      throw new HarnessError("IO_ERROR", `${label} failed: ffmpeg printed no parsable loudnorm json`, { stderr_tail: pass.stderr });
+    }
+    return parsed;
+  };
+  let measured = await measurePass(null, "loudnorm measure");
+  // peaks the linear gain would push past -1 dBTP: limited before loudnorm, and measured again through the limiter
+  // (it lowers the loudness a little), so the final pass can stay linear
+  const limit = peakLimit(measured.measured);
+  if (limit !== null) {
+    log(`loudnorm: peak ${measured.measured.input_tp} dBTP over the linear budget at ${measured.measured.input_i} LUFS; limiting at ${round3(20 * Math.log10(limit))} dBFS`);
+    measured = await measurePass(limit, "loudnorm measure (limited)");
   }
 
   // ---- 5) the real encode ----
@@ -478,7 +490,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
   const episodeSeconds = segs.reduce((end, s) => Math.max(end, s.end), 0);
   const finalEncode = (choice: EncoderChoice, label: string): Promise<ProcResult> => {
     reportProgress(FINAL_FROM, "final_encode");
-    const prog = withProgress(finalArgs({ ...finalInput, encoder: choice, loudnorm: measured.measured, measureOnly: false }).argv, episodeSeconds, (f) => reportProgress(FINAL_FROM + (100 - FINAL_FROM) * f, "final_encode"));
+    const prog = withProgress(finalArgs({ ...finalInput, encoder: choice, loudnorm: measured.measured, limit, measureOnly: false }).argv, episodeSeconds, (f) => reportProgress(FINAL_FROM + (100 - FINAL_FROM) * f, "final_encode"));
     return runProcess(spawnFn, prog.argv, remaining(), label, false, { signal, onStdoutLine: prog.onStdoutLine });
   };
   try {
@@ -513,9 +525,8 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
       warnings.push("loudnorm_not_linear");
       log(
         `loudnorm fell back from linear to ${renderPass.output.normalization_type} normalization ` +
-          `(measured ${measured.measured.input_i} LUFS / ${measured.measured.input_tp} dBTP, crest ` +
-          `${round3(measured.measured.input_tp - measured.measured.input_i)} dB > 13 dB); the delivered ` +
-          `loudness may sit below the -14 LUFS target`,
+          `(measured ${measured.measured.input_i} LUFS / ${measured.measured.input_tp} dBTP / LRA ` +
+          `${measured.measured.input_lra}${limit !== null ? ", limited" : ""}); the delivered loudness may sit below the -14 LUFS target`,
       );
     }
   }

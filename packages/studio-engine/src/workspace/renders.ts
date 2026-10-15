@@ -47,7 +47,10 @@ export interface RenderResult {
   height: number | null;
   watermarked: boolean | null;
   size_bytes: number | null;
+  /** The render worker's warnings worth telling people (`noteOf`), joined. */
   note: string;
+  /** Every warning of the worker's manifest, as it wrote them. */
+  warnings?: string[];
 }
 
 export interface RenderDeps {
@@ -58,6 +61,14 @@ export interface RenderDeps {
   voiceDir: string;
   pollMs?: number;
   queueTimeoutMs?: number;
+}
+
+/** Warnings that stay in the job's result but say nothing a person or the agent can act on. */
+const QUIET_WARNINGS = new Set(["loudnorm_not_linear"]);
+
+/** The note of a render: its worker's warnings minus the quiet ones. */
+export function noteOf(warnings: readonly string[]): string {
+  return warnings.filter((w) => !QUIET_WARNINGS.has(w)).join("; ");
 }
 
 const STAGE: Record<RenderKind, string> = { render_preview: "render-preview", render_final: "render-final", export_premiere: "premiere" };
@@ -169,13 +180,13 @@ export function renderHandler(kind: RenderKind, d: RenderDeps): JobHandler {
       const m = PremiereManifestSchema.parse(JSON.parse((await d.bucket.get(`${outputPrefix}${PREMIERE_MANIFEST_PATH}`)).toString("utf8")));
       result = {
         kind, revision: rev.revision, key: `${outputPrefix}${m.output}`, duration_s: null, width: null, height: null, watermarked: null,
-        size_bytes: m.size_bytes ?? null, note: (m.warnings ?? []).join("; "),
+        size_bytes: m.size_bytes ?? null, note: noteOf(m.warnings ?? []), warnings: m.warnings ?? [],
       };
     } else {
       const m = RenderManifestSchema.parse(JSON.parse((await d.bucket.get(`${outputPrefix}${RENDER_MANIFEST_PATH}`)).toString("utf8")));
       result = {
         kind, revision: rev.revision, key: `${outputPrefix}${m.output}`, duration_s: m.duration_s, width: m.width, height: m.height,
-        watermarked: m.watermarked, size_bytes: m.size_bytes, note: (m.warnings ?? []).join("; "),
+        watermarked: m.watermarked, size_bytes: m.size_bytes, note: noteOf(m.warnings ?? []), warnings: m.warnings ?? [],
       };
     }
     await ackFarmJob(d.farm, farmJob.id);

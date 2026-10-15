@@ -28,6 +28,9 @@ export interface AudioGraphInput {
   musicIndex: number | null;
   /** `null` for the measurement pass; the first pass's measured loudness for the final encode pass. */
   loudnorm: LoudnormMeasured | null;
+  /** Ceiling (linear amplitude, `peakLimit`) of an `alimiter` just before loudnorm, on both passes; absent or
+   * `null`: none. */
+  limit?: number | null;
 }
 
 /** Formats a time/gain value on the 3-decimal grid with no trailing zeros (e.g. `0.4`, not `0.400`). */
@@ -36,6 +39,26 @@ function fmt(n: number): string {
 }
 
 const DUCK_THRESHOLD = "0.031";
+/** Loudness target of the second pass (`loudnorm=I=-14:TP=-1`). */
+const TARGET_I = -14;
+const TARGET_TP = -1;
+/** `alimiter` takes its ceiling as a linear amplitude no lower than this (-24 dBFS). */
+const LIMIT_FLOOR = 0.0625;
+/** Sample peaks are held this far under the true-peak budget: the limiter sees samples, loudnorm true peaks. */
+const LIMIT_MARGIN_DB = 1;
+
+/**
+ * The `alimiter` ceiling that lets the second loudnorm pass stay linear, or `null` when the mix needs none.
+ * loudnorm only goes linear when the measured peak, raised by the programme's gain, stays under TP=-1
+ * (`measured_TP + (-14 - measured_I) <= -1`); a mix with a crest factor over 13 dB (street sound under quiet
+ * music) fell back to dynamic on every render and landed short of -14 LUFS (`loudnorm_not_linear`). The limiter
+ * changes the loudness a little, so the runner measures again through it before the final pass.
+ */
+export function peakLimit(m: LoudnormMeasured): number | null {
+  const ceilingDb = m.input_i + (TARGET_TP - TARGET_I) - LIMIT_MARGIN_DB;
+  if (m.input_tp <= ceilingDb) return null;
+  return round3(Math.min(1, Math.max(LIMIT_FLOOR, 10 ** (ceilingDb / 20))));
+}
 const DUCK_RATIO = "6";
 
 function buildVoiceGraph(composition: Composition, mezzIndex: (order: number) => number, narrationIndex: (line_id: string) => number): { parts: string[]; label: string } {
@@ -128,6 +151,11 @@ export function audioGraph(p: AudioGraphInput): { filter: string; out: string } 
   } else {
     parts.push("[voice]anull[mix]");
     mixLabel = "mix";
+  }
+
+  if (p.limit !== undefined && p.limit !== null) {
+    parts.push(`[${mixLabel}]alimiter=limit=${fmt(p.limit)}:attack=5:release=50:level=false[limited]`);
+    mixLabel = "limited";
   }
 
   if (loudnorm === null) {

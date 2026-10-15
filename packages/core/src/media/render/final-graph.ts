@@ -19,6 +19,8 @@ export interface FinalGraphInput {
   /** How the video is encoded (`videoEncoderArgs`); default `final`. */
   tier?: OutputTier;
   loudnorm: LoudnormMeasured | null;
+  /** An `alimiter` ceiling before loudnorm (`peakLimit`), the same on the measurement and the final pass. */
+  limit?: number | null;
   out_path: string;
   /** `true` for the loudnorm measurement pass: same inputs, audio-only filtergraph, `-f null -`. */
   measureOnly: boolean;
@@ -118,6 +120,7 @@ export function finalArgs(p: FinalGraphInput): { argv: string[]; inputs: { kind:
     },
     musicIndex: musicIdx,
     loudnorm,
+    limit: p.limit ?? null,
   });
 
   if (measureOnly) {
