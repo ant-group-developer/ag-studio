@@ -143,6 +143,36 @@ describe("job runner", () => {
     expect(msgs[0]!.text).toBe("Đã chuẩn bị 2/3 · 1 lỗi: **B** — ag-go trả 503.");
   });
 
+  it("a batch whose last job is stopped in line, or left by a stopped worker, still tells its thread once", async () => {
+    const { db, project, thread, workspacesRoot, dir } = await setup();
+    const handler: JobHandler = async (job) => ({ result: { ok: true }, message: `Đã chuẩn bị **${(job.request as { name: string }).name}**.` });
+    const ids: string[] = [];
+    for (const [batch, name] of [["b-1", "A"], ["b-1", "B"], ["b-2", "C"], ["b-2", "D"], ["b-3", "E"]] as const) {
+      ids.push((await createJob(db, {
+        projectId: project.id, threadId: thread.id, kind: "prepare_asset", title: `Chuẩn bị ${name}`, request: { asset_id: name, name, batch_id: batch },
+        continueAgent: true, createdBy: "auth0|u", actorRole: "editor",
+      }, at(1))).id);
+    }
+    const runner = createJobRunner({ db, logger: quiet, workspacesRoot, dataRoot: join(dir, "data"), handlers: { prepare_asset: handler }, lanes: 1, now: () => at(300) });
+    await runner.tick(); // A
+    await runner.idle();
+    await requestJobCancel(db, ids[1]!, at(300)); // B stopped in line: b-1 is over
+    await runner.tick(); // C
+    await runner.idle();
+    // D was taken by a worker that stopped, too many times: failed by the next pass (b-2 is over)
+    await db.run("UPDATE project_jobs SET status = 'running', attempts = 3, updated_at = ? WHERE id = ?", [at(0), ids[3]!]);
+    await requestJobCancel(db, ids[4]!, at(300)); // b-3: nothing ran, nothing to tell
+    await runner.tick();
+    await runner.idle();
+    await runner.tick();
+    await runner.idle();
+    const texts = (await listMessages(db, thread.id)).filter((m) => m.role === "system").map((m) => m.text);
+    expect(texts).toEqual([
+      "Đã chuẩn bị 1/2 · 1 đã dừng.",
+      "Đã chuẩn bị 1/2 · 1 lỗi: **D** — worker dừng giữa chừng nhiều lần.",
+    ]);
+  });
+
   it("stops a running job when a person asks: the handler's signal aborts, the job is cancelled, the agent waits", async () => {
     const { db, project, thread, workspacesRoot, dir } = await setup();
     const handler: JobHandler = async (_job, ctx) => {

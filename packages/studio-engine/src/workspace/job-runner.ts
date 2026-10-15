@@ -208,6 +208,9 @@ export function createJobRunner(o: JobRunnerOptions): JobRunner {
       const { requeued, failed } = await requeueStaleJobs(o.db, now());
       if (requeued.length || failed.length) o.logger.warn("jobs left by a stopped worker", { requeued, failed });
     } catch (e) { o.logger.warn("requeue of stale jobs failed", { error: errText(e) }); }
+    try {
+      await tellEndedBatches(o.db, now());
+    } catch (e) { o.logger.warn("batch summaries failed", { error: errText(e) }); }
     const started: string[] = [];
     const lanes = lanesNow();
     while (live.size < lanes) {
@@ -284,7 +287,9 @@ export function batchSummary(jobs: readonly JobRecord[]): string {
  * (`request.batch_id`) say nothing until the last of them ends, which posts one summary (`batchSummary`) and is the
  * only one to wake the agent: 160 prepare messages, each waking the agent, flooded a thread on prod.
  */
-async function tellThread(db: StudioDb, job: JobRecord, status: "done" | "failed" | "cancelled", message: string | null, now: string): Promise<void> {
+async function tellThread(
+  db: StudioDb, job: JobRecord, status: "done" | "failed" | "cancelled", message: string | null, now: string, quietUnlessRan = false,
+): Promise<void> {
   if (!job.thread_id) return;
   let text = message;
   let wake = job.continue_agent && status !== "cancelled";
@@ -296,6 +301,8 @@ async function tellThread(db: StudioDb, job: JobRecord, status: "done" | "failed
       if (jobs.some((j) => j.status === "queued" || j.status === "running")) return null;
       if (jobs.some((j) => (j.result as { batch_told?: unknown } | null)?.batch_told === true)) return null;
       await db.run("UPDATE project_jobs SET result = COALESCE(result, '{}'::jsonb) || ?::jsonb WHERE id = ?", [JSON.stringify({ batch_told: true }), job.id]);
+      // every job stopped before it ran: nothing to tell
+      if (quietUnlessRan && jobs.every((j) => j.status === "cancelled")) return { text: null, wake: false };
       return { text: batchSummary(jobs), wake: jobs.some((j) => j.continue_agent && j.status !== "cancelled") };
     });
     if (told === null) return;
@@ -309,4 +316,26 @@ async function tellThread(db: StudioDb, job: JobRecord, status: "done" | "failed
   const goOn = wake && settings.auto_continue && await automaticTurnsInARow(db, thread.id) < AUTO_TURNS_IN_A_ROW;
   const actor = job.actor_role ? { id: job.created_by, role: job.actor_role as ActorRole } : null;
   await postSystemMessage(db, { threadId: thread.id, text, trigger: "job", continueAgent: goOn, actor }, now);
+}
+
+/** How far back `tellEndedBatches` looks for a job that ended outside a runner. */
+const BATCH_SWEEP_MS = 60 * 60_000;
+
+/**
+ * Batches whose last job ended outside a runner — stopped while still in line (`requestJobCancel`), or failed for a
+ * worker that stopped (`requeueStaleJobs`) — are told here, on the runner's next pass: the jobs that ended before
+ * each saw the batch still going and said nothing.
+ */
+async function tellEndedBatches(db: StudioDb, now: string): Promise<void> {
+  const since = new Date(Date.parse(now) - BATCH_SWEEP_MS).toISOString();
+  const batch = "b.project_id = j.project_id AND b.request->>'batch_id' = j.request->>'batch_id'";
+  const rows = await db.all<{ id: string }>(
+    `SELECT DISTINCT ON (j.project_id, j.request->>'batch_id') j.id FROM project_jobs j
+      WHERE j.status IN ('cancelled', 'failed') AND j.request->>'batch_id' IS NOT NULL AND j.finished_at >= ?
+        AND NOT EXISTS (SELECT 1 FROM project_jobs b WHERE ${batch} AND (b.status IN ('queued', 'running') OR b.result->>'batch_told' = 'true'))
+      ORDER BY j.project_id, j.request->>'batch_id', j.finished_at DESC, j.id`, [since]);
+  for (const r of rows) {
+    const job = await getJob(db, r.id);
+    if (job && (job.status === "cancelled" || job.status === "failed")) await tellThread(db, job, job.status, null, now, true);
+  }
 }
