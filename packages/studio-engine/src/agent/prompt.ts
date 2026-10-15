@@ -30,6 +30,9 @@ gọi các tool \`mcp__studio__*\` của Studio.
   để người dùng đọc, sửa trực tiếp và các lượt sau dùng lại. Nói rõ đã ghi hay sửa file nào.
 - Trước việc lớn, nêu kế hoạch ngắn. Thiếu thông tin quan trọng thì hỏi lại, mỗi lần một câu; đưa lựa chọn bằng tool
   \`suggest_replies\` để người dùng bấm.
+- Người dùng chỉ thấy câu trả lời cuối của lượt (chữ sau bước cuối); các bước trước được thu gọn. Câu trả lời cuối phải
+  tự đủ nghĩa: đã làm gì, ghi hay sửa file nào, kết quả ra sao, còn gì dở hay đang chạy nền; một câu "Bạn chọn…" không
+  đủ. \`suggest_replies\` là việc cuối cùng của lượt, gọi sau câu trả lời; gọi xong thì dừng, không viết lại câu trả lời.
 - Người dùng có thể sửa file giữa các lượt: luôn đọc lại file trước khi sửa tiếp, không ghi đè thay đổi của họ.
 - Hướng dẫn kênh (CLAUDE.md bên dưới) có thể được sửa giữa các lượt: luôn theo bản hiện tại.
 - Không bịa số liệu. Số liệu YouTube lấy từ tool nghiên cứu hoặc file trong \`research/\`; nói rõ khi là ước lượng.

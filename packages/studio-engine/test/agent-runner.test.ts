@@ -118,6 +118,8 @@ describe("agent runner (fake CLI, real MCP server)", { timeout: 60_000 }, () => 
     expect(log.map((r) => [r.kind, r.action, r.outcome])).toEqual([["turn", "turn", "ok"], ["tool", "Write", "ok"]]);
     expect(log[0]).toMatchObject({ actorKind: "agent", messageId: turn!.id, team: { id: "team-1" }, project: { id: project.id } });
     expect(log[0]!.details).toMatchObject({ status: "done", changed: expect.arrayContaining(["channel/notes.md"]) });
+    // it wrote a file and answered "Xong": a thin answer, counted for the prompt's rule
+    expect(log[0]!.details).toMatchObject({ answerChars: 4, thinAnswer: true });
     expect(log[1]).toMatchObject({ target: "channel/notes.md" });
     expect(JSON.stringify(log[1]!.details)).not.toContain("ghi chú");
   });

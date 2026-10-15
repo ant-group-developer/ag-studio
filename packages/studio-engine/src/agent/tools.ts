@@ -131,9 +131,11 @@ export const PROJECT_TOOLS: AgentTool[] = [
   }),
   tool({
     name: "suggest_replies",
-    description: "Gợi ý 1–4 câu trả lời ngắn để người dùng bấm thay vì gõ (ví dụ các lựa chọn khi bạn hỏi lại). Gọi ở cuối lượt.",
+    description: "Gợi ý 1–4 câu trả lời ngắn để người dùng bấm thay vì gõ (ví dụ các lựa chọn khi bạn hỏi lại). Việc cuối cùng của lượt, sau câu trả lời.",
     input: z.object({ options: z.array(z.string().trim().min(1).max(120)).min(1).max(4) }).strict(),
-    run: (_ctx, a) => ({ text: `Đã hiện ${a.options.length} gợi ý cho người dùng.` }),
+    run: (_ctx, a) => ({
+      text: `Đã hiện ${a.options.length} gợi ý cho người dùng. Nếu chưa tóm tắt lượt này (đã làm gì, file nào, kết quả, còn gì dở) thì viết ngay; nếu đã viết thì kết thúc, đừng viết lại.`,
+    }),
   }),
   tool({
     name: "playbook_status",

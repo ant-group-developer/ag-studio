@@ -14,6 +14,7 @@ import type { StudioBucket } from "../bucket.js";
 import { acquireClaudeSlot, CHAT_SLOT_LEASE_SECONDS, heartbeatClaudeSlot, idsHoldingSlots, releaseClaudeSlot } from "../claude-slots.js";
 import type { StudioDb } from "../studio-db.js";
 import { logAudit } from "../audit-log.js";
+import { finalAnswer, thinAnswer } from "./answer.js";
 import { turnChangedFiles } from "../workspace/file-changes.js";
 import { projectDir, scanWorkspace } from "../workspace/files.js";
 import { playbookContextLines, playbookStatus, type StepFact } from "../workspace/playbook-status.js";
@@ -313,6 +314,7 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
       details: {
         status: out.status, trigger: message.trigger, model: out.state.model ?? null, inputTokens: r?.input_tokens ?? null, outputTokens: r?.output_tokens ?? null,
         numTurns: r?.num_turns ?? null, changed,
+        answerChars: finalAnswer(out.state.parts).length, thinAnswer: thinAnswer(out.state.parts, changed),
       },
     }, (e) => logger.warn("turn not in the activity log", { error: String(e) }));
     for (const p of out.state.parts) {
