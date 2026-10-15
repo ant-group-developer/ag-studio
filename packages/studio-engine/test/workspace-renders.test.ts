@@ -36,7 +36,16 @@ const view = (over: Partial<FarmJobView>): FarmJobView => ({
 let opened: Awaited<ReturnType<typeof world>> | undefined;
 afterEach(async () => { await opened?.db.close(); opened = undefined; });
 
-async function setup(renderWarnings: string[] = []) {
+/** An inspection as the render worker writes it (`inspect.json`), with `issues` to say. */
+function inspection(issues: unknown[], over: Record<string, unknown> = {}) {
+  return {
+    schema_version: "harness.render-inspect/v1", expected_seconds: 64.5, video_seconds: 64.5, audio_seconds: 64.5, freezes: [], blacks: [], silences: [],
+    segments: [{ order: 0, start: 0, end: 4, lufs: -20 }], loudness_median_lufs: -20,
+    sheets: [{ file: "sheet-01.jpg", from_s: 0, every_s: 10, columns: 5, rows: 4, frames: 7, tile_width: 320 }], issues, inspect_seconds: 2, ...over,
+  };
+}
+
+async function setup(renderWarnings: string[] = [], inspect: ReturnType<typeof inspection> | null = null) {
   const w = opened = await world();
   await w.db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [NOW, NOW]);
   const project = await createProject(w.db, "team-1", { name: "Du lịch chậm", description: "", language: "vi", aspect: "16:9" }, "u", NOW);
@@ -53,7 +62,12 @@ async function setup(renderWarnings: string[] = []) {
       const out = `productions/${project.id}/jobs/${stage}/${jobId}/out/`;
       const manifest = req.type === "studio.export_premiere"
         ? { schema: "ag.studio.premiere/v1", output: payload.output, size_bytes: 2_097_152, media: "proxy", files: [], warnings: ["1 font thay thế"] }
-        : { schema: "ag.studio.render/v1", production_id: project.id, revision: 1, output: payload.output, width: 1920, height: 1080, duration_s: 64.5, size_bytes: 1000, watermarked: true, sources: [], warnings: renderWarnings };
+        : { schema: "ag.studio.render/v1", production_id: project.id, revision: 1, output: payload.output, width: 1920, height: 1080, duration_s: 64.5, size_bytes: 1000, watermarked: true, sources: [], warnings: renderWarnings,
+          ...(inspect && payload.inspect ? { inspect: { output: "inspect.json", sheets: ["sheet-01.jpg"] } } : {}) };
+      if (inspect && payload.inspect) {
+        await w.bucket.put(`${out}inspect.json`, Buffer.from(JSON.stringify(inspect)));
+        await w.bucket.put(`${out}sheet-01.jpg`, Buffer.from("jpeg"));
+      }
       await w.bucket.put(`${out}${req.type === "studio.export_premiere" ? "premiere.json" : "render.json"}`, Buffer.from(JSON.stringify(manifest)));
       return { job: view({ type: req.type as never }), created: true };
     },
@@ -88,7 +102,7 @@ describe("video renders", () => {
     expect(readFileSync(join(s.dir, "videos", s.video.id, "renders", notes[0]!), "utf8")).toContain("Dài 1:05 · 1920×1080 · có watermark");
   });
 
-  it("a composition with a newer field asks the farm for a render machine at that level", async () => {
+  it("a render asks the farm for a machine that inspects it, a composition with a newer field for one at that level", async () => {
     const s = await setup();
     const music = { track: "library:music/calm.mp3", gain_db: -30, ducking: false };
     await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id, { music }), authorId: "u" });
@@ -97,14 +111,19 @@ describe("video renders", () => {
     await s.run();
     await s.run();
     expect(s.submitted.map((j) => [j.type, j.requirements])).toEqual([
-      ["studio.render_preview", { studio_render_min: 1 }],
+      ["studio.render_preview", { studio_render_min: 2 }],
       ["studio.export_premiere", { studio_render_min: 1 }],
     ]);
-    // music that ducks: any render machine
+    expect(s.submitted[0]!.payload.inspect).toBe(true);
+    expect(s.submitted[1]!.payload.inspect).toBeUndefined();
+    // music that ducks: any machine for Premiere, one that inspects for a render
     await saveVideoRevision(s.db, s.video.id, { baseRevision: 1, data: timeline(s.video.id, { music: { ...music, ducking: true } }), authorId: "u" });
     await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", createdBy: "u" }, NOW);
+    await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "export_premiere", createdBy: "u" }, NOW);
     await s.run();
-    expect(s.submitted[2]!.requirements).toBeUndefined();
+    await s.run();
+    expect(s.submitted[2]!.requirements).toEqual({ studio_render_min: 2 });
+    expect(s.submitted[3]!.requirements).toBeUndefined();
   });
 
   it("keeps every worker warning in the result but leaves loudnorm_not_linear out of the note", async () => {
@@ -131,6 +150,44 @@ describe("video renders", () => {
     expect(r.problem).toMatch(/^bản render dài 13:23 nhưng timeline dài 17:30 \(thiếu 247 giây\)/);
     const notes = readdirSync(join(s.dir, "videos", s.video.id, "renders"));
     expect(readFileSync(join(s.dir, "videos", s.video.id, "renders", notes[0]!), "utf8")).toContain("**Lỗi:** bản render dài 13:23");
+  });
+
+  it("copies the worker's inspection next to the note and says what it found in the note and the chat", async () => {
+    const s = await setup([], inspection([
+      { code: "silence", severity: "warning", start: 12, end: 40 },
+      { code: "freeze", severity: "error", start: 50.2, end: 64.5, order: 0, to_end: true },
+      { code: "clip_loudness", severity: "warning", start: 0, end: 4, order: 0, delta_db: -9.2 },
+      { code: "sparkle", severity: "warning" },
+    ]));
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
+    const job = await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", createdBy: "u", threadId: null }, NOW);
+    await s.run();
+    const r = (await videoRenders(s.db, s.project.id, s.video.id))[0]!;
+    const name = readdirSync(join(s.dir, "videos", s.video.id, "renders")).find((f) => f.endsWith(".md"))!.replace(/\.md$/, "");
+    expect(name).toMatch(new RegExp(`^\\d{4}-\\d{2}-\\d{2}-render-preview-r1-${job.id.slice(0, 8)}$`));
+    const base = `videos/${s.video.id}/renders/${name}`;
+    expect(r.inspect).toEqual({
+      dir: base, sheets: [{ path: `${base}/sheet-01.jpg`, from_s: 0, to_s: 60 }],
+      issues: ["đứng hình từ 0:50 tới hết video (qua cả điểm cắt)", "im lặng 0:12–0:40", "clip C001 · Thuyền nhỏ hơn trung bình 9 dB"],
+    });
+    expect(readFileSync(join(s.dir, base, "inspect.json"), "utf8")).toContain("render-inspect");
+    expect(readFileSync(join(s.dir, base, "sheet-01.jpg"), "utf8")).toBe("jpeg");
+    const note = readFileSync(join(s.dir, `${base}.md`), "utf8");
+    expect(note).toContain("## Tự kiểm");
+    expect(note).toContain("- đứng hình từ 0:50 tới hết video");
+    expect(note).toContain(["- ", "`", base, "/sheet-01.jpg", "`", ": 0:00–1:00"].join(""));
+    const done = (await getJob(s.db, job.id))!;
+    expect(done.status).toBe("done");
+  });
+
+  it("a render the worker did not inspect says so in the note", async () => {
+    const s = await setup();
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
+    await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", createdBy: "u" }, NOW);
+    await s.run();
+    expect((await videoRenders(s.db, s.project.id, s.video.id))[0]!.inspect).toBeUndefined();
+    const notes = readdirSync(join(s.dir, "videos", s.video.id, "renders"));
+    expect(readFileSync(join(s.dir, "videos", s.video.id, "renders", notes[0]!), "utf8")).toContain("Máy render không tự kiểm bản này");
   });
 
   it("the final render is a final-media farm job on the chosen machine, and the video is done", async () => {
