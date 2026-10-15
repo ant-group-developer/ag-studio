@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CompositionSchema, TimelineV4Schema, upgradeTimelineV3, type TimelineV3, type TimelineV4 } from "@harness/contracts";
+import { CompositionSchema, downgradeTimelineV4, TimelineV4Schema, upgradeTimelineV3, type TimelineV3, type TimelineV4 } from "@harness/contracts";
 import { applyTimelineOps, setCaptions, setClipMuted, setTransition, TimelineOpError, trimClip } from "../../src/studio/layout.js";
 import { studioFontFamilies, studioOverlayAss, studioScriptFont } from "../../src/studio/overlay.js";
 import { timelineToComposition } from "../../src/studio/render-plan.js";
@@ -203,6 +203,33 @@ describe("timelineToComposition on v4", () => {
     expect(studioFontFamilies(timelineToComposition(cut()))).toEqual(["Arial"]);
     expect(studioScriptFont("ありがとう", "Noto Sans JP")).toBeNull();
     expect(studioScriptFont("Hà Nội")).toBeNull();
+  });
+
+  it("feedback-vps §4.3: a clip's gain, even source sound and the music's volume line reach the composition", () => {
+    const t = applyTimelineOps({ ...cut(), music: { track: "library:music/a.mp3", gain_db: -18, ducking: true } }, [
+      { op: "setClipGain", clip_id: "C002", gain_db: -6 },
+      { op: "setSourceEven", even: true },
+      { op: "setMusicEnvelope", points: [{ at: 10, gain_db: -12 }, { at: 0, gain_db: -30 }, { at: 10, gain_db: -10 }] },
+    ], {});
+    expect(t.clips[1]!.gain_db).toBe(-6);
+    expect(t.source_audio).toEqual({ muted: false, even: true });
+    expect(t.music!.envelope).toEqual([{ at: 0, gain_db: -30 }, { at: 10, gain_db: -10 }]);
+    const c = CompositionSchema.parse(timelineToComposition(t));
+    expect(c.segments.map((s) => s.gain_db)).toEqual([undefined, -6, undefined]);
+    expect(c.source_even).toBe(true);
+    expect(c.music!.envelope).toEqual([{ at: 0, gain_db: -30 }, { at: 10, gain_db: -10 }]);
+    // undone: no key left behind; muting keeps "even"; a new track keeps the line (its points are times in the video)
+    const back = applyTimelineOps(t, [
+      { op: "setClipGain", clip_id: "C002", gain_db: 0 },
+      { op: "setSourceMuted", muted: true },
+      { op: "setMusic", music: { track: "library:music/b.mp3", gain_db: -20, ducking: false } },
+    ], {});
+    expect("gain_db" in back.clips[1]!).toBe(false);
+    expect(back.source_audio).toEqual({ muted: true, even: true });
+    expect(back.music).toEqual({ track: "library:music/b.mp3", gain_db: -20, ducking: false, envelope: [{ at: 0, gain_db: -30 }, { at: 10, gain_db: -10 }] });
+    expect(applyTimelineOps(back, [{ op: "setMusicEnvelope", points: [] }], {}).music).toEqual({ track: "library:music/b.mp3", gain_db: -20, ducking: false });
+    expect(() => applyTimelineOps({ ...cut(), music: null }, [{ op: "setMusicEnvelope", points: [{ at: 0, gain_db: -20 }] }], {})).toThrow(TimelineOpError);
+    expect(() => downgradeTimelineV4({ ...t, edit_style: "whole" })).toThrow(/gain|envelope|even/);
   });
 
   it("the footage's own speech (narration original) plays at its own level, not lowered as background", () => {

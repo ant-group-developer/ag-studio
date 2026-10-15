@@ -39,6 +39,13 @@ describe("compositionFeatureLevel", () => {
     expect(compositionFeatureLevel(timelineToComposition({ ...timeline(null), text_style: { ...look, font: "Arial", shadow: true } }))).toBe(4);
   });
 
+  it("is 5 for a clip's gain, even source sound or a music volume line", () => {
+    const t = timeline({ track: "library:m.mp3", gain_db: -18, ducking: true });
+    expect(compositionFeatureLevel(timelineToComposition({ ...t, clips: [{ ...t.clips[0]!, gain_db: -6 }] }))).toBe(5);
+    expect(compositionFeatureLevel(timelineToComposition({ ...t, source_audio: { muted: false, even: true } }))).toBe(5);
+    expect(compositionFeatureLevel(timelineToComposition({ ...t, music: { ...t.music!, envelope: [{ at: 0, gain_db: -30 }] } }))).toBe(5);
+  });
+
   it("never asks for more than this build renders", () => {
     expect(compositionFeatureLevel(timelineToComposition(timeline({ track: "library:m.mp3", gain_db: -30, ducking: false })))).toBeLessThanOrEqual(RENDER_FEATURE_LEVEL);
   });

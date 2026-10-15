@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { TEXT_LOOK_SIZES } from "./composition.js";
 import {
-  CAPTION_MODES, ChannelRefSchema, TIMELINE_TEXT_MAX, TIMELINE_TEXT_MAX_SECONDS, MAX_RESEARCH_CHANNELS, MAX_RESEARCH_KEYWORDS, STUDIO_ASPECTS, StudioHintsSchema, StudioMusicSchema,
+  CAPTION_MODES, ChannelRefSchema, CLIP_GAIN_MAX_DB, CLIP_GAIN_MIN_DB, MUSIC_ENVELOPE_MAX_POINTS, MusicEnvelopePointSchema, TIMELINE_TEXT_MAX, TIMELINE_TEXT_MAX_SECONDS, MAX_RESEARCH_CHANNELS, MAX_RESEARCH_KEYWORDS, STUDIO_ASPECTS, StudioHintsSchema, StudioMusicSchema,
   studioVersion, TEXT_KINDS, TEXT_POSITIONS_V2, TIMELINE_TRANSITIONS, type TeamSkillStep,
 } from "./studio.js";
 
@@ -142,6 +142,12 @@ export const TimelineOpSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("setCaptions"), mode: z.enum(CAPTION_MODES) }).strict(),
   /** Timeline v4 only: one clip's own sound off (or on again). */
   z.object({ op: z.literal("setClipMuted"), clip_id: clipId, muted: z.boolean() }).strict(),
+  /** Timeline v4 only: one clip's own sound louder or quieter, dB (0 = as recorded). */
+  z.object({ op: z.literal("setClipGain"), clip_id: clipId, gain_db: z.number().min(CLIP_GAIN_MIN_DB).max(CLIP_GAIN_MAX_DB) }).strict(),
+  /** Timeline v4 only: every clip's own sound brought to one level (or as recorded again). */
+  z.object({ op: z.literal("setSourceEven"), even: z.boolean() }).strict(),
+  /** Timeline v4 only: the music's volume line, points in seconds of the video ([] = none: the music's own gain). */
+  z.object({ op: z.literal("setMusicEnvelope"), points: z.array(MusicEnvelopePointSchema).max(MUSIC_ENVELOPE_MAX_POINTS) }).strict(),
 ]);
 export type TimelineOp = z.infer<typeof TimelineOpSchema>;
 

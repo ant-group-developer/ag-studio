@@ -21,6 +21,8 @@ const sidecarSchema = z.object({
   bytes: z.number().int().min(0),
   created_at: z.string().min(1),
   last_used_at: z.string().min(1),
+  /** The mezzanine's integrated loudness (`even.ts`), measured once when a render needs it; null = silent. */
+  lufs: z.number().nullable().optional(),
 }).strict();
 
 export type MezzCacheSidecar = z.infer<typeof sidecarSchema>;
@@ -93,6 +95,25 @@ export function cacheCommit(c: MezzCache, key: string, tmpPath: string, meta: { 
   const sidecar: MezzCacheSidecar = { key, seconds: meta.seconds, bytes: meta.bytes, created_at: meta.now, last_used_at: meta.now };
   writeFileSync(sidecarPath(c, key), JSON.stringify(sidecar));
   return media;
+}
+
+/** The loudness recorded for an entry: a number, null (silent), or undefined when it was never measured. */
+export function cacheLufs(c: MezzCache, key: string): number | null | undefined {
+  try {
+    return sidecarSchema.parse(JSON.parse(readFileSync(sidecarPath(c, key), "utf8"))).lufs;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Records an entry's loudness in its sidecar (a sidecar that cannot be read or written is left as it is). */
+export function cacheSetLufs(c: MezzCache, key: string, lufs: number | null): void {
+  try {
+    const parsed = sidecarSchema.parse(JSON.parse(readFileSync(sidecarPath(c, key), "utf8")));
+    writeFileSync(sidecarPath(c, key), JSON.stringify({ ...parsed, lufs }));
+  } catch {
+    // measured again next time
+  }
 }
 
 /**

@@ -103,6 +103,31 @@ describe("fitCutTimeline", () => {
     expect(fitCutTimeline({ ...args, plan: muted }).timeline.clips.some((x) => "muted" in x)).toBe(false);
   });
 
+  it("feedback-vps §4.3: a shot's gain, even source sound and the music's volume line, anchored on shots, reach the timeline", () => {
+    const voice = { L001: { key: KEY(1), duration_s: 2.2, words: [] }, L002: { key: KEY(2), duration_s: 1.4, words: [] } };
+    const loud: EditPlan = {
+      ...plan,
+      shots: plan.shots.map((s) => (s.order === 2 ? { ...s, gain_db: -8 } : s)),
+      source_even: true,
+      music_envelope: [{ at_order: 3, offset_s: 0.5, gain_db: -10 }, { at_order: 1, offset_s: 0, gain_db: -30 }],
+    };
+    const { timeline } = fitCutTimeline({
+      productionId: "prod-1", plan: loud, shots, survey, transcript: null, voice,
+      sources: [{ asset_id: "a", source_id: A }, { asset_id: "b", source_id: B }], assets,
+      canvas: { width: 3840, height: 2160 }, fps: 30, music: { track: "library:music/calm.mp3", gain_db: -18, ducking: true },
+    });
+    const t = TimelineV4Schema.parse(timeline);
+    expect(t.clips.map((c) => c.gain_db)).toEqual([undefined, -8, undefined]);
+    expect(t.source_audio).toEqual({ muted: false, even: true });
+    const third = layoutTimeline(t).clips[2]!.start;
+    expect(t.music!.envelope).toEqual([{ at: 0, gain_db: -30 }, { at: Math.round((third + 0.5) * 1000) / 1000, gain_db: -10 }]);
+    // without music there is no line to keep
+    expect(fitCutTimeline({
+      productionId: "prod-1", plan: loud, shots, survey, transcript: null, voice,
+      sources: [{ asset_id: "a", source_id: A }, { asset_id: "b", source_id: B }], assets, canvas: { width: 3840, height: 2160 }, fps: 30, music: null,
+    }).timeline.music).toBeNull();
+  });
+
     it("a line with no audio cannot be placed", () => {
     expect(() => fit({ L001: { key: KEY(1), duration_s: 2, words: [] } })).toThrow(/L002/);
   });

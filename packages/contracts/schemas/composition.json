@@ -135,6 +135,9 @@
               "has_audio": {
                 "type": "boolean"
               },
+              "gain_db": {
+                "type": "number"
+              },
               "transition_out": {
                 "type": "object",
                 "properties": {
@@ -434,6 +437,25 @@
                     "additionalProperties": false
                   }
                 },
+                "envelope": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "at": {
+                        "type": "number"
+                      },
+                      "gain_db": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "at",
+                      "gain_db"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
                 "duck": {
                   "type": "object",
                   "properties": {
@@ -619,6 +641,9 @@
             "additionalProperties": false
           },
           "default": []
+        },
+        "source_even": {
+          "type": "boolean"
         },
         "warnings": {
           "type": "array",

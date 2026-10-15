@@ -483,6 +483,84 @@
                   "muted"
                 ],
                 "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "setClipGain"
+                  },
+                  "clip_id": {
+                    "type": "string",
+                    "pattern": "^C\\d{3,4}$"
+                  },
+                  "gain_db": {
+                    "type": "number",
+                    "minimum": -30,
+                    "maximum": 20
+                  }
+                },
+                "required": [
+                  "op",
+                  "clip_id",
+                  "gain_db"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "setSourceEven"
+                  },
+                  "even": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "op",
+                  "even"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "setMusicEnvelope"
+                  },
+                  "points": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "at": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "gain_db": {
+                          "type": "number",
+                          "minimum": -60,
+                          "maximum": 0
+                        }
+                      },
+                      "required": [
+                        "at",
+                        "gain_db"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 200
+                  }
+                },
+                "required": [
+                  "op",
+                  "points"
+                ],
+                "additionalProperties": false
               }
             ]
           },

@@ -95,6 +95,11 @@
                   "keep",
                   "mute"
                 ]
+              },
+              "gain_db": {
+                "type": "number",
+                "minimum": -30,
+                "maximum": 20
               }
             },
             "required": [
@@ -215,6 +220,38 @@
               "type": "null"
             }
           ]
+        },
+        "music_envelope": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "at_order": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "offset_s": {
+                "type": "number",
+                "minimum": 0
+              },
+              "gain_db": {
+                "type": "number",
+                "minimum": -60,
+                "maximum": 0
+              }
+            },
+            "required": [
+              "at_order",
+              "offset_s",
+              "gain_db"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 200
+        },
+        "source_even": {
+          "type": "boolean"
         }
       },
       "required": [

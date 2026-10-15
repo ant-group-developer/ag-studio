@@ -18,11 +18,12 @@
  */
 import { spawn as nodeSpawn } from "node:child_process";
 import { copyFileSync, existsSync, linkSync, mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { HarnessError, isHarnessError, RenderReportSchema, type Clock, type Composition, type MediaProber, type RenderReport } from "@harness/contracts";
 import { childEnvWithoutSecrets } from "../child-env.js";
 import { round3 } from "../time.js";
-import { cacheCommit, cacheEvict, cacheLookup, type MezzCache } from "./cache.js";
+import { cacheCommit, cacheEvict, cacheLookup, cacheLufs, cacheSetLufs, type MezzCache } from "./cache.js";
+import { ebur128Args, evenGains, parseEbur128Integrated } from "./even.js";
 import { NVENC_PROBE_ARGS, resolveEncoder, type EncoderChoice, type OutputTier } from "./encoder.js";
 import { peakLimit } from "./audio-graph.js";
 import { finalArgs } from "./final-graph.js";
@@ -528,6 +529,28 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
   }
   writeFileSync(join(clipSetDir, "manifest.json"), JSON.stringify(manifest, null, 2));
 
+  // ---- 3b) even source sound: each segment's own loudness, measured once per mezzanine and kept in its sidecar ----
+  let evenGainDb: Map<number, number> | undefined;
+  if (composition.source_even) {
+    reportProgress(MEZZ_SHARE, "even");
+    const lufs: (number | null)[] = [];
+    for (const seg of segs) {
+      if (!seg.has_audio) { lufs.push(null); continue; }
+      const body = mezz.find((m) => m.order === seg.order)!.body;
+      const key = basename(body, ".mp4");
+      let l = cacheLufs(d.cache, key);
+      if (l === undefined) {
+        const pass = await runProcess(spawnFn, ebur128Args(d.ffmpeg, body), remaining(), `even ${seg.order}`, false, { signal });
+        l = parseEbur128Integrated(pass.stderr);
+        cacheSetLufs(d.cache, key, l);
+      }
+      lufs.push(l);
+    }
+    const gains = evenGains(lufs);
+    evenGainDb = new Map(segs.map((s, k) => [s.order, gains[k]!]));
+    log(`even source sound: ${gains.filter((g) => g !== 0).length}/${segs.length} segments corrected (${Math.min(...gains)}..${Math.max(...gains)} dB)`);
+  }
+
   // ---- 4) loudnorm measurement pass ----
   // Both final passes run in `tmp/in`, where the mezzanines have short names, and read their filtergraph from a
   // file: the command line stays short however many segments the episode has.
@@ -539,6 +562,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     ffmpeg: d.ffmpeg, composition: absolutePaths(composition), mezz: shortMezzNames(mezz, inputsDir),
     assPath: p.assPath !== null ? resolve(p.assPath) : null, fontsDir: fontsDir !== null ? resolve(fontsDir) : null,
     out_path: resolve(episodePath), tier: p.tier ?? "final",
+    ...(evenGainDb ? { evenGainDb } : {}),
     ...(p.safe_margin_px !== undefined ? { safe_margin_px: p.safe_margin_px } : {}),
   };
   let graphs = 0;

@@ -11,7 +11,7 @@
  */
 import {
   upgradeTimelineV3,
-  type CaptionMode, type EpisodeAsset, type StudioMusic, type TimelineClipV4, type TimelineOp, type TimelineText,
+  type CaptionMode, type EpisodeAsset, type MusicEnvelopePoint, type StudioMusic, type TimelineClipV4, type TimelineOp, type TimelineText,
   type StoredTimeline, type TimelineTransitionKind, type TimelineV4,
 } from "@harness/contracts";
 
@@ -441,6 +441,38 @@ export function setClipMuted(t: TimelineV4, clipId: string, muted: boolean): Tim
   return { ...v4, clips };
 }
 
+/** One clip's own sound louder or quieter (`gain_db`; 0 removes the key). Timeline v4 only. */
+export function setClipGain(t: TimelineV4, clipId: string, gainDb: number): TimelineV4 {
+  const v4 = requireV4(t, "Âm lượng clip");
+  const i = clipIndex(v4, clipId);
+  const { gain_db: _was, ...clip } = v4.clips[i]!;
+  const clips = v4.clips.slice();
+  const g = Math.round(gainDb * 10) / 10;
+  clips[i] = g === 0 ? clip : { ...clip, gain_db: g };
+  return { ...v4, clips };
+}
+
+/** Every clip's own sound brought to one level (`source_audio.even`), or as recorded again. Timeline v4 only. */
+export function setSourceEven(t: TimelineV4, even: boolean): TimelineV4 {
+  const v4 = requireV4(t, "Đều tiếng gốc");
+  const { even: _was, ...sourceAudio } = v4.source_audio;
+  return { ...v4, source_audio: even ? { ...sourceAudio, even: true } : sourceAudio };
+}
+
+/**
+ * The music's volume line (`music.envelope`), points in order of time (a later point at the same second wins); none
+ * removes it. Timeline v4 with music only.
+ */
+export function setMusicEnvelope(t: TimelineV4, points: readonly MusicEnvelopePoint[]): TimelineV4 {
+  const v4 = requireV4(t, "Đường âm lượng nhạc");
+  if (!v4.music) throw new TimelineOpError("no_music", "timeline chưa có nhạc: đặt nhạc trước (setMusic)");
+  const { envelope: _was, ...music } = v4.music;
+  const byTime = new Map<number, number>();
+  for (const p of points) byTime.set(r3(p.at), p.gain_db);
+  const envelope = [...byTime].sort((a, b) => a[0] - b[0]).map(([at, gain_db]) => ({ at, gain_db }));
+  return { ...v4, music: envelope.length ? { ...music, envelope } : music };
+}
+
 /** Burnt-in subtitles from the narration. Timeline v4 only. */
 export function setCaptions(t: TimelineV4, mode: CaptionMode): TimelineV4 {
   return { ...requireV4(t, "Phụ đề"), captions: { mode } };
@@ -463,12 +495,14 @@ export function removeText<T extends AnyTimeline>(t: T, textId: string): T {
   return { ...t, texts: t.texts.filter((x) => x.text_id !== textId) };
 }
 
+/** The music (or none). A v4 timeline's volume line stays with the new track: its points are times in the video. */
 export function setMusic<T extends AnyTimeline>(t: T, music: StudioMusic | null): T {
-  return { ...t, music };
+  const envelope = isTimelineV4(t) ? t.music?.envelope : undefined;
+  return { ...t, music: music && envelope ? { track: music.track, gain_db: music.gain_db, ducking: music.ducking, envelope } : music };
 }
 
 export function setSourceMuted<T extends AnyTimeline>(t: T, muted: boolean): T {
-  return { ...t, source_audio: { muted } };
+  return { ...t, source_audio: { ...t.source_audio, muted } };
 }
 
 // ---------------------------------------------------------------------------
@@ -508,6 +542,9 @@ function applyOne<T extends AnyTimeline>(t: T, op: TimelineOp, allowed: Record<s
     case "setTransition": return setTransition(requireV4(t, "Chuyển cảnh"), op.clip_id, op.kind, op.seconds) as T;
     case "setCaptions": return setCaptions(requireV4(t, "Phụ đề"), op.mode) as T;
     case "setClipMuted": return setClipMuted(requireV4(t, "Tắt tiếng clip"), op.clip_id, op.muted) as T;
+    case "setClipGain": return setClipGain(requireV4(t, "Âm lượng clip"), op.clip_id, op.gain_db) as T;
+    case "setSourceEven": return setSourceEven(requireV4(t, "Đều tiếng gốc"), op.even) as T;
+    case "setMusicEnvelope": return setMusicEnvelope(requireV4(t, "Đường âm lượng nhạc"), op.points) as T;
   }
 }
 

@@ -45,6 +45,27 @@ export const StudioMusicSchema = z.object({
 }).strict();
 export type StudioMusic = z.infer<typeof StudioMusicSchema>;
 
+/** A clip's own gain on top of its sound (feedback-vps §4.3), dB. */
+export const CLIP_GAIN_MIN_DB = -30;
+export const CLIP_GAIN_MAX_DB = 20;
+/** One point of the music's volume line: the music's gain at `at` seconds of the video. */
+export const MusicEnvelopePointSchema = z.object({
+  at: z.number().min(0),
+  gain_db: z.number().min(-60).max(0),
+}).strict();
+export type MusicEnvelopePoint = z.infer<typeof MusicEnvelopePointSchema>;
+export const MUSIC_ENVELOPE_MAX_POINTS = 200;
+
+/**
+ * A timeline's music (v4): as `StudioMusicSchema`, plus a volume line (feedback-vps §4.3). With `envelope`, the music's
+ * gain follows the points (straight lines between them, the first point's gain before it, the last one's after it) and
+ * `gain_db` is only what it goes back to without them. Ducking still lowers it under the voice.
+ */
+export const TimelineMusicSchema = StudioMusicSchema.extend({
+  envelope: z.array(MusicEnvelopePointSchema).min(1).max(MUSIC_ENVELOPE_MAX_POINTS).optional(),
+}).strict();
+export type TimelineMusic = z.infer<typeof TimelineMusicSchema>;
+
 // ---------------------------------------------------------------------------
 // Audio the person gives a production: a narration voice sample, background music (ADR-0001 items 167-168)
 // ---------------------------------------------------------------------------
@@ -710,6 +731,8 @@ export const TimelineClipV4Schema = z.object({
    * other clips keep theirs. Absent = as the timeline's `source_audio`.
    */
   muted: z.boolean().optional(),
+  /** Feedback-vps §4.3: this clip's own sound louder or quieter, dB (`CLIP_GAIN_MIN_DB`..`CLIP_GAIN_MAX_DB`). Absent = 0. */
+  gain_db: z.number().min(CLIP_GAIN_MIN_DB).max(CLIP_GAIN_MAX_DB).optional(),
 }).strict().refine((c) => c.out === null || c.out > c.in, { message: "out must be after in", path: ["out"] });
 
 export const NarrationWordSchema = z.object({
@@ -748,8 +771,15 @@ export const TimelineV4Schema = z.object({
   }).strict(),
   /** Burnt-in subtitles from the narration's words. */
   captions: z.object({ mode: z.enum(CAPTION_MODES) }).strict(),
-  music: StudioMusicSchema.nullable(),
-  source_audio: z.object({ muted: z.boolean() }).strict(),
+  music: TimelineMusicSchema.nullable(),
+  source_audio: z.object({
+    muted: z.boolean(),
+    /**
+     * Feedback-vps §4.3: every clip's own sound brought to one level (the render worker measures each clip and corrects it
+     * by at most ±12 dB) before the clip's `gain_db`. Absent = as recorded.
+     */
+    even: z.boolean().optional(),
+  }).strict(),
   assets: z.record(z.string(), EpisodeAssetSchema),
   alternates: z.array(reasonedAsset),
   /** Cut 1.1.0: the branding's text look, frozen when the cut is fitted. Absent = the Studio default look. */
@@ -801,7 +831,10 @@ export function downgradeTimelineV4(t: TimelineV4): TimelineV3 {
     if (c.line_id !== null) lost.push(`${c.clip_id} line_id`);
     if (c.transition_out.kind !== "cut" || c.transition_out.seconds !== 0) lost.push(`${c.clip_id} transition`);
     if (c.muted) lost.push(`${c.clip_id} muted`);
+    if (c.gain_db !== undefined) lost.push(`${c.clip_id} gain`);
   }
+  if (t.music?.envelope) lost.push("music envelope");
+  if (t.source_audio.even !== undefined) lost.push("source_audio even");
   const n = t.narration;
   if (n.voice !== "none" || n.lines.length > 0 || n.lead_seconds !== DEFAULT_NARRATION_LEAD_SECONDS) lost.push("narration");
   if (t.captions.mode !== "none") lost.push("captions");
@@ -816,8 +849,8 @@ export function downgradeTimelineV4(t: TimelineV4): TimelineV3 {
     language: t.language,
     clips: t.clips.map((c) => ({ clip_id: c.clip_id, asset_id: c.asset_id, section_title: c.section_title })),
     texts: t.texts,
-    music: t.music,
-    source_audio: t.source_audio,
+    music: t.music ? { track: t.music.track, gain_db: t.music.gain_db, ducking: t.music.ducking } : null,
+    source_audio: { muted: t.source_audio.muted },
     assets: t.assets,
     alternates: t.alternates,
   };
@@ -968,6 +1001,8 @@ export const EditPlanSchema = z.object({
     note: z.string().max(300),
     /** Cut 1.1.0: `mute` = this shot's own sound is not heard (announcements, music, strangers). Absent = `keep`. */
     source_audio: z.enum(["keep", "mute"]).optional(),
+    /** Feedback-vps §4.3: this shot's own sound louder or quieter, dB; every clip cut from it takes it. */
+    gain_db: z.number().min(CLIP_GAIN_MIN_DB).max(CLIP_GAIN_MAX_DB).optional(),
   }).strict()).min(1).max(400),
   lines: z.array(z.object({
     line_id: z.string().regex(/^L\d{3}$/),
@@ -985,6 +1020,17 @@ export const EditPlanSchema = z.object({
   }).strict()).max(EDIT_PLAN_TEXTS_MAX),
   /** A mood for the music (the production's track is used; kept for later). */
   music_mood: z.string().max(40).nullable(),
+  /**
+   * Feedback-vps §4.3: the music's volume line, each point anchored on a shot like a text (`at_order`, `offset_s` into
+   * it), the fit puts it at that shot's place in the video (`TimelineMusicSchema.envelope`).
+   */
+  music_envelope: z.array(z.object({
+    at_order: z.number().int().min(1),
+    offset_s: z.number().min(0),
+    gain_db: z.number().min(-60).max(0),
+  }).strict()).min(1).max(MUSIC_ENVELOPE_MAX_POINTS).optional(),
+  /** Feedback-vps §4.3: the clips' own sound brought to one level (`source_audio.even`). */
+  source_even: z.boolean().optional(),
 }).strict();
 export type EditPlan = z.infer<typeof EditPlanSchema>;
 

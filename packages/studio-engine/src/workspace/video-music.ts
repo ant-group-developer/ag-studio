@@ -17,7 +17,9 @@ export async function videoMusicToTimeline(db: StudioDb, o: { workspaceDir: stri
   const latest = await latestVideoRevision(db, o.videoId);
   if (!latest) return null;
   const m = await musicForVideo(db, o.projectId, o.videoId);
-  if (!m || JSON.stringify(latest.data.music) === JSON.stringify(m.music)) return null;
+  // the volume line is the timeline's own: it stays whatever the music is
+  const playing = latest.data.music ? { track: latest.data.music.track, gain_db: latest.data.music.gain_db, ducking: latest.data.music.ducking } : null;
+  if (!m || JSON.stringify(playing) === JSON.stringify(m.music)) return null;
   const next = applyTimelineOps(latest.data, [{ op: "setMusic", music: m.music }], latest.data.assets);
   const { revision } = await saveVideoRevision(db, o.videoId, { baseRevision: latest.revision, data: next, authorId: o.authorId, label: "music" });
   await writeTimelineSnapshot(db, o.workspaceDir, o.projectId, o.videoId, o.now);

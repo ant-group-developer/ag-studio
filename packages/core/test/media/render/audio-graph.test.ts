@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CompositionSchema, newId, type Composition } from "@harness/contracts";
-import { audioGraph, peakLimit, type AudioGraphInput, type LoudnormMeasured } from "../../../src/media/render/audio-graph.js";
+import { audioGraph, envelopeDbExpr, peakLimit, type AudioGraphInput, type LoudnormMeasured } from "../../../src/media/render/audio-graph.js";
 
 const SRC_A = "src_01JAAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -156,6 +156,27 @@ describe("audioGraph", () => {
     expect(run({ composition, limit: 0.251 }).filter).toContain("[mix]alimiter=limit=0.251:attack=5:release=50:level=false[limited];[limited]loudnorm=I=-14:TP=-1:LRA=11:print_format=json[aout]");
     expect(run({ composition, limit: 0.251, loudnorm: measured }).filter).toContain("[limited]loudnorm=I=-14:TP=-1:LRA=11:measured_I=-24.5:measured_TP=-11.9:");
     expect(run({ composition, loudnorm: measured }).filter).not.toContain("alimiter");
+  });
+
+  it("feedback-vps §4.3: a segment's gain and its even-level correction add up in one volume on its own sound", () => {
+    const composition = baseComposition({ voice: "original", segments: [{ ...segment(0, 0, 5), gain_db: 6 }, segment(1, 5, 10)] });
+    const plain = run({ composition }).filter;
+    expect(plain).toContain("apad=whole_dur=5,volume=6dB,afade=t=in");
+    expect(plain.match(/volume=[-\d.]+dB,afade/g)).toHaveLength(1);
+    const evened = run({ composition, evenGainDb: new Map([[0, -2.5], [1, 4]]) }).filter;
+    expect(evened).toContain("apad=whole_dur=5,volume=3.5dB,afade");
+    expect(evened).toContain("apad=whole_dur=5,volume=4dB,afade");
+    // a tts episode does not play the footage's sound at all
+    expect(run({ composition: { ...composition, voice: "tts" } }).filter).not.toContain("volume=6dB");
+  });
+
+  it("feedback-vps §4.3: a music volume line is a per-frame volume of t, linear between points", () => {
+    expect(envelopeDbExpr([{ at: 4, gain_db: -10 }, { at: 0, gain_db: -30 }])).toBe("if(lt(t,0),-30,if(lt(t,4),-30+(20)*(t-0)/4,-10))");
+    expect(envelopeDbExpr([{ at: 2, gain_db: -20 }])).toBe("if(lt(t,2),-20,-20)");
+    const composition = baseComposition({ voice: "none", music: musicFixture({ envelope: [{ at: 0, gain_db: -30 }, { at: 4, gain_db: -10 }] }) });
+    const { filter } = run({ composition, musicIndex: 2 });
+    expect(filter).toContain("asetpts=PTS-STARTPTS,volume=volume='pow(10,(if(lt(t,0),-30,if(lt(t,4),-30+(20)*(t-0)/4,-10)))/20)':eval=frame[music]");
+    expect(filter).not.toContain("volume=-18dB[music]");
   });
 
   it("voice: tts, 0 narration lines -> anullsrc", () => {

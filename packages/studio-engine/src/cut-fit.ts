@@ -114,6 +114,7 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
       line_id: lineAt.get(v.order) ?? null, transition_out: transition,
       // a piece the fit appended to cover the narration comes from no plan shot: it keeps its sound
       ...(p.clipAudio && origin?.shot.source_audio === "mute" ? { muted: true } : {}),
+      ...(origin?.shot.gain_db ? { gain_db: origin.shot.gain_db } : {}),
     };
   });
 
@@ -124,6 +125,14 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
     const start = first === undefined ? undefined : startOf.get(first);
     return start === undefined ? [] : [{ text_id: t.text_id, kind: t.kind, text: t.text, start: r3(start + t.offset_s), duration: t.duration, position: t.position }];
   });
+
+  // the music's volume line: each point where its shot starts in the fitted video, plus its offset
+  const envelope = (plan.music_envelope ?? []).flatMap((pt) => {
+    const first = fitted.orderMap.get(pt.at_order)?.[0];
+    const start = first === undefined ? undefined : startOf.get(first);
+    return start === undefined ? [] : [{ at: r3(start + pt.offset_s), gain_db: pt.gain_db }];
+  }).sort((a, b) => a.at - b.at);
+  const music = p.music && envelope.length ? { ...p.music, envelope } : p.music;
 
   const used = new Set(clips.map((c) => c.asset_id));
   const timeline = TimelineV4Schema.parse({
@@ -139,8 +148,8 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
       })),
     },
     captions: { mode: narrated ? "burn-in" : "none" },
-    music: p.music,
-    source_audio: { muted: false },
+    music,
+    source_audio: { muted: false, ...(plan.source_even ? { even: true } : {}) },
     assets: Object.fromEntries(Object.entries(p.assets).filter(([id]) => used.has(id))),
     alternates: [],
     ...(p.textStyle ? { text_style: p.textStyle } : {}),

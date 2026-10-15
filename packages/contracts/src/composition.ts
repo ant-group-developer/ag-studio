@@ -210,6 +210,8 @@ export const CompositionSchema = z.object({
     end: z.number(),
     fit: z.enum(["scale_pad", "scale_crop"]),
     has_audio: z.boolean(),
+    /** Feedback-vps §4.3: this segment's own sound louder or quieter, dB. Absent = 0. Needs render level 5. */
+    gain_db: z.number().optional(),
     transition_out: z.object({
       kind: z.enum(TRANSITION_KINDS),
       seconds: z.number(),
@@ -231,6 +233,8 @@ export const CompositionSchema = z.object({
     fade_in: z.number(),
     fade_out: z.number(),
     cues: z.array(z.object({ start: z.number(), end: z.number(), gain_db: z.number() }).strict()),
+    /** Feedback-vps §4.3: the music's gain along the episode, linear between points (absent = `cues[0].gain_db`). Level 5. */
+    envelope: z.array(z.object({ at: z.number(), gain_db: z.number() }).strict()).optional(),
     duck: z.object({
       /** `false`: the music plays at its own gain, never pushed down under the voice. Absent = `true` (every
        * composition before it had this key ducked); Studio writes the key only when ducking is off, so a render
@@ -264,6 +268,11 @@ export const CompositionSchema = z.object({
     }).strict()),
   }).strict(),
   text_dropped: z.array(z.object({ id: z.string(), reason: z.string() }).strict()).default([]),
+  /**
+   * Feedback-vps §4.3: the render worker measures each segment's own sound (ebur128 of its mezzanine, cached with it) and
+   * brings it to the median of them, by at most ±12 dB, before `gain_db`. Absent = as recorded. Needs render level 5.
+   */
+  source_even: z.boolean().optional(),
   warnings: z.array(z.string()),
 }).strict();
 

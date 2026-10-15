@@ -744,6 +744,61 @@ describe.skipIf(!hasFfmpeg())("renderComposition (needs ffmpeg)", () => {
     expect(res.report.music).toMatchObject({ track_id: "trk", loop: true });
   }, 240_000);
 
+  it("feedback-vps §4.3: even source sound brings a quiet clip up to a loud one, measured once and kept in the cache", async () => {
+    const srcDir = tempDir("render-src-ev-");
+    const loud = join(srcDir, "loud.mp4");
+    const quiet = join(srcDir, "quiet.mp4");
+    for (const [path, db] of [[loud, 0], [quiet, -20]] as const) {
+      run(ffmpegPath(), ["-hide_banner", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+        "-t", "2", "-af", `volume=${db}dB`, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", path]);
+    }
+    const comp = (even: boolean, gain?: number) => composition({
+      output: { width: 320, height: 180, fps: 25, codec: "h264" },
+      total_seconds: 4,
+      voice: "original",
+      segments: [
+        segment({ order: 0, source_id: SRC_A, source_path: loud, in: 0, out: 2, start: 0, end: 2, has_audio: true }),
+        { ...segment({ order: 1, source_id: SRC_B, source_path: quiet, in: 0, out: 2, start: 2, end: 4, has_audio: true }), ...(gain !== undefined ? { gain_db: gain } : {}) },
+      ],
+      ...(even ? { source_even: true } : {}),
+    });
+    const checksums = new Map([[SRC_A, "sha256:" + "1".repeat(64)], [SRC_B, "sha256:" + "2".repeat(64)]]);
+    const cacheDir = join(tempDir("render-cache-ev-"), "mezz");
+    const gap = async (c: Composition) => {
+      const res = await renderComposition(deps(cacheDir), input({ composition: c, outDir: join(tempDir("render-out-ev-"), "out"), sourceChecksums: checksums }));
+      return maxVolumeDb(res.episodePath, 0.5, 1)! - maxVolumeDb(res.episodePath, 2.5, 1)!;
+    };
+    expect(await gap(comp(false))).toBeGreaterThan(15);
+    expect(Math.abs(await gap(comp(true)))).toBeLessThan(2);
+    // the clip's own gain on top of the even level
+    expect(await gap(comp(true, -6))).toBeGreaterThan(4);
+    const sidecars = readdirSync(cacheDir).filter((n) => n.endsWith(".json")).map((n) => JSON.parse(readFileSync(join(cacheDir, n), "utf8")) as { lufs?: number | null });
+    expect(sidecars.filter((s) => typeof s.lufs === "number")).toHaveLength(2);
+  }, 240_000);
+
+  it("feedback-vps §4.3: the music follows its volume line", async () => {
+    const srcDir = tempDir("render-src-env-");
+    const a = join(srcDir, "a.mp4");
+    makeClip(a, 4, false);
+    const music = join(srcDir, "music.wav");
+    makeTone(music, 6, 220);
+    const comp = composition({
+      output: { width: 320, height: 180, fps: 25, codec: "h264" },
+      total_seconds: 6,
+      voice: "none",
+      segments: [segment({ order: 0, source_id: SRC_A, source_path: a, in: 0, out: 4, start: 0, end: 4, has_audio: false }),
+        segment({ order: 1, source_id: SRC_A, source_path: a, in: 0, out: 2, start: 4, end: 6, has_audio: false })],
+      music: {
+        track_id: "trk", path: music, loop: true, fade_in: 0.1, fade_out: 0.1,
+        cues: [{ start: 0, end: 6, gain_db: -18 }],
+        envelope: [{ at: 0, gain_db: -40 }, { at: 2.5, gain_db: -40 }, { at: 3, gain_db: -10 }],
+        duck: { enabled: false, windows: [], gain_db: -12, attack_ms: 150, release_ms: 600 },
+      },
+    });
+    const res = await renderComposition(deps(join(tempDir("render-cache-env-"), "mezz")), input({ composition: comp, outDir: join(tempDir("render-out-env-"), "out"), sourceChecksums: new Map([[SRC_A, "sha256:" + "3".repeat(64)]]) }));
+    expect(maxVolumeDb(res.episodePath, 4, 1)! - maxVolumeDb(res.episodePath, 1, 1)!).toBeGreaterThan(25);
+  }, 240_000);
+
   it("a segment whose source_id has no checksum is a CONFIG_INVALID, before any ffmpeg runs", async () => {
     const srcDir = tempDir("render-src-e-");
     const a = join(srcDir, "a.mp4");

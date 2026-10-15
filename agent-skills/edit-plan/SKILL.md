@@ -34,6 +34,12 @@ description: Viết kế hoạch dựng của một video — thứ tự shot, �
   cho vừa lời ("hình theo lời"), nên đừng cố khớp giây.
 - `transition`: `cut` hoặc `dissolve` (sang shot sau). `source_audio: "mute"` khi tiếng gốc làm phiền (thông báo, nhạc,
   người lạ nói).
+- Âm lượng (tuỳ chọn): `gain_db` của shot (-30..20 dB) cho tiếng gốc to/nhỏ hơn (người nói nhỏ: +6; phố ồn: -8);
+  `source_even: true` để máy render đo tiếng gốc từng clip và kéo về cùng một mức (bù tối đa ±12 dB, trước `gain_db`);
+  `music_envelope`: đường âm lượng nhạc, mỗi điểm `{ "at_order", "offset_s", "gain_db" (-60..0) }` neo vào shot như chữ —
+  nhạc đi theo đường thẳng nối các điểm (trước điểm đầu giữ mức điểm đầu, sau điểm cuối giữ mức điểm cuối). Ví dụ nhạc nhỏ
+  khi có người nói ở shot 5 rồi lên lại ở shot 9:
+  `[{"at_order":5,"offset_s":0,"gain_db":-18},{"at_order":5,"offset_s":0.5,"gain_db":-32},{"at_order":9,"offset_s":0,"gain_db":-32},{"at_order":9,"offset_s":1,"gain_db":-18}]`.
 - `texts` (tối đa 200): `kind` title | callout | lower_third; tối đa 120 ký tự (dài quá chiều ngang thì tự xuống dòng);
   `at_order` là shot neo, `offset_s` tính từ đầu shot đó, `duration` 0.5–600 giây (chữ có thể nằm suốt một đoạn dài);
   `position` top_left | top_center | top_right | center | bottom_left | bottom_center | bottom_right; `size` s | m | l
