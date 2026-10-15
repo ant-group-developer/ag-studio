@@ -11,8 +11,10 @@
  * ag-go said); `--clamp` then applies the render worker's clamp of `segment.out` to the probed file length before
  * rendering. The composition comes from `timelineToComposition` and is rendered by `renderComposition` at 640x360
  * (preview tier, cpu), text off. Prints the length of the video and audio streams (and how far the mezzanines' own
- * video streams fall short of their segments) and exits 1 when either stream is more than 0.1 s off
- * `total_seconds`. Synthetic tones have no loudness range, so `loudnorm_not_linear` is expected here.
+ * video streams fall short of their segments), inspects the file as the render worker does (`inspectRender`:
+ * `<out>/inspect/inspect.json` and contact sheets), and exits 1 when either stream is more than 0.1 s off
+ * `total_seconds` or the picture freezes up to the end (a test pattern never stops moving). Synthetic tones have no
+ * loudness range, so `loudnorm_not_linear` is expected here.
  *
  * Needs ffmpeg/ffprobe (`FFMPEG_PATH`/`FFPROBE_PATH` or on PATH) and built packages (`pnpm build`).
  */
@@ -20,7 +22,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { renderComposition, timelineToComposition } from "@harness/core";
+import { inspectRender, renderComposition, timelineToComposition } from "@harness/core";
 
 const TOLERANCE_S = 0.1;
 const W = 640;
@@ -77,14 +79,6 @@ function streamSeconds(path) {
     return s?.duration !== undefined ? Number(s.duration) : null;
   };
   return { format: Number(out.format?.duration ?? NaN), video: pick("video"), audio: pick("audio") };
-}
-
-/** The last moment the picture still changes (freezedetect over the last 60 s), or `null` when it never froze. */
-function freezeStart(path, total) {
-  const from = Math.max(0, total - 60);
-  const r = spawnSync(ffmpeg, ["-hide_banner", "-ss", String(from), "-i", path, "-vf", "freezedetect=n=0.001:d=2", "-an", "-f", "null", "-"], { encoding: "utf8", windowsHide: true });
-  const starts = [...(r.stderr ?? "").matchAll(/freeze_start: ([\d.]+)/g)].map((m) => from + Number(m[1]));
-  return starts.length > 0 ? starts[starts.length - 1] : null;
 }
 
 async function main() {
@@ -189,7 +183,12 @@ async function main() {
   }
   const expected = composition.total_seconds;
   const got = streamSeconds(episodePath);
-  const freeze = got.video !== null ? freezeStart(episodePath, got.video) : null;
+  const t1 = Date.now();
+  const { inspection, path: inspectPath } = await inspectRender(
+    { ffmpeg, clock: { now: () => new Date().toISOString() } },
+    { episodePath, composition, outDir: join(out, "inspect"), hasAudio: got.audio !== null, videoSeconds: got.video, audioSeconds: got.audio, timeoutSeconds: 3600 },
+  );
+  const freeze = inspection.issues.find((i) => i.code === "freeze" && i.to_end)?.start ?? null;
   const dissolves = composition.segments.filter((s) => s.transition_out.kind === "dissolve" && s.transition_out.tail_available).length;
   const result = {
     video: timeline.episode_id,
@@ -206,7 +205,11 @@ async function main() {
     audio_seconds: got.audio,
     freeze_from: freeze,
     warnings: report.warnings,
-    render_seconds: Math.round((Date.now() - t0) / 1000),
+    issues: inspection.issues,
+    sheets: inspection.sheets.length,
+    render_seconds: Math.round((t1 - t0) / 1000),
+    inspect_seconds: Math.round((Date.now() - t1) / 1000),
+    inspect: inspectPath,
     file: episodePath,
   };
   writeFileSync(join(out, "result.json"), JSON.stringify({ ...result, clamped_segments: clamped }, null, 2));
@@ -218,7 +221,11 @@ async function main() {
     console.error(`MISMATCH: video ${got.video} s, audio ${got.audio} s, timeline ${expected} s`);
     process.exit(1);
   }
-  console.error(`OK: both streams within ${TOLERANCE_S} s of ${expected} s`);
+  if (freeze !== null) {
+    console.error(`FROZEN: the picture stops moving at ${freeze} s and never moves again`);
+    process.exit(1);
+  }
+  console.error(`OK: both streams within ${TOLERANCE_S} s of ${expected} s, no freeze up to the end`);
 }
 
 main().catch((e) => {

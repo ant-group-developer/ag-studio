@@ -147,6 +147,8 @@ interface RunOptions {
   onStdoutLine?: ((line: string) => void) | undefined;
   /** Working directory of the child (the final passes name their mezzanines relative to it). */
   cwd?: string | undefined;
+  /** Every complete stderr line, all of it (the error tail keeps only the last `STDERR_TAIL` characters). */
+  onStderrLine?: ((line: string) => void) | undefined;
 }
 
 function runProcess(spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, label: string, captureStdout: boolean, opts: RunOptions = {}): Promise<ProcResult> {
@@ -178,8 +180,18 @@ function runProcess(spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, la
 
     child.stderr?.setEncoding("utf8");
     child.stdout?.setEncoding("utf8");
+    let errBuf = "";
     child.stderr?.on("data", (chunk: string) => {
       stderr = (stderr + chunk).slice(-STDERR_TAIL);
+      if (opts.onStderrLine) {
+        errBuf += chunk;
+        let nl = errBuf.search(/\r?\n|\r/);
+        while (nl >= 0) {
+          opts.onStderrLine(errBuf.slice(0, nl).trim());
+          errBuf = errBuf.slice(nl).replace(/^(\r\n|\n|\r)/, "");
+          nl = errBuf.search(/\r?\n|\r/);
+        }
+      }
     });
     child.stdout?.on("data", (chunk: string) => {
       if (captureStdout) stdout = (stdout + chunk).slice(-STDERR_TAIL);
@@ -204,6 +216,7 @@ function runProcess(spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, la
 
     child.on("error", (e) => settle(new HarnessError("CONFIG_INVALID", `ffmpeg not available: cannot run "${bin}": ${e.message}`, { label, ffmpeg: bin })));
     child.on("close", (code) => {
+      if (opts.onStderrLine && errBuf.trim() !== "") opts.onStderrLine(errBuf.trim());
       // `timedOut` first: a killed process also reports a non-zero/null exit, and "timed out" is the useful
       // message of the two.
       if (aborted) {
@@ -226,6 +239,17 @@ function runProcess(spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, la
       resolve({ stdout, stderr });
     });
   });
+}
+
+/**
+ * One ffmpeg pass outside `renderComposition` (the inspection of a finished render, `inspect.ts`), with the same
+ * error handling: a binary that will not start is `CONFIG_INVALID`, a failing or timed-out ffmpeg `IO_ERROR`.
+ */
+export async function runFfmpegPass(
+  spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, label: string,
+  opts: { signal?: AbortSignal | undefined; cwd?: string | undefined; onStderrLine?: ((line: string) => void) | undefined } = {},
+): Promise<void> {
+  await runProcess(spawnFn, argv, timeoutSeconds, label, false, opts);
 }
 
 /**

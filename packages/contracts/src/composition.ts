@@ -292,7 +292,64 @@ export const RenderReportSchema = z.object({
   ffmpeg_version: z.string(),
 }).strict();
 
-export type Overlays = z.infer<typeof OverlaysSchema>;
+const inspectSpanSchema = z.object({ start: z.number(), end: z.number() });
+
+/** What the inspection of a finished render can find (`inspectionIssues` in `@harness/core`). */
+export const RENDER_INSPECT_ISSUE_CODES = ["duration", "freeze", "black", "silence", "clip_loudness"] as const;
+export type RenderInspectIssueCode = (typeof RENDER_INSPECT_ISSUE_CODES)[number];
+
+export const RenderInspectIssueSchema = z.object({
+  /** One of `RENDER_INSPECT_ISSUE_CODES`; a reader skips a code it does not know (a newer render worker). */
+  code: z.string(),
+  severity: z.enum(["error", "warning"]),
+  /** Seconds on the episode. */
+  start: z.number().optional(),
+  end: z.number().optional(),
+  /** The composition segment it is in (`segments[].order`). */
+  order: z.number().int().optional(),
+  /** `duration`: the composition's length and the stream furthest from it. */
+  expected_s: z.number().optional(),
+  actual_s: z.number().optional(),
+  /** `clip_loudness`: the segment against the median of the segments, in dB. */
+  delta_db: z.number().optional(),
+  /** `freeze`: the picture never moves again. */
+  to_end: z.boolean().optional(),
+});
+export type RenderInspectIssue = z.infer<typeof RenderInspectIssueSchema>;
+
+/**
+ * `inspect.json`: the render worker's check of a file it rendered (plan 2026-10-15 feedback-vps §2.1) -- one ffmpeg pass
+ * of `freezedetect`, `blackdetect`, `silencedetect` and `ebur128`, read per composition segment, and contact sheets
+ * of the picture. Not strict: Studio reads what a newer worker wrote.
+ */
+export const RenderInspectionSchema = z.object({
+  schema_version: schemaVersion("render-inspect"),
+  /** The composition's `total_seconds`, and each stream of the file as measured. */
+  expected_seconds: z.number(),
+  video_seconds: z.number().nullable(),
+  audio_seconds: z.number().nullable(),
+  freezes: z.array(inspectSpanSchema),
+  blacks: z.array(inspectSpanSchema),
+  silences: z.array(inspectSpanSchema),
+  /** Momentary loudness gated at -70 LUFS over each segment's window; null: silent or no audio. */
+  segments: z.array(z.object({ order: z.number().int(), start: z.number(), end: z.number(), lufs: z.number().nullable() })),
+  loudness_median_lufs: z.number().nullable(),
+  /** `sheet-NN.jpg`: `frames` tiles from `from_s`, one every `every_s` seconds, `columns` x `rows`, row by row. */
+  sheets: z.array(z.object({
+    file: z.string(),
+    from_s: z.number(),
+    every_s: z.number(),
+    columns: z.number().int(),
+    rows: z.number().int(),
+    frames: z.number().int(),
+    tile_width: z.number().int(),
+  })),
+  issues: z.array(RenderInspectIssueSchema),
+  inspect_seconds: z.number(),
+});
+export type RenderInspection = z.infer<typeof RenderInspectionSchema>;
+
+export type Overlays =z.infer<typeof OverlaysSchema>;
 export type BrandProfile = z.infer<typeof BrandProfileSchema>;
 export type MusicTrack = z.infer<typeof MusicTrackSchema>;
 export type CaptionCue = z.infer<typeof CaptionCueSchema>;

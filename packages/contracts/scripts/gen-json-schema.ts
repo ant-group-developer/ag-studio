@@ -44,7 +44,7 @@ export const ALL_SCHEMAS: Record<string, ZodTypeAny> = {
   voice: ME.VoiceProfileSchema,
   overlays: CM.OverlaysSchema, brand: CM.BrandProfileSchema, "music-track": CM.MusicTrackSchema,
   "caption-cue": CM.CaptionCueSchema, "text-event": CM.TextEventSchema, composition: CM.CompositionSchema,
-  "render-report": CM.RenderReportSchema,
+  "render-report": CM.RenderReportSchema, "render-inspect": CM.RenderInspectionSchema,
   "studio-brief": S.StudioBriefSchema, "studio-research": S.StudioResearchSchema, "studio-trend-report": S.TrendReportSchema,
   "studio-catalog": S.StudioCatalogSchema, "studio-series-plan": S.SeriesPlanSchema, "studio-episodes": S.SpawnedEpisodesSchema,
   "studio-episode": S.StudioEpisodeSchema, "studio-timeline-v3": S.TimelineV3Schema, "studio-timeline-v4": S.TimelineV4Schema, "studio-cut-sources": SX.CutSourcesSchema, "studio-cut-proxies": SX.CutProxySetSchema, "studio-cut-watch": SX.CutWatchSchema, "studio-edit-plan": S.EditPlanSchema, "studio-youtube-kit": S.YoutubeKitSchema,
