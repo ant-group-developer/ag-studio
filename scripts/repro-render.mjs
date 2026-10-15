@@ -4,13 +4,16 @@
  * file is as long as the timeline says (plan 2026-10-15 feedback-vps, task 1.1).
  *
  *   node scripts/repro-render.mjs <video dir> [--out <dir>] [--src-fps <rate>] [--shorten <s>] [--clamp] [--keep]
+ *                                 [--texts [--fonts <dir>]] [--frames <s,s,…>]
  *
  * `<video dir>` holds `timeline.json` (a saved revision `{revision, timeline}` or a bare timeline) and
  * `sources/index.json`. Every asset becomes a `testsrc2` + `sine` file at `--src-fps` (default 30; cameras often
  * record 30000/1001) exactly `duration_s` long (minus `--shorten` seconds, to play a source file shorter than
  * ag-go said); `--clamp` then applies the render worker's clamp of `segment.out` to the probed file length before
  * rendering. The composition comes from `timelineToComposition` and is rendered by `renderComposition` at 640x360
- * (preview tier, cpu), text off. Prints the length of the video and audio streams (and how far the mezzanines' own
+ * (preview tier, cpu), text off unless `--texts`: then the texts and subtitles are burnt in as the render worker does
+ * (`studioOverlayAss` with script fonts, libass `fontsdir` = `--fonts`, e.g. a folder with Arial and the worker's
+ * `fonts/`), and `--frames` cuts those seconds to `<out>/frames/<s>.jpg` to look at. Prints the length of the video and audio streams (and how far the mezzanines' own
  * video streams fall short of their segments), inspects the file as the render worker does (`inspectRender`:
  * `<out>/inspect/inspect.json` and contact sheets), and exits 1 when either stream is more than 0.1 s off
  * `total_seconds` or the picture freezes up to the end (a test pattern never stops moving). Synthetic tones have no
@@ -22,14 +25,14 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { inspectRender, renderComposition, timelineToComposition } from "@harness/core";
+import { inspectRender, renderComposition, studioOverlayAss, timelineToComposition } from "@harness/core";
 
 const TOLERANCE_S = 0.1;
 const W = 640;
 const H = 360;
 
 function parseArgs(argv) {
-  const opts = { dir: null, out: null, srcFps: "30", shorten: 0, clamp: false, keep: false };
+  const opts = { dir: null, out: null, srcFps: "30", shorten: 0, clamp: false, keep: false, texts: false, fonts: null, frames: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--out") opts.out = argv[++i];
@@ -37,6 +40,9 @@ function parseArgs(argv) {
     else if (a === "--shorten") opts.shorten = Number(argv[++i]);
     else if (a === "--clamp") opts.clamp = true;
     else if (a === "--keep") opts.keep = true;
+    else if (a === "--texts") opts.texts = true;
+    else if (a === "--fonts") opts.fonts = resolve(argv[++i]);
+    else if (a === "--frames") opts.frames = argv[++i].split(",").map(Number);
     else if (!a.startsWith("--") && opts.dir === null) opts.dir = a;
     else throw new Error(`unknown argument ${a}`);
   }
@@ -143,6 +149,15 @@ async function main() {
     composition.music.path = path;
   }
 
+  let assPath = null;
+  if (opts.texts) {
+    const ass = studioOverlayAss(composition, { scriptFonts: true });
+    if (ass !== null) {
+      assPath = join(out, "overlay.ass");
+      writeFileSync(assPath, ass, "utf8");
+    }
+  }
+
   const sourceChecksums = new Map(composition.segments.map((s) => [s.source_id, `fake:${basename(s.source_path)}`]));
   const renderDir = join(out, "render");
   rmSync(renderDir, { recursive: true, force: true });
@@ -159,8 +174,8 @@ async function main() {
     },
     {
       composition,
-      assPath: null,
-      fontsDir: null,
+      assPath,
+      fontsDir: opts.fonts,
       outDir: renderDir,
       encoderCfg: "cpu",
       tier: "preview",
@@ -188,6 +203,10 @@ async function main() {
     { ffmpeg, clock: { now: () => new Date().toISOString() } },
     { episodePath, composition, outDir: join(out, "inspect"), hasAudio: got.audio !== null, videoSeconds: got.video, audioSeconds: got.audio, timeoutSeconds: 3600 },
   );
+  if (opts.frames.length > 0) mkdirSync(join(out, "frames"), { recursive: true });
+  for (const s of opts.frames) {
+    run(ffmpeg, ["-hide_banner", "-y", "-ss", String(s), "-i", episodePath, "-frames:v", "1", "-q:v", "3", join(out, "frames", `${s}.jpg`)]);
+  }
   const freeze = inspection.issues.find((i) => i.code === "freeze" && i.to_end)?.start ?? null;
   const dissolves = composition.segments.filter((s) => s.transition_out.kind === "dissolve" && s.transition_out.tail_available).length;
   const result = {
@@ -206,6 +225,7 @@ async function main() {
     freeze_from: freeze,
     warnings: report.warnings,
     issues: inspection.issues,
+    segment_lufs: inspection.segments.map((s) => [s.order, s.lufs]),
     sheets: inspection.sheets.length,
     render_seconds: Math.round((t1 - t0) / 1000),
     inspect_seconds: Math.round((Date.now() - t1) / 1000),
