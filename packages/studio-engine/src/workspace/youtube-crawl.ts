@@ -40,6 +40,14 @@ interface ApiChannel {
 
 class QuotaExceededError extends Error {}
 
+/** A YouTube Data API answer other than 2xx, with its status and the API's `reason` ("" when it gave none). */
+class YoutubeApiError extends Error {
+  constructor(message: string, readonly status: number, readonly reason: string) {
+    super(message);
+    this.name = "YoutubeApiError";
+  }
+}
+
 /** Videos per channel a `top_channels` crawl shows. */
 export const CHANNEL_TOP_VIDEOS = 5;
 
@@ -210,8 +218,17 @@ export class YoutubeCrawler {
     return ids.slice(0, max);
   }
 
+  /** The playlist's video ids; none when YouTube has no such playlist (a channel with no public uploads answers
+   * 404 `playlistNotFound` for its uploads list: that channel stays in the table with no videos, it does not fail the
+   * whole `youtube_top_channels`). */
   private async apiPlaylistIds(playlistId: string, max: number, signal?: AbortSignal): Promise<string[]> {
-    const res = await this.api<{ items?: { contentDetails?: { videoId?: string } }[] }>("playlistItems", { part: "contentDetails", playlistId, maxResults: String(Math.min(50, max)) }, { signal });
+    let res: { items?: { contentDetails?: { videoId?: string } }[] };
+    try {
+      res = await this.api("playlistItems", { part: "contentDetails", playlistId, maxResults: String(Math.min(50, max)) }, { signal });
+    } catch (e) {
+      if (e instanceof YoutubeApiError && e.status === 404 && e.reason === "playlistNotFound") return [];
+      throw e;
+    }
     return (res.items ?? []).map((i) => i.contentDetails?.videoId).filter((x): x is string => !!x);
   }
 
@@ -264,7 +281,7 @@ export class YoutubeCrawler {
       try { reason = (JSON.parse(text) as { error?: { errors?: { reason?: string }[] } }).error?.errors?.[0]?.reason ?? ""; } catch { /* not JSON */ }
       if (res.status === 403 && (reason === "quotaExceeded" || reason === "dailyLimitExceeded")) throw new QuotaExceededError("Hết hạn mức YouTube Data API trong ngày");
       if (res.status === 400 && reason === "keyInvalid") throw new Error("YOUTUBE_API_KEY không hợp lệ");
-      throw new Error(`YouTube ${resource} trả ${res.status}${reason ? ` (${reason})` : ""}`);
+      throw new YoutubeApiError(`YouTube ${resource} trả ${res.status}${reason ? ` (${reason})` : ""}`, res.status, reason);
     }
     if (cacheKey && this.o.cache) await this.o.cache.set(cacheKey, text, this.now().toISOString());
     return JSON.parse(text) as T;

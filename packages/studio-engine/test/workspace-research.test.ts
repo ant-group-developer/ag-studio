@@ -100,6 +100,32 @@ describe("YouTube crawl with the Data API", () => {
     expect(yt.calls.find((x) => x.resource === "search")!.query.get("type")).toBe("channel");
   });
 
+  it("top channels: a channel whose uploads list YouTube cannot find stays, with no videos", async () => {
+    const yt = fakeYoutube({
+      search: () => ({ body: { items: [{ id: { channelId: "UCa" } }, { id: { channelId: "UCb" } }] } }),
+      channels: () => ({ body: { items: [
+        { id: "UCa", snippet: { title: "Kênh A" }, statistics: { subscriberCount: "1000" }, contentDetails: { relatedPlaylists: { uploads: "UUa" } } },
+        { id: "UCb", snippet: { title: "Kênh B" }, statistics: { subscriberCount: "5000" }, contentDetails: { relatedPlaylists: { uploads: "UUb" } } },
+      ] } }),
+      playlistItems: (q) => (q.get("playlistId") === "UUb"
+        ? { status: 404, body: { error: { code: 404, errors: [{ reason: "playlistNotFound" }] } } }
+        : { body: { items: [{ contentDetails: { videoId: "UUa-1" } }] } }),
+      videos: (q) => ({ body: { items: q.get("id") ? q.get("id")!.split(",").map((id) => video(id, { views: 100 })) : [] } }),
+    });
+    const doc = await new YoutubeCrawler({ apiKey: "k", fetch: yt.impl, now: () => NOW }).crawl(CrawlRequestSchema.parse({ kind: "top_channels", q: "du lịch", max: 2 }));
+    expect(doc.channels.map((c) => [c.title, c.videos.map((v) => v.video_id)])).toEqual([["Kênh B", []], ["Kênh A", ["UUa-1"]]]);
+  });
+
+  it("top channels: any other error of YouTube still fails the crawl", async () => {
+    const yt = fakeYoutube({
+      search: () => ({ body: { items: [{ id: { channelId: "UCa" } }] } }),
+      channels: () => ({ body: { items: [{ id: "UCa", snippet: { title: "Kênh A" }, contentDetails: { relatedPlaylists: { uploads: "UUa" } } }] } }),
+      playlistItems: () => ({ status: 500, body: { error: { errors: [{ reason: "backendError" }] } } }),
+    });
+    await expect(new YoutubeCrawler({ apiKey: "k", fetch: yt.impl, now: () => NOW }).crawl(CrawlRequestSchema.parse({ kind: "top_channels", q: "du lịch", max: 1 })))
+      .rejects.toThrow("YouTube playlistItems trả 500 (backendError)");
+  });
+
   it("channel top: the channel's most viewed videos of all time", async () => {
     const yt = fakeYoutube({
       channels: (q) => ({ body: { items: [{ id: "UCx", snippet: { title: "Kênh X" }, statistics: { subscriberCount: "42" } }].filter(() => q.get("forHandle") === "@kenhx") } }),
