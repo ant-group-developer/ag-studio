@@ -44,7 +44,7 @@ export const ACTION_PARAMS = {
 
 export interface ActionRecord {
   id: string; project_id: string; video_id: string | null; thread_id: string; message_id: string | null; kind: ActionKind; title: string;
-  summary: string; params: string; revision: number | null; status: ActionStatus; decided_by: string | null; decided_at: string | null;
+  summary: string; params: Record<string, unknown>; revision: number | null; status: ActionStatus; decided_by: string | null; decided_at: string | null;
   job_id: string | null; error: string | null; created_by: string; created_at: string; expires_at: string;
 }
 
@@ -57,17 +57,17 @@ export interface ActionView {
 export function actionView(a: ActionRecord): ActionView {
   return {
     id: a.id, projectId: a.project_id, videoId: a.video_id, threadId: a.thread_id, messageId: a.message_id, kind: a.kind, title: a.title,
-    summary: a.summary, params: JSON.parse(a.params) as unknown, revision: a.revision, status: a.status, needs: ACTION_ROLE[a.kind],
+    summary: a.summary, params: a.params, revision: a.revision, status: a.status, needs: ACTION_ROLE[a.kind],
     decidedBy: a.decided_by, decidedAt: a.decided_at, jobId: a.job_id, error: a.error, createdAt: a.created_at, expiresAt: a.expires_at,
   };
 }
 
-export function getAction(db: StudioDb, id: string): ActionRecord | undefined {
+export async function getAction(db: StudioDb, id: string): Promise<ActionRecord | undefined> {
   return db.get<ActionRecord>("SELECT * FROM agent_actions WHERE id = ?", [id]);
 }
 
 /** Actions of a thread (or of a project), oldest first; with `open`, those still waiting for a person. */
-export function listActions(db: StudioDb, where: { threadId?: string; projectId?: string; open?: boolean }): ActionRecord[] {
+export async function listActions(db: StudioDb, where: { threadId?: string; projectId?: string; open?: boolean }): Promise<ActionRecord[]> {
   const conds: string[] = [];
   const params: string[] = [];
   if (where.threadId) { conds.push("thread_id = ?"); params.push(where.threadId); }
@@ -76,16 +76,16 @@ export function listActions(db: StudioDb, where: { threadId?: string; projectId?
   return db.all<ActionRecord>(`SELECT * FROM agent_actions ${conds.length ? `WHERE ${conds.join(" AND ")}` : ""} ORDER BY created_at, id`, params);
 }
 
-function videoOf(db: StudioDb, projectId: string, videoId: string) {
-  const v = getVideo(db, videoId);
+async function videoOf(db: StudioDb, projectId: string, videoId: string) {
+  const v = await getVideo(db, videoId);
   if (!v || v.project_id !== projectId || v.archived_at) throw new StudioRunError("invalid", `không có video ${videoId} trong dự án`, { code: "no_video" });
   return v;
 }
 
 /** A card for a person to confirm. Video actions are tied to the timeline revision they were proposed on. */
-export function proposeAction(db: StudioDb, p: {
+export async function proposeAction(db: StudioDb, p: {
   projectId: string; threadId: string; messageId: string | null; kind: ActionKind; title: string; summary: string; params: unknown; createdBy: string;
-}, now = new Date().toISOString()): ActionRecord {
+}, now = new Date().toISOString()): Promise<ActionRecord> {
   const parsed = ACTION_PARAMS[p.kind].safeParse(p.params);
   if (!parsed.success) {
     throw new StudioRunError("invalid", `tham số của ${p.kind} sai: ${parsed.error.issues.map((i) => `${i.path.join(".") || "(gốc)"}: ${i.message}`).join("; ")}`, { code: "bad_params" });
@@ -94,30 +94,28 @@ export function proposeAction(db: StudioDb, p: {
   let videoId: string | null = null;
   let revision: number | null = null;
   if ("video_id" in params) {
-    videoId = videoOf(db, p.projectId, params.video_id as string).id;
+    videoId = (await videoOf(db, p.projectId, params.video_id as string)).id;
     if (p.kind === "render_final" || p.kind === "export_premiere") {
-      const latest = latestVideoRevision(db, videoId)?.revision ?? null;
+      const latest = (await latestVideoRevision(db, videoId))?.revision ?? null;
       if (latest === null) throw new StudioRunError("invalid", "video chưa có timeline: dựng timeline trước", { code: "no_timeline" });
       revision = (params.revision as number | undefined) ?? latest;
       if (revision !== latest) throw new StudioRunError("invalid", `timeline đang ở bản ${latest}, không phải ${revision}`, { code: "stale_revision" });
       params.revision = revision;
     }
   }
-  const id = randomUUID();
-  db.run(
+  return (await db.get<ActionRecord>(
     `INSERT INTO agent_actions (id, project_id, video_id, thread_id, message_id, kind, title, summary, params, revision, status, created_by, created_at, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?)`,
-    [id, p.projectId, videoId, p.threadId, p.messageId, p.kind, p.title.trim().slice(0, 200), p.summary.trim().slice(0, 4000), JSON.stringify(params), revision,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?) RETURNING *`,
+    [randomUUID(), p.projectId, videoId, p.threadId, p.messageId, p.kind, p.title.trim().slice(0, 200), p.summary.trim().slice(0, 4000), JSON.stringify(params), revision,
       p.createdBy, now, new Date(Date.parse(now) + ACTION_TTL_MS).toISOString()],
-  );
-  return getAction(db, id)!;
+  ))!;
 }
 
 /** A card past its time, or whose video's timeline moved on, cannot be confirmed any more. */
-export function actionExpired(db: StudioDb, a: ActionRecord, now: string): string | null {
+export async function actionExpired(db: StudioDb, a: ActionRecord, now: string): Promise<string | null> {
   if (Date.parse(now) > Date.parse(a.expires_at)) return "thẻ đã quá 24 giờ";
   if (a.revision !== null && a.video_id) {
-    const latest = latestVideoRevision(db, a.video_id)?.revision ?? null;
+    const latest = (await latestVideoRevision(db, a.video_id))?.revision ?? null;
     if (latest !== a.revision) return `timeline đã đổi (bản ${latest ?? "—"}, thẻ cho bản ${a.revision})`;
   }
   return null;
@@ -130,49 +128,56 @@ const JOB_OF: Partial<Record<ActionKind, JobKind>> = { render_final: "render_fin
  * A person confirms or rejects a card. Confirmed: the work is queued (its job tells the thread when it ends and lets
  * the agent go on), or done at once (delete a video). Either way the thread gets a line saying who decided.
  */
-export function decideAction(db: StudioDb, p: { actionId: string; decision: "confirm" | "reject"; userId: string; role: ActorRole }, now = new Date().toISOString()): ActionRecord {
-  const a = getAction(db, p.actionId);
-  if (!a) throw new StudioRunError("not_found", `không có thẻ ${p.actionId}`);
-  if (a.status !== "proposed") throw new StudioRunError("conflict", "thẻ đã được quyết rồi", { code: "decided" });
-  const need = ACTION_ROLE[a.kind];
-  if (!atLeastRole(p.role, need)) throw new StudioRunError("rejected", `cần vai ${need} để quyết thẻ này`, { code: "role" });
+export async function decideAction(db: StudioDb, p: { actionId: string; decision: "confirm" | "reject"; userId: string; role: ActorRole }, now = new Date().toISOString()): Promise<ActionRecord> {
   const set = (status: ActionStatus, extra: { job_id?: string | null; error?: string | null } = {}) => db.run(
-    "UPDATE agent_actions SET status = ?, decided_by = ?, decided_at = ?, job_id = ?, error = ? WHERE id = ?",
-    [status, p.userId, now, extra.job_id ?? null, extra.error ?? null, a.id],
+    "UPDATE agent_actions SET status = ?, decided_by = ?, decided_at = ?, job_id = ?, error = ? WHERE id = ? AND status = 'proposed'",
+    [status, p.userId, now, extra.job_id ?? null, extra.error ?? null, p.actionId],
   );
-  const tell = (text: string) => postSystemMessage(db, { threadId: a.thread_id, text, trigger: "action", continueAgent: false }, now);
-  if (p.decision === "reject") {
-    set("rejected");
-    tell(`Người dùng đã **từ chối**: ${a.title}.`);
-    return getAction(db, a.id)!;
-  }
-  const expired = actionExpired(db, a, now);
-  if (expired) {
-    set("expired", { error: expired });
-    throw new StudioRunError("invalid", `thẻ hết hiệu lực: ${expired}; nhờ agent đề xuất lại`, { code: "expired" });
-  }
-  const params = JSON.parse(a.params) as Record<string, unknown>;
+  // the work runs in the decision's transaction: a card is decided once, and a failure leaves nothing half done
+  let working = false;
   try {
-    let jobId: string | null = null;
-    if (a.kind === "delete_video") {
-      archiveVideo(db, params.video_id as string, now);
-    } else if (a.kind === "crawl_large") {
-      const crawl = CrawlRequestSchema.parse(params.crawl);
-      jobId = queueResearch(db, { projectId: a.project_id, crawl, threadId: a.thread_id, continueAgent: true, createdBy: p.userId, actorRole: p.role }, now).id;
-    } else {
-      const kind = JOB_OF[a.kind]!;
-      jobId = createJob(db, {
-        projectId: a.project_id, videoId: a.video_id, threadId: a.thread_id, kind, title: a.title, request: { ...params, action_id: a.id },
-        continueAgent: true, createdBy: p.userId, actorRole: p.role,
-      }, now).id;
-    }
-    set("confirmed", { job_id: jobId });
-    tell(`Người dùng đã **xác nhận**: ${a.title}.${jobId ? " Studio đang làm (xem thẻ việc nền)." : ""}`);
+    const out = await db.tx(async (): Promise<{ action: ActionRecord } | { expired: string }> => {
+      const a = await getAction(db, p.actionId);
+      if (!a) throw new StudioRunError("not_found", `không có thẻ ${p.actionId}`);
+      if (a.status !== "proposed") throw new StudioRunError("conflict", "thẻ đã được quyết rồi", { code: "decided" });
+      const need = ACTION_ROLE[a.kind];
+      if (!atLeastRole(p.role, need)) throw new StudioRunError("rejected", `cần vai ${need} để quyết thẻ này`, { code: "role" });
+      const tell = (text: string) => postSystemMessage(db, { threadId: a.thread_id, text, trigger: "action", continueAgent: false }, now);
+      if (p.decision === "reject") {
+        await set("rejected");
+        await tell(`Người dùng đã **từ chối**: ${a.title}.`);
+        return { action: (await getAction(db, a.id))! };
+      }
+      const expired = await actionExpired(db, a, now);
+      if (expired) {
+        await set("expired", { error: expired });
+        return { expired };
+      }
+      working = true;
+      const params = a.params;
+      let jobId: string | null = null;
+      if (a.kind === "delete_video") {
+        await archiveVideo(db, params.video_id as string, now);
+      } else if (a.kind === "crawl_large") {
+        const crawl = CrawlRequestSchema.parse(params.crawl);
+        jobId = (await queueResearch(db, { projectId: a.project_id, crawl, threadId: a.thread_id, continueAgent: true, createdBy: p.userId, actorRole: p.role }, now)).id;
+      } else {
+        const kind = JOB_OF[a.kind]!;
+        jobId = (await createJob(db, {
+          projectId: a.project_id, videoId: a.video_id, threadId: a.thread_id, kind, title: a.title, request: { ...params, action_id: a.id },
+          continueAgent: true, createdBy: p.userId, actorRole: p.role,
+        }, now)).id;
+      }
+      await set("confirmed", { job_id: jobId });
+      await tell(`Người dùng đã **xác nhận**: ${a.title}.${jobId ? " Studio đang làm (xem thẻ việc nền)." : ""}`);
+      return { action: (await getAction(db, a.id))! };
+    });
+    if ("expired" in out) throw new StudioRunError("invalid", `thẻ hết hiệu lực: ${out.expired}; nhờ agent đề xuất lại`, { code: "expired" });
+    return out.action;
   } catch (e) {
-    set("failed", { error: e instanceof Error ? e.message : String(e) });
+    if (working) await set("failed", { error: e instanceof Error ? e.message : String(e) });
     throw e;
   }
-  return getAction(db, a.id)!;
 }
 
 /** The card's text for a crawl, when the agent gives none. */

@@ -3,7 +3,7 @@
  * that any production may use. A shot-cut episode whose production has no music of its own gets one picked by mood
  * when its cut is fitted (cut 1.1.0); the person reviewing the timeline can change it.
  *
- * The tracks are rows of the harness `music_track` table (same `studio.db`), their files AAC under `library/music/`
+ * The tracks are rows of the `music_track` table, their files AAC under `library/music/`
  * on the bucket — outside the per-production audio the cleanup sweep removes.
  */
 import { mkdtempSync, rmSync } from "node:fs";
@@ -17,25 +17,25 @@ import type { StudioDb } from "./studio-db.js";
 export const LIBRARY_MUSIC_ORIGINS = ["own", "licensed", "royalty_free"] as const;
 export type LibraryMusicOrigin = (typeof LIBRARY_MUSIC_ORIGINS)[number];
 
-export function listLibraryMusic(db: StudioDb, o: { activeOnly?: boolean } = {}): MusicTrack[] {
+export async function listLibraryMusic(db: StudioDb, o: { activeOnly?: boolean } = {}): Promise<MusicTrack[]> {
   const rows = o.activeOnly
-    ? db.all<{ data: string }>("SELECT data FROM music_track WHERE active = 1 ORDER BY rowid")
-    : db.all<{ data: string }>("SELECT data FROM music_track ORDER BY rowid");
-  return rows.map((r) => MusicTrackSchema.parse(JSON.parse(r.data)));
+    ? await db.all<{ data: unknown }>("SELECT data FROM music_track WHERE active ORDER BY ord")
+    : await db.all<{ data: unknown }>("SELECT data FROM music_track ORDER BY ord");
+  return rows.map((r) => MusicTrackSchema.parse(r.data));
 }
 
-export function getLibraryMusic(db: StudioDb, trackId: string): MusicTrack | null {
-  const r = db.get<{ data: string }>("SELECT data FROM music_track WHERE id = ?", [trackId]);
-  return r ? MusicTrackSchema.parse(JSON.parse(r.data)) : null;
+export async function getLibraryMusic(db: StudioDb, trackId: string): Promise<MusicTrack | null> {
+  const r = await db.get<{ data: unknown }>("SELECT data FROM music_track WHERE id = ?", [trackId]);
+  return r ? MusicTrackSchema.parse(r.data) : null;
 }
 
 /** Same row as the harness store writes (`upsertMusicTrack`). */
-export function saveLibraryMusic(db: StudioDb, t: MusicTrack): void {
+export async function saveLibraryMusic(db: StudioDb, t: MusicTrack): Promise<void> {
   const v = MusicTrackSchema.parse(t);
-  db.run(
+  await db.run(
     "INSERT INTO music_track (id, data, active, updated_at) VALUES (?, ?, ?, ?) " +
     "ON CONFLICT(id) DO UPDATE SET data = excluded.data, active = excluded.active, updated_at = excluded.updated_at",
-    [v.track_id, JSON.stringify(v), v.active ? 1 : 0, v.updated_at],
+    [v.track_id, JSON.stringify(v), v.active, v.updated_at],
   );
 }
 
@@ -60,14 +60,14 @@ export async function importLibraryMusic(d: AudioImportDeps, o: {
     const key = `library/music/${sha}.m4a`;
     await d.bucket.putFile(key, out, "audio/mp4");
     const trackId = `m-${sha.slice(0, 16)}`;
-    const before = getLibraryMusic(d.db, trackId);
+    const before = await getLibraryMusic(d.db, trackId);
     const moods = [...new Set(o.moods.map((m) => m.trim()).filter(Boolean))];
     const track = MusicTrackSchema.parse({
       schema_version: "harness.music-track/v1", track_id: trackId, display_name: o.displayName.trim(), file: `library:music/${sha}.m4a`,
       mood: moods, duration_seconds: duration_s, loop_ok: o.loopOk, origin: o.origin, origin_note: o.originNote.trim(),
       checksum: `sha256:${sha}`, active: true, created_at: before?.created_at ?? o.now, updated_at: o.now,
     });
-    saveLibraryMusic(d.db, track);
+    await saveLibraryMusic(d.db, track);
     return track;
   } finally {
     rmSync(work, { recursive: true, force: true });

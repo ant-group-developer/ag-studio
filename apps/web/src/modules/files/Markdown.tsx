@@ -1,11 +1,26 @@
+import type { AnchorHTMLAttributes } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Link, useInRouterContext } from "react-router-dom";
+
+/** A link inside Studio's web: a path of this site (`/p/<id>/v/<id>?tab=preview`), never `//host`, `/\host` or a scheme. */
+export function isInternalHref(href: string | undefined): href is string {
+  return !!href && href.startsWith("/") && !href.startsWith("//") && !href.startsWith("/\\");
+}
+
+/** A link of the text: one inside Studio goes through the router (no page reload, the chat stays), others open apart. */
+function MdLink({ href, children, node: _node, ...rest }: AnchorHTMLAttributes<HTMLAnchorElement> & { node?: unknown }) {
+  const inRouter = useInRouterContext();
+  if (isInternalHref(href) && inRouter) return <Link to={href} {...rest}>{children}</Link>;
+  if (isInternalHref(href)) return <a href={href} {...rest}>{children}</a>;
+  return <a href={href} target="_blank" rel="noopener noreferrer" {...rest}>{children}</a>;
+}
 
 /** Markdown rendered for reading (react-markdown never renders raw HTML: a pasted `<script>` stays text). */
 export function Markdown({ text }: { text: string }) {
   return (
     <div className="ws-md">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{stripFrontmatter(text)}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: MdLink }}>{stripFrontmatter(text)}</ReactMarkdown>
     </div>
   );
 }

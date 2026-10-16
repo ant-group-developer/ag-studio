@@ -9,6 +9,8 @@ import { z } from "zod";
 import { toolInputJsonSchema, VIDEO_STATUSES } from "@harness/contracts";
 import { StudioRunError } from "../errors.js";
 import { DEFAULT_SITE_NAME, withSiteName } from "../site-name.js";
+import type { AudioImportDeps } from "../audio-import.js";
+import type { StudioBucket } from "../bucket.js";
 import type { StudioDb } from "../studio-db.js";
 import { createVideo, listVideos, projectView, requireVideo, updateVideo, type ProjectRecord, type VideoRecord } from "../workspace/project-db.js";
 import { normalizeRelPath, recordFileVersion } from "../workspace/files.js";
@@ -42,6 +44,10 @@ export interface AgentToolContext {
   siteName?: string;
   /** Farm machines online that fetch reference videos (`studio.reference_fetch`); absent: none. */
   referenceFetchers?: () => Promise<string[]>;
+  /** ffmpeg and the bucket, to make music of the project's audio files (`music_set`); absent: this server has no ffmpeg. */
+  audio?: AudioImportDeps;
+  /** Studio's bucket, where the beats of a track sit beside it (`music_list`); absent: the tempo is not read. */
+  bucket?: StudioBucket;
 }
 
 export interface ToolAnswer {
@@ -70,13 +76,13 @@ export const PROJECT_TOOLS: AgentTool[] = [
     name: "project_info",
     description: "Thông tin dự án (kênh) đang làm: tên, kênh YouTube, mô tả, ngôn ngữ, khung hình, cài đặt, giọng đọc và nhạc nền, danh sách video (id, số, tên, trạng thái), và video của luồng này nếu có (kèm nhạc của video: nhạc riêng do người dùng chọn ở tab Đầu vào của video, không có thì nhạc dự án).",
     input: z.object({}).strict(),
-    run: (ctx) => ({
+    run: async (ctx) => ({
       text: json({
-        project: { ...projectView(ctx.project), workspace: ".", audio: projectAudioSummary(ctx.db, ctx.project.id) },
-        videos: listVideos(ctx.db, ctx.project.id).map((v) => ({ id: v.id, idx: v.idx, title: v.title, status: v.status, folder: `videos/${v.id}/` })),
+        project: { ...projectView(ctx.project), workspace: ".", audio: await projectAudioSummary(ctx.db, ctx.project.id) },
+        videos: (await listVideos(ctx.db, ctx.project.id)).map((v) => ({ id: v.id, idx: v.idx, title: v.title, status: v.status, folder: `videos/${v.id}/` })),
         this_thread: {
           id: ctx.thread.id, kind: ctx.thread.kind, title: ctx.thread.title, video_id: ctx.thread.video_id,
-          ...(ctx.thread.video_id ? { video_music: videoMusicSummary(ctx.db, ctx.project.id, ctx.thread.video_id) } : {}),
+          ...(ctx.thread.video_id ? { video_music: await videoMusicSummary(ctx.db, ctx.project.id, ctx.thread.video_id) } : {}),
         },
       }),
     }),
@@ -85,8 +91,8 @@ export const PROJECT_TOOLS: AgentTool[] = [
     name: "video_list",
     description: "Danh sách video của dự án, mới nhất trước: id, số thứ tự, tên, trạng thái, thư mục.",
     input: z.object({}).strict(),
-    run: (ctx) => ({
-      text: json(listVideos(ctx.db, ctx.project.id).map((v) => ({ id: v.id, idx: v.idx, title: v.title, status: v.status, folder: `videos/${v.id}/` }))),
+    run: async (ctx) => ({
+      text: json((await listVideos(ctx.db, ctx.project.id)).map((v) => ({ id: v.id, idx: v.idx, title: v.title, status: v.status, folder: `videos/${v.id}/` }))),
     }),
   }),
   tool({
@@ -97,16 +103,16 @@ export const PROJECT_TOOLS: AgentTool[] = [
       brief: z.string().max(20_000).optional(),
     }).strict(),
     role: "editor",
-    run: (ctx, a) => {
+    run: async (ctx, a) => {
       const now = ctx.now();
-      const video = createVideo(ctx.db, ctx.project.id, { title: a.title, createdBy: ctx.claims.sub }, now);
+      const video = await createVideo(ctx.db, ctx.project.id, { title: a.title, createdBy: ctx.claims.sub }, now);
       mkdirSync(join(ctx.workspaceDir, "videos", video.id), { recursive: true });
-      videoThread(ctx.db, { projectId: ctx.project.id, videoId: video.id, title: a.title, createdBy: ctx.claims.sub }, now);
+      await videoThread(ctx.db, { projectId: ctx.project.id, videoId: video.id, title: a.title, createdBy: ctx.claims.sub }, now);
       if (a.brief?.trim()) {
         const path = `videos/${video.id}/brief.md`;
         const text = videoBrief(a.title, a.brief, now);
         writeFileSync(join(ctx.workspaceDir, "videos", video.id, "brief.md"), text);
-        recordFileVersion(ctx.db, { projectId: ctx.project.id, path, bytes: Buffer.from(text, "utf8"), author: { kind: "agent", id: ctx.claims.sub, messageId: ctx.message.id }, now });
+        await recordFileVersion(ctx.db, { projectId: ctx.project.id, path, bytes: Buffer.from(text, "utf8"), author: { kind: "agent", id: ctx.claims.sub, messageId: ctx.message.id }, now });
       }
       return { text: json({ id: video.id, idx: video.idx, title: video.title, folder: `videos/${video.id}/`, brief: a.brief ? `videos/${video.id}/brief.md` : null }) };
     },
@@ -120,28 +126,30 @@ export const PROJECT_TOOLS: AgentTool[] = [
       status: z.enum(VIDEO_STATUSES).optional(),
     }).strict(),
     role: "editor",
-    run: (ctx, a) => {
+    run: async (ctx, a) => {
       const id = a.video_id ?? ctx.video?.id;
       if (!id) throw new StudioRunError("invalid", "luồng này không gắn với video nào: cho biết video_id", { code: "no_video" });
-      const v = requireVideo(ctx.db, id);
+      const v = await requireVideo(ctx.db, id);
       if (v.project_id !== ctx.project.id) throw new StudioRunError("invalid", "video thuộc dự án khác", { code: "other_project" });
-      const out = updateVideo(ctx.db, id, { ...(a.title ? { title: a.title } : {}), ...(a.status ? { status: a.status } : {}) }, ctx.now());
+      const out = await updateVideo(ctx.db, id, { ...(a.title ? { title: a.title } : {}), ...(a.status ? { status: a.status } : {}) }, ctx.now());
       return { text: json({ id: out.id, title: out.title, status: out.status }) };
     },
   }),
   tool({
     name: "suggest_replies",
-    description: "Gợi ý 1–4 câu trả lời ngắn để người dùng bấm thay vì gõ (ví dụ các lựa chọn khi bạn hỏi lại). Gọi ở cuối lượt.",
+    description: "Gợi ý 1–4 câu trả lời ngắn để người dùng bấm thay vì gõ (ví dụ các lựa chọn khi bạn hỏi lại). Việc cuối cùng của lượt, sau câu trả lời.",
     input: z.object({ options: z.array(z.string().trim().min(1).max(120)).min(1).max(4) }).strict(),
-    run: (_ctx, a) => ({ text: `Đã hiện ${a.options.length} gợi ý cho người dùng.` }),
+    run: (_ctx, a) => ({
+      text: `Đã hiện ${a.options.length} gợi ý cho người dùng. Nếu chưa tóm tắt lượt này (đã làm gì, file nào, kết quả, còn gì dở) thì viết ngay; nếu đã viết thì kết thúc, đừng viết lại.`,
+    }),
   }),
   tool({
     name: "playbook_status",
     description: "Tiến độ theo quy trình gợi ý của dự án (và video của luồng này): từng bước, trạng thái (missing, draft, invalid, done, skipped, stale, running), file của bước, lỗi, và các bước gợi ý tiếp theo (next) theo phạm vi: luồng video chỉ gợi ý bước của video, luồng kênh chỉ gợi ý bước của kênh; outside_requires là bước của phạm vi kia mà bước này dựa vào nhưng chưa xong (chỉ là ghi chú). Chỉ là gợi ý: không bước nào bắt buộc.",
     input: z.object({ video_id: z.string().min(1).optional() }).strict(),
-    run: (ctx, a) => {
+    run: async (ctx, a) => {
       const videoId = a.video_id ?? ctx.video?.id ?? null;
-      const st = playbookStatus(ctx.db, ctx.workspaceDir, { projectId: ctx.project.id, videoId, ...(ctx.stepFacts ? { facts: ctx.stepFacts } : {}), now: ctx.now() });
+      const st = await playbookStatus(ctx.db, ctx.workspaceDir, { projectId: ctx.project.id, videoId, ...(ctx.stepFacts ? { facts: ctx.stepFacts } : {}), now: ctx.now() });
       const slim = (x: typeof st.project) => x.map((t) => ({ key: t.key, title: t.title, status: t.status, file: t.primary, skill: t.skill, optional: t.optional, requires: t.requires, issues: t.issues.map((i) => `[${i.level}] ${i.message}`), stale_because: t.staleBecause, outside_requires: t.outsideRequires, detail: t.detail }));
       return { text: json({ custom_playbook: st.custom, playbook_issues: st.issues, scope: st.scope, project: slim(st.project), video: st.video ? slim(st.video) : null, next: st.next, project_open: st.projectOpen }) };
     },
@@ -166,13 +174,13 @@ export const PROJECT_TOOLS: AgentTool[] = [
       query: z.string().trim().min(1).max(200).optional(),
       limit: z.number().int().min(1).max(200).optional(),
     }).strict(),
-    run: (ctx, a) => {
+    run: async (ctx, a) => {
       if (!a.thread_id) {
-        return { text: json(listThreads(ctx.db, ctx.project.id).map((t) => ({ id: t.id, title: t.title, kind: t.kind, video_id: t.video_id, messages: t.message_count, last: t.last_message_at }))) };
+        return { text: json((await listThreads(ctx.db, ctx.project.id)).map((t) => ({ id: t.id, title: t.title, kind: t.kind, video_id: t.video_id, messages: t.message_count, last: t.last_message_at }))) };
       }
-      const t = getThread(ctx.db, a.thread_id);
+      const t = await getThread(ctx.db, a.thread_id);
       if (!t || t.project_id !== ctx.project.id) throw new StudioRunError("not_found", `không có luồng ${a.thread_id} trong dự án`);
-      return { text: threadMarkdown(ctx.db, t, { ...(a.query ? { query: a.query } : {}), limit: a.limit ?? 60 }) };
+      return { text: await threadMarkdown(ctx.db, t, { ...(a.query ? { query: a.query } : {}), limit: a.limit ?? 60 }) };
     },
   }),
 ];

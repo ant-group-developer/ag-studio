@@ -17,13 +17,15 @@
  * `CONFIG_INVALID`, which maps to `contract` and does not retry.
  */
 import { spawn as nodeSpawn } from "node:child_process";
-import { copyFileSync, existsSync, linkSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { copyFileSync, existsSync, linkSync, mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 import { HarnessError, isHarnessError, RenderReportSchema, type Clock, type Composition, type MediaProber, type RenderReport } from "@harness/contracts";
 import { childEnvWithoutSecrets } from "../child-env.js";
 import { round3 } from "../time.js";
-import { cacheCommit, cacheEvict, cacheLookup, type MezzCache } from "./cache.js";
+import { cacheCommit, cacheEvict, cacheLookup, cacheLufs, cacheSetLufs, type MezzCache } from "./cache.js";
+import { ebur128Args, evenGains, parseEbur128Integrated } from "./even.js";
 import { NVENC_PROBE_ARGS, resolveEncoder, type EncoderChoice, type OutputTier } from "./encoder.js";
+import { peakLimit } from "./audio-graph.js";
 import { finalArgs } from "./final-graph.js";
 import { parseLoudnorm } from "./loudnorm.js";
 import { mezzArgs, mezzCacheKey } from "./mezzanine.js";
@@ -144,6 +146,10 @@ interface RunOptions {
   signal?: AbortSignal | undefined;
   /** Every complete stdout line (used for `-progress pipe:1`); implies piping stdout. */
   onStdoutLine?: ((line: string) => void) | undefined;
+  /** Working directory of the child (the final passes name their mezzanines relative to it). */
+  cwd?: string | undefined;
+  /** Every complete stderr line, all of it (the error tail keeps only the last `STDERR_TAIL` characters). */
+  onStderrLine?: ((line: string) => void) | undefined;
 }
 
 function runProcess(spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, label: string, captureStdout: boolean, opts: RunOptions = {}): Promise<ProcResult> {
@@ -154,7 +160,7 @@ function runProcess(spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, la
   return new Promise<ProcResult>((resolve, reject) => {
     const pipeStdout = captureStdout || opts.onStdoutLine !== undefined;
     // `env`: ffmpeg never needs a secret, and the repo rule is absolute -- see `childEnvWithoutSecrets`.
-    const child = spawnFn(bin, args, { windowsHide: true, env: childEnvWithoutSecrets(), stdio: ["ignore", pipeStdout ? "pipe" : "ignore", "pipe"] });
+    const child = spawnFn(bin, args, { windowsHide: true, env: childEnvWithoutSecrets(), stdio: ["ignore", pipeStdout ? "pipe" : "ignore", "pipe"], ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}) });
     let stderr = "";
     let stdout = "";
     let lineBuf = "";
@@ -175,8 +181,18 @@ function runProcess(spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, la
 
     child.stderr?.setEncoding("utf8");
     child.stdout?.setEncoding("utf8");
+    let errBuf = "";
     child.stderr?.on("data", (chunk: string) => {
       stderr = (stderr + chunk).slice(-STDERR_TAIL);
+      if (opts.onStderrLine) {
+        errBuf += chunk;
+        let nl = errBuf.search(/\r?\n|\r/);
+        while (nl >= 0) {
+          opts.onStderrLine(errBuf.slice(0, nl).trim());
+          errBuf = errBuf.slice(nl).replace(/^(\r\n|\n|\r)/, "");
+          nl = errBuf.search(/\r?\n|\r/);
+        }
+      }
     });
     child.stdout?.on("data", (chunk: string) => {
       if (captureStdout) stdout = (stdout + chunk).slice(-STDERR_TAIL);
@@ -201,6 +217,7 @@ function runProcess(spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, la
 
     child.on("error", (e) => settle(new HarnessError("CONFIG_INVALID", `ffmpeg not available: cannot run "${bin}": ${e.message}`, { label, ffmpeg: bin })));
     child.on("close", (code) => {
+      if (opts.onStderrLine && errBuf.trim() !== "") opts.onStderrLine(errBuf.trim());
       // `timedOut` first: a killed process also reports a non-zero/null exit, and "timed out" is the useful
       // message of the two.
       if (aborted) {
@@ -223,6 +240,17 @@ function runProcess(spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, la
       resolve({ stdout, stderr });
     });
   });
+}
+
+/**
+ * One ffmpeg pass outside `renderComposition` (the inspection of a finished render, `inspect.ts`), with the same
+ * error handling: a binary that will not start is `CONFIG_INVALID`, a failing or timed-out ffmpeg `IO_ERROR`.
+ */
+export async function runFfmpegPass(
+  spawnFn: SpawnFn, argv: string[], timeoutSeconds: number, label: string,
+  opts: { signal?: AbortSignal | undefined; cwd?: string | undefined; onStderrLine?: ((line: string) => void) | undefined } = {},
+): Promise<void> {
+  await runProcess(spawnFn, argv, timeoutSeconds, label, false, opts);
 }
 
 /**
@@ -250,6 +278,55 @@ async function ffmpegVersion(spawnFn: SpawnFn, ffmpeg: string): Promise<string> 
   } catch {
     return "unknown";
   }
+}
+
+/**
+ * The option that reads a filtergraph from a file, for an ffmpeg of this version (`ffmpegVersion`): ffmpeg 8 dropped
+ * `-filter_complex_script` for the generic `-/filter_complex <file>` (7.x has both). A git build ("N-…") or an
+ * unknown version is taken as current.
+ */
+export function filterGraphFileOption(version: string): "-/filter_complex" | "-filter_complex_script" {
+  const m = /^n?(\d+)\./.exec(version);
+  return m !== null && Number(m[1]) < 8 ? "-filter_complex_script" : "-/filter_complex";
+}
+
+/**
+ * The final passes' mezzanines under short names (`0.mp4`, `1.mp4`, …) in `dir`, which becomes ffmpeg's working
+ * directory: hard links (the cache usually sits on the same volume), else symlinks, else the full path. With the
+ * filtergraph in a file, that keeps the command line of a 400-segment episode to a few thousand characters --
+ * hundreds of `-i <cache>/<64 hex>.mp4` plus the graph overran Windows' 32,767 (`spawn ENAMETOOLONG` at 73 clips).
+ */
+function shortMezzNames(mezz: readonly MezzRef[], dir: string): MezzRef[] {
+  mkdirSync(dir, { recursive: true });
+  let n = 0;
+  const short = (path: string): string => {
+    const target = resolve(path);
+    const name = `${n++}.mp4`;
+    const at = join(dir, name);
+    try {
+      linkSync(target, at);
+      return name;
+    } catch {
+      // another volume or no hard links here: a symlink, or the full path
+    }
+    try {
+      symlinkSync(target, at);
+      return name;
+    } catch {
+      return target;
+    }
+  };
+  return mezz.map((m) => ({ order: m.order, body: short(m.body), tail: m.tail === null ? null : short(m.tail) }));
+}
+
+/** The composition with every file it names made absolute, for an ffmpeg running in another directory. */
+function absolutePaths(c: Composition): Composition {
+  return {
+    ...c,
+    narration: c.narration.map((n) => ({ ...n, wav: resolve(n.wav) })),
+    music: c.music !== null ? { ...c.music, path: resolve(c.music.path) } : null,
+    logo: c.logo !== null ? { ...c.logo, path: resolve(c.logo.path) } : null,
+  };
 }
 
 function secondsBetween(clock: Clock, startedAt: string): number {
@@ -349,7 +426,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
       const tmpPath = join(tmpDir, `${k}.mp4`);
       const args = mezzArgs({
         ffmpeg: d.ffmpeg, source: o.source, in: o.in, out: o.out, fit: o.fit, w: width, h: height, fps,
-        has_audio: o.has_audio, encoder: choice, codec, out_path: tmpPath,
+        has_audio: o.has_audio, encoder: choice, codec, out_path: tmpPath, ...(composition.look ? { look: composition.look } : {}),
       });
       const prog = withProgress(args, expected, o.onFraction ?? null);
       await runProcess(spawnFn, prog.argv, remaining(), label, false, { signal, onStdoutLine: prog.onStdoutLine });
@@ -399,7 +476,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     if (checksum === undefined) {
       throw new HarnessError("CONFIG_INVALID", `no source checksum for segment ${seg.order} (source ${seg.source_id})`, { order: seg.order, source_id: seg.source_id });
     }
-    const common = { source_checksum: checksum, fit: seg.fit, w: width, h: height, fps, has_audio: seg.has_audio, codec };
+    const common = { source_checksum: checksum, fit: seg.fit, w: width, h: height, fps, has_audio: seg.has_audio, codec, ...(composition.look ? { look: composition.look } : {}) };
 
     const bodyStart = mezzSeconds;
     const body = await renderMezz({
@@ -452,22 +529,69 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
   }
   writeFileSync(join(clipSetDir, "manifest.json"), JSON.stringify(manifest, null, 2));
 
+  // ---- 3b) even source sound: each segment's own loudness, measured once per mezzanine and kept in its sidecar ----
+  let evenGainDb: Map<number, number> | undefined;
+  if (composition.source_even) {
+    reportProgress(MEZZ_SHARE, "even");
+    const lufs: (number | null)[] = [];
+    for (const seg of segs) {
+      if (!seg.has_audio) { lufs.push(null); continue; }
+      const body = mezz.find((m) => m.order === seg.order)!.body;
+      const key = basename(body, ".mp4");
+      let l = cacheLufs(d.cache, key);
+      if (l === undefined) {
+        const pass = await runProcess(spawnFn, ebur128Args(d.ffmpeg, body), remaining(), `even ${seg.order}`, false, { signal });
+        l = parseEbur128Integrated(pass.stderr);
+        cacheSetLufs(d.cache, key, l);
+      }
+      lufs.push(l);
+    }
+    const gains = evenGains(lufs);
+    evenGainDb = new Map(segs.map((s, k) => [s.order, gains[k]!]));
+    log(`even source sound: ${gains.filter((g) => g !== 0).length}/${segs.length} segments corrected (${Math.min(...gains)}..${Math.max(...gains)} dB)`);
+  }
+
   // ---- 4) loudnorm measurement pass ----
+  // Both final passes run in `tmp/in`, where the mezzanines have short names, and read their filtergraph from a
+  // file: the command line stays short however many segments the episode has.
+  const version = await ffmpegVersion(spawnFn, d.ffmpeg);
+  const inputsDir = resolve(tmpDir, "in");
   const episodePath = join(outDir, "full-episode.mp4");
+  const fontsDir = p.fontsDir !== undefined ? p.fontsDir : (composition.brand?.fonts_dir ?? null);
   const finalInput = {
-    ffmpeg: d.ffmpeg, composition, mezz, assPath: p.assPath,
-    fontsDir: p.fontsDir !== undefined ? p.fontsDir : (composition.brand?.fonts_dir ?? null),
-    out_path: episodePath, tier: p.tier ?? "final",
+    ffmpeg: d.ffmpeg, composition: absolutePaths(composition), mezz: shortMezzNames(mezz, inputsDir),
+    assPath: p.assPath !== null ? resolve(p.assPath) : null, fontsDir: fontsDir !== null ? resolve(fontsDir) : null,
+    out_path: resolve(episodePath), tier: p.tier ?? "final",
+    ...(evenGainDb ? { evenGainDb } : {}),
     ...(p.safe_margin_px !== undefined ? { safe_margin_px: p.safe_margin_px } : {}),
+  };
+  let graphs = 0;
+  const graphFromFile = (argv: string[]): string[] => {
+    const at = argv.indexOf("-filter_complex");
+    if (at < 0) return argv;
+    const file = join(inputsDir, `graph-${graphs++}.txt`);
+    writeFileSync(file, argv[at + 1]!);
+    return [...argv.slice(0, at), filterGraphFileOption(version), file, ...argv.slice(at + 2)];
   };
 
   // The measurement pass is audio-only (`-vn -f null -`), so `encoder` never reaches its argv; it is passed
   // for the shape of `FinalGraphInput` alone.
   reportProgress(MEASURE_AT, "loudnorm");
-  const measure = await runProcess(spawnFn, finalArgs({ ...finalInput, encoder, loudnorm: null, measureOnly: true }).argv, remaining(), "loudnorm measure", false, { signal });
-  const measured = parseLoudnorm(measure.stderr);
-  if (measured === null) {
-    throw new HarnessError("IO_ERROR", "loudnorm measure failed: ffmpeg printed no parsable loudnorm json", { stderr_tail: measure.stderr });
+  const measurePass = async (limit: number | null, label: string) => {
+    const pass = await runProcess(spawnFn, graphFromFile(finalArgs({ ...finalInput, encoder, loudnorm: null, limit, measureOnly: true }).argv), remaining(), label, false, { signal, cwd: inputsDir });
+    const parsed = parseLoudnorm(pass.stderr);
+    if (parsed === null) {
+      throw new HarnessError("IO_ERROR", `${label} failed: ffmpeg printed no parsable loudnorm json`, { stderr_tail: pass.stderr });
+    }
+    return parsed;
+  };
+  let measured = await measurePass(null, "loudnorm measure");
+  // peaks the linear gain would push past -1 dBTP: limited before loudnorm, and measured again through the limiter
+  // (it lowers the loudness a little), so the final pass can stay linear
+  const limit = peakLimit(measured.measured);
+  if (limit !== null) {
+    log(`loudnorm: peak ${measured.measured.input_tp} dBTP over the linear budget at ${measured.measured.input_i} LUFS; limiting at ${round3(20 * Math.log10(limit))} dBFS`);
+    measured = await measurePass(limit, "loudnorm measure (limited)");
   }
 
   // ---- 5) the real encode ----
@@ -478,8 +602,8 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
   const episodeSeconds = segs.reduce((end, s) => Math.max(end, s.end), 0);
   const finalEncode = (choice: EncoderChoice, label: string): Promise<ProcResult> => {
     reportProgress(FINAL_FROM, "final_encode");
-    const prog = withProgress(finalArgs({ ...finalInput, encoder: choice, loudnorm: measured.measured, measureOnly: false }).argv, episodeSeconds, (f) => reportProgress(FINAL_FROM + (100 - FINAL_FROM) * f, "final_encode"));
-    return runProcess(spawnFn, prog.argv, remaining(), label, false, { signal, onStdoutLine: prog.onStdoutLine });
+    const prog = withProgress(graphFromFile(finalArgs({ ...finalInput, encoder: choice, loudnorm: measured.measured, limit, measureOnly: false }).argv), episodeSeconds, (f) => reportProgress(FINAL_FROM + (100 - FINAL_FROM) * f, "final_encode"));
+    return runProcess(spawnFn, prog.argv, remaining(), label, false, { signal, onStdoutLine: prog.onStdoutLine, cwd: inputsDir });
   };
   try {
     render = await finalEncode(finalEncoder, "final encode");
@@ -513,9 +637,8 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
       warnings.push("loudnorm_not_linear");
       log(
         `loudnorm fell back from linear to ${renderPass.output.normalization_type} normalization ` +
-          `(measured ${measured.measured.input_i} LUFS / ${measured.measured.input_tp} dBTP, crest ` +
-          `${round3(measured.measured.input_tp - measured.measured.input_i)} dB > 13 dB); the delivered ` +
-          `loudness may sit below the -14 LUFS target`,
+          `(measured ${measured.measured.input_i} LUFS / ${measured.measured.input_tp} dBTP / LRA ` +
+          `${measured.measured.input_lra}${limit !== null ? ", limited" : ""}); the delivered loudness may sit below the -14 LUFS target`,
       );
     }
   }
@@ -553,7 +676,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     brand: composition.brand !== null ? "present" : "absent",
     warnings,
     render_seconds: secondsBetween(d.clock, startedAt),
-    ffmpeg_version: await ffmpegVersion(spawnFn, d.ffmpeg),
+    ffmpeg_version: version,
   });
 
   writeFileSync(join(outDir, "render-report.json"), JSON.stringify(report, null, 2));

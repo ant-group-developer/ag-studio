@@ -162,12 +162,12 @@ export interface FileVersion {
   author_id: string | null;
   message_id: string | null;
   created_at: string;
-  has_content: number;
+  has_content: boolean;
 }
 
 export interface FileVersionDetail extends FileVersion {
   content: string | null;
-  issues: string | null;
+  issues: unknown;
 }
 
 export interface DiffLine { kind: "context" | "add" | "del"; text: string }
@@ -281,7 +281,7 @@ export interface Activity {
 }
 
 // ---- Inputs and jobs ----
-export type JobKind = "prepare_asset" | "transcribe_upload" | "tts" | "fit" | "render_preview" | "render_final" | "export_premiere" | "research" | "style_watch" | "thumbnail";
+export type JobKind = "prepare_asset" | "transcribe_upload" | "tts" | "fit" | "render_preview" | "render_final" | "export_premiere" | "research" | "style_watch" | "thumbnail" | "music_beats";
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
 export interface JobView {
@@ -428,6 +428,10 @@ export interface RenderView {
   watermarked: boolean | null;
   sizeBytes: number | null;
   note: string;
+  /** What makes the file wrong (it is shorter than its timeline…), in words; null or absent: nothing. */
+  problem?: string | null;
+  /** What the render machine's inspection of the file found, in words; absent: an older Studio. */
+  issues?: string[];
   finishedAt: string | null;
   /** A short-lived link to watch a preview or the final render, signed with the list; absent for a Premiere export (asked for apart). */
   url?: string;

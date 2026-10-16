@@ -83,7 +83,7 @@ export class FilesController {
   @Get()
   @Roles('viewer')
   tree(@Param('projectId') projectId: string, @Query('under') under?: string): Promise<{ entries: WorkspaceEntry[] }> {
-    return mapErrors(() => ({ entries: listWorkspaceTree(this.workspace.dir(projectId), under ? { under } : {}) }));
+    return mapErrors(async () => ({ entries: listWorkspaceTree(await this.workspace.dir(projectId), under ? { under } : {}) }));
   }
 
   /**
@@ -94,8 +94,8 @@ export class FilesController {
   @Get('content')
   @Roles('viewer')
   content(@Param('projectId') projectId: string, @Query('path') path: string, @Req() req: Request): Promise<WorkspaceFile & { issues: FileIssue[]; streamUrl: string | null }> {
-    return mapErrors(() => {
-      const file = readWorkspaceFile(this.workspace.dir(projectId), this.visible(path));
+    return mapErrors(async () => {
+      const file = readWorkspaceFile(await this.workspace.dir(projectId), this.visible(path));
       return {
         ...file, issues: file.text === null ? [] : validateFileText(file.path, file.text),
         streamUrl: file.binary ? this.links.url(projectId, file.path, req.authContext!.userId) : null,
@@ -107,7 +107,7 @@ export class FilesController {
   @Get('raw')
   @Roles('viewer')
   async raw(@Param('projectId') projectId: string, @Query('path') path: string, @Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
-    const file = await mapErrors(() => statWorkspaceFile(this.workspace.dir(projectId), this.visible(path)));
+    const file = await mapErrors(async () => statWorkspaceFile(await this.workspace.dir(projectId), this.visible(path)));
     res.setHeader('Content-Type', file.mime);
     res.setHeader('Content-Length', String(file.size));
     res.setHeader('Cache-Control', 'private, no-store');
@@ -119,10 +119,10 @@ export class FilesController {
   @Put('content')
   @Roles('editor')
   write(@Param('projectId') projectId: string, @Body() raw: unknown, @Req() req: Request) {
-    return mapErrors(() => {
+    return mapErrors(async () => {
       const body = parseBody(WriteSchema, raw);
-      const saved = writeWorkspaceFile(this.engine.db, {
-        projectId, dir: this.workspace.dir(projectId), path: body.path, content: body.content,
+      const saved = await writeWorkspaceFile(this.engine.db, {
+        projectId, dir: await this.workspace.dir(projectId), path: body.path, content: body.content,
         ...(body.baseSha256 !== undefined ? { baseSha256: body.baseSha256 } : {}),
         author: { kind: 'user', id: req.authContext!.userId },
       });
@@ -134,8 +134,8 @@ export class FilesController {
   @Roles('editor')
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Param('projectId') projectId: string, @Query('path') path: string, @Query('baseSha256') baseSha256: string | undefined, @Req() req: Request) {
-    return mapErrors(() => deleteWorkspaceFile(this.engine.db, {
-      projectId, dir: this.workspace.dir(projectId), path, ...(baseSha256 ? { baseSha256 } : {}),
+    return mapErrors(async () => deleteWorkspaceFile(this.engine.db, {
+      projectId, dir: await this.workspace.dir(projectId), path, ...(baseSha256 ? { baseSha256 } : {}),
       author: { kind: 'user', id: req.authContext!.userId },
     }));
   }
@@ -160,7 +160,7 @@ export class FilesController {
       }
       if (!file) throw new BadRequestException({ code: 'file_missing', message: 'Chọn file' });
       checkFileUpload(file.originalname, file.size);
-      const dir = this.workspace.dir(projectId);
+      const dir = await this.workspace.dir(projectId);
       const folder = normalizeRelPath(form.dir ?? 'context/uploads');
       const path = this.freePath(dir, folder, safeFileName(file.originalname));
       const at = file;
@@ -176,14 +176,14 @@ export class FilesController {
   @Get('versions')
   @Roles('viewer')
   versions(@Param('projectId') projectId: string, @Query('path') path: string): Promise<{ versions: FileVersionRow[] }> {
-    return mapErrors(() => ({ versions: listFileVersions(this.engine.db, projectId, this.visible(path)) }));
+    return mapErrors(async () => ({ versions: await listFileVersions(this.engine.db, projectId, this.visible(path)) }));
   }
 
   @Get('versions/:versionId')
   @Roles('viewer')
   version(@Param('projectId') projectId: string, @Param('versionId') versionId: string) {
-    return mapErrors(() => {
-      const v = getFileVersion(this.engine.db, projectId, versionId);
+    return mapErrors(async () => {
+      const v = await getFileVersion(this.engine.db, projectId, versionId);
       if (!v) throw new StudioRunError('not_found', `không có phiên bản ${versionId}`);
       this.visible(v.path);
       return v;
@@ -197,8 +197,8 @@ export class FilesController {
   @Get('versions/:versionId/diff')
   @Roles('viewer')
   diff(@Param('projectId') projectId: string, @Param('versionId') versionId: string, @Query('base') base?: string): Promise<VersionDiff> {
-    return mapErrors(() => {
-      const d = versionDiff(this.engine.db, projectId, versionId, base === 'none' ? { base: null } : base ? { base } : {});
+    return mapErrors(async () => {
+      const d = await versionDiff(this.engine.db, projectId, versionId, base === 'none' ? { base: null } : base ? { base } : {});
       this.visible(d.path);
       return d;
     });
@@ -208,13 +208,13 @@ export class FilesController {
   @Post('versions/:versionId/restore')
   @Roles('editor')
   restore(@Param('projectId') projectId: string, @Param('versionId') versionId: string, @Body() raw: unknown, @Req() req: Request) {
-    return mapErrors(() => {
+    return mapErrors(async () => {
       const body = parseBody(RestoreSchema, raw);
-      const v = getFileVersion(this.engine.db, projectId, versionId);
+      const v = await getFileVersion(this.engine.db, projectId, versionId);
       if (!v) throw new StudioRunError('not_found', `không có phiên bản ${versionId}`);
       if (v.content === null) throw new StudioRunError('rejected', 'phiên bản này không giữ nội dung (file nhị phân, quá lớn hoặc đã xoá)', { code: 'no_content' });
       return writeWorkspaceFile(this.engine.db, {
-        projectId, dir: this.workspace.dir(projectId), path: v.path, content: v.content,
+        projectId, dir: await this.workspace.dir(projectId), path: v.path, content: v.content,
         ...(body.baseSha256 !== undefined ? { baseSha256: body.baseSha256 } : {}),
         author: { kind: 'user', id: req.authContext!.userId },
       });

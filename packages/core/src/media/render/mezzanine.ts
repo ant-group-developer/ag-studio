@@ -2,6 +2,7 @@
  * clock, no randomness. Task 7 owns the cache directory, sidecar JSON, LRU sweep and the actual ffmpeg spawn;
  * this module only decides the argv and the key that names the cache entry. */
 import { createHash } from "node:crypto";
+import type { VideoLook } from "@harness/contracts";
 import { canonicalJson } from "../../artifacts/checksum.js";
 import { videoEncoderArgs, type EncoderChoice } from "./encoder.js";
 
@@ -30,8 +31,26 @@ export function mezzCacheKey(p: {
   encoder: EncoderChoice;
   codec: "h264" | "hevc";
   tail_seconds?: number;
+  /** The colour grade (`lookFilter`); absent or `none` leaves the key what it always was. */
+  look?: VideoLook;
 }): string {
-  return createHash("sha256").update(canonicalJson({ ...p, mezz_version: MEZZ_VERSION })).digest("hex");
+  const { look, ...rest } = p;
+  const graded = look !== undefined && look !== "none" ? { look } : {};
+  return createHash("sha256").update(canonicalJson({ ...rest, ...graded, mezz_version: MEZZ_VERSION })).digest("hex");
+}
+
+/**
+ * The colour grade of a look (feedback-vps §4.6), applied to the scaled picture before it is encoded; null for `none`.
+ * Mild on purpose: footage of every kind takes it, and a grade that crushes a dark street or burns a sky is worse than none.
+ */
+export function lookFilter(look: VideoLook | undefined): string | null {
+  switch (look) {
+    case "natural": return "eq=contrast=1.04:saturation=1.1:gamma=1.02";
+    case "vivid": return "eq=contrast=1.1:saturation=1.35";
+    case "warm": return "colorbalance=rs=0.06:bs=-0.06:rm=0.04:bm=-0.04:rh=0.02:bh=-0.02,eq=saturation=1.08";
+    case "cinematic": return "curves=master='0/0.03 0.25/0.22 0.75/0.8 1/0.97',colorbalance=rs=-0.04:bs=0.05:rh=0.05:bh=-0.04,eq=saturation=0.9";
+    default: return null;
+  }
 }
 
 /** `scale`+`pad`/`crop` filter (lanczos) to bring a source up to the fixed output frame -- spec §5.1.
@@ -66,6 +85,7 @@ export function mezzArgs(p: {
   encoder: EncoderChoice;
   codec: "h264" | "hevc";
   out_path: string;
+  look?: VideoLook;
 }): string[] {
   const { ffmpeg, source, in: inSec, out, fit, w, h, fps, has_audio, encoder, codec, out_path } = p;
   const duration = out - inSec;
@@ -73,7 +93,8 @@ export function mezzArgs(p: {
   const args: string[] = [ffmpeg, "-hide_banner", "-y", "-ss", String(inSec), "-to", String(out), "-i", source];
   if (!has_audio) args.push("-f", "lavfi", "-t", String(duration), "-i", "anullsrc=r=48000:cl=stereo");
 
-  const videoChain = `[0:v]${scaleFilter(fit, w, h)},fps=${fps},format=yuv420p[v]`;
+  const grade = lookFilter(p.look);
+  const videoChain = `[0:v]${scaleFilter(fit, w, h)},${grade !== null ? `${grade},` : ""}fps=${fps},format=yuv420p[v]`;
   const audioChain = has_audio ? "[0:a]aresample=48000,aformat=channel_layouts=stereo[a]" : "[1:a]anull[a]";
   args.push("-filter_complex", `${videoChain};${audioChain}`, "-map", "[v]", "-map", "[a]");
   args.push(...videoEncoderArgs({ choice: encoder, codec, tier: "mezz", fps }));

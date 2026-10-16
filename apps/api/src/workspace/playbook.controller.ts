@@ -35,10 +35,10 @@ export class PlaybookController {
   @Get('playbook')
   @Roles('viewer')
   status(@Param('projectId') projectId: string, @Query('videoId') videoId?: string): Promise<PlaybookStatus> {
-    return mapErrors(() => {
-      requireProject(this.engine.db, projectId);
-      if (videoId && requireVideo(this.engine.db, videoId).project_id !== projectId) throw new StudioRunError('not_found', `không có video ${videoId}`);
-      return playbookStatus(this.engine.db, this.workspace.dir(projectId), { projectId, videoId: videoId ?? null });
+    return mapErrors(async () => {
+      await requireProject(this.engine.db, projectId);
+      if (videoId && (await requireVideo(this.engine.db, videoId)).project_id !== projectId) throw new StudioRunError('not_found', `không có video ${videoId}`);
+      return playbookStatus(this.engine.db, await this.workspace.dir(projectId), { projectId, videoId: videoId ?? null });
     });
   }
 
@@ -47,9 +47,9 @@ export class PlaybookController {
   @Roles('editor')
   @HttpCode(HttpStatus.OK)
   mark(@Param('projectId') projectId: string, @Param('stepKey') stepKey: string, @Body() raw: unknown, @Req() req: Request) {
-    return mapErrors(() => {
+    return mapErrors(async () => {
       const body = parseBody(MarkSchema, raw);
-      const dir = this.workspace.dir(projectId);
+      const dir = await this.workspace.dir(projectId);
       const step = loadPlaybook(dir).playbook.steps.find((s) => s.key === stepKey);
       if (!step) throw new StudioRunError('not_found', `không có bước ${stepKey}`);
       if (step.scope === 'video' && !body.videoId) throw new StudioRunError('invalid', 'bước của video cần videoId', { code: 'video_required' });
@@ -69,11 +69,11 @@ export class PlaybookController {
   @Roles('producer')
   @HttpCode(HttpStatus.OK)
   customize(@Param('projectId') projectId: string, @Req() req: Request): Promise<{ path: string; created: boolean }> {
-    return mapErrors(() => {
-      const dir = this.workspace.dir(projectId);
+    return mapErrors(async () => {
+      const dir = await this.workspace.dir(projectId);
       if (existsSync(join(dir, ...PLAYBOOK_PATH.split('/')))) return { path: PLAYBOOK_PATH, created: false };
       const text = defaultPlaybookYaml();
-      writeWorkspaceFile(this.engine.db, { projectId, dir, path: PLAYBOOK_PATH, content: text, baseSha256: null, author: { kind: 'user', id: req.authContext!.userId } });
+      await writeWorkspaceFile(this.engine.db, { projectId, dir, path: PLAYBOOK_PATH, content: text, baseSha256: null, author: { kind: 'user', id: req.authContext!.userId } });
       return { path: PLAYBOOK_PATH, created: true };
     });
   }
@@ -81,10 +81,10 @@ export class PlaybookController {
   @Get('lessons')
   @Roles('viewer')
   lessons(@Param('projectId') projectId: string, @Query('status') status?: string, @Query('threadId') threadId?: string): Promise<{ lessons: LessonProposal[] }> {
-    return mapErrors(() => {
-      requireProject(this.engine.db, projectId);
+    return mapErrors(async () => {
+      await requireProject(this.engine.db, projectId);
       const st = status === 'proposed' || status === 'accepted' || status === 'dismissed' ? status : undefined;
-      return { lessons: listLessonProposals(this.engine.db, projectId, { ...(st ? { status: st } : {}), ...(threadId ? { threadId } : {}) }) };
+      return { lessons: await listLessonProposals(this.engine.db, projectId, { ...(st ? { status: st } : {}), ...(threadId ? { threadId } : {}) }) };
     });
   }
 
@@ -93,9 +93,9 @@ export class PlaybookController {
   @Roles('editor')
   @HttpCode(HttpStatus.OK)
   accept(@Param('projectId') projectId: string, @Param('lessonId') lessonId: string, @Body() raw: unknown, @Req() req: Request): Promise<LessonProposal> {
-    return mapErrors(() => {
+    return mapErrors(async () => {
       const body = parseBody(AcceptSchema, raw);
-      return acceptLesson(this.engine.db, { projectId, lessonId, dir: this.workspace.dir(projectId), userId: req.authContext!.userId, ...(body.text ? { text: body.text } : {}) });
+      return acceptLesson(this.engine.db, { projectId, lessonId, dir: await this.workspace.dir(projectId), userId: req.authContext!.userId, ...(body.text ? { text: body.text } : {}) });
     });
   }
 

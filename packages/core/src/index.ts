@@ -59,4 +59,7 @@ export * from "./media/render/final-graph.js";
 export * from "./media/render/loudnorm.js";
 export * from "./media/render/cache.js";
 export * from "./media/render/run.js";
+export * from "./media/render/features.js";
+export * from "./media/render/even.js";
+export * from "./media/render/inspect.js";
 export * from "./studio/index.js";

@@ -300,6 +300,20 @@
                     "m",
                     "l"
                   ]
+                },
+                "shadow": {
+                  "type": "boolean"
+                },
+                "font": {
+                  "type": "string",
+                  "enum": [
+                    "Arial",
+                    "Be Vietnam Pro",
+                    "Noto Sans JP",
+                    "Noto Sans KR",
+                    "Noto Serif",
+                    "Playfair Display"
+                  ]
                 }
               },
               "required": [

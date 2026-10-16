@@ -28,6 +28,30 @@ export interface AudioGraphInput {
   musicIndex: number | null;
   /** `null` for the measurement pass; the first pass's measured loudness for the final encode pass. */
   loudnorm: LoudnormMeasured | null;
+  /** Ceiling (linear amplitude, `peakLimit`) of an `alimiter` just before loudnorm, on both passes; absent or
+   * `null`: none. */
+  limit?: number | null;
+  /** `composition.source_even`: the gain (dB) that brings a segment's own sound to the others' (`evenGains`), by
+   * `segments[].order`; absent = 0. */
+  evenGainDb?: ReadonlyMap<number, number>;
+}
+
+/**
+ * The music's gain along the episode as an ffmpeg expression of `t` (dB): the first point's gain before it, straight
+ * lines between points, the last point's gain after it. Points are sorted by time first.
+ */
+export function envelopeDbExpr(points: readonly { at: number; gain_db: number }[]): string {
+  const p = [...points].sort((a, b) => a.at - b.at);
+  if (p.length === 0) throw new Error("envelopeDbExpr: no points");
+  let expr = fmt(p[p.length - 1]!.gain_db);
+  for (let k = p.length - 1; k >= 1; k--) {
+    const a = p[k - 1]!;
+    const b = p[k]!;
+    const span = b.at - a.at;
+    const line = span > 0 ? `${fmt(a.gain_db)}+(${fmt(b.gain_db - a.gain_db)})*(t-${fmt(a.at)})/${fmt(span)}` : fmt(b.gain_db);
+    expr = `if(lt(t,${fmt(b.at)}),${line},${expr})`;
+  }
+  return `if(lt(t,${fmt(p[0]!.at)}),${fmt(p[0]!.gain_db)},${expr})`;
 }
 
 /** Formats a time/gain value on the 3-decimal grid with no trailing zeros (e.g. `0.4`, not `0.400`). */
@@ -36,9 +60,29 @@ function fmt(n: number): string {
 }
 
 const DUCK_THRESHOLD = "0.031";
+/** Loudness target of the second pass (`loudnorm=I=-14:TP=-1`). */
+const TARGET_I = -14;
+const TARGET_TP = -1;
+/** `alimiter` takes its ceiling as a linear amplitude no lower than this (-24 dBFS). */
+const LIMIT_FLOOR = 0.0625;
+/** Sample peaks are held this far under the true-peak budget: the limiter sees samples, loudnorm true peaks. */
+const LIMIT_MARGIN_DB = 1;
+
+/**
+ * The `alimiter` ceiling that lets the second loudnorm pass stay linear, or `null` when the mix needs none.
+ * loudnorm only goes linear when the measured peak, raised by the programme's gain, stays under TP=-1
+ * (`measured_TP + (-14 - measured_I) <= -1`); a mix with a crest factor over 13 dB (street sound under quiet
+ * music) fell back to dynamic on every render and landed short of -14 LUFS (`loudnorm_not_linear`). The limiter
+ * changes the loudness a little, so the runner measures again through it before the final pass.
+ */
+export function peakLimit(m: LoudnormMeasured): number | null {
+  const ceilingDb = m.input_i + (TARGET_TP - TARGET_I) - LIMIT_MARGIN_DB;
+  if (m.input_tp <= ceilingDb) return null;
+  return round3(Math.min(1, Math.max(LIMIT_FLOOR, 10 ** (ceilingDb / 20))));
+}
 const DUCK_RATIO = "6";
 
-function buildVoiceGraph(composition: Composition, mezzIndex: (order: number) => number, narrationIndex: (line_id: string) => number): { parts: string[]; label: string } {
+function buildVoiceGraph(composition: Composition, mezzIndex: (order: number) => number, narrationIndex: (line_id: string) => number, evenGainDb?: ReadonlyMap<number, number>): { parts: string[]; label: string } {
   const parts: string[] = [];
   const total = fmt(composition.total_seconds);
 
@@ -67,8 +111,8 @@ function buildVoiceGraph(composition: Composition, mezzIndex: (order: number) =>
     return { parts, label: "voice" };
   }
 
-  // "original" or "none": every segment's own audio, trimmed to its body length (no tail), 20ms edge fades,
-  // concatenated in segment order. Mezzanine audio is trimmed exactly to `end - start` per segment, so the
+  // "original" or "none": every segment's own audio, trimmed (or padded with silence, when its source ran
+  // short) to its body length (no tail), 20ms edge fades, concatenated in segment order. Mezzanine audio is trimmed exactly to `end - start` per segment, so the
   // concat's total should already equal `total_seconds`; `apad,atrim` here is defensive (same reasoning as
   // the `tts` branch above) against per-segment rounding drift accumulating over many segments.
   const segs = [...composition.segments].sort((a, b) => a.order - b.order);
@@ -77,7 +121,10 @@ function buildVoiceGraph(composition: Composition, mezzIndex: (order: number) =>
     const i = mezzIndex(seg.order);
     const len = seg.end - seg.start;
     const label = `s_${idx}`;
-    parts.push(`[${i}:a]atrim=0:${fmt(len)},afade=t=in:d=0.02,afade=t=out:st=${fmt(len - 0.02)}:d=0.02[${label}]`);
+    // the segment's own gain and its even-level correction (feedback-vps §4.3)
+    const gain = round3((seg.gain_db ?? 0) + (evenGainDb?.get(seg.order) ?? 0));
+    const volume = gain !== 0 ? `volume=${fmt(gain)}dB,` : "";
+    parts.push(`[${i}:a]atrim=0:${fmt(len)},apad=whole_dur=${fmt(len)},${volume}afade=t=in:d=0.02,afade=t=out:st=${fmt(len - 0.02)}:d=0.02[${label}]`);
     labels.push(`[${label}]`);
   });
   parts.push(`${labels.join("")}concat=n=${labels.length}:v=0:a=1[voice_concat]`);
@@ -96,7 +143,7 @@ export function audioGraph(p: AudioGraphInput): { filter: string; out: string } 
   const { composition, mezzIndex, narrationIndex, musicIndex, loudnorm } = p;
   const parts: string[] = [];
 
-  const voice = buildVoiceGraph(composition, mezzIndex, narrationIndex);
+  const voice = buildVoiceGraph(composition, mezzIndex, narrationIndex, p.evenGainDb);
   parts.push(...voice.parts);
 
   const music = composition.music;
@@ -112,10 +159,16 @@ export function audioGraph(p: AudioGraphInput): { filter: string; out: string } 
     // silence (review fix wave, m2).
     const musicEnd = Math.min(composition.total_seconds, music.cues[0]?.end ?? composition.total_seconds);
     const fadeOutStart = fmt(Math.max(0, musicEnd - music.fade_out));
+    // a volume line (feedback-vps §4.3) is evaluated on every frame at the episode's time; without one, a fixed gain
+    const gain = music.envelope && music.envelope.length > 0
+      ? `asetpts=PTS-STARTPTS,volume=volume='pow(10,(${envelopeDbExpr(music.envelope)})/20)':eval=frame`
+      : `volume=${fmt(gainDb)}dB`;
     parts.push(
-      `[${musicIndex}:a]${loopPrefix}atrim=0:${fmt(composition.total_seconds)},afade=t=in:d=${fmt(music.fade_in)},afade=t=out:st=${fadeOutStart}:d=${fmt(music.fade_out)},volume=${fmt(gainDb)}dB[music]`,
+      `[${musicIndex}:a]${loopPrefix}atrim=0:${fmt(composition.total_seconds)},afade=t=in:d=${fmt(music.fade_in)},afade=t=out:st=${fadeOutStart}:d=${fmt(music.fade_out)},${gain}[music]`,
     );
-    if (composition.voice !== "none") {
+    // `duck.enabled: false` (the timeline's `music.ducking` off): the music keeps its gain over the voice. Ducked
+    // under the footage's own sound, a quiet track (-30 dB) all but vanished on every noisy street shot.
+    if (composition.voice !== "none" && music.duck.enabled !== false) {
       parts.push("[voice]asplit=2[voice_mix][voice_sc]");
       parts.push(`[music][voice_sc]sidechaincompress=threshold=${DUCK_THRESHOLD}:ratio=${DUCK_RATIO}:attack=${music.duck.attack_ms}:release=${music.duck.release_ms}:makeup=1[music_d]`);
       parts.push("[voice_mix][music_d]amix=inputs=2:normalize=0:duration=first[mix]");
@@ -126,6 +179,11 @@ export function audioGraph(p: AudioGraphInput): { filter: string; out: string } 
   } else {
     parts.push("[voice]anull[mix]");
     mixLabel = "mix";
+  }
+
+  if (p.limit !== undefined && p.limit !== null) {
+    parts.push(`[${mixLabel}]alimiter=limit=${fmt(p.limit)}:attack=5:release=50:level=false[limited]`);
+    mixLabel = "limited";
   }
 
   if (loudnorm === null) {

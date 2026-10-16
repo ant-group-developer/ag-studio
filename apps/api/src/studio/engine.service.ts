@@ -1,11 +1,11 @@
-import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   createStudioEngineCore,
   FarmOwnerClient,
   referenceFetchNodes,
   S3Bucket,
-  StudioDb,
+  type StudioDb,
   type StudioBucket,
   type StudioEngineCore,
 } from '@ag-studio/engine';
@@ -29,13 +29,12 @@ export async function referenceFetcherNames(engine: Pick<EngineService, 'farmNod
 }
 
 /**
- * The Studio engine inside the API process: the same `studio.db` (through StudioDbService), bucket and clock the
- * worker uses, and the farm's machine list for the Queue screen.
+ * The Studio engine inside the API process: the same Postgres database (through StudioDbService), bucket and clock
+ * the worker uses, and the farm's machine list for the Queue screen.
  */
 @Injectable()
-export class EngineService implements OnModuleInit, OnModuleDestroy {
+export class EngineService implements OnModuleInit {
   private _core?: StudioEngineCore;
-  private _db?: StudioDb;
   private _bucket?: StudioBucket;
   private _farm?: FarmOwnerClient;
   private nodes: { at: number; value: Promise<FarmNodes> } | null = null;
@@ -46,12 +45,10 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit(): void {
-    // StudioDbService (a dependency, so initialised first) has already applied every migration.
+    // StudioDbService (a dependency, so initialised first) has already connected and applied every migration.
     this._core = createStudioEngineCore({
-      dbPath: this.config.get<string>('STUDIO_DB_PATH', './data/studio.db'),
       dataRoot: this.config.get<string>('STUDIO_DATA_ROOT', './data/harness'),
     });
-    this._db = new StudioDb(this.dbService.db);
     this._bucket = new S3Bucket({
       endpoint: this.config.get<string>('STUDIO_R2_ENDPOINT') as string,
       bucket: this.config.get<string>('STUDIO_R2_BUCKET') as string,
@@ -64,12 +61,8 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  onModuleDestroy(): void {
-    this._core?.close();
-  }
-
   get core(): StudioEngineCore { return this.must(this._core); }
-  get db(): StudioDb { return this.must(this._db); }
+  get db(): StudioDb { return this.dbService.db; }
   get bucket(): StudioBucket { return this.must(this._bucket); }
   get browserUrlTtl(): number { return this.config.get<number>('STUDIO_BROWSER_URL_TTL_SECONDS') ?? 3600; }
 

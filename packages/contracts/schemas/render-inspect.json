@@ -1,0 +1,224 @@
+{
+  "$ref": "#/definitions/render-inspect",
+  "definitions": {
+    "render-inspect": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "harness.render-inspect/v1"
+        },
+        "expected_seconds": {
+          "type": "number"
+        },
+        "video_seconds": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "audio_seconds": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "freezes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "number"
+              },
+              "end": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "start",
+              "end"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "blacks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "number"
+              },
+              "end": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "start",
+              "end"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "silences": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "number"
+              },
+              "end": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "start",
+              "end"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "order": {
+                "type": "integer"
+              },
+              "start": {
+                "type": "number"
+              },
+              "end": {
+                "type": "number"
+              },
+              "lufs": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "order",
+              "start",
+              "end",
+              "lufs"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "loudness_median_lufs": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "sheets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "from_s": {
+                "type": "number"
+              },
+              "every_s": {
+                "type": "number"
+              },
+              "columns": {
+                "type": "integer"
+              },
+              "rows": {
+                "type": "integer"
+              },
+              "frames": {
+                "type": "integer"
+              },
+              "tile_width": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "file",
+              "from_s",
+              "every_s",
+              "columns",
+              "rows",
+              "frames",
+              "tile_width"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "error",
+                  "warning"
+                ]
+              },
+              "start": {
+                "type": "number"
+              },
+              "end": {
+                "type": "number"
+              },
+              "order": {
+                "type": "integer"
+              },
+              "expected_s": {
+                "type": "number"
+              },
+              "actual_s": {
+                "type": "number"
+              },
+              "delta_db": {
+                "type": "number"
+              },
+              "to_end": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "code",
+              "severity"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "inspect_seconds": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "schema_version",
+        "expected_seconds",
+        "video_seconds",
+        "audio_seconds",
+        "freezes",
+        "blacks",
+        "silences",
+        "segments",
+        "loudness_median_lufs",
+        "sheets",
+        "issues",
+        "inspect_seconds"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

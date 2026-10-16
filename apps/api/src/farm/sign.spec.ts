@@ -13,13 +13,13 @@ const MOCK_JOB = {
   attempt_id: 'attempt-1',
   production_id: 'prod-1',
   job_type: 'studio.render_preview',
-  is_final_render: 0,
+  is_final_render: false,
   created_at: new Date().toISOString(),
 };
 
 const MOCK_FINAL_JOB = {
   ...MOCK_JOB,
-  is_final_render: 1,
+  is_final_render: true,
   job_type: 'studio.render_final',
 };
 
@@ -45,7 +45,7 @@ describe('FarmController /farm/sign', () => {
 
   beforeEach(() => {
     dbGet = vi.fn();
-    dbRun = vi.fn().mockReturnValue({ changes: 1, lastInsertRowid: 1 });
+    dbRun = vi.fn().mockReturnValue({ changes: 1 });
     agGoResolveAssets = vi.fn();
 
     const mockDb = {
@@ -134,8 +134,8 @@ describe('FarmController /farm/sign', () => {
     dbGet.mockImplementation((sql: string) => (sql.includes('project_farm_jobs') ? job : { user_id: owner }));
   }
 
-  it('uses purpose=preview when is_final_render=0', async () => {
-    routeDb({ ...MOCK_JOB, is_final_render: 0 });
+  it('uses purpose=preview when is_final_render=false', async () => {
+    routeDb({ ...MOCK_JOB, is_final_render: false });
     agGoResolveAssets.mockResolvedValue({
       items: [
         {
@@ -152,7 +152,7 @@ describe('FarmController /farm/sign', () => {
       ],
       missing: [],
     });
-    dbRun.mockReturnValue({ changes: 1, lastInsertRowid: 1 });
+    dbRun.mockReturnValue({ changes: 1 });
 
     const req = {
       ticketClaims: makeTicketClaims(MOCK_JOB.farm_job_id),
@@ -168,8 +168,8 @@ describe('FarmController /farm/sign', () => {
     });
   });
 
-  it('uses purpose=final when is_final_render=1', async () => {
-    routeDb({ ...MOCK_FINAL_JOB, is_final_render: 1 });
+  it('uses purpose=final when is_final_render=true', async () => {
+    routeDb({ ...MOCK_FINAL_JOB, is_final_render: true });
     agGoResolveAssets.mockResolvedValue({
       items: [
         {
@@ -186,7 +186,7 @@ describe('FarmController /farm/sign', () => {
       ],
       missing: [],
     });
-    dbRun.mockReturnValue({ changes: 1, lastInsertRowid: 1 });
+    dbRun.mockReturnValue({ changes: 1 });
 
     const req = {
       ticketClaims: makeTicketClaims(MOCK_FINAL_JOB.farm_job_id),
@@ -201,12 +201,12 @@ describe('FarmController /farm/sign', () => {
   });
 
   it('answers the whole file with its cache key and source, and 403 when ag-go has nothing servable', async () => {
-    routeDb({ ...MOCK_JOB, is_final_render: 0 });
+    routeDb({ ...MOCK_JOB, is_final_render: false });
     agGoResolveAssets.mockResolvedValue({
       items: [{ assetId: 'asset-1', url: 'https://cdn.example.com/asset-1.mp4', sourceKind: 'proxy', watermarked: false, contentType: 'video/mp4', sizeBytes: 1024, durationMs: 30000, cacheKey: 'proxy:analysis-1', expiresAt: new Date(Date.now() + 3600000).toISOString() }],
       missing: [],
     });
-    dbRun.mockReturnValue({ changes: 1, lastInsertRowid: 1 });
+    dbRun.mockReturnValue({ changes: 1 });
     const req = { ticketClaims: makeTicketClaims(MOCK_JOB.farm_job_id), ip: '127.0.0.1' } as never;
     const res = await controller.sign({ ops: [{ op: 'get', input: 'asset:asset-1' }] }, req);
     expect(res.results[0]).toMatchObject({ op: 'get', input: 'asset:asset-1', cache_key: 'proxy:analysis-1', size_bytes: 1024, source: { source_kind: 'proxy', watermarked: false, start_ms: null, end_ms: null } });
@@ -233,7 +233,7 @@ describe('FarmController /farm/sign', () => {
   describe('a project job (agent workspace)', () => {
     const PROJECT_JOB = {
       farm_job_id: 'farm-job-p1', production_id: 'proj-1', stage_key: 'prepare', attempt_id: 'job-1',
-      job_type: 'studio.transcribe', is_final_render: 0,
+      job_type: 'studio.transcribe', is_final_render: false,
     };
     const sqls: string[] = [];
     function routeProject(job: unknown, owner: string | null = 'auth0|owner') {
@@ -259,7 +259,7 @@ describe('FarmController /farm/sign', () => {
     });
 
     it('a final render of a project asks for the original, without a preference', async () => {
-      routeProject({ ...PROJECT_JOB, is_final_render: 1 });
+      routeProject({ ...PROJECT_JOB, is_final_render: true });
       agGoResolveAssets.mockResolvedValue({ items: [{ ...item, sourceKind: 'original' }], missing: [] });
       const req = { ticketClaims: makeTicketClaims(PROJECT_JOB.farm_job_id), ip: '127.0.0.1' } as never;
       await controller.sign({ ops: [{ op: 'get', input: 'asset:asset-1' }] }, req);

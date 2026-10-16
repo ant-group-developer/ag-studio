@@ -83,9 +83,9 @@ const UPLOAD_KINDS: { exts: string[]; mediaType: SourceMediaType; dir: string }[
 ];
 
 /** The person's role in the team as a job records it (a Studio admin acts as owner). */
-function roleOf(engine: EngineService, req: Request, teamId: string): ActorRole {
+async function roleOf(engine: EngineService, req: Request, teamId: string): Promise<ActorRole> {
   if (req.authContext?.isAdmin) return 'owner';
-  return engine.db.get<{ role: ActorRole }>('SELECT role FROM team_members WHERE team_id = ? AND user_id = ?', [teamId, req.authContext!.userId])?.role ?? 'viewer';
+  return (await engine.db.get<{ role: ActorRole }>('SELECT role FROM team_members WHERE team_id = ? AND user_id = ?', [teamId, req.authContext!.userId]))?.role ?? 'viewer';
 }
 
 /**
@@ -113,10 +113,10 @@ export class InputsController {
   @Get('sources')
   @Roles('viewer')
   sources(@Param('projectId') projectId: string, @Query('videoId') videoId?: string): Promise<{ sources: SourceItem[]; counts: AssetCounts }> {
-    return mapErrors(() => {
-      requireProject(this.engine.db, projectId);
-      this.nameUnnamed(projectId);
-      const sources = sourceItems(this.engine.db, projectId, videoId ? { videoId } : {});
+    return mapErrors(async () => {
+      await requireProject(this.engine.db, projectId);
+      const sources = await sourceItems(this.engine.db, projectId, videoId ? { videoId } : {});
+      await this.nameUnnamed(projectId);
       return { sources, counts: assetCounts(sources) };
     });
   }
@@ -125,13 +125,13 @@ export class InputsController {
    * ag-go videos added without a name (the agent left it out, so people saw the asset id) get their names from the
    * picked ag-go projects, as the owner: in the background, best effort, so the next load shows them.
    */
-  private nameUnnamed(projectId: string): void {
+  private async nameUnnamed(projectId: string): Promise<void> {
     const db = this.engine.db;
-    const missing = new Set(unnamedAssetIds(db, projectId));
+    const missing = new Set(await unnamedAssetIds(db, projectId));
     if (!missing.size || Date.now() - (this.namedAt.get(projectId) ?? 0) < 10 * 60_000) return;
     this.namedAt.set(projectId, Date.now());
-    const owner = projectActAs(db, projectId);
-    const projectIds = listSources(db, projectId).filter((s) => s.kind === 'ag_go_project').map((s) => s.ref);
+    const owner = await projectActAs(db, projectId);
+    const projectIds = (await listSources(db, projectId)).filter((s) => s.kind === 'ag_go_project').map((s) => s.ref);
     if (!owner || !projectIds.length) return;
     this.naming = (async () => {
       const names = new Map<string, string>();
@@ -142,7 +142,7 @@ export class InputsController {
         if (!r.nextCursor) break;
         cursor = r.nextCursor;
       }
-      if (names.size) nameUnnamedAssets(db, this.workspace.dir(projectId), projectId, names);
+      if (names.size) await nameUnnamedAssets(db, await this.workspace.dir(projectId), projectId, names);
     })().catch(() => { /* looked up again in 10 minutes */ });
   }
 
@@ -160,8 +160,8 @@ export class InputsController {
   add(@Param('projectId') projectId: string, @Body() raw: unknown, @Req() req: Request): Promise<{ source: SourceItem; prepare?: unknown }> {
     return mapErrors(async () => {
       const body = parseBody(AddSchema, raw);
-      const project = requireProject(this.engine.db, projectId);
-      const owner = projectActAs(this.engine.db, projectId);
+      const project = await requireProject(this.engine.db, projectId);
+      const owner = await projectActAs(this.engine.db, projectId);
       if (!owner) throw new StudioRunError('invalid', `dự án chưa có chủ để hỏi ${this.siteName.current()}`, { code: 'no_owner' });
       const userId = req.authContext!.userId;
       if (body.kind === 'ag_go_project') {
@@ -169,27 +169,27 @@ export class InputsController {
         if (seen.total === 0 && seen.items.length === 0) {
           throw new StudioRunError('invalid', `Chủ dự án không thấy video đã phân tích nào trong project ${this.siteName.current()} này`, { code: 'owner_cannot_access' });
         }
-        const s = addSource(this.engine.db, { projectId, kind: 'ag_go_project', ref: body.ref, mediaType: 'mixed', label: body.label, meta: { videos: seen.total }, addedBy: userId });
-        return { source: this.item(projectId, s.id) };
+        const s = await addSource(this.engine.db, { projectId, kind: 'ag_go_project', ref: body.ref, mediaType: 'mixed', label: body.label, meta: { videos: seen.total }, addedBy: userId });
+        return { source: await this.item(projectId, s.id) };
       }
       if (body.videoId) {
-        const v = requireVideo(this.engine.db, body.videoId);
+        const v = await requireVideo(this.engine.db, body.videoId);
         if (v.project_id !== projectId) throw new StudioRunError('invalid', 'video thuộc dự án khác', { code: 'other_project' });
       }
       const { missing } = await this.footage.check(owner, [body.ref]);
       if (missing.length) {
         throw new StudioRunError('invalid', `Chủ dự án không dùng được video này trên ${this.siteName.current()} (không có quyền hoặc chưa có bản xem)`, { code: 'owner_cannot_access' });
       }
-      const s = addSource(this.engine.db, {
+      const s = await addSource(this.engine.db, {
         projectId, videoId: body.videoId ?? null, kind: 'ag_go_asset', ref: body.ref, mediaType: 'video', label: body.label, meta: body.meta ?? {}, addedBy: userId,
       });
-      if (body.videoId) writeVideoIndex(this.engine.db, this.workspace.dir(projectId), projectId, body.videoId);
+      if (body.videoId) await writeVideoIndex(this.engine.db, await this.workspace.dir(projectId), projectId, body.videoId);
       const prepare = body.prepare
-        ? queuePrepare(this.engine.db, {
-          projectId, assetIds: [body.ref], threadId: this.videoThreadId(body.videoId), createdBy: userId, actorRole: roleOf(this.engine, req, project.team_id),
-        }, new Date().toISOString())[body.ref]
+        ? (await queuePrepare(this.engine.db, {
+          projectId, assetIds: [body.ref], threadId: await this.videoThreadId(body.videoId), createdBy: userId, actorRole: await roleOf(this.engine, req, project.team_id),
+        }, new Date().toISOString()))[body.ref]
         : undefined;
-      return { source: this.item(projectId, s.id), ...(prepare ? { prepare } : {}) };
+      return { source: await this.item(projectId, s.id), ...(prepare ? { prepare } : {}) };
     });
   }
 
@@ -197,11 +197,11 @@ export class InputsController {
   @Roles('editor')
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(@Param('projectId') projectId: string, @Param('sourceId') sourceId: string, @Req() req: Request): Promise<void> {
-    await mapErrors(() => {
-      const s = getSource(this.engine.db, sourceId);
+    await mapErrors(async () => {
+      const s = await getSource(this.engine.db, sourceId);
       if (!s || s.project_id !== projectId) throw new StudioRunError('not_found', `không có nguồn ${sourceId}`);
-      removeSource(this.engine.db, sourceId, req.authContext!.userId);
-      if (s.kind === 'ag_go_asset' && s.video_id) writeVideoIndex(this.engine.db, this.workspace.dir(projectId), projectId, s.video_id);
+      await removeSource(this.engine.db, sourceId, req.authContext!.userId);
+      if (s.kind === 'ag_go_asset' && s.video_id) await writeVideoIndex(this.engine.db, await this.workspace.dir(projectId), projectId, s.video_id);
     });
   }
 
@@ -245,22 +245,22 @@ export class InputsController {
       const { name, kind } = this.checkSource(file.originalname, file.size, reference);
       const at = file;
       const f = form;
-      return await mapErrors(() => {
-        requireProject(this.engine.db, projectId);
+      return await mapErrors(async () => {
+        await requireProject(this.engine.db, projectId);
         if (f.videoId) {
-          const v = requireVideo(this.engine.db, f.videoId);
+          const v = await requireVideo(this.engine.db, f.videoId);
           if (v.project_id !== projectId) throw new StudioRunError('invalid', 'video thuộc dự án khác', { code: 'other_project' });
         }
-        const dir = this.workspace.dir(projectId);
+        const dir = await this.workspace.dir(projectId);
         const path = this.freePath(dir, kind.dir, name);
-        const saved = writeWorkspaceFile(this.engine.db, {
+        const saved = await writeWorkspaceFile(this.engine.db, {
           projectId, dir, path, content: readFileSync(at.path), baseSha256: null, author: { kind: 'user', id: req.authContext!.userId },
         });
-        const s = addSource(this.engine.db, {
+        const s = await addSource(this.engine.db, {
           projectId, videoId: f.videoId ?? null, kind: 'upload', ref: saved.path, mediaType: kind.mediaType, label: name,
           meta: { bytes: at.size, ...(reference ? { reference: true } : {}) }, addedBy: req.authContext!.userId,
         });
-        return { source: this.item(projectId, s.id), file: saved };
+        return { source: await this.item(projectId, s.id), file: saved };
       });
     } finally {
       if (file) rmSync(file.path, { force: true });
@@ -304,11 +304,11 @@ export class InputsController {
   footageSearch(@Param('projectId') projectId: string, @Query() raw: unknown, @Req() req: Request) {
     return mapErrors(async () => {
       const q = parseBody(FootageQuerySchema, raw);
-      const projectIds = this.footageScope(projectId, q);
+      const projectIds = await this.footageScope(projectId, q);
       if (!projectIds.length) return { items: [], nextCursor: null, total: 0 };
       const { agGoProjectId: _one, agGoProjectIds: _many, ...filters } = q;
       const r = await this.footage.searchForPicker(req.authContext!.userId, { ...filters, projectIds, limit: q.limit ?? 40 });
-      const state = assetStates(this.engine.db, projectId);
+      const state = await assetStates(this.engine.db, projectId);
       return { ...r, items: r.items.map((i) => ({ ...i, prepared: state(i.assetId) })) };
     });
   }
@@ -323,8 +323,8 @@ export class InputsController {
   footageFacets(@Param('projectId') projectId: string, @Query() raw: unknown, @Req() req: Request) {
     return mapErrors(async () => {
       const q = parseBody(FootageQuerySchema, raw);
-      const projectIds = this.footageScope(projectId, q);
-      const picked = listSources(this.engine.db, projectId).filter((s) => s.kind === 'ag_go_project');
+      const projectIds = await this.footageScope(projectId, q);
+      const picked = (await listSources(this.engine.db, projectId)).filter((s) => s.kind === 'ag_go_project');
       const empty = { tags: [], genres: [], timesOfDay: [], orientations: [], resolutions: [], categories: [], provinces: [], authors: [] };
       if (!projectIds.length) return { ...empty, projects: [] };
       const { agGoProjectId: _one, agGoProjectIds: _many, page: _p, cursor: _c, limit: _l, sortBy: _s, sortOrder: _o, ...filters } = q;
@@ -335,9 +335,9 @@ export class InputsController {
   }
 
   /** The ag-go projects a footage query looks in: those asked for (each must be picked here), else every picked one. */
-  private footageScope(projectId: string, q: { agGoProjectId?: string | undefined; agGoProjectIds?: string[] | undefined }): string[] {
-    requireProject(this.engine.db, projectId);
-    const picked = listSources(this.engine.db, projectId).filter((s) => s.kind === 'ag_go_project').map((s) => s.ref);
+  private async footageScope(projectId: string, q: { agGoProjectId?: string | undefined; agGoProjectIds?: string[] | undefined }): Promise<string[]> {
+    await requireProject(this.engine.db, projectId);
+    const picked = (await listSources(this.engine.db, projectId)).filter((s) => s.kind === 'ag_go_project').map((s) => s.ref);
     const asked = [...new Set([...(q.agGoProjectIds ?? []), ...(q.agGoProjectId ? [q.agGoProjectId] : [])])];
     const stray = asked.filter((id) => !picked.includes(id));
     if (stray.length) throw new StudioRunError('invalid', `project ${this.siteName.current()} này chưa thuộc đầu vào của dự án`, { code: 'not_an_input', ids: stray });
@@ -348,14 +348,14 @@ export class InputsController {
   @Post('prepare')
   @Roles('editor')
   prepare(@Param('projectId') projectId: string, @Body() raw: unknown, @Req() req: Request) {
-    return mapErrors(() => {
+    return mapErrors(async () => {
       const body = parseBody(PrepareSchema, raw);
-      const project = requireProject(this.engine.db, projectId);
-      const first = listSources(this.engine.db, projectId).find((s) => s.kind === 'ag_go_asset' && body.assetIds.includes(s.ref) && s.video_id);
+      const project = await requireProject(this.engine.db, projectId);
+      const first = (await listSources(this.engine.db, projectId)).find((s) => s.kind === 'ag_go_asset' && body.assetIds.includes(s.ref) && s.video_id);
       return {
-        assets: queuePrepare(this.engine.db, {
-          projectId, assetIds: body.assetIds, threadId: this.videoThreadId(first?.video_id ?? undefined), createdBy: req.authContext!.userId,
-          actorRole: roleOf(this.engine, req, project.team_id), ...(body.again ? { again: true } : {}),
+        assets: await queuePrepare(this.engine.db, {
+          projectId, assetIds: body.assetIds, threadId: await this.videoThreadId(first?.video_id ?? undefined), createdBy: req.authContext!.userId,
+          actorRole: await roleOf(this.engine, req, project.team_id), ...(body.again ? { again: true } : {}),
         }, new Date().toISOString()),
       };
     });
@@ -364,9 +364,9 @@ export class InputsController {
   @Get('jobs')
   @Roles('viewer')
   jobs(@Param('projectId') projectId: string, @Query('active') active?: string, @Query('videoId') videoId?: string): Promise<{ jobs: JobView[] }> {
-    return mapErrors(() => {
-      requireProject(this.engine.db, projectId);
-      return { jobs: listJobs(this.engine.db, projectId, { ...(active === '1' ? { active: true } : {}), ...(videoId ? { videoId } : {}), limit: 50 }).map(jobView) };
+    return mapErrors(async () => {
+      await requireProject(this.engine.db, projectId);
+      return { jobs: (await listJobs(this.engine.db, projectId, { ...(active === '1' ? { active: true } : {}), ...(videoId ? { videoId } : {}), limit: 50 })).map(jobView) };
     });
   }
 
@@ -375,21 +375,21 @@ export class InputsController {
   @Roles('editor')
   @HttpCode(HttpStatus.OK)
   cancel(@Param('projectId') projectId: string, @Param('jobId') jobId: string): Promise<JobView> {
-    return mapErrors(() => {
-      const j = requireJob(this.engine.db, jobId);
+    return mapErrors(async () => {
+      const j = await requireJob(this.engine.db, jobId);
       if (j.project_id !== projectId) throw new StudioRunError('not_found', `không có việc ${jobId}`);
-      return jobView(requestJobCancel(this.engine.db, jobId));
+      return jobView(await requestJobCancel(this.engine.db, jobId));
     });
   }
 
-  private item(projectId: string, sourceId: string): SourceItem {
-    return sourceItems(this.engine.db, projectId).find((s) => s.id === sourceId)!;
+  private async item(projectId: string, sourceId: string): Promise<SourceItem> {
+    return (await sourceItems(this.engine.db, projectId)).find((s) => s.id === sourceId)!;
   }
 
   /** The main thread of a video (told when its jobs end); none for project-wide work. */
-  private videoThreadId(videoId: string | undefined): string | null {
+  private async videoThreadId(videoId: string | undefined): Promise<string | null> {
     if (!videoId) return null;
-    return this.engine.db.get<{ id: string }>("SELECT id FROM agent_threads WHERE video_id = ? AND kind = 'video' AND archived_at IS NULL", [videoId])?.id ?? null;
+    return (await this.engine.db.get<{ id: string }>("SELECT id FROM agent_threads WHERE video_id = ? AND kind = 'video' AND archived_at IS NULL", [videoId]))?.id ?? null;
   }
 
   private freePath(dir: string, folder: string, name: string): string {

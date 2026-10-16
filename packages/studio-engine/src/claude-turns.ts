@@ -90,7 +90,7 @@ interface Raw {
   id: string; created_at: string; team_id: string | null; production_id: string | null; project_name: string | null; episode_id: string | null;
   video_title: string | null; run_id: string; thread_title: string | null; attempt_id: string; user_id: string | null; model: string; outcome: string;
   status: string | null; trigger: string | null; input_tokens: number | null; output_tokens: number | null; cache_read_tokens: number | null;
-  cache_creation_tokens: number | null; cost_usd: number; wall_seconds: number; num_turns: number | null; parts: string | null; prompt: string | null;
+  cache_creation_tokens: number | null; cost_usd: number; wall_seconds: number; num_turns: number | null; parts: unknown; prompt: string | null;
 }
 
 const SELECT = `SELECT c.id, c.created_at, c.team_id, c.production_id, p.name AS project_name, c.episode_id, v.title AS video_title, c.run_id,
@@ -103,10 +103,7 @@ const SELECT = `SELECT c.id, c.created_at, c.team_id, c.production_id, p.name AS
   LEFT JOIN agent_threads t ON t.id = c.run_id
   LEFT JOIN agent_messages m ON m.id = c.attempt_id`;
 
-const parseParts = (raw: string | null): AgentPart[] => {
-  if (!raw) return [];
-  try { const v = JSON.parse(raw) as unknown; return Array.isArray(v) ? (v as AgentPart[]) : []; } catch { return []; }
-};
+const parseParts = (raw: unknown): AgentPart[] => (Array.isArray(raw) ? (raw as AgentPart[]) : []);
 const toolParts = (parts: AgentPart[]) => parts.filter((p): p is Extract<AgentPart, { kind: "tool" }> => p.kind === "tool");
 
 function row(r: Raw): ClaudeTurnRow {
@@ -122,7 +119,7 @@ function row(r: Raw): ClaudeTurnRow {
 }
 
 /** The agent's turns over a period, newest first (or by cost, time, tokens), a page at a time. */
-export function claudeTurns(db: StudioDb, q: ClaudeTurnsQuery): { items: ClaudeTurnRow[]; total: number; page: number; pageSize: number } {
+export async function claudeTurns(db: StudioDb, q: ClaudeTurnsQuery): Promise<{ items: ClaudeTurnRow[]; total: number; page: number; pageSize: number }> {
   const where = ["c.source = 'claude-agent'", "c.created_at >= ?", "c.created_at < ?"];
   const params: (string | number)[] = [q.from, q.to];
   if (q.teamIds) {
@@ -139,11 +136,11 @@ export function claudeTurns(db: StudioDb, q: ClaudeTurnsQuery): { items: ClaudeT
   if (q.threadId) { where.push("c.run_id = ?"); params.push(q.threadId); }
   if (q.outcome) { where.push("c.outcome = ?"); params.push(q.outcome); }
   const filter = where.join(" AND ");
-  const total = db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM llm_calls c WHERE ${filter}`, params)?.n ?? 0;
+  const total = (await db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM llm_calls c WHERE ${filter}`, params))?.n ?? 0;
   const pageSize = Math.min(Math.max(q.pageSize ?? 50, 1), 200);
   const page = Math.max(q.page ?? 1, 1);
   const order = `${SORT_SQL[q.sortBy ?? "at"]} ${q.sortOrder === "asc" ? "ASC" : "DESC"}, c.created_at DESC, c.id`;
-  const items = db.all<Raw>(`${SELECT} WHERE ${filter} ORDER BY ${order} LIMIT ? OFFSET ?`, [...params, pageSize, (page - 1) * pageSize]).map(row);
+  const items = (await db.all<Raw>(`${SELECT} WHERE ${filter} ORDER BY ${order} LIMIT ? OFFSET ?`, [...params, pageSize, (page - 1) * pageSize])).map(row);
   return { items, total, page, pageSize };
 }
 
@@ -155,20 +152,20 @@ function shortInput(input: unknown): unknown {
 }
 
 /** One turn in full; undefined when it is not an agent turn (or not in `teamIds`, when given). */
-export function claudeTurn(db: StudioDb, id: string, opts: { teamIds?: string[] } = {}): ClaudeTurnDetail | undefined {
-  const r = db.get<Raw>(`${SELECT} WHERE c.id = ? AND c.source = 'claude-agent'`, [id]);
+export async function claudeTurn(db: StudioDb, id: string, opts: { teamIds?: string[] } = {}): Promise<ClaudeTurnDetail | undefined> {
+  const r = await db.get<Raw>(`${SELECT} WHERE c.id = ? AND c.source = 'claude-agent'`, [id]);
   if (!r || (opts.teamIds && !opts.teamIds.includes(r.team_id ?? ""))) return undefined;
-  const m = db.get<{ thread_id: string; seq: number; text: string; error: string | null; attempts: number; started_at: string | null; finished_at: string | null }>(
+  const m = await db.get<{ thread_id: string; seq: number; text: string; error: string | null; attempts: number; started_at: string | null; finished_at: string | null }>(
     "SELECT thread_id, seq, text, error, attempts, started_at, finished_at FROM agent_messages WHERE id = ?", [r.attempt_id],
   );
   const asked = m
-    ? db.get<{ text: string; created_by: string | null }>(
+    ? await db.get<{ text: string; created_by: string | null }>(
       "SELECT text, created_by FROM agent_messages WHERE thread_id = ? AND role IN ('user', 'system') AND seq < ? ORDER BY seq DESC LIMIT 1", [m.thread_id, m.seq],
     )
     : undefined;
-  const audit = db.get<{ details: string | null }>("SELECT details FROM audit_log WHERE kind = 'turn' AND message_id = ? ORDER BY at DESC LIMIT 1", [r.attempt_id]);
-  let changed: string[] = [];
-  try { const d = audit?.details ? (JSON.parse(audit.details) as { changed?: unknown }) : null; if (Array.isArray(d?.changed)) changed = d.changed.filter((x): x is string => typeof x === "string"); } catch { /* none */ }
+  const audit = await db.get<{ details: unknown }>("SELECT details FROM audit_log WHERE kind = 'turn' AND message_id = ? ORDER BY at DESC LIMIT 1", [r.attempt_id]);
+  const d = audit?.details && typeof audit.details === "object" ? (audit.details as { changed?: unknown }) : null;
+  const changed = Array.isArray(d?.changed) ? d.changed.filter((x): x is string => typeof x === "string") : [];
   return {
     ...row(r),
     promptText: asked?.text ?? null, promptBy: asked?.created_by ?? null, text: m?.text || null, error: m?.error ?? null, attempts: m?.attempts ?? null,

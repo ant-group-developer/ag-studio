@@ -51,7 +51,7 @@ export class StatsController {
     const scope = await this.admin.viewScope(req, q.teamId);
     const to = q.to ? new Date(q.to) : new Date(this.engine.core.clock.now());
     const from = q.from ? new Date(q.from) : new Date(to.getTime() - 30 * DAY_MS);
-    const stats = claudeStats(this.engine.db, {
+    const stats = await claudeStats(this.engine.db, {
       from: from.toISOString(), to: to.toISOString(), groupBy: q.groupBy,
       ...(scope.all ? {} : { teamIds: scope.teamIds }), ...(q.projectId ? { projectId: q.projectId } : {}), ...(q.tz !== undefined ? { tzOffsetMinutes: q.tz } : {}),
     });
@@ -71,7 +71,7 @@ export class StatsController {
     const to = q.to ? new Date(q.to) : new Date(this.engine.core.clock.now());
     const from = q.from ? new Date(q.from) : new Date(to.getTime() - 30 * DAY_MS);
     const { from: _f, to: _t, teamId: _team, ...filters } = q;
-    const page = claudeTurns(this.engine.db, { from: from.toISOString(), to: to.toISOString(), ...(scope.all ? {} : { teamIds: scope.teamIds }), ...filters });
+    const page = await claudeTurns(this.engine.db, { from: from.toISOString(), to: to.toISOString(), ...(scope.all ? {} : { teamIds: scope.teamIds }), ...filters });
     const people = await this.directory.summaries([...new Set(page.items.map((r) => r.userId).filter((k): k is string => !!k))]);
     return { from: from.toISOString(), to: to.toISOString(), ...page, items: page.items.map((r) => ({ ...r, user: r.userId ? people.get(r.userId) ?? null : null })) };
   }
@@ -80,7 +80,7 @@ export class StatsController {
   @Get('claude/turns/:turnId')
   async turn(@Param('turnId') turnId: string, @Req() req: Request) {
     const scope = await this.admin.viewScope(req);
-    const turn = claudeTurn(this.engine.db, turnId, scope.all ? {} : { teamIds: scope.teamIds });
+    const turn = await claudeTurn(this.engine.db, turnId, scope.all ? {} : { teamIds: scope.teamIds });
     if (!turn) throw new NotFoundException(`không có lượt ${turnId}`);
     const people = await this.directory.summaries([turn.userId, turn.promptBy].filter((k): k is string => !!k));
     return { ...turn, user: turn.userId ? people.get(turn.userId) ?? null : null, promptUser: turn.promptBy ? people.get(turn.promptBy) ?? null : null };

@@ -1,7 +1,7 @@
 /**
  * The Studio worker (spec 2026-10-10 agent-workspace): one process running, side by side, the agent loop (turns of the
  * projects' chat threads), the loop of project jobs (preparing inputs, crawls, timelines, renders, thumbnails, style),
- * the cleanup sweep and the footage usage sent to ag-go, against the same `studio.db` as apps/api.
+ * the cleanup sweep and the footage usage sent to ag-go, against the same database as apps/api.
  */
 import { createLogger, Redactor, type HarnessLogger } from "@harness/core";
 import type { FarmOwnerClient } from "@ag-farm/owner-client";
@@ -28,6 +28,7 @@ import { researchHandler } from "./workspace/research.js";
 import { styleWatchHandler } from "./workspace/style-watch.js";
 import { startUsageSender, type UsageSink } from "./workspace/usage-send.js";
 import { thumbnailHandler } from "./workspace/thumbnails.js";
+import { musicBeatsHandler } from "./workspace/music-beats.js";
 import { YoutubeCrawler } from "./workspace/youtube-crawl.js";
 
 export interface StudioWorkerOptions {
@@ -75,8 +76,8 @@ export interface StudioWorkerPool {
 }
 
 /** The Claude calls this worker may run at once now (the web setting, else the env). */
-export function claudeCap(o: Pick<StudioWorkerOptions, "db" | "claudeMaxConcurrent">): number {
-  return claudeMaxConcurrent(o.db, o.claudeMaxConcurrent ?? DEFAULT_CLAUDE_MAX_CONCURRENT).value;
+export async function claudeCap(o: Pick<StudioWorkerOptions, "db" | "claudeMaxConcurrent">): Promise<number> {
+  return (await claudeMaxConcurrent(o.db, o.claudeMaxConcurrent ?? DEFAULT_CLAUDE_MAX_CONCURRENT)).value;
 }
 
 export function createStudioWorkerPool(o: StudioWorkerOptions & {
@@ -86,7 +87,7 @@ export function createStudioWorkerPool(o: StudioWorkerOptions & {
    * Project jobs: where workspaces are, jobs at once (`lanes`, plus one per idle farm machine up to `maxLanes` when
    * that is above `lanes`); absent: none run in this worker.
    */
-  jobs?: { workspacesRoot: string; lanes?: number; maxLanes?: number; pollMs?: number };
+  jobs?: { workspacesRoot: string; lanes?: number; maxLanes?: number; pollMs?: number; /** `prepare_asset` jobs at once (default 3). */ prepareLanes?: number };
   /** The cleanup sweep every `everyMs`, first a minute after start; absent or 0: never. */
   cleanup?: { everyMs: number; retention?: Partial<RetentionConfig> };
 }): StudioWorkerPool {
@@ -103,6 +104,7 @@ export function createStudioWorkerPool(o: StudioWorkerOptions & {
   const jobs = o.jobs ? createJobRunner({
     db: o.db, logger: jobsLog, workspacesRoot: o.jobs.workspacesRoot, dataRoot: o.dataRoot,
     handlers: projectJobHandlers(o), ...(lanes ? { lanes } : {}), ...(o.jobs.pollMs ? { pollMs: o.jobs.pollMs } : {}),
+    kindLimits: { prepare_asset: Math.max(1, o.jobs.prepareLanes ?? 3) },
   }) : null;
   return {
     agent,
@@ -145,6 +147,8 @@ export function projectJobHandlers(o: StudioWorkerOptions): Partial<Record<JobKi
     handlers.fit = fitHandler({ db: o.db, bucket: o.bucket, farm: o.farm, voiceDir: media.voiceDir, ...farmWait });
     // renders of a project's videos: preview, final, Premiere (the narration comes from the voice store)
     for (const kind of RENDER_KINDS) handlers[kind] = renderHandler(kind, { db: o.db, bucket: o.bucket, farm: o.farm, voiceDir: media.voiceDir, ...farmWait });
+    // the beats of imported music, found by a farm machine with Python and kept beside the track (the fit's, for snap)
+    handlers.music_beats = musicBeatsHandler({ db: o.db, bucket: o.bucket, farm: o.farm, ...farmWait });
   }
   if (o.thumbnails) handlers.thumbnail = thumbnailHandler({ db: o.db, bucket: o.bucket, renderer: o.thumbnails });
   // reference videos: uploaded ones (style_from_files), and YouTube ones a person agreed to download (a

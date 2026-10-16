@@ -51,9 +51,9 @@ export interface FarmStep {
 
 export interface FarmWatch {
   /** What to show while it waits or runs. `progress` is the farm's 0–1, `node` the machine's name (or id); `waiting`: no machine took it yet. */
-  onUpdate(u: { phase: string; progress: number | null; node: string | null; farmJobId: string; waiting: boolean }): void;
+  onUpdate(u: { phase: string; progress: number | null; node: string | null; farmJobId: string; waiting: boolean }): void | Promise<void>;
   /** Read often: true stops the job (cancelled on the farm). */
-  stopRequested(): "cancelled" | "shutdown" | null;
+  stopRequested(): Promise<"cancelled" | "shutdown" | null>;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -89,24 +89,24 @@ export async function runFarmStep(
   const now = d.now ?? (() => new Date().toISOString());
   const inPrefix = stageInputPrefix(job.project_id, step.stageKey, step.attemptId);
   for (const u of step.uploads ?? []) await d.bucket.putFile(`${inPrefix}${u.relPath}`, u.localPath);
-  const stop0 = watch.stopRequested();
+  const stop0 = await watch.stopRequested();
   if (stop0) throw new JobStopped(stop0);
   const { job: sent } = await d.farm.submitJob({
     type: step.type as never, correlation_id: `studio-job-${step.stageKey}-${step.attemptId}`, affinity_key: job.project_id,
     max_attempts: step.maxAttempts ?? 2, payload: step.payload,
     ...(step.requirements && Object.keys(step.requirements).length ? { requirements: step.requirements as never } : {}),
   });
-  d.db.run(
-    `INSERT OR IGNORE INTO project_farm_jobs (farm_job_id, job_id, project_id, video_id, stage_key, attempt_id, job_type, is_final_render, requirements, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [sent.id, job.id, job.project_id, job.video_id, step.stageKey, step.attemptId, step.type, step.isFinalRender ? 1 : 0, JSON.stringify(step.requirements ?? {}), now()],
+  await d.db.run(
+    `INSERT INTO project_farm_jobs (farm_job_id, job_id, project_id, video_id, stage_key, attempt_id, job_type, is_final_render, requirements, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+    [sent.id, job.id, job.project_id, job.video_id, step.stageKey, step.attemptId, step.type, step.isFinalRender === true, JSON.stringify(step.requirements ?? {}), now()],
   );
   const nameOf = nodeNames(d.farm);
   const pollMs = d.pollMs ?? 3000;
   let view = sent;
   let waitingSince: number | null = null;
   for (;;) {
-    const stop = watch.stopRequested();
+    const stop = await watch.stopRequested();
     if (stop) {
       if (stop === "cancelled") await d.farm.cancelJob(sent.id).catch(() => undefined);
       throw new JobStopped(stop);
@@ -126,9 +126,12 @@ export async function runFarmStep(
     waitingSince = waiting ? waitingSince ?? Date.now() : null;
     if (waiting && d.queueTimeoutMs && Date.now() - waitingSince! > d.queueTimeoutMs) {
       await d.farm.cancelJob(sent.id).catch(() => undefined);
-      throw new Error(`không máy farm nào nhận việc sau ${Math.round(d.queueTimeoutMs / 60_000)} phút (máy có thể đang tắt)`);
+      // a render needs a machine of its render level: one still on an older render worker never takes it
+      const level = (step.requirements as { studio_render_min?: unknown } | undefined)?.studio_render_min;
+      const why = typeof level === "number" ? `máy có thể đang tắt, hoặc chưa máy nào lên bản render worker đạt mức render ≥ ${level}` : "máy có thể đang tắt";
+      throw new Error(`không máy farm nào nhận việc sau ${Math.round(d.queueTimeoutMs / 60_000)} phút (${why})`);
     }
-    watch.onUpdate({ phase, progress: view.progress_percent === null ? null : view.progress_percent / 100, node, farmJobId: sent.id, waiting });
+    await watch.onUpdate({ phase, progress: view.progress_percent === null ? null : view.progress_percent / 100, node, farmJobId: sent.id, waiting });
     await sleep(pollMs);
     view = await d.farm.getJob(sent.id);
   }

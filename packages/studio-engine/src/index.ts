@@ -1,6 +1,7 @@
 export * from "./bucket.js";
 export * from "./core.js";
 export * from "./studio-db.js";
+export * from "./migrate.js";
 export * from "./payloads.js";
 export * from "./worker.js";
 export { FarmOwnerClient } from "@ag-farm/owner-client";
@@ -74,6 +75,7 @@ export * from "./workspace/renders.js";
 export * from "./workspace/project-audio.js";
 export * from "./workspace/fit.js";
 export * from "./workspace/video-music.js";
+export * from "./workspace/music-beats.js";
 export * from "./agent/timeline-tools.js";
 export * from "./workspace/thumbnails.js";
 export * from "./workspace/style-watch.js";

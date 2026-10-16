@@ -7,7 +7,7 @@
  */
 import { mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { JobView as FarmJobView } from "@ag-farm/protocol";
 import {
   clearYoutubeBlocked, createJob, createJobRunner, createProject, FARM_BLOCKED_MESSAGE, getJob, MemoryBucket, noteYoutubeBlocked, referenceDownloadBlock,
@@ -56,10 +56,14 @@ function spyYtDlp(answer?: (id: string, dir: string) => Promise<string>): YtDlp 
   };
 }
 
-function setup(o: { nodes?: { online: boolean; kinds: string[] }[]; ytdlp?: YtDlp | null; video?: () => Promise<Buffer> } = {}) {
-  const w = world();
-  w.db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [NOW, NOW]);
-  const project = createProject(w.db, "team-1", { name: "Du lịch chậm", description: "", language: "vi", aspect: "16:9" }, "u", NOW);
+const opened: Awaited<ReturnType<typeof world>>[] = [];
+afterEach(async () => { for (const w of opened.splice(0)) await w.db.close(); });
+const open = async () => { const w = await world(); opened.push(w); return w; };
+
+async function setup(o: { nodes?: { online: boolean; kinds: string[] }[]; ytdlp?: YtDlp | null; video?: () => Promise<Buffer> } = {}) {
+  const w = await open();
+  await w.db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [NOW, NOW]);
+  const project = await createProject(w.db, "team-1", { name: "Du lịch chậm", description: "", language: "vi", aspect: "16:9" }, "u", NOW);
   const root = join(w.dir, "workspaces");
   const dir = seedWorkspace(root, project, NOW);
   const bucket = new MemoryBucket();
@@ -92,7 +96,7 @@ function setup(o: { nodes?: { online: boolean; kinds: string[] }[]; ytdlp?: YtDl
         }));
       return { job: view({ id, status: "leased", node_id: NODE_ID, progress_percent: 40 }), created: true };
     },
-    getJob: async (id) => { phases.push(getJob(w.db, jobId)?.phase ?? ""); return views.get(id)!; },
+    getJob: async (id) => { phases.push((await getJob(w.db, jobId))?.phase ?? ""); return views.get(id)!; },
     cancelJob: async (id) => views.get(id)!,
     ackJob: async (id) => views.get(id)!,
   };
@@ -102,11 +106,11 @@ function setup(o: { nodes?: { online: boolean; kinds: string[] }[]; ytdlp?: YtDl
     handlers: { style_watch: styleWatchHandler({ db: w.db, ytdlp, ffmpeg: FFMPEG, ffprobe: FFPROBE, farm: { client: farm, bucket, fetchers: referenceFetchers(farm), pollMs: 1 } }) },
   });
   const run = async (videoIds: string[]) => {
-    const job = createJob(w.db, { projectId: project.id, kind: "style_watch", title: "Học phong cách", request: { video_ids: videoIds, purpose: "nhịp dựng" }, createdBy: "u" });
+    const job = await createJob(w.db, { projectId: project.id, kind: "style_watch", title: "Học phong cách", request: { video_ids: videoIds, purpose: "nhịp dựng" }, createdBy: "u" });
     jobId = job.id;
-    runner.tick();
+    await runner.tick();
     await runner.idle();
-    return getJob(w.db, job.id)!;
+    return (await getJob(w.db, job.id))!;
   };
   const watch = () => JSON.parse(readFileSync(join(dir, "research", `style-${new Date().toISOString().slice(0, 10)}-1`, "watch.json"), "utf8"));
   const left = () => [...bucket.objects.keys()].filter((k) => k.includes("/jobs/reference_fetch/"));
@@ -115,14 +119,14 @@ function setup(o: { nodes?: { online: boolean; kinds: string[] }[]; ytdlp?: YtDl
 
 describe("reference videos through the farm (no ffmpeg needed)", () => {
   it("a machine takes it: the farm job is recorded with its machine, the video comes from the bucket and is deleted", async () => {
-    const s = setup();
-    noteYoutubeBlocked(s.db, new Date().toISOString()); // YouTube blocks the server
+    const s = await setup();
+    await noteYoutubeBlocked(s.db, new Date().toISOString()); // YouTube blocks the server
     const job = await s.run(["U_17EqTHUIo"]);
     expect(s.submitted).toEqual([{
       type: "studio.reference_fetch", correlation_id: `studio-job-reference_fetch-${job.id}-r1`, requirements: { ytdlp: true },
       payload: { production_id: s.project.id, video_id: "U_17EqTHUIo", max_height: 480, max_seconds: 1800, max_bytes: 300 * 1024 * 1024, output: "reference/U_17EqTHUIo.mp4" },
     }]);
-    expect(s.db.get("SELECT job_id, job_type, stage_key, attempt_id FROM project_farm_jobs")).toEqual({
+    expect(await s.db.get("SELECT job_id, job_type, stage_key, attempt_id FROM project_farm_jobs")).toEqual({
       job_id: job.id, job_type: "studio.reference_fetch", stage_key: "reference_fetch", attempt_id: `${job.id}-r1`,
     });
     expect(s.phases).toContain("Đang tải video mẫu 1/1 trên máy PC-01");
@@ -132,30 +136,30 @@ describe("reference videos through the farm (no ffmpeg needed)", () => {
     // the file was not a video, so nothing was measured; what the machine said is kept
     expect(s.watch().videos[0]).toMatchObject({ video_id: "U_17EqTHUIo", via: "farm", node: "PC-01", title: "Video U_17EqTHUIo", channel: "Kênh mẫu", code: "other" });
     // a farm fetch says nothing of the server: its block stays
-    expect(youtubeBlock(s.db, new Date().toISOString())).toMatchObject({ where: "studio" });
+    expect(await youtubeBlock(s.db, new Date().toISOString())).toMatchObject({ where: "studio" });
   });
 
   it("a machine YouTube blocks stops the rest, remembered for the farm and not as the server's block", async () => {
-    const s = setup();
+    const s = await setup();
     const job = await s.run(["BOTblocked1", "U_17EqTHUIp", "U_17EqTHUIq"]);
     expect(job.status).toBe("failed");
     expect(job.error).toBe(FARM_BLOCKED_MESSAGE);
-    expect(JSON.parse(job.result!)).toEqual({ error_code: "youtube_blocked" });
+    expect(job.result).toEqual({ error_code: "youtube_blocked" });
     expect(s.submitted).toHaveLength(1);
     const watch = s.watch();
     expect(watch).toMatchObject({ youtube_blocked: true, blocked_where: "farm" });
     expect(watch.videos.map((v: { code: string; skipped: boolean }) => [v.code, v.skipped])).toEqual([["youtube_blocked", false], ["youtube_blocked", true], ["youtube_blocked", true]]);
     expect(watch.videos[0].error).toBe("YouTube đang chặn tải từ máy farm PC-01 (đòi đăng nhập để xác nhận không phải bot)");
     const now = new Date().toISOString();
-    expect(youtubeBlock(s.db, now, "farm")).toMatchObject({ where: "farm" });
-    expect(youtubeBlock(s.db, now)).toBeNull();
+    expect(await youtubeBlock(s.db, now, "farm")).toMatchObject({ where: "farm" });
+    expect(await youtubeBlock(s.db, now)).toBeNull();
   });
 
   it("each refusal says why in Studio's words; anything else the farm says is kept", async () => {
-    const s = setup();
+    const s = await setup();
     const job = await s.run(["PRIVate0000", "ERRgone0000", "NETfail0000", "WEIRDcode00"]);
     expect(job.status).toBe("failed");
-    expect(JSON.parse(job.result!)).toEqual({ error_code: "reference_failed" });
+    expect(job.result).toEqual({ error_code: "reference_failed" });
     const videos = s.watch().videos as { code: string; error: string; skipped: boolean }[];
     expect(videos.map((v) => v.code)).toEqual(["private", "unavailable", "network", "other"]);
     expect(videos[0]!.error).toBe("video riêng tư");
@@ -166,7 +170,7 @@ describe("reference videos through the farm (no ffmpeg needed)", () => {
 
   it("no machine takes it (offline, or without the kind): Studio's own yt-dlp as before", async () => {
     const yt = spyYtDlp(async () => { throw new YtDlpError({ code: "private", reason: "video riêng tư", detail: "" }); });
-    const s = setup({ nodes: [{ online: false, kinds: ["studio.reference_fetch"] }, { online: true, kinds: ["studio.render_preview"] }], ytdlp: yt });
+    const s = await setup({ nodes: [{ online: false, kinds: ["studio.reference_fetch"] }, { online: true, kinds: ["studio.render_preview"] }], ytdlp: yt });
     await s.run(["PRIVate0000"]);
     expect(s.submitted).toEqual([]);
     expect(yt.calls).toEqual(["metadata PRIVate0000", "download PRIVate0000"]);
@@ -175,34 +179,34 @@ describe("reference videos through the farm (no ffmpeg needed)", () => {
 
   it("only the farm remembered blocked and Studio has yt-dlp: the server downloads; no yt-dlp here: the farm still tries", async () => {
     const yt = spyYtDlp(async () => { throw new YtDlpError({ code: "private", reason: "video riêng tư", detail: "" }); });
-    const s = setup({ ytdlp: yt });
-    noteYoutubeBlocked(s.db, new Date().toISOString(), "farm");
+    const s = await setup({ ytdlp: yt });
+    await noteYoutubeBlocked(s.db, new Date().toISOString(), "farm");
     await s.run(["PRIVate0000"]);
     expect(s.submitted).toEqual([]);
     expect(yt.calls).toContain("download PRIVate0000");
 
-    const t = setup({ ytdlp: null });
-    noteYoutubeBlocked(t.db, new Date().toISOString(), "farm");
+    const t = await setup({ ytdlp: null });
+    await noteYoutubeBlocked(t.db, new Date().toISOString(), "farm");
     await t.run(["PRIVate0000"]);
     expect(t.submitted).toHaveLength(1);
   });
 });
 
 describe("where a reference video goes, and what the agent is told", () => {
-  it("the route and the block a card would meet", () => {
-    const { db } = world();
-    expect(referenceRoute(db, NOW, 0)).toBe("studio");
-    expect(referenceRoute(db, NOW, 2)).toBe("farm");
-    noteYoutubeBlocked(db, NOW);
-    expect(referenceDownloadBlock(db, NOW, 0)).toMatchObject({ where: "studio" });
-    expect(referenceDownloadBlock(db, NOW, 1)).toBeNull(); // through the farm it works
-    noteYoutubeBlocked(db, NOW, "farm");
-    expect(referenceRoute(db, NOW, 1)).toBe("farm");
-    expect(referenceDownloadBlock(db, NOW, 1)).toMatchObject({ where: "farm" });
-    clearYoutubeBlocked(db); // the server's own clears only its own
-    expect(youtubeBlock(db, NOW, "farm")).not.toBeNull();
-    expect(referenceRoute(db, NOW, 1)).toBe("studio");
-    expect(referenceDownloadBlock(db, NOW, 1)).toBeNull();
+  it("the route and the block a card would meet", async () => {
+    const { db } = await open();
+    expect(await referenceRoute(db, NOW, 0)).toBe("studio");
+    expect(await referenceRoute(db, NOW, 2)).toBe("farm");
+    await noteYoutubeBlocked(db, NOW);
+    expect(await referenceDownloadBlock(db, NOW, 0)).toMatchObject({ where: "studio" });
+    expect(await referenceDownloadBlock(db, NOW, 1)).toBeNull(); // through the farm it works
+    await noteYoutubeBlocked(db, NOW, "farm");
+    expect(await referenceRoute(db, NOW, 1)).toBe("farm");
+    expect(await referenceDownloadBlock(db, NOW, 1)).toMatchObject({ where: "farm" });
+    await clearYoutubeBlocked(db); // the server's own clears only its own
+    expect(await youtubeBlock(db, NOW, "farm")).not.toBeNull();
+    expect(await referenceRoute(db, NOW, 1)).toBe("studio");
+    expect(await referenceDownloadBlock(db, NOW, 1)).toBeNull();
   });
 
   it("machines that can fetch: online and taking the kind; a farm that does not answer counts none", async () => {
@@ -231,18 +235,18 @@ describe("where a reference video goes, and what the agent is told", () => {
 
 describe.skipIf(!hasFfmpeg())("a reference video fetched by the farm, measured (needs ffmpeg + ffprobe)", () => {
   it("measured like a downloaded one, sheets kept, the video deleted from the bucket and the scratch folder", async () => {
-    const made = join(world().dir, "made");
+    const made = join((await open()).dir, "made");
     mkdirSync(made, { recursive: true });
     const clip = await ytDlp({ argv: [process.execPath, join(ROOT, "fixtures", "fake-yt-dlp.mjs")], ffmpeg: FFMPEG }).download("U_17EqTHUIo", made);
-    const s = setup({ video: async () => readFileSync(clip) });
+    const s = await setup({ video: async () => readFileSync(clip) });
     const job = await s.run(["U_17EqTHUIo"]);
-    expect(getJob(s.db, job.id)).toMatchObject({ status: "done", error: null });
+    expect(await getJob(s.db, job.id)).toMatchObject({ status: "done", error: null });
     const watch = s.watch();
     expect(watch.videos[0]).toMatchObject({ via: "farm", node: "PC-01", error: null, title: "Video U_17EqTHUIo" });
     expect(watch.videos[0].measured.cuts_per_minute).toBeGreaterThan(10);
     expect(s.left()).toEqual([]);
     const readme = readFileSync(join(s.dir, "research", `style-${new Date().toISOString().slice(0, 10)}-1`, "README.md"), "utf8");
     expect(readme).toContain("do máy farm tải ≤480p (PC-01)");
-    expect(youtubeBlock(s.db, new Date().toISOString(), "farm")).toBeNull();
+    expect(await youtubeBlock(s.db, new Date().toISOString(), "farm")).toBeNull();
   }, 120_000);
 });

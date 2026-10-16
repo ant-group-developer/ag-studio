@@ -6,9 +6,8 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { projectSettingsOf } from "@harness/contracts";
 import type { StudioDb } from "../studio-db.js";
-import type { ProjectRecord } from "../workspace/project-db.js";
+import { projectSettings, type ProjectRecord } from "../workspace/project-db.js";
 import { readFrontmatter, writeFrontmatter } from "../workspace/frontmatter.js";
 
 export interface SkillEntry {
@@ -49,11 +48,11 @@ function folderSkills(dir: string, source: "studio" | "project", prefix: string)
 }
 
 /** Every skill of a project's turn: Studio's, then the team's enabled ones (those the project picked, if it did), then its own. */
-export function projectSkills(db: StudioDb, o: { project: ProjectRecord; workspaceDir: string; builtinDir: string }): SkillEntry[] {
-  const picked = projectSettingsOf(o.project.settings).team_skills;
-  const team = db.all<{ id: string; name: string; purpose: string; content: string }>(
-    "SELECT id, name, purpose, content FROM team_skills WHERE team_id = ? AND enabled = 1 ORDER BY position, created_at", [o.project.team_id],
-  ).filter((s) => !picked || picked.includes(s.id)).map((s): SkillEntry => {
+export async function projectSkills(db: StudioDb, o: { project: ProjectRecord; workspaceDir: string; builtinDir: string }): Promise<SkillEntry[]> {
+  const picked = projectSettings(o.project).team_skills;
+  const team = (await db.all<{ id: string; name: string; purpose: string; content: string }>(
+    "SELECT id, name, purpose, content FROM team_skills WHERE team_id = ? AND enabled ORDER BY position, created_at", [o.project.team_id],
+  )).filter((s) => !picked || picked.includes(s.id)).map((s): SkillEntry => {
     const name = `team-${skillSlug(s.name)}`;
     const description = s.purpose.trim() || `Quy chuẩn "${s.name}" của team: làm theo khi làm việc liên quan.`;
     return { name, source: "team", description, text: withName(s.content, name, description) };
@@ -64,14 +63,14 @@ export function projectSkills(db: StudioDb, o: { project: ProjectRecord; workspa
 }
 
 /** Writes the turn's plugin folder (`.claude-plugin/plugin.json` + `skills/<name>/SKILL.md`) afresh; answers it. */
-export function materializeSkillPlugin(db: StudioDb, o: { project: ProjectRecord; workspaceDir: string; builtinDir: string; pluginsRoot: string }): string {
+export async function materializeSkillPlugin(db: StudioDb, o: { project: ProjectRecord; workspaceDir: string; builtinDir: string; pluginsRoot: string }): Promise<string> {
   const dir = join(o.pluginsRoot, o.project.id);
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(join(dir, ".claude-plugin"), { recursive: true });
   writeFileSync(join(dir, ".claude-plugin", "plugin.json"), JSON.stringify({
     name: "studio", version: "1.0.0", description: "AG Studio: skill của Studio, của team và của dự án",
   }, null, 2));
-  for (const s of projectSkills(db, o)) {
+  for (const s of await projectSkills(db, o)) {
     mkdirSync(join(dir, "skills", s.name), { recursive: true });
     writeFileSync(join(dir, "skills", s.name, "SKILL.md"), s.text);
   }

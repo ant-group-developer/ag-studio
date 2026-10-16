@@ -55,8 +55,8 @@ export class ResearchController {
   @Roles('viewer')
   @HttpCode(HttpStatus.OK)
   estimate(@Param('projectId') projectId: string, @Body() raw: unknown): Promise<CrawlEstimate> {
-    return mapErrors(() => {
-      requireProject(this.engine.db, projectId);
+    return mapErrors(async () => {
+      await requireProject(this.engine.db, projectId);
       const request = parseBody(CrawlRequestSchema, raw);
       const api = !!this.config.get<string>('YOUTUBE_API_KEY');
       return { request, title: crawlTitle(request), units: api ? estimateCrawlUnits(request) : 0, large: isLargeCrawl(request), source: api ? 'youtube_api' : 'yt-dlp' };
@@ -67,14 +67,14 @@ export class ResearchController {
   @Roles('editor')
   @HttpCode(HttpStatus.CREATED)
   run(@Param('projectId') projectId: string, @Body() raw: unknown, @Req() req: Request): Promise<JobView> {
-    return mapErrors(() => {
+    return mapErrors(async () => {
       const body = parseBody(RunSchema, raw);
       const crawl = parseBody(CrawlRequestSchema, body.crawl);
-      const project = requireProject(this.engine.db, projectId);
-      const threadId = body.threadId && this.engine.db.get<{ id: string }>('SELECT id FROM agent_threads WHERE id = ? AND project_id = ?', [body.threadId, projectId]) ? body.threadId : null;
+      const project = await requireProject(this.engine.db, projectId);
+      const threadId = body.threadId && await this.engine.db.get<{ id: string }>('SELECT id FROM agent_threads WHERE id = ? AND project_id = ?', [body.threadId, projectId]) ? body.threadId : null;
       const role = req.authContext?.isAdmin ? 'owner'
-        : this.engine.db.get<{ role: ActorRole }>('SELECT role FROM team_members WHERE team_id = ? AND user_id = ?', [project.team_id, req.authContext!.userId])?.role ?? null;
-      return jobView(queueResearch(this.engine.db, { projectId, crawl, threadId, createdBy: req.authContext!.userId, actorRole: role }));
+        : (await this.engine.db.get<{ role: ActorRole }>('SELECT role FROM team_members WHERE team_id = ? AND user_id = ?', [project.team_id, req.authContext!.userId]))?.role ?? null;
+      return jobView(await queueResearch(this.engine.db, { projectId, crawl, threadId, createdBy: req.authContext!.userId, actorRole: role }));
     });
   }
 
@@ -82,9 +82,9 @@ export class ResearchController {
   @Get()
   @Roles('viewer')
   list(@Param('projectId') projectId: string): Promise<{ files: ResearchFile[] }> {
-    return mapErrors(() => {
-      requireProject(this.engine.db, projectId);
-      const dir = join(this.workspace.dir(projectId), 'research');
+    return mapErrors(async () => {
+      await requireProject(this.engine.db, projectId);
+      const dir = join(await this.workspace.dir(projectId), 'research');
       if (!existsSync(dir)) return { files: [] };
       const files: ResearchFile[] = [];
       for (const name of readdirSync(dir)) {

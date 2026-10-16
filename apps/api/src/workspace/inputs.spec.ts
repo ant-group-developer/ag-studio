@@ -1,5 +1,5 @@
 /**
- * The Inputs tab routes over a real studio.db and folder: ag-go projects and videos are added only when the project's
+ * The Inputs tab routes over a real database and folder: ag-go projects and videos are added only when the project's
  * owner can use them, uploads land in context/ by kind, preparing queues one background job per video, the agent's
  * jobs list and stop, and the video's sources index follows.
  */
@@ -26,7 +26,7 @@ const A1 = '0b9a7c34-5f1e-4d4c-9a51-3f2a1e0c7d11';
 const A2 = '1c8b6d45-6e2f-4e5d-8b62-4e3b2f1d8e22';
 const code = (e: unknown) => (e as { getResponse?: () => { code?: string } }).getResponse?.().code ?? String(e);
 
-describe('inputs (real studio.db)', () => {
+describe('inputs (real database)', () => {
   let s: RealStudio;
   let root: string;
   let projects: ProjectsController;
@@ -62,10 +62,10 @@ describe('inputs (real studio.db)', () => {
     projects = new ProjectsController(engine, ws, NO_DIRECTORY);
     videos = new VideosController(engine, ws);
     inputs = new InputsController(engine, ws, footage, ({ current: () => 'Kho Footage' }) as unknown as SiteNameService);
-    insertTeam(s.db, 'team-1', OWNER);
-    s.engine.db.run("INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES ('team-1', ?, 'editor', ?)", [EDITOR, new Date().toISOString()]);
+    await insertTeam(s.db, 'team-1', OWNER);
+    await s.engine.db.run("INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES ('team-1', ?, 'editor', ?)", [EDITOR, new Date().toISOString()]);
   });
-  afterEach(() => s.close());
+  afterEach(async () => { await s.close(); });
 
   it("adds an ag-go project the owner sees, refuses one they don't, and searches it as the person", async () => {
     const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
@@ -110,18 +110,18 @@ describe('inputs (real studio.db)', () => {
     const added = await inputs.add(p.id, { kind: 'ag_go_asset', ref: A1, label: 'Hoa Lư 03.mp4', videoId: v.id, meta: { durationMs: 72_400 }, prepare: true }, req(EDITOR));
     expect(added.source).toMatchObject({ kind: 'ag_go_asset', videoId: v.id, asset: { state: 'queued' } });
     const jobId = (added.prepare as { job_id: string }).job_id;
-    expect(getJob(s.engine.db, jobId)).toMatchObject({ kind: 'prepare_asset', thread_id: v.threadId, units: null, continue_agent: 0, actor_role: 'editor' });
+    expect(await getJob(s.engine.db, jobId)).toMatchObject({ kind: 'prepare_asset', thread_id: v.threadId, units: null, continue_agent: false, actor_role: 'editor' });
     const index = JSON.parse(readFileSync(join(root, p.id, 'videos', v.id, 'sources', 'index.json'), 'utf8'));
     expect(index.sources).toEqual([expect.objectContaining({ asset_id: A1, name: 'Hoa Lư 03.mp4', status: 'missing' })]);
     expect((await inputs.prepare(p.id, { assetIds: [A1, A2] }, req(EDITOR))).assets).toEqual({ [A1]: expect.objectContaining({ state: 'queued', job_id: jobId }), [A2]: { state: 'not_an_input' } });
     expect((await inputs.jobs(p.id, '1')).jobs.map((j) => j.id)).toEqual([jobId]);
-    claimJob(s.engine.db, ['prepare_asset'], new Date().toISOString());
+    await claimJob(s.engine.db, ['prepare_asset'], new Date().toISOString());
     // the list says how many videos stand where (each once), alongside the rows as before
     expect((await inputs.sources(p.id)).counts).toEqual({ videos: 1, ready: 0, preparing: 1, failed: 0, notPrepared: 0 });
     expect((await inputs.sources(p.id, v.id)).sources.map((x) => x.asset?.state)).toEqual(['preparing']);
     expect(await inputs.cancel(p.id, jobId)).toMatchObject({ status: 'running', cancelRequested: true });
     expect(await inputs.cancel('other', jobId).catch(code)).toBe('not_found');
-    expect(listMessages(s.engine.db, v.threadId)).toEqual([]);
+    expect(await listMessages(s.engine.db, v.threadId)).toEqual([]);
     await inputs.remove(p.id, added.source.id, req(EDITOR));
     expect(JSON.parse(readFileSync(join(root, p.id, 'videos', v.id, 'sources', 'index.json'), 'utf8')).sources).toEqual([]);
   });
@@ -129,7 +129,7 @@ describe('inputs (real studio.db)', () => {
   it('names videos the agent added without a name, from the picked ag-go projects, when the sources are listed', async () => {
     const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
     await inputs.add(p.id, { kind: 'ag_go_project', ref: 'agp-1', label: 'Ninh Bình' }, req(EDITOR));
-    addSource(s.engine.db, { projectId: p.id, kind: 'ag_go_asset', ref: A1, mediaType: 'video', label: A1, addedBy: OWNER });
+    await addSource(s.engine.db, { projectId: p.id, kind: 'ag_go_asset', ref: A1, mediaType: 'video', label: A1, addedBy: OWNER });
     expect((await inputs.sources(p.id)).sources.find((x) => x.ref === A1)?.label).toBe(A1);
     await inputs.naming;
     expect(calls.at(-1)).toEqual(['search', OWNER, { projectIds: ['agp-1'], limit: 100 }]);

@@ -40,9 +40,9 @@ const isAudioName = (name: string) => (AUDIO_FILE_EXTS as readonly string[]).som
  * there, and any audio file under `context/audio/` (also those put there through the Files tab, which have no row).
  * Newest first. Only names and sizes: nothing is probed.
  */
-export function projectAudioFiles(db: StudioDb, dir: string, projectId: string): ProjectAudioFile[] {
+export async function projectAudioFiles(db: StudioDb, dir: string, projectId: string): Promise<ProjectAudioFile[]> {
   const out = new Map<string, ProjectAudioFile>();
-  for (const s of listSources(db, projectId)) {
+  for (const s of await listSources(db, projectId)) {
     if (s.kind !== "upload" || s.media_type !== "audio" || out.has(s.ref)) continue;
     const abs = join(dir, ...s.ref.split("/"));
     if (!existsSync(abs)) continue;
@@ -66,18 +66,18 @@ export function projectAudioFiles(db: StudioDb, dir: string, projectId: string):
 }
 
 /** The library track the project's music is, if it is one (`library:music/…`). */
-export function projectLibraryTrack(db: StudioDb, projectId: string): MusicTrack | null {
-  return libraryTrackOf(db, projectAudio(db, projectId).music);
+export async function projectLibraryTrack(db: StudioDb, projectId: string): Promise<MusicTrack | null> {
+  return libraryTrackOf(db, (await projectAudio(db, projectId)).music);
 }
 
 /**
  * Points the project at a track of the music library (no file is copied: the track stays where the library keeps it,
  * and the cleanup sweep never removes library tracks). A retired track cannot be picked.
  */
-export function setProjectLibraryMusic(db: StudioDb, projectId: string, track: MusicTrack, o: { gainDb?: number; ducking?: boolean } = {}): ProductionMusic {
-  requireProject(db, projectId);
+export async function setProjectLibraryMusic(db: StudioDb, projectId: string, track: MusicTrack, o: { gainDb?: number; ducking?: boolean } = {}): Promise<ProductionMusic> {
+  await requireProject(db, projectId);
   const music = libraryMusic(track, o);
-  db.run("UPDATE projects SET music = ?, updated_at = ? WHERE id = ?", [JSON.stringify(music), new Date().toISOString(), projectId]);
+  await db.run("UPDATE projects SET music = ?, updated_at = ? WHERE id = ?", [JSON.stringify(music), new Date().toISOString(), projectId]);
   return music;
 }
 
@@ -91,88 +91,113 @@ function libraryMusic(track: MusicTrack, o: { gainDb?: number; ducking?: boolean
   });
 }
 
-const libraryTrackOf = (db: StudioDb, m: ProductionMusic | null): MusicTrack | null =>
-  (m && m.track.startsWith("library:music/") ? listLibraryMusic(db).find((t) => t.file === m.track) ?? null : null);
+const libraryTrackOf = async (db: StudioDb, m: ProductionMusic | null): Promise<MusicTrack | null> =>
+  (m && m.track.startsWith("library:music/") ? (await listLibraryMusic(db)).find((t) => t.file === m.track) ?? null : null);
 
 // ---------------------------------------------------------------------------
 // A video's own music: overrides the project's (video → project → Studio's pick by mood when the timeline is built)
 // ---------------------------------------------------------------------------
 
 /** A video's own music, or null (it takes the project's). */
-export function videoOwnMusic(db: StudioDb, videoId: string): ProductionMusic | null {
-  return parse(db.get<{ music: string | null }>("SELECT music FROM videos WHERE id = ?", [videoId])?.music ?? null, ProductionMusicSchema);
+export async function videoOwnMusic(db: StudioDb, videoId: string): Promise<ProductionMusic | null> {
+  return parse((await db.get<{ music: unknown }>("SELECT music FROM videos WHERE id = ?", [videoId]))?.music ?? null, ProductionMusicSchema);
 }
 
 /** The library track a video's own music is, if it is one. */
-export function videoLibraryTrack(db: StudioDb, videoId: string): MusicTrack | null {
-  return libraryTrackOf(db, videoOwnMusic(db, videoId));
+export async function videoLibraryTrack(db: StudioDb, videoId: string): Promise<MusicTrack | null> {
+  return libraryTrackOf(db, await videoOwnMusic(db, videoId));
 }
 
 /** The music a video's timeline takes, and whose: its own, else the project's; null when Studio picks by mood. */
-export function musicForVideo(db: StudioDb, projectId: string, videoId: string): { music: StudioMusic; from: "video" | "project" } | null {
-  const own = videoOwnMusic(db, videoId);
+export async function musicForVideo(db: StudioDb, projectId: string, videoId: string): Promise<{ music: StudioMusic; from: "video" | "project" } | null> {
+  const own = await videoOwnMusic(db, videoId);
   if (own) return { music: studioMusicOf(own), from: "video" };
-  const project = projectMusic(db, projectId);
+  const project = await projectMusic(db, projectId);
   return project ? { music: project, from: "project" } : null;
 }
 
-function setVideoMusic(db: StudioDb, videoId: string, music: ProductionMusic | null): void {
-  db.run("UPDATE videos SET music = ?, updated_at = ? WHERE id = ?", [music ? JSON.stringify(music) : null, new Date().toISOString(), videoId]);
+async function setVideoMusic(db: StudioDb, videoId: string, music: ProductionMusic | null): Promise<void> {
+  await db.run("UPDATE videos SET music = ?, updated_at = ? WHERE id = ?", [music ? JSON.stringify(music) : null, new Date().toISOString(), videoId]);
 }
 
 /** One file or several joined (`importMusic`) become a video's own music. */
 export async function importVideoMusic(d: AudioImportDeps, o: MusicFiles & { videoId: string }): Promise<ProductionMusic> {
-  const v = requireVideo(d.db, o.videoId);
+  const v = await requireVideo(d.db, o.videoId);
   const music = await importMusic(d, v.project_id, o);
-  setVideoMusic(d.db, v.id, music);
+  await setVideoMusic(d.db, v.id, music);
   return music;
 }
 
 /** A library track becomes a video's own music. */
-export function setVideoLibraryMusic(db: StudioDb, videoId: string, track: MusicTrack, o: { gainDb?: number; ducking?: boolean } = {}): ProductionMusic {
-  requireVideo(db, videoId);
+export async function setVideoLibraryMusic(db: StudioDb, videoId: string, track: MusicTrack, o: { gainDb?: number; ducking?: boolean } = {}): Promise<ProductionMusic> {
+  await requireVideo(db, videoId);
   const music = libraryMusic(track, o);
-  setVideoMusic(db, videoId, music);
+  await setVideoMusic(db, videoId, music);
   return music;
 }
 
+/**
+ * The gain and ducking a timeline edit gave the music (feedback-vps §4.4: op setMusic), kept as the video's own music so
+ * the next fit plays it the same way instead of at the -18 dB default: the video's own music when it is that track, else a
+ * copy of the project's when it is that track, else the track itself (a library track with its details). Returns what
+ * was kept, or null when nothing changed.
+ */
+export async function keepVideoMusicLevels(db: StudioDb, projectId: string, videoId: string, m: StudioMusic): Promise<ProductionMusic | null> {
+  const own = await videoOwnMusic(db, videoId);
+  const level = { gain_db: m.gain_db, ducking: m.ducking };
+  let next: ProductionMusic;
+  if (own && own.track === m.track) {
+    if (own.gain_db === m.gain_db && own.ducking === m.ducking) return null;
+    next = { ...own, ...level };
+  } else {
+    const project = (await projectAudio(db, projectId)).music;
+    const lib = m.track.startsWith("library:music/") ? (await listLibraryMusic(db)).find((t) => t.file === m.track && t.active) ?? null : null;
+    next = project && project.track === m.track ? { ...project, ...level }
+      : lib ? libraryMusic(lib, { gainDb: m.gain_db, ducking: m.ducking })
+        : ProductionMusicSchema.parse({ track: m.track, ...level });
+  }
+  await setVideoMusic(db, videoId, next);
+  return next;
+}
+
 /** The video takes the project's music again. */
-export function clearVideoMusic(db: StudioDb, videoId: string): void {
-  requireVideo(db, videoId);
-  setVideoMusic(db, videoId, null);
+export async function clearVideoMusic(db: StudioDb, videoId: string): Promise<void> {
+  await requireVideo(db, videoId);
+  await setVideoMusic(db, videoId, null);
 }
 
 /** What the agent and the web are told of a video's music. */
-export function videoMusicSummary(db: StudioDb, projectId: string, videoId: string): string {
-  const own = videoOwnMusic(db, videoId);
-  if (!own) return `nhạc của dự án: ${projectAudioSummary(db, projectId).music}`;
-  const lib = libraryTrackOf(db, own);
+export async function videoMusicSummary(db: StudioDb, projectId: string, videoId: string): Promise<string> {
+  const own = await videoOwnMusic(db, videoId);
+  if (!own) return `nhạc của dự án: ${(await projectAudioSummary(db, projectId)).music}`;
+  const lib = await libraryTrackOf(db, own);
   return lib ? `nhạc riêng của video: bài "${lib.display_name}" trong kho nhạc, ${own.gain_db} dB${own.ducking ? ", nhỏ lại khi có lời" : ""}`
     : ownMusicWords(own, "của video");
 }
 
 export interface ProjectAudio { voice: ProductionVoice | null; music: ProductionMusic | null }
 
-const parse = <T>(raw: string | null, schema: { safeParse(v: unknown): { success: true; data: T } | { success: false } }): T | null => {
+const parse = <T>(raw: unknown, schema: { safeParse(v: unknown): { success: true; data: T } | { success: false } }): T | null => {
   if (!raw) return null;
-  try { const r = schema.safeParse(JSON.parse(raw)); return r.success ? r.data : null; } catch { return null; }
+  const r = schema.safeParse(raw);
+  return r.success ? r.data : null;
 };
 
-export function projectAudio(db: StudioDb, projectId: string): ProjectAudio {
-  const row = db.get<{ voice: string | null; music: string | null }>("SELECT voice, music FROM projects WHERE id = ?", [projectId]);
+export async function projectAudio(db: StudioDb, projectId: string): Promise<ProjectAudio> {
+  const row = await db.get<{ voice: unknown; music: unknown }>("SELECT voice, music FROM projects WHERE id = ?", [projectId]);
   if (!row) return { voice: null, music: null };
   return { voice: parse(row.voice, ProductionVoiceSchema), music: parse(row.music, ProductionMusicSchema) };
 }
 
 /** The voice narration is read in: a clone, declined (`none`), or missing (nothing chosen and no default voice). */
-export function projectNarrationVoice(db: StudioDb, projectId: string): NarrationVoice {
-  const row = db.get<{ voice: string | null }>("SELECT voice FROM projects WHERE id = ?", [projectId]);
-  return productionVoice(row?.voice ?? null);
+export async function projectNarrationVoice(db: StudioDb, projectId: string): Promise<NarrationVoice> {
+  const row = await db.get<{ voice: unknown }>("SELECT voice FROM projects WHERE id = ?", [projectId]);
+  return productionVoice(row?.voice ? JSON.stringify(row.voice) : null);
 }
 
 /** The project's own music as the timeline takes it, or null. */
-export function projectMusic(db: StudioDb, projectId: string): StudioMusic | null {
-  const m = projectAudio(db, projectId).music;
+export async function projectMusic(db: StudioDb, projectId: string): Promise<StudioMusic | null> {
+  const m = (await projectAudio(db, projectId)).music;
   return m ? studioMusicOf(m) : null;
 }
 
@@ -181,7 +206,7 @@ export async function importProjectAudio(d: AudioImportDeps, o: {
   projectId: string; kind: AudioKind; file: string; source: AudioSource; userId: string;
   origin?: VoiceOrigin; referenceText?: string | null; gainDb?: number; ducking?: boolean;
 }): Promise<ProductionVoice | ProductionMusic> {
-  requireProject(d.db, o.projectId);
+  await requireProject(d.db, o.projectId);
   if (o.kind === "music") {
     return importProjectMusic(d, {
       projectId: o.projectId, files: [{ path: o.file, filename: o.source.kind === "upload" ? o.source.filename : "music" }], source: o.source,
@@ -201,7 +226,7 @@ export async function importProjectAudio(d: AudioImportDeps, o: {
       mode: "clone", reference: `library:${key.slice("library/".length)}`, reference_text: o.referenceText?.trim() || null, speed: 1,
       origin: o.origin, source: o.source, sha256: sha, duration_s, confirmed_by: o.userId, confirmed_at: now,
     });
-    d.db.run("UPDATE projects SET voice = ?, updated_at = ? WHERE id = ?", [JSON.stringify(voice), now, o.projectId]);
+    await d.db.run("UPDATE projects SET voice = ?, updated_at = ? WHERE id = ?", [JSON.stringify(voice), now, o.projectId]);
     return voice;
   } finally {
     rmSync(work, { recursive: true, force: true });
@@ -251,22 +276,22 @@ export async function importMusic(d: AudioImportDeps, projectId: string, o: Musi
 
 /** One file or several joined (`importMusic`) become the project's music. */
 export async function importProjectMusic(d: AudioImportDeps, o: MusicFiles & { projectId: string }): Promise<ProductionMusic> {
-  requireProject(d.db, o.projectId);
+  await requireProject(d.db, o.projectId);
   const music = await importMusic(d, o.projectId, o);
-  d.db.run("UPDATE projects SET music = ?, updated_at = ? WHERE id = ?", [JSON.stringify(music), new Date().toISOString(), o.projectId]);
+  await d.db.run("UPDATE projects SET music = ?, updated_at = ? WHERE id = ?", [JSON.stringify(music), new Date().toISOString(), o.projectId]);
   return music;
 }
 
 /** No narration for the project's videos: their lines become subtitles. */
-export function declineProjectNarration(db: StudioDb, projectId: string, userId: string): ProductionVoice {
+export async function declineProjectNarration(db: StudioDb, projectId: string, userId: string): Promise<ProductionVoice> {
   const now = new Date().toISOString();
   const voice = ProductionVoiceSchema.parse({ mode: "none", decided_by: userId, decided_at: now });
-  db.run("UPDATE projects SET voice = ?, updated_at = ? WHERE id = ?", [JSON.stringify(voice), now, projectId]);
+  await db.run("UPDATE projects SET voice = ?, updated_at = ? WHERE id = ?", [JSON.stringify(voice), now, projectId]);
   return voice;
 }
 
-export function clearProjectAudio(db: StudioDb, projectId: string, kind: AudioKind): void {
-  db.run(`UPDATE projects SET ${kind === "voice" ? "voice" : "music"} = NULL, updated_at = ? WHERE id = ?`, [new Date().toISOString(), projectId]);
+export async function clearProjectAudio(db: StudioDb, projectId: string, kind: AudioKind): Promise<void> {
+  await db.run(`UPDATE projects SET ${kind === "voice" ? "voice" : "music"} = NULL, updated_at = ? WHERE id = ?`, [new Date().toISOString(), projectId]);
 }
 
 /** Own music in words: "nhạc riêng của dự án (3 bài ghép, chuyển mờ 2 s; 412 s), -18 dB, nhỏ lại khi có lời". */
@@ -278,8 +303,8 @@ export function ownMusicWords(m: ProductionMusic, whose: string): string {
 }
 
 /** What the agent and the web are told of the project's audio (no bucket keys). */
-export function projectAudioSummary(db: StudioDb, projectId: string): { voice: string; music: string } {
-  const a = projectAudio(db, projectId);
+export async function projectAudioSummary(db: StudioDb, projectId: string): Promise<{ voice: string; music: string }> {
+  const a = await projectAudio(db, projectId);
   const v = a.voice;
   const mode = v && "mode" in v ? v.mode : v ? "clone" : null;
   const clone = v && "mode" in v && v.mode === "clone" ? v : null;
@@ -288,7 +313,7 @@ export function projectAudioSummary(db: StudioDb, projectId: string): { voice: s
       : mode === "clone" ? `giọng mẫu${clone?.duration_s ? ` ${Math.round(clone.duration_s)} s` : ""}${clone ? ` (${clone.origin === "synthetic" ? "giọng máy" : clone.origin === "own" ? "giọng của người dùng" : "có bản quyền"})` : ""}`
         : "đang tạo giọng";
   const m = a.music;
-  const lib = m ? projectLibraryTrack(db, projectId) : null;
+  const lib = m ? await libraryTrackOf(db, m) : null;
   const music = lib ? `bài "${lib.display_name}" trong kho nhạc${lib.duration_seconds ? ` (${Math.round(lib.duration_seconds)} s)` : ""}, ${m!.gain_db} dB${m!.ducking ? ", nhỏ lại khi có lời" : ""}`
     : m ? ownMusicWords(m, "của dự án")
     : "chưa chọn (Studio chọn nhạc trong thư viện theo tâm trạng trong kế hoạch dựng hoặc branding)";

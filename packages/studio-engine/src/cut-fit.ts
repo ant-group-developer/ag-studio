@@ -2,14 +2,15 @@
  * From the approved edit plan of a shot-cut episode to its first timeline v4 (spec local-chat §3.3, plan phase 5 D2):
  * the plan becomes a harness EDL and narration, the read lines its narration timing, harness `fitEdl` reshapes the
  * picture so every line has enough of it ("picture follows voice", ADR-0001 item 106), `buildTimeline` lays it out,
- * and the result is written as a timeline v4. Pure: no I/O.
+ * and the result is written as a timeline v4. A shot with `snap` then has its cut moved onto the music's beat or bar
+ * (`snapCuts`, feedback-vps §4.7). Pure: no I/O.
  */
 import {
   DEFAULT_NARRATION_LEAD_SECONDS, EdlSchema, NarrationTimingSchema, TimelineV4Schema,
   type EditPlan, type EpisodeAsset, type FitReport, type NarrationTiming, type ShotsIndex, type StudioCanvas, type StudioMusic,
-  type StudioSurvey, type TextLook, type TimelineClipV4, type TimelineV4, type Transcript,
+  type StudioSurvey, type TextLook, type TimelineClipV4, type TimelineV4, type Transcript, type VideoLook,
 } from "@harness/contracts";
-import { buildTimeline, fitEdl, narrationCps } from "@harness/core";
+import { buildTimeline, fitEdl, narrationCps, snapCuts, type BeatGrid, type SnapMove, type SnapSkip } from "@harness/core";
 
 /** The read audio of a narration line (voice store). */
 export interface ReadLine { key: string; duration_s: number; words: { word: string; start: number; end: number }[] }
@@ -41,10 +42,20 @@ export interface FitCutInput {
   clipAudio?: boolean;
   /** Fit v2: the branding's text look, frozen into the timeline (the render draws the texts in it). */
   textStyle?: TextLook | null;
+  /** Feedback-vps §4.6: the colour of the picture (the plan's, else the branding's). */
+  look?: VideoLook | null;
+  /** Feedback-vps §4.7: the music's beats, for the plan's shots with `snap`; null: none known (those cuts stay). */
+  beats?: BeatGrid | null;
 }
 
-/** A dissolve, when the plan asks for one: the harness brand default length. */
-const DISSOLVE_SECONDS = 0.4;
+/** What `snap` did: cuts moved onto the music's beats (clip ids), and shots whose cut could not move. */
+export interface FitSnapReport {
+  moves: (SnapMove & { clip_id: string })[];
+  skipped: (SnapSkip & { clip_id: string })[];
+}
+
+/** A transition's length when the plan gives none: a dissolve the harness brand default, a dip to black a little longer. */
+const TRANSITION_SECONDS = { dissolve: 0.4, dip_black: 0.6 } as const;
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
 /** The shot of `source_id` holding the middle of `[in, out)` (an appended piece is not one of the plan's shots). */
@@ -54,7 +65,7 @@ function shotAt(shots: ShotsIndex, sourceId: string, inS: number, out: number): 
   return s?.shot_id ?? null;
 }
 
-export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: FitReport } {
+export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: FitReport; snap: FitSnapReport } {
   const { plan } = p;
   const narrated = plan.narration === "tts";
   const anchors = new Map(plan.shots.filter((s) => s.line_id).map((s) => [s.line_id!, s.order]));
@@ -101,10 +112,34 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
     return [clip?.order ?? -1, n.line_id] as const;
   }));
   const video = [...laid.video].sort((a, b) => a.order - b.order);
+
+  // cuts on the music's beat: the last piece of a shot with `snap` ends on the nearest beat or bar it can
+  const snap: FitSnapReport = { moves: [], skipped: [] };
+  const snapped = video.some((v) => { const o = fromPlan.get(v.order); return o?.last && o.shot.snap; });
+  if (snapped && p.beats) {
+    // seconds of narration each anchoring piece (by fitted order) starts
+    const lines = new Map([...lineAt].filter(([, id]) => voiceOf[id]).map(([order, id]) => [order, voiceOf[id]!.duration_s]));
+    const r = snapCuts(video.map((v) => {
+      const o = fromPlan.get(v.order);
+      const mid = (v.in + v.out) / 2;
+      const shot = p.shots.sources.find((x) => x.source_id === v.source_id)?.shots.find((x) => x.in <= mid && mid < x.out);
+      const line = lines.get(v.order);
+      return {
+        duration: r3(v.out - v.in), snap: o?.last ? o.shot.snap ?? null : null, room: shot ? Math.max(0, r3(shot.out - v.out)) : 0,
+        ...(line !== undefined ? { line: { lead: DEFAULT_NARRATION_LEAD_SECONDS, length: line } } : {}),
+      };
+    }), p.beats, { fps: p.fps });
+    let at = 0;
+    video.forEach((v, i) => { v.out = r3(v.in + r.durations[i]!); v.start = r3(at); at += r.durations[i]!; v.end = r3(at); });
+    const idOf = (i: number) => `C${String(i + 1).padStart(3, "0")}`;
+    snap.moves = r.moves.map((m) => ({ ...m, clip_id: idOf(m.index) }));
+    snap.skipped = r.skipped.map((s) => ({ ...s, clip_id: idOf(s.index) }));
+  }
   const clips: TimelineClipV4[] = video.map((v, i) => {
     const origin = fromPlan.get(v.order);
-    const transition = origin?.last && origin.shot.transition === "dissolve" && i < video.length - 1
-      ? { kind: "dissolve" as const, seconds: DISSOLVE_SECONDS } : { kind: "cut" as const, seconds: 0 };
+    const kind = origin?.shot.transition;
+    const transition = origin?.last && kind && kind !== "cut" && i < video.length - 1
+      ? { kind, seconds: origin.shot.transition_s ?? TRANSITION_SECONDS[kind] } : { kind: "cut" as const, seconds: 0 };
     const assetId = assetOf.get(v.source_id);
     if (!assetId) throw new Error(`fitted entry ${v.order} is on an unknown source ${v.source_id}`);
     return {
@@ -114,6 +149,7 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
       line_id: lineAt.get(v.order) ?? null, transition_out: transition,
       // a piece the fit appended to cover the narration comes from no plan shot: it keeps its sound
       ...(p.clipAudio && origin?.shot.source_audio === "mute" ? { muted: true } : {}),
+      ...(origin?.shot.gain_db ? { gain_db: origin.shot.gain_db } : {}),
     };
   });
 
@@ -124,6 +160,14 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
     const start = first === undefined ? undefined : startOf.get(first);
     return start === undefined ? [] : [{ text_id: t.text_id, kind: t.kind, text: t.text, start: r3(start + t.offset_s), duration: t.duration, position: t.position }];
   });
+
+  // the music's volume line: each point where its shot starts in the fitted video, plus its offset
+  const envelope = (plan.music_envelope ?? []).flatMap((pt) => {
+    const first = fitted.orderMap.get(pt.at_order)?.[0];
+    const start = first === undefined ? undefined : startOf.get(first);
+    return start === undefined ? [] : [{ at: r3(start + pt.offset_s), gain_db: pt.gain_db }];
+  }).sort((a, b) => a.at - b.at);
+  const music = p.music && envelope.length ? { ...p.music, envelope } : p.music;
 
   const used = new Set(clips.map((c) => c.asset_id));
   const timeline = TimelineV4Schema.parse({
@@ -139,11 +183,12 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
       })),
     },
     captions: { mode: narrated ? "burn-in" : "none" },
-    music: p.music,
-    source_audio: { muted: false },
+    music,
+    source_audio: { muted: plan.source_muted ?? false, ...(plan.source_even ? { even: true } : {}) },
     assets: Object.fromEntries(Object.entries(p.assets).filter(([id]) => used.has(id))),
     alternates: [],
     ...(p.textStyle ? { text_style: p.textStyle } : {}),
+    ...(p.look && p.look !== "none" ? { look: p.look } : {}),
   });
-  return { timeline, report: fitted.report };
+  return { timeline, report: fitted.report, snap };
 }

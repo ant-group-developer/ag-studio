@@ -127,15 +127,15 @@ export class TeamsController {
   @Delete(':teamId')
   @Roles('owner')
   @HttpCode(HttpStatus.NO_CONTENT)
-  deleteTeam(@Param('teamId') teamId: string) {
-    this.teamsService.deleteTeam(teamId);
+  async deleteTeam(@Param('teamId') teamId: string) {
+    await this.teamsService.deleteTeam(teamId);
   }
 
   /** Paged members list with name/email/avatar from Account API. */
   @Get(':teamId/members')
   @Roles('viewer')
   async listMembers(@Param('teamId') teamId: string, @Query() query: ListMembersQueryDto) {
-    const paged = this.teamsService.listMembersPaged(teamId, query);
+    const paged = await this.teamsService.listMembersPaged(teamId, query);
     const people = await this.directory.summaries(paged.items.map((m) => m.userId));
     return {
       ...paged,
@@ -150,7 +150,7 @@ export class TeamsController {
   @Get(':teamId/member-candidates')
   @Roles('owner')
   async memberCandidates(@Param('teamId') teamId: string, @Query('keyword') keyword: string | undefined, @Req() req: Request) {
-    const members = new Set(this.teamsService.listMembers(teamId).map((m) => m.userId));
+    const members = new Set((await this.teamsService.listMembers(teamId)).map((m) => m.userId));
     const people = await this.directory.search(req.authContext!.accessToken, (keyword ?? '').slice(0, 200));
     return people.filter((p) => !members.has(p.userId));
   }
@@ -158,26 +158,26 @@ export class TeamsController {
   @Post(':teamId/members')
   @Roles('owner')
   @HttpCode(HttpStatus.CREATED)
-  addMember(@Param('teamId') teamId: string, @Body() dto: AddMemberDto) {
-    this.teamsService.addMember(teamId, dto.userId, dto.role as 'owner' | 'producer' | 'editor' | 'viewer');
+  async addMember(@Param('teamId') teamId: string, @Body() dto: AddMemberDto) {
+    await this.teamsService.addMember(teamId, dto.userId, dto.role as 'owner' | 'producer' | 'editor' | 'viewer');
     return { ok: true };
   }
 
   @Delete(':teamId/members/:userId')
   @Roles('owner')
   @HttpCode(HttpStatus.NO_CONTENT)
-  removeMember(@Param('teamId') teamId: string, @Param('userId') userId: string) {
-    this.teamsService.removeMember(teamId, userId);
+  async removeMember(@Param('teamId') teamId: string, @Param('userId') userId: string) {
+    await this.teamsService.removeMember(teamId, userId);
   }
 
   @Patch(':teamId/members/:userId')
   @Roles('owner')
-  updateMemberRole(
+  async updateMemberRole(
     @Param('teamId') teamId: string,
     @Param('userId') userId: string,
     @Body() dto: UpdateMemberRoleDto,
   ) {
-    this.teamsService.updateMemberRole(teamId, userId, dto.role as 'owner' | 'producer' | 'editor' | 'viewer');
+    await this.teamsService.updateMemberRole(teamId, userId, dto.role as 'owner' | 'producer' | 'editor' | 'viewer');
     return { ok: true };
   }
 }

@@ -11,7 +11,7 @@
  */
 import {
   upgradeTimelineV3,
-  type CaptionMode, type EpisodeAsset, type StudioMusic, type TimelineClipV4, type TimelineOp, type TimelineText,
+  type CaptionMode, type EpisodeAsset, type MusicEnvelopePoint, type VideoLook, type StudioMusic, type TimelineClipV4, type TimelineOp, type TimelineText,
   type StoredTimeline, type TimelineTransitionKind, type TimelineV4,
 } from "@harness/contracts";
 
@@ -388,6 +388,24 @@ export function setSectionTitle<T extends AnyTimeline>(t: T, clipId: string, tit
   return { ...t, clips };
 }
 
+/**
+ * Clips whose `out` passes the known length of their video (`assets[].duration_s`, the prepare step's) end at that
+ * length instead, each reported as a `clip_out_clamped` warning. Within `RANGE_SLACK` such an `out` is not an
+ * error, but a composition asking for more of a file than it holds made the render worker clamp the segment on its
+ * own, out of step with the rest of the episode. Timeline v3 (whole clips) never needs it.
+ */
+export function clampClipOuts<T extends AnyTimeline>(t: T): { timeline: T; issues: TimelineIssue[] } {
+  if (!isTimelineV4(t)) return { timeline: t, issues: [] };
+  const issues: TimelineIssue[] = [];
+  const clips = t.clips.map((c) => {
+    const duration = t.assets[c.asset_id]?.duration_s;
+    if (c.out === null || duration === undefined || duration <= 0 || c.out <= duration + EPS || c.in >= duration - EPS) return c;
+    issues.push({ severity: "warning", code: "clip_out_clamped", message: `clip ${c.clip_id} dừng ở ${r3(duration)}s, hết video (đã ghi ${c.out}s)`, clip_id: c.clip_id });
+    return { ...c, out: r3(duration) };
+  });
+  return issues.length ? { timeline: { ...t, clips } as T, issues } : { timeline: t, issues };
+}
+
 /** Plays `[in, out)` of the clip's asset (`out: null` = to its end). Timeline v4 only. */
 export function trimClip(t: TimelineV4, clipId: string, inS: number, out: number | null): TimelineV4 {
   const v4 = requireV4(t, "Cắt đầu/cuối clip");
@@ -423,6 +441,44 @@ export function setClipMuted(t: TimelineV4, clipId: string, muted: boolean): Tim
   return { ...v4, clips };
 }
 
+/** One clip's own sound louder or quieter (`gain_db`; 0 removes the key). Timeline v4 only. */
+export function setClipGain(t: TimelineV4, clipId: string, gainDb: number): TimelineV4 {
+  const v4 = requireV4(t, "Âm lượng clip");
+  const i = clipIndex(v4, clipId);
+  const { gain_db: _was, ...clip } = v4.clips[i]!;
+  const clips = v4.clips.slice();
+  const g = Math.round(gainDb * 10) / 10;
+  clips[i] = g === 0 ? clip : { ...clip, gain_db: g };
+  return { ...v4, clips };
+}
+
+/** Every clip's own sound brought to one level (`source_audio.even`), or as recorded again. Timeline v4 only. */
+export function setSourceEven(t: TimelineV4, even: boolean): TimelineV4 {
+  const v4 = requireV4(t, "Đều tiếng gốc");
+  const { even: _was, ...sourceAudio } = v4.source_audio;
+  return { ...v4, source_audio: even ? { ...sourceAudio, even: true } : sourceAudio };
+}
+
+/**
+ * The music's volume line (`music.envelope`), points in order of time (a later point at the same second wins); none
+ * removes it. Timeline v4 with music only.
+ */
+export function setMusicEnvelope(t: TimelineV4, points: readonly MusicEnvelopePoint[]): TimelineV4 {
+  const v4 = requireV4(t, "Đường âm lượng nhạc");
+  if (!v4.music) throw new TimelineOpError("no_music", "timeline chưa có nhạc: đặt nhạc trước (setMusic)");
+  const { envelope: _was, ...music } = v4.music;
+  const byTime = new Map<number, number>();
+  for (const p of points) byTime.set(r3(p.at), p.gain_db);
+  const envelope = [...byTime].sort((a, b) => a[0] - b[0]).map(([at, gain_db]) => ({ at, gain_db }));
+  return { ...v4, music: envelope.length ? { ...music, envelope } : music };
+}
+
+/** The colour of the picture (`none` removes the key: as filmed). Timeline v4 only. */
+export function setLook(t: TimelineV4, look: VideoLook): TimelineV4 {
+  const { look: _was, ...rest } = requireV4(t, "Màu");
+  return look === "none" ? rest : { ...rest, look };
+}
+
 /** Burnt-in subtitles from the narration. Timeline v4 only. */
 export function setCaptions(t: TimelineV4, mode: CaptionMode): TimelineV4 {
   return { ...requireV4(t, "Phụ đề"), captions: { mode } };
@@ -445,12 +501,14 @@ export function removeText<T extends AnyTimeline>(t: T, textId: string): T {
   return { ...t, texts: t.texts.filter((x) => x.text_id !== textId) };
 }
 
+/** The music (or none). A v4 timeline's volume line stays with the new track: its points are times in the video. */
 export function setMusic<T extends AnyTimeline>(t: T, music: StudioMusic | null): T {
-  return { ...t, music };
+  const envelope = isTimelineV4(t) ? t.music?.envelope : undefined;
+  return { ...t, music: music && envelope ? { track: music.track, gain_db: music.gain_db, ducking: music.ducking, envelope } : music };
 }
 
 export function setSourceMuted<T extends AnyTimeline>(t: T, muted: boolean): T {
-  return { ...t, source_audio: { muted } };
+  return { ...t, source_audio: { ...t.source_audio, muted } };
 }
 
 // ---------------------------------------------------------------------------
@@ -470,7 +528,7 @@ function applyOne<T extends AnyTimeline>(t: T, op: TimelineOp, allowed: Record<s
     case "moveClip": return moveClip(t, op.from, op.to);
     case "replaceClipAsset": return replaceClipAsset(withAsset(t, op.asset_id), op.clip_id, op.asset_id);
     case "setSectionTitle": return setSectionTitle(t, op.clip_id, op.title);
-    case "addText": return addText(t, { kind: op.kind, text: op.text, start: op.start, duration: op.duration, position: op.position });
+    case "addText": return addText(t, { kind: op.kind, text: op.text, start: op.start, duration: op.duration, position: op.position, ...(op.size ? { size: op.size } : {}) });
     case "updateText": {
       const patch: Partial<Omit<TimelineText, "text_id">> = {};
       if (op.kind !== null) patch.kind = op.kind;
@@ -478,6 +536,7 @@ function applyOne<T extends AnyTimeline>(t: T, op: TimelineOp, allowed: Record<s
       if (op.start !== null) patch.start = op.start;
       if (op.duration !== null) patch.duration = op.duration;
       if (op.position !== null) patch.position = op.position;
+      if (op.size !== null && op.size !== undefined) patch.size = op.size;
       return updateText(t, op.text_id, patch);
     }
     case "removeText":
@@ -489,19 +548,27 @@ function applyOne<T extends AnyTimeline>(t: T, op: TimelineOp, allowed: Record<s
     case "setTransition": return setTransition(requireV4(t, "Chuyển cảnh"), op.clip_id, op.kind, op.seconds) as T;
     case "setCaptions": return setCaptions(requireV4(t, "Phụ đề"), op.mode) as T;
     case "setClipMuted": return setClipMuted(requireV4(t, "Tắt tiếng clip"), op.clip_id, op.muted) as T;
+    case "setClipGain": return setClipGain(requireV4(t, "Âm lượng clip"), op.clip_id, op.gain_db) as T;
+    case "setSourceEven": return setSourceEven(requireV4(t, "Đều tiếng gốc"), op.even) as T;
+    case "setMusicEnvelope": return setMusicEnvelope(requireV4(t, "Đường âm lượng nhạc"), op.points) as T;
+    case "setLook": return setLook(requireV4(t, "Màu"), op.look) as T;
   }
 }
 
 /**
  * Runs chat edits in order on `t` (never changed). A video not yet in the timeline may be added only from `allowed`
- * (the episode's candidate videos). A failing edit throws `TimelineOpError` naming its position.
+ * (the episode's candidate videos). A failing edit throws `TimelineOpError` naming its position. Clips that end up
+ * past the end of their video are clamped to it (`clampClipOuts`); the warnings go to `warnings` when given.
  */
-export function applyTimelineOps<T extends AnyTimeline>(t: T, ops: readonly TimelineOp[], allowed: Record<string, EpisodeAsset>): T {
-  return ops.reduce((acc, op, i) => {
+export function applyTimelineOps<T extends AnyTimeline>(t: T, ops: readonly TimelineOp[], allowed: Record<string, EpisodeAsset>, warnings?: TimelineIssue[]): T {
+  const edited = ops.reduce((acc, op, i) => {
     try { return applyOne(acc, op, allowed); }
     catch (e) {
       if (e instanceof TimelineOpError) throw new TimelineOpError(e.code, `thao tác ${i + 1} (${op.op}): ${e.message}`);
       throw e;
     }
   }, t);
+  const { timeline, issues } = clampClipOuts(edited);
+  warnings?.push(...issues);
+  return timeline;
 }

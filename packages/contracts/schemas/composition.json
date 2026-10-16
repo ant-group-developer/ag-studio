@@ -135,6 +135,9 @@
               "has_audio": {
                 "type": "boolean"
               },
+              "gain_db": {
+                "type": "number"
+              },
               "transition_out": {
                 "type": "object",
                 "properties": {
@@ -223,6 +226,14 @@
                   "slide_up",
                   "pop"
                 ]
+              },
+              "size": {
+                "type": "string",
+                "enum": [
+                  "s",
+                  "m",
+                  "l"
+                ]
               }
             },
             "required": [
@@ -265,6 +276,20 @@
                 "s",
                 "m",
                 "l"
+              ]
+            },
+            "shadow": {
+              "type": "boolean"
+            },
+            "font": {
+              "type": "string",
+              "enum": [
+                "Arial",
+                "Be Vietnam Pro",
+                "Noto Sans JP",
+                "Noto Sans KR",
+                "Noto Serif",
+                "Playfair Display"
               ]
             }
           },
@@ -412,9 +437,31 @@
                     "additionalProperties": false
                   }
                 },
+                "envelope": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "at": {
+                        "type": "number"
+                      },
+                      "gain_db": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "at",
+                      "gain_db"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
                 "duck": {
                   "type": "object",
                   "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
                     "windows": {
                       "type": "array",
                       "items": {
@@ -594,6 +641,19 @@
             "additionalProperties": false
           },
           "default": []
+        },
+        "source_even": {
+          "type": "boolean"
+        },
+        "look": {
+          "type": "string",
+          "enum": [
+            "none",
+            "natural",
+            "vivid",
+            "warm",
+            "cinematic"
+          ]
         },
         "warnings": {
           "type": "array",

@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { MusicTrack } from "@harness/contracts";
 import { foldMood, getLibraryMusic, importLibraryMusic, listLibraryMusic, pickLibraryMusic, saveLibraryMusic } from "../src/index.js";
 import { hasFfmpeg, makeWav } from "../../../tests/media.js";
@@ -40,19 +40,25 @@ describe("pickLibraryMusic", () => {
 });
 
 describe("the library rows", () => {
-  it("are the harness music_track rows: saved, listed (active only on request), read back", () => {
-    const { db } = world();
-    saveLibraryMusic(db, track("calm-a", ["calm"]));
-    saveLibraryMusic(db, track("off", ["sad"], { active: false }));
-    expect(listLibraryMusic(db).map((t) => t.track_id)).toEqual(["calm-a", "off"]);
-    expect(listLibraryMusic(db, { activeOnly: true }).map((t) => t.track_id)).toEqual(["calm-a"]);
-    saveLibraryMusic(db, track("calm-a", ["calm", "morning"]));
-    expect(getLibraryMusic(db, "calm-a")?.mood).toEqual(["calm", "morning"]);
-    expect(getLibraryMusic(db, "nope")).toBeNull();
+  let w: Awaited<ReturnType<typeof world>> | undefined;
+  afterEach(async () => { await w?.db.close(); w = undefined; });
+
+  it("are the music_track rows: saved, listed in the order added (active only on request), read back", async () => {
+    w = await world();
+    const { db } = w;
+    await saveLibraryMusic(db, track("off", ["sad"], { active: false }));
+    await saveLibraryMusic(db, track("calm-a", ["calm"]));
+    expect((await listLibraryMusic(db)).map((t) => t.track_id)).toEqual(["off", "calm-a"]);
+    expect((await listLibraryMusic(db, { activeOnly: true })).map((t) => t.track_id)).toEqual(["calm-a"]);
+    await saveLibraryMusic(db, track("off", ["sad", "rain"], { active: true }));
+    expect((await listLibraryMusic(db, { activeOnly: true })).map((t) => t.track_id)).toEqual(["off", "calm-a"]);
+    expect((await getLibraryMusic(db, "off"))?.mood).toEqual(["sad", "rain"]);
+    expect(await getLibraryMusic(db, "nope")).toBeNull();
   });
 
   it.skipIf(!hasFfmpeg())("an upload is made AAC, kept by its content under library/music/, and the same file again is the same track", async () => {
-    const { db, bucket } = world();
+    w = await world();
+    const { db, bucket } = w;
     const wav = join(mkdtempSync(join(tmpdir(), "music-in-")), "tone.wav");
     makeWav(wav, 12, { frequency: 440 });
     const d = { db, bucket, ffmpeg: FFMPEG, ffprobe: FFPROBE };
@@ -64,6 +70,6 @@ describe("the library rows", () => {
     expect(await bucket.exists(`library/${first.file.slice("library:".length)}`)).not.toBeNull();
     const again = await importLibraryMusic(d, { file: wav, displayName: "Sáng", moods: ["upbeat"], origin: "own", originNote: "x", loopOk: false, now: "2026-10-08T02:00:00.000Z" });
     expect(again).toMatchObject({ track_id: first.track_id, mood: ["upbeat"], created_at: "2026-10-08T01:00:00.000Z", updated_at: "2026-10-08T02:00:00.000Z" });
-    expect(listLibraryMusic(db)).toHaveLength(1);
+    expect(await listLibraryMusic(db)).toHaveLength(1);
   }, 60_000);
 });

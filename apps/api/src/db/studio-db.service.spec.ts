@@ -1,175 +1,41 @@
 /**
- * Migration compatibility test: verifies that StudioDbService and SqliteStateStore
- * (the core harness state store) can open the same SQLite database in either order
- * without colliding on the `schema_migrations` table.
- *
- * Both must use the same table schema:
- *   schema_migrations(name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)
- * where `name` is the full migration filename including the `.sql` extension.
+ * StudioDbService over a real Studio database (Postgres in PGlite, migrated): get/all/run/tx go to the same database,
+ * a failed `tx` leaves nothing behind, and the API refuses to start without DATABASE_URL.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { randomUUID } from 'node:crypto';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { ConfigService } from '@nestjs/config';
+import { testStudioDb } from '@ag-studio/engine/testing';
+import { StudioDbService } from './studio-db.service';
 
-// Use CJS require for node:sqlite
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
+describe('StudioDbService', () => {
+  let db: StudioDbService;
+  beforeEach(async () => { db = StudioDbService.over(await testStudioDb()); });
+  afterEach(() => db.onModuleDestroy());
 
-// ---- Inline the migration logic used by StudioDbService ----
-// (we can't instantiate the NestJS service directly without the full DI container)
+  const team = (id: string) => {
+    const now = new Date().toISOString();
+    return db.run('INSERT INTO teams (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)', [id, `Team ${id}`, now, now]);
+  };
 
-function runStudioDbMigrations(dbPath: string): void {
-  const db = new DatabaseSync(dbPath);
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      name       TEXT PRIMARY KEY,
-      applied_at TEXT NOT NULL
-    )
-  `);
-  // We don't actually apply real migrations here — just check the table structure
-  db.close();
-}
-
-// ---- Inline the migration logic used by SqliteStateStore ----
-
-function runCoreStoreMigrations(dbPath: string): string[] {
-  const db = new DatabaseSync(dbPath);
-  db.exec('PRAGMA journal_mode = WAL');
-  db.exec('PRAGMA busy_timeout = 5000');
-  db.exec(
-    'CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)',
-  );
-  const applied: string[] = [];
-  // No real SQL files to run here — just checks the table
-  db.close();
-  return applied;
-}
-
-function listApplied(dbPath: string): Array<{ name: string }> {
-  const db = new DatabaseSync(dbPath);
-  const rows = db
-    .prepare("SELECT name FROM schema_migrations ORDER BY name")
-    .all() as Array<{ name: string }>;
-  db.close();
-  return rows;
-}
-
-function insertRow(dbPath: string, name: string): void {
-  const db = new DatabaseSync(dbPath);
-  db.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)').run(
-    name,
-    new Date().toISOString(),
-  );
-  db.close();
-}
-
-// -----------------------------------------------------------------------
-
-let testDir: string;
-let dbPath: string;
-
-beforeEach(() => {
-  testDir = join(tmpdir(), `migration-compat-${randomUUID()}`);
-  mkdirSync(testDir, { recursive: true });
-  dbPath = join(testDir, 'studio.db');
-});
-
-afterEach(() => {
-  if (existsSync(testDir)) {
-    rmSync(testDir, { recursive: true, force: true });
-  }
-});
-
-describe('StudioDbService + SqliteStateStore migration compatibility', () => {
-  it('StudioDbService first, then core store — same table, same column', () => {
-    // Open with StudioDbService semantics first
-    runStudioDbMigrations(dbPath);
-    // Then open with core store semantics — should not throw
-    expect(() => runCoreStoreMigrations(dbPath)).not.toThrow();
+  it('reads and writes the migrated tables', async () => {
+    expect(await team('t1')).toEqual({ changes: 1 });
+    await team('t2');
+    expect(await db.get<{ name: string }>('SELECT name FROM teams WHERE id = ?', ['t1'])).toEqual({ name: 'Team t1' });
+    expect(await db.get('SELECT id FROM teams WHERE id = ?', ['missing'])).toBeUndefined();
+    expect((await db.all<{ id: string }>('SELECT id FROM teams ORDER BY id')).map((r) => r.id)).toEqual(['t1', 't2']);
+    expect(await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM teams')).toEqual({ n: 2 });
+    expect(await db.run('DELETE FROM teams')).toEqual({ changes: 2 });
   });
 
-  it('core store first, then StudioDbService — same table, same column', () => {
-    // Open with core store semantics first
-    runCoreStoreMigrations(dbPath);
-    // Then open with StudioDbService semantics — should not throw
-    expect(() => runStudioDbMigrations(dbPath)).not.toThrow();
+  it('a tx lands whole or not at all', async () => {
+    await db.tx(async () => { await team('t1'); await team('t2'); });
+    await expect(db.tx(async () => { await team('t3'); await team('t1'); })).rejects.toMatchObject({ code: '23505' });
+    expect((await db.all<{ id: string }>('SELECT id FROM teams ORDER BY id')).map((r) => r.id)).toEqual(['t1', 't2']);
   });
 
-  it('rows written by StudioDbService are visible to core store reader', () => {
-    runStudioDbMigrations(dbPath);
-    // Insert a row as StudioDbService would (name = full filename)
-    insertRow(dbPath, '0001_initial.sql');
-    insertRow(dbPath, '0009_studio_farm_jobs.sql');
-
-    // Core store should be able to read them
-    runCoreStoreMigrations(dbPath);
-    const rows = listApplied(dbPath);
-    expect(rows.map((r) => r.name)).toContain('0001_initial.sql');
-    expect(rows.map((r) => r.name)).toContain('0009_studio_farm_jobs.sql');
-  });
-
-  it('rows written by core store are visible to StudioDbService reader', () => {
-    runCoreStoreMigrations(dbPath);
-    // Insert a row as SqliteStateStore would (name = full filename)
-    insertRow(dbPath, '0007_composition.sql');
-
-    // StudioDbService should be able to read them
-    runStudioDbMigrations(dbPath);
-    const rows = listApplied(dbPath);
-    expect(rows.map((r) => r.name)).toContain('0007_composition.sql');
-  });
-
-  it('key layout: StudioDbService uses full filename with .sql extension', () => {
-    runStudioDbMigrations(dbPath);
-    insertRow(dbPath, '0001_initial.sql');
-    const rows = listApplied(dbPath);
-    // name must include the .sql extension (not stripped)
-    expect(rows[0]?.name).toBe('0001_initial.sql');
-    expect(rows[0]?.name).not.toBe('0001_initial');
-  });
-});
-
-describe('Key layout: stageInputPrefix from sign-schemas matches farm-executor', () => {
-  // Import both inline implementations and assert they produce identical results.
-  // This is the "shared test vector" described in problem 3 of the task.
-
-  // Inline copy of stageInputPrefix from packages/executors/src/farm-executor.ts
-  function executorInputPrefix(
-    productionId: string,
-    stageKey: string,
-    attemptId: string,
-  ): string {
-    return `productions/${productionId}/jobs/${stageKey}/${attemptId}/in/`;
-  }
-
-  // Inline copy of getStageInputPrefix from apps/api/src/farm/sign-schemas.ts
-  function signSchemaInputPrefix(
-    productionId: string,
-    stageKey: string,
-    attemptId: string,
-  ): string {
-    return `productions/${productionId}/jobs/${stageKey}/${attemptId}/in/`;
-  }
-
-  const CASES = [
-    ['prod-abc', 'tts', 'attempt-001'],
-    ['prod-123', 'render-preview', 'atm_XYZ'],
-    ['p', 's', 'a'],
-  ] as const;
-
-  for (const [prodId, stageKey, attemptId] of CASES) {
-    it(`matches for ${prodId}/${stageKey}/${attemptId}`, () => {
-      expect(executorInputPrefix(prodId, stageKey, attemptId)).toBe(
-        signSchemaInputPrefix(prodId, stageKey, attemptId),
-      );
-    });
-  }
-
-  it('does not include attempt id in old layout (regression check)', () => {
-    const prefix = executorInputPrefix('prod-1', 'render', 'atm-99');
-    expect(prefix).toContain('atm-99');
-    expect(prefix).toBe('productions/prod-1/jobs/render/atm-99/in/');
+  it('refuses to start without DATABASE_URL', async () => {
+    const svc = new StudioDbService({ get: () => undefined } as unknown as ConfigService);
+    await expect(svc.onModuleInit()).rejects.toThrow(/DATABASE_URL/);
+    expect(() => svc.db).toThrow(/before module init/);
   });
 });

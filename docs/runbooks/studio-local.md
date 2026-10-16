@@ -97,7 +97,7 @@ cd E:/CODE/ag-render-worker; yarn build
 
 Không dùng `corepack pnpm build` ở gốc ag-studio: script đó gọi `pnpm` trần, không có trên PATH của máy này.
 
-Migration: Studio API tự migrate `studio.db` khi khởi động. ag-go: `yarn migration:run` trong `ag-go-api`. ag-farm:
+Migration: Studio API (và worker) tự migrate database Postgres `DATABASE_URL` khi khởi động. ag-go: `yarn migration:run` trong `ag-go-api`. ag-farm:
 script `migration:run` trỏ sai chỗ typeorm, chạy tay trong `ag-farm/apps/api`:
 
 ```bash
@@ -108,7 +108,10 @@ node --require ts-node/register ../../node_modules/typeorm/cli.js migration:run 
 
 - Các file `.env` cho chạy trực tiếp đã có sẵn trên máy dev (bảng mục 1); chúng trỏ `localhost`, khác bộ `.env` cho
   Docker (`E:\CODE\ag-studio\.env`, `E:\CODE\ag-farm\.env`, trỏ `host.docker.internal`) do
-  `E:\ag-local\setup\config-local.cjs` sinh. Dữ liệu Studio: `E:\ag-local\studio-data` (`studio.db`, `harness/`).
+  `E:\ag-local\setup\config-local.cjs` sinh. Dữ liệu Studio: database Postgres `DATABASE_URL` (schema `DATABASE_SCHEMA`, mặc định public) trong `apps/api/.env`
+  (worker dùng cùng database), file ở
+  `E:\ag-local\studio-data\harness`. `studio.db` cũ ở `E:\ag-local\studio-data` chỉ còn để chép sang Postgres một lần:
+  `node packages/studio-engine/scripts/migrate-sqlite-to-pg.mjs <studio.db>` (cần `DATABASE_URL`, build engine trước).
 - **Claude giả hay thật:** `STUDIO_AGENT_ARGV` trong `apps/api/.env` (mảng JSON, ví dụ
   `["node","E:/CODE/ag-studio/fixtures/fake-studio-agent.mjs"]`) cho agent giả, không tốn hạn mức. Bỏ dòng đó để dùng
   `claude` thật bằng `CLAUDE_CODE_OAUTH_TOKEN` (hoặc đăng nhập `claude` → `/login`). Trên Windows, `claude.cmd` của npm
@@ -166,7 +169,7 @@ node --require ts-node/register ../../node_modules/typeorm/cli.js migration:run 
   tắt thì việc chuẩn bị lỗi "fetch failed". Việc dùng farm (lời dẫn, render) cần máy `local-render`
   **online** ở web farm 3011: farm-api tắt lâu thì render worker không tự nối lại — tắt/bật lại `render-worker`.
 - Log Studio API/worker khi bật bằng `local-stack.mjs` không vào `E:/ag-local/dev-run/*.log` (chạy dưới `cmd.exe`); xem
-  trạng thái lượt chat và job trong `studio.db` (`agent_messages`, `project_jobs`) hoặc màn web.
+  trạng thái lượt chat và job trong Postgres (`agent_messages`, `project_jobs`) hoặc màn web.
 
 ## 5. Chạy bằng Docker (cách cũ)
 

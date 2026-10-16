@@ -39,9 +39,9 @@ export class VideosController {
   @Get('projects/:projectId/videos')
   @Roles('viewer')
   list(@Param('projectId') projectId: string, @Query('archived') archived?: string): Promise<{ videos: VideoView[] }> {
-    return mapErrors(() => {
-      requireProject(this.engine.db, projectId);
-      return { videos: listVideos(this.engine.db, projectId, { archived: archived === 'true' || archived === '1' }).map(videoView) };
+    return mapErrors(async () => {
+      await requireProject(this.engine.db, projectId);
+      return { videos: (await listVideos(this.engine.db, projectId, { archived: archived === 'true' || archived === '1' })).map(videoView) };
     });
   }
 
@@ -53,19 +53,19 @@ export class VideosController {
   @Roles('editor')
   @HttpCode(HttpStatus.CREATED)
   create(@Param('projectId') projectId: string, @Body() raw: unknown, @Req() req: Request): Promise<VideoView & { threadId: string }> {
-    return mapErrors(() => {
+    return mapErrors(async () => {
       const body = parseBody(CreateVideoSchema, raw);
-      const project = requireProject(this.engine.db, projectId);
+      const project = await requireProject(this.engine.db, projectId);
       const userId = req.authContext!.userId;
-      const video = createVideo(this.engine.db, projectId, { title: body.title ?? 'Video mới', createdBy: userId });
-      const named = body.title ? video : updateVideo(this.engine.db, video.id, { title: `Video ${video.idx}` });
-      mkdirSync(join(this.workspace.dir(projectId), 'videos', video.id), { recursive: true });
-      const thread = videoThread(this.engine.db, { projectId, videoId: video.id, title: named.title, createdBy: userId });
+      const video = await createVideo(this.engine.db, projectId, { title: body.title ?? 'Video mới', createdBy: userId });
+      const named = body.title ? video : await updateVideo(this.engine.db, video.id, { title: `Video ${video.idx}` });
+      mkdirSync(join(await this.workspace.dir(projectId), 'videos', video.id), { recursive: true });
+      const thread = await videoThread(this.engine.db, { projectId, videoId: video.id, title: named.title, createdBy: userId });
       if (body.learning) {
-        setThreadLearning(this.engine.db, { threadId: thread.id, useLessons: body.learning.useLessons, refs: body.learning.threads, addedBy: userId });
+        await setThreadLearning(this.engine.db, { threadId: thread.id, useLessons: body.learning.useLessons, refs: body.learning.threads, addedBy: userId });
       }
       if (body.prompt) {
-        postUserMessage(this.engine.db, { threadId: thread.id, text: body.prompt, actor: { id: userId, role: actorRole(this.engine, req, project.team_id) } });
+        await postUserMessage(this.engine.db, { threadId: thread.id, text: body.prompt, actor: { id: userId, role: await actorRole(this.engine, req, project.team_id) } });
       }
       return { ...videoView(named), threadId: thread.id };
     });
@@ -75,9 +75,9 @@ export class VideosController {
   @Get('videos/:videoId')
   @Roles('viewer')
   get(@Param('videoId') videoId: string, @Req() req: Request): Promise<VideoView & { threadId: string }> {
-    return mapErrors(() => {
-      const v = requireVideo(this.engine.db, videoId);
-      const thread = videoThread(this.engine.db, { projectId: v.project_id, videoId, title: v.title, createdBy: req.authContext!.userId });
+    return mapErrors(async () => {
+      const v = await requireVideo(this.engine.db, videoId);
+      const thread = await videoThread(this.engine.db, { projectId: v.project_id, videoId, title: v.title, createdBy: req.authContext!.userId });
       return { ...videoView(v), threadId: thread.id };
     });
   }
@@ -85,7 +85,7 @@ export class VideosController {
   @Patch('videos/:videoId')
   @Roles('editor')
   update(@Param('videoId') videoId: string, @Body() raw: unknown): Promise<VideoView> {
-    return mapErrors(() => videoView(updateVideo(this.engine.db, videoId, parseBody(UpdateVideoSchema, raw))));
+    return mapErrors(async () => videoView(await updateVideo(this.engine.db, videoId, parseBody(UpdateVideoSchema, raw))));
   }
 
   /** Archives the video (its folder stays in the workspace). */

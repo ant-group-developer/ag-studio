@@ -50,7 +50,6 @@ RUN apt-get update \
   && claude --version
 ENV NODE_ENV=production \
     HARNESS_ROOT=/src/ag-studio \
-    STUDIO_DB_PATH=/data/studio.db \
     STUDIO_DATA_ROOT=/data/harness \
     STUDIO_FFMPEG_PATH=/usr/bin/ffmpeg \
     STUDIO_FFPROBE_PATH=/usr/bin/ffprobe \

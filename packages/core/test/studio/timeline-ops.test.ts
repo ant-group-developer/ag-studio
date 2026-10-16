@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { TimelineOp, TimelineV3 } from "@harness/contracts";
-import { applyTimelineOps, TimelineOpError } from "../../src/studio/layout.js";
+import { upgradeTimelineV3, type TimelineOp, type TimelineV3 } from "@harness/contracts";
+import { applyTimelineOps, clampClipOuts, TimelineOpError, type TimelineIssue } from "../../src/studio/layout.js";
 
 const asset = (d: number) => ({ title: "Video", summary_vi: "Clip", duration_s: d, orientation: "landscape" as const });
 
@@ -45,6 +45,20 @@ describe("applyTimelineOps", () => {
     const after = applyTimelineOps(tl(), [{ op: "replaceClipAsset", clip_id: "C002", asset_id: "a09" }], { a09: asset(5) });
     expect(after.clips[1]?.asset_id).toBe("a09");
     expect(after.alternates.map((a) => a.asset_id)).toEqual(["a02"]);
+  });
+
+  it("a clip trimmed just past the end of its video ends at the video's length, with a clip_out_clamped warning", () => {
+    const v4 = { ...upgradeTimelineV3(tl()), edit_style: "cut" as const };
+    const warnings: TimelineIssue[] = [];
+    const after = applyTimelineOps(v4, [{ op: "trimClip", clip_id: "C002", in: 2, out: 10.04 }], {}, warnings);
+    expect(after.clips[1]).toMatchObject({ in: 2, out: 10 });
+    expect(warnings).toEqual([expect.objectContaining({ severity: "warning", code: "clip_out_clamped", clip_id: "C002" })]);
+    // inside the video: nothing to say
+    const fine: TimelineIssue[] = [];
+    expect(applyTimelineOps(v4, [{ op: "trimClip", clip_id: "C002", in: 2, out: 9 }], {}, fine).clips[1]).toMatchObject({ out: 9 });
+    expect(fine).toEqual([]);
+    // a timeline that is fine comes back as it was
+    expect(clampClipOuts(v4).timeline).toBe(v4);
   });
 
   it("refuses a video the episode may not use, and names the op that failed", () => {

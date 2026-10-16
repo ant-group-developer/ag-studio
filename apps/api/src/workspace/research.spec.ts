@@ -1,5 +1,5 @@
 /**
- * The Research tab routes over a real studio.db and folder: a crawl's cost before it runs, running it as a job, and
+ * The Research tab routes over a real database and folder: a crawl's cost before it runs, running it as a job, and
  * the research documents of the project with what Studio knows of its crawls.
  */
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
@@ -19,7 +19,7 @@ const req = (userId: string) => ({ authContext: { userId, accessToken: 't' } }) 
 const OWNER = 'auth0|owner';
 const code = (e: unknown) => (e as { getResponse?: () => { code?: string } }).getResponse?.().code ?? String(e);
 
-describe('research (real studio.db)', () => {
+describe('research (real database)', () => {
   let s: RealStudio;
   let root: string;
   let projects: ProjectsController;
@@ -30,9 +30,9 @@ describe('research (real studio.db)', () => {
     s = await realStudio();
     root = mkdtempSync(join(tmpdir(), 'research-api-'));
     projects = new ProjectsController(s.engine as unknown as EngineService, ws(), NO_DIRECTORY);
-    insertTeam(s.db, 'team-1', OWNER);
+    await insertTeam(s.db, 'team-1', OWNER);
   });
-  afterEach(() => s.close());
+  afterEach(async () => { await s.close(); });
 
   it('says what a crawl costs, with the API or with yt-dlp', async () => {
     const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
@@ -48,7 +48,7 @@ describe('research (real studio.db)', () => {
     const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
     const job = await research({}).run(p.id, { crawl: { kind: 'trending', max: 150 } }, req(OWNER));
     expect(job).toMatchObject({ kind: 'research', status: 'queued', title: 'Xu hướng YouTube VN', threadId: null });
-    expect(getJob(s.engine.db, job.id)).toMatchObject({ units: 150, actor_role: 'owner', continue_agent: 0 });
+    expect(await getJob(s.engine.db, job.id)).toMatchObject({ units: 150, actor_role: 'owner', continue_agent: false });
   });
 
   it('lists research documents newest first, with the crawls Studio wrote', async () => {

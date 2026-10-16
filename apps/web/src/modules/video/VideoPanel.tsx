@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { App as AntApp, Button, Empty, Popconfirm, Spin, Tag } from "antd";
+import { Alert, App as AntApp, Button, Empty, Popconfirm, Spin, Tag } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clapperboard, Download, Film, Hammer, Play } from "lucide-react";
 import { useAiTranslation } from "../common/assistant-name";
@@ -78,6 +78,8 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
   const jobs = jobsToShow(renders.data?.jobs ?? [], list);
   const playerUrl = shown?.url ? keptUrl(playerUrls.current, shown.jobId, shown.url) : null;
   const errors = latest?.issues.filter((i) => i.startsWith("[error]")) ?? [];
+  const status = renderStatus(renders.data?.jobs ?? [], list);
+  const shownFound = shown ? [...(shown.problem ? [shown.problem] : []), ...(shown.issues ?? [])] : [];
 
   return (
     <div className="ws-inputs ws-video">
@@ -123,6 +125,19 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
             {jobs.map((j) => <JobCard key={j.id} job={j} onStop={atLeast("editor") ? (x) => stop.mutate(x) : undefined} stopping={stop.isPending && stop.variables?.id === j.id} />)}
           </div>
         ) : null}
+        {status ? (
+          <Alert
+            className="ws-video__status" showIcon type={status.state === "failed" ? "error" : "info"}
+            message={t(status.state === "failed" ? "ws.video.statusFailed" : status.state === "queued" ? "ws.video.statusQueued" : "ws.video.statusRunning", {
+              what: t(`ws.video.what.${status.kind}`), revision: status.revision ?? "?",
+            })}
+            description={[
+              status.state === "failed" ? status.job.error : status.job.phase,
+              status.state === "failed" ? t("ws.video.statusRetry") : null,
+              shown ? t("ws.video.statusOlder", { revision: shown.revision }) : status.state === "failed" ? null : t("ws.video.statusFirst"),
+            ].filter((x): x is string => !!x).map((x) => x.trim()).map((x) => (/[.!?…]$/.test(x) ? x : `${x}.`)).join(" ")}
+          />
+        ) : null}
         {shown ? (
           playerUrl ? (
             <video key={shown.jobId} className="ws-video__player" src={playerUrl} controls preload="metadata" aria-label={t("ws.video.player")} />
@@ -131,6 +146,12 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
               {t("ws.video.linkFailed")}
             </div>
           )
+        ) : null}
+        {shownFound.length ? (
+          <div className="ws-video__found" role="note">
+            <span className="ws-hint">{t("ws.video.inspected")}</span>
+            <ul className="ws-video__issues">{shownFound.map((x) => <li key={x}>{x}</li>)}</ul>
+          </div>
         ) : null}
         {renders.isLoading ? <Spin size="small" /> : list.length ? (
           <ul className="ws-inputs__list">
@@ -195,6 +216,24 @@ function RenderRow({ r, videoId, lang, current, onPlay, onDownload }: {
       ) : null}
     </li>
   );
+}
+
+/** What the newest render of the tab is doing, told over the player: in line or running, or failed after the last
+ * render that finished. Premiere exports are not watched here; their jobs show as cards only. */
+export function renderStatus(jobs: JobView[], renders: RenderView[]): {
+  state: "queued" | "running" | "failed"; kind: "render_preview" | "render_final"; job: JobView; revision: number | null;
+} | null {
+  const watchable = (k: string): k is "render_preview" | "render_final" => k === "render_preview" || k === "render_final";
+  const revisionOf = (j: JobView) => {
+    const r = (j.request as { revision?: unknown } | null)?.revision;
+    return typeof r === "number" ? r : null;
+  };
+  const live = jobs.find((j) => watchable(j.kind) && (j.status === "queued" || j.status === "running"));
+  if (live && watchable(live.kind)) return { state: live.status === "queued" ? "queued" : "running", kind: live.kind, job: live, revision: revisionOf(live) };
+  // a failure counts while nothing of its kind came after it (the cards over the player go by the same rule)
+  const failed = jobsToShow(jobs, renders).find((j) => watchable(j.kind) && j.status === "failed");
+  if (failed && watchable(failed.kind)) return { state: "failed", kind: failed.kind, job: failed, revision: revisionOf(failed) };
+  return null;
 }
 
 /**

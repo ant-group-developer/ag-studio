@@ -31,7 +31,7 @@ export class ProjectsController {
   @Get('teams/:teamId/projects')
   @Roles('viewer')
   async list(@Param('teamId') teamId: string, @Query('archived') archived?: string): Promise<{ projects: ProjectListItem[] }> {
-    const rows = listProjects(this.engine.db, teamId, { archived: archived === 'true' || archived === '1' });
+    const rows = await listProjects(this.engine.db, teamId, { archived: archived === 'true' || archived === '1' });
     const people = await this.directory.summaries(rows.map((r) => r.created_by));
     return {
       projects: rows.map((r) => ({
@@ -45,13 +45,13 @@ export class ProjectsController {
   @Roles('producer')
   @HttpCode(HttpStatus.CREATED)
   create(@Param('teamId') teamId: string, @Body() raw: unknown, @Req() req: Request): Promise<ProjectView> {
-    return mapErrors(() => {
+    return mapErrors(async () => {
       const body = parseBody(CreateProjectSchema, raw);
       const now = new Date().toISOString();
-      const project = createProject(this.engine.db, teamId, body, req.authContext!.userId, now);
+      const project = await createProject(this.engine.db, teamId, body, req.authContext!.userId, now);
       const dir = seedWorkspace(this.workspace.root, project, now);
-      scanWorkspace(this.engine.db, { projectId: project.id, dir, author: { kind: 'studio', id: null }, now });
-      createThread(this.engine.db, { projectId: project.id, kind: 'project', title: 'Kênh', createdBy: req.authContext!.userId }, now);
+      await scanWorkspace(this.engine.db, { projectId: project.id, dir, author: { kind: 'studio', id: null }, now });
+      await createThread(this.engine.db, { projectId: project.id, kind: 'project', title: 'Kênh', createdBy: req.authContext!.userId }, now);
       return projectView(project);
     });
   }
@@ -59,9 +59,9 @@ export class ProjectsController {
   @Get('projects/:projectId')
   @Roles('viewer')
   get(@Param('projectId') projectId: string): Promise<ProjectView & { videos: VideoView[] }> {
-    return mapErrors(() => {
-      const project = requireProject(this.engine.db, projectId);
-      return { ...projectView(project), videos: listVideos(this.engine.db, projectId).map(videoView) };
+    return mapErrors(async () => {
+      const project = await requireProject(this.engine.db, projectId);
+      return { ...projectView(project), videos: (await listVideos(this.engine.db, projectId)).map(videoView) };
     });
   }
 
@@ -69,7 +69,7 @@ export class ProjectsController {
   @Patch('projects/:projectId')
   @Roles('producer')
   update(@Param('projectId') projectId: string, @Body() raw: unknown): Promise<ProjectView> {
-    return mapErrors(() => projectView(updateProject(this.engine.db, projectId, parseBody(UpdateProjectSchema, raw))));
+    return mapErrors(async () => projectView(await updateProject(this.engine.db, projectId, parseBody(UpdateProjectSchema, raw))));
   }
 
   /** Archives the project (its videos and files stay; it leaves the team's list). */

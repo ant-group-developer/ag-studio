@@ -28,7 +28,7 @@ ADR-0001 (mục 127 trở đi cho Studio, 179–190 cho workspace agent) và `do
 - E2E (vitest, không phải Playwright): `E2E=1 pnpm vitest run tests/e2e` — dựng ag-farm hub (Docker Postgres),
   API Studio và ag-render-worker thật, ag-go/S3 giả; job farm ghi như job của dự án.
 - `pnpm typecheck` cần chạy sau `pnpm build`: typecheck từng package dùng `tsc --noEmit` và cần `dist/*.d.ts` của các package phụ thuộc; test (`vitest`) thì không cần build vì `vitest.shared.ts` ở root đã cấu hình alias `@harness/*` trỏ thẳng vào `src`.
-- `node:sqlite` in ra `ExperimentalWarning` trên Node 22 — đây là bình thường, không phải lỗi; có thể tắt bằng `NODE_OPTIONS=--no-warnings` khi chạy test nếu muốn output sạch.
+- Test của Studio (engine, API) chạy trên Postgres thật trong PGlite (`testStudioDb()` ở `@ag-studio/engine/testing`), không cần server. Harness CLI cũ (`packages/core`, `cli`, `dashboard`, `migrations/` ở root) vẫn dùng `node:sqlite` và in `ExperimentalWarning` trên Node 22 — bình thường.
 - Sau khi sửa bất kỳ schema Zod nào trong `packages/contracts/src/` (entity, config, execution): chạy `pnpm gen:schemas` rồi commit các file JSON Schema sinh ra cùng lúc — `test/json-schema.test.ts` kiểm tra chúng khớp.
 
 ## Lệnh 2B (script, gate, media, doctor)
@@ -67,9 +67,12 @@ Hệ thống cũ (production, run workflow `ag-studio-*`, gate, chat theo bướ
 nhưng không code nào đọc.
 
 ### Tiến trình và dữ liệu
-- Ba tiến trình dùng chung **một** `studio.db` (`STUDIO_DB_PATH`) và một `STUDIO_DATA_ROOT`: `apps/api` (NestJS, cổng
-  `PORT`), `apps/worker` (`createStudioWorkerPool`: vòng agent + vòng job dự án + quét dọn), `apps/web` (Vite/React). API
-  migrate lúc khởi động; chạy worker **sau** khi API healthy. Không có Postgres. API ghi `studio.db` bằng `BEGIN IMMEDIATE`.
+- API và worker dùng chung **một** database Postgres (`DATABASE_URL`, schema `DATABASE_SCHEMA` — mặc định public, đặt
+  làm search_path nên SQL không ghi tên schema; server có sẵn, không nằm trong docker compose) và
+  một `STUDIO_DATA_ROOT`: `apps/api` (NestJS, cổng `PORT`), `apps/worker` (`createStudioWorkerPool`: vòng agent + vòng job
+  dự án + quét dọn), `apps/web` (Vite/React). Schema ở `packages/studio-engine/migrations/` (thêm bảng/cột: file
+  `000N_*.sql` mới, kiểu Postgres thật: timestamptz, jsonb, boolean); API và worker migrate lúc khởi động. Lớp DB
+  `StudioDb` (`studio-db.ts`) async; ghi nhiều câu hay đọc-rồi-ghi phải nằm trong `db.tx()` (một khoá ghi chung).
 - Team → **dự án** (một kênh YouTube, bảng `projects`) → **video** (`videos`), thêm dần theo lời người dùng. Mỗi dự án là một
   thư mục làm việc như một repo: `<STUDIO_WORKSPACES_ROOT>/<projectId>/` (mặc định `<STUDIO_DATA_ROOT>/workspaces`, phải nằm
   **ngoài mọi repo** để CLAUDE.md của thư mục cha không lọt vào; API và worker phải thấy cùng thư mục): `CLAUDE.md` (kênh,
@@ -139,7 +142,8 @@ nhưng không code nào đọc.
   `prepare_asset` (hỏi ag-go bản chuẩn bị sẵn: cảnh, khung, tờ ghép, lời thoại; chưa có thì xin ag-go chạy và chờ; tải
   khung và tờ về `inputs/<asset>/`, ADR mục 195), `research`
   (crawl YouTube: Data API nếu có `YOUTUBE_API_KEY`, không thì yt-dlp), `fit` (timeline v4 từ edit-plan, lời dẫn `studio.tts`
-  vào kho giọng `voice-store.ts`), `render_preview|render_final|export_premiere`, `thumbnail`, `style_watch`. Mỗi job báo
+  vào kho giọng `voice-store.ts`), `render_preview|render_final|export_premiere`, `thumbnail`, `style_watch`, `music_beats`
+  (nhịp của nhạc vừa nhập hoặc vừa chọn, migration `0002`; xem mục nhạc bên dưới). Mỗi job báo
   `phase`, `progress`, `eta_seconds` (`eta.ts`, không đoán khi đang chờ máy farm), máy farm; Dừng = `cancel_requested` (kill
   ffmpeg / huỷ job farm). Xong thì đăng tin hệ thống vào luồng và cho agent làm tiếp (≤ 3 lượt tự chạy liên tiếp, tắt bằng
   `settings.auto_continue`). Worker thiếu công cụ thì job loại đó chờ worker khác (`projectJobHandlers`).
@@ -165,11 +169,27 @@ nhưng không code nào đọc.
   video đóng vai "episode"). **Không đổi hợp đồng ag-farm khi chưa hỏi.** Build cần checkout `../ag-farm`.
 - Render worker (`E:\CODE\ag-render-worker`) chạy `renderComposition` của `@harness/core`; **mọi node farm render phải chạy
   ag-render-worker ≥ 0.8.0** (composition có `text_style`, Premiere `audio: per_segment`) và khai `python` (`extra.python_bin`)
-  để nhận `studio.tts`/`studio.transcribe`. Bản cuối: `requirements` theo máy chọn (`renderRequirements`; ghim `node_id` qua
-  thẻ xác nhận). Xuất Premiere: FCP7 XML zip kèm WAV lời dẫn từ kho giọng.
-- Timeline v4 (`TimelineV4Schema`): clip là đoạn `[in, out)` của video, có `shot_id`, `line_id`, `transition_out`; thao tác
-  thuần ở `packages/core/src/studio/layout.ts` (`applyTimelineOps`, `timelineIssues`); composition suy từ revision
+  để nhận `studio.tts`/`studio.transcribe`; máy tự kiểm khi khởi động (thiếu engine Python thì không khai Python, thiếu font
+  đóng kèm thì hạ mức render; runbook kiểm các máy sau phát hành ở README của ag-render-worker). Bản cuối: `requirements` theo máy chọn (`renderRequirements`; ghim `node_id` qua
+  thẻ xác nhận). Composition thêm trường mới thì tăng `RENDER_FEATURE_LEVEL` và `compositionFeatureLevel`
+  (`packages/core/src/media/render/features.ts`): worker khai mức của mình (`engines.studio_render`), Studio đòi
+  `requirements.studio_render_min` khi composition dùng trường đó, nên máy render bản cũ không nhận job nó không đọc được
+  (mức 3 chữ: cỡ riêng, bóng, xếp chồng; 4 font; 5 âm thanh: `gain_db` từng đoạn, `source_even`, `music.envelope`; 6 màu
+  `look`). Font: Arial của máy cộng font OFL đóng kèm bản phát hành (`TEXT_FONTS`; `fonts/fonts.json` của ag-render-worker,
+  tải bằng `scripts/fetch-fonts.mjs`; Noto Sans JP/KR là bản tĩnh của notofonts/noto-cjk vì libass không chọn được bản
+  biến thiên mặc định Thin); chữ Nhật/Hàn luôn vẽ bằng Noto Sans JP/KR. Xuất Premiere: FCP7 XML zip kèm WAV lời dẫn từ kho giọng.
+- Timeline v4 (`TimelineV4Schema`): clip là đoạn `[in, out)` của video, có `shot_id`, `line_id`, `transition_out`, `muted`,
+  `gain_db`; timeline có `source_audio.even`, `music.envelope`, `text_style` (font, bóng), `look` (màu). Kế hoạch dựng
+  (`EditPlanSchema`) giữ được mọi thứ đó để `fit` dựng lại không mất; `setMusic` nhớ mức nhạc vào nhạc của video; thao tác
+  thuần ở `packages/core/src/studio/layout.ts` (`applyTimelineOps`, `timelineIssues`); shot của kế hoạch có `snap: "beat" | "bar"`
+  thì `fit` dời điểm cắt cuối shot về phách/đầu ô nhịp gần nhất của nhạc (`snapCuts` ở `core/src/studio/beat-snap.ts`: không
+  ngắn hơn `MIN_CLIP_SECONDS`, không vượt cảnh gốc, không làm lời dẫn đè nhau, điểm cắt và độ dài clip theo nguyên khung);
+  composition suy từ revision
   (`timelineToComposition`). Revision ở `video_revisions` (`saveVideoRevision`, xung đột → `RevisionConflictError`).
+- Nhịp nhạc (kế hoạch feedback-vps §4.7, `workspace/music-beats.ts`): nhạc của dự án/video vừa nhập hoặc chọn (API tab Đầu
+  vào, tool `music_set`) xếp job `music_beats` → job farm `studio.beats` (máy render có Python, librosa, `engines/python/beats.py`;
+  bài ghép phân tích từng bài) → `MusicBeatsSchema` cất cạnh track trên bucket (`<khoá track>.beats.json`, quét dọn giữ theo
+  track). `fit` đọc ở đó, chưa có thì tự gửi `studio.beats`; `music_list` báo BPM cho agent. Không có trường composition mới.
 - Giọng đọc/nhạc của dự án: chọn từ file audio đã tải lên (`workspace/project-audio.ts`; giọng cần vai producer và khai nguồn
   gốc; `projectAudioFiles` = audio có dòng nguồn + mọi file dưới `context/audio/`, cả file tải qua tab Tệp), hoặc nhạc là một
   bài của kho nhạc (`setProjectLibraryMusic`, `track: library:music/…`, không chép file, không cần ffmpeg); bỏ chọn nhạc
@@ -182,7 +202,12 @@ nhưng không code nào đọc.
   (nghe thử), không lời dẫn, tự chọn theo mood; nút thiếu vai/thiếu ffmpeg mờ kèm lý do, lỗi tải hiện
   lỗi + Thử lại (không biến mất).
 - Thumbnail (`workspace/thumbnails.ts`) cắt khung từ bản render và vẽ chữ trên máy Studio (ffmpeg bất đồng bộ, font Arial của
-  hệ thống qua `STUDIO_FONTS_DIR`, không ship font). Quy chuẩn & skill của nhóm (`team_skills`) thành skill của agent khi dự
+  hệ thống qua `STUDIO_FONTS_DIR`, không ship font). Cùng job đó cắt khung không chữ cho agent xem (tool `render_frames`,
+  ≤ 12 khung từ bản render mới nhất, `videos/<id>/renders/frames/r<bản>-<giây>s.jpg`).
+- Bản xem trước và bản cuối được máy render tự kiểm (`inspectRender`, `packages/core/src/media/render/inspect.ts`; payload
+  `inspect: true`, cần `studio_render_min` 2): đứng hình, màn đen, im lặng, độ to từng đoạn và tờ ghép khung hình (1 khung/10 s,
+  lưới 5×4). Studio chép `inspect.json` + `sheet-NN.jpg` vào `videos/<id>/renders/<tên ghi chú>/`, ghi chú render và tin báo
+  xong liệt kê vấn đề bằng lời (`inspectionLines`). `scripts/repro-render.mjs` chạy cùng lượt kiểm này. Quy chuẩn & skill của nhóm (`team_skills`) thành skill của agent khi dự
   án bật.
 - Quét dọn (`cleanup.ts`, mỗi `STUDIO_CLEANUP_HOURS`): dòng kho giọng lâu không đọc, audio dự án không còn ai trỏ tới, thư mục
   tạm của job/lượt bị bỏ dở, `.trash` của dự án, dòng `audit_log` cũ hơn `STUDIO_RETENTION_AUDIT_DAYS` (90).

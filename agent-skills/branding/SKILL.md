@@ -17,11 +17,14 @@ title_max_chars: 60            # 20–100; tiêu đề dài hơn bị cảnh bá
 hashtags: ["#DiBoCham"]        # 1–5, chỉ chữ/số/_ sau dấu #
 banned_words: ["sốc", "không thể tin nổi"]
 music_mood: [calm, warm]       # 1–5 mood; Studio chọn nhạc trong kho theo mood
+look: natural                  # màu hình của mọi video: none | natural | vivid | warm | cinematic (tuỳ chọn)
 text_look:                     # chữ trên video vẽ đúng như vậy
   text_color: "#FFFFFF"
   outline_color: "#1A1A1A"     # viền chữ
   box_color: null              # hộp sau tiêu đề/địa danh; null = không hộp
   size: m                      # s | m | l
+  shadow: true                 # bóng mờ dưới chữ và phụ đề (tuỳ chọn), dễ đọc trên nền sáng
+  font: "Be Vietnam Pro"       # tuỳ chọn, một trong danh sách dưới; không ghi = Arial
 thumbnail:
   max_words: 3                 # 1–8
   text_case: upper             # upper | sentence
@@ -29,6 +32,19 @@ thumbnail:
 ---
 ```
 Độ tương phản chữ/hộp (hoặc chữ/viền khi không có hộp) phải ≥ 3:1, nếu không Studio báo `text_look_no_contrast`.
+
+Font chữ trên video (`text_look.font`) chỉ chọn trong danh sách máy render có sẵn — viết đúng tên:
+- `Arial` (mặc định): trung tính, dễ đọc.
+- `Be Vietnam Pro`: sans hiện đại, dấu tiếng Việt đẹp — hợp kênh tiếng Việt.
+- `Noto Sans JP`, `Noto Sans KR`: sans cho kênh tiếng Nhật / Hàn.
+- `Noto Serif`: có chân, trang trọng, đủ dấu tiếng Việt.
+- `Playfair Display`: có chân, tương phản cao, hợp tiêu đề sang trọng (du lịch, ẩm thực cao cấp).
+Chữ Nhật và chữ Hàn luôn được vẽ bằng Noto Sans JP / KR dù font của kênh là gì, nên chữ song ngữ không bị ô vuông.
+Font khác (không có trong danh sách) không dùng được.
+
+Màu hình (`look`) áp cho mọi clip khi render: `none` giữ nguyên như quay; `natural` tăng nhẹ tương phản và màu (an toàn cho
+mọi kênh); `vivid` màu rực (ẩm thực, lễ hội); `warm` ấm, vàng nhẹ (du lịch chậm, hoàng hôn); `cinematic` tương phản mềm,
+bóng xanh, sáng ấm (phim tài liệu, cảm xúc). Một video có thể đổi riêng bằng `look` trong kế hoạch dựng.
 
 ## Thân file
 - **Giọng văn**: 2–6 tính từ; nên/không nên viết thế nào (xưng hô, độ dài câu); câu cửa miệng.

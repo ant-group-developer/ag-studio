@@ -19,6 +19,10 @@ export interface FinalGraphInput {
   /** How the video is encoded (`videoEncoderArgs`); default `final`. */
   tier?: OutputTier;
   loudnorm: LoudnormMeasured | null;
+  /** An `alimiter` ceiling before loudnorm (`peakLimit`), the same on the measurement and the final pass. */
+  limit?: number | null;
+  /** `composition.source_even`: each segment's even-level gain (dB, by order), measured by the runner. */
+  evenGainDb?: ReadonlyMap<number, number>;
   out_path: string;
   /** `true` for the loudnorm measurement pass: same inputs, audio-only filtergraph, `-f null -`. */
   measureOnly: boolean;
@@ -31,6 +35,17 @@ export type FinalGraphInputKind = "body" | "tail" | "narration" | "music" | "log
 
 function fmt(n: number): string {
   return String(round3(n));
+}
+
+/**
+ * Brings a mezzanine's picture to exactly `seconds`: a body that came out short (the render worker clamps
+ * `segment.out` to a source file shorter than the timeline's asset, a frame lost to rounding) holds its last
+ * frame, one that ran long is cut. Every xfade offset below is a sum of segment lengths, so a body shorter than
+ * its segment pushed the offset past the end of the left stream, and xfade then dropped nearly all of the right
+ * one: the Kiyomizu preview ended at 13:23 of 17:30, on its last dissolve.
+ */
+function exactLength(seconds: number): string {
+  return `tpad=stop_mode=clone:stop_duration=${fmt(seconds)},trim=duration=${fmt(seconds)},setpts=PTS-STARTPTS`;
 }
 
 export function escapeFilterPath(p: string): string {
@@ -118,6 +133,8 @@ export function finalArgs(p: FinalGraphInput): { argv: string[]; inputs: { kind:
     },
     musicIndex: musicIdx,
     loudnorm,
+    limit: p.limit ?? null,
+    ...(p.evenGainDb ? { evenGainDb: p.evenGainDb } : {}),
   });
 
   if (measureOnly) {
@@ -135,12 +152,15 @@ export function finalArgs(p: FinalGraphInput): { argv: string[]; inputs: { kind:
   for (let k = 0; k < segs.length; k++) {
     const seg = segs[k]!;
     const bodyIdx = bodyIndexByOrder.get(seg.order)!;
-    let label = `${bodyIdx}:v`;
+    let label = `v${k}b`;
+    videoParts.push(`[${bodyIdx}:v]${exactLength(segLen[k]!)}[${label}]`);
 
     if (seg.transition_out.kind === "dissolve" && seg.transition_out.tail_available) {
       const tailIdx = tailIndexByOrder.get(seg.order)!;
+      const tail = `v${k}t`;
+      videoParts.push(`[${tailIdx}:v]${exactLength(seg.transition_out.seconds)}[${tail}]`);
       const out = `v${k}c`;
-      videoParts.push(`[${bodyIdx}:v][${tailIdx}:v]concat=n=2:v=1:a=0[${out}]`);
+      videoParts.push(`[${label}][${tail}]concat=n=2:v=1:a=0[${out}]`);
       label = out;
     }
 

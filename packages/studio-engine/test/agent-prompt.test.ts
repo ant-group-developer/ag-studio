@@ -42,12 +42,20 @@ describe("agent system prompt", () => {
     expect(named).not.toMatch(/ag-go/i);
     expect(agentSystemPrompt(dir)).toContain('tên là "AG Go"');
   });
+
+  it("says how a render is seen and what not to tell people about it", () => {
+    const rules = agentSystemPrompt(workspace());
+    expect(rules).toContain("[Mở bản xem trước](/p/<id dự án>/v/<id video>?tab=preview)");
+    expect(rules).toContain("Nhạc ngắn hơn video thì tự lặp lại tới hết video");
+    expect(rules).toContain("Không giải thích cảnh báo kỹ thuật của máy render");
+    expect(rules).toContain("render_frames");
+  });
 });
 
 describe("turn prompt", () => {
-  const project = { name: "Du lịch chậm", channel_url: "@dlc", language: "vi", aspect: "16:9" } as ProjectRecord;
+  const project = { id: "p1", name: "Du lịch chậm", channel_url: "@dlc", language: "vi", aspect: "16:9" } as ProjectRecord;
   const thread = { id: "t1", kind: "video", title: "Hội An" } as ThreadRecord;
-  const msg = (role: "user" | "system", text: string, attachments?: string[]) => ({ role, text, attachments: attachments ? JSON.stringify(attachments) : null }) as MessageRecord;
+  const msg = (role: "user" | "system", text: string, attachments?: string[]) => ({ role, text, attachments: attachments ?? null }) as MessageRecord;
 
   it("leads with the context, then what was said since the last turn", () => {
     const out = agentTurnPrompt({
@@ -58,6 +66,7 @@ describe("turn prompt", () => {
     });
     expect(out.startsWith("<studio_context>\nDự án: Du lịch chậm (@dlc)")).toBe(true);
     expect(out).toContain("Video của luồng: #3 \"Hội An\" (id v1) — thư mục videos/v1/");
+    expect(out).toContain("Link bản xem trước của video (tab Xem trước): /p/p1/v/v1?tab=preview");
     expect(out).toContain("- \"Huế\": tóm tắt videos/v0/SUMMARY.md");
     expect(out).toContain("- \"Ý tưởng\": toàn bộ lịch sử .studio/history/t9.md");
     expect(out).toContain("Bước gợi ý: brief");

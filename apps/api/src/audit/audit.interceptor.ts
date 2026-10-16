@@ -1,9 +1,9 @@
-import { CallHandler, ExecutionContext, HttpException, Injectable, SetMetadata, type NestInterceptor } from '@nestjs/common';
+import { CallHandler, ExecutionContext, HttpException, Injectable, Logger, SetMetadata, type NestInterceptor } from '@nestjs/common';
 import { HTTP_CODE_METADATA } from '@nestjs/common/constants';
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
-import { tap, type Observable } from 'rxjs';
-import { logAudit, scopeOf } from '@ag-studio/engine';
+import { defer, mergeMap, tap, type Observable } from 'rxjs';
+import { logAudit, scopeOf, type AuditScope } from '@ag-studio/engine';
 import { EngineService } from '../studio/engine.service';
 
 const NO_AUDIT_KEY = 'audit:skip';
@@ -50,6 +50,9 @@ function bodyDetails(raw: unknown): Record<string, unknown> | undefined {
  */
 @Injectable()
 export class AuditInterceptor implements NestInterceptor {
+  private readonly logger = new Logger(AuditInterceptor.name);
+  private readonly inFlight = new Set<Promise<void>>();
+
   constructor(
     private readonly engine: EngineService,
     private readonly reflector: Reflector,
@@ -63,27 +66,24 @@ export class AuditInterceptor implements NestInterceptor {
 
     const started = Date.now();
     const params = (req.params ?? {}) as Record<string, string>;
-    let before: ReturnType<typeof scopeOf> | null = null;
-    try {
-      before = scopeOf(this.engine.db, {
-        teamId: params.teamId ?? null, projectId: params.projectId ?? null, videoId: params.videoId ?? null, threadId: params.threadId ?? null,
-        jobId: params.jobId ?? null, actionId: params.actionId ?? null,
-      });
-    } catch { /* logged without a scope */ }
+    const scopeBefore = (): Promise<AuditScope | null> => scopeOf(this.engine.db, {
+      teamId: params.teamId ?? null, projectId: params.projectId ?? null, videoId: params.videoId ?? null, threadId: params.threadId ?? null,
+      jobId: params.jobId ?? null, actionId: params.actionId ?? null,
+    }).catch(() => null); // logged without a scope
     const action = `${context.getClass().name}.${context.getHandler().name}`;
     const okStatus = this.reflector.get<number | undefined>(HTTP_CODE_METADATA, context.getHandler()) ?? (req.method === 'POST' ? 201 : 200);
 
-    const write = (outcome: 'ok' | 'error', status: number, answer?: unknown, error?: unknown) => {
+    const write = async (before: AuditScope | null, outcome: 'ok' | 'error', status: number, answer?: unknown, error?: unknown) => {
       const ids = answerIds(answer);
       const body = bodyDetails(req.body);
       const file = (req as Request & { file?: { originalname?: string; size?: number } }).file;
       let scope = before;
-      if (!scope?.teamId && (ids.projectId || ids.teamId)) scope = scopeOf(this.engine.db, { teamId: ids.teamId ?? null, projectId: ids.projectId ?? null });
+      if (!scope?.teamId && (ids.projectId || ids.teamId)) scope = await scopeOf(this.engine.db, { teamId: ids.teamId ?? null, projectId: ids.projectId ?? null });
       // a new team is its own team; a new project its own project
       if (!scope?.teamId && action === 'TeamsController.createTeam' && ids.id) scope = { teamId: ids.id, projectId: null, videoId: null, threadId: null };
-      if (scope && !scope.projectId && action === 'ProjectsController.create' && ids.id) scope = scopeOf(this.engine.db, { projectId: ids.id });
+      if (scope && !scope.projectId && action === 'ProjectsController.create' && ids.id) scope = await scopeOf(this.engine.db, { projectId: ids.id });
       const target = TARGET.map((k) => (req.body as Record<string, unknown> | undefined)?.[k]).find((v) => typeof v === 'string') as string | undefined;
-      logAudit(this.engine.db, {
+      await logAudit(this.engine.db, {
         actorKind: 'user', actorId: req.authContext!.userId, kind: 'http', action, outcome, method: req.method,
         route: (req.route as { path?: string } | undefined)?.path ?? req.path, statusCode: status, durationMs: Date.now() - started,
         teamId: scope?.teamId ?? null, projectId: scope?.projectId ?? null, videoId: scope?.videoId ?? null, threadId: scope?.threadId ?? null,
@@ -94,12 +94,22 @@ export class AuditInterceptor implements NestInterceptor {
           ...(ids.id ? { created: ids.id } : {}), ...(error instanceof HttpException ? { error: (error.getResponse() as { code?: string })?.code ?? undefined } : {}),
         },
         requestId: req.requestId ?? null,
-      });
+      }, (err) => this.logger.warn(`audit log: ${String(err)}`));
+    };
+    // after the answer, never in its way: a failure to log is only reported
+    const record = (...args: Parameters<typeof write>) => {
+      const p = write(...args).catch((err: unknown) => this.logger.warn(`audit log: ${String(err)}`)).finally(() => this.inFlight.delete(p));
+      this.inFlight.add(p);
     };
 
-    return next.handle().pipe(tap({
-      next: (answer) => write('ok', okStatus, answer),
-      error: (e: unknown) => write('error', e instanceof HttpException ? e.getStatus() : typeof (e as { status?: unknown })?.status === 'number' ? (e as { status: number }).status : 500, undefined, e),
-    }));
+    return defer(scopeBefore).pipe(mergeMap((before) => next.handle().pipe(tap({
+      next: (answer) => record(before, 'ok', okStatus, answer),
+      error: (e: unknown) => record(before, 'error', e instanceof HttpException ? e.getStatus() : typeof (e as { status?: unknown })?.status === 'number' ? (e as { status: number }).status : 500, undefined, e),
+    }))));
+  }
+
+  /** Resolves once the log writes in flight have landed (or failed). */
+  async settled(): Promise<void> {
+    while (this.inFlight.size) await Promise.all([...this.inFlight]);
   }
 }

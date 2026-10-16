@@ -26,16 +26,16 @@ export interface JobContext {
   /** Aborted when the job is stopped or the worker shuts down: pass it to downloads and ffmpeg. */
   signal: AbortSignal;
   /** Why it must stop, when it must: a person stopped it, or the worker shuts down (the job goes back in line). */
-  stopRequested(): "cancelled" | "shutdown" | null;
+  stopRequested(): Promise<"cancelled" | "shutdown" | null>;
   /** Throws `JobStopped` when it must stop: call between steps. */
-  checkpoint(): void;
+  checkpoint(): Promise<void>;
   /**
    * What it does now and how far it is (0–1); the time left is worked out here. `waiting`: in line for someone else
    * (a farm machine) — no time left can be told until it is taken.
    */
-  report(p: { phase?: string; progress?: number | null; node?: string | null; farmJobId?: string | null; waiting?: boolean }): void;
+  report(p: { phase?: string; progress?: number | null; node?: string | null; farmJobId?: string | null; waiting?: boolean }): Promise<void>;
   /** The size of the job (seconds of video…), once known, for the estimate before progress comes. */
-  setUnits(units: number): void;
+  setUnits(units: number): Promise<void>;
   /** The project's workspace folder. */
   workspaceDir: string;
   /** A scratch folder outside the workspace, removed when the job ends. */
@@ -57,6 +57,9 @@ export interface JobRunnerOptions {
   handlers: Partial<Record<JobKind, JobHandler>>;
   /** Jobs run at once (ffmpeg on this machine, farm waits), or how many now (read each tick); default 2. */
   lanes?: number | (() => number);
+  /** At most this many jobs of a kind at once, within `lanes` (`prepare_asset`: ag-go answered 503 when every idle
+   * farm machine added a prepare lane, each downloading eight images at once). */
+  kindLimits?: Partial<Record<JobKind, number>>;
   pollMs?: number;
   /** How often the row is refreshed (heartbeat, time left, stop requests); default 2 s. */
   tickMs?: number;
@@ -65,7 +68,7 @@ export interface JobRunnerOptions {
 
 export interface JobRunner {
   /** One pass: requeue jobs left by a stopped worker, start queued ones while lanes are free. Answers the jobs started. */
-  tick(): string[];
+  tick(): Promise<string[]>;
   /** Jobs running in this process now. */
   running(): string[];
   /** Resolves when every running job ended. */
@@ -92,6 +95,8 @@ export function createJobRunner(o: JobRunnerOptions): JobRunner {
   const lanesNow = typeof o.lanes === "function" ? o.lanes : () => (o.lanes as number | undefined) ?? 2;
   const kinds = Object.keys(o.handlers) as JobKind[];
   const live = new Map<string, Promise<void>>();
+  const liveKind = new Map<string, JobKind>();
+  const running = (kind: JobKind) => [...liveKind.values()].filter((k) => k === kind).length;
   let shuttingDown = false;
   const shutdown = new AbortController();
 
@@ -108,45 +113,48 @@ export function createJobRunner(o: JobRunnerOptions): JobRunner {
     let waitedMs = 0;
     let waitStart: number | null = null;
     let units = job.units;
-    const perUnit = secondsPerUnit(o.db, job.kind);
+    const perUnit = await secondsPerUnit(o.db, job.kind);
     const startedAt = Date.parse(job.started_at ?? now());
     const tempDir = join(o.dataRoot, "job-runs", job.id);
     mkdirSync(tempDir, { recursive: true });
     const eta = () => waiting ? null : estimateSecondsLeft({
       kind: job.kind, elapsedSeconds: (Date.parse(now()) - startedAt - waitedMs) / 1000, progress, units, secondsPerUnit: perUnit,
     });
-    const readStop = () => {
-      if (!stop && jobCancelRequested(o.db, job.id)) stop = "cancelled";
+    const readStop = async () => {
+      if (!stop && await jobCancelRequested(o.db, job.id)) stop = "cancelled";
       if (!stop && shuttingDown) stop = "shutdown";
       if (stop && !ac.signal.aborted) ac.abort();
       return stop;
     };
+    // one tick at a time; the last one is waited for before the job's end is written
+    let ticking: Promise<void> | null = null;
     const ticker = setInterval(() => {
-      try {
-        readStop();
-        reportJob(o.db, job.id, { etaSeconds: eta() }, now());
-        touchJob(o.db, job.id, now());
-      } catch (e) { log.warn("job tick failed", { error: errText(e) }); }
+      if (ticking) return;
+      ticking = (async () => {
+        await readStop();
+        await reportJob(o.db, job.id, { etaSeconds: eta() }, now());
+        await touchJob(o.db, job.id, now());
+      })().catch((e) => log.warn("job tick failed", { error: errText(e) })).finally(() => { ticking = null; });
     }, o.tickMs ?? 2000);
     const ctx: JobContext = {
       signal: ac.signal,
       stopRequested: readStop,
-      checkpoint: () => { const s = readStop(); if (s) throw new JobStopped(s); },
-      report: (p) => {
+      checkpoint: async () => { const s = await readStop(); if (s) throw new JobStopped(s); },
+      report: async (p) => {
         if (p.progress !== undefined) progress = p.progress;
         if (p.waiting !== undefined && p.waiting !== waiting) {
           if (p.waiting) waitStart = Date.parse(now());
           else if (waitStart !== null) { waitedMs += Date.parse(now()) - waitStart; waitStart = null; }
           waiting = p.waiting;
         }
-        reportJob(o.db, job.id, {
+        await reportJob(o.db, job.id, {
           ...(p.phase !== undefined ? { phase: p.phase } : {}), ...(p.progress !== undefined ? { progress: p.progress } : {}),
           ...(p.node !== undefined ? { nodeId: p.node } : {}), ...(p.farmJobId !== undefined ? { farmJobId: p.farmJobId } : {}), etaSeconds: eta(),
         }, now());
       },
-      setUnits: (n) => {
+      setUnits: async (n) => {
         units = n;
-        o.db.run("UPDATE project_jobs SET units = ? WHERE id = ?", [n, job.id]);
+        await o.db.run("UPDATE project_jobs SET units = ? WHERE id = ?", [n, job.id]);
       },
       workspaceDir: projectDir(o.workspacesRoot, job.project_id),
       tempDir,
@@ -155,14 +163,14 @@ export function createJobRunner(o: JobRunnerOptions): JobRunner {
     };
     let outcome: { status: "done" | "failed" | "cancelled"; result?: unknown; error?: string | null; message?: string | null } | null = null;
     try {
-      ctx.report({ phase: "Bắt đầu", progress: null });
+      await ctx.report({ phase: "Bắt đầu", progress: null });
       const r = await handler(job, ctx);
       outcome = { status: "done", result: r.result, message: r.message ?? null };
     } catch (e) {
-      const s = e instanceof JobStopped ? e.reason : readStop();
+      const s = e instanceof JobStopped ? e.reason : await readStop();
       if (s === "shutdown") {
         // back in line for the next worker; its farm job is found again by correlation id
-        o.db.run("UPDATE project_jobs SET status = 'queued', phase = NULL, eta_seconds = NULL, updated_at = ? WHERE id = ? AND status = 'running'", [now(), job.id]);
+        await o.db.run("UPDATE project_jobs SET status = 'queued', phase = NULL, eta_seconds = NULL, updated_at = ? WHERE id = ? AND status = 'running'", [now(), job.id]);
         log.info("job left for the next worker", {});
       } else if (s === "cancelled") {
         outcome = { status: "cancelled", error: null, message: `Đã dừng: ${job.title}.` };
@@ -176,39 +184,56 @@ export function createJobRunner(o: JobRunnerOptions): JobRunner {
       }
     } finally {
       clearInterval(ticker);
+      await ticking;
       shutdown.signal.removeEventListener("abort", onShutdown);
       rmSync(tempDir, { recursive: true, force: true });
     }
     if (!outcome) return;
-    finishJob(o.db, job.id, { status: outcome.status, result: outcome.result, error: outcome.error ?? null }, now());
+    await finishJob(o.db, job.id, { status: outcome.status, result: outcome.result, error: outcome.error ?? null }, now());
     log.info("job finished", { status: outcome.status });
-    const done = getJob(o.db, job.id)!;
+    const done = (await getJob(o.db, job.id))!;
     // the activity log: the job as Studio ran it for the person who asked
-    logAudit(o.db, {
+    await logAudit(o.db, {
       actorKind: "studio", actorId: done.created_by, kind: "job", action: `job.${done.kind}`, outcome: done.status === "failed" ? "error" : "ok", at: now(),
       durationMs: done.started_at && done.finished_at ? Date.parse(done.finished_at) - Date.parse(done.started_at) : null,
       projectId: done.project_id, videoId: done.video_id, threadId: done.thread_id, jobId: done.id, target: done.title, summary: done.error?.slice(0, 300) ?? null,
       details: { status: done.status, node: done.node_id, units: done.units, farmJobId: done.farm_job_id, attempts: done.attempts },
     }, (e) => log.warn("job not in the activity log", { error: String(e) }));
-    tellThread(o.db, done, outcome.status, outcome.message ?? null, now());
+    await tellThread(o.db, done, outcome.status, outcome.message ?? null, now());
   };
 
-  const tick = (): string[] => {
+  const pass = async (): Promise<string[]> => {
     if (shuttingDown || kinds.length === 0) return [];
     try {
-      const { requeued, failed } = requeueStaleJobs(o.db, now());
+      const { requeued, failed } = await requeueStaleJobs(o.db, now());
       if (requeued.length || failed.length) o.logger.warn("jobs left by a stopped worker", { requeued, failed });
     } catch (e) { o.logger.warn("requeue of stale jobs failed", { error: errText(e) }); }
+    try {
+      await tellEndedBatches(o.db, now());
+    } catch (e) { o.logger.warn("batch summaries failed", { error: errText(e) }); }
     const started: string[] = [];
     const lanes = lanesNow();
     while (live.size < lanes) {
-      const job = claimJob(o.db, kinds, now());
+      const open = kinds.filter((k) => running(k) < (o.kindLimits?.[k] ?? Infinity));
+      if (open.length === 0) break;
+      const job = await claimJob(o.db, open, now());
       if (!job) break;
       started.push(job.id);
-      const p = run(job).catch((e) => o.logger.error("job runner crashed", { job_id: job.id, error: errText(e) })).finally(() => live.delete(job.id));
+      liveKind.set(job.id, job.kind);
+      const p = run(job).catch((e) => o.logger.error("job runner crashed", { job_id: job.id, error: errText(e) })).finally(() => {
+        live.delete(job.id);
+        liveKind.delete(job.id);
+      });
       live.set(job.id, p);
     }
     return started;
+  };
+  // passes run one after another: two at once would both see free lanes
+  let passes: Promise<unknown> = Promise.resolve();
+  const tick = (): Promise<string[]> => {
+    const p = passes.then(pass, pass);
+    passes = p.catch(() => undefined);
+    return p;
   };
 
   return {
@@ -218,7 +243,7 @@ export function createJobRunner(o: JobRunnerOptions): JobRunner {
     runForever: async (signal) => {
       const pollMs = o.pollMs ?? 1000;
       while (!signal.aborted) {
-        tick();
+        await tick().catch((e) => o.logger.warn("job pass failed", { error: errText(e) }));
         await new Promise<void>((res) => {
           const t = setTimeout(res, pollMs);
           signal.addEventListener("abort", () => { clearTimeout(t); res(); }, { once: true });
@@ -231,18 +256,86 @@ export function createJobRunner(o: JobRunnerOptions): JobRunner {
   };
 }
 
+/** What a batch of jobs of a kind did, for its one summary line. */
+const BATCH_VERB: Partial<Record<JobKind, string>> = { prepare_asset: "Đã chuẩn bị" };
+/** Failures a batch summary names; the rest are counted. */
+const BATCH_FAILURES_NAMED = 8;
+
+function batchOf(job: JobRecord): string | null {
+  const id = (job.request as { batch_id?: unknown } | null)?.batch_id;
+  return typeof id === "string" && id ? id : null;
+}
+
+/** "Đã chuẩn bị 12/14 · 2 lỗi: **A** — lý do; **B** — lý do · 1 đã dừng." */
+export function batchSummary(jobs: readonly JobRecord[]): string {
+  const name = (j: JobRecord) => {
+    const n = (j.request as { name?: unknown } | null)?.name;
+    return typeof n === "string" && n ? n : j.title;
+  };
+  const done = jobs.filter((j) => j.status === "done").length;
+  const failed = jobs.filter((j) => j.status === "failed");
+  const cancelled = jobs.filter((j) => j.status === "cancelled").length;
+  const named = failed.slice(0, BATCH_FAILURES_NAMED).map((j) => `**${name(j)}** — ${(j.error ?? "lỗi").slice(0, 200)}`);
+  const more = failed.length > BATCH_FAILURES_NAMED ? ` và ${failed.length - BATCH_FAILURES_NAMED} lỗi khác` : "";
+  return `${BATCH_VERB[jobs[0]!.kind] ?? "Đã xong"} ${done}/${jobs.length}`
+    + `${failed.length ? ` · ${failed.length} lỗi: ${named.join("; ")}${more}` : ""}${cancelled ? ` · ${cancelled} đã dừng` : ""}.`;
+}
+
 /**
  * A finished job's line in its thread, and the agent's next turn when the job asked for one, the project lets the
- * agent go on by itself, and it has not already gone on 3 times without a person's message.
+ * agent go on by itself, and it has not already gone on 3 times without a person's message. Jobs queued together
+ * (`request.batch_id`) say nothing until the last of them ends, which posts one summary (`batchSummary`) and is the
+ * only one to wake the agent: 160 prepare messages, each waking the agent, flooded a thread on prod.
  */
-function tellThread(db: StudioDb, job: JobRecord, status: "done" | "failed" | "cancelled", message: string | null, now: string): void {
-  if (!job.thread_id || !message) return;
-  const thread = getThread(db, job.thread_id);
+async function tellThread(
+  db: StudioDb, job: JobRecord, status: "done" | "failed" | "cancelled", message: string | null, now: string, quietUnlessRan = false,
+): Promise<void> {
+  if (!job.thread_id) return;
+  let text = message;
+  let wake = job.continue_agent && status !== "cancelled";
+  const batchId = batchOf(job);
+  if (batchId !== null) {
+    // one transaction (one write lock): of two jobs ending at once, exactly one sees the batch over and tells it
+    const told = await db.tx(async () => {
+      const jobs = await db.all<JobRecord>("SELECT * FROM project_jobs WHERE project_id = ? AND request->>'batch_id' = ? ORDER BY created_at, id", [job.project_id, batchId]);
+      if (jobs.some((j) => j.status === "queued" || j.status === "running")) return null;
+      if (jobs.some((j) => (j.result as { batch_told?: unknown } | null)?.batch_told === true)) return null;
+      await db.run("UPDATE project_jobs SET result = COALESCE(result, '{}'::jsonb) || ?::jsonb WHERE id = ?", [JSON.stringify({ batch_told: true }), job.id]);
+      // every job stopped before it ran: nothing to tell
+      if (quietUnlessRan && jobs.every((j) => j.status === "cancelled")) return { text: null, wake: false };
+      return { text: batchSummary(jobs), wake: jobs.some((j) => j.continue_agent && j.status !== "cancelled") };
+    });
+    if (told === null) return;
+    ({ text, wake } = told);
+  }
+  if (!text) return;
+  const thread = await getThread(db, job.thread_id);
   if (!thread || thread.archived_at) return;
-  const project = getProject(db, job.project_id);
-  const settings = projectSettingsOf(project?.settings ?? null);
-  const goOn = job.continue_agent === 1 && status !== "cancelled" && settings.auto_continue
-    && automaticTurnsInARow(db, thread.id) < AUTO_TURNS_IN_A_ROW;
+  const project = await getProject(db, job.project_id);
+  const settings = projectSettingsOf(project ? JSON.stringify(project.settings) : null);
+  const goOn = wake && settings.auto_continue && await automaticTurnsInARow(db, thread.id) < AUTO_TURNS_IN_A_ROW;
   const actor = job.actor_role ? { id: job.created_by, role: job.actor_role as ActorRole } : null;
-  postSystemMessage(db, { threadId: thread.id, text: message, trigger: "job", continueAgent: goOn, actor }, now);
+  await postSystemMessage(db, { threadId: thread.id, text, trigger: "job", continueAgent: goOn, actor }, now);
+}
+
+/** How far back `tellEndedBatches` looks for a job that ended outside a runner. */
+const BATCH_SWEEP_MS = 60 * 60_000;
+
+/**
+ * Batches whose last job ended outside a runner — stopped while still in line (`requestJobCancel`), or failed for a
+ * worker that stopped (`requeueStaleJobs`) — are told here, on the runner's next pass: the jobs that ended before
+ * each saw the batch still going and said nothing.
+ */
+async function tellEndedBatches(db: StudioDb, now: string): Promise<void> {
+  const since = new Date(Date.parse(now) - BATCH_SWEEP_MS).toISOString();
+  const batch = "b.project_id = j.project_id AND b.request->>'batch_id' = j.request->>'batch_id'";
+  const rows = await db.all<{ id: string }>(
+    `SELECT DISTINCT ON (j.project_id, j.request->>'batch_id') j.id FROM project_jobs j
+      WHERE j.status IN ('cancelled', 'failed') AND j.request->>'batch_id' IS NOT NULL AND j.finished_at >= ?
+        AND NOT EXISTS (SELECT 1 FROM project_jobs b WHERE ${batch} AND (b.status IN ('queued', 'running') OR b.result->>'batch_told' = 'true'))
+      ORDER BY j.project_id, j.request->>'batch_id', j.finished_at DESC, j.id`, [since]);
+  for (const r of rows) {
+    const job = await getJob(db, r.id);
+    if (job && (job.status === "cancelled" || job.status === "failed")) await tellThread(db, job, job.status, null, now, true);
+  }
 }

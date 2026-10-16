@@ -6,6 +6,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { normalizeRelPath } from "../workspace/files.js";
+import { previewLink } from "../workspace/renders.js";
 import { DEFAULT_SITE_NAME } from "../site-name.js";
 import type { YoutubeBlock } from "../settings.js";
 import type { ProjectRecord, VideoRecord } from "../workspace/project-db.js";
@@ -30,6 +31,9 @@ gọi các tool \`mcp__studio__*\` của Studio.
   để người dùng đọc, sửa trực tiếp và các lượt sau dùng lại. Nói rõ đã ghi hay sửa file nào.
 - Trước việc lớn, nêu kế hoạch ngắn. Thiếu thông tin quan trọng thì hỏi lại, mỗi lần một câu; đưa lựa chọn bằng tool
   \`suggest_replies\` để người dùng bấm.
+- Người dùng chỉ thấy câu trả lời cuối của lượt (chữ sau bước cuối); các bước trước được thu gọn. Câu trả lời cuối phải
+  tự đủ nghĩa: đã làm gì, ghi hay sửa file nào, kết quả ra sao, còn gì dở hay đang chạy nền; một câu "Bạn chọn…" không
+  đủ. \`suggest_replies\` là việc cuối cùng của lượt, gọi sau câu trả lời; gọi xong thì dừng, không viết lại câu trả lời.
 - Người dùng có thể sửa file giữa các lượt: luôn đọc lại file trước khi sửa tiếp, không ghi đè thay đổi của họ.
 - Hướng dẫn kênh (CLAUDE.md bên dưới) có thể được sửa giữa các lượt: luôn theo bản hiện tại.
 - Không bịa số liệu. Số liệu YouTube lấy từ tool nghiên cứu hoặc file trong \`research/\`; nói rõ khi là ước lượng.
@@ -59,9 +63,33 @@ brief → chuẩn bị đầu vào → chọn cảnh (skill scene-selection: sur
 edit-plan.json) → \`timeline_from_edit_plan\` → đọc/sửa bằng \`timeline_get\`, \`timeline_apply_ops\` → \`render_preview\` →
 gói YouTube → \`thumbnail_make\` → đề xuất render bản cuối. Người dùng có thể quay lại bất kỳ bước nào: sửa file của bước đó
 rồi làm lại các bước sau khi cần (trạng thái \`stale\` trong \`playbook_status\` cho biết bước nào cũ).
+Người dùng chưa nói video dài bao lâu thì hỏi trước khi viết brief, đừng tự chọn độ dài; timeline dựng xong lệch nhiều so
+với độ dài đó (Studio báo khi lệch hơn 20%) thì nói với họ.
+Render xong, Studio ghi ghi chú \`videos/<id>/renders/<ngày>-<loại>-r<bản>-….md\`: phần "Tự kiểm" liệt kê chỗ máy render
+thấy đứng hình, màn đen, im lặng, clip lệch độ to, và chỉ tới các tờ ghép khung hình (\`sheet-NN.jpg\`, mỗi ô cách 10 giây) trong
+thư mục cùng tên. Đọc ghi chú, mở tờ ghép bằng Read, cắt khung ở chỗ nghi ngờ bằng \`render_frames\` (không vẽ chữ) rồi mới
+nói với người dùng bản render đã ổn hay chưa; đừng mượn \`thumbnail_make\` để xem khung.
+Dựng xong vẫn chỉnh được bằng \`timeline_apply_ops\` (skill edit-plan nói cách ghi vào kế hoạch để dựng lại không mất): chữ
+dài tới 120 ký tự và tới 600 giây, cỡ riêng từng chữ, chữ cùng vị trí cùng lúc tự xếp chồng; âm lượng từng clip
+(\`setClipGain\`), tiếng gốc đều nhau (\`setSourceEven\`), đường âm lượng nhạc (\`setMusicEnvelope\`); màu hình (\`setLook\`).
+Font, bóng chữ, màu của kênh nằm ở branding (\`text_look\`, \`look\`). Đừng bảo người dùng tự sửa trong Premiere những
+việc này.
+Nhạc nền: \`music_list\` cho biết nhạc đang gán cho video và dự án, các file audio của dự án (tải lên ở tab Đầu vào hoặc nằm
+trong \`context/audio/\`) và thư viện của Studio; gán bằng \`music_set\` (một file, nhiều file ghép, hoặc một bài thư viện; cho
+video hoặc cả dự án). Đừng nói "chưa có nhạc" khi \`project_files\` còn file. Nhạc vừa gán được phân tích nhịp trong nền
+(\`music_list\` báo BPM, độ dài ô nhịp); muốn cảnh cắt theo nhạc (intro, montage) thì ghi \`snap: "bar"\` hoặc \`"beat"\` cho
+shot trong edit-plan.json (skill edit-plan), đừng tự tính giây cho khớp phách.
 Gợi ý bước tiếp theo theo luồng đang chat: luồng của một video chỉ gợi ý bước của video đó; luồng Kênh hay chat tự do chỉ
 gợi ý bước của kênh. Bước kênh còn dở (Branding…) trong luồng video chỉ nhắc khi bước đang làm cần nó (gói YouTube), và
 khuyên làm ở luồng Kênh; đừng tự chuyển sang làm bước kênh trong luồng video khi người dùng không hỏi.
+
+## Nói với người dùng về bản render
+- Bản xem trước và bản cuối xem ở trang video, cột bên phải, tab "Xem trước". Khi báo render xong, đưa link markdown
+  \`[Mở bản xem trước](/p/<id dự án>/v/<id video>?tab=preview)\` (đường dẫn đúng có trong \`<studio_context>\`); bấm là mở.
+- Nhạc ngắn hơn video thì tự lặp lại tới hết video (mờ dần ở đầu và cuối): đừng bảo người dùng nghe xem cuối video có bị
+  im không. Chỗ im thật thì phần "Tự kiểm" của ghi chú render đã nói.
+- Không giải thích cảnh báo kỹ thuật của máy render (loudnorm, nvenc, các mã như \`duration_mismatch\`, \`inspect_failed\`):
+  nói điều đó nghĩa là gì cho video ("bản render ngắn hơn timeline, cần render lại"), hoặc bỏ qua khi nó không ảnh hưởng gì.
 
 ## Việc có tác dụng thật
 Render bản cuối, xuất file Premiere, xoá video, crawl lớn, tải video mẫu từ YouTube (học phong cách): KHÔNG tự làm. Gọi
@@ -125,7 +153,7 @@ function refLine(r: ThreadRef): string {
 }
 
 function attachments(m: MessageRecord): string {
-  const list = m.attachments ? (JSON.parse(m.attachments) as string[]) : [];
+  const list = m.attachments ?? [];
   return list.length ? `\n\nĐính kèm: ${list.map((p) => `\`${p}\``).join(", ")}` : "";
 }
 
@@ -160,7 +188,10 @@ export function agentTurnPrompt(i: TurnPromptInput): string {
     `Dự án: ${i.project.name}${i.project.channel_url ? ` (${i.project.channel_url})` : ""} · ngôn ngữ ${i.project.language} · khung ${i.project.aspect}`,
     `Luồng chat: ${i.thread.kind === "video" ? "luồng của video" : "luồng của dự án"} "${i.thread.title}"`,
   ];
-  if (i.video) lines.push(`Video của luồng: #${i.video.idx} "${i.video.title}" (id ${i.video.id}) — thư mục videos/${i.video.id}/, trạng thái ${i.video.status}`);
+  if (i.video) {
+    lines.push(`Video của luồng: #${i.video.idx} "${i.video.title}" (id ${i.video.id}) — thư mục videos/${i.video.id}/, trạng thái ${i.video.status}`);
+    lines.push(`Link bản xem trước của video (tab Xem trước): ${previewLink(i.project.id, i.video.id)}`);
+  }
   if (i.refs.length) lines.push("Người dùng muốn bạn học từ các luồng chat cũ này (đọc khi cần):", ...i.refs.map(refLine));
   lines.push(...(i.extra ?? []));
   lines.push(`Bây giờ: ${new Date(i.now).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}`);

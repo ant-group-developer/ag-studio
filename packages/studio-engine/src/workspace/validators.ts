@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import {
-  EditPlanSchema, HashtagSchema, PROJECT_ASPECTS, StudioPlaybookSchema, StudioSurveySchema, TextLookSchema, YOUTUBE_DESCRIPTION_BODY_MAX,
+  EditPlanSchema, HashtagSchema, PROJECT_ASPECTS, StudioPlaybookSchema, StudioSurveySchema, TextLookSchema, VIDEO_LOOKS, YOUTUBE_DESCRIPTION_BODY_MAX,
   YOUTUBE_TAGS_MAX_CHARS, YOUTUBE_TITLE_MAX, type FileValidatorId,
 } from "@harness/contracts";
 import { contrastRatio, TEXT_LOOK_MIN_CONTRAST, validateStyle } from "@harness/core";
@@ -37,6 +37,8 @@ export const BrandingFrontmatterSchema = z.object({
   series_name: z.string().min(1).max(100).optional(),
   /** How the words look on the video (the render draws exactly this). */
   text_look: TextLookSchema.optional(),
+  /** The colour of the picture of the channel's videos (feedback-vps §4.6). */
+  look: z.enum(VIDEO_LOOKS).optional(),
   music_mood: z.array(z.string().min(1).max(40)).max(5).optional(),
   title_max_chars: z.number().int().min(20).max(100).optional(),
   hashtags: z.array(HashtagSchema).max(5).optional(),

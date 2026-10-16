@@ -20,6 +20,9 @@ import { studioStepFacts } from "./step-facts.js";
 /** What Studio knows of a `studio` step (inputs prepared, timeline built, render done…). */
 export interface StepFact { status: "done" | "running" | "missing"; detail?: string }
 
+/** What Studio knows of each `studio` step, by key (and video). */
+export type StepFacts = (key: string, videoId: string | null) => StepFact | undefined | Promise<StepFact | undefined>;
+
 export interface StepOutputState { path: string; role: "doc" | "data" | "studio"; exists: boolean; issues: FileIssue[] }
 
 export interface StepState {
@@ -96,10 +99,10 @@ function baseStatus(dir: string, s: PlaybookStep, outputs: StepOutputState[], fa
 }
 
 /** The steps of one scope, with the marks of done steps kept up to date (stale detection). */
-function scopeStates(db: StudioDb | null, dir: string, playbook: StudioPlaybook, scope: "project" | "video", o: {
-  projectId: string; videoId: string | null; facts?: ((key: string, videoId: string | null) => StepFact | undefined) | undefined;
+async function scopeStates(db: StudioDb | null, dir: string, playbook: StudioPlaybook, scope: "project" | "video", o: {
+  projectId: string; videoId: string | null; facts?: StepFacts | undefined;
   upstreamDigests: Map<string, string>; now: string;
-}): StepState[] {
+}): Promise<StepState[]> {
   const states: StepState[] = [];
   for (const s of playbook.steps.filter((x) => x.scope === scope)) {
     const outputs = s.outputs.map((out) => {
@@ -111,20 +114,20 @@ function scopeStates(db: StudioDb | null, dir: string, playbook: StudioPlaybook,
     const paths = outputs.map((x) => x.path);
     const digest = digestOf(dir, paths);
     o.upstreamDigests.set(s.key, digest);
-    let { status, detail } = baseStatus(dir, s, outputs, o.facts?.(s.key, o.videoId));
+    let { status, detail } = baseStatus(dir, s, outputs, await o.facts?.(s.key, o.videoId));
     let staleBecause: string[] = [];
     if (db && status === "done") {
       const vid = scope === "video" ? o.videoId ?? "" : "";
-      const mark = db.get<{ output_digest: string; upstream: string }>(
+      const mark = await db.get<{ output_digest: string; upstream: Record<string, string> }>(
         "SELECT output_digest, upstream FROM step_marks WHERE project_id = ? AND video_id = ? AND step_key = ?", [o.projectId, vid, s.key]);
       const upstreamNow = Object.fromEntries(s.requires.map((r) => [r, o.upstreamDigests.get(r) ?? ""]));
       if (!mark || mark.output_digest !== digest) {
-        db.run(
+        await db.run(
           `INSERT INTO step_marks (project_id, video_id, step_key, output_digest, upstream, marked_at) VALUES (?, ?, ?, ?, ?, ?)
            ON CONFLICT (project_id, video_id, step_key) DO UPDATE SET output_digest = excluded.output_digest, upstream = excluded.upstream, marked_at = excluded.marked_at`,
           [o.projectId, vid, s.key, digest, JSON.stringify(upstreamNow), o.now]);
       } else {
-        const before = JSON.parse(mark.upstream) as Record<string, string>;
+        const before = mark.upstream ?? {};
         staleBecause = s.requires.filter((r) => before[r] !== undefined && before[r] !== upstreamNow[r]);
         if (staleBecause.length) status = "stale";
       }
@@ -147,16 +150,16 @@ const FINE: StepStatus[] = ["done", "skipped"];
  * The playbook's state for the project (and one video). `db` keeps the stale marks; without it nothing is stale.
  * `scope` (default: "video" when a video is given, else "project") picks whose steps `next` suggests.
  */
-export function playbookStatus(db: StudioDb | null, dir: string, o: {
-  projectId: string; videoId?: string | null; scope?: PlaybookScope; facts?: (key: string, videoId: string | null) => StepFact | undefined; now?: string;
-}): PlaybookStatus {
+export async function playbookStatus(db: StudioDb | null, dir: string, o: {
+  projectId: string; videoId?: string | null; scope?: PlaybookScope; facts?: StepFacts; now?: string;
+}): Promise<PlaybookStatus> {
   const { playbook, custom, issues } = loadPlaybook(dir);
   const now = o.now ?? new Date().toISOString();
   const digests = new Map<string, string>();
   // Studio's own steps (preparing inputs…) from the database, unless the caller says otherwise
   const facts = o.facts ?? (db ? studioStepFacts(db, o.projectId) : undefined);
-  const project = scopeStates(db, dir, playbook, "project", { projectId: o.projectId, videoId: null, facts, upstreamDigests: digests, now });
-  const video = o.videoId ? scopeStates(db, dir, playbook, "video", { projectId: o.projectId, videoId: o.videoId, facts, upstreamDigests: digests, now }) : null;
+  const project = await scopeStates(db, dir, playbook, "project", { projectId: o.projectId, videoId: null, facts, upstreamDigests: digests, now });
+  const video = o.videoId ? await scopeStates(db, dir, playbook, "video", { projectId: o.projectId, videoId: o.videoId, facts, upstreamDigests: digests, now }) : null;
   const byKey = new Map([...project, ...(video ?? [])].map((s) => [s.key, s]));
   const fine = (key: string) => FINE.includes(byKey.get(key)?.status ?? "missing");
   for (const s of [...project, ...(video ?? [])]) {

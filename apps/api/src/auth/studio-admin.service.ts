@@ -30,9 +30,9 @@ export class StudioAdminService {
     if (!(await this.isAdmin(req))) throw new ForbiddenException('Requires a Studio admin');
   }
 
-  ownedTeamIds(userId: string): string[] {
-    return this.db
-      .all<{ team_id: string }>("SELECT team_id FROM team_members WHERE user_id = ? AND role = 'owner' ORDER BY team_id", [userId])
+  async ownedTeamIds(userId: string): Promise<string[]> {
+    return (await this.db
+      .all<{ team_id: string }>("SELECT team_id FROM team_members WHERE user_id = ? AND role = 'owner' ORDER BY team_id", [userId]))
       .map((r) => r.team_id);
   }
 
@@ -42,7 +42,7 @@ export class StudioAdminService {
    */
   async viewScope(req: Request, teamId?: string): Promise<ViewScope> {
     if (await this.isAdmin(req)) return teamId ? { all: false, teamIds: [teamId] } : { all: true };
-    const owned = this.ownedTeamIds(req.authContext!.userId);
+    const owned = await this.ownedTeamIds(req.authContext!.userId);
     if (teamId) {
       if (!owned.includes(teamId)) throw new ForbiddenException('Requires the owner of this team');
       return { all: false, teamIds: [teamId] };

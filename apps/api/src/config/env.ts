@@ -1,7 +1,12 @@
 import { z } from 'zod';
 
 export const envSchema = z.object({
-  STUDIO_DB_PATH: z.string().default('./data/studio.db'),
+  /** Studio's Postgres database: postgresql://user:password@host:5432/ag_studio (the worker uses the same). */
+  DATABASE_URL: z.string().min(1),
+  /** Most connections the API's pool opens (default 10). */
+  STUDIO_DB_POOL_MAX: z.coerce.number().int().positive().optional(),
+  /** Postgres schema of Studio's tables (default public; created at start when missing). The worker uses the same. */
+  DATABASE_SCHEMA: z.string().regex(/^[a-z_][a-z0-9_]{0,62}$/, 'lower case letters, digits and _').optional(),
   AUTH0_ISSUER_URL: z.string().url(),
   AUTH0_AUDIENCE: z.string(),
   AUTH0_JWKS_URI: z.string().url(),
@@ -20,7 +25,7 @@ export const envSchema = z.object({
   STUDIO_R2_ACCESS_KEY_ID: z.string(),
   STUDIO_R2_SECRET_ACCESS_KEY: z.string(),
   FARM_URL_TTL_SECONDS: z.coerce.number().default(3600),
-  /** Workspaces and artifacts of the Studio engine (the harness state itself lives in STUDIO_DB_PATH). */
+  /** Workspaces and artifacts of the Studio engine (voice store, scratch folders, workspaces by default). */
   STUDIO_DATA_ROOT: z.string().default('./data/harness'),
   /** Project workspaces (the agent works in <root>/<project id>); default <STUDIO_DATA_ROOT>/workspaces. The worker must see the same folder. */
   STUDIO_WORKSPACES_ROOT: z.string().optional(),

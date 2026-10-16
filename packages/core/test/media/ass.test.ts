@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BrandProfile, CaptionCue, TextEvent } from "@harness/contracts";
-import { buildAss, countDialogues } from "../../src/media/ass.js";
+import { buildAss, countDialogues, wrapTextLines } from "../../src/media/ass.js";
 
 function brandFixture(overrides: Partial<BrandProfile> = {}): BrandProfile {
   return {
@@ -119,6 +119,93 @@ describe("buildAss", () => {
   it("generates \\move for a slide_up text event", () => {
     const ass = buildAss({ brand: brandFixture(), mode: "none", cues: [], text_events: TEXT_EVENTS, logo: null, canvas: CANVAS });
     expect(ass).toMatch(/\\move\(\d+,\d+,\d+,\d+,0,250\)/);
+  });
+
+  describe("texts at one position at the same time (feedback-vps §4.1)", () => {
+    const at = (ass: string, id: string) => {
+      const line = ass.split("\n").filter((l) => l.startsWith("Dialogue: 1,")).find((l) => l.endsWith(id))!;
+      const m = /\\an(\d)\\pos\((\d+(?:\.\d+)?),(\d+(?:\.\d+)?)\)/.exec(line)!;
+      return { an: Number(m[1]), x: Number(m[2]), y: Number(m[3]), line };
+    };
+    const ev = (id: string, text: string, start: number, end: number, position: TextEvent["position"], extra: Partial<TextEvent> = {}): TextEvent =>
+      ({ id, kind: "lower_third", text, start, end, position, animation: "fade", ...extra });
+
+    it("stack instead of covering each other: up the screen at the bottom, down it at the top", () => {
+      const events = [
+        ev("A", "Kiyomizu-dera", 0, 10, "bottom_left"),
+        ev("B", "清水寺", 2, 8, "bottom_left"),
+        ev("C", "Kyoto", 0, 10, "top_center"),
+        ev("D", "京都", 0, 10, "top_center"),
+      ];
+      const ass = buildAss({ brand: brandFixture(), mode: "none", cues: [], text_events: events, logo: null, canvas: CANVAS });
+      const step = Math.round(72 * (1.3 + 0.3));
+      expect(at(ass, "Kiyomizu-dera").y).toBe(2160 - 120);
+      expect(at(ass, "清水寺").y).toBe(2160 - 120 - step);
+      expect(at(ass, "Kyoto").y).toBe(120);
+      expect(at(ass, "京都").y).toBe(120 + step);
+      // same x: one column, two lines
+      expect(at(ass, "清水寺").x).toBe(at(ass, "Kiyomizu-dera").x);
+    });
+
+    it("a text that does not overlap keeps the first slot, and a freed slot is taken again", () => {
+      const events = [ev("A", "one", 0, 4, "bottom_left"), ev("B", "two", 1, 9, "bottom_left"), ev("C", "three", 5, 7, "bottom_left"), ev("D", "four", 20, 22, "bottom_left")];
+      const ass = buildAss({ brand: brandFixture(), mode: "none", cues: [], text_events: events, logo: null, canvas: CANVAS });
+      expect(at(ass, "one").y).toBe(2040);
+      expect(at(ass, "two").y).toBeLessThan(2040);
+      expect(at(ass, "three").y).toBe(2040);
+      expect(at(ass, "four").y).toBe(2040);
+    });
+
+    it("is the same whatever order the events come in", () => {
+      const events = [ev("A", "first", 0, 5, "center"), ev("B", "second", 0, 5, "center"), ev("C", "third", 1, 5, "center")];
+      const one = buildAss({ brand: brandFixture(), mode: "none", cues: [], text_events: events, logo: null, canvas: CANVAS });
+      const two = buildAss({ brand: brandFixture(), mode: "none", cues: [], text_events: [...events].reverse(), logo: null, canvas: CANVAS });
+      expect(at(two, "third").y).toBe(at(one, "third").y);
+      expect(new Set(["first", "second", "third"].map((t) => at(one, t).y)).size).toBe(3);
+    });
+
+    it("a text's own size is drawn with \\fs and makes its slot taller", () => {
+      const events = [ev("A", "big", 0, 5, "bottom_left", { size: "l" }), ev("B", "small", 0, 5, "bottom_left", { size: "s" })];
+      const ass = buildAss({ brand: brandFixture(), mode: "none", cues: [], text_events: events, logo: null, canvas: CANVAS });
+      expect(at(ass, "big").line).toContain(`\\fs${Math.round(72 * 1.25)}`);
+      expect(at(ass, "small").line).toContain(`\\fs${Math.round(72 * 0.8)}`);
+      expect(at(ass, "small").y).toBe(2040 - Math.round(90 * 1.6));
+      expect(buildAss({ brand: brandFixture(), mode: "none", cues: [], text_events: [ev("A", "plain", 0, 5, "bottom_left")], logo: null, canvas: CANVAS })).not.toContain("\\fs");
+    });
+
+    it("a long text wraps inside the picture and stacks by its line count", () => {
+      const long = "A walk through the old streets of Higashiyama, past tea houses, temples and the stone steps of Sannenzaka";
+      const events = [ev("A", long, 0, 5, "bottom_left"), ev("B", "second", 0, 5, "bottom_left")];
+      const ass = buildAss({ brand: brandFixture(), mode: "none", cues: [], text_events: events, logo: null, canvas: { width: 1920, height: 1080 } });
+      const lines = wrapTextLines(long, 72, 1920 - 240);
+      expect(lines.length).toBeGreaterThan(1);
+      expect(lines.join(" ")).toBe(long);
+      expect(at(ass, "second").y).toBe(1080 - 120 - Math.round(72 * (lines.length * 1.3 + 0.3)));
+      expect(ass).toContain(lines.join("\\N"));
+    });
+  });
+
+  it("wraps CJK text between characters and Latin text at spaces", () => {
+    expect(wrapTextLines("日本語の長い文章です", 100, 500)).toEqual(["日本語の長", "い文章です"]);
+    expect(wrapTextLines("one two three", 100, 400)).toEqual(["one two", "three"]);
+    expect(wrapTextLines("short", 100, 3000)).toEqual(["short"]);
+    expect(wrapTextLines("line one\nline two", 100, 3000)).toEqual(["line one", "line two"]);
+  });
+
+  it("a shadow and a script font only when asked", () => {
+    const plain = buildAss({ brand: brandFixture(), mode: "burn-in", cues: CUES, text_events: TEXT_EVENTS, logo: null, canvas: CANVAS });
+    const styles = (ass: string) => ass.split("\n").filter((l) => l.startsWith("Style:")).map((l) => l.split(",")[17]);
+    expect(styles(plain).every((s) => s === "0")).toBe(true);
+    const shadowed = buildAss({ brand: brandFixture(), mode: "burn-in", cues: CUES, text_events: TEXT_EVENTS, logo: null, canvas: CANVAS, shadow: true });
+    expect(styles(shadowed).every((s) => Number(s) >= 2)).toBe(true);
+    const jp = buildAss({
+      brand: brandFixture(), mode: "burn-in", cues: [{ index: 1, start: 0, end: 2, lines: ["ありがとう"], raise_px: 0, words: [] }],
+      text_events: [{ id: "T1", kind: "title", text: "清水寺", start: 0, end: 2, position: "top_left", animation: "fade" }, ...TEXT_EVENTS],
+      logo: null, canvas: CANVAS, scriptFont: (t) => (/[\u3040-\u9fff]/.test(t) ? "Noto Sans JP" : null),
+    });
+    expect(jp).toContain("{\\fnNoto Sans JP}ありがとう");
+    expect(jp.split("\n").find((l) => l.endsWith("清水寺"))).toContain("\\fnNoto Sans JP");
+    expect(jp.split("\n").find((l) => l.endsWith("Breaking"))).not.toContain("\\fn");
   });
 
   it("returns zero Dialogue lines and a valid header when brand is null, regardless of mode", () => {

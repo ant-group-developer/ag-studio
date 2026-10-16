@@ -35,7 +35,7 @@ export class AgentTokenGuard implements CanActivate {
     private readonly engine: EngineService,
   ) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<Request>();
     const secret = this.config.get<string>('STUDIO_AGENT_TOKEN_SECRET');
     if (!secret) throw new ServiceUnavailableException({ code: 'agent_disabled', message: 'STUDIO_AGENT_TOKEN_SECRET chưa đặt' });
@@ -48,16 +48,16 @@ export class AgentTokenGuard implements CanActivate {
       throw new UnauthorizedException({ code: 'bad_agent_token', message: e instanceof StudioRunError ? e.message : 'token không hợp lệ' });
     }
     const db = this.engine.db;
-    const message = getMessage(db, claims.msg);
+    const message = await getMessage(db, claims.msg);
     if (!message || message.status !== 'running' || message.thread_id !== claims.thread) {
       throw new ForbiddenException({ code: 'turn_not_running', message: 'lượt này đã kết thúc' });
     }
-    const thread = getThread(db, claims.thread);
-    const project = getProject(db, claims.project);
+    const thread = await getThread(db, claims.thread);
+    const project = await getProject(db, claims.project);
     if (!thread || !project || thread.project_id !== project.id || project.archived_at) {
       throw new ForbiddenException({ code: 'bad_scope', message: 'token không khớp dự án' });
     }
-    const video = thread.video_id ? getVideo(db, thread.video_id) ?? null : null;
+    const video = thread.video_id ? (await getVideo(db, thread.video_id)) ?? null : null;
     req.agentCall = { claims, message, thread, project, video, role: message.actor_role ?? 'viewer' };
     return true;
   }

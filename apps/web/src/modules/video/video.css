@@ -11,3 +11,5 @@
 .ws-video__thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
 .ws-video__thumb { border: 1px solid var(--ws-line); border-radius: 6px; padding: 0; background: var(--ws-chip); cursor: pointer; aspect-ratio: 16 / 9; overflow: hidden; }
 .ws-video__thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ws-video__status { margin: 8px 0; font-size: 13px; }
+.ws-video__found { margin: 0 0 10px; padding: 8px 10px; border-radius: 6px; background: var(--ws-chip); font-size: 12px; }

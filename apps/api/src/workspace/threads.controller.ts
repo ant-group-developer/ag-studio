@@ -2,7 +2,7 @@ import {
   Body, Controller, Delete, Get, HttpCode, HttpStatus, MessageEvent, Param, Patch, Post, Put, Query, Req, Sse, UseGuards,
 } from '@nestjs/common';
 import type { Request } from 'express';
-import { interval, map, merge, Observable, startWith, filter, distinctUntilChanged } from 'rxjs';
+import { catchError, distinctUntilChanged, EMPTY, exhaustMap, filter, from, interval, map, merge, Observable, startWith } from 'rxjs';
 import { z } from 'zod';
 import {
   agentActivity, archiveThread, createThread, getMessage, listMessages, listThreadRefs, listThreads, messageView, normalizeRelPath,
@@ -48,15 +48,15 @@ export interface ThreadView {
 export function threadView(t: ThreadRecord | ThreadListRow): ThreadView {
   const list = 'message_count' in t ? { messageCount: t.message_count, lastMessageAt: t.last_message_at, busy: t.running > 0 } : {};
   return {
-    id: t.id, projectId: t.project_id, videoId: t.video_id, kind: t.kind, title: t.title, useLessons: t.use_lessons !== 0,
+    id: t.id, projectId: t.project_id, videoId: t.video_id, kind: t.kind, title: t.title, useLessons: t.use_lessons,
     createdAt: t.created_at, updatedAt: t.updated_at, archivedAt: t.archived_at, ...list,
   };
 }
 
 /** The person's role in the team as a turn records it (a Studio admin acts as owner). */
-export function actorRole(engine: EngineService, req: Request, teamId: string): ActorRole {
+export async function actorRole(engine: EngineService, req: Request, teamId: string): Promise<ActorRole> {
   if (req.authContext?.isAdmin) return 'owner';
-  return engine.db.get<{ role: ActorRole }>('SELECT role FROM team_members WHERE team_id = ? AND user_id = ?', [teamId, req.authContext!.userId])?.role ?? 'viewer';
+  return (await engine.db.get<{ role: ActorRole }>('SELECT role FROM team_members WHERE team_id = ? AND user_id = ?', [teamId, req.authContext!.userId]))?.role ?? 'viewer';
 }
 
 /**
@@ -72,9 +72,9 @@ export class ThreadsController {
   @Get('projects/:projectId/threads')
   @Roles('viewer')
   list(@Param('projectId') projectId: string, @Query('videoId') videoId?: string): Promise<{ threads: ThreadView[] }> {
-    return mapErrors(() => {
-      requireProject(this.engine.db, projectId);
-      return { threads: listThreads(this.engine.db, projectId, videoId ? { videoId } : {}).map(threadView) };
+    return mapErrors(async () => {
+      await requireProject(this.engine.db, projectId);
+      return { threads: (await listThreads(this.engine.db, projectId, videoId ? { videoId } : {})).map(threadView) };
     });
   }
 
@@ -83,24 +83,24 @@ export class ThreadsController {
   @Roles('editor')
   @HttpCode(HttpStatus.CREATED)
   create(@Param('projectId') projectId: string, @Body() raw: unknown, @Req() req: Request): Promise<ThreadView> {
-    return mapErrors(() => {
+    return mapErrors(async () => {
       const body = parseBody(CreateThreadSchema, raw);
-      requireProject(this.engine.db, projectId);
-      const t = createThread(this.engine.db, { projectId, kind: 'project', title: body.title ?? 'Chat mới', createdBy: req.authContext!.userId });
-      if (body.learning) this.learn(t.id, body.learning, req.authContext!.userId);
-      return threadView(requireThread(this.engine.db, t.id));
+      await requireProject(this.engine.db, projectId);
+      const t = await createThread(this.engine.db, { projectId, kind: 'project', title: body.title ?? 'Chat mới', createdBy: req.authContext!.userId });
+      if (body.learning) await this.learn(t.id, body.learning, req.authContext!.userId);
+      return threadView(await requireThread(this.engine.db, t.id));
     });
   }
 
   @Get('threads/:threadId')
   @Roles('viewer')
   get(@Param('threadId') threadId: string): Promise<ThreadView & { refs: { threadId: string; mode: 'summary' | 'full'; title: string }[]; messages: MessageView[] }> {
-    return mapErrors(() => {
-      const t = requireThread(this.engine.db, threadId);
+    return mapErrors(async () => {
+      const t = await requireThread(this.engine.db, threadId);
       return {
         ...threadView(t),
-        refs: listThreadRefs(this.engine.db, threadId).map((r) => ({ threadId: r.ref_thread_id, mode: r.mode, title: r.title })),
-        messages: listMessages(this.engine.db, threadId).map(messageView),
+        refs: (await listThreadRefs(this.engine.db, threadId)).map((r) => ({ threadId: r.ref_thread_id, mode: r.mode, title: r.title })),
+        messages: (await listMessages(this.engine.db, threadId)).map(messageView),
       };
     });
   }
@@ -108,9 +108,9 @@ export class ThreadsController {
   @Get('threads/:threadId/messages')
   @Roles('viewer')
   messages(@Param('threadId') threadId: string, @Query('after') after?: string): Promise<{ messages: MessageView[] }> {
-    return mapErrors(() => {
-      requireThread(this.engine.db, threadId);
-      return { messages: listMessages(this.engine.db, threadId, { afterSeq: Number(after) || 0 }).map(messageView) };
+    return mapErrors(async () => {
+      await requireThread(this.engine.db, threadId);
+      return { messages: (await listMessages(this.engine.db, threadId, { afterSeq: Number(after) || 0 })).map(messageView) };
     });
   }
 
@@ -119,13 +119,13 @@ export class ThreadsController {
   @Roles('editor')
   @HttpCode(HttpStatus.CREATED)
   send(@Param('threadId') threadId: string, @Body() raw: unknown, @Req() req: Request): Promise<{ message: MessageView; turn: MessageView | null }> {
-    return mapErrors(() => {
+    return mapErrors(async () => {
       const body = parseBody(SendSchema, raw);
-      const thread = requireThread(this.engine.db, threadId);
-      const project = requireProject(this.engine.db, thread.project_id);
+      const thread = await requireThread(this.engine.db, threadId);
+      const project = await requireProject(this.engine.db, thread.project_id);
       const attachments = (body.attachments ?? []).map((p) => normalizeRelPath(p));
-      const out = postUserMessage(this.engine.db, {
-        threadId, text: body.text, attachments, actor: { id: req.authContext!.userId, role: actorRole(this.engine, req, project.team_id) },
+      const out = await postUserMessage(this.engine.db, {
+        threadId, text: body.text, attachments, actor: { id: req.authContext!.userId, role: await actorRole(this.engine, req, project.team_id) },
       });
       return { message: messageView(out.user), turn: out.turn ? messageView(out.turn) : null };
     });
@@ -134,27 +134,27 @@ export class ThreadsController {
   @Post('threads/:threadId/messages/:messageId/cancel')
   @Roles('editor')
   cancel(@Param('threadId') threadId: string, @Param('messageId') messageId: string): Promise<MessageView> {
-    return mapErrors(() => {
-      const m = getMessage(this.engine.db, messageId);
+    return mapErrors(async () => {
+      const m = await getMessage(this.engine.db, messageId);
       if (!m || m.thread_id !== threadId) throw new StudioRunError('not_found', `không có lượt ${messageId}`);
-      return messageView(requestCancel(this.engine.db, messageId));
+      return messageView(await requestCancel(this.engine.db, messageId));
     });
   }
 
   @Patch('threads/:threadId')
   @Roles('editor')
   rename(@Param('threadId') threadId: string, @Body() raw: unknown): Promise<ThreadView> {
-    return mapErrors(() => threadView(renameThread(this.engine.db, threadId, parseBody(RenameSchema, raw).title)));
+    return mapErrors(async () => threadView(await renameThread(this.engine.db, threadId, parseBody(RenameSchema, raw).title)));
   }
 
   /** Body `{useLessons, threads: [{threadId, mode}]}`: what this thread learns from (replaces the earlier choice). */
   @Put('threads/:threadId/learning')
   @Roles('editor')
   setLearning(@Param('threadId') threadId: string, @Body() raw: unknown, @Req() req: Request): Promise<ThreadView> {
-    return mapErrors(() => {
-      requireThread(this.engine.db, threadId);
-      this.learn(threadId, parseBody(LearningSchema, raw), req.authContext!.userId);
-      return threadView(requireThread(this.engine.db, threadId));
+    return mapErrors(async () => {
+      await requireThread(this.engine.db, threadId);
+      await this.learn(threadId, parseBody(LearningSchema, raw), req.authContext!.userId);
+      return threadView(await requireThread(this.engine.db, threadId));
     });
   }
 
@@ -169,9 +169,9 @@ export class ThreadsController {
   @Get('projects/:projectId/activity')
   @Roles('viewer')
   activity(@Param('projectId') projectId: string): Promise<{ activity: Activity[] }> {
-    return mapErrors(() => {
-      requireProject(this.engine.db, projectId);
-      return { activity: agentActivity(this.engine.db, projectId) };
+    return mapErrors(async () => {
+      await requireProject(this.engine.db, projectId);
+      return { activity: await agentActivity(this.engine.db, projectId) };
     });
   }
 
@@ -184,17 +184,19 @@ export class ThreadsController {
   @RawResponse()
   threadEvents(@Param('threadId') threadId: string): Observable<MessageEvent> {
     const sent = new Map<string, string>();
-    let since = '';
+    let since = new Date(0).toISOString();
+    const poll = async (): Promise<MessageRecord[]> => {
+      const rows = await this.engine.db.all<MessageRecord>(
+        'SELECT * FROM agent_messages WHERE thread_id = ? AND updated_at >= ? ORDER BY seq', [threadId, since],
+      );
+      const fresh = rows.filter((r) => sent.get(r.id) !== r.updated_at);
+      for (const r of fresh) { sent.set(r.id, r.updated_at); if (r.updated_at > since) since = r.updated_at; }
+      return fresh;
+    };
+    // one look at a time (a slow one skips ticks); a failed look is tried again at the next tick
     const changes = interval(THREAD_EVENTS_MS).pipe(
       startWith(0),
-      map(() => {
-        const rows = this.engine.db.all<MessageRecord>(
-          'SELECT * FROM agent_messages WHERE thread_id = ? AND updated_at >= ? ORDER BY seq', [threadId, since],
-        );
-        const fresh = rows.filter((r) => sent.get(r.id) !== r.updated_at);
-        for (const r of fresh) { sent.set(r.id, r.updated_at); if (r.updated_at > since) since = r.updated_at; }
-        return fresh;
-      }),
+      exhaustMap(() => from(poll()).pipe(catchError(() => EMPTY))),
       filter((fresh) => fresh.length > 0),
       map((fresh): MessageEvent => ({ type: 'messages', data: { messages: fresh.map(messageView) } })),
     );
@@ -208,15 +210,15 @@ export class ThreadsController {
   projectEvents(@Param('projectId') projectId: string): Observable<MessageEvent> {
     const changes = interval(PROJECT_EVENTS_MS).pipe(
       startWith(0),
-      map(() => projectFingerprint(this.engine.db, projectId)),
+      exhaustMap(() => from(projectFingerprint(this.engine.db, projectId)).pipe(catchError(() => EMPTY))),
       distinctUntilChanged(),
       map((fingerprint): MessageEvent => ({ type: 'changed', data: { fingerprint } })),
     );
     return merge(changes, interval(PING_MS).pipe(map((): MessageEvent => ({ type: 'ping', data: '' }))));
   }
 
-  private learn(threadId: string, learning: z.infer<typeof LearningSchema>, userId: string): void {
-    setThreadLearning(this.engine.db, {
+  private async learn(threadId: string, learning: z.infer<typeof LearningSchema>, userId: string): Promise<void> {
+    await setThreadLearning(this.engine.db, {
       threadId, useLessons: learning.useLessons, addedBy: userId,
       refs: learning.threads.map((r) => ({ threadId: r.threadId, mode: r.mode })),
     });
