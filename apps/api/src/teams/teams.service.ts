@@ -27,54 +27,57 @@ export interface Paged<T> {
 export class TeamsService {
   constructor(private readonly db: StudioDbService) {}
 
-  createTeam(name: string, ownerId: string): { id: string; name: string; createdAt: string; members: { userId: string; role: TeamRole }[] } {
+  async createTeam(name: string, ownerId: string): Promise<{ id: string; name: string; createdAt: string; members: { userId: string; role: TeamRole }[] }> {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
 
-    this.db.run('INSERT INTO teams (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)', [id, name, now, now]);
-    this.db.run('INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)', [id, ownerId, 'owner', now]);
+    await this.db.tx(async () => {
+      await this.db.run('INSERT INTO teams (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)', [id, name, now, now]);
+      await this.db.run('INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)', [id, ownerId, 'owner', now]);
+    });
 
     return { id, name, createdAt: now, members: [{ userId: ownerId, role: 'owner' }] };
   }
 
   /** One team with the caller's role (null for an admin who is not a member) and its counts. */
-  getTeam(teamId: string, userId: string): { id: string; name: string; createdAt: string; updatedAt: string; role: TeamRole | null; isMember: boolean; memberCount: number; projectCount: number } {
-    const team = this.db.get<TeamRow>('SELECT * FROM teams WHERE id = ?', [teamId]);
+  async getTeam(teamId: string, userId: string): Promise<{ id: string; name: string; createdAt: string; updatedAt: string; role: TeamRole | null; isMember: boolean; memberCount: number; projectCount: number }> {
+    const team = await this.db.get<TeamRow>('SELECT * FROM teams WHERE id = ?', [teamId]);
     if (!team) throw new NotFoundException(`Team ${teamId} not found`);
-    const role = this.db.get<{ role: TeamRole }>('SELECT role FROM team_members WHERE team_id = ? AND user_id = ?', [teamId, userId])?.role ?? null;
-    const memberCount = this.db.get<{ n: number }>('SELECT COUNT(*) as n FROM team_members WHERE team_id = ?', [teamId])?.n ?? 0;
-    const projectCount = this.db.get<{ n: number }>('SELECT COUNT(*) as n FROM projects WHERE team_id = ? AND archived_at IS NULL', [teamId])?.n ?? 0;
+    const role = (await this.db.get<{ role: TeamRole }>('SELECT role FROM team_members WHERE team_id = ? AND user_id = ?', [teamId, userId]))?.role ?? null;
+    const memberCount = (await this.db.get<{ n: number }>('SELECT COUNT(*) as n FROM team_members WHERE team_id = ?', [teamId]))?.n ?? 0;
+    const projectCount = (await this.db.get<{ n: number }>('SELECT COUNT(*) as n FROM projects WHERE team_id = ? AND archived_at IS NULL', [teamId]))?.n ?? 0;
     return { id: team.id, name: team.name, createdAt: team.created_at, updatedAt: team.updated_at, role, isMember: role !== null, memberCount, projectCount };
   }
 
-  updateTeam(teamId: string, name: string): { id: string; name: string; createdAt: string; updatedAt: string } {
-    const existing = this.db.get<TeamRow>('SELECT * FROM teams WHERE id = ?', [teamId]);
-    if (!existing) throw new NotFoundException(`Team ${teamId} not found`);
+  async updateTeam(teamId: string, name: string): Promise<{ id: string; name: string; createdAt: string; updatedAt: string }> {
     const now = new Date().toISOString();
-    this.db.run('UPDATE teams SET name = ?, updated_at = ? WHERE id = ?', [name, now, teamId]);
-    return { id: existing.id, name, createdAt: existing.created_at, updatedAt: now };
+    const updated = await this.db.get<TeamRow>('UPDATE teams SET name = ?, updated_at = ? WHERE id = ? RETURNING *', [name, now, teamId]);
+    if (!updated) throw new NotFoundException(`Team ${teamId} not found`);
+    return { id: updated.id, name, createdAt: updated.created_at, updatedAt: now };
   }
 
-  deleteTeam(teamId: string): void {
-    const existing = this.db.get<TeamRow>('SELECT id FROM teams WHERE id = ?', [teamId]);
-    if (!existing) throw new NotFoundException(`Team ${teamId} not found`);
+  async deleteTeam(teamId: string): Promise<void> {
+    await this.db.tx(async () => {
+      const existing = await this.db.get<TeamRow>('SELECT id FROM teams WHERE id = ?', [teamId]);
+      if (!existing) throw new NotFoundException(`Team ${teamId} not found`);
 
-    // 409 team_has_active_runs: a job or an agent turn of one of its projects is still going
-    const busy = this.db.get<{ n: number }>(
-      `SELECT (SELECT COUNT(*) FROM project_jobs j JOIN projects p ON p.id = j.project_id WHERE p.team_id = ? AND j.status IN ('queued', 'running'))
-            + (SELECT COUNT(*) FROM agent_messages m JOIN agent_threads t ON t.id = m.thread_id JOIN projects p ON p.id = t.project_id
-                WHERE p.team_id = ? AND m.status IN ('pending', 'running')) AS n`,
-      [teamId, teamId],
-    )?.n ?? 0;
-    if (busy > 0) {
-      throw new ConflictException({ code: 'team_has_active_runs', message: 'Team has projects with work running' });
-    }
+      // 409 team_has_active_runs: a job or an agent turn of one of its projects is still going
+      const busy = (await this.db.get<{ n: number }>(
+        `SELECT (SELECT COUNT(*) FROM project_jobs j JOIN projects p ON p.id = j.project_id WHERE p.team_id = ? AND j.status IN ('queued', 'running'))
+              + (SELECT COUNT(*) FROM agent_messages m JOIN agent_threads t ON t.id = m.thread_id JOIN projects p ON p.id = t.project_id
+                  WHERE p.team_id = ? AND m.status IN ('pending', 'running')) AS n`,
+        [teamId, teamId],
+      ))?.n ?? 0;
+      if (busy > 0) {
+        throw new ConflictException({ code: 'team_has_active_runs', message: 'Team has projects with work running' });
+      }
 
-    this.db.run('DELETE FROM teams WHERE id = ?', [teamId]);
+      await this.db.run('DELETE FROM teams WHERE id = ?', [teamId]);
+    });
   }
 
-  listTeams(userId: string): { id: string; name: string; createdAt: string; role: TeamRole }[] {
-    const rows = this.db.all<TeamRow & { role: TeamRole }>(
+  async listTeams(userId: string): Promise<{ id: string; name: string; createdAt: string; role: TeamRole }[]> {
+    const rows = await this.db.all<TeamRow & { role: TeamRole }>(
       `SELECT t.id, t.name, t.created_at, tm.role
        FROM teams t JOIN team_members tm ON tm.team_id = t.id
        WHERE tm.user_id = ? ORDER BY t.created_at DESC`,
@@ -84,11 +87,11 @@ export class TeamsService {
   }
 
   /** Paged teams list for the caller. Admins get all teams; `isMember` says which ones the caller is in. */
-  listTeamsPaged(
+  async listTeamsPaged(
     userId: string,
     isAdmin: boolean,
     opts: { page?: number; pageSize?: number; sortBy?: string; sortOrder?: 'asc' | 'desc'; q?: string },
-  ): Paged<{ id: string; name: string; createdAt: string; role: TeamRole | null; isMember: boolean; memberCount: number; projectCount: number }> {
+  ): Promise<Paged<{ id: string; name: string; createdAt: string; role: TeamRole | null; isMember: boolean; memberCount: number; projectCount: number }>> {
     const page = Math.max(1, opts.page ?? 1);
     const pageSize = Math.min(100, Math.max(1, opts.pageSize ?? 20));
     const offset = (page - 1) * pageSize;
@@ -105,7 +108,7 @@ export class TeamsService {
       params.push(userId);
     }
     if (opts.q) {
-      conditions.push('t.name LIKE ?');
+      conditions.push('t.name ILIKE ?');
       params.push(`%${opts.q}%`);
     }
 
@@ -113,22 +116,22 @@ export class TeamsService {
     const sql = `SELECT t.id, t.name, t.created_at FROM teams t ${where} ORDER BY ${orderCol} ${orderDir} LIMIT ? OFFSET ?`;
     const countSql = `SELECT COUNT(*) as n FROM teams t ${where}`;
 
-    const rows = this.db.all<TeamRow>(sql, [...params, pageSize, offset]);
-    const total = this.db.get<{ n: number }>(countSql, params)?.n ?? 0;
+    const rows = await this.db.all<TeamRow>(sql, [...params, pageSize, offset]);
+    const total = (await this.db.get<{ n: number }>(countSql, params))?.n ?? 0;
 
-    const items = rows.map((r) => {
-      const member = this.db.get<{ role: TeamRole }>(
+    const items = await Promise.all(rows.map(async (r) => {
+      const member = await this.db.get<{ role: TeamRole }>(
         'SELECT role FROM team_members WHERE team_id = ? AND user_id = ?',
         [r.id, userId],
       );
-      const memberCount = this.db.get<{ n: number }>(
+      const memberCount = (await this.db.get<{ n: number }>(
         'SELECT COUNT(*) as n FROM team_members WHERE team_id = ?',
         [r.id],
-      )?.n ?? 0;
-      const projectCount = this.db.get<{ n: number }>(
+      ))?.n ?? 0;
+      const projectCount = (await this.db.get<{ n: number }>(
         'SELECT COUNT(*) as n FROM projects WHERE team_id = ? AND archived_at IS NULL',
         [r.id],
-      )?.n ?? 0;
+      ))?.n ?? 0;
 
       return {
         id: r.id,
@@ -139,15 +142,15 @@ export class TeamsService {
         memberCount,
         projectCount,
       };
-    });
+    }));
 
     return { items, total, page, pageSize };
   }
 
-  listMembers(teamId: string): { userId: string; role: TeamRole; joinedAt: string }[] {
-    const team = this.db.get<TeamRow>('SELECT id FROM teams WHERE id = ?', [teamId]);
+  async listMembers(teamId: string): Promise<{ userId: string; role: TeamRole; joinedAt: string }[]> {
+    const team = await this.db.get<TeamRow>('SELECT id FROM teams WHERE id = ?', [teamId]);
     if (!team) throw new NotFoundException(`Team ${teamId} not found`);
-    const rows = this.db.all<TeamMemberRow>(
+    const rows = await this.db.all<TeamMemberRow>(
       'SELECT user_id, role, joined_at FROM team_members WHERE team_id = ? ORDER BY joined_at',
       [teamId],
     );
@@ -155,11 +158,11 @@ export class TeamsService {
   }
 
   /** Paged members list. */
-  listMembersPaged(
+  async listMembersPaged(
     teamId: string,
     opts: { page?: number; pageSize?: number; sortBy?: string; sortOrder?: 'asc' | 'desc'; q?: string },
-  ): Paged<{ userId: string; role: TeamRole; joinedAt: string }> {
-    const team = this.db.get<TeamRow>('SELECT id FROM teams WHERE id = ?', [teamId]);
+  ): Promise<Paged<{ userId: string; role: TeamRole; joinedAt: string }>> {
+    const team = await this.db.get<TeamRow>('SELECT id FROM teams WHERE id = ?', [teamId]);
     if (!team) throw new NotFoundException(`Team ${teamId} not found`);
 
     const page = Math.max(1, opts.page ?? 1);
@@ -170,11 +173,11 @@ export class TeamsService {
     const orderCol = colMap[opts.sortBy ?? 'joinedAt'] ?? 'joined_at';
     const orderDir = opts.sortOrder === 'desc' ? 'DESC' : 'ASC';
 
-    const rows = this.db.all<TeamMemberRow>(
+    const rows = await this.db.all<TeamMemberRow>(
       `SELECT user_id, role, joined_at FROM team_members WHERE team_id = ? ORDER BY ${orderCol} ${orderDir} LIMIT ? OFFSET ?`,
       [teamId, pageSize, offset],
     );
-    const total = this.db.get<{ n: number }>('SELECT COUNT(*) as n FROM team_members WHERE team_id = ?', [teamId])?.n ?? 0;
+    const total = (await this.db.get<{ n: number }>('SELECT COUNT(*) as n FROM team_members WHERE team_id = ?', [teamId]))?.n ?? 0;
 
     return {
       items: rows.map((r) => ({ userId: r.user_id, role: r.role, joinedAt: r.joined_at })),
@@ -184,43 +187,46 @@ export class TeamsService {
     };
   }
 
-  addMember(teamId: string, userId: string, role: TeamRole): void {
-    const existing = this.db.get<TeamMemberRow>(
-      'SELECT team_id FROM team_members WHERE team_id = ? AND user_id = ?',
-      [teamId, userId],
-    );
-    if (existing) throw new ConflictException(`User ${userId} is already a member`);
+  async addMember(teamId: string, userId: string, role: TeamRole): Promise<void> {
     const now = new Date().toISOString();
-    this.db.run('INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)', [teamId, userId, role, now]);
-  }
-
-  removeMember(teamId: string, userId: string): void {
-    // Last-owner protection
-    this.checkNotLastOwner(teamId, userId);
-    const result = this.db.run('DELETE FROM team_members WHERE team_id = ? AND user_id = ?', [teamId, userId]);
-    if (result.changes === 0) throw new NotFoundException(`Member ${userId} not found in team ${teamId}`);
-  }
-
-  updateMemberRole(teamId: string, userId: string, role: TeamRole): void {
-    // Demoting last owner → 409
-    if (role !== 'owner') this.checkNotLastOwner(teamId, userId);
-    const result = this.db.run(
-      'UPDATE team_members SET role = ? WHERE team_id = ? AND user_id = ?',
-      [role, teamId, userId],
+    const added = await this.db.run(
+      'INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES (?, ?, ?, ?) ON CONFLICT (team_id, user_id) DO NOTHING',
+      [teamId, userId, role, now],
     );
-    if (result.changes === 0) throw new NotFoundException(`Member ${userId} not found in team ${teamId}`);
+    if (added.changes === 0) throw new ConflictException(`User ${userId} is already a member`);
   }
 
-  private checkNotLastOwner(teamId: string, userId: string): void {
-    const member = this.db.get<{ role: TeamRole }>(
+  async removeMember(teamId: string, userId: string): Promise<void> {
+    await this.db.tx(async () => {
+      // Last-owner protection
+      await this.checkNotLastOwner(teamId, userId);
+      const result = await this.db.run('DELETE FROM team_members WHERE team_id = ? AND user_id = ?', [teamId, userId]);
+      if (result.changes === 0) throw new NotFoundException(`Member ${userId} not found in team ${teamId}`);
+    });
+  }
+
+  async updateMemberRole(teamId: string, userId: string, role: TeamRole): Promise<void> {
+    await this.db.tx(async () => {
+      // Demoting last owner → 409
+      if (role !== 'owner') await this.checkNotLastOwner(teamId, userId);
+      const result = await this.db.run(
+        'UPDATE team_members SET role = ? WHERE team_id = ? AND user_id = ?',
+        [role, teamId, userId],
+      );
+      if (result.changes === 0) throw new NotFoundException(`Member ${userId} not found in team ${teamId}`);
+    });
+  }
+
+  private async checkNotLastOwner(teamId: string, userId: string): Promise<void> {
+    const member = await this.db.get<{ role: TeamRole }>(
       'SELECT role FROM team_members WHERE team_id = ? AND user_id = ?',
       [teamId, userId],
     );
     if (member?.role !== 'owner') return; // not an owner, no constraint
-    const ownerCount = this.db.get<{ n: number }>(
+    const ownerCount = (await this.db.get<{ n: number }>(
       "SELECT COUNT(*) as n FROM team_members WHERE team_id = ? AND role = 'owner'",
       [teamId],
-    )?.n ?? 0;
+    ))?.n ?? 0;
     if (ownerCount <= 1) {
       throw new ConflictException({ code: 'last_owner', message: 'Cannot remove or demote the last owner of a team' });
     }

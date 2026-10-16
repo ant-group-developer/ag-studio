@@ -25,8 +25,8 @@ export function messageMarkdown(m: MessageView): string {
 }
 
 /** The whole thread (or the messages that mention `query`) as markdown, oldest first. */
-export function threadMarkdown(db: StudioDb, thread: ThreadRecord, opts: { query?: string; limit?: number } = {}): string {
-  let messages = listMessages(db, thread.id, { limit: 5000 }).map(messageView).filter((m) => m.status !== "pending");
+export async function threadMarkdown(db: StudioDb, thread: ThreadRecord, opts: { query?: string; limit?: number } = {}): Promise<string> {
+  let messages = (await listMessages(db, thread.id, { limit: 5000 })).map(messageView).filter((m) => m.status !== "pending");
   if (opts.query) {
     const q = opts.query.toLowerCase();
     messages = messages.filter((m) => m.text.toLowerCase().includes(q));

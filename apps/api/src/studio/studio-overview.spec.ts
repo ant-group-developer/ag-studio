@@ -14,12 +14,12 @@ const accounts = { getUserProfile: async (_t: string, id: string) => ({ userType
 const config = (v?: string) => ({ get: () => v }) as unknown as ConfigService;
 const node = { id: '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b', name: 'render-01', online: true, kinds: ['studio.render_final'], gpus: [], running_jobs: 0, last_seen_at: '2026-10-10T08:00:00.000Z' };
 
-describe('StudioOverviewController (real studio.db)', () => {
+describe('StudioOverviewController (real database)', () => {
   let s: RealStudio;
   beforeEach(async () => {
     s = await realStudio();
-    insertTeam(s.db, 'team-1', 'auth0|owner');
-    insertTeam(s.db, 'team-2', 'auth0|other');
+    await insertTeam(s.db, 'team-1', 'auth0|owner');
+    await insertTeam(s.db, 'team-2', 'auth0|other');
   });
   afterEach(() => s.close());
 
@@ -27,10 +27,10 @@ describe('StudioOverviewController (real studio.db)', () => {
     let farmUp = true;
     const engine = { ...s.engine, db: s.engine.db, core: s.engine.core, farmNodes: async () => { if (!farmUp) throw new Error('farm down'); return { nodes: [node] }; } };
     const ctl = new StudioOverviewController(engine as unknown as EngineService, new StudioAdminService(accounts, s.db), config());
-    const mine = createProject(s.engine.db, 'team-1', { name: 'Du lịch chậm', description: '', language: 'vi', aspect: '16:9' }, 'auth0|owner', '2026-10-10T08:00:00.000Z');
-    const theirs = createProject(s.engine.db, 'team-2', { name: 'Ẩm thực', description: '', language: 'vi', aspect: '16:9' }, 'auth0|other', '2026-10-10T09:00:00.000Z');
-    createJob(s.engine.db, { projectId: mine.id, kind: 'research', title: 'Crawl', request: {}, createdBy: 'auth0|owner' });
-    createJob(s.engine.db, { projectId: theirs.id, kind: 'render_preview', title: 'Xem trước', request: {}, createdBy: 'auth0|other' });
+    const mine = await createProject(s.engine.db, 'team-1', { name: 'Du lịch chậm', description: '', language: 'vi', aspect: '16:9' }, 'auth0|owner', '2026-10-10T08:00:00.000Z');
+    const theirs = await createProject(s.engine.db, 'team-2', { name: 'Ẩm thực', description: '', language: 'vi', aspect: '16:9' }, 'auth0|other', '2026-10-10T09:00:00.000Z');
+    await createJob(s.engine.db, { projectId: mine.id, kind: 'research', title: 'Crawl', request: {}, createdBy: 'auth0|owner' });
+    await createJob(s.engine.db, { projectId: theirs.id, kind: 'render_preview', title: 'Xem trước', request: {}, createdBy: 'auth0|other' });
 
     const q = await ctl.queue(req('auth0|owner'));
     expect(q.items.map((i) => [i.projectName, i.title])).toEqual([['Du lịch chậm', 'Crawl']]);
@@ -46,9 +46,9 @@ describe('StudioOverviewController (real studio.db)', () => {
     const ctl = new StudioOverviewController(engine as unknown as EngineService, new StudioAdminService(accounts, s.db), config());
     expect((await ctl.queue(req('auth0|admin'))).youtube).toBeNull();
     const now = new Date().toISOString();
-    noteYoutubeBlocked(s.engine.db, now);
+    await noteYoutubeBlocked(s.engine.db, now);
     expect((await ctl.queue(req('auth0|admin'))).youtube).toEqual({ blockedAt: now, until: new Date(Date.parse(now) + 6 * 3600_000).toISOString(), where: 'studio' });
-    clearYoutubeBlocked(s.engine.db);
+    await clearYoutubeBlocked(s.engine.db);
     expect((await ctl.queue(req('auth0|admin'))).youtube).toBeNull();
   });
 
@@ -58,9 +58,9 @@ describe('StudioOverviewController (real studio.db)', () => {
     const engine = { ...s.engine, db: s.engine.db, core: s.engine.core, farmNodes: async () => { if (!farmUp) throw new Error('down'); return { nodes: [node, fetcher, { ...fetcher, name: 'PC-02', online: false }] }; } };
     const ctl = new StudioOverviewController(engine as unknown as EngineService, new StudioAdminService(accounts, s.db), config());
     const now = new Date().toISOString();
-    noteYoutubeBlocked(s.engine.db, now);
+    await noteYoutubeBlocked(s.engine.db, now);
     expect(await ctl.queue(req('auth0|admin'))).toMatchObject({ youtube: { where: 'studio' }, youtubeFarm: null, referenceFetchers: ['PC-01'] });
-    noteYoutubeBlocked(s.engine.db, now, 'farm');
+    await noteYoutubeBlocked(s.engine.db, now, 'farm');
     expect((await ctl.queue(req('auth0|admin'))).youtubeFarm).toMatchObject({ where: 'farm' });
     farmUp = false;
     expect((await ctl.queue(req('auth0|admin'))).referenceFetchers).toBeNull();
@@ -69,9 +69,9 @@ describe('StudioOverviewController (real studio.db)', () => {
   it('reports Claude slots against the cap: the env value until an admin saves one', async () => {
     const ctl = new StudioOverviewController(s.engine as EngineService, new StudioAdminService(accounts, s.db), config('5'));
     const now = new Date().toISOString();
-    acquireClaudeSlot(s.engine.db, 'agent', 'turn-1', 1, now);
-    acquireClaudeSlot(s.engine.db, 'agent', 'turn-2', 1, now);
-    expect(ctl.claude()).toEqual({ running: 1, waiting: 1, max: 5, source: 'env', assistantName: 'Claude' });
+    await acquireClaudeSlot(s.engine.db, 'agent', 'turn-1', 1, now);
+    await acquireClaudeSlot(s.engine.db, 'agent', 'turn-2', 1, now);
+    expect(await ctl.claude()).toEqual({ running: 1, waiting: 1, max: 5, source: 'env', assistantName: 'Claude' });
     await expect(ctl.settings({ claudeMaxConcurrent: 3 }, req('auth0|owner'))).rejects.toBeInstanceOf(ForbiddenException);
     expect(await ctl.settings({ claudeMaxConcurrent: 3 }, req('auth0|admin'))).toMatchObject({ max: 3, source: 'settings' });
   });
@@ -80,10 +80,10 @@ describe('StudioOverviewController (real studio.db)', () => {
     const ctl = new StudioOverviewController(s.engine as EngineService, new StudioAdminService(accounts, s.db), config('5'));
     await expect(ctl.settings({ assistantName: 'AG AI' }, req('auth0|owner'))).rejects.toBeInstanceOf(ForbiddenException);
     expect(await ctl.settings({ assistantName: 'AG AI' }, req('auth0|admin'))).toMatchObject({ assistantName: 'AG AI', max: 5 });
-    expect(ctl.claude().assistantName).toBe('AG AI');
+    expect((await ctl.claude()).assistantName).toBe('AG AI');
     expect(await ctl.settings({ assistantName: '' }, req('auth0|admin'))).toMatchObject({ assistantName: 'Claude' });
     await expect(ctl.settings({}, req('auth0|admin'))).rejects.toMatchObject({ status: 400 });
     await expect(ctl.settings({ claudeMaxConcurrent: 4, assistantName: 'x'.repeat(41) }, req('auth0|admin'))).rejects.toMatchObject({ status: 422 });
-    expect(ctl.claude()).toMatchObject({ max: 5, assistantName: 'Claude' });
+    expect(await ctl.claude()).toMatchObject({ max: 5, assistantName: 'Claude' });
   });
 });

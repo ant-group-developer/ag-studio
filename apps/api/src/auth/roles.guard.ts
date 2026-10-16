@@ -63,13 +63,13 @@ export class RolesGuard implements CanActivate {
     if (authCtx.isAdmin) return true;
 
     const params = request.params as Record<string, string>;
-    const teamId = params['teamId'] ?? this.teamOfWorkspaceParam(params);
+    const teamId = params['teamId'] ?? await this.teamOfWorkspaceParam(params);
 
     if (!teamId) {
       throw new ForbiddenException('Cannot determine team for authorization');
     }
 
-    const member = this.db.get<TeamMemberRow>(
+    const member = await this.db.get<TeamMemberRow>(
       'SELECT role FROM team_members WHERE team_id = ? AND user_id = ?',
       [teamId, userId],
     );
@@ -90,19 +90,19 @@ export class RolesGuard implements CanActivate {
   }
 
   /** The team of a workspace route (`:projectId`, `:videoId`, `:threadId`); unknown ids leave it undetermined. */
-  private teamOfWorkspaceParam(params: Record<string, string>): string | undefined {
+  private async teamOfWorkspaceParam(params: Record<string, string>): Promise<string | undefined> {
     if (params['projectId']) {
-      return this.db.get<TeamOfRow>('SELECT team_id FROM projects WHERE id = ?', [params['projectId']])?.team_id;
+      return (await this.db.get<TeamOfRow>('SELECT team_id FROM projects WHERE id = ?', [params['projectId']]))?.team_id;
     }
     if (params['videoId']) {
-      return this.db.get<TeamOfRow>(
+      return (await this.db.get<TeamOfRow>(
         'SELECT p.team_id FROM videos v JOIN projects p ON p.id = v.project_id WHERE v.id = ?', [params['videoId']],
-      )?.team_id;
+      ))?.team_id;
     }
     if (params['threadId']) {
-      return this.db.get<TeamOfRow>(
+      return (await this.db.get<TeamOfRow>(
         'SELECT p.team_id FROM agent_threads t JOIN projects p ON p.id = t.project_id WHERE t.id = ?', [params['threadId']],
-      )?.team_id;
+      ))?.team_id;
     }
     return undefined;
   }

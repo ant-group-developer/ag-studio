@@ -1,5 +1,5 @@
 /**
- * Projects, videos and workspace files over a real studio.db and a real folder: creating a project seeds its
+ * Projects, videos and workspace files over a real database and a real folder: creating a project seeds its
  * workspace (versioned as Studio's), a person edits CLAUDE.md against the copy they saw, uploads keep their name,
  * hidden folders stay hidden, and every change has a version to restore.
  */
@@ -30,7 +30,7 @@ async function failure(p: Promise<unknown> | (() => unknown)) {
   return null;
 }
 
-describe('workspace routes (real studio.db and folder)', () => {
+describe('workspace routes (real database and folder)', () => {
   let s: RealStudio;
   let root: string;
   let projects: ProjectsController;
@@ -45,9 +45,9 @@ describe('workspace routes (real studio.db and folder)', () => {
     projects = new ProjectsController(engine, ws, NO_DIRECTORY);
     videos = new VideosController(engine, ws);
     files = new FilesController(engine, ws, new FileLinkService({ get: () => 's'.repeat(32) } as unknown as ConfigService));
-    insertTeam(s.db, 'team-1', OWNER);
+    await insertTeam(s.db, 'team-1', OWNER);
   });
-  afterEach(() => s.close());
+  afterEach(async () => { await s.close(); });
 
   it('creates a project with its workspace, lists it, edits it and archives it', async () => {
     expect(await failure(projects.create('team-1', { name: ' ' }, req(OWNER)))).toBe('BadRequestException:invalid');

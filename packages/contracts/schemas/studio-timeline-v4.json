@@ -142,6 +142,11 @@
               },
               "muted": {
                 "type": "boolean"
+              },
+              "gain_db": {
+                "type": "number",
+                "minimum": -30,
+                "maximum": 20
               }
             },
             "required": [
@@ -177,7 +182,7 @@
               "text": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 64
+                "maxLength": 120
               },
               "start": {
                 "type": "number",
@@ -186,7 +191,7 @@
               "duration": {
                 "type": "number",
                 "minimum": 0.5,
-                "maximum": 20
+                "maximum": 600
               },
               "position": {
                 "type": "string",
@@ -198,6 +203,14 @@
                   "bottom_left",
                   "bottom_center",
                   "bottom_right"
+                ]
+              },
+              "size": {
+                "type": "string",
+                "enum": [
+                  "s",
+                  "m",
+                  "l"
                 ]
               }
             },
@@ -344,6 +357,30 @@
                 },
                 "ducking": {
                   "type": "boolean"
+                },
+                "envelope": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "at": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "gain_db": {
+                        "type": "number",
+                        "minimum": -60,
+                        "maximum": 0
+                      }
+                    },
+                    "required": [
+                      "at",
+                      "gain_db"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "minItems": 1,
+                  "maxItems": 200
                 }
               },
               "required": [
@@ -362,6 +399,9 @@
           "type": "object",
           "properties": {
             "muted": {
+              "type": "boolean"
+            },
+            "even": {
               "type": "boolean"
             }
           },
@@ -452,6 +492,20 @@
                 "m",
                 "l"
               ]
+            },
+            "shadow": {
+              "type": "boolean"
+            },
+            "font": {
+              "type": "string",
+              "enum": [
+                "Arial",
+                "Be Vietnam Pro",
+                "Noto Sans JP",
+                "Noto Sans KR",
+                "Noto Serif",
+                "Playfair Display"
+              ]
             }
           },
           "required": [
@@ -461,6 +515,16 @@
             "size"
           ],
           "additionalProperties": false
+        },
+        "look": {
+          "type": "string",
+          "enum": [
+            "none",
+            "natural",
+            "vivid",
+            "warm",
+            "cinematic"
+          ]
         }
       },
       "required": [

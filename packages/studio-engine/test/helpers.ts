@@ -2,7 +2,8 @@ import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createStudioEngineCore, MemoryBucket, StudioDb, type ThumbnailRenderer } from "../src/index.js";
+import { createStudioEngineCore, MemoryBucket, type ThumbnailRenderer } from "../src/index.js";
+import { testStudioDb } from "../src/testing.js";
 
 export const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..", "..", "..");
 
@@ -85,13 +86,13 @@ export function fakeFarm(bucket: MemoryBucket) {
   };
 }
 
-export function world() {
+/** A fresh migrated database (Postgres in PGlite), the engine core and a bucket in memory. */
+export async function world() {
   const dir = mkdtempSync(join(tmpdir(), "studio-engine-"));
-  const dbPath = join(dir, "studio.db");
-  const core = createStudioEngineCore({ dbPath, dataRoot: join(dir, "data"), harnessRoot: ROOT });
-  const db = new StudioDb(dbPath);
+  const core = createStudioEngineCore({ dataRoot: join(dir, "data"), harnessRoot: ROOT });
+  const db = await testStudioDb();
   const bucket = new MemoryBucket();
-  return { dir, dbPath, core, db, bucket };
+  return { dir, core, db, bucket };
 }
 
 /** Thumbnail pictures without ffmpeg: a frame is a small fake JPEG naming its moment, words are appended to it. */

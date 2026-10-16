@@ -1,4 +1,5 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, UseGuards } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import { z } from 'zod';
 import { agentToolList, callAgentTool, logAudit, type ToolAnswer } from '@ag-studio/engine';
@@ -7,6 +8,7 @@ import { EngineService, referenceFetcherNames } from '../studio/engine.service';
 import { WorkspaceService } from '../workspace/workspace.service';
 import { ProjectFootageService } from '../workspace/project-footage.service';
 import { SiteNameService } from '../ag-go/site-name.service';
+import { audioTools } from '../studio/audio-tools';
 import { parseBody } from '../workspace/zod-body';
 import { AgentTokenGuard } from './agent-token.guard';
 import { AgentToolsService } from './agent-tools.service';
@@ -27,6 +29,7 @@ export class AgentToolsController {
     private readonly tools: AgentToolsService,
     private readonly footage: ProjectFootageService,
     private readonly siteName: SiteNameService,
+    private readonly config: ConfigService,
   ) {}
 
   @Get('tools')
@@ -48,15 +51,17 @@ export class AgentToolsController {
       summary: outcome === 'error' ? text.slice(0, 300) : null, details: { args: body.arguments ?? {}, result: text.slice(0, 300) },
     });
     try {
+      const tools = audioTools(this.config);
       const answer = await callAgentTool(this.tools.all, {
         db: this.engine.db, claims: call.claims, message: call.message, thread: call.thread, project: call.project, video: call.video,
-        workspaceDir: this.workspace.dir(call.project.id), role: call.role, now: () => new Date().toISOString(), footage: this.footage,
-        siteName: this.siteName.current(), referenceFetchers: () => referenceFetcherNames(this.engine),
+        workspaceDir: await this.workspace.dir(call.project.id), role: call.role, now: () => new Date().toISOString(), footage: this.footage,
+        siteName: this.siteName.current(), referenceFetchers: () => referenceFetcherNames(this.engine), bucket: this.engine.bucket,
+        ...(tools ? { audio: { db: this.engine.db, bucket: this.engine.bucket, ...tools } } : {}),
       }, body.name, body.arguments ?? {});
-      record(answer.isError ? 'error' : 'ok', answer.text);
+      await record(answer.isError ? 'error' : 'ok', answer.text);
       return answer;
     } catch (e) {
-      record('error', e instanceof Error ? e.message : String(e));
+      await record('error', e instanceof Error ? e.message : String(e));
       throw e;
     }
   }

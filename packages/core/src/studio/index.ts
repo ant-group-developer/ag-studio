@@ -10,3 +10,4 @@ export * from "./thumbnails.js";
 export * from "./cut-validate.js";
 export * from "./research-web.js";
 export * from "./style.js";
+export * from "./beat-snap.js";

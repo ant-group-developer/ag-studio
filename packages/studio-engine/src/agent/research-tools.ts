@@ -46,12 +46,12 @@ async function crawl(ctx: AgentToolContext, input: CrawlRequestInput, waitSecond
       isError: true,
     };
   }
-  const job = queueResearch(ctx.db, { projectId: ctx.project.id, crawl: r, threadId: ctx.thread.id, continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role }, ctx.now());
+  const job = await queueResearch(ctx.db, { projectId: ctx.project.id, crawl: r, threadId: ctx.thread.id, continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role }, ctx.now());
   const until = Date.now() + (waitSeconds ?? 45) * 1000;
   for (;;) {
-    const j = getJob(ctx.db, job.id)!;
+    const j = (await getJob(ctx.db, job.id))!;
     if (j.status === "done") {
-      const files = ((JSON.parse(j.result ?? "{}") as { files?: string[] }).files ?? []);
+      const files = (j.result as { files?: string[] } | null)?.files ?? [];
       return { text: json({ job_id: j.id, status: "done", ...summary(ctx, files[0] ?? "") }) };
     }
     if (j.status === "failed" || j.status === "cancelled") return { text: `Không crawl được: ${j.error ?? j.status}`, isError: true };
@@ -110,9 +110,9 @@ export const RESEARCH_TOOLS: AgentTool[] = [
       purpose: z.string().trim().min(1).max(300).describe("Học gì từ các video này (nhịp dựng, mở đầu, chuyển cảnh…)"),
     }).strict(),
     role: "editor",
-    run: (ctx, a) => {
+    run: async (ctx, a) => {
       const files = [...new Set(a.paths.map((p) => referenceFile(ctx.workspaceDir, p).path))];
-      const job = createJob(ctx.db, {
+      const job = await createJob(ctx.db, {
         projectId: ctx.project.id, threadId: ctx.thread.id, kind: "style_watch", title: `Học phong cách từ ${files.length} video tải lên`,
         request: { files, purpose: a.purpose }, continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role,
       }, ctx.now());

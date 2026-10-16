@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { CompositionSchema, newId, type Composition, type MediaProbe, type MediaProber } from "@harness/contracts";
-import { probeNvenc, renderComposition, stderrSummary, type RenderDeps, type RenderInput, type SpawnFn } from "../../../src/media/render/run.js";
+import { filterGraphFileOption, probeNvenc, renderComposition, stderrSummary, type RenderDeps, type RenderInput, type SpawnFn } from "../../../src/media/render/run.js";
 import { hasFfmpeg } from "../../../../../tests/media.js";
 
 const SRC_A = "src_01JAAAAAAAAAAAAAAAAAAAAAAA";
@@ -222,9 +222,11 @@ interface FakePlan {
  * to that path so the runner's `statSync`/link/commit steps have a file to work with. `plan` decides per
  * call what happens, by argv and by call index.
  */
-function fakeSpawn(plan: (argv: string[], index: number) => FakePlan = () => ({})): { spawn: SpawnFn; calls: string[][]; options: Record<string, unknown>[]; kills: () => number } {
+function fakeSpawn(plan: (argv: string[], index: number) => FakePlan = () => ({})): { spawn: SpawnFn; calls: string[][]; options: Record<string, unknown>[]; graphs: (string | null)[]; kills: () => number } {
   const calls: string[][] = [];
   const options: Record<string, unknown>[] = [];
+  /** Per call, the filtergraph it read from a file (the file is gone once the render is over). */
+  const graphs: (string | null)[] = [];
   let kills = 0;
 
   const spawn = ((bin: string, args: readonly string[], opts: Record<string, unknown>) => {
@@ -232,6 +234,8 @@ function fakeSpawn(plan: (argv: string[], index: number) => FakePlan = () => ({}
     const index = calls.length;
     calls.push(argv);
     options.push(opts);
+    const at = argv.findIndex((a) => a === "-/filter_complex" || a === "-filter_complex_script");
+    graphs.push(at >= 0 ? readFileSync(argv[at + 1]!, "utf8") : null);
     const p = plan(argv, index);
     const exit = p.exit === undefined ? 0 : p.exit;
 
@@ -268,7 +272,7 @@ function fakeSpawn(plan: (argv: string[], index: number) => FakePlan = () => ({}
     return child as unknown as ReturnType<SpawnFn>;
   }) as unknown as SpawnFn;
 
-  return { spawn, calls, options, kills: () => kills };
+  return { spawn, calls, options, graphs, kills: () => kills };
 }
 
 /** Answers every probe with the same 2-second 4K/48 kHz stereo shape the fake compositions below expect. */
@@ -426,6 +430,48 @@ describe("renderComposition (fake ffmpeg)", () => {
     expect(report.warnings).toContain("loudnorm_not_linear");
     // The measured numbers still go into the report: the episode is delivered, `render-valid` judges it.
     expect(report.loudness).toMatchObject({ integrated_lufs: -14.03, true_peak_dbtp: -1.49 });
+  });
+
+  it("a peak over the linear budget: measured again through an alimiter, and the final pass limits the same way", async () => {
+    // the canned block measures -23.47 LUFS / -4.61 dBTP: +9.5 dB of gain would put the peak at +4.9 dBTP
+    const { spawn, calls, graphs } = fakeSpawn();
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+    await renderComposition(d, input({ composition: fakeComposition(), outDir, encoderCfg: "cpu", sourceChecksums: CHECKSUMS }));
+    const graph = (argv: string[]) => graphs[calls.indexOf(argv)] ?? "";
+    const measures = calls.filter((c) => c.includes("-vn"));
+    expect(measures).toHaveLength(2);
+    expect(graph(measures[0]!)).not.toContain("alimiter");
+    // ceiling -23.47 + 13 - 1 = -11.47 dBFS
+    expect(graph(measures[1]!)).toContain("alimiter=limit=0.267:attack=5:release=50:level=false[limited];[limited]loudnorm=I=-14:TP=-1:LRA=11:print_format=json");
+    expect(graph(calls.find((c) => c.includes("[vout]"))!)).toContain("alimiter=limit=0.267:");
+  });
+
+  // 73 clips overran Windows' 32,767-character command line (`spawn ENAMETOOLONG`): every `-i <cache>/<64 hex>.mp4`
+  // plus the whole filtergraph went on it.
+  it("a 400-segment episode: the final passes' command lines stay under 8,000 characters", async () => {
+    const { spawn, calls, options, graphs } = fakeSpawn();
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+    const segments = Array.from({ length: 400 }, (_, k) => segment({ order: k, source_id: SRC_A, source_path: "/abs/a.mp4", in: 0, out: 2, start: 2 * k, end: 2 * k + 2, has_audio: true }));
+    await renderComposition(d, input({ composition: composition({ total_seconds: 800, segments }), outDir, encoderCfg: "cpu", sourceChecksums: CHECKSUMS }));
+    const passes = calls.map((c, i) => ({ c, i })).filter(({ c }) => c.includes("-vn") || c.includes("[vout]"));
+    expect(passes.length).toBeGreaterThanOrEqual(2);
+    for (const { c, i } of passes) {
+      expect(c.join(" ").length).toBeLessThan(8000);
+      expect(c).not.toContain("-filter_complex");
+      expect(graphs[i]).toContain("concat=n=");
+      // the mezzanines by short names, in the directory the pass runs in
+      expect(c[c.indexOf("-i") + 1]).toBe("0.mp4");
+      expect(existsSync(String(options[i]!.cwd))).toBe(false); // tmp/ is swept once the render is over
+    }
+  });
+
+  it("the filtergraph file option follows the ffmpeg version", () => {
+    expect(filterGraphFileOption("7.1.2-0+deb13u1")).toBe("-filter_complex_script");
+    expect(filterGraphFileOption("n7.0.2")).toBe("-filter_complex_script");
+    expect(filterGraphFileOption("8.1")).toBe("-/filter_complex");
+    expect(filterGraphFileOption("9.0.1-essentials_build-www.gyan.dev")).toBe("-/filter_complex");
+    expect(filterGraphFileOption("N-118912-g2c4f3e1d2b")).toBe("-/filter_complex");
+    expect(filterGraphFileOption("unknown")).toBe("-/filter_complex");
   });
 
   it("does not warn loudnorm_not_linear when the final pass really normalized linearly", async () => {
@@ -628,6 +674,37 @@ describe.skipIf(!hasFfmpeg())("renderComposition (needs ffmpeg)", () => {
     expect(Math.abs(((await d.prober.probe(join(res.clipSetDir, "000.mp4")))?.duration_seconds ?? 0) - 2)).toBeLessThanOrEqual(0.05);
   }, 240_000);
 
+  // The Kiyomizu preview (17:30) ended at 13:23, on its last dissolve: the render worker clamps `segment.out` to a
+  // source file shorter than the timeline's asset but keeps `start`/`end`, so the body came out shorter than its
+  // segment and the xfade offset (a sum of segment lengths) passed the end of the left stream.
+  it("a body shorter than its segment (clamped out) still lands every stream on total_seconds across a dissolve", async () => {
+    const srcDir = tempDir("render-src-c-");
+    const a = join(srcDir, "a.mp4");
+    const b = join(srcDir, "b.mp4");
+    makeClip(a, 3, true);
+    makeClip(b, 3, true);
+
+    const comp = composition({
+      output: { width: 640, height: 360, fps: 25, codec: "h264" },
+      total_seconds: 4,
+      segments: [
+        // the segment is 2 s long, its body only 1.5 s
+        segment({ order: 0, source_id: SRC_A, source_path: a, in: 0, out: 1.5, start: 0, end: 2, has_audio: true, transition_out: { kind: "dissolve", seconds: 0.4, tail_available: true } }),
+        segment({ order: 1, source_id: SRC_B, source_path: b, in: 0, out: 2, start: 2, end: 4, has_audio: true }),
+      ],
+      transitions: { requested: 1, applied: 1, downgraded: [] },
+    });
+    const checksums = new Map([[SRC_A, "sha256:" + "e".repeat(64)], [SRC_B, "sha256:" + "f".repeat(64)]]);
+    const d = deps(join(tempDir("render-cache-c-"), "mezz"));
+    const res = await renderComposition(d, input({ composition: comp, outDir: join(tempDir("render-out-c-"), "out"), sourceChecksums: checksums }));
+
+    const streams = spawnSync(ffprobePath(), ["-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "json", res.episodePath], { encoding: "utf8" });
+    const parsed = JSON.parse(streams.stdout) as { streams: { codec_type: string; duration: string }[] };
+    const seconds = (type: string) => Number(parsed.streams.find((s) => s.codec_type === type)?.duration);
+    expect(Math.abs(seconds("video") - 4)).toBeLessThanOrEqual(0.1);
+    expect(Math.abs(seconds("audio") - 4)).toBeLessThanOrEqual(0.1);
+  }, 240_000);
+
   it("tts narration and looped music both reach the mix", async () => {
     const srcDir = tempDir("render-src-m-");
     const a = join(srcDir, "a.mp4");
@@ -665,6 +742,84 @@ describe.skipIf(!hasFfmpeg())("renderComposition (needs ffmpeg)", () => {
     expect(musicDb).not.toBeNull();
     expect(musicDb!).toBeGreaterThan(-60);
     expect(res.report.music).toMatchObject({ track_id: "trk", loop: true });
+  }, 240_000);
+
+  it("feedback-vps §4.3: even source sound brings a quiet clip up to a loud one, measured once and kept in the cache", async () => {
+    const srcDir = tempDir("render-src-ev-");
+    const loud = join(srcDir, "loud.mp4");
+    const quiet = join(srcDir, "quiet.mp4");
+    for (const [path, db] of [[loud, 0], [quiet, -20]] as const) {
+      run(ffmpegPath(), ["-hide_banner", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+        "-t", "2", "-af", `volume=${db}dB`, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", path]);
+    }
+    const comp = (even: boolean, gain?: number) => composition({
+      output: { width: 320, height: 180, fps: 25, codec: "h264" },
+      total_seconds: 4,
+      voice: "original",
+      segments: [
+        segment({ order: 0, source_id: SRC_A, source_path: loud, in: 0, out: 2, start: 0, end: 2, has_audio: true }),
+        { ...segment({ order: 1, source_id: SRC_B, source_path: quiet, in: 0, out: 2, start: 2, end: 4, has_audio: true }), ...(gain !== undefined ? { gain_db: gain } : {}) },
+      ],
+      ...(even ? { source_even: true } : {}),
+    });
+    const checksums = new Map([[SRC_A, "sha256:" + "1".repeat(64)], [SRC_B, "sha256:" + "2".repeat(64)]]);
+    const cacheDir = join(tempDir("render-cache-ev-"), "mezz");
+    const gap = async (c: Composition) => {
+      const res = await renderComposition(deps(cacheDir), input({ composition: c, outDir: join(tempDir("render-out-ev-"), "out"), sourceChecksums: checksums }));
+      return maxVolumeDb(res.episodePath, 0.5, 1)! - maxVolumeDb(res.episodePath, 2.5, 1)!;
+    };
+    expect(await gap(comp(false))).toBeGreaterThan(15);
+    expect(Math.abs(await gap(comp(true)))).toBeLessThan(2);
+    // the clip's own gain on top of the even level
+    expect(await gap(comp(true, -6))).toBeGreaterThan(4);
+    const sidecars = readdirSync(cacheDir).filter((n) => n.endsWith(".json")).map((n) => JSON.parse(readFileSync(join(cacheDir, n), "utf8")) as { lufs?: number | null });
+    expect(sidecars.filter((s) => typeof s.lufs === "number")).toHaveLength(2);
+  }, 240_000);
+
+  it("feedback-vps §4.3: the music follows its volume line", async () => {
+    const srcDir = tempDir("render-src-env-");
+    const a = join(srcDir, "a.mp4");
+    makeClip(a, 4, false);
+    const music = join(srcDir, "music.wav");
+    makeTone(music, 6, 220);
+    const comp = composition({
+      output: { width: 320, height: 180, fps: 25, codec: "h264" },
+      total_seconds: 6,
+      voice: "none",
+      segments: [segment({ order: 0, source_id: SRC_A, source_path: a, in: 0, out: 4, start: 0, end: 4, has_audio: false }),
+        segment({ order: 1, source_id: SRC_A, source_path: a, in: 0, out: 2, start: 4, end: 6, has_audio: false })],
+      music: {
+        track_id: "trk", path: music, loop: true, fade_in: 0.1, fade_out: 0.1,
+        cues: [{ start: 0, end: 6, gain_db: -18 }],
+        envelope: [{ at: 0, gain_db: -40 }, { at: 2.5, gain_db: -40 }, { at: 3, gain_db: -10 }],
+        duck: { enabled: false, windows: [], gain_db: -12, attack_ms: 150, release_ms: 600 },
+      },
+    });
+    const res = await renderComposition(deps(join(tempDir("render-cache-env-"), "mezz")), input({ composition: comp, outDir: join(tempDir("render-out-env-"), "out"), sourceChecksums: new Map([[SRC_A, "sha256:" + "3".repeat(64)]]) }));
+    expect(maxVolumeDb(res.episodePath, 4, 1)! - maxVolumeDb(res.episodePath, 1, 1)!).toBeGreaterThan(25);
+  }, 240_000);
+
+  it("feedback-vps §4.6: every look renders with this ffmpeg and changes the picture", async () => {
+    const srcDir = tempDir("render-src-look-");
+    const a = join(srcDir, "a.mp4");
+    makeClip(a, 4, true);
+    const frameMean = (file: string) => {
+      const r = spawnSync(ffmpegPath(), ["-v", "error", "-ss", "1.5", "-i", file, "-frames:v", "1", "-vf", "scale=1:1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]);
+      expect(r.stdout).toHaveLength(3);
+      return [...r.stdout].join(",");
+    };
+    const cacheDir = join(tempDir("render-cache-look-"), "mezz");
+    const colours = new Set<string>();
+    for (const look of [undefined, "natural", "vivid", "warm", "cinematic"] as const) {
+      const comp = composition({
+        output: { width: 320, height: 180, fps: 25, codec: "h264" }, total_seconds: 3,
+        segments: [segment({ order: 0, source_id: SRC_A, source_path: a, in: 0, out: 3, start: 0, end: 3, has_audio: true })],
+        ...(look ? { look } : {}),
+      });
+      const res = await renderComposition(deps(cacheDir), input({ composition: comp, outDir: join(tempDir("render-out-look-"), "out"), sourceChecksums: new Map([[SRC_A, "sha256:" + "4".repeat(64)]]) }));
+      colours.add(frameMean(res.episodePath));
+    }
+    expect(colours.size).toBe(5);
   }, 240_000);
 
   it("a segment whose source_id has no checksum is a CONFIG_INVALID, before any ffmpeg runs", async () => {

@@ -28,11 +28,11 @@ export class ActionsController {
   @Roles('viewer')
   async list(@Param('threadId') threadId: string): Promise<{ actions: ActionView[]; youtubeBlocked: YoutubeBlock | null }> {
     const fetchers = await referenceFetcherNames(this.engine);
-    return mapErrors(() => {
-      requireThread(this.engine.db, threadId);
+    return mapErrors(async () => {
+      await requireThread(this.engine.db, threadId);
       return {
-        actions: listActions(this.engine.db, { threadId }).map(actionView),
-        youtubeBlocked: referenceDownloadBlock(this.engine.db, this.engine.core.clock.now(), fetchers.length),
+        actions: (await listActions(this.engine.db, { threadId })).map(actionView),
+        youtubeBlocked: await referenceDownloadBlock(this.engine.db, this.engine.core.clock.now(), fetchers.length),
       };
     });
   }
@@ -52,13 +52,13 @@ export class ActionsController {
   }
 
   private decide(projectId: string, actionId: string, decision: 'confirm' | 'reject', req: Request): Promise<ActionView> {
-    return mapErrors(() => {
-      const project = requireProject(this.engine.db, projectId);
-      const a = getAction(this.engine.db, actionId);
+    return mapErrors(async () => {
+      const project = await requireProject(this.engine.db, projectId);
+      const a = await getAction(this.engine.db, actionId);
       if (!a || a.project_id !== projectId) throw new StudioRunError('not_found', `không có thẻ ${actionId}`);
       const role: ActorRole = req.authContext?.isAdmin ? 'owner'
-        : this.engine.db.get<{ role: ActorRole }>('SELECT role FROM team_members WHERE team_id = ? AND user_id = ?', [project.team_id, req.authContext!.userId])?.role ?? 'viewer';
-      return actionView(decideAction(this.engine.db, { actionId, decision, userId: req.authContext!.userId, role }));
+        : (await this.engine.db.get<{ role: ActorRole }>('SELECT role FROM team_members WHERE team_id = ? AND user_id = ?', [project.team_id, req.authContext!.userId]))?.role ?? 'viewer';
+      return actionView(await decideAction(this.engine.db, { actionId, decision, userId: req.authContext!.userId, role }));
     });
   }
 }

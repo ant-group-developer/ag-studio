@@ -40,7 +40,7 @@ export class AuditController {
   @Get('scope')
   async scope(@Req() req: Request) {
     const scope = await this.admin.viewScope(req);
-    return { all: scope.all, teams: this.teams(scope) };
+    return { all: scope.all, teams: await this.teams(scope) };
   }
 
   @Get()
@@ -49,7 +49,7 @@ export class AuditController {
     const scope = await this.admin.viewScope(req, q.teamId);
     const { teamId: _t, page, pageSize, ...rest } = q;
     const filter: AuditFilter = { ...rest, ...(scope.all ? {} : { teamIds: scope.teamIds }) };
-    const out = listAudit(this.engine.db, filter, page ?? 1, pageSize ?? 50);
+    const out = await listAudit(this.engine.db, filter, page ?? 1, pageSize ?? 50);
     const people = await this.directory.summaries(out.items.map((i) => i.actorId).filter((x): x is string => !!x));
     return { ...out, items: out.items.map((i) => ({ ...i, actor: i.actorId ? people.get(i.actorId) ?? unknownPerson(i.actorId) : null })) };
   }
@@ -58,12 +58,12 @@ export class AuditController {
   @Get('actors')
   async actors(@Query('teamId') teamId: string | undefined, @Req() req: Request) {
     const scope = await this.admin.viewScope(req, teamId || undefined);
-    const ids = auditActors(this.engine.db, scope.all ? {} : { teamIds: scope.teamIds });
+    const ids = await auditActors(this.engine.db, scope.all ? {} : { teamIds: scope.teamIds });
     const people = await this.directory.summaries(ids);
     return { actors: ids.map((i) => people.get(i) ?? unknownPerson(i)) };
   }
 
-  private teams(scope: ViewScope): { id: string; name: string }[] {
+  private async teams(scope: ViewScope): Promise<{ id: string; name: string }[]> {
     if (scope.all) return this.engine.db.all<{ id: string; name: string }>('SELECT id, name FROM teams ORDER BY name');
     if (!scope.teamIds.length) return [];
     return this.engine.db.all<{ id: string; name: string }>(

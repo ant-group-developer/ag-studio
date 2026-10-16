@@ -2,7 +2,9 @@
  * Sends the usage outbox (`usage-outbox.ts`) to ag-go `POST /usage/studio-events` (contract H3), from the worker every
  * 30 s: the due events in batches of 200, marked sent once ag-go took them. A failed send (ag-go down, a key without
  * `usage:write`: 401/403) keeps them and tries again later, waiting twice as long each time up to an hour. An event ag-go
- * could never take (an id that is not a UUID) is set aside, not retried, so it never holds the others back.
+ * could never take (an id that is not a UUID) is set aside, not retried, so it never holds the others back. A batch is
+ * claimed before it is sent (its `next_at` pushed past `USAGE_CLAIM_MS`), so two workers polling at once never send the
+ * same event; a worker that stops mid-send leaves its batch due again once the claim runs out.
  */
 import type { HarnessLogger } from "@harness/core";
 import type { StudioDb } from "../studio-db.js";
@@ -14,6 +16,8 @@ export interface UsageSink {
 }
 
 export const USAGE_BATCH = 200;
+/** How long a claimed batch is kept from other senders. */
+export const USAGE_CLAIM_MS = 10 * 60_000;
 const BACKOFF_FIRST_MS = 30_000;
 const BACKOFF_MAX_MS = 3_600_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -50,46 +54,51 @@ const errorText = (e: unknown): string => {
 export async function sendDueUsage(db: StudioDb, sink: UsageSink, o: { now?: () => Date; batch?: number; log?: HarnessLogger } = {}): Promise<UsageSendReport> {
   const now = (o.now ?? (() => new Date()))();
   const at = now.toISOString();
-  const rows = db.all<{ event_key: string; payload: string; attempts: number }>(
-    "SELECT event_key, payload, attempts FROM ag_go_usage_outbox WHERE sent_at IS NULL AND next_at <= ? ORDER BY next_at, created_at, rowid LIMIT ?",
-    [at, o.batch ?? USAGE_BATCH],
+  // claimed in one statement: rows another sender holds (locked or claimed) are not due here
+  const rows = await db.all<{ event_key: string; payload: unknown; attempts: number; due: string; created_at: string; seq: number }>(
+    `WITH due AS (
+       SELECT event_key, next_at FROM ag_go_usage_outbox WHERE sent_at IS NULL AND next_at <= ?
+        ORDER BY next_at, created_at, seq LIMIT ? FOR UPDATE SKIP LOCKED)
+     UPDATE ag_go_usage_outbox o SET next_at = ? FROM due WHERE o.event_key = due.event_key
+     RETURNING o.event_key, o.payload, o.attempts, due.next_at AS due, o.created_at, o.seq`,
+    [at, o.batch ?? USAGE_BATCH, new Date(now.getTime() + USAGE_CLAIM_MS).toISOString()],
   );
+  rows.sort((a, b) => a.due.localeCompare(b.due) || a.created_at.localeCompare(b.created_at) || a.seq - b.seq);
   const report: UsageSendReport = { sent: 0, failed: 0, setAside: 0, accepted: 0, duplicates: 0 };
-  const setAside = (key: string, why: string) => {
-    db.run("UPDATE ag_go_usage_outbox SET sent_at = ?, last_error = ? WHERE event_key = ?", [at, `set aside: ${why}`.slice(0, 500), key]);
+  const setAside = async (key: string, why: string) => {
+    await db.run("UPDATE ag_go_usage_outbox SET sent_at = ?, last_error = ? WHERE event_key = ?", [at, `set aside: ${why}`.slice(0, 500), key]);
     report.setAside++;
     o.log?.warn("usage event set aside: ag-go would never take it", { event_key: key, why });
   };
   const ready: { key: string; attempts: number; event: UsageEvent }[] = [];
   for (const r of rows) {
-    let parsed: UsageEvent;
-    try { parsed = JSON.parse(r.payload) as UsageEvent; } catch { setAside(r.event_key, "payload is not JSON"); continue; }
-    const s = sendableUsage(parsed);
-    if ("problem" in s) setAside(r.event_key, s.problem);
+    if (!r.payload || typeof r.payload !== "object" || Array.isArray(r.payload)) { await setAside(r.event_key, "payload is not an event"); continue; }
+    const s = sendableUsage(r.payload as UsageEvent);
+    if ("problem" in s) await setAside(r.event_key, s.problem);
     else ready.push({ key: r.event_key, attempts: r.attempts, event: s.event });
   }
   if (!ready.length) return report;
 
-  const markSent = (keys: string[], r: { accepted: number; duplicates: number }) => {
-    db.immediate(() => {
-      for (const k of keys) db.run("UPDATE ag_go_usage_outbox SET sent_at = ?, last_error = NULL WHERE event_key = ?", [at, k]);
+  const markSent = async (keys: string[], r: { accepted: number; duplicates: number }) => {
+    await db.tx(async () => {
+      for (const k of keys) await db.run("UPDATE ag_go_usage_outbox SET sent_at = ?, last_error = NULL WHERE event_key = ?", [at, k]);
     });
     report.sent += keys.length;
     report.accepted += r.accepted;
     report.duplicates += r.duplicates;
   };
-  const markFailed = (items: typeof ready, error: string) => {
-    db.immediate(() => {
+  const markFailed = async (items: typeof ready, error: string) => {
+    await db.tx(async () => {
       for (const i of items) {
         const next = new Date(now.getTime() + usageBackoffMs(i.attempts + 1)).toISOString();
-        db.run("UPDATE ag_go_usage_outbox SET attempts = attempts + 1, next_at = ?, last_error = ? WHERE event_key = ?", [next, error, i.key]);
+        await db.run("UPDATE ag_go_usage_outbox SET attempts = attempts + 1, next_at = ?, last_error = ? WHERE event_key = ?", [next, error, i.key]);
       }
     });
     report.failed += items.length;
   };
 
   try {
-    markSent(ready.map((i) => i.key), await sink.send(ready.map((i) => i.event)));
+    await markSent(ready.map((i) => i.key), await sink.send(ready.map((i) => i.event)));
     return report;
   } catch (e) {
     const error = errorText(e);
@@ -97,14 +106,14 @@ export async function sendDueUsage(db: StudioDb, sink: UsageSink, o: { now?: () 
     if ((e as { status?: unknown }).status === 400 && ready.length > 1) {
       for (const i of ready) {
         try {
-          markSent([i.key], await sink.send([i.event]));
+          await markSent([i.key], await sink.send([i.event]));
         } catch (one) {
-          if ((one as { status?: unknown }).status === 400) setAside(i.key, errorText(one));
-          else markFailed([i], errorText(one));
+          if ((one as { status?: unknown }).status === 400) await setAside(i.key, errorText(one));
+          else await markFailed([i], errorText(one));
         }
       }
     } else {
-      markFailed(ready, error);
+      await markFailed(ready, error);
     }
     if (report.failed) {
       o.log?.warn("usage events not sent to ag-go: tried again later", {

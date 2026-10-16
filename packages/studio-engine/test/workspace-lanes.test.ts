@@ -15,6 +15,7 @@ const node = (over: Partial<Node>): Node => ({
   id: "00000000-0000-4000-8000-000000000001", name: "may-1", online: true, kinds: ["studio.transcribe"], gpus: [], running_jobs: 0, last_seen_at: NOW, ...over,
 });
 const flush = () => new Promise((r) => setTimeout(r, 0));
+const until = async (ok: () => boolean) => { for (let i = 0; i < 200 && !ok(); i++) await new Promise((r) => setTimeout(r, 5)); };
 
 describe("idle farm machines", () => {
   it("counts machines online, running nothing, that take a Studio job type", () => {
@@ -63,29 +64,32 @@ describe("job lanes from the farm", () => {
 
 describe("job runner with lanes that change", () => {
   it("starts more jobs when more lanes open, and none while running ones fill them", async () => {
-    const w = world();
-    w.db.run("INSERT OR IGNORE INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [NOW, NOW]);
-    const project = createProject(w.db, "team-1", { name: "Kênh", description: "", language: "vi", aspect: "16:9" }, "auth0|u", NOW);
+    const w = await world();
+    await w.db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?) ON CONFLICT DO NOTHING", [NOW, NOW]);
+    const project = await createProject(w.db, "team-1", { name: "Kênh", description: "", language: "vi", aspect: "16:9" }, "auth0|u", NOW);
     const workspacesRoot = join(w.dir, "workspaces");
     seedWorkspace(workspacesRoot, project);
-    for (let i = 0; i < 5; i++) createJob(w.db, { projectId: project.id, kind: "prepare_asset", title: `Chuẩn bị ${i}`, request: { asset_id: `a${i}` }, createdBy: "u" }, NOW);
+    for (let i = 0; i < 5; i++) await createJob(w.db, { projectId: project.id, kind: "prepare_asset", title: `Chuẩn bị ${i}`, request: { asset_id: `a${i}` }, createdBy: "u" }, NOW);
     const release: (() => void)[] = [];
     const handler: JobHandler = () => new Promise((res) => release.push(() => res({ result: null })));
     let lanes = 2;
     const runner = createJobRunner({
       db: w.db, logger: studioLogger({ test: "lanes" }), workspacesRoot, dataRoot: join(w.dir, "data"), handlers: { prepare_asset: handler }, lanes: () => lanes,
     });
-    expect(runner.tick()).toHaveLength(2);
-    expect(runner.tick()).toHaveLength(0);
+    expect(await runner.tick()).toHaveLength(2);
+    expect(await runner.tick()).toHaveLength(0);
     lanes = 4;
-    expect(runner.tick()).toHaveLength(2);
+    expect(await runner.tick()).toHaveLength(2);
     expect(runner.running()).toHaveLength(4);
     lanes = 1;
-    expect(runner.tick()).toHaveLength(0);
+    expect(await runner.tick()).toHaveLength(0);
+    await until(() => release.length === 4);
     while (release.length) release.shift()!();
     await runner.idle();
-    expect(runner.tick()).toHaveLength(1);
+    expect(await runner.tick()).toHaveLength(1);
+    await until(() => release.length === 1);
     while (release.length) release.shift()!();
     await runner.idle();
+    await w.db.close();
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { CompositionSchema, TimelineV4Schema, upgradeTimelineV3, type TimelineV3, type TimelineV4 } from "@harness/contracts";
+import { CompositionSchema, downgradeTimelineV4, TimelineV4Schema, upgradeTimelineV3, type TimelineV3, type TimelineV4 } from "@harness/contracts";
 import { applyTimelineOps, setCaptions, setClipMuted, setTransition, TimelineOpError, trimClip } from "../../src/studio/layout.js";
-import { studioOverlayAss } from "../../src/studio/overlay.js";
+import { studioFontFamilies, studioOverlayAss, studioScriptFont } from "../../src/studio/overlay.js";
 import { timelineToComposition } from "../../src/studio/render-plan.js";
 
 const asset = (d: number) => ({ title: "Video", summary_vi: "Clip", duration_s: d, orientation: "landscape" as const });
@@ -92,9 +92,12 @@ describe("timelineToComposition on v4", () => {
   it("ducks the music under the narration when the timeline asks for it", () => {
     const c = timelineToComposition(cut());
     expect(c.music?.duck.windows).toEqual([{ start: 0.3, end: 2.7 }, { start: 7.3, end: 8.8 }]);
+    // ducking on: no `enabled` key, so a render worker older than it still takes the composition
+    expect(c.music?.duck).not.toHaveProperty("enabled");
     const flat = cut();
     flat.music = { ...flat.music!, ducking: false };
     expect(timelineToComposition(flat).music?.duck.windows).toEqual([]);
+    expect(timelineToComposition(flat).music?.duck.enabled).toBe(false);
   });
 
   it("lines written but not read (narration declined) become subtitles only: no WAV, no ducking, timed by length", () => {
@@ -162,6 +165,81 @@ describe("timelineToComposition on v4", () => {
     // no box colour: no text sits on a box
     expect(studioOverlayAss(timelineToComposition({ ...cut(), text_style: { ...look, box_color: null } }))!.split("\n")
       .filter((l) => l.startsWith("Style:")).every((l) => l.split(",")[15] === "1")).toBe(true);
+  });
+
+  it("feedback-vps §4.1: a text's size goes from the edit op to the composition; a callout is drawn smaller than before", () => {
+    const t = applyTimelineOps(cut(), [
+      { op: "addText", kind: "callout", text: "清水寺 · Kiyomizu-dera, the temple of pure water above Kyoto", start: 1, duration: 300, position: "center", size: "l" },
+      { op: "addText", kind: "callout", text: "Wow", start: 1, duration: 2, position: "bottom_center" },
+    ], {});
+    const added = t.texts.slice(-2);
+    expect(added[0]!.size).toBe("l");
+    expect("size" in added[1]!).toBe(false);
+    expect(applyTimelineOps(t, [{ op: "updateText", text_id: added[1]!.text_id, kind: null, text: null, start: null, duration: null, position: null, size: "s" }], {}).texts.at(-1)!.size).toBe("s");
+    const c = CompositionSchema.parse(timelineToComposition(t));
+    expect(c.text_events.at(-2)!.size).toBe("l");
+    expect("size" in c.text_events.at(-1)!).toBe(false);
+    const callout = studioOverlayAss(c)!.split("\n").find((l) => l.startsWith("Style: Callout,"))!.split(",");
+    expect(Number(callout[2])).toBe(104);
+  });
+
+  it("feedback-vps §4.2: the look's font names every style; Japanese and Korean words get Noto Sans JP / KR on a machine that ships them", () => {
+    const look = { text_color: "#FFFFFF", outline_color: "#000000", box_color: null, size: "m" as const, font: "Playfair Display" as const };
+    const t = applyTimelineOps({ ...cut(), text_style: look }, [
+      { op: "addText", kind: "title", text: "Kiyomizu-dera", start: 1, duration: 5, position: "top_left" },
+      { op: "addText", kind: "title", text: "清水寺", start: 1, duration: 5, position: "top_left" },
+      { op: "addText", kind: "lower_third", text: "경복궁", start: 8, duration: 2, position: "bottom_left" },
+    ], {});
+    const c = CompositionSchema.parse(timelineToComposition(t));
+    const styles = studioOverlayAss(c)!.split("\n").filter((l) => l.startsWith("Style:")).map((l) => l.split(",")[1]);
+    expect(new Set(styles)).toEqual(new Set(["Playfair Display"]));
+    // an older worker's way: no script font asked for
+    expect(studioOverlayAss(c)).not.toContain("\\fn");
+    const ass = studioOverlayAss(c, { scriptFonts: true })!;
+    expect(ass.split("\n").find((l) => l.endsWith("清水寺"))).toContain("\\fnNoto Sans JP");
+    expect(ass.split("\n").find((l) => l.endsWith("경복궁"))).toContain("\\fnNoto Sans KR");
+    expect(ass.split("\n").find((l) => l.endsWith("Kiyomizu-dera"))).not.toContain("\\fn");
+    expect(studioFontFamilies(c)).toEqual(["Playfair Display", "Noto Sans JP", "Noto Sans KR"]);
+    expect(studioFontFamilies(timelineToComposition(cut()))).toEqual(["Arial"]);
+    expect(studioScriptFont("ありがとう", "Noto Sans JP")).toBeNull();
+    expect(studioScriptFont("Hà Nội")).toBeNull();
+  });
+
+  it("feedback-vps §4.3: a clip's gain, even source sound and the music's volume line reach the composition", () => {
+    const t = applyTimelineOps({ ...cut(), music: { track: "library:music/a.mp3", gain_db: -18, ducking: true } }, [
+      { op: "setClipGain", clip_id: "C002", gain_db: -6 },
+      { op: "setSourceEven", even: true },
+      { op: "setMusicEnvelope", points: [{ at: 10, gain_db: -12 }, { at: 0, gain_db: -30 }, { at: 10, gain_db: -10 }] },
+    ], {});
+    expect(t.clips[1]!.gain_db).toBe(-6);
+    expect(t.source_audio).toEqual({ muted: false, even: true });
+    expect(t.music!.envelope).toEqual([{ at: 0, gain_db: -30 }, { at: 10, gain_db: -10 }]);
+    const c = CompositionSchema.parse(timelineToComposition(t));
+    expect(c.segments.map((s) => s.gain_db)).toEqual([undefined, -6, undefined]);
+    expect(c.source_even).toBe(true);
+    expect(c.music!.envelope).toEqual([{ at: 0, gain_db: -30 }, { at: 10, gain_db: -10 }]);
+    // undone: no key left behind; muting keeps "even"; a new track keeps the line (its points are times in the video)
+    const back = applyTimelineOps(t, [
+      { op: "setClipGain", clip_id: "C002", gain_db: 0 },
+      { op: "setSourceMuted", muted: true },
+      { op: "setMusic", music: { track: "library:music/b.mp3", gain_db: -20, ducking: false } },
+    ], {});
+    expect("gain_db" in back.clips[1]!).toBe(false);
+    expect(back.source_audio).toEqual({ muted: true, even: true });
+    expect(back.music).toEqual({ track: "library:music/b.mp3", gain_db: -20, ducking: false, envelope: [{ at: 0, gain_db: -30 }, { at: 10, gain_db: -10 }] });
+    expect(applyTimelineOps(back, [{ op: "setMusicEnvelope", points: [] }], {}).music).toEqual({ track: "library:music/b.mp3", gain_db: -20, ducking: false });
+    expect(() => applyTimelineOps({ ...cut(), music: null }, [{ op: "setMusicEnvelope", points: [{ at: 0, gain_db: -20 }] }], {})).toThrow(TimelineOpError);
+    expect(() => downgradeTimelineV4({ ...t, edit_style: "whole" })).toThrow(/gain|envelope|even/);
+  });
+
+  it("feedback-vps §4.6: the timeline's look reaches the composition; none is as filmed", () => {
+    const warm = applyTimelineOps(cut(), [{ op: "setLook", look: "warm" }], {});
+    expect(warm.look).toBe("warm");
+    expect(timelineToComposition(warm).look).toBe("warm");
+    const none = applyTimelineOps(warm, [{ op: "setLook", look: "none" }], {});
+    expect("look" in none).toBe(false);
+    expect("look" in timelineToComposition(none)).toBe(false);
+    expect(() => downgradeTimelineV4({ ...warm, edit_style: "whole" })).toThrow(/look/);
   });
 
   it("the footage's own speech (narration original) plays at its own level, not lowered as background", () => {

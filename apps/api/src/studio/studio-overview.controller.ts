@@ -34,10 +34,10 @@ export class StudioOverviewController {
    * `assistantName` is what the web calls the AI.
    */
   @Get('claude')
-  claude() {
-    const cap = claudeMaxConcurrent(this.engine.db, this.envCap());
+  async claude() {
+    const cap = await claudeMaxConcurrent(this.engine.db, this.envCap());
     return {
-      ...claudeUsage(this.engine.db, this.engine.core.clock.now()), max: cap.value, source: cap.source, assistantName: assistantName(this.engine.db),
+      ...(await claudeUsage(this.engine.db, this.engine.core.clock.now())), max: cap.value, source: cap.source, assistantName: await assistantName(this.engine.db),
     };
   }
 
@@ -51,14 +51,14 @@ export class StudioOverviewController {
   @Get('queue')
   async queue(@Req() req: Request) {
     const isAdmin = await this.admin.isAdmin(req);
-    const { items, hidden } = studioActivity(this.engine.db, { userId: req.authContext!.userId, isAdmin });
+    const { items, hidden } = await studioActivity(this.engine.db, { userId: req.authContext!.userId, isAdmin });
     let machines = null;
     let farm: { ok: true } | { ok: false; error: string } = { ok: true };
     try { machines = (await this.engine.farmNodes()).nodes; } catch (e) { farm = { ok: false, error: e instanceof Error ? e.message : String(e) }; }
     const now = this.engine.core.clock.now();
     return {
-      claude: this.claude(), items, hidden, machines, farm,
-      youtube: youtubeBlock(this.engine.db, now), youtubeFarm: youtubeBlock(this.engine.db, now, 'farm'),
+      claude: await this.claude(), items, hidden, machines, farm,
+      youtube: await youtubeBlock(this.engine.db, now), youtubeFarm: await youtubeBlock(this.engine.db, now, 'farm'),
       referenceFetchers: machines ? referenceFetchNodes(machines).map((n) => n.name) : null,
     };
   }
@@ -80,14 +80,14 @@ export class StudioOverviewController {
     if (dto.claudeMaxConcurrent === undefined && dto.assistantName === undefined) {
       throw new BadRequestException('Send claudeMaxConcurrent or assistantName');
     }
-    return mapErrors(() => {
+    return mapErrors(async () => {
       const by = req.authContext!.userId;
       const now = this.engine.core.clock.now();
       // one transaction: a bad name does not leave the cap half saved
       try {
-        this.engine.db.immediate(() => {
-          if (dto.claudeMaxConcurrent !== undefined) setClaudeMaxConcurrent(this.engine.db, dto.claudeMaxConcurrent, by, now);
-          if (dto.assistantName !== undefined) setAssistantName(this.engine.db, dto.assistantName, by, now);
+        await this.engine.db.tx(async () => {
+          if (dto.claudeMaxConcurrent !== undefined) await setClaudeMaxConcurrent(this.engine.db, dto.claudeMaxConcurrent, by, now);
+          if (dto.assistantName !== undefined) await setAssistantName(this.engine.db, dto.assistantName, by, now);
         });
       } catch (e) {
         // the engine's HarnessError (`@harness/contracts` is not a dependency of the API)

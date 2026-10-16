@@ -104,6 +104,7 @@ export function timelineToComposition(t: AnyTimeline): Composition {
     end: r3(x.start + x.duration),
     position: x.position,
     animation: "fade" as const,
+    ...(x.size ? { size: x.size } : {}),
   }));
 
   const captionMode = v4?.captions.mode ?? "none";
@@ -124,7 +125,10 @@ export function timelineToComposition(t: AnyTimeline): Composition {
         fade_in: 1.0,
         fade_out: 2.0,
         cues: [{ start: 0, end: layout.duration, gain_db: t.music.gain_db }],
+        ...(v4?.music?.envelope ? { envelope: v4.music.envelope.map((p) => ({ at: p.at, gain_db: p.gain_db })) } : {}),
         duck: {
+          // the key only when ducking is off: a composition that ducks stays readable by every render worker
+          ...(t.music.ducking ? {} : { enabled: false }),
           windows: t.music.ducking ? duckWindows(spoken) : [],
           gain_db: -8,
           attack_ms: 200,
@@ -155,6 +159,7 @@ export function timelineToComposition(t: AnyTimeline): Composition {
       fit: "scale_pad" as const,
       // a clip muted on its own (cut 1.1.0) is silent; every render worker reads this per segment
       has_audio: hasAudio && !c.muted,
+      ...(c.gain_db ? { gain_db: c.gain_db } : {}),
       transition_out: { kind: transitions[order]!.kind, seconds: transitions[order]!.seconds, tail_available: transitions[order]!.tail_available },
     })),
     text_events: textEvents,
@@ -165,6 +170,8 @@ export function timelineToComposition(t: AnyTimeline): Composition {
     logo: null,
     transitions: { requested, applied: requested - downgraded.length, downgraded },
     text_dropped: [],
+    ...(v4?.source_audio.even ? { source_even: true } : {}),
+    ...(v4?.look && v4.look !== "none" ? { look: v4.look } : {}),
     warnings,
   };
 }

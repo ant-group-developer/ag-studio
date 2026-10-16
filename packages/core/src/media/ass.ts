@@ -2,7 +2,7 @@
  * (sub-project 5B Task 3, spec §4.6). Pure: no I/O, no clock, no randomness -- rendering (`ass=...:fontsdir=...`)
  * happens in `media-render` (Task 7), which is also where the fontname-vs-family assumption below gets a real
  * check. */
-import type { BrandProfile, CaptionCue, OverlayKind, SubtitleMode, TextAnimation, TextEvent, TextPosition } from "@harness/contracts";
+import type { BrandProfile, CaptionCue, OverlayKind, SubtitleMode, TextAnimation, TextEvent, TextLookSize, TextPosition } from "@harness/contracts";
 
 export interface AssInput {
   brand: BrandProfile | null;
@@ -16,7 +16,25 @@ export interface AssInput {
    * (Studio's text look, cut 1.1.0). Absent = the outline colour, as harness renders always did.
    */
   boxColorInOutline?: boolean;
+  /** A soft shadow under every text and subtitle (Studio's text look `shadow`). Absent = none, as before. */
+  shadow?: boolean;
+  /**
+   * The font a text or subtitle is drawn in when the style's font lacks its script (Japanese, Korean): its family name,
+   * or null to keep the style's. A render worker that ships fallback fonts passes it; absent = always the style's.
+   */
+  scriptFont?: (text: string) => string | null;
 }
+
+/** A text's own size step against its kind's size (`TextEvent.size`, Studio's text look sizes). */
+export const TEXT_SIZE_SCALE: Record<TextLookSize, number> = { s: 0.8, m: 1, l: 1.25 };
+/** One line of a text is this many times its font size tall: ascent, descent and the outline or box around it. */
+const LINE_HEIGHT = 1.3;
+/** Room left between two texts stacked at one position, in font sizes. */
+const STACK_GAP = 0.3;
+/** Average advance of a Latin glyph, in font sizes (a little over Arial's, so a line is never guessed too short). */
+const LATIN_ADVANCE = 0.56;
+/** CJK ideographs, kana, Hangul and full-width forms: one font size wide, and a line may break before any of them. */
+const WIDE_CHAR = /[\u1100-\u11ff\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\ufe30-\ufe4f\uff00-\uffef]/;
 
 const STYLES_FORMAT =
   "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding";
@@ -67,6 +85,7 @@ function formatAssTime(seconds: number): string {
 
 function styleLine(s: {
   name: string;
+  shadow?: number;
   fontname: string;
   size: number;
   primary: string;
@@ -79,7 +98,7 @@ function styleLine(s: {
   marginV: number;
 }): string {
   const bold = s.bold ? -1 : 0;
-  return `Style: ${s.name},${s.fontname},${s.size},${s.primary},${s.secondary},${s.outline},${s.back},${bold},0,0,0,100,100,0,0,${s.borderStyle},4,0,${s.alignment},0,0,${s.marginV},1`;
+  return `Style: ${s.name},${s.fontname},${s.size},${s.primary},${s.secondary},${s.outline},${s.back},${bold},0,0,0,100,100,0,0,${s.borderStyle},4,${s.shadow ?? 0},${s.alignment},0,0,${s.marginV},1`;
 }
 
 /** `\an<n>\pos(x,y)` anchor for a text-event `position`, from the brand's `safe_margin_px` (`m`). */
@@ -162,17 +181,101 @@ function cueText(cue: CaptionCue, mode: SubtitleMode): string {
   return cue.lines.map(escapeAss).join("\\N");
 }
 
-function buildCueDialogue(cue: CaptionCue, mode: SubtitleMode, marginBase: number): string {
+function buildCueDialogue(cue: CaptionCue, mode: SubtitleMode, marginBase: number, font: string | null): string {
   const style = mode === "karaoke" ? "SubHi" : "Sub";
   const marginV = marginBase + cue.raise_px;
-  return `Dialogue: 0,${formatAssTime(cue.start)},${formatAssTime(cue.end)},${style},,0,0,${marginV},,${cueText(cue, mode)}`;
+  return `Dialogue: 0,${formatAssTime(cue.start)},${formatAssTime(cue.end)},${style},,0,0,${marginV},,${font !== null ? `{\\fn${font}}` : ""}${cueText(cue, mode)}`;
 }
 
-function buildTextEventDialogue(ev: TextEvent, m: number, canvas: { width: number; height: number }): string {
-  const { an, x, y } = positionTag(ev.position, m, canvas);
+/**
+ * The lines a text is drawn on at `sizePx` within `maxWidthPx`: its own line breaks kept, a line wider than the room
+ * broken greedily at the last space (or before a CJK character; mid-word only when a word alone is too wide). Widths
+ * are estimated from the characters (`LATIN_ADVANCE`, `WIDE_CHAR`), never measured, so the result is the same on every
+ * machine. The style has no wrapping of its own (`WrapStyle: 2`): a 120-character text would run off the picture.
+ */
+export function wrapTextLines(text: string, sizePx: number, maxWidthPx: number): string[] {
+  const maxEm = maxWidthPx / sizePx;
+  const width = (ch: string) => (WIDE_CHAR.test(ch) ? 1 : LATIN_ADVANCE);
+  const out: string[] = [];
+  for (const para of text.split("\n")) {
+    const chars = [...para];
+    let line = "";
+    let lineEm = 0;
+    /** Where `line` may break: the length of the line before the break, and whether a space is dropped there. */
+    let breakAt = -1;
+    let breakSkips = false;
+    for (const ch of chars) {
+      if (ch === " ") { breakAt = line.length; breakSkips = true; }
+      else if (WIDE_CHAR.test(ch) && line.length > 0) { breakAt = line.length; breakSkips = false; }
+      const w = width(ch);
+      if (lineEm + w > maxEm && line.trim().length > 0 && ch !== " ") {
+        if (breakAt > 0) {
+          out.push(line.slice(0, breakAt).trimEnd());
+          line = line.slice(breakAt + (breakSkips ? 1 : 0));
+        } else {
+          out.push(line);
+          line = "";
+        }
+        lineEm = [...line].reduce((n, c) => n + width(c), 0);
+        breakAt = -1;
+      }
+      line += ch;
+      lineEm += w;
+    }
+    out.push(line.trim());
+  }
+  return out;
+}
+
+/** A text event as drawn: its anchor after stacking, its size, its lines. */
+interface PlacedText {
+  ev: TextEvent;
+  an: number;
+  x: number;
+  y: number;
+  sizePx: number;
+  lines: string[];
+}
+
+const BOTTOM_ANCHORS = new Set([1, 2, 3]);
+
+/**
+ * Where each text event is drawn. Texts at one position that are on screen at the same time (a title and its
+ * translation, two place names) would sit on the same `\\pos` and cover each other, so each takes a slot: the lowest
+ * slot no overlapping text at its position holds, in order of start (then of the list). Slot k sits past the texts
+ * overlapping it in slots 0..k-1, each as tall as its lines plus a gap: up the screen at a bottom position, down it at
+ * a top or the centre position. Pure and fixed: the same events always land in the same places.
+ */
+function placeTextEvents(events: TextEvent[], sizeOf: (ev: TextEvent) => number, m: number, canvas: { width: number; height: number }): PlacedText[] {
+  const order = events.map((ev, i) => ({ ev, i })).sort((a, b) => a.ev.start - b.ev.start || a.i - b.i);
+  const placed: (PlacedText & { slot: number; height: number })[] = [];
+  const byIndex = new Map<number, PlacedText>();
+  for (const { ev, i } of order) {
+    const sizePx = sizeOf(ev);
+    const lines = wrapTextLines(ev.text, sizePx, canvas.width - 2 * m);
+    const height = sizePx * (lines.length * LINE_HEIGHT + STACK_GAP);
+    const overlapping = placed.filter((p) => p.ev.position === ev.position && p.ev.start < ev.end && ev.start < p.ev.end);
+    const taken = new Set(overlapping.map((p) => p.slot));
+    let slot = 0;
+    while (taken.has(slot)) slot++;
+    let offset = 0;
+    for (let k = 0; k < slot; k++) offset += Math.max(0, ...overlapping.filter((p) => p.slot === k).map((p) => p.height));
+    const base = positionTag(ev.position, m, canvas);
+    const y = Math.round(BOTTOM_ANCHORS.has(base.an) ? base.y - offset : base.y + offset);
+    const at = { ev, an: base.an, x: base.x, y, sizePx, lines, slot, height };
+    placed.push(at);
+    byIndex.set(i, at);
+  }
+  return events.map((_, i) => byIndex.get(i)!);
+}
+
+function buildTextEventDialogue(t: PlacedText, styleSizePx: number, font: string | null): string {
+  const { ev, an, x, y } = t;
   const anim = animationTag(ev.animation, x, y);
-  const override = `{\\an${an}\\pos(${x},${y})${anim}}`;
-  return `Dialogue: 1,${formatAssTime(ev.start)},${formatAssTime(ev.end)},${KIND_STYLE_NAME[ev.kind]},,0,0,0,,${override}${escapeAss(ev.text)}`;
+  const size = t.sizePx !== styleSizePx ? `\\fs${t.sizePx}` : "";
+  const fn = font !== null ? `\\fn${font}` : "";
+  const override = `{\\an${an}\\pos(${x},${y})${size}${fn}${anim}}`;
+  return `Dialogue: 1,${formatAssTime(ev.start)},${formatAssTime(ev.end)},${KIND_STYLE_NAME[ev.kind]},,0,0,0,,${override}${t.lines.map(escapeAss).join("\\N")}`;
 }
 
 const NO_BRAND_STYLE = styleLine({
@@ -207,7 +310,9 @@ export function buildAss(p: AssInput): string {
   const back = assColor(brand.colors.box);
 
   const subAlignment = brand.subtitles.position === "top_center" ? 8 : 2;
+  const shadowOf = (sizePx: number) => (p.shadow ? Math.max(2, Math.round(sizePx * 0.05)) : 0);
   const subStyle = styleLine({
+    shadow: shadowOf(brand.subtitles.size_px),
     name: "Sub",
     fontname: regularFont,
     size: brand.subtitles.size_px,
@@ -221,6 +326,7 @@ export function buildAss(p: AssInput): string {
     marginV: m,
   });
   const subHiStyle = styleLine({
+    shadow: shadowOf(brand.subtitles.size_px),
     name: "SubHi",
     fontname: regularFont,
     size: brand.subtitles.size_px,
@@ -238,6 +344,7 @@ export function buildAss(p: AssInput): string {
     const cfg = brand.text[kind];
     const bold = kind === "title" || kind === "callout";
     return styleLine({
+      shadow: shadowOf(cfg.size_px),
       name: KIND_STYLE_NAME[kind],
       fontname: bold ? boldFont : regularFont,
       size: cfg.size_px,
@@ -253,8 +360,11 @@ export function buildAss(p: AssInput): string {
   };
 
   const eventLines: string[] = [];
-  if (mode !== "none") for (const cue of cues) eventLines.push(buildCueDialogue(cue, mode, m));
-  for (const ev of text_events) eventLines.push(buildTextEventDialogue(ev, m, canvas));
+  const fontFor = (text: string) => p.scriptFont?.(text) ?? null;
+  if (mode !== "none") for (const cue of cues) eventLines.push(buildCueDialogue(cue, mode, m, fontFor(cue.lines.join(" "))));
+  const styleSize = (ev: TextEvent) => brand.text[ev.kind].size_px;
+  const placed = placeTextEvents(text_events, (ev) => Math.round(styleSize(ev) * TEXT_SIZE_SCALE[ev.size ?? "m"]), m, canvas);
+  for (const t of placed) eventLines.push(buildTextEventDialogue(t, styleSize(t.ev), fontFor(t.ev.text)));
 
   return (
     [

@@ -32,9 +32,9 @@ export const ACTION_TOOLS: AgentTool[] = [
     run: async (ctx, a) => {
       // YouTube blocking the Studio server refuses the card only when no farm machine can fetch instead (or the farm
       // is blocked too): through the farm it would work (`referenceDownloadBlock`)
-      const studioBlock = a.kind === "reference_download" ? youtubeBlock(ctx.db, ctx.now()) : null;
+      const studioBlock = a.kind === "reference_download" ? await youtubeBlock(ctx.db, ctx.now()) : null;
       const fetchers = studioBlock && ctx.referenceFetchers ? await ctx.referenceFetchers().catch(() => [] as string[]) : [];
-      const blocked = studioBlock ? referenceDownloadBlock(ctx.db, ctx.now(), fetchers.length) : null;
+      const blocked = studioBlock ? await referenceDownloadBlock(ctx.db, ctx.now(), fetchers.length) : null;
       if (blocked) {
         throw new StudioRunError("rejected", [
           blocked.where === "farm"
@@ -47,7 +47,7 @@ export const ACTION_TOOLS: AgentTool[] = [
       const viaFarm = studioBlock && fetchers.length ? ` Video mẫu sẽ tải qua máy farm (${fetchers.join(", ")}) vì YouTube đang chặn máy chủ Studio.` : "";
       const params = { ...a.params };
       if (VIDEO_KINDS.has(a.kind) && params.video_id === undefined && ctx.video) params.video_id = ctx.video.id;
-      const action = proposeAction(ctx.db, {
+      const action = await proposeAction(ctx.db, {
         projectId: ctx.project.id, threadId: ctx.thread.id, messageId: ctx.message.id, kind: a.kind, title: a.title, summary: a.why, params,
         createdBy: ctx.claims.sub,
       }, ctx.now());

@@ -23,9 +23,9 @@ export class WorkspaceService {
   }
 
   /** The project's folder; re-seeded when missing (a fresh disk, or a project made before the folder existed). */
-  dir(projectId: string): string {
+  async dir(projectId: string): Promise<string> {
     const dir = projectDir(this.root, projectId);
-    if (!existsSync(dir)) seedWorkspace(this.root, requireProject(this.engine.db, projectId));
+    if (!existsSync(dir)) seedWorkspace(this.root, await requireProject(this.engine.db, projectId));
     return dir;
   }
 }

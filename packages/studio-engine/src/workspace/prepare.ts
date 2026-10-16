@@ -76,6 +76,8 @@ export interface PrepareDeps {
   pollMs?: number;
   /** How long a prep is waited for at most (default 60 min). */
   maxWaitMs?: number;
+  /** Waits before each new try of an ag-go call that answered 429/502/503/504 (default 2, 5 and 15 s). */
+  retryDelaysMs?: readonly number[];
 }
 
 /** `request` of a `prepare_asset` job. */
@@ -84,6 +86,8 @@ export interface PrepareRequest {
   /** ag-go's name of the video, when known. */
   name?: string | null;
   duration_s?: number | null;
+  /** Jobs queued together (`queuePrepare` of several videos): the thread hears once, when the last one ends. */
+  batch_id?: string;
 }
 
 export const ASSET_ID = /^[A-Za-z0-9_-]{1,80}$/;
@@ -125,6 +129,9 @@ export function clock(s: number): string {
 
 /** Images downloaded at once. */
 const DOWNLOAD_LANES = 8;
+/** ag-go's answers that mean "busy, try again", not "no". */
+const RETRY_STATUS = new Set([429, 502, 503, 504]);
+const RETRY_DELAYS_MS = [2000, 5000, 15_000];
 const POLL_MS = 5000;
 const MAX_WAIT_MS = 60 * 60_000;
 /** A frame or sheet path as ag-go names them (`frames/001.jpg`, `sheets/01.jpg`): nothing else is written. */
@@ -144,13 +151,13 @@ export function prepareHandler(d: PrepareDeps): (job: JobRecord, ctx: JobContext
     try {
       return await prepareAsset(d, job, ctx);
     } catch (e) {
-      const req = JSON.parse(job.request) as PrepareRequest;
-      if (!(e instanceof JobStopped) && !ctx.stopRequested() && ASSET_ID.test(req.asset_id)) {
-        savePrepared(d.db, {
+      const req = job.request as PrepareRequest;
+      if (!(e instanceof JobStopped) && !await ctx.stopRequested() && ASSET_ID.test(req.asset_id)) {
+        await savePrepared(d.db, {
           project_id: job.project_id, asset_id: req.asset_id, status: "failed", name: req.name ?? null, duration_s: req.duration_s ?? null, width: null, height: null,
-          has_audio: null, shots: null, transcript: 0, source_kind: null, watermarked: null, error: (e instanceof Error ? e.message : String(e)).slice(0, 500),
+          has_audio: null, shots: null, transcript: false, source_kind: null, watermarked: null, error: (e instanceof Error ? e.message : String(e)).slice(0, 500),
         }, ctx.now());
-        writeVideoIndexesFor(d.db, ctx.workspaceDir, job.project_id, req.asset_id);
+        await writeVideoIndexesFor(d.db, ctx.workspaceDir, job.project_id, req.asset_id);
       }
       throw e;
     }
@@ -158,11 +165,11 @@ export function prepareHandler(d: PrepareDeps): (job: JobRecord, ctx: JobContext
 }
 
 export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobContext): Promise<JobOutcome> {
-  const req = JSON.parse(job.request) as PrepareRequest;
+  const req = job.request as PrepareRequest;
   const assetId = req.asset_id;
   const site = d.siteName?.() ?? DEFAULT_SITE_NAME;
   if (!ASSET_ID.test(assetId)) throw new Error(`id video ${site} không hợp lệ: ${assetId}`);
-  const actAs = projectActAs(d.db, job.project_id);
+  const actAs = await projectActAs(d.db, job.project_id);
   if (!actAs) throw new Error(`dự án chưa có chủ để hỏi ${site}`);
 
   const prep = await readyPrep(d, ctx, actAs, assetId, site, req.duration_s ?? null);
@@ -183,8 +190,8 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
     note = prep.hasAudio ? "không nghe thấy lời nói" : "video không có tiếng";
   }
 
-  ctx.checkpoint();
-  ctx.report({ phase: "Đang ghi vào inputs/", progress: IMAGES.to, waiting: false });
+  await ctx.checkpoint();
+  await ctx.report({ phase: "Đang ghi vào inputs/", progress: IMAGES.to, waiting: false });
   const shotsFile: InputShots = {
     schema_version: "studio.input-shots/v1", asset_id: assetId, name, duration_s: prep.durationS, width: prep.width || null, height: prep.height || null,
     fps: prep.fps, has_audio: prep.hasAudio, source: { kind: prep.sourceKind, watermarked: prep.watermarked },
@@ -204,13 +211,13 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
   mkdirSync(join(ctx.workspaceDir, "inputs"), { recursive: true });
   cpSync(out, dest, { recursive: true });
   const shots = shotsFile.shots.length;
-  savePrepared(d.db, {
+  await savePrepared(d.db, {
     project_id: job.project_id, asset_id: assetId, status: "ready", name, duration_s: prep.durationS, width: shotsFile.width, height: shotsFile.height,
-    has_audio: prep.hasAudio ? 1 : 0, shots, transcript: transcript && transcript.segments.length ? 1 : 0,
-    source_kind: prep.sourceKind, watermarked: prep.watermarked ? 1 : 0, error: null,
+    has_audio: prep.hasAudio, shots, transcript: !!transcript && transcript.segments.length > 0,
+    source_kind: prep.sourceKind, watermarked: prep.watermarked, error: null,
   }, ctx.now());
-  writeVideoIndexesFor(d.db, ctx.workspaceDir, job.project_id, assetId);
-  ctx.report({ progress: 1 });
+  await writeVideoIndexesFor(d.db, ctx.workspaceDir, job.project_id, assetId);
+  await ctx.report({ progress: 1 });
   return {
     result: { asset_id: assetId, name, shots, duration_s: prep.durationS, transcript: note, folder: `${inputDir(assetId)}/` },
     message: `Đã chuẩn bị **${name}** (${clock(prep.durationS)}): ${shots} cảnh, lời thoại: ${note}. Xem \`${inputDir(assetId)}/README.md\`.`,
@@ -224,7 +231,7 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
 async function readyPrep(
   d: PrepareDeps, ctx: JobContext, actAs: string, assetId: string, site: string, durationS: number | null,
 ): Promise<NonNullable<AgGoPrepItem["prep"]>> {
-  ctx.report({ phase: `Đang hỏi ${site}`, progress: 0 });
+  await ctx.report({ phase: `Đang hỏi ${site}`, progress: 0 });
   const pick = (r: { items: AgGoPrepItem[] }): AgGoPrepItem => {
     const item = r.items.find((i) => i.assetId === assetId);
     if (!item) throw new Error(`${site} không trả lời về video này`);
@@ -232,7 +239,7 @@ async function readyPrep(
   };
   const ask = async (how: "read" | "run"): Promise<AgGoPrepItem> => {
     try {
-      return pick(await d.preps[how](actAs, [assetId]));
+      return pick(await retryBusy(() => d.preps[how](actAs, [assetId]), ctx.signal, d.retryDelaysMs));
     } catch (e) {
       if ((e as { status?: number }).status === 404) throw new Error(`${site} không cho chủ dự án dùng video này (không có quyền hoặc video không còn)`);
       throw e;
@@ -242,26 +249,44 @@ async function readyPrep(
   let asked = false;
   const until = Date.now() + (d.maxWaitMs ?? MAX_WAIT_MS);
   for (;;) {
-    ctx.checkpoint();
+    await ctx.checkpoint();
     if (item.state === "ready" && item.prep) return item.prep;
     if (!asked) {
       // a prep that has to run first: its length gives the time left until ag-go reports progress
       asked = true;
-      if (durationS) ctx.setUnits(durationS);
+      if (durationS) await ctx.setUnits(durationS);
       item = await ask("run");
       continue;
     }
     if (item.state === "failed") throw new Error(`${site} không chuẩn bị được video này${item.error ? `: ${item.error}` : ""}`);
     if (item.state === "missing") throw new Error(`${site} chưa nhận chuẩn bị video này; thử lại sau`);
     const phase = PHASE[item.phase ?? "queued"];
-    ctx.report({
+    await ctx.report({
       phase: phase.text, progress: phase.from + (phase.to - phase.from) * Math.max(0, Math.min(1, item.progress ?? 0)),
       waiting: (item.phase ?? "queued") === "queued",
     });
     if (Date.now() >= until) throw new Error(`${site} chưa chuẩn bị xong video này sau ${Math.round((d.maxWaitMs ?? MAX_WAIT_MS) / 60_000)} phút; thử lại sau`);
     await pause(d.pollMs ?? POLL_MS, ctx.signal);
-    ctx.checkpoint();
+    await ctx.checkpoint();
     item = await ask("read");
+  }
+}
+
+/**
+ * `fn`, tried again after each of `delays` while it fails with an HTTP status ag-go answers when it is busy (the
+ * error's `status`: 429, 502, 503, 504). Any other failure, a stopped job, or the last try's failure is thrown. On
+ * prod several prepares at once, eight image downloads each, drew 503s that failed the whole prepare.
+ */
+export async function retryBusy<T>(fn: () => Promise<T>, signal: AbortSignal, delays: readonly number[] = RETRY_DELAYS_MS): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const status = (e as { status?: unknown } | null)?.status;
+      if (typeof status !== "number" || !RETRY_STATUS.has(status) || attempt >= delays.length || signal.aborted) throw e;
+      await pause(delays[attempt]!, signal);
+      if (signal.aborted) throw e;
+    }
   }
 }
 
@@ -281,7 +306,7 @@ async function downloadImages(d: PrepareDeps, ctx: JobContext, prep: NonNullable
   for (const i of images) if (!IMAGE_PATH.test(i.path)) throw new Error(`${site} trả về đường dẫn ảnh lạ: ${i.path}`);
   mkdirSync(join(out, "frames"), { recursive: true });
   mkdirSync(join(out, "sheets"), { recursive: true });
-  ctx.report({ phase: "Đang tải khung hình", progress: IMAGES.from, waiting: false });
+  await ctx.report({ phase: "Đang tải khung hình", progress: IMAGES.from, waiting: false });
   let next = 0;
   let done = 0;
   let broken = false;
@@ -290,10 +315,10 @@ async function downloadImages(d: PrepareDeps, ctx: JobContext, prep: NonNullable
     while (!broken && next < images.length) {
       const img = images[next++]!;
       try {
-        ctx.checkpoint();
+        await ctx.checkpoint();
         const dest = join(out, img.path);
         mkdirSync(dirname(dest), { recursive: true });
-        await d.download(img.url, dest, ctx.signal);
+        await retryBusy(() => d.download(img.url, dest, ctx.signal), ctx.signal, d.retryDelaysMs);
       } catch (e) {
         broken = true;
         throw e;
@@ -301,13 +326,13 @@ async function downloadImages(d: PrepareDeps, ctx: JobContext, prep: NonNullable
       done++;
       if (Date.now() - lastShown >= 500 || done === images.length) {
         lastShown = Date.now();
-        ctx.report({ phase: `Đang tải khung hình (${done}/${images.length})`, progress: IMAGES.from + (IMAGES.to - IMAGES.from) * (done / images.length) });
+        await ctx.report({ phase: `Đang tải khung hình (${done}/${images.length})`, progress: IMAGES.from + (IMAGES.to - IMAGES.from) * (done / images.length) });
       }
     }
   }));
   const failed = lanes.find((r): r is PromiseRejectedResult => r.status === "rejected");
   if (failed) {
-    ctx.checkpoint();
+    await ctx.checkpoint();
     throw failed.reason;
   }
 }

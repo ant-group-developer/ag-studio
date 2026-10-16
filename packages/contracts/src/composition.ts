@@ -26,7 +26,24 @@ export const OVERLAY_TEXT_MAX: Record<OverlayKind, number> = { title: 48, callou
 
 const hexColor = z.string().regex(/^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$/);
 
+/**
+ * The fonts a text look may name (feedback-vps §4.2): Arial, which every render machine has installed, and fonts under
+ * the SIL Open Font License that the render worker ships in its release (`fonts/` of ag-render-worker). Noto Sans JP
+ * and KR also draw Japanese and Korean words whatever the look's font is.
+ */
+export const TEXT_FONTS = ["Arial", "Be Vietnam Pro", "Noto Sans JP", "Noto Sans KR", "Noto Serif", "Playfair Display"] as const;
+export type TextFont = (typeof TEXT_FONTS)[number];
+
+/**
+ * The colour of a video's picture (feedback-vps §4.6): a fixed grade applied to every clip when its mezzanine is made.
+ * `none` = as filmed; `natural` a little contrast and colour; `vivid` strong colour; `warm` golden; `cinematic` soft
+ * contrast, teal shadows, warm highlights.
+ */
+export const VIDEO_LOOKS = ["none", "natural", "vivid", "warm", "cinematic"] as const;
+export type VideoLook = (typeof VIDEO_LOOKS)[number];
+
 export const TEXT_LOOK_SIZES = ["s", "m", "l"] as const;
+export type TextLookSize = (typeof TEXT_LOOK_SIZES)[number];
 /**
  * A team's look for the words on screen (Studio branding `on_screen_text.look`, frozen into a shot-cut timeline and
  * its composition): text and outline colours, a box behind titles and lower thirds (`null` = none), a size step.
@@ -37,6 +54,10 @@ export const TextLookSchema = z.object({
   outline_color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "#RRGGBB"),
   box_color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "#RRGGBB").nullable(),
   size: z.enum(TEXT_LOOK_SIZES),
+  /** A soft shadow under texts and subtitles (feedback-vps §4.1). Absent = none. Needs render level 3. */
+  shadow: z.boolean().optional(),
+  /** One of `TEXT_FONTS` (feedback-vps §4.2). Absent = Arial. Needs render level 4. */
+  font: z.enum(TEXT_FONTS).optional(),
 }).strict();
 export type TextLook = z.infer<typeof TextLookSchema>;
 
@@ -162,6 +183,8 @@ export const TextEventSchema = z.object({
   end: z.number().min(0),
   position: z.enum(TEXT_POSITIONS),
   animation: z.enum(TEXT_ANIMATIONS),
+  /** This text's own size step against its kind's (feedback-vps §4.1). Absent = `m`. Needs render level 3. */
+  size: z.enum(TEXT_LOOK_SIZES).optional(),
 }).strict();
 
 /** `composition.json`: the fully-resolved render plan -- picture segments (mirroring `timeline.json.video`
@@ -195,6 +218,8 @@ export const CompositionSchema = z.object({
     end: z.number(),
     fit: z.enum(["scale_pad", "scale_crop"]),
     has_audio: z.boolean(),
+    /** Feedback-vps §4.3: this segment's own sound louder or quieter, dB. Absent = 0. Needs render level 5. */
+    gain_db: z.number().optional(),
     transition_out: z.object({
       kind: z.enum(TRANSITION_KINDS),
       seconds: z.number(),
@@ -216,7 +241,13 @@ export const CompositionSchema = z.object({
     fade_in: z.number(),
     fade_out: z.number(),
     cues: z.array(z.object({ start: z.number(), end: z.number(), gain_db: z.number() }).strict()),
+    /** Feedback-vps §4.3: the music's gain along the episode, linear between points (absent = `cues[0].gain_db`). Level 5. */
+    envelope: z.array(z.object({ at: z.number(), gain_db: z.number() }).strict()).optional(),
     duck: z.object({
+      /** `false`: the music plays at its own gain, never pushed down under the voice. Absent = `true` (every
+       * composition before it had this key ducked); Studio writes the key only when ducking is off, so a render
+       * worker that predates it still takes every ducked composition (`RENDER_FEATURE_LEVEL`). */
+      enabled: z.boolean().optional(),
       windows: z.array(z.object({ start: z.number(), end: z.number() }).strict()),
       gain_db: z.number(),
       attack_ms: z.number(),
@@ -245,6 +276,13 @@ export const CompositionSchema = z.object({
     }).strict()),
   }).strict(),
   text_dropped: z.array(z.object({ id: z.string(), reason: z.string() }).strict()).default([]),
+  /**
+   * Feedback-vps §4.3: the render worker measures each segment's own sound (ebur128 of its mezzanine, cached with it) and
+   * brings it to the median of them, by at most ±12 dB, before `gain_db`. Absent = as recorded. Needs render level 5.
+   */
+  source_even: z.boolean().optional(),
+  /** Feedback-vps §4.6: the colour grade of every segment (`VIDEO_LOOKS`, never `none`). Absent = as filmed. Level 6. */
+  look: z.enum(VIDEO_LOOKS).optional(),
   warnings: z.array(z.string()),
 }).strict();
 
@@ -288,7 +326,64 @@ export const RenderReportSchema = z.object({
   ffmpeg_version: z.string(),
 }).strict();
 
-export type Overlays = z.infer<typeof OverlaysSchema>;
+const inspectSpanSchema = z.object({ start: z.number(), end: z.number() });
+
+/** What the inspection of a finished render can find (`inspectionIssues` in `@harness/core`). */
+export const RENDER_INSPECT_ISSUE_CODES = ["duration", "freeze", "black", "silence", "clip_loudness"] as const;
+export type RenderInspectIssueCode = (typeof RENDER_INSPECT_ISSUE_CODES)[number];
+
+export const RenderInspectIssueSchema = z.object({
+  /** One of `RENDER_INSPECT_ISSUE_CODES`; a reader skips a code it does not know (a newer render worker). */
+  code: z.string(),
+  severity: z.enum(["error", "warning"]),
+  /** Seconds on the episode. */
+  start: z.number().optional(),
+  end: z.number().optional(),
+  /** The composition segment it is in (`segments[].order`). */
+  order: z.number().int().optional(),
+  /** `duration`: the composition's length and the stream furthest from it. */
+  expected_s: z.number().optional(),
+  actual_s: z.number().optional(),
+  /** `clip_loudness`: the segment against the median of the segments, in dB. */
+  delta_db: z.number().optional(),
+  /** `freeze`: the picture never moves again. */
+  to_end: z.boolean().optional(),
+});
+export type RenderInspectIssue = z.infer<typeof RenderInspectIssueSchema>;
+
+/**
+ * `inspect.json`: the render worker's check of a file it rendered (plan 2026-10-15 feedback-vps §2.1) -- one ffmpeg pass
+ * of `freezedetect`, `blackdetect`, `silencedetect` and `ebur128`, read per composition segment, and contact sheets
+ * of the picture. Not strict: Studio reads what a newer worker wrote.
+ */
+export const RenderInspectionSchema = z.object({
+  schema_version: schemaVersion("render-inspect"),
+  /** The composition's `total_seconds`, and each stream of the file as measured. */
+  expected_seconds: z.number(),
+  video_seconds: z.number().nullable(),
+  audio_seconds: z.number().nullable(),
+  freezes: z.array(inspectSpanSchema),
+  blacks: z.array(inspectSpanSchema),
+  silences: z.array(inspectSpanSchema),
+  /** Momentary loudness gated at -70 LUFS over each segment's window; null: silent or no audio. */
+  segments: z.array(z.object({ order: z.number().int(), start: z.number(), end: z.number(), lufs: z.number().nullable() })),
+  loudness_median_lufs: z.number().nullable(),
+  /** `sheet-NN.jpg`: `frames` tiles from `from_s`, one every `every_s` seconds, `columns` x `rows`, row by row. */
+  sheets: z.array(z.object({
+    file: z.string(),
+    from_s: z.number(),
+    every_s: z.number(),
+    columns: z.number().int(),
+    rows: z.number().int(),
+    frames: z.number().int(),
+    tile_width: z.number().int(),
+  })),
+  issues: z.array(RenderInspectIssueSchema),
+  inspect_seconds: z.number(),
+});
+export type RenderInspection = z.infer<typeof RenderInspectionSchema>;
+
+export type Overlays =z.infer<typeof OverlaysSchema>;
 export type BrandProfile = z.infer<typeof BrandProfileSchema>;
 export type MusicTrack = z.infer<typeof MusicTrackSchema>;
 export type CaptionCue = z.infer<typeof CaptionCueSchema>;

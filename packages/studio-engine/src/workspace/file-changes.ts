@@ -16,11 +16,11 @@ export interface ChangedFile {
 
 interface VersionText { id: string; sha256: string; content: string | null }
 
-/** The version of `path` just before the row `rowid` (the one a change is compared with), if any. */
-export function versionBefore(db: StudioDb, projectId: string, path: string, rowid: number): VersionText | undefined {
+/** The version of `path` just before the one numbered `seq` (the one a change is compared with), if any. */
+export async function versionBefore(db: StudioDb, projectId: string, path: string, seq: number): Promise<VersionText | undefined> {
   return db.get<VersionText>(
-    "SELECT id, sha256, content FROM project_file_versions WHERE project_id = ? AND path = ? AND rowid < ? ORDER BY rowid DESC LIMIT 1",
-    [projectId, path, rowid],
+    "SELECT id, sha256, content FROM project_file_versions WHERE project_id = ? AND path = ? AND seq < ? ORDER BY seq DESC LIMIT 1",
+    [projectId, path, seq],
   );
 }
 
@@ -28,17 +28,17 @@ export function versionBefore(db: StudioDb, projectId: string, path: string, row
  * The files turn `messageId` changed, by path: its last version of each against the version before its first one.
  * A file it made then removed, or put back as it was, is not listed.
  */
-export function turnChangedFiles(db: StudioDb, projectId: string, messageId: string): ChangedFile[] {
-  const groups = db.all<{ path: string; first: number; last: number }>(
-    `SELECT path, MIN(rowid) AS first, MAX(rowid) AS last FROM project_file_versions
+export async function turnChangedFiles(db: StudioDb, projectId: string, messageId: string): Promise<ChangedFile[]> {
+  const groups = await db.all<{ path: string; first: number; last: number }>(
+    `SELECT path, MIN(seq) AS first, MAX(seq) AS last FROM project_file_versions
       WHERE message_id = ? AND project_id = ? GROUP BY path ORDER BY path`,
     [messageId, projectId],
   );
   const out: ChangedFile[] = [];
   for (const g of groups) {
-    const after = db.get<VersionText>("SELECT id, sha256, content FROM project_file_versions WHERE rowid = ?", [g.last]);
+    const after = await db.get<VersionText>("SELECT id, sha256, content FROM project_file_versions WHERE seq = ?", [g.last]);
     if (!after) continue;
-    const before = versionBefore(db, projectId, g.path, g.first);
+    const before = await versionBefore(db, projectId, g.path, g.first);
     const existed = !!before && before.sha256 !== "";
     const exists = after.sha256 !== "";
     if (!existed && !exists) continue;
@@ -62,7 +62,7 @@ export type VersionDiff = { path: string; version_id: string; before_version_id:
   | { unavailable: "binary" | "too_large" }
 );
 
-interface VersionRow { rowid: number; id: string; path: string; sha256: string; size: number; content: string | null }
+interface VersionRow { seq: number; id: string; path: string; sha256: string; size: number; content: string | null }
 
 /** A version's text ("" for a deletion), or why there is none. */
 function versionText(path: string, v: VersionRow | undefined): string | { unavailable: "binary" | "too_large" } {
@@ -76,20 +76,20 @@ function versionText(path: string, v: VersionRow | undefined): string | { unavai
  * empty file, for a file a turn made) or, by default, with the version just before it (nothing before = an empty file).
  * 3 lines of context around each change.
  */
-export function versionDiff(db: StudioDb, projectId: string, versionId: string, opts: { base?: string | null } = {}): VersionDiff {
-  const cols = "rowid, id, path, sha256, size, content";
-  const v = db.get<VersionRow>(`SELECT ${cols} FROM project_file_versions WHERE project_id = ? AND id = ?`, [projectId, versionId]);
+export async function versionDiff(db: StudioDb, projectId: string, versionId: string, opts: { base?: string | null } = {}): Promise<VersionDiff> {
+  const cols = "seq, id, path, sha256, size, content";
+  const v = await db.get<VersionRow>(`SELECT ${cols} FROM project_file_versions WHERE project_id = ? AND id = ?`, [projectId, versionId]);
   if (!v) throw new StudioRunError("not_found", `không có phiên bản ${versionId}`);
   let before: VersionRow | undefined;
   if (opts.base === null) {
     before = undefined;
   } else if (opts.base) {
-    before = db.get<VersionRow>(`SELECT ${cols} FROM project_file_versions WHERE project_id = ? AND id = ?`, [projectId, opts.base]);
+    before = await db.get<VersionRow>(`SELECT ${cols} FROM project_file_versions WHERE project_id = ? AND id = ?`, [projectId, opts.base]);
     if (!before || before.path !== v.path) throw new StudioRunError("invalid", "bản so sánh phải là một phiên bản của cùng file", { code: "bad_base" });
   } else {
-    before = db.get<VersionRow>(
-      `SELECT ${cols} FROM project_file_versions WHERE project_id = ? AND path = ? AND rowid < ? ORDER BY rowid DESC LIMIT 1`,
-      [projectId, v.path, v.rowid],
+    before = await db.get<VersionRow>(
+      `SELECT ${cols} FROM project_file_versions WHERE project_id = ? AND path = ? AND seq < ? ORDER BY seq DESC LIMIT 1`,
+      [projectId, v.path, v.seq],
     );
   }
   const head = { path: v.path, version_id: v.id, before_version_id: before?.id ?? null };

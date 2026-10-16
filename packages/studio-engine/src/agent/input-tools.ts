@@ -40,17 +40,17 @@ const siteOf = (ctx: AgentToolContext) => ctx.siteName ?? DEFAULT_SITE_NAME;
 const tool = <I extends z.ZodTypeAny>(t: AgentTool<I>): AgentTool => t as unknown as AgentTool;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function footageOf(ctx: AgentToolContext & { footage?: ProjectFootage }): { footage: ProjectFootage; actAs: string } {
+async function footageOf(ctx: AgentToolContext & { footage?: ProjectFootage }): Promise<{ footage: ProjectFootage; actAs: string }> {
   if (!ctx.footage) throw new StudioRunError("invalid", `Studio này chưa nối ${siteOf(ctx)}: không tìm hay thêm video được`, { code: "no_ag_go" });
-  const actAs = projectActAs(ctx.db, ctx.project.id);
+  const actAs = await projectActAs(ctx.db, ctx.project.id);
   if (!actAs) throw new StudioRunError("invalid", `dự án chưa có chủ để hỏi ${siteOf(ctx)}`, { code: "no_owner" });
   return { footage: ctx.footage, actAs };
 }
 
-function targetVideo(ctx: AgentToolContext, videoId: string | undefined): string {
+async function targetVideo(ctx: AgentToolContext, videoId: string | undefined): Promise<string> {
   const id = videoId ?? ctx.video?.id;
   if (!id) throw new StudioRunError("invalid", "luồng này không gắn với video nào: cho biết video_id", { code: "no_video" });
-  const v = requireVideo(ctx.db, id);
+  const v = await requireVideo(ctx.db, id);
   if (v.project_id !== ctx.project.id) throw new StudioRunError("invalid", "video thuộc dự án khác", { code: "other_project" });
   return id;
 }
@@ -58,12 +58,12 @@ function targetVideo(ctx: AgentToolContext, videoId: string | undefined): string
 /** Where an ag-go video of the project stands: prepared, being prepared, failed, or not yet. */
 const assetState = (ctx: AgentToolContext, assetId: string) => stateOf(ctx.db, ctx.project.id, assetId);
 
-const slimSource = (ctx: AgentToolContext, s: SourceRecord) => {
+const slimSource = async (ctx: AgentToolContext, s: SourceRecord) => {
   const v = sourceView(s);
   return {
     id: v.id, kind: v.kind, ref: v.ref, media_type: v.mediaType, label: v.label, video_id: v.videoId,
     ...(v.kind === "upload" ? { path: v.ref, ...(v.meta.reference ? { reference_video: true } : {}) } : {}),
-    ...(v.kind === "ag_go_asset" ? assetState(ctx, v.ref) : {}),
+    ...(v.kind === "ag_go_asset" ? await assetState(ctx, v.ref) : {}),
   };
 };
 
@@ -80,13 +80,14 @@ export const INPUT_TOOLS: AgentTool[] = [
     name: "inputs_list",
     description: "Đầu vào người dùng đã chọn cho dự án (project {{site}}, video {{site}}, file tải lên trong context/) và cho video của luồng này (hoặc `video_id`): mỗi video {{site}} kèm trạng thái chuẩn bị (ready: đọc inputs/<asset>/README.md; not_prepared: gọi inputs_prepare). File có reference_video là video mẫu để học phong cách dựng (style_from_files), không phải footage.",
     input: z.object({ video_id: z.string().min(1).optional() }).strict(),
-    run: (ctx, a) => {
+    run: async (ctx, a) => {
       const videoId = a.video_id ?? ctx.video?.id;
-      const all = videoId ? listSources(ctx.db, ctx.project.id, { videoId }) : listSources(ctx.db, ctx.project.id, { projectOnly: true });
+      const all = videoId ? await listSources(ctx.db, ctx.project.id, { videoId }) : await listSources(ctx.db, ctx.project.id, { projectOnly: true });
+      const slim = (list: SourceRecord[]) => Promise.all(list.map((s) => slimSource(ctx, s)));
       return {
         text: json({
-          project: all.filter((s) => !s.video_id).map((s) => slimSource(ctx, s)),
-          video: videoId ? { id: videoId, index: videoIndexPath(videoId), sources: all.filter((s) => s.video_id).map((s) => slimSource(ctx, s)) } : null,
+          project: await slim(all.filter((s) => !s.video_id)),
+          video: videoId ? { id: videoId, index: videoIndexPath(videoId), sources: await slim(all.filter((s) => s.video_id)) } : null,
           hint: all.some((s) => s.kind === "ag_go_project") ? `Tìm video trong các project ${siteOf(ctx)} bằng footage_search.` : undefined,
         }),
       };
@@ -102,8 +103,8 @@ export const INPUT_TOOLS: AgentTool[] = [
       cursor: z.string().min(1).optional(),
     }).strict(),
     run: async (ctx, a) => {
-      const { footage, actAs } = footageOf(ctx);
-      const projects = listSources(ctx.db, ctx.project.id).filter((s) => s.kind === "ag_go_project").map((s) => s.ref);
+      const { footage, actAs } = await footageOf(ctx);
+      const projects = (await listSources(ctx.db, ctx.project.id)).filter((s) => s.kind === "ag_go_project").map((s) => s.ref);
       if (!projects.length) return { text: `Dự án chưa có project ${siteOf(ctx)} nào. Nhờ người dùng chọn ở tab Đầu vào (hoặc thêm từng video).`, isError: true };
       if (a.ag_go_project_id && !projects.includes(a.ag_go_project_id)) {
         return { text: `Project ${siteOf(ctx)} ${a.ag_go_project_id} không thuộc đầu vào của dự án (có: ${projects.join(", ")}).`, isError: true };
@@ -112,10 +113,10 @@ export const INPUT_TOOLS: AgentTool[] = [
       return {
         text: json({
           total: r.total, next_cursor: r.nextCursor,
-          items: r.items.map((i) => ({
+          items: await Promise.all(r.items.map(async (i) => ({
             asset_id: i.assetId, name: i.name, duration_s: Math.round(i.durationMs / 100) / 10, size: i.width && i.height ? `${i.width}x${i.height}` : null,
-            has_speech: i.hasSpeech ?? null, projects: i.projectNames ?? [], summary: i.summaryVi ?? null, prepared: assetState(ctx, i.assetId).state,
-          })),
+            has_speech: i.hasSpeech ?? null, projects: i.projectNames ?? [], summary: i.summaryVi ?? null, prepared: (await assetState(ctx, i.assetId)).state,
+          }))),
         }),
       };
     },
@@ -129,16 +130,16 @@ export const INPUT_TOOLS: AgentTool[] = [
     }).strict(),
     role: "editor",
     run: async (ctx, a) => {
-      const videoId = targetVideo(ctx, a.video_id);
-      const { footage, actAs } = footageOf(ctx);
+      const videoId = await targetVideo(ctx, a.video_id);
+      const { footage, actAs } = await footageOf(ctx);
       const { missing } = await footage.check(actAs, a.assets.map((x) => x.asset_id));
       if (missing.length) {
         return { text: `${siteOf(ctx)} không cho chủ dự án dùng các video: ${missing.join(", ")} (không có quyền hoặc chưa có bản xem). Không thêm gì.`, isError: true };
       }
       for (const x of a.assets) {
-        addSource(ctx.db, { projectId: ctx.project.id, videoId, kind: "ag_go_asset", ref: x.asset_id, mediaType: "video", label: x.name, addedBy: ctx.claims.sub }, ctx.now());
+        await addSource(ctx.db, { projectId: ctx.project.id, videoId, kind: "ag_go_asset", ref: x.asset_id, mediaType: "video", label: x.name, addedBy: ctx.claims.sub }, ctx.now());
       }
-      const index = writeVideoIndex(ctx.db, ctx.workspaceDir, ctx.project.id, videoId);
+      const index = await writeVideoIndex(ctx.db, ctx.workspaceDir, ctx.project.id, videoId);
       return { text: json({ video_id: videoId, index: videoIndexPath(videoId), sources: index.sources.map((s) => ({ index: s.index, asset_id: s.asset_id, name: s.name, status: s.status })) }) };
     },
   }),
@@ -152,7 +153,7 @@ export const INPUT_TOOLS: AgentTool[] = [
     }).strict(),
     role: "editor",
     run: async (ctx, a) => {
-      const queued = queuePrepare(ctx.db, {
+      const queued = await queuePrepare(ctx.db, {
         projectId: ctx.project.id, assetIds: a.asset_ids, threadId: ctx.thread.id, continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role,
         ...(a.again ? { again: true } : {}),
       }, ctx.now());
@@ -163,12 +164,17 @@ export const INPUT_TOOLS: AgentTool[] = [
         if ("job_id" in st) jobs.push(st.job_id);
       }
       const until = Date.now() + (a.wait_s ?? 0) * 1000;
+      const busy = async () => {
+        const out: string[] = [];
+        for (const j of jobs) { const s = (await getJob(ctx.db, j))?.status; if (s === "queued" || s === "running") out.push(j); }
+        return out;
+      };
       while (jobs.length && Date.now() < until) {
-        if (jobs.every((j) => { const s = getJob(ctx.db, j)?.status; return s !== "queued" && s !== "running"; })) break;
+        if (!(await busy()).length) break;
         await sleep(1000);
       }
-      for (const id of a.asset_ids) if (answer[id] && (answer[id] as { state: string }).state !== "not_an_input") answer[id] = assetState(ctx, id);
-      const pending = jobs.filter((j) => { const s = getJob(ctx.db, j)?.status; return s === "queued" || s === "running"; });
+      for (const id of a.asset_ids) if (answer[id] && (answer[id] as { state: string }).state !== "not_an_input") answer[id] = await assetState(ctx, id);
+      const pending = await busy();
       return {
         text: json({
           assets: answer,
@@ -181,20 +187,20 @@ export const INPUT_TOOLS: AgentTool[] = [
     name: "input_describe",
     description: "Tóm tắt một video {{site}} đã chuẩn bị: thư mục, số cảnh, có lời thoại không, đường dẫn README/shots/transcript. Đọc các file đó bằng Read để xem chi tiết.",
     input: z.object({ asset_id: z.string().regex(ASSET_ID) }).strict(),
-    run: (ctx, a) => ({ text: json({ asset_id: a.asset_id, ...assetState(ctx, a.asset_id) }) }),
+    run: async (ctx, a) => ({ text: json({ asset_id: a.asset_id, ...(await assetState(ctx, a.asset_id)) }) }),
   }),
   tool({
     name: "job_status",
     description: "Việc nền của dự án: một việc (`job_id`) hoặc các việc đang chạy và 10 việc gần nhất — loại, trạng thái, đang làm gì, tiến độ 0–1, còn khoảng bao nhiêu giây, máy farm.",
     input: z.object({ job_id: z.string().min(1).optional() }).strict(),
-    run: (ctx, a) => {
+    run: async (ctx, a) => {
       if (a.job_id) {
-        const j = getJob(ctx.db, a.job_id);
+        const j = await getJob(ctx.db, a.job_id);
         if (!j || j.project_id !== ctx.project.id) throw new StudioRunError("not_found", `không có việc ${a.job_id} trong dự án`);
         return { text: json(jobLine(j)) };
       }
-      const active = listJobs(ctx.db, ctx.project.id, { active: true });
-      const recent = listJobs(ctx.db, ctx.project.id, { limit: 10 }).filter((j) => j.status !== "queued" && j.status !== "running");
+      const active = await listJobs(ctx.db, ctx.project.id, { active: true });
+      const recent = (await listJobs(ctx.db, ctx.project.id, { limit: 10 })).filter((j) => j.status !== "queued" && j.status !== "running");
       return { text: json({ active: active.map(jobLine), recent: recent.map(jobLine) }) };
     },
   }),
@@ -203,10 +209,10 @@ export const INPUT_TOOLS: AgentTool[] = [
     description: "Dừng một việc nền của dự án (đang chờ thì huỷ ngay; đang chạy thì dừng ffmpeg / huỷ job farm). Chỉ khi người dùng muốn dừng.",
     input: z.object({ job_id: z.string().min(1) }).strict(),
     role: "editor",
-    run: (ctx, a) => {
-      const j = getJob(ctx.db, a.job_id);
+    run: async (ctx, a) => {
+      const j = await getJob(ctx.db, a.job_id);
       if (!j || j.project_id !== ctx.project.id) throw new StudioRunError("not_found", `không có việc ${a.job_id} trong dự án`);
-      const after = requestJobCancel(ctx.db, a.job_id, ctx.now());
+      const after = await requestJobCancel(ctx.db, a.job_id, ctx.now());
       return { text: after.status === "cancelled" ? `Đã huỷ: ${after.title}.` : after.status === "running" ? `Đang dừng: ${after.title}.` : `Việc đã ${after.status}, không cần dừng.` };
     },
   }),

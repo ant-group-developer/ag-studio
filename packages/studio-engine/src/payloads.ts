@@ -5,7 +5,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { HarnessError, type StoredTimeline } from "@harness/contracts";
-import { isTimelineV4, layoutTimeline, timelineToComposition } from "@harness/core";
+import { compositionFeatureLevel, isTimelineV4, layoutTimeline, RENDER_INSPECT_LEVEL, timelineToComposition } from "@harness/core";
 import type { StudioRenderPayload } from "@ag-farm/protocol";
 import { voicePath } from "./voice-store.js";
 
@@ -37,8 +37,11 @@ export async function prepareRender(
     voiceDir?: string;
     /** false: the composition leaves out the timeline's text look. Default: kept. */
     textStyle?: boolean;
+    /** true: the render worker inspects the file it renders (`inspect.json`, contact sheets), which needs a worker at
+     * `RENDER_INSPECT_LEVEL`. */
+    inspect?: boolean;
   },
-): Promise<{ productionId: string; payload: StudioRenderPayload; extraUploads: { localPath: string; relPath: string }[] }> {
+): Promise<{ productionId: string; payload: StudioRenderPayload; extraUploads: { localPath: string; relPath: string }[]; renderLevel: number }> {
   const voice = narrationUploads(p.timeline, p.voiceDir);
   const composition = timelineToComposition(p.timeline);
   if (p.textStyle === false) delete composition.text_style;
@@ -49,8 +52,9 @@ export async function prepareRender(
     productionId: p.productionId,
     payload: {
       production_id: p.productionId, revision: p.revision, composition: "stage:composition.json", canvas: p.timeline.canvas,
-      handle_seconds: 0, output: p.output, thumbnails: p.thumbnails,
+      handle_seconds: 0, output: p.output, thumbnails: p.thumbnails, ...(p.inspect ? { inspect: true } : {}),
     },
     extraUploads: [{ localPath: compPath, relPath: "composition.json" }, ...voice],
+    renderLevel: Math.max(compositionFeatureLevel(composition), p.inspect ? RENDER_INSPECT_LEVEL : 0),
   };
 }

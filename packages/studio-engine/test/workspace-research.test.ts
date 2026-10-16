@@ -4,10 +4,10 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { CrawlRequestSchema, StudioCrawlSchema } from "@harness/contracts";
 import {
-  createJob, createJobRunner, createProject, crawlSlug, getJob, researchHandler, seedWorkspace, slugify, studioLogger, youtubeBlock, YoutubeCrawler, ytDlp,
+  createJob, createJobRunner, createProject, crawlSlug, getJob, researchHandler, seedWorkspace, slugify, studioLogger, studioResearchCache, youtubeBlock, YoutubeCrawler, ytDlp,
   type ResearchCache,
 } from "../src/index.js";
 import { world } from "./helpers.js";
@@ -100,6 +100,32 @@ describe("YouTube crawl with the Data API", () => {
     expect(yt.calls.find((x) => x.resource === "search")!.query.get("type")).toBe("channel");
   });
 
+  it("top channels: a channel whose uploads list YouTube cannot find stays, with no videos", async () => {
+    const yt = fakeYoutube({
+      search: () => ({ body: { items: [{ id: { channelId: "UCa" } }, { id: { channelId: "UCb" } }] } }),
+      channels: () => ({ body: { items: [
+        { id: "UCa", snippet: { title: "Kênh A" }, statistics: { subscriberCount: "1000" }, contentDetails: { relatedPlaylists: { uploads: "UUa" } } },
+        { id: "UCb", snippet: { title: "Kênh B" }, statistics: { subscriberCount: "5000" }, contentDetails: { relatedPlaylists: { uploads: "UUb" } } },
+      ] } }),
+      playlistItems: (q) => (q.get("playlistId") === "UUb"
+        ? { status: 404, body: { error: { code: 404, errors: [{ reason: "playlistNotFound" }] } } }
+        : { body: { items: [{ contentDetails: { videoId: "UUa-1" } }] } }),
+      videos: (q) => ({ body: { items: q.get("id") ? q.get("id")!.split(",").map((id) => video(id, { views: 100 })) : [] } }),
+    });
+    const doc = await new YoutubeCrawler({ apiKey: "k", fetch: yt.impl, now: () => NOW }).crawl(CrawlRequestSchema.parse({ kind: "top_channels", q: "du lịch", max: 2 }));
+    expect(doc.channels.map((c) => [c.title, c.videos.map((v) => v.video_id)])).toEqual([["Kênh B", []], ["Kênh A", ["UUa-1"]]]);
+  });
+
+  it("top channels: any other error of YouTube still fails the crawl", async () => {
+    const yt = fakeYoutube({
+      search: () => ({ body: { items: [{ id: { channelId: "UCa" } }] } }),
+      channels: () => ({ body: { items: [{ id: "UCa", snippet: { title: "Kênh A" }, contentDetails: { relatedPlaylists: { uploads: "UUa" } } }] } }),
+      playlistItems: () => ({ status: 500, body: { error: { errors: [{ reason: "backendError" }] } } }),
+    });
+    await expect(new YoutubeCrawler({ apiKey: "k", fetch: yt.impl, now: () => NOW }).crawl(CrawlRequestSchema.parse({ kind: "top_channels", q: "du lịch", max: 1 })))
+      .rejects.toThrow("YouTube playlistItems trả 500 (backendError)");
+  });
+
   it("channel top: the channel's most viewed videos of all time", async () => {
     const yt = fakeYoutube({
       channels: (q) => ({ body: { items: [{ id: "UCx", snippet: { title: "Kênh X" }, statistics: { subscriberCount: "42" } }].filter(() => q.get("forHandle") === "@kenhx") } }),
@@ -141,6 +167,22 @@ describe("YouTube crawl with yt-dlp (no API key)", () => {
 });
 
 describe("research job", () => {
+  let w: Awaited<ReturnType<typeof world>> | undefined;
+  afterEach(async () => { await w?.db.close(); w = undefined; });
+
+  const open = async () => (w = await world());
+
+  it("the crawl cache in the database gives back the body it was given", async () => {
+    const { db } = await open();
+    const cache = studioResearchCache(db);
+    expect(await cache.get("k")).toBeNull();
+    await cache.set("k", JSON.stringify({ items: [{ id: "a" }] }), NOW.toISOString());
+    await cache.set("k", JSON.stringify({ items: [{ id: "b" }] }), NOW.toISOString());
+    const hit = (await cache.get("k"))!;
+    expect(JSON.parse(hit.body)).toEqual({ items: [{ id: "b" }] });
+    expect(hit.fetchedAt).toBe(NOW.toISOString());
+  });
+
   it("names files by date and what was asked", () => {
     expect(slugify("Phố cổ Hội An — đêm rằm!")).toBe("pho-co-hoi-an-dem-ram");
     expect(crawlSlug(CrawlRequestSchema.parse({ kind: "trending", region: "VN" }))).toBe("xu-huong-vn");
@@ -148,50 +190,50 @@ describe("research job", () => {
   });
 
   it("writes research/<date>-<slug>.json and .md, and tells the thread", async () => {
-    const w = world();
-    w.db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [NOW.toISOString(), NOW.toISOString()]);
-    const project = createProject(w.db, "team-1", { name: "Du lịch chậm", description: "", language: "vi", aspect: "16:9" }, "u");
+    const w = await open();
+    await w.db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [NOW.toISOString(), NOW.toISOString()]);
+    const project = await createProject(w.db, "team-1", { name: "Du lịch chậm", description: "", language: "vi", aspect: "16:9" }, "u");
     const root = join(w.dir, "workspaces");
     const dir = seedWorkspace(root, project);
     const crawler = new YoutubeCrawler({ ytdlp: FAKE_YTDLP });
-    const job = createJob(w.db, { projectId: project.id, kind: "research", title: "Chủ đề phố cổ", request: { crawl: { kind: "topic", q: "phố cổ", max: 5, days: 3650 } }, createdBy: "u" });
+    const job = await createJob(w.db, { projectId: project.id, kind: "research", title: "Chủ đề phố cổ", request: { crawl: { kind: "topic", q: "phố cổ", max: 5, days: 3650 } }, createdBy: "u" });
     const runner = createJobRunner({ db: w.db, logger: studioLogger({ test: "research" }), workspacesRoot: root, dataRoot: join(w.dir, "data"), handlers: { research: researchHandler({ db: w.db, crawler }) } });
-    runner.tick();
+    await runner.tick();
     await runner.idle();
-    const done = getJob(w.db, job.id)!;
+    const done = (await getJob(w.db, job.id))!;
     expect(done.status).toBe("done");
     const day = new Date().toISOString().slice(0, 10);
     const base = `research/${day}-chu-de-pho-co`;
-    expect(JSON.parse(done.result!)).toMatchObject({ files: [`${base}.md`, `${base}.json`], videos: 5, source: "yt-dlp" });
+    expect(done.result).toMatchObject({ files: [`${base}.md`, `${base}.json`], videos: 5, source: "yt-dlp" });
     expect(StudioCrawlSchema.parse(JSON.parse(readFileSync(join(dir, `${base}.json`), "utf8"))).videos).toHaveLength(5);
     const md = readFileSync(join(dir, `${base}.md`), "utf8");
     expect(md).toContain('# Video xem nhiều: "phố cổ" (VN, 3650 ngày)');
     expect(md).toContain("| 1 | [Phố cổ 10](https://www.youtube.com/watch?v=srch0000010) | Kênh B | 10.000 |");
     expect(md).toContain("## Nhận xét nhanh");
     // the same crawl again the same day goes next to it
-    createJob(w.db, { projectId: project.id, kind: "research", title: "Lại", request: { crawl: { kind: "topic", q: "phố cổ", max: 5, days: 3650 } }, createdBy: "u" });
-    runner.tick();
+    await createJob(w.db, { projectId: project.id, kind: "research", title: "Lại", request: { crawl: { kind: "topic", q: "phố cổ", max: 5, days: 3650 } }, createdBy: "u" });
+    await runner.tick();
     await runner.idle();
     expect(existsSync(join(dir, `${base}-2.md`))).toBe(true);
   });
 
   it("YouTube blocking the server: the job says so plainly, with its code and the way that is not blocked", async () => {
-    const w = world();
-    w.db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [NOW.toISOString(), NOW.toISOString()]);
-    const project = createProject(w.db, "team-1", { name: "Du lịch chậm", description: "", language: "vi", aspect: "16:9" }, "u");
+    const w = await open();
+    await w.db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?)", [NOW.toISOString(), NOW.toISOString()]);
+    const project = await createProject(w.db, "team-1", { name: "Du lịch chậm", description: "", language: "vi", aspect: "16:9" }, "u");
     const root = join(w.dir, "workspaces");
     seedWorkspace(root, project);
     const crawler = new YoutubeCrawler({ ytdlp: ytDlp({ argv: [process.execPath, join(ROOT, "fixtures", "fake-yt-dlp.mjs"), "--fake-blocked"] }) });
-    const job = createJob(w.db, { projectId: project.id, kind: "research", title: "Chủ đề phố cổ", request: { crawl: { kind: "topic", q: "phố cổ", max: 5, days: 3650 } }, createdBy: "u" });
+    const job = await createJob(w.db, { projectId: project.id, kind: "research", title: "Chủ đề phố cổ", request: { crawl: { kind: "topic", q: "phố cổ", max: 5, days: 3650 } }, createdBy: "u" });
     const runner = createJobRunner({ db: w.db, logger: studioLogger({ test: "research" }), workspacesRoot: root, dataRoot: join(w.dir, "data"), handlers: { research: researchHandler({ db: w.db, crawler }) } });
-    runner.tick();
+    await runner.tick();
     await runner.idle();
-    const failed = getJob(w.db, job.id)!;
+    const failed = (await getJob(w.db, job.id))!;
     expect(failed.status).toBe("failed");
     expect(failed.error).toMatch(/^yt-dlp không tìm được: YouTube đang chặn tải từ máy chủ Studio/);
     expect(failed.error).toContain("YOUTUBE_API_KEY");
     expect(failed.error).not.toContain("cookies");
-    expect(JSON.parse(failed.result!)).toEqual({ error_code: "youtube_blocked" });
-    expect(youtubeBlock(w.db, new Date().toISOString())).toMatchObject({ where: "studio" });
+    expect(failed.result).toEqual({ error_code: "youtube_blocked" });
+    expect(await youtubeBlock(w.db, new Date().toISOString())).toMatchObject({ where: "studio" });
   });
 });

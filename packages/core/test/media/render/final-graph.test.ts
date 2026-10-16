@@ -77,6 +77,11 @@ describe("finalArgs", () => {
     const { argv } = finalArgs(baseInput({ composition, mezz }));
     const joined = argv.join(" ");
     expect(joined).toContain("xfade=transition=fade:duration=0.4:offset=5");
+    // every body (and tail) is held to its segment's own length before anything adds the lengths up
+    expect(joined).toContain("[0:v]tpad=stop_mode=clone:stop_duration=5,trim=duration=5,setpts=PTS-STARTPTS[v0b]");
+    expect(joined).toContain("[1:v]tpad=stop_mode=clone:stop_duration=0.4,trim=duration=0.4,setpts=PTS-STARTPTS[v0t]");
+    expect(joined).toContain("[v0b][v0t]concat=n=2:v=1:a=0[v0c]");
+    expect(joined).toContain("[2:v]tpad=stop_mode=clone:stop_duration=5,trim=duration=5,setpts=PTS-STARTPTS[v1b]");
     // both xfade inputs end in `fps`: ffmpeg 7.1 drops the frame rate through concat/setpts and xfade then
     // refuses to configure (exit 234)
     expect(joined).toMatch(/settb=AVTB,setpts=PTS-STARTPTS,fps=30\[xt1l\]/);

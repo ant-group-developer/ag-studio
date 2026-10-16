@@ -99,9 +99,9 @@ export function researchBase(dir: string, r: CrawlRequest, now: string): string 
 }
 
 /** Queues one crawl as a `research` job of the project. */
-export function queueResearch(db: StudioDb, p: {
+export async function queueResearch(db: StudioDb, p: {
   projectId: string; crawl: CrawlRequest; threadId?: string | null; continueAgent?: boolean; createdBy: string; actorRole?: ActorRole | null;
-}, now = new Date().toISOString()): JobRecord {
+}, now = new Date().toISOString()): Promise<JobRecord> {
   const crawl = CrawlRequestSchema.parse(p.crawl);
   const request: ResearchJobRequest = { crawl };
   return createJob(db, {
@@ -112,23 +112,26 @@ export function queueResearch(db: StudioDb, p: {
 
 export function researchHandler(d: { db: StudioDb; crawler: YoutubeCrawler }): (job: JobRecord, ctx: JobContext) => Promise<JobOutcome> {
   return async (job, ctx) => {
-    const req = CrawlRequestSchema.parse((JSON.parse(job.request) as ResearchJobRequest).crawl);
-    ctx.setUnits(req.kind === "top_channels" ? req.max * 5 : req.max);
-    const doc = await d.crawler.crawl(req, (phase, progress) => ctx.report({ phase, progress }), ctx.signal).catch((e: unknown) => {
+    const req = CrawlRequestSchema.parse((job.request as ResearchJobRequest).crawl);
+    await ctx.setUnits(req.kind === "top_channels" ? req.max * 5 : req.max);
+    // the crawl's progress is written in order, and all of it before what comes next
+    let shown: Promise<void> = Promise.resolve();
+    const show = (phase: string, progress: number | null) => { shown = shown.then(() => ctx.report({ phase, progress })).catch(() => undefined); };
+    const doc = await d.crawler.crawl(req, show, ctx.signal).finally(() => shown).catch(async (e: unknown) => {
       // the server blocked by YouTube: say so, and the way that is not blocked (the Data API)
       if (ytFailureOf(e)?.code === "youtube_blocked") {
-        noteYoutubeBlocked(d.db, ctx.now());
+        await noteYoutubeBlocked(d.db, ctx.now());
         throw new JobError("youtube_blocked", `${(e as Error).message}. Đặt YOUTUBE_API_KEY cho worker thì nghiên cứu đi qua YouTube Data API, không bị chặn kiểu này.`);
       }
       throw e;
     });
-    if (doc.source === "yt-dlp") clearYoutubeBlocked(d.db); // yt-dlp read YouTube: it is not blocking
-    ctx.checkpoint();
-    ctx.report({ phase: "Đang ghi vào research/", progress: 0.98 });
+    if (doc.source === "yt-dlp") await clearYoutubeBlocked(d.db); // yt-dlp read YouTube: it is not blocking
+    await ctx.checkpoint();
+    await ctx.report({ phase: "Đang ghi vào research/", progress: 0.98 });
     const base = researchBase(ctx.workspaceDir, req, ctx.now());
     const author = { kind: "studio" as const, id: null };
-    writeWorkspaceFile(d.db, { projectId: job.project_id, dir: ctx.workspaceDir, path: `${base}.json`, content: `${JSON.stringify(doc, null, 2)}\n`, baseSha256: null, author, now: ctx.now() });
-    writeWorkspaceFile(d.db, { projectId: job.project_id, dir: ctx.workspaceDir, path: `${base}.md`, content: crawlMarkdown(doc), baseSha256: null, author, now: ctx.now() });
+    await writeWorkspaceFile(d.db, { projectId: job.project_id, dir: ctx.workspaceDir, path: `${base}.json`, content: `${JSON.stringify(doc, null, 2)}\n`, baseSha256: null, author, now: ctx.now() });
+    await writeWorkspaceFile(d.db, { projectId: job.project_id, dir: ctx.workspaceDir, path: `${base}.md`, content: crawlMarkdown(doc), baseSha256: null, author, now: ctx.now() });
     const what = doc.channels.length ? `${doc.channels.length} kênh` : `${doc.videos.length} video`;
     return {
       result: { files: [`${base}.md`, `${base}.json`], videos: doc.videos.length, channels: doc.channels.length, quota_units: doc.quota_units, source: doc.source },

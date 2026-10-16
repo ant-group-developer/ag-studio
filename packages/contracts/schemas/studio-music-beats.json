@@ -1,0 +1,122 @@
+{
+  "$ref": "#/definitions/studio-music-beats",
+  "definitions": {
+    "studio-music-beats": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "studio.music-beats/v1"
+        },
+        "track": {
+          "type": "string",
+          "pattern": "^library:[A-Za-z0-9._\\-/]+$"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration_s": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "bpm": {
+          "anyOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "beats_per_bar": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 12
+        },
+        "beats": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "maxItems": 60000
+        },
+        "downbeats": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "maxItems": 60000
+        },
+        "sections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "number",
+                "minimum": 0
+              },
+              "end": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "bpm": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "start",
+              "end",
+              "bpm"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 20
+        },
+        "engine": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "analysed_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "track",
+        "sha256",
+        "duration_s",
+        "bpm",
+        "beats_per_bar",
+        "beats",
+        "downbeats",
+        "sections",
+        "engine",
+        "analysed_at"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

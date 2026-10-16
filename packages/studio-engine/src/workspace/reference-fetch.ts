@@ -99,7 +99,7 @@ export async function fetchReferenceOnFarm(
       },
       { id: job.id, project_id: job.project_id, video_id: null },
       { type: REFERENCE_FETCH_KIND, payload, stageKey: REFERENCE_FETCH_STAGE, attemptId, requirements: { ytdlp: true } },
-      { ...watch, onUpdate: (u) => { if (u.node) node = u.node; watch.onUpdate(u); } },
+      { ...watch, onUpdate: (u) => { if (u.node) node = u.node; return watch.onUpdate(u); } },
     );
     const summary = (farmJob.result as { summary?: unknown } | null)?.summary;
     const parsed = StudioReferenceFetchResultSchema.safeParse(summary);

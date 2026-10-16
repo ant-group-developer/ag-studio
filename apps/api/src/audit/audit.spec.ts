@@ -15,20 +15,20 @@ const directory = {
   summaries: async (ids: string[]) => new Map(ids.filter((i) => i === 'auth0|owner').map((i) => [i, { userId: i, name: 'Lan', email: 'lan@x', avatar: null }])),
 } as unknown as AccountDirectoryService;
 
-describe('AuditController (real studio.db)', () => {
+describe('AuditController (real database)', () => {
   let s: RealStudio;
   let ctl: AuditController;
   beforeEach(async () => {
     s = await realStudio();
-    insertTeam(s.db, 'team-1', 'auth0|owner');
-    insertTeam(s.db, 'team-2', 'auth0|other');
+    await insertTeam(s.db, 'team-1', 'auth0|owner');
+    await insertTeam(s.db, 'team-2', 'auth0|other');
     ctl = new AuditController(s.engine as EngineService, new StudioAdminService(accounts, s.db), directory);
-    const p1 = createProject(s.engine.db, 'team-1', { name: 'Kênh A', description: '', language: 'vi', aspect: '16:9' }, 'auth0|owner');
-    const p2 = createProject(s.engine.db, 'team-2', { name: 'Kênh B', description: '', language: 'vi', aspect: '16:9' }, 'auth0|other');
-    logAudit(s.engine.db, { at: '2026-10-10T08:00:00.000Z', actorKind: 'user', actorId: 'auth0|owner', kind: 'http', action: 'VideosController.create', outcome: 'ok', projectId: p1.id });
-    logAudit(s.engine.db, { at: '2026-10-10T09:00:00.000Z', actorKind: 'agent', actorId: 'auth0|owner', kind: 'tool', action: 'Write', outcome: 'error', projectId: p1.id });
-    logAudit(s.engine.db, { at: '2026-10-10T10:00:00.000Z', actorKind: 'user', actorId: 'auth0|other', kind: 'http', action: 'ProjectsController.update', outcome: 'ok', projectId: p2.id });
-    logAudit(s.engine.db, { at: '2026-10-10T11:00:00.000Z', actorKind: 'user', actorId: 'auth0|admin', kind: 'http', action: 'StudioOverviewController.settings', outcome: 'ok' });
+    const p1 = await createProject(s.engine.db, 'team-1', { name: 'Kênh A', description: '', language: 'vi', aspect: '16:9' }, 'auth0|owner');
+    const p2 = await createProject(s.engine.db, 'team-2', { name: 'Kênh B', description: '', language: 'vi', aspect: '16:9' }, 'auth0|other');
+    await logAudit(s.engine.db, { at: '2026-10-10T08:00:00.000Z', actorKind: 'user', actorId: 'auth0|owner', kind: 'http', action: 'VideosController.create', outcome: 'ok', projectId: p1.id });
+    await logAudit(s.engine.db, { at: '2026-10-10T09:00:00.000Z', actorKind: 'agent', actorId: 'auth0|owner', kind: 'tool', action: 'Write', outcome: 'error', projectId: p1.id });
+    await logAudit(s.engine.db, { at: '2026-10-10T10:00:00.000Z', actorKind: 'user', actorId: 'auth0|other', kind: 'http', action: 'ProjectsController.update', outcome: 'ok', projectId: p2.id });
+    await logAudit(s.engine.db, { at: '2026-10-10T11:00:00.000Z', actorKind: 'user', actorId: 'auth0|admin', kind: 'http', action: 'StudioOverviewController.settings', outcome: 'ok' });
   });
   afterEach(() => s.close());
 

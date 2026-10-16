@@ -10,7 +10,7 @@ import { z } from 'zod';
 import {
   AUDIO_MAX_BYTES, AudioImportError, clearProjectAudio, clearVideoMusic, declineProjectNarration, getLibraryMusic, getVideoRevision, importProjectAudio,
   importProjectMusic, importVideoMusic, jobView, latestVideoRevision, listJobs, listVideoRevisions, musicForVideo, MUSIC_CROSSFADE_MAX_SECONDS,
-  MUSIC_MIX_MAX_PARTS, projectAudio, projectAudioFiles, projectAudioSummary, projectLibraryTrack, queueFit, queueRender, readWorkspaceBytes, requireProject,
+  MUSIC_MIX_MAX_PARTS, projectAudio, projectAudioFiles, projectAudioSummary, projectLibraryTrack, queueFit, queueMusicBeats, queueRender, readWorkspaceBytes, requireProject,
   requireVideo, resolveInside, setProjectLibraryMusic, setVideoLibraryMusic, StudioRunError, timelineSummary, videoLibraryTrack, videoMusicSummary,
   videoMusicToTimeline, videoOwnMusic, videoRender, videoRenders, VOICE_ORIGINS, type ActorRole, type JobView, type ProjectAudioFile, type RenderKind,
 } from '@ag-studio/engine';
@@ -96,6 +96,10 @@ export interface RenderView {
   watermarked: boolean | null;
   sizeBytes: number | null;
   note: string;
+  /** What makes the file wrong (it is shorter than its timeline…), in words; null: nothing. */
+  problem: string | null;
+  /** What the render machine's inspection of the file found, in words (frozen from 13:21, silent 12:00–12:40…). */
+  issues: string[];
   finishedAt: string | null;
   /**
    * A short-lived link to watch a preview or the final render, signed with the list (no ag-go footage check: an mp4 does
@@ -145,16 +149,16 @@ export class VideoMediaController {
   @Roles('viewer')
   renders(@Param('videoId') videoId: string): Promise<{ renders: RenderView[]; jobs: JobView[]; thumbnails: string[] }> {
     return mapErrors(async () => {
-      const v = requireVideo(this.engine.db, videoId);
-      const out: RenderView[] = await Promise.all(videoRenders(this.engine.db, v.project_id, v.id).map(async (r) => ({
+      const v = await requireVideo(this.engine.db, videoId);
+      const out: RenderView[] = await Promise.all((await videoRenders(this.engine.db, v.project_id, v.id)).map(async (r) => ({
         jobId: r.jobId, kind: r.kind, revision: r.revision, durationS: r.duration_s, width: r.width, height: r.height, watermarked: r.watermarked,
-        sizeBytes: r.size_bytes, note: r.note, finishedAt: r.finishedAt,
+        sizeBytes: r.size_bytes, note: r.note, problem: r.problem ?? null, issues: r.inspect?.issues ?? [], finishedAt: r.finishedAt,
         ...(r.kind === 'export_premiere' ? {} : { url: await this.engine.bucket.signedGetUrl(r.key, this.engine.browserUrlTtl) }),
       })));
-      const jobs = listJobs(this.engine.db, v.project_id, { videoId, limit: 30 })
+      const jobs = (await listJobs(this.engine.db, v.project_id, { videoId, limit: 30 }))
         .filter((j) => ['render_preview', 'render_final', 'export_premiere', 'fit', 'thumbnail'].includes(j.kind) && j.status !== 'done').map(jobView);
       // thumbnails made for it (workspace files the web reads like any other)
-      const tdir = join(this.workspace.dir(v.project_id), 'videos', v.id, 'thumbnails');
+      const tdir = join(await this.workspace.dir(v.project_id), 'videos', v.id, 'thumbnails');
       const thumbnails = existsSync(tdir) ? readdirSync(tdir).filter((f) => /\.(jpe?g|png)$/i.test(f)).sort().map((f) => `videos/${v.id}/thumbnails/${f}`) : [];
       return { renders: out, jobs, thumbnails };
     });
@@ -170,8 +174,8 @@ export class VideoMediaController {
   @Roles('viewer')
   link(@Param('videoId') videoId: string, @Param('jobId') jobId: string, @Req() req: Request): Promise<RenderLink> {
     return mapErrors(async () => {
-      const v = requireVideo(this.engine.db, videoId);
-      const r = videoRender(this.engine.db, v.id, jobId);
+      const v = await requireVideo(this.engine.db, videoId);
+      const r = await videoRender(this.engine.db, v.id, jobId);
       if (!r) throw new StudioRunError('not_found', `video không có bản render ${jobId}`);
       const hidden = r.kind === 'export_premiere' ? await this.footageVerdict(req.authContext!.userId, v.id, r.revision) : null;
       if (hidden) return { jobId: r.jobId, url: null, urlHidden: hidden };
@@ -184,16 +188,16 @@ export class VideoMediaController {
   @Roles('editor')
   @HttpCode(HttpStatus.CREATED)
   render(@Param('videoId') videoId: string, @Body() raw: unknown, @Req() req: Request): Promise<JobView> {
-    return mapErrors(() => {
+    return mapErrors(async () => {
       const body = parseBody(RenderSchema, raw);
-      const v = requireVideo(this.engine.db, videoId);
-      const project = requireProject(this.engine.db, v.project_id);
-      const role = this.roleOf(req, project.team_id);
+      const v = await requireVideo(this.engine.db, videoId);
+      const project = await requireProject(this.engine.db, v.project_id);
+      const role = await this.roleOf(req, project.team_id);
       if (body.kind !== 'render_preview' && ORDER.indexOf(role) < ORDER.indexOf('producer')) {
         throw new ForbiddenException({ code: 'role', message: 'Render bản cuối và xuất Premiere cần vai producer' });
       }
-      if (!latestVideoRevision(this.engine.db, videoId)) throw new StudioRunError('invalid', 'video chưa có timeline', { code: 'no_timeline' });
-      return jobView(queueRender(this.engine.db, {
+      if (!(await latestVideoRevision(this.engine.db, videoId))) throw new StudioRunError('invalid', 'video chưa có timeline', { code: 'no_timeline' });
+      return jobView(await queueRender(this.engine.db, {
         projectId: v.project_id, videoId, kind: body.kind, createdBy: req.authContext!.userId, actorRole: role,
         request: { ...(body.nodeId ? { node_id: body.nodeId } : {}), ...(body.media ? { media: body.media } : {}) },
       }));
@@ -203,12 +207,12 @@ export class VideoMediaController {
   @Get('videos/:videoId/timeline')
   @Roles('viewer')
   timeline(@Param('videoId') videoId: string) {
-    return mapErrors(() => {
-      const v = requireVideo(this.engine.db, videoId);
-      const latest = latestVideoRevision(this.engine.db, v.id);
+    return mapErrors(async () => {
+      const v = await requireVideo(this.engine.db, videoId);
+      const latest = await latestVideoRevision(this.engine.db, v.id);
       return {
         latest: latest ? timelineSummary(latest.data, latest.revision, latest.label) : null,
-        revisions: listVideoRevisions(this.engine.db, v.id).map((r) => ({ revision: r.revision, label: r.label, authorId: r.author_id, createdAt: r.created_at })),
+        revisions: (await listVideoRevisions(this.engine.db, v.id)).map((r) => ({ revision: r.revision, label: r.label, authorId: r.author_id, createdAt: r.created_at })),
       };
     });
   }
@@ -217,25 +221,25 @@ export class VideoMediaController {
   @Roles('editor')
   @HttpCode(HttpStatus.CREATED)
   fit(@Param('videoId') videoId: string, @Req() req: Request): Promise<JobView> {
-    return mapErrors(() => {
-      const v = requireVideo(this.engine.db, videoId);
-      const project = requireProject(this.engine.db, v.project_id);
-      return jobView(queueFit(this.engine.db, { projectId: v.project_id, videoId, createdBy: req.authContext!.userId, actorRole: this.roleOf(req, project.team_id) }));
+    return mapErrors(async () => {
+      const v = await requireVideo(this.engine.db, videoId);
+      const project = await requireProject(this.engine.db, v.project_id);
+      return jobView(await queueFit(this.engine.db, { projectId: v.project_id, videoId, createdBy: req.authContext!.userId, actorRole: await this.roleOf(req, project.team_id) }));
     });
   }
 
   @Get('projects/:projectId/audio')
   @Roles('viewer')
   audio(@Param('projectId') projectId: string, @Req() req: Request): Promise<ProjectAudioResponse> {
-    return mapErrors(() => {
-      requireProject(this.engine.db, projectId);
-      const a = projectAudio(this.engine.db, projectId);
-      const lib = projectLibraryTrack(this.engine.db, projectId);
+    return mapErrors(async () => {
+      await requireProject(this.engine.db, projectId);
+      const a = await projectAudio(this.engine.db, projectId);
+      const lib = await projectLibraryTrack(this.engine.db, projectId);
       return {
-        voice: a.voice, music: a.music, summary: projectAudioSummary(this.engine.db, projectId),
+        voice: a.voice, music: a.music, summary: await projectAudioSummary(this.engine.db, projectId),
         libraryTrack: lib ? { trackId: lib.track_id, displayName: lib.display_name, moods: lib.mood, durationSeconds: lib.duration_seconds } : null,
         enabled: audioTools(this.config) !== null,
-        files: this.links.withListenUrls(projectId, projectAudioFiles(this.engine.db, this.workspace.dir(projectId), projectId), req.authContext!.userId),
+        files: this.links.withListenUrls(projectId, await projectAudioFiles(this.engine.db, await this.workspace.dir(projectId), projectId), req.authContext!.userId),
       };
     });
   }
@@ -247,17 +251,18 @@ export class VideoMediaController {
   fromLibrary(@Param('projectId') projectId: string, @Body() raw: unknown, @Req() req: Request) {
     return mapErrors(async () => {
       const body = parseBody(FromLibrarySchema, raw);
-      requireProject(this.engine.db, projectId);
-      const track = getLibraryMusic(this.engine.db, body.trackId);
+      await requireProject(this.engine.db, projectId);
+      const track = await getLibraryMusic(this.engine.db, body.trackId);
       if (!track) throw new NotFoundException({ code: 'not_found', message: `Không có bài ${body.trackId} trong kho nhạc` });
       try {
-        setProjectLibraryMusic(this.engine.db, projectId, track, {
+        await setProjectLibraryMusic(this.engine.db, projectId, track, {
           ...(body.gainDb !== undefined ? { gainDb: body.gainDb } : {}), ...(body.ducking !== undefined ? { ducking: body.ducking } : {}),
         });
       } catch (e) {
         if (e instanceof AudioImportError) throw new UnprocessableEntityException({ code: e.code, message: e.message });
         throw e;
       }
+      await this.beats(projectId, null, req);
       return this.audio(projectId, req);
     });
   }
@@ -270,12 +275,12 @@ export class VideoMediaController {
     return mapErrors(async () => {
       if (kind !== 'voice' && kind !== 'music') throw new BadRequestException({ code: 'kind', message: 'voice hoặc music' });
       const body = parseBody(FromFileSchema, raw);
-      const project = requireProject(this.engine.db, projectId);
-      if (kind === 'voice' && ORDER.indexOf(this.roleOf(req, project.team_id)) < ORDER.indexOf('producer')) {
+      const project = await requireProject(this.engine.db, projectId);
+      if (kind === 'voice' && ORDER.indexOf(await this.roleOf(req, project.team_id)) < ORDER.indexOf('producer')) {
         throw new ForbiddenException({ code: 'role', message: 'Chọn giọng đọc cần vai producer' });
       }
       if (kind === 'voice' && !body.origin) throw new UnprocessableEntityException({ code: 'origin', message: 'Cho biết giọng này từ đâu: giọng máy, giọng của bạn, hay có bản quyền' });
-      const dir = this.workspace.dir(projectId);
+      const dir = await this.workspace.dir(projectId);
       const { abs } = resolveInside(dir, body.path);
       readWorkspaceBytes(dir, body.path); // exists and readable
       if (statSync(abs).size > AUDIO_MAX_BYTES[kind]) throw new PayloadTooLargeException({ code: 'audio_too_large', message: `File lớn hơn ${AUDIO_MAX_BYTES[kind] / 1024 / 1024} MB` });
@@ -289,6 +294,7 @@ export class VideoMediaController {
         if (e instanceof AudioImportError) throw new UnprocessableEntityException({ code: e.code, message: e.message });
         throw e;
       }
+      if (kind === 'music') await this.beats(projectId, null, req);
       return this.audio(projectId, req);
     });
   }
@@ -298,8 +304,8 @@ export class VideoMediaController {
   @HttpCode(HttpStatus.OK)
   decline(@Param('projectId') projectId: string, @Req() req: Request) {
     return mapErrors(async () => {
-      requireProject(this.engine.db, projectId);
-      declineProjectNarration(this.engine.db, projectId, req.authContext!.userId);
+      await requireProject(this.engine.db, projectId);
+      await declineProjectNarration(this.engine.db, projectId, req.authContext!.userId);
       return this.audio(projectId, req);
     });
   }
@@ -310,11 +316,11 @@ export class VideoMediaController {
   clear(@Param('projectId') projectId: string, @Param('kind') kind: string, @Req() req: Request) {
     return mapErrors(async () => {
       if (kind !== 'voice' && kind !== 'music') throw new BadRequestException({ code: 'kind', message: 'voice hoặc music' });
-      const project = requireProject(this.engine.db, projectId);
-      if (kind === 'voice' && ORDER.indexOf(this.roleOf(req, project.team_id)) < ORDER.indexOf('producer')) {
+      const project = await requireProject(this.engine.db, projectId);
+      if (kind === 'voice' && ORDER.indexOf(await this.roleOf(req, project.team_id)) < ORDER.indexOf('producer')) {
         throw new ForbiddenException({ code: 'role', message: 'Bỏ chọn giọng đọc cần vai producer' });
       }
-      clearProjectAudio(this.engine.db, projectId, kind);
+      await clearProjectAudio(this.engine.db, projectId, kind);
       return this.audio(projectId, req);
     });
   }
@@ -329,11 +335,12 @@ export class VideoMediaController {
   fromFiles(@Param('projectId') projectId: string, @Body() raw: unknown, @Req() req: Request) {
     return mapErrors(async () => {
       const body = parseBody(FromFilesSchema, raw);
-      requireProject(this.engine.db, projectId);
-      const files = this.musicFiles(projectId, body.paths);
+      await requireProject(this.engine.db, projectId);
+      const files = await this.musicFiles(projectId, body.paths);
       await this.importing(() => importProjectMusic({ db: this.engine.db, bucket: this.engine.bucket, ...requireAudioTools(this.config) }, {
         projectId, files, ...musicOptions(body),
       }));
+      await this.beats(projectId, null, req);
       return this.audio(projectId, req);
     });
   }
@@ -352,12 +359,13 @@ export class VideoMediaController {
   videoFromFiles(@Param('videoId') videoId: string, @Body() raw: unknown, @Req() req: Request) {
     return mapErrors(async () => {
       const body = parseBody(FromFilesSchema, raw);
-      const v = requireVideo(this.engine.db, videoId);
-      const files = this.musicFiles(v.project_id, body.paths);
+      const v = await requireVideo(this.engine.db, videoId);
+      const files = await this.musicFiles(v.project_id, body.paths);
       await this.importing(() => importVideoMusic({ db: this.engine.db, bucket: this.engine.bucket, ...requireAudioTools(this.config) }, {
         videoId, files, ...musicOptions(body),
       }));
-      return this.videoAudioOf(videoId, this.follow(v.project_id, videoId, req), req);
+      await this.beats(v.project_id, videoId, req);
+      return this.videoAudioOf(videoId, await this.follow(v.project_id, videoId, req), req);
     });
   }
 
@@ -368,11 +376,12 @@ export class VideoMediaController {
   videoFromLibrary(@Param('videoId') videoId: string, @Body() raw: unknown, @Req() req: Request) {
     return mapErrors(async () => {
       const body = parseBody(FromLibrarySchema, raw);
-      const v = requireVideo(this.engine.db, videoId);
-      const track = getLibraryMusic(this.engine.db, body.trackId);
+      const v = await requireVideo(this.engine.db, videoId);
+      const track = await getLibraryMusic(this.engine.db, body.trackId);
       if (!track) throw new NotFoundException({ code: 'not_found', message: `Không có bài ${body.trackId} trong kho nhạc` });
       await this.importing(async () => setVideoLibraryMusic(this.engine.db, videoId, track, musicOptions(body)));
-      return this.videoAudioOf(videoId, this.follow(v.project_id, videoId, req), req);
+      await this.beats(v.project_id, videoId, req);
+      return this.videoAudioOf(videoId, await this.follow(v.project_id, videoId, req), req);
     });
   }
 
@@ -381,34 +390,46 @@ export class VideoMediaController {
   @Roles('editor')
   clearVideo(@Param('videoId') videoId: string, @Req() req: Request) {
     return mapErrors(async () => {
-      const v = requireVideo(this.engine.db, videoId);
-      clearVideoMusic(this.engine.db, videoId);
-      return this.videoAudioOf(videoId, this.follow(v.project_id, videoId, req), req);
+      const v = await requireVideo(this.engine.db, videoId);
+      await clearVideoMusic(this.engine.db, videoId);
+      return this.videoAudioOf(videoId, await this.follow(v.project_id, videoId, req), req);
     });
   }
 
-  private videoAudioOf(videoId: string, revision: number | null, req: Request): VideoAudioResponse {
-    const v = requireVideo(this.engine.db, videoId);
-    const own = videoOwnMusic(this.engine.db, videoId);
-    const lib = videoLibraryTrack(this.engine.db, videoId);
-    const uses = musicForVideo(this.engine.db, v.project_id, videoId)?.from ?? 'mood';
+  private async videoAudioOf(videoId: string, revision: number | null, req: Request): Promise<VideoAudioResponse> {
+    const v = await requireVideo(this.engine.db, videoId);
+    const own = await videoOwnMusic(this.engine.db, videoId);
+    const lib = await videoLibraryTrack(this.engine.db, videoId);
+    const uses = (await musicForVideo(this.engine.db, v.project_id, videoId))?.from ?? 'mood';
     return {
-      music: own, uses, summary: videoMusicSummary(this.engine.db, v.project_id, videoId),
+      music: own, uses, summary: await videoMusicSummary(this.engine.db, v.project_id, videoId),
       libraryTrack: lib ? { trackId: lib.track_id, displayName: lib.display_name, moods: lib.mood, durationSeconds: lib.duration_seconds } : null,
       enabled: audioTools(this.config) !== null,
-      files: this.links.withListenUrls(v.project_id, projectAudioFiles(this.engine.db, this.workspace.dir(v.project_id), v.project_id), req.authContext!.userId),
+      files: this.links.withListenUrls(v.project_id, await projectAudioFiles(this.engine.db, await this.workspace.dir(v.project_id), v.project_id), req.authContext!.userId),
       revision,
     };
   }
 
   /** The video's latest timeline takes its music now (a new revision), or null when nothing changed. */
-  private follow(projectId: string, videoId: string, req: Request): number | null {
-    return videoMusicToTimeline(this.engine.db, { workspaceDir: this.workspace.dir(projectId), projectId, videoId, authorId: req.authContext!.userId });
+  private async follow(projectId: string, videoId: string, req: Request): Promise<number | null> {
+    return videoMusicToTimeline(this.engine.db, { workspaceDir: await this.workspace.dir(projectId), projectId, videoId, authorId: req.authContext!.userId });
+  }
+
+  /**
+   * The beats of the music just set, found on the farm in the background (job `music_beats`) so the edit plan can cut on
+   * them (feedback-vps §4.7). Nothing when they are known; a failure to queue never fails picking the music.
+   */
+  private async beats(projectId: string, videoId: string | null, req: Request): Promise<void> {
+    try {
+      await queueMusicBeats({ db: this.engine.db, bucket: this.engine.bucket }, { projectId, videoId, createdBy: req.authContext!.userId });
+    } catch {
+      /* the fit finds them when a shot needs them */
+    }
   }
 
   /** Workspace audio files to make music of, each there and not larger than a music track may be. */
-  private musicFiles(projectId: string, paths: string[]): { path: string; filename: string }[] {
-    const dir = this.workspace.dir(projectId);
+  private async musicFiles(projectId: string, paths: string[]): Promise<{ path: string; filename: string }[]> {
+    const dir = await this.workspace.dir(projectId);
     return paths.map((p) => {
       const { abs } = resolveInside(dir, p);
       readWorkspaceBytes(dir, p); // exists and readable
@@ -430,17 +451,17 @@ export class VideoMediaController {
     }
   }
 
-  private roleOf(req: Request, teamId: string): ActorRole {
+  private async roleOf(req: Request, teamId: string): Promise<ActorRole> {
     if (req.authContext?.isAdmin) return 'owner';
-    return this.engine.db.get<{ role: ActorRole }>('SELECT role FROM team_members WHERE team_id = ? AND user_id = ?', [teamId, req.authContext!.userId])?.role ?? 'viewer';
+    return (await this.engine.db.get<{ role: ActorRole }>('SELECT role FROM team_members WHERE team_id = ? AND user_id = ?', [teamId, req.authContext!.userId]))?.role ?? 'viewer';
   }
 
   /**
    * Why ag-go does not serve every video of that timeline revision to this person, or null when it does: answered from
    * what is known per ag-go video (`FootageRights`), asking ag-go only about the videos not known yet.
    */
-  private footageVerdict(userId: string, videoId: string, revision: number): Promise<FootageVerdict | null> {
-    const rev = getVideoRevision(this.engine.db, videoId, revision);
+  private async footageVerdict(userId: string, videoId: string, revision: number): Promise<FootageVerdict | null> {
+    const rev = await getVideoRevision(this.engine.db, videoId, revision);
     return this.rights.verdict(userId, rev ? rev.data.clips.map((c) => c.asset_id) : [], `video ${videoId} r${revision}`);
   }
 }

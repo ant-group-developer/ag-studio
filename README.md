@@ -7,7 +7,7 @@ chiến lược, branding, rồi làm từng *video* từ footage trên **ag-go*
 dừng được.
 
 ```
-Trình duyệt ──► apps/web ──► apps/api ─┬─► studio.db (SQLite) ◄── apps/worker
+Trình duyệt ──► apps/web ──► apps/api ─┬─► Postgres (DATABASE_URL) ◄── apps/worker
      │                                 │                          │
      └────► ag-go-api (bearer Auth0)   └─► ag-go-api (service key, act-as)
                                                                   ▼

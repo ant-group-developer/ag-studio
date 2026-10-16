@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { TextLookSchema } from "./composition.js";
+import { TEXT_LOOK_SIZES, TextLookSchema, VIDEO_LOOKS } from "./composition.js";
 import { surveyIndexSchemaV2 } from "./library.js";
 
 /**
@@ -44,6 +44,27 @@ export const StudioMusicSchema = z.object({
   ducking: z.boolean(),
 }).strict();
 export type StudioMusic = z.infer<typeof StudioMusicSchema>;
+
+/** A clip's own gain on top of its sound (feedback-vps §4.3), dB. */
+export const CLIP_GAIN_MIN_DB = -30;
+export const CLIP_GAIN_MAX_DB = 20;
+/** One point of the music's volume line: the music's gain at `at` seconds of the video. */
+export const MusicEnvelopePointSchema = z.object({
+  at: z.number().min(0),
+  gain_db: z.number().min(-60).max(0),
+}).strict();
+export type MusicEnvelopePoint = z.infer<typeof MusicEnvelopePointSchema>;
+export const MUSIC_ENVELOPE_MAX_POINTS = 200;
+
+/**
+ * A timeline's music (v4): as `StudioMusicSchema`, plus a volume line (feedback-vps §4.3). With `envelope`, the music's
+ * gain follows the points (straight lines between them, the first point's gain before it, the last one's after it) and
+ * `gain_db` is only what it goes back to without them. Ducking still lowers it under the voice.
+ */
+export const TimelineMusicSchema = StudioMusicSchema.extend({
+  envelope: z.array(MusicEnvelopePointSchema).min(1).max(MUSIC_ENVELOPE_MAX_POINTS).optional(),
+}).strict();
+export type TimelineMusic = z.infer<typeof TimelineMusicSchema>;
 
 // ---------------------------------------------------------------------------
 // Audio the person gives a production: a narration voice sample, background music (ADR-0001 items 167-168)
@@ -118,6 +139,37 @@ export type ProductionMusic = z.infer<typeof ProductionMusicSchema>;
 export function studioMusicOf(m: ProductionMusic): StudioMusic {
   return { track: m.track, gain_db: m.gain_db, ducking: m.ducking };
 }
+
+/** Beats of a track at most (3 hours at 300 BPM is 54 000), as the farm's `studio.beats`. */
+export const MUSIC_BEATS_MAX = 60_000;
+const BeatTimesSchema = z.array(z.number().min(0)).max(MUSIC_BEATS_MAX);
+
+/**
+ * The beats of a background track (feedback-vps §4.7), found by the farm (`studio.beats`, librosa) when the music is
+ * imported and kept beside the track in the bucket (`<track key>.beats.json`): every beat, the first beat of each bar,
+ * the tempo, and each joined song's own tempo. A shot of the edit plan with `snap` cuts on them. Times are seconds of the
+ * track, which plays from the start of the video (and again from its start when it loops).
+ */
+export const MusicBeatsSchema = z.object({
+  schema_version: studioVersion("music-beats"),
+  track: LibraryInputSchema,
+  /** The track's content when it was analysed (a library track replaced under the same name is analysed again). */
+  sha256: z.string().min(1).nullable(),
+  duration_s: z.number().positive(),
+  /** The tempo heard longest; null when no beat could be heard. */
+  bpm: z.number().positive().nullable(),
+  beats_per_bar: z.number().int().min(2).max(12),
+  beats: BeatTimesSchema,
+  downbeats: BeatTimesSchema,
+  sections: z.array(z.object({ start: z.number().min(0), end: z.number().positive(), bpm: z.number().positive().nullable() }).strict()).min(1).max(20),
+  engine: z.string().max(100),
+  analysed_at: z.string(),
+}).strict();
+export type MusicBeats = z.infer<typeof MusicBeatsSchema>;
+
+/** Where a shot of the edit plan may cut: on the nearest beat of the music, or on the nearest first beat of a bar. */
+export const SNAP_KINDS = ["beat", "bar"] as const;
+export type SnapKind = (typeof SNAP_KINDS)[number];
 
 /** Soft target: an episode may differ from `episode_target_seconds` by this fraction (a warning, never a block). */
 export const EPISODE_DURATION_TOLERANCE = 0.2;
@@ -308,6 +360,11 @@ export const NARRATION_VOICES = ["none", "tts", "original"] as const;
 export type NarrationVoice = (typeof NARRATION_VOICES)[number];
 
 export const TEXT_KINDS = ["title", "callout", "lower_third"] as const;
+/** Characters of one text on the picture, and how long it may stay on (feedback-vps §4.1: was 64 and 20 s). */
+export const TIMELINE_TEXT_MAX = 120;
+export const TIMELINE_TEXT_MAX_SECONDS = 600;
+/** Texts an edit plan may carry (was 30). */
+export const EDIT_PLAN_TEXTS_MAX = 200;
 export const TEXT_POSITIONS_V2 = ["top_left", "top_center", "top_right", "center", "bottom_left", "bottom_center", "bottom_right"] as const;
 export type TextKind = (typeof TEXT_KINDS)[number];
 export type StudioTextPosition = (typeof TEXT_POSITIONS_V2)[number];
@@ -331,7 +388,7 @@ export const PlannedEpisodeSchema = z.object({
   /** On-screen texts; `at_item` is the index in `items` whose start the text appears at. */
   texts_suggested: z.array(z.object({
     kind: z.enum(TEXT_KINDS),
-    text: z.string().min(1).max(64),
+    text: z.string().min(1).max(TIMELINE_TEXT_MAX),
     at_item: z.number().int().min(0),
   }).strict()).max(10),
   /**
@@ -606,14 +663,20 @@ export const StudioEpisodeSchema = PlannedEpisodeSchema.extend({
 }).strict();
 export type StudioEpisode = z.infer<typeof StudioEpisodeSchema>;
 
-/** One text on the picture (T). `start` is seconds from the start of the episode. Same in v3 and v4. */
+/**
+ * One text on the picture (T). `start` is seconds from the start of the episode. Same in v3 and v4. A text may stay
+ * on for a whole stretch (a place name, a bilingual caption: up to `TIMELINE_TEXT_MAX_SECONDS`); texts at one position
+ * that overlap in time stack instead of covering each other (`buildAss`).
+ */
 export const TimelineTextSchema = z.object({
   text_id: z.string().regex(/^T\d{3}$/),
   kind: z.enum(TEXT_KINDS),
-  text: z.string().min(1).max(64),
+  text: z.string().min(1).max(TIMELINE_TEXT_MAX),
   start: z.number().min(0),
-  duration: z.number().min(0.5).max(20),
+  duration: z.number().min(0.5).max(TIMELINE_TEXT_MAX_SECONDS),
   position: z.enum(TEXT_POSITIONS_V2),
+  /** Size step against the kind's own size (s 0.8×, m, l 1.25×). Absent = `m`. */
+  size: z.enum(TEXT_LOOK_SIZES).optional(),
 }).strict();
 
 /**
@@ -699,6 +762,8 @@ export const TimelineClipV4Schema = z.object({
    * other clips keep theirs. Absent = as the timeline's `source_audio`.
    */
   muted: z.boolean().optional(),
+  /** Feedback-vps §4.3: this clip's own sound louder or quieter, dB (`CLIP_GAIN_MIN_DB`..`CLIP_GAIN_MAX_DB`). Absent = 0. */
+  gain_db: z.number().min(CLIP_GAIN_MIN_DB).max(CLIP_GAIN_MAX_DB).optional(),
 }).strict().refine((c) => c.out === null || c.out > c.in, { message: "out must be after in", path: ["out"] });
 
 export const NarrationWordSchema = z.object({
@@ -737,12 +802,21 @@ export const TimelineV4Schema = z.object({
   }).strict(),
   /** Burnt-in subtitles from the narration's words. */
   captions: z.object({ mode: z.enum(CAPTION_MODES) }).strict(),
-  music: StudioMusicSchema.nullable(),
-  source_audio: z.object({ muted: z.boolean() }).strict(),
+  music: TimelineMusicSchema.nullable(),
+  source_audio: z.object({
+    muted: z.boolean(),
+    /**
+     * Feedback-vps §4.3: every clip's own sound brought to one level (the render worker measures each clip and corrects it
+     * by at most ±12 dB) before the clip's `gain_db`. Absent = as recorded.
+     */
+    even: z.boolean().optional(),
+  }).strict(),
   assets: z.record(z.string(), EpisodeAssetSchema),
   alternates: z.array(reasonedAsset),
   /** Cut 1.1.0: the branding's text look, frozen when the cut is fitted. Absent = the Studio default look. */
   text_style: TextLookSchema.optional(),
+  /** Feedback-vps §4.6: the colour of the picture (`VIDEO_LOOKS`). Absent = `none`, as filmed. */
+  look: z.enum(VIDEO_LOOKS).optional(),
 }).strict();
 export type TimelineV4 = z.infer<typeof TimelineV4Schema>;
 export type TimelineClipV4 = TimelineV4["clips"][number];
@@ -790,11 +864,15 @@ export function downgradeTimelineV4(t: TimelineV4): TimelineV3 {
     if (c.line_id !== null) lost.push(`${c.clip_id} line_id`);
     if (c.transition_out.kind !== "cut" || c.transition_out.seconds !== 0) lost.push(`${c.clip_id} transition`);
     if (c.muted) lost.push(`${c.clip_id} muted`);
+    if (c.gain_db !== undefined) lost.push(`${c.clip_id} gain`);
   }
+  if (t.music?.envelope) lost.push("music envelope");
+  if (t.source_audio.even !== undefined) lost.push("source_audio even");
   const n = t.narration;
   if (n.voice !== "none" || n.lines.length > 0 || n.lead_seconds !== DEFAULT_NARRATION_LEAD_SECONDS) lost.push("narration");
   if (t.captions.mode !== "none") lost.push("captions");
   if (t.text_style) lost.push("text_style");
+  if (t.look !== undefined) lost.push("look");
   if (lost.length > 0) throw new TimelineVersionError(`a v3 timeline cannot hold: ${lost.join(", ")}`);
   return {
     schema_version: "studio.timeline/v3",
@@ -805,8 +883,8 @@ export function downgradeTimelineV4(t: TimelineV4): TimelineV3 {
     language: t.language,
     clips: t.clips.map((c) => ({ clip_id: c.clip_id, asset_id: c.asset_id, section_title: c.section_title })),
     texts: t.texts,
-    music: t.music,
-    source_audio: t.source_audio,
+    music: t.music ? { track: t.music.track, gain_db: t.music.gain_db, ducking: t.music.ducking } : null,
+    source_audio: { muted: t.source_audio.muted },
     assets: t.assets,
     alternates: t.alternates,
   };
@@ -952,11 +1030,21 @@ export const EditPlanSchema = z.object({
     in: z.number().min(0),
     out: z.number().positive(),
     line_id: z.string().regex(/^L\d{3}$/).nullable(),
-    transition: z.enum(["cut", "dissolve"]),
+    /** Into the next shot. Feedback-vps §4.4: also `dip_black`, the same as the timeline's. */
+    transition: z.enum(TIMELINE_TRANSITIONS),
+    /** Seconds of the transition (default: dissolve 0.4, dip to black 0.6). */
+    transition_s: z.number().min(0.2).max(1).optional(),
     section_title: z.string().min(1).max(100).nullable(),
     note: z.string().max(300),
     /** Cut 1.1.0: `mute` = this shot's own sound is not heard (announcements, music, strangers). Absent = `keep`. */
     source_audio: z.enum(["keep", "mute"]).optional(),
+    /** Feedback-vps §4.3: this shot's own sound louder or quieter, dB; every clip cut from it takes it. */
+    gain_db: z.number().min(CLIP_GAIN_MIN_DB).max(CLIP_GAIN_MAX_DB).optional(),
+    /**
+     * Feedback-vps §4.7: the cut out of this shot moves to the music's nearest beat (`beat`) or first beat of a bar
+     * (`bar`), within what the shot holds and never below the shortest clip; the music's beats must be known.
+     */
+    snap: z.enum(SNAP_KINDS).optional(),
   }).strict()).min(1).max(400),
   lines: z.array(z.object({
     line_id: z.string().regex(/^L\d{3}$/),
@@ -965,14 +1053,40 @@ export const EditPlanSchema = z.object({
   texts: z.array(z.object({
     text_id: z.string().regex(/^T\d{3}$/),
     kind: z.enum(TEXT_KINDS),
-    text: z.string().min(1).max(64),
+    text: z.string().min(1).max(TIMELINE_TEXT_MAX),
     at_order: z.number().int().min(1),
     offset_s: z.number().min(0),
-    duration: z.number().min(0.5).max(20),
+    duration: z.number().min(0.5).max(TIMELINE_TEXT_MAX_SECONDS),
     position: z.enum(TEXT_POSITIONS_V2),
-  }).strict()).max(30),
+    size: z.enum(TEXT_LOOK_SIZES).optional(),
+  }).strict()).max(EDIT_PLAN_TEXTS_MAX),
   /** A mood for the music (the production's track is used; kept for later). */
   music_mood: z.string().max(40).nullable(),
+  /**
+   * Feedback-vps §4.3: the music's volume line, each point anchored on a shot like a text (`at_order`, `offset_s` into
+   * it), the fit puts it at that shot's place in the video (`TimelineMusicSchema.envelope`).
+   */
+  music_envelope: z.array(z.object({
+    at_order: z.number().int().min(1),
+    offset_s: z.number().min(0),
+    gain_db: z.number().min(-60).max(0),
+  }).strict()).min(1).max(MUSIC_ENVELOPE_MAX_POINTS).optional(),
+  /** Feedback-vps §4.3: the clips' own sound brought to one level (`source_audio.even`). */
+  source_even: z.boolean().optional(),
+  /**
+   * Feedback-vps §4.4: how the music plays, on top of the music the video takes (its own, the project's, or the library's by
+   * mood): its gain and whether it ducks under the voice. `null` = no music at all. Absent = as that music is set.
+   */
+  music: z.object({
+    gain_db: z.number().min(-40).max(0).optional(),
+    ducking: z.boolean().optional(),
+  }).strict().nullable().optional(),
+  /** Feedback-vps §4.4: every clip's own sound off (`source_audio.muted`). */
+  source_muted: z.boolean().optional(),
+  /** Feedback-vps §4.4: this video's text look instead of the branding's (font, size, colours, shadow). */
+  text_look: TextLookSchema.optional(),
+  /** Feedback-vps §4.6: the colour of the picture instead of the branding's `look`. */
+  look: z.enum(VIDEO_LOOKS).optional(),
 }).strict();
 export type EditPlan = z.infer<typeof EditPlanSchema>;
 

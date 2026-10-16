@@ -74,32 +74,32 @@ export function redactDetails(value: unknown): unknown {
 export interface AuditScope { teamId: string | null; projectId: string | null; videoId: string | null; threadId: string | null }
 
 /** The team, project, video and thread a set of ids belongs to (unknown ids leave the rest as given). */
-export function scopeOf(db: StudioDb, ids: { teamId?: string | null; projectId?: string | null; videoId?: string | null; threadId?: string | null; jobId?: string | null; actionId?: string | null }): AuditScope {
+export async function scopeOf(db: StudioDb, ids: { teamId?: string | null; projectId?: string | null; videoId?: string | null; threadId?: string | null; jobId?: string | null; actionId?: string | null }): Promise<AuditScope> {
   let { projectId = null, videoId = null, threadId = null } = ids;
   if (ids.jobId && !projectId) {
-    const j = db.get<{ project_id: string; video_id: string | null; thread_id: string | null }>("SELECT project_id, video_id, thread_id FROM project_jobs WHERE id = ?", [ids.jobId]);
+    const j = await db.get<{ project_id: string; video_id: string | null; thread_id: string | null }>("SELECT project_id, video_id, thread_id FROM project_jobs WHERE id = ?", [ids.jobId]);
     if (j) { projectId = j.project_id; videoId ??= j.video_id; threadId ??= j.thread_id; }
   }
   if (ids.actionId && !projectId) {
-    const a = db.get<{ project_id: string; video_id: string | null; thread_id: string }>("SELECT project_id, video_id, thread_id FROM agent_actions WHERE id = ?", [ids.actionId]);
+    const a = await db.get<{ project_id: string; video_id: string | null; thread_id: string }>("SELECT project_id, video_id, thread_id FROM agent_actions WHERE id = ?", [ids.actionId]);
     if (a) { projectId = a.project_id; videoId ??= a.video_id; threadId ??= a.thread_id; }
   }
   if (threadId && !projectId) {
-    const t = db.get<{ project_id: string; video_id: string | null }>("SELECT project_id, video_id FROM agent_threads WHERE id = ?", [threadId]);
+    const t = await db.get<{ project_id: string; video_id: string | null }>("SELECT project_id, video_id FROM agent_threads WHERE id = ?", [threadId]);
     if (t) { projectId = t.project_id; videoId ??= t.video_id; }
   }
-  if (videoId && !projectId) projectId = db.get<{ project_id: string }>("SELECT project_id FROM videos WHERE id = ?", [videoId])?.project_id ?? null;
-  const teamId = ids.teamId ?? (projectId ? db.get<{ team_id: string }>("SELECT team_id FROM projects WHERE id = ?", [projectId])?.team_id ?? null : null);
+  if (videoId && !projectId) projectId = (await db.get<{ project_id: string }>("SELECT project_id FROM videos WHERE id = ?", [videoId]))?.project_id ?? null;
+  const teamId = ids.teamId ?? (projectId ? (await db.get<{ team_id: string }>("SELECT team_id FROM projects WHERE id = ?", [projectId]))?.team_id ?? null : null);
   return { teamId, projectId, videoId, threadId };
 }
 
 /** Writes one row; a failure is reported to `onError` (default: stderr), never thrown. Returns the row's id. */
-export function logAudit(db: StudioDb, e: AuditEntry, onError: (err: unknown) => void = (err) => process.stderr.write(`audit log: ${String(err)}\n`)): string | null {
+export async function logAudit(db: StudioDb, e: AuditEntry, onError: (err: unknown) => void = (err) => process.stderr.write(`audit log: ${String(err)}\n`)): Promise<string | null> {
   try {
-    const scope = scopeOf(db, { teamId: e.teamId ?? null, projectId: e.projectId ?? null, videoId: e.videoId ?? null, threadId: e.threadId ?? null, jobId: e.jobId ?? null });
+    const scope = await scopeOf(db, { teamId: e.teamId ?? null, projectId: e.projectId ?? null, videoId: e.videoId ?? null, threadId: e.threadId ?? null, jobId: e.jobId ?? null });
     const id = randomUUID();
     const details = e.details === undefined ? null : JSON.stringify(redactDetails(e.details));
-    db.run(
+    await db.run(
       `INSERT INTO audit_log (id, at, actor_kind, actor_id, kind, action, outcome, method, route, status_code, duration_ms, team_id, project_id, video_id,
          thread_id, message_id, job_id, target, summary, details, cost_usd, request_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -158,7 +158,7 @@ function where(f: AuditFilter): { sql: string; params: (string | number)[] } {
   const c: string[] = [];
   const p: (string | number)[] = [];
   if (f.teamIds) {
-    if (!f.teamIds.length) return { sql: "WHERE 0", params: [] };
+    if (!f.teamIds.length) return { sql: "WHERE false", params: [] };
     c.push(`a.team_id IN (${f.teamIds.map(() => "?").join(", ")})`);
     p.push(...f.teamIds);
   }
@@ -179,21 +179,21 @@ interface AuditRow {
   id: string; at: string; actor_kind: AuditActorKind; actor_id: string | null; kind: AuditKind; action: string; outcome: "ok" | "error"; method: string | null;
   route: string | null; status_code: number | null; duration_ms: number | null; team_id: string | null; team_name: string | null; project_id: string | null;
   project_name: string | null; video_id: string | null; video_title: string | null; thread_id: string | null; message_id: string | null; job_id: string | null;
-  target: string | null; summary: string | null; details: string | null; cost_usd: number | null;
+  target: string | null; summary: string | null; details: unknown; cost_usd: number | null;
 }
 
 /** A page of the log, newest first, with the names of the team, project and video when they still exist. */
-export function listAudit(db: StudioDb, f: AuditFilter, page = 1, pageSize = 50): { items: AuditView[]; total: number; page: number; pageSize: number } {
+export async function listAudit(db: StudioDb, f: AuditFilter, page = 1, pageSize = 50): Promise<{ items: AuditView[]; total: number; page: number; pageSize: number }> {
   const w = where(f);
   const size = Math.min(Math.max(pageSize, 1), 200);
   const at = Math.max(page, 1);
-  const rows = db.all<AuditRow>(
+  const rows = await db.all<AuditRow>(
     `SELECT a.*, t.name AS team_name, p.name AS project_name, v.title AS video_title
        FROM audit_log a LEFT JOIN teams t ON t.id = a.team_id LEFT JOIN projects p ON p.id = a.project_id LEFT JOIN videos v ON v.id = a.video_id
        ${w.sql} ORDER BY a.at DESC, a.id DESC LIMIT ? OFFSET ?`,
     [...w.params, size, (at - 1) * size],
   );
-  const total = db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM audit_log a ${w.sql}`, w.params)?.n ?? 0;
+  const total = (await db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM audit_log a ${w.sql}`, w.params))?.n ?? 0;
   return {
     items: rows.map((r) => ({
       id: r.id, at: r.at, actorKind: r.actor_kind, actorId: r.actor_id, kind: r.kind, action: r.action, outcome: r.outcome, method: r.method, route: r.route,
@@ -202,21 +202,21 @@ export function listAudit(db: StudioDb, f: AuditFilter, page = 1, pageSize = 50)
       project: r.project_id ? { id: r.project_id, name: r.project_name } : null,
       video: r.video_id ? { id: r.video_id, title: r.video_title } : null,
       threadId: r.thread_id, messageId: r.message_id, jobId: r.job_id, target: r.target, summary: r.summary,
-      details: r.details ? JSON.parse(r.details) : null, costUsd: r.cost_usd,
+      details: r.details ?? null, costUsd: r.cost_usd,
     })),
     total, page: at, pageSize: size,
   };
 }
 
 /** The people who appear in the log under a filter (for the "who" filter). */
-export function auditActors(db: StudioDb, f: AuditFilter): string[] {
+export async function auditActors(db: StudioDb, f: AuditFilter): Promise<string[]> {
   const { actorId: _who, ...rest } = f;
   const w = where(rest);
-  return db.all<{ actor_id: string }>(`SELECT DISTINCT a.actor_id FROM audit_log a ${w.sql}${w.sql ? " AND" : " WHERE"} a.actor_id IS NOT NULL ORDER BY a.actor_id LIMIT 500`, w.params)
+  return (await db.all<{ actor_id: string }>(`SELECT DISTINCT a.actor_id FROM audit_log a ${w.sql}${w.sql ? " AND" : " WHERE"} a.actor_id IS NOT NULL ORDER BY a.actor_id LIMIT 500`, w.params))
     .map((r) => r.actor_id);
 }
 
 /** Drops rows older than `cutoff` (ISO); how many went. */
-export function sweepAuditLog(db: StudioDb, cutoff: string): number {
-  return db.run("DELETE FROM audit_log WHERE at < ?", [cutoff]).changes;
+export async function sweepAuditLog(db: StudioDb, cutoff: string): Promise<number> {
+  return (await db.run("DELETE FROM audit_log WHERE at < ?", [cutoff])).changes;
 }

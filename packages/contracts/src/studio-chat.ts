@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { TEXT_LOOK_SIZES, VIDEO_LOOKS } from "./composition.js";
 import {
-  CAPTION_MODES, ChannelRefSchema, MAX_RESEARCH_CHANNELS, MAX_RESEARCH_KEYWORDS, STUDIO_ASPECTS, StudioHintsSchema, StudioMusicSchema,
+  CAPTION_MODES, ChannelRefSchema, CLIP_GAIN_MAX_DB, CLIP_GAIN_MIN_DB, MUSIC_ENVELOPE_MAX_POINTS, MusicEnvelopePointSchema, TIMELINE_TEXT_MAX, TIMELINE_TEXT_MAX_SECONDS, MAX_RESEARCH_CHANNELS, MAX_RESEARCH_KEYWORDS, STUDIO_ASPECTS, StudioHintsSchema, StudioMusicSchema,
   studioVersion, TEXT_KINDS, TEXT_POSITIONS_V2, TIMELINE_TRANSITIONS, type TeamSkillStep,
 } from "./studio.js";
 
@@ -108,11 +109,12 @@ const textId = z.string().regex(/^T\d{3}$/);
 const index = z.number().int().min(0);
 const textFields = {
   kind: z.enum(TEXT_KINDS),
-  text: z.string().min(1).max(64),
+  text: z.string().min(1).max(TIMELINE_TEXT_MAX),
   start: z.number().min(0),
-  duration: z.number().min(0.5).max(20),
+  duration: z.number().min(0.5).max(TIMELINE_TEXT_MAX_SECONDS),
   position: z.enum(TEXT_POSITIONS_V2),
 };
+const textSize = z.enum(TEXT_LOOK_SIZES);
 
 /** One edit, named after the operation in `core/src/studio/layout.ts` it runs. */
 export const TimelineOpSchema = z.discriminatedUnion("op", [
@@ -121,12 +123,15 @@ export const TimelineOpSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("moveClip"), from: index, to: index }).strict(),
   z.object({ op: z.literal("replaceClipAsset"), clip_id: clipId, asset_id: z.string().min(1) }).strict(),
   z.object({ op: z.literal("setSectionTitle"), clip_id: clipId, title: z.string().min(1).max(100).nullable() }).strict(),
-  z.object({ op: z.literal("addText"), ...textFields }).strict(),
+  /** `size`: s|m|l against the kind's size (absent = m). */
+  z.object({ op: z.literal("addText"), ...textFields, size: textSize.optional() }).strict(),
   /** null = keep the current value. */
   z.object({
     op: z.literal("updateText"), text_id: textId,
     kind: textFields.kind.nullable(), text: textFields.text.nullable(), start: textFields.start.nullable(),
     duration: textFields.duration.nullable(), position: textFields.position.nullable(),
+    /** null or absent = keep. */
+    size: textSize.nullable().optional(),
   }).strict(),
   z.object({ op: z.literal("removeText"), text_id: textId }).strict(),
   z.object({ op: z.literal("setMusic"), music: StudioMusicSchema.nullable() }).strict(),
@@ -137,6 +142,14 @@ export const TimelineOpSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("setCaptions"), mode: z.enum(CAPTION_MODES) }).strict(),
   /** Timeline v4 only: one clip's own sound off (or on again). */
   z.object({ op: z.literal("setClipMuted"), clip_id: clipId, muted: z.boolean() }).strict(),
+  /** Timeline v4 only: one clip's own sound louder or quieter, dB (0 = as recorded). */
+  z.object({ op: z.literal("setClipGain"), clip_id: clipId, gain_db: z.number().min(CLIP_GAIN_MIN_DB).max(CLIP_GAIN_MAX_DB) }).strict(),
+  /** Timeline v4 only: every clip's own sound brought to one level (or as recorded again). */
+  z.object({ op: z.literal("setSourceEven"), even: z.boolean() }).strict(),
+  /** Timeline v4 only: the music's volume line, points in seconds of the video ([] = none: the music's own gain). */
+  z.object({ op: z.literal("setMusicEnvelope"), points: z.array(MusicEnvelopePointSchema).max(MUSIC_ENVELOPE_MAX_POINTS) }).strict(),
+  /** Timeline v4 only: the colour of the picture (`none` = as filmed). */
+  z.object({ op: z.literal("setLook"), look: z.enum(VIDEO_LOOKS) }).strict(),
 ]);
 export type TimelineOp = z.infer<typeof TimelineOpSchema>;
 

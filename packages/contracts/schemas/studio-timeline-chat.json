@@ -144,7 +144,7 @@
                   "text": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 64
+                    "maxLength": 120
                   },
                   "start": {
                     "type": "number",
@@ -153,7 +153,7 @@
                   "duration": {
                     "type": "number",
                     "minimum": 0.5,
-                    "maximum": 20
+                    "maximum": 600
                   },
                   "position": {
                     "type": "string",
@@ -165,6 +165,14 @@
                       "bottom_left",
                       "bottom_center",
                       "bottom_right"
+                    ]
+                  },
+                  "size": {
+                    "type": "string",
+                    "enum": [
+                      "s",
+                      "m",
+                      "l"
                     ]
                   }
                 },
@@ -209,7 +217,7 @@
                       {
                         "type": "string",
                         "minLength": 1,
-                        "maxLength": 64
+                        "maxLength": 120
                       },
                       {
                         "type": "null"
@@ -232,7 +240,7 @@
                       {
                         "type": "number",
                         "minimum": 0.5,
-                        "maximum": 20
+                        "maximum": 600
                       },
                       {
                         "type": "null"
@@ -251,6 +259,21 @@
                           "bottom_left",
                           "bottom_center",
                           "bottom_right"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "size": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "s",
+                          "m",
+                          "l"
                         ]
                       },
                       {
@@ -458,6 +481,108 @@
                   "op",
                   "clip_id",
                   "muted"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "setClipGain"
+                  },
+                  "clip_id": {
+                    "type": "string",
+                    "pattern": "^C\\d{3,4}$"
+                  },
+                  "gain_db": {
+                    "type": "number",
+                    "minimum": -30,
+                    "maximum": 20
+                  }
+                },
+                "required": [
+                  "op",
+                  "clip_id",
+                  "gain_db"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "setSourceEven"
+                  },
+                  "even": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "op",
+                  "even"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "setMusicEnvelope"
+                  },
+                  "points": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "at": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "gain_db": {
+                          "type": "number",
+                          "minimum": -60,
+                          "maximum": 0
+                        }
+                      },
+                      "required": [
+                        "at",
+                        "gain_db"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 200
+                  }
+                },
+                "required": [
+                  "op",
+                  "points"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "setLook"
+                  },
+                  "look": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "natural",
+                      "vivid",
+                      "warm",
+                      "cinematic"
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "look"
                 ],
                 "additionalProperties": false
               }
