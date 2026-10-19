@@ -214,6 +214,8 @@ interface FakePlan {
   stderr?: string;
   /** stdout this call streams (e.g. `-progress pipe:1` lines); none by default. */
   stdout?: string;
+  /** How long the call runs before it streams its output and exits, in ms (default 0). */
+  delayMs?: number;
 }
 
 /**
@@ -222,12 +224,15 @@ interface FakePlan {
  * to that path so the runner's `statSync`/link/commit steps have a file to work with. `plan` decides per
  * call what happens, by argv and by call index.
  */
-function fakeSpawn(plan: (argv: string[], index: number) => FakePlan = () => ({})): { spawn: SpawnFn; calls: string[][]; options: Record<string, unknown>[]; graphs: (string | null)[]; kills: () => number } {
+function fakeSpawn(plan: (argv: string[], index: number) => FakePlan = () => ({})): { spawn: SpawnFn; calls: string[][]; options: Record<string, unknown>[]; graphs: (string | null)[]; kills: () => number; maxRunning: () => number } {
   const calls: string[][] = [];
   const options: Record<string, unknown>[] = [];
   /** Per call, the filtergraph it read from a file (the file is gone once the render is over). */
   const graphs: (string | null)[] = [];
   let kills = 0;
+  /** Children spawned and not closed yet, and the most there ever were at once. */
+  let running = 0;
+  let maxRunning = 0;
 
   const spawn = ((bin: string, args: readonly string[], opts: Record<string, unknown>) => {
     const argv = [bin, ...args];
@@ -238,6 +243,8 @@ function fakeSpawn(plan: (argv: string[], index: number) => FakePlan = () => ({}
     graphs.push(at >= 0 ? readFileSync(argv[at + 1]!, "utf8") : null);
     const p = plan(argv, index);
     const exit = p.exit === undefined ? 0 : p.exit;
+    running++;
+    maxRunning = Math.max(maxRunning, running);
 
     const child = new EventEmitter() as EventEmitter & { stderr: Readable; stdout: Readable | null; kill: () => boolean };
     const err = new Readable({ read() {} });
@@ -250,9 +257,16 @@ function fakeSpawn(plan: (argv: string[], index: number) => FakePlan = () => ({}
         out.push(null);
       }, 0);
     }
+    let closed = false;
+    const close = (code: number | null): void => {
+      if (closed) return;
+      closed = true;
+      running--;
+      child.emit("close", code);
+    };
     child.kill = () => {
       kills++;
-      child.emit("close", null);
+      close(null);
       return true;
     };
 
@@ -261,18 +275,20 @@ function fakeSpawn(plan: (argv: string[], index: number) => FakePlan = () => ({}
       // time it inspects it (a bare setTimeout races the stream).
       err.on("end", () => {
         const out = argv[argv.length - 1]!;
-        if (exit === 0 && argv.includes("-y") && out !== "-") writeFileSync(out, Buffer.alloc(4096, 1));
-        child.emit("close", exit);
+        if (closed) return;
+        // the file says which call made it (`-ss <in>` names a mezzanine's segment), padded to a few KB
+        if (exit === 0 && argv.includes("-y") && out !== "-") writeFileSync(out, Buffer.concat([Buffer.from(argv.join(" ")), Buffer.alloc(4096, 1)]));
+        close(exit);
       });
       setTimeout(() => {
         err.push(p.stderr ?? LOUDNORM_STDERR);
         err.push(null);
-      }, 0);
+      }, p.delayMs ?? 0);
     }
     return child as unknown as ReturnType<SpawnFn>;
   }) as unknown as SpawnFn;
 
-  return { spawn, calls, options, graphs, kills: () => kills };
+  return { spawn, calls, options, graphs, kills: () => kills, maxRunning: () => maxRunning };
 }
 
 /** Answers every probe with the same 2-second 4K/48 kHz stereo shape the fake compositions below expect. */
@@ -367,6 +383,64 @@ describe("renderComposition progress and cancel", () => {
       .rejects.toMatchObject({ code: "IO_ERROR", message: expect.stringContaining("aborted") });
     expect(kills()).toBe(1);
     expect(calls).toHaveLength(1);
+  });
+});
+
+/** `n` 2-second segments off one source, back to back; `inPoints` overrides where each one starts in it. */
+function segmentsComposition(n: number, inPoints: number[] = Array.from({ length: n }, (_, k) => 2 * k)): Composition {
+  return composition({
+    total_seconds: 2 * n,
+    segments: inPoints.map((at, k) => segment({ order: k, source_id: SRC_A, source_path: "/abs/a.mp4", in: at, out: at + 2, start: 2 * k, end: 2 * k + 2, has_audio: true })),
+  });
+}
+
+const isMezz = (argv: string[]): boolean => argv.includes("-ss");
+
+describe("renderComposition mezzanines in parallel", () => {
+  it("never runs more than mezzConcurrency at once, and the clip set keeps the timeline order", async () => {
+    // later segments finish first: the order must come from the timeline, not from who is done
+    const { spawn, calls, maxRunning } = fakeSpawn((argv) => (isMezz(argv) ? { delayMs: 60 - 8 * Number(argv[argv.indexOf("-ss") + 1]) / 2 } : {}));
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+    const { report } = await renderComposition(d, input({ composition: segmentsComposition(6), outDir, sourceChecksums: CHECKSUMS, mezzConcurrency: 3 }));
+
+    expect(calls.filter(isMezz)).toHaveLength(6);
+    expect(maxRunning()).toBe(3);
+    expect(report.segments).toMatchObject({ total: 6, rendered: 6, cached: 0 });
+    for (let k = 0; k < 6; k++) {
+      expect(readFileSync(join(outDir, "cuts", `00${k}.mp4`)).subarray(0, 600).toString()).toContain(`-ss ${2 * k} -to ${2 * k + 2} `);
+    }
+  });
+
+  it("the same shot used twice is encoded once, and the second use counts as cached", async () => {
+    const { spawn, calls } = fakeSpawn((argv) => (isMezz(argv) ? { delayMs: 30 } : {}));
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+    const { report } = await renderComposition(d, input({ composition: segmentsComposition(3, [0, 0, 4]), outDir, sourceChecksums: CHECKSUMS, mezzConcurrency: 3 }));
+
+    expect(calls.filter(isMezz).map((c) => c[c.indexOf("-ss") + 1])).toEqual(["0", "4"]);
+    expect(report.segments).toMatchObject({ total: 3, rendered: 2, cached: 1 });
+  });
+
+  it("a failing mezzanine stops the others: nothing new starts, the running ones are killed, its error is thrown", async () => {
+    const { spawn, calls, kills } = fakeSpawn((argv) => {
+      if (!isMezz(argv)) return {};
+      return argv[argv.indexOf("-ss") + 1] === "2" ? { exit: 1, stderr: "/abs/a.mp4: Invalid data found when processing input" } : { delayMs: 500 };
+    });
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+    await expect(renderComposition(d, input({ composition: segmentsComposition(6), outDir, sourceChecksums: CHECKSUMS, mezzConcurrency: 3 })))
+      .rejects.toMatchObject({ code: "IO_ERROR", message: expect.stringContaining("mezzanine 1: ffmpeg exited 1: /abs/a.mp4: Invalid data") });
+    expect(calls.filter(isMezz)).toHaveLength(3);
+    expect(kills()).toBe(2);
+  });
+
+  it("nvenc failing on every running mezzanine: each retries on cpu, the run warns once and ends on cpu", async () => {
+    const { spawn, calls } = fakeSpawn((argv) => (isMezz(argv) && argv.includes("h264_nvenc") ? { exit: 1, delayMs: 20 } : {}));
+    const { d, outDir } = fakeWorld({ spawn, nvenc: true });
+    const { report } = await renderComposition(d, input({ composition: segmentsComposition(3), outDir, encoderCfg: "auto", sourceChecksums: CHECKSUMS, mezzConcurrency: 3 }));
+
+    expect(calls.filter((c) => isMezz(c) && c.includes("h264_nvenc"))).toHaveLength(3);
+    expect(calls.filter((c) => isMezz(c) && c.includes("libx264"))).toHaveLength(3);
+    expect(report.warnings.filter((w) => w.startsWith("nvenc_segment_fallback"))).toHaveLength(1);
+    expect(report.encoder).toBe("cpu");
   });
 });
 
@@ -650,7 +724,7 @@ describe.skipIf(!hasFfmpeg())("renderComposition (needs ffmpeg)", () => {
     expect(Math.abs(((await d.prober.probe(second.episodePath))?.duration_seconds ?? 0) - 3.48)).toBeLessThanOrEqual(0.1);
   }, 240_000);
 
-  it("a dissolve between two segments keeps the total duration and is counted as applied", async () => {
+  it("a dissolve between two segments keeps the total duration and is counted as applied (both segments encoded at once)", async () => {
     const srcDir = tempDir("render-src-x-");
     const a = join(srcDir, "a.mp4");
     const b = join(srcDir, "b.mp4");
@@ -667,7 +741,7 @@ describe.skipIf(!hasFfmpeg())("renderComposition (needs ffmpeg)", () => {
     });
     const checksums = new Map([[SRC_A, "sha256:" + "c".repeat(64)], [SRC_B, "sha256:" + "d".repeat(64)]]);
     const d = deps(join(tempDir("render-cache-x-"), "mezz"));
-    const res = await renderComposition(d, input({ composition: comp, outDir: join(tempDir("render-out-x-"), "out"), sourceChecksums: checksums }));
+    const res = await renderComposition(d, input({ composition: comp, outDir: join(tempDir("render-out-x-"), "out"), sourceChecksums: checksums, mezzConcurrency: 2 }));
 
     expect(Math.abs(((await d.prober.probe(res.episodePath))?.duration_seconds ?? 0) - 4)).toBeLessThanOrEqual(0.1);
     expect(res.report.transitions.applied).toBe(1);

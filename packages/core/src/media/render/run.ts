@@ -71,6 +71,9 @@ export interface RenderInput {
   /** Cancels the render: the running ffmpeg is killed and the call rejects with `IO_ERROR` (a farm job that
    * lost its lease or was cancelled must not keep encoding for minutes). */
   signal?: AbortSignal;
+  /** How many mezzanines are encoded at once (default 1). One ffmpeg rarely keeps a render machine busy: its decode,
+   * scale and filters run on a few cores, so a farm worker runs 3. The final passes are one ffmpeg whatever this is. */
+  mezzConcurrency?: number;
   /** Progress over the whole render, 0-100, with a short stage name (`mezzanine`, `loudnorm`, `final_encode`).
    * Called often during encodes; callers throttle. */
   onProgress?: (percent: number, stage: string) => void;
@@ -423,9 +426,16 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
    * segment that falls back to CPU must be looked up, written and committed under the CPU key, or the cache
    * would hold a CPU-encoded file under a name that promises NVENC.
    */
+  /** Stops every other mezzanine of this run once one of them failed (the job's own `signal` stops them too). */
+  const pool = new AbortController();
+  const mezzSignal = signal !== undefined ? AbortSignal.any([signal, pool.signal]) : pool.signal;
+
   const renderMezz = async (o: { keyFor: (e: EncoderChoice) => string; source: string; in: number; out: number; fit: "scale_pad" | "scale_crop"; has_audio: boolean; label: string; onFraction?: (f: number) => void }): Promise<{ path: string; seconds: number; cached: boolean }> => {
     const expected = o.out - o.in;
-    let key = o.keyFor(encoder);
+    // The encoder this attempt starts on: with several mezzanines running at once, another one may have moved the
+    // run to cpu while this one was still encoding on nvenc, and this one still deserves its own cpu retry.
+    const choice = encoder;
+    let key = o.keyFor(choice);
 
     const hit = cacheLookup(d.cache, key, "mp4", d.clock.now());
     if (hit !== null) {
@@ -447,19 +457,22 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
         has_audio: o.has_audio, encoder: choice, codec, out_path: tmpPath, ...(composition.look ? { look: composition.look } : {}),
       });
       const prog = withProgress(args, expected, o.onFraction ?? null);
-      await runProcess(spawnFn, prog.argv, remaining(), label, false, { signal, onStdoutLine: prog.onStdoutLine });
+      await runProcess(spawnFn, prog.argv, remaining(), label, false, { signal: mezzSignal, onStdoutLine: prog.onStdoutLine });
       return tmpPath;
     };
 
     let tmpPath: string;
     try {
-      tmpPath = await encodeTo(encoder, key, `mezzanine ${o.label}`);
+      tmpPath = await encodeTo(choice, key, `mezzanine ${o.label}`);
     } catch (e) {
       // Spec §7: an NVENC failure on one segment gets exactly one CPU retry; a CPU failure is the stage's.
       // `CONFIG_INVALID` (the ffmpeg binary itself cannot be run) is never worth retrying on either encoder.
-      if (signal?.aborted || encoder !== "nvenc" || !isHarnessError(e, "IO_ERROR")) throw e;
-      warnings.push(`nvenc_segment_fallback:${o.label}`);
-      log(`nvenc failed for mezzanine ${o.label} (${(e as Error).message}); this run falls back to cpu`);
+      if (mezzSignal.aborted || choice !== "nvenc" || !isHarnessError(e, "IO_ERROR")) throw e;
+      // One warning for the run: the first mezzanine to fall back moves every later one to cpu.
+      if (encoder === "nvenc") {
+        warnings.push(`nvenc_segment_fallback:${o.label}`);
+        log(`nvenc failed for mezzanine ${o.label} (${(e as Error).message}); this run falls back to cpu`);
+      }
       rmSync(join(tmpDir, `${key}.mp4`), { force: true });
       encoder = "cpu";
       key = o.keyFor("cpu");
@@ -477,56 +490,98 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     return { path, seconds: expected, cached: false };
   };
 
-  const mezz: MezzRef[] = [];
-  let rendered = 0;
-  let cached = 0;
-  /** Total mezzanine footage this episode is built from -- every body plus every dissolve tail, whether it
-   * was encoded now or served from the cache. It describes the render PLAN's size, not the work done this
-   * run; `rendered`/`cached` next to it are what say how much of it had to be encoded (review round 1, m6). */
-  let mezzSeconds = 0;
+  /** Mezzanines being encoded right now, by cache key: a second segment with the same key (the same shot used twice)
+   * waits for the first one's file instead of encoding it again into the same temporary path. */
+  const inflight = new Map<string, Promise<{ path: string; seconds: number; cached: boolean }>>();
+  const renderMezzOnce = (o: Parameters<typeof renderMezz>[0]): Promise<{ path: string; seconds: number; cached: boolean }> => {
+    const key = o.keyFor(encoder);
+    const running = inflight.get(key);
+    if (running !== undefined) return running.then((m) => ({ ...m, cached: true }));
+    const job = renderMezz(o).finally(() => inflight.delete(key));
+    inflight.set(key, job);
+    return job;
+  };
+
   /** Seconds of mezzanine the plan needs (bodies + dissolve tails), to weight the mezzanine phase. */
   const planSeconds = segs.reduce((sum, s) => sum + (s.out - s.in) + (s.transition_out.kind === "dissolve" && s.transition_out.tail_available ? s.transition_out.seconds : 0), 0);
-  const mezzProgress = (doneSeconds: number): void => reportProgress(planSeconds > 0 ? (MEZZ_SHARE * doneSeconds) / planSeconds : 0, "mezzanine");
+  /** Seconds of mezzanine done so far, per segment order: several segments move at once. */
+  const doneByOrder = new Map<number, number>();
+  const mezzProgress = (order: number, doneSeconds: number): void => {
+    doneByOrder.set(order, doneSeconds);
+    let done = 0;
+    for (const s of doneByOrder.values()) done += s;
+    reportProgress(planSeconds > 0 ? (MEZZ_SHARE * done) / planSeconds : 0, "mezzanine");
+  };
   reportProgress(0, "mezzanine");
   const timings: RenderTimings = { mezz_s: 0, source_wait_s: 0, even_s: 0, loudnorm_s: 0, final_encode_s: 0 };
   const mezzStarted = Date.now();
 
+  // Every checksum is there before any ffmpeg starts: a bad composition fails as a whole, not halfway through.
   for (const seg of segs) {
-    const checksum = p.sourceChecksums.get(seg.source_id);
-    if (checksum === undefined) {
+    if (!p.sourceChecksums.has(seg.source_id)) {
       throw new HarnessError("CONFIG_INVALID", `no source checksum for segment ${seg.order} (source ${seg.source_id})`, { order: seg.order, source_id: seg.source_id });
     }
+  }
+
+  const renderSegment = async (seg: Composition["segments"][number]): Promise<{ ref: MezzRef; seconds: number; cached: boolean }> => {
+    const checksum = p.sourceChecksums.get(seg.source_id)!;
     const common = { source_checksum: checksum, fit: seg.fit, w: width, h: height, fps, has_audio: seg.has_audio, codec, ...(composition.look ? { look: composition.look } : {}) };
 
-    const bodyStart = mezzSeconds;
-    const body = await renderMezz({
+    const body = await renderMezzOnce({
       keyFor: (e) => mezzCacheKey({ ...common, encoder: e, in: seg.in, out: seg.out }),
       source: seg.source_path, in: seg.in, out: seg.out, fit: seg.fit, has_audio: seg.has_audio, label: String(seg.order),
-      onFraction: (f) => mezzProgress(bodyStart + f * (seg.out - seg.in)),
+      onFraction: (f) => mezzProgress(seg.order, f * (seg.out - seg.in)),
     });
-    mezzSeconds += body.seconds;
-    mezzProgress(mezzSeconds);
+    let seconds = body.seconds;
+    mezzProgress(seg.order, seconds);
 
     let tail: { path: string; seconds: number; cached: boolean } | null = null;
     if (seg.transition_out.kind === "dissolve" && seg.transition_out.tail_available) {
       const tailSeconds = seg.transition_out.seconds;
       // The tail carries `tail_seconds` in its own key, so changing the transition length (or the transition
       // kind) never invalidates the body it belongs to.
-      tail = await renderMezz({
+      tail = await renderMezzOnce({
         keyFor: (e) => mezzCacheKey({ ...common, encoder: e, in: seg.out, out: seg.out + tailSeconds, tail_seconds: tailSeconds }),
         source: seg.source_path, in: seg.out, out: seg.out + tailSeconds, fit: seg.fit, has_audio: seg.has_audio, label: `${seg.order}-tail`,
       });
-      mezzSeconds += tail.seconds;
-      mezzProgress(mezzSeconds);
+      seconds += tail.seconds;
+      mezzProgress(seg.order, seconds);
     }
+    // A segment counts as cached only when every mezzanine it needs was a hit.
+    return { ref: { order: seg.order, body: body.path, tail: tail?.path ?? null }, seconds, cached: body.cached && (tail === null || tail.cached) };
+  };
 
-    // Counted per SEGMENT (not per file) so `rendered + cached === total` always holds: a segment counts as
-    // cached only when every mezzanine it needs was a hit.
-    if (body.cached && (tail === null || tail.cached)) cached++;
-    else rendered++;
+  // `mezzConcurrency` segments at a time, in timeline order; the results keep that order whatever finishes first. The
+  // first failure stops the pool: no new segment starts, the running ffmpegs are killed, and that failure is thrown.
+  const concurrency = Math.max(1, Math.floor(p.mezzConcurrency ?? 1));
+  const done: { ref: MezzRef; seconds: number; cached: boolean }[] = new Array(segs.length);
+  let nextSeg = 0;
+  let failure: { error: unknown } | null = null;
+  const lane = async (): Promise<void> => {
+    while (failure === null && nextSeg < segs.length) {
+      const k = nextSeg++;
+      try {
+        done[k] = await renderSegment(segs[k]!);
+      } catch (e) {
+        if (failure === null) {
+          failure = { error: e };
+          pool.abort();
+        }
+        return;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, segs.length) }, lane));
+  if (failure !== null) throw (failure as { error: unknown }).error;
 
-    mezz.push({ order: seg.order, body: body.path, tail: tail?.path ?? null });
-  }
+  const mezz: MezzRef[] = done.map((r) => r.ref);
+  // Counted per SEGMENT (not per file) so `rendered + cached === total` always holds.
+  const cached = done.filter((r) => r.cached).length;
+  const rendered = done.length - cached;
+  /** Total mezzanine footage this episode is built from -- every body plus every dissolve tail, whether it
+   * was encoded now or served from the cache. It describes the render PLAN's size, not the work done this
+   * run; `rendered`/`cached` next to it are what say how much of it had to be encoded (review round 1, m6). */
+  const mezzSeconds = done.reduce((sum, r) => sum + r.seconds, 0);
   timings.mezz_s = secondsSince(mezzStarted);
 
   // ---- 3) clip_set: cuts/<order>.mp4 + manifest.json (the 5A `clip-set-complete` contract) ----
