@@ -171,7 +171,9 @@ nhưng không code nào đọc.
   ag-render-worker ≥ 0.8.0** (composition có `text_style`, Premiere `audio: per_segment`) và khai `python` (`extra.python_bin`)
   để nhận `studio.tts`/`studio.transcribe`; máy tự kiểm khi khởi động (thiếu engine Python thì không khai Python, thiếu font
   đóng kèm thì hạ mức render; runbook kiểm các máy sau phát hành ở README của ag-render-worker). Bản cuối: `requirements` theo máy chọn (`renderRequirements`; ghim `node_id` qua
-  thẻ xác nhận). Composition thêm trường mới thì tăng `RENDER_FEATURE_LEVEL` và `compositionFeatureLevel`
+  thẻ xác nhận); độ phân giải `resolution: 1080p | 4k` (nút Render bản cuối, thẻ `render_final`): timeline luôn dựng 1920×1080
+  (`fit.ts`), `renderCanvas` (`payloads.ts`) đưa canvas của composition lên cạnh ngắn 2160 lúc gửi, chữ tự to theo (`studioDefaultBrand`);
+  xem trước luôn theo timeline. Composition thêm trường mới thì tăng `RENDER_FEATURE_LEVEL` và `compositionFeatureLevel`
   (`packages/core/src/media/render/features.ts`): worker khai mức của mình (`engines.studio_render`), Studio đòi
   `requirements.studio_render_min` khi composition dùng trường đó, nên máy render bản cũ không nhận job nó không đọc được
   (mức 3 chữ: cỡ riêng, bóng, xếp chồng; 4 font; 5 âm thanh: `gain_db` từng đoạn, `source_even`, `music.envelope`; 6 màu

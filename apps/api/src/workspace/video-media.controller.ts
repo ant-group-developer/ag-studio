@@ -10,7 +10,7 @@ import { z } from 'zod';
 import {
   AUDIO_MAX_BYTES, AudioImportError, clearProjectAudio, clearVideoMusic, declineProjectNarration, getLibraryMusic, getVideoRevision, importProjectAudio,
   importProjectMusic, importVideoMusic, jobView, latestVideoRevision, listJobs, listVideoRevisions, musicForVideo, MUSIC_CROSSFADE_MAX_SECONDS,
-  MUSIC_MIX_MAX_PARTS, projectAudio, projectAudioFiles, projectAudioSummary, projectLibraryTrack, queueFit, queueMusicBeats, queueRender, readWorkspaceBytes, requireProject,
+  MUSIC_MIX_MAX_PARTS, projectAudio, projectAudioFiles, projectAudioSummary, projectLibraryTrack, queueFit, queueMusicBeats, queueRender, readWorkspaceBytes, RENDER_RESOLUTIONS, requireProject,
   requireVideo, resolveInside, setProjectLibraryMusic, setVideoLibraryMusic, StudioRunError, timelineSummary, videoLibraryTrack, videoMusicSummary,
   videoMusicToTimeline, videoOwnMusic, videoRender, videoRenders, VOICE_ORIGINS, type ActorRole, type JobView, type ProjectAudioFile, type RenderKind,
 } from '@ag-studio/engine';
@@ -30,6 +30,8 @@ const RenderSchema = z.object({
   kind: z.enum(['render_preview', 'render_final', 'export_premiere']),
   nodeId: z.string().uuid().optional(),
   media: z.enum(['proxy', 'original']).optional(),
+  /** Final render only: its frame size (default the timeline's 1080p). */
+  resolution: z.enum(RENDER_RESOLUTIONS).optional(),
 }).strict();
 const FromFileSchema = z.object({
   path: z.string().min(1).max(300),
@@ -199,7 +201,10 @@ export class VideoMediaController {
       if (!(await latestVideoRevision(this.engine.db, videoId))) throw new StudioRunError('invalid', 'video chưa có timeline', { code: 'no_timeline' });
       return jobView(await queueRender(this.engine.db, {
         projectId: v.project_id, videoId, kind: body.kind, createdBy: req.authContext!.userId, actorRole: role,
-        request: { ...(body.nodeId ? { node_id: body.nodeId } : {}), ...(body.media ? { media: body.media } : {}) },
+        request: {
+          ...(body.nodeId ? { node_id: body.nodeId } : {}), ...(body.media ? { media: body.media } : {}),
+          ...(body.kind === 'render_final' && body.resolution ? { resolution: body.resolution } : {}),
+        },
       }));
     });
   }

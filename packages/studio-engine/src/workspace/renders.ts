@@ -11,7 +11,7 @@ import { HarnessError, RenderInspectionSchema, type RenderInspection, type Rende
 import { compositionFeatureLevel, isTimelineV4, layoutTimeline, timelineIssues, timelineToComposition, youtubeChapters } from "@harness/core";
 import { PREMIERE_MANIFEST_PATH, PremiereManifestSchema, RENDER_MANIFEST_PATH, RenderManifestSchema, type RenderManifest, type StudioExportPremierePayload } from "@ag-farm/protocol";
 import type { StudioBucket } from "../bucket.js";
-import { narrationUploads, prepareRender } from "../payloads.js";
+import { narrationUploads, prepareRender, type RenderResolution } from "../payloads.js";
 import type { StudioDb } from "../studio-db.js";
 import { writeWorkspaceFile } from "./files.js";
 import { ackFarmJob, runFarmStep, type ProjectFarm } from "./farm.js";
@@ -30,6 +30,8 @@ export interface RenderJobRequest {
   revision?: number;
   /** A farm machine for the final render (`requirements.node_id`). */
   node_id?: string;
+  /** Final render: the frame size (`renderCanvas`); none: the timeline's (1080p). */
+  resolution?: RenderResolution;
   /** Premiere: pack previews (`proxy`) or the original files. */
   media?: "proxy" | "original";
   /** The card a person confirmed, when there is one. */
@@ -246,7 +248,7 @@ export function renderHandler(kind: RenderKind, d: RenderDeps): JobHandler {
         const build = await prepareRender(join(ctx.tempDir, "render"), {
           timeline: rev.data, revision: rev.revision, productionId: job.project_id, episodeId: video.id,
           output: `videos/${video.id}/${kind === "render_final" ? "final" : "previews"}/${job.id}.mp4`, thumbnails: [], voiceDir: d.voiceDir, textStyle: true,
-          inspect: true,
+          inspect: true, ...(kind === "render_final" && req.resolution ? { resolution: req.resolution } : {}),
         });
         type = kind === "render_final" ? "studio.render_final" : "studio.render_preview";
         payload = build.payload;

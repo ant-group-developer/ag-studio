@@ -13,6 +13,7 @@ import type { StudioDb } from "../studio-db.js";
 import { archiveVideo, getVideo, latestVideoRevision } from "../workspace/project-db.js";
 import { createJob, type JobKind } from "../workspace/jobs-db.js";
 import { crawlTitle, queueResearch } from "../workspace/research.js";
+import { RENDER_RESOLUTIONS } from "../payloads.js";
 import { postSystemMessage, type ActorRole } from "./threads-db.js";
 
 export const ACTION_KINDS = ["render_final", "export_premiere", "delete_video", "crawl_large", "reference_download"] as const;
@@ -31,7 +32,7 @@ export const ACTION_TTL_MS = 24 * 3600_000;
 const VideoId = z.string().min(1);
 /** What each action takes. */
 export const ACTION_PARAMS = {
-  render_final: z.object({ video_id: VideoId, revision: z.number().int().min(1).optional(), node_id: z.string().uuid().optional() }).strict(),
+  render_final: z.object({ video_id: VideoId, revision: z.number().int().min(1).optional(), node_id: z.string().uuid().optional(), resolution: z.enum(RENDER_RESOLUTIONS).optional() }).strict(),
   export_premiere: z.object({ video_id: VideoId, revision: z.number().int().min(1).optional() }).strict(),
   delete_video: z.object({ video_id: VideoId }).strict(),
   crawl_large: z.object({ crawl: CrawlRequestSchema }).strict(),

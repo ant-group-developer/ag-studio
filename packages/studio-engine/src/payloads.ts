@@ -9,6 +9,21 @@ import { compositionFeatureLevel, isTimelineV4, layoutTimeline, RENDER_INSPECT_L
 import type { StudioRenderPayload } from "@ag-farm/protocol";
 import { voicePath } from "./voice-store.js";
 
+/** The frame size a final render can be made at, by its short edge: 1080p (the timeline's own) or 4K UHD. */
+export const RENDER_RESOLUTIONS = ["1080p", "4k"] as const;
+export type RenderResolution = (typeof RENDER_RESOLUTIONS)[number];
+const SHORT_EDGE: Record<RenderResolution, number> = { "1080p": 1080, "4k": 2160 };
+
+/**
+ * The timeline's canvas brought to a resolution's short edge, its aspect kept (16:9 4K: 3840×2160, 9:16: 2160×3840).
+ * Sides stay even for yuv420p. Text and subtitles follow: the overlay sizes them by the canvas' short edge.
+ */
+export function renderCanvas(canvas: { width: number; height: number }, resolution: RenderResolution): { width: number; height: number } {
+  const k = SHORT_EDGE[resolution] / Math.min(canvas.width, canvas.height);
+  const even = (n: number) => 2 * Math.round((n * k) / 2);
+  return { width: even(canvas.width), height: even(canvas.height) };
+}
+
 /**
  * The WAV of every narration line the composition plays, from the voice store, uploaded with the job as
  * `voice/<line_id>.wav` (the composition reads `stage:voice/<line_id>.wav`). A v3 timeline has none.
@@ -40,10 +55,13 @@ export async function prepareRender(
     /** true: the render worker inspects the file it renders (`inspect.json`, contact sheets), which needs a worker at
      * `RENDER_INSPECT_LEVEL`. */
     inspect?: boolean;
+    /** The frame size of the render; none: the timeline's canvas. */
+    resolution?: RenderResolution;
   },
 ): Promise<{ productionId: string; payload: StudioRenderPayload; extraUploads: { localPath: string; relPath: string }[]; renderLevel: number }> {
   const voice = narrationUploads(p.timeline, p.voiceDir);
-  const composition = timelineToComposition(p.timeline);
+  const timeline = p.resolution ? { ...p.timeline, canvas: renderCanvas(p.timeline.canvas, p.resolution) } : p.timeline;
+  const composition = timelineToComposition(timeline);
   if (p.textStyle === false) delete composition.text_style;
   const compPath = join(workDir, "render-plan", "composition.json");
   mkdirSync(dirname(compPath), { recursive: true });
@@ -51,7 +69,7 @@ export async function prepareRender(
   return {
     productionId: p.productionId,
     payload: {
-      production_id: p.productionId, revision: p.revision, composition: "stage:composition.json", canvas: p.timeline.canvas,
+      production_id: p.productionId, revision: p.revision, composition: "stage:composition.json", canvas: timeline.canvas,
       handle_seconds: 0, output: p.output, thumbnails: p.thumbnails, ...(p.inspect ? { inspect: true } : {}),
     },
     extraUploads: [{ localPath: compPath, relPath: "composition.json" }, ...voice],

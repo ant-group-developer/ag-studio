@@ -70,6 +70,17 @@ describe('video media (real database)', () => {
   });
   afterEach(async () => { await s.close(); });
 
+  it('a final render can be asked in 4K; a preview never keeps a resolution', async () => {
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    const v = await videos.create(p.id, { title: 'Huế' }, req(OWNER));
+    await saveVideoRevision(s.engine.db, v.id, { baseRevision: 0, data: timeline(v.id), authorId: 'u' });
+    const final = await media.render(v.id, { kind: 'render_final', resolution: '4k' }, req(OWNER));
+    expect((await getJob(s.engine.db, final.id))!.request).toMatchObject({ resolution: '4k' });
+    const preview = await media.render(v.id, { kind: 'render_preview', resolution: '4k' }, req(OWNER));
+    expect((await getJob(s.engine.db, preview.id))!.request).not.toHaveProperty('resolution');
+    expect(await media.render(v.id, { kind: 'render_final', resolution: '8k' }, req(OWNER)).catch((e: { getStatus?: () => number }) => e.getStatus?.())).toBe(400);
+  });
+
   it('starts renders by role, lists finished ones with their link and links a Premiere export only for those whose footage rights cover it', async () => {
     const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
     const v = await videos.create(p.id, { title: 'Huế' }, req(OWNER));
