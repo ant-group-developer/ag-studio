@@ -205,6 +205,25 @@ describe("video renders", () => {
     expect((await getVideo(s.db, s.video.id))!.status).toBe("done");
   });
 
+  it("a final render in 4K: the frame and the composition are 2160 on their short edge, a preview stays at the timeline's", async () => {
+    const s = await setup();
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
+    const job = await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_final", request: { resolution: "4k" }, createdBy: "u" }, NOW);
+    await s.run();
+    expect(s.submitted[0]!.payload.canvas).toEqual({ width: 3840, height: 2160 });
+    const comp = JSON.parse(s.bucket.objects.get(`productions/${s.project.id}/jobs/render-final/${job.id}/in/composition.json`)!.toString("utf8"));
+    expect(comp.output).toMatchObject({ width: 3840, height: 2160 });
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 1, data: timeline(s.video.id, { canvas: { width: 1080, height: 1920 } }), authorId: "u" });
+    await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_final", request: { resolution: "4k" }, createdBy: "u" }, NOW);
+    await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", request: { resolution: "4k" }, createdBy: "u" }, NOW);
+    await s.run();
+    await s.run();
+    expect(s.submitted.slice(1).map((j) => [j.type, j.payload.canvas])).toEqual([
+      ["studio.render_final", { width: 2160, height: 3840 }],
+      ["studio.render_preview", { width: 1080, height: 1920 }],
+    ]);
+  });
+
   it("a Premiere export names the files after the videos and keeps the zip's key", async () => {
     const s = await setup();
     await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });

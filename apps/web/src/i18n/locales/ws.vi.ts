@@ -141,6 +141,7 @@ export const wsVi = {
     renderPreview: "Render xem trước",
     renderFinal: "Render bản cuối",
     finalConfirm: "Render bản cuối từ timeline bản {{revision}} trên farm?",
+    resolution: "Độ phân giải bản cuối",
     exportPremiere: "Xuất Premiere",
     exportSaving: "Bản xuất Premiere đã xong, đang tải về",
     renderFailed: "Không bắt đầu render được",

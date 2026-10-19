@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, App as AntApp, Button, Empty, Popconfirm, Spin, Tag } from "antd";
+import { Alert, App as AntApp, Button, Empty, Popconfirm, Radio, Spin, Tag } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clapperboard, Download, Film, Hammer, Play } from "lucide-react";
 import { useAiTranslation } from "../common/assistant-name";
 import { StudioHttpError } from "../../api/http";
-import { useWorkspaceClient, type JobView, type RenderKind, type RenderLink, type RenderView, type TeamRoleName, type WorkspaceClient } from "../../api/workspace-client";
+import { useWorkspaceClient, type JobView, type RenderKind, type RenderLink, type RenderResolution, type RenderView, type TeamRoleName, type WorkspaceClient } from "../../api/workspace-client";
 import { JobCard } from "../inputs/JobCard";
 import { clock, fileSize, relativeTime } from "../workspace/time";
 import "../inputs/inputs.css";
@@ -25,6 +25,7 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
   const client = useWorkspaceClient();
   const qc = useQueryClient();
   const [playing, setPlaying] = useState<string | null>(null);
+  const [resolution, setResolution] = useState<RenderResolution>("1080p");
   // the list polled again signs anew: the player keeps the link it has (they live an hour) or it reloads
   const playerUrls = useRef(new Map<string, { url: string; at: number }>());
   const timeline = useQuery({ queryKey: ["timeline", videoId], queryFn: () => client.getTimeline(videoId) });
@@ -39,7 +40,7 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
   };
   const fail = (fallback: string) => (e: unknown) => void message.error(e instanceof StudioHttpError ? e.message : fallback);
   const start = useMutation({
-    mutationFn: (kind: RenderKind) => client.startRender(videoId, { kind }),
+    mutationFn: (kind: RenderKind) => client.startRender(videoId, kind === "render_final" ? { kind, resolution } : { kind }),
     onSuccess: (job, kind) => { if (kind === "export_premiere") savingExports.add(job.id); refresh(); },
     onError: fail(t("ws.video.renderFailed")),
   });
@@ -112,7 +113,13 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
           ) : null}
           {atLeast("producer") ? (
             <>
-              <Popconfirm title={t("ws.video.finalConfirm", { revision: latest?.revision ?? "?" })} onConfirm={() => start.mutate("render_final")} okText={t("ws.video.renderFinal")} cancelText={t("common.cancel")}>
+              <Popconfirm
+                title={t("ws.video.finalConfirm", { revision: latest?.revision ?? "?" })}
+                description={(
+                  <Radio.Group size="small" optionType="button" value={resolution} onChange={(e) => setResolution(e.target.value as RenderResolution)}
+                    aria-label={t("ws.video.resolution")} options={[{ value: "1080p", label: "1080p" }, { value: "4k", label: "4K" }]} />
+                )}
+                onConfirm={() => start.mutate("render_final")} okText={t("ws.video.renderFinal")} cancelText={t("common.cancel")}>
                 <Button size="small" icon={<Clapperboard size={13} />} disabled={!latest || errors.length > 0} loading={start.isPending && start.variables === "render_final"}>{t("ws.video.renderFinal")}</Button>
               </Popconfirm>
               <Button size="small" icon={<Film size={13} />} disabled={!latest || errors.length > 0} loading={start.isPending && start.variables === "export_premiere"}

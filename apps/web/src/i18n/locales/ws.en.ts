@@ -144,6 +144,7 @@ export const wsEn: Messages<typeof wsVi> = {
     renderPreview: "Render a preview",
     renderFinal: "Render the final",
     finalConfirm: "Render the final video from timeline revision {{revision}} on the farm?",
+    resolution: "Final resolution",
     exportPremiere: "Export to Premiere",
     exportSaving: "The Premiere export is done, downloading it",
     renderFailed: "Could not start the render",

@@ -130,7 +130,17 @@ describe("video preview tab", { timeout: 20_000 }, () => {
     fireEvent.click(screen.getByRole("button", { name: /Render bản cuối/ }));
     const ok = await screen.findAllByRole("button", { name: "Render bản cuối" });
     fireEvent.click(ok[ok.length - 1]!);
-    await waitFor(() => expect(ws.startRender).toHaveBeenCalledWith("v1", { kind: "render_final" }));
+    await waitFor(() => expect(ws.startRender).toHaveBeenCalledWith("v1", { kind: "render_final", resolution: "1080p" }));
+  });
+
+  it("a producer can pick 4K for the final render", async () => {
+    wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={producer} />);
+    await screen.findByText("bản 3 · fit · 2 clip · ≈ 1:05 · 1 câu lời dẫn");
+    fireEvent.click(screen.getByRole("button", { name: /Render bản cuối/ }));
+    fireEvent.click(await screen.findByRole("radio", { name: "4K" }));
+    const ok = await screen.findAllByRole("button", { name: "Render bản cuối" });
+    fireEvent.click(ok[ok.length - 1]!);
+    await waitFor(() => expect(ws.startRender).toHaveBeenCalledWith("v1", { kind: "render_final", resolution: "4k" }));
   });
 
   it("saves a Premiere export started here once it is done, and not the older ones", async () => {

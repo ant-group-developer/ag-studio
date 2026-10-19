@@ -418,6 +418,8 @@ export type AddSourceInput =
 
 // ---- A video's media and the project's audio ----
 export type RenderKind = "render_preview" | "render_final" | "export_premiere";
+/** The frame size of a final render: 1080p (the timeline's) or 4K UHD. */
+export type RenderResolution = "1080p" | "4k";
 export interface RenderView {
   jobId: string;
   kind: RenderKind;
@@ -692,7 +694,7 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
       return call("GET", `/api/videos/${enc(videoId)}/renders/${enc(jobId)}/link`);
     },
     /** 403 `role`: the final render and the Premiere export need a producer. */
-    startRender(videoId: string, input: { kind: RenderKind; nodeId?: string; media?: "proxy" | "original" }): Promise<JobView> {
+    startRender(videoId: string, input: { kind: RenderKind; nodeId?: string; media?: "proxy" | "original"; resolution?: RenderResolution }): Promise<JobView> {
       return call("POST", `/api/videos/${enc(videoId)}/renders`, input);
     },
     getTimeline(videoId: string): Promise<{ latest: TimelineSummary | null; revisions: { revision: number; label: string | null; authorId: string; createdAt: string }[] }> {
