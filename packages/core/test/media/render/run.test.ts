@@ -444,6 +444,63 @@ describe("renderComposition mezzanines in parallel", () => {
   });
 });
 
+/** A prober for the fake ffmpeg's files: a mezzanine is as long as the `-ss`/`-to` it was made with, anything else 2 s. */
+function argvProber(): MediaProber {
+  return {
+    async probe(path: string): Promise<MediaProbe | null> {
+      const head = existsSync(path) ? readFileSync(path).subarray(0, 600).toString() : "";
+      const m = / -ss (\S+) -to (\S+) /.exec(head);
+      return {
+        media: null, duration_seconds: m ? Number(m[2]) - Number(m[1]) : 2, mime_type: null, container: "mp4",
+        video: { codec: "h264", width: 3840, height: 2160, fps: 25 }, audio: { codec: "aac", channels: 2, sample_rate: 48000 },
+      };
+    },
+  };
+}
+
+describe("renderComposition with sourceFor (sources still downloading)", () => {
+  it("each segment starts once its own source is ready, on the file, checksum and out the hook answers", async () => {
+    const events: string[] = [];
+    const { spawn, calls } = fakeSpawn((argv) => {
+      if (isMezz(argv)) events.push(`mezz:${argv[argv.indexOf("-ss") + 1]}`);
+      return {};
+    });
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+    d.prober = argvProber();
+    const sourceFor = async (seg: Composition["segments"][number]) => {
+      await new Promise((r) => setTimeout(r, 60 * seg.order));
+      events.push(`ready:${seg.order}`);
+      // the last source turned out shorter than the timeline thought: its out is cut to 5.5
+      return { path: `/dl/a-${seg.order}.mp4`, checksum: "sha256:" + String(seg.order).repeat(64), out: seg.order === 2 ? 5.5 : seg.out };
+    };
+    const { report, timings, clipSetDir } = await renderComposition(d, input({
+      composition: segmentsComposition(3), outDir, sourceChecksums: new Map(), mezzConcurrency: 3, sourceFor,
+    }));
+
+    expect(events).toEqual(["ready:0", "mezz:0", "ready:1", "mezz:2", "ready:2", "mezz:4"]);
+    const mezz = calls.filter(isMezz);
+    expect(mezz.map((c) => c[c.indexOf("-i") + 1])).toEqual(["/dl/a-0.mp4", "/dl/a-1.mp4", "/dl/a-2.mp4"]);
+    expect(mezz[2]!.slice(mezz[2]!.indexOf("-ss"), mezz[2]!.indexOf("-ss") + 4)).toEqual(["-ss", "4", "-to", "5.5"]);
+    expect(JSON.parse(readFileSync(join(clipSetDir, "manifest.json"), "utf8")).map((m: { seconds: number }) => m.seconds)).toEqual([2, 2, 1.5]);
+    expect(report.segments).toMatchObject({ total: 3, rendered: 3 });
+    expect(timings.source_wait_s).toBeGreaterThan(0.1);
+  });
+
+  it("a source that fails stops the run at once, without waiting for the others still downloading", async () => {
+    const { spawn, calls } = fakeSpawn();
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+    const sourceFor = (seg: Composition["segments"][number]) =>
+      seg.order === 1
+        ? new Promise<never>((_, reject) => setTimeout(() => reject(new Error("fetch failed")), 20))
+        : seg.order === 0 ? Promise.resolve({ path: "/dl/a.mp4", checksum: "sha256:" + "a".repeat(64), out: seg.out }) : new Promise<never>(() => {});
+    const started = Date.now();
+    await expect(renderComposition(d, input({ composition: segmentsComposition(3), outDir, sourceChecksums: new Map(), mezzConcurrency: 3, sourceFor })))
+      .rejects.toThrow("fetch failed");
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(calls.filter(isMezz).map((c) => c[c.indexOf("-ss") + 1])).toEqual(["0"]);
+  });
+});
+
 describe("renderComposition (fake ffmpeg)", () => {
   it("an ffmpeg binary that cannot be spawned at all is CONFIG_INVALID, not a transient IO_ERROR", async () => {
     const outDir = join(tempDir("missing-ffmpeg-out-"), "out");
