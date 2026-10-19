@@ -345,7 +345,9 @@ describe("renderComposition progress and cancel", () => {
     const { spawn, calls } = fakeSpawn((argv) => (argv.includes("-progress") ? { stdout: "frame=10\nout_time=00:00:01.000000\nout_time=00:00:04.000000\nprogress=end\n" } : {}));
     const { d, outDir } = fakeWorld({ spawn, nvenc: false });
     const seen: [number, string][] = [];
-    await renderComposition(d, input({ composition: fakeComposition(), outDir, sourceChecksums: CHECKSUMS, onProgress: (pct, stage) => seen.push([pct, stage]) }));
+    const { timings } = await renderComposition(d, input({ composition: fakeComposition(), outDir, sourceChecksums: CHECKSUMS, onProgress: (pct, stage) => seen.push([pct, stage]) }));
+    expect(Object.keys(timings).sort()).toEqual(["even_s", "final_encode_s", "loudnorm_s", "mezz_s", "source_wait_s"]);
+    expect(Object.values(timings).every((s) => s >= 0)).toBe(true);
 
     const stages = [...new Set(seen.map(([, st]) => st))];
     expect(stages).toEqual(["mezzanine", "loudnorm", "final_encode"]);

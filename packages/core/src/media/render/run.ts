@@ -341,13 +341,31 @@ interface MezzRef {
   tail: string | null;
 }
 
+/** Wall-clock seconds of each phase of one `renderComposition` call, for the job that ran it to report. */
+export interface RenderTimings {
+  /** Every mezzanine, from the first one started to the last one done (cache hits included). */
+  mezz_s: number;
+  /** Of `mezz_s`, the time mezzanine slots sat idle waiting for `sourceFor` (a source still downloading). */
+  source_wait_s: number;
+  /** The even-source-sound measurement (0 when the composition does not ask for it). */
+  even_s: number;
+  /** The loudnorm measurement pass, or both of them when the peak needed a limiter. */
+  loudnorm_s: number;
+  /** The final encode, its cpu retry included. */
+  final_encode_s: number;
+}
+
+function secondsSince(startMs: number): number {
+  return round3((Date.now() - startMs) / 1000);
+}
+
 /**
  * Renders one episode from a resolved `composition.json`. Returns the report (also written next to the
  * episode as `render-report.json`, so the stage can declare it as an output verbatim), the episode path and
  * the `cuts/` directory that carries the `clip_set` contract `thumbnail-candidates` and 5A's
  * `clip-set-complete` checker still depend on.
  */
-export async function renderComposition(d: RenderDeps, p: RenderInput): Promise<{ report: RenderReport; episodePath: string; clipSetDir: string }> {
+export async function renderComposition(d: RenderDeps, p: RenderInput): Promise<{ report: RenderReport; episodePath: string; clipSetDir: string; timings: RenderTimings }> {
   try {
     return await renderCompositionInner(d, p);
   } finally {
@@ -360,7 +378,7 @@ export async function renderComposition(d: RenderDeps, p: RenderInput): Promise<
   }
 }
 
-async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ report: RenderReport; episodePath: string; clipSetDir: string }> {
+async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ report: RenderReport; episodePath: string; clipSetDir: string; timings: RenderTimings }> {
   const { composition } = p;
   const spawnFn = d.spawn ?? nodeSpawn;
   const log = d.log ?? (() => {});
@@ -470,6 +488,8 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
   const planSeconds = segs.reduce((sum, s) => sum + (s.out - s.in) + (s.transition_out.kind === "dissolve" && s.transition_out.tail_available ? s.transition_out.seconds : 0), 0);
   const mezzProgress = (doneSeconds: number): void => reportProgress(planSeconds > 0 ? (MEZZ_SHARE * doneSeconds) / planSeconds : 0, "mezzanine");
   reportProgress(0, "mezzanine");
+  const timings: RenderTimings = { mezz_s: 0, source_wait_s: 0, even_s: 0, loudnorm_s: 0, final_encode_s: 0 };
+  const mezzStarted = Date.now();
 
   for (const seg of segs) {
     const checksum = p.sourceChecksums.get(seg.source_id);
@@ -507,6 +527,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
 
     mezz.push({ order: seg.order, body: body.path, tail: tail?.path ?? null });
   }
+  timings.mezz_s = secondsSince(mezzStarted);
 
   // ---- 3) clip_set: cuts/<order>.mp4 + manifest.json (the 5A `clip-set-complete` contract) ----
   const manifest: { order: number; source_id: string; seconds: number }[] = [];
@@ -533,6 +554,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
   let evenGainDb: Map<number, number> | undefined;
   if (composition.source_even) {
     reportProgress(MEZZ_SHARE, "even");
+    const evenStarted = Date.now();
     const lufs: (number | null)[] = [];
     for (const seg of segs) {
       if (!seg.has_audio) { lufs.push(null); continue; }
@@ -549,6 +571,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     const gains = evenGains(lufs);
     evenGainDb = new Map(segs.map((s, k) => [s.order, gains[k]!]));
     log(`even source sound: ${gains.filter((g) => g !== 0).length}/${segs.length} segments corrected (${Math.min(...gains)}..${Math.max(...gains)} dB)`);
+    timings.even_s = secondsSince(evenStarted);
   }
 
   // ---- 4) loudnorm measurement pass ----
@@ -585,6 +608,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     }
     return parsed;
   };
+  const loudnormStarted = Date.now();
   let measured = await measurePass(null, "loudnorm measure");
   // peaks the linear gain would push past -1 dBTP: limited before loudnorm, and measured again through the limiter
   // (it lowers the loudness a little), so the final pass can stay linear
@@ -593,6 +617,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     log(`loudnorm: peak ${measured.measured.input_tp} dBTP over the linear budget at ${measured.measured.input_i} LUFS; limiting at ${round3(20 * Math.log10(limit))} dBFS`);
     measured = await measurePass(limit, "loudnorm measure (limited)");
   }
+  timings.loudnorm_s = secondsSince(loudnormStarted);
 
   // ---- 5) the real encode ----
   // Starts from whatever the mezzanine tier settled on: if NVENC already died on a segment, there is no
@@ -605,6 +630,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     const prog = withProgress(graphFromFile(finalArgs({ ...finalInput, encoder: choice, loudnorm: measured.measured, limit, measureOnly: false }).argv), episodeSeconds, (f) => reportProgress(FINAL_FROM + (100 - FINAL_FROM) * f, "final_encode"));
     return runProcess(spawnFn, prog.argv, remaining(), label, false, { signal, onStdoutLine: prog.onStdoutLine, cwd: inputsDir });
   };
+  const finalStarted = Date.now();
   try {
     render = await finalEncode(finalEncoder, "final encode");
   } catch (e) {
@@ -615,6 +641,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     finalEncoder = "cpu";
     render = await finalEncode(finalEncoder, "final encode (cpu retry)");
   }
+  timings.final_encode_s = secondsSince(finalStarted);
 
   const renderPass = parseLoudnorm(render.stderr);
   let loudness: RenderReport["loudness"] = null;
@@ -683,5 +710,5 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
   const evicted = cacheEvict(d.cache);
   if (evicted.removed > 0) log(`mezz cache swept: ${evicted.removed} entries, ${evicted.bytes} bytes`);
 
-  return { report, episodePath, clipSetDir };
+  return { report, episodePath, clipSetDir, timings };
 }
