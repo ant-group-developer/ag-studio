@@ -30,7 +30,7 @@ const RenderSchema = z.object({
   kind: z.enum(['render_preview', 'render_final', 'export_premiere']),
   nodeId: z.string().uuid().optional(),
   media: z.enum(['proxy', 'original']).optional(),
-  /** Final render only: its frame size (default the timeline's 1080p). */
+  /** Final render and Premiere export: the frame size (default the timeline's 1080p). */
   resolution: z.enum(RENDER_RESOLUTIONS).optional(),
 }).strict();
 const FromFileSchema = z.object({
@@ -203,7 +203,7 @@ export class VideoMediaController {
         projectId: v.project_id, videoId, kind: body.kind, createdBy: req.authContext!.userId, actorRole: role,
         request: {
           ...(body.nodeId ? { node_id: body.nodeId } : {}), ...(body.media ? { media: body.media } : {}),
-          ...(body.kind === 'render_final' && body.resolution ? { resolution: body.resolution } : {}),
+          ...(body.kind !== 'render_preview' && body.resolution ? { resolution: body.resolution } : {}),
         },
       }));
     });

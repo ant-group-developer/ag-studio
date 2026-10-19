@@ -80,6 +80,16 @@ describe("actions a person confirms", () => {
     expect((await getJob(s.db, done.job_id!))!.request).toMatchObject({ resolution: "4k" });
   });
 
+  it("a Premiere export card can ask for 4K and its job keeps it", async () => {
+    const s = await setup();
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
+    const base = { projectId: s.project.id, threadId: s.thread.id, messageId: s.turn.id, kind: "export_premiere" as const, title: "Xuất Premiere 4K", summary: "…", createdBy: "u" };
+    expect(await codeOf(proposeAction(s.db, { ...base, params: { video_id: s.video.id, resolution: "720p" } }, NOW))).toBe("bad_params");
+    const a = await proposeAction(s.db, { ...base, params: { video_id: s.video.id, resolution: "4k" } }, NOW);
+    const done = await decideAction(s.db, { actionId: a.id, decision: "confirm", userId: "p", role: "producer" }, NOW);
+    expect((await getJob(s.db, done.job_id!))!.request).toMatchObject({ resolution: "4k" });
+  });
+
   it("two people confirming the same card at once: it runs once", async () => {
     const s = await setup();
     await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });

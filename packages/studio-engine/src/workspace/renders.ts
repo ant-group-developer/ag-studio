@@ -8,10 +8,10 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { HarnessError, RenderInspectionSchema, type RenderInspection, type RenderInspectIssue, type StoredTimeline } from "@harness/contracts";
-import { compositionFeatureLevel, isTimelineV4, layoutTimeline, timelineIssues, timelineToComposition, youtubeChapters } from "@harness/core";
+import { compositionFeatureLevel, isTimelineV4, RENDER_PREMIERE_SCALE_LEVEL, layoutTimeline, timelineIssues, timelineToComposition, youtubeChapters } from "@harness/core";
 import { PREMIERE_MANIFEST_PATH, PremiereManifestSchema, RENDER_MANIFEST_PATH, RenderManifestSchema, type RenderManifest, type StudioExportPremierePayload } from "@ag-farm/protocol";
 import type { StudioBucket } from "../bucket.js";
-import { narrationUploads, prepareRender, type RenderResolution } from "../payloads.js";
+import { narrationUploads, prepareRender, renderCanvas, type RenderResolution } from "../payloads.js";
 import type { StudioDb } from "../studio-db.js";
 import { writeWorkspaceFile } from "./files.js";
 import { ackFarmJob, runFarmStep, type ProjectFarm } from "./farm.js";
@@ -30,7 +30,7 @@ export interface RenderJobRequest {
   revision?: number;
   /** A farm machine for the final render (`requirements.node_id`). */
   node_id?: string;
-  /** Final render: the frame size (`renderCanvas`); none: the timeline's (1080p). */
+  /** Final render and Premiere export: the frame size (`renderCanvas`); none: the timeline's (1080p). */
   resolution?: RenderResolution;
   /** Premiere: pack previews (`proxy`) or the original files. */
   media?: "proxy" | "original";
@@ -226,11 +226,13 @@ export function renderHandler(kind: RenderKind, d: RenderDeps): JobHandler {
     let renderLevel: number;
     try {
       if (kind === "export_premiere") {
-        const composition = timelineToComposition(rev.data);
+        // the sequence is the composition's frame: at 4K the worker scales each clip to fill it (Basic Motion)
+        const composition = timelineToComposition(req.resolution ? { ...rev.data, canvas: renderCanvas(rev.data.canvas, req.resolution) } : rev.data);
         const compPath = join(ctx.tempDir, "composition.json");
         writeFileSync(compPath, JSON.stringify(composition));
         uploads = [{ localPath: compPath, relPath: "composition.json" }, ...narrationUploads(rev.data, d.voiceDir)];
-        renderLevel = compositionFeatureLevel(composition);
+        // an older worker leaves the clips at 100% in a sequence larger than the proxies
+        renderLevel = Math.max(compositionFeatureLevel(composition), req.resolution === "4k" ? RENDER_PREMIERE_SCALE_LEVEL : 0);
         const perSegment = new Set(composition.segments.map((s) => s.has_audio)).size > 1;
         type = "studio.export_premiere";
         payload = {

@@ -143,6 +143,17 @@ describe("video preview tab", { timeout: 20_000 }, () => {
     await waitFor(() => expect(ws.startRender).toHaveBeenCalledWith("v1", { kind: "render_final", resolution: "4k" }));
   });
 
+  it("a producer can pick 4K for the Premiere export, told the proxies are scaled up", async () => {
+    wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={producer} />);
+    await screen.findByText("bản 3 · fit · 2 clip · ≈ 1:05 · 1 câu lời dẫn");
+    fireEvent.click(screen.getByRole("button", { name: /Xuất Premiere/ }));
+    fireEvent.click(await screen.findByRole("radio", { name: "4K" }));
+    expect(await screen.findByText(/phóng vừa khung 4K/)).toBeTruthy();
+    const ok = await screen.findAllByRole("button", { name: "Xuất Premiere" });
+    fireEvent.click(ok[ok.length - 1]!);
+    await waitFor(() => expect(ws.startRender).toHaveBeenCalledWith("v1", { kind: "export_premiere", resolution: "4k" }));
+  });
+
   it("saves a Premiere export started here once it is done, and not the older ones", async () => {
     const saved: string[] = [];
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { saved.push(this.href); });
@@ -155,7 +166,9 @@ describe("video preview tab", { timeout: 20_000 }, () => {
     wrap(<VideoPanel projectId="p1" videoId="v1" atLeast={producer} />);
     await screen.findByText("bản 3 · fit · 2 clip · ≈ 1:05 · 1 câu lời dẫn");
     fireEvent.click(screen.getByRole("button", { name: /Xuất Premiere/ }));
-    await waitFor(() => expect(ws.startRender).toHaveBeenCalledWith("v1", { kind: "export_premiere" }));
+    const ok = await screen.findAllByRole("button", { name: "Xuất Premiere" });
+    fireEvent.click(ok[ok.length - 1]!);
+    await waitFor(() => expect(ws.startRender).toHaveBeenCalledWith("v1", { kind: "export_premiere", resolution: "1080p" }));
     await waitFor(() => expect(saved).toEqual([zip]));
     expect(ws.renderLink.mock.calls).toEqual([["v1", "j9"]]);
     fireEvent.click(screen.getByRole("button", { name: /Dựng lại từ kế hoạch/ }));

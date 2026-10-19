@@ -233,6 +233,20 @@ describe("video renders", () => {
     expect((await getJob(s.db, job.id))!.result).toMatchObject({ kind: "export_premiere", size_bytes: 2_097_152, note: "1 font thay thế" });
   });
 
+  it("a Premiere export in 4K: the composition's frame, so the sequence, is 3840x2160; without it the timeline's", async () => {
+    const s = await setup();
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
+    const k4 = await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "export_premiere", request: { resolution: "4k" }, createdBy: "u" }, NOW);
+    const hd = await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "export_premiere", createdBy: "u" }, NOW);
+    await s.run();
+    await s.run();
+    const output = (id: string) => JSON.parse(s.bucket.objects.get(`productions/${s.project.id}/jobs/premiere/${id}/in/composition.json`)!.toString("utf8")).output;
+    expect(output(k4.id)).toMatchObject({ width: 3840, height: 2160 });
+    expect(output(hd.id)).toMatchObject({ width: 1920, height: 1080 });
+    // only a worker that scales the clips to the sequence takes the 4K one
+    expect(s.submitted.map((j) => (j.requirements as { studio_render_min?: number } | undefined)?.studio_render_min)).toEqual([7, undefined]);
+  });
+
   it("a timeline with errors is not sent", async () => {
     const s = await setup();
     await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id, { assets: {} }), authorId: "u" });
