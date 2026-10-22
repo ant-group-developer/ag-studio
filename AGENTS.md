@@ -170,14 +170,19 @@ nhưng không code nào đọc.
 - Render worker (`E:\CODE\ag-render-worker`) chạy `renderComposition` của `@harness/core`; **mọi node farm render phải chạy
   ag-render-worker ≥ 0.8.0** (composition có `text_style`, Premiere `audio: per_segment`) và khai `python` (`extra.python_bin`)
   để nhận `studio.tts`/`studio.transcribe`; máy tự kiểm khi khởi động (thiếu engine Python thì không khai Python, thiếu font
-  đóng kèm thì hạ mức render; runbook kiểm các máy sau phát hành ở README của ag-render-worker). Bản cuối: `requirements` theo máy chọn (`renderRequirements`; ghim `node_id` qua
-  thẻ xác nhận); độ phân giải `resolution: 1080p | 4k` (nút Render bản cuối, thẻ `render_final`): timeline luôn dựng 1920×1080
+  đóng kèm thì hạ mức render; runbook kiểm các máy sau phát hành ở README của ag-render-worker). `renderComposition` dựng
+  `mezzConcurrency` mezzanine một lúc (mặc định 1; worker 3), đoạn trùng khoá cache dựng một lần, một đoạn lỗi thì dừng cả
+  lượt; `sourceFor` cho mỗi đoạn chờ đúng file nguồn của nó (worker tải 2 file một lúc và dựng chồng lên lúc tải) và trả
+  `out` đã cắt theo file; kết quả kèm `timings` từng pha, worker ghi `t_*_s`, `encoder`, `source_gb` vào `summary` của job
+  (README của worker, mục "Tốc độ render"). Bản cuối: `requirements` theo máy chọn (`renderRequirements`; ghim `node_id` qua
+  thẻ xác nhận); độ phân giải `resolution: 1080p | 4k` (nút Render bản cuối và Xuất Premiere, thẻ `render_final`/`export_premiere`): timeline luôn dựng 1920×1080
   (`fit.ts`), `renderCanvas` (`payloads.ts`) đưa canvas của composition lên cạnh ngắn 2160 lúc gửi, chữ tự to theo (`studioDefaultBrand`);
-  xem trước luôn theo timeline. Composition thêm trường mới thì tăng `RENDER_FEATURE_LEVEL` và `compositionFeatureLevel`
+  Premiere: sequence bằng canvas đó, worker phóng từng clip vừa khung như render (Basic Motion, pad/crop), nên Premiere 4K
+  đòi mức render 7 (`RENDER_PREMIERE_SCALE_LEVEL`); xem trước luôn theo timeline. Composition thêm trường mới thì tăng `RENDER_FEATURE_LEVEL` và `compositionFeatureLevel`
   (`packages/core/src/media/render/features.ts`): worker khai mức của mình (`engines.studio_render`), Studio đòi
   `requirements.studio_render_min` khi composition dùng trường đó, nên máy render bản cũ không nhận job nó không đọc được
   (mức 3 chữ: cỡ riêng, bóng, xếp chồng; 4 font; 5 âm thanh: `gain_db` từng đoạn, `source_even`, `music.envelope`; 6 màu
-  `look`). Font: Arial của máy cộng font OFL đóng kèm bản phát hành (`TEXT_FONTS`; `fonts/fonts.json` của ag-render-worker,
+  `look`; 7 Premiere phóng clip vừa sequence). Font: Arial của máy cộng font OFL đóng kèm bản phát hành (`TEXT_FONTS`; `fonts/fonts.json` của ag-render-worker,
   tải bằng `scripts/fetch-fonts.mjs`; Noto Sans JP/KR là bản tĩnh của notofonts/noto-cjk vì libass không chọn được bản
   biến thiên mặc định Thin); chữ Nhật/Hàn luôn vẽ bằng Noto Sans JP/KR. Xuất Premiere: FCP7 XML zip kèm WAV lời dẫn từ kho giọng.
 - Timeline v4 (`TimelineV4Schema`): clip là đoạn `[in, out)` của video, có `shot_id`, `line_id`, `transition_out`, `muted`,

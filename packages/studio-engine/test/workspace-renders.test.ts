@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { TimelineV4 } from "@harness/contracts";
 import type { JobView as FarmJobView } from "@ag-farm/protocol";
 import {
-  createJobRunner, createProject, createThread, createVideo, getJob, getVideo, latestVideoRevision, queueRender, renderHandler, RENDER_KINDS, RevisionConflictError, saveVideoRevision, seedWorkspace,
+  createJobRunner, createProject, createThread, createVideo, getJob, getVideo, latestVideoRevision, queueRender, renderHandler, RENDER_KINDS, RevisionConflictError, savePrepared, saveVideoRevision, seedWorkspace,
   studioLogger, videoRenders, type JobHandler, type JobKind, type ProjectFarm,
 } from "../src/index.js";
 import { world } from "./helpers.js";
@@ -224,6 +224,28 @@ describe("video renders", () => {
     ]);
   });
 
+  it("a clip of a video prepared without an audio stream is silent in the composition of a render and of a Premiere export", async () => {
+    const s = await setup();
+    const prepared = (asset_id: string, has_audio: boolean) => savePrepared(s.db, {
+      project_id: s.project.id, asset_id, status: "ready", name: null, duration_s: 10, width: 1920, height: 1080, has_audio, shots: 1, transcript: false,
+      source_kind: "original", watermarked: false, error: null,
+    }, NOW);
+    await prepared("a1", false);
+    await prepared("a2", true);
+    const clip = (id: string, asset: string) => ({ clip_id: id, asset_id: asset, section_title: null, in: 0, out: 2, shot_id: null, line_id: null, transition_out: { kind: "cut" as const, seconds: 0 } });
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, authorId: "u", data: timeline(s.video.id, {
+      clips: [clip("C001", "a1"), clip("C002", "a2")],
+      assets: { a1: { title: "Flycam", summary_vi: "…", duration_s: 10, orientation: "landscape" }, a2: { title: "Thuyền", summary_vi: "…", duration_s: 10, orientation: "landscape" } },
+    }) });
+    const render = await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", createdBy: "u" }, NOW);
+    const premiere = await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "export_premiere", createdBy: "u" }, NOW);
+    await s.run();
+    await s.run();
+    const sound = (key: string) => JSON.parse(s.bucket.objects.get(key)!.toString("utf8")).segments.map((x: { has_audio: boolean }) => x.has_audio);
+    expect(sound(`productions/${s.project.id}/jobs/render-preview/${render.id}/in/composition.json`)).toEqual([false, true]);
+    expect(sound(`productions/${s.project.id}/jobs/premiere/${premiere.id}/in/composition.json`)).toEqual([false, true]);
+  });
+
   it("a Premiere export names the files after the videos and keeps the zip's key", async () => {
     const s = await setup();
     await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
@@ -231,6 +253,20 @@ describe("video renders", () => {
     await s.run();
     expect(s.submitted[0]).toMatchObject({ type: "studio.export_premiere", payload: { episode_id: s.video.id, media: "proxy", name: "Tràng An", edit_style: "cut", media_names: { "asset:a1": "Thuyền" } } });
     expect((await getJob(s.db, job.id))!.result).toMatchObject({ kind: "export_premiere", size_bytes: 2_097_152, note: "1 font thay thế" });
+  });
+
+  it("a Premiere export in 4K: the composition's frame, so the sequence, is 3840x2160; without it the timeline's", async () => {
+    const s = await setup();
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
+    const k4 = await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "export_premiere", request: { resolution: "4k" }, createdBy: "u" }, NOW);
+    const hd = await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "export_premiere", createdBy: "u" }, NOW);
+    await s.run();
+    await s.run();
+    const output = (id: string) => JSON.parse(s.bucket.objects.get(`productions/${s.project.id}/jobs/premiere/${id}/in/composition.json`)!.toString("utf8")).output;
+    expect(output(k4.id)).toMatchObject({ width: 3840, height: 2160 });
+    expect(output(hd.id)).toMatchObject({ width: 1920, height: 1080 });
+    // only a worker that scales the clips to the sequence takes the 4K one
+    expect(s.submitted.map((j) => (j.requirements as { studio_render_min?: number } | undefined)?.studio_render_min)).toEqual([7, undefined]);
   });
 
   it("a timeline with errors is not sent", async () => {

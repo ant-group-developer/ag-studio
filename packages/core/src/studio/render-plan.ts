@@ -85,8 +85,11 @@ function writtenLines(input: AnyTimeline, layout: TimelineLayout): Timeline | nu
   return { ...narrationTimeline(input, layout), voice: "tts", narration };
 }
 
-/** Build `composition.json` from a frozen timeline. */
-export function timelineToComposition(t: AnyTimeline): Composition {
+/**
+ * Build `composition.json` from a frozen timeline. `silentAssets`: assets whose file has no audio stream (as Studio's
+ * preparation probed them): their clips are silent, since a segment that maps sound its source lacks fails to render.
+ */
+export function timelineToComposition(t: AnyTimeline, opts: { silentAssets?: ReadonlySet<string> } = {}): Composition {
   const layout = layoutTimeline(t);
   const hasAudio = !t.source_audio.muted;
   const v4 = isTimelineV4(t) ? t : null;
@@ -158,7 +161,7 @@ export function timelineToComposition(t: AnyTimeline): Composition {
       end: c.end,
       fit: "scale_pad" as const,
       // a clip muted on its own (cut 1.1.0) is silent; every render worker reads this per segment
-      has_audio: hasAudio && !c.muted,
+      has_audio: hasAudio && !c.muted && !opts.silentAssets?.has(c.asset_id),
       ...(c.gain_db ? { gain_db: c.gain_db } : {}),
       transition_out: { kind: transitions[order]!.kind, seconds: transitions[order]!.seconds, tail_available: transitions[order]!.tail_available },
     })),

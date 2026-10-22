@@ -33,7 +33,7 @@ const VideoId = z.string().min(1);
 /** What each action takes. */
 export const ACTION_PARAMS = {
   render_final: z.object({ video_id: VideoId, revision: z.number().int().min(1).optional(), node_id: z.string().uuid().optional(), resolution: z.enum(RENDER_RESOLUTIONS).optional() }).strict(),
-  export_premiere: z.object({ video_id: VideoId, revision: z.number().int().min(1).optional() }).strict(),
+  export_premiere: z.object({ video_id: VideoId, revision: z.number().int().min(1).optional(), resolution: z.enum(RENDER_RESOLUTIONS).optional() }).strict(),
   delete_video: z.object({ video_id: VideoId }).strict(),
   crawl_large: z.object({ crawl: CrawlRequestSchema }).strict(),
   reference_download: z.object({

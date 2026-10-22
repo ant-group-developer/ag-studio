@@ -17,7 +17,7 @@ export const ACTION_TOOLS: AgentTool[] = [
     description: [
       "Đề xuất một việc có tác dụng thật để người dùng bấm xác nhận trên giao diện (bạn không tự làm được những việc này):",
       "render_final {video_id?, node_id?, resolution?: \"1080p\" | \"4k\"} render bản cuối của video từ timeline hiện tại, mặc định 1080p; 4k chỉ khi người dùng muốn (cần producer);",
-      "export_premiere {video_id?} xuất file dựng Premiere (cần producer); delete_video {video_id} lưu trữ một video (cần producer);",
+      "export_premiere {video_id?, resolution?: \"1080p\" | \"4k\"} xuất file dựng Premiere, sequence mặc định 1080p (cần producer); delete_video {video_id} lưu trữ một video (cần producer);",
       "crawl_large {crawl: {kind, …}} một crawl YouTube lớn (> 500 đơn vị hoặc > 100 video);",
       "reference_download {video_ids: [id YouTube 11 ký tự, tối đa 5], purpose} tải video mẫu ≤480p để đo phong cách dựng (tải qua máy farm khi có; không được khi YouTube chặn máy chủ Studio mà không máy farm nào tải thay).",
       "video_id bỏ trống = video của luồng này. `title` là câu ngắn trên thẻ, `why` giải thích ngắn vì sao.",

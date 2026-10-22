@@ -107,6 +107,13 @@ export async function listPrepared(db: StudioDb, projectId: string): Promise<Pre
   return db.all<PreparedAsset>("SELECT * FROM prepared_assets WHERE project_id = ? ORDER BY prepared_at DESC", [projectId]);
 }
 
+/** ag-go videos of a project whose prepared file has no audio stream: their clips render silent. */
+export async function silentAssetIds(db: StudioDb, projectId: string): Promise<Set<string>> {
+  return new Set((await db.all<{ asset_id: string }>(
+    "SELECT asset_id FROM prepared_assets WHERE project_id = ? AND has_audio = FALSE", [projectId],
+  )).map((r) => r.asset_id));
+}
+
 export async function savePrepared(db: StudioDb, p: Omit<PreparedAsset, "prepared_at">, now: string): Promise<void> {
   await db.run(
     `INSERT INTO prepared_assets (project_id, asset_id, status, name, duration_s, width, height, has_audio, shots, transcript, source_kind, watermarked, error, prepared_at)
