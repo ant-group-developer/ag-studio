@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CompositionSchema, isHarnessError, newId, type Composition } from "@harness/contracts";
-import { escapeFilterPath, finalArgs, type FinalGraphInput } from "../../../src/media/render/final-graph.js";
+import { escapeFilterPath, finalArgs, finalConcatArgs, finalConcatList, finalSliceArgs, finalSlices, type FinalGraphInput } from "../../../src/media/render/final-graph.js";
 import { videoEncoderArgs } from "../../../src/media/render/encoder.js";
 
 const SRC_A = "src_01JAAAAAAAAAAAAAAAAAAAAAAA";
@@ -215,5 +215,131 @@ describe("escapeFilterPath", () => {
     // round 1) re-opens a quote as far as pass 2 is concerned and swallows the rest of the filter
     // (`:fontsdir=...`). The working 6-char sequence `'\\\''` survives both passes intact.
     expect(escapeFilterPath("E:\\x\\it's\\overlay.ass")).toBe("E\\:/x/it'\\\\\\''s/overlay.ass");
+  });
+});
+
+describe("finalSlices", () => {
+  const cut = { kind: "cut", seconds: 0.4, tail_available: false } as const;
+  const dissolve = { kind: "dissolve", seconds: 0.5, tail_available: true } as const;
+  const dip = { kind: "dip_black", seconds: 1, tail_available: false } as const;
+  const episode = (kinds: Composition["segments"][number]["transition_out"][], len = 60) =>
+    baseComposition({ total_seconds: kinds.length * len, segments: kinds.map((k, i) => segment(i, i * len, (i + 1) * len, k)) });
+
+  it("one slice when asked for one, or when the episode is too short to split", () => {
+    expect(finalSlices(episode([cut, cut, cut, cut, cut, cut]), 1)).toEqual([{ orders: [0, 1, 2, 3, 4, 5], start: 0, seconds: 360, dipIn: 0 }]);
+    expect(finalSlices(episode([cut, cut, cut], 10), 3)).toHaveLength(1);
+  });
+
+  it("splits at the cuts nearest an even share, each slice starting where the ones before it end", () => {
+    const slices = finalSlices(episode([cut, cut, cut, cut, cut, cut]), 3);
+    expect(slices.map((s) => s.orders)).toEqual([[0, 1], [2, 3], [4, 5]]);
+    expect(slices.map((s) => [s.start, s.seconds])).toEqual([[0, 120], [120, 120], [240, 120]]);
+  });
+
+  it("never splits a dissolve: its tail plays over the next segment", () => {
+    const c = episode([cut, dissolve, cut, dissolve, cut, cut]);
+    const slices = finalSlices(c, 3);
+    expect(slices).toHaveLength(3);
+    expect(slices.flatMap((s) => s.orders)).toEqual([0, 1, 2, 3, 4, 5]);
+    for (const s of slices.slice(0, -1)) expect(c.segments[s.orders[s.orders.length - 1]!]!.transition_out.kind).toBe("cut");
+  });
+
+  it("all dissolves: nowhere to split, one slice", () => {
+    expect(finalSlices(episode([dissolve, dissolve, dissolve, cut]), 3)).toHaveLength(1);
+  });
+
+  it("a split at a dip_black: the next slice fades in from black over the second half", () => {
+    const slices = finalSlices(episode([cut, dip, cut, cut]), 2);
+    expect(slices.map((s) => [s.orders, s.dipIn])).toEqual([[[0, 1], 0], [[2, 3], 1]]);
+  });
+
+  it("start is the sum of the segment lengths before it, the time the picture shows there", () => {
+    const c = baseComposition({ total_seconds: 100, segments: [segment(0, 0, 33.3), segment(1, 33.3, 66.7), segment(2, 66.7, 100)] });
+    expect(finalSlices(c, 3, 10).map((s) => s.start)).toEqual([0, 33.3, 66.7]);
+  });
+});
+
+describe("finalArgs streams", () => {
+  const withEverything = () =>
+    baseComposition({
+      voice: "tts",
+      total_seconds: 15,
+      segments: [segment(0, 0, 5, { kind: "dissolve", seconds: 0.4, tail_available: true }), segment(1, 5, 15)],
+      narration: [{ line_id: "L001", wav: "/abs/voice/L001.wav", start: 0, end: 15 }],
+      music: {
+        track_id: "calm-01", path: "/kho/music/calm-01/track.mp3", loop: false, fade_in: 1, fade_out: 3,
+        cues: [{ start: 0, end: 15, gain_db: -18 }], duck: { windows: [], gain_db: -12, attack_ms: 150, release_ms: 600 },
+      },
+      logo: { path: "/kho/brands/ch1/logo.png", corner: "right", opacity: 0.8, height_px: 140 },
+    });
+  const mezz = [
+    { order: 0, body: "/cache/mezz/b0.mp4", tail: "/cache/mezz/b0-tail.mp4" },
+    { order: 1, body: "/cache/mezz/b1.mp4", tail: null },
+  ];
+
+  it('"video": the picture only, from bodies, tails and the logo; no sound, no audio graph', () => {
+    const { argv, inputs } = finalArgs(baseInput({ composition: withEverything(), mezz, streams: "video", out_path: "/tmp/slice-0.mp4" }));
+    expect(inputs.map((i) => i.kind)).toEqual(["body", "tail", "body", "logo"]);
+    const joined = argv.join(" ");
+    expect(joined).not.toContain("loudnorm");
+    expect(joined).toContain("-map [vout]");
+    expect(argv).toContain("-an");
+    expect(argv).not.toContain("-c:a");
+    expect(argv.slice(argv.indexOf("-c:v"), argv.indexOf("-c:v") + 2)).toEqual(["-c:v", "libx264"]);
+    expect(argv[argv.length - 1]).toBe("/tmp/slice-0.mp4");
+  });
+
+  it('"audio": the sound only, from bodies, narration and music, encoded as the one-pass render encodes it', () => {
+    const both = finalArgs(baseInput({ composition: withEverything(), mezz })).argv;
+    const { argv, inputs } = finalArgs(baseInput({ composition: withEverything(), mezz, streams: "audio", out_path: "/tmp/sound.m4a" }));
+    expect(inputs.map((i) => i.kind)).toEqual(["body", "body", "narration", "music"]);
+    expect(argv).toContain("-vn");
+    expect(argv).not.toContain("-c:v");
+    expect(argv.join(" ")).toContain("loudnorm=I=-14");
+    expect(argv.slice(argv.indexOf("-c:a"), -1)).toEqual(both.slice(both.indexOf("-c:a"), both.indexOf("-movflags")));
+    expect(argv[argv.length - 1]).toBe("/tmp/sound.m4a");
+  });
+
+  it("a slice's subtitles run on the episode's clock: shifted by its start before ass, back to 0 after", () => {
+    const composition = baseComposition({ segments: [segment(0, 0, 5), segment(1, 5, 10)] });
+    const m = [{ order: 0, body: "/b0.mp4", tail: null }, { order: 1, body: "/b1.mp4", tail: null }];
+    const joined = finalArgs(baseInput({ composition, mezz: m, streams: "video", assPath: "/x/o.ass", sliceStart: 120.5 })).argv.join(" ");
+    expect(joined).toContain("setpts=PTS+120.5/TB,ass=filename='/x/o.ass',setpts=PTS-STARTPTS[vass]");
+  });
+
+  it("dipInSeconds fades the first segment in from black", () => {
+    const composition = baseComposition({ segments: [segment(0, 0, 5), segment(1, 5, 10)] });
+    const m = [{ order: 0, body: "/b0.mp4", tail: null }, { order: 1, body: "/b1.mp4", tail: null }];
+    const joined = finalArgs(baseInput({ composition, mezz: m, streams: "video", dipInSeconds: 1 })).argv.join(" ");
+    expect(joined).toContain("[v0b]fade=t=in:st=0:d=0.5[v0fi]");
+  });
+});
+
+describe("finalSliceArgs, finalConcatArgs", () => {
+  it("a slice renders its own segments rebased to 0, with the slice's start and dip carried over", () => {
+    const composition = baseComposition({
+      total_seconds: 180,
+      segments: [segment(0, 0, 60), segment(1, 60, 120, { kind: "dip_black", seconds: 1, tail_available: false }), segment(2, 120, 180)],
+    });
+    const mezz = [0, 1, 2].map((order) => ({ order, body: `/b${order}.mp4`, tail: null }));
+    const slices = finalSlices(composition, 3, 30);
+    expect(slices).toHaveLength(3);
+    const { argv, inputs } = finalSliceArgs(baseInput({ composition, mezz, assPath: "/o.ass" }), slices[2]!, "/tmp/slice-2.mp4");
+    expect(inputs.map((i) => i.path)).toEqual(["/b2.mp4"]);
+    const joined = argv.join(" ");
+    expect(joined).toContain("[0:v]tpad=stop_mode=clone:stop_duration=60,trim=duration=60,setpts=PTS-STARTPTS[v0b]");
+    expect(joined).toContain("fade=t=in:st=0:d=0.5");
+    expect(joined).toContain("setpts=PTS+120/TB,ass=");
+    expect(argv).toContain("-an");
+    expect(argv[argv.length - 1]).toBe("/tmp/slice-2.mp4");
+  });
+
+  it("the slices are joined by stream copy, with the sound muxed in and the file made streamable", () => {
+    expect(finalConcatArgs({ ffmpeg: "ffmpeg", list: "slices.txt", audio: "sound.m4a", codec: "h264", out_path: "/out/e.mp4" })).toEqual([
+      "ffmpeg", "-hide_banner", "-y", "-f", "concat", "-safe", "0", "-i", "slices.txt", "-i", "sound.m4a",
+      "-map", "0:v", "-map", "1:a", "-c", "copy", "-movflags", "+faststart", "/out/e.mp4",
+    ]);
+    expect(finalConcatArgs({ ffmpeg: "ffmpeg", list: "l.txt", audio: "s.m4a", codec: "hevc", out_path: "e.mp4" })).toContain("hvc1");
+    expect(finalConcatList(["slice-0.mp4", "it's.mp4"])).toBe("file 'slice-0.mp4'\nfile 'it'\\''s.mp4'\n");
   });
 });
