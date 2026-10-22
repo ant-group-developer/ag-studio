@@ -138,6 +138,8 @@ describe("timelineToComposition on v4", () => {
     // on again: the key goes, the document is as before
     expect(setClipMuted(t, "C002", false)).toEqual(cut());
     expect(timelineToComposition({ ...t, source_audio: { muted: true } }).segments.map((s) => s.has_audio)).toEqual([false, false, false]);
+    // every clip of a video whose file has no audio stream is silent too (C001 and C003 are both a01)
+    expect(timelineToComposition(cut(), { silentAssets: new Set(["a01"]) }).segments.map((s) => s.has_audio)).toEqual([false, true, false]);
     // the chat's edit, and only on a shot-cut timeline's clips
     expect(applyTimelineOps(cut(), [{ op: "setClipMuted", clip_id: "C003", muted: true }], {}).clips[2]!.muted).toBe(true);
     expect(() => applyTimelineOps(cut(), [{ op: "setClipMuted", clip_id: "C009", muted: true }], {})).toThrow(TimelineOpError);

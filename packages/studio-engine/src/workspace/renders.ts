@@ -18,6 +18,7 @@ import { ackFarmJob, runFarmStep, type ProjectFarm } from "./farm.js";
 import type { JobContext, JobHandler } from "./job-runner.js";
 import { createJob, getJob, listJobs, type JobKind, type JobRecord } from "./jobs-db.js";
 import { getVideoRevision, latestVideoRevision, requireVideo, updateVideo } from "./project-db.js";
+import { silentAssetIds } from "./sources-db.js";
 import { enqueueUsage, renderUsageEvents } from "./usage-outbox.js";
 
 export const RENDER_KINDS = ["render_preview", "render_final", "export_premiere"] as const satisfies readonly JobKind[];
@@ -224,10 +225,12 @@ export function renderHandler(kind: RenderKind, d: RenderDeps): JobHandler {
     let uploads: { localPath: string; relPath: string }[];
     /** The render level the composition needs (`compositionFeatureLevel`): an older render worker rejects it. */
     let renderLevel: number;
+    // a clip of a video with no audio stream must not ask the worker for its sound
+    const silentAssets = await silentAssetIds(d.db, job.project_id);
     try {
       if (kind === "export_premiere") {
         // the sequence is the composition's frame: at 4K the worker scales each clip to fill it (Basic Motion)
-        const composition = timelineToComposition(req.resolution ? { ...rev.data, canvas: renderCanvas(rev.data.canvas, req.resolution) } : rev.data);
+        const composition = timelineToComposition(req.resolution ? { ...rev.data, canvas: renderCanvas(rev.data.canvas, req.resolution) } : rev.data, { silentAssets });
         const compPath = join(ctx.tempDir, "composition.json");
         writeFileSync(compPath, JSON.stringify(composition));
         uploads = [{ localPath: compPath, relPath: "composition.json" }, ...narrationUploads(rev.data, d.voiceDir)];
@@ -250,7 +253,7 @@ export function renderHandler(kind: RenderKind, d: RenderDeps): JobHandler {
         const build = await prepareRender(join(ctx.tempDir, "render"), {
           timeline: rev.data, revision: rev.revision, productionId: job.project_id, episodeId: video.id,
           output: `videos/${video.id}/${kind === "render_final" ? "final" : "previews"}/${job.id}.mp4`, thumbnails: [], voiceDir: d.voiceDir, textStyle: true,
-          inspect: true, ...(kind === "render_final" && req.resolution ? { resolution: req.resolution } : {}),
+          inspect: true, silentAssets, ...(kind === "render_final" && req.resolution ? { resolution: req.resolution } : {}),
         });
         type = kind === "render_final" ? "studio.render_final" : "studio.render_preview";
         payload = build.payload;

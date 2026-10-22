@@ -496,6 +496,19 @@ describe("renderComposition with sourceFor (sources still downloading)", () => {
     expect(timings.source_wait_s).toBeGreaterThan(0.1);
   });
 
+  it("a source file with no audio stream is built silent, whatever the composition says", async () => {
+    const { spawn, calls } = fakeSpawn();
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+    const sourceFor = async (seg: Composition["segments"][number]) =>
+      ({ path: `/dl/a-${seg.order}.mp4`, checksum: "sha256:" + String(seg.order).repeat(64), out: seg.out, ...(seg.order === 0 ? { has_audio: false } : {}) });
+    await renderComposition(d, input({ composition: segmentsComposition(2), outDir, sourceChecksums: new Map(), sourceFor }));
+
+    const [silent, sounding] = calls.filter(isMezz);
+    expect(silent!.join(" ")).toContain("anullsrc");
+    expect(silent!.join(" ")).not.toContain("[0:a]");
+    expect(sounding!.join(" ")).toContain("[0:a]aresample");
+  });
+
   it("a source that fails stops the run at once, without waiting for the others still downloading", async () => {
     const { spawn, calls } = fakeSpawn();
     const { d, outDir } = fakeWorld({ spawn, nvenc: false });
@@ -917,6 +930,25 @@ describe.skipIf(!hasFfmpeg())("renderComposition (needs ffmpeg)", () => {
     expect(await gap(comp(true, -6))).toBeGreaterThan(4);
     const sidecars = readdirSync(cacheDir).filter((n) => n.endsWith(".json")).map((n) => JSON.parse(readFileSync(join(cacheDir, n), "utf8")) as { lufs?: number | null });
     expect(sidecars.filter((s) => typeof s.lufs === "number")).toHaveLength(2);
+  }, 240_000);
+
+  it("a video-only source marked has_audio renders once sourceFor says it has no audio, with even sound on", async () => {
+    const srcDir = tempDir("render-src-mute-");
+    const silent = join(srcDir, "silent.mp4");
+    const sounding = join(srcDir, "sounding.mp4");
+    makeClip(silent, 2, false);
+    makeClip(sounding, 2, true);
+    const comp = composition({
+      output: { width: 320, height: 180, fps: 25, codec: "h264" }, total_seconds: 4, voice: "original", source_even: true,
+      segments: [
+        segment({ order: 0, source_id: SRC_A, source_path: silent, in: 0, out: 2, start: 0, end: 2, has_audio: true }),
+        segment({ order: 1, source_id: SRC_B, source_path: sounding, in: 0, out: 2, start: 2, end: 4, has_audio: true }),
+      ],
+    });
+    const sourceFor = async (seg: Composition["segments"][number]) =>
+      ({ path: seg.source_path, checksum: "sha256:" + String(seg.order + 4).repeat(64), out: seg.out, has_audio: seg.source_path !== silent });
+    const res = await renderComposition(deps(join(tempDir("render-cache-mute-"), "mezz")), input({ composition: comp, outDir: join(tempDir("render-out-mute-"), "out"), sourceChecksums: new Map(), sourceFor }));
+    expect(maxVolumeDb(res.episodePath, 2.5, 1)!).toBeGreaterThan(-60);
   }, 240_000);
 
   it("feedback-vps §4.3: the music follows its volume line", async () => {

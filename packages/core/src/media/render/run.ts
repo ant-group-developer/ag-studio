@@ -79,9 +79,10 @@ export interface RenderInput {
    * starts as soon as its own file is downloaded, while the later ones still are. It answers the file, the checksum
    * that goes into the cache key (`sourceChecksums` is not read then) and the segment's `out`, which the caller may
    * have cut down to a source file shorter than the timeline thought. Absent: `source_path`, `sourceChecksums` and
-   * `out` as the composition has them.
+   * `out` as the composition has them. `has_audio: false` says the file has no audio stream: the segment is then
+   * silent whatever the composition says, since mapping its missing `[0:a]` fails the whole mezzanine.
    */
-  sourceFor?: (segment: Composition["segments"][number]) => Promise<{ path: string; checksum: string; out: number }>;
+  sourceFor?: (segment: Composition["segments"][number]) => Promise<{ path: string; checksum: string; out: number; has_audio?: boolean }>;
   /** Progress over the whole render, 0-100, with a short stage name (`mezzanine`, `loudnorm`, `final_encode`).
    * Called often during encodes; callers throttle. */
   onProgress?: (percent: number, stage: string) => void;
@@ -540,19 +541,21 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     }
   }
 
-  const renderSegment = async (seg: Composition["segments"][number]): Promise<{ ref: MezzRef; seconds: number; cached: boolean; out: number }> => {
-    let src = { path: seg.source_path, checksum: p.sourceChecksums.get(seg.source_id)!, out: seg.out };
+  const renderSegment = async (seg: Composition["segments"][number]): Promise<{ ref: MezzRef; seconds: number; cached: boolean; out: number; has_audio: boolean }> => {
+    let src: { path: string; checksum: string; out: number; has_audio?: boolean } = { path: seg.source_path, checksum: p.sourceChecksums.get(seg.source_id)!, out: seg.out };
     if (p.sourceFor !== undefined) {
       const waitStarted = Date.now();
       // A stopped run does not wait for a download it no longer needs.
       src = await Promise.race([p.sourceFor(seg), poolStopped]);
       timings.source_wait_s = round3(timings.source_wait_s + secondsSince(waitStarted));
     }
-    const common = { source_checksum: src.checksum, fit: seg.fit, w: width, h: height, fps, has_audio: seg.has_audio, codec, ...(composition.look ? { look: composition.look } : {}) };
+    const hasAudio = seg.has_audio && src.has_audio !== false;
+    if (seg.has_audio && !hasAudio) log(`segment ${seg.order}: its source has no audio stream; built silent`);
+    const common = { source_checksum: src.checksum, fit: seg.fit, w: width, h: height, fps, has_audio: hasAudio, codec, ...(composition.look ? { look: composition.look } : {}) };
 
     const body = await renderMezzOnce({
       keyFor: (e) => mezzCacheKey({ ...common, encoder: e, in: seg.in, out: src.out }),
-      source: src.path, in: seg.in, out: src.out, fit: seg.fit, has_audio: seg.has_audio, label: String(seg.order),
+      source: src.path, in: seg.in, out: src.out, fit: seg.fit, has_audio: hasAudio, label: String(seg.order),
       onFraction: (f) => mezzProgress(seg.order, f * (src.out - seg.in)),
     });
     let seconds = body.seconds;
@@ -565,19 +568,19 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
       // kind) never invalidates the body it belongs to.
       tail = await renderMezzOnce({
         keyFor: (e) => mezzCacheKey({ ...common, encoder: e, in: src.out, out: src.out + tailSeconds, tail_seconds: tailSeconds }),
-        source: src.path, in: src.out, out: src.out + tailSeconds, fit: seg.fit, has_audio: seg.has_audio, label: `${seg.order}-tail`,
+        source: src.path, in: src.out, out: src.out + tailSeconds, fit: seg.fit, has_audio: hasAudio, label: `${seg.order}-tail`,
       });
       seconds += tail.seconds;
       mezzProgress(seg.order, seconds);
     }
     // A segment counts as cached only when every mezzanine it needs was a hit.
-    return { ref: { order: seg.order, body: body.path, tail: tail?.path ?? null }, seconds, cached: body.cached && (tail === null || tail.cached), out: src.out };
+    return { ref: { order: seg.order, body: body.path, tail: tail?.path ?? null }, seconds, cached: body.cached && (tail === null || tail.cached), out: src.out, has_audio: hasAudio };
   };
 
   // `mezzConcurrency` segments at a time, in timeline order; the results keep that order whatever finishes first. The
   // first failure stops the pool: no new segment starts, the running ffmpegs are killed, and that failure is thrown.
   const concurrency = Math.max(1, Math.floor(p.mezzConcurrency ?? 1));
-  const done: { ref: MezzRef; seconds: number; cached: boolean; out: number }[] = new Array(segs.length);
+  const done: { ref: MezzRef; seconds: number; cached: boolean; out: number; has_audio: boolean }[] = new Array(segs.length);
   let nextSeg = 0;
   let failure: { error: unknown } | null = null;
   const lane = async (): Promise<void> => {
@@ -600,6 +603,8 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
   const mezz: MezzRef[] = done.map((r) => r.ref);
   /** Each segment's `out` as its mezzanine was cut (`sourceFor` may have shortened it). */
   const outByOrder = new Map(done.map((r) => [r.ref.order, r.out]));
+  /** Each segment's own sound as its mezzanine was built: off for a source file with no audio stream. */
+  const audioByOrder = new Map(done.map((r) => [r.ref.order, r.has_audio]));
   // Counted per SEGMENT (not per file) so `rendered + cached === total` always holds.
   const cached = done.filter((r) => r.cached).length;
   const rendered = done.length - cached;
@@ -637,7 +642,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     const evenStarted = Date.now();
     const lufs: (number | null)[] = [];
     for (const seg of segs) {
-      if (!seg.has_audio) { lufs.push(null); continue; }
+      if (!audioByOrder.get(seg.order)) { lufs.push(null); continue; }
       const body = mezz.find((m) => m.order === seg.order)!.body;
       const key = basename(body, ".mp4");
       let l = cacheLufs(d.cache, key);

@@ -57,11 +57,13 @@ export async function prepareRender(
     inspect?: boolean;
     /** The frame size of the render; none: the timeline's canvas. */
     resolution?: RenderResolution;
+    /** Assets whose file has no audio stream (`silentAssetIds`): their clips are silent. */
+    silentAssets?: ReadonlySet<string>;
   },
 ): Promise<{ productionId: string; payload: StudioRenderPayload; extraUploads: { localPath: string; relPath: string }[]; renderLevel: number }> {
   const voice = narrationUploads(p.timeline, p.voiceDir);
   const timeline = p.resolution ? { ...p.timeline, canvas: renderCanvas(p.timeline.canvas, p.resolution) } : p.timeline;
-  const composition = timelineToComposition(timeline);
+  const composition = timelineToComposition(timeline, p.silentAssets ? { silentAssets: p.silentAssets } : {});
   if (p.textStyle === false) delete composition.text_style;
   const compPath = join(workDir, "render-plan", "composition.json");
   mkdirSync(dirname(compPath), { recursive: true });
