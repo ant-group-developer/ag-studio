@@ -232,7 +232,7 @@ xem nhóm mình; người khác 403.
   không trả lời được nhớ 30 s (poll không dồn); 404 của ag-go nêu tên video thì video đó ngoài phạm vi, không nêu thì mọi
   timeline dùng đủ tập video đã hỏi bị ẩn; một lần kiểm > 2 s ghi log
 - `POST /videos/:videoId/renders {kind: render_preview|render_final|export_premiere, nodeId?, media?, resolution?: 1080p|4k}` — xem trước: editor;
-  bản cuối, Premiere: producer (403 `role`). `resolution` chỉ cho bản cuối (mặc định 1080p của timeline; `4k` = cạnh ngắn 2160).
+  bản cuối, Premiere: producer (403 `role`). `resolution` cho bản cuối và Premiere (mặc định 1080p của timeline; `4k` = cạnh ngắn 2160; xem trước bỏ qua).
 - `GET /projects/:projectId/audio` (viewer) → `{voice, music, summary, libraryTrack, enabled, files}`: `enabled` = API có
   ffmpeg (`STUDIO_FFMPEG_PATH`; ffprobe là `STUDIO_FFPROBE_PATH` hoặc ffprobe cạnh ffmpeg như worker) để nhận file audio;
   `files` = file audio dùng được `[{path, name, bytes, sourceId, addedAt, listenUrl}]` (`listenUrl`: `GET files/stream`, 15 phút), mới nhất trước: audio đã tải ở tab Đầu vào

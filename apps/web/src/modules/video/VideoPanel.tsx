@@ -26,6 +26,7 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
   const qc = useQueryClient();
   const [playing, setPlaying] = useState<string | null>(null);
   const [resolution, setResolution] = useState<RenderResolution>("1080p");
+  const [premiereResolution, setPremiereResolution] = useState<RenderResolution>("1080p");
   // the list polled again signs anew: the player keeps the link it has (they live an hour) or it reloads
   const playerUrls = useRef(new Map<string, { url: string; at: number }>());
   const timeline = useQuery({ queryKey: ["timeline", videoId], queryFn: () => client.getTimeline(videoId) });
@@ -40,7 +41,8 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
   };
   const fail = (fallback: string) => (e: unknown) => void message.error(e instanceof StudioHttpError ? e.message : fallback);
   const start = useMutation({
-    mutationFn: (kind: RenderKind) => client.startRender(videoId, kind === "render_final" ? { kind, resolution } : { kind }),
+    mutationFn: (kind: RenderKind) => client.startRender(videoId,
+      kind === "render_final" ? { kind, resolution } : kind === "export_premiere" ? { kind, resolution: premiereResolution } : { kind }),
     onSuccess: (job, kind) => { if (kind === "export_premiere") savingExports.add(job.id); refresh(); },
     onError: fail(t("ws.video.renderFailed")),
   });
@@ -115,15 +117,21 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
             <>
               <Popconfirm
                 title={t("ws.video.finalConfirm", { revision: latest?.revision ?? "?" })}
-                description={(
-                  <Radio.Group size="small" optionType="button" value={resolution} onChange={(e) => setResolution(e.target.value as RenderResolution)}
-                    aria-label={t("ws.video.resolution")} options={[{ value: "1080p", label: "1080p" }, { value: "4k", label: "4K" }]} />
-                )}
+                description={<ResolutionPicker value={resolution} onChange={setResolution} label={t("ws.video.resolution")} />}
                 onConfirm={() => start.mutate("render_final")} okText={t("ws.video.renderFinal")} cancelText={t("common.cancel")}>
                 <Button size="small" icon={<Clapperboard size={13} />} disabled={!latest || errors.length > 0} loading={start.isPending && start.variables === "render_final"}>{t("ws.video.renderFinal")}</Button>
               </Popconfirm>
-              <Button size="small" icon={<Film size={13} />} disabled={!latest || errors.length > 0} loading={start.isPending && start.variables === "export_premiere"}
-                onClick={() => start.mutate("export_premiere")}>{t("ws.video.exportPremiere")}</Button>
+              <Popconfirm
+                title={t("ws.video.premiereConfirm", { revision: latest?.revision ?? "?" })}
+                description={(
+                  <div className="ws-video__resolution">
+                    <ResolutionPicker value={premiereResolution} onChange={setPremiereResolution} label={t("ws.video.premiereResolution")} />
+                    {premiereResolution === "4k" ? <div className="ws-video__resolution-hint">{t("ws.video.premiere4kHint")}</div> : null}
+                  </div>
+                )}
+                onConfirm={() => start.mutate("export_premiere")} okText={t("ws.video.exportPremiere")} cancelText={t("common.cancel")}>
+                <Button size="small" icon={<Film size={13} />} disabled={!latest || errors.length > 0} loading={start.isPending && start.variables === "export_premiere"}>{t("ws.video.exportPremiere")}</Button>
+              </Popconfirm>
             </>
           ) : null}
         </div>
@@ -288,4 +296,12 @@ function keptUrl(kept: Map<string, { url: string; at: number }>, jobId: string, 
   if (k && Date.now() - k.at < 30 * 60_000) return k.url;
   kept.set(jobId, { url, at: Date.now() });
   return url;
+}
+
+/** The frame size of a final render or an export: 1080p (the timeline's) or 4K. */
+function ResolutionPicker({ value, onChange, label }: { value: RenderResolution; onChange: (r: RenderResolution) => void; label: string }) {
+  return (
+    <Radio.Group size="small" optionType="button" value={value} onChange={(e) => onChange(e.target.value as RenderResolution)}
+      aria-label={label} options={[{ value: "1080p", label: "1080p" }, { value: "4k", label: "4K" }]} />
+  );
 }
