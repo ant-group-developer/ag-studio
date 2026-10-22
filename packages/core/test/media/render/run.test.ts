@@ -338,6 +338,16 @@ describe("stderrSummary", () => {
     );
   });
 
+  it("names a stream the filtergraph maps but the source lacks (a video-only clip marked has_audio), as ffmpeg 6.1 on Windows prints it", () => {
+    const stderr = [
+      "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'asset_x.mp4':",
+      "  Stream #0:0[0x1](und): Video: h264 (High), yuv420p(progressive), 1920x1080, 25 fps",
+      `[fc#0 @ 000001b9a48f0dc0] Stream specifier ':a' in filtergraph description [0:v]scale=1920:1080,${"eq=contrast=1.1,".repeat(30)}fps=25,format=yuv420p[v];[0:a]aresample=48000,aformat=channel_layouts=stereo[a] matches no streams.`,
+      "Error initializing complex filters: Invalid argument",
+    ].join("\r\n");
+    expect(stderrSummary(stderr)).toBe("[fc#0] Stream specifier ':a' in the filtergraph matches no streams. | Error initializing complex filters: Invalid argument");
+  });
+
   it("falls back to the last meaningful line when nothing looks like an error", () => {
     expect(stderrSummary("Input #0, mov,mp4\n  Duration: 00:00:02.00\nsomething odd happened\nConversion failed!\n")).toBe("something odd happened");
   });

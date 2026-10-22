@@ -103,19 +103,21 @@ interface ProcResult {
 const STDERR_SUMMARY_CHARS = 600;
 /** ffmpeg's knock-on lines after the real failure: they say THAT it failed, never why. */
 const STDERR_NOISE = /Task finished with error code|Terminating thread with return code|Could not open encoder before EOF|Nothing was written into output file|Error reinitializing filters|Conversion failed!|^Press \[q\]|^\s*Stream #|^\s*Stream mapping|^frame=|^\s*$/;
-const STDERR_ERRORISH = /error|invalid|failed|fail to|cannot|can't|could not|unable|no such|not found|does not|do not|needs|must|mismatch|unsupported|unknown|not supported/i;
+const STDERR_ERRORISH = /error|invalid|failed|fail to|cannot|can't|could not|unable|no such|not found|does not|do not|needs|must|mismatch|unsupported|unknown|not supported|matches no streams/i;
 
 /**
  * The line or two of a failing ffmpeg's stderr that say WHY it failed, for the error message: an exit code
  * alone ("ffmpeg exited 234" = EINVAL) is all the farm job and Studio ever showed, and the worker deletes the
  * job's workspace right after. ffmpeg prints the cause first and a cascade of generic "Task finished with
  * error code -22" lines after it, so this takes the FIRST error-looking lines once that noise is dropped, and
- * falls back to the last line left. `[Parsed_xfade_15 @ 0x7f..]` loses its address, which only differs per run.
+ * falls back to the last line left. `[Parsed_xfade_15 @ 0x7f..]` loses its address, which only differs per run
+ * (Windows builds print it without `0x`), and a "Stream specifier ... matches no streams" line drops the whole
+ * filtergraph it quotes, which would push the words that matter past the cap.
  */
 export function stderrSummary(stderr: string): string {
   const lines = stderr
     .split(/\r?\n/)
-    .map((l) => l.replace(/ @ 0x[0-9a-f]+\]/i, "]").trim())
+    .map((l) => l.replace(/ @ (?:0x)?[0-9a-f]+\]/i, "]").replace(/ in filtergraph description .* matches no streams/i, " in the filtergraph matches no streams").trim())
     .filter((l) => !STDERR_NOISE.test(l));
   const errorish = lines.filter((l) => STDERR_ERRORISH.test(l));
   const picked = errorish.length > 0 ? errorish.slice(0, 2) : lines.slice(-1);
