@@ -8,6 +8,22 @@ thêm nguyên nhân tự cập nhật vào phần lease (P5). Lần 3: đọc l�
 và dev) và Studio; thiết kế lại P3 theo các điểm người dùng đã chốt (chọn theo quyền tải bản gốc, project thêm vào là đóng
 góp).
 
+## Tiến độ (2026-10-23, trên `dev-duc`, chưa push)
+
+| Phase | Commit | Kiểm |
+|---|---|---|
+| P1 | ag-studio `624a465` | engine 367 test |
+| P2 | ag-studio `db86e3f` | engine 369 test |
+| P3a | ag-studio `caf3271` | web `InputsPanel` 17 test, i18n; chưa thử trên trình duyệt (local stack tắt) |
+| P6 | ag-studio `3c64cb8` (core), ag-render-worker `1fef30f` | core render 45 test, worker 164 test |
+| P5b, P5d | ag-farm `11f28d9`, `c1780a2` | worker-sdk 94 test |
+| P4 | ag-studio `f5d2a8e` (migration `0003`, đã chạy thử trên bản sao DB prod rồi rollback) | engine, web chat 27 test, API 162 test |
+| P3b, P3c | chưa làm | |
+| P5a, P5c | việc của người dùng (ffmpeg 8.1 trên 7 máy, log AG-186) | |
+
+Phát hành: render worker và scan worker cần bản mới có worker-sdk P5b/P5d (render worker thêm P6); chưa nâng version, chưa
+build.
+
 ## Trạng thái: các session khác đã sửa gì
 
 Từ 19/10, git log 4 repo (ag-studio, ag-farm, ag-render-worker, ag-scan-worker, kể cả nhánh và worktree) **không có commit
