@@ -125,6 +125,10 @@ nhưng không code nào đọc.
 - Slot Claude (`claude-slots.ts`): mỗi lượt giữ dòng `lease` `agent:<id>` (chờ: `agent-wait:<id>`, cũng tính vào cap), nên mọi
   worker dùng chung một cap: `studio_settings.claude.max_concurrent` (admin sửa ở màn Hàng đợi) thắng
   `STUDIO_CLAUDE_MAX_CONCURRENT` (1–100, mặc định 20). Hết hạn mức gói: `rate_limited`, chờ 5→60 phút rồi chạy lại.
+- Lượt hết giờ (`STUDIO_AGENT_TURN_MINUTES`, mặc định 20): file đã ghi vẫn giữ; dự án bật `auto_continue` và chưa quá
+  `AUTO_TURNS_IN_A_ROW` (3) lượt tự chạy từ tin của người thì lượt đánh `done` + `error: timeout`, Studio đăng ghi chú
+  (`trigger: timeout`, migration `0003`) và xếp lượt mới tiếp tục cùng session; tin người nhắn lúc đó được trả lời trước.
+  Không thì lượt `failed` như cũ.
 - **Tên AI trên web** (`studio_settings.assistant.name`): admin đặt ở màn Hàng đợi, mặc định `Claude`; chỉ là tên hiển thị.
   Chuỗi i18n nhắc AI dùng `{{ai}}` và component gọi `useAiTranslation()` (`apps/web/src/modules/common/assistant-name.tsx`).
 - **Tên kho footage** là `siteName` của chính ag-go (`GET /settings/public`, không cần đăng nhập; mặc định `AG Go`), không

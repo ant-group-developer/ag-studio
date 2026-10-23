@@ -318,7 +318,8 @@ export const wsEn: Messages<typeof wsVi> = {
     failed: "This turn failed: {{error}}",
     cancelled: "Stopped.",
     maxTurns: "Stopped after the most steps one turn may take; say “continue” to go on.",
-    errors: { timeout: "a turn's time limit", unknown: "unknown error" },
+    timeoutGoesOn: "Out of a turn's time; {{ai}} goes on in the next turn, keeping what was done.",
+    errors: { timeout: "a turn's time limit; say “continue” to go on", unknown: "unknown error" },
     phase: {
       starting: "starting",
       thinking: "thinking",

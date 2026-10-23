@@ -315,7 +315,8 @@ export const wsVi = {
     failed: "Lượt này lỗi: {{error}}",
     cancelled: "Đã dừng.",
     maxTurns: "Dừng vì đã dùng hết số bước của một lượt; nhắn “tiếp tục” để làm tiếp.",
-    errors: { timeout: "quá thời gian của một lượt", unknown: "không rõ lỗi" },
+    timeoutGoesOn: "Hết thời gian của một lượt; {{ai}} làm tiếp ở lượt sau, giữ những gì đã làm.",
+    errors: { timeout: "quá thời gian của một lượt; nhắn “tiếp tục” để làm tiếp", unknown: "không rõ lỗi" },
     phase: {
       starting: "đang khởi động",
       thinking: "đang suy nghĩ",

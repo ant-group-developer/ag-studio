@@ -164,7 +164,7 @@ function AgentMessage({ message, projectId, onStop, onOpenFile }: {
   onStop?: (() => void) | undefined;
   onOpenFile?: ((path: string) => void) | undefined;
 }) {
-  const { t } = useTranslation();
+  const { t } = useAiTranslation();
   const [open, setOpenState] = useState(() => unfolded.get(message.id) ?? false);
   const setOpen = (v: boolean) => { unfolded.set(message.id, v); setOpenState(v); };
   const { visible, work, answer, steps } = splitTurn(message.parts);
@@ -193,6 +193,7 @@ function AgentMessage({ message, projectId, onStop, onOpenFile }: {
       {message.status === "failed" ? <div className="ws-msg__error">{t("ws.chat.failed", { error: errorText(t, message.error) })}</div> : null}
       {message.status === "cancelled" ? <div className="ws-msg__note">{t("ws.chat.cancelled")}</div> : null}
       {message.status === "done" && message.error === "max_turns" ? <div className="ws-msg__note">{t("ws.chat.maxTurns")}</div> : null}
+      {message.status === "done" && message.error === "timeout" ? <div className="ws-msg__note">{t("ws.chat.timeoutGoesOn")}</div> : null}
     </div>
   );
 }

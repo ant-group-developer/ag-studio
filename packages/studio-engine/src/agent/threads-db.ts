@@ -12,7 +12,7 @@ import type { ChangedFile } from "../workspace/file-changes.js";
 export type ThreadKind = "project" | "video";
 export type MessageRole = "user" | "assistant" | "system";
 export type MessageStatus = "pending" | "running" | "done" | "failed" | "rate_limited" | "cancelled";
-export type MessageTrigger = "user" | "job" | "action" | "autofix" | "system";
+export type MessageTrigger = "user" | "job" | "action" | "autofix" | "system" | "timeout";
 export type ActorRole = "viewer" | "editor" | "producer" | "owner";
 /** Who a turn acts for: the person and their role in the team when they asked (a Studio admin counts as owner). */
 export interface TurnActor { id: string; role: ActorRole }
@@ -326,6 +326,9 @@ export async function queueFollowUp(db: StudioDb, threadId: string, now: string)
     return insertMessage(db, { threadId, role: "assistant", status: "pending", trigger: "user", actor, now });
   });
 }
+
+/** How many turns jobs, actions or a timed out turn may start in a row before a person speaks again. */
+export const AUTO_TURNS_IN_A_ROW = 3;
 
 /** Turns started by jobs or actions in a row since the last person's message (auto-continue stops at a few). */
 export async function automaticTurnsInARow(db: StudioDb, threadId: string): Promise<number> {

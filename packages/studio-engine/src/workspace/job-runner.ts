@@ -12,7 +12,7 @@ import type { HarnessLogger } from "@harness/core";
 import { projectSettingsOf } from "@harness/contracts";
 import type { StudioDb } from "../studio-db.js";
 import { logAudit } from "../audit-log.js";
-import { automaticTurnsInARow, getThread, postSystemMessage, type ActorRole } from "../agent/threads-db.js";
+import { AUTO_TURNS_IN_A_ROW, automaticTurnsInARow, getThread, postSystemMessage, type ActorRole } from "../agent/threads-db.js";
 import { getProject } from "./project-db.js";
 import { projectDir } from "./files.js";
 import { estimateSecondsLeft } from "./eta.js";
@@ -88,7 +88,6 @@ function errCode(e: unknown): string | null {
   const code = (e as Error & { code?: unknown }).code;
   return typeof code === "string" ? code : null;
 }
-const AUTO_TURNS_IN_A_ROW = 3;
 
 export function createJobRunner(o: JobRunnerOptions): JobRunner {
   const now = o.now ?? (() => new Date().toISOString());

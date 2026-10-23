@@ -51,6 +51,13 @@ describe("a turn's work", () => {
     expect(screen.getByRole("button", { name: /Đã làm 2 bước/ })).toHaveAttribute("aria-expanded", "true");
   });
 
+  it("a turn out of time that goes on says so; one that stopped there says how to go on", () => {
+    const { rerender } = render(<MessageItem message={msg({ parts: [text("Đang chọn cảnh.")], error: "timeout" })} />);
+    expect(screen.getByText("Hết thời gian của một lượt; Claude làm tiếp ở lượt sau, giữ những gì đã làm.")).toBeInTheDocument();
+    rerender(<MessageItem message={msg({ status: "failed", parts: [text("Đang chọn cảnh.")], error: "timeout" })} />);
+    expect(screen.getByText("Lượt này lỗi: quá thời gian của một lượt; nhắn “tiếp tục” để làm tiếp")).toBeInTheDocument();
+  });
+
   it("the files a finished turn changed show under its answer; an older turn or a running one shows none", () => {
     const changedFiles = [{ path: "channel/plan.md", change: "modified" as const, version_id: "v2", before_version_id: "v1", added: 3, removed: 1 }];
     const { rerender } = render(<MessageItem projectId="p1" message={msg({ parts: [text("Xong.")], changedFiles })} onOpenFile={vi.fn()} />);
