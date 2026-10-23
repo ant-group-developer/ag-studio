@@ -145,7 +145,9 @@ nhưng không code nào đọc.
   vào kho giọng `voice-store.ts`), `render_preview|render_final|export_premiere`, `thumbnail`, `style_watch`, `music_beats`
   (nhịp của nhạc vừa nhập hoặc vừa chọn, migration `0002`; xem mục nhạc bên dưới). Mỗi job báo
   `phase`, `progress`, `eta_seconds` (`eta.ts`, không đoán khi đang chờ máy farm), máy farm; Dừng = `cancel_requested` (kill
-  ffmpeg / huỷ job farm). Xong thì đăng tin hệ thống vào luồng và cho agent làm tiếp (≤ 3 lượt tự chạy liên tiếp, tắt bằng
+  ffmpeg / huỷ job farm). Hỏi farm lỗi tạm (timeout, mất kết nối, 5xx/408/429) thì `runFarmStep` hỏi lại thưa dần (tối đa
+  30 s), phase "Farm · mất liên lạc, đang hỏi lại"; quá 15 phút không trả lời mới hỏng và huỷ job farm; 4xx hỏng ngay.
+  Xong thì đăng tin hệ thống vào luồng và cho agent làm tiếp (≤ 3 lượt tự chạy liên tiếp, tắt bằng
   `settings.auto_continue`). Worker thiếu công cụ thì job loại đó chờ worker khác (`projectJobHandlers`).
 - Lỗi yt-dlp có mã (`classifyYtDlp`, `YtDlpError`): `youtube_blocked` (YouTube chặn máy chủ: bot check, 429) làm
   `style_watch` dừng ngay, không thử video còn lại; job lỗi có mã ghi `result.error_code` (`JobError`). Không cookie, không

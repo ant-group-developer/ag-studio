@@ -58,6 +58,22 @@ export interface FarmWatch {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** How long the farm may stay out of reach while a job runs on it before the step gives up (and cancels it there). */
+export const FARM_UNREACHABLE_TIMEOUT_MS = 15 * 60_000;
+/** The longest wait between two tries while the farm is out of reach. */
+const UNREACHABLE_MAX_BACKOFF_MS = 30_000;
+
+/**
+ * An error asking the farm that asking again may get past: the owner client's timeout, a dropped connection, a busy or
+ * broken hub (`FarmHttpError` 5xx, 408, 429). A 4xx answer (the job is gone, the key is wrong) will not change.
+ */
+function farmUnreachable(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  if (e.name !== "FarmHttpError") return true;
+  const status = (e as Error & { status?: number }).status ?? 0;
+  return status >= 500 || status === 408 || status === 429;
+}
+
 /** Node names by id, read from the farm at most once a minute. */
 function nodeNames(farm: ProjectFarm): (id: string | null) => Promise<string | null> {
   let names = new Map<string, string>();
@@ -74,13 +90,18 @@ function nodeNames(farm: ProjectFarm): (id: string | null) => Promise<string | n
 
 /**
  * Runs one farm step of a project job to its end and answers the bucket prefix of its outputs. A failed or cancelled
- * farm job throws (with the farm's reason); a stop request cancels it on the farm and throws `JobStopped`.
+ * farm job throws (with the farm's reason); a stop request cancels it on the farm and throws `JobStopped`. Asking the
+ * farm fails now and then (the hub restarting, a slow network): the step keeps asking, longer and longer apart, and only
+ * gives up after `unreachableTimeoutMs` without an answer (20/10: one timed out request had failed five renders, one of
+ * which the farm went on to finish).
  */
 export async function runFarmStep(
   d: {
     db: StudioDb; bucket: StudioBucket; farm: ProjectFarm; pollMs?: number; now?: () => string;
     /** No machine takes it this long: cancelled on the farm, and this throws saying so (default: wait forever). */
     queueTimeoutMs?: number;
+    /** The farm gave no answer this long: cancelled there, and this throws saying so (default 15 minutes). */
+    unreachableTimeoutMs?: number;
   },
   job: { id: string; project_id: string; video_id: string | null },
   step: FarmStep,
@@ -103,13 +124,26 @@ export async function runFarmStep(
   );
   const nameOf = nodeNames(d.farm);
   const pollMs = d.pollMs ?? 3000;
+  const unreachableTimeoutMs = d.unreachableTimeoutMs ?? FARM_UNREACHABLE_TIMEOUT_MS;
   let view = sent;
   let waitingSince: number | null = null;
+  /** Since when, and how many times in a row, asking the farm failed (null: the last answer came). */
+  let unreachable = null as { since: number; misses: number } | null;
   for (;;) {
     const stop = await watch.stopRequested();
     if (stop) {
       if (stop === "cancelled") await d.farm.cancelJob(sent.id).catch(() => undefined);
       throw new JobStopped(stop);
+    }
+    if (unreachable) {
+      const node = await nameOf(view.node_id);
+      await watch.onUpdate({
+        phase: "Farm · mất liên lạc, đang hỏi lại", progress: view.progress_percent === null ? null : view.progress_percent / 100, node, farmJobId: sent.id,
+        waiting: view.status === "queued" || view.status === "paused",
+      });
+      await sleep(Math.min(UNREACHABLE_MAX_BACKOFF_MS, pollMs * 2 ** unreachable.misses));
+      view = await askAgain();
+      continue;
     }
     if (view.status === "completed") break;
     if (view.status === "failed" || view.status === "cancelled") {
@@ -133,9 +167,27 @@ export async function runFarmStep(
     }
     await watch.onUpdate({ phase, progress: view.progress_percent === null ? null : view.progress_percent / 100, node, farmJobId: sent.id, waiting });
     await sleep(pollMs);
-    view = await d.farm.getJob(sent.id);
+    view = await askAgain();
   }
   return { outputPrefix: jobOutputPrefix(job.project_id, step.stageKey, step.attemptId), farmJob: view };
+
+  /** The job's state from the farm; while it is out of reach, the last one known (until `unreachableTimeoutMs`). */
+  async function askAgain(): Promise<FarmJobView> {
+    try {
+      const fresh = await d.farm.getJob(sent.id);
+      unreachable = null;
+      return fresh;
+    } catch (e) {
+      if (!farmUnreachable(e)) throw e;
+      unreachable = unreachable ? { since: unreachable.since, misses: unreachable.misses + 1 } : { since: Date.now(), misses: 0 };
+      if (Date.now() - unreachable.since >= unreachableTimeoutMs) {
+        await d.farm.cancelJob(sent.id).catch(() => undefined);
+        const minutes = Math.round(unreachableTimeoutMs / 60_000);
+        throw new Error(`không hỏi được farm trong ${minutes >= 1 ? `${minutes} phút` : `${Math.round(unreachableTimeoutMs / 1000)} giây`} (${(e as Error).message}); việc trên farm đã được huỷ`);
+      }
+      return view;
+    }
+  }
 }
 
 /** Lets the farm forget a finished job (its outputs were read). */
