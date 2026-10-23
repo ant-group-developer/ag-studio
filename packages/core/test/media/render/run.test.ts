@@ -372,7 +372,8 @@ describe("renderComposition progress and cancel", () => {
     const { d, outDir } = fakeWorld({ spawn, nvenc: false });
     const seen: [number, string][] = [];
     const { timings } = await renderComposition(d, input({ composition: fakeComposition(), outDir, sourceChecksums: CHECKSUMS, onProgress: (pct, stage) => seen.push([pct, stage]) }));
-    expect(Object.keys(timings).sort()).toEqual(["even_s", "final_encode_s", "loudnorm_s", "mezz_s", "source_wait_s"]);
+    expect(Object.keys(timings).sort()).toEqual(["even_s", "final_encode_s", "final_slices", "loudnorm_s", "mezz_s", "source_wait_s"]);
+    expect(timings.final_slices).toBe(1);
     expect(Object.values(timings).every((s) => s >= 0)).toBe(true);
 
     const stages = [...new Set(seen.map(([, st]) => st))];
@@ -521,6 +522,101 @@ describe("renderComposition with sourceFor (sources still downloading)", () => {
       .rejects.toThrow("fetch failed");
     expect(Date.now() - started).toBeLessThan(2000);
     expect(calls.filter(isMezz).map((c) => c[c.indexOf("-ss") + 1])).toEqual(["0"]);
+  });
+});
+
+describe("renderComposition final encode in slices (fake ffmpeg)", () => {
+  /** Six 40-second cuts: long enough for three slices of 80 s. */
+  const longComposition = (): Composition =>
+    composition({
+      total_seconds: 240,
+      segments: Array.from({ length: 6 }, (_, k) =>
+        segment({ order: k, source_id: SRC_A, source_path: "/abs/a.mp4", in: k * 40, out: (k + 1) * 40, start: k * 40, end: (k + 1) * 40, has_audio: true })),
+    });
+  /** Answers a fake mezzanine's own `-t` (the fake writes its argv into the file), 2 s for anything else. */
+  const lengthProber = (): MediaProber => ({
+    async probe(path: string): Promise<MediaProbe | null> {
+      const m = / -t (\d+(?:\.\d+)?) /.exec(readFileSync(path, "utf8"));
+      return {
+        media: null, duration_seconds: m ? Number(m[1]) : 2, mime_type: null, container: "mp4",
+        video: { codec: "h264", width: 3840, height: 2160, fps: 25 }, audio: { codec: "aac", channels: 2, sample_rate: 48000 },
+      };
+    },
+  });
+  const isSlice = (argv: string[]): boolean => argv.includes("-an");
+  const isSound = (argv: string[]): boolean => argv[argv.length - 1]!.endsWith("sound.m4a");
+
+  it("every slice's picture and the sound run at once, then are joined; loudness comes from the sound pass", async () => {
+    // only the sound pass prints a loudnorm block: the report's loudness can only have come from it
+    const { spawn, calls, maxRunning } = fakeSpawn((argv) => (isSlice(argv) ? { stderr: "", delayMs: 20 } : isSound(argv) ? { delayMs: 20 } : {}));
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+    d.prober = lengthProber();
+    const seen: number[] = [];
+
+    const { report, timings, episodePath } = await renderComposition(d, input({ composition: longComposition(), outDir, sourceChecksums: CHECKSUMS, finalSliceInputs: 2, decodeThreads: 8, onProgress: (pct) => seen.push(pct) }));
+
+    expect(timings.final_slices).toBe(3);
+    const slices = calls.filter(isSlice);
+    expect(slices).toHaveLength(3);
+    // two mezzanines a slice, each decoder held to 8 threads
+    for (const s of slices) expect(s.filter((a, i) => a === "-threads" && s[i + 1] === "8" && s[i + 2] === "-i")).toHaveLength(2);
+    expect(calls.filter(isSound)).toHaveLength(1);
+    expect(maxRunning()).toBe(4);
+    const join = calls.find((c) => c.includes("concat") && c.includes("-safe"))!;
+    expect(join[join.length - 1]).toMatch(/full-episode.mp4$/);
+    expect(join).toContain("sound.m4a");
+    expect(calls.indexOf(join)).toBeGreaterThan(Math.max(...slices.map((s) => calls.indexOf(s))));
+    expect(existsSync(episodePath)).toBe(true);
+    expect(report.loudness).toEqual({ integrated_lufs: -14.03, true_peak_dbtp: -1.49, lra: 6.6 });
+    expect(seen[seen.length - 1]).toBe(100);
+  });
+
+  it("a slice failing on nvenc stops the others, and the whole final encode retries on cpu", async () => {
+    let failed = false;
+    const { spawn, calls, kills } = fakeSpawn((argv) => {
+      if (!isSlice(argv) && !isSound(argv)) return {};
+      if (!failed && argv.includes("h264_nvenc")) {
+        failed = true;
+        return { exit: 1, delayMs: 5 };
+      }
+      return { delayMs: 500 };
+    });
+    const { d, outDir } = fakeWorld({ spawn, nvenc: true });
+    d.prober = lengthProber();
+
+    const { report } = await renderComposition(d, input({ composition: longComposition(), outDir, encoderCfg: "auto", sourceChecksums: CHECKSUMS, finalSliceInputs: 2 }));
+
+    expect(report.warnings).toContain("nvenc_final_fallback");
+    expect(report.encoder).toBe("cpu");
+    // the two other nvenc slices and the first sound pass were killed, not left running
+    expect(kills()).toBe(3);
+    expect(calls.filter((c) => isSlice(c) && c.includes("libx264"))).toHaveLength(3);
+    expect(calls.filter((c) => c.includes("concat") && c.includes("-safe"))).toHaveLength(1);
+  });
+
+  it("no more than finalConcurrency slices at once, taken in timeline order", async () => {
+    const { spawn, calls, maxRunning } = fakeSpawn((argv) => (isSlice(argv) || isSound(argv) ? { delayMs: 15 } : {}));
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+    d.prober = lengthProber();
+
+    const { timings } = await renderComposition(d, input({ composition: longComposition(), outDir, sourceChecksums: CHECKSUMS, finalSliceInputs: 1, finalConcurrency: 2 }));
+
+    expect(timings.final_slices).toBe(6);
+    // two slices and the sound pass, never more
+    expect(maxRunning()).toBe(3);
+    const slices = calls.filter(isSlice).map((c) => c[c.length - 1]!.split(/[\\/]/).pop());
+    expect(slices).toEqual(["slice-0.mp4", "slice-1.mp4", "slice-2.mp4", "slice-3.mp4", "slice-4.mp4", "slice-5.mp4"]);
+  });
+
+  it("an episode too short to split stays one pass, whatever finalSliceInputs asks", async () => {
+    const { spawn, calls } = fakeSpawn();
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+
+    const { timings } = await renderComposition(d, input({ composition: fakeComposition(), outDir, sourceChecksums: CHECKSUMS, finalSliceInputs: 1 }));
+
+    expect(timings.final_slices).toBe(1);
+    expect(calls.filter(isSlice)).toHaveLength(0);
+    expect(calls.filter((c) => c.includes("[vout]"))).toHaveLength(1);
   });
 });
 
@@ -828,6 +924,40 @@ describe.skipIf(!hasFfmpeg())("renderComposition (needs ffmpeg)", () => {
     expect(res.report.segments.total).toBe(2);
     // The clip_set keeps the BODY length (2s), not body+tail.
     expect(Math.abs(((await d.prober.probe(join(res.clipSetDir, "000.mp4")))?.duration_seconds ?? 0) - 2)).toBeLessThanOrEqual(0.05);
+  }, 240_000);
+
+  it("an episode in three slices (a dissolve inside one, a dip_black between two) keeps every frame, its length and its sound", async () => {
+    const srcDir = tempDir("render-src-sl-");
+    const files = [0, 1, 2, 3].map((k) => join(srcDir, `${k}.mp4`));
+    for (const f of files) makeClip(f, 33, true);
+    const ids = ["src_01JAAAAAAAAAAAAAAAAAAAAAAA", "src_01JBBBBBBBBBBBBBBBBBBBBBBB", "src_01JCCCCCCCCCCCCCCCCCCCCCCC", "src_01JDDDDDDDDDDDDDDDDDDDDDDD"];
+    const kinds: Composition["segments"][number]["transition_out"][] = [
+      { kind: "dissolve", seconds: 0.4, tail_available: true },
+      { kind: "cut", seconds: 0.4, tail_available: false },
+      { kind: "dip_black", seconds: 1, tail_available: false },
+      { kind: "cut", seconds: 0.4, tail_available: false },
+    ];
+    const comp = composition({
+      output: { width: 640, height: 360, fps: 25, codec: "h264" },
+      total_seconds: 128,
+      segments: files.map((f, k) => segment({ order: k, source_id: ids[k]!, source_path: f, in: 0, out: 32, start: k * 32, end: (k + 1) * 32, has_audio: true, transition_out: kinds[k]! })),
+      transitions: { requested: 2, applied: 2, downgraded: [] },
+    });
+    const checksums = new Map(ids.map((id, k) => [id, "sha256:" + String(k).repeat(64)]));
+    const d = deps(join(tempDir("render-cache-sl-"), "mezz"));
+    const res = await renderComposition(d, input({ composition: comp, outDir: join(tempDir("render-out-sl-"), "out"), sourceChecksums: checksums, tier: "preview", mezzConcurrency: 4, finalSliceInputs: 1, decodeThreads: 4 }));
+
+    expect(res.timings.final_slices).toBe(3);
+    const probe = (entries: string, stream: string): string =>
+      spawnSync(ffprobePath(), ["-v", "error", "-select_streams", stream, "-show_entries", entries, "-of", "csv=p=0", res.episodePath], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).stdout;
+    // 4 x 32 s at 25 fps, the dissolve's tail overlapping its own length: 3200 frames, one every 40 ms, none twice
+    const pts = probe("packet=pts_time", "v:0").trim().split(/\r?\n/).map(Number).sort((a, b) => a - b);
+    expect(pts).toHaveLength(3200);
+    const steps = pts.slice(1).map((t, i) => Math.round((t - pts[i]!) * 1000) / 1000);
+    expect(Math.min(...steps)).toBe(0.04);
+    expect(Math.max(...steps)).toBe(0.04);
+    expect(Math.abs(Number(probe("stream=duration", "a:0").trim()) - 128)).toBeLessThanOrEqual(0.1);
+    expect(res.report.loudness).not.toBeNull();
   }, 240_000);
 
   // The Kiyomizu preview (17:30) ended at 13:23, on its last dissolve: the render worker clamps `segment.out` to a
