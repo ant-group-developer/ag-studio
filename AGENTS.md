@@ -182,7 +182,8 @@ nhưng không code nào đọc.
   theo `sliceStart`), một ffmpeg chỉ làm tiếng (`streams: "audio"`, khối loudnorm của report lấy từ lượt này), rồi
   `finalConcatArgs` nối bằng `-c copy`; `decodeThreads` (worker 8) đặt `-threads` cho bộ giải mã từng mezzanine. Một
   lượt mở mọi clip cùng lúc và mỗi bộ giải mã 4K giữ khung hình của từng luồng: bản 137 clip ngốn ~30 GB trên máy farm
-  32 GB. Một đoạn lỗi dừng cả lượt, NVENC lỗi thì cả lượt làm lại bằng cpu. Bản cuối: `requirements` theo máy chọn (`renderRequirements`; ghim `node_id` qua
+  32 GB. Một đoạn lỗi dừng cả lượt, NVENC lỗi thì cả lượt làm lại bằng cpu, trừ khi lỗi vì hết giờ hoặc ngân sách
+  (`timeoutSeconds`, worker `render_budget_s`: bản cuối 3 giờ, xem trước 1 giờ) còn dưới 5 phút ("not retried on cpu"). Bản cuối: `requirements` theo máy chọn (`renderRequirements`; ghim `node_id` qua
   thẻ xác nhận); độ phân giải `resolution: 1080p | 4k` (nút Render bản cuối và Xuất Premiere, thẻ `render_final`/`export_premiere`): timeline luôn dựng 1920×1080
   (`fit.ts`), `renderCanvas` (`payloads.ts`) đưa canvas của composition lên cạnh ngắn 2160 lúc gửi, chữ tự to theo (`studioDefaultBrand`);
   Premiere: sequence bằng canvas đó, worker phóng từng clip vừa khung như render (Basic Motion, pad/crop), nên Premiere 4K

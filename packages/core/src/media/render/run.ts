@@ -106,6 +106,8 @@ const NVENC_PROBE_TIMEOUT_SECONDS = 20;
 /** A cached or freshly rendered mezzanine whose probed duration drifts further than this from the requested
  * length is treated as corrupt (spec §7: "Cache mezz hỏng (file cụt) -> xoá, render lại"). */
 const MEZZ_DURATION_TOLERANCE = 0.05;
+/** Under this much of the render's budget left, an NVENC failure is not retried on cpu (it could not finish). */
+const CPU_RETRY_MIN_SECONDS = 300;
 
 interface ProcResult {
   stdout: string;
@@ -414,6 +416,18 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
   const deadlineMs = Date.now() + p.timeoutSeconds * 1000;
   /** Whatever is left of the run's budget, for the next ffmpeg call. */
   const remaining = (): number => Math.max(1, (deadlineMs - Date.now()) / 1000);
+  /**
+   * Why an NVENC failure gets no cpu retry, or null when it does: the encode timed out (the budget ran out, cpu is
+   * slower still) or too little of the budget is left. Prod 20/10: two final encodes timed out on nvenc at minute 60
+   * and "retried" on cpu with the 1 s left, reporting "ffmpeg timed out after 1s".
+   */
+  const noCpuRetry = (e: HarnessError): string | null => {
+    if (typeof e.details.timeout_seconds === "number") return `the render's ${p.timeoutSeconds} s are spent`;
+    const left = (deadlineMs - Date.now()) / 1000;
+    return left < CPU_RETRY_MIN_SECONDS ? `${Math.max(0, Math.floor(left))} s of the render's ${p.timeoutSeconds} s are left` : null;
+  };
+  const notRetried = (e: HarnessError, why: string): HarnessError =>
+    new HarnessError("IO_ERROR", `${e.message}; not retried on cpu: ${why}`, { ...e.details, cpu_retry: false });
 
   /** Share of the 0-100 progress each phase covers. */
   const MEZZ_SHARE = 70;
@@ -500,6 +514,8 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
       // Spec §7: an NVENC failure on one segment gets exactly one CPU retry; a CPU failure is the stage's.
       // `CONFIG_INVALID` (the ffmpeg binary itself cannot be run) is never worth retrying on either encoder.
       if (mezzSignal.aborted || choice !== "nvenc" || !isHarnessError(e, "IO_ERROR")) throw e;
+      const why = noCpuRetry(e);
+      if (why !== null) throw notRetried(e, why);
       // One warning for the run: the first mezzanine to fall back moves every later one to cpu.
       if (encoder === "nvenc") {
         warnings.push(`nvenc_segment_fallback:${o.label}`);
@@ -783,6 +799,8 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     render = await finalEncode(finalEncoder, "final encode");
   } catch (e) {
     if (signal?.aborted || finalEncoder !== "nvenc" || !isHarnessError(e, "IO_ERROR")) throw e;
+    const why = noCpuRetry(e);
+    if (why !== null) throw notRetried(e, why);
     warnings.push("nvenc_final_fallback");
     log(`nvenc failed on the final encode (${(e as Error).message}); retrying once on cpu`);
     rmSync(episodePath, { force: true });
