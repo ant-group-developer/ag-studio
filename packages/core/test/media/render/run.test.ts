@@ -553,11 +553,13 @@ describe("renderComposition final encode in slices (fake ffmpeg)", () => {
     d.prober = lengthProber();
     const seen: number[] = [];
 
-    const { report, timings, episodePath } = await renderComposition(d, input({ composition: longComposition(), outDir, sourceChecksums: CHECKSUMS, finalSlices: 3, onProgress: (pct) => seen.push(pct) }));
+    const { report, timings, episodePath } = await renderComposition(d, input({ composition: longComposition(), outDir, sourceChecksums: CHECKSUMS, finalSliceInputs: 2, decodeThreads: 8, onProgress: (pct) => seen.push(pct) }));
 
     expect(timings.final_slices).toBe(3);
     const slices = calls.filter(isSlice);
     expect(slices).toHaveLength(3);
+    // two mezzanines a slice, each decoder held to 8 threads
+    for (const s of slices) expect(s.filter((a, i) => a === "-threads" && s[i + 1] === "8" && s[i + 2] === "-i")).toHaveLength(2);
     expect(calls.filter(isSound)).toHaveLength(1);
     expect(maxRunning()).toBe(4);
     const join = calls.find((c) => c.includes("concat") && c.includes("-safe"))!;
@@ -582,7 +584,7 @@ describe("renderComposition final encode in slices (fake ffmpeg)", () => {
     const { d, outDir } = fakeWorld({ spawn, nvenc: true });
     d.prober = lengthProber();
 
-    const { report } = await renderComposition(d, input({ composition: longComposition(), outDir, encoderCfg: "auto", sourceChecksums: CHECKSUMS, finalSlices: 3 }));
+    const { report } = await renderComposition(d, input({ composition: longComposition(), outDir, encoderCfg: "auto", sourceChecksums: CHECKSUMS, finalSliceInputs: 2 }));
 
     expect(report.warnings).toContain("nvenc_final_fallback");
     expect(report.encoder).toBe("cpu");
@@ -592,11 +594,25 @@ describe("renderComposition final encode in slices (fake ffmpeg)", () => {
     expect(calls.filter((c) => c.includes("concat") && c.includes("-safe"))).toHaveLength(1);
   });
 
-  it("an episode too short to split stays one pass, whatever finalSlices asks", async () => {
+  it("no more than finalConcurrency slices at once, taken in timeline order", async () => {
+    const { spawn, calls, maxRunning } = fakeSpawn((argv) => (isSlice(argv) || isSound(argv) ? { delayMs: 15 } : {}));
+    const { d, outDir } = fakeWorld({ spawn, nvenc: false });
+    d.prober = lengthProber();
+
+    const { timings } = await renderComposition(d, input({ composition: longComposition(), outDir, sourceChecksums: CHECKSUMS, finalSliceInputs: 1, finalConcurrency: 2 }));
+
+    expect(timings.final_slices).toBe(6);
+    // two slices and the sound pass, never more
+    expect(maxRunning()).toBe(3);
+    const slices = calls.filter(isSlice).map((c) => c[c.length - 1]!.split(/[\\/]/).pop());
+    expect(slices).toEqual(["slice-0.mp4", "slice-1.mp4", "slice-2.mp4", "slice-3.mp4", "slice-4.mp4", "slice-5.mp4"]);
+  });
+
+  it("an episode too short to split stays one pass, whatever finalSliceInputs asks", async () => {
     const { spawn, calls } = fakeSpawn();
     const { d, outDir } = fakeWorld({ spawn, nvenc: false });
 
-    const { timings } = await renderComposition(d, input({ composition: fakeComposition(), outDir, sourceChecksums: CHECKSUMS, finalSlices: 3 }));
+    const { timings } = await renderComposition(d, input({ composition: fakeComposition(), outDir, sourceChecksums: CHECKSUMS, finalSliceInputs: 1 }));
 
     expect(timings.final_slices).toBe(1);
     expect(calls.filter(isSlice)).toHaveLength(0);
@@ -929,7 +945,7 @@ describe.skipIf(!hasFfmpeg())("renderComposition (needs ffmpeg)", () => {
     });
     const checksums = new Map(ids.map((id, k) => [id, "sha256:" + String(k).repeat(64)]));
     const d = deps(join(tempDir("render-cache-sl-"), "mezz"));
-    const res = await renderComposition(d, input({ composition: comp, outDir: join(tempDir("render-out-sl-"), "out"), sourceChecksums: checksums, tier: "preview", mezzConcurrency: 4, finalSlices: 3 }));
+    const res = await renderComposition(d, input({ composition: comp, outDir: join(tempDir("render-out-sl-"), "out"), sourceChecksums: checksums, tier: "preview", mezzConcurrency: 4, finalSliceInputs: 1, decodeThreads: 4 }));
 
     expect(res.timings.final_slices).toBe(3);
     const probe = (entries: string, stream: string): string =>

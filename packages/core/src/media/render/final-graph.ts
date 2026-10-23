@@ -36,6 +36,9 @@ export interface FinalGraphInput {
   sliceStart?: number;
   /** The first segment fades in from black over half of this: the slice before ended on a dip_black. */
   dipInSeconds?: number;
+  /** `-threads` of every mezzanine's decoder (absent: ffmpeg's own, up to 16 on a farm machine). Each thread holds 4K
+   * frames of its own, so this and the number of mezzanines open at once are what a pass's memory comes to. */
+  decodeThreads?: number;
 }
 
 export type FinalStreams = "both" | "video" | "audio";
@@ -145,7 +148,11 @@ export function finalArgs(p: FinalGraphInput): { argv: string[]; inputs: { kind:
   }
 
   const argv: string[] = [ffmpeg, "-hide_banner", "-y"];
-  for (const input of inputs) argv.push("-i", input.path);
+  for (const input of inputs) {
+    const mezzanine = input.kind === "body" || input.kind === "tail";
+    if (mezzanine && p.decodeThreads !== undefined) argv.push("-threads", String(p.decodeThreads));
+    argv.push("-i", input.path);
+  }
 
   // ---- audio graph (the measurement pass, the one-pass encode, the sound of a sliced one) ----
   const audio = !wantAudio ? null : audioGraph({
@@ -306,13 +313,15 @@ function canSplitAfter(seg: Composition["segments"][number]): boolean {
 }
 
 /**
- * The episode cut into at most `count` slices whose pictures can be encoded at the same time (ffmpeg 6.1 runs the
- * decode and the filtergraph of one pass on a single thread: the farm's final pass used 10-20% of its CPU). A slice
- * ends only where a segment does not dissolve into the next (a cut, or a dip_black, whose two halves sit inside the
- * two segments), at the boundary nearest an even share of the episode, and no slice is shorter than `minSeconds`.
- * One slice (the whole episode) when there is nowhere to split.
+ * The episode cut into slices of about `maxInputs` mezzanine pictures each (a body, plus its tail when it dissolves),
+ * for their pictures to be encoded a few at a time. One pass opens every mezzanine of the episode at once and every
+ * open 4K decoder holds its frames: on a 20-thread farm machine a 137-clip episode took ~30 GB of 32 and paged, or ran
+ * out of memory. A slice ends only where a segment does not dissolve into the next (a cut, or a dip_black, whose two
+ * halves sit inside the two segments), so one may run past `maxInputs` up to the next such boundary; no slice is
+ * shorter than `minSeconds`, the last one included. One slice (the whole episode) when `maxInputs` is 0 or there is
+ * nowhere to split.
  */
-export function finalSlices(composition: Composition, count: number, minSeconds: number = MIN_SLICE_SECONDS): FinalSlice[] {
+export function finalSlices(composition: Composition, maxInputs: number, minSeconds: number = MIN_SLICE_SECONDS): FinalSlice[] {
   const segs = [...composition.segments].sort((a, b) => a.order - b.order);
   const ends: number[] = [];
   let acc = 0;
@@ -320,16 +329,16 @@ export function finalSlices(composition: Composition, count: number, minSeconds:
   const total = acc;
   /** Indices of the segments each slice ends after. */
   const cuts: number[] = [];
-  for (let i = 1; i < Math.max(1, Math.floor(count)); i++) {
-    const target = (total * i) / count;
-    const from = cuts.length > 0 ? ends[cuts[cuts.length - 1]!]! : 0;
-    let best: number | null = null;
+  if (maxInputs > 0) {
+    let inputs = 0;
+    let from = 0;
     for (let k = 0; k < segs.length - 1; k++) {
-      if (!canSplitAfter(segs[k]!) || ends[k]! - from < minSeconds || total - ends[k]! < minSeconds) continue;
-      if (cuts.length > 0 && k <= cuts[cuts.length - 1]!) continue;
-      if (best === null || Math.abs(ends[k]! - target) < Math.abs(ends[best]! - target)) best = k;
+      inputs += canSplitAfter(segs[k]!) ? 1 : 2;
+      if (inputs < maxInputs || !canSplitAfter(segs[k]!) || ends[k]! - from < minSeconds || total - ends[k]! < minSeconds) continue;
+      cuts.push(k);
+      inputs = 0;
+      from = ends[k]!;
     }
-    if (best !== null) cuts.push(best);
   }
   const slices: FinalSlice[] = [];
   let first = 0;

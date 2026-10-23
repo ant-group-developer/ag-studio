@@ -8,8 +8,8 @@
  *      whenever the key hits and the cached file still probes to the right length,
  *   3. `clip_set`: `cuts/<order>.mp4` hardlinked (or copied) from each body, plus `cuts/manifest.json`,
  *   4. the loudnorm measurement pass (`-f null -`) over the audio graph,
- *   5. the real encode with those measured values (with `finalSlices`, the picture in slices encoded at once, the
- *      sound in a pass of its own, then joined by stream copy),
+ *   5. the real encode with those measured values (with `finalSliceInputs`, the picture in slices encoded a few at a
+ *      time, the sound in a pass of its own, then joined by stream copy),
  *   6. `render-report.json` + an LRU sweep of the cache.
  *
  * Every ffmpeg failure -- non-zero exit, a kill on timeout, a binary that will not start, a mezzanine whose
@@ -76,13 +76,16 @@ export interface RenderInput {
    * scale and filters run on a few cores, so a farm worker runs 3. */
   mezzConcurrency?: number;
   /**
-   * Into how many slices the final encode may cut the episode's picture, each one encoded by its own ffmpeg at the
-   * same time while another makes the sound, then joined by stream copy (default 1: one ffmpeg makes both). ffmpeg 6.1
-   * decodes and filters one pass on a single thread, so on the farm a 4K final pass ran at ~45 fps on a 20-thread
-   * machine using 10-20% of it. `finalSlices` decides where it may cut: an episode short or dissolving everywhere
-   * stays in one pass.
+   * About how many mezzanine pictures a slice of the final encode holds (`finalSlices`; absent or 0: one ffmpeg makes
+   * the whole file). Each slice's picture is encoded by its own ffmpeg, `finalConcurrency` at a time, while another
+   * makes the sound, then the slices are joined by stream copy. One pass opens every mezzanine at once: a 137-clip 4K
+   * episode took ~30 GB on a 32 GB farm machine and paged or ran out of memory, at ~45 fps.
    */
-  finalSlices?: number;
+  finalSliceInputs?: number;
+  /** How many slices are encoded at once (default 3). */
+  finalConcurrency?: number;
+  /** `-threads` of each mezzanine's decoder in the final passes (absent: ffmpeg's own, 16 on a farm machine). */
+  decodeThreads?: number;
   /**
    * Where a segment's source is, awaited right before that segment's mezzanines: a farm job hands this so a segment
    * starts as soon as its own file is downloaded, while the later ones still are. It answers the file, the checksum
@@ -683,6 +686,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     out_path: resolve(episodePath), tier: p.tier ?? "final",
     ...(evenGainDb ? { evenGainDb } : {}),
     ...(p.safe_margin_px !== undefined ? { safe_margin_px: p.safe_margin_px } : {}),
+    ...(p.decodeThreads !== undefined ? { decodeThreads: p.decodeThreads } : {}),
   };
   let graphs = 0;
   const graphFromFile = (argv: string[]): string[] => {
@@ -721,15 +725,17 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
   let finalEncoder = encoder;
   let render: ProcResult;
   const episodeSeconds = segs.reduce((end, s) => Math.max(end, s.end), 0);
-  const slices = finalSlices(composition, p.finalSlices ?? 1);
+  const slices = finalSlices(composition, p.finalSliceInputs ?? 0);
+  const sliceConcurrency = Math.max(1, Math.floor(p.finalConcurrency ?? 3));
   timings.final_slices = slices.length;
   const onePass = (choice: EncoderChoice, label: string): Promise<ProcResult> => {
     reportProgress(FINAL_FROM, "final_encode");
     const prog = withProgress(graphFromFile(finalArgs({ ...finalInput, encoder: choice, loudnorm: measured.measured, limit, measureOnly: false }).argv), episodeSeconds, (f) => reportProgress(FINAL_FROM + (100 - FINAL_FROM) * f, "final_encode"));
     return runProcess(spawnFn, prog.argv, remaining(), label, false, { signal, onStdoutLine: prog.onStdoutLine, cwd: inputsDir });
   };
-  /** Every slice's picture and the sound at once, then joined. Answers the sound pass, whose stderr has the loudnorm
-   * block. The first failure kills the others and is thrown once they have all closed. */
+  /** The slices' pictures `sliceConcurrency` at a time, in order, the sound alongside, then joined. Answers the sound
+   * pass, whose stderr has the loudnorm block. The first failure kills the running ones, no new slice starts, and it is
+   * thrown once they have all closed. */
   const slicedPass = async (choice: EncoderChoice, label: string): Promise<ProcResult> => {
     reportProgress(FINAL_FROM, "final_encode");
     const stop = new AbortController();
@@ -745,17 +751,22 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     const files = slices.map((_, i) => `slice-${i}.mp4`);
     const sound = "sound.m4a";
     const sliceInput = { ...finalInput, encoder: choice, loudnorm: null, limit, measureOnly: false };
-    const runs: Promise<ProcResult>[] = [
+    const encodeSlice = (i: number): Promise<ProcResult> => {
+      const slice = slices[i]!;
+      const prog = withProgress(graphFromFile(finalSliceArgs(sliceInput, slice, join(inputsDir, files[i]!)).argv), slice.seconds, (f) => {
+        doneSeconds[i] = f * slice.seconds;
+        reportProgress(FINAL_FROM + ((100 - FINAL_FROM) * doneSeconds.reduce((a, b) => a + b, 0)) / episodeSeconds, "final_encode");
+      });
+      return watch(runProcess(spawnFn, prog.argv, remaining(), `${label} (slice ${i + 1}/${slices.length})`, false, { signal: stop.signal, onStdoutLine: prog.onStdoutLine, cwd: inputsDir }));
+    };
+    let nextSlice = 0;
+    const lane = async (): Promise<void> => {
+      while (failure === null && nextSlice < slices.length) await encodeSlice(nextSlice++);
+    };
+    const settled = await Promise.allSettled([
       watch(runProcess(spawnFn, graphFromFile(finalArgs({ ...finalInput, encoder: choice, loudnorm: measured.measured, limit, measureOnly: false, streams: "audio", out_path: join(inputsDir, sound) }).argv), remaining(), `${label} (sound)`, false, { signal: stop.signal, cwd: inputsDir })),
-      ...slices.map((slice, i) => {
-        const prog = withProgress(graphFromFile(finalSliceArgs(sliceInput, slice, join(inputsDir, files[i]!)).argv), slice.seconds, (f) => {
-          doneSeconds[i] = f * slice.seconds;
-          reportProgress(FINAL_FROM + ((100 - FINAL_FROM) * doneSeconds.reduce((a, b) => a + b, 0)) / episodeSeconds, "final_encode");
-        });
-        return watch(runProcess(spawnFn, prog.argv, remaining(), `${label} (slice ${i + 1}/${slices.length})`, false, { signal: stop.signal, onStdoutLine: prog.onStdoutLine, cwd: inputsDir }));
-      }),
-    ];
-    const settled = await Promise.allSettled(runs);
+      ...Array.from({ length: Math.min(sliceConcurrency, slices.length) }, lane),
+    ]);
     signal?.removeEventListener("abort", onAbort);
     if (failure !== null) throw (failure as { error: unknown }).error;
     writeFileSync(join(inputsDir, "slices.txt"), finalConcatList(files));
@@ -765,7 +776,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     reportProgress(100, "final_encode");
     return (settled[0] as PromiseFulfilledResult<ProcResult>).value;
   };
-  if (slices.length > 1) log(`final encode in ${slices.length} slices: ${slices.map((s) => `${round3(s.seconds)}s`).join(" + ")}`);
+  if (slices.length > 1) log(`final encode in ${slices.length} slices, ${Math.min(sliceConcurrency, slices.length)} at a time: ${slices.map((s) => `${round3(s.seconds)}s`).join(" + ")}`);
   const finalEncode = slices.length > 1 ? slicedPass : onePass;
   const finalStarted = Date.now();
   try {

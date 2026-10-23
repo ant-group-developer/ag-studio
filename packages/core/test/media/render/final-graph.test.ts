@@ -225,27 +225,27 @@ describe("finalSlices", () => {
   const episode = (kinds: Composition["segments"][number]["transition_out"][], len = 60) =>
     baseComposition({ total_seconds: kinds.length * len, segments: kinds.map((k, i) => segment(i, i * len, (i + 1) * len, k)) });
 
-  it("one slice when asked for one, or when the episode is too short to split", () => {
-    expect(finalSlices(episode([cut, cut, cut, cut, cut, cut]), 1)).toEqual([{ orders: [0, 1, 2, 3, 4, 5], start: 0, seconds: 360, dipIn: 0 }]);
-    expect(finalSlices(episode([cut, cut, cut], 10), 3)).toHaveLength(1);
+  it("one slice when every input fits in one, when there is no cap, or when the episode is too short to split", () => {
+    expect(finalSlices(episode([cut, cut, cut, cut, cut, cut]), 6)).toEqual([{ orders: [0, 1, 2, 3, 4, 5], start: 0, seconds: 360, dipIn: 0 }]);
+    expect(finalSlices(episode([cut, cut, cut, cut, cut, cut]), 0)).toHaveLength(1);
+    expect(finalSlices(episode([cut, cut, cut], 10), 1)).toHaveLength(1);
   });
 
-  it("splits at the cuts nearest an even share, each slice starting where the ones before it end", () => {
-    const slices = finalSlices(episode([cut, cut, cut, cut, cut, cut]), 3);
+  it("ends a slice once it holds maxInputs pictures, each slice starting where the ones before it end", () => {
+    const slices = finalSlices(episode([cut, cut, cut, cut, cut, cut]), 2);
     expect(slices.map((s) => s.orders)).toEqual([[0, 1], [2, 3], [4, 5]]);
     expect(slices.map((s) => [s.start, s.seconds])).toEqual([[0, 120], [120, 120], [240, 120]]);
   });
 
-  it("never splits a dissolve: its tail plays over the next segment", () => {
+  it("counts a dissolve's tail as an input, and never splits a dissolve: its tail plays over the next segment", () => {
     const c = episode([cut, dissolve, cut, dissolve, cut, cut]);
     const slices = finalSlices(c, 3);
-    expect(slices).toHaveLength(3);
-    expect(slices.flatMap((s) => s.orders)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(slices.map((s) => s.orders)).toEqual([[0, 1, 2], [3, 4], [5]]);
     for (const s of slices.slice(0, -1)) expect(c.segments[s.orders[s.orders.length - 1]!]!.transition_out.kind).toBe("cut");
   });
 
   it("all dissolves: nowhere to split, one slice", () => {
-    expect(finalSlices(episode([dissolve, dissolve, dissolve, cut]), 3)).toHaveLength(1);
+    expect(finalSlices(episode([dissolve, dissolve, dissolve, cut]), 1)).toHaveLength(1);
   });
 
   it("a split at a dip_black: the next slice fades in from black over the second half", () => {
@@ -253,9 +253,13 @@ describe("finalSlices", () => {
     expect(slices.map((s) => [s.orders, s.dipIn])).toEqual([[[0, 1], 0], [[2, 3], 1]]);
   });
 
+  it("no slice shorter than minSeconds: a short one runs on, and the last one takes what is left", () => {
+    expect(finalSlices(episode([cut, cut, cut, cut, cut], 20), 1).map((s) => s.orders)).toEqual([[0, 1], [2, 3, 4]]);
+  });
+
   it("start is the sum of the segment lengths before it, the time the picture shows there", () => {
     const c = baseComposition({ total_seconds: 100, segments: [segment(0, 0, 33.3), segment(1, 33.3, 66.7), segment(2, 66.7, 100)] });
-    expect(finalSlices(c, 3, 10).map((s) => s.start)).toEqual([0, 33.3, 66.7]);
+    expect(finalSlices(c, 1, 10).map((s) => s.start)).toEqual([0, 33.3, 66.7]);
   });
 });
 
@@ -315,6 +319,24 @@ describe("finalArgs streams", () => {
   });
 });
 
+describe("finalArgs decodeThreads", () => {
+  it("caps the decoder threads of every mezzanine input, and of nothing else", () => {
+    const composition = baseComposition({
+      segments: [segment(0, 0, 5, { kind: "dissolve", seconds: 0.4, tail_available: true }), segment(1, 5, 10)],
+      logo: { path: "/kho/brands/ch1/logo.png", corner: "right", opacity: 0.8, height_px: 140 },
+    });
+    const mezz = [
+      { order: 0, body: "/cache/mezz/b0.mp4", tail: "/cache/mezz/b0-tail.mp4" },
+      { order: 1, body: "/cache/mezz/b1.mp4", tail: null },
+    ];
+    const { argv } = finalArgs(baseInput({ composition, mezz, decodeThreads: 8 }));
+    const before = (path: string) => argv.slice(argv.indexOf(path) - 3, argv.indexOf(path) - 1);
+    for (const m of ["/cache/mezz/b0.mp4", "/cache/mezz/b0-tail.mp4", "/cache/mezz/b1.mp4"]) expect(before(m)).toEqual(["-threads", "8"]);
+    expect(before("/kho/brands/ch1/logo.png")).not.toEqual(["-threads", "8"]);
+    expect(finalArgs(baseInput({ composition, mezz })).argv).not.toContain("-threads");
+  });
+});
+
 describe("finalSliceArgs, finalConcatArgs", () => {
   it("a slice renders its own segments rebased to 0, with the slice's start and dip carried over", () => {
     const composition = baseComposition({
@@ -322,7 +344,7 @@ describe("finalSliceArgs, finalConcatArgs", () => {
       segments: [segment(0, 0, 60), segment(1, 60, 120, { kind: "dip_black", seconds: 1, tail_available: false }), segment(2, 120, 180)],
     });
     const mezz = [0, 1, 2].map((order) => ({ order, body: `/b${order}.mp4`, tail: null }));
-    const slices = finalSlices(composition, 3, 30);
+    const slices = finalSlices(composition, 1, 30);
     expect(slices).toHaveLength(3);
     const { argv, inputs } = finalSliceArgs(baseInput({ composition, mezz, assPath: "/o.ass" }), slices[2]!, "/tmp/slice-2.mp4");
     expect(inputs.map((i) => i.path)).toEqual(["/b2.mp4"]);
