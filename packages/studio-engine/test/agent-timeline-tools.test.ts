@@ -1,8 +1,9 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { TimelineV4 } from "@harness/contracts";
+import { studioSourceId } from "@harness/core";
 import {
   addSource, agentTools, callAgentTool, createProject, createThread, createVideo, latestVideoRevision, listJobs, markAgentTurnRunning,
   postUserMessage, savePrepared, saveVideoRevision, seedWorkspace, videoOwnMusic, type AgentToolContext, type StudioDb,
@@ -46,6 +47,35 @@ async function setup() {
     message: turn!, thread, project, video, workspaceDir: dir, role: "editor", now: () => NOW,
   };
   return { ...w, project, video, dir, thread, ctx, tools: agentTools() };
+}
+
+const FIT_ASSET = "0b9a7c34-5f1e-4d4c-9a51-3f2a1e0c7d11";
+
+/** What a fit reads: a prepared input of 3 shots, the agent's survey.json and edit-plan.json (as in workspace-fit). */
+async function writeFitInputs(s: Awaited<ReturnType<typeof setup>>): Promise<{ survey: string; plan: string }> {
+  const src = studioSourceId(FIT_ASSET);
+  await addSource(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "ag_go_asset", ref: FIT_ASSET, mediaType: "video", label: "Thuyền.mp4", addedBy: "u" }, NOW);
+  const input = join(s.dir, "inputs", FIT_ASSET);
+  mkdirSync(input, { recursive: true });
+  writeFileSync(join(input, "shots.json"), JSON.stringify({
+    schema_version: "studio.input-shots/v1", asset_id: FIT_ASSET, name: "Thuyền.mp4", duration_s: 30, width: 1920, height: 1080, fps: 30, has_audio: true,
+    source: { kind: "preview", watermarked: false }, scene: {}, shots: [1, 2, 3].map((n) => ({ n, in: (n - 1) * 10, out: n * 10, frame: `frames/00${n}.jpg` })), sheets: [],
+  }));
+  await savePrepared(s.db, { project_id: s.project.id, asset_id: FIT_ASSET, status: "ready", name: "Thuyền.mp4", duration_s: 30, width: 1920, height: 1080, has_audio: true, shots: 3, transcript: false, source_kind: "preview", watermarked: false, error: null }, NOW);
+  const vdir = join(s.dir, "videos", s.video.id);
+  mkdirSync(vdir, { recursive: true });
+  const survey = join(vdir, "survey.json");
+  writeFileSync(survey, JSON.stringify({
+    schema_version: "harness.survey-index/v2",
+    shots: [0, 1, 2].map((i) => ({ source_id: src, shot_id: `s000-00${i}`, in: i * 10, out: (i + 1) * 10, score: 4, tags: [], usable: true, note: "đẹp", speech: "none" })),
+  }));
+  const plan = join(vdir, "edit-plan.json");
+  writeFileSync(plan, JSON.stringify({
+    schema_version: "studio.edit-plan/v1", episode_id: "x", narration: "none", language: "vi", target_seconds: 20,
+    shots: [{ order: 1, shot_id: "s000-000", source_id: src, in: 0, out: 8, line_id: null, transition: "cut", section_title: "Mở đầu", note: "" }],
+    lines: [], texts: [], music_mood: null,
+  }));
+  return { survey, plan };
 }
 
 const call = async (s: Awaited<ReturnType<typeof setup>>, name: string, args: unknown) => {
@@ -216,8 +246,24 @@ describe("timeline tools", () => {
     expect((await call(s, "render_preview", {})).isError).toBe(true);
     await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
     expect((await call(s, "render_preview", {})).json).toMatchObject({ status: "queued" });
+    await writeFitInputs(s);
     expect((await call(s, "timeline_from_edit_plan", { wait_s: 0 })).json).toMatchObject({ status: "queued" });
     expect((await listJobs(s.db, s.project.id)).map((j) => [j.kind, j.thread_id, j.continue_agent])).toEqual([["fit", s.thread.id, true], ["render_preview", s.thread.id, true]]);
+  });
+
+  it("timeline_from_edit_plan says at once what the survey or the plan lacks, and queues nothing (prod 14 fits failed so)", async () => {
+    const s = await setup();
+    const { survey, plan } = await writeFitInputs(s);
+    rmSync(survey);
+    const missing = await call(s, "timeline_from_edit_plan", { wait_s: 0 });
+    expect(missing).toMatchObject({ isError: true, text: expect.stringContaining(`chưa có videos/${s.video.id}/survey.json`) });
+    writeFileSync(survey, JSON.stringify({ schema_version: "harness.survey-index/v2", shots: [{ shot_id: "s000-000" }] }));
+    rmSync(plan);
+    const both = await call(s, "timeline_from_edit_plan", { wait_s: 0 });
+    expect(both.text).toContain(`chưa có videos/${s.video.id}/edit-plan.json`);
+    expect(both.text).toMatch(/survey\.json sai: shots\.0\./);
+    expect(both.text).toContain("validate_file");
+    expect(await listJobs(s.db, s.project.id)).toEqual([]);
   });
 });
 
