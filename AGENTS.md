@@ -174,11 +174,13 @@ nhưng không code nào đọc.
   `mezzConcurrency` mezzanine một lúc (mặc định 1; worker 3), đoạn trùng khoá cache dựng một lần, một đoạn lỗi thì dừng cả
   lượt; `sourceFor` cho mỗi đoạn chờ đúng file nguồn của nó (worker tải 2 file một lúc và dựng chồng lên lúc tải) và trả
   `out` đã cắt theo file; kết quả kèm `timings` từng pha, worker ghi `t_*_s`, `encoder`, `source_gb` vào `summary` của job
-  (README của worker, mục "Tốc độ render"). Lượt ghép cuối: `finalSlices` (mặc định 1; worker 3) cắt hình thành nhiều
-  đoạn ở chỗ không dissolve (`finalSlices()` trong `final-graph.ts`, mỗi đoạn ≥ 30 s), mỗi đoạn một ffmpeg chỉ làm hình
-  (`finalSliceArgs`, phụ đề dời theo `sliceStart`), một ffmpeg chỉ làm tiếng (`streams: "audio"`, khối loudnorm của
-  report lấy từ lượt này), rồi `finalConcatArgs` nối bằng `-c copy`; một đoạn lỗi dừng cả lượt, NVENC lỗi thì cả lượt
-  làm lại bằng cpu. Bản cuối: `requirements` theo máy chọn (`renderRequirements`; ghim `node_id` qua
+  (README của worker, mục "Tốc độ render"). Lượt ghép cuối: `finalSliceInputs` (mặc định 0 = một lượt; worker 14) cắt
+  hình thành đoạn chừng bấy nhiêu clip mezzanine ở chỗ không dissolve (`finalSlices()` trong `final-graph.ts`, mỗi đoạn
+  ≥ 30 s), `finalConcurrency` đoạn một lúc (mặc định 3), mỗi đoạn một ffmpeg chỉ làm hình (`finalSliceArgs`, phụ đề dời
+  theo `sliceStart`), một ffmpeg chỉ làm tiếng (`streams: "audio"`, khối loudnorm của report lấy từ lượt này), rồi
+  `finalConcatArgs` nối bằng `-c copy`; `decodeThreads` (worker 8) đặt `-threads` cho bộ giải mã từng mezzanine. Một
+  lượt mở mọi clip cùng lúc và mỗi bộ giải mã 4K giữ khung hình của từng luồng: bản 137 clip ngốn ~30 GB trên máy farm
+  32 GB. Một đoạn lỗi dừng cả lượt, NVENC lỗi thì cả lượt làm lại bằng cpu. Bản cuối: `requirements` theo máy chọn (`renderRequirements`; ghim `node_id` qua
   thẻ xác nhận); độ phân giải `resolution: 1080p | 4k` (nút Render bản cuối và Xuất Premiere, thẻ `render_final`/`export_premiere`): timeline luôn dựng 1920×1080
   (`fit.ts`), `renderCanvas` (`payloads.ts`) đưa canvas của composition lên cạnh ngắn 2160 lúc gửi, chữ tự to theo (`studioDefaultBrand`);
   Premiere: sequence bằng canvas đó, worker phóng từng clip vừa khung như render (Basic Motion, pad/crop), nên Premiere 4K
