@@ -644,8 +644,7 @@ export const wsEn: Messages<typeof wsVi> = {
     addProject: "Add project",
     noProjectYet: "No {{site}} project yet. Add one so the agent can search its videos.",
     agGoUnavailable: "Cannot reach {{site}}",
-    ownerCannotSeeProject: "The project's owner sees no video in this {{site}} project",
-    ownerCannotUse: "{{name}}: the project's owner cannot use this video on {{site}}",
+    ownerCannotUse: "{{name}}: the project's owner cannot use this video on {{site}} yet (they need access to the folder holding it, or it has no preview yet)",
     addFailed: "Could not add",
     videoCount_one: "{{count}} video",
     videoCount_other: "{{count}} videos",
@@ -908,6 +907,8 @@ export const wsEn: Messages<typeof wsVi> = {
     addedCount_other: "Added {{count}} projects",
     someFailed_one: "{{count}} project could not be added",
     someFailed_other: "{{count}} projects could not be added",
+    refused: "Owner cannot use it",
+    refusedHelp: "Studio finds scenes, prepares and renders with the project owner's {{site}} access. The owner cannot use the videos of the projects below yet: they need access to the folder holding each project (access by category is not enough), and the project needs analysed videos. Ask a {{site}} manager for that access, then add them again.",
   },
   research: {
     newTitle: "Crawl YouTube",

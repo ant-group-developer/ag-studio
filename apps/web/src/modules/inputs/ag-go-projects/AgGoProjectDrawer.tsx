@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { Alert, App as AntApp, Avatar, Button, Drawer, Empty, Flex, Image, Pagination, Radio, Space, Tag, Tooltip, Typography, theme } from "antd";
 import { ProTable, type ProColumns } from "@ant-design/pro-components";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -35,14 +35,14 @@ function ThumbnailCell({ assetId }: { assetId?: string | null | undefined }) {
   return <div className="agp-thumb"><Image src={url} width={96} height={72} alt="" style={{ borderRadius: 6, objectFit: "cover" }} /></div>;
 }
 
-const reasonOf = (e: unknown, ownerCannot: string, fallback: string) =>
-  e instanceof StudioHttpError ? (e.code === "owner_cannot_access" ? ownerCannot : e.message) : fallback;
+const ownerCannot = (e: unknown) => e instanceof StudioHttpError && e.code === "owner_cannot_access";
 
 /**
  * Picks the ag-go projects the agent searches for footage, in a full-screen drawer laid out exactly as ag-go's own
  * Projects page: the filter sidebar, the smart search, sort, list or grid, pages of 12–96. Several projects are
  * ticked (across pages and views) and added together; Studio checks for each that the project's owner sees videos
- * in it, and says which could not be added.
+ * in it, and says which could not be added. Those the owner cannot use are unticked and marked until the drawer opens
+ * again, with why said once (prod: the same projects were added again and again, 653 refusals in a week).
  */
 export function AgGoProjectDrawer({ projectId, picked, open, onClose }: { projectId: string; picked: SourceItem[]; open: boolean; onClose: () => void }) {
   const { t } = useAiTranslation();
@@ -60,7 +60,9 @@ export function AgGoProjectDrawer({ projectId, picked, open, onClose }: { projec
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [selected, setSelected] = useState<Map<string, AgGoProject>>(new Map());
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-  useEffect(() => { if (open) { setFilters({}); setPage(1); setSelected(new Map()); setProgress(null); } }, [open]);
+  /** Projects Studio refused because the project's owner cannot use them, until the drawer opens again. */
+  const [refusedIds, setRefusedIds] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => { if (open) { setFilters({}); setPage(1); setSelected(new Map()); setProgress(null); setRefusedIds(new Set()); } }, [open]);
 
   const params: AgGoProjectQuery = {
     page, pageSize, sortBy: sort.sortBy, sortOrder: sort.sortOrder, ...(filters.keyword ? { keyword: filters.keyword } : {}),
@@ -72,7 +74,7 @@ export function AgGoProjectDrawer({ projectId, picked, open, onClose }: { projec
   const items = list.data?.items ?? [];
   const total = list.data?.total ?? 0;
   const addedIds = useMemo(() => new Set(picked.filter((s) => s.kind === "ag_go_project").map((s) => s.ref)), [picked]);
-  const canSelect = (p: AgGoProject) => !addedIds.has(p.id) && p.videoCount > 0;
+  const canSelect = (p: AgGoProject) => !addedIds.has(p.id) && !refusedIds.has(p.id) && p.videoCount > 0;
   const selectedIds = useMemo(() => new Set(selected.keys()), [selected]);
   const activeCount = countActiveFilters(filters);
 
@@ -92,28 +94,43 @@ export function AgGoProjectDrawer({ projectId, picked, open, onClose }: { projec
     return next;
   });
 
-  /** Adds the ticked projects one after the other; those refused stay ticked and are listed with why. */
+  /**
+   * Adds the ticked projects one after the other. Those the owner cannot use are unticked, marked and listed under one
+   * explanation; those that failed otherwise stay ticked, listed with their error, to try again.
+   */
   const addSelected = async () => {
     const todo = [...selected.values()];
+    const refused: AgGoProject[] = [];
     const failed: { project: AgGoProject; reason: string }[] = [];
     setProgress({ done: 0, total: todo.length });
     for (const [i, p] of todo.entries()) {
       try {
         await client.addSource(projectId, { kind: "ag_go_project", ref: p.id, label: p.name });
       } catch (e) {
-        failed.push({ project: p, reason: reasonOf(e, t("ws.inputs.ownerCannotSeeProject"), t("ws.inputs.addFailed")) });
+        if (ownerCannot(e)) refused.push(p);
+        else failed.push({ project: p, reason: e instanceof StudioHttpError ? e.message : t("ws.inputs.addFailed") });
       }
       setProgress({ done: i + 1, total: todo.length });
     }
     setProgress(null);
     void qc.invalidateQueries({ queryKey: ["sources", projectId] });
-    const added = todo.length - failed.length;
+    const added = todo.length - refused.length - failed.length;
     if (added) void message.success(t("ws.agp.addedCount", { count: added }));
+    if (refused.length) setRefusedIds((ids) => new Set([...ids, ...refused.map((p) => p.id)]));
     setSelected(new Map(failed.map((f) => [f.project.id, f.project])));
-    if (failed.length) {
+    if (refused.length || failed.length) {
+      const list = (rows: { key: string; node: ReactNode }[]) => <ul style={{ paddingLeft: 18, margin: "4px 0 8px" }}>{rows.map((r) => <li key={r.key}>{r.node}</li>)}</ul>;
       modal.warning({
-        title: t("ws.agp.someFailed", { count: failed.length }),
-        content: <ul style={{ paddingLeft: 18, margin: 0 }}>{failed.map((f) => <li key={f.project.id}><strong>{f.project.name}</strong>: {f.reason}</li>)}</ul>,
+        title: t("ws.agp.someFailed", { count: refused.length + failed.length }),
+        content: (
+          <div>
+            {refused.length ? <>
+              <Typography.Paragraph style={{ marginBottom: 4 }}>{t("ws.agp.refusedHelp")}</Typography.Paragraph>
+              {list(refused.map((p) => ({ key: p.id, node: <strong>{p.name}</strong> })))}
+            </> : null}
+            {failed.length ? list(failed.map((f) => ({ key: f.project.id, node: <><strong>{f.project.name}</strong>: {f.reason}</> }))) : null}
+          </div>
+        ),
       });
     } else {
       onClose();
@@ -136,6 +153,7 @@ export function AgGoProjectDrawer({ projectId, picked, open, onClose }: { projec
               <Typography.Text type="secondary" ellipsis={{ tooltip: p.ownerUser?.name || p.ownerUser?.email }}>{p.ownerUser?.name || p.ownerUser?.email || t("ws.agp.unknown")}</Typography.Text>
             </Flex>
             {addedIds.has(p.id) ? <span><Tag color="success" icon={<CircleCheck size={12} style={{ marginRight: 4, verticalAlign: -2 }} />}>{t("ws.agp.added")}</Tag></span>
+              : refusedIds.has(p.id) ? <span><Tag color="warning">{t("ws.agp.refused")}</Tag></span>
               : !p.videoCount ? <span><Tag>{t("ws.agp.noVideos")}</Tag></span> : null}
           </Flex>
         </Flex>
@@ -250,7 +268,7 @@ export function AgGoProjectDrawer({ projectId, picked, open, onClose }: { projec
                   {list.isLoading ? <ProjectGridSkeleton /> : (
                     <ProjectGridView
                       items={items} isLoading={false} emptyText={emptyText}
-                      selectedIds={selectedIds} addedIds={addedIds} canSelect={canSelect} onToggle={toggle}
+                      selectedIds={selectedIds} addedIds={addedIds} refusedIds={refusedIds} canSelect={canSelect} onToggle={toggle}
                       onFilterFolder={(folderId) => applyQuickFilter({ folderIds: [folderId] })}
                       onFilterLocation={({ countryId, provinceId }) => applyQuickFilter({ countryId, provinceId })}
                     />
