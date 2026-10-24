@@ -18,11 +18,20 @@ góp).
 | P6 | ag-studio `3c64cb8` (core), ag-render-worker `1fef30f` | core render 45 test, worker 164 test |
 | P5b, P5d | ag-farm `11f28d9`, `c1780a2` | worker-sdk 94 test |
 | P4 | ag-studio `f5d2a8e` (migration `0003`, đã chạy thử trên bản sao DB prod rồi rollback) | engine, web chat 27 test, API 162 test |
-| P3b, P3c | chưa làm | |
+| P3b, P3c | để sau (cần sửa ag-go, người dùng tách ra 2026-10-24) | |
 | P5a, P5c | việc của người dùng (ffmpeg 8.1 trên 7 máy, log AG-186) | |
 
-Phát hành: render worker và scan worker cần bản mới có worker-sdk P5b/P5d (render worker thêm P6); chưa nâng version, chưa
-build.
+Thêm 2026-10-24 (lỗi mức trung bình, người dùng chọn):
+
+| Lỗi | Commit | Kiểm |
+|---|---|---|
+| Research: agent đưa tên kênh ("Mei Time") thay vì link, 6 lần | ag-studio `b8699ea`: tìm kênh theo tên (Data API, yt-dlp), ghi chú kênh đã chọn | research 20 test |
+| Upload 413: nhạc WAV 105–114 MB vượt 100 MB | ag-studio `3acbdbf`: nhạc tới 300 MB; nginx của web 320 MB | API inputs/music, web AudioControls |
+| Upload part 502 làm hỏng bản render | ag-farm `ae78f57`: gửi lại part khi lỗi tạm (5 lần), ký lại URL khi 403 | worker-sdk 98 test |
+
+Phát hành (2026-10-24): render worker **0.14.5** (ag-render-worker `a9eddcd`) và scan worker **0.5.1** (ag-scan-worker
+`89ada14`) đã build vào `E:\CODE\ag-farm\releases`, `latest.json` trỏ đúng, sha256 khớp. Chưa chép lên VPS. Hub ag-farm không
+đổi (chỉ worker-sdk), không cần deploy farm.
 
 ## Trạng thái: các session khác đã sửa gì
 
