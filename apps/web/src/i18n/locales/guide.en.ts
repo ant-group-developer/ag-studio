@@ -55,7 +55,7 @@ Documents (PDF, markdown, CSV…), images and audio: **Upload** in the Documents
 - **No narration**: the words become on-screen captions.
 
 **Background music** (editor role):
-- **Upload music** (up to 100 MB): used at once.
+- **Upload music** (up to 300 MB): used at once.
 - **Pick an uploaded file**: a two-column picker. On the left, search, listen and tick tracks; on the right, the play order, which you drag (mouse or keyboard) to change. The total length already takes off the crossfades between tracks.
 - **Pick from the library**: listen, then pick a track from the shared library.
 - **Pick by mood**: no music of its own; when the timeline is built, Studio takes a library track matching the mood of the edit plan and the branding.

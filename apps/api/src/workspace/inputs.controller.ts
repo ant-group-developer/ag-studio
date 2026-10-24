@@ -224,7 +224,7 @@ export class InputsController {
   /**
    * A document, image or audio file into `context/` (videos come from ag-go), or, with `reference`, a reference video
    * to learn an edit style from (`context/references/`, never footage): saved under its own name and listed as a
-   * source. Word files are refused (save them as PDF). Audio up to 100 MB (a whole music track), other files 50 MB.
+   * source. Word files are refused (save them as PDF). Audio up to 300 MB (a whole music track), other files 50 MB.
    * Multipart `file`, or `{uploadKey, name}` once the browser put the file on the bucket (`uploads`).
    */
   @Post('sources/upload')

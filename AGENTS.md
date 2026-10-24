@@ -214,7 +214,7 @@ nhưng không code nào đọc.
   gốc; `projectAudioFiles` = audio có dòng nguồn + mọi file dưới `context/audio/`, cả file tải qua tab Tệp), hoặc nhạc là một
   bài của kho nhạc (`setProjectLibraryMusic`, `track: library:music/…`, không chép file, không cần ffmpeg); bỏ chọn nhạc
   (editor) thì lấy kho nhạc theo mood của kế hoạch dựng/branding (`music-library.ts`). API cần `STUDIO_FFMPEG_PATH` để nhận
-  file audio (ffprobe mặc định cạnh ffmpeg như worker; `GET audio` trả `enabled`). Audio tải lên ≤ 100 MB, file khác ≤ 50 MB.
+  file audio (ffprobe mặc định cạnh ffmpeg như worker; `GET audio` trả `enabled`). Audio tải lên ≤ 300 MB (file WAV 10 phút ~110 MB), file khác ≤ 50 MB.
   Web: thẻ "Giọng đọc và nhạc nền" ở đầu tab Đầu vào (`inputs/AudioControls.tsx`, `AudioCard`): tải lên rồi dùng ngay, chọn
   file đã tải (hộp hai cột `inputs/MusicPicker.tsx`: tìm, tích, nghe thử từng bài, thời lượng đọc từ metadata của `<audio>`
   | thứ tự phát kéo thả bằng `@dnd-kit` (chuột và bàn phím), tổng thời lượng trừ chuyển mờ; file nghe qua `listenUrl` =

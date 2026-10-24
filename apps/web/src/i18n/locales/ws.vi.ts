@@ -392,7 +392,7 @@ export const wsVi = {
     addFailed: "Không thêm được bài nhạc",
     saveFailed: "Không lưu được thay đổi",
     errors: {
-      audio_too_large: "File quá lớn (nhạc tối đa 100 MB).", audio_invalid: "File không có tiếng, quá ngắn hoặc không đọc được.",
+      audio_too_large: "File quá lớn (nhạc tối đa 300 MB).", audio_invalid: "File không có tiếng, quá ngắn hoặc không đọc được.",
       audio_disabled: "Máy Studio chưa cấu hình ffmpeg nên chưa nhận audio được.",
     },
   },

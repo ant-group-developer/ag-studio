@@ -27,7 +27,7 @@ export const WORKSPACE_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
 /** Largest audio file a person uploads: as long as the music a project takes (a whole track). */
 export const AUDIO_UPLOAD_MAX_BYTES = AUDIO_MAX_BYTES.music;
 
-/** The size limit of an upload by its name: audio up to 100 MB, anything else 50 MB. */
+/** The size limit of an upload by its name: audio up to 300 MB, anything else 50 MB. */
 export function uploadMaxBytes(name: string): number {
   const lower = name.toLowerCase();
   return (AUDIO_FILE_EXTS as readonly string[]).some((ext) => lower.endsWith(ext)) ? AUDIO_UPLOAD_MAX_BYTES : WORKSPACE_UPLOAD_MAX_BYTES;
@@ -143,7 +143,7 @@ export class FilesController {
   /**
    * Multipart `file`, or `{uploadKey, name}` once the browser put the file on the bucket (`POST projects/:id/uploads`
    * with `purpose: "file"`); `dir` defaults to `context/uploads`. Saved under its own name, ` (2)`… when taken. Audio
-   * ≤ 100 MB, else ≤ 50 MB.
+   * ≤ 300 MB, else ≤ 50 MB.
    */
   @Post('upload')
   @Roles('editor')

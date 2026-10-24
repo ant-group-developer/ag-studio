@@ -395,7 +395,7 @@ export const wsEn: Messages<typeof wsVi> = {
     addFailed: "Could not add the track",
     saveFailed: "Could not save the change",
     errors: {
-      audio_too_large: "The file is too large (music up to 100 MB).", audio_invalid: "The file has no sound, is too short or cannot be read.",
+      audio_too_large: "The file is too large (music up to 300 MB).", audio_invalid: "The file has no sound, is too short or cannot be read.",
       audio_disabled: "The Studio server has no ffmpeg configured, so it cannot take audio yet.",
     },
   },

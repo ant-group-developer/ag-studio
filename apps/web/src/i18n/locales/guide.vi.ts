@@ -55,7 +55,7 @@ Tài liệu (PDF, markdown, CSV…), ảnh và audio: **Tải lên** ở mục T
 - **Không lời dẫn**: lời thành phụ đề trên hình.
 
 **Nhạc nền** (vai biên tập viên):
-- **Tải nhạc** (tối đa 100 MB): dùng ngay.
+- **Tải nhạc** (tối đa 300 MB): dùng ngay.
 - **Chọn file đã tải**: hộp chọn hai cột. Bên trái tìm, nghe thử và tích các bài; bên phải là thứ tự phát, kéo thả (bằng chuột hoặc bàn phím) để đổi. Tổng thời lượng đã trừ đoạn chuyển mờ giữa các bài.
 - **Chọn từ kho nhạc**: nghe thử rồi chọn một bài trong kho nhạc chung.
 - **Tự chọn theo mood**: bỏ nhạc riêng; khi dựng timeline, Studio lấy nhạc trong kho theo mood của kế hoạch dựng và branding.

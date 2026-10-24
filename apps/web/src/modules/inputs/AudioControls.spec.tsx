@@ -252,13 +252,13 @@ describe("voice and music card", { timeout: 20_000 }, () => {
     card();
     await screen.findByRole("group", { name: "Nhạc nền" });
     const big = new File(["x"], "to.mp3", { type: "audio/mpeg" });
-    Object.defineProperty(big, "size", { value: 101 * 1024 * 1024 });
+    Object.defineProperty(big, "size", { value: 301 * 1024 * 1024 });
     const files = ["a.mp3", "b.mp3", "c.mp3"].map((n) => new File(["x"], n, { type: "audio/mpeg" }));
     fireEvent.change(screen.getByLabelText("Tải nhạc", { selector: "input" }), { target: { files: [files[0], big, files[1], files[2]] } });
     expect(await screen.findByRole("dialog", { name: "Chọn file làm nhạc nền" })).toBeInTheDocument();
     expect(ws.uploadSource).toHaveBeenCalledTimes(3);
     expect(ws.audioFromFile).not.toHaveBeenCalled();
-    expect(await screen.findByText("to.mp3: lớn hơn 100 MB, không tải được")).toBeInTheDocument();
+    expect(await screen.findByText("to.mp3: lớn hơn 300 MB, không tải được")).toBeInTheDocument();
     expect(screen.getByText(/b\.mp3 \(0\.0 MB\): máy chủ từ chối vì file quá lớn/)).toBeInTheDocument();
     expect(screen.getByText("Đã tải 2 file, chọn file dùng")).toBeInTheDocument();
   });
