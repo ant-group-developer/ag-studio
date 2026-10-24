@@ -8,6 +8,7 @@ import type {
   ResolveAssetsResponse,
   SearchFootageQuery,
   SearchFootageResponse,
+  StudioResolveAssetsBody,
   StudioUsageEvent,
   StudioUsageEventsResponse,
 } from "./types.js";
@@ -132,6 +133,24 @@ export class AgGoClient {
   /** Asks ag-go to prep missing or failed footage now (or to raise one waiting in a backfill); answers like `getAssetPreps`. */
   runAssetPreps(actAsUserId: string, assetIds: string[]): Promise<AssetPrepsResponse> {
     return this.request<AssetPrepsResponse>("POST", "/footage/assets/prep/run", actAsUserId, { assetIds });
+  }
+
+  /**
+   * ag-go's trusted mode for Studio (`/footage/studio/*`, service key alone, scope `footage:studio`): only videos of
+   * `projectIds` (the ag-go projects added to the Studio project), whoever asks. Resolve: others are `missing`.
+   */
+  studioResolveAssets(body: StudioResolveAssetsBody): Promise<ResolveAssetsResponse> {
+    return this.request<ResolveAssetsResponse>("POST", "/footage/studio/assets/resolve", null, body);
+  }
+
+  /** The prep of each footage, in the trusted mode; a video outside `projectIds` is refused (404). */
+  studioAssetPreps(projectIds: string[], assetIds: string[]): Promise<AssetPrepsResponse> {
+    return this.request<AssetPrepsResponse>("POST", "/footage/studio/assets/prep", null, { projectIds, assetIds });
+  }
+
+  /** Runs missing or failed preps now, in the trusted mode; `requestedBy`: the Studio user who asked, for ag-go's record. */
+  studioRunAssetPreps(projectIds: string[], assetIds: string[], requestedBy?: string): Promise<AssetPrepsResponse> {
+    return this.request<AssetPrepsResponse>("POST", "/footage/studio/assets/prep/run", null, { projectIds, assetIds, ...(requestedBy ? { requestedBy } : {}) });
   }
 
   /** Footage usage events (1–500), with the service key alone (scope `usage:write`); a resent `eventKey` counts once. */

@@ -14,6 +14,7 @@ export type {
   ResolveAssetsResponse,
   SearchFootageQuery,
   SearchFootageResponse,
+  StudioResolveAssetsBody,
   CatalogItem,
   CatalogResponse,
   AssetPrep,

@@ -24,6 +24,8 @@ async function setup() {
   opened.push(w);
   await w.db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES ('team-1', 'Team', ?, ?) ON CONFLICT DO NOTHING", [NOW, NOW]);
   const project = await createProject(w.db, "team-1", { name: "Du lịch chậm", description: "", language: "vi", aspect: "16:9" }, "auth0|owner", NOW);
+  // ag-go serves the project the videos of the ag-go projects added to it
+  await addSource(w.db, { projectId: project.id, kind: "ag_go_project", ref: "agp-1", mediaType: "mixed", label: "Ninh Bình", addedBy: "u" }, NOW);
   const workspacesRoot = join(w.dir, "workspaces");
   const dir = seedWorkspace(workspacesRoot, project);
   return { ...w, project, workspacesRoot, ws: dir };
@@ -54,14 +56,14 @@ function readyPrep(over: Partial<Prep> = {}): Prep {
 const item = (state: AgGoPrepItem["state"], over: Partial<AgGoPrepItem> = {}): AgGoPrepItem =>
   ({ assetId: ASSET, state, phase: null, progress: null, error: null, prep: null, ...over });
 
-/** ag-go's preps: `reads` answered in turn (the last one repeats), `run` answers `ran`. */
+/** ag-go's preps (its trusted mode, within the projects given): `reads` answered in turn (the last one repeats), `run` answers `ran`. */
 function fakePreps(reads: AgGoPrepItem[], ran: AgGoPrepItem = reads[0]!) {
   const calls: string[] = [];
   let i = 0;
   return {
     calls,
-    read: async (actAs: string, ids: string[]) => { calls.push(`read ${actAs} ${ids.join(",")}`); return { items: [reads[Math.min(i++, reads.length - 1)]!] }; },
-    run: async (actAs: string, ids: string[]) => { calls.push(`run ${actAs} ${ids.join(",")}`); return { items: [ran] }; },
+    read: async (projectIds: string[], ids: string[]) => { calls.push(`read ${projectIds.join(",")} ${ids.join(",")}`); return { items: [reads[Math.min(i++, reads.length - 1)]!] }; },
+    run: async (projectIds: string[], ids: string[], by?: string) => { calls.push(`run ${projectIds.join(",")} ${ids.join(",")} by ${by}`); return { items: [ran] }; },
   };
 }
 
@@ -114,7 +116,7 @@ describe("prepare a video ag-go has prepared", () => {
     await runner.idle();
     expect(await getJob(db, job.id)).toMatchObject({ status: "done", error: null, units: null });
     // ready at ag-go: read only, never run again
-    expect(preps.calls).toEqual([`read auth0|owner ${ASSET}`]);
+    expect(preps.calls).toEqual([`read agp-1 ${ASSET}`]);
     expect(urls.sort()).toEqual(["https://r2.test/frames/001.jpg?sig", "https://r2.test/frames/002.jpg?sig", "https://r2.test/frames/003.jpg?sig", "https://r2.test/sheets/01.jpg?sig"]);
     const input = join(ws, "inputs", ASSET);
     expect(JSON.parse(readFileSync(join(input, "shots.json"), "utf8"))).toEqual({
@@ -195,7 +197,7 @@ describe("prepare a video ag-go has not prepared yet", () => {
     );
     const { ctx, reports, units } = fakeCtx(s.ws);
     const out = await prepareAsset({ db: s.db, preps, download, pollMs: 1 }, await job(s), ctx);
-    expect(preps.calls).toEqual([`read auth0|owner ${ASSET}`, `run auth0|owner ${ASSET}`, `read auth0|owner ${ASSET}`, `read auth0|owner ${ASSET}`, `read auth0|owner ${ASSET}`]);
+    expect(preps.calls).toEqual([`read agp-1 ${ASSET}`, `run agp-1 ${ASSET} by u`, `read agp-1 ${ASSET}`, `read agp-1 ${ASSET}`, `read agp-1 ${ASSET}`]);
     expect(units).toEqual([61]);
     const waits = reports.filter((r) => r.phase?.startsWith("Đang c") || r.phase?.startsWith("Đang đọc"));
     expect(waits.map((r) => [r.phase, r.progress, r.waiting])).toEqual([
@@ -213,7 +215,7 @@ describe("prepare a video ag-go has not prepared yet", () => {
     const runner = createJobRunner({ db: s.db, logger: studioLogger({ test: "prepare" }), workspacesRoot: s.workspacesRoot, dataRoot: join(s.dir, "data"), handlers: { prepare_asset: prepareHandler(deps) } });
     await runner.tick();
     await runner.idle();
-    expect(preps.calls.slice(0, 2)).toEqual([`read auth0|owner ${ASSET}`, `run auth0|owner ${ASSET}`]);
+    expect(preps.calls.slice(0, 2)).toEqual([`read agp-1 ${ASSET}`, `run agp-1 ${ASSET} by u`]);
     expect(await getJob(s.db, j.id)).toMatchObject({ status: "failed", error: "AG Go không chuẩn bị được video này: scan.prep: không đọc được video" });
     expect(await getPrepared(s.db, s.project.id, ASSET)).toMatchObject({ status: "failed", error: "AG Go không chuẩn bị được video này: scan.prep: không đọc được video" });
   });
@@ -223,7 +225,7 @@ describe("prepare a video ag-go has not prepared yet", () => {
     const busy = (status: number) => Object.assign(new Error(`ag-go-api error: HTTP ${status}`), { status });
     const inner = fakePreps([item("ready", { prep: readyPrep() })]);
     let reads = 0;
-    const preps = { ...inner, read: async (actAs: string, ids: string[]) => { if (reads++ < 2) throw busy(reads === 1 ? 503 : 429); return inner.read(actAs, ids); } };
+    const preps = { ...inner, read: async (projectIds: string[], ids: string[]) => { if (reads++ < 2) throw busy(reads === 1 ? 503 : 429); return inner.read(projectIds, ids); } };
     const tries = new Map<string, number>();
     const flaky: PrepareDeps["download"] = async (url, dest, signal) => {
       tries.set(url, (tries.get(url) ?? 0) + 1);
@@ -267,6 +269,18 @@ describe("prepare a video ag-go has not prepared yet", () => {
 });
 
 describe("prepare when ag-go does not serve the video", () => {
+  it("fails when the project has no ag-go project, without asking ag-go", async () => {
+    const { db, project, workspacesRoot, dir } = await setup();
+    await db.run("DELETE FROM project_sources WHERE project_id = ?", [project.id]);
+    const job = await createJob(db, { projectId: project.id, kind: "prepare_asset", title: "Chuẩn bị", request: { asset_id: ASSET }, createdBy: "u" }, NOW);
+    const preps = fakePreps([item("ready", { prep: readyPrep() })]);
+    const runner = createJobRunner({ db, logger: studioLogger({ test: "prepare" }), workspacesRoot, dataRoot: join(dir, "data"), handlers: { prepare_asset: prepareHandler({ db, preps, download }) } });
+    await runner.tick();
+    await runner.idle();
+    expect(await getJob(db, job.id)).toMatchObject({ status: "failed", error: expect.stringContaining("dự án chưa có project AG Go nào") });
+    expect(preps.calls).toEqual([]);
+  });
+
   it("fails before any download, naming the library as ag-go calls itself", async () => {
     const { db, project, workspacesRoot, dir } = await setup();
     const job = await createJob(db, { projectId: project.id, kind: "prepare_asset", title: "Chuẩn bị", request: { asset_id: ASSET }, createdBy: "u" }, NOW);
@@ -278,7 +292,7 @@ describe("prepare when ag-go does not serve the video", () => {
     const runner = createJobRunner({ db, logger: studioLogger({ test: "prepare" }), workspacesRoot, dataRoot: join(dir, "data"), handlers: { prepare_asset: prepareHandler(deps) } });
     await runner.tick();
     await runner.idle();
-    expect(await getJob(db, job.id)).toMatchObject({ status: "failed", error: expect.stringContaining("Kho Footage không cho chủ dự án dùng video này") });
+    expect(await getJob(db, job.id)).toMatchObject({ status: "failed", error: expect.stringContaining("video không thuộc project Kho Footage nào của dự án") });
   });
 
   it("refuses image paths that are not ag-go's frames or sheets", async () => {

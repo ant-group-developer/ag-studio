@@ -185,7 +185,15 @@ xem nhóm mình; người khác 403.
 - `GET /projects/:projectId/sources?videoId` → `{sources: SourceItem[], counts}` (project ag-go, video ag-go kèm trạng thái chuẩn bị,
   file tải lên; trạng thái tính trong một lượt đọc DB dù bao nhiêu video/job; `counts = {videos, ready, preparing, failed,
   notPrepared}` đếm mỗi video ag-go một lần, `preparing` gồm cả đang chờ); `POST sources` (editor) `{kind: ag_go_project, ref, label}` | `{kind: ag_go_asset, ref, label, videoId?,
-  meta?, prepare?}` — chủ dự án không dùng được trên ag-go → 422 `owner_cannot_access`; `DELETE sources/:sourceId`
+  meta?, prepare?}` — project: hỏi ag-go **như người bấm** (`POST /footage/projects/access`), chỉ thêm khi họ tải được bản gốc
+  và project có video đã phân tích dùng được (422 `ag_go_view_only` | `ag_go_no_videos` | `ag_go_not_visible`), `meta.videos`
+  = số video dùng được; video: phải thuộc một project ag-go đã thêm (422 `no_ag_go_project` | `not_in_added_project`).
+  Thêm xong, mọi lời gọi footage của dự án dùng chế độ tin cậy của ag-go (mục dưới), không kiểm quyền ai nữa.
+- `POST ag-go-access {projectIds}` (editor, 1–200) → `{items: [{projectId, state: addable|view_only|no_videos|not_visible,
+  analyzedVideos, usableVideos}]}`: picker hỏi các project đang hiện, như người hỏi
+- `DELETE sources/:sourceId?force=1` (editor): gỡ project ag-go mà video lẻ đã thêm (của dự án hay của video) thuộc nó và không
+  thuộc project ag-go nào khác của dự án → 409 `project_in_use {assets, videos: [tiêu đề]}` (các video đó sẽ không render được);
+  `force=1` vẫn gỡ
 - `POST uploads {purpose: source|reference|file, name, size, contentType?}` (editor) → `{key, url, contentType, expiresAt}`:
   kiểm tên, loại, dung lượng như lúc tải (cùng mã lỗi 413/415) rồi ký link PUT lên R2 (`uploads/<projectId>/<uuid>`, 1 giờ).
   Trình duyệt PUT file kèm đúng `Content-Type` đó, rồi gọi `sources/upload` hoặc `files/upload` với `{uploadKey: key, name}`:
@@ -197,8 +205,8 @@ xem nhóm mình; người khác 403.
   nguồn `mediaType: video`, `meta.reference: true` (không phải footage); file khác → 415 `not_video`. Agent học bằng tool
   `style_from_files {paths, purpose}` (job `style_watch` với `files`, không cần thẻ, không đổi hay xoá file)
 - `GET footage?agGoProjectIds&q&categoryIds&ownerUserIds&provinceIds&resolutions&tags&genres&timesOfDay&orientations&minDurationMs&maxDurationMs&usability&sortBy&sortOrder&page|cursor&limit`
-  → video trong các project ag-go của dự án (chỉ những project đã gắn; `agGoProjectId` cũ vẫn nhận), theo quyền ag-go của
-  người hỏi; danh sách là chuỗi cách bằng dấu phẩy, enum như ag-go `/footage/search`; khoá lạ → 400 `invalid`, project
+  → video trong các project ag-go của dự án (chỉ những project đã gắn; `agGoProjectId` cũ vẫn nhận), ai hỏi cũng như nhau
+  (chế độ tin cậy của ag-go, `GET /footage/studio/search`); danh sách là chuỗi cách bằng dấu phẩy, enum như ag-go `/footage/search`; khoá lạ → 400 `invalid`, project
   chưa gắn → `not_an_input`. Mỗi item thêm `prepared`.
 - `GET footage/facets?<cùng bộ lọc>` → `{tags, genres, timesOfDay, orientations, resolutions, categories, provinces, authors,
   projects}` (mỗi mục `[{value, label?, count}]`); `projects` là các project đã gắn, `count` của ag-go hoặc `null`
@@ -222,15 +230,9 @@ xem nhóm mình; người khác 403.
 - `GET /videos/:videoId/renders` → `{renders: RenderView[], jobs, thumbnails: path[]}` — đọc DB, không hỏi ag-go, nên tab Xem
   trước hiện ngay; bản xem trước và bản cuối (mp4) có sẵn `url` (ký tại chỗ, sống `STUDIO_BROWSER_URL_TTL_SECONDS`) để player chạy
   không cần request thứ hai; dòng Premiere không có `url` (xin bằng route dưới lúc lưu)
-- `GET /videos/:videoId/renders/:jobId/link` (viewer) → `{jobId, url: string | null, urlHidden?}` cho đúng một bản render;
-  bản mp4 luôn có `url` (không kiểm quyền footage: bản cuối dựng từ bản gốc của chủ dự án, người trong dự án xem được);
-  file Premiere (.zip đóng gói chính các file footage) chỉ có `url` khi quyền ag-go của người xem phủ mọi video trong
-  revision của bản đó (không thì `urlHidden: footage_scope`;
-  ag-go không trả lời được — lỗi mạng, 5xx… — thì `urlHidden: footage_check_failed`, API ghi log lý do); link Premiere đặt
-  sẵn tên file `.zip`; `jobId` không phải bản render xong của video → 404. API nhớ quyền theo (người, video ag-go) 10 phút
-  và chỉ hỏi ag-go những video chưa biết (từng lô 10, 4 lô song song), nên revision mới cùng footage trả lời ngay; ag-go
-  không trả lời được nhớ 30 s (poll không dồn); 404 của ag-go nêu tên video thì video đó ngoài phạm vi, không nêu thì mọi
-  timeline dùng đủ tập video đã hỏi bị ẩn; một lần kiểm > 2 s ghi log
+- `GET /videos/:videoId/renders/:jobId/link` (viewer) → `{jobId, url}` cho đúng một bản render, ai trong dự án cũng có
+  (không hỏi ag-go, kể cả file Premiere: footage của project ag-go đã thêm là của dự án, ADR mục 197); link Premiere đặt sẵn
+  tên file `.zip`; `jobId` không phải bản render xong của video → 404
 - `POST /videos/:videoId/renders {kind: render_preview|render_final|export_premiere, nodeId?, media?, resolution?: 1080p|4k}` — xem trước: editor;
   bản cuối, Premiere: producer (403 `role`). `resolution` cho bản cuối và Premiere (mặc định 1080p của timeline; `4k` = cạnh ngắn 2160; xem trước bỏ qua).
 - `GET /projects/:projectId/audio` (viewer) → `{voice, music, summary, libraryTrack, enabled, files}`: `enabled` = API có
@@ -275,5 +277,6 @@ render_preview, thumbnail_make, music_list, propose_action`.
 
 ## Farm
 
-`POST /farm/sign` (vé của farm) tra job ở `studio_farm_jobs` rồi `project_farm_jobs`; với dự án: chủ dự án là người hỏi
-ag-go, bản xem trước xin `prefer: {short_edge: 480, clean: true}`.
+`POST /farm/sign` (vé của farm) tra job ở `studio_farm_jobs` rồi `project_farm_jobs`; với dự án: hỏi ag-go ở chế độ tin cậy
+(`POST /footage/studio/assets/resolve` kèm các project ag-go của dự án; bản cuối luôn bản gốc), bản xem trước xin
+`prefer: {short_edge: 480, clean: true}`; dự án chưa có project ag-go hay video ngoài các project đó → 403.

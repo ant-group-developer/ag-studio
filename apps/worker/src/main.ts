@@ -90,17 +90,17 @@ async function main(): Promise<void> {
   const media: CutMediaDeps | null = ffmpeg ? {
     ffmpeg,
     ffprobe: process.env.STUDIO_FFPROBE_PATH ?? ffprobeBeside(ffmpeg),
-    resolveAssets: async (actAs, assetIds, purpose, prefer) => {
-      const r = await agGo.resolveAssets(actAs, { assetIds, purpose, ...(prefer ? { prefer } : {}) });
+    resolveAssets: async (projectIds, assetIds, purpose, prefer) => {
+      const r = await agGo.studioResolveAssets({ projectIds, assetIds, purpose, ...(prefer ? { prefer } : {}) });
       return { items: r.items, missing: r.missing ?? [] };
     },
     download: (url, dest) => httpDownload(url, dest),
     voiceDir: join(dataRoot, "voice"),
   } : null;
-  // inputs come prepared from ag-go (shots, frames, sheets, transcript), asked as the project's owner
+  // inputs come prepared from ag-go (shots, frames, sheets, transcript): its trusted mode, bound to the project's ag-go projects
   const preps = {
-    read: (actAs: string, assetIds: string[]) => agGo.getAssetPreps(actAs, assetIds),
-    run: (actAs: string, assetIds: string[]) => agGo.runAssetPreps(actAs, assetIds),
+    read: (projectIds: string[], assetIds: string[]) => agGo.studioAssetPreps(projectIds, assetIds),
+    run: (projectIds: string[], assetIds: string[], requestedBy?: string) => agGo.studioRunAssetPreps(projectIds, assetIds, requestedBy),
   };
   const workspacesRoot = resolve(process.env.STUDIO_WORKSPACES_ROOT ?? join(dataRoot, "workspaces"));
   const agentSecret = process.env.STUDIO_AGENT_TOKEN_SECRET;

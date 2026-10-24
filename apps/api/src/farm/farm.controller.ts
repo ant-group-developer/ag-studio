@@ -112,17 +112,14 @@ export class FarmController {
 
     const prodId = job.production_id;
     const isFinalRender = job.is_final_render;
-    // ag-go is asked on behalf of the project's owner (plan 3.1), never of the project itself:
-    // `X-Act-As-User` must be a user id or ag-go cannot apply that user's folder scope and rights.
-    const owner = await this.db.get<{ user_id: string | null }>(
-      `SELECT COALESCE(p.owner_user_id,
-                (SELECT tm.user_id FROM team_members tm
-                  WHERE tm.team_id = p.team_id AND tm.role = 'owner'
-                  ORDER BY tm.joined_at LIMIT 1)) AS user_id
-         FROM projects p WHERE p.id = ?`,
-      [prodId],
-    );
-    const actAsUserId = owner?.user_id ?? null;
+    // ag-go's trusted mode for Studio (plan 2026-10-24): the videos of the ag-go projects added to the project, whoever
+    // renders; someone who could download their originals added them.
+    const agGoProjectIds = (
+      await this.db.all<{ ref: string }>(
+        `SELECT ref FROM project_sources WHERE project_id = ? AND kind = 'ag_go_project' ORDER BY added_at, id`,
+        [prodId],
+      )
+    ).map((r) => r.ref);
 
     // 3. Authorize ALL ops first (fail fast on any unauthorized op)
     const authorizations: Array<{
@@ -178,18 +175,19 @@ export class FarmController {
       if (op.op === 'get' && auth.assetId) {
         // GĐ2 asset resolve via ag-go POST /footage/assets/resolve
         const purpose = isFinalRender ? 'final' : 'preview';
-        if (!actAsUserId) {
-          throw new ForbiddenException(`Project ${prodId} has no owner to resolve footage as`);
+        if (!agGoProjectIds.length) {
+          throw new ForbiddenException(`Project ${prodId} has no ag-go project to resolve footage from`);
         }
-        // a preview reads a clean 480p rendition when ag-go has one (P7); older ag-go ignores `prefer`
-        const resolveResp = await this.agGoClient.resolveAssets(actAsUserId, {
+        // a preview reads a clean 480p rendition when ag-go has one (P7)
+        const resolveResp = await this.agGoClient.studioResolveAssets({
+          projectIds: agGoProjectIds,
           assetIds: [auth.assetId],
           purpose,
           ...(!isFinalRender ? { prefer: PREVIEW_PREFER } : {}),
         });
         const item = resolveResp.items[0];
         if (!item) {
-          throw new ForbiddenException(`Asset not found: ${auth.assetId}`);
+          throw new ForbiddenException(`Asset not in the project's ag-go projects: ${auth.assetId}`);
         }
         resultUrl = item.url;
         result = {

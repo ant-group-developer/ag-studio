@@ -9,7 +9,7 @@ import { extname, join } from 'node:path';
 import type { Request } from 'express';
 import { z } from 'zod';
 import {
-  addSource, assetCounts, assetStates, AUDIO_FILE_EXTS, getSource, jobView, listJobs, listSources, nameUnnamedAssets, projectActAs, queuePrepare, removeSource, requestJobCancel, requireJob,
+  addSource, agGoProjectIds, assetCounts, assetStates, AUDIO_FILE_EXTS, getSource, jobView, listJobs, listSources, nameUnnamedAssets, queuePrepare, removeSource, requestJobCancel, requireJob,
   PROJECT_AUDIO_DIR, REFERENCE_UPLOAD_DIR, REFERENCE_UPLOAD_MAX_BYTES, REFERENCE_VIDEO_EXTS, requireProject, requireVideo, sourceItems, StudioRunError, writeVideoIndex,
   writeWorkspaceFile, type ActorRole, type AssetCounts, type JobView, type SourceItem, type SourceMediaType, unnamedAssetIds,
 } from '@ag-studio/engine';
@@ -19,7 +19,7 @@ import { EngineService } from '../studio/engine.service';
 import { mapErrors } from '../studio/http-errors';
 import { checkFileUpload, safeFileName, uploadMaxBytes, WORKSPACE_UPLOAD_MAX_BYTES } from './files.controller';
 import { dropRawUpload, RawUploadFields, signRawUpload, SignUploadFields, takeRawUpload, type UploadedTmp } from './raw-uploads';
-import { ProjectFootageService } from './project-footage.service';
+import { addability, ProjectFootageService, type AgGoAddability } from './project-footage.service';
 import { SiteNameService } from '../ag-go/site-name.service';
 import { FOOTAGE_RESOLUTIONS, FOOTAGE_SORT_FIELDS, FOOTAGE_USABILITIES } from '../ag-go/client';
 import { WorkspaceService } from './workspace.service';
@@ -37,6 +37,7 @@ const AddSchema = z.discriminatedUnion('kind', [
   }).strict(),
 ]);
 const PrepareSchema = z.object({ assetIds: z.array(z.string().regex(ASSET_OR_PROJECT_ID)).min(1).max(40), again: z.boolean().optional() }).strict();
+const AccessSchema = z.object({ projectIds: z.array(z.string().regex(ASSET_OR_PROJECT_ID)).min(1).max(200) }).strict();
 const UploadFormSchema = z.object({
   videoId: z.string().min(1).optional(),
   /** A reference video to learn an edit style from (not footage): saved under `context/references/`, up to 300 MB. */
@@ -123,21 +124,20 @@ export class InputsController {
 
   /**
    * ag-go videos added without a name (the agent left it out, so people saw the asset id) get their names from the
-   * picked ag-go projects, as the owner: in the background, best effort, so the next load shows them.
+   * picked ag-go projects: in the background, best effort, so the next load shows them.
    */
   private async nameUnnamed(projectId: string): Promise<void> {
     const db = this.engine.db;
     const missing = new Set(await unnamedAssetIds(db, projectId));
     if (!missing.size || Date.now() - (this.namedAt.get(projectId) ?? 0) < 10 * 60_000) return;
     this.namedAt.set(projectId, Date.now());
-    const owner = await projectActAs(db, projectId);
-    const projectIds = (await listSources(db, projectId)).filter((s) => s.kind === 'ag_go_project').map((s) => s.ref);
-    if (!owner || !projectIds.length) return;
+    const projectIds = await agGoProjectIds(db, projectId);
+    if (!projectIds.length) return;
     this.naming = (async () => {
       const names = new Map<string, string>();
       let cursor: string | undefined;
       for (let page = 0; page < 20 && names.size < missing.size; page++) {
-        const r = await this.footage.search(owner, { projectIds, limit: 100, ...(cursor ? { cursor } : {}) });
+        const r = await this.footage.search({ projectIds, limit: 100, ...(cursor ? { cursor } : {}) });
         for (const i of r.items) if (missing.has(i.assetId) && i.name) names.set(i.assetId, i.name);
         if (!r.nextCursor) break;
         cursor = r.nextCursor;
@@ -151,8 +151,10 @@ export class InputsController {
 
   /**
    * Adds an ag-go project (its videos become searchable for the agent) or an ag-go video (to the project, or to one
-   * video). ag-go is asked as the project's owner, whom the agent and renders act as: what they cannot use is refused
-   * (422 `owner_cannot_access`).
+   * video). A project is added only by someone who may download its originals on ag-go and when it has a usable
+   * analysed video (asked as that person; 422 `ag_go_not_visible` / `ag_go_view_only` / `ag_go_no_videos`); the project
+   * then uses it with no further check, whoever works on it (plan 2026-10-24). A video must belong to an ag-go project
+   * added already (422 `no_ag_go_project`, `not_in_added_project`).
    */
   @Post('sources')
   @Roles('editor')
@@ -161,24 +163,26 @@ export class InputsController {
     return mapErrors(async () => {
       const body = parseBody(AddSchema, raw);
       const project = await requireProject(this.engine.db, projectId);
-      const owner = await projectActAs(this.engine.db, projectId);
-      if (!owner) throw new StudioRunError('invalid', `dự án chưa có chủ để hỏi ${this.siteName.current()}`, { code: 'no_owner' });
       const userId = req.authContext!.userId;
       if (body.kind === 'ag_go_project') {
-        const seen = await this.footage.search(owner, { projectIds: [body.ref], limit: 1 });
-        if (seen.total === 0 && seen.items.length === 0) {
-          throw new StudioRunError('invalid', `Chủ dự án chưa dùng được video nào của project ${this.siteName.current()} này: cần quyền xem thư mục chứa project (quyền theo danh mục chưa đủ), hoặc project chưa có video đã phân tích`, { code: 'owner_cannot_access' });
-        }
-        const s = await addSource(this.engine.db, { projectId, kind: 'ag_go_project', ref: body.ref, mediaType: 'mixed', label: body.label, meta: { videos: seen.total }, addedBy: userId });
+        const access = (await this.footage.access(userId, [body.ref])).get(body.ref);
+        const state = addability(access);
+        if (state !== 'addable') throw this.cannotAdd(state);
+        const s = await addSource(this.engine.db, {
+          projectId, kind: 'ag_go_project', ref: body.ref, mediaType: 'mixed', label: body.label, meta: { videos: access!.usableVideos }, addedBy: userId,
+        });
         return { source: await this.item(projectId, s.id) };
       }
       if (body.videoId) {
         const v = await requireVideo(this.engine.db, body.videoId);
         if (v.project_id !== projectId) throw new StudioRunError('invalid', 'video thuộc dự án khác', { code: 'other_project' });
       }
-      const { missing } = await this.footage.check(owner, [body.ref]);
+      const site = this.siteName.current();
+      const projects = await agGoProjectIds(this.engine.db, projectId);
+      if (!projects.length) throw new StudioRunError('invalid', `Thêm project ${site} chứa video này vào dự án trước`, { code: 'no_ag_go_project' });
+      const { missing } = await this.footage.check(projects, [body.ref]);
       if (missing.length) {
-        throw new StudioRunError('invalid', `Chủ dự án chưa dùng được video này trên ${this.siteName.current()}: cần quyền xem thư mục chứa video, hoặc video chưa có bản xem`, { code: 'owner_cannot_access' });
+        throw new StudioRunError('invalid', `Video này không thuộc project ${site} nào của dự án: thêm project chứa nó trước`, { code: 'not_in_added_project' });
       }
       const s = await addSource(this.engine.db, {
         projectId, videoId: body.videoId ?? null, kind: 'ag_go_asset', ref: body.ref, mediaType: 'video', label: body.label, meta: body.meta ?? {}, addedBy: userId,
@@ -193,13 +197,42 @@ export class InputsController {
     });
   }
 
+  /**
+   * Whether the person may add each of these ag-go projects (the picker's cards), asked as that person: `addable`,
+   * `view_only` (watermarked only), `no_videos` (no usable analysed video), `not_visible`; with the analysed and usable
+   * videos of those they see.
+   */
+  @Post('ag-go-access')
+  @Roles('editor')
+  @HttpCode(HttpStatus.OK)
+  agGoAccess(@Param('projectId') projectId: string, @Body() raw: unknown, @Req() req: Request): Promise<{ items: { projectId: string; state: AgGoAddability; analyzedVideos: number; usableVideos: number }[] }> {
+    return mapErrors(async () => {
+      const body = parseBody(AccessSchema, raw);
+      await requireProject(this.engine.db, projectId);
+      const ids = [...new Set(body.projectIds)];
+      const access = await this.footage.access(req.authContext!.userId, ids);
+      return {
+        items: ids.map((id) => {
+          const a = access.get(id);
+          return { projectId: id, state: addability(a), analyzedVideos: a?.analyzedVideos ?? 0, usableVideos: a?.usableVideos ?? 0 };
+        }),
+      };
+    });
+  }
+
+  /**
+   * Removes a source. An ag-go project whose videos are still used (added to the project or to a video) and are in no
+   * other ag-go project of it is refused first (409 `project_in_use`, with how many and in which videos): with
+   * `force=1` it is removed anyway, and ag-go no longer serves those videos to the project.
+   */
   @Delete('sources/:sourceId')
   @Roles('editor')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async remove(@Param('projectId') projectId: string, @Param('sourceId') sourceId: string, @Req() req: Request): Promise<void> {
+  async remove(@Param('projectId') projectId: string, @Param('sourceId') sourceId: string, @Query('force') force: string | undefined, @Req() req: Request): Promise<void> {
     await mapErrors(async () => {
       const s = await getSource(this.engine.db, sourceId);
       if (!s || s.project_id !== projectId) throw new StudioRunError('not_found', `không có nguồn ${sourceId}`);
+      if (s.kind === 'ag_go_project' && force !== '1') await this.refuseInUse(projectId, s.ref);
       await removeSource(this.engine.db, sourceId, req.authContext!.userId);
       if (s.kind === 'ag_go_asset' && s.video_id) await writeVideoIndex(this.engine.db, await this.workspace.dir(projectId), projectId, s.video_id);
     });
@@ -296,18 +329,18 @@ export class InputsController {
   }
 
   /**
-   * Videos of the project's ag-go projects the person can see (their own ag-go scope), with where each stands here:
-   * the filters, sort and paging of ag-go's footage search, always within the projects picked for this project.
+   * Videos of the project's ag-go projects (ag-go's trusted mode: every one of them, whoever asks), with where each
+   * stands here: the filters, sort and paging of ag-go's footage search, always within the projects picked for this project.
    */
   @Get('footage')
   @Roles('viewer')
-  footageSearch(@Param('projectId') projectId: string, @Query() raw: unknown, @Req() req: Request) {
+  footageSearch(@Param('projectId') projectId: string, @Query() raw: unknown) {
     return mapErrors(async () => {
       const q = parseBody(FootageQuerySchema, raw);
       const projectIds = await this.footageScope(projectId, q);
       if (!projectIds.length) return { items: [], nextCursor: null, total: 0 };
       const { agGoProjectId: _one, agGoProjectIds: _many, ...filters } = q;
-      const r = await this.footage.searchForPicker(req.authContext!.userId, { ...filters, projectIds, limit: q.limit ?? 40 });
+      const r = await this.footage.searchForPicker({ ...filters, projectIds, limit: q.limit ?? 40 });
       const state = await assetStates(this.engine.db, projectId);
       return { ...r, items: r.items.map((i) => ({ ...i, prepared: state(i.assetId) })) };
     });
@@ -320,7 +353,7 @@ export class InputsController {
    */
   @Get('footage/facets')
   @Roles('viewer')
-  footageFacets(@Param('projectId') projectId: string, @Query() raw: unknown, @Req() req: Request) {
+  footageFacets(@Param('projectId') projectId: string, @Query() raw: unknown) {
     return mapErrors(async () => {
       const q = parseBody(FootageQuerySchema, raw);
       const projectIds = await this.footageScope(projectId, q);
@@ -328,7 +361,7 @@ export class InputsController {
       const empty = { tags: [], genres: [], timesOfDay: [], orientations: [], resolutions: [], categories: [], provinces: [], authors: [] };
       if (!projectIds.length) return { ...empty, projects: [] };
       const { agGoProjectId: _one, agGoProjectIds: _many, page: _p, cursor: _c, limit: _l, sortBy: _s, sortOrder: _o, ...filters } = q;
-      const f = await this.footage.facets(req.authContext!.userId, { ...filters, projectIds });
+      const f = await this.footage.facets({ ...filters, projectIds });
       const counts = new Map(f.projects.map((p) => [p.value, p.count]));
       return { ...f, projects: picked.map((s) => ({ value: s.ref, label: s.label, count: counts.get(s.ref) ?? null })) };
     });
@@ -379,6 +412,37 @@ export class InputsController {
       const j = await requireJob(this.engine.db, jobId);
       if (j.project_id !== projectId) throw new StudioRunError('not_found', `không có việc ${jobId}`);
       return jobView(await requestJobCancel(this.engine.db, jobId));
+    });
+  }
+
+  /** Why an ag-go project cannot be added, as said to the person who tried. */
+  private cannotAdd(state: Exclude<AgGoAddability, 'addable'>): StudioRunError {
+    const site = this.siteName.current();
+    if (state === 'view_only') {
+      return new StudioRunError('invalid', `Bạn chỉ xem được project này trên ${site} (bản có watermark): cần quyền tải bản gốc của project để thêm vào dự án`, { code: 'ag_go_view_only' });
+    }
+    if (state === 'no_videos') return new StudioRunError('invalid', `Project ${site} này chưa có video đã phân tích dùng được`, { code: 'ag_go_no_videos' });
+    return new StudioRunError('invalid', `Bạn không thấy project này trên ${site}`, { code: 'ag_go_not_visible' });
+  }
+
+  /**
+   * Refuses to remove the ag-go project `ref` while videos added to the project (or to its videos) belong to it and to
+   * no other ag-go project of the project: ag-go would no longer serve them (409 `project_in_use`).
+   */
+  private async refuseInUse(projectId: string, ref: string): Promise<void> {
+    const db = this.engine.db;
+    const assets = (await listSources(db, projectId)).filter((x) => x.kind === 'ag_go_asset');
+    if (!assets.length) return;
+    const others = (await agGoProjectIds(db, projectId)).filter((id) => id !== ref);
+    const { missing } = await this.footage.check(others, [...new Set(assets.map((x) => x.ref))]);
+    if (!missing.length) return;
+    const used = assets.filter((x) => missing.includes(x.ref));
+    const videoIds = [...new Set(used.map((x) => x.video_id).filter((v): v is string => !!v))];
+    const titles = videoIds.length
+      ? (await db.all<{ title: string }>(`SELECT title FROM videos WHERE id IN (${videoIds.map(() => '?').join(', ')}) ORDER BY idx`, videoIds)).map((v) => v.title)
+      : [];
+    throw new StudioRunError('conflict', `${missing.length} video đang dùng thuộc project ${this.siteName.current()} này: gỡ thì các video đó không render được nữa`, {
+      code: 'project_in_use', assets: missing.length, videos: titles,
     });
   }
 

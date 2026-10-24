@@ -125,11 +125,13 @@ export async function savePrepared(db: StudioDb, p: Omit<PreparedAsset, "prepare
   );
 }
 
-/** The user ag-go is asked as for a project's footage: its owner, else the team's first owner (as `/farm/sign`). */
-export async function projectActAs(db: StudioDb, projectId: string): Promise<string | null> {
-  return (await db.get<{ user_id: string | null }>(
-    `SELECT COALESCE(p.owner_user_id,
-              (SELECT tm.user_id FROM team_members tm WHERE tm.team_id = p.team_id AND tm.role = 'owner' ORDER BY tm.joined_at LIMIT 1)) AS user_id
-       FROM projects p WHERE p.id = ?`, [projectId],
-  ))?.user_id ?? null;
+/**
+ * The ag-go projects added to a project, in the order they were added: ag-go's trusted mode for Studio serves the
+ * project the videos of these and nothing else, whoever asks (plan 2026-10-24: someone who could download their
+ * originals added them).
+ */
+export async function agGoProjectIds(db: StudioDb, projectId: string): Promise<string[]> {
+  return (await db.all<{ ref: string }>(
+    "SELECT ref FROM project_sources WHERE project_id = ? AND kind = 'ag_go_project' ORDER BY added_at, id", [projectId],
+  )).map((r) => r.ref);
 }

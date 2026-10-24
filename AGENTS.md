@@ -103,9 +103,12 @@ nhưng không code nào đọc.
   (`AccountApiService`: nhớ 5 phút, các request cùng người dùng chung một lần hỏi, chờ tối đa 5 s, lỗi thì dùng hồ sơ cũ ≤ 1 giờ;
   JWKS cũng chờ tối đa 5 s và chung một lần tải). CORS mọi origin, preflight nhớ 2 giờ (`common/cors.ts`).
 - Footage: video chỉ đến từ ag-go (chọn project/video ag-go ở tab Đầu vào; không còn `@folder`); web gọi thẳng ag-go bằng
-  bearer người dùng (`/projects`, `/projects/:id/media`), API và worker gọi bằng `AG_GO_SERVICE_KEY` + `X-Act-As-User` = chủ
-  dự án. Bản xem trước và bản cuối (mp4) ai trong dự án cũng xem được (link có sẵn trong `GET renders`); file Premiere chỉ trả link cho người mà quyền ag-go của chính họ phủ mọi video trong bản đó (ADR mục 194). Tài liệu/ảnh/audio tải lên
-  Studio. **Không bao giờ lấy giọng hay nhạc từ ag-go.**
+  bearer người dùng (`/projects`, `/projects/:id/media`). Thêm project ag-go: API hỏi ag-go **như người bấm**
+  (`POST /footage/projects/access`, service key + `X-Act-As-User`), chỉ người tải được bản gốc mới thêm được; video lẻ phải
+  thuộc một project đã thêm. Sau đó mọi lời gọi footage (tab Đầu vào, agent, chuẩn bị, `/farm/sign`, worker) dùng **chế độ
+  tin cậy** của ag-go (`/footage/studio/*`, chỉ `AG_GO_SERVICE_KEY` scope `footage:studio`, kèm `projectIds` = các project
+  ag-go của dự án, `agGoProjectIds()`), không kiểm quyền ai; mọi bản render kể cả file Premiere ai trong dự án cũng có link
+  (ADR mục 197). Tài liệu/ảnh/audio tải lên Studio. **Không bao giờ lấy giọng hay nhạc từ ag-go.**
 
 ### Agent
 - Mỗi luồng chat là một session Claude Code (`claude -p --output-format stream-json --restricted`, chỉ Read/Write/Edit/Glob/

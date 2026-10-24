@@ -1283,3 +1283,15 @@ Spec `docs/superpowers/specs/2026-10-10-ag-studio-agent-workspace-design.md`, pl
     nên ghi lại hay gửi lại không đếm trùng. Worker gửi mỗi 30 s lô 200 (`usage-send.ts`, chỉ service key, scope
     `usage:write`); lỗi (ag-go tắt, 401/403 khi khoá thiếu scope) giữ lại và lùi dần 30 s → tối đa 1 giờ, có log; sự kiện
     ag-go không bao giờ nhận (id không phải UUID) để riêng, không chặn các sự kiện khác. Bản xem trước không tính.
+197. **Project ag-go thêm một lần bởi người tải được bản gốc, rồi dự án dùng không kiểm quyền (2026-10-24, plan
+    2026-10-24).** Trước đây API và worker hỏi ag-go như chủ dự án (`X-Act-As-User`), mà API footage của ag-go chỉ tính
+    quyền làm việc theo thư mục, còn menu Dự án của ag-go tính cả `read_all` và gói bản gốc: project người dùng thấy
+    nhưng thêm không được ("Chủ dự án không thấy video nào…"). Nay picker liệt kê như menu Dự án; API hỏi ag-go **như
+    người bấm** (`POST /footage/projects/access`): chỉ project họ tải được bản gốc (quyền vai trò `download_original` +
+    quyền bản gốc trên project) và có video dùng được mới thêm được (`POST ag-go-access` cho thẻ của picker). Thêm xong,
+    mọi lời gọi footage của dự án (tìm, facets, đặt tên, chuẩn bị, `/farm/sign`, worker) đi chế độ tin cậy của ag-go
+    (`/footage/studio/*`, chỉ service key, scope `footage:studio`, kèm `projectIds` của dự án): ag-go phục vụ đúng video của
+    các project đó, bản cuối luôn bản gốc, không kiểm quyền ai. Thay mục 194 ở phần file Premiere: link có cho mọi người
+    trong dự án (`FootageRights` bị bỏ). Chấp nhận: thu hồi quyền ag-go không ảnh hưởng nguồn đã thêm; thành viên dùng
+    footage họ không có quyền ag-go. Video lẻ phải thuộc một project đã thêm; gỡ project còn video lẻ đang dùng thì hỏi
+    trước (409 `project_in_use`, `force=1`).
