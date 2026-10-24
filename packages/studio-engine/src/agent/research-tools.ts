@@ -91,7 +91,7 @@ export const RESEARCH_TOOLS: AgentTool[] = [
   }),
   tool({
     name: "youtube_channel_top_videos",
-    description: "Video xem nhiều nhất của một kênh (link, @handle hoặc ID kênh), mặc định 30. Ghi research/<ngày>-kenh-<kênh>.md (+ .json).",
+    description: "Video xem nhiều nhất của một kênh, mặc định 30. `channel`: link, @handle hoặc ID kênh; chỉ có tên kênh thì Studio tìm kênh mang tên đó và ghi trong ghi chú kênh nào đã chọn. Ghi research/<ngày>-kenh-<kênh>.md (+ .json).",
     input: z.object({ channel: z.string().trim().min(2).max(300), max: z.number().int().min(1).max(100).optional(), wait_s: waitS }).strict(),
     role: "editor",
     run: (ctx, a) => crawl(ctx, { kind: "channel_top", channel: a.channel, ...(a.max ? { max: a.max } : {}) }, a.wait_s),

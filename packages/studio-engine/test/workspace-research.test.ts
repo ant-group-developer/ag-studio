@@ -138,6 +138,26 @@ describe("YouTube crawl with the Data API", () => {
     expect(yt.calls.find((x) => x.resource === "search")!.query.get("channelId")).toBe("UCx");
   });
 
+  it("channel top by the channel's name: the channel of that name YouTube finds, said in a note (prod: \"Mei Time\" failed 6 times)", async () => {
+    const yt = fakeYoutube({
+      channels: (q) => ({ body: { items: [
+        { id: "UCother", snippet: { title: "Mei Time Clips" }, statistics: { subscriberCount: "3" } },
+        { id: "UCmei", snippet: { title: "Mei Time" }, statistics: { subscriberCount: "42" } },
+      ].filter((c) => (q.get("id") ?? "").split(",").includes(c.id)) } }),
+      search: (q) => ({ body: { items: q.get("type") === "channel"
+        ? (q.get("q") === "Mei Time" ? [{ id: { channelId: "UCother" } }, { id: { channelId: "UCmei" } }] : [])
+        : [{ id: { videoId: "m1" } }] } }),
+      videos: () => ({ body: { items: [video("m1", { views: 5 })] } }),
+    });
+    const crawler = new YoutubeCrawler({ apiKey: "k", fetch: yt.impl, now: () => NOW });
+    const doc = await crawler.crawl(CrawlRequestSchema.parse({ kind: "channel_top", channel: "Mei Time", max: 5 }));
+    expect(doc.channel).toEqual({ channel_id: "UCmei", title: "Mei Time", subscribers: 42 });
+    expect(yt.calls.filter((x) => x.resource === "search").at(-1)!.query.get("channelId")).toBe("UCmei");
+    expect(doc.notes.join(" ")).toContain('Kênh tìm theo tên "Mei Time": Mei Time (UCmei)');
+    await expect(crawler.crawl(CrawlRequestSchema.parse({ kind: "channel_top", channel: "Không có kênh này" })))
+      .rejects.toThrow('Không tìm thấy kênh nào tên "Không có kênh này": đưa link kênh hoặc @handle');
+  });
+
   it("says when the day's quota is gone", async () => {
     const yt = fakeYoutube({ videos: () => ({ status: 403, body: { error: { errors: [{ reason: "quotaExceeded" }] } } }) });
     await expect(new YoutubeCrawler({ apiKey: "k", fetch: yt.impl, now: () => NOW }).crawl(CrawlRequestSchema.parse({ kind: "trending" })))
@@ -146,6 +166,12 @@ describe("YouTube crawl with the Data API", () => {
 });
 
 describe("YouTube crawl with yt-dlp (no API key)", () => {
+  it("channel top by the channel's name: the channel of that name among the search results, said in a note", async () => {
+    const doc = await new YoutubeCrawler({ ytdlp: FAKE_YTDLP, now: () => NOW }).crawl(CrawlRequestSchema.parse({ kind: "channel_top", channel: "kênh b", max: 3 }));
+    expect(doc.notes.join(" ")).toContain('Kênh tìm theo tên "kênh b": Kênh B (UCsearchchannelB00000000)');
+    expect(doc.videos.length).toBeGreaterThan(0);
+  });
+
   it("topic: YouTube's search through yt-dlp, re-sorted by views, with a note", async () => {
     const c = new YoutubeCrawler({ ytdlp: FAKE_YTDLP, now: () => NOW });
     expect(c.source).toBe("yt-dlp");
