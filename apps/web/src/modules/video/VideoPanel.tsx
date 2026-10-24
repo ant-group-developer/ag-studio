@@ -58,7 +58,8 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
       if (done) {
         savingExports.delete(id);
         void qc.fetchQuery(linkQuery(client, videoId, id)).then((l) => {
-          if (l.url) { saveFile(l.url); void message.success(t("ws.video.exportSaving")); } else void message.warning(t(hiddenKey(l)));
+          saveFile(l.url);
+          void message.success(t("ws.video.exportSaving"));
         }, () => void message.error(t("ws.video.linkFailed")));
       } else if (job && (job.status === "failed" || job.status === "cancelled")) savingExports.delete(id);
     }
@@ -71,10 +72,7 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
       else void message.error(t("ws.video.linkFailed"));
       return;
     }
-    void qc.fetchQuery(linkQuery(client, videoId, r.jobId)).then((l) => {
-      if (l.url) saveFile(l.url);
-      else void message.warning(t(hiddenKey(l)));
-    }, () => void message.error(t("ws.video.linkFailed")));
+    void qc.fetchQuery(linkQuery(client, videoId, r.jobId)).then((l) => saveFile(l.url), () => void message.error(t("ws.video.linkFailed")));
   };
 
   const latest = timeline.data?.latest ?? null;
@@ -171,7 +169,7 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
         {renders.isLoading ? <Spin size="small" /> : list.length ? (
           <ul className="ws-inputs__list">
             {list.map((r) => (
-              <RenderRow key={r.jobId} r={r} videoId={videoId} lang={i18n.language} current={shown?.jobId === r.jobId} onPlay={() => setPlaying(r.jobId)} onDownload={() => download(r)} />
+              <RenderRow key={r.jobId} r={r} lang={i18n.language} current={shown?.jobId === r.jobId} onPlay={() => setPlaying(r.jobId)} onDownload={() => download(r)} />
             ))}
           </ul>
         ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("ws.video.noRenders")} />}
@@ -207,14 +205,10 @@ function Thumb({ projectId, path, onOpen }: { projectId: string; path: string; o
   );
 }
 
-function RenderRow({ r, videoId, lang, current, onPlay, onDownload }: {
-  r: RenderView; videoId: string; lang: string; current: boolean; onPlay: () => void; onDownload: () => void;
+function RenderRow({ r, lang, current, onPlay, onDownload }: {
+  r: RenderView; lang: string; current: boolean; onPlay: () => void; onDownload: () => void;
 }) {
   const { t } = useAiTranslation();
-  const client = useWorkspaceClient();
-  // what is known of a Premiere export's link (asked for on a click or when it is saved), never asked from here
-  const link = useQuery({ ...linkQuery(client, videoId, r.jobId), enabled: false });
-  const hidden = r.kind === "export_premiere" ? link.data?.urlHidden : undefined;
   return (
     <li className={`ws-inputs__row${current ? " ws-video__row--current" : ""}`}>
       <Tag color={r.kind === "render_final" ? "green" : r.kind === "export_premiere" ? "purple" : "blue"}>{t(`ws.video.kind.${r.kind}`)}</Tag>
@@ -223,12 +217,10 @@ function RenderRow({ r, videoId, lang, current, onPlay, onDownload }: {
           {t("ws.video.revision", { revision: r.revision })}{r.durationS !== null ? ` · ${clock(r.durationS)}` : ""}{r.sizeBytes ? ` · ${fileSize(r.sizeBytes)}` : ""}
           {r.watermarked ? ` · ${t("ws.video.watermarked")}` : ""}
         </span>
-        <span className="ws-hint">{r.finishedAt ? relativeTime(r.finishedAt, lang) : ""}{hidden ? ` · ${t(hiddenKey(link.data!))}` : ""}{r.note ? ` · ${r.note}` : ""}</span>
+        <span className="ws-hint">{r.finishedAt ? relativeTime(r.finishedAt, lang) : ""}{r.note ? ` · ${r.note}` : ""}</span>
       </div>
-      {!hidden && r.kind !== "export_premiere" ? <button type="button" className="ws-link" onClick={onPlay}>{t("ws.video.watch")}</button> : null}
-      {!hidden ? (
-        <button type="button" className="ws-icon-button" onClick={onDownload} aria-label={t("ws.video.download")} title={t("ws.video.download")}><Download size={13} /></button>
-      ) : null}
+      {r.kind !== "export_premiere" ? <button type="button" className="ws-link" onClick={onPlay}>{t("ws.video.watch")}</button> : null}
+      <button type="button" className="ws-icon-button" onClick={onDownload} aria-label={t("ws.video.download")} title={t("ws.video.download")}><Download size={13} /></button>
     </li>
   );
 }
@@ -265,17 +257,15 @@ export function jobsToShow(jobs: JobView[], renders: RenderView[]): JobView[] {
   }).slice(0, 4);
 }
 
-/** A Premiere export's link is kept 25 minutes (it lives an hour); ag-go not answering only 30 s, so a click asks again. */
+/** A Premiere export's link is kept 25 minutes (it lives an hour). */
 function linkQuery(client: WorkspaceClient, videoId: string, jobId: string) {
   return {
     queryKey: ["renderLink", videoId, jobId] as const,
-    queryFn: () => client.renderLink(videoId, jobId),
-    staleTime: (q: { state: { data?: RenderLink } }) => (q.state.data?.urlHidden === "footage_check_failed" ? 30_000 : 25 * 60_000),
+    queryFn: (): Promise<RenderLink> => client.renderLink(videoId, jobId),
+    staleTime: 25 * 60_000,
     gcTime: 30 * 60_000,
   };
 }
-
-const hiddenKey = (l: RenderLink) => (l.urlHidden === "footage_check_failed" ? "ws.video.checkFailed" : "ws.video.hidden");
 
 /** Premiere exports started from this tab and not saved yet; kept while the panel is closed so a later visit saves them. */
 const savingExports = new Set<string>();

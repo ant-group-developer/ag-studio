@@ -38,7 +38,7 @@ Mẹo: sửa file **CLAUDE.md** ở tab Tệp để nói về kênh, khán giả
 - **Thêm project**: chọn một hay nhiều project {{site}}. {{ai}} tìm video trong đó khi làm từng video.
 - Trong một video: chọn đúng các video {{site}} muốn dùng (dạng bảng hoặc lưới, lọc và tìm như trên {{site}}).
 
-Bạn chỉ thấy footage mà **chủ dự án** được xem trên {{site}}: {{ai}} và máy render dùng quyền của chủ dự án.
+Chỉ thêm được project mà **bạn tải được bản gốc** trên {{site}} (project chỉ xem được bản watermark thì mở xem chi tiết được, không thêm được). Thêm xong, cả dự án dùng footage của project đó: {{ai}}, chuẩn bị và render, ai trong dự án cũng như nhau.
 
 **Chuẩn bị đầu vào.** Trước khi chọn cảnh, mỗi video cần được chuẩn bị: cảnh đã cắt, khung hình, tờ ghép và lời thoại. {{site}} làm sẵn việc này khi footage được tải lên, nên Studio chỉ chép về, thường mất vài giây. Video nào {{site}} chưa chuẩn bị thì Studio nhờ {{site}} làm ngay và chờ; thẻ việc hiện trạng thái (đang chờ máy, đang cắt cảnh, đang đọc lời thoại), tiến độ và nút Dừng.
 
@@ -102,8 +102,8 @@ Timeline đổi sau khi có thẻ đề xuất thì thẻ hết hiệu lực; nh
     problems: {
       title: "Lỗi thường gặp",
       body: `- **Việc nền đứng ở "đang chờ máy"**: chưa có máy farm nào nhận loại việc này (máy tắt hoặc đang bận). Sau một lúc việc tự dừng và báo vào chat; thử lại sau hoặc báo quản trị.
-- **Footage không chuẩn bị được**: bấm **Thử lại các video lỗi** ở tab Đầu vào. Vẫn lỗi thì xem video đó còn trên {{site}} không và chủ dự án còn quyền xem không.
-- **Không thấy project {{site}} muốn thêm**: chỉ hiện project mà chủ dự án được xem trên {{site}}.
+- **Footage không chuẩn bị được**: bấm **Thử lại các video lỗi** ở tab Đầu vào. Vẫn lỗi thì xem video đó còn trên {{site}} và còn thuộc một project {{site}} của dự án không.
+- **Không thêm được project {{site}}**: thẻ project nói lý do (chỉ xem bản watermark, chưa có video đã phân tích). Cần quyền tải bản gốc của project đó trên {{site}}.
 - **Tin nhắn báo hết hạn mức**: {{ai}} chờ hạn mức gói rồi tự chạy lại tới giờ hẹn. Muốn thôi thì bấm Dừng.
 - **Thẻ xác nhận "hết hiệu lực"**: timeline đã đổi hoặc đã quá 24 giờ. Nhờ {{ai}} đề xuất lại.
 - **File Premiere báo chưa có quyền xem footage**: quyền {{site}} của bạn không phủ footage trong file đó; chia sẻ dự án không mở rộng quyền footage. Bản xem trước và bản cuối vẫn xem được.

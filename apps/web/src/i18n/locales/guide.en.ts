@@ -38,7 +38,7 @@ Tip: edit **CLAUDE.md** in the Files tab to describe the channel, the audience, 
 - **Add project**: pick one or more {{site}} projects. {{ai}} searches their videos when it works on each video.
 - In a video: pick exactly the {{site}} videos to use (as a table or a grid, filtered and searched as on {{site}}).
 
-You only see footage the **project's owner** may view on {{site}}: {{ai}} and the render machines use the owner's access.
+Only projects whose **originals you may download** on {{site}} can be added (a project you see watermarked only opens for a look, it cannot be added). Once added, the whole project uses its footage: {{ai}}, preparing and renders, the same for everyone of the project.
 
 **Preparing inputs.** Before scenes are picked, each video needs preparing: its shots cut, frames, contact sheets and speech. {{site}} does this ahead of time when footage is uploaded, so Studio only copies it, usually in seconds. When {{site}} has not prepared a video yet, Studio asks {{site}} to do it right away and waits; the job card shows where it is (waiting for a machine, cutting shots, reading speech), its progress and a Stop button.
 
@@ -102,8 +102,8 @@ When the timeline changes after a card was proposed, the card expires; ask {{ai}
     problems: {
       title: "Common problems",
       body: `- **A job stuck at "waiting for a machine"**: no farm machine takes this kind of work right now (off or busy). After a while the job stops and says so in the chat; try again later or tell an admin.
-- **Footage that will not prepare**: press **Retry the failed videos** in the Inputs tab. If it still fails, check the video is still on {{site}} and the project's owner may still view it.
-- **The {{site}} project you want is not listed**: only projects the project's owner may view on {{site}} are listed.
+- **Footage that will not prepare**: press **Retry the failed videos** in the Inputs tab. If it still fails, check the video is still on {{site}} and still in one of the project's {{site}} projects.
+- **A {{site}} project cannot be added**: its card says why (watermarked view only, no analysed video yet). You need the right to download its originals on {{site}}.
 - **A message says the quota ran out**: {{ai}} waits for the plan's quota and runs again at the time shown. Press Stop to give up.
 - **A confirm card "expired"**: the timeline changed or 24 hours passed. Ask {{ai}} to propose it again.
 - **The Premiere file says you may not view the footage**: your {{site}} access does not cover the footage in that file; sharing a project does not widen footage access. The preview and the final cut still play.
