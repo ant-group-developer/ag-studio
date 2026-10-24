@@ -167,12 +167,12 @@ describe('inputs (real database)', () => {
     expect(await inputs.upload(p.id, { reference: '1' }, tmp('notes.md', 'x'), req(EDITOR)).catch(code)).toBe('not_video');
   });
 
-  it('audio uploads go up to 100 MB (a whole music track); other files stay at 50 MB', async () => {
+  it('audio uploads go up to 300 MB (a whole music track); other files stay at 50 MB', async () => {
     const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
     const tmp = (name: string, size: number) => { const path = join(mkdtempSync(join(tmpdir(), 'up-')), name); writeFileSync(path, 'x'); return { path, originalname: name, size }; };
     const music = await inputs.upload(p.id, {}, tmp('Nhạc nền.MP3', 80 * 1024 * 1024), req(EDITOR));
     expect(music.source).toMatchObject({ ref: 'context/audio/Nhạc nền.MP3', mediaType: 'audio' });
-    expect(await inputs.upload(p.id, {}, tmp('dai.wav', 101 * 1024 * 1024), req(EDITOR)).catch(code)).toBe('file_too_large');
+    expect(await inputs.upload(p.id, {}, tmp('dai.wav', 301 * 1024 * 1024), req(EDITOR)).catch(code)).toBe('file_too_large');
     expect(await inputs.upload(p.id, {}, tmp('anh.png', 60 * 1024 * 1024), req(EDITOR)).catch(code)).toBe('file_too_large');
   });
 
@@ -181,7 +181,9 @@ describe('inputs (real database)', () => {
     const bucket = new MemoryBucket();
     Object.assign(s.engine, { bucket });
     expect(await inputs.signUpload(p.id, { purpose: 'source', name: 'a.docx', size: 10 }).catch(code)).toBe('docx_not_supported');
-    expect(await inputs.signUpload(p.id, { purpose: 'source', name: 'dai.wav', size: 101 * 1024 * 1024 }).catch(code)).toBe('file_too_large');
+    expect(await inputs.signUpload(p.id, { purpose: 'source', name: 'dai.wav', size: 301 * 1024 * 1024 }).catch(code)).toBe('file_too_large');
+    // prod 23/10: a 10-minute WAV track, refused at the old 100 MB
+    expect(await inputs.signUpload(p.id, { purpose: 'source', name: 'Pale Afternoon.wav', size: 113_909_824, contentType: 'audio/wav' })).toMatchObject({ key: expect.any(String) });
     expect(await inputs.signUpload(p.id, { purpose: 'reference', name: 'notes.md', size: 10 }).catch(code)).toBe('not_video');
     const link = await inputs.signUpload(p.id, { purpose: 'source', name: 'Nhạc nền.mp3', size: 3, contentType: 'audio/mpeg' });
     expect(link).toMatchObject({ contentType: 'audio/mpeg', url: `memory://${link.key}?put=audio%2Fmpeg` });

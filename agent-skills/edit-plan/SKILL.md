@@ -66,8 +66,10 @@ description: Viết kế hoạch dựng của một video — thứ tự shot, �
 Frontmatter `status: draft`. Thân: cấu trúc từng phần, lời dẫn đầy đủ, lý do chọn cảnh, chữ trên hình, nhạc.
 
 ## Sau khi ghi
-1. `validate_file` cho `videos/<id>/edit-plan.json`; sửa đến khi hết lỗi.
-2. Khi người dùng đồng ý: `status: done` trong edit-plan.md, rồi `timeline_from_edit_plan`. Lời dẫn tts cần giọng của
+1. `validate_file` cho `videos/<id>/edit-plan.json` và `survey.json` (chưa có survey thì chạy skill scene-selection
+   trước); sửa đến khi hết lỗi.
+2. Khi người dùng đồng ý: `status: done` trong edit-plan.md, rồi `timeline_from_edit_plan` (thiếu hay sai một trong hai
+   file thì tool báo ngay, không tạo việc). Lời dẫn tts cần giọng của
    dự án (xem `project_info`); chưa có thì nhờ người dùng chọn file giọng mẫu ở tab Đầu vào.
 3. **Dựng lại từ kế hoạch thay toàn bộ timeline.** Mỗi lần sửa timeline bằng `timeline_apply_ops` mà muốn giữ khi dựng lại
    (chuyển cảnh, âm lượng clip, đường âm lượng nhạc, tắt tiếng, chữ, cỡ chữ, màu), ghi luôn thay đổi đó vào

@@ -315,7 +315,8 @@ export const wsVi = {
     failed: "Lượt này lỗi: {{error}}",
     cancelled: "Đã dừng.",
     maxTurns: "Dừng vì đã dùng hết số bước của một lượt; nhắn “tiếp tục” để làm tiếp.",
-    errors: { timeout: "quá thời gian của một lượt", unknown: "không rõ lỗi" },
+    timeoutGoesOn: "Hết thời gian của một lượt; {{ai}} làm tiếp ở lượt sau, giữ những gì đã làm.",
+    errors: { timeout: "quá thời gian của một lượt; nhắn “tiếp tục” để làm tiếp", unknown: "không rõ lỗi" },
     phase: {
       starting: "đang khởi động",
       thinking: "đang suy nghĩ",
@@ -391,7 +392,7 @@ export const wsVi = {
     addFailed: "Không thêm được bài nhạc",
     saveFailed: "Không lưu được thay đổi",
     errors: {
-      audio_too_large: "File quá lớn (nhạc tối đa 100 MB).", audio_invalid: "File không có tiếng, quá ngắn hoặc không đọc được.",
+      audio_too_large: "File quá lớn (nhạc tối đa 300 MB).", audio_invalid: "File không có tiếng, quá ngắn hoặc không đọc được.",
       audio_disabled: "Máy Studio chưa cấu hình ffmpeg nên chưa nhận audio được.",
     },
   },
@@ -642,8 +643,7 @@ export const wsVi = {
     addProject: "Thêm project",
     noProjectYet: "Chưa có project {{site}} nào. Thêm project để agent tìm video trong đó.",
     agGoUnavailable: "Không gọi được {{site}}",
-    ownerCannotSeeProject: "Chủ dự án không thấy video nào trong project {{site}} này",
-    ownerCannotUse: "{{name}}: chủ dự án không dùng được video này trên {{site}}",
+    ownerCannotUse: "{{name}}: chủ dự án chưa dùng được video này trên {{site}} (cần quyền xem thư mục chứa video, hoặc video chưa có bản xem)",
     addFailed: "Không thêm được",
     videoCount_one: "{{count}} video",
     videoCount_other: "{{count}} video",
@@ -906,6 +906,8 @@ export const wsVi = {
     addedCount_other: "Đã thêm {{count}} dự án",
     someFailed_one: "{{count}} dự án không thêm được",
     someFailed_other: "{{count}} dự án không thêm được",
+    refused: "Chủ dự án chưa dùng được",
+    refusedHelp: "Studio tìm cảnh, chuẩn bị và render bằng quyền {{site}} của chủ dự án. Chủ dự án chưa dùng được video của các project dưới đây: cần quyền xem thư mục chứa project (quyền theo danh mục chưa đủ), và project phải có video đã phân tích. Nhờ quản lý {{site}} cấp quyền rồi thêm lại.",
   },
   research: {
     newTitle: "Crawl YouTube",

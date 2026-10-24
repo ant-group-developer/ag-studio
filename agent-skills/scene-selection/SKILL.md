@@ -14,6 +14,13 @@ description: Chọn cảnh cho một video — xem tờ ghép và khung hình c�
   khung `inputs/<asset>/frames/NNN.jpg` (NNN = số cảnh của nguồn, bắt đầu 001 ứng với `s…-000`), lời thoại
   `inputs/<asset>/transcript.md`. Mở ảnh bằng Read để xem. Xem tờ ghép trước, mở khung riêng khi cần nhìn kỹ.
 
+## Làm từng nguồn, ghi dần
+Một lượt có giới hạn thời gian; video nhiều nguồn rất dễ hết giờ giữa chừng. Vì vậy:
+- Trước khi xem: đọc `survey.json` nếu đã có. Nguồn đã có đủ dòng thì bỏ qua, làm tiếp nguồn chưa chấm.
+- Chấm theo tờ ghép (16 cảnh một tờ). Chỉ mở khung riêng cho cảnh còn phân vân, không mở lần lượt từng khung.
+- Xem xong **mỗi nguồn** thì ghi ngay các dòng của nguồn đó vào `survey.json` (giữ các dòng đã có), rồi mới sang nguồn
+  sau. Lượt bị cắt thì lượt sau không phải xem lại từ đầu.
+
 ## `survey.json` — Studio đọc, đúng một dòng cho mỗi cảnh của `sources/index.json`
 ```json
 {

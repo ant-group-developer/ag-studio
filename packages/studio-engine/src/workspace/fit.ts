@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   EditPlanSchema, ShotsIndexSchema, StudioSurveySchema, TextLookSchema, TranscriptSchema, VIDEO_LOOKS,
-  type EditPlan, type EpisodeAsset, type ShotsIndex, type StudioMusic, type TextLook, type TimelineV4, type Transcript, type VideoLook,
+  type EditPlan, type EpisodeAsset, type ShotsIndex, type StudioMusic, type StudioSurvey, type TextLook, type TimelineV4, type Transcript, type VideoLook,
 } from "@harness/contracts";
 import { clampClipOuts, timelineIssues, type BeatGrid } from "@harness/core";
 import { StudioTtsPayloadSchema, TTS_MANIFEST_PATH, TtsManifestSchema } from "@ag-farm/protocol";
@@ -126,6 +126,30 @@ export function readEditPlan(dir: string, videoId: string, shots: ShotsIndex): E
   return parsed.data;
 }
 
+/** The video's survey, checked against the schema; what is missing or wrong is said with the rows at fault. */
+export function readSurvey(dir: string, videoId: string): StudioSurvey {
+  const path = join(dir, surveyPath(videoId));
+  if (!existsSync(path)) throw new Error(`chưa có ${surveyPath(videoId)} (skill scene-selection)`);
+  let raw: unknown;
+  try { raw = JSON.parse(readFileSync(path, "utf8")); } catch (e) { throw new Error(`${surveyPath(videoId)} không phải JSON: ${(e as Error).message}`); }
+  const parsed = StudioSurveySchema.safeParse(raw);
+  if (!parsed.success) throw new Error(`${surveyPath(videoId)} sai: ${parsed.error.issues.slice(0, 3).map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`);
+  return parsed.data;
+}
+
+/**
+ * What keeps a fit of the video from starting: the edit plan and the survey, read as the job reads them. The agent tool
+ * asks before queueing (prod 14–23/10: every failed fit had been queued minutes before its survey.json existed).
+ */
+export async function fitInputProblems(db: StudioDb, dir: string, projectId: string, videoId: string): Promise<string[]> {
+  const problems: string[] = [];
+  const index = await buildVideoIndex(db, dir, projectId, videoId);
+  for (const read of [() => readEditPlan(dir, videoId, shotsOfIndex(index)), () => readSurvey(dir, videoId)]) {
+    try { read(); } catch (e) { problems.push((e as Error).message); }
+  }
+  return problems;
+}
+
 /** Queues building the video's timeline from its edit plan. */
 export async function queueFit(db: StudioDb, p: { projectId: string; videoId: string; threadId?: string | null; continueAgent?: boolean; createdBy: string; actorRole?: JobRecord["actor_role"] }, now = new Date().toISOString()): Promise<JobRecord> {
   const v = await requireVideo(db, p.videoId);
@@ -222,9 +246,7 @@ export function fitHandler(d: FitDeps): JobHandler {
     const index = await buildVideoIndex(d.db, ctx.workspaceDir, project.id, videoId);
     const shots = shotsOfIndex(index);
     const plan = readEditPlan(ctx.workspaceDir, videoId, shots);
-    const surveyRaw = existsSync(join(ctx.workspaceDir, surveyPath(videoId))) ? JSON.parse(readFileSync(join(ctx.workspaceDir, surveyPath(videoId)), "utf8")) as unknown : null;
-    const survey = StudioSurveySchema.safeParse(surveyRaw);
-    if (!survey.success) throw new Error(`${surveyPath(videoId)} thiếu hoặc sai (skill scene-selection)`);
+    const survey = readSurvey(ctx.workspaceDir, videoId);
     await ctx.setUnits(plan.target_seconds);
 
     // narration: read in the project's voice; declined: written lines (subtitles); none at all: say so
@@ -277,7 +299,7 @@ export function fitHandler(d: FitDeps): JobHandler {
       }
     }
     const fitted = fitCutTimeline({
-      productionId: project.id, plan, shots, survey: survey.data, transcript: transcriptOfIndex(ctx.workspaceDir, index), voice: read, written,
+      productionId: project.id, plan, shots, survey, transcript: transcriptOfIndex(ctx.workspaceDir, index), voice: read, written,
       sources: index.sources.map((s) => ({ asset_id: s.asset_id, source_id: s.source_id })), assets: videoAssets(index, ctx.workspaceDir),
       canvas: CANVAS[project.aspect], fps: 30, music, clipAudio: true, textStyle: plan.text_look ?? branding.textLook,
       look: plan.look ?? branding.look, beats,

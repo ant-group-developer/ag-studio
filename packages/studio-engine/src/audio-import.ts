@@ -19,7 +19,8 @@ export { VOICE_ORIGINS, type AudioSource, type VoiceOrigin } from "@harness/cont
 
 export type AudioKind = "voice" | "music";
 
-export const AUDIO_MAX_BYTES: Record<AudioKind, number> = { voice: 20 * 1024 * 1024, music: 100 * 1024 * 1024 };
+/** Music up to 300 MB: a 10-minute WAV track is ~110 MB (prod 23/10: three refused at the old 100 MB). */
+export const AUDIO_MAX_BYTES: Record<AudioKind, number> = { voice: 20 * 1024 * 1024, music: 300 * 1024 * 1024 };
 /** OmniVoice clones from a few seconds; a longer sample only slows every line down. */
 export const VOICE_MIN_SECONDS = 3;
 export const VOICE_MAX_SECONDS = 20;

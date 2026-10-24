@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   agentToolList, agentTools, callAgentTool, createAgentRunner, createProject, createThread, createVideo, getMessage, getProject, getThread, getVideo,
-  listFileVersions, listLessonProposals, listMessages, listVideos, MemoryBucket, mcpToolNames, postUserMessage, projectDir, requestCancel, seedWorkspace,
+  listFileVersions, listLessonProposals, listMessages, listVideos, MemoryBucket, mcpToolNames, postSystemMessage, postUserMessage, projectDir, requestCancel, seedWorkspace,
   verifyAgentToken, type StudioDb,
 } from "../src/index.js";
 import { world } from "./helpers.js";
@@ -194,6 +194,42 @@ describe("agent runner (fake CLI, real MCP server)", { timeout: 60_000 }, () => 
     await requestCancel(db, turn!.id);
     await runner.idle();
     expect(await turnOf(turn!.id)).toMatchObject({ status: "cancelled", text: "đang làm" });
+  });
+
+  it("a turn out of time keeps what it wrote and goes on in the same session (prod 22-23/10: 7 turns cut at 20 minutes)", async () => {
+    const { runner, say, turnOf, db, thread, dir } = await setup({}, { deadlineMs: 1500 });
+    const { turn } = await say("@fake say đang chọn cảnh\n@fake write videos/notes.md dở dang\n@fake hang");
+    await runner.tick();
+    await runner.idle();
+    expect(await turnOf(turn!.id)).toMatchObject({ status: "done", error: "timeout", text: "đang chọn cảnh" });
+    expect(readFileSync(join(dir, "videos", "notes.md"), "utf8")).toBe("dở dang");
+    const after = (await listMessages(db, thread.id)).slice(2);
+    expect(after.map((m) => [m.role, m.status, m.trigger])).toEqual([["system", "done", "timeout"], ["assistant", "pending", "timeout"]]);
+    expect(after[0]!.text).toContain("hết thời gian của một lượt");
+    expect(after[0]!.text).toContain("làm tiếp từ chỗ dừng");
+    expect(after[1]).toMatchObject({ created_by: "auth0|u", actor_role: "editor" });
+  });
+
+  it("out of time with auto-continue off, or after 3 automatic turns in a row: the turn fails and waits for a person", async () => {
+    const { runner, say, turnOf, db, thread, project } = await setup({}, { deadlineMs: 1500 });
+    await db.run("UPDATE projects SET settings = ? WHERE id = ?", [JSON.stringify({ auto_continue: false }), project.id]);
+    const { turn } = await say("@fake hang");
+    await runner.tick();
+    await runner.idle();
+    expect(await turnOf(turn!.id)).toMatchObject({ status: "failed", error: "timeout" });
+    expect((await listMessages(db, thread.id)).map((m) => m.role)).toEqual(["user", "assistant"]);
+
+    // auto-continue on, but this is already the third automatic turn since the person's message
+    await db.run("UPDATE projects SET settings = ? WHERE id = ?", [JSON.stringify({ auto_continue: true }), project.id]);
+    await say("@fake say ok");
+    await runner.tick(); await runner.idle();
+    // a system message reads "[Studio] <text>": the fake CLI only sees the line after
+    for (const text of ["việc 1 xong", "việc 2 xong", "việc 3 xong\n@fake hang"]) {
+      await postSystemMessage(db, { threadId: thread.id, text, trigger: "job", continueAgent: true, actor: { id: "auth0|u", role: "editor" } });
+      await runner.tick(); await runner.idle();
+    }
+    const last = (await listMessages(db, thread.id)).at(-1)!;
+    expect(last).toMatchObject({ role: "assistant", trigger: "job", status: "failed", error: "timeout" });
   });
 
   it("a lost session starts a new one with a recap; the plan's limit waits and retries", async () => {

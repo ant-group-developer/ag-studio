@@ -167,7 +167,7 @@ export class InputsController {
       if (body.kind === 'ag_go_project') {
         const seen = await this.footage.search(owner, { projectIds: [body.ref], limit: 1 });
         if (seen.total === 0 && seen.items.length === 0) {
-          throw new StudioRunError('invalid', `Chủ dự án không thấy video đã phân tích nào trong project ${this.siteName.current()} này`, { code: 'owner_cannot_access' });
+          throw new StudioRunError('invalid', `Chủ dự án chưa dùng được video nào của project ${this.siteName.current()} này: cần quyền xem thư mục chứa project (quyền theo danh mục chưa đủ), hoặc project chưa có video đã phân tích`, { code: 'owner_cannot_access' });
         }
         const s = await addSource(this.engine.db, { projectId, kind: 'ag_go_project', ref: body.ref, mediaType: 'mixed', label: body.label, meta: { videos: seen.total }, addedBy: userId });
         return { source: await this.item(projectId, s.id) };
@@ -178,7 +178,7 @@ export class InputsController {
       }
       const { missing } = await this.footage.check(owner, [body.ref]);
       if (missing.length) {
-        throw new StudioRunError('invalid', `Chủ dự án không dùng được video này trên ${this.siteName.current()} (không có quyền hoặc chưa có bản xem)`, { code: 'owner_cannot_access' });
+        throw new StudioRunError('invalid', `Chủ dự án chưa dùng được video này trên ${this.siteName.current()}: cần quyền xem thư mục chứa video, hoặc video chưa có bản xem`, { code: 'owner_cannot_access' });
       }
       const s = await addSource(this.engine.db, {
         projectId, videoId: body.videoId ?? null, kind: 'ag_go_asset', ref: body.ref, mediaType: 'video', label: body.label, meta: body.meta ?? {}, addedBy: userId,
@@ -224,7 +224,7 @@ export class InputsController {
   /**
    * A document, image or audio file into `context/` (videos come from ag-go), or, with `reference`, a reference video
    * to learn an edit style from (`context/references/`, never footage): saved under its own name and listed as a
-   * source. Word files are refused (save them as PDF). Audio up to 100 MB (a whole music track), other files 50 MB.
+   * source. Word files are refused (save them as PDF). Audio up to 300 MB (a whole music track), other files 50 MB.
    * Multipart `file`, or `{uploadKey, name}` once the browser put the file on the bucket (`uploads`).
    */
   @Post('sources/upload')

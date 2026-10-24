@@ -3,7 +3,7 @@
  * agent's survey.json and edit-plan.json, the narration read on a fake farm into the voice store, the fitted timeline
  * saved as a revision and written to videos/<id>/timeline.json.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { JobView as FarmJobView } from "@ag-farm/protocol";
@@ -174,6 +174,22 @@ describe("timeline from the edit plan", () => {
     await s.run();
     expect((await getJob(s.db, b.id))!.error).toContain("#1 s000-009");
     expect(existsSync(join(s.vdir, "timeline.json"))).toBe(false);
+  });
+
+  it("says what is wrong with the survey: missing, not JSON, or which rows break the schema", async () => {
+    const s = await setup();
+    s.writePlan("none");
+    const errorOf = async () => {
+      const j = await queueFit(s.db, { projectId: s.project.id, videoId: s.video.id, createdBy: "u" }, NOW);
+      await s.run();
+      return (await getJob(s.db, j.id))!.error;
+    };
+    rmSync(join(s.vdir, "survey.json"));
+    expect(await errorOf()).toBe(`chưa có videos/${s.video.id}/survey.json (skill scene-selection)`);
+    writeFileSync(join(s.vdir, "survey.json"), "{ shots: ");
+    expect(await errorOf()).toContain(`videos/${s.video.id}/survey.json không phải JSON`);
+    writeFileSync(join(s.vdir, "survey.json"), JSON.stringify({ schema_version: "harness.survey-index/v2", shots: [{ shot_id: "s000-000", in: 0, out: 10 }] }));
+    expect(await errorOf()).toMatch(new RegExp(`^videos/${s.video.id}/survey\\.json sai: shots\\.0\\.`));
   });
 });
 

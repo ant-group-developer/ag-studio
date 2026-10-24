@@ -173,7 +173,25 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
       ["p1", { kind: "ag_go_project", ref: "agp-4", label: "Tràng An" }],
     ]);
     const warning = await screen.findByText("1 dự án không thêm được", { selector: ".ant-modal-confirm-title" });
-    expect(warning.closest(".ant-modal-content")).toHaveTextContent("Tràng An: Chủ dự án không thấy video nào trong project AG Go này");
+    const content = warning.closest(".ant-modal-content")!;
+    expect(content).toHaveTextContent("Studio tìm cảnh, chuẩn bị và render bằng quyền AG Go của chủ dự án");
+    expect(content).toHaveTextContent("quyền theo danh mục chưa đủ");
+    expect(within(content as HTMLElement).getByText("Tràng An", { selector: "strong" })).toBeInTheDocument();
+    // refused for the owner: unticked and marked, so it is not added again until the drawer opens anew
+    expect(within(drawer).queryByText("Đã chọn 1 dự án")).toBeNull();
+    expect(within(drawer).getByTestId("agp-card-agp-4")).toHaveTextContent("Chủ dự án chưa dùng được");
+    expect(within(drawer).getByRole("checkbox", { name: "Tràng An" })).toBeDisabled();
+  });
+
+  it("a project that failed for another reason stays ticked, with its error, to try again", async () => {
+    ws.addSource.mockRejectedValueOnce(new StudioHttpError(503, { message: "Studio đang bận" }));
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Thêm project" }));
+    const drawer = await screen.findByRole("dialog", { name: /Chọn project AG Go/ });
+    fireEvent.click(await within(drawer).findByRole("checkbox", { name: "Ninh Bình mùa lúa" }));
+    fireEvent.click(within(drawer).getAllByRole("button", { name: /Thêm 1 dự án/ })[0]!);
+    const warning = await screen.findByText("1 dự án không thêm được", { selector: ".ant-modal-confirm-title" });
+    expect(warning.closest(".ant-modal-content")).toHaveTextContent("Ninh Bình mùa lúa: Studio đang bận");
     expect(within(drawer).getByText("Đã chọn 1 dự án")).toBeInTheDocument();
   });
 

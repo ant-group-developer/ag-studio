@@ -74,7 +74,7 @@ describe('MusicLibraryController (real database)', () => {
 
   it('only an admin gets a link to put a track on the bucket; a track too large or not uploaded is refused', async () => {
     expect(await failure(controller().signUpload({ name: 'a.mp3', size: 10 }, req('auth0|editor')))).toEqual({ type: 'ForbiddenException', code: undefined });
-    expect(await failure(controller().signUpload({ name: 'a.mp3', size: 101 * 1024 * 1024 }, req(ADMIN)))).toEqual({ type: 'PayloadTooLargeException', code: 'audio_too_large' });
+    expect(await failure(controller().signUpload({ name: 'a.mp3', size: 301 * 1024 * 1024 }, req(ADMIN)))).toEqual({ type: 'PayloadTooLargeException', code: 'audio_too_large' });
     const link = await controller().signUpload({ name: 'a.mp3', size: 10, contentType: 'audio/mpeg' }, req(ADMIN));
     expect(link.key).toMatch(/^uploads\/library\//);
     const form = { displayName: 'Sáng', moods: 'calm', origin: 'own', originNote: 'nhóm', uploadKey: link.key, name: 'a.mp3' };

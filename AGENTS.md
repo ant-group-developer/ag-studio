@@ -125,6 +125,10 @@ nhưng không code nào đọc.
 - Slot Claude (`claude-slots.ts`): mỗi lượt giữ dòng `lease` `agent:<id>` (chờ: `agent-wait:<id>`, cũng tính vào cap), nên mọi
   worker dùng chung một cap: `studio_settings.claude.max_concurrent` (admin sửa ở màn Hàng đợi) thắng
   `STUDIO_CLAUDE_MAX_CONCURRENT` (1–100, mặc định 20). Hết hạn mức gói: `rate_limited`, chờ 5→60 phút rồi chạy lại.
+- Lượt hết giờ (`STUDIO_AGENT_TURN_MINUTES`, mặc định 20): file đã ghi vẫn giữ; dự án bật `auto_continue` và chưa quá
+  `AUTO_TURNS_IN_A_ROW` (3) lượt tự chạy từ tin của người thì lượt đánh `done` + `error: timeout`, Studio đăng ghi chú
+  (`trigger: timeout`, migration `0003`) và xếp lượt mới tiếp tục cùng session; tin người nhắn lúc đó được trả lời trước.
+  Không thì lượt `failed` như cũ.
 - **Tên AI trên web** (`studio_settings.assistant.name`): admin đặt ở màn Hàng đợi, mặc định `Claude`; chỉ là tên hiển thị.
   Chuỗi i18n nhắc AI dùng `{{ai}}` và component gọi `useAiTranslation()` (`apps/web/src/modules/common/assistant-name.tsx`).
 - **Tên kho footage** là `siteName` của chính ag-go (`GET /settings/public`, không cần đăng nhập; mặc định `AG Go`), không
@@ -145,7 +149,9 @@ nhưng không code nào đọc.
   vào kho giọng `voice-store.ts`), `render_preview|render_final|export_premiere`, `thumbnail`, `style_watch`, `music_beats`
   (nhịp của nhạc vừa nhập hoặc vừa chọn, migration `0002`; xem mục nhạc bên dưới). Mỗi job báo
   `phase`, `progress`, `eta_seconds` (`eta.ts`, không đoán khi đang chờ máy farm), máy farm; Dừng = `cancel_requested` (kill
-  ffmpeg / huỷ job farm). Xong thì đăng tin hệ thống vào luồng và cho agent làm tiếp (≤ 3 lượt tự chạy liên tiếp, tắt bằng
+  ffmpeg / huỷ job farm). Hỏi farm lỗi tạm (timeout, mất kết nối, 5xx/408/429) thì `runFarmStep` hỏi lại thưa dần (tối đa
+  30 s), phase "Farm · mất liên lạc, đang hỏi lại"; quá 15 phút không trả lời mới hỏng và huỷ job farm; 4xx hỏng ngay.
+  Xong thì đăng tin hệ thống vào luồng và cho agent làm tiếp (≤ 3 lượt tự chạy liên tiếp, tắt bằng
   `settings.auto_continue`). Worker thiếu công cụ thì job loại đó chờ worker khác (`projectJobHandlers`).
 - Lỗi yt-dlp có mã (`classifyYtDlp`, `YtDlpError`): `youtube_blocked` (YouTube chặn máy chủ: bot check, 429) làm
   `style_watch` dừng ngay, không thử video còn lại; job lỗi có mã ghi `result.error_code` (`JobError`). Không cookie, không
@@ -180,7 +186,8 @@ nhưng không code nào đọc.
   theo `sliceStart`), một ffmpeg chỉ làm tiếng (`streams: "audio"`, khối loudnorm của report lấy từ lượt này), rồi
   `finalConcatArgs` nối bằng `-c copy`; `decodeThreads` (worker 8) đặt `-threads` cho bộ giải mã từng mezzanine. Một
   lượt mở mọi clip cùng lúc và mỗi bộ giải mã 4K giữ khung hình của từng luồng: bản 137 clip ngốn ~30 GB trên máy farm
-  32 GB. Một đoạn lỗi dừng cả lượt, NVENC lỗi thì cả lượt làm lại bằng cpu. Bản cuối: `requirements` theo máy chọn (`renderRequirements`; ghim `node_id` qua
+  32 GB. Một đoạn lỗi dừng cả lượt, NVENC lỗi thì cả lượt làm lại bằng cpu, trừ khi lỗi vì hết giờ hoặc ngân sách
+  (`timeoutSeconds`, worker `render_budget_s`: bản cuối 3 giờ, xem trước 1 giờ) còn dưới 5 phút ("not retried on cpu"). Bản cuối: `requirements` theo máy chọn (`renderRequirements`; ghim `node_id` qua
   thẻ xác nhận); độ phân giải `resolution: 1080p | 4k` (nút Render bản cuối và Xuất Premiere, thẻ `render_final`/`export_premiere`): timeline luôn dựng 1920×1080
   (`fit.ts`), `renderCanvas` (`payloads.ts`) đưa canvas của composition lên cạnh ngắn 2160 lúc gửi, chữ tự to theo (`studioDefaultBrand`);
   Premiere: sequence bằng canvas đó, worker phóng từng clip vừa khung như render (Basic Motion, pad/crop), nên Premiere 4K
@@ -207,7 +214,7 @@ nhưng không code nào đọc.
   gốc; `projectAudioFiles` = audio có dòng nguồn + mọi file dưới `context/audio/`, cả file tải qua tab Tệp), hoặc nhạc là một
   bài của kho nhạc (`setProjectLibraryMusic`, `track: library:music/…`, không chép file, không cần ffmpeg); bỏ chọn nhạc
   (editor) thì lấy kho nhạc theo mood của kế hoạch dựng/branding (`music-library.ts`). API cần `STUDIO_FFMPEG_PATH` để nhận
-  file audio (ffprobe mặc định cạnh ffmpeg như worker; `GET audio` trả `enabled`). Audio tải lên ≤ 100 MB, file khác ≤ 50 MB.
+  file audio (ffprobe mặc định cạnh ffmpeg như worker; `GET audio` trả `enabled`). Audio tải lên ≤ 300 MB (file WAV 10 phút ~110 MB), file khác ≤ 50 MB.
   Web: thẻ "Giọng đọc và nhạc nền" ở đầu tab Đầu vào (`inputs/AudioControls.tsx`, `AudioCard`): tải lên rồi dùng ngay, chọn
   file đã tải (hộp hai cột `inputs/MusicPicker.tsx`: tìm, tích, nghe thử từng bài, thời lượng đọc từ metadata của `<audio>`
   | thứ tự phát kéo thả bằng `@dnd-kit` (chuột và bàn phím), tổng thời lượng trừ chuyển mờ; file nghe qua `listenUrl` =

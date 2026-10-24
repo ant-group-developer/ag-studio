@@ -28,7 +28,7 @@ import { threadMarkdown } from "./history.js";
 import { agentSystemPrompt, agentTurnPrompt, youtubeBlockLines } from "./prompt.js";
 import { youtubeBlock } from "../settings.js";
 import {
-  cancelRequested, finishTurn, getMessage, getThread, listThreadRefs, markAgentTurnRunning, markSessionStarted, nextPendingAgentTurns,
+  AUTO_TURNS_IN_A_ROW, automaticTurnsInARow, cancelRequested, finishTurn, getMessage, getThread, listThreadRefs, markAgentTurnRunning, markSessionStarted, nextPendingAgentTurns,
   orphanedAgentTurns, postSystemMessage, queueFollowUp, requeueAgentTurn, resetSession, setTurnChangedFiles, turnInput, updateRunningTurn, type MessageRecord,
 } from "./threads-db.js";
 import { signAgentToken } from "./token.js";
@@ -93,6 +93,12 @@ export interface AgentRunner {
 }
 
 const plusMinutes = (now: string, m: number) => new Date(Date.parse(now) + m * 60_000).toISOString();
+
+/** The note a turn out of time leaves for the turn that goes on (it resumes the same session). */
+function timeoutNote(deadlineMs: number): string {
+  const limit = deadlineMs >= 60_000 ? `${Math.round(deadlineMs / 60_000)} phút` : `${Math.round(deadlineMs / 1000)} giây`;
+  return `Lượt trước hết thời gian của một lượt (${limit}) khi đang làm dở. Các file đã ghi vẫn còn: làm tiếp từ chỗ dừng, đừng làm lại phần đã xong; việc dài thì chia ra, ghi kết quả dần.`;
+}
 
 export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
   const { db, logger } = o;
@@ -268,6 +274,9 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
       let llmCallId: string | null = null;
       try { llmCallId = await record(message, out, wall); } catch (e) { logger.warn("agent turn not logged", { error: String(e) }); }
       const base = { text: out.text, parts: out.state.parts, costUsd: out.state.result?.cost_usd ?? null, llmCallId };
+      // out of time: goes on by itself while the project allows it and a person spoke not too many turns ago
+      const goesOnAfterTimeout = out.status === "timeout" && projectSettings(project).auto_continue
+        && await automaticTurnsInARow(db, thread.id) < AUTO_TURNS_IN_A_ROW;
       if (out.status === "rate_limited") {
         const wait = AGENT_RATE_LIMIT_BACKOFF_MINUTES[Math.min(message.attempts - 1, AGENT_RATE_LIMIT_BACKOFF_MINUTES.length - 1)] ?? 60;
         await finishTurn(db, messageId, { ...base, status: "rate_limited", error: "rate_limited", notBefore: plusMinutes(now(), wait) }, now());
@@ -275,6 +284,10 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
         await finishTurn(db, messageId, { ...base, status: "done", error: out.status === "max_turns" ? "max_turns" : null }, now());
       } else if (out.status === "cancelled") {
         await finishTurn(db, messageId, { ...base, status: "cancelled", error: null }, now());
+      } else if (goesOnAfterTimeout) {
+        // what it wrote is kept (scanned below); the next turn resumes the same session from where this one stopped
+        logger.warn("agent turn out of time; it goes on in a new turn", { message_id: messageId });
+        await finishTurn(db, messageId, { ...base, status: "done", error: "timeout" }, now());
       } else {
         const error = out.status === "timeout" ? "timeout" : out.error ?? "failed";
         logger.warn("agent turn failed", { message_id: messageId, status: out.status, error, stderr: out.stderr.slice(-500) });
@@ -288,7 +301,12 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
         await writeHistory(thread.id, dir);
         const fixing = out.status === "done" && message.trigger !== "autofix" && projectSettings(project).auto_fix
           ? await askToFix(thread.id, dir, changed, message) : false;
-        if (!fixing) await queueFollowUp(db, thread.id, now());
+        // a person's message that came in meanwhile is answered first; otherwise a turn out of time goes on
+        const followed = fixing ? null : await queueFollowUp(db, thread.id, now());
+        if (!fixing && !followed && goesOnAfterTimeout) {
+          const actor = message.created_by && message.actor_role ? { id: message.created_by, role: message.actor_role } : null;
+          await postSystemMessage(db, { threadId: thread.id, text: timeoutNote(o.deadlineMs), trigger: "timeout", continueAgent: true, actor }, now());
+        }
       }
       await auditTurn(message, thread.video_id, project, out, Date.now() - started, changed);
     } catch (e) {

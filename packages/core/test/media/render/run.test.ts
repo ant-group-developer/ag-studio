@@ -667,6 +667,43 @@ describe("renderComposition (fake ffmpeg)", () => {
     expect(finalAttempts).toBe(2);
   });
 
+  it("an nvenc final encode that ran out of the render's time gets no cpu retry, and says so (prod 20/10: 'timed out after 1s')", async () => {
+    let finalAttempts = 0;
+    const { spawn } = fakeSpawn((argv) => {
+      if (!argv.includes("[vout]")) return {};
+      finalAttempts++;
+      return { hang: true };
+    });
+    const { d, outDir } = fakeWorld({ spawn, nvenc: true });
+
+    await expect(renderComposition(d, input({ composition: fakeComposition(), outDir, encoderCfg: "auto", timeoutSeconds: 2, sourceChecksums: CHECKSUMS })))
+      .rejects.toMatchObject({ code: "IO_ERROR", message: expect.stringMatching(/^final encode: ffmpeg timed out after .*; not retried on cpu: the render's 2 s are spent$/) });
+    expect(finalAttempts).toBe(1);
+  });
+
+  it("an nvenc failure with under 5 minutes of the render's time left gets no cpu retry either", async () => {
+    let finalAttempts = 0;
+    const { spawn } = fakeSpawn((argv) => {
+      if (!argv.includes("[vout]")) return {};
+      finalAttempts++;
+      return { exit: 1 };
+    });
+    const { d, outDir } = fakeWorld({ spawn, nvenc: true });
+
+    await expect(renderComposition(d, input({ composition: fakeComposition(), outDir, encoderCfg: "auto", timeoutSeconds: 200, sourceChecksums: CHECKSUMS })))
+      .rejects.toMatchObject({ message: expect.stringMatching(/^final encode: ffmpeg exited 1.*; not retried on cpu: \d+ s of the render's 200 s are left$/) });
+    expect(finalAttempts).toBe(1);
+  });
+
+  it("a mezzanine whose nvenc encode ran out of time is not retried on cpu", async () => {
+    const { spawn, calls } = fakeSpawn((argv) => (argv.includes("h264_nvenc") && !argv.includes("[vout]") ? { hang: true } : {}));
+    const { d, outDir } = fakeWorld({ spawn, nvenc: true });
+
+    await expect(renderComposition(d, input({ composition: fakeComposition(), outDir, encoderCfg: "auto", timeoutSeconds: 2, sourceChecksums: CHECKSUMS })))
+      .rejects.toMatchObject({ message: expect.stringContaining("not retried on cpu") });
+    expect(calls.filter((c) => c.some((a) => a.includes("cpu retry")) || (c.includes("libx264") && !c.includes("[vout]")))).toHaveLength(0);
+  });
+
   // Task 11 (the real 4K run): a mix whose true peak sits 17.9 dB above its integrated loudness cannot be
   // lifted to -14 LUFS without breaching TP=-1, so ffmpeg answers `linear=true` with `dynamic` normalization,
   // pins the peak at -1 dBTP and delivers ~-16 LUFS -- which `render-valid` then rejects with nothing but

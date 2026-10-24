@@ -10,7 +10,7 @@ import { applyTimelineOps, timelineIssues, type TimelineIssue } from "@harness/c
 import { StudioRunError } from "../errors.js";
 import { AUDIO_MAX_BYTES, AudioImportError, MUSIC_CROSSFADE_MAX_SECONDS, MUSIC_MIX_MAX_PARTS } from "../audio-import.js";
 import { listLibraryMusic } from "../music-library.js";
-import { queueFit, timelineSnapshotPath, videoAssets, writeTimelineSnapshot } from "../workspace/fit.js";
+import { fitInputProblems, queueFit, timelineSnapshotPath, videoAssets, writeTimelineSnapshot } from "../workspace/fit.js";
 import { getJob } from "../workspace/jobs-db.js";
 import { getVideoRevision, latestVideoRevision, requireVideo, saveVideoRevision } from "../workspace/project-db.js";
 import { RevisionConflictError } from "../studio-db.js";
@@ -140,11 +140,15 @@ async function waitFor(ctx: AgentToolContext, jobId: string, seconds: number): P
 export const TIMELINE_TOOLS: AgentTool[] = [
   tool({
     name: "timeline_from_edit_plan",
-    description: "Dựng timeline của video từ videos/<id>/edit-plan.json và survey.json (việc nền: đọc lời dẫn bằng giọng của dự án trên farm, khớp hình với lời, chữ theo branding, nhạc của dự án hoặc thư viện). Lưu thành bản timeline mới; Studio ghi videos/<id>/timeline.json để bạn đọc.",
+    description: "Dựng timeline của video từ videos/<id>/edit-plan.json và survey.json (việc nền: đọc lời dẫn bằng giọng của dự án trên farm, khớp hình với lời, chữ theo branding, nhạc của dự án hoặc thư viện). Chỉ gọi khi cả hai file đã qua validate_file; thiếu hay sai thì tool báo ngay, không tạo việc. Lưu thành bản timeline mới; Studio ghi videos/<id>/timeline.json để bạn đọc.",
     input: z.object({ video_id: z.string().min(1).optional(), wait_s: waitS }).strict(),
     role: "editor",
     run: async (ctx, a) => {
       const v = await videoOf(ctx, a.video_id);
+      const problems = await fitInputProblems(ctx.db, ctx.workspaceDir, ctx.project.id, v.id);
+      if (problems.length) {
+        return { text: `Chưa dựng được timeline:\n- ${problems.join("\n- ")}\nViết hoặc sửa file (skill scene-selection cho survey.json, edit-plan cho edit-plan.json), kiểm bằng validate_file, rồi gọi lại.`, isError: true };
+      }
       const job = await queueFit(ctx.db, { projectId: ctx.project.id, videoId: v.id, threadId: ctx.thread.id, continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role }, ctx.now());
       return waitFor(ctx, job.id, a.wait_s ?? 45);
     },

@@ -14,7 +14,7 @@ import { clock } from "../workspace/time";
 const AUDIO_ACCEPT = ".mp3,.wav,.m4a,.aac,.ogg,.flac";
 const MB = 1024 * 1024;
 /** The largest audio file the API takes (`AUDIO_UPLOAD_MAX_BYTES`, a whole music track). */
-const AUDIO_MAX_MB = 100;
+const AUDIO_MAX_MB = 300;
 
 /**
  * Why a file did not upload, naming it. A 413 without Studio's own answer comes from a proxy in front of the API
@@ -149,7 +149,7 @@ function MusicLibraryModal({ open, current, onPick, onClose }: {
   );
 }
 
-/** Uploads audio files one by one into the project (none over 100 MB), saying how far it is; answers what went and why the rest did not. */
+/** Uploads audio files one by one into the project (none over 300 MB), saying how far it is; answers what went and why the rest did not. */
 function useAudioUpload(projectId: string) {
   const { t } = useTranslation();
   const client = useWorkspaceClient();

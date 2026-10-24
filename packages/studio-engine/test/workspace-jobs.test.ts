@@ -334,6 +334,62 @@ describe("farm step of a project job", () => {
   });
 });
 
+/** The owner client's errors: a timed out request, a dropped connection, an HTTP status (`FarmHttpError`). */
+const timedOut = () => Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+const httpError = (status: number) => Object.assign(new Error(`Farm API error ${status}`), { name: "FarmHttpError", status });
+
+describe("losing touch with the farm while a job runs on it", () => {
+  it("keeps asking through timeouts, dropped connections and 5xx, and says so meanwhile", async () => {
+    const { db, bucket, project } = await setup();
+    const job = await createJob(db, { projectId: project.id, kind: "render_final", title: "R", request: {}, createdBy: "u" }, at(0));
+    const leased = { status: "leased", node_id: "00000000-0000-4000-8000-0000000000a1", progress_percent: 40 } as const;
+    const { farm, calls } = fakeFarm([{}, leased, leased, { status: "completed" }]);
+    const answer = farm.getJob;
+    const fails = [timedOut(), new TypeError("fetch failed"), httpError(502)];
+    let asked = 0;
+    farm.getJob = async (id) => { if (++asked >= 2 && fails.length) throw fails.shift(); return answer(id); };
+    const phases: string[] = [];
+    const r = await runFarmStep({ db, bucket, farm, pollMs: 1 }, job, { type: "studio.render_final", payload: {}, stageKey: "render", attemptId: job.id },
+      { onUpdate: (u) => { phases.push(u.phase); }, stopRequested: async () => null });
+    expect(r.farmJob.status).toBe("completed");
+    expect(phases).toContain("Farm · mất liên lạc, đang hỏi lại");
+    expect(phases.at(-1)).toBe("Farm · GPU-02");
+    expect(calls.cancel).toEqual([]);
+  });
+
+  it("gives up after the farm stayed out of reach too long, and cancels the job there", async () => {
+    const { db, bucket, project } = await setup();
+    const job = await createJob(db, { projectId: project.id, kind: "render_final", title: "R", request: {}, createdBy: "u" }, at(0));
+    const { farm, calls } = fakeFarm([{}, { status: "leased" }]);
+    farm.getJob = async () => { throw timedOut(); };
+    await expect(runFarmStep({ db, bucket, farm, pollMs: 1, unreachableTimeoutMs: 30 }, job, { type: "studio.render_final", payload: {}, stageKey: "render", attemptId: job.id },
+      { onUpdate: () => undefined, stopRequested: async () => null })).rejects.toThrow("không hỏi được farm trong");
+    expect(calls.cancel).toEqual(["00000000-0000-4000-8000-00000000f001"]);
+  });
+
+  it("an answer that will not change by asking again (404, 401) fails at once", async () => {
+    const { db, bucket, project } = await setup();
+    const job = await createJob(db, { projectId: project.id, kind: "render_final", title: "R", request: {}, createdBy: "u" }, at(0));
+    const { farm } = fakeFarm([{}, { status: "leased" }]);
+    let asked = 0;
+    farm.getJob = async () => { asked++; throw httpError(404); };
+    await expect(runFarmStep({ db, bucket, farm, pollMs: 1 }, job, { type: "studio.render_final", payload: {}, stageKey: "render", attemptId: job.id },
+      { onUpdate: () => undefined, stopRequested: async () => null })).rejects.toThrow("Farm API error 404");
+    expect(asked).toBe(1);
+  });
+
+  it("a stop request still cancels the job while the farm is out of reach", async () => {
+    const { db, bucket, project } = await setup();
+    const job = await createJob(db, { projectId: project.id, kind: "render_final", title: "R", request: {}, createdBy: "u" }, at(0));
+    const { farm, calls } = fakeFarm([{}, { status: "leased" }]);
+    let stop: "cancelled" | null = null;
+    farm.getJob = async () => { stop = "cancelled"; throw timedOut(); };
+    await expect(runFarmStep({ db, bucket, farm, pollMs: 1 }, job, { type: "studio.render_final", payload: {}, stageKey: "render", attemptId: job.id },
+      { onUpdate: () => undefined, stopRequested: async () => stop })).rejects.toMatchObject({ name: "JobStopped", reason: "cancelled" });
+    expect(calls.cancel).toEqual(["00000000-0000-4000-8000-00000000f001"]);
+  });
+});
+
 describe("ffmpeg -progress", () => {
   it("reads out_time across chunk boundaries", async () => {
     const { progressReader } = await import("../src/cut-ffmpeg.js");

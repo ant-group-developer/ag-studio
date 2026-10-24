@@ -216,7 +216,7 @@ export interface ChatMessage {
   parts: AgentPart[];
   phase: AgentPhase | null;
   attachments: string[];
-  trigger: "user" | "job" | "action" | "autofix" | "system";
+  trigger: "user" | "job" | "action" | "autofix" | "system" | "timeout";
   notBefore: string | null;
   error: string | null;
   cancelRequested: boolean;

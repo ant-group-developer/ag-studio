@@ -6,7 +6,7 @@
  * Trending needs the API: YouTube has no public trending page any more.
  */
 import { CrawlRequestSchema, type CrawlChannel, type CrawlRequest, type ResearchVideo, type StudioCrawl } from "@harness/contracts";
-import { parseChannelInput } from "@harness/core";
+import { parseChannelInput, type ChannelRef } from "@harness/core";
 import type { YtDlp, YtVideoMeta } from "../yt-dlp.js";
 import {
   CACHE_TTL_MS, DURATION_BUCKETS, durationBucket, median, parseIsoDuration, researchVideo, titleTerms, topCounts, YOUTUBE_API, type ResearchCache,
@@ -118,7 +118,7 @@ export class YoutubeCrawler {
       if (r.kind === "trending") videos = await this.apiTrending(r, now, progress, signal);
       else if (r.kind === "topic") videos = await this.apiTopic(r, now, progress, signal);
       else if (r.kind === "top_channels") channels = await this.apiTopChannels(r, now, progress, signal);
-      else ({ videos, channel } = await this.apiChannelTop(r, now, progress, signal));
+      else ({ videos, channel } = await this.apiChannelTop(r, now, progress, notes, signal));
     } else {
       const yt = this.o.ytdlp!;
       if (r.kind === "trending") throw new Error("Xu hướng cần YOUTUBE_API_KEY: YouTube không còn trang Thịnh hành công khai cho yt-dlp đọc");
@@ -178,9 +178,9 @@ export class YoutubeCrawler {
     return out.sort((a, b) => (b.subscribers ?? -1) - (a.subscribers ?? -1));
   }
 
-  private async apiChannelTop(r: Extract<CrawlRequest, { kind: "channel_top" }>, now: Date, progress: CrawlProgress, signal?: AbortSignal) {
+  private async apiChannelTop(r: Extract<CrawlRequest, { kind: "channel_top" }>, now: Date, progress: CrawlProgress, notes: string[], signal?: AbortSignal) {
     progress("Đang tìm kênh", 0.05);
-    const c = await this.apiResolveChannel(r.channel, signal);
+    const c = await this.apiResolveChannel(r.channel, notes, signal);
     const ids = await this.apiSearchIds({ channelId: c.id, type: "video", order: "viewCount" }, r.max,
       (n) => progress(`Đang lấy video xem nhiều nhất (${n}/${r.max})`, 0.1 + 0.5 * (n / r.max)), signal);
     progress(`Đang đọc số liệu ${ids.length} video`, 0.7);
@@ -188,9 +188,9 @@ export class YoutubeCrawler {
     return { videos, channel: { channel_id: c.id, title: c.snippet?.title ?? null, subscribers: subscribersOf(c) } };
   }
 
-  private async apiResolveChannel(input: string, signal?: AbortSignal): Promise<ApiChannel> {
+  private async apiResolveChannel(input: string, notes: string[], signal?: AbortSignal): Promise<ApiChannel> {
     const ref = parseChannelInput(input);
-    if (!ref) throw new Error("Không nhận ra link kênh, @handle hoặc ID kênh");
+    if (!ref) return this.apiChannelByName(input, notes, signal);
     let channelId: string | null = ref.kind === "id" ? ref.value : null;
     if (ref.kind === "video") {
       const v = await this.api<{ items?: ApiVideo[] }>("videos", { part: "snippet", id: ref.value }, { signal });
@@ -201,6 +201,17 @@ export class YoutubeCrawler {
     const ch = await this.api<{ items?: ApiChannel[] }>("channels", { part: "snippet,statistics,contentDetails", ...lookup }, { signal });
     const c = ch.items?.[0];
     if (!c) throw new Error("Không tìm thấy kênh");
+    return c;
+  }
+
+  /** A channel named, not linked: among the first channels YouTube finds for the name, the one titled so, else the first. */
+  private async apiChannelByName(name: string, notes: string[], signal?: AbortSignal): Promise<ApiChannel> {
+    const ids = await this.apiSearchIds({ q: name, type: "channel" }, 5, () => {}, signal, "channelId");
+    const found = ids.length ? await this.apiChannels(ids, signal) : [];
+    const ordered = ids.map((id) => found.find((c) => c.id === id)).filter((c): c is ApiChannel => !!c);
+    const c = ordered.find((x) => sameName(x.snippet?.title ?? "", name)) ?? ordered[0];
+    if (!c) throw new Error(notFoundByName(name));
+    notes.push(foundByName(name, c.snippet?.title ?? c.id, c.id));
     return c;
   }
 
@@ -320,9 +331,24 @@ export class YoutubeCrawler {
       .slice(0, r.max);
   }
 
+  /** A channel named, not linked, through yt-dlp: among the channels of a video search for the name, the one titled so,
+   * else the one with the most results. */
+  private async ytChannelByName(yt: YtDlp, name: string, notes: string[], signal?: AbortSignal): Promise<ChannelRef> {
+    const ids = await yt.search(name, 20, "relevance", signal);
+    const meta = ids.length ? await yt.metadata(ids, signal) : new Map<string, YtVideoMeta>();
+    const counts = new Map<string, { title: string; n: number }>();
+    for (const m of meta.values()) counts.set(m.channel_id, { title: m.channel_title, n: (counts.get(m.channel_id)?.n ?? 0) + 1 });
+    const ranked = [...counts.entries()].sort((a, b) => b[1].n - a[1].n);
+    const hit = ranked.find(([, c]) => sameName(c.title, name)) ?? ranked[0];
+    if (!hit) throw new Error(notFoundByName(name));
+    notes.push(foundByName(name, hit[1].title, hit[0]));
+    return { kind: "id", value: hit[0] };
+  }
+
   private async ytChannelTop(yt: YtDlp, r: Extract<CrawlRequest, { kind: "channel_top" }>, now: Date, progress: CrawlProgress, notes: string[], signal?: AbortSignal) {
-    const ref = parseChannelInput(r.channel);
-    if (!ref || ref.kind === "video") throw new Error("Không nhận ra link kênh, @handle hoặc ID kênh");
+    const parsed = parseChannelInput(r.channel);
+    if (parsed?.kind === "video") throw new Error("Không nhận ra link kênh, @handle hoặc ID kênh");
+    const ref = parsed ?? await this.ytChannelByName(yt, r.channel, notes, signal);
     progress("Đang đọc danh sách video của kênh bằng yt-dlp", 0.1);
     const recent = Math.min(200, Math.max(100, r.max * 3));
     const list = await yt.listChannel(ref, recent, signal);
@@ -333,6 +359,16 @@ export class YoutubeCrawler {
     return { videos, channel: list.channel_id ? { channel_id: list.channel_id, title: list.title, subscribers: null } : null };
   }
 }
+
+/** Same channel name, whatever the case, accents' encoding and spacing. */
+function sameName(a: string, b: string): boolean {
+  const norm = (s: string) => s.normalize("NFC").toLocaleLowerCase("vi").replace(/s+/g, " ").trim();
+  return norm(a) === norm(b);
+}
+
+const notFoundByName = (name: string) => `Không tìm thấy kênh nào tên "${name}": đưa link kênh hoặc @handle`;
+const foundByName = (name: string, title: string, id: string) =>
+  `Kênh tìm theo tên "${name}": ${title} (${id}). Không đúng kênh thì đưa link kênh hoặc @handle.`;
 
 function subscribersOf(c: ApiChannel): number | null {
   return c.statistics?.hiddenSubscriberCount || c.statistics?.subscriberCount === undefined ? null : Number(c.statistics.subscriberCount);

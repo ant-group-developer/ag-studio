@@ -76,10 +76,12 @@ export function ProjectGridSkeleton({ rows = 2 }: { rows?: number }) {
 /**
  * ag-go's project cards: the thumbnail filling a square, category and image/video counts on top, the name at the
  * bottom; on hover, where it is, who made it, its folder and when it changed, and Pick. A card picks itself when
- * clicked; projects already added (or without a video) cannot be picked.
+ * clicked; projects already added, refused for the owner, or without a video cannot be picked.
  */
-export function ProjectGridView({ items, isLoading, emptyText, selectedIds, addedIds, canSelect, onToggle, onFilterFolder, onFilterLocation }: {
+export function ProjectGridView({ items, isLoading, emptyText, selectedIds, addedIds, refusedIds, canSelect, onToggle, onFilterFolder, onFilterLocation }: {
   items: AgGoProject[]; isLoading: boolean; emptyText: string; selectedIds: ReadonlySet<string>; addedIds: ReadonlySet<string>;
+  /** Projects Studio refused because the project's owner cannot use them. */
+  refusedIds?: ReadonlySet<string>;
   canSelect: (p: AgGoProject) => boolean; onToggle: (p: AgGoProject, selected: boolean) => void;
   onFilterFolder: (folderId: string) => void; onFilterLocation: (l: { countryId: string; provinceId?: string | undefined }) => void;
 }) {
@@ -116,7 +118,8 @@ export function ProjectGridView({ items, isLoading, emptyText, selectedIds, adde
                 ) : null}
                 <div className="agp-counts">
                   {added ? <div className="agp-badge agp-badge--added"><CircleCheck size={14} /><span>{t("ws.agp.added")}</span></div> : null}
-                  {!added && !p.videoCount ? <div className="agp-badge agp-badge--muted"><span>{t("ws.agp.noVideos")}</span></div> : null}
+                  {!added && refusedIds?.has(p.id) ? <div className="agp-badge agp-badge--muted"><span>{t("ws.agp.refused")}</span></div> : null}
+                  {!added && !refusedIds?.has(p.id) && !p.videoCount ? <div className="agp-badge agp-badge--muted"><span>{t("ws.agp.noVideos")}</span></div> : null}
                   {p.imageCount > 0 ? (
                     <Tooltip title={`${p.imageCount} ${t("ws.agp.image")}`}><div className="agp-badge"><ImageIcon size={14} /><span>{p.imageCount}</span></div></Tooltip>
                   ) : null}
