@@ -33,6 +33,16 @@ Phát hành (2026-10-24): render worker **0.14.5** (ag-render-worker `a9eddcd`) 
 `89ada14`) đã build vào `E:\CODE\ag-farm\releases`, `latest.json` trỏ đúng, sha256 khớp. Chưa chép lên VPS. Hub ag-farm không
 đổi (chỉ worker-sdk), không cần deploy farm.
 
+Thêm 2026-10-24 (lần 2, người dùng yêu cầu "worker tự làm"):
+
+| Việc | Commit | Kiểm |
+|---|---|---|
+| P5a tự động: setup cài ffmpeg 8.1 (khoá sha256 từ digest GitHub), encode thử, ghi `<app>\ffmpeg.json`; worker dùng nó sau `FFMPEG_PATH` | ag-render-worker `6b8882f` | PowerShell setup tests, worker 165 test |
+| Lấy log của worker từ trang Máy (P5c không cần vào máy) | ag-farm `2b7b8bf` (hub + protocol, migration `2500000000000`), `713621e` (worker-sdk), `d918474` (web) | hub unit 80 + DB 85, worker-sdk 105, web 95 |
+
+Phát hành: render worker **0.14.6** (`285ea31`), scan worker **0.5.2** (`4ce8122`) trong `E:\CODE\ag-farm\releases`. Thứ tự:
+**deploy farm (hub + web) trước**, rồi chép worker lên VPS; worker mới gặp hub cũ thì thôi hỏi log một giờ, không hỏng gì.
+
 ## Trạng thái: các session khác đã sửa gì
 
 Từ 19/10, git log 4 repo (ag-studio, ag-farm, ag-render-worker, ag-scan-worker, kể cả nhánh và worktree) **không có commit
