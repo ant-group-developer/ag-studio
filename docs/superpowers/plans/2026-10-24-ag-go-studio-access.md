@@ -16,8 +16,8 @@ Hệ quả chấp nhận: thu hồi quyền ag-go không ảnh hưởng nguồn 
 |---|---|---|
 | P1 ag-go-v2 | xong | ag-go-api `02d900d`, `831c8e6` (dev-duc, chưa push) |
 | P2 Studio API + worker | xong | `7527289` (dev-duc, chưa push) |
-| P3 Studio web | xong | commit P3 trên dev-duc |
-| P4 kiểm tra | test hai repo xanh; chạy local với footage Hoa Lư; SQL prod ở dưới (chưa chạy); deploy chưa làm | |
+| P3 Studio web | xong | `33ed5ad` (dev-duc, chưa push) |
+| P4 kiểm tra | test hai repo xanh (ag-go-api 508 + 146 DB, Studio 2166 + web 196). Local với footage Hoa Lư: chế độ tin cậy tìm 21 video, bản cuối ra bản gốc, xem trước ra proxy sạch, video ngoài project → `missing` / prep 404, thiếu `projectIds` → 400, token người dùng → 401; access như chủ project: thêm được. Giao diện chưa xem trên máy (cần đăng nhập Auth0). SQL prod ở dưới chưa chạy; deploy chưa làm | |
 
 ## P1 – ag-go-v2
 - `POST /footage/projects/access` (service key `footage:read`, act-as người dùng): mỗi project → thấy được, tải được
