@@ -27,19 +27,28 @@ async function setup(role: AgentToolContext["role"] = "editor") {
   const { turn } = await postUserMessage(w.db, { threadId: thread.id, text: "Chọn video", actor: { id: "u", role } }, NOW);
   await markAgentTurnRunning(w.db, turn!.id, NOW);
   const searches: unknown[] = [];
+  const checks: unknown[] = [];
   const footage: ProjectFootage = {
-    search: async (actAs, q) => {
-      searches.push([actAs, q]);
+    search: async (q) => {
+      searches.push(q);
       return { items: [{ assetId: A1, name: "Hoa Lư 03.mp4", durationMs: 72_400, width: 1920, height: 1080, hasSpeech: true, projectNames: ["Ninh Bình"], summaryVi: "Thuyền trên sông" }], nextCursor: null, total: 1 };
     },
-    check: async (_actAs, ids) => ({ ok: ids.filter((i) => i !== A2), missing: ids.filter((i) => i === A2) }),
+    // A2 is in no ag-go project of the project
+    check: async (projectIds, ids) => {
+      checks.push([projectIds, ids]);
+      return { ok: ids.filter((i) => i !== A2), missing: ids.filter((i) => i === A2) };
+    },
   };
   const ctx: AgentToolContext = {
     db: w.db, claims: { msg: turn!.id, thread: thread.id, project: project.id, video: video.id, sub: "u", exp: 9e9 },
     message: turn!, thread, project, video, workspaceDir: dir, role, now: () => NOW, footage,
   };
-  return { ...w, project, video, dir, thread, ctx, tools: agentTools(), searches };
+  return { ...w, project, video, dir, thread, ctx, tools: agentTools(), searches, checks };
 }
+
+/** Picks an ag-go project for the project, as a person does in the Inputs tab. */
+const pickProject = (s: Awaited<ReturnType<typeof setup>>) =>
+  addSource(s.db, { projectId: s.project.id, kind: "ag_go_project", ref: "agp-1", mediaType: "mixed", label: "Ninh Bình", addedBy: "u" }, NOW);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const call = async (s: Awaited<ReturnType<typeof setup>>, name: string, args: unknown, ctx = s.ctx) => {
@@ -57,19 +66,22 @@ describe("input tools", () => {
     expect(await call(s, "footage_search", {}, { ...named, footage: undefined })).toMatchObject({ isError: true, text: expect.stringContaining("chưa nối Kho Footage") });
   });
 
-  it("footage_search looks only in the project's ag-go projects, as the owner, with each video's preparation", async () => {
+  it("footage_search looks only in the project's ag-go projects (ag-go's trusted mode), with each video's preparation", async () => {
     const s = await setup();
     expect(await call(s, "footage_search", {})).toMatchObject({ isError: true, text: expect.stringContaining("chưa có project AG Go") });
-    await addSource(s.db, { projectId: s.project.id, kind: "ag_go_project", ref: "agp-1", mediaType: "mixed", label: "Ninh Bình", addedBy: "u" }, NOW);
+    await pickProject(s);
     const r = await call(s, "footage_search", { q: "thuyền" });
-    expect(s.searches).toEqual([["auth0|owner", { projectIds: ["agp-1"], q: "thuyền", limit: 30 }]]);
+    expect(s.searches).toEqual([{ projectIds: ["agp-1"], q: "thuyền", limit: 30 }]);
     expect(r.json.items).toEqual([{ asset_id: A1, name: "Hoa Lư 03.mp4", duration_s: 72.4, size: "1920x1080", has_speech: true, projects: ["Ninh Bình"], summary: "Thuyền trên sông", prepared: "not_prepared" }]);
     expect(await call(s, "footage_search", { ag_go_project_id: "agp-x" })).toMatchObject({ isError: true });
   });
 
-  it("inputs_add adds usable videos to this thread's video in order and writes its index; refuses what the owner cannot use", async () => {
+  it("inputs_add adds videos of the project's ag-go projects to this thread's video in order and writes its index; refuses others", async () => {
     const s = await setup();
+    expect(await call(s, "inputs_add", { assets: [{ asset_id: A1, name: "Hoa Lư 03.mp4" }] })).toMatchObject({ isError: true, text: expect.stringContaining("chưa có project AG Go") });
+    await pickProject(s);
     expect(await call(s, "inputs_add", { assets: [{ asset_id: A1, name: "Hoa Lư 03.mp4" }, { asset_id: A2, name: "Tam Cốc.mp4" }] })).toMatchObject({ isError: true, text: expect.stringContaining(A2) });
+    expect(s.checks).toEqual([[["agp-1"], [A1, A2]]]);
     const r = await call(s, "inputs_add", { assets: [{ asset_id: A1, name: "Hoa Lư 03.mp4" }] });
     expect(r.json).toMatchObject({ video_id: s.video.id, sources: [{ index: 0, asset_id: A1, name: "Hoa Lư 03.mp4", status: "missing" }] });
     expect(existsSync(join(s.dir, "videos", s.video.id, "sources", "index.json"))).toBe(true);
@@ -104,6 +116,7 @@ describe("input tools", () => {
 
   it("inputs_prepare queues one job per video not yet prepared (the agent goes on when it ends), reuses running and ready ones", async () => {
     const s = await setup();
+    await pickProject(s);
     await call(s, "inputs_add", { assets: [{ asset_id: A1, name: "Hoa Lư 03.mp4" }] });
     expect((await call(s, "inputs_prepare", { asset_ids: [A2] })).json.assets[A2]).toMatchObject({ state: "not_an_input" });
     const first = await call(s, "inputs_prepare", { asset_ids: [A1] });
@@ -121,6 +134,7 @@ describe("input tools", () => {
 
   it("inputs_prepare waits for the job when asked (up to wait_s)", async () => {
     const s = await setup();
+    await pickProject(s);
     await call(s, "inputs_add", { assets: [{ asset_id: A1, name: "Hoa Lư 03.mp4" }] });
     setTimeout(() => void (async () => {
       const j = (await listJobs(s.db, s.project.id))[0]!;
@@ -134,6 +148,7 @@ describe("input tools", () => {
 
   it("job_status shows running and recent jobs; job_cancel stops one of the project's", async () => {
     const s = await setup();
+    await pickProject(s);
     await call(s, "inputs_add", { assets: [{ asset_id: A1, name: "Hoa Lư 03.mp4" }] });
     const id = (await call(s, "inputs_prepare", { asset_ids: [A1] })).json.assets[A1].job_id as string;
     expect((await call(s, "job_status", {})).json.active).toEqual([expect.objectContaining({ id, kind: "prepare_asset", status: "queued" })]);
@@ -149,6 +164,7 @@ describe("the prepare step of the playbook", () => {
     const s = await setup();
     const prepare = async () => (await call(s, "playbook_status", {})).json.video.find((x: { key: string }) => x.key === "prepare");
     expect(await prepare()).toMatchObject({ status: "missing", detail: "chưa chọn video nguồn nào cho video này" });
+    await pickProject(s);
     await call(s, "inputs_add", { assets: [{ asset_id: A1, name: "Hoa Lư 03.mp4" }] });
     const jobId = (await call(s, "inputs_prepare", { asset_ids: [A1] })).json.assets[A1].job_id as string;
     expect(await prepare()).toMatchObject({ status: "running", detail: "đang chuẩn bị (0/1 xong)" });

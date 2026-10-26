@@ -65,6 +65,14 @@ export interface ResolveAssetsBody {
   prefer?: { short_edge?: number; clean?: boolean };
 }
 
+/**
+ * `POST /footage/studio/assets/resolve` (ag-go's trusted mode for Studio, service key alone): only videos of `projectIds`
+ * (the ag-go projects added to the Studio project) are served, the others are `missing`; a final render gets originals.
+ */
+export interface StudioResolveAssetsBody extends ResolveAssetsBody {
+  projectIds: string[];
+}
+
 /** Query of ag-go `GET /footage/search` (service key + `X-Act-As-User`): the analysed videos the user can reach. */
 export interface SearchFootageQuery {
   projectIds?: string[];

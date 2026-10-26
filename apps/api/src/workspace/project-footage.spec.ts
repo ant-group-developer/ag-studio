@@ -1,11 +1,12 @@
 /**
- * Whether ag-go serves videos to a user: a long timeline is asked in lots (ag-go signs video by video and one request
- * for all of them outlasts the timeout), and what ag-go could not answer is not taken for a lack of rights.
+ * Which videos ag-go's trusted mode serves a project (those of its ag-go projects): a long list is asked in lots (ag-go
+ * signs video by video and one request for all of them outlasts the timeout); and whether a person may add an ag-go
+ * project.
  */
 import { describe, expect, it } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import { AgGoClientError } from '../ag-go/client';
-import { ProjectFootageService } from './project-footage.service';
+import { addability, ProjectFootageService } from './project-footage.service';
 
 const config = { get: (k: string) => (k === 'AG_GO_API_URL' ? 'http://ag-go.test/api' : 'key') } as unknown as ConfigService;
 const ids = Array.from({ length: 78 }, (_, i) => `a${i}`);
@@ -13,63 +14,59 @@ const ids = Array.from({ length: 78 }, (_, i) => `a${i}`);
 function service(answer: (lot: string[]) => Promise<{ items: { assetId: string }[]; missing?: string[] }>) {
   const s = new ProjectFootageService(config);
   const lots: string[][] = [];
-  const order: { lot: string; alone: boolean }[] = [];
+  const bodies: unknown[] = [];
   let open = 0;
   let most = 0;
   Object.assign((s as unknown as { agGo: object }).agGo, {
-    resolveAssets: async (_actAs: string, body: { assetIds: string[] }) => {
+    studioResolveAssets: async (body: { projectIds: string[]; assetIds: string[] }) => {
       lots.push(body.assetIds);
+      bodies.push(body);
       most = Math.max(most, ++open);
-      order.push({ lot: body.assetIds[0]!, alone: open === 1 });
       try { await new Promise((r) => setTimeout(r, 5)); return await answer(body.assetIds); } finally { open--; }
     },
   });
-  return { s, lots, order, most: () => most };
+  return { s, lots, bodies, most: () => most };
 }
 
-describe('ProjectFootageService.check and checkLots', () => {
-  it('asks a long timeline in lots of ten, the first alone then four at a time, and merges what ag-go cannot serve', async () => {
-    const { s, lots, order, most } = service(async (lot) => ({ items: lot.filter((id) => id !== 'a5').map((assetId) => ({ assetId })), missing: lot.includes('a70') ? ['a70'] : [] }));
-    const r = await s.check('u1', ids);
+describe('ProjectFootageService.check', () => {
+  it("asks a long list in lots of ten, four at a time, within the project's ag-go projects, and merges what ag-go does not serve", async () => {
+    const { s, lots, bodies, most } = service(async (lot) => ({ items: lot.filter((id) => id !== 'a5').map((assetId) => ({ assetId })), missing: lot.includes('a70') ? ['a70'] : [] }));
+    const r = await s.check(['p1', 'p2'], ids);
     expect(lots.map((l) => l.length)).toEqual([10, 10, 10, 10, 10, 10, 10, 8]);
     expect(lots.flat().sort()).toEqual([...ids].sort());
+    expect(bodies[0]).toEqual({ projectIds: ['p1', 'p2'], assetIds: ids.slice(0, 10), purpose: 'preview' });
     expect(most()).toBe(4);
-    expect(order[0]).toEqual({ lot: 'a0', alone: true });
     expect(r.missing).toEqual(['a5', 'a70']);
     expect(r.ok).toHaveLength(76);
   });
 
-  it('asks a lot again once when ag-go answers 503 (the Account API did not answer in time)', async () => {
+  it('asks a lot again once when ag-go answers 503, and fails when it still does not answer', async () => {
     let failures = 0;
     const flaky = service(async (lot) => {
-      if (lot.includes('a30') && failures++ === 0) throw new AgGoClientError(503, { message: 'Account API is unavailable' });
+      if (lot.includes('a30') && failures++ === 0) throw new AgGoClientError(503, { message: 'unavailable' });
       return { items: lot.map((assetId) => ({ assetId })) };
     });
-    expect((await flaky.s.check('u1', ids)).missing).toEqual([]);
+    expect((await flaky.s.check(['p1'], ids)).missing).toEqual([]);
     expect(flaky.lots).toHaveLength(9);
     const down = service(async (lot) => { if (lot.includes('a30')) throw new AgGoClientError(503, 'down'); return { items: lot.map((assetId) => ({ assetId })) }; });
-    await expect(down.s.check('u1', ids)).rejects.toMatchObject({ status: 503 });
+    await expect(down.s.check(['p1'], ids)).rejects.toMatchObject({ status: 503 });
     expect(down.lots.filter((l) => l.includes('a30'))).toHaveLength(2);
   });
 
-  it('answers lot by lot: what ag-go serves in the lots it answered, and the error of each lot it did not', async () => {
-    const { s } = service(async (lot) => {
-      if (lot.includes('a0')) throw new AgGoClientError(404, 'not in scope: a3');
-      if (lot.includes('a40')) throw new AgGoClientError(500, 'boom');
-      return { items: lot.filter((id) => id !== 'a12').map((assetId) => ({ assetId })) };
-    });
-    const answers = await s.checkLots('u1', ids);
-    expect(answers.map((a) => a.assetIds[0])).toEqual(['a0', 'a10', 'a20', 'a30', 'a40', 'a50', 'a60', 'a70']);
-    expect(answers[0]).toMatchObject({ error: { status: 404 } });
-    expect(answers[4]).toMatchObject({ error: { status: 500 } });
-    expect(answers[1]).toEqual({ assetIds: ids.slice(10, 20), served: ids.slice(10, 20).filter((id) => id !== 'a12'), missing: ['a12'] });
+  it('without an ag-go project none is served, and ag-go is not asked', async () => {
+    const { s, lots } = service(async () => ({ items: [] }));
+    expect(await s.check([], ['a1', 'a2'])).toEqual({ ok: [], missing: ['a1', 'a2'] });
+    expect(lots).toEqual([]);
   });
+});
 
-  it('a lot ag-go could not answer fails the check before one it answered 404', async () => {
-    const out = (lot: string[]) => (lot.includes('a0') ? new AgGoClientError(404, 'not in scope') : lot.includes('a40') ? new AgGoClientError(502, 'Bad Gateway') : null);
-    const { s } = service(async (lot) => { const e = out(lot); if (e) throw e; return { items: lot.map((assetId) => ({ assetId })) }; });
-    await expect(s.check('u1', ids)).rejects.toMatchObject({ status: 502 });
-    const only404 = service(async (lot) => { if (lot.includes('a0')) throw new AgGoClientError(404, 'not in scope'); return { items: lot.map((assetId) => ({ assetId })) }; });
-    await expect(only404.s.check('u1', ids)).rejects.toMatchObject({ status: 404 });
+describe('addability', () => {
+  const a = (over: object) => ({ projectId: 'p', canView: true, canDownloadOriginals: true, analyzedVideos: 2, usableVideos: 1, ...over });
+  it('adds a project the person may download the originals of, with a usable video', () => {
+    expect(addability(a({}))).toBe('addable');
+    expect(addability(a({ canDownloadOriginals: false }))).toBe('view_only');
+    expect(addability(a({ usableVideos: 0 }))).toBe('no_videos');
+    expect(addability(a({ canView: false, canDownloadOriginals: false }))).toBe('not_visible');
+    expect(addability(undefined)).toBe('not_visible');
   });
 });

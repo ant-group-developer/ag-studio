@@ -242,7 +242,7 @@ thể cần thêm một JS runtime (Deno) cho YouTube: làm theo thông báo l�
 | Màn Hàng đợi "Không đọc được danh sách máy farm" | Farm hub không chạy, hoặc `FARM_OWNER_KEY` sai | `local-stack.mjs status`; log `studio-api` |
 | Kiểm trong khung trình duyệt của app desktop, số liệu không tự cập nhật | Khung đó báo trang luôn ẩn nên không polling | Tải lại trang sau mỗi bước |
 | Chuẩn bị video treo ở "Đang chờ máy" / "Đang đọc lời thoại" | ag-go chạy `scan.prep` trên `local-scan` (cần bản có `scan.prep`), lời thoại `studio.transcribe` trên `local-render`: máy offline hoặc thiếu kind | Web farm 3011 xem node và job của chủ `ag-go`; trang phân tích ag-go (admin) xem số prep đang chạy |
-| Chuẩn bị video lỗi ngay ("fetch failed", 401/403) | ag-go-api 3738 không chạy, hoặc khoá Studio thiếu scope `footage:read`/`footage:resolve` trong `SERVICE_KEYS` của ag-go | `local-stack.mjs status`; sửa `SERVICE_KEYS` rồi bật lại ag-go-api |
+| Chuẩn bị video lỗi ngay ("fetch failed", 401/403) | ag-go-api 3738 không chạy, hoặc khoá Studio thiếu scope `footage:studio` (`footage:read` để thêm project) trong `SERVICE_KEYS` của ag-go | `local-stack.mjs status`; sửa `SERVICE_KEYS` rồi bật lại ag-go-api |
 | Log worker `usage events not sent to ag-go` (HTTP 403) | Khoá Studio trong `SERVICE_KEYS` của ag-go thiếu scope `usage:write` | Thêm scope rồi bật lại ag-go-api; sự kiện nằm trong `ag_go_usage_outbox` và tự gửi lại (chậm nhất 1 giờ) |
 | Dựng timeline treo ở "đọc lời dẫn" | `local-render` không khai `python` hoặc thiếu kind `studio.tts` | Mục 4a; web farm 3011 xem khả năng node |
 | Job `studio.transcribe` bị hub từ chối "not allowed for owner studio" | DB farm chưa chạy migration `studio-transcribe` | Chạy migration hub (mục 3) |

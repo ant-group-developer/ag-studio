@@ -1,13 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { FootageItem, ProjectFootage } from '@ag-studio/engine';
-import { AgGoClient, AgGoClientError, type FootageFacets, type FootageFilters, type SearchFootageQuery } from '../ag-go/client';
+import { AgGoClient, AgGoClientError, type AgGoProjectAccess, type FootageFacets, type FootageFilters, type SearchFootageQuery } from '../ag-go/client';
 
 /**
- * ag-go signs a URL (and asks R2 for the proxy) video by video, so a long timeline asked at once outlasts the client's
- * timeout: it is asked in lots of this many, a few lots at a time. ag-go asks the Account API for the acted-as user's
- * rights on each request (kept a minute, but not shared by requests under way): the first lot goes alone so the others
- * find them kept, and a lot ag-go answers 502/503 (the Account API not answering in time) is asked once more.
+ * ag-go signs a URL (and asks R2 for the proxy) video by video, so a long list asked at once outlasts the client's
+ * timeout: it is asked in lots of this many, a few lots at a time; a lot ag-go answers 502/503 is asked once more.
  */
 const CHECK_LOT = 10;
 const CHECK_PARALLEL = 4;
@@ -36,9 +34,23 @@ export interface PickerFootageItem {
 }
 
 /**
- * ag-go for a project's inputs (spec 2026-10-10 agent-workspace §4), with the service key acting as a user (the
- * project's owner for the agent's tools, the person themself in the web): the analysed videos of ag-go projects, and
- * whether ag-go serves a video to that user. Only the API holds the service key.
+ * Whether a person may add an ag-go project to a Studio project (plan 2026-10-24): `addable` they may download its
+ * originals and it has a usable analysed video; `view_only` they see it watermarked only; `no_videos` nothing usable
+ * analysed yet; `not_visible` they do not see it.
+ */
+export type AgGoAddability = 'addable' | 'view_only' | 'no_videos' | 'not_visible';
+
+export function addability(a: AgGoProjectAccess | undefined): AgGoAddability {
+  if (!a?.canView) return 'not_visible';
+  if (!a.canDownloadOriginals) return 'view_only';
+  return a.usableVideos > 0 ? 'addable' : 'no_videos';
+}
+
+/**
+ * ag-go for a project's inputs (spec 2026-10-10 agent-workspace §4, plan 2026-10-24): its trusted mode for Studio, with
+ * the service key alone and bound to the ag-go projects added to the project, whoever asks (a person in the web, the
+ * agent, a render). Someone who could download their originals added them, so nothing more is checked. Only whether a
+ * person may add an ag-go project is asked as that person. Only the API holds the service key.
  */
 @Injectable()
 export class ProjectFootageService implements ProjectFootage {
@@ -51,8 +63,8 @@ export class ProjectFootageService implements ProjectFootage {
     });
   }
 
-  async search(actAs: string, q: { projectIds: string[]; q?: string; limit?: number; cursor?: string }) {
-    const r = await this.agGo.searchFootage(actAs, q);
+  async search(q: { projectIds: string[]; q?: string; limit?: number; cursor?: string }) {
+    const r = await this.agGo.studioSearchFootage(q);
     const items: FootageItem[] = r.items.map((i) => ({
       assetId: i.assetId, name: i.name, durationMs: i.durationMs, width: i.width ?? null, height: i.height ?? null,
       hasAudio: i.hasAudio ?? null, hasSpeech: i.hasSpeech ?? null, projectNames: i.projectNames ?? null, summaryVi: i.summaryVi ?? i.titleVi ?? null,
@@ -65,8 +77,8 @@ export class ProjectFootageService implements ProjectFootage {
    * The Inputs tab's video picker: every filter, sort and page ag-go offers, and what the picker shows of each video
    * (the agent's `search` above stays as it is).
    */
-  async searchForPicker(actAs: string, q: SearchFootageQuery & { projectIds: string[] }): Promise<{ items: PickerFootageItem[]; nextCursor: string | null; total: number }> {
-    const r = await this.agGo.searchFootage(actAs, q);
+  async searchForPicker(q: SearchFootageQuery & { projectIds: string[] }): Promise<{ items: PickerFootageItem[]; nextCursor: string | null; total: number }> {
+    const r = await this.agGo.studioSearchFootage(q);
     return {
       items: r.items.map((i) => ({
         assetId: i.assetId, name: i.name, durationMs: i.durationMs, width: i.width ?? null, height: i.height ?? null, orientation: i.orientation ?? null,
@@ -79,54 +91,36 @@ export class ProjectFootageService implements ProjectFootage {
     };
   }
 
-  facets(actAs: string, filters: FootageFilters): Promise<FootageFacets> {
-    return this.agGo.getFootageFacets(actAs, filters);
+  facets(filters: FootageFilters & { projectIds: string[] }): Promise<FootageFacets> {
+    return this.agGo.studioFootageFacets(filters);
+  }
+
+  /** What `userId` may do with each ag-go project, asked as that person. */
+  async access(userId: string, projectIds: string[]): Promise<Map<string, AgGoProjectAccess>> {
+    const r = await this.agGo.projectAccess(userId, projectIds);
+    return new Map(r.items.map((a) => [a.projectId, a]));
   }
 
   /**
-   * Asks ag-go to resolve the videos for a preview as the user: what it cannot serve is `missing`. A lot ag-go could not
-   * answer fails the whole check, before one it answered 404 (a video out of the user's scope).
+   * Which of these videos belong to one of `projectIds` (ag-go serves them to the project): asked as a preview resolve,
+   * whose `missing` are the others. No project: none of them.
    */
-  async check(actAs: string, assetIds: string[]) {
-    const answers = await this.checkLots(actAs, assetIds);
-    const failed = answers.flatMap((a) => ('error' in a ? [a.error] : []));
-    if (failed.length) throw failed.find((e) => !(e instanceof AgGoClientError && e.status === 404)) ?? failed[0];
-    const missing = answers.flatMap((a) => ('missing' in a ? a.missing : []));
-    return { ok: assetIds.filter((id) => !missing.includes(id)), missing };
-  }
-
-  /**
-   * The same asking as `check`, answered lot by lot: what ag-go serves and does not serve in each lot it answered, and
-   * the error of each lot it did not (its 404 names the first video out of the user's scope).
-   */
-  async checkLots(actAs: string, assetIds: string[]): Promise<FootageLotAnswer[]> {
+  async check(projectIds: string[], assetIds: string[]): Promise<{ ok: string[]; missing: string[] }> {
+    if (!projectIds.length || !assetIds.length) return { ok: [], missing: [...assetIds] };
     const lots: string[][] = [];
     for (let i = 0; i < assetIds.length; i += CHECK_LOT) lots.push(assetIds.slice(i, i + CHECK_LOT));
-    const answers: FootageLotAnswer[] = new Array(lots.length);
-    const ask = (assetIds: string[]) => this.agGo.resolveAssets(actAs, { assetIds, purpose: 'preview' });
-    const answer = async (i: number) => {
-      const lot = lots[i]!;
-      answers[i] = await ask(lot)
-        .catch((e: unknown) => (e instanceof AgGoClientError && (e.status === 502 || e.status === 503) ? ask(lot) : Promise.reject(e)))
-        .then(
-          (r): FootageLotAnswer => {
-            const served = new Set(r.items.map((x) => x.assetId));
-            const flagged = new Set(r.missing ?? []);
-            const missing = lot.filter((id) => !served.has(id) || flagged.has(id));
-            return { assetIds: lot, served: lot.filter((id) => !missing.includes(id)), missing };
-          },
-          (error: unknown): FootageLotAnswer => ({ assetIds: lot, error }),
-        );
+    const ask = (ids: string[]) => this.agGo.studioResolveAssets({ projectIds, assetIds: ids, purpose: 'preview' });
+    const missing = new Set<string>();
+    let next = 0;
+    const lane = async () => {
+      for (let i = next++; i < lots.length; i = next++) {
+        const lot = lots[i]!;
+        const r = await ask(lot).catch((e: unknown) => (e instanceof AgGoClientError && (e.status === 502 || e.status === 503) ? ask(lot) : Promise.reject(e)));
+        const served = new Set(r.items.map((x) => x.assetId));
+        for (const id of lot) if (!served.has(id) || r.missing?.includes(id)) missing.add(id);
+      }
     };
-    await answer(0);
-    let next = 1;
-    const lane = async () => { for (let i = next++; i < lots.length; i = next++) await answer(i); };
-    await Promise.all(Array.from({ length: Math.min(CHECK_PARALLEL, lots.length - 1) }, lane));
-    return answers;
+    await Promise.all(Array.from({ length: Math.min(CHECK_PARALLEL, lots.length) }, lane));
+    return { ok: assetIds.filter((id) => !missing.has(id)), missing: assetIds.filter((id) => missing.has(id)) };
   }
 }
-
-/** One lot of a footage check: ag-go's answer, or the error it gave instead. */
-export type FootageLotAnswer =
-  | { assetIds: string[]; served: string[]; missing: string[] }
-  | { assetIds: string[]; error: unknown };

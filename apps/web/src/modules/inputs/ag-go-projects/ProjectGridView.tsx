@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Avatar, Button, Checkbox, Col, Empty, Row, Skeleton, Tooltip, Typography, theme } from "antd";
 import { useQuery } from "@tanstack/react-query";
-import { Camera, Check, CircleCheck, Clapperboard, Clock, Folder, Image as ImageIcon, MapPin, Plus } from "lucide-react";
+import { Camera, Check, Clapperboard, Clock, Eye, Folder, Image as ImageIcon, MapPin, Plus } from "lucide-react";
 import { useAgGoClient, type AgGoProject } from "../../../api/ag-go-client";
+import type { AgGoAddability } from "../../../api/workspace-client";
 import { useAiTranslation } from "../../common/assistant-name";
+import { AccessBadge } from "./access-state";
 import { formatDate } from "./text-match";
 import "./project-grid.css";
 
@@ -74,15 +76,17 @@ export function ProjectGridSkeleton({ rows = 2 }: { rows?: number }) {
 }
 
 /**
- * ag-go's project cards: the thumbnail filling a square, category and image/video counts on top, the name at the
- * bottom; on hover, where it is, who made it, its folder and when it changed, and Pick. A card picks itself when
- * clicked; projects already added, refused for the owner, or without a video cannot be picked.
+ * ag-go's project cards: the thumbnail filling a square, category and image/video counts on top with whether it can be
+ * added, the name at the bottom; on hover, where it is, who made it, its folder and when it changed, See details and
+ * Pick. A card picks itself when clicked; projects already added, or that the person may not add, cannot be picked.
  */
-export function ProjectGridView({ items, isLoading, emptyText, selectedIds, addedIds, refusedIds, canSelect, onToggle, onFilterFolder, onFilterLocation }: {
+export function ProjectGridView({ items, isLoading, emptyText, selectedIds, addedIds, stateOf, canSelect, onToggle, onOpen, onFilterFolder, onFilterLocation }: {
   items: AgGoProject[]; isLoading: boolean; emptyText: string; selectedIds: ReadonlySet<string>; addedIds: ReadonlySet<string>;
-  /** Projects Studio refused because the project's owner cannot use them. */
-  refusedIds?: ReadonlySet<string>;
+  /** Whether the person may add each project (unknown while it is asked). */
+  stateOf: (p: AgGoProject) => AgGoAddability | undefined;
   canSelect: (p: AgGoProject) => boolean; onToggle: (p: AgGoProject, selected: boolean) => void;
+  /** Opens the project's detail drawer. */
+  onOpen: (p: AgGoProject) => void;
   onFilterFolder: (folderId: string) => void; onFilterLocation: (l: { countryId: string; provinceId?: string | undefined }) => void;
 }) {
   const { t } = useAiTranslation();
@@ -117,9 +121,7 @@ export function ProjectGridView({ items, isLoading, emptyText, selectedIds, adde
                   </div>
                 ) : null}
                 <div className="agp-counts">
-                  {added ? <div className="agp-badge agp-badge--added"><CircleCheck size={14} /><span>{t("ws.agp.added")}</span></div> : null}
-                  {!added && refusedIds?.has(p.id) ? <div className="agp-badge agp-badge--muted"><span>{t("ws.agp.refused")}</span></div> : null}
-                  {!added && !refusedIds?.has(p.id) && !p.videoCount ? <div className="agp-badge agp-badge--muted"><span>{t("ws.agp.noVideos")}</span></div> : null}
+                  <AccessBadge state={stateOf(p)} added={added} />
                   {p.imageCount > 0 ? (
                     <Tooltip title={`${p.imageCount} ${t("ws.agp.image")}`}><div className="agp-badge"><ImageIcon size={14} /><span>{p.imageCount}</span></div></Tooltip>
                   ) : null}
@@ -180,6 +182,9 @@ export function ProjectGridView({ items, isLoading, emptyText, selectedIds, adde
                     </div>
                   </div>
                   <div className="agp-actions" onClick={stop}>
+                    <Tooltip title={t("ws.agp.details")}>
+                      <Button shape="circle" size="large" className="agp-action" icon={<Eye size={20} />} aria-label={`${t("ws.agp.details")} ${p.name}`} onClick={() => onOpen(p)} />
+                    </Tooltip>
                     <Tooltip title={added ? t("ws.agp.added") : selected ? t("ws.agp.unselect") : t("ws.agp.select")}>
                       <Button
                         type={selected ? "primary" : "default"} shape="circle" size="large" className="agp-action" disabled={!selectable}

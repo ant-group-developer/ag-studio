@@ -28,6 +28,7 @@ const ws = {
   listSources: vi.fn(),
   listJobs: vi.fn(),
   addSource: vi.fn(),
+  agGoAccess: vi.fn(),
   removeSource: vi.fn().mockResolvedValue(undefined),
   uploadSource: vi.fn(),
   searchFootage: vi.fn(),
@@ -50,6 +51,7 @@ const agGo = {
   ], page: 1, pageSize: 24, total: 4, totalPages: 1 }),
   getAssetPreviewUrl: vi.fn().mockRejectedValue(new Error("no thumbnail")),
   findProvinces: vi.fn().mockResolvedValue([]),
+  getProject: vi.fn(),
   getProjectMedia: vi.fn(),
   getFolders: vi.fn(),
   getCategories: vi.fn().mockResolvedValue([{ id: "cat-1", name: "Du lịch" }, { id: "cat-2", name: "Ẩm thực" }]),
@@ -59,6 +61,11 @@ const agGo = {
   getProvinces: vi.fn().mockResolvedValue([{ id: "nb", countryId: "vn", name: "Ninh Bình" }]),
   getProjectOwners: vi.fn().mockResolvedValue([{ id: "u-1", projectCount: 4, user: { id: "u-1", name: "Lan" } }]),
 };
+/** Whether the person may add each ag-go project, as Studio answers (`POST ag-go-access`). */
+let access: Record<string, string> = {};
+const answerAccess = async (_p: string, ids: string[]) => ({
+  items: ids.map((projectId) => ({ projectId, state: access[projectId] ?? "not_visible", analyzedVideos: 4, usableVideos: 3 })),
+});
 const facets = {
   projects: [{ value: "agp-1", label: "Ninh Bình", count: 2 }], categories: [], provinces: [], authors: [], resolutions: [{ value: "4k", count: 1 }],
   orientations: [{ value: "landscape", count: 2 }], timesOfDay: [], genres: [], tags: [{ value: "sông", count: 2 }, { value: "chùa", count: 1 }],
@@ -79,6 +86,10 @@ function mount(videoId?: string, onOpenFile = vi.fn(), canEdit = true) {
   Object.assign(onOpenFile, { unmount: r.unmount });
   return onOpenFile;
 }
+/** The detail drawer of an ag-go project, by its title (antd gives every drawer the same label id in tests). */
+async function detailDrawer(name: string): Promise<HTMLElement> {
+  return (await screen.findByText(name, { selector: ".agp-detail__title" })).closest<HTMLElement>(".ant-drawer-content")!;
+}
 /** Switches the Inputs tab to its "Documents, images, audio" sub-section. */
 async function toFiles() {
   fireEvent.click(await screen.findByText(/^Tài liệu, ảnh, audio ·/));
@@ -90,6 +101,8 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     vi.clearAllMocks();
     localStorage.clear();
     ws.getFootageFacets.mockResolvedValue(facets);
+    access = { "agp-1": "addable", "agp-2": "addable", "agp-3": "no_videos", "agp-4": "addable" };
+    ws.agGoAccess.mockImplementation(answerAccess);
     ws.listSources.mockResolvedValue({ sources: [
       src({ kind: "ag_go_project", ref: "agp-1", mediaType: "mixed", label: "Ninh Bình", meta: { videos: 42 } }),
       src({ kind: "ag_go_asset", ref: A1, videoId: "v1", mediaType: "video", label: "Hoa Lư 03.mp4", meta: { durationMs: 72_400 },
@@ -155,17 +168,22 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
   });
 
   it("picks several ag-go projects in a full-screen drawer like ag-go's, adds them together and says which failed", async () => {
-    ws.addSource.mockResolvedValueOnce({ source: {} }).mockRejectedValueOnce(new StudioHttpError(422, { message: "x", code: "owner_cannot_access" }));
+    ws.addSource.mockResolvedValueOnce({ source: {} }).mockRejectedValueOnce(new StudioHttpError(422, { message: "x", code: "ag_go_view_only" }));
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "Thêm project" }));
     const drawer = await screen.findByRole("dialog", { name: /Chọn project AG Go/ });
     expect(await within(drawer).findByText("Ninh Bình mùa lúa")).toBeInTheDocument();
+    // each card of the page says whether the person may add it, asked as them
+    await waitFor(() => expect(within(drawer).getByTestId("agp-card-agp-2")).toHaveTextContent("Thêm được"));
+    expect(ws.agGoAccess).toHaveBeenCalledWith("p1", ["agp-1", "agp-2", "agp-3", "agp-4"]);
     expect(within(drawer).getByTestId("agp-card-agp-1")).toHaveTextContent("Đã thêm");
+    expect(within(drawer).getByTestId("agp-card-agp-3")).toHaveTextContent("Chưa có video đã phân tích");
     expect(within(drawer).getByRole("checkbox", { name: "Ninh Bình (đã có)" })).toBeDisabled();
     expect(within(drawer).getByRole("checkbox", { name: "Chưa quay" })).toBeDisabled();
     fireEvent.click(within(drawer).getByRole("checkbox", { name: "Ninh Bình mùa lúa" }));
     fireEvent.click(within(drawer).getByTestId("agp-card-agp-4"));
     expect(within(drawer).getByText("Đã chọn 2 dự án")).toBeInTheDocument();
+    access["agp-4"] = "view_only";
     fireEvent.click(within(drawer).getAllByRole("button", { name: /Thêm 2 dự án/ })[0]!);
     await waitFor(() => expect(ws.addSource).toHaveBeenCalledTimes(2));
     expect(ws.addSource.mock.calls).toEqual([
@@ -174,12 +192,10 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     ]);
     const warning = await screen.findByText("1 dự án không thêm được", { selector: ".ant-modal-confirm-title" });
     const content = warning.closest(".ant-modal-content")!;
-    expect(content).toHaveTextContent("Studio tìm cảnh, chuẩn bị và render bằng quyền AG Go của chủ dự án");
-    expect(content).toHaveTextContent("quyền theo danh mục chưa đủ");
-    expect(within(content as HTMLElement).getByText("Tràng An", { selector: "strong" })).toBeInTheDocument();
-    // refused for the owner: unticked and marked, so it is not added again until the drawer opens anew
+    expect(content).toHaveTextContent("Tràng An: Bạn chỉ xem được bản có watermark: cần quyền tải bản gốc của project này trên AG Go để thêm.");
+    // refused for its state: unticked, and its card says it once asked again
     expect(within(drawer).queryByText("Đã chọn 1 dự án")).toBeNull();
-    expect(within(drawer).getByTestId("agp-card-agp-4")).toHaveTextContent("Chủ dự án chưa dùng được");
+    await waitFor(() => expect(within(drawer).getByTestId("agp-card-agp-4")).toHaveTextContent("Chỉ xem (watermark)"));
     expect(within(drawer).getByRole("checkbox", { name: "Tràng An" })).toBeDisabled();
   });
 
@@ -188,11 +204,65 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "Thêm project" }));
     const drawer = await screen.findByRole("dialog", { name: /Chọn project AG Go/ });
-    fireEvent.click(await within(drawer).findByRole("checkbox", { name: "Ninh Bình mùa lúa" }));
+    const box = await within(drawer).findByRole("checkbox", { name: "Ninh Bình mùa lúa" });
+    await waitFor(() => expect(box).toBeEnabled());
+    fireEvent.click(box);
     fireEvent.click(within(drawer).getAllByRole("button", { name: /Thêm 1 dự án/ })[0]!);
     const warning = await screen.findByText("1 dự án không thêm được", { selector: ".ant-modal-confirm-title" });
     expect(warning.closest(".ant-modal-content")).toHaveTextContent("Ninh Bình mùa lúa: Studio đang bận");
     expect(within(drawer).getByText("Đã chọn 1 dự án")).toBeInTheDocument();
+  });
+
+  it("opens a project in Studio: what ag-go says of it, its images and videos as the person sees them, and adds it from there", async () => {
+    access["agp-2"] = "view_only";
+    agGo.getProject.mockResolvedValue({ id: "agp-2", name: "Ninh Bình mùa lúa", videoCount: 12, imageCount: 3, mediaCount: 15, description: "Lúa chín ở Tam Cốc", tags: ["lúa", "đồng"], folderPath: "Miền Bắc / Ninh Bình" });
+    agGo.getProjectMedia.mockResolvedValue({ items: [
+      { id: "m1", assetId: "a-1", caption: "Đồng lúa.mp4", thumbnailUrl: "https://r2.test/t1.jpg", previewUrl: "https://r2.test/p1-wm.mp4", watermarkVariant: "720p_wm", durationSeconds: 65, width: 1280, height: 720, asset: { assetType: "video" } },
+      { id: "m2", assetId: "a-2", caption: "Cổng chùa.jpg", thumbnailUrl: "https://r2.test/t2.jpg", previewUrl: null, durationSeconds: null, width: 800, height: 600, asset: { assetType: "image" } },
+    ], nextCursor: null });
+    ws.addSource.mockResolvedValue({ source: {} });
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Thêm project" }));
+    const drawer = await screen.findByRole("dialog", { name: /Chọn project AG Go/ });
+    await waitFor(() => expect(within(drawer).getByTestId("agp-card-agp-2")).toHaveTextContent("Chỉ xem (watermark)"));
+    expect(within(drawer).getByRole("checkbox", { name: "Ninh Bình mùa lúa" })).toBeDisabled();
+    fireEvent.click(within(drawer).getByRole("button", { name: "Xem chi tiết Ninh Bình mùa lúa" }));
+    const detail = await detailDrawer("Ninh Bình mùa lúa");
+    expect(await within(detail).findByText("Lúa chín ở Tam Cốc")).toBeInTheDocument();
+    expect(detail).toHaveTextContent("Miền Bắc / Ninh Bình");
+    expect(detail).toHaveTextContent("3 ảnh · 12 video");
+    expect(detail).toHaveTextContent("3/4 video đã phân tích dùng được");
+    expect(detail).toHaveTextContent("cần quyền tải bản gốc của project này");
+    expect(agGo.getProjectMedia).toHaveBeenCalledWith("agp-2", { limit: 48 });
+    expect(within(detail).getByRole("button", { name: "Thêm vào dự án" })).toBeDisabled();
+    // a video plays in place, from the preview the person may see
+    fireEvent.click(await within(detail).findByRole("button", { name: "Phát Đồng lúa.mp4" }));
+    const player = await screen.findByLabelText("Phát Đồng lúa.mp4", { selector: "video" });
+    expect(player).toHaveAttribute("src", "https://r2.test/p1-wm.mp4");
+    fireEvent.click(screen.getAllByRole("button", { name: "Close" }).at(-1)!);
+    // a project the person may add is added from its detail
+    access["agp-2"] = "addable";
+    fireEvent.click(within(drawer).getByRole("button", { name: "Xem chi tiết Tràng An" }));
+    const other = await detailDrawer("Tràng An");
+    const add = within(other).getByRole("button", { name: "Thêm vào dự án" });
+    await waitFor(() => expect(add).toBeEnabled());
+    fireEvent.click(add);
+    await waitFor(() => expect(ws.addSource).toHaveBeenCalledWith("p1", { kind: "ag_go_project", ref: "agp-4", label: "Tràng An" }));
+  });
+
+  it("asks before removing an ag-go project whose videos are still used, then removes it anyway", async () => {
+    ws.removeSource.mockRejectedValueOnce(new StudioHttpError(409, { message: "x", code: "project_in_use", assets: 2, videos: ["Tràng An", "Hoa Lư"] }));
+    mount();
+    const projects = await screen.findByRole("region", { name: "Project AG Go" });
+    fireEvent.click(within(projects).getByRole("button", { name: "Bỏ Ninh Bình" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Bỏ" }));
+    await waitFor(() => expect(ws.removeSource).toHaveBeenCalledWith("p1", expect.any(String), {}));
+    const title = await screen.findByText("Vẫn gỡ Ninh Bình?", { selector: ".ant-modal-confirm-title" });
+    const content = title.closest(".ant-modal-content") as HTMLElement;
+    expect(content).toHaveTextContent("2 video đang dùng thuộc project này");
+    expect(content).toHaveTextContent("Dùng trong: Tràng An, Hoa Lư");
+    fireEvent.click(within(content).getByRole("button", { name: "Vẫn gỡ" }));
+    await waitFor(() => expect(ws.removeSource).toHaveBeenLastCalledWith("p1", ws.removeSource.mock.calls[0]![1], { force: true }));
   });
 
   it("filters, searches, sorts and pages ag-go projects as ag-go does, in a list or a grid", async () => {

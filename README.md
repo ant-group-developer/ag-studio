@@ -63,7 +63,7 @@ corepack pnpm test
 |---|---|---|
 | **Auth0** | Đăng nhập (JWT) | Client SPA cho web; `azp` nằm trong `AUTH0_ALLOWED_CLIENT_IDS` của Studio và ag-go; cho phép origin của web |
 | **Account API** | Quyền admin, tên/email người dùng | `ACCOUNT_API_KEY`; không với tới thì không ai là admin, còn lại vẫn chạy |
-| **ag-go-api** | Footage đã quét, URL ký tới file gốc/proxy | Service key scope `footage:read,footage:resolve`; origin của web trong `CORS_EXTRA_ORIGINS` |
+| **ag-go-api** | Footage đã quét, URL ký tới file gốc/proxy | Service key scope `footage:read,footage:studio,usage:write`; origin của web trong `CORS_EXTRA_ORIGINS` |
 | **ag-farm** + **ag-render-worker** | Render preview/final, xuất Premiere | Owner `studio` (xem dưới) |
 | **R2** | Input/output render, thumbnail, export, audio dự án, payload nhật ký LLM | Bucket và khoá ghi |
 | **YouTube Data API** | Crawl xu hướng, kênh top (tuỳ chọn; không có thì yt-dlp) | `YOUTUBE_API_KEY` |

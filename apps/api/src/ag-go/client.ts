@@ -22,11 +22,25 @@ export interface GetFoldersResponse {
   folders: FolderItem[];
 }
 
-export interface ResolveAssetsBody {
+/** ag-go `POST /footage/studio/assets/resolve` (trusted mode): only videos of `projectIds` are served, the others are `missing`. */
+export interface StudioResolveAssetsBody {
+  projectIds: string[];
   assetIds: string[];
   purpose: 'preview' | 'final';
-  /** Mirror of `@ag-studio/ag-go-client`: a clean rendition first, then the short edge nearest; older ag-go ignores it. */
+  /** Mirror of `@ag-studio/ag-go-client`: a clean rendition first, then the short edge nearest. */
   prefer?: { short_edge?: number; clean?: boolean };
+}
+
+/** What a person may do with one ag-go project (`POST /footage/projects/access`, asked as that person). */
+export interface AgGoProjectAccess {
+  projectId: string;
+  /** Listed for them on ag-go's Projects page (watermarked unless the originals are open). */
+  canView: boolean;
+  /** They may download its originals: only such projects are added to a Studio project. */
+  canDownloadOriginals: boolean;
+  /** Analysed videos (0 when they cannot see the project), and the usable ones among them. */
+  analyzedVideos: number;
+  usableVideos: number;
 }
 
 /** Mirrors of ag-go's footage search vocabulary (`footage/dto/search-query.dto.ts`). */
@@ -133,7 +147,7 @@ export interface ResolvedAssetItem {
 
 export interface ResolveAssetsResponse {
   items: ResolvedAssetItem[];
-  /** Asset ids ag-go could not serve to this user. */
+  /** Asset ids ag-go could not serve (trusted mode: those outside the projects given). */
   missing?: string[];
 }
 
@@ -214,18 +228,19 @@ export class AgGoClient {
     this.timeoutMs = opts.timeoutMs ?? 30_000;
   }
 
-  private buildHeaders(actAsUserId: string): Record<string, string> {
+  /** `actAsUserId` null: ag-go's trusted mode for Studio (`/footage/studio/*`, no `X-Act-As-User`). */
+  private buildHeaders(actAsUserId: string | null): Record<string, string> {
     return {
       'Content-Type': 'application/json',
       'X-Service-Key': this.serviceKey,
-      'X-Act-As-User': actAsUserId,
+      ...(actAsUserId !== null ? { 'X-Act-As-User': actAsUserId } : {}),
     };
   }
 
   private async request<T>(
     method: string,
     path: string,
-    actAsUserId: string,
+    actAsUserId: string | null,
     body?: unknown,
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
@@ -268,21 +283,29 @@ export class AgGoClient {
     return this.request<GetFoldersResponse>('GET', '/footage/folders', actAsUserId);
   }
 
-  /** The analysed videos of ag-go projects (or folders) the user can reach. */
-  searchFootage(actAsUserId: string, query: SearchFootageQuery): Promise<SearchFootageResponse> {
+  /** Whether the person sees each ag-go project and may download its originals, with its analysed and usable videos. */
+  projectAccess(actAsUserId: string, projectIds: string[]): Promise<{ items: AgGoProjectAccess[] }> {
+    return this.request<{ items: AgGoProjectAccess[] }>('POST', '/footage/projects/access', actAsUserId, { projectIds });
+  }
+
+  /**
+   * The analysed videos of `projectIds` (ag-go projects added to a Studio project), in ag-go's trusted mode for Studio:
+   * the service key alone, whoever asks.
+   */
+  studioSearchFootage(query: SearchFootageQuery & { projectIds: string[] }): Promise<SearchFootageResponse> {
     const qs = footageParams(query).toString();
-    return this.request<SearchFootageResponse>('GET', `/footage/search${qs ? `?${qs}` : ''}`, actAsUserId);
+    return this.request<SearchFootageResponse>('GET', `/footage/studio/search?${qs}`, null);
   }
 
-  /** How many videos have each tag, genre, category… under the filters (a facet leaves its own filter out). */
-  getFootageFacets(actAsUserId: string, filters: FootageFilters): Promise<FootageFacets> {
+  /** How many videos of `projectIds` have each tag, genre, category… under the filters (a facet leaves its own filter out). */
+  studioFootageFacets(filters: FootageFilters & { projectIds: string[] }): Promise<FootageFacets> {
     const qs = footageParams(filters).toString();
-    return this.request<FootageFacets>('GET', `/footage/facets${qs ? `?${qs}` : ''}`, actAsUserId);
+    return this.request<FootageFacets>('GET', `/footage/studio/facets?${qs}`, null);
   }
 
-  /** GĐ2 (v3): resolve whole-asset IDs → signed download URLs. */
-  resolveAssets(actAsUserId: string, body: ResolveAssetsBody): Promise<ResolveAssetsResponse> {
-    return this.request<ResolveAssetsResponse>('POST', '/footage/assets/resolve', actAsUserId, body);
+  /** Signed URLs of whole videos of `projectIds` (originals for a final render); the others are `missing`. */
+  studioResolveAssets(body: StudioResolveAssetsBody): Promise<ResolveAssetsResponse> {
+    return this.request<ResolveAssetsResponse>('POST', '/footage/studio/assets/resolve', null, body);
   }
 
   /** GĐ2 (v3): get media URLs for one asset. */

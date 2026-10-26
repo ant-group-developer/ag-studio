@@ -1,5 +1,5 @@
 import {
-  BadRequestException, Body, Controller, Delete, ForbiddenException, Get, HttpCode, HttpStatus, Logger, NotFoundException, Param, PayloadTooLargeException,
+  BadRequestException, Body, Controller, Delete, ForbiddenException, Get, HttpCode, HttpStatus, NotFoundException, Param, PayloadTooLargeException,
   Post, Req, UnprocessableEntityException, UseGuards,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import type { Request } from 'express';
 import { z } from 'zod';
 import {
-  AUDIO_MAX_BYTES, AudioImportError, clearProjectAudio, clearVideoMusic, declineProjectNarration, getLibraryMusic, getVideoRevision, importProjectAudio,
+  AUDIO_MAX_BYTES, AudioImportError, clearProjectAudio, clearVideoMusic, declineProjectNarration, getLibraryMusic, importProjectAudio,
   importProjectMusic, importVideoMusic, jobView, latestVideoRevision, listJobs, listVideoRevisions, musicForVideo, MUSIC_CROSSFADE_MAX_SECONDS,
   MUSIC_MIX_MAX_PARTS, projectAudio, projectAudioFiles, projectAudioSummary, projectLibraryTrack, queueFit, queueMusicBeats, queueRender, readWorkspaceBytes, RENDER_RESOLUTIONS, requireProject,
   requireVideo, resolveInside, setProjectLibraryMusic, setVideoLibraryMusic, StudioRunError, timelineSummary, videoLibraryTrack, videoMusicSummary,
@@ -20,8 +20,6 @@ import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from '../studio/engine.service';
 import { mapErrors } from '../studio/http-errors';
 import { FileLinkService } from './file-links';
-import { FootageRights, type FootageVerdict } from './footage-rights';
-import { ProjectFootageService } from './project-footage.service';
 import { WorkspaceService } from './workspace.service';
 import { parseBody } from './zod-body';
 
@@ -113,16 +111,13 @@ export interface RenderView {
 /** A render's link, asked for one render at a time (`GET videos/:videoId/renders/:jobId/link`). */
 export interface RenderLink {
   jobId: string;
-  /** A short-lived link; for a Premiere export, null when the person's own ag-go rights do not cover every video in it, or ag-go could not say. */
-  url: string | null;
-  /** `footage_scope`: ag-go does not serve every video of it to this person; `footage_check_failed`: ag-go did not answer. */
-  urlHidden?: FootageVerdict;
+  /** A short-lived link (a Premiere export's names the .zip to save). */
+  url: string;
 }
 
 /**
- * A video's media (spec 2026-10-10 agent-workspace §P6): its renders (a preview or the final render plays for anyone
- * of the project; a Premiere export, which packs the footage files themselves, links only for people whose own ag-go
- * rights cover its footage — sharing a project never widens anyone's footage), starting a render (a preview: editor;
+ * A video's media (spec 2026-10-10 agent-workspace §P6): its renders (each links for anyone of the project, a Premiere
+ * export too: the footage of the project's ag-go projects is the project's, plan 2026-10-24), starting a render (a preview: editor;
  * the final render and the Premiere export: producer), its timeline, building it from the edit plan; and the project's
  * narration voice and music, picked from audio files uploaded to the Inputs tab (or put in `context/audio/`), the music
  * also from the music library.
@@ -130,18 +125,12 @@ export interface RenderLink {
 @Controller()
 @UseGuards(RolesGuard)
 export class VideoMediaController {
-  private readonly logger = new Logger(VideoMediaController.name);
-  private readonly rights: FootageRights;
-
   constructor(
     private readonly engine: EngineService,
     private readonly workspace: WorkspaceService,
-    footage: ProjectFootageService,
     private readonly config: ConfigService,
     private readonly links: FileLinkService,
-  ) {
-    this.rights = new FootageRights(footage, this.logger);
-  }
+  ) {}
 
   /**
    * What the Preview tab lists, from the database alone (no ag-go), a preview or final render with its link signed here
@@ -167,20 +156,17 @@ export class VideoMediaController {
   }
 
   /**
-   * One render's link. A preview or the final render links for anyone of the project (the final is built from the
-   * owner's originals, so members watch it at full quality whatever their own ag-go rights); a Premiere export packs the
-   * footage files themselves, so it links only for a person whose own ag-go rights cover every video of its timeline
-   * revision (sharing a project never widens anyone's footage), and its link names the .zip to save.
+   * One render's link, for anyone of the project whatever their own ag-go rights: the footage of the project's ag-go
+   * projects is the project's once someone who could download their originals added them (plan 2026-10-24). A Premiere
+   * export's link names the .zip to save.
    */
   @Get('videos/:videoId/renders/:jobId/link')
   @Roles('viewer')
-  link(@Param('videoId') videoId: string, @Param('jobId') jobId: string, @Req() req: Request): Promise<RenderLink> {
+  link(@Param('videoId') videoId: string, @Param('jobId') jobId: string): Promise<RenderLink> {
     return mapErrors(async () => {
       const v = await requireVideo(this.engine.db, videoId);
       const r = await videoRender(this.engine.db, v.id, jobId);
       if (!r) throw new StudioRunError('not_found', `video không có bản render ${jobId}`);
-      const hidden = r.kind === 'export_premiere' ? await this.footageVerdict(req.authContext!.userId, v.id, r.revision) : null;
-      if (hidden) return { jobId: r.jobId, url: null, urlHidden: hidden };
       const url = await this.engine.bucket.signedGetUrl(r.key, this.engine.browserUrlTtl, r.kind === 'export_premiere' ? { downloadName: `${v.title.slice(0, 80)}.zip` } : {});
       return { jobId: r.jobId, url };
     });
@@ -461,12 +447,4 @@ export class VideoMediaController {
     return (await this.engine.db.get<{ role: ActorRole }>('SELECT role FROM team_members WHERE team_id = ? AND user_id = ?', [teamId, req.authContext!.userId]))?.role ?? 'viewer';
   }
 
-  /**
-   * Why ag-go does not serve every video of that timeline revision to this person, or null when it does: answered from
-   * what is known per ag-go video (`FootageRights`), asking ag-go only about the videos not known yet.
-   */
-  private async footageVerdict(userId: string, videoId: string, revision: number): Promise<FootageVerdict | null> {
-    const rev = await getVideoRevision(this.engine.db, videoId, revision);
-    return this.rights.verdict(userId, rev ? rev.data.clips.map((c) => c.asset_id) : [], `video ${videoId} r${revision}`);
-  }
 }

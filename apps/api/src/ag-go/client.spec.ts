@@ -8,26 +8,27 @@ const envelope = (data: unknown) => new Response(JSON.stringify({ success: true,
 describe('AgGoClient footage', () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it('sends every footage filter ag-go knows, lists comma-joined, as the user', async () => {
+  it('searches the projects in the trusted mode with every filter ag-go knows, lists comma-joined, no act-as user', async () => {
     const seen: { url: string; headers: Record<string, string> }[] = [];
     vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
       seen.push({ url, headers: init.headers as Record<string, string> });
       return envelope({ items: [], nextCursor: null, total: 0 });
     });
     const c = new AgGoClient({ baseUrl: 'https://go.test/api/', serviceKey: 'k' });
-    await c.searchFootage('auth0|u', {
+    await c.studioSearchFootage({
       projectIds: ['p1', 'p2'], q: 'thuyền', categoryIds: ['c1'], ownerUserIds: ['o1'], provinceIds: ['pr1'], resolutions: ['4k', '1080p'],
       tags: ['sông'], genres: ['travel'], timesOfDay: ['day'], orientations: ['landscape'], minDurationMs: 1000, maxDurationMs: 60000,
       usability: 'all', page: 2, limit: 40, sortBy: 'duration', sortOrder: 'asc',
     });
     const u = new URL(seen[0]!.url);
-    expect(u.pathname).toBe('/api/footage/search');
+    expect(u.pathname).toBe('/api/footage/studio/search');
     expect(Object.fromEntries(u.searchParams)).toEqual({
       projectIds: 'p1,p2', q: 'thuyền', categoryIds: 'c1', ownerUserIds: 'o1', provinceIds: 'pr1', resolutions: '4k,1080p', tags: 'sông',
       genres: 'travel', timesOfDay: 'day', orientations: 'landscape', minDurationMs: '1000', maxDurationMs: '60000', usability: 'all',
       page: '2', limit: '40', sortBy: 'duration', sortOrder: 'asc',
     });
-    expect(seen[0]!.headers).toMatchObject({ 'X-Service-Key': 'k', 'X-Act-As-User': 'auth0|u' });
+    expect(seen[0]!.headers).toMatchObject({ 'X-Service-Key': 'k' });
+    expect(seen[0]!.headers).not.toHaveProperty('X-Act-As-User');
   });
 
   it('asks the facets of the same filters, without paging', async () => {
@@ -35,8 +36,22 @@ describe('AgGoClient footage', () => {
     const facets = { tags: [{ value: 'sông', count: 3 }], genres: [], timesOfDay: [], orientations: [], resolutions: [], categories: [], provinces: [], projects: [], authors: [] };
     vi.stubGlobal('fetch', async (url: string) => { urls.push(url); return envelope(facets); });
     const c = new AgGoClient({ baseUrl: 'https://go.test/api', serviceKey: 'k' });
-    expect(await c.getFootageFacets('auth0|u', { projectIds: ['p1'], usability: 'usable' })).toEqual(facets);
-    expect(urls).toEqual(['https://go.test/api/footage/facets?projectIds=p1&usability=usable']);
+    expect(await c.studioFootageFacets({ projectIds: ['p1'], usability: 'usable' })).toEqual(facets);
+    expect(urls).toEqual(['https://go.test/api/footage/studio/facets?projectIds=p1&usability=usable']);
+  });
+
+  it('resolves within the projects, and asks what a person may do with projects as that person', async () => {
+    const seen: { url: string; init: RequestInit }[] = [];
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => { seen.push({ url, init }); return envelope({ items: [] }); });
+    const c = new AgGoClient({ baseUrl: 'https://go.test/api', serviceKey: 'k' });
+    await c.studioResolveAssets({ projectIds: ['p1'], assetIds: ['a1'], purpose: 'final' });
+    await c.projectAccess('auth0|u', ['p1', 'p2']);
+    expect(seen.map((s) => [s.url, JSON.parse(s.init.body as string)])).toEqual([
+      ['https://go.test/api/footage/studio/assets/resolve', { projectIds: ['p1'], assetIds: ['a1'], purpose: 'final' }],
+      ['https://go.test/api/footage/projects/access', { projectIds: ['p1', 'p2'] }],
+    ]);
+    expect(seen[0]!.init.headers).not.toHaveProperty('X-Act-As-User');
+    expect(seen[1]!.init.headers).toMatchObject({ 'X-Act-As-User': 'auth0|u' });
   });
 
   it('reads and runs the preps of footage as the user', async () => {

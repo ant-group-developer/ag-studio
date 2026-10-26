@@ -128,7 +128,7 @@ export function FootagePicker({ projectId, videoId, sources, open, onClose }: {
             meta: { durationMs: it.durationMs, ...(from ? { agGoProjectId: from } : {}), ...(it.thumbnailUrl ? { thumbnailUrl: it.thumbnailUrl } : {}) },
           });
         } catch (e) {
-          failed.push(e instanceof StudioHttpError && e.code === "owner_cannot_access" ? t("ws.inputs.ownerCannotUse", { name: it.name }) : `${it.name}: ${errorText(e, t("ws.inputs.addFailed"))}`);
+          failed.push(e instanceof StudioHttpError && e.code === "not_in_added_project" ? t("ws.inputs.notInAddedProject", { name: it.name }) : `${it.name}: ${errorText(e, t("ws.inputs.addFailed"))}`);
         }
       }
       return failed;

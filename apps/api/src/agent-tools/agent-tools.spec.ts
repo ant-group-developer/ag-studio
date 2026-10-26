@@ -38,8 +38,8 @@ describe('agent tools API (real database)', () => {
     guard = new AgentTokenGuard(config({ STUDIO_AGENT_TOKEN_SECRET: SECRET }), engine);
     searched.length = 0;
     const footage = {
-      search: async (actAs: string, q: unknown) => { searched.push([actAs, q]); return { items: [], nextCursor: null, total: 0 }; },
-      check: async (_actAs: string, ids: string[]) => ({ ok: ids, missing: [] }),
+      search: async (q: unknown) => { searched.push(q); return { items: [], nextCursor: null, total: 0 }; },
+      check: async (_projectIds: string[], ids: string[]) => ({ ok: ids, missing: [] }),
     } as unknown as ProjectFootageService;
     controller = new AgentToolsController(engine, ws, new AgentToolsService(), footage, ({ current: () => 'Kho Footage' }) as unknown as SiteNameService, ({ get: () => undefined }) as unknown as ConfigService);
     await insertTeam(s.db, 'team-1', 'auth0|owner');
@@ -69,12 +69,12 @@ describe('agent tools API (real database)', () => {
     expect(out).toMatchObject({ isError: true, text: expect.stringContaining('chưa có project Kho Footage') });
   });
 
-  it("searches the project's ag-go projects as the project's owner", async () => {
+  it("searches the project's ag-go projects (ag-go's trusted mode, whoever asks)", async () => {
     const { project, token } = await turn('viewer');
     await addSource(s.engine.db, { projectId: project.id, kind: 'ag_go_project', ref: 'agp-1', mediaType: 'mixed', label: 'Ninh Bình', addedBy: 'auth0|owner' });
     const out = await controller.call({ name: 'footage_search', arguments: { q: 'thuyền' } }, await admitted(token));
     expect(out.isError).toBeUndefined();
-    expect(searched).toEqual([['auth0|owner', { projectIds: ['agp-1'], q: 'thuyền', limit: 30 }]]);
+    expect(searched).toEqual([{ projectIds: ['agp-1'], q: 'thuyền', limit: 30 }]);
   });
 
   it('lets a running turn in and runs a tool with the role of the person who asked', async () => {

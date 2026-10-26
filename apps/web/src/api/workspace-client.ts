@@ -438,13 +438,19 @@ export interface RenderView {
   /** A short-lived link to watch a preview or the final render, signed with the list; absent for a Premiere export (asked for apart). */
   url?: string;
 }
-/** A render's link, asked for one render at a time (a Premiere export, when it is saved). */
+/** A render's link, asked for one render at a time (a Premiere export, when it is saved), for anyone of the project. */
 export interface RenderLink {
   jobId: string;
-  /** For a Premiere export, null when the person's own ag-go rights do not cover the footage in it, or ag-go could not say (`footage_check_failed`). */
-  url: string | null;
-  urlHidden?: "footage_scope" | "footage_check_failed";
+  url: string;
 }
+
+/**
+ * Whether the person may add an ag-go project (`POST ag-go-access`, asked as them): `addable` they may download its
+ * originals and it has a usable analysed video; `view_only` they see it watermarked only; `no_videos` nothing usable
+ * analysed yet; `not_visible` they do not see it.
+ */
+export type AgGoAddability = "addable" | "view_only" | "no_videos" | "not_visible";
+export interface AgGoProjectAccess { projectId: string; state: AgGoAddability; analyzedVideos: number; usableVideos: number }
 
 export interface TimelineClipRow {
   clip_id: string; at: number; length: number; asset: string; asset_id: string; in: number; out: number | null; shot_id: string | null;
@@ -647,12 +653,23 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     listSources(projectId: string, videoId?: string): Promise<{ sources: SourceItem[]; counts?: SourceCounts }> {
       return call("GET", `/api/projects/${enc(projectId)}/sources${buildQuery({ videoId })}`);
     },
-    /** 422 `owner_cannot_access` when the project's owner cannot use it on ag-go. */
+    /**
+     * An ag-go project only someone who may download its originals adds (422 `ag_go_view_only`, `ag_go_no_videos`,
+     * `ag_go_not_visible`); an ag-go video only from a project added (422 `no_ag_go_project`, `not_in_added_project`).
+     */
     addSource(projectId: string, input: AddSourceInput): Promise<{ source: SourceItem; prepare?: AssetState }> {
       return call("POST", `/api/projects/${enc(projectId)}/sources`, input);
     },
-    removeSource(projectId: string, sourceId: string): Promise<void> {
-      return call("DELETE", `/api/projects/${enc(projectId)}/sources/${enc(sourceId)}`);
+    /** Which of these ag-go projects the person may add (the picker's cards). */
+    agGoAccess(projectId: string, projectIds: string[]): Promise<{ items: AgGoProjectAccess[] }> {
+      return call("POST", `/api/projects/${enc(projectId)}/ag-go-access`, { projectIds });
+    },
+    /**
+     * 409 `project_in_use` (`assets`, `videos`: titles) for an ag-go project whose videos are used and in no other project
+     * of it; `force` removes it anyway.
+     */
+    removeSource(projectId: string, sourceId: string, opts: { force?: boolean } = {}): Promise<void> {
+      return call("DELETE", `/api/projects/${enc(projectId)}/sources/${enc(sourceId)}${opts.force ? "?force=1" : ""}`);
     },
     /**
      * A document, image or audio file into context/ (415 `docx_not_supported`, `video_from_ag_go`, `file_type`), checked
@@ -668,7 +685,7 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
         uploadKey: link.key, name: file.name, ...(videoId ? { videoId } : {}), ...(opts.reference ? { reference: true } : {}),
       });
     },
-    /** Videos of the project's ag-go projects the person can see, with where each stands here. */
+    /** Videos of the project's ag-go projects (the same for everyone of the project), with where each stands here. */
     searchFootage(projectId: string, q: FootageQuery = {}): Promise<{ items: FootageItem[]; nextCursor: string | null; total: number }> {
       return call("GET", `/api/projects/${enc(projectId)}/footage${footageQueryString(q)}`);
     },

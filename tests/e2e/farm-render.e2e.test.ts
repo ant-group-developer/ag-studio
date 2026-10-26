@@ -196,8 +196,11 @@ function createSilentWav(outputPath: string, durationSeconds: number): void {
 
 // ------------------------------------------------------------------
 // Fake ag-go server — resolves asset IDs to presigned fake-S3 GET URLs
-// (v3/GĐ4 API: POST /footage/assets/resolve)
+// (its trusted mode for Studio: POST /footage/studio/assets/resolve, within the project's ag-go projects)
 // ------------------------------------------------------------------
+
+/** The ag-go project added to the e2e project: its videos are what ag-go serves it. */
+const E2E_AG_GO_PROJECT = "agp-e2e";
 
 const segmentRegistry = new Map<
   string,
@@ -207,17 +210,18 @@ const segmentRegistry = new Map<
 async function startFakeAgGo(): Promise<void> {
   return new Promise((resolve, reject) => {
     agGoServer = http.createServer(async (req, res) => {
-      if (req.method === "POST" && req.url?.includes("/footage/assets/resolve")) {
+      if (req.method === "POST" && req.url?.includes("/footage/studio/assets/resolve")) {
         let body = "";
         for await (const chunk of req) body += chunk;
         const parsed = JSON.parse(body) as {
+          projectIds: string[];
           assetIds: string[];
           purpose: string;
         };
 
         const items = parsed.assetIds.map((assetId) => {
           const rec = segmentRegistry.get(assetId);
-          if (!rec) return null;
+          if (!rec || !parsed.projectIds.includes(E2E_AG_GO_PROJECT)) return null;
           const url =
             `http://127.0.0.1:${FAKE_S3_PORT}/${S3_BUCKET}/${rec.s3Key}` +
             `?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=3600`;
@@ -849,7 +853,6 @@ describe.skipIf(!isE2E)("farm E2E: studio.render_preview", () => {
       const db = studioDb!;
       // teams.id is a FK for projects.team_id
       await db.run("INSERT INTO teams (id, name, created_at, updated_at) VALUES (?, ?, now(), now()) ON CONFLICT DO NOTHING", ["team-e2e", "E2E Team"]);
-      // /farm/sign resolves footage acting as the project's owner, never as the project itself.
       await db.run("INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES (?, ?, 'owner', now()) ON CONFLICT DO NOTHING", ["team-e2e", "auth0|e2e-owner"]);
       // the farm's "production" is the project (its id names the key prefix productions/<project>/jobs/…)
       await db.run(
@@ -859,6 +862,12 @@ describe.skipIf(!isE2E)("farm E2E: studio.render_preview", () => {
       );
       const projectRow = await db.get("SELECT id FROM projects WHERE id = ?", [productionId]);
       if (!projectRow) throw new Error(`project row not found after INSERT for id=${productionId}`);
+      // /farm/sign resolves footage within the project's ag-go projects (ag-go's trusted mode for Studio)
+      await db.run(
+        `INSERT INTO project_sources (id, project_id, video_id, kind, ref, media_type, label, meta, added_by, added_at)
+         VALUES (?, ?, NULL, 'ag_go_project', ?, 'mixed', 'E2E', '{}', 'auth0|e2e-owner', now()) ON CONFLICT DO NOTHING`,
+        [`src-${productionId}`, productionId, E2E_AG_GO_PROJECT],
+      );
     }
 
     // Build the StudioStorage backed by FakeS3Server

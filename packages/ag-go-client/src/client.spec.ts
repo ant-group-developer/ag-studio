@@ -192,6 +192,32 @@ describe("AgGoClient - preps", () => {
   });
 });
 
+describe("AgGoClient - trusted mode for Studio", () => {
+  const call = (f: typeof globalThis.fetch) => (f as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+
+  it("resolves videos of the project's ag-go projects with the service key alone", async () => {
+    const mockFetch = makeMockFetch(200, { items: [], missing: ["a2"] });
+    const client = makeClient(mockFetch);
+    await expect(client.studioResolveAssets({ projectIds: ["p1"], assetIds: ["a2"], purpose: "final" })).resolves.toEqual({ items: [], missing: ["a2"] });
+    const [url, init] = call(mockFetch);
+    expect(url).toBe(`${BASE_URL}/footage/studio/assets/resolve`);
+    expect(JSON.parse(init.body as string)).toEqual({ projectIds: ["p1"], assetIds: ["a2"], purpose: "final" });
+    expect(init.headers).not.toHaveProperty("X-Act-As-User");
+  });
+
+  it("reads and runs preps within the projects, saying who asked", async () => {
+    const read = makeMockFetch(200, { items: [] });
+    await makeClient(read).studioAssetPreps(["p1"], ["a1"]);
+    expect(call(read)[0]).toBe(`${BASE_URL}/footage/studio/assets/prep`);
+    expect(JSON.parse(call(read)[1].body as string)).toEqual({ projectIds: ["p1"], assetIds: ["a1"] });
+    const run = makeMockFetch(200, { items: [] });
+    await makeClient(run).studioRunAssetPreps(["p1"], ["a1"], "auth0|u");
+    expect(call(run)[0]).toBe(`${BASE_URL}/footage/studio/assets/prep/run`);
+    expect(JSON.parse(call(run)[1].body as string)).toEqual({ projectIds: ["p1"], assetIds: ["a1"], requestedBy: "auth0|u" });
+    expect(call(run)[1].headers).not.toHaveProperty("X-Act-As-User");
+  });
+});
+
 describe("AgGoClient - sendUsageEvents", () => {
   it("POSTs the events with the service key alone (no act-as user)", async () => {
     const mockFetch = makeMockFetch(200, { success: true, requestId: "r", data: { accepted: 1, duplicates: 0 }, error: null, timestamp: "t" });

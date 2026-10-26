@@ -10,11 +10,11 @@ import { requireVideo } from "../workspace/project-db.js";
 import { getJob, jobView, listJobs, requestJobCancel, type JobRecord } from "../workspace/jobs-db.js";
 import { ASSET_ID } from "../workspace/prepare.js";
 import { assetState as stateOf, queuePrepare } from "../workspace/inputs.js";
-import { addSource, listSources, projectActAs, sourceView, type SourceRecord } from "../workspace/sources-db.js";
+import { addSource, agGoProjectIds, listSources, sourceView, type SourceRecord } from "../workspace/sources-db.js";
 import { writeVideoIndex, videoIndexPath } from "../workspace/video-index.js";
 import type { AgentTool, AgentToolContext } from "./tools.js";
 
-/** One analysed ag-go video as the project's owner sees it. */
+/** One analysed ag-go video of the project's ag-go projects. */
 export interface FootageItem {
   assetId: string;
   name: string;
@@ -28,11 +28,15 @@ export interface FootageItem {
   thumbnailUrl?: string | null;
 }
 
-/** ag-go as the API reaches it (service key, acting as the project's owner); wired by the API. */
+/**
+ * ag-go as the API reaches it: its trusted mode for Studio (service key alone), bound to ag-go projects added to the
+ * project, whoever asks (plan 2026-10-24); wired by the API.
+ */
 export interface ProjectFootage {
-  search(actAs: string, q: { projectIds: string[]; q?: string; limit?: number; cursor?: string }): Promise<{ items: FootageItem[]; nextCursor: string | null; total: number }>;
-  /** Which of these videos ag-go serves to the owner (a preview at least). */
-  check(actAs: string, assetIds: string[]): Promise<{ ok: string[]; missing: string[] }>;
+  /** The analysed videos of `projectIds` (each one added to the project). */
+  search(q: { projectIds: string[]; q?: string; limit?: number; cursor?: string }): Promise<{ items: FootageItem[]; nextCursor: string | null; total: number }>;
+  /** Which of these videos belong to one of `projectIds`, so ag-go serves them to the project. */
+  check(projectIds: string[], assetIds: string[]): Promise<{ ok: string[]; missing: string[] }>;
 }
 
 const json = (v: unknown) => JSON.stringify(v, null, 2);
@@ -40,11 +44,10 @@ const siteOf = (ctx: AgentToolContext) => ctx.siteName ?? DEFAULT_SITE_NAME;
 const tool = <I extends z.ZodTypeAny>(t: AgentTool<I>): AgentTool => t as unknown as AgentTool;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function footageOf(ctx: AgentToolContext & { footage?: ProjectFootage }): Promise<{ footage: ProjectFootage; actAs: string }> {
+/** ag-go, and the ag-go projects added to the project (what it serves the project). */
+async function footageOf(ctx: AgentToolContext & { footage?: ProjectFootage }): Promise<{ footage: ProjectFootage; projects: string[] }> {
   if (!ctx.footage) throw new StudioRunError("invalid", `Studio này chưa nối ${siteOf(ctx)}: không tìm hay thêm video được`, { code: "no_ag_go" });
-  const actAs = await projectActAs(ctx.db, ctx.project.id);
-  if (!actAs) throw new StudioRunError("invalid", `dự án chưa có chủ để hỏi ${siteOf(ctx)}`, { code: "no_owner" });
-  return { footage: ctx.footage, actAs };
+  return { footage: ctx.footage, projects: await agGoProjectIds(ctx.db, ctx.project.id) };
 }
 
 async function targetVideo(ctx: AgentToolContext, videoId: string | undefined): Promise<string> {
@@ -103,13 +106,12 @@ export const INPUT_TOOLS: AgentTool[] = [
       cursor: z.string().min(1).optional(),
     }).strict(),
     run: async (ctx, a) => {
-      const { footage, actAs } = await footageOf(ctx);
-      const projects = (await listSources(ctx.db, ctx.project.id)).filter((s) => s.kind === "ag_go_project").map((s) => s.ref);
-      if (!projects.length) return { text: `Dự án chưa có project ${siteOf(ctx)} nào. Nhờ người dùng chọn ở tab Đầu vào (hoặc thêm từng video).`, isError: true };
+      const { footage, projects } = await footageOf(ctx);
+      if (!projects.length) return { text: `Dự án chưa có project ${siteOf(ctx)} nào. Nhờ người dùng chọn ở tab Đầu vào.`, isError: true };
       if (a.ag_go_project_id && !projects.includes(a.ag_go_project_id)) {
         return { text: `Project ${siteOf(ctx)} ${a.ag_go_project_id} không thuộc đầu vào của dự án (có: ${projects.join(", ")}).`, isError: true };
       }
-      const r = await footage.search(actAs, { projectIds: a.ag_go_project_id ? [a.ag_go_project_id] : projects, ...(a.q ? { q: a.q } : {}), limit: a.limit ?? 30, ...(a.cursor ? { cursor: a.cursor } : {}) });
+      const r = await footage.search({ projectIds: a.ag_go_project_id ? [a.ag_go_project_id] : projects, ...(a.q ? { q: a.q } : {}), limit: a.limit ?? 30, ...(a.cursor ? { cursor: a.cursor } : {}) });
       return {
         text: json({
           total: r.total, next_cursor: r.nextCursor,
@@ -123,7 +125,7 @@ export const INPUT_TOOLS: AgentTool[] = [
   }),
   tool({
     name: "inputs_add",
-    description: "Thêm video {{site}} vào video của luồng này (hoặc `video_id`), theo thứ tự dùng. Lấy asset_id và `name` (bắt buộc, người dùng đọc tên này) từ footage_search. Studio kiểm chủ dự án dùng được video đó. Sau đó gọi inputs_prepare cho video chưa chuẩn bị.",
+    description: "Thêm video {{site}} vào video của luồng này (hoặc `video_id`), theo thứ tự dùng. Lấy asset_id và `name` (bắt buộc, người dùng đọc tên này) từ footage_search. Studio kiểm video đó thuộc một project {{site}} của dự án. Sau đó gọi inputs_prepare cho video chưa chuẩn bị.",
     input: z.object({
       assets: z.array(z.object({ asset_id: z.string().regex(ASSET_ID), name: z.string().trim().min(1).max(200) }).strict()).min(1).max(40),
       video_id: z.string().min(1).optional(),
@@ -131,10 +133,11 @@ export const INPUT_TOOLS: AgentTool[] = [
     role: "editor",
     run: async (ctx, a) => {
       const videoId = await targetVideo(ctx, a.video_id);
-      const { footage, actAs } = await footageOf(ctx);
-      const { missing } = await footage.check(actAs, a.assets.map((x) => x.asset_id));
+      const { footage, projects } = await footageOf(ctx);
+      if (!projects.length) return { text: `Dự án chưa có project ${siteOf(ctx)} nào: video phải thuộc một project người dùng đã chọn ở tab Đầu vào. Không thêm gì.`, isError: true };
+      const { missing } = await footage.check(projects, a.assets.map((x) => x.asset_id));
       if (missing.length) {
-        return { text: `${siteOf(ctx)} không cho chủ dự án dùng các video: ${missing.join(", ")} (không có quyền hoặc chưa có bản xem). Không thêm gì.`, isError: true };
+        return { text: `Các video không thuộc project ${siteOf(ctx)} nào của dự án: ${missing.join(", ")}. Không thêm gì. Tìm lại bằng footage_search.`, isError: true };
       }
       for (const x of a.assets) {
         await addSource(ctx.db, { projectId: ctx.project.id, videoId, kind: "ag_go_asset", ref: x.asset_id, mediaType: "video", label: x.name, addedBy: ctx.claims.sub }, ctx.now());

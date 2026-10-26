@@ -23,7 +23,7 @@ import { DEFAULT_SITE_NAME } from "../site-name.js";
 import { JobStopped } from "./farm.js";
 import type { JobContext, JobOutcome } from "./job-runner.js";
 import type { JobRecord } from "./jobs-db.js";
-import { projectActAs, savePrepared } from "./sources-db.js";
+import { agGoProjectIds, savePrepared } from "./sources-db.js";
 import { writeVideoIndexesFor } from "./video-index.js";
 
 /** Where the prep of one footage stands at ag-go (`POST /footage/assets/prep`, contract H2 of plan 2026-10-13). */
@@ -56,12 +56,15 @@ export interface AgGoPrepItem {
   };
 }
 
-/** ag-go's preps, asked as `actAs` (the project's owner). */
+/**
+ * ag-go's preps in its trusted mode for Studio: only videos of `projectIds` (the ag-go projects added to the project),
+ * whoever asks; another video is refused (404).
+ */
 export interface AgGoPreps {
   /** The prep of each footage, or how far it is. */
-  read(actAs: string, assetIds: string[]): Promise<{ items: AgGoPrepItem[] }>;
-  /** Runs missing or failed preps now, raises one waiting in a backfill; answers like `read`. */
-  run(actAs: string, assetIds: string[]): Promise<{ items: AgGoPrepItem[] }>;
+  read(projectIds: string[], assetIds: string[]): Promise<{ items: AgGoPrepItem[] }>;
+  /** Runs missing or failed preps now, raises one waiting in a backfill; answers like `read`. `requestedBy`: who asked, for ag-go's record. */
+  run(projectIds: string[], assetIds: string[], requestedBy?: string): Promise<{ items: AgGoPrepItem[] }>;
 }
 
 /** What preparing needs on the worker. */
@@ -169,10 +172,10 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
   const assetId = req.asset_id;
   const site = d.siteName?.() ?? DEFAULT_SITE_NAME;
   if (!ASSET_ID.test(assetId)) throw new Error(`id video ${site} không hợp lệ: ${assetId}`);
-  const actAs = await projectActAs(d.db, job.project_id);
-  if (!actAs) throw new Error(`dự án chưa có chủ để hỏi ${site}`);
+  const projectIds = await agGoProjectIds(d.db, job.project_id);
+  if (!projectIds.length) throw new Error(`dự án chưa có project ${site} nào: thêm project chứa video này ở tab Đầu vào`);
 
-  const prep = await readyPrep(d, ctx, actAs, assetId, site, req.duration_s ?? null);
+  const prep = await readyPrep(d, ctx, { projectIds, requestedBy: job.created_by }, assetId, site, req.duration_s ?? null);
   const name = req.name?.trim() || assetId;
   const out = join(ctx.tempDir, "out");
   await downloadImages(d, ctx, prep, out, site);
@@ -229,7 +232,7 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
  * run it now, then asked again every `pollMs` until it is ready, failed, or `maxWaitMs` passed.
  */
 async function readyPrep(
-  d: PrepareDeps, ctx: JobContext, actAs: string, assetId: string, site: string, durationS: number | null,
+  d: PrepareDeps, ctx: JobContext, from: { projectIds: string[]; requestedBy: string }, assetId: string, site: string, durationS: number | null,
 ): Promise<NonNullable<AgGoPrepItem["prep"]>> {
   await ctx.report({ phase: `Đang hỏi ${site}`, progress: 0 });
   const pick = (r: { items: AgGoPrepItem[] }): AgGoPrepItem => {
@@ -239,9 +242,10 @@ async function readyPrep(
   };
   const ask = async (how: "read" | "run"): Promise<AgGoPrepItem> => {
     try {
-      return pick(await retryBusy(() => d.preps[how](actAs, [assetId]), ctx.signal, d.retryDelaysMs));
+      const call = () => (how === "read" ? d.preps.read(from.projectIds, [assetId]) : d.preps.run(from.projectIds, [assetId], from.requestedBy));
+      return pick(await retryBusy(call, ctx.signal, d.retryDelaysMs));
     } catch (e) {
-      if ((e as { status?: number }).status === 404) throw new Error(`${site} không cho chủ dự án dùng video này (không có quyền hoặc video không còn)`);
+      if ((e as { status?: number }).status === 404) throw new Error(`video không thuộc project ${site} nào của dự án (hoặc không còn trên ${site}): thêm project chứa nó ở tab Đầu vào`);
       throw e;
     }
   };

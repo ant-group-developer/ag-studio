@@ -53,6 +53,7 @@ export interface AgGoProject {
   /** The asset whose thumbnail stands for the project (`GET /assets/:id/preview-url`). */
   thumbnailAssetId?: string | null;
   tags?: string[];
+  description?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -96,6 +97,10 @@ export interface AgGoProjectMedia {
   assetId: string;
   caption: string | null;
   thumbnailUrl?: string | null;
+  /** The largest preview the person may see (watermarked unless they may see this project's originals). */
+  previewUrl?: string | null;
+  /** Set when that preview is watermarked. */
+  watermarkVariant?: string | null;
   durationSeconds: number | null;
   width: number | null;
   height: number | null;
@@ -172,6 +177,11 @@ export async function getAgGoAssetPreviewUrl(accessToken: string, assetId: strin
   return (await agGoGet<{ url: string }>(accessToken, `/assets/${encodeURIComponent(assetId)}/preview-url?${query.toString()}`)).url;
 }
 
+/** One ag-go project as its page shows it (`GET /projects/:id`): its description and tags with the rest. */
+export function getAgGoProject(accessToken: string, projectId: string): Promise<AgGoProject> {
+  return agGoGet(accessToken, `/projects/${encodeURIComponent(projectId)}`);
+}
+
 /** The media of one ag-go project, a page at a time (`limit` ≤ 100). */
 export function getAgGoProjectMedia(accessToken: string, projectId: string, q: { cursor?: string; limit?: number } = {}): Promise<AgGoProjectMediaPage> {
   const query = new URLSearchParams();
@@ -210,6 +220,7 @@ export function createAgGoWebClient(getAccessToken: () => Promise<string>) {
     getProjectOwners: async () => agGoLookups.owners(await getAccessToken()),
     findProvinces: async (keyword: string) => agGoLookups.provincesFound(await getAccessToken(), keyword),
     getAssetPreviewUrl: async (assetId: string, variantCode?: string, width?: number) => getAgGoAssetPreviewUrl(await getAccessToken(), assetId, variantCode, width),
+    getProject: async (projectId: string): Promise<AgGoProject> => getAgGoProject(await getAccessToken(), projectId),
     getProjectMedia: async (projectId: string, q: { cursor?: string; limit?: number } = {}): Promise<AgGoProjectMediaPage> =>
       getAgGoProjectMedia(await getAccessToken(), projectId, q),
   };

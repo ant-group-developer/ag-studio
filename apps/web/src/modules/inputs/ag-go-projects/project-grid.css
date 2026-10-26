@@ -51,3 +51,20 @@
 .agp-filter-option-count { flex-shrink: 0; color: rgba(0, 0, 0, 0.45); font-size: 12px; font-variant-numeric: tabular-nums; }
 .agp-thin-scrollbar { scrollbar-width: thin; scrollbar-color: rgba(0, 0, 0, 0.18) transparent; }
 .agp-drawer { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+
+/* whether a project can be added (Studio's own, on the cards) */
+.agp-badge--addable { background: #e6f4ff; color: #0958d9; }
+
+/* the project's detail drawer: cover, then a grid of its images and videos */
+.agp-detail__cover { flex: 0 0 auto; width: 160px; height: 120px; border-radius: 12px; overflow: hidden; background: #f4f4f5; color: #a1a1aa; display: flex; align-items: center; justify-content: center; }
+.agp-detail__cover img { width: 100%; height: 100%; object-fit: cover; }
+.agp-media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.agp-media { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.agp-media__box { position: relative; width: 100%; aspect-ratio: 16 / 10; border-radius: 8px; overflow: hidden; background: #f4f4f5; border: none; padding: 0; cursor: pointer; }
+.agp-media__box:disabled { cursor: default; }
+.agp-media__box:focus-visible { outline: 2px solid #1677ff; outline-offset: 2px; }
+.agp-media__image, .agp-media__image .ant-image-img { width: 100%; height: 100%; object-fit: cover; }
+.agp-media__play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 36px; height: 36px; border-radius: 50%; background: rgba(0, 0, 0, 0.55); color: #fff; display: flex; align-items: center; justify-content: center; }
+.agp-media__len { position: absolute; right: 6px; bottom: 6px; padding: 1px 6px; border-radius: 4px; background: rgba(0, 0, 0, 0.65); color: #fff; font-size: 11px; font-variant-numeric: tabular-nums; }
+.agp-media__name { font-size: 12px; }
+.agp-detail__title { display: block; font-size: 18px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

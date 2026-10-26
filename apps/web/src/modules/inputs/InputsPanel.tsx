@@ -37,7 +37,7 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
   projectId: string; videoId?: string; canEdit: boolean; canProduce?: boolean; onOpenFile: (path: string) => void;
 }) {
   const { t } = useAiTranslation();
-  const { message } = AntApp.useApp();
+  const { message, modal } = AntApp.useApp();
   const client = useWorkspaceClient();
   const qc = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -70,7 +70,29 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
     onSuccess: (n) => { refresh(); void message.success(t("ws.inputs.bulkQueued", { count: n })); },
     onError: (e) => { refresh(); fail(t("ws.inputs.prepareFailed"))(e); },
   });
-  const remove = useMutation({ mutationFn: (s: SourceItem) => client.removeSource(projectId, s.id), onSuccess: refresh, onError: fail(t("ws.inputs.removeFailed")) });
+  const remove = useMutation({
+    mutationFn: (p: { source: SourceItem; force?: boolean }) => client.removeSource(projectId, p.source.id, p.force ? { force: true } : {}),
+    onSuccess: refresh,
+    onError: (e, p) => {
+      // an ag-go project whose videos are still used: removed only once the person says so
+      if (e instanceof StudioHttpError && e.code === "project_in_use") {
+        const titles = Array.isArray(e.body?.videos) ? (e.body.videos as string[]) : [];
+        modal.confirm({
+          title: t("ws.inputs.projectInUse.title", { name: p.source.label }),
+          content: (
+            <>
+              <p>{t("ws.inputs.projectInUse.body", { count: typeof e.body?.assets === "number" ? e.body.assets : 1 })}</p>
+              {titles.length ? <p className="ws-hint">{t("ws.inputs.projectInUse.videos", { titles: titles.join(", ") })}</p> : null}
+            </>
+          ),
+          okText: t("ws.inputs.projectInUse.ok"), okButtonProps: { danger: true }, cancelText: t("common.cancel"),
+          onOk: () => remove.mutate({ source: p.source, force: true }),
+        });
+        return;
+      }
+      fail(t("ws.inputs.removeFailed"))(e);
+    },
+  });
   const stop = useMutation({ mutationFn: (j: JobView) => client.cancelJob(projectId, j.id), onSuccess: refresh, onError: fail(t("ws.jobs.stopFailed")) });
   const uploading = useUploadProgress();
   const upload = useMutation({
@@ -108,7 +130,7 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
   const recent = jobList.filter((j) => j.status !== "queued" && j.status !== "running").slice(0, 3);
   const shownJobs = [...active, ...recent];
   const removeButton = (s: SourceItem) => canEdit ? (
-    <Popconfirm title={t("ws.inputs.removeUploadConfirm", { name: s.label })} onConfirm={() => remove.mutate(s)} okText={t("ws.inputs.remove")} cancelText={t("common.cancel")}>
+    <Popconfirm title={t("ws.inputs.removeUploadConfirm", { name: s.label })} onConfirm={() => remove.mutate({ source: s })} okText={t("ws.inputs.remove")} cancelText={t("common.cancel")}>
       <button type="button" className="ws-icon-button" aria-label={t("ws.inputs.removeNamed", { name: s.label })}><Trash2 size={13} /></button>
     </Popconfirm>
   ) : null;
@@ -147,7 +169,7 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
                   <h4 className="ws-inputs__h">{t("ws.inputs.agGoProjects")} <span className="ws-hint">{agGoProjects.length || ""}</span></h4>
                   {canEdit ? <Button size="small" icon={<Plus size={13} />} onClick={() => setProjectPicker(true)}>{t("ws.inputs.addProject")}</Button> : null}
                 </div>
-                {agGoProjects.length ? <AgGoProjectList projects={agGoProjects} canEdit={canEdit} onRemove={(s) => remove.mutate(s)} />
+                {agGoProjects.length ? <AgGoProjectList projects={agGoProjects} canEdit={canEdit} onRemove={(s) => remove.mutate({ source: s })} />
                   : <p className="ws-hint">{t("ws.inputs.noProjectYet")}</p>}
               </section>
 
@@ -159,7 +181,7 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
                   </div>
                   {videoAssets.length ? (
                     <FootageAssets assets={videoAssets} videos={videos.data?.videos ?? []} grouped={!videoId} filter={filter} onFilter={setFilter} canEdit={canEdit}
-                      onOpenFile={onOpenFile} onPrepare={(assetId, again) => prepare.mutate({ assetId, again })} onRemove={(x) => remove.mutate(x)}
+                      onOpenFile={onOpenFile} onPrepare={(assetId, again) => prepare.mutate({ assetId, again })} onRemove={(x) => remove.mutate({ source: x })}
                       onBulk={(ids) => bulk.mutate(ids)} bulkBusy={bulk.isPending} />
                   ) : <p className="ws-hint">{agGoProjects.length ? t("ws.inputs.noVideoYet") : t("ws.inputs.addProjectFirst")}</p>}
                 </section>
