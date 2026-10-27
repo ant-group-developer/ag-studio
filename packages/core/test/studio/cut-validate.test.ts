@@ -131,6 +131,18 @@ describe("validateEditPlan", () => {
     expect(codes(validateEditPlan(plan({ texts: [t, ...many] }), { survey: survey(), shots: shots() })).problems).toContain("too_many_texts");
   });
 
+  it("warns of a jump cut: two pieces of one shot back to back, under 2 s apart", () => {
+    const p = plan();
+    const second = (inS: number, out: number) => plan({ target_seconds: 11, shots: [p.shots[0]!, { ...p.shots[0]!, order: 2, in: inS, out, line_id: null }, { ...p.shots[2]!, order: 3 }] });
+    const ctx = { survey: survey(), shots: shots() };
+    expect(validateEditPlan(second(5.5, 6), ctx).warnings).toEqual([{ code: "jump_cut", message: expect.stringContaining("chỉ cách 0.5s") }]);
+    expect(codes(validateEditPlan(second(0, 3), ctx)).warnings).toContain("jump_cut"); // overlapping
+    expect(codes(validateEditPlan(second(5, 6), ctx)).warnings).not.toContain("jump_cut"); // carries straight on
+    expect(validateEditPlan(second(5.5, 6), ctx).ok).toBe(true); // advice, never blocks
+    // two shots of one source: the source cuts there, so no jump
+    expect(codes(validateEditPlan(plan({ shots: [p.shots[0]!, { ...p.shots[2]!, order: 2, in: 14, out: 18 }] }), ctx)).warnings).not.toContain("jump_cut");
+  });
+
   it("warns when a line is longer than its picture and when the cut is off its target", () => {
     const long = plan({ lines: [{ line_id: "L001", text: "Một câu lời dẫn dài hơn rất nhiều so với hình đang có trước dòng sau, ".repeat(2) + "vẫn còn đọc tiếp khi hình đã sang cảnh khác." }, plan().lines[1]!] });
     expect(codes(validateEditPlan(long, { survey: survey(), shots: shots() })).warnings).toContain("line_too_long");

@@ -35,10 +35,18 @@ Một lượt có giới hạn thời gian; video nhiều nguồn rất dễ h�
 - `score` 0–5 (5 = cảnh đẹp nhất, đúng ý brief); `usable: false` cho cảnh rung, mờ, lộ người lạ, logo, chữ, quá ngắn.
 - `speech`: `talking` (có người nói rõ), `ambient` (tiếng nền có ích), `none`.
 - `note` ngắn, nói vì sao. `tags` vài từ tiếng Việt về nội dung.
+- Ghi thêm vào `tags` những gì kế hoạch dựng cần để cắt cho đúng (xem "Ngữ pháp dựng" của skill edit-plan):
+  - cỡ shot: `toàn` (rộng, thấy cả nơi chốn), `trung`, `cận`;
+  - `establishing` cho shot mở cảnh tốt (rộng, rõ nơi chốn, đứng yên hoặc lia chậm);
+  - hướng chuyển động nếu có: `trái→phải`, `phải→trái`, `tiến vào`, `lùi ra`;
+  - `cutaway` cho chi tiết ngắn chèn được ở bất cứ đâu (tay, biển hiệu, đồ ăn, mặt nước).
+
+  Ví dụ `["thuyền", "sông", "toàn", "establishing", "trái→phải"]`.
 
 ## `scenes.md` — cho người đọc
 Frontmatter `status: draft` (đổi `done` khi người dùng đồng ý). Thân: các cảnh tốt nhất theo phần của brief (mở đầu,
-thân, kết), cảnh nên tránh và vì sao, ghi chú về tiếng gốc.
+thân, kết), mỗi phần có shot nào để mở (toàn/establishing) và có đủ trung, cận, cutaway chưa; cảnh nên tránh và vì sao,
+ghi chú về tiếng gốc.
 
 Sau khi ghi: gọi `validate_file` cho `videos/<id>/survey.json`, sửa đến khi hết lỗi; cảnh báo "chưa chấm" nghĩa là còn
 thiếu dòng. Rồi gợi ý bước kế hoạch dựng.

@@ -118,6 +118,26 @@ describe("timelineIssues on v4", () => {
     expect(codes(trimClip(cut(), "C003", 4, 8))).toContain("warning:overlapping_range");
   });
 
+  it("warns of a jump cut: back to back on one shot, under 2 s apart or overlapping", () => {
+    const jumps = (t: TimelineV4) => timelineIssues(t).filter((i) => i.code === "jump_cut").map((i) => i.clip_id);
+    const pair = (aIn: number, aOut: number, bIn: number, bOut: number, shots: [string | null, string | null] = [null, null]) => {
+      const t = cut();
+      t.clips[1] = { ...t.clips[1]!, asset_id: "a01", in: bIn, out: bOut, shot_id: shots[1] };
+      t.clips[0] = { ...t.clips[0]!, in: aIn, out: aOut, shot_id: shots[0], transition_out: { kind: "cut", seconds: 0 } };
+      t.clips[2] = { ...t.clips[2]!, asset_id: "a02", in: 0, out: 4 };
+      return t;
+    };
+    expect(jumps(cut())).toEqual([]); // C001 and C003 share a01 but are not back to back
+    expect(jumps(pair(2, 5, 6, 9))).toEqual(["C002"]); // 1 s skipped
+    expect(jumps(pair(6, 9, 2, 5))).toEqual(["C002"]); // 1 s back
+    expect(jumps(pair(2, 5, 4, 8))).toEqual(["C002"]); // overlapping
+    expect(timelineIssues(pair(2, 5, 4, 8)).find((i) => i.code === "jump_cut")?.message).toContain("chồng nhau 1.0s");
+    expect(jumps(pair(2, 5, 5, 8))).toEqual([]); // carries straight on: one shot
+    expect(jumps(pair(2, 5, 7, 9))).toEqual([]); // 2 s apart
+    expect(jumps(pair(2, 5, 6, 9, ["s000-001", "s000-002"]))).toEqual([]); // two detected shots: the source cuts there
+    expect(jumps(pair(2, 5, 6, 9, ["s000-001", "s000-001"]))).toEqual(["C002"]);
+  });
+
   it("flags ranges, short clips and narration problems", () => {
     const beyond = cut();
     beyond.clips[1] = { ...beyond.clips[1]!, out: 12 }; // a02 is 10 s long

@@ -21,6 +21,32 @@ const EPS = 1e-6;
 const RANGE_SLACK = 0.05;
 /** Shortest clip a shot-cut episode may hold. */
 export const MIN_CLIP_SECONDS = 0.5;
+/** Two pieces of one shot closer than this in the source jump when played back to back (jump cut). */
+export const JUMP_CUT_SECONDS = 2;
+/** A piece that starts this close to where the one before ended carries straight on: it plays as one shot. */
+const SEAMLESS_SECONDS = 0.05;
+
+/** One piece of footage as the jump-cut check reads it: a timeline clip or an edit-plan shot. */
+export interface FootagePiece {
+  source: string;
+  /** The detected shot it is cut from; null when unknown (the whole source is then one shot). */
+  shot: string | null;
+  in: number;
+  out: number;
+}
+
+/**
+ * Seconds of source between two pieces played back to back when they make a jump cut (negative: they overlap), or
+ * null when they do not: another source, two different detected shots (the source itself cuts there), more than
+ * `JUMP_CUT_SECONDS` apart, or the second carrying straight on from the first.
+ */
+export function jumpCutGap(a: FootagePiece, b: FootagePiece): number | null {
+  if (a.source !== b.source) return null;
+  if (a.shot !== null && b.shot !== null && a.shot !== b.shot) return null;
+  if (Math.abs(b.in - a.out) <= SEAMLESS_SECONDS) return null;
+  const gap = Math.max(b.in - a.out, a.in - b.out);
+  return gap < JUMP_CUT_SECONDS - EPS ? r3(gap) : null;
+}
 
 /** A timeline of either version (`StoredTimeline` of contracts). */
 export type AnyTimeline = StoredTimeline;
@@ -243,6 +269,21 @@ function shotIssues(t: TimelineV4, layout: TimelineLayout): TimelineIssue[] {
         issues.push({ severity: "warning", code: "overlapping_range", message: `clip ${a.clip_id} và ${b.clip_id} dùng chung một đoạn của video ${a.asset_id}`, clip_id: b.clip_id });
       }
     }
+  }
+
+  // Back to back, the same shot with little or no time between: the picture jumps (jump cut)
+  const piece = (c: LaidClip): FootagePiece => ({ source: c.asset_id, shot: c.shot_id, in: c.in, out: c.source_out });
+  for (let k = 1; k < layout.clips.length; k++) {
+    const a = layout.clips[k - 1]!;
+    const b = layout.clips[k]!;
+    const gap = jumpCutGap(piece(a), piece(b));
+    if (gap === null) continue;
+    const apart = gap < 0 ? `chồng nhau ${(-gap).toFixed(1)}s` : `chỉ cách ${gap.toFixed(1)}s`;
+    issues.push({
+      severity: "warning", code: "jump_cut",
+      message: `clip ${a.clip_id} và ${b.clip_id} liền nhau, cùng video ${a.asset_id}, ${apart} trong video gốc: hình bị giật (jump cut) — chèn một shot khác vào giữa (cutaway) hoặc lấy đoạn cách xa hơn ${JUMP_CUT_SECONDS}s`,
+      clip_id: b.clip_id,
+    });
   }
 
   // Narration anchors

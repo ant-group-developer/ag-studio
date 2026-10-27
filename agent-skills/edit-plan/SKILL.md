@@ -9,6 +9,26 @@ description: Viết kế hoạch dựng của một video — thứ tự shot, �
 `videos/<id>/brief.md`, `scenes.md`, `survey.json`, `sources/index.json`, lời thoại `inputs/<asset>/transcript.md`,
 `channel/branding.md` (giọng văn, `music_mood`), `channel/style.md` nếu có. Dùng cảnh `usable: true`, điểm cao.
 
+## Ngữ pháp dựng — chọn shot theo luật, không theo điểm
+Điểm chỉ nói shot đẹp hay không; thứ tự và chỗ cắt theo các luật dưới đây (cỡ shot, hướng chuyển động lấy từ `tags`
+của `survey.json`, thiếu thì mở khung để xem).
+- **Mở mỗi cảnh (mỗi nơi, mỗi phần) từ rộng tới gần:** toàn/establishing để người xem biết đang ở đâu, rồi trung, rồi
+  cận và chi tiết. Sang nơi mới thì lại mở bằng một shot toàn.
+- **Mỗi cú cắt phải đổi rõ hình:** không đặt liền nhau hai shot cùng nguồn, cùng cỡ, cùng góc. Đổi cỡ (toàn → trung →
+  cận) hoặc đổi góc máy ít nhất khoảng 30°; nếu không thì hình chỉ "nhảy" (jump cut).
+- **Hai đoạn của cùng một cảnh gốc** không đặt liền nhau khi chúng cách nhau dưới 2 s hay chồng nhau: chèn một
+  cutaway (chi tiết, cảnh khác) vào giữa, hoặc lấy đoạn cách xa hơn. Lấy liền mạch (đoạn sau bắt đầu đúng chỗ đoạn trước
+  hết) thì không sao — đó vẫn là một shot.
+- **Giữ hướng chuyển động qua cú cắt:** thuyền, người, xe đi trái→phải ở shot trước thì shot sau cũng trái→phải (hoặc
+  đứng yên); đổi hướng thì đặt một shot trung tính (chính diện, tĩnh, cận) vào giữa.
+- **Cắt theo lời và nhịp:** điểm cắt rơi vào đầu/cuối một ý của lời dẫn, giữa hai câu, không giữa một từ; câu nói về
+  một chi tiết thì hình chi tiết đó lên đúng lúc câu bắt đầu (neo `line_id` vào shot đó).
+- **Độ dài shot theo nhịp:** b-roll du lịch 2–6 s một shot (theo `shot_seconds` của `channel/style.json` nếu có); shot
+  toàn mở cảnh và cảnh đẹp có thể dài hơn, chi tiết và cutaway ngắn hơn. Đừng để nhiều shot liền nhau dài bằng nhau.
+- **Cutaway** (chi tiết, biển hiệu, đồ ăn, mặt nước) là chỗ nối khi phải dùng tiếp cùng một nguồn hay cùng một cảnh.
+- Trong `note` của mỗi shot ghi ngắn vai trò của nó (`toàn mở cảnh`, `cận chi tiết`, `cutaway nối`) để người đọc và lần
+  sửa sau hiểu vì sao shot nằm đó.
+
 ## `edit-plan.json` — Studio đọc khi dựng timeline
 ```json
 {
@@ -67,7 +87,9 @@ Frontmatter `status: draft`. Thân: cấu trúc từng phần, lời dẫn đầ
 
 ## Sau khi ghi
 1. `validate_file` cho `videos/<id>/edit-plan.json` và `survey.json` (chưa có survey thì chạy skill scene-selection
-   trước); sửa đến khi hết lỗi.
+   trước); sửa đến khi hết lỗi. Kế hoạch được kiểm với bản chọn cảnh: cảnh báo `jump_cut` (hai đoạn cùng cảnh liền
+   nhau), `not_usable` (shot đã loại ở bước chọn cảnh), `style_shot_length` (nhịp lệch phong cách) — sửa theo "Ngữ pháp
+   dựng" trừ khi có lý do và ghi lý do đó trong `note`.
 2. Khi người dùng đồng ý: `status: done` trong edit-plan.md, rồi `timeline_from_edit_plan` (thiếu hay sai một trong hai
    file thì tool báo ngay, không tạo việc). Lời dẫn tts cần giọng của
    dự án (xem `project_info`); chưa có thì nhờ người dùng chọn file giọng mẫu ở tab Đầu vào.

@@ -9,9 +9,9 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import {
   EditPlanSchema, HashtagSchema, PROJECT_ASPECTS, StudioPlaybookSchema, StudioSurveySchema, TextLookSchema, VIDEO_LOOKS, YOUTUBE_DESCRIPTION_BODY_MAX,
-  YOUTUBE_TAGS_MAX_CHARS, YOUTUBE_TITLE_MAX, type FileValidatorId,
+  YOUTUBE_TAGS_MAX_CHARS, YOUTUBE_TITLE_MAX, type FileValidatorId, type StudioStyle,
 } from "@harness/contracts";
-import { contrastRatio, TEXT_LOOK_MIN_CONTRAST, validateStyle } from "@harness/core";
+import { contrastRatio, TEXT_LOOK_MIN_CONTRAST, validateEditPlan, validateStyle } from "@harness/core";
 import { readFrontmatter } from "./frontmatter.js";
 import { normalizeRelPath } from "./files.js";
 
@@ -206,12 +206,39 @@ function againstVideoShots(dir: string, rel: string, kind: "survey" | "edit_plan
     else if (k.source_id !== r.source_id) issues.push({ level: "error", code: "wrong_source", message: `${name}: source_id phải là ${k.source_id}` });
     else if (r.in < k.in - 0.05 || r.out > k.out + 0.05) issues.push({ level: "error", code: "outside_shot", message: `${name}: [${r.in}, ${r.out}) ra ngoài cảnh [${k.in}, ${k.out})` });
   }
+  if (kind === "edit_plan" && !hasErrors(issues)) issues.push(...editPlanAgainstSurvey(dir, videoId, text, index));
   if (kind === "survey") {
     const seen = new Set(rows.map((r) => r.shot_id));
     const unscored = [...known.keys()].filter((id) => !seen.has(id));
     if (unscored.length) issues.push({ level: "warning", code: "unscored", message: `${unscored.length} cảnh chưa chấm (${unscored.slice(0, 5).join(", ")}${unscored.length > 5 ? "…" : ""})` });
   }
   return issues.slice(0, 30);
+}
+
+/** `validateEditPlan`'s problems that leave a timeline Studio will not render (a piece under 0.5 s, a line read twice). */
+const EDIT_PLAN_ERRORS = new Set(["too_short", "line_twice", "duplicate_line"]);
+/** Its findings the checks above already report under their own code. */
+const EDIT_PLAN_REPORTED = new Set(["schema", "unknown_shot", "wrong_source", "outside_shot", "unknown_line", "unanchored_line", "bad_at_order"]);
+
+/**
+ * The edit plan against the approved scene selection (`survey.json`) and the channel's edit style (`channel/style.json`):
+ * `validateEditPlan` of core — unusable shots, jump cuts, rhythm, texts, length. Most of it is editing advice, so a
+ * warning; only what the timeline would then reject is an error. Nothing to check against while the survey is not valid.
+ */
+function editPlanAgainstSurvey(dir: string, videoId: string, text: string, index: { sources: { source_id: string; shots: { shot_id: string; in: number; out: number }[] }[] }): FileIssue[] {
+  const surveyPath = join(dir, "videos", videoId, "survey.json");
+  if (!existsSync(surveyPath)) return [];
+  let survey: ReturnType<typeof StudioSurveySchema.safeParse>;
+  try { survey = StudioSurveySchema.safeParse(JSON.parse(readFileSync(surveyPath, "utf8"))); } catch { return []; }
+  if (!survey.success) return [];
+  const stylePath = join(dir, "channel", "style.json");
+  let style: StudioStyle | null = null;
+  try { if (existsSync(stylePath)) style = validateStyle(JSON.parse(readFileSync(stylePath, "utf8")), { watch: null }).value; } catch { /* no style */ }
+  const v = validateEditPlan({ episode_id: "video", ...(JSON.parse(text) as object) }, { survey: survey.data, shots: index, style });
+  return [
+    ...v.problems.map((p) => ({ level: EDIT_PLAN_ERRORS.has(p.code) ? "error" as const : "warning" as const, code: p.code, message: p.message })),
+    ...v.warnings.map((p) => ({ level: "warning" as const, code: p.code, message: p.message })),
+  ].filter((i) => !EDIT_PLAN_REPORTED.has(i.code));
 }
 
 export const hasErrors = (issues: FileIssue[]) => issues.some((i) => i.level === "error");

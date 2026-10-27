@@ -8,7 +8,7 @@ import {
   type EditPlan, type ShotsIndex, type StudioStyle, type StudioSurvey, type SurveyOp,
 } from "@harness/contracts";
 import type { ZodError } from "zod";
-import { narrationCps, TimelineOpError } from "./layout.js";
+import { JUMP_CUT_SECONDS, jumpCutGap, narrationCps, TimelineOpError } from "./layout.js";
 import type { StudioProblem, StudioValidation } from "./validate.js";
 
 /** How far a row's or a shot's `in`/`out` may stray from the detected shot (rounding of the 0.1 s cut grid). */
@@ -32,7 +32,10 @@ function zodProblems(e: ZodError): StudioProblem[] {
   return e.issues.map((i) => ({ code: "schema", message: `${i.path.join(".") || "(root)"}: ${i.message}` }));
 }
 
-function shotTable(shots: ShotsIndex): Map<string, { source_id: string; in: number; out: number }> {
+/** What the checks read of `shots.json`: each source's shots (a video's `sources/index.json` has the same shape). */
+type ShotRanges = { sources: readonly { source_id: string; shots: readonly { shot_id: string; in: number; out: number }[] }[] };
+
+function shotTable(shots: ShotRanges): Map<string, { source_id: string; in: number; out: number }> {
   return new Map(shots.sources.flatMap((s) => s.shots.map((x) => [x.shot_id, { source_id: s.source_id, in: x.in, out: x.out }] as const)));
 }
 
@@ -69,7 +72,7 @@ export function validateStudioSurvey(raw: unknown, ctx: { shots: ShotsIndex }): 
 export function validateEditPlan(
   raw: unknown,
   /** `style`: the production's edit style (cut 1.1.0), when it has one; its shot length is a follow-up (`style_`). */
-  ctx: { survey: StudioSurvey; shots: ShotsIndex; style?: StudioStyle | null },
+  ctx: { survey: StudioSurvey; shots: ShotRanges; style?: StudioStyle | null },
 ): StudioValidation<EditPlan> {
   const parsed = EditPlanSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, value: null, problems: zodProblems(parsed.error), warnings: [] };
@@ -93,6 +96,18 @@ export function validateEditPlan(
     } else if (s.out - s.in < MIN_PIECE_SECONDS) {
       problems.push({ code: "too_short", message: `shot thứ ${s.order} chỉ dài ${(s.out - s.in).toFixed(2)}s (tối thiểu ${MIN_PIECE_SECONDS}s)` });
     }
+  }
+
+  // Back to back on one shot with little or no time between: the picture jumps
+  for (let k = 1; k < plan.shots.length; k++) {
+    const a = plan.shots[k - 1]!;
+    const b = plan.shots[k]!;
+    const gap = jumpCutGap({ source: a.source_id, shot: a.shot_id, in: a.in, out: a.out }, { source: b.source_id, shot: b.shot_id, in: b.in, out: b.out });
+    if (gap === null) continue;
+    warnings.push({
+      code: "jump_cut",
+      message: `shot thứ ${a.order} và ${b.order} liền nhau trên cùng cảnh ${a.shot_id}, ${gap < 0 ? "chồng nhau" : "chỉ cách"} ${Math.abs(gap).toFixed(1)}s: hình bị giật (jump cut) — chèn một shot khác vào giữa (cutaway) hoặc lấy đoạn cách xa hơn ${JUMP_CUT_SECONDS}s`,
+    });
   }
 
   // Narration

@@ -21,6 +21,10 @@ export const FIT = { lead: 0.3, tail: 0.4, keepSlack: 0.5, snapWindow: 0.4, minG
 /** An interval marks a shot as "used" when it covers the shot's midpoint or overlaps it by more than this. */
 const USED_OVERLAP = 0.2;
 
+/** What rule 4 holds against a shot, in score points (0–5), for each neighbour of its cut that it matches: the same
+ * source (no new place or angle across the cut) and, when the shots have one, the same size (wide, medium, close). */
+const NEIGHBOUR_PENALTY = { source: 2, size: 1 } as const;
+
 type FitAction = FitReport["entries"][number]["action"];
 type Voice = FitReport["voice"];
 
@@ -33,6 +37,14 @@ interface ShotRef {
   out: number;
   score: number;
   usable: boolean;
+  /** Shot size from `shot_sizes`; null when the shot has none. */
+  size: string | null;
+}
+
+/** The footage on one side of a cut, as rule 4 compares a candidate against it. */
+interface Neighbour {
+  source_id: string;
+  size: string | null;
 }
 
 /** An EDL entry under construction. `before` is null for an entry the input EDL did not contain. */
@@ -79,6 +91,9 @@ export function fitEdl(p: {
   transcript: Transcript | null;
   voice: Voice;
   target_duration_seconds?: [number, number];
+  /** Size of each shot by `shot_id` (wide, medium, close…), when the shots have it: rule 4 avoids cutting between two
+   * shots of the same size. */
+  shot_sizes?: Readonly<Record<string, string>>;
 }): FitEdlResult {
   const target = p.target_duration_seconds;
   const durationOf = new Map(p.shots.sources.map((s) => [s.source_id, s.duration_seconds]));
@@ -100,6 +115,7 @@ export function fitEdl(p: {
         out: sh.out,
         score: meta?.score ?? 0,
         usable: meta?.usable ?? true,
+        size: p.shot_sizes?.[sh.shot_id] ?? null,
       };
     });
     shotsBySource.set(src.source_id, list);
@@ -125,7 +141,13 @@ export function fitEdl(p: {
   const shortfallRow = new Map<number, number>();
   const groups = new Map<number, Work[]>();
 
-  for (const entry of ordered) {
+  /** The shot an interval sits in (by its midpoint), if any. */
+  const shotAt = (source_id: string, from: number, to: number): ShotRef | undefined => {
+    const mid = (from + to) / 2;
+    return shotsBySource.get(source_id)?.find((s) => s.in <= mid && mid < s.out);
+  };
+
+  for (const [k, entry] of ordered.entries()) {
     const lines = p.timing.lines.filter((l) => l.edl_order === entry.order);
     const base: Work = {
       source_id: entry.source_id,
@@ -139,7 +161,10 @@ export function fitEdl(p: {
 
     let work: Work[];
     if (p.voice === "tts" && lines.length > 0) {
-      const fitted = fitOne(base, lines, { shotsBySource, allShots, used, markUsed });
+      // What appended footage is cut into, after this entry's own: the next entry the agent placed.
+      const following = ordered[k + 1];
+      const next = following ? { source_id: following.source_id, size: shotAt(following.source_id, following.in, following.out)?.size ?? null } : null;
+      const fitted = fitOne(base, lines, next, { shotsBySource, allShots, used, markUsed });
       work = fitted.work;
       if (fitted.shortfall) {
         shortfallRow.set(entry.order, shortfalls.length);
@@ -298,7 +323,8 @@ function appendedWork(group: ShotRef, take: number, lineIds: string[], action: "
 
 /**
  * The five `voice: tts` rules for one narrated entry (spec §4.1): trim, extend inside the entry's own shot,
- * append the adjacent shots of the same source, append the best unused shots anywhere, and finally reuse
+ * append the adjacent shots of the same source, append the best unused shots anywhere (another source and shot size
+ * than the footage either side of the cut where one is as good), and finally reuse
  * footage already on screen. Reuse makes at most one pass over its candidates, so it always terminates.
  *
  * A deficit below `minEntry` is treated as covered and stops the search: a cut that short is not worth a
@@ -311,6 +337,8 @@ function appendedWork(group: ShotRef, take: number, lineIds: string[], action: "
 function fitOne(
   base: Work,
   lines: NarrationTiming["lines"],
+  /** The footage after this entry's group (the next original entry), null for the last. */
+  next: Neighbour | null,
   ctx: FitContext,
 ): { work: Work[]; shortfall: FitReport["shortfalls"][number] | null } {
   const lineIds = lines.map((l) => l.line_id);
@@ -345,6 +373,9 @@ function fitOne(
   /** A shot that could not fill even a minimum-length entry is no use to any of the append rules. */
   const longEnough = (s: ShotRef): boolean => s.out - s.in >= FIT.minEntry - EPS;
 
+  /** The footage the next appended shot is cut from: the last one placed. */
+  let prev: Neighbour = { source_id: base.source_id, size: anchor?.size ?? null };
+
   // Rule 3 -- the shots right after it in the same source, while they are free and usable.
   if (anchor) {
     for (let i = list.indexOf(anchor) + 1; worthFilling() && i < list.length; i++) {
@@ -353,17 +384,23 @@ function fitOne(
       const take = Math.min(sh.out - sh.in, remaining);
       work.push(appendedWork(sh, take, lineIds, "appended"));
       ctx.used.add(shotKey(sh));
+      prev = sh;
       remaining -= take;
     }
   }
 
-  // Rule 4 -- the best unused shot anywhere, repeatedly.
+  // Rule 4 -- the best unused shot anywhere, repeatedly; best once it is held against the footage on both sides of
+  // its cuts (`NEIGHBOUR_PENALTY`), so it changes source and size where it can. With no such choice, plain quality.
+  const penalty = (s: ShotRef): number => [prev, next].reduce((sum, n) => !n ? sum
+    : sum + (n.source_id === s.source_id ? NEIGHBOUR_PENALTY.source : 0) + (n.size !== null && n.size === s.size ? NEIGHBOUR_PENALTY.size : 0), 0);
+  const byFit = (a: ShotRef, b: ShotRef): number => b.score - penalty(b) - (a.score - penalty(a)) || byQuality(a, b);
   while (worthFilling()) {
-    const next = ctx.allShots.filter((s) => s.usable && longEnough(s) && !ctx.used.has(shotKey(s))).sort(byQuality)[0];
-    if (!next) break;
-    const take = Math.min(next.out - next.in, remaining);
-    work.push(appendedWork(next, take, lineIds, "appended"));
-    ctx.used.add(shotKey(next));
+    const pick = ctx.allShots.filter((s) => s.usable && longEnough(s) && !ctx.used.has(shotKey(s))).sort(byFit)[0];
+    if (!pick) break;
+    const take = Math.min(pick.out - pick.in, remaining);
+    work.push(appendedWork(pick, take, lineIds, "appended"));
+    ctx.used.add(shotKey(pick));
+    prev = pick;
     remaining -= take;
   }
 
