@@ -315,7 +315,10 @@ export type AssetState =
   | { state: "not_prepared" }
   | { state: "not_an_input" };
 
-export type SourceKind = "ag_go_project" | "ag_go_asset" | "upload";
+/** `upload_asset`: a video or photo from someone's computer, used as footage like an ag-go video. */
+export type SourceKind = "ag_go_project" | "ag_go_asset" | "upload_asset" | "upload";
+/** The kinds of source that are footage of a video. */
+export const isFootage = (s: Pick<SourceItem, "kind">): boolean => s.kind === "ag_go_asset" || s.kind === "upload_asset";
 export interface SourceItem {
   id: string;
   projectId: string;
@@ -684,6 +687,15 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
       return call("POST", `/api/projects/${enc(projectId)}/sources/upload`, {
         uploadKey: link.key, name: file.name, ...(videoId ? { videoId } : {}), ...(opts.reference ? { reference: true } : {}),
       });
+    },
+    /**
+     * A video (up to 4 GB) or photo (50 MB) from the computer as footage of a video, put straight on the bucket, then
+     * prepared like an ag-go video (415 `file_type`, 413 `file_too_large`).
+     */
+    async uploadFootage(projectId: string, file: File, videoId: string, onProgress?: OnProgress): Promise<{ source: SourceItem; prepare?: AssetState }> {
+      const link = await call<UploadLink>("POST", `/api/projects/${enc(projectId)}/uploads`, { purpose: "footage", name: file.name, size: file.size, ...uploadType(file) });
+      await putToBucket(link, file, onProgress);
+      return call("POST", `/api/projects/${enc(projectId)}/sources/footage`, { uploadKey: link.key, name: file.name, videoId });
     },
     /** Videos of the project's ag-go projects (the same for everyone of the project), with where each stands here. */
     searchFootage(projectId: string, q: FootageQuery = {}): Promise<{ items: FootageItem[]; nextCursor: string | null; total: number }> {

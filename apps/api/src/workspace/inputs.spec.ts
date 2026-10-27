@@ -264,4 +264,31 @@ describe('inputs (real database)', () => {
     expect(await inputs.upload(p.id, { uploadKey: liar.key, name: 'b.pdf' }, undefined, req(EDITOR)).catch(code)).toBe('file_too_large');
     expect(bucket.objects.has(liar.key)).toBe(false);
   });
+
+  it('footage from the computer: a video or photo put where footage is kept, added to the video and prepared at once', async () => {
+    const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
+    const v = await videos.create(p.id, { title: 'Tràng An' }, req(OWNER));
+    const bucket = new MemoryBucket();
+    Object.assign(s.engine, { bucket });
+    expect(await inputs.signUpload(p.id, { purpose: 'footage', name: 'ghi chú.pdf', size: 10 }).catch(code)).toBe('file_type');
+    expect(await inputs.signUpload(p.id, { purpose: 'footage', name: 'dai.mov', size: 5 * 1024 ** 3 }).catch(code)).toBe('file_too_large');
+    expect(await inputs.signUpload(p.id, { purpose: 'footage', name: 'anh.png', size: 60 * 1024 ** 2 }).catch(code)).toBe('file_too_large');
+    // no ag-go project needed: the file is Studio's
+    const link = await inputs.signUpload(p.id, { purpose: 'footage', name: 'Hang Múa.MOV', size: 5, contentType: 'video/quicktime' });
+    expect(link.key).toMatch(new RegExp(`^library/studio/projects/${p.id}/footage/[0-9a-f-]{36}\.mov$`));
+    await bucket.put(link.key, Buffer.from('movie'));
+    const r = await inputs.addFootage(p.id, { uploadKey: link.key, name: 'Hang Múa.MOV', videoId: v.id }, req(EDITOR));
+    expect(r.source).toMatchObject({ kind: 'upload_asset', mediaType: 'video', label: 'Hang Múa.MOV', videoId: v.id, meta: { key: link.key, bytes: 5 } });
+    expect(r.prepare).toMatchObject({ state: 'queued', job_id: expect.any(String) });
+    // the file stays where it is: renders read it from there
+    expect(bucket.objects.has(link.key)).toBe(true);
+    const index = JSON.parse(readFileSync(join(root, p.id, 'videos', v.id, 'sources', 'index.json'), 'utf8'));
+    expect(index.sources).toMatchObject([{ asset_id: r.source.ref, name: 'Hang Múa.MOV', status: 'missing' }]);
+    // a key of another project, or one never put
+    expect(await inputs.addFootage(p.id, { uploadKey: link.key.replace(p.id, 'other'), name: 'x.mov', videoId: v.id }, req(EDITOR)).catch(code)).toBe('upload_key');
+    const never = await inputs.signUpload(p.id, { purpose: 'footage', name: 'x.jpg', size: 1 });
+    expect(await inputs.addFootage(p.id, { uploadKey: never.key, name: 'x.jpg', videoId: v.id }, req(EDITOR)).catch(code)).toBe('upload_missing');
+    // a video still goes to the Footage section, not to context/
+    expect(await inputs.signUpload(p.id, { purpose: 'source', name: 'a.mp4', size: 10 }).catch(code)).toBe('video_from_ag_go');
+  });
 });

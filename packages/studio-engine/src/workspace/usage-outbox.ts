@@ -57,13 +57,14 @@ export async function sourceUsageEvent(db: StudioDb, s: SourceRecord, kind: "sou
   };
 }
 
-/** One event per ag-go video in a finished final render or Premiere export of a video. */
+/** One event per ag-go video in a finished final render or Premiere export of a video (footage uploaded to Studio is not ag-go's). */
 export async function renderUsageEvents(
   db: StudioDb, job: { id: string; project_id: string; created_by: string }, kind: "render_final" | "export_premiere", videoId: string,
   assetIds: readonly string[], at: string,
 ): Promise<UsageEvent[]> {
   const n = await names(db, job.project_id, videoId);
-  return [...new Set(assetIds)].map((assetId) => ({
+  const uploaded = new Set((await db.all<{ ref: string }>("SELECT DISTINCT ref FROM project_sources WHERE project_id = ? AND kind = 'upload_asset'", [job.project_id])).map((r) => r.ref));
+  return [...new Set(assetIds)].filter((id) => !uploaded.has(id)).map((assetId) => ({
     eventKey: `job:${job.id}:${assetId}`, kind: kind === "render_final" ? "final_render" : "premiere_export", occurredAt: at, assetId, agGoProjectId: null,
     studioProjectId: job.project_id, studioProjectName: n.project, studioVideoId: videoId, studioVideoTitle: n.video, studioUserId: job.created_by,
   }));

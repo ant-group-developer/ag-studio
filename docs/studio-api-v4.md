@@ -200,10 +200,21 @@ xem nhóm mình; người khác 403.
   API kiểm key thuộc dự án (400 `upload_key`), lấy cỡ thật trên R2 (quá thì 413 và xoá), kéo file về, xử lý như file
   multipart rồi xoá bản trên R2 (không thấy → 404 `upload_missing`). Bucket cần CORS cho origin của web.
 - `POST sources/upload` multipart `file` (hoặc JSON `uploadKey` + `name`) + `videoId?` + `reference?` (editor): tài liệu → `context/uploads/`, ảnh →
-  `context/images/`, audio → `context/audio/` (audio ≤ 100 MB, file khác ≤ 50 MB); Word → 415 `docx_not_supported`, video → 415 `video_from_ag_go`.
+  `context/images/`, audio → `context/audio/` (audio ≤ 300 MB, file khác ≤ 50 MB); Word → 415 `docx_not_supported`, video → 415 `video_from_ag_go`
+  (footage thì tải qua `sources/footage`).
   `reference=1`: video mẫu để học phong cách dựng (mp4, mov, m4v, mkv, webm, avi; ≤ 300 MB) → `context/references/`,
   nguồn `mediaType: video`, `meta.reference: true` (không phải footage); file khác → 415 `not_video`. Agent học bằng tool
   `style_from_files {paths, purpose}` (job `style_watch` với `files`, không cần thẻ, không đổi hay xoá file)
+- Footage tải từ máy (phản hồi 2026-10-27 mục 3): `POST uploads {purpose: footage, name, size, contentType?}` ký link PUT thẳng
+  vào chỗ giữ footage `library/studio/projects/<projectId>/footage/<uuid><ext>` (video mp4, mov, m4v, mkv, webm, avi, mts,
+  m2ts ≤ 4 GB; ảnh jpg, jpeg, png, webp ≤ 50 MB; loại khác 415 `file_type`, quá cỡ 413). Rồi `POST sources/footage
+  {uploadKey, name, videoId, prepare?}` (editor) → `{source, prepare?}`: nguồn `kind: upload_asset`, `ref` = uuid,
+  `meta {key, bytes, clip_key?}`; key của dự án khác hoặc không phải key footage → 400 `upload_key`, chưa có trên R2 → 404
+  `upload_missing`. File ở yên đó (không kéo về API). Job `prepare_asset` chuẩn bị như video ag-go vào `inputs/<uuid>/`:
+  video qua farm `scan.prep` (đọc `library:` từ R2 của Studio; chủ job `studio` trên farm cần có `scan.prep` trong
+  `allowed_types`) rồi `studio.transcribe`; ảnh thành clip 6 s đẩy vào chậm ngay trên worker (`<uuid>.mp4`, `meta.clip_key`).
+  Render ký `asset:<uuid>` thành link R2 của file (ảnh: clip), `cache_key: studio-upload:<key>`, không hỏi ag-go và không
+  báo usage cho ag-go. Gỡ nguồn thì file bị dọn sau `audioGraceDays` (7 ngày) khi không nguồn nào giữ nó.
 - `GET footage?agGoProjectIds&q&categoryIds&ownerUserIds&provinceIds&resolutions&tags&genres&timesOfDay&orientations&minDurationMs&maxDurationMs&usability&sortBy&sortOrder&page|cursor&limit`
   → video trong các project ag-go của dự án (chỉ những project đã gắn; `agGoProjectId` cũ vẫn nhận), ai hỏi cũng như nhau
   (chế độ tin cậy của ag-go, `GET /footage/studio/search`); danh sách là chuỗi cách bằng dấu phẩy, enum như ag-go `/footage/search`; khoá lạ → 400 `invalid`, project

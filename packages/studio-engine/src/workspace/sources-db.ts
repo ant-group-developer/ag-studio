@@ -8,8 +8,18 @@ import { StudioRunError } from "../errors.js";
 import type { StudioDb } from "../studio-db.js";
 import { enqueueUsage, sourceUsageEvent } from "./usage-outbox.js";
 
-export type SourceKind = "ag_go_project" | "ag_go_asset" | "upload";
+/**
+ * `ag_go_asset`: a video from ag-go; `upload_asset`: a video or photo from someone's computer, kept on the bucket
+ * (`footage-upload.ts`). Both are footage: prepared into `inputs/<id>/`, cut into the video, rendered by id.
+ */
+export type SourceKind = "ag_go_project" | "ag_go_asset" | "upload_asset" | "upload";
 export type SourceMediaType = "video" | "image" | "audio" | "document" | "mixed";
+
+/** The kinds of source that are footage of a video. */
+export const FOOTAGE_KINDS: readonly SourceKind[] = ["ag_go_asset", "upload_asset"];
+export const isFootageKind = (kind: SourceKind): boolean => FOOTAGE_KINDS.includes(kind);
+/** The same as an SQL condition on `kind`. */
+export const FOOTAGE_KIND_SQL = "kind IN ('ag_go_asset', 'upload_asset')";
 
 export interface SourceRecord {
   id: string; project_id: string; video_id: string | null; kind: SourceKind; ref: string; media_type: SourceMediaType; label: string;
@@ -86,11 +96,18 @@ export async function removeSource(db: StudioDb, id: string, by: string | null =
   });
 }
 
-/** ag-go video ids a video is made from: picked for it alone, in the order they were added. */
+/** The footage ids a video is made from (ag-go videos and uploads): picked for it alone, in the order they were added. */
 export async function videoAssetIds(db: StudioDb, projectId: string, videoId: string): Promise<string[]> {
   return (await db.all<{ ref: string }>(
-    "SELECT ref FROM project_sources WHERE project_id = ? AND video_id = ? AND kind = 'ag_go_asset' ORDER BY added_at, id", [projectId, videoId],
+    `SELECT ref FROM project_sources WHERE project_id = ? AND video_id = ? AND ${FOOTAGE_KIND_SQL} ORDER BY added_at, id`, [projectId, videoId],
   )).map((r) => r.ref);
+}
+
+/** The uploaded footage `assetId` of the project (any of its sources: they share the file), if it is one. */
+export async function uploadedAsset(db: StudioDb, projectId: string, assetId: string): Promise<SourceRecord | undefined> {
+  return db.get<SourceRecord>(
+    "SELECT * FROM project_sources WHERE project_id = ? AND kind = 'upload_asset' AND ref = ? ORDER BY added_at, id LIMIT 1", [projectId, assetId],
+  );
 }
 
 export interface PreparedAsset {

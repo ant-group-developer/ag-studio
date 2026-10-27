@@ -12,6 +12,9 @@
  * ag-go prepares every video once, when it comes in (a farm `scan.prep`, then `studio.transcribe`), and keeps it: the
  * job asks for it, asks ag-go to run it now when it has none yet and waits, then downloads the frames and sheets and
  * writes the files in the formats video-index, fit and the shot-choosing skill read. Nothing is decoded here.
+ *
+ * Footage someone uploaded (`upload_asset`, `footage-upload.ts`) is prepared into the same files: by the same farm jobs
+ * Studio sends itself for a video, here for a photo.
  */
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -23,7 +26,8 @@ import { DEFAULT_SITE_NAME } from "../site-name.js";
 import { JobStopped } from "./farm.js";
 import type { JobContext, JobOutcome } from "./job-runner.js";
 import type { JobRecord } from "./jobs-db.js";
-import { agGoProjectIds, savePrepared } from "./sources-db.js";
+import { prepareUpload, type UploadPrepDeps } from "./footage-upload.js";
+import { agGoProjectIds, savePrepared, uploadedAsset, type SourceRecord } from "./sources-db.js";
 import { writeVideoIndexesFor } from "./video-index.js";
 
 /** Where the prep of one footage stands at ag-go (`POST /footage/assets/prep`, contract H2 of plan 2026-10-13). */
@@ -70,7 +74,10 @@ export interface AgGoPreps {
 /** What preparing needs on the worker. */
 export interface PrepareDeps {
   db: StudioDb;
-  preps: AgGoPreps;
+  /** ag-go's preps (ag-go videos); absent: only uploaded footage is prepared here. */
+  preps?: AgGoPreps;
+  /** The bucket, the farm and ffmpeg (uploaded footage, `footage-upload.ts`); absent: only ag-go videos are prepared. */
+  uploads?: Omit<UploadPrepDeps, "db">;
   /** Downloads a signed frame or sheet URL to `dest`; throws on any HTTP or network error. */
   download(url: string, dest: string, signal: AbortSignal): Promise<void>;
   /** What people call the footage library (ag-go's `siteName`), for job text and README; default "AG Go". */
@@ -148,11 +155,16 @@ const PHASE: Record<NonNullable<AgGoPrepItem["phase"]>, { text: string; from: nu
 };
 const IMAGES = { from: 0.9, to: 0.98 } as const;
 
-/** The `prepare_asset` handler: a failure (not a stop) is recorded for the asset, so its videos' index says why. */
+/**
+ * The `prepare_asset` handler, for an ag-go video or uploaded footage: a failure (not a stop) is recorded for the asset,
+ * so its videos' index says why.
+ */
 export function prepareHandler(d: PrepareDeps): (job: JobRecord, ctx: JobContext) => Promise<JobOutcome> {
   return async (job, ctx) => {
     try {
-      return await prepareAsset(d, job, ctx);
+      const req = job.request as PrepareRequest;
+      const upload = ASSET_ID.test(req.asset_id) ? await uploadedAsset(d.db, job.project_id, req.asset_id) : undefined;
+      return upload ? await prepareUploaded(d, job, ctx, upload) : await prepareAsset(d, job, ctx);
     } catch (e) {
       const req = job.request as PrepareRequest;
       if (!(e instanceof JobStopped) && !await ctx.stopRequested() && ASSET_ID.test(req.asset_id)) {
@@ -172,10 +184,11 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
   const assetId = req.asset_id;
   const site = d.siteName?.() ?? DEFAULT_SITE_NAME;
   if (!ASSET_ID.test(assetId)) throw new Error(`id video ${site} không hợp lệ: ${assetId}`);
+  if (!d.preps) throw new Error(`worker này không nối ${site} nên chưa chuẩn bị được video ${site}`);
   const projectIds = await agGoProjectIds(d.db, job.project_id);
   if (!projectIds.length) throw new Error(`dự án chưa có project ${site} nào: thêm project chứa video này ở tab Đầu vào`);
 
-  const prep = await readyPrep(d, ctx, { projectIds, requestedBy: job.created_by }, assetId, site, req.duration_s ?? null);
+  const prep = await readyPrep({ ...d, preps: d.preps }, ctx, { projectIds, requestedBy: job.created_by }, assetId, site, req.duration_s ?? null);
   const name = req.name?.trim() || assetId;
   const out = join(ctx.tempDir, "out");
   await downloadImages(d, ctx, prep, out, site);
@@ -184,7 +197,7 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
   let note: string;
   if (prep.transcriptStatus === "done" && prep.transcript) {
     transcript = cleanTranscript(job.project_id, assetId, prep.transcript);
-    note = transcript.segments.length ? `${transcript.segments.length} câu, ngôn ngữ ${transcript.language ?? "?"}` : "không nghe thấy lời nói";
+    note = transcriptNote(transcript);
   } else if (prep.transcriptStatus === "failed") {
     note = `${site} chưa đọc được (lời thoại là phần thêm: cảnh vẫn dùng được)`;
   } else if (prep.transcriptStatus === "skipped") {
@@ -193,8 +206,6 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
     note = prep.hasAudio ? "không nghe thấy lời nói" : "video không có tiếng";
   }
 
-  await ctx.checkpoint();
-  await ctx.report({ phase: "Đang ghi vào inputs/", progress: IMAGES.to, waiting: false });
   const shotsFile: InputShots = {
     schema_version: "studio.input-shots/v1", asset_id: assetId, name, duration_s: prep.durationS, width: prep.width || null, height: prep.height || null,
     fps: prep.fps, has_audio: prep.hasAudio, source: { kind: prep.sourceKind, watermarked: prep.watermarked },
@@ -202,6 +213,48 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
     shots: prep.shots.map((s) => ({ n: s.n, in: s.in, out: s.out, frame: s.frame })),
     sheets: prep.sheets.map((s) => ({ file: s.file, shots: s.shots })),
   };
+  return writePrepared(d.db, job, ctx, out, shotsFile, transcript, note, site);
+}
+
+/** The footage someone uploaded (`footage-upload.ts`), prepared into the same files as an ag-go video. */
+async function prepareUploaded(d: PrepareDeps, job: JobRecord, ctx: JobContext, src: SourceRecord): Promise<JobOutcome> {
+  if (!d.uploads) throw new Error("worker này chưa chuẩn bị được footage tải lên (thiếu kho hoặc farm)");
+  const site = d.siteName?.() ?? DEFAULT_SITE_NAME;
+  const out = join(ctx.tempDir, "out");
+  mkdirSync(join(out, "frames"), { recursive: true });
+  mkdirSync(join(out, "sheets"), { recursive: true });
+  const prep = await prepareUpload({ ...d.uploads, db: d.db }, job, ctx, src, out);
+  let transcript: InputTranscript | null = null;
+  let note: string;
+  if ("manifest" in prep.transcript) {
+    transcript = cleanManifest(src.ref, prep.transcript.manifest);
+    note = transcriptNote(transcript);
+  } else if (prep.transcript.none === "failed") {
+    note = "chưa đọc được (lời thoại là phần thêm: cảnh vẫn dùng được)";
+    ctx.logger.warn("upload transcript failed", { asset_id: src.ref, error: prep.transcript.error });
+  } else {
+    note = src.media_type === "image" ? "ảnh không có tiếng" : "video không có tiếng";
+  }
+  const shotsFile: InputShots = {
+    schema_version: "studio.input-shots/v1", asset_id: src.ref, name: src.label, duration_s: prep.durationS, width: prep.width, height: prep.height,
+    fps: prep.fps, has_audio: prep.hasAudio, source: { kind: src.media_type === "image" ? "upload_image" : "upload", watermarked: false },
+    scene: { threshold: prep.scene.threshold, min_shot_seconds: prep.scene.minShotS, max_shot_seconds: prep.scene.maxShotS },
+    shots: prep.shots, sheets: prep.sheets,
+  };
+  return writePrepared(d.db, job, ctx, out, shotsFile, transcript, note, site);
+}
+
+function transcriptNote(t: InputTranscript): string {
+  return t.segments.length ? `${t.segments.length} câu, ngôn ngữ ${t.language ?? "?"}` : "không nghe thấy lời nói";
+}
+
+/** The prep's files from `out/` into `inputs/<id>/`, the asset marked ready and its videos' indexes written again. */
+async function writePrepared(
+  db: StudioDb, job: JobRecord, ctx: JobContext, out: string, shotsFile: InputShots, transcript: InputTranscript | null, note: string, site: string,
+): Promise<JobOutcome> {
+  const { asset_id: assetId, name } = shotsFile;
+  await ctx.checkpoint();
+  await ctx.report({ phase: "Đang ghi vào inputs/", progress: IMAGES.to, waiting: false });
   writeFileSync(join(out, "shots.json"), JSON.stringify(shotsFile, null, 2));
   if (transcript) {
     writeFileSync(join(out, "transcript.json"), JSON.stringify(transcript, null, 2));
@@ -214,16 +267,16 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
   mkdirSync(join(ctx.workspaceDir, "inputs"), { recursive: true });
   cpSync(out, dest, { recursive: true });
   const shots = shotsFile.shots.length;
-  await savePrepared(d.db, {
-    project_id: job.project_id, asset_id: assetId, status: "ready", name, duration_s: prep.durationS, width: shotsFile.width, height: shotsFile.height,
-    has_audio: prep.hasAudio, shots, transcript: !!transcript && transcript.segments.length > 0,
-    source_kind: prep.sourceKind, watermarked: prep.watermarked, error: null,
+  await savePrepared(db, {
+    project_id: job.project_id, asset_id: assetId, status: "ready", name, duration_s: shotsFile.duration_s, width: shotsFile.width, height: shotsFile.height,
+    has_audio: shotsFile.has_audio, shots, transcript: !!transcript && transcript.segments.length > 0,
+    source_kind: shotsFile.source.kind, watermarked: shotsFile.source.watermarked, error: null,
   }, ctx.now());
-  await writeVideoIndexesFor(d.db, ctx.workspaceDir, job.project_id, assetId);
+  await writeVideoIndexesFor(db, ctx.workspaceDir, job.project_id, assetId);
   await ctx.report({ progress: 1 });
   return {
-    result: { asset_id: assetId, name, shots, duration_s: prep.durationS, transcript: note, folder: `${inputDir(assetId)}/` },
-    message: `Đã chuẩn bị **${name}** (${clock(prep.durationS)}): ${shots} cảnh, lời thoại: ${note}. Xem \`${inputDir(assetId)}/README.md\`.`,
+    result: { asset_id: assetId, name, shots, duration_s: shotsFile.duration_s, transcript: note, folder: `${inputDir(assetId)}/` },
+    message: `Đã chuẩn bị **${name}** (${clock(shotsFile.duration_s)}): ${shots} cảnh, lời thoại: ${note}. Xem \`${inputDir(assetId)}/README.md\`.`,
   };
 }
 
@@ -232,7 +285,7 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
  * run it now, then asked again every `pollMs` until it is ready, failed, or `maxWaitMs` passed.
  */
 async function readyPrep(
-  d: PrepareDeps, ctx: JobContext, from: { projectIds: string[]; requestedBy: string }, assetId: string, site: string, durationS: number | null,
+  d: PrepareDeps & { preps: AgGoPreps }, ctx: JobContext, from: { projectIds: string[]; requestedBy: string }, assetId: string, site: string, durationS: number | null,
 ): Promise<NonNullable<AgGoPrepItem["prep"]>> {
   await ctx.report({ phase: `Đang hỏi ${site}`, progress: 0 });
   const pick = (r: { items: AgGoPrepItem[] }): AgGoPrepItem => {
@@ -343,14 +396,20 @@ async function downloadImages(d: PrepareDeps, ctx: JobContext, prep: NonNullable
 
 /** ag-go's raw WhisperX transcript, cleaned of what nobody said (`transcript-clean.ts`), as `transcript.json`. */
 function cleanTranscript(projectId: string, assetId: string, t: NonNullable<NonNullable<AgGoPrepItem["prep"]>["transcript"]>): InputTranscript {
-  const manifest: TranscribeManifest = {
+  return cleanManifest(assetId, {
     schema: TRANSCRIBE_MANIFEST_SCHEMA, production_id: projectId, engine: { name: t.engine, version: null },
     sources: [{
       source_id: assetId, language: t.language, alignment: t.alignment,
       segments: t.segments.map((g) => ({ start: g.start, end: g.end, text: g.text, words: g.words ?? [] })),
     }],
-  };
-  const { manifest: clean, report } = cleanTranscribeManifest(manifest);
+  });
+}
+
+/** A farm transcript of one footage (its source `assetId`), cleaned, as `transcript.json`. */
+function cleanManifest(assetId: string, manifest: TranscribeManifest): InputTranscript {
+  const one = { ...manifest, sources: manifest.sources.filter((s) => s.source_id === assetId) };
+  if (!one.sources.length) throw new Error("máy farm không trả lời thoại của video này");
+  const { manifest: clean, report } = cleanTranscribeManifest(one);
   const src = clean.sources[0]!;
   return {
     schema_version: "studio.input-transcript/v1", asset_id: assetId, language: src.language, alignment: src.alignment,
@@ -369,13 +428,19 @@ export function transcriptMarkdown(name: string, t: InputTranscript): string {
 export function inputReadme(s: InputShots, t: InputTranscript | null, transcriptNote: string, now: string, siteName: string = DEFAULT_SITE_NAME): string {
   const size = s.width && s.height ? `${s.width}×${s.height}` : "?";
   const source = s.source.kind === "original" ? "bản gốc" : s.source.kind === "proxy" ? "bản proxy" : "bản xem trước";
+  const uploaded = s.source.kind === "upload" || s.source.kind === "upload_image";
+  const what = s.source.kind === "upload_image" ? "Ảnh tải từ máy" : uploaded ? "Video tải từ máy" : `Video ${siteName}`;
   const lines = [
     `# ${s.name}`,
     "",
-    `Video ${siteName} \`${s.asset_id}\`, Studio chuẩn bị ${now.slice(0, 16).replace("T", " ")} UTC. Thư mục này chỉ đọc; chuẩn bị lại để cập nhật.`,
+    `${what} \`${s.asset_id}\`, Studio chuẩn bị ${now.slice(0, 16).replace("T", " ")} UTC. Thư mục này chỉ đọc; chuẩn bị lại để cập nhật.`,
     "",
     `- Dài ${clock(s.duration_s)} · ${size}${s.fps ? ` · ${s.fps} fps` : ""} · ${s.has_audio ? "có tiếng" : "không tiếng"}`,
-    `- Cảnh, khung hình và lời thoại do ${siteName} chuẩn bị sẵn từ ${source}${s.source.watermarked ? " (có watermark)" : ""} — chỉ để chọn cảnh; bản cuối render từ bản gốc.`,
+    s.source.kind === "upload_image"
+      ? `- Studio làm từ ảnh một clip ${clock(s.duration_s)} đẩy vào chậm (một cảnh): dùng như một shot ngắn 2–5 s, đừng để ảnh tĩnh đứng lâu.`
+      : uploaded
+        ? "- Máy farm cắt cảnh, lấy khung hình và đọc lời thoại từ chính file tải lên; bản render dùng file đó."
+        : `- Cảnh, khung hình và lời thoại do ${siteName} chuẩn bị sẵn từ ${source}${s.source.watermarked ? " (có watermark)" : ""} — chỉ để chọn cảnh; bản cuối render từ bản gốc.`,
     `- ${s.shots.length} cảnh (\`shots.json\`): khung giữa mỗi cảnh \`frames/NNN.jpg\`, tờ ghép ${CUT_SHEET_SHOTS} cảnh \`sheets/NN.jpg\`.`,
     `- Lời thoại: ${t ? `\`transcript.md\` (${transcriptNote})` : transcriptNote}.`,
     "",

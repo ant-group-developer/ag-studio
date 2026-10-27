@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, Film, FolderKanban, Image as ImageIcon, Music, Plus, Trash2, Upload } from "lucide-react";
 import { useAiTranslation } from "../common/assistant-name";
 import { StudioHttpError } from "../../api/http";
-import { useWorkspaceClient, type JobView, type SourceItem } from "../../api/workspace-client";
+import { isFootage, useWorkspaceClient, type JobView, type SourceItem } from "../../api/workspace-client";
 import { FootagePicker } from "./AgGoPickers";
 import { AgGoProjectDrawer } from "./ag-go-projects/AgGoProjectDrawer";
 import { JobList, JobsLine } from "./JobList";
@@ -15,6 +15,8 @@ import "./inputs.css";
 
 const UPLOAD_ACCEPT = ".md,.txt,.pdf,.csv,.json,.srt,.vtt,.jpg,.jpeg,.png,.webp,.gif,.mp3,.wav,.m4a,.aac,.ogg,.flac";
 const REFERENCE_ACCEPT = ".mp4,.mov,.m4v,.mkv,.webm,.avi";
+/** Footage from the computer: the API's `FOOTAGE_VIDEO_EXTS` and `FOOTAGE_IMAGE_EXTS`. */
+const FOOTAGE_ACCEPT = ".mp4,.mov,.m4v,.mkv,.webm,.avi,.mts,.m2ts,.jpg,.jpeg,.png,.webp";
 const KIND_ICON = { document: FileText, image: ImageIcon, audio: Music, video: Film, mixed: FolderKanban } as const;
 /** The sub-section last shown (footage or files), remembered in this browser. */
 const SECTION_KEY = "studio.inputs.section";
@@ -42,6 +44,7 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
   const qc = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
   const referenceInput = useRef<HTMLInputElement>(null);
+  const footageInput = useRef<HTMLInputElement>(null);
   const [projectPicker, setProjectPicker] = useState(false);
   const [footagePicker, setFootagePicker] = useState(false);
   const [jobsOpen, setJobsOpen] = useState(false);
@@ -108,6 +111,16 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
     },
     onError: fail(t("ws.inputs.uploadFailed")),
   });
+  const uploadingFootage = useUploadProgress();
+  const uploadFootage = useMutation({
+    mutationFn: (files: File[]) => {
+      const progress = uploadingFootage.start(files);
+      return Promise.all(files.map((f, i) => client.uploadFootage(projectId, f, videoId!, progress[i])));
+    },
+    onSettled: uploadingFootage.done,
+    onSuccess: (r) => { refresh(); void message.success(t("ws.inputs.footageUploaded", { count: r.length })); },
+    onError: (e) => { refresh(); fail(t("ws.inputs.uploadFailed"))(e); },
+  });
   const uploadingReference = useUploadProgress();
   const uploadReference = useMutation({
     mutationFn: (files: File[]) => {
@@ -121,7 +134,7 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
 
   const all = sources.data?.sources ?? [];
   const agGoProjects = all.filter((s) => s.kind === "ag_go_project");
-  const videoAssets = all.filter((s) => s.kind === "ag_go_asset" && (videoId ? s.videoId === videoId : true));
+  const videoAssets = all.filter((s) => isFootage(s) && (videoId ? s.videoId === videoId : true));
   const uploads = all.filter((s) => s.kind === "upload" && !s.meta.reference);
   const references = all.filter((s) => s.kind === "upload" && s.meta.reference === true);
   const counts = videoId ? countAssets(videoAssets) : sources.data?.counts ?? countAssets(videoAssets);
@@ -177,13 +190,22 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
                 <section aria-label={videoId ? t("ws.inputs.videoFootage") : t("ws.inputs.preparedFootage")}>
                   <div className="ws-inputs__head">
                     <h4 className="ws-inputs__h">{videoId ? t("ws.inputs.videoFootage") : t("ws.inputs.preparedFootage")}</h4>
-                    {videoId && canEdit ? <Button size="small" icon={<Plus size={13} />} disabled={!agGoProjects.length} onClick={() => setFootagePicker(true)}>{t("ws.inputs.pickVideos")}</Button> : null}
+                    {videoId && canEdit ? (
+                      <span className="ws-inputs__actions">
+                        <Button size="small" icon={<Plus size={13} />} disabled={!agGoProjects.length} onClick={() => setFootagePicker(true)}>{t("ws.inputs.pickVideos")}</Button>
+                        <Button size="small" icon={<Upload size={13} />} loading={uploadFootage.isPending} title={t("ws.inputs.uploadFootageHint")} onClick={() => footageInput.current?.click()}>
+                          {uploadingFootage.percent !== null ? t("common.uploading", { pct: uploadingFootage.percent }) : t("ws.inputs.uploadFootage")}
+                        </Button>
+                        <input ref={footageInput} type="file" multiple hidden accept={FOOTAGE_ACCEPT} aria-label={t("ws.inputs.uploadFootage")}
+                          onChange={(e) => { const files = [...(e.target.files ?? [])]; e.target.value = ""; if (files.length) uploadFootage.mutate(files); }} />
+                      </span>
+                    ) : null}
                   </div>
                   {videoAssets.length ? (
                     <FootageAssets assets={videoAssets} videos={videos.data?.videos ?? []} grouped={!videoId} filter={filter} onFilter={setFilter} canEdit={canEdit}
                       onOpenFile={onOpenFile} onPrepare={(assetId, again) => prepare.mutate({ assetId, again })} onRemove={(x) => remove.mutate({ source: x })}
                       onBulk={(ids) => bulk.mutate(ids)} bulkBusy={bulk.isPending} />
-                  ) : <p className="ws-hint">{agGoProjects.length ? t("ws.inputs.noVideoYet") : t("ws.inputs.addProjectFirst")}</p>}
+                  ) : <p className="ws-hint">{agGoProjects.length || videoId ? t("ws.inputs.noVideoYet") : t("ws.inputs.addProjectFirst")}</p>}
                 </section>
               ) : null}
             </>

@@ -31,6 +31,7 @@ const ws = {
   agGoAccess: vi.fn(),
   removeSource: vi.fn().mockResolvedValue(undefined),
   uploadSource: vi.fn(),
+  uploadFootage: vi.fn(),
   searchFootage: vi.fn(),
   getFootageFacets: vi.fn(),
   prepareInputs: vi.fn().mockResolvedValue({ assets: {} }),
@@ -152,7 +153,7 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
 
   it("lists the ag-go projects, this video's ag-go videos with their preparation, and uploads", async () => {
     const open = mount("v1");
-    const footage = await screen.findByRole("region", { name: "Video AG Go của video này" });
+    const footage = await screen.findByRole("region", { name: "Footage của video này" });
     expect(footage).toHaveTextContent("Hoa Lư 03.mp4");
     expect(footage).toHaveTextContent("1:12 · 12 cảnh · có lời thoại");
     fireEvent.click(within(footage).getByRole("button", { name: "Mở" }));
@@ -331,6 +332,24 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     expect(ws.addSource.mock.calls[0]![1]).toMatchObject({ kind: "ag_go_asset", videoId: "v1", prepare: true, meta: { durationMs: 45_000 } });
   });
 
+  it("uploads videos and photos from the computer as footage of the video, prepared at once, and lists them with the ag-go ones", async () => {
+    ws.uploadFootage.mockResolvedValue({ source: src({}), prepare: { state: "queued", job_id: "j9", phase: null, progress: null } });
+    ws.listSources.mockResolvedValue({ sources: [
+      src({ kind: "upload_asset", ref: A1, videoId: "v1", mediaType: "image", label: "đỉnh Múa.jpg",
+        asset: { state: "ready", folder: `inputs/${A1}/`, readme: `inputs/${A1}/README.md`, shots: 1, duration_s: 6, transcript: false } }),
+      src({ kind: "upload_asset", ref: A2, videoId: "v1", mediaType: "video", label: "Hang Múa.mov", asset: { state: "preparing", job_id: "j9", phase: null, progress: 0.3 } }),
+    ] });
+    mount("v1");
+    const footage = await screen.findByRole("region", { name: "Footage của video này" });
+    expect(footage).toHaveTextContent("ảnh tải từ máy · 0:06 · 1 cảnh");
+    expect(footage).toHaveTextContent("video tải từ máy");
+    expect(footage).toHaveTextContent("Đang chuẩn bị 30%");
+    const input = within(footage).getByLabelText("Tải từ máy", { selector: "input" });
+    fireEvent.change(input, { target: { files: [new File(["v"], "Hang Múa.mov", { type: "video/quicktime" })] } });
+    await waitFor(() => expect(ws.uploadFootage).toHaveBeenCalledWith("p1", expect.any(File), "v1", expect.any(Function)));
+    expect(await screen.findByText("Đã tải lên 1 footage, đang chuẩn bị")).toBeTruthy();
+  });
+
   it("uploads files into the project", async () => {
     ws.uploadSource.mockResolvedValue({ source: src({}), file: {} });
     mount();
@@ -431,7 +450,7 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
       kind: "ag_go_asset", ref: `a${i}`, label: `Clip ${i}.mp4`, videoId: "v1", mediaType: "video", asset: { state: "not_prepared" },
     })) });
     mount("v1", vi.fn(), false);
-    const region = await screen.findByRole("region", { name: "Video AG Go của video này" });
+    const region = await screen.findByRole("region", { name: "Footage của video này" });
     expect(within(region).getAllByRole("listitem")).toHaveLength(30);
     expect(within(region).queryByRole("button", { name: /Chuẩn bị các video/ })).toBeNull();
     fireEvent.click(within(region).getByRole("button", { name: "Xem thêm (5)" }));

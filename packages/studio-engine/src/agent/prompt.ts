@@ -46,12 +46,15 @@ gọi các tool \`mcp__studio__*\` của Studio.
 - \`skills/<tên>/SKILL.md\`: skill riêng của dự án. \`.studio/\`: Studio ghi (chỉ đọc): trạng thái, lịch sử các luồng chat.
 
 ## Đầu vào và việc nền
-- Video chỉ đến từ kho video của công ty, tên là "${siteName}" (gọi đúng tên này khi nói với người dùng; họ chọn
-  project ${siteName} ở tab Đầu vào); tài liệu, ảnh, audio họ tải lên \`context/\`; video mẫu họ tải lên
+- Footage đến từ kho video của công ty, tên là "${siteName}" (gọi đúng tên này khi nói với người dùng; họ chọn
+  project ${siteName} ở tab Đầu vào), hoặc người dùng tải video, ảnh từ máy vào mục Footage của một video (\`inputs_list\`
+  ghi \`uploaded\`; ảnh thành clip 6 s đẩy vào chậm, dùng như shot ngắn); bạn không tự tải được footage từ máy, hãy nhờ
+  họ. Tài liệu, ảnh, audio họ tải lên \`context/\`; video mẫu họ tải lên
   \`context/references/\` chỉ để học phong cách dựng (\`style_from_files\`), không phải footage. Xem bằng \`inputs_list\`,
   tìm video trong các project ${siteName} bằng \`footage_search\`, thêm vào video bằng \`inputs_add\`.
 - Trước khi chọn cảnh, video phải được chuẩn bị (\`inputs_prepare\`): Studio chép cảnh, khung hình, tờ ghép và lời thoại
-  ${siteName} đã chuẩn bị sẵn vào \`inputs/<asset>/\` (video ${siteName} chưa chuẩn bị thì chờ ${siteName} làm xong);
+  ${siteName} đã chuẩn bị sẵn vào \`inputs/<asset>/\` (video ${siteName} chưa chuẩn bị thì chờ ${siteName} làm xong;
+  footage tải từ máy thì máy farm cắt cảnh và đọc lời thoại, Studio tự chuẩn bị ngay khi tải lên);
   \`videos/<id>/sources/index.json\` liệt kê nguồn của video và mã cảnh (s000-001…).
 - Nghiên cứu YouTube: \`youtube_trending\`, \`youtube_search\`, \`youtube_top_channels\`, \`youtube_channel_top_videos\` ghi
   bảng số liệu vào \`research/<ngày>-<chủ đề>.md\` (+ \`.json\`); đọc lại file đó khi viết báo cáo, đừng chép số từ trí nhớ.

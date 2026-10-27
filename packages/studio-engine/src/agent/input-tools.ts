@@ -10,7 +10,7 @@ import { requireVideo } from "../workspace/project-db.js";
 import { getJob, jobView, listJobs, requestJobCancel, type JobRecord } from "../workspace/jobs-db.js";
 import { ASSET_ID } from "../workspace/prepare.js";
 import { assetState as stateOf, queuePrepare } from "../workspace/inputs.js";
-import { addSource, agGoProjectIds, listSources, sourceView, type SourceRecord } from "../workspace/sources-db.js";
+import { addSource, agGoProjectIds, isFootageKind, listSources, sourceView, type SourceRecord } from "../workspace/sources-db.js";
 import { writeVideoIndex, videoIndexPath } from "../workspace/video-index.js";
 import type { AgentTool, AgentToolContext } from "./tools.js";
 
@@ -66,7 +66,8 @@ const slimSource = async (ctx: AgentToolContext, s: SourceRecord) => {
   return {
     id: v.id, kind: v.kind, ref: v.ref, media_type: v.mediaType, label: v.label, video_id: v.videoId,
     ...(v.kind === "upload" ? { path: v.ref, ...(v.meta.reference ? { reference_video: true } : {}) } : {}),
-    ...(v.kind === "ag_go_asset" ? await assetState(ctx, v.ref) : {}),
+    ...(v.kind === "upload_asset" ? { uploaded: v.mediaType === "image" ? "ảnh tải từ máy (thành clip có chuyển động nhẹ)" : "video tải từ máy" } : {}),
+    ...(isFootageKind(v.kind) ? await assetState(ctx, v.ref) : {}),
   };
 };
 
@@ -148,7 +149,7 @@ export const INPUT_TOOLS: AgentTool[] = [
   }),
   tool({
     name: "inputs_prepare",
-    description: "Chuẩn bị video {{site}} để chọn cảnh (việc nền: chép cảnh, khung hình, tờ ghép, lời thoại {{site}} đã chuẩn bị sẵn vào inputs/<asset>/; video {{site}} chưa chuẩn bị thì chờ {{site}} làm, có thể vài phút). Mỗi video chỉ chuẩn bị một lần cho cả dự án; `again` chép lại bản mới nhất của {{site}}. `wait_s` (≤ 60) chờ xong trong lượt này; chưa xong thì Studio báo vào luồng khi xong và bạn làm tiếp.",
+    description: "Chuẩn bị video {{site}} hoặc footage tải từ máy để chọn cảnh (việc nền: chép cảnh, khung hình, tờ ghép, lời thoại {{site}} đã chuẩn bị sẵn vào inputs/<asset>/; video {{site}} chưa chuẩn bị thì chờ {{site}} làm, có thể vài phút; footage tải từ máy thì máy farm cắt cảnh và đọc lời thoại). Mỗi video chỉ chuẩn bị một lần cho cả dự án; `again` chép lại bản mới nhất của {{site}} (footage tải từ máy: làm lại). `wait_s` (≤ 60) chờ xong trong lượt này; chưa xong thì Studio báo vào luồng khi xong và bạn làm tiếp.",
     input: z.object({
       asset_ids: z.array(z.string().regex(ASSET_ID)).min(1).max(40),
       wait_s: z.number().int().min(0).max(60).optional(),

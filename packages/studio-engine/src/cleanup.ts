@@ -3,7 +3,8 @@
  *
  * - Voice store lines not read for `voiceDays` (a line read again is only one farm job away).
  * - Project audio on the bucket (`library/studio/projects/<id>/voice|music/…`) nothing points at any more: not the
- *   project, not a video's own music, not any video revision (a track's beats go with it). Only past `audioGraceDays`.
+ *   project, not a video's own music, not any video revision (a track's beats go with it); and uploaded footage
+ *   (`…/footage/…`) no source holds (removed, or an upload never finished). Only past `audioGraceDays`.
  * - Files a browser uploaded to the bucket (`uploads/…`) Studio never took, past `RAW_UPLOAD_HOURS`.
  * - Scratch folders a crashed worker left: `<dataRoot>/job-runs/<job>` of jobs no longer running and
  *   `<dataRoot>/agent-runs/<message>` of turns no longer running, past `SCRATCH_HOURS`.
@@ -66,6 +67,12 @@ export async function sweepProjectAudio(db: StudioDb, bucket: StudioBucket, cuto
   }
   for (const r of await db.all<{ music: string }>("SELECT music::text AS music FROM videos WHERE music IS NOT NULL")) {
     for (const k of libraryKeys(r.music)) keep.add(k);
+  }
+  // uploaded footage and a photo's clip, while a source holds them (`footage-upload.ts`)
+  for (const r of await db.all<{ key: string | null; clip_key: string | null }>(
+    "SELECT meta->>'key' AS key, meta->>'clip_key' AS clip_key FROM project_sources WHERE kind = 'upload_asset'",
+  )) {
+    for (const k of [r.key, r.clip_key]) if (k) keep.add(k);
   }
   // a track's beats (`<key>.beats.json`) go with it
   const kept = (key: string) => keep.has(key) || (key.endsWith(BEATS_SUFFIX) && keep.has(key.slice(0, -BEATS_SUFFIX.length)));

@@ -9,7 +9,7 @@ import type { ActorRole } from "../agent/threads-db.js";
 import { createJob, listJobs, type JobRecord } from "./jobs-db.js";
 import { inputDir, type PrepareRequest } from "./prepare.js";
 import { writeVideoIndexesFor } from "./video-index.js";
-import { getPrepared, listPrepared, listSources, sourceView, type PreparedAsset, type SourceRecord, type SourceView } from "./sources-db.js";
+import { getPrepared, isFootageKind, listPrepared, listSources, sourceView, type PreparedAsset, type SourceRecord, type SourceView } from "./sources-db.js";
 
 export type AssetState =
   | { state: "queued" | "preparing"; job_id: string; phase: string | null; progress: number | null }
@@ -69,15 +69,15 @@ export type SourceItem = SourceView & { asset: AssetState | null };
 /** Sources with where each ag-go video stands (`listSources` options), in one pass. */
 export async function sourceItems(db: StudioDb, projectId: string, opts: { videoId?: string; projectOnly?: boolean } = {}): Promise<SourceItem[]> {
   const state = await assetStates(db, projectId);
-  return (await listSources(db, projectId, opts)).map((s) => ({ ...sourceView(s), asset: s.kind === "ag_go_asset" ? state(s.ref) : null }));
+  return (await listSources(db, projectId, opts)).map((s) => ({ ...sourceView(s), asset: isFootageKind(s.kind) ? state(s.ref) : null }));
 }
 
-/** How many distinct ag-go videos the sources hold, by where they stand (queued and running count as preparing). */
+/** How many distinct footage (ag-go videos and uploads) the sources hold, by where they stand (queued and running count as preparing). */
 export interface AssetCounts { videos: number; ready: number; preparing: number; failed: number; notPrepared: number }
 
 export function assetCounts(items: readonly SourceItem[]): AssetCounts {
   const seen = new Map<string, AssetState>();
-  for (const s of items) if (s.kind === "ag_go_asset" && s.asset && !seen.has(s.ref)) seen.set(s.ref, s.asset);
+  for (const s of items) if (isFootageKind(s.kind) && s.asset && !seen.has(s.ref)) seen.set(s.ref, s.asset);
   const c: AssetCounts = { videos: seen.size, ready: 0, preparing: 0, failed: 0, notPrepared: 0 };
   for (const a of seen.values()) {
     if (a.state === "ready") c.ready += 1;
@@ -89,9 +89,9 @@ export function assetCounts(items: readonly SourceItem[]): AssetCounts {
 }
 
 /**
- * Queues preparing these ag-go videos of the project, skipping those prepared (unless `again`: copied again from ag-go,
- * whose own prep is not run again) or already in line. An id that is no ag-go video source of the project is answered
- * `not_an_input`. One transaction: two calls at once queue a video once. Several videos queued at once share a
+ * Queues preparing these footage of the project (ag-go videos, uploads), skipping those prepared (unless `again`: an
+ * ag-go video is copied again from ag-go, whose own prep is not run again; an upload is analysed again) or already in
+ * line. An id that is no footage source of the project is answered `not_an_input`. One transaction: two calls at once queue a video once. Several videos queued at once share a
  * `batch_id`: their thread hears one summary when the last of them ends, not a message (and an agent turn) each.
  */
 export async function queuePrepare(db: StudioDb, p: {
@@ -99,7 +99,7 @@ export async function queuePrepare(db: StudioDb, p: {
 }, now: string): Promise<Record<string, AssetState | { state: "not_an_input" }>> {
   return db.tx(async () => {
     const known = new Map<string, SourceRecord>();
-    for (const s of await listSources(db, p.projectId)) if (s.kind === "ag_go_asset" && !known.has(s.ref)) known.set(s.ref, s);
+    for (const s of await listSources(db, p.projectId)) if (isFootageKind(s.kind) && !known.has(s.ref)) known.set(s.ref, s);
     const out: Record<string, AssetState | { state: "not_an_input" }> = {};
     const state = await assetStates(db, p.projectId);
     const toQueue: { id: string; src: SourceRecord; req: PrepareRequest }[] = [];

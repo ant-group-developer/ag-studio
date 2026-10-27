@@ -136,10 +136,12 @@ export function projectJobHandlers(o: StudioWorkerOptions): Partial<Record<JobKi
   const handlers: Partial<Record<JobKind, JobHandler>> = {};
   const media = o.media;
   const farmWait = { pollMs: o.farmPollMs ?? 3000, ...(o.farmQueueTimeoutMs ? { queueTimeoutMs: o.farmQueueTimeoutMs } : {}) };
-  // ag-go prepares each video once; the job copies its shots, frames and transcript into the project
-  if (o.preps) {
+  // ag-go prepares each video once; the job copies its shots, frames and transcript into the project. Footage someone
+  // uploaded is cut on the farm (a photo made into a clip here, with ffmpeg)
+  if (o.preps || media) {
     handlers.prepare_asset = prepareHandler({
-      db: o.db, preps: o.preps, download: (url, dest, signal) => httpDownload(url, dest, signal), ...(o.siteName ? { siteName: o.siteName } : {}),
+      db: o.db, ...(o.preps ? { preps: o.preps } : {}), download: (url, dest, signal) => httpDownload(url, dest, signal), ...(o.siteName ? { siteName: o.siteName } : {}),
+      uploads: { bucket: o.bucket, farm: o.farm, ...(media ? { ffmpeg: media.ffmpeg, ffprobe: media.ffprobe } : {}), ...farmWait },
     });
   }
   if (media) {

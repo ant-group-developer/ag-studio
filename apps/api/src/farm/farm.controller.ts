@@ -82,6 +82,16 @@ export class FarmController {
   }
 
   /** A project's farm job (migration 0033); the project plays the farm's "production". */
+  /** The file a render reads for footage `assetId` uploaded to the project (a photo's clip, else the file); null when it is no upload. */
+  private async uploadedFootage(projectId: string, assetId: string): Promise<{ key: string } | null> {
+    const row = await this.db.get<{ key: string | null }>(
+      `SELECT COALESCE(meta->>'clip_key', meta->>'key') AS key FROM project_sources
+       WHERE project_id = ? AND kind = 'upload_asset' AND ref = ? ORDER BY added_at, id LIMIT 1`,
+      [projectId, assetId],
+    );
+    return row?.key ? { key: row.key } : null;
+  }
+
   private async lookupJob(farmJobId: string): Promise<FarmJobRow | null> {
     return (await this.db.get<FarmJobRow>(
       `SELECT farm_job_id, stage_key, attempt_id, project_id AS production_id, job_type, is_final_render
@@ -172,7 +182,23 @@ export class FarmController {
       let result: SignResult;
       let resultUrl: string | null = null;
 
-      if (op.op === 'get' && auth.assetId) {
+      const upload = op.op === 'get' && auth.assetId ? await this.uploadedFootage(prodId, auth.assetId) : null;
+      if (op.op === 'get' && upload) {
+        // footage someone uploaded to Studio (feedback 2026-10-27 item 3): its file on the bucket, the same for every render
+        const expiresAt = new Date(Date.now() + this.urlTtl * 1000).toISOString();
+        resultUrl = await getSignedUrl(this.s3, new GetObjectCommand({ Bucket: this.bucket, Key: upload.key }), { expiresIn: this.urlTtl });
+        result = {
+          op: 'get',
+          input: op.input,
+          url: resultUrl,
+          expires_at: expiresAt,
+          size_bytes: null,
+          content_type: null,
+          // the object at a key is never replaced (a new upload gets a new id), so the key names its content
+          cache_key: `studio-upload:${upload.key}`,
+          source: { source_kind: 'original', watermarked: false, start_ms: null, end_ms: null },
+        };
+      } else if (op.op === 'get' && auth.assetId) {
         // GĐ2 asset resolve via ag-go POST /footage/assets/resolve
         const purpose = isFinalRender ? 'final' : 'preview';
         if (!agGoProjectIds.length) {

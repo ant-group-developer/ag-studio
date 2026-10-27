@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ForbiddenException } from '@nestjs/common';
+import { S3Client } from '@aws-sdk/client-s3';
 import { FarmController } from './farm.controller';
 import { StudioDbService } from '../db/studio-db.service';
 import { ConfigService } from '@nestjs/config';
@@ -137,6 +138,31 @@ describe('FarmController /farm/sign', () => {
     dbGet.mockImplementation((sql: string) => (sql.includes('project_farm_jobs') ? job : undefined));
     dbAll.mockImplementation((sql: string) => (sql.includes('project_sources') ? projects.map((ref) => ({ ref })) : []));
   }
+
+  it('footage uploaded to Studio: a link to its file on the bucket (a photo: its clip), never asked of ag-go, even with no ag-go project', async () => {
+    const key = 'library/studio/projects/prod-1/footage/0b9a7c34-5f1e-4d4c-9a51-3f2a1e0c7d11.mov';
+    const clip = 'library/studio/projects/prod-1/footage/1c8b6d45-6e2f-4e5d-8b62-4e3b2f1d8e22.mp4';
+    dbGet.mockImplementation((sql: string, params: unknown[]) => {
+      if (sql.includes('project_farm_jobs')) return MOCK_JOB;
+      if (sql.includes("kind = 'upload_asset'")) {
+        return params[1] === '0b9a7c34-5f1e-4d4c-9a51-3f2a1e0c7d11' ? { key } : params[1] === '1c8b6d45-6e2f-4e5d-8b62-4e3b2f1d8e22' ? { key: clip } : undefined;
+      }
+      return undefined;
+    });
+    dbAll.mockReturnValue([]);
+    // a real client: presigning is local, nothing is sent
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (controller as any).s3 = new S3Client({ region: 'auto', endpoint: 'https://r2.example.com', forcePathStyle: true, credentials: { accessKeyId: 'k', secretAccessKey: 's' } });
+    const req = { ticketClaims: makeTicketClaims(MOCK_JOB.farm_job_id), ip: '127.0.0.1' } as never;
+    const r = await controller.sign({
+      ops: [{ op: 'get', input: 'asset:0b9a7c34-5f1e-4d4c-9a51-3f2a1e0c7d11' }, { op: 'get', input: 'asset:1c8b6d45-6e2f-4e5d-8b62-4e3b2f1d8e22' }],
+    }, req);
+    expect(agGoResolveAssets).not.toHaveBeenCalled();
+    const [video, photo] = r.results as { url: string; cache_key: string; source: unknown }[];
+    expect(video!.url).toContain(`/test-bucket/${key}`);
+    expect(video).toMatchObject({ cache_key: `studio-upload:${key}`, source: { source_kind: 'original', watermarked: false } });
+    expect(photo!.url).toContain('1c8b6d45-6e2f-4e5d-8b62-4e3b2f1d8e22.mp4');
+  });
 
   it('uses purpose=preview when is_final_render=false', async () => {
     routeDb({ ...MOCK_JOB, is_final_render: false });
